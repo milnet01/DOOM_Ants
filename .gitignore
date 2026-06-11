@@ -1,0 +1,21 @@
+# Build output
+*.o
+*.obj
+*.exe
+*.so
+*.a
+linuxdoom
+doom
+build/
+cmake-build-*/
+
+# Editor / OS cruft
+*.swp
+*~
+.DS_Store
+.vscode/
+.idea/
+
+# Game data — never commit WADs (licensing)
+*.wad
+*.WAD
