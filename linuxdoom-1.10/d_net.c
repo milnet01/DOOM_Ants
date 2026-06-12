@@ -460,8 +460,8 @@ void CheckAbort (void)
 	I_StartTic (); 
 	
     I_StartTic ();
-    for ( ; eventtail != eventhead 
-	      ; eventtail = (++eventtail)&(MAXEVENTS-1) ) 
+    for ( ; eventtail != eventhead
+	      ; eventtail = (eventtail + 1)&(MAXEVENTS-1) )
     { 
 	ev = &events[eventtail]; 
 	if (ev->type == ev_keydown && ev->data1 == KEY_ESCAPE)
