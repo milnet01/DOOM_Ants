@@ -10,8 +10,9 @@ CC=  gcc  # gcc or g++
 # (empty () = unspecified args for the action-function table in info.c)
 # that C23 — gcc's current default — would reject.
 # SDL2 replaces the legacy X11 video / sndserver audio (DOOM-0004).
-SDL_CFLAGS:=$(shell pkg-config --cflags sdl2)
-SDL_LIBS:=$(shell pkg-config --libs sdl2)
+# SDL2_mixer renders the in-WAD music as General MIDI (DOOM-0016).
+SDL_CFLAGS:=$(shell pkg-config --cflags sdl2 SDL2_mixer)
+SDL_LIBS:=$(shell pkg-config --libs sdl2 SDL2_mixer)
 
 CFLAGS=-g -Wall -std=gnu11 -DNORMALUNIX -DLINUX $(SDL_CFLAGS) # -DUSEASM
 LDFLAGS=
@@ -27,6 +28,7 @@ OBJS=				\
 		$(O)/dstrings.o		\
 		$(O)/i_system.o		\
 		$(O)/i_sound.o		\
+		$(O)/mus2mid.o		\
 		$(O)/i_video.o		\
 		$(O)/i_net.o			\
 		$(O)/tables.o			\

@@ -41,6 +41,9 @@ rcsid[] = "$Id: i_unix.c,v 1.5 1997/02/03 22:45:10 b1 Exp $";
 #include <unistd.h>
 
 #include <SDL.h>
+#include <SDL_mixer.h>
+
+#include "mus2mid.h"
 
 // Timer stuff. Experimental.
 #include <time.h>
@@ -405,13 +408,59 @@ void I_SetSfxVolume(int volume)
   snd_SfxVolume = volume;
 }
 
-// MUSIC API - dummy. Some code from DOS version.
+//
+// MUSIC API.
+//
+// Music plays on its OWN audio output via SDL2_mixer at 44100 Hz, fully
+// independent of the 11025 Hz effects mixer above (which is untouched). MUS
+// lumps are converted to MIDI in memory (mus2mid) and rendered by SDL2_mixer
+// through FluidSynth + a General-MIDI soundfont. Music is non-essential: any
+// failure logs a warning, disables music, and lets the game run with effects
+// only. See docs/specs/DOOM-0016-music.md.
+//
+
+// Default General-MIDI soundfont (openSUSE path); overridable via
+// $DOOM_SOUNDFONT for other distros and the future Windows build (DOOM-0006).
+#define DEFAULT_SOUNDFONT "/usr/share/sounds/sf2/FluidR3_GM.sf2"
+
+// DOOM only ever has one song registered at a time, but a tiny table keeps
+// the handle->resources mapping explicit and the free path unambiguous.
+#define MAX_SONGS 4
+
+typedef struct
+{
+  boolean        in_use;
+  Mix_Music*     music;
+  unsigned char* midi;   // converted MIDI buffer, kept alive until unregister
+} song_t;
+
+static boolean music_initialised = false;
+static song_t  songs[MAX_SONGS];
+
+// Map a registered handle (1-based) back to its slot; NULL if out of range
+// or not in use. Handle 0 means "no song" (e.g. music disabled).
+static song_t* song_for(int handle)
+{
+  if (handle < 1 || handle > MAX_SONGS)
+    return NULL;
+  if (!songs[handle - 1].in_use)
+    return NULL;
+  return &songs[handle - 1];
+}
+
 void I_SetMusicVolume(int volume)
 {
-  // Internal state variable.
+  // Internal state variable (DOOM's 0-15 scale).
   snd_MusicVolume = volume;
-  // Now set volume on output device.
-  // Whatever( snd_MusciVolume );
+
+  if (music_initialised)
+  {
+    // Scale 0-15 -> SDL2_mixer's 0-128, clamped defensively.
+    int v = (volume * 128) / 15;
+    if (v < 0)   v = 0;
+    if (v > 128) v = 128;
+    Mix_VolumeMusic(v);
+  }
 }
 
 
@@ -805,7 +854,13 @@ I_InitSound()
 
   // Finished initialization.
   fprintf(stderr, "I_InitSound: sound module ready\n");
-    
+
+  // Bring up music on its own SDL2_mixer device (DOOM-0016). Stock linuxdoom
+  // never wired this call, so music stayed silent even with real code behind
+  // the API; init it here, in the platform sound layer, alongside effects.
+  // (I_ShutdownMusic is already wired on the shutdown side, in i_system.c.)
+  I_InitMusic();
+
 #endif
 }
 
@@ -814,63 +869,161 @@ I_InitSound()
 
 //
 // MUSIC API.
-// Still no music done.
-// Remains. Dummies.
 //
-void I_InitMusic(void)		{ }
-void I_ShutdownMusic(void)	{ }
+// Real implementations (DOOM-0016). These are the platform side of the music
+// contract that s_sound.c already calls; the shared state + helpers live up
+// near I_SetMusicVolume. The stock dead "I_QrySongPlaying" dummy and its
+// looping/musicdies statics are gone — their only caller was already commented
+// out and they have no role in the SDL2_mixer path.
+//
 
-static int	looping=0;
-static int	musicdies=-1;
-
-void I_PlaySong(int handle, int looping)
+void I_InitMusic(void)
 {
-  // UNUSED.
-  handle = looping = 0;
-  musicdies = gametic + TICRATE*30;
+  const char*	soundfont;
+  int		i;
+
+  music_initialised = false;
+  for (i = 0; i < MAX_SONGS; i++)
+  {
+    songs[i].in_use = false;
+    songs[i].music = NULL;
+    songs[i].midi = NULL;
+  }
+
+  // SDL2_mixer only exposes a MIDI decoder once MIX_INIT_MID succeeds.
+  if ((Mix_Init(MIX_INIT_MID) & MIX_INIT_MID) == 0)
+  {
+    fprintf(stderr, "I_InitMusic: no MIDI support (%s); music disabled\n",
+	    Mix_GetError());
+    return;
+  }
+
+  // A SECOND audio device, separate from the 11025 Hz effects device, at full
+  // 44100 Hz stereo. The OS mixes the two output streams.
+  if (Mix_OpenAudioDevice(44100, MIX_DEFAULT_FORMAT, 2, 2048, NULL,
+			  SDL_AUDIO_ALLOW_FREQUENCY_CHANGE) < 0)
+  {
+    fprintf(stderr, "I_InitMusic: could not open music device (%s); "
+	    "music disabled\n", Mix_GetError());
+    Mix_Quit();
+    return;
+  }
+
+  // Soundfont: $DOOM_SOUNDFONT, then the system FluidR3_GM, else leave
+  // SDL2_mixer to its built-in default backend (best-effort, not guaranteed).
+  soundfont = getenv("DOOM_SOUNDFONT");
+  if (soundfont && access(soundfont, R_OK) == 0)
+    Mix_SetSoundFonts(soundfont);
+  else if (access(DEFAULT_SOUNDFONT, R_OK) == 0)
+    Mix_SetSoundFonts(DEFAULT_SOUNDFONT);
+
+  music_initialised = true;
+
+  // Apply the volume the menu/config already chose (0-15 -> 0-128).
+  I_SetMusicVolume(snd_MusicVolume);
+
+  fprintf(stderr, "I_InitMusic: music ready (44100 Hz, SDL2_mixer)\n");
 }
 
-void I_PauseSong (int handle)
+void I_ShutdownMusic(void)
 {
-  // UNUSED.
-  handle = 0;
-}
+  int i;
 
-void I_ResumeSong (int handle)
-{
-  // UNUSED.
-  handle = 0;
-}
+  if (!music_initialised)
+    return;
 
-void I_StopSong(int handle)
-{
-  // UNUSED.
-  handle = 0;
-  
-  looping = 0;
-  musicdies = 0;
-}
+  Mix_HaltMusic();
+  for (i = 0; i < MAX_SONGS; i++)
+    if (songs[i].in_use)
+      I_UnRegisterSong(i + 1);
 
-void I_UnRegisterSong(int handle)
-{
-  // UNUSED.
-  handle = 0;
+  Mix_CloseAudio();
+  Mix_Quit();
+  music_initialised = false;
 }
 
 int I_RegisterSong(void* data)
 {
-  // UNUSED.
-  data = NULL;
-  
-  return 1;
+  unsigned char*	midi;
+  int			midilen;
+  SDL_RWops*		rw;
+  Mix_Music*		music;
+  int			slot;
+
+  if (!music_initialised)
+    return 0;
+
+  // Convert MUS -> MIDI. The MUS header carries its own length.
+  if (mus2mid((const unsigned char*)data, &midi, &midilen) != 0)
+  {
+    fprintf(stderr, "I_RegisterSong: lump is not MUS music; skipping\n");
+    return 0;
+  }
+
+  for (slot = 0; slot < MAX_SONGS; slot++)
+    if (!songs[slot].in_use)
+      break;
+  if (slot == MAX_SONGS)
+  {
+    fprintf(stderr, "I_RegisterSong: song table full; skipping\n");
+    free(midi);
+    return 0;
+  }
+
+  // Keep the MIDI buffer alive until I_UnRegisterSong (defensive: do not
+  // assume Mix_LoadMUS_RW copies it). freesrc frees only the RWops wrapper.
+  rw = SDL_RWFromConstMem(midi, midilen);
+  music = Mix_LoadMUS_RW(rw, SDL_TRUE);
+  if (!music)
+  {
+    fprintf(stderr, "I_RegisterSong: %s\n", Mix_GetError());
+    free(midi);
+    return 0;
+  }
+
+  songs[slot].in_use = true;
+  songs[slot].music = music;
+  songs[slot].midi = midi;
+  return slot + 1;
 }
 
-// Is the song playing?
-int I_QrySongPlaying(int handle)
+void I_PlaySong(int handle, int looping)
 {
-  // UNUSED.
-  handle = 0;
-  return looping || musicdies > gametic;
+  song_t* s = song_for(handle);
+  if (!s)
+    return;
+  // -1 loops forever; 1 plays the song once.
+  Mix_PlayMusic(s->music, looping ? -1 : 1);
+}
+
+void I_PauseSong(int handle)
+{
+  if (music_initialised)
+    Mix_PauseMusic();
+}
+
+void I_ResumeSong(int handle)
+{
+  if (music_initialised)
+    Mix_ResumeMusic();
+}
+
+void I_StopSong(int handle)
+{
+  if (music_initialised)
+    Mix_HaltMusic();
+}
+
+void I_UnRegisterSong(int handle)
+{
+  song_t* s = song_for(handle);
+  if (!s)
+    return;
+  Mix_FreeMusic(s->music);
+  free(s->midi);
+  s->in_use = false;
+  s->music = NULL;
+  s->midi = NULL;
 }
 
 

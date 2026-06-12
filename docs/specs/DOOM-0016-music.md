@@ -1,6 +1,6 @@
 # DOOM-0016 — General-MIDI music playback
 
-**Status:** Cold-eyes clean (2026-06-12) — pending user sign-off, then implementation
+**Status:** Implemented (2026-06-12) — user-signed-off; shipped in i_sound.c + mus2mid.c
 **Kind:** feature
 **Depends on:** DOOM-0004 (SDL2 audio layer), shipped.
 
@@ -129,6 +129,13 @@ dangling reference. It is not part of the live contract.
    handle to its `{Mix_Music*, midi_buffer}` so `I_UnRegisterSong` frees both.
    The converted MIDI buffer is kept alive until unregister (defensive: do not
    assume `Mix_LoadMUS_RW` copies it).
+
+   **Implementation note (found during build):** stock linuxdoom never actually
+   *called* `I_InitMusic` (only `I_ShutdownMusic` is wired, from `i_system.c`),
+   so music would have stayed silent even with real code behind the API. The
+   fix adds a single `I_InitMusic();` call at the end of `I_InitSound()` — still
+   inside the platform sound file `i_sound.c`, so the "no game code (`s_sound.c`,
+   `d_main.c`) changes" guarantee holds.
 
 ### Soundfont selection
 
