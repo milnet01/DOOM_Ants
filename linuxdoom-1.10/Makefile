@@ -6,7 +6,10 @@
 #
 CC=  gcc  # gcc or g++
 
-CFLAGS=-g -Wall -DNORMALUNIX -DLINUX # -DUSEASM 
+# -std=gnu11: this is 1997 C89. gnu11 keeps the K&R idioms it relies on
+# (empty () = unspecified args for the action-function table in info.c)
+# that C23 — gcc's current default — would reject.
+CFLAGS=-g -Wall -std=gnu11 -DNORMALUNIX -DLINUX # -DUSEASM
 LDFLAGS=-L/usr/X11R6/lib
 LIBS=-lXext -lX11 -lnsl -lm
 
