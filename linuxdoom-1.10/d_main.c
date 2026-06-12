@@ -41,6 +41,7 @@ static const char rcsid[] = "$Id: d_main.c,v 1.8 1997/02/03 22:45:09 b1 Exp $";
 #include <fcntl.h>
 #endif
 
+#include <limits.h>		// PATH_MAX (used outside the NORMALUNIX guard)
 
 #include "doomdef.h"
 #include "doomstat.h"
@@ -564,14 +565,18 @@ void D_AddFile (char *file)
 void IdentifyVersion (void)
 {
 
-    char*	doom1wad;
-    char*	doomwad;
-    char*	doomuwad;
-    char*	doom2wad;
+    // Fixed-size scratch buffers for the candidate IWAD paths. A path that
+    // would not fit in PATH_MAX can't name a real file anyway, so snprintf
+    // truncation is harmless - and stack buffers can't leak the way the old
+    // per-candidate malloc()s did on every early return.
+    char	doom1wad[PATH_MAX];
+    char	doomwad[PATH_MAX];
+    char	doomuwad[PATH_MAX];
+    char	doom2wad[PATH_MAX];
 
-    char*	doom2fwad;
-    char*	plutoniawad;
-    char*	tntwad;
+    char	doom2fwad[PATH_MAX];
+    char	plutoniawad[PATH_MAX];
+    char	tntwad[PATH_MAX];
 
 #ifdef NORMALUNIX
     char *home;
@@ -581,33 +586,24 @@ void IdentifyVersion (void)
 	doomwaddir = ".";
 
     // Commercial.
-    doom2wad = malloc(strlen(doomwaddir)+1+9+1);
-    sprintf(doom2wad, "%s/doom2.wad", doomwaddir);
+    snprintf(doom2wad, sizeof(doom2wad), "%s/doom2.wad", doomwaddir);
 
     // Retail.
-    doomuwad = malloc(strlen(doomwaddir)+1+8+1);
-    sprintf(doomuwad, "%s/doomu.wad", doomwaddir);
-    
+    snprintf(doomuwad, sizeof(doomuwad), "%s/doomu.wad", doomwaddir);
+
     // Registered.
-    doomwad = malloc(strlen(doomwaddir)+1+8+1);
-    sprintf(doomwad, "%s/doom.wad", doomwaddir);
-    
+    snprintf(doomwad, sizeof(doomwad), "%s/doom.wad", doomwaddir);
+
     // Shareware.
-    doom1wad = malloc(strlen(doomwaddir)+1+9+1);
-    sprintf(doom1wad, "%s/doom1.wad", doomwaddir);
+    snprintf(doom1wad, sizeof(doom1wad), "%s/doom1.wad", doomwaddir);
 
-     // Bug, dear Shawn.
-    // Insufficient malloc, caused spurious realloc errors.
-    plutoniawad = malloc(strlen(doomwaddir)+1+/*9*/12+1);
-    sprintf(plutoniawad, "%s/plutonia.wad", doomwaddir);
+    snprintf(plutoniawad, sizeof(plutoniawad), "%s/plutonia.wad", doomwaddir);
 
-    tntwad = malloc(strlen(doomwaddir)+1+9+1);
-    sprintf(tntwad, "%s/tnt.wad", doomwaddir);
+    snprintf(tntwad, sizeof(tntwad), "%s/tnt.wad", doomwaddir);
 
 
     // French stuff.
-    doom2fwad = malloc(strlen(doomwaddir)+1+10+1);
-    sprintf(doom2fwad, "%s/doom2f.wad", doomwaddir);
+    snprintf(doom2fwad, sizeof(doom2fwad), "%s/doom2f.wad", doomwaddir);
 
     home = getenv("HOME");
     if (!home)
