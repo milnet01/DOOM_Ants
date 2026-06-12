@@ -28,18 +28,21 @@ without changing how it plays. The SDL2 layer makes this cross-platform, so
 this phase also delivers a **Windows** build and downloadable releases to share
 with friends.
 
-- 📋 [DOOM-0003] **Get linuxdoom-1.10 compiling on modern 64-bit Linux.**
+- ✅ [DOOM-0003] **Get linuxdoom-1.10 compiling on modern 64-bit Linux.**
   **Layman:** Fix the 1997 code so today's compiler can build it.
   Kind: fix.
   Source: in-session-2026-06-11.
-- 📋 [DOOM-0004] **Replace legacy X11 video & sound with SDL2.**
+  Resolved (2026-06-12): builds under gcc 15 / C23 via -std=gnu11; m_misc.c config-table and am_map.c implicit-int repairs.
+- ✅ [DOOM-0004] **Replace legacy X11 video & sound with SDL2.**
   **Layman:** Swap the ancient display/sound code for a modern, cross-platform layer.
   Kind: refactor.
   Source: in-session-2026-06-11.
-- 📋 [DOOM-0005] **Boot with a shareware WAD and confirm gameplay.**
+  Resolved (2026-06-12): SDL2 video (ARGB texture, integer scale) + in-process SDL audio mixer replace X11/sndserver; single self-contained binary.
+- 🚧 [DOOM-0005] **Boot with a shareware WAD and confirm gameplay.**
   **Layman:** Actually run it with DOOM's data and check it plays like the original.
   Kind: test.
   Source: in-session-2026-06-11.
+  Progress (2026-06-12): boots Ultimate Doom / DOOM II with SDL2 video+audio; renders a warped-in level for 25s+ with no crash (verified headless via SDL dummy drivers). Four 64-bit pointer fixes landed (r_data maptexture/array sizing, p_setup line list, colormap/translation alignment). Remaining: a human playtest on a real display to confirm input feel and visuals; shareware doom1.wad not yet exercised (tested with retail IWADs).
 - 📋 [DOOM-0006] **Add a Windows build target.**
   **Layman:** Produce a version that runs on Windows so friends can play it.
   Kind: feature.

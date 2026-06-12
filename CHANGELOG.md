@@ -16,3 +16,13 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 DOOM_Ants is a GPL-v2 derivative of id Software's DOOM source code
 (released 1997-12-23).
+
+### Changed
+
+- **Replace legacy X11 video & sound with SDL2.** (DOOM-0004)
+  Swap the ancient display/sound code for a modern, cross-platform layer.
+
+### Fixed
+
+- **Get linuxdoom-1.10 compiling on modern 64-bit Linux.** (DOOM-0003)
+  Fix the 1997 code so today's compiler can build it.
