@@ -6,6 +6,13 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-06-12
+
+First playable release: id Software's 1997 DOOM engine building and running on
+modern 64-bit Linux through SDL2, now with music, a fixed save system, and
+quality-of-life input and windowing improvements. A Linux (x86-64) build is
+attached; the Windows build and a fully self-contained package come later.
+
 ### Added
 - **Play the in-WAD music as clean General MIDI.** (DOOM-0016)
   Turns on DOOM's soundtrack — title screen, every level, the intermission and end screens — rendered as smooth, modern General MIDI. Sound effects are untouched.
@@ -24,11 +31,6 @@ All notable changes to DOOM_Ants are documented here. The format follows
 - `ROADMAP.md` with the three-phase plan: Foundations, Build & Modernise,
   and The Spin (the 3D / ray-tracing renderer overhaul).
 
----
-
-DOOM_Ants is a GPL-v2 derivative of id Software's DOOM source code
-(released 1997-12-23).
-
 ### Changed
 
 - **Replace legacy X11 video & sound with SDL2.** (DOOM-0004)
@@ -41,3 +43,11 @@ DOOM_Ants is a GPL-v2 derivative of id Software's DOOM source code
 
 - **Get linuxdoom-1.10 compiling on modern 64-bit Linux.** (DOOM-0003)
   Fix the 1997 code so today's compiler can build it.
+
+[Unreleased]: https://github.com/milnet01/DOOM_Ants/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/milnet01/DOOM_Ants/releases/tag/v0.1.0
+
+---
+
+DOOM_Ants is a GPL-v2 derivative of id Software's DOOM source code
+(released 1997-12-23).
