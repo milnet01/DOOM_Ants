@@ -164,3 +164,15 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Keep it running smoothly — never below 60 frames per second.
   Kind: perf.
   Source: in-session-2026-06-11.
+
+- 📋 [DOOM-0026] **Keep the classic 2.5D renderer selectable alongside the 3D renderer.**
+  Design constraint on the Phase 2 true-3D / ray-traced renderer (DOOM-0008..0012): it must sit ALONGSIDE the original software renderer, not replace it. Add a runtime renderer switch exposed in the main menu (e.g. a 'Renderer: Classic / 3D' option), persisted in the config. Implies abstracting the render path behind a small back-end interface so both can be selected without a rebuild. Default to Classic for exact parity. This shapes how DOOM-0008 is architected, so it is recorded now rather than retrofitted later.
+  **Layman:** When the new 3D renderer arrives, you'll still be able to switch back to the original DOOM look from the main menu - both renderers ship in the same build.
+  Kind: feature.
+  Source: user-request-2026-06-12.
+
+- 📋 [DOOM-0027] **Raise the classic renderer's internal resolution above 320x200.**
+  DOOM-0014 explicitly deferred this ('the internal detail is still the original 320x200 - true high-resolution rendering is a separate Phase 2 job'). Proven path is Crispy Doom's medium-res approach: make SCREENWIDTH/SCREENHEIGHT runtime variables instead of compile-time #defines, render the 3D view at an integer multiple (2x = 640x400), and draw the 320x200 UI assets at matching scale. Touches the r_main/r_draw/r_plane/r_things projection + lookup tables, st_stuff (status bar), m_menu, wi_stuff (intermission), hu_stuff/hu_lib (HUD), f_finale, f_wipe (screen melt), and the SDL2 blit in i_video. Needs a design spec (docs/specs/) run through /cold-eyes before implementation. Reference: github.com/fabiangreffrath/crispy-doom.
+  **Layman:** Render the original-style view at higher internal detail (e.g. 640x400) so it looks sharp instead of blocky when the window is enlarged - the look stays classic DOOM, just crisper.
+  Kind: enhancement.
+  Source: user-request-2026-06-12.
