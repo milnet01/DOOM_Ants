@@ -6,6 +6,28 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Mark I_Error as _Noreturn.** (DOOM-0023)
+  Tells the compiler that the fatal-error function never returns, so it can optimise better and reason correctly about the code that runs after a fatal-error guard.
+
+### Fixed
+
+- **Print pointers with %p instead of %lx in s_sound debug output.** (DOOM-0022)
+  A cosmetic fix to the debug logging so memory addresses print correctly on 64-bit builds.
+
+- **Fix off-by-one ammo-type bounds check in P_GiveAmmo.** (DOOM-0021)
+  Corrects a boundary test on ammo types so an edge value can't read past the end of the ammo array.
+
+- **Add the missing mobjinfo bounds guard in P_RespawnSpecials.** (DOOM-0020)
+  Hardens the item-respawn code against an out-of-bounds read if a queued item has an unrecognised type.
+
+- **Fix level-load reset clearing pointer size instead of the mouse/joy button arrays.** (DOOM-0019)
+  On each new level the game tried to wipe the mouse and joystick button state but only cleared a sliver of it, so a button could appear stuck for a moment after a level loads.
+
+- **Fix undefined behaviour in the event-queue ring increment.** (DOOM-0018)
+  Fixes a hidden flaw where the input-event counter was updated in a way modern compilers are allowed to mishandle - it could silently drop or scramble keypresses on a new compiler.
+
 ## [0.1.0] - 2026-06-12
 
 First playable release: id Software's 1997 DOOM engine building and running on
