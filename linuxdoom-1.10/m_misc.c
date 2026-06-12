@@ -380,7 +380,7 @@ void M_LoadDefaults (void)
 	while (!feof(f))
 	{
 	    isstring = false;
-	    if (fscanf (f, "%79s %[^\n]\n", def, strparm) == 2)
+	    if (fscanf (f, "%79s %99[^\n]\n", def, strparm) == 2)
 	    {
 		if (strparm[0] == '"')
 		{
@@ -392,7 +392,7 @@ void M_LoadDefaults (void)
 		    strcpy(newstring, strparm+1);
 		}
 		else if (strparm[0] == '0' && strparm[1] == 'x')
-		    sscanf(strparm+2, "%x", &parm);
+		    sscanf(strparm+2, "%x", (unsigned int *)&parm);
 		else
 		    sscanf(strparm, "%i", &parm);
 		for (i=0 ; i<numdefaults ; i++)
