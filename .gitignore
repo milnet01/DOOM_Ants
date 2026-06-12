@@ -5,9 +5,12 @@
 *.so
 *.a
 linuxdoom
+linuxxdoom
 doom
 build/
 cmake-build-*/
+# DOOM Makefile object dir (O=linux)
+/linuxdoom-1.10/linux/
 
 # Editor / OS cruft
 *.swp

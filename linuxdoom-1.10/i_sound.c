@@ -39,10 +39,8 @@ rcsid[] = "$Id: i_unix.c,v 1.5 1997/02/03 22:45:10 b1 Exp $";
 
 #include <fcntl.h>
 #include <unistd.h>
-#include <sys/ioctl.h>
 
-// Linux voxware output.
-#include <linux/soundcard.h>
+#include <SDL.h>
 
 // Timer stuff. Experimental.
 #include <time.h>
@@ -102,9 +100,6 @@ static int flag = 0;
 // The actual lengths of all sound effects.
 int 		lengths[NUMSFX];
 
-// The actual output device.
-int	audio_fd;
-
 // The global mixing buffer.
 // Basically, samples from all active internal channels
 //  are modifed and added, and stored in the buffer
@@ -149,30 +144,6 @@ int		vol_lookup[128*256];
 // Hardware left and right channel volume lookup.
 int*		channelleftvol_lookup[NUM_CHANNELS];
 int*		channelrightvol_lookup[NUM_CHANNELS];
-
-
-
-
-//
-// Safe ioctl, convenience.
-//
-void
-myioctl
-( int	fd,
-  int	command,
-  int*	arg )
-{   
-    int		rc;
-    extern int	errno;
-    
-    rc = ioctl(fd, command, arg);  
-    if (rc < 0)
-    {
-	fprintf(stderr, "ioctl(dsp,%d,arg) failed\n", command);
-	fprintf(stderr, "errno=%d\n", errno);
-	exit(-1);
-    }
-}
 
 
 
@@ -491,8 +462,11 @@ I_StartSound
     // Debug.
     //fprintf( stderr, "starting sound %d", id );
     
-    // Returns a handle (not used).
+    // Returns a handle (not used). Lock out the SDL mixer callback while
+    //  we mutate the shared channel table.
+    SDL_LockAudio();
     id = addsfx( id, vol, steptable[pitch], sep );
+    SDL_UnlockAudio();
 
     // fprintf( stderr, "/handle is %d\n", id );
     
@@ -536,7 +510,7 @@ int I_SoundIsPlaying(int handle)
 //
 // This function currently supports only 16bit.
 //
-void I_UpdateSound( void )
+static void I_MixSound( void )
 {
 #ifdef SNDINTR
   // Debug. Count buffer misses with interrupt.
@@ -662,11 +636,24 @@ void I_UpdateSound( void )
 // Mixing now done synchronous, and
 //  only output be done asynchronous?
 //
+// SDL pulls audio on its own thread: mix on demand and hand back the buffer.
+static void I_SDLAudioCallback(void* unused, Uint8* stream, int len)
+{
+  (void)unused;
+  I_MixSound();
+  // I_MixSound fills SAMPLECOUNT stereo 16-bit frames; never copy past that.
+  if (len > SAMPLECOUNT*2*(int)sizeof(signed short))
+    len = SAMPLECOUNT*2*(int)sizeof(signed short);
+  memcpy(stream, mixbuffer, len);
+}
+
+// The game loop still calls these every frame. Mixing is now pull-driven by
+//  the callback above, so the synchronous update/submit are no-ops here.
+void I_UpdateSound(void) {}
+
 void
 I_SubmitSound(void)
 {
-  // Write it to DSP device.
-  write(audio_fd, mixbuffer, SAMPLECOUNT*BUFMUL);
 }
 
 
@@ -721,8 +708,9 @@ void I_ShutdownSound(void)
   I_SoundDelTimer();
 #endif
   
-  // Cleaning up -releasing the DSP device.
-  close ( audio_fd );
+  // Cleaning up - releasing the audio device.
+  SDL_CloseAudio();
+  SDL_QuitSubSystem(SDL_INIT_AUDIO);
 #endif
 
   // Done.
@@ -764,31 +752,25 @@ I_InitSound()
   I_SoundSetTimer( SOUND_INTERVAL );
 #endif
     
-  // Secure and configure sound device first.
+  // Secure and configure the sound device through SDL. The mixer runs at
+  //  11025 Hz, signed 16-bit stereo - I_SDLAudioCallback pulls from it.
   fprintf( stderr, "I_InitSound: ");
-  
-  audio_fd = open("/dev/dsp", O_WRONLY);
-  if (audio_fd<0)
-    fprintf(stderr, "Could not open /dev/dsp\n");
-  
-                     
-  i = 11 | (2<<16);                                           
-  myioctl(audio_fd, SNDCTL_DSP_SETFRAGMENT, &i);
-  myioctl(audio_fd, SNDCTL_DSP_RESET, 0);
-  
-  i=SAMPLERATE;
-  
-  myioctl(audio_fd, SNDCTL_DSP_SPEED, &i);
-  
-  i=1;
-  myioctl(audio_fd, SNDCTL_DSP_STEREO, &i);
-  
-  myioctl(audio_fd, SNDCTL_DSP_GETFMTS, &i);
-  
-  if (i&=AFMT_S16_LE)    
-    myioctl(audio_fd, SNDCTL_DSP_SETFMT, &i);
-  else
-    fprintf(stderr, "Could not play signed 16 data\n");
+  {
+    SDL_AudioSpec	want;
+
+    if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0)
+      I_Error("I_InitSound: SDL audio init failed: %s", SDL_GetError());
+
+    SDL_memset(&want, 0, sizeof(want));
+    want.freq = SAMPLERATE;
+    want.format = AUDIO_S16SYS;
+    want.channels = 2;
+    want.samples = SAMPLECOUNT;
+    want.callback = I_SDLAudioCallback;
+
+    if (SDL_OpenAudio(&want, NULL) < 0)
+      I_Error("I_InitSound: SDL_OpenAudio failed: %s", SDL_GetError());
+  }
 
   fprintf(stderr, " configured audio device\n" );
 
@@ -817,7 +799,10 @@ I_InitSound()
   // Now initialize mixbuffer with zero.
   for ( i = 0; i< MIXBUFFERSIZE; i++ )
     mixbuffer[i] = 0;
-  
+
+  // Everything is ready: let the callback start pulling audio.
+  SDL_PauseAudio(0);
+
   // Finished initialization.
   fprintf(stderr, "I_InitSound: sound module ready\n");
     
@@ -897,7 +882,10 @@ int I_QrySongPlaying(int handle)
 // I ripped this out of the Timer class in
 //  our Difference Engine, including a few
 //  SUN remains...
-//  
+//
+// Only used when SNDINTR drives output via /dev/dsp; the SDL backend pulls
+// audio on its own thread, so this is left guarded as dead, original code.
+#ifdef SNDINTR
 #ifdef sun
     typedef     sigset_t        tSigSet;
 #else    
@@ -983,3 +971,4 @@ void I_SoundDelTimer()
   if ( I_SoundSetTimer( 0 ) == -1)
     fprintf( stderr, "I_SoundDelTimer: failed to remove interrupt. Doh!\n");
 }
+#endif // SNDINTR

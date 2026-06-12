@@ -80,8 +80,10 @@ typedef enum
 // The integrated sound support is experimental,
 //  and unfinished. Default is synchronous.
 // Experimental asynchronous timer based is
-//  handled by SNDINTR. 
-#define SNDSERV  1
+//  handled by SNDINTR.
+// DOOM_Ants: the SDL2 backend mixes in-process (see i_sound.c), so the
+//  external sndserver is no longer used.
+//#define SNDSERV  1
 //#define SNDINTR  1
 
 
