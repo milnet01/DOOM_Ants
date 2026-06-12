@@ -13,6 +13,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Stop leaking the candidate IWAD path strings in IdentifyVersion.** (DOOM-0025)
+  Tidies up the data-file search at startup so the small scratch strings it builds while hunting for your DOOM .wad are no longer left dangling in memory.
+
+- **Harden the config-file parser against an over-long line.** (DOOM-0024)
+  A corrupt or hand-edited config file with a very long line can no longer overflow an internal buffer and crash the game.
+
 - **Print pointers with %p instead of %lx in s_sound debug output.** (DOOM-0022)
   A cosmetic fix to the debug logging so memory addresses print correctly on 64-bit builds.
 

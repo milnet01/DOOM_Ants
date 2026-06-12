@@ -126,6 +126,18 @@ with friends.
   Source: audit-2026-06-12.
   Resolved (2026-06-12): I_Error declared `_Noreturn` in i_system.h + i_system.c (it ends in exit(-1)). Benefits gcc 15 flow analysis/optimisation. NB cppcheck does NOT honour the C11 _Noreturn keyword for its OOB analysis (only its library .cfg noreturn list), so the guarded-access false positives it reports remain — logged to the ledger rather than silenced.
 
+- ✅ [DOOM-0024] **Harden the config-file parser against an over-long line.**
+  M_LoadDefaults read config lines with an unbounded %[^\n] conversion into strparm[100], so any line longer than 99 chars smashed the stack. Bounded it to %99[^\n]. Also corrected the hex branch, which read %x into a signed int (now through an unsigned int* alias). gcc build clean; cppcheck invalidscanf + invalidScanfArgType findings cleared.
+  **Layman:** A corrupt or hand-edited config file with a very long line can no longer overflow an internal buffer and crash the game.
+  Kind: fix.
+  Source: in-session-2026-06-12 (cppcheck audit).
+
+- ✅ [DOOM-0025] **Stop leaking the candidate IWAD path strings in IdentifyVersion.**
+  IdentifyVersion malloc'd seven candidate IWAD path strings up front and returned on the first access() match without freeing the rest (cppcheck flagged ~12 memleak paths, including the new -iwad early return). D_AddFile copies its argument, so the buffers are pure local scratch - converted them to fixed PATH_MAX stack buffers written with snprintf, removing the leak by construction. A path longer than PATH_MAX can't name a real file, so snprintf truncation is harmless. gcc build clean; all memleak findings cleared.
+  **Layman:** Tidies up the data-file search at startup so the small scratch strings it builds while hunting for your DOOM .wad are no longer left dangling in memory.
+  Kind: fix.
+  Source: in-session-2026-06-12 (cppcheck audit + user request).
+
 ## Phase 2 — The Spin
 
 The creative overhaul: evolve the renderer toward true 3D with ray tracing and
