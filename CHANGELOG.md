@@ -36,5 +36,8 @@ DOOM_Ants is a GPL-v2 derivative of id Software's DOOM source code
 
 ### Fixed
 
+- **Fix savegame crash by giving saves a real heap buffer.** (DOOM-0017)
+  Saving a game no longer corrupts memory or crashes — the save data now gets its own properly-sized space instead of being squeezed into the video screen memory.
+
 - **Get linuxdoom-1.10 compiling on modern 64-bit Linux.** (DOOM-0003)
   Fix the 1997 code so today's compiler can build it.

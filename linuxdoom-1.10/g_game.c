@@ -71,7 +71,12 @@ rcsid[] = "$Id: g_game.c,v 1.8 1997/02/03 22:45:09 b1 Exp $";
 #include "g_game.h"
 
 
-#define SAVEGAMESIZE	0x2c000
+// 512 KiB. The original 0x2c000 (180 KiB) was sized for 1997 32-bit structs;
+// on 64-bit every saved pointer field doubles, so a busy stock level's save
+// (mobjs are the bulk, ~700 * ~256 B on DOOM II's biggest maps ≈ 220 KiB)
+// can exceed it. 512 KiB leaves >2x headroom; the post-write guard in
+// G_DoSaveGame is the backstop for anything larger.
+#define SAVEGAMESIZE	0x80000
 #define SAVESTRINGSIZE	24
 
 
@@ -1280,11 +1285,17 @@ void G_DoSaveGame (void)
 	sprintf(name,"c:\\doomdata\\"SAVEGAMENAME"%d.dsg",savegameslot);
     else
 	sprintf (name,SAVEGAMENAME"%d.dsg",savegameslot); 
-    description = savedescription; 
-	 
-    save_p = savebuffer = screens[1]+0x4000; 
-	 
-    memcpy (save_p, description, SAVESTRINGSIZE); 
+    description = savedescription;
+
+    // Use a dedicated heap buffer. Stock linuxdoom parked the savegame inside
+    // the video screen buffer (screens[1]+0x4000), but the four screens are a
+    // single 256000-byte block, leaving only ~175 KiB there - smaller than
+    // SAVEGAMESIZE - so a save overran the screen buffers into the heap and
+    // crashed (worse on 64-bit, where the archived structs are larger). The
+    // load path already uses a heap buffer via M_ReadFile/Z_Free; mirror it.
+    save_p = savebuffer = Z_Malloc (SAVEGAMESIZE, PU_STATIC, NULL);
+
+    memcpy (save_p, description, SAVESTRINGSIZE);
     save_p += SAVESTRINGSIZE; 
     memset (name2,0,sizeof(name2)); 
     sprintf (name2,"version %i",VERSION); 
@@ -1307,11 +1318,13 @@ void G_DoSaveGame (void)
 	 
     *save_p++ = 0x1d;		// consistancy marker 
 	 
-    length = save_p - savebuffer; 
-    if (length > SAVEGAMESIZE) 
-	I_Error ("Savegame buffer overrun"); 
-    M_WriteFile (name, savebuffer, length); 
-    gameaction = ga_nothing; 
+    length = save_p - savebuffer;
+    if (length > SAVEGAMESIZE)
+	I_Error ("Savegame buffer overrun");
+    M_WriteFile (name, savebuffer, length);
+    Z_Free (savebuffer);
+    savebuffer = NULL;
+    gameaction = ga_nothing;
     savedescription[0] = 0;		 
 	 
     players[consoleplayer].message = GGSAVED; 
