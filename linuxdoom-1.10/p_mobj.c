@@ -615,7 +615,10 @@ void P_RespawnSpecials (void)
 	if (mthing->type == mobjinfo[i].doomednum)
 	    break;
     }
-    
+
+    if (i == NUMMOBJTYPES)
+	I_Error ("P_RespawnSpecials: Unknown type %i", mthing->type);
+
     // spawn it
     if (mobjinfo[i].flags & MF_SPAWNCEILING)
 	z = ONCEILINGZ;
