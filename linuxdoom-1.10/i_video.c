@@ -44,7 +44,7 @@ static SDL_Texture*	texture;
 static Uint32		palette[256];
 
 // Integer scale of the 320x200 image (window is SCREENWIDTH*scale wide).
-static int		scale = 3;
+static int		scale = 4;
 
 
 //
@@ -310,11 +310,16 @@ void I_InitGraphics(void)
     // Crisp nearest-neighbour upscale, no blur.
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
 
+    // Resizable by default; -fullscreen for a borderless desktop-sized window.
+    Uint32 flags = SDL_WINDOW_RESIZABLE;
+    if (M_CheckParm("-fullscreen") || M_CheckParm("-f"))
+	flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+
     window = SDL_CreateWindow(
 	"DOOM",
 	SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
 	SCREENWIDTH*scale, SCREENHEIGHT*scale,
-	0);
+	flags);
     if (!window)
 	I_Error("I_InitGraphics: could not create window: %s", SDL_GetError());
 
