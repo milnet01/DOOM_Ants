@@ -305,23 +305,24 @@ void G_BuildTiccmd (ticcmd_t* cmd)
 	    cmd->angleturn += angleturn[tspeed]; 
     } 
  
-    if (gamekeydown[key_up]) 
+    // WASD is wired in alongside the arrow keys: W/S move, A/D strafe.
+    if (gamekeydown[key_up] || gamekeydown['w'])
     {
 	// fprintf(stderr, "up\n");
-	forward += forwardmove[speed]; 
+	forward += forwardmove[speed];
     }
-    if (gamekeydown[key_down]) 
+    if (gamekeydown[key_down] || gamekeydown['s'])
     {
 	// fprintf(stderr, "down\n");
-	forward -= forwardmove[speed]; 
+	forward -= forwardmove[speed];
     }
-    if (joyymove < 0) 
-	forward += forwardmove[speed]; 
-    if (joyymove > 0) 
-	forward -= forwardmove[speed]; 
-    if (gamekeydown[key_straferight]) 
-	side += sidemove[speed]; 
-    if (gamekeydown[key_strafeleft]) 
+    if (joyymove < 0)
+	forward += forwardmove[speed];
+    if (joyymove > 0)
+	forward -= forwardmove[speed];
+    if (gamekeydown[key_straferight] || gamekeydown['d'])
+	side += sidemove[speed];
+    if (gamekeydown[key_strafeleft] || gamekeydown['a'])
 	side -= sidemove[speed];
     
     // buttons
