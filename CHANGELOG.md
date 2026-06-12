@@ -7,6 +7,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Play the in-WAD music as clean General MIDI.** (DOOM-0016)
+  Turns on DOOM's soundtrack — title screen, every level, the intermission and end screens — rendered as smooth, modern General MIDI. Sound effects are untouched.
+
 - **Add a -iwad switch and detect Ultimate Doom by content.** (DOOM-0015)
   Pick which game to run with -iwad <file>, so DOOM 1 and DOOM 2 can share one folder. A doom.wad that is Ultimate Doom now correctly offers all four episodes.
 
