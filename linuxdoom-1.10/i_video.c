@@ -43,8 +43,9 @@ static SDL_Texture*	texture;
 // 8-bit palette index -> ARGB8888, rebuilt by I_SetPalette.
 static Uint32		palette[256];
 
-// Integer scale of the 320x200 image (window is SCREENWIDTH*scale wide).
-static int		scale = 4;
+// Integer scale of the 640x400 image (window is SCREENWIDTH*scale wide).
+// Default 2 keeps the same physical window size as the old 320x200-at-scale-4.
+static int		scale = 2;
 
 
 //

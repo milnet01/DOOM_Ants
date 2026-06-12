@@ -260,7 +260,7 @@ rcsid[] = "$Id: st_stuff.c,v 1.6 1997/02/03 22:45:13 b1 Exp $";
     (strlen(mapnames[(gameepisode-1)*9+(gamemap-1)]))
 
 #define ST_MAPTITLEX \
-    (SCREENWIDTH - ST_MAPWIDTH * ST_CHATFONTWIDTH)
+    (ORIGWIDTH - ST_MAPWIDTH * ST_CHATFONTWIDTH)
 
 #define ST_MAPTITLEY		0
 #define ST_MAPHEIGHT		1

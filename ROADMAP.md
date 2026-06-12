@@ -171,8 +171,8 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: feature.
   Source: user-request-2026-06-12.
 
-- 📋 [DOOM-0027] **Raise the classic renderer's internal resolution above 320x200.**
-  DOOM-0014 explicitly deferred this ('the internal detail is still the original 320x200 - true high-resolution rendering is a separate Phase 2 job'). Proven path is Crispy Doom's medium-res approach: make SCREENWIDTH/SCREENHEIGHT runtime variables instead of compile-time #defines, render the 3D view at an integer multiple (2x = 640x400), and draw the 320x200 UI assets at matching scale. Touches the r_main/r_draw/r_plane/r_things projection + lookup tables, st_stuff (status bar), m_menu, wi_stuff (intermission), hu_stuff/hu_lib (HUD), f_finale, f_wipe (screen melt), and the SDL2 blit in i_video. Needs a design spec (docs/specs/) run through /cold-eyes before implementation. Reference: github.com/fabiangreffrath/crispy-doom.
-  **Layman:** Render the original-style view at higher internal detail (e.g. 640x400) so it looks sharp instead of blocky when the window is enlarged - the look stays classic DOOM, just crisper.
+- ✅ [DOOM-0027] **Raise the classic renderer's internal resolution to 640x400.**
+  Design: docs/specs/DOOM-0027-hires.md (6 /cold-eyes loops). User signed off a **compile-time fixed 2x** over the runtime-variable approach this entry originally sketched: a two-coordinate-space split (logical ORIGWIDTH/ORIGHEIGHT 320x200 vs physical SCREENWIDTH/SCREENHEIGHT 640x400) with a per-buffer-width scaler in v_video.c, so UI code keeps its logical coordinates. Builds clean across the ~12 touched files (doomdef, v_video, st_stuff, i_video, m_menu, wi_stuff, hu_lib, f_finale, am_map, r_draw, d_main). Runtime play-test pending (needs a WAD).
+  **Layman:** Render the original-style view at higher internal detail (640x400) so it looks sharp instead of blocky when the window is enlarged - the look stays classic DOOM, just crisper.
   Kind: enhancement.
   Source: user-request-2026-06-12.

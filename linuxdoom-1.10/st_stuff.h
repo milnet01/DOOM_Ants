@@ -27,11 +27,12 @@
 #include "doomtype.h"
 #include "d_event.h"
 
-// Size of statusbar.
-// Now sensitive for scaling.
-#define ST_HEIGHT	32*SCREEN_MUL
-#define ST_WIDTH	SCREENWIDTH
-#define ST_Y		(SCREENHEIGHT - ST_HEIGHT)
+// Size of statusbar, in LOGICAL (320x200) space: the bar is assembled into the
+// logical scratch screen and scaled to the physical screen by V_CopyRect
+// (DOOM-0027).
+#define ST_HEIGHT	32
+#define ST_WIDTH	ORIGWIDTH
+#define ST_Y		(ORIGHEIGHT - ST_HEIGHT)
 
 
 //

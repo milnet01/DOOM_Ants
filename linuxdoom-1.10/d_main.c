@@ -301,14 +301,16 @@ void D_Display (void)
     inhelpscreensstate = inhelpscreens;
     oldgamestate = wipegamestate = gamestate;
     
-    // draw pause pic
+    // draw pause pic.  viewwindowx/y and scaledviewwidth are physical; the
+    // M_PAUSE patch draws through the logical-space V_DrawPatch, so divide the
+    // geometry by HIRES (68 is the patch's logical width) (DOOM-0027).
     if (paused)
     {
 	if (automapactive)
 	    y = 4;
 	else
-	    y = viewwindowy+4;
-	V_DrawPatchDirect(viewwindowx+(scaledviewwidth-68)/2,
+	    y = viewwindowy/HIRES+4;
+	V_DrawPatchDirect(viewwindowx/HIRES+(scaledviewwidth/HIRES-68)/2,
 			  y,0,W_CacheLumpName ("M_PAUSE", PU_CACHE));
     }
 

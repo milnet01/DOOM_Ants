@@ -318,7 +318,7 @@ void F_TextWrite (void)
 	}
 		
 	w = SHORT (hu_font[c]->width);
-	if (cx+w > SCREENWIDTH)
+	if (cx+w > ORIGWIDTH)
 	    break;
 	V_DrawPatch(cx, cy, 0, hu_font[c]);
 	cx+=w;
@@ -603,6 +603,11 @@ void F_CastDrawer (void)
 }
 
 
+// Private 320x200 logical scratch for the bunny-scroll scene.  F_DrawPatchCol
+// renders into this in native 320 space; F_BunnyScroll then 2x-blits it to the
+// physical screen, keeping the fiddly scroll math out of the scaler (DOOM-0027).
+static byte	bunnyscreen[ORIGWIDTH*ORIGHEIGHT];
+
 //
 // F_DrawPatchCol
 //
@@ -617,21 +622,21 @@ F_DrawPatchCol
     byte*	dest;
     byte*	desttop;
     int		count;
-	
+
     column = (column_t *)((byte *)patch + LONG(patch->columnofs[col]));
-    desttop = screens[0]+x;
+    desttop = bunnyscreen+x;
 
     // step through the posts in a column
     while (column->topdelta != 0xff )
     {
 	source = (byte *)column + 3;
-	dest = desttop + column->topdelta*SCREENWIDTH;
+	dest = desttop + column->topdelta*ORIGWIDTH;
 	count = column->length;
-		
+
 	while (count--)
 	{
 	    *dest = *source++;
-	    dest += SCREENWIDTH;
+	    dest += ORIGWIDTH;
 	}
 	column = (column_t *)(  (byte *)column + column->length + 4 );
     }
@@ -655,31 +660,49 @@ void F_BunnyScroll (void)
     p2 = W_CacheLumpName ("PFUB1", PU_LEVEL);
 
     V_MarkRect (0, 0, SCREENWIDTH, SCREENHEIGHT);
-	
+
     scrolled = 320 - (finalecount-230)/2;
     if (scrolled > 320)
 	scrolled = 320;
     if (scrolled < 0)
 	scrolled = 0;
-		
-    for ( x=0 ; x<SCREENWIDTH ; x++)
+
+    // Render the scrolling scene into the logical 320-wide scratch (the 320
+    // constants are the patch width, in logical space) (DOOM-0027).
+    for ( x=0 ; x<ORIGWIDTH ; x++)
     {
 	if (x+scrolled < 320)
 	    F_DrawPatchCol (x, p1, x+scrolled);
 	else
-	    F_DrawPatchCol (x, p2, x+scrolled - 320);		
+	    F_DrawPatchCol (x, p2, x+scrolled - 320);
     }
-	
+
+    // 2x-blit the scratch onto the physical screen (each pixel -> a HIRES block).
+    {
+	int	sx, sy, rx, ry;
+	for (sy=0 ; sy<ORIGHEIGHT ; sy++)
+	    for (sx=0 ; sx<ORIGWIDTH ; sx++)
+	    {
+		byte px = bunnyscreen[sy*ORIGWIDTH+sx];
+		byte* d = screens[0] + (sy*HIRES)*SCREENWIDTH + sx*HIRES;
+		for (ry=0 ; ry<HIRES ; ry++, d+=SCREENWIDTH)
+		    for (rx=0 ; rx<HIRES ; rx++)
+			d[rx] = px;
+	    }
+    }
+
+    // The "THE END" cards draw on top, AFTER the scene-blit, via the standard
+    // scaling V_DrawPatch in logical coords (DOOM-0027).
     if (finalecount < 1130)
 	return;
     if (finalecount < 1180)
     {
-	V_DrawPatch ((SCREENWIDTH-13*8)/2,
-		     (SCREENHEIGHT-8*8)/2,0, W_CacheLumpName ("END0",PU_CACHE));
+	V_DrawPatch ((ORIGWIDTH-13*8)/2,
+		     (ORIGHEIGHT-8*8)/2,0, W_CacheLumpName ("END0",PU_CACHE));
 	laststage = 0;
 	return;
     }
-	
+
     stage = (finalecount-1180) / 5;
     if (stage > 6)
 	stage = 6;
@@ -688,9 +711,9 @@ void F_BunnyScroll (void)
 	S_StartSound (NULL, sfx_pistol);
 	laststage = stage;
     }
-	
+
     sprintf (name,"END%i",stage);
-    V_DrawPatch ((SCREENWIDTH-13*8)/2, (SCREENHEIGHT-8*8)/2,0, W_CacheLumpName (name,PU_CACHE));
+    V_DrawPatch ((ORIGWIDTH-13*8)/2, (ORIGHEIGHT-8*8)/2,0, W_CacheLumpName (name,PU_CACHE));
 }
 
 

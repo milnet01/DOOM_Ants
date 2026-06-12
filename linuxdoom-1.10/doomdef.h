@@ -99,20 +99,18 @@ typedef enum
 //
 #define	BASE_WIDTH		320
 
-// It is educational but futile to change this
-//  scaling e.g. to 2. Drawing of status bar,
-//  menues etc. is tied to the scale implied
-//  by the graphics.
-#define	SCREEN_MUL		1
+// Resolution (DOOM-0027). The view renders at HIRES x the original 320x200.
+// UI art is authored for the 320x200 "logical" canvas (ORIGWIDTH x ORIGHEIGHT)
+// and scaled up to the physical buffer by the v_video primitives, which key
+// the scale to each screen buffer's width. See docs/specs/DOOM-0027-hires.md.
+// (The id authors' old "futile to change this" note no longer applies.)
+#define	ORIGWIDTH		320
+#define	ORIGHEIGHT		200
+#define	HIRES			2
 #define	INV_ASPECT_RATIO	0.625 // 0.75, ideally
 
-// Defines suck. C sucks.
-// C++ might sucks for OOP, but it sure is a better C.
-// So there.
-#define SCREENWIDTH  320
-//SCREEN_MUL*BASE_WIDTH //320
-#define SCREENHEIGHT 200
-//(int)(SCREEN_MUL*BASE_WIDTH*INV_ASPECT_RATIO) //200
+#define SCREENWIDTH		(ORIGWIDTH*HIRES)
+#define SCREENHEIGHT		(ORIGHEIGHT*HIRES)
 
 
 

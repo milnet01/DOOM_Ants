@@ -117,7 +117,7 @@ HUlib_drawTextLine
 	    && c <= '_')
 	{
 	    w = SHORT(l->f[c - l->sc]->width);
-	    if (x+w > SCREENWIDTH)
+	    if (x+w > ORIGWIDTH)
 		break;
 	    V_DrawPatchDirect(x, l->y, FG, l->f[c - l->sc]);
 	    x += w;
@@ -125,14 +125,14 @@ HUlib_drawTextLine
 	else
 	{
 	    x += 4;
-	    if (x >= SCREENWIDTH)
+	    if (x >= ORIGWIDTH)
 		break;
 	}
     }
 
     // draw the cursor if requested
     if (drawcursor
-	&& x + SHORT(l->f['_' - l->sc]->width) <= SCREENWIDTH)
+	&& x + SHORT(l->f['_' - l->sc]->width) <= ORIGWIDTH)
     {
 	V_DrawPatchDirect(x, l->y, FG, l->f['_' - l->sc]);
     }
@@ -154,8 +154,10 @@ void HUlib_eraseTextLine(hu_textline_t* l)
     if (!automapactive &&
 	viewwindowx && l->needsupdate)
     {
-	lh = SHORT(l->f[0]->height) + 1;
-	for (y=l->y,yoffset=y*SCREENWIDTH ; y<l->y+lh ; y++,yoffset+=SCREENWIDTH)
+	// The chars are drawn scaled (xHIRES) into the physical screen, so erase
+	// the physical rows they occupy: scale the start and height (DOOM-0027).
+	lh = SHORT(l->f[0]->height) + 1;	// logical line height
+	for (y=HIRES*l->y,yoffset=y*SCREENWIDTH ; y<HIRES*(l->y+lh) ; y++,yoffset+=SCREENWIDTH)
 	{
 	    if (y < viewwindowy || y >= viewwindowy + viewheight)
 		R_VideoErase(yoffset, SCREENWIDTH); // erase entire line

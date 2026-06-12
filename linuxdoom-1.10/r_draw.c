@@ -48,8 +48,9 @@ rcsid[] = "$Id: r_draw.c,v 1.4 1997/02/03 16:47:55 b1 Exp $";
 #define MAXWIDTH			1120
 #define MAXHEIGHT			832
 
-// status bar height at bottom of screen
-#define SBARHEIGHT		32
+// status bar height at bottom of screen, in PHYSICAL pixels (DOOM-0027:
+// the bar is HIRES x the logical 32-row height)
+#define SBARHEIGHT		(HIRES*32)
 
 //
 // All drawing to the view buffer is accomplished in this file.
@@ -771,45 +772,35 @@ void R_FillBackScreen (void)
 	} 
     } 
 	
-    patch = W_CacheLumpName ("brdr_t",PU_CACHE);
+    // The view geometry is physical; the brdr_* tiles are 320x200-logical art
+    // drawn through the scaling V_DrawPatch, so draw the border in LOGICAL space
+    // (divide the geometry by HIRES) and let the scaler double it (DOOM-0027).
+    {
+	int	lvx = viewwindowx / HIRES;
+	int	lvy = viewwindowy / HIRES;
+	int	lvw = scaledviewwidth / HIRES;
+	int	lvh = viewheight / HIRES;
 
-    for (x=0 ; x<scaledviewwidth ; x+=8)
-	V_DrawPatch (viewwindowx+x,viewwindowy-8,1,patch);
-    patch = W_CacheLumpName ("brdr_b",PU_CACHE);
+	patch = W_CacheLumpName ("brdr_t",PU_CACHE);
+	for (x=0 ; x<lvw ; x+=8)
+	    V_DrawPatch (lvx+x,lvy-8,1,patch);
+	patch = W_CacheLumpName ("brdr_b",PU_CACHE);
+	for (x=0 ; x<lvw ; x+=8)
+	    V_DrawPatch (lvx+x,lvy+lvh,1,patch);
+	patch = W_CacheLumpName ("brdr_l",PU_CACHE);
+	for (y=0 ; y<lvh ; y+=8)
+	    V_DrawPatch (lvx-8,lvy+y,1,patch);
+	patch = W_CacheLumpName ("brdr_r",PU_CACHE);
+	for (y=0 ; y<lvh ; y+=8)
+	    V_DrawPatch (lvx+lvw,lvy+y,1,patch);
 
-    for (x=0 ; x<scaledviewwidth ; x+=8)
-	V_DrawPatch (viewwindowx+x,viewwindowy+viewheight,1,patch);
-    patch = W_CacheLumpName ("brdr_l",PU_CACHE);
-
-    for (y=0 ; y<viewheight ; y+=8)
-	V_DrawPatch (viewwindowx-8,viewwindowy+y,1,patch);
-    patch = W_CacheLumpName ("brdr_r",PU_CACHE);
-
-    for (y=0 ; y<viewheight ; y+=8)
-	V_DrawPatch (viewwindowx+scaledviewwidth,viewwindowy+y,1,patch);
-
-
-    // Draw beveled edge. 
-    V_DrawPatch (viewwindowx-8,
-		 viewwindowy-8,
-		 1,
-		 W_CacheLumpName ("brdr_tl",PU_CACHE));
-    
-    V_DrawPatch (viewwindowx+scaledviewwidth,
-		 viewwindowy-8,
-		 1,
-		 W_CacheLumpName ("brdr_tr",PU_CACHE));
-    
-    V_DrawPatch (viewwindowx-8,
-		 viewwindowy+viewheight,
-		 1,
-		 W_CacheLumpName ("brdr_bl",PU_CACHE));
-    
-    V_DrawPatch (viewwindowx+scaledviewwidth,
-		 viewwindowy+viewheight,
-		 1,
-		 W_CacheLumpName ("brdr_br",PU_CACHE));
-} 
+	// Draw beveled edge.
+	V_DrawPatch (lvx-8, lvy-8,   1, W_CacheLumpName ("brdr_tl",PU_CACHE));
+	V_DrawPatch (lvx+lvw, lvy-8, 1, W_CacheLumpName ("brdr_tr",PU_CACHE));
+	V_DrawPatch (lvx-8, lvy+lvh, 1, W_CacheLumpName ("brdr_bl",PU_CACHE));
+	V_DrawPatch (lvx+lvw, lvy+lvh, 1, W_CacheLumpName ("brdr_br",PU_CACHE));
+    }
+}
  
 
 //
