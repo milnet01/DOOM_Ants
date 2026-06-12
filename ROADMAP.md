@@ -38,11 +38,12 @@ with friends.
   Kind: refactor.
   Source: in-session-2026-06-11.
   Resolved (2026-06-12): SDL2 video (ARGB texture, integer scale) + in-process SDL audio mixer replace X11/sndserver; single self-contained binary.
-- 🚧 [DOOM-0005] **Boot with a shareware WAD and confirm gameplay.**
+- ✅ [DOOM-0005] **Boot with a shareware WAD and confirm gameplay.**
   **Layman:** Actually run it with DOOM's data and check it plays like the original.
   Kind: test.
   Source: in-session-2026-06-11.
   Progress (2026-06-12): boots Ultimate Doom / DOOM II with SDL2 video+audio; renders a warped-in level for 25s+ with no crash (verified headless via SDL dummy drivers). Four 64-bit pointer fixes landed (r_data maptexture/array sizing, p_setup line list, colormap/translation alignment). Remaining: a human playtest on a real display to confirm input feel and visuals; shareware doom1.wad not yet exercised (tested with retail IWADs).
+  Resolved (2026-06-12): user playtested DOOM II on a real display - boots, renders, controls respond, and SDL sound effects play. Plays like the original.
 - 📋 [DOOM-0006] **Add a Windows build target.**
   **Layman:** Produce a version that runs on Windows so friends can play it.
   Kind: feature.
@@ -51,6 +52,21 @@ with friends.
   **Layman:** Put ready-to-run downloads online so anyone can grab a copy.
   Kind: release.
   Source: in-session-2026-06-11.
+
+- ✅ [DOOM-0013] **Add WASD movement keys alongside the arrow keys.**
+  **Layman:** Lets you move with the modern W/A/S/D keys — W/S walk, A/D step sideways — not just the arrow keys.
+  Kind: feature.
+  Source: user-request-2026-06-12.
+
+- ✅ [DOOM-0014] **Make the game window larger, resizable, and fullscreen-capable.**
+  **Layman:** Opens at a bigger size, can be resized by dragging, and runs fullscreen with -fullscreen. (The picture is bigger; the internal detail is still the original 320x200 — true high-resolution rendering is a separate Phase 2 job.)
+  Kind: enhancement.
+  Source: user-request-2026-06-12.
+
+- ✅ [DOOM-0015] **Add a -iwad switch and detect Ultimate Doom by content.**
+  **Layman:** Pick which game to run with -iwad <file>, so DOOM 1 and DOOM 2 can share one folder. A doom.wad that is Ultimate Doom now correctly offers all four episodes.
+  Kind: feature.
+  Source: user-request-2026-06-12.
 
 ## Phase 2 — The Spin
 
