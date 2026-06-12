@@ -50,10 +50,11 @@ with friends.
   Kind: feature.
   Source: in-session-2026-06-11.
   Deferred (2026-06-12, user): the Windows build only matters once the Phase 2 3D version exists, so it is parked until then. Survey notes for when we pick it up: openSUSE Tumbleweed ships mingw64-cross-gcc but NO mingw SDL2 / SDL2_mixer / fluidsynth packages (would need source cross-builds of those, incl. the FluidR3_GM soundfont bundled and pointed at via $DOOM_SOUNDFONT). Remaining POSIX porting surface: i_net.c (BSD sockets/ioctl), i_system.c (gettimeofday, usleep), unistd/sys-time includes in w_wad.c/m_misc.c/d_main.c/r_data.c/m_menu.c.
-- 📋 [DOOM-0007] **Publish downloadable Linux & Windows builds via GitHub Releases.**
+- 🚧 [DOOM-0007] **Publish downloadable Linux & Windows builds via GitHub Releases.**
   **Layman:** Put ready-to-run downloads online so anyone can grab a copy.
   Kind: release.
   Source: in-session-2026-06-11.
+  Progress (2026-06-12): Linux half shipped — v0.1.0 GitHub Release with doom_ants-0.1.0-linux-x86_64.tar.gz (binary + README + LICENSE; runtime deps documented). https://github.com/milnet01/DOOM_Ants/releases/tag/v0.1.0 . Windows build half stays open until DOOM-0006 lands (Phase 2). A fully self-contained Linux package (AppImage) is a possible follow-up.
 
 - ✅ [DOOM-0013] **Add WASD movement keys alongside the arrow keys.**
   **Layman:** Lets you move with the modern W/A/S/D keys — W/S walk, A/D step sideways — not just the arrow keys.
