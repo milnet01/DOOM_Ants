@@ -16,10 +16,11 @@ that everything else builds on.
   **Layman:** Set up the project's rulebooks and roadmap so the work stays organised and unambiguous.
   Kind: doc.
   Source: in-session-2026-06-11.
-- 📋 [DOOM-0002] **Publish DOOM_Ants as a public GitHub repository.**
+- ✅ [DOOM-0002] **Publish DOOM_Ants as a public GitHub repository.**
   **Layman:** Put the project online, publicly, so it can be shared and downloaded.
   Kind: chore.
   Source: in-session-2026-06-11.
+  Resolved (2026-06-12): already live and public at https://github.com/milnet01/DOOM_Ants (visibility PUBLIC, non-empty, described). Origin remote is set; today's commits are pending a push.
 
 ## Phase 1 — Build, Modernise & Share
 
@@ -48,6 +49,7 @@ with friends.
   **Layman:** Produce a version that runs on Windows so friends can play it.
   Kind: feature.
   Source: in-session-2026-06-11.
+  Deferred (2026-06-12, user): the Windows build only matters once the Phase 2 3D version exists, so it is parked until then. Survey notes for when we pick it up: openSUSE Tumbleweed ships mingw64-cross-gcc but NO mingw SDL2 / SDL2_mixer / fluidsynth packages (would need source cross-builds of those, incl. the FluidR3_GM soundfont bundled and pointed at via $DOOM_SOUNDFONT). Remaining POSIX porting surface: i_net.c (BSD sockets/ioctl), i_system.c (gettimeofday, usleep), unistd/sys-time includes in w_wad.c/m_misc.c/d_main.c/r_data.c/m_menu.c.
 - 📋 [DOOM-0007] **Publish downloadable Linux & Windows builds via GitHub Releases.**
   **Layman:** Put ready-to-run downloads online so anyone can grab a copy.
   Kind: release.
