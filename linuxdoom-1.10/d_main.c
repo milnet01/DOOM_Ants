@@ -34,6 +34,7 @@ static const char rcsid[] = "$Id: d_main.c,v 1.8 1997/02/03 22:45:09 b1 Exp $";
 #ifdef NORMALUNIX
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -614,6 +615,30 @@ void IdentifyVersion (void)
     sprintf(basedefault, "%s/.doomrc", home);
 #endif
 
+    // DOOM_Ants: -iwad <file> selects the IWAD explicitly, so DOOM 1 and
+    // DOOM 2 can share one folder instead of relying on the doom2.wad-first
+    // auto-search. gamemode is inferred from the filename; a registered
+    // doom.wad is promoted to retail after load if it carries episode 4.
+    {
+	int iwadparm = M_CheckParm("-iwad");
+	if (iwadparm && iwadparm < myargc-1)
+	{
+	    char* iwad = myargv[iwadparm+1];
+	    char* base = strrchr(iwad, '/');
+	    base = base ? base+1 : iwad;
+	    if (strstr(base,"doom2") || strstr(base,"tnt") || strstr(base,"plutonia"))
+		gamemode = commercial;
+	    else if (strstr(base,"doom1"))
+		gamemode = shareware;
+	    else if (strstr(base,"doomu"))
+		gamemode = retail;
+	    else
+		gamemode = registered;
+	    D_AddFile (iwad);
+	    return;
+	}
+    }
+
     if (M_CheckParm ("-shdev"))
     {
 	gamemode = shareware;
@@ -1019,7 +1044,13 @@ void D_DoomMain (void)
 
     printf ("W_Init: Init WADfiles.\n");
     W_InitMultipleFiles (wadfiles);
-    
+
+    // DOOM_Ants: the modern doom.wad is Ultimate Doom (4 episodes). Vanilla
+    // only recognised retail via the doomu.wad filename; detect the extra
+    // episode by lump so doom.wad gets all four episodes.
+    if (gamemode == registered && W_CheckNumForName("e4m1") >= 0)
+	gamemode = retail;
+
 
     // Check for -file in shareware
     if (modifiedgame)
