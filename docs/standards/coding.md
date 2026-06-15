@@ -37,11 +37,21 @@ The original DOOM is C from 1997. While we still live in that code:
 
 ## The new renderer (Phase 2)
 
-When the true-3D / ray-traced renderer work begins, this section will be
-expanded with the language and graphics-API decision (C vs C++, the Vulkan
-ray-tracing approach, the shading-language choice) — recorded as a design doc
-in `docs/specs/` and an ADR-style note, *before* code is written. Until then,
-this is a placeholder on purpose.
+The renderer-backend seam (DOOM-0026) is designed and being built
+(2026-06-15); the 3D renderer itself (DOOM-0008..0012) remains
+`💭 considered` — not begun. The foundational decisions for it are below;
+**why** each went the way it did is owned by ADR
+`docs/decisions/0001-renderer-language-and-api.md`, and the full architecture is
+in `docs/specs/DOOM-0026-renderer-backend.md`:
+
+- **Graphics API:** Vulkan, as a hybrid (rasterise, then hardware ray tracing
+  for shadows and reflections).
+- **Language:** the engine stays **C**; the Vulkan back-end is **C++**, isolated
+  behind the plain-C `renderer_backend_t` seam.
+- **Shading language:** **GLSL**, compiled ahead-of-time to SPIR-V.
+
+These hold for all Phase-2 renderer work; revisit only with a new ADR. See
+ADR 0001 for the rationale and alternatives.
 
 ## External libraries
 

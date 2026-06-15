@@ -13,6 +13,7 @@ without having to ask the author what was meant.
 | `CHANGELOG.md` | What actually shipped, per release (Keep a Changelog). |
 | `docs/standards/` | The house rules (this folder). |
 | `docs/specs/` | One design doc per large feature, written **before** building it. |
+| `docs/decisions/` | ADR-style notes recording *why* a hard architectural choice went the way it did (numbered `NNNN-topic.md`). |
 
 ## Writing rules
 
@@ -31,6 +32,13 @@ implementation — the spec is the contract the implementation must satisfy. A
 spec covers: the goal, the approach (with at least one alternative considered),
 the affected files/subsystems, and how it will be verified. Keep claims about
 the existing code honest — check the source, don't rely on memory.
+
+A *hard architectural choice* (language, API, protocol, storage format) is
+recorded in **both** places: the spec captures the **design** (how it works);
+an ADR in `docs/decisions/` captures the **decision** (what was chosen and
+*why*, with the alternatives rejected). The ADR is the canonical home for the
+rationale — the spec references it rather than restating it, so the two can't
+drift.
 
 ## Keeping docs true
 
