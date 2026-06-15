@@ -81,7 +81,7 @@ M_DrawText
     {
 	c = toupper(*string) - HU_FONTSTART;
 	string++;
-	if (c < 0 || c> HU_FONTSIZE)
+	if (c < 0 || c >= HU_FONTSIZE)
 	{
 	    x += 4;
 	    continue;
