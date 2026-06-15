@@ -1,14 +1,15 @@
 # DOOM-0027 — Raise the classic renderer's internal resolution
 
-**Status:** Ready to implement — 6 `/cold-eyes` loops to clean; compile-time fixed-2× approach signed off by user (2026-06-12). The `V_DrawPatch` physical-coordinate class is exhaustively closed (Component F); the standing residual is Component E's mechanical position-arithmetic re-sweep.
-**Roadmap:** 📋 planned (Phase 2 — "the spin"), `ROADMAP.md` DOOM-0027.
+**Status:** Shipped (2026-06-15, commit 5ad6cb1) — compile-time fixed-2× approach signed off by user (2026-06-12), 6 `/cold-eyes` loops to clean. The hi-res constants live in `doomdef.h:107-113`; runtime play-test pending a WAD.
+**Roadmap:** ✅ shipped (Phase 2 — "the spin"), `ROADMAP.md` DOOM-0027.
 **Kind:** enhancement
 **Depends on:** DOOM-0014 (SDL2 windowing — bigger/resizable window), shipped. DOOM-0004 (SDL2 video layer), shipped.
 
-> **Design decision (signed off by user, 2026-06-12):** this spec adopts a
-> compile-time fixed 2× over the roadmap's runtime-variable recommendation. See
-> *Alternative considered — runtime variables*. The roadmap body (`ROADMAP.md:175`)
-> is to be trimmed to point here, landed alongside the implementation.
+> **Design decision (signed off by user, 2026-06-12):** this spec adopted a
+> compile-time fixed 2× over the roadmap's original runtime-variable sketch. See
+> *Alternative considered — runtime variables*. The roadmap entry was trimmed to
+> point here when the implementation landed (see the DOOM-0027 bullet in
+> `ROADMAP.md`).
 
 ## Contents
 
@@ -35,7 +36,7 @@ not blurry-blocky when blown up.
 This is the item DOOM-0014 explicitly deferred — its release note adds, in a
 parenthetical: *"The picture is bigger; the internal detail is still the original
 320x200 — true high-resolution rendering is a separate Phase 2 job."*
-(`CHANGELOG.md:52`, `ROADMAP.md:65`). This spec is that Phase 2 job.
+(`CHANGELOG.md:63`, `ROADMAP.md:66`). This spec is that Phase 2 job.
 
 This spec covers a **fixed 2× (640×400)** internal resolution. Picking the
 resolution at runtime, or going to 3×/4×, is explicitly deferred (see *Out of
@@ -136,16 +137,15 @@ makes the scaler a trivial 2×2 block copy with no sampling artefacts.
 
 ### Alternative considered — make the resolution a *runtime* variable (the approach the roadmap recommends)
 
-**This spec deliberately overrides the roadmap on the central design decision.**
-The DOOM-0027 roadmap body (`ROADMAP.md:175`) does not merely float runtime
-variables — it calls Crispy Doom's runtime-variable approach the *proven path*:
-*"make SCREENWIDTH/SCREENHEIGHT runtime variables instead of compile-time
-#defines."* This spec rejects that for v1 in favour of compile-time constants.
-The reversal is the reason this spec needs explicit sign-off (see the note under
-*Status*); on acceptance, the roadmap body must be trimmed to "Design: see
-`docs/specs/DOOM-0027-hires.md`" so the rejected method does not survive as a
-confidently-wrong instruction (`documentation.md`: fix a doc the moment a change
-makes it wrong).
+**This spec deliberately overrode the roadmap's original design sketch.** The
+DOOM-0027 roadmap entry originally sketched a runtime-variable approach (after
+Crispy Doom's medium-res mode: making `SCREENWIDTH`/`SCREENHEIGHT` runtime
+variables instead of compile-time `#define`s). This spec rejected that for v1 in
+favour of compile-time constants — the reversal is why the spec carried explicit
+sign-off (see the note under *Status*). When the implementation landed, the
+roadmap entry was trimmed to point here (the `Design:` line under DOOM-0027 in
+`ROADMAP.md`), so the rejected method no longer survives as a confidently-wrong
+instruction (`documentation.md`: fix a doc the moment a change makes it wrong).
 
 Rejected for v1 because it is **substantially** more invasive for no extra
 player benefit here:
