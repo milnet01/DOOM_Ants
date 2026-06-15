@@ -178,12 +178,13 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: perf.
   Source: in-session-2026-06-11.
 
-- 🚧 [DOOM-0026] **Keep the classic 2.5D renderer selectable alongside the 3D renderer.**
+- ✅ [DOOM-0026] **Keep the classic 2.5D renderer selectable alongside the 3D renderer.**
   Design constraint on the Phase 2 true-3D / ray-traced renderer (DOOM-0008..0012): it must sit ALONGSIDE the original software renderer, not replace it. Add a runtime renderer switch exposed in the main menu (e.g. a 'Renderer: Classic / 3D' option), persisted in the config. Implies abstracting the render path behind a small back-end interface so both can be selected without a rebuild. Default to Classic for exact parity. This shapes how DOOM-0008 is architected, so it is recorded now rather than retrofitted later.
   **Layman:** When the new 3D renderer arrives, you'll still be able to switch back to the original DOOM look from the main menu - both renderers ship in the same build.
   Kind: feature.
   Source: user-request-2026-06-12.
   Design: docs/specs/DOOM-0026-renderer-backend.md (function-pointer back-end seam at the world/UI boundary; Classic + future Vulkan-hybrid 3D; auto-detected tiers). Decisions in docs/decisions/0001-renderer-language-and-api.md. Implementation of the Classic seam follows this session.
+  Resolved (2026-06-15): the renderer back-end seam shipped — r_backend.h/.c with a function-pointer interface at the world/UI boundary, the Classic back-end wrapping the existing software renderer unchanged, RB_Init auto-detect/clamp, D_Display routed through RB_RenderPlayerView/RB_Present, a "renderer" config default, and a "Renderer:" options-menu item (3D shown unavailable until DOOM-0008). Classic output byte-identical; builds clean; smoke-tested on doom1.wad (E1M1 renders via the seam, unavailable-mode config falls back to Classic). The 3D back-end (DOOM-0008..0012) remains future work.
 
 - ✅ [DOOM-0027] **Raise the classic renderer's internal resolution to 640x400.**
   Design: docs/specs/DOOM-0027-hires.md (6 /cold-eyes loops). User signed off a **compile-time fixed 2x** over the runtime-variable approach this entry originally sketched: a two-coordinate-space split (logical ORIGWIDTH/ORIGHEIGHT 320x200 vs physical SCREENWIDTH/SCREENHEIGHT 640x400) with a per-buffer-width scaler in v_video.c, so UI code keeps its logical coordinates. Builds clean across the ~12 touched files (doomdef, v_video, st_stuff, i_video, m_menu, wi_stuff, hu_lib, f_finale, am_map, r_draw, d_main). Runtime play-test pending (needs a WAD).
