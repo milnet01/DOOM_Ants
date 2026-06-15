@@ -18,6 +18,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Fix undefined order-of-evaluation in sndserv's strupr.** (DOOM-0029)
+  Tidied a tiny string-uppercasing routine in the standalone sound server that relied on undefined C behaviour, so it now works reliably on any compiler.
+
+- **Fix an off-by-one out-of-bounds read in the menu/finale font renderer.** (DOOM-0028)
+  A stray character in on-screen text could make the game read one slot past the end of the font table; now it's skipped cleanly like any other non-font character.
+
 - **Stop leaking the candidate IWAD path strings in IdentifyVersion.** (DOOM-0025)
   Tidies up the data-file search at startup so the small scratch strings it builds while hunting for your DOOM .wad are no longer left dangling in memory.
 

@@ -12,10 +12,11 @@ into `CHANGELOG.md`.
 Documentation, standards, and getting the project published. The groundwork
 that everything else builds on.
 
-- 🚧 [DOOM-0001] **Establish the documentation & standards tree.**
+- ✅ [DOOM-0001] **Establish the documentation & standards tree.**
   **Layman:** Set up the project's rulebooks and roadmap so the work stays organised and unambiguous.
   Kind: doc.
   Source: in-session-2026-06-11.
+  Resolved (2026-06-15): documentation & standards tree is in place — README.TXT, CLAUDE.md, ROADMAP.md, CHANGELOG.md, docs/specs/, and the four house-rule standards (docs/standards/coding.md, commits.md, documentation.md, roadmap-format.md), all with substantive content. Tree is established; further standards get added on demand per their own "add only when a real decision forces it" rule.
 - ✅ [DOOM-0002] **Publish DOOM_Ants as a public GitHub repository.**
   **Layman:** Put the project online, publicly, so it can be shared and downloaded.
   Kind: chore.
@@ -137,6 +138,18 @@ with friends.
   **Layman:** Tidies up the data-file search at startup so the small scratch strings it builds while hunting for your DOOM .wad are no longer left dangling in memory.
   Kind: fix.
   Source: in-session-2026-06-12 (cppcheck audit + user request).
+
+- ✅ [DOOM-0028] **Fix an off-by-one out-of-bounds read in the menu/finale font renderer.**
+  cppcheck arrayIndexOutOfBoundsCond. hu_font[HU_FONTSIZE] has valid indices 0..HU_FONTSIZE-1 (HU_FONTSIZE = '_'-'!'+1 = 63), but the range guard read `if (c < 0 || c > HU_FONTSIZE)` — letting c == HU_FONTSIZE through to hu_font[63], one patch_t* past the array. Reachable: a backtick '`' maps via toupper to index 63. Changed the guard to `c >= HU_FONTSIZE` at all four sites (f_finale.c x3 in F_TextWrite / F_CastDrawer measure+draw, m_misc.c M_WriteText). Out-of-range chars are now skipped with the existing `cx += 4` spacing, identical to every other non-font char. Builds clean (linux/linuxxdoom links).
+  **Layman:** A stray character in on-screen text could make the game read one slot past the end of the font table; now it's skipped cleanly like any other non-font character.
+  Kind: audit-fix.
+  Source: audit-2026-06-15 cppcheck.
+
+- ✅ [DOOM-0029] **Fix undefined order-of-evaluation in sndserv's strupr.**
+  cppcheck unknownEvaluationOrder. sndserv/wadread.c strupr() did `*s++ = toupper(*s)`, where the post-increment store target and the toupper read of *s are unsequenced side effects on the same pointer — undefined behaviour. Rewrote to the engine's own correct idiom (w_wad.c strupr): `while (*s) { *s = toupper(*s); s++; }`. Compiles clean.
+  **Layman:** Tidied a tiny string-uppercasing routine in the standalone sound server that relied on undefined C behaviour, so it now works reliably on any compiler.
+  Kind: audit-fix.
+  Source: audit-2026-06-15 cppcheck.
 
 ## Phase 2 — The Spin
 
