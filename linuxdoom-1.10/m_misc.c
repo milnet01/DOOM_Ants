@@ -60,6 +60,9 @@ rcsid[] = "$Id: m_misc.c,v 1.6 1997/02/03 22:45:10 b1 Exp $";
 
 #include "m_misc.h"
 
+// Renderer back-end selection (DOOM-0026) — persisted via defaults[] below.
+#include "r_backend.h"
+
 //
 // M_DrawText
 // Returns the final X coordinate
@@ -238,7 +241,8 @@ default_t	defaults[] =
     {"sfx_volume",&snd_SfxVolume, 8},
     {"music_volume",&snd_MusicVolume, 8},
     {"show_messages",&showMessages, 1},
-    
+    {"renderer",&rendermode, RB_CLASSIC},
+
 
 #ifdef NORMALUNIX
     {"key_right",&key_right, KEY_RIGHTARROW},

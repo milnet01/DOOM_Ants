@@ -75,6 +75,7 @@ static const char rcsid[] = "$Id: d_main.c,v 1.8 1997/02/03 22:45:09 b1 Exp $";
 
 #include "p_setup.h"
 #include "r_local.h"
+#include "r_backend.h"
 
 
 #include "d_main.h"
@@ -267,7 +268,7 @@ void D_Display (void)
     
     // draw the view directly
     if (gamestate == GS_LEVEL && !automapactive && gametic)
-	R_RenderPlayerView (&players[displayplayer]);
+	RB_RenderPlayerView (&players[displayplayer]);
 
     if (gamestate == GS_LEVEL && gametic)
 	HU_Drawer ();
@@ -323,7 +324,7 @@ void D_Display (void)
     // normal update
     if (!wipe)
     {
-	I_FinishUpdate ();              // page flip or blit buffer
+	RB_Present ();                  // page flip or blit buffer
 	return;
     }
     
@@ -344,7 +345,7 @@ void D_Display (void)
 			       , 0, 0, SCREENWIDTH, SCREENHEIGHT, tics);
 	I_UpdateNoBlit ();
 	M_Drawer ();                            // menu is drawn even on top of wipes
-	I_FinishUpdate ();                      // page flip or blit buffer
+	RB_Present ();                          // page flip or blit buffer
     } while (!done);
 }
 
@@ -369,6 +370,10 @@ void D_DoomLoop (void)
     }
 	
     I_InitGraphics ();
+
+    // Pick + init the renderer back-end now the SDL/graphics device exists,
+    // so a back-end's Available()/Init() can probe the GPU (DOOM-0026).
+    RB_Init ();
 
     while (1)
     {

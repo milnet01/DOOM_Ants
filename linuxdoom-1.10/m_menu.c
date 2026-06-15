@@ -63,6 +63,8 @@ rcsid[] = "$Id: m_menu.c,v 1.7 1997/02/03 22:45:10 b1 Exp $";
 
 #include "m_menu.h"
 
+#include "r_backend.h"   // renderer back-end toggle (DOOM-0026)
+
 
 
 extern patch_t*		hu_font[HU_FONTSIZE];
@@ -196,6 +198,7 @@ void M_ChangeSensitivity(int choice);
 void M_SfxVol(int choice);
 void M_MusicVol(int choice);
 void M_ChangeDetail(int choice);
+void M_ChangeRenderer(int choice);
 void M_SizeDisplay(int choice);
 void M_StartGame(int choice);
 void M_Sound(int choice);
@@ -341,6 +344,7 @@ enum
     endgame,
     messages,
     detail,
+    renderer,
     scrnsize,
     option_empty1,
     mousesens,
@@ -354,6 +358,7 @@ menuitem_t OptionsMenu[]=
     {1,"M_ENDGAM",	M_EndGame,'e'},
     {1,"M_MESSG",	M_ChangeMessages,'m'},
     {1,"M_DETAIL",	M_ChangeDetail,'g'},
+    {1,"",		M_ChangeRenderer,'r'},
     {2,"M_SCRNSZ",	M_SizeDisplay,'s'},
     {-1,"",0},
     {2,"M_MSENS",	M_ChangeSensitivity,'m'},
@@ -958,6 +963,12 @@ void M_DrawOptions(void)
     V_DrawPatchDirect (OptionsDef.x + 120,OptionsDef.y+LINEHEIGHT*messages,0,
 		       W_CacheLumpName(msgNames[showMessages],PU_CACHE));
 
+    // Renderer back-end (DOOM-0026): drawn as text since there is no menu-art
+    // lump for it. Shows the active back-end; cycles on selection.
+    M_WriteText(OptionsDef.x,OptionsDef.y+LINEHEIGHT*renderer,"Renderer:");
+    M_WriteText(OptionsDef.x + 88,OptionsDef.y+LINEHEIGHT*renderer,
+		(char *)RB_ModeName(rendermode));
+
     M_DrawThermo(OptionsDef.x,OptionsDef.y+LINEHEIGHT*(mousesens+1),
 		 10,mouseSensitivity);
 	
@@ -1144,6 +1155,35 @@ void M_ChangeDetail(int choice)
 	players[consoleplayer].message = DETAILHI;
     else
 	players[consoleplayer].message = DETAILLO;*/
+}
+
+//
+// Cycle the renderer back-end (DOOM-0026). Advances to the next *available*
+// back-end, wrapping. Only Classic exists today, so this stays on Classic and
+// tells the player the 3D renderer isn't built yet.
+//
+void M_ChangeRenderer(int choice)
+{
+    int next;
+
+    choice = 0;
+    for (next = (rendermode + 1) % RB_NUMMODES; next != rendermode;
+	 next = (next + 1) % RB_NUMMODES)
+    {
+	if (RB_ModeAvailable(next))
+	    break;
+    }
+
+    if (next == rendermode)
+    {
+	// No other back-end available — nothing to switch to yet.
+	S_StartSound(NULL, sfx_oof);
+	players[consoleplayer].message = "3D renderer not yet available";
+	message_dontfuckwithme = true;
+	return;
+    }
+
+    RB_SetMode(next);
 }
 
 

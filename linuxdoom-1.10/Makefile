@@ -66,6 +66,7 @@ OBJS=				\
 		$(O)/p_tick.o			\
 		$(O)/p_saveg.o		\
 		$(O)/p_user.o			\
+		$(O)/r_backend.o		\
 		$(O)/r_bsp.o			\
 		$(O)/r_data.o			\
 		$(O)/r_draw.o			\
