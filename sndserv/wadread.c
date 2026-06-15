@@ -133,8 +133,7 @@ static void derror(char* msg)
 
 void strupr (char *s)
 {
-    while (*s)
-	*s++ = toupper(*s);
+    while (*s) { *s = toupper(*s); s++; }
 }
 
 int filelength (int handle)
