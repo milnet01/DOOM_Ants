@@ -50,6 +50,11 @@ typedef struct
 // value; typed int so it matches default_t.location (an int*).
 extern int rendermode;
 
+// DOOM-0008: headless probe of the best 3D tier this machine supports. Returns
+// an RB_* value (RB_RT3D / RB_RASTER3D / RB_CLASSIC) and logs what it found.
+// Implemented in r_vulkan.cpp; needs no window or surface.
+int RB_VulkanProbe(void);
+
 // Resolve + init the back-end. Clamps `rendermode` to one that is actually
 // available (always at least Classic). Call once, after I_InitGraphics.
 void RB_Init(void);

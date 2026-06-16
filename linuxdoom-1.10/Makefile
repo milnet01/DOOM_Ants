@@ -4,7 +4,8 @@
 #
 # $Log:$
 #
-CC=  gcc  # gcc or g++
+CC=  gcc  # C engine: 1997 C
+CXX= g++  # 3D renderer back-end (DOOM-0008): C++ behind the plain-C seam
 
 # -std=gnu11: this is 1997 C89. gnu11 keeps the K&R idioms it relies on
 # (empty () = unspecified args for the action-function table in info.c)
@@ -14,9 +15,15 @@ CC=  gcc  # gcc or g++
 SDL_CFLAGS:=$(shell pkg-config --cflags sdl2 SDL2_mixer)
 SDL_LIBS:=$(shell pkg-config --libs sdl2 SDL2_mixer)
 
+# Vulkan: the 3D renderer back-end (DOOM-0008). pkg-config if present, else
+# the bare loader. A machine without Vulkan still builds and runs Classic.
+VULKAN_LIBS:=$(shell pkg-config --libs vulkan 2>/dev/null || echo -lvulkan)
+
 CFLAGS=-g -Wall -std=gnu11 -DNORMALUNIX -DLINUX $(SDL_CFLAGS) # -DUSEASM
+# C++17 for the Vulkan back-end (ADR 0001). Same defines + SDL include path.
+CXXFLAGS=-g -Wall -std=c++17 -DNORMALUNIX -DLINUX $(SDL_CFLAGS)
 LDFLAGS=
-LIBS=$(SDL_LIBS) -lm
+LIBS=$(SDL_LIBS) $(VULKAN_LIBS) -lm
 
 # subdirectory for objects
 O=linux
@@ -67,6 +74,7 @@ OBJS=				\
 		$(O)/p_saveg.o		\
 		$(O)/p_user.o			\
 		$(O)/r_backend.o		\
+		$(O)/r_vulkan.o		\
 		$(O)/r_bsp.o			\
 		$(O)/r_data.o			\
 		$(O)/r_draw.o			\
@@ -93,12 +101,17 @@ clean:
 	rm -f *.o *~ *.flc
 	rm -f linux/*
 
+# Link with the C++ driver (g++) so libstdc++ is pulled in for the Vulkan
+# back-end. Linking the C objects this way is harmless.
 $(O)/linuxxdoom:	$(OBJS) $(O)/i_main.o
-	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJS) $(O)/i_main.o \
+	$(CXX) $(LDFLAGS) $(OBJS) $(O)/i_main.o \
 	-o $(O)/linuxxdoom $(LIBS)
 
 $(O)/%.o:	%.c
 	$(CC) $(CFLAGS) -c $< -o $@
+
+$(O)/%.o:	%.cpp
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 #############################################################
 #

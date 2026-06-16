@@ -80,6 +80,12 @@ const char* RB_ModeName(rendermode_t mode)
 
 void RB_Init(void)
 {
+    // DOOM-0008: report the 3D tier this machine supports. The Vulkan back-ends
+    // are not selectable yet (their Available() is wired in once the renderer
+    // draws), so this only logs detection for now — it does not change the
+    // clamp below, which keeps the engine on Classic.
+    RB_VulkanProbe();
+
     // Clamp a persisted choice to a back-end that actually exists here.
     // Classic is always available, so this never leaves `active` NULL.
     if (!RB_ModeAvailable(rendermode))
