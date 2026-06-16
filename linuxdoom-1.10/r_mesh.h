@@ -66,6 +66,16 @@ rb_mesh_t* RB_BuildLevelMesh(void);
 
 void RB_FreeMesh(rb_mesh_t* mesh);
 
+// POD camera handed across the seam each frame (RB_Vulkan_RenderView). The C
+// side (r_backend.c) reads the player's view globals and converts to float
+// world units / radians so the C++ back-end needs no DOOM headers. Axes match
+// the mesh: x east, y north, z up; angle is yaw (0 = +x east, CCW positive).
+typedef struct
+{
+    float x, y, z;   // eye position, world units
+    float angle;     // yaw, radians
+} rb_view_t;
+
 #ifdef __cplusplus
 }
 #endif

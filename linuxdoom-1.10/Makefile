@@ -28,6 +28,13 @@ LIBS=$(SDL_LIBS) $(VULKAN_LIBS) -lm
 # subdirectory for objects
 O=linux
 
+# Shaders (DOOM-0008): GLSL compiled to SPIR-V with glslc, then embedded as C
+# byte arrays with xxd so the binary is self-contained (no runtime shader
+# files). r_vulkan.cpp #includes the generated *.spv.h headers.
+SHADER_DIR=shaders
+SHADER_SRCS=$(SHADER_DIR)/mesh.vert $(SHADER_DIR)/mesh.frag
+SHADER_HDRS=$(SHADER_SRCS:=.spv.h)
+
 # not too sophisticated dependency
 OBJS=				\
 		$(O)/doomdef.o		\
@@ -101,6 +108,7 @@ all:	 $(O)/linuxxdoom
 clean:
 	rm -f *.o *~ *.flc
 	rm -f linux/*
+	rm -f $(SHADER_DIR)/*.spv $(SHADER_DIR)/*.spv.h
 
 # Link with the C++ driver (g++) so libstdc++ is pulled in for the Vulkan
 # back-end. Linking the C objects this way is harmless.
@@ -113,6 +121,15 @@ $(O)/%.o:	%.c
 
 $(O)/%.o:	%.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+# GLSL -> SPIR-V -> embedded C header. Stage is inferred from the .vert/.frag
+# extension by glslc; xxd -n pins a stable array name (mesh_vert_spv, ...).
+$(SHADER_DIR)/%.spv.h:	$(SHADER_DIR)/%
+	glslc -O $< -o $(SHADER_DIR)/$*.spv
+	xxd -i -n $(subst .,_,$*)_spv $(SHADER_DIR)/$*.spv > $@
+
+# The Vulkan back-end embeds the compiled shaders.
+$(O)/r_vulkan.o:	$(SHADER_HDRS)
 
 #############################################################
 #

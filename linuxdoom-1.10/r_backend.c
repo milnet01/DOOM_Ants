@@ -22,9 +22,13 @@
 //
 //-----------------------------------------------------------------------------
 
+#include <math.h>
+
 #include "r_backend.h"
 #include "r_main.h"     // R_RenderPlayerView
 #include "i_video.h"    // I_FinishUpdate
+#include "m_fixed.h"    // FRACUNIT
+#include "r_mesh.h"     // rb_view_t (POD camera across the seam)
 
 // A level is loaded once the BSP segs exist (r_state.h). Used by RB_Init to
 // catch up the scene build when a map was loaded before the back-end came up
@@ -60,7 +64,7 @@ static void    Classic_Shutdown(void)               { }
 extern int  RB_Vulkan_Available(int want_rt);   // want_rt: require RT extensions
 extern void RB_Vulkan_Init(void);
 extern void RB_Vulkan_SetResolution(int w, int h);
-extern void RB_Vulkan_RenderView(void);
+extern void RB_Vulkan_RenderView(const rb_view_t* view);
 extern void RB_Vulkan_Present(void);
 extern void RB_Vulkan_Shutdown(void);
 extern void RB_Vulkan_BuildLevel(void);
@@ -69,7 +73,19 @@ static boolean Vulkan_RT_Available(void)     { return RB_Vulkan_Available(1); }
 static boolean Vulkan_Raster_Available(void) { return RB_Vulkan_Available(0); }
 static void    Vulkan_Init(void)                   { RB_Vulkan_Init(); }
 static void    Vulkan_SetResolution(int w, int h)  { RB_Vulkan_SetResolution(w, h); }
-static void    Vulkan_RenderPlayerView(player_t* p){ (void)p; RB_Vulkan_RenderView(); }
+
+// Convert the player's view to a POD camera and hand it across the seam. viewz
+// is the eye height (player->viewz); angle_t is a 32-bit binary angle (full
+// circle = 2^32), so scale it to radians. mo is always set for a live view.
+static void Vulkan_RenderPlayerView(player_t* p)
+{
+    rb_view_t view;
+    view.x     = p->mo->x  / (float)FRACUNIT;
+    view.y     = p->mo->y  / (float)FRACUNIT;
+    view.z     = p->viewz  / (float)FRACUNIT;
+    view.angle = (float)(p->mo->angle * (2.0 * M_PI / 4294967296.0));
+    RB_Vulkan_RenderView(&view);
+}
 static void    Vulkan_Present(void)                { RB_Vulkan_Present(); }
 static void    Vulkan_Shutdown(void)               { RB_Vulkan_Shutdown(); }
 static void    Vulkan_BuildLevel(void)             { RB_Vulkan_BuildLevel(); }

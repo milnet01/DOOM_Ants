@@ -172,6 +172,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   3 = DOOM-0010/0011/0012** (full dynamic lights, volumetrics, and the performance
   work to the 60 FPS floor). Shading curves authored/validated in the Vestige
   Formula Workbench. ADR: docs/decisions/0001-renderer-language-and-api.md.
+  Progress (2026-06-16): Stage 1 raster primary visibility up. The level mesh is now GPU-uploaded (vertex buffer) and drawn in a depth-buffered render pass from the player's camera (view-projection from viewx/viewy/viewz/viewangle, 90deg horizontal FOV), with a bring-up shader (sector light + Lambert; neutral grey until materials). Added the GLSL->SPIR-V->embedded-header build rule (glslc + xxd) to the Makefile, an rb_view_t POD camera across the seam, and a graphics pipeline (cull-none, depth-test). Smoke-tested on doom.wad E1M1 via -warp: RT3D tier on the RX 6600, 1201 tris/3603 verts uploaded, 3D geometry renders (screenshot-confirmed), no Vulkan/validation errors over a multi-second run. Next: materials/textures (palette albedo), then sprites + UI composite, then the path tracer (DOOM-0009). NB: validation layer not installed on the dev box this run, so INV-8 unexercised here.
 - 💭 [DOOM-0009] **Add hardware path tracing (Monte-Carlo GI + ray-traced shadows).**
   **Layman:** Use the graphics card to trace real light rays for accurate lighting, bounced light, and shadows.
   Kind: feature.

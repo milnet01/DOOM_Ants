@@ -12,6 +12,10 @@ cmake-build-*/
 # DOOM Makefile object dir (O=linux)
 /linuxdoom-1.10/linux/
 
+# Generated shader artifacts (DOOM-0008): GLSL -> SPIR-V -> embedded C header
+/linuxdoom-1.10/shaders/*.spv
+/linuxdoom-1.10/shaders/*.spv.h
+
 # Editor / OS cruft
 *.swp
 *~
