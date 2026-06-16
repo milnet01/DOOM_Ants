@@ -44,6 +44,7 @@ typedef struct
     void        (*RenderPlayerView)(player_t* player);  // the world view
     void        (*Present)(void);               // composite UI + world, flip
     void        (*Shutdown)(void);
+    void        (*BuildLevel)(void);            // optional: per-level scene build
 } renderer_backend_t;
 
 // Selected mode, persisted via m_misc.c's defaults[] table. Holds an RB_*
@@ -62,6 +63,10 @@ void RB_Init(void);
 // Frame hooks the main loop (D_Display) calls through the active back-end.
 void RB_RenderPlayerView(player_t* player);
 void RB_Present(void);
+
+// Per-level scene build, called at the end of P_SetupLevel. No-op under
+// Classic; the 3D back-end converts the map to meshes + acceleration structures.
+void RB_BuildLevel(void);
 
 // Switch back-end at runtime (the menu). Re-inits; clamps to available.
 void RB_SetMode(rendermode_t mode);

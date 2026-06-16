@@ -37,6 +37,9 @@
 #include <cstdint>
 #include <vector>
 
+// POD-only, DOOM-header-free seam: the C geometry builder (r_mesh.c).
+#include "r_mesh.h"
+
 // Tier values returned by RB_VulkanProbe — kept numerically in lockstep with
 // rendermode_t in r_backend.h (RB_CLASSIC=0, RB_RT3D=1, RB_RASTER3D=2). The
 // probe deliberately does not include the DOOM C headers (which are not C++
@@ -176,6 +179,8 @@ struct VulkanState
     VkFence     inFlight       = VK_NULL_HANDLE;
 
     VkDebugUtilsMessengerEXT debug = VK_NULL_HANDLE;
+
+    rb_mesh_t* levelMesh = nullptr;   // current level's CPU geometry (DOOM-0008)
 
     bool ready        = false;
     bool needRecreate = false;
@@ -535,6 +540,24 @@ extern "C" void RB_Vulkan_RenderView(void)
     // tracer that fill this in arrive in following increments.
 }
 
+extern "C" void RB_Vulkan_BuildLevel(void)
+{
+    // Convert the freshly-loaded map to a 3D triangle mesh (r_mesh.c). GPU
+    // upload + acceleration-structure build land in the next increment; for now
+    // we build, report, and hold it so the conversion is proven end to end.
+    if (g.levelMesh)
+    {
+        RB_FreeMesh(g.levelMesh);
+        g.levelMesh = nullptr;
+    }
+
+    g.levelMesh = RB_BuildLevelMesh();
+
+    printf("RB_Vulkan_BuildLevel: %d triangles (%d vertices) from the map.\n",
+           g.levelMesh->numtris, g.levelMesh->numverts);
+    fflush(stdout);
+}
+
 extern "C" void RB_Vulkan_Present(void)
 {
     if (!g.ready)
@@ -634,6 +657,12 @@ extern "C" void RB_Vulkan_Present(void)
 
 extern "C" void RB_Vulkan_Shutdown(void)
 {
+    if (g.levelMesh)
+    {
+        RB_FreeMesh(g.levelMesh);
+        g.levelMesh = nullptr;
+    }
+
     if (!g.instance)
         return;
     if (g.device)

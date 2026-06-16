@@ -26,6 +26,11 @@
 #include "r_main.h"     // R_RenderPlayerView
 #include "i_video.h"    // I_FinishUpdate
 
+// A level is loaded once the BSP segs exist (r_state.h). Used by RB_Init to
+// catch up the scene build when a map was loaded before the back-end came up
+// (the -warp autostart path: G_InitNew runs P_SetupLevel before D_DoomLoop).
+extern int numsegs;
+
 // Selected mode (RB_*). Default Classic — exact parity for anyone who never
 // touches the menu option. Persisted by m_misc.c's defaults[] table.
 int rendermode = RB_CLASSIC;
@@ -58,6 +63,7 @@ extern void RB_Vulkan_SetResolution(int w, int h);
 extern void RB_Vulkan_RenderView(void);
 extern void RB_Vulkan_Present(void);
 extern void RB_Vulkan_Shutdown(void);
+extern void RB_Vulkan_BuildLevel(void);
 
 static boolean Vulkan_RT_Available(void)     { return RB_Vulkan_Available(1); }
 static boolean Vulkan_Raster_Available(void) { return RB_Vulkan_Available(0); }
@@ -66,23 +72,24 @@ static void    Vulkan_SetResolution(int w, int h)  { RB_Vulkan_SetResolution(w, 
 static void    Vulkan_RenderPlayerView(player_t* p){ (void)p; RB_Vulkan_RenderView(); }
 static void    Vulkan_Present(void)                { RB_Vulkan_Present(); }
 static void    Vulkan_Shutdown(void)               { RB_Vulkan_Shutdown(); }
+static void    Vulkan_BuildLevel(void)             { RB_Vulkan_BuildLevel(); }
 
 static renderer_backend_t backends[RB_NUMMODES] =
 {
     [RB_CLASSIC] =
     {
         "Classic", Classic_Available, Classic_Init, Classic_SetResolution,
-        Classic_RenderPlayerView, Classic_Present, Classic_Shutdown
+        Classic_RenderPlayerView, Classic_Present, Classic_Shutdown, NULL
     },
     [RB_RT3D] =
     {
         "3D (ray traced)", Vulkan_RT_Available, Vulkan_Init, Vulkan_SetResolution,
-        Vulkan_RenderPlayerView, Vulkan_Present, Vulkan_Shutdown
+        Vulkan_RenderPlayerView, Vulkan_Present, Vulkan_Shutdown, Vulkan_BuildLevel
     },
     [RB_RASTER3D] =
     {
         "3D (raster)", Vulkan_Raster_Available, Vulkan_Init, Vulkan_SetResolution,
-        Vulkan_RenderPlayerView, Vulkan_Present, Vulkan_Shutdown
+        Vulkan_RenderPlayerView, Vulkan_Present, Vulkan_Shutdown, Vulkan_BuildLevel
     },
 };
 
@@ -127,6 +134,13 @@ void RB_Init(void)
     active = &backends[rendermode];
     if (active->Init)
         active->Init();
+
+    // If a map was already loaded before we got here (the -warp autostart path
+    // runs P_SetupLevel before D_DoomLoop inits the back-end), build its scene
+    // now. The normal new-game path builds via P_SetupLevel's RB_BuildLevel,
+    // which by then sees the initialised 3D back-end.
+    if (numsegs > 0 && active->BuildLevel)
+        active->BuildLevel();
 }
 
 void RB_RenderPlayerView(player_t* player)
@@ -137,6 +151,12 @@ void RB_RenderPlayerView(player_t* player)
 void RB_Present(void)
 {
     active->Present();
+}
+
+void RB_BuildLevel(void)
+{
+    if (active->BuildLevel)
+        active->BuildLevel();
 }
 
 void RB_SetMode(rendermode_t mode)

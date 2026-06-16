@@ -45,6 +45,8 @@ rcsid[] = "$Id: p_setup.c,v 1.5 1997/02/03 22:45:12 b1 Exp $";
 
 #include "doomstat.h"
 
+#include "r_backend.h"	// DOOM-0008: per-level 3D scene build hook
+
 
 void	P_SpawnMapThing (mapthing_t*	mthing);
 
@@ -688,6 +690,10 @@ P_SetupLevel
     // preload graphics
     if (precache)
 	R_PrecacheLevel ();
+
+    // DOOM-0008: hand the freshly-loaded map to the active renderer back-end so
+    // a 3D back-end can rebuild its scene geometry. No-op under Classic.
+    RB_BuildLevel ();
 
     //printf ("free memory: 0x%x\n", Z_FreeMemory());
 
