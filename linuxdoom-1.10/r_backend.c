@@ -15,9 +15,10 @@
 // GNU General Public License for more details.
 //
 // DESCRIPTION:
-//    Renderer back-end seam (DOOM-0026). Only the Classic software renderer
-//    is implemented; the 3D back-ends are designed (see the spec) but not
-//    built, so they report unavailable and the engine stays on Classic.
+//    Renderer back-end seam (DOOM-0026). Classic is the software renderer;
+//    the RB_RT3D / RB_RASTER3D slots are the Vulkan 3D back-end (DOOM-0008),
+//    which brings up a device + swapchain and presents through this seam.
+//    Classic stays the default and is untouched.
 //
 //-----------------------------------------------------------------------------
 
@@ -42,6 +43,30 @@ static void    Classic_RenderPlayerView(player_t* p){ R_RenderPlayerView(p); }
 static void    Classic_Present(void)                { I_FinishUpdate(); }
 static void    Classic_Shutdown(void)               { }
 
+//
+// Vulkan 3D back-end (DOOM-0008), implemented in r_vulkan.cpp. Its entry points
+// are declared here rather than in a header so r_vulkan.cpp stays free of the
+// DOOM C headers (which are not C++-clean); the seam struct is assembled from
+// them below. RT3D and Raster3D share one implementation — they differ only in
+// the capability they require (hardware ray tracing vs. plain Vulkan) and, in
+// later increments, the integrator path; this Stage-1 increment presents a
+// cleared frame for both, proving the device + swapchain + present loop.
+//
+extern int  RB_Vulkan_Available(int want_rt);   // want_rt: require RT extensions
+extern void RB_Vulkan_Init(void);
+extern void RB_Vulkan_SetResolution(int w, int h);
+extern void RB_Vulkan_RenderView(void);
+extern void RB_Vulkan_Present(void);
+extern void RB_Vulkan_Shutdown(void);
+
+static boolean Vulkan_RT_Available(void)     { return RB_Vulkan_Available(1); }
+static boolean Vulkan_Raster_Available(void) { return RB_Vulkan_Available(0); }
+static void    Vulkan_Init(void)                   { RB_Vulkan_Init(); }
+static void    Vulkan_SetResolution(int w, int h)  { RB_Vulkan_SetResolution(w, h); }
+static void    Vulkan_RenderPlayerView(player_t* p){ (void)p; RB_Vulkan_RenderView(); }
+static void    Vulkan_Present(void)                { RB_Vulkan_Present(); }
+static void    Vulkan_Shutdown(void)               { RB_Vulkan_Shutdown(); }
+
 static renderer_backend_t backends[RB_NUMMODES] =
 {
     [RB_CLASSIC] =
@@ -49,8 +74,16 @@ static renderer_backend_t backends[RB_NUMMODES] =
         "Classic", Classic_Available, Classic_Init, Classic_SetResolution,
         Classic_RenderPlayerView, Classic_Present, Classic_Shutdown
     },
-    // RB_RT3D / RB_RASTER3D: not built yet. Zero-initialised, so Available is
-    // NULL and RB_ModeAvailable reports them unselectable (DOOM-0008).
+    [RB_RT3D] =
+    {
+        "3D (ray traced)", Vulkan_RT_Available, Vulkan_Init, Vulkan_SetResolution,
+        Vulkan_RenderPlayerView, Vulkan_Present, Vulkan_Shutdown
+    },
+    [RB_RASTER3D] =
+    {
+        "3D (raster)", Vulkan_Raster_Available, Vulkan_Init, Vulkan_SetResolution,
+        Vulkan_RenderPlayerView, Vulkan_Present, Vulkan_Shutdown
+    },
 };
 
 // Display names for the menu, including the not-yet-built 3D modes so the

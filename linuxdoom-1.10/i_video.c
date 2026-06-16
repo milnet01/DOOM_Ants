@@ -285,6 +285,59 @@ void I_ShutdownGraphics(void)
 }
 
 
+//
+// I_GetWindow  (DOOM-0008)
+//
+// Hands the live SDL_Window to the Vulkan back-end as an opaque pointer, so the
+// DOOM C translation units don't have to include SDL just to pass it through.
+// The back-end casts it back to SDL_Window* for SDL_Vulkan_CreateSurface.
+//
+void* I_GetWindow(void)
+{
+    return window;
+}
+
+
+//
+// I_ShutdownGraphicsForVulkan  (DOOM-0008)
+//
+// The 3D back-end owns presentation, so it cannot share the 2D SDL_Renderer
+// path. An existing window can't gain the Vulkan flag, so we tear down the
+// renderer/texture/window and recreate the window with SDL_WINDOW_VULKAN. The
+// SDL video subsystem stays initialised; only the 3D back-end is called after
+// this, and only when it is the selected, available mode (DOOM-0026 clamp).
+//
+void I_ShutdownGraphicsForVulkan(void)
+{
+    Uint32 flags;
+
+    if (texture)	SDL_DestroyTexture(texture);
+    if (renderer)	SDL_DestroyRenderer(renderer);
+    if (window)		SDL_DestroyWindow(window);
+    texture = NULL;
+    renderer = NULL;
+    window = NULL;
+
+    flags = SDL_WINDOW_VULKAN;
+    if (M_CheckParm("-fullscreen") || M_CheckParm("-f"))
+	flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+    else
+	flags |= SDL_WINDOW_RESIZABLE;
+
+    window = SDL_CreateWindow(
+	"DOOM",
+	SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+	SCREENWIDTH*scale, SCREENHEIGHT*scale,
+	flags);
+    if (!window)
+	I_Error("I_ShutdownGraphicsForVulkan: could not create Vulkan window: %s",
+		SDL_GetError());
+
+    // Same input grab as the Classic window.
+    SDL_SetRelativeMouseMode(SDL_TRUE);
+}
+
+
 void I_InitGraphics(void)
 {
     int		pnum;

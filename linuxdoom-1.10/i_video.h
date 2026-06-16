@@ -45,6 +45,14 @@ void I_SetPalette (byte* palette);
 void I_UpdateNoBlit (void);
 void I_FinishUpdate (void);
 
+// DOOM-0008 3D back-end hooks. I_GetWindow returns the SDL_Window* as an opaque
+// pointer (so the DOOM C TUs need not include SDL; the Vulkan back-end casts it
+// back). I_ShutdownGraphicsForVulkan tears down the 2D SDL_Renderer path and
+// recreates the window with SDL_WINDOW_VULKAN. Called only when a 3D back-end
+// is the selected, available mode.
+void* I_GetWindow (void);
+void  I_ShutdownGraphicsForVulkan (void);
+
 // Wait for vertical retrace or pause a bit.
 void I_WaitVBL(int count);
 
