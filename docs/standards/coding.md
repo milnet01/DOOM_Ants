@@ -37,15 +37,18 @@ The original DOOM is C from 1997. While we still live in that code:
 
 ## The new renderer (Phase 2)
 
-The renderer-backend seam (DOOM-0026) is designed and being built
-(2026-06-15); the 3D renderer itself (DOOM-0008..0012) remains
-`💭 considered` — not begun. The foundational decisions for it are below;
-**why** each went the way it did is owned by ADR
-`docs/decisions/0001-renderer-language-and-api.md`, and the full architecture is
-in `docs/specs/DOOM-0026-renderer-backend.md`:
+The renderer-backend seam (DOOM-0026) shipped. DOOM-0008 (the 3D renderer's
+foundation) is being designed and implemented (spec reviewed 2026-06-16);
+DOOM-0009..0012 remain `💭 considered`. The goal is a **real-time hardware path tracer** — global
+illumination, ray-traced shadows, on DOOM's original art. The foundational
+decisions for it are below; **why** each went the way it did is owned by ADR
+`docs/decisions/0001-renderer-language-and-api.md`; the back-end seam is in
+`docs/specs/DOOM-0026-renderer-backend.md` and the path-tracer design in
+`docs/specs/DOOM-0008-3d-renderer.md`:
 
-- **Graphics API:** Vulkan, as a hybrid (rasterise, then hardware ray tracing
-  for shadows and reflections).
+- **Graphics API:** Vulkan, real-time hardware **path tracing** (global
+  illumination + ray-traced shadows), with rasterised primary visibility as a
+  performance lever and a non-RT raster fallback tier.
 - **Language:** the engine stays **C**; the Vulkan back-end is **C++**, isolated
   behind the plain-C `renderer_backend_t` seam.
 - **Shading language:** **GLSL**, compiled ahead-of-time to SPIR-V.

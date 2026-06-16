@@ -5,9 +5,10 @@ released 1997-12-23), being modernised in two movements:
 
 1. **Make it run today** — compile and play the 1997 engine on modern
    64-bit Linux, swapping the legacy X11 video/sound layer for SDL2.
-2. **The spin** — evolve the renderer toward true 3D with hardware ray
-   tracing, dynamic and volumetric lighting, and a 60 FPS floor — while
-   keeping it feeling like the original DOOM.
+2. **The spin** — evolve the renderer toward true 3D with hardware
+   ray/path tracing (global illumination + ray-traced shadows), dynamic and
+   volumetric lighting, and a 60 FPS floor — while keeping it feeling like the
+   original DOOM.
 
 The roadmap (`ROADMAP.md`) is the source of truth for what's planned,
 in progress, and shipped. Finished items graduate into `CHANGELOG.md`.

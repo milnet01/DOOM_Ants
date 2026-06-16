@@ -153,16 +153,27 @@ with friends.
 
 ## Phase 2 — The Spin
 
-The creative overhaul: evolve the renderer toward true 3D with ray tracing and
-modern lighting, holding 60 FPS, while keeping the original DOOM feel. These are
+The creative overhaul: evolve the renderer toward true 3D with hardware
+ray/path tracing and modern lighting, holding 60 FPS, while keeping the original
+DOOM feel. DOOM-0008 (the foundation) is now in design/build (🚧); the rest are
 parked ideas (💭 considered) until we commit to and design each one.
 
-- 💭 [DOOM-0008] **Convert the renderer to true 3D.**
+- 🚧 [DOOM-0008] **Convert the renderer to true 3D.**
   **Layman:** Replace DOOM's fake-3D trick with a real 3D engine.
   Kind: feature.
   Source: in-session-2026-06-11.
-- 💭 [DOOM-0009] **Add hardware ray tracing (path tracing where feasible).**
-  **Layman:** Use the graphics card to trace real light rays for accurate reflections and shadows.
+  Design: docs/specs/DOOM-0008-3d-renderer.md (`/cold-eyes` reviewed 2026-06-16) — a
+  real-time Vulkan **path tracer** (global illumination + ray-traced shadows) on
+  DOOM's original art, behind the DOOM-0026 seam, with auto-detected tiers
+  (RT-capable → full path tracing; non-RT → raster-3D; no Vulkan → Classic). Built
+  in stages: **Stage 1 = DOOM-0008** (3D meshes, materials, acceleration
+  structure, sprites, UI compositing, selectable "Renderer: 3D"); **Stage 2 =
+  DOOM-0009** (the Monte-Carlo integrator + muzzle-flash dynamic shadows); **Stage
+  3 = DOOM-0010/0011/0012** (full dynamic lights, volumetrics, and the performance
+  work to the 60 FPS floor). Shading curves authored/validated in the Vestige
+  Formula Workbench. ADR: docs/decisions/0001-renderer-language-and-api.md.
+- 💭 [DOOM-0009] **Add hardware path tracing (Monte-Carlo GI + ray-traced shadows).**
+  **Layman:** Use the graphics card to trace real light rays for accurate lighting, bounced light, and shadows.
   Kind: feature.
   Source: in-session-2026-06-11.
 - 💭 [DOOM-0010] **Add dynamic lighting.**
@@ -183,7 +194,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** When the new 3D renderer arrives, you'll still be able to switch back to the original DOOM look from the main menu - both renderers ship in the same build.
   Kind: feature.
   Source: user-request-2026-06-12.
-  Design: docs/specs/DOOM-0026-renderer-backend.md (function-pointer back-end seam at the world/UI boundary; Classic + future Vulkan-hybrid 3D; auto-detected tiers). Decisions in docs/decisions/0001-renderer-language-and-api.md. Implementation of the Classic seam follows this session.
+  Design: docs/specs/DOOM-0026-renderer-backend.md (function-pointer back-end seam at the world/UI boundary; Classic + future Vulkan path-traced 3D; auto-detected tiers). Decisions in docs/decisions/0001-renderer-language-and-api.md. Implementation of the Classic seam follows this session.
   Resolved (2026-06-15): the renderer back-end seam shipped — r_backend.h/.c with a function-pointer interface at the world/UI boundary, the Classic back-end wrapping the existing software renderer unchanged, RB_Init auto-detect/clamp, D_Display routed through RB_RenderPlayerView/RB_Present, a "renderer" config default, and a "Renderer:" options-menu item (3D shown unavailable until DOOM-0008). Classic output byte-identical; builds clean; smoke-tested on doom1.wad (E1M1 renders via the seam, unavailable-mode config falls back to Classic). The 3D back-end (DOOM-0008..0012) remains future work.
 
 - ✅ [DOOM-0027] **Raise the classic renderer's internal resolution to 640x400.**

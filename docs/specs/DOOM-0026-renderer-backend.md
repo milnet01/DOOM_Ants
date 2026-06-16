@@ -1,14 +1,24 @@
 # DOOM-0026 — Selectable renderer back-ends (Classic / 3D)
 
-**Status:** Reviewed — `/cold-eyes` loops 1–5 to clean (see loop log); ready to
-implement. Architecture approved by user
-(2026-06-15): function-pointer back-end seam at the world/UI boundary;
-Vulkan hybrid (raster + hardware-RT effects) as the eventual 3D back-end with
-graceful auto-detected tiers; menu toggle built with 3D shown unavailable.
-3D back-end language = C++ (the engine stays C); shaders = GLSL compiled to
-SPIR-V. The rationale for those three decisions is owned by ADR
+**Status:** Shipped — the seam, Classic back-end, config, and menu toggle landed
+(`/cold-eyes` loops 1–5 to clean, see loop log). Architecture approved by user
+(2026-06-15): function-pointer back-end seam at the world/UI boundary; a Vulkan
+3D back-end behind it with graceful auto-detected tiers; menu toggle built with
+3D shown unavailable. 3D back-end language = C++ (the engine stays C); shaders =
+GLSL compiled to SPIR-V. The rationale for those three decisions is owned by ADR
 `docs/decisions/0001-renderer-language-and-api.md`; `docs/standards/coding.md`
 carries the one-line summary.
+
+> **Amendment (2026-06-16):** the eventual 3D back-end is now a **real-time
+> hardware path tracer** (global illumination + ray-traced shadows), not the
+> "hybrid raster + ray-traced effects (shadows/reflections)" this spec sketched
+> in its [3D hybrid back-end](#3d-hybrid-back-end-designed-not-built) section.
+> That section is retained as the seam's original design context; the
+> **authoritative 3D-renderer design is now `docs/specs/DOOM-0008-3d-renderer.md`**
+> (and ADR 0001, amended same day). Where this spec says "hybrid effects" /
+> "shadows and reflections", read DOOM-0008 instead. Nothing in the *seam* this
+> spec shipped changes — the back-end still speaks the plain-C
+> `renderer_backend_t` interface; only what the 3D back-end does behind it does.
 
 This spec covers two roadmap concerns that are deliberately designed together,
 because the second shapes the first:
@@ -167,6 +177,14 @@ behavioural surface that ships this session.
 The eventual `R_Vulkan` back-end. **No code lands for this in DOOM-0026** — this
 section is the architecture the seam must accommodate, fulfilling DOOM-0026's
 "shapes how DOOM-0008 is architected" intent.
+
+> **Superseded (2026-06-16):** the 3D back-end's *internal* design below
+> ("hybrid raster + ray-traced shadows/reflections") is now superseded by the
+> real-time **path tracer** in `docs/specs/DOOM-0008-3d-renderer.md` (GI +
+> ray-traced shadows). The seam requirements this section establishes — the
+> plain-C interface, UI compositing, auto-detected tiers — still hold; only the
+> lighting model evolved. Read the bullets below as the seam's original context,
+> not the current 3D design.
 
 - **API / language / shaders:** Vulkan (hybrid raster + hardware RT), the engine
   stays C with the back-end in C++, and shaders in GLSL compiled to SPIR-V. These
