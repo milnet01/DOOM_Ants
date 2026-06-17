@@ -42,7 +42,7 @@ rcsid[] = "$Id: r_data.c,v 1.4 1997/02/03 16:47:55 b1 Exp $";
 #include "r_sky.h"
 
 #ifdef LINUX
-#include  <alloca.h>
+#include  <stdlib.h>
 #include  <stdint.h>
 #endif
 
@@ -300,8 +300,7 @@ void R_GenerateComposite (int texnum)
 void R_GenerateLookup (int texnum)
 {
     texture_t*		texture;
-    byte*		patchcount;	// patchcount[texture->width]
-    texpatch_t*		patch;	
+    texpatch_t*		patch;
     patch_t*		realpatch;
     int			x;
     int			x1;
@@ -323,7 +322,10 @@ void R_GenerateLookup (int texnum)
     //  that are covered by more than one patch.
     // Fill in the lump / offset, so columns
     //  with only a single patch are all done.
-    patchcount = (byte *)alloca (texture->width);
+    // VLA replaces obsolete alloca(): width is bounded (texture-lump short)
+    // and the buffer is auto-freed on every return, incl. the early
+    // "column without a patch" return below.
+    byte		patchcount[texture->width];
     memset (patchcount, 0, texture->width);
     patch = texture->patches;
 		
@@ -452,7 +454,12 @@ void R_InitTextures (void)
     names = W_CacheLumpName ("PNAMES", PU_STATIC);
     nummappatches = LONG ( *((int *)names) );
     name_p = names+4;
-    patchlookup = alloca (nummappatches*sizeof(*patchlookup));
+    // alloca() is obsolete and nummappatches comes from the (untrusted)
+    // PNAMES lump, so use a checked heap allocation; freed once the texture
+    // build loop below is done with it.
+    patchlookup = malloc (nummappatches*sizeof(*patchlookup));
+    if (!patchlookup)
+	I_Error ("R_InitTextures: couldn't malloc patchlookup");
     
     for (i=0 ; i<nummappatches ; i++)
     {
@@ -563,6 +570,8 @@ void R_InitTextures (void)
 		
 	totalwidth += texture->width;
     }
+
+    free (patchlookup);
 
     Z_Free (maptex1);
     if (maptex2)
@@ -748,10 +757,6 @@ int		spritememory;
 
 void R_PrecacheLevel (void)
 {
-    char*		flatpresent;
-    char*		texturepresent;
-    char*		spritepresent;
-
     int			i;
     int			j;
     int			k;
@@ -765,8 +770,9 @@ void R_PrecacheLevel (void)
 	return;
     
     // Precache flats.
-    flatpresent = alloca(numflats);
-    memset (flatpresent,0,numflats);	
+    // VLAs replace obsolete alloca(); 1 byte/entry, auto-freed on return.
+    char		flatpresent[numflats];
+    memset (flatpresent,0,numflats);
 
     for (i=0 ; i<numsectors ; i++)
     {
@@ -787,7 +793,7 @@ void R_PrecacheLevel (void)
     }
     
     // Precache textures.
-    texturepresent = alloca(numtextures);
+    char		texturepresent[numtextures];
     memset (texturepresent,0, numtextures);
 	
     for (i=0 ; i<numsides ; i++)
@@ -822,7 +828,7 @@ void R_PrecacheLevel (void)
     }
     
     // Precache sprites.
-    spritepresent = alloca(numsprites);
+    char		spritepresent[numsprites];
     memset (spritepresent,0, numsprites);
 	
     for (th = thinkercap.next ; th != &thinkercap ; th=th->next)

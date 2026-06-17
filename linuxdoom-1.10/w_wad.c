@@ -34,7 +34,6 @@ rcsid[] = "$Id: w_wad.c,v 1.5 1997/02/03 16:47:57 b1 Exp $";
 #include <malloc.h>
 #include <fcntl.h>
 #include <sys/stat.h>
-#include <alloca.h>
 #define O_BINARY		0
 #endif
 
@@ -147,6 +146,7 @@ void W_AddFile (char *filename)
     int			length;
     int			startlump;
     filelump_t*		fileinfo;
+    filelump_t*		fileinfo_heap = NULL;	// malloc'd base (WAD branch); freed at end, NULL-safe for the single-lump path
     filelump_t		singleinfo;
     int			storehandle;
     
@@ -196,7 +196,12 @@ void W_AddFile (char *filename)
 	header.numlumps = LONG(header.numlumps);
 	header.infotableofs = LONG(header.infotableofs);
 	length = header.numlumps*sizeof(filelump_t);
-	fileinfo = alloca (length);
+	// alloca() is obsolete and numlumps is attacker-controlled, so a huge
+	// request must fail gracefully: use a checked heap allocation.
+	fileinfo = fileinfo_heap = malloc (length);
+	if (!fileinfo)
+	    I_Error ("W_AddFile: couldn't malloc %i bytes for %s",
+		     length, filename);
 	lseek (handle, header.infotableofs, SEEK_SET);
 	read (handle, fileinfo, length);
 	numlumps += header.numlumps;
@@ -220,7 +225,9 @@ void W_AddFile (char *filename)
 	lump_p->size = LONG(fileinfo->size);
 	strncpy (lump_p->name, fileinfo->name, 8);
     }
-	
+
+    free (fileinfo_heap);	// no-op when NULL (single-lump path)
+
     if (reloadname)
 	close (handle);
 }
@@ -242,7 +249,8 @@ void W_Reload (void)
     int			handle;
     int			length;
     filelump_t*		fileinfo;
-	
+    filelump_t*		fileinfo_heap;
+
     if (!reloadname)
 	return;
 		
@@ -253,7 +261,11 @@ void W_Reload (void)
     lumpcount = LONG(header.numlumps);
     header.infotableofs = LONG(header.infotableofs);
     length = lumpcount*sizeof(filelump_t);
-    fileinfo = alloca (length);
+    // alloca() is obsolete; use a checked heap allocation (lumpcount is
+    // read straight from the file header, so a huge value must fail safely).
+    fileinfo = fileinfo_heap = malloc (length);
+    if (!fileinfo)
+	I_Error ("W_Reload: couldn't malloc %i bytes", length);
     lseek (handle, header.infotableofs, SEEK_SET);
     read (handle, fileinfo, length);
     
@@ -270,7 +282,9 @@ void W_Reload (void)
 	lump_p->position = LONG(fileinfo->filepos);
 	lump_p->size = LONG(fileinfo->size);
     }
-	
+
+    free (fileinfo_heap);
+
     close (handle);
 }
 
