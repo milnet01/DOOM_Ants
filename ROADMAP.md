@@ -177,23 +177,26 @@ with friends.
   Kind: fix.
   Source: audit-2026-06-17 grep format-string.
 
-- 📋 [DOOM-0034] **Replace obsolete alloca() calls in r_data.c and w_wad.c.**
+- ✅ [DOOM-0034] **Replace obsolete alloca() calls in r_data.c and w_wad.c.**
   cppcheck flags alloca() at r_data.c:326,455,768,790,825 and w_wad.c:199,256. alloca can overflow the stack on a large request. Replace with a C99 VLA or a checked heap allocation where the size is unbounded.
   **Layman:** Swap a risky old memory trick for a safer modern one.
   Kind: refactor.
   Source: audit-2026-06-17 cppcheck allocaCalled.
+  Resolved (2026-06-17): replaced all 7 alloca() sites. Bounded 1-byte arrays (patchcount, flatpresent, texturepresent, spritepresent) became C99 VLAs (auto-freed on return, incl. R_GenerateLookup's early return). The untrusted multiplied sizes (patchlookup = nummappatches*4 from PNAMES; fileinfo = numlumps*16 in W_AddFile/W_Reload) became checked malloc()+I_Error-on-null+free, so a hostile lump count now fails gracefully instead of smashing the stack. Swapped <alloca.h> for <stdlib.h> in r_data.c, dropped it from w_wad.c. cppcheck allocaCalled now clears; engine builds clean.
 
-- 📋 [DOOM-0035] **Fix signed/unsigned printf/scanf format-specifier mismatches in the serial/IPX drivers.**
+- ✅ [DOOM-0035] **Fix signed/unsigned printf/scanf format-specifier mismatches in the serial/IPX drivers.**
   sersrc/DOOMNET.C:107 (%lu vs signed long), sersrc/PORT.C:83 (%x vs signed int* in scanf), ipx/DOOMNET.C:59 (%lu vs signed long). Legacy DOS multiplayer drivers; low priority as they are not part of the SDL2 build path.
   **Layman:** Correct some number-formatting mismatches in the old modem/LAN code.
   Kind: fix.
   Source: audit-2026-06-17 cppcheck invalidPrintfArgType.
+  Resolved (2026-06-17): flatadr long -> unsigned long in sersrc/DOOMNET.C and ipx/DOOMNET.C (matches the %lu sprintf; the value is a flattened seg:off address, always >= 0). uart int -> unsigned int in sersrc/PORT.C (matches the 0x%x sscanf at :83 and the latent 0x%x printf at :89, same root cause). cppcheck invalidPrintfArgType/invalidScanfArgType clear. DOS-only drivers, not in the SDL2 build path; verified via cppcheck.
 
-- 📋 [DOOM-0036] **Fix the sndserv standalone build (soundsrv.c missing <string.h>).**
+- ✅ [DOOM-0036] **Fix the sndserv standalone build (soundsrv.c missing <string.h>).**
   sndserv/soundsrv.c uses strlen/strcmp without including <string.h>, so its standalone Makefile fails (implicit-declaration error under modern gcc). Pre-existing breakage, unrelated to the alloc-guard bundle; the standalone sndserv is legacy (superseded by SDL2 audio, DOOM-0004). Add the missing include.
   **Layman:** Make the optional standalone sound server compile again.
   Kind: fix.
   Source: audit-2026-06-17 build-check.
+  Resolved (2026-06-17): added #include <string.h> to sndserv/soundsrv.c (uses strlen at :325-337 and strcmp at :348). soundsrv.c now compiles clean under modern gcc with no implicit-declaration error.
 
 ## Phase 2 — The Spin
 

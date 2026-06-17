@@ -16,10 +16,16 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Replace obsolete alloca() in r_data.c and w_wad.c with C99 VLAs (bounded buffers) and checked heap allocations (untrusted WAD-driven sizes), so a hostile lump count fails gracefully instead of overflowing the stack** (DOOM-0034)
+
 - **Mark I_Error as _Noreturn.** (DOOM-0023)
   Tells the compiler that the fatal-error function never returns, so it can optimise better and reason correctly about the code that runs after a fatal-error guard.
 
 ### Fixed
+
+- **Fix the standalone sndserv build by adding the missing <string.h> include to soundsrv.c** (DOOM-0036)
+
+- **Fix signed/unsigned printf/scanf format-specifier mismatches in the serial/IPX multiplayer drivers (flatadr, uart)** (DOOM-0035)
 
 - **Pass a literal format string to printf for the dev/CD-ROM banners.** (DOOM-0033)
   Tidies up two startup messages so they print safely.
