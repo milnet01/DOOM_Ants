@@ -46,16 +46,18 @@ with friends.
   Source: in-session-2026-06-11.
   Progress (2026-06-12): boots Ultimate Doom / DOOM II with SDL2 video+audio; renders a warped-in level for 25s+ with no crash (verified headless via SDL dummy drivers). Four 64-bit pointer fixes landed (r_data maptexture/array sizing, p_setup line list, colormap/translation alignment). Remaining: a human playtest on a real display to confirm input feel and visuals; shareware doom1.wad not yet exercised (tested with retail IWADs).
   Resolved (2026-06-12): user playtested DOOM II on a real display - boots, renders, controls respond, and SDL sound effects play. Plays like the original.
-- 📋 [DOOM-0006] **Add a Windows build target.**
+- ✅ [DOOM-0006] **Add a Windows build target.**
   **Layman:** Produce a version that runs on Windows so friends can play it.
   Kind: feature.
   Source: in-session-2026-06-11.
   Deferred (2026-06-12, user): the Windows build only matters once the Phase 2 3D version exists, so it is parked until then. Survey notes for when we pick it up: openSUSE Tumbleweed ships mingw64-cross-gcc but NO mingw SDL2 / SDL2_mixer / fluidsynth packages (would need source cross-builds of those, incl. the FluidR3_GM soundfont bundled and pointed at via $DOOM_SOUNDFONT). Remaining POSIX porting surface: i_net.c (BSD sockets/ioctl), i_system.c (gettimeofday, usleep), unistd/sys-time includes in w_wad.c/m_misc.c/d_main.c/r_data.c/m_menu.c.
-- 🚧 [DOOM-0007] **Publish downloadable Linux & Windows builds via GitHub Releases.**
+  Resolved (2026-06-17): added a `make windows` mingw-w64 cross-build target. mingw-w64 supplies DOOM's POSIX shims, so the only _WIN32-guarded divergences were i_net.c (BSD sockets -> Winsock2), i_main.c (SDL_MAIN_HANDLED), d_main.c ($HOME->%USERPROFILE%, one-arg mkdir), doomtype.h/m_bbox.h (portable MAXINT vs glibc <values.h>), and w_wad.c (don't redefine mingw strupr/filelength; conditional O_BINARY). SDL2 2.32.10 / SDL2_mixer 2.8.2 / Vulkan-Headers 1.4.350.0 mingw dev libs staged under mingw-deps/ (git-ignored; README documents fetch). Builds mingw/doom_ants.exe (PE32+ x86-64); verified under Wine through engine init to the expected no-WAD exit; native Linux build unchanged. Commit eac0cd4.
+- ✅ [DOOM-0007] **Publish downloadable Linux & Windows builds via GitHub Releases.**
   **Layman:** Put ready-to-run downloads online so anyone can grab a copy.
   Kind: release.
   Source: in-session-2026-06-11.
   Progress (2026-06-12): Linux half shipped — v0.1.0 GitHub Release with doom_ants-0.1.0-linux-x86_64.tar.gz (binary + README + LICENSE; runtime deps documented). https://github.com/milnet01/DOOM_Ants/releases/tag/v0.1.0 . Windows build half stays open until DOOM-0006 lands (Phase 2). A fully self-contained Linux package (AppImage) is a possible follow-up.
+  Resolved (2026-06-17): both platforms now downloadable. Linux = v0.1.0 stable (doom_ants-0.1.0-linux-x86_64.tar.gz). Windows = v0.2.0-pre.1 preview (doom_ants-0.2.0-pre.1-windows-x86_64.zip: doom_ants.exe + SDL2/SDL2_mixer/winpthread DLLs + README + LICENSE), published as a pre-release because the Phase-2 3D renderer (DOOM-0008) is still in progress. Follow-up options remain: a fully self-contained Linux AppImage, and promoting the snapshot to a finalised versioned release once Phase 2 lands.
 
 - ✅ [DOOM-0013] **Add WASD movement keys alongside the arrow keys.**
   **Layman:** Lets you move with the modern W/A/S/D keys — W/S walk, A/D step sideways — not just the arrow keys.
@@ -197,6 +199,17 @@ with friends.
   Kind: fix.
   Source: audit-2026-06-17 build-check.
   Resolved (2026-06-17): added #include <string.h> to sndserv/soundsrv.c (uses strlen at :325-337 and strcmp at :348). soundsrv.c now compiles clean under modern gcc with no implicit-declaration error.
+
+- 📋 [DOOM-0038] **Add game controller (gamepad) support.**
+  Wire SDL2's GameController API (SDL_GameController* / SDL_CONTROLLERAXISMOTION
+  + SDL_CONTROLLERBUTTONDOWN events, already available since the DOOM-0004 SDL2
+  port) into the DOOM input path so a gamepad can drive movement, turning, fire,
+  use and menu navigation. Analog sticks map to move/strafe and turn; buttons map
+  to the existing DOOM actions with a sensible default layout. Consider an analog
+  look/turn sensitivity and an optional in-menu rebind later.
+  **Layman:** Let people play with a game controller, not just keyboard and mouse.
+  Kind: feature.
+  Source: user-request-2026-06-17.
 
 ## Phase 2 — The Spin
 

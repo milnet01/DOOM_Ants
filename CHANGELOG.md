@@ -8,6 +8,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Add a Windows build target.** (DOOM-0006)
+  Produce a version that runs on Windows so friends can play it.
+
 - **Keep the classic 2.5D renderer selectable alongside the 3D renderer.** (DOOM-0026)
   When the new 3D renderer arrives, you'll still be able to switch back to the original DOOM look from the main menu - both renderers ship in the same build.
 
