@@ -1603,7 +1603,16 @@ void G_DoPlayDemo (void)
     if ( *demo_p++ != VERSION)
     {
       fprintf( stderr, "Demo is from a different game version!\n");
+      // A version-mismatched demo never loads a level, so the tick loop must
+      // not run P_Ticker on a player with no mobj. Release the lump and either
+      // quit (an explicit -playdemo / -timedemo) or fall back to the attract-
+      // mode title screen, rather than crashing in P_PlayerThink (DOOM-0030).
+      Z_ChangeTag (demobuffer, PU_CACHE);
       gameaction = ga_nothing;
+      if (singledemo || timingdemo)
+	I_Quit ();
+      gamestate = GS_DEMOSCREEN;
+      D_AdvanceDemo ();
       return;
     }
     
