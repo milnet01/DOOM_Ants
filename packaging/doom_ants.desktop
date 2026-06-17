@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=DOOM_Ants
+Comment=id Software's 1997 DOOM, modernised for 64-bit Linux (SDL2)
+Exec=doom_ants
+Icon=doom_ants
+Categories=Game;ActionGame;
+Terminal=true

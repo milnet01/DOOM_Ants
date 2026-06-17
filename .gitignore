@@ -18,6 +18,11 @@ cmake-build-*/
 /mingw-deps/*
 !/mingw-deps/README.md
 
+# AppImage packaging (DOOM-0007): downloaded tools + staging tree. The build
+# script, desktop file and icon are tracked; tools/ and build/ are not.
+/packaging/tools/
+/packaging/build/
+
 # Generated shader artifacts (DOOM-0008): GLSL -> SPIR-V -> embedded C header
 /linuxdoom-1.10/shaders/*.spv
 /linuxdoom-1.10/shaders/*.spv.h
