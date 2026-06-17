@@ -21,6 +21,10 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Loading a savegame written by a different DOOM version no longer leaks the file buffer on the rejected-version path.** (DOOM-0031)
+
+- **Playing back a demo recorded by a different DOOM version no longer crashes — it skips the demo and returns to the title screen (or exits cleanly for an explicit -playdemo/-timedemo).** (DOOM-0030)
+
 - **Fix undefined order-of-evaluation in sndserv's strupr.** (DOOM-0029)
   Tidied a tiny string-uppercasing routine in the standalone sound server that relied on undefined C behaviour, so it now works reliably on any compiler.
 

@@ -151,11 +151,19 @@ with friends.
   Kind: audit-fix.
   Source: audit-2026-06-15 cppcheck.
 
-- 📋 [DOOM-0030] **Fix the crash when a demo lump's version doesn't match the engine.**
+- ✅ [DOOM-0030] **Fix the crash when a demo lump's version doesn't match the engine.**
   G_DoPlayDemo (g_game.c:1603-1607) rejects a version-mismatched demo with a stderr message + gameaction=ga_nothing + early return, but leaves no level/player initialised; the engine then ticks P_PlayerThink on a NULL player->mo (crash at p_user.c:245, via P_Ticker -> G_Ticker -> D_DoomLoop). Repro: `-timedemo demo1` on doom.wad whose demo lumps are a different VERSION byte -> SIGSEGV. Found 2026-06-16 while smoke-testing the DOOM-0008 raster path (unrelated to that change; pre-existing). Investigate why the tick loop runs a player thinker after the demo aborts and make a version mismatch fail gracefully (skip the demo / fall back to the title screen), not crash.
   **Layman:** Playing back a demo recorded by a different DOOM version (e.g. -timedemo on a WAD whose demos don't match this engine) currently crashes the game instead of just skipping the demo; this should fail gracefully.
   Kind: fix.
   Source: in-session-2026-06-16.
+  Resolved (2026-06-17): G_DoPlayDemo's version-mismatch abort now mirrors G_CheckDemoStatus's teardown — releases the lump, I_Quit on an explicit -playdemo/-timedemo, else sets GS_DEMOSCREEN + D_AdvanceDemo back to the title screen, so the same-tick G_Ticker dispatch never runs P_Ticker/P_PlayerThink on a NULL player->mo. Commit 22e149b.
+
+- ✅ [DOOM-0031] **Free the save buffer when a savegame's version doesn't match the engine.**
+  G_DoLoadGame (g_game.c:1222) reads the whole save file into a Z_Malloc(PU_STATIC) buffer via M_ReadFile, then bailed with a bare `return; // bad version` on a version-string mismatch, leaking savebuffer on every failed load. The normal completion path frees it with Z_Free(savebuffer); the mismatch path now does the same. Same bad-input-cleanup class as the demo-version crash (DOOM-0030) and the IdentifyVersion path leak (DOOM-0025). Found 2026-06-17 during the audit sweep that accompanied DOOM-0030.
+  Resolved (2026-06-17): freed savebuffer before the early return; compiles clean. Commit 9e87bcd.
+  **Layman:** Loading a save file made by a different DOOM version used to quietly waste a chunk of memory every attempt; now it cleans up after itself.
+  Kind: fix.
+  Source: in-session-2026-06-17 (cppcheck sibling of DOOM-0030).
 
 ## Phase 2 — The Spin
 
