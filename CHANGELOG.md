@@ -21,6 +21,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Pass a literal format string to printf for the dev/CD-ROM banners.** (DOOM-0033)
+  Tidies up two startup messages so they print safely.
+
+- **Guard unchecked heap allocations against out-of-memory null-deref.** (DOOM-0032)
+  If the game can't get memory it now exits with a clear message instead of crashing.
+
 - **Loading a savegame written by a different DOOM version no longer leaks the file buffer on the rejected-version path.** (DOOM-0031)
 
 - **Playing back a demo recorded by a different DOOM version no longer crashes — it skips the demo and returns to the title screen (or exits cleanly for an explicit -playdemo/-timedemo).** (DOOM-0030)

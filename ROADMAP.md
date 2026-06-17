@@ -165,6 +165,36 @@ with friends.
   Kind: fix.
   Source: in-session-2026-06-17 (cppcheck sibling of DOOM-0030).
 
+- ✅ [DOOM-0032] **Guard unchecked heap allocations against out-of-memory null-deref.**
+  Eight raw malloc sites used their result without a NULL check, so an out-of-memory condition segfaulted instead of failing cleanly. Added if(!p) I_Error guards matching the engine's own idiom (already used in r_mesh.c): i_system.c I_ZoneBase (the zone-heap base) and I_AllocLow; i_net.c doomcom; m_misc.c M_LoadDefaults string default; d_main.c D_AddFile + FindResponseFile (file buffer and rebuilt argv); sndserv/wadread.c lumpinfo (uses derror). Already-guarded reallocs (w_wad.c, mus2mid.c, r_mesh.c) left as-is.
+  **Layman:** If the game can't get memory it now exits with a clear message instead of crashing.
+  Kind: fix.
+  Source: audit-2026-06-17 cppcheck nullPointerOutOfMemory.
+
+- ✅ [DOOM-0033] **Pass a literal format string to printf for the dev/CD-ROM banners.**
+  d_main.c:903/907 called printf(D_DEVSTR) and printf(D_CDROM), passing a macro as the format string. The macros are constant today (no % conversions) so this was not exploitable, but it is a format-string anti-pattern (-Wformat-security). Changed to printf("%s", D_DEVSTR/D_CDROM).
+  **Layman:** Tidies up two startup messages so they print safely.
+  Kind: fix.
+  Source: audit-2026-06-17 grep format-string.
+
+- 📋 [DOOM-0034] **Replace obsolete alloca() calls in r_data.c and w_wad.c.**
+  cppcheck flags alloca() at r_data.c:326,455,768,790,825 and w_wad.c:199,256. alloca can overflow the stack on a large request. Replace with a C99 VLA or a checked heap allocation where the size is unbounded.
+  **Layman:** Swap a risky old memory trick for a safer modern one.
+  Kind: refactor.
+  Source: audit-2026-06-17 cppcheck allocaCalled.
+
+- 📋 [DOOM-0035] **Fix signed/unsigned printf/scanf format-specifier mismatches in the serial/IPX drivers.**
+  sersrc/DOOMNET.C:107 (%lu vs signed long), sersrc/PORT.C:83 (%x vs signed int* in scanf), ipx/DOOMNET.C:59 (%lu vs signed long). Legacy DOS multiplayer drivers; low priority as they are not part of the SDL2 build path.
+  **Layman:** Correct some number-formatting mismatches in the old modem/LAN code.
+  Kind: fix.
+  Source: audit-2026-06-17 cppcheck invalidPrintfArgType.
+
+- 📋 [DOOM-0036] **Fix the sndserv standalone build (soundsrv.c missing <string.h>).**
+  sndserv/soundsrv.c uses strlen/strcmp without including <string.h>, so its standalone Makefile fails (implicit-declaration error under modern gcc). Pre-existing breakage, unrelated to the alloc-guard bundle; the standalone sndserv is legacy (superseded by SDL2 audio, DOOM-0004). Add the missing include.
+  **Layman:** Make the optional standalone sound server compile again.
+  Kind: fix.
+  Source: audit-2026-06-17 build-check.
+
 ## Phase 2 — The Spin
 
 The creative overhaul: evolve the renderer toward true 3D with hardware
@@ -217,3 +247,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Render the original-style view at higher internal detail (640x400) so it looks sharp instead of blocky when the window is enlarged - the look stays classic DOOM, just crisper.
   Kind: enhancement.
   Source: user-request-2026-06-12.
+
+- 📋 [DOOM-0037] **Initialise VulkanState::viewProj in the 3D renderer back-end.**
+  cppcheck: r_vulkan.cpp:210 member VulkanState::viewProj has no initializer. Part of the in-progress DOOM-0008 renderer. Give it a default (identity) initialiser so a frame drawn before the first camera update is well-defined.
+  **Layman:** Make sure a camera matrix in the new 3D renderer always starts with a known value.
+  Kind: fix.
+  Source: audit-2026-06-17 cppcheck uninitMemberVarNoCtor.
