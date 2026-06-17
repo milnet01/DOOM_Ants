@@ -23,6 +23,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Initialise VulkanState::viewProj in the 3D renderer back-end.** (DOOM-0037)
+  Make sure a camera matrix in the new 3D renderer always starts with a known value.
+
 - **Fix the standalone sndserv build by adding the missing <string.h> include to soundsrv.c** (DOOM-0036)
 
 - **Fix signed/unsigned printf/scanf format-specifier mismatches in the serial/IPX multiplayer drivers (flatadr, uart)** (DOOM-0035)

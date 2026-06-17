@@ -207,7 +207,9 @@ struct VulkanState
     VkDeviceMemory vbufMemory = VK_NULL_HANDLE;
     uint32_t       vertexCount = 0;
 
-    float viewProj[16];               // column-major MVP from RB_Vulkan_RenderView
+    // column-major MVP from RB_Vulkan_RenderView; identity until the first
+    // camera update so a frame drawn before then is well-defined (DOOM-0037).
+    float viewProj[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
     bool  haveCamera = false;
 
     static constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;

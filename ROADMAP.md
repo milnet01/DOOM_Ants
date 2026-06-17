@@ -251,8 +251,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: enhancement.
   Source: user-request-2026-06-12.
 
-- 📋 [DOOM-0037] **Initialise VulkanState::viewProj in the 3D renderer back-end.**
+- ✅ [DOOM-0037] **Initialise VulkanState::viewProj in the 3D renderer back-end.**
   cppcheck: r_vulkan.cpp:210 member VulkanState::viewProj has no initializer. Part of the in-progress DOOM-0008 renderer. Give it a default (identity) initialiser so a frame drawn before the first camera update is well-defined.
   **Layman:** Make sure a camera matrix in the new 3D renderer always starts with a known value.
   Kind: fix.
   Source: audit-2026-06-17 cppcheck uninitMemberVarNoCtor.
+  Resolved (2026-06-17): gave VulkanState::viewProj a default identity matrix ({1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1}) at r_vulkan.cpp:210 so a frame drawn before the first RB_Vulkan_RenderView camera update is well-defined. Verified: g++ -std=c++17 builds r_vulkan.o and links linuxxdoom cleanly; cppcheck uninitMemberVarNoCtor no longer reported.
