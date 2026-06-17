@@ -17,7 +17,7 @@ struct	SREGS	sregs;
 que_t		inque, outque;
 
 
-int			uart;			// io address
+unsigned int		uart;			// io address; matches the 0x%x scanf/printf
 enum {UART_8250, UART_16550} uart_type;
 int			irq;
 

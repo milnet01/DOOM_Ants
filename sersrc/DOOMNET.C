@@ -66,7 +66,7 @@ void LaunchDOOM (void)
 {
 	char	*newargs[99];
 	char	adrstring[10];
-	long  	flatadr;
+	unsigned long	flatadr;	// flattened seg:off address, always >= 0; matches the %lu below
 	int		p;
 	unsigned char	far	*vector;
 
