@@ -1219,9 +1219,12 @@ void G_DoLoadGame (void)
     // skip the description field 
     memset (vcheck,0,sizeof(vcheck)); 
     sprintf (vcheck,"version %i",VERSION); 
-    if (strcmp (save_p, vcheck)) 
-	return;				// bad version 
-    save_p += VERSIONSIZE; 
+    if (strcmp (save_p, vcheck))
+    {
+	Z_Free (savebuffer);		// bad version: free the buffer M_ReadFile
+	return;				// allocated, matching the normal path's
+    }					// Z_Free below (DOOM-0031)
+    save_p += VERSIONSIZE;
 			 
     gameskill = *save_p++; 
     gameepisode = *save_p++; 
