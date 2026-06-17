@@ -19,6 +19,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Print clear WAD-placement guidance when no IWAD is found.** (DOOM-0040)
+  If no game data file is found, the game now tells you exactly where to put a WAD instead of a cryptic error.
+
+- **Launch in fullscreen by default, with -windowed to opt out.** (DOOM-0039)
+  The game now opens fullscreen straight away; pass -windowed if you'd rather have a window.
+
 - **Replace obsolete alloca() in r_data.c and w_wad.c with C99 VLAs (bounded buffers) and checked heap allocations (untrusted WAD-driven sizes), so a hostile lump count fails gracefully instead of overflowing the stack** (DOOM-0034)
 
 - **Mark I_Error as _Noreturn.** (DOOM-0023)

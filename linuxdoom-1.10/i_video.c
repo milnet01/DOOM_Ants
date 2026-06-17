@@ -298,6 +298,15 @@ void* I_GetWindow(void)
 }
 
 
+// Fullscreen is the default for the packaged builds; -windowed (-w) opts out.
+// -fullscreen (-f) is still accepted (and harmless) for explicitness. Single
+// source of truth so the Vulkan and Classic window paths can't drift (DOOM-0039).
+static boolean I_WantFullscreen(void)
+{
+    return !(M_CheckParm("-windowed") || M_CheckParm("-w"));
+}
+
+
 //
 // I_ShutdownGraphicsForVulkan  (DOOM-0008)
 //
@@ -319,7 +328,7 @@ void I_ShutdownGraphicsForVulkan(void)
     window = NULL;
 
     flags = SDL_WINDOW_VULKAN;
-    if (M_CheckParm("-fullscreen") || M_CheckParm("-f"))
+    if (I_WantFullscreen())
 	flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
     else
 	flags |= SDL_WINDOW_RESIZABLE;
@@ -364,10 +373,10 @@ void I_InitGraphics(void)
     // Crisp nearest-neighbour upscale, no blur.
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
 
-    // Resizable by default; -fullscreen for a borderless desktop-sized window.
-    Uint32 flags = SDL_WINDOW_RESIZABLE;
-    if (M_CheckParm("-fullscreen") || M_CheckParm("-f"))
-	flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+    // Fullscreen (borderless desktop) by default; -windowed for a resizable window.
+    Uint32 flags = I_WantFullscreen()
+	? SDL_WINDOW_FULLSCREEN_DESKTOP
+	: SDL_WINDOW_RESIZABLE;
 
     window = SDL_CreateWindow(
 	"DOOM",

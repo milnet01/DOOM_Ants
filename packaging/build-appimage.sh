@@ -45,11 +45,16 @@ cp "$SOUNDFONT"                            "$APPDIR/usr/share/soundfonts/"
 cp "$PKG/doom_ants.desktop"                "$APPDIR/usr/share/applications/"
 cp "$PKG/doom_ants.png"                    "$APPDIR/usr/share/icons/hicolor/256x256/apps/"
 
-# Point the music synth at the bundled soundfont unless the user set their own.
+# Runtime hook: use the bundled soundfont for music, and look for the WAD next
+# to the .AppImage file (so dropping a WAD beside it and double-clicking works,
+# regardless of the launcher's working directory). Both respect a user override.
 SF_NAME="$(basename "$SOUNDFONT")"
-cat > "$APPDIR/apprun-hooks/doom_ants-soundfont.sh" <<HOOK
+cat > "$APPDIR/apprun-hooks/doom_ants-env.sh" <<HOOK
 if [ -z "\$DOOM_SOUNDFONT" ]; then
     export DOOM_SOUNDFONT="\$APPDIR/usr/share/soundfonts/$SF_NAME"
+fi
+if [ -z "\$DOOMWADDIR" ] && [ -n "\$APPIMAGE" ]; then
+    export DOOMWADDIR="\$(dirname "\$APPIMAGE")"
 fi
 HOOK
 

@@ -742,6 +742,14 @@ void IdentifyVersion (void)
       return;
     }
 
+    // No IWAD found. Tell the user exactly what to do — the packaged builds
+    // (Windows zip / Linux AppImage) have no room for a long readme, and the
+    // game data is not redistributable, so this message is where most players
+    // learn where the WAD goes (DOOM-0040).
+    printf("No DOOM game data (IWAD) found in: %s\n", doomwaddir);
+    printf("Put a .wad file (doom1.wad, doom.wad or doom2.wad) in that folder\n");
+    printf("- next to the program - or run with: -iwad <path-to-your.wad>\n");
+    printf("The free shareware doom1.wad works.\n");
     printf("Game mode indeterminate.\n");
     gamemode = indetermined;
 

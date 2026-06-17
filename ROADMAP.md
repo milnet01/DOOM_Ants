@@ -212,6 +212,18 @@ with friends.
   Kind: feature.
   Source: user-request-2026-06-17.
 
+- ✅ [DOOM-0039] **Launch in fullscreen by default, with -windowed to opt out.**
+  i_video.c: both the Classic and Vulkan window-creation paths now default to SDL_WINDOW_FULLSCREEN_DESKTOP via a shared I_WantFullscreen() helper; -windowed/-w opts out, -fullscreen/-f still accepted. Single helper so the two paths can't drift. Verified: Linux + Windows builds compile and link clean.
+  **Layman:** The game now opens fullscreen straight away; pass -windowed if you'd rather have a window.
+  Kind: ux.
+  Source: user-request-2026-06-17.
+
+- ✅ [DOOM-0040] **Print clear WAD-placement guidance when no IWAD is found.**
+  d_main.c IdentifyVersion: when no IWAD is located, print the searched folder and tell the user to drop doom1.wad/doom.wad/doom2.wad there or pass -iwad. Helps the single-file Linux AppImage (no companion readme). Paired packaging change: the AppImage apprun hook sets DOOMWADDIR to the .AppImage's own directory, so a WAD dropped beside it is found regardless of launch CWD. Verified: AppImage run from a different CWD reports the AppImage's own folder as the search dir.
+  **Layman:** If no game data file is found, the game now tells you exactly where to put a WAD instead of a cryptic error.
+  Kind: enhancement.
+  Source: user-request-2026-06-17.
+
 ## Phase 2 — The Spin
 
 The creative overhaul: evolve the renderer toward true 3D with hardware
