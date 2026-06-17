@@ -615,6 +615,10 @@ void IdentifyVersion (void)
     snprintf(doom2fwad, sizeof(doom2fwad), "%s/doom2f.wad", doomwaddir);
 
     home = getenv("HOME");
+#ifdef _WIN32
+    if (!home)
+      home = getenv("USERPROFILE");	// Windows has no $HOME (DOOM-0006)
+#endif
     if (!home)
       I_Error("Please set $HOME to your home directory");
     sprintf(basedefault, "%s/.doomrc", home);
@@ -911,7 +915,11 @@ void D_DoomMain (void)
     if (M_CheckParm("-cdrom"))
     {
 	printf("%s", D_CDROM);
+#ifdef _WIN32
+	mkdir("c:\\doomdata");		// Windows mkdir takes no mode arg
+#else
 	mkdir("c:\\doomdata",0);
+#endif
 	strcpy (basedefault,"c:/doomdata/default.cfg");
     }	
     

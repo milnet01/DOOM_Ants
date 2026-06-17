@@ -25,6 +25,11 @@ CXXFLAGS=-g -Wall -std=c++17 -DNORMALUNIX -DLINUX $(SDL_CFLAGS)
 LDFLAGS=
 LIBS=$(SDL_LIBS) $(VULKAN_LIBS) -lm
 
+# Output binary name and any platform-extra link libs. The Windows cross-build
+# (target `windows`, DOOM-0006) overrides these via a recursive make.
+BIN=linuxxdoom
+EXTRALIBS=
+
 # subdirectory for objects
 O=linux
 
@@ -103,18 +108,39 @@ OBJS=				\
 		$(O)/info.o				\
 		$(O)/sounds.o
 
-all:	 $(O)/linuxxdoom
+all:	 $(O)/$(BIN)
 
 clean:
 	rm -f *.o *~ *.flc
-	rm -f linux/*
+	rm -f linux/* mingw/*
 	rm -f $(SHADER_DIR)/*.spv $(SHADER_DIR)/*.spv.h
 
 # Link with the C++ driver (g++) so libstdc++ is pulled in for the Vulkan
 # back-end. Linking the C objects this way is harmless.
-$(O)/linuxxdoom:	$(OBJS) $(O)/i_main.o
+$(O)/$(BIN):	$(OBJS) $(O)/i_main.o
 	$(CXX) $(LDFLAGS) $(OBJS) $(O)/i_main.o \
-	-o $(O)/linuxxdoom $(LIBS)
+	-o $(O)/$(BIN) $(LIBS) $(EXTRALIBS)
+
+# ---- Windows cross-build (DOOM-0006) ----
+# mingw-w64 cross-compiler (zypper: mingw64-cross-gcc{,-c++}) plus upstream
+# SDL2 / SDL2_mixer / Vulkan dev libs staged under ../mingw-deps/prefix (see
+# mingw-deps/README.md). Re-enters make with the cross toolchain and Windows
+# flags so the one OBJS list and pattern rules are reused unchanged. Winsock
+# (-lws2_32) replaces BSD sockets; vulkan-1.dll ships with the user's GPU
+# driver, so it is linked (-lvulkan-1) but not bundled. Static libgcc/libstdc++
+# keep the GCC runtime out of the distributable.
+WIN_PREFIX=../mingw-deps/prefix
+windows:	$(SHADER_HDRS)
+	mkdir -p mingw
+	$(MAKE) O=mingw BIN=doom_ants.exe \
+	  CC=x86_64-w64-mingw32-gcc \
+	  CXX=x86_64-w64-mingw32-g++ \
+	  SDL_CFLAGS="-I$(WIN_PREFIX)/include -I$(WIN_PREFIX)/include/SDL2" \
+	  SDL_LIBS="-L$(WIN_PREFIX)/lib -lSDL2_mixer -lSDL2" \
+	  VULKAN_LIBS="-L$(WIN_PREFIX)/lib -lvulkan-1" \
+	  LDFLAGS="-static-libgcc -static-libstdc++" \
+	  EXTRALIBS="-lws2_32" \
+	  mingw/doom_ants.exe
 
 $(O)/%.o:	%.c
 	$(CC) $(CFLAGS) -c $< -o $@

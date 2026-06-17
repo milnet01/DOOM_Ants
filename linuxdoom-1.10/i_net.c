@@ -27,13 +27,35 @@ rcsid[] = "$Id: m_bbox.c,v 1.1 1997/02/03 22:45:10 b1 Exp $";
 #include <string.h>
 #include <stdio.h>
 
+#include <errno.h>
+
+#ifdef _WIN32
+// Windows has no BSD sockets; it uses Winsock2 (DOOM-0006). The handful of
+// POSIX socket idioms this file needs are mapped onto their Winsock spellings
+// below. Link against -lws2_32 and call WSAStartup before the first socket use.
+// winsock2.h transitively typedefs `boolean` (unsigned char) via the Windows
+// RPC headers, clashing with DOOM's enum `boolean`; this file never uses the
+// Windows one, so rename it out of the way across just these includes.
+#define boolean win_rpc_boolean
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#undef boolean
+#define socket_errno        WSAGetLastError()
+#ifndef EWOULDBLOCK
+#define EWOULDBLOCK         WSAEWOULDBLOCK
+#endif
+#ifndef IPPORT_USERRESERVED         // BSD netinet/in.h has this; Winsock doesn't
+#define IPPORT_USERRESERVED 5000
+#endif
+#else
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <errno.h>
 #include <unistd.h>
 #include <netdb.h>
 #include <sys/ioctl.h>
+#define socket_errno        errno
+#endif
 
 #include "i_system.h"
 #include "d_event.h"
@@ -52,6 +74,9 @@ rcsid[] = "$Id: m_bbox.c,v 1.1 1997/02/03 22:45:10 b1 Exp $";
 
 
 // For some odd reason...
+// (Winsock provides its own ntohl/ntohs/htonl/htons functions, so only define
+//  these hand-rolled versions off-Windows — DOOM-0006.)
+#ifndef _WIN32
 #define ntohl(x) \
         ((unsigned long int)((((unsigned long int)(x) & 0x000000ffU) << 24) | \
                              (((unsigned long int)(x) & 0x0000ff00U) <<  8) | \
@@ -61,9 +86,10 @@ rcsid[] = "$Id: m_bbox.c,v 1.1 1997/02/03 22:45:10 b1 Exp $";
 #define ntohs(x) \
         ((unsigned short int)((((unsigned short int)(x) & 0x00ff) << 8) | \
                               (((unsigned short int)(x) & 0xff00) >> 8))) \
-	  
+
 #define htonl(x) ntohl(x)
 #define htons(x) ntohs(x)
+#endif
 
 void	NetSend (void);
 boolean NetListen (void);
@@ -171,7 +197,7 @@ void PacketGet (void)
 		  , (struct sockaddr *)&fromaddress, &fromlen );
     if (c == -1 )
     {
-	if (errno != EWOULDBLOCK)
+	if (socket_errno != EWOULDBLOCK)
 	    I_Error ("GetPacket: %s",strerror(errno));
 	doomcom->remotenode = -1;		// no packet
 	return;
@@ -296,6 +322,15 @@ void I_InitNetwork (void)
     netget = PacketGet;
     netgame = true;
 
+#ifdef _WIN32
+    {
+	// Winsock must be started before any socket / gethostbyname call.
+	WSADATA wsadata;
+	if (WSAStartup (MAKEWORD(2,2), &wsadata) != 0)
+	    I_Error ("I_InitNetwork: WSAStartup failed");
+    }
+#endif
+
     // parse player number and host list
     doomcom->consoleplayer = myargv[i+1][0]-'1';
 
@@ -328,7 +363,11 @@ void I_InitNetwork (void)
     // build message to receive
     insocket = UDPsocket ();
     BindToLocalPort (insocket,htons(DOOMPORT));
+#ifdef _WIN32
+    ioctlsocket (insocket, FIONBIO, (u_long *)&trueval);
+#else
     ioctl (insocket, FIONBIO, &trueval);
+#endif
 
     sendsocket = UDPsocket ();
 }

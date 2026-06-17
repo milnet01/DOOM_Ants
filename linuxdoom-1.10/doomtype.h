@@ -38,7 +38,9 @@ typedef unsigned char byte;
 
 
 // Predefined with some OS.
-#ifdef LINUX
+// glibc supplies MAXINT/MININT/... via <values.h>; mingw (Windows) has no
+// such header, so fall through to the explicit definitions below (DOOM-0006).
+#if defined(LINUX) && !defined(_WIN32)
 #include <values.h>
 #else
 #define MAXCHAR		((char)0x7f)

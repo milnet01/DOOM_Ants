@@ -9,8 +9,14 @@ linuxxdoom
 doom
 build/
 cmake-build-*/
-# DOOM Makefile object dir (O=linux)
+# DOOM Makefile object dirs (O=linux native, O=mingw Windows cross-build)
 /linuxdoom-1.10/linux/
+/linuxdoom-1.10/mingw/
+
+# Windows cross-build dependencies (DOOM-0006): downloaded upstream SDL2 /
+# SDL2_mixer / Vulkan mingw dev libs. Regenerable — see mingw-deps/README.md.
+/mingw-deps/*
+!/mingw-deps/README.md
 
 # Generated shader artifacts (DOOM-0008): GLSL -> SPIR-V -> embedded C header
 /linuxdoom-1.10/shaders/*.spv

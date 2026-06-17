@@ -34,7 +34,13 @@ rcsid[] = "$Id: w_wad.c,v 1.5 1997/02/03 16:47:57 b1 Exp $";
 #include <malloc.h>
 #include <fcntl.h>
 #include <sys/stat.h>
-#define O_BINARY		0
+#ifndef O_BINARY		// mingw already defines O_BINARY (0x8000); only the
+#define O_BINARY		0	// Unix builds need the no-op fallback (DOOM-0006)
+#endif
+#endif
+
+#ifdef _WIN32
+#include <io.h>		// mingw's filelength(); strupr() is in <string.h>
 #endif
 
 #include "doomtype.h"
@@ -65,20 +71,24 @@ void**			lumpcache;
 
 #define strcmpi	strcasecmp
 
+// mingw already provides strupr() and filelength() (the latter via <io.h>),
+// so define our own only off-Windows to avoid the clash (DOOM-0006).
+#ifndef _WIN32
 void strupr (char* s)
 {
     while (*s) { *s = toupper(*s); s++; }
 }
 
-int filelength (int handle) 
-{ 
+int filelength (int handle)
+{
     struct stat	fileinfo;
-    
+
     if (fstat (handle,&fileinfo) == -1)
 	I_Error ("Error fstating");
 
     return fileinfo.st_size;
 }
+#endif
 
 
 void

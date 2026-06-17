@@ -31,15 +31,26 @@ rcsid[] = "$Id: i_main.c,v 1.4 1997/02/03 22:45:10 b1 Exp $";
 #include "m_argv.h"
 #include "d_main.h"
 
+#ifdef _WIN32
+// Keep our own int main() as the entry point on Windows rather than letting
+// SDL redirect it to WinMain (DOOM-0006). SDL_MAIN_HANDLED suppresses the
+// redirect; SDL_SetMainReady() below satisfies SDL's main-was-entered check.
+#define SDL_MAIN_HANDLED
+#include <SDL.h>
+#endif
+
 int
 main
 ( int		argc,
-  char**	argv ) 
-{ 
-    myargc = argc; 
-    myargv = argv; 
- 
-    D_DoomMain (); 
+  char**	argv )
+{
+#ifdef _WIN32
+    SDL_SetMainReady ();
+#endif
+    myargc = argc;
+    myargv = argv;
+
+    D_DoomMain ();
 
     return 0;
 } 
