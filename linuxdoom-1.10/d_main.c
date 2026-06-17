@@ -906,11 +906,11 @@ void D_DoomMain (void)
     printf ("%s\n",title);
 
     if (devparm)
-	printf(D_DEVSTR);
+	printf("%s", D_DEVSTR);
 
     if (M_CheckParm("-cdrom"))
     {
-	printf(D_CDROM);
+	printf("%s", D_CDROM);
 	mkdir("c:\\doomdata",0);
 	strcpy (basedefault,"c:/doomdata/default.cfg");
     }	
