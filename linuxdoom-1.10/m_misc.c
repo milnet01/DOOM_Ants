@@ -392,6 +392,8 @@ void M_LoadDefaults (void)
 		    isstring = true;
 		    len = strlen(strparm);
 		    newstring = (char *) malloc(len);
+		    if (!newstring)
+			I_Error ("M_LoadDefaults: out of memory for string default");
 		    strparm[len-1] = 0;
 		    strcpy(newstring, strparm+1);
 		}

@@ -175,6 +175,8 @@ void openwad(char* wadname)
     tablelength = numlumps * sizeof(lumpinfo_t);
     tablefilelength = numlumps * sizeof(filelump_t);
     lumpinfo = (lumpinfo_t *) malloc(tablelength);
+    if (!lumpinfo)
+	derror("out of memory allocating lumpinfo table");
     filetable = (filelump_t *) ((char*)lumpinfo + tablelength - tablefilelength);
 
     // get the lumpinfo table

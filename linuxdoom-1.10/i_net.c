@@ -249,6 +249,8 @@ void I_InitNetwork (void)
     struct hostent*	hostentry;	// host information entry
 	
     doomcom = malloc (sizeof (*doomcom) );
+    if (!doomcom)
+	I_Error ("I_InitNetwork: failed to allocate doomcom");
     memset (doomcom, 0, sizeof(*doomcom) );
     
     // set up for network

@@ -75,8 +75,14 @@ int  I_GetHeapSize (void)
 
 byte* I_ZoneBase (int*	size)
 {
+    byte*	base;
+
     *size = mb_used*1024*1024;
-    return (byte *) malloc (*size);
+    base = (byte *) malloc (*size);
+    if (!base)
+	I_Error ("I_ZoneBase: failed to allocate %d bytes for the zone heap",
+		 *size);
+    return base;
 }
 
 
@@ -149,6 +155,8 @@ byte*	I_AllocLow(int length)
     byte*	mem;
         
     mem = (byte *)malloc (length);
+    if (!mem)
+	I_Error ("I_AllocLow: failed to allocate %d bytes", length);
     memset (mem,0,length);
     return mem;
 }

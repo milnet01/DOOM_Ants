@@ -558,6 +558,8 @@ void D_AddFile (char *file)
 	;
 
     newfile = malloc (strlen(file)+1);
+    if (!newfile)
+	I_Error ("D_AddFile: out of memory adding %s", file);
     strcpy (newfile, file);
 	
     wadfiles[numwadfiles] = newfile;
@@ -777,6 +779,8 @@ void FindResponseFile (void)
 	    size = ftell(handle);
 	    fseek (handle,0,SEEK_SET);
 	    file = malloc (size);
+	    if (!file)
+		I_Error ("FindResponseFile: out of memory reading response file");
 	    fread (file,size,1,handle);
 	    fclose (handle);
 			
@@ -786,6 +790,8 @@ void FindResponseFile (void)
 			
 	    firstargv = myargv[0];
 	    myargv = malloc(sizeof(char *)*MAXARGVS);
+	    if (!myargv)
+		I_Error ("FindResponseFile: out of memory rebuilding argv");
 	    memset(myargv,0,sizeof(char *)*MAXARGVS);
 	    myargv[0] = firstargv;
 			
@@ -901,7 +907,7 @@ void D_DoomMain (void)
 
     if (devparm)
 	printf(D_DEVSTR);
-    
+
     if (M_CheckParm("-cdrom"))
     {
 	printf(D_CDROM);
