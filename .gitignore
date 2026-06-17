@@ -26,3 +26,7 @@ cmake-build-*/
 # Game data — never commit WADs (licensing)
 *.wad
 *.WAD
+
+# ants-audit tooling artifacts
+.audit_cache/
+audit_rule_quality.json
