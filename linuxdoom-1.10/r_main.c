@@ -686,8 +686,13 @@ void R_ExecuteSetViewSize (void)
     }
     else
     {
-	scaledviewwidth = setblocks*32;
-	viewheight = (setblocks*168/10)&~7;
+	// The *32 (=ORIGWIDTH/10) and *168/10 block-fractions are in the 320x200
+	// logical space; scale them to the physical buffer so a non-fullscreen
+	// view still fills its share of the hi-res screen (DOOM-0027). Without
+	// the *HIRES, blocks==10 gave a 320x168 view marooned in the 640x400
+	// buffer (a small bordered square) instead of the intended 640x336.
+	scaledviewwidth = setblocks*32*HIRES;
+	viewheight = (setblocks*168/10*HIRES)&~7;
     }
     
     detailshift = setdetail;
@@ -718,9 +723,13 @@ void R_ExecuteSetViewSize (void)
 	
     R_InitTextureMapping ();
     
-    // psprite scales
-    pspritescale = FRACUNIT*viewwidth/SCREENWIDTH;
-    pspriteiscale = FRACUNIT*SCREENWIDTH/viewwidth;
+    // psprite scales. The weapon sprite's coordinates (psp->sx, BASEYCENTER)
+    // are authored in the 320x200 logical space, so the scale maps logical->view
+    // and must divide by ORIGWIDTH, not the physical SCREENWIDTH (DOOM-0027).
+    // Dividing by SCREENWIDTH (640) halved the scale to FRACUNIT, which shrank
+    // the gun and left its anchor mid-screen instead of at the view bottom.
+    pspritescale = FRACUNIT*viewwidth/ORIGWIDTH;
+    pspriteiscale = FRACUNIT*ORIGWIDTH/viewwidth;
     
     // thing clipping
     for (i=0 ; i<viewwidth ; i++)

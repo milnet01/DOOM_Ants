@@ -285,3 +285,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: fix.
   Source: audit-2026-06-17 cppcheck uninitMemberVarNoCtor.
   Resolved (2026-06-17): gave VulkanState::viewProj a default identity matrix ({1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1}) at r_vulkan.cpp:210 so a frame drawn before the first RB_Vulkan_RenderView camera update is well-defined. Verified: g++ -std=c++17 builds r_vulkan.o and links linuxxdoom cleanly; cppcheck uninitMemberVarNoCtor no longer reported.
+
+- ✅ [DOOM-0041] **Fix DOOM-0027 hi-res scaling regressions: small view window and mispositioned weapon sprite.**
+  First runtime play-test of DOOM-0027 (its roadmap note flagged the play-test as pending) surfaced two regressions, both from 1997-era 320x200 constants left unscaled when the view buffer became 640x400. (1) R_ExecuteSetViewSize computed scaledviewwidth=setblocks*32 and viewheight=setblocks*168/10 in logical units, so the default screen size produced a 320x168 view marooned in the 640x400 buffer (a small bordered square) -- fixed by scaling both by HIRES. (2) pspritescale divided by the physical SCREENWIDTH(640) while the weapon's sx/BASEYCENTER are authored in 320x200 logical space, halving the scale to FRACUNIT so the gun shrank and its anchor sat mid-view -- fixed by dividing by ORIGWIDTH(320). Both in r_main.c. Verified by before/after in-game screenshots on doom.wad E1M1 (Classic renderer, fullscreen): the view now fills the screen and the pistol sits correctly at the view bottom. Not from DOOM-0038/0008 (those don't touch the Classic path).
+  **Layman:** In the new sharper (640x400) mode the 3D view was a small square in the middle of the screen and the gun drifted up to the centre; both now sit and scale correctly.
+  Kind: fix.
+  Source: user-report-2026-06-20.

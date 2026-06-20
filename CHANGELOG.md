@@ -35,6 +35,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Fix DOOM-0027 hi-res scaling regressions: small view window and mispositioned weapon sprite.** (DOOM-0041)
+  In the new sharper (640x400) mode the 3D view was a small square in the middle of the screen and the gun drifted up to the centre; both now sit and scale correctly.
+
 - **Initialise VulkanState::viewProj in the 3D renderer back-end.** (DOOM-0037)
   Make sure a camera matrix in the new 3D renderer always starts with a known value.
 
