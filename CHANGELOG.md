@@ -8,6 +8,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Add game controller (gamepad) support.** (DOOM-0038)
+  Plug in a controller and play: left stick moves and strafes, right stick turns, the triggers and face buttons fire, open doors and run, and Start opens the menu. Reuses DOOM's original joystick handling so the menus and controls just work; controllers can be plugged in and out while playing.
+
 - **Add a Windows build target.** (DOOM-0006)
   Produce a version that runs on Windows so friends can play it.
 

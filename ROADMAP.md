@@ -201,7 +201,7 @@ with friends.
   Source: audit-2026-06-17 build-check.
   Resolved (2026-06-17): added #include <string.h> to sndserv/soundsrv.c (uses strlen at :325-337 and strcmp at :348). soundsrv.c now compiles clean under modern gcc with no implicit-declaration error.
 
-- 📋 [DOOM-0038] **Add game controller (gamepad) support.**
+- ✅ [DOOM-0038] **Add game controller (gamepad) support.**
   Wire SDL2's GameController API (SDL_GameController* / SDL_CONTROLLERAXISMOTION
   + SDL_CONTROLLERBUTTONDOWN events, already available since the DOOM-0004 SDL2
   port) into the DOOM input path so a gamepad can drive movement, turning, fire,
@@ -211,6 +211,7 @@ with friends.
   **Layman:** Let people play with a game controller, not just keyboard and mouse.
   Kind: feature.
   Source: user-request-2026-06-17.
+  Resolved (2026-06-20): Wired SDL2's GameController API into i_video.c. The classic ev_joystick path is reused for the four action buttons + turn + forward + menu navigation (including the menu's auto-repeat throttle), so the engine's own G_Responder/M_Responder dual game/menu routing is reused unchanged. The two things the two-axis ev_joystick contract can't carry -- an independent strafe axis and a menu-open button -- are synthesised as the engine's existing strafe keys (key_straferight/left) and KEY_ESCAPE, so no engine-file changes were needed; the whole feature lives in i_video.c. Default layout: left stick move/strafe, right stick turn, d-pad move + menu-nav, A/RT fire, B strafe-mod (menu back), X/Y use, LB/RB/LT run, Start/Back menu. Hot-plug via SDL_CONTROLLERDEVICEADDED/REMOVED. Builds clean (gcc -Wall, no warnings) and runs (E1M1 startup smoke-tested, no regression). Runtime gamepad-input test pending a physical controller + interactive session; in-menu rebinding and analog sensitivity deferred to future work.
 
 - ✅ [DOOM-0039] **Launch in fullscreen by default, with -windowed to opt out.**
   i_video.c: both the Classic and Vulkan window-creation paths now default to SDL_WINDOW_FULLSCREEN_DESKTOP via a shared I_WantFullscreen() helper; -windowed/-w opts out, -fullscreen/-f still accepted. Single helper so the two paths can't drift. Verified: Linux + Windows builds compile and link clean.
@@ -246,6 +247,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   work to the 60 FPS floor). Shading curves authored/validated in the Vestige
   Formula Workbench. ADR: docs/decisions/0001-renderer-language-and-api.md.
   Progress (2026-06-16): Stage 1 raster primary visibility up. The level mesh is now GPU-uploaded (vertex buffer) and drawn in a depth-buffered render pass from the player's camera (view-projection from viewx/viewy/viewz/viewangle, 90deg horizontal FOV), with a bring-up shader (sector light + Lambert; neutral grey until materials). Added the GLSL->SPIR-V->embedded-header build rule (glslc + xxd) to the Makefile, an rb_view_t POD camera across the seam, and a graphics pipeline (cull-none, depth-test). Smoke-tested on doom.wad E1M1 via -warp: RT3D tier on the RX 6600, 1201 tris/3603 verts uploaded, 3D geometry renders (screenshot-confirmed), no Vulkan/validation errors over a multi-second run. Next: materials/textures (palette albedo), then sprites + UI composite, then the path tracer (DOOM-0009). NB: validation layer not installed on the dev box this run, so INV-8 unexercised here.
+  Progress (2026-06-20): Materials slice -- per-surface palette albedo. r_mesh.c now computes each surface's average DOOM colour (flats: raw 64x64 palette indices; walls: an R_GetColumn column grid) through PLAYPAL and carries it as a new per-vertex rb_vertex_t.{r,g,b} attribute. The Vulkan pipeline binds it at location 3 (attrs[4]) and the bring-up fragment shader uses it in place of the neutral-grey stand-in; the fixed-direction Lambert term is still placeholder (INV-7 exemption noted in mesh.frag). Verified on doom.wad E1M1, RT3D tier on the RX 6600: 1701 triangles built with albedo, no crash / no Vulkan error over a multi-second run, and a screenshot confirms real per-surface colours (tan STARTAN walls, grey ceilings, blue floor) instead of uniform grey. Next: per-texel texture sampling (image atlas + descriptor sets), then sprites + UI composite, then the path tracer (DOOM-0009).
 - 💭 [DOOM-0009] **Add hardware path tracing (Monte-Carlo GI + ray-traced shadows).**
   **Layman:** Use the graphics card to trace real light rays for accurate lighting, bounced light, and shadows.
   Kind: feature.
