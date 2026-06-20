@@ -735,24 +735,26 @@ void CreatePipeline()
     stages[1].module = frag;
     stages[1].pName = "main";
 
-    // Vertex layout: only the attributes this pass reads (position, normal,
-    // sector light). The full rb_vertex_t stride is kept so UV/material fields
-    // stay available to later increments without re-uploading.
+    // Vertex layout: the attributes this pass reads (position, normal, sector
+    // light, surface albedo). The full rb_vertex_t stride is kept so the UV /
+    // texnum fields stay available to the per-texel texturing increment without
+    // re-uploading.
     VkVertexInputBindingDescription bind = {};
     bind.binding = 0;
     bind.stride = sizeof(rb_vertex_t);
     bind.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
-    VkVertexInputAttributeDescription attrs[3] = {};
+    VkVertexInputAttributeDescription attrs[4] = {};
     attrs[0] = { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, (uint32_t)offsetof(rb_vertex_t, x) };
     attrs[1] = { 1, 0, VK_FORMAT_R32G32B32_SFLOAT, (uint32_t)offsetof(rb_vertex_t, nx) };
     attrs[2] = { 2, 0, VK_FORMAT_R32_SFLOAT,       (uint32_t)offsetof(rb_vertex_t, light) };
+    attrs[3] = { 3, 0, VK_FORMAT_R32G32B32_SFLOAT, (uint32_t)offsetof(rb_vertex_t, r) };
 
     VkPipelineVertexInputStateCreateInfo vin = {};
     vin.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     vin.vertexBindingDescriptionCount = 1;
     vin.pVertexBindingDescriptions = &bind;
-    vin.vertexAttributeDescriptionCount = 3;
+    vin.vertexAttributeDescriptionCount = 4;
     vin.pVertexAttributeDescriptions = attrs;
 
     VkPipelineInputAssemblyStateCreateInfo ia = {};

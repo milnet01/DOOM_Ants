@@ -46,6 +46,9 @@ typedef struct
     int   texnum;       // wall texture index, or flat index when RB_MESH_FLAT
     int   flags;        // RB_MESH_* bits
     float light;        // owning sector lightlevel, 0..1
+    float r, g, b;      // surface average albedo, 0..1 (DOOM palette colour).
+                        // A per-surface flat-shaded stand-in until the path
+                        // tracer samples the texture per-texel (DOOM-0009).
 } rb_vertex_t;
 
 // rb_vertex_t.flags bits.
