@@ -48,6 +48,37 @@ static Uint32		palette[256];
 static int		scale = 2;
 
 
+// --- Gamepad (DOOM-0038) ----------------------------------------------------
+//
+// Wires SDL2's GameController API into DOOM's input. The classic ev_joystick
+// path (G_Responder / M_Responder) already routes a four-button, two-axis pad
+// through both gameplay and the menus -- including the menu's auto-repeat
+// throttle -- so forward/back, turn, the four action buttons and menu
+// navigation all reuse it unchanged. The two things the two-axis ev_joystick
+// contract can't carry, an independent strafe axis and a menu-open button, are
+// synthesised as the engine's existing keyboard events (the configured strafe
+// keys and KEY_ESCAPE), so no engine code changes.
+//
+// Default layout (SDL / Xbox names; in-menu rebinding is future work):
+//   Left stick      move forward/back (Y) and strafe (X)
+//   Right stick X   turn
+//   D-pad           move/turn, and menu navigation
+//   A / Right Trig  fire            (menu: select)
+//   B               strafe modifier (menu: back)
+//   X / Y           use / open door
+//   LB / RB / L Trig run (speed)
+//   Start / Back    menu (Escape)
+static SDL_GameController*	gamepad;
+
+// The strafe keycodes live in g_game.c; gamepad strafe is posted through them
+// so it honours any rebind and reuses the existing movement path.
+extern int	key_straferight;
+extern int	key_strafeleft;
+
+#define GP_AXIS_DEADZONE	8000	// ~25% of the 32767 stick range
+#define GP_TRIGGER_THRESH	16000	// half-pull on a 0..32767 trigger
+
+
 //
 // Translates an SDL key event into a DOOM key code.
 //
@@ -118,6 +149,116 @@ static int mousebuttons(Uint32 state)
 }
 
 
+//
+// Gamepad open/close. Only the first game-controller is tracked.
+//
+static void I_OpenGamepad(int device_index)
+{
+    if (gamepad)
+	return;
+    if (SDL_IsGameController(device_index))
+	gamepad = SDL_GameControllerOpen(device_index);
+}
+
+static void I_CloseGamepad(void)
+{
+    if (gamepad)
+    {
+	SDL_GameControllerClose(gamepad);
+	gamepad = NULL;
+    }
+}
+
+
+//
+// Posts a synthetic key event only when the held state changes, so a held
+// axis/button reads as one keydown..keyup pair (DOOM keys are edge-triggered).
+//
+static void I_PostKeyEdge(boolean down, boolean* held, int doomkey)
+{
+    event_t event;
+
+    if (down == *held)
+	return;
+    *held = down;
+    event.type = down ? ev_keydown : ev_keyup;
+    event.data1 = doomkey;
+    D_PostEvent(&event);
+}
+
+
+//
+// Reads the open gamepad once per tic and feeds DOOM's input: an ev_joystick
+// for buttons + turn + forward (reused for menu navigation), plus synthetic
+// strafe / Escape key edges for what the two-axis contract can't carry.
+//
+static void I_PollGamepad(void)
+{
+    event_t	event;
+    int		lx, ly, rx, lt, rt;
+    int		buttons = 0;
+    static boolean strafe_r_held, strafe_l_held, esc_held;
+
+    if (!gamepad)
+	return;
+
+    lx = SDL_GameControllerGetAxis(gamepad, SDL_CONTROLLER_AXIS_LEFTX);
+    ly = SDL_GameControllerGetAxis(gamepad, SDL_CONTROLLER_AXIS_LEFTY);
+    rx = SDL_GameControllerGetAxis(gamepad, SDL_CONTROLLER_AXIS_RIGHTX);
+    lt = SDL_GameControllerGetAxis(gamepad, SDL_CONTROLLER_AXIS_TRIGGERLEFT);
+    rt = SDL_GameControllerGetAxis(gamepad, SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
+
+    // data2 = turn (right stick X or d-pad L/R),
+    // data3 = forward/back (left stick Y or d-pad U/D); SDL's Y is up-negative,
+    // matching DOOM's forward == -1.
+    event.type = ev_joystick;
+    event.data2 = 0;
+    event.data3 = 0;
+
+    if (rx > GP_AXIS_DEADZONE
+	|| SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_DPAD_RIGHT))
+	event.data2 = 1;
+    else if (rx < -GP_AXIS_DEADZONE
+	|| SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_DPAD_LEFT))
+	event.data2 = -1;
+
+    if (ly < -GP_AXIS_DEADZONE
+	|| SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_DPAD_UP))
+	event.data3 = -1;
+    else if (ly > GP_AXIS_DEADZONE
+	|| SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_DPAD_DOWN))
+	event.data3 = 1;
+
+    // data1 button mask, matching the joyb* defaults: bit0 fire (menu select),
+    // bit1 strafe modifier (menu back), bit2 speed/run, bit3 use.
+    if (SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_A)
+	|| rt > GP_TRIGGER_THRESH)
+	buttons |= 1;
+    if (SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_B))
+	buttons |= 2;
+    if (SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_LEFTSHOULDER)
+	|| SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)
+	|| lt > GP_TRIGGER_THRESH)
+	buttons |= 4;
+    if (SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_X)
+	|| SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_Y))
+	buttons |= 8;
+    event.data1 = buttons;
+
+    D_PostEvent(&event);
+
+    // Left stick X has no ev_joystick channel; drive the engine's strafe keys.
+    I_PostKeyEdge(lx >  GP_AXIS_DEADZONE, &strafe_r_held, key_straferight);
+    I_PostKeyEdge(lx < -GP_AXIS_DEADZONE, &strafe_l_held, key_strafeleft);
+
+    // Start / Back toggle the menu through the engine's Escape handling.
+    I_PostKeyEdge(
+	SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_START)
+	|| SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_BACK),
+	&esc_held, KEY_ESCAPE);
+}
+
+
 static void I_GetEvent(SDL_Event* sdlevent)
 {
     event_t event;
@@ -157,6 +298,18 @@ static void I_GetEvent(SDL_Event* sdlevent)
 	I_Quit();
 	break;
 
+      case SDL_CONTROLLERDEVICEADDED:
+	I_OpenGamepad(sdlevent->cdevice.which);
+	break;
+
+      case SDL_CONTROLLERDEVICEREMOVED:
+	// cdevice.which is an instance id here; close only if it is ours.
+	if (gamepad
+	    && sdlevent->cdevice.which
+	       == SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(gamepad)))
+	    I_CloseGamepad();
+	break;
+
       default:
 	break;
     }
@@ -184,6 +337,8 @@ void I_StartTic (void)
 
     while (SDL_PollEvent(&sdlevent))
 	I_GetEvent(&sdlevent);
+
+    I_PollGamepad();
 }
 
 
@@ -281,6 +436,8 @@ void I_ShutdownGraphics(void)
     texture = NULL;
     renderer = NULL;
     window = NULL;
+    I_CloseGamepad();
+    SDL_QuitSubSystem(SDL_INIT_GAMECONTROLLER);
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
 }
 
@@ -404,6 +561,21 @@ void I_InitGraphics(void)
     // Trap and hide the cursor so relative motion drives turn/look,
     //  the way the original -grabmouse did.
     SDL_SetRelativeMouseMode(SDL_TRUE);
+
+    // Gamepad support (DOOM-0038): optional. A box with no controller (or no
+    // GameController support) just runs keyboard/mouse as before. SDL queues a
+    // CONTROLLERDEVICEADDED for each already-connected pad, but open any here
+    // too so the first frame already has input.
+    if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) == 0)
+    {
+	int i;
+	for (i = 0 ; i < SDL_NumJoysticks() ; i++)
+	{
+	    I_OpenGamepad(i);
+	    if (gamepad)
+		break;
+	}
+    }
 
     // screens[0] is allocated by V_Init; we only read it here.
 }
