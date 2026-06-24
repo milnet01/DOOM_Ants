@@ -310,6 +310,27 @@ parked ideas (💭 considered) until we commit to and design each one.
   mid-level via a temporary probe; the software view renders with the full
   HUD after the handoff, clean build, no Vulkan validation errors. Next:
   polish the 3D look (DOOM-0008 raster bring-up follow-ups).
+  Progress (2026-06-24): 3D-look polish pass (several commits). (1) Distance
+  light falloff in the world shader -- camera pos rides the push constant,
+  the fragment dims far surfaces toward a floor so the view reads with
+  depth instead of flat sector light (weapon psprite excluded). (2)
+  Two-sided masked mid-walls (grates/fences) now render see-through:
+  R_RenderTextureToAtlas composites wall patches into the atlas like
+  R_GenerateComposite so masked gaps stay index 0, and the shader
+  alpha-tests FLAG_MASKED. (3) Floor/ceiling black gaps closed: emit_cap
+  now triangulates the convex hull of each subsector's seg endpoints
+  (Andrew monotone chain), spanning the invisible BSP-partition edges that
+  were showing the sky backdrop through the floor. (4) Sprites/weapon no
+  longer punch see-through holes on genuinely-black texels: opaque index-0
+  is remapped to the palette's darkest non-black index (index 0 stays the
+  transparent key). (5) Weapon overlay keeps DOOM's 4:3 proportions on
+  widescreen (x scaled by (4:3)/aspect about screen centre). Weapon
+  horizontal placement kept DOOM-authentic per user (sprite centred, aim
+  point dead-centre; pistol barrel sits a hair left by the original art).
+  All verified on DOOM II MAP01/MAP02 (RX 6600, RT3D), clean builds, no
+  Vulkan validation errors. Next: UI compositing -- draw the 2D overlay
+  (status bar, messages, menu) over the 3D frame; it is currently skipped,
+  so the HUD and the menu are invisible in 3D.
 - 💭 [DOOM-0009] **Add hardware path tracing (Monte-Carlo GI + ray-traced shadows).**
   **Layman:** Use the graphics card to trace real light rays for accurate lighting, bounced light, and shadows.
   Kind: feature.
