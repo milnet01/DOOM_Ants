@@ -526,3 +526,88 @@ int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts)
     }
     return n;
 }
+
+
+// Player weapon / muzzle-flash overlay. The psprites live in DOOM's 320x200 HUD
+// space; mirror R_DrawPSprite's placement (with pspritescale = 1, i.e. straight
+// into 320x200) and map that rect to Vulkan NDC over the whole frame. z=0 plants
+// the quad at the near plane so the depth test (LESS) always lets it sit on top
+// of the world. Screen-space, so no camera/view is needed.
+int RB_BuildPSprites(rb_vertex_t* out, int maxverts)
+{
+    player_t* player;
+    float     baselight;
+    int       i, n = 0;
+    int       fl = RB_MESH_SPRITE | RB_MESH_PSPRITE;
+
+    if (numspritelumps <= 0)
+        return 0;
+    ensure_sprite_heights();
+
+    player = &players[consoleplayer];
+    if (!player->mo)
+        return 0;
+    baselight = player->mo->subsector->sector->lightlevel / 255.0f;
+
+    for (i = 0; i < NUMPSPRITES; i++)
+    {
+        pspdef_t*      psp = &player->psprites[i];
+        spritedef_t*   sprdef;
+        spriteframe_t* sprframe;
+        int            lump;
+        boolean        flip;
+        float          wpx, hpx, loff, toff, light;
+        float          lx, rx, ty, by;          // rect in 320x200 HUD space
+        float          nx0, nx1, ny0, ny1;      // same rect in NDC
+        float          u0, u1, v0, v1;
+
+        if (!psp->state)
+            continue;
+        if ((unsigned)psp->state->sprite >= (unsigned)numsprites)
+            continue;
+        sprdef = &sprites[psp->state->sprite];
+        if ((psp->state->frame & FF_FRAMEMASK) >= sprdef->numframes)
+            continue;
+        sprframe = &sprdef->spriteframes[psp->state->frame & FF_FRAMEMASK];
+        lump = sprframe->lump[0];               // psprites are never rotated
+        flip = (boolean)sprframe->flip[0];
+
+        wpx  = spritewidth[lump]     / (float)FRACUNIT;
+        hpx  = (float)sprite_h[lump];
+        loff = spriteoffset[lump]    / (float)FRACUNIT;
+        toff = spritetopoffset[lump] / (float)FRACUNIT;
+
+        // psp->sx / psp->sy carry the weapon bob; offsets re-centre the patch.
+        lx = psp->sx / (float)FRACUNIT - loff;
+        ty = psp->sy / (float)FRACUNIT - toff;
+        rx = lx + wpx;
+        by = ty + hpx;
+
+        // 320 wide, 200 tall -> NDC [-1,1]; Vulkan y points down (y=0 is top).
+        nx0 = lx / 160.0f - 1.0f;
+        nx1 = rx / 160.0f - 1.0f;
+        ny0 = ty / 100.0f - 1.0f;
+        ny1 = by / 100.0f - 1.0f;
+
+        light = (psp->state->frame & FF_FULLBRIGHT) ? 1.0f : baselight;
+        if (light < 0.0f) light = 0.0f;
+        if (light > 1.0f) light = 1.0f;
+
+        u0 = 0.5f;  u1 = wpx - 0.5f;
+        v0 = 0.5f;  v1 = hpx - 0.5f;
+        if (flip) { float t = u0; u0 = u1; u1 = t; }
+
+        if (n + 6 > maxverts)
+            return n;
+
+        // Normal toward +z keeps the placeholder Lambert term constant for the
+        // weapon. left-top, right-top, right-bottom, then left-top, rb, left-bot.
+        out[n++] = mkv(nx0, ny0, 0.0f, 0.0f, 0.0f, 1.0f, u0, v0, lump, fl, light);
+        out[n++] = mkv(nx1, ny0, 0.0f, 0.0f, 0.0f, 1.0f, u1, v0, lump, fl, light);
+        out[n++] = mkv(nx1, ny1, 0.0f, 0.0f, 0.0f, 1.0f, u1, v1, lump, fl, light);
+        out[n++] = mkv(nx0, ny0, 0.0f, 0.0f, 0.0f, 1.0f, u0, v0, lump, fl, light);
+        out[n++] = mkv(nx1, ny1, 0.0f, 0.0f, 0.0f, 1.0f, u1, v1, lump, fl, light);
+        out[n++] = mkv(nx0, ny1, 0.0f, 0.0f, 0.0f, 1.0f, u0, v1, lump, fl, light);
+    }
+    return n;
+}

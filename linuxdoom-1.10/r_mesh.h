@@ -54,6 +54,9 @@ typedef struct
 #define RB_MESH_MASKED  0x2   // two-sided middle texture (alpha-tested)
 #define RB_MESH_SPRITE  0x4   // billboard sprite (texnum indexes sprite lumps;
                               // palette index 0 is transparent / alpha-tested)
+#define RB_MESH_PSPRITE 0x8   // player weapon overlay: position is already in
+                              // clip space (NDC), so the vertex shader skips the
+                              // view-projection. Carries RB_MESH_SPRITE too.
 
 typedef struct
 {
@@ -124,6 +127,13 @@ typedef struct
 // numwall + numflat + texnum); flags carry RB_MESH_SPRITE. Rebuilt every frame
 // because things move; must be called after a level is loaded.
 int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts);
+
+// Build the player's weapon/flash psprites as a screen-space overlay, writing
+// rb_vertex_t triangles into out[] (up to maxverts). Positions are emitted in
+// Vulkan NDC (the 320x200 HUD space mapped to the full frame) with z=0 so the
+// weapon draws on top of the world; flags carry RB_MESH_SPRITE|RB_MESH_PSPRITE.
+// Returns the vertex count (a multiple of 6). Rebuilt every frame.
+int RB_BuildPSprites(rb_vertex_t* out, int maxverts);
 
 #ifdef __cplusplus
 }

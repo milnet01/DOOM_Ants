@@ -27,9 +27,16 @@ layout(location = 2) out float vLight;
 layout(location = 3) flat out int vTexnum;
 layout(location = 4) flat out int vFlags;
 
+const int FLAG_PSPRITE = 0x8;   // matches RB_MESH_PSPRITE in r_mesh.h
+
 void main()
 {
-    gl_Position = pc.mvp * vec4(inPos, 1.0);
+    // The player-weapon overlay arrives already in clip space (NDC, z=0), so it
+    // skips the view-projection; everything else is a world-space mesh vertex.
+    if ((inFlags & FLAG_PSPRITE) != 0)
+        gl_Position = vec4(inPos, 1.0);
+    else
+        gl_Position = pc.mvp * vec4(inPos, 1.0);
     vNormal = inNormal;
     vUV     = inUV;
     vLight  = inLight;

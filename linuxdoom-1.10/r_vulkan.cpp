@@ -1355,8 +1355,13 @@ extern "C" void RB_Vulkan_Present(void)
     // draw (which read this buffer) has finished. Host-coherent, so no flush.
     g.spriteVertCount = 0;
     if (g.spriteMapped && g.haveCamera && g.atlasReady)
-        g.spriteVertCount = (uint32_t)RB_BuildSprites(
-            &g.lastView, (rb_vertex_t*)g.spriteMapped, (int)g.spriteVertCap);
+    {
+        rb_vertex_t* buf = (rb_vertex_t*)g.spriteMapped;
+        int          n   = RB_BuildSprites(&g.lastView, buf, (int)g.spriteVertCap);
+        // Weapon overlay shares the buffer/draw; appended last so it sits on top.
+        n += RB_BuildPSprites(buf + n, (int)g.spriteVertCap - n);
+        g.spriteVertCount = (uint32_t)n;
+    }
 
     VkCommandBufferBeginInfo bi = {};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
