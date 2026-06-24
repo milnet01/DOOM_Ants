@@ -22,6 +22,7 @@
 //-----------------------------------------------------------------------------
 
 #include <stdlib.h>
+#include <string.h>
 #include <math.h>
 
 #include "doomtype.h"
@@ -35,63 +36,13 @@
 #include "z_zone.h"     // PU_CACHE
 #include "r_mesh.h"
 
-// Texture width-1 mask table (power-of-two widths). Defined in r_data.c; no
-// public header declares it, but it is the cheapest way to bound a wall's
-// column sweep when averaging its albedo.
-extern int* texturewidthmask;
-
-//
-// Average albedo of a wall texture or flat, as straight palette RGB in 0..1.
-// Lets the bring-up shader tint each surface with its real DOOM colour ahead
-// of full per-texel texture sampling. Flats are a raw 64x64 block of palette
-// indices; walls are sampled column-by-column through R_GetColumn (which
-// returns render-ready contiguous column pixels). Strided so a level's worth
-// of surfaces costs well under a frame.
-//
-static void surface_albedo(int texnum, boolean isflat,
-                           float* outr, float* outg, float* outb)
-{
-    const byte* pal = W_CacheLumpName("PLAYPAL", PU_CACHE);
-    long sr = 0, sg = 0, sb = 0;
-    int  n = 0;
-
-    if (isflat)
-    {
-        const byte* flat = W_CacheLumpNum(firstflat + texnum, PU_CACHE);
-        int i;
-        for (i = 0; i < 64 * 64; i += 7)
-        {
-            const byte* c = pal + flat[i] * 3;
-            sr += c[0]; sg += c[1]; sb += c[2]; n++;
-        }
-    }
-    else
-    {
-        int w     = texturewidthmask[texnum] + 1;
-        int h     = textureheight[texnum] >> FRACBITS;
-        int cstep = w > 64 ? 4 : 1;
-        int rstep = h > 64 ? 4 : 1;
-        int col, row;
-        for (col = 0; col < w; col += cstep)
-        {
-            const byte* src = R_GetColumn(texnum, col);
-            for (row = 0; row < h; row += rstep)
-            {
-                const byte* c = pal + src[row] * 3;
-                sr += c[0]; sg += c[1]; sb += c[2]; n++;
-            }
-        }
-    }
-
-    if (n == 0)
-    {
-        *outr = *outg = *outb = 0.5f;
-        return;
-    }
-    *outr = sr / (float)n / 255.0f;
-    *outg = sg / (float)n / 255.0f;
-    *outb = sb / (float)n / 255.0f;
-}
+// Texture geometry tables from r_data.c (no public header declares them).
+// texturewidthmask+1 is the wall's tiling width (matches how R_GetColumn masks
+// column lookups — non-power-of-two textures tile at this width, exactly as the
+// software renderer shows them); textureheight is the wall's pixel height.
+extern int*     texturewidthmask;
+extern int      numtextures;
+extern int      numflats;
 
 //
 // Growable vertex array.
@@ -117,15 +68,13 @@ static void push_vert(builder_t* b, rb_vertex_t vert)
 
 static rb_vertex_t mkv(float x, float y, float z,
                        float nx, float ny, float nz,
-                       float u, float v, int texnum, int flags, float light,
-                       float cr, float cg, float cb)
+                       float u, float v, int texnum, int flags, float light)
 {
     rb_vertex_t out;
     out.x = x;   out.y = y;   out.z = z;
     out.nx = nx; out.ny = ny; out.nz = nz;
     out.u = u;   out.v = v;
     out.texnum = texnum; out.flags = flags; out.light = light;
-    out.r = cr;  out.g = cg;  out.b = cb;
     return out;
 }
 
@@ -153,7 +102,6 @@ static void emit_wall(builder_t* bld, seg_t* seg, fixed_t bottomz, fixed_t topz,
     float x1, y1, x2, y2, zb, zt;
     float dx, dy, len, nx, ny;
     float u0, u1, vtop, vbot, light;
-    float cr, cg, cb;
     rb_vertex_t bl, br, tr, tl;
 
     if (topz <= bottomz)   return;   // no vertical span
@@ -179,12 +127,11 @@ static void emit_wall(builder_t* bld, seg_t* seg, fixed_t bottomz, fixed_t topz,
     vtop = seg->sidedef->rowoffset / (float)FRACUNIT;
     vbot = vtop + (zt - zb);
     light = seg->frontsector->lightlevel / 255.0f;
-    surface_albedo(texnum, false, &cr, &cg, &cb);
 
-    bl = mkv(x1, y1, zb, nx, ny, 0.0f, u0, vbot, texnum, flags, light, cr, cg, cb);
-    br = mkv(x2, y2, zb, nx, ny, 0.0f, u1, vbot, texnum, flags, light, cr, cg, cb);
-    tr = mkv(x2, y2, zt, nx, ny, 0.0f, u1, vtop, texnum, flags, light, cr, cg, cb);
-    tl = mkv(x1, y1, zt, nx, ny, 0.0f, u0, vtop, texnum, flags, light, cr, cg, cb);
+    bl = mkv(x1, y1, zb, nx, ny, 0.0f, u0, vbot, texnum, flags, light);
+    br = mkv(x2, y2, zb, nx, ny, 0.0f, u1, vbot, texnum, flags, light);
+    tr = mkv(x2, y2, zt, nx, ny, 0.0f, u1, vtop, texnum, flags, light);
+    tl = mkv(x1, y1, zt, nx, ny, 0.0f, u0, vtop, texnum, flags, light);
     push_quad(bld, bl, br, tr, tl);
 }
 
@@ -199,16 +146,13 @@ static void emit_cap(builder_t* bld, seg_t* segp, int n, fixed_t height,
     float nz = up ? 1.0f : -1.0f;
     vertex_t* p0;
     float px0, py0;
-    float cr, cg, cb;
     rb_vertex_t pivot;
     int k;
-
-    surface_albedo(flatnum, true, &cr, &cg, &cb);
 
     p0  = segp[0].v1;
     px0 = p0->x / (float)FRACUNIT; py0 = p0->y / (float)FRACUNIT;
     // Flats tile on the fixed 64x64 world grid -> world-xy texel coords.
-    pivot = mkv(px0, py0, z, 0.0f, 0.0f, nz, px0, py0, flatnum, RB_MESH_FLAT, light, cr, cg, cb);
+    pivot = mkv(px0, py0, z, 0.0f, 0.0f, nz, px0, py0, flatnum, RB_MESH_FLAT, light);
 
     for (k = 1; k < n - 1; k++)
     {
@@ -216,8 +160,8 @@ static void emit_cap(builder_t* bld, seg_t* segp, int n, fixed_t height,
         vertex_t* pb = segp[k + 1].v1;
         float ax = pa->x / (float)FRACUNIT, ay = pa->y / (float)FRACUNIT;
         float bx = pb->x / (float)FRACUNIT, by = pb->y / (float)FRACUNIT;
-        rb_vertex_t va = mkv(ax, ay, z, 0.0f, 0.0f, nz, ax, ay, flatnum, RB_MESH_FLAT, light, cr, cg, cb);
-        rb_vertex_t vb = mkv(bx, by, z, 0.0f, 0.0f, nz, bx, by, flatnum, RB_MESH_FLAT, light, cr, cg, cb);
+        rb_vertex_t va = mkv(ax, ay, z, 0.0f, 0.0f, nz, ax, ay, flatnum, RB_MESH_FLAT, light);
+        rb_vertex_t vb = mkv(bx, by, z, 0.0f, 0.0f, nz, bx, by, flatnum, RB_MESH_FLAT, light);
         if (up)
             push_tri(bld, pivot, va, vb);
         else
@@ -310,4 +254,114 @@ void RB_FreeMesh(rb_mesh_t* mesh)
         return;
     free(mesh->verts);
     free(mesh);
+}
+
+//
+// Atlas packing. Each tile is a wall texture (id = texnum) or a flat
+// (id = numtextures + flatnum). Tiles are placed by a simple shelf packer into
+// a fixed-width atlas that grows in height; a tile never bleeds into its
+// neighbour because the shader wraps UVs strictly within [origin, origin+size)
+// and samples nearest, so no inter-tile padding is needed.
+//
+#define ATLAS_WIDTH 2048
+
+static void tile_size(int id, int* w, int* h)
+{
+    if (id < numtextures)
+    {
+        *w = texturewidthmask[id] + 1;            // wall tiling width
+        *h = textureheight[id] >> FRACBITS;       // wall pixel height
+    }
+    else
+    {
+        *w = *h = 64;                             // flats are always 64x64
+    }
+    if (*w < 1) *w = 1;
+    if (*h < 1) *h = 1;
+}
+
+// Copy one tile's palette indices into the atlas at (ox,oy).
+static void blit_tile(unsigned char* dst, int dstw, int id, int ox, int oy,
+                      int w, int h)
+{
+    int col, row;
+    if (id < numtextures)
+    {
+        for (col = 0; col < w; col++)
+        {
+            const byte* src = R_GetColumn(id, col);   // contiguous top..bottom
+            for (row = 0; row < h; row++)
+                dst[(oy + row) * dstw + (ox + col)] = src[row];
+        }
+    }
+    else
+    {
+        const byte* flat = W_CacheLumpNum(firstflat + (id - numtextures), PU_CACHE);
+        for (row = 0; row < h; row++)
+            for (col = 0; col < w; col++)
+                dst[(oy + row) * dstw + (ox + col)] = flat[row * 64 + col];
+    }
+}
+
+rb_atlas_t* RB_BuildAtlas(void)
+{
+    int total = numtextures + numflats;
+    rb_atlas_t* atlas = malloc(sizeof(rb_atlas_t));
+    int x = 0, y = 0, shelf = 0, id;
+
+    if (!atlas)
+        I_Error("RB_BuildAtlas: out of memory allocating atlas handle");
+
+    atlas->numwall = numtextures;
+    atlas->numflat = numflats;
+    atlas->rects   = malloc((size_t)total * sizeof(rb_rect_t));
+    if (!atlas->rects)
+        I_Error("RB_BuildAtlas: out of memory allocating %d rects", total);
+
+    // Pass 1: shelf-pack to assign each tile an origin and measure the height.
+    // Packed in id order (not height-sorted) so the rect array stays indexable
+    // by the shader's unified id; a level's texture set wastes only a little
+    // atlas area this way, paid once per session.
+    for (id = 0; id < total; id++)
+    {
+        int w, h;
+        tile_size(id, &w, &h);
+        if (x + w > ATLAS_WIDTH)        // next shelf
+        {
+            x = 0;
+            y += shelf;
+            shelf = 0;
+        }
+        atlas->rects[id].ox = (float)x;
+        atlas->rects[id].oy = (float)y;
+        atlas->rects[id].w  = (float)w;
+        atlas->rects[id].h  = (float)h;
+        x += w;
+        if (h > shelf) shelf = h;
+    }
+
+    atlas->atlasw = ATLAS_WIDTH;
+    atlas->atlash = y + shelf;
+    atlas->pixels = calloc((size_t)atlas->atlasw * atlas->atlash, 1);
+    if (!atlas->pixels)
+        I_Error("RB_BuildAtlas: out of memory for a %dx%d atlas",
+                atlas->atlasw, atlas->atlash);
+
+    // Pass 2: blit every tile's palette indices into the packed slot.
+    for (id = 0; id < total; id++)
+        blit_tile(atlas->pixels, atlas->atlasw, id,
+                  (int)atlas->rects[id].ox, (int)atlas->rects[id].oy,
+                  (int)atlas->rects[id].w, (int)atlas->rects[id].h);
+
+    memcpy(atlas->playpal, W_CacheLumpName("PLAYPAL", PU_CACHE), sizeof(atlas->playpal));
+    return atlas;
+}
+
+void RB_FreeAtlas(rb_atlas_t* atlas)
+{
+    if (!atlas)
+        return;
+    free(atlas->pixels);
+    free(atlas->rects);
+    free(atlas);
 }

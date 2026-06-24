@@ -4,9 +4,10 @@
 // mesh (r_mesh.c, world units: x east, y north, z up) by the camera's
 // view-projection matrix pushed each frame from RB_Vulkan_RenderView.
 //
-// Position, normal, sector light and per-surface average albedo are bound; the
-// UV / texnum attributes are consumed by the per-texel texturing + path-traced
-// increments that follow.
+// Per-texel materials slice: the texel coords (uv), the surface's texture id
+// (texnum) and its mesh flags are carried flat to the fragment shader, which
+// samples the paletted atlas. The sector light comes along for the bring-up
+// shade term.
 //
 
 layout(push_constant) uniform Push {
@@ -15,17 +16,23 @@ layout(push_constant) uniform Push {
 
 layout(location = 0) in vec3  inPos;
 layout(location = 1) in vec3  inNormal;
-layout(location = 2) in float inLight;
-layout(location = 3) in vec3  inAlbedo;
+layout(location = 2) in vec2  inUV;
+layout(location = 3) in float inLight;
+layout(location = 4) in int   inTexnum;
+layout(location = 5) in int   inFlags;
 
 layout(location = 0) out vec3  vNormal;
-layout(location = 1) out float vLight;
-layout(location = 2) out vec3  vAlbedo;
+layout(location = 1) out vec2  vUV;
+layout(location = 2) out float vLight;
+layout(location = 3) flat out int vTexnum;
+layout(location = 4) flat out int vFlags;
 
 void main()
 {
     gl_Position = pc.mvp * vec4(inPos, 1.0);
     vNormal = inNormal;
+    vUV     = inUV;
     vLight  = inLight;
-    vAlbedo = inAlbedo;
+    vTexnum = inTexnum;
+    vFlags  = inFlags;
 }

@@ -42,13 +42,11 @@ typedef struct
 {
     float x, y, z;      // world position
     float nx, ny, nz;   // surface normal (unit)
-    float u, v;         // texel coordinates (pre-division)
+    float u, v;         // texel coordinates (pre-wrap; the shader tiles by the
+                        // texture's atlas-rect size)
     int   texnum;       // wall texture index, or flat index when RB_MESH_FLAT
     int   flags;        // RB_MESH_* bits
     float light;        // owning sector lightlevel, 0..1
-    float r, g, b;      // surface average albedo, 0..1 (DOOM palette colour).
-                        // A per-surface flat-shaded stand-in until the path
-                        // tracer samples the texture per-texel (DOOM-0009).
 } rb_vertex_t;
 
 // rb_vertex_t.flags bits.
@@ -68,6 +66,41 @@ typedef struct
 rb_mesh_t* RB_BuildLevelMesh(void);
 
 void RB_FreeMesh(rb_mesh_t* mesh);
+
+//
+// Texture atlas for per-texel sampling (DOOM-0008 materials slice). Every wall
+// texture and flat is packed, as raw 8-bit palette indices, into one R8 atlas
+// image; the GPU shader looks each surface up by a unified id and decodes the
+// index through the PLAYPAL colour table. Keeping the art paletted (index +
+// palette LUT, not pre-decoded RGB) preserves DOOM's exact colours and leaves
+// the door open for palette-flash effects as a single LUT-row swap later.
+//
+
+// One packed tile, addressed by id. ox/oy = origin in the atlas (texels);
+// w/h = the tile's size in texels (the shader tiles UVs by this). Floats so the
+// array uploads straight into a std430 storage buffer (vec4 per rect).
+typedef struct
+{
+    float ox, oy, w, h;
+} rb_rect_t;
+
+typedef struct
+{
+    unsigned char* pixels;        // atlasw*atlash palette indices, heap-owned
+    int            atlasw, atlash;
+    rb_rect_t*     rects;         // numwall+numflat entries: walls first, then
+                                  // flats (flat id = numwall + flatnum)
+    int            numwall;       // wall-texture rects (== numtextures)
+    int            numflat;       // flat rects (== numflats)
+    unsigned char  playpal[256 * 3];  // palette 0, straight RGB
+} rb_atlas_t;
+
+// Pack every wall texture + flat into one paletted atlas. WAD-global and
+// constant for the session, so the back-end builds it once and reuses it across
+// levels. Heap-owned; release with RB_FreeAtlas.
+rb_atlas_t* RB_BuildAtlas(void);
+
+void RB_FreeAtlas(rb_atlas_t* atlas);
 
 // POD camera handed across the seam each frame (RB_Vulkan_RenderView). The C
 // side (r_backend.c) reads the player's view globals and converts to float

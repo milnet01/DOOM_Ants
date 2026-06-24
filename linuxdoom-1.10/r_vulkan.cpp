@@ -207,6 +207,23 @@ struct VulkanState
     VkDeviceMemory vbufMemory = VK_NULL_HANDLE;
     uint32_t       vertexCount = 0;
 
+    // Paletted texture atlas (DOOM-0008 materials slice). WAD-global and
+    // constant, so it is built and uploaded once and reused across levels.
+    VkImage        atlasImage  = VK_NULL_HANDLE;
+    VkDeviceMemory atlasMemory = VK_NULL_HANDLE;
+    VkImageView    atlasView   = VK_NULL_HANDLE;
+    VkImage        palImage    = VK_NULL_HANDLE;   // 256x1 PLAYPAL LUT
+    VkDeviceMemory palMemory   = VK_NULL_HANDLE;
+    VkImageView    palView     = VK_NULL_HANDLE;
+    VkSampler      texSampler  = VK_NULL_HANDLE;   // nearest, clamped (manual wrap)
+    VkBuffer       rectBuf     = VK_NULL_HANDLE;   // per-id atlas rects (std430)
+    VkDeviceMemory rectMemory  = VK_NULL_HANDLE;
+
+    VkDescriptorSetLayout dsLayout = VK_NULL_HANDLE;
+    VkDescriptorPool      dsPool   = VK_NULL_HANDLE;
+    VkDescriptorSet       ds       = VK_NULL_HANDLE;
+    bool                  atlasReady = false;
+
     // column-major MVP from RB_Vulkan_RenderView; identity until the first
     // camera update so a frame drawn before then is well-defined (DOOM-0037).
     float viewProj[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
@@ -530,6 +547,139 @@ uint32_t FindMemoryType(uint32_t typeBits, VkMemoryPropertyFlags props)
     I_Error("R_Vulkan: no memory type with the required properties.");
 }
 
+// A short-lived primary command buffer for one-off uploads (image staging
+// copies, layout transitions). Recorded, submitted, and waited on inline — the
+// per-level/atlas uploads are not on the frame hot path.
+VkCommandBuffer BeginOneTime()
+{
+    VkCommandBufferAllocateInfo ai = {};
+    ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    ai.commandPool = g.cmdPool;
+    ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    ai.commandBufferCount = 1;
+    VkCommandBuffer cb = VK_NULL_HANDLE;
+    Check(vkAllocateCommandBuffers(g.device, &ai, &cb), "vkAllocateCommandBuffers(oneTime)");
+
+    VkCommandBufferBeginInfo bi = {};
+    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    Check(vkBeginCommandBuffer(cb, &bi), "vkBeginCommandBuffer(oneTime)");
+    return cb;
+}
+
+void EndOneTime(VkCommandBuffer cb)
+{
+    Check(vkEndCommandBuffer(cb), "vkEndCommandBuffer(oneTime)");
+    VkSubmitInfo si = {};
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &cb;
+    Check(vkQueueSubmit(g.queue, 1, &si, VK_NULL_HANDLE), "vkQueueSubmit(oneTime)");
+    vkQueueWaitIdle(g.queue);
+    vkFreeCommandBuffers(g.device, g.cmdPool, 1, &cb);
+}
+
+// Create a device-local sampled image of the given format and upload `pixels`
+// through a staging buffer, leaving it in SHADER_READ_ONLY_OPTIMAL with a view.
+void CreateSampledImage(uint32_t w, uint32_t h, VkFormat fmt,
+                        const void* pixels, VkDeviceSize bytes,
+                        VkImage* outImage, VkDeviceMemory* outMem,
+                        VkImageView* outView)
+{
+    // Staging buffer (host visible) holding the source texels.
+    VkBufferCreateInfo bci = {};
+    bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bci.size = bytes;
+    bci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VkBuffer staging = VK_NULL_HANDLE;
+    Check(vkCreateBuffer(g.device, &bci, nullptr, &staging), "vkCreateBuffer(staging)");
+
+    VkMemoryRequirements sreq = {};
+    vkGetBufferMemoryRequirements(g.device, staging, &sreq);
+    VkMemoryAllocateInfo smai = {};
+    smai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    smai.allocationSize = sreq.size;
+    smai.memoryTypeIndex = FindMemoryType(sreq.memoryTypeBits,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    VkDeviceMemory stagingMem = VK_NULL_HANDLE;
+    Check(vkAllocateMemory(g.device, &smai, nullptr, &stagingMem), "vkAllocateMemory(staging)");
+    Check(vkBindBufferMemory(g.device, staging, stagingMem, 0), "vkBindBufferMemory(staging)");
+
+    void* mapped = nullptr;
+    Check(vkMapMemory(g.device, stagingMem, 0, bytes, 0, &mapped), "vkMapMemory(staging)");
+    std::memcpy(mapped, pixels, (size_t)bytes);
+    vkUnmapMemory(g.device, stagingMem);
+
+    // Device-local sampled image.
+    VkImageCreateInfo ici = {};
+    ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ici.imageType = VK_IMAGE_TYPE_2D;
+    ici.format = fmt;
+    ici.extent = { w, h, 1 };
+    ici.mipLevels = 1;
+    ici.arrayLayers = 1;
+    ici.samples = VK_SAMPLE_COUNT_1_BIT;
+    ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    Check(vkCreateImage(g.device, &ici, nullptr, outImage), "vkCreateImage(sampled)");
+
+    VkMemoryRequirements req = {};
+    vkGetImageMemoryRequirements(g.device, *outImage, &req);
+    VkMemoryAllocateInfo mai = {};
+    mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    mai.allocationSize = req.size;
+    mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    Check(vkAllocateMemory(g.device, &mai, nullptr, outMem), "vkAllocateMemory(sampled)");
+    Check(vkBindImageMemory(g.device, *outImage, *outMem, 0), "vkBindImageMemory(sampled)");
+
+    // UNDEFINED -> TRANSFER_DST, copy, TRANSFER_DST -> SHADER_READ_ONLY.
+    VkCommandBuffer cb = BeginOneTime();
+
+    VkImageMemoryBarrier toDst = {};
+    toDst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    toDst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    toDst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    toDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toDst.image = *outImage;
+    toDst.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    toDst.srcAccessMask = 0;
+    toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toDst);
+
+    VkBufferImageCopy region = {};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageExtent = { w, h, 1 };
+    vkCmdCopyBufferToImage(cb, staging, *outImage,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+    VkImageMemoryBarrier toRead = toDst;
+    toRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    toRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    toRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    toRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toRead);
+
+    EndOneTime(cb);
+
+    vkDestroyBuffer(g.device, staging, nullptr);
+    vkFreeMemory(g.device, stagingMem, nullptr);
+
+    VkImageViewCreateInfo vci = {};
+    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vci.image = *outImage;
+    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vci.format = fmt;
+    vci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    Check(vkCreateImageView(g.device, &vci, nullptr, outView), "vkCreateImageView(sampled)");
+}
+
 //
 // Minimal column-major 4x4 matrix math (matches GLSL mat4 layout, so the
 // result uploads straight into the push constant with no transpose). Only the
@@ -720,6 +870,43 @@ VkShaderModule MakeShader(const unsigned char* code, unsigned len)
     return m;
 }
 
+// Descriptor set 0 for the materials pass: the paletted atlas, the PLAYPAL LUT,
+// and the per-id atlas-rect storage buffer. Plus the nearest/clamped sampler
+// shared by both images (the shader wraps UVs itself, so addressing is clamp).
+void CreateDescriptors()
+{
+    VkDescriptorSetLayoutBinding binds[3] = {};
+    binds[0].binding = 0;   // atlas (R8 palette indices)
+    binds[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    binds[0].descriptorCount = 1;
+    binds[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    binds[1].binding = 1;   // PLAYPAL LUT
+    binds[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    binds[1].descriptorCount = 1;
+    binds[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    binds[2].binding = 2;   // atlas rects (std430 storage buffer)
+    binds[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    binds[2].descriptorCount = 1;
+    binds[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutCreateInfo dlci = {};
+    dlci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    dlci.bindingCount = 3;
+    dlci.pBindings = binds;
+    Check(vkCreateDescriptorSetLayout(g.device, &dlci, nullptr, &g.dsLayout),
+          "vkCreateDescriptorSetLayout");
+
+    VkSamplerCreateInfo sci = {};
+    sci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    sci.magFilter = VK_FILTER_NEAREST;          // paletted art: point sampling
+    sci.minFilter = VK_FILTER_NEAREST;
+    sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    sci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    Check(vkCreateSampler(g.device, &sci, nullptr, &g.texSampler), "vkCreateSampler");
+}
+
 void CreatePipeline()
 {
     VkShaderModule vert = MakeShader(mesh_vert_spv, mesh_vert_spv_len);
@@ -735,26 +922,26 @@ void CreatePipeline()
     stages[1].module = frag;
     stages[1].pName = "main";
 
-    // Vertex layout: the attributes this pass reads (position, normal, sector
-    // light, surface albedo). The full rb_vertex_t stride is kept so the UV /
-    // texnum fields stay available to the per-texel texturing increment without
-    // re-uploading.
+    // Vertex layout: position, normal, texel UV, sector light, texture id, and
+    // mesh flags — everything the per-texel materials pass samples with.
     VkVertexInputBindingDescription bind = {};
     bind.binding = 0;
     bind.stride = sizeof(rb_vertex_t);
     bind.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
-    VkVertexInputAttributeDescription attrs[4] = {};
+    VkVertexInputAttributeDescription attrs[6] = {};
     attrs[0] = { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, (uint32_t)offsetof(rb_vertex_t, x) };
     attrs[1] = { 1, 0, VK_FORMAT_R32G32B32_SFLOAT, (uint32_t)offsetof(rb_vertex_t, nx) };
-    attrs[2] = { 2, 0, VK_FORMAT_R32_SFLOAT,       (uint32_t)offsetof(rb_vertex_t, light) };
-    attrs[3] = { 3, 0, VK_FORMAT_R32G32B32_SFLOAT, (uint32_t)offsetof(rb_vertex_t, r) };
+    attrs[2] = { 2, 0, VK_FORMAT_R32G32_SFLOAT,    (uint32_t)offsetof(rb_vertex_t, u) };
+    attrs[3] = { 3, 0, VK_FORMAT_R32_SFLOAT,       (uint32_t)offsetof(rb_vertex_t, light) };
+    attrs[4] = { 4, 0, VK_FORMAT_R32_SINT,         (uint32_t)offsetof(rb_vertex_t, texnum) };
+    attrs[5] = { 5, 0, VK_FORMAT_R32_SINT,         (uint32_t)offsetof(rb_vertex_t, flags) };
 
     VkPipelineVertexInputStateCreateInfo vin = {};
     vin.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     vin.vertexBindingDescriptionCount = 1;
     vin.pVertexBindingDescriptions = &bind;
-    vin.vertexAttributeDescriptionCount = 4;
+    vin.vertexAttributeDescriptionCount = 6;
     vin.pVertexAttributeDescriptions = attrs;
 
     VkPipelineInputAssemblyStateCreateInfo ia = {};
@@ -804,6 +991,8 @@ void CreatePipeline()
 
     VkPipelineLayoutCreateInfo plci = {};
     plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plci.setLayoutCount = 1;
+    plci.pSetLayouts = &g.dsLayout;
     plci.pushConstantRangeCount = 1;
     plci.pPushConstantRanges = &pcr;
     Check(vkCreatePipelineLayout(g.device, &plci, nullptr, &g.pipelineLayout),
@@ -859,6 +1048,113 @@ void RecreateSwapchain()
     CreateFramebuffers();
 }
 
+// Build the paletted texture atlas (r_mesh.c), upload the atlas + PLAYPAL LUT
+// images and the per-id rect table, and write descriptor set 0. WAD-global, so
+// this runs once on the first level build and is reused thereafter.
+void UploadAtlas()
+{
+    rb_atlas_t* a = RB_BuildAtlas();
+    printf("RB_Vulkan: texture atlas %dx%d (%d walls + %d flats).\n",
+           a->atlasw, a->atlash, a->numwall, a->numflat);
+    fflush(stdout);
+
+    // Atlas: one channel of raw palette indices.
+    CreateSampledImage((uint32_t)a->atlasw, (uint32_t)a->atlash, VK_FORMAT_R8_UNORM,
+                       a->pixels, (VkDeviceSize)a->atlasw * a->atlash,
+                       &g.atlasImage, &g.atlasMemory, &g.atlasView);
+
+    // PLAYPAL as a 256x1 RGBA LUT (UNORM: raw palette colours, decoded straight
+    // like the prior bring-up path — no extra colour conversion in this slice).
+    unsigned char lut[256 * 4];
+    for (int i = 0; i < 256; ++i)
+    {
+        lut[i * 4 + 0] = a->playpal[i * 3 + 0];
+        lut[i * 4 + 1] = a->playpal[i * 3 + 1];
+        lut[i * 4 + 2] = a->playpal[i * 3 + 2];
+        lut[i * 4 + 3] = 255;
+    }
+    CreateSampledImage(256, 1, VK_FORMAT_R8G8B8A8_UNORM, lut, sizeof(lut),
+                       &g.palImage, &g.palMemory, &g.palView);
+
+    // Rect storage buffer (std430): { vec2 atlasSize; int numWall; int pad;
+    // vec4 rects[]; }. Host-visible — read-only in the shader, written once.
+    int   nrect = a->numwall + a->numflat;
+    VkDeviceSize rectBytes = 16 + (VkDeviceSize)nrect * sizeof(rb_rect_t);
+
+    VkBufferCreateInfo bci = {};
+    bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bci.size = rectBytes;
+    bci.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    Check(vkCreateBuffer(g.device, &bci, nullptr, &g.rectBuf), "vkCreateBuffer(rects)");
+
+    VkMemoryRequirements req = {};
+    vkGetBufferMemoryRequirements(g.device, g.rectBuf, &req);
+    VkMemoryAllocateInfo mai = {};
+    mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    mai.allocationSize = req.size;
+    mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    Check(vkAllocateMemory(g.device, &mai, nullptr, &g.rectMemory), "vkAllocateMemory(rects)");
+    Check(vkBindBufferMemory(g.device, g.rectBuf, g.rectMemory, 0), "vkBindBufferMemory(rects)");
+
+    void* mapped = nullptr;
+    Check(vkMapMemory(g.device, g.rectMemory, 0, rectBytes, 0, &mapped), "vkMapMemory(rects)");
+    {
+        unsigned char* p = (unsigned char*)mapped;
+        float  size[2] = { (float)a->atlasw, (float)a->atlash };
+        int    numWall = a->numwall;
+        int    pad     = 0;
+        std::memcpy(p + 0, size, sizeof(size));
+        std::memcpy(p + 8, &numWall, sizeof(numWall));
+        std::memcpy(p + 12, &pad, sizeof(pad));
+        std::memcpy(p + 16, a->rects, (size_t)nrect * sizeof(rb_rect_t));
+    }
+    vkUnmapMemory(g.device, g.rectMemory);
+
+    // Descriptor pool + set, written to point at the three resources.
+    VkDescriptorPoolSize sizes[2] = {};
+    sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    sizes[0].descriptorCount = 2;
+    sizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    sizes[1].descriptorCount = 1;
+    VkDescriptorPoolCreateInfo dpci = {};
+    dpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    dpci.maxSets = 1;
+    dpci.poolSizeCount = 2;
+    dpci.pPoolSizes = sizes;
+    Check(vkCreateDescriptorPool(g.device, &dpci, nullptr, &g.dsPool), "vkCreateDescriptorPool");
+
+    VkDescriptorSetAllocateInfo dsai = {};
+    dsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsai.descriptorPool = g.dsPool;
+    dsai.descriptorSetCount = 1;
+    dsai.pSetLayouts = &g.dsLayout;
+    Check(vkAllocateDescriptorSets(g.device, &dsai, &g.ds), "vkAllocateDescriptorSets");
+
+    VkDescriptorImageInfo atlasInfo = { g.texSampler, g.atlasView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+    VkDescriptorImageInfo palInfo   = { g.texSampler, g.palView,   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+    VkDescriptorBufferInfo rectInfo = { g.rectBuf, 0, VK_WHOLE_SIZE };
+
+    VkWriteDescriptorSet writes[3] = {};
+    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet = g.ds; writes[0].dstBinding = 0; writes[0].descriptorCount = 1;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[0].pImageInfo = &atlasInfo;
+    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[1].dstSet = g.ds; writes[1].dstBinding = 1; writes[1].descriptorCount = 1;
+    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[1].pImageInfo = &palInfo;
+    writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[2].dstSet = g.ds; writes[2].dstBinding = 2; writes[2].descriptorCount = 1;
+    writes[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    writes[2].pBufferInfo = &rectInfo;
+    vkUpdateDescriptorSets(g.device, 3, writes, 0, nullptr);
+
+    RB_FreeAtlas(a);
+    g.atlasReady = true;
+}
+
 } // namespace
 
 extern "C" int RB_Vulkan_Available(int want_rt)
@@ -885,6 +1181,7 @@ extern "C" void RB_Vulkan_Init(void)
     CreateRenderPass();
     CreateDepthResources();
     CreateFramebuffers();
+    CreateDescriptors();       // set layout + sampler (needed by the pipeline layout)
     CreatePipeline();
     CreateCommandsAndSync();
     g.ready = true;
@@ -935,6 +1232,10 @@ extern "C" void RB_Vulkan_BuildLevel(void)
         RB_FreeMesh(g.levelMesh);
         g.levelMesh = nullptr;
     }
+
+    // The texture atlas is WAD-global; build + upload it on the first level only.
+    if (!g.atlasReady)
+        UploadAtlas();
 
     g.levelMesh = RB_BuildLevelMesh();
 
@@ -1023,9 +1324,9 @@ extern "C" void RB_Vulkan_Present(void)
     rp.pClearValues = clears;
     vkCmdBeginRenderPass(g.cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
 
-    // Draw the world only once we have both geometry and a camera (e.g. not in
-    // a pre-level menu); otherwise the clear alone presents.
-    if (g.vbuf && g.vertexCount && g.haveCamera)
+    // Draw the world only once we have geometry, the texture atlas, and a camera
+    // (e.g. not in a pre-level menu); otherwise the clear alone presents.
+    if (g.vbuf && g.vertexCount && g.haveCamera && g.atlasReady)
     {
         VkViewport vpRect = {};
         vpRect.width = (float)g.extent.width;
@@ -1036,6 +1337,8 @@ extern "C" void RB_Vulkan_Present(void)
         vkCmdSetScissor(g.cmd, 0, 1, &scissor);
 
         vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.pipeline);
+        vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                g.pipelineLayout, 0, 1, &g.ds, 0, nullptr);
         vkCmdPushConstants(g.cmd, g.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
                            0, 16 * sizeof(float), g.viewProj);
         VkDeviceSize off = 0;
@@ -1087,6 +1390,20 @@ extern "C" void RB_Vulkan_Shutdown(void)
 
     if (g.vbuf)           vkDestroyBuffer(g.device, g.vbuf, nullptr);
     if (g.vbufMemory)     vkFreeMemory(g.device, g.vbufMemory, nullptr);
+
+    // Texture atlas resources.
+    if (g.dsPool)      vkDestroyDescriptorPool(g.device, g.dsPool, nullptr);
+    if (g.dsLayout)    vkDestroyDescriptorSetLayout(g.device, g.dsLayout, nullptr);
+    if (g.texSampler)  vkDestroySampler(g.device, g.texSampler, nullptr);
+    if (g.rectBuf)     vkDestroyBuffer(g.device, g.rectBuf, nullptr);
+    if (g.rectMemory)  vkFreeMemory(g.device, g.rectMemory, nullptr);
+    if (g.atlasView)   vkDestroyImageView(g.device, g.atlasView, nullptr);
+    if (g.atlasImage)  vkDestroyImage(g.device, g.atlasImage, nullptr);
+    if (g.atlasMemory) vkFreeMemory(g.device, g.atlasMemory, nullptr);
+    if (g.palView)     vkDestroyImageView(g.device, g.palView, nullptr);
+    if (g.palImage)    vkDestroyImage(g.device, g.palImage, nullptr);
+    if (g.palMemory)   vkFreeMemory(g.device, g.palMemory, nullptr);
+
     DestroyFramebufferResources();   // framebuffers, depth, swapchain image views
     if (g.pipeline)       vkDestroyPipeline(g.device, g.pipeline, nullptr);
     if (g.pipelineLayout) vkDestroyPipelineLayout(g.device, g.pipelineLayout, nullptr);
