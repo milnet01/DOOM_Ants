@@ -141,8 +141,16 @@ static void emit_wall(builder_t* bld, seg_t* seg, fixed_t bottomz, fixed_t topz,
 }
 
 //
-// Floor or ceiling cap for one subsector: fan its segs' v1 points.
+// Floor or ceiling cap for one subsector: fan a triangle from the first seg's
+// start to every seg's full v1->v2 edge.
 //  up != 0  -> floor (normal +z, CCW from above);  else ceiling (normal -z).
+//
+// Fanning each seg's *edge* (both endpoints), not just consecutive v1 points,
+// matters: the old v1-only fan dropped the last seg's v2 (the final boundary
+// vertex), leaving an uncovered wedge that showed through as a black floor/
+// ceiling. A subsector is convex and its segs are ordered around it, so the
+// gap back to the pivot is the single straight BSP-partition edge the pivot
+// already spans -- so edge-fanning covers the whole cell with no holes.
 //
 static void emit_cap(builder_t* bld, seg_t* segp, int n, fixed_t height,
                      int up, int flatnum, float light)
@@ -159,10 +167,13 @@ static void emit_cap(builder_t* bld, seg_t* segp, int n, fixed_t height,
     // Flats tile on the fixed 64x64 world grid -> world-xy texel coords.
     pivot = mkv(px0, py0, z, 0.0f, 0.0f, nz, px0, py0, flatnum, RB_MESH_FLAT, light);
 
-    for (k = 1; k < n - 1; k++)
+    for (k = 0; k < n; k++)
     {
         vertex_t* pa = segp[k].v1;
-        vertex_t* pb = segp[k + 1].v1;
+        vertex_t* pb = segp[k].v2;
+        // Skip edges that touch the pivot (zero-area triangle), e.g. seg 0.
+        if (pa == p0 || pb == p0)
+            continue;
         float ax = pa->x / (float)FRACUNIT, ay = pa->y / (float)FRACUNIT;
         float bx = pb->x / (float)FRACUNIT, by = pb->y / (float)FRACUNIT;
         rb_vertex_t va = mkv(ax, ay, z, 0.0f, 0.0f, nz, ax, ay, flatnum, RB_MESH_FLAT, light);
