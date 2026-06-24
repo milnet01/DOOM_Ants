@@ -294,6 +294,22 @@ parked ideas (💭 considered) until we commit to and design each one.
   refine to DOOM's skytexturemid placement if a sky-floor map needs it.
   Next: still on the DOOM-0008 raster bring-up (menu wiring of the
   Classic/Solid/Ultra modes is the user-facing piece).
+  Progress (2026-06-24): renderer menu wiring. The three tiers are now
+  player-facing as Classic / Solid / Ultra (RB_CLASSIC / RB_RASTER3D /
+  RB_RT3D) and selectable live from the Options "Renderer:" item. The
+  rendermode_t enum values stay frozen (config + r_vulkan tier lockstep),
+  so the menu's ascending-fidelity cycle (Classic -> Solid -> Ultra) lives
+  in a separate cycleOrder[] behind RB_NextAvailableMode(), skipping any
+  tier this machine can't run. Closed the half-wired switch: switching INTO
+  a Vulkan mode already recreated the SDL window as a Vulkan window, but
+  nothing rebuilt the 2D software window on the way back; added
+  I_ReinitGraphicsForClassic() (counterpart to I_ShutdownGraphicsForVulkan,
+  2D window/renderer/texture creation factored into CreateSoftwareWindow),
+  called from Classic_Init, a no-op on the normal Classic boot path.
+  Verified on DOOM II MAP01 (RX 6600, RT3D): live-switched Ultra -> Classic
+  mid-level via a temporary probe; the software view renders with the full
+  HUD after the handoff, clean build, no Vulkan validation errors. Next:
+  polish the 3D look (DOOM-0008 raster bring-up follow-ups).
 - 💭 [DOOM-0009] **Add hardware path tracing (Monte-Carlo GI + ray-traced shadows).**
   **Layman:** Use the graphics card to trace real light rays for accurate lighting, bounced light, and shadows.
   Kind: feature.
