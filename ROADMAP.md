@@ -439,3 +439,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** In 3D mode the menu only appears once you're in a level; on the opening title screen it's currently invisible. Make it show there too.
   Kind: fix.
   Source: in-session-2026-06-24.
+
+- 📋 [DOOM-0046] **Add an optional on-screen FPS counter with selectable corner placement.**
+  An Options toggle ("Show FPS: On/Off") plus a position setting ("FPS position: Top-Left / Top-Centre / Top-Right"), both config-persisted via m_misc.c's defaults[] table. Measure frame rate from I_GetTime/the frame loop (a rolling average over the last N frames reads steadier than an instantaneous tics delta) and draw the number with the small HUD font (HUlib / the STCFN* glyphs, as the messages widget does) into the 320x200 screens[0] each frame, anchored to the chosen top corner with a few-pixel margin. Drawing into screens[0] means it shows in every renderer for free: Classic blits it, and the DOOM-0008 3D compositor already composites that buffer over the 3D view (so no Vulkan-side work needed). Keep it out of screenshots/intermission only if it looks intrusive -- otherwise always-on when toggled. Ties into the Phase-2 "60 FPS floor" goal as the user-facing way to watch it.
+  **Layman:** Add a setting to show a frames-per-second counter on screen, and let the player pick whether it sits in the top-left, top-middle, or top-right corner.
+  Kind: feature.
+  Source: user-request-2026-06-24.
