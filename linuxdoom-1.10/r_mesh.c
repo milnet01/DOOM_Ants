@@ -311,12 +311,10 @@ static void blit_tile(unsigned char* dst, int dstw, int id, int ox, int oy,
     int col, row;
     if (id < numtextures)
     {
-        for (col = 0; col < w; col++)
-        {
-            const byte* src = R_GetColumn(id, col);   // contiguous top..bottom
-            for (row = 0; row < h; row++)
-                dst[(oy + row) * dstw + (ox + col)] = src[row];
-        }
+        // Composite the wall texture's patches with their real posts: opaque
+        // textures fill the slot, masked ones (grates/fences) leave gaps at the
+        // pre-zeroed index 0 so the shader's alpha test reads them transparent.
+        R_RenderTextureToAtlas(id, dst, dstw, ox, oy, w, h);
     }
     else if (id < numtextures + numflats)
     {

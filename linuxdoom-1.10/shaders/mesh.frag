@@ -52,6 +52,7 @@ layout(set = 0, binding = 2) readonly buffer Atlas {
 } atlas;
 
 const int FLAG_FLAT    = 0x1;   // matches RB_MESH_FLAT in r_mesh.h
+const int FLAG_MASKED  = 0x2;   // matches RB_MESH_MASKED in r_mesh.h
 const int FLAG_SPRITE  = 0x4;   // matches RB_MESH_SPRITE in r_mesh.h
 const int FLAG_PSPRITE = 0x8;   // matches RB_MESH_PSPRITE in r_mesh.h
 const int FLAG_SKY     = 0x10;  // matches RB_MESH_SKY in r_mesh.h
@@ -99,10 +100,11 @@ void main()
 
     float index   = texture(atlasTex, atlasUV).r * 255.0;
 
-    // Sprites store transparency as palette index 0 (the gaps between posts);
-    // drop those texels so billboards read as cut-outs, not boxes. A genuine
-    // index-0 (black) texel inside a sprite is dropped too — DOOM art avoids it.
-    if ((vFlags & FLAG_SPRITE) != 0 && index < 0.5)
+    // Sprites and two-sided masked mid-walls (grates/fences) store transparency
+    // as palette index 0 (the gaps between posts); drop those texels so they
+    // read as cut-outs, not boxes. A genuine index-0 (black) texel inside such
+    // art is dropped too — DOOM art avoids it.
+    if ((vFlags & (FLAG_SPRITE | FLAG_MASKED)) != 0 && index < 0.5)
         discard;
 
     vec3  albedo  = texture(paletteTex, vec2((index + 0.5) / 256.0, 0.5)).rgb;

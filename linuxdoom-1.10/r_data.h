@@ -54,6 +54,12 @@ int R_FlatNumForName (char* name);
 int R_TextureNumForName (char *name);
 int R_CheckTextureNumForName (char *name);
 
+// DOOM-0008: composite a wall texture's patches into the 3D atlas slot at
+// (ox,oy), leaving masked textures' gaps untouched (transparent in a calloc'd
+// atlas) so two-sided middle textures render see-through. Clamped to tilew x tileh.
+void R_RenderTextureToAtlas (int texnum, byte* dst, int dstw,
+			     int ox, int oy, int tilew, int tileh);
+
 #endif
 //-----------------------------------------------------------------------------
 //

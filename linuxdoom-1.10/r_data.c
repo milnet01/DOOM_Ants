@@ -293,6 +293,67 @@ void R_GenerateComposite (int texnum)
 }
 
 
+//
+// R_RenderTextureToAtlas  (DOOM-0008)
+//
+// Composite a wall texture's patches straight into the 3D renderer's paletted
+// atlas slot at (ox,oy) in a dstw-stride buffer, one patch at a time like
+// R_GenerateComposite. Only the patches' actual posts are written, so any
+// texel a masked texture leaves uncovered keeps whatever the caller pre-cleared
+// the slot to (the atlas is calloc'd, so that is index 0 = transparent). That
+// is what lets two-sided middle textures (grates, fences) read see-through in
+// the raster path, while fully-covered textures come out opaque as before.
+// Writes are clamped to the tilew x tileh slot.
+//
+void
+R_RenderTextureToAtlas
+( int		texnum,
+  byte*		dst,
+  int		dstw,
+  int		ox,
+  int		oy,
+  int		tilew,
+  int		tileh )
+{
+    texture_t*	texture = textures[texnum];
+    int		i;
+
+    for (i = 0; i < texture->patchcount; i++)
+    {
+	texpatch_t*	patch     = &texture->patches[i];
+	patch_t*	realpatch = W_CacheLumpNum (patch->patch, PU_CACHE);
+	int		x1 = patch->originx;
+	int		x2 = x1 + SHORT(realpatch->width);
+	int		x  = x1 < 0 ? 0 : x1;
+
+	if (x2 > tilew)
+	    x2 = tilew;
+
+	for ( ; x < x2; x++)
+	{
+	    column_t*	col = (column_t *)((byte *)realpatch
+			    + LONG(realpatch->columnofs[x - x1]));
+
+	    // Walk the column's posts (same masked format as a sprite patch).
+	    while (col->topdelta != 0xff)
+	    {
+		const byte*	src = (const byte *)col + 3;
+		int		top = patch->originy + col->topdelta;
+		int		r;
+
+		for (r = 0; r < col->length; r++)
+		{
+		    int ty = top + r;
+		    if (ty >= 0 && ty < tileh)
+			dst[(oy + ty) * dstw + (ox + x)] = src[r];
+		}
+		col = (column_t *)((byte *)col + col->length + 4);
+	    }
+	}
+    }
+}
+
+
 
 //
 // R_GenerateLookup
