@@ -291,3 +291,21 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** In the new sharper (640x400) mode the 3D view was a small square in the middle of the screen and the gun drifted up to the centre; both now sit and scale correctly.
   Kind: fix.
   Source: user-report-2026-06-20.
+
+- 💭 [DOOM-0042] **Add a second, high-fidelity art set (DOOM 3 / sci-fi-horror look) selectable alongside the classic art.**
+  Two art options for the 3D renderer: (1) DOOM's original art converted to 3D (the DOOM-0008 path, already in progress); (2) a replacement HD art set inspired by DOOM 3 and sci-fi horror generally. LEVEL LAYOUT IS UNCHANGED — same map geometry/segs/sectors and UVs; only the textures, flats, sprites and their materials are swapped. Implies a material-source abstraction (a 'theme' the renderer selects) layered on the bindless material pipeline, plus real PBR maps (albedo/normal/roughness/metallic/emissive) for the HD set rather than flat paletted albedo. LICENSING CONSTRAINT: id Software's DOOM 3 assets are proprietary and CANNOT be shipped in this GPL-v2 repo. Sourcing options to decide with the user: freely/CC0-licensed HD texture+sprite packs, community packs with compatible licences, AI-generated art, or an optional separately-distributed asset pack the user supplies locally. Open decision: which sourcing route. Depends on the bindless material seam and the path tracer (DOOM-0009).
+  **Layman:** A second look for the 3D game: a modern, scary, DOOM-3-style art set you can switch to — same levels, new graphics.
+  Kind: feature.
+  Source: user-request-2026-06-24.
+
+- 📋 [DOOM-0043] **Place scene lights and an ambient floor so path-traced rooms are never unintentionally pitch black.**
+  Once ray tracing computes real light transport, sectors with no bright surfaces go near-black. Build on the DOOM-0008 spec's derived emission (sector lightlevel glow, known bright/lamp/computer textures as emitters, sky sun) and add deliberate light placement where it makes sense (lamps, computer banks, exit signs, fire) plus a small ambient/sky floor so navigation stays playable. Distinct from DOOM-0010 (moving/coloured dynamic lights) and DOOM-0009 (the integrator itself) — this is the lighting-design/brightness pass that keeps the world readable. Pairs with the player flashlight (next item) for genuinely dark areas.
+  **Layman:** Make sure rooms aren't pitch dark once real lighting is on — add lights where it makes sense and a gentle base glow.
+  Kind: feature.
+  Source: user-request-2026-06-24.
+
+- 📋 [DOOM-0044] **Add a player flashlight toggled by a key, lighting the path-traced scene with ray-traced shadows.**
+  A camera-mounted spotlight (headlamp) the player toggles with a configurable, config-persisted key. Fed to the path tracer as a dynamic analytic light so it casts real ray-traced shadows and bounces, sampled by next-event estimation. Follows view position/angle each frame (no BLAS change — a light parameter, not geometry). Builds on the DOOM-0009 integrator and the dynamic-light path (DOOM-0010 seed). Makes the dark sci-fi-horror areas (previous item) tense rather than unplayable.
+  **Layman:** Give the player a flashlight they can switch on and off with a button.
+  Kind: feature.
+  Source: user-request-2026-06-24.
