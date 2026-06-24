@@ -23,15 +23,20 @@ layout(location = 2) in float vLight;
 layout(location = 3) flat in int vTexnum;
 layout(location = 4) flat in int vFlags;
 layout(location = 5) in vec2  vScreenUV;   // [0,1] across the frame (sky only)
+layout(location = 6) in float vDist;       // world distance camera->fragment
 
 layout(location = 0) out vec4 outColor;
 
 // Must match mesh.vert's block byte-for-byte (shared push-constant range). The
-// sky path reads pc.yaw to pan the panorama; the other members are vertex-only.
+// sky path reads pc.yaw to pan the panorama; eyeX/Y/Z are vertex-only (folded
+// into vDist there); the rest are vertex-only.
 layout(push_constant) uniform Push {
     mat4  mvp;
     float extralight;
     float yaw;          // view yaw, radians
+    float eyeX;
+    float eyeY;
+    float eyeZ;
 } pc;
 
 layout(set = 0, binding = 0) uniform sampler2D atlasTex;     // R8 palette indices
@@ -46,9 +51,10 @@ layout(set = 0, binding = 2) readonly buffer Atlas {
     vec4 rects[];     // ox, oy, w, h  (texels)
 } atlas;
 
-const int FLAG_FLAT   = 0x1;   // matches RB_MESH_FLAT in r_mesh.h
-const int FLAG_SPRITE = 0x4;   // matches RB_MESH_SPRITE in r_mesh.h
-const int FLAG_SKY    = 0x10;  // matches RB_MESH_SKY in r_mesh.h
+const int FLAG_FLAT    = 0x1;   // matches RB_MESH_FLAT in r_mesh.h
+const int FLAG_SPRITE  = 0x4;   // matches RB_MESH_SPRITE in r_mesh.h
+const int FLAG_PSPRITE = 0x8;   // matches RB_MESH_PSPRITE in r_mesh.h
+const int FLAG_SKY     = 0x10;  // matches RB_MESH_SKY in r_mesh.h
 
 const float PI = 3.14159265358979;
 
@@ -104,7 +110,16 @@ void main()
     vec3  n     = normalize(vNormal);
     vec3  L     = normalize(vec3(0.3, 0.4, 0.85));   // arbitrary key direction
     float diff  = max(dot(n, L), 0.0);
-    float shade = vLight * (0.55 + 0.45 * diff);
+
+    // DOOM-style distance light diminishing: far surfaces fade toward dark, the
+    // depth cue the flat sector-light pass lacks (near stays at full sector
+    // light, so this adds near/far contrast rather than darkening everything).
+    // The weapon psprite is NDC (vDist meaningless), so it keeps full brightness.
+    float distLight = 1.0;
+    if ((vFlags & FLAG_PSPRITE) == 0)
+        distLight = clamp(1.0 - vDist / 3000.0, 0.35, 1.0);
+
+    float shade = vLight * distLight * (0.55 + 0.45 * diff);
 
     outColor = vec4(albedo * shade, 1.0);
 }

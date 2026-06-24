@@ -1008,7 +1008,7 @@ void CreatePipeline()
     VkPushConstantRange pcr = {};
     pcr.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     pcr.offset = 0;
-    pcr.size = 18 * sizeof(float);   // mat4 MVP + extralight brighten + sky yaw
+    pcr.size = 21 * sizeof(float);   // mat4 MVP + extralight + sky yaw + camera xyz
 
     VkPipelineLayoutCreateInfo plci = {};
     plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -1421,13 +1421,16 @@ extern "C" void RB_Vulkan_Present(void)
         // shade) and the view yaw (mesh.frag pans the sky by it). Push constants
         // and descriptor sets are layout-scoped, so they outlive the pipeline
         // binds below — set them once for both the sky and world pipelines.
-        float pcData[18];
+        float pcData[21];
         std::memcpy(pcData, g.viewProj, 16 * sizeof(float));
         pcData[16] = g.lastView.extralight;
         pcData[17] = g.lastView.angle;
+        pcData[18] = g.lastView.x;     // camera world pos: distance light falloff
+        pcData[19] = g.lastView.y;
+        pcData[20] = g.lastView.z;
         vkCmdPushConstants(g.cmd, g.pipelineLayout,
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, 18 * sizeof(float), pcData);
+                           0, 21 * sizeof(float), pcData);
 
         VkDeviceSize off = 0;
         // Sky first, behind everything: depth-off pipeline, the 6 verts at the

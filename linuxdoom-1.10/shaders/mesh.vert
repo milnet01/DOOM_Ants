@@ -14,6 +14,9 @@ layout(push_constant) uniform Push {
     mat4  mvp;          // projection * view, column-major (Vulkan clip space)
     float extralight;   // muzzle-flash view brighten, added to every shade [0,1]
     float yaw;          // view yaw (radians); the sky fragment path pans by it
+    float eyeX;         // camera world position (separate floats: tight push-
+    float eyeY;         // constant packing, no vec3 16-byte alignment hole);
+    float eyeZ;         // drives the distance light falloff in the fragment shader
 } pc;
 
 layout(location = 0) in vec3  inPos;
@@ -29,6 +32,7 @@ layout(location = 2) out float vLight;
 layout(location = 3) flat out int vTexnum;
 layout(location = 4) flat out int vFlags;
 layout(location = 5) out vec2 vScreenUV;   // [0,1] across the frame; sky uses it
+layout(location = 6) out float vDist;      // world distance camera->vertex (falloff)
 
 const int FLAG_PSPRITE = 0x8;   // matches RB_MESH_PSPRITE in r_mesh.h
 const int FLAG_SKY     = 0x10;  // matches RB_MESH_SKY in r_mesh.h
@@ -50,4 +54,7 @@ void main()
     vFlags  = inFlags;
     // NDC xy -> [0,1] screen space (Vulkan y points down, so .y=0 is the top).
     vScreenUV = inPos.xy * 0.5 + 0.5;
+    // World distance from the camera for the fragment's distance light falloff.
+    // Meaningless for NDC psprite/sky verts; the fragment shader ignores it there.
+    vDist = length(inPos - vec3(pc.eyeX, pc.eyeY, pc.eyeZ));
 }
