@@ -264,6 +264,19 @@ parked ideas (💭 considered) until we commit to and design each one.
   full 16:9 frame (no 4:3/aspect correction yet, same as the world view);
   invuln fixedcolormap + invisibility shadow not applied (sector light +
   FF_FULLBRIGHT only). Next: sky rendering for sky-flat surfaces.
+  Progress (2026-06-24): muzzle-flash extralight wired into the 3D view.
+  Classic DOOM brightens the whole screen for a few tics while a gun fires
+  (A_Light1/2 set player->extralight); the Vulkan mesh path ignored it, so
+  firing added no flicker. rb_view_t gained a [0,1] extralight term, set on
+  the C side from player->extralight (one light-segment = 1<<LIGHTSEGSHIFT =
+  16 of the 0..255 units, matching the software renderer); it rides the push
+  constant beside the MVP and mesh.vert adds it to every surface's shade,
+  clamped (fullbright stays 1). Walls, floors, monsters, and the weapon
+  flicker brighter together -- the original feel, not the real localized
+  flash light (that is DOOM-0009 Stage 2's muzzle-flash dynamic shadows).
+  Verified end-to-end on E1M1 (RT3D tier, RX 6600) by temporarily forcing
+  the term: the whole lit scene lifts uniformly while the dark void/clear
+  stays dark; clean build, no Vulkan validation errors. Next: sky rendering.
 - 💭 [DOOM-0009] **Add hardware path tracing (Monte-Carlo GI + ray-traced shadows).**
   **Layman:** Use the graphics card to trace real light rays for accurate lighting, bounced light, and shadows.
   Kind: feature.
