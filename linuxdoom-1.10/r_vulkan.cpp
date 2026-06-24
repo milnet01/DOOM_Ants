@@ -433,14 +433,20 @@ void CreateSwapchain()
     Check(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(g.phys, g.surface, &caps),
           "vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
 
-    // Surface format: prefer 8-bit BGRA sRGB, else whatever the surface offers.
+    // Surface format: prefer 8-bit BGRA *UNORM* (not _SRGB). The bring-up shader
+    // writes DOOM's palette colours, which are already display-encoded (sRGB)
+    // values; a _SRGB swapchain would apply the sRGB transfer a second time and
+    // wash the image out (and lift the dark background to a glowing grey). A
+    // UNORM swapchain presents our bytes as-is, matching the software renderer's
+    // output exactly. The scene-linear workflow + a real tonemap (writing linear
+    // radiance into an _SRGB target) arrives with the path tracer (DOOM-0009).
     uint32_t fn = 0;
     vkGetPhysicalDeviceSurfaceFormatsKHR(g.phys, g.surface, &fn, nullptr);
     std::vector<VkSurfaceFormatKHR> formats(fn);
     vkGetPhysicalDeviceSurfaceFormatsKHR(g.phys, g.surface, &fn, formats.data());
     VkSurfaceFormatKHR fmt = formats[0];
     for (const VkSurfaceFormatKHR& f : formats)
-        if (f.format == VK_FORMAT_B8G8R8A8_SRGB &&
+        if (f.format == VK_FORMAT_B8G8R8A8_UNORM &&
             f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
         {
             fmt = f;
