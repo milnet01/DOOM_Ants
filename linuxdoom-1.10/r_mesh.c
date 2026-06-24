@@ -601,12 +601,17 @@ int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts)
 // into 320x200) and map that rect to Vulkan NDC over the whole frame. z=0 plants
 // the quad at the near plane so the depth test (LESS) always lets it sit on top
 // of the world. Screen-space, so no camera/view is needed.
-int RB_BuildPSprites(rb_vertex_t* out, int maxverts)
+int RB_BuildPSprites(rb_vertex_t* out, int maxverts, float aspect)
 {
     player_t* player;
     float     baselight;
     int       i, n = 0;
     int       fl = RB_MESH_SPRITE | RB_MESH_PSPRITE;
+    // DOOM's weapon lives in 320x200 (displayed 4:3). Mapping it to the full
+    // widescreen NDC stretched it ~33% wide on 16:9; scale x by (4:3)/aspect
+    // about screen centre so the gun keeps DOOM's 1.2 pixel aspect (y stays
+    // full-height). 1.0 at 4:3, ~0.75 at 16:9.
+    float     xscale = (4.0f / 3.0f) / aspect;
 
     if (numspritelumps <= 0)
         return 0;
@@ -652,8 +657,9 @@ int RB_BuildPSprites(rb_vertex_t* out, int maxverts)
         by = ty + hpx;
 
         // 320 wide, 200 tall -> NDC [-1,1]; Vulkan y points down (y=0 is top).
-        nx0 = lx / 160.0f - 1.0f;
-        nx1 = rx / 160.0f - 1.0f;
+        // x is scaled about screen centre to undo the widescreen stretch.
+        nx0 = (lx / 160.0f - 1.0f) * xscale;
+        nx1 = (rx / 160.0f - 1.0f) * xscale;
         ny0 = ty / 100.0f - 1.0f;
         ny1 = by / 100.0f - 1.0f;
 

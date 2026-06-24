@@ -137,10 +137,12 @@ int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts);
 
 // Build the player's weapon/flash psprites as a screen-space overlay, writing
 // rb_vertex_t triangles into out[] (up to maxverts). Positions are emitted in
-// Vulkan NDC (the 320x200 HUD space mapped to the full frame) with z=0 so the
-// weapon draws on top of the world; flags carry RB_MESH_SPRITE|RB_MESH_PSPRITE.
-// Returns the vertex count (a multiple of 6). Rebuilt every frame.
-int RB_BuildPSprites(rb_vertex_t* out, int maxverts);
+// Vulkan NDC with z=0 so the weapon draws on top of the world; flags carry
+// RB_MESH_SPRITE|RB_MESH_PSPRITE. The 320x200 HUD space maps to the frame with
+// x scaled by (4:3)/aspect about screen centre, so the gun keeps DOOM's pixel
+// aspect instead of stretching on widescreen. Returns the vertex count (a
+// multiple of 6). Rebuilt every frame.
+int RB_BuildPSprites(rb_vertex_t* out, int maxverts, float aspect);
 
 // Build the sky backdrop as one full-screen quad in Vulkan NDC (z=0), flagged
 // RB_MESH_SKY with texnum = view->skytexnum. Drawn behind the world (depth test

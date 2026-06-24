@@ -1376,7 +1376,10 @@ extern "C" void RB_Vulkan_Present(void)
         int sky = RB_BuildSky(&g.lastView, buf, (int)g.spriteVertCap);
         int n   = RB_BuildSprites(&g.lastView, buf + sky, (int)g.spriteVertCap - sky);
         // Weapon overlay shares the buffer/draw; appended last so it sits on top.
-        n += RB_BuildPSprites(buf + sky + n, (int)g.spriteVertCap - sky - n);
+        // Pass the swapchain aspect so the gun keeps DOOM's 4:3 proportions.
+        float aspect = g.extent.height ? (float)g.extent.width / (float)g.extent.height
+                                       : 1.0f;
+        n += RB_BuildPSprites(buf + sky + n, (int)g.spriteVertCap - sky - n, aspect);
         g.skyVertCount    = (uint32_t)sky;
         g.spriteVertCount = (uint32_t)n;
     }
