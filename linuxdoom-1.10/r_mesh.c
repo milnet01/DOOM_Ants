@@ -336,6 +336,28 @@ static void tile_size(int id, int* w, int* h)
     if (*h < 1) *h = 1;
 }
 
+// Palette index of the darkest non-black colour. Index 0 doubles as the
+// sprite/masked transparent key, so a genuinely-black (index 0) texel inside a
+// post would be discarded and punch a see-through hole in the sprite (visible
+// on the player weapon/hand). Remap such opaque texels to this near-black index
+// instead: visually identical, but not keyed out. Scanned once from PLAYPAL.
+static int sprite_opaque_black(void)
+{
+    static int idx = -1;
+    if (idx < 0)
+    {
+        const byte* pal = W_CacheLumpName("PLAYPAL", PU_CACHE);
+        int i, best = 1, bestlum = 1 << 30;
+        for (i = 1; i < 256; i++)
+        {
+            int lum = pal[i*3] + pal[i*3 + 1] + pal[i*3 + 2];
+            if (lum < bestlum) { bestlum = lum; best = i; }
+        }
+        idx = best;
+    }
+    return idx;
+}
+
 // Copy one tile's palette indices into the atlas at (ox,oy).
 static void blit_tile(unsigned char* dst, int dstw, int id, int ox, int oy,
                       int w, int h)
@@ -373,9 +395,14 @@ static void blit_tile(unsigned char* dst, int dstw, int id, int ox, int oy,
                 const byte* src = (const byte*)column + 3;
                 for (row = 0; row < column->length; row++)
                 {
-                    int y = column->topdelta + row;
+                    int  y     = column->topdelta + row;
+                    byte texel = src[row];
+                    // Opaque black -> near-black, so it survives the index-0
+                    // transparency test instead of becoming a hole.
+                    if (texel == 0)
+                        texel = (byte)sprite_opaque_black();
                     if (y >= 0 && y < h)
-                        dst[(oy + y) * dstw + (ox + col)] = src[row];
+                        dst[(oy + y) * dstw + (ox + col)] = texel;
                 }
                 column = (const column_t*)
                     ((const byte*)column + column->length + 4);
