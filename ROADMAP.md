@@ -331,6 +331,46 @@ parked ideas (💭 considered) until we commit to and design each one.
   Vulkan validation errors. Next: UI compositing -- draw the 2D overlay
   (status bar, messages, menu) over the 3D frame; it is currently skipped,
   so the HUD and the menu are invisible in 3D.
+  Progress (2026-06-24): 2D HUD/menu compositor. The 3D back-ends render
+  the world through Vulkan, so the engine's paletted screens[0] -- where
+  the status bar, messages, menu, and intermission/finale draw -- was never
+  shown (HUD invisible; the menu unreachable, so you couldn't even switch
+  back to Classic from inside 3D). Now composited as a full-screen layer
+  over the rendered scene: a vertexless pass (overlay.vert/.frag) samples
+  screens[0] through the same PLAYPAL LUT the world uses and discards the
+  transparent key. The 3D view's footprint in screens[0] is cleared to that
+  key each frame (RB_OVERLAY_KEY = palette index 251, pure magenta, unused
+  by any HUD/menu/font art, verified against the lumps), so the scene shows
+  through there while every 2D element painted on top composites over the
+  world. A persistently-mapped staging buffer streams the overlay into a
+  device-local R8 image each frame (upload recorded before the render pass,
+  draw issued last, depth off; descriptor binding 3). Verified on DOOM II
+  MAP01 (RX 6600, Ultra) at screen sizes 9/10/11: status bar + brick border
+  composite correctly, the view region keys out cleanly, no validation
+  errors. (Title-screen-before-any-level case still shows the slate clear
+  in 3D because the overlay reuses the level atlas's palette/descriptor --
+  see found-issue below.)
+  Progress (2026-06-24): floor/ceiling caps rebuilt from the BSP. The
+  convex-hull-of-seg-endpoints cap (above) still under-covered subsectors
+  whose true corners sit on BSP partition-line intersections (no seg
+  there), and a numlines < 3 guard dropped every subsector with fewer than
+  three segs outright -- both showing the sky backdrop through the floor (a
+  tan gradient where a flat belongs). Replaced with the canonical carve:
+  start from a map-sized quad and clip it by each ancestor partition line
+  down the node tree (children[0] front/right, children[1] back/left, per
+  R_PointOnSide), so every leaf gets its exact convex cell with no gaps.
+  MAP01 1206 -> 1420 triangles; floor renders solid, no sky bleed-through
+  (RX 6600, Ultra, no validation errors).
+  Progress (2026-06-24): weapon drawn in the view window. RB_BuildPSprites
+  mapped the weapon's 200-tall HUD canvas onto the whole frame, so the hand
+  landed at the screen bottom where the composited status bar painted over
+  it ("just the gun, no hand" at screen size <= 10). Now mapped onto the
+  active view's vertical span [viewwindowy, viewwindowy+viewheight] so the
+  weapon anchors to the view bottom and clears the status bar, as the classic
+  renderer does; full-screen (size 11) is unchanged. With this, screen size
+  10 (full-width view, status bar shown, no brick border) gives HUD + full
+  gun/hand + solid floor -- user-confirmed "perfect". The horizontal 4:3
+  mapping is untouched.
 - 💭 [DOOM-0009] **Add hardware path tracing (Monte-Carlo GI + ray-traced shadows).**
   **Layman:** Use the graphics card to trace real light rays for accurate lighting, bounced light, and shadows.
   Kind: feature.
@@ -393,3 +433,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Give the player a flashlight they can switch on and off with a button.
   Kind: feature.
   Source: user-request-2026-06-24.
+
+- 📋 [DOOM-0045] **Composite the HUD/menu over the 3D view before a level is loaded (title screen).**
+  The DOOM-0008 2D HUD/menu compositor only engages once a level is built, because it reuses the level texture atlas's PLAYPAL LUT + descriptor set (UploadAtlas). So at the title/demo screen in Solid/Ultra mode -- before any level -- the 2D overlay (title pic, main menu) is not composited and the view shows the slate clear, which means a cold launch straight into a 3D tier shows no menu until a demo/level loads. Decouple the palette LUT + overlay image/descriptor from the level atlas (build the PLAYPAL LUT at Vulkan init from the WAD-global palette) so the overlay composites from the first frame. Found 2026-06-24 while implementing the compositor; the in-level case (the user-facing goal: HUD + menu reachable during play, including switching back to Classic) works.
+  **Layman:** In 3D mode the menu only appears once you're in a level; on the opening title screen it's currently invisible. Make it show there too.
+  Kind: fix.
+  Source: in-session-2026-06-24.
