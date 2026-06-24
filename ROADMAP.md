@@ -297,6 +297,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** A second look for the 3D game: a modern, scary, DOOM-3-style art set you can switch to — same levels, new graphics.
   Kind: feature.
   Source: user-request-2026-06-24.
+  Decision (2026-06-24): art-sourcing route = curate free / CC0-licensed HD packs (GPL-v2-distributable). Implication: bulk surface textures are well-covered by CC0 PBR libraries (e.g. ambientCG, Poly Haven), but DOOM-specific sprite/monster coverage under a free licence is patchy — expect to fill gaps (AI-generated or hand-authored originals) and to wrangle disparate packs into one coherent sci-fi-horror look. Curate against DOOM's texture names/sizes via a materials sidecar (see the Q2RTX materials.csv pattern in docs/research/3d-renderer-approaches.md).
 
 - 📋 [DOOM-0043] **Place scene lights and an ambient floor so path-traced rooms are never unintentionally pitch black.**
   Once ray tracing computes real light transport, sectors with no bright surfaces go near-black. Build on the DOOM-0008 spec's derived emission (sector lightlevel glow, known bright/lamp/computer textures as emitters, sky sun) and add deliberate light placement where it makes sense (lamps, computer banks, exit signs, fire) plus a small ambient/sky floor so navigation stays playable. Distinct from DOOM-0010 (moving/coloured dynamic lights) and DOOM-0009 (the integrator itself) — this is the lighting-design/brightness pass that keeps the world readable. Pairs with the player flashlight (next item) for genuinely dark areas.
