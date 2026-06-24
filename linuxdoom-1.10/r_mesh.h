@@ -115,8 +115,10 @@ void RB_FreeAtlas(rb_atlas_t* atlas);
 // the mesh: x east, y north, z up; angle is yaw (0 = +x east, CCW positive).
 typedef struct
 {
-    float x, y, z;   // eye position, world units
-    float angle;     // yaw, radians
+    float x, y, z;       // eye position, world units
+    float angle;         // yaw, radians
+    float extralight;    // muzzle-flash view brighten, [0,1] added to every shade
+                         // (classic DOOM's player->extralight, see r_backend.c)
 } rb_view_t;
 
 // Build this frame's billboard sprites (things + items) as camera-facing quads,

@@ -1004,7 +1004,7 @@ void CreatePipeline()
     VkPushConstantRange pcr = {};
     pcr.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     pcr.offset = 0;
-    pcr.size = 16 * sizeof(float);   // mat4 MVP
+    pcr.size = 17 * sizeof(float);   // mat4 MVP + extralight brighten
 
     VkPipelineLayoutCreateInfo plci = {};
     plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -1400,8 +1400,13 @@ extern "C" void RB_Vulkan_Present(void)
         vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.pipeline);
         vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                 g.pipelineLayout, 0, 1, &g.ds, 0, nullptr);
+        // mat4 MVP followed by the muzzle-flash brighten (mesh.vert adds it to
+        // every shade), so the world flickers brighter while a gun fires.
+        float pcData[17];
+        std::memcpy(pcData, g.viewProj, 16 * sizeof(float));
+        pcData[16] = g.lastView.extralight;
         vkCmdPushConstants(g.cmd, g.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
-                           0, 16 * sizeof(float), g.viewProj);
+                           0, 17 * sizeof(float), pcData);
 
         VkDeviceSize off = 0;
         if (g.vbuf && g.vertexCount)

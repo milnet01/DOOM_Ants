@@ -84,6 +84,12 @@ static void Vulkan_RenderPlayerView(player_t* p)
     view.y     = p->mo->y  / (float)FRACUNIT;
     view.z     = p->viewz  / (float)FRACUNIT;
     view.angle = (float)(p->mo->angle * (2.0 * M_PI / 4294967296.0));
+    // Muzzle-flash brighten: A_Light1/2 set extralight to 1/2 light-segments while
+    // a gun fires (p_pspr.c). The software renderer adds it to the light index
+    // (lightnum = (lightlevel >> LIGHTSEGSHIFT) + extralight); one segment is
+    // 1<<LIGHTSEGSHIFT = 16 of the 0..255 lightlevel units. Fold the same step
+    // into the [0,1] shade so the whole 3D view flickers brighter, as it always did.
+    view.extralight = p->extralight * (16.0f / 255.0f);
     RB_Vulkan_RenderView(&view);
 }
 static void    Vulkan_Present(void)                { RB_Vulkan_Present(); }

@@ -11,7 +11,8 @@
 //
 
 layout(push_constant) uniform Push {
-    mat4 mvp;   // projection * view, column-major (Vulkan clip space)
+    mat4  mvp;          // projection * view, column-major (Vulkan clip space)
+    float extralight;   // muzzle-flash view brighten, added to every shade [0,1]
 } pc;
 
 layout(location = 0) in vec3  inPos;
@@ -39,7 +40,8 @@ void main()
         gl_Position = pc.mvp * vec4(inPos, 1.0);
     vNormal = inNormal;
     vUV     = inUV;
-    vLight  = inLight;
+    // Muzzle flash brightens the whole view; fullbright surfaces stay clamped at 1.
+    vLight  = clamp(inLight + pc.extralight, 0.0, 1.0);
     vTexnum = inTexnum;
     vFlags  = inFlags;
 }
