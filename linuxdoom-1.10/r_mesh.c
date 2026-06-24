@@ -27,8 +27,9 @@
 
 #include "doomtype.h"
 #include "m_fixed.h"
+#include "doomdata.h"   // NF_SUBSECTOR (BSP child = leaf flag)
 #include "r_defs.h"
-#include "r_state.h"    // segs/subsectors/sectors + counts, firstflat, textureheight
+#include "r_state.h"    // segs/subsectors/sectors/nodes + counts, firstflat, textureheight
 #include "r_data.h"     // R_GetColumn
 #include "r_main.h"     // R_PointToAngle2 (sprite rotation pick)
 #include "doomstat.h"   // skyflatnum, players, consoleplayer
@@ -141,80 +142,109 @@ static void emit_wall(builder_t* bld, seg_t* seg, fixed_t bottomz, fixed_t topz,
 }
 
 //
-// 2D cross product (B-O) x (A-O): >0 left turn, <0 right turn, 0 collinear.
-static float cross2(float ox, float oy, float ax, float ay, float bx, float by)
+// Floor/ceiling caps via BSP carve.
+//
+// A subsector is a convex BSP leaf, but only PART of its boundary is made of
+// segs -- the remaining edges are invisible BSP partition lines that carry no
+// seg, and some subsectors have fewer than three segs at all. Fanning seg
+// endpoints (or their convex hull) therefore leaves the partition edges open,
+// showing the sky backdrop through the floor/ceiling, and drops the seg-poor
+// subsectors entirely. The exact convex cell of every leaf is instead recovered
+// the canonical way (as GZDoom/Eternity build flat polygons): start from a
+// map-sized quad and clip it by each ancestor partition line on the way down
+// the node tree. Every subsector seg lies on one of those ancestor partitions,
+// so the carved polygon reproduces the full floor/ceiling outline with no gaps.
+//
+
+enum { POLYMAX = 64 };
+typedef struct { int n; float x[POLYMAX], y[POLYMAX]; } poly_t;
+
+// Clip `in` to one side of the line through (ox,oy) with direction (dx,dy).
+// keepRight != 0 keeps the front/right half-plane (DOOM's side 0, where a seg's
+// front sector sits); else the back/left (side 1). Sutherland-Hodgman; boundary
+// points are kept on both sides so the two children share the cut edge exactly.
+static poly_t clip_poly(const poly_t* in, float ox, float oy,
+                        float dx, float dy, int keepRight)
 {
-    return (ax - ox) * (by - oy) - (ay - oy) * (bx - ox);
+    poly_t out;
+    float  sgn = keepRight ? 1.0f : -1.0f;
+    int    i;
+    out.n = 0;
+    for (i = 0; i < in->n; i++)
+    {
+        int   j  = (i + 1 == in->n) ? 0 : i + 1;
+        float fi = sgn * (dx * (in->y[i] - oy) - dy * (in->x[i] - ox));
+        float fj = sgn * (dx * (in->y[j] - oy) - dy * (in->x[j] - ox));
+        int   ini = fi <= 0.0f, inj = fj <= 0.0f;   // inside == front half-plane
+        if (ini && out.n < POLYMAX)
+        { out.x[out.n] = in->x[i]; out.y[out.n] = in->y[i]; out.n++; }
+        if (ini != inj && out.n < POLYMAX)          // edge crosses: add the hit
+        {
+            float t = fi / (fi - fj);
+            out.x[out.n] = in->x[i] + t * (in->x[j] - in->x[i]);
+            out.y[out.n] = in->y[i] + t * (in->y[j] - in->y[i]);
+            out.n++;
+        }
+    }
+    return out;
 }
 
-// Floor or ceiling cap for one subsector: triangulate the convex hull of its
-// seg endpoints.
-//  up != 0  -> floor (normal +z, CCW from above);  else ceiling (normal -z).
-//
-// A subsector is convex, but only partly bounded by segs -- the rest of its
-// boundary is invisible BSP partition lines that carry no seg. Fanning the seg
-// points directly leaves those partition edges as gaps, which now show the sky
-// backdrop through the floor/ceiling. The convex hull of all seg endpoints
-// spans the partition edges with straight lines (they are straight), closing
-// the cap. (A corner that lies on a partition line beyond the outermost seg
-// endpoints is not recovered -- a rare, tiny sliver.)
-//
-static void emit_cap(builder_t* bld, seg_t* segp, int n, fixed_t height,
-                     int up, int flatnum, float light)
+// Triangulate a carved cell as a fan at `height`, flats tiling on the fixed
+// 64x64 world grid (world-xy texel coords). up != 0 -> floor (normal +z, CCW
+// from above); else ceiling (normal -z, reversed winding).
+static void emit_cap_poly(builder_t* bld, const poly_t* p, fixed_t height,
+                          int up, int flatnum, float light)
 {
-    enum { MAXPTS = 256 };
     float z  = height / (float)FRACUNIT;
     float nz = up ? 1.0f : -1.0f;
-    float px[MAXPTS], py[MAXPTS];           // seg endpoints (world xy)
-    float hx[MAXPTS + 1], hy[MAXPTS + 1];   // hull, CCW (last == first)
-    int   np = 0, h = 0, lower, hn, k;
     rb_vertex_t pivot;
+    int k;
+    if (p->n < 3) return;
+    pivot = mkv(p->x[0], p->y[0], z, 0.0f, 0.0f, nz, p->x[0], p->y[0], flatnum, RB_MESH_FLAT, light);
+    for (k = 1; k < p->n - 1; k++)
+    {
+        rb_vertex_t va = mkv(p->x[k],   p->y[k],   z, 0.0f, 0.0f, nz, p->x[k],   p->y[k],   flatnum, RB_MESH_FLAT, light);
+        rb_vertex_t vb = mkv(p->x[k+1], p->y[k+1], z, 0.0f, 0.0f, nz, p->x[k+1], p->y[k+1], flatnum, RB_MESH_FLAT, light);
+        if (up) push_tri(bld, pivot, va, vb);
+        else    push_tri(bld, pivot, vb, va);   // flip winding so -z faces down
+    }
+}
 
-    for (k = 0; k < n && np + 2 <= MAXPTS; k++)
-    {
-        px[np] = segp[k].v1->x / (float)FRACUNIT;
-        py[np] = segp[k].v1->y / (float)FRACUNIT; np++;
-        px[np] = segp[k].v2->x / (float)FRACUNIT;
-        py[np] = segp[k].v2->y / (float)FRACUNIT; np++;
-    }
-    if (np < 3) return;
+// Emit a subsector's floor and ceiling from its carved convex cell (sky flats
+// are skipped: those openings render as the sky backdrop, not a flat).
+static void emit_subsector_caps(builder_t* bld, int ssnum, const poly_t* cell)
+{
+    subsector_t* ss  = &subsectors[ssnum];
+    sector_t*    sec = ss->sector;
+    float        light;
+    if (!sec || cell->n < 3) return;
+    light = sec->lightlevel / 255.0f;
+    if (sec->floorpic != skyflatnum)
+        emit_cap_poly(bld, cell, sec->floorheight, 1, sec->floorpic, light);
+    if (sec->ceilingpic != skyflatnum)
+        emit_cap_poly(bld, cell, sec->ceilingheight, 0, sec->ceilingpic, light);
+}
 
-    // Sort points by (x, then y) -- insertion sort; np is small (a few segs).
-    for (k = 1; k < np; k++)
+// Walk the BSP, carrying the convex cell clipped by every ancestor partition.
+// children[0] is the front/right half-space, children[1] the back/left (DOOM's
+// R_PointOnSide convention); at a leaf the carried cell is the subsector's
+// exact floor/ceiling outline.
+static void carve_caps(builder_t* bld, int nodenum, poly_t poly)
+{
+    node_t* nd;
+    float   ox, oy, dx, dy;
+    if (poly.n < 3)
+        return;
+    if (nodenum & NF_SUBSECTOR)
     {
-        float vx = px[k], vy = py[k];
-        int j = k - 1;
-        while (j >= 0 && (px[j] > vx || (px[j] == vx && py[j] > vy)))
-        { px[j + 1] = px[j]; py[j + 1] = py[j]; j--; }
-        px[j + 1] = vx; py[j + 1] = vy;
+        emit_subsector_caps(bld, nodenum & ~NF_SUBSECTOR, &poly);
+        return;
     }
-
-    // Andrew's monotone chain -> CCW hull. <=0 drops collinear/coincident pts.
-    for (k = 0; k < np; k++)
-    {
-        while (h >= 2 && cross2(hx[h-2], hy[h-2], hx[h-1], hy[h-1], px[k], py[k]) <= 0.0f) h--;
-        hx[h] = px[k]; hy[h] = py[k]; h++;
-    }
-    lower = h + 1;
-    for (k = np - 2; k >= 0; k--)
-    {
-        while (h >= lower && cross2(hx[h-2], hy[h-2], hx[h-1], hy[h-1], px[k], py[k]) <= 0.0f) h--;
-        hx[h] = px[k]; hy[h] = py[k]; h++;
-    }
-    hn = h - 1;                  // last hull point repeats the first
-    if (hn < 3) return;
-
-    // Flats tile on the fixed 64x64 world grid -> world-xy texel coords.
-    pivot = mkv(hx[0], hy[0], z, 0.0f, 0.0f, nz, hx[0], hy[0], flatnum, RB_MESH_FLAT, light);
-    for (k = 1; k < hn - 1; k++)
-    {
-        rb_vertex_t va = mkv(hx[k],   hy[k],   z, 0.0f, 0.0f, nz, hx[k],   hy[k],   flatnum, RB_MESH_FLAT, light);
-        rb_vertex_t vb = mkv(hx[k+1], hy[k+1], z, 0.0f, 0.0f, nz, hx[k+1], hy[k+1], flatnum, RB_MESH_FLAT, light);
-        if (up)
-            push_tri(bld, pivot, va, vb);
-        else
-            push_tri(bld, pivot, vb, va);   // flip winding so -z faces down
-    }
+    nd = &nodes[nodenum];
+    ox = nd->x  / (float)FRACUNIT; oy = nd->y  / (float)FRACUNIT;
+    dx = nd->dx / (float)FRACUNIT; dy = nd->dy / (float)FRACUNIT;
+    carve_caps(bld, nd->children[0], clip_poly(&poly, ox, oy, dx, dy, 1));
+    carve_caps(bld, nd->children[1], clip_poly(&poly, ox, oy, dx, dy, 0));
 }
 
 rb_mesh_t* RB_BuildLevelMesh(void)
@@ -265,26 +295,21 @@ rb_mesh_t* RB_BuildLevelMesh(void)
         }
     }
 
-    // Floor/ceiling caps.
-    for (i = 0; i < numsubsectors; i++)
+    // Floor/ceiling caps: carve each subsector's exact convex cell out of the
+    // BSP, clipping a map-sized quad down through the node tree. The root is the
+    // last node (or subsector 0 for a node-less single-sector map). B spans
+    // DOOM's signed-16-bit coordinate range, so the box contains the whole map.
     {
-        subsector_t* ss  = &subsectors[i];
-        sector_t*    sec = ss->sector;
-        seg_t*       segp;
-        float        light;
-
-        if (!sec || ss->numlines < 3)
-            continue;
-
-        segp  = &segs[ss->firstline];
-        light = sec->lightlevel / 255.0f;
-
-        if (sec->floorpic != skyflatnum)
-            emit_cap(&bld, segp, ss->numlines, sec->floorheight, 1,
-                     sec->floorpic, light);
-        if (sec->ceilingpic != skyflatnum)
-            emit_cap(&bld, segp, ss->numlines, sec->ceilingheight, 0,
-                     sec->ceilingpic, light);
+        const float B = 32768.0f;
+        poly_t box;
+        int    root;
+        box.n = 4;                       // CCW with y up
+        box.x[0] = -B; box.y[0] = -B;
+        box.x[1] =  B; box.y[1] = -B;
+        box.x[2] =  B; box.y[2] =  B;
+        box.x[3] = -B; box.y[3] =  B;
+        root = (numnodes > 0) ? (numnodes - 1) : NF_SUBSECTOR;
+        carve_caps(&bld, root, box);
     }
 
     mesh = malloc(sizeof(rb_mesh_t));
