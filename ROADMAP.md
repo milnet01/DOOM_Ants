@@ -277,6 +277,23 @@ parked ideas (💭 considered) until we commit to and design each one.
   Verified end-to-end on E1M1 (RT3D tier, RX 6600) by temporarily forcing
   the term: the whole lit scene lifts uniformly while the dark void/clear
   stays dark; clean build, no Vulkan validation errors. Next: sky rendering.
+  Progress (2026-06-24): sky rendering for the 3D view. Sky-flat
+  ceilings were skipped in the mesh, leaving the dark clear colour
+  showing through; now a full-screen backdrop draws behind the world
+  (a second depth-off pipeline) and the fragment shader maps each pixel
+  to a sky texel by view yaw + screen x (cylindrical, 90 deg of view per
+  texture width, atan for the perspective FOV) and screen y (128px sky
+  over the top half, horizon at screen centre). Fullbright, so the muzzle
+  flash never brightens it; column sign matches DOOM's viewangle +
+  xtoviewangle so it pans the correct way on turning. Sky texnum rides
+  across the seam in rb_view_t (RB_BuildSky), DOOM globals stay C-side.
+  Verified on DOOM II MAP01 (RT3D, RX 6600): sky shows through the
+  entryway opening, occluded by walls/ceiling, no validation errors.
+  Follow-up: vertical mapping is a top-half linear clamp (below-horizon
+  smear is hidden by floors but would show through a rare F_SKY1 floor);
+  refine to DOOM's skytexturemid placement if a sky-floor map needs it.
+  Next: still on the DOOM-0008 raster bring-up (menu wiring of the
+  Classic/Solid/Ultra modes is the user-facing piece).
 - 💭 [DOOM-0009] **Add hardware path tracing (Monte-Carlo GI + ray-traced shadows).**
   **Layman:** Use the graphics card to trace real light rays for accurate lighting, bounced light, and shadows.
   Kind: feature.
