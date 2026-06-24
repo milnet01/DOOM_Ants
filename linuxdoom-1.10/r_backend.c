@@ -25,11 +25,13 @@
 #include <math.h>
 
 #include "r_backend.h"
-#include "r_main.h"     // R_RenderPlayerView
+#include "doomdef.h"    // SCREENWIDTH/SCREENHEIGHT
+#include "r_main.h"     // R_RenderPlayerView, view-window globals
 #include "i_video.h"    // I_FinishUpdate
 #include "m_fixed.h"    // FRACUNIT
 #include "r_sky.h"      // skytexture (the sky's wall-texture index)
-#include "r_mesh.h"     // rb_view_t (POD camera across the seam)
+#include "r_mesh.h"     // rb_view_t (POD camera across the seam), RB_OVERLAY_KEY
+#include "v_video.h"    // screens[] (the paletted 2D overlay buffer)
 
 // A level is loaded once the BSP segs exist (r_state.h). Used by RB_Init to
 // catch up the scene build when a map was loaded before the back-end came up
@@ -66,6 +68,7 @@ extern int  RB_Vulkan_Available(int want_rt);   // want_rt: require RT extension
 extern void RB_Vulkan_Init(void);
 extern void RB_Vulkan_SetResolution(int w, int h);
 extern void RB_Vulkan_RenderView(const rb_view_t* view);
+extern void RB_Vulkan_SetOverlay(const unsigned char* pixels, int w, int h);
 extern void RB_Vulkan_Present(void);
 extern void RB_Vulkan_Shutdown(void);
 extern void RB_Vulkan_BuildLevel(void);
@@ -96,8 +99,31 @@ static void Vulkan_RenderPlayerView(player_t* p)
     // R_SetupLevel; the C++ side never touches DOOM globals.
     view.skytexnum = skytexture;
     RB_Vulkan_RenderView(&view);
+
+    // The 3D world goes to Vulkan, so the engine never draws it into screens[0].
+    // Clear the view's footprint there to the transparent key (RB_OVERLAY_KEY) so
+    // the 2D overlay composited on top (RB_Vulkan_SetOverlay) keys this region out
+    // and the rendered 3D scene shows through. The 2D drawers that run after this
+    // (HU_Drawer messages, M_Drawer menu, the pause pic) paint opaquely over the
+    // key and so appear on top of the 3D view. Mirrors D_Display's gate for this
+    // call, so the rect always matches the frame the renderer just produced.
+    {
+        int x, yy;
+        for (yy = 0; yy < viewheight; yy++)
+        {
+            byte* row = screens[0] + (viewwindowy + yy) * SCREENWIDTH + viewwindowx;
+            for (x = 0; x < viewwidth; x++)
+                row[x] = RB_OVERLAY_KEY;
+        }
+    }
 }
-static void    Vulkan_Present(void)                { RB_Vulkan_Present(); }
+static void    Vulkan_Present(void)
+{
+    // Hand the freshly-drawn 2D overlay (status bar / menu / messages) to the
+    // back-end, then present; it composites screens[0] over the 3D frame.
+    RB_Vulkan_SetOverlay(screens[0], SCREENWIDTH, SCREENHEIGHT);
+    RB_Vulkan_Present();
+}
 static void    Vulkan_Shutdown(void)               { RB_Vulkan_Shutdown(); }
 static void    Vulkan_BuildLevel(void)             { RB_Vulkan_BuildLevel(); }
 

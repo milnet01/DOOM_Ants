@@ -61,6 +61,14 @@ typedef struct
                               // the fragment shader samples the sky texture by
                               // view yaw + screen position (cylindrical), fullbright.
 
+// Transparent-key palette index for the 2D HUD/menu compositor (DOOM-0008). In
+// the 3D back-ends the engine still draws every 2D element (status bar, menu,
+// messages) into the paletted screens[0]; the 3D view's footprint there is
+// cleared to this index each frame (r_backend.c) and the overlay shader
+// (overlay.frag) discards it, so the rendered 3D scene shows through. Index 251
+// is pure magenta (255,0,255), unused by any DOOM HUD/menu/font art.
+#define RB_OVERLAY_KEY  251
+
 typedef struct
 {
     rb_vertex_t* verts;     // numverts entries, owned by this struct

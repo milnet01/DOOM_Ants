@@ -46,6 +46,8 @@
 // Compiled shaders, embedded as byte arrays (Makefile: GLSL -> SPIR-V -> xxd).
 #include "shaders/mesh.vert.spv.h"
 #include "shaders/mesh.frag.spv.h"
+#include "shaders/overlay.vert.spv.h"
+#include "shaders/overlay.frag.spv.h"
 
 // Tier values returned by RB_VulkanProbe — kept numerically in lockstep with
 // rendermode_t in r_backend.h (RB_CLASSIC=0, RB_RT3D=1, RB_RASTER3D=2). The
@@ -193,6 +195,10 @@ struct VulkanState
     // Same layout/shaders as `pipeline`, but depth test + write disabled, so the
     // sky backdrop paints behind everything and the world overdraws it.
     VkPipeline       skyPipeline    = VK_NULL_HANDLE;
+    // 2D HUD/menu compositor (DOOM-0008): a vertexless full-screen pass that
+    // draws the paletted screens[0] overlay over the rendered 3D scene, keying
+    // out the transparent index. Shares pipelineLayout + descriptor set 0.
+    VkPipeline       overlayPipeline = VK_NULL_HANDLE;
 
     VkCommandPool   cmdPool = VK_NULL_HANDLE;
     VkCommandBuffer cmd     = VK_NULL_HANDLE;
@@ -238,6 +244,19 @@ struct VulkanState
     VkDescriptorPool      dsPool   = VK_NULL_HANDLE;
     VkDescriptorSet       ds       = VK_NULL_HANDLE;
     bool                  atlasReady = false;
+
+    // 2D overlay (screens[0]) resources for the HUD/menu compositor. The image
+    // is device-local R8 palette indices; a persistently-mapped staging buffer
+    // streams the engine's 320x200 (HIRES-scaled) overlay into it each frame.
+    VkImage        overlayImage   = VK_NULL_HANDLE;
+    VkDeviceMemory overlayMemory  = VK_NULL_HANDLE;
+    VkImageView    overlayView    = VK_NULL_HANDLE;
+    VkBuffer       overlayStaging = VK_NULL_HANDLE;
+    VkDeviceMemory overlayStagingMem = VK_NULL_HANDLE;
+    void*          overlayMapped  = nullptr;
+    const unsigned char* overlaySrc = nullptr;  // this frame's screens[0]
+    int            overlayW = 0, overlayH = 0;
+    bool           overlayReady = false;
 
     // column-major MVP from RB_Vulkan_RenderView; identity until the first
     // camera update so a frame drawn before then is well-defined (DOOM-0037).
@@ -896,7 +915,7 @@ VkShaderModule MakeShader(const unsigned char* code, unsigned len)
 // shared by both images (the shader wraps UVs itself, so addressing is clamp).
 void CreateDescriptors()
 {
-    VkDescriptorSetLayoutBinding binds[3] = {};
+    VkDescriptorSetLayoutBinding binds[4] = {};
     binds[0].binding = 0;   // atlas (R8 palette indices)
     binds[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     binds[0].descriptorCount = 1;
@@ -909,10 +928,14 @@ void CreateDescriptors()
     binds[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     binds[2].descriptorCount = 1;
     binds[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    binds[3].binding = 3;   // 2D HUD/menu overlay (R8 screens[0] indices)
+    binds[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    binds[3].descriptorCount = 1;
+    binds[3].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkDescriptorSetLayoutCreateInfo dlci = {};
     dlci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    dlci.bindingCount = 3;
+    dlci.bindingCount = 4;
     dlci.pBindings = binds;
     Check(vkCreateDescriptorSetLayout(g.device, &dlci, nullptr, &g.dsLayout),
           "vkCreateDescriptorSetLayout");
@@ -1046,6 +1069,25 @@ void CreatePipeline()
     Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &pci, nullptr,
                                     &g.skyPipeline), "vkCreateGraphicsPipelines(sky)");
 
+    // 2D HUD/menu compositor: own shaders, no vertex input (a full-screen
+    // triangle generated from gl_VertexIndex), depth off, drawn last over the
+    // 3D scene. Shares this pipeline layout (descriptor set 0 + push range),
+    // sampling the overlay image (binding 3) and PLAYPAL LUT (binding 1).
+    VkShaderModule ovVert = MakeShader(overlay_vert_spv, overlay_vert_spv_len);
+    VkShaderModule ovFrag = MakeShader(overlay_frag_spv, overlay_frag_spv_len);
+    VkPipelineShaderStageCreateInfo ovStages[2] = { stages[0], stages[1] };
+    ovStages[0].module = ovVert;
+    ovStages[1].module = ovFrag;
+    VkPipelineVertexInputStateCreateInfo ovVin = {};
+    ovVin.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    pci.pStages = ovStages;
+    pci.pVertexInputState = &ovVin;        // vertexless
+    pci.pDepthStencilState = &skyDs;       // depth test + write off
+    Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &pci, nullptr,
+                                    &g.overlayPipeline), "vkCreateGraphicsPipelines(overlay)");
+    vkDestroyShaderModule(g.device, ovVert, nullptr);
+    vkDestroyShaderModule(g.device, ovFrag, nullptr);
+
     vkDestroyShaderModule(g.device, vert, nullptr);
     vkDestroyShaderModule(g.device, frag, nullptr);
 }
@@ -1168,10 +1210,12 @@ void UploadAtlas()
     }
     vkUnmapMemory(g.device, g.rectMemory);
 
-    // Descriptor pool + set, written to point at the three resources.
+    // Descriptor pool + set. Three combined-image-samplers (atlas, PLAYPAL,
+    // and the HUD overlay written later by RB_Vulkan_SetOverlay) + one storage
+    // buffer (atlas rects).
     VkDescriptorPoolSize sizes[2] = {};
     sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    sizes[0].descriptorCount = 2;
+    sizes[0].descriptorCount = 3;
     sizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     sizes[1].descriptorCount = 1;
     VkDescriptorPoolCreateInfo dpci = {};
@@ -1211,6 +1255,77 @@ void UploadAtlas()
 
     RB_FreeAtlas(a);
     g.atlasReady = true;
+}
+
+// Create the HUD/menu overlay's GPU resources (device-local R8 image + a
+// persistently-mapped staging buffer) sized to the engine's screens[0], and
+// point descriptor binding 3 at it. Lazy and one-shot: called the first time an
+// overlay arrives (RB_Vulkan_SetOverlay) once the descriptor set exists. The
+// image is left UNDEFINED here; the per-frame copy in Present fills + transitions
+// it. screens[0] is a fixed size for the session, so this runs exactly once.
+void CreateOverlayResources(int w, int h)
+{
+    VkDeviceSize bytes = (VkDeviceSize)w * h;
+
+    // Persistent host-visible staging buffer, mapped for the whole session.
+    VkBufferCreateInfo bci = {};
+    bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bci.size = bytes;
+    bci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    Check(vkCreateBuffer(g.device, &bci, nullptr, &g.overlayStaging), "vkCreateBuffer(overlay)");
+    VkMemoryRequirements sreq = {};
+    vkGetBufferMemoryRequirements(g.device, g.overlayStaging, &sreq);
+    VkMemoryAllocateInfo smai = {};
+    smai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    smai.allocationSize = sreq.size;
+    smai.memoryTypeIndex = FindMemoryType(sreq.memoryTypeBits,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    Check(vkAllocateMemory(g.device, &smai, nullptr, &g.overlayStagingMem), "vkAllocateMemory(overlay staging)");
+    Check(vkBindBufferMemory(g.device, g.overlayStaging, g.overlayStagingMem, 0), "vkBindBufferMemory(overlay)");
+    Check(vkMapMemory(g.device, g.overlayStagingMem, 0, bytes, 0, &g.overlayMapped), "vkMapMemory(overlay)");
+
+    // Device-local R8 image (palette indices), sampled by overlay.frag.
+    VkImageCreateInfo ici = {};
+    ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ici.imageType = VK_IMAGE_TYPE_2D;
+    ici.format = VK_FORMAT_R8_UNORM;
+    ici.extent = { (uint32_t)w, (uint32_t)h, 1 };
+    ici.mipLevels = 1;
+    ici.arrayLayers = 1;
+    ici.samples = VK_SAMPLE_COUNT_1_BIT;
+    ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    Check(vkCreateImage(g.device, &ici, nullptr, &g.overlayImage), "vkCreateImage(overlay)");
+    VkMemoryRequirements ireq = {};
+    vkGetImageMemoryRequirements(g.device, g.overlayImage, &ireq);
+    VkMemoryAllocateInfo imai = {};
+    imai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    imai.allocationSize = ireq.size;
+    imai.memoryTypeIndex = FindMemoryType(ireq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    Check(vkAllocateMemory(g.device, &imai, nullptr, &g.overlayMemory), "vkAllocateMemory(overlay image)");
+    Check(vkBindImageMemory(g.device, g.overlayImage, g.overlayMemory, 0), "vkBindImageMemory(overlay)");
+
+    VkImageViewCreateInfo vci = {};
+    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vci.image = g.overlayImage;
+    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vci.format = VK_FORMAT_R8_UNORM;
+    vci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    Check(vkCreateImageView(g.device, &vci, nullptr, &g.overlayView), "vkCreateImageView(overlay)");
+
+    // Point descriptor binding 3 at the overlay image (the set already exists).
+    VkDescriptorImageInfo ovInfo = { g.texSampler, g.overlayView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+    VkWriteDescriptorSet write = {};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = g.ds; write.dstBinding = 3; write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &ovInfo;
+    vkUpdateDescriptorSets(g.device, 1, &write, 0, nullptr);
+
+    g.overlayReady = true;
 }
 
 } // namespace
@@ -1276,6 +1391,22 @@ extern "C" void RB_Vulkan_RenderView(const rb_view_t* view)
     Mat4Mul(p, v, g.viewProj);              // MVP = proj * view
     g.haveCamera = true;
     g.lastView   = *view;                   // for the sprite build in Present
+}
+
+extern "C" void RB_Vulkan_SetOverlay(const unsigned char* pixels, int w, int h)
+{
+    // Stash this frame's 2D overlay (screens[0]); the actual copy into the GPU
+    // image happens in Present, after the fence wait, so the staging buffer is
+    // never written while a prior frame might still read it. The compositor
+    // needs the palette LUT + descriptor set, which the atlas upload owns, so
+    // it only engages once a level has been built (the menu/HUD case).
+    if (!g.ready || !g.atlasReady || !pixels || w <= 0 || h <= 0)
+        return;
+    if (!g.overlayReady)
+        CreateOverlayResources(w, h);
+    g.overlaySrc = pixels;
+    g.overlayW   = w;
+    g.overlayH   = h;
 }
 
 extern "C" void RB_Vulkan_BuildLevel(void)
@@ -1384,10 +1515,52 @@ extern "C" void RB_Vulkan_Present(void)
         g.spriteVertCount = (uint32_t)n;
     }
 
+    // Copy this frame's 2D overlay (screens[0]) into the mapped staging buffer.
+    // Same race-safe window as the sprites above: the fence wait guarantees the
+    // previous frame's copy (which read this buffer) has finished.
+    bool drawOverlay = g.overlayReady && g.overlaySrc;
+    if (drawOverlay)
+        std::memcpy(g.overlayMapped, g.overlaySrc,
+                    (size_t)g.overlayW * g.overlayH);
+
     VkCommandBufferBeginInfo bi = {};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     Check(vkBeginCommandBuffer(g.cmd, &bi), "vkBeginCommandBuffer");
+
+    // Upload the overlay staging buffer into its sampled image before the render
+    // pass (transfers are illegal inside one). oldLayout UNDEFINED is fine: every
+    // texel is overwritten, so the previous frame's contents need not survive.
+    if (drawOverlay)
+    {
+        VkImageMemoryBarrier toDst = {};
+        toDst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        toDst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        toDst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        toDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toDst.image = g.overlayImage;
+        toDst.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        toDst.srcAccessMask = 0;
+        toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toDst);
+
+        VkBufferImageCopy region = {};
+        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.imageSubresource.layerCount = 1;
+        region.imageExtent = { (uint32_t)g.overlayW, (uint32_t)g.overlayH, 1 };
+        vkCmdCopyBufferToImage(g.cmd, g.overlayStaging, g.overlayImage,
+                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+        VkImageMemoryBarrier toRead = toDst;
+        toRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        toRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        toRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        toRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toRead);
+    }
 
     // Clear to a dark slate (world background) + far depth, then draw the level
     // mesh. The render pass transitions the colour image to PRESENT_SRC for us.
@@ -1460,6 +1633,28 @@ extern "C" void RB_Vulkan_Present(void)
         }
     }
 
+    // 2D HUD/menu compositor, last and over everything: a vertexless full-screen
+    // triangle that samples screens[0] and keys out the transparent index so the
+    // 3D scene shows through the view area. Drawn outside the camera gate so the
+    // full-screen 2D states (intermission/finale, the menu) composite even when
+    // no world was rendered; it sets its own viewport/scissor and binds the set
+    // for that case.
+    if (drawOverlay)
+    {
+        VkViewport vpRect = {};
+        vpRect.width = (float)g.extent.width;
+        vpRect.height = (float)g.extent.height;
+        vpRect.maxDepth = 1.0f;
+        vkCmdSetViewport(g.cmd, 0, 1, &vpRect);
+        VkRect2D scissor = { { 0, 0 }, g.extent };
+        vkCmdSetScissor(g.cmd, 0, 1, &scissor);
+
+        vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                g.pipelineLayout, 0, 1, &g.ds, 0, nullptr);
+        vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.overlayPipeline);
+        vkCmdDraw(g.cmd, 3, 1, 0, 0);
+    }
+
     vkCmdEndRenderPass(g.cmd);
     Check(vkEndCommandBuffer(g.cmd), "vkEndCommandBuffer");
 
@@ -1520,9 +1715,17 @@ extern "C" void RB_Vulkan_Shutdown(void)
     if (g.palImage)    vkDestroyImage(g.device, g.palImage, nullptr);
     if (g.palMemory)   vkFreeMemory(g.device, g.palMemory, nullptr);
 
+    // 2D HUD/menu overlay resources.
+    if (g.overlayView)       vkDestroyImageView(g.device, g.overlayView, nullptr);
+    if (g.overlayImage)      vkDestroyImage(g.device, g.overlayImage, nullptr);
+    if (g.overlayMemory)     vkFreeMemory(g.device, g.overlayMemory, nullptr);
+    if (g.overlayStaging)    vkDestroyBuffer(g.device, g.overlayStaging, nullptr);
+    if (g.overlayStagingMem) vkFreeMemory(g.device, g.overlayStagingMem, nullptr);
+
     DestroyFramebufferResources();   // framebuffers, depth, swapchain image views
     if (g.pipeline)       vkDestroyPipeline(g.device, g.pipeline, nullptr);
     if (g.skyPipeline)    vkDestroyPipeline(g.device, g.skyPipeline, nullptr);
+    if (g.overlayPipeline) vkDestroyPipeline(g.device, g.overlayPipeline, nullptr);
     if (g.pipelineLayout) vkDestroyPipelineLayout(g.device, g.pipelineLayout, nullptr);
     if (g.renderPass)     vkDestroyRenderPass(g.device, g.renderPass, nullptr);
     if (g.inFlight)       vkDestroyFence(g.device, g.inFlight, nullptr);
