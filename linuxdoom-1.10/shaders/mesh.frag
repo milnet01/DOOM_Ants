@@ -22,8 +22,17 @@ layout(location = 1) in vec2  vUV;
 layout(location = 2) in float vLight;
 layout(location = 3) flat in int vTexnum;
 layout(location = 4) flat in int vFlags;
+layout(location = 5) in vec2  vScreenUV;   // [0,1] across the frame (sky only)
 
 layout(location = 0) out vec4 outColor;
+
+// Must match mesh.vert's block byte-for-byte (shared push-constant range). The
+// sky path reads pc.yaw to pan the panorama; the other members are vertex-only.
+layout(push_constant) uniform Push {
+    mat4  mvp;
+    float extralight;
+    float yaw;          // view yaw, radians
+} pc;
 
 layout(set = 0, binding = 0) uniform sampler2D atlasTex;     // R8 palette indices
 layout(set = 0, binding = 1) uniform sampler2D paletteTex;   // 256x1 PLAYPAL RGB
@@ -39,9 +48,34 @@ layout(set = 0, binding = 2) readonly buffer Atlas {
 
 const int FLAG_FLAT   = 0x1;   // matches RB_MESH_FLAT in r_mesh.h
 const int FLAG_SPRITE = 0x4;   // matches RB_MESH_SPRITE in r_mesh.h
+const int FLAG_SKY    = 0x10;  // matches RB_MESH_SKY in r_mesh.h
+
+const float PI = 3.14159265358979;
 
 void main()
 {
+    // Sky backdrop: a cylindrical panorama keyed on the view yaw, exactly like
+    // classic DOOM. The sky is a wall texture (atlas id == texnum). 90 deg of
+    // view spans one texture width; screen x maps to a ray-yaw offset via atan
+    // (perspective, 90 deg horizontal FOV -> tan(45)=1), and pc.yaw pans it as
+    // the player turns. Vertically the 128px sky fills the top half of the
+    // frame with the horizon at screen centre. Fullbright, so no shade term and
+    // the muzzle flash never touches it.
+    if ((vFlags & FLAG_SKY) != 0)
+    {
+        vec4  rect  = atlas.rects[vTexnum];
+        float ndcX  = vScreenUV.x * 2.0 - 1.0;
+        // DOOM's sky column is viewangle + xtoviewangle[x], and xtoviewangle is
+        // +left/-right; ndcX is -left/+right, so the screen term is -atan(ndcX).
+        float ang   = pc.yaw - atan(ndcX);
+        float col   = ang / (PI * 0.5) * rect.z;
+        float row   = clamp(vScreenUV.y * 2.0 * rect.w, 0.0, rect.w - 1.0);
+        vec2  uv    = (rect.xy + vec2(mod(col, rect.z), row)) / atlas.atlasSize;
+        float idx   = texture(atlasTex, uv).r * 255.0;
+        outColor    = vec4(texture(paletteTex, vec2((idx + 0.5) / 256.0, 0.5)).rgb, 1.0);
+        return;
+    }
+
     // Unified atlas id: walls [0,numWall), flats [numWall,numWall+numFlat),
     // sprites after. The vertex's texnum is the per-category index.
     int id;

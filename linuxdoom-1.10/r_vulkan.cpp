@@ -190,6 +190,9 @@ struct VulkanState
 
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
     VkPipeline       pipeline       = VK_NULL_HANDLE;
+    // Same layout/shaders as `pipeline`, but depth test + write disabled, so the
+    // sky backdrop paints behind everything and the world overdraws it.
+    VkPipeline       skyPipeline    = VK_NULL_HANDLE;
 
     VkCommandPool   cmdPool = VK_NULL_HANDLE;
     VkCommandBuffer cmd     = VK_NULL_HANDLE;
@@ -216,6 +219,7 @@ struct VulkanState
     void*          spriteMapped     = nullptr;
     uint32_t       spriteVertCap    = 0;
     uint32_t       spriteVertCount  = 0;
+    uint32_t       skyVertCount     = 0;   // sky verts at the front of spriteVbuf
     rb_view_t      lastView         = {};
 
     // Paletted texture atlas (DOOM-0008 materials slice). WAD-global and
@@ -1002,9 +1006,9 @@ void CreatePipeline()
     dynState.pDynamicStates = dyn;
 
     VkPushConstantRange pcr = {};
-    pcr.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    pcr.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     pcr.offset = 0;
-    pcr.size = 17 * sizeof(float);   // mat4 MVP + extralight brighten
+    pcr.size = 18 * sizeof(float);   // mat4 MVP + extralight brighten + sky yaw
 
     VkPipelineLayoutCreateInfo plci = {};
     plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -1032,6 +1036,15 @@ void CreatePipeline()
     pci.subpass = 0;
     Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &pci, nullptr,
                                     &g.pipeline), "vkCreateGraphicsPipelines");
+
+    // Sky variant: identical, but with depth test + write off so the full-screen
+    // backdrop always paints and never occludes the world drawn over it.
+    VkPipelineDepthStencilStateCreateInfo skyDs = ds;
+    skyDs.depthTestEnable  = VK_FALSE;
+    skyDs.depthWriteEnable = VK_FALSE;
+    pci.pDepthStencilState = &skyDs;
+    Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &pci, nullptr,
+                                    &g.skyPipeline), "vkCreateGraphicsPipelines(sky)");
 
     vkDestroyShaderModule(g.device, vert, nullptr);
     vkDestroyShaderModule(g.device, frag, nullptr);
@@ -1354,12 +1367,17 @@ extern "C" void RB_Vulkan_Present(void)
     // Safe to overwrite now: the fence wait above guarantees the previous frame's
     // draw (which read this buffer) has finished. Host-coherent, so no flush.
     g.spriteVertCount = 0;
+    g.skyVertCount    = 0;
     if (g.spriteMapped && g.haveCamera && g.atlasReady)
     {
         rb_vertex_t* buf = (rb_vertex_t*)g.spriteMapped;
-        int          n   = RB_BuildSprites(&g.lastView, buf, (int)g.spriteVertCap);
+        // Sky backdrop first (verts [0,sky)); it draws behind the world with the
+        // depth-off pipeline. Sprites + weapon follow and share the main draw.
+        int sky = RB_BuildSky(&g.lastView, buf, (int)g.spriteVertCap);
+        int n   = RB_BuildSprites(&g.lastView, buf + sky, (int)g.spriteVertCap - sky);
         // Weapon overlay shares the buffer/draw; appended last so it sits on top.
-        n += RB_BuildPSprites(buf + n, (int)g.spriteVertCap - n);
+        n += RB_BuildPSprites(buf + sky + n, (int)g.spriteVertCap - sky - n);
+        g.skyVertCount    = (uint32_t)sky;
         g.spriteVertCount = (uint32_t)n;
     }
 
@@ -1397,27 +1415,42 @@ extern "C" void RB_Vulkan_Present(void)
         VkRect2D scissor = { { 0, 0 }, g.extent };
         vkCmdSetScissor(g.cmd, 0, 1, &scissor);
 
-        vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.pipeline);
         vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                 g.pipelineLayout, 0, 1, &g.ds, 0, nullptr);
-        // mat4 MVP followed by the muzzle-flash brighten (mesh.vert adds it to
-        // every shade), so the world flickers brighter while a gun fires.
-        float pcData[17];
+        // mat4 MVP, then the muzzle-flash brighten (mesh.vert adds it to every
+        // shade) and the view yaw (mesh.frag pans the sky by it). Push constants
+        // and descriptor sets are layout-scoped, so they outlive the pipeline
+        // binds below — set them once for both the sky and world pipelines.
+        float pcData[18];
         std::memcpy(pcData, g.viewProj, 16 * sizeof(float));
         pcData[16] = g.lastView.extralight;
-        vkCmdPushConstants(g.cmd, g.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
-                           0, 17 * sizeof(float), pcData);
+        pcData[17] = g.lastView.angle;
+        vkCmdPushConstants(g.cmd, g.pipelineLayout,
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0, 18 * sizeof(float), pcData);
 
         VkDeviceSize off = 0;
+        // Sky first, behind everything: depth-off pipeline, the 6 verts at the
+        // front of the sprite buffer. The world then overdraws it wherever there
+        // is solid geometry, leaving sky only in the sky-flat openings.
+        if (g.spriteVbuf && g.skyVertCount)
+        {
+            vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.skyPipeline);
+            vkCmdBindVertexBuffers(g.cmd, 0, 1, &g.spriteVbuf, &off);
+            vkCmdDraw(g.cmd, g.skyVertCount, 1, 0, 0);
+        }
+
+        vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.pipeline);
         if (g.vbuf && g.vertexCount)
         {
             vkCmdBindVertexBuffers(g.cmd, 0, 1, &g.vbuf, &off);
             vkCmdDraw(g.cmd, g.vertexCount, 1, 0, 0);
         }
+        // Sprites + weapon: same buffer as the sky, but skip its leading verts.
         if (g.spriteVbuf && g.spriteVertCount)
         {
             vkCmdBindVertexBuffers(g.cmd, 0, 1, &g.spriteVbuf, &off);
-            vkCmdDraw(g.cmd, g.spriteVertCount, 1, 0, 0);
+            vkCmdDraw(g.cmd, g.spriteVertCount, 1, g.skyVertCount, 0);
         }
     }
 
@@ -1483,6 +1516,7 @@ extern "C" void RB_Vulkan_Shutdown(void)
 
     DestroyFramebufferResources();   // framebuffers, depth, swapchain image views
     if (g.pipeline)       vkDestroyPipeline(g.device, g.pipeline, nullptr);
+    if (g.skyPipeline)    vkDestroyPipeline(g.device, g.skyPipeline, nullptr);
     if (g.pipelineLayout) vkDestroyPipelineLayout(g.device, g.pipelineLayout, nullptr);
     if (g.renderPass)     vkDestroyRenderPass(g.device, g.renderPass, nullptr);
     if (g.inFlight)       vkDestroyFence(g.device, g.inFlight, nullptr);

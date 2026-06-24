@@ -611,3 +611,25 @@ int RB_BuildPSprites(rb_vertex_t* out, int maxverts)
     }
     return n;
 }
+
+int RB_BuildSky(const rb_view_t* view, rb_vertex_t* out, int maxverts)
+{
+    int     fl = RB_MESH_SKY;
+    int     sky = view->skytexnum;
+    float   l = 1.0f;   // unused: the sky fragment path is fullbright
+
+    if (maxverts < 6)
+        return 0;
+
+    // One full-screen quad in Vulkan NDC (z=0). UVs are unused here: the vertex
+    // shader derives the screen position from the NDC corner, and the fragment
+    // shader turns that plus the view yaw into a sky-texture texel. Corners:
+    // top-left, top-right, bottom-right, then top-left, bottom-right, bottom-left.
+    out[0] = mkv(-1.0f, -1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, sky, fl, l);
+    out[1] = mkv( 1.0f, -1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, sky, fl, l);
+    out[2] = mkv( 1.0f,  1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, sky, fl, l);
+    out[3] = mkv(-1.0f, -1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, sky, fl, l);
+    out[4] = mkv( 1.0f,  1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, sky, fl, l);
+    out[5] = mkv(-1.0f,  1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, sky, fl, l);
+    return 6;
+}

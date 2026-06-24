@@ -57,6 +57,9 @@ typedef struct
 #define RB_MESH_PSPRITE 0x8   // player weapon overlay: position is already in
                               // clip space (NDC), so the vertex shader skips the
                               // view-projection. Carries RB_MESH_SPRITE too.
+#define RB_MESH_SKY     0x10  // full-screen sky backdrop: NDC like a psprite, but
+                              // the fragment shader samples the sky texture by
+                              // view yaw + screen position (cylindrical), fullbright.
 
 typedef struct
 {
@@ -119,6 +122,8 @@ typedef struct
     float angle;         // yaw, radians
     float extralight;    // muzzle-flash view brighten, [0,1] added to every shade
                          // (classic DOOM's player->extralight, see r_backend.c)
+    int   skytexnum;     // sky wall-texture index (DOOM's skytexture global); the
+                         // sky backdrop samples this atlas tile, see RB_BuildSky
 } rb_view_t;
 
 // Build this frame's billboard sprites (things + items) as camera-facing quads,
@@ -136,6 +141,14 @@ int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts);
 // weapon draws on top of the world; flags carry RB_MESH_SPRITE|RB_MESH_PSPRITE.
 // Returns the vertex count (a multiple of 6). Rebuilt every frame.
 int RB_BuildPSprites(rb_vertex_t* out, int maxverts);
+
+// Build the sky backdrop as one full-screen quad in Vulkan NDC (z=0), flagged
+// RB_MESH_SKY with texnum = view->skytexnum. Drawn behind the world (depth test
+// off) so it shows through sky-flat openings; the fragment shader maps each
+// screen pixel to a sky-texture texel by view yaw (cylindrical panorama, 90 deg
+// of yaw per texture width) so it pans as the player turns. Returns the vertex
+// count written (6, or 0 if out has no room).
+int RB_BuildSky(const rb_view_t* view, rb_vertex_t* out, int maxverts);
 
 #ifdef __cplusplus
 }

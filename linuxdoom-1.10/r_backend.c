@@ -28,6 +28,7 @@
 #include "r_main.h"     // R_RenderPlayerView
 #include "i_video.h"    // I_FinishUpdate
 #include "m_fixed.h"    // FRACUNIT
+#include "r_sky.h"      // skytexture (the sky's wall-texture index)
 #include "r_mesh.h"     // rb_view_t (POD camera across the seam)
 
 // A level is loaded once the BSP segs exist (r_state.h). Used by RB_Init to
@@ -90,6 +91,10 @@ static void Vulkan_RenderPlayerView(player_t* p)
     // 1<<LIGHTSEGSHIFT = 16 of the 0..255 lightlevel units. Fold the same step
     // into the [0,1] shade so the whole 3D view flickers brighter, as it always did.
     view.extralight = p->extralight * (16.0f / 255.0f);
+    // Sky backdrop: hand the sky's wall-texture index across the seam so the
+    // 3D back-end can sample it (RB_BuildSky). skytexture is set per level by
+    // R_SetupLevel; the C++ side never touches DOOM globals.
+    view.skytexnum = skytexture;
     RB_Vulkan_RenderView(&view);
 }
 static void    Vulkan_Present(void)                { RB_Vulkan_Present(); }
