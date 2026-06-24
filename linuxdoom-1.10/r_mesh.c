@@ -26,6 +26,7 @@
 #include <math.h>
 
 #include "doomtype.h"
+#include "doomdef.h"    // SCREENHEIGHT (view-window -> NDC for the weapon)
 #include "m_fixed.h"
 #include "doomdata.h"   // NF_SUBSECTOR (BSP child = leaf flag)
 #include "r_defs.h"
@@ -637,6 +638,15 @@ int RB_BuildPSprites(rb_vertex_t* out, int maxverts, float aspect)
     // about screen centre so the gun keeps DOOM's 1.2 pixel aspect (y stays
     // full-height). 1.0 at 4:3, ~0.75 at 16:9.
     float     xscale = (4.0f / 3.0f) / aspect;
+    // The weapon belongs to the active view window, not the whole frame. Map the
+    // 200-tall HUD canvas onto the view's vertical span [viewwindowy,
+    // viewwindowy+viewheight] (physical pixels) so the lower part -- the hand --
+    // sits at the view bottom and clears the status bar when one is shown (screen
+    // size <= 10), exactly as the classic renderer anchors the weapon to the
+    // view. At full-screen (size 11) this is the identity y/100 - 1.
+    float     halfH  = SCREENHEIGHT * 0.5f;
+    float     vy0    = viewwindowy / halfH - 1.0f;             // view top, NDC
+    float     vyscl  = (viewheight / 200.0f) / halfH;          // canvas px -> NDC
 
     if (numspritelumps <= 0)
         return 0;
@@ -685,8 +695,8 @@ int RB_BuildPSprites(rb_vertex_t* out, int maxverts, float aspect)
         // x is scaled about screen centre to undo the widescreen stretch.
         nx0 = (lx / 160.0f - 1.0f) * xscale;
         nx1 = (rx / 160.0f - 1.0f) * xscale;
-        ny0 = ty / 100.0f - 1.0f;
-        ny1 = by / 100.0f - 1.0f;
+        ny0 = vy0 + ty * vyscl;
+        ny1 = vy0 + by * vyscl;
 
         light = (psp->state->frame & FF_FULLBRIGHT) ? 1.0f : baselight;
         if (light < 0.0f) light = 0.0f;
