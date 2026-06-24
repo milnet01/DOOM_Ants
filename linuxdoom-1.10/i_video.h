@@ -49,9 +49,12 @@ void I_FinishUpdate (void);
 // pointer (so the DOOM C TUs need not include SDL; the Vulkan back-end casts it
 // back). I_ShutdownGraphicsForVulkan tears down the 2D SDL_Renderer path and
 // recreates the window with SDL_WINDOW_VULKAN. Called only when a 3D back-end
-// is the selected, available mode.
+// is the selected, available mode. I_ReinitGraphicsForClassic is the reverse:
+// switching back to Classic rebuilds the 2D window/renderer/texture (no-op when
+// the 2D renderer is already live).
 void* I_GetWindow (void);
 void  I_ShutdownGraphicsForVulkan (void);
+void  I_ReinitGraphicsForClassic (void);
 
 // Wait for vertical retrace or pause a bit.
 void I_WaitVBL(int count);

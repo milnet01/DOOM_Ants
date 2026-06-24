@@ -74,5 +74,8 @@ void RB_SetMode(rendermode_t mode);
 // Menu helpers: display name for a mode, and whether it can be selected now.
 const char* RB_ModeName(rendermode_t mode);
 boolean     RB_ModeAvailable(rendermode_t mode);
+// Next selectable mode in the menu's fidelity order (Classic -> Solid -> Ultra),
+// skipping modes unavailable on this machine; returns `cur` if none other fits.
+rendermode_t RB_NextAvailableMode(rendermode_t cur);
 
 #endif

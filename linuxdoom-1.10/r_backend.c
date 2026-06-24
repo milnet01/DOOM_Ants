@@ -47,7 +47,7 @@ int rendermode = RB_CLASSIC;
 // before; the only difference is the call is dispatched through `active`.
 //
 static boolean Classic_Available(void)              { return true; }
-static void    Classic_Init(void)                   { }
+static void    Classic_Init(void)                   { I_ReinitGraphicsForClassic(); }
 static void    Classic_SetResolution(int w, int h)  { (void)w; (void)h; }
 static void    Classic_RenderPlayerView(player_t* p){ R_RenderPlayerView(p); }
 static void    Classic_Present(void)                { I_FinishUpdate(); }
@@ -110,23 +110,32 @@ static renderer_backend_t backends[RB_NUMMODES] =
     },
     [RB_RT3D] =
     {
-        "3D (ray traced)", Vulkan_RT_Available, Vulkan_Init, Vulkan_SetResolution,
+        "Ultra", Vulkan_RT_Available, Vulkan_Init, Vulkan_SetResolution,
         Vulkan_RenderPlayerView, Vulkan_Present, Vulkan_Shutdown, Vulkan_BuildLevel
     },
     [RB_RASTER3D] =
     {
-        "3D (raster)", Vulkan_Raster_Available, Vulkan_Init, Vulkan_SetResolution,
+        "Solid", Vulkan_Raster_Available, Vulkan_Init, Vulkan_SetResolution,
         Vulkan_RenderPlayerView, Vulkan_Present, Vulkan_Shutdown, Vulkan_BuildLevel
     },
 };
 
-// Display names for the menu, including the not-yet-built 3D modes so the
-// option can show them as unavailable.
+// Player-facing names for the menu (DOOM-0008). Classic = 1997 software
+// renderer; Solid = real 3D with the original flat-shaded look (raster); Ultra
+// = 3D with ray-traced lighting. The rendermode_t enum values are frozen for
+// config/tier lockstep, so the menu's cycle order lives in cycleOrder[] below.
 static const char* modeNames[RB_NUMMODES] =
 {
     [RB_CLASSIC]  = "Classic",
-    [RB_RT3D]     = "3D (ray traced)",
-    [RB_RASTER3D] = "3D (raster)",
+    [RB_RT3D]     = "Ultra",
+    [RB_RASTER3D] = "Solid",
+};
+
+// Menu cycle order: ascending visual fidelity (Classic -> Solid -> Ultra),
+// decoupled from the enum's numeric values (RB_RT3D=1, RB_RASTER3D=2).
+static const rendermode_t cycleOrder[RB_NUMMODES] =
+{
+    RB_CLASSIC, RB_RASTER3D, RB_RT3D
 };
 
 static renderer_backend_t* active = &backends[RB_CLASSIC];
@@ -145,12 +154,29 @@ const char* RB_ModeName(rendermode_t mode)
     return "?";
 }
 
+// Next selectable mode after `cur`, walking cycleOrder[] (Classic -> Solid ->
+// Ultra -> ...) and skipping any unavailable on this machine. Returns `cur`
+// when nothing else is available, so the menu can say "not yet available".
+rendermode_t RB_NextAvailableMode(rendermode_t cur)
+{
+    int i, j;
+    for (i = 0; i < RB_NUMMODES; i++)
+        if (cycleOrder[i] == cur)
+            break;
+    for (j = 1; j <= RB_NUMMODES; j++)
+    {
+        rendermode_t m = cycleOrder[(i + j) % RB_NUMMODES];
+        if (RB_ModeAvailable(m))
+            return m;
+    }
+    return cur;
+}
+
 void RB_Init(void)
 {
-    // DOOM-0008: report the 3D tier this machine supports. The Vulkan back-ends
-    // are not selectable yet (their Available() is wired in once the renderer
-    // draws), so this only logs detection for now — it does not change the
-    // clamp below, which keeps the engine on Classic.
+    // DOOM-0008: log the 3D tier this machine supports. The Vulkan back-ends are
+    // selectable via the menu (Solid/Ultra) and a persisted "renderer" choice;
+    // the clamp below keeps a config that names an unavailable mode on Classic.
     RB_VulkanProbe();
 
     // Clamp a persisted choice to a back-end that actually exists here.

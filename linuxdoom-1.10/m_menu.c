@@ -1158,21 +1158,16 @@ void M_ChangeDetail(int choice)
 }
 
 //
-// Cycle the renderer back-end (DOOM-0026). Advances to the next *available*
-// back-end, wrapping. Only Classic exists today, so this stays on Classic and
-// tells the player the 3D renderer isn't built yet.
+// Cycle the renderer back-end (DOOM-0026). Advances to the next available mode
+// in fidelity order (Classic -> Solid -> Ultra), skipping any this machine
+// can't run. If nothing else is available (no Vulkan device), say so.
 //
 void M_ChangeRenderer(int choice)
 {
-    int next;
+    rendermode_t next;
 
     choice = 0;
-    for (next = (rendermode + 1) % RB_NUMMODES; next != rendermode;
-	 next = (next + 1) % RB_NUMMODES)
-    {
-	if (RB_ModeAvailable(next))
-	    break;
-    }
+    next = RB_NextAvailableMode(rendermode);
 
     if (next == rendermode)
     {

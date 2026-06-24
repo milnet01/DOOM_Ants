@@ -504,33 +504,16 @@ void I_ShutdownGraphicsForVulkan(void)
 }
 
 
-void I_InitGraphics(void)
+//
+// CreateSoftwareWindow  (DOOM-0008)
+//
+// Build the 2D window + accelerated renderer + streaming ARGB texture that the
+// software path presents through. Shared by first-time init and the switch back
+// from a 3D back-end (I_ReinitGraphicsForClassic). Assumes the SDL video
+// subsystem is already up and `scale` is set.
+//
+static void CreateSoftwareWindow(void)
 {
-    int		pnum;
-    static int	firsttime = 1;
-
-    if (!firsttime)
-	return;
-    firsttime = 0;
-
-    // Window scale: -2/-3 like the original, or -scale N.
-    if (M_CheckParm("-2"))
-	scale = 2;
-    if (M_CheckParm("-3"))
-	scale = 3;
-    if ( (pnum = M_CheckParm("-scale")) && pnum < myargc-1 )
-    {
-	scale = atoi(myargv[pnum+1]);
-	if (scale < 1) scale = 1;
-    }
-
-    if (SDL_InitSubSystem(SDL_INIT_VIDEO) < 0)
-	I_Error("I_InitGraphics: SDL video init failed: %s", SDL_GetError());
-
-    // Crisp nearest-neighbour upscale, no blur.
-    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
-
-    // Fullscreen (borderless desktop) by default; -windowed for a resizable window.
     Uint32 flags = I_WantFullscreen()
 	? SDL_WINDOW_FULLSCREEN_DESKTOP
 	: SDL_WINDOW_RESIZABLE;
@@ -561,6 +544,37 @@ void I_InitGraphics(void)
     // Trap and hide the cursor so relative motion drives turn/look,
     //  the way the original -grabmouse did.
     SDL_SetRelativeMouseMode(SDL_TRUE);
+}
+
+
+void I_InitGraphics(void)
+{
+    int		pnum;
+    static int	firsttime = 1;
+
+    if (!firsttime)
+	return;
+    firsttime = 0;
+
+    // Window scale: -2/-3 like the original, or -scale N.
+    if (M_CheckParm("-2"))
+	scale = 2;
+    if (M_CheckParm("-3"))
+	scale = 3;
+    if ( (pnum = M_CheckParm("-scale")) && pnum < myargc-1 )
+    {
+	scale = atoi(myargv[pnum+1]);
+	if (scale < 1) scale = 1;
+    }
+
+    if (SDL_InitSubSystem(SDL_INIT_VIDEO) < 0)
+	I_Error("I_InitGraphics: SDL video init failed: %s", SDL_GetError());
+
+    // Crisp nearest-neighbour upscale, no blur.
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
+
+    // The 2D window + renderer + texture (shared with the 3D->Classic switch).
+    CreateSoftwareWindow();
 
     // Gamepad support (DOOM-0038): optional. A box with no controller (or no
     // GameController support) just runs keyboard/mouse as before. SDL queues a
@@ -578,4 +592,26 @@ void I_InitGraphics(void)
     }
 
     // screens[0] is allocated by V_Init; we only read it here.
+}
+
+
+//
+// I_ReinitGraphicsForClassic  (DOOM-0008)
+//
+// Counterpart to I_ShutdownGraphicsForVulkan: switching a live game from a 3D
+// back-end back to Classic. The window is then a SDL_WINDOW_VULKAN window with
+// the 2D SDL_Renderer torn down (renderer == NULL), so destroy it and rebuild
+// the software window/renderer/texture. No-op on the normal Classic path, where
+// the 2D renderer is already live (first-boot and Classic->Classic).
+//
+void I_ReinitGraphicsForClassic(void)
+{
+    if (renderer)
+	return;
+    if (window)
+    {
+	SDL_DestroyWindow(window);
+	window = NULL;
+    }
+    CreateSoftwareWindow();
 }
