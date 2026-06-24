@@ -207,6 +207,17 @@ struct VulkanState
     VkDeviceMemory vbufMemory = VK_NULL_HANDLE;
     uint32_t       vertexCount = 0;
 
+    // Per-frame billboard sprites (DOOM-0008): things move, so this host-visible
+    // buffer is persistently mapped and refilled by RB_BuildSprites every frame,
+    // then drawn after the static level mesh with the same pipeline. lastView is
+    // the camera RenderView stashed, used to build the sprites in Present.
+    VkBuffer       spriteVbuf       = VK_NULL_HANDLE;
+    VkDeviceMemory spriteVbufMemory = VK_NULL_HANDLE;
+    void*          spriteMapped     = nullptr;
+    uint32_t       spriteVertCap    = 0;
+    uint32_t       spriteVertCount  = 0;
+    rb_view_t      lastView         = {};
+
     // Paletted texture atlas (DOOM-0008 materials slice). WAD-global and
     // constant, so it is built and uploaded once and reused across levels.
     VkImage        atlasImage  = VK_NULL_HANDLE;
@@ -1057,11 +1068,37 @@ void RecreateSwapchain()
 // Build the paletted texture atlas (r_mesh.c), upload the atlas + PLAYPAL LUT
 // images and the per-id rect table, and write descriptor set 0. WAD-global, so
 // this runs once on the first level build and is reused thereafter.
+// Persistently-mapped, host-visible vertex buffer for the per-frame billboard
+// sprites. Sized once for a generous cap; RB_BuildSprites refills it each frame.
+void CreateSpriteBuffer()
+{
+    g.spriteVertCap = 4096 * 6;   // up to ~4096 things per frame, 6 verts each
+    VkDeviceSize size = (VkDeviceSize)g.spriteVertCap * sizeof(rb_vertex_t);
+
+    VkBufferCreateInfo bci = {};
+    bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bci.size = size;
+    bci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    Check(vkCreateBuffer(g.device, &bci, nullptr, &g.spriteVbuf), "vkCreateBuffer(sprites)");
+
+    VkMemoryRequirements req = {};
+    vkGetBufferMemoryRequirements(g.device, g.spriteVbuf, &req);
+    VkMemoryAllocateInfo mai = {};
+    mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    mai.allocationSize = req.size;
+    mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    Check(vkAllocateMemory(g.device, &mai, nullptr, &g.spriteVbufMemory), "vkAllocateMemory(sprites)");
+    Check(vkBindBufferMemory(g.device, g.spriteVbuf, g.spriteVbufMemory, 0), "vkBindBufferMemory(sprites)");
+    Check(vkMapMemory(g.device, g.spriteVbufMemory, 0, size, 0, &g.spriteMapped), "vkMapMemory(sprites)");
+}
+
 void UploadAtlas()
 {
     rb_atlas_t* a = RB_BuildAtlas();
-    printf("RB_Vulkan: texture atlas %dx%d (%d walls + %d flats).\n",
-           a->atlasw, a->atlash, a->numwall, a->numflat);
+    printf("RB_Vulkan: texture atlas %dx%d (%d walls + %d flats + %d sprites).\n",
+           a->atlasw, a->atlash, a->numwall, a->numflat, a->numsprite);
     fflush(stdout);
 
     // Atlas: one channel of raw palette indices.
@@ -1082,9 +1119,9 @@ void UploadAtlas()
     CreateSampledImage(256, 1, VK_FORMAT_R8G8B8A8_UNORM, lut, sizeof(lut),
                        &g.palImage, &g.palMemory, &g.palView);
 
-    // Rect storage buffer (std430): { vec2 atlasSize; int numWall; int pad;
+    // Rect storage buffer (std430): { vec2 atlasSize; int numWall; int numFlat;
     // vec4 rects[]; }. Host-visible — read-only in the shader, written once.
-    int   nrect = a->numwall + a->numflat;
+    int   nrect = a->numwall + a->numflat + a->numsprite;
     VkDeviceSize rectBytes = 16 + (VkDeviceSize)nrect * sizeof(rb_rect_t);
 
     VkBufferCreateInfo bci = {};
@@ -1108,12 +1145,12 @@ void UploadAtlas()
     Check(vkMapMemory(g.device, g.rectMemory, 0, rectBytes, 0, &mapped), "vkMapMemory(rects)");
     {
         unsigned char* p = (unsigned char*)mapped;
-        float  size[2] = { (float)a->atlasw, (float)a->atlash };
-        int    numWall = a->numwall;
-        int    pad     = 0;
+        float  size[2]  = { (float)a->atlasw, (float)a->atlash };
+        int    numWall  = a->numwall;
+        int    numFlat  = a->numflat;
         std::memcpy(p + 0, size, sizeof(size));
         std::memcpy(p + 8, &numWall, sizeof(numWall));
-        std::memcpy(p + 12, &pad, sizeof(pad));
+        std::memcpy(p + 12, &numFlat, sizeof(numFlat));
         std::memcpy(p + 16, a->rects, (size_t)nrect * sizeof(rb_rect_t));
     }
     vkUnmapMemory(g.device, g.rectMemory);
@@ -1156,6 +1193,8 @@ void UploadAtlas()
     writes[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     writes[2].pBufferInfo = &rectInfo;
     vkUpdateDescriptorSets(g.device, 3, writes, 0, nullptr);
+
+    CreateSpriteBuffer();   // per-frame billboard buffer (uses the same atlas)
 
     RB_FreeAtlas(a);
     g.atlasReady = true;
@@ -1223,6 +1262,7 @@ extern "C" void RB_Vulkan_RenderView(const rb_view_t* view)
     Mat4PerspectiveH(kPi * 0.5f, aspect, 1.0f, 100000.0f, p);
     Mat4Mul(p, v, g.viewProj);              // MVP = proj * view
     g.haveCamera = true;
+    g.lastView   = *view;                   // for the sprite build in Present
 }
 
 extern "C" void RB_Vulkan_BuildLevel(void)
@@ -1310,6 +1350,14 @@ extern "C" void RB_Vulkan_Present(void)
     vkResetFences(g.device, 1, &g.inFlight);
     vkResetCommandBuffer(g.cmd, 0);
 
+    // Rebuild this frame's billboard sprites into the persistently-mapped buffer.
+    // Safe to overwrite now: the fence wait above guarantees the previous frame's
+    // draw (which read this buffer) has finished. Host-coherent, so no flush.
+    g.spriteVertCount = 0;
+    if (g.spriteMapped && g.haveCamera && g.atlasReady)
+        g.spriteVertCount = (uint32_t)RB_BuildSprites(
+            &g.lastView, (rb_vertex_t*)g.spriteMapped, (int)g.spriteVertCap);
+
     VkCommandBufferBeginInfo bi = {};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
@@ -1330,9 +1378,11 @@ extern "C" void RB_Vulkan_Present(void)
     rp.pClearValues = clears;
     vkCmdBeginRenderPass(g.cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
 
-    // Draw the world only once we have geometry, the texture atlas, and a camera
-    // (e.g. not in a pre-level menu); otherwise the clear alone presents.
-    if (g.vbuf && g.vertexCount && g.haveCamera && g.atlasReady)
+    // Draw once we have the texture atlas and a camera (e.g. not in a pre-level
+    // menu); otherwise the clear alone presents. The static level mesh and the
+    // per-frame billboard sprites share the pipeline, descriptor set, and view
+    // matrix — sprites just bind a second vertex buffer and draw after the walls.
+    if (g.haveCamera && g.atlasReady)
     {
         VkViewport vpRect = {};
         vpRect.width = (float)g.extent.width;
@@ -1347,9 +1397,18 @@ extern "C" void RB_Vulkan_Present(void)
                                 g.pipelineLayout, 0, 1, &g.ds, 0, nullptr);
         vkCmdPushConstants(g.cmd, g.pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
                            0, 16 * sizeof(float), g.viewProj);
+
         VkDeviceSize off = 0;
-        vkCmdBindVertexBuffers(g.cmd, 0, 1, &g.vbuf, &off);
-        vkCmdDraw(g.cmd, g.vertexCount, 1, 0, 0);
+        if (g.vbuf && g.vertexCount)
+        {
+            vkCmdBindVertexBuffers(g.cmd, 0, 1, &g.vbuf, &off);
+            vkCmdDraw(g.cmd, g.vertexCount, 1, 0, 0);
+        }
+        if (g.spriteVbuf && g.spriteVertCount)
+        {
+            vkCmdBindVertexBuffers(g.cmd, 0, 1, &g.spriteVbuf, &off);
+            vkCmdDraw(g.cmd, g.spriteVertCount, 1, 0, 0);
+        }
     }
 
     vkCmdEndRenderPass(g.cmd);
@@ -1394,8 +1453,10 @@ extern "C" void RB_Vulkan_Shutdown(void)
     if (g.device)
         vkDeviceWaitIdle(g.device);
 
-    if (g.vbuf)           vkDestroyBuffer(g.device, g.vbuf, nullptr);
-    if (g.vbufMemory)     vkFreeMemory(g.device, g.vbufMemory, nullptr);
+    if (g.vbuf)             vkDestroyBuffer(g.device, g.vbuf, nullptr);
+    if (g.vbufMemory)       vkFreeMemory(g.device, g.vbufMemory, nullptr);
+    if (g.spriteVbuf)       vkDestroyBuffer(g.device, g.spriteVbuf, nullptr);
+    if (g.spriteVbufMemory) vkFreeMemory(g.device, g.spriteVbufMemory, nullptr);
 
     // Texture atlas resources.
     if (g.dsPool)      vkDestroyDescriptorPool(g.device, g.dsPool, nullptr);

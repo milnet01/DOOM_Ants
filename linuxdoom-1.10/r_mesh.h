@@ -52,6 +52,8 @@ typedef struct
 // rb_vertex_t.flags bits.
 #define RB_MESH_FLAT    0x1   // texnum indexes flats[], not textures[]
 #define RB_MESH_MASKED  0x2   // two-sided middle texture (alpha-tested)
+#define RB_MESH_SPRITE  0x4   // billboard sprite (texnum indexes sprite lumps;
+                              // palette index 0 is transparent / alpha-tested)
 
 typedef struct
 {
@@ -88,16 +90,18 @@ typedef struct
 {
     unsigned char* pixels;        // atlasw*atlash palette indices, heap-owned
     int            atlasw, atlash;
-    rb_rect_t*     rects;         // numwall+numflat entries: walls first, then
-                                  // flats (flat id = numwall + flatnum)
+    rb_rect_t*     rects;         // numwall+numflat+numsprite entries, in that
+                                  // order: flat id = numwall + flatnum, sprite
+                                  // id = numwall + numflat + spritelump
     int            numwall;       // wall-texture rects (== numtextures)
     int            numflat;       // flat rects (== numflats)
+    int            numsprite;     // sprite-lump rects (== numspritelumps)
     unsigned char  playpal[256 * 3];  // palette 0, straight RGB
 } rb_atlas_t;
 
-// Pack every wall texture + flat into one paletted atlas. WAD-global and
-// constant for the session, so the back-end builds it once and reuses it across
-// levels. Heap-owned; release with RB_FreeAtlas.
+// Pack every wall texture, flat, and sprite lump into one paletted atlas.
+// WAD-global and constant for the session, so the back-end builds it once and
+// reuses it across levels. Heap-owned; release with RB_FreeAtlas.
 rb_atlas_t* RB_BuildAtlas(void);
 
 void RB_FreeAtlas(rb_atlas_t* atlas);
@@ -111,6 +115,15 @@ typedef struct
     float x, y, z;   // eye position, world units
     float angle;     // yaw, radians
 } rb_view_t;
+
+// Build this frame's billboard sprites (things + items) as camera-facing quads,
+// writing rb_vertex_t triangles into out[] (up to maxverts). Returns the vertex
+// count written (a multiple of 6). The view supplies the camera so each quad
+// faces the view plane, and picks the 8-way sprite rotation, exactly as the
+// software renderer does. texnum carries the sprite-lump index (atlas id =
+// numwall + numflat + texnum); flags carry RB_MESH_SPRITE. Rebuilt every frame
+// because things move; must be called after a level is loaded.
+int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts);
 
 #ifdef __cplusplus
 }

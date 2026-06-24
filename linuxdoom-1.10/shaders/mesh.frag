@@ -33,24 +33,38 @@ layout(set = 0, binding = 1) uniform sampler2D paletteTex;   // 256x1 PLAYPAL RG
 layout(set = 0, binding = 2) readonly buffer Atlas {
     vec2 atlasSize;   // atlas dimensions in texels
     int  numWall;     // flats start at this id
-    int  _pad;
+    int  numFlat;     // sprites start at numWall + numFlat
     vec4 rects[];     // ox, oy, w, h  (texels)
 } atlas;
 
-const int FLAG_FLAT = 0x1;   // matches RB_MESH_FLAT in r_mesh.h
+const int FLAG_FLAT   = 0x1;   // matches RB_MESH_FLAT in r_mesh.h
+const int FLAG_SPRITE = 0x4;   // matches RB_MESH_SPRITE in r_mesh.h
 
 void main()
 {
-    int  id   = (vFlags & FLAG_FLAT) != 0 ? atlas.numWall + vTexnum : vTexnum;
+    // Unified atlas id: walls [0,numWall), flats [numWall,numWall+numFlat),
+    // sprites after. The vertex's texnum is the per-category index.
+    int id;
+    if ((vFlags & FLAG_SPRITE) != 0)    id = atlas.numWall + atlas.numFlat + vTexnum;
+    else if ((vFlags & FLAG_FLAT) != 0) id = atlas.numWall + vTexnum;
+    else                                id = vTexnum;
     vec4 rect = atlas.rects[id];
 
     // Tile the UV within the texture, then map into the atlas. fract keeps the
     // sample strictly inside the rect, so nearest sampling never bleeds across
-    // tile borders.
+    // tile borders. (Sprite UVs are pre-inset half a texel, so fract is a no-op
+    // for them and the sample never reaches a neighbouring tile.)
     vec2 local    = fract(vUV / rect.zw);
     vec2 atlasUV  = (rect.xy + local * rect.zw) / atlas.atlasSize;
 
     float index   = texture(atlasTex, atlasUV).r * 255.0;
+
+    // Sprites store transparency as palette index 0 (the gaps between posts);
+    // drop those texels so billboards read as cut-outs, not boxes. A genuine
+    // index-0 (black) texel inside a sprite is dropped too — DOOM art avoids it.
+    if ((vFlags & FLAG_SPRITE) != 0 && index < 0.5)
+        discard;
+
     vec3  albedo  = texture(paletteTex, vec2((index + 0.5) / 256.0, 0.5)).rgb;
 
     vec3  n     = normalize(vNormal);

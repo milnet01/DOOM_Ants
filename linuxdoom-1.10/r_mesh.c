@@ -30,7 +30,12 @@
 #include "r_defs.h"
 #include "r_state.h"    // segs/subsectors/sectors + counts, firstflat, textureheight
 #include "r_data.h"     // R_GetColumn
-#include "doomstat.h"   // skyflatnum
+#include "r_main.h"     // R_PointToAngle2 (sprite rotation pick)
+#include "doomstat.h"   // skyflatnum, players, consoleplayer
+#include "p_mobj.h"     // mobj_t (the things billboarded as sprites)
+#include "p_pspr.h"     // FF_FRAMEMASK / FF_FULLBRIGHT
+#include "tables.h"     // ANG45
+#include "m_swap.h"     // SHORT / LONG (sprite patch headers)
 #include "i_system.h"   // I_Error
 #include "w_wad.h"      // W_CacheLumpNum/Name
 #include "z_zone.h"     // PU_CACHE
@@ -272,9 +277,17 @@ static void tile_size(int id, int* w, int* h)
         *w = texturewidthmask[id] + 1;            // wall tiling width
         *h = textureheight[id] >> FRACBITS;       // wall pixel height
     }
-    else
+    else if (id < numtextures + numflats)
     {
         *w = *h = 64;                             // flats are always 64x64
+    }
+    else
+    {
+        // sprite lump: full patch bounding box (the gaps become transparent)
+        const patch_t* p = W_CacheLumpNum(
+            firstspritelump + (id - numtextures - numflats), PU_CACHE);
+        *w = SHORT(p->width);
+        *h = SHORT(p->height);
     }
     if (*w < 1) *w = 1;
     if (*h < 1) *h = 1;
@@ -294,27 +307,55 @@ static void blit_tile(unsigned char* dst, int dstw, int id, int ox, int oy,
                 dst[(oy + row) * dstw + (ox + col)] = src[row];
         }
     }
-    else
+    else if (id < numtextures + numflats)
     {
         const byte* flat = W_CacheLumpNum(firstflat + (id - numtextures), PU_CACHE);
         for (row = 0; row < h; row++)
             for (col = 0; col < w; col++)
                 dst[(oy + row) * dstw + (ox + col)] = flat[row * 64 + col];
     }
+    else
+    {
+        // Sprite lump: a posted (masked) patch. The atlas slot is pre-zeroed
+        // (calloc), so untouched texels stay palette index 0 = transparent; we
+        // write only the opaque pixels each post lists. Same column walk the
+        // software masked-column drawer uses: data at post+3, next post at
+        // +length+4.
+        const patch_t* patch = W_CacheLumpNum(
+            firstspritelump + (id - numtextures - numflats), PU_CACHE);
+        for (col = 0; col < w; col++)
+        {
+            const column_t* column = (const column_t*)
+                ((const byte*)patch + LONG(patch->columnofs[col]));
+            while (column->topdelta != 0xff)
+            {
+                const byte* src = (const byte*)column + 3;
+                for (row = 0; row < column->length; row++)
+                {
+                    int y = column->topdelta + row;
+                    if (y >= 0 && y < h)
+                        dst[(oy + y) * dstw + (ox + col)] = src[row];
+                }
+                column = (const column_t*)
+                    ((const byte*)column + column->length + 4);
+            }
+        }
+    }
 }
 
 rb_atlas_t* RB_BuildAtlas(void)
 {
-    int total = numtextures + numflats;
+    int total = numtextures + numflats + numspritelumps;
     rb_atlas_t* atlas = malloc(sizeof(rb_atlas_t));
     int x = 0, y = 0, shelf = 0, id;
 
     if (!atlas)
         I_Error("RB_BuildAtlas: out of memory allocating atlas handle");
 
-    atlas->numwall = numtextures;
-    atlas->numflat = numflats;
-    atlas->rects   = malloc((size_t)total * sizeof(rb_rect_t));
+    atlas->numwall   = numtextures;
+    atlas->numflat   = numflats;
+    atlas->numsprite = numspritelumps;
+    atlas->rects     = malloc((size_t)total * sizeof(rb_rect_t));
     if (!atlas->rects)
         I_Error("RB_BuildAtlas: out of memory allocating %d rects", total);
 
@@ -364,4 +405,124 @@ void RB_FreeAtlas(rb_atlas_t* atlas)
     free(atlas->pixels);
     free(atlas->rects);
     free(atlas);
+}
+
+//
+// DOOM-0008 sprites. Each visible thing becomes one camera-facing billboard
+// quad: a cylindrical billboard whose horizontal axis follows the camera's
+// right vector and whose vertical axis is world +z (sprites stand upright). The
+// quad is sized in map units from the sprite patch, positioned at the thing's
+// feet via spritetopoffset, and the 8-way rotation / horizontal flip are chosen
+// exactly as R_ProjectSprite does. Transparency is the shader's job (it drops
+// palette index 0), so no per-sprite sorting is needed — the depth buffer plus
+// alpha-test resolves occlusion. Rebuilt every frame because things move.
+//
+
+// Sprite-lump pixel heights, cached on first use. Widths/offsets already live in
+// r_data.c's spritewidth/spriteoffset/spritetopoffset (fixed-point); only the
+// height has no table, so we read it from each patch header once.
+static short* sprite_h = NULL;
+
+static void ensure_sprite_heights(void)
+{
+    int i;
+    if (sprite_h)
+        return;
+    sprite_h = malloc((size_t)numspritelumps * sizeof(short));
+    if (!sprite_h)
+        I_Error("RB_BuildSprites: out of memory for %d sprite heights",
+                numspritelumps);
+    for (i = 0; i < numspritelumps; i++)
+    {
+        const patch_t* p = W_CacheLumpNum(firstspritelump + i, PU_CACHE);
+        sprite_h[i] = SHORT(p->height);
+    }
+}
+
+int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts)
+{
+    // Camera right vector in world space, matching Mat4LookAt with up = +z:
+    // right = normalize(fwd x up) = (sin a, -cos a, 0). Billboard up is +z, and
+    // the normal faces the camera (placeholder shading only).
+    float   a    = view->angle;
+    float   rx   =  sinf(a), ry = -cosf(a);    // screen-right in world
+    float   nx   = -cosf(a), ny = -sinf(a);    // billboard normal (toward eye)
+    fixed_t camx = (fixed_t)(view->x * FRACUNIT);
+    fixed_t camy = (fixed_t)(view->y * FRACUNIT);
+    int     s, n = 0;
+
+    if (numspritelumps <= 0)
+        return 0;
+    ensure_sprite_heights();
+
+    for (s = 0; s < numsectors; s++)
+    {
+        mobj_t* thing;
+        for (thing = sectors[s].thinglist; thing; thing = thing->snext)
+        {
+            spritedef_t*   sprdef;
+            spriteframe_t* sprframe;
+            int            lump;
+            boolean        flip;
+            float          wpx, hpx, loff, toff, cx, cy, topz, botz, ld, rd, light;
+            float          u0, u1, v0, v1;
+
+            if (thing == players[consoleplayer].mo)
+                continue;                       // our own body, first person
+            if ((unsigned)thing->sprite >= (unsigned)numsprites)
+                continue;
+            sprdef = &sprites[thing->sprite];
+            if ((thing->frame & FF_FRAMEMASK) >= sprdef->numframes)
+                continue;
+            sprframe = &sprdef->spriteframes[thing->frame & FF_FRAMEMASK];
+
+            if (sprframe->rotate)
+            {
+                angle_t  ang = R_PointToAngle2(camx, camy, thing->x, thing->y);
+                unsigned rot = (ang - thing->angle + (unsigned)(ANG45/2)*9) >> 29;
+                lump = sprframe->lump[rot];
+                flip = (boolean)sprframe->flip[rot];
+            }
+            else
+            {
+                lump = sprframe->lump[0];
+                flip = (boolean)sprframe->flip[0];
+            }
+
+            wpx  = spritewidth[lump]     / (float)FRACUNIT;
+            hpx  = (float)sprite_h[lump];
+            loff = spriteoffset[lump]    / (float)FRACUNIT;
+            toff = spritetopoffset[lump] / (float)FRACUNIT;
+
+            cx   = thing->x / (float)FRACUNIT;
+            cy   = thing->y / (float)FRACUNIT;
+            topz = thing->z / (float)FRACUNIT + toff;
+            botz = topz - hpx;
+            ld   = -loff;                       // left edge along right vector
+            rd   = -loff + wpx;                 // right edge
+
+            light = thing->subsector->sector->lightlevel / 255.0f;
+            if (thing->frame & FF_FULLBRIGHT)
+                light = 1.0f;
+            if (light < 0.0f) light = 0.0f;
+            if (light > 1.0f) light = 1.0f;
+
+            // UVs inset half a texel so nearest sampling stays inside the rect.
+            u0 = 0.5f;  u1 = wpx - 0.5f;
+            v0 = 0.5f;  v1 = hpx - 0.5f;
+            if (flip) { float t = u0; u0 = u1; u1 = t; }
+
+            if (n + 6 > maxverts)
+                return n;                       // buffer full; drop the rest
+
+            // Corners: left-top, right-top, right-bottom, left-bottom.
+            out[n++] = mkv(cx + rx*ld, cy + ry*ld, topz, nx, ny, 0.0f, u0, v0, lump, RB_MESH_SPRITE, light);
+            out[n++] = mkv(cx + rx*rd, cy + ry*rd, topz, nx, ny, 0.0f, u1, v0, lump, RB_MESH_SPRITE, light);
+            out[n++] = mkv(cx + rx*rd, cy + ry*rd, botz, nx, ny, 0.0f, u1, v1, lump, RB_MESH_SPRITE, light);
+            out[n++] = mkv(cx + rx*ld, cy + ry*ld, topz, nx, ny, 0.0f, u0, v0, lump, RB_MESH_SPRITE, light);
+            out[n++] = mkv(cx + rx*rd, cy + ry*rd, botz, nx, ny, 0.0f, u1, v1, lump, RB_MESH_SPRITE, light);
+            out[n++] = mkv(cx + rx*ld, cy + ry*ld, botz, nx, ny, 0.0f, u0, v1, lump, RB_MESH_SPRITE, light);
+        }
+    }
+    return n;
 }
