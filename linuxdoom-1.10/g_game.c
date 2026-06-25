@@ -1549,9 +1549,11 @@ void G_RecordDemo (char* name)
     int             i; 
     int				maxsize;
 	
-    usergame = false; 
-    strcpy (demoname, name); 
-    strcat (demoname, ".lmp"); 
+    usergame = false;
+    // -record takes an unbounded command-line name; snprintf bounds it to
+    // demoname[32] (and always NUL-terminates) so a long name can't overflow
+    // the buffer the way strcpy+strcat did.
+    snprintf (demoname, sizeof(demoname), "%s.lmp", name);
     maxsize = 0x20000;
     i = M_CheckParm ("-maxdemo");
     if (i && i<myargc-1)

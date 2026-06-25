@@ -242,6 +242,12 @@ with friends.
   Kind: feature.
   Source: user-request-2026-06-25.
 
+- ✅ [DOOM-0070] **Fix unbounded -record demo-name buffer overflow in G_RecordDemo.**
+  Found 2026-06-26 (ants-audit static analysis, verified). G_RecordDemo (g_game.c:1547) did strcpy(demoname, name) + strcat(demoname, ".lmp") into demoname[32] (g_game.c:132); `name` is the raw -record command-line argument (d_main.c:1204), unbounded. A -record name longer than 27 chars overflows the global buffer (corrupts adjacent globals, potential control-flow hijack). Same class as DOOM-0024 (config-parser hardening). Resolved: replaced with snprintf(demoname, sizeof(demoname), "%s.lmp", name) — bounds the copy, always NUL-terminates, builds the whole name in one call. Built clean. The other 91 audit string-function findings are faithful-1997 copies of string literals / known-bounded buffers (false-positives); the SNDSERV popen "command injection" CRITICAL is dead code (not compiled in the SDL2 build).
+  **Layman:** A long demo filename passed on the command line could overflow a fixed buffer and corrupt memory; now it's safely truncated.
+  Kind: security.
+  Source: ants-audit-2026-06-26.
+
 ## Phase 2 — The Spin
 
 The creative overhaul: evolve the renderer toward true 3D with hardware
