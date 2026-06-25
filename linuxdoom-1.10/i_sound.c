@@ -455,8 +455,11 @@ void I_SetMusicVolume(int volume)
 
   if (music_initialised)
   {
-    // Scale 0-15 -> SDL2_mixer's 0-128, clamped defensively.
-    int v = (volume * 128) / 15;
+    // Scale 0-15 -> SDL2_mixer's 0-128, but cap well below full: music plays on
+    // a separate 44.1 kHz SDL2_mixer device that is perceptibly louder than the
+    // 11025 Hz software SFX mixer at equal settings, drowning the effects
+    // (DOOM-0047). 80/128 (~63%) rebalances it; tunable by ear.
+    int v = (volume * 80) / 15;
     if (v < 0)   v = 0;
     if (v > 128) v = 128;
     Mix_VolumeMusic(v);
