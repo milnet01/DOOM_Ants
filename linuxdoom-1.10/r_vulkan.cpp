@@ -517,9 +517,13 @@ void CreateSwapchain()
     // output exactly. The scene-linear workflow + a real tonemap (writing linear
     // radiance into an _SRGB target) arrives with the path tracer (DOOM-0009).
     uint32_t fn = 0;
-    vkGetPhysicalDeviceSurfaceFormatsKHR(g.phys, g.surface, &fn, nullptr);
+    Check(vkGetPhysicalDeviceSurfaceFormatsKHR(g.phys, g.surface, &fn, nullptr),
+          "vkGetPhysicalDeviceSurfaceFormatsKHR(count)");
+    if (fn == 0)
+        I_Error("R_Vulkan: surface reports no formats");
     std::vector<VkSurfaceFormatKHR> formats(fn);
-    vkGetPhysicalDeviceSurfaceFormatsKHR(g.phys, g.surface, &fn, formats.data());
+    Check(vkGetPhysicalDeviceSurfaceFormatsKHR(g.phys, g.surface, &fn, formats.data()),
+          "vkGetPhysicalDeviceSurfaceFormatsKHR");
     VkSurfaceFormatKHR fmt = formats[0];
     for (const VkSurfaceFormatKHR& f : formats)
         if (f.format == VK_FORMAT_B8G8R8A8_UNORM &&

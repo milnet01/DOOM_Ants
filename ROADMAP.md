@@ -628,3 +628,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: fix.
   Source: in-session-2026-06-26.
   Resolved (2026-06-26): dropped the non-canonical Lambert key light from mesh.frag. Web research (id r_segs.c, DoomWiki "Fake contrast", GZDoom gl_maplightmode, ryanthomson.net colormap writeup) confirmed classic DOOM shades every surface by sector light + distance ONLY — no normal/directional term — so a floor and ceiling at equal sector light and distance are equally bright. The (0.55 + 0.45*dot(N,L)) term dropped down-facing ceiling caps to ~0.55x (floors sat ~0.93x), pushing dim ceilings to black — the courtyard-overhang black band. Now shade = vLight * distLight (distance diminishing kept; it is faithful). Removed the now-dead n/L/diff. The one legit orientation effect, wall fake-contrast (walls-only ±1 light level on axis-aligned segs), is left as an optional future per-vertex pass, not a per-fragment key light. Built clean (mesh.frag.spv regenerated). Awaiting user GPU re-test (E1M1 courtyard overhang should read dark-grey/textured like Classic, not black).
+
+- ✅ [DOOM-0071] **Guard the Vulkan surface-format query against a zero count / dropped result.**
+  Found 2026-06-26 (indie-review, r_vulkan.cpp lane, verified). CreateSwapchain called vkGetPhysicalDeviceSurfaceFormatsKHR twice WITHOUT checking either VkResult (the sibling caps query is Check-wrapped) and then dereferenced formats[0]. A driver reporting zero formats (spec-illegal but seen on broken/headless drivers) makes the std::vector empty and formats[0] undefined behaviour. Resolved: Check-wrap both queries and I_Error if fn==0 before indexing — matching the file's existing Check/I_Error idiom. Built clean.
+  **Layman:** On an unusual graphics driver the renderer could read invalid memory while picking a display format at startup; now it checks properly and fails loudly instead.
+  Kind: review-fix.
+  Source: indie-review-2026-06-26.

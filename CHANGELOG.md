@@ -54,6 +54,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Guard the Vulkan surface-format query against a zero count / dropped result.** (DOOM-0071)
+  On an unusual graphics driver the renderer could read invalid memory while picking a display format at startup; now it checks properly and fails loudly instead.
+
 - **Faithful 3D lighting — ceilings no longer render black in Solid/Ultra (DOOM-0069)**
   Removed a non-canonical directional key light from the mesh fragment shader. Classic DOOM shades by sector light + distance only, so floors and ceilings at the same light/distance now match; previously down-facing ceilings were darkened ~40% and went black in dim sectors (the courtyard-overhang band).
 
