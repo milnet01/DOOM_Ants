@@ -58,6 +58,14 @@ typedef struct
     int   vtexsec;      // sector whose plane the texture is pegged to
     int   vtexplane;    // RB_PLANE_* of that anchor plane (NONE = don't re-peg)
     float vtexoff;      // texels from the anchor plane to texture row 0
+    // Live-texture source (walls only). A switch swaps the sidedef's texture
+    // (P_ChangeSwitchTexture) and animated walls/flats cycle a translation table
+    // each tic, neither of which the once-baked texnum reflects. So a wall vertex
+    // records the sidedef + which slot it drew from; RB_UpdateMeshHeights re-reads
+    // texturetranslation[sides[vtexside].<slot>] each frame. vtexside < 0 means a
+    // flat (refreshed via vsector/vplane + flattranslation) or static. DOOM-0066.
+    int   vtexside;     // sidedef index, or -1 (flat / no re-texture)
+    int   vtexslot;     // 0 = top, 1 = mid, 2 = bottom texture
 } rb_vertex_t;
 
 // Which moving sector plane a mesh vertex's z follows. The mesh is built once

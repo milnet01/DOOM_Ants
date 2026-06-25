@@ -84,6 +84,7 @@ static rb_vertex_t mkv(float x, float y, float z,
     out.texnum = texnum; out.flags = flags; out.light = light;
     out.vsector = 0; out.vplane = RB_PLANE_NONE;   // static unless tagged below
     out.vtexsec = 0; out.vtexplane = RB_PLANE_NONE; out.vtexoff = 0.0f;
+    out.vtexside = -1; out.vtexslot = 0;           // flat/static unless emit_wall tags it
     return out;
 }
 
@@ -209,6 +210,15 @@ static void emit_wall(builder_t* bld, seg_t* seg, fixed_t bottomz, fixed_t topz,
     bl.vtexsec   = br.vtexsec   = tr.vtexsec   = tl.vtexsec   = anchorsec;
     bl.vtexplane = br.vtexplane = tr.vtexplane = tl.vtexplane = anchorplane;
     bl.vtexoff   = br.vtexoff   = tr.vtexoff   = tl.vtexoff   = vtexoff;
+    // Tag the live-texture source so switches/animations refresh per frame
+    // (DOOM-0066). Slot follows the pegkind: upper=top, lower=bottom, one-sided
+    // and two-sided rail both draw the midtexture.
+    {
+        int side = (int)(seg->sidedef - sides);
+        int slot = pegkind == PEG_UPPER ? 0 : pegkind == PEG_LOWER ? 2 : 1;
+        bl.vtexside = br.vtexside = tr.vtexside = tl.vtexside = side;
+        bl.vtexslot = br.vtexslot = tr.vtexslot = tl.vtexslot = slot;
+    }
     push_quad(bld, bl, br, tr, tl);
 }
 
@@ -448,6 +458,28 @@ void RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst)
     {
         const rb_vertex_t* v = &mesh->verts[i];
         float newz;
+        // Live texture id (DOOM-0066). A pressed switch swaps the sidedef's
+        // texture and animated walls/flats cycle the translation table each tic;
+        // the baked texnum reflects neither. Re-derive exactly what the software
+        // renderer samples: texturetranslation[sidedef tex] for walls,
+        // flattranslation[sector pic] for flats. Cheap: one array read per vertex.
+        if (v->flags & RB_MESH_FLAT)
+        {
+            int pic = (v->vplane == RB_PLANE_CEIL)
+                      ? sectors[v->vsector].ceilingpic
+                      : sectors[v->vsector].floorpic;
+            if (pic != skyflatnum)
+                dst[i].texnum = flattranslation[pic];
+        }
+        else if (v->vtexside >= 0)
+        {
+            const side_t* sd = &sides[v->vtexside];
+            int base = v->vtexslot == 0 ? sd->toptexture
+                     : v->vtexslot == 2 ? sd->bottomtexture
+                     : sd->midtexture;
+            if (base > 0)
+                dst[i].texnum = texturetranslation[base];
+        }
         if (v->vplane == RB_PLANE_FLOOR)
             newz = sectors[v->vsector].floorheight / (float)FRACUNIT;
         else if (v->vplane == RB_PLANE_CEIL)

@@ -8,6 +8,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Reflect runtime wall/flat texture changes in the 3D mesh (switches, animated textures).** (DOOM-0066)
+  In the 3D renderers a pressed switch doesn't light up and animated surfaces (screens, slime) don't animate, because the 3D world bakes each surface's picture in once.
+
 - **Map the controller Triangle (Y) button to toggle the automap.** (DOOM-0063)
   Press Triangle on the PS4 pad to open the map; press it again to close it.
 
