@@ -42,6 +42,10 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Sound effects no longer drowned out by the music (DOOM-0047)**
+  Music plays on a separate, louder audio device than the sound effects;
+  its volume is now capped so effects stay audible underneath it.
+
 - **Fix DOOM-0027 hi-res scaling regressions: small view window and mispositioned weapon sprite.** (DOOM-0041)
   In the new sharper (640x400) mode the 3D view was a small square in the middle of the screen and the gun drifted up to the centre; both now sit and scale correctly.
 

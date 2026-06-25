@@ -463,12 +463,13 @@ parked ideas (💭 considered) until we commit to and design each one.
   Source: in-session-2026-06-25.
   Implemented 2026-06-25 (commit 7d19c64): force a full status-bar refresh each frame in 3D modes so stale overlay pixels are cleared. Builds clean. Pending on-screen re-test of the Sound Volume menu over the HUD.
 
-- 🚧 [DOOM-0047] **Verify sound-effect audibility vs music balance in the SDL2 build.**
+- ✅ [DOOM-0047] **Verify sound-effect audibility vs music balance in the SDL2 build.**
   Found 2026-06-25 (user testing). SFX are fully wired (i_sound.c: addsfx -> I_MixSound -> SDL callback; s_sound.c S_StartSound -> I_StartSound; no stub), but the user can't tell they play. SFX are software-mixed at 11025 Hz; music plays via SDL2_mixer at 44100 Hz on a separate device, so music may dominate. Isolation test first: set Music Volume to 0 and confirm SFX are audible. If SFX are present but quiet, options: raise the default sfx_volume (m_misc.c, currently 8/15) or rebalance the mix; do not rewrite the mixer blind. Confirm by ear before changing audio.
   **Layman:** Hard to tell if gun/door/monster sounds are playing under the music.
   Kind: investigate.
   Source: in-session-2026-06-25.
   Resolved-pending-ear-check 2026-06-25 (commit 863447f): user confirmed SFX play but are drowned by music. Capped music scale at 80/128 (~63%) instead of full -- safer than boosting SFX (software mixer would clip). Tunable; awaiting the user's confirmation of the new balance.
+  Resolved (2026-06-25, commit 863447f, user-confirmed): capped the music scale at 80/128 (~63%) so the louder separate-device music no longer drowns the 11025 Hz software SFX mixer. User reports "the sound effects and music are much better now." Tunable if needed."
 
 - 📋 [DOOM-0048] **Decouple render rate from the 35 Hz game tic (currently present-locked at 35 FPS).**
   Found 2026-06-25 (FPS counter reads ~35). D_Display is presenting one frame per 35 Hz game tic, so the renderer is tic-locked and can't exceed 35 FPS regardless of GPU headroom. The FPS counter (DOOM-0046) is reporting the true present rate. To hit the Phase-2 60 FPS floor the present/interpolation must be decoupled from the fixed game tic (render interpolation between tics, uncapped or vsync present). Part of the 60-FPS-floor performance work (DOOM-0011/0012); recorded now as the concrete sub-task surfaced by testing.
