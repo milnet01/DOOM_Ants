@@ -75,6 +75,11 @@ extern void RB_Vulkan_Present(void);
 extern void RB_Vulkan_Shutdown(void);
 extern void RB_Vulkan_BuildLevel(void);
 
+// Software-renderer automap "seen" marking (r_main.c). The 3D back-ends bypass
+// the seg pipeline that sets ML_MAPPED, so the automap needs this run per play
+// frame to reveal what the player sees (DOOM-0064).
+extern void R_MarkAutomapLines(player_t* player);
+
 static boolean Vulkan_RT_Available(void)     { return RB_Vulkan_Available(1); }
 static boolean Vulkan_Raster_Available(void) { return RB_Vulkan_Available(0); }
 static void    Vulkan_Init(void)                   { RB_Vulkan_Init(); }
@@ -101,6 +106,16 @@ static void Vulkan_RenderPlayerView(player_t* p)
     // R_SetupLevel; the C++ side never touches DOOM globals.
     view.skytexnum = skytexture;
     RB_Vulkan_RenderView(&view);
+
+    // Reveal the automap the same way Classic does: the software seg renderer
+    // sets ML_MAPPED on every visible linedef (R_StoreWallRange), but the Vulkan
+    // path never runs it, so the map stayed blank in Solid/Ultra. Run a cheap
+    // mark-only BSP pass each play frame -- frustum + occlusion correct, no
+    // drawing -- so what the player can see is flagged seen (DOOM-0064). Only
+    // during play: when the automap is open this whole function is skipped
+    // (D_Display gates it on !automapactive), matching Classic, which likewise
+    // marks nothing new while you stare at the map.
+    R_MarkAutomapLines(p);
 
     // The 3D world goes to Vulkan, so the engine never draws it into screens[0].
     // Clear the view's footprint there to the transparent key (RB_OVERLAY_KEY) so

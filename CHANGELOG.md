@@ -51,6 +51,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Automap renders blank/frozen in the 3D back-ends (Solid/Ultra).** (DOOM-0064)
+  The in-game map is blank in the 3D renderers and only updates in Classic; needs a runtime probe to finish diagnosing.
+
 - **Draw the upper wall above an outdoor doorway in the 3D mesh (sky-ceiling guard fix).** (DOOM-0062)
   In the 3D renderers the wall above DOOM's outdoor exit door was see-through; now the lintel renders like Classic.
 

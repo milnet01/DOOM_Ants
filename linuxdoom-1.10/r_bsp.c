@@ -513,6 +513,23 @@ void R_Subsector (int num)
     count = sub->numlines;
     line = &segs[sub->firstline];
 
+    // Automap mark-only pass for the 3D back-ends (R_MarkAutomapLines): only the
+    // seg walk runs so each visible linedef gets ML_MAPPED in R_StoreWallRange.
+    // Skip the floor/ceiling visplane and sprite setup -- nothing is drawn, and
+    // R_FindPlane would burn a visplane every frame for no reason (DOOM-0064).
+    {
+	extern boolean rb_mapmarkonly;
+	if (rb_mapmarkonly)
+	{
+	    while (count--)
+	    {
+		R_AddLine (line);
+		line++;
+	    }
+	    return;
+	}
+    }
+
     if (frontsector->floorheight < viewz)
     {
 	floorplane = R_FindPlane (frontsector->floorheight,

@@ -903,5 +903,31 @@ void R_RenderPlayerView (player_t* player)
     R_DrawMasked ();
 
     // Check for new console commands.
-    NetUpdate ();				
+    NetUpdate ();
+}
+
+
+// When true, the software seg pipeline only marks linedefs ML_MAPPED (for the
+// automap) and skips all drawing -- see R_MarkAutomapLines (DOOM-0064).
+boolean		rb_mapmarkonly = false;
+
+//
+// R_MarkAutomapLines
+// Automap "seen" marking for the 3D back-ends. The Vulkan renderer draws the
+// whole level mesh and never runs R_StoreWallRange, which is the one place that
+// sets ML_MAPPED -- so the automap revealed only the player arrow in Solid/Ultra
+// (DOOM-0064). Run the software BSP walk in mark-only mode: identical view
+// setup, frustum culling and solid-seg occlusion as a real frame, but
+// R_StoreWallRange marks each visible linedef and returns before drawing, and
+// R_Subsector skips the visplane/sprite setup. So it reveals exactly what the
+// player can see -- same result as the Classic automap -- with no pixels drawn.
+//
+void R_MarkAutomapLines (player_t* player)
+{
+    rb_mapmarkonly = true;
+    R_SetupFrame (player);
+    R_ClearClipSegs ();
+    R_ClearDrawSegs ();
+    R_RenderBSPNode (numnodes-1);
+    rb_mapmarkonly = false;
 }

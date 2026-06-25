@@ -396,7 +396,14 @@ R_StoreWallRange
 
     // mark the segment as visible for auto map
     linedef->flags |= ML_MAPPED;
-    
+
+    // Automap mark-only pass for the 3D back-ends (R_MarkAutomapLines): the
+    // visible linedef is now flagged; skip all drawing. ds_p has not advanced
+    // yet, so no drawseg leaks (DOOM-0064).
+    extern boolean rb_mapmarkonly;
+    if (rb_mapmarkonly)
+	return;
+
     // calculate rw_distance for scale calculation
     rw_normalangle = curline->angle + ANG90;
     offsetangle = abs(rw_normalangle-rw_angle1);
