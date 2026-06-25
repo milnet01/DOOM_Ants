@@ -21,7 +21,7 @@
 //-----------------------------------------------------------------------------
 
 static const char
-rcsid[] = "$Id:$";
+rcsid[] __attribute__((used)) = "$Id:$";
 
 // We are referring to sprite numbers.
 #include "info.h"

@@ -22,7 +22,7 @@
 //-----------------------------------------------------------------------------
 
 static const char
-rcsid[] = "$Id: p_tick.c,v 1.4 1997/02/03 16:47:55 b1 Exp $";
+rcsid[] __attribute__((used)) = "$Id: p_tick.c,v 1.4 1997/02/03 16:47:55 b1 Exp $";
 
 #include "i_system.h"
 #include "z_zone.h"
