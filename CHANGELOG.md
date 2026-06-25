@@ -42,6 +42,11 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Menu now shows when booting straight into a 3D renderer (DOOM-0045)**
+  Launching directly into the Solid/Ultra 3D renderer previously showed a
+  blank screen with no title or menu until a level loaded; the 2D menu now
+  composites over the 3D view from the first frame.
+
 - **Sound effects no longer drowned out by the music (DOOM-0047)**
   Music plays on a separate, louder audio device than the sound effects;
   its volume is now capped so effects stay audible underneath it.
