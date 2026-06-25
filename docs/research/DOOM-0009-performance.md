@@ -208,7 +208,8 @@ numerical shading curves route through the Vestige Formula Workbench at
 1. **Migrate atlas → bindless** materials (`VK_EXT_descriptor_indexing`, core 1.2)
    — RT hit shaders index a global texture table; carries over the R8-index + LUT
    decode, vertex plumbing, staging upload.
-2. **Static BLAS + TLAS** (§2.5); white-furnace test the AS + intersection.
+2. **Static BLAS + TLAS** (§2 — the AS-discipline survey item); white-furnace test
+   the AS + intersection.
 3. **Direct lighting only:** NEE + MIS + RR + firefly clamp + NaN guards via
    ray-query, REJECT-culled light set (§3.1). Reference-image regression.
 4. **Static GI bake** into the sector-keyed cache (§1, §3.2) at level load.

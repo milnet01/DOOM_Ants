@@ -1,8 +1,8 @@
 # DOOM-0008 — True-3D Vulkan path-traced renderer
 
-**Status:** Reviewed — `/cold-eyes` loops 1–2 (see loop log); loop 2 returned
-only polish, fixed, and per user direction implementation proceeds. Ready to
-implement.
+**Status:** Shipped (Stage 1, 2026-06-25, user-confirmed on DOOM 1 & DOOM 2). Built
+via `/cold-eyes` loops 1–2 (see loop log). Stage 2 (the hardware path tracer) is
+specced separately in DOOM-0009.
 
 This spec covers the `R_Vulkan` 3D back-end that plugs into the
 `renderer_backend_t` seam shipped in DOOM-0026. The **target is a real-time
@@ -287,7 +287,9 @@ Per pixel, per frame:
    effective samples at 1–2 spp/frame.
 5. **Denoise → tonemap → encode** — spatial denoise (SVGF/A-SVGF) using
    Workbench-fitted edge-stopping weights, exposure (`exposure_ev` + `extralight`),
-   ACES tonemap (`aces_tonemap`), encode to the swapchain format.
+   ACES tonemap (`aces_tonemap`), encode to the swapchain format. *(Superseded:
+   DOOM-0009 §3 selects Khronos PBR Neutral over ACES for the shipping Stage-2
+   integrator — this ACES line predates that choice.)*
 
 Determinism/quality guards: per-pixel RNG seeded by pixel + frame; safe-math
 guards (from the Workbench GLSL prelude) prevent NaN fireflies; a firefly clamp
@@ -313,7 +315,8 @@ additions tracked in `/mnt/Games/Scripts/Linux/3D_Engine/DOOM_Ants_Feedback.md`)
 - Volumetric (DOOM-0011): **Beer-Lambert** absorption, Henyey-Greenstein phase
   (Vestige's Schlick-fit), **`caustic_depth_fade`**.
 - Output: `srgb_to_linear`/`linear_to_srgb` *(requested)*, **`exposure_ev`**,
-  **`aces_tonemap`**.
+  **`pbr_neutral_tonemap`** *(the Stage-2 operator — DOOM-0009 §3)*;
+  `aces_tonemap` *(superseded; only as an optional "filmic" toggle)*.
 - Denoise (Stage 3): temporal-blend alpha, edge-stopping weights, adaptive
   sample-count curve *(requested)*.
 
@@ -426,7 +429,8 @@ Not touched: all `r_*.c` software-renderer internals, all UI drawing logic
   (timer/validation check).
 - **INV-6** The path tracer is unbiased up to Russian-roulette/clamp: a converged
   accumulation matches a reference render of the same scene within a small
-  relative-MSE tolerance (exact threshold owned by DOOM-0009's Stage-2 spec).
+  relative-MSE tolerance (exact threshold owned by DOOM-0009 INV-6: ≤ 0.5%
+  rel-MSE @ a brute-force reference, 4096-spp default, raise if noisy).
   *Test:* white-furnace / known-scene convergence check.
 - **INV-7** No magic constants in path-tracer shaders — every tuning curve traces
   to a Workbench-exported `shaders/formulas/*` artifact. *Test:* grep the shaders;

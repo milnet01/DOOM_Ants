@@ -1,6 +1,8 @@
 # DOOM-0009 — Hardware path tracer (Stage 2)
 
-**Status:** Draft (pre-`/cold-eyes`). Design contract for the Stage-2 renderer.
+**Status:** Reviewed — `/cold-eyes` loops 1–5 (see log), converged to polish-only
+with no design defects, user-accepted 2026-06-25. Implementation-ready. Design
+contract for the Stage-2 renderer.
 **Depends on:** DOOM-0008 (Stage 1 raster 3D: meshes, materials, sprites, UI
 composite) shipped; DOOM-0026 renderer-backend seam; ADR
 `docs/decisions/0001-renderer-language-and-api.md`.
@@ -19,8 +21,10 @@ Light DOOM's existing 3D scene (the Stage-1 mesh) with a real hardware
 **Monte-Carlo path tracer** — global illumination, ray-traced shadows, derived
 emissive surfaces — so the world looks physically lit while still **feeling like
 DOOM**. Stage 2 ships when a path-traced frame converges to a reference image
-(white-furnace verified) and muzzle-flash dynamic shadows are visible, at a
-playable frame rate on the reference GPU (AMD RX 6600 / RDNA2 / RADV).
+(white-furnace verified) and muzzle-flash dynamic shadows are visible, at an
+**interactive ≥ 30 FPS at 1080p** on the reference GPU (AMD RX 6600 / RDNA2 /
+RADV). The hard **60 FPS floor is deferred to DOOM-0012** — Stage 2's bar is
+*correct and interactive*, not *fast*.
 
 Non-goals for Stage 2 (deferred to Stage 3): moving/coloured/flickering dynamic
 lights beyond the muzzle flash (DOOM-0010), volumetrics (DOOM-0011), and the full
@@ -33,17 +37,21 @@ Per the 2026-06-25 direction decision, ray tracing is a **player setting**, not 
 fixed property of a renderer tier, and it is **independent of the art set**:
 
 - **Renderer:** Classic (1997 software) · 3D (Vulkan). Unchanged seam (DOOM-0026).
-- **Ray Tracing: On / Off** — only meaningful in 3D. Maps onto the existing tiers:
-  *Off* = `RB_RASTER3D` ("Solid", raster lighting), *On* = `RB_RT3D` ("Ultra",
-  path-traced). Surfaced in Options as a clear "Ray Tracing" item; internally it
-  still selects the Solid/Ultra back-end so the frozen `rendermode_t` enum and the
-  tier auto-probe (DOOM-0008) are untouched. "Ray Tracing: On" is greyed out when
-  the GPU lacks `VK_KHR_acceleration_structure` + `VK_KHR_ray_query`.
+- **Ray Tracing: On / Off** — only meaningful in 3D. Maps onto the existing tiers
+  by mode *identity* (not the enum's numeric value): *Off* = `RB_RASTER3D`
+  ("Solid", raster lighting), *On* = `RB_RT3D` ("Ultra", path-traced). **Stage-2
+  menu change:** today the Options menu has one `"Renderer:"` item that *cycles*
+  Classic → Solid → Ultra (`m_menu.c` `M_ChangeRenderer` → `RB_NextAvailableMode`,
+  via `cycleOrder[]`). Stage 2 reworks this into a clear "Ray Tracing: On / Off"
+  item (the Classic/3D split stays its own control). Internally it still selects
+  the Solid/Ultra back-end so the frozen `rendermode_t` enum and the tier
+  auto-probe (DOOM-0008) are untouched. "Ray Tracing: On" is greyed out when the
+  GPU lacks `VK_KHR_acceleration_structure` + `VK_KHR_ray_query`.
 - **Art set: Classic / HD** — a separate theme toggle (DOOM-0042), **orthogonal**
-  to RT. The path tracer consumes whatever material is bound; it never assumes a
-  specific art set. So all four combinations are valid: {Classic-art, HD-art} ×
-  {RT off, RT on}. Stage 2 ships with Classic-art only; HD-art arrives in
-  DOOM-0042 with no path-tracer changes required (INV-9).
+  to RT (the art-set-agnostic mechanism is INV-9, below). All four combinations
+  are valid: {Classic-art, HD-art} × {RT off, RT on}. Stage 2 ships with
+  Classic-art only; HD-art arrives in DOOM-0042 with no path-tracer changes
+  required.
 
 **INV-9 (art-set agnostic):** the integrator and lighting code reference only the
 bindless material interface (albedo/roughness/metallic/emissive/normal samplers
@@ -57,24 +65,42 @@ survey: ray-query is mature on RADV and matches the megakernel plan; the RT
 pipeline path is a later option, not Stage 2). One dispatch over screen pixels.
 
 - **Acceleration structure:** the static map = one **BLAS** built once with
-  `PREFER_FAST_TRACE | ALLOW_COMPACTION` (compacted). Per-entity BLASes (none
-  deform in classic DOOM — sprites are billboards) reused. A **TLAS rebuilt every
-  frame** over a few hundred instances, updating only instance transforms for
-  moving sectors (doors/lifts, via the DOOM-0049 plane-height data) and
-  billboards. No BLAS refit. (`docs/research/DOOM-0009-performance.md` §2.5.)
-- **Materials → bindless.** Migrate the Stage-1 single R8 atlas to a bindless
-  array-of-textures (`VK_EXT_descriptor_indexing`, core 1.2): one image per
+  `PREFER_FAST_TRACE | ALLOW_COMPACTION` (compacted). A **TLAS rebuilt every
+  frame** over a few hundred instances; billboards (sprites) update via TLAS
+  instance transforms. **Moving sectors (doors/lifts)** animate via DOOM-0049's
+  per-vertex plane-height patching (`RB_UpdateMeshHeights`) — and because that
+  *moves vertices*, the affected sector's BLAS must be **refit** each active
+  frame: a rigid TLAS instance transform cannot express a non-rigid wall-height
+  change. Only moving sectors refit; static geometry never does. **The cited
+  research docs diverge here:** `DOOM-0009-performance.md` §2 says "instance
+  transform only, no refit" — true only for *rigid* motion (billboards, monsters)
+  — while `3d-renderer-approaches.md` says "per-sector BLAS refit per frame"; the
+  latter wins for DOOM doors, whose wall-height change is non-rigid. This
+  deliberately **overrides perf §2's [HIGH]-confidence "no refit"** — that finding
+  rests on the premise "nothing in classic DOOM deforms," which DOOM-0049's
+  per-vertex patching disproves (door walls do deform). (DOOM-0008 is itself split
+  the same way — §Approach "instance transform" vs §Geometry "BLAS refit".) The
+  *only* part left open (§9) is the **granularity**, not whether to refit.
+- **Materials → bindless.** Migrate the Stage-1 single R8 atlas (which today packs
+  walls, flats *and* sprites — `rb_atlas_t::numsprite`) to a bindless
+  array-of-textures (`VK_EXT_descriptor_indexing`, core Vulkan 1.2): one image per
   texture/flat/sprite with native REPEAT wrap, indexed by material id from the hit
-  shader. The R8-index + PLAYPAL-LUT decode, vertex plumbing, and staging upload
-  carry over; only "1 atlas + manual UV-wrap" becomes "N images + native wrap".
+  shader. The R8-index + PLAYPAL-LUT decode (`r_mesh.c` `RB_PlayPal`), vertex
+  plumbing, and staging upload carry over; only "1 atlas + manual UV-wrap" becomes
+  "N images + native wrap".
   This is the seam DOOM-0042's HD PBR set plugs into (INV-9).
 - **Memory:** VMA (the many image/buffer allocations of the RT work). RADV AS
-  structures are fat (~137 B/tri) — trivial for one DOOM map, but budget VRAM for
-  large external WADs and always compact.
+  structures are fat (~137 B/tri vs ~45 on NVIDIA — estimate, confirm with RRA) —
+  trivial for one DOOM map, but budget VRAM for large external WADs and always
+  compact.
 - **Colour:** light in **linear** space (sRGB→linear after the PLAYPAL lookup,
   treat palette colour as albedo); do **not** bake COLORMAP light-diminishing into
   albedo (it double-darkens once GI runs). Tonemap with Khronos **PBR Neutral**
-  (preserves DOOM's saturated palette). A "vanilla-tint" post pass that quantises
+  (preserves DOOM's saturated palette). *This supersedes the ACES placeholder in
+  DOOM-0008 §"The path tracer" (`aces_tonemap`), which predates the PBR-Neutral
+  choice; `aces_tonemap` is retired as the default operator and could only return
+  as an optional "filmic" toggle, never the Stage-2 default.* A
+  "vanilla-tint" post pass that quantises
   the HDR result back through COLORMAP/PLAYPAL is an optional toggle, not the model.
 
 ## 4. Lighting model
@@ -88,10 +114,12 @@ So split static from dynamic (the central performance lever):
   integrator, amortised/async on a worker queue) into a **sector-keyed irradiance
   cache** (§4.3). The steady-state (player not firing) frame is then a cache
   lookup + primary visibility — near-zero ray cost.
-- **Dynamic delta:** when a muzzle flash (`player->extralight` / a live dynamic
-  light) is active, path-trace its **ray-traced shadows** for the few active
-  frames only (dynamic-light gating), composited over the baked static. Idle
-  frames stay cheap; firing frames pay for the delta.
+- **Dynamic delta:** when a muzzle flash is active, path-trace its **ray-traced
+  shadows** for the few active frames only (dynamic-light gating), composited over
+  the baked static. Idle frames stay cheap; firing frames pay for the delta.
+  Note `player->extralight` is only the *gating signal* (a positionless `int`
+  screen-brighten); the flash's **world position and intensity** are derived from
+  the player viewpoint + weapon muzzle, not from `extralight`.
 
 ### 4.2 Emission model (from DOOM-0008 spec)
 - Sector `lightlevel` seeds a surface emissive term (brighter sectors emit more).
@@ -104,8 +132,9 @@ So split static from dynamic (the central performance lever):
   sky environment. **HDRI option:** the sky environment may be sampled from an
   Outdoor HDRI (the user's asset library) for realistic outdoor sky light + a
   directional sun extracted from the HDRI's brightest region; falls back to a
-  procedural sky tint + sun when no HDRI is selected. (Direction-agnostic: helps
-  both art sets.)
+  procedural sky tint + sun when no HDRI is selected. (Spec-originated, not from
+  the cited survey — both research docs treat sky as bounded sky-light only.
+  Art-set-agnostic: helps both Classic and HD art.)
 
 ### 4.3 DOOM-native optimisations (from the research doc)
 - **REJECT-driven light selection:** use DOOM's `REJECT` sector-visibility lump to
@@ -116,18 +145,21 @@ So split static from dynamic (the central performance lever):
   rather than a uniform world hash grid. DOOM sectors are exactly the regions of
   piecewise-constant lighting bounded by walls, so a few probes per subsector
   capture the low-frequency irradiance with far fewer probes and **no thin-wall
-  leak** (DDGI's failure mode). This *is* what the §4.1 bake fills.
+  leak** (DDGI's failure mode). This *is* what the §4.1 bake fills. The *keying* by
+  `(subsector, height band)` is settled; the *storage granularity* (per-vertex
+  irradiance vs per-subsector probe volume) is the §9 open item.
 - **Palette quantisation as a free denoiser:** when the vanilla-tint post pass is
   on, residual sub-quantum noise collapses to the same palette index, so the
   denoiser can target a looser convergence threshold.
 
 ### 4.4 Integrator
-1 path/pixel + temporal accumulation + motion-vector reprojection · NEE + multiple
+1 path/pixel (≈ primary hit + 1 indirect bounce + shadow/NEE rays) + temporal
+accumulation + motion-vector reprojection · NEE + multiple
 importance sampling (power heuristic) · Lambertian diffuse + cosine sampling (GGX/
 VNDF specular gated to measured need — matte DOOM art rarely needs it) · Russian-
 roulette termination + firefly clamp + NaN guards · **half-resolution indirect**
 trace reconstructed inside the denoiser's à-trous wavelet (biggest ms lever, near-
-free on matte art) · **A-SVGF** denoise (purpose-built for the muzzle-flash sudden-
+free on matte art; start *straight* half-res, not checkerboard) · **A-SVGF** denoise (purpose-built for the muzzle-flash sudden-
 light case; clean-room from the paper, Q2RTX as readable GPL reference) · **FSR2**
 upscale last, decoupled, denoise-before-upscale, jitter-consistent. No ReSTIR in
 Stage 2 (few lights; its reservoirs are RDNA2's worst register case).
@@ -135,29 +167,46 @@ Stage 2 (few lights; its reservoirs are RDNA2's worst register case).
 ## 5. Shading curves (Vestige Formula Workbench)
 
 **INV-7 (no magic constants):** every numerical tuning curve in the path-tracer
-shaders traces to a Workbench-exported `shaders/formulas/*.glsl` artifact (safe-
-math NaN-guarded), compiled by `glslc` and committed; coefficient drift is
-regression-locked by the Workbench harness. Curves to author there: GGX/VNDF
-sample+PDF, cosine-hemisphere PDF, MIS power-heuristic weight, Russian-roulette
-survival probability, A-SVGF temporal-blend α + edge-stopping weights, sRGB↔linear,
-exposure/tonemap (PBR Neutral). The safe-math guards matter here specifically: one
-NaN becomes a firefly the denoiser then smears. Workbench at
-`/mnt/Games/Scripts/Linux/3D_Engine/`; requests tracked there as `3D_E-0006…0010`.
+shaders traces to a Workbench-exported `linuxdoom-1.10/shaders/formulas/*.glsl`
+artifact (that `formulas/` directory is created during build steps 3/6 — it does
+not exist yet; today `linuxdoom-1.10/shaders/` holds only the Stage-1 mesh/overlay
+shaders) (safe-math NaN-guarded), compiled by `glslc` and committed; coefficient
+drift is regression-locked by the Workbench harness. Curves to author there:
+GGX/VNDF sample+PDF, cosine-hemisphere PDF, MIS power-heuristic weight, Russian-
+roulette survival probability, A-SVGF temporal-blend α + edge-stopping weights,
+sRGB↔linear, exposure/tonemap (PBR Neutral). The safe-math guards matter here
+specifically: one NaN becomes a firefly the denoiser then smears. Workbench at
+`/mnt/Games/Scripts/Linux/3D_Engine/`; requests tracked in that project's
+`DOOM_Ants_Feedback.md` as `3D_E-0006…0010`.
 
 ## 6. Invariants
 
+**INV-6/7/8 continue DOOM-0008's INV-6/7/8** (same numbers, same intent) — this
+spec fills the threshold DOOM-0008 INV-6 deferred, and **tightens INV-8's test**
+to *every tier path* **and** a validation-layer-equipped box (DOOM-0008's INV-8
+read "level-load + play + exit on the dev machine"). **INV-9/10/11 are new to
+Stage 2.** (INV numbers are per-spec: DOOM-0026's INV-1..5 are a separate series
+with different meanings — don't conflate across specs.)
+
 - **INV-6 (unbiased):** the integrator is unbiased up to Russian-roulette/clamp;
   converged accumulation matches a brute-force reference within a small relative-
-  MSE tolerance (threshold: **≤ 0.5% rel-MSE** on the white-furnace + a reference
-  Cornell-style DOOM room, measured at 4096 spp accumulation).
+  MSE tolerance. **Acceptance bar (spec-chosen, not a research-doc figure): ≤ 0.5%
+  rel-MSE** on the white-furnace + a reference Cornell-style DOOM room (a small
+  test scene this spec's implementer authors), measured against a **4096-spp
+  brute-force reference** (the offline convergence point the 1-spp + temporal
+  result is compared to; raise it if 4096 itself still shows visible noise). This
+  is the threshold DOOM-0008 INV-6 explicitly defers here.
 - **INV-7 (no magic constants):** §5.
 - **INV-8 (validation-clean):** zero Vulkan validation-layer errors over a
-  multi-second run on every tier path (must be exercised on a box with the layers
-  installed — flagged unmet in some DOOM-0008 runs).
+  multi-second run on every tier path. Must be exercised on a box with
+  `VK_LAYER_KHRONOS_validation` installed — the layer was not installed on the dev
+  box during early Stage-1 bring-up (ROADMAP DOOM-0008 progress note), so this
+  invariant needs a fresh check on a layer-equipped machine.
 - **INV-9 (art-set agnostic):** §2.
 - **INV-10 (toggle parity):** switching Ray Tracing Off→On→Off mid-game leaves the
-  scene correct each time (reuses the DOOM-0051 level-rebuild + screen-wipe path);
-  RT Off (Solid) output is unchanged by any RT-only code.
+  scene correct each time (reuses the `RB_SetMode` level-rebuild + screen-wipe path
+  from the DOOM-0026 seam, hardened by the DOOM-0051 mid-game-switch fix); RT Off
+  (Solid) output is unchanged by any RT-only code.
 - **INV-11 (graceful fallback):** on a non-RT GPU, "Ray Tracing: On" is
   unselectable and the engine stays on Solid/Classic; no crash, no half-state.
 
@@ -170,7 +219,9 @@ NaN becomes a firefly the denoiser then smears. Workbench at
    query, REJECT-culled light set. Reference-image regression (INV-6).
 4. **Static GI bake** into the sector-keyed cache at level load (§4.1, §4.3).
 5. **Dynamic delta:** muzzle-flash analytic light + ray-traced shadows, gated on
-   activity, composited over the baked static. Verify: visible muzzle-flash shadow.
+   activity, composited over the baked static. Verify: a muzzle-flash shadow whose
+   *direction tracks the muzzle position* as the player rotates (a positionless
+   screen-brighten would fail this — it guards the §4.1 derivation).
 6. **Half-res indirect + A-SVGF** (§4.4), then **FSR2**. Verify: stable image, no
    ghosting on a muzzle flash.
 7. **Perf pass** toward the 60 FPS floor; reassess a runtime hash cache + optional
@@ -178,26 +229,66 @@ NaN becomes a firefly the denoiser then smears. Workbench at
 
 ## 8. Performance budget (planning; measure on the RX 6600)
 
-Target 1080p @ a playable rate, 60 FPS floor deferred to DOOM-0012. Must-measure-
-before-committing (no published RADV numbers): A-SVGF ms @ 1080p; the leaned
-cache/bake ms; AS build/refit ms; the per-level static-bake time. Lean the
-megakernel hard (split shading out of traversal, wave32, opaque-only geometry +
-separate alpha sprites, early-terminate shadow rays, one live RayQuery) — RDNA2
-runs BVH traversal as shader code, so occupancy/registers dominate. Build on Mesa
-≥ 25.2.
+Stage-2 target: **1080p @ ≥ 30 FPS interactive** on the RX 6600 (the §1 ship bar);
+the hard 60 FPS floor is formally owned by DOOM-0012. The ≥ 30 figure is a
+spec-chosen, conservative Stage-2 floor: Stage 2 gates on *correctness*, not the
+final frame rate. (The research's "60 FPS trivially met" is an optimistic,
+unmeasured estimate — ≥ 30 is the safe bar until it's measured on the RX 6600.) Must-measure-before-committing (no
+published RADV numbers): A-SVGF ms @ 1080p (research plans ~2–3 ms — the number to
+beat); the leaned cache/bake ms; AS
+build/refit ms (worst case to budget: an open door's per-frame BLAS refit
+coinciding with a muzzle-flash dynamic-delta trace — the two costs stack); the
+per-level static-bake time; and the ReSTIR-GI register/occupancy cost on RDNA2
+(the gate for the step-7 reassessment). Lean the
+megakernel hard (split
+shading out of traversal, wave32, opaque-only geometry + separate alpha sprites,
+early-terminate shadow rays, one live RayQuery) — RDNA2 runs BVH traversal as
+shader code, so occupancy/registers dominate. Build on **Mesa ≥ 25.2 (26.0
+preferred** — the BVH-builder/codegen wins land at 25.2; `ds_bvh_stack_*`
+traversal speedups are RDNA3/4-only, per the research doc).
 
-## 9. Open questions (resolve during `/cold-eyes` or early build)
+## 9. Open questions (each names the build step that must close it)
 
-- Bake storage: per-vertex irradiance vs per-subsector probe volume — pick by the
-  measured bake size/quality on E1M1 + a large WAD.
-- HDRI sun extraction: brightest-texel vs a fitted directional — defer to DOOM-0043
+- **Bake storage** (gates **build step 4**): per-vertex irradiance vs per-subsector
+  probe volume — pick by the measured bake size/quality on E1M1 + a large WAD
+  *before* starting step 4, so the cache schema isn't built twice.
+- **Moving-sector AS granularity** (**hard gate** on **build step 5**): §3 settles *that*
+  non-rigid wall-height changes need a BLAS refit; the open part is the
+  granularity — refit the whole affected sector's BLAS, or split rigid caps into
+  TLAS instances and refit only the non-rigid jambs. Pick by the measured
+  per-frame AS cost against the shipped DOOM-0049 vertex-patching, before step 5.
+- **HDRI sun extraction** (**soft gate** — step 5 may start without it, deferrable
+  to DOOM-0043): brightest-texel vs a fitted directional — defer to DOOM-0043
   (deliberate scene lights) if the procedural sun suffices for Stage 2.
-- Whether the "Ray Tracing" toggle should also expose a quality sub-setting (spp /
-  render-scale) in Stage 2 or wait for DOOM-0012.
+- **Quality sub-setting** (gates the **step-1 menu rework**, else deferred to
+  DOOM-0012): whether the "Ray Tracing" toggle also exposes spp / render-scale in
+  Stage 2.
 
 ---
 
 ## Cold-eyes loop log
 
-*(to be filled as `/cold-eyes` runs — per global rule 14, looped until a pass
-returns zero verified findings before any implementation.)*
+**3-lane partition each loop:** (A) spec vs the two research docs, (B) spec vs
+sibling specs (DOOM-0008/0026, ADR-0001, ROADMAP), (C) spec vs cited engine code.
+Each loop briefed cold — no prior-loop findings handed to the reviewers.
+
+- **Loop 1** — 0 CRITICAL, 6 HIGH, 10 MEDIUM + lows. Substantive: broken `§2.5`
+  xref; "playable frame rate" unquantified; the "Ray Tracing" menu item described
+  as existing (code has a 3-way cycle); `extralight` is positionless; ACES↔PBR
+  tonemap conflict; INV-6/7/8 shared with DOOM-0008 unflagged; the moving-sector
+  AS claim physically wrong (vertices move ⇒ BLAS refit). All verified + fixed.
+- **Loop 2** — mostly self-inflicted nits from loop-1 edits (bare `DOOM-0008 §`
+  placeholders, `4096 spp` unjustified, `137 B/tri` lost its baseline, INV-9 stated
+  twice) + `aces_tonemap` still un-marked in DOOM-0008's curve list. Fixed.
+- **Loop 3** — §3-asserts-vs-§9-open contradiction on moving-sector AS resolved
+  (rigid → instance, non-rigid → refit); FPS/4096-spp wording corrected; INV-8
+  tightening + INV-10 repoint to `RB_SetMode`. Lane C (doc-vs-code) **clean**.
+- **Loop 4** — Lane C **clean** again. FPS framing de-attributed from the research;
+  refit override of the [HIGH] "no refit" finding made explicit; A-SVGF budget,
+  bake keying/storage split, per-spec INV note. Fixed.
+- **Loop 5** — polish + 2 real sibling drifts: DOOM-0008 header never flipped to
+  Shipped; its Workbench list named only the retired `aces_tonemap`. Fixed. No
+  design defects; no CRITICAL across any loop.
+
+*(Looped per global rule 14. Severity converged loop-over-loop — substantive in
+loop 1, polish-only by loop 5, with doc-vs-code clean for the final three loops.)*
