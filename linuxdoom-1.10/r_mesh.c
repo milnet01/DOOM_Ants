@@ -373,9 +373,15 @@ rb_mesh_t* RB_BuildLevelMesh(void)
                       side->toptexture, 0, PEG_UPPER,
                       bi, RB_PLANE_CEIL, fi, RB_PLANE_CEIL);
 
-        // Lower step (front floor lower than back): bottom = front floor, top =
-        // back floor (a lift floor raising/lowering changes the relevant edge).
-        if (front->floorheight < back->floorheight)
+        // Lower step (front floor lower than/equal to back): bottom = front
+        // floor, top = back floor (a lift floor raising/lowering changes the
+        // relevant edge). The <= (not <) emits a flush line's lower wall as a
+        // zero-height quad so a lift built level with its neighbour still has a
+        // shaft wall to GROW into as it travels -- without it that wall was
+        // missing in 3D until the lift moved, where Classic re-derives it each
+        // frame (DOOM-0068). emit_wall drops the "-"/untextured side, so only the
+        // textured shaft face (which grows valid, never inverts) is added.
+        if (front->floorheight <= back->floorheight)
             emit_wall(&bld, seg, front->floorheight, back->floorheight,
                       side->bottomtexture, 0, PEG_LOWER,
                       fi, RB_PLANE_FLOOR, bi, RB_PLANE_FLOOR);

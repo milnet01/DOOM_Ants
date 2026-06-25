@@ -51,6 +51,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Build flush lift/step shaft walls in the 3D mesh so they appear when the lift travels.** (DOOM-0068)
+  In the 3D renderers a lift shaft wall was missing (you could see through it) until the lift moved; now it's there like Classic.
+
 - **Stop door/lift textures stretching and squashing as they move in the 3D mesh.** (DOOM-0067)
   In the 3D renderers a moving door/lift stretched its texture open and squashed it closed; now the texture stays put as the surface slides, like Classic.
 
