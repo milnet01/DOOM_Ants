@@ -117,7 +117,13 @@ static void emit_wall(builder_t* bld, seg_t* seg, fixed_t bottomz, fixed_t topz,
     float u0, u1, vtop, vbot, light;
     rb_vertex_t bl, br, tr, tl;
 
-    if (topz <= bottomz)   return;   // no vertical span
+    // Keep zero-height walls (topz == bottomz): a closed door/lift sector
+    // collapses its own walls to zero, but those walls must exist in the mesh so
+    // the DOOM-0049 per-frame re-height can grow them as the sector opens --
+    // otherwise the doorway side (the jamb/track) is a void hole (DOOM-0052).
+    // A zero-height quad is degenerate (the GPU draws nothing) until it grows.
+    // Still drop inverted spans (topz < bottomz) and untextured walls.
+    if (topz < bottomz)    return;   // inverted: skip
     if (texnum <= 0)       return;   // "-" / no texture: nothing to draw here
 
     v1 = seg->v1;
