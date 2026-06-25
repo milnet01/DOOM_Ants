@@ -434,17 +434,19 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: feature.
   Source: user-request-2026-06-24.
 
-- 📋 [DOOM-0045] **Composite the HUD/menu over the 3D view before a level is loaded (title screen).**
+- 🚧 [DOOM-0045] **Composite the HUD/menu over the 3D view before a level is loaded (title screen).**
   The DOOM-0008 2D HUD/menu compositor only engages once a level is built, because it reuses the level texture atlas's PLAYPAL LUT + descriptor set (UploadAtlas). So at the title/demo screen in Solid/Ultra mode -- before any level -- the 2D overlay (title pic, main menu) is not composited and the view shows the slate clear, which means a cold launch straight into a 3D tier shows no menu until a demo/level loads. Decouple the palette LUT + overlay image/descriptor from the level atlas (build the PLAYPAL LUT at Vulkan init from the WAD-global palette) so the overlay composites from the first frame. Found 2026-06-24 while implementing the compositor; the in-level case (the user-facing goal: HUD + menu reachable during play, including switching back to Classic) works.
   **Layman:** In 3D mode the menu only appears once you're in a level; on the opening title screen it's currently invisible. Make it show there too.
   Kind: fix.
   Source: in-session-2026-06-24.
+  Implemented 2026-06-25 (commit 9d826d1): palette LUT + descriptor set built at Vulkan init from WAD-global PLAYPAL, decoupled from the level atlas; overlay composites from the first frame. Builds clean. Pending on-screen verify that the title pic + main menu show in Ultra/Solid before a level loads.
 
-- 📋 [DOOM-0046] **Add an optional on-screen FPS counter with selectable corner placement.**
+- ✅ [DOOM-0046] **Add an optional on-screen FPS counter with selectable corner placement.**
   An Options toggle ("Show FPS: On/Off") plus a position setting ("FPS position: Top-Left / Top-Centre / Top-Right"), both config-persisted via m_misc.c's defaults[] table. Measure frame rate from I_GetTime/the frame loop (a rolling average over the last N frames reads steadier than an instantaneous tics delta) and draw the number with the small HUD font (HUlib / the STCFN* glyphs, as the messages widget does) into the 320x200 screens[0] each frame, anchored to the chosen top corner with a few-pixel margin. Drawing into screens[0] means it shows in every renderer for free: Classic blits it, and the DOOM-0008 3D compositor already composites that buffer over the 3D view (so no Vulkan-side work needed). Keep it out of screenshots/intermission only if it looks intrusive -- otherwise always-on when toggled. Ties into the Phase-2 "60 FPS floor" goal as the user-facing way to watch it.
   **Layman:** Add a setting to show a frames-per-second counter on screen, and let the player pick whether it sits in the top-left, top-middle, or top-right corner.
   Kind: feature.
   Source: user-request-2026-06-24.
+  Resolved (2026-06-25, commit a5baf13, user-confirmed on RX 6600): Options "FPS:" item cycles Off/Top-Left/Top-Centre/Top-Right, persisted via the fps_corner config default; HU_DrawFPS draws a half-second rolling average with the small HUD font into screens[0] (shows under every renderer); new I_GetTimeMS wall-clock helper. User saw it on screen. It read ~35 because the renderer is currently present-locked to the 35Hz game tic -- the counter is correct; the tic-lock is tracked as DOOM-0048. Collapsed the roadmap's two settings to one 4-state cycle to avoid a menu overflow (same outcome)."
 
 - 📋 [DOOM-0049] **Animate moving sectors (doors, lifts, floors, crushers) in the 3D view.**
   Found 2026-06-25 (user testing, Ultra). The 3D level mesh (r_mesh.c RB_BuildLevelMesh) is built once at level load with sector floor/ceiling heights baked into vertex z, and never updated; game logic (T_VerticalDoor, T_PlatRaise, T_MovePlane) still moves sectors, so doors/lifts open in gameplay but stay frozen on screen. Cheapest correct fix without regenerating geometry: tag each mesh vertex with its (sector index, plane=floor|ceiling|none), upload a per-frame per-sector height-delta buffer (height - initial), and offset z in mesh.vert by the selected plane's delta. Snapshot initial floor/ceiling heights at RB_Vulkan_BuildLevel. Walls between two sectors: top verts track one sector's ceiling, bottom verts the other's floor -- tag at emit time in emit_wall/emit_cap. Sprites/psprite/sky verts = plane none (no offset). Scrolling textures already animate (sidedef offset, unaffected).
@@ -452,11 +454,12 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: fix.
   Source: in-session-2026-06-25.
 
-- 📋 [DOOM-0050] **Fix 2D HUD/menu overlay ghosting over the status bar in 3D modes.**
+- 🚧 [DOOM-0050] **Fix 2D HUD/menu overlay ghosting over the status bar in 3D modes.**
   Found 2026-06-25 (user testing, Sound Volume menu). In Solid/Ultra the compositor reads the whole paletted screens[0] each frame, but only the 3D view rectangle is cleared to RB_OVERLAY_KEY (r_backend.c). The status-bar region is drawn by ST_Drawer with refresh=false (st_stuff.c ST_diffDraw), which repaints only changed widgets, not the background -- so stale menu pixels drawn over the status bar last frame are never erased and composite as ghosting. Fix: force a full status-bar refresh (ST_doRefresh) each frame while in a 3D mode so the bar background repaints and erases stale overlay pixels; the border redraw already covers windowed sizes (borderdrawcount on menuactive). Watch also for any vertical displacement of the menu title (verify the overlay samples the full 320x200 logical screens[0] under DOOM-0027 hires).
   **Layman:** Menus smear over the bottom HUD bar in 3D mode.
   Kind: fix.
   Source: in-session-2026-06-25.
+  Implemented 2026-06-25 (commit 7d19c64): force a full status-bar refresh each frame in 3D modes so stale overlay pixels are cleared. Builds clean. Pending on-screen re-test of the Sound Volume menu over the HUD.
 
 - 📋 [DOOM-0047] **Verify sound-effect audibility vs music balance in the SDL2 build.**
   Found 2026-06-25 (user testing). SFX are fully wired (i_sound.c: addsfx -> I_MixSound -> SDL callback; s_sound.c S_StartSound -> I_StartSound; no stub), but the user can't tell they play. SFX are software-mixed at 11025 Hz; music plays via SDL2_mixer at 44100 Hz on a separate device, so music may dominate. Isolation test first: set Music Volume to 0 and confirm SFX are audible. If SFX are present but quiet, options: raise the default sfx_volume (m_misc.c, currently 8/15) or rebalance the mix; do not rewrite the mixer blind. Confirm by ear before changing audio.

@@ -8,6 +8,13 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Optional on-screen FPS counter with selectable corner placement (DOOM-0046)**
+  An Options "FPS:" item cycles Off / Top-Left / Top-Centre / Top-Right,
+  persisted in the config. Drawn with the small HUD font into the 320x200
+  screen buffer, so it appears under every renderer (Classic, Solid, Ultra).
+  Measured as a half-second rolling average via a new wall-clock millisecond
+  timer.
+
 - **Add game controller (gamepad) support.** (DOOM-0038)
   Plug in a controller and play: left stick moves and strafes, right stick turns, the triggers and face buttons fire, open doors and run, and Start opens the menu. Reuses DOOM's original joystick handling so the menus and controls just work; controllers can be plugged in and out while playing.
 
