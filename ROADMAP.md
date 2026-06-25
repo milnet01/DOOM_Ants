@@ -488,3 +488,15 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Some doorways show black wedges where floor/wall should be.
   Kind: fix.
   Source: in-session-2026-06-25.
+
+- 📋 [DOOM-0053] **Fix in-game menu text ghosting in the Classic renderer (hi-res).**
+  Found 2026-06-25 (user testing, after an Ultra->Classic mid-game switch). Navigating the in-game Esc menu in Classic leaves previous pages' text un-erased -- main-menu and Options text accumulate over the view (SAVE GAME / READ THIS! / QUIT GAME / MOUSE SENSITIVITY / SOUND VOLUME all at once). Investigation (Explore agent): the in-game menu-erase relies on R_RenderPlayerView redrawing the view window each frame to overwrite menu pixels, plus R_DrawViewBorder for the border; R_DrawViewBorder early-returns at fullscreen (scaledviewwidth==SCREENWIDTH), so the view re-fill is the only eraser for the view region. Under DOOM-0027 hi-res, scaledviewwidth/viewwindow are physical units while the d_main.c:294 gate compares to the literal 320 -- verify the view actually re-renders and fully fills its window after a switch to Classic (viewactive / setsizeneeded / buffer re-init). Needs a careful, iteratively-verified fix (candidate: clear the view-window region of screens[0] before R_RenderPlayerView, or correct the fullscreen erase gate). Solid/Ultra switching is clean (DOOM-0051); Classic is the remaining mode.
+  **Layman:** In Classic mode, menu pages smear over each other as you navigate.
+  Kind: fix.
+  Source: in-session-2026-06-25.
+
+- 💭 [DOOM-0054] **Integrate RetroAchievements (unlock achievements while playing).**
+  User request 2026-06-25. Integrate RetroAchievements: hash the loaded IWAD/PWAD to identify the game, log in to the RA service, and unlock achievements by watching game state (players[], mobjs, level/secret/kill counters) against RA's trigger definitions; support hardcore mode + leaderboards. Use rcheevos -- RA's official client library (MIT, GPL-v2-compatible) -- for the protocol, hashing, and trigger evaluation, so we don't reimplement the network/achievement logic. Design points to settle: account/network handling and offline behaviour, the memory-inspection hooks into DOOM's game state, an opt-in toggle, and keeping it out of the core game loop's way. Sizable networked feature; likely Phase 3+. Captured now per request.
+  **Layman:** Earn RetroAchievements in DOOM_Ants like an emulator does.
+  Kind: feature.
+  Source: user-request-2026-06-25.
