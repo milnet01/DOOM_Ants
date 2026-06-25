@@ -213,7 +213,17 @@ void D_Display (void)
 	return;                    // for comparative timing / profiling
 		
     redrawsbar = false;
-    
+
+    // Classic's in-level Esc menu doesn't fully erase previous menu pages under
+    // the hi-res screen buffer, so navigating them smears the pages together
+    // (DOOM-0053). While a menu is open in Classic, drive the same full
+    // view/border/background redraw a screen-size change triggers, so every menu
+    // page draws over a clean frame. The 3D back-ends clear screens[0] via their
+    // per-frame compositor (view-rect key + forced status-bar refresh), so they
+    // are already clean and exempt.
+    if (gamestate == GS_LEVEL && menuactive && rendermode == RB_CLASSIC)
+	setsizeneeded = true;
+
     // change the view size if needed
     if (setsizeneeded)
     {
@@ -252,7 +262,8 @@ void D_Display (void)
 	// it last frame are never erased and ghost through (DOOM-0050). Force a
 	// full status-bar refresh in 3D so its background repaints and clears them.
 	// Classic blits the whole screen, so it needs no force.
-	ST_Drawer (viewheight == 200, redrawsbar || rendermode != RB_CLASSIC );
+	ST_Drawer (viewheight == 200,
+		   redrawsbar || rendermode != RB_CLASSIC || menuactive );
 	fullscreen = viewheight == 200;
 	break;
 
