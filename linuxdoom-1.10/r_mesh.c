@@ -82,6 +82,7 @@ static rb_vertex_t mkv(float x, float y, float z,
     out.nx = nx; out.ny = ny; out.nz = nz;
     out.u = u;   out.v = v;
     out.texnum = texnum; out.flags = flags; out.light = light;
+    out.vsector = 0; out.vplane = RB_PLANE_NONE;   // static unless tagged below
     return out;
 }
 
@@ -101,8 +102,13 @@ static void push_quad(builder_t* b, rb_vertex_t a, rb_vertex_t c,
 //
 // One vertical wall quad between bottomz and topz along the seg.
 //
+// botsec/botplane and topsec/topplane tag which moving sector plane the quad's
+// bottom and top edges follow, so doors/lifts can be re-heighted per frame
+// (DOOM-0049). The bottom edge sits at bottomz (== that sector plane's height
+// at build time); the top edge at topz.
 static void emit_wall(builder_t* bld, seg_t* seg, fixed_t bottomz, fixed_t topz,
-                      int texnum, int flags)
+                      int texnum, int flags,
+                      int botsec, int botplane, int topsec, int topplane)
 {
     vertex_t* v1;
     vertex_t* v2;
@@ -139,6 +145,9 @@ static void emit_wall(builder_t* bld, seg_t* seg, fixed_t bottomz, fixed_t topz,
     br = mkv(x2, y2, zb, nx, ny, 0.0f, u1, vbot, texnum, flags, light);
     tr = mkv(x2, y2, zt, nx, ny, 0.0f, u1, vtop, texnum, flags, light);
     tl = mkv(x1, y1, zt, nx, ny, 0.0f, u0, vtop, texnum, flags, light);
+    // Bottom edge follows botsec/botplane, top edge follows topsec/topplane.
+    bl.vsector = br.vsector = botsec; bl.vplane = br.vplane = botplane;
+    tr.vsector = tl.vsector = topsec; tr.vplane = tl.vplane = topplane;
     push_quad(bld, bl, br, tr, tl);
 }
 
@@ -194,7 +203,8 @@ static poly_t clip_poly(const poly_t* in, float ox, float oy,
 // 64x64 world grid (world-xy texel coords). up != 0 -> floor (normal +z, CCW
 // from above); else ceiling (normal -z, reversed winding).
 static void emit_cap_poly(builder_t* bld, const poly_t* p, fixed_t height,
-                          int up, int flatnum, float light)
+                          int up, int flatnum, float light,
+                          int secidx, int plane)
 {
     float z  = height / (float)FRACUNIT;
     float nz = up ? 1.0f : -1.0f;
@@ -202,10 +212,12 @@ static void emit_cap_poly(builder_t* bld, const poly_t* p, fixed_t height,
     int k;
     if (p->n < 3) return;
     pivot = mkv(p->x[0], p->y[0], z, 0.0f, 0.0f, nz, p->x[0], p->y[0], flatnum, RB_MESH_FLAT, light);
+    pivot.vsector = secidx; pivot.vplane = plane;
     for (k = 1; k < p->n - 1; k++)
     {
         rb_vertex_t va = mkv(p->x[k],   p->y[k],   z, 0.0f, 0.0f, nz, p->x[k],   p->y[k],   flatnum, RB_MESH_FLAT, light);
         rb_vertex_t vb = mkv(p->x[k+1], p->y[k+1], z, 0.0f, 0.0f, nz, p->x[k+1], p->y[k+1], flatnum, RB_MESH_FLAT, light);
+        va.vsector = vb.vsector = secidx; va.vplane = vb.vplane = plane;
         if (up) push_tri(bld, pivot, va, vb);
         else    push_tri(bld, pivot, vb, va);   // flip winding so -z faces down
     }
@@ -218,12 +230,16 @@ static void emit_subsector_caps(builder_t* bld, int ssnum, const poly_t* cell)
     subsector_t* ss  = &subsectors[ssnum];
     sector_t*    sec = ss->sector;
     float        light;
+    int          secidx;
     if (!sec || cell->n < 3) return;
-    light = sec->lightlevel / 255.0f;
+    light  = sec->lightlevel / 255.0f;
+    secidx = (int)(sec - sectors);   // for the per-frame dynamic-height update
     if (sec->floorpic != skyflatnum)
-        emit_cap_poly(bld, cell, sec->floorheight, 1, sec->floorpic, light);
+        emit_cap_poly(bld, cell, sec->floorheight, 1, sec->floorpic, light,
+                      secidx, RB_PLANE_FLOOR);
     if (sec->ceilingpic != skyflatnum)
-        emit_cap_poly(bld, cell, sec->ceilingheight, 0, sec->ceilingpic, light);
+        emit_cap_poly(bld, cell, sec->ceilingheight, 0, sec->ceilingpic, light,
+                      secidx, RB_PLANE_CEIL);
 }
 
 // Walk the BSP, carrying the convex cell clipped by every ancestor partition.
@@ -265,34 +281,50 @@ rb_mesh_t* RB_BuildLevelMesh(void)
         if (!side || !front)
             continue;
 
+        // Sector indices for the per-frame dynamic-height update (DOOM-0049):
+        // each wall edge is tagged with the sector + plane whose height set it.
+        int fi = (int)(front - sectors);
+
         if (!back)
         {
-            // One-sided solid wall: full floor..ceiling, mid texture.
+            // One-sided solid wall: front floor..ceiling, mid texture.
             emit_wall(&bld, seg, front->floorheight,
-                      front->ceilingheight, side->midtexture, 0);
+                      front->ceilingheight, side->midtexture, 0,
+                      fi, RB_PLANE_FLOOR, fi, RB_PLANE_CEIL);
             continue;
         }
 
+        int bi = (int)(back - sectors);
+
         // Upper step (front ceiling higher than back). Skipped when the front
         // ceiling is sky: that region renders as sky, not the top texture.
+        // Bottom edge = back ceiling (the door face on a door sector), top edge
+        // = front ceiling -- so a rising door ceiling shrinks this wall.
         if (front->ceilingheight > back->ceilingheight
             && front->ceilingpic != skyflatnum)
             emit_wall(&bld, seg, back->ceilingheight, front->ceilingheight,
-                      side->toptexture, 0);
+                      side->toptexture, 0,
+                      bi, RB_PLANE_CEIL, fi, RB_PLANE_CEIL);
 
-        // Lower step (front floor lower than back).
+        // Lower step (front floor lower than back): bottom = front floor, top =
+        // back floor (a lift floor raising/lowering changes the relevant edge).
         if (front->floorheight < back->floorheight)
             emit_wall(&bld, seg, front->floorheight, back->floorheight,
-                      side->bottomtexture, 0);
+                      side->bottomtexture, 0,
+                      fi, RB_PLANE_FLOOR, bi, RB_PLANE_FLOOR);
 
-        // Middle (rails/grates): alpha-tested, spans the shared opening.
+        // Middle (rails/grates): alpha-tested, spans the shared opening. The
+        // bottom edge follows the higher floor, the top edge the lower ceiling.
         if (side->midtexture)
         {
+            int     bsec = front->floorheight > back->floorheight ? fi : bi;
+            int     tsec = front->ceilingheight < back->ceilingheight ? fi : bi;
             fixed_t zb = front->floorheight > back->floorheight
                        ? front->floorheight : back->floorheight;
             fixed_t zt = front->ceilingheight < back->ceilingheight
                        ? front->ceilingheight : back->ceilingheight;
-            emit_wall(&bld, seg, zb, zt, side->midtexture, RB_MESH_MASKED);
+            emit_wall(&bld, seg, zb, zt, side->midtexture, RB_MESH_MASKED,
+                      bsec, RB_PLANE_FLOOR, tsec, RB_PLANE_CEIL);
         }
     }
 
@@ -328,6 +360,25 @@ void RB_FreeMesh(rb_mesh_t* mesh)
         return;
     free(mesh->verts);
     free(mesh);
+}
+
+void RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst)
+{
+    int i;
+    if (!mesh || !dst)
+        return;
+    // Doors/lifts move sector floor/ceiling heights every tic; rewrite only the
+    // z of vertices tagged to a moving plane, straight to the GPU buffer (the
+    // mesh stays otherwise static). mesh->verts holds the build-time tags +
+    // base geometry; dst[i] is the live GPU vertex (z gets the current height).
+    for (i = 0; i < mesh->numverts; i++)
+    {
+        const rb_vertex_t* v = &mesh->verts[i];
+        if (v->vplane == RB_PLANE_FLOOR)
+            dst[i].z = sectors[v->vsector].floorheight / (float)FRACUNIT;
+        else if (v->vplane == RB_PLANE_CEIL)
+            dst[i].z = sectors[v->vsector].ceilingheight / (float)FRACUNIT;
+    }
 }
 
 //

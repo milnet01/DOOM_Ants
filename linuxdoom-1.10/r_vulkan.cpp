@@ -214,6 +214,8 @@ struct VulkanState
     // GPU vertex buffer for the level mesh (uploaded at BuildLevel).
     VkBuffer       vbuf       = VK_NULL_HANDLE;
     VkDeviceMemory vbufMemory = VK_NULL_HANDLE;
+    void*          vbufMapped = nullptr;   // host-visible, kept mapped so moving
+                                           // sectors re-height per frame (DOOM-0049)
     uint32_t       vertexCount = 0;
 
     // Per-frame billboard sprites (DOOM-0008): things move, so this host-visible
@@ -1464,6 +1466,7 @@ extern "C" void RB_Vulkan_BuildLevel(void)
     fflush(stdout);
 
     // (Re)create the vertex buffer sized to this level's mesh.
+    if (g.vbufMapped) { vkUnmapMemory(g.device, g.vbufMemory); g.vbufMapped = nullptr; }
     if (g.vbuf)       { vkDestroyBuffer(g.device, g.vbuf, nullptr);  g.vbuf = VK_NULL_HANDLE; }
     if (g.vbufMemory) { vkFreeMemory(g.device, g.vbufMemory, nullptr); g.vbufMemory = VK_NULL_HANDLE; }
     g.vertexCount = 0;
@@ -1489,10 +1492,11 @@ extern "C" void RB_Vulkan_BuildLevel(void)
     Check(vkAllocateMemory(g.device, &mai, nullptr, &g.vbufMemory), "vkAllocateMemory(vbuf)");
     Check(vkBindBufferMemory(g.device, g.vbuf, g.vbufMemory, 0), "vkBindBufferMemory(vbuf)");
 
-    void* mapped = nullptr;
-    Check(vkMapMemory(g.device, g.vbufMemory, 0, size, 0, &mapped), "vkMapMemory(vbuf)");
-    std::memcpy(mapped, g.levelMesh->verts, (size_t)size);
-    vkUnmapMemory(g.device, g.vbufMemory);
+    // Kept mapped for the whole level: RB_UpdateMeshHeights patches moving-sector
+    // z's into it each frame (host-coherent, so no flush). Unmapped on rebuild
+    // (above) and shutdown.
+    Check(vkMapMemory(g.device, g.vbufMemory, 0, size, 0, &g.vbufMapped), "vkMapMemory(vbuf)");
+    std::memcpy(g.vbufMapped, g.levelMesh->verts, (size_t)size);
 
     g.vertexCount = (uint32_t)g.levelMesh->numverts;
 }
@@ -1544,6 +1548,12 @@ extern "C" void RB_Vulkan_Present(void)
         g.skyVertCount    = (uint32_t)sky;
         g.spriteVertCount = (uint32_t)n;
     }
+
+    // Re-height moving sectors (doors/lifts) in the static level buffer from the
+    // live sector heights. Same fence-safe window as the sprites above (the wait
+    // guarantees the previous frame's draw finished); host-coherent, no flush.
+    if (g.levelMesh && g.vbufMapped)
+        RB_UpdateMeshHeights(g.levelMesh, (rb_vertex_t*)g.vbufMapped);
 
     // Copy this frame's 2D overlay (screens[0]) into the mapped staging buffer.
     // Same race-safe window as the sprites above: the fence wait guarantees the
@@ -1727,6 +1737,7 @@ extern "C" void RB_Vulkan_Shutdown(void)
     if (g.device)
         vkDeviceWaitIdle(g.device);
 
+    if (g.vbufMapped)       vkUnmapMemory(g.device, g.vbufMemory);
     if (g.vbuf)             vkDestroyBuffer(g.device, g.vbuf, nullptr);
     if (g.vbufMemory)       vkFreeMemory(g.device, g.vbufMemory, nullptr);
     if (g.spriteVbuf)       vkDestroyBuffer(g.device, g.spriteVbuf, nullptr);

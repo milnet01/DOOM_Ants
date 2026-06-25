@@ -47,7 +47,19 @@ typedef struct
     int   texnum;       // wall texture index, or flat index when RB_MESH_FLAT
     int   flags;        // RB_MESH_* bits
     float light;        // owning sector lightlevel, 0..1
+    int   vsector;      // owning sector index, for the dynamic-height lookup below
+    int   vplane;       // RB_PLANE_* : which sector plane this vertex's z tracks
 } rb_vertex_t;
+
+// Which moving sector plane a mesh vertex's z follows. The mesh is built once
+// with heights baked into z, but doors/lifts change sector floor/ceiling
+// heights every tic; tagging each vertex lets RB_UpdateMeshHeights re-height the
+// moving ones per frame with no mesh rebuild (DOOM-0049). vsector/vplane are
+// not GPU vertex attributes (the pipeline reads only position/normal/uv/...),
+// so they ride along free in the vertex stride.
+#define RB_PLANE_NONE   0   // static: z never changes
+#define RB_PLANE_FLOOR  1   // z follows sectors[vsector].floorheight
+#define RB_PLANE_CEIL   2   // z follows sectors[vsector].ceilingheight
 
 // rb_vertex_t.flags bits.
 #define RB_MESH_FLAT    0x1   // texnum indexes flats[], not textures[]
@@ -82,6 +94,13 @@ typedef struct
 rb_mesh_t* RB_BuildLevelMesh(void);
 
 void RB_FreeMesh(rb_mesh_t* mesh);
+
+// Re-height a built mesh from the current sector floor/ceiling heights, writing
+// into dst[] (which must hold mesh->numverts rb_vertex_t -- e.g. the mapped GPU
+// vertex buffer). Only vertices tagged RB_PLANE_FLOOR/CEIL have their z rewritten
+// (to the live sector plane height); static vertices are untouched. Call once
+// per frame so doors and lifts animate without rebuilding the mesh (DOOM-0049).
+void RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst);
 
 //
 // Texture atlas for per-texel sampling (DOOM-0008 materials slice). Every wall
