@@ -8,6 +8,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Let the controller Circle (B) button close an open menu.** (DOOM-0056)
+  Circle on the controller now backs out / closes the menu, like Start does.
+
+- **Convert the renderer to true 3D.** (DOOM-0008)
+  Replace DOOM's fake-3D trick with a real 3D engine.
+
 - **Optional on-screen FPS counter with selectable corner placement (DOOM-0046)**
   An Options "FPS:" item cycles Off / Top-Left / Top-Centre / Top-Right,
   persisted in the config. Drawn with the small HUD font into the 320x200
@@ -41,6 +47,18 @@ All notable changes to DOOM_Ants are documented here. The format follows
   Tells the compiler that the fatal-error function never returns, so it can optimise better and reason correctly about the code that runs after a fatal-error guard.
 
 ### Fixed
+
+- **Fix in-game menu text ghosting in the Classic renderer (hi-res).** (DOOM-0053)
+  In Classic mode, menu pages smear over each other as you navigate.
+
+- **Close black gaps in floor/wall geometry near doorways in the 3D view.** (DOOM-0052)
+  Some doorways show black wedges where floor/wall should be.
+
+- **Fix mid-game renderer switching (blank 3D world, Classic ghosting).** (DOOM-0051)
+  Switching renderers during play broke the view; now rebuilt cleanly.
+
+- **Animate moving sectors (doors, lifts, floors, crushers) in the 3D view.** (DOOM-0049)
+  Doors and lifts don't visually move in 3D mode yet.
 
 - **Classic hi-res floors no longer smear or crash (DOOM-0055)**
   At the sharper 640x400 resolution the floor and ceiling could smear during

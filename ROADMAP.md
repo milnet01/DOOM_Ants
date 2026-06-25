@@ -225,11 +225,12 @@ with friends.
   Kind: enhancement.
   Source: user-request-2026-06-17.
 
-- 🚧 [DOOM-0056] **Let the controller Circle (B) button close an open menu.**
+- ✅ [DOOM-0056] **Let the controller Circle (B) button close an open menu.**
   User request 2026-06-25. The gamepad opened/closed the menu via Start/Options (KEY_ESCAPE toggle). Now the B button (PlayStation Circle, the common 'back' button) also acts as Escape WHILE a menu is open -- backing out a level / closing at the top -- matching the PS back convention. In play (no menu) B keeps its strafe/menu-back role (joyb bit1); the menu case is gated on menuactive so B can only close, never open. i_video.c I_PollGamepad. Builds clean; pending user verify."
   **Layman:** Circle on the controller now backs out / closes the menu, like Start does.
   Kind: enhancement.
   Source: user-request-2026-06-25.
+  Resolved (2026-06-25, commit 83dd303, user-confirmed). Controller Circle (B) now backs out one menu level and closes only at the top: B->KEY_BACKSPACE while a menu is open, and KEY_BACKSPACE closes when the menu has no prevMenu. Start/Options still toggles. User confirms it works as a back-then-close button.
 
 ## Phase 2 — The Spin
 
@@ -238,7 +239,7 @@ ray/path tracing and modern lighting, holding 60 FPS, while keeping the original
 DOOM feel. DOOM-0008 (the foundation) is now in design/build (🚧); the rest are
 parked ideas (💭 considered) until we commit to and design each one.
 
-- 🚧 [DOOM-0008] **Convert the renderer to true 3D.**
+- ✅ [DOOM-0008] **Convert the renderer to true 3D.**
   **Layman:** Replace DOOM's fake-3D trick with a real 3D engine.
   Kind: feature.
   Source: in-session-2026-06-11.
@@ -377,6 +378,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   10 (full-width view, status bar shown, no brick border) gives HUD + full
   gun/hand + solid floor -- user-confirmed "perfect". The horizontal 4:3
   mapping is untouched.
+  Stage 1 shipped (2026-06-25, user-confirmed). The Vulkan 3D raster renderer is complete and playable: level meshes, per-texel paletted materials (atlas), world sprites + weapon, sky, muzzle-flash brighten, the Classic/Solid/Ultra menu, the 2D HUD/menu compositor, BSP floor caps, moving-sector animation (DOOM-0049), door-jamb geometry (DOOM-0052), and clean mid-game switching (DOOM-0051). Tested on DOOM 1 and DOOM 2 first levels. Stage 2 = the path tracer (DOOM-0009); the bindless-material migration and acceleration structure land there per docs/specs/DOOM-0009-path-tracer.md.
 - 💭 [DOOM-0009] **Add hardware path tracing (Monte-Carlo GI + ray-traced shadows).**
   **Layman:** Use the graphics card to trace real light rays for accurate lighting, bounced light, and shadows.
   Kind: feature.
@@ -457,12 +459,13 @@ parked ideas (💭 considered) until we commit to and design each one.
   Resolved (2026-06-25, commit a5baf13, user-confirmed on RX 6600): Options "FPS:" item cycles Off/Top-Left/Top-Centre/Top-Right, persisted via the fps_corner config default; HU_DrawFPS draws a half-second rolling average with the small HUD font into screens[0] (shows under every renderer); new I_GetTimeMS wall-clock helper. User saw it on screen. It read ~35 because the renderer is currently present-locked to the 35Hz game tic -- the counter is correct; the tic-lock is tracked as DOOM-0048. Collapsed the roadmap's two settings to one 4-state cycle to avoid a menu overflow (same outcome)."
   Follow-up fix (2026-06-25, commit dfd8932): centre/right placement used SCREENWIDTH (physical hi-res = ORIGWIDTH*HIRES) but the HUD font draws in logical 320-wide space, so top-centre was cut off at the right edge and top-right ran off screen. Fixed to anchor on ORIGWIDTH. Pending re-test of the centre/right corners.
 
-- 🚧 [DOOM-0049] **Animate moving sectors (doors, lifts, floors, crushers) in the 3D view.**
+- ✅ [DOOM-0049] **Animate moving sectors (doors, lifts, floors, crushers) in the 3D view.**
   Found 2026-06-25 (user testing, Ultra). The 3D level mesh (r_mesh.c RB_BuildLevelMesh) is built once at level load with sector floor/ceiling heights baked into vertex z, and never updated; game logic (T_VerticalDoor, T_PlatRaise, T_MovePlane) still moves sectors, so doors/lifts open in gameplay but stay frozen on screen. Cheapest correct fix without regenerating geometry: tag each mesh vertex with its (sector index, plane=floor|ceiling|none), upload a per-frame per-sector height-delta buffer (height - initial), and offset z in mesh.vert by the selected plane's delta. Snapshot initial floor/ceiling heights at RB_Vulkan_BuildLevel. Walls between two sectors: top verts track one sector's ceiling, bottom verts the other's floor -- tag at emit time in emit_wall/emit_cap. Sprites/psprite/sky verts = plane none (no offset). Scrolling textures already animate (sidedef offset, unaffected).
   **Layman:** Doors and lifts don't visually move in 3D mode yet.
   Kind: fix.
   Source: in-session-2026-06-25.
   Implemented 2026-06-25 (commit 977c662): per-vertex (sector, plane) tags + RB_UpdateMeshHeights rewrites moving-plane z's into a kept-mapped vertex buffer each frame. User testing confirmed doors are functional (sound + walk-through) but frozen; this animates them. Builds clean. Pending on-screen verify. Known follow-ups: texture v not re-pegged (slight stretch on moving faces); zero-height-at-build walls (some lift sides) not emitted.
+  Resolved (2026-06-25, user-confirmed). Doors/lifts animate in the 3D view via per-vertex (sector,plane) tags + RB_UpdateMeshHeights. User confirms doors animate correctly and no longer stretch/shrink.
 
 - 🚧 [DOOM-0050] **Fix 2D HUD/menu overlay ghosting over the status bar in 3D modes.**
   Found 2026-06-25 (user testing, Sound Volume menu). In Solid/Ultra the compositor reads the whole paletted screens[0] each frame, but only the 3D view rectangle is cleared to RB_OVERLAY_KEY (r_backend.c). The status-bar region is drawn by ST_Drawer with refresh=false (st_stuff.c ST_diffDraw), which repaints only changed widgets, not the background -- so stale menu pixels drawn over the status bar last frame are never erased and composite as ghosting. Fix: force a full status-bar refresh (ST_doRefresh) each frame while in a 3D mode so the bar background repaints and erases stale overlay pixels; the border redraw already covers windowed sizes (borderdrawcount on menuactive). Watch also for any vertical displacement of the menu title (verify the overlay samples the full 320x200 logical screens[0] under DOOM-0027 hires).
@@ -485,26 +488,29 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: perf.
   Source: in-session-2026-06-25.
 
-- 🚧 [DOOM-0051] **Fix mid-game renderer switching (blank 3D world, Classic ghosting).**
+- ✅ [DOOM-0051] **Fix mid-game renderer switching (blank 3D world, Classic ghosting).**
   Found 2026-06-25 (user testing). Switching renderer mid-game via the Options menu broke: into Solid/Ultra the world was blank (HUD only), and into Classic the view showed magenta smears + leftover menu text. Root cause: RB_SetMode (r_backend.c) shut down + re-initialised the back-end but never rebuilt the level, so a Vulkan target had no mesh/atlas; and the shared paletted screens[0] carried the 3D compositor's RB_OVERLAY_KEY (magenta index 251) + stale menu pixels across the hand-off. Fix (commit pending): after Init, call active->BuildLevel() when a level is loaded (mirrors RB_Init's autostart path; Classic's BuildLevel is NULL so it no-ops); then memset screens[0]=0, set setsizeneeded, and ST_Start() to force a clean full view/border/HUD redraw. Pending on-screen verify of all six switch directions.
   **Layman:** Switching renderers during play broke the view; now rebuilt cleanly.
   Kind: fix.
   Source: in-session-2026-06-25.
+  Resolved (2026-06-25, user-confirmed). Mid-game renderer switching works in all directions: into Solid/Ultra rebuilds the level (no blank view); into Classic no longer crashes (that was the DOOM-0055 hi-res visplane bug, now fixed) and the screen is wiped clean of the 3D key colour.
 
-- 🚧 [DOOM-0052] **Close black gaps in floor/wall geometry near doorways in the 3D view.**
+- ✅ [DOOM-0052] **Close black gaps in floor/wall geometry near doorways in the 3D view.**
   Found 2026-06-25 (user testing, screenshots). Black triangular gaps appear in the floor/walls around some doorways in Solid/Ultra -- void showing through where a cap or wall triangle is missing. Likely interacts with the DOOM-0049 moving-sector re-height (a moving plane exposes an edge that was zero-height / not emitted at build, per the known DOOM-0049 limitation) and/or a BSP floor-cap carve gap at door-sector boundaries. Investigate against r_mesh.c emit_wall/emit_subsector_caps and the DOOM-0049 zero-height-wall note; reproduce on a specific doorway. Distinct from the (accepted) texture stretch on moving faces.
   **Layman:** Some doorways show black wedges where floor/wall should be.
   Kind: fix.
   Source: in-session-2026-06-25.
   Candidate fix 2026-06-25 (commit 0b82c32): the door/lift jamb walls were dropped by emit_wall's zero-height guard (a closed door collapses its own walls to zero), so the doorway side was a void hole in 3D. Now emit zero-height walls (degenerate, drawn only once DOOM-0049 grows them). Pending on-screen verify that the door-side void is gone. Follow-up: jamb texture stretches when grown (zero-span V); the bottom-centre floor wedge near the camera is still open and may be a separate carve/projection issue."
+  Resolved (2026-06-25, commit 0b82c32, user-confirmed earlier in Ultra). Zero-height door/lift jamb walls are now emitted so the doorway sides are no longer a void hole.
 
-- 📋 [DOOM-0053] **Fix in-game menu text ghosting in the Classic renderer (hi-res).**
+- ✅ [DOOM-0053] **Fix in-game menu text ghosting in the Classic renderer (hi-res).**
   Found 2026-06-25 (user testing, after an Ultra->Classic mid-game switch). Navigating the in-game Esc menu in Classic leaves previous pages' text un-erased -- main-menu and Options text accumulate over the view (SAVE GAME / READ THIS! / QUIT GAME / MOUSE SENSITIVITY / SOUND VOLUME all at once). Investigation (Explore agent): the in-game menu-erase relies on R_RenderPlayerView redrawing the view window each frame to overwrite menu pixels, plus R_DrawViewBorder for the border; R_DrawViewBorder early-returns at fullscreen (scaledviewwidth==SCREENWIDTH), so the view re-fill is the only eraser for the view region. Under DOOM-0027 hi-res, scaledviewwidth/viewwindow are physical units while the d_main.c:294 gate compares to the literal 320 -- verify the view actually re-renders and fully fills its window after a switch to Classic (viewactive / setsizeneeded / buffer re-init). Needs a careful, iteratively-verified fix (candidate: clear the view-window region of screens[0] before R_RenderPlayerView, or correct the fullscreen erase gate). Solid/Ultra switching is clean (DOOM-0051); Classic is the remaining mode.
   **Layman:** In Classic mode, menu pages smear over each other as you navigate.
   Kind: fix.
   Source: in-session-2026-06-25.
   Resolved (2026-06-25, commit 30090e7, user-confirmed): the in-level Esc menu in Classic no longer smears pages together. While a menu is open in a level in Classic, D_Display now drives the full view/border/background redraw a screen-size change triggers, plus a forced status-bar repaint, so each page lands on a clean frame; scoped to Classic+GS_LEVEL+menuactive. NB: a separate Classic hi-res floor/visplane smear during gameplay (no menu) is tracked as DOOM-0055 -- not this menu fix."
   Reopened (2026-06-25): the 30090e7 fix (force a full view-size/border redraw while a menu is open in Classic) CAUSED A CRASH -- it drove DOOM-0027's latent hi-res view-border + visplane path, which on a windowed screen size spams 'Patch ... exceeds LFB' and crashes (R_MapPlane: 321, 221 at 255) on switching to Classic. Reverted in the DOOM-0055 commit. The menu ghosting returns but is cosmetic; its real fix is the underlying hi-res software-renderer bug (DOOM-0055), not a forced redraw. Do NOT re-add a forced setsizeneeded."
+  Resolved (2026-06-25, commit 148e121, user-confirmed). The view region was fixed by the DOOM-0055 visplane widening; the status-bar region (where 'SOUND VOLUME' lingered) is fixed by forcing a full HUD repaint while a menu is or was just open (menuactive || menuactivestate). HUD-only, no view-resize path. User confirms no menu text left on the HUD after closing.
 
 - 💭 [DOOM-0054] **Integrate RetroAchievements (unlock achievements while playing).**
   User request 2026-06-25. Integrate RetroAchievements: hash the loaded IWAD/PWAD to identify the game, log in to the RA service, and unlock achievements by watching game state (players[], mobjs, level/secret/kill counters) against RA's trigger definitions; support hardcore mode + leaderboards. Use rcheevos -- RA's official client library (MIT, GPL-v2-compatible) -- for the protocol, hashing, and trigger evaluation, so we don't reimplement the network/achievement logic. Design points to settle: account/network handling and offline behaviour, the memory-inspection hooks into DOOM's game state, an opt-in toggle, and keeping it out of the core game loop's way. Sizable networked feature; likely Phase 3+. Captured now per request.
