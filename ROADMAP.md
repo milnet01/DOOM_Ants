@@ -532,3 +532,15 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Fix two sentences in an old design doc that disagree with each other about how moving doors are drawn in the ray-traced renderer.
   Kind: doc-fix.
   Source: cold-eyes DOOM-0009 2026-06-25.
+
+- 📋 [DOOM-0058] **Replace the per-material manual sub-allocator with VMA.**
+  DOOM-0009 build step 1 backs all N bindless material images with ONE device allocation, binding each at a manually-aligned offset (r_vulkan.cpp UploadAtlas). That keeps the allocation count at 1 (clear of the driver's per-allocation limit on large WADs) but is a minimal hand-rolled sub-allocator. Swap it for the Vulkan Memory Allocator (VMA) when the AS/buffer allocations of later build steps arrive, so all GPU memory goes through one battle-tested allocator. No behaviour change; robustness + less bespoke code.
+  **Layman:** Tidy up how the game reserves video memory for textures so it scales to big mods.
+  Kind: refactor.
+  Source: in-session-2026-06-25 DOOM-0009 build step 1 increment 2.
+
+- 📋 [DOOM-0059] **Gate the 3D render tiers on descriptor-indexing support at probe time.**
+  The bindless materials path (DOOM-0009 build step 1) requires four Vulkan 1.2 descriptor-indexing features. They are checked in PickPhysicalAndDevice (device creation, after the user has already switched to Solid/Ultra), so a GPU lacking them now I_Errors at init. Effectively unreachable on real hardware (any Vulkan-1.2 driver has them), but the clean fix is to fold the check into RB_Vulkan_Available / the tier probe so an unsupported GPU never offers the 3D tiers and the menu silently stays on Classic — no abort.
+  **Layman:** On a very old GPU, keep the menu on Classic instead of crashing when 3D is picked.
+  Kind: enhancement.
+  Source: in-session-2026-06-25 DOOM-0009 build step 1 increment 2.
