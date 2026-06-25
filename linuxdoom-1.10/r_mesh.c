@@ -83,6 +83,7 @@ static rb_vertex_t mkv(float x, float y, float z,
     out.u = u;   out.v = v;
     out.texnum = texnum; out.flags = flags; out.light = light;
     out.vsector = 0; out.vplane = RB_PLANE_NONE;   // static unless tagged below
+    out.vtexsec = 0; out.vtexplane = RB_PLANE_NONE; out.vtexoff = 0.0f;
     return out;
 }
 
@@ -119,7 +120,8 @@ static void emit_wall(builder_t* bld, seg_t* seg, fixed_t bottomz, fixed_t topz,
     vertex_t* v2;
     float x1, y1, x2, y2, zb, zt;
     float dx, dy, len, nx, ny;
-    float u0, u1, vtop, vbot, light;
+    float u0, u1, vtop, vbot, light, vtexoff;
+    int   anchorsec, anchorplane;
     rb_vertex_t bl, br, tr, tl;
 
     // Keep zero-height walls (topz == bottomz): a closed door/lift sector
@@ -160,21 +162,39 @@ static void emit_wall(builder_t* bld, seg_t* seg, fixed_t bottomz, fixed_t topz,
         float texH = textureheight[texnum] / (float)FRACUNIT;
         float h    = zt - zb;
         int   lf   = seg->linedef->flags;
+        // vtop = texel V at the top edge; anchorsec/anchorplane = the sector
+        // plane the texture is pegged to (the top edge, the bottom edge, or --
+        // for a DONTPEGBOTTOM lower -- the front ceiling). On a door/lift that
+        // anchor plane slides and the texture rides with it (DOOM-0067).
         switch (pegkind)
         {
           case PEG_UPPER:   // default: texture bottom at the lower (back) ceiling
-            vtop = (lf & ML_DONTPEGTOP) ? 0.0f : (texH - h);
+            if (lf & ML_DONTPEGTOP) { vtop = 0.0f;     anchorsec = topsec; anchorplane = topplane; }
+            else                    { vtop = texH - h; anchorsec = botsec; anchorplane = botplane; }
             break;
           case PEG_LOWER:   // default: texture top at the step top (back floor)
-            vtop = (lf & ML_DONTPEGBOTTOM)
-                 ? (seg->frontsector->ceilingheight / (float)FRACUNIT - zt)
-                 : 0.0f;
+            if (lf & ML_DONTPEGBOTTOM)
+            {
+                vtop = seg->frontsector->ceilingheight / (float)FRACUNIT - zt;
+                anchorsec = botsec; anchorplane = RB_PLANE_CEIL;   // front ceiling
+            }
+            else { vtop = 0.0f; anchorsec = topsec; anchorplane = topplane; }
             break;
           default:          // PEG_ONESIDED / PEG_MID: default texture top at top
-            vtop = (lf & ML_DONTPEGBOTTOM) ? (texH - h) : 0.0f;
+            if (lf & ML_DONTPEGBOTTOM) { vtop = texH - h; anchorsec = botsec; anchorplane = botplane; }
+            else                       { vtop = 0.0f;     anchorsec = topsec; anchorplane = topplane; }
             break;
         }
         vtop += seg->sidedef->rowoffset / (float)FRACUNIT;
+        // Texture row 0 sits at world height (vtop + zt) in texels(==world
+        // units); store it relative to the anchor plane's build height so
+        // RB_UpdateMeshHeights can re-derive v from the live anchor height.
+        {
+            float anchorz = (anchorplane == RB_PLANE_CEIL
+                             ? sectors[anchorsec].ceilingheight
+                             : sectors[anchorsec].floorheight) / (float)FRACUNIT;
+            vtexoff = (vtop + zt) - anchorz;
+        }
     }
     vbot = vtop + (zt - zb);
     light = seg->frontsector->lightlevel / 255.0f;
@@ -186,6 +206,9 @@ static void emit_wall(builder_t* bld, seg_t* seg, fixed_t bottomz, fixed_t topz,
     // Bottom edge follows botsec/botplane, top edge follows topsec/topplane.
     bl.vsector = br.vsector = botsec; bl.vplane = br.vplane = botplane;
     tr.vsector = tl.vsector = topsec; tr.vplane = tl.vplane = topplane;
+    bl.vtexsec   = br.vtexsec   = tr.vtexsec   = tl.vtexsec   = anchorsec;
+    bl.vtexplane = br.vtexplane = tr.vtexplane = tl.vtexplane = anchorplane;
+    bl.vtexoff   = br.vtexoff   = tr.vtexoff   = tl.vtexoff   = vtexoff;
     push_quad(bld, bl, br, tr, tl);
 }
 
@@ -426,13 +449,18 @@ void RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst)
         else
             continue;
         dst[i].z = newz;
-        // Walls keep their texture pegged in world space as the edge moves: the
-        // build-time mapping has v + z constant along the quad (1 texel per world
-        // unit), so shift v by however far z moved. Without this a door/lift
-        // stretches its texture as it grows and squashes it as it shrinks
-        // (DOOM-0067). Flats project on world XY, so their v must NOT follow z.
-        if (!(v->flags & RB_MESH_FLAT))
-            dst[i].v = v->v + (v->z - newz);
+        // Walls: re-peg the texture to its (possibly moving) anchor plane so it
+        // slides WITH a door/lift at 1 texel per world unit instead of stretching
+        // or staying fixed in space. Texture row 0 sits at anchor_height +
+        // vtexoff; v counts down from there to this vertex's z. Flats project on
+        // world XY (vtexplane == NONE) and are left alone (DOOM-0067).
+        if (v->vtexplane == RB_PLANE_FLOOR || v->vtexplane == RB_PLANE_CEIL)
+        {
+            float az = (v->vtexplane == RB_PLANE_CEIL
+                        ? sectors[v->vtexsec].ceilingheight
+                        : sectors[v->vtexsec].floorheight) / (float)FRACUNIT;
+            dst[i].v = (az + v->vtexoff) - newz;
+        }
     }
 }
 

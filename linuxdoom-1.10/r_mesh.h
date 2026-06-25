@@ -49,6 +49,15 @@ typedef struct
     float light;        // owning sector lightlevel, 0..1
     int   vsector;      // owning sector index, for the dynamic-height lookup below
     int   vplane;       // RB_PLANE_* : which sector plane this vertex's z tracks
+    // Texture-pegging anchor (walls only). DOOM pegs a wall's texture to one
+    // edge; on a moving sector (door/lift) that edge slides, and the texture must
+    // slide with it at 1 texel per world unit -- not stretch. So the texture row
+    // 0 sits at world height (sectors[vtexsec].<vtexplane> + vtexoff), and
+    // RB_UpdateMeshHeights re-derives v = that - z each frame. vtexplane==
+    // RB_PLANE_NONE means "static texture" (flats; never re-pegged). DOOM-0067.
+    int   vtexsec;      // sector whose plane the texture is pegged to
+    int   vtexplane;    // RB_PLANE_* of that anchor plane (NONE = don't re-peg)
+    float vtexoff;      // texels from the anchor plane to texture row 0
 } rb_vertex_t;
 
 // Which moving sector plane a mesh vertex's z follows. The mesh is built once
