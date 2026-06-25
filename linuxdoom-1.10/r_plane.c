@@ -128,15 +128,20 @@ R_MapPlane
     fixed_t	length;
     unsigned	index;
 	
-#ifdef RANGECHECK
+    // A view-size / visplane inconsistency at hi-res windowed screen sizes can
+    // hand this an inverted or out-of-range span (DOOM-0055). The RANGECHECK
+    // build aborts on it (I_Error -> the "game just closed" crash); a release
+    // build would index screens[0] out of bounds. Skip the bad span instead:
+    // no crash, no out-of-bounds write. A skipped span is the existing floor
+    // smear, not a new symptom. Root cause (the visplane span open/close logic)
+    // is tracked under DOOM-0055 and fixed separately; this is the safety guard.
     if (x2 < x1
 	|| x1<0
 	|| x2>=viewwidth
-	|| (unsigned)y>viewheight)
+	|| (unsigned)y>(unsigned)viewheight)
     {
-	I_Error ("R_MapPlane: %i, %i at %i",x1,x2,y);
+	return;
     }
-#endif
 
     if (planeheight != cachedheight[y])
     {
