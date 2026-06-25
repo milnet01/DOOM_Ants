@@ -23,6 +23,7 @@
 //-----------------------------------------------------------------------------
 
 #include <math.h>
+#include <string.h>     // memset (wipe screens[0] on a mode switch)
 
 #include "r_backend.h"
 #include "doomdef.h"    // SCREENWIDTH/SCREENHEIGHT
@@ -32,6 +33,9 @@
 #include "r_sky.h"      // skytexture (the sky's wall-texture index)
 #include "r_mesh.h"     // rb_view_t (POD camera across the seam), RB_OVERLAY_KEY
 #include "v_video.h"    // screens[] (the paletted 2D overlay buffer)
+#include "st_stuff.h"   // ST_Start (force a full status-bar redraw on switch)
+
+extern boolean setsizeneeded;   // r_main.c: forces a view-size + border redraw
 
 // A level is loaded once the BSP segs exist (r_state.h). Used by RB_Init to
 // catch up the scene build when a map was loaded before the back-end came up
@@ -250,4 +254,20 @@ void RB_SetMode(rendermode_t mode)
     active = &backends[rendermode];
     if (active->Init)
         active->Init();
+
+    // Switching mid-game: the new back-end starts with no scene. Rebuild the
+    // current level so the 3D back-ends draw the world immediately instead of a
+    // blank view (RB_Init does the same on the -warp autostart path). Classic's
+    // BuildLevel is NULL, so this is a no-op when switching to it.
+    if (numsegs > 0 && active->BuildLevel)
+        active->BuildLevel();
+
+    // screens[0] (the paletted 2D buffer) is shared across back-ends and carries
+    // stale pixels across the hand-off -- the 3D compositor's magenta key colour
+    // and any half-drawn menu -- which the next mode would show as ghosting (seen
+    // switching out of Solid/Ultra). Wipe it and force a full view/border/HUD
+    // redraw so the first frame in the new mode is clean.
+    memset(screens[0], 0, SCREENWIDTH * SCREENHEIGHT);
+    setsizeneeded = true;   // recompute the view window + redraw the border
+    ST_Start();             // full status-bar repaint (sets st_firsttime)
 }
