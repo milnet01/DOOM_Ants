@@ -560,3 +560,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** In the 3D renderers a wall switch's button graphic was sliding out of view; now textures line up vertically like Classic.
   Kind: fix.
   Source: in-session-2026-06-25.
+
+- ✅ [DOOM-0062] **Draw the upper wall above an outdoor doorway in the 3D mesh (sky-ceiling guard fix).**
+  Found 2026-06-25 (user testing, DOOM 1 E1M1 outdoor area, Solid/Ultra): the wood lintel above the exit-building doorway was missing -- a see-through hole where Classic shows solid wall. Root cause: r_mesh.c RB_BuildLevelMesh guarded the upper-step emit with `front->ceilingpic != skyflatnum`, skipping the top texture whenever the FRONT sector ceiling is sky. Outdoors that is always true, so any doorway cut into an open-air wall lost its upper. DOOM only suppresses the upper when BOTH ceilings are sky (the outdoor height-change hack, r_segs.c:530). Fix: skip only when front AND back ceilings are skyflatnum; otherwise emit the top texture (emit_wall still early-returns on a "-"/absent toptexture, so genuine sky gaps still show through). Built clean. Needs user GPU re-test.
+  **Layman:** In the 3D renderers the wall above DOOM's outdoor exit door was see-through; now the lintel renders like Classic.
+  Kind: fix.
+  Source: in-session-2026-06-25.

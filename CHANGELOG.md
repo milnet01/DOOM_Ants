@@ -48,6 +48,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Draw the upper wall above an outdoor doorway in the 3D mesh (sky-ceiling guard fix).** (DOOM-0062)
+  In the 3D renderers the wall above DOOM's outdoor exit door was see-through; now the lintel renders like Classic.
+
 - **Port DOOM wall texture pegging into the 3D mesh (fixes vertically-misaligned uppers and switches).** (DOOM-0061)
   In the 3D renderers a wall switch's button graphic was sliding out of view; now textures line up vertically like Classic.
 

@@ -334,12 +334,18 @@ rb_mesh_t* RB_BuildLevelMesh(void)
 
         int bi = (int)(back - sectors);
 
-        // Upper step (front ceiling higher than back). Skipped when the front
-        // ceiling is sky: that region renders as sky, not the top texture.
+        // Upper step (front ceiling higher than back). Skipped only when BOTH
+        // ceilings are sky -- DOOM's outdoor height-change hack (r_segs.c:530),
+        // which hides the seam between two open-sky areas of differing heights.
+        // When only the front ceiling is sky (e.g. a doorway cut into an outdoor
+        // wall), the top texture above the opening IS drawn, with the sky
+        // backdrop showing above it; guarding on the front ceiling alone left a
+        // see-through hole there (the missing lintel above E1M1's exit door).
         // Bottom edge = back ceiling (the door face on a door sector), top edge
         // = front ceiling -- so a rising door ceiling shrinks this wall.
         if (front->ceilingheight > back->ceilingheight
-            && front->ceilingpic != skyflatnum)
+            && !(front->ceilingpic == skyflatnum
+                 && back->ceilingpic == skyflatnum))
             emit_wall(&bld, seg, back->ceilingheight, front->ceilingheight,
                       side->toptexture, 0, PEG_UPPER,
                       bi, RB_PLANE_CEIL, fi, RB_PLANE_CEIL);
