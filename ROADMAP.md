@@ -595,3 +595,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** In the 3D renderers a pressed switch doesn't light up and animated surfaces (screens, slime) don't animate, because the 3D world bakes each surface's picture in once.
   Kind: feature.
   Source: in-session-2026-06-25.
+
+- ✅ [DOOM-0067] **Stop door/lift textures stretching and squashing as they move in the 3D mesh.**
+  Found 2026-06-25 (user testing, Solid/Ultra): doors stretched their texture as they opened and squashed it as they closed; lifts the same. Root cause: RB_UpdateMeshHeights (r_mesh.c, the DOOM-0049 per-frame moving-sector updater) rewrote only each moving vertex's z (world height) and never its v (texture row). The build-time wall mapping holds v + z = const along the quad (1 texel per world unit), so when z moved but v stayed, the fixed texture span was scaled across the changed quad height -> stretch when growing, squash when shrinking. DOOM instead keeps the texture fixed in world space and lets the moving edge slide over it. Pre-existing since DOOM-0049; DOOM-0061's correct pegging made it obvious. Fix: in RB_UpdateMeshHeights, after setting the new z, shift the vertex's v by (build_z - new_z) for WALL verts so v + z stays constant (texture stays pegged). Flats (RB_MESH_FLAT) project on world XY, so their v must not follow z -- guarded out. Always recomputed from the immutable build-time v/z baseline (no drift). Built clean. Needs user GPU re-test (open/close a door and ride a lift in Solid/Ultra).
+  **Layman:** In the 3D renderers a moving door/lift stretched its texture open and squashed it closed; now the texture stays put as the surface slides, like Classic.
+  Kind: fix.
+  Source: in-session-2026-06-25.

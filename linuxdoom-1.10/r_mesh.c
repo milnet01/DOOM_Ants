@@ -418,10 +418,21 @@ void RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst)
     for (i = 0; i < mesh->numverts; i++)
     {
         const rb_vertex_t* v = &mesh->verts[i];
+        float newz;
         if (v->vplane == RB_PLANE_FLOOR)
-            dst[i].z = sectors[v->vsector].floorheight / (float)FRACUNIT;
+            newz = sectors[v->vsector].floorheight / (float)FRACUNIT;
         else if (v->vplane == RB_PLANE_CEIL)
-            dst[i].z = sectors[v->vsector].ceilingheight / (float)FRACUNIT;
+            newz = sectors[v->vsector].ceilingheight / (float)FRACUNIT;
+        else
+            continue;
+        dst[i].z = newz;
+        // Walls keep their texture pegged in world space as the edge moves: the
+        // build-time mapping has v + z constant along the quad (1 texel per world
+        // unit), so shift v by however far z moved. Without this a door/lift
+        // stretches its texture as it grows and squashes it as it shrinks
+        // (DOOM-0067). Flats project on world XY, so their v must NOT follow z.
+        if (!(v->flags & RB_MESH_FLAT))
+            dst[i].v = v->v + (v->z - newz);
     }
 }
 

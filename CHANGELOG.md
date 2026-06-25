@@ -51,6 +51,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Stop door/lift textures stretching and squashing as they move in the 3D mesh.** (DOOM-0067)
+  In the 3D renderers a moving door/lift stretched its texture open and squashed it closed; now the texture stays put as the surface slides, like Classic.
+
 - **Automap renders blank/frozen in the 3D back-ends (Solid/Ultra).** (DOOM-0064)
   The in-game map is blank in the 3D renderers and only updates in Classic; needs a runtime probe to finish diagnosing.
 
