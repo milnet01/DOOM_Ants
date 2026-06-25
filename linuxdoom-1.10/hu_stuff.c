@@ -24,6 +24,7 @@ static const char
 rcsid[] = "$Id: hu_stuff.c,v 1.4 1997/02/03 16:47:52 b1 Exp $";
 
 #include <ctype.h>
+#include <stdio.h>
 
 #include "doomdef.h"
 
@@ -34,6 +35,8 @@ rcsid[] = "$Id: hu_stuff.c,v 1.4 1997/02/03 16:47:52 b1 Exp $";
 #include "hu_stuff.h"
 #include "hu_lib.h"
 #include "w_wad.h"
+#include "v_video.h"
+#include "i_system.h"
 
 #include "s_sound.h"
 
@@ -104,6 +107,10 @@ static int		message_counter;
 
 extern int		showMessages;
 extern boolean		automapactive;
+
+// FPS counter (DOOM-0046): 0=off, 1=top-left, 2=top-centre, 3=top-right.
+// Defined in m_menu.c alongside showMessages and persisted via m_misc.c.
+extern int		fpsCorner;
 
 static boolean		headsupactive = false;
 
@@ -491,6 +498,69 @@ void HU_Drawer(void)
     if (automapactive)
 	HUlib_drawTextLine(&w_title, false);
 
+}
+
+//
+// HU_DrawFPS
+// Optional on-screen frame-rate counter (DOOM-0046). Measured as a rolling
+// average over a ~half-second window (steadier than an instantaneous delta),
+// drawn with the small HUD font into screens[0] so it shows under every
+// renderer for free — Classic blits screens[0], and the 3D back-end composites
+// it over the Vulkan view. Anchored to the top corner picked by fpsCorner.
+//
+void HU_DrawFPS(void)
+{
+    static int	frames = 0;
+    static int	lastms = 0;
+    static int	fps = 0;
+    char	buf[8];
+    int		now = I_GetTimeMS();
+    int		elapsed = now - lastms;
+    int		x, y, w, i, c;
+
+    // Count every presented frame; refresh the displayed value twice a second.
+    if (!lastms)
+	lastms = now;               // first call: start the window, don't divide
+    frames++;
+    if (elapsed >= 500)
+    {
+	fps = (frames * 1000) / elapsed;
+	frames = 0;
+	lastms = now;
+    }
+
+    if (!fpsCorner)
+	return;
+
+    sprintf(buf, "%d", fps);
+
+    // Measure the string in the HUD font so centre/right anchors line up.
+    w = 0;
+    for (i = 0; buf[i]; i++)
+    {
+	c = toupper(buf[i]) - HU_FONTSTART;
+	w += (c < 0 || c >= HU_FONTSIZE) ? 4 : SHORT(hu_font[c]->width);
+    }
+
+    y = 2;                                          // a few px from the top
+    switch (fpsCorner)
+    {
+      case 2: x = (SCREENWIDTH - w) / 2; break;     // top-centre
+      case 3: x = SCREENWIDTH - w - 2;   break;     // top-right
+      default: x = 2;                    break;     // top-left
+    }
+
+    for (i = 0; buf[i]; i++)
+    {
+	c = toupper(buf[i]) - HU_FONTSTART;
+	if (c < 0 || c >= HU_FONTSIZE)
+	{
+	    x += 4;
+	    continue;
+	}
+	V_DrawPatch(x, y, 0, hu_font[c]);
+	x += SHORT(hu_font[c]->width);
+    }
 }
 
 void HU_Erase(void)

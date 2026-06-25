@@ -44,6 +44,9 @@ byte*	I_ZoneBase (int *size);
 // returns current time in tics.
 int I_GetTime (void);
 
+// Wall-clock milliseconds (finer than I_GetTime); used by the FPS counter.
+int I_GetTimeMS (void);
+
 
 //
 // Called by D_DoomLoop,

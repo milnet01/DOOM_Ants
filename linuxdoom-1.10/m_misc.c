@@ -200,6 +200,7 @@ extern int	viewheight;
 
 extern int	mouseSensitivity;
 extern int	showMessages;
+extern int	fpsCorner;
 
 extern int	detailLevel;
 
@@ -241,6 +242,7 @@ default_t	defaults[] =
     {"sfx_volume",&snd_SfxVolume, 8},
     {"music_volume",&snd_MusicVolume, 8},
     {"show_messages",&showMessages, 1},
+    {"fps_corner",&fpsCorner, 0},
     {"renderer",&rendermode, RB_CLASSIC},
 
 

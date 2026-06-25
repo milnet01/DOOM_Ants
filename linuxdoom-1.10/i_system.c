@@ -106,6 +106,24 @@ int  I_GetTime (void)
 }
 
 
+//
+// I_GetTimeMS
+// Wall-clock time in milliseconds. Finer than I_GetTime's 35Hz tics, which is
+// too coarse to measure a frame rate that can run well above TICRATE; used by
+// the FPS counter's rolling average (DOOM-0046).
+//
+int  I_GetTimeMS (void)
+{
+    struct timeval	tp;
+    static int		basetime=0;
+
+    gettimeofday(&tp, NULL);
+    if (!basetime)
+	basetime = tp.tv_sec;
+    return (tp.tv_sec-basetime)*1000 + tp.tv_usec/1000;
+}
+
+
 
 //
 // I_Init

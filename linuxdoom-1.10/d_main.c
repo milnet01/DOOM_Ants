@@ -316,6 +316,10 @@ void D_Display (void)
     }
 
 
+    // optional FPS counter (DOOM-0046): drawn into screens[0] each frame, in
+    // every gamestate, so it composites under every renderer. Under the menu.
+    HU_DrawFPS ();
+
     // menus go directly to the screen
     M_Drawer ();          // menu is drawn even on top of everything
     NetUpdate ();         // send out any new accumulation

@@ -54,6 +54,7 @@ boolean HU_Responder(event_t* ev);
 
 void HU_Ticker(void);
 void HU_Drawer(void);
+void HU_DrawFPS(void);
 char HU_dequeueChatChar(void);
 void HU_Erase(void);
 

@@ -79,7 +79,11 @@ int			mouseSensitivity;       // has default
 
 // Show messages has default, 0 = off, 1 = on
 int			showMessages;
-	
+
+// FPS counter (DOOM-0046), has default. 0 = off, 1 = top-left,
+// 2 = top-centre, 3 = top-right. Drawn by HU_DrawFPS.
+int			fpsCorner;
+
 
 // Blocky mode, has default, 0 = high, 1 = normal
 int			detailLevel;		
@@ -199,6 +203,7 @@ void M_SfxVol(int choice);
 void M_MusicVol(int choice);
 void M_ChangeDetail(int choice);
 void M_ChangeRenderer(int choice);
+void M_ChangeFPS(int choice);
 void M_SizeDisplay(int choice);
 void M_StartGame(int choice);
 void M_Sound(int choice);
@@ -345,6 +350,7 @@ enum
     messages,
     detail,
     renderer,
+    showfps,
     scrnsize,
     option_empty1,
     mousesens,
@@ -359,6 +365,7 @@ menuitem_t OptionsMenu[]=
     {1,"M_MESSG",	M_ChangeMessages,'m'},
     {1,"M_DETAIL",	M_ChangeDetail,'g'},
     {1,"",		M_ChangeRenderer,'r'},
+    {1,"",		M_ChangeFPS,'f'},
     {2,"M_SCRNSZ",	M_SizeDisplay,'s'},
     {-1,"",0},
     {2,"M_MSENS",	M_ChangeSensitivity,'m'},
@@ -951,6 +958,7 @@ void M_Episode(int choice)
 //
 char    detailNames[2][9]	= {"M_GDHIGH","M_GDLOW"};
 char	msgNames[2][9]		= {"M_MSGOFF","M_MSGON"};
+char	fpsPosNames[4][11]	= {"Off","Top-Left","Top-Centre","Top-Right"};
 
 
 void M_DrawOptions(void)
@@ -968,6 +976,11 @@ void M_DrawOptions(void)
     M_WriteText(OptionsDef.x,OptionsDef.y+LINEHEIGHT*renderer,"Renderer:");
     M_WriteText(OptionsDef.x + 88,OptionsDef.y+LINEHEIGHT*renderer,
 		(char *)RB_ModeName(rendermode));
+
+    // FPS counter (DOOM-0046): text-drawn like Renderer (no menu-art lump).
+    M_WriteText(OptionsDef.x,OptionsDef.y+LINEHEIGHT*showfps,"FPS:");
+    M_WriteText(OptionsDef.x + 88,OptionsDef.y+LINEHEIGHT*showfps,
+		fpsPosNames[fpsCorner]);
 
     M_DrawThermo(OptionsDef.x,OptionsDef.y+LINEHEIGHT*(mousesens+1),
 		 10,mouseSensitivity);
@@ -1179,6 +1192,16 @@ void M_ChangeRenderer(int choice)
     }
 
     RB_SetMode(next);
+}
+
+
+//
+// Cycle the FPS counter: Off -> Top-Left -> Top-Centre -> Top-Right (DOOM-0046)
+//
+void M_ChangeFPS(int choice)
+{
+    choice = 0;
+    fpsCorner = (fpsCorner + 1) % 4;
 }
 
 
