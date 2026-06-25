@@ -48,6 +48,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Port DOOM wall texture pegging into the 3D mesh (fixes vertically-misaligned uppers and switches).** (DOOM-0061)
+  In the 3D renderers a wall switch's button graphic was sliding out of view; now textures line up vertically like Classic.
+
 - **Fix in-game menu text ghosting in the Classic renderer (hi-res).** (DOOM-0053)
   In Classic mode, menu pages smear over each other as you navigate.
 

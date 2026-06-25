@@ -99,6 +99,11 @@ static void push_quad(builder_t* b, rb_vertex_t a, rb_vertex_t c,
     push_tri(b, a, d, e);
 }
 
+// Wall pegging kind: selects which DOOM vertical-alignment rule emit_wall
+// applies (faithful to r_segs.c). One-sided mids and two-sided masked rails
+// share a rule; uppers and lowers each have their own.
+enum { PEG_ONESIDED, PEG_UPPER, PEG_LOWER, PEG_MID };
+
 //
 // One vertical wall quad between bottomz and topz along the seg.
 //
@@ -107,7 +112,7 @@ static void push_quad(builder_t* b, rb_vertex_t a, rb_vertex_t c,
 // (DOOM-0049). The bottom edge sits at bottomz (== that sector plane's height
 // at build time); the top edge at topz.
 static void emit_wall(builder_t* bld, seg_t* seg, fixed_t bottomz, fixed_t topz,
-                      int texnum, int flags,
+                      int texnum, int flags, int pegkind,
                       int botsec, int botplane, int topsec, int topplane)
 {
     vertex_t* v1;
@@ -139,11 +144,38 @@ static void emit_wall(builder_t* bld, seg_t* seg, fixed_t bottomz, fixed_t topz,
     if (len < 1e-4f) return;         // degenerate seg
     nx = dy / len; ny = -dx / len;
 
-    // UVs in DOOM texels (shader divides by texture size). U runs along the
-    // wall from the seg + sidedef offset; V runs down from the quad top.
-    u0   = (seg->offset + seg->sidedef->textureoffset) / (float)FRACUNIT;
-    u1   = u0 + len;
-    vtop = seg->sidedef->rowoffset / (float)FRACUNIT;
+    // U (horizontal) in DOOM texels: along the wall from the seg + sidedef
+    // offset. The shader divides by texture size; REPEAT wraps.
+    u0 = (seg->offset + seg->sidedef->textureoffset) / (float)FRACUNIT;
+    u1 = u0 + len;
+
+    // V (vertical) origin: faithfully port DOOM's wall pegging (r_segs.c). The
+    // texture's top row sits at a world height that depends on the wall kind and
+    // the linedef's ML_DONTPEG* flags. Without this every default upper texture
+    // (DOOM bottom-pegs them) and every DONTPEGBOTTOM switch/step face samples
+    // the wrong rows, sliding its art out of the visible band -- e.g. a wall
+    // switch whose button graphic scrolls off. vtop is the texel V at the quad's
+    // top edge; 1 world unit == 1 texel, and the shader REPEAT-wraps the rest.
+    {
+        float texH = textureheight[texnum] / (float)FRACUNIT;
+        float h    = zt - zb;
+        int   lf   = seg->linedef->flags;
+        switch (pegkind)
+        {
+          case PEG_UPPER:   // default: texture bottom at the lower (back) ceiling
+            vtop = (lf & ML_DONTPEGTOP) ? 0.0f : (texH - h);
+            break;
+          case PEG_LOWER:   // default: texture top at the step top (back floor)
+            vtop = (lf & ML_DONTPEGBOTTOM)
+                 ? (seg->frontsector->ceilingheight / (float)FRACUNIT - zt)
+                 : 0.0f;
+            break;
+          default:          // PEG_ONESIDED / PEG_MID: default texture top at top
+            vtop = (lf & ML_DONTPEGBOTTOM) ? (texH - h) : 0.0f;
+            break;
+        }
+        vtop += seg->sidedef->rowoffset / (float)FRACUNIT;
+    }
     vbot = vtop + (zt - zb);
     light = seg->frontsector->lightlevel / 255.0f;
 
@@ -295,7 +327,7 @@ rb_mesh_t* RB_BuildLevelMesh(void)
         {
             // One-sided solid wall: front floor..ceiling, mid texture.
             emit_wall(&bld, seg, front->floorheight,
-                      front->ceilingheight, side->midtexture, 0,
+                      front->ceilingheight, side->midtexture, 0, PEG_ONESIDED,
                       fi, RB_PLANE_FLOOR, fi, RB_PLANE_CEIL);
             continue;
         }
@@ -309,14 +341,14 @@ rb_mesh_t* RB_BuildLevelMesh(void)
         if (front->ceilingheight > back->ceilingheight
             && front->ceilingpic != skyflatnum)
             emit_wall(&bld, seg, back->ceilingheight, front->ceilingheight,
-                      side->toptexture, 0,
+                      side->toptexture, 0, PEG_UPPER,
                       bi, RB_PLANE_CEIL, fi, RB_PLANE_CEIL);
 
         // Lower step (front floor lower than back): bottom = front floor, top =
         // back floor (a lift floor raising/lowering changes the relevant edge).
         if (front->floorheight < back->floorheight)
             emit_wall(&bld, seg, front->floorheight, back->floorheight,
-                      side->bottomtexture, 0,
+                      side->bottomtexture, 0, PEG_LOWER,
                       fi, RB_PLANE_FLOOR, bi, RB_PLANE_FLOOR);
 
         // Middle (rails/grates): alpha-tested, spans the shared opening. The
@@ -329,7 +361,7 @@ rb_mesh_t* RB_BuildLevelMesh(void)
                        ? front->floorheight : back->floorheight;
             fixed_t zt = front->ceilingheight < back->ceilingheight
                        ? front->ceilingheight : back->ceilingheight;
-            emit_wall(&bld, seg, zb, zt, side->midtexture, RB_MESH_MASKED,
+            emit_wall(&bld, seg, zb, zt, side->midtexture, RB_MESH_MASKED, PEG_MID,
                       bsec, RB_PLANE_FLOOR, tsec, RB_PLANE_CEIL);
         }
     }

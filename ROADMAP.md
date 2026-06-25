@@ -232,6 +232,16 @@ with friends.
   Source: user-request-2026-06-25.
   Resolved (2026-06-25, commit 83dd303, user-confirmed). Controller Circle (B) now backs out one menu level and closes only at the top: B->KEY_BACKSPACE while a menu is open, and KEY_BACKSPACE closes when the menu has no prevMenu. Start/Options still toggles. User confirms it works as a back-then-close button.
 
+- 📋 [DOOM-0060] **Game-select boot menu: choose DOOM 1 or DOOM 2, switch back without relaunching by hand.**
+  Approach (user-chosen): a relauncher, NOT an in-process IWAD swap — each game runs in a fresh engine boot, sidestepping the teardown of the WAD-global state (textures incl. the new bindless material array, sprites, zone memory). Requirements:
+  - Auto-detect IWADs at startup. Exactly one present (DOOM 1 doom1.wad/doom.wad OR doom2.wad) -> skip the selector, boot straight into it. Both present -> show the Game Select screen.
+  - Game Select screen styled with the same look and feel as the games' title screens.
+  - In-game menu option 'Return to Game Select' that re-enters the chooser so the other game can be picked.
+  Open design wrinkles for the spec: the selector needs art/palette/font but runs before an IWAD is chosen (load one to draw it, or peek both wads for each TITLEPIC?); the re-exec mechanism (exec the binary with -iwad vs in-process reset); how 'Return to Game Select' surfaces mid-game. Needs a spec + /cold-eyes before implementation (house rule 14).
+  **Layman:** On startup, if both games are installed you get a menu to pick one; finish playing, return to that menu, and pick the other. If only one game is found it boots straight in.
+  Kind: feature.
+  Source: user-request-2026-06-25.
+
 ## Phase 2 — The Spin
 
 The creative overhaul: evolve the renderer toward true 3D with hardware
@@ -544,3 +554,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** On a very old GPU, keep the menu on Classic instead of crashing when 3D is picked.
   Kind: enhancement.
   Source: in-session-2026-06-25 DOOM-0009 build step 1 increment 2.
+
+- ✅ [DOOM-0061] **Port DOOM wall texture pegging into the 3D mesh (fixes vertically-misaligned uppers and switches).**
+  Found 2026-06-25 (user testing, DOOM 1, Solid/Ultra): a wall switch (red-button panel) visible in Classic did not show in the 3D back-ends. Root cause: r_mesh.c emit_wall had NO texture pegging -- it top-aligned every wall (vtop = rowoffset only). DOOM picks the texture's vertical origin per wall kind and per the linedef ML_DONTPEGTOP/ML_DONTPEGBOTTOM flags (r_segs.c:448-605): default upper textures are bottom-pegged, and DONTPEGBOTTOM switch/step faces peg to the ceiling. Ignoring this slid those textures' art out of the visible band. Fix: emit_wall gains a pegkind (PEG_ONESIDED/UPPER/LOWER/MID) and computes vtop via the faithful r_segs rules using textureheight[] + linedef flags; the four call sites pass their kind. Default lower/one-sided/mid V origins are unchanged (only +rowoffset cases), so the only behaviour change is the previously-wrong uppers and DONTPEG faces now align. Built clean. Needs user GPU re-test (the switch should reappear and uppers should match Classic).
+  **Layman:** In the 3D renderers a wall switch's button graphic was sliding out of view; now textures line up vertically like Classic.
+  Kind: fix.
+  Source: in-session-2026-06-25.
