@@ -542,12 +542,15 @@ void HU_DrawFPS(void)
 	w += (c < 0 || c >= HU_FONTSIZE) ? 4 : SHORT(hu_font[c]->width);
     }
 
+    // Position in DOOM's logical 320x200 space (ORIGWIDTH), the space V_DrawPatch
+    // and the HUD font draw into -- SCREENWIDTH is the physical hi-res width
+    // (ORIGWIDTH*HIRES) and would push centre/right placement off-screen.
     y = 2;                                          // a few px from the top
     switch (fpsCorner)
     {
-      case 2: x = (SCREENWIDTH - w) / 2; break;     // top-centre
-      case 3: x = SCREENWIDTH - w - 2;   break;     // top-right
-      default: x = 2;                    break;     // top-left
+      case 2: x = (ORIGWIDTH - w) / 2; break;       // top-centre
+      case 3: x = ORIGWIDTH - w - 2;   break;       // top-right
+      default: x = 2;                  break;       // top-left
     }
 
     for (i = 0; buf[i]; i++)
