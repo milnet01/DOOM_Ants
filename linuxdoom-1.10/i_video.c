@@ -199,7 +199,7 @@ static void I_PollGamepad(void)
     int		buttons = 0;
     boolean	b_pressed;
     extern boolean menuactive;          // m_menu.c: lets B (Circle) close the menu
-    static boolean strafe_r_held, strafe_l_held, esc_held;
+    static boolean strafe_r_held, strafe_l_held, esc_held, back_held;
 
     if (!gamepad)
 	return;
@@ -258,11 +258,15 @@ static void I_PollGamepad(void)
     I_PostKeyEdge(lx < -GP_AXIS_DEADZONE, &strafe_l_held, key_strafeleft);
 
     // Start / Back toggle the menu through the engine's Escape handling.
+    // Start / Back toggle the menu (open from play, close from anywhere) via Esc.
     I_PostKeyEdge(
 	SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_START)
-	|| SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_BACK)
-	|| (b_pressed && menuactive),   // Circle backs/closes an open menu
+	|| SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_BACK),
 	&esc_held, KEY_ESCAPE);
+
+    // B (Circle) is "back" while a menu is open: M_Responder backs out one level
+    // and closes when there is none left. In play (no menu) B stays strafe (bit1).
+    I_PostKeyEdge(b_pressed && menuactive, &back_held, KEY_BACKSPACE);
 }
 
 

@@ -1749,6 +1749,13 @@ boolean M_Responder (event_t* ev)
 	    itemOn = currentMenu->lastOn;
 	    S_StartSound(NULL,sfx_swtchn);
 	}
+	else
+	{
+	    // No menu to go back to (top level): "back" closes the panel, so the
+	    // controller Circle button works as back-then-close (DOOM-0056).
+	    M_ClearMenus ();
+	    S_StartSound(NULL,sfx_swtchx);
+	}
 	return true;
 	
       default:
