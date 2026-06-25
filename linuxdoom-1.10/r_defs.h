@@ -466,16 +466,21 @@ typedef struct
   int			maxx;
   
   // leave pads for [minx-1]/[maxx+1]
-  
-  byte		pad1;
-  // Here lies the rub for all
-  //  dynamic resize/change of resolution.
-  byte		top[SCREENWIDTH];
-  byte		pad2;
-  byte		pad3;
-  // See above.
-  byte		bottom[SCREENWIDTH];
-  byte		pad4;
+
+  // "Here lies the rub for all dynamic resize/change of resolution": top[]/
+  // bottom[] hold physical screen row indices, but were byte (0..255), so at
+  // hi-res (SCREENHEIGHT=400) rows > 255 truncated and corrupted the spans
+  // (DOOM-0055). Widened to unsigned int per Crispy Doom's proven hi-res fix:
+  // the unfilled-column sentinel becomes 0xffffffffu (outside any row range)
+  // and R_MakeSpans takes UNSIGNED params so the sentinel reads as the largest
+  // value (a signed int would read all-ones as -1 and invert the span logic).
+  // The pads must match the element type so [minx-1]/[maxx+1] stay valid.
+  unsigned int	pad1;
+  unsigned int	top[SCREENWIDTH];
+  unsigned int	pad2;
+  unsigned int	pad3;
+  unsigned int	bottom[SCREENWIDTH];
+  unsigned int	pad4;
 
 } visplane_t;
 

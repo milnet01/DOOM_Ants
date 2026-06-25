@@ -302,7 +302,7 @@ R_CheckPlane
     }
 
     for (x=intrl ; x<= intrh ; x++)
-	if (pl->top[x] != 0xff)
+	if (pl->top[x] != 0xffffffffu)   // unfilled-column sentinel (DOOM-0055)
 	    break;
 
     if (x > intrh)
@@ -332,13 +332,16 @@ R_CheckPlane
 //
 // R_MakeSpans
 //
+// t1/b1/t2/b2 are UNSIGNED so the 0xffffffffu unfilled-column sentinel reads as
+// the largest value (a signed int would read it as -1 and invert the span
+// open/close logic, under-filling the floor). Crispy Doom hi-res fix (DOOM-0055).
 void
 R_MakeSpans
 ( int		x,
-  int		t1,
-  int		b1,
-  int		t2,
-  int		b2 )
+  unsigned int	t1,
+  unsigned int	b1,
+  unsigned int	t2,
+  unsigned int	b2 )
 {
     while (t1 < t2 && t1<=b1)
     {
@@ -410,6 +413,8 @@ void R_DrawPlanes (void)
 	    dc_texturemid = skytexturemid;
 	    for (x=pl->minx ; x <= pl->maxx ; x++)
 	    {
+		if (pl->top[x] == 0xffffffffu)
+		    continue;   // unfilled column: skip (DOOM-0055 sentinel)
 		dc_yl = pl->top[x];
 		dc_yh = pl->bottom[x];
 
@@ -440,8 +445,8 @@ void R_DrawPlanes (void)
 
 	planezlight = zlight[light];
 
-	pl->top[pl->maxx+1] = 0xff;
-	pl->top[pl->minx-1] = 0xff;
+	pl->top[pl->maxx+1] = 0xffffffffu;   // edge sentinels (DOOM-0055)
+	pl->top[pl->minx-1] = 0xffffffffu;
 		
 	stop = pl->maxx + 1;
 
