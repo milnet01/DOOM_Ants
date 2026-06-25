@@ -1149,6 +1149,66 @@ void CreateSpriteBuffer()
     Check(vkMapMemory(g.device, g.spriteVbufMemory, 0, size, 0, &g.spriteMapped), "vkMapMemory(sprites)");
 }
 
+// Build the WAD-global PLAYPAL colour LUT and the descriptor set at init, BEFORE
+// any level/atlas exists, so the 2D HUD/menu overlay composites from the very
+// first frame (the title/demo screen in Solid/Ultra) instead of only after a
+// level is built (DOOM-0045). The set's atlas (binding 0) and rect (binding 2)
+// slots are filled later by UploadAtlas; the overlay (binding 3) by
+// CreateOverlayResources. overlay.frag samples only the palette (1) and overlay
+// (3) bindings, so the title-screen draw is valid with 0/2 still unwritten.
+// Needs the command pool (CreateSampledImage stages through a one-time buffer),
+// so RB_Vulkan_Init calls this after CreateCommandsAndSync.
+void InitPaletteAndDescriptorSet()
+{
+    // PLAYPAL as a 256x1 RGBA LUT (UNORM: raw palette colours, decoded straight
+    // like the world path — no extra colour conversion). Sourced from the cached
+    // WAD lump via the C seam, so no level/atlas is needed.
+    const unsigned char* playpal = RB_PlayPal();
+    unsigned char lut[256 * 4];
+    for (int i = 0; i < 256; ++i)
+    {
+        lut[i * 4 + 0] = playpal[i * 3 + 0];
+        lut[i * 4 + 1] = playpal[i * 3 + 1];
+        lut[i * 4 + 2] = playpal[i * 3 + 2];
+        lut[i * 4 + 3] = 255;
+    }
+    CreateSampledImage(256, 1, VK_FORMAT_R8G8B8A8_UNORM, lut, sizeof(lut),
+                       &g.palImage, &g.palMemory, &g.palView);
+
+    // Descriptor pool + set: three combined-image-samplers (atlas, PLAYPAL, HUD
+    // overlay) + one storage buffer (atlas rects). Allocating the set now reserves
+    // all four binding slots from the pool; atlas/rects/overlay are written when
+    // they arrive (UploadAtlas, CreateOverlayResources).
+    VkDescriptorPoolSize sizes[2] = {};
+    sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    sizes[0].descriptorCount = 3;
+    sizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    sizes[1].descriptorCount = 1;
+    VkDescriptorPoolCreateInfo dpci = {};
+    dpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    dpci.maxSets = 1;
+    dpci.poolSizeCount = 2;
+    dpci.pPoolSizes = sizes;
+    Check(vkCreateDescriptorPool(g.device, &dpci, nullptr, &g.dsPool), "vkCreateDescriptorPool");
+
+    VkDescriptorSetAllocateInfo dsai = {};
+    dsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsai.descriptorPool = g.dsPool;
+    dsai.descriptorSetCount = 1;
+    dsai.pSetLayouts = &g.dsLayout;
+    Check(vkAllocateDescriptorSets(g.device, &dsai, &g.ds), "vkAllocateDescriptorSets");
+
+    // Write the palette LUT (binding 1) now; the overlay needs only this + the
+    // overlay image (binding 3), so the title screen composites immediately.
+    VkDescriptorImageInfo palInfo = { g.texSampler, g.palView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+    VkWriteDescriptorSet write = {};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = g.ds; write.dstBinding = 1; write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &palInfo;
+    vkUpdateDescriptorSets(g.device, 1, &write, 0, nullptr);
+}
+
 void UploadAtlas()
 {
     rb_atlas_t* a = RB_BuildAtlas();
@@ -1156,23 +1216,13 @@ void UploadAtlas()
            a->atlasw, a->atlash, a->numwall, a->numflat, a->numsprite);
     fflush(stdout);
 
-    // Atlas: one channel of raw palette indices.
+    // Atlas: one channel of raw palette indices. The PLAYPAL LUT (binding 1) and
+    // the descriptor set itself were created at init (InitPaletteAndDescriptorSet)
+    // so the overlay can composite before any level; here we only build the atlas
+    // image + rect buffer and point bindings 0 and 2 at them.
     CreateSampledImage((uint32_t)a->atlasw, (uint32_t)a->atlash, VK_FORMAT_R8_UNORM,
                        a->pixels, (VkDeviceSize)a->atlasw * a->atlash,
                        &g.atlasImage, &g.atlasMemory, &g.atlasView);
-
-    // PLAYPAL as a 256x1 RGBA LUT (UNORM: raw palette colours, decoded straight
-    // like the prior bring-up path — no extra colour conversion in this slice).
-    unsigned char lut[256 * 4];
-    for (int i = 0; i < 256; ++i)
-    {
-        lut[i * 4 + 0] = a->playpal[i * 3 + 0];
-        lut[i * 4 + 1] = a->playpal[i * 3 + 1];
-        lut[i * 4 + 2] = a->playpal[i * 3 + 2];
-        lut[i * 4 + 3] = 255;
-    }
-    CreateSampledImage(256, 1, VK_FORMAT_R8G8B8A8_UNORM, lut, sizeof(lut),
-                       &g.palImage, &g.palMemory, &g.palView);
 
     // Rect storage buffer (std430): { vec2 atlasSize; int numWall; int numFlat;
     // vec4 rects[]; }. Host-visible — read-only in the shader, written once.
@@ -1210,46 +1260,22 @@ void UploadAtlas()
     }
     vkUnmapMemory(g.device, g.rectMemory);
 
-    // Descriptor pool + set. Three combined-image-samplers (atlas, PLAYPAL,
-    // and the HUD overlay written later by RB_Vulkan_SetOverlay) + one storage
-    // buffer (atlas rects).
-    VkDescriptorPoolSize sizes[2] = {};
-    sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    sizes[0].descriptorCount = 3;
-    sizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    sizes[1].descriptorCount = 1;
-    VkDescriptorPoolCreateInfo dpci = {};
-    dpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    dpci.maxSets = 1;
-    dpci.poolSizeCount = 2;
-    dpci.pPoolSizes = sizes;
-    Check(vkCreateDescriptorPool(g.device, &dpci, nullptr, &g.dsPool), "vkCreateDescriptorPool");
-
-    VkDescriptorSetAllocateInfo dsai = {};
-    dsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    dsai.descriptorPool = g.dsPool;
-    dsai.descriptorSetCount = 1;
-    dsai.pSetLayouts = &g.dsLayout;
-    Check(vkAllocateDescriptorSets(g.device, &dsai, &g.ds), "vkAllocateDescriptorSets");
-
+    // Point the existing set's atlas (binding 0) + rect (binding 2) slots at the
+    // freshly-built resources. The set, sampler, and PLAYPAL LUT (binding 1) were
+    // created at init (InitPaletteAndDescriptorSet).
     VkDescriptorImageInfo atlasInfo = { g.texSampler, g.atlasView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-    VkDescriptorImageInfo palInfo   = { g.texSampler, g.palView,   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
     VkDescriptorBufferInfo rectInfo = { g.rectBuf, 0, VK_WHOLE_SIZE };
 
-    VkWriteDescriptorSet writes[3] = {};
+    VkWriteDescriptorSet writes[2] = {};
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[0].dstSet = g.ds; writes[0].dstBinding = 0; writes[0].descriptorCount = 1;
     writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     writes[0].pImageInfo = &atlasInfo;
     writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[1].dstSet = g.ds; writes[1].dstBinding = 1; writes[1].descriptorCount = 1;
-    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    writes[1].pImageInfo = &palInfo;
-    writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[2].dstSet = g.ds; writes[2].dstBinding = 2; writes[2].descriptorCount = 1;
-    writes[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    writes[2].pBufferInfo = &rectInfo;
-    vkUpdateDescriptorSets(g.device, 3, writes, 0, nullptr);
+    writes[1].dstSet = g.ds; writes[1].dstBinding = 2; writes[1].descriptorCount = 1;
+    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    writes[1].pBufferInfo = &rectInfo;
+    vkUpdateDescriptorSets(g.device, 2, writes, 0, nullptr);
 
     CreateSpriteBuffer();   // per-frame billboard buffer (uses the same atlas)
 
@@ -1357,6 +1383,8 @@ extern "C" void RB_Vulkan_Init(void)
     CreateDescriptors();       // set layout + sampler (needed by the pipeline layout)
     CreatePipeline();
     CreateCommandsAndSync();
+    InitPaletteAndDescriptorSet();  // PLAYPAL LUT + descriptor set, so the HUD/menu
+                                    // overlay composites from the first frame (DOOM-0045)
     g.ready = true;
 
     printf("RB_Vulkan_Init: swapchain up (%ux%u, %u images).\n",
@@ -1397,10 +1425,12 @@ extern "C" void RB_Vulkan_SetOverlay(const unsigned char* pixels, int w, int h)
 {
     // Stash this frame's 2D overlay (screens[0]); the actual copy into the GPU
     // image happens in Present, after the fence wait, so the staging buffer is
-    // never written while a prior frame might still read it. The compositor
-    // needs the palette LUT + descriptor set, which the atlas upload owns, so
-    // it only engages once a level has been built (the menu/HUD case).
-    if (!g.ready || !g.atlasReady || !pixels || w <= 0 || h <= 0)
+    // never written while a prior frame might still read it. The palette LUT +
+    // descriptor set are built at init (InitPaletteAndDescriptorSet), so the
+    // compositor engages from the first frame — the title/demo screen before any
+    // level — not only once an atlas has been built (DOOM-0045). g.ready implies
+    // both exist, since RB_Vulkan_Init always creates them.
+    if (!g.ready || !pixels || w <= 0 || h <= 0)
         return;
     if (!g.overlayReady)
         CreateOverlayResources(w, h);

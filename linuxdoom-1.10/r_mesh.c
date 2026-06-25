@@ -437,6 +437,13 @@ static void blit_tile(unsigned char* dst, int dstw, int id, int ox, int oy,
     }
 }
 
+const unsigned char* RB_PlayPal(void)
+{
+    // Palette 0 of the WAD-global PLAYPAL lump (256 RGB triples). Cached, so the
+    // back-end can read it at init -- before any level -- for the overlay LUT.
+    return (const unsigned char*)W_CacheLumpName("PLAYPAL", PU_CACHE);
+}
+
 rb_atlas_t* RB_BuildAtlas(void)
 {
     int total = numtextures + numflats + numspritelumps;

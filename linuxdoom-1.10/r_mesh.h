@@ -120,6 +120,12 @@ rb_atlas_t* RB_BuildAtlas(void);
 
 void RB_FreeAtlas(rb_atlas_t* atlas);
 
+// WAD-global PLAYPAL (palette 0): 256 straight-RGB triples, pointing at the
+// cached lump. The back-end builds its colour LUT from this at init so the 2D
+// HUD/menu overlay can composite from the very first frame -- the title/demo
+// screen, before any level or texture atlas exists (DOOM-0045).
+const unsigned char* RB_PlayPal(void);
+
 // POD camera handed across the seam each frame (RB_Vulkan_RenderView). The C
 // side (r_backend.c) reads the player's view globals and converts to float
 // world units / radians so the C++ back-end needs no DOOM headers. Axes match
