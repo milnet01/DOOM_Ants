@@ -16,8 +16,8 @@
 layout(location = 0) in  vec2 vUV;
 layout(location = 0) out vec4 outColor;
 
-layout(set = 0, binding = 1) uniform sampler2D paletteTex;   // 256x1 PLAYPAL RGB
-layout(set = 0, binding = 3) uniform sampler2D overlayTex;   // R8 screens[0] indices
+layout(set = 0, binding = 0) uniform sampler2D paletteTex;   // 256x1 PLAYPAL RGB
+layout(set = 0, binding = 1) uniform sampler2D overlayTex;   // R8 screens[0] indices
 
 // Transparent key — must match RB_OVERLAY_KEY in r_mesh.h (palette index 251,
 // pure magenta, unused by any DOOM HUD/menu/font art).

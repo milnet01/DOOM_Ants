@@ -230,17 +230,22 @@ struct VulkanState
     uint32_t       skyVertCount     = 0;   // sky verts at the front of spriteVbuf
     rb_view_t      lastView         = {};
 
-    // Paletted texture atlas (DOOM-0008 materials slice). WAD-global and
-    // constant, so it is built and uploaded once and reused across levels.
-    VkImage        atlasImage  = VK_NULL_HANDLE;
-    VkDeviceMemory atlasMemory = VK_NULL_HANDLE;
-    VkImageView    atlasView   = VK_NULL_HANDLE;
+    // Bindless material array (DOOM-0009 build step 1): one R8 palette-index image
+    // per material (wall/flat/sprite), each sized to itself and REPEAT-addressed,
+    // indexed by unified id in the shader. WAD-global and constant — built once,
+    // reused across levels. All N images share one device allocation (a minimal
+    // manual sub-allocator; VMA replaces it before the image count nears the
+    // driver's per-allocation limit). Supersedes the single packed atlas + rect
+    // buffer the Stage-1 raster path used.
+    std::vector<VkImage>     matImages;
+    std::vector<VkImageView> matViews;
+    VkDeviceMemory           matMemory  = VK_NULL_HANDLE;  // one alloc, N images
+    int                      matNumWall = 0;   // id offsets pushed to the shader
+    int                      matNumFlat = 0;   // (flats at numWall, sprites after)
     VkImage        palImage    = VK_NULL_HANDLE;   // 256x1 PLAYPAL LUT
     VkDeviceMemory palMemory   = VK_NULL_HANDLE;
     VkImageView    palView     = VK_NULL_HANDLE;
-    VkSampler      texSampler  = VK_NULL_HANDLE;   // nearest, clamped (manual wrap)
-    VkBuffer       rectBuf     = VK_NULL_HANDLE;   // per-id atlas rects (std430)
-    VkDeviceMemory rectMemory  = VK_NULL_HANDLE;
+    VkSampler      texSampler  = VK_NULL_HANDLE;   // nearest, REPEAT (native tiling)
 
     VkDescriptorSetLayout dsLayout = VK_NULL_HANDLE;
     VkDescriptorPool      dsPool   = VK_NULL_HANDLE;
@@ -269,10 +274,6 @@ struct VulkanState
 
     bool ready        = false;
     bool needRecreate = false;
-
-    // Descriptor indexing (core Vulkan 1.2) gates the bindless array-of-textures
-    // material path (DOOM-0009 build step 1). Probed at device creation.
-    bool hasDescriptorIndexing = false;
 };
 
 VulkanState g;
@@ -459,8 +460,13 @@ void PickPhysicalAndDevice()
     // Bindless materials (DOOM-0009 build step 1) index an array-of-textures by
     // material id. That needs descriptor indexing — core in Vulkan 1.2, which we
     // already target, so we enable it through VkPhysicalDeviceVulkan12Features
-    // rather than the legacy VK_EXT_descriptor_indexing string. Probe first; a
-    // GPU without it keeps the single-atlas path (no crash).
+    // rather than the legacy VK_EXT_descriptor_indexing string. The materials
+    // path is now bindless-only (no atlas fallback), so a device that lacks these
+    // four features cannot run the 3D renderer — fail init clearly, the same way
+    // a non-presenting device does above. This is effectively unreachable on real
+    // hardware: any GPU whose driver exposes Vulkan 1.2 supports all four.
+    // (Graceful probe-time gating so the menu never offers 3D on such a GPU is
+    // tracked separately — see ROADMAP.)
     VkPhysicalDeviceVulkan12Features have12 = {};
     have12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
     VkPhysicalDeviceFeatures2 have2 = {};
@@ -468,31 +474,26 @@ void PickPhysicalAndDevice()
     have2.pNext = &have12;
     vkGetPhysicalDeviceFeatures2(g.phys, &have2);
 
-    g.hasDescriptorIndexing =
+    bool hasDescriptorIndexing =
         have12.runtimeDescriptorArray &&
         have12.shaderSampledImageArrayNonUniformIndexing &&
         have12.descriptorBindingVariableDescriptorCount &&
         have12.descriptorBindingPartiallyBound;
+    if (!hasDescriptorIndexing)
+        I_Error("R_Vulkan: GPU lacks Vulkan 1.2 descriptor indexing "
+                "(runtimeDescriptorArray / nonUniform / variableCount / "
+                "partiallyBound) — the 3D renderer needs bindless materials.");
 
     VkPhysicalDeviceVulkan12Features enable12 = {};
     enable12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
-    if (g.hasDescriptorIndexing)
-    {
-        enable12.runtimeDescriptorArray                     = VK_TRUE;
-        enable12.shaderSampledImageArrayNonUniformIndexing  = VK_TRUE;
-        enable12.descriptorBindingVariableDescriptorCount   = VK_TRUE;
-        enable12.descriptorBindingPartiallyBound            = VK_TRUE;
-    }
-    else
-    {
-        printf("RB_Vulkan: descriptor indexing unsupported — "
-               "bindless materials unavailable, keeping the atlas path.\n");
-        fflush(stdout);
-    }
+    enable12.runtimeDescriptorArray                     = VK_TRUE;
+    enable12.shaderSampledImageArrayNonUniformIndexing  = VK_TRUE;
+    enable12.descriptorBindingVariableDescriptorCount   = VK_TRUE;
+    enable12.descriptorBindingPartiallyBound            = VK_TRUE;
 
     VkDeviceCreateInfo dci = {};
     dci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    dci.pNext = g.hasDescriptorIndexing ? (const void*)&enable12 : nullptr;
+    dci.pNext = &enable12;   // required (we I_Error above if unsupported)
     dci.queueCreateInfoCount = 1;
     dci.pQueueCreateInfos = &qci;
     dci.enabledExtensionCount = 1;
@@ -956,27 +957,42 @@ VkShaderModule MakeShader(const unsigned char* code, unsigned len)
 // shared by both images (the shader wraps UVs itself, so addressing is clamp).
 void CreateDescriptors()
 {
-    VkDescriptorSetLayoutBinding binds[4] = {};
-    binds[0].binding = 0;   // atlas (R8 palette indices)
+    // Three bindings: PLAYPAL LUT (0) + HUD/menu overlay (1) are single images the
+    // title screen needs before any level; the bindless material array (2) is a
+    // variable-count array of every wall/flat/sprite image, written once the atlas
+    // is built (UploadAtlas). The variable-count binding must be the highest, and
+    // PARTIALLY_BOUND lets the set be valid at the title screen with the material
+    // slot still unwritten (the overlay pass never samples it).
+    const uint32_t matCount = (uint32_t)RB_MaterialCount();
+
+    VkDescriptorSetLayoutBinding binds[3] = {};
+    binds[0].binding = 0;   // PLAYPAL LUT
     binds[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     binds[0].descriptorCount = 1;
     binds[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-    binds[1].binding = 1;   // PLAYPAL LUT
+    binds[1].binding = 1;   // 2D HUD/menu overlay (R8 screens[0] indices)
     binds[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     binds[1].descriptorCount = 1;
     binds[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-    binds[2].binding = 2;   // atlas rects (std430 storage buffer)
-    binds[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    binds[2].descriptorCount = 1;
+    binds[2].binding = 2;   // bindless material array (R8 palette-index images)
+    binds[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    binds[2].descriptorCount = matCount;
     binds[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-    binds[3].binding = 3;   // 2D HUD/menu overlay (R8 screens[0] indices)
-    binds[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    binds[3].descriptorCount = 1;
-    binds[3].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorBindingFlags flags[3] = {
+        0, 0,
+        VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT |
+        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT,
+    };
+    VkDescriptorSetLayoutBindingFlagsCreateInfo bfci = {};
+    bfci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+    bfci.bindingCount = 3;
+    bfci.pBindingFlags = flags;
 
     VkDescriptorSetLayoutCreateInfo dlci = {};
     dlci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    dlci.bindingCount = 4;
+    dlci.pNext = &bfci;
+    dlci.bindingCount = 3;
     dlci.pBindings = binds;
     Check(vkCreateDescriptorSetLayout(g.device, &dlci, nullptr, &g.dsLayout),
           "vkCreateDescriptorSetLayout");
@@ -986,9 +1002,9 @@ void CreateDescriptors()
     sci.magFilter = VK_FILTER_NEAREST;          // paletted art: point sampling
     sci.minFilter = VK_FILTER_NEAREST;
     sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-    sci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    sci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sci.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;   // per-image native tiling
+    sci.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     Check(vkCreateSampler(g.device, &sci, nullptr, &g.texSampler), "vkCreateSampler");
 }
 
@@ -1072,7 +1088,8 @@ void CreatePipeline()
     VkPushConstantRange pcr = {};
     pcr.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     pcr.offset = 0;
-    pcr.size = 21 * sizeof(float);   // mat4 MVP + extralight + sky yaw + camera xyz
+    pcr.size = 23 * sizeof(float);   // mat4 MVP + extralight + sky yaw + camera xyz
+                                     // + numWall/numFlat (material-id offsets)
 
     VkPipelineLayoutCreateInfo plci = {};
     plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -1113,7 +1130,7 @@ void CreatePipeline()
     // 2D HUD/menu compositor: own shaders, no vertex input (a full-screen
     // triangle generated from gl_VertexIndex), depth off, drawn last over the
     // 3D scene. Shares this pipeline layout (descriptor set 0 + push range),
-    // sampling the overlay image (binding 3) and PLAYPAL LUT (binding 1).
+    // sampling the overlay image (binding 1) and PLAYPAL LUT (binding 0).
     VkShaderModule ovVert = MakeShader(overlay_vert_spv, overlay_vert_spv_len);
     VkShaderModule ovFrag = MakeShader(overlay_frag_spv, overlay_frag_spv_len);
     VkPipelineShaderStageCreateInfo ovStages[2] = { stages[0], stages[1] };
@@ -1193,10 +1210,11 @@ void CreateSpriteBuffer()
 // Build the WAD-global PLAYPAL colour LUT and the descriptor set at init, BEFORE
 // any level/atlas exists, so the 2D HUD/menu overlay composites from the very
 // first frame (the title/demo screen in Solid/Ultra) instead of only after a
-// level is built (DOOM-0045). The set's atlas (binding 0) and rect (binding 2)
-// slots are filled later by UploadAtlas; the overlay (binding 3) by
-// CreateOverlayResources. overlay.frag samples only the palette (1) and overlay
-// (3) bindings, so the title-screen draw is valid with 0/2 still unwritten.
+// level is built (DOOM-0045). The set's bindless material array (binding 2) is
+// filled later by UploadAtlas; the overlay image (binding 1) by
+// CreateOverlayResources. overlay.frag samples only the palette (0) and overlay
+// (1) bindings, so the title-screen draw is valid with the material array (2)
+// still unwritten — its PARTIALLY_BOUND flag makes that legal.
 // Needs the command pool (CreateSampledImage stages through a one-time buffer),
 // so RB_Vulkan_Init calls this after CreateCommandsAndSync.
 void InitPaletteAndDescriptorSet()
@@ -1216,35 +1234,44 @@ void InitPaletteAndDescriptorSet()
     CreateSampledImage(256, 1, VK_FORMAT_R8G8B8A8_UNORM, lut, sizeof(lut),
                        &g.palImage, &g.palMemory, &g.palView);
 
-    // Descriptor pool + set: three combined-image-samplers (atlas, PLAYPAL, HUD
-    // overlay) + one storage buffer (atlas rects). Allocating the set now reserves
-    // all four binding slots from the pool; atlas/rects/overlay are written when
-    // they arrive (UploadAtlas, CreateOverlayResources).
-    VkDescriptorPoolSize sizes[2] = {};
+    // Descriptor pool + set: every binding is a combined-image-sampler — PLAYPAL
+    // (1) + HUD overlay (1) + the bindless material array (N). The material slots
+    // are reserved now (variable-count = the WAD's material total) but written
+    // when the atlas is built (UploadAtlas); the overlay (binding 1) arrives via
+    // CreateOverlayResources. PLAYPAL (binding 0) is written here so the title
+    // screen composites from the first frame.
+    const uint32_t matCount = (uint32_t)RB_MaterialCount();
+
+    VkDescriptorPoolSize sizes[1] = {};
     sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    sizes[0].descriptorCount = 3;
-    sizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    sizes[1].descriptorCount = 1;
+    sizes[0].descriptorCount = 2 + matCount;
     VkDescriptorPoolCreateInfo dpci = {};
     dpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     dpci.maxSets = 1;
-    dpci.poolSizeCount = 2;
+    dpci.poolSizeCount = 1;
     dpci.pPoolSizes = sizes;
     Check(vkCreateDescriptorPool(g.device, &dpci, nullptr, &g.dsPool), "vkCreateDescriptorPool");
 
+    // The variable-count binding (2) needs its actual size declared at allocation.
+    VkDescriptorSetVariableDescriptorCountAllocateInfo varCount = {};
+    varCount.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO;
+    varCount.descriptorSetCount = 1;
+    varCount.pDescriptorCounts = &matCount;
+
     VkDescriptorSetAllocateInfo dsai = {};
     dsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsai.pNext = &varCount;
     dsai.descriptorPool = g.dsPool;
     dsai.descriptorSetCount = 1;
     dsai.pSetLayouts = &g.dsLayout;
     Check(vkAllocateDescriptorSets(g.device, &dsai, &g.ds), "vkAllocateDescriptorSets");
 
-    // Write the palette LUT (binding 1) now; the overlay needs only this + the
-    // overlay image (binding 3), so the title screen composites immediately.
+    // Write the palette LUT (binding 0) now; the overlay needs only this + the
+    // overlay image (binding 1), so the title screen composites immediately.
     VkDescriptorImageInfo palInfo = { g.texSampler, g.palView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
     VkWriteDescriptorSet write = {};
     write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write.dstSet = g.ds; write.dstBinding = 1; write.descriptorCount = 1;
+    write.dstSet = g.ds; write.dstBinding = 0; write.descriptorCount = 1;
     write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     write.pImageInfo = &palInfo;
     vkUpdateDescriptorSets(g.device, 1, &write, 0, nullptr);
@@ -1252,73 +1279,175 @@ void InitPaletteAndDescriptorSet()
 
 void UploadAtlas()
 {
+    // Reuse the Stage-1 packer purely as a pixel source: it composites each
+    // material (walls, flats, sprites) into one packed buffer and hands back each
+    // tile's origin+size. We re-cut every tile into its own R8 image for the
+    // bindless array; the packed image itself is never uploaded.
     rb_atlas_t* a = RB_BuildAtlas();
-    printf("RB_Vulkan: texture atlas %dx%d (%d walls + %d flats + %d sprites).\n",
-           a->atlasw, a->atlash, a->numwall, a->numflat, a->numsprite);
+    int n = a->numwall + a->numflat + a->numsprite;
+    printf("RB_Vulkan: %d bindless materials (%d walls + %d flats + %d sprites).\n",
+           n, a->numwall, a->numflat, a->numsprite);
     fflush(stdout);
 
-    // Atlas: one channel of raw palette indices. The PLAYPAL LUT (binding 1) and
-    // the descriptor set itself were created at init (InitPaletteAndDescriptorSet)
-    // so the overlay can composite before any level; here we only build the atlas
-    // image + rect buffer and point bindings 0 and 2 at them.
-    CreateSampledImage((uint32_t)a->atlasw, (uint32_t)a->atlash, VK_FORMAT_R8_UNORM,
-                       a->pixels, (VkDeviceSize)a->atlasw * a->atlash,
-                       &g.atlasImage, &g.atlasMemory, &g.atlasView);
+    g.matNumWall = a->numwall;
+    g.matNumFlat = a->numflat;
+    g.matImages.resize(n);
+    g.matViews.resize(n);
 
-    // Rect storage buffer (std430): { vec2 atlasSize; int numWall; int numFlat;
-    // vec4 rects[]; }. Host-visible — read-only in the shader, written once.
-    int   nrect = a->numwall + a->numflat + a->numsprite;
-    VkDeviceSize rectBytes = 16 + (VkDeviceSize)nrect * sizeof(rb_rect_t);
+    // One staging buffer holds every tile's palette indices back to back, so all
+    // N copies ride a single command submission — a per-image submit+wait would be
+    // thousands of GPU stalls at level load. Each tile's offset is 4-byte aligned
+    // (vkCmdCopyBufferToImage requires bufferOffset % 4 == 0).
+    std::vector<VkDeviceSize> texOffset(n);
+    VkDeviceSize stageBytes = 0;
+    for (int i = 0; i < n; i++)
+    {
+        texOffset[i] = stageBytes;
+        VkDeviceSize sz = (VkDeviceSize)(int)a->rects[i].w * (int)a->rects[i].h;
+        stageBytes += (sz + 3) & ~(VkDeviceSize)3;
+    }
 
-    VkBufferCreateInfo bci = {};
-    bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bci.size = rectBytes;
-    bci.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-    bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    Check(vkCreateBuffer(g.device, &bci, nullptr, &g.rectBuf), "vkCreateBuffer(rects)");
+    VkBufferCreateInfo sbci = {};
+    sbci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    sbci.size = stageBytes;
+    sbci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    sbci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VkBuffer staging = VK_NULL_HANDLE;
+    Check(vkCreateBuffer(g.device, &sbci, nullptr, &staging), "vkCreateBuffer(mat staging)");
 
-    VkMemoryRequirements req = {};
-    vkGetBufferMemoryRequirements(g.device, g.rectBuf, &req);
+    VkMemoryRequirements sreq = {};
+    vkGetBufferMemoryRequirements(g.device, staging, &sreq);
+    VkMemoryAllocateInfo smai = {};
+    smai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    smai.allocationSize = sreq.size;
+    smai.memoryTypeIndex = FindMemoryType(sreq.memoryTypeBits,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    VkDeviceMemory stagingMem = VK_NULL_HANDLE;
+    Check(vkAllocateMemory(g.device, &smai, nullptr, &stagingMem), "vkAllocateMemory(mat staging)");
+    Check(vkBindBufferMemory(g.device, staging, stagingMem, 0), "vkBindBufferMemory(mat staging)");
+
+    // Cut each tile out of the packed atlas, row by row, into its staging slot.
+    unsigned char* sp = nullptr;
+    Check(vkMapMemory(g.device, stagingMem, 0, stageBytes, 0, (void**)&sp), "vkMapMemory(mat staging)");
+    for (int i = 0; i < n; i++)
+    {
+        int ox = (int)a->rects[i].ox, oy = (int)a->rects[i].oy;
+        int w  = (int)a->rects[i].w,  h  = (int)a->rects[i].h;
+        unsigned char* dst = sp + texOffset[i];
+        for (int row = 0; row < h; row++)
+            std::memcpy(dst + (size_t)row * w,
+                        a->pixels + (size_t)(oy + row) * a->atlasw + ox,
+                        (size_t)w);
+    }
+    vkUnmapMemory(g.device, stagingMem);
+
+    // Create all N images, then back them with ONE device allocation (a minimal
+    // manual sub-allocator: each image binds at its own aligned offset). This
+    // keeps the per-allocation count at 1 instead of N, well clear of the driver's
+    // limit on big WADs; VMA does this properly in a later increment.
+    VkDeviceSize memBytes = 0;
+    std::vector<VkDeviceSize> imgOffset(n);
+    uint32_t memTypeBits = 0xffffffffu;
+    for (int i = 0; i < n; i++)
+    {
+        VkImageCreateInfo ici = {};
+        ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        ici.imageType = VK_IMAGE_TYPE_2D;
+        ici.format = VK_FORMAT_R8_UNORM;
+        ici.extent = { (uint32_t)(int)a->rects[i].w, (uint32_t)(int)a->rects[i].h, 1 };
+        ici.mipLevels = 1;
+        ici.arrayLayers = 1;
+        ici.samples = VK_SAMPLE_COUNT_1_BIT;
+        ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+        ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        Check(vkCreateImage(g.device, &ici, nullptr, &g.matImages[i]), "vkCreateImage(material)");
+
+        VkMemoryRequirements req = {};
+        vkGetImageMemoryRequirements(g.device, g.matImages[i], &req);
+        memBytes = (memBytes + req.alignment - 1) & ~(req.alignment - 1);
+        imgOffset[i] = memBytes;
+        memBytes += req.size;
+        memTypeBits &= req.memoryTypeBits;
+    }
+
     VkMemoryAllocateInfo mai = {};
     mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    mai.allocationSize = req.size;
-    mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    Check(vkAllocateMemory(g.device, &mai, nullptr, &g.rectMemory), "vkAllocateMemory(rects)");
-    Check(vkBindBufferMemory(g.device, g.rectBuf, g.rectMemory, 0), "vkBindBufferMemory(rects)");
+    mai.allocationSize = memBytes;
+    mai.memoryTypeIndex = FindMemoryType(memTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    Check(vkAllocateMemory(g.device, &mai, nullptr, &g.matMemory), "vkAllocateMemory(materials)");
+    for (int i = 0; i < n; i++)
+        Check(vkBindImageMemory(g.device, g.matImages[i], g.matMemory, imgOffset[i]),
+              "vkBindImageMemory(material)");
 
-    void* mapped = nullptr;
-    Check(vkMapMemory(g.device, g.rectMemory, 0, rectBytes, 0, &mapped), "vkMapMemory(rects)");
+    // One command buffer: all UNDEFINED->TRANSFER_DST barriers, all copies, then
+    // all TRANSFER_DST->SHADER_READ barriers.
+    std::vector<VkImageMemoryBarrier> toDst(n), toRead(n);
+    for (int i = 0; i < n; i++)
     {
-        unsigned char* p = (unsigned char*)mapped;
-        float  size[2]  = { (float)a->atlasw, (float)a->atlash };
-        int    numWall  = a->numwall;
-        int    numFlat  = a->numflat;
-        std::memcpy(p + 0, size, sizeof(size));
-        std::memcpy(p + 8, &numWall, sizeof(numWall));
-        std::memcpy(p + 12, &numFlat, sizeof(numFlat));
-        std::memcpy(p + 16, a->rects, (size_t)nrect * sizeof(rb_rect_t));
+        VkImageMemoryBarrier b = {};
+        b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = g.matImages[i];
+        b.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        b.srcAccessMask = 0;
+        b.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        toDst[i] = b;
+        b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        toRead[i] = b;
     }
-    vkUnmapMemory(g.device, g.rectMemory);
 
-    // Point the existing set's atlas (binding 0) + rect (binding 2) slots at the
-    // freshly-built resources. The set, sampler, and PLAYPAL LUT (binding 1) were
-    // created at init (InitPaletteAndDescriptorSet).
-    VkDescriptorImageInfo atlasInfo = { g.texSampler, g.atlasView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-    VkDescriptorBufferInfo rectInfo = { g.rectBuf, 0, VK_WHOLE_SIZE };
+    VkCommandBuffer cb = BeginOneTime();
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         0, 0, nullptr, 0, nullptr, (uint32_t)n, toDst.data());
+    for (int i = 0; i < n; i++)
+    {
+        VkBufferImageCopy region = {};
+        region.bufferOffset = texOffset[i];
+        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.imageSubresource.layerCount = 1;
+        region.imageExtent = { (uint32_t)(int)a->rects[i].w, (uint32_t)(int)a->rects[i].h, 1 };
+        vkCmdCopyBufferToImage(cb, staging, g.matImages[i],
+                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    }
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         0, 0, nullptr, 0, nullptr, (uint32_t)n, toRead.data());
+    EndOneTime(cb);
 
-    VkWriteDescriptorSet writes[2] = {};
-    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[0].dstSet = g.ds; writes[0].dstBinding = 0; writes[0].descriptorCount = 1;
-    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    writes[0].pImageInfo = &atlasInfo;
-    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[1].dstSet = g.ds; writes[1].dstBinding = 2; writes[1].descriptorCount = 1;
-    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    writes[1].pBufferInfo = &rectInfo;
-    vkUpdateDescriptorSets(g.device, 2, writes, 0, nullptr);
+    vkDestroyBuffer(g.device, staging, nullptr);
+    vkFreeMemory(g.device, stagingMem, nullptr);
 
-    CreateSpriteBuffer();   // per-frame billboard buffer (uses the same atlas)
+    // Image views + one array write filling the bindless binding (2) slots [0,n).
+    std::vector<VkDescriptorImageInfo> infos(n);
+    for (int i = 0; i < n; i++)
+    {
+        VkImageViewCreateInfo vci = {};
+        vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        vci.image = g.matImages[i];
+        vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        vci.format = VK_FORMAT_R8_UNORM;
+        vci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        Check(vkCreateImageView(g.device, &vci, nullptr, &g.matViews[i]), "vkCreateImageView(material)");
+        infos[i] = { g.texSampler, g.matViews[i], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+    }
+    VkWriteDescriptorSet warr = {};
+    warr.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    warr.dstSet = g.ds;
+    warr.dstBinding = 2;
+    warr.dstArrayElement = 0;
+    warr.descriptorCount = (uint32_t)n;
+    warr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    warr.pImageInfo = infos.data();
+    vkUpdateDescriptorSets(g.device, 1, &warr, 0, nullptr);
+
+    CreateSpriteBuffer();   // per-frame billboard buffer (uses the material array)
 
     RB_FreeAtlas(a);
     g.atlasReady = true;
@@ -1326,7 +1455,7 @@ void UploadAtlas()
 
 // Create the HUD/menu overlay's GPU resources (device-local R8 image + a
 // persistently-mapped staging buffer) sized to the engine's screens[0], and
-// point descriptor binding 3 at it. Lazy and one-shot: called the first time an
+// point descriptor binding 1 at it. Lazy and one-shot: called the first time an
 // overlay arrives (RB_Vulkan_SetOverlay) once the descriptor set exists. The
 // image is left UNDEFINED here; the per-frame copy in Present fills + transitions
 // it. screens[0] is a fixed size for the session, so this runs exactly once.
@@ -1383,11 +1512,11 @@ void CreateOverlayResources(int w, int h)
     vci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
     Check(vkCreateImageView(g.device, &vci, nullptr, &g.overlayView), "vkCreateImageView(overlay)");
 
-    // Point descriptor binding 3 at the overlay image (the set already exists).
+    // Point descriptor binding 1 at the overlay image (the set already exists).
     VkDescriptorImageInfo ovInfo = { g.texSampler, g.overlayView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
     VkWriteDescriptorSet write = {};
     write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write.dstSet = g.ds; write.dstBinding = 3; write.descriptorCount = 1;
+    write.dstSet = g.ds; write.dstBinding = 1; write.descriptorCount = 1;
     write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     write.pImageInfo = &ovInfo;
     vkUpdateDescriptorSets(g.device, 1, &write, 0, nullptr);
@@ -1676,16 +1805,20 @@ extern "C" void RB_Vulkan_Present(void)
         // shade) and the view yaw (mesh.frag pans the sky by it). Push constants
         // and descriptor sets are layout-scoped, so they outlive the pipeline
         // binds below — set them once for both the sky and world pipelines.
-        float pcData[21];
+        float pcData[23];
         std::memcpy(pcData, g.viewProj, 16 * sizeof(float));
         pcData[16] = g.lastView.extralight;
         pcData[17] = g.lastView.angle;
         pcData[18] = g.lastView.x;     // camera world pos: distance light falloff
         pcData[19] = g.lastView.y;
         pcData[20] = g.lastView.z;
+        // Material-id offsets (ints, reinterpreted into the float buffer): the
+        // fragment shader maps per-category texnum -> unified bindless-array id.
+        std::memcpy(&pcData[21], &g.matNumWall, sizeof(int));
+        std::memcpy(&pcData[22], &g.matNumFlat, sizeof(int));
         vkCmdPushConstants(g.cmd, g.pipelineLayout,
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, 21 * sizeof(float), pcData);
+                           0, 23 * sizeof(float), pcData);
 
         VkDeviceSize off = 0;
         // Sky first, behind everything: depth-off pipeline, the 6 verts at the
@@ -1782,15 +1915,13 @@ extern "C" void RB_Vulkan_Shutdown(void)
     if (g.spriteVbuf)       vkDestroyBuffer(g.device, g.spriteVbuf, nullptr);
     if (g.spriteVbufMemory) vkFreeMemory(g.device, g.spriteVbufMemory, nullptr);
 
-    // Texture atlas resources.
+    // Material + palette resources.
     if (g.dsPool)      vkDestroyDescriptorPool(g.device, g.dsPool, nullptr);
     if (g.dsLayout)    vkDestroyDescriptorSetLayout(g.device, g.dsLayout, nullptr);
     if (g.texSampler)  vkDestroySampler(g.device, g.texSampler, nullptr);
-    if (g.rectBuf)     vkDestroyBuffer(g.device, g.rectBuf, nullptr);
-    if (g.rectMemory)  vkFreeMemory(g.device, g.rectMemory, nullptr);
-    if (g.atlasView)   vkDestroyImageView(g.device, g.atlasView, nullptr);
-    if (g.atlasImage)  vkDestroyImage(g.device, g.atlasImage, nullptr);
-    if (g.atlasMemory) vkFreeMemory(g.device, g.atlasMemory, nullptr);
+    for (VkImageView v : g.matViews)  if (v) vkDestroyImageView(g.device, v, nullptr);
+    for (VkImage    im : g.matImages) if (im) vkDestroyImage(g.device, im, nullptr);
+    if (g.matMemory)   vkFreeMemory(g.device, g.matMemory, nullptr);
     if (g.palView)     vkDestroyImageView(g.device, g.palView, nullptr);
     if (g.palImage)    vkDestroyImage(g.device, g.palImage, nullptr);
     if (g.palMemory)   vkFreeMemory(g.device, g.palMemory, nullptr);

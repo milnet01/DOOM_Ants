@@ -1,12 +1,16 @@
 #version 450
+#extension GL_EXT_nonuniform_qualifier : require
 //
 // DOOM-0008 Stage 1 — primary-visibility fragment shader (per-texel materials).
 //
-// Each surface is sampled from a paletted atlas: the texture's atlas rect is
-// looked up by a unified id (walls first, then flats), the UV is tiled within
-// the rect, an 8-bit palette index is read from the R8 atlas, and that index is
-// decoded to colour through the PLAYPAL lookup texture. Keeping the art paletted
-// (index + LUT, not pre-decoded RGB) preserves DOOM's exact colours.
+// Each surface samples one paletted material from a bindless array of R8 images
+// (DOOM-0009 build step 1): the surface's unified id (walls first, then flats,
+// then sprites) indexes materialTex[id], native REPEAT tiling wraps the UV, an
+// 8-bit palette index is read, and that index is decoded to colour through the
+// PLAYPAL lookup texture. One image per material (its own size, REPEAT address
+// mode) replaces the single packed atlas + manual fract() wrap, so the future
+// ray/path tracer can light each surface's real material by hit id. Keeping the
+// art paletted (index + LUT, not pre-decoded RGB) preserves DOOM's exact colours.
 //
 // This is still a *bring-up* shader: the fixed-direction Lambert term below is
 // placeholder shading to make the 3D read as 3D, NOT a tuned rendering curve. It
@@ -28,8 +32,9 @@ layout(location = 6) in float vDist;       // world distance camera->fragment
 layout(location = 0) out vec4 outColor;
 
 // Must match mesh.vert's block byte-for-byte (shared push-constant range). The
-// sky path reads pc.yaw to pan the panorama; eyeX/Y/Z are vertex-only (folded
-// into vDist there); the rest are vertex-only.
+// sky path reads pc.yaw to pan the panorama; numWall/numFlat give the material-id
+// offsets (walls|flats|sprites); eyeX/Y/Z are vertex-only (folded into vDist
+// there); the rest are vertex-only.
 layout(push_constant) uniform Push {
     mat4  mvp;
     float extralight;
@@ -37,19 +42,17 @@ layout(push_constant) uniform Push {
     float eyeX;
     float eyeY;
     float eyeZ;
+    int   numWall;      // flats start at this id; sprites at numWall + numFlat
+    int   numFlat;
 } pc;
 
-layout(set = 0, binding = 0) uniform sampler2D atlasTex;     // R8 palette indices
-layout(set = 0, binding = 1) uniform sampler2D paletteTex;   // 256x1 PLAYPAL RGB
+layout(set = 0, binding = 0) uniform sampler2D paletteTex;   // 256x1 PLAYPAL RGB
 
-// Per-texture atlas rects, indexed by the unified id. std430 so each rb_rect_t
-// (ox,oy,w,h) maps to one vec4.
-layout(set = 0, binding = 2) readonly buffer Atlas {
-    vec2 atlasSize;   // atlas dimensions in texels
-    int  numWall;     // flats start at this id
-    int  numFlat;     // sprites start at numWall + numFlat
-    vec4 rects[];     // ox, oy, w, h  (texels)
-} atlas;
+// Bindless material array: one R8 palette-index image per material (wall/flat/
+// sprite), sized to itself, REPEAT-addressed. Indexed by the unified id; the id
+// is per-fragment-divergent within a draw, so every access is nonuniformEXT-
+// qualified. Unsized -> runtimeDescriptorArray (core Vulkan 1.2).
+layout(set = 0, binding = 2) uniform sampler2D materialTex[];
 
 const int FLAG_FLAT    = 0x1;   // matches RB_MESH_FLAT in r_mesh.h
 const int FLAG_MASKED  = 0x2;   // matches RB_MESH_MASKED in r_mesh.h
@@ -70,35 +73,32 @@ void main()
     // the muzzle flash never touches it.
     if ((vFlags & FLAG_SKY) != 0)
     {
-        vec4  rect  = atlas.rects[vTexnum];
+        int   id    = vTexnum;                  // the sky is a wall texture
+        vec2  sz    = vec2(textureSize(materialTex[nonuniformEXT(id)], 0));
         float ndcX  = vScreenUV.x * 2.0 - 1.0;
         // DOOM's sky column is viewangle + xtoviewangle[x], and xtoviewangle is
         // +left/-right; ndcX is -left/+right, so the screen term is -atan(ndcX).
         float ang   = pc.yaw - atan(ndcX);
-        float col   = ang / (PI * 0.5) * rect.z;
-        float row   = clamp(vScreenUV.y * 2.0 * rect.w, 0.0, rect.w - 1.0);
-        vec2  uv    = (rect.xy + vec2(mod(col, rect.z), row)) / atlas.atlasSize;
-        float idx   = texture(atlasTex, uv).r * 255.0;
+        float col   = ang / (PI * 0.5) * sz.x;  // REPEAT wraps the column
+        float row   = clamp(vScreenUV.y * 2.0 * sz.y, 0.0, sz.y - 1.0);
+        vec2  uv    = vec2(col, row) / sz;      // u tiles (REPEAT), v stays clamped
+        float idx   = texture(materialTex[nonuniformEXT(id)], uv).r * 255.0;
         outColor    = vec4(texture(paletteTex, vec2((idx + 0.5) / 256.0, 0.5)).rgb, 1.0);
         return;
     }
 
-    // Unified atlas id: walls [0,numWall), flats [numWall,numWall+numFlat),
+    // Unified material id: walls [0,numWall), flats [numWall,numWall+numFlat),
     // sprites after. The vertex's texnum is the per-category index.
     int id;
-    if ((vFlags & FLAG_SPRITE) != 0)    id = atlas.numWall + atlas.numFlat + vTexnum;
-    else if ((vFlags & FLAG_FLAT) != 0) id = atlas.numWall + vTexnum;
+    if ((vFlags & FLAG_SPRITE) != 0)    id = pc.numWall + pc.numFlat + vTexnum;
+    else if ((vFlags & FLAG_FLAT) != 0) id = pc.numWall + vTexnum;
     else                                id = vTexnum;
-    vec4 rect = atlas.rects[id];
 
-    // Tile the UV within the texture, then map into the atlas. fract keeps the
-    // sample strictly inside the rect, so nearest sampling never bleeds across
-    // tile borders. (Sprite UVs are pre-inset half a texel, so fract is a no-op
-    // for them and the sample never reaches a neighbouring tile.)
-    vec2 local    = fract(vUV / rect.zw);
-    vec2 atlasUV  = (rect.xy + local * rect.zw) / atlas.atlasSize;
-
-    float index   = texture(atlasTex, atlasUV).r * 255.0;
+    // Native REPEAT tiling: divide the raw texel UV by the material's own size
+    // and let the sampler wrap. (Sprite UVs are pre-inset half a texel and stay
+    // in range, so REPEAT is a no-op for them — no bleed across a tile border.)
+    vec2  sz      = vec2(textureSize(materialTex[nonuniformEXT(id)], 0));
+    float index   = texture(materialTex[nonuniformEXT(id)], vUV / sz).r * 255.0;
 
     // Sprites and two-sided masked mid-walls (grates/fences) store transparency
     // as palette index 0 (the gaps between posts); drop those texels so they

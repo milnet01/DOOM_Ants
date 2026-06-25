@@ -17,6 +17,8 @@ layout(push_constant) uniform Push {
     float eyeX;         // camera world position (separate floats: tight push-
     float eyeY;         // constant packing, no vec3 16-byte alignment hole);
     float eyeZ;         // drives the distance light falloff in the fragment shader
+    int   numWall;      // material-id offsets (fragment-only; the vertex stage
+    int   numFlat;      // ignores them, but the block must match mesh.frag's)
 } pc;
 
 layout(location = 0) in vec3  inPos;

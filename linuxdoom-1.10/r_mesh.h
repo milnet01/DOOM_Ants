@@ -139,6 +139,14 @@ rb_atlas_t* RB_BuildAtlas(void);
 
 void RB_FreeAtlas(rb_atlas_t* atlas);
 
+// Total material count: wall textures + flats + sprite lumps, the size of the
+// bindless texture array (DOOM-0009 build step 1). WAD-global and known right
+// after R_Init, so the C++ back-end can size the variable-count descriptor array
+// at device-init time — before the atlas itself is built — without crossing the
+// seam to the DOOM texture globals. Matches the id ordering RB_BuildAtlas packs:
+// walls [0,numwall), flats next, sprites last.
+int RB_MaterialCount(void);
+
 // WAD-global PLAYPAL (palette 0): 256 straight-RGB triples, pointing at the
 // cached lump. The back-end builds its colour LUT from this at init so the 2D
 // HUD/menu overlay can composite from the very first frame -- the title/demo

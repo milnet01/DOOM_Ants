@@ -556,6 +556,12 @@ rb_atlas_t* RB_BuildAtlas(void)
     return atlas;
 }
 
+int RB_MaterialCount(void)
+{
+    // Same set RB_BuildAtlas packs, in the same id order (walls, flats, sprites).
+    return numtextures + numflats + numspritelumps;
+}
+
 void RB_FreeAtlas(rb_atlas_t* atlas)
 {
     if (!atlas)
