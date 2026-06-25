@@ -199,7 +199,7 @@ static void I_PollGamepad(void)
     int		buttons = 0;
     boolean	b_pressed;
     extern boolean menuactive;          // m_menu.c: lets B (Circle) close the menu
-    static boolean strafe_r_held, strafe_l_held, esc_held, back_held;
+    static boolean strafe_r_held, strafe_l_held, esc_held, back_held, map_held;
 
     if (!gamepad)
 	return;
@@ -246,8 +246,9 @@ static void I_PollGamepad(void)
 	|| SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)
 	|| lt > GP_TRIGGER_THRESH)
 	buttons |= 4;
-    if (SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_X)
-	|| SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_Y))
+    // Square (X) = use/open. Triangle (Y) is no longer a second use button; it
+    // toggles the automap via the KEY_TAB edge posted below.
+    if (SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_X))
 	buttons |= 8;
     event.data1 = buttons;
 
@@ -263,6 +264,13 @@ static void I_PollGamepad(void)
 	SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_START)
 	|| SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_BACK),
 	&esc_held, KEY_ESCAPE);
+
+    // Triangle (Y) toggles the automap. KEY_TAB is the engine's automap key
+    // (AM_STARTKEY/AM_ENDKEY in am_map.c); posting it as an edge means one press
+    // opens the map and the next closes it -- same open/close toggle as Escape.
+    I_PostKeyEdge(
+	SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_Y),
+	&map_held, KEY_TAB);
 
     // B (Circle) is "back" while a menu is open: M_Responder backs out one level
     // and closes when there is none left. In play (no menu) B stays strafe (bit1).

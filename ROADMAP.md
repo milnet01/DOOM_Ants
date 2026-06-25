@@ -566,3 +566,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** In the 3D renderers the wall above DOOM's outdoor exit door was see-through; now the lintel renders like Classic.
   Kind: fix.
   Source: in-session-2026-06-25.
+
+- ✅ [DOOM-0063] **Map the controller Triangle (Y) button to toggle the automap.**
+  User request: a controller button to show/hide the automap (PS4 Triangle). i_video.c I_PollGamepad previously mapped both Square (X) and Triangle (Y) to "use" (bit3). Dropped Y from the use mask (X still opens doors) and posts the engine's automap key (KEY_TAB == AM_STARTKEY/AM_ENDKEY) as an edge via I_PostKeyEdge, so one press opens the map and the next closes it -- same open/close-toggle contract as Start->Escape. Built clean.
+  **Layman:** Press Triangle on the PS4 pad to open the map; press it again to close it.
+  Kind: feature.
+  Source: user-request-2026-06-25.

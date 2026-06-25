@@ -8,6 +8,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Map the controller Triangle (Y) button to toggle the automap.** (DOOM-0063)
+  Press Triangle on the PS4 pad to open the map; press it again to close it.
+
 - **Let the controller Circle (B) button close an open menu.** (DOOM-0056)
   Circle on the controller now backs out / closes the menu, like Start does.
 
