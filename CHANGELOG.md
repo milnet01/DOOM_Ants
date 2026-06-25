@@ -54,6 +54,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Faithful 3D lighting — ceilings no longer render black in Solid/Ultra (DOOM-0069)**
+  Removed a non-canonical directional key light from the mesh fragment shader. Classic DOOM shades by sector light + distance only, so floors and ceilings at the same light/distance now match; previously down-facing ceilings were darkened ~40% and went black in dim sectors (the courtyard-overhang band).
+
 - **Stray distant floor/ceiling planes in the 3D outdoor view.** (DOOM-0065)
   In the 3D renderers a dark slab appears across the distance outdoors where Classic shows open sky.
 

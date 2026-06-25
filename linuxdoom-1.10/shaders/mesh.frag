@@ -109,19 +109,22 @@ void main()
 
     vec3  albedo  = texture(paletteTex, vec2((index + 0.5) / 256.0, 0.5)).rgb;
 
-    vec3  n     = normalize(vNormal);
-    vec3  L     = normalize(vec3(0.3, 0.4, 0.85));   // arbitrary key direction
-    float diff  = max(dot(n, L), 0.0);
-
-    // DOOM-style distance light diminishing: far surfaces fade toward dark, the
-    // depth cue the flat sector-light pass lacks (near stays at full sector
-    // light, so this adds near/far contrast rather than darkening everything).
-    // The weapon psprite is NDC (vDist meaningless), so it keeps full brightness.
+    // Classic DOOM shades every surface by sector light + distance ONLY -- there
+    // is no normal/directional term -- so a floor and a ceiling at the same
+    // sector light and distance read equally bright. An earlier Lambert key
+    // light here (0.55 + 0.45*dot(N,L)) dropped down-facing ceilings to ~0.55x
+    // and pushed dim ones to black, while floors sat near 0.93x (DOOM-0069);
+    // faithful lighting omits it. (Wall "fake contrast" -- a small walls-only
+    // +/-1 light-level step on axis-aligned segs -- is the only orientation
+    // effect DOOM has; it belongs in a per-vertex build-time pass, not here.)
+    //
+    // DOOM-style distance diminishing: far surfaces fade toward dark (near keeps
+    // full sector light). The weapon psprite is NDC, so vDist is meaningless there.
     float distLight = 1.0;
     if ((vFlags & FLAG_PSPRITE) == 0)
         distLight = clamp(1.0 - vDist / 3000.0, 0.35, 1.0);
 
-    float shade = vLight * distLight * (0.55 + 0.45 * diff);
+    float shade = vLight * distLight;
 
     outColor = vec4(albedo * shade, 1.0);
 }
