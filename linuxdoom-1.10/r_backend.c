@@ -35,8 +35,6 @@
 #include "v_video.h"    // screens[] (the paletted 2D overlay buffer)
 #include "st_stuff.h"   // ST_Start (force a full status-bar redraw on switch)
 
-extern boolean setsizeneeded;   // r_main.c: forces a view-size + border redraw
-
 // A level is loaded once the BSP segs exist (r_state.h). Used by RB_Init to
 // catch up the scene build when a map was loaded before the back-end came up
 // (the -warp autostart path: G_InitNew runs P_SetupLevel before D_DoomLoop).
@@ -264,10 +262,11 @@ void RB_SetMode(rendermode_t mode)
 
     // screens[0] (the paletted 2D buffer) is shared across back-ends and carries
     // stale pixels across the hand-off -- the 3D compositor's magenta key colour
-    // and any half-drawn menu -- which the next mode would show as ghosting (seen
-    // switching out of Solid/Ultra). Wipe it and force a full view/border/HUD
-    // redraw so the first frame in the new mode is clean.
+    // and any half-drawn menu. Wipe it so the next mode starts clean, and force a
+    // full status-bar repaint. We deliberately do NOT force setsizeneeded here:
+    // recomputing the view size drives the hi-res view-border + visplane path,
+    // which has latent DOOM-0027 bugs that crashed Classic on switch (DOOM-0055).
+    // The view tables stay valid from startup, so Classic renders without it.
     memset(screens[0], 0, SCREENWIDTH * SCREENHEIGHT);
-    setsizeneeded = true;   // recompute the view window + redraw the border
     ST_Start();             // full status-bar repaint (sets st_firsttime)
 }
