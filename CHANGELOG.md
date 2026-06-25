@@ -42,6 +42,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Classic hi-res floors no longer smear or crash (DOOM-0055)**
+  At the sharper 640x400 resolution the floor and ceiling could smear during
+  movement or close the game; the renderer's floor/ceiling row tracking is now
+  widened to handle the taller picture (the classic 1997 limitation it warned
+  about). Fixes the floor rendering and the windowed-mode crash.
+
 - **Menu now shows when booting straight into a 3D renderer (DOOM-0045)**
   Launching directly into the Solid/Ultra 3D renderer previously showed a
   blank screen with no title or menu until a level loaded; the 2D menu now
