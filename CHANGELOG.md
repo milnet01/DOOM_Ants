@@ -42,6 +42,10 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Classic in-level menu pages no longer smear together (DOOM-0053)**
+  Navigating the in-game menu in the Classic renderer left previous pages'
+  text on screen; each page now draws over a freshly redrawn frame.
+
 - **Sound effects no longer drowned out by the music (DOOM-0047)**
   Music plays on a separate, louder audio device than the sound effects;
   its volume is now capped so effects stay audible underneath it.

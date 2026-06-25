@@ -483,20 +483,28 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: fix.
   Source: in-session-2026-06-25.
 
-- 📋 [DOOM-0052] **Close black gaps in floor/wall geometry near doorways in the 3D view.**
+- 🚧 [DOOM-0052] **Close black gaps in floor/wall geometry near doorways in the 3D view.**
   Found 2026-06-25 (user testing, screenshots). Black triangular gaps appear in the floor/walls around some doorways in Solid/Ultra -- void showing through where a cap or wall triangle is missing. Likely interacts with the DOOM-0049 moving-sector re-height (a moving plane exposes an edge that was zero-height / not emitted at build, per the known DOOM-0049 limitation) and/or a BSP floor-cap carve gap at door-sector boundaries. Investigate against r_mesh.c emit_wall/emit_subsector_caps and the DOOM-0049 zero-height-wall note; reproduce on a specific doorway. Distinct from the (accepted) texture stretch on moving faces.
   **Layman:** Some doorways show black wedges where floor/wall should be.
   Kind: fix.
   Source: in-session-2026-06-25.
+  Candidate fix 2026-06-25 (commit 0b82c32): the door/lift jamb walls were dropped by emit_wall's zero-height guard (a closed door collapses its own walls to zero), so the doorway side was a void hole in 3D. Now emit zero-height walls (degenerate, drawn only once DOOM-0049 grows them). Pending on-screen verify that the door-side void is gone. Follow-up: jamb texture stretches when grown (zero-span V); the bottom-centre floor wedge near the camera is still open and may be a separate carve/projection issue."
 
-- 📋 [DOOM-0053] **Fix in-game menu text ghosting in the Classic renderer (hi-res).**
+- ✅ [DOOM-0053] **Fix in-game menu text ghosting in the Classic renderer (hi-res).**
   Found 2026-06-25 (user testing, after an Ultra->Classic mid-game switch). Navigating the in-game Esc menu in Classic leaves previous pages' text un-erased -- main-menu and Options text accumulate over the view (SAVE GAME / READ THIS! / QUIT GAME / MOUSE SENSITIVITY / SOUND VOLUME all at once). Investigation (Explore agent): the in-game menu-erase relies on R_RenderPlayerView redrawing the view window each frame to overwrite menu pixels, plus R_DrawViewBorder for the border; R_DrawViewBorder early-returns at fullscreen (scaledviewwidth==SCREENWIDTH), so the view re-fill is the only eraser for the view region. Under DOOM-0027 hi-res, scaledviewwidth/viewwindow are physical units while the d_main.c:294 gate compares to the literal 320 -- verify the view actually re-renders and fully fills its window after a switch to Classic (viewactive / setsizeneeded / buffer re-init). Needs a careful, iteratively-verified fix (candidate: clear the view-window region of screens[0] before R_RenderPlayerView, or correct the fullscreen erase gate). Solid/Ultra switching is clean (DOOM-0051); Classic is the remaining mode.
   **Layman:** In Classic mode, menu pages smear over each other as you navigate.
   Kind: fix.
   Source: in-session-2026-06-25.
+  Resolved (2026-06-25, commit 30090e7, user-confirmed): the in-level Esc menu in Classic no longer smears pages together. While a menu is open in a level in Classic, D_Display now drives the full view/border/background redraw a screen-size change triggers, plus a forced status-bar repaint, so each page lands on a clean frame; scoped to Classic+GS_LEVEL+menuactive. NB: a separate Classic hi-res floor/visplane smear during gameplay (no menu) is tracked as DOOM-0055 -- not this menu fix."
 
 - 💭 [DOOM-0054] **Integrate RetroAchievements (unlock achievements while playing).**
   User request 2026-06-25. Integrate RetroAchievements: hash the loaded IWAD/PWAD to identify the game, log in to the RA service, and unlock achievements by watching game state (players[], mobjs, level/secret/kill counters) against RA's trigger definitions; support hardcore mode + leaderboards. Use rcheevos -- RA's official client library (MIT, GPL-v2-compatible) -- for the protocol, hashing, and trigger evaluation, so we don't reimplement the network/achievement logic. Design points to settle: account/network handling and offline behaviour, the memory-inspection hooks into DOOM's game state, an opt-in toggle, and keeping it out of the core game loop's way. Sizable networked feature; likely Phase 3+. Captured now per request.
   **Layman:** Earn RetroAchievements in DOOM_Ants like an emulator does.
   Kind: feature.
   Source: user-request-2026-06-25.
+
+- 📋 [DOOM-0055] **Fix Classic hi-res floor/visplane smearing and a stray floating floor polygon.**
+  Found 2026-06-25 (user testing, Classic gameplay, no menu open). The floor (visplanes) leaves smear/ghost stripes during movement and a stray floor polygon appears in the air. Almost certainly a DOOM-0027 hi-res software-renderer bug: the visplane fill or the screens[0] view fill doesn't cover every physical pixel at hi-res (integer y-scaling gaps), so stale pixels persist between frames -- likely the SAME root cause as the Classic menu ghosting (DOOM-0053), which the full-redraw workaround masked for menus only. Distinct from the 3D back-ends (they recomposite each frame). Investigate r_plane.c R_DrawPlanes / R_MakeSpans and the hi-res y-mapping; the proper fix is a complete per-pixel fill rather than a per-frame clear. Lower priority than the 3D-path bugs since Classic is the legacy renderer.
+  **Layman:** In Classic the floor smears as you move and a stray bit of floor floats.
+  Kind: fix.
+  Source: in-session-2026-06-25.
