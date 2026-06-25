@@ -252,7 +252,14 @@ void D_Display (void)
 	// it last frame are never erased and ghost through (DOOM-0050). Force a
 	// full status-bar refresh in 3D so its background repaints and clears them.
 	// Classic blits the whole screen, so it needs no force.
-	ST_Drawer (viewheight == 200, redrawsbar || rendermode != RB_CLASSIC );
+	// Force a full status-bar repaint in 3D (the compositor reads the whole
+	// HUD each frame) and, in any mode, while a menu is or was just open --
+	// otherwise menu text drawn over the status bar isn't erased when the
+	// menu closes (DOOM-0053). This only repaints the HUD; it does NOT touch
+	// the view-resize/border path that crashed earlier (DOOM-0055).
+	ST_Drawer (viewheight == 200,
+		   redrawsbar || rendermode != RB_CLASSIC
+		   || menuactive || menuactivestate);
 	fullscreen = viewheight == 200;
 	break;
 
