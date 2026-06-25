@@ -301,15 +301,40 @@ static void emit_subsector_caps(builder_t* bld, int ssnum, const poly_t* cell)
     subsector_t* ss  = &subsectors[ssnum];
     sector_t*    sec = ss->sector;
     float        light;
-    int          secidx;
+    int          secidx, i;
+    poly_t       clipped;
     if (!sec || cell->n < 3) return;
+
+    // The partition-only carve over-shoots past one-sided (solid) walls: a seg is
+    // not a BSP partition, so nothing trims the cell out there and it balloons to
+    // the map-box edge into the void. Indoors that overshoot hides behind the
+    // wall, but across open outdoor space the stray cap pokes past the wall and
+    // floats in the distance (DOOM-0065). Trim the cell to each one-sided seg's
+    // front (right) half-plane -- the sector sits on the front of its own walls,
+    // so this removes only the void overshoot, never valid interior. Two-sided
+    // segs are left alone: the neighbouring subsector covers their far side, and
+    // clipping a shared edge risks opening a crack between the two caps.
+    clipped = *cell;
+    for (i = 0; i < ss->numlines; i++)
+    {
+        seg_t* sg = &segs[ss->firstline + i];
+        float  ox, oy, dx, dy;
+        if (sg->backsector)                       // two-sided: no void beyond it
+            continue;
+        ox = sg->v1->x / (float)FRACUNIT; oy = sg->v1->y / (float)FRACUNIT;
+        dx = (sg->v2->x - sg->v1->x) / (float)FRACUNIT;
+        dy = (sg->v2->y - sg->v1->y) / (float)FRACUNIT;
+        clipped = clip_poly(&clipped, ox, oy, dx, dy, 1);   // keep front side
+        if (clipped.n < 3) return;                          // trimmed to nothing
+    }
+
     light  = sec->lightlevel / 255.0f;
     secidx = (int)(sec - sectors);   // for the per-frame dynamic-height update
     if (sec->floorpic != skyflatnum)
-        emit_cap_poly(bld, cell, sec->floorheight, 1, sec->floorpic, light,
+        emit_cap_poly(bld, &clipped, sec->floorheight, 1, sec->floorpic, light,
                       secidx, RB_PLANE_FLOOR);
     if (sec->ceilingpic != skyflatnum)
-        emit_cap_poly(bld, cell, sec->ceilingheight, 0, sec->ceilingpic, light,
+        emit_cap_poly(bld, &clipped, sec->ceilingheight, 0, sec->ceilingpic, light,
                       secidx, RB_PLANE_CEIL);
 }
 

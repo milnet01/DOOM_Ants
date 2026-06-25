@@ -54,6 +54,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Stray distant floor/ceiling planes in the 3D outdoor view.** (DOOM-0065)
+  In the 3D renderers a dark slab appears across the distance outdoors where Classic shows open sky.
+
 - **Build flush lift/step shaft walls in the 3D mesh so they appear when the lift travels.** (DOOM-0068)
   In the 3D renderers a lift shaft wall was missing (you could see through it) until the lift moved; now it's there like Classic.
 
