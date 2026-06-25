@@ -634,3 +634,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** On an unusual graphics driver the renderer could read invalid memory while picking a display format at startup; now it checks properly and fails loudly instead.
   Kind: review-fix.
   Source: indie-review-2026-06-26.
+
+- ✅ [DOOM-0072] **Clamp atlas tile width so a crafted-WAD wide texture can't overrun the atlas.**
+  Found 2026-06-26 (indie-review, r_mesh.c lane, verified). The shelf packer (RB_BuildAtlas) assumes every tile fits the 2048-wide atlas: when x+w>ATLAS_WIDTH it resets x=0 but keeps w, so a tile wider than 2048 is placed at x=0 with w>2048 and blit_tile writes dst[(oy+row)*2048 + (ox+col)] with ox+col running past the row into following rows / past the buffer — a heap overflow driven by WAD data (malicious PWADs are a known DOOM attack surface). Stock textures are <=256 wide so it never fires normally. Resolved: clamp *w to ATLAS_WIDTH in tile_size (the single place the width flows from, used by rect/x-advance/blit consistently) — an over-wide tile is cropped, not overflowed. Built clean.
+  **Layman:** A specially-crafted level file with an unusually wide texture could corrupt memory while building the 3D texture sheet; the width is now capped so it crops instead.
+  Kind: security.
+  Source: indie-review-2026-06-26.

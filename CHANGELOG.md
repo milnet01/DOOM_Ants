@@ -154,6 +154,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Security
 
+- **Clamp atlas tile width so a crafted-WAD wide texture can't overrun the atlas.** (DOOM-0072)
+  A specially-crafted level file with an unusually wide texture could corrupt memory while building the 3D texture sheet; the width is now capped so it crops instead.
+
 - **Bound the -record demo-name to prevent a buffer overflow (DOOM-0070)**
   A -record command-line name longer than 27 characters overflowed the fixed 32-byte demoname buffer (strcpy+strcat). G_RecordDemo now uses snprintf to bound and NUL-terminate the name.
 

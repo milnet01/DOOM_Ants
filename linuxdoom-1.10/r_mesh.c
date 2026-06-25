@@ -556,6 +556,11 @@ static void tile_size(int id, int* w, int* h)
     }
     if (*w < 1) *w = 1;
     if (*h < 1) *h = 1;
+    // A tile wider than the atlas would overrun the shelf row in blit_tile
+    // (the packer resets x to 0 but keeps the width). Stock DOOM textures are
+    // <=256 wide so this never fires, but a crafted WAD could define a wider
+    // texture -- clamp to crop it rather than corrupt the heap.
+    if (*w > ATLAS_WIDTH) *w = ATLAS_WIDTH;
 }
 
 // Palette index of the darkest non-black colour. Index 0 doubles as the
