@@ -466,20 +466,16 @@ typedef struct
   int			maxx;
   
   // leave pads for [minx-1]/[maxx+1]
-
-  // top[]/bottom[] hold physical screen row indices (0..SCREENHEIGHT-1). The
-  // original byte (0..255) was "the rub for all dynamic resize/change of
-  // resolution" -- at hi-res SCREENHEIGHT is 400, so rows > 255 truncated and
-  // corrupted the floor/ceiling spans (DOOM-0055: crash + smear). Widened to
-  // unsigned short; the pads must match the element type so [minx-1]/[maxx+1]
-  // stay valid. The unfilled-column sentinel is 0xffff (memset 0xff fills it;
-  // the explicit assigns/compares use 0xffff -- see r_plane.c).
-  unsigned short	pad1;
-  unsigned short	top[SCREENWIDTH];
-  unsigned short	pad2;
-  unsigned short	pad3;
-  unsigned short	bottom[SCREENWIDTH];
-  unsigned short	pad4;
+  
+  byte		pad1;
+  // Here lies the rub for all
+  //  dynamic resize/change of resolution.
+  byte		top[SCREENWIDTH];
+  byte		pad2;
+  byte		pad3;
+  // See above.
+  byte		bottom[SCREENWIDTH];
+  byte		pad4;
 
 } visplane_t;
 
