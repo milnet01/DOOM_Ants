@@ -197,6 +197,8 @@ static void I_PollGamepad(void)
     event_t	event;
     int		lx, ly, rx, lt, rt;
     int		buttons = 0;
+    boolean	b_pressed;
+    extern boolean menuactive;          // m_menu.c: lets B (Circle) close the menu
     static boolean strafe_r_held, strafe_l_held, esc_held;
 
     if (!gamepad)
@@ -234,7 +236,11 @@ static void I_PollGamepad(void)
     if (SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_A)
 	|| rt > GP_TRIGGER_THRESH)
 	buttons |= 1;
-    if (SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_B))
+    // B (Circle): the strafe / menu-back button in play, but while a menu is open
+    // it acts as Escape (back/close) -- the PlayStation "back" convention -- so
+    // only feed bit1 when no menu is up; the Escape edge below covers the menu.
+    b_pressed = SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_B);
+    if (b_pressed && !menuactive)
 	buttons |= 2;
     if (SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_LEFTSHOULDER)
 	|| SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)
@@ -254,7 +260,8 @@ static void I_PollGamepad(void)
     // Start / Back toggle the menu through the engine's Escape handling.
     I_PostKeyEdge(
 	SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_START)
-	|| SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_BACK),
+	|| SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_BACK)
+	|| (b_pressed && menuactive),   // Circle backs/closes an open menu
 	&esc_held, KEY_ESCAPE);
 }
 

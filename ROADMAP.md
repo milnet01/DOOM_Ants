@@ -225,6 +225,12 @@ with friends.
   Kind: enhancement.
   Source: user-request-2026-06-17.
 
+- 🚧 [DOOM-0056] **Let the controller Circle (B) button close an open menu.**
+  User request 2026-06-25. The gamepad opened/closed the menu via Start/Options (KEY_ESCAPE toggle). Now the B button (PlayStation Circle, the common 'back' button) also acts as Escape WHILE a menu is open -- backing out a level / closing at the top -- matching the PS back convention. In play (no menu) B keeps its strafe/menu-back role (joyb bit1); the menu case is gated on menuactive so B can only close, never open. i_video.c I_PollGamepad. Builds clean; pending user verify."
+  **Layman:** Circle on the controller now backs out / closes the menu, like Start does.
+  Kind: enhancement.
+  Source: user-request-2026-06-25.
+
 ## Phase 2 — The Spin
 
 The creative overhaul: evolve the renderer toward true 3D with hardware
