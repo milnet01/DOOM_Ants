@@ -475,3 +475,15 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** The game draws only 35 frames a second; the FPS counter correctly shows ~35.
   Kind: perf.
   Source: in-session-2026-06-25.
+
+- 🚧 [DOOM-0051] **Fix mid-game renderer switching (blank 3D world, Classic ghosting).**
+  Found 2026-06-25 (user testing). Switching renderer mid-game via the Options menu broke: into Solid/Ultra the world was blank (HUD only), and into Classic the view showed magenta smears + leftover menu text. Root cause: RB_SetMode (r_backend.c) shut down + re-initialised the back-end but never rebuilt the level, so a Vulkan target had no mesh/atlas; and the shared paletted screens[0] carried the 3D compositor's RB_OVERLAY_KEY (magenta index 251) + stale menu pixels across the hand-off. Fix (commit pending): after Init, call active->BuildLevel() when a level is loaded (mirrors RB_Init's autostart path; Classic's BuildLevel is NULL so it no-ops); then memset screens[0]=0, set setsizeneeded, and ST_Start() to force a clean full view/border/HUD redraw. Pending on-screen verify of all six switch directions.
+  **Layman:** Switching renderers during play broke the view; now rebuilt cleanly.
+  Kind: fix.
+  Source: in-session-2026-06-25.
+
+- 📋 [DOOM-0052] **Close black gaps in floor/wall geometry near doorways in the 3D view.**
+  Found 2026-06-25 (user testing, screenshots). Black triangular gaps appear in the floor/walls around some doorways in Solid/Ultra -- void showing through where a cap or wall triangle is missing. Likely interacts with the DOOM-0049 moving-sector re-height (a moving plane exposes an edge that was zero-height / not emitted at build, per the known DOOM-0049 limitation) and/or a BSP floor-cap carve gap at door-sector boundaries. Investigate against r_mesh.c emit_wall/emit_subsector_caps and the DOOM-0049 zero-height-wall note; reproduce on a specific doorway. Distinct from the (accepted) texture stretch on moving faces.
+  **Layman:** Some doorways show black wedges where floor/wall should be.
+  Kind: fix.
+  Source: in-session-2026-06-25.
