@@ -246,7 +246,13 @@ void D_Display (void)
 	    redrawsbar = true;
 	if (inhelpscreensstate && !inhelpscreens)
 	    redrawsbar = true;              // just put away the help screen
-	ST_Drawer (viewheight == 200, redrawsbar );
+	// In a 3D back-end the compositor reads the whole paletted screens[0]
+	// each frame but only keys the 3D view rect transparent; the status-bar
+	// region is otherwise only diff-drawn, so stale menu pixels painted over
+	// it last frame are never erased and ghost through (DOOM-0050). Force a
+	// full status-bar refresh in 3D so its background repaints and clears them.
+	// Classic blits the whole screen, so it needs no force.
+	ST_Drawer (viewheight == 200, redrawsbar || rendermode != RB_CLASSIC );
 	fullscreen = viewheight == 200;
 	break;
 
