@@ -305,26 +305,25 @@ static void emit_subsector_caps(builder_t* bld, int ssnum, const poly_t* cell)
     poly_t       clipped;
     if (!sec || cell->n < 3) return;
 
-    // The partition-only carve over-shoots past one-sided (solid) walls: a seg is
-    // not a BSP partition, so nothing trims the cell out there and it balloons to
-    // the map-box edge into the void. Indoors that overshoot hides behind the
-    // wall, but across open outdoor space the stray cap pokes past the wall and
-    // floats in the distance (DOOM-0065). Trim the cell to each one-sided seg's
-    // front (right) half-plane -- the sector sits on the front of its own walls,
-    // so this removes only the void overshoot, never valid interior. Two-sided
-    // segs are left alone: the neighbouring subsector covers their far side, and
-    // clipping a shared edge risks opening a crack between the two caps.
+    // The partition-only carve reproduces the convex BSP leaf, but a seg is not a
+    // BSP partition: where a wall bounds the cell nothing trims it, so the cell
+    // overshoots past the wall -- out to the map-box edge at a one-sided wall, or
+    // into the neighbour past a two-sided one. Classic never overshoots (its
+    // visplane spans are clipped to each seg's on-screen extent), so the stray cap
+    // shows only in 3D, floating past walls in open views (DOOM-0065). Trim the
+    // cell to every seg's front (right) half-plane: each seg is an edge of the
+    // convex leaf, so the sector lies entirely on its front and clipping removes
+    // only the overshoot, never valid interior. Two-sided neighbours clip to the
+    // same shared line from opposite sides, so their caps still meet exactly (any
+    // height step between them is covered by the wall quad on that seg).
     clipped = *cell;
     for (i = 0; i < ss->numlines; i++)
     {
         seg_t* sg = &segs[ss->firstline + i];
-        float  ox, oy, dx, dy;
-        if (sg->backsector)                       // two-sided: no void beyond it
-            continue;
-        ox = sg->v1->x / (float)FRACUNIT; oy = sg->v1->y / (float)FRACUNIT;
-        dx = (sg->v2->x - sg->v1->x) / (float)FRACUNIT;
-        dy = (sg->v2->y - sg->v1->y) / (float)FRACUNIT;
-        clipped = clip_poly(&clipped, ox, oy, dx, dy, 1);   // keep front side
+        float  ox = sg->v1->x / (float)FRACUNIT, oy = sg->v1->y / (float)FRACUNIT;
+        float  dx = (sg->v2->x - sg->v1->x) / (float)FRACUNIT;
+        float  dy = (sg->v2->y - sg->v1->y) / (float)FRACUNIT;
+        clipped = clip_poly(&clipped, ox, oy, dx, dy, 1);   // keep front (sector) side
         if (clipped.n < 3) return;                          // trimmed to nothing
     }
 
