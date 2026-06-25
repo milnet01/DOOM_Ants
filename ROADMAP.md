@@ -640,3 +640,21 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** A specially-crafted level file with an unusually wide texture could corrupt memory while building the 3D texture sheet; the width is now capped so it crops instead.
   Kind: security.
   Source: indie-review-2026-06-26.
+
+- 📋 [DOOM-0073] **3D renderer defensive-hardening bundle (indie-review deferred items).**
+  Deferred indie-review findings (2026-06-26) that are defensive-only (not reachable with the shipped/stock WADs) — bundled for one hardening pass. (1) clip_poly POLYMAX=64 silently truncates a carved cap to a malformed polygon -> emit_cap_poly fans garbage triangles; a Python replay proved stock E1M1 stays at <=8 verts, but a very complex custom sector could exceed 64 -> add a guard that skips/asserts rather than rendering wrong (r_mesh.c clip_poly/emit_subsector_caps). (2) RB_UpdateMeshHeights indexes flattranslation[pic]/texturetranslation[base] from WAD-loaded shorts every frame with no bound check -> a corrupt map is a repeated OOB read; add a load-time invariant or per-use clamp (r_mesh.c ~496/505). (3) RB_BuildSprites uses sprframe->lump[rot] then spritewidth[lump] with no lump>=0 check; R_InstallSpriteLump validates at load (same as vanilla) so unreachable, but a cheap guard documents the invariant (r_mesh.c ~786). (4) RB_Vulkan_SetOverlay assumes screens[0] never resizes mid-session (true today: V_Init allocates once) -> add a size-change guard so a future runtime-resolution change can't overrun the overlay staging buffer (r_vulkan.cpp ~1605/1731). (5) (fixed_t)(view->x*FRACUNIT) overflows int32 at the +/-32768 map edge -> wrong sprite-rotation angle for a frame; compute the angle without round-tripping through fixed (r_mesh.c ~753). (6) carve_caps recurses passing a ~520-byte poly_t by value (twice/level) -> pass const poly_t* to cut stack/copies and bound a degenerate-BSP stack blow (r_mesh.c ~344). (7) several Vulkan enumerate calls + vkCreateDebugUtilsMessengerEXT drop their VkResult -> Check-wrap the load-bearing ones (esp. vkGetSwapchainImagesKHR). All MEDIUM/LOW, none reachable in normal play.
+  **Layman:** A set of small safety nets in the 3D renderer for unusual or corrupt level data — none affect normal play; grouped for a later hardening pass.
+  Kind: refactor.
+  Source: indie-review-2026-06-26.
+
+- 📋 [DOOM-0074] **3D renderer has no CPU/GPU frame overlap (single frame in flight).**
+  Found 2026-06-26 (indie-review, r_vulkan.cpp). The swapchain requests minImageCount+1 images (typically 3) and uses FIFO present, but there is only ONE command buffer + one inFlight fence + one image-available/render-finished semaphore pair, and every RB_Vulkan_Present blocks on that fence at the top. So the CPU always waits for the previous frame's full GPU completion before recording the next -- zero CPU/GPU overlap, throughput capped at GPU-bound latency. Correctness-safe (the fence serializes the persistently-mapped vertex buffer writes), but a real ceiling for the project's 60 FPS floor. Fix: an N-deep ring of {cmd, imageAvailable, renderFinished, fence} indexed by a frame counter, with per-frame vertex-buffer regions (or fence-gated reuse). Defer until perf work; note the mapped-buffer write must stay fence-guarded per frame-slot.
+  **Layman:** The 3D renderer waits for the graphics card to fully finish each frame before starting the next, leaving performance on the table toward the 60 FPS goal.
+  Kind: perf.
+  Source: indie-review-2026-06-26.
+
+- 📋 [DOOM-0075] **3D sky pans ~4x too fast and tiles 4x too often vs Classic.**
+  Found 2026-06-26 (indie-review, mesh.frag). The sky fragment path maps the ~90deg horizontal FOV (atan(ndcX) over -1..1) to ONE full sky-texture width: col = ang/(PI*0.5)*sz.x. Classic DOOM maps a full 360deg of yaw to one texture repeat (ANGLETOSKYSHIFT: 90deg -> 1/4 texture). So our sky pans 4x faster and tiles 4x as often as the original. Falls under mesh.frag's explicit bring-up-shader constant exemption, hence deferred not silently changed. Fix: col = ang/(2.0*PI)*sz.x (360deg -> one texture width), matching DOOM's viewangletox sky shift. Verify against Classic by turning on the spot in E1M1.
+  **Layman:** In the 3D renderers the sky/mountains scroll about four times too fast as you turn, compared to Classic DOOM.
+  Kind: fix.
+  Source: indie-review-2026-06-26.
