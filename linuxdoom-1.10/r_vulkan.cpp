@@ -269,6 +269,10 @@ struct VulkanState
 
     bool ready        = false;
     bool needRecreate = false;
+
+    // Descriptor indexing (core Vulkan 1.2) gates the bindless array-of-textures
+    // material path (DOOM-0009 build step 1). Probed at device creation.
+    bool hasDescriptorIndexing = false;
 };
 
 VulkanState g;
@@ -452,8 +456,43 @@ void PickPhysicalAndDevice()
     // enabled in the increment that first traces rays.
     const char* devExts[] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
 
+    // Bindless materials (DOOM-0009 build step 1) index an array-of-textures by
+    // material id. That needs descriptor indexing — core in Vulkan 1.2, which we
+    // already target, so we enable it through VkPhysicalDeviceVulkan12Features
+    // rather than the legacy VK_EXT_descriptor_indexing string. Probe first; a
+    // GPU without it keeps the single-atlas path (no crash).
+    VkPhysicalDeviceVulkan12Features have12 = {};
+    have12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    VkPhysicalDeviceFeatures2 have2 = {};
+    have2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    have2.pNext = &have12;
+    vkGetPhysicalDeviceFeatures2(g.phys, &have2);
+
+    g.hasDescriptorIndexing =
+        have12.runtimeDescriptorArray &&
+        have12.shaderSampledImageArrayNonUniformIndexing &&
+        have12.descriptorBindingVariableDescriptorCount &&
+        have12.descriptorBindingPartiallyBound;
+
+    VkPhysicalDeviceVulkan12Features enable12 = {};
+    enable12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    if (g.hasDescriptorIndexing)
+    {
+        enable12.runtimeDescriptorArray                     = VK_TRUE;
+        enable12.shaderSampledImageArrayNonUniformIndexing  = VK_TRUE;
+        enable12.descriptorBindingVariableDescriptorCount   = VK_TRUE;
+        enable12.descriptorBindingPartiallyBound            = VK_TRUE;
+    }
+    else
+    {
+        printf("RB_Vulkan: descriptor indexing unsupported — "
+               "bindless materials unavailable, keeping the atlas path.\n");
+        fflush(stdout);
+    }
+
     VkDeviceCreateInfo dci = {};
     dci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    dci.pNext = g.hasDescriptorIndexing ? (const void*)&enable12 : nullptr;
     dci.queueCreateInfoCount = 1;
     dci.pQueueCreateInfos = &qci;
     dci.enabledExtensionCount = 1;
