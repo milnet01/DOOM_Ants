@@ -38,6 +38,9 @@ cmake-build-*/
 *.wad
 *.WAD
 
+# Save games — per-player runtime state, not source (doomsav0..5.dsg)
+*.dsg
+
 # ants-audit tooling artifacts
 .audit_cache/
 audit_rule_quality.json
