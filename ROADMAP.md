@@ -445,3 +445,27 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Add a setting to show a frames-per-second counter on screen, and let the player pick whether it sits in the top-left, top-middle, or top-right corner.
   Kind: feature.
   Source: user-request-2026-06-24.
+
+- 📋 [DOOM-0049] **Animate moving sectors (doors, lifts, floors, crushers) in the 3D view.**
+  Found 2026-06-25 (user testing, Ultra). The 3D level mesh (r_mesh.c RB_BuildLevelMesh) is built once at level load with sector floor/ceiling heights baked into vertex z, and never updated; game logic (T_VerticalDoor, T_PlatRaise, T_MovePlane) still moves sectors, so doors/lifts open in gameplay but stay frozen on screen. Cheapest correct fix without regenerating geometry: tag each mesh vertex with its (sector index, plane=floor|ceiling|none), upload a per-frame per-sector height-delta buffer (height - initial), and offset z in mesh.vert by the selected plane's delta. Snapshot initial floor/ceiling heights at RB_Vulkan_BuildLevel. Walls between two sectors: top verts track one sector's ceiling, bottom verts the other's floor -- tag at emit time in emit_wall/emit_cap. Sprites/psprite/sky verts = plane none (no offset). Scrolling textures already animate (sidedef offset, unaffected).
+  **Layman:** Doors and lifts don't visually move in 3D mode yet.
+  Kind: fix.
+  Source: in-session-2026-06-25.
+
+- 📋 [DOOM-0050] **Fix 2D HUD/menu overlay ghosting over the status bar in 3D modes.**
+  Found 2026-06-25 (user testing, Sound Volume menu). In Solid/Ultra the compositor reads the whole paletted screens[0] each frame, but only the 3D view rectangle is cleared to RB_OVERLAY_KEY (r_backend.c). The status-bar region is drawn by ST_Drawer with refresh=false (st_stuff.c ST_diffDraw), which repaints only changed widgets, not the background -- so stale menu pixels drawn over the status bar last frame are never erased and composite as ghosting. Fix: force a full status-bar refresh (ST_doRefresh) each frame while in a 3D mode so the bar background repaints and erases stale overlay pixels; the border redraw already covers windowed sizes (borderdrawcount on menuactive). Watch also for any vertical displacement of the menu title (verify the overlay samples the full 320x200 logical screens[0] under DOOM-0027 hires).
+  **Layman:** Menus smear over the bottom HUD bar in 3D mode.
+  Kind: fix.
+  Source: in-session-2026-06-25.
+
+- 📋 [DOOM-0047] **Verify sound-effect audibility vs music balance in the SDL2 build.**
+  Found 2026-06-25 (user testing). SFX are fully wired (i_sound.c: addsfx -> I_MixSound -> SDL callback; s_sound.c S_StartSound -> I_StartSound; no stub), but the user can't tell they play. SFX are software-mixed at 11025 Hz; music plays via SDL2_mixer at 44100 Hz on a separate device, so music may dominate. Isolation test first: set Music Volume to 0 and confirm SFX are audible. If SFX are present but quiet, options: raise the default sfx_volume (m_misc.c, currently 8/15) or rebalance the mix; do not rewrite the mixer blind. Confirm by ear before changing audio.
+  **Layman:** Hard to tell if gun/door/monster sounds are playing under the music.
+  Kind: investigate.
+  Source: in-session-2026-06-25.
+
+- 📋 [DOOM-0048] **Decouple render rate from the 35 Hz game tic (currently present-locked at 35 FPS).**
+  Found 2026-06-25 (FPS counter reads ~35). D_Display is presenting one frame per 35 Hz game tic, so the renderer is tic-locked and can't exceed 35 FPS regardless of GPU headroom. The FPS counter (DOOM-0046) is reporting the true present rate. To hit the Phase-2 60 FPS floor the present/interpolation must be decoupled from the fixed game tic (render interpolation between tics, uncapped or vsync present). Part of the 60-FPS-floor performance work (DOOM-0011/0012); recorded now as the concrete sub-task surfaced by testing.
+  **Layman:** The game draws only 35 frames a second; the FPS counter correctly shows ~35.
+  Kind: perf.
+  Source: in-session-2026-06-25.
