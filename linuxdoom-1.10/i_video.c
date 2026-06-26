@@ -199,7 +199,9 @@ static void I_PollGamepad(void)
     int		buttons = 0;
     boolean	b_pressed;
     extern boolean menuactive;          // m_menu.c: lets B (Circle) close the menu
+    extern int rb_wireframe;            // r_vulkan.cpp: 3D wireframe debug toggle
     static boolean strafe_r_held, strafe_l_held, esc_held, back_held, map_held;
+    static boolean share_held;
 
     if (!gamepad)
 	return;
@@ -258,12 +260,20 @@ static void I_PollGamepad(void)
     I_PostKeyEdge(lx >  GP_AXIS_DEADZONE, &strafe_r_held, key_straferight);
     I_PostKeyEdge(lx < -GP_AXIS_DEADZONE, &strafe_l_held, key_strafeleft);
 
-    // Start / Back toggle the menu through the engine's Escape handling.
-    // Start / Back toggle the menu (open from play, close from anywhere) via Esc.
+    // Start toggles the menu (open from play, close from anywhere) via Escape.
     I_PostKeyEdge(
-	SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_START)
-	|| SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_BACK),
+	SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_START),
 	&esc_held, KEY_ESCAPE);
+
+    // Share (PS4 "Back") toggles the 3D wireframe debug view on its press edge.
+    // Not a DOOM key, so flip the renderer flag directly rather than post an
+    // event; harmless in Classic (no Vulkan path reads it).
+    {
+	boolean share = SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_BACK);
+	if (share && !share_held)
+	    rb_wireframe = !rb_wireframe;
+	share_held = share;
+    }
 
     // Triangle (Y) toggles the automap. KEY_TAB is the engine's automap key
     // (AM_STARTKEY/AM_ENDKEY in am_map.c); posting it as an edge means one press

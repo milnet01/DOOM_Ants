@@ -195,6 +195,11 @@ struct VulkanState
     // Same layout/shaders as `pipeline`, but depth test + write disabled, so the
     // sky backdrop paints behind everything and the world overdraws it.
     VkPipeline       skyPipeline    = VK_NULL_HANDLE;
+    // Wireframe variant of `pipeline` (polygonMode LINE) for the debug view
+    // toggled by rb_wireframe / the gamepad Share button. Only built when the GPU
+    // advertises fillModeNonSolid (wireSupported); else the toggle is a no-op.
+    VkPipeline       wirePipeline   = VK_NULL_HANDLE;
+    bool             wireSupported  = false;
     // 2D HUD/menu compositor (DOOM-0008): a vertexless full-screen pass that
     // draws the paletted screens[0] overlay over the rendered 3D scene, keying
     // out the transparent index. Shares pipelineLayout + descriptor set 0.
@@ -277,6 +282,12 @@ struct VulkanState
 };
 
 VulkanState g;
+
+// Debug wireframe toggle: 0 = normal fill, non-zero = draw the world (and
+// sprites) as wireframe over a filled sky backdrop. Flipped from i_video.c's
+// gamepad poll (PS4 Share button). C linkage so the C input layer can extern it.
+// No effect in Classic (no Vulkan path) or when the GPU lacks fillModeNonSolid.
+extern "C" { int rb_wireframe = 0; }
 
 [[noreturn]] void Fail(const char* what, VkResult r)
 {
@@ -491,6 +502,13 @@ void PickPhysicalAndDevice()
     enable12.descriptorBindingVariableDescriptorCount   = VK_TRUE;
     enable12.descriptorBindingPartiallyBound            = VK_TRUE;
 
+    // Optional: fillModeNonSolid enables the polygonMode-LINE wireframe debug
+    // pipeline (rb_wireframe / gamepad Share). Near-universal on desktop GPUs,
+    // but strictly optional -- if absent we just skip building wirePipeline.
+    g.wireSupported = have2.features.fillModeNonSolid;
+    VkPhysicalDeviceFeatures enableBase = {};
+    enableBase.fillModeNonSolid = g.wireSupported ? VK_TRUE : VK_FALSE;
+
     VkDeviceCreateInfo dci = {};
     dci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     dci.pNext = &enable12;   // required (we I_Error above if unsupported)
@@ -498,6 +516,7 @@ void PickPhysicalAndDevice()
     dci.pQueueCreateInfos = &qci;
     dci.enabledExtensionCount = 1;
     dci.ppEnabledExtensionNames = devExts;
+    dci.pEnabledFeatures = &enableBase;
 
     Check(vkCreateDevice(g.phys, &dci, nullptr, &g.device), "vkCreateDevice");
     vkGetDeviceQueue(g.device, g.queueFamily, 0, &g.queue);
@@ -1130,6 +1149,18 @@ void CreatePipeline()
     pci.pDepthStencilState = &skyDs;
     Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &pci, nullptr,
                                     &g.skyPipeline), "vkCreateGraphicsPipelines(sky)");
+
+    // Wireframe variant of the world pipeline (debug view). Same mesh shaders and
+    // depth-tested state, only polygonMode flipped to LINE; built last so the FILL
+    // mode is restored for any pipeline created after. Skipped without the feature.
+    if (g.wireSupported)
+    {
+        rs.polygonMode = VK_POLYGON_MODE_LINE;
+        pci.pDepthStencilState = &ds;   // depth-tested like the world it mirrors
+        Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &pci, nullptr,
+                                        &g.wirePipeline), "vkCreateGraphicsPipelines(wire)");
+        rs.polygonMode = VK_POLYGON_MODE_FILL;
+    }
 
     // 2D HUD/menu compositor: own shaders, no vertex input (a full-screen
     // triangle generated from gl_VertexIndex), depth off, drawn last over the
@@ -1835,7 +1866,12 @@ extern "C" void RB_Vulkan_Present(void)
             vkCmdDraw(g.cmd, g.skyVertCount, 1, 0, 0);
         }
 
-        vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.pipeline);
+        // Wireframe debug view (rb_wireframe, gamepad Share): draw the world and
+        // sprites as lines over the filled sky so what the mesh actually emits is
+        // visible. Falls back to the fill pipeline if the wire one was not built.
+        VkPipeline worldPipe = (rb_wireframe && g.wirePipeline)
+                             ? g.wirePipeline : g.pipeline;
+        vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, worldPipe);
         if (g.vbuf && g.vertexCount)
         {
             vkCmdBindVertexBuffers(g.cmd, 0, 1, &g.vbuf, &off);
@@ -1939,6 +1975,7 @@ extern "C" void RB_Vulkan_Shutdown(void)
 
     DestroyFramebufferResources();   // framebuffers, depth, swapchain image views
     if (g.pipeline)       vkDestroyPipeline(g.device, g.pipeline, nullptr);
+    if (g.wirePipeline)   vkDestroyPipeline(g.device, g.wirePipeline, nullptr);
     if (g.skyPipeline)    vkDestroyPipeline(g.device, g.skyPipeline, nullptr);
     if (g.overlayPipeline) vkDestroyPipeline(g.device, g.overlayPipeline, nullptr);
     if (g.pipelineLayout) vkDestroyPipelineLayout(g.device, g.pipelineLayout, nullptr);
