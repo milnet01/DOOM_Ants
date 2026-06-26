@@ -209,7 +209,13 @@ struct VulkanState
     VkCommandBuffer cmd     = VK_NULL_HANDLE;
 
     VkSemaphore imageAvailable = VK_NULL_HANDLE;
-    VkSemaphore renderFinished = VK_NULL_HANDLE;
+    // One renderFinished per swapchain image, indexed by the acquired image index.
+    // A single shared semaphore is unsafe: the queue submit signals it but the
+    // *presentation engine* consumes it, which the per-frame fence does not track,
+    // so the next submit could re-signal it while a present still holds it
+    // (VUID-vkQueueSubmit-pSignalSemaphores-00067). Image idx is only re-acquired
+    // after its previous present finished, so renderFinished[idx] is then unsignalled.
+    std::vector<VkSemaphore> renderFinished;
     VkFence     inFlight       = VK_NULL_HANDLE;
 
     VkDebugUtilsMessengerEXT debug = VK_NULL_HANDLE;
@@ -660,6 +666,23 @@ void CreateSwapchain()
     vkGetSwapchainImagesKHR(g.device, g.swapchain, &ic, g.images.data());
 }
 
+// (Re)create the per-swapchain-image renderFinished semaphores, sized to the
+// current image count. Destroys any existing set first, so it is safe to call on
+// swapchain recreate (the image count can change). Callers guarantee the queue is
+// idle (init order, or vkDeviceWaitIdle in RecreateSwapchain) before the destroy.
+void CreateRenderFinishedSemaphores()
+{
+    for (VkSemaphore s : g.renderFinished)
+        vkDestroySemaphore(g.device, s, nullptr);
+    g.renderFinished.assign(g.images.size(), VK_NULL_HANDLE);
+
+    VkSemaphoreCreateInfo semci = {};
+    semci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    for (VkSemaphore& s : g.renderFinished)
+        Check(vkCreateSemaphore(g.device, &semci, nullptr, &s),
+              "vkCreateSemaphore(renderFinished)");
+}
+
 void CreateCommandsAndSync()
 {
     VkCommandPoolCreateInfo pci = {};
@@ -680,7 +703,7 @@ void CreateCommandsAndSync()
     VkSemaphoreCreateInfo semci = {};
     semci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
     Check(vkCreateSemaphore(g.device, &semci, nullptr, &g.imageAvailable), "vkCreateSemaphore");
-    Check(vkCreateSemaphore(g.device, &semci, nullptr, &g.renderFinished), "vkCreateSemaphore");
+    CreateRenderFinishedSemaphores();   // one per swapchain image (g.images is up)
 
     // Created signalled so the first frame's wait passes (single frame in flight).
     VkFenceCreateInfo fci = {};
@@ -1265,6 +1288,7 @@ void RecreateSwapchain()
     CreateImageViews();
     CreateDepthResources();
     CreateFramebuffers();
+    CreateRenderFinishedSemaphores();   // image count may have changed; resize set
 }
 
 // Build the paletted texture atlas (r_mesh.c), upload the atlas + PLAYPAL LUT
@@ -1973,13 +1997,13 @@ extern "C" void RB_Vulkan_Present(void)
     si.commandBufferCount = 1;
     si.pCommandBuffers = &g.cmd;
     si.signalSemaphoreCount = 1;
-    si.pSignalSemaphores = &g.renderFinished;
+    si.pSignalSemaphores = &g.renderFinished[idx];   // per-image (see struct note)
     Check(vkQueueSubmit(g.queue, 1, &si, g.inFlight), "vkQueueSubmit");
 
     VkPresentInfoKHR pi = {};
     pi.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     pi.waitSemaphoreCount = 1;
-    pi.pWaitSemaphores = &g.renderFinished;
+    pi.pWaitSemaphores = &g.renderFinished[idx];
     pi.swapchainCount = 1;
     pi.pSwapchains = &g.swapchain;
     pi.pImageIndices = &idx;
@@ -2035,7 +2059,9 @@ extern "C" void RB_Vulkan_Shutdown(void)
     if (g.pipelineLayout) vkDestroyPipelineLayout(g.device, g.pipelineLayout, nullptr);
     if (g.renderPass)     vkDestroyRenderPass(g.device, g.renderPass, nullptr);
     if (g.inFlight)       vkDestroyFence(g.device, g.inFlight, nullptr);
-    if (g.renderFinished) vkDestroySemaphore(g.device, g.renderFinished, nullptr);
+    for (VkSemaphore s : g.renderFinished)
+        vkDestroySemaphore(g.device, s, nullptr);
+    g.renderFinished.clear();
     if (g.imageAvailable) vkDestroySemaphore(g.device, g.imageAvailable, nullptr);
     if (g.cmdPool)        vkDestroyCommandPool(g.device, g.cmdPool, nullptr);
     if (g.swapchain)      vkDestroySwapchainKHR(g.device, g.swapchain, nullptr);

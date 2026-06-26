@@ -57,6 +57,13 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **3D renderer: use a per-swapchain-image present semaphore** (DOOM-0079)
+  The Vulkan present-completion signal (renderFinished semaphore) was shared
+  across frames, so a queue submit could re-signal it while a prior present
+  still held it (a validation error caught once the Khronos validation layer
+  was installed). Now one semaphore per swapchain image, indexed by the
+  acquired image — no behaviour change on screen, but technically correct.
+
 - **Fix the sky rendering a black band across distant outdoor views in the 3D back-ends.** (DOOM-0076)
   The sky shader squashed the panorama into the top half of the screen and clamped everything below centre to the texture's dark bottom row; it now maps the sky at DOOM's fixed scale with the horizon at screen centre and wraps instead of clamping, matching Classic.
 
