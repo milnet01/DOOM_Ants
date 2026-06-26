@@ -277,6 +277,14 @@ struct VulkanState
 
     static constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
 
+    // Hardware ray tracing (DOOM-0009 build step 2). Enabled on the logical device
+    // only when the chosen GPU advertises VK_KHR_acceleration_structure +
+    // VK_KHR_ray_query *and* their feature bits + bufferDeviceAddress. Gates all
+    // path-tracer work; the raster (Solid) path never touches it, so RT-off output
+    // is unaffected (INV-10). False on a non-RT GPU, where Ultra is never offered
+    // (INV-11).
+    bool rtEnabled = false;
+
     bool ready        = false;
     bool needRecreate = false;
 };
@@ -464,9 +472,11 @@ void PickPhysicalAndDevice()
     qci.queueCount = 1;
     qci.pQueuePriorities = &priority;
 
-    // Swapchain is all we need for the clear path; RT device extensions are
-    // enabled in the increment that first traces rays.
-    const char* devExts[] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+    // Swapchain is always required. The hardware-RT extension chain (acceleration
+    // structure + ray query + their deferred-host-ops dependency) is appended below
+    // only when the chosen GPU supports ray tracing (DOOM-0009 build step 2); on a
+    // non-RT GPU the device stays raster-only.
+    std::vector<const char*> devExts = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
 
     // Bindless materials (DOOM-0009 build step 1) index an array-of-textures by
     // material id. That needs descriptor indexing — core in Vulkan 1.2, which we
@@ -478,8 +488,18 @@ void PickPhysicalAndDevice()
     // hardware: any GPU whose driver exposes Vulkan 1.2 supports all four.
     // (Graceful probe-time gating so the menu never offers 3D on such a GPU is
     // tracked separately — see ROADMAP.)
+    //
+    // The same features-2 query also reads the RT feature bits (accelerationStructure
+    // + rayQuery + bufferDeviceAddress, the AS build reads vertices by GPU address):
+    // the extension strings alone don't guarantee the feature is usable.
     VkPhysicalDeviceVulkan12Features have12 = {};
     have12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR haveAccel = {};
+    haveAccel.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+    VkPhysicalDeviceRayQueryFeaturesKHR haveRayQuery = {};
+    haveRayQuery.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+    have12.pNext = &haveAccel;
+    haveAccel.pNext = &haveRayQuery;
     VkPhysicalDeviceFeatures2 have2 = {};
     have2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     have2.pNext = &have12;
@@ -495,12 +515,46 @@ void PickPhysicalAndDevice()
                 "(runtimeDescriptorArray / nonUniform / variableCount / "
                 "partiallyBound) — the 3D renderer needs bindless materials.");
 
+    // Ray tracing is enabled when the device advertises the extensions (DeviceHasRT,
+    // the same gate the tier-probe uses) AND the matching feature bits. Otherwise
+    // Ultra is silently unavailable (INV-11) and only the raster 3D path runs.
+    g.rtEnabled = DeviceHasRT(g.phys)
+                  && haveAccel.accelerationStructure
+                  && haveRayQuery.rayQuery
+                  && have12.bufferDeviceAddress;
+
     VkPhysicalDeviceVulkan12Features enable12 = {};
     enable12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
     enable12.runtimeDescriptorArray                     = VK_TRUE;
     enable12.shaderSampledImageArrayNonUniformIndexing  = VK_TRUE;
     enable12.descriptorBindingVariableDescriptorCount   = VK_TRUE;
     enable12.descriptorBindingPartiallyBound            = VK_TRUE;
+
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR enableAccel = {};
+    enableAccel.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+    enableAccel.accelerationStructure = VK_TRUE;
+    VkPhysicalDeviceRayQueryFeaturesKHR enableRayQuery = {};
+    enableRayQuery.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+    enableRayQuery.rayQuery = VK_TRUE;
+
+    if (g.rtEnabled)
+    {
+        // bufferDeviceAddress lets the AS build read the mesh vertex buffer by GPU
+        // address; the two RT feature structs chain after the 1.2 features.
+        enable12.bufferDeviceAddress = VK_TRUE;
+        enable12.pNext     = &enableAccel;
+        enableAccel.pNext  = &enableRayQuery;
+        devExts.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+        devExts.push_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+        devExts.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+        printf("RB_Vulkan: hardware ray tracing enabled "
+               "(acceleration structure + ray query).\n");
+    }
+    else
+    {
+        printf("RB_Vulkan: hardware ray tracing unavailable; raster 3D only.\n");
+    }
+    fflush(stdout);
 
     // Optional: fillModeNonSolid enables the polygonMode-LINE wireframe debug
     // pipeline (rb_wireframe / gamepad Share). Near-universal on desktop GPUs,
@@ -514,8 +568,8 @@ void PickPhysicalAndDevice()
     dci.pNext = &enable12;   // required (we I_Error above if unsupported)
     dci.queueCreateInfoCount = 1;
     dci.pQueueCreateInfos = &qci;
-    dci.enabledExtensionCount = 1;
-    dci.ppEnabledExtensionNames = devExts;
+    dci.enabledExtensionCount = (uint32_t)devExts.size();
+    dci.ppEnabledExtensionNames = devExts.data();
     dci.pEnabledFeatures = &enableBase;
 
     Check(vkCreateDevice(g.phys, &dci, nullptr, &g.device), "vkCreateDevice");
