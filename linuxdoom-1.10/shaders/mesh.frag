@@ -80,8 +80,16 @@ void main()
         // +left/-right; ndcX is -left/+right, so the screen term is -atan(ndcX).
         float ang   = pc.yaw - atan(ndcX);
         float col   = ang / (PI * 0.5) * sz.x;  // REPEAT wraps the column
-        float row   = clamp(vScreenUV.y * 2.0 * sz.y, 0.0, sz.y - 1.0);
-        vec2  uv    = vec2(col, row) / sz;      // u tiles (REPEAT), v stays clamped
+        // Vertical: DOOM's fixed sky scale -- one 320x200 logical screen pixel
+        // per texel, with the texture's skytexturemid (row 100) pinned to the
+        // horizon at screen centre; REPEAT wraps the rest. Mirrors classic r_sky
+        // (dc_texturemid = skytexturemid = 100<<FRACBITS, dc_iscale = FRACUNIT).
+        // The old "* 2.0 then clamp to the bottom row" squashed the panorama into
+        // the top half and clamped everything below centre to the texture's dark
+        // base row, which showed as a black band across distant outdoor views
+        // wherever the floor did not reach the horizon (DOOM-0076).
+        float row   = 100.0 + (vScreenUV.y - 0.5) * 200.0;
+        vec2  uv    = vec2(col, row) / sz;      // u + v both REPEAT-wrap
         float idx   = texture(materialTex[nonuniformEXT(id)], uv).r * 255.0;
         outColor    = vec4(texture(paletteTex, vec2((idx + 0.5) / 256.0, 0.5)).rgb, 1.0);
         return;
