@@ -291,6 +291,28 @@ struct VulkanState
     // (INV-11).
     bool rtEnabled = false;
 
+    // Ray-tracing acceleration structures (DOOM-0009 build step 2b), rebuilt once
+    // per level from the static level mesh. The TLAS holds a single identity
+    // instance of the BLAS for now; per-frame sprites + moving-sector refit land
+    // in later build steps. All RT-gated — untouched while rtEnabled is false.
+    VkAccelerationStructureKHR blas        = VK_NULL_HANDLE;
+    VkBuffer                   blasBuf     = VK_NULL_HANDLE;
+    VkDeviceMemory             blasMem     = VK_NULL_HANDLE;
+    VkAccelerationStructureKHR tlas        = VK_NULL_HANDLE;
+    VkBuffer                   tlasBuf     = VK_NULL_HANDLE;
+    VkDeviceMemory             tlasMem     = VK_NULL_HANDLE;
+    VkBuffer                   tlasInstBuf = VK_NULL_HANDLE;  // one instance, host-visible
+    VkDeviceMemory             tlasInstMem = VK_NULL_HANDLE;
+
+    // VK_KHR_acceleration_structure entry points — not core, so loaded by name once
+    // the device is up (LoadRtEntryPoints); null while rtEnabled is false.
+    PFN_vkGetAccelerationStructureBuildSizesKHR    pfnGetASBuildSizes = nullptr;
+    PFN_vkCreateAccelerationStructureKHR           pfnCreateAS        = nullptr;
+    PFN_vkCmdBuildAccelerationStructuresKHR        pfnCmdBuildAS      = nullptr;
+    PFN_vkGetAccelerationStructureDeviceAddressKHR pfnGetASAddress    = nullptr;
+    PFN_vkDestroyAccelerationStructureKHR          pfnDestroyAS       = nullptr;
+    VkDeviceSize                                   scratchAlign       = 256;
+
     bool ready        = false;
     bool needRecreate = false;
 };
@@ -759,6 +781,247 @@ void EndOneTime(VkCommandBuffer cb)
     Check(vkQueueSubmit(g.queue, 1, &si, VK_NULL_HANDLE), "vkQueueSubmit(oneTime)");
     vkQueueWaitIdle(g.queue);
     vkFreeCommandBuffers(g.device, g.cmdPool, 1, &cb);
+}
+
+inline VkDeviceAddress AlignUp(VkDeviceAddress v, VkDeviceSize a)
+{
+    return a ? ((v + a - 1) / a) * a : v;
+}
+
+// GPU address of a buffer (core in Vulkan 1.2; the memory must have been allocated
+// with VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT, which CreateRtBuffer ensures).
+VkDeviceAddress BufferAddress(VkBuffer b)
+{
+    VkBufferDeviceAddressInfo i = {};
+    i.sType  = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+    i.buffer = b;
+    return vkGetBufferDeviceAddress(g.device, &i);
+}
+
+// Buffer + dedicated allocation for ray-tracing use (AS storage, scratch, the TLAS
+// instance array). When the usage includes SHADER_DEVICE_ADDRESS the allocation
+// gets the device-address flag so BufferAddress works.
+void CreateRtBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
+                    VkMemoryPropertyFlags props,
+                    VkBuffer* buf, VkDeviceMemory* mem)
+{
+    VkBufferCreateInfo bci = {};
+    bci.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bci.size        = size;
+    bci.usage       = usage;
+    bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    Check(vkCreateBuffer(g.device, &bci, nullptr, buf), "vkCreateBuffer(rt)");
+
+    VkMemoryRequirements req = {};
+    vkGetBufferMemoryRequirements(g.device, *buf, &req);
+
+    VkMemoryAllocateFlagsInfo flags = {};
+    flags.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+    flags.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+
+    VkMemoryAllocateInfo mai = {};
+    mai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    mai.pNext           = (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) ? &flags : nullptr;
+    mai.allocationSize  = req.size;
+    mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, props);
+    Check(vkAllocateMemory(g.device, &mai, nullptr, mem), "vkAllocateMemory(rt)");
+    Check(vkBindBufferMemory(g.device, *buf, *mem, 0), "vkBindBufferMemory(rt)");
+}
+
+// Resolve the VK_KHR_acceleration_structure entry points and query the scratch
+// alignment. Called once after device creation; no-op without RT.
+void LoadRtEntryPoints()
+{
+    if (!g.rtEnabled)
+        return;
+    g.pfnGetASBuildSizes = (PFN_vkGetAccelerationStructureBuildSizesKHR)
+        vkGetDeviceProcAddr(g.device, "vkGetAccelerationStructureBuildSizesKHR");
+    g.pfnCreateAS = (PFN_vkCreateAccelerationStructureKHR)
+        vkGetDeviceProcAddr(g.device, "vkCreateAccelerationStructureKHR");
+    g.pfnCmdBuildAS = (PFN_vkCmdBuildAccelerationStructuresKHR)
+        vkGetDeviceProcAddr(g.device, "vkCmdBuildAccelerationStructuresKHR");
+    g.pfnGetASAddress = (PFN_vkGetAccelerationStructureDeviceAddressKHR)
+        vkGetDeviceProcAddr(g.device, "vkGetAccelerationStructureDeviceAddressKHR");
+    g.pfnDestroyAS = (PFN_vkDestroyAccelerationStructureKHR)
+        vkGetDeviceProcAddr(g.device, "vkDestroyAccelerationStructureKHR");
+    if (!g.pfnGetASBuildSizes || !g.pfnCreateAS || !g.pfnCmdBuildAS
+        || !g.pfnGetASAddress || !g.pfnDestroyAS)
+        I_Error("R_Vulkan: ray-tracing entry points missing despite enabled extensions.");
+
+    VkPhysicalDeviceAccelerationStructurePropertiesKHR asProps = {};
+    asProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR;
+    VkPhysicalDeviceProperties2 p2 = {};
+    p2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+    p2.pNext = &asProps;
+    vkGetPhysicalDeviceProperties2(g.phys, &p2);
+    g.scratchAlign = asProps.minAccelerationStructureScratchOffsetAlignment;
+}
+
+// Tear down the per-level acceleration structures + their buffers. Safe when none
+// exist (level rebuild, shutdown); caller guarantees the GPU is idle.
+void DestroyAccelerationStructures()
+{
+    if (g.tlas)        { g.pfnDestroyAS(g.device, g.tlas, nullptr); g.tlas = VK_NULL_HANDLE; }
+    if (g.tlasBuf)     { vkDestroyBuffer(g.device, g.tlasBuf, nullptr); g.tlasBuf = VK_NULL_HANDLE; }
+    if (g.tlasMem)     { vkFreeMemory(g.device, g.tlasMem, nullptr); g.tlasMem = VK_NULL_HANDLE; }
+    if (g.tlasInstBuf) { vkDestroyBuffer(g.device, g.tlasInstBuf, nullptr); g.tlasInstBuf = VK_NULL_HANDLE; }
+    if (g.tlasInstMem) { vkFreeMemory(g.device, g.tlasInstMem, nullptr); g.tlasInstMem = VK_NULL_HANDLE; }
+    if (g.blas)        { g.pfnDestroyAS(g.device, g.blas, nullptr); g.blas = VK_NULL_HANDLE; }
+    if (g.blasBuf)     { vkDestroyBuffer(g.device, g.blasBuf, nullptr); g.blasBuf = VK_NULL_HANDLE; }
+    if (g.blasMem)     { vkFreeMemory(g.device, g.blasMem, nullptr); g.blasMem = VK_NULL_HANDLE; }
+}
+
+// Build the static BLAS (every level-mesh triangle) and a one-instance identity
+// TLAS over it (DOOM-0009 build step 2b). Runs once per level load after the
+// vertex buffer is uploaded; the mesh is a non-indexed triangle list with the
+// world position at byte offset 0 of rb_vertex_t. Built non-compacted: a ~2k-tri
+// DOOM map is trivially small, so compaction (spec §3, a VRAM win for large WADs)
+// is deferred to the step-7 perf pass.
+void BuildAccelerationStructures()
+{
+    DestroyAccelerationStructures();
+    if (!g.vertexCount)
+        return;
+
+    const uint32_t triCount = g.vertexCount / 3;
+
+    // ---- BLAS: the level triangles ----
+    VkAccelerationStructureGeometryKHR geom = {};
+    geom.sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    geom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+    geom.flags        = VK_GEOMETRY_OPAQUE_BIT_KHR;
+    geom.geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+    geom.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+    geom.geometry.triangles.vertexData.deviceAddress = BufferAddress(g.vbuf);
+    geom.geometry.triangles.vertexStride = sizeof(rb_vertex_t);
+    geom.geometry.triangles.maxVertex    = g.vertexCount - 1;
+    geom.geometry.triangles.indexType    = VK_INDEX_TYPE_NONE_KHR;
+
+    VkAccelerationStructureBuildGeometryInfoKHR bgi = {};
+    bgi.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+    bgi.type          = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+    bgi.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+    bgi.mode          = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+    bgi.geometryCount = 1;
+    bgi.pGeometries   = &geom;
+
+    VkAccelerationStructureBuildSizesInfoKHR sizes = {};
+    sizes.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+    g.pfnGetASBuildSizes(g.device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
+                         &bgi, &triCount, &sizes);
+
+    CreateRtBuffer(sizes.accelerationStructureSize,
+                   VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
+                   | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &g.blasBuf, &g.blasMem);
+
+    VkAccelerationStructureCreateInfoKHR asci = {};
+    asci.sType  = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+    asci.buffer = g.blasBuf;
+    asci.size   = sizes.accelerationStructureSize;
+    asci.type   = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+    Check(g.pfnCreateAS(g.device, &asci, nullptr, &g.blas), "vkCreateAccelerationStructureKHR(blas)");
+
+    VkBuffer scratchBuf = VK_NULL_HANDLE; VkDeviceMemory scratchMem = VK_NULL_HANDLE;
+    CreateRtBuffer(sizes.buildScratchSize + g.scratchAlign,
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &scratchBuf, &scratchMem);
+
+    bgi.dstAccelerationStructure  = g.blas;
+    bgi.scratchData.deviceAddress = AlignUp(BufferAddress(scratchBuf), g.scratchAlign);
+
+    VkAccelerationStructureBuildRangeInfoKHR range = {};
+    range.primitiveCount = triCount;
+    const VkAccelerationStructureBuildRangeInfoKHR* pRange = &range;
+
+    VkCommandBuffer cb = BeginOneTime();
+    g.pfnCmdBuildAS(cb, 1, &bgi, &pRange);
+    EndOneTime(cb);   // submits + waits: the BLAS is fully built before the TLAS reads it
+
+    vkDestroyBuffer(g.device, scratchBuf, nullptr);
+    vkFreeMemory(g.device, scratchMem, nullptr);
+
+    // ---- TLAS: one identity instance of the BLAS ----
+    VkAccelerationStructureDeviceAddressInfoKHR adi = {};
+    adi.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+    adi.accelerationStructure = g.blas;
+    const VkDeviceAddress blasAddr = g.pfnGetASAddress(g.device, &adi);
+
+    VkAccelerationStructureInstanceKHR inst = {};
+    inst.transform.matrix[0][0] = 1.0f;   // identity 3x4 row-major
+    inst.transform.matrix[1][1] = 1.0f;
+    inst.transform.matrix[2][2] = 1.0f;
+    inst.mask  = 0xFF;
+    inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+    inst.accelerationStructureReference = blasAddr;
+
+    CreateRtBuffer(sizeof(inst),
+                   VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+                   | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                   &g.tlasInstBuf, &g.tlasInstMem);
+    void* instMapped = nullptr;
+    Check(vkMapMemory(g.device, g.tlasInstMem, 0, sizeof(inst), 0, &instMapped), "vkMapMemory(tlasInst)");
+    std::memcpy(instMapped, &inst, sizeof(inst));
+    vkUnmapMemory(g.device, g.tlasInstMem);
+
+    VkAccelerationStructureGeometryKHR tgeom = {};
+    tgeom.sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    tgeom.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+    tgeom.flags        = VK_GEOMETRY_OPAQUE_BIT_KHR;
+    tgeom.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+    tgeom.geometry.instances.arrayOfPointers    = VK_FALSE;
+    tgeom.geometry.instances.data.deviceAddress = BufferAddress(g.tlasInstBuf);
+
+    VkAccelerationStructureBuildGeometryInfoKHR tbgi = {};
+    tbgi.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+    tbgi.type          = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+    tbgi.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+    tbgi.mode          = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+    tbgi.geometryCount = 1;
+    tbgi.pGeometries   = &tgeom;
+
+    const uint32_t instCount = 1;
+    VkAccelerationStructureBuildSizesInfoKHR tsizes = {};
+    tsizes.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+    g.pfnGetASBuildSizes(g.device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
+                         &tbgi, &instCount, &tsizes);
+
+    CreateRtBuffer(tsizes.accelerationStructureSize,
+                   VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
+                   | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &g.tlasBuf, &g.tlasMem);
+
+    VkAccelerationStructureCreateInfoKHR tasci = {};
+    tasci.sType  = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+    tasci.buffer = g.tlasBuf;
+    tasci.size   = tsizes.accelerationStructureSize;
+    tasci.type   = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+    Check(g.pfnCreateAS(g.device, &tasci, nullptr, &g.tlas), "vkCreateAccelerationStructureKHR(tlas)");
+
+    VkBuffer tScratchBuf = VK_NULL_HANDLE; VkDeviceMemory tScratchMem = VK_NULL_HANDLE;
+    CreateRtBuffer(tsizes.buildScratchSize + g.scratchAlign,
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &tScratchBuf, &tScratchMem);
+
+    tbgi.dstAccelerationStructure  = g.tlas;
+    tbgi.scratchData.deviceAddress = AlignUp(BufferAddress(tScratchBuf), g.scratchAlign);
+
+    VkAccelerationStructureBuildRangeInfoKHR trange = {};
+    trange.primitiveCount = 1;
+    const VkAccelerationStructureBuildRangeInfoKHR* pTrange = &trange;
+
+    cb = BeginOneTime();
+    g.pfnCmdBuildAS(cb, 1, &tbgi, &pTrange);
+    EndOneTime(cb);
+
+    vkDestroyBuffer(g.device, tScratchBuf, nullptr);
+    vkFreeMemory(g.device, tScratchMem, nullptr);
+
+    printf("RB_Vulkan: built BLAS (%u tris) + TLAS (1 instance); AS %.1f KiB.\n",
+           triCount,
+           (double)(sizes.accelerationStructureSize + tsizes.accelerationStructureSize) / 1024.0);
+    fflush(stdout);
 }
 
 // Create a device-local sampled image of the given format and upload `pixels`
@@ -1658,6 +1921,7 @@ extern "C" void RB_Vulkan_Init(void)
         I_Error("R_Vulkan: SDL_Vulkan_CreateSurface: %s", SDL_GetError());
 
     PickPhysicalAndDevice();
+    LoadRtEntryPoints();   // resolve the AS entry points + scratch align (RT only)
     CreateSwapchain();
     CreateImageViews();
     CreateRenderPass();
@@ -1760,13 +2024,22 @@ extern "C" void RB_Vulkan_BuildLevel(void)
     bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bci.size = size;
     bci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    // With RT on, the same buffer is read as BLAS build input (by GPU address), so
+    // it also needs the AS-input + device-address usage and a device-address alloc.
+    if (g.rtEnabled)
+        bci.usage |= VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+                   | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
     bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     Check(vkCreateBuffer(g.device, &bci, nullptr, &g.vbuf), "vkCreateBuffer(vbuf)");
 
     VkMemoryRequirements req = {};
     vkGetBufferMemoryRequirements(g.device, g.vbuf, &req);
+    VkMemoryAllocateFlagsInfo vbufFlags = {};
+    vbufFlags.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+    vbufFlags.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
     VkMemoryAllocateInfo mai = {};
     mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    mai.pNext = g.rtEnabled ? &vbufFlags : nullptr;
     mai.allocationSize = req.size;
     mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
@@ -1780,6 +2053,11 @@ extern "C" void RB_Vulkan_BuildLevel(void)
     std::memcpy(g.vbufMapped, g.levelMesh->verts, (size_t)size);
 
     g.vertexCount = (uint32_t)g.levelMesh->numverts;
+
+    // DOOM-0009 build step 2b: (re)build the static BLAS + TLAS over this mesh so
+    // the path tracer has something to trace against. No-op without RT.
+    if (g.rtEnabled)
+        BuildAccelerationStructures();
 }
 
 extern "C" void RB_Vulkan_Present(void)
@@ -2027,6 +2305,7 @@ extern "C" void RB_Vulkan_Shutdown(void)
     if (g.device)
         vkDeviceWaitIdle(g.device);
 
+    if (g.rtEnabled)        DestroyAccelerationStructures();
     if (g.vbufMapped)       vkUnmapMemory(g.device, g.vbufMemory);
     if (g.vbuf)             vkDestroyBuffer(g.device, g.vbuf, nullptr);
     if (g.vbufMemory)       vkFreeMemory(g.device, g.vbufMemory, nullptr);
