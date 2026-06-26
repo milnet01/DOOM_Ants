@@ -8,6 +8,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Add a 3D wireframe debug view, toggled by the gamepad Share button.** (DOOM-0077)
+  Draws the world and sprites as wireframe over a filled sky in Solid/Ultra to show what the renderer builds; no effect in Classic. Start alone now opens the menu.
+
 - **Reflect runtime wall/flat texture changes in the 3D mesh (switches, animated textures).** (DOOM-0066)
   In the 3D renderers a pressed switch doesn't light up and animated surfaces (screens, slime) don't animate, because the 3D world bakes each surface's picture in once.
 
@@ -53,6 +56,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
   Tells the compiler that the fatal-error function never returns, so it can optimise better and reason correctly about the code that runs after a fatal-error guard.
 
 ### Fixed
+
+- **Fix the sky rendering a black band across distant outdoor views in the 3D back-ends.** (DOOM-0076)
+  The sky shader squashed the panorama into the top half of the screen and clamped everything below centre to the texture's dark bottom row; it now maps the sky at DOOM's fixed scale with the horizon at screen centre and wraps instead of clamping, matching Classic.
 
 - **Guard the Vulkan surface-format query against a zero count / dropped result.** (DOOM-0071)
   On an unusual graphics driver the renderer could read invalid memory while picking a display format at startup; now it checks properly and fails loudly instead.
