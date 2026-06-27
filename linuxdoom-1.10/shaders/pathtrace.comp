@@ -57,6 +57,13 @@ layout(set = 1, binding = 2) uniform sampler2D materialTex[];
 // frame agree on what each surface reflects.
 #include "pt_common.glsl"
 
+// Tone pipeline (build step 4b-iii). The scalar curves come from the Vestige
+// Formula Workbench export (exposureEv, linearToSrgb in formulas.glsl); the
+// PBR-Neutral operator is the hand-written non-scalar routine. This retires the
+// inline EXPOSURE=4.0 + Reinhard + pow(1/2.2) hack (INV-7 backfill paid down).
+#include "formulas/formulas.glsl"
+#include "formulas/pbr_neutral_tonemap.glsl"
+
 layout(push_constant) uniform PC {
     vec4  camPos;    // xyz = ray origin (world)
     vec4  camDir;    // xyz = forward
@@ -69,11 +76,7 @@ layout(push_constant) uniform PC {
     MatEmis  matEmis;  // per-material Le table (device address)
 } pc;
 
-// --- Camera-only NEE / exposure constants (build step 3c) --------------------
-// INV-7 backfill: provisional inline values (user-approved 2026-06-27) pending the
-// Vestige Formula Workbench export. The cross-shader scene-light constants
-// (FIREFLY_MAX, SKY_COLOR) live in pt_common.glsl; these stay here because only the
-// camera frame applies them.
+// --- Camera-only shading constants (build step 3c/4b-iii) --------------------
 const uint  NEE_SAMPLES = 4u;          // shadow rays/pixel. Emitters are picked by
                                        // POWER (3c-2, cdf binary search), so a few
                                        // samples land on the lights that matter.
@@ -82,16 +85,20 @@ const uint  NEE_SAMPLES = 4u;          // shadow rays/pixel. Emitters are picked
 // this flat term with a true bounce solution. NEE lamps pool brighter light on top.
 const float SECTOR_FILL   = 0.20;      // sector-lightlevel -> ambient fill scale
 const float AMBIENT_FLOOR = 0.02;      // floor so unlit sectors aren't pure black
-const float EXPOSURE      = 4.0;       // linear pre-tonemap gain (DOOM's derived
-                                       // radiances are low; lift before Reinhard).
+// Exposure as a photographic EV (the Workbench exposureEv curve turns it into a
+// linear gain: 1/(2^EV * 1.2)). -2.25 ≈ the old 4.0 gain, so this swap changes the
+// tone *operator* without an exposure jump; the value gets its real tune in step 4c
+// once the GI bake feeds the frame and the radiance levels settle.
+const float EXPOSURE_EV   = -2.25;
 
-// Reinhard tonemap + sRGB-ish encode: the integrator works in linear radiance,
-// the swapchain is UNORM, so map HDR->[0,1] and gamma-encode for display.
+// Display tone map: lift by exposure, compress HDR->[0,1] with the hue-preserving
+// Khronos PBR-Neutral operator (keeps DOOM's saturated palette where Reinhard/ACES
+// would wash it out), then sRGB-encode per channel for the UNORM swapchain.
 vec3 toneEncode(vec3 L)
 {
-    L = max(L, vec3(0.0));
-    vec3 m = L / (L + vec3(1.0));
-    return pow(m, vec3(1.0 / 2.2));
+    L = max(L, vec3(0.0)) * exposureEv(EXPOSURE_EV);
+    L = pbrNeutralToneMapping(L);
+    return vec3(linearToSrgb(L.r), linearToSrgb(L.g), linearToSrgb(L.b));
 }
 
 void main()
@@ -197,7 +204,7 @@ void main()
             L += albedo * (sLight * SECTOR_FILL + AMBIENT_FLOOR);
 
             if (any(isnan(L)) || any(isinf(L))) L = vec3(0.0);
-            colour = toneEncode(L * EXPOSURE);
+            colour = toneEncode(L);
         }
         else
         {
@@ -210,7 +217,7 @@ void main()
         // across hit and miss); the bounded sky-light in NEE mode (tonemapped like
         // the lit surfaces); a dark sky in intersection mode.
         if      (mode == 2u) colour = vec3(1.0);
-        else if (mode == 4u) colour = toneEncode(SKY_COLOR * EXPOSURE);
+        else if (mode == 4u) colour = toneEncode(SKY_COLOR);
         else                 colour = vec3(0.02, 0.02, 0.05);
     }
 

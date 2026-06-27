@@ -174,6 +174,11 @@ $(SHADER_DIR)/%.spv.h:	$(SHADER_DIR)/%
 # after the default goal (all:) so it stays a dependency, not make's first target.
 $(SHADER_DIR)/pathtrace.comp.spv.h $(SHADER_DIR)/bake.comp.spv.h: \
 		$(SHADER_DIR)/pt_common.glsl
+# pathtrace.comp also #includes the tone pipeline (Workbench-exported scalar curves
+# + the hand-written PBR-Neutral operator), step 4b-iii.
+$(SHADER_DIR)/pathtrace.comp.spv.h: \
+		$(SHADER_DIR)/formulas/formulas.glsl \
+		$(SHADER_DIR)/formulas/pbr_neutral_tonemap.glsl
 
 # The Vulkan back-end embeds the compiled shaders.
 $(O)/r_vulkan.o:	$(SHADER_HDRS)
