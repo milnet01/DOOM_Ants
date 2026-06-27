@@ -98,10 +98,11 @@ float rnd(inout uint s) { s = pcgHash(s); return float(s) * (1.0 / 4294967296.0)
 // --- NEE direct lighting (build step 3c) -------------------------------------
 // INV-7 backfill: provisional inline curves/thresholds (user-approved 2026-06-27)
 // pending the Vestige Formula Workbench export.
-const uint  NEE_SAMPLES = 16u;         // shadow rays/pixel. High for a legible first
-                                       // image: emitters are picked UNIFORMLY here,
-                                       // so coverage is ~SAMPLES/count — importance
-                                       // sampling (REJECT/MIS) in 3c-2 cuts this back.
+const uint  NEE_SAMPLES = 4u;          // shadow rays/pixel. Emitters are picked by
+                                       // POWER (build step 3c-2, cdf binary search),
+                                       // so a few samples land on the lights that
+                                       // matter — 4 here is cleaner than the old 16
+                                       // uniform picks at a quarter of the ray cost.
 // Sector lightlevel is the scene's real illumination (DOOM's small emissive
 // textures alone subtend a tiny solid angle -> faint), so it seeds a moody
 // ambient fill here; the step-4 GI bake replaces this flat term with a true
@@ -112,6 +113,11 @@ const vec3  SKY_COLOR     = vec3(0.20, 0.26, 0.40);  // bounded sky-light (miss 
 const float FIREFLY_MAX   = 4.0;       // clamp one NEE sample's *reflected radiance*
                                        // (post-BRDF) — bounds near-lamp spikes while
                                        // preserving distance falloff farther out
+const float EXPOSURE      = 4.0;       // linear pre-tonemap gain. DOOM's derived
+                                       // radiances are low; this lifts the lit scene
+                                       // to a readable level before the Reinhard
+                                       // roll-off (the §5 PBR-Neutral exposure curve,
+                                       // INV-7 backfill — provisional inline value).
 
 // Reinhard tonemap + sRGB-ish encode: the integrator works in linear radiance,
 // the swapchain is UNORM, so map HDR->[0,1] and gamma-encode for display.
@@ -124,10 +130,12 @@ vec3 toneEncode(vec3 L)
 
 // One area-sampled direct-lighting estimate from emitter triangle k. Returns the
 // incident contribution (Le * geometry / pdf), WITHOUT the surface BRDF (the
-// caller folds in albedo/pi). p(Q) = (1/count)*(1/area), so 1/p = count*area.
-vec3 sampleEmitter(uint k, vec3 hitP, vec3 n, uint count, inout uint seed)
+// caller folds in albedo/pi). The caller picks k by power (build step 3c-2) with
+// selection probability pdfSel, and samples a uniform point on the triangle, so
+// p(Q) = pdfSel * (1/area) and 1/p = area / pdfSel.
+vec3 sampleEmitter(uint k, vec3 hitP, vec3 n, float pdfSel, inout uint seed)
 {
-    uint b = k * 12u;
+    uint b = k * 14u;
     vec3 v0 = vec3(pc.emit.e[b+0u],  pc.emit.e[b+1u],  pc.emit.e[b+2u]);
     vec3 v1 = vec3(pc.emit.e[b+3u],  pc.emit.e[b+4u],  pc.emit.e[b+5u]);
     vec3 v2 = vec3(pc.emit.e[b+6u],  pc.emit.e[b+7u],  pc.emit.e[b+8u]);
@@ -168,7 +176,7 @@ vec3 sampleEmitter(uint k, vec3 hitP, vec3 n, uint count, inout uint seed)
         return vec3(0.0);                      // shadowed
 
     float G   = cosSurf * cosL / dist2;
-    float inv = float(count) * area;           // 1 / p(Q)
+    float inv = area / pdfSel;                  // 1 / p(Q), p = pdfSel * (1/area)
     return Le * G * inv;
 }
 
@@ -274,10 +282,12 @@ void main()
                           pc.matEmis.m[uint(id) * 3u + 1u],
                           pc.matEmis.m[uint(id) * 3u + 2u]);
 
-            // Direct light: average NEE_SAMPLES uniform emitter samples (each an
-            // unbiased estimate of the whole emitter set). Clamp per sample in the
-            // reflected-radiance domain (after BRDF albedo/PI) so the firefly limit
-            // is a real luminance bound, not a raw-estimator one.
+            // Direct light: average NEE_SAMPLES emitter samples (each an unbiased
+            // estimate of the whole emitter set). Emitters are picked by POWER —
+            // binary-search the cdf stored per record (slot 12) so bright/large
+            // lights are chosen proportionally more often, then weight by 1/pdf
+            // (slot 13). Clamp per sample in the reflected-radiance domain (after
+            // BRDF albedo/PI) so the firefly limit is a real luminance bound.
             uint count = pc.misc2.x;
             if (count > 0u)
             {
@@ -285,10 +295,17 @@ void main()
                 vec3 direct = vec3(0.0);
                 for (uint si = 0u; si < NEE_SAMPLES; si++)
                 {
-                    uint k = uint(rnd(seed) * float(count));
-                    if (k >= count) k = count - 1u;
-                    vec3 c   = sampleEmitter(k, hitP, n, count, seed);
-                    vec3 rad = albedo * (1.0 / PI) * c;     // reflected radiance
+                    float u  = rnd(seed);
+                    uint  lo = 0u, hi = count - 1u;        // first k with cdf[k] >= u
+                    while (lo < hi)
+                    {
+                        uint mid = (lo + hi) >> 1u;
+                        if (pc.emit.e[mid * 14u + 12u] < u) lo = mid + 1u;
+                        else                                hi = mid;
+                    }
+                    float pdf = pc.emit.e[lo * 14u + 13u];
+                    vec3  c   = sampleEmitter(lo, hitP, n, pdf, seed);
+                    vec3  rad = albedo * (1.0 / PI) * c;    // reflected radiance
                     direct += min(rad, vec3(FIREFLY_MAX));
                 }
                 L += direct / float(NEE_SAMPLES);
@@ -298,7 +315,7 @@ void main()
             L += albedo * (sLight * SECTOR_FILL + AMBIENT_FLOOR);
 
             if (any(isnan(L)) || any(isinf(L))) L = vec3(0.0);
-            colour = toneEncode(L);
+            colour = toneEncode(L * EXPOSURE);
         }
         else
         {
@@ -311,7 +328,7 @@ void main()
         // across hit and miss); the bounded sky-light in NEE mode (tonemapped like
         // the lit surfaces); a dark sky in intersection mode.
         if      (mode == 2u) colour = vec3(1.0);
-        else if (mode == 4u) colour = toneEncode(SKY_COLOR);
+        else if (mode == 4u) colour = toneEncode(SKY_COLOR * EXPOSURE);
         else                 colour = vec3(0.02, 0.02, 0.05);
     }
 
