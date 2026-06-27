@@ -406,6 +406,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Let lights move and react — muzzle flashes, flickering lamps — lighting the scene live.
   Kind: feature.
   Source: in-session-2026-06-11.
+  Scope clarification (2026-06-27, user): the muzzle flash must light up the room in BOTH 3D tiers (Solid AND Ultra), with ray tracing ON or OFF. RT off → a raster-lit flash (the room brightens, no cast shadows); RT on → the DOOM-0009 path tracer additionally casts the flash's ray-traced shadows + bounces. So muzzle-flash illumination is tier- and RT-agnostic (it is NOT an Ultra-only or RT-only effect); only the shadow quality scales with the RT toggle. Distinct from the pitch-black-room handling (DOOM-0043, Ultra-only): a flash lights any room momentarily regardless of tier.
 - 💭 [DOOM-0011] **Add volumetric lighting (god rays).**
   **Layman:** Visible shafts of light through smoke and doorways.
   Kind: feature.
@@ -455,6 +456,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Make sure rooms aren't pitch dark once real lighting is on — add lights where it makes sense and a gentle base glow.
   Kind: feature.
   Source: user-request-2026-06-24.
+  Scope decision (2026-06-27, user): this is ULTRA-ONLY. Solid intentionally leaves unlit rooms pitch black for now — the player flashlight (DOOM-0044) is the intended answer for dark Solid rooms, not an ambient floor. Whether to soften pitch-black Solid rooms gets revisited during playtest (using cheats to traverse levels), not decided now. So DOOM-0043's deliberate scene lights + gentle ambient/sky floor apply to the Ultra tier; Solid (RT on or off) ships no ambient floor at this stage.
 
 - 📋 [DOOM-0044] **Add a player flashlight toggled by a key, lighting the path-traced scene with ray-traced shadows.**
   A camera-mounted spotlight (headlamp) the player toggles with a configurable, config-persisted key. Fed to the path tracer as a dynamic analytic light so it casts real ray-traced shadows and bounces, sampled by next-event estimation. Follows view position/angle each frame (no BLAS change — a light parameter, not geometry). Builds on the DOOM-0009 integrator and the dynamic-light path (DOOM-0010 seed). Makes the dark sci-fi-horror areas (previous item) tense rather than unplayable.

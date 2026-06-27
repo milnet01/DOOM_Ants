@@ -72,12 +72,16 @@ in this spec's build order.
 
 **In Stage 2 specifically,** the only *observable* difference between Solid-RT-on
 and Ultra-RT-on is the **art set** — the modern-lighting layer (DOOM-0010/0011)
-lands in Stage 3. And the "rooms never go unintentionally black" safety floor
-(DOOM-0043) is an **RT-on concern, not an Ultra-only one**: Solid-RT-on traces the
-same GI, so it needs the same ambient floor; Ultra additionally gets *deliberate,
-art-directed* light placement. (Whether the bare ambient floor also ships for
-Solid-RT-on or is held until Ultra is a product call — tracked on DOOM-0043, not
-gated by this spec.)
+lands in Stage 3. Dark rooms are handled **per tier**: **Solid** deliberately leaves unlit rooms
+dark — the player flashlight (DOOM-0044) is the answer, and whether to soften
+pitch-black Solid rooms is left to playtest, not decided here; **Ultra** gets
+deliberate scene lights + a gentle ambient floor (DOOM-0043) so it reads as a lit,
+atmospheric space. The **muzzle flash is the exception** to the per-tier split: it
+lights the room in **both 3D tiers, RT on or off** (firing-lights-the-room is core
+DOOM feedback — Classic already does it via `extralight`). With RT **on**, this
+spec adds the flash's *ray-traced shadows* (§4.1); with RT **off** it is a plain
+raster flash. The broader dynamic-*atmosphere* lighting (DOOM-0010 — flickering
+lamps, coloured lights) stays an Ultra feature.
 
 **Menu rework (Stage-2).** Today the Options menu has one `"Renderer:"` item that
 *cycles* Classic → Solid → Ultra (`m_menu.c` `M_ChangeRenderer` →
@@ -364,8 +368,10 @@ each pass briefed cold.
   Ultra=RT-on" model (annotated to the 2026-06-27 model); §3/§7 described the
   bindless-materials migration (build step 1) as future when it shipped 2026-06-25
   (marked shipped); §2 ambiguities resolved (Stage-2 Solid-vs-Ultra difference is
-  art-set only; DOOM-0043's ambient floor is an RT-on concern, not Ultra-only; the
-  two player axes persist as two `m_misc.c` defaults). Fixed.
+  art-set only; DOOM-0043's ambient floor scoped — **subsequently set Ultra-only**
+  by the 2026-06-27 user decision (Solid leaves unlit rooms dark, the flashlight is
+  the answer; revisit at playtest — see §2); the two player axes persist as two
+  `m_misc.c` defaults). Fixed.
 - **Pass 3** — Lane C **clean**. ROADMAP DOOM-0009 status `💭`→`🚧` (shipped +
   in-flight work); tonemap-supersession reworded to the reconciled state
   (DOOM-0008 already records it); "five looks" qualified as the eventual target
