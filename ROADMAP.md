@@ -709,3 +709,17 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Three small wording/accuracy tidy-ups in the path-tracer design doc, found during review but not urgent.
   Kind: doc-fix.
   Source: cold-eyes-2026-06-27 (DOOM-0009 §2 revision, lane A residuals).
+
+- 📋 [DOOM-0082] **Activated switches/buttons emit a faint coloured glow (red buttons glow red).**
+  Folds into the DOOM-0009 path-tracer emitter work (build step 3b/3c). The
+  per-material emissive precompute auto-derives a switch's lit-variant texture
+  colour (red buttons -> red Le), and the mesh already re-reads each surface's
+  live texture per frame (DOOM-0066), so the glow should engage on activation.
+  Two pieces to verify when 3c lands: (1) the lit button texture actually crosses
+  the emissive brightness threshold (data-dependent — may need a switch-texture
+  allow-list or a lowered threshold for the "faint" case); (2) the emitter set
+  tracks the live switch texture swap (event- or per-tic refresh) so a pressed
+  button becomes an emitter. Intensity is a tunable ("faint").
+  **Layman:** When you press a lit button or switch, it gives off a soft glow in its own colour — a red button casts a faint red light — instead of staying flat.
+  Kind: feature.
+  Source: user-request-2026-06-27.
