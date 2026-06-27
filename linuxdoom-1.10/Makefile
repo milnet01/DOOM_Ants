@@ -117,6 +117,15 @@ clean:
 	rm -f linux/* mingw/*
 	rm -f $(SHADER_DIR)/*.spv $(SHADER_DIR)/*.spv.h
 
+# ---- Unit tests ----
+# nee-test (DOOM-0009 step 3c-3): prove the power-importance NEE emitter sampling
+# (build step 3c-2) is unbiased. Self-contained — compiles tests/nee_sampling_test
+# .cpp, which includes nee_sampling.h (the SAME table/selection math the emitter
+# builder and pathtrace.comp use). No WAD, no GPU, no Vulkan link; just builds + runs.
+nee-test:	tests/nee_sampling_test.cpp nee_sampling.h
+	$(CXX) $(CXXFLAGS) tests/nee_sampling_test.cpp -o $(O)/nee_sampling_test
+	$(O)/nee_sampling_test
+
 # Link with the C++ driver (g++) so libstdc++ is pulled in for the Vulkan
 # back-end. Linking the C objects this way is harmless.
 $(O)/$(BIN):	$(OBJS) $(O)/i_main.o

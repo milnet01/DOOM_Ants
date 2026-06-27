@@ -43,6 +43,10 @@
 // per-frame camera (rb_view_t).
 #include "r_mesh.h"
 
+// Power-importance emitter-sampling math (build step 3c-2), shared with the
+// unbiasedness test (tests/nee_sampling_test.cpp) so both use one implementation.
+#include "nee_sampling.h"
+
 // Compiled shaders, embedded as byte arrays (Makefile: GLSL -> SPIR-V -> xxd).
 #include "shaders/mesh.vert.spv.h"
 #include "shaders/mesh.frag.spv.h"
@@ -2398,20 +2402,19 @@ void BuildEmitterList()
     g.emitCount = (uint32_t)wgt.size();
 
     // Normalise the weights into each record's cdf (cumulative upper edge) + pdf
-    // (selection probability). Uniform fallback if every weight is zero (all
-    // triangles degenerate), so the shader's 1/pdf divide is always finite.
-    double total = 0.0;
-    for (float w : wgt) total += w;
-    double acc = 0.0;
-    for (uint32_t i = 0; i < g.emitCount; i++)
-    {
-        const float pdf = total > 0.0 ? (float)(wgt[i] / total) : 1.0f / (float)g.emitCount;
-        acc += pdf;
-        emit[(size_t)i * 14 + 12] = total > 0.0 ? (float)acc : (float)(i + 1) / (float)g.emitCount;
-        emit[(size_t)i * 14 + 13] = pdf;
-    }
+    // (selection probability) via the shared nee_build_cdf (uniform fallback if
+    // every weight is zero), then scatter into the 14-float records. Same code the
+    // unbiasedness test exercises (tests/nee_sampling_test.cpp).
     if (g.emitCount)
-        emit[(size_t)(g.emitCount - 1) * 14 + 12] = 1.0f;   // exact upper edge for u->1
+    {
+        std::vector<float> cdf(g.emitCount), pdf(g.emitCount);
+        nee_build_cdf(wgt.data(), (int)g.emitCount, cdf.data(), pdf.data());
+        for (uint32_t i = 0; i < g.emitCount; i++)
+        {
+            emit[(size_t)i * 14 + 12] = cdf[i];
+            emit[(size_t)i * 14 + 13] = pdf[i];
+        }
+    }
 
     if (g.emitCount)
         UploadAddressBuffer(emit.data(), (VkDeviceSize)emit.size() * sizeof(float),
