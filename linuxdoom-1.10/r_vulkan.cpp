@@ -3206,6 +3206,10 @@ void RecordRtTrace(uint32_t idx)
     pc.misc[3] = (uint32_t)g.matNumWall;   // flat-id offset for mode-3 textured decode
     pc.misc2[0] = g.emitCount;             // NEE emitter triangle count (step 3b)
     pc.misc2[1] = g.probeCount;            // GI probe count (step 4c; 0 -> no GI)
+    // Muzzle-flash gate (step 5): player->extralight [0,1] forwarded as the flash
+    // intensity (0 = not firing -> the dynamic light is skipped). Bit-cast into the
+    // uint slot; the shader reads it back with uintBitsToFloat.
+    std::memcpy(&pc.misc2[2], &g.lastView.extralight, sizeof(float));
     pc.vertsAddr   = BufferAddress(g.vbuf);
     pc.emitAddr    = g.emitBuf    ? BufferAddress(g.emitBuf)    : 0;
     pc.matEmisAddr = g.matEmisBuf ? BufferAddress(g.matEmisBuf) : 0;

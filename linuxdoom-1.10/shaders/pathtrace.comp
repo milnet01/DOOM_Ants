@@ -97,6 +97,18 @@ const float AMBIENT_FLOOR = 0.02;      // tiny fill for a triangle with no GI pr
 // once the GI bake feeds the frame and the radiance levels settle.
 const float EXPOSURE_EV   = -2.25;
 
+// Muzzle-flash dynamic light (build step 5). A positional point light at the gun,
+// active only while firing (the host passes player->extralight in misc2.z). Offset
+// FORWARD + DROP from the eye so it sits at the barrel: as the player turns, the
+// muzzle swings around the eye and its hard shadow tracks with it (a positionless
+// screen-brighten could not). INV-7 backfill constants (inline, like the step-3
+// scene-light values) pending a Workbench pass: warm flash colour, a radiant scale
+// tuned for DOOM-unit 1/dist^2 falloff, and the barrel offset in world units.
+const vec3  FLASH_COLOR     = vec3(1.0, 0.85, 0.6);
+const float FLASH_INTENSITY = 6.0e4;
+const float MUZZLE_FORWARD  = 24.0;
+const float MUZZLE_DROP     = 8.0;
+
 // Display tone map: lift by exposure, compress HDR->[0,1] with the hue-preserving
 // Khronos PBR-Neutral operator (keeps DOOM's saturated palette where Reinhard/ACES
 // would wash it out), then sRGB-encode per channel for the UNORM swapchain.
@@ -214,6 +226,35 @@ void main()
                 L += albedo * giIrradiance(pc.probes, subId, n);
             else
                 L += albedo * AMBIENT_FLOOR;
+
+            // Dynamic delta (build step 5): the muzzle flash. A point light at the
+            // gun barrel (eye + forward/drop offset) while firing, with a hard
+            // ray-traced shadow, composited additively over the baked static. The
+            // offset makes the muzzle swing as the player turns, so the cast shadow's
+            // direction tracks it (the verify a positionless brighten would fail).
+            float flash = uintBitsToFloat(pc.misc2.z);
+            if (flash > 0.0)
+            {
+                vec3  muzzle = pc.camPos.xyz + pc.camDir.xyz * MUZZLE_FORWARD
+                             + vec3(0.0, 0.0, -MUZZLE_DROP);
+                vec3  md    = muzzle - hitP;
+                float mdist2 = dot(md, md);
+                float mdist  = sqrt(mdist2);
+                vec3  mwi    = md / mdist;
+                float mcos   = dot(n, mwi);
+                if (mcos > 0.0 && mdist2 > 1.0)
+                {
+                    rayQueryEXT sq;
+                    rayQueryInitializeEXT(sq, topAS,
+                        gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0xFFu,
+                        hitP + n * 1e-3, 1e-3, mwi, mdist - 2e-3);
+                    while (rayQueryProceedEXT(sq)) {}
+                    if (rayQueryGetIntersectionTypeEXT(sq, true)
+                        == gl_RayQueryCommittedIntersectionNoneEXT)
+                        L += albedo * (1.0 / PI) * FLASH_COLOR
+                             * (flash * FLASH_INTENSITY) * mcos / mdist2;
+                }
+            }
 
             if (any(isnan(L)) || any(isinf(L))) L = vec3(0.0);
             colour = toneEncode(L);
