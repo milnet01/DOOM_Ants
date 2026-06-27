@@ -348,10 +348,11 @@ VkShaderModule MakeShader(const unsigned char* code, unsigned len);
 // No effect in Classic (no Vulkan path) or when the GPU lacks fillModeNonSolid.
 extern "C" { int rb_wireframe = 0; }
 
-// Path-tracer debug view (DOOM-0009 build step 2c), cycled by the `~` key:
+// Path-tracer debug view (DOOM-0009), cycled by the `~` key:
 // 0 = off (normal raster/overlay present), 1 = ray-traced intersection/normal
-// visualization, 2 = white-furnace energy check. Only acts when the GPU has RT
-// and a TLAS exists (in-level); harmless otherwise. C linkage for i_video.c.
+// visualization, 2 = white-furnace energy check, 3 = textured/sector-lit surface
+// (build step 3a). Only acts when the GPU has RT and a TLAS exists (in-level);
+// harmless otherwise. C linkage for i_video.c.
 extern "C" { int rb_rtdebug = 0; }
 
 [[noreturn]] void Fail(const char* what, VkResult r)
@@ -1102,15 +1103,20 @@ void CreateRtComputePipeline()
     dai.pSetLayouts        = &g.rtDsLayout;
     Check(vkAllocateDescriptorSets(g.device, &dai, &g.rtDs), "vkAllocateDescriptorSets(rt)");
 
-    // Push constant: 4x vec4 (camera) + uvec4 (mode/w/h) + uint64 (vertex addr).
+    // Push constant: 4x vec4 (camera) + uvec4 (mode/w/h/numWall) + uint64 (vertex addr).
     VkPushConstantRange pcr = {};
     pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pcr.offset     = 0;
     pcr.size       = 88;
+    // Two sets: 0 = RT (TLAS + output image), 1 = the raster materials set
+    // (g.dsLayout: PLAYPAL LUT + bindless material array), reused verbatim so the
+    // textured trace (step 3a) decodes surfaces with no parallel material path.
+    // g.dsLayout is created by CreateDescriptors, which Init runs before this.
+    VkDescriptorSetLayout setLayouts[2] = { g.rtDsLayout, g.dsLayout };
     VkPipelineLayoutCreateInfo plci = {};
     plci.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    plci.setLayoutCount         = 1;
-    plci.pSetLayouts            = &g.rtDsLayout;
+    plci.setLayoutCount         = 2;
+    plci.pSetLayouts            = setLayouts;
     plci.pushConstantRangeCount = 1;
     plci.pPushConstantRanges    = &pcr;
     Check(vkCreatePipelineLayout(g.device, &plci, nullptr, &g.rtPipeLayout),
@@ -1514,10 +1520,15 @@ void CreateDescriptors()
     const uint32_t matCount = (uint32_t)RB_MaterialCount();
 
     VkDescriptorSetLayoutBinding binds[3] = {};
+    // PLAYPAL LUT (0) and the bindless material array (2) are also read by the
+    // path-tracer compute megakernel (DOOM-0009 step 3a, pathtrace.comp set 1),
+    // which binds this very set, so they carry COMPUTE as well as FRAGMENT. The
+    // HUD/menu overlay (1) is fragment-only (the trace never samples it). Adding a
+    // stage is permissive — it does not alter the raster pass (INV-10).
     binds[0].binding = 0;   // PLAYPAL LUT
     binds[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     binds[0].descriptorCount = 1;
-    binds[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    binds[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
     binds[1].binding = 1;   // 2D HUD/menu overlay (R8 screens[0] indices)
     binds[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     binds[1].descriptorCount = 1;
@@ -1525,7 +1536,7 @@ void CreateDescriptors()
     binds[2].binding = 2;   // bindless material array (R8 palette-index images)
     binds[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     binds[2].descriptorCount = matCount;
-    binds[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    binds[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
 
     VkDescriptorBindingFlags flags[3] = {
         0, 0,
@@ -2298,11 +2309,17 @@ void RecordRtTrace(uint32_t idx)
     pc.camUp[2] = 1.0f;          pc.camUp[3] = (float)h / (float)w;
     pc.misc[0] = (uint32_t)rb_rtdebug;
     pc.misc[1] = w; pc.misc[2] = h;
+    pc.misc[3] = (uint32_t)g.matNumWall;   // flat-id offset for mode-3 textured decode
     pc.vertsAddr = BufferAddress(g.vbuf);
 
+    // Set 0 = RT (TLAS + output image); set 1 = the raster materials set (palette
+    // LUT + bindless material array), so the textured trace samples the same
+    // materials as the raster pass (step 3a). rtActive gates on g.atlasReady, so
+    // the material array (binding 2) is written before this binds it.
+    VkDescriptorSet sets[2] = { g.rtDs, g.ds };
     vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g.rtPipeline);
     vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-                            g.rtPipeLayout, 0, 1, &g.rtDs, 0, nullptr);
+                            g.rtPipeLayout, 0, 2, sets, 0, nullptr);
     vkCmdPushConstants(g.cmd, g.rtPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT,
                        0, sizeof(pc), &pc);
     vkCmdDispatch(g.cmd, (w + 7) / 8, (h + 7) / 8, 1);
@@ -2383,7 +2400,7 @@ extern "C" void RB_Vulkan_Present(void)
     // the raster (Solid) path is byte-for-byte unaffected (INV-10).
     const bool rtActive = rb_rtdebug && g.rtEnabled && g.tlas != VK_NULL_HANDLE
                        && g.rtPipeline != VK_NULL_HANDLE && g.haveCamera
-                       && g.vbuf != VK_NULL_HANDLE;
+                       && g.vbuf != VK_NULL_HANDLE && g.atlasReady;
 
     // Rebuild this frame's billboard sprites into the persistently-mapped buffer.
     // Safe to overwrite now: the fence wait above guarantees the previous frame's

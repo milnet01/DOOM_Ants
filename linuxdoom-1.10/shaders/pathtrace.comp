@@ -19,19 +19,38 @@
 //                           variance. So a correct integrator paints the whole
 //                           screen flat white; any tint/banding is an energy
 //                           bug in the pdf/throughput code.
+//   mode 3  TEXTURED       — build step 3a: fetch the hit surface's real DOOM
+//                           material (paletted texture decoded through PLAYPAL,
+//                           exactly as the raster mesh.frag does) and modulate by
+//                           sector lightlevel. The honest "albedo recovered +
+//                           sector-light seed" view; real NEE direct lighting
+//                           replaces the flat sector-light term in step 3c.
 //
 #extension GL_EXT_ray_query           : require
 #extension GL_EXT_buffer_reference     : require
 #extension GL_EXT_scalar_block_layout  : require
+#extension GL_EXT_nonuniform_qualifier : require
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(set = 0, binding = 0) uniform accelerationStructureEXT topAS;
 layout(set = 0, binding = 1, rgba8) uniform writeonly image2D outImg;
 
+// Materials (set 1) — shared verbatim with the raster pass (r_vulkan.cpp
+// CreateDescriptors / mesh.frag): the 256x1 PLAYPAL LUT and the bindless array of
+// R8 palette-index material images. Same binding numbers (0, 2) and the same
+// g.ds set bound at trace time, so the traced surface decodes to DOOM's exact
+// colours with no parallel material path.
+layout(set = 1, binding = 0) uniform sampler2D paletteTex;
+layout(set = 1, binding = 2) uniform sampler2D materialTex[];
+
 // The level mesh vertex buffer, read by GPU address so a hit can fetch the
-// triangle's baked normal. Matches rb_vertex_t (r_mesh.h): 18 floats/vertex,
-// position at [0..2], normal at [3..5]. scalar layout = tight float packing.
+// triangle's per-vertex data. Matches rb_vertex_t (r_mesh.h): 18 4-byte slots/
+// vertex — position [0..2], normal [3..5], texel u/v [6..7], texnum [8] (int),
+// flags [9] (int), sector light [10] (float). scalar layout = tight packing; the
+// int fields are recovered with floatBitsToInt. (The trace hits only static
+// walls/flats — sprites and the sky backdrop are per-frame, not in the BLAS — so
+// the unified material id needs only the numWall offset, not numFlat.)
 layout(buffer_reference, scalar) readonly buffer Verts { float v[]; };
 
 layout(push_constant) uniform PC {
@@ -39,11 +58,12 @@ layout(push_constant) uniform PC {
     vec4  camDir;    // xyz = forward
     vec4  camRight;  // xyz = right,  w = tan(hFov/2)
     vec4  camUp;     // xyz = up,     w = tan(vFov/2)
-    uvec4 misc;      // x = mode, y = width, z = height, w = unused
+    uvec4 misc;      // x = mode, y = width, z = height, w = numWall (flat-id offset)
     Verts verts;     // level mesh vertex buffer (device address)
 } pc;
 
 const float PI = 3.14159265358979323846;
+const int FLAG_FLAT = 0x1;   // matches RB_MESH_FLAT in r_mesh.h (flats vs walls)
 
 // Cheap integer hash (PCG) -> a float in [0,1), for the furnace bounce sample.
 uint pcgHash(uint x)
@@ -105,6 +125,30 @@ void main()
             float brdf = 1.0 / PI;                  // albedo 1 Lambert
             float L    = 1.0;
             colour = vec3(pdf > 0.0 ? (brdf * cosT / pdf) * L : 0.0);
+        }
+        else if (mode == 3u)
+        {
+            // Textured (3a): decode the hit surface's DOOM material exactly as the
+            // raster path (mesh.frag) does, then modulate by sector lightlevel.
+            // Per-vertex data of the hit triangle's vertex 0 (flat-shaded faces
+            // share it across all three vertices, like the normal above).
+            float u     = pc.verts.v[i0 + 6u];
+            float vv    = pc.verts.v[i0 + 7u];
+            int   texnum = floatBitsToInt(pc.verts.v[i0 + 8u]);
+            int   flags  = floatBitsToInt(pc.verts.v[i0 + 9u]);
+            float light  = pc.verts.v[i0 + 10u];
+
+            // Unified bindless id: flats sit after the walls (offset numWall);
+            // walls (including two-sided masked mid-walls) index by texnum direct.
+            // The ray is opaque (gl_RayFlagsOpaqueEXT), so a masked mid-wall reads
+            // solid here — its index-0 cut-out gaps become see-through only once
+            // any-hit alpha testing lands (a later refinement, with NEE in 3c).
+            int  id    = ((flags & FLAG_FLAT) != 0) ? (int(pc.misc.w) + texnum) : texnum;
+            vec2 sz    = vec2(textureSize(materialTex[nonuniformEXT(id)], 0));
+            float idx  = texture(materialTex[nonuniformEXT(id)], vec2(u, vv) / sz).r * 255.0;
+            vec3 albedo = texture(paletteTex, vec2((idx + 0.5) / 256.0, 0.5)).rgb;
+
+            colour = albedo * light;                // sector-light seed; NEE in 3c
         }
         else
         {
