@@ -39,7 +39,7 @@ O=linux
 SHADER_DIR=shaders
 SHADER_SRCS=$(SHADER_DIR)/mesh.vert $(SHADER_DIR)/mesh.frag \
 		$(SHADER_DIR)/overlay.vert $(SHADER_DIR)/overlay.frag \
-		$(SHADER_DIR)/pathtrace.comp
+		$(SHADER_DIR)/pathtrace.comp $(SHADER_DIR)/bake.comp
 SHADER_HDRS=$(SHADER_SRCS:=.spv.h)
 
 # not too sophisticated dependency
@@ -166,6 +166,14 @@ $(O)/%.o:	%.cpp
 $(SHADER_DIR)/%.spv.h:	$(SHADER_DIR)/%
 	glslc --target-env=vulkan1.2 -O $< -o $(SHADER_DIR)/$*.spv
 	xxd -i -n $(subst .,_,$*)_spv $(SHADER_DIR)/$*.spv > $@
+
+# The path-tracer compute shaders #include the shared shading header
+# (pt_common.glsl); glslc emits no auto-dep here, so name it explicitly or an edit
+# to the shared math would silently skip the recompile (the same hazard the C
+# objects have — see the "make clean after a shared header" project note). Listed
+# after the default goal (all:) so it stays a dependency, not make's first target.
+$(SHADER_DIR)/pathtrace.comp.spv.h $(SHADER_DIR)/bake.comp.spv.h: \
+		$(SHADER_DIR)/pt_common.glsl
 
 # The Vulkan back-end embeds the compiled shaders.
 $(O)/r_vulkan.o:	$(SHADER_HDRS)

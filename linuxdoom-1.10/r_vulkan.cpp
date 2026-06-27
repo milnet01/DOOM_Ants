@@ -53,6 +53,7 @@
 #include "shaders/overlay.vert.spv.h"
 #include "shaders/overlay.frag.spv.h"
 #include "shaders/pathtrace.comp.spv.h"
+#include "shaders/bake.comp.spv.h"
 
 // Tier values returned by RB_VulkanProbe — kept numerically in lockstep with
 // rendermode_t in r_backend.h (RB_CLASSIC=0, RB_RT3D=1, RB_RASTER3D=2). The
@@ -333,6 +334,15 @@ struct VulkanState
     VkDescriptorSet       rtDs       = VK_NULL_HANDLE;
     VkPipelineLayout      rtPipeLayout = VK_NULL_HANDLE;
     VkPipeline            rtPipeline   = VK_NULL_HANDLE;
+
+    // GI bake compute pass (DOOM-0009 build step 4b-ii). Its own descriptor set
+    // (TLAS only — no output image) + pipeline; set 1 (materials) is shared with
+    // the megakernel. Created once; the dispatch runs at each level load.
+    VkDescriptorSetLayout bakeDsLayout   = VK_NULL_HANDLE;
+    VkDescriptorPool      bakeDsPool     = VK_NULL_HANDLE;
+    VkDescriptorSet       bakeDs         = VK_NULL_HANDLE;
+    VkPipelineLayout      bakePipeLayout = VK_NULL_HANDLE;
+    VkPipeline            bakePipeline   = VK_NULL_HANDLE;
 
     // Direct-lighting emitters (DOOM-0009 build step 3b). matEmisBuf is the
     // WAD-global per-material Le table (3 floats/material, linear RGB) built with
@@ -1180,6 +1190,73 @@ void CreateRtComputePipeline()
     cpci.layout       = g.rtPipeLayout;
     Check(vkCreateComputePipelines(g.device, VK_NULL_HANDLE, 1, &cpci, nullptr, &g.rtPipeline),
           "vkCreateComputePipelines(rt)");
+    vkDestroyShaderModule(g.device, cs, nullptr);
+}
+
+// Build the once-per-run GI bake pipeline (DOOM-0009 build step 4b-ii). Like the
+// megakernel but its set 0 holds the TLAS alone (the bake writes the probe SSBO by
+// address, not an image); set 1 reuses the raster materials set. The dispatch runs
+// at each level load (RunGiBake), so the descriptor's TLAS half is (re)written
+// there. RT-only; CreateRtComputePipeline (which makes g.dsLayout's sibling) and
+// CreateDescriptors run before this.
+void CreateBakePipeline()
+{
+    VkDescriptorSetLayoutBinding tlasBind = {};
+    tlasBind.binding         = 0;   // TLAS
+    tlasBind.descriptorType  = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    tlasBind.descriptorCount = 1;
+    tlasBind.stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    VkDescriptorSetLayoutCreateInfo dlci = {};
+    dlci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    dlci.bindingCount = 1;
+    dlci.pBindings    = &tlasBind;
+    Check(vkCreateDescriptorSetLayout(g.device, &dlci, nullptr, &g.bakeDsLayout),
+          "vkCreateDescriptorSetLayout(bake)");
+
+    VkDescriptorPoolSize pool = {};
+    pool.type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR; pool.descriptorCount = 1;
+    VkDescriptorPoolCreateInfo pci = {};
+    pci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pci.maxSets       = 1;
+    pci.poolSizeCount = 1;
+    pci.pPoolSizes    = &pool;
+    Check(vkCreateDescriptorPool(g.device, &pci, nullptr, &g.bakeDsPool),
+          "vkCreateDescriptorPool(bake)");
+
+    VkDescriptorSetAllocateInfo dai = {};
+    dai.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dai.descriptorPool     = g.bakeDsPool;
+    dai.descriptorSetCount = 1;
+    dai.pSetLayouts        = &g.bakeDsLayout;
+    Check(vkAllocateDescriptorSets(g.device, &dai, &g.bakeDs), "vkAllocateDescriptorSets(bake)");
+
+    // Push constant: uvec4 (probeCount/numWall/emitterCount/_) + 4 uint64 buffer
+    // addresses (verts, emit, matEmis, probes) = 48 bytes.
+    VkPushConstantRange pcr = {};
+    pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pcr.offset     = 0;
+    pcr.size       = 48;
+    VkDescriptorSetLayout setLayouts[2] = { g.bakeDsLayout, g.dsLayout };
+    VkPipelineLayoutCreateInfo plci = {};
+    plci.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plci.setLayoutCount         = 2;
+    plci.pSetLayouts            = setLayouts;
+    plci.pushConstantRangeCount = 1;
+    plci.pPushConstantRanges    = &pcr;
+    Check(vkCreatePipelineLayout(g.device, &plci, nullptr, &g.bakePipeLayout),
+          "vkCreatePipelineLayout(bake)");
+
+    VkShaderModule cs = MakeShader(bake_comp_spv, bake_comp_spv_len);
+    VkComputePipelineCreateInfo cpci = {};
+    cpci.sType        = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    cpci.stage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    cpci.stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
+    cpci.stage.module = cs;
+    cpci.stage.pName  = "main";
+    cpci.layout       = g.bakePipeLayout;
+    Check(vkCreateComputePipelines(g.device, VK_NULL_HANDLE, 1, &cpci, nullptr, &g.bakePipeline),
+          "vkCreateComputePipelines(bake)");
     vkDestroyShaderModule(g.device, cs, nullptr);
 }
 
@@ -2293,6 +2370,7 @@ extern "C" void RB_Vulkan_Init(void)
         // (which points the set's image half at its view). The TLAS half is
         // written later, per level, by BuildAccelerationStructures.
         CreateRtComputePipeline();
+        CreateBakePipeline();          // GI bake pass (step 4b-ii), dispatched per level
         CreateRtTargets();
     }
     g.ready = true;
@@ -2438,6 +2516,85 @@ void BuildEmitterList()
 // major R[4] G[4] B[4]). Must match the bake shader and the megakernel's read.
 static const uint32_t PROBE_FLOATS = 16;
 
+// Run the GI bake (DOOM-0009 build step 4b-ii): dispatch bake.comp once over the
+// just-placed probe buffer, filling each probe's SH-L1 radiance, then read it back
+// to verify the bake produced finite, non-zero values. Called at the tail of
+// BuildProbes (positions uploaded, SH zeroed). Needs the per-level TLAS + the
+// materials/emitter/Le buffers, so it runs after BuildAccelerationStructures and
+// BuildEmitterList. The probe buffer is host-visible + coherent, so after the
+// one-shot dispatch waits idle, the host map sees the GPU's writes directly.
+void RunGiBake()
+{
+    if (!g.rtEnabled || g.probeBuf == VK_NULL_HANDLE || g.probeCount == 0 ||
+        g.tlas == VK_NULL_HANDLE || g.bakePipeline == VK_NULL_HANDLE ||
+        g.matEmisBuf == VK_NULL_HANDLE)
+        return;
+
+    // Point the bake set's TLAS half at this level's freshly built TLAS.
+    VkWriteDescriptorSetAccelerationStructureKHR asInfo = {};
+    asInfo.sType                      = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
+    asInfo.accelerationStructureCount = 1;
+    asInfo.pAccelerationStructures    = &g.tlas;
+    VkWriteDescriptorSet w = {};
+    w.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    w.pNext           = &asInfo;
+    w.dstSet          = g.bakeDs;
+    w.dstBinding      = 0;
+    w.descriptorCount = 1;
+    w.descriptorType  = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    vkUpdateDescriptorSets(g.device, 1, &w, 0, nullptr);
+
+    struct BakePush {
+        uint32_t misc[4];       // probeCount, numWall, emitterCount, reserved
+        uint64_t vertsAddr;
+        uint64_t emitAddr;      // 0 if this level has no emitters (shader guards on count)
+        uint64_t matEmisAddr;
+        uint64_t probeAddr;
+    } bp = {};
+    static_assert(sizeof(BakePush) == 48, "bake push-constant layout must match the shader");
+    bp.misc[0]     = g.probeCount;
+    bp.misc[1]     = (uint32_t)g.matNumWall;
+    bp.misc[2]     = g.emitCount;
+    bp.vertsAddr   = BufferAddress(g.vbuf);
+    bp.emitAddr    = g.emitBuf ? BufferAddress(g.emitBuf) : 0;
+    bp.matEmisAddr = BufferAddress(g.matEmisBuf);
+    bp.probeAddr   = BufferAddress(g.probeBuf);
+
+    VkDescriptorSet sets[2] = { g.bakeDs, g.ds };
+    VkCommandBuffer cb = BeginOneTime();
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, g.bakePipeline);
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE,
+                            g.bakePipeLayout, 0, 2, sets, 0, nullptr);
+    vkCmdPushConstants(cb, g.bakePipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(bp), &bp);
+    vkCmdDispatch(cb, (g.probeCount + 63) / 64, 1, 1);
+    EndOneTime(cb);   // submits + waits idle: the bake is complete before the readback
+
+    // Verify (step 4b-ii): scan the SH payload (floats 4..15 of each record) for
+    // finiteness and non-zero energy, and report the mean DC (l=0) irradiance.
+    void* mapped = nullptr;
+    Check(vkMapMemory(g.device, g.probeMem, 0, VK_WHOLE_SIZE, 0, &mapped), "vkMapMemory(probeReadback)");
+    const float* pf = (const float*)mapped;
+    int   nonFinite = 0, nonZero = 0;
+    double dcSum[3] = { 0, 0, 0 };
+    for (uint32_t i = 0; i < g.probeCount; i++)
+    {
+        const float* sh = &pf[(size_t)i * PROBE_FLOATS + 4];   // 12 SH floats
+        for (int k = 0; k < 12; k++)
+        {
+            if (!std::isfinite(sh[k]))      nonFinite++;
+            else if (sh[k] != 0.0f)         nonZero++;
+        }
+        // DC term per channel (sh[0], sh[4], sh[8]) * Y00 = average radiance.
+        dcSum[0] += sh[0] * 0.282095; dcSum[1] += sh[4] * 0.282095; dcSum[2] += sh[8] * 0.282095;
+    }
+    vkUnmapMemory(g.device, g.probeMem);
+    printf("RB_Vulkan: GI bake done — %u probes, %d non-finite SH coeffs, %d non-zero; "
+           "mean DC irradiance rgb(%.3f, %.3f, %.3f)\n",
+           g.probeCount, nonFinite, nonZero,
+           dcSum[0] / g.probeCount, dcSum[1] / g.probeCount, dcSum[2] / g.probeCount);
+    fflush(stdout);
+}
+
 // Place this level's GI-bake probes (DOOM-0009 build step 4b-i): one per subsector
 // (RB_BuildProbes), uploaded as PROBE_FLOATS records with the SH payload zeroed —
 // the bake compute pass (4b-ii) fills it, the megakernel reads it (4c). Rebuilt
@@ -2483,6 +2640,10 @@ void BuildProbes()
     printf("RB_Vulkan: %u GI probes (1/subsector). bounds x[%.0f,%.0f] y[%.0f,%.0f] z[%.0f,%.0f]\n",
            g.probeCount, lo[0], hi[0], lo[1], hi[1], lo[2], hi[2]);
     fflush(stdout);
+
+    // Build step 4b-ii: bake the indirect irradiance into the probes now that the
+    // positions are uploaded (and the TLAS / emitter / Le buffers are ready).
+    RunGiBake();
 }
 
 extern "C" void RB_Vulkan_BuildLevel(void)
@@ -2952,6 +3113,11 @@ extern "C" void RB_Vulkan_Shutdown(void)
         if (g.rtPipeLayout) vkDestroyPipelineLayout(g.device, g.rtPipeLayout, nullptr);
         if (g.rtDsPool)     vkDestroyDescriptorPool(g.device, g.rtDsPool, nullptr);
         if (g.rtDsLayout)   vkDestroyDescriptorSetLayout(g.device, g.rtDsLayout, nullptr);
+        // GI bake pipeline (step 4b-ii).
+        if (g.bakePipeline)   vkDestroyPipeline(g.device, g.bakePipeline, nullptr);
+        if (g.bakePipeLayout) vkDestroyPipelineLayout(g.device, g.bakePipeLayout, nullptr);
+        if (g.bakeDsPool)     vkDestroyDescriptorPool(g.device, g.bakeDsPool, nullptr);
+        if (g.bakeDsLayout)   vkDestroyDescriptorSetLayout(g.device, g.bakeDsLayout, nullptr);
         // Direct-lighting buffers (step 3b): per-level emitter list + WAD-global Le table.
         if (g.emitBuf)      vkDestroyBuffer(g.device, g.emitBuf, nullptr);
         if (g.emitMem)      vkFreeMemory(g.device, g.emitMem, nullptr);

@@ -1,0 +1,136 @@
+#version 460
+//
+// DOOM-0009 path tracer — static GI bake (build step 4b-ii).
+//
+// DOOM's lighting is ~95% static, so the bounced (indirect) light is solved ONCE
+// at level load instead of every frame. One compute thread per GI probe (placed
+// one-per-subsector at the convex-cell centroid, build step 4b-i): the thread
+// fires BAKE_RAYS sample rays over the full sphere, shades each hit with the SAME
+// NEE direct-lighting the camera frame uses (shadeSurface, pt_common.glsl), and
+// projects the incoming radiance onto an SH-L1 (4-coefficient) directional basis.
+// The result is written back into the probe buffer; the megakernel reads it in
+// step 4c to replace the temporary flat ambient fill with a real bounce solution.
+//
+// This is single-bounce indirect: each probe sees the directly-lit (and self-
+// emissive) surfaces around it. That is the first lit GI term; multi-bounce would
+// iterate the probes feeding back into the bake (a later refinement).
+//
+#extension GL_EXT_ray_query              : require
+#extension GL_EXT_buffer_reference       : require
+#extension GL_EXT_scalar_block_layout    : require
+#extension GL_EXT_nonuniform_qualifier   : require
+#extension GL_GOOGLE_include_directive    : require   // shared pt_common.glsl
+
+layout(local_size_x = 64) in;
+
+// Same set 0 (TLAS) + set 1 (materials) the megakernel binds, so shadeSurface()
+// traces the same scene and decodes the same DOOM palette. The bake writes no
+// image — the probe buffer is its output, reached by GPU address (below).
+layout(set = 0, binding = 0) uniform accelerationStructureEXT topAS;
+layout(set = 1, binding = 0) uniform sampler2D paletteTex;
+layout(set = 1, binding = 2) uniform sampler2D materialTex[];
+
+#include "pt_common.glsl"
+
+// The GI probe buffer (read-write by GPU address). 16 floats/probe: pos[3] + pad
+// then SH-L1 radiance, channel-major R[4] G[4] B[4]. The host wrote the positions
+// (SH zeroed); this pass fills the SH.
+layout(buffer_reference, scalar) buffer Probes { float p[]; };
+
+layout(push_constant) uniform PC {
+    uvec4    misc;     // x = probeCount, y = numWall, z = emitterCount, w = reserved
+    Verts    verts;    // level mesh vertex buffer
+    Emitters emit;     // step-3b emitter list (count in misc.z)
+    MatEmis  matEmis;  // per-material Le table
+    Probes   probes;   // GI probe buffer (this pass's output)
+} pc;
+
+const uint  BAKE_RAYS = 256u;   // sphere samples/probe. SH-L1 is very low frequency,
+                                // so a few hundred uniform directions converge it
+                                // smoothly; the bake is one-time so cost is cheap.
+const uint  BAKE_NEE  = 1u;     // shadow rays per bake-ray hit. 1 suffices — the
+                                // sphere integration already averages over BAKE_RAYS
+                                // directions, so per-hit direct-light variance washes
+                                // out into the low-order SH.
+
+void main()
+{
+    const uint pi = gl_GlobalInvocationID.x;
+    if (pi >= pc.misc.x)
+        return;
+
+    const uint base = pi * 16u;
+    const vec3 P = vec3(pc.probes.p[base + 0u], pc.probes.p[base + 1u], pc.probes.p[base + 2u]);
+
+    // SH-L1 radiance accumulators per colour channel (4 coeffs each: l=0 + 3*l=1).
+    vec4 shR = vec4(0.0), shG = vec4(0.0), shB = vec4(0.0);
+
+    uint seed = pcgHash(pi * 9781u + 1u);
+
+    for (uint s = 0u; s < BAKE_RAYS; s++)
+    {
+        // Uniform direction on the full sphere (z = 1 - 2u maps to cos-uniform).
+        float u1 = rnd(seed), u2 = rnd(seed);
+        float z   = 1.0 - 2.0 * u1;
+        float r   = sqrt(max(0.0, 1.0 - z * z));
+        float phi = 2.0 * PI * u2;
+        vec3  wi  = vec3(r * cos(phi), r * sin(phi), z);
+
+        // Trace the sample ray from the probe.
+        rayQueryEXT rq;
+        rayQueryInitializeEXT(rq, topAS, gl_RayFlagsOpaqueEXT, 0xFFu, P, 0.01, wi, 1.0e9);
+        while (rayQueryProceedEXT(rq)) {}
+
+        vec3 Li;
+        if (rayQueryGetIntersectionTypeEXT(rq, true)
+            == gl_RayQueryCommittedIntersectionTriangleEXT)
+        {
+            // Flat-shaded hit-surface decode (mirrors the megakernel's primary
+            // hit): non-indexed soup, 18 floats/vertex, vertex 0 of triangle prim
+            // at prim*3*18. Normal faced toward the probe.
+            const int  prim = rayQueryGetIntersectionPrimitiveIndexEXT(rq, true);
+            const uint i0   = uint(prim) * 3u * 18u;
+            vec3 n = normalize(vec3(pc.verts.v[i0 + 3u], pc.verts.v[i0 + 4u], pc.verts.v[i0 + 5u]));
+            if (dot(n, wi) > 0.0) n = -n;
+            float uu     = pc.verts.v[i0 + 6u];
+            float vv     = pc.verts.v[i0 + 7u];
+            int   texnum = floatBitsToInt(pc.verts.v[i0 + 8u]);
+            int   flags  = floatBitsToInt(pc.verts.v[i0 + 9u]);
+            uint  id     = ((flags & FLAG_FLAT) != 0) ? (pc.misc.y + uint(texnum))
+                                                      : uint(texnum);
+
+            vec3  albedo = decodeAlbedo(id, vec2(uu, vv));
+            float tHit   = rayQueryGetIntersectionTEXT(rq, true);
+            vec3  hitP   = P + wi * tHit;
+
+            // Outgoing radiance from the hit toward the probe: emission + NEE
+            // direct (the same shared shading the camera applies on a primary hit).
+            Li = shadeSurface(hitP, n, albedo, id, pc.misc.z,
+                              pc.emit, pc.matEmis, BAKE_NEE, seed);
+        }
+        else
+        {
+            Li = SKY_COLOR;     // ray escaped through the sky: bounded sky-light fill
+        }
+
+        // Project incoming radiance onto the real SH-L1 basis for direction wi:
+        //   Y00 = 0.282095, Y1m = 0.488603 * {y, z, x}
+        vec4 Y = vec4(0.282095, 0.488603 * wi.y, 0.488603 * wi.z, 0.488603 * wi.x);
+        shR += Li.r * Y;
+        shG += Li.g * Y;
+        shB += Li.b * Y;
+    }
+
+    // Monte-Carlo normalisation for uniform sphere sampling: integral estimate is
+    // (4*pi / N) * sum. The clamped-cosine convolution for irradiance lookup is
+    // applied later (step 4c), so the probe stores raw radiance SH coefficients.
+    float norm = (4.0 * PI) / float(BAKE_RAYS);
+    shR *= norm; shG *= norm; shB *= norm;
+
+    pc.probes.p[base + 4u]  = shR.x; pc.probes.p[base + 5u]  = shR.y;
+    pc.probes.p[base + 6u]  = shR.z; pc.probes.p[base + 7u]  = shR.w;
+    pc.probes.p[base + 8u]  = shG.x; pc.probes.p[base + 9u]  = shG.y;
+    pc.probes.p[base + 10u] = shG.z; pc.probes.p[base + 11u] = shG.w;
+    pc.probes.p[base + 12u] = shB.x; pc.probes.p[base + 13u] = shB.y;
+    pc.probes.p[base + 14u] = shB.z; pc.probes.p[base + 15u] = shB.w;
+}
