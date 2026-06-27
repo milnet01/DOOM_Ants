@@ -53,13 +53,29 @@ layout(set = 1, binding = 2) uniform sampler2D materialTex[];
 // the unified material id needs only the numWall offset, not numFlat.)
 layout(buffer_reference, scalar) readonly buffer Verts { float v[]; };
 
+// Emitter list (build step 3b) — the subset of static level triangles whose
+// material is emissive (a bright lamp/screen/switch/slime texture crossing the
+// build-time luminance threshold). Each record is 12 tight floats: v0[3] v1[3]
+// v2[3] Le[3] (world positions + linear emitted radiance). NEE (step 3c) samples
+// a point on one of these per shading point and shadow-rays to it.
+layout(buffer_reference, scalar) readonly buffer Emitters { float e[]; };
+
+// Per-material emitted radiance Le, indexed by the same unified material id the
+// textured decode uses (walls [0,numWall), flats after). Lets a primary hit add
+// its own self-emission (a lamp you look at directly glows) without re-deriving
+// the per-texture mean. 3 floats/material (linear RGB).
+layout(buffer_reference, scalar) readonly buffer MatEmis { float m[]; };
+
 layout(push_constant) uniform PC {
     vec4  camPos;    // xyz = ray origin (world)
     vec4  camDir;    // xyz = forward
     vec4  camRight;  // xyz = right,  w = tan(hFov/2)
     vec4  camUp;     // xyz = up,     w = tan(vFov/2)
     uvec4 misc;      // x = mode, y = width, z = height, w = numWall (flat-id offset)
-    Verts verts;     // level mesh vertex buffer (device address)
+    uvec4 misc2;     // x = emitter count (step 3b); y,z,w reserved
+    Verts    verts;    // level mesh vertex buffer (device address)
+    Emitters emit;     // step-3b emitter list (device address; count in misc2.x)
+    MatEmis  matEmis;  // per-material Le table (device address)
 } pc;
 
 const float PI = 3.14159265358979323846;

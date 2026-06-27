@@ -330,6 +330,20 @@ struct VulkanState
     VkPipelineLayout      rtPipeLayout = VK_NULL_HANDLE;
     VkPipeline            rtPipeline   = VK_NULL_HANDLE;
 
+    // Direct-lighting emitters (DOOM-0009 build step 3b). matEmisBuf is the
+    // WAD-global per-material Le table (3 floats/material, linear RGB) built with
+    // the material array; matEmissive is the CPU mirror the per-level emitter
+    // extraction reads to decide which triangles emit. emitBuf is this level's
+    // emitter-triangle list (12 floats/tri: v0 v1 v2 Le), rebuilt per level;
+    // emitCount is its triangle count. Both are device-address storage buffers the
+    // megakernel reads via buffer_reference (NEE, step 3c). RT-gated.
+    std::vector<float> matEmissive;                 // CPU Le mirror, 3*matCount
+    VkBuffer       matEmisBuf = VK_NULL_HANDLE;     // GPU Le table (device address)
+    VkDeviceMemory matEmisMem = VK_NULL_HANDLE;
+    VkBuffer       emitBuf    = VK_NULL_HANDLE;     // per-level emitter list
+    VkDeviceMemory emitMem    = VK_NULL_HANDLE;
+    uint32_t       emitCount  = 0;
+
     bool ready        = false;
     bool needRecreate = false;
 };
@@ -858,6 +872,24 @@ void CreateRtBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
     Check(vkBindBufferMemory(g.device, *buf, *mem, 0), "vkBindBufferMemory(rt)");
 }
 
+// Create a host-visible device-address STORAGE buffer and fill it with `bytes` of
+// `data`. The path tracer reads these (the per-material Le table, the per-level
+// emitter list) by GPU address via buffer_reference, the same way it reads the
+// vertex buffer. Host-visible + coherent so the one-shot upload is a plain memcpy
+// (these are small and written once per level/session — no staging needed).
+void UploadAddressBuffer(const void* data, VkDeviceSize bytes,
+                         VkBuffer* buf, VkDeviceMemory* mem)
+{
+    CreateRtBuffer(bytes,
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                   buf, mem);
+    void* mapped = nullptr;
+    Check(vkMapMemory(g.device, *mem, 0, bytes, 0, &mapped), "vkMapMemory(addrBuf)");
+    std::memcpy(mapped, data, (size_t)bytes);
+    vkUnmapMemory(g.device, *mem);
+}
+
 // Resolve the VK_KHR_acceleration_structure entry points and query the scratch
 // alignment. Called once after device creation; no-op without RT.
 void LoadRtEntryPoints()
@@ -1103,11 +1135,12 @@ void CreateRtComputePipeline()
     dai.pSetLayouts        = &g.rtDsLayout;
     Check(vkAllocateDescriptorSets(g.device, &dai, &g.rtDs), "vkAllocateDescriptorSets(rt)");
 
-    // Push constant: 4x vec4 (camera) + uvec4 (mode/w/h/numWall) + uint64 (vertex addr).
+    // Push constant: 4x vec4 (camera) + 2x uvec4 (mode/w/h/numWall, emitterCount) +
+    // 3x uint64 (vertex / emitter-list / Le-table addresses) = 120 bytes (step 3b).
     VkPushConstantRange pcr = {};
     pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pcr.offset     = 0;
-    pcr.size       = 88;
+    pcr.size       = 120;
     // Two sets: 0 = RT (TLAS + output image), 1 = the raster materials set
     // (g.dsLayout: PLAYPAL LUT + bindless material array), reused verbatim so the
     // textured trace (step 3a) decodes surfaces with no parallel material path.
@@ -1851,6 +1884,91 @@ void InitPaletteAndDescriptorSet()
     vkUpdateDescriptorSets(g.device, 1, &write, 0, nullptr);
 }
 
+// --- Per-material emission precompute (DOOM-0009 build step 3b, §4.2) ----------
+// Tuning constants. INV-7 backfill: these are provisional closed-form thresholds
+// authored inline (user-approved 2026-06-27); they migrate to a Vestige Formula
+// Workbench `shaders/formulas/*.glsl` artifact when 3c's curves are formalised.
+namespace emis {
+    // A palette texel counts as "bright" (an emitter contributor) when its linear
+    // luminance clears this. ~0.5 = brighter than mid-grey: lamp/screen/switch
+    // fullbrights and the brightest slime greens pass; ordinary wall/floor art does
+    // not. (§4.2 "palette colours above a threshold".)
+    constexpr float kBrightLum = 0.5f;
+    // A material becomes an NEE emitter only when its area-weighted emitted
+    // luminance clears this — keeps the candidate set to genuine light sources, not
+    // a stray bright speck. Below it the (tiny) Le is dropped to zero.
+    constexpr float kEmitterMinLum = 0.02f;
+    // Global emissive intensity (radiance) scale. INV-7 tunable; 1.0 = palette
+    // brightness as-is. 3c dials the overall scene exposure / "faint" feel here.
+    constexpr float kEmissiveScale = 1.0f;
+    // Rec.709 luminance weights (linear RGB).
+    constexpr float kLumR = 0.2126f, kLumG = 0.7152f, kLumB = 0.0722f;
+
+    inline float srgb2lin(float c) {
+        return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f);
+    }
+    inline float luminance(float r, float gg, float b) {
+        return kLumR * r + kLumG * gg + kLumB * b;
+    }
+}
+
+// Fill out[3*n] with each material's emitted radiance Le (linear RGB), computed
+// once from the packed atlas: for every texel of a tile, decode its palette index
+// to linear RGB; texels brighter than kBrightLum sum into the tile's emission,
+// divided by the tile's total texel count (area-weighted — a small bright lamp on
+// a dark plate emits proportionally less than a fully-lit screen). Materials whose
+// result is below kEmitterMinLum are zeroed (not light sources). The id ordering
+// matches RB_BuildAtlas (walls, then flats, then sprites), so the shader indexes
+// Le by the same unified id the textured decode uses.
+static void ComputeMaterialEmissive(const rb_atlas_t* a, std::vector<float>& out)
+{
+    const int n = a->numwall + a->numflat + a->numsprite;
+    out.assign((size_t)n * 3, 0.0f);
+
+    // Pre-decode the 256 palette entries to linear RGB once (not per texel).
+    float palLin[256][3];
+    for (int i = 0; i < 256; i++)
+    {
+        palLin[i][0] = emis::srgb2lin(a->playpal[i * 3 + 0] / 255.0f);
+        palLin[i][1] = emis::srgb2lin(a->playpal[i * 3 + 1] / 255.0f);
+        palLin[i][2] = emis::srgb2lin(a->playpal[i * 3 + 2] / 255.0f);
+    }
+
+    for (int id = 0; id < n; id++)
+    {
+        const int ox = (int)a->rects[id].ox, oy = (int)a->rects[id].oy;
+        const int w  = (int)a->rects[id].w,  h  = (int)a->rects[id].h;
+        const int total = w * h;
+        if (total <= 0)
+            continue;
+
+        double sr = 0.0, sg = 0.0, sb = 0.0;
+        for (int row = 0; row < h; row++)
+        {
+            const unsigned char* line = a->pixels + (size_t)(oy + row) * a->atlasw + ox;
+            for (int col = 0; col < w; col++)
+            {
+                const float* c = palLin[line[col]];
+                if (emis::luminance(c[0], c[1], c[2]) > emis::kBrightLum)
+                {
+                    sr += c[0]; sg += c[1]; sb += c[2];
+                }
+            }
+        }
+
+        float le[3] = {
+            (float)(sr / total) * emis::kEmissiveScale,
+            (float)(sg / total) * emis::kEmissiveScale,
+            (float)(sb / total) * emis::kEmissiveScale,
+        };
+        if (emis::luminance(le[0], le[1], le[2]) < emis::kEmitterMinLum * emis::kEmissiveScale)
+            continue;   // not a light source — leave Le at zero
+        out[(size_t)id * 3 + 0] = le[0];
+        out[(size_t)id * 3 + 1] = le[1];
+        out[(size_t)id * 3 + 2] = le[2];
+    }
+}
+
 void UploadAtlas()
 {
     // Reuse the Stage-1 packer purely as a pixel source: it composites each
@@ -2020,6 +2138,25 @@ void UploadAtlas()
     warr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     warr.pImageInfo = infos.data();
     vkUpdateDescriptorSets(g.device, 1, &warr, 0, nullptr);
+
+    // Per-material emission table (DOOM-0009 build step 3b). Computed from the
+    // packed atlas (needs a->pixels/playpal, freed just below) into a CPU mirror the
+    // per-level emitter extraction reads, plus a GPU device-address buffer the
+    // megakernel samples for a hit surface's own self-emission. RT-only; WAD-global,
+    // built once with the material array.
+    if (g.rtEnabled)
+    {
+        ComputeMaterialEmissive(a, g.matEmissive);
+        UploadAddressBuffer(g.matEmissive.data(),
+                            (VkDeviceSize)g.matEmissive.size() * sizeof(float),
+                            &g.matEmisBuf, &g.matEmisMem);
+        int emis = 0;
+        for (size_t i = 0; i < g.matEmissive.size(); i += 3)
+            if (g.matEmissive[i] + g.matEmissive[i + 1] + g.matEmissive[i + 2] > 0.0f)
+                emis++;
+        printf("RB_Vulkan: %d emissive materials (of %d).\n", emis, n);
+        fflush(stdout);
+    }
 
     CreateSpriteBuffer();   // per-frame billboard buffer (uses the material array)
 
@@ -2193,6 +2330,57 @@ extern "C" void RB_Vulkan_SetOverlay(const unsigned char* pixels, int w, int h)
     g.overlayH   = h;
 }
 
+// Build this level's NEE emitter list (DOOM-0009 build step 3b): the subset of
+// static mesh triangles whose material is emissive (per-material Le from
+// ComputeMaterialEmissive). Each record is 12 tight floats — v0[3] v1[3] v2[3]
+// Le[3] — uploaded to a device-address buffer the megakernel samples for direct
+// lighting (step 3c). Rebuilt per level (the geometry changes); the Le table it
+// reads is WAD-global. Positions are the baked (static) heights — emitters on a
+// moving sector would lag, acceptable for now. Switch ON-faces are not yet
+// emitters: the list is static, while a pressed switch swaps texture at runtime
+// (DOOM-0066) — tracking that live swap is the DOOM-0082 follow-up.
+void BuildEmitterList()
+{
+    if (g.emitBuf) { vkDestroyBuffer(g.device, g.emitBuf, nullptr); g.emitBuf = VK_NULL_HANDLE; }
+    if (g.emitMem) { vkFreeMemory(g.device, g.emitMem, nullptr);    g.emitMem = VK_NULL_HANDLE; }
+    g.emitCount = 0;
+
+    if (!g.rtEnabled || !g.levelMesh || g.matEmissive.empty())
+        return;
+
+    const int matCount = (int)(g.matEmissive.size() / 3);
+    const rb_vertex_t* v = g.levelMesh->verts;
+    const int numtris = g.levelMesh->numverts / 3;
+
+    std::vector<float> emit;
+    emit.reserve(64 * 12);
+    for (int t = 0; t < numtris; t++)
+    {
+        const rb_vertex_t* tri = &v[t * 3];
+        const int texnum = tri->texnum;
+        const int id = (tri->flags & RB_MESH_FLAT) ? g.matNumWall + texnum : texnum;
+        if (id < 0 || id >= matCount)
+            continue;
+        const float* le = &g.matEmissive[(size_t)id * 3];
+        if (le[0] + le[1] + le[2] <= 0.0f)
+            continue;   // material isn't a light source
+
+        for (int k = 0; k < 3; k++)
+        {
+            emit.push_back(tri[k].x); emit.push_back(tri[k].y); emit.push_back(tri[k].z);
+        }
+        emit.push_back(le[0]); emit.push_back(le[1]); emit.push_back(le[2]);
+    }
+
+    g.emitCount = (uint32_t)(emit.size() / 12);
+    if (g.emitCount)
+        UploadAddressBuffer(emit.data(), (VkDeviceSize)emit.size() * sizeof(float),
+                            &g.emitBuf, &g.emitMem);
+
+    printf("RB_Vulkan: %u emitter triangles for NEE.\n", g.emitCount);
+    fflush(stdout);
+}
+
 extern "C" void RB_Vulkan_BuildLevel(void)
 {
     // Convert the freshly-loaded map to a 3D triangle mesh (r_mesh.c) and upload
@@ -2265,6 +2453,10 @@ extern "C" void RB_Vulkan_BuildLevel(void)
     // the path tracer has something to trace against. No-op without RT.
     if (g.rtEnabled)
         BuildAccelerationStructures();
+
+    // Build step 3b: extract this level's NEE emitter triangles from the mesh +
+    // the WAD-global Le table. No-op without RT (or before the atlas is uploaded).
+    BuildEmitterList();
 }
 
 // Record the path-tracer debug frame into g.cmd (caller began the buffer):
@@ -2298,10 +2490,13 @@ void RecordRtTrace(uint32_t idx)
         float    camDir[4];
         float    camRight[4];   // w = tan(hFov/2)
         float    camUp[4];      // w = tan(vFov/2)
-        uint32_t misc[4];       // mode, width, height, unused
+        uint32_t misc[4];       // mode, width, height, numWall (flat-id offset)
+        uint32_t misc2[4];      // emitterCount, reserved, reserved, reserved
         uint64_t vertsAddr;
+        uint64_t emitAddr;      // step-3b emitter list (0 if none)
+        uint64_t matEmisAddr;   // per-material Le table
     } pc = {};
-    static_assert(sizeof(RtPushConstants) == 88, "RT push-constant layout must match the shader");
+    static_assert(sizeof(RtPushConstants) == 120, "RT push-constant layout must match the shader");
     pc.camPos[0] = g.lastView.x; pc.camPos[1] = g.lastView.y; pc.camPos[2] = g.lastView.z;
     pc.camDir[0] = c;            pc.camDir[1] = s;            pc.camDir[2] = 0.0f;
     pc.camRight[0] = s;          pc.camRight[1] = -c;         pc.camRight[2] = 0.0f;
@@ -2310,7 +2505,10 @@ void RecordRtTrace(uint32_t idx)
     pc.misc[0] = (uint32_t)rb_rtdebug;
     pc.misc[1] = w; pc.misc[2] = h;
     pc.misc[3] = (uint32_t)g.matNumWall;   // flat-id offset for mode-3 textured decode
-    pc.vertsAddr = BufferAddress(g.vbuf);
+    pc.misc2[0] = g.emitCount;             // NEE emitter triangle count (step 3b)
+    pc.vertsAddr   = BufferAddress(g.vbuf);
+    pc.emitAddr    = g.emitBuf    ? BufferAddress(g.emitBuf)    : 0;
+    pc.matEmisAddr = g.matEmisBuf ? BufferAddress(g.matEmisBuf) : 0;
 
     // Set 0 = RT (TLAS + output image); set 1 = the raster materials set (palette
     // LUT + bindless material array), so the textured trace samples the same
@@ -2646,6 +2844,11 @@ extern "C" void RB_Vulkan_Shutdown(void)
         if (g.rtPipeLayout) vkDestroyPipelineLayout(g.device, g.rtPipeLayout, nullptr);
         if (g.rtDsPool)     vkDestroyDescriptorPool(g.device, g.rtDsPool, nullptr);
         if (g.rtDsLayout)   vkDestroyDescriptorSetLayout(g.device, g.rtDsLayout, nullptr);
+        // Direct-lighting buffers (step 3b): per-level emitter list + WAD-global Le table.
+        if (g.emitBuf)      vkDestroyBuffer(g.device, g.emitBuf, nullptr);
+        if (g.emitMem)      vkFreeMemory(g.device, g.emitMem, nullptr);
+        if (g.matEmisBuf)   vkDestroyBuffer(g.device, g.matEmisBuf, nullptr);
+        if (g.matEmisMem)   vkFreeMemory(g.device, g.matEmisMem, nullptr);
     }
     if (g.vbufMapped)       vkUnmapMemory(g.device, g.vbufMemory);
     if (g.vbuf)             vkDestroyBuffer(g.device, g.vbuf, nullptr);
