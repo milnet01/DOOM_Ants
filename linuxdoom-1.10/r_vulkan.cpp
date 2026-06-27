@@ -365,8 +365,9 @@ extern "C" { int rb_wireframe = 0; }
 // Path-tracer debug view (DOOM-0009), cycled by the `~` key:
 // 0 = off (normal raster/overlay present), 1 = ray-traced intersection/normal
 // visualization, 2 = white-furnace energy check, 3 = textured/sector-lit surface
-// (build step 3a). Only acts when the GPU has RT and a TLAS exists (in-level);
-// harmless otherwise. C linkage for i_video.c.
+// (build step 3a), 4 = NEE direct lighting with ray-traced shadows (build step
+// 3c). Only acts when the GPU has RT and a TLAS exists (in-level); harmless
+// otherwise. C linkage for i_video.c.
 extern "C" { int rb_rtdebug = 0; }
 
 [[noreturn]] void Fail(const char* what, VkResult r)

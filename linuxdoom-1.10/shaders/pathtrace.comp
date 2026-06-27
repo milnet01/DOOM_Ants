@@ -1,12 +1,11 @@
 #version 460
 //
-// DOOM-0009 path tracer — build step 2c: "first rays on screen".
+// DOOM-0009 path tracer — build steps 2c/3a/3c.
 //
-// A diagnostic compute megakernel that casts one primary ray per pixel against
-// the level TLAS (built in step 2b) via VK_KHR_ray_query, and writes a debug
-// image the present path blits to the swapchain. It is the foundation step 3
-// (NEE direct lighting) builds on; it does NOT shade the scene yet. Two modes,
-// selected by the host (the `~` debug toggle, cycling off -> 1 -> 2):
+// A compute megakernel that casts one primary ray per pixel against the level
+// TLAS (built in step 2b) via VK_KHR_ray_query, and writes an image the present
+// path blits to the swapchain. Modes 1-3 are diagnostics; mode 4 is the first
+// real lit output. Selected by the host (the `~` debug toggle, off -> 1..4):
 //
 //   mode 1  INTERSECTION  — traversal + camera sanity. On a hit, colour by the
 //                           surface normal (n*0.5+0.5); on a miss, a dark sky.
@@ -25,6 +24,12 @@
 //                           sector lightlevel. The honest "albedo recovered +
 //                           sector-light seed" view; real NEE direct lighting
 //                           replaces the flat sector-light term in step 3c.
+//   mode 4  NEE DIRECT    — build step 3c: linear albedo + the surface's own
+//                           emission, plus direct light estimated by shadow-
+//                           sampling the step-3b emitter list (hard ray-traced
+//                           shadows), a flat sky ambient standing in for the
+//                           step-4 GI bake, Reinhard-tonemapped. The first lit
+//                           image: lamps/screens/slime/lit switches cast light.
 //
 #extension GL_EXT_ray_query           : require
 #extension GL_EXT_buffer_reference     : require
@@ -89,6 +94,77 @@ uint pcgHash(uint x)
     return (word >> 22u) ^ word;
 }
 float rnd(inout uint s) { s = pcgHash(s); return float(s) * (1.0 / 4294967296.0); }
+
+// --- NEE direct lighting (build step 3c) -------------------------------------
+// INV-7 backfill: provisional inline curves/thresholds (user-approved 2026-06-27)
+// pending the Vestige Formula Workbench export.
+const uint  NEE_SAMPLES = 16u;         // shadow rays/pixel. High for a legible first
+                                       // image: emitters are picked UNIFORMLY here,
+                                       // so coverage is ~SAMPLES/count — importance
+                                       // sampling (REJECT/MIS) in 3c-2 cuts this back.
+const float SKY_AMBIENT  = 0.06;       // TEMP flat fill until the step-4 GI bake;
+                                       // keeps lamp-less rooms from going pure black
+const vec3  SKY_COLOR    = vec3(0.10, 0.13, 0.20);  // bounded sky-light (miss env)
+const float FIREFLY_MAX  = 8.0;        // clamp one NEE sample's radiance (anti-spike)
+
+// Reinhard tonemap + sRGB-ish encode: the integrator works in linear radiance,
+// the swapchain is UNORM, so map HDR->[0,1] and gamma-encode for display.
+vec3 toneEncode(vec3 L)
+{
+    L = max(L, vec3(0.0));
+    vec3 m = L / (L + vec3(1.0));
+    return pow(m, vec3(1.0 / 2.2));
+}
+
+// One area-sampled direct-lighting estimate from emitter triangle k. Returns the
+// incident contribution (Le * geometry / pdf), WITHOUT the surface BRDF (the
+// caller folds in albedo/pi). p(Q) = (1/count)*(1/area), so 1/p = count*area.
+vec3 sampleEmitter(uint k, vec3 hitP, vec3 n, uint count, inout uint seed)
+{
+    uint b = k * 12u;
+    vec3 v0 = vec3(pc.emit.e[b+0u],  pc.emit.e[b+1u],  pc.emit.e[b+2u]);
+    vec3 v1 = vec3(pc.emit.e[b+3u],  pc.emit.e[b+4u],  pc.emit.e[b+5u]);
+    vec3 v2 = vec3(pc.emit.e[b+6u],  pc.emit.e[b+7u],  pc.emit.e[b+8u]);
+    vec3 Le = vec3(pc.emit.e[b+9u],  pc.emit.e[b+10u], pc.emit.e[b+11u]);
+
+    vec3 e1 = v1 - v0, e2 = v2 - v0;
+    vec3 ng = cross(e1, e2);
+    float area2 = length(ng);                  // = 2 * triangle area
+    if (area2 < 1e-8) return vec3(0.0);
+    vec3  nL   = ng / area2;
+    float area = 0.5 * area2;
+
+    // Uniform point on the triangle (reflected barycentric).
+    float r1 = rnd(seed), r2 = rnd(seed);
+    if (r1 + r2 > 1.0) { r1 = 1.0 - r1; r2 = 1.0 - r2; }
+    vec3 Q = v0 + e1 * r1 + e2 * r2;
+
+    vec3  d     = Q - hitP;
+    float dist2 = dot(d, d);
+    if (dist2 < 1e-6) return vec3(0.0);
+    float dist = sqrt(dist2);
+    vec3  wi   = d / dist;
+
+    float cosSurf = dot(n, wi);
+    if (cosSurf <= 0.0) return vec3(0.0);      // emitter is behind the surface
+    float cosL = abs(dot(nL, wi));             // two-sided (DOOM faces emit both ways)
+    if (cosL <= 0.0) return vec3(0.0);
+
+    // Occlusion: opaque any-hit, terminate on first hit. tMax just short of the
+    // light so the emitter face itself doesn't self-occlude.
+    rayQueryEXT sq;
+    rayQueryInitializeEXT(sq, topAS,
+        gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0xFFu,
+        hitP + n * 1e-3, 1e-3, wi, dist - 2e-3);
+    while (rayQueryProceedEXT(sq)) {}
+    if (rayQueryGetIntersectionTypeEXT(sq, true)
+        != gl_RayQueryCommittedIntersectionNoneEXT)
+        return vec3(0.0);                      // shadowed
+
+    float G   = cosSurf * cosL / dist2;
+    float inv = float(count) * area;           // 1 / p(Q)
+    return Le * G * inv;
+}
 
 void main()
 {
@@ -166,6 +242,54 @@ void main()
 
             colour = albedo * light;                // sector-light seed; NEE in 3c
         }
+        else if (mode == 4u)
+        {
+            // NEE direct lighting (build step 3c). Decode the surface albedo (as
+            // mode 3) into linear space, add the surface's own emission (so a lamp
+            // you look at directly glows), then estimate direct light by shadow-
+            // sampling the emitter list. A flat sky ambient stands in for the step-4
+            // GI bake so lamp-less rooms aren't pure black.
+            float u      = pc.verts.v[i0 + 6u];
+            float vv     = pc.verts.v[i0 + 7u];
+            int   texnum = floatBitsToInt(pc.verts.v[i0 + 8u]);
+            int   flags  = floatBitsToInt(pc.verts.v[i0 + 9u]);
+            int  id    = ((flags & FLAG_FLAT) != 0) ? (int(pc.misc.w) + texnum) : texnum;
+            vec2 sz    = vec2(textureSize(materialTex[nonuniformEXT(id)], 0));
+            float idx  = texture(materialTex[nonuniformEXT(id)], vec2(u, vv) / sz).r * 255.0;
+            vec3 albedo = texture(paletteTex, vec2((idx + 0.5) / 256.0, 0.5)).rgb;
+            albedo = pow(albedo, vec3(2.2));        // palette is gamma-encoded -> linear
+
+            float tHit = rayQueryGetIntersectionTEXT(rq, true);
+            vec3  hitP = origin + dir * tHit;
+
+            // Self-emission (linear) from the per-material Le table.
+            vec3 L = vec3(pc.matEmis.m[uint(id) * 3u + 0u],
+                          pc.matEmis.m[uint(id) * 3u + 1u],
+                          pc.matEmis.m[uint(id) * 3u + 2u]);
+
+            // Direct light: average NEE_SAMPLES uniform emitter samples (each an
+            // unbiased estimate of the whole emitter set). brdf = albedo / PI.
+            uint count = pc.misc2.x;
+            if (count > 0u)
+            {
+                uint seed = px.x + px.y * w + 1u;
+                vec3 direct = vec3(0.0);
+                for (uint si = 0u; si < NEE_SAMPLES; si++)
+                {
+                    uint k = uint(rnd(seed) * float(count));
+                    if (k >= count) k = count - 1u;
+                    vec3 c = sampleEmitter(k, hitP, n, count, seed);
+                    direct += min(c, vec3(FIREFLY_MAX));
+                }
+                L += albedo * (1.0 / PI) * (direct / float(NEE_SAMPLES));
+            }
+
+            // Temporary ambient fill (replaced by the step-4 GI bake).
+            L += albedo * SKY_AMBIENT;
+
+            if (any(isnan(L)) || any(isinf(L))) L = vec3(0.0);
+            colour = toneEncode(L);
+        }
         else
         {
             colour = n * 0.5 + 0.5;                 // intersection / normal view
@@ -173,9 +297,12 @@ void main()
     }
     else
     {
-        // Miss: the environment. Unit radiance in furnace mode (energy stays
-        // flat across hit and miss); a dark sky in intersection mode.
-        colour = (mode == 2u) ? vec3(1.0) : vec3(0.02, 0.02, 0.05);
+        // Miss: the environment. Unit radiance in furnace mode (energy stays flat
+        // across hit and miss); the bounded sky-light in NEE mode (tonemapped like
+        // the lit surfaces); a dark sky in intersection mode.
+        if      (mode == 2u) colour = vec3(1.0);
+        else if (mode == 4u) colour = toneEncode(SKY_COLOR);
+        else                 colour = vec3(0.02, 0.02, 0.05);
     }
 
     imageStore(outImg, ivec2(px), vec4(colour, 1.0));
