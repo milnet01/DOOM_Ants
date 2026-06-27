@@ -469,6 +469,52 @@ void RB_FreeMesh(rb_mesh_t* mesh)
     free(mesh);
 }
 
+// DOOM-0009 build step 4: place one GI-bake irradiance probe per subsector. The
+// position is the mean of the subsector's seg endpoints (a point inside the
+// convex BSP leaf) at the owning sector's mid-height. The sector is taken from
+// the first seg's frontsector (subsectors[].sector is not populated at load in
+// this DOOM build -- it is filled lazily by R_Subsector at render time), so this
+// stays correct even before the first frame is drawn.
+int RB_BuildProbes(rb_probe_t* out, int maxprobes)
+{
+    int n = (numsubsectors < maxprobes) ? numsubsectors : maxprobes;
+    int i;
+    for (i = 0; i < n; i++)
+    {
+        subsector_t* ss = &subsectors[i];
+        double cx = 0.0, cy = 0.0;
+        int    j;
+
+        if (ss->numlines <= 0)        // degenerate leaf: park at origin, never hit
+        {
+            out[i].x = out[i].y = out[i].z = 0.0f;
+            continue;
+        }
+
+        for (j = 0; j < ss->numlines; j++)
+        {
+            seg_t* seg = &segs[ss->firstline + j];
+            cx += (seg->v1->x + seg->v2->x) / (double)FRACUNIT;
+            cy += (seg->v1->y + seg->v2->y) / (double)FRACUNIT;
+        }
+        cx /= (double)(ss->numlines * 2);
+        cy /= (double)(ss->numlines * 2);
+
+        {
+            sector_t* sec = segs[ss->firstline].frontsector;
+            out[i].x = (float)cx;
+            out[i].y = (float)cy;
+            out[i].z = 0.5f * (sec->floorheight + sec->ceilingheight) / (float)FRACUNIT;
+        }
+    }
+    return n;
+}
+
+int RB_NumSubsectors(void)
+{
+    return numsubsectors;
+}
+
 void RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst)
 {
     int i;

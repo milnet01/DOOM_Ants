@@ -119,6 +119,23 @@ void RB_FreeMesh(rb_mesh_t* mesh);
 // per frame so doors and lifts animate without rebuilding the mesh (DOOM-0049).
 void RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst);
 
+// DOOM-0009 build step 4 (static GI bake): one irradiance probe per subsector.
+// The position is the subsector's convex BSP-leaf centroid (mean of its seg
+// endpoints) at mid-height ((floor+ceiling)/2), in world units (fixed/FRACUNIT,
+// matching the mesh). Subsectors are convex and wall-bounded, so a centroid probe
+// sits inside the cell and the GI bake it anchors cannot leak light through a wall
+// (the per-subsector scheme chosen by the step-4a measurement). The bake fills a
+// directional-irradiance payload per probe on the GPU; this only places them.
+typedef struct { float x, y, z; } rb_probe_t;
+
+// Write one probe per subsector into out[] (in subsector order, so out[i] is
+// subsectors[i]); returns the count written (min(numsubsectors, maxprobes)).
+int RB_BuildProbes(rb_probe_t* out, int maxprobes);
+
+// Subsector count of the loaded level = the probe count. Lets the C++ back-end
+// size the probe array without reaching past the mesh seam into engine globals.
+int RB_NumSubsectors(void);
+
 //
 // Texture atlas for per-texel sampling (DOOM-0008 materials slice). Every wall
 // texture and flat is packed, as raw 8-bit palette indices, into one R8 atlas

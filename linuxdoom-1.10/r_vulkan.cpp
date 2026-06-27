@@ -348,6 +348,16 @@ struct VulkanState
     VkDeviceMemory emitMem    = VK_NULL_HANDLE;
     uint32_t       emitCount  = 0;
 
+    // GI bake probes (DOOM-0009 build step 4). One irradiance probe per subsector
+    // (placed by RB_BuildProbes at the convex-cell centroid), baked once per level
+    // load. Each record is 16 floats: pos[3] + pad + SH-L1 directional irradiance
+    // (channel-major: R[4] G[4] B[4]). A host-visible device-address SSBO — the CPU
+    // writes the positions, the bake compute pass writes the SH payload, and the
+    // megakernel reads it to replace the flat ambient fill (step 4c). RT-gated.
+    VkBuffer       probeBuf   = VK_NULL_HANDLE;
+    VkDeviceMemory probeMem   = VK_NULL_HANDLE;
+    uint32_t       probeCount = 0;
+
     bool ready        = false;
     bool needRecreate = false;
 };
@@ -2424,6 +2434,57 @@ void BuildEmitterList()
     fflush(stdout);
 }
 
+// 16 floats per GI probe: pos[3] + pad + SH-L1 directional irradiance (channel-
+// major R[4] G[4] B[4]). Must match the bake shader and the megakernel's read.
+static const uint32_t PROBE_FLOATS = 16;
+
+// Place this level's GI-bake probes (DOOM-0009 build step 4b-i): one per subsector
+// (RB_BuildProbes), uploaded as PROBE_FLOATS records with the SH payload zeroed —
+// the bake compute pass (4b-ii) fills it, the megakernel reads it (4c). Rebuilt
+// per level; no-op without RT. The buffer is host-visible so the bake's GPU writes
+// stay coherent for the trace's reads.
+void BuildProbes()
+{
+    if (g.probeBuf) { vkDestroyBuffer(g.device, g.probeBuf, nullptr); g.probeBuf = VK_NULL_HANDLE; }
+    if (g.probeMem) { vkFreeMemory(g.device, g.probeMem, nullptr);    g.probeMem = VK_NULL_HANDLE; }
+    g.probeCount = 0;
+
+    if (!g.rtEnabled || !g.levelMesh)
+        return;
+
+    const int n = RB_NumSubsectors();
+    if (n <= 0)
+        return;
+
+    std::vector<rb_probe_t> probes(n);
+    const int got = RB_BuildProbes(probes.data(), n);
+    g.probeCount = (uint32_t)got;
+
+    std::vector<float> rec((size_t)got * PROBE_FLOATS, 0.0f);   // SH zeroed
+    for (int i = 0; i < got; i++)
+    {
+        rec[(size_t)i * PROBE_FLOATS + 0] = probes[i].x;
+        rec[(size_t)i * PROBE_FLOATS + 1] = probes[i].y;
+        rec[(size_t)i * PROBE_FLOATS + 2] = probes[i].z;
+    }
+
+    UploadAddressBuffer(rec.data(), (VkDeviceSize)rec.size() * sizeof(float),
+                        &g.probeBuf, &g.probeMem);
+
+    // 4b-i verification: probe count + the spatial bounds of the placed probes
+    // (should sit inside the map's coordinate extent — a sanity check on placement).
+    float lo[3] = {  1e30f,  1e30f,  1e30f };
+    float hi[3] = { -1e30f, -1e30f, -1e30f };
+    for (int i = 0; i < got; i++)
+    {
+        const float* p = &rec[(size_t)i * PROBE_FLOATS];
+        for (int k = 0; k < 3; k++) { lo[k] = std::min(lo[k], p[k]); hi[k] = std::max(hi[k], p[k]); }
+    }
+    printf("RB_Vulkan: %u GI probes (1/subsector). bounds x[%.0f,%.0f] y[%.0f,%.0f] z[%.0f,%.0f]\n",
+           g.probeCount, lo[0], hi[0], lo[1], hi[1], lo[2], hi[2]);
+    fflush(stdout);
+}
+
 extern "C" void RB_Vulkan_BuildLevel(void)
 {
     // Convert the freshly-loaded map to a 3D triangle mesh (r_mesh.c) and upload
@@ -2500,6 +2561,10 @@ extern "C" void RB_Vulkan_BuildLevel(void)
     // Build step 3b: extract this level's NEE emitter triangles from the mesh +
     // the WAD-global Le table. No-op without RT (or before the atlas is uploaded).
     BuildEmitterList();
+
+    // Build step 4b-i: place this level's per-subsector GI probes. (The bake that
+    // fills them — 4b-ii — runs after this; 4c reads them in the megakernel.)
+    BuildProbes();
 }
 
 // Record the path-tracer debug frame into g.cmd (caller began the buffer):
@@ -2892,6 +2957,9 @@ extern "C" void RB_Vulkan_Shutdown(void)
         if (g.emitMem)      vkFreeMemory(g.device, g.emitMem, nullptr);
         if (g.matEmisBuf)   vkDestroyBuffer(g.device, g.matEmisBuf, nullptr);
         if (g.matEmisMem)   vkFreeMemory(g.device, g.matEmisMem, nullptr);
+        // GI bake probes (step 4).
+        if (g.probeBuf)     vkDestroyBuffer(g.device, g.probeBuf, nullptr);
+        if (g.probeMem)     vkFreeMemory(g.device, g.probeMem, nullptr);
     }
     if (g.vbufMapped)       vkUnmapMemory(g.device, g.vbufMemory);
     if (g.vbuf)             vkDestroyBuffer(g.device, g.vbuf, nullptr);
