@@ -723,3 +723,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** When you press a lit button or switch, it gives off a soft glow in its own colour — a red button casts a faint red light — instead of staying flat.
   Kind: feature.
   Source: user-request-2026-06-27.
+
+- 📋 [DOOM-0083] **Green slime/nukage emits a faint green glow onto its surroundings.**
+  Same DOOM-0009 path-tracer emitter mechanism as [DOOM-0082]: the per-material emissive precompute (build step 3b) auto-derives a green Le from the slime/nukage flats' bright green texels, so those surfaces become NEE area emitters and cast a faint green tint on neighbours. Two data-dependent checks when 3c lands: (1) the nukage/slime flats (NUKAGE1-3, and bright-green floor flats) actually cross the emissive luminance threshold (may need a per-flat allow-list or lowered threshold for the "faint" case, since slime is darker than a lamp); (2) animated slime flats cycle via flattranslation each tic (DOOM-0066) — the emitter set should track the live flat so the glow animates. Intensity is the same "faint" tunable as DOOM-0082. Distinct from DOOM-0082 (switches/buttons) in surface class (environmental animated floor flats) but shares the implementation.
+  **Layman:** Glowing green slime pools cast a soft green light on the nearby floor and walls, instead of looking flat.
+  Kind: feature.
+  Source: user-request-2026-06-27.
