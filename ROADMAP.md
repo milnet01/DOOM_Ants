@@ -729,3 +729,18 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Glowing green slime pools cast a soft green light on the nearby floor and walls, instead of looking flat.
   Kind: feature.
   Source: user-request-2026-06-27.
+
+- 📋 [DOOM-0084] **Make free-standing light objects (floor lamps, torches, burning barrels) emit light in the path tracer.**
+  DOOM-0009's NEE emitter list (BuildEmitterList) is extracted only from the
+  static walls+flats BLAS, so Thing/sprite objects are excluded. The brightest
+  *visible* lights in many rooms — TLMP/TLP2 floor lamps, candelabra, burning
+  barrels — are map Things rendered as billboards (per spec §line123, sprites
+  live in the per-frame TLAS, not the static BLAS). To light them: tag the
+  emissive sprite Things, derive a per-Thing Le (same area-weighted bright-texel
+  mean as ComputeMaterialEmissive), and add them as point/area emitters in the
+  NEE light set each frame (or via the per-frame TLAS instances). Pairs with
+  DOOM-0010 (dynamic/flicker) and DOOM-0043 (scene lights). Sector-light ambient
+  fill already lifts these areas; this gives them real local pooling + shadows.
+  **Layman:** The tall lamp stands, candles and burning barrels you see around the map are separate objects, not part of the walls or floor — so the new lighting doesn't treat them as lights yet. This makes them glow and cast light like the ceiling lights already do.
+  Kind: enhancement.
+  Source: user-observation-2026-06-27 (3c-1 visual verify: lamp stands not lit).
