@@ -1899,9 +1899,13 @@ namespace emis {
     // luminance clears this — keeps the candidate set to genuine light sources, not
     // a stray bright speck. Below it the (tiny) Le is dropped to zero.
     constexpr float kEmitterMinLum = 0.02f;
-    // Global emissive intensity (radiance) scale. INV-7 tunable; 1.0 = palette
-    // brightness as-is. 3c dials the overall scene exposure / "faint" feel here.
-    constexpr float kEmissiveScale = 1.0f;
+    // Global emissive intensity (radiance) scale. INV-7 tunable. DOOM's emissive
+    // textures are small, so at palette brightness (1.0) they subtend too little
+    // solid angle to light a room — they need a high radiance to read as lights.
+    // 40 makes lamps/screens visibly pool light + cast shadows; the shader's
+    // per-sample radiance clamp bounds the near-field. (The kEmitterMinLum gate
+    // below scales by this too, so the emitter SET is unchanged — only intensity.)
+    constexpr float kEmissiveScale = 40.0f;
     // Rec.709 luminance weights (linear RGB).
     constexpr float kLumR = 0.2126f, kLumG = 0.7152f, kLumB = 0.0722f;
 

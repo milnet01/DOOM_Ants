@@ -102,10 +102,16 @@ const uint  NEE_SAMPLES = 16u;         // shadow rays/pixel. High for a legible 
                                        // image: emitters are picked UNIFORMLY here,
                                        // so coverage is ~SAMPLES/count — importance
                                        // sampling (REJECT/MIS) in 3c-2 cuts this back.
-const float SKY_AMBIENT  = 0.06;       // TEMP flat fill until the step-4 GI bake;
-                                       // keeps lamp-less rooms from going pure black
-const vec3  SKY_COLOR    = vec3(0.10, 0.13, 0.20);  // bounded sky-light (miss env)
-const float FIREFLY_MAX  = 8.0;        // clamp one NEE sample's radiance (anti-spike)
+// Sector lightlevel is the scene's real illumination (DOOM's small emissive
+// textures alone subtend a tiny solid angle -> faint), so it seeds a moody
+// ambient fill here; the step-4 GI bake replaces this flat term with a true
+// bounce solution. NEE lamps then pool brighter light + cast shadows on top.
+const float SECTOR_FILL   = 0.20;      // sector-lightlevel -> ambient fill scale
+const float AMBIENT_FLOOR = 0.02;      // floor so unlit sectors aren't pure black
+const vec3  SKY_COLOR     = vec3(0.20, 0.26, 0.40);  // bounded sky-light (miss env)
+const float FIREFLY_MAX   = 4.0;       // clamp one NEE sample's *reflected radiance*
+                                       // (post-BRDF) — bounds near-lamp spikes while
+                                       // preserving distance falloff farther out
 
 // Reinhard tonemap + sRGB-ish encode: the integrator works in linear radiance,
 // the swapchain is UNORM, so map HDR->[0,1] and gamma-encode for display.
@@ -253,6 +259,7 @@ void main()
             float vv     = pc.verts.v[i0 + 7u];
             int   texnum = floatBitsToInt(pc.verts.v[i0 + 8u]);
             int   flags  = floatBitsToInt(pc.verts.v[i0 + 9u]);
+            float sLight = pc.verts.v[i0 + 10u];    // owning sector lightlevel, 0..1
             int  id    = ((flags & FLAG_FLAT) != 0) ? (int(pc.misc.w) + texnum) : texnum;
             vec2 sz    = vec2(textureSize(materialTex[nonuniformEXT(id)], 0));
             float idx  = texture(materialTex[nonuniformEXT(id)], vec2(u, vv) / sz).r * 255.0;
@@ -268,7 +275,9 @@ void main()
                           pc.matEmis.m[uint(id) * 3u + 2u]);
 
             // Direct light: average NEE_SAMPLES uniform emitter samples (each an
-            // unbiased estimate of the whole emitter set). brdf = albedo / PI.
+            // unbiased estimate of the whole emitter set). Clamp per sample in the
+            // reflected-radiance domain (after BRDF albedo/PI) so the firefly limit
+            // is a real luminance bound, not a raw-estimator one.
             uint count = pc.misc2.x;
             if (count > 0u)
             {
@@ -278,14 +287,15 @@ void main()
                 {
                     uint k = uint(rnd(seed) * float(count));
                     if (k >= count) k = count - 1u;
-                    vec3 c = sampleEmitter(k, hitP, n, count, seed);
-                    direct += min(c, vec3(FIREFLY_MAX));
+                    vec3 c   = sampleEmitter(k, hitP, n, count, seed);
+                    vec3 rad = albedo * (1.0 / PI) * c;     // reflected radiance
+                    direct += min(rad, vec3(FIREFLY_MAX));
                 }
-                L += albedo * (1.0 / PI) * (direct / float(NEE_SAMPLES));
+                L += direct / float(NEE_SAMPLES);
             }
 
-            // Temporary ambient fill (replaced by the step-4 GI bake).
-            L += albedo * SKY_AMBIENT;
+            // Sector-light ambient fill (TEMP stand-in for the step-4 GI bake).
+            L += albedo * (sLight * SECTOR_FILL + AMBIENT_FLOOR);
 
             if (any(isnan(L)) || any(isinf(L))) L = vec3(0.0);
             colour = toneEncode(L);
