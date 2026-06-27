@@ -1,0 +1,122 @@
+#version 460
+//
+// DOOM-0009 path tracer — build step 2c: "first rays on screen".
+//
+// A diagnostic compute megakernel that casts one primary ray per pixel against
+// the level TLAS (built in step 2b) via VK_KHR_ray_query, and writes a debug
+// image the present path blits to the swapchain. It is the foundation step 3
+// (NEE direct lighting) builds on; it does NOT shade the scene yet. Two modes,
+// selected by the host (the `~` debug toggle, cycling off -> 1 -> 2):
+//
+//   mode 1  INTERSECTION  — traversal + camera sanity. On a hit, colour by the
+//                           surface normal (n*0.5+0.5); on a miss, a dark sky.
+//                           Should line up face-for-face with the raster view.
+//   mode 2  WHITE FURNACE  — energy sanity for the sampling math step 3 reuses.
+//                           Every hit does one cosine-weighted diffuse bounce
+//                           into a constant unit-radiance environment with
+//                           albedo 1 and NO occlusion: the estimator
+//                           brdf*cos/pdf = albedo = 1 exactly, with zero
+//                           variance. So a correct integrator paints the whole
+//                           screen flat white; any tint/banding is an energy
+//                           bug in the pdf/throughput code.
+//
+#extension GL_EXT_ray_query           : require
+#extension GL_EXT_buffer_reference     : require
+#extension GL_EXT_scalar_block_layout  : require
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform accelerationStructureEXT topAS;
+layout(set = 0, binding = 1, rgba8) uniform writeonly image2D outImg;
+
+// The level mesh vertex buffer, read by GPU address so a hit can fetch the
+// triangle's baked normal. Matches rb_vertex_t (r_mesh.h): 18 floats/vertex,
+// position at [0..2], normal at [3..5]. scalar layout = tight float packing.
+layout(buffer_reference, scalar) readonly buffer Verts { float v[]; };
+
+layout(push_constant) uniform PC {
+    vec4  camPos;    // xyz = ray origin (world)
+    vec4  camDir;    // xyz = forward
+    vec4  camRight;  // xyz = right,  w = tan(hFov/2)
+    vec4  camUp;     // xyz = up,     w = tan(vFov/2)
+    uvec4 misc;      // x = mode, y = width, z = height, w = unused
+    Verts verts;     // level mesh vertex buffer (device address)
+} pc;
+
+const float PI = 3.14159265358979323846;
+
+// Cheap integer hash (PCG) -> a float in [0,1), for the furnace bounce sample.
+uint pcgHash(uint x)
+{
+    uint state = x * 747796405u + 2891336453u;
+    uint word  = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+float rnd(inout uint s) { s = pcgHash(s); return float(s) * (1.0 / 4294967296.0); }
+
+void main()
+{
+    const uvec2 px = gl_GlobalInvocationID.xy;
+    const uint  w  = pc.misc.y;
+    const uint  h  = pc.misc.z;
+    if (px.x >= w || px.y >= h)
+        return;
+
+    // Primary ray: pixel centre -> NDC [-1,1], screen-y down so world up = -ndcY.
+    const float ndcX = (2.0 * (float(px.x) + 0.5) / float(w)) - 1.0;
+    const float ndcY = (2.0 * (float(px.y) + 0.5) / float(h)) - 1.0;
+    const vec3  origin = pc.camPos.xyz;
+    const vec3  dir = normalize(pc.camDir.xyz
+                              + pc.camRight.xyz * (ndcX * pc.camRight.w)
+                              + pc.camUp.xyz    * (-ndcY * pc.camUp.w));
+
+    const uint mode = pc.misc.x;
+
+    rayQueryEXT rq;
+    rayQueryInitializeEXT(rq, topAS, gl_RayFlagsOpaqueEXT, 0xFFu,
+                          origin, 0.01, dir, 1.0e9);
+    while (rayQueryProceedEXT(rq)) {}
+
+    vec3 colour;
+    if (rayQueryGetIntersectionTypeEXT(rq, true)
+        == gl_RayQueryCommittedIntersectionTriangleEXT)
+    {
+        // Baked world normal from the hit triangle's first vertex (flat-shaded
+        // DOOM geometry shares one normal across the face). Non-indexed soup, so
+        // vertex 0 of triangle p is at p*3.
+        const int  prim = rayQueryGetIntersectionPrimitiveIndexEXT(rq, true);
+        const uint i0   = uint(prim) * 3u * 18u;   // 18 floats/vertex
+        vec3 n = vec3(pc.verts.v[i0 + 3u], pc.verts.v[i0 + 4u], pc.verts.v[i0 + 5u]);
+        n = normalize(n);
+        if (dot(n, dir) > 0.0) n = -n;             // face the viewer
+
+        if (mode == 2u)
+        {
+            // White furnace: one cosine-weighted bounce, constant env L = 1,
+            // albedo = 1, no occlusion. weight = brdf*cos/pdf = albedo, exactly.
+            uint  seed = px.x + px.y * w;
+            float u1 = rnd(seed), u2 = rnd(seed);
+            vec3  t  = normalize(cross(abs(n.z) < 0.999 ? vec3(0,0,1) : vec3(1,0,0), n));
+            vec3  b  = cross(n, t);
+            float r  = sqrt(u1), phi = 2.0 * PI * u2;
+            vec3  sd = t * (r * cos(phi)) + b * (r * sin(phi)) + n * sqrt(max(0.0, 1.0 - u1));
+            float cosT = max(dot(n, sd), 0.0);
+            float pdf  = cosT / PI;
+            float brdf = 1.0 / PI;                  // albedo 1 Lambert
+            float L    = 1.0;
+            colour = vec3(pdf > 0.0 ? (brdf * cosT / pdf) * L : 0.0);
+        }
+        else
+        {
+            colour = n * 0.5 + 0.5;                 // intersection / normal view
+        }
+    }
+    else
+    {
+        // Miss: the environment. Unit radiance in furnace mode (energy stays
+        // flat across hit and miss); a dark sky in intersection mode.
+        colour = (mode == 2u) ? vec3(1.0) : vec3(0.02, 0.02, 0.05);
+    }
+
+    imageStore(outImg, ivec2(px), vec4(colour, 1.0));
+}

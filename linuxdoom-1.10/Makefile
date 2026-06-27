@@ -38,7 +38,8 @@ O=linux
 # files). r_vulkan.cpp #includes the generated *.spv.h headers.
 SHADER_DIR=shaders
 SHADER_SRCS=$(SHADER_DIR)/mesh.vert $(SHADER_DIR)/mesh.frag \
-		$(SHADER_DIR)/overlay.vert $(SHADER_DIR)/overlay.frag
+		$(SHADER_DIR)/overlay.vert $(SHADER_DIR)/overlay.frag \
+		$(SHADER_DIR)/pathtrace.comp
 SHADER_HDRS=$(SHADER_SRCS:=.spv.h)
 
 # not too sophisticated dependency
@@ -149,10 +150,12 @@ $(O)/%.o:	%.c
 $(O)/%.o:	%.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-# GLSL -> SPIR-V -> embedded C header. Stage is inferred from the .vert/.frag
-# extension by glslc; xxd -n pins a stable array name (mesh_vert_spv, ...).
+# GLSL -> SPIR-V -> embedded C header. Stage is inferred from the .vert/.frag/
+# .comp extension by glslc; xxd -n pins a stable array name (mesh_vert_spv, ...).
+# --target-env=vulkan1.2 is required by pathtrace.comp (VK_KHR_ray_query +
+# buffer_reference need SPIR-V 1.5); harmless for the 1.0-era raster shaders.
 $(SHADER_DIR)/%.spv.h:	$(SHADER_DIR)/%
-	glslc -O $< -o $(SHADER_DIR)/$*.spv
+	glslc --target-env=vulkan1.2 -O $< -o $(SHADER_DIR)/$*.spv
 	xxd -i -n $(subst .,_,$*)_spv $(SHADER_DIR)/$*.spv > $@
 
 # The Vulkan back-end embeds the compiled shaders.

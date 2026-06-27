@@ -48,6 +48,7 @@
 #include "shaders/mesh.frag.spv.h"
 #include "shaders/overlay.vert.spv.h"
 #include "shaders/overlay.frag.spv.h"
+#include "shaders/pathtrace.comp.spv.h"
 
 // Tier values returned by RB_VulkanProbe — kept numerically in lockstep with
 // rendermode_t in r_backend.h (RB_CLASSIC=0, RB_RT3D=1, RB_RASTER3D=2). The
@@ -313,17 +314,45 @@ struct VulkanState
     PFN_vkDestroyAccelerationStructureKHR          pfnDestroyAS       = nullptr;
     VkDeviceSize                                   scratchAlign       = 256;
 
+    // Path-tracer compute pass (DOOM-0009 build step 2c). A megakernel casts one
+    // primary ray per pixel against the TLAS and writes a debug image (rtImage)
+    // the present path blits to the swapchain when the rb_rtdebug toggle is on.
+    // rtImage is swapchain-sized (recreated with it); the pipeline/descriptor are
+    // built once. The compute descriptor binds the TLAS (b0) + storage image (b1)
+    // and is rewritten whenever either changes (level load / swapchain rebuild).
+    // All RT-gated — null/untouched while rtEnabled is false (INV-10/11).
+    VkImage               rtImage    = VK_NULL_HANDLE;   // R8G8B8A8 storage target
+    VkDeviceMemory        rtMemory   = VK_NULL_HANDLE;
+    VkImageView           rtView     = VK_NULL_HANDLE;
+    VkDescriptorSetLayout rtDsLayout = VK_NULL_HANDLE;
+    VkDescriptorPool      rtDsPool   = VK_NULL_HANDLE;
+    VkDescriptorSet       rtDs       = VK_NULL_HANDLE;
+    VkPipelineLayout      rtPipeLayout = VK_NULL_HANDLE;
+    VkPipeline            rtPipeline   = VK_NULL_HANDLE;
+
     bool ready        = false;
     bool needRecreate = false;
 };
 
 VulkanState g;
 
+// Defined below (after the AS build that first calls it): (re)point the compute
+// descriptor at the current TLAS + storage image once both exist.
+void UpdateRtComputeDescriptor();
+// Defined further down; used by the path-tracer pipeline built above it.
+VkShaderModule MakeShader(const unsigned char* code, unsigned len);
+
 // Debug wireframe toggle: 0 = normal fill, non-zero = draw the world (and
 // sprites) as wireframe over a filled sky backdrop. Flipped from i_video.c's
 // gamepad poll (PS4 Share button). C linkage so the C input layer can extern it.
 // No effect in Classic (no Vulkan path) or when the GPU lacks fillModeNonSolid.
 extern "C" { int rb_wireframe = 0; }
+
+// Path-tracer debug view (DOOM-0009 build step 2c), cycled by the `~` key:
+// 0 = off (normal raster/overlay present), 1 = ray-traced intersection/normal
+// visualization, 2 = white-furnace energy check. Only acts when the GPU has RT
+// and a TLAS exists (in-level); harmless otherwise. C linkage for i_video.c.
+extern "C" { int rb_rtdebug = 0; }
 
 [[noreturn]] void Fail(const char* what, VkResult r)
 {
@@ -1022,6 +1051,162 @@ void BuildAccelerationStructures()
            triCount,
            (double)(sizes.accelerationStructureSize + tsizes.accelerationStructureSize) / 1024.0);
     fflush(stdout);
+
+    // The path-tracer compute descriptor binds this TLAS; re-point it now that
+    // the per-level TLAS exists (the storage image half is written at init /
+    // swapchain rebuild). No-op until the compute pipeline is up.
+    UpdateRtComputeDescriptor();
+}
+
+// ---------------------------------------------------------------------------
+// Path-tracer compute pass (DOOM-0009 build step 2c)
+// ---------------------------------------------------------------------------
+
+// Build the once-per-run compute pipeline: a descriptor set (TLAS + storage
+// image), an 88-byte push-constant range (camera basis + mode + vertex-buffer
+// address), and the pathtrace.comp megakernel. RT-only; never called without it.
+void CreateRtComputePipeline()
+{
+    VkDescriptorSetLayoutBinding binds[2] = {};
+    binds[0].binding         = 0;   // TLAS
+    binds[0].descriptorType  = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    binds[0].descriptorCount = 1;
+    binds[0].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+    binds[1].binding         = 1;   // output storage image
+    binds[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    binds[1].descriptorCount = 1;
+    binds[1].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    VkDescriptorSetLayoutCreateInfo dlci = {};
+    dlci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    dlci.bindingCount = 2;
+    dlci.pBindings    = binds;
+    Check(vkCreateDescriptorSetLayout(g.device, &dlci, nullptr, &g.rtDsLayout),
+          "vkCreateDescriptorSetLayout(rt)");
+
+    VkDescriptorPoolSize pools[2] = {};
+    pools[0].type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR; pools[0].descriptorCount = 1;
+    pools[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;              pools[1].descriptorCount = 1;
+    VkDescriptorPoolCreateInfo pci = {};
+    pci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pci.maxSets       = 1;
+    pci.poolSizeCount = 2;
+    pci.pPoolSizes    = pools;
+    Check(vkCreateDescriptorPool(g.device, &pci, nullptr, &g.rtDsPool),
+          "vkCreateDescriptorPool(rt)");
+
+    VkDescriptorSetAllocateInfo dai = {};
+    dai.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dai.descriptorPool     = g.rtDsPool;
+    dai.descriptorSetCount = 1;
+    dai.pSetLayouts        = &g.rtDsLayout;
+    Check(vkAllocateDescriptorSets(g.device, &dai, &g.rtDs), "vkAllocateDescriptorSets(rt)");
+
+    // Push constant: 4x vec4 (camera) + uvec4 (mode/w/h) + uint64 (vertex addr).
+    VkPushConstantRange pcr = {};
+    pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pcr.offset     = 0;
+    pcr.size       = 88;
+    VkPipelineLayoutCreateInfo plci = {};
+    plci.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plci.setLayoutCount         = 1;
+    plci.pSetLayouts            = &g.rtDsLayout;
+    plci.pushConstantRangeCount = 1;
+    plci.pPushConstantRanges    = &pcr;
+    Check(vkCreatePipelineLayout(g.device, &plci, nullptr, &g.rtPipeLayout),
+          "vkCreatePipelineLayout(rt)");
+
+    VkShaderModule cs = MakeShader(pathtrace_comp_spv, pathtrace_comp_spv_len);
+    VkComputePipelineCreateInfo cpci = {};
+    cpci.sType        = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    cpci.stage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    cpci.stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
+    cpci.stage.module = cs;
+    cpci.stage.pName  = "main";
+    cpci.layout       = g.rtPipeLayout;
+    Check(vkCreateComputePipelines(g.device, VK_NULL_HANDLE, 1, &cpci, nullptr, &g.rtPipeline),
+          "vkCreateComputePipelines(rt)");
+    vkDestroyShaderModule(g.device, cs, nullptr);
+}
+
+// (Re)create the swapchain-sized storage image the compute pass writes and the
+// blit reads. R8G8B8A8_UNORM so vkCmdBlitImage matches components by name into
+// the B8G8R8A8 swapchain with no red/blue swap. STORAGE (compute) + TRANSFER_SRC
+// (blit). RT-only.
+void CreateRtTargets()
+{
+    VkImageCreateInfo ici = {};
+    ici.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ici.imageType     = VK_IMAGE_TYPE_2D;
+    ici.format        = VK_FORMAT_R8G8B8A8_UNORM;
+    ici.extent        = { g.extent.width, g.extent.height, 1 };
+    ici.mipLevels     = 1;
+    ici.arrayLayers   = 1;
+    ici.samples       = VK_SAMPLE_COUNT_1_BIT;
+    ici.tiling        = VK_IMAGE_TILING_OPTIMAL;
+    ici.usage         = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    ici.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+    ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    Check(vkCreateImage(g.device, &ici, nullptr, &g.rtImage), "vkCreateImage(rt)");
+
+    VkMemoryRequirements req = {};
+    vkGetImageMemoryRequirements(g.device, g.rtImage, &req);
+    VkMemoryAllocateInfo mai = {};
+    mai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    mai.allocationSize  = req.size;
+    mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    Check(vkAllocateMemory(g.device, &mai, nullptr, &g.rtMemory), "vkAllocateMemory(rt)");
+    Check(vkBindImageMemory(g.device, g.rtImage, g.rtMemory, 0), "vkBindImageMemory(rt)");
+
+    VkImageViewCreateInfo vci = {};
+    vci.sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vci.image            = g.rtImage;
+    vci.viewType         = VK_IMAGE_VIEW_TYPE_2D;
+    vci.format           = VK_FORMAT_R8G8B8A8_UNORM;
+    vci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    Check(vkCreateImageView(g.device, &vci, nullptr, &g.rtView), "vkCreateImageView(rt)");
+
+    UpdateRtComputeDescriptor();   // re-point the storage-image half at the new view
+}
+
+void DestroyRtTargets()
+{
+    if (g.rtView)   { vkDestroyImageView(g.device, g.rtView, nullptr);  g.rtView = VK_NULL_HANDLE; }
+    if (g.rtImage)  { vkDestroyImage(g.device, g.rtImage, nullptr);     g.rtImage = VK_NULL_HANDLE; }
+    if (g.rtMemory) { vkFreeMemory(g.device, g.rtMemory, nullptr);      g.rtMemory = VK_NULL_HANDLE; }
+}
+
+void UpdateRtComputeDescriptor()
+{
+    // Needs the compute set, a TLAS (per level) and the storage image (per
+    // swapchain). Called from each of their creation points; the first call with
+    // all three present wires the set, later ones re-point it.
+    if (g.rtDs == VK_NULL_HANDLE || g.tlas == VK_NULL_HANDLE || g.rtView == VK_NULL_HANDLE)
+        return;
+
+    VkWriteDescriptorSetAccelerationStructureKHR asInfo = {};
+    asInfo.sType                      = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
+    asInfo.accelerationStructureCount = 1;
+    asInfo.pAccelerationStructures    = &g.tlas;
+
+    VkDescriptorImageInfo imgInfo = {};
+    imgInfo.imageView   = g.rtView;
+    imgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+    VkWriteDescriptorSet writes[2] = {};
+    writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].pNext           = &asInfo;
+    writes[0].dstSet          = g.rtDs;
+    writes[0].dstBinding      = 0;
+    writes[0].descriptorCount = 1;
+    writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[1].dstSet          = g.rtDs;
+    writes[1].dstBinding      = 1;
+    writes[1].descriptorCount = 1;
+    writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    writes[1].pImageInfo      = &imgInfo;
+    vkUpdateDescriptorSets(g.device, 2, writes, 0, nullptr);
 }
 
 // Create a device-local sampled image of the given format and upload `pixels`
@@ -1547,11 +1732,13 @@ void RecreateSwapchain()
 {
     vkDeviceWaitIdle(g.device);
     DestroyFramebufferResources();
+    if (g.rtEnabled) DestroyRtTargets();   // swapchain-sized; rebuilt below
     CreateSwapchain();   // reuses g.swapchain as oldSwapchain, then replaces it
     CreateImageViews();
     CreateDepthResources();
     CreateFramebuffers();
     CreateRenderFinishedSemaphores();   // image count may have changed; resize set
+    if (g.rtEnabled) CreateRtTargets();    // re-point the compute descriptor too
 }
 
 // Build the paletted texture atlas (r_mesh.c), upload the atlas + PLAYPAL LUT
@@ -1932,6 +2119,15 @@ extern "C" void RB_Vulkan_Init(void)
     CreateCommandsAndSync();
     InitPaletteAndDescriptorSet();  // PLAYPAL LUT + descriptor set, so the HUD/menu
                                     // overlay composites from the first frame (DOOM-0045)
+    if (g.rtEnabled)
+    {
+        // Path-tracer compute pass (DOOM-0009 build step 2c). Pipeline first (it
+        // allocates the descriptor set), then the swapchain-sized storage image
+        // (which points the set's image half at its view). The TLAS half is
+        // written later, per level, by BuildAccelerationStructures.
+        CreateRtComputePipeline();
+        CreateRtTargets();
+    }
     g.ready = true;
 
     printf("RB_Vulkan_Init: swapchain up (%ux%u, %u images).\n",
@@ -2060,6 +2256,100 @@ extern "C" void RB_Vulkan_BuildLevel(void)
         BuildAccelerationStructures();
 }
 
+// Record the path-tracer debug frame into g.cmd (caller began the buffer):
+// dispatch the megakernel into rtImage, then blit it onto the acquired
+// swapchain image. Assumes rtActive was checked (RT on, TLAS + camera + pipeline
+// present). The submit that follows waits the acquire semaphore at TRANSFER.
+void RecordRtTrace(uint32_t idx)
+{
+    const uint32_t w = g.extent.width, h = g.extent.height;
+
+    // rtImage -> GENERAL for the compute write (prior contents are discarded).
+    VkImageMemoryBarrier toGeneral = {};
+    toGeneral.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    toGeneral.oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED;
+    toGeneral.newLayout        = VK_IMAGE_LAYOUT_GENERAL;
+    toGeneral.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toGeneral.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toGeneral.image            = g.rtImage;
+    toGeneral.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    toGeneral.srcAccessMask    = 0;
+    toGeneral.dstAccessMask    = VK_ACCESS_SHADER_WRITE_BIT;
+    vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toGeneral);
+
+    // Camera basis: DOOM yaw in the xy plane, z up; 90 deg horizontal FOV
+    // (FIELDOFVIEW), vertical derived from the aspect — matching the raster
+    // Mat4PerspectiveH so the intersection view lines up with the raster one.
+    const float c = std::cos(g.lastView.angle), s = std::sin(g.lastView.angle);
+    struct RtPushConstants {
+        float    camPos[4];
+        float    camDir[4];
+        float    camRight[4];   // w = tan(hFov/2)
+        float    camUp[4];      // w = tan(vFov/2)
+        uint32_t misc[4];       // mode, width, height, unused
+        uint64_t vertsAddr;
+    } pc = {};
+    static_assert(sizeof(RtPushConstants) == 88, "RT push-constant layout must match the shader");
+    pc.camPos[0] = g.lastView.x; pc.camPos[1] = g.lastView.y; pc.camPos[2] = g.lastView.z;
+    pc.camDir[0] = c;            pc.camDir[1] = s;            pc.camDir[2] = 0.0f;
+    pc.camRight[0] = s;          pc.camRight[1] = -c;         pc.camRight[2] = 0.0f;
+    pc.camRight[3] = 1.0f;                                   // tan(45 deg)
+    pc.camUp[2] = 1.0f;          pc.camUp[3] = (float)h / (float)w;
+    pc.misc[0] = (uint32_t)rb_rtdebug;
+    pc.misc[1] = w; pc.misc[2] = h;
+    pc.vertsAddr = BufferAddress(g.vbuf);
+
+    vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g.rtPipeline);
+    vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                            g.rtPipeLayout, 0, 1, &g.rtDs, 0, nullptr);
+    vkCmdPushConstants(g.cmd, g.rtPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+                       0, sizeof(pc), &pc);
+    vkCmdDispatch(g.cmd, (w + 7) / 8, (h + 7) / 8, 1);
+
+    // rtImage GENERAL -> TRANSFER_SRC; swapchain UNDEFINED -> TRANSFER_DST.
+    VkImageMemoryBarrier toSrc = toGeneral;
+    toSrc.oldLayout     = VK_IMAGE_LAYOUT_GENERAL;
+    toSrc.newLayout     = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    toSrc.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    toSrc.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toSrc);
+
+    VkImageMemoryBarrier toDst = {};
+    toDst.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    toDst.oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED;
+    toDst.newLayout        = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    toDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toDst.image            = g.images[idx];
+    toDst.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    toDst.srcAccessMask    = 0;
+    toDst.dstAccessMask    = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toDst);
+
+    // 1:1 blit (matched extents); component-by-name copy, so R8G8B8A8 -> the
+    // B8G8R8A8 swapchain carries no red/blue swap.
+    VkImageBlit blit = {};
+    blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+    blit.srcOffsets[1]  = { (int32_t)w, (int32_t)h, 1 };
+    blit.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+    blit.dstOffsets[1]  = { (int32_t)w, (int32_t)h, 1 };
+    vkCmdBlitImage(g.cmd, g.rtImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                   g.images[idx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                   1, &blit, VK_FILTER_NEAREST);
+
+    // Swapchain TRANSFER_DST -> PRESENT_SRC for vkQueuePresentKHR.
+    VkImageMemoryBarrier toPresent = toDst;
+    toPresent.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    toPresent.newLayout     = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    toPresent.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    toPresent.dstAccessMask = 0;
+    vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &toPresent);
+}
+
 extern "C" void RB_Vulkan_Present(void)
 {
     if (!g.ready)
@@ -2087,12 +2377,20 @@ extern "C" void RB_Vulkan_Present(void)
     vkResetFences(g.device, 1, &g.inFlight);
     vkResetCommandBuffer(g.cmd, 0);
 
+    // Path-tracer debug view (DOOM-0009 build step 2c): when the rb_rtdebug toggle
+    // is on and the GPU has RT with a built TLAS + a camera, the frame is the
+    // traced image blitted to the swapchain instead of the raster pass. Gated so
+    // the raster (Solid) path is byte-for-byte unaffected (INV-10).
+    const bool rtActive = rb_rtdebug && g.rtEnabled && g.tlas != VK_NULL_HANDLE
+                       && g.rtPipeline != VK_NULL_HANDLE && g.haveCamera
+                       && g.vbuf != VK_NULL_HANDLE;
+
     // Rebuild this frame's billboard sprites into the persistently-mapped buffer.
     // Safe to overwrite now: the fence wait above guarantees the previous frame's
     // draw (which read this buffer) has finished. Host-coherent, so no flush.
     g.spriteVertCount = 0;
     g.skyVertCount    = 0;
-    if (g.spriteMapped && g.haveCamera && g.atlasReady)
+    if (!rtActive && g.spriteMapped && g.haveCamera && g.atlasReady)
     {
         rb_vertex_t* buf = (rb_vertex_t*)g.spriteMapped;
         // Sky backdrop first (verts [0,sky)); it draws behind the world with the
@@ -2117,7 +2415,7 @@ extern "C" void RB_Vulkan_Present(void)
     // Copy this frame's 2D overlay (screens[0]) into the mapped staging buffer.
     // Same race-safe window as the sprites above: the fence wait guarantees the
     // previous frame's copy (which read this buffer) has finished.
-    bool drawOverlay = g.overlayReady && g.overlaySrc;
+    bool drawOverlay = !rtActive && g.overlayReady && g.overlaySrc;
     if (drawOverlay)
         std::memcpy(g.overlayMapped, g.overlaySrc,
                     (size_t)g.overlayW * g.overlayH);
@@ -2126,6 +2424,16 @@ extern "C" void RB_Vulkan_Present(void)
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     Check(vkBeginCommandBuffer(g.cmd, &bi), "vkBeginCommandBuffer");
+
+    // RT debug frame: trace + blit, then skip the raster render pass entirely
+    // (RecordRtTrace owns the swapchain layout transition to PRESENT_SRC). The
+    // `else` brace closes just before vkEndCommandBuffer.
+    if (rtActive)
+    {
+        RecordRtTrace(idx);
+    }
+    else
+    {
 
     // Upload the overlay staging buffer into its sampled image before the render
     // pass (transfers are illegal inside one). oldLayout UNDEFINED is fine: every
@@ -2264,9 +2572,16 @@ extern "C" void RB_Vulkan_Present(void)
     }
 
     vkCmdEndRenderPass(g.cmd);
+    }   // end of the non-RT (raster) recording branch
+
     Check(vkEndCommandBuffer(g.cmd), "vkEndCommandBuffer");
 
-    VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    // The RT path's first swapchain write is the blit (TRANSFER); the raster
+    // path's is the colour attachment. Wait the acquire semaphore at the matching
+    // stage so the image isn't written before it's acquired.
+    VkPipelineStageFlags waitStage = rtActive
+        ? VK_PIPELINE_STAGE_TRANSFER_BIT
+        : VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     VkSubmitInfo si = {};
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     si.waitSemaphoreCount = 1;
@@ -2306,6 +2621,15 @@ extern "C" void RB_Vulkan_Shutdown(void)
         vkDeviceWaitIdle(g.device);
 
     if (g.rtEnabled)        DestroyAccelerationStructures();
+    // Path-tracer compute resources (DOOM-0009 build step 2c).
+    if (g.rtEnabled)
+    {
+        DestroyRtTargets();
+        if (g.rtPipeline)   vkDestroyPipeline(g.device, g.rtPipeline, nullptr);
+        if (g.rtPipeLayout) vkDestroyPipelineLayout(g.device, g.rtPipeLayout, nullptr);
+        if (g.rtDsPool)     vkDestroyDescriptorPool(g.device, g.rtDsPool, nullptr);
+        if (g.rtDsLayout)   vkDestroyDescriptorSetLayout(g.device, g.rtDsLayout, nullptr);
+    }
     if (g.vbufMapped)       vkUnmapMemory(g.device, g.vbufMemory);
     if (g.vbuf)             vkDestroyBuffer(g.device, g.vbuf, nullptr);
     if (g.vbufMemory)       vkFreeMemory(g.device, g.vbufMemory, nullptr);

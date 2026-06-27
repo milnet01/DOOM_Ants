@@ -295,6 +295,16 @@ static void I_GetEvent(SDL_Event* sdlevent)
     switch (sdlevent->type)
     {
       case SDL_KEYDOWN:
+	// Backquote/tilde (`~`) cycles the path-tracer debug view (DOOM-0009
+	// build step 2c): off -> intersection -> white-furnace. Not a DOOM key,
+	// so flip the renderer flag directly instead of posting an event; the
+	// Vulkan present path reads it, and it is a no-op without RT.
+	if (sdlevent->key.keysym.sym == SDLK_BACKQUOTE && !sdlevent->key.repeat)
+	{
+	    extern int rb_rtdebug;          // r_vulkan.cpp
+	    rb_rtdebug = (rb_rtdebug + 1) % 3;
+	    break;
+	}
 	event.type = ev_keydown;
 	event.data1 = xlatekey(&sdlevent->key.keysym);
 	D_PostEvent(&event);
