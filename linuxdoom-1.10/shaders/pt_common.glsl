@@ -159,6 +159,62 @@ vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
     return L;
 }
 
+// Cosine-weighted hemisphere direction around normal n (build step 4d). The
+// returned direction's pdf is cos(theta)/PI, so a Lambert brdf*cos/pdf collapses to
+// the surface albedo — used by both the brute-force estimator and the white-furnace
+// math check below.
+vec3 cosineHemisphere(vec3 n, inout uint seed)
+{
+    float u1 = rnd(seed), u2 = rnd(seed);
+    vec3  t  = normalize(cross(abs(n.z) < 0.999 ? vec3(0,0,1) : vec3(1,0,0), n));
+    vec3  b  = cross(n, t);
+    float r  = sqrt(u1), phi = 2.0 * PI * u2;
+    return t * (r * cos(phi)) + b * (r * sin(phi)) + n * sqrt(max(0.0, 1.0 - u1));
+}
+
+// --- INV-6 verify estimators (build step 4d) -------------------------------------
+// Two independent UNCLAMPED estimators of the same direct-light integral, compared
+// for convergence. They must be unclamped because INV-6 proves the integrator
+// unbiased "up to the firefly clamp" — the clamp is a separate, acknowledged bias,
+// so folding it into either estimator would make a matched image fail for a reason
+// the invariant explicitly excludes. The display/bake path (shadeSurface) keeps its
+// clamp; only this verify path drops it.
+
+// One power-importance NEE sample (the shipping estimator's selection), unclamped.
+// Mirrors shadeSurface's emitter pick (cdf binary search, weight by 1/pdf) but
+// without the firefly clamp.
+vec3 directNEEVerify(vec3 hitP, vec3 n, vec3 albedo, uint emitCount,
+                     Emitters emit, inout uint seed)
+{
+    if (emitCount == 0u) return vec3(0.0);
+    float u  = rnd(seed);
+    uint  lo = 0u, hi = emitCount - 1u;
+    while (lo < hi)
+    {
+        uint mid = (lo + hi) >> 1u;
+        if (emit.e[mid * 14u + 12u] < u) lo = mid + 1u;
+        else                             hi = mid;
+    }
+    float pdf = emit.e[lo * 14u + 13u];
+    return albedo * (1.0 / PI) * sampleEmitter(lo, hitP, n, pdf, emit, seed);
+}
+
+// Brute-force reference: evaluate EVERY emitter each sample (no importance
+// selection, pdfSel = 1 so sampleEmitter returns each light's full Le·G·area
+// estimate), unclamped. This shares NO selection machinery with the NEE estimator,
+// so a converged image matching power-NEE proves the power-importance weighting is
+// unbiased (INV-6). Low variance (the selection noise is gone — only the per-light
+// area sample remains), so it converges in far fewer samples than a unidirectional
+// estimator would on DOOM's sparse emitters.
+vec3 directAllLights(vec3 hitP, vec3 n, vec3 albedo, uint emitCount,
+                     Emitters emit, inout uint seed)
+{
+    vec3 sum = vec3(0.0);
+    for (uint k = 0u; k < emitCount; k++)
+        sum += sampleEmitter(k, hitP, n, 1.0, emit, seed);   // pdfSel = 1 -> full light
+    return albedo * (1.0 / PI) * sum;
+}
+
 // Evaluate the baked SH-L1 GI cache for subsector `subId` along normal `n`, and
 // return the diffuse reflected-radiance factor (multiply by surface albedo). The
 // probe stores RADIANCE SH coefficients; convolving with the clamped-cosine kernel

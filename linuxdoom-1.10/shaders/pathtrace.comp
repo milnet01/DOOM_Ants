@@ -41,6 +41,10 @@ layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(set = 0, binding = 0) uniform accelerationStructureEXT topAS;
 layout(set = 0, binding = 1, rgba8) uniform writeonly image2D outImg;
+// Float accumulation target for the INV-6 verify path (build step 4d, mode 5).
+// Carries running sums: rgb = summed direct-only radiance, a = sample count. Read
+// back on the host to form converged images. Untouched by the display modes 1-4.
+layout(set = 0, binding = 2, rgba32f) uniform image2D accumImg;
 
 // Materials (set 1) — shared verbatim with the raster pass (r_vulkan.cpp
 // CreateDescriptors / mesh.frag): the 256x1 PLAYPAL LUT and the bindless array of
@@ -71,6 +75,8 @@ layout(push_constant) uniform PC {
     vec4  camUp;     // xyz = up,     w = tan(vFov/2)
     uvec4 misc;      // x = mode, y = width, z = height, w = numWall (flat-id offset)
     uvec4 misc2;     // x = emitter count (3b); y = probe count (4c); z,w reserved
+    uvec4 misc3;     // step-4d verify: x = sample-seed base, y = spp this dispatch,
+                     // z = estimator (0 = power-NEE, 1 = brute-force), w reserved
     Verts    verts;    // level mesh vertex buffer (device address)
     Emitters emit;     // step-3b emitter list (device address; count in misc2.x)
     MatEmis  matEmis;  // per-material Le table (device address)
@@ -212,6 +218,51 @@ void main()
             if (any(isnan(L)) || any(isinf(L))) L = vec3(0.0);
             colour = toneEncode(L);
         }
+        else if (mode == 5u)
+        {
+            // Verify accumulate (build step 4d, INV-6). Integrate DIRECT-ONLY
+            // radiance (no self-emission, no GI) with the estimator in misc3.z,
+            // summing spp samples into the float accum image. The host drives many
+            // dispatches with advancing seed bases to converge each estimator, then
+            // compares power-NEE vs brute-force for the rel-MSE bar. Writes ONLY the
+            // accum image (rgb = radiance sum, a = sample count); no display output.
+            float u      = pc.verts.v[i0 + 6u];
+            float vv     = pc.verts.v[i0 + 7u];
+            int   texnum = floatBitsToInt(pc.verts.v[i0 + 8u]);
+            int   flags  = floatBitsToInt(pc.verts.v[i0 + 9u]);
+            uint  id     = ((flags & FLAG_FLAT) != 0) ? (pc.misc.w + uint(texnum))
+                                                      : uint(texnum);
+            vec3  albedo = decodeAlbedo(id, vec2(u, vv));
+            float tHit   = rayQueryGetIntersectionTEXT(rq, true);
+            vec3  hitP   = origin + dir * tHit;
+
+            uint  spp = pc.misc3.y;
+            vec3  sum = vec3(0.0);
+            for (uint si = 0u; si < spp; si++)
+            {
+                uint seed = pcgHash((px.x + px.y * w) * 2654435761u
+                                    + pc.misc3.x + si);
+                if (pc.misc3.z == 0u)
+                    sum += directNEEVerify(hitP, n, albedo, pc.misc2.x, pc.emit, seed);
+                else if (pc.misc3.z == 1u)
+                    sum += directAllLights(hitP, n, albedo, pc.misc2.x, pc.emit, seed);
+                else
+                {
+                    // White-furnace math check: one cosine bounce into a constant
+                    // unit-radiance environment, albedo 1, NO occlusion (no trace).
+                    // brdf*cos/pdf == 1 exactly for any direction, so a correct
+                    // pdf/throughput implementation sums to spp*1.0 with zero
+                    // variance; the host asserts the converged mean == 1.
+                    vec3  sd   = cosineHemisphere(n, seed);
+                    float cosT = max(dot(n, sd), 0.0);
+                    float pdf  = cosT / PI;
+                    sum += pdf > 0.0 ? (1.0 / PI) * cosT / pdf : 0.0;
+                }
+            }
+            vec4 prev = imageLoad(accumImg, ivec2(px));
+            imageStore(accumImg, ivec2(px), prev + vec4(sum, float(spp)));
+            return;                                 // verify writes accum only
+        }
         else
         {
             colour = n * 0.5 + 0.5;                 // intersection / normal view
@@ -219,10 +270,13 @@ void main()
     }
     else
     {
-        // Miss: the environment. Unit radiance in furnace mode (energy stays flat
-        // across hit and miss); the bounded sky-light in NEE mode (tonemapped like
-        // the lit surfaces); a dark sky in intersection mode.
-        if      (mode == 2u) colour = vec3(1.0);
+        // Miss: the environment. Mode 5 (verify) leaves the accum texel untouched
+        // (count stays 0 -> the host skips background pixels). Unit radiance in
+        // furnace mode (energy stays flat across hit and miss); the bounded
+        // sky-light in NEE mode (tonemapped like the lit surfaces); a dark sky in
+        // intersection mode.
+        if      (mode == 5u) return;
+        else if (mode == 2u) colour = vec3(1.0);
         else if (mode == 4u) colour = toneEncode(SKY_COLOR);
         else                 colour = vec3(0.02, 0.02, 0.05);
     }

@@ -37,6 +37,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdint>
+#include <cstdlib>     // exit() for the -rtverify self-test
 #include <vector>
 
 // POD-only, DOOM-header-free seam: the C geometry builder (r_mesh.c) and the
@@ -170,6 +171,7 @@ extern "C" int RB_VulkanProbe(void)
 extern "C" void* I_GetWindow(void);
 extern "C" void  I_ShutdownGraphicsForVulkan(void);
 extern "C" [[noreturn]] void I_Error(const char* error, ...);
+extern "C" int M_CheckParm(const char* check);   // m_argv.c — for -rtverify (step 4d)
 
 namespace {
 
@@ -335,6 +337,18 @@ struct VulkanState
     VkPipelineLayout      rtPipeLayout = VK_NULL_HANDLE;
     VkPipeline            rtPipeline   = VK_NULL_HANDLE;
 
+    // INV-6 verify accumulator (DOOM-0009 build step 4d). A fixed-size rgba32f
+    // storage image (compute binding 2) the megakernel's mode-5 verify path sums
+    // direct-only radiance into, plus a host-visible buffer the result is copied to
+    // for the CPU rel-MSE / white-furnace check. Created once with the pipeline;
+    // exercised only by RB_RtVerify (the `-rtverify` headless self-test), never the
+    // display path. RT-gated.
+    VkImage        rtAccum     = VK_NULL_HANDLE;   // rgba32f: rgb sum, a = sampleN
+    VkDeviceMemory rtAccumMem  = VK_NULL_HANDLE;
+    VkImageView    rtAccumView = VK_NULL_HANDLE;
+    VkBuffer       rtReadback  = VK_NULL_HANDLE;   // host-visible copy target
+    VkDeviceMemory rtReadbackMem = VK_NULL_HANDLE;
+
     // GI bake compute pass (DOOM-0009 build step 4b-ii). Its own descriptor set
     // (TLAS only — no output image) + pipeline; set 1 (materials) is shared with
     // the megakernel. Created once; the dispatch runs at each level load.
@@ -401,6 +415,16 @@ extern "C" { int rb_wireframe = 0; }
 // 3c). Only acts when the GPU has RT and a TLAS exists (in-level); harmless
 // otherwise. C linkage for i_video.c.
 extern "C" { int rb_rtdebug = 0; }
+
+// INV-6 headless self-test latch (DOOM-0009 build step 4d). Set from the
+// `-rtverify` command-line parm; the first ready present runs RB_RtVerify (the
+// rel-MSE + white-furnace proof) and exits. -1 = unchecked, 0 = off, 1 = armed.
+int rb_rtverify = -1;
+
+// Verify accumulator resolution — small + fixed (independent of the swapchain) so
+// the high-sample-count convergence runs in well under a second per estimator.
+static const uint32_t kVerifyW = 320;
+static const uint32_t kVerifyH = 200;
 
 [[noreturn]] void Fail(const char* what, VkResult r)
 {
@@ -1133,26 +1157,30 @@ void BuildAccelerationStructures()
 // address), and the pathtrace.comp megakernel. RT-only; never called without it.
 void CreateRtComputePipeline()
 {
-    VkDescriptorSetLayoutBinding binds[2] = {};
+    VkDescriptorSetLayoutBinding binds[3] = {};
     binds[0].binding         = 0;   // TLAS
     binds[0].descriptorType  = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
     binds[0].descriptorCount = 1;
     binds[0].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
-    binds[1].binding         = 1;   // output storage image
+    binds[1].binding         = 1;   // output storage image (display modes 1-4)
     binds[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     binds[1].descriptorCount = 1;
     binds[1].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+    binds[2].binding         = 2;   // rgba32f verify accumulator (mode 5; step 4d)
+    binds[2].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    binds[2].descriptorCount = 1;
+    binds[2].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
 
     VkDescriptorSetLayoutCreateInfo dlci = {};
     dlci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    dlci.bindingCount = 2;
+    dlci.bindingCount = 3;
     dlci.pBindings    = binds;
     Check(vkCreateDescriptorSetLayout(g.device, &dlci, nullptr, &g.rtDsLayout),
           "vkCreateDescriptorSetLayout(rt)");
 
     VkDescriptorPoolSize pools[2] = {};
     pools[0].type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR; pools[0].descriptorCount = 1;
-    pools[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;              pools[1].descriptorCount = 1;
+    pools[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;              pools[1].descriptorCount = 2;
     VkDescriptorPoolCreateInfo pci = {};
     pci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     pci.maxSets       = 1;
@@ -1168,13 +1196,14 @@ void CreateRtComputePipeline()
     dai.pSetLayouts        = &g.rtDsLayout;
     Check(vkAllocateDescriptorSets(g.device, &dai, &g.rtDs), "vkAllocateDescriptorSets(rt)");
 
-    // Push constant: 4x vec4 (camera) + 2x uvec4 (mode/w/h/numWall, emitter+probe
-    // counts) + 5x uint64 (vertex / emitter / Le / probe-cache / tri-subsector
-    // addresses) = 136 bytes (steps 3b + 4c). Within the 256-byte device limit.
+    // Push constant: 4x vec4 (camera) + 3x uvec4 (mode/w/h/numWall, emitter+probe
+    // counts, verify seed/spp/estimator) + 5x uint64 (vertex / emitter / Le /
+    // probe-cache / tri-subsector addresses) = 152 bytes (steps 3b + 4c + 4d verify).
+    // Within the 256-byte device limit.
     VkPushConstantRange pcr = {};
     pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pcr.offset     = 0;
-    pcr.size       = 136;
+    pcr.size       = 152;
     // Two sets: 0 = RT (TLAS + output image), 1 = the raster materials set
     // (g.dsLayout: PLAYPAL LUT + bindless material array), reused verbatim so the
     // textured trace (step 3a) decodes surfaces with no parallel material path.
@@ -1200,6 +1229,80 @@ void CreateRtComputePipeline()
     Check(vkCreateComputePipelines(g.device, VK_NULL_HANDLE, 1, &cpci, nullptr, &g.rtPipeline),
           "vkCreateComputePipelines(rt)");
     vkDestroyShaderModule(g.device, cs, nullptr);
+
+    // INV-6 verify accumulator (build step 4d): a fixed-size rgba32f storage image
+    // (compute binding 2) + a host-visible readback buffer. Created once; mode 5
+    // (RB_RtVerify) sums radiance into it and copies it here for the CPU rel-MSE
+    // check. binding 2 is statically referenced by the shader, so it must hold a
+    // valid view even for the display dispatches that never touch it — written now.
+    VkImageCreateInfo aci = {};
+    aci.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    aci.imageType     = VK_IMAGE_TYPE_2D;
+    aci.format        = VK_FORMAT_R32G32B32A32_SFLOAT;
+    aci.extent        = { kVerifyW, kVerifyH, 1 };
+    aci.mipLevels     = 1;
+    aci.arrayLayers   = 1;
+    aci.samples       = VK_SAMPLE_COUNT_1_BIT;
+    aci.tiling        = VK_IMAGE_TILING_OPTIMAL;
+    aci.usage         = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+                      | VK_IMAGE_USAGE_TRANSFER_DST_BIT;   // DST for the clear
+    aci.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+    aci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    Check(vkCreateImage(g.device, &aci, nullptr, &g.rtAccum), "vkCreateImage(accum)");
+
+    VkMemoryRequirements areq = {};
+    vkGetImageMemoryRequirements(g.device, g.rtAccum, &areq);
+    VkMemoryAllocateInfo amai = {};
+    amai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    amai.allocationSize  = areq.size;
+    amai.memoryTypeIndex = FindMemoryType(areq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    Check(vkAllocateMemory(g.device, &amai, nullptr, &g.rtAccumMem), "vkAllocateMemory(accum)");
+    Check(vkBindImageMemory(g.device, g.rtAccum, g.rtAccumMem, 0), "vkBindImageMemory(accum)");
+
+    VkImageViewCreateInfo avci = {};
+    avci.sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    avci.image            = g.rtAccum;
+    avci.viewType         = VK_IMAGE_VIEW_TYPE_2D;
+    avci.format           = VK_FORMAT_R32G32B32A32_SFLOAT;
+    avci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    Check(vkCreateImageView(g.device, &avci, nullptr, &g.rtAccumView), "vkCreateImageView(accum)");
+
+    // Park it in GENERAL once. The descriptor (binding 2) advertises GENERAL and the
+    // shader statically references it, so even the display dispatches that never read
+    // it expect the layout to match — transition now, then it stays GENERAL for life.
+    {
+        VkCommandBuffer cb = BeginOneTime();
+        VkImageMemoryBarrier toGen = {};
+        toGen.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        toGen.oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED;
+        toGen.newLayout        = VK_IMAGE_LAYOUT_GENERAL;
+        toGen.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toGen.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toGen.image            = g.rtAccum;
+        toGen.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        toGen.srcAccessMask    = 0;
+        toGen.dstAccessMask    = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toGen);
+        EndOneTime(cb);
+    }
+
+    CreateRtBuffer((VkDeviceSize)kVerifyW * kVerifyH * 4 * sizeof(float),
+                   VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                   &g.rtReadback, &g.rtReadbackMem);
+
+    VkDescriptorImageInfo accInfo = {};
+    accInfo.imageView   = g.rtAccumView;
+    accInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    VkWriteDescriptorSet accWrite = {};
+    accWrite.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    accWrite.dstSet          = g.rtDs;
+    accWrite.dstBinding      = 2;
+    accWrite.descriptorCount = 1;
+    accWrite.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    accWrite.pImageInfo      = &accInfo;
+    vkUpdateDescriptorSets(g.device, 1, &accWrite, 0, nullptr);
 }
 
 // Build the once-per-run GI bake pipeline (DOOM-0009 build step 4b-ii). Like the
@@ -2624,6 +2727,156 @@ void RunGiBake()
     fflush(stdout);
 }
 
+// INV-6 headless self-test (DOOM-0009 build step 4d). Converge the megakernel's
+// DIRECT-only lighting two independent ways at the current camera — power-importance
+// NEE (the shipping estimator) and a brute-force cosine-hemisphere unidirectional
+// estimator — and assert their images agree within the spec's 0.5% rel-MSE bar. The
+// two share NO sampling machinery (the brute force doesn't even read the emitter
+// list), so agreement proves the NEE integrator is unbiased. A white-furnace pass
+// independently checks the pdf/throughput math integrates to exactly 1. Drives the
+// mode-5 verify path over the rgba32f accumulator (binding 2), reads it back, and
+// computes the metrics on the CPU. Called once from the first ready present when
+// `-rtverify` is set; the caller exits afterward.
+void RB_RtVerify()
+{
+    const uint32_t W = kVerifyW, H = kVerifyH;
+    const uint32_t pxCount = W * H;
+
+    // Same camera basis RecordRtTrace builds, so the verify view is what the player
+    // sees at the trigger frame. mode 5 (verify accumulate) + the scene addresses.
+    const float cc = std::cos(g.lastView.angle), ss = std::sin(g.lastView.angle);
+    struct RtPC {
+        float    camPos[4]; float camDir[4]; float camRight[4]; float camUp[4];
+        uint32_t misc[4]; uint32_t misc2[4]; uint32_t misc3[4];
+        uint64_t vertsAddr, emitAddr, matEmisAddr, probeAddr, triSsAddr;
+    } pc = {};
+    static_assert(sizeof(RtPC) == 152, "verify push-constant layout must match the shader");
+    pc.camPos[0] = g.lastView.x; pc.camPos[1] = g.lastView.y; pc.camPos[2] = g.lastView.z;
+    pc.camDir[0] = cc;           pc.camDir[1] = ss;
+    pc.camRight[0] = ss;         pc.camRight[1] = -cc;        pc.camRight[3] = 1.0f;
+    pc.camUp[2]  = 1.0f;         pc.camUp[3] = (float)H / (float)W;
+    pc.misc[0] = 5u; pc.misc[1] = W; pc.misc[2] = H; pc.misc[3] = (uint32_t)g.matNumWall;
+    pc.misc2[0] = g.emitCount; pc.misc2[1] = g.probeCount;
+    pc.vertsAddr   = BufferAddress(g.vbuf);
+    pc.emitAddr    = g.emitBuf    ? BufferAddress(g.emitBuf)    : 0;
+    pc.matEmisAddr = g.matEmisBuf ? BufferAddress(g.matEmisBuf) : 0;
+    pc.probeAddr   = g.probeBuf   ? BufferAddress(g.probeBuf)   : 0;   // unused by mode 5
+    pc.triSsAddr   = g.triSsBuf   ? BufferAddress(g.triSsBuf)   : 0;
+
+    VkDescriptorSet sets[2] = { g.rtDs, g.ds };
+
+    // The display image (binding 1) is statically referenced by the shader even in
+    // mode 5, and its descriptor advertises GENERAL — but no frame has been rendered
+    // this run, so it is still UNDEFINED. Park it in GENERAL so the verify dispatches
+    // validate clean (the accumulator at binding 2 was parked at creation).
+    {
+        VkCommandBuffer cb = BeginOneTime();
+        VkImageMemoryBarrier toGen = {};
+        toGen.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        toGen.oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED;
+        toGen.newLayout        = VK_IMAGE_LAYOUT_GENERAL;
+        toGen.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toGen.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toGen.image            = g.rtImage;
+        toGen.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        toGen.srcAccessMask    = 0;
+        toGen.dstAccessMask    = VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toGen);
+        EndOneTime(cb);
+    }
+
+    // Converge one estimator into the accumulator, then read it back into `out`
+    // (pxCount * 4 floats: rgb radiance sum + sample count). Each step is its OWN
+    // one-time submit: EndOneTime waits the queue idle, so the clear -> dispatches ->
+    // copy stay ordered (and the accumulator's read-add-write hazard between passes
+    // is covered) without any one submission running long enough to trip the GPU's
+    // timeout watchdog (a single all-dispatches submit device-loses on the heavier
+    // all-lights estimator). All accumulator ops run in GENERAL (clear/storage/copy).
+    auto runEstimator = [&](uint32_t estimator, uint32_t dispatches, uint32_t sppPer,
+                            std::vector<float>& out)
+    {
+        pc.misc3[1] = sppPer;
+        pc.misc3[2] = estimator;
+
+        VkImageSubresourceRange range = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        {
+            VkCommandBuffer cb = BeginOneTime();
+            VkClearColorValue zero = {};
+            vkCmdClearColorImage(cb, g.rtAccum, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &range);
+            EndOneTime(cb);
+        }
+
+        for (uint32_t d = 0; d < dispatches; d++)
+        {
+            pc.misc3[0] = d * sppPer;       // advance the per-sample seed base
+            VkCommandBuffer cb = BeginOneTime();
+            vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, g.rtPipeline);
+            vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                    g.rtPipeLayout, 0, 2, sets, 0, nullptr);
+            vkCmdPushConstants(cb, g.rtPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+            vkCmdDispatch(cb, (W + 7) / 8, (H + 7) / 8, 1);
+            EndOneTime(cb);
+        }
+
+        {
+            VkCommandBuffer cb = BeginOneTime();
+            VkBufferImageCopy region = {};
+            region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+            region.imageExtent      = { W, H, 1 };
+            vkCmdCopyImageToBuffer(cb, g.rtAccum, VK_IMAGE_LAYOUT_GENERAL, g.rtReadback, 1, &region);
+            EndOneTime(cb);
+        }
+
+        void* mapped = nullptr;
+        Check(vkMapMemory(g.device, g.rtReadbackMem, 0, VK_WHOLE_SIZE, 0, &mapped), "vkMapMemory(rtVerify)");
+        out.assign((const float*)mapped, (const float*)mapped + (size_t)pxCount * 4);
+        vkUnmapMemory(g.device, g.rtReadbackMem);
+    };
+
+    std::vector<float> nee, brute, furnace;
+    runEstimator(0u, 256u, 64u, nee);       // power-NEE:          16384 spp
+    runEstimator(1u,  64u, 64u, brute);     // brute (all lights):  4096 spp (low var)
+    runEstimator(2u,   4u, 64u, furnace);   // white furnace:        256 spp (exact)
+
+    // rel-MSE between the two converged direct-light images over pixels both hit:
+    // sum (nee-brute)^2 / sum brute^2, summed over RGB.
+    double num = 0.0, den = 0.0;
+    int    litPx = 0;
+    for (uint32_t i = 0; i < pxCount; i++)
+    {
+        const float* a = &nee[(size_t)i * 4];
+        const float* b = &brute[(size_t)i * 4];
+        if (a[3] <= 0.0f || b[3] <= 0.0f) continue;     // background (a primary miss)
+        litPx++;
+        for (int ch = 0; ch < 3; ch++)
+        {
+            double ma = a[ch] / a[3], mb = b[ch] / b[3];
+            num += (ma - mb) * (ma - mb);
+            den += mb * mb;
+        }
+    }
+    double relMSE = (den > 0.0) ? num / den : 0.0;
+
+    // White furnace: every hit pixel's converged mean must be 1.0 (brdf*cos/pdf==1).
+    double furnMaxDev = 0.0;
+    for (uint32_t i = 0; i < pxCount; i++)
+    {
+        const float* f = &furnace[(size_t)i * 4];
+        if (f[3] <= 0.0f) continue;
+        double dev = std::fabs((double)f[0] / f[3] - 1.0);
+        if (dev > furnMaxDev) furnMaxDev = dev;
+    }
+
+    const double bar = 0.005;       // INV-6 acceptance: <= 0.5% rel-MSE
+    printf("[rtverify] INV-6 direct-light rel-MSE = %.4f%% over %d lit px "
+           "(power-NEE 16384 spp vs brute-force/all-lights 4096 spp): %s (bar 0.50%%)\n",
+           relMSE * 100.0, litPx, (relMSE <= bar) ? "PASS" : "FAIL");
+    printf("[rtverify] white-furnace max deviation from 1.0 = %.6f: %s\n",
+           furnMaxDev, (furnMaxDev < 1e-3) ? "PASS" : "FAIL");
+    fflush(stdout);
+}
+
 // Place this level's GI-bake probes (DOOM-0009 build step 4b-i): one per subsector
 // (RB_BuildProbes), uploaded as PROBE_FLOATS records with the SH payload zeroed —
 // the bake compute pass (4b-ii) fills it, the megakernel reads it (4c). Rebuilt
@@ -2804,13 +3057,14 @@ void RecordRtTrace(uint32_t idx)
         float    camUp[4];      // w = tan(vFov/2)
         uint32_t misc[4];       // mode, width, height, numWall (flat-id offset)
         uint32_t misc2[4];      // emitterCount, probeCount, reserved, reserved
+        uint32_t misc3[4];      // 4d verify only (seed/spp/estimator); 0 for display
         uint64_t vertsAddr;
         uint64_t emitAddr;      // step-3b emitter list (0 if none)
         uint64_t matEmisAddr;   // per-material Le table
         uint64_t probeAddr;     // step-4 GI probe cache (0 if none)
         uint64_t triSsAddr;     // per-triangle subsector id (0 if none)
     } pc = {};
-    static_assert(sizeof(RtPushConstants) == 136, "RT push-constant layout must match the shader");
+    static_assert(sizeof(RtPushConstants) == 152, "RT push-constant layout must match the shader");
     pc.camPos[0] = g.lastView.x; pc.camPos[1] = g.lastView.y; pc.camPos[2] = g.lastView.z;
     pc.camDir[0] = c;            pc.camDir[1] = s;            pc.camDir[2] = 0.0f;
     pc.camRight[0] = s;          pc.camRight[1] = -c;         pc.camRight[2] = 0.0f;
@@ -2894,6 +3148,22 @@ extern "C" void RB_Vulkan_Present(void)
     }
 
     vkWaitForFences(g.device, 1, &g.inFlight, VK_TRUE, UINT64_MAX);
+
+    // INV-6 self-test (DOOM-0009 build step 4d). The first in-level present with the
+    // full RT scene ready runs the rel-MSE + white-furnace proof against the current
+    // camera, prints PASS/FAIL, and exits — a headless gate, never the display path.
+    // The fence wait above guarantees no frame is in flight before its one-time
+    // dispatches. Cached so the parm is read once.
+    if (rb_rtverify < 0)
+        rb_rtverify = M_CheckParm("-rtverify") ? 1 : 0;
+    if (rb_rtverify == 1 && g.rtEnabled && g.tlas != VK_NULL_HANDLE &&
+        g.rtPipeline != VK_NULL_HANDLE && g.haveCamera &&
+        g.vbuf != VK_NULL_HANDLE && g.atlasReady)
+    {
+        rb_rtverify = 0;
+        RB_RtVerify();
+        exit(0);
+    }
 
     uint32_t idx = 0;
     VkResult acq = vkAcquireNextImageKHR(g.device, g.swapchain, UINT64_MAX,
@@ -3161,6 +3431,12 @@ extern "C" void RB_Vulkan_Shutdown(void)
         if (g.rtPipeLayout) vkDestroyPipelineLayout(g.device, g.rtPipeLayout, nullptr);
         if (g.rtDsPool)     vkDestroyDescriptorPool(g.device, g.rtDsPool, nullptr);
         if (g.rtDsLayout)   vkDestroyDescriptorSetLayout(g.device, g.rtDsLayout, nullptr);
+        // INV-6 verify accumulator + readback (step 4d).
+        if (g.rtAccumView)  vkDestroyImageView(g.device, g.rtAccumView, nullptr);
+        if (g.rtAccum)      vkDestroyImage(g.device, g.rtAccum, nullptr);
+        if (g.rtAccumMem)   vkFreeMemory(g.device, g.rtAccumMem, nullptr);
+        if (g.rtReadback)   vkDestroyBuffer(g.device, g.rtReadback, nullptr);
+        if (g.rtReadbackMem) vkFreeMemory(g.device, g.rtReadbackMem, nullptr);
         // GI bake pipeline (step 4b-ii).
         if (g.bakePipeline)   vkDestroyPipeline(g.device, g.bakePipeline, nullptr);
         if (g.bakePipeLayout) vkDestroyPipelineLayout(g.device, g.bakePipeLayout, nullptr);
