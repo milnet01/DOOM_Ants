@@ -557,11 +557,12 @@ int RB_NumSubsectors(void)
     return numsubsectors;
 }
 
-void RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst)
+int RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst)
 {
     int i;
+    int moved = 0;          // any z actually changed this frame -> RT refit (step 5)
     if (!mesh || !dst)
-        return;
+        return 0;
     // Doors/lifts move sector floor/ceiling heights every tic; rewrite only the
     // z of vertices tagged to a moving plane, straight to the GPU buffer (the
     // mesh stays otherwise static). mesh->verts holds the build-time tags +
@@ -598,6 +599,8 @@ void RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst)
             newz = sectors[v->vsector].ceilingheight / (float)FRACUNIT;
         else
             continue;
+        if (dst[i].z != newz)
+            moved = 1;          // geometry shifted -> the BLAS is now stale
         dst[i].z = newz;
         // Walls: re-peg the texture to its (possibly moving) anchor plane so it
         // slides WITH a door/lift at 1 texel per world unit instead of stretching
@@ -612,6 +615,7 @@ void RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst)
             dst[i].v = (az + v->vtexoff) - newz;
         }
     }
+    return moved;
 }
 
 //

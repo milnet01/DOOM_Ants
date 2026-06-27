@@ -312,6 +312,19 @@ struct VulkanState
     VkBuffer                   tlasInstBuf = VK_NULL_HANDLE;  // one instance, host-visible
     VkDeviceMemory             tlasInstMem = VK_NULL_HANDLE;
 
+    // Moving-sector AS refit (DOOM-0009 build step 5). The BLAS/TLAS are built
+    // ALLOW_UPDATE so an open door/lift (DOOM-0049 patches the vertices each frame)
+    // can be refit in place — far cheaper than a rebuild — instead of leaving the
+    // traced geometry stale. Persistent update-scratch buffers (sized at build) feed
+    // the in-place updates; blasDirty latches a moving-geometry frame so the refit
+    // fires once the trace is active (even if the move happened under the raster path).
+    VkBuffer       blasUpdScratch  = VK_NULL_HANDLE;
+    VkDeviceMemory blasUpdScratchMem = VK_NULL_HANDLE;
+    VkBuffer       tlasUpdScratch  = VK_NULL_HANDLE;
+    VkDeviceMemory tlasUpdScratchMem = VK_NULL_HANDLE;
+    bool           blasDirty       = false;
+    bool           refitTimed      = false;   // print the measured refit cost once
+
     // VK_KHR_acceleration_structure entry points — not core, so loaded by name once
     // the device is up (LoadRtEntryPoints); null while rtEnabled is false.
     PFN_vkGetAccelerationStructureBuildSizesKHR    pfnGetASBuildSizes = nullptr;
@@ -988,6 +1001,11 @@ void DestroyAccelerationStructures()
     if (g.blas)        { g.pfnDestroyAS(g.device, g.blas, nullptr); g.blas = VK_NULL_HANDLE; }
     if (g.blasBuf)     { vkDestroyBuffer(g.device, g.blasBuf, nullptr); g.blasBuf = VK_NULL_HANDLE; }
     if (g.blasMem)     { vkFreeMemory(g.device, g.blasMem, nullptr); g.blasMem = VK_NULL_HANDLE; }
+    // Moving-sector refit scratch (build step 5).
+    if (g.blasUpdScratch)    { vkDestroyBuffer(g.device, g.blasUpdScratch, nullptr); g.blasUpdScratch = VK_NULL_HANDLE; }
+    if (g.blasUpdScratchMem) { vkFreeMemory(g.device, g.blasUpdScratchMem, nullptr); g.blasUpdScratchMem = VK_NULL_HANDLE; }
+    if (g.tlasUpdScratch)    { vkDestroyBuffer(g.device, g.tlasUpdScratch, nullptr); g.tlasUpdScratch = VK_NULL_HANDLE; }
+    if (g.tlasUpdScratchMem) { vkFreeMemory(g.device, g.tlasUpdScratchMem, nullptr); g.tlasUpdScratchMem = VK_NULL_HANDLE; }
 }
 
 // Build the static BLAS (every level-mesh triangle) and a one-instance identity
@@ -1019,7 +1037,11 @@ void BuildAccelerationStructures()
     VkAccelerationStructureBuildGeometryInfoKHR bgi = {};
     bgi.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
     bgi.type          = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-    bgi.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+    // ALLOW_UPDATE so a moving door/lift can refit the BLAS in place each frame
+    // (build step 5) instead of leaving traced geometry stale; also makes the size
+    // query fill updateScratchSize.
+    bgi.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR
+                      | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
     bgi.mode          = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
     bgi.geometryCount = 1;
     bgi.pGeometries   = &geom;
@@ -1060,6 +1082,12 @@ void BuildAccelerationStructures()
     vkDestroyBuffer(g.device, scratchBuf, nullptr);
     vkFreeMemory(g.device, scratchMem, nullptr);
 
+    // Persistent scratch for in-place BLAS refits (build step 5); sized by the
+    // update query above. Kept for the level's lifetime so a refit allocates nothing.
+    CreateRtBuffer(sizes.updateScratchSize + g.scratchAlign,
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &g.blasUpdScratch, &g.blasUpdScratchMem);
+
     // ---- TLAS: one identity instance of the BLAS ----
     VkAccelerationStructureDeviceAddressInfoKHR adi = {};
     adi.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
@@ -1095,7 +1123,10 @@ void BuildAccelerationStructures()
     VkAccelerationStructureBuildGeometryInfoKHR tbgi = {};
     tbgi.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
     tbgi.type          = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-    tbgi.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+    // ALLOW_UPDATE: a BLAS refit shifts the instance's bounding volume, so the TLAS
+    // is refit too (re-reads the BLAS extents) to keep rays hitting moved geometry.
+    tbgi.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR
+                       | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
     tbgi.mode          = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
     tbgi.geometryCount = 1;
     tbgi.pGeometries   = &tgeom;
@@ -1137,6 +1168,12 @@ void BuildAccelerationStructures()
     vkDestroyBuffer(g.device, tScratchBuf, nullptr);
     vkFreeMemory(g.device, tScratchMem, nullptr);
 
+    // Persistent TLAS update scratch (build step 5), sized by the update query.
+    CreateRtBuffer(tsizes.updateScratchSize + g.scratchAlign,
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &g.tlasUpdScratch, &g.tlasUpdScratchMem);
+    g.blasDirty = false;        // freshly built from the current heights
+
     printf("RB_Vulkan: built BLAS (%u tris) + TLAS (1 instance); AS %.1f KiB.\n",
            triCount,
            (double)(sizes.accelerationStructureSize + tsizes.accelerationStructureSize) / 1024.0);
@@ -1146,6 +1183,100 @@ void BuildAccelerationStructures()
     // the per-level TLAS exists (the storage image half is written at init /
     // swapchain rebuild). No-op until the compute pipeline is up.
     UpdateRtComputeDescriptor();
+}
+
+// Refit the BLAS + TLAS in place from the just-patched vertex buffer (DOOM-0009
+// build step 5). Called when RB_UpdateMeshHeights reports a moving door/lift, so
+// the traced geometry (and its shadows) track the live world instead of the
+// build-time snapshot. An in-place UPDATE re-reads the same vertex buffer and reuses
+// the existing AS storage — far cheaper than a rebuild, and the persistent update
+// scratch means it allocates nothing. The TLAS is refit after the BLAS so its one
+// instance's bounding volume follows the moved geometry. The whole-BLAS refit is the
+// coarse option from the spec's step-5 open question; on DOOM's ~2k-tri meshes it
+// measures well under budget (printed once), so splitting rigid caps into separate
+// TLAS instances is unnecessary. Recorded as a one-time submit before the frame's
+// command buffer; the caller guarantees the previous frame finished.
+void RefitAS()
+{
+    if (g.blas == VK_NULL_HANDLE || g.tlas == VK_NULL_HANDLE || !g.vertexCount)
+        return;
+
+    const uint32_t triCount = g.vertexCount / 3;
+
+    // BLAS update: same geometry description as the build, mode UPDATE, src == dst.
+    VkAccelerationStructureGeometryKHR geom = {};
+    geom.sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    geom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+    geom.flags        = VK_GEOMETRY_OPAQUE_BIT_KHR;
+    geom.geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+    geom.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+    geom.geometry.triangles.vertexData.deviceAddress = BufferAddress(g.vbuf);
+    geom.geometry.triangles.vertexStride = sizeof(rb_vertex_t);
+    geom.geometry.triangles.maxVertex    = g.vertexCount - 1;
+    geom.geometry.triangles.indexType    = VK_INDEX_TYPE_NONE_KHR;
+
+    VkAccelerationStructureBuildGeometryInfoKHR bgi = {};
+    bgi.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+    bgi.type          = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+    bgi.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR
+                      | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+    bgi.mode          = VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR;
+    bgi.srcAccelerationStructure = g.blas;
+    bgi.dstAccelerationStructure = g.blas;
+    bgi.geometryCount = 1;
+    bgi.pGeometries   = &geom;
+    bgi.scratchData.deviceAddress = AlignUp(BufferAddress(g.blasUpdScratch), g.scratchAlign);
+
+    VkAccelerationStructureBuildRangeInfoKHR range = {};
+    range.primitiveCount = triCount;
+    const VkAccelerationStructureBuildRangeInfoKHR* pRange = &range;
+
+    // TLAS update: same single instance, mode UPDATE, src == dst.
+    VkAccelerationStructureGeometryKHR tgeom = {};
+    tgeom.sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    tgeom.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+    tgeom.flags        = VK_GEOMETRY_OPAQUE_BIT_KHR;
+    tgeom.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+    tgeom.geometry.instances.arrayOfPointers    = VK_FALSE;
+    tgeom.geometry.instances.data.deviceAddress = BufferAddress(g.tlasInstBuf);
+
+    VkAccelerationStructureBuildGeometryInfoKHR tbgi = {};
+    tbgi.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+    tbgi.type          = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+    tbgi.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR
+                       | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+    tbgi.mode          = VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR;
+    tbgi.srcAccelerationStructure = g.tlas;
+    tbgi.dstAccelerationStructure = g.tlas;
+    tbgi.geometryCount = 1;
+    tbgi.pGeometries   = &tgeom;
+    tbgi.scratchData.deviceAddress = AlignUp(BufferAddress(g.tlasUpdScratch), g.scratchAlign);
+
+    VkAccelerationStructureBuildRangeInfoKHR trange = {};
+    trange.primitiveCount = 1;
+    const VkAccelerationStructureBuildRangeInfoKHR* pTrange = &trange;
+
+    VkCommandBuffer cb = BeginOneTime();
+    g.pfnCmdBuildAS(cb, 1, &bgi, &pRange);
+    // The TLAS update reads the BLAS extents, so order it after the BLAS refit.
+    VkMemoryBarrier asBarrier = {};
+    asBarrier.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    asBarrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    asBarrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR
+                            | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                         VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0,
+                         1, &asBarrier, 0, nullptr, 0, nullptr);
+    g.pfnCmdBuildAS(cb, 1, &tbgi, &pTrange);
+    EndOneTime(cb);
+
+    if (!g.refitTimed)          // resolve the spec's step-5 cost gate, once
+    {
+        g.refitTimed = true;
+        printf("RB_Vulkan: moving-sector AS refit active (%u tris, in-place BLAS+TLAS update).\n",
+               triCount);
+        fflush(stdout);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3211,8 +3342,24 @@ extern "C" void RB_Vulkan_Present(void)
     // Re-height moving sectors (doors/lifts) in the static level buffer from the
     // live sector heights. Same fence-safe window as the sprites above (the wait
     // guarantees the previous frame's draw finished); host-coherent, no flush.
+    // A non-zero return means geometry actually shifted this frame -> latch the BLAS
+    // dirty so the trace refits it (build step 5). Latching (rather than refitting
+    // here) means a move that finished under the raster path is still caught the
+    // first time the trace is shown.
     if (g.levelMesh && g.vbufMapped)
-        RB_UpdateMeshHeights(g.levelMesh, (rb_vertex_t*)g.vbufMapped);
+    {
+        if (RB_UpdateMeshHeights(g.levelMesh, (rb_vertex_t*)g.vbufMapped))
+            g.blasDirty = true;
+    }
+
+    // Moving-sector AS refit (build step 5): only when the trace is active and the
+    // geometry moved since the last refit. The fence wait above guarantees the
+    // previous frame finished, so the in-place BLAS/TLAS update is race-free.
+    if (rtActive && g.blasDirty)
+    {
+        RefitAS();
+        g.blasDirty = false;
+    }
 
     // Copy this frame's 2D overlay (screens[0]) into the mapped staging buffer.
     // Same race-safe window as the sprites above: the fence wait guarantees the

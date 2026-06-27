@@ -120,7 +120,10 @@ void RB_FreeMesh(rb_mesh_t* mesh);
 // vertex buffer). Only vertices tagged RB_PLANE_FLOOR/CEIL have their z rewritten
 // (to the live sector plane height); static vertices are untouched. Call once
 // per frame so doors and lifts animate without rebuilding the mesh (DOOM-0049).
-void RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst);
+// Returns non-zero if any vertex z actually changed this frame (a door/lift is
+// mid-move) so the RT back-end can refit its acceleration structure only when the
+// geometry really moved (DOOM-0009 build step 5).
+int RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst);
 
 // DOOM-0009 build step 4 (static GI bake): one irradiance probe per subsector.
 // The position is the subsector's convex BSP-leaf centroid (mean of its seg
