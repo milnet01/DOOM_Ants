@@ -37,6 +37,8 @@ cmake-build-*/
 # Game data — never commit WADs (licensing)
 *.wad
 *.WAD
+# Local WAD/data folder (WADs plus their .zip archives) — licensing, never commit
+/wads/
 
 # Save games — per-player runtime state, not source (doomsav0..5.dsg)
 *.dsg
