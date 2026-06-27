@@ -1,8 +1,10 @@
 # DOOM-0009 — Hardware path tracer (Stage 2)
 
-**Status:** Reviewed — `/cold-eyes` loops 1–5 (see log), converged to polish-only
-with no design defects, user-accepted 2026-06-25. Implementation-ready. Design
-contract for the Stage-2 renderer.
+**Status:** Reviewed — `/cold-eyes` loops 1–5 (see log), user-accepted 2026-06-25.
+**§2 settings model revised 2026-06-27** (three tiers + a per-tier ray-tracing
+toggle, art bound to the tier); revision re-run through `/cold-eyes` to clean (3
+cold passes, see the loop log below). Implementation-ready. Design contract for the
+Stage-2 renderer.
 **Depends on:** DOOM-0008 (Stage 1 raster 3D: meshes, materials, sprites, UI
 composite) shipped; DOOM-0026 renderer-backend seam; ADR
 `docs/decisions/0001-renderer-language-and-api.md`.
@@ -31,31 +33,79 @@ lights beyond the muzzle flash (DOOM-0010), volumetrics (DOOM-0011), and the ful
 performance pass to a hard 60 FPS floor (DOOM-0012). Stage 2 must be *correct and
 playable*; Stage 3 makes it *fast and rich*.
 
-## 2. Settings model — ray tracing is a toggle, orthogonal to art
+## 2. Settings model — three tiers, ray tracing a toggle inside the two 3D tiers
 
-Per the 2026-06-25 direction decision, ray tracing is a **player setting**, not a
-fixed property of a renderer tier, and it is **independent of the art set**:
+Per the **2026-06-27 direction decision** (superseding the 2026-06-25 model, in
+which ray tracing was orthogonal to a free-floating Classic/HD *art* toggle), the
+player picks a **render tier**, and ray tracing is an **On/Off toggle that lives
+inside both 3D tiers**. The art set is **bound to the tier**, not chosen separately:
 
-- **Renderer:** Classic (1997 software) · 3D (Vulkan). Unchanged seam (DOOM-0026).
-- **Ray Tracing: On / Off** — only meaningful in 3D. Maps onto the existing tiers
-  by mode *identity* (not the enum's numeric value): *Off* = `RB_RASTER3D`
-  ("Solid", raster lighting), *On* = `RB_RT3D` ("Ultra", path-traced). **Stage-2
-  menu change:** today the Options menu has one `"Renderer:"` item that *cycles*
-  Classic → Solid → Ultra (`m_menu.c` `M_ChangeRenderer` → `RB_NextAvailableMode`,
-  via `cycleOrder[]`). Stage 2 reworks this into a clear "Ray Tracing: On / Off"
-  item (the Classic/3D split stays its own control). Internally it still selects
-  the Solid/Ultra back-end so the frozen `rendermode_t` enum and the tier
-  auto-probe (DOOM-0008) are untouched. "Ray Tracing: On" is greyed out when the
-  GPU lacks `VK_KHR_acceleration_structure` + `VK_KHR_ray_query`.
-- **Art set: Classic / HD** — a separate theme toggle (DOOM-0042), **orthogonal**
-  to RT (the art-set-agnostic mechanism is INV-9, below). All four combinations
-  are valid: {Classic-art, HD-art} × {RT off, RT on}. Stage 2 ships with
-  Classic-art only; HD-art arrives in DOOM-0042 with no path-tracer changes
-  required.
+- **Classic** — the 1997 software renderer: fully original art and lighting, no ray
+  tracing, no flashlight. Untouched by Stage 2.
+- **Solid** — 3D (Vulkan) with the **original 1993 art** and original-style
+  lighting. Ray Tracing On/Off. Player flashlight available (DOOM-0044).
+- **Ultra** — 3D (Vulkan) with the **HD PBR art set** (DOOM-0042) plus modern
+  lighting — scene lights so rooms are never unintentionally black (DOOM-0043),
+  volumetrics/god rays (DOOM-0011), dynamic lights (DOOM-0010) — and the same
+  player flashlight (DOOM-0044). Ray Tracing On/Off.
+
+**Ray Tracing is orthogonal to the tier, not its identity.** Each 3D tier renders
+with RT *off* (raster lighting) or RT *on* (path-traced GI + ray-traced shadows) —
+so the two 3D tiers each have an RT-off and an RT-on form, which with Classic makes
+**five looks in all** — the eventual target matrix, completed only once the
+tier-defining items land (DOOM-0042 art, DOOM-0010/0011 lighting); this spec ships
+the shared RT-on back-end they sit on. (This is a *tier × RT* split, not the
+retired *art × RT* toggle: the art set is fixed by the tier, per the bullets
+above.) This path tracer
+(DOOM-0009) is the **RT-on back-end** shared by both tiers; what differs between
+Solid-RT-on and Ultra-RT-on is only the art set and the modern-lighting layer the
+tier loads, never the integrator.
+
+**Scope — what DOOM-0009 delivers vs. what the tier carries.** §2 describes the
+tier *model*; this spec delivers only the shared RT-on path-traced back-end (build
+order §7). The features that *define* the Ultra tier ship under their own roadmap
+items, not here — HD PBR art (DOOM-0042), scene lights + ambient floor (DOOM-0043),
+the player flashlight (DOOM-0044, shared with Solid), and dynamic/volumetric
+lighting (DOOM-0010/0011, deferred to Stage 3 per §1 Non-goals) — each owning its
+own RT-off/on behaviour. Listing them here defines the tier; it does not put them
+in this spec's build order.
+
+**In Stage 2 specifically,** the only *observable* difference between Solid-RT-on
+and Ultra-RT-on is the **art set** — the modern-lighting layer (DOOM-0010/0011)
+lands in Stage 3. And the "rooms never go unintentionally black" safety floor
+(DOOM-0043) is an **RT-on concern, not an Ultra-only one**: Solid-RT-on traces the
+same GI, so it needs the same ambient floor; Ultra additionally gets *deliberate,
+art-directed* light placement. (Whether the bare ambient floor also ships for
+Solid-RT-on or is held until Ultra is a product call — tracked on DOOM-0043, not
+gated by this spec.)
+
+**Menu rework (Stage-2).** Today the Options menu has one `"Renderer:"` item that
+*cycles* Classic → Solid → Ultra (`m_menu.c` `M_ChangeRenderer` →
+`RB_NextAvailableMode`, via `cycleOrder[]`), with the three menu positions mapping
+1:1 onto the three `rendermode_t` values **in cycle order** — `RB_CLASSIC`, then
+`RB_RASTER3D` (Solid), then `RB_RT3D` (Ultra). (That is the *menu* order; the
+enum's own declaration order differs — `RB_CLASSIC`=0, `RB_RT3D`=1, `RB_RASTER3D`=2
+— and `cycleOrder[]` deliberately decouples display order from enum value.) Stage 2
+splits this into **two controls**:
+- **Renderer:** Classic / Solid / Ultra — selects the tier (art + lighting set).
+- **Ray Tracing: On / Off** — disabled in Classic; greyed out on a GPU lacking
+  `VK_KHR_acceleration_structure` + `VK_KHR_ray_query` (INV-11).
+
+Because RT is now independent of the tier, the 3-value `rendermode_t` enum can no
+longer stand 1:1 for the player choice (it cannot express Ultra-with-RT-off). The
+enum stays frozen and continues to name the **active back-end** (`RB_RASTER3D` =
+RT-off raster path, `RB_RT3D` = RT-on path-traced path); the **tier** (Solid/Ultra)
+becomes a separate art-and-lighting theme carried alongside it. The DOOM-0008 tier
+auto-probe and the `RB_SetMode` rebuild path (DOOM-0026/0051) are reused unchanged;
+only the menu gains the second axis plus a theme selector. The tier (Classic /
+Solid / Ultra) and the Ray-Tracing on/off toggle each persist as their own
+`m_misc.c` default, since the single `rendermode` value used today can no longer
+encode both axes. (Implementation detail, settled here so step 1's menu work has a
+target; not a product question.)
 
 **INV-9 (art-set agnostic):** the integrator and lighting code reference only the
 bindless material interface (albedo/roughness/metallic/emissive/normal samplers
-indexed by material id), never the source art set. Swapping Classic↔HD art changes
+indexed by material id), never the source art set. Selecting Solid↔Ultra changes
 only which textures the material table points at.
 
 ## 3. Architecture
@@ -81,13 +131,14 @@ pipeline path is a later option, not Stage 2). One dispatch over screen pixels.
   per-vertex patching disproves (door walls do deform). (DOOM-0008 is itself split
   the same way — §Approach "instance transform" vs §Geometry "BLAS refit".) The
   *only* part left open (§9) is the **granularity**, not whether to refit.
-- **Materials → bindless.** Migrate the Stage-1 single R8 atlas (which today packs
-  walls, flats *and* sprites — `rb_atlas_t::numsprite`) to a bindless
-  array-of-textures (`VK_EXT_descriptor_indexing`, core Vulkan 1.2): one image per
-  texture/flat/sprite with native REPEAT wrap, indexed by material id from the hit
-  shader. The R8-index + PLAYPAL-LUT decode (`r_mesh.c` `RB_PlayPal`), vertex
-  plumbing, and staging upload carry over; only "1 atlas + manual UV-wrap" becomes
-  "N images + native wrap".
+- **Materials → bindless** *(shipped — build step 1, 2026-06-25)*. The Stage-1
+  single R8 atlas (which packed walls, flats *and* sprites — `rb_atlas_t::numsprite`)
+  has been migrated to a bindless array-of-textures (`VK_EXT_descriptor_indexing`,
+  core Vulkan 1.2): one image per texture/flat/sprite with native REPEAT wrap,
+  indexed by material id from the hit shader. The R8-index + PLAYPAL-LUT decode (LUT
+  supplied by `r_mesh.c` `RB_PlayPal`, applied in the mesh/overlay shaders), vertex
+  plumbing, and staging upload carried over; "1 atlas + manual UV-wrap" became "N
+  images + native wrap".
   This is the seam DOOM-0042's HD PBR set plugs into (INV-9).
 - **Memory:** VMA (the many image/buffer allocations of the RT work). RADV AS
   structures are fat (~137 B/tri vs ~45 on NVIDIA — estimate, confirm with RRA) —
@@ -96,10 +147,11 @@ pipeline path is a later option, not Stage 2). One dispatch over screen pixels.
 - **Colour:** light in **linear** space (sRGB→linear after the PLAYPAL lookup,
   treat palette colour as albedo); do **not** bake COLORMAP light-diminishing into
   albedo (it double-darkens once GI runs). Tonemap with Khronos **PBR Neutral**
-  (preserves DOOM's saturated palette). *This supersedes the ACES placeholder in
-  DOOM-0008 §"The path tracer" (`aces_tonemap`), which predates the PBR-Neutral
-  choice; `aces_tonemap` is retired as the default operator and could only return
-  as an optional "filmic" toggle, never the Stage-2 default.* A
+  (preserves DOOM's saturated palette). *PBR Neutral supersedes DOOM-0008's earlier
+  ACES default — a reconciliation DOOM-0008 §"The path tracer" already records
+  (`aces_tonemap`, a DOOM-0008 Workbench-formula name not yet in engine code,
+  predated the PBR-Neutral choice and is retired as the default operator, returning
+  only as an optional "filmic" toggle, never the Stage-2 default).* A
   "vanilla-tint" post pass that quantises
   the HDR result back through COLORMAP/PLAYPAL is an optional toggle, not the model.
 
@@ -205,15 +257,17 @@ with different meanings — don't conflate across specs.)
 - **INV-9 (art-set agnostic):** §2.
 - **INV-10 (toggle parity):** switching Ray Tracing Off→On→Off mid-game leaves the
   scene correct each time (reuses the `RB_SetMode` level-rebuild + screen-wipe path
-  from the DOOM-0026 seam, hardened by the DOOM-0051 mid-game-switch fix); RT Off
-  (Solid) output is unchanged by any RT-only code.
+  from the DOOM-0026 seam, hardened by the DOOM-0051 mid-game-switch fix); RT-Off
+  (raster) output — in either Solid or Ultra — is unchanged by any RT-only code.
 - **INV-11 (graceful fallback):** on a non-RT GPU, "Ray Tracing: On" is
   unselectable and the engine stays on Solid/Classic; no crash, no half-state.
 
 ## 7. Build order (cheapest-first; each step independently verifiable)
 
-1. **Bindless materials** — migrate atlas → array-of-textures; Solid output
-   unchanged (INV-10). Verify: screenshot parity with the atlas path.
+1. **Bindless materials** — *shipped 2026-06-25* (the materials path is now
+   bindless-only, no atlas fallback — `r_vulkan.cpp`). Migrated atlas →
+   array-of-textures; Solid output unchanged (INV-10). Verified: screenshot parity
+   with the atlas path.
 2. **BLAS + TLAS** on the static mesh; white-furnace + intersection test (INV-6/8).
 3. **Direct lighting only:** NEE + MIS + RR + firefly clamp + NaN guards via ray-
    query, REJECT-culled light set. Reference-image regression (INV-6).
@@ -292,3 +346,34 @@ Each loop briefed cold — no prior-loop findings handed to the reviewers.
 
 *(Looped per global rule 14. Severity converged loop-over-loop — substantive in
 loop 1, polish-only by loop 5, with doc-vs-code clean for the final three loops.)*
+
+### 2026-06-27 — §2 tier-model revision re-review (3 cold passes)
+
+§2 was rewritten (RT becomes an On/Off toggle inside *both* 3D tiers; the art set
+is bound to the tier — Solid = original art, Ultra = HD PBR; "Solid/Ultra" is no
+longer a synonym for "RT off/on"). Re-looped per rule 14, same 3-lane partition,
+each pass briefed cold.
+
+- **Pass 1** — 0 CRITICAL. Enum-order misstatement in §2 (listed cycle order as if
+  it were the `rendermode_t` declaration order; flagged by all three lanes);
+  `RB_PlayPal` mis-described as performing the PLAYPAL decode (it only supplies the
+  LUT — decode is in the shaders); §2 implied this spec delivers the whole Ultra
+  tier; "four configs" phrasing echoed the retired art×RT matrix. All verified +
+  fixed.
+- **Pass 2** — ROADMAP DOOM-0009 bullet still stated the retired "Solid=RT-off,
+  Ultra=RT-on" model (annotated to the 2026-06-27 model); §3/§7 described the
+  bindless-materials migration (build step 1) as future when it shipped 2026-06-25
+  (marked shipped); §2 ambiguities resolved (Stage-2 Solid-vs-Ultra difference is
+  art-set only; DOOM-0043's ambient floor is an RT-on concern, not Ultra-only; the
+  two player axes persist as two `m_misc.c` defaults). Fixed.
+- **Pass 3** — Lane C **clean**. ROADMAP DOOM-0009 status `💭`→`🚧` (shipped +
+  in-flight work); tonemap-supersession reworded to the reconciled state
+  (DOOM-0008 already records it); "five looks" qualified as the eventual target
+  matrix. Fixed. Lane A's residual findings were pre-existing §3/§4 research-
+  fidelity nits outside this revision's scope (muzzle world-position source for
+  build step 5; "exact"→"conservative" REJECT wording; DOOM-0008 cross-ref anchor)
+  — captured as a roadmap doc-fix follow-up rather than reopening previously-
+  converged sections.
+
+*(Edited surface converged: doc-vs-code clean, no CRITICAL/HIGH left on the §2
+model. No prior-pass findings handed to reviewers — each pass cold.)*
