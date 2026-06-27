@@ -36,6 +36,13 @@ layout(buffer_reference, scalar) readonly buffer Verts    { float v[]; };
 layout(buffer_reference, scalar) readonly buffer Emitters { float e[]; };
 layout(buffer_reference, scalar) readonly buffer MatEmis  { float m[]; };
 
+// GI probe cache (build step 4c), read side. ProbesRO is the baked per-subsector
+// SH-L1 (16 floats/probe: pos[3] pad, then channel-major radiance SH R[4] G[4]
+// B[4]); TriSs maps a hit triangle's primitive index -> its subsector (== probe)
+// index. Both the camera frame and the multi-bounce bake read these.
+layout(buffer_reference, scalar) readonly buffer ProbesRO { float p[]; };
+layout(buffer_reference, scalar) readonly buffer TriSs    { uint  s[]; };
+
 // Cheap integer hash (PCG) -> a float in [0,1), for stochastic sampling.
 uint pcgHash(uint x)
 {
@@ -109,19 +116,23 @@ vec3 sampleEmitter(uint k, vec3 hitP, vec3 n, float pdfSel, Emitters emit, inout
     return Le * G * inv;
 }
 
-// Reflected radiance leaving a hit surface toward the viewer/probe: the surface's
-// own emission + NEE direct light (power-importance emitter pick, hard ray-traced
-// shadows, firefly-clamped per sample). EXCLUDES the temporary flat ambient fill
-// (camera-only, retired once the probes feed the frame in step 4c) and any
-// tonemapping (the integrator stays in linear radiance). `albedo` is decoded once
-// by the caller and passed in; `nSamples` shadow rays are averaged.
+// Reflected radiance leaving a hit surface toward the viewer/probe: optionally the
+// surface's own emission, plus NEE direct light (power-importance emitter pick,
+// hard ray-traced shadows, firefly-clamped per sample). Excludes any tonemapping
+// (the integrator stays in linear radiance). `albedo` is decoded once by the
+// caller and passed in; `nSamples` shadow rays are averaged. `addEmission` is true
+// for the camera frame (a lamp you look at glows) and false for the GI bake (so the
+// probes store INDIRECT-only radiance — the directly-visible emitter term is the
+// frame's NEE job, double-counted if folded into the cache too).
 vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
-                  Emitters emit, MatEmis matEmis, uint nSamples, inout uint seed)
+                  Emitters emit, MatEmis matEmis, uint nSamples, bool addEmission,
+                  inout uint seed)
 {
     // Self-emission (linear) from the per-material Le table.
-    vec3 L = vec3(matEmis.m[id * 3u + 0u],
-                  matEmis.m[id * 3u + 1u],
-                  matEmis.m[id * 3u + 2u]);
+    vec3 L = addEmission ? vec3(matEmis.m[id * 3u + 0u],
+                                matEmis.m[id * 3u + 1u],
+                                matEmis.m[id * 3u + 2u])
+                         : vec3(0.0);
 
     if (emitCount > 0u && nSamples > 0u)
     {
@@ -146,4 +157,26 @@ vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
         L += direct / float(nSamples);
     }
     return L;
+}
+
+// Evaluate the baked SH-L1 GI cache for subsector `subId` along normal `n`, and
+// return the diffuse reflected-radiance factor (multiply by surface albedo). The
+// probe stores RADIANCE SH coefficients; convolving with the clamped-cosine kernel
+// gives irradiance E(n) = A0*c0*Y0 + A1*(c1.Y1(n)), A0=PI, A1=2PI/3, and the
+// Lambert BRDF divides by PI — so the PIs fold to weight 1 on the DC term and 2/3
+// on the linear terms. Basis order matches the bake's projection (coeff 1<-n.y,
+// 2<-n.z, 3<-n.x). SH-L1 can ring slightly negative, so clamp to >= 0.
+vec3 giIrradiance(ProbesRO pr, uint subId, vec3 n)
+{
+    uint  b  = subId * 16u + 4u;             // SH coeffs start at float 4
+    float y0 = 0.282095;
+    float y1 = 0.488603 * n.y;
+    float y2 = 0.488603 * n.z;
+    float y3 = 0.488603 * n.x;
+    const float k = 2.0 / 3.0;
+    vec3 gi;
+    gi.r = pr.p[b+0u]*y0 + k*(pr.p[b+1u]*y1 + pr.p[b+2u]*y2 + pr.p[b+3u]*y3);
+    gi.g = pr.p[b+4u]*y0 + k*(pr.p[b+5u]*y1 + pr.p[b+6u]*y2 + pr.p[b+7u]*y3);
+    gi.b = pr.p[b+8u]*y0 + k*(pr.p[b+9u]*y1 + pr.p[b+10u]*y2 + pr.p[b+11u]*y3);
+    return max(gi, vec3(0.0));
 }

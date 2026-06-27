@@ -70,21 +70,21 @@ layout(push_constant) uniform PC {
     vec4  camRight;  // xyz = right,  w = tan(hFov/2)
     vec4  camUp;     // xyz = up,     w = tan(vFov/2)
     uvec4 misc;      // x = mode, y = width, z = height, w = numWall (flat-id offset)
-    uvec4 misc2;     // x = emitter count (step 3b); y,z,w reserved
+    uvec4 misc2;     // x = emitter count (3b); y = probe count (4c); z,w reserved
     Verts    verts;    // level mesh vertex buffer (device address)
     Emitters emit;     // step-3b emitter list (device address; count in misc2.x)
     MatEmis  matEmis;  // per-material Le table (device address)
+    ProbesRO probes;   // step-4 baked GI cache (device address; count in misc2.y)
+    TriSs    triSs;     // per-triangle subsector id -> probe index (device address)
 } pc;
 
 // --- Camera-only shading constants (build step 3c/4b-iii) --------------------
 const uint  NEE_SAMPLES = 4u;          // shadow rays/pixel. Emitters are picked by
                                        // POWER (3c-2, cdf binary search), so a few
                                        // samples land on the lights that matter.
-// Sector lightlevel seeds a moody ambient fill (DOOM's small emissive textures
-// subtend a tiny solid angle -> faint on their own); the step-4 GI bake replaces
-// this flat term with a true bounce solution. NEE lamps pool brighter light on top.
-const float SECTOR_FILL   = 0.20;      // sector-lightlevel -> ambient fill scale
-const float AMBIENT_FLOOR = 0.02;      // floor so unlit sectors aren't pure black
+const float AMBIENT_FLOOR = 0.02;      // tiny fill for a triangle with no GI probe
+                                       // (untagged) so it isn't pure black — the
+                                       // step-4 probe bounce is the real fill now.
 // Exposure as a photographic EV (the Workbench exposureEv curve turns it into a
 // linear gain: 1/(2^EV * 1.2)). -2.25 ≈ the old 4.0 gain, so this swap changes the
 // tone *operator* without an exposure jump; the value gets its real tune in step 4c
@@ -188,7 +188,6 @@ void main()
             float vv     = pc.verts.v[i0 + 7u];
             int   texnum = floatBitsToInt(pc.verts.v[i0 + 8u]);
             int   flags  = floatBitsToInt(pc.verts.v[i0 + 9u]);
-            float sLight = pc.verts.v[i0 + 10u];    // owning sector lightlevel, 0..1
             uint  id     = ((flags & FLAG_FLAT) != 0) ? (pc.misc.w + uint(texnum))
                                                       : uint(texnum);
             vec3  albedo = decodeAlbedo(id, vec2(u, vv));
@@ -198,10 +197,17 @@ void main()
 
             uint seed = px.x + px.y * w + 1u;
             vec3 L = shadeSurface(hitP, n, albedo, id, pc.misc2.x,
-                                  pc.emit, pc.matEmis, NEE_SAMPLES, seed);
+                                  pc.emit, pc.matEmis, NEE_SAMPLES, true, seed);
 
-            // Sector-light ambient fill (TEMP stand-in for the step-4 GI bake).
-            L += albedo * (sLight * SECTOR_FILL + AMBIENT_FLOOR);
+            // Indirect GI (build step 4c): the bounced-light solution baked into the
+            // per-subsector probe cache, replacing the old flat ambient fill. Look up
+            // this triangle's room probe and add albedo * its SH-L1 irradiance for
+            // the surface normal. Untagged tris (no probe) fall back to a small floor.
+            uint subId = pc.triSs.s[uint(prim)];
+            if (subId < pc.misc2.y)
+                L += albedo * giIrradiance(pc.probes, subId, n);
+            else
+                L += albedo * AMBIENT_FLOOR;
 
             if (any(isnan(L)) || any(isinf(L))) L = vec3(0.0);
             colour = toneEncode(L);

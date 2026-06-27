@@ -38,11 +38,14 @@ layout(set = 1, binding = 2) uniform sampler2D materialTex[];
 layout(buffer_reference, scalar) buffer Probes { float p[]; };
 
 layout(push_constant) uniform PC {
-    uvec4    misc;     // x = probeCount, y = numWall, z = emitterCount, w = reserved
+    uvec4    misc;     // x = probeCount, y = numWall, z = emitterCount,
+                       // w = giEnabled (1 on bounce passes 2+, reads prevProbes)
     Verts    verts;    // level mesh vertex buffer
     Emitters emit;     // step-3b emitter list (count in misc.z)
     MatEmis  matEmis;  // per-material Le table
     Probes   probes;   // GI probe buffer (this pass's output)
+    ProbesRO prevProbes; // previous bounce pass's probes (read for multi-bounce)
+    TriSs    triSs;     // per-triangle subsector id -> probe index
 } pc;
 
 const uint  BAKE_RAYS = 256u;   // sphere samples/probe. SH-L1 is very low frequency,
@@ -103,10 +106,22 @@ void main()
             float tHit   = rayQueryGetIntersectionTEXT(rq, true);
             vec3  hitP   = P + wi * tHit;
 
-            // Outgoing radiance from the hit toward the probe: emission + NEE
-            // direct (the same shared shading the camera applies on a primary hit).
+            // Outgoing radiance from the hit toward the probe: NEE direct only
+            // (addEmission=false — directly-visible emitters are the frame's NEE
+            // job; folding them in here too would double-count). This pass's probes
+            // therefore hold INDIRECT radiance.
             Li = shadeSurface(hitP, n, albedo, id, pc.misc.z,
-                              pc.emit, pc.matEmis, BAKE_NEE, seed);
+                              pc.emit, pc.matEmis, BAKE_NEE, false, seed);
+
+            // Multi-bounce: on passes 2+ (giEnabled), add the light this surface
+            // received from the PREVIOUS bounce's probes. Pass 1 builds 1-bounce
+            // indirect; feeding it back makes pass 2 = 2 bounces, pass 3 = 3, etc.
+            if (pc.misc.w != 0u)
+            {
+                uint subId = pc.triSs.s[uint(prim)];
+                if (subId < pc.misc.x)
+                    Li += albedo * giIrradiance(pc.prevProbes, subId, n);
+            }
         }
         else
         {

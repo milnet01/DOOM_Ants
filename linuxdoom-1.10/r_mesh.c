@@ -59,6 +59,13 @@ typedef struct
     rb_vertex_t* v;
     int          count;
     int          cap;
+    // Per-triangle subsector id (DOOM-0009 step 4c). push_tri stamps the current
+    // subsector (cur_ss) onto each triangle so a ray hit can locate its room's GI
+    // probe. Parallel to the triangle list (one entry per 3 verts).
+    int*         ssid;
+    int          ssidcount;
+    int          ssidcap;
+    int          cur_ss;
 } builder_t;
 
 static void push_vert(builder_t* b, rb_vertex_t vert)
@@ -71,6 +78,18 @@ static void push_vert(builder_t* b, rb_vertex_t vert)
             I_Error("RB_BuildLevelMesh: out of memory at %d vertices", b->count);
     }
     b->v[b->count++] = vert;
+}
+
+static void push_ssid(builder_t* b, int ss)
+{
+    if (b->ssidcount == b->ssidcap)
+    {
+        b->ssidcap = b->ssidcap ? b->ssidcap * 2 : 4096;
+        b->ssid = realloc(b->ssid, b->ssidcap * sizeof(int));
+        if (!b->ssid)
+            I_Error("RB_BuildLevelMesh: out of memory at %d tri-ids", b->ssidcount);
+    }
+    b->ssid[b->ssidcount++] = ss;
 }
 
 static rb_vertex_t mkv(float x, float y, float z,
@@ -91,6 +110,7 @@ static rb_vertex_t mkv(float x, float y, float z,
 static void push_tri(builder_t* b, rb_vertex_t a, rb_vertex_t c, rb_vertex_t d)
 {
     push_vert(b, a); push_vert(b, c); push_vert(b, d);
+    push_ssid(b, b->cur_ss);   // tag this triangle with the subsector being emitted
 }
 
 // Quad corners given counter-clockwise; split into two triangles.
@@ -305,6 +325,8 @@ static void emit_subsector_caps(builder_t* bld, int ssnum, const poly_t* cell)
     poly_t       clipped;
     if (!sec || cell->n < 3) return;
 
+    bld->cur_ss = ssnum;   // tag this subsector's floor/ceiling caps (step 4c)
+
     // The partition-only carve reproduces the convex BSP leaf, but a seg is not a
     // BSP partition: where a wall bounds the cell nothing trims it, so the cell
     // overshoots past the wall -- out to the map-box edge at a one-sided wall, or
@@ -363,7 +385,21 @@ rb_mesh_t* RB_BuildLevelMesh(void)
 {
     builder_t bld = { 0 };
     rb_mesh_t* mesh;
-    int i;
+    int* seg2ss;
+    int i, s, k;
+
+    bld.cur_ss = -1;   // untagged until a wall/cap sets it (step 4c)
+
+    // Reverse map seg -> subsector for the per-triangle GI tag: subsectors own
+    // contiguous seg ranges (firstline..firstline+numlines), so invert that once.
+    // A wall's lit face is in its seg's subsector, so that's the probe to sample.
+    seg2ss = malloc(numsegs * sizeof(int));
+    if (!seg2ss)
+        I_Error("RB_BuildLevelMesh: out of memory for seg->subsector map");
+    for (i = 0; i < numsegs; i++) seg2ss[i] = -1;
+    for (s = 0; s < numsubsectors; s++)
+        for (k = 0; k < subsectors[s].numlines; k++)
+            seg2ss[subsectors[s].firstline + k] = s;
 
     // Walls.
     for (i = 0; i < numsegs; i++)
@@ -375,6 +411,8 @@ rb_mesh_t* RB_BuildLevelMesh(void)
 
         if (!side || !front)
             continue;
+
+        bld.cur_ss = seg2ss[i];   // tag this seg's wall quads (step 4c)
 
         // Sector indices for the per-frame dynamic-height update (DOOM-0049):
         // each wall edge is tagged with the sector + plane whose height set it.
@@ -452,12 +490,15 @@ rb_mesh_t* RB_BuildLevelMesh(void)
         carve_caps(&bld, root, box);
     }
 
+    free(seg2ss);
+
     mesh = malloc(sizeof(rb_mesh_t));
     if (!mesh)
         I_Error("RB_BuildLevelMesh: out of memory allocating mesh handle");
     mesh->verts    = bld.v;
     mesh->numverts = bld.count;
     mesh->numtris  = bld.count / 3;
+    mesh->tri_ss   = bld.ssid;   // one subsector id per triangle (step 4c)
     return mesh;
 }
 
@@ -466,6 +507,7 @@ void RB_FreeMesh(rb_mesh_t* mesh)
     if (!mesh)
         return;
     free(mesh->verts);
+    free(mesh->tri_ss);
     free(mesh);
 }
 

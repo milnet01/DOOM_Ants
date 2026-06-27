@@ -103,6 +103,9 @@ typedef struct
     rb_vertex_t* verts;     // numverts entries, owned by this struct
     int          numverts;  // always a multiple of 3
     int          numtris;   // numverts / 3
+    int*         tri_ss;    // per-triangle subsector index (numtris entries), so a
+                            // ray hit can find its room's GI probe (DOOM-0009 step
+                            // 4c). -1 if untagged. Owned by this struct.
 } rb_mesh_t;
 
 // Build the current level's mesh from the globals p_setup.c populated

@@ -367,6 +367,14 @@ struct VulkanState
     VkBuffer       probeBuf   = VK_NULL_HANDLE;
     VkDeviceMemory probeMem   = VK_NULL_HANDLE;
     uint32_t       probeCount = 0;
+    // Second probe buffer + per-triangle subsector-id buffer (step 4c). The bake
+    // ping-pongs probeBuf <-> probeBuf2 across bounce passes (read the previous
+    // pass, write the current); the final bounce lands in probeBuf, which the
+    // megakernel reads, keyed per hit by triSsBuf (triangle -> subsector -> probe).
+    VkBuffer       probeBuf2  = VK_NULL_HANDLE;
+    VkDeviceMemory probeMem2  = VK_NULL_HANDLE;
+    VkBuffer       triSsBuf   = VK_NULL_HANDLE;
+    VkDeviceMemory triSsMem   = VK_NULL_HANDLE;
 
     bool ready        = false;
     bool needRecreate = false;
@@ -1160,12 +1168,13 @@ void CreateRtComputePipeline()
     dai.pSetLayouts        = &g.rtDsLayout;
     Check(vkAllocateDescriptorSets(g.device, &dai, &g.rtDs), "vkAllocateDescriptorSets(rt)");
 
-    // Push constant: 4x vec4 (camera) + 2x uvec4 (mode/w/h/numWall, emitterCount) +
-    // 3x uint64 (vertex / emitter-list / Le-table addresses) = 120 bytes (step 3b).
+    // Push constant: 4x vec4 (camera) + 2x uvec4 (mode/w/h/numWall, emitter+probe
+    // counts) + 5x uint64 (vertex / emitter / Le / probe-cache / tri-subsector
+    // addresses) = 136 bytes (steps 3b + 4c). Within the 256-byte device limit.
     VkPushConstantRange pcr = {};
     pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pcr.offset     = 0;
-    pcr.size       = 120;
+    pcr.size       = 136;
     // Two sets: 0 = RT (TLAS + output image), 1 = the raster materials set
     // (g.dsLayout: PLAYPAL LUT + bindless material array), reused verbatim so the
     // textured trace (step 3a) decodes surfaces with no parallel material path.
@@ -1231,12 +1240,12 @@ void CreateBakePipeline()
     dai.pSetLayouts        = &g.bakeDsLayout;
     Check(vkAllocateDescriptorSets(g.device, &dai, &g.bakeDs), "vkAllocateDescriptorSets(bake)");
 
-    // Push constant: uvec4 (probeCount/numWall/emitterCount/_) + 4 uint64 buffer
-    // addresses (verts, emit, matEmis, probes) = 48 bytes.
+    // Push constant: uvec4 (probeCount/numWall/emitterCount/giEnabled) + 6 uint64
+    // buffer addresses (verts, emit, matEmis, probes, prevProbes, triSs) = 64 bytes.
     VkPushConstantRange pcr = {};
     pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pcr.offset     = 0;
-    pcr.size       = 48;
+    pcr.size       = 64;
     VkDescriptorSetLayout setLayouts[2] = { g.bakeDsLayout, g.dsLayout };
     VkPipelineLayoutCreateInfo plci = {};
     plci.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -2545,31 +2554,51 @@ void RunGiBake()
     vkUpdateDescriptorSets(g.device, 1, &w, 0, nullptr);
 
     struct BakePush {
-        uint32_t misc[4];       // probeCount, numWall, emitterCount, reserved
+        uint32_t misc[4];       // probeCount, numWall, emitterCount, giEnabled
         uint64_t vertsAddr;
         uint64_t emitAddr;      // 0 if this level has no emitters (shader guards on count)
         uint64_t matEmisAddr;
-        uint64_t probeAddr;
+        uint64_t probeAddr;     // write target (this pass's output)
+        uint64_t prevProbeAddr; // read source (previous bounce's probes)
+        uint64_t triSsAddr;
     } bp = {};
-    static_assert(sizeof(BakePush) == 48, "bake push-constant layout must match the shader");
+    static_assert(sizeof(BakePush) == 64, "bake push-constant layout must match the shader");
     bp.misc[0]     = g.probeCount;
     bp.misc[1]     = (uint32_t)g.matNumWall;
     bp.misc[2]     = g.emitCount;
     bp.vertsAddr   = BufferAddress(g.vbuf);
     bp.emitAddr    = g.emitBuf ? BufferAddress(g.emitBuf) : 0;
     bp.matEmisAddr = BufferAddress(g.matEmisBuf);
-    bp.probeAddr   = BufferAddress(g.probeBuf);
+    bp.triSsAddr   = BufferAddress(g.triSsBuf);
 
+    // Multi-bounce GI (user request): pass 1 bakes 1-bounce indirect; each further
+    // pass feeds the previous pass's probes back in (giEnabled) for one more bounce.
+    // Ping-pong probeBuf <-> probeBuf2 (read prev, write current); start so the FINAL
+    // bounce lands in probeBuf (the buffer the megakernel reads): for an odd bounce
+    // count that means starting the write on probeBuf. Per-frame cost is unchanged
+    // (still one probe lookup); only this one-time bake does the extra passes.
+    const int      BOUNCES = 3;
+    VkBuffer       wbuf = (BOUNCES & 1) ? g.probeBuf : g.probeBuf2;
+    VkBuffer       rbuf = (BOUNCES & 1) ? g.probeBuf2 : g.probeBuf;
     VkDescriptorSet sets[2] = { g.bakeDs, g.ds };
-    VkCommandBuffer cb = BeginOneTime();
-    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, g.bakePipeline);
-    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE,
-                            g.bakePipeLayout, 0, 2, sets, 0, nullptr);
-    vkCmdPushConstants(cb, g.bakePipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(bp), &bp);
-    vkCmdDispatch(cb, (g.probeCount + 63) / 64, 1, 1);
-    EndOneTime(cb);   // submits + waits idle: the bake is complete before the readback
+    for (int b = 0; b < BOUNCES; b++)
+    {
+        bp.misc[3]        = (b > 0) ? 1u : 0u;          // giEnabled on bounces 2+
+        bp.probeAddr      = BufferAddress(wbuf);
+        bp.prevProbeAddr  = BufferAddress(rbuf);
 
-    // Verify (step 4b-ii): scan the SH payload (floats 4..15 of each record) for
+        VkCommandBuffer cb = BeginOneTime();
+        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, g.bakePipeline);
+        vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                g.bakePipeLayout, 0, 2, sets, 0, nullptr);
+        vkCmdPushConstants(cb, g.bakePipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(bp), &bp);
+        vkCmdDispatch(cb, (g.probeCount + 63) / 64, 1, 1);
+        EndOneTime(cb);   // waits idle: this bounce is done before the next reads it
+        std::swap(wbuf, rbuf);
+    }
+    // After an odd bounce count the final pass wrote g.probeBuf — readback below.
+
+    // Verify: scan the final SH payload (floats 4..15 of each record) for
     // finiteness and non-zero energy, and report the mean DC (l=0) irradiance.
     void* mapped = nullptr;
     Check(vkMapMemory(g.device, g.probeMem, 0, VK_WHOLE_SIZE, 0, &mapped), "vkMapMemory(probeReadback)");
@@ -2588,8 +2617,8 @@ void RunGiBake()
         dcSum[0] += sh[0] * 0.282095; dcSum[1] += sh[4] * 0.282095; dcSum[2] += sh[8] * 0.282095;
     }
     vkUnmapMemory(g.device, g.probeMem);
-    printf("RB_Vulkan: GI bake done — %u probes, %d non-finite SH coeffs, %d non-zero; "
-           "mean DC irradiance rgb(%.3f, %.3f, %.3f)\n",
+    printf("RB_Vulkan: GI bake done (3 bounces) — %u probes, %d non-finite SH coeffs, "
+           "%d non-zero; mean DC irradiance rgb(%.3f, %.3f, %.3f)\n",
            g.probeCount, nonFinite, nonZero,
            dcSum[0] / g.probeCount, dcSum[1] / g.probeCount, dcSum[2] / g.probeCount);
     fflush(stdout);
@@ -2602,8 +2631,12 @@ void RunGiBake()
 // stay coherent for the trace's reads.
 void BuildProbes()
 {
-    if (g.probeBuf) { vkDestroyBuffer(g.device, g.probeBuf, nullptr); g.probeBuf = VK_NULL_HANDLE; }
-    if (g.probeMem) { vkFreeMemory(g.device, g.probeMem, nullptr);    g.probeMem = VK_NULL_HANDLE; }
+    if (g.probeBuf)  { vkDestroyBuffer(g.device, g.probeBuf, nullptr);  g.probeBuf  = VK_NULL_HANDLE; }
+    if (g.probeMem)  { vkFreeMemory(g.device, g.probeMem, nullptr);     g.probeMem  = VK_NULL_HANDLE; }
+    if (g.probeBuf2) { vkDestroyBuffer(g.device, g.probeBuf2, nullptr); g.probeBuf2 = VK_NULL_HANDLE; }
+    if (g.probeMem2) { vkFreeMemory(g.device, g.probeMem2, nullptr);    g.probeMem2 = VK_NULL_HANDLE; }
+    if (g.triSsBuf)  { vkDestroyBuffer(g.device, g.triSsBuf, nullptr);  g.triSsBuf  = VK_NULL_HANDLE; }
+    if (g.triSsMem)  { vkFreeMemory(g.device, g.triSsMem, nullptr);     g.triSsMem  = VK_NULL_HANDLE; }
     g.probeCount = 0;
 
     if (!g.rtEnabled || !g.levelMesh)
@@ -2625,8 +2658,18 @@ void BuildProbes()
         rec[(size_t)i * PROBE_FLOATS + 2] = probes[i].z;
     }
 
+    // Both probe buffers get the positions (SH zeroed): the bake ping-pongs between
+    // them across bounce passes, and each pass reads its WRITE buffer's positions.
     UploadAddressBuffer(rec.data(), (VkDeviceSize)rec.size() * sizeof(float),
                         &g.probeBuf, &g.probeMem);
+    UploadAddressBuffer(rec.data(), (VkDeviceSize)rec.size() * sizeof(float),
+                        &g.probeBuf2, &g.probeMem2);
+
+    // Per-triangle subsector id (step 4c): the megakernel + the multi-bounce bake
+    // index it by primitive id to find a hit's room probe. uint32 per triangle.
+    UploadAddressBuffer(g.levelMesh->tri_ss,
+                        (VkDeviceSize)g.levelMesh->numtris * sizeof(int),
+                        &g.triSsBuf, &g.triSsMem);
 
     // 4b-i verification: probe count + the spatial bounds of the placed probes
     // (should sit inside the map's coordinate extent — a sanity check on placement).
@@ -2760,12 +2803,14 @@ void RecordRtTrace(uint32_t idx)
         float    camRight[4];   // w = tan(hFov/2)
         float    camUp[4];      // w = tan(vFov/2)
         uint32_t misc[4];       // mode, width, height, numWall (flat-id offset)
-        uint32_t misc2[4];      // emitterCount, reserved, reserved, reserved
+        uint32_t misc2[4];      // emitterCount, probeCount, reserved, reserved
         uint64_t vertsAddr;
         uint64_t emitAddr;      // step-3b emitter list (0 if none)
         uint64_t matEmisAddr;   // per-material Le table
+        uint64_t probeAddr;     // step-4 GI probe cache (0 if none)
+        uint64_t triSsAddr;     // per-triangle subsector id (0 if none)
     } pc = {};
-    static_assert(sizeof(RtPushConstants) == 120, "RT push-constant layout must match the shader");
+    static_assert(sizeof(RtPushConstants) == 136, "RT push-constant layout must match the shader");
     pc.camPos[0] = g.lastView.x; pc.camPos[1] = g.lastView.y; pc.camPos[2] = g.lastView.z;
     pc.camDir[0] = c;            pc.camDir[1] = s;            pc.camDir[2] = 0.0f;
     pc.camRight[0] = s;          pc.camRight[1] = -c;         pc.camRight[2] = 0.0f;
@@ -2775,9 +2820,12 @@ void RecordRtTrace(uint32_t idx)
     pc.misc[1] = w; pc.misc[2] = h;
     pc.misc[3] = (uint32_t)g.matNumWall;   // flat-id offset for mode-3 textured decode
     pc.misc2[0] = g.emitCount;             // NEE emitter triangle count (step 3b)
+    pc.misc2[1] = g.probeCount;            // GI probe count (step 4c; 0 -> no GI)
     pc.vertsAddr   = BufferAddress(g.vbuf);
     pc.emitAddr    = g.emitBuf    ? BufferAddress(g.emitBuf)    : 0;
     pc.matEmisAddr = g.matEmisBuf ? BufferAddress(g.matEmisBuf) : 0;
+    pc.probeAddr   = g.probeBuf   ? BufferAddress(g.probeBuf)   : 0;
+    pc.triSsAddr   = g.triSsBuf   ? BufferAddress(g.triSsBuf)   : 0;
 
     // Set 0 = RT (TLAS + output image); set 1 = the raster materials set (palette
     // LUT + bindless material array), so the textured trace samples the same
@@ -3123,9 +3171,13 @@ extern "C" void RB_Vulkan_Shutdown(void)
         if (g.emitMem)      vkFreeMemory(g.device, g.emitMem, nullptr);
         if (g.matEmisBuf)   vkDestroyBuffer(g.device, g.matEmisBuf, nullptr);
         if (g.matEmisMem)   vkFreeMemory(g.device, g.matEmisMem, nullptr);
-        // GI bake probes (step 4).
+        // GI bake probes + per-triangle subsector map (step 4).
         if (g.probeBuf)     vkDestroyBuffer(g.device, g.probeBuf, nullptr);
         if (g.probeMem)     vkFreeMemory(g.device, g.probeMem, nullptr);
+        if (g.probeBuf2)    vkDestroyBuffer(g.device, g.probeBuf2, nullptr);
+        if (g.probeMem2)    vkFreeMemory(g.device, g.probeMem2, nullptr);
+        if (g.triSsBuf)     vkDestroyBuffer(g.device, g.triSsBuf, nullptr);
+        if (g.triSsMem)     vkFreeMemory(g.device, g.triSsMem, nullptr);
     }
     if (g.vbufMapped)       vkUnmapMemory(g.device, g.vbufMemory);
     if (g.vbuf)             vkDestroyBuffer(g.device, g.vbuf, nullptr);
