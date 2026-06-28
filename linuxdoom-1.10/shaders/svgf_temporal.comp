@@ -1,6 +1,9 @@
 #version 460
 //
-// DOOM-0009 path tracer — build step 6a: SVGF temporal accumulation.
+// DOOM-0009 path tracer — build step 6a: SVGF temporal accumulation, plus the
+// step-6 adaptive anti-ghosting (the "A" in A-SVGF — see the blend block below).
+// (The three passes keep the shorter `svgf_*` file names; they implement the
+// adaptive variant once this anti-ghosting term is in place.)
 //
 // First of the three denoiser passes. Reads this frame's noisy, albedo-
 // DEMODULATED illumination (gillum) and G-buffer (gpos/gnorm, written by
@@ -98,9 +101,24 @@ void main()
         }
     }
 
-    // --- exponential blend + moments -------------------------------------------
     float newHist = valid ? min(hist + 1.0, 32.0) : 1.0;
-    float alpha   = max(1.0 / newHist, 0.1);   // EMA; floor keeps fast lights responsive
+
+    // --- adaptive anti-ghosting (the "A" in A-SVGF) ----------------------------
+    // A sudden lighting change (a muzzle flash switching on, then off) makes this
+    // sample diverge from the accumulated history by far more than the temporal
+    // noise. Where that happens, shrink the effective history so the stale value
+    // cannot trail ("ghost") across the change. Ordinary Monte-Carlo noise — a
+    // luma delta within a couple of sigma of the history mean — leaves the history
+    // intact, so a stable scene keeps converging instead of re-noising every frame.
+    if (valid) {
+        float sigma = sqrt(max(m2 - m1 * m1, 0.0));      // temporal luma stddev
+        float grad  = clamp((abs(l - m1) - 2.0 * sigma)  // delta beyond the noise floor,
+                            / (m1 + 1e-3), 0.0, 1.0);     // relative to the history mean
+        newHist = mix(newHist, 1.0, grad);   // grad→1 resets history (kills the ghost)
+    }
+
+    // --- exponential blend + moments -------------------------------------------
+    float alpha = max(1.0 / newHist, 0.1);     // EMA; floor keeps fast lights responsive
     vec3  outC = valid ? mix(histC, illum, alpha) : illum;
     float nm1  = valid ? mix(m1, l,     alpha) : l;
     float nm2  = valid ? mix(m2, l * l, alpha) : l * l;
