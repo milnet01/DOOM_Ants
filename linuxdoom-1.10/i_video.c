@@ -311,7 +311,7 @@ static void I_GetEvent(SDL_Event* sdlevent)
 		// Terminal proof of the active mode (the on-screen top-centre title
 		// is the in-game proof; this mirrors it for headless/log debugging).
 		static const char* const names[] = {
-		    "OFF (raster)", "HITS/normals", "white furnace",
+		    "Original (raster)", "HITS/normals", "white furnace",
 		    "textured", "NEE direct (noisy)", "(verify)", "DENOISED (SVGF)"
 		};
 		printf("RT debug mode %d: %s\n", rb_rtdebug, names[rb_rtdebug]);
