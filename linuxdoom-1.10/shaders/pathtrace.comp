@@ -174,6 +174,17 @@ void main()
         n = normalize(n);
         if (dot(n, dir) > 0.0) n = -n;             // face the viewer
 
+        // Barycentric-interpolate the hit's texture coords across the triangle. DOOM
+        // faces are flat-SHADED (one normal per face, shared above), but a textured
+        // surface's UVs VARY per vertex — sampling only vertex 0's UV for the whole
+        // triangle (as the normal is shared) paints each face a single flat colour
+        // (no texture). The rasteriser interpolates UVs for free; the tracer must do
+        // it explicitly from the hit barycentrics. 18 floats/vertex, UV at [6,7].
+        vec2 bc = rayQueryGetIntersectionBarycentricsEXT(rq, true);
+        vec2 hitUV = (1.0 - bc.x - bc.y) * vec2(pc.verts.v[i0 +  6u], pc.verts.v[i0 +  7u])
+                   +          bc.x        * vec2(pc.verts.v[i0 + 24u], pc.verts.v[i0 + 25u])
+                   +          bc.y        * vec2(pc.verts.v[i0 + 42u], pc.verts.v[i0 + 43u]);
+
         if (mode == 2u)
         {
             // White furnace: one cosine-weighted bounce, constant env L = 1,
@@ -196,8 +207,6 @@ void main()
             // raster path (mesh.frag) does, then modulate by sector lightlevel.
             // Per-vertex data of the hit triangle's vertex 0 (flat-shaded faces
             // share it across all three vertices, like the normal above).
-            float u     = pc.verts.v[i0 + 6u];
-            float vv    = pc.verts.v[i0 + 7u];
             int   texnum = floatBitsToInt(pc.verts.v[i0 + 8u]);
             int   flags  = floatBitsToInt(pc.verts.v[i0 + 9u]);
             float light  = pc.verts.v[i0 + 10u];
@@ -209,7 +218,7 @@ void main()
             // any-hit alpha testing lands (a later refinement, with NEE in 3c).
             int  id    = ((flags & FLAG_FLAT) != 0) ? (int(pc.misc.w) + texnum) : texnum;
             vec2 sz    = vec2(textureSize(materialTex[nonuniformEXT(id)], 0));
-            float idx  = texture(materialTex[nonuniformEXT(id)], vec2(u, vv) / sz).r * 255.0;
+            float idx  = texture(materialTex[nonuniformEXT(id)], hitUV / sz).r * 255.0;
             vec3 albedo = texture(paletteTex, vec2((idx + 0.5) / 256.0, 0.5)).rgb;
 
             colour = albedo * light;                // sector-light seed; NEE in 3c
@@ -221,13 +230,11 @@ void main()
             // direct, hard shadows) via the shared shadeSurface() — the SAME math
             // the GI bake runs at each probe-ray hit. A flat sky/sector ambient
             // stands in for the step-4 GI bake so lamp-less rooms aren't pure black.
-            float u      = pc.verts.v[i0 + 6u];
-            float vv     = pc.verts.v[i0 + 7u];
             int   texnum = floatBitsToInt(pc.verts.v[i0 + 8u]);
             int   flags  = floatBitsToInt(pc.verts.v[i0 + 9u]);
             uint  id     = ((flags & FLAG_FLAT) != 0) ? (pc.misc.w + uint(texnum))
                                                       : uint(texnum);
-            vec3  albedo = decodeAlbedo(id, vec2(u, vv));
+            vec3  albedo = decodeAlbedo(id, hitUV);
 
             float tHit = rayQueryGetIntersectionTEXT(rq, true);
             vec3  hitP = origin + dir * tHit;
@@ -286,13 +293,11 @@ void main()
             // dispatches with advancing seed bases to converge each estimator, then
             // compares power-NEE vs brute-force for the rel-MSE bar. Writes ONLY the
             // accum image (rgb = radiance sum, a = sample count); no display output.
-            float u      = pc.verts.v[i0 + 6u];
-            float vv     = pc.verts.v[i0 + 7u];
             int   texnum = floatBitsToInt(pc.verts.v[i0 + 8u]);
             int   flags  = floatBitsToInt(pc.verts.v[i0 + 9u]);
             uint  id     = ((flags & FLAG_FLAT) != 0) ? (pc.misc.w + uint(texnum))
                                                       : uint(texnum);
-            vec3  albedo = decodeAlbedo(id, vec2(u, vv));
+            vec3  albedo = decodeAlbedo(id, hitUV);
             float tHit   = rayQueryGetIntersectionTEXT(rq, true);
             vec3  hitP   = origin + dir * tHit;
 
@@ -329,13 +334,11 @@ void main()
             // albedo is factored out (stored separately so the spatial filter never
             // blurs texture detail) and self-emission is excluded (re-added crisp in
             // the composite). Writes the SVGF G-buffer instead of a display pixel.
-            float u      = pc.verts.v[i0 + 6u];
-            float vv     = pc.verts.v[i0 + 7u];
             int   texnum = floatBitsToInt(pc.verts.v[i0 + 8u]);
             int   flags  = floatBitsToInt(pc.verts.v[i0 + 9u]);
             uint  id     = ((flags & FLAG_FLAT) != 0) ? (pc.misc.w + uint(texnum))
                                                       : uint(texnum);
-            vec3  albedo = decodeAlbedo(id, vec2(u, vv));
+            vec3  albedo = decodeAlbedo(id, hitUV);
             float tHit   = rayQueryGetIntersectionTEXT(rq, true);
             vec3  hitP   = origin + dir * tHit;
 

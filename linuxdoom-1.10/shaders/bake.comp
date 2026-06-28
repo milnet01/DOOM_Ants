@@ -95,14 +95,20 @@ void main()
             const uint i0   = uint(prim) * 3u * 18u;
             vec3 n = normalize(vec3(pc.verts.v[i0 + 3u], pc.verts.v[i0 + 4u], pc.verts.v[i0 + 5u]));
             if (dot(n, wi) > 0.0) n = -n;
-            float uu     = pc.verts.v[i0 + 6u];
-            float vv     = pc.verts.v[i0 + 7u];
             int   texnum = floatBitsToInt(pc.verts.v[i0 + 8u]);
             int   flags  = floatBitsToInt(pc.verts.v[i0 + 9u]);
             uint  id     = ((flags & FLAG_FLAT) != 0) ? (pc.misc.y + uint(texnum))
                                                       : uint(texnum);
 
-            vec3  albedo = decodeAlbedo(id, vec2(uu, vv));
+            // Barycentric-interpolate the UV (flat-shaded normal, but per-vertex UVs)
+            // so the bake reflects the same per-texel albedo the megakernel does —
+            // pt_common is shared precisely so the two agree on what a surface
+            // reflects. 18 floats/vertex, UV at [6,7]; v1 at +24, v2 at +42.
+            vec2 bc = rayQueryGetIntersectionBarycentricsEXT(rq, true);
+            vec2 uv = (1.0 - bc.x - bc.y) * vec2(pc.verts.v[i0 +  6u], pc.verts.v[i0 +  7u])
+                    +          bc.x        * vec2(pc.verts.v[i0 + 24u], pc.verts.v[i0 + 25u])
+                    +          bc.y        * vec2(pc.verts.v[i0 + 42u], pc.verts.v[i0 + 43u]);
+            vec3  albedo = decodeAlbedo(id, uv);
             float tHit   = rayQueryGetIntersectionTEXT(rq, true);
             vec3  hitP   = P + wi * tHit;
 
