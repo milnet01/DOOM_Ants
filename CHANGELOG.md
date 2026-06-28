@@ -47,6 +47,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Smooth (pixel-art-aware) upscaling of the 2D title/HUD/menu overlay in the 3D renderers.** (DOOM-0089)
+  The menus and title screens now look smooth instead of blocky when shown over the 3D view.
+
 - **Print clear WAD-placement guidance when no IWAD is found.** (DOOM-0040)
   If no game data file is found, the game now tells you exactly where to put a WAD instead of a cryptic error.
 
