@@ -208,6 +208,7 @@ void M_DrawRendererMenu(void);
 void M_ChangeFPS(int choice);
 void M_ChangeUpscaler(int choice);
 void M_ChangeRenderScale(int choice);
+void M_ChangeBrightness(int choice);
 void M_SizeDisplay(int choice);
 void M_StartGame(int choice);
 void M_Sound(int choice);
@@ -397,6 +398,7 @@ enum
     rm_renderer,
     rm_upscaler,
     rm_renderscale,
+    rm_brightness,
     rm_end
 } renderer_e;
 
@@ -404,7 +406,8 @@ menuitem_t RendererMenu[]=
 {
     {1,"",	M_ChangeRenderer,'r'},
     {1,"",	M_ChangeUpscaler,'u'},
-    {1,"",	M_ChangeRenderScale,'c'}
+    {1,"",	M_ChangeRenderScale,'c'},
+    {2,"",	M_ChangeBrightness,'b'}
 };
 
 menu_t  RendererDef =
@@ -722,7 +725,8 @@ void M_SaveGame (int choice)
 //
 //      M_QuickSave
 //
-char    tempstring[80];
+char    tempstring[128];   // DOOM-0097: hold the longest quicksave/load prompt
+                           // (~59 fixed chars + a 24-char savegame name = up to 83)
 
 void M_QuickSaveResponse(int ch)
 {
@@ -752,7 +756,7 @@ void M_QuickSave(void)
 	quickSaveSlot = -2;	// means to pick a slot now
 	return;
     }
-    sprintf(tempstring,QSPROMPT,savegamestrings[quickSaveSlot]);
+    snprintf(tempstring,sizeof(tempstring),QSPROMPT,savegamestrings[quickSaveSlot]);
     M_StartMessage(tempstring,M_QuickSaveResponse,true);
 }
 
@@ -784,7 +788,7 @@ void M_QuickLoad(void)
 	M_StartMessage(QSAVESPOT,NULL,false);
 	return;
     }
-    sprintf(tempstring,QLPROMPT,savegamestrings[quickSaveSlot]);
+    snprintf(tempstring,sizeof(tempstring),QLPROMPT,savegamestrings[quickSaveSlot]);
     M_StartMessage(tempstring,M_QuickLoadResponse,true);
 }
 
@@ -997,6 +1001,7 @@ char	fpsPosNames[4][11]	= {"Off","Top-Left","Top-Centre","Top-Right"};
 // rb_upscaler / rb_renderscale live in r_vulkan.cpp (read by the path tracer).
 extern int	rb_upscaler;
 extern int	rb_renderscale;
+extern int	rb_exposure;
 char	upscalerNames[2][8]	= {"Off","TAAU"};
 int	renderScalePresets[4]	= {100,75,67,50};
 char	renderScaleNames[4][6]	= {"100%","75%","67%","50%"};
@@ -1063,6 +1068,12 @@ void M_DrawRendererMenu(void)
     M_WriteText(RendererDef.x,RendererDef.y+LINEHEIGHT*rm_renderscale,"Render Scale:");
     M_WriteText(RendererDef.x + 120,RendererDef.y+LINEHEIGHT*rm_renderscale,
 		renderScaleNames[rsi]);
+
+    // DOOM-0096: Ultra/denoiser brightness. Label on its own line with a thermometer
+    // slider below it (rb_exposure 0..15), the standard DOOM slider layout.
+    M_WriteText(RendererDef.x,RendererDef.y+LINEHEIGHT*rm_brightness,"Brightness:");
+    M_DrawThermo(RendererDef.x,RendererDef.y+LINEHEIGHT*(rm_brightness+1),
+		16,rb_exposure);
 }
 
 
@@ -1289,6 +1300,24 @@ void M_ChangeRenderScale(int choice)
     choice = 0;
     for (i=0 ; i<4 ; i++) if (renderScalePresets[i]==rb_renderscale) k=i;
     rb_renderscale = renderScalePresets[(k + 1) % 4];
+}
+
+//
+// Brightness slider for the Ultra/denoiser view (DOOM-0096): left/right nudge the
+// exposure EV fed to the path-tracer composite tonemap. rb_exposure 0..15 maps in
+// r_vulkan.cpp to EV [-4.0, -0.25] (pos 7 == the old fixed -2.25 default).
+//
+void M_ChangeBrightness(int choice)
+{
+    switch (choice)
+    {
+      case 0:
+	if (rb_exposure > 0)  rb_exposure--;
+	break;
+      case 1:
+	if (rb_exposure < 15) rb_exposure++;
+	break;
+    }
 }
 
 void M_ChangeFPS(int choice)

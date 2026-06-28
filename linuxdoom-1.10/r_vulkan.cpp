@@ -232,6 +232,11 @@ struct VulkanState
     // draws the paletted screens[0] overlay over the rendered 3D scene, keying
     // out the transparent index. Shares pipelineLayout + descriptor set 0.
     VkPipeline       overlayPipeline = VK_NULL_HANDLE;
+    // DOOM-0094: LOAD-variant of renderPass (colour loadOp=LOAD to keep the path-
+    // traced blit, depth cleared). Used after RecordRtTrace to draw the weapon
+    // viewmodel + the 2D HUD/menu/FPS overlay over the traced view. Format-compatible
+    // with renderPass, so it reuses g.framebuffers and the world/overlay pipelines.
+    VkRenderPass     rtOverlayPass   = VK_NULL_HANDLE;
 
     VkCommandPool   cmdPool = VK_NULL_HANDLE;
     VkCommandBuffer cmd     = VK_NULL_HANDLE;
@@ -501,7 +506,7 @@ extern "C" { int rb_rtdebug = 0; }
 // later phases on the same contract). rb_renderscale: the path tracer's render
 // resolution as a percent of the display (100/75/67/50); only takes effect with an
 // upscaler active and on the mode-6 denoised path. C linkage for the C menu/config.
-extern "C" { int rb_upscaler = 0; int rb_renderscale = 100; }
+extern "C" { int rb_upscaler = 0; int rb_renderscale = 100; int rb_exposure = 10; }
 
 // INV-6 headless self-test latch (DOOM-0009 build step 4d). Set from the
 // `-rtverify` command-line parm; the first ready present runs RB_RtVerify (the
@@ -2406,6 +2411,24 @@ void CreateRenderPass()
     rpci.pDependencies = &dep;
     Check(vkCreateRenderPass(g.device, &rpci, nullptr, &g.renderPass),
           "vkCreateRenderPass");
+
+    // DOOM-0094: a LOAD-variant for the path-traced present path. RecordRtTrace blits
+    // the traced world to the swapchain and leaves it in PRESENT_SRC; this pass LOADs
+    // that colour (loadOp=LOAD, initialLayout PRESENT_SRC) and draws the weapon + the
+    // 2D overlay on top, handing the image back in PRESENT_SRC. Depth is still cleared
+    // (the weapon is a screen-space psprite that always sits on top). Same attachment
+    // formats, so it is render-pass-compatible with g.framebuffers and the pipelines.
+    att[0].loadOp        = VK_ATTACHMENT_LOAD_OP_LOAD;
+    att[0].initialLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;   // keep the blitted trace
+    // The blit that fills the colour image is a TRANSFER write; order it before the
+    // colour LOAD + attachment writes (the base dep only chains the colour/depth stages).
+    dep.srcStageMask  = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    dep.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    Check(vkCreateRenderPass(g.device, &rpci, nullptr, &g.rtOverlayPass),
+          "vkCreateRenderPass(rtOverlay)");
 }
 
 void CreateFramebuffers()
@@ -3887,6 +3910,14 @@ void RecordRtTrace(uint32_t idx)
         spc.prevUp[3]    = g.prevCamUp[3];
         spc.misc[0] = svgfParity;
         spc.misc[1] = w; spc.misc[2] = h;
+        // DOOM-0096 brightness: map the rb_exposure slider (0..15) to a photographic
+        // EV [-4.0, -0.25] (pos 7 == the old fixed -2.25) and hand it to the composite
+        // tonemap via misc3.x (bit-cast float). Only svgf_composite reads misc3 here.
+        {
+            int e = rb_exposure < 0 ? 0 : (rb_exposure > 15 ? 15 : rb_exposure);
+            float ev = -4.0f + 0.25f * (float)e;
+            std::memcpy(&spc.misc3[0], &ev, sizeof(float));
+        }
 
         vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
                                 g.svgfPipeLayout, 0, 1, &g.svgfDs, 0, nullptr);
@@ -4060,6 +4091,117 @@ void RecordRtTrace(uint32_t idx)
     }
 }
 
+// DOOM-0094: upload the per-frame 2D overlay staging buffer (screens[0]) into its
+// sampled image. A transfer, so it must run OUTSIDE any render pass. Shared by the
+// raster present path and the path-traced overlay pass below.
+void UploadOverlayImage()
+{
+    VkImageMemoryBarrier toDst = {};
+    toDst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    toDst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    toDst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    toDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toDst.image = g.overlayImage;
+    toDst.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    toDst.srcAccessMask = 0;
+    toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toDst);
+
+    VkBufferImageCopy region = {};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageExtent = { (uint32_t)g.overlayW, (uint32_t)g.overlayH, 1 };
+    vkCmdCopyBufferToImage(g.cmd, g.overlayStaging, g.overlayImage,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+    VkImageMemoryBarrier toRead = toDst;
+    toRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    toRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    toRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    toRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toRead);
+}
+
+// DOOM-0094: draw the 2D presentation layer over the path-traced view. RecordRtTrace
+// blits the traced WORLD to the swapchain (and leaves it in PRESENT_SRC) but skips the
+// HUD/menu/messages/FPS overlay (all composited from screens[0]) and the player weapon
+// the raster path draws. This runs the LOAD-variant render pass (g.rtOverlayPass: colour
+// loadOp=LOAD keeps the trace, depth cleared) over g.framebuffers[idx] and draws (1) the
+// weapon viewmodel psprite via the world pipeline (depth-cleared so it sits on top, as
+// the player weapon always does) and (2) the overlay compositor. World sprites
+// (monsters/items) are out of scope -- they need TLAS depth occlusion (DOOM-0084).
+void RecordRtOverlay(uint32_t idx, bool drawOverlay)
+{
+    const bool drawWeapon = g.spriteVbuf && g.spriteVertCount;
+    if (!drawOverlay && !drawWeapon)
+        return;   // nothing to composite; the trace already presents.
+
+    // The overlay image upload is a transfer; it must precede the render pass.
+    if (drawOverlay)
+        UploadOverlayImage();
+
+    VkClearValue clears[2] = {};
+    clears[1].depthStencil = { 1.0f, 0 };   // colour is LOAD (the trace); depth cleared
+
+    VkRenderPassBeginInfo rp = {};
+    rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rp.renderPass = g.rtOverlayPass;
+    rp.framebuffer = g.framebuffers[idx];
+    rp.renderArea.extent = g.extent;
+    rp.clearValueCount = 2;
+    rp.pClearValues = clears;
+    vkCmdBeginRenderPass(g.cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
+
+    VkViewport vpRect = {};
+    vpRect.width = (float)g.extent.width;
+    vpRect.height = (float)g.extent.height;
+    vpRect.maxDepth = 1.0f;
+    vkCmdSetViewport(g.cmd, 0, 1, &vpRect);
+    VkRect2D scissor = { { 0, 0 }, g.extent };
+    vkCmdSetScissor(g.cmd, 0, 1, &scissor);
+
+    vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            g.pipelineLayout, 0, 1, &g.ds, 0, nullptr);
+
+    // Player weapon: a screen-space psprite (NDC, MVP skipped by mesh.vert) drawn with
+    // the world pipeline, so it needs the same push constants -- only the muzzle-flash
+    // brighten + material-id offsets actually affect a psprite, but mirror the raster
+    // weapon draw so the gun renders identically in Solid and Ultra.
+    if (drawWeapon)
+    {
+        float pcData[23];
+        std::memcpy(pcData, g.viewProj, 16 * sizeof(float));
+        pcData[16] = g.lastView.extralight;
+        pcData[17] = g.lastView.angle;
+        pcData[18] = g.lastView.x;
+        pcData[19] = g.lastView.y;
+        pcData[20] = g.lastView.z;
+        std::memcpy(&pcData[21], &g.matNumWall, sizeof(int));
+        std::memcpy(&pcData[22], &g.matNumFlat, sizeof(int));
+        vkCmdPushConstants(g.cmd, g.pipelineLayout,
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0, 23 * sizeof(float), pcData);
+
+        VkDeviceSize off = 0;
+        vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.pipeline);
+        vkCmdBindVertexBuffers(g.cmd, 0, 1, &g.spriteVbuf, &off);
+        vkCmdDraw(g.cmd, g.spriteVertCount, 1, 0, 0);
+    }
+
+    // 2D HUD/menu/messages/FPS compositor, last and over everything: samples screens[0]
+    // and keys out the transparent index so the traced view (and the weapon) shows through.
+    if (drawOverlay)
+    {
+        vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.overlayPipeline);
+        vkCmdDraw(g.cmd, 3, 1, 0, 0);
+    }
+
+    vkCmdEndRenderPass(g.cmd);
+}
+
 extern "C" void RB_Vulkan_Present(void)
 {
     if (!g.ready)
@@ -4131,6 +4273,17 @@ extern "C" void RB_Vulkan_Present(void)
         g.skyVertCount    = (uint32_t)sky;
         g.spriteVertCount = (uint32_t)n;
     }
+    // DOOM-0094: in the path-traced view the world comes from the trace, but the
+    // player weapon is a screen-space psprite drawn on top. Build ONLY the weapon —
+    // no sky, no world sprites (monsters/items need TLAS depth occlusion, tracked
+    // under DOOM-0084). It lands at the front of the buffer; drawn after the trace.
+    else if (rtActive && g.spriteMapped && g.haveCamera && g.atlasReady)
+    {
+        rb_vertex_t* buf = (rb_vertex_t*)g.spriteMapped;
+        float aspect = g.extent.height ? (float)g.extent.width / (float)g.extent.height
+                                       : 1.0f;
+        g.spriteVertCount = (uint32_t)RB_BuildPSprites(buf, (int)g.spriteVertCap, aspect);
+    }
 
     // Re-height moving sectors (doors/lifts) in the static level buffer from the
     // live sector heights. Same fence-safe window as the sprites above (the wait
@@ -4157,7 +4310,9 @@ extern "C" void RB_Vulkan_Present(void)
     // Copy this frame's 2D overlay (screens[0]) into the mapped staging buffer.
     // Same race-safe window as the sprites above: the fence wait guarantees the
     // previous frame's copy (which read this buffer) has finished.
-    bool drawOverlay = !rtActive && g.overlayReady && g.overlaySrc;
+    // DOOM-0094: the 2D overlay (HUD/menu/messages/FPS, all composited from screens[0])
+    // now draws in BOTH the raster and the path-traced present paths.
+    bool drawOverlay = g.overlayReady && g.overlaySrc;
     if (drawOverlay)
         std::memcpy(g.overlayMapped, g.overlaySrc,
                     (size_t)g.overlayW * g.overlayH);
@@ -4173,6 +4328,8 @@ extern "C" void RB_Vulkan_Present(void)
     if (rtActive)
     {
         RecordRtTrace(idx);
+        // DOOM-0094: draw the weapon + the 2D overlay over the traced world.
+        RecordRtOverlay(idx, drawOverlay);
     }
     else
     {
@@ -4181,35 +4338,7 @@ extern "C" void RB_Vulkan_Present(void)
     // pass (transfers are illegal inside one). oldLayout UNDEFINED is fine: every
     // texel is overwritten, so the previous frame's contents need not survive.
     if (drawOverlay)
-    {
-        VkImageMemoryBarrier toDst = {};
-        toDst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        toDst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        toDst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        toDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        toDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        toDst.image = g.overlayImage;
-        toDst.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-        toDst.srcAccessMask = 0;
-        toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toDst);
-
-        VkBufferImageCopy region = {};
-        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        region.imageSubresource.layerCount = 1;
-        region.imageExtent = { (uint32_t)g.overlayW, (uint32_t)g.overlayH, 1 };
-        vkCmdCopyBufferToImage(g.cmd, g.overlayStaging, g.overlayImage,
-                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-
-        VkImageMemoryBarrier toRead = toDst;
-        toRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        toRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        toRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        toRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toRead);
-    }
+        UploadOverlayImage();
 
     // Clear to a dark slate (world background) + far depth, then draw the level
     // mesh. The render pass transitions the colour image to PRESENT_SRC for us.
@@ -4439,6 +4568,7 @@ extern "C" void RB_Vulkan_Shutdown(void)
     if (g.skyPipeline)    vkDestroyPipeline(g.device, g.skyPipeline, nullptr);
     if (g.overlayPipeline) vkDestroyPipeline(g.device, g.overlayPipeline, nullptr);
     if (g.pipelineLayout) vkDestroyPipelineLayout(g.device, g.pipelineLayout, nullptr);
+    if (g.rtOverlayPass)  vkDestroyRenderPass(g.device, g.rtOverlayPass, nullptr);
     if (g.renderPass)     vkDestroyRenderPass(g.device, g.renderPass, nullptr);
     if (g.inFlight)       vkDestroyFence(g.device, g.inFlight, nullptr);
     for (VkSemaphore s : g.renderFinished)

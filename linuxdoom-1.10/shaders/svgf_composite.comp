@@ -37,10 +37,12 @@ layout(push_constant) uniform PC {
     MatEmis matEmis;
 } pc;
 
-const float EXPOSURE_EV = -2.25;   // matches pathtrace.comp toneEncode
-
+// DOOM-0096: the exposure EV is no longer a fixed constant — the host passes the
+// user's Brightness-slider value (rb_exposure) in misc3.x (bit-cast float) so the
+// Ultra/denoiser view brightness is adjustable from the Renderer menu.
 vec3 toneEncode(vec3 L)
 {
+    float EXPOSURE_EV = uintBitsToFloat(pc.misc3.x);
     L = max(L, vec3(0.0)) * exposureEv(EXPOSURE_EV);
     L = pbrNeutralToneMapping(L);
     return vec3(linearToSrgb(L.r), linearToSrgb(L.g), linearToSrgb(L.b));

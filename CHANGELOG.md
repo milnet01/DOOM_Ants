@@ -8,6 +8,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **User-adjustable brightness slider for the path-traced (Ultra/denoiser) view.** (DOOM-0096)
+  The ray-traced view looked a little dark. Add a Brightness slider to the Renderer settings menu so you can dial it to taste; it now defaults a touch brighter.
+
 - **Temporal upscaler (TAAU) for the Ultra path tracer — DOOM-0009 build step 6-d phase 1** (DOOM-0009)
   The denoised path-tracer view can now render below display resolution and reconstruct a full-resolution image by accumulating sub-pixel-jittered frames (a custom temporal anti-aliasing upsampler). Adds the jitter, motion-vector, and menu plumbing the later FSR 2 / FSR 3.1 backends will share. New Options -> Renderer sub-menu: Renderer, Upscaler (Off / TAAU), Render Scale (100/75/67/50%); defaults to Off, so the existing image is unchanged until enabled.
 
@@ -62,6 +65,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
   Tells the compiler that the fatal-error function never returns, so it can optimise better and reason correctly about the code that runs after a fatal-error guard.
 
 ### Fixed
+
+- **M_QuickLoad sprintf can overflow tempstring[80] (-Wformat-overflow).** (DOOM-0097)
+  A harmless-looking quick-load confirmation message could, with a long savegame name, write past the end of a fixed text buffer — a latent crash/corruption risk flagged by the compiler.
+
+- **Draw the 2D presentation layer (HUD, menu, FPS, weapon) over the path-traced view.** (DOOM-0094)
+  In the ray-traced view you currently see only the world — no menu, HUD, FPS counter or your gun. Bring those back so it's a real playable view, not a bare diagnostic.
 
 - **3D renderer: use a per-swapchain-image present semaphore** (DOOM-0079)
   The Vulkan present-completion signal (renderFinished semaphore) was shared

@@ -203,6 +203,7 @@ extern int	showMessages;
 extern int	fpsCorner;
 extern int	rb_upscaler;	// DOOM-0009 6-d temporal upscaler (0 Off, 1 TAAU)
 extern int	rb_renderscale;	// DOOM-0009 6-d render scale percent (100/75/67/50)
+extern int	rb_exposure;	// DOOM-0096 Ultra/denoiser brightness slider (0..15)
 
 extern int	detailLevel;
 
@@ -248,6 +249,7 @@ default_t	defaults[] =
     {"renderer",&rendermode, RB_CLASSIC},
     {"upscaler",&rb_upscaler, 0},
     {"render_scale",&rb_renderscale, 100},
+    {"rt_brightness",&rb_exposure, 10},
 
 
 #ifdef NORMALUNIX

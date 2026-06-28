@@ -262,6 +262,13 @@ with friends.
   Kind: feature.
   Source: user-request-2026-06-28.
 
+- ✅ [DOOM-0097] **M_QuickLoad sprintf can overflow tempstring[80] (-Wformat-overflow).**
+  gcc -Wformat-overflow flags m_menu.c:790 M_QuickLoad: sprintf(tempstring, QLPROMPT, savegamestrings[quickSaveSlot]) can write 60-83 bytes into tempstring[80] (QLPROMPT is the \"do you want to quickload...'%s'?\" prompt + a 24-char savegame name). Pre-existing original-DOOM code, surfaced while building DOOM-0096. Fix: bound it with snprintf(tempstring, sizeof(tempstring), ...). M_QuickSave (the symmetric quicksave prompt) likely shares the pattern; check both. Source: in-session-2026-06-28 (build warning).
+  **Layman:** A harmless-looking quick-load confirmation message could, with a long savegame name, write past the end of a fixed text buffer — a latent crash/corruption risk flagged by the compiler.
+  Kind: fix.
+  Source: in-session-2026-06-28.
+  Resolved (2026-06-28): root cause was tempstring[80] being too small for the longest quicksave/quickload prompt (~59 fixed chars + a 24-char savegame name = up to 83 bytes). Bumped the shared buffer to [128] and switched both M_QuickSave (QSPROMPT) and M_QuickLoad (QLPROMPT) from sprintf to snprintf(sizeof) for defense-in-depth. Clean build — both -Wformat-overflow and -Wformat-truncation gone.
+
 ## Phase 2 — The Spin
 
 The creative overhaul: evolve the renderer toward true 3D with hardware
@@ -844,14 +851,23 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: security.
   Source: research-2026-06-28.
 
-- 📋 [DOOM-0094] **Draw the 2D presentation layer (HUD, menu, FPS, weapon) over the path-traced view.**
+- ✅ [DOOM-0094] **Draw the 2D presentation layer (HUD, menu, FPS, weapon) over the path-traced view.**
   The path-tracer present path (RecordRtTrace) writes only the traced WORLD to the swapchain (compute -> blit) and skips the entire 2D + sprite presentation the raster path draws: the 2D overlay screens[0] (HUD + in-game menu + on-screen messages + the DOOM-0046 FPS counter are ALL composited from screens[0]) and the weapon viewmodel billboard (RB_BuildPSprites). So the `~` trace modes show no HUD, menu, FPS or gun/hand — it reads as a diagnostic, not a playable mode. Plan: after the trace blit, run a render pass over the swapchain (loadOp=LOAD on colour to keep the trace, loadOp=CLEAR on depth) that draws (1) the weapon billboard via the existing world pipeline (depth-cleared so it sits on top, as the player weapon always does) and (2) the overlay compositor (existing overlayPipeline) — reusing g.framebuffers (a LOAD-variant render pass is format-compatible). Enable the screens[0] staging copy + RB_BuildPSprites for rtActive (currently gated !rtActive). SCOPE: the weapon (a screen-space psprite) is in; WORLD sprites (monsters/items) are NOT — they need correct depth occlusion against the traced world, which means putting them in the TLAS (DOOM-0084) or a depth-aware billboard pass, tracked separately. Relates to but distinct from DOOM-0050 (overlay ghosting in the raster 3D modes).
   **Layman:** In the ray-traced view you currently see only the world — no menu, HUD, FPS counter or your gun. Bring those back so it's a real playable view, not a bare diagnostic.
   Kind: fix.
   Source: user-request-2026-06-28.
+  Progress (2026-06-28): implemented in r_vulkan.cpp. Added a LOAD-variant render pass (g.rtOverlayPass: colour loadOp=LOAD to keep the traced blit, depth cleared), format-compatible with g.framebuffers + the world/overlay pipelines. After RecordRtTrace, RecordRtOverlay() draws (1) the weapon viewmodel psprite via the world pipeline and (2) the existing overlay compositor. Enabled RB_BuildPSprites + the screens[0] staging copy for rtActive (weapon only; sky + world sprites intentionally excluded per scope). Extracted UploadOverlayImage() shared by both present paths (raster path emits identical commands -> INV-10 preserved). Builds clean (-Wall, 0 warnings). PENDING: visual confirmation on the RX 6600 that HUD/menu/FPS/weapon show in the ~ Ultra view; flip to shipped after that.
+  Resolved (2026-06-28): verified in-game on the RX 6600 — the ~ path-traced view now shows the HUD, the weapon (hand+gun), and the FPS counter. World sprites (enemies/pickups/barrels) are correctly absent: out of scope here, tracked under DOOM-0084 (they need TLAS depth occlusion). FPS ~27 at TAAU 75% is a perf data point for DOOM-0090, not a defect.
 
 - 📋 [DOOM-0095] **Per-weapon muzzle-flash colour (and position) in the path tracer — BFG green, plasma blue.**
   DOOM-0009 step 5 ships a single fixed muzzle flash: colour FLASH_COLOR=(1.0,0.85,0.6) warm + a fixed barrel offset (MUZZLE_FORWARD=24, MUZZLE_DROP=8), identical for every weapon, because the shader is only told the engine's `extralight` scalar (firing brightness) via misc2.z — the weapon TYPE (player->readyweapon) never reaches the renderer. Enhancement: forward readyweapon into the RT push constants and select the flash colour per weapon — warm yellow (pistol/shotgun/SSG/chaingun/rocket), BLUE (plasma rifle), GREEN (BFG9000); fist/chainsaw emit no flash (already gated by extralight). Optional: small per-weapon intensity/position (BFG's large slow flash vs the chaingun stutter; the BFG could also tint via its own emissive). Small, localised: one host push-constant field + a colour lookup in pathtrace.comp's mode-4 and mode-6 flash blocks (keep the two in lockstep). Tunable colours are INV-7 backfill candidates (a Vestige Workbench pass) like the other scene-light constants."
   **Layman:** Make each gun's muzzle flash the right colour — the BFG glows green, the plasma rifle blue, the rest warm yellow — instead of every gun flashing the same warm colour.
   Kind: enhancement.
   Source: user-request-2026-06-28.
+
+- ✅ [DOOM-0096] **User-adjustable brightness slider for the path-traced (Ultra/denoiser) view.**
+  The denoiser composite tonemap (svgf_composite.comp) hard-coded EXPOSURE_EV = -2.25, which read a little dark. Make it user-adjustable: a Brightness thermometer slider in the Renderer menu backed by a new rb_exposure tunable (0..15, persisted to the config as rt_brightness). The host maps the slider to a photographic EV [-4.0, -0.25] (pos 7 == the old -2.25) and passes it to the composite via the spare misc3.x push-constant slot (bit-cast float); the shader replaces its const with uintBitsToFloat(pc.misc3.x). Default pos 10 (~ -1.5 EV), one step brighter than before, per user request. Scope: the denoiser/Ultra view (svgf_composite, mode 6); the debug ~ modes 1-4 (pathtrace.comp) keep their fixed exposure. Source: user-request-2026-06-28.
+  **Layman:** The ray-traced view looked a little dark. Add a Brightness slider to the Renderer settings menu so you can dial it to taste; it now defaults a touch brighter.
+  Kind: feature.
+  Source: user-request-2026-06-28.
+  Resolved (2026-06-28): shipped + user-tested. Brightness slider added to the Renderer menu (rb_exposure 0..15 -> EV [-4.0,-0.25] via svgf_composite misc3.x; persisted as rt_brightness; default pos 10 ~ -1.5 EV). User confirms the default view is now slightly brighter and the slider works; effect is subtle and the view is still somewhat dark, but they chose to leave the range as-is — the player flashlight (DOOM-0044) is the intended fix for dark corners. Range/mapping is a one-line change if a punchier slider is wanted later.
