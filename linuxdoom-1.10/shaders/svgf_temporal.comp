@@ -133,7 +133,7 @@ void main()
         }
     }
 
-    float newHist = valid ? min(hist + 1.0, 32.0) : 1.0;
+    float newHist = valid ? min(hist + 1.0, 64.0) : 1.0;
 
     // --- adaptive anti-ghosting (the "A" in A-SVGF) ----------------------------
     // A sudden lighting change (a muzzle flash switching on, then off) makes this
@@ -150,7 +150,12 @@ void main()
     }
 
     // --- exponential blend + moments -------------------------------------------
-    float alpha = max(1.0 / newHist, 0.1);     // EMA; floor keeps fast lights responsive
+    float alpha = max(1.0 / newHist, 0.03);    // EMA; ~33-frame floor for deep, blur-free
+                                               // convergence on still surfaces. Safe to be
+                                               // this low because the adaptive anti-ghosting
+                                               // above resets history on a real lighting
+                                               // change — the old 0.1 floor only existed to
+                                               // stay responsive, which the gradient now does.
     vec3  outC = valid ? mix(histC, illum, alpha) : illum;
     float nm1  = valid ? mix(m1, l,     alpha) : l;
     float nm2  = valid ? mix(m2, l * l, alpha) : l * l;
