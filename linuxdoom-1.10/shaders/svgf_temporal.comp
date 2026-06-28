@@ -53,11 +53,14 @@ void main()
     uint cur = pc.misc.x, prev = cur ^ 1u;
 
     vec4  gp    = imageLoad(gpos[cur], p);
-    vec3  illum = imageLoad(gillum, p).rgb;
+    vec4  gi0   = imageLoad(gillum, p);
+    vec3  illum = gi0.rgb;
     float l     = lum(illum);
 
     // Sky / miss: no surface, so no temporal reprojection. Pass the stored linear
     // colour straight to the spatial pass (which also skips sky) with zero variance.
+    // (gp.w < 0 identifies sky — not the half-res sample flag, which lives in gillum.a
+    // and is only consulted for surfaces, below.)
     if (gp.w < 0.0) {
         imageStore(hmom[cur], p, vec4(l, l * l, 1.0, 0.0));
         imageStore(atrous[0], p, vec4(illum, 0.0));
@@ -66,6 +69,35 @@ void main()
 
     vec3 wpos = gp.xyz;
     vec3 n    = imageLoad(gnorm[cur], p).xyz;
+
+    // build step 6c: reconstruct the half-resolution lighting. The even/even grid
+    // pixels (gillum.a == 1) carry a real traced sample; the other three pixels of
+    // each 2x2 block are a joint-bilateral upsample of the up-to-four surrounding grid
+    // samples, weighted by full-res G-buffer similarity (normal + world distance) so
+    // the upsample stops at silhouettes. This is the spec's "reconstruct in the
+    // denoiser" step; the a-trous pass then refines it spatially.
+    if (gi0.a < 0.5) {
+        ivec2 b      = ivec2(p.x & ~1, p.y & ~1);          // top-left grid sample
+        float camDst = length(wpos - pc.prevPos.xyz);      // ~camera->surface distance
+        float pxSpan = max(camDst * 2.0 * pc.prevRight.w / float(w), 1.0); // world/pixel
+        vec3  sum = vec3(0.0); float wsum = 0.0;
+        for (int dy = 0; dy <= 2; dy += 2)
+        for (int dx = 0; dx <= 2; dx += 2) {
+            ivec2 sp = b + ivec2(dx, dy);
+            if (sp.x >= w || sp.y >= h) continue;
+            vec4 sgp = imageLoad(gpos[cur], sp);
+            if (sgp.w < 0.0) continue;                     // skip sky samples
+            vec3  sn = imageLoad(gnorm[cur], sp).xyz;
+            float wn = max(dot(sn, n), 0.0);               // normal similarity
+            float wz = exp(-length(sgp.xyz - wpos) / pxSpan); // depth/world similarity
+            float ws = 1.0 / (1.0 + length(vec2(p - sp)));    // spatial falloff
+            float wt = wn * wz * ws + 1e-4;
+            sum  += imageLoad(gillum, sp).rgb * wt;
+            wsum += wt;
+        }
+        illum = wsum > 0.0 ? sum / wsum : imageLoad(gillum, b).rgb;
+        l     = lum(illum);
+    }
 
     // --- reproject this world point into the previous camera --------------------
     bool  valid = false;

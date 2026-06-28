@@ -432,6 +432,16 @@ parked ideas (💭 considered) until we commit to and design each one.
   visual acceptance pending a playtest. Also recorded the §4.4 player-
   selectable upscaler decision (TAAU / FSR 2 / FSR 3.1; frame-gen split
   out to DOOM-0088). Next: 6-c half-res indirect, then 6-d upscalers.
+  Progress (2026-06-28): build step 6c half-res lighting implemented.
+  Finding: the spec's "half-res indirect" target was already removed by the
+  step-4 baked-GI cache (no live indirect bounce); the live cost is the
+  direct/NEE shadow rays. User chose to half-res that. Shader-only (no host
+  change): pathtrace.comp mode 6 casts the NEE + flash shadow rays for one
+  even/even pixel per 2×2 block (gillum.a flags samples), G-buffer + albedo
+  stay full-res; svgf_temporal.comp joint-bilateral-upsamples the other
+  three from the grid samples, edge-guided by the full-res G-buffer, before
+  the à-trous. Spec §4.4/§7 reconciled + cold-eyes'd. Builds clean; visual
+  acceptance pending playtest. Next: 6-d upscalers.
 - 💭 [DOOM-0010] **Add dynamic lighting.**
   **Layman:** Let lights move and react — muzzle flashes, flickering lamps — lighting the scene live.
   Kind: feature.

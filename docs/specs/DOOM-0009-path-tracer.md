@@ -214,13 +214,20 @@ So split static from dynamic (the central performance lever):
   denoiser can target a looser convergence threshold.
 
 ### 4.4 Integrator
-1 path/pixel (≈ primary hit + 1 indirect bounce + shadow/NEE rays) + temporal
+1 path/pixel (≈ primary hit + live direct/NEE shadow rays + a *cached* indirect
+lookup — the indirect bounce is baked, §4.1/§4.3, not traced live per pixel) + temporal
 accumulation + motion-vector reprojection · NEE + multiple
 importance sampling (power heuristic) · Lambertian diffuse + cosine sampling (GGX/
 VNDF specular gated to measured need — matte DOOM art rarely needs it) · Russian-
-roulette termination + firefly clamp + NaN guards · **half-resolution indirect**
-trace reconstructed inside the denoiser's à-trous wavelet (biggest ms lever, near-
-free on matte art; start *straight* half-res, not checkerboard) · **A-SVGF**
+roulette termination + firefly clamp + NaN guards · **half-resolution lighting**
+trace — the live noisy direct/NEE shadow-ray lighting is cast for one pixel per 2×2
+block (the fixed even/even sample — *straight* half-res, not checkerboard; the indirect
+bounce is already baked into the GI cache, §4.3, so the half-res lever applies to the
+live *direct* trace, not a live indirect bounce; the G-buffer + albedo stay full-res
+for sharp edges + demodulation), reconstructed in the denoiser by a joint-bilateral
+upsample at the temporal stage (guided by the full-res G-buffer) that then feeds the
+à-trous spatial pass — which IS the A-SVGF spatial filter, not a separate stage;
+biggest ms lever, near-free on matte art · **A-SVGF**
 (adaptive spatiotemporal variance-guided filtering) denoise (purpose-built for the
 muzzle-flash sudden-light case; clean-room from the paper, Q2RTX as readable GPL
 reference) · **upscale last** — decoupled, denoise-before-upscale, jitter-consistent
@@ -310,7 +317,7 @@ with different meanings — don't conflate across specs.)
    activity, composited over the baked static. Verify: a muzzle-flash shadow whose
    *direction tracks the muzzle position* as the player rotates (a positionless
    screen-brighten would fail this — it guards the §4.1 derivation).
-6. **Half-res indirect + A-SVGF** (§4.4), then **upscale** (player-selectable
+6. **Half-res direct/NEE trace + A-SVGF** (§4.4), then **upscale** (player-selectable
    TAAU / FSR 2 / FSR 3.1, §4.4; frame generation excluded — DOOM-0048). Verify: stable
    image; no visible trailing/smearing of
    the flash highlight in the frames after it ends (the A-SVGF history clamp),
@@ -419,3 +426,4 @@ each pass briefed cold.
 *(Edited surface converged: doc-vs-code clean, no CRITICAL/HIGH left on the §2
 model. No prior-pass findings handed to reviewers — each pass cold.)*
 - **2026-06-28 — §4.4 upscaler-method decision (2 cold passes, 2 lanes each)** — Recorded the player-selectable upscaler decision (custom TAAU / FSR 2 / FSR 3.1; frame-gen deferred to DOOM-0088, gated behind DOOM-0048). Loop 1 (2 lanes): 1 HIGH (§9 dangling "build step 6-d" — §7 has flat steps 1-7), 2 MED (§2 upscaler axis dangling; "no ghosting" untestable), several LOW (A-SVGF/spp/TAAU/FSR/VMA/RRA/DDGI unexpanded; FSR currency/license referents; jitter-consistent undefined). All verified + fixed. Loop 2 (2 lanes): loop-1 fixes held (none resurfaced); surfaced introduced-by-edit nits (m_misc 2-vs-3 defaults, "step 6 perf pass" → step 7, §7-6 frame-gen echo) — all fixed — plus PRE-EXISTING drift orthogonal to the upscaler decision: spec stale vs shipped 6a/6b (formulas/ now exists — fixed; build-step statuses, §2 tier×RT prose repeated 3-4x, A-SVGF vs svgf_* shader naming) — bundled onto DOOM-0081. Per user direction (move on when only verified polish remains, no structural/architectural findings), stopped the loop.
+- **2026-06-28 — §4.4 6-c half-res reconcile (1 quick cold pass)** — Reconciled §4.4 for the build-step-6c scope decision: the live indirect bounce is baked (§4.1/§4.3), so "half-res indirect" became "half-res LIGHTING" — the live direct/NEE shadow-ray trace is cast for one even/even pixel per 2×2 block, reconstructed in the denoiser (joint-bilateral upsample at the temporal stage → à-trous), G-buffer + albedo full-res. One quick cold pass (1 lane): 2 HIGH (§7 step 6 still said "indirect"; §4.4's "+1 indirect bounce" cost formula contradicted the baked-cache reality), 1 MED (à-trous-vs-A-SVGF read as two stages not one), 2 LOW (sample-placement unspecified; sentence density). All verified + fixed: §7 step 6 → "Half-res direct/NEE trace"; line 217 → "cached indirect lookup … baked, not traced live"; à-trous named as the A-SVGF spatial filter; pinned "fixed even/even sample, straight half-res". Per user direction (move on when only verified polish remains), did not re-loop.

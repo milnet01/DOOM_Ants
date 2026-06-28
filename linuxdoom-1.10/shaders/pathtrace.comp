@@ -331,6 +331,23 @@ void main()
             float tHit   = rayQueryGetIntersectionTEXT(rq, true);
             vec3  hitP   = origin + dir * tHit;
 
+            // build step 6c (half-resolution lighting): the G-buffer (position /
+            // normal / albedo) is written at FULL resolution for EVERY pixel — it
+            // carries the sharp edges the denoiser upsample and demodulation lean on.
+            // The expensive part — the live direct/NEE shadow rays + the muzzle-flash
+            // shadow ray — is the half-res lever: only the even/even pixel of each 2x2
+            // block casts it. The other three pixels are reconstructed in the temporal
+            // pass from these grid samples, guided by this full-res G-buffer. gillum.a
+            // flags a real sample (1) vs a pixel to reconstruct (0).
+            uint par = pc.misc3.w;
+            imageStore(gpos[par],  ivec2(px), vec4(hitP, float(id)));
+            imageStore(gnorm[par], ivec2(px), vec4(n, 0.0));
+            imageStore(galbedo,    ivec2(px), vec4(albedo, 1.0));
+            if (((px.x | px.y) & 1u) != 0u) {       // not an even/even grid sample
+                imageStore(gillum, ivec2(px), vec4(0.0));
+                return;
+            }
+
             // Direct NEE with albedo 1 + no emission -> the pure incident/PI direct
             // irradiance; baked GI irradiance is already albedo-free; the muzzle
             // flash term likewise without albedo. albedo/emission ride separately.
@@ -369,11 +386,7 @@ void main()
             }
 
             if (any(isnan(illum)) || any(isinf(illum))) illum = vec3(0.0);
-            uint par = pc.misc3.w;
-            imageStore(gpos[par],  ivec2(px), vec4(hitP, float(id)));
-            imageStore(gnorm[par], ivec2(px), vec4(n, 0.0));
-            imageStore(galbedo,    ivec2(px), vec4(albedo, 1.0));
-            imageStore(gillum,     ivec2(px), vec4(illum, 0.0));
+            imageStore(gillum, ivec2(px), vec4(illum, 1.0));
             return;                                 // feed writes the G-buffer only
         }
         else
