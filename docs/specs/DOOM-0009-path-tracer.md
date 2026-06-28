@@ -90,10 +90,14 @@ lamps, coloured lights) stays an Ultra feature.
 `RB_RASTER3D` (Solid), then `RB_RT3D` (Ultra). (That is the *menu* order; the
 enum's own declaration order differs — `RB_CLASSIC`=0, `RB_RT3D`=1, `RB_RASTER3D`=2
 — and `cycleOrder[]` deliberately decouples display order from enum value.) Stage 2
-splits this into **two controls**:
+splits this into **three controls** (two tier×RT axes plus a Stage-2 quality
+sub-setting):
 - **Renderer:** Classic / Solid / Ultra — selects the tier (art + lighting set).
 - **Ray Tracing: On / Off** — disabled in Classic; greyed out on a GPU lacking
   `VK_KHR_acceleration_structure` + `VK_KHR_ray_query` (INV-11).
+- **Upscaler:** TAAU / FSR 2 / FSR 3.1 — the Stage-2 image-reconstruction method for
+  the path-traced render (§4.4); the upscaler-*method* is settled (§4.4), while
+  spp/render-scale exposure stays open (§9).
 
 Because RT is now independent of the tier, the 3-value `rendermode_t` enum can no
 longer stand 1:1 for the player choice (it cannot express Ultra-with-RT-off). The
@@ -102,9 +106,9 @@ RT-off raster path, `RB_RT3D` = RT-on path-traced path); the **tier** (Solid/Ult
 becomes a separate art-and-lighting theme carried alongside it. The DOOM-0008 tier
 auto-probe and the `RB_SetMode` rebuild path (DOOM-0026/0051) are reused unchanged;
 only the menu gains the second axis plus a theme selector. The tier (Classic /
-Solid / Ultra) and the Ray-Tracing on/off toggle each persist as their own
-`m_misc.c` default, since the single `rendermode` value used today can no longer
-encode both axes. (Implementation detail, settled here so step 1's menu work has a
+Solid / Ultra), the Ray-Tracing on/off toggle, and the upscaler-method selector
+(§4.4) each persist as their own `m_misc.c` default, since the single `rendermode`
+value used today can no longer encode these axes. (Implementation detail, settled here so step 1's menu work has a
 target; not a product question.)
 
 **INV-9 (art-set agnostic):** the integrator and lighting code reference only the
@@ -144,8 +148,9 @@ pipeline path is a later option, not Stage 2). One dispatch over screen pixels.
   plumbing, and staging upload carried over; "1 atlas + manual UV-wrap" became "N
   images + native wrap".
   This is the seam DOOM-0042's HD PBR set plugs into (INV-9).
-- **Memory:** VMA (the many image/buffer allocations of the RT work). RADV AS
-  structures are fat (~137 B/tri vs ~45 on NVIDIA — estimate, confirm with RRA) —
+- **Memory:** VMA (Vulkan Memory Allocator; the many image/buffer allocations of the
+  RT work). RADV AS structures are fat (~137 B/tri vs ~45 on NVIDIA — estimate, confirm
+  with RRA, the Radeon Raytracing Analyzer) —
   trivial for one DOOM map, but budget VRAM for large external WADs and always
   compact.
 - **Colour:** light in **linear** space (sRGB→linear after the PLAYPAL lookup,
@@ -201,7 +206,7 @@ So split static from dynamic (the central performance lever):
   rather than a uniform world hash grid. DOOM sectors are exactly the regions of
   piecewise-constant lighting bounded by walls, so a few probes per subsector
   capture the low-frequency irradiance with far fewer probes and **no thin-wall
-  leak** (DDGI's failure mode). This *is* what the §4.1 bake fills. The *keying* by
+  leak** (the failure mode of DDGI — dynamic diffuse global illumination). This *is* what the §4.1 bake fills. The *keying* by
   `(subsector, height band)` is settled; the *storage granularity* (per-vertex
   irradiance vs per-subsector probe volume) is the §9 open item.
 - **Palette quantisation as a free denoiser:** when the vanilla-tint post pass is
@@ -215,18 +220,43 @@ importance sampling (power heuristic) · Lambertian diffuse + cosine sampling (G
 VNDF specular gated to measured need — matte DOOM art rarely needs it) · Russian-
 roulette termination + firefly clamp + NaN guards · **half-resolution indirect**
 trace reconstructed inside the denoiser's à-trous wavelet (biggest ms lever, near-
-free on matte art; start *straight* half-res, not checkerboard) · **A-SVGF** denoise (purpose-built for the muzzle-flash sudden-
-light case; clean-room from the paper, Q2RTX as readable GPL reference) · **FSR2**
-upscale last, decoupled, denoise-before-upscale, jitter-consistent. No ReSTIR in
+free on matte art; start *straight* half-res, not checkerboard) · **A-SVGF**
+(adaptive spatiotemporal variance-guided filtering) denoise (purpose-built for the
+muzzle-flash sudden-light case; clean-room from the paper, Q2RTX as readable GPL
+reference) · **upscale last** — decoupled, denoise-before-upscale, jitter-consistent
+(the upscaler is fed the same per-frame sub-pixel jitter the path tracer used). No ReSTIR in
 Stage 2 (few lights; its reservoirs are RDNA2's worst register case).
+
+**Upscaler — player-selectable method (2026-06-28 decision).** The final upscale is a
+settings axis, not a fixed choice: **custom TAAU** (temporal anti-aliasing upsampling) ·
+**FSR 2** · **FSR 3.1** (AMD FidelityFX Super Resolution). All three consume the *same*
+engine inputs (motion vectors + depth + jitter + exposure), so the upscale plumbing is
+built once (for TAAU) and each FSR backend is then wired behind that same resource
+contract. Offering both FSR generations is a *player look/cost preference*, not a fixed
+quality ladder (FSR 2 tends sharper/more-aliased, FSR 3.1 more temporally stable); their
+relative GPU cost on the RX 6600 is **measured in the step-7 perf pass** (§8), not assumed
+here — note the well-known FSR 3 cost is *frame generation* (deferred below), not the
+upscaler, so "FSR 2 is lighter" is not assumed without measurement. **FSR 3.1** is the
+current FidelityFX Super Resolution upscaler (the exact FidelityFX SDK version is pinned
+at integration, per the latest-dependency rule) and the recommended default on the
+RX 6600 (RDNA2, the §8 target); **FSR 4** is RDNA4-exclusive (ML, hardware-gated — per
+AMD's stated FSR 4 requirements) and therefore not an option on this GPU, so FSR 3.1 is
+the ceiling here. The selected method persists as its own `m_misc.c` default alongside
+the tier + RT axes (§2). **Frame generation is explicitly out of scope for DOOM-0009:**
+FSR 3's frame-gen hooks the present/swapchain, needs HUD/UI composition handling, and is
+coupled to frame pacing — none of which has a clean seam while the engine is present-
+locked to the 35 Hz tic. It ships as its own roadmap item gated behind the render-rate
+decouple (DOOM-0048), not here. The upscaler integrates the FidelityFX SDK (MIT-licensed,
+GPL-v2-compatible — confirm against the SDK LICENSE at integration).
 
 ## 5. Shading curves (Vestige Formula Workbench)
 
 **INV-7 (no magic constants):** every numerical tuning curve in the path-tracer
 shaders traces to a Workbench-exported `linuxdoom-1.10/shaders/formulas/*.glsl`
-artifact (that `formulas/` directory is created during build steps 3/6 — it does
-not exist yet; today `linuxdoom-1.10/shaders/` holds only the Stage-1 mesh/overlay
-shaders) (safe-math NaN-guarded), compiled by `glslc` and committed; coefficient
+artifact (that `formulas/` directory was created during build steps 3/6 and now
+exists — `formulas.glsl` + `pbr_neutral_tonemap.glsl` alongside the path-tracer and
+denoiser shaders under `linuxdoom-1.10/shaders/`) (safe-math NaN-guarded), compiled
+by `glslc` and committed; coefficient
 drift is regression-locked by the Workbench harness. Curves to author there:
 GGX/VNDF sample+PDF, cosine-hemisphere PDF, MIS power-heuristic weight, Russian-
 roulette survival probability, A-SVGF temporal-blend α + edge-stopping weights,
@@ -248,7 +278,7 @@ with different meanings — don't conflate across specs.)
   converged accumulation matches a brute-force reference within a small relative-
   MSE tolerance. **Acceptance bar (spec-chosen, not a research-doc figure): ≤ 0.5%
   rel-MSE** on the white-furnace + a reference Cornell-style DOOM room (a small
-  test scene this spec's implementer authors), measured against a **4096-spp
+  test scene this spec's implementer authors), measured against a **4096-samples-per-pixel (spp)
   brute-force reference** (the offline convergence point the 1-spp + temporal
   result is compared to; raise it if 4096 itself still shows visible noise). This
   is the threshold DOOM-0008 INV-6 explicitly defers here.
@@ -280,8 +310,11 @@ with different meanings — don't conflate across specs.)
    activity, composited over the baked static. Verify: a muzzle-flash shadow whose
    *direction tracks the muzzle position* as the player rotates (a positionless
    screen-brighten would fail this — it guards the §4.1 derivation).
-6. **Half-res indirect + A-SVGF** (§4.4), then **FSR2**. Verify: stable image, no
-   ghosting on a muzzle flash.
+6. **Half-res indirect + A-SVGF** (§4.4), then **upscale** (player-selectable
+   TAAU / FSR 2 / FSR 3.1, §4.4; frame generation excluded — DOOM-0048). Verify: stable
+   image; no visible trailing/smearing of
+   the flash highlight in the frames after it ends (the A-SVGF history clamp),
+   screenshot-compared frame N vs N+3.
 7. **Perf pass** toward the 60 FPS floor; reassess a runtime hash cache + optional
    ReSTIR GI against measured noise (this tips into Stage 3 / DOOM-0012).
 
@@ -319,8 +352,10 @@ traversal speedups are RDNA3/4-only, per the research doc).
   to DOOM-0043): brightest-texel vs a fitted directional — defer to DOOM-0043
   (deliberate scene lights) if the procedural sun suffices for Stage 2.
 - **Quality sub-setting** (gates the **step-1 menu rework**, else deferred to
-  DOOM-0012): whether the "Ray Tracing" toggle also exposes spp / render-scale in
-  Stage 2.
+  DOOM-0012): the **upscaler-method** selector (TAAU / FSR 2 / FSR 3.1) is *settled*
+  in §4.4 (the menu axis lands with the step-1 menu rework; the upscale backends wire in
+  build step 6); the still-open part is whether the "Ray Tracing"
+  toggle also exposes spp / render-scale in Stage 2.
 
 ---
 
@@ -383,3 +418,4 @@ each pass briefed cold.
 
 *(Edited surface converged: doc-vs-code clean, no CRITICAL/HIGH left on the §2
 model. No prior-pass findings handed to reviewers — each pass cold.)*
+- **2026-06-28 — §4.4 upscaler-method decision (2 cold passes, 2 lanes each)** — Recorded the player-selectable upscaler decision (custom TAAU / FSR 2 / FSR 3.1; frame-gen deferred to DOOM-0088, gated behind DOOM-0048). Loop 1 (2 lanes): 1 HIGH (§9 dangling "build step 6-d" — §7 has flat steps 1-7), 2 MED (§2 upscaler axis dangling; "no ghosting" untestable), several LOW (A-SVGF/spp/TAAU/FSR/VMA/RRA/DDGI unexpanded; FSR currency/license referents; jitter-consistent undefined). All verified + fixed. Loop 2 (2 lanes): loop-1 fixes held (none resurfaced); surfaced introduced-by-edit nits (m_misc 2-vs-3 defaults, "step 6 perf pass" → step 7, §7-6 frame-gen echo) — all fixed — plus PRE-EXISTING drift orthogonal to the upscaler decision: spec stale vs shipped 6a/6b (formulas/ now exists — fixed; build-step statuses, §2 tier×RT prose repeated 3-4x, A-SVGF vs svgf_* shader naming) — bundled onto DOOM-0081. Per user direction (move on when only verified polish remains, no structural/architectural findings), stopped the loop.

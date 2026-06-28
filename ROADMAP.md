@@ -730,6 +730,15 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Three small wording/accuracy tidy-ups in the path-tracer design doc, found during review but not urgent.
   Kind: doc-fix.
   Source: cold-eyes-2026-06-27 (DOOM-0009 §2 revision, lane A residuals).
+  Progress (2026-06-28): the 2026-06-28 §4.4 upscaler-decision cold-eyes
+  pass surfaced more pre-existing DOOM-0009 spec drift to bundle here: (1) build-
+  step statuses are stale — §7 marks only step 1 shipped while steps 2-6 (BLAS/
+  TLAS, NEE, GI bake, dynamic delta, SVGF 6a/6b) are implemented on disk; (2) §2's
+  tier×RT contract prose is restated 3-4x (lines ~40-116) — candidate for a
+  collapse; (3) "A-SVGF" (spec) vs the shipped svgf_* shader names — add a one-line
+  note that the adaptive anti-ghosting ("A") lands in step 6, or reconcile the name;
+  (4) INV-6's "raise spp if 4096 shows visible noise" escape clause is subjective.
+  The §5 formulas/ "does not exist yet" staleness was fixed inline this session.
 
 - 📋 [DOOM-0082] **Activated switches/buttons emit a faint coloured glow (red buttons glow red).**
   Folds into the DOOM-0009 path-tracer emitter work (build step 3b/3c). The
@@ -772,3 +781,14 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** The DOOM logo, title/intermission pictures and menu text are still tiny 1993-resolution images, so they look blocky on a big modern screen. This swaps in sharp, high-resolution versions while keeping the option of the original look.
   Kind: enhancement.
   Source: user-request-2026-06-28.
+
+- 📋 [DOOM-0088] **FSR 3 frame generation (interpolated frames), gated behind DOOM-0048.**
+  Deferred out of DOOM-0009 by the 2026-06-28 §4.4 decision. FSR 3 frame
+  generation is invasive (proxy swapchain, HUD/UI composition handling, frame
+  pacing) and has no clean seam while the engine is present-locked to the 35 Hz
+  tic. HARD-GATED behind DOOM-0048 (decouple render rate). The RX 6600 (RDNA2)
+  supports it (vendor-agnostic, shader-based). Distinct from the upscaler axis
+  (TAAU / FSR 2 / FSR 3.1) which ships in DOOM-0009 step 6.
+  **Layman:** An optional mode that inserts AI-guessed in-between frames to make motion look smoother — kept separate from the sharpness upscaler, and only after the engine can render faster than the 35-times-a-second game clock.
+  Kind: feature.
+  Source: in-session-2026-06-28 (DOOM-0009 §4.4 upscaler decision).
