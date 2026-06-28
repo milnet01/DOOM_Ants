@@ -248,6 +248,20 @@ with friends.
   Kind: security.
   Source: ants-audit-2026-06-26.
 
+- 💭 [DOOM-0085] **Build a multiplayer system: restore networked co-op and deathmatch over a modern transport.**
+  Original DOOM shipped co-op + deathmatch via a peer-to-peer tick-synchronised (lockstep) model in d_net.c, talking to the network through the DoomCom seam in i_net.c — originally backed by IPX LAN (ipx/) or serial/modem (sersrc/). Those transports are dead on modern 64-bit Linux and sit outside the SDL2 build path (cf. DOOM-0035). Goal: replace only the transport (the i_net.c / DoomCom I/O layer) with modern UDP/IP sockets, keeping d_net.c's game-sync logic intact where possible. Baseline scope: faithful 2-4 player co-op + deathmatch over LAN/internet.
+  Open questions (settle in a spec when this leaves Considered): (a) topology — keep classic P2P lockstep, or move to client-server with input delay/prediction for internet latency; (b) player count beyond the original 4; (c) direct-connect + NAT traversal vs a discovery/matchmaking layer; (d) the simulation is render-tier-independent (INV-10), so lockstep determinism must hold identically in Classic/Solid/Ultra and per-frame AS/refit work must never enter the netgame tick. Needs a design spec + /cold-eyes before implementation (house rule 14). The legacy DOS drivers (ipx/, sersrc/) stay as historical reference, not a build target.
+  **Layman:** Bring back DOOM's classic multiplayer — co-op and deathmatch — but over today's internet/LAN instead of the dead 1990s LAN-cable and modem links. Parked for now; we'll design it properly when we reach it.
+  Kind: feature.
+  Source: user-request-2026-06-28.
+
+- 💭 [DOOM-0087] **Provide a map-authoring workflow / level editor for custom multiplayer WADs.**
+  Motivation: the stock single-player maps aren't built for deathmatch/co-op, so DOOM-0085 (multiplayer) wants purpose-made MP maps — which needs a way to author custom WADs. Recommended approach (simpler path first): DOOM_Ants runs standard DOOM-format WADs, and the vanilla engine already supports multiplayer maps — deathmatch player starts (g_game.c deathmatchstarts) and the multiplayer-only Thing flag (p_mobj.c:743, options & 16 skipped outside a netgame). So DM/co-op maps are authorable today with a mature FOSS editor (Ultimate Doom Builder, SLADE, or Eureka) exporting a normal WAD this engine loads. Realistic scope: (a) verify the engine cleanly loads + plays third-party editor output (DM starts + MP thing flags); (b) document the authoring workflow; only (c) build bespoke in-engine tooling if MP needs map data the standard format/editors can't express. A from-scratch editor duplicates excellent existing tools — last resort (house rule: reuse before rewriting).
+  Open: whether the 3D/RT tiers need map-side authoring data existing editors can't carry — e.g. RT light/emissive entities (cf. DOOM-0043/0084) or new linedef specials — which would be the one strong reason to build custom tooling. Pairs with DOOM-0085.
+  **Layman:** To play multiplayer on maps designed for it (the originals weren't), we need a way to make our own maps. Excellent DOOM map editors already exist, so the likely plan is to use one and make sure our engine loads its maps — building a brand-new editor only if our 3D lighting needs something those tools can't do.
+  Kind: feature.
+  Source: user-request-2026-06-28.
+
 ## Phase 2 — The Spin
 
 The creative overhaul: evolve the renderer toward true 3D with hardware
@@ -747,3 +761,10 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** The tall lamp stands, candles and burning barrels you see around the map are separate objects, not part of the walls or floor — so the new lighting doesn't treat them as lights yet. This makes them glow and cast light like the ceiling lights already do.
   Kind: enhancement.
   Source: user-observation-2026-06-27 (3c-1 visual verify: lamp stands not lit).
+
+- 💭 [DOOM-0086] **Increase the resolution of the title screens and in-game menu graphics.**
+  DOOM's title/intermission screens (TITLEPIC, INTERPIC, the M_DOOM logo) and menu graphics (M_* patches, the menu/HUD fonts) are 320x200-era paletted lumps. With the hi-res framebuffer (DOOM-0027, 640x400) and the 3D tiers they are point-upscaled and visibly blocky. Goal: supply higher-resolution replacement art for the title/intermission screens and menu/HUD patches, drawn at native display resolution instead of upscaled from the 320x200 lumps. Likely a parallel-asset set selectable alongside the originals (same rule as DOOM-0042's HD art and DOOM-0026's Classic toggle), so the authentic low-res look is preserved.
+  Open: sourcing the art (hand-authored / AI-upscaled originals — id's art cannot ship, cf. DOOM-0042), and the draw path (load hi-res patches + a higher-res font, or render menu text via a scalable font). Distinct from DOOM-0045 (menu compositing in 3D) and DOOM-0053/0055 (hi-res ghosting/smearing fixes), which concern where/whether the existing low-res art draws, not its resolution.
+  **Layman:** The DOOM logo, title/intermission pictures and menu text are still tiny 1993-resolution images, so they look blocky on a big modern screen. This swaps in sharp, high-resolution versions while keeping the option of the original look.
+  Kind: enhancement.
+  Source: user-request-2026-06-28.
