@@ -1,0 +1,71 @@
+#version 460
+//
+// DOOM-0009 path tracer — build step 6a: SVGF composite (final pass).
+//
+// Re-modulates the denoised, albedo-demodulated illumination by the stored
+// surface albedo, re-adds crisp self-emission (never denoised, so light sources
+// stay sharp), then tonemaps with the SAME exposure -> Khronos PBR-Neutral ->
+// sRGB operator as the live mode-4 path and writes the swapchain-bound storage
+// image the present path blits. Sky pixels carry their stored linear colour
+// straight through the tonemap.
+//
+#extension GL_EXT_buffer_reference     : require
+#extension GL_EXT_scalar_block_layout  : require
+#extension GL_GOOGLE_include_directive : require
+
+#include "formulas/formulas.glsl"
+#include "formulas/pbr_neutral_tonemap.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0, rgba32f) uniform image2D gpos[2];    // .w = matId (<0 sky)
+layout(set = 0, binding = 2, rgba16f) uniform image2D galbedo;    // surface albedo
+layout(set = 0, binding = 6, rgba16f) uniform image2D atrous[2];  // denoised illum
+layout(set = 0, binding = 7, rgba8)   uniform image2D outColor;   // swapchain blit source
+
+// Per-material Le table (3 floats/material, linear RGB), same buffer the trace
+// reads for self-emission — passed by device address so the composite needs no
+// material descriptor set.
+layout(buffer_reference, scalar) readonly buffer MatEmis { float m[]; };
+
+layout(push_constant) uniform PC {
+    vec4  prevPos; vec4 prevDir; vec4 prevRight; vec4 prevUp;
+    uvec4 misc;   // x = cur parity, y = width, z = height, w = final a-trous source index
+    uvec4 misc2;
+    uvec4 misc3;
+    MatEmis matEmis;
+} pc;
+
+const float EXPOSURE_EV = -2.25;   // matches pathtrace.comp toneEncode
+
+vec3 toneEncode(vec3 L)
+{
+    L = max(L, vec3(0.0)) * exposureEv(EXPOSURE_EV);
+    L = pbrNeutralToneMapping(L);
+    return vec3(linearToSrgb(L.r), linearToSrgb(L.g), linearToSrgb(L.b));
+}
+
+void main()
+{
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    int   w = int(pc.misc.y), h = int(pc.misc.z);
+    if (p.x >= w || p.y >= h) return;
+    uint cur = pc.misc.x, fin = pc.misc.w;
+
+    vec4 gp    = imageLoad(gpos[cur], p);
+    vec3 illum = imageLoad(atrous[fin], p).rgb;
+
+    vec3 L;
+    if (gp.w < 0.0) {
+        L = illum;                                  // sky: stored linear colour
+    } else {
+        vec3 albedo = imageLoad(galbedo, p).rgb;
+        uint id = uint(gp.w + 0.5);
+        vec3 emis = vec3(pc.matEmis.m[id * 3u + 0u],
+                         pc.matEmis.m[id * 3u + 1u],
+                         pc.matEmis.m[id * 3u + 2u]);
+        L = albedo * illum + emis;
+    }
+    if (any(isnan(L)) || any(isinf(L))) L = vec3(0.0);
+    imageStore(outColor, p, vec4(toneEncode(L), 1.0));
+}

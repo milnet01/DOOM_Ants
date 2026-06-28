@@ -39,7 +39,9 @@ O=linux
 SHADER_DIR=shaders
 SHADER_SRCS=$(SHADER_DIR)/mesh.vert $(SHADER_DIR)/mesh.frag \
 		$(SHADER_DIR)/overlay.vert $(SHADER_DIR)/overlay.frag \
-		$(SHADER_DIR)/pathtrace.comp $(SHADER_DIR)/bake.comp
+		$(SHADER_DIR)/pathtrace.comp $(SHADER_DIR)/bake.comp \
+		$(SHADER_DIR)/svgf_temporal.comp $(SHADER_DIR)/svgf_atrous.comp \
+		$(SHADER_DIR)/svgf_composite.comp $(SHADER_DIR)/label.comp
 SHADER_HDRS=$(SHADER_SRCS:=.spv.h)
 
 # not too sophisticated dependency
@@ -110,6 +112,8 @@ OBJS=				\
 		$(O)/info.o				\
 		$(O)/sounds.o
 
+.PHONY:	all clean windows test nee-test
+
 all:	 $(O)/$(BIN)
 
 clean:
@@ -118,13 +122,36 @@ clean:
 	rm -f $(SHADER_DIR)/*.spv $(SHADER_DIR)/*.spv.h
 
 # ---- Unit tests ----
-# nee-test (DOOM-0009 step 3c-3): prove the power-importance NEE emitter sampling
-# (build step 3c-2) is unbiased. Self-contained — compiles tests/nee_sampling_test
-# .cpp, which includes nee_sampling.h (the SAME table/selection math the emitter
-# builder and pathtrace.comp use). No WAD, no GPU, no Vulkan link; just builds + runs.
-nee-test:	tests/nee_sampling_test.cpp nee_sampling.h
-	$(CXX) $(CXXFLAGS) tests/nee_sampling_test.cpp -o $(O)/nee_sampling_test
+# Every tests/*_test.cpp is a self-contained unit test (includes the header under
+# test; no WAD, no GPU, no Vulkan link). Built to its own binary under $(O), so the
+# set scales without the build getting longer:
+#   * incremental — a test binary is a real file target, recompiled only when its
+#     source or (via the auto-generated .d header deps) an included header changes.
+#     Unchanged tests are skipped, so `make test` stays cheap as tests are added.
+#   * parallel — `make -j test` compiles every test concurrently (then runs them).
+#   * fast at runtime — -O2 (these CPU-only tests do millions of iterations; the
+#     optimisation is free speed since test code never ships).
+# Adding a test is one file: drop tests/<name>_test.cpp in — no Makefile edit.
+TEST_SRCS=$(wildcard tests/*_test.cpp)
+TEST_BINS=$(TEST_SRCS:tests/%.cpp=$(O)/%)
+TEST_CXXFLAGS=$(CXXFLAGS) -O2 -MMD -MP
+
+$(O)/%_test:	tests/%_test.cpp
+	$(CXX) $(TEST_CXXFLAGS) $< -o $@
+
+# Build all tests (parallel-friendly: the binaries are prerequisites, so -j builds
+# them concurrently) then run each. A non-zero exit from any test fails the target.
+test:	$(TEST_BINS)
+	@for t in $(TEST_BINS); do echo "== $$t =="; $$t || exit 1; done
+
+# Back-compat alias for the original single test (now incremental — only rebuilds
+# tests/nee_sampling_test.cpp when it or nee_sampling.h changes).
+nee-test:	$(O)/nee_sampling_test
 	$(O)/nee_sampling_test
+
+# Auto-generated header dependencies for the tests (-MMD), so editing a shared
+# header under test rebuilds exactly the affected tests — no manual `make clean`.
+-include $(TEST_BINS:=.d)
 
 # Link with the C++ driver (g++) so libstdc++ is pulled in for the Vulkan
 # back-end. Linking the C objects this way is harmless.
@@ -175,8 +202,9 @@ $(SHADER_DIR)/%.spv.h:	$(SHADER_DIR)/%
 $(SHADER_DIR)/pathtrace.comp.spv.h $(SHADER_DIR)/bake.comp.spv.h: \
 		$(SHADER_DIR)/pt_common.glsl
 # pathtrace.comp also #includes the tone pipeline (Workbench-exported scalar curves
-# + the hand-written PBR-Neutral operator), step 4b-iii.
-$(SHADER_DIR)/pathtrace.comp.spv.h: \
+# + the hand-written PBR-Neutral operator), step 4b-iii. The SVGF composite reuses
+# the same tone operator (step 6a).
+$(SHADER_DIR)/pathtrace.comp.spv.h $(SHADER_DIR)/svgf_composite.comp.spv.h: \
 		$(SHADER_DIR)/formulas/formulas.glsl \
 		$(SHADER_DIR)/formulas/pbr_neutral_tonemap.glsl
 

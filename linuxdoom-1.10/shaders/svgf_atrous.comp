@@ -1,0 +1,98 @@
+#version 460
+//
+// DOOM-0009 path tracer — build step 6b: SVGF edge-aware a-trous wavelet.
+//
+// Second denoiser pass, run several times by the host (one dispatch per
+// iteration) with a doubling hole step (1, 2, 4, 8, 16). Each pass is a 5x5
+// cross-bilateral (B3-spline) blur of the demodulated illumination, edge-stopped
+// on three signals so it never smooths across real detail:
+//   * normal      — keeps separate faces apart,
+//   * world plane — keeps depth/silhouette edges apart,
+//   * luminance   — scaled by the per-pixel variance (SVGF), so converged regions
+//                   filter little and noisy/disoccluded regions filter hard.
+// Variance is filtered with the squared weights, the SVGF estimator for the next
+// iteration's luminance edge-stop. Iteration 0 also writes its result to the
+// colour history (hcol[cur]) — the temporal pass reprojects that next frame.
+//
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0, rgba32f) uniform image2D gpos[2];
+layout(set = 0, binding = 1, rgba16f) uniform image2D gnorm[2];
+layout(set = 0, binding = 4, rgba16f) uniform image2D hcol[2];
+layout(set = 0, binding = 6, rgba16f) uniform image2D atrous[2];
+
+layout(push_constant) uniform PC {
+    vec4  prevPos; vec4 prevDir; vec4 prevRight; vec4 prevUp;
+    uvec4 misc;   // x = cur parity, y = width, z = height, w = hole step
+    uvec4 misc2;  // x = ping (source index), y = iter
+    uvec4 misc3;
+} pc;
+
+float lum(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+
+void main()
+{
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    int   w = int(pc.misc.y), h = int(pc.misc.z);
+    if (p.x >= w || p.y >= h) return;
+    uint cur  = pc.misc.x;
+    int  step = int(pc.misc.w);
+    uint ping = pc.misc2.x, pong = ping ^ 1u;
+
+    vec4 gp = imageLoad(gpos[cur], p);
+    vec4 c  = imageLoad(atrous[ping], p);
+
+    // Sky: passthrough (and seed the colour history on the first iteration).
+    if (gp.w < 0.0) {
+        imageStore(atrous[pong], p, c);
+        if (pc.misc2.y == 0u) imageStore(hcol[cur], p, vec4(c.rgb, 0.0));
+        return;
+    }
+
+    vec3  nC   = imageLoad(gnorm[cur], p).xyz;
+    vec3  posC = gp.xyz;
+    float lC   = lum(c.rgb);
+
+    const float kern[3] = float[3](1.0, 2.0 / 3.0, 1.0 / 6.0);  // B3-spline row
+    const float sigN = 64.0;   // normal sharpness
+    const float sigZ = 1.0;    // plane-distance falloff (relative, scale-free)
+    const float sigL = 4.0;    // luminance falloff (x sqrt variance)
+
+    float lStd = sqrt(max(c.a, 1e-8));
+
+    float wCen = kern[0] * kern[0];
+    vec3  sum  = c.rgb * wCen;
+    float sumV = c.a   * (wCen * wCen);
+    float wsum  = wCen;
+    float wsum2 = wCen * wCen;
+
+    for (int dy = -2; dy <= 2; dy++)
+    for (int dx = -2; dx <= 2; dx++) {
+        if (dx == 0 && dy == 0) continue;
+        ivec2 q = p + ivec2(dx, dy) * step;
+        if (q.x < 0 || q.y < 0 || q.x >= w || q.y >= h) continue;
+
+        vec4 gq = imageLoad(gpos[cur], q);
+        if (gq.w < 0.0) continue;                  // skip sky neighbours
+        vec4 cq = imageLoad(atrous[ping], q);
+        vec3 nq = imageLoad(gnorm[cur], q).xyz;
+
+        float wN = pow(max(dot(nC, nq), 0.0), sigN);
+        float planeD  = abs(dot(posC - gq.xyz, nC));
+        float spanD   = length(posC - gq.xyz);
+        float wZ = exp(-planeD / (sigZ * spanD + 1e-3));     // 1 if coplanar
+        float wL = exp(-abs(lC - lum(cq.rgb)) / (sigL * lStd + 1e-3));
+
+        float hk  = kern[abs(dx)] * kern[abs(dy)];
+        float wgt = hk * wN * wZ * wL;
+        sum   += cq.rgb * wgt;
+        sumV  += cq.a   * wgt * wgt;
+        wsum  += wgt;
+        wsum2 += wgt * wgt;
+    }
+
+    vec3  outC = sum  / max(wsum,  1e-6);
+    float outV = sumV / max(wsum2, 1e-6);
+    imageStore(atrous[pong], p, vec4(outC, outV));
+    if (pc.misc2.y == 0u) imageStore(hcol[cur], p, vec4(outC, 0.0));
+}

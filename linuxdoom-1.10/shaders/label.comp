@@ -1,0 +1,78 @@
+#version 460
+//
+// DOOM-0009 — on-screen path-tracer mode label (debug aid).
+//
+// Stamps a short uppercase title top-centre into the traced image (rtImage) just
+// before the present blit, so it is obvious which `~` path-tracer mode is active
+// (the trace path skips the normal HUD). Runs for every RT display frame; only the
+// label box pixels are written, the rest of the image is left untouched. The host
+// passes pre-mapped glyph indices (no per-char logic here). Embedded 5x7 font.
+//
+layout(local_size_x = 8, local_size_y = 8) in;
+
+// Re-uses the SVGF descriptor set's output binding (binding 7 = the rtImage view).
+layout(set = 0, binding = 7, rgba8) uniform image2D outColor;
+
+layout(push_constant) uniform PC {
+    uint w, h, count, scale;
+    uint chars[12];        // glyph indices (see FONT order), `count` valid
+} pc;
+
+// 16 glyphs in a fixed order shared with the host: 0=space, then
+// A C D E F H I N O R S T U X Y. Each glyph is 7 rows top->bottom, each row a
+// 5-bit column mask (bit 4 = leftmost column).
+const uint FONT[112] = uint[112](
+    0x00,0x00,0x00,0x00,0x00,0x00,0x00,   // space
+    0x0E,0x11,0x11,0x1F,0x11,0x11,0x11,   // A
+    0x0E,0x11,0x10,0x10,0x10,0x11,0x0E,   // C
+    0x1E,0x11,0x11,0x11,0x11,0x11,0x1E,   // D
+    0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F,   // E
+    0x1F,0x10,0x10,0x1E,0x10,0x10,0x10,   // F
+    0x11,0x11,0x11,0x1F,0x11,0x11,0x11,   // H
+    0x1F,0x04,0x04,0x04,0x04,0x04,0x1F,   // I
+    0x11,0x19,0x15,0x13,0x11,0x11,0x11,   // N
+    0x0E,0x11,0x11,0x11,0x11,0x11,0x0E,   // O
+    0x1E,0x11,0x11,0x1E,0x14,0x12,0x11,   // R
+    0x0F,0x10,0x10,0x0E,0x01,0x01,0x1E,   // S
+    0x1F,0x04,0x04,0x04,0x04,0x04,0x04,   // T
+    0x11,0x11,0x11,0x11,0x11,0x11,0x0E,   // U
+    0x11,0x11,0x0A,0x04,0x0A,0x11,0x11,   // X
+    0x11,0x11,0x0A,0x04,0x04,0x04,0x04    // Y
+);
+
+void main()
+{
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (p.x >= int(pc.w) || p.y >= int(pc.h)) return;
+
+    uint sc = max(pc.scale, 1u);
+    uint cw = 6u * sc;                         // 5-px glyph + 1-px gap, scaled
+    int  labelW = int(pc.count * cw);
+    int  x0 = (int(pc.w) - labelW) / 2;        // centred
+    int  y0 = int(8u * sc);                    // top margin
+    int  gh = int(7u * sc);
+    int  pad = int(2u * sc);
+
+    // Only touch the label box; leave the rest of the traced frame alone.
+    if (p.x < x0 - pad || p.x >= x0 + labelW + pad ||
+        p.y < y0 - pad || p.y >= y0 + gh + pad)
+        return;
+
+    bool ink = false;
+    int  rx = p.x - x0, ry = p.y - y0;
+    if (rx >= 0 && ry >= 0 && ry < gh) {
+        uint ci = uint(rx) / cw;
+        if (ci < pc.count) {
+            uint inX = uint(rx) % cw;
+            if (inX < 5u * sc) {
+                uint col = inX / sc;           // 0..4 (left->right)
+                uint row = uint(ry) / sc;      // 0..6
+                uint g   = pc.chars[ci];
+                uint msk = FONT[g * 7u + row];
+                ink = ((msk >> (4u - col)) & 1u) != 0u;
+            }
+        }
+    }
+    // White glyphs on a black plate (legible over bright or dark scenes).
+    imageStore(outColor, p, ink ? vec4(1.0) : vec4(0.0, 0.0, 0.0, 1.0));
+}

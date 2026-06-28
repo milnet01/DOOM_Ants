@@ -297,12 +297,26 @@ static void I_GetEvent(SDL_Event* sdlevent)
       case SDL_KEYDOWN:
 	// Backquote/tilde (`~`) cycles the path-tracer debug view (DOOM-0009):
 	// off -> intersection -> white-furnace -> textured (3a) -> NEE direct
-	// lighting (3c). Not a DOOM key, so flip the renderer flag directly instead
-	// of posting an event; the Vulkan present path reads it, no-op without RT.
+	// lighting (3c, mode 4) -> SVGF denoised (step 6, mode 6). Mode 5 is the
+	// headless -rtverify path, so it is skipped in the cycle. Not a DOOM key, so
+	// flip the renderer flag directly instead of posting an event; the Vulkan
+	// present path reads it, no-op without RT.
 	if (sdlevent->key.keysym.sym == SDLK_BACKQUOTE && !sdlevent->key.repeat)
 	{
 	    extern int rb_rtdebug;          // r_vulkan.cpp
-	    rb_rtdebug = (rb_rtdebug + 1) % 5;
+	    rb_rtdebug++;
+	    if      (rb_rtdebug == 5) rb_rtdebug = 6;   // skip the verify-only mode
+	    else if (rb_rtdebug > 6)  rb_rtdebug = 0;
+	    {
+		// Terminal proof of the active mode (the on-screen top-centre title
+		// is the in-game proof; this mirrors it for headless/log debugging).
+		static const char* const names[] = {
+		    "OFF (raster)", "HITS/normals", "white furnace",
+		    "textured", "NEE direct (noisy)", "(verify)", "DENOISED (SVGF)"
+		};
+		printf("RT debug mode %d: %s\n", rb_rtdebug, names[rb_rtdebug]);
+		fflush(stdout);
+	    }
 	    break;
 	}
 	event.type = ev_keydown;

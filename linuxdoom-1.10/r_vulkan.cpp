@@ -55,6 +55,10 @@
 #include "shaders/overlay.frag.spv.h"
 #include "shaders/pathtrace.comp.spv.h"
 #include "shaders/bake.comp.spv.h"
+#include "shaders/svgf_temporal.comp.spv.h"
+#include "shaders/svgf_atrous.comp.spv.h"
+#include "shaders/svgf_composite.comp.spv.h"
+#include "shaders/label.comp.spv.h"
 
 // Tier values returned by RB_VulkanProbe — kept numerically in lockstep with
 // rendermode_t in r_backend.h (RB_CLASSIC=0, RB_RT3D=1, RB_RASTER3D=2). The
@@ -174,6 +178,15 @@ extern "C" [[noreturn]] void I_Error(const char* error, ...);
 extern "C" int M_CheckParm(const char* check);   // m_argv.c — for -rtverify (step 4d)
 
 namespace {
+
+// SVGF denoiser images (DOOM-0009 build step 6), indices into g.svImg/svMem/svView.
+// gpos/gnorm/hcol/hmom/atrous ping-pong (2 each); albedo/illum are current-frame
+// only. gpos is rgba32f (world position needs the precision + holds matId exactly);
+// all others are rgba16f.
+enum {
+    SV_GPOS0, SV_GPOS1, SV_GNORM0, SV_GNORM1, SV_ALBEDO, SV_ILLUM,
+    SV_HCOL0, SV_HCOL1, SV_HMOM0, SV_HMOM1, SV_ATROUS0, SV_ATROUS1, SV_COUNT
+};
 
 struct VulkanState
 {
@@ -361,6 +374,32 @@ struct VulkanState
     VkImageView    rtAccumView = VK_NULL_HANDLE;
     VkBuffer       rtReadback  = VK_NULL_HANDLE;   // host-visible copy target
     VkDeviceMemory rtReadbackMem = VK_NULL_HANDLE;
+
+    // SVGF denoiser (DOOM-0009 build step 6). Swapchain-sized G-buffer + history
+    // images (recreated with the swapchain), one shared descriptor set, and three
+    // compute pipelines (temporal accumulation 6a, edge-aware a-trous 6b, composite
+    // 6a). The feed is pathtrace.comp mode 6 (writes set 2 = svgfDs). Only exercised
+    // by the mode-6 display path (the `~` toggle's denoised view); RT-gated.
+    VkImage        svImg[SV_COUNT]  = {};
+    VkDeviceMemory svMem[SV_COUNT]  = {};
+    VkImageView    svView[SV_COUNT] = {};
+    VkDescriptorSetLayout svgfDsLayout   = VK_NULL_HANDLE;
+    VkDescriptorPool      svgfDsPool     = VK_NULL_HANDLE;
+    VkDescriptorSet       svgfDs         = VK_NULL_HANDLE;
+    VkPipelineLayout      svgfPipeLayout = VK_NULL_HANDLE;
+    VkPipeline            svgfTemporal   = VK_NULL_HANDLE;
+    VkPipeline            svgfAtrous     = VK_NULL_HANDLE;
+    VkPipeline            svgfComposite  = VK_NULL_HANDLE;
+    // On-screen path-tracer mode label (debug). Re-uses svgfDsLayout (binding 7 =
+    // rtImage) with its own push range; stamps the mode title before the blit.
+    VkPipelineLayout      labelPipeLayout = VK_NULL_HANDLE;
+    VkPipeline            labelPipeline   = VK_NULL_HANDLE;
+    uint32_t svgfFrame = 0;                       // parity counter for the history ping-pong
+    // Previous denoised frame's camera basis, for the temporal reprojection.
+    float prevCamPos[3]   = {};
+    float prevCamDir[3]   = {};
+    float prevCamRight[4] = {};                   // w = tan(hFov/2)
+    float prevCamUp[4]    = {};                   // w = tan(vFov/2)
 
     // GI bake compute pass (DOOM-0009 build step 4b-ii). Its own descriptor set
     // (TLAS only — no output image) + pipeline; set 1 (materials) is shared with
@@ -704,6 +743,17 @@ void PickPhysicalAndDevice()
     g.wireSupported = have2.features.fillModeNonSolid;
     VkPhysicalDeviceFeatures enableBase = {};
     enableBase.fillModeNonSolid = g.wireSupported ? VK_TRUE : VK_FALSE;
+    // The SVGF denoiser (DOOM-0009 step 6) indexes storage-image ARRAYS by a
+    // runtime (dynamically-uniform) parity — gpos[cur], atrous[ping], hcol[prev].
+    // That needs shaderStorageImageArrayDynamicIndexing; without it the index
+    // silently collapses to 0 on some drivers, degenerating the temporal + a-trous
+    // ping-pong (the denoiser becomes a no-op). Near-universal on RT-class GPUs;
+    // request it when present, warn (don't fail) if absent — only mode 6 needs it.
+    if (have2.features.shaderStorageImageArrayDynamicIndexing)
+        enableBase.shaderStorageImageArrayDynamicIndexing = VK_TRUE;
+    else if (g.rtEnabled)
+        printf("RB_Vulkan: WARNING — no shaderStorageImageArrayDynamicIndexing; "
+               "the SVGF denoiser (~ mode 6) will not function.\n");
 
     VkDeviceCreateInfo dci = {};
     dci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -1335,14 +1385,17 @@ void CreateRtComputePipeline()
     pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pcr.offset     = 0;
     pcr.size       = 152;
-    // Two sets: 0 = RT (TLAS + output image), 1 = the raster materials set
+    // Three sets: 0 = RT (TLAS + output image), 1 = the raster materials set
     // (g.dsLayout: PLAYPAL LUT + bindless material array), reused verbatim so the
-    // textured trace (step 3a) decodes surfaces with no parallel material path.
-    // g.dsLayout is created by CreateDescriptors, which Init runs before this.
-    VkDescriptorSetLayout setLayouts[2] = { g.rtDsLayout, g.dsLayout };
+    // textured trace (step 3a) decodes surfaces with no parallel material path,
+    // 2 = the SVGF denoiser G-buffer (step 6; mode 6 writes its feed half). The
+    // megakernel statically references set 2 (mode 6), so EVERY dispatch of this
+    // pipeline must bind all three sets — RecordRtTrace + RB_RtVerify both do.
+    // g.dsLayout + g.svgfDsLayout are created before this (Init order).
+    VkDescriptorSetLayout setLayouts[3] = { g.rtDsLayout, g.dsLayout, g.svgfDsLayout };
     VkPipelineLayoutCreateInfo plci = {};
     plci.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    plci.setLayoutCount         = 2;
+    plci.setLayoutCount         = 3;
     plci.pSetLayouts            = setLayouts;
     plci.pushConstantRangeCount = 1;
     plci.pPushConstantRanges    = &pcr;
@@ -1507,6 +1560,265 @@ void CreateBakePipeline()
 // blit reads. R8G8B8A8_UNORM so vkCmdBlitImage matches components by name into
 // the B8G8R8A8 swapchain with no red/blue swap. STORAGE (compute) + TRANSFER_SRC
 // (blit). RT-only.
+// SVGF descriptor-set layout (DOOM-0009 build step 6). Created BEFORE the
+// path-trace pipeline (whose layout references it as set 2). One set shared by the
+// megakernel's mode-6 feed and all three denoiser passes: eight storage-image
+// bindings, the ping-pong targets as 2-element arrays the shaders index by parity.
+void CreateSvgfDescriptorLayout()
+{
+    const uint32_t counts[8] = { 2, 2, 1, 1, 2, 2, 2, 1 };   // gpos,gnorm,albedo,illum,hcol,hmom,atrous,out
+    VkDescriptorSetLayoutBinding b[8] = {};
+    uint32_t total = 0;
+    for (uint32_t i = 0; i < 8; i++) {
+        b[i].binding         = i;
+        b[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        b[i].descriptorCount = counts[i];
+        b[i].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+        total += counts[i];
+    }
+    VkDescriptorSetLayoutCreateInfo dlci = {};
+    dlci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    dlci.bindingCount = 8;
+    dlci.pBindings    = b;
+    Check(vkCreateDescriptorSetLayout(g.device, &dlci, nullptr, &g.svgfDsLayout),
+          "vkCreateDescriptorSetLayout(svgf)");
+
+    VkDescriptorPoolSize pool = {};
+    pool.type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    pool.descriptorCount = total;
+    VkDescriptorPoolCreateInfo pci = {};
+    pci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pci.maxSets       = 1;
+    pci.poolSizeCount = 1;
+    pci.pPoolSizes    = &pool;
+    Check(vkCreateDescriptorPool(g.device, &pci, nullptr, &g.svgfDsPool),
+          "vkCreateDescriptorPool(svgf)");
+
+    VkDescriptorSetAllocateInfo dai = {};
+    dai.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dai.descriptorPool     = g.svgfDsPool;
+    dai.descriptorSetCount = 1;
+    dai.pSetLayouts        = &g.svgfDsLayout;
+    Check(vkAllocateDescriptorSets(g.device, &dai, &g.svgfDs), "vkAllocateDescriptorSets(svgf)");
+}
+
+// The three SVGF compute pipelines (temporal accumulation, edge-aware a-trous,
+// composite), sharing one pipeline layout: set 0 = svgfDsLayout + a 120-byte push
+// range (the SvgfPC struct in RecordRtTrace). Created after the descriptor layout.
+void CreateSvgfPipelines()
+{
+    VkPushConstantRange pcr = {};
+    pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pcr.offset     = 0;
+    pcr.size       = 120;
+    VkPipelineLayoutCreateInfo plci = {};
+    plci.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plci.setLayoutCount         = 1;
+    plci.pSetLayouts            = &g.svgfDsLayout;
+    plci.pushConstantRangeCount = 1;
+    plci.pPushConstantRanges    = &pcr;
+    Check(vkCreatePipelineLayout(g.device, &plci, nullptr, &g.svgfPipeLayout),
+          "vkCreatePipelineLayout(svgf)");
+
+    struct { const unsigned char* code; unsigned len; VkPipeline* out; } passes[3] = {
+        { svgf_temporal_comp_spv,  svgf_temporal_comp_spv_len,  &g.svgfTemporal  },
+        { svgf_atrous_comp_spv,    svgf_atrous_comp_spv_len,    &g.svgfAtrous    },
+        { svgf_composite_comp_spv, svgf_composite_comp_spv_len, &g.svgfComposite },
+    };
+    for (auto& p : passes) {
+        VkShaderModule cs = MakeShader(p.code, p.len);
+        VkComputePipelineCreateInfo cpci = {};
+        cpci.sType        = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+        cpci.stage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        cpci.stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
+        cpci.stage.module = cs;
+        cpci.stage.pName  = "main";
+        cpci.layout       = g.svgfPipeLayout;
+        Check(vkCreateComputePipelines(g.device, VK_NULL_HANDLE, 1, &cpci, nullptr, p.out),
+              "vkCreateComputePipelines(svgf)");
+        vkDestroyShaderModule(g.device, cs, nullptr);
+    }
+}
+
+// On-screen RT mode label pipeline (debug). Re-uses svgfDsLayout (it already binds
+// rtImage at binding 7); its own pipeline layout carries the 64-byte label push.
+void CreateLabelPipeline()
+{
+    VkPushConstantRange pcr = {};
+    pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pcr.offset     = 0;
+    pcr.size       = 64;   // matches LabelPC in RecordRtTrace + label.comp
+    VkPipelineLayoutCreateInfo plci = {};
+    plci.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plci.setLayoutCount         = 1;
+    plci.pSetLayouts            = &g.svgfDsLayout;
+    plci.pushConstantRangeCount = 1;
+    plci.pPushConstantRanges    = &pcr;
+    Check(vkCreatePipelineLayout(g.device, &plci, nullptr, &g.labelPipeLayout),
+          "vkCreatePipelineLayout(label)");
+
+    VkShaderModule cs = MakeShader(label_comp_spv, label_comp_spv_len);
+    VkComputePipelineCreateInfo cpci = {};
+    cpci.sType        = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    cpci.stage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    cpci.stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
+    cpci.stage.module = cs;
+    cpci.stage.pName  = "main";
+    cpci.layout       = g.labelPipeLayout;
+    Check(vkCreateComputePipelines(g.device, VK_NULL_HANDLE, 1, &cpci, nullptr, &g.labelPipeline),
+          "vkCreateComputePipelines(label)");
+    vkDestroyShaderModule(g.device, cs, nullptr);
+}
+
+// Map an RT debug mode to its on-screen title as label.comp glyph indices (font
+// order: 0=space, A C D E F H I N O R S T U X Y). Returns the character count.
+uint32_t ModeLabel(int mode, uint32_t* out)
+{
+    // Indices: A1 C2 D3 E4 F5 H6 I7 N8 O9 R10 S11 T12 U13 X14 Y15.
+    static const uint32_t HITS[]     = { 6,7,12,11 };               // mode 1
+    static const uint32_t FURNACE[]  = { 5,13,10,8,1,2,4 };         // mode 2
+    static const uint32_t TEXTURED[] = { 12,4,14,12,13,10,4,3 };    // mode 3
+    static const uint32_t NOISY[]    = { 8,9,7,11,15 };             // mode 4
+    static const uint32_t DENOISED[] = { 3,4,8,9,7,11,4,3 };        // mode 6
+    static const uint32_t RT[]       = { 10,12 };                   // fallback
+    const uint32_t* s; uint32_t n;
+    switch (mode) {
+        case 1: s = HITS;     n = 4; break;
+        case 2: s = FURNACE;  n = 7; break;
+        case 3: s = TEXTURED; n = 8; break;
+        case 4: s = NOISY;    n = 5; break;
+        case 6: s = DENOISED; n = 8; break;
+        default: s = RT;      n = 2; break;
+    }
+    for (uint32_t i = 0; i < n; i++) out[i] = s[i];
+    return n;
+}
+
+// Point the SVGF descriptor set at the current image views. Binding 7 (output)
+// re-uses the megakernel's rtImage view — the composite writes the same image the
+// present path already blits. Called from CreateSvgfTargets (init + each resize).
+void WriteSvgfDescriptor()
+{
+    VkDescriptorImageInfo info[13] = {};
+    const VkImageView views[13] = {
+        g.svView[SV_GPOS0],  g.svView[SV_GPOS1],            // b0 gpos[2]
+        g.svView[SV_GNORM0], g.svView[SV_GNORM1],           // b1 gnorm[2]
+        g.svView[SV_ALBEDO],                                // b2 albedo
+        g.svView[SV_ILLUM],                                 // b3 illum
+        g.svView[SV_HCOL0],  g.svView[SV_HCOL1],            // b4 hcol[2]
+        g.svView[SV_HMOM0],  g.svView[SV_HMOM1],            // b5 hmom[2]
+        g.svView[SV_ATROUS0],g.svView[SV_ATROUS1],          // b6 atrous[2]
+        g.rtView,                                           // b7 outColor (rtImage)
+    };
+    for (uint32_t i = 0; i < 13; i++) {
+        info[i].imageView   = views[i];
+        info[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    }
+    struct { uint32_t binding, first, count; } map[8] = {
+        {0,0,2},{1,2,2},{2,4,1},{3,5,1},{4,6,2},{5,8,2},{6,10,2},{7,12,1}
+    };
+    VkWriteDescriptorSet wr[8] = {};
+    for (int i = 0; i < 8; i++) {
+        wr[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        wr[i].dstSet          = g.svgfDs;
+        wr[i].dstBinding      = map[i].binding;
+        wr[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        wr[i].descriptorCount = map[i].count;
+        wr[i].pImageInfo      = &info[map[i].first];
+    }
+    vkUpdateDescriptorSets(g.device, 8, wr, 0, nullptr);
+}
+
+void DestroySvgfTargets()
+{
+    for (uint32_t i = 0; i < SV_COUNT; i++) {
+        if (g.svView[i]) { vkDestroyImageView(g.device, g.svView[i], nullptr); g.svView[i] = VK_NULL_HANDLE; }
+        if (g.svImg[i])  { vkDestroyImage(g.device, g.svImg[i], nullptr);      g.svImg[i]  = VK_NULL_HANDLE; }
+        if (g.svMem[i])  { vkFreeMemory(g.device, g.svMem[i], nullptr);        g.svMem[i]  = VK_NULL_HANDLE; }
+    }
+}
+
+// Create the swapchain-sized SVGF G-buffer + history images, park them all in
+// GENERAL (storage read+write for their whole life), clear the histories (gpos
+// histories to matId = -1 so a stale prev pixel can never validate against this
+// frame), and (re)point the descriptor set. Called from CreateRtTargets, so it
+// rebuilds with the swapchain. Resets the frame parity + prev-camera so the first
+// post-resize frame starts a fresh temporal history.
+void CreateSvgfTargets()
+{
+    const uint32_t W = g.extent.width, H = g.extent.height;
+    for (uint32_t i = 0; i < SV_COUNT; i++) {
+        VkFormat fmt = (i == SV_GPOS0 || i == SV_GPOS1) ? VK_FORMAT_R32G32B32A32_SFLOAT
+                                                        : VK_FORMAT_R16G16B16A16_SFLOAT;
+        VkImageCreateInfo ici = {};
+        ici.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        ici.imageType     = VK_IMAGE_TYPE_2D;
+        ici.format        = fmt;
+        ici.extent        = { W, H, 1 };
+        ici.mipLevels     = 1;
+        ici.arrayLayers   = 1;
+        ici.samples       = VK_SAMPLE_COUNT_1_BIT;
+        ici.tiling        = VK_IMAGE_TILING_OPTIMAL;
+        ici.usage         = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        ici.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+        ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        Check(vkCreateImage(g.device, &ici, nullptr, &g.svImg[i]), "vkCreateImage(svgf)");
+
+        VkMemoryRequirements req = {};
+        vkGetImageMemoryRequirements(g.device, g.svImg[i], &req);
+        VkMemoryAllocateInfo mai = {};
+        mai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        mai.allocationSize  = req.size;
+        mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        Check(vkAllocateMemory(g.device, &mai, nullptr, &g.svMem[i]), "vkAllocateMemory(svgf)");
+        Check(vkBindImageMemory(g.device, g.svImg[i], g.svMem[i], 0), "vkBindImageMemory(svgf)");
+
+        VkImageViewCreateInfo vci = {};
+        vci.sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        vci.image            = g.svImg[i];
+        vci.viewType         = VK_IMAGE_VIEW_TYPE_2D;
+        vci.format           = fmt;
+        vci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        Check(vkCreateImageView(g.device, &vci, nullptr, &g.svView[i]), "vkCreateImageView(svgf)");
+    }
+
+    {
+        VkCommandBuffer cb = BeginOneTime();
+        VkImageMemoryBarrier toGen[SV_COUNT] = {};
+        for (uint32_t i = 0; i < SV_COUNT; i++) {
+            toGen[i].sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            toGen[i].oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED;
+            toGen[i].newLayout        = VK_IMAGE_LAYOUT_GENERAL;
+            toGen[i].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toGen[i].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toGen[i].image            = g.svImg[i];
+            toGen[i].subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+            toGen[i].srcAccessMask    = 0;
+            toGen[i].dstAccessMask    = VK_ACCESS_TRANSFER_WRITE_BIT
+                                      | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        }
+        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             0, 0, nullptr, 0, nullptr, SV_COUNT, toGen);
+
+        VkImageSubresourceRange range = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        VkClearColorValue sky = {};  sky.float32[3] = -1.0f;   // matId < 0 -> never validates
+        VkClearColorValue zero = {};
+        const int clearSky[2]  = { SV_GPOS0, SV_GPOS1 };
+        const int clearZero[4] = { SV_HCOL0, SV_HCOL1, SV_HMOM0, SV_HMOM1 };
+        for (int i : clearSky)  vkCmdClearColorImage(cb, g.svImg[i], VK_IMAGE_LAYOUT_GENERAL, &sky,  1, &range);
+        for (int i : clearZero) vkCmdClearColorImage(cb, g.svImg[i], VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &range);
+        EndOneTime(cb);
+    }
+
+    WriteSvgfDescriptor();
+    g.svgfFrame = 0;
+    std::memset(g.prevCamPos,   0, sizeof(g.prevCamPos));
+    std::memset(g.prevCamDir,   0, sizeof(g.prevCamDir));
+    std::memset(g.prevCamRight, 0, sizeof(g.prevCamRight));
+    std::memset(g.prevCamUp,    0, sizeof(g.prevCamUp));
+}
+
 void CreateRtTargets()
 {
     VkImageCreateInfo ici = {};
@@ -1541,10 +1853,12 @@ void CreateRtTargets()
     Check(vkCreateImageView(g.device, &vci, nullptr, &g.rtView), "vkCreateImageView(rt)");
 
     UpdateRtComputeDescriptor();   // re-point the storage-image half at the new view
+    CreateSvgfTargets();           // SVGF G-buffer/history (binding 7 re-uses rtView)
 }
 
 void DestroyRtTargets()
 {
+    DestroySvgfTargets();          // swapchain-sized SVGF images, rebuilt with rtImage
     if (g.rtView)   { vkDestroyImageView(g.device, g.rtView, nullptr);  g.rtView = VK_NULL_HANDLE; }
     if (g.rtImage)  { vkDestroyImage(g.device, g.rtImage, nullptr);     g.rtImage = VK_NULL_HANDLE; }
     if (g.rtMemory) { vkFreeMemory(g.device, g.rtMemory, nullptr);      g.rtMemory = VK_NULL_HANDLE; }
@@ -2612,9 +2926,12 @@ extern "C" void RB_Vulkan_Init(void)
         // allocates the descriptor set), then the swapchain-sized storage image
         // (which points the set's image half at its view). The TLAS half is
         // written later, per level, by BuildAccelerationStructures.
+        CreateSvgfDescriptorLayout();  // set-2 layout (the trace pipeline layout needs it)
         CreateRtComputePipeline();
         CreateBakePipeline();          // GI bake pass (step 4b-ii), dispatched per level
-        CreateRtTargets();
+        CreateSvgfPipelines();         // denoiser passes (step 6); needs svgfDsLayout
+        CreateLabelPipeline();         // on-screen mode label (debug); reuses svgfDsLayout
+        CreateRtTargets();             // rt + svgf images; writes both descriptor sets
     }
     g.ready = true;
 
@@ -2894,7 +3211,7 @@ void RB_RtVerify()
     pc.probeAddr   = g.probeBuf   ? BufferAddress(g.probeBuf)   : 0;   // unused by mode 5
     pc.triSsAddr   = g.triSsBuf   ? BufferAddress(g.triSsBuf)   : 0;
 
-    VkDescriptorSet sets[2] = { g.rtDs, g.ds };
+    VkDescriptorSet sets[3] = { g.rtDs, g.ds, g.svgfDs };
 
     // The display image (binding 1) is statically referenced by the shader even in
     // mode 5, and its descriptor advertises GENERAL — but no frame has been rendered
@@ -2944,7 +3261,7 @@ void RB_RtVerify()
             VkCommandBuffer cb = BeginOneTime();
             vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, g.rtPipeline);
             vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE,
-                                    g.rtPipeLayout, 0, 2, sets, 0, nullptr);
+                                    g.rtPipeLayout, 0, 3, sets, 0, nullptr);
             vkCmdPushConstants(cb, g.rtPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
             vkCmdDispatch(cb, (W + 7) / 8, (H + 7) / 8, 1);
             EndOneTime(cb);
@@ -3216,17 +3533,133 @@ void RecordRtTrace(uint32_t idx)
     pc.probeAddr   = g.probeBuf   ? BufferAddress(g.probeBuf)   : 0;
     pc.triSsAddr   = g.triSsBuf   ? BufferAddress(g.triSsBuf)   : 0;
 
+    // SVGF denoised view (step 6): mode 6. The feed writes this frame's G-buffer
+    // half into gpos[parity]/gnorm[parity]; the temporal pass reprojects last
+    // frame's [parity^1]. Parity advances once per denoised frame (end of this fn).
+    const bool     denoise    = (rb_rtdebug == 6);
+    const uint32_t svgfParity = g.svgfFrame & 1u;
+    pc.misc3[3] = svgfParity;
+    // Per-frame seed base for the mode-6 feed: SVGF needs each frame to be an
+    // INDEPENDENT noise sample, or temporal accumulation averages identical values
+    // (no convergence) and the temporal variance is 0 (the a-trous luminance
+    // edge-stop then collapses to identity — the denoiser does nothing). The frozen
+    // px-only seed mode 4 uses is fine for a one-shot noisy view but fatal here.
+    pc.misc3[0] = g.svgfFrame;
+
     // Set 0 = RT (TLAS + output image); set 1 = the raster materials set (palette
     // LUT + bindless material array), so the textured trace samples the same
-    // materials as the raster pass (step 3a). rtActive gates on g.atlasReady, so
-    // the material array (binding 2) is written before this binds it.
-    VkDescriptorSet sets[2] = { g.rtDs, g.ds };
+    // materials as the raster pass (step 3a); set 2 = the SVGF G-buffer (step 6).
+    // rtActive gates on g.atlasReady, so the material array (binding 2) is written
+    // before this binds it. All three sets are bound (the megakernel statically
+    // references set 2 via mode 6, so it must be valid for every dispatch).
+    VkDescriptorSet sets[3] = { g.rtDs, g.ds, g.svgfDs };
     vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g.rtPipeline);
     vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-                            g.rtPipeLayout, 0, 2, sets, 0, nullptr);
+                            g.rtPipeLayout, 0, 3, sets, 0, nullptr);
     vkCmdPushConstants(g.cmd, g.rtPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT,
                        0, sizeof(pc), &pc);
     vkCmdDispatch(g.cmd, (w + 7) / 8, (h + 7) / 8, 1);
+
+    // Denoiser chain (step 6a/6b): feed (the dispatch above, mode 6) -> temporal
+    // accumulation -> N edge-aware a-trous iterations -> composite, all reading/
+    // writing SVGF storage images in GENERAL with a compute->compute barrier
+    // between passes. The composite writes rtImage (the same image the blit below
+    // reads), so the rtImage transitions are unchanged. Only mode 6 runs this.
+    if (denoise)
+    {
+        // Compute->compute RAW barrier (storage image write -> read) between passes.
+        auto svgfBarrier = [&]() {
+            VkMemoryBarrier mb = {};
+            mb.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+            mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+            vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+                                 1, &mb, 0, nullptr, 0, nullptr);
+        };
+
+        // Push constants shared by the three denoiser passes (prefix-compatible: the
+        // temporal/a-trous shaders ignore the trailing matEmis address).
+        struct SvgfPC {
+            float    prevPos[4], prevDir[4], prevRight[4], prevUp[4];
+            uint32_t misc[4];    // x=cur parity, y=w, z=h, w=a-trous step / final src
+            uint32_t misc2[4];   // x=a-trous ping (source index), y=iter
+            uint32_t misc3[4];
+            uint64_t matEmis;
+        } spc = {};
+        static_assert(sizeof(SvgfPC) == 120, "SVGF push-constant layout must match the shaders");
+        spc.prevPos[0]   = g.prevCamPos[0];   spc.prevPos[1]   = g.prevCamPos[1];   spc.prevPos[2]   = g.prevCamPos[2];
+        spc.prevDir[0]   = g.prevCamDir[0];   spc.prevDir[1]   = g.prevCamDir[1];   spc.prevDir[2]   = g.prevCamDir[2];
+        spc.prevRight[0] = g.prevCamRight[0]; spc.prevRight[1] = g.prevCamRight[1]; spc.prevRight[2] = g.prevCamRight[2];
+        spc.prevRight[3] = g.prevCamRight[3];
+        spc.prevUp[0]    = g.prevCamUp[0];    spc.prevUp[1]    = g.prevCamUp[1];    spc.prevUp[2]    = g.prevCamUp[2];
+        spc.prevUp[3]    = g.prevCamUp[3];
+        spc.misc[0] = svgfParity;
+        spc.misc[1] = w; spc.misc[2] = h;
+
+        vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                g.svgfPipeLayout, 0, 1, &g.svgfDs, 0, nullptr);
+
+        const uint32_t gx = (w + 7) / 8, gy = (h + 7) / 8;
+
+        // 1) temporal accumulation (feed -> atrous[0]).
+        svgfBarrier();
+        vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g.svgfTemporal);
+        spc.misc[3] = 0; spc.misc2[0] = 0; spc.misc2[1] = 0;
+        vkCmdPushConstants(g.cmd, g.svgfPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(spc), &spc);
+        vkCmdDispatch(g.cmd, gx, gy, 1);
+
+        // 2) edge-aware a-trous: N iterations, hole step doubling, ping-ponging
+        //    atrous[0]<->atrous[1]. Iteration 0 also writes the colour history.
+        const int N = 5;
+        uint32_t ping = 0;
+        vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g.svgfAtrous);
+        for (int i = 0; i < N; i++) {
+            svgfBarrier();
+            spc.misc[3]  = (uint32_t)(1 << i);   // hole step 1,2,4,8,16
+            spc.misc2[0] = ping;                 // source index
+            spc.misc2[1] = (uint32_t)i;          // iter (0 -> writes history)
+            vkCmdPushConstants(g.cmd, g.svgfPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(spc), &spc);
+            vkCmdDispatch(g.cmd, gx, gy, 1);
+            ping ^= 1u;                           // last written buffer = final result
+        }
+
+        // 3) composite: re-modulate albedo + re-add emission + tonemap -> rtImage.
+        svgfBarrier();
+        vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g.svgfComposite);
+        spc.misc[3]  = ping;                      // final a-trous source index
+        spc.matEmis  = g.matEmisBuf ? BufferAddress(g.matEmisBuf) : 0;
+        vkCmdPushConstants(g.cmd, g.svgfPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(spc), &spc);
+        vkCmdDispatch(g.cmd, gx, gy, 1);
+    }
+
+    // On-screen mode label (debug): stamp the active `~` mode's title top-centre
+    // into rtImage before the blit (the trace path skips the normal HUD, so this is
+    // the only on-screen mode proof). Runs for every RT display mode; the
+    // compute->compute barrier orders it after the megakernel (modes 1-4) /
+    // composite (mode 6) write, and it only touches the label box pixels.
+    {
+        VkMemoryBarrier mb = {};
+        mb.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        mb.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+                             1, &mb, 0, nullptr, 0, nullptr);
+
+        struct LabelPC { uint32_t w, h, count, scale; uint32_t chars[12]; } lpc = {};
+        static_assert(sizeof(LabelPC) == 64, "label push-constant layout must match label.comp");
+        lpc.w     = w;
+        lpc.h     = h;
+        lpc.scale = (h >= 1080u) ? 4u : (h >= 600u ? 3u : 2u);
+        lpc.count = ModeLabel(rb_rtdebug, lpc.chars);
+        vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g.labelPipeline);
+        vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                g.labelPipeLayout, 0, 1, &g.svgfDs, 0, nullptr);
+        vkCmdPushConstants(g.cmd, g.labelPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+                           0, sizeof(lpc), &lpc);
+        vkCmdDispatch(g.cmd, (w + 7) / 8, (h + 7) / 8, 1);
+    }
 
     // rtImage GENERAL -> TRANSFER_SRC; swapchain UNDEFINED -> TRANSFER_DST.
     VkImageMemoryBarrier toSrc = toGeneral;
@@ -3269,6 +3702,22 @@ void RecordRtTrace(uint32_t idx)
     toPresent.dstAccessMask = 0;
     vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
                          VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &toPresent);
+
+    // Snapshot this frame's camera basis as "previous" for next frame's temporal
+    // reprojection, and advance the history parity — but only on denoised frames,
+    // so [parity^1] always names the last frame that actually wrote the G-buffer
+    // (a stretch of non-denoised modes can't leave a stale prev that wrongly
+    // validates). The basis mirrors the camera built at the top of this function.
+    if (denoise)
+    {
+        g.prevCamPos[0] = g.lastView.x; g.prevCamPos[1] = g.lastView.y; g.prevCamPos[2] = g.lastView.z;
+        g.prevCamDir[0] = c;            g.prevCamDir[1] = s;            g.prevCamDir[2] = 0.0f;
+        g.prevCamRight[0] = s;          g.prevCamRight[1] = -c;         g.prevCamRight[2] = 0.0f;
+        g.prevCamRight[3] = 1.0f;                                       // tan(hFov/2)
+        g.prevCamUp[0] = 0.0f; g.prevCamUp[1] = 0.0f; g.prevCamUp[2] = 1.0f;
+        g.prevCamUp[3] = (float)h / (float)w;                          // tan(vFov/2)
+        g.svgfFrame++;
+    }
 }
 
 extern "C" void RB_Vulkan_Present(void)
@@ -3593,6 +4042,15 @@ extern "C" void RB_Vulkan_Shutdown(void)
         if (g.bakePipeLayout) vkDestroyPipelineLayout(g.device, g.bakePipeLayout, nullptr);
         if (g.bakeDsPool)     vkDestroyDescriptorPool(g.device, g.bakeDsPool, nullptr);
         if (g.bakeDsLayout)   vkDestroyDescriptorSetLayout(g.device, g.bakeDsLayout, nullptr);
+        // SVGF denoiser pipelines (step 6); its images are freed by DestroyRtTargets.
+        if (g.svgfTemporal)   vkDestroyPipeline(g.device, g.svgfTemporal, nullptr);
+        if (g.svgfAtrous)     vkDestroyPipeline(g.device, g.svgfAtrous, nullptr);
+        if (g.svgfComposite)  vkDestroyPipeline(g.device, g.svgfComposite, nullptr);
+        if (g.svgfPipeLayout) vkDestroyPipelineLayout(g.device, g.svgfPipeLayout, nullptr);
+        if (g.labelPipeline)   vkDestroyPipeline(g.device, g.labelPipeline, nullptr);
+        if (g.labelPipeLayout) vkDestroyPipelineLayout(g.device, g.labelPipeLayout, nullptr);
+        if (g.svgfDsPool)     vkDestroyDescriptorPool(g.device, g.svgfDsPool, nullptr);
+        if (g.svgfDsLayout)   vkDestroyDescriptorSetLayout(g.device, g.svgfDsLayout, nullptr);
         // Direct-lighting buffers (step 3b): per-level emitter list + WAD-global Le table.
         if (g.emitBuf)      vkDestroyBuffer(g.device, g.emitBuf, nullptr);
         if (g.emitMem)      vkFreeMemory(g.device, g.emitMem, nullptr);

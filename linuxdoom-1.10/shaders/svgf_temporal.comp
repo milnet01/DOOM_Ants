@@ -1,0 +1,116 @@
+#version 460
+//
+// DOOM-0009 path tracer — build step 6a: SVGF temporal accumulation.
+//
+// First of the three denoiser passes. Reads this frame's noisy, albedo-
+// DEMODULATED illumination (gillum) and G-buffer (gpos/gnorm, written by
+// pathtrace.comp mode 6), reprojects each pixel's world hit point into the
+// PREVIOUS frame's camera, validates the match (the reprojected pixel must look
+// at the same surface — disocclusion + normal test), and blends the new sample
+// into the accumulated history with an exponential moving average. It also tracks
+// the 1st/2nd luminance moments so the spatial a-trous pass (step 6b) can drive
+// its edge-stopping by the per-pixel variance.
+//
+// Output (integrated colour + variance in .a) goes to atrous[0]; the a-trous pass
+// filters it and feeds its first iteration back as next frame's colour history
+// (the SVGF colour-feedback). The colour is kept demodulated end-to-end — the
+// composite pass re-applies albedo + emission — so neither pass blurs across
+// texture detail.
+//
+#extension GL_GOOGLE_include_directive : require
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+// Set 2 in the trace pipeline; set 0 here. Frame ping-pong arrays (gpos/gnorm/
+// hcol/hmom) index by parity: [cur] is this frame, [prev] last frame.
+layout(set = 0, binding = 0, rgba32f) uniform image2D gpos[2];   // worldPos.xyz, .w = matId (<0 sky)
+layout(set = 0, binding = 1, rgba16f) uniform image2D gnorm[2];  // world normal.xyz
+layout(set = 0, binding = 3, rgba16f) uniform image2D gillum;    // demodulated noisy illum (current)
+layout(set = 0, binding = 4, rgba16f) uniform image2D hcol[2];   // integrated colour history
+layout(set = 0, binding = 5, rgba16f) uniform image2D hmom[2];   // .r m1, .g m2, .b histLen
+layout(set = 0, binding = 6, rgba16f) uniform image2D atrous[2]; // [0] = integrated colour + .a variance
+
+layout(push_constant) uniform PC {
+    vec4  prevPos;    // xyz = previous-frame camera position
+    vec4  prevDir;    // xyz = previous-frame forward
+    vec4  prevRight;  // xyz = previous-frame right, w = tan(hFov/2)
+    vec4  prevUp;     // xyz = previous-frame up,    w = tan(vFov/2)
+    uvec4 misc;       // x = cur parity, y = width, z = height, w = a-trous step
+    uvec4 misc2;      // x = a-trous ping, y = iter
+    uvec4 misc3;
+} pc;
+
+float lum(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+
+void main()
+{
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    int   w = int(pc.misc.y), h = int(pc.misc.z);
+    if (p.x >= w || p.y >= h) return;
+    uint cur = pc.misc.x, prev = cur ^ 1u;
+
+    vec4  gp    = imageLoad(gpos[cur], p);
+    vec3  illum = imageLoad(gillum, p).rgb;
+    float l     = lum(illum);
+
+    // Sky / miss: no surface, so no temporal reprojection. Pass the stored linear
+    // colour straight to the spatial pass (which also skips sky) with zero variance.
+    if (gp.w < 0.0) {
+        imageStore(hmom[cur], p, vec4(l, l * l, 1.0, 0.0));
+        imageStore(atrous[0], p, vec4(illum, 0.0));
+        return;
+    }
+
+    vec3 wpos = gp.xyz;
+    vec3 n    = imageLoad(gnorm[cur], p).xyz;
+
+    // --- reproject this world point into the previous camera --------------------
+    bool  valid = false;
+    vec3  histC = vec3(0.0);
+    float m1 = 0.0, m2 = 0.0, hist = 0.0;
+
+    vec3  rel = wpos - pc.prevPos.xyz;
+    float vz  = dot(rel, pc.prevDir.xyz);                 // depth along prev view axis
+    if (vz > 1e-3) {
+        // Invert the primary-ray construction (pathtrace.comp): screen-y is down,
+        // so world up maps to -ndcY.
+        float ndcX =  (dot(rel, pc.prevRight.xyz) / vz) / pc.prevRight.w;
+        float ndcY = -(dot(rel, pc.prevUp.xyz)    / vz) / pc.prevUp.w;
+        float fx = (ndcX + 1.0) * 0.5 * float(w) - 0.5;
+        float fy = (ndcY + 1.0) * 0.5 * float(h) - 0.5;
+        ivec2 pp = ivec2(int(floor(fx + 0.5)), int(floor(fy + 0.5)));
+        if (pp.x >= 0 && pp.y >= 0 && pp.x < w && pp.y < h) {
+            vec4 gpPrev = imageLoad(gpos[prev], pp);
+            if (gpPrev.w >= 0.0) {                        // prev pixel was a surface
+                vec3  nPrev = imageLoad(gnorm[prev], pp).xyz;
+                // Accept if the reprojected pixel saw (nearly) the same world point.
+                // Tolerance scales with how much world space one pixel spans at this
+                // depth, so it is correct across DOOM's wide range of map scales.
+                float wpp = vz * 2.0 * pc.prevRight.w / float(w);
+                if (length(gpPrev.xyz - wpos) < max(4.0 * wpp, 2.0)
+                    && dot(nPrev, n) > 0.9) {
+                    histC = imageLoad(hcol[prev], pp).rgb;
+                    vec4 hm = imageLoad(hmom[prev], pp);
+                    m1 = hm.r; m2 = hm.g; hist = hm.b;
+                    valid = true;
+                }
+            }
+        }
+    }
+
+    // --- exponential blend + moments -------------------------------------------
+    float newHist = valid ? min(hist + 1.0, 32.0) : 1.0;
+    float alpha   = max(1.0 / newHist, 0.1);   // EMA; floor keeps fast lights responsive
+    vec3  outC = valid ? mix(histC, illum, alpha) : illum;
+    float nm1  = valid ? mix(m1, l,     alpha) : l;
+    float nm2  = valid ? mix(m2, l * l, alpha) : l * l;
+
+    // Variance from the temporal moments once enough history exists. A fresh or
+    // disoccluded pixel has no reliable temporal estimate, so flag it large — the
+    // a-trous pass then leans on its spatial neighbourhood (still edge-stopped).
+    float var = valid ? max(0.0, nm2 - nm1 * nm1) : 1.0e3;
+    if (newHist < 4.0) var = max(var, 4.0 - newHist);
+
+    imageStore(hmom[cur], p, vec4(nm1, nm2, newHist, 0.0));
+    imageStore(atrous[0], p, vec4(outC, var));
+}
