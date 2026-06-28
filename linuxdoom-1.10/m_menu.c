@@ -203,7 +203,11 @@ void M_SfxVol(int choice);
 void M_MusicVol(int choice);
 void M_ChangeDetail(int choice);
 void M_ChangeRenderer(int choice);
+void M_RendererMenu(int choice);
+void M_DrawRendererMenu(void);
 void M_ChangeFPS(int choice);
+void M_ChangeUpscaler(int choice);
+void M_ChangeRenderScale(int choice);
 void M_SizeDisplay(int choice);
 void M_StartGame(int choice);
 void M_Sound(int choice);
@@ -364,7 +368,7 @@ menuitem_t OptionsMenu[]=
     {1,"M_ENDGAM",	M_EndGame,'e'},
     {1,"M_MESSG",	M_ChangeMessages,'m'},
     {1,"M_DETAIL",	M_ChangeDetail,'g'},
-    {1,"",		M_ChangeRenderer,'r'},
+    {1,"",		M_RendererMenu,'r'},
     {1,"",		M_ChangeFPS,'f'},
     {2,"M_SCRNSZ",	M_SizeDisplay,'s'},
     {-1,"",0},
@@ -380,6 +384,36 @@ menu_t  OptionsDef =
     OptionsMenu,
     M_DrawOptions,
     60,37,
+    0
+};
+
+//
+// RENDERER SUB-MENU (DOOM-0008/0009): the 3D back-end + path-tracer settings,
+// grouped off the Options "Renderer" row so the upscaler controls have room (the
+// main Options menu is full at 320x200). Back returns to Options.
+//
+enum
+{
+    rm_renderer,
+    rm_upscaler,
+    rm_renderscale,
+    rm_end
+} renderer_e;
+
+menuitem_t RendererMenu[]=
+{
+    {1,"",	M_ChangeRenderer,'r'},
+    {1,"",	M_ChangeUpscaler,'u'},
+    {1,"",	M_ChangeRenderScale,'c'}
+};
+
+menu_t  RendererDef =
+{
+    rm_end,
+    &OptionsDef,
+    RendererMenu,
+    M_DrawRendererMenu,
+    60,60,
     0
 };
 
@@ -959,6 +993,13 @@ void M_Episode(int choice)
 char    detailNames[2][9]	= {"M_GDHIGH","M_GDLOW"};
 char	msgNames[2][9]		= {"M_MSGOFF","M_MSGON"};
 char	fpsPosNames[4][11]	= {"Off","Top-Left","Top-Centre","Top-Right"};
+// Temporal upscaler (DOOM-0009 6-d): selector text + the render-scale presets.
+// rb_upscaler / rb_renderscale live in r_vulkan.cpp (read by the path tracer).
+extern int	rb_upscaler;
+extern int	rb_renderscale;
+char	upscalerNames[2][8]	= {"Off","TAAU"};
+int	renderScalePresets[4]	= {100,75,67,50};
+char	renderScaleNames[4][6]	= {"100%","75%","67%","50%"};
 
 
 void M_DrawOptions(void)
@@ -992,6 +1033,36 @@ void M_DrawOptions(void)
 void M_Options(int choice)
 {
     M_SetupNextMenu(&OptionsDef);
+}
+
+//
+// Renderer sub-menu: the 3D back-end + path-tracer upscaler (DOOM-0009 6-d).
+//
+void M_RendererMenu(int choice)
+{
+    choice = 0;
+    M_SetupNextMenu(&RendererDef);
+}
+
+void M_DrawRendererMenu(void)
+{
+    int rsi, k;
+
+    M_WriteText(RendererDef.x + 50,RendererDef.y - 20,"RENDERER");
+
+    M_WriteText(RendererDef.x,RendererDef.y+LINEHEIGHT*rm_renderer,"Renderer:");
+    M_WriteText(RendererDef.x + 120,RendererDef.y+LINEHEIGHT*rm_renderer,
+		(char *)RB_ModeName(rendermode));
+
+    M_WriteText(RendererDef.x,RendererDef.y+LINEHEIGHT*rm_upscaler,"Upscaler:");
+    M_WriteText(RendererDef.x + 120,RendererDef.y+LINEHEIGHT*rm_upscaler,
+		upscalerNames[(rb_upscaler==1)?1:0]);
+
+    rsi = 0;
+    for (k=0 ; k<4 ; k++) if (renderScalePresets[k]==rb_renderscale) rsi=k;
+    M_WriteText(RendererDef.x,RendererDef.y+LINEHEIGHT*rm_renderscale,"Render Scale:");
+    M_WriteText(RendererDef.x + 120,RendererDef.y+LINEHEIGHT*rm_renderscale,
+		renderScaleNames[rsi]);
 }
 
 
@@ -1198,6 +1269,28 @@ void M_ChangeRenderer(int choice)
 //
 // Cycle the FPS counter: Off -> Top-Left -> Top-Centre -> Top-Right (DOOM-0046)
 //
+//
+// Cycle the temporal upscaler: Off -> TAAU (DOOM-0009 build step 6-d). FSR 2 /
+// FSR 3.1 are later phases on the same plumbing; only TAAU ships here.
+//
+void M_ChangeUpscaler(int choice)
+{
+    choice = 0;
+    rb_upscaler = (rb_upscaler + 1) % 2;
+}
+
+//
+// Cycle the path tracer's render scale: 100% -> 75% -> 67% -> 50% (DOOM-0009 6-d).
+// Takes effect on the Ultra denoised view when an upscaler is active.
+//
+void M_ChangeRenderScale(int choice)
+{
+    int i, k = 0;
+    choice = 0;
+    for (i=0 ; i<4 ; i++) if (renderScalePresets[i]==rb_renderscale) k=i;
+    rb_renderscale = renderScalePresets[(k + 1) % 4];
+}
+
 void M_ChangeFPS(int choice)
 {
     choice = 0;

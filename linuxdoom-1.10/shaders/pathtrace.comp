@@ -80,8 +80,8 @@ layout(set = 1, binding = 2) uniform sampler2D materialTex[];
 #include "formulas/pbr_neutral_tonemap.glsl"
 
 layout(push_constant) uniform PC {
-    vec4  camPos;    // xyz = ray origin (world)
-    vec4  camDir;    // xyz = forward
+    vec4  camPos;    // xyz = ray origin (world); w = sub-pixel jitter X (6-d)
+    vec4  camDir;    // xyz = forward;            w = sub-pixel jitter Y (6-d)
     vec4  camRight;  // xyz = right,  w = tan(hFov/2)
     vec4  camUp;     // xyz = up,     w = tan(vFov/2)
     uvec4 misc;      // x = mode, y = width, z = height, w = numWall (flat-id offset)
@@ -143,8 +143,12 @@ void main()
         return;
 
     // Primary ray: pixel centre -> NDC [-1,1], screen-y down so world up = -ndcY.
-    const float ndcX = (2.0 * (float(px.x) + 0.5) / float(w)) - 1.0;
-    const float ndcY = (2.0 * (float(px.y) + 0.5) / float(h)) - 1.0;
+    // build step 6-d: an optional sub-pixel jitter (camPos.w / camDir.w, in render
+    // pixels) shifts the sample point each frame so the temporal upscaler (TAAU/FSR)
+    // reconstructs sub-pixel detail. Zero on the non-upscaled path, so the ray is
+    // the exact pixel centre as before.
+    const float ndcX = (2.0 * (float(px.x) + 0.5 + pc.camPos.w) / float(w)) - 1.0;
+    const float ndcY = (2.0 * (float(px.y) + 0.5 + pc.camDir.w) / float(h)) - 1.0;
     const vec3  origin = pc.camPos.xyz;
     const vec3  dir = normalize(pc.camDir.xyz
                               + pc.camRight.xyz * (ndcX * pc.camRight.w)

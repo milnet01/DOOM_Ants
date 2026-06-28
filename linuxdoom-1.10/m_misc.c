@@ -201,6 +201,8 @@ extern int	viewheight;
 extern int	mouseSensitivity;
 extern int	showMessages;
 extern int	fpsCorner;
+extern int	rb_upscaler;	// DOOM-0009 6-d temporal upscaler (0 Off, 1 TAAU)
+extern int	rb_renderscale;	// DOOM-0009 6-d render scale percent (100/75/67/50)
 
 extern int	detailLevel;
 
@@ -244,6 +246,8 @@ default_t	defaults[] =
     {"show_messages",&showMessages, 1},
     {"fps_corner",&fpsCorner, 0},
     {"renderer",&rendermode, RB_CLASSIC},
+    {"upscaler",&rb_upscaler, 0},
+    {"render_scale",&rb_renderscale, 100},
 
 
 #ifdef NORMALUNIX

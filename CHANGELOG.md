@@ -8,6 +8,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Temporal upscaler (TAAU) for the Ultra path tracer — DOOM-0009 build step 6-d phase 1** (DOOM-0009)
+  The denoised path-tracer view can now render below display resolution and reconstruct a full-resolution image by accumulating sub-pixel-jittered frames (a custom temporal anti-aliasing upsampler). Adds the jitter, motion-vector, and menu plumbing the later FSR 2 / FSR 3.1 backends will share. New Options -> Renderer sub-menu: Renderer, Upscaler (Off / TAAU), Render Scale (100/75/67/50%); defaults to Off, so the existing image is unchanged until enabled.
+
 - **Add a 3D wireframe debug view, toggled by the gamepad Share button.** (DOOM-0077)
   Draws the world and sprites as wireframe over a filled sky in Solid/Ultra to show what the renderer builds; no effect in Classic. Start alone now opens the menu.
 

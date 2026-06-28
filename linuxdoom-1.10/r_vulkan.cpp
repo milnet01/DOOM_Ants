@@ -59,6 +59,7 @@
 #include "shaders/svgf_atrous.comp.spv.h"
 #include "shaders/svgf_composite.comp.spv.h"
 #include "shaders/label.comp.spv.h"
+#include "shaders/taau.comp.spv.h"
 
 // Tier values returned by RB_VulkanProbe — kept numerically in lockstep with
 // rendermode_t in r_backend.h (RB_CLASSIC=0, RB_RT3D=1, RB_RASTER3D=2). The
@@ -185,8 +186,14 @@ namespace {
 // all others are rgba16f.
 enum {
     SV_GPOS0, SV_GPOS1, SV_GNORM0, SV_GNORM1, SV_ALBEDO, SV_ILLUM,
-    SV_HCOL0, SV_HCOL1, SV_HMOM0, SV_HMOM1, SV_ATROUS0, SV_ATROUS1, SV_COUNT
+    SV_HCOL0, SV_HCOL1, SV_HMOM0, SV_HMOM1, SV_ATROUS0, SV_ATROUS1,
+    SV_MOTION,   // build step 6-d: render-res motion vector (rg16f), composite writes it
+    SV_COUNT
 };
+
+// build step 6-d TAAU targets (display-resolution): two history images that
+// ping-pong by frame parity, plus the upscaled output the present path blits.
+enum { TA_HIST0, TA_HIST1, TA_OUT, TA_COUNT };
 
 struct VulkanState
 {
@@ -394,6 +401,26 @@ struct VulkanState
     // rtImage) with its own push range; stamps the mode title before the blit.
     VkPipelineLayout      labelPipeLayout = VK_NULL_HANDLE;
     VkPipeline            labelPipeline   = VK_NULL_HANDLE;
+    // Second descriptor set on svgfDsLayout whose output (binding 7) points at the
+    // TAAU output instead of rtImage, so the label can be stamped on the upscaled
+    // image (build step 6-d). The other bindings reuse the SVGF views (unread by the
+    // label shader). Allocated with svgfDs; its binding 7 is written by the TAAU
+    // descriptor write (after the TAAU output exists).
+    VkDescriptorSet       labelTaauDs     = VK_NULL_HANDLE;
+
+    // Temporal upscaler (DOOM-0009 build step 6-d). Display-resolution history +
+    // output images, one descriptor set, one compute pipeline. Active only on the
+    // mode-6 denoised path with the Upscaler setting on TAAU; otherwise the path
+    // tracer + SVGF run at display resolution and the present path blits rtImage as
+    // before (no behaviour change). RT-gated.
+    VkImage        taImg[TA_COUNT]  = {};
+    VkDeviceMemory taMem[TA_COUNT]  = {};
+    VkImageView    taView[TA_COUNT] = {};
+    VkDescriptorSetLayout taauDsLayout   = VK_NULL_HANDLE;
+    VkDescriptorPool      taauDsPool     = VK_NULL_HANDLE;
+    VkDescriptorSet       taauDs         = VK_NULL_HANDLE;
+    VkPipelineLayout      taauPipeLayout = VK_NULL_HANDLE;
+    VkPipeline            taauPipeline   = VK_NULL_HANDLE;
     uint32_t svgfFrame = 0;                       // parity counter for the history ping-pong
     // Previous denoised frame's camera basis, for the temporal reprojection.
     float prevCamPos[3]   = {};
@@ -467,6 +494,14 @@ extern "C" { int rb_wireframe = 0; }
 // 3c). Only acts when the GPU has RT and a TLAS exists (in-level); harmless
 // otherwise. C linkage for i_video.c.
 extern "C" { int rb_rtdebug = 0; }
+
+// Temporal upscaler settings (DOOM-0009 build step 6-d), set from the Options menu
+// and persisted by m_misc.c. rb_upscaler: 0 = Off (present rtImage at full display
+// resolution, as before), 1 = TAAU (custom temporal upscaler; FSR 2 / FSR 3.1 are
+// later phases on the same contract). rb_renderscale: the path tracer's render
+// resolution as a percent of the display (100/75/67/50); only takes effect with an
+// upscaler active and on the mode-6 denoised path. C linkage for the C menu/config.
+extern "C" { int rb_upscaler = 0; int rb_renderscale = 100; }
 
 // INV-6 headless self-test latch (DOOM-0009 build step 4d). Set from the
 // `-rtverify` command-line parm; the first ready present runs RB_RtVerify (the
@@ -1566,10 +1601,11 @@ void CreateBakePipeline()
 // bindings, the ping-pong targets as 2-element arrays the shaders index by parity.
 void CreateSvgfDescriptorLayout()
 {
-    const uint32_t counts[8] = { 2, 2, 1, 1, 2, 2, 2, 1 };   // gpos,gnorm,albedo,illum,hcol,hmom,atrous,out
-    VkDescriptorSetLayoutBinding b[8] = {};
+    // gpos,gnorm,albedo,illum,hcol,hmom,atrous,out,motion (binding 8 = 6-d MV).
+    const uint32_t counts[9] = { 2, 2, 1, 1, 2, 2, 2, 1, 1 };
+    VkDescriptorSetLayoutBinding b[9] = {};
     uint32_t total = 0;
-    for (uint32_t i = 0; i < 8; i++) {
+    for (uint32_t i = 0; i < 9; i++) {
         b[i].binding         = i;
         b[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         b[i].descriptorCount = counts[i];
@@ -1578,17 +1614,19 @@ void CreateSvgfDescriptorLayout()
     }
     VkDescriptorSetLayoutCreateInfo dlci = {};
     dlci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    dlci.bindingCount = 8;
+    dlci.bindingCount = 9;
     dlci.pBindings    = b;
     Check(vkCreateDescriptorSetLayout(g.device, &dlci, nullptr, &g.svgfDsLayout),
           "vkCreateDescriptorSetLayout(svgf)");
 
+    // Two sets from this layout: svgfDs (the denoiser chain) + labelTaauDs (the
+    // label-on-upscaled-output variant, binding 7 retargeted in WriteTaauDescriptor).
     VkDescriptorPoolSize pool = {};
     pool.type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    pool.descriptorCount = total;
+    pool.descriptorCount = total * 2;
     VkDescriptorPoolCreateInfo pci = {};
     pci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pci.maxSets       = 1;
+    pci.maxSets       = 2;
     pci.poolSizeCount = 1;
     pci.pPoolSizes    = &pool;
     Check(vkCreateDescriptorPool(g.device, &pci, nullptr, &g.svgfDsPool),
@@ -1600,6 +1638,7 @@ void CreateSvgfDescriptorLayout()
     dai.descriptorSetCount = 1;
     dai.pSetLayouts        = &g.svgfDsLayout;
     Check(vkAllocateDescriptorSets(g.device, &dai, &g.svgfDs), "vkAllocateDescriptorSets(svgf)");
+    Check(vkAllocateDescriptorSets(g.device, &dai, &g.labelTaauDs), "vkAllocateDescriptorSets(labelTaau)");
 }
 
 // The three SVGF compute pipelines (temporal accumulation, edge-aware a-trous,
@@ -1670,6 +1709,73 @@ void CreateLabelPipeline()
     vkDestroyShaderModule(g.device, cs, nullptr);
 }
 
+// Temporal upscaler (build step 6-d): its own 4-binding descriptor set + compute
+// pipeline. b0 = render-res denoised colour (rtImage), b1 = render-res motion vector
+// (SV_MOTION), b2 = display-res history[2], b3 = display-res output. The push range
+// is the 48-byte TaauPC (parity + display/render dims + jitter). Built once with the
+// SVGF pipelines; the image views are pointed in by WriteTaauDescriptor on (re)size.
+void CreateTaauPipeline()
+{
+    const uint32_t counts[4] = { 1, 1, 2, 1 };   // inColor, inMotion, hist[2], out
+    VkDescriptorSetLayoutBinding b[4] = {};
+    uint32_t total = 0;
+    for (uint32_t i = 0; i < 4; i++) {
+        b[i].binding         = i;
+        b[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        b[i].descriptorCount = counts[i];
+        b[i].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+        total += counts[i];
+    }
+    VkDescriptorSetLayoutCreateInfo dlci = {};
+    dlci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    dlci.bindingCount = 4;
+    dlci.pBindings    = b;
+    Check(vkCreateDescriptorSetLayout(g.device, &dlci, nullptr, &g.taauDsLayout),
+          "vkCreateDescriptorSetLayout(taau)");
+
+    VkDescriptorPoolSize pool = {};
+    pool.type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    pool.descriptorCount = total;
+    VkDescriptorPoolCreateInfo pci = {};
+    pci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pci.maxSets       = 1;
+    pci.poolSizeCount = 1;
+    pci.pPoolSizes    = &pool;
+    Check(vkCreateDescriptorPool(g.device, &pci, nullptr, &g.taauDsPool), "vkCreateDescriptorPool(taau)");
+
+    VkDescriptorSetAllocateInfo dai = {};
+    dai.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dai.descriptorPool     = g.taauDsPool;
+    dai.descriptorSetCount = 1;
+    dai.pSetLayouts        = &g.taauDsLayout;
+    Check(vkAllocateDescriptorSets(g.device, &dai, &g.taauDs), "vkAllocateDescriptorSets(taau)");
+
+    VkPushConstantRange pcr = {};
+    pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pcr.offset     = 0;
+    pcr.size       = 48;   // matches TaauPC in RecordRtTrace + taau.comp
+    VkPipelineLayoutCreateInfo plci = {};
+    plci.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plci.setLayoutCount         = 1;
+    plci.pSetLayouts            = &g.taauDsLayout;
+    plci.pushConstantRangeCount = 1;
+    plci.pPushConstantRanges    = &pcr;
+    Check(vkCreatePipelineLayout(g.device, &plci, nullptr, &g.taauPipeLayout),
+          "vkCreatePipelineLayout(taau)");
+
+    VkShaderModule cs = MakeShader(taau_comp_spv, taau_comp_spv_len);
+    VkComputePipelineCreateInfo cpci = {};
+    cpci.sType        = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    cpci.stage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    cpci.stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
+    cpci.stage.module = cs;
+    cpci.stage.pName  = "main";
+    cpci.layout       = g.taauPipeLayout;
+    Check(vkCreateComputePipelines(g.device, VK_NULL_HANDLE, 1, &cpci, nullptr, &g.taauPipeline),
+          "vkCreateComputePipelines(taau)");
+    vkDestroyShaderModule(g.device, cs, nullptr);
+}
+
 // Map an RT debug mode to its on-screen title as label.comp glyph indices (font
 // order: 0=space, A C D E F H I N O R S T U X Y). Returns the character count.
 uint32_t ModeLabel(int mode, uint32_t* out)
@@ -1699,8 +1805,8 @@ uint32_t ModeLabel(int mode, uint32_t* out)
 // present path already blits. Called from CreateSvgfTargets (init + each resize).
 void WriteSvgfDescriptor()
 {
-    VkDescriptorImageInfo info[13] = {};
-    const VkImageView views[13] = {
+    VkDescriptorImageInfo info[14] = {};
+    const VkImageView views[14] = {
         g.svView[SV_GPOS0],  g.svView[SV_GPOS1],            // b0 gpos[2]
         g.svView[SV_GNORM0], g.svView[SV_GNORM1],           // b1 gnorm[2]
         g.svView[SV_ALBEDO],                                // b2 albedo
@@ -1709,16 +1815,17 @@ void WriteSvgfDescriptor()
         g.svView[SV_HMOM0],  g.svView[SV_HMOM1],            // b5 hmom[2]
         g.svView[SV_ATROUS0],g.svView[SV_ATROUS1],          // b6 atrous[2]
         g.rtView,                                           // b7 outColor (rtImage)
+        g.svView[SV_MOTION],                                // b8 motion vector (6-d)
     };
-    for (uint32_t i = 0; i < 13; i++) {
+    for (uint32_t i = 0; i < 14; i++) {
         info[i].imageView   = views[i];
         info[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
     }
-    struct { uint32_t binding, first, count; } map[8] = {
-        {0,0,2},{1,2,2},{2,4,1},{3,5,1},{4,6,2},{5,8,2},{6,10,2},{7,12,1}
+    struct { uint32_t binding, first, count; } map[9] = {
+        {0,0,2},{1,2,2},{2,4,1},{3,5,1},{4,6,2},{5,8,2},{6,10,2},{7,12,1},{8,13,1}
     };
-    VkWriteDescriptorSet wr[8] = {};
-    for (int i = 0; i < 8; i++) {
+    VkWriteDescriptorSet wr[9] = {};
+    for (int i = 0; i < 9; i++) {
         wr[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         wr[i].dstSet          = g.svgfDs;
         wr[i].dstBinding      = map[i].binding;
@@ -1726,7 +1833,7 @@ void WriteSvgfDescriptor()
         wr[i].descriptorCount = map[i].count;
         wr[i].pImageInfo      = &info[map[i].first];
     }
-    vkUpdateDescriptorSets(g.device, 8, wr, 0, nullptr);
+    vkUpdateDescriptorSets(g.device, 9, wr, 0, nullptr);
 }
 
 void DestroySvgfTargets()
@@ -1749,6 +1856,7 @@ void CreateSvgfTargets()
     const uint32_t W = g.extent.width, H = g.extent.height;
     for (uint32_t i = 0; i < SV_COUNT; i++) {
         VkFormat fmt = (i == SV_GPOS0 || i == SV_GPOS1) ? VK_FORMAT_R32G32B32A32_SFLOAT
+                     : (i == SV_MOTION)                 ? VK_FORMAT_R16G16_SFLOAT
                                                         : VK_FORMAT_R16G16B16A16_SFLOAT;
         VkImageCreateInfo ici = {};
         ici.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -1819,6 +1927,146 @@ void CreateSvgfTargets()
     std::memset(g.prevCamUp,    0, sizeof(g.prevCamUp));
 }
 
+// Point the TAAU descriptor set at the current views (build step 6-d): the render-
+// res denoised colour (rtImage) + motion vector feed it, the display-res history +
+// output close it. Also repoint labelTaauDs's binding 7 at the TAAU output so the
+// debug label stamps on the upscaled image (the rest mirror svgfDs, unread by the
+// label shader). Called from CreateTaauTargets (init + each resize).
+void WriteTaauDescriptor()
+{
+    VkDescriptorImageInfo info[5] = {};
+    const VkImageView views[5] = {
+        g.rtView,                 // b0 inColor  (render-res denoised)
+        g.svView[SV_MOTION],      // b1 inMotion (render-res MV)
+        g.taView[TA_HIST0], g.taView[TA_HIST1],   // b2 hist[2]
+        g.taView[TA_OUT],         // b3 outColor (display-res)
+    };
+    for (uint32_t i = 0; i < 5; i++) {
+        info[i].imageView   = views[i];
+        info[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    }
+    struct { uint32_t binding, first, count; } map[4] = { {0,0,1},{1,1,1},{2,2,2},{3,4,1} };
+    VkWriteDescriptorSet wr[4] = {};
+    for (int i = 0; i < 4; i++) {
+        wr[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        wr[i].dstSet          = g.taauDs;
+        wr[i].dstBinding      = map[i].binding;
+        wr[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        wr[i].descriptorCount = map[i].count;
+        wr[i].pImageInfo      = &info[map[i].first];
+    }
+    vkUpdateDescriptorSets(g.device, 4, wr, 0, nullptr);
+
+    // labelTaauDs: same 9 bindings as svgfDs but binding 7 (output) = TAAU output.
+    VkDescriptorImageInfo lin[14] = {};
+    const VkImageView lviews[14] = {
+        g.svView[SV_GPOS0],  g.svView[SV_GPOS1],
+        g.svView[SV_GNORM0], g.svView[SV_GNORM1],
+        g.svView[SV_ALBEDO], g.svView[SV_ILLUM],
+        g.svView[SV_HCOL0],  g.svView[SV_HCOL1],
+        g.svView[SV_HMOM0],  g.svView[SV_HMOM1],
+        g.svView[SV_ATROUS0],g.svView[SV_ATROUS1],
+        g.taView[TA_OUT],                                   // b7 -> upscaled output
+        g.svView[SV_MOTION],
+    };
+    for (uint32_t i = 0; i < 14; i++) {
+        lin[i].imageView   = lviews[i];
+        lin[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    }
+    struct { uint32_t binding, first, count; } lmap[9] = {
+        {0,0,2},{1,2,2},{2,4,1},{3,5,1},{4,6,2},{5,8,2},{6,10,2},{7,12,1},{8,13,1}
+    };
+    VkWriteDescriptorSet lwr[9] = {};
+    for (int i = 0; i < 9; i++) {
+        lwr[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        lwr[i].dstSet          = g.labelTaauDs;
+        lwr[i].dstBinding      = lmap[i].binding;
+        lwr[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        lwr[i].descriptorCount = lmap[i].count;
+        lwr[i].pImageInfo      = &lin[lmap[i].first];
+    }
+    vkUpdateDescriptorSets(g.device, 9, lwr, 0, nullptr);
+}
+
+void DestroyTaauTargets()
+{
+    for (uint32_t i = 0; i < TA_COUNT; i++) {
+        if (g.taView[i]) { vkDestroyImageView(g.device, g.taView[i], nullptr); g.taView[i] = VK_NULL_HANDLE; }
+        if (g.taImg[i])  { vkDestroyImage(g.device, g.taImg[i], nullptr);      g.taImg[i]  = VK_NULL_HANDLE; }
+        if (g.taMem[i])  { vkFreeMemory(g.device, g.taMem[i], nullptr);        g.taMem[i]  = VK_NULL_HANDLE; }
+    }
+}
+
+// Create the display-resolution TAAU history (rgba16f x2) + output (rgba8) images,
+// park them in GENERAL for their whole life, clear the histories to zero, and point
+// the descriptor sets. Called from CreateRtTargets, so it rebuilds with the swapchain.
+void CreateTaauTargets()
+{
+    const uint32_t W = g.extent.width, H = g.extent.height;
+    for (uint32_t i = 0; i < TA_COUNT; i++) {
+        VkFormat fmt = (i == TA_OUT) ? VK_FORMAT_R8G8B8A8_UNORM : VK_FORMAT_R16G16B16A16_SFLOAT;
+        VkImageCreateInfo ici = {};
+        ici.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        ici.imageType     = VK_IMAGE_TYPE_2D;
+        ici.format        = fmt;
+        ici.extent        = { W, H, 1 };
+        ici.mipLevels     = 1;
+        ici.arrayLayers   = 1;
+        ici.samples       = VK_SAMPLE_COUNT_1_BIT;
+        ici.tiling        = VK_IMAGE_TILING_OPTIMAL;
+        // The output is also a blit source; the histories are storage-only.
+        ici.usage         = VK_IMAGE_USAGE_STORAGE_BIT
+                          | ((i == TA_OUT) ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0);
+        ici.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+        ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        Check(vkCreateImage(g.device, &ici, nullptr, &g.taImg[i]), "vkCreateImage(taau)");
+
+        VkMemoryRequirements req = {};
+        vkGetImageMemoryRequirements(g.device, g.taImg[i], &req);
+        VkMemoryAllocateInfo mai = {};
+        mai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        mai.allocationSize  = req.size;
+        mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        Check(vkAllocateMemory(g.device, &mai, nullptr, &g.taMem[i]), "vkAllocateMemory(taau)");
+        Check(vkBindImageMemory(g.device, g.taImg[i], g.taMem[i], 0), "vkBindImageMemory(taau)");
+
+        VkImageViewCreateInfo vci = {};
+        vci.sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        vci.image            = g.taImg[i];
+        vci.viewType         = VK_IMAGE_VIEW_TYPE_2D;
+        vci.format           = fmt;
+        vci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        Check(vkCreateImageView(g.device, &vci, nullptr, &g.taView[i]), "vkCreateImageView(taau)");
+    }
+
+    {
+        VkCommandBuffer cb = BeginOneTime();
+        VkImageMemoryBarrier toGen[TA_COUNT] = {};
+        for (uint32_t i = 0; i < TA_COUNT; i++) {
+            toGen[i].sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            toGen[i].oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED;
+            toGen[i].newLayout        = VK_IMAGE_LAYOUT_GENERAL;
+            toGen[i].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toGen[i].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toGen[i].image            = g.taImg[i];
+            toGen[i].subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+            toGen[i].srcAccessMask    = 0;
+            toGen[i].dstAccessMask    = VK_ACCESS_TRANSFER_WRITE_BIT
+                                      | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        }
+        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             0, 0, nullptr, 0, nullptr, TA_COUNT, toGen);
+        VkImageSubresourceRange range = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        VkClearColorValue zero = {};
+        vkCmdClearColorImage(cb, g.taImg[TA_HIST0], VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &range);
+        vkCmdClearColorImage(cb, g.taImg[TA_HIST1], VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &range);
+        EndOneTime(cb);
+    }
+
+    WriteTaauDescriptor();
+}
+
 void CreateRtTargets()
 {
     VkImageCreateInfo ici = {};
@@ -1854,10 +2102,12 @@ void CreateRtTargets()
 
     UpdateRtComputeDescriptor();   // re-point the storage-image half at the new view
     CreateSvgfTargets();           // SVGF G-buffer/history (binding 7 re-uses rtView)
+    CreateTaauTargets();           // 6-d upscaler history/output (reads rtView + SV_MOTION)
 }
 
 void DestroyRtTargets()
 {
+    DestroyTaauTargets();          // display-sized TAAU images, rebuilt with rtImage
     DestroySvgfTargets();          // swapchain-sized SVGF images, rebuilt with rtImage
     if (g.rtView)   { vkDestroyImageView(g.device, g.rtView, nullptr);  g.rtView = VK_NULL_HANDLE; }
     if (g.rtImage)  { vkDestroyImage(g.device, g.rtImage, nullptr);     g.rtImage = VK_NULL_HANDLE; }
@@ -2931,7 +3181,8 @@ extern "C" void RB_Vulkan_Init(void)
         CreateBakePipeline();          // GI bake pass (step 4b-ii), dispatched per level
         CreateSvgfPipelines();         // denoiser passes (step 6); needs svgfDsLayout
         CreateLabelPipeline();         // on-screen mode label (debug); reuses svgfDsLayout
-        CreateRtTargets();             // rt + svgf images; writes both descriptor sets
+        CreateTaauPipeline();          // 6-d temporal upscaler; needs its own set + pipeline
+        CreateRtTargets();             // rt + svgf + taau images; writes the descriptor sets
     }
     g.ready = true;
 
@@ -3476,9 +3727,46 @@ extern "C" void RB_Vulkan_BuildLevel(void)
 // dispatch the megakernel into rtImage, then blit it onto the acquired
 // swapchain image. Assumes rtActive was checked (RT on, TLAS + camera + pipeline
 // present). The submit that follows waits the acquire semaphore at TRANSFER.
+// Halton radical-inverse low-discrepancy value, for the build step 6-d sub-pixel
+// camera jitter. Bases 2 and 3 over a 16-frame cycle give a well-distributed sample
+// pattern the temporal upscaler integrates into reconstructed sub-pixel detail.
+static float RadicalInverse(uint32_t i, uint32_t base)
+{
+    float inv = 1.0f / (float)base, r = 0.0f, f = inv;
+    while (i > 0u) { r += (float)(i % base) * f; i /= base; f *= inv; }
+    return r;
+}
+
 void RecordRtTrace(uint32_t idx)
 {
-    const uint32_t w = g.extent.width, h = g.extent.height;
+    const uint32_t dispW = g.extent.width, dispH = g.extent.height;
+
+    // build step 6-d: the temporal upscaler runs only on the mode-6 denoised path
+    // with the Upscaler set to TAAU. When active, the path tracer + SVGF render into a
+    // render-scale sub-rectangle of the (display-sized) storage images and TAAU
+    // reconstructs the full display image; otherwise everything runs at display
+    // resolution and the present path blits rtImage as before (no behaviour change).
+    const bool taauActive = (rb_rtdebug == 6) && (rb_upscaler == 1)
+                          && g.taauPipeline != VK_NULL_HANDLE;
+    uint32_t renderW = dispW, renderH = dispH;
+    float jitterX = 0.0f, jitterY = 0.0f;
+    if (taauActive) {
+        uint32_t sc = (uint32_t)(rb_renderscale < 25 ? 25
+                                 : (rb_renderscale > 100 ? 100 : rb_renderscale));
+        renderW = ((dispW * sc / 100u) + 1u) & ~1u;   // round to even
+        renderH = ((dispH * sc / 100u) + 1u) & ~1u;
+        if (renderW < 2u)    renderW = 2u;
+        if (renderW > dispW) renderW = dispW;
+        if (renderH < 2u)    renderH = 2u;
+        if (renderH > dispH) renderH = dispH;
+        // Halton(2,3) sub-pixel offset in render pixels, centred ([-0.5, 0.5)).
+        uint32_t j = (g.svgfFrame % 16u) + 1u;
+        jitterX = RadicalInverse(j, 2u) - 0.5f;
+        jitterY = RadicalInverse(j, 3u) - 0.5f;
+    }
+    // From here `w`,`h` are the RENDER dimensions driving the trace + SVGF + the TAAU
+    // input; `dispW`,`dispH` are the display dimensions for the label + final blit.
+    const uint32_t w = renderW, h = renderH;
 
     // rtImage -> GENERAL for the compute write (prior contents are discarded).
     VkImageMemoryBarrier toGeneral = {};
@@ -3517,7 +3805,10 @@ void RecordRtTrace(uint32_t idx)
     pc.camDir[0] = c;            pc.camDir[1] = s;            pc.camDir[2] = 0.0f;
     pc.camRight[0] = s;          pc.camRight[1] = -c;         pc.camRight[2] = 0.0f;
     pc.camRight[3] = 1.0f;                                   // tan(45 deg)
-    pc.camUp[2] = 1.0f;          pc.camUp[3] = (float)h / (float)w;
+    // Vertical FOV from the DISPLAY aspect (the frustum is display-shaped); the render
+    // sub-rect is a uniform scale of it, so the same tangents drive both.
+    pc.camUp[2] = 1.0f;          pc.camUp[3] = (float)dispH / (float)dispW;
+    pc.camPos[3] = jitterX;      pc.camDir[3] = jitterY;     // 6-d sub-pixel jitter (0 when off)
     pc.misc[0] = (uint32_t)rb_rtdebug;
     pc.misc[1] = w; pc.misc[2] = h;
     pc.misc[3] = (uint32_t)g.matNumWall;   // flat-id offset for mode-3 textured decode
@@ -3631,13 +3922,56 @@ void RecordRtTrace(uint32_t idx)
         spc.matEmis  = g.matEmisBuf ? BufferAddress(g.matEmisBuf) : 0;
         vkCmdPushConstants(g.cmd, g.svgfPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(spc), &spc);
         vkCmdDispatch(g.cmd, gx, gy, 1);
+
+        // 4) temporal upscale (build step 6-d): reconstruct the full display image
+        //    from the render-res denoised colour (rtImage) + motion vectors + this
+        //    frame's jitter, accumulating into the parity history. TAAU only; the
+        //    blit below then sources the upscaled output instead of rtImage.
+        if (taauActive)
+        {
+            svgfBarrier();                        // composite writes rtImage + MV -> TAAU reads
+            // TAAU output -> GENERAL for the compute write (it sat in TRANSFER_SRC
+            // after last frame's blit; every display pixel is overwritten here).
+            VkImageMemoryBarrier toGenOut = {};
+            toGenOut.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            toGenOut.oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED;
+            toGenOut.newLayout        = VK_IMAGE_LAYOUT_GENERAL;
+            toGenOut.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toGenOut.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toGenOut.image            = g.taImg[TA_OUT];
+            toGenOut.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+            toGenOut.srcAccessMask    = 0;
+            toGenOut.dstAccessMask    = VK_ACCESS_SHADER_WRITE_BIT;
+            vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toGenOut);
+
+            struct TaauPC {
+                uint32_t misc[4];    // x = cur parity, y = display W, z = display H, w reserved
+                uint32_t misc2[4];   // x = render W, y = render H, z,w reserved
+                float    jitter[4];  // xy = render-pixel jitter
+            } tpc = {};
+            static_assert(sizeof(TaauPC) == 48, "TAAU push-constant layout must match taau.comp");
+            tpc.misc[0] = svgfParity; tpc.misc[1] = dispW;   tpc.misc[2] = dispH;
+            tpc.misc2[0] = renderW;   tpc.misc2[1] = renderH;
+            tpc.jitter[0] = jitterX;  tpc.jitter[1] = jitterY;
+            vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g.taauPipeline);
+            vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                    g.taauPipeLayout, 0, 1, &g.taauDs, 0, nullptr);
+            vkCmdPushConstants(g.cmd, g.taauPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(tpc), &tpc);
+            vkCmdDispatch(g.cmd, (dispW + 7) / 8, (dispH + 7) / 8, 1);
+        }
     }
 
-    // On-screen mode label (debug): stamp the active `~` mode's title top-centre
-    // into rtImage before the blit (the trace path skips the normal HUD, so this is
-    // the only on-screen mode proof). Runs for every RT display mode; the
-    // compute->compute barrier orders it after the megakernel (modes 1-4) /
-    // composite (mode 6) write, and it only touches the label box pixels.
+    // The image the present path blits: the upscaled TAAU output (display-res) when
+    // TAAU ran, else rtImage (the megakernel / composite output, display-res on every
+    // non-TAAU path). The label + blit below operate at display resolution on it.
+    const VkImage finalImage = taauActive ? g.taImg[TA_OUT] : g.rtImage;
+
+    // On-screen mode label (debug): stamp the active `~` mode's title top-centre into
+    // the final image before the blit (the trace path skips the normal HUD, so this
+    // is the only on-screen mode proof). Runs for every RT display mode; the
+    // compute->compute barrier orders it after the megakernel (modes 1-4) / composite
+    // (mode 6) / TAAU (mode 6 upscaled) write, and it only touches the label box.
     {
         VkMemoryBarrier mb = {};
         mb.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
@@ -3649,20 +3983,24 @@ void RecordRtTrace(uint32_t idx)
 
         struct LabelPC { uint32_t w, h, count, scale; uint32_t chars[12]; } lpc = {};
         static_assert(sizeof(LabelPC) == 64, "label push-constant layout must match label.comp");
-        lpc.w     = w;
-        lpc.h     = h;
-        lpc.scale = (h >= 1080u) ? 4u : (h >= 600u ? 3u : 2u);
+        lpc.w     = dispW;
+        lpc.h     = dispH;
+        lpc.scale = (dispH >= 1080u) ? 4u : (dispH >= 600u ? 3u : 2u);
         lpc.count = ModeLabel(rb_rtdebug, lpc.chars);
+        // labelTaauDs retargets binding 7 (output) at the TAAU image; svgfDs writes
+        // rtImage. Both layout-compatible with the label pipeline layout.
+        VkDescriptorSet labelSet = taauActive ? g.labelTaauDs : g.svgfDs;
         vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g.labelPipeline);
         vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-                                g.labelPipeLayout, 0, 1, &g.svgfDs, 0, nullptr);
+                                g.labelPipeLayout, 0, 1, &labelSet, 0, nullptr);
         vkCmdPushConstants(g.cmd, g.labelPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT,
                            0, sizeof(lpc), &lpc);
-        vkCmdDispatch(g.cmd, (w + 7) / 8, (h + 7) / 8, 1);
+        vkCmdDispatch(g.cmd, (dispW + 7) / 8, (dispH + 7) / 8, 1);
     }
 
-    // rtImage GENERAL -> TRANSFER_SRC; swapchain UNDEFINED -> TRANSFER_DST.
+    // final image GENERAL -> TRANSFER_SRC; swapchain UNDEFINED -> TRANSFER_DST.
     VkImageMemoryBarrier toSrc = toGeneral;
+    toSrc.image         = finalImage;
     toSrc.oldLayout     = VK_IMAGE_LAYOUT_GENERAL;
     toSrc.newLayout     = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
     toSrc.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
@@ -3683,14 +4021,16 @@ void RecordRtTrace(uint32_t idx)
     vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                          VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toDst);
 
-    // 1:1 blit (matched extents); component-by-name copy, so R8G8B8A8 -> the
-    // B8G8R8A8 swapchain carries no red/blue swap.
+    // 1:1 blit (matched display extents); component-by-name copy, so R8G8B8A8 -> the
+    // B8G8R8A8 swapchain carries no red/blue swap. The final image is display-sized
+    // on every path (rtImage at display res, or the TAAU output), so this stays a
+    // nearest 1:1 copy — the resolution reconstruction already happened in TAAU.
     VkImageBlit blit = {};
     blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
-    blit.srcOffsets[1]  = { (int32_t)w, (int32_t)h, 1 };
+    blit.srcOffsets[1]  = { (int32_t)dispW, (int32_t)dispH, 1 };
     blit.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
-    blit.dstOffsets[1]  = { (int32_t)w, (int32_t)h, 1 };
-    vkCmdBlitImage(g.cmd, g.rtImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+    blit.dstOffsets[1]  = { (int32_t)dispW, (int32_t)dispH, 1 };
+    vkCmdBlitImage(g.cmd, finalImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                    g.images[idx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                    1, &blit, VK_FILTER_NEAREST);
 
@@ -3715,7 +4055,7 @@ void RecordRtTrace(uint32_t idx)
         g.prevCamRight[0] = s;          g.prevCamRight[1] = -c;         g.prevCamRight[2] = 0.0f;
         g.prevCamRight[3] = 1.0f;                                       // tan(hFov/2)
         g.prevCamUp[0] = 0.0f; g.prevCamUp[1] = 0.0f; g.prevCamUp[2] = 1.0f;
-        g.prevCamUp[3] = (float)h / (float)w;                          // tan(vFov/2)
+        g.prevCamUp[3] = (float)dispH / (float)dispW;                  // tan(vFov/2), display aspect
         g.svgfFrame++;
     }
 }
@@ -4051,6 +4391,11 @@ extern "C" void RB_Vulkan_Shutdown(void)
         if (g.labelPipeLayout) vkDestroyPipelineLayout(g.device, g.labelPipeLayout, nullptr);
         if (g.svgfDsPool)     vkDestroyDescriptorPool(g.device, g.svgfDsPool, nullptr);
         if (g.svgfDsLayout)   vkDestroyDescriptorSetLayout(g.device, g.svgfDsLayout, nullptr);
+        // Temporal upscaler (step 6-d); its images are freed by DestroyRtTargets.
+        if (g.taauPipeline)   vkDestroyPipeline(g.device, g.taauPipeline, nullptr);
+        if (g.taauPipeLayout) vkDestroyPipelineLayout(g.device, g.taauPipeLayout, nullptr);
+        if (g.taauDsPool)     vkDestroyDescriptorPool(g.device, g.taauDsPool, nullptr);
+        if (g.taauDsLayout)   vkDestroyDescriptorSetLayout(g.device, g.taauDsLayout, nullptr);
         // Direct-lighting buffers (step 3b): per-level emitter list + WAD-global Le table.
         if (g.emitBuf)      vkDestroyBuffer(g.device, g.emitBuf, nullptr);
         if (g.emitMem)      vkFreeMemory(g.device, g.emitMem, nullptr);
