@@ -250,8 +250,8 @@ default_t	defaults[] =
     {"show_messages",&showMessages, 1},
     {"fps_corner",&fpsCorner, 0},
     {"renderer",&rendermode, RB_CLASSIC},
-    {"upscaler",&rb_upscaler, 0},
-    {"render_scale",&rb_renderscale, 100},
+    {"upscaler",&rb_upscaler, 1},		// DOOM-0090: default Ultra to TAAU @ 50%
+    {"render_scale",&rb_renderscale, 50},	// so it boots playable, not 8 FPS at native
     {"rt_brightness",&rb_exposure, 10},
     {"flashlight",&rb_flashlight, 0},
     {"rt_view",&rb_rtdebug, 6},

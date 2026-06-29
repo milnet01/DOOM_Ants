@@ -569,7 +569,7 @@ extern "C" { int rb_flashlight = 0; }
 // later phases on the same contract). rb_renderscale: the path tracer's render
 // resolution as a percent of the display (100/75/67/50); only takes effect with an
 // upscaler active and on the mode-6 denoised path. C linkage for the C menu/config.
-extern "C" { int rb_upscaler = 0; int rb_renderscale = 100; int rb_exposure = 10; }
+extern "C" { int rb_upscaler = 1; int rb_renderscale = 50; int rb_exposure = 10; }   // DOOM-0090: TAAU @ 50% default
 
 // DOOM-0090: per-pass GPU profiler toggle (the `\` key; persisted as rt_profile).
 // When on, the path tracer's per-stage GPU cost is timestamped and printed to the
@@ -4369,7 +4369,11 @@ void RecordRtTrace(uint32_t idx)
 
         // 2) edge-aware a-trous: N iterations, hole step doubling, ping-ponging
         //    atrous[0]<->atrous[1]. Iteration 0 also writes the colour history.
-        const int N = 5;
+        // DOOM-0090: 4 a-trous iterations (was 5). The dropped pass is the coarsest
+        // (hole step 16) — it only smooths very-low-frequency residual noise, the
+        // least visible level, so removing it trims the denoiser's cost (its second-
+        // hotspot ~36 ms at native / ~8.5 ms at 50%) with minimal visual change.
+        const int N = 4;
         uint32_t ping = 0;
         vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g.svgfAtrous);
         for (int i = 0; i < N; i++) {
