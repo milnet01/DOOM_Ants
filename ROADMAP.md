@@ -873,3 +873,14 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: feature.
   Source: user-request-2026-06-28.
   Resolved (2026-06-28): shipped + user-tested. Brightness slider added to the Renderer menu (rb_exposure 0..15 -> EV [-4.0,-0.25] via svgf_composite misc3.x; persisted as rt_brightness; default pos 10 ~ -1.5 EV). User confirms the default view is now slightly brighter and the slider works; effect is subtle and the view is still somewhat dark, but they chose to leave the range as-is — the player flashlight (DOOM-0044) is the intended fix for dark corners. Range/mapping is a one-line change if a punchier slider is wanted later.
+
+- 📋 [DOOM-0098] **Make the Ultra ambient floor shadow-aware so it stops flattening contrast.**
+  Refines DOOM-0043. The current ambient floor (max(GI, sectorLight*AMBIENT_SECTOR_SCALE) in pathtrace.comp modes 4 + 6) is added FLAT to every surface in a sector, so within a lit room it lifts the shadowed side of a surface as much as the lit side — softening shadows/contrast (user playtest 2026-06-29: "not too dark now but it kind of kills the shadows"). The per-sector keying is correct (bright-marked rooms read, dark sectors stay dark); the problem is the within-room flatness, which per-area targeting cannot fix because the shadow lives inside the same bright room that needs the glow.
+  Approaches to evaluate (cheapest first):
+    (a) Occlusion/AO-modulate the floor: scale the ambient term by a cheap ambient-occlusion / short shadow-ray term so genuinely open surfaces get the fill but shadowed pockets keep their darkness. Preserves contrast while still rescuing dark rooms.
+    (b) Fold the floor into the GI bake (bake.comp) instead of adding it at the camera: treat the sector-light ambient as a small uniform emitter that participates in the bounce, so occlusion falls out of the existing GI solution naturally (no extra per-pixel ray) — but changes bake semantics and re-bake cost.
+    (c) Hemisphere/normal-aware fill (e.g. a faint sky-direction bias) so up-facing surfaces get more than tucked-under faces — partial contrast recovery, cheaper than a full AO term.
+  Defer until later levels are playtested (per DOOM-0043's play-it-first decision) and likely sequence AFTER the flashlight (DOOM-0044), which is the proper answer for genuinely dark corners and may reduce how hard the ambient floor has to work. AMBIENT_SECTOR_SCALE stays the master-strength knob regardless of approach.
+  **Layman:** Refine the gentle room glow so it only fills genuinely dark/shadowed spots instead of washing out every shadow.
+  Kind: enhancement.
+  Source: user-request-2026-06-29.
