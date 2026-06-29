@@ -67,6 +67,13 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **REJECT-lump light culling for NEE (cheap-ladder step 1).** (DOOM-0119)
+  Ultra path tracer skips glowing-sprite lights in rooms a surface
+  can't see (via the WAD REJECT visibility lump), before casting their
+  shadow rays. At 50% render scale in a light-heavy multi-room scene the
+  megakernel now dips to ~9 ms (51 fps spikes) where cross-room lights
+  are culled, up from the ~37-46 fps DOOM-0090 baseline.
+
 - **Smooth camera between game tics in the 3D renderers — render rate is no longer capped at the 35 Hz game tick** (DOOM-0048)
   DOOM's world updates 35 times a second; the 3D view now interpolates the camera between those updates so walking and turning look smooth at any frame rate above 35 FPS, instead of stepping at 35. The simulation itself is untouched (so demos and multiplayer stay identical), and Classic mode still renders locked to the tick.
 
