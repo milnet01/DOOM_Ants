@@ -67,6 +67,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Ultra path tracer is ~6x faster in light-heavy rooms (8-9 → 35-42 FPS on an RX 6600 at 50% render scale)** (DOOM-0090)
+  Skips shadow rays for sprite lights too far or dim to add visible light, instead of tracing one per glowing prop per pixel. Plus a new on-screen per-pass GPU profiler (the \ key) used to find the hotspot.
+
 - **Ultra now boots into the denoised path-traced view and remembers your view choice between sessions** (DOOM-0116)
 
 - **Compact the static world BLAS to reclaim ray-tracing acceleration-structure memory** (DOOM-0091)
