@@ -68,6 +68,14 @@ layout(buffer_reference, scalar) readonly buffer MatEmis  { float m[]; };
 layout(buffer_reference, scalar) readonly buffer ProbesRO { float p[]; };
 layout(buffer_reference, scalar) readonly buffer TriSs    { uint  s[]; };
 
+// DOOM-0119 REJECT-lump light cull (read side). SubSec maps a subsector index to its
+// owning sector; EmitSec maps an emitter index to its sector (0xFFFFFFFF = no cull);
+// Reject is the packed sector x sector visibility bitmatrix as uint words (byte b =
+// (w[b>>2] >> (8*(b&3))) & 0xFF; bit (s1*numSec+s2) set => s2 not visible from s1).
+layout(buffer_reference, scalar) readonly buffer SubSec  { uint s[]; };
+layout(buffer_reference, scalar) readonly buffer EmitSec { uint s[]; };
+layout(buffer_reference, scalar) readonly buffer Reject  { uint w[]; };
+
 // Cheap integer hash (PCG) -> a float in [0,1), for stochastic sampling.
 uint pcgHash(uint x)
 {
@@ -170,9 +178,14 @@ vec3 sampleEmitter(uint k, vec3 hitP, vec3 n, float pdfSel, uint omniStart, Emit
 // for the camera frame (a lamp you look at glows) and false for the GI bake (so the
 // probes store INDIRECT-only radiance — the directly-visible emitter term is the
 // frame's NEE job, double-counted if folded into the cache too).
+// DOOM-0119: hitSec is the owning sector of the shading point (0xFFFFFFFF = unknown
+// -> no cull); numSectors is the REJECT matrix dimension (0 = cull off). emitSec +
+// reject are the cull buffers. They gate ONLY the omnidirectional sprite loop below;
+// the GI bake passes numSectors 0 (its omni loop is empty, omniStart == emitCount).
 vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
                   uint omniStart, Emitters emit, MatEmis matEmis, uint nSamples,
-                  bool addEmission, inout uint seed)
+                  bool addEmission, uint hitSec, uint numSectors,
+                  EmitSec emitSec, Reject reject, inout uint seed)
 {
     // Self-emission (linear) from the per-material Le table, LOCALISED to this hit
     // texel's brightness (DOOM-0084) so a lamp glows from its lit top, not its dark
@@ -223,6 +236,23 @@ vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
         // sprites are ever in view, so the extra shadow ray per sprite is cheap.
         for (uint k = omniStart; k < emitCount; k++)
         {
+            // DOOM-0119: REJECT-lump cull. Skip an omni sprite light whose sector is
+            // provably invisible from this hit's sector — exact + free, before the
+            // shadow ray (strictly stronger than the OMNI_CULL_VALUE contribution
+            // cull). Bypassed when either sector is unknown (a static centroid on a
+            // linedef, or a sprite hit) or the level carries no REJECT data.
+            if (numSectors > 0u && hitSec < numSectors)
+            {
+                uint es = emitSec.s[k];
+                if (es < numSectors)
+                {
+                    uint pnum    = hitSec * numSectors + es;
+                    uint bytenum = pnum >> 3u;
+                    uint byteval = (reject.w[bytenum >> 2u] >> ((bytenum & 3u) * 8u)) & 0xFFu;
+                    if ((byteval & (1u << (pnum & 7u))) != 0u)
+                        continue;                 // not visible -> skip this light
+                }
+            }
             vec3 rad = albedo * (1.0 / PI) * sampleEmitter(k, hitP, n, 1.0, omniStart, emit, OMNI_CULL_VALUE, seed);
             L += min(rad, vec3(FIREFLY_MAX));
         }

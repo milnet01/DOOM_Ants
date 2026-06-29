@@ -88,13 +88,18 @@ layout(push_constant) uniform PC {
     uvec4 misc2;     // x = emitter count (3b); y = probe count (4c); z,w reserved
     uvec4 misc3;     // step-4d verify: x = sample-seed base, y = spp this dispatch,
                      // z = estimator (0 = power-NEE, 1 = brute-force), w reserved
-    uvec4 misc4;     // DOOM-0100: x = sprite material base (numWall+numFlat); rest reserved
+    uvec4 misc4;     // DOOM-0100: x = sprite material base (numWall+numFlat);
+                     // y = omniStart (DOOM-0084); z = numSectors (DOOM-0119 REJECT
+                     // cull dim, 0 = off); w reserved
     Verts    verts;    // level mesh vertex buffer (device address)
     Emitters emit;     // step-3b emitter list (device address; count in misc2.x)
     MatEmis  matEmis;  // per-material Le table (device address)
     ProbesRO probes;   // step-4 baked GI cache (device address; count in misc2.y)
     TriSs    triSs;     // per-triangle subsector id -> probe index (device address)
     Verts    spriteVerts; // DOOM-0100: per-frame billboard verts (device address; 0 if none)
+    SubSec   subSec;   // DOOM-0119: subsector -> sector (device address; 0 if cull off)
+    EmitSec  emitSec;  // DOOM-0119: per-emitter sector (device address; 0 if cull off)
+    Reject   reject;   // DOOM-0119: REJECT bitmatrix words (device address; 0 if cull off)
 } pc;
 
 // --- Camera-only shading constants (build step 3c/4b-iii) --------------------
@@ -320,8 +325,19 @@ void main()
             // the glow on the bright pixels (lamp top, not the dark stand).
             bool addEmis = isSprite ? ((flags & FLAG_EMISSIVE) != 0) : true;
             uint seed = px.x + px.y * w + 1u;
+            // DOOM-0119: this hit's owning sector for the REJECT light cull. World hit
+            // -> subsector (triSs) -> sector (subSec); sprite hits + the no-REJECT case
+            // pass 0xFFFFFFFF (unknown) so shadeSurface leaves every light in play.
+            // probeCount (misc2.y) == subsector count, so it bounds the triSs lookup.
+            uint hitSec = 0xFFFFFFFFu;
+            if (pc.misc4.z > 0u && !isSprite)
+            {
+                uint ss = pc.triSs.s[uint(prim)];
+                if (ss < pc.misc2.y) hitSec = pc.subSec.s[ss];
+            }
             vec3 L = shadeSurface(hitP, n, albedo, id, pc.misc2.x, pc.misc4.y,
-                                  pc.emit, pc.matEmis, NEE_SAMPLES, addEmis, seed);
+                                  pc.emit, pc.matEmis, NEE_SAMPLES, addEmis,
+                                  hitSec, pc.misc4.z, pc.emitSec, pc.reject, seed);
 
             // Indirect GI (build step 4c) + DOOM-0043 sector-light ambient floor.
             // The probe holds the bounced solution; the floor is a deliberate,
@@ -487,8 +503,16 @@ void main()
             // INDEPENDENT sample -> temporal accumulation converges and the SVGF
             // variance estimate is non-zero (a frozen seed defeats the denoiser).
             uint seed  = pcgHash(px.x + px.y * w + 1u + pc.misc3.x * 2654435761u);
+            // DOOM-0119: hit sector for the REJECT light cull (see the mode-4 path).
+            uint hitSec = 0xFFFFFFFFu;
+            if (pc.misc4.z > 0u && !isSprite)
+            {
+                uint ss = pc.triSs.s[uint(prim)];
+                if (ss < pc.misc2.y) hitSec = pc.subSec.s[ss];
+            }
             vec3 illum = shadeSurface(hitP, n, vec3(1.0), id, pc.misc2.x, pc.misc4.y,
-                                      pc.emit, pc.matEmis, NEE_SAMPLES, false, seed);
+                                      pc.emit, pc.matEmis, NEE_SAMPLES, false,
+                                      hitSec, pc.misc4.z, pc.emitSec, pc.reject, seed);
             // GI bounce + DOOM-0043 sector-light ambient floor (demodulated: the
             // composite re-applies albedo). Same max() floor as mode 4 so a bright-
             // marked but unlit room reads, while dark sectors stay dark.

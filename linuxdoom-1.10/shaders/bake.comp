@@ -46,6 +46,9 @@ layout(push_constant) uniform PC {
     Probes   probes;   // GI probe buffer (this pass's output)
     ProbesRO prevProbes; // previous bounce pass's probes (read for multi-bounce)
     TriSs    triSs;     // per-triangle subsector id -> probe index
+    EmitSec  emitSec;  // DOOM-0119: unused here (always 0) — the bake's omni loop is
+    Reject   reject;   // empty (omniStart == emitCount), so shadeSurface's REJECT cull
+                       // is dead; passed only to satisfy the shared signature.
 } pc;
 
 const uint  BAKE_RAYS = 256u;   // sphere samples/probe. SH-L1 is very low frequency,
@@ -118,8 +121,11 @@ void main()
             // therefore hold INDIRECT radiance.
             // omniStart = emitCount: the level-load bake has only static wall/flat
             // emitters (no sprite lights yet), so every emitter stays oriented.
+            // DOOM-0119: hitSec 0xFFFFFFFF + numSectors 0 -> REJECT cull off (the bake
+            // never culls; its omni loop is empty anyway).
             Li = shadeSurface(hitP, n, albedo, id, pc.misc.z, pc.misc.z,
-                              pc.emit, pc.matEmis, BAKE_NEE, false, seed);
+                              pc.emit, pc.matEmis, BAKE_NEE, false,
+                              0xFFFFFFFFu, 0u, pc.emitSec, pc.reject, seed);
 
             // Multi-bounce: on passes 2+ (giEnabled), add the light this surface
             // received from the PREVIOUS bounce's probes. Pass 1 builds 1-bounce

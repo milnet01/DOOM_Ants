@@ -51,6 +51,11 @@ extern int*     texturewidthmask;
 extern int      numtextures;
 extern int      numflats;
 
+// DOOM-0119: the WAD REJECT sector->sector visibility lump, cached by P_SetupLevel
+// (declared in p_local.h, not pulled in here). numsectors/sectors/subsectors/segs
+// come from r_state.h.
+extern byte*    rejectmatrix;
+
 //
 // Growable vertex array.
 //
@@ -555,6 +560,47 @@ int RB_BuildProbes(rb_probe_t* out, int maxprobes)
 int RB_NumSubsectors(void)
 {
     return numsubsectors;
+}
+
+// DOOM-0119: REJECT-lump visibility, used by the path tracer to cull lights a
+// shading point can't see.
+int RB_NumSectors(void)
+{
+    return numsectors;
+}
+
+const unsigned char* RB_RejectMatrix(int* sizeBytes)
+{
+    // DOOM packs the matrix as numsectors*numsectors bits, row-major, LSB-first
+    // (see P_CheckSight): bit (s1*numsectors+s2) set => s2 invisible from s1.
+    if (sizeBytes)
+        *sizeBytes = (numsectors * numsectors + 7) / 8;
+    return (const unsigned char*)rejectmatrix;
+}
+
+int RB_SectorAtPoint(float x, float y)
+{
+    subsector_t* ss = R_PointInSubsector((fixed_t)(x * FRACUNIT), (fixed_t)(y * FRACUNIT));
+    if (!ss || ss->numlines <= 0)
+        return -1;
+    // subsectors[].sector is filled lazily at render time; derive the sector the same
+    // way RB_BuildProbes does (the first seg's frontsector) so this is valid even
+    // before the first frame is drawn.
+    return (int)(segs[ss->firstline].frontsector - sectors);
+}
+
+int RB_BuildSubsectorSectors(int* out, int n)
+{
+    int count = (numsubsectors < n) ? numsubsectors : n;
+    int i;
+    for (i = 0; i < count; i++)
+    {
+        subsector_t* ss = &subsectors[i];
+        out[i] = (ss->numlines > 0)
+               ? (int)(segs[ss->firstline].frontsector - sectors)
+               : -1;
+    }
+    return count;
 }
 
 int RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst)

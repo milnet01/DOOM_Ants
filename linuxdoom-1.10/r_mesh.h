@@ -147,6 +147,31 @@ int RB_BuildProbes(rb_probe_t* out, int maxprobes);
 // size the probe array without reaching past the mesh seam into engine globals.
 int RB_NumSubsectors(void);
 
+// DOOM-0119 (REJECT-lump light culling). The path tracer skips emitter sectors the
+// WAD's REJECT visibility lump marks invisible from a shading point's sector, before
+// casting a shadow ray. These hand the sector mapping + the matrix across the C/C++
+// seam (the back-end has no DOOM headers). All valid after P_SetupLevel.
+
+// Sector count of the loaded level (the REJECT matrix is numsectors x numsectors bits).
+int RB_NumSectors(void);
+
+// The packed REJECT bitmatrix and its byte length (set *sizeBytes). Bit
+// (s1*numsectors + s2) set => sector s2 is provably never visible from s1 (DOOM's
+// P_CheckSight convention, row-major LSB-first). Returns NULL / *sizeBytes 0 if the
+// level has no REJECT lump (then the caller skips the cull).
+const unsigned char* RB_RejectMatrix(int* sizeBytes);
+
+// Sector index containing world point (x, y) in float world units (the mesh's
+// units), via the BSP. -1 if degenerate. Used to tag a sprite emitter (a glowing
+// Thing) with its room for the REJECT cull.
+int RB_SectorAtPoint(float x, float y);
+
+// Owning sector index of each subsector, written into out[] in subsector order
+// (matching RB_BuildProbes / the mesh tri_ss map), up to n entries; returns the
+// count. -1 for a degenerate (line-less) leaf. Lets a ray hit -> subsector ->
+// sector without crossing the seam to the DOOM globals.
+int RB_BuildSubsectorSectors(int* out, int n);
+
 //
 // Texture atlas for per-texel sampling (DOOM-0008 materials slice). Every wall
 // texture and flat is packed, as raw 8-bit palette indices, into one R8 atlas

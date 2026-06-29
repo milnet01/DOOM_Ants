@@ -527,6 +527,20 @@ struct VulkanState
     VkBuffer       triSsBuf   = VK_NULL_HANDLE;
     VkDeviceMemory triSsMem   = VK_NULL_HANDLE;
 
+    // DOOM-0119 REJECT-lump light cull. subSecBuf maps subsector -> owning sector
+    // (per level); rejectBuf is the WAD REJECT visibility bitmatrix packed as uint
+    // words (per level); emitSecBuf is per-emitter sector, host-visible + refilled
+    // each frame alongside emitBuf (static records carry a 0xFFFFFFFF sentinel = no
+    // cull). numSectors gates the shader cull (0 = no REJECT lump -> cull off).
+    VkBuffer       subSecBuf     = VK_NULL_HANDLE;
+    VkDeviceMemory subSecMem     = VK_NULL_HANDLE;
+    VkBuffer       rejectBuf     = VK_NULL_HANDLE;
+    VkDeviceMemory rejectMem     = VK_NULL_HANDLE;
+    VkBuffer       emitSecBuf    = VK_NULL_HANDLE;
+    VkDeviceMemory emitSecMem    = VK_NULL_HANDLE;
+    void*          emitSecMapped = nullptr;
+    uint32_t       numSectors    = 0;            // REJECT matrix dimension (0 = cull off)
+
     bool ready        = false;
     bool needRecreate = false;
 };
@@ -1716,16 +1730,17 @@ void CreateRtComputePipeline()
     Check(vkAllocateDescriptorSets(g.device, &dai, &g.rtDs), "vkAllocateDescriptorSets(rt)");
 
     // Push constant: 4x vec4 (camera) + 4x uvec4 (mode/w/h/numWall, emitter+probe
-    // counts, verify seed/spp/estimator, DOOM-0100 sprite base + omni-emitter start)
-    // + 6x uint64 (vertex / emitter / Le / probe-cache / tri-subsector / sprite-vert
-    // addresses) = 176 bytes. MUST match sizeof(RtPushConstants) in RecordRtTrace —
-    // a short range silently drops misc4/spriteVerts (the omni-light fix), so the
-    // verify struct's 152-byte push is a valid partial of this 176-byte range. Within
+    // counts, verify seed/spp/estimator, DOOM-0100 sprite base + omni-emitter start +
+    // DOOM-0119 REJECT sector count) + 9x uint64 (vertex / emitter / Le / probe-cache /
+    // tri-subsector / sprite-vert + DOOM-0119 subsector-sector / emitter-sector /
+    // reject-matrix addresses) = 200 bytes. MUST match sizeof(RtPushConstants) in
+    // RecordRtTrace — a short range silently drops the trailing addresses, so the
+    // verify struct's 152-byte push is a valid partial of this 200-byte range. Within
     // the 256-byte device limit.
     VkPushConstantRange pcr = {};
     pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pcr.offset     = 0;
-    pcr.size       = 176;
+    pcr.size       = 200;
     // Three sets: 0 = RT (TLAS + output image), 1 = the raster materials set
     // (g.dsLayout: PLAYPAL LUT + bindless material array), reused verbatim so the
     // textured trace (step 3a) decodes surfaces with no parallel material path,
@@ -1868,12 +1883,14 @@ void CreateBakePipeline()
     dai.pSetLayouts        = &g.bakeDsLayout;
     Check(vkAllocateDescriptorSets(g.device, &dai, &g.bakeDs), "vkAllocateDescriptorSets(bake)");
 
-    // Push constant: uvec4 (probeCount/numWall/emitterCount/giEnabled) + 6 uint64
-    // buffer addresses (verts, emit, matEmis, probes, prevProbes, triSs) = 64 bytes.
+    // Push constant: uvec4 (probeCount/numWall/emitterCount/giEnabled) + 8 uint64
+    // buffer addresses (verts, emit, matEmis, probes, prevProbes, triSs, + DOOM-0119
+    // emitSec/reject — always 0 here, but the shared shadeSurface references them so
+    // the range must cover them) = 80 bytes. MUST match sizeof(BakePush) below.
     VkPushConstantRange pcr = {};
     pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pcr.offset     = 0;
-    pcr.size       = 64;
+    pcr.size       = 80;
     VkDescriptorSetLayout setLayouts[2] = { g.bakeDsLayout, g.dsLayout };
     VkPipelineLayoutCreateInfo plci = {};
     plci.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -3579,7 +3596,8 @@ static const uint32_t SPR_EMIT_MAX = 1024;
 // set, and write the 14-float records into the persistently-mapped emitter buffer.
 // Sets g.emitCount. dynEmit/dynWgt may be null (static-only, e.g. the level-load
 // fill the GI bake reads). Host-coherent + the frame fence makes the write safe.
-void FinalizeEmitters(const std::vector<float>* dynEmit, const std::vector<float>* dynWgt)
+void FinalizeEmitters(const std::vector<float>* dynEmit, const std::vector<float>* dynWgt,
+                      const std::vector<uint32_t>* dynSec = nullptr)
 {
     if (!g.emitMapped || !g.emitCap) { g.emitCount = 0; return; }
     // Static emitters [0, staticN) then this frame's sprite emitters [staticN, n) —
@@ -3590,6 +3608,23 @@ void FinalizeEmitters(const std::vector<float>* dynEmit, const std::vector<float
         g.staticEmit.data(), g.staticWgt.data(), (int)g.staticWgt.size(),
         dynN ? dynEmit->data() : nullptr, dynN ? dynWgt->data() : nullptr, dynN,
         (int)g.emitCap, (float*)g.emitMapped);
+
+    // DOOM-0119: fill the parallel per-emitter sector buffer in lock-step with the
+    // merge above (same static-then-dynamic order + same cap clamp). Static records
+    // carry the no-cull sentinel (their centroid sits on a linedef -> ambiguous
+    // sector); dynamic sprite records carry their Thing's sector from dynSec.
+    if (g.emitSecMapped)
+    {
+        uint32_t* es = (uint32_t*)g.emitSecMapped;
+        const int staticN = (int)g.staticWgt.size();
+        const int n = (int)g.emitCount;
+        for (int i = 0; i < n; i++)
+        {
+            if (i < staticN) { es[i] = 0xFFFFFFFFu; continue; }
+            const int di = i - staticN;
+            es[i] = (dynSec && di < (int)dynSec->size()) ? (*dynSec)[di] : 0xFFFFFFFFu;
+        }
+    }
 }
 
 // DOOM-0084: each traced frame, scan this frame's world-sprite billboards (already
@@ -3620,6 +3655,7 @@ void BuildDynamicEmitters()
     const float kSpriteEmitBoost = 12.0f;
 
     std::vector<float> emit, wgt;
+    std::vector<uint32_t> dynSec;            // DOOM-0119: per-emitter sector (REJECT cull)
     uint32_t litSprites = 0;
     float maxLe = 0.0f;
     for (uint32_t t = 0; t < tris; t++)
@@ -3647,10 +3683,19 @@ void BuildDynamicEmitters()
         const float czv = ex1 * ey2 - ey1 * ex2;
         const float area = 0.5f * std::sqrt(cxv * cxv + cyv * cyv + czv * czv);
         wgt.push_back(emis::luminance(lr, lg, lb) * area);
+
+        // DOOM-0119: tag this sprite emitter with its room for the REJECT cull. The
+        // quad is a billboard centred on the Thing, so the triangle centroid's sector
+        // is the Thing's sector. No REJECT lump (numSectors 0) or no sector -> sentinel
+        // so the shader leaves this light uncalled.
+        const float cxw = (tri[0].x + tri[1].x + tri[2].x) * (1.0f / 3.0f);
+        const float cyw = (tri[0].y + tri[1].y + tri[2].y) * (1.0f / 3.0f);
+        const int   sec = (g.numSectors > 0u) ? RB_SectorAtPoint(cxw, cyw) : -1;
+        dynSec.push_back(sec >= 0 ? (uint32_t)sec : 0xFFFFFFFFu);
         litSprites++;
         maxLe = std::max(maxLe, emis::value(lr, lg, lb));
     }
-    FinalizeEmitters(&emit, &wgt);
+    FinalizeEmitters(&emit, &wgt, &dynSec);
 
     // Diagnostic (DOOM-0084 bring-up): confirm sprite lights reach the NEE set.
     // Rate-limited so it doesn't spam at 35 Hz; prints on change of the lit count.
@@ -3684,6 +3729,9 @@ void BuildEmitterList()
 {
     if (g.emitBuf) { vkDestroyBuffer(g.device, g.emitBuf, nullptr); g.emitBuf = VK_NULL_HANDLE; }
     if (g.emitMem) { vkFreeMemory(g.device, g.emitMem, nullptr);    g.emitMem = VK_NULL_HANDLE; }
+    if (g.emitSecBuf) { vkDestroyBuffer(g.device, g.emitSecBuf, nullptr); g.emitSecBuf = VK_NULL_HANDLE; }
+    if (g.emitSecMem) { vkFreeMemory(g.device, g.emitSecMem, nullptr);    g.emitSecMem = VK_NULL_HANDLE; }
+    g.emitSecMapped = nullptr;
     g.emitMapped = nullptr;
     g.emitCount  = 0;
     g.emitCap    = 0;
@@ -3744,6 +3792,15 @@ void BuildEmitterList()
                    &g.emitBuf, &g.emitMem);
     Check(vkMapMemory(g.device, g.emitMem, 0, VK_WHOLE_SIZE, 0, &g.emitMapped), "vkMapMemory(emit)");
 
+    // DOOM-0119: parallel per-emitter sector buffer (host-visible, same record cap),
+    // refilled by FinalizeEmitters each frame. One uint per emitter record. Created
+    // before the static-only fill below so that fill tags the static set's sentinels.
+    CreateRtBuffer((VkDeviceSize)g.emitCap * sizeof(uint32_t),
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                   &g.emitSecBuf, &g.emitSecMem);
+    Check(vkMapMemory(g.device, g.emitSecMem, 0, VK_WHOLE_SIZE, 0, &g.emitSecMapped), "vkMapMemory(emitSec)");
+
     // Static-only initial fill — this is what the level-load GI bake reads (no
     // sprites at bake time); per-frame fills add the emissive sprites.
     FinalizeEmitters(nullptr, nullptr);
@@ -3793,8 +3850,10 @@ void RunGiBake()
         uint64_t probeAddr;     // write target (this pass's output)
         uint64_t prevProbeAddr; // read source (previous bounce's probes)
         uint64_t triSsAddr;
+        uint64_t emitSecAddr;   // DOOM-0119: always 0 (the bake's REJECT cull is dead);
+        uint64_t rejectAddr;    // present only to match the shared shadeSurface signature.
     } bp = {};
-    static_assert(sizeof(BakePush) == 64, "bake push-constant layout must match the shader");
+    static_assert(sizeof(BakePush) == 80, "bake push-constant layout must match the shader");
     bp.misc[0]     = g.probeCount;
     bp.misc[1]     = (uint32_t)g.matNumWall;
     bp.misc[2]     = g.emitCount;
@@ -4019,7 +4078,12 @@ void BuildProbes()
     if (g.probeMem2) { vkFreeMemory(g.device, g.probeMem2, nullptr);    g.probeMem2 = VK_NULL_HANDLE; }
     if (g.triSsBuf)  { vkDestroyBuffer(g.device, g.triSsBuf, nullptr);  g.triSsBuf  = VK_NULL_HANDLE; }
     if (g.triSsMem)  { vkFreeMemory(g.device, g.triSsMem, nullptr);     g.triSsMem  = VK_NULL_HANDLE; }
+    if (g.subSecBuf) { vkDestroyBuffer(g.device, g.subSecBuf, nullptr); g.subSecBuf = VK_NULL_HANDLE; }
+    if (g.subSecMem) { vkFreeMemory(g.device, g.subSecMem, nullptr);    g.subSecMem = VK_NULL_HANDLE; }
+    if (g.rejectBuf) { vkDestroyBuffer(g.device, g.rejectBuf, nullptr); g.rejectBuf = VK_NULL_HANDLE; }
+    if (g.rejectMem) { vkFreeMemory(g.device, g.rejectMem, nullptr);    g.rejectMem = VK_NULL_HANDLE; }
     g.probeCount = 0;
+    g.numSectors = 0;
 
     if (!g.rtEnabled || !g.levelMesh)
         return;
@@ -4052,6 +4116,33 @@ void BuildProbes()
     UploadAddressBuffer(g.levelMesh->tri_ss,
                         (VkDeviceSize)g.levelMesh->numtris * sizeof(int),
                         &g.triSsBuf, &g.triSsMem);
+
+    // DOOM-0119: REJECT-lump light-cull data. subSec maps subsector -> owning sector
+    // (same order as the probes/tri_ss above), and reject is the WAD REJECT bitmatrix
+    // uploaded as uint words (the shader extracts the byte then the bit). The
+    // megakernel skips an omni sprite light whose sector this hit's sector provably
+    // can't see. Left disabled (numSectors 0) when the level has no REJECT lump.
+    int rejectBytes = 0;
+    const unsigned char* reject = RB_RejectMatrix(&rejectBytes);
+    const int numSec = RB_NumSectors();
+    if (reject && rejectBytes > 0 && numSec > 0)
+    {
+        std::vector<int32_t> subSec(n);
+        RB_BuildSubsectorSectors(subSec.data(), n);
+        UploadAddressBuffer(subSec.data(), (VkDeviceSize)subSec.size() * sizeof(int32_t),
+                            &g.subSecBuf, &g.subSecMem);
+
+        // Pad the byte matrix up to a uint-word multiple so the shader's last word
+        // read is fully backed; the high padding bytes are never addressed.
+        std::vector<uint32_t> rej((size_t)((rejectBytes + 3) / 4), 0u);
+        std::memcpy(rej.data(), reject, (size_t)rejectBytes);
+        UploadAddressBuffer(rej.data(), (VkDeviceSize)rej.size() * sizeof(uint32_t),
+                            &g.rejectBuf, &g.rejectMem);
+        g.numSectors = (uint32_t)numSec;
+        printf("RB_Vulkan: DOOM-0119 REJECT cull active (%d sectors, %d-byte matrix).\n",
+               numSec, rejectBytes);
+        fflush(stdout);
+    }
 
     // 4b-i verification: probe count + the spatial bounds of the placed probes
     // (should sit inside the map's coordinate extent — a sanity check on placement).
@@ -4247,8 +4338,11 @@ void RecordRtTrace(uint32_t idx)
         uint64_t probeAddr;     // step-4 GI probe cache (0 if none)
         uint64_t triSsAddr;     // per-triangle subsector id (0 if none)
         uint64_t spriteVertsAddr; // DOOM-0100: per-frame billboard verts (0 if none)
+        uint64_t subSecAddr;      // DOOM-0119: subsector -> sector (0 if cull off)
+        uint64_t emitSecAddr;     // DOOM-0119: per-emitter sector (0 if cull off)
+        uint64_t rejectAddr;      // DOOM-0119: REJECT bitmatrix words (0 if cull off)
     } pc = {};
-    static_assert(sizeof(RtPushConstants) == 176, "RT push-constant layout must match the shader");
+    static_assert(sizeof(RtPushConstants) == 200, "RT push-constant layout must match the shader");
     pc.camPos[0] = g.lastView.x; pc.camPos[1] = g.lastView.y; pc.camPos[2] = g.lastView.z;
     pc.camDir[0] = c;            pc.camDir[1] = s;            pc.camDir[2] = 0.0f;
     pc.camRight[0] = s;          pc.camRight[1] = -c;         pc.camRight[2] = 0.0f;
@@ -4275,12 +4369,18 @@ void RecordRtTrace(uint32_t idx)
     // the shader treats them as omnidirectional (a lamp emits all ways, not as a
     // camera-facing card). Static wall/flat emitters before this index stay oriented.
     pc.misc4[1]    = (uint32_t)g.staticWgt.size();
+    // DOOM-0119: REJECT cull dimension (sector count). 0 when the level has no
+    // REJECT lump (rejectBuf absent), which disables the shader cull entirely.
+    pc.misc4[2]    = g.rejectBuf ? g.numSectors : 0u;
     pc.vertsAddr   = BufferAddress(g.vbuf);
     pc.emitAddr    = g.emitBuf    ? BufferAddress(g.emitBuf)    : 0;
     pc.matEmisAddr = g.matEmisBuf ? BufferAddress(g.matEmisBuf) : 0;
     pc.probeAddr   = g.probeBuf   ? BufferAddress(g.probeBuf)   : 0;
     pc.triSsAddr   = g.triSsBuf   ? BufferAddress(g.triSsBuf)   : 0;
     pc.spriteVertsAddr = g.sprWorldBuf ? BufferAddress(g.sprWorldBuf) : 0;
+    pc.subSecAddr  = g.subSecBuf  ? BufferAddress(g.subSecBuf)  : 0;   // DOOM-0119
+    pc.emitSecAddr = g.emitSecBuf ? BufferAddress(g.emitSecBuf) : 0;
+    pc.rejectAddr  = g.rejectBuf  ? BufferAddress(g.rejectBuf)  : 0;
 
     // SVGF denoised view (step 6): mode 6. The feed writes this frame's G-buffer
     // half into gpos[parity]/gnorm[parity]; the temporal pass reprojects last
@@ -5043,6 +5143,8 @@ extern "C" void RB_Vulkan_Shutdown(void)
         // Direct-lighting buffers (step 3b): per-level emitter list + WAD-global Le table.
         if (g.emitBuf)      vkDestroyBuffer(g.device, g.emitBuf, nullptr);
         if (g.emitMem)      vkFreeMemory(g.device, g.emitMem, nullptr);
+        if (g.emitSecBuf)   vkDestroyBuffer(g.device, g.emitSecBuf, nullptr);
+        if (g.emitSecMem)   vkFreeMemory(g.device, g.emitSecMem, nullptr);
         if (g.matEmisBuf)   vkDestroyBuffer(g.device, g.matEmisBuf, nullptr);
         if (g.matEmisMem)   vkFreeMemory(g.device, g.matEmisMem, nullptr);
         // GI bake probes + per-triangle subsector map (step 4).
@@ -5052,6 +5154,11 @@ extern "C" void RB_Vulkan_Shutdown(void)
         if (g.probeMem2)    vkFreeMemory(g.device, g.probeMem2, nullptr);
         if (g.triSsBuf)     vkDestroyBuffer(g.device, g.triSsBuf, nullptr);
         if (g.triSsMem)     vkFreeMemory(g.device, g.triSsMem, nullptr);
+        // DOOM-0119 REJECT-lump light-cull buffers.
+        if (g.subSecBuf)    vkDestroyBuffer(g.device, g.subSecBuf, nullptr);
+        if (g.subSecMem)    vkFreeMemory(g.device, g.subSecMem, nullptr);
+        if (g.rejectBuf)    vkDestroyBuffer(g.device, g.rejectBuf, nullptr);
+        if (g.rejectMem)    vkFreeMemory(g.device, g.rejectMem, nullptr);
     }
     if (g.vbufMapped)       vkUnmapMemory(g.device, g.vbufMemory);
     if (g.vbuf)             vkDestroyBuffer(g.device, g.vbuf, nullptr);
