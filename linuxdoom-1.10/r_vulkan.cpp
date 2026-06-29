@@ -417,7 +417,12 @@ struct VulkanState
     VkDescriptorPool      rtDsPool   = VK_NULL_HANDLE;
     VkDescriptorSet       rtDs       = VK_NULL_HANDLE;
     VkPipelineLayout      rtPipeLayout = VK_NULL_HANDLE;
-    VkPipeline            rtPipeline   = VK_NULL_HANDLE;
+    // DOOM-0129: the megakernel's view-mode is a spec-constant, so each mode gets
+    // its own specialised pipeline (the unused debug modes dead-strip out). The
+    // module is kept alive to build variants lazily; rtPipeline is indexed by mode
+    // value (1..6, slot 0 unused — mode 0 = RT off, never dispatched).
+    VkShaderModule        rtModule     = VK_NULL_HANDLE;
+    VkPipeline            rtPipeline[7] = {};
 
     // INV-6 verify accumulator (DOOM-0009 build step 4d). A fixed-size rgba32f
     // storage image (compute binding 2) the megakernel's mode-5 verify path sums
@@ -1685,6 +1690,40 @@ uint32_t BuildSpriteTlas()
 // Path-tracer compute pass (DOOM-0009 build step 2c)
 // ---------------------------------------------------------------------------
 
+// DOOM-0129: build (and cache) the megakernel pipeline variant for one view-mode.
+// `mode` is pathtrace.comp's spec-constant 0, so the driver folds the other modes'
+// branches to `if (false)` and dead-strips them — fewer VGPRs, higher RDNA2
+// occupancy, pixel-identical output. Variants are built on first use; mode 6 (the
+// Ultra play path) is pre-built in CreateRtComputePipeline so the first traced
+// frame has no compile hitch. Slot index == mode value (1..6).
+static VkPipeline RtPipelineForMode(uint32_t mode)
+{
+    if (mode >= 7u) mode = 6u;                 // clamp to the play path defensively
+    if (g.rtPipeline[mode] != VK_NULL_HANDLE)
+        return g.rtPipeline[mode];
+
+    const uint32_t modeVal = mode;
+    VkSpecializationMapEntry me = { 0u, 0u, sizeof(uint32_t) }; // constant_id 0
+    VkSpecializationInfo     si = {};
+    si.mapEntryCount = 1;
+    si.pMapEntries   = &me;
+    si.dataSize      = sizeof(modeVal);
+    si.pData         = &modeVal;
+
+    VkComputePipelineCreateInfo cpci = {};
+    cpci.sType                     = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    cpci.stage.sType               = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    cpci.stage.stage               = VK_SHADER_STAGE_COMPUTE_BIT;
+    cpci.stage.module              = g.rtModule;
+    cpci.stage.pName               = "main";
+    cpci.stage.pSpecializationInfo = &si;
+    cpci.layout                    = g.rtPipeLayout;
+    Check(vkCreateComputePipelines(g.device, VK_NULL_HANDLE, 1, &cpci, nullptr,
+                                   &g.rtPipeline[mode]),
+          "vkCreateComputePipelines(rt)");
+    return g.rtPipeline[mode];
+}
+
 // Build the once-per-run compute pipeline: a descriptor set (TLAS + storage
 // image), an 88-byte push-constant range (camera basis + mode + vertex-buffer
 // address), and the pathtrace.comp megakernel. RT-only; never called without it.
@@ -1758,17 +1797,12 @@ void CreateRtComputePipeline()
     Check(vkCreatePipelineLayout(g.device, &plci, nullptr, &g.rtPipeLayout),
           "vkCreatePipelineLayout(rt)");
 
-    VkShaderModule cs = MakeShader(pathtrace_comp_spv, pathtrace_comp_spv_len);
-    VkComputePipelineCreateInfo cpci = {};
-    cpci.sType        = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    cpci.stage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    cpci.stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
-    cpci.stage.module = cs;
-    cpci.stage.pName  = "main";
-    cpci.layout       = g.rtPipeLayout;
-    Check(vkCreateComputePipelines(g.device, VK_NULL_HANDLE, 1, &cpci, nullptr, &g.rtPipeline),
-          "vkCreateComputePipelines(rt)");
-    vkDestroyShaderModule(g.device, cs, nullptr);
+    // DOOM-0129: keep the module alive — each view-mode is compiled into its own
+    // specialised pipeline (RtPipelineForMode), built lazily from this module. Pre-
+    // build mode 6 (the default Ultra play path) so the first traced frame has no
+    // pipeline-compile hitch; the diagnostic modes (1-5) build on first toggle.
+    g.rtModule = MakeShader(pathtrace_comp_spv, pathtrace_comp_spv_len);
+    RtPipelineForMode(6u);
 
     // INV-6 verify accumulator (build step 4d): a fixed-size rgba32f storage image
     // (compute binding 2) + a host-visible readback buffer. Created once; mode 5
@@ -3999,7 +4033,7 @@ void RB_RtVerify()
         {
             pc.misc3[0] = d * sppPer;       // advance the per-sample seed base
             VkCommandBuffer cb = BeginOneTime();
-            vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, g.rtPipeline);
+            vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, RtPipelineForMode(5u));
             vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE,
                                     g.rtPipeLayout, 0, 3, sets, 0, nullptr);
             vkCmdPushConstants(cb, g.rtPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
@@ -4402,7 +4436,8 @@ void RecordRtTrace(uint32_t idx)
     // before this binds it. All three sets are bound (the megakernel statically
     // references set 2 via mode 6, so it must be valid for every dispatch).
     VkDescriptorSet sets[3] = { g.rtDs, g.ds, g.svgfDs };
-    vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g.rtPipeline);
+    vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                      RtPipelineForMode((uint32_t)rb_rtdebug));
     vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
                             g.rtPipeLayout, 0, 3, sets, 0, nullptr);
     vkCmdPushConstants(g.cmd, g.rtPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT,
@@ -4826,7 +4861,7 @@ extern "C" void RB_Vulkan_Present(void)
     if (rb_rtverify < 0)
         rb_rtverify = M_CheckParm("-rtverify") ? 1 : 0;
     if (rb_rtverify == 1 && g.rtEnabled && g.tlas != VK_NULL_HANDLE &&
-        g.rtPipeline != VK_NULL_HANDLE && g.haveCamera &&
+        g.rtModule != VK_NULL_HANDLE && g.haveCamera &&
         g.vbuf != VK_NULL_HANDLE && g.atlasReady)
     {
         rb_rtverify = 0;
@@ -4853,7 +4888,7 @@ extern "C" void RB_Vulkan_Present(void)
     // traced image blitted to the swapchain instead of the raster pass. Gated so
     // the raster (Solid) path is byte-for-byte unaffected (INV-10).
     const bool rtActive = rb_rtdebug && g.rtEnabled && g.tlas != VK_NULL_HANDLE
-                       && g.rtPipeline != VK_NULL_HANDLE && g.haveCamera
+                       && g.rtModule != VK_NULL_HANDLE && g.haveCamera
                        && g.vbuf != VK_NULL_HANDLE && g.atlasReady;
 
     // Rebuild this frame's billboard sprites into the persistently-mapped buffer.
@@ -5111,7 +5146,10 @@ extern "C" void RB_Vulkan_Shutdown(void)
     if (g.rtEnabled)
     {
         DestroyRtTargets();
-        if (g.rtPipeline)   vkDestroyPipeline(g.device, g.rtPipeline, nullptr);
+        // DOOM-0129: free every per-mode megakernel variant + the shared module.
+        for (uint32_t m = 0; m < 7; m++)
+            if (g.rtPipeline[m]) vkDestroyPipeline(g.device, g.rtPipeline[m], nullptr);
+        if (g.rtModule)     vkDestroyShaderModule(g.device, g.rtModule, nullptr);
         if (g.rtPipeLayout) vkDestroyPipelineLayout(g.device, g.rtPipeLayout, nullptr);
         if (g.rtDsPool)     vkDestroyDescriptorPool(g.device, g.rtDsPool, nullptr);
         if (g.rtDsLayout)   vkDestroyDescriptorSetLayout(g.device, g.rtDsLayout, nullptr);

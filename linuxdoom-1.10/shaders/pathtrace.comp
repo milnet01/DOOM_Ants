@@ -216,7 +216,13 @@ void main()
                               + pc.camRight.xyz * (ndcX * pc.camRight.w)
                               + pc.camUp.xyz    * (-ndcY * pc.camUp.w));
 
-    const uint mode = pc.misc.x;
+    // DOOM-0129: the view-mode is a specialization constant, not a push-constant.
+    // The host compiles one pipeline variant per shipped mode (RtPipelineForMode),
+    // so every `if (mode == Nu)` for the other modes folds to `if (false)` and is
+    // dead-stripped by the driver — fewer live registers, higher RDNA2 occupancy,
+    // pixel-identical output (the executed path is unchanged). Default 6 = the
+    // denoised Ultra play path. (pc.misc.x is now unused; misc.y/z/w still live.)
+    layout(constant_id = 0) const uint mode = 6u;
 
     rayQueryEXT rq;
     // DOOM-0100: drop gl_RayFlagsOpaqueEXT. The world BLAS is OPAQUE_BIT (auto-
