@@ -67,6 +67,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Compact the static world BLAS to reclaim ray-tracing acceleration-structure memory** (DOOM-0091)
+  The per-level world BLAS is now built with ALLOW_COMPACTION and copy-compacted into a right-sized acceleration structure at load, reclaiming the worst-case build padding (a 20-50% VRAM win that scales with large WADs). ALLOW_UPDATE is kept so moving doors/lifts still refit on the compacted structure.
+
 - **Smooth (pixel-art-aware) upscaling of the 2D title/HUD/menu overlay in the 3D renderers.** (DOOM-0089)
   The menus and title screens now look smooth instead of blocky when shown over the 3D view.
 
