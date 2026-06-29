@@ -1123,3 +1123,17 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Floors and walls seen edge-on currently shimmer and smear; anisotropic filtering keeps them crisp into the distance — but it needs a true-colour texture path first and should stay tunable so DOOM's chunky-pixel look survives.
   Kind: enhancement.
   Source: user-request-2026-06-29.
+
+- 📋 [DOOM-0133] **Fix vkCmdClearColorImage validation error: storage images cleared without VK_IMAGE_USAGE_TRANSFER_DST_BIT.**
+  At startup two STORAGE_BIT images are cleared with vkCmdClearColorImage, which requires VK_IMAGE_USAGE_TRANSFER_DST_BIT in the image's usage flags (VUID-vkCmdClearColorImage-image-00002). Symptom in the log: two images (e.g. 0x7e..., 0x81...) flagged immediately after swapchain creation. Fix: add VK_IMAGE_USAGE_TRANSFER_DST_BIT to those images' VkImageCreateInfo.usage (candidates: the SVGF G-buffer / rtAccum storage images), or clear them via a compute store / render-pass clear instead. Pre-existing (not from DOOM-0129/0130/0131). Validation-only; no functional impact observed.
+  Kind: fix.
+  **Layman:** A harmless-but-incorrect graphics warning at startup: two images are wiped using a method their creation flags don't permit. The game runs fine, but it should be made spec-correct.
+  Kind: fix.
+  Source: terminal-log-2026-06-29.
+
+- 📋 [DOOM-0134] **Fix render-pass/framebuffer incompatibility validation errors (srcStageMask/Access mismatch between two render passes).**
+  vkCmdBeginRenderPass / vkCmdDraw report pDependencies[0] srcStageMask, srcAccessMask and dstAccessMask incompatible between VkRenderPass 0xd... and VkRenderPass 0xc... (the framebuffer was created against 0xc but begun/used with 0xd) — VUID-VkRenderPassBeginInfo-renderPass-00904 / VUID-vkCmdDraw-renderPass-02684. The two passes' subpass dependencies differ (ALL_TRANSFER vs EARLY_FRAGMENT_TESTS|COLOR_ATTACHMENT_OUTPUT). Fix: make the render pass used at BeginRenderPass / pipeline creation render-pass-compatible with the one the framebuffer was created from (align the subpass dependency stage/access masks, or create the framebuffer against the matching pass). Pre-existing raster-path issue (not from DOOM-0129/0130/0131). Validation-only.
+  Kind: fix.
+  **Layman:** Another startup/raster-path graphics warning: a drawing surface was set up with one recipe but used with a slightly different one. Cosmetic to the validation layer, but worth making consistent.
+  Kind: fix.
+  Source: terminal-log-2026-06-29.
