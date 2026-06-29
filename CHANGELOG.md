@@ -67,6 +67,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Ultra now boots playable by default (TAAU upscaler at 50% render scale) instead of at native resolution** (DOOM-0090)
+  Fresh installs start Ultra the way it's actually playable (~35-42 FPS on a mid GPU) rather than ~8 FPS at native; existing saved settings are untouched and the scale is still adjustable in Options -> Renderer. Also trimmed the denoiser's coarsest filter pass (5->4) to shave its cost with minimal visual change.
+
 - **Ultra path tracer runs markedly faster in light-heavy rooms (~20s → 35-42 FPS on an RX 6600 at the same 50% render scale)** (DOOM-0090)
   Skips shadow rays for sprite lights too far or dim to add visible light, instead of tracing one per glowing prop per pixel. The win grows with how many glowing props are in view. Plus a new on-screen per-pass GPU profiler (the \ key) used to find the hotspot.
 
