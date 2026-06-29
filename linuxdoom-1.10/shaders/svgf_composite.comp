@@ -58,10 +58,21 @@ void main()
     vec4 gp    = imageLoad(gpos[cur], p);
     vec3 illum = imageLoad(atrous[fin], p).rgb;
 
-    vec3 L;
+    // DOOM-0141: sky backdrop (matId < 0). gillum carries the DISPLAY-encoded sky
+    // panorama (the mountains), passed through the denoiser untouched; emit it raw —
+    // fullbright, NO tonemap — so the denoised sky matches the Solid/raster sky exactly
+    // (which writes the palette colour straight to the swapchain). Motion is zero for a
+    // view-locked backdrop (recomputed each frame, so no reprojection/ghosting).
     if (gp.w < 0.0) {
-        L = illum;                                  // sky: stored linear colour
-    } else {
+        vec3 sky = illum;
+        if (any(isnan(sky)) || any(isinf(sky))) sky = vec3(0.0);
+        imageStore(outColor, p, vec4(clamp(sky, 0.0, 1.0), 1.0));
+        imageStore(motion, p, vec4(0.0));
+        return;
+    }
+
+    vec3 L;
+    {
         vec4 ga = imageLoad(galbedo, p);
         vec3 albedo = ga.rgb;
         uint id = uint(gp.w + 0.5);

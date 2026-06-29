@@ -111,6 +111,16 @@ typedef struct
     int*         tri_ss;    // per-triangle subsector index (numtris entries), so a
                             // ray hit can find its room's GI probe (DOOM-0009 step
                             // 4c). -1 if untagged. Owned by this struct.
+    // DOOM-0141: sky backdrop geometry (sky ceilings + sky-border walls), kept
+    // SEPARATE from the world mesh above. Classic DOOM draws a solid sky backdrop
+    // that occludes everything behind it; the world mesh omits sky surfaces, so in
+    // the ray-traced view rays escaped through the gap (distant geometry "floated").
+    // These tris ride their own acceleration structure on a ray mask only PRIMARY
+    // rays see, so they occlude the view without casting shadows or perturbing the
+    // GI bake, and the raster path (its own RB_BuildSky quad) never draws them.
+    // texnum on each vertex is the sky wall-texture (skytexture); flags = RB_MESH_SKY.
+    rb_vertex_t* sky;       // numsky entries (multiple of 3), or NULL. Owned here.
+    int          numsky;    // sky vertex count (always a multiple of 3)
 } rb_mesh_t;
 
 // Build the current level's mesh from the globals p_setup.c populated

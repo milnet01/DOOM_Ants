@@ -1184,3 +1184,14 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: chore.
   Source: user-request-2026-06-29.
   Resolved (2026-06-29): `make clean && make` now reports 0 warnings/errors under -Wall (was 98). Part 1 (commit DOOM-0140 pt1): Z_ChangeTag macro indentation + dead locals + i_sound flag SNDINTR-gate. Part 2: intptr_t/uintptr_t for all pointer<->int casts (p_saveg PADSAVEP + 10 load-side index casts, z_zone owner check, d_main statcopy, d_net 2 offset hacks); socklen_t for i_net recvfrom; sprintf buffers enlarged (f_finale 16, p_setup 16, wi_stuff 40); strcmp signedness cast (g_game); r_things sort sentinel made static. Behaviour preserved throughout. Two latent vanilla bugs found, silenced-not-fixed, tracked as DOOM-0138 (donut precedence) + DOOM-0139 (sky enum). Runtime warnings remain separate: DOOM-0133/0134 (Vulkan validation), DOOM-0137 (bad-patch flood). Builds clean; gameplay unchanged (needs a play sanity-check).
+
+- 🚧 [DOOM-0141] **Render the DOOM sky in the ray-traced view (no more see-through floating geometry).**
+  Root cause: the RT mesh builder SKIPS sky ceilings/sky-border walls (r_mesh.c:362, :446-448), so primary rays escape through the gap and either hit distant geometry (it "floats") or miss into the flat SKY_COLOR fill (pt_common.glsl:30). Classic DOOM fakes a solid sky backdrop that occludes everything behind it (r_plane.c); the tracer has no analogue. A full sky panorama already exists for the raster path (mesh.frag FLAG_SKY + RB_BuildSky) but is disabled under RT (r_vulkan.cpp:4951).
+  
+  Fix (RT-only, isolates the change from the working raster/Solid path): emit sky surfaces into a SEPARATE mesh + static BLAS on a 3rd TLAS instance (customIndex 2, mask 0x04) that only PRIMARY rays see — shadow rays + the GI bake cull to 0x01 so they never hit it (no false shadows, GI unchanged, raster untouched).
+    Stage 1: emit sky geometry + sky BLAS/instance; tracer treats a sky hit like a miss (flat SKY_COLOR) but now OCCLUDING -> floating geometry gone.
+    Stage 2: shade the sky hit (and miss) as the real cylindrical sky-texture panorama by ray/screen yaw, mirroring mesh.frag; composite outputs sky raw (no tonemap) so Ultra matches Classic's mountains.
+  Files: r_mesh.c/.h (separate sky vert list), r_vulkan.cpp (sky buffer/BLAS/instance + skytexnum in misc4.w), pathtrace.comp (sky hit/miss panorama), svgf_composite.comp (raw sky out).
+  **Layman:** In the Ultra/Solid ray-traced view the sky was a hole, so distant buildings floated in mid-air and the sky showed as flat blue instead of the mountains you see in Classic. This makes the sky a solid backdrop again.
+  Kind: fix.
+  Source: user-report-2026-06-29 (level 2 screenshot: geometry floating against flat-blue sky).

@@ -257,6 +257,29 @@ vec3 flashlightDelta(vec3 hitP, vec3 n, vec3 albedo)
          / (fl2 + FLASHLIGHT_RADIUS2);
 }
 
+// DOOM-0141: sample the classic DOOM sky panorama for a primary ray. Mirrors the
+// raster path (mesh.frag FLAG_SKY): a cylindrical projection keyed on the view yaw
+// (from camDir) and screen position — 90 deg of view spans one sky-texture width,
+// the 128px sky pins its row 100 to the horizon at screen centre, both axes REPEAT-
+// wrap. Returns DISPLAY-encoded (palette) colour, fullbright: the sky is a backdrop,
+// not a lit surface, so the mode-4 path and the composite output it WITHOUT tonemap,
+// matching the Solid/raster sky exactly. pc.misc4.w is the sky wall-texture bindless
+// id (0xFFFFFFFF when the level has no sky -> fall back to the flat SKY_COLOR fill).
+vec3 skyPanorama(uvec2 px, uint w, uint h)
+{
+    if (pc.misc4.w == 0xFFFFFFFFu) return SKY_COLOR;
+    uint  id   = pc.misc4.w;
+    vec2  sz   = vec2(textureSize(materialTex[nonuniformEXT(id)], 0));
+    float yaw  = atan(pc.camDir.y, pc.camDir.x);       // view yaw (x east, y north)
+    vec2  suv  = (vec2(px) + 0.5) / vec2(float(w), float(h));   // [0,1] across the frame
+    float ndcX = suv.x * 2.0 - 1.0;
+    float ang  = yaw - atan(ndcX);                     // matches mesh.frag's screen term
+    float col  = ang / (PI * 0.5) * sz.x;              // 90 deg view = one texture width
+    float row  = 100.0 + (suv.y - 0.5) * 200.0;        // classic fixed sky scale
+    float idx  = texture(materialTex[nonuniformEXT(id)], vec2(col, row) / sz).r * 255.0;
+    return texture(paletteTex, vec2((idx + 0.5) / 256.0, 0.5)).rgb;
+}
+
 void main()
 {
     const uvec2 px = gl_GlobalInvocationID.xy;
@@ -302,9 +325,17 @@ void main()
         }
     }
 
+    // DOOM-0141: a committed hit on the sky backdrop instance (custom index 2) is
+    // rendered as the sky, NOT shaded as a surface — and because it was the committed
+    // (nearest) hit, it OCCLUDES geometry behind it, exactly like classic DOOM's sky.
+    // It funnels into the same per-mode sky output as a true miss below.
+    const bool committed = rayQueryGetIntersectionTypeEXT(rq, true)
+                           == gl_RayQueryCommittedIntersectionTriangleEXT;
+    const bool isSky = committed
+                       && rayQueryGetIntersectionInstanceCustomIndexEXT(rq, true) == 2;
+
     vec3 colour;
-    if (rayQueryGetIntersectionTypeEXT(rq, true)
-        == gl_RayQueryCommittedIntersectionTriangleEXT)
+    if (committed && !isSky)
     {
         // DOOM-0100: a hit is either the static world (instance 0) or a billboard
         // sprite (instance 1). Both share the rb_vertex_t layout (18 floats/vertex),
@@ -555,25 +586,26 @@ void main()
     }
     else
     {
-        // Miss: the environment. Mode 5 (verify) leaves the accum texel untouched
-        // (count stays 0 -> the host skips background pixels). Unit radiance in
-        // furnace mode (energy stays flat across hit and miss); the bounded
-        // sky-light in NEE mode (tonemapped like the lit surfaces); a dark sky in
-        // intersection mode.
+        // Miss OR sky-backdrop hit (DOOM-0141): both render the DOOM sky. Mode 5
+        // (verify) leaves the accum texel untouched (count stays 0 -> the host skips
+        // background pixels). Furnace mode keeps unit radiance (energy flat across hit
+        // and miss). Modes 4/6 render the real sky panorama (the mountains), DISPLAY-
+        // encoded and output WITHOUT tonemap so the traced sky matches the Solid/raster
+        // sky; the intersection debug view keeps a flat dark sky.
         if      (mode == 5u) return;
         else if (mode == 6u)
         {
-            // Sky in the denoise feed: matId < 0 flags it, the stored linear
-            // SKY_COLOR passes through the denoiser and is tonemapped by composite.
+            // Sky in the denoise feed: matId < 0 flags it; the stored sky colour passes
+            // through the denoiser and the composite emits it raw (no tonemap).
             uint par = pc.misc3.w;
             imageStore(gpos[par],  ivec2(px), vec4(0.0, 0.0, 0.0, -1.0));
             imageStore(gnorm[par], ivec2(px), vec4(0.0, 0.0, 1.0, 0.0));
             imageStore(galbedo,    ivec2(px), vec4(0.0));
-            imageStore(gillum,     ivec2(px), vec4(SKY_COLOR, 0.0));
+            imageStore(gillum,     ivec2(px), vec4(skyPanorama(px, w, h), 0.0));
             return;
         }
         else if (mode == 2u) colour = vec3(1.0);
-        else if (mode == 4u) colour = toneEncode(SKY_COLOR);
+        else if (mode == 4u) colour = skyPanorama(px, w, h);
         else                 colour = vec3(0.02, 0.02, 0.05);
     }
 

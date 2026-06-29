@@ -51,6 +51,11 @@ extern int*     texturewidthmask;
 extern int      numtextures;
 extern int      numflats;
 
+// DOOM-0141: the level's sky wall-texture index (r_sky.c). Sky ceilings/borders are
+// emitted into the RT-only sky list below with this texnum so the path tracer samples
+// the same sky panorama the raster path's RB_BuildSky uses.
+extern int      skytexture;
+
 // DOOM-0119: the WAD REJECT sector->sector visibility lump, cached by P_SetupLevel
 // (declared in p_local.h, not pulled in here). numsectors/sectors/subsectors/segs
 // come from r_state.h.
@@ -71,6 +76,11 @@ typedef struct
     int          ssidcount;
     int          ssidcap;
     int          cur_ss;
+    // DOOM-0141: sky backdrop tris (RT-only, separate acceleration structure). No
+    // ssid/probe tag — sky is fullbright and never reflects, so it carries no GI.
+    rb_vertex_t* sky;
+    int          skycount;
+    int          skycap;
 } builder_t;
 
 static void push_vert(builder_t* b, rb_vertex_t vert)
@@ -124,6 +134,44 @@ static void push_quad(builder_t* b, rb_vertex_t a, rb_vertex_t c,
 {
     push_tri(b, a, c, d);
     push_tri(b, a, d, e);
+}
+
+// DOOM-0141: push one sky backdrop triangle (separate list, no ssid tag).
+static void sky_push_tri(builder_t* b, rb_vertex_t a, rb_vertex_t c, rb_vertex_t d)
+{
+    if (b->skycount + 3 > b->skycap)
+    {
+        b->skycap = b->skycap ? b->skycap * 2 : 1024;
+        b->sky = realloc(b->sky, b->skycap * sizeof(rb_vertex_t));
+        if (!b->sky)
+            I_Error("RB_BuildLevelMesh: out of memory at %d sky verts", b->skycount);
+    }
+    b->sky[b->skycount++] = a;
+    b->sky[b->skycount++] = c;
+    b->sky[b->skycount++] = d;
+}
+
+// DOOM-0141: emit a sky-border wall (the vertical gap between two open-sky sectors of
+// different ceiling height, where classic DOOM shows sky in place of an upper
+// texture) as sky backdrop geometry. Fills the [zb, zt] span across the seg so the
+// view can't see through to geometry beyond; flagged RB_MESH_SKY (UVs unused).
+static void emit_sky_wall(builder_t* bld, const seg_t* seg, fixed_t zb, fixed_t zt)
+{
+    float x1 = seg->v1->x / (float)FRACUNIT, y1 = seg->v1->y / (float)FRACUNIT;
+    float x2 = seg->v2->x / (float)FRACUNIT, y2 = seg->v2->y / (float)FRACUNIT;
+    float zbf = zb / (float)FRACUNIT, ztf = zt / (float)FRACUNIT;
+    float dx = x2 - x1, dy = y2 - y1;
+    float len = sqrtf(dx * dx + dy * dy);
+    float nx = len > 0.0f ? -dy / len : 0.0f;
+    float ny = len > 0.0f ?  dx / len : 0.0f;
+    rb_vertex_t a, b, c, d;
+    if (ztf <= zbf) return;
+    a = mkv(x1, y1, zbf, nx, ny, 0.0f, 0.0f, 0.0f, skytexture, RB_MESH_SKY, 1.0f);
+    b = mkv(x2, y2, zbf, nx, ny, 0.0f, 0.0f, 0.0f, skytexture, RB_MESH_SKY, 1.0f);
+    c = mkv(x2, y2, ztf, nx, ny, 0.0f, 0.0f, 0.0f, skytexture, RB_MESH_SKY, 1.0f);
+    d = mkv(x1, y1, ztf, nx, ny, 0.0f, 0.0f, 0.0f, skytexture, RB_MESH_SKY, 1.0f);
+    sky_push_tri(bld, a, b, c);
+    sky_push_tri(bld, a, c, d);
 }
 
 // Wall pegging kind: selects which DOOM vertical-alignment rule emit_wall
@@ -319,6 +367,28 @@ static void emit_cap_poly(builder_t* bld, const poly_t* p, fixed_t height,
     }
 }
 
+// DOOM-0141: emit a sky-flat cap (a sector floor/ceiling textured F_SKY1) as sky
+// backdrop geometry — same convex cell as a normal cap, but flagged RB_MESH_SKY with
+// the sky wall-texture so the tracer shades it as the panorama (fullbright; UVs
+// unused, the panorama is keyed on screen/ray yaw). `up` picks the normal direction
+// (a sky ceiling faces down). Mirrors emit_cap_poly's fan/winding into the sky list.
+static void emit_sky_cap(builder_t* bld, const poly_t* p, fixed_t height, int up)
+{
+    float z  = height / (float)FRACUNIT;
+    float nz = up ? 1.0f : -1.0f;
+    int   k;
+    rb_vertex_t pivot;
+    if (p->n < 3) return;
+    pivot = mkv(p->x[0], p->y[0], z, 0.0f, 0.0f, nz, 0.0f, 0.0f, skytexture, RB_MESH_SKY, 1.0f);
+    for (k = 1; k < p->n - 1; k++)
+    {
+        rb_vertex_t va = mkv(p->x[k],   p->y[k],   z, 0.0f, 0.0f, nz, 0.0f, 0.0f, skytexture, RB_MESH_SKY, 1.0f);
+        rb_vertex_t vb = mkv(p->x[k+1], p->y[k+1], z, 0.0f, 0.0f, nz, 0.0f, 0.0f, skytexture, RB_MESH_SKY, 1.0f);
+        if (up) sky_push_tri(bld, pivot, va, vb);
+        else    sky_push_tri(bld, pivot, vb, va);   // flip winding so -z faces down
+    }
+}
+
 // Emit a subsector's floor and ceiling from its carved convex cell (sky flats
 // are skipped: those openings render as the sky backdrop, not a flat).
 static void emit_subsector_caps(builder_t* bld, int ssnum, const poly_t* cell)
@@ -356,12 +426,18 @@ static void emit_subsector_caps(builder_t* bld, int ssnum, const poly_t* cell)
 
     light  = sec->lightlevel / 255.0f;
     secidx = (int)(sec - sectors);   // for the per-frame dynamic-height update
+    // DOOM-0141: a sky-flat cap becomes RT-only sky backdrop geometry (occludes the
+    // view like classic's sky) instead of being omitted; a normal flat caps as before.
     if (sec->floorpic != skyflatnum)
         emit_cap_poly(bld, &clipped, sec->floorheight, 1, sec->floorpic, light,
                       secidx, RB_PLANE_FLOOR);
+    else
+        emit_sky_cap(bld, &clipped, sec->floorheight, 1);
     if (sec->ceilingpic != skyflatnum)
         emit_cap_poly(bld, &clipped, sec->ceilingheight, 0, sec->ceilingpic, light,
                       secidx, RB_PLANE_CEIL);
+    else
+        emit_sky_cap(bld, &clipped, sec->ceilingheight, 0);
 }
 
 // Walk the BSP, carrying the convex cell clipped by every ancestor partition.
@@ -443,12 +519,18 @@ rb_mesh_t* RB_BuildLevelMesh(void)
         // see-through hole there (the missing lintel above E1M1's exit door).
         // Bottom edge = back ceiling (the door face on a door sector), top edge
         // = front ceiling -- so a rising door ceiling shrinks this wall.
-        if (front->ceilingheight > back->ceilingheight
-            && !(front->ceilingpic == skyflatnum
-                 && back->ceilingpic == skyflatnum))
-            emit_wall(&bld, seg, back->ceilingheight, front->ceilingheight,
-                      side->toptexture, 0, PEG_UPPER,
-                      bi, RB_PLANE_CEIL, fi, RB_PLANE_CEIL);
+        if (front->ceilingheight > back->ceilingheight)
+        {
+            if (front->ceilingpic == skyflatnum && back->ceilingpic == skyflatnum)
+                // DOOM-0141: both ceilings sky -> classic shows sky in the height
+                // gap (no upper texture). Emit it as RT-only sky backdrop so the
+                // tracer occludes geometry beyond instead of seeing through the gap.
+                emit_sky_wall(&bld, seg, back->ceilingheight, front->ceilingheight);
+            else
+                emit_wall(&bld, seg, back->ceilingheight, front->ceilingheight,
+                          side->toptexture, 0, PEG_UPPER,
+                          bi, RB_PLANE_CEIL, fi, RB_PLANE_CEIL);
+        }
 
         // Lower step (front floor lower than/equal to back): bottom = front
         // floor, top = back floor (a lift floor raising/lowering changes the
@@ -504,6 +586,8 @@ rb_mesh_t* RB_BuildLevelMesh(void)
     mesh->numverts = bld.count;
     mesh->numtris  = bld.count / 3;
     mesh->tri_ss   = bld.ssid;   // one subsector id per triangle (step 4c)
+    mesh->sky      = bld.sky;     // DOOM-0141: RT-only sky backdrop tris
+    mesh->numsky   = bld.skycount;
     return mesh;
 }
 
@@ -513,6 +597,7 @@ void RB_FreeMesh(rb_mesh_t* mesh)
         return;
     free(mesh->verts);
     free(mesh->tri_ss);
+    free(mesh->sky);
     free(mesh);
 }
 

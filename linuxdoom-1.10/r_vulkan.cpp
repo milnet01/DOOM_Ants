@@ -391,6 +391,22 @@ struct VulkanState
     VkBuffer                   tlasBuildScratch    = VK_NULL_HANDLE;  // persistent: per-frame TLAS rebuild
     VkDeviceMemory             tlasBuildScratchMem = VK_NULL_HANDLE;
 
+    // DOOM-0141: RT-only sky backdrop. A STATIC BLAS over the level's sky ceilings/
+    // borders (rb_mesh_t.sky), on a 3rd TLAS instance (custom index 2, mask 0x04)
+    // that ONLY primary rays see — so it occludes the view like classic DOOM's sky
+    // without casting shadows or perturbing the GI bake (both cull to mask 0x01).
+    // The vert buffer is created in BuildProbes (with g.vbuf); the BLAS in
+    // BuildAccelerationStructures. skyTexnum is the sky wall-texture bindless id
+    // (passed to the trace in misc4.w for the panorama sample).
+    VkBuffer                   skyMeshBuf   = VK_NULL_HANDLE;
+    VkDeviceMemory             skyMeshMem   = VK_NULL_HANDLE;
+    uint32_t                   skyMeshVerts = 0;   // distinct from raster skyVertCount (line ~286)
+    int                        skyMeshTexnum = 0;
+    VkAccelerationStructureKHR skyBlas      = VK_NULL_HANDLE;
+    VkBuffer                   skyBlasBuf   = VK_NULL_HANDLE;
+    VkDeviceMemory             skyBlasMem   = VK_NULL_HANDLE;
+    VkDeviceAddress            skyBlasAddr  = 0;
+
     // VK_KHR_acceleration_structure entry points — not core, so loaded by name once
     // the device is up (LoadRtEntryPoints); null while rtEnabled is false.
     PFN_vkGetAccelerationStructureBuildSizesKHR    pfnGetASBuildSizes = nullptr;
@@ -1223,6 +1239,12 @@ void DestroyAccelerationStructures()
     if (g.spriteBlasMem)     { vkFreeMemory(g.device, g.spriteBlasMem, nullptr); g.spriteBlasMem = VK_NULL_HANDLE; }
     if (g.spriteBlasScratch)    { vkDestroyBuffer(g.device, g.spriteBlasScratch, nullptr); g.spriteBlasScratch = VK_NULL_HANDLE; }
     if (g.spriteBlasScratchMem) { vkFreeMemory(g.device, g.spriteBlasScratchMem, nullptr); g.spriteBlasScratchMem = VK_NULL_HANDLE; }
+
+    // DOOM-0141: sky backdrop BLAS (the vert buffer is freed in BuildProbes, with vbuf).
+    if (g.skyBlas)    { g.pfnDestroyAS(g.device, g.skyBlas, nullptr); g.skyBlas = VK_NULL_HANDLE; }
+    if (g.skyBlasBuf) { vkDestroyBuffer(g.device, g.skyBlasBuf, nullptr); g.skyBlasBuf = VK_NULL_HANDLE; }
+    if (g.skyBlasMem) { vkFreeMemory(g.device, g.skyBlasMem, nullptr); g.skyBlasMem = VK_NULL_HANDLE; }
+    g.skyBlasAddr = 0;
     if (g.tlasBuildScratch)    { vkDestroyBuffer(g.device, g.tlasBuildScratch, nullptr); g.tlasBuildScratch = VK_NULL_HANDLE; }
     if (g.tlasBuildScratchMem) { vkFreeMemory(g.device, g.tlasBuildScratchMem, nullptr); g.tlasBuildScratchMem = VK_NULL_HANDLE; }
     if (g.sprWorldBuf)       { vkDestroyBuffer(g.device, g.sprWorldBuf, nullptr); g.sprWorldBuf = VK_NULL_HANDLE; }
@@ -1433,11 +1455,78 @@ void BuildAccelerationStructures()
     sadi.accelerationStructure = g.spriteBlas;
     g.spriteBlasAddr = g.pfnGetASAddress(g.device, &sadi);
 
-    // ---- TLAS: instance 0 = the static world BLAS; instance 1 = the per-frame
-    // sprite BLAS (added each frame in RecordRtTrace with mask 0x02). Sized for 2,
-    // built here with just the world instance (the sprite BLAS has no geometry yet),
-    // then rebuilt every traced frame. ----
-    static const uint32_t kMaxTlasInstances = 2;
+    // ---- Sky BLAS (DOOM-0141): a STATIC, opaque backdrop BLAS over this level's sky
+    // ceilings/borders (g.skyMeshBuf, built in BuildProbes). It rides TLAS instance 1 on
+    // mask 0x04 (primary rays only) so it occludes the view like classic DOOM's sky
+    // while shadow rays + the GI bake (mask 0x01) never hit it. Sky planes don't move,
+    // so it's built once here — no per-frame rebuild, no refit. Skipped if the level
+    // has no sky surfaces (fully enclosed map). ----
+    if (g.skyMeshVerts >= 3 && g.skyMeshBuf != VK_NULL_HANDLE)
+    {
+        const uint32_t skyTris = g.skyMeshVerts / 3u;
+        VkAccelerationStructureGeometryKHR kgeom = {};
+        kgeom.sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+        kgeom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+        kgeom.flags        = VK_GEOMETRY_OPAQUE_BIT_KHR;   // solid backdrop: auto-commits
+        kgeom.geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+        kgeom.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+        kgeom.geometry.triangles.vertexData.deviceAddress = BufferAddress(g.skyMeshBuf);
+        kgeom.geometry.triangles.vertexStride = sizeof(rb_vertex_t);
+        kgeom.geometry.triangles.maxVertex    = g.skyMeshVerts - 1;
+        kgeom.geometry.triangles.indexType    = VK_INDEX_TYPE_NONE_KHR;
+
+        VkAccelerationStructureBuildGeometryInfoKHR kbgi = {};
+        kbgi.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+        kbgi.type          = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+        kbgi.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+        kbgi.mode          = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+        kbgi.geometryCount = 1;
+        kbgi.pGeometries   = &kgeom;
+
+        VkAccelerationStructureBuildSizesInfoKHR ksizes = {};
+        ksizes.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+        g.pfnGetASBuildSizes(g.device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
+                             &kbgi, &skyTris, &ksizes);
+
+        CreateRtBuffer(ksizes.accelerationStructureSize,
+                       VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
+                       | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &g.skyBlasBuf, &g.skyBlasMem);
+        VkAccelerationStructureCreateInfoKHR kci = {};
+        kci.sType  = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+        kci.buffer = g.skyBlasBuf;
+        kci.size   = ksizes.accelerationStructureSize;
+        kci.type   = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+        Check(g.pfnCreateAS(g.device, &kci, nullptr, &g.skyBlas), "vkCreateAccelerationStructureKHR(skyBlas)");
+
+        VkBuffer kScratch = VK_NULL_HANDLE; VkDeviceMemory kScratchMem = VK_NULL_HANDLE;
+        CreateRtBuffer(ksizes.buildScratchSize + g.scratchAlign,
+                       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &kScratch, &kScratchMem);
+        kbgi.dstAccelerationStructure  = g.skyBlas;
+        kbgi.scratchData.deviceAddress = AlignUp(BufferAddress(kScratch), g.scratchAlign);
+        VkAccelerationStructureBuildRangeInfoKHR krange = {};
+        krange.primitiveCount = skyTris;
+        const VkAccelerationStructureBuildRangeInfoKHR* pKr = &krange;
+        VkCommandBuffer kcb = BeginOneTime();
+        g.pfnCmdBuildAS(kcb, 1, &kbgi, &pKr);
+        EndOneTime(kcb);                 // submits + waits: the static sky BLAS is ready
+        vkDestroyBuffer(g.device, kScratch, nullptr);
+        vkFreeMemory(g.device, kScratchMem, nullptr);
+
+        VkAccelerationStructureDeviceAddressInfoKHR kadi = {};
+        kadi.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+        kadi.accelerationStructure = g.skyBlas;
+        g.skyBlasAddr = g.pfnGetASAddress(g.device, &kadi);
+    }
+    const bool skyPresent = (g.skyBlas != VK_NULL_HANDLE);
+
+    // ---- TLAS: instance 0 = the static world BLAS; instance 1 = the static sky BLAS
+    // (DOOM-0141, mask 0x04, present only when the level has sky); the per-frame sprite
+    // BLAS (mask 0x02) is appended each frame in BuildSpriteTlas at the slot after the
+    // static instances. Sized for 3, built here with the static instance(s), then
+    // rebuilt every traced frame. ----
+    static const uint32_t kMaxTlasInstances = 3;
     VkAccelerationStructureDeviceAddressInfoKHR adi = {};
     adi.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
     adi.accelerationStructure = g.blas;
@@ -1457,7 +1546,19 @@ void BuildAccelerationStructures()
     insts[0].mask  = 0x01;                     // world: primary + shadow/NEE rays
     insts[0].flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
     insts[0].accelerationStructureReference = blasAddr;
-    // Instance 1 (sprites) is left zeroed (mask 0 -> never hit) until a frame fills it.
+    // DOOM-0141: instance 1 = the static sky backdrop (mask 0x04 -> primary rays only;
+    // custom index 2 -> the megakernel shades it as sky). Set once; never per-frame.
+    if (skyPresent)
+    {
+        insts[1].transform.matrix[0][0] = 1.0f;
+        insts[1].transform.matrix[1][1] = 1.0f;
+        insts[1].transform.matrix[2][2] = 1.0f;
+        insts[1].instanceCustomIndex = 2u;
+        insts[1].mask  = 0x04;
+        insts[1].flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+        insts[1].accelerationStructureReference = g.skyBlasAddr;
+    }
+    // The sprite slot (1 when no sky, else 2) is left zeroed until a frame fills it.
 
     VkAccelerationStructureGeometryKHR tgeom = {};
     tgeom.sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
@@ -1504,7 +1605,7 @@ void BuildAccelerationStructures()
     tbgi.scratchData.deviceAddress = AlignUp(BufferAddress(g.tlasBuildScratch), g.scratchAlign);
 
     VkAccelerationStructureBuildRangeInfoKHR trange = {};
-    trange.primitiveCount = 1;                  // world only at level-load
+    trange.primitiveCount = skyPresent ? 2u : 1u;   // static world [+ sky] at level-load
     const VkAccelerationStructureBuildRangeInfoKHR* pTrange = &trange;
 
     cb = BeginOneTime();
@@ -1512,10 +1613,12 @@ void BuildAccelerationStructures()
     EndOneTime(cb);
     g.blasDirty = false;        // freshly built from the current heights
 
-    printf("RB_Vulkan: built BLAS (%u tris, %.1f->%.1f KiB compacted) + TLAS (2-instance cap, world live); AS %.1f KiB.\n",
+    printf("RB_Vulkan: built BLAS (%u tris, %.1f->%.1f KiB compacted) + sky BLAS (%u tris) + TLAS (3-instance cap, world%s live); AS %.1f KiB.\n",
            triCount,
            (double)sizes.accelerationStructureSize / 1024.0,
            (double)blasSize / 1024.0,
+           g.skyMeshVerts / 3u,
+           skyPresent ? "+sky" : "",
            (double)(blasSize + tsizes.accelerationStructureSize
                     + ssizes.accelerationStructureSize) / 1024.0);
     fflush(stdout);
@@ -1617,6 +1720,12 @@ uint32_t BuildSpriteTlas()
     VkAccelerationStructureInstanceKHR* insts =
         (VkAccelerationStructureInstanceKHR*)g.tlasInstMapped;
 
+    // DOOM-0141: static instances occupy the low slots — 0 = world, 1 = sky (when the
+    // level has sky). The per-frame sprite instance lands right after them. The static
+    // slots are filled once in BuildAccelerationStructures and persist in the mapped
+    // buffer, so the rebuild here only touches the sprite slot.
+    const uint32_t base = (g.skyBlas != VK_NULL_HANDLE) ? 2u : 1u;
+
     if (haveSpr)
     {
         // Sprite BLAS rebuild over this frame's billboards (non-opaque triangles).
@@ -1647,20 +1756,20 @@ uint32_t BuildSpriteTlas()
         g.pfnCmdBuildAS(g.cmd, 1, &sbgi, &pSr);
         asBarrier();   // TLAS rebuild below reads the sprite BLAS extents
 
-        insts[1].transform.matrix[0][0] = 1.0f;
-        insts[1].transform.matrix[1][1] = 1.0f;
-        insts[1].transform.matrix[2][2] = 1.0f;
-        insts[1].instanceCustomIndex = 1u;        // megakernel: "this hit is a sprite"
-        insts[1].mask  = 0x02;                     // primary rays only (shadow/NEE cull to 0x01)
-        insts[1].flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
-        insts[1].accelerationStructureReference = g.spriteBlasAddr;
+        insts[base].transform.matrix[0][0] = 1.0f;
+        insts[base].transform.matrix[1][1] = 1.0f;
+        insts[base].transform.matrix[2][2] = 1.0f;
+        insts[base].instanceCustomIndex = 1u;      // megakernel: "this hit is a sprite"
+        insts[base].mask  = 0x02;                   // primary rays only (shadow/NEE cull to 0x01)
+        insts[base].flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+        insts[base].accelerationStructureReference = g.spriteBlasAddr;
     }
     else
     {
-        insts[1].mask = 0u;                        // no sprites this frame
+        insts[base].mask = 0u;                      // no sprites this frame
     }
 
-    const uint32_t instCount = haveSpr ? 2u : 1u;
+    const uint32_t instCount = haveSpr ? (base + 1u) : base;
 
     VkAccelerationStructureGeometryKHR tgeom = {};
     tgeom.sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
@@ -4238,6 +4347,13 @@ extern "C" void RB_Vulkan_BuildLevel(void)
     if (g.vbufMemory) { vkFreeMemory(g.device, g.vbufMemory, nullptr); g.vbufMemory = VK_NULL_HANDLE; }
     g.vertexCount = 0;
 
+    // DOOM-0141: (re)create the RT-only sky backdrop vertex buffer for this level (the
+    // sky BLAS built from it is torn down in DestroyAccelerationStructures).
+    if (g.skyMeshBuf) { vkDestroyBuffer(g.device, g.skyMeshBuf, nullptr); g.skyMeshBuf = VK_NULL_HANDLE; }
+    if (g.skyMeshMem) { vkFreeMemory(g.device, g.skyMeshMem, nullptr); g.skyMeshMem = VK_NULL_HANDLE; }
+    g.skyMeshVerts = 0;
+    g.skyMeshTexnum    = 0;
+
     VkDeviceSize size = (VkDeviceSize)g.levelMesh->numverts * sizeof(rb_vertex_t);
     if (size == 0)
         return;   // empty map (no drawable geometry); nothing to upload
@@ -4275,6 +4391,26 @@ extern "C" void RB_Vulkan_BuildLevel(void)
     std::memcpy(g.vbufMapped, g.levelMesh->verts, (size_t)size);
 
     g.vertexCount = (uint32_t)g.levelMesh->numverts;
+
+    // DOOM-0141: upload this level's sky backdrop tris (if any) into a host-visible
+    // buffer the static sky BLAS builds from (in BuildAccelerationStructures, below).
+    // skyTexnum is read off the verts (all carry texnum == skytexture) so the trace
+    // can sample the sky panorama without reaching across the C/C++ seam.
+    if (g.rtEnabled && g.levelMesh->numsky >= 3 && g.levelMesh->sky)
+    {
+        VkDeviceSize ssz = (VkDeviceSize)g.levelMesh->numsky * sizeof(rb_vertex_t);
+        CreateRtBuffer(ssz,
+                       VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+                       | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                       &g.skyMeshBuf, &g.skyMeshMem);
+        void* skyMapped = nullptr;
+        Check(vkMapMemory(g.device, g.skyMeshMem, 0, ssz, 0, &skyMapped), "vkMapMemory(sky)");
+        std::memcpy(skyMapped, g.levelMesh->sky, (size_t)ssz);
+        vkUnmapMemory(g.device, g.skyMeshMem);
+        g.skyMeshVerts = (uint32_t)g.levelMesh->numsky;
+        g.skyMeshTexnum    = g.levelMesh->sky[0].texnum;
+    }
 
     // DOOM-0009 build step 2b: (re)build the static BLAS + TLAS over this mesh so
     // the path tracer has something to trace against. No-op without RT.
@@ -4438,6 +4574,10 @@ void RecordRtTrace(uint32_t idx)
     // DOOM-0119: REJECT cull dimension (sector count). 0 when the level has no
     // REJECT lump (rejectBuf absent), which disables the shader cull entirely.
     pc.misc4[2]    = g.rejectBuf ? g.numSectors : 0u;
+    // DOOM-0141: sky wall-texture bindless id for the panorama sample (sky hit /
+    // miss). 0xFFFFFFFF when the level has no sky geometry -> the shader falls back
+    // to the flat SKY_COLOR fill (a miss in an enclosed level is degenerate anyway).
+    pc.misc4[3]    = (g.skyMeshVerts > 0) ? (uint32_t)g.skyMeshTexnum : 0xFFFFFFFFu;
     pc.vertsAddr   = BufferAddress(g.vbuf);
     pc.emitAddr    = g.emitBuf    ? BufferAddress(g.emitBuf)    : 0;
     pc.matEmisAddr = g.matEmisBuf ? BufferAddress(g.matEmisBuf) : 0;
