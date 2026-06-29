@@ -1104,3 +1104,22 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: perf.
   Source: in-session-2026-06-29 megakernel lossless-perf analysis.
   Resolved (2026-06-29): RefitAS() split into RecordRefitAS(VkCommandBuffer) — the BLAS in-place update is now recorded into the frame command buffer (g.cmd) inside RecordRtTrace, ahead of the TLAS rebuild that reads it, ordered by an AS write->read barrier. The old standalone BeginOneTime/EndOneTime submit (which waited the queue idle, bubbling the GPU on every door/lift frame) is removed. Memory model unchanged (host-coherent vbuf written before submit, fence-guarded); only the refit timing changes. blasDirty still latches under raster so off-screen moves are caught on the first traced frame. Builds clean.
+
+- 📋 [DOOM-0132] **Anisotropic texture filtering (with mipmaps) for grazing-angle surfaces, gated on a true-colour material path.**
+  Goal: sharpen textures viewed at oblique/grazing angles (DOOM's long floors and corridor walls receding into the distance), where point-sampling without mipmaps currently shimmers/moires.
+  
+  BLOCKER (verified): the material sampler is VK_FILTER_NEAREST + VK_SAMPLER_MIPMAP_MODE_NEAREST (r_vulkan.cpp:2870-2874, "paletted art: point sampling"). The material textures store PALETTE INDICES that are resolved through paletteTex; linear/anisotropic filtering of indices is invalid (averaging index 50 and 200 yields a garbage colour, not a blend of the two colours). So AF cannot be bolted onto the current paletted sampler.
+  
+  Requires, in order:
+  1. A true-colour material path: pre-expand the paletted material atlas to RGB(A) once (palette + any COLORMAP/sector-light handling resolved up front), so the sampled texels are colours that CAN be filtered. This is the load-bearing prerequisite and probably its own item.
+  2. Mipmap generation for the material atlas (AF builds on mipmapping).
+  3. Enable the samplerAnisotropy device feature + a sampler with maxAnisotropy (clamp to VkPhysicalDeviceLimits.maxSamplerAnisotropy, e.g. up to 16x), linear min/mag + linear mipmap mode.
+  4. Raster (Solid) path gets hardware AF for free once 1-3 land (fragment shader has implicit derivatives).
+  5. Ultra (path tracer, pathtrace.comp) has NO implicit derivatives in compute — AF needs explicit gradients via textureGrad with ray differentials (track the ray's footprint). Larger effort; can land after the raster path.
+  
+  Aesthetic tension (per RT north star): AF + linear filtering smooths DOOM's deliberately crunchy pixels. Keep it a tunable level (Off / 2x / 4x / 8x / 16x) so the user can trade shimmer-reduction against the retro look; tune with the user. Off should remain byte-identical to today's NEAREST path.
+  
+  Kind: enhancement.
+  **Layman:** Floors and walls seen edge-on currently shimmer and smear; anisotropic filtering keeps them crisp into the distance — but it needs a true-colour texture path first and should stay tunable so DOOM's chunky-pixel look survives.
+  Kind: enhancement.
+  Source: user-request-2026-06-29.
