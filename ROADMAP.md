@@ -1152,3 +1152,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: feature.
   Source: user-request-2026-06-29.
   Resolved (2026-06-29): added rb_rtdebug_menu (persisted "rt_debug_views", default 0) and a "Debug Views: On/Off" item in the shared Renderer menu (m_menu.c rm_debugviews, drawn between Render Scale and Brightness so it doesn't collide with the brightness thermo). ~ handler (i_video.c) now branches: debug off -> toggle rb_rtdebug 6<->0 (plain RT on/off); debug on -> full diagnostic cycle as before. Toggling debug off snaps rb_rtdebug out of diagnostic values 1-4 to 6. Per user decision the Solid/Ultra menu label is NOT linked to RT on/off (the ~ key remains the only RT switch). Builds clean; in-game menu/keyboard check pending on user. The open question in the original bullet (Solid forces raster) was answered: no.
+
+- ✅ [DOOM-0136] **Map the RT-view toggle to the PS4/PS5 touchpad — clicking its right half mirrors the ~ key.**
+  Resolved (2026-06-29): extracted the ~-key RT-view logic into a shared I_ToggleRtView() (i_video.c) so the keyboard and gamepad share one path. In I_PollGamepad the whole-pad click (SDL_CONTROLLER_BUTTON_TOUCHPAD) is edge-detected; on the press edge SDL_GameControllerGetTouchpadFinger(gamepad,0,0,...) reads finger 0's normalised position and the toggle fires only when a finger is down on the right half (x >= 0.5). SDL 2.32.70 on this box, well past the 2.0.14 touchpad-API floor. No-op on pads without a touchpad (the button never reports). Honours the DOOM-0135 Debug Views toggle (RT on/off vs diagnostic cycle). Builds clean; in-game controller check pending on user.\nKind: feature.
+  **Layman:** On a PlayStation controller you can now press the right side of the touchpad to turn ray tracing on/off (or cycle debug views when that mode is on), just like the ~ key on the keyboard.
+  Kind: feature.
+  Source: user-request-2026-06-29.

@@ -188,6 +188,37 @@ static void I_PostKeyEdge(boolean down, boolean* held, int doomkey)
 
 
 //
+// Toggle the path-tracer view (DOOM-0009), shared by the `~` key and the gamepad
+// touchpad (DOOM-0136). With the Debug Views menu toggle off (rb_rtdebug_menu==0)
+// it is a plain ray-tracing on/off switch (denoised SVGF <-> raster); with it on
+// it cycles the diagnostic views (mode 5, headless verify, is skipped). Flips the
+// renderer flag directly; the Vulkan present path reads it, no-op without RT.
+static void I_ToggleRtView(void)
+{
+    extern int rb_rtdebug;          // r_vulkan.cpp
+    extern int rb_rtdebug_menu;     // r_vulkan.cpp (DOOM-0135)
+    if (rb_rtdebug_menu)
+    {
+	rb_rtdebug++;
+	if      (rb_rtdebug == 5) rb_rtdebug = 6;   // skip the verify-only mode
+	else if (rb_rtdebug > 6)  rb_rtdebug = 0;
+    }
+    else
+    {
+	rb_rtdebug = (rb_rtdebug == 0) ? 6 : 0;     // plain RT on/off
+    }
+    {
+	// Terminal proof of the active mode (the on-screen top-centre title is the
+	// in-game proof; this mirrors it for headless/log debugging).
+	static const char* const names[] = {
+	    "Original (raster)", "HITS/normals", "white furnace",
+	    "textured", "NEE direct (noisy)", "(verify)", "DENOISED (SVGF)"
+	};
+	printf("RT debug mode %d: %s\n", rb_rtdebug, names[rb_rtdebug]);
+	fflush(stdout);
+    }
+}
+
 // Reads the open gamepad once per tic and feeds DOOM's input: an ev_joystick
 // for buttons + turn + forward (reused for menu navigation), plus synthetic
 // strafe / Escape key edges for what the two-axis contract can't carry.
@@ -202,7 +233,7 @@ static void I_PollGamepad(void)
     extern int rb_wireframe;            // r_vulkan.cpp: 3D wireframe debug toggle
     extern int rb_flashlight;           // r_vulkan.cpp: DOOM-0044 headlamp toggle
     static boolean strafe_r_held, strafe_l_held, esc_held, back_held, map_held;
-    static boolean share_held, flash_held;
+    static boolean share_held, flash_held, touchpad_held;
 
     if (!gamepad)
 	return;
@@ -288,6 +319,23 @@ static void I_PollGamepad(void)
 	flash_held = l1;
     }
 
+    // DOOM-0136: clicking the RIGHT half of the touchpad toggles the path-tracer
+    // view -- the gamepad equivalent of the `~` key. The whole-pad click is
+    // BUTTON_TOUCHPAD; the finger position (SDL 2.0.14+) picks the half (x in
+    // [0,1], so >= 0.5 is the right side). Edge-detected so one press = one toggle.
+    // PS4/PS5 pads only; a controller with no touchpad never reports the button.
+    {
+	boolean tp = SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_TOUCHPAD);
+	if (tp && !touchpad_held)
+	{
+	    Uint8 fstate = 0; float fx = 0.0f, fy = 0.0f, fpres = 0.0f;
+	    if (SDL_GameControllerGetTouchpadFinger(gamepad, 0, 0, &fstate, &fx, &fy, &fpres) == 0
+		&& fstate && fx >= 0.5f)
+		I_ToggleRtView();
+	}
+	touchpad_held = tp;
+    }
+
     // Triangle (Y) toggles the automap. KEY_TAB is the engine's automap key
     // (AM_STARTKEY/AM_ENDKEY in am_map.c); posting it as an edge means one press
     // opens the map and the next closes it -- same open/close toggle as Escape.
@@ -328,29 +376,7 @@ static void I_GetEvent(SDL_Event* sdlevent)
 	// no-op without RT.
 	if (sdlevent->key.keysym.sym == SDLK_BACKQUOTE && !sdlevent->key.repeat)
 	{
-	    extern int rb_rtdebug;          // r_vulkan.cpp
-	    extern int rb_rtdebug_menu;     // r_vulkan.cpp (DOOM-0135)
-	    if (rb_rtdebug_menu)
-	    {
-		rb_rtdebug++;
-		if      (rb_rtdebug == 5) rb_rtdebug = 6;   // skip the verify-only mode
-		else if (rb_rtdebug > 6)  rb_rtdebug = 0;
-	    }
-	    else
-	    {
-		// Debug views off: ~ is a simple RT on/off toggle (6 denoised <-> 0 raster).
-		rb_rtdebug = (rb_rtdebug == 0) ? 6 : 0;
-	    }
-	    {
-		// Terminal proof of the active mode (the on-screen top-centre title
-		// is the in-game proof; this mirrors it for headless/log debugging).
-		static const char* const names[] = {
-		    "Original (raster)", "HITS/normals", "white furnace",
-		    "textured", "NEE direct (noisy)", "(verify)", "DENOISED (SVGF)"
-		};
-		printf("RT debug mode %d: %s\n", rb_rtdebug, names[rb_rtdebug]);
-		fflush(stdout);
-	    }
+	    I_ToggleRtView();           // DOOM-0135/0136: shared with the touchpad
 	    break;
 	}
 	// Backslash (`\`) toggles the per-pass GPU profiler (DOOM-0090): prints the
