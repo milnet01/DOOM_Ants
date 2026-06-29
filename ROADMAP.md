@@ -833,11 +833,12 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: enhancement.
   Source: in-session-2026-06-28.
 
-- 📋 [DOOM-0090] **Profile and reduce the path-tracer megakernel's occupancy / VGPR pressure on the RX 6600.**
+- 🚧 [DOOM-0090] **Profile and reduce the path-tracer megakernel's occupancy / VGPR pressure on the RX 6600.**
   From the 2026-06-28 verified research (docs/research/DOOM-0009-rt-denoiser-upscaler-bestpractices.md §1a). RDNA2 caps at 16 wavefronts/SIMD with only ~1024 VGPRs, so the megakernel's single hottest register hot-spot throttles the whole kernel — the occupancy penalty is STRONGER on the RX 6600 than the RDNA3 examples in the literature. Actions: profile occupancy with Radeon GPU Profiler; ensure exactly one live rayQueryEXT in scope (AMD guidance); demote rarely-used hot paths out of the megakernel's max-VGPR footprint; keep the kernel BOUNDED (the megakernel-vs-wavefront refutation in the research was scene-specific — the megakernel choice is validated for DOOM's low-divergence matte art, but an unbounded one is the risk). Feeds DOOM-0009 step-7 perf pass. Cited: AMD GPUOpen RDNA performance guide + occupancy-explained; Laine et al. 2013.
   **Layman:** Make the ray-tracing GPU program use fewer registers so more of it runs at once — the single biggest speed lever on this card.
   Kind: perf.
   Source: research-2026-06-28.
+  Progress (2026-06-29): instrumentation half landed + pushed (e720b4e). Added an opt-in per-pass GPU profiler (the `\` key, persisted as rt_profile) that timestamps the four path-tracer stages — sprite-AS rebuild / megakernel trace / denoiser chain + TAAU / label + blit — and prints per-frame averages to the terminal once a second. Read back stall-free under single-frame-in-flight. Next: read the breakdown on the RX 6600 at 50% render scale and reduce the proven hotspot (megakernel VGPR/occupancy needs RGP; denoiser a-trous iteration count is in-code tunable).
 
 - 🚧 [DOOM-0091] **Compact the BLAS and rebuild the TLAS on the compute queue (RT acceleration-structure best practice).**
   From the 2026-06-28 verified research (§1b). BLAS compaction (build with VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR -> query compacted size -> compact) typically saves 20-50% AS memory. Rebuild the small TLAS each frame on the COMPUTE queue (AMD guidance) rather than the graphics queue. The current transform-only door/lift refit (ALLOW_UPDATE) is validated and stays — but note the hard limit: transitioning a primitive active<->inactive cannot be done by update and forces a full rebuild (relevant if a sector ever culls geometry in/out). Counterpoint to weigh on-HW (Intel): a budgeted full per-frame TLAS rebuild can be more frame-time-stable than relying on updates. Cited: AMD GPUOpen RDNA guide; Khronos Vulkan RT best-practices; Vulkan AS spec.
@@ -992,11 +993,12 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: fix.
   Source: in-session-2026-06-29.
 
-- 🚧 [DOOM-0116] **Persist the Ultra path-tracer view across sessions and default it to the denoised (SVGF) view.**
+- ✅ [DOOM-0116] **Persist the Ultra path-tracer view across sessions and default it to the denoised (SVGF) view.**
   The `~` path-tracer view selector (rb_rtdebug) defaulted to 0 (raster "Original") and was not persisted, so Ultra booted into the raster-looking view every launch until the user pressed `~` to reach mode 6 (denoised SVGF). Now persisted via m_misc.c defaults[] as "rt_view" (default 6) and clamped on load in RB_Init to a valid cycle value ({0,1,2,3,4,6}; 5 is the headless verify path). So a fresh Ultra user sees the denoised path-traced view immediately, and any `~` choice survives a restart. rendermode (Classic/Solid/Ultra) already persisted. Implemented 2026-06-29; awaiting play-test (held local with DOOM-0048 — needs a WAD to confirm Ultra shows the denoised view on boot). Implemented in-session.
   **Layman:** Ultra now starts in the proper ray-traced (denoised) look and remembers your view choice between play sessions.
   Kind: feature.
   Source: user-request-2026-06-29.
+  Resolved (2026-06-29): play-tested — Ultra boots straight into the denoised (SVGF) view (the on-screen "DENOISED" label confirms) and the `~` view choice persists across sessions via the rt_view config var. Shipped in 4d8f619 (pushed e720b4e).
 
 - 📋 [DOOM-0117] **Controls settings page that lists every keyboard key and controller-button mapping.**
   Add an Options -> Controls page that displays the full current binding set: keyboard keys (key_right/left/up/down, key_fire, key_use, key_strafe, key_speed, strafe left/right, etc. from m_misc.c defaults[]) and the controller/gamepad mappings (joyb_*, plus the gamepad actions like the L1 flashlight from DOOM-0044). Read-only display; rebinding is the follow-up DOOM-0118. Prerequisite for it (the page is where rebinding happens).
