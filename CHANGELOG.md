@@ -8,6 +8,15 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Player flashlight (headlamp), toggled by F or gamepad L1 (DOOM-0044)**
+  A camera-mounted spotlight aimed along the view, toggled with F or gamepad
+  L1 and persisted in the config. In Ultra (path-traced) it casts real
+  ray-traced shadows; in Solid (raster 3D) it lights a cone with distance
+  falloff. Same session: the path tracer's dynamic lights gained a near-field
+  softening so they no longer blow out at point-blank range, the SVGF temporal
+  denoiser's anti-ghosting was fixed so a light switching off no longer
+  lingers, and the muzzle flash was brightened to light the surrounding room.
+
 - **Ultra ambient floor: path-traced rooms marked bright by the level designer no longer go pitch black (DOOM-0043)**
   The path tracer now adds a gentle ambient term scaled by each surface's DOOM
   sector lightlevel, so a sector the mapper lit brightly reads as lit even when it
