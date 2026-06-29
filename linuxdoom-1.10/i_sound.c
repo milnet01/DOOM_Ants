@@ -82,7 +82,9 @@ void I_SoundDelTimer( void );
 // A quick hack to establish a protocol between
 // synchronous mix buffer updates and asynchronous
 // audio writes. Probably redundant with gametic.
-static int flag = 0;
+#ifdef SNDINTR
+static int flag = 0;            // only referenced by the SNDINTR interrupt path
+#endif
 
 // The number of internal mixing channels,
 //  the samples calculated for each mixing step,
