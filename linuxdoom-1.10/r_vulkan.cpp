@@ -4124,6 +4124,10 @@ void RecordRtTrace(uint32_t idx)
     // enable bit is forwarded, into the spare misc2.w slot (read as misc2.w != 0u).
     pc.misc2[3] = rb_flashlight ? 1u : 0u;
     pc.misc4[0]    = (uint32_t)(g.matNumWall + g.matNumFlat);   // sprite material base (DOOM-0100)
+    // DOOM-0084: emitters [staticCount, emitCount) are the per-frame sprite lights —
+    // the shader treats them as omnidirectional (a lamp emits all ways, not as a
+    // camera-facing card). Static wall/flat emitters before this index stay oriented.
+    pc.misc4[1]    = (uint32_t)g.staticWgt.size();
     pc.vertsAddr   = BufferAddress(g.vbuf);
     pc.emitAddr    = g.emitBuf    ? BufferAddress(g.emitBuf)    : 0;
     pc.matEmisAddr = g.matEmisBuf ? BufferAddress(g.matEmisBuf) : 0;

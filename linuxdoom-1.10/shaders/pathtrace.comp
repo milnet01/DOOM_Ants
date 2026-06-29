@@ -320,7 +320,7 @@ void main()
             // the glow on the bright pixels (lamp top, not the dark stand).
             bool addEmis = isSprite ? ((flags & FLAG_EMISSIVE) != 0) : true;
             uint seed = px.x + px.y * w + 1u;
-            vec3 L = shadeSurface(hitP, n, albedo, id, pc.misc2.x,
+            vec3 L = shadeSurface(hitP, n, albedo, id, pc.misc2.x, pc.misc4.y,
                                   pc.emit, pc.matEmis, NEE_SAMPLES, addEmis, seed);
 
             // Indirect GI (build step 4c) + DOOM-0043 sector-light ambient floor.
@@ -424,9 +424,9 @@ void main()
                 uint seed = pcgHash((px.x + px.y * w) * 2654435761u
                                     + pc.misc3.x + si);
                 if (pc.misc3.z == 0u)
-                    sum += directNEEVerify(hitP, n, albedo, pc.misc2.x, pc.emit, seed);
+                    sum += directNEEVerify(hitP, n, albedo, pc.misc2.x, pc.misc2.x, pc.emit, seed);
                 else if (pc.misc3.z == 1u)
-                    sum += directAllLights(hitP, n, albedo, pc.misc2.x, pc.emit, seed);
+                    sum += directAllLights(hitP, n, albedo, pc.misc2.x, pc.misc2.x, pc.emit, seed);
                 else
                 {
                     // White-furnace math check: one cosine bounce into a constant
@@ -487,7 +487,7 @@ void main()
             // INDEPENDENT sample -> temporal accumulation converges and the SVGF
             // variance estimate is non-zero (a frozen seed defeats the denoiser).
             uint seed  = pcgHash(px.x + px.y * w + 1u + pc.misc3.x * 2654435761u);
-            vec3 illum = shadeSurface(hitP, n, vec3(1.0), id, pc.misc2.x,
+            vec3 illum = shadeSurface(hitP, n, vec3(1.0), id, pc.misc2.x, pc.misc4.y,
                                       pc.emit, pc.matEmis, NEE_SAMPLES, false, seed);
             // GI bounce + DOOM-0043 sector-light ambient floor (demodulated: the
             // composite re-applies albedo). Same max() floor as mode 4 so a bright-

@@ -116,7 +116,9 @@ void main()
             // (addEmission=false — directly-visible emitters are the frame's NEE
             // job; folding them in here too would double-count). This pass's probes
             // therefore hold INDIRECT radiance.
-            Li = shadeSurface(hitP, n, albedo, id, pc.misc.z,
+            // omniStart = emitCount: the level-load bake has only static wall/flat
+            // emitters (no sprite lights yet), so every emitter stays oriented.
+            Li = shadeSurface(hitP, n, albedo, id, pc.misc.z, pc.misc.z,
                               pc.emit, pc.matEmis, BAKE_NEE, false, seed);
 
             // Multi-bounce: on passes 2+ (giEnabled), add the light this surface

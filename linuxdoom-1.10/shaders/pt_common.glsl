@@ -85,7 +85,13 @@ vec3 decodeAlbedo(uint id, vec2 uv)
 // caller folds in albedo/pi). The caller picks k by power (build step 3c-2) with
 // selection probability pdfSel, and samples a uniform point on the triangle, so
 // p(Q) = pdfSel * (1/area) and 1/p = area / pdfSel.
-vec3 sampleEmitter(uint k, vec3 hitP, vec3 n, float pdfSel, Emitters emit, inout uint seed)
+// `omniStart`: emitters with index >= omniStart are OMNIDIRECTIONAL (DOOM-0084
+// sprite lights — lamps/torches/barrels). A camera-facing billboard quad has a
+// normal pointing at the viewer, so as an oriented area light its cosL would be ~0
+// for a floor point right below it (it would light nothing). Sprite lights are
+// glowing objects that emit in all directions, so they skip the emitter-orientation
+// cosine (cosL = 1). Static wall/flat emitters (index < omniStart) stay oriented.
+vec3 sampleEmitter(uint k, vec3 hitP, vec3 n, float pdfSel, uint omniStart, Emitters emit, inout uint seed)
 {
     uint b = k * 14u;
     vec3 v0 = vec3(emit.e[b+0u],  emit.e[b+1u],  emit.e[b+2u]);
@@ -113,7 +119,9 @@ vec3 sampleEmitter(uint k, vec3 hitP, vec3 n, float pdfSel, Emitters emit, inout
 
     float cosSurf = dot(n, wi);
     if (cosSurf <= 0.0) return vec3(0.0);      // emitter is behind the surface
-    float cosL = abs(dot(nL, wi));             // two-sided (DOOM faces emit both ways)
+    // Oriented wall/flat emitter: two-sided cosine (DOOM faces emit both ways).
+    // Omnidirectional sprite light (k >= omniStart): emits in all directions.
+    float cosL = (k >= omniStart) ? 1.0 : abs(dot(nL, wi));
     if (cosL <= 0.0) return vec3(0.0);
 
     // Occlusion: opaque any-hit, terminate on first hit. tMax just short of the
@@ -143,8 +151,8 @@ vec3 sampleEmitter(uint k, vec3 hitP, vec3 n, float pdfSel, Emitters emit, inout
 // probes store INDIRECT-only radiance — the directly-visible emitter term is the
 // frame's NEE job, double-counted if folded into the cache too).
 vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
-                  Emitters emit, MatEmis matEmis, uint nSamples, bool addEmission,
-                  inout uint seed)
+                  uint omniStart, Emitters emit, MatEmis matEmis, uint nSamples,
+                  bool addEmission, inout uint seed)
 {
     // Self-emission (linear) from the per-material Le table, LOCALISED to this hit
     // texel's brightness (DOOM-0084) so a lamp glows from its lit top, not its dark
@@ -171,7 +179,7 @@ vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
                 else                             hi = mid;
             }
             float pdf = emit.e[lo * 14u + 13u];
-            vec3  c   = sampleEmitter(lo, hitP, n, pdf, emit, seed);
+            vec3  c   = sampleEmitter(lo, hitP, n, pdf, omniStart, emit, seed);
             vec3  rad = albedo * (1.0 / PI) * c;     // reflected radiance (Lambert)
             direct += min(rad, vec3(FIREFLY_MAX));   // firefly clamp in luminance domain
         }
@@ -205,7 +213,7 @@ vec3 cosineHemisphere(vec3 n, inout uint seed)
 // Mirrors shadeSurface's emitter pick (cdf binary search, weight by 1/pdf) but
 // without the firefly clamp.
 vec3 directNEEVerify(vec3 hitP, vec3 n, vec3 albedo, uint emitCount,
-                     Emitters emit, inout uint seed)
+                     uint omniStart, Emitters emit, inout uint seed)
 {
     if (emitCount == 0u) return vec3(0.0);
     float u  = rnd(seed);
@@ -217,7 +225,7 @@ vec3 directNEEVerify(vec3 hitP, vec3 n, vec3 albedo, uint emitCount,
         else                             hi = mid;
     }
     float pdf = emit.e[lo * 14u + 13u];
-    return albedo * (1.0 / PI) * sampleEmitter(lo, hitP, n, pdf, emit, seed);
+    return albedo * (1.0 / PI) * sampleEmitter(lo, hitP, n, pdf, omniStart, emit, seed);
 }
 
 // Brute-force reference: evaluate EVERY emitter each sample (no importance
@@ -228,11 +236,11 @@ vec3 directNEEVerify(vec3 hitP, vec3 n, vec3 albedo, uint emitCount,
 // area sample remains), so it converges in far fewer samples than a unidirectional
 // estimator would on DOOM's sparse emitters.
 vec3 directAllLights(vec3 hitP, vec3 n, vec3 albedo, uint emitCount,
-                     Emitters emit, inout uint seed)
+                     uint omniStart, Emitters emit, inout uint seed)
 {
     vec3 sum = vec3(0.0);
     for (uint k = 0u; k < emitCount; k++)
-        sum += sampleEmitter(k, hitP, n, 1.0, emit, seed);   // pdfSel = 1 -> full light
+        sum += sampleEmitter(k, hitP, n, 1.0, omniStart, emit, seed);   // pdfSel = 1 -> full light
     return albedo * (1.0 / PI) * sum;
 }
 
