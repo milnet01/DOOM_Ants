@@ -67,6 +67,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Resample omnidirectional sprite lights with RIS so the path tracer casts one shadow ray instead of one per light.** (DOOM-0120)
+  The Ultra path tracer's sprite-light loop now uses Resampled Importance Sampling (the cheap end of the ReSTIR family): it weighs every surviving candidate light, keeps one by weighted-reservoir, and casts a single shadow ray on the survivor — instead of a shadow ray per light. Frame time is now effectively independent of how many glowing props are on screen (measured ~flat from 22 to 40 sprites), and the worst-case is faster than before. No cross-frame reservoir is kept, so it stays light on AMD RDNA2 registers; the temporal upscaler and denoiser absorb the single ray's noise. The estimator is provably unbiased against the previous per-light sum, and the old dim-sprite cull (with its small one-sided bias) is removed.
+
 - **REJECT-lump light culling for NEE (cheap-ladder step 1).** (DOOM-0119)
   Ultra path tracer skips glowing-sprite lights in rooms a surface
   can't see (via the WAD REJECT visibility lump), before casting their
