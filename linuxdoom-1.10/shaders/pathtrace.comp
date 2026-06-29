@@ -106,6 +106,13 @@ const uint  NEE_SAMPLES = 6u;          // shadow rays/pixel. Emitters are picked
 const float AMBIENT_FLOOR = 0.02;      // tiny fill for a triangle with no GI probe
                                        // (untagged) so it isn't pure black — the
                                        // step-4 probe bounce is the real fill now.
+// DOOM-0043 (Ultra-only — only this megakernel runs it; Solid is the raster path):
+// a gentle ambient floor that scales with the surface's DOOM sector lightlevel
+// (per-vertex, 0..1). A sector the mapper marked bright reads as lit even with no
+// emissive lamp texture; a dark sector stays dark so the flashlight (DOOM-0044)
+// has somewhere to matter. INV-7 inline tunable — this is the playtest brightness
+// knob (the feature is provisional pending playtest, per the DOOM-0043 roadmap).
+const float AMBIENT_SECTOR_SCALE = 0.25;   // bright sector (light=1) -> 0.25 linear fill
 // Exposure as a photographic EV (the Workbench exposureEv curve turns it into a
 // linear gain: 1/(2^EV * 1.2)). -2.25 ≈ the old 4.0 gain, so this swap changes the
 // tone *operator* without an exposure jump; the value gets its real tune in step 4c
@@ -243,15 +250,17 @@ void main()
             vec3 L = shadeSurface(hitP, n, albedo, id, pc.misc2.x,
                                   pc.emit, pc.matEmis, NEE_SAMPLES, true, seed);
 
-            // Indirect GI (build step 4c): the bounced-light solution baked into the
-            // per-subsector probe cache, replacing the old flat ambient fill. Look up
-            // this triangle's room probe and add albedo * its SH-L1 irradiance for
-            // the surface normal. Untagged tris (no probe) fall back to a small floor.
-            uint subId = pc.triSs.s[uint(prim)];
-            if (subId < pc.misc2.y)
-                L += albedo * giIrradiance(pc.probes, subId, n);
-            else
-                L += albedo * AMBIENT_FLOOR;
+            // Indirect GI (build step 4c) + DOOM-0043 sector-light ambient floor.
+            // The probe holds the bounced solution; the floor is a deliberate,
+            // designer-driven ambient seeded by the sector lightlevel (§4.2). max()
+            // keeps GI wherever it already exceeds the floor, so lit rooms are
+            // untouched (no double-count) and only dim/unprobed surfaces get lifted.
+            float secLight = pc.verts.v[i0 + 10u];                  // sector lightlevel 0..1
+            vec3  ambient  = vec3(max(secLight * AMBIENT_SECTOR_SCALE, AMBIENT_FLOOR));
+            uint  subId    = pc.triSs.s[uint(prim)];
+            vec3  gi       = (subId < pc.misc2.y) ? giIrradiance(pc.probes, subId, n)
+                                                  : vec3(0.0);
+            L += albedo * max(gi, ambient);
 
             // Dynamic delta (build step 5): the muzzle flash. A point light at the
             // gun barrel (eye + forward/drop offset) while firing, with a hard
@@ -368,9 +377,15 @@ void main()
             uint seed  = pcgHash(px.x + px.y * w + 1u + pc.misc3.x * 2654435761u);
             vec3 illum = shadeSurface(hitP, n, vec3(1.0), id, pc.misc2.x,
                                       pc.emit, pc.matEmis, NEE_SAMPLES, false, seed);
-            uint subId = pc.triSs.s[uint(prim)];
-            illum += (subId < pc.misc2.y) ? giIrradiance(pc.probes, subId, n)
-                                          : vec3(AMBIENT_FLOOR);
+            // GI bounce + DOOM-0043 sector-light ambient floor (demodulated: the
+            // composite re-applies albedo). Same max() floor as mode 4 so a bright-
+            // marked but unlit room reads, while dark sectors stay dark.
+            float secLight = pc.verts.v[i0 + 10u];                  // sector lightlevel 0..1
+            vec3  ambient  = vec3(max(secLight * AMBIENT_SECTOR_SCALE, AMBIENT_FLOOR));
+            uint  subId    = pc.triSs.s[uint(prim)];
+            vec3  gi       = (subId < pc.misc2.y) ? giIrradiance(pc.probes, subId, n)
+                                                  : vec3(0.0);
+            illum += max(gi, ambient);
 
             float flash = uintBitsToFloat(pc.misc2.z);
             if (flash > 0.0)

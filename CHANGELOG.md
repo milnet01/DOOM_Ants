@@ -8,6 +8,14 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Ultra ambient floor: path-traced rooms marked bright by the level designer no longer go pitch black (DOOM-0043)**
+  The path tracer now adds a gentle ambient term scaled by each surface's DOOM
+  sector lightlevel, so a sector the mapper lit brightly reads as lit even when it
+  holds no emissive lamp texture, while dark sectors stay dark. Applied as a floor
+  under the baked GI (max, not add) so already-lit rooms are unchanged. Ultra-only
+  (Solid keeps its pitch-black rooms — the flashlight is its answer). Brightness is
+  an inline tunable pending playtest.
+
 - **User-adjustable brightness slider for the path-traced (Ultra/denoiser) view.** (DOOM-0096)
   The ray-traced view looked a little dark. Add a Brightness slider to the Renderer settings menu so you can dial it to taste; it now defaults a touch brighter.
 
