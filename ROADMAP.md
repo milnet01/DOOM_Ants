@@ -911,3 +911,81 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** The glowing fireballs imps and barons throw — and plasma and BFG balls — should light up the walls and floor as they fly past and cast moving shadows, instead of being flat self-lit sprites that don't affect the scene.
   Kind: feature.
   Source: user-request-2026-06-29.
+
+- 📋 [DOOM-0103] **Specular / glossy highlights (GGX) on metal, wet floors and nukage in the path tracer.**
+  Add a GGX/VNDF specular lobe gated to surfaces that warrant it (metal/computer textures, liquid flats), per DOOM-0009 spec 4.4 ('specular gated to measured need'). Roughness from a per-material heuristic (liquids/metal = glossy, matte wall/floor art = diffuse). Aesthetic north star: Quake RTX — a full RT overhaul that still reads as the original — informed by DOOM 3 / 2016 / Eternal / Dark Ages. Pairs with DOOM-0042 (HD PBR material set). Tune strength with the user to keep the DOOM feel.
+  **Layman:** Shiny surfaces — metal, wet floors, slime — get realistic highlights like modern DOOM, without losing the classic look.
+  Kind: feature.
+  Source: user-request-2026-06-29.
+
+- 📋 [DOOM-0104] **Ray-traced reflections (glossy / near-mirror) on polished floors, water and metal.**
+  A secondary reflection ray off surfaces flagged reflective, glossy-importance-sampled by roughness (near-mirror for water/polished metal, blurry for semi-gloss). Builds on the existing megakernel + per-frame TLAS. Stage-3-class cost — gate behind the perf pass / DOOM-0012. Strength tunable so it enhances rather than overwhelms the DOOM look (Quake-RTX restraint).
+  **Layman:** Polished floors and water actually reflect the room and your surroundings, like Quake RTX.
+  Kind: feature.
+  Source: user-request-2026-06-29.
+
+- 📋 [DOOM-0105] **Ray-traced ambient occlusion / contact shadows for crisper depth.**
+  The static GI bake already gives some implicit AO; add short-range RTAO (or extend the bake) for crisper contact darkening — especially under dynamic sprites (monsters/items/barrels, DOOM-0100) that the static bake doesn't cover. Cheap relative to reflections; high perceived-quality return.
+  **Layman:** Corners, crevices and where objects meet the floor get subtle realistic darkening, adding depth.
+  Kind: enhancement.
+  Source: user-request-2026-06-29.
+
+- 📋 [DOOM-0106] **Volumetric lighting — light shafts and atmospheric fog in the path tracer.**
+  Ray-marched single-scattering through fog/dust along the view ray, sampling the NEE light set (lamps, muzzle flash, flashlight, projectile lights) for in-scatter. Big atmosphere win, heavier cost — gate behind perf / DOOM-0012. DOOM 3 / Eternal reference. Pairs well with the flashlight (DOOM-0044) for a visible cone.
+  **Layman:** Light beams through doorways and atmospheric haze, like DOOM 3's flashlight beams and Eternal's god-rays.
+  Kind: feature.
+  Source: user-request-2026-06-29.
+
+- 📋 [DOOM-0107] **Sprites: unit-quad BLAS + per-instance transforms instead of a per-frame triangle-soup rebuild.**
+  DOOM-0100 shipped world sprites as a triangle-soup BLAS rebuilt every frame (simplest reuse of RB_BuildSprites). The DOOM-0008/0009 spec's design is one unit-quad BLAS reused via per-instance billboard transforms (TLAS instance update, no per-frame BLAS build) — cheaper. Switch to it if the per-frame sprite-BLAS build measures costly in the perf pass. Same on-screen result.
+  **Layman:** A faster way to feed the on-screen monsters/items to the ray tracer each frame.
+  Kind: perf.
+  Source: in-session-2026-06-29.
+
+- 📋 [DOOM-0108] **Sprites cast alpha-tested shadows in the Ultra view.**
+  DOOM-0100 makes sprites primary-ray-visible but mask-excludes them from shadow/NEE rays (cull mask 0x01 = world only) to avoid per-shadow-ray alpha-test cost (spec 8 lean posture). Add alpha-tested sprite silhouettes to shadow rays (the spec's flat-card-shadow intent) once the perf budget allows — likely gated behind the half-res trace / DOOM-0012.
+  **Layman:** Monsters, barrels and lamps should cast shadows in the ray-traced view, not just receive light.
+  Kind: feature.
+  Source: in-session-2026-06-29.
+
+- 📋 [DOOM-0109] **Per-object motion vectors for moving sprites (reduce denoiser ghosting).**
+  The SVGF/TAAU motion vectors (svgf_composite) are camera-only, so a moving sprite (walking monster, flying projectile) reprojects to the wrong history texel and can ghost/smear. Derive per-sprite motion from the mobj's previous-tic position and write it into the motion buffer for sprite pixels. Pairs with DOOM-0100/0102.
+  **Layman:** Stop fast-moving monsters from smearing slightly in the denoised ray-traced view.
+  Kind: enhancement.
+  Source: in-session-2026-06-29.
+
+- 📋 [DOOM-0110] **Light the weapon/hand from local path-traced light (coloured tint, not just white sector brightness).**
+  The player weapon is a screen-space psprite drawn over the traced world (DOOM-0094), shaded by sector lightlevel + extralight only — so it brightens white and never picks up coloured RT light (user saw the gun brighten white under red ceiling lights). Sample the path-traced irradiance at the player/muzzle position (a small light probe: the GI cache + nearby dynamic/NEE lights) and tint the psprite by it. Keeps the weapon consistent with the lit world.
+  **Layman:** Your gun and hand should pick up the colour of nearby lights — go red under a red light, blue under a blue one — instead of just brightening white.
+  Kind: feature.
+  Source: user-request-2026-06-29.
+
+- 📋 [DOOM-0111] **Exploding barrels emit a transient light flash in the path tracer.**
+  An exploding barrel (MT_BARREL death -> A_Explode) currently emits no light. Spawn a brief, bright warm-orange dynamic point light at the barrel position for the explosion frames (like the muzzle flash, gated on the death/explosion tics), with a ray-traced shadow. Builds on the multi-dynamic-light foundation (DOOM-0010); colour per the projectile-light palette (DOOM-0102).
+  **Layman:** When a barrel blows up, the explosion should briefly light up the room.
+  Kind: feature.
+  Source: user-request-2026-06-29.
+
+- 📋 [DOOM-0112] **Glowing collectibles (health/armor potions, spheres) emit a coloured glow + light.**
+  DOOM-0084 gates sprite emission on FF_FULLBRIGHT, which correctly excludes ammo but also excludes glowing collectibles that aren't fullbright-framed (the blue health-bonus potion BON1, armor bonus BON2, soul/mega sphere, invuln/blur sphere). Add a small allowlist of 'glowing collectible' mobjtypes that emit even without FF_FULLBRIGHT, coloured by their sprite (blue potion -> blue light). Confirm the exact set with the user.
+  **Layman:** Pickups that are meant to glow — the blue health bottle, soul/mega spheres — should give off coloured light, while plain ammo stays dark.
+  Kind: feature.
+  Source: user-request-2026-06-29.
+
+- 📋 [DOOM-0113] **Sprite area-lights are flat camera-facing cards, so they light ~2 sides instead of all around.**
+  DOOM-0084 samples each emissive sprite's two billboard triangles as the NEE area light. The billboard is a flat quad oriented at the camera, so even with cosL forced to 1 the emitting AREA is a plane: surfaces edge-on to that plane (e.g. a wall in the corner next to the bottle) receive almost nothing. The proper fix is a true positional/point light per emissive Thing (the DOOM-0010/0101/0102 dynamic-light foundation): sample a small sphere/point at the Thing centre so it radiates uniformly. Until then sprite lights are ~2-sided. Confirmed on-screen: blue bonus bottle lights two walls but not the corner between them.
+  **Layman:** A glowing bottle or lamp lights the floor and the walls it faces, but a wall tucked in the corner beside it stays dark — because the light is emitted from a flat card facing the player, not from a little glowing ball. Make these lights radiate evenly in every direction.
+  Kind: enhancement.
+  Source: user-request-2026-06-29.
+
+- 📋 [DOOM-0114] **Some allowlisted glowing pickups (key skulls, armor bonus) don't visibly cast light.**
+  DOOM-0084/0112: sprite_glows() allowlists the key skulls (BSKU/RSKU/YSKU) and armor/health bonuses (BON1/BON2), and bottles now light correctly — but skulls and the armor bonus show no surrounding light. Likely causes to check: (a) their sprite texture's computed Le (ComputeMaterialEmissive area-weighted bright-texel mean) falls below the emitter-min gate, so they never enter the emitter list; (b) the billboard is so small its area term makes the contribution negligible even when direct-sampled; (c) armor genuinely lit but drowned by adjacent sky/skylight. Instrument per-sprite Le + emitter inclusion to disambiguate, then raise the gate/boost or floor the area for tiny pickups.
+  **Layman:** The blue bottles glow and light the room now, but the floating key-skulls and the green armor bonus still don't throw any light (the armor may also just be washed out by bright skylight near it). Find out why those particular pickups stay dark and fix them.
+  Kind: fix.
+  Source: user-request-2026-06-29.
+
+- 📋 [DOOM-0115] **Fix pre-existing Vulkan validation errors (clear-color usage, renderpass dependency mismatch).**
+  INV-8 (validation-clean). Two distinct families in the terminal log: (1) vkCmdClearColorImage on an image created with only VK_IMAGE_USAGE_STORAGE_BIT, missing VK_IMAGE_USAGE_TRANSFER_DST_BIT (add the usage flag at image creation, or clear via a compute/shader path); (2) vkCmdBeginRenderPass/vkCmdDraw pDependencies srcStageMask/srcAccessMask/dstAccessMask incompatible between the render pass used to create the framebuffer/pipeline and the one begun (the two render passes' subpass dependencies must match for compatibility). Pre-existing, not from the sprite work. Reconcile the renderpass dependency definitions and add the transfer-dst usage.
+  **Layman:** The graphics debug layer is logging a few rule violations every frame. They aren't causing visible problems today, but they're real correctness bugs that can break on other drivers — clean them up.
+  Kind: fix.
+  Source: in-session-2026-06-29.
