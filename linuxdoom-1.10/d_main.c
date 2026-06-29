@@ -395,8 +395,19 @@ void D_DoomLoop (void)
     while (1)
     {
 	// frame syncronous IO operations
-	I_StartFrame ();                
-	
+	I_StartFrame ();
+
+	// DOOM-0048: in single-player 3D, decouple the present rate from the 35 Hz
+	// game tic. Run every tic that is due without blocking, then render an
+	// interpolated in-between frame paced by vsync, so the camera is smooth above
+	// 35 FPS while the simulation stays locked to 35 Hz. Net/demo/Classic keep the
+	// classic tic-locked path (sync + demo determinism + no wasted software redraws).
+	static boolean wasUncapped = false;
+	static int     lastTicMs   = 0;
+	boolean uncapped = !singletics && !netgame && !demoplayback
+			 && !demorecording && rendermode != RB_CLASSIC;
+	int ticBefore = gametic;
+
 	// process one or more tics
 	if (singletics)
 	{
@@ -410,11 +421,47 @@ void D_DoomLoop (void)
 	    gametic++;
 	    maketic++;
 	}
+	else if (uncapped)
+	{
+	    // Non-blocking equivalent of TryRunTics for one node: NetUpdate() reads
+	    // input and advances maketic at 35 Hz; run each available tic, capped at
+	    // a second so a long stall can't spiral.
+	    int guard = 0;
+	    NetUpdate ();
+	    while (gametic < maketic && guard++ < TICRATE)
+	    {
+		if (advancedemo)
+		    D_DoAdvanceDemo ();
+		M_Ticker ();
+		G_Ticker ();
+		gametic++;
+	    }
+	}
 	else
 	{
 	    TryRunTics (); // will run at least one tic
 	}
-		
+
+	// Drive the render interpolation (DOOM-0048). Reset on entry so a stale frame
+	// can't smear; snapshot when a tic ran; set the sub-tic fraction every frame.
+	if (uncapped)
+	{
+	    player_t* vp = &players[consoleplayer];
+	    if (!wasUncapped)
+		RB_InterpReset (vp);
+	    if (gametic != ticBefore)
+	    {
+		RB_InterpSnapshot (vp);
+		lastTicMs = I_GetTimeMS ();
+	    }
+	    RB_InterpSetFrac ((double)(I_GetTimeMS () - lastTicMs) / (1000.0 / TICRATE));
+	}
+	else
+	{
+	    RB_InterpDisable ();
+	}
+	wasUncapped = uncapped;
+
 	S_UpdateSounds (players[consoleplayer].mo);// move positional sounds
 
 	// Update display, next frame, with current state.

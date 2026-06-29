@@ -85,16 +85,90 @@ static boolean Vulkan_Raster_Available(void) { return RB_Vulkan_Available(0); }
 static void    Vulkan_Init(void)                   { RB_Vulkan_Init(); }
 static void    Vulkan_SetResolution(int w, int h)  { RB_Vulkan_SetResolution(w, h); }
 
+// ---------------------------------------------------------------------------
+// Render interpolation (DOOM-0048). The 3D back-ends can present faster than the
+// 35 Hz game tic; between tics we lerp the camera between the previous and the
+// current tic's player view so motion is smooth at the display refresh. This is
+// render-only -- the simulation is never touched, so demos stay bit-exact and the
+// only cost is up to one tic (~28 ms) of view latency. Driven by the single-player
+// loop in D_DoomLoop; net/demo/Classic leave it disabled and read the live state.
+// Position is fixed_t, angle a 32-bit binary angle (lerp the signed short-way delta
+// so a turn past north takes the short arc). A teleport or level load makes the
+// per-tic delta huge, so we snap instead of smearing the camera across the map.
+// ---------------------------------------------------------------------------
+#define RB_TELEPORT_SNAP (128.0 * FRACUNIT)   // a per-tic move this large is a warp
+
+static boolean rb_interpActive = false;
+static double  rb_interpFrac   = 1.0;
+static fixed_t rb_pX, rb_pY, rb_pZ;   static angle_t rb_pAng;   // previous tic
+static fixed_t rb_cX, rb_cY, rb_cZ;   static angle_t rb_cAng;   // current tic
+
+// Snap both endpoints to the player's current view and turn interpolation off --
+// used when (re)entering the uncapped path so a stale previous frame can't smear.
+void RB_InterpReset(player_t* p)
+{
+    if (p && p->mo)
+    {
+        rb_pX = rb_cX = p->mo->x;
+        rb_pY = rb_cY = p->mo->y;
+        rb_pZ = rb_cZ = p->viewz;
+        rb_pAng = rb_cAng = p->mo->angle;
+    }
+    rb_interpActive = false;
+    rb_interpFrac   = 1.0;
+}
+
+// A game tic completed: the old "current" becomes "previous" and the player's
+// fresh view becomes "current". A warp-sized jump snaps both ends (no lerp).
+void RB_InterpSnapshot(player_t* p)
+{
+    if (!p || !p->mo)
+        return;
+    rb_pX = rb_cX; rb_pY = rb_cY; rb_pZ = rb_cZ; rb_pAng = rb_cAng;
+    rb_cX = p->mo->x; rb_cY = p->mo->y; rb_cZ = p->viewz; rb_cAng = p->mo->angle;
+    if (fabs((double)rb_cX - rb_pX) > RB_TELEPORT_SNAP
+        || fabs((double)rb_cY - rb_pY) > RB_TELEPORT_SNAP)
+    {
+        rb_pX = rb_cX; rb_pY = rb_cY; rb_pZ = rb_cZ; rb_pAng = rb_cAng;
+    }
+}
+
+// Sub-tic fraction [0,1] for this frame; enables interpolation for the next view.
+void RB_InterpSetFrac(double frac)
+{
+    rb_interpFrac   = frac < 0.0 ? 0.0 : (frac > 1.0 ? 1.0 : frac);
+    rb_interpActive = true;
+}
+
+// Render the live tic state with no lerp (net/demo/Classic, or a paused loop).
+void RB_InterpDisable(void) { rb_interpActive = false; }
+
 // Convert the player's view to a POD camera and hand it across the seam. viewz
 // is the eye height (player->viewz); angle_t is a 32-bit binary angle (full
 // circle = 2^32), so scale it to radians. mo is always set for a live view.
+// When interpolation is active the camera is lerped between the last two tics
+// (DOOM-0048); otherwise the live tic state is used unchanged.
 static void Vulkan_RenderPlayerView(player_t* p)
 {
     rb_view_t view;
-    view.x     = p->mo->x  / (float)FRACUNIT;
-    view.y     = p->mo->y  / (float)FRACUNIT;
-    view.z     = p->viewz  / (float)FRACUNIT;
-    view.angle = (float)(p->mo->angle * (2.0 * M_PI / 4294967296.0));
+    if (rb_interpActive)
+    {
+        const double f = rb_interpFrac;
+        view.x = (rb_pX + f * ((double)rb_cX - rb_pX)) / (double)FRACUNIT;
+        view.y = (rb_pY + f * ((double)rb_cY - rb_pY)) / (double)FRACUNIT;
+        view.z = (rb_pZ + f * ((double)rb_cZ - rb_pZ)) / (double)FRACUNIT;
+        // Shortest signed arc on the binary angle: the int cast of the unsigned
+        // difference wraps to [-2^31, 2^31), i.e. the short way round.
+        const double dAng = (double)(int)(rb_cAng - rb_pAng);
+        view.angle = (float)(((double)rb_pAng + f * dAng) * (2.0 * M_PI / 4294967296.0));
+    }
+    else
+    {
+        view.x     = p->mo->x  / (float)FRACUNIT;
+        view.y     = p->mo->y  / (float)FRACUNIT;
+        view.z     = p->viewz  / (float)FRACUNIT;
+        view.angle = (float)(p->mo->angle * (2.0 * M_PI / 4294967296.0));
+    }
     // Muzzle-flash brighten: A_Light1/2 set extralight to 1/2 light-segments while
     // a gun fires (p_pspr.c). The software renderer adds it to the light index
     // (lightnum = (lightlevel >> LIGHTSEGSHIFT) + extralight); one segment is

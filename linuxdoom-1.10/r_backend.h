@@ -64,6 +64,15 @@ void RB_Init(void);
 void RB_RenderPlayerView(player_t* player);
 void RB_Present(void);
 
+// Render interpolation (DOOM-0048): the single-player loop snapshots the player
+// view each tic and sets a sub-tic fraction so the 3D back-ends can present a
+// smooth camera between 35 Hz tics. Render-only; the simulation is untouched.
+// Net/demo/Classic call RB_InterpDisable() to render the live tic state.
+void RB_InterpReset(player_t* player);     // snap both ends to now; disable
+void RB_InterpSnapshot(player_t* player);  // a tic ran: shift current -> previous
+void RB_InterpSetFrac(double frac);        // [0,1] sub-tic fraction; enable
+void RB_InterpDisable(void);               // render the live tic state, no lerp
+
 // Per-level scene build, called at the end of P_SetupLevel. No-op under
 // Classic; the 3D back-end converts the map to meshes + acceleration structures.
 void RB_BuildLevel(void);
