@@ -893,3 +893,21 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** When you switch the flashlight off, the lit patch is now much quicker to clear but still doesn't vanish instantly in every case — finish the job.
   Kind: enhancement.
   Source: user-request-2026-06-29.
+
+- 📋 [DOOM-0100] **Render world sprites (monsters, items, barrels) in the path-traced Ultra view.**
+  The megakernel (pathtrace.comp) traces primary rays against the static walls+flats BLAS only, so world Things (drawn as billboards in Solid via RB_BuildSprites) never appear in Ultra. DOOM-0094 shipped the weapon + 2D overlay over the trace but explicitly DEFERRED world sprites: they need correct depth occlusion against the traced world, 'tracked separately'. Approach: add each visible Thing as a per-frame TLAS instance -- a camera-facing billboard quad with the paletted sprite material, alpha-tested on palette index 0 -- so primary rays hit them with real depth occlusion and they receive path-traced lighting/shadows. Shares the per-frame TLAS instance plumbing with DOOM-0084 (emissive Things) and the projectile-light item below; build them together. Distinct from DOOM-0080 (replace billboards with real 3D models, far-future). Cap/cull off-screen Things.
+  **Layman:** In the ray-traced (Ultra) view the monsters, pickups and barrels are currently invisible — only walls, floors, the weapon and HUD show. Make all those objects appear in the ray-traced view too.
+  Kind: feature.
+  Source: user-request-2026-06-29.
+
+- 📋 [DOOM-0101] **Enemy hitscan attacks cast a muzzle-flash light in the path tracer, like the player's.**
+  The player muzzle flash (DOOM-0009 step 5, hardened in the DOOM-0044 session) is a dynamic analytic light at the player barrel, gated on extralight via misc2.z, with a ray-traced shadow. Enemy hitscan attackers -- former human (A_PosAttack), shotgun guy (A_SPosAttack), chaingunner (A_CPosAttack), spider mastermind -- flash on their firing frames but emit no light. Spawn a brief flash (warm, ~A_Light1 brightness) at the firing enemy's position + facing on the attack tic, with a ray-traced shadow like the player's. Requires generalising the single-dynamic-light path to N dynamic lights (today only one player-flash slot exists via misc2.z) -- the concrete first increment of DOOM-0010 (dynamic lighting). Pairs with the projectile-light item (same multi-light mechanism).
+  **Layman:** When a zombie, shotgun guy or chaingunner fires at you, their gun should briefly light up the room — the same way your own gun's flash now does.
+  Kind: feature.
+  Source: user-request-2026-06-29.
+
+- 📋 [DOOM-0102] **Demon projectiles (fireballs, plasma, BFG) cast moving light + shadows in the path tracer.**
+  Projectile mobjs -- imp/baron MT_TROOPSHOT/MT_BRUISERSHOT, caco MT_HEADSHOT, revenant MT_TRACER, mancubus MT_FATSHOT, arachnotron MT_ARACHPLAZ, plasma MT_PLASMA, BFG MT_BFG -- are moving emissive Things. Each should be a moving dynamic point/area light updated to the mobj position every frame, casting ray-traced shadows + bounces, coloured per type (imp/baron fire warm orange; plasma blue; BFG green -- reuse the DOOM-0095 colour idea). Per frame: gather active projectiles, derive Le + colour, feed them into the NEE dynamic-light set; cap to the brightest N for perf. Builds on the multi-dynamic-light generalisation (DOOM-0010) shared with the enemy-flash item, and on emissive Things (DOOM-0084); their visible sprites come via the world-sprite-drawing item above.
+  **Layman:** The glowing fireballs imps and barons throw — and plasma and BFG balls — should light up the walls and floor as they fly past and cast moving shadows, instead of being flat self-lit sprites that don't affect the scene.
+  Kind: feature.
+  Source: user-request-2026-06-29.
