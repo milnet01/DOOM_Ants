@@ -461,9 +461,11 @@ void G_DoLoadLevel (void)
 
     // DOOM determines the sky texture to be used
     // depending on the current episode, and the game version.
+    // DOOM-0139: pack_tnt/pack_plut are GameMission_t; cast to GameMode_t to
+    // preserve the (numeric) vanilla comparison and silence -Wenum-compare.
     if ( (gamemode == commercial)
-	 || ( gamemode == pack_tnt )
-	 || ( gamemode == pack_plut ) )
+	 || ( gamemode == (GameMode_t)pack_tnt )
+	 || ( gamemode == (GameMode_t)pack_plut ) )
     {
 	skytexture = R_TextureNumForName ("SKY3");
 	if (gamemap < 12)
@@ -1203,20 +1205,19 @@ void G_LoadGame (char* name)
 
 void G_DoLoadGame (void) 
 { 
-    int		length; 
     int		i; 
     int		a,b,c; 
     char	vcheck[VERSIONSIZE]; 
 	 
     gameaction = ga_nothing; 
 	 
-    length = M_ReadFile (savename, &savebuffer); 
+    M_ReadFile (savename, &savebuffer); 
     save_p = savebuffer + SAVESTRINGSIZE;
     
     // skip the description field 
     memset (vcheck,0,sizeof(vcheck)); 
     sprintf (vcheck,"version %i",VERSION); 
-    if (strcmp (save_p, vcheck))
+    if (strcmp ((char *)save_p, vcheck))
     {
 	Z_Free (savebuffer);		// bad version: free the buffer M_ReadFile
 	return;				// allocated, matching the normal path's

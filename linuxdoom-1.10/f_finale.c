@@ -652,7 +652,7 @@ void F_BunnyScroll (void)
     int		x;
     patch_t*	p1;
     patch_t*	p2;
-    char	name[10];
+    char	name[16];
     int		stage;
     static int	laststage;
 		

@@ -1184,7 +1184,10 @@ int EV_DoDonut(line_t*	line)
 	s2 = getNextSector(s1->lines[0],s1);
 	for (i = 0;i < s2->linecount;i++)
 	{
-	    if ((!s2->lines[i]->flags & ML_TWOSIDED) ||
+	    // DOOM-0138: vanilla bug preserved -- (!flags) is 0/1 so
+	    // (!flags) & ML_TWOSIDED is always 0 (intended: !(flags & ML_TWOSIDED)).
+	    // Parenthesised to keep shipped behaviour and silence -Wparentheses.
+	    if (((!s2->lines[i]->flags) & ML_TWOSIDED) ||
 		(s2->lines[i]->backsector == s1))
 		continue;
 	    s3 = s2->lines[i]->backsector;
