@@ -1195,3 +1195,21 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** In the Ultra/Solid ray-traced view the sky was a hole, so distant buildings floated in mid-air and the sky showed as flat blue instead of the mountains you see in Classic. This makes the sky a solid backdrop again.
   Kind: fix.
   Source: user-report-2026-06-29 (level 2 screenshot: geometry floating against flat-blue sky).
+
+- 📋 [DOOM-0142] **Mid-ground occluder wall missing in the 3D mesh (geometry visible over a wall Classic blocks).**
+  Confirmed a SHARED-mesh bug (identical in Solid raster + Ultra RT), pre-existing, NOT sky-related and NOT fixed by DOOM-0141. A/B at the same spot: Classic (image #5) shows a tall solid brown wall occluding the mid-ground (sky above it only); Solid/Ultra (images #6/#7) show that wall too short/absent, revealing distant techbase buildings + a rocky/nukage band behind it (the apparent 'floating geometry'). The missing chunk is the UPPER ~half of the wall (screen ~52-78%). Leading suspects in r_mesh.c wall emission: (a) emit_wall drops any upper/lower step whose texture is '-' (texnum<=0, r_mesh.c:208) -> a height-step wall the map leaves untextured but classic still occludes; (b) a sector floor/ceiling height baked wrong; (c) classic's per-column sky/visplane occlusion hiding geometry that true-3D reveals. Needs the exact WAD/level + the in-engine normals debug view (or a walk-into-it collision test) to pin which. Likely also affects other open-vista maps.
+  **Layman:** On level 2's outdoor vista, the 3D renderers (Solid + Ultra) let you see over/through a wall that the Classic renderer correctly uses to block the view, so distant buildings look like they float.
+  Kind: fix.
+  Source: user-report-2026-06-29 (level 2; Classic vs Solid vs Ultra A/B screenshots).
+
+- 📋 [DOOM-0143] **Seam (black line + white sliver) where the RT sky cap meets a wall top.**
+  Introduced by DOOM-0141's sky ceiling caps. The sky cap (a horizontal polygon at the sky sector's ceiling height) does not meet the wall's top edge cleanly -- a hairline gap (black line, background showing) and a grazing-angle sliver of the cap shading bright sky (white triangle). Likely the DOOM-0065 cap-overshoot trim (clip_poly to each seg's front half-plane) leaving the sky cap edge a hair short of the wall, and/or a T-junction at the shared edge. Fix: align the sky cap edge to the wall top (small overshoot or shared-edge snap), or depth-bias. Minor/cosmetic; the occlusion itself is correct.
+  **Layman:** With the new ray-traced sky, a thin dark line and a small bright sliver can show right where a wall meets the sky.
+  Kind: fix.
+  Source: user-report-2026-06-29 (image #9, Ultra, after DOOM-0141).
+
+- ✅ [DOOM-0144] **Split the rt_profile denoise+TAAU bucket into temporal/a-trous/composite/TAAU sub-timings.**
+  The rt_profile line (\\ key) lumped the whole denoiser into one 'denoise+taau' number. Added GPU timestamps 5/6/7 (the timer pool already had 8 slots, only 0-4 used) at the temporal/a-trous/composite boundaries inside RecordRtTrace's denoise block; non-mode-6 frames write the spare slots collapsed so the 8-query readback stays available (no VK_NOT_READY). profMs grew 4->8; the print now reads 'denoise+taau X (temporal a, atrous b, composite c, taau d)'. Instrumentation only, no behaviour change. NEXT SESSION: capture a fresh rt_profile line on E1M2 to see whether a-trous (4 iters @ render res) or TAAU (@ 4K display res) dominates, then optimise the fat one losslessly (e.g. TAAU is the only pass at full 4K).
+  **Layman:** The on-screen/log performance readout now shows exactly which part of the denoiser is slowest, so we can target the right thing next session.
+  Kind: perf.
+  Source: in-session-2026-06-29 (profiler showed denoise+taau is a flat ~7.2ms ~38% of frame; need the sub-breakdown to optimise).

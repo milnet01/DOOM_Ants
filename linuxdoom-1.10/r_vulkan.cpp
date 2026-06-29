@@ -259,7 +259,9 @@ struct VulkanState
     VkQueryPool gpuTimerPool    = VK_NULL_HANDLE;
     float       timestampPeriod = 0.0f;   // ns per tick (0 = timestamps unusable)
     bool        gpuTimersInUse  = false;  // last frame wrote timestamps
-    double      profMs[4]       = { 0, 0, 0, 0 };  // megakernel/denoise/label/blit
+    // [0]=sprite-AS [1]=megakernel [2]=denoise+TAAU [3]=blit, then the DOOM-0144
+    // sub-breakdown of [2]: [4]=temporal [5]=a-trous [6]=composite [7]=TAAU.
+    double      profMs[8]       = { 0, 0, 0, 0, 0, 0, 0, 0 };
     int         profFrames      = 0;
     int         profLastReport  = 0;      // I_GetTimeMS of the last printf
 
@@ -4673,6 +4675,8 @@ void RecordRtTrace(uint32_t idx)
         spc.misc[3] = 0; spc.misc2[0] = 0; spc.misc2[1] = 0;
         vkCmdPushConstants(g.cmd, g.svgfPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(spc), &spc);
         vkCmdDispatch(g.cmd, gx, gy, 1);
+        // DOOM-0144: split the denoise+TAAU bucket into its sub-passes (slots 5/6/7).
+        if (prof) vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 5);
 
         // 2) edge-aware a-trous: N iterations, hole step doubling, ping-ponging
         //    atrous[0]<->atrous[1]. Iteration 0 also writes the colour history.
@@ -4692,6 +4696,7 @@ void RecordRtTrace(uint32_t idx)
             vkCmdDispatch(g.cmd, gx, gy, 1);
             ping ^= 1u;                           // last written buffer = final result
         }
+        if (prof) vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 6);
 
         // 3) composite: re-modulate albedo + re-add emission + tonemap -> rtImage.
         svgfBarrier();
@@ -4700,6 +4705,7 @@ void RecordRtTrace(uint32_t idx)
         spc.matEmis  = g.matEmisBuf ? BufferAddress(g.matEmisBuf) : 0;
         vkCmdPushConstants(g.cmd, g.svgfPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(spc), &spc);
         vkCmdDispatch(g.cmd, gx, gy, 1);
+        if (prof) vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 7);
 
         // 4) temporal upscale (build step 6-d): reconstruct the full display image
         //    from the render-res denoised colour (rtImage) + motion vectors + this
@@ -4740,6 +4746,16 @@ void RecordRtTrace(uint32_t idx)
         }
     }
 
+    // DOOM-0144: when the denoiser didn't run (non-mode-6 views), slots 5-7 were
+    // never written this frame. The readback reads all 8 in one batch, so define them
+    // here (collapsed to the denoise-end point -> sub-segments read as ~0) to keep the
+    // query batch fully available rather than VK_NOT_READY.
+    if (prof && !denoise)
+    {
+        vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 5);
+        vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 6);
+        vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 7);
+    }
     if (prof) vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 3);
 
     // The image the present path blits: the upscaled TAAU output (display-res) when
@@ -4994,8 +5010,8 @@ extern "C" void RB_Vulkan_Present(void)
     // ticks -> ms, and print the running averages once a second. RT-only / opt-in.
     if (g.gpuTimersInUse && g.gpuTimerPool)
     {
-        uint64_t ts[5] = {};
-        if (vkGetQueryPoolResults(g.device, g.gpuTimerPool, 0, 5, sizeof(ts), ts,
+        uint64_t ts[8] = {};
+        if (vkGetQueryPoolResults(g.device, g.gpuTimerPool, 0, 8, sizeof(ts), ts,
                 sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS)
         {
             const double k = (double)g.timestampPeriod / 1.0e6;   // ticks -> ms
@@ -5003,6 +5019,11 @@ extern "C" void RB_Vulkan_Present(void)
             g.profMs[1] += (double)(ts[2] - ts[1]) * k;   // megakernel trace
             g.profMs[2] += (double)(ts[3] - ts[2]) * k;   // denoiser chain + TAAU
             g.profMs[3] += (double)(ts[4] - ts[3]) * k;   // label + blit + present
+            // DOOM-0144 sub-breakdown of the denoise+TAAU bucket:
+            g.profMs[4] += (double)(ts[5] - ts[2]) * k;   // temporal accumulation
+            g.profMs[5] += (double)(ts[6] - ts[5]) * k;   // a-trous (4 iterations)
+            g.profMs[6] += (double)(ts[7] - ts[6]) * k;   // composite
+            g.profMs[7] += (double)(ts[3] - ts[7]) * k;   // TAAU upscale (display res)
             g.profFrames++;
             int now = I_GetTimeMS();
             if (g.profLastReport == 0) g.profLastReport = now;
@@ -5011,13 +5032,13 @@ extern "C" void RB_Vulkan_Present(void)
                 const double f = 1.0 / (double)g.profFrames;
                 int omni = (int)g.emitCount - (int)g.staticWgt.size();
                 printf("[rt_profile] %3d fps | sprites %.2f | megakernel %.2f | "
-                       "denoise+taau %.2f | blit %.2f ms | omni %d/%d lights "
-                       "(avg/frame, RT GPU only)\n",
-                       g.profFrames, g.profMs[0] * f, g.profMs[1] * f,
-                       g.profMs[2] * f, g.profMs[3] * f,
-                       omni < 0 ? 0 : omni, (int)g.emitCount);
+                       "denoise+taau %.2f (temporal %.2f, atrous %.2f, composite %.2f, "
+                       "taau %.2f) | blit %.2f ms | omni %d/%d lights (avg/frame, RT GPU only)\n",
+                       g.profFrames, g.profMs[0] * f, g.profMs[1] * f, g.profMs[2] * f,
+                       g.profMs[4] * f, g.profMs[5] * f, g.profMs[6] * f, g.profMs[7] * f,
+                       g.profMs[3] * f, omni < 0 ? 0 : omni, (int)g.emitCount);
                 fflush(stdout);
-                g.profMs[0] = g.profMs[1] = g.profMs[2] = g.profMs[3] = 0.0;
+                for (int pi = 0; pi < 8; pi++) g.profMs[pi] = 0.0;
                 g.profFrames = 0;
                 g.profLastReport = now;
             }
