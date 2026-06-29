@@ -200,8 +200,9 @@ static void I_PollGamepad(void)
     boolean	b_pressed;
     extern boolean menuactive;          // m_menu.c: lets B (Circle) close the menu
     extern int rb_wireframe;            // r_vulkan.cpp: 3D wireframe debug toggle
+    extern int rb_flashlight;           // r_vulkan.cpp: DOOM-0044 headlamp toggle
     static boolean strafe_r_held, strafe_l_held, esc_held, back_held, map_held;
-    static boolean share_held;
+    static boolean share_held, flash_held;
 
     if (!gamepad)
 	return;
@@ -244,8 +245,10 @@ static void I_PollGamepad(void)
     b_pressed = SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_B);
     if (b_pressed && !menuactive)
 	buttons |= 2;
-    if (SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_LEFTSHOULDER)
-	|| SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)
+    // R1 / left-trigger = speed (run). L1 is no longer a run button: it toggles
+    // the flashlight on its press edge below (DOOM-0044, user mapping) -- R1 and
+    // the left trigger still cover run.
+    if (SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)
 	|| lt > GP_TRIGGER_THRESH)
 	buttons |= 4;
     // Square (X) = use/open. Triangle (Y) is no longer a second use button; it
@@ -275,6 +278,16 @@ static void I_PollGamepad(void)
 	share_held = share;
     }
 
+    // L1 (left shoulder) toggles the player flashlight on its press edge
+    // (DOOM-0044). Edge-detected like Share above; flips the renderer flag
+    // directly (not a DOOM key). Harmless in Classic (no Vulkan path reads it).
+    {
+	boolean l1 = SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_LEFTSHOULDER);
+	if (l1 && !flash_held)
+	    rb_flashlight = !rb_flashlight;
+	flash_held = l1;
+    }
+
     // Triangle (Y) toggles the automap. KEY_TAB is the engine's automap key
     // (AM_STARTKEY/AM_ENDKEY in am_map.c); posting it as an edge means one press
     // opens the map and the next closes it -- same open/close toggle as Escape.
@@ -291,10 +304,20 @@ static void I_PollGamepad(void)
 static void I_GetEvent(SDL_Event* sdlevent)
 {
     event_t event;
+    extern boolean menuactive;          // m_menu.c: F still types in menu text entry
+    extern int rb_flashlight;           // r_vulkan.cpp: DOOM-0044 headlamp toggle
 
     switch (sdlevent->type)
     {
       case SDL_KEYDOWN:
+	// F toggles the player flashlight (DOOM-0044) on its press edge, like the
+	// `~` debug cycle below. Not a DOOM key, so flip the renderer flag directly.
+	// Gated on !menuactive so F still types normally in save-name / menu entry.
+	if (sdlevent->key.keysym.sym == SDLK_f && !sdlevent->key.repeat && !menuactive)
+	{
+	    rb_flashlight = !rb_flashlight;
+	    break;
+	}
 	// Backquote/tilde (`~`) cycles the path-tracer debug view (DOOM-0009):
 	// off -> intersection -> white-furnace -> textured (3a) -> NEE direct
 	// lighting (3c, mode 4) -> SVGF denoised (step 6, mode 6). Mode 5 is the

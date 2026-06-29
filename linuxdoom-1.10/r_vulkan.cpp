@@ -500,6 +500,14 @@ extern "C" { int rb_wireframe = 0; }
 // otherwise. C linkage for i_video.c.
 extern "C" { int rb_rtdebug = 0; }
 
+// Player flashlight / headlamp (DOOM-0044). Toggled by the player (keyboard F or
+// gamepad L1, edge-detected in i_video.c) and persisted by m_misc.c. A spotlight
+// at the eye aimed along the view: in Ultra the path tracer casts its ray-traced
+// shadows (pathtrace.comp, gated on misc2.w); in Solid the raster fragment shader
+// lights a cone with no shadows (mesh.frag). 0 = off, 1 = on. No effect in
+// Classic. C linkage for the C input/config layers.
+extern "C" { int rb_flashlight = 0; }
+
 // Temporal upscaler settings (DOOM-0009 build step 6-d), set from the Options menu
 // and persisted by m_misc.c. rb_upscaler: 0 = Off (present rtImage at full display
 // resolution, as before), 1 = TAAU (custom temporal upscaler; FSR 2 / FSR 3.1 are
@@ -2602,8 +2610,9 @@ void CreatePipeline()
     VkPushConstantRange pcr = {};
     pcr.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     pcr.offset = 0;
-    pcr.size = 23 * sizeof(float);   // mat4 MVP + extralight + sky yaw + camera xyz
+    pcr.size = 24 * sizeof(float);   // mat4 MVP + extralight + sky yaw + camera xyz
                                      // + numWall/numFlat (material-id offsets)
+                                     // + flashlight on/off (DOOM-0044)
 
     VkPipelineLayoutCreateInfo plci = {};
     plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -3815,7 +3824,7 @@ void RecordRtTrace(uint32_t idx)
         float    camRight[4];   // w = tan(hFov/2)
         float    camUp[4];      // w = tan(vFov/2)
         uint32_t misc[4];       // mode, width, height, numWall (flat-id offset)
-        uint32_t misc2[4];      // emitterCount, probeCount, reserved, reserved
+        uint32_t misc2[4];      // emitterCount, probeCount, muzzle-flash(z), flashlight(w)
         uint32_t misc3[4];      // 4d verify only (seed/spp/estimator); 0 for display
         uint64_t vertsAddr;
         uint64_t emitAddr;      // step-3b emitter list (0 if none)
@@ -3841,6 +3850,10 @@ void RecordRtTrace(uint32_t idx)
     // intensity (0 = not firing -> the dynamic light is skipped). Bit-cast into the
     // uint slot; the shader reads it back with uintBitsToFloat.
     std::memcpy(&pc.misc2[2], &g.lastView.extralight, sizeof(float));
+    // DOOM-0044 flashlight gate: the player headlamp on/off (rb_flashlight). Its
+    // position + aim are the eye + view dir already in camPos/camDir, so only the
+    // enable bit is forwarded, into the spare misc2.w slot (read as misc2.w != 0u).
+    pc.misc2[3] = rb_flashlight ? 1u : 0u;
     pc.vertsAddr   = BufferAddress(g.vbuf);
     pc.emitAddr    = g.emitBuf    ? BufferAddress(g.emitBuf)    : 0;
     pc.matEmisAddr = g.matEmisBuf ? BufferAddress(g.matEmisBuf) : 0;
@@ -4172,7 +4185,7 @@ void RecordRtOverlay(uint32_t idx, bool drawOverlay)
     // weapon draw so the gun renders identically in Solid and Ultra.
     if (drawWeapon)
     {
-        float pcData[23];
+        float pcData[24];
         std::memcpy(pcData, g.viewProj, 16 * sizeof(float));
         pcData[16] = g.lastView.extralight;
         pcData[17] = g.lastView.angle;
@@ -4181,9 +4194,10 @@ void RecordRtOverlay(uint32_t idx, bool drawOverlay)
         pcData[20] = g.lastView.z;
         std::memcpy(&pcData[21], &g.matNumWall, sizeof(int));
         std::memcpy(&pcData[22], &g.matNumFlat, sizeof(int));
+        pcData[23] = rb_flashlight ? 1.0f : 0.0f;   // inert here (psprite skips the cone)
         vkCmdPushConstants(g.cmd, g.pipelineLayout,
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, 23 * sizeof(float), pcData);
+                           0, 24 * sizeof(float), pcData);
 
         VkDeviceSize off = 0;
         vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.pipeline);
@@ -4375,7 +4389,7 @@ extern "C" void RB_Vulkan_Present(void)
         // shade) and the view yaw (mesh.frag pans the sky by it). Push constants
         // and descriptor sets are layout-scoped, so they outlive the pipeline
         // binds below — set them once for both the sky and world pipelines.
-        float pcData[23];
+        float pcData[24];
         std::memcpy(pcData, g.viewProj, 16 * sizeof(float));
         pcData[16] = g.lastView.extralight;
         pcData[17] = g.lastView.angle;
@@ -4386,9 +4400,10 @@ extern "C" void RB_Vulkan_Present(void)
         // fragment shader maps per-category texnum -> unified bindless-array id.
         std::memcpy(&pcData[21], &g.matNumWall, sizeof(int));
         std::memcpy(&pcData[22], &g.matNumFlat, sizeof(int));
+        pcData[23] = rb_flashlight ? 1.0f : 0.0f;   // DOOM-0044 raster flashlight cone
         vkCmdPushConstants(g.cmd, g.pipelineLayout,
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, 23 * sizeof(float), pcData);
+                           0, 24 * sizeof(float), pcData);
 
         VkDeviceSize off = 0;
         // Sky first, behind everything: depth-off pipeline, the 6 verts at the

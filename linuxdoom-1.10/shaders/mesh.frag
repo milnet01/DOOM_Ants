@@ -28,6 +28,7 @@ layout(location = 3) flat in int vTexnum;
 layout(location = 4) flat in int vFlags;
 layout(location = 5) in vec2  vScreenUV;   // [0,1] across the frame (sky only)
 layout(location = 6) in float vDist;       // world distance camera->fragment
+layout(location = 7) in vec3  vWorldPos;   // world position (DOOM-0044 flashlight)
 
 layout(location = 0) out vec4 outColor;
 
@@ -44,6 +45,7 @@ layout(push_constant) uniform Push {
     float eyeZ;
     int   numWall;      // flats start at this id; sprites at numWall + numFlat
     int   numFlat;
+    float flashlight;   // DOOM-0044 headlamp on/off (1=on); Solid raster cone
 } pc;
 
 layout(set = 0, binding = 0) uniform sampler2D paletteTex;   // 256x1 PLAYPAL RGB
@@ -133,6 +135,27 @@ void main()
         distLight = clamp(1.0 - vDist / 3000.0, 0.35, 1.0);
 
     float shade = vLight * distLight;
+
+    // DOOM-0044 player flashlight (Solid tier / ray tracing OFF): an additive
+    // raster spotlight at the eye, aimed along the view yaw. No cast shadows --
+    // that is the Ultra path-traced version (pathtrace.comp) -- just a cone, a
+    // distance falloff, and a gentle facing term so the beam reads as a real
+    // light on the surface it lands on. Skips the sky (returned above) and the
+    // NDC weapon psprite (vWorldPos is meaningless there). The cone cosines match
+    // the path tracer's so both tiers feel like the same lamp. Bring-up constants
+    // (INV-7 governs the path tracer; the raster shader is placeholder shading).
+    if (pc.flashlight > 0.5 && (vFlags & FLAG_PSPRITE) == 0)
+    {
+        vec3  eye    = vec3(pc.eyeX, pc.eyeY, pc.eyeZ);
+        vec3  fwd    = vec3(cos(pc.yaw), sin(pc.yaw), 0.0);
+        vec3  toFrag = vWorldPos - eye;
+        float fdist  = length(toFrag);
+        vec3  fdir   = toFrag / max(fdist, 1e-4);             // eye -> fragment
+        float spot   = smoothstep(0.82, 0.92, dot(fdir, fwd));    // cone ~35->23 deg
+        float fall   = clamp(1.0 - fdist / 1200.0, 0.0, 1.0);     // near-bright beam
+        float facing = max(dot(normalize(vNormal), -fdir), 0.0);  // surface faces lamp
+        shade = clamp(shade + spot * fall * facing, 0.0, 1.0);
+    }
 
     outColor = vec4(albedo * shade, 1.0);
 }

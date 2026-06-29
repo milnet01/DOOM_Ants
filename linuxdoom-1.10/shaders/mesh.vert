@@ -19,6 +19,7 @@ layout(push_constant) uniform Push {
     float eyeZ;         // drives the distance light falloff in the fragment shader
     int   numWall;      // material-id offsets (fragment-only; the vertex stage
     int   numFlat;      // ignores them, but the block must match mesh.frag's)
+    float flashlight;   // DOOM-0044 headlamp on/off (1=on); Solid raster cone
 } pc;
 
 layout(location = 0) in vec3  inPos;
@@ -35,6 +36,7 @@ layout(location = 3) flat out int vTexnum;
 layout(location = 4) flat out int vFlags;
 layout(location = 5) out vec2 vScreenUV;   // [0,1] across the frame; sky uses it
 layout(location = 6) out float vDist;      // world distance camera->vertex (falloff)
+layout(location = 7) out vec3  vWorldPos;  // world position; DOOM-0044 flashlight cone
 
 const int FLAG_PSPRITE = 0x8;   // matches RB_MESH_PSPRITE in r_mesh.h
 const int FLAG_SKY     = 0x10;  // matches RB_MESH_SKY in r_mesh.h
@@ -59,4 +61,7 @@ void main()
     // World distance from the camera for the fragment's distance light falloff.
     // Meaningless for NDC psprite/sky verts; the fragment shader ignores it there.
     vDist = length(inPos - vec3(pc.eyeX, pc.eyeY, pc.eyeZ));
+    // World position for the fragment's flashlight cone (DOOM-0044). Meaningless
+    // for NDC psprite/sky verts; the fragment shader excludes those from the cone.
+    vWorldPos = inPos;
 }

@@ -131,6 +131,18 @@ const float FLASH_INTENSITY = 6.0e4;
 const float MUZZLE_FORWARD  = 24.0;
 const float MUZZLE_DROP     = 8.0;
 
+// Player flashlight / headlamp (DOOM-0044). A spotlight at the eye, aimed along
+// the view direction (camPos/camDir already carry both), toggled by the player
+// (the host forwards the on/off bit in misc2.w). Same hard ray-traced shadow +
+// DOOM-unit 1/dist^2 falloff as the muzzle flash, plus a cone so it reads as a
+// focused beam: full-bright inside ~23 deg, falling to zero by ~35 deg off-axis.
+// Warm-white beam. INV-7 inline tunables (the cone + intensity get their real
+// tune in a Workbench pass, like the muzzle-flash and scene-light constants).
+const vec3  FLASHLIGHT_COLOR     = vec3(1.0, 0.97, 0.88);
+const float FLASHLIGHT_INTENSITY = 6.0e4;
+const float FLASHLIGHT_COS_IN    = 0.92;   // cos(~23 deg): full-bright cone core
+const float FLASHLIGHT_COS_OUT   = 0.82;   // cos(~35 deg): beam edge fades to 0
+
 // Display tone map: lift by exposure, compress HDR->[0,1] with the hue-preserving
 // Khronos PBR-Neutral operator (keeps DOOM's saturated palette where Reinhard/ACES
 // would wash it out), then sRGB-encode per channel for the UNORM swapchain.
@@ -291,6 +303,34 @@ void main()
                 }
             }
 
+            // DOOM-0044: the player flashlight (headlamp). A spotlight at the eye
+            // aimed along the view, gated by the rb_flashlight toggle (misc2.w),
+            // with the same hard ray-traced shadow + 1/dist^2 falloff as the muzzle
+            // flash plus a cone attenuation. The lamp sits at the eye, so the shade
+            // ray runs surface->eye; the cone tests how closely that hugs camDir.
+            if (pc.misc2.w != 0u)
+            {
+                vec3  fl    = pc.camPos.xyz - hitP;     // surface -> eye (the lamp)
+                float fl2   = dot(fl, fl);
+                float fdist = sqrt(fl2);
+                vec3  fwi   = fl / fdist;
+                float fcos  = dot(n, fwi);
+                float spot  = smoothstep(FLASHLIGHT_COS_OUT, FLASHLIGHT_COS_IN,
+                                         dot(-fwi, pc.camDir.xyz));
+                if (fcos > 0.0 && spot > 0.0 && fl2 > 1.0)
+                {
+                    rayQueryEXT sq;
+                    rayQueryInitializeEXT(sq, topAS,
+                        gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0xFFu,
+                        hitP + n * 1e-3, 1e-3, fwi, fdist - 2e-3);
+                    while (rayQueryProceedEXT(sq)) {}
+                    if (rayQueryGetIntersectionTypeEXT(sq, true)
+                        == gl_RayQueryCommittedIntersectionNoneEXT)
+                        L += albedo * (1.0 / PI) * FLASHLIGHT_COLOR
+                             * (FLASHLIGHT_INTENSITY * spot) * fcos / fl2;
+                }
+            }
+
             if (any(isnan(L)) || any(isinf(L))) L = vec3(0.0);
             colour = toneEncode(L);
         }
@@ -408,6 +448,31 @@ void main()
                         == gl_RayQueryCommittedIntersectionNoneEXT)
                         illum += (1.0 / PI) * FLASH_COLOR
                                * (flash * FLASH_INTENSITY) * mcos / mdist2;
+                }
+            }
+
+            // DOOM-0044 flashlight, demodulated (the composite re-applies albedo).
+            // Same eye-mounted spotlight + ray-traced shadow as mode 4, sans albedo.
+            if (pc.misc2.w != 0u)
+            {
+                vec3  fl    = pc.camPos.xyz - hitP;     // surface -> eye (the lamp)
+                float fl2   = dot(fl, fl);
+                float fdist = sqrt(fl2);
+                vec3  fwi   = fl / fdist;
+                float fcos  = dot(n, fwi);
+                float spot  = smoothstep(FLASHLIGHT_COS_OUT, FLASHLIGHT_COS_IN,
+                                         dot(-fwi, pc.camDir.xyz));
+                if (fcos > 0.0 && spot > 0.0 && fl2 > 1.0)
+                {
+                    rayQueryEXT sq;
+                    rayQueryInitializeEXT(sq, topAS,
+                        gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0xFFu,
+                        hitP + n * 1e-3, 1e-3, fwi, fdist - 2e-3);
+                    while (rayQueryProceedEXT(sq)) {}
+                    if (rayQueryGetIntersectionTypeEXT(sq, true)
+                        == gl_RayQueryCommittedIntersectionNoneEXT)
+                        illum += (1.0 / PI) * FLASHLIGHT_COLOR
+                               * (FLASHLIGHT_INTENSITY * spot) * fcos / fl2;
                 }
             }
 
