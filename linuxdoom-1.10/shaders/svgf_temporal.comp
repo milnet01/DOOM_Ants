@@ -144,9 +144,17 @@ void main()
     // intact, so a stable scene keeps converging instead of re-noising every frame.
     if (valid) {
         float sigma = sqrt(max(m2 - m1 * m1, 0.0));      // temporal luma stddev
-        float grad  = clamp((abs(l - m1) - 2.0 * sigma)  // delta beyond the noise floor,
-                            / (m1 + 1e-3), 0.0, 1.0);     // relative to the history mean
-        newHist = mix(newHist, 1.0, grad);   // grad→1 resets history (kills the ghost)
+        // Luma change beyond the noise floor, normalised by the BRIGHTER of the new
+        // and old level so a sudden DARKEN (flashlight/muzzle switching OFF) is caught
+        // as strongly as a brighten, and so a ~half-magnitude change already SATURATES
+        // the reset. That full one-frame reset is the point: a softer ramp (the prior
+        // /m1) only partly reset on the first frame, and the bright residue it left
+        // then inflated the variance estimate (m2 - m1^2), which pushed 2*sigma above
+        // the delta on the FOLLOWING frames so detection stalled — the lit patch then
+        // bled away at the slow EMA floor (~a second) instead of vanishing at once.
+        float ref  = max(max(m1, l), 1e-3);
+        float grad = clamp((abs(l - m1) - 2.0 * sigma) / (0.5 * ref), 0.0, 1.0);
+        newHist = mix(newHist, 1.0, grad);   // grad→1 fully resets history (kills the ghost)
     }
 
     // --- exponential blend + moments -------------------------------------------
