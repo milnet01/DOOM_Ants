@@ -18,10 +18,10 @@ layout(push_constant) uniform PC {
     uint chars[12];        // glyph indices (see FONT order), `count` valid
 } pc;
 
-// 16 glyphs in a fixed order shared with the host: 0=space, then
-// A C D E F H I N O R S T U X Y. Each glyph is 7 rows top->bottom, each row a
-// 5-bit column mask (bit 4 = leftmost column).
-const uint FONT[112] = uint[112](
+// 18 glyphs in a fixed order shared with the host: 0=space, then
+// A C D E F H I N O R S T U X Y, then P L (DOOM-0090, for the PROFILER line).
+// Each glyph is 7 rows top->bottom, each row a 5-bit column mask (bit 4 = leftmost).
+const uint FONT[126] = uint[126](
     0x00,0x00,0x00,0x00,0x00,0x00,0x00,   // space
     0x0E,0x11,0x11,0x1F,0x11,0x11,0x11,   // A
     0x0E,0x11,0x10,0x10,0x10,0x11,0x0E,   // C
@@ -37,7 +37,9 @@ const uint FONT[112] = uint[112](
     0x1F,0x04,0x04,0x04,0x04,0x04,0x04,   // T
     0x11,0x11,0x11,0x11,0x11,0x11,0x0E,   // U
     0x11,0x11,0x0A,0x04,0x0A,0x11,0x11,   // X
-    0x11,0x11,0x0A,0x04,0x04,0x04,0x04    // Y
+    0x11,0x11,0x0A,0x04,0x04,0x04,0x04,   // Y
+    0x1E,0x11,0x11,0x1E,0x10,0x10,0x10,   // P  (index 16)
+    0x10,0x10,0x10,0x10,0x10,0x10,0x1F    // L  (index 17)
 );
 
 void main()
@@ -45,11 +47,14 @@ void main()
     ivec2 p = ivec2(gl_GlobalInvocationID.xy);
     if (p.x >= int(pc.w) || p.y >= int(pc.h)) return;
 
-    uint sc = max(pc.scale, 1u);
-    uint cw = 6u * sc;                         // 5-px glyph + 1-px gap, scaled
+    // DOOM-0090: scale low byte = font scale; high byte = line index (0 = the mode
+    // title, 1 = the PROFILER status line stacked below it).
+    uint sc   = max(pc.scale & 0xFFu, 1u);
+    uint line = (pc.scale >> 8) & 0xFFu;
+    uint cw = 6u * sc;                          // 5-px glyph + 1-px gap, scaled
     int  labelW = int(pc.count * cw);
-    int  x0 = (int(pc.w) - labelW) / 2;        // centred
-    int  y0 = int(8u * sc);                    // top margin
+    int  x0 = (int(pc.w) - labelW) / 2;         // centred
+    int  y0 = int((8u + line * 9u) * sc);       // top margin; line 1 sits below line 0
     int  gh = int(7u * sc);
     int  pad = int(2u * sc);
 

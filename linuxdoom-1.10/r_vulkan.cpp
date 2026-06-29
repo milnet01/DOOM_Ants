@@ -4465,6 +4465,25 @@ void RecordRtTrace(uint32_t idx)
         vkCmdPushConstants(g.cmd, g.labelPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT,
                            0, sizeof(lpc), &lpc);
         vkCmdDispatch(g.cmd, (dispW + 7) / 8, (dispH + 7) / 8, 1);
+
+        // DOOM-0090: when the GPU profiler (`\`) is on, stamp "PROFILER" as a second
+        // line below the mode title, so it's clear on-screen the profiler is active
+        // (the per-pass timings still print to the terminal). Same pipeline + set;
+        // the high byte of scale selects line 1. A shader-write->write barrier orders
+        // it after the mode-label write (disjoint rows, but keeps validation happy).
+        if (rb_profile)
+        {
+            vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+                                 1, &mb, 0, nullptr, 0, nullptr);
+            static const uint32_t PROFILER[8] = { 16,10,9,5,7,17,4,10 };  // P R O F I L E R
+            for (int i = 0; i < 8; i++) lpc.chars[i] = PROFILER[i];
+            lpc.count = 8u;
+            lpc.scale |= (1u << 8);   // line 1 (below the mode title)
+            vkCmdPushConstants(g.cmd, g.labelPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+                               0, sizeof(lpc), &lpc);
+            vkCmdDispatch(g.cmd, (dispW + 7) / 8, (dispH + 7) / 8, 1);
+        }
     }
 
     // final image GENERAL -> TRANSFER_SRC; swapchain UNDEFINED -> TRANSFER_DST.
