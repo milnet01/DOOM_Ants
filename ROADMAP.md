@@ -1124,12 +1124,13 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: enhancement.
   Source: user-request-2026-06-29.
 
-- 📋 [DOOM-0133] **Fix vkCmdClearColorImage validation error: storage images cleared without VK_IMAGE_USAGE_TRANSFER_DST_BIT.**
+- ✅ [DOOM-0133] **Fix vkCmdClearColorImage validation error: storage images cleared without VK_IMAGE_USAGE_TRANSFER_DST_BIT.**
   At startup two STORAGE_BIT images are cleared with vkCmdClearColorImage, which requires VK_IMAGE_USAGE_TRANSFER_DST_BIT in the image's usage flags (VUID-vkCmdClearColorImage-image-00002). Symptom in the log: two images (e.g. 0x7e..., 0x81...) flagged immediately after swapchain creation. Fix: add VK_IMAGE_USAGE_TRANSFER_DST_BIT to those images' VkImageCreateInfo.usage (candidates: the SVGF G-buffer / rtAccum storage images), or clear them via a compute store / render-pass clear instead. Pre-existing (not from DOOM-0129/0130/0131). Validation-only; no functional impact observed.
   Kind: fix.
   **Layman:** A harmless-but-incorrect graphics warning at startup: two images are wiped using a method their creation flags don't permit. The game runs fine, but it should be made spec-correct.
   Kind: fix.
   Source: terminal-log-2026-06-29.
+  Resolved (2026-06-29): the TAAU history images (taImg, non-TA_OUT) were created STORAGE-only but are cleared at init/resize via vkCmdClearColorImage, which requires TRANSFER_DST. Added VK_IMAGE_USAGE_TRANSFER_DST_BIT to the non-output taImg usage (r_vulkan.cpp CreateTaauTargets). The svImg path already had it. Builds clean; confirm the two startup vkCmdClearColorImage validation errors are gone with a validation-layer run.
 
 - 📋 [DOOM-0134] **Fix render-pass/framebuffer incompatibility validation errors (srcStageMask/Access mismatch between two render passes).**
   vkCmdBeginRenderPass / vkCmdDraw report pDependencies[0] srcStageMask, srcAccessMask and dstAccessMask incompatible between VkRenderPass 0xd... and VkRenderPass 0xc... (the framebuffer was created against 0xc but begun/used with 0xd) — VUID-VkRenderPassBeginInfo-renderPass-00904 / VUID-vkCmdDraw-renderPass-02684. The two passes' subpass dependencies differ (ALL_TRANSFER vs EARLY_FRAGMENT_TESTS|COLOR_ATTACHMENT_OUTPUT). Fix: make the render pass used at BeginRenderPass / pipeline creation render-pass-compatible with the one the framebuffer was created from (align the subpass dependency stage/access masks, or create the framebuffer against the matching pass). Pre-existing raster-path issue (not from DOOM-0129/0130/0131). Validation-only.

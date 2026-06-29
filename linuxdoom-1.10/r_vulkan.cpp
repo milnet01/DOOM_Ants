@@ -2381,9 +2381,11 @@ void CreateTaauTargets()
         ici.arrayLayers   = 1;
         ici.samples       = VK_SAMPLE_COUNT_1_BIT;
         ici.tiling        = VK_IMAGE_TILING_OPTIMAL;
-        // The output is also a blit source; the histories are storage-only.
+        // The output is also a blit source; the histories are cleared at init/
+        // resize via vkCmdClearColorImage, which requires TRANSFER_DST (DOOM-0133).
         ici.usage         = VK_IMAGE_USAGE_STORAGE_BIT
-                          | ((i == TA_OUT) ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0);
+                          | ((i == TA_OUT) ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+                                           : VK_IMAGE_USAGE_TRANSFER_DST_BIT);
         ici.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
         ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         Check(vkCreateImage(g.device, &ici, nullptr, &g.taImg[i]), "vkCreateImage(taau)");
