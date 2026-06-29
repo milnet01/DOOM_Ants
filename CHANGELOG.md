@@ -67,6 +67,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Smooth camera between game tics in the 3D renderers — render rate is no longer capped at the 35 Hz game tick** (DOOM-0048)
+  DOOM's world updates 35 times a second; the 3D view now interpolates the camera between those updates so walking and turning look smooth at any frame rate above 35 FPS, instead of stepping at 35. The simulation itself is untouched (so demos and multiplayer stay identical), and Classic mode still renders locked to the tick.
+
 - **Ultra now boots playable by default (TAAU upscaler at 50% render scale) instead of at native resolution** (DOOM-0090)
   Fresh installs start Ultra the way it's actually playable (~35-42 FPS on a mid GPU) rather than ~8 FPS at native; existing saved settings are untouched and the scale is still adjustable in Options -> Renderer. Also trimmed the denoiser's coarsest filter pass (5->4) to shave its cost with minimal visual change.
 
