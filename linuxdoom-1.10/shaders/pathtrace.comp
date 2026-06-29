@@ -127,11 +127,14 @@ const float EXPOSURE_EV   = -2.25;
 // scene-light values) pending a Workbench pass: warm flash colour, a radiant scale
 // tuned for DOOM-unit 1/dist^2 falloff, and the barrel offset in world units.
 const vec3  FLASH_COLOR     = vec3(1.0, 0.85, 0.6);
-const float FLASH_INTENSITY = 3.0e5;   // the host gates this by extralight, which is only
+const float FLASH_INTENSITY = 3.0e6;   // the host gates this by extralight, which is only
                                        // 1or2 * 16/255 = 0.063/0.125 (A_Light1/2), so the
-                                       // effective radiance is ~8-16x lower than the raw
-                                       // value -- raised 6e4->3e5 so a flash actually lights
-                                       // the room out to ~150u instead of needing point blank.
+                                       // EFFECTIVE radiance is ~8-16x lower than the raw value.
+                                       // At 3e6 a single flash (A_Light1) lands ~1.9e5 effective
+                                       // -- ~3x the flashlight's 6e4 -- so a gunshot clearly
+                                       // out-shines the headlamp and lights the whole room; the
+                                       // big flash (A_Light2) is ~6x. A brief blinding burst when
+                                       // firing point-blank is intended (it is a 1-2 frame flash).
 const float FLASH_RADIUS2   = 1.5e4;   // (~122 u)^2 near-field softening (same idea as the
                                        // flashlight): caps the 1/dist^2 peak so firing with
                                        // the barrel against a wall doesn't blow out to white.
