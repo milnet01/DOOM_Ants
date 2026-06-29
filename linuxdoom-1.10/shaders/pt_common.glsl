@@ -24,15 +24,9 @@ const int   FLAG_EMISSIVE = 0x20;    // matches RB_MESH_EMISSIVE — a fullbrigh
 // 2026-06-27) pending the Vestige Formula Workbench export.
 const float FIREFLY_MAX = 4.0;                       // clamp one NEE sample's
                                                      // reflected radiance (post-BRDF)
-// DOOM-0090: omni sprite lights are sampled one shadow ray EACH per pixel (no
-// importance pick), so a room full of glowing props makes the megakernel scale
-// O(sprites)/pixel — the dominant cost (profiled: 16->90+ ms facing a lit room).
-// Skip a sprite's shadow ray when its UNSHADOWED contribution is below this VALUE
-// (max channel, matching the project's brightness convention) — a sprite that far
-// or that dim adds no visible light even if fully lit, so the costly BVH traversal
-// is wasted. ~0.06% of the firefly ceiling: far below one 8-bit step after tonemap.
-// Omni-path only; the static-light and INV-6 verify estimators pass 0 (no cull).
-const float OMNI_CULL_VALUE = 0.0025;
+// (DOOM-0090's OMNI_CULL_VALUE dim-sprite cull was removed by DOOM-0120: RIS keeps
+// every surviving sprite as a weighted candidate — a dim one simply almost never wins
+// the reservoir draw — so the cliff is gone without the cull's one-sided bias.)
 const vec3  SKY_COLOR    = vec3(0.20, 0.26, 0.40);   // bounded sky-light on a miss
                                                      // (linear radiance; the camera
                                                      // tonemaps it, the bake folds it
@@ -97,20 +91,26 @@ vec3 decodeAlbedo(uint id, vec2 uv)
     return pow(a, vec3(2.2));                 // palette is gamma-encoded -> linear
 }
 
-// One area-sampled direct-lighting estimate from emitter triangle k. Returns the
-// incident contribution (Le * geometry / pdf), WITHOUT the surface BRDF (the
-// caller folds in albedo/pi). The caller picks k by power (build step 3c-2) with
-// selection probability pdfSel, and samples a uniform point on the triangle, so
-// p(Q) = pdfSel * (1/area) and 1/p = area / pdfSel.
+// One area-sampled direct-lighting estimate from emitter triangle k, WITHOUT the
+// shadow ray. Returns the incident contribution (Le * geometry / pdf), WITHOUT the
+// surface BRDF (the caller folds in albedo/pi), and outputs the sampled direction +
+// distance so a later occlusion test can reuse the exact point. The caller picks k by
+// power (build step 3c-2) with selection probability pdfSel, and samples a uniform
+// point on the triangle, so p(Q) = pdfSel * (1/area) and 1/p = area / pdfSel.
 // `omniStart`: emitters with index >= omniStart are OMNIDIRECTIONAL (DOOM-0084
 // sprite lights — lamps/torches/barrels). A camera-facing billboard quad has a
 // normal pointing at the viewer, so as an oriented area light its cosL would be ~0
 // for a floor point right below it (it would light nothing). Sprite lights are
 // glowing objects that emit in all directions, so they skip the emitter-orientation
 // cosine (cosL = 1). Static wall/flat emitters (index < omniStart) stay oriented.
-vec3 sampleEmitter(uint k, vec3 hitP, vec3 n, float pdfSel, uint omniStart, Emitters emit,
-                   float minContribValue, inout uint seed)
+// DOOM-0120: split out of sampleEmitter so RIS can resample candidates by their
+// unshadowed weight BEFORE spending one shadow ray on the survivor. vec3(0) on a
+// degenerate/back-facing emitter (wiOut/distOut then left zeroed — don't shadow them).
+vec3 emitterContribUnshadowed(uint k, vec3 hitP, vec3 n, float pdfSel, uint omniStart,
+                              Emitters emit, out vec3 wiOut, out float distOut, inout uint seed)
 {
+    wiOut = vec3(0.0); distOut = 0.0;
+
     uint b = k * 14u;
     vec3 v0 = vec3(emit.e[b+0u],  emit.e[b+1u],  emit.e[b+2u]);
     vec3 v1 = vec3(emit.e[b+3u],  emit.e[b+4u],  emit.e[b+5u]);
@@ -144,7 +144,37 @@ vec3 sampleEmitter(uint k, vec3 hitP, vec3 n, float pdfSel, uint omniStart, Emit
 
     float G   = cosSurf * cosL / dist2;
     float inv = area / pdfSel;                  // 1 / p(Q), p = pdfSel * (1/area)
-    vec3  contrib = Le * G * inv;               // unshadowed estimate (pre-BRDF)
+    wiOut = wi; distOut = dist;
+    return Le * G * inv;                        // unshadowed estimate (pre-BRDF)
+}
+
+// Shadow ray toward a sampled emitter point: true if a world-BLAS surface blocks it.
+// Opaque any-hit, terminate on first hit. tMax just short of the light so the emitter
+// face itself doesn't self-occlude. Cull mask 0x01 = the world BLAS only (DOOM-0100):
+// sprite billboards (mask 0x02) are alpha-cut-outs and do not occlude light in this
+// increment, so shadow rays skip them entirely. (DOOM-0120: split out so the RIS omni
+// path and the direct sampleEmitter path cast the byte-identical occlusion ray.)
+bool occluded(vec3 hitP, vec3 n, vec3 wi, float dist)
+{
+    rayQueryEXT sq;
+    rayQueryInitializeEXT(sq, topAS,
+        gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0x01u,
+        hitP + n * 1e-3, 1e-3, wi, dist - 2e-3);
+    while (rayQueryProceedEXT(sq)) {}
+    return rayQueryGetIntersectionTypeEXT(sq, true)
+           != gl_RayQueryCommittedIntersectionNoneEXT;
+}
+
+// Full single-emitter direct estimate: unshadowed contribution gated by one shadow
+// ray (the static-NEE and INV-6 verify paths' workhorse). Behaviour and seed usage
+// are identical to the pre-DOOM-0120 monolithic version — it now just composes the
+// two helpers above.
+vec3 sampleEmitter(uint k, vec3 hitP, vec3 n, float pdfSel, uint omniStart, Emitters emit,
+                   float minContribValue, inout uint seed)
+{
+    vec3  wi; float dist;
+    vec3  contrib = emitterContribUnshadowed(k, hitP, n, pdfSel, omniStart, emit, wi, dist, seed);
+    if (contrib == vec3(0.0)) return vec3(0.0); // degenerate / back-facing
 
     // DOOM-0090 contribution cull (opt-in: minContribValue > 0, omni path only).
     // The shadow ray is the expensive part; skip it when even a FULLY-lit result
@@ -154,19 +184,7 @@ vec3 sampleEmitter(uint k, vec3 hitP, vec3 n, float pdfSel, uint omniStart, Emit
         max(contrib.r, max(contrib.g, contrib.b)) < minContribValue)
         return vec3(0.0);
 
-    // Occlusion: opaque any-hit, terminate on first hit. tMax just short of the
-    // light so the emitter face itself doesn't self-occlude. Cull mask 0x01 = the
-    // world BLAS only (DOOM-0100): sprite billboards (mask 0x02) are alpha-cut-outs
-    // and do not occlude light in this increment, so shadow rays skip them entirely.
-    rayQueryEXT sq;
-    rayQueryInitializeEXT(sq, topAS,
-        gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0x01u,
-        hitP + n * 1e-3, 1e-3, wi, dist - 2e-3);
-    while (rayQueryProceedEXT(sq)) {}
-    if (rayQueryGetIntersectionTypeEXT(sq, true)
-        != gl_RayQueryCommittedIntersectionNoneEXT)
-        return vec3(0.0);                      // shadowed
-
+    if (occluded(hitP, n, wi, dist)) return vec3(0.0); // shadowed
     return contrib;
 }
 
@@ -230,17 +248,23 @@ vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
             L += direct / float(nSamples);
         }
 
-        // Guaranteed direct sampling of every omnidirectional sprite light. pdfSel =
-        // 1.0 -> sampleEmitter returns the full Le*G*area irradiance with no selection
-        // division, so there is no rare-high-energy spike for the clamp to eat. Few
-        // sprites are ever in view, so the extra shadow ray per sprite is cheap.
+        // DOOM-0120 RIS: resample the omnidirectional sprite lights down to ONE shadow
+        // ray. The old path cast a shadow ray for EVERY surviving sprite (O(sprites)
+        // /pixel — the megakernel's dominant cost in a prop-lit room); RIS draws each
+        // candidate's UNSHADOWED reflected radiance, keeps one by weighted-reservoir,
+        // and spends a single occlusion ray on the survivor — O(1) rays + O(M) cheap
+        // weight evals (cheap-ladder step 2, DOOM-0092 §1.4). No reservoir is kept
+        // across frames or neighbours (the part that hurts RDNA2 registers); TAAU +
+        // SVGF absorb the single ray's per-pixel visibility noise over time.
+        vec3  selRefl = vec3(0.0);     // survivor's clamped UNSHADOWED reflected radiance
+        vec3  selWi   = vec3(0.0);
+        float selDist = 0.0, selTgt = 0.0, wsum = 0.0;
         for (uint k = omniStart; k < emitCount; k++)
         {
-            // DOOM-0119: REJECT-lump cull. Skip an omni sprite light whose sector is
-            // provably invisible from this hit's sector — exact + free, before the
-            // shadow ray (strictly stronger than the OMNI_CULL_VALUE contribution
-            // cull). Bypassed when either sector is unknown (a static centroid on a
-            // linedef, or a sprite hit) or the level carries no REJECT data.
+            // DOOM-0119 REJECT-lump cull: drop a sprite whose sector is provably
+            // invisible from this hit's sector before it ever enters the candidate pool
+            // — exact + free. Bypassed when either sector is unknown (a static centroid
+            // on a linedef, or a sprite hit) or the level carries no REJECT data.
             if (numSectors > 0u && hitSec < numSectors)
             {
                 uint es = emitSec.s[k];
@@ -250,12 +274,31 @@ vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
                     uint bytenum = pnum >> 3u;
                     uint byteval = (reject.w[bytenum >> 2u] >> ((bytenum & 3u) * 8u)) & 0xFFu;
                     if ((byteval & (1u << (pnum & 7u))) != 0u)
-                        continue;                 // not visible -> skip this light
+                        continue;                 // not visible -> not a candidate
                 }
             }
-            vec3 rad = albedo * (1.0 / PI) * sampleEmitter(k, hitP, n, 1.0, omniStart, emit, OMNI_CULL_VALUE, seed);
-            L += min(rad, vec3(FIREFLY_MAX));
+            vec3  wi; float dist;
+            vec3  c = emitterContribUnshadowed(k, hitP, n, 1.0, omniStart, emit, wi, dist, seed);
+            // Per-light firefly clamp BEFORE resampling — mirrors the old per-sprite
+            // min(rad, FIREFLY_MAX). The RIS sum of pre-clamped lights then needs no
+            // second clamp, so a torch-lit room stays as bright as the old loop while a
+            // degenerate near-light can't blow up the reservoir weight.
+            vec3  refl = min(albedo * (1.0 / PI) * c, vec3(FIREFLY_MAX));
+            float tgt  = max(refl.r, max(refl.g, refl.b)); // VALUE target (max channel,
+                                                           // matching the brightness
+                                                           // convention) — a saturated
+                                                           // light can't over-weight.
+            if (tgt <= 0.0) continue;
+            wsum += tgt;
+            if (rnd(seed) * wsum < tgt)           // weighted reservoir: keep w.p. tgt/wsum
+            {
+                selRefl = refl; selWi = wi; selDist = dist; selTgt = tgt;
+            }
         }
+        // One shadow ray to the survivor; reweight by wsum/selTgt so E[estimate] equals
+        // the old per-light-clamped sum  Σ_k min(rad_k, FIREFLY_MAX)·V_k  exactly.
+        if (selTgt > 0.0 && !occluded(hitP, n, selWi, selDist))
+            L += selRefl * (wsum / selTgt);
     }
     return L;
 }
