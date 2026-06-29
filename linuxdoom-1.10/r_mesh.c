@@ -863,6 +863,7 @@ int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts)
             spritedef_t*   sprdef;
             spriteframe_t* sprframe;
             int            lump;
+            int            sflags;
             boolean        flip;
             float          wpx, hpx, loff, toff, cx, cy, topz, botz, ld, rd, light;
             float          u0, u1, v0, v1;
@@ -907,6 +908,13 @@ int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts)
             if (light < 0.0f) light = 0.0f;
             if (light > 1.0f) light = 1.0f;
 
+            // DOOM-0084: a fullbright frame marks an actual light object (lamp,
+            // torch, candle, burning barrel, projectile) — NOT ammo/pickups. Only
+            // these self-glow + cast NEE light in the path tracer; everything else
+            // is just a depth-occluding billboard (DOOM-0100).
+            sflags = RB_MESH_SPRITE
+                   | ((thing->frame & FF_FULLBRIGHT) ? RB_MESH_EMISSIVE : 0);
+
             // UVs inset half a texel so nearest sampling stays inside the rect.
             u0 = 0.5f;  u1 = wpx - 0.5f;
             v0 = 0.5f;  v1 = hpx - 0.5f;
@@ -916,12 +924,12 @@ int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts)
                 return n;                       // buffer full; drop the rest
 
             // Corners: left-top, right-top, right-bottom, left-bottom.
-            out[n++] = mkv(cx + rx*ld, cy + ry*ld, topz, nx, ny, 0.0f, u0, v0, lump, RB_MESH_SPRITE, light);
-            out[n++] = mkv(cx + rx*rd, cy + ry*rd, topz, nx, ny, 0.0f, u1, v0, lump, RB_MESH_SPRITE, light);
-            out[n++] = mkv(cx + rx*rd, cy + ry*rd, botz, nx, ny, 0.0f, u1, v1, lump, RB_MESH_SPRITE, light);
-            out[n++] = mkv(cx + rx*ld, cy + ry*ld, topz, nx, ny, 0.0f, u0, v0, lump, RB_MESH_SPRITE, light);
-            out[n++] = mkv(cx + rx*rd, cy + ry*rd, botz, nx, ny, 0.0f, u1, v1, lump, RB_MESH_SPRITE, light);
-            out[n++] = mkv(cx + rx*ld, cy + ry*ld, botz, nx, ny, 0.0f, u0, v1, lump, RB_MESH_SPRITE, light);
+            out[n++] = mkv(cx + rx*ld, cy + ry*ld, topz, nx, ny, 0.0f, u0, v0, lump, sflags, light);
+            out[n++] = mkv(cx + rx*rd, cy + ry*rd, topz, nx, ny, 0.0f, u1, v0, lump, sflags, light);
+            out[n++] = mkv(cx + rx*rd, cy + ry*rd, botz, nx, ny, 0.0f, u1, v1, lump, sflags, light);
+            out[n++] = mkv(cx + rx*ld, cy + ry*ld, topz, nx, ny, 0.0f, u0, v0, lump, sflags, light);
+            out[n++] = mkv(cx + rx*rd, cy + ry*rd, botz, nx, ny, 0.0f, u1, v1, lump, sflags, light);
+            out[n++] = mkv(cx + rx*ld, cy + ry*ld, botz, nx, ny, 0.0f, u0, v1, lump, sflags, light);
         }
     }
     return n;

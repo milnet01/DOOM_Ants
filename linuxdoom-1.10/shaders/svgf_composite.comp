@@ -62,12 +62,19 @@ void main()
     if (gp.w < 0.0) {
         L = illum;                                  // sky: stored linear colour
     } else {
-        vec3 albedo = imageLoad(galbedo, p).rgb;
+        vec4 ga = imageLoad(galbedo, p);
+        vec3 albedo = ga.rgb;
         uint id = uint(gp.w + 0.5);
         vec3 emis = vec3(pc.matEmis.m[id * 3u + 0u],
                          pc.matEmis.m[id * 3u + 1u],
                          pc.matEmis.m[id * 3u + 2u]);
-        L = albedo * illum + emis;
+        // DOOM-0084: localise self-emission to this texel's VALUE (max channel, so a
+        // saturated red/blue light isn't suppressed) — a lamp glows from its lit top,
+        // not its dark stand — matching shadeSurface() in pt_common.glsl so the
+        // denoised view agrees with the raw mode-4 view. ga.a is the emission ENABLE
+        // (0 for a non-light sprite — pickup/monster). INV-7 backfill thresholds.
+        float emisMask = smoothstep(0.30, 0.60, max(albedo.r, max(albedo.g, albedo.b)));
+        L = albedo * illum + emis * emisMask * ga.a;
     }
     if (any(isnan(L)) || any(isinf(L))) L = vec3(0.0);
     imageStore(outColor, p, vec4(toneEncode(L), 1.0));

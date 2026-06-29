@@ -334,8 +334,9 @@ struct VulkanState
     VkAccelerationStructureKHR tlas        = VK_NULL_HANDLE;
     VkBuffer                   tlasBuf     = VK_NULL_HANDLE;
     VkDeviceMemory             tlasMem     = VK_NULL_HANDLE;
-    VkBuffer                   tlasInstBuf = VK_NULL_HANDLE;  // one instance, host-visible
+    VkBuffer                   tlasInstBuf = VK_NULL_HANDLE;  // up to 2 instances, host-visible
     VkDeviceMemory             tlasInstMem = VK_NULL_HANDLE;
+    void*                      tlasInstMapped = nullptr;      // [0]=world, [1]=sprites
 
     // Moving-sector AS refit (DOOM-0009 build step 5). The BLAS/TLAS are built
     // ALLOW_UPDATE so an open door/lift (DOOM-0049 patches the vertices each frame)
@@ -349,6 +350,34 @@ struct VulkanState
     VkDeviceMemory tlasUpdScratchMem = VK_NULL_HANDLE;
     bool           blasDirty       = false;
     bool           refitTimed      = false;   // print the measured refit cost once
+
+    // DOOM-0100: world sprites (monsters/items/barrels) in the traced view. Each
+    // frame the billboards RB_BuildSprites already produces (the raster path) are
+    // written into this host-visible buffer, a throwaway triangle-soup BLAS is
+    // (re)built over them, and that BLAS is added to the TLAS as a 2nd instance so
+    // primary rays hit the sprites with real depth + lighting. The geometry is
+    // NON-opaque (palette index 0 alpha-tests in the trace's candidate loop) and
+    // carries instance mask 0x02 — shadow/NEE rays cull to 0x01 (world only), so
+    // sprites neither cast (rectangular) shadows nor block light this increment.
+    // As-built note: the DOOM-0008/0009 spec describes one unit-quad BLAS reused
+    // via per-instance transforms; this triangle-soup-per-frame variant is the
+    // simpler reuse of the existing billboard build (same on-screen result). The
+    // transform variant is a perf follow-up (DOOM-0107). Same rb_vertex_t layout
+    // as the world mesh, so the megakernel decodes a sprite hit identically.
+    VkBuffer       sprWorldBuf       = VK_NULL_HANDLE;   // billboard verts (BLAS input + shader attrs)
+    VkDeviceMemory sprWorldMem       = VK_NULL_HANDLE;
+    void*          sprWorldMapped    = nullptr;
+    uint32_t       sprWorldVertCap   = 0;
+    uint32_t       sprWorldVertCount = 0;               // this frame's verts (6 per sprite)
+    VkAccelerationStructureKHR spriteBlas        = VK_NULL_HANDLE;
+    VkBuffer                   spriteBlasBuf     = VK_NULL_HANDLE;
+    VkDeviceMemory             spriteBlasMem     = VK_NULL_HANDLE;
+    VkBuffer                   spriteBlasScratch    = VK_NULL_HANDLE;
+    VkDeviceMemory             spriteBlasScratchMem = VK_NULL_HANDLE;
+    VkDeviceAddress            spriteBlasAddr    = 0;
+    uint32_t                   sprBlasMaxTris    = 0;
+    VkBuffer                   tlasBuildScratch    = VK_NULL_HANDLE;  // persistent: per-frame TLAS rebuild
+    VkDeviceMemory             tlasBuildScratchMem = VK_NULL_HANDLE;
 
     // VK_KHR_acceleration_structure entry points — not core, so loaded by name once
     // the device is up (LoadRtEntryPoints); null while rtEnabled is false.
@@ -452,9 +481,18 @@ struct VulkanState
     std::vector<float> matEmissive;                 // CPU Le mirror, 3*matCount
     VkBuffer       matEmisBuf = VK_NULL_HANDLE;     // GPU Le table (device address)
     VkDeviceMemory matEmisMem = VK_NULL_HANDLE;
-    VkBuffer       emitBuf    = VK_NULL_HANDLE;     // per-level emitter list
+    VkBuffer       emitBuf    = VK_NULL_HANDLE;     // emitter list (host-visible, persistent)
     VkDeviceMemory emitMem    = VK_NULL_HANDLE;
-    uint32_t       emitCount  = 0;
+    void*          emitMapped = nullptr;
+    uint32_t       emitCount  = 0;                  // emitters this frame (static + sprites)
+    uint32_t       emitCap    = 0;                  // record capacity of emitBuf
+    // DOOM-0084: the static walls/flats emitters are extracted once at level load and
+    // cached here (14 floats/record, cdf/pdf zeroed). Each traced frame the emissive
+    // world sprites (lamps/torches/burning barrels — material Le > 0) are appended and
+    // the merged list + CDF re-finalised into emitBuf, so those free-standing lights
+    // pool light + cast shadows onto their surroundings via the same NEE path.
+    std::vector<float> staticEmit;                  // cached static emitter records
+    std::vector<float> staticWgt;                   // cached static power weights
 
     // GI bake probes (DOOM-0009 build step 4). One irradiance probe per subsector
     // (placed by RB_BuildProbes at the convex-cell centroid), baked once per level
@@ -1104,6 +1142,18 @@ void DestroyAccelerationStructures()
     if (g.blasUpdScratchMem) { vkFreeMemory(g.device, g.blasUpdScratchMem, nullptr); g.blasUpdScratchMem = VK_NULL_HANDLE; }
     if (g.tlasUpdScratch)    { vkDestroyBuffer(g.device, g.tlasUpdScratch, nullptr); g.tlasUpdScratch = VK_NULL_HANDLE; }
     if (g.tlasUpdScratchMem) { vkFreeMemory(g.device, g.tlasUpdScratchMem, nullptr); g.tlasUpdScratchMem = VK_NULL_HANDLE; }
+    // DOOM-0100 sprite RT resources.
+    if (g.spriteBlas)        { g.pfnDestroyAS(g.device, g.spriteBlas, nullptr); g.spriteBlas = VK_NULL_HANDLE; }
+    if (g.spriteBlasBuf)     { vkDestroyBuffer(g.device, g.spriteBlasBuf, nullptr); g.spriteBlasBuf = VK_NULL_HANDLE; }
+    if (g.spriteBlasMem)     { vkFreeMemory(g.device, g.spriteBlasMem, nullptr); g.spriteBlasMem = VK_NULL_HANDLE; }
+    if (g.spriteBlasScratch)    { vkDestroyBuffer(g.device, g.spriteBlasScratch, nullptr); g.spriteBlasScratch = VK_NULL_HANDLE; }
+    if (g.spriteBlasScratchMem) { vkFreeMemory(g.device, g.spriteBlasScratchMem, nullptr); g.spriteBlasScratchMem = VK_NULL_HANDLE; }
+    if (g.tlasBuildScratch)    { vkDestroyBuffer(g.device, g.tlasBuildScratch, nullptr); g.tlasBuildScratch = VK_NULL_HANDLE; }
+    if (g.tlasBuildScratchMem) { vkFreeMemory(g.device, g.tlasBuildScratchMem, nullptr); g.tlasBuildScratchMem = VK_NULL_HANDLE; }
+    if (g.sprWorldBuf)       { vkDestroyBuffer(g.device, g.sprWorldBuf, nullptr); g.sprWorldBuf = VK_NULL_HANDLE; }
+    if (g.sprWorldMem)       { vkFreeMemory(g.device, g.sprWorldMem, nullptr); g.sprWorldMem = VK_NULL_HANDLE; }
+    g.sprWorldMapped = nullptr; g.tlasInstMapped = nullptr;
+    g.spriteBlasAddr = 0; g.sprWorldVertCount = 0;
 }
 
 // Build the static BLAS (every level-mesh triangle) and a one-instance identity
@@ -1186,29 +1236,89 @@ void BuildAccelerationStructures()
                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &g.blasUpdScratch, &g.blasUpdScratchMem);
 
-    // ---- TLAS: one identity instance of the BLAS ----
+    // ---- Sprite BLAS storage (DOOM-0100): a throwaway triangle-soup BLAS over
+    // this frame's billboards, rebuilt each frame in RecordRtTrace. Allocate it
+    // (and a persistent build scratch + the host-visible vert buffer) once here,
+    // sized to the sprite cap; the per-frame rebuild reuses the storage. NON-opaque
+    // geometry so palette-0 alpha-tests in the trace candidate loop. ----
+    g.sprWorldVertCap = 4096u * 6u;        // up to ~4096 things/frame, 6 verts each
+    g.sprBlasMaxTris  = g.sprWorldVertCap / 3u;
+    CreateRtBuffer((VkDeviceSize)g.sprWorldVertCap * sizeof(rb_vertex_t),
+                   VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+                   | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                   &g.sprWorldBuf, &g.sprWorldMem);
+    Check(vkMapMemory(g.device, g.sprWorldMem, 0, VK_WHOLE_SIZE, 0, &g.sprWorldMapped),
+          "vkMapMemory(sprWorld)");
+
+    VkAccelerationStructureGeometryKHR sgeom = {};
+    sgeom.sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    sgeom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+    sgeom.flags        = 0;   // NON-opaque: alpha-tested in the trace candidate loop
+    sgeom.geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+    sgeom.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+    sgeom.geometry.triangles.vertexData.deviceAddress = BufferAddress(g.sprWorldBuf);
+    sgeom.geometry.triangles.vertexStride = sizeof(rb_vertex_t);
+    sgeom.geometry.triangles.maxVertex    = g.sprWorldVertCap - 1;
+    sgeom.geometry.triangles.indexType    = VK_INDEX_TYPE_NONE_KHR;
+
+    VkAccelerationStructureBuildGeometryInfoKHR sbgi = {};
+    sbgi.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+    sbgi.type          = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+    sbgi.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR;  // rebuilt every frame
+    sbgi.mode          = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+    sbgi.geometryCount = 1;
+    sbgi.pGeometries   = &sgeom;
+
+    VkAccelerationStructureBuildSizesInfoKHR ssizes = {};
+    ssizes.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+    g.pfnGetASBuildSizes(g.device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
+                         &sbgi, &g.sprBlasMaxTris, &ssizes);
+
+    CreateRtBuffer(ssizes.accelerationStructureSize,
+                   VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
+                   | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &g.spriteBlasBuf, &g.spriteBlasMem);
+    VkAccelerationStructureCreateInfoKHR sasci = {};
+    sasci.sType  = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+    sasci.buffer = g.spriteBlasBuf;
+    sasci.size   = ssizes.accelerationStructureSize;
+    sasci.type   = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+    Check(g.pfnCreateAS(g.device, &sasci, nullptr, &g.spriteBlas), "vkCreateAccelerationStructureKHR(spriteBlas)");
+    CreateRtBuffer(ssizes.buildScratchSize + g.scratchAlign,
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &g.spriteBlasScratch, &g.spriteBlasScratchMem);
+
+    VkAccelerationStructureDeviceAddressInfoKHR sadi = {};
+    sadi.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+    sadi.accelerationStructure = g.spriteBlas;
+    g.spriteBlasAddr = g.pfnGetASAddress(g.device, &sadi);
+
+    // ---- TLAS: instance 0 = the static world BLAS; instance 1 = the per-frame
+    // sprite BLAS (added each frame in RecordRtTrace with mask 0x02). Sized for 2,
+    // built here with just the world instance (the sprite BLAS has no geometry yet),
+    // then rebuilt every traced frame. ----
+    static const uint32_t kMaxTlasInstances = 2;
     VkAccelerationStructureDeviceAddressInfoKHR adi = {};
     adi.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
     adi.accelerationStructure = g.blas;
     const VkDeviceAddress blasAddr = g.pfnGetASAddress(g.device, &adi);
 
-    VkAccelerationStructureInstanceKHR inst = {};
-    inst.transform.matrix[0][0] = 1.0f;   // identity 3x4 row-major
-    inst.transform.matrix[1][1] = 1.0f;
-    inst.transform.matrix[2][2] = 1.0f;
-    inst.mask  = 0xFF;
-    inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
-    inst.accelerationStructureReference = blasAddr;
-
-    CreateRtBuffer(sizeof(inst),
+    CreateRtBuffer(sizeof(VkAccelerationStructureInstanceKHR) * kMaxTlasInstances,
                    VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
                    | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                    &g.tlasInstBuf, &g.tlasInstMem);
-    void* instMapped = nullptr;
-    Check(vkMapMemory(g.device, g.tlasInstMem, 0, sizeof(inst), 0, &instMapped), "vkMapMemory(tlasInst)");
-    std::memcpy(instMapped, &inst, sizeof(inst));
-    vkUnmapMemory(g.device, g.tlasInstMem);
+    Check(vkMapMemory(g.device, g.tlasInstMem, 0, VK_WHOLE_SIZE, 0, &g.tlasInstMapped), "vkMapMemory(tlasInst)");
+    VkAccelerationStructureInstanceKHR* insts = (VkAccelerationStructureInstanceKHR*)g.tlasInstMapped;
+    std::memset(insts, 0, sizeof(VkAccelerationStructureInstanceKHR) * kMaxTlasInstances);
+    insts[0].transform.matrix[0][0] = 1.0f;   // world: identity 3x4 row-major
+    insts[0].transform.matrix[1][1] = 1.0f;
+    insts[0].transform.matrix[2][2] = 1.0f;
+    insts[0].mask  = 0x01;                     // world: primary + shadow/NEE rays
+    insts[0].flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+    insts[0].accelerationStructureReference = blasAddr;
+    // Instance 1 (sprites) is left zeroed (mask 0 -> never hit) until a frame fills it.
 
     VkAccelerationStructureGeometryKHR tgeom = {};
     tgeom.sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
@@ -1221,19 +1331,17 @@ void BuildAccelerationStructures()
     VkAccelerationStructureBuildGeometryInfoKHR tbgi = {};
     tbgi.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
     tbgi.type          = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-    // ALLOW_UPDATE: a BLAS refit shifts the instance's bounding volume, so the TLAS
-    // is refit too (re-reads the BLAS extents) to keep rays hitting moved geometry.
-    tbgi.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR
-                       | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+    // No ALLOW_UPDATE: the TLAS is fully rebuilt each traced frame (cheap for 2
+    // instances) so the sprite instance's BLAS extents are always current.
+    tbgi.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
     tbgi.mode          = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
     tbgi.geometryCount = 1;
     tbgi.pGeometries   = &tgeom;
 
-    const uint32_t instCount = 1;
     VkAccelerationStructureBuildSizesInfoKHR tsizes = {};
     tsizes.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
     g.pfnGetASBuildSizes(g.device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
-                         &tbgi, &instCount, &tsizes);
+                         &tbgi, &kMaxTlasInstances, &tsizes);
 
     CreateRtBuffer(tsizes.accelerationStructureSize,
                    VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
@@ -1247,34 +1355,28 @@ void BuildAccelerationStructures()
     tasci.type   = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
     Check(g.pfnCreateAS(g.device, &tasci, nullptr, &g.tlas), "vkCreateAccelerationStructureKHR(tlas)");
 
-    VkBuffer tScratchBuf = VK_NULL_HANDLE; VkDeviceMemory tScratchMem = VK_NULL_HANDLE;
+    // Persistent TLAS build scratch (sized for the max instance count), reused by
+    // the per-frame rebuild so a traced frame allocates nothing.
     CreateRtBuffer(tsizes.buildScratchSize + g.scratchAlign,
                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-                   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &tScratchBuf, &tScratchMem);
+                   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &g.tlasBuildScratch, &g.tlasBuildScratchMem);
 
     tbgi.dstAccelerationStructure  = g.tlas;
-    tbgi.scratchData.deviceAddress = AlignUp(BufferAddress(tScratchBuf), g.scratchAlign);
+    tbgi.scratchData.deviceAddress = AlignUp(BufferAddress(g.tlasBuildScratch), g.scratchAlign);
 
     VkAccelerationStructureBuildRangeInfoKHR trange = {};
-    trange.primitiveCount = 1;
+    trange.primitiveCount = 1;                  // world only at level-load
     const VkAccelerationStructureBuildRangeInfoKHR* pTrange = &trange;
 
     cb = BeginOneTime();
     g.pfnCmdBuildAS(cb, 1, &tbgi, &pTrange);
     EndOneTime(cb);
-
-    vkDestroyBuffer(g.device, tScratchBuf, nullptr);
-    vkFreeMemory(g.device, tScratchMem, nullptr);
-
-    // Persistent TLAS update scratch (build step 5), sized by the update query.
-    CreateRtBuffer(tsizes.updateScratchSize + g.scratchAlign,
-                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-                   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &g.tlasUpdScratch, &g.tlasUpdScratchMem);
     g.blasDirty = false;        // freshly built from the current heights
 
-    printf("RB_Vulkan: built BLAS (%u tris) + TLAS (1 instance); AS %.1f KiB.\n",
+    printf("RB_Vulkan: built BLAS (%u tris) + TLAS (2-instance cap, world live); AS %.1f KiB.\n",
            triCount,
-           (double)(sizes.accelerationStructureSize + tsizes.accelerationStructureSize) / 1024.0);
+           (double)(sizes.accelerationStructureSize + tsizes.accelerationStructureSize
+                    + ssizes.accelerationStructureSize) / 1024.0);
     fflush(stdout);
 
     // The path-tracer compute descriptor binds this TLAS; re-point it now that
@@ -1283,17 +1385,18 @@ void BuildAccelerationStructures()
     UpdateRtComputeDescriptor();
 }
 
-// Refit the BLAS + TLAS in place from the just-patched vertex buffer (DOOM-0009
+// Refit the world BLAS in place from the just-patched vertex buffer (DOOM-0009
 // build step 5). Called when RB_UpdateMeshHeights reports a moving door/lift, so
 // the traced geometry (and its shadows) track the live world instead of the
 // build-time snapshot. An in-place UPDATE re-reads the same vertex buffer and reuses
 // the existing AS storage — far cheaper than a rebuild, and the persistent update
-// scratch means it allocates nothing. The TLAS is refit after the BLAS so its one
-// instance's bounding volume follows the moved geometry. The whole-BLAS refit is the
-// coarse option from the spec's step-5 open question; on DOOM's ~2k-tri meshes it
-// measures well under budget (printed once), so splitting rigid caps into separate
-// TLAS instances is unnecessary. Recorded as a one-time submit before the frame's
-// command buffer; the caller guarantees the previous frame finished.
+// scratch means it allocates nothing. The whole-BLAS refit is the coarse option from
+// the spec's step-5 open question; on DOOM's ~2k-tri meshes it measures well under
+// budget (printed once), so splitting rigid caps into separate TLAS instances is
+// unnecessary. The TLAS itself is rebuilt unconditionally each traced frame (for the
+// sprite instance, DOOM-0100), so it picks up the refit BLAS extents there — no TLAS
+// refit needed here. Recorded as a one-time submit before the frame's command buffer;
+// the caller guarantees the previous frame finished.
 void RefitAS()
 {
     if (g.blas == VK_NULL_HANDLE || g.tlas == VK_NULL_HANDLE || !g.vertexCount)
@@ -1329,7 +1432,91 @@ void RefitAS()
     range.primitiveCount = triCount;
     const VkAccelerationStructureBuildRangeInfoKHR* pRange = &range;
 
-    // TLAS update: same single instance, mode UPDATE, src == dst.
+    VkCommandBuffer cb = BeginOneTime();
+    g.pfnCmdBuildAS(cb, 1, &bgi, &pRange);
+    EndOneTime(cb);
+
+    if (!g.refitTimed)          // resolve the spec's step-5 cost gate, once
+    {
+        g.refitTimed = true;
+        printf("RB_Vulkan: moving-sector world-BLAS refit active (%u tris, in-place update).\n",
+               triCount);
+        fflush(stdout);
+    }
+}
+
+// DOOM-0100: record this frame's sprite BLAS rebuild + TLAS rebuild into g.cmd,
+// before the trace dispatch. The host has already filled g.sprWorldBuf (the
+// billboards) and set g.sprWorldVertCount this frame. When sprites are present we
+// (re)build the throwaway sprite BLAS over them and add it to the TLAS as instance
+// 1 (mask 0x02); otherwise the TLAS is rebuilt with the world instance only. A
+// barrier orders each AS write before its reader (TLAS reads the BLAS extents; the
+// compute trace reads the TLAS). Returns the instance count built.
+uint32_t BuildSpriteTlas()
+{
+    const uint32_t sprTris = g.sprWorldVertCount / 3u;
+    const bool haveSpr = sprTris > 0u && g.spriteBlas != VK_NULL_HANDLE
+                       && g.tlasBuildScratch != VK_NULL_HANDLE;
+
+    auto asBarrier = [&]() {
+        VkMemoryBarrier mb = {};
+        mb.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        mb.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+        mb.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR
+                         | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+        vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                             VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0,
+                             1, &mb, 0, nullptr, 0, nullptr);
+    };
+
+    VkAccelerationStructureInstanceKHR* insts =
+        (VkAccelerationStructureInstanceKHR*)g.tlasInstMapped;
+
+    if (haveSpr)
+    {
+        // Sprite BLAS rebuild over this frame's billboards (non-opaque triangles).
+        VkAccelerationStructureGeometryKHR sgeom = {};
+        sgeom.sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+        sgeom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+        sgeom.flags        = 0;   // NON-opaque: palette-0 alpha-tested in the trace
+        sgeom.geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+        sgeom.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+        sgeom.geometry.triangles.vertexData.deviceAddress = BufferAddress(g.sprWorldBuf);
+        sgeom.geometry.triangles.vertexStride = sizeof(rb_vertex_t);
+        sgeom.geometry.triangles.maxVertex    = g.sprWorldVertCount - 1;
+        sgeom.geometry.triangles.indexType    = VK_INDEX_TYPE_NONE_KHR;
+
+        VkAccelerationStructureBuildGeometryInfoKHR sbgi = {};
+        sbgi.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+        sbgi.type          = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+        sbgi.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR;
+        sbgi.mode          = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+        sbgi.geometryCount = 1;
+        sbgi.pGeometries   = &sgeom;
+        sbgi.dstAccelerationStructure  = g.spriteBlas;
+        sbgi.scratchData.deviceAddress = AlignUp(BufferAddress(g.spriteBlasScratch), g.scratchAlign);
+
+        VkAccelerationStructureBuildRangeInfoKHR srange = {};
+        srange.primitiveCount = sprTris;
+        const VkAccelerationStructureBuildRangeInfoKHR* pSr = &srange;
+        g.pfnCmdBuildAS(g.cmd, 1, &sbgi, &pSr);
+        asBarrier();   // TLAS rebuild below reads the sprite BLAS extents
+
+        insts[1].transform.matrix[0][0] = 1.0f;
+        insts[1].transform.matrix[1][1] = 1.0f;
+        insts[1].transform.matrix[2][2] = 1.0f;
+        insts[1].instanceCustomIndex = 1u;        // megakernel: "this hit is a sprite"
+        insts[1].mask  = 0x02;                     // primary rays only (shadow/NEE cull to 0x01)
+        insts[1].flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+        insts[1].accelerationStructureReference = g.spriteBlasAddr;
+    }
+    else
+    {
+        insts[1].mask = 0u;                        // no sprites this frame
+    }
+
+    const uint32_t instCount = haveSpr ? 2u : 1u;
+
     VkAccelerationStructureGeometryKHR tgeom = {};
     tgeom.sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
     tgeom.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
@@ -1341,40 +1528,27 @@ void RefitAS()
     VkAccelerationStructureBuildGeometryInfoKHR tbgi = {};
     tbgi.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
     tbgi.type          = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-    tbgi.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR
-                       | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
-    tbgi.mode          = VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR;
-    tbgi.srcAccelerationStructure = g.tlas;
-    tbgi.dstAccelerationStructure = g.tlas;
+    tbgi.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+    tbgi.mode          = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
     tbgi.geometryCount = 1;
     tbgi.pGeometries   = &tgeom;
-    tbgi.scratchData.deviceAddress = AlignUp(BufferAddress(g.tlasUpdScratch), g.scratchAlign);
+    tbgi.dstAccelerationStructure  = g.tlas;
+    tbgi.scratchData.deviceAddress = AlignUp(BufferAddress(g.tlasBuildScratch), g.scratchAlign);
 
     VkAccelerationStructureBuildRangeInfoKHR trange = {};
-    trange.primitiveCount = 1;
-    const VkAccelerationStructureBuildRangeInfoKHR* pTrange = &trange;
+    trange.primitiveCount = instCount;
+    const VkAccelerationStructureBuildRangeInfoKHR* pTr = &trange;
+    g.pfnCmdBuildAS(g.cmd, 1, &tbgi, &pTr);
 
-    VkCommandBuffer cb = BeginOneTime();
-    g.pfnCmdBuildAS(cb, 1, &bgi, &pRange);
-    // The TLAS update reads the BLAS extents, so order it after the BLAS refit.
-    VkMemoryBarrier asBarrier = {};
-    asBarrier.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-    asBarrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
-    asBarrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR
-                            | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
-    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-                         VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0,
-                         1, &asBarrier, 0, nullptr, 0, nullptr);
-    g.pfnCmdBuildAS(cb, 1, &tbgi, &pTrange);
-    EndOneTime(cb);
-
-    if (!g.refitTimed)          // resolve the spec's step-5 cost gate, once
-    {
-        g.refitTimed = true;
-        printf("RB_Vulkan: moving-sector AS refit active (%u tris, in-place BLAS+TLAS update).\n",
-               triCount);
-        fflush(stdout);
-    }
+    // The compute trace reads the TLAS; order the build before it.
+    VkMemoryBarrier toTrace = {};
+    toTrace.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    toTrace.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    toTrace.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+                         1, &toTrace, 0, nullptr, 0, nullptr);
+    return instCount;
 }
 
 // ---------------------------------------------------------------------------
@@ -2845,6 +3019,13 @@ namespace emis {
     inline float luminance(float r, float gg, float b) {
         return kLumR * r + kLumG * gg + kLumB * b;
     }
+    // Brightness as VALUE (max channel), not luminance — luminance underweights
+    // saturated colours (pure red scores only 0.21), so a red ceiling light would
+    // miss the "bright"/emitter thresholds and never glow. Value is hue-agnostic, so
+    // a saturated red/blue/green light is rated by its intensity and emits in colour.
+    inline float value(float r, float gg, float b) {
+        return std::max(r, std::max(gg, b));
+    }
 }
 
 // Fill out[3*n] with each material's emitted radiance Le (linear RGB), computed
@@ -2884,7 +3065,7 @@ static void ComputeMaterialEmissive(const rb_atlas_t* a, std::vector<float>& out
             for (int col = 0; col < w; col++)
             {
                 const float* c = palLin[line[col]];
-                if (emis::luminance(c[0], c[1], c[2]) > emis::kBrightLum)
+                if (emis::value(c[0], c[1], c[2]) > emis::kBrightLum)
                 {
                     sr += c[0]; sg += c[1]; sb += c[2];
                 }
@@ -2896,7 +3077,7 @@ static void ComputeMaterialEmissive(const rb_atlas_t* a, std::vector<float>& out
             (float)(sg / total) * emis::kEmissiveScale,
             (float)(sb / total) * emis::kEmissiveScale,
         };
-        if (emis::luminance(le[0], le[1], le[2]) < emis::kEmitterMinLum * emis::kEmissiveScale)
+        if (emis::value(le[0], le[1], le[2]) < emis::kEmitterMinLum * emis::kEmissiveScale)
             continue;   // not a light source — leave Le at zero
         out[(size_t)id * 3 + 0] = le[0];
         out[(size_t)id * 3 + 1] = le[1];
@@ -3270,20 +3451,108 @@ extern "C" void RB_Vulkan_SetOverlay(const unsigned char* pixels, int w, int h)
     g.overlayH   = h;
 }
 
+// DOOM-0084: per-frame budget of emissive-sprite emitter triangles appended to the
+// static set (2 per emissive sprite quad). Excess (rare) is clamped and logged.
+static const uint32_t SPR_EMIT_MAX = 1024;
+
+// Merge the cached static emitters (g.staticEmit/g.staticWgt) with this frame's
+// dynamic emissive-sprite emitters, rebuild the power-importance CDF over the whole
+// set, and write the 14-float records into the persistently-mapped emitter buffer.
+// Sets g.emitCount. dynEmit/dynWgt may be null (static-only, e.g. the level-load
+// fill the GI bake reads). Host-coherent + the frame fence makes the write safe.
+void FinalizeEmitters(const std::vector<float>* dynEmit, const std::vector<float>* dynWgt)
+{
+    if (!g.emitMapped || !g.emitCap) { g.emitCount = 0; return; }
+    const uint32_t staticN = (uint32_t)g.staticWgt.size();
+    const uint32_t dynN    = dynWgt ? (uint32_t)dynWgt->size() : 0u;
+    uint32_t n = staticN + dynN;
+    if (n > g.emitCap) n = g.emitCap;            // drop excess sprites (caller logs)
+    if (n == 0) { g.emitCount = 0; return; }
+
+    std::vector<float> wgt(n);
+    for (uint32_t i = 0; i < staticN && i < n; i++) wgt[i] = g.staticWgt[i];
+    for (uint32_t i = 0; i < dynN && staticN + i < n; i++) wgt[staticN + i] = (*dynWgt)[i];
+
+    std::vector<float> cdf(n), pdf(n);
+    nee_build_cdf(wgt.data(), (int)n, cdf.data(), pdf.data());
+
+    float* out = (float*)g.emitMapped;
+    uint32_t w = 0;
+    for (uint32_t i = 0; i < staticN && w < n; i++, w++)
+        std::memcpy(&out[w * 14u], &g.staticEmit[(size_t)i * 14u], 14u * sizeof(float));
+    for (uint32_t i = 0; i < dynN && w < n; i++, w++)
+        std::memcpy(&out[w * 14u], &(*dynEmit)[(size_t)i * 14u], 14u * sizeof(float));
+    for (uint32_t i = 0; i < n; i++) { out[i * 14u + 12u] = cdf[i]; out[i * 14u + 13u] = pdf[i]; }
+    g.emitCount = n;
+}
+
+// DOOM-0084: each traced frame, scan this frame's world-sprite billboards (already
+// built into g.sprWorldBuf for the trace, DOOM-0100) for emissive ones — a sprite
+// whose material has a non-zero Le (the same area-weighted bright-texel mean that
+// flags emissive lamp/computer textures, so TLMP/TLP2 floor lamps, candelabra and
+// burning barrels qualify automatically, no hand-kept name list). Append each
+// emissive sprite's two quad triangles as NEE area emitters so it pools light +
+// casts world-occluded shadows onto its surroundings, then re-finalise the list.
+void BuildDynamicEmitters()
+{
+    if (!g.emitMapped || g.matEmissive.empty() || !g.sprWorldMapped)
+    {
+        FinalizeEmitters(nullptr, nullptr);      // keep the static set live
+        return;
+    }
+    const int      matCount = (int)(g.matEmissive.size() / 3);
+    const uint32_t base     = (uint32_t)(g.matNumWall + g.matNumFlat);
+    const rb_vertex_t* v    = (const rb_vertex_t*)g.sprWorldMapped;
+    const uint32_t tris     = g.sprWorldVertCount / 3u;
+
+    std::vector<float> emit, wgt;
+    for (uint32_t t = 0; t < tris; t++)
+    {
+        const rb_vertex_t* tri = &v[t * 3];
+        if (!(tri->flags & RB_MESH_EMISSIVE))
+            continue;                            // not a light object (pickup/monster/decoration)
+        const int id = (int)base + tri->texnum;
+        if (id < 0 || id >= matCount)
+            continue;
+        const float* le = &g.matEmissive[(size_t)id * 3];
+        if (le[0] + le[1] + le[2] <= 0.0f)
+            continue;                            // emissive Thing whose sprite texture isn't a light
+        for (int k = 0; k < 3; k++)
+        {
+            emit.push_back(tri[k].x); emit.push_back(tri[k].y); emit.push_back(tri[k].z);
+        }
+        emit.push_back(le[0]); emit.push_back(le[1]); emit.push_back(le[2]);
+        emit.push_back(0.0f); emit.push_back(0.0f);   // cdf, pdf — filled in finalise
+        const float ex1 = tri[1].x - tri[0].x, ey1 = tri[1].y - tri[0].y, ez1 = tri[1].z - tri[0].z;
+        const float ex2 = tri[2].x - tri[0].x, ey2 = tri[2].y - tri[0].y, ez2 = tri[2].z - tri[0].z;
+        const float cxv = ey1 * ez2 - ez1 * ey2;
+        const float cyv = ez1 * ex2 - ex1 * ez2;
+        const float czv = ex1 * ey2 - ey1 * ex2;
+        const float area = 0.5f * std::sqrt(cxv * cxv + cyv * cyv + czv * czv);
+        wgt.push_back(emis::luminance(le[0], le[1], le[2]) * area);
+    }
+    FinalizeEmitters(&emit, &wgt);
+}
+
 // Build this level's NEE emitter list (DOOM-0009 build step 3b): the subset of
 // static mesh triangles whose material is emissive (per-material Le from
-// ComputeMaterialEmissive). Each record is 12 tight floats — v0[3] v1[3] v2[3]
-// Le[3] — uploaded to a device-address buffer the megakernel samples for direct
-// lighting (step 3c). Rebuilt per level (the geometry changes); the Le table it
-// reads is WAD-global. Positions are the baked (static) heights — emitters on a
-// moving sector would lag, acceptable for now. Switch ON-faces are not yet
-// emitters: the list is static, while a pressed switch swaps texture at runtime
-// (DOOM-0066) — tracking that live swap is the DOOM-0082 follow-up.
+// ComputeMaterialEmissive). Each record is 14 tight floats — v0[3] v1[3] v2[3]
+// Le[3] cdf pdf — written into a host-visible buffer the megakernel samples for
+// direct lighting (step 3c). The static set is cached (g.staticEmit) so each traced
+// frame can append emissive world sprites (DOOM-0084) without re-scanning the mesh;
+// FinalizeEmitters merges them and rebuilds the CDF. Rebuilt per level (the geometry
+// changes); the Le table it reads is WAD-global. Positions are the baked (static)
+// heights — emitters on a moving sector would lag, acceptable for now. Switch
+// ON-faces are not yet emitters (DOOM-0066 live swap, a DOOM-0082 follow-up).
 void BuildEmitterList()
 {
     if (g.emitBuf) { vkDestroyBuffer(g.device, g.emitBuf, nullptr); g.emitBuf = VK_NULL_HANDLE; }
     if (g.emitMem) { vkFreeMemory(g.device, g.emitMem, nullptr);    g.emitMem = VK_NULL_HANDLE; }
-    g.emitCount = 0;
+    g.emitMapped = nullptr;
+    g.emitCount  = 0;
+    g.emitCap    = 0;
+    g.staticEmit.clear();
+    g.staticWgt.clear();
 
     if (!g.rtEnabled || !g.levelMesh || g.matEmissive.empty())
         return;
@@ -3297,11 +3566,10 @@ void BuildEmitterList()
     // 3c-2): the shader picks an emitter by binary-searching cdf, so a bright/large
     // light is sampled proportionally more often than a dim/small one, then divides
     // by pdf. Weight per emitter = luminance(Le) * triangle area (a radiant-power
-    // proxy). This cuts NEE variance enough to drop the shadow-ray count ~4x.
-    std::vector<float> emit;
-    std::vector<float> wgt;
-    emit.reserve(64 * 14);
-    wgt.reserve(64);
+    // proxy). The static walls/flats set is cached (cdf/pdf zeroed; FinalizeEmitters
+    // builds the CDF over static + per-frame sprites — DOOM-0084).
+    g.staticEmit.reserve(64 * 14);
+    g.staticWgt.reserve(64);
     for (int t = 0; t < numtris; t++)
     {
         const rb_vertex_t* tri = &v[t * 3];
@@ -3315,10 +3583,10 @@ void BuildEmitterList()
 
         for (int k = 0; k < 3; k++)
         {
-            emit.push_back(tri[k].x); emit.push_back(tri[k].y); emit.push_back(tri[k].z);
+            g.staticEmit.push_back(tri[k].x); g.staticEmit.push_back(tri[k].y); g.staticEmit.push_back(tri[k].z);
         }
-        emit.push_back(le[0]); emit.push_back(le[1]); emit.push_back(le[2]);
-        emit.push_back(0.0f); emit.push_back(0.0f);   // cdf, pdf — filled in below
+        g.staticEmit.push_back(le[0]); g.staticEmit.push_back(le[1]); g.staticEmit.push_back(le[2]);
+        g.staticEmit.push_back(0.0f); g.staticEmit.push_back(0.0f);   // cdf, pdf — finalised later
 
         // Triangle area = 1/2 |(v1-v0) x (v2-v0)|, for the power weight.
         const float ex1 = tri[1].x - tri[0].x, ey1 = tri[1].y - tri[0].y, ez1 = tri[1].z - tri[0].z;
@@ -3327,31 +3595,25 @@ void BuildEmitterList()
         const float cy = ez1 * ex2 - ex1 * ez2;
         const float cz = ex1 * ey2 - ey1 * ex2;
         const float area = 0.5f * std::sqrt(cx * cx + cy * cy + cz * cz);
-        wgt.push_back(emis::luminance(le[0], le[1], le[2]) * area);
+        g.staticWgt.push_back(emis::luminance(le[0], le[1], le[2]) * area);
     }
 
-    g.emitCount = (uint32_t)wgt.size();
+    // Host-visible, persistently-mapped emitter buffer sized for the static set plus
+    // a per-frame budget of emissive-sprite triangles (DOOM-0084). The megakernel
+    // reads it by device address; FinalizeEmitters refills it each traced frame.
+    g.emitCap = (uint32_t)g.staticWgt.size() + SPR_EMIT_MAX;
+    CreateRtBuffer((VkDeviceSize)g.emitCap * 14u * sizeof(float),
+                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                   &g.emitBuf, &g.emitMem);
+    Check(vkMapMemory(g.device, g.emitMem, 0, VK_WHOLE_SIZE, 0, &g.emitMapped), "vkMapMemory(emit)");
 
-    // Normalise the weights into each record's cdf (cumulative upper edge) + pdf
-    // (selection probability) via the shared nee_build_cdf (uniform fallback if
-    // every weight is zero), then scatter into the 14-float records. Same code the
-    // unbiasedness test exercises (tests/nee_sampling_test.cpp).
-    if (g.emitCount)
-    {
-        std::vector<float> cdf(g.emitCount), pdf(g.emitCount);
-        nee_build_cdf(wgt.data(), (int)g.emitCount, cdf.data(), pdf.data());
-        for (uint32_t i = 0; i < g.emitCount; i++)
-        {
-            emit[(size_t)i * 14 + 12] = cdf[i];
-            emit[(size_t)i * 14 + 13] = pdf[i];
-        }
-    }
+    // Static-only initial fill — this is what the level-load GI bake reads (no
+    // sprites at bake time); per-frame fills add the emissive sprites.
+    FinalizeEmitters(nullptr, nullptr);
 
-    if (g.emitCount)
-        UploadAddressBuffer(emit.data(), (VkDeviceSize)emit.size() * sizeof(float),
-                            &g.emitBuf, &g.emitMem);
-
-    printf("RB_Vulkan: %u emitter triangles for NEE (power-sampled).\n", g.emitCount);
+    printf("RB_Vulkan: %u static emitter triangles for NEE (power-sampled; +emissive sprites/frame).\n",
+           (uint32_t)g.staticWgt.size());
     fflush(stdout);
 }
 
@@ -3800,6 +4062,11 @@ void RecordRtTrace(uint32_t idx)
     // input; `dispW`,`dispH` are the display dimensions for the label + final blit.
     const uint32_t w = renderW, h = renderH;
 
+    // DOOM-0100: rebuild the per-frame sprite BLAS + TLAS (world + sprites) into
+    // g.cmd before the trace dispatch, so primary rays this frame hit the world
+    // sprites with real depth + lighting. No-op-ish when there are no sprites.
+    BuildSpriteTlas();
+
     // rtImage -> GENERAL for the compute write (prior contents are discarded).
     VkImageMemoryBarrier toGeneral = {};
     toGeneral.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -3826,13 +4093,15 @@ void RecordRtTrace(uint32_t idx)
         uint32_t misc[4];       // mode, width, height, numWall (flat-id offset)
         uint32_t misc2[4];      // emitterCount, probeCount, muzzle-flash(z), flashlight(w)
         uint32_t misc3[4];      // 4d verify only (seed/spp/estimator); 0 for display
+        uint32_t misc4[4];      // DOOM-0100: x = sprite material base (numWall+numFlat); rest reserved
         uint64_t vertsAddr;
         uint64_t emitAddr;      // step-3b emitter list (0 if none)
         uint64_t matEmisAddr;   // per-material Le table
         uint64_t probeAddr;     // step-4 GI probe cache (0 if none)
         uint64_t triSsAddr;     // per-triangle subsector id (0 if none)
+        uint64_t spriteVertsAddr; // DOOM-0100: per-frame billboard verts (0 if none)
     } pc = {};
-    static_assert(sizeof(RtPushConstants) == 152, "RT push-constant layout must match the shader");
+    static_assert(sizeof(RtPushConstants) == 176, "RT push-constant layout must match the shader");
     pc.camPos[0] = g.lastView.x; pc.camPos[1] = g.lastView.y; pc.camPos[2] = g.lastView.z;
     pc.camDir[0] = c;            pc.camDir[1] = s;            pc.camDir[2] = 0.0f;
     pc.camRight[0] = s;          pc.camRight[1] = -c;         pc.camRight[2] = 0.0f;
@@ -3854,11 +4123,13 @@ void RecordRtTrace(uint32_t idx)
     // position + aim are the eye + view dir already in camPos/camDir, so only the
     // enable bit is forwarded, into the spare misc2.w slot (read as misc2.w != 0u).
     pc.misc2[3] = rb_flashlight ? 1u : 0u;
+    pc.misc4[0]    = (uint32_t)(g.matNumWall + g.matNumFlat);   // sprite material base (DOOM-0100)
     pc.vertsAddr   = BufferAddress(g.vbuf);
     pc.emitAddr    = g.emitBuf    ? BufferAddress(g.emitBuf)    : 0;
     pc.matEmisAddr = g.matEmisBuf ? BufferAddress(g.matEmisBuf) : 0;
     pc.probeAddr   = g.probeBuf   ? BufferAddress(g.probeBuf)   : 0;
     pc.triSsAddr   = g.triSsBuf   ? BufferAddress(g.triSsBuf)   : 0;
+    pc.spriteVertsAddr = g.sprWorldBuf ? BufferAddress(g.sprWorldBuf) : 0;
 
     // SVGF denoised view (step 6): mode 6. The feed writes this frame's G-buffer
     // half into gpos[parity]/gnorm[parity]; the temporal pass reprojects last
@@ -4272,6 +4543,7 @@ extern "C" void RB_Vulkan_Present(void)
     // draw (which read this buffer) has finished. Host-coherent, so no flush.
     g.spriteVertCount = 0;
     g.skyVertCount    = 0;
+    g.sprWorldVertCount = 0;
     if (!rtActive && g.spriteMapped && g.haveCamera && g.atlasReady)
     {
         rb_vertex_t* buf = (rb_vertex_t*)g.spriteMapped;
@@ -4287,16 +4559,26 @@ extern "C" void RB_Vulkan_Present(void)
         g.skyVertCount    = (uint32_t)sky;
         g.spriteVertCount = (uint32_t)n;
     }
-    // DOOM-0094: in the path-traced view the world comes from the trace, but the
-    // player weapon is a screen-space psprite drawn on top. Build ONLY the weapon —
-    // no sky, no world sprites (monsters/items need TLAS depth occlusion, tracked
-    // under DOOM-0084). It lands at the front of the buffer; drawn after the trace.
+    // DOOM-0094/0100: in the path-traced view the world comes from the trace. The
+    // player weapon is still a screen-space psprite drawn on top (g.spriteMapped),
+    // but world sprites (monsters/items/barrels) are now traced as a per-frame TLAS
+    // instance (DOOM-0100): build their billboards into g.sprWorldBuf so BuildSpriteTlas
+    // can rebuild the sprite BLAS over them. No sky (the trace's miss shader is the sky).
     else if (rtActive && g.spriteMapped && g.haveCamera && g.atlasReady)
     {
         rb_vertex_t* buf = (rb_vertex_t*)g.spriteMapped;
         float aspect = g.extent.height ? (float)g.extent.width / (float)g.extent.height
                                        : 1.0f;
         g.spriteVertCount = (uint32_t)RB_BuildPSprites(buf, (int)g.spriteVertCap, aspect);
+
+        g.sprWorldVertCount = 0;
+        if (g.sprWorldMapped)
+            g.sprWorldVertCount = (uint32_t)RB_BuildSprites(&g.lastView,
+                (rb_vertex_t*)g.sprWorldMapped, (int)g.sprWorldVertCap);
+
+        // DOOM-0084: append this frame's emissive sprites (lamps/torches/barrels)
+        // to the NEE light list so they pool light onto their surroundings.
+        BuildDynamicEmitters();
     }
 
     // Re-height moving sectors (doors/lifts) in the static level buffer from the

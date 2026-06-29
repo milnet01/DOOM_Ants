@@ -88,11 +88,13 @@ layout(push_constant) uniform PC {
     uvec4 misc2;     // x = emitter count (3b); y = probe count (4c); z,w reserved
     uvec4 misc3;     // step-4d verify: x = sample-seed base, y = spp this dispatch,
                      // z = estimator (0 = power-NEE, 1 = brute-force), w reserved
+    uvec4 misc4;     // DOOM-0100: x = sprite material base (numWall+numFlat); rest reserved
     Verts    verts;    // level mesh vertex buffer (device address)
     Emitters emit;     // step-3b emitter list (device address; count in misc2.x)
     MatEmis  matEmis;  // per-material Le table (device address)
     ProbesRO probes;   // step-4 baked GI cache (device address; count in misc2.y)
     TriSs    triSs;     // per-triangle subsector id -> probe index (device address)
+    Verts    spriteVerts; // DOOM-0100: per-frame billboard verts (device address; 0 if none)
 } pc;
 
 // --- Camera-only shading constants (build step 3c/4b-iii) --------------------
@@ -168,6 +170,27 @@ vec3 toneEncode(vec3 L)
     return vec3(linearToSrgb(L.r), linearToSrgb(L.g), linearToSrgb(L.b));
 }
 
+// DOOM-0100: a sprite billboard candidate is "opaque" (a real hit) only where its
+// paletted texel is not index 0 (the transparent cut-out key). The sprite BLAS is
+// the only NON-opaque geometry, so every triangle candidate the trace yields is a
+// sprite: sample its texel at the candidate's barycentric UV and report whether the
+// ray should commit here. Mirrors the raster sprite alpha-test (mesh.frag) and the
+// world decode (same 18-float rb_vertex_t layout; UV at [6,7], material id at [8]).
+bool spriteCandidateOpaque(rayQueryEXT rq)
+{
+    int  prim = rayQueryGetIntersectionPrimitiveIndexEXT(rq, false);
+    vec2 bc   = rayQueryGetIntersectionBarycentricsEXT(rq, false);
+    uint i0   = uint(prim) * 3u * 18u;
+    int  texnum = floatBitsToInt(pc.spriteVerts.v[i0 + 8u]);
+    vec2 uv = (1.0 - bc.x - bc.y) * vec2(pc.spriteVerts.v[i0 +  6u], pc.spriteVerts.v[i0 +  7u])
+            +          bc.x        * vec2(pc.spriteVerts.v[i0 + 24u], pc.spriteVerts.v[i0 + 25u])
+            +          bc.y        * vec2(pc.spriteVerts.v[i0 + 42u], pc.spriteVerts.v[i0 + 43u]);
+    uint  id  = pc.misc4.x + uint(texnum);
+    vec2  sz  = vec2(textureSize(materialTex[nonuniformEXT(id)], 0));
+    float idx = texture(materialTex[nonuniformEXT(id)], uv / sz).r * 255.0;
+    return idx >= 0.5;            // palette index 0 == transparent
+}
+
 void main()
 {
     const uvec2 px = gl_GlobalInvocationID.xy;
@@ -191,20 +214,38 @@ void main()
     const uint mode = pc.misc.x;
 
     rayQueryEXT rq;
-    rayQueryInitializeEXT(rq, topAS, gl_RayFlagsOpaqueEXT, 0xFFu,
+    // DOOM-0100: drop gl_RayFlagsOpaqueEXT. The world BLAS is OPAQUE_BIT (auto-
+    // commits with no candidate), while the sprite BLAS is non-opaque and yields
+    // triangle candidates we alpha-test against the billboard's cut-out key.
+    rayQueryInitializeEXT(rq, topAS, gl_RayFlagsNoneEXT, 0xFFu,
                           origin, 0.01, dir, 1.0e9);
-    while (rayQueryProceedEXT(rq)) {}
+    while (rayQueryProceedEXT(rq)) {
+        if (rayQueryGetIntersectionTypeEXT(rq, false)
+            == gl_RayQueryCandidateIntersectionTriangleEXT)
+        {
+            // Only the sprite BLAS is non-opaque, so any triangle candidate is a
+            // sprite: commit it as the hit only where its texel is not cut out.
+            if (spriteCandidateOpaque(rq))
+                rayQueryConfirmIntersectionEXT(rq);
+        }
+    }
 
     vec3 colour;
     if (rayQueryGetIntersectionTypeEXT(rq, true)
         == gl_RayQueryCommittedIntersectionTriangleEXT)
     {
-        // Baked world normal from the hit triangle's first vertex (flat-shaded
-        // DOOM geometry shares one normal across the face). Non-indexed soup, so
-        // vertex 0 of triangle p is at p*3.
+        // DOOM-0100: a hit is either the static world (instance 0) or a billboard
+        // sprite (instance 1). Both share the rb_vertex_t layout (18 floats/vertex),
+        // so select the matching vertex buffer and decode identically below.
+        const bool isSprite = rayQueryGetIntersectionInstanceCustomIndexEXT(rq, true) == 1;
+        Verts vb = isSprite ? pc.spriteVerts : pc.verts;
+
+        // Baked normal from the hit triangle's first vertex (flat-shaded world faces
+        // share one normal across the face; sprite billboards bake a camera-facing
+        // normal). Non-indexed soup, so vertex 0 of triangle p is at p*3.
         const int  prim = rayQueryGetIntersectionPrimitiveIndexEXT(rq, true);
         const uint i0   = uint(prim) * 3u * 18u;   // 18 floats/vertex
-        vec3 n = vec3(pc.verts.v[i0 + 3u], pc.verts.v[i0 + 4u], pc.verts.v[i0 + 5u]);
+        vec3 n = vec3(vb.v[i0 + 3u], vb.v[i0 + 4u], vb.v[i0 + 5u]);
         n = normalize(n);
         if (dot(n, dir) > 0.0) n = -n;             // face the viewer
 
@@ -215,9 +256,9 @@ void main()
         // (no texture). The rasteriser interpolates UVs for free; the tracer must do
         // it explicitly from the hit barycentrics. 18 floats/vertex, UV at [6,7].
         vec2 bc = rayQueryGetIntersectionBarycentricsEXT(rq, true);
-        vec2 hitUV = (1.0 - bc.x - bc.y) * vec2(pc.verts.v[i0 +  6u], pc.verts.v[i0 +  7u])
-                   +          bc.x        * vec2(pc.verts.v[i0 + 24u], pc.verts.v[i0 + 25u])
-                   +          bc.y        * vec2(pc.verts.v[i0 + 42u], pc.verts.v[i0 + 43u]);
+        vec2 hitUV = (1.0 - bc.x - bc.y) * vec2(vb.v[i0 +  6u], vb.v[i0 +  7u])
+                   +          bc.x        * vec2(vb.v[i0 + 24u], vb.v[i0 + 25u])
+                   +          bc.y        * vec2(vb.v[i0 + 42u], vb.v[i0 + 43u]);
 
         if (mode == 2u)
         {
@@ -241,16 +282,15 @@ void main()
             // raster path (mesh.frag) does, then modulate by sector lightlevel.
             // Per-vertex data of the hit triangle's vertex 0 (flat-shaded faces
             // share it across all three vertices, like the normal above).
-            int   texnum = floatBitsToInt(pc.verts.v[i0 + 8u]);
-            int   flags  = floatBitsToInt(pc.verts.v[i0 + 9u]);
-            float light  = pc.verts.v[i0 + 10u];
+            int   texnum = floatBitsToInt(vb.v[i0 + 8u]);
+            int   flags  = floatBitsToInt(vb.v[i0 + 9u]);
+            float light  = vb.v[i0 + 10u];
 
-            // Unified bindless id: flats sit after the walls (offset numWall);
-            // walls (including two-sided masked mid-walls) index by texnum direct.
-            // The ray is opaque (gl_RayFlagsOpaqueEXT), so a masked mid-wall reads
-            // solid here — its index-0 cut-out gaps become see-through only once
-            // any-hit alpha testing lands (a later refinement, with NEE in 3c).
-            int  id    = ((flags & FLAG_FLAT) != 0) ? (int(pc.misc.w) + texnum) : texnum;
+            // Unified bindless id: sprites sit after the flats (offset misc4.x =
+            // numWall+numFlat); flats sit after the walls (offset numWall); walls
+            // (including two-sided masked mid-walls) index by texnum direct.
+            int  id    = isSprite ? (int(pc.misc4.x) + texnum)
+                       : (((flags & FLAG_FLAT) != 0) ? (int(pc.misc.w) + texnum) : texnum);
             vec2 sz    = vec2(textureSize(materialTex[nonuniformEXT(id)], 0));
             float idx  = texture(materialTex[nonuniformEXT(id)], hitUV / sz).r * 255.0;
             vec3 albedo = texture(paletteTex, vec2((idx + 0.5) / 256.0, 0.5)).rgb;
@@ -264,27 +304,36 @@ void main()
             // direct, hard shadows) via the shared shadeSurface() — the SAME math
             // the GI bake runs at each probe-ray hit. A flat sky/sector ambient
             // stands in for the step-4 GI bake so lamp-less rooms aren't pure black.
-            int   texnum = floatBitsToInt(pc.verts.v[i0 + 8u]);
-            int   flags  = floatBitsToInt(pc.verts.v[i0 + 9u]);
-            uint  id     = ((flags & FLAG_FLAT) != 0) ? (pc.misc.w + uint(texnum))
-                                                      : uint(texnum);
+            int   texnum = floatBitsToInt(vb.v[i0 + 8u]);
+            int   flags  = floatBitsToInt(vb.v[i0 + 9u]);
+            uint  id     = isSprite ? (pc.misc4.x + uint(texnum))
+                         : (((flags & FLAG_FLAT) != 0) ? (pc.misc.w + uint(texnum))
+                                                       : uint(texnum));
             vec3  albedo = decodeAlbedo(id, hitUV);
 
             float tHit = rayQueryGetIntersectionTEXT(rq, true);
             vec3  hitP = origin + dir * tHit;
 
+            // DOOM-0084: world surfaces self-emit as before; a sprite self-emits only
+            // if it's a fullbright light Thing (lamp/torch/barrel), so ammo pickups and
+            // monsters don't glow. The per-texel value mask in shadeSurface then keeps
+            // the glow on the bright pixels (lamp top, not the dark stand).
+            bool addEmis = isSprite ? ((flags & FLAG_EMISSIVE) != 0) : true;
             uint seed = px.x + px.y * w + 1u;
             vec3 L = shadeSurface(hitP, n, albedo, id, pc.misc2.x,
-                                  pc.emit, pc.matEmis, NEE_SAMPLES, true, seed);
+                                  pc.emit, pc.matEmis, NEE_SAMPLES, addEmis, seed);
 
             // Indirect GI (build step 4c) + DOOM-0043 sector-light ambient floor.
             // The probe holds the bounced solution; the floor is a deliberate,
             // designer-driven ambient seeded by the sector lightlevel (§4.2). max()
             // keeps GI wherever it already exceeds the floor, so lit rooms are
             // untouched (no double-count) and only dim/unprobed surfaces get lifted.
-            float secLight = pc.verts.v[i0 + 10u];                  // sector lightlevel 0..1
+            // Sprites carry their own sector lightlevel but have no GI probe (the
+            // per-triangle subsector map covers world tris only), so subId is forced
+            // out of range -> gi=0 and the sector-light ambient stands in for them.
+            float secLight = vb.v[i0 + 10u];                       // sector lightlevel 0..1
             vec3  ambient  = vec3(max(secLight * AMBIENT_SECTOR_SCALE, AMBIENT_FLOOR));
-            uint  subId    = pc.triSs.s[uint(prim)];
+            uint  subId    = isSprite ? 0xFFFFFFFFu : pc.triSs.s[uint(prim)];
             vec3  gi       = (subId < pc.misc2.y) ? giIrradiance(pc.probes, subId, n)
                                                   : vec3(0.0);
             L += albedo * max(gi, ambient);
@@ -308,7 +357,7 @@ void main()
                 {
                     rayQueryEXT sq;
                     rayQueryInitializeEXT(sq, topAS,
-                        gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0xFFu,
+                        gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0x01u,
                         hitP + n * 1e-3, 1e-3, mwi, mdist - 2e-3);
                     while (rayQueryProceedEXT(sq)) {}
                     if (rayQueryGetIntersectionTypeEXT(sq, true)
@@ -337,7 +386,7 @@ void main()
                 {
                     rayQueryEXT sq;
                     rayQueryInitializeEXT(sq, topAS,
-                        gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0xFFu,
+                        gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0x01u,
                         hitP + n * 1e-3, 1e-3, fwi, fdist - 2e-3);
                     while (rayQueryProceedEXT(sq)) {}
                     if (rayQueryGetIntersectionTypeEXT(sq, true)
@@ -359,10 +408,11 @@ void main()
             // dispatches with advancing seed bases to converge each estimator, then
             // compares power-NEE vs brute-force for the rel-MSE bar. Writes ONLY the
             // accum image (rgb = radiance sum, a = sample count); no display output.
-            int   texnum = floatBitsToInt(pc.verts.v[i0 + 8u]);
-            int   flags  = floatBitsToInt(pc.verts.v[i0 + 9u]);
-            uint  id     = ((flags & FLAG_FLAT) != 0) ? (pc.misc.w + uint(texnum))
-                                                      : uint(texnum);
+            int   texnum = floatBitsToInt(vb.v[i0 + 8u]);
+            int   flags  = floatBitsToInt(vb.v[i0 + 9u]);
+            uint  id     = isSprite ? (pc.misc4.x + uint(texnum))
+                         : (((flags & FLAG_FLAT) != 0) ? (pc.misc.w + uint(texnum))
+                                                       : uint(texnum));
             vec3  albedo = decodeAlbedo(id, hitUV);
             float tHit   = rayQueryGetIntersectionTEXT(rq, true);
             vec3  hitP   = origin + dir * tHit;
@@ -400,10 +450,11 @@ void main()
             // albedo is factored out (stored separately so the spatial filter never
             // blurs texture detail) and self-emission is excluded (re-added crisp in
             // the composite). Writes the SVGF G-buffer instead of a display pixel.
-            int   texnum = floatBitsToInt(pc.verts.v[i0 + 8u]);
-            int   flags  = floatBitsToInt(pc.verts.v[i0 + 9u]);
-            uint  id     = ((flags & FLAG_FLAT) != 0) ? (pc.misc.w + uint(texnum))
-                                                      : uint(texnum);
+            int   texnum = floatBitsToInt(vb.v[i0 + 8u]);
+            int   flags  = floatBitsToInt(vb.v[i0 + 9u]);
+            uint  id     = isSprite ? (pc.misc4.x + uint(texnum))
+                         : (((flags & FLAG_FLAT) != 0) ? (pc.misc.w + uint(texnum))
+                                                       : uint(texnum));
             vec3  albedo = decodeAlbedo(id, hitUV);
             float tHit   = rayQueryGetIntersectionTEXT(rq, true);
             vec3  hitP   = origin + dir * tHit;
@@ -416,10 +467,14 @@ void main()
             // block casts it. The other three pixels are reconstructed in the temporal
             // pass from these grid samples, guided by this full-res G-buffer. gillum.a
             // flags a real sample (1) vs a pixel to reconstruct (0).
+            // DOOM-0084: galbedo.a carries the self-emission ENABLE (1 = world surface
+            // or a fullbright light sprite; 0 = a non-light sprite — pickup/monster),
+            // so the composite re-adds emission only where it belongs.
+            bool addEmis = isSprite ? ((flags & FLAG_EMISSIVE) != 0) : true;
             uint par = pc.misc3.w;
             imageStore(gpos[par],  ivec2(px), vec4(hitP, float(id)));
             imageStore(gnorm[par], ivec2(px), vec4(n, 0.0));
-            imageStore(galbedo,    ivec2(px), vec4(albedo, 1.0));
+            imageStore(galbedo,    ivec2(px), vec4(albedo, addEmis ? 1.0 : 0.0));
             if (((px.x | px.y) & 1u) != 0u) {       // not an even/even grid sample
                 imageStore(gillum, ivec2(px), vec4(0.0));
                 return;
@@ -437,9 +492,9 @@ void main()
             // GI bounce + DOOM-0043 sector-light ambient floor (demodulated: the
             // composite re-applies albedo). Same max() floor as mode 4 so a bright-
             // marked but unlit room reads, while dark sectors stay dark.
-            float secLight = pc.verts.v[i0 + 10u];                  // sector lightlevel 0..1
+            float secLight = vb.v[i0 + 10u];                       // sector lightlevel 0..1
             vec3  ambient  = vec3(max(secLight * AMBIENT_SECTOR_SCALE, AMBIENT_FLOOR));
-            uint  subId    = pc.triSs.s[uint(prim)];
+            uint  subId    = isSprite ? 0xFFFFFFFFu : pc.triSs.s[uint(prim)];  // sprites: no GI probe
             vec3  gi       = (subId < pc.misc2.y) ? giIrradiance(pc.probes, subId, n)
                                                   : vec3(0.0);
             illum += max(gi, ambient);
@@ -458,7 +513,7 @@ void main()
                 {
                     rayQueryEXT sq;
                     rayQueryInitializeEXT(sq, topAS,
-                        gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0xFFu,
+                        gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0x01u,
                         hitP + n * 1e-3, 1e-3, mwi, mdist - 2e-3);
                     while (rayQueryProceedEXT(sq)) {}
                     if (rayQueryGetIntersectionTypeEXT(sq, true)
@@ -484,7 +539,7 @@ void main()
                 {
                     rayQueryEXT sq;
                     rayQueryInitializeEXT(sq, topAS,
-                        gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0xFFu,
+                        gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0x01u,
                         hitP + n * 1e-3, 1e-3, fwi, fdist - 2e-3);
                     while (rayQueryProceedEXT(sq)) {}
                     if (rayQueryGetIntersectionTypeEXT(sq, true)

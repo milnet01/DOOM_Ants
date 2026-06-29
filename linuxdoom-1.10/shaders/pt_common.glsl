@@ -16,8 +16,9 @@
 // The mesh/emitter/Le buffers are passed in by device-address handle (below) so
 // each shader keeps its own push-constant layout.
 
-const float PI        = 3.14159265358979323846;
-const int   FLAG_FLAT = 0x1;     // matches RB_MESH_FLAT in r_mesh.h (flats vs walls)
+const float PI            = 3.14159265358979323846;
+const int   FLAG_FLAT     = 0x1;     // matches RB_MESH_FLAT in r_mesh.h (flats vs walls)
+const int   FLAG_EMISSIVE = 0x20;    // matches RB_MESH_EMISSIVE — a fullbright light Thing
 
 // INV-7 backfill: provisional inline scene-light constants (user-approved
 // 2026-06-27) pending the Vestige Formula Workbench export.
@@ -27,6 +28,21 @@ const vec3  SKY_COLOR    = vec3(0.20, 0.26, 0.40);   // bounded sky-light on a m
                                                      // (linear radiance; the camera
                                                      // tonemaps it, the bake folds it
                                                      // into the probe as fill)
+// DOOM-0084: self-emission is LOCALISED to a surface's bright texels — a lamp glows
+// from its lit top, a computer from its screen, not the whole sprite/face evenly.
+// The per-material Le (a tile-averaged value) is scaled by how bright THIS hit texel
+// is, so dark texels (a lamp's metal stand) stop glowing while bright ones keep the
+// tuned Le. Mirrors the same scale in svgf_composite.comp so the raw + denoised views
+// agree. INV-7 backfill thresholds (linear luminance), pending a Workbench export.
+const float EMIS_MASK_LO = 0.30;   // texel below this VALUE (max channel): no self-glow
+const float EMIS_MASK_HI = 0.60;   // at/above this: the full material Le
+// Brightness as VALUE (max channel), not luminance — so a saturated red/blue light
+// glows by its intensity instead of being suppressed by luma weighting (matches
+// ComputeMaterialEmissive's emis::value on the C++ side).
+float emissiveMask(vec3 albedoLinear) {
+    return smoothstep(EMIS_MASK_LO, EMIS_MASK_HI,
+                      max(albedoLinear.r, max(albedoLinear.g, albedoLinear.b)));
+}
 
 // The level mesh vertex buffer (rb_vertex_t: 18 floats/vertex — pos[0..2]
 // normal[3..5] u/v[6..7] texnum[8] flags[9] sectorLight[10]) and the step-3b
@@ -101,10 +117,12 @@ vec3 sampleEmitter(uint k, vec3 hitP, vec3 n, float pdfSel, Emitters emit, inout
     if (cosL <= 0.0) return vec3(0.0);
 
     // Occlusion: opaque any-hit, terminate on first hit. tMax just short of the
-    // light so the emitter face itself doesn't self-occlude.
+    // light so the emitter face itself doesn't self-occlude. Cull mask 0x01 = the
+    // world BLAS only (DOOM-0100): sprite billboards (mask 0x02) are alpha-cut-outs
+    // and do not occlude light in this increment, so shadow rays skip them entirely.
     rayQueryEXT sq;
     rayQueryInitializeEXT(sq, topAS,
-        gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0xFFu,
+        gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0x01u,
         hitP + n * 1e-3, 1e-3, wi, dist - 2e-3);
     while (rayQueryProceedEXT(sq)) {}
     if (rayQueryGetIntersectionTypeEXT(sq, true)
@@ -128,10 +146,13 @@ vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
                   Emitters emit, MatEmis matEmis, uint nSamples, bool addEmission,
                   inout uint seed)
 {
-    // Self-emission (linear) from the per-material Le table.
+    // Self-emission (linear) from the per-material Le table, LOCALISED to this hit
+    // texel's brightness (DOOM-0084) so a lamp glows from its lit top, not its dark
+    // stand. The GI bake passes addEmission=false (the emitter term is the frame's
+    // NEE job), so this only shapes the directly-visible glow.
     vec3 L = addEmission ? vec3(matEmis.m[id * 3u + 0u],
                                 matEmis.m[id * 3u + 1u],
-                                matEmis.m[id * 3u + 2u])
+                                matEmis.m[id * 3u + 2u]) * emissiveMask(albedo)
                          : vec3(0.0);
 
     if (emitCount > 0u && nSamples > 0u)

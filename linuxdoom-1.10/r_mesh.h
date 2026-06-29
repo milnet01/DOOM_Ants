@@ -89,6 +89,11 @@ typedef struct
 #define RB_MESH_SKY     0x10  // full-screen sky backdrop: NDC like a psprite, but
                               // the fragment shader samples the sky texture by
                               // view yaw + screen position (cylindrical), fullbright.
+#define RB_MESH_EMISSIVE 0x20 // DOOM-0084: this sprite Thing is a light source (its
+                              // current frame is FF_FULLBRIGHT — lamps/torches/barrels,
+                              // not ammo pickups). Only these self-glow + cast NEE light
+                              // in the path tracer; the per-texel value mask then
+                              // localises the glow to the sprite's bright pixels.
 
 // Transparent-key palette index for the 2D HUD/menu compositor (DOOM-0008). In
 // the 3D back-ends the engine still draws every 2D element (status bar, menu,
