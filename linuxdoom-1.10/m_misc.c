@@ -205,6 +205,7 @@ extern int	rb_upscaler;	// DOOM-0009 6-d temporal upscaler (0 Off, 1 TAAU)
 extern int	rb_renderscale;	// DOOM-0009 6-d render scale percent (100/75/67/50)
 extern int	rb_exposure;	// DOOM-0096 Ultra/denoiser brightness slider (0..15)
 extern int	rb_flashlight;	// DOOM-0044 player flashlight on/off (persisted)
+extern int	rb_rtdebug;	// DOOM-0116 Ultra path-tracer view (6 = denoised; persisted)
 
 extern int	detailLevel;
 
@@ -252,6 +253,7 @@ default_t	defaults[] =
     {"render_scale",&rb_renderscale, 100},
     {"rt_brightness",&rb_exposure, 10},
     {"flashlight",&rb_flashlight, 0},
+    {"rt_view",&rb_rtdebug, 6},
 
 
 #ifdef NORMALUNIX

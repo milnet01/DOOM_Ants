@@ -301,6 +301,16 @@ void RB_Init(void)
     if (!RB_ModeAvailable(rendermode))
         rendermode = RB_CLASSIC;
 
+    // Sanitise the persisted Ultra path-tracer view (DOOM-0116): the `~` cycle
+    // only ever yields {0,1,2,3,4,6} (mode 5 is the headless verify path), so a
+    // hand-edited config that picks 5 or an out-of-range value snaps to 6 (the
+    // denoised SVGF view, also the default for a fresh config).
+    {
+        extern int rb_rtdebug;          // r_vulkan.cpp
+        if (rb_rtdebug < 0 || rb_rtdebug > 6 || rb_rtdebug == 5)
+            rb_rtdebug = 6;
+    }
+
     active = &backends[rendermode];
     if (active->Init)
         active->Init();

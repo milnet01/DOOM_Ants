@@ -539,7 +539,9 @@ extern "C" { int rb_wireframe = 0; }
 // (build step 3a), 4 = NEE direct lighting with ray-traced shadows (build step
 // 3c). Only acts when the GPU has RT and a TLAS exists (in-level); harmless
 // otherwise. C linkage for i_video.c.
-extern "C" { int rb_rtdebug = 0; }
+// DOOM-0116: persisted via m_misc.c ("rt_view"); defaults to 6 (denoised SVGF) so
+// Ultra shows the path-traced view on first run. Loaded value clamped in RB_Init.
+extern "C" { int rb_rtdebug = 6; }
 
 // Player flashlight / headlamp (DOOM-0044). Toggled by the player (keyboard F or
 // gamepad L1, edge-detected in i_video.c) and persisted by m_misc.c. A spotlight

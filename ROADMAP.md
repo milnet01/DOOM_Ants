@@ -991,3 +991,21 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** The graphics debug layer is logging a few rule violations every frame. They aren't causing visible problems today, but they're real correctness bugs that can break on other drivers — clean them up.
   Kind: fix.
   Source: in-session-2026-06-29.
+
+- 🚧 [DOOM-0116] **Persist the Ultra path-tracer view across sessions and default it to the denoised (SVGF) view.**
+  The `~` path-tracer view selector (rb_rtdebug) defaulted to 0 (raster "Original") and was not persisted, so Ultra booted into the raster-looking view every launch until the user pressed `~` to reach mode 6 (denoised SVGF). Now persisted via m_misc.c defaults[] as "rt_view" (default 6) and clamped on load in RB_Init to a valid cycle value ({0,1,2,3,4,6}; 5 is the headless verify path). So a fresh Ultra user sees the denoised path-traced view immediately, and any `~` choice survives a restart. rendermode (Classic/Solid/Ultra) already persisted. Implemented 2026-06-29; awaiting play-test (held local with DOOM-0048 — needs a WAD to confirm Ultra shows the denoised view on boot). Implemented in-session.
+  **Layman:** Ultra now starts in the proper ray-traced (denoised) look and remembers your view choice between play sessions.
+  Kind: feature.
+  Source: user-request-2026-06-29.
+
+- 📋 [DOOM-0117] **Controls settings page that lists every keyboard key and controller-button mapping.**
+  Add an Options -> Controls page that displays the full current binding set: keyboard keys (key_right/left/up/down, key_fire, key_use, key_strafe, key_speed, strafe left/right, etc. from m_misc.c defaults[]) and the controller/gamepad mappings (joyb_*, plus the gamepad actions like the L1 flashlight from DOOM-0044). Read-only display; rebinding is the follow-up DOOM-0118. Prerequisite for it (the page is where rebinding happens).
+  **Layman:** A single menu page that shows you, at a glance, what every key and gamepad button does.
+  Kind: feature.
+  Source: user-request-2026-06-29.
+
+- 📋 [DOOM-0118] **Let the player rebind keyboard keys and controller buttons from the Controls page, persisted to config.**
+  Build on the Controls settings page (DOOM-0117): select a binding, capture the next key/button press, write it back to the live key_*/joyb_* globals and persist via m_misc.c defaults[] (M_SaveDefaults). Handle conflict detection (a key already bound elsewhere) and a reset-to-defaults option. Covers both keyboard and gamepad. The defaults[] table already persists every key_*/mouseb_*/joyb_* value, so this is mostly the capture UI + write-back + save.
+  **Layman:** Change any key or gamepad button to whatever you prefer, and it sticks between sessions.
+  Kind: feature.
+  Source: user-request-2026-06-29.
