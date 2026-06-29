@@ -1083,3 +1083,21 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** A graphics-checker warning: when the world's ray-tracing structure is quickly refreshed (instead of rebuilt) as moving things come into view, it sometimes no longer fits or its settings don't line up. Harmless on this AMD card today, but worth fixing so the refresh path is correct and the log stays clean.
   Kind: fix.
   Source: in-session-2026-06-29 DOOM-0120 play-test log.
+
+- 📋 [DOOM-0129] **Specialise the path-tracer megakernel per view-mode (Vulkan spec-constant) so glslc strips the unused debug modes, cutting VGPR/occupancy on RDNA2.**
+  mode is a runtime push-constant (pathtrace.comp:219, `const uint mode = pc.misc.x;`) branched on by `if (mode == 2u)` etc., so glslc cannot dead-strip modes 1/2/3 (white-furnace/textured) and 5 (verify: directNEEVerify/directAllLights inlined from pt_common.glsl). Only mode 4 (noisy NEE) and mode 6 (denoised, the default) ship in play. Make `mode` a `layout(constant_id=0) const uint`, build one .spv variant per shipped mode (Makefile already does per-file glslc — add a -D/spec-constant rule), bind the matching pipeline. Provably image-identical (same executed path); the only change is which dead code is present. RDNA2 occupancy is a VGPR step function, so even modest live-state reduction can bump the occupancy tier. Targets the #1 cost (megakernel ~15 ms @50%). Companion to DOOM-0090 (occupancy/VGPR pass); LOSSLESS, low risk, medium effort.
+  **Layman:** The renderer is one giant shader that carries five unused diagnostic view-modes at once; compiling a trimmed copy per real view-mode frees GPU registers and runs faster with a pixel-identical picture.
+  Kind: perf.
+  Source: in-session-2026-06-29 megakernel lossless-perf analysis.
+
+- 📋 [DOOM-0130] **Extract shared muzzle-flash + flashlight shadow-ray helpers (byte-identical between megakernel mode 4 and mode 6) to shrink shader code/live-state.**
+  The muzzle-flash and flashlight shadow-ray blocks are duplicated between mode 4 (pathtrace.comp ~357-414) and mode 6 (~526-575), differing only by the `albedo *` factor (mode 6 is demodulated). Fold into shared inline helpers (as DOOM-0120 did for occluded()/emitterContribUnshadowed()). Identical output; reduces code size + live state, compounding the DOOM-0129 occupancy win. LOSSLESS, low risk, low effort.
+  **Layman:** Two big chunks of lighting code are copy-pasted between the renderer's two real view-modes; merging them into one helper shrinks the shader and helps it run faster, with no visual change.
+  Kind: refactor.
+  Source: in-session-2026-06-29 megakernel lossless-perf analysis.
+
+- 📋 [DOOM-0131] **Fold RefitAS into the frame command buffer to remove the mid-frame one-time submit that bubbles the GPU on door/lift frames.**
+  RefitAS uses its own BeginOneTime/EndOneTime submit (r_vulkan.cpp:1565-1567), a separate command-buffer submission outside the frame's g.cmd, on moving-geometry frames (g.blasDirty). That synchronous mid-frame submit can bubble the GPU while geometry animates. Record the BLAS UPDATE -> AS barrier -> (TLAS) into the frame's g.cmd instead (as BuildSpriteTlas already does for per-frame builds), removing the extra submit with identical output. Intermittent (animation-only) latency/hitch fix. Relates to DOOM-0091 (AS best-practice) and DOOM-0128 (refit sizing). LOSSLESS, low-moderate risk.
+  **Layman:** When a door or lift moves, the renderer fires a separate GPU job mid-frame that can briefly stall it; folding that into the main frame removes the hitch (identical image).
+  Kind: perf.
+  Source: in-session-2026-06-29 megakernel lossless-perf analysis.
