@@ -852,11 +852,12 @@ parked ideas (💭 considered) until we commit to and design each one.
   Source: research-2026-06-28.
   Progress (2026-06-29): BLAS compaction shipped. The static world BLAS is now built with ALLOW_COMPACTION_BIT, its compacted size queried (VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR), and copy-compacted into a right-sized AS at level load (r_vulkan.cpp BuildAccelerationStructures). ALLOW_UPDATE is retained so moving-sector refits still run on the compacted AS (verified safe per NVIDIA RTXMU / nvpro: compaction + update are not mutually exclusive). The per-frame sprite BLAS stays non-compacted (a query round-trip would stall the frame). Build prints "BLAS (N tris, X->Y KiB compacted)" so the win is observable at runtime. DEFERRED: "rebuild the TLAS on the compute queue" — the engine creates a single graphics+present queue (queueCount=1, r_vulkan.cpp PickPhysicalAndDevice), so moving the per-frame TLAS rebuild off the graphics queue needs a second queue + per-frame cross-queue ownership transfers/semaphores (medium/high risk); the research body itself flags that a budgeted per-frame rebuild on the graphics queue can be more frame-time-stable. Re-evaluate the compute-queue half only if profiling (DOOM-0090) shows the on-graphics-queue TLAS build is a bottleneck. Item kept in-progress for that remaining half.
 
-- 📋 [DOOM-0092] **Research: ReSTIR DI/GI cost on RDNA2 and the static SH-L1 bake vs a dynamic DDGI probe field.**
+- ✅ [DOOM-0092] **Research: ReSTIR DI/GI cost on RDNA2 and the static SH-L1 bake vs a dynamic DDGI probe field.**
   Coverage GAP from the 2026-06-28 research (§4): no external claims on this axis survived verification within budget, so it needs its own pass. Open questions: (1) the measured register-pressure / occupancy + frame-time cost of adding ReSTIR DI (then GI) to the inline-ray-query megakernel ON the RX 6600 specifically -- the spec's own §4.4 already flags ReSTIR as RDNA2's worst register case, so this must be MEASURED, not assumed (it interacts directly with the occupancy item above); (2) whether per-subsector SH-L1 probes go stale when doors/lifts change local visibility, and whether a dynamic DDGI/irradiance field is worth its cost; (3) an external correctness check on the NEE + power-importance + MIS variance. Decide before any Stage-3 / DOOM-0012 ReSTIR work.
   **Layman:** Investigate whether smarter light sampling and dynamic light-probes are worth it on this card before committing to them.
   Kind: research.
   Source: research-2026-06-28.
+  Resolved (2026-06-29): research complete — docs/research/DOOM-0092-restir-cost-benefit.md (4 cold-eyes loops to clean). DECISION: defer full ReSTIR; build the cheap ladder first — REJECT cull (DOOM-0119) -> RIS without reservoirs (DOOM-0120). Full ReSTIR is reconsidered only if RIS still misses 60 fps AND the RGP capture (DOOM-0090, guide added at docs/research/DOOM-0090-rgp-capture-guide.md) shows occupancy headroom by the doc's numeric VGPR/wave gate. The premise flipped: this session MEASURED ~104-118 emitters in a light-heavy room (not 'a few lights'), but the cheap end of the resampling family captures the win at a fraction of ReSTIR's RDNA2 register cost. ReSTIR GI stays deferred (indirect is baked). Q2: keep the static sector-keyed bake + event-driven lazy re-bake on door/lift moves (DOOM-0121); NO continuous DDGI field (leaks + per-frame cost). Q3: 'MIS' is N/A (shipped integrator is pure-Lambert NEE-only) and INV-6 proves only the STATIC selection unbiased — the omni path is unverified (verify runs omniStart==emitCount). Spawned: DOOM-0119..0125 (REJECT, RIS, lazy re-bake, INV-6 omni gap, omni-cull bias quant, spec-MIS doc-fix, perf-doc citation sweep).
 
 - 📋 [DOOM-0093] **Harden the path tracer against untrusted WAD data and GPU memory-safety / device-loss risks.**
   Coverage GAP from the 2026-06-28 research (§5): no claims survived verification within budget, but the axis matters because WADs are UNTRUSTED input that drives emitter-list extraction and acceleration-structure builds. Needs a dedicated pass: (1) GPU memory-safety / out-of-bounds with buffer_reference + bindless descriptor indexing (bounds checks, robustBufferAccess, descriptor-indexing partial-bound hazards); (2) a systematic NaN/inf hardening pass across the tracer (we clamp in places; make it principled -- and mine the Vulkan robustness guide + NVIDIA driver-level RT validation); (3) defensive AS-build limits against degenerate / huge geometry from a crafted WAD causing DoS / device-loss (TDR). Tie to the validation-clean invariant (INV-8).
@@ -1016,3 +1017,45 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Change any key or gamepad button to whatever you prefer, and it sticks between sessions.
   Kind: feature.
   Source: user-request-2026-06-29.
+
+- 📋 [DOOM-0119] **REJECT-lump light culling for NEE (cheap-ladder step 1).**
+  Per docs/research/DOOM-0092-restir-cost-benefit.md §1.4. Use the WAD REJECT sector->sector visibility lump to skip, per shading point, every emissive sector invisible from the current sector -- an exact, free, register-free candidate-set cull. Cheapest first lever against the ~100-emitter worst case; precedes RIS. Fall back to a shadow ray where REJECT is conservative.
+  **Layman:** Use DOOM's built-in room-visibility table to skip lights that can't possibly reach a surface, so the path tracer stops wasting work on them.
+  Kind: implement.
+  Source: research-2026-06-29 DOOM-0092 §1.4.
+
+- 📋 [DOOM-0120] **RIS light resampling without reservoirs (cheap-ladder step 2).**
+  Per docs/research/DOOM-0092-restir-cost-benefit.md §1.4. Resampled Importance Sampling: pick M omni candidates, resample to 1 by contribution weight, cast ONE shadow ray -- NO cross-frame/neighbour reservoir (the part that hurts RDNA2 registers). Replaces the current O(N) omni loop with O(1) shadow rays + O(M) cheap weight evals. Build after REJECT cull. Full ReSTIR is only reconsidered if RIS still misses 60 fps AND the DOOM-0090 RGP capture shows occupancy headroom.
+  **Layman:** Pick a few candidate lights, keep the best one, and cast a single shadow ray instead of looping every light -- much cheaper on this AMD card than full ReSTIR.
+  Kind: implement.
+  Source: research-2026-06-29 DOOM-0092 §1.4.
+
+- 📋 [DOOM-0121] **Event-driven lazy per-sector irradiance re-bake on door/lift moves.**
+  Per docs/research/DOOM-0092-restir-cost-benefit.md §2. Keep the static sector-keyed irradiance bake; on a door/lift visibility change, mark the <=2 affected sectors dirty and re-fill only their cache entries (trigger = the existing sector-move thinker). Avoids a continuously-traced dynamic DDGI field (costs every frame + thin-wall leaks). Storage granularity (per-vertex vs SH-L1 probe) stays the DOOM-0009 spec Sec.9 open item.
+  **Layman:** When a door or lift opens, only the couple of rooms it affects get their baked lighting refreshed -- cheaper than constantly recomputing the whole level's bounce light.
+  Kind: implement.
+  Source: research-2026-06-29 DOOM-0092 Q2.
+
+- 📋 [DOOM-0122] **INV-6 verify path runs with omniStart==emitCount, leaving the omni NEE loop unchecked.**
+  Per docs/research/DOOM-0092-restir-cost-benefit.md §3. pathtrace.comp:427/429 call directNEEVerify/directAllLights with omniStart==emitCount (both args pc.misc2.x), so the post-DOOM-0084 omni direct-sampling branch in sampleEmitter is never exercised on the verify path. INV-6 currently proves only the STATIC power-importance selection unbiased. Fix: pass the real omniStart so the omni loop is checked against the brute-force reference; refresh the now-stale 'Mirrors shadeSurface's emitter pick' comment at pt_common.glsl:254-256.
+  **Layman:** The self-test that proves the lighting math is unbiased doesn't actually cover the newer glowing-sprite lighting path -- a gap worth closing.
+  Kind: review-fix.
+  Source: research-2026-06-29 DOOM-0092 Q3.
+
+- 📋 [DOOM-0123] **Quantify the omni-cull (OMNI_CULL_VALUE) one-sided bias against the brute-force reference.**
+  Per docs/research/DOOM-0092-restir-cost-benefit.md §3 follow-up #2. The OMNI_CULL_VALUE=0.0025 cull drops a sprite's shadow ray when its UNSHADOWED contribution is below threshold -- a deliberate one-signed bias (shadowing only shrinks the term), bounded by threshold x culled-count. Measure it once vs directAllLights to record the bound instead of assuming it negligible.
+  **Layman:** Measure exactly how much the shadow-ray-skipping shortcut darkens the image, so we have a recorded number rather than an assumption.
+  Kind: test.
+  Source: research-2026-06-29 DOOM-0092 Q3.
+
+- 📋 [DOOM-0124] **Correct DOOM-0009 spec's stale 'NEE + MIS' wording to NEE-only.**
+  Per docs/research/DOOM-0092-restir-cost-benefit.md §3. docs/specs/DOOM-0009-path-tracer.md §4.4 (~line 219) says 'NEE + multiple importance sampling (power heuristic)' and §7 build-step 3 (~line 313) says 'NEE + MIS + RR', but the shipped integrator is pure-Lambert NEE-only with a cosine-hemisphere bounce -- no BSDF-light sampling, so MIS is moot. Correct to 'NEE-only (MIS N/A for pure-Lambert)', unless a future specular path is planned (then mark MIS as future, not present).
+  **Layman:** The design doc still says the renderer uses a lighting technique (MIS) it doesn't actually use -- update it to match the real code.
+  Kind: doc-fix.
+  Source: research-2026-06-29 DOOM-0092 Q3.
+
+- 📋 [DOOM-0125] **Sweep dangling sub-section citations into DOOM-0009-performance.md (flat-list doc).**
+  Per the DOOM-0092 cold-eyes loops. docs/research/DOOM-0009-performance.md uses flat numbered lists under ## 2 / ## 3 (no Sec.2.x/3.x sub-anchors). The DOOM-0009 spec (and the original DOOM-0092 draft) cite broken anchors like 'perf Sec.2.5'/'Sec.2.7'. Sweep all docs citing the perf doc and rewrite to 'Sec.2 item N' / 'Sec.3 idea N'.
+  **Layman:** Several docs point at section numbers that don't exist in the performance research file -- fix the broken internal references.
+  Kind: doc-fix.
+  Source: research-2026-06-29 DOOM-0092 cold-eyes.
