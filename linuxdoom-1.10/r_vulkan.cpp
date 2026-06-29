@@ -251,6 +251,18 @@ struct VulkanState
     std::vector<VkSemaphore> renderFinished;
     VkFence     inFlight       = VK_NULL_HANDLE;
 
+    // DOOM-0090: opt-in per-pass GPU timer (toggled by rb_profile / the `\` key).
+    // A timestamp query pool is sampled at the path tracer's pass boundaries in
+    // RecordRtTrace and read back at the top of the next frame. Single-frame-in-
+    // flight means that frame is already complete by then, so the read adds no
+    // stall. profMs accumulates the four segment costs; printed once a second.
+    VkQueryPool gpuTimerPool    = VK_NULL_HANDLE;
+    float       timestampPeriod = 0.0f;   // ns per tick (0 = timestamps unusable)
+    bool        gpuTimersInUse  = false;  // last frame wrote timestamps
+    double      profMs[4]       = { 0, 0, 0, 0 };  // megakernel/denoise/label/blit
+    int         profFrames      = 0;
+    int         profLastReport  = 0;      // I_GetTimeMS of the last printf
+
     VkDebugUtilsMessengerEXT debug = VK_NULL_HANDLE;
 
     rb_mesh_t* levelMesh = nullptr;   // current level's CPU geometry (DOOM-0008)
@@ -558,6 +570,12 @@ extern "C" { int rb_flashlight = 0; }
 // resolution as a percent of the display (100/75/67/50); only takes effect with an
 // upscaler active and on the mode-6 denoised path. C linkage for the C menu/config.
 extern "C" { int rb_upscaler = 0; int rb_renderscale = 100; int rb_exposure = 10; }
+
+// DOOM-0090: per-pass GPU profiler toggle (the `\` key; persisted as rt_profile).
+// When on, the path tracer's per-stage GPU cost is timestamped and printed to the
+// terminal once a second. Off by default; RT-only (the raster path never reads it).
+extern "C" { int rb_profile = 0; }
+extern "C" int I_GetTimeMS(void);   // i_system.c; for the rt_profile once-a-second report
 
 // INV-6 headless self-test latch (DOOM-0009 build step 4d). Set from the
 // `-rtverify` command-line parm; the first ready present runs RB_RtVerify (the
@@ -987,6 +1005,28 @@ void CreateCommandsAndSync()
     fci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     fci.flags = VK_FENCE_CREATE_SIGNALED_BIT;
     Check(vkCreateFence(g.device, &fci, nullptr, &g.inFlight), "vkCreateFence");
+
+    // DOOM-0090: timestamp query pool for the opt-in per-pass GPU profiler. Needs a
+    // non-zero timestampPeriod (the device can convert ticks to ns) and a queue that
+    // can write timestamps (timestampValidBits != 0); otherwise leave it null and the
+    // profiler stays a no-op. 8 slots (5 used) to keep the reset/read simple.
+    VkPhysicalDeviceProperties pdp = {};
+    vkGetPhysicalDeviceProperties(g.phys, &pdp);
+    g.timestampPeriod = pdp.limits.timestampPeriod;
+    uint32_t nqf = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(g.phys, &nqf, nullptr);
+    std::vector<VkQueueFamilyProperties> qfp(nqf);
+    vkGetPhysicalDeviceQueueFamilyProperties(g.phys, &nqf, qfp.data());
+    if (g.timestampPeriod > 0.0f && g.queueFamily < nqf &&
+        qfp[g.queueFamily].timestampValidBits != 0)
+    {
+        VkQueryPoolCreateInfo qpci = {};
+        qpci.sType      = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+        qpci.queryType  = VK_QUERY_TYPE_TIMESTAMP;
+        qpci.queryCount = 8;
+        Check(vkCreateQueryPool(g.device, &qpci, nullptr, &g.gpuTimerPool),
+              "vkCreateQueryPool(timers)");
+    }
 }
 
 // glibc only exposes M_PI under -std=gnu*, not strict -std=c++17 (this TU);
@@ -4158,10 +4198,21 @@ void RecordRtTrace(uint32_t idx)
     // input; `dispW`,`dispH` are the display dimensions for the label + final blit.
     const uint32_t w = renderW, h = renderH;
 
+    // DOOM-0090: per-pass GPU timer. Reset the pool + stamp the frame's GPU start,
+    // then stamp each pass boundary below. Read back next frame (single-frame-in-
+    // flight, so it's complete). Segments: sprite-AS / megakernel / denoise+TAAU / blit.
+    extern int rb_profile;
+    const bool prof = rb_profile && g.gpuTimerPool;
+    if (prof) {
+        vkCmdResetQueryPool(g.cmd, g.gpuTimerPool, 0, 8);
+        vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, g.gpuTimerPool, 0);
+    }
+
     // DOOM-0100: rebuild the per-frame sprite BLAS + TLAS (world + sprites) into
     // g.cmd before the trace dispatch, so primary rays this frame hit the world
     // sprites with real depth + lighting. No-op-ish when there are no sprites.
     BuildSpriteTlas();
+    if (prof) vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 1);
 
     // rtImage -> GENERAL for the compute write (prior contents are discarded).
     VkImageMemoryBarrier toGeneral = {};
@@ -4257,6 +4308,7 @@ void RecordRtTrace(uint32_t idx)
     vkCmdPushConstants(g.cmd, g.rtPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT,
                        0, sizeof(pc), &pc);
     vkCmdDispatch(g.cmd, (w + 7) / 8, (h + 7) / 8, 1);
+    if (prof) vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 2);
 
     // Denoiser chain (step 6a/6b): feed (the dispatch above, mode 6) -> temporal
     // accumulation -> N edge-aware a-trous iterations -> composite, all reading/
@@ -4377,6 +4429,8 @@ void RecordRtTrace(uint32_t idx)
         }
     }
 
+    if (prof) vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 3);
+
     // The image the present path blits: the upscaled TAAU output (display-res) when
     // TAAU ran, else rtImage (the megakernel / composite output, display-res on every
     // non-TAAU path). The label + blit below operate at display resolution on it.
@@ -4457,6 +4511,11 @@ void RecordRtTrace(uint32_t idx)
     toPresent.dstAccessMask = 0;
     vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
                          VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &toPresent);
+
+    if (prof) {
+        vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 4);
+        g.gpuTimersInUse = true;   // results ready to read at the top of next frame
+    }
 
     // Snapshot this frame's camera basis as "previous" for next frame's temporal
     // reprojection, and advance the history parity — but only on denoised frames,
@@ -4599,6 +4658,39 @@ extern "C" void RB_Vulkan_Present(void)
     }
 
     vkWaitForFences(g.device, 1, &g.inFlight, VK_TRUE, UINT64_MAX);
+
+    // DOOM-0090: read back the previous frame's per-pass GPU timestamps (the fence
+    // wait above guarantees that frame is complete, so this never stalls), convert
+    // ticks -> ms, and print the running averages once a second. RT-only / opt-in.
+    if (g.gpuTimersInUse && g.gpuTimerPool)
+    {
+        uint64_t ts[5] = {};
+        if (vkGetQueryPoolResults(g.device, g.gpuTimerPool, 0, 5, sizeof(ts), ts,
+                sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS)
+        {
+            const double k = (double)g.timestampPeriod / 1.0e6;   // ticks -> ms
+            g.profMs[0] += (double)(ts[1] - ts[0]) * k;   // sprite BLAS/TLAS rebuild
+            g.profMs[1] += (double)(ts[2] - ts[1]) * k;   // megakernel trace
+            g.profMs[2] += (double)(ts[3] - ts[2]) * k;   // denoiser chain + TAAU
+            g.profMs[3] += (double)(ts[4] - ts[3]) * k;   // label + blit + present
+            g.profFrames++;
+            int now = I_GetTimeMS();
+            if (g.profLastReport == 0) g.profLastReport = now;
+            if (now - g.profLastReport >= 1000 && g.profFrames > 0)
+            {
+                const double f = 1.0 / (double)g.profFrames;
+                printf("[rt_profile] %3d fps | sprites %.2f | megakernel %.2f | "
+                       "denoise+taau %.2f | blit %.2f ms (avg/frame, RT GPU only)\n",
+                       g.profFrames, g.profMs[0] * f, g.profMs[1] * f,
+                       g.profMs[2] * f, g.profMs[3] * f);
+                fflush(stdout);
+                g.profMs[0] = g.profMs[1] = g.profMs[2] = g.profMs[3] = 0.0;
+                g.profFrames = 0;
+                g.profLastReport = now;
+            }
+        }
+        g.gpuTimersInUse = false;
+    }
 
     // INV-6 self-test (DOOM-0009 build step 4d). The first in-level present with the
     // full RT scene ready runs the rel-MSE + white-furnace proof against the current
@@ -4968,6 +5060,7 @@ extern "C" void RB_Vulkan_Shutdown(void)
     if (g.rtOverlayPass)  vkDestroyRenderPass(g.device, g.rtOverlayPass, nullptr);
     if (g.renderPass)     vkDestroyRenderPass(g.device, g.renderPass, nullptr);
     if (g.inFlight)       vkDestroyFence(g.device, g.inFlight, nullptr);
+    if (g.gpuTimerPool)   vkDestroyQueryPool(g.device, g.gpuTimerPool, nullptr);   // DOOM-0090
     for (VkSemaphore s : g.renderFinished)
         vkDestroySemaphore(g.device, s, nullptr);
     g.renderFinished.clear();

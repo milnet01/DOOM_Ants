@@ -206,6 +206,7 @@ extern int	rb_renderscale;	// DOOM-0009 6-d render scale percent (100/75/67/50)
 extern int	rb_exposure;	// DOOM-0096 Ultra/denoiser brightness slider (0..15)
 extern int	rb_flashlight;	// DOOM-0044 player flashlight on/off (persisted)
 extern int	rb_rtdebug;	// DOOM-0116 Ultra path-tracer view (6 = denoised; persisted)
+extern int	rb_profile;	// DOOM-0090 per-pass GPU profiler toggle (0 Off; `\` key)
 
 extern int	detailLevel;
 
@@ -254,6 +255,7 @@ default_t	defaults[] =
     {"rt_brightness",&rb_exposure, 10},
     {"flashlight",&rb_flashlight, 0},
     {"rt_view",&rb_rtdebug, 6},
+    {"rt_profile",&rb_profile, 0},
 
 
 #ifdef NORMALUNIX

@@ -342,6 +342,17 @@ static void I_GetEvent(SDL_Event* sdlevent)
 	    }
 	    break;
 	}
+	// Backslash (`\`) toggles the per-pass GPU profiler (DOOM-0090): prints the
+	// path tracer's per-stage GPU cost (sprites/megakernel/denoise/blit) to the
+	// terminal once a second. RT-only; no-op under Classic/Solid.
+	if (sdlevent->key.keysym.sym == SDLK_BACKSLASH && !sdlevent->key.repeat)
+	{
+	    extern int rb_profile;          // r_vulkan.cpp
+	    rb_profile = !rb_profile;
+	    printf("RT per-pass GPU profiler %s\n", rb_profile ? "ON" : "OFF");
+	    fflush(stdout);
+	    break;
+	}
 	event.type = ev_keydown;
 	event.data1 = xlatekey(&sdlevent->key.keysym);
 	D_PostEvent(&event);
