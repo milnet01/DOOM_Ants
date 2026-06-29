@@ -24,6 +24,15 @@ const int   FLAG_EMISSIVE = 0x20;    // matches RB_MESH_EMISSIVE — a fullbrigh
 // 2026-06-27) pending the Vestige Formula Workbench export.
 const float FIREFLY_MAX = 4.0;                       // clamp one NEE sample's
                                                      // reflected radiance (post-BRDF)
+// DOOM-0090: omni sprite lights are sampled one shadow ray EACH per pixel (no
+// importance pick), so a room full of glowing props makes the megakernel scale
+// O(sprites)/pixel — the dominant cost (profiled: 16->90+ ms facing a lit room).
+// Skip a sprite's shadow ray when its UNSHADOWED contribution is below this VALUE
+// (max channel, matching the project's brightness convention) — a sprite that far
+// or that dim adds no visible light even if fully lit, so the costly BVH traversal
+// is wasted. ~0.06% of the firefly ceiling: far below one 8-bit step after tonemap.
+// Omni-path only; the static-light and INV-6 verify estimators pass 0 (no cull).
+const float OMNI_CULL_VALUE = 0.0025;
 const vec3  SKY_COLOR    = vec3(0.20, 0.26, 0.40);   // bounded sky-light on a miss
                                                      // (linear radiance; the camera
                                                      // tonemaps it, the bake folds it
@@ -91,7 +100,8 @@ vec3 decodeAlbedo(uint id, vec2 uv)
 // for a floor point right below it (it would light nothing). Sprite lights are
 // glowing objects that emit in all directions, so they skip the emitter-orientation
 // cosine (cosL = 1). Static wall/flat emitters (index < omniStart) stay oriented.
-vec3 sampleEmitter(uint k, vec3 hitP, vec3 n, float pdfSel, uint omniStart, Emitters emit, inout uint seed)
+vec3 sampleEmitter(uint k, vec3 hitP, vec3 n, float pdfSel, uint omniStart, Emitters emit,
+                   float minContribValue, inout uint seed)
 {
     uint b = k * 14u;
     vec3 v0 = vec3(emit.e[b+0u],  emit.e[b+1u],  emit.e[b+2u]);
@@ -124,6 +134,18 @@ vec3 sampleEmitter(uint k, vec3 hitP, vec3 n, float pdfSel, uint omniStart, Emit
     float cosL = (k >= omniStart) ? 1.0 : abs(dot(nL, wi));
     if (cosL <= 0.0) return vec3(0.0);
 
+    float G   = cosSurf * cosL / dist2;
+    float inv = area / pdfSel;                  // 1 / p(Q), p = pdfSel * (1/area)
+    vec3  contrib = Le * G * inv;               // unshadowed estimate (pre-BRDF)
+
+    // DOOM-0090 contribution cull (opt-in: minContribValue > 0, omni path only).
+    // The shadow ray is the expensive part; skip it when even a FULLY-lit result
+    // would be invisible. Cheap to evaluate (no traversal), and unbiased for the
+    // static/verify paths which pass 0 here.
+    if (minContribValue > 0.0 &&
+        max(contrib.r, max(contrib.g, contrib.b)) < minContribValue)
+        return vec3(0.0);
+
     // Occlusion: opaque any-hit, terminate on first hit. tMax just short of the
     // light so the emitter face itself doesn't self-occlude. Cull mask 0x01 = the
     // world BLAS only (DOOM-0100): sprite billboards (mask 0x02) are alpha-cut-outs
@@ -137,9 +159,7 @@ vec3 sampleEmitter(uint k, vec3 hitP, vec3 n, float pdfSel, uint omniStart, Emit
         != gl_RayQueryCommittedIntersectionNoneEXT)
         return vec3(0.0);                      // shadowed
 
-    float G   = cosSurf * cosL / dist2;
-    float inv = area / pdfSel;                  // 1 / p(Q), p = pdfSel * (1/area)
-    return Le * G * inv;
+    return contrib;
 }
 
 // Reflected radiance leaving a hit surface toward the viewer/probe: optionally the
@@ -190,7 +210,7 @@ vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
                     else                             hi = mid;
                 }
                 float pdf = emit.e[lo * 14u + 13u];
-                vec3  c   = sampleEmitter(lo, hitP, n, pdf, omniStart, emit, seed);
+                vec3  c   = sampleEmitter(lo, hitP, n, pdf, omniStart, emit, 0.0, seed);
                 vec3  rad = albedo * (1.0 / PI) * c; // reflected radiance (Lambert)
                 direct += min(rad, vec3(FIREFLY_MAX)); // firefly clamp (luminance)
             }
@@ -203,7 +223,7 @@ vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
         // sprites are ever in view, so the extra shadow ray per sprite is cheap.
         for (uint k = omniStart; k < emitCount; k++)
         {
-            vec3 rad = albedo * (1.0 / PI) * sampleEmitter(k, hitP, n, 1.0, omniStart, emit, seed);
+            vec3 rad = albedo * (1.0 / PI) * sampleEmitter(k, hitP, n, 1.0, omniStart, emit, OMNI_CULL_VALUE, seed);
             L += min(rad, vec3(FIREFLY_MAX));
         }
     }
@@ -247,7 +267,7 @@ vec3 directNEEVerify(vec3 hitP, vec3 n, vec3 albedo, uint emitCount,
         else                             hi = mid;
     }
     float pdf = emit.e[lo * 14u + 13u];
-    return albedo * (1.0 / PI) * sampleEmitter(lo, hitP, n, pdf, omniStart, emit, seed);
+    return albedo * (1.0 / PI) * sampleEmitter(lo, hitP, n, pdf, omniStart, emit, 0.0, seed);
 }
 
 // Brute-force reference: evaluate EVERY emitter each sample (no importance
@@ -262,7 +282,7 @@ vec3 directAllLights(vec3 hitP, vec3 n, vec3 albedo, uint emitCount,
 {
     vec3 sum = vec3(0.0);
     for (uint k = 0u; k < emitCount; k++)
-        sum += sampleEmitter(k, hitP, n, 1.0, omniStart, emit, seed);   // pdfSel = 1 -> full light
+        sum += sampleEmitter(k, hitP, n, 1.0, omniStart, emit, 0.0, seed);   // pdfSel = 1 -> full light
     return albedo * (1.0 / PI) * sum;
 }
 

@@ -4679,10 +4679,13 @@ extern "C" void RB_Vulkan_Present(void)
             if (now - g.profLastReport >= 1000 && g.profFrames > 0)
             {
                 const double f = 1.0 / (double)g.profFrames;
+                int omni = (int)g.emitCount - (int)g.staticWgt.size();
                 printf("[rt_profile] %3d fps | sprites %.2f | megakernel %.2f | "
-                       "denoise+taau %.2f | blit %.2f ms (avg/frame, RT GPU only)\n",
+                       "denoise+taau %.2f | blit %.2f ms | omni %d/%d lights "
+                       "(avg/frame, RT GPU only)\n",
                        g.profFrames, g.profMs[0] * f, g.profMs[1] * f,
-                       g.profMs[2] * f, g.profMs[3] * f);
+                       g.profMs[2] * f, g.profMs[3] * f,
+                       omni < 0 ? 0 : omni, (int)g.emitCount);
                 fflush(stdout);
                 g.profMs[0] = g.profMs[1] = g.profMs[2] = g.profMs[3] = 0.0;
                 g.profFrames = 0;
