@@ -19,11 +19,32 @@ SDL_LIBS:=$(shell pkg-config --libs sdl2 SDL2_mixer)
 # the bare loader. A machine without Vulkan still builds and runs Classic.
 VULKAN_LIBS:=$(shell pkg-config --libs vulkan 2>/dev/null || echo -lvulkan)
 
-CFLAGS=-g -Wall -std=gnu11 -DNORMALUNIX -DLINUX $(SDL_CFLAGS) # -DUSEASM
+# -MMD -MP: emit a per-object .d header-dependency file (and phony header targets),
+# so editing a shared header (r_defs.h, r_mesh.h, ...) rebuilds exactly the objects
+# that include it — no more full `make clean` after a header edit, and no silently
+# stale object with a mismatched struct layout. The .d files are -include'd below.
+DEPFLAGS=-MMD -MP
+CFLAGS=-g -Wall -std=gnu11 -DNORMALUNIX -DLINUX $(DEPFLAGS) $(SDL_CFLAGS) # -DUSEASM
 # C++17 for the Vulkan back-end (ADR 0001). Same defines + SDL include path.
-CXXFLAGS=-g -Wall -std=c++17 -DNORMALUNIX -DLINUX $(SDL_CFLAGS)
-LDFLAGS=
+CXXFLAGS=-g -Wall -std=c++17 -DNORMALUNIX -DLINUX $(DEPFLAGS) $(SDL_CFLAGS)
+# Link with mold when present (a faster drop-in linker) — native build only; the
+# Windows cross-target overrides LDFLAGS, so the mingw link is untouched. Detected
+# once; empty (= the default ld) when mold isn't installed.
+MOLD:=$(shell command -v mold 2>/dev/null)
+LDFLAGS=$(if $(MOLD),-fuse-ld=mold,)
 LIBS=$(SDL_LIBS) $(VULKAN_LIBS) -lm
+
+# Parallel compile, but capped by FREE RAM so the build can never exhaust memory and
+# hang the machine. A heavy C++ TU here peaks ~300 MB; we budget a generous 1 GB/job,
+# so jobs = min(cores, MemAvailable_GB), floor 1. On a roomy box this is all cores; on
+# a tight-RAM box it auto-throttles down instead of OOM-thrashing. Override explicitly
+# with `make -jN` (or `-j1` for serial). mold threads the LINK step separately (brief,
+# low RAM) — this cap is only about the compile processes, the real memory risk.
+# Safe to parallelise now that the .d files above complete the dependency graph.
+JOBS:=$(shell n=$$(nproc 2>/dev/null || echo 4); \
+	m=$$(awk '/MemAvailable/{print int($$2/1048576)}' /proc/meminfo 2>/dev/null); \
+	[ -z "$$m" ] && m=$$n; j=$$m; [ "$$j" -gt "$$n" ] && j=$$n; [ "$$j" -lt 1 ] && j=1; echo $$j)
+MAKEFLAGS+=-j$(JOBS)
 
 # Output binary name and any platform-extra link libs. The Windows cross-build
 # (target `windows`, DOOM-0006) overrides these via a recursive make.
@@ -153,6 +174,12 @@ nee-test:	$(O)/nee_sampling_test
 # Auto-generated header dependencies for the tests (-MMD), so editing a shared
 # header under test rebuilds exactly the affected tests — no manual `make clean`.
 -include $(TEST_BINS:=.d)
+
+# Auto-generated header dependencies for the engine objects (-MMD above), so editing
+# a shared header rebuilds exactly the affected objects — the same incremental, no-
+# `make clean` workflow the tests already have. Leading '-' ignores the .d files that
+# don't exist yet on a fresh build.
+-include $(OBJS:.o=.d) $(O)/i_main.d
 
 # Link with the C++ driver (g++) so libstdc++ is pulled in for the Vulkan
 # back-end. Linking the C objects this way is harmless.
