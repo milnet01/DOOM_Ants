@@ -839,6 +839,27 @@ static void ensure_sprite_heights(void)
     }
 }
 
+// DOOM-0112: glowing collectibles that should emit coloured light even though their
+// frames aren't FF_FULLBRIGHT — the blue/green bonus potions, the powerup spheres,
+// the coloured keys/skulls, and the health pickups. Plain ammo is deliberately
+// absent (it stays a dark billboard). Their emission colour comes from the sprite's
+// own bright texels (the per-material Le), so a blue potion glows blue.
+static boolean sprite_glows(spritenum_t s)
+{
+    switch (s)
+    {
+        case SPR_BON1: case SPR_BON2:                         // health / armor bonus
+        case SPR_SOUL: case SPR_MEGA: case SPR_PINV:          // soul / mega / invuln
+        case SPR_PINS: case SPR_PSTR:                         // blur sphere / berserk
+        case SPR_BKEY: case SPR_RKEY: case SPR_YKEY:          // keycards
+        case SPR_BSKU: case SPR_RSKU: case SPR_YSKU:          // skull keys
+        case SPR_STIM: case SPR_MEDI:                         // stimpack / medikit
+            return true;
+        default:
+            return false;
+    }
+}
+
 int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts)
 {
     // Camera right vector in world space, matching Mat4LookAt with up = +z:
@@ -911,9 +932,12 @@ int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts)
             // DOOM-0084: a fullbright frame marks an actual light object (lamp,
             // torch, candle, burning barrel, projectile) — NOT ammo/pickups. Only
             // these self-glow + cast NEE light in the path tracer; everything else
-            // is just a depth-occluding billboard (DOOM-0100).
-            sflags = RB_MESH_SPRITE
-                   | ((thing->frame & FF_FULLBRIGHT) ? RB_MESH_EMISSIVE : 0);
+            // is just a depth-occluding billboard (DOOM-0100). DOOM-0112 also lights
+            // the glowing collectibles (bonus potions, spheres, keys, health) which
+            // aren't FF_FULLBRIGHT but should still emit their colour.
+            sflags = RB_MESH_SPRITE;
+            if ((thing->frame & FF_FULLBRIGHT) || sprite_glows(thing->sprite))
+                sflags |= RB_MESH_EMISSIVE;
 
             // UVs inset half a texel so nearest sampling stays inside the rect.
             u0 = 0.5f;  u1 = wpx - 0.5f;
