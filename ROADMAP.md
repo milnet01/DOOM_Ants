@@ -1097,8 +1097,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: refactor.
   Source: in-session-2026-06-29 megakernel lossless-perf analysis.
 
-- 📋 [DOOM-0131] **Fold RefitAS into the frame command buffer to remove the mid-frame one-time submit that bubbles the GPU on door/lift frames.**
+- ✅ [DOOM-0131] **Fold RefitAS into the frame command buffer to remove the mid-frame one-time submit that bubbles the GPU on door/lift frames.**
   RefitAS uses its own BeginOneTime/EndOneTime submit (r_vulkan.cpp:1565-1567), a separate command-buffer submission outside the frame's g.cmd, on moving-geometry frames (g.blasDirty). That synchronous mid-frame submit can bubble the GPU while geometry animates. Record the BLAS UPDATE -> AS barrier -> (TLAS) into the frame's g.cmd instead (as BuildSpriteTlas already does for per-frame builds), removing the extra submit with identical output. Intermittent (animation-only) latency/hitch fix. Relates to DOOM-0091 (AS best-practice) and DOOM-0128 (refit sizing). LOSSLESS, low-moderate risk.
   **Layman:** When a door or lift moves, the renderer fires a separate GPU job mid-frame that can briefly stall it; folding that into the main frame removes the hitch (identical image).
   Kind: perf.
   Source: in-session-2026-06-29 megakernel lossless-perf analysis.
+  Resolved (2026-06-29): RefitAS() split into RecordRefitAS(VkCommandBuffer) — the BLAS in-place update is now recorded into the frame command buffer (g.cmd) inside RecordRtTrace, ahead of the TLAS rebuild that reads it, ordered by an AS write->read barrier. The old standalone BeginOneTime/EndOneTime submit (which waited the queue idle, bubbling the GPU on every door/lift frame) is removed. Memory model unchanged (host-coherent vbuf written before submit, fence-guarded); only the refit timing changes. blasDirty still latches under raster so off-screen moves are caught on the first traced frame. Builds clean.

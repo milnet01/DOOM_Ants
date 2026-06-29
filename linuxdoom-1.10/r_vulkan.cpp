@@ -1532,7 +1532,13 @@ void BuildAccelerationStructures()
 // sprite instance, DOOM-0100), so it picks up the refit BLAS extents there — no TLAS
 // refit needed here. Recorded as a one-time submit before the frame's command buffer;
 // the caller guarantees the previous frame finished.
-void RefitAS()
+// DOOM-0131: record the moving-sector world-BLAS in-place update into a caller-
+// supplied command buffer. Previously this owned its own BeginOneTime/EndOneTime
+// submit (EndOneTime waits the queue idle), which stalled the GPU mid-frame on
+// every door/lift frame. The caller now folds it into the frame command buffer
+// (g.cmd) ahead of the TLAS rebuild — see RecordRtTrace — so it pipelines with
+// the rest of the frame instead of bubbling.
+void RecordRefitAS(VkCommandBuffer cb)
 {
     if (g.blas == VK_NULL_HANDLE || g.tlas == VK_NULL_HANDLE || !g.vertexCount)
         return;
@@ -1567,9 +1573,7 @@ void RefitAS()
     range.primitiveCount = triCount;
     const VkAccelerationStructureBuildRangeInfoKHR* pRange = &range;
 
-    VkCommandBuffer cb = BeginOneTime();
     g.pfnCmdBuildAS(cb, 1, &bgi, &pRange);
-    EndOneTime(cb);
 
     if (!g.refitTimed)          // resolve the spec's step-5 cost gate, once
     {
@@ -4333,6 +4337,26 @@ void RecordRtTrace(uint32_t idx)
         vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, g.gpuTimerPool, 0);
     }
 
+    // DOOM-0131: refit the moving-sector world BLAS in-line (build step 5) when a
+    // door/lift shifted geometry this frame. Recorded into g.cmd ahead of the TLAS
+    // rebuild below (which reads the BLAS extents); an AS write->read barrier orders
+    // them. Folding this into the frame buffer removes the old standalone one-time
+    // submit that bubbled the GPU. blasDirty is latched in the present path even
+    // under raster, so a move finished off-screen is caught the first traced frame.
+    if (g.blasDirty)
+    {
+        RecordRefitAS(g.cmd);
+        VkMemoryBarrier rmb = {};
+        rmb.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        rmb.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+        rmb.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR
+                          | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+        vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                             VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0,
+                             1, &rmb, 0, nullptr, 0, nullptr);
+        g.blasDirty = false;
+    }
+
     // DOOM-0100: rebuild the per-frame sprite BLAS + TLAS (world + sprites) into
     // g.cmd before the trace dispatch, so primary rays this frame hit the world
     // sprites with real depth + lighting. No-op-ish when there are no sprites.
@@ -4947,14 +4971,10 @@ extern "C" void RB_Vulkan_Present(void)
             g.blasDirty = true;
     }
 
-    // Moving-sector AS refit (build step 5): only when the trace is active and the
-    // geometry moved since the last refit. The fence wait above guarantees the
-    // previous frame finished, so the in-place BLAS/TLAS update is race-free.
-    if (rtActive && g.blasDirty)
-    {
-        RefitAS();
-        g.blasDirty = false;
-    }
+    // DOOM-0131: the moving-sector world-BLAS refit (build step 5) is now recorded
+    // into the frame command buffer inside RecordRtTrace (ahead of the TLAS rebuild)
+    // instead of a standalone one-time submit here. blasDirty stays latched until
+    // the first traced frame, so an off-screen move under raster is still caught.
 
     // Copy this frame's 2D overlay (screens[0]) into the mapped staging buffer.
     // Same race-safe window as the sprites above: the fence wait guarantees the
