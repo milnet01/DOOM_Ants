@@ -3466,27 +3466,14 @@ static const uint32_t SPR_EMIT_MAX = 1024;
 void FinalizeEmitters(const std::vector<float>* dynEmit, const std::vector<float>* dynWgt)
 {
     if (!g.emitMapped || !g.emitCap) { g.emitCount = 0; return; }
-    const uint32_t staticN = (uint32_t)g.staticWgt.size();
-    const uint32_t dynN    = dynWgt ? (uint32_t)dynWgt->size() : 0u;
-    uint32_t n = staticN + dynN;
-    if (n > g.emitCap) n = g.emitCap;            // drop excess sprites (caller logs)
-    if (n == 0) { g.emitCount = 0; return; }
-
-    std::vector<float> wgt(n);
-    for (uint32_t i = 0; i < staticN && i < n; i++) wgt[i] = g.staticWgt[i];
-    for (uint32_t i = 0; i < dynN && staticN + i < n; i++) wgt[staticN + i] = (*dynWgt)[i];
-
-    std::vector<float> cdf(n), pdf(n);
-    nee_build_cdf(wgt.data(), (int)n, cdf.data(), pdf.data());
-
-    float* out = (float*)g.emitMapped;
-    uint32_t w = 0;
-    for (uint32_t i = 0; i < staticN && w < n; i++, w++)
-        std::memcpy(&out[w * 14u], &g.staticEmit[(size_t)i * 14u], 14u * sizeof(float));
-    for (uint32_t i = 0; i < dynN && w < n; i++, w++)
-        std::memcpy(&out[w * 14u], &(*dynEmit)[(size_t)i * 14u], 14u * sizeof(float));
-    for (uint32_t i = 0; i < n; i++) { out[i * 14u + 12u] = cdf[i]; out[i * 14u + 13u] = pdf[i]; }
-    g.emitCount = n;
+    // Static emitters [0, staticN) then this frame's sprite emitters [staticN, n) —
+    // the omniStart split (misc4.y) the shader keys on. The merge + cdf build is the
+    // shared nee_merge_emitters() (nee_sampling.h), unit-tested in nee_sampling_test.
+    const int dynN = (dynEmit && dynWgt) ? (int)dynWgt->size() : 0;
+    g.emitCount = (uint32_t)nee_merge_emitters(
+        g.staticEmit.data(), g.staticWgt.data(), (int)g.staticWgt.size(),
+        dynN ? dynEmit->data() : nullptr, dynN ? dynWgt->data() : nullptr, dynN,
+        (int)g.emitCap, (float*)g.emitMapped);
 }
 
 // DOOM-0084: each traced frame, scan this frame's world-sprite billboards (already

@@ -126,6 +126,51 @@ static void check_distribution(const std::vector<float>& w, const char* label)
                 label, n, estG, trueSumG, estW, trueSumW);
 }
 
+// Lock the static|sprite emitter split (DOOM-0084). nee_merge_emitters() — the exact
+// merge r_vulkan.cpp's FinalizeEmitters runs — must place every STATIC record before
+// every DYNAMIC (sprite) record, because that boundary IS the shader's omniStart
+// (index >= omniStart -> omnidirectional sprite light). If a future edit reorders or
+// interleaves them, sprites get mislabelled and lamps stop casting (the exact bug this
+// guards). Also checks the cap drops sprites, never static lights, and the cdf is built.
+static void check_merge_ordering()
+{
+    const int S = NEE_EMIT_STRIDE;
+    const int staticN = 3, dynN = 2;
+    // Tag slot 0 of each record with a unique id (static 10x, sprite 20x) so the
+    // post-merge order is checkable; give sprites a smaller weight than statics.
+    std::vector<float> sRec(staticN * S, 0.0f), sWgt(staticN);
+    std::vector<float> dRec(dynN * S, 0.0f),    dWgt(dynN);
+    for (int i = 0; i < staticN; i++) { sRec[i * S + 0] = 100.0f + (float)i; sWgt[i] = 1.0f + (float)i; }
+    for (int i = 0; i < dynN;    i++) { dRec[i * S + 0] = 200.0f + (float)i; dWgt[i] = 0.5f; }
+
+    std::vector<float> out((staticN + dynN) * S, -1.0f);
+    int n = nee_merge_emitters(sRec.data(), sWgt.data(), staticN,
+                               dRec.data(), dWgt.data(), dynN,
+                               staticN + dynN, out.data());
+    check(n == staticN + dynN, "merge returns staticN + dynN when under cap");
+
+    bool orderOk = (n == staticN + dynN);
+    for (int i = 0; i < staticN; i++) if (out[i * S + 0] != 100.0f + (float)i) orderOk = false;
+    for (int i = 0; i < dynN;    i++) if (out[(staticN + i) * S + 0] != 200.0f + (float)i) orderOk = false;
+    check(orderOk, "static records fill [0,staticN), sprites fill [staticN,n) (omniStart split)");
+
+    bool cdfOk = (n > 0) && std::fabs(out[(n - 1) * S + 12] - 1.0f) < 1e-6f;
+    for (int i = 1; i < n; i++) if (out[i * S + 12] < out[(i - 1) * S + 12]) cdfOk = false;
+    check(cdfOk, "merged cdf (slot 12) is monotone and ends at exactly 1");
+
+    // Cap below the total: n is capped and the STATIC set survives intact — overflow
+    // only ever drops sprites, never a static wall/flat light.
+    std::vector<float> out2(staticN * S, -1.0f);
+    int n2 = nee_merge_emitters(sRec.data(), sWgt.data(), staticN,
+                                dRec.data(), dWgt.data(), dynN,
+                                staticN, out2.data());   // cap = staticN
+    bool capOk = (n2 == staticN);
+    for (int i = 0; i < staticN; i++) if (out2[i * S + 0] != 100.0f + (float)i) capOk = false;
+    check(capOk, "cap drops excess sprites, keeps every static emitter");
+
+    std::printf("  [merge] n=%d (3 static + 2 sprite), capped n=%d (sprites dropped)\n", n, n2);
+}
+
 int main()
 {
     std::printf("nee_sampling_test (DOOM-0009 step 3c-3): power-importance NEE is unbiased\n");
@@ -146,6 +191,9 @@ int main()
         check_table(sets[i]);
         check_distribution(sets[i], names[i]);
     }
+
+    std::printf("- static|sprite emitter split (DOOM-0084)\n");
+    check_merge_ordering();
 
     if (g_failures == 0)
         std::printf("PASS: all checks green — 3c-2 power sampling is unbiased.\n");
