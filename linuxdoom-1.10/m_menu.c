@@ -208,6 +208,7 @@ void M_DrawRendererMenu(void);
 void M_ChangeFPS(int choice);
 void M_ChangeUpscaler(int choice);
 void M_ChangeRenderScale(int choice);
+void M_ChangeDebugViews(int choice);
 void M_ChangeBrightness(int choice);
 void M_SizeDisplay(int choice);
 void M_StartGame(int choice);
@@ -398,6 +399,7 @@ enum
     rm_renderer,
     rm_upscaler,
     rm_renderscale,
+    rm_debugviews,
     rm_brightness,
     rm_end
 } renderer_e;
@@ -407,6 +409,7 @@ menuitem_t RendererMenu[]=
     {1,"",	M_ChangeRenderer,'r'},
     {1,"",	M_ChangeUpscaler,'u'},
     {1,"",	M_ChangeRenderScale,'c'},
+    {1,"",	M_ChangeDebugViews,'d'},
     {2,"",	M_ChangeBrightness,'b'}
 };
 
@@ -1002,6 +1005,7 @@ char	fpsPosNames[4][11]	= {"Off","Top-Left","Top-Centre","Top-Right"};
 extern int	rb_upscaler;
 extern int	rb_renderscale;
 extern int	rb_exposure;
+extern int	rb_rtdebug_menu;	// DOOM-0135 Debug Views toggle
 char	upscalerNames[2][8]	= {"Off","TAAU"};
 int	renderScalePresets[4]	= {100,75,67,50};
 char	renderScaleNames[4][6]	= {"100%","75%","67%","50%"};
@@ -1068,6 +1072,12 @@ void M_DrawRendererMenu(void)
     M_WriteText(RendererDef.x,RendererDef.y+LINEHEIGHT*rm_renderscale,"Render Scale:");
     M_WriteText(RendererDef.x + 120,RendererDef.y+LINEHEIGHT*rm_renderscale,
 		renderScaleNames[rsi]);
+
+    // DOOM-0135: Debug Views toggle. Off = ~ is a plain RT on/off switch; On = ~
+    // cycles the path-tracer diagnostic views (HITS/normals, white furnace, ...).
+    M_WriteText(RendererDef.x,RendererDef.y+LINEHEIGHT*rm_debugviews,"Debug Views:");
+    M_WriteText(RendererDef.x + 120,RendererDef.y+LINEHEIGHT*rm_debugviews,
+		rb_rtdebug_menu ? "On" : "Off");
 
     // DOOM-0096: Ultra/denoiser brightness. Label on its own line with a thermometer
     // slider below it (rb_exposure 0..15), the standard DOOM slider layout.
@@ -1300,6 +1310,21 @@ void M_ChangeRenderScale(int choice)
     choice = 0;
     for (i=0 ; i<4 ; i++) if (renderScalePresets[i]==rb_renderscale) k=i;
     rb_renderscale = renderScalePresets[(k + 1) % 4];
+}
+
+//
+// Toggle the path-tracer Debug Views (DOOM-0135). Off = the `~` key is a plain RT
+// on/off switch; On = `~` cycles the diagnostic views. Turning it off snaps the
+// view out of any diagnostic mode (1-4) to the denoised view, so the picture never
+// sticks on e.g. white-furnace once the cycle key is no longer reachable.
+//
+void M_ChangeDebugViews(int choice)
+{
+    extern int rb_rtdebug;          // r_vulkan.cpp
+    choice = 0;
+    rb_rtdebug_menu = rb_rtdebug_menu ? 0 : 1;
+    if (!rb_rtdebug_menu && rb_rtdebug >= 1 && rb_rtdebug <= 4)
+	rb_rtdebug = 6;
 }
 
 //

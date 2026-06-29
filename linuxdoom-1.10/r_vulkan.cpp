@@ -574,6 +574,12 @@ extern "C" { int rb_wireframe = 0; }
 // Ultra shows the path-traced view on first run. Loaded value clamped in RB_Init.
 extern "C" { int rb_rtdebug = 6; }
 
+// DOOM-0135: "Debug Views" menu toggle. When 0 (default) the `~` key is a plain
+// ray-tracing on/off switch (rb_rtdebug 6<->0); when 1 it cycles the full set of
+// path-tracer diagnostic views (1-4) as before. Persisted via m_misc.c
+// ("rt_debug_views"); read only by the i_video.c `~` handler + the menu. C linkage.
+extern "C" { int rb_rtdebug_menu = 0; }
+
 // Player flashlight / headlamp (DOOM-0044). Toggled by the player (keyboard F or
 // gamepad L1, edge-detected in i_video.c) and persisted by m_misc.c. A spotlight
 // at the eye aimed along the view: in Ultra the path tracer casts its ray-traced

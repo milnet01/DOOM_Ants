@@ -1137,3 +1137,18 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Another startup/raster-path graphics warning: a drawing surface was set up with one recipe but used with a slightly different one. Cosmetic to the validation layer, but worth making consistent.
   Kind: fix.
   Source: terminal-log-2026-06-29.
+
+- ✅ [DOOM-0135] **Menu "Debug Views" toggle gating the ~ path-tracer diagnostic cycle; ~ becomes plain RT on/off when debug is off.**
+  Current wiring (verified): rb_rtdebug (the ~ key, values 0=raster .. 6=denoised, 5=headless-verify-only) is the ONLY thing that switches the Vulkan backend between the flat raster view and the path-traced view. rb_rtdebug is written in exactly 3 places: r_vulkan.cpp:575 (default 6), r_backend.c:310-311 (init clamp), i_video.c:330-332 (the ~ cycle). The menu "Renderer" selector (Classic/Solid/Ultra via RB_SetMode) does NOT touch rb_rtdebug, and Solid (RB_RASTER3D) + Ultra (RB_RT3D) share the same Vulkan_Present/Vulkan_Init — only their Available() probe differs. So today picking "Solid" does not disable the tracer; the ~ key does. There is ONE shared RendererDef menu (m_menu.c:413), so a new item appears for both Solid and Ultra automatically.
+  
+  Plan:
+  - New persisted int rb_rtdebug_menu (default 0 = off), m_misc.c default + extern in r_vulkan.cpp beside rb_rtdebug.
+  - Menu: add rm_debugviews item to the RendererMenu[] enum/array + draw "Debug Views: On/Off" in M_DrawRendererMenu; handler toggles the flag. On turning it OFF, snap rb_rtdebug out of any diagnostic value (1-4) to 6 so the view doesn't stick on white-furnace etc.
+  - ~ handler (i_video.c): if debug on -> existing full cycle (0,1,2,3,4,6, skip 5); if debug off -> toggle rb_rtdebug 6<->0 (RT on/off).
+  
+  OPEN QUESTION (blocks final design): should selecting Solid vs Ultra in the Renderer menu also drive RT off/on (Solid forces rb_rtdebug=0, Ultra forces 6), so the menu label matches what's shown? Today they don't, which is likely the source of the confusion. Resolve with the user before implementing.
+  Kind: feature.
+  **Layman:** Add a Debug Views on/off switch to the Renderer menu. With it off (the normal case), the ~ key simply turns ray tracing on or off; with it on, ~ cycles through the developer diagnostic views (normals, white-furnace, etc.) as it does today.
+  Kind: feature.
+  Source: user-request-2026-06-29.
+  Resolved (2026-06-29): added rb_rtdebug_menu (persisted "rt_debug_views", default 0) and a "Debug Views: On/Off" item in the shared Renderer menu (m_menu.c rm_debugviews, drawn between Render Scale and Brightness so it doesn't collide with the brightness thermo). ~ handler (i_video.c) now branches: debug off -> toggle rb_rtdebug 6<->0 (plain RT on/off); debug on -> full diagnostic cycle as before. Toggling debug off snaps rb_rtdebug out of diagnostic values 1-4 to 6. Per user decision the Solid/Ultra menu label is NOT linked to RT on/off (the ~ key remains the only RT switch). Builds clean; in-game menu/keyboard check pending on user. The open question in the original bullet (Solid forces raster) was answered: no.

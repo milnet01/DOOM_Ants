@@ -318,18 +318,29 @@ static void I_GetEvent(SDL_Event* sdlevent)
 	    rb_flashlight = !rb_flashlight;
 	    break;
 	}
-	// Backquote/tilde (`~`) cycles the path-tracer debug view (DOOM-0009):
-	// off -> intersection -> white-furnace -> textured (3a) -> NEE direct
-	// lighting (3c, mode 4) -> SVGF denoised (step 6, mode 6). Mode 5 is the
-	// headless -rtverify path, so it is skipped in the cycle. Not a DOOM key, so
-	// flip the renderer flag directly instead of posting an event; the Vulkan
-	// present path reads it, no-op without RT.
+	// Backquote/tilde (`~`) controls the path-tracer view (DOOM-0009). DOOM-0135:
+	// with the "Debug Views" menu toggle OFF (the default, rb_rtdebug_menu==0) it
+	// is a plain ray-tracing on/off switch (denoised SVGF <-> raster). With it ON
+	// it cycles the full diagnostic set: off -> intersection -> white-furnace ->
+	// textured (3a) -> NEE direct (3c, mode 4) -> SVGF denoised (step 6, mode 6);
+	// mode 5 (headless -rtverify) is skipped. Not a DOOM key, so flip the renderer
+	// flag directly instead of posting an event; the Vulkan present path reads it,
+	// no-op without RT.
 	if (sdlevent->key.keysym.sym == SDLK_BACKQUOTE && !sdlevent->key.repeat)
 	{
 	    extern int rb_rtdebug;          // r_vulkan.cpp
-	    rb_rtdebug++;
-	    if      (rb_rtdebug == 5) rb_rtdebug = 6;   // skip the verify-only mode
-	    else if (rb_rtdebug > 6)  rb_rtdebug = 0;
+	    extern int rb_rtdebug_menu;     // r_vulkan.cpp (DOOM-0135)
+	    if (rb_rtdebug_menu)
+	    {
+		rb_rtdebug++;
+		if      (rb_rtdebug == 5) rb_rtdebug = 6;   // skip the verify-only mode
+		else if (rb_rtdebug > 6)  rb_rtdebug = 0;
+	    }
+	    else
+	    {
+		// Debug views off: ~ is a simple RT on/off toggle (6 denoised <-> 0 raster).
+		rb_rtdebug = (rb_rtdebug == 0) ? 6 : 0;
+	    }
 	    {
 		// Terminal proof of the active mode (the on-screen top-centre title
 		// is the in-game proof; this mirrors it for headless/log debugging).
