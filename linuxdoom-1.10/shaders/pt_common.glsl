@@ -163,27 +163,49 @@ vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
                                 matEmis.m[id * 3u + 2u]) * emissiveMask(albedo)
                          : vec3(0.0);
 
-    if (emitCount > 0u && nSamples > 0u)
+    // Direct lighting splits by emitter kind (DOOM-0084). The MANY static wall/flat
+    // emitters [0, omniStart) are power-importance-sampled through the CDF. The FEW
+    // omnidirectional sprite lights (lamps/torches/pickups, [omniStart, emitCount))
+    // carry tiny area-weight and would almost never win the CDF draw, so they are
+    // sampled DIRECTLY below — one guaranteed shadow ray each, every frame. Without
+    // the split a lamp self-glows but never casts: its CDF slice rounds to zero next
+    // to the big walls, and the one-in-a-thousand hit is then eaten by the firefly
+    // clamp. Splitting also keeps the static sampler unbiased (sprites are out of its
+    // draw, so no double-count with the explicit loop).
+    if (nSamples > 0u)
     {
-        vec3 direct = vec3(0.0);
-        for (uint si = 0u; si < nSamples; si++)
+        if (omniStart > 0u)              // power-importance-sample the static set
         {
-            // Pick an emitter by power: binary-search the cdf (slot 12) for the
-            // first k with cdf[k] >= u, then weight by its 1/pdf (slot 13).
-            float u  = rnd(seed);
-            uint  lo = 0u, hi = emitCount - 1u;
-            while (lo < hi)
+            vec3 direct = vec3(0.0);
+            for (uint si = 0u; si < nSamples; si++)
             {
-                uint mid = (lo + hi) >> 1u;
-                if (emit.e[mid * 14u + 12u] < u) lo = mid + 1u;
-                else                             hi = mid;
+                // Binary-search the cdf (slot 12) over [0, omniStart) for the first
+                // k with cdf[k] >= u, then weight by its 1/pdf (slot 13).
+                float u  = rnd(seed);
+                uint  lo = 0u, hi = omniStart - 1u;
+                while (lo < hi)
+                {
+                    uint mid = (lo + hi) >> 1u;
+                    if (emit.e[mid * 14u + 12u] < u) lo = mid + 1u;
+                    else                             hi = mid;
+                }
+                float pdf = emit.e[lo * 14u + 13u];
+                vec3  c   = sampleEmitter(lo, hitP, n, pdf, omniStart, emit, seed);
+                vec3  rad = albedo * (1.0 / PI) * c; // reflected radiance (Lambert)
+                direct += min(rad, vec3(FIREFLY_MAX)); // firefly clamp (luminance)
             }
-            float pdf = emit.e[lo * 14u + 13u];
-            vec3  c   = sampleEmitter(lo, hitP, n, pdf, omniStart, emit, seed);
-            vec3  rad = albedo * (1.0 / PI) * c;     // reflected radiance (Lambert)
-            direct += min(rad, vec3(FIREFLY_MAX));   // firefly clamp in luminance domain
+            L += direct / float(nSamples);
         }
-        L += direct / float(nSamples);
+
+        // Guaranteed direct sampling of every omnidirectional sprite light. pdfSel =
+        // 1.0 -> sampleEmitter returns the full Le*G*area irradiance with no selection
+        // division, so there is no rare-high-energy spike for the clamp to eat. Few
+        // sprites are ever in view, so the extra shadow ray per sprite is cheap.
+        for (uint k = omniStart; k < emitCount; k++)
+        {
+            vec3 rad = albedo * (1.0 / PI) * sampleEmitter(k, hitP, n, 1.0, omniStart, emit, seed);
+            L += min(rad, vec3(FIREFLY_MAX));
+        }
     }
     return L;
 }

@@ -1599,14 +1599,17 @@ void CreateRtComputePipeline()
     dai.pSetLayouts        = &g.rtDsLayout;
     Check(vkAllocateDescriptorSets(g.device, &dai, &g.rtDs), "vkAllocateDescriptorSets(rt)");
 
-    // Push constant: 4x vec4 (camera) + 3x uvec4 (mode/w/h/numWall, emitter+probe
-    // counts, verify seed/spp/estimator) + 5x uint64 (vertex / emitter / Le /
-    // probe-cache / tri-subsector addresses) = 152 bytes (steps 3b + 4c + 4d verify).
-    // Within the 256-byte device limit.
+    // Push constant: 4x vec4 (camera) + 4x uvec4 (mode/w/h/numWall, emitter+probe
+    // counts, verify seed/spp/estimator, DOOM-0100 sprite base + omni-emitter start)
+    // + 6x uint64 (vertex / emitter / Le / probe-cache / tri-subsector / sprite-vert
+    // addresses) = 176 bytes. MUST match sizeof(RtPushConstants) in RecordRtTrace —
+    // a short range silently drops misc4/spriteVerts (the omni-light fix), so the
+    // verify struct's 152-byte push is a valid partial of this 176-byte range. Within
+    // the 256-byte device limit.
     VkPushConstantRange pcr = {};
     pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pcr.offset     = 0;
-    pcr.size       = 152;
+    pcr.size       = 176;
     // Three sets: 0 = RT (TLAS + output image), 1 = the raster materials set
     // (g.dsLayout: PLAYPAL LUT + bindless material array), reused verbatim so the
     // textured trace (step 3a) decodes surfaces with no parallel material path,
@@ -3505,7 +3508,17 @@ void BuildDynamicEmitters()
     const rb_vertex_t* v    = (const rb_vertex_t*)g.sprWorldMapped;
     const uint32_t tris     = g.sprWorldVertCount / 3u;
 
+    // DOOM-0084: cast-intensity boost for sprite lights. A lamp billboard is a small
+    // quad, so as an NEE area light its radiant power (Le * area) is tiny next to the
+    // big wall/flat emitters — it's selected rarely and contributes little, so lamps
+    // self-glow but barely light the room. Boost the EMITTER Le (not the self-glow,
+    // which reads matEmis directly) so sprite lights both weigh more in the CDF and
+    // cast more. INV-7 tunable, pending a Workbench pass.
+    const float kSpriteEmitBoost = 12.0f;
+
     std::vector<float> emit, wgt;
+    uint32_t litSprites = 0;
+    float maxLe = 0.0f;
     for (uint32_t t = 0; t < tris; t++)
     {
         const rb_vertex_t* tri = &v[t * 3];
@@ -3517,11 +3530,12 @@ void BuildDynamicEmitters()
         const float* le = &g.matEmissive[(size_t)id * 3];
         if (le[0] + le[1] + le[2] <= 0.0f)
             continue;                            // emissive Thing whose sprite texture isn't a light
+        const float lr = le[0] * kSpriteEmitBoost, lg = le[1] * kSpriteEmitBoost, lb = le[2] * kSpriteEmitBoost;
         for (int k = 0; k < 3; k++)
         {
             emit.push_back(tri[k].x); emit.push_back(tri[k].y); emit.push_back(tri[k].z);
         }
-        emit.push_back(le[0]); emit.push_back(le[1]); emit.push_back(le[2]);
+        emit.push_back(lr); emit.push_back(lg); emit.push_back(lb);
         emit.push_back(0.0f); emit.push_back(0.0f);   // cdf, pdf — filled in finalise
         const float ex1 = tri[1].x - tri[0].x, ey1 = tri[1].y - tri[0].y, ez1 = tri[1].z - tri[0].z;
         const float ex2 = tri[2].x - tri[0].x, ey2 = tri[2].y - tri[0].y, ez2 = tri[2].z - tri[0].z;
@@ -3529,9 +3543,28 @@ void BuildDynamicEmitters()
         const float cyv = ez1 * ex2 - ex1 * ez2;
         const float czv = ex1 * ey2 - ey1 * ex2;
         const float area = 0.5f * std::sqrt(cxv * cxv + cyv * cyv + czv * czv);
-        wgt.push_back(emis::luminance(le[0], le[1], le[2]) * area);
+        wgt.push_back(emis::luminance(lr, lg, lb) * area);
+        litSprites++;
+        maxLe = std::max(maxLe, emis::value(lr, lg, lb));
     }
     FinalizeEmitters(&emit, &wgt);
+
+    // Diagnostic (DOOM-0084 bring-up): confirm sprite lights reach the NEE set.
+    // Rate-limited so it doesn't spam at 35 Hz; prints on change of the lit count.
+    static uint32_t lastLit = 0xFFFFFFFFu;
+    if (litSprites != lastLit)
+    {
+        lastLit = litSprites;
+        double sumStatic = 0.0, sumSprite = 0.0;
+        for (float w : g.staticWgt) sumStatic += w;
+        for (float w : wgt)         sumSprite += w;
+        const double frac = (sumStatic + sumSprite) > 0.0
+                          ? sumSprite / (sumStatic + sumSprite) : 0.0;
+        printf("RB_Vulkan NEE: %u static + %u sprite emitters (sprite maxLe %.2f, "
+               "CDF sprite share %.4f%% -> now sampled directly).\n",
+               (uint32_t)g.staticWgt.size(), litSprites, maxLe, frac * 100.0);
+        fflush(stdout);
+    }
 }
 
 // Build this level's NEE emitter list (DOOM-0009 build step 3b): the subset of
