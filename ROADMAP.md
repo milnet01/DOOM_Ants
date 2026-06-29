@@ -1158,3 +1158,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** On a PlayStation controller you can now press the right side of the touchpad to turn ray tracing on/off (or cycle debug views when that mode is on), just like the ~ key on the keyboard.
   Kind: feature.
   Source: user-request-2026-06-29.
+
+- 📋 [DOOM-0137] **Stop the startup flood of "V_DrawPatch: bad patch (ignored) / exceeds LFB" border-bezel warnings.**
+  Symptom (verified in a profiling run): ~80 lines of \"Patch at X,Y exceeds LFB\" + \"V_DrawPatch: bad patch (ignored)\" at startup, at coords like 0,-3 / 8,-3 ... / 320,168 (the viewport border bezel, drawn ~3px outside the play area at 8px steps).\n\nRoot: V_DrawPatch (v_video.c:245-253) rejects + warns when a patch's x/y (+ width/height) fall outside the 320x200 logical screen or scrn>4, then returns. The view-border bezel pieces are being drawn at out-of-bounds coordinates (negative / >=320), so each is skipped with a warning. Pre-existing (the id ChangeLog notes the same TNT.WAD case); surfaced loudly here, likely because the 3D backend's screen/viewport sizing (scaledviewwidth / viewwindowx/y) differs from the software path when the border is first drawn.\n\nFix options: (a) correct the border-draw geometry so the bezel patches land in-bounds (proper root fix); (b) if the bezel genuinely has no place at the current view size, skip drawing those pieces rather than calling V_DrawPatch and getting rejected; (c) at minimum, demote the per-patch fprintf to a single rate-limited/once message so the log isn't flooded. Cosmetic / log-noise only; no visible rendering defect reported.\nKind: fix.
+  **Layman:** At startup the log spits out dozens of harmless 'bad patch' warnings while drawing the screen border. The picture is fine; it's just noise that should be silenced or the border draw fixed.
+  Kind: fix.
+  Source: terminal-log-2026-06-29.
