@@ -6,6 +6,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Screen Size slider can no longer be raised high enough to hide the in-game HUD; the status bar now always stays on during play.** (DOOM-0148)
+
+- **Classic renderer now presents at authentic 4:3 instead of a stretched 16:10, so the picture has correct proportions and fills a 4:3 monitor (title and menu screens too).** (DOOM-0147)
+
 ## [0.2.0] - 2026-06-30
 
 ### Added
