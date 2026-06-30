@@ -460,8 +460,11 @@ void I_SetMusicVolume(int volume)
     // Scale 0-15 -> SDL2_mixer's 0-128, but cap well below full: music plays on
     // a separate 44.1 kHz SDL2_mixer device that is perceptibly louder than the
     // 11025 Hz software SFX mixer at equal settings, drowning the effects
-    // (DOOM-0047). 80/128 (~63%) rebalances it; tunable by ear.
-    int v = (volume * 80) / 15;
+    // (DOOM-0047). SFX can't be boosted to compensate -- a channel volume >127
+    // is a hard I_Error (see I_UpdateSoundParams) -- so the rebalance lives
+    // entirely on the music side. 48/128 (~38%) at max; user-reported (2026-06-30)
+    // that 80/128 still dominated even with the music slider low. Tunable by ear.
+    int v = (volume * 48) / 15;
     if (v < 0)   v = 0;
     if (v > 128) v = 128;
     Mix_VolumeMusic(v);
