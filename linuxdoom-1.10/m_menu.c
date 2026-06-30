@@ -1035,7 +1035,7 @@ void M_DrawOptions(void)
 		 10,mouseSensitivity);
 	
     M_DrawThermo(OptionsDef.x,OptionsDef.y+LINEHEIGHT*(scrnsize+1),
-		 9,screenSize);
+		 8,screenSize);
 }
 
 void M_Options(int choice)
@@ -1365,7 +1365,9 @@ void M_SizeDisplay(int choice)
 	}
 	break;
       case 1:
-	if (screenSize < 8)
+	// Stop at screenSize 7 -> screenblocks 10: one short of the HUD-less
+	// fullscreen view (11), so the status bar can't be slid away (DOOM-0148).
+	if (screenSize < 7)
 	{
 	    screenblocks++;
 	    screenSize++;
@@ -2062,6 +2064,11 @@ void M_Init (void)
     itemOn = currentMenu->lastOn;
     whichSkull = 0;
     skullAnimCounter = 10;
+    // HUD stays on in-game (DOOM-0148): screenblocks 11 is the fullscreen view
+    // that hides the status bar. The largest size we allow is 10 (full view
+    // WITH HUD), so clamp a config that saved 11 from an earlier build.
+    if (screenblocks > 10)
+	screenblocks = 10;
     screenSize = screenblocks - 3;
     messageToPrint = 0;
     messageString = NULL;
