@@ -6,6 +6,10 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Rebalanced audio so sound effects are no longer drowned out by music: the music volume ceiling is lowered (quieter at every slider position) and new installs default to full sound-effects volume.** (DOOM-0047)
+
 ### Fixed
 
 - **The Screen Size slider can no longer be raised high enough to hide the in-game HUD; the status bar now always stays on during play.** (DOOM-0148)
