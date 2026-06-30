@@ -120,6 +120,8 @@ typedef enum
 #define MAXWIDTH		1280	// physical cap: 640 logical (24:9) * HIRES
 extern int SCREENWIDTH;		// physical view width, runtime
 extern int WIDESCREENDELTA;	// logical UI-centring offset = (active logical width - NONWIDEWIDTH)/2
+extern int widescreen;		// DOOM-0147 Part C: 0 = force 4:3 even on a wide display (startup)
+extern int fillstretch;		// DOOM-0147 Part C: 1 = stretch present to fill the monitor (live)
 #define SCREENHEIGHT		(ORIGHEIGHT*HIRES)
 
 

@@ -257,6 +257,8 @@ default_t	defaults[] =
     {"flashlight",&rb_flashlight, 0},
     {"rt_view",&rb_rtdebug, 6},
     {"rt_debug_views",&rb_rtdebug_menu, 0},
+    {"widescreen",&widescreen, 1},		// DOOM-0147 Part C: 0 = force 4:3 (restart)
+    {"fillstretch",&fillstretch, 0},		// DOOM-0147 Part C: 1 = stretch to fill (live)
     {"rt_profile",&rb_profile, 0},
 
 

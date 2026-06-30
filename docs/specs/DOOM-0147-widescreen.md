@@ -1,8 +1,14 @@
-# DOOM-0147 (Part B) — Authentic widescreen for the classic renderer
+# DOOM-0147 (Parts B & C) — Authentic widescreen for the classic renderer
 
-**Status:** Part B — **implemented** 2026-06-30 (builds clean Linux + Windows; awaiting
-visual confirmation on a true-widescreen display — see Implementation notes).
-**Roadmap:** DOOM-0147 (Part A shipped 16e076b; Part C follows).
+**Status:** Part B — **implemented** 2026-06-30 (commit `8fb4d66`; builds clean
+Linux + Windows; awaiting visual confirmation on a true-widescreen display — see
+Implementation notes). Part C — **cold-eyes converged** 2026-07-01 (3 loops; see the
+Part C cold-eyes loop log at the end of this doc), cleared for implementation; not
+yet implemented.
+**Roadmap:** DOOM-0147 (Part A shipped 16e076b). Part C, **once shipped**, completes
+DOOM-0147's 4:3-vs-widescreen aspect choice — the roadmap entry stays 🚧 until
+then. The static-screen side-gaps on true-widescreen displays are a **separate**
+open item, **DOOM-0151** — closing DOOM-0147 does not close it.
 **Kind:** fix / enhancement.
 **Depends on:** DOOM-0027 (shipped) — reuses its `ORIGWIDTH`/`SCREENWIDTH`/`HIRES` split.
 
@@ -17,6 +23,7 @@ visual confirmation on a true-widescreen display — see Implementation notes).
 - [Verification](#verification)
 - [Out of scope (YAGNI)](#out-of-scope-yagni)
 - [Cold-eyes loop log](#cold-eyes-loop-log)
+- [Part C — aspect toggle + fill-to-screen (persisted)](#part-c--aspect-toggle--fill-to-screen-persisted)
 
 ## Goal
 
@@ -41,7 +48,9 @@ This is **Part B** of DOOM-0147. Part A (present the 4:3 buffer at authentic 4:3
 commit 16e076b) already shipped — roadmap-tracked only, with no standalone spec,
 as it was a small present-time change; the "Part B" title here does not imply a
 missing sibling doc. Part C (a menu toggle between *4:3* and *Widescreen*, plus
-the optional 5:4 fill-stretch, persisted) follows this.
+a fill-to-screen stretch, persisted) follows this — see the Part C section for its
+current scope (the "Fill Screen" toggle is a first-class all-display control, not
+the 5:4-only option this line originally imagined).
 
 ## Background — why it doesn't "just work"
 
@@ -136,11 +145,14 @@ Introduce three concepts:
    second `MAXWIDTH`. It must be **enlarged** to fit the widest physical buffer:
    24:9 → logical 640 → physical `640*HIRES = 1280`, so `MAXWIDTH` goes `1120 →
    ≥1280` (and `screens[]` must allocate `MAXWIDTH*SCREENHEIGHT`, not the current
-   `SCREENWIDTH*SCREENHEIGHT` — see `v_video.c:524`). Update the present-time
+   `SCREENWIDTH*SCREENHEIGHT` — see `v_video.c:534`). Update the present-time
    call, currently `SDL_RenderSetLogicalSize(renderer, SCREENWIDTH,
    SCREENWIDTH*3/4)` (`i_video.c:666`, the 4:3 lock set by Part A), to a logical
    area matching the active display aspect, so the wide buffer fills the window
-   with no letterbox/pillarbox.
+   with no letterbox/pillarbox. *(This `*3/4` form is the pre-Part-B before-state;
+   Part B implemented it as `SDL_RenderSetLogicalSize(renderer, SCREENWIDTH,
+   SCREENHEIGHT*6/5)` at `i_video.c:668`, which is the current line Part C builds
+   on.)*
 
    **Row-stride sites to track (don't miss these).** Several places stride by the
    compile-time `SCREENWIDTH` macro and must instead use the active physical
@@ -255,7 +267,7 @@ Doom reference implementation — not recalled.
   `WIDESCREENDELTA = (SCREENWIDTH − NONWIDEWIDTH)/2`. Confirmed by fetching the
   raw source 2026-06-30.
 - **Buffers auto-size.** `screens[0..3]` are one `I_AllocLow(SCREENWIDTH*
-  SCREENHEIGHT*4)` (`v_video.c:524`) carved in four (`:528`); the `I_FinishUpdate`
+  SCREENHEIGHT*4)` (`v_video.c:534`) carved in four (`:538`); the `I_FinishUpdate`
   blit loop (`i_video.c:481-520`) and the SDL texture-create (`:668-670`) follow
   `SCREENWIDTH/HEIGHT`; `f_wipe.c` is fully `(width,height)`-parameterized; `WI_slamBackground`
   copies a full frame. None of these embed a 4:3/320 constant. (Code-map.)
@@ -456,3 +468,247 @@ cites are tracked by DOOM-0150.
 
 **Outcome:** 5 loops; 2 CRITICALs + 1 correctness bug caught and fixed; converged
 to citation-clean. Spec is cleared for implementation (house rule 14 satisfied).
+
+---
+
+## Part C — aspect toggle + fill-to-screen (persisted)
+
+**Status:** Part C — **cold-eyes converged** 2026-07-01 (3 loops; see the Part C
+cold-eyes loop log below), cleared for implementation; not yet implemented.
+**Depends on:** Part B (implemented `8fb4d66`) — reuses its runtime `SCREENWIDTH` /
+`WIDESCREENDELTA` and the `I_InitWidescreen` startup hook.
+
+Terminology: **Fill Screen** is the menu label, `fillstretch` is the backing
+global, this section's heading calls it "fill-to-screen", and Part B's notes call
+the same idea "fill-stretch" — one concept, several spellings.
+
+### Goal (Part C)
+
+Give the player two persisted display preferences, reachable from the in-game
+**Renderer** sub-menu (Options → Renderer):
+
+1. **Widescreen — On / Off.** On (default) keeps the Part B Hor+ behaviour: on a
+   display wider than 4:3 the Classic renderer shows more of the level to the
+   sides. Off forces authentic 4:3 (pillar-boxed on a wide display) for players
+   who prefer the original framing.
+2. **Fill Screen — On / Off.** Off (default) presents the rendered image at its
+   correct aspect, letter-/pillar-boxing with black bars where the monitor's
+   shape doesn't match. On stretches the image to fill the whole monitor,
+   removing the bars at the cost of a small geometric distortion.
+
+Both settings persist to `~/.doomrc` (via `M_SaveDefaults` / `M_LoadDefaults`) so
+they survive a restart.
+
+**Why two settings.** They target different displays and are independent:
+- *Widescreen* only does anything on a display **wider** than 4:3 — the knob for
+  16:9 / ultrawide players.
+- *Fill Screen* is the knob for displays **narrower** than 4:3 (e.g. the
+  maintainer's 5:4 1280×1024) where Hor+ has no spare width to add: it removes the
+  thin top/bottom bars Part A leaves, by stretching. On a wide display it also
+  removes any residual bars. It is the only Part C control that changes anything
+  visible on a 5:4 monitor; the Widescreen toggle there is cosmetic (4:3 either
+  way, since Hor+ already clamps a 5:4 display to 320 logical).
+
+### Approach (Part C)
+
+Two new persisted `int` globals, **defined** in `i_video.c` next to the
+`SCREENWIDTH` / `WIDESCREENDELTA` definitions (`i_video.c:685`) and **declared
+`extern` in `doomdef.h`** next to those globals' own externs (`doomdef.h:121` — the
+established convention; `i_video.h` holds only function declarations). The new
+`I_SetAspect` function is declared in `i_video.h` alongside `I_InitWidescreen`.
+Both globals are registered in the `m_misc.c` `defaults[]` table so they load from
+/ save to `~/.doomrc`:
+
+| global | default | meaning |
+|--------|---------|---------|
+| `widescreen`  | `1` | `0` ⇒ force 4:3 even on a wide display |
+| `fillstretch` | `0` | `1` ⇒ stretch the present to fill the monitor |
+
+#### Widescreen (applied at startup — "restart to apply")
+
+`I_InitWidescreen` (`i_video.c:698`) already computes the active logical width
+from the desktop aspect. One change: when `widescreen == 0`, skip the aspect
+result and pin `logical = NONWIDEWIDTH` (→ `SCREENWIDTH = 640`,
+`WIDESCREENDELTA = 0`) — the exact Part A 4:3 state.
+
+Because `SCREENWIDTH` sizes the screen buffers (`v_video.c` `V_Init`, `:534`),
+the SDL streaming texture (`i_video.c:670`) and the present logical size — **all
+allocated once at startup** — the Widescreen toggle is honoured at the **next
+launch**, not live. The menu draws a "restart to apply" note. This is the
+conservative choice: a live toggle would have to re-allocate `screens[]`,
+recreate the texture, and re-run the whole `R_ExecuteSetViewSize` /
+`R_InitTextureMapping` view-setup chain, destabilising the just-shipped Part B for
+a niche control. Listed under Out of scope.
+
+**Ordering fix (load-before-init).** Today `d_main.c` runs
+`I_InitWidescreen()` (`:1127`) → `V_Init()` (`:1130`) → `M_LoadDefaults()`
+(`:1133`), so the persisted `widescreen` value is not yet loaded when
+`I_InitWidescreen` decides the width and `V_Init` allocates the buffers to it.
+`M_LoadDefaults()` is moved **above** `I_InitWidescreen()`. It is a pure
+config-file → globals read (`m_misc.c:361`) with no dependency on the video / zone
+/ WAD systems — `basedefault` is already set (`d_main.c:689`), and vanilla DOOM
+loads defaults before `V_Init` for exactly this reason — so the move is safe.
+
+#### Fill Screen (applied live)
+
+The present path sets the SDL logical size once at window creation (inside
+`CreateSoftwareWindow`, `i_video.c:639` — the
+`SDL_RenderSetLogicalSize(renderer, SCREENWIDTH, SCREENHEIGHT*6/5)` call at
+`:668`). Part C replaces that single call with a new `I_SetAspect(void)` that
+branches on `fillstretch`:
+
+- `fillstretch == 0` → `SDL_RenderSetLogicalSize(renderer, SCREENWIDTH, SCREENHEIGHT*6/5)`
+  — authentic aspect with the 1.2× vertical pixel correction; SDL adds black bars
+  where the window shape differs (the Part B present, unchanged).
+- `fillstretch == 1` → `SDL_RenderSetLogicalSize(renderer, 0, 0)`. Passing `(0,0)`
+  clears the logical resolution and resets SDL's viewport to the full output and
+  scale to `1.0` (verified SDL2 behaviour), so the per-frame
+  `SDL_RenderCopy(renderer, texture, NULL, NULL)` (`i_video.c:518`) stretches the
+  texture across the whole window.
+
+**Trade-off (be explicit).** Fill bypasses **both** the black bars **and** the
+6/5 (1.2×) vertical-aspect correction: the texture is the raw
+`SCREENWIDTH × SCREENHEIGHT` (640×400) render buffer, not the 4:3-corrected
+640×480 logical area, so on a 5:4 monitor the image gains a little extra vertical
+stretch on top of filling the bars. This is the accepted cost of "fill the
+screen"; players who want correct proportions leave it Off.
+
+`I_SetAspect` guards `if (!renderer) return;` and is called both at window
+creation (in place of the old line) and from the menu handler, so flipping Fill
+Screen updates the picture immediately — no restart, no reallocation (it only
+recomputes SDL's viewport/scale, which is legal at any time).
+
+#### Menu (Renderer sub-menu)
+
+Two text rows are added to `RendererMenu[]` and the `renderer_e` enum
+(`m_menu.c:397/407`), drawn by `M_DrawRendererMenu` (`:1055`) with `M_WriteText`
+(no menu-art lumps needed), placed **before** the Brightness thermo so the slider
+stays last:
+
+```
+rm_renderer, rm_upscaler, rm_renderscale, rm_debugviews,
+rm_widescreen, rm_fillstretch, rm_brightness, rm_end
+```
+
+- `M_ChangeWidescreen(choice)` → `widescreen = widescreen ? 0 : 1;` (value drawn
+  On/Off; a "restart to apply" note is drawn under the row).
+- `M_ChangeFillScreen(choice)` → `fillstretch = fillstretch ? 0 : 1; I_SetAspect();`
+  (live).
+
+Both follow the existing `M_ChangeDebugViews` On/Off idiom (`m_menu.c:1320`,
+`x = x ? 0 : 1`; the nearby `M_ChangeUpscaler` uses a `(x+1)%2` form instead —
+either works, the proposal mirrors DebugViews). `m_menu.c` sees the `widescreen` /
+`fillstretch` externs via `doomdef.h` (already included) and gains
+`#include "i_video.h"` (or a local `extern void I_SetAspect(void);`) for the live
+re-apply.
+
+### Components / affected files (Part C)
+
+- `i_video.c` — define `widescreen` / `fillstretch`; `I_InitWidescreen` honours
+  `widescreen`; new `I_SetAspect`; `CreateSoftwareWindow` calls it in place of the
+  hard-coded logical-size line.
+- `doomdef.h` — declare the `widescreen` / `fillstretch` externs (next to the
+  `SCREENWIDTH` / `WIDESCREENDELTA` externs at `:121`).
+- `i_video.h` — declare `I_SetAspect`.
+- `m_misc.c` — two `defaults[]` rows (`{"widescreen",&widescreen,1}`,
+  `{"fillstretch",&fillstretch,0}`).
+- `m_menu.c` — enum + array rows, two `M_DrawRendererMenu` labels + restart note,
+  two handlers, two forward decls, `#include "i_video.h"`.
+- `d_main.c` — move `M_LoadDefaults()` above `I_InitWidescreen()`.
+
+### Verification (Part C)
+
+1. **Default = zero behavioural change from Part B.** With a fresh config
+   (`widescreen=1`, `fillstretch=0`): `I_InitWidescreen` takes the same aspect
+   path as Part B, and `I_SetAspect` issues the identical
+   `SDL_RenderSetLogicalSize(renderer, SCREENWIDTH, SCREENHEIGHT*6/5)`. On the 5:4
+   dev monitor this stays the provable 4:3 no-op.
+2. **`widescreen=0`** on a 16:9 display → `SCREENWIDTH=640`, pillar-boxed 4:3
+   (matches Part A); persists across restart; the menu shows the restart note.
+3. **`fillstretch=1`** → the picture fills the whole monitor with no black bars,
+   live the instant it is toggled and again after a restart (loaded from config).
+4. **Persistence** — toggling either writes `widescreen` / `fillstretch` to
+   `~/.doomrc` on quit (`M_SaveDefaults`, `m_misc.c:329`) and reloads next launch.
+5. **Menu layout** — after the two new rows, the Brightness thermo is still the
+   last Renderer row (the slider must stay at the bottom).
+6. **Builds clean** on Linux + Windows; no new warnings.
+
+### Out of scope (YAGNI) (Part C)
+
+- **Live Widescreen toggle** (re-alloc buffers + recreate texture + re-run view
+  setup mid-session). Revisit only if explicitly requested.
+- **Aspect-correct fill** (pixel-perfect integer scaling, per-axis choice). Fill
+  is a deliberate stretch; players who want correctness leave it Off.
+- **Static-screen side-gaps** (title / intermission / menu / finale full-screen
+  320-wide art showing un-painted sides on a true-widescreen display). Tracked
+  **separately as DOOM-0151** — closing DOOM-0147 does **not** close it.
+- **A separate Video menu.** Two rows fit the Renderer sub-menu, which already
+  hosts the other present-time controls (upscaler, render scale).
+
+### Cold-eyes loop log (Part C)
+
+**Loop 1 (2026-07-01)** — 2 cold reviewers (code-accuracy lane; cross-doc lane).
+**Zero CRITICAL; zero HIGH from the code lane** — every Part C code citation
+verified against current source. Findings verified and fixed:
+- **HIGH (clarity)** — "Part C completes the item" risked implying the still-open
+  DOOM-0151 side-gap work was also done. Clarified that Part C completes
+  DOOM-0147's aspect-choice scope only, with an explicit DOOM-0151 cross-ref in
+  the header and Out-of-scope list.
+- **HIGH (accuracy)** — Fill Screen described the distortion as merely the
+  window-aspect mismatch; corrected to state `(0,0)` drops **both** the bars and
+  the 6/5 vertical-aspect correction (raw 640×400 texture, not the 640×480
+  corrected area).
+- **MEDIUM (accuracy)** — the spec claimed `SCREENWIDTH` / `WIDESCREENDELTA`
+  externs live in `i_video.h`; they are in `doomdef.h:121`. Corrected: the new
+  globals' externs go in `doomdef.h` (the real convention), `I_SetAspect` in
+  `i_video.h`.
+- **MEDIUM (accuracy)** — cited `M_ChangeUpscaler` + `M_ChangeDebugViews` as one
+  On/Off pattern, but they use different idioms (`(x+1)%2` vs `x?0:1`); re-cited
+  `M_ChangeDebugViews` (`:1320`) as the matching template.
+- **MEDIUM (currency)** — present-call drift: Part B change #2's historical
+  `SCREENWIDTH*3/4` (`:666`) vs the current `SCREENHEIGHT*6/5` (`:668`); annotated
+  the Part B line as the superseded before-state.
+- **MEDIUM (structure)** — Part C opened a second `# H1`; demoted to `##` with
+  `###` / `####` sub-sections and added a Contents entry.
+- **MEDIUM** — `CreateSoftwareWindow` pinned to its definition (`i_video.c:639`;
+  the logical-size call is at `:668`).
+- **LOW** — tied the "Fill Screen" (menu) / `fillstretch` (global) / "fill-stretch"
+  (Part B notes) terms together with a one-line glossary.
+- **Open question resolved** — `SDL_RenderSetLogicalSize(renderer, 0, 0)` confirmed
+  against SDL2 (clears the logical resolution, resets the viewport to full output +
+  scale `1.0`); noted inline as the relied-on behaviour.
+
+**Loop 2 (2026-07-01)** — 2 cold reviewers re-read the edited section. Code-accuracy
+lane returned **zero** findings (all Part C citations verified). Cross-doc lane
+found self-consistency issues introduced by the Loop-1 log, fixed this pass:
+- **HIGH** — top-of-doc Status still said "before implementation" while the Loop-1
+  log already recorded fixed findings; reconciled both Status lines to "in cold-eyes
+  review" with a pointer to this log.
+- **HIGH** — "Part C completes the item" read as present-tense closure while the
+  roadmap is still 🚧; softened to "once shipped, completes …".
+- **MEDIUM** — Part B's "optional 5:4 fill-stretch" framing under-described Part C's
+  first-class Fill Screen; added a forward pointer at Part B's mention.
+- **MEDIUM** — single-sourced the Part B commit hash (`8fb4d66`) into Part B's Status.
+- **MEDIUM** — added Verification step 5 (Brightness thermo stays the last Renderer
+  row). **LOW** — folded "fill-to-screen" into the terminology gloss.
+
+**Loop 3 (2026-07-01)** — 2 cold reviewers. Code-accuracy lane: **zero CRITICAL /
+HIGH**; one stale cross-cite caught and fixed. Cross-doc lane: the only HIGH was the
+log's own in-progress state (resolved by this convergence entry).
+- **MEDIUM (accuracy)** — Part B's `screens[]` alloc cite drifted (`v_video.c:524/528`
+  → current `:534/538`); corrected at both active Part B sites (the Loop-2 historical
+  log line is left as a point-in-time record).
+- **LOW** — "final scope" → "current scope" (the scope is settled, but the review was
+  still open when written).
+- **Assessed and kept (dismissed with reason):** the `(Part C)` heading suffixes are
+  **deliberate** — without them the Part C `### Goal` / `### Verification` headings
+  would collide with Part B's identically-named anchors. The `renderer_e` "enum" name
+  is faithfully copied from the source (an unnamed enum with a stray tag), not a doc
+  error. Terminology is acknowledged in the gloss rather than flattened, since
+  `fillstretch` (code) must differ from "Fill Screen" (UI label).
+
+**Outcome:** 3 loops; the code-accuracy lane reached zero findings (an implementer
+builds from accurate citations), cross-doc relationships (DOOM-0147 🚧 vs DOOM-0151
+📋) verified consistent, and the residual cross-doc findings decayed to the log's own
+not-yet-converged state — resolved here. **Spec is cleared for implementation (house
+rule 14 satisfied).**

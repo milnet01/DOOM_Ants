@@ -629,6 +629,28 @@ void I_ShutdownGraphicsForVulkan(void)
 
 
 //
+// I_SetAspect  (DOOM-0147 Part C)
+//
+// Apply the present aspect from the `fillstretch` preference. Off (default):
+// authentic DOOM pixel aspect -- logical SCREENWIDTH x SCREENHEIGHT*6/5, SDL
+// letter-/pillar-boxes with black bars where the window shape differs. On: pass
+// (0,0) to disable logical scaling, so the framebuffer stretches to fill the whole
+// window (no bars, at the cost of dropping the 4:3 vertical correction). Safe to
+// call any time -- the menu toggle re-applies it live; no-op before the renderer
+// exists.
+//
+void I_SetAspect(void)
+{
+    if (!renderer)
+	return;
+    if (fillstretch)
+	SDL_RenderSetLogicalSize(renderer, 0, 0);
+    else
+	SDL_RenderSetLogicalSize(renderer, SCREENWIDTH, SCREENHEIGHT * 6 / 5);
+}
+
+
+//
 // CreateSoftwareWindow  (DOOM-0008)
 //
 // Build the 2D window + accelerated renderer + streaming ARGB texture that the
@@ -665,7 +687,7 @@ static void CreateSoftwareWindow(void)
     // 640x480 -- identical to the old SCREENWIDTH*3/4 form. On a widescreen build
     // SCREENWIDTH is larger, so the logical area matches the display aspect and
     // fills the monitor edge-to-edge with MORE level shown (Hor+), no stretch.
-    SDL_RenderSetLogicalSize(renderer, SCREENWIDTH, SCREENHEIGHT * 6 / 5);
+    I_SetAspect();		// DOOM-0147 Part C: 4:3 present, or fill-stretch per pref
 
     texture = SDL_CreateTexture(renderer,
 	SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
@@ -684,6 +706,13 @@ static void CreateSoftwareWindow(void)
 // query fails. I_InitWidescreen (called before V_Init/R_Init) overrides them.
 int		SCREENWIDTH = ORIGWIDTH * HIRES;
 int		WIDESCREENDELTA = 0;
+
+// DOOM-0147 Part C: persisted display prefs (loaded from ~/.doomrc before
+// I_InitWidescreen). widescreen=0 forces 4:3 even on a wide display (honoured at
+// startup, hence "restart to apply"); fillstretch=1 stretches the present to fill
+// the monitor (applied live by I_SetAspect). Defaults reproduce Part B exactly.
+int		widescreen = 1;
+int		fillstretch = 0;
 
 //
 // I_InitWidescreen  (DOOM-0147)
@@ -708,6 +737,7 @@ void I_InitWidescreen(void)
 
     // active logical width = NONWIDEWIDTH * aspect / (4/3) = 240 * aspect, rounded.
     logical = (int)(240.0 * aspect + 0.5);
+    if (!widescreen)			logical = NONWIDEWIDTH;		// Part C: user forced 4:3
     if (logical < NONWIDEWIDTH)		logical = NONWIDEWIDTH;		// narrower than 4:3
     if (logical > MAXWIDTH / HIRES)	logical = MAXWIDTH / HIRES;	// ultrawide cap (24:9)
 

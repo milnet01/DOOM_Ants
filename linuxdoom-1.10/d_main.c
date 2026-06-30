@@ -1123,14 +1123,16 @@ void D_DoomMain (void)
     }
     
     // init subsystems
+    // DOOM-0147 Part C: load defaults FIRST so I_InitWidescreen can honour the
+    // persisted `widescreen` pref (it sizes SCREENWIDTH, which V_Init allocates to).
+    printf ("M_LoadDefaults: Load system defaults.\n");
+    M_LoadDefaults ();              // load before initing other systems
+
     printf ("I_InitWidescreen: detect display aspect (DOOM-0147).\n");
     I_InitWidescreen ();        // sets runtime SCREENWIDTH before buffers/projection
 
     printf ("V_Init: allocate screens.\n");
     V_Init ();
-
-    printf ("M_LoadDefaults: Load system defaults.\n");
-    M_LoadDefaults ();              // load before initing other systems
 
     printf ("Z_Init: Init zone memory allocation daemon. \n");
     Z_Init ();

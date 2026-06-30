@@ -210,6 +210,8 @@ void M_ChangeUpscaler(int choice);
 void M_ChangeRenderScale(int choice);
 void M_ChangeDebugViews(int choice);
 void M_ChangeBrightness(int choice);
+void M_ChangeWidescreen(int choice);
+void M_ChangeFillScreen(int choice);
 void M_SizeDisplay(int choice);
 void M_StartGame(int choice);
 void M_Sound(int choice);
@@ -400,6 +402,8 @@ enum
     rm_upscaler,
     rm_renderscale,
     rm_debugviews,
+    rm_widescreen,
+    rm_fillstretch,
     rm_brightness,
     rm_end
 } renderer_e;
@@ -410,6 +414,8 @@ menuitem_t RendererMenu[]=
     {1,"",	M_ChangeUpscaler,'u'},
     {1,"",	M_ChangeRenderScale,'c'},
     {1,"",	M_ChangeDebugViews,'d'},
+    {1,"",	M_ChangeWidescreen,'w'},
+    {1,"",	M_ChangeFillScreen,'f'},
     {2,"",	M_ChangeBrightness,'b'}
 };
 
@@ -1078,6 +1084,16 @@ void M_DrawRendererMenu(void)
     M_WriteText(RendererDef.x + 120,RendererDef.y+LINEHEIGHT*rm_debugviews,
 		rb_rtdebug_menu ? "On" : "Off");
 
+    // DOOM-0147 Part C: Widescreen on/off (sizes SCREENWIDTH at startup, so the
+    // value carries a "(restart)" tag) + Fill Screen on/off (live present stretch).
+    M_WriteText(RendererDef.x,RendererDef.y+LINEHEIGHT*rm_widescreen,"Widescreen:");
+    M_WriteText(RendererDef.x + 120,RendererDef.y+LINEHEIGHT*rm_widescreen,
+		widescreen ? "On (restart)" : "Off (restart)");
+
+    M_WriteText(RendererDef.x,RendererDef.y+LINEHEIGHT*rm_fillstretch,"Fill Screen:");
+    M_WriteText(RendererDef.x + 120,RendererDef.y+LINEHEIGHT*rm_fillstretch,
+		fillstretch ? "On" : "Off");
+
     // DOOM-0096: Ultra/denoiser brightness. Label on its own line with a thermometer
     // slider below it (rb_exposure 0..15), the standard DOOM slider layout.
     M_WriteText(RendererDef.x,RendererDef.y+LINEHEIGHT*rm_brightness,"Brightness:");
@@ -1342,6 +1358,29 @@ void M_ChangeBrightness(int choice)
 	if (rb_exposure < 15) rb_exposure++;
 	break;
     }
+}
+
+//
+// DOOM-0147 Part C: Widescreen on/off. SCREENWIDTH (and the screen buffers + SDL
+// texture sized from it) is fixed once at startup, so the change only takes effect
+// on the next launch -- the menu value shows "(restart)". Persisted to ~/.doomrc.
+//
+void M_ChangeWidescreen(int choice)
+{
+    choice = 0;
+    widescreen = widescreen ? 0 : 1;
+}
+
+//
+// DOOM-0147 Part C: Fill Screen on/off -- stretch the present to fill the whole
+// monitor vs. authentic 4:3 with black bars. Applied live via I_SetAspect (present
+// time only, no reallocation). Persisted to ~/.doomrc.
+//
+void M_ChangeFillScreen(int choice)
+{
+    choice = 0;
+    fillstretch = fillstretch ? 0 : 1;
+    I_SetAspect();
 }
 
 void M_ChangeFPS(int choice)

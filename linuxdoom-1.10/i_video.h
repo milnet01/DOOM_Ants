@@ -35,6 +35,7 @@
 // determines the hardware configuration
 // and sets up the video mode
 void I_InitWidescreen (void);	// DOOM-0147: set runtime SCREENWIDTH before V_Init
+void I_SetAspect (void);	// DOOM-0147 Part C: apply 4:3 / fill-stretch present aspect
 void I_InitGraphics (void);
 
 

@@ -8,6 +8,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Widescreen and Fill Screen display toggles in the Renderer menu (DOOM-0147 Part C)** (DOOM-0147)
+  Two persisted options (Options -> Renderer): "Widescreen" turns the authentic Hor+ widescreen on or off (Off forces classic 4:3 even on a wide monitor; takes effect on restart), and "Fill Screen" stretches the picture to fill the whole monitor, removing the black bars on displays whose shape isn't 4:3 (applies instantly). Both are saved to ~/.doomrc. Defaults reproduce the prior behaviour exactly.
+
 - **Authentic widescreen (Hor+) for the Classic software renderer (DOOM-0147 Part B)** (DOOM-0147)
   On a display wider than 4:3 the Classic renderer now shows MORE of the level
   to the left and right instead of stretching the 4:3 picture. The view width is
