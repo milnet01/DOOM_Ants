@@ -34,6 +34,7 @@
 // Called by D_DoomMain,
 // determines the hardware configuration
 // and sets up the video mode
+void I_InitWidescreen (void);	// DOOM-0147: set runtime SCREENWIDTH before V_Init
 void I_InitGraphics (void);
 
 

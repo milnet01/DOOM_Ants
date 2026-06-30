@@ -55,8 +55,8 @@ visplane_t*		lastvisplane;
 visplane_t*		floorplane;
 visplane_t*		ceilingplane;
 
-// ?
-#define MAXOPENINGS	SCREENWIDTH*64
+// DOOM-0147: sized at the compile-time MAXWIDTH cap, not the runtime SCREENWIDTH.
+#define MAXOPENINGS	MAXWIDTH*64
 short			openings[MAXOPENINGS];
 short*			lastopening;
 
@@ -66,8 +66,8 @@ short*			lastopening;
 //  floorclip starts out SCREENHEIGHT
 //  ceilingclip starts out -1
 //
-short			floorclip[SCREENWIDTH];
-short			ceilingclip[SCREENWIDTH];
+short			floorclip[MAXWIDTH];
+short			ceilingclip[MAXWIDTH];
 
 //
 // spanstart holds the start of a plane span
@@ -83,7 +83,7 @@ lighttable_t**		planezlight;
 fixed_t			planeheight;
 
 fixed_t			yslope[SCREENHEIGHT];
-fixed_t			distscale[SCREENWIDTH];
+fixed_t			distscale[MAXWIDTH];
 fixed_t			basexscale;
 fixed_t			baseyscale;
 

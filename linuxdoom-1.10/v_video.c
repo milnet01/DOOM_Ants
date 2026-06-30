@@ -195,8 +195,11 @@ V_CopyRect
 
     ssw = screenwidth[srcscrn];
     dsw = screenwidth[destscrn];
-    sf = ssw / ORIGWIDTH;
-    df = dsw / ORIGWIDTH;
+    // DOOM-0147: scale is HIRES for full-screen buffers, 1 for the ORIGWIDTH-wide
+    // status-bar scratch. (A widescreen buffer must not inflate the factor past
+    // HIRES; dsw/ORIGWIDTH only stayed == HIRES by luck at 4:3.)
+    sf = (ssw == ORIGWIDTH) ? 1 : HIRES;
+    df = (dsw == ORIGWIDTH) ? 1 : HIRES;
 
     src = screens[srcscrn] + (srcy*sf)*ssw + (srcx*sf);
     dest = screens[destscrn] + (desty*df)*dsw + (destx*df);
@@ -236,7 +239,10 @@ V_DrawPatch
     int		w; 
 	 
     int		dsw = screenwidth[scrn];	// dest stride
-    int		f = dsw / ORIGWIDTH;		// scale factor (HIRES, or 1 for the scratch)
+    // DOOM-0147: HIRES for full-screen buffers, 1 for the ORIGWIDTH-wide scratch.
+    int		f = (dsw == ORIGWIDTH) ? 1 : HIRES;
+    // Re-centre 320-wide UI art in a widescreen frame (0 on the scratch and at 4:3).
+    int		wsdelta = (dsw == ORIGWIDTH) ? 0 : WIDESCREENDELTA;
     int		rx, ry;
 
     y -= SHORT(patch->topoffset);
@@ -258,6 +264,7 @@ V_DrawPatch
     if (!scrn)
 	V_MarkRect (x, y, SHORT(patch->width), SHORT(patch->height));
 
+    x += wsdelta;				// DOOM-0147 widescreen UI centring
     col = 0;
     desttop = screens[scrn] + (y*f)*dsw + (x*f);	// physical top-left
 
@@ -311,7 +318,9 @@ V_DrawPatchFlipped
     int		w; 
 	 
     int		dsw = screenwidth[scrn];	// dest stride
-    int		f = dsw / ORIGWIDTH;		// scale factor
+    // DOOM-0147: HIRES for full-screen buffers, 1 for the ORIGWIDTH-wide scratch.
+    int		f = (dsw == ORIGWIDTH) ? 1 : HIRES;
+    int		wsdelta = (dsw == ORIGWIDTH) ? 0 : WIDESCREENDELTA;	// UI centring
     int		rx, ry;
 
     y -= SHORT(patch->topoffset);
@@ -331,6 +340,7 @@ V_DrawPatchFlipped
     if (!scrn)
 	V_MarkRect (x, y, SHORT(patch->width), SHORT(patch->height));
 
+    x += wsdelta;				// DOOM-0147 widescreen UI centring
     col = 0;
     desttop = screens[scrn] + (y*f)*dsw + (x*f);
 

@@ -219,7 +219,9 @@ static int 	grid = 0;
 static int 	leveljuststarted = 1; 	// kluge until AM_LevelInit() is called
 
 boolean    	automapactive = false;
-static int 	finit_width = SCREENWIDTH;
+// DOOM-0147: SCREENWIDTH is now a runtime value, so it can't be a static
+// initialiser. Default to the 4:3 width; AM_LevelInit sets the real runtime width.
+static int 	finit_width = NONWIDEWIDTH*HIRES;
 static int 	finit_height = SCREENHEIGHT - HIRES*32;	// reserve the physical status bar (DOOM-0027)
 
 // location of window on screen
@@ -539,6 +541,7 @@ void AM_LevelInit(void)
     leveljuststarted = 0;
 
     f_x = f_y = 0;
+    finit_width = SCREENWIDTH;		// DOOM-0147: runtime width is known by now
     f_w = finit_width;
     f_h = finit_height;
 

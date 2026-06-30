@@ -1123,6 +1123,9 @@ void D_DoomMain (void)
     }
     
     // init subsystems
+    printf ("I_InitWidescreen: detect display aspect (DOOM-0147).\n");
+    I_InitWidescreen ();        // sets runtime SCREENWIDTH before buffers/projection
+
     printf ("V_Init: allocate screens.\n");
     V_Init ();
 

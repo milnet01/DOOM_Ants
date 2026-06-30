@@ -476,10 +476,10 @@ typedef struct
   // value (a signed int would read all-ones as -1 and invert the span logic).
   // The pads must match the element type so [minx-1]/[maxx+1] stay valid.
   unsigned int	pad1;
-  unsigned int	top[SCREENWIDTH];
+  unsigned int	top[MAXWIDTH];
   unsigned int	pad2;
   unsigned int	pad3;
-  unsigned int	bottom[SCREENWIDTH];
+  unsigned int	bottom[MAXWIDTH];
   unsigned int	pad4;
 
 } visplane_t;

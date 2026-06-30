@@ -6,6 +6,19 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Authentic widescreen (Hor+) for the Classic software renderer (DOOM-0147 Part B)** (DOOM-0147)
+  On a display wider than 4:3 the Classic renderer now shows MORE of the level
+  to the left and right instead of stretching the 4:3 picture. The view width is
+  chosen at startup from the real display aspect; the projection keeps DOOM's
+  vanilla vertical proportions and per-column angle, so it still feels like the
+  original. UI art and the status bar stay centred. Displays at 4:3 or narrower
+  (e.g. 5:4 1280x1024) render authentic 4:3 unchanged — a provable no-op there.
+  Internally SCREENWIDTH became a runtime value (view-width arrays now sized at
+  the MAXWIDTH cap). Builds clean on Linux and Windows; awaiting visual
+  confirmation on a 16:9 display. Part C (a 4:3<->Widescreen menu toggle) follows.
+
 ### Changed
 
 - **Rebalanced audio so sound effects are no longer drowned out by music: the music volume ceiling is lowered (quieter at every slider position) and new installs default to full sound-effects volume.** (DOOM-0047)

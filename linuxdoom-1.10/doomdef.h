@@ -109,7 +109,17 @@ typedef enum
 #define	HIRES			2
 #define	INV_ASPECT_RATIO	0.625 // 0.75, ideally
 
-#define SCREENWIDTH		(ORIGWIDTH*HIRES)
+// DOOM-0147 widescreen (Hor+). NONWIDEWIDTH is the immutable 4:3 logical
+// reference (320). The physical view width SCREENWIDTH is now a RUNTIME value,
+// chosen at startup from the real display aspect (I_InitWidescreen): it is
+// NONWIDEWIDTH*HIRES (640) on a 4:3-or-narrower display and grows up to MAXWIDTH
+// on a wider one. Static view-width arrays are sized at the compile-time MAXWIDTH
+// cap (the renderer only ever fills the first SCREENWIDTH columns). WIDESCREENDELTA
+// is the logical-space offset that re-centres 320-wide UI art in a wide frame.
+#define NONWIDEWIDTH		320
+#define MAXWIDTH		1280	// physical cap: 640 logical (24:9) * HIRES
+extern int SCREENWIDTH;		// physical view width, runtime
+extern int WIDESCREENDELTA;	// logical UI-centring offset = (active logical width - NONWIDEWIDTH)/2
 #define SCREENHEIGHT		(ORIGHEIGHT*HIRES)
 
 

@@ -657,13 +657,15 @@ static void CreateSoftwareWindow(void)
     if (!renderer)
 	I_Error("I_InitGraphics: could not create renderer: %s", SDL_GetError());
 
-    // Present at authentic 4:3 (DOOM-0147). The SCREENWIDTHxSCREENHEIGHT
-    // framebuffer is 1.6:1 (square pixels), but DOOM's true display is 4:3 --
-    // VGA stretched the 200 scanlines ~1.2x vertically. Giving SDL a 4:3
-    // logical area makes it stretch the framebuffer to that height and
-    // letterbox to the window: fills a 4:3 monitor edge-to-edge, pillarboxes
-    // a widescreen one (no top/bottom bars, correct proportions).
-    SDL_RenderSetLogicalSize(renderer, SCREENWIDTH, SCREENWIDTH * 3 / 4);
+    // Present with authentic DOOM pixel aspect (DOOM-0147). The framebuffer is
+    // SCREENWIDTH x SCREENHEIGHT of square pixels, but DOOM's true display
+    // stretched the 200 scanlines ~1.2x vertically. So the logical height is a
+    // fixed SCREENHEIGHT*6/5 (= 400*1.2 = 480) regardless of width, and the
+    // logical width is the runtime SCREENWIDTH. At 4:3 (SCREENWIDTH 640) this is
+    // 640x480 -- identical to the old SCREENWIDTH*3/4 form. On a widescreen build
+    // SCREENWIDTH is larger, so the logical area matches the display aspect and
+    // fills the monitor edge-to-edge with MORE level shown (Hor+), no stretch.
+    SDL_RenderSetLogicalSize(renderer, SCREENWIDTH, SCREENHEIGHT * 6 / 5);
 
     texture = SDL_CreateTexture(renderer,
 	SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
@@ -676,6 +678,42 @@ static void CreateSoftwareWindow(void)
     SDL_SetRelativeMouseMode(SDL_TRUE);
 }
 
+
+// DOOM-0147: the physical software-render width and the UI-centring offset.
+// Defaults are vanilla 4:3 -- safe if I_InitWidescreen never runs or the display
+// query fails. I_InitWidescreen (called before V_Init/R_Init) overrides them.
+int		SCREENWIDTH = ORIGWIDTH * HIRES;
+int		WIDESCREENDELTA = 0;
+
+//
+// I_InitWidescreen  (DOOM-0147)
+//
+// Pick the physical render width from the real display aspect so the classic
+// renderer fills a widescreen monitor by showing MORE of the level (Hor+), not by
+// stretching it. MUST run before V_Init/R_Init: both the screen buffers and the
+// projection read SCREENWIDTH. A 4:3-or-narrower display (e.g. the 5:4 1280x1024)
+// clamps to NONWIDEWIDTH and renders authentic 4:3 -- Hor+ has no width to add.
+// SDL video is brought up here (idempotent; I_InitGraphics re-inits it later).
+//
+void I_InitWidescreen(void)
+{
+    SDL_DisplayMode	dm;
+    double		aspect = 4.0 / 3.0;	// safe default if the query fails
+    int			logical;
+
+    if (SDL_InitSubSystem(SDL_INIT_VIDEO) == 0
+	&& SDL_GetDesktopDisplayMode(0, &dm) == 0
+	&& dm.h > 0)
+	aspect = (double)dm.w / (double)dm.h;
+
+    // active logical width = NONWIDEWIDTH * aspect / (4/3) = 240 * aspect, rounded.
+    logical = (int)(240.0 * aspect + 0.5);
+    if (logical < NONWIDEWIDTH)		logical = NONWIDEWIDTH;		// narrower than 4:3
+    if (logical > MAXWIDTH / HIRES)	logical = MAXWIDTH / HIRES;	// ultrawide cap (24:9)
+
+    SCREENWIDTH = logical * HIRES;
+    WIDESCREENDELTA = (logical - NONWIDEWIDTH) / 2;
+}
 
 void I_InitGraphics(void)
 {

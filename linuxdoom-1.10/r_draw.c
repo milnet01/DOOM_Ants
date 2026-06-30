@@ -44,8 +44,9 @@ rcsid[] __attribute__((used)) = "$Id: r_draw.c,v 1.4 1997/02/03 16:47:55 b1 Exp 
 #include "doomstat.h"
 
 
-// ?
-#define MAXWIDTH			1120
+// MAXWIDTH now lives in doomdef.h (DOOM-0147: it caps the runtime SCREENWIDTH
+// and every static view-width array). MAXHEIGHT stays local -- view height is
+// still the compile-time SCREENHEIGHT.
 #define MAXHEIGHT			832
 
 // status bar height at bottom of screen, in PHYSICAL pixels (DOOM-0027:
@@ -258,8 +259,10 @@ void R_DrawColumnLow (void)
 //
 // Spectre/Invisibility.
 //
-#define FUZZTABLE		50 
-#define FUZZOFF	(SCREENWIDTH)
+#define FUZZTABLE		50
+// DOOM-0147: SCREENWIDTH is runtime now, so the table can't statically hold
+// +/-SCREENWIDTH. Hold the row-step SIGN (+1/-1) and scale by SCREENWIDTH at use.
+#define FUZZOFF	1
 
 
 int	fuzzoffset[FUZZTABLE] =
@@ -357,7 +360,7 @@ void R_DrawFuzzColumn (void)
 	//  a pixel that is either one column
 	//  left or right of the current one.
 	// Add index from colormap to index.
-	*dest = colormaps[6*256+dest[fuzzoffset[fuzzpos]]]; 
+	*dest = colormaps[6*256+dest[fuzzoffset[fuzzpos]*SCREENWIDTH]];
 
 	// Clamp table lookup index.
 	if (++fuzzpos == FUZZTABLE) 

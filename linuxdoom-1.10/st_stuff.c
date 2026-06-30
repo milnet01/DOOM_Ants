@@ -506,7 +506,23 @@ void ST_refreshBackground(void)
 	if (netgame)
 	    V_DrawPatch(ST_FX, 0, BG, faceback);
 
-	V_CopyRect(ST_X, 0, BG, ST_WIDTH, ST_HEIGHT, ST_X, ST_Y, FG);
+	// DOOM-0147: centre the 320-wide bar in a widescreen frame (delta 0 at 4:3).
+	V_CopyRect(ST_X, 0, BG, ST_WIDTH, ST_HEIGHT, ST_X+WIDESCREENDELTA, ST_Y, FG);
+
+	// On a widescreen frame the bar is narrower than the strip; black out the
+	// sides so no stale pixels show beside it (skipped at 4:3 where delta is 0).
+	if (WIDESCREENDELTA > 0)
+	{
+	    int		y;
+	    int		left  = WIDESCREENDELTA * HIRES;
+	    int		right = left + ST_WIDTH * HIRES;
+	    for (y = ST_Y*HIRES ; y < SCREENHEIGHT ; y++)
+	    {
+		byte*	row = screens[FG] + y*SCREENWIDTH;
+		memset(row, 0, left);
+		memset(row + right, 0, SCREENWIDTH - right);
+	    }
+	}
     }
 
 }

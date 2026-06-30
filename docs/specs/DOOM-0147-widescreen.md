@@ -1,6 +1,7 @@
 # DOOM-0147 (Part B) — Authentic widescreen for the classic renderer
 
-**Status:** Part B — design complete, cold-eyes looped; implementation not started.
+**Status:** Part B — **implemented** 2026-06-30 (builds clean Linux + Windows; awaiting
+visual confirmation on a true-widescreen display — see Implementation notes).
 **Roadmap:** DOOM-0147 (Part A shipped 16e076b; Part C follows).
 **Kind:** fix / enhancement.
 **Depends on:** DOOM-0027 (shipped) — reuses its `ORIGWIDTH`/`SCREENWIDTH`/`HIRES` split.
@@ -319,6 +320,49 @@ confirm. Step → verify check:
   window (`r_mesh.c` does its own aspect correction). This spec is the *software*
   renderer only.
 - **Aspect choice persistence + menu toggle** — that's Part C, a follow-up.
+
+## Implementation notes (2026-06-30)
+
+Four things surfaced during implementation that the cold-eyes loops (a *docs* review)
+could not have caught — they needed an implementer reading the hot render path:
+
+1. **`SCREENWIDTH` runtime-isation was wider than "3 stride sites."** Change #2 chose
+   to make `SCREENWIDTH` a runtime value; in practice that also required repointing
+   **~16 compile-time array declarations** (`floorclip`/`ceilingclip`/`distscale`
+   `r_plane.{c,h}`; `negonearray`/`screenheightarray`/`clipbot`/`cliptop`
+   `r_things.{c,h}`; `xtoviewangle` `r_main.c`/`r_state.h`; visplane `top`/`bottom`
+   `r_defs.h`; `MAXOPENINGS`) to the compile-time `MAXWIDTH` cap (promoted from
+   `r_draw.c` to `doomdef.h`, `1120 → 1280`). Two file-scope *static initialisers*
+   also broke and were converted to runtime assignment: `am_map.c` `finit_width` (set
+   in `AM_LevelInit`) and the spectre-fuzz table `r_draw.c` `fuzzoffset[]` (now holds
+   `±1` row-step signs, scaled by `SCREENWIDTH` at use). All hot-loop strides
+   (`dest += SCREENWIDTH`, `dest[SCREENWIDTH*n]`) "just worked" once the symbol became
+   a runtime int — only declarations and static initialisers needed edits.
+
+2. **UI scale factor `f = dsw/ORIGWIDTH` was latently wrong for wide buffers.** In
+   `V_DrawPatch`/`V_DrawPatchFlipped`/`V_CopyRect` the per-buffer scale was derived as
+   `screenwidth/ORIGWIDTH`, which equals `HIRES` only by integer-truncation luck at
+   ≤16:9 and inflates to 3–4× at 21:9+. Pinned to `HIRES` for the full-screen buffers
+   (1 for the `ORIGWIDTH`-wide scratch). Zero-diff at 4:3.
+
+3. **DOOM-0148 (HUD always on, Screen Size capped at block 10) defeated widescreen
+   in-game.** Block 10 hardcoded `scaledviewwidth = setblocks*32*HIRES` (= 640, 4:3),
+   so the gameplay view never widened. Block 10 now uses the full `SCREENWIDTH`
+   (zero-diff at 4:3, where `SCREENWIDTH == 640`). The spec's claim that
+   `R_FillBackScreen` would fill the status-bar sides was wrong at full width (it
+   early-returns) — instead `ST_refreshBackground` blacks out the strips either side
+   of the centred 320-wide bar.
+
+4. **Static 320-wide full-screen art (title / intermission / menu background /
+   finale) shows side gaps on a true-widescreen display.** This is the spec's
+   already-out-of-scope "widescreen UI artwork" item, now visible in practice: the
+   originals are centred (via `WIDESCREENDELTA`) with un-painted sides. Tracked as a
+   follow-up (a black-clear of those pages, or genuine widescreen art with the Ultra
+   HD-asset work). The user's 5:4 monitor is unaffected (it renders authentic 4:3).
+
+Files touched: `doomdef.h`, `r_draw.c`, `r_plane.{c,h}`, `r_things.{c,h}`, `r_main.c`,
+`r_state.h`, `r_defs.h`, `i_video.{c,h}`, `d_main.c`, `am_map.c`, `v_video.c`,
+`st_stuff.c`. Builds clean on both targets; 4:3/5:4 is a provable zero-diff no-op.
 
 ## Cold-eyes loop log
 

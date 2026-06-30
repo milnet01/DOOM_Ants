@@ -64,6 +64,10 @@ int			centery;
 fixed_t			centerxfrac;
 fixed_t			centeryfrac;
 fixed_t			projection;
+// DOOM-0147 widescreen: the 4:3-reference half-width in fixed point. Drives the
+// focal length and the world/vertical scale so widescreen columns extend the FOV
+// at vanilla angular resolution instead of stretching. Equals centerxfrac at 4:3.
+fixed_t			centerxfrac_nonwide;
 
 // just for profiling purposes
 int			framecount;	
@@ -100,7 +104,7 @@ int			viewangletox[FINEANGLES/2];
 // The xtoviewangleangle[] table maps a screen pixel
 // to the lowest viewangle that maps back to x ranges
 // from clipangle to -clipangle.
-angle_t			xtoviewangle[SCREENWIDTH+1];
+angle_t			xtoviewangle[MAXWIDTH+1];
 
 
 // UNUSED.
@@ -554,7 +558,7 @@ void R_InitTextureMapping (void)
     //
     // Calc focallength
     //  so FIELDOFVIEW angles covers SCREENWIDTH.
-    focallength = FixedDiv (centerxfrac,
+    focallength = FixedDiv (centerxfrac_nonwide,
 			    finetangent[FINEANGLES/4+FIELDOFVIEW/2] );
 	
     for (i=0 ; i<FINEANGLES/2 ; i++)
@@ -675,7 +679,8 @@ void R_ExecuteSetViewSize (void)
     int		i;
     int		j;
     int		level;
-    int		startmap; 	
+    int		startmap;
+    int		nonwideviewwidth;	// DOOM-0147: 4:3-equivalent view width
 
     setsizeneeded = false;
 
@@ -683,6 +688,16 @@ void R_ExecuteSetViewSize (void)
     {
 	scaledviewwidth = SCREENWIDTH;
 	viewheight = SCREENHEIGHT;
+    }
+    else if (setblocks == 10)
+    {
+	// DOOM-0147: the full-size WITH-status-bar view spans the entire (possibly
+	// widescreen) buffer, so widescreen gameplay works while the HUD is on --
+	// DOOM-0148 caps Screen Size here. The status bar sits centred in the bottom
+	// strip (ST_refreshBackground blacks out its sides). At 4:3 SCREENWIDTH is
+	// 640, identical to the old setblocks*32*HIRES, so this is a zero-diff path.
+	scaledviewwidth = SCREENWIDTH;
+	viewheight = (setblocks*168/10*HIRES)&~7;
     }
     else
     {
@@ -702,7 +717,18 @@ void R_ExecuteSetViewSize (void)
     centerx = viewwidth/2;
     centerxfrac = centerx<<FRACBITS;
     centeryfrac = centery<<FRACBITS;
-    projection = centerxfrac;
+
+    // DOOM-0147 widescreen (Hor+): the focal length, the world-scale projection,
+    // the vertical (yslope) scale and the weapon-sprite scale must reference the
+    // *non-wide* 4:3 half-width, so the extra widescreen columns extend the
+    // horizontal FOV at vanilla angular resolution rather than stretching the
+    // picture. centerx/centerxfrac stay the geometric centre of the (wide) view
+    // -- they place columns and anchor the weapon sprite. When SCREENWIDTH ==
+    // NONWIDEWIDTH*HIRES (a 4:3-or-narrower display) nonwideviewwidth == viewwidth
+    // and every line below reduces to the vanilla math exactly (zero-diff path).
+    nonwideviewwidth = viewwidth * (NONWIDEWIDTH*HIRES) / SCREENWIDTH;
+    centerxfrac_nonwide = (nonwideviewwidth/2)<<FRACBITS;
+    projection = centerxfrac_nonwide;
 
     if (!detailshift)
     {
@@ -728,8 +754,10 @@ void R_ExecuteSetViewSize (void)
     // and must divide by ORIGWIDTH, not the physical SCREENWIDTH (DOOM-0027).
     // Dividing by SCREENWIDTH (640) halved the scale to FRACUNIT, which shrank
     // the gun and left its anchor mid-screen instead of at the view bottom.
-    pspritescale = FRACUNIT*viewwidth/ORIGWIDTH;
-    pspriteiscale = FRACUNIT*ORIGWIDTH/viewwidth;
+    // DOOM-0147: use the non-wide view width so a wider FOV does NOT enlarge the
+    // gun -- it keeps its authentic 4:3 size (== viewwidth at 4:3).
+    pspritescale = FRACUNIT*nonwideviewwidth/ORIGWIDTH;
+    pspriteiscale = FRACUNIT*ORIGWIDTH/nonwideviewwidth;
     
     // thing clipping
     for (i=0 ; i<viewwidth ; i++)
@@ -740,7 +768,7 @@ void R_ExecuteSetViewSize (void)
     {
 	dy = ((i-viewheight/2)<<FRACBITS)+FRACUNIT/2;
 	dy = abs(dy);
-	yslope[i] = FixedDiv ( (viewwidth<<detailshift)/2*FRACUNIT, dy);
+	yslope[i] = FixedDiv ( (nonwideviewwidth<<detailshift)/2*FRACUNIT, dy);
     }
 	
     for (i=0 ; i<viewwidth ; i++)
