@@ -657,7 +657,13 @@ static void CreateSoftwareWindow(void)
     if (!renderer)
 	I_Error("I_InitGraphics: could not create renderer: %s", SDL_GetError());
 
-    SDL_RenderSetLogicalSize(renderer, SCREENWIDTH, SCREENHEIGHT);
+    // Present at authentic 4:3 (DOOM-0147). The SCREENWIDTHxSCREENHEIGHT
+    // framebuffer is 1.6:1 (square pixels), but DOOM's true display is 4:3 --
+    // VGA stretched the 200 scanlines ~1.2x vertically. Giving SDL a 4:3
+    // logical area makes it stretch the framebuffer to that height and
+    // letterbox to the window: fills a 4:3 monitor edge-to-edge, pillarboxes
+    // a widescreen one (no top/bottom bars, correct proportions).
+    SDL_RenderSetLogicalSize(renderer, SCREENWIDTH, SCREENWIDTH * 3 / 4);
 
     texture = SDL_CreateTexture(renderer,
 	SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
