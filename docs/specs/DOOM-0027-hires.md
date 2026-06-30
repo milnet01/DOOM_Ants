@@ -130,7 +130,7 @@ The 3D renderer, the SDL output, the automap and the screen-melt keep using
 `SCREENWIDTH`/`SCREENHEIGHT` and get hi-res for free.
 
 Why **integer 2×** specifically, and not an arbitrary factor: 640×400 has the
-**identical aspect ratio** to 320×200 (`INV_ASPECT_RATIO 0.625`, `doomdef.h:107`
+**identical aspect ratio** to 320×200 (`INV_ASPECT_RATIO 0.625`, `doomdef.h:110`
 — i.e. 200/320), so DOOM's signature non-square-pixel "stretch" is preserved
 bit-for-bit; there is no aspect-correction maths to add. A pure doubling also
 makes the scaler a trivial 2×2 block copy with no sampling artefacts.
@@ -258,7 +258,7 @@ handled.
 use is `ST_HEIGHT 32*SCREEN_MUL` (`st_stuff.h:32`), which Component C rewrites in
 logical terms. Remove the `SCREEN_MUL` define and that one use in the same
 change (leaving a `*1` factor dangling would rot). `BASE_WIDTH` (`:100`) and
-`INV_ASPECT_RATIO` (`:107`) are unreferenced by this change and left untouched.
+`INV_ASPECT_RATIO` (`:110`) are unreferenced by this change and left untouched.
 
 **B. `v_video.c` — the scaler (the bulk of the new logic).**
 Add `int screenwidth[5]` and initialise **all five entries in `V_Init`** —
@@ -274,9 +274,9 @@ primitives scale to the destination buffer's width:
 
 | Function | Location | Change |
 |----------|----------|--------|
-| `V_DrawPatch` | `:204` | index by `screenwidth[dest]`; scale a 320-patch by `screenwidth[dest]/ORIGWIDTH` (→ ×2 into a frame buffer, ×1 into the 320 scratch) |
-| `V_DrawPatchFlipped` | `:271` | same, mirrored |
-| `V_CopyRect` | def `:158`, blit `:187-188` | **all eight args are logical** — see coordinate rule below |
+| `V_DrawPatch` | `:223` | index by `screenwidth[dest]`; scale a 320-patch by `screenwidth[dest]/ORIGWIDTH` (→ ×2 into a frame buffer, ×1 into the 320 scratch) |
+| `V_DrawPatchFlipped` | `:298` | same, mirrored |
+| `V_CopyRect` | def `:162`, blit `:187-188` | **all eight args are logical** — see coordinate rule below |
 | `V_DrawBlock` | def `:405`, blit `:428` | **raw, not a logical primitive** — index by `screenwidth[dest]`; copies a caller-supplied *physical* block 1:1 (only caller: `f_wipe.c:257`, physical dims). No logical scaling. |
 
 **`V_CopyRect` coordinate rule (load-bearing — the whole bar pipeline rests on it).**
@@ -298,8 +298,8 @@ block at the destination stride (a 2×2 block for 320→640). When src and dest
 factors are equal (any physical→physical copy, if one is ever added) it degenerates
 to the original 1:1 `memcpy`.
 
-`V_DrawPatchDirect` (`:337`) forwards to `V_DrawPatch` (`:343`) and inherits the
-scaling for free (its original VGA-planar body is **commented out**, `:345-395`,
+`V_DrawPatchDirect` (`:372`) forwards to `V_DrawPatch` (`:378`) and inherits the
+scaling for free (its original VGA-planar body is **commented out**, `:380-`,
 verifiably dead under SDL2 — leave it).
 
 Bounds checks must be evaluated in the space each primitive's args live in —
@@ -475,7 +475,7 @@ scaling never reaches them. They must be handled explicitly:
   bar. One-line fix. (The map-drawing transforms themselves auto-scale via
   `f_w`/`f_h` seeded from `finit_width = SCREENWIDTH`, `am_map.c:222`; the map
   draws into `fb = screens[0]`, `:464`.)
-- **`r_draw.c:52` `#define SBARHEIGHT 32`** — the renderer's *own* copy of the
+- **`r_draw.c:53` `#define SBARHEIGHT (HIRES*32)`** — the renderer's *own* copy of the
   physical bar height, used to reserve the bottom strip: `viewwindowy = (SCREENHEIGHT
   - SBARHEIGHT - height)>>1` (`:716`), the back-screen fill bound
   `y < SCREENHEIGHT-SBARHEIGHT` (`:759`), and the border centring `top =
