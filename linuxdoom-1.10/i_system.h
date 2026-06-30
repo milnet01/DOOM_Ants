@@ -89,7 +89,12 @@ byte* I_AllocLow (int length);
 void I_Tactile (int on, int off, int total);
 
 
-_Noreturn void I_Error (char *error, ...);
+// noreturn: I_Error never returns (it prints, shuts down, exits). The GCC
+// attribute form is used rather than C11 _Noreturn because cppcheck honours the
+// attribute on variadic functions but not the keyword -- without it the static
+// analyser imagines every "if (!p) I_Error(...)" guard falling through and
+// false-flags the following pointer use (kept the audit signal noisy).
+__attribute__((noreturn)) void I_Error (char *error, ...);
 
 
 #endif

@@ -185,7 +185,7 @@ byte*	I_AllocLow(int length)
 //
 extern boolean demorecording;
 
-_Noreturn void I_Error (char *error, ...)
+__attribute__((noreturn)) void I_Error (char *error, ...)
 {
     va_list	argptr;
 
