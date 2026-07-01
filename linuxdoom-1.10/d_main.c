@@ -496,6 +496,11 @@ char                    *pagename;
 //
 void D_PageTicker (void)
 {
+    // DOOM-0152: freeze the attract cycle while the menu is up, so the background
+    // doesn't slide from the title to the red-on-red CREDIT/HELP page (or a demo)
+    // behind the menu and make the menu text illegible.
+    if (menuactive)
+	return;
     if (--pagetic < 0)
 	D_AdvanceDemo ();
 }
@@ -507,7 +512,11 @@ void D_PageTicker (void)
 //
 void D_PageDrawer (void)
 {
-    V_DrawPatch (0,0, 0, W_CacheLumpName(pagename, PU_CACHE));
+    // DOOM-0152: with the menu open, always show the plain TITLEPIC behind it. The
+    // attract loop's CREDIT/HELP pages are dense red text the (red) menu items are
+    // illegible over; paired with D_PageTicker's freeze so the page stays put.
+    V_DrawPatch (0,0, 0,
+		 W_CacheLumpName(menuactive ? "TITLEPIC" : pagename, PU_CACHE));
 }
 
 

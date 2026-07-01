@@ -1276,3 +1276,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** On a wide monitor the old fixed-size pictures (title, menu background, end screens) sit centred with blank strips on either side; tidy those strips so they look intentional.
   Kind: enhancement.
   Source: in-session-2026-06-30 (discovered implementing DOOM-0147 Part B).
+
+- ✅ [DOOM-0152] **Show the plain TITLEPIC behind the menu so menu text is readable.**
+  Reported 2026-07-01 with a screenshot: the main menu drawn over the attract-loop CREDIT page was red-on-red and illegible. Fix (d_main.c): D_PageDrawer draws TITLEPIC whenever menuactive (instead of the current attract page), and D_PageTicker freezes the attract cycle while the menu is up so it can't slide to CREDIT/HELP or a demo behind the menu. Closing the menu resumes the normal attract loop. Builds clean Linux+Windows; exe redeployed. Note: on a true-widescreen display TITLEPIC is still the 320-wide art centred with black side strips (that side-fill is DOOM-0151).
+  **Layman:** Opening the menu over the scrolling credits screen put red menu text on top of red credits text — unreadable. Now the menu always shows the plain DOOM title behind it.
+  Kind: fix.
+  Source: user-request-2026-07-01.

@@ -24,6 +24,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **The menu now shows the plain DOOM title behind it, not the attract-loop credits**
+  Opening the menu while the credits/help screen was showing put red menu text over red credit text and was hard to read. The menu now always draws the plain TITLEPIC behind it and pauses the title/demo cycle until you close the menu.
+
 - **Rebalanced audio so sound effects are no longer drowned out by music: the music volume ceiling is lowered (quieter at every slider position) and new installs default to full sound-effects volume.** (DOOM-0047)
 
 ### Fixed
