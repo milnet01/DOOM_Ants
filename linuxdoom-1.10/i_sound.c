@@ -561,25 +561,28 @@ static boolean I_CacheSfxChunk(int sfxid)
 }
 
 
-// DOOM-0047: set a mixer channel's volume+pan to match the classic software mixer's
-// per-channel loudness, so Linux is unchanged and Windows (now on the working
-// SDL2_mixer device) matches it. vol is 0..15 (snd_SfxVolume range); sep is 0..255
-// (128 = centre). Replicates the old addsfx() left/right split, then maps the ~0..15
-// per-side level onto SDL_mixer's 0..255 panning (x2 == the classic ~12% ceiling).
+// DOOM-0047: set a mixer channel's volume + stereo pan. vol is 0..15 (the
+// snd_SfxVolume range); sep is 0..255 (128 = centre). Volume and pan are kept
+// separate: Mix_Volume carries loudness (0..MIX_MAX_VOLUME) so a maxed effects
+// slider plays at FULL level and can balance the music (which peaks ~48/128), and
+// Mix_SetPanning carries only left/right balance -- full in both channels at centre
+// (so centred sounds, incl. all menu blips, are at full volume), fading one side as
+// the source moves off-centre. This is much louder than the classic ~12% software-
+// mixer ceiling, but the slider is now meaningful across its whole range (the old
+// mixer was near-silent by the time the level attenuated a centred sound). Higher
+// sep = more to the right, matching the classic mixer's convention.
 static void I_SetChanVolPan(int channel, int vol, int sep)
 {
-    int	left, right;
+    int	mixvol, left, right;
 
-    sep  += 1;
-    left  = vol - ((vol * sep * sep) >> 16);
-    sep   = sep - 257;
-    right = vol - ((vol * sep * sep) >> 16);
+    if (vol < 0)  vol = 0;  else if (vol > 15) vol = 15;
+    mixvol = (vol * MIX_MAX_VOLUME) / 15;		// 0..128
+    Mix_Volume(channel, mixvol);
 
-    left  = (left  < 0 ? 0 : left)  * 2;
-    right = (right < 0 ? 0 : right) * 2;
-    if (left  > 255) left  = 255;
-    if (right > 255) right = 255;
-
+    left  = 2 * (255 - sep);				// full (>=255) at/left of centre
+    right = 2 * sep;					// full (>=255) at/right of centre
+    if (left  < 0) left  = 0;  else if (left  > 255) left  = 255;
+    if (right < 0) right = 0;  else if (right > 255) right = 255;
     Mix_SetPanning(channel, (Uint8)left, (Uint8)right);
 }
 

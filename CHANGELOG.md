@@ -27,6 +27,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Sound effects are much louder / the SFX slider now spans its full range** (DOOM-0047)
+  Effects were far too quiet relative to music (the old mixer capped them at ~12%). The SFX volume slider now scales effects from silent to full, and centred sounds (including all menu blips) play at full volume, so effects balance the music properly. Adjust the two sliders to taste.
+
 - **Mouse now turns only — it no longer moves the player forward/back** (DOOM-0154)
   Moving the mouse up/down no longer walks the player; the mouse only turns left/right. Use the arrow keys or WASD to move.
 
