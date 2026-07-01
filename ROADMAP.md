@@ -269,7 +269,7 @@ with friends.
   Source: in-session-2026-06-28.
   Resolved (2026-06-28): root cause was tempstring[80] being too small for the longest quicksave/quickload prompt (~59 fixed chars + a 24-char savegame name = up to 83 bytes). Bumped the shared buffer to [128] and switched both M_QuickSave (QSPROMPT) and M_QuickLoad (QLPROMPT) from sprintf to snprintf(sizeof) for defense-in-depth. Clean build — both -Wformat-overflow and -Wformat-truncation gone.
 
-- 📋 [DOOM-0158] **Announce a found secret with an on-screen message + a distinct sound (all renderers).**
+- 🚧 [DOOM-0158] **Announce a found secret with an on-screen message + a distinct sound (all renderers).**
   When the player steps into a secret sector, show a brief HUD message and play
   a distinct chime — in Classic, Solid AND Ultra (a HUD/gameplay layer, renderer
   -independent). Hook P_PlayerInSpecialSector, sector special 9 (p_spec.c:1048
@@ -286,6 +286,7 @@ with friends.
   **Layman:** When you find a hidden secret area, a short message pops up on screen and a sound plays to let you know — right now you only find out from the end-of-level stats.
   Kind: feature.
   Source: user-request-2026-07-01.
+  Progress 2026-07-01: implemented. p_spec.c case 9 (secret sector) now sets player->message = SECRETMESSAGE and calls S_StartSound(NULL, sfx_itmbk) after the secretcount++/special=0. New SECRETMESSAGE macro ("A secret is revealed!") in d_englsh.h + French parity ("UN SECRET EST REVELE!") in d_french.h; p_spec.c now includes dstrings.h. Sound sfx_itmbk (item-respawn whoosh) chosen with user — effectively no collision in normal solo play. Global sound (NULL origin) + standard HU message path, so it fires in the shared game tick across Classic/Solid/Ultra. Full build links clean. PENDING: in-game verify the popup renders over the 3D view in Solid AND Ultra (DOOM-0050-adjacent overlay compositing) and the chime plays — needs on-HW check with user.
 
 ## Phase 2 — The Spin
 

@@ -130,6 +130,11 @@
 #define PD_YELLOWK	"You need a yellow key to open this door"
 
 //
+//	P_spec.C
+//
+#define SECRETMESSAGE	"A secret is revealed!"
+
+//
 //	G_game.C
 //
 #define GGSAVED	"game saved."

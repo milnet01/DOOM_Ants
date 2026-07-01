@@ -51,6 +51,7 @@ rcsid[] __attribute__((used)) = "$Id: p_spec.c,v 1.6 1997/02/03 22:45:12 b1 Exp 
 
 // Data.
 #include "sounds.h"
+#include "dstrings.h"
 
 
 //
@@ -1049,6 +1050,11 @@ void P_PlayerInSpecialSector (player_t* player)
 	// SECRET SECTOR
 	player->secretcount++;
 	sector->special = 0;
+	// DOOM-0158: announce the find with a HUD message + a distinct chime.
+	// The message rides the standard HU print path and the sound is global
+	// (S_StartSound(NULL, ...)), so both surface in Classic, Solid and Ultra.
+	player->message = SECRETMESSAGE;
+	S_StartSound(NULL, sfx_itmbk);
 	break;
 			
       case 11:

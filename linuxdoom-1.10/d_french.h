@@ -122,6 +122,11 @@
 #define PD_YELLOWK	PD_YELLOWO
 
 //
+//	P_spec.C
+//
+#define SECRETMESSAGE	"UN SECRET EST REVELE!"
+
+//
 //	G_game.C
 //
 #define GGSAVED		"JEU SAUVEGARDE."
