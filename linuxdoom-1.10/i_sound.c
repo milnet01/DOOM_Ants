@@ -152,15 +152,17 @@ int		channelids[NUM_CHANNELS];
 // Pitch to stepping lookup, unused.
 int		steptable[256];
 
-// DOOM-0047: the effects mixer's actual OUTPUT rate. When effects ride the
-// SDL2_mixer device (the normal path) this is the rate that device opened at
-// (queried from Mix_QuerySpec, since ALLOW_FREQUENCY_CHANGE may pick 48 kHz); the
-// pitch step table is built for it so effects play at the right pitch. Defaults to
-// SAMPLERATE for the standalone-device fallback.
-static int	sfx_out_freq = SAMPLERATE;
-// True once effects are wired into SDL2_mixer's post-mix hook; false means the
-// standalone SDL device fallback is in use (music device failed to open).
-static boolean	sfx_via_postmix = false;
+// DOOM-0047: effects now play through SDL2_mixer as chunks on the SAME device as
+// the music (the Chocolate-Doom approach), replacing the hand-rolled software mixer
+// that was near-silent on Windows (a second SDL audio device barely output). Each
+// DOOM sound lump is converted once to the mixer's output format and cached here as
+// a Mix_Chunk; playback is Mix_PlayChannel + Mix_SetPanning. The old software-mixer
+// globals above (mixbuffer/channels/steptable/vol_lookup) and getsfx()/addsfx() are
+// left dead for now (non-static, no warning); a later pass can drop them.
+static Mix_Chunk	sfx_chunks[NUMSFX];	// converted sample, per sfx id
+static boolean		sfx_chunk_ok[NUMSFX];	// true if that chunk built OK
+static int		mixer_freq = SAMPLERATE;	// device rate (from Mix_QuerySpec)
+static boolean		sound_ok = false;	// the SDL2_mixer device opened OK
 
 // Volume lookups.
 int		vol_lookup[128*256];
@@ -390,37 +392,13 @@ addsfx
 //
 void I_SetChannels()
 {
-  // Init internal lookups (raw data, mixing buffer, channels).
-  // This function sets up internal lookups used during
-  //  the mixing process. 
-  int		i;
-  int		j;
-    
-  int*	steptablemid = steptable + 128;
-  
-  // Okay, reset internal mixing channels to zero.
-  /*for (i=0; i<NUM_CHANNELS; i++)
-  {
-    channels[i] = 0;
-  }*/
-
-  // This table provides step widths for pitch parameters.
-  // DOOM-0047: the base step (pitch 0) rescales an SFXRATE (11025 Hz) source to the
-  // SAMPLERATE (44100 Hz) output, so a normal-pitch sound advances SFXRATE/SAMPLERATE
-  // (0.25) source samples per output sample -- correct pitch at the higher rate.
-  // At SFXRATE == SAMPLERATE this reduces to the original 65536 (1.0).
-  for (i=-128 ; i<128 ; i++)
-    steptablemid[i] = (int)(pow(2.0, (i/64.0))
-			    * ((double)SFXRATE / (double)sfx_out_freq) * 65536.0);
-  
-  
-  // Generates volume lookup tables
-  //  which also turn the unsigned samples
-  //  into signed samples.
-  for (i=0 ; i<128 ; i++)
-    for (j=0 ; j<256 ; j++)
-      vol_lookup[i*256+j] = (i*(j-128)*256)/127;
-}	
+  // DOOM-0047: effects play as SDL2_mixer chunks now (see I_StartSound). Just make
+  // sure the mixer has at least DOOM's mixing-slot count of channels; the device
+  // was already opened in I_InitSound. (The old software-mixer lookup tables that
+  // lived here are gone.)
+  if (sound_ok)
+    Mix_AllocateChannels(NUM_CHANNELS);
+}
 
  
 void I_SetSfxVolume(int volume)
@@ -506,6 +484,105 @@ int I_GetSfxLumpNum(sfxinfo_t* sfx)
     return W_GetNumForName(namebuf);
 }
 
+
+// DOOM-0047: convert one DOOM sound lump (8-bit unsigned PCM mono; the 8-byte
+// header holds the sample rate at bytes 2-3 and the sample count at 4-7) into an
+// S16 stereo Mix_Chunk at the mixer's output rate, cached in sfx_chunks[sfxid].
+// Returns false on failure (that sound just won't play). Aliases (sfx->link) share
+// the primary sound and are resolved at play time.
+static boolean I_CacheSfxChunk(int sfxid)
+{
+    char	namebuf[16];
+    int		lumpnum;
+    int		lumplen;
+    byte*	lump;
+    int		rate;
+    int		nsamp;
+    SDL_AudioCVT convertor;
+
+    if (S_sfx[sfxid].link)
+	return false;
+
+    // Non-fatal lookup: a sound absent from this IWAD (e.g. a DOOM 2 effect under
+    // DOOM 1) is simply skipped -- it just won't play. (I_GetSfxLumpNum would
+    // W_GetNumForName -> I_Error and abort startup.)
+    snprintf(namebuf, sizeof(namebuf), "ds%s", S_sfx[sfxid].name);
+    lumpnum = W_CheckNumForName(namebuf);
+    if (lumpnum < 0)
+	return false;
+    lumplen = W_LumpLength(lumpnum);
+    if (lumplen <= 8)
+	return false;
+
+    lump  = (byte*) W_CacheLumpNum(lumpnum, PU_STATIC);
+    rate  = lump[2] | (lump[3] << 8);
+    nsamp = lump[4] | (lump[5] << 8) | (lump[6] << 16) | (lump[7] << 24);
+    if (rate <= 0)
+	rate = SFXRATE;
+    if (nsamp <= 0 || nsamp > lumplen - 8)
+	nsamp = lumplen - 8;			// fall back to the raw byte count
+
+    // Build U8 mono @ rate -> S16SYS stereo @ mixer_freq.
+    if (SDL_BuildAudioCVT(&convertor, AUDIO_U8, 1, rate,
+			  AUDIO_S16SYS, 2, mixer_freq) < 0)
+    {
+	Z_Free(lump);
+	return false;
+    }
+    convertor.len = nsamp;
+    convertor.buf = (Uint8*) malloc((size_t)convertor.len
+				    * (convertor.len_mult > 0 ? convertor.len_mult : 1));
+    if (!convertor.buf)
+    {
+	Z_Free(lump);
+	return false;
+    }
+    memcpy(convertor.buf, lump + 8, nsamp);
+    Z_Free(lump);
+    if (SDL_ConvertAudio(&convertor) < 0)
+    {
+	free(convertor.buf);
+	return false;
+    }
+
+    sfx_chunks[sfxid].allocated = 1;
+    sfx_chunks[sfxid].abuf = (Uint8*) malloc(convertor.len_cvt);
+    if (!sfx_chunks[sfxid].abuf)
+    {
+	free(convertor.buf);
+	return false;
+    }
+    memcpy(sfx_chunks[sfxid].abuf, convertor.buf, convertor.len_cvt);
+    sfx_chunks[sfxid].alen = convertor.len_cvt;
+    sfx_chunks[sfxid].volume = MIX_MAX_VOLUME;
+    free(convertor.buf);
+    sfx_chunk_ok[sfxid] = true;
+    return true;
+}
+
+
+// DOOM-0047: set a mixer channel's volume+pan to match the classic software mixer's
+// per-channel loudness, so Linux is unchanged and Windows (now on the working
+// SDL2_mixer device) matches it. vol is 0..15 (snd_SfxVolume range); sep is 0..255
+// (128 = centre). Replicates the old addsfx() left/right split, then maps the ~0..15
+// per-side level onto SDL_mixer's 0..255 panning (x2 == the classic ~12% ceiling).
+static void I_SetChanVolPan(int channel, int vol, int sep)
+{
+    int	left, right;
+
+    sep  += 1;
+    left  = vol - ((vol * sep * sep) >> 16);
+    sep   = sep - 257;
+    right = vol - ((vol * sep * sep) >> 16);
+
+    left  = (left  < 0 ? 0 : left)  * 2;
+    right = (right < 0 ? 0 : right) * 2;
+    if (left  > 255) left  = 255;
+    if (right > 255) right = 255;
+
+    Mix_SetPanning(channel, (Uint8)left, (Uint8)right);
+}
+
 //
 // Starting a sound means adding it
 //  to the current list of active sounds
@@ -539,18 +616,27 @@ I_StartSound
     // warning: control reaches end of non-void function.
     return id;
 #else
-    // Debug.
-    //fprintf( stderr, "starting sound %d", id );
-    
-    // Returns a handle (not used). Lock out the SDL mixer callback while
-    //  we mutate the shared channel table.
-    SDL_LockAudio();
-    id = addsfx( id, vol, steptable[pitch], sep );
-    SDL_UnlockAudio();
+    // DOOM-0047: play the pre-converted chunk on a free SDL2_mixer channel and set
+    // its volume/pan. The channel index IS the handle DOOM stores and later passes
+    // to I_UpdateSoundParams / I_StopSound / I_SoundIsPlaying. (Pitch variation from
+    // the old software mixer is not applied to chunks -- a minor fidelity trade.)
+    {
+      int channel;
 
-    // fprintf( stderr, "/handle is %d\n", id );
-    
-    return id;
+      if (!sound_ok || id < 0 || id >= NUMSFX)
+	return -1;
+      if (S_sfx[id].link)			// alias -> use the linked primary's chunk
+	id = (int)(S_sfx[id].link - S_sfx);
+      if (id < 0 || id >= NUMSFX || !sfx_chunk_ok[id])
+	return -1;
+
+      channel = Mix_PlayChannel(-1, &sfx_chunks[id], 0);
+      if (channel < 0)
+	return -1;				// no free channel
+
+      I_SetChanVolPan(channel, vol, sep);
+      return channel;
+    }
 #endif
 }
 
@@ -558,20 +644,16 @@ I_StartSound
 
 void I_StopSound (int handle)
 {
-  // You need the handle returned by StartSound.
-  // Would be looping all channels,
-  //  tracking down the handle,
-  //  an setting the channel to zero.
-  
-  // UNUSED.
-  handle = 0;
+    if (sound_ok && handle >= 0)
+	Mix_HaltChannel(handle);
 }
 
 
 int I_SoundIsPlaying(int handle)
 {
-    // Ouch.
-    return gametic < handle;
+    if (!sound_ok || handle < 0)
+	return 0;
+    return Mix_Playing(handle);
 }
 
 
@@ -726,7 +808,7 @@ static void I_MixSoundInto( signed short* out, int frames )
 // it, so effects and music share the ONE SDL2_mixer device. This fixes near-silent
 // effects on Windows, where opening a SECOND (legacy SDL_OpenAudio) device for
 // effects produced almost no output. len is bytes; a stereo S16 frame is 4 bytes.
-static void I_SFXPostMix(void* udata, Uint8* stream, int len)
+static void __attribute__((unused)) I_SFXPostMix(void* udata, Uint8* stream, int len)
 {
   (void)udata;
   I_MixSoundInto((signed short*)stream, len / (int)(2*sizeof(signed short)));
@@ -735,7 +817,7 @@ static void I_SFXPostMix(void* udata, Uint8* stream, int len)
 // Fallback effects path: a standalone SDL device, used only if the SDL2_mixer music
 // device could not be opened (so effects still play without music). SDL hands us an
 // uninitialised buffer, so zero it first, then mix effects in.
-static void I_SDLAudioCallback(void* unused, Uint8* stream, int len)
+static void __attribute__((unused)) I_SDLAudioCallback(void* unused, Uint8* stream, int len)
 {
   (void)unused;
   SDL_memset(stream, 0, len);
@@ -760,13 +842,11 @@ I_UpdateSoundParams
   int	sep,
   int	pitch)
 {
-  // I fail too see that this is used.
-  // Would be using the handle to identify
-  //  on which channel the sound might be active,
-  //  and resetting the channel parameters.
-
-  // UNUSED.
-  handle = vol = sep = pitch = 0;
+  // DOOM-0047: re-pan/re-volume the playing chunk on this mixer channel as the
+  // sound source moves relative to the player. (pitch is not applied to chunks.)
+  (void)pitch;
+  if (sound_ok && handle >= 0)
+    I_SetChanVolPan(handle, vol, sep);
 }
 
 
@@ -803,12 +883,21 @@ void I_ShutdownSound(void)
   I_SoundDelTimer();
 #endif
   
-  // Cleaning up - releasing the audio device.
-  if (sfx_via_postmix)
-    Mix_SetPostMix(NULL, NULL);		// effects rode the SDL2_mixer device
-  else
-    SDL_CloseAudio();			// standalone fallback device
-  SDL_QuitSubSystem(SDL_INIT_AUDIO);
+  // DOOM-0047: effects play as SDL2_mixer chunks on the shared device -- stop any
+  // playing channels and free the converted chunk buffers. The device itself is
+  // owned by the music side (Mix_CloseAudio runs in I_ShutdownMusic).
+  if (sound_ok)
+  {
+    int s;
+    Mix_HaltChannel(-1);
+    for (s = 0; s < NUMSFX; s++)
+      if (sfx_chunk_ok[s])
+      {
+	free(sfx_chunks[s].abuf);
+	sfx_chunks[s].abuf = NULL;
+	sfx_chunk_ok[s] = false;
+      }
+  }
 #endif
 
   // Done.
@@ -854,57 +943,27 @@ I_InitSound()
   if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0)
     I_Error("I_InitSound: SDL audio init failed: %s", SDL_GetError());
 
-  // Initialize external data (all sounds) at start, keep static.
-  fprintf( stderr, "I_InitSound: ");
-
-  for (i=1 ; i<NUMSFX ; i++)
-  {
-    // Alias? Example is the chaingun sound linked to pistol.
-    if (!S_sfx[i].link)
-    {
-      // Load data from WAD file.
-      S_sfx[i].data = getsfx( S_sfx[i].name, &lengths[i] );
-    }
-    else
-    {
-      // Previously loaded already?
-      S_sfx[i].data = S_sfx[i].link->data;
-      lengths[i] = lengths[(S_sfx[i].link - S_sfx)/sizeof(sfxinfo_t)];
-    }
-  }
-
-  fprintf( stderr, " pre-cached all sound data\n");
-
-  // Now initialize mixbuffer with zero (only used by the standalone fallback).
-  for ( i = 0; i< MIXBUFFERSIZE; i++ )
-    mixbuffer[i] = 0;
-
-  // Bring up music on the SDL2_mixer device (DOOM-0016). DOOM-0047: effects now
-  // ride that SAME device via its post-mix hook, so start music FIRST -- if it
-  // opens, I_InitMusic sets sfx_via_postmix and effects are already wired in.
-  // (I_ShutdownMusic is already wired on the shutdown side, in i_system.c.)
+  // DOOM-0016/0047: open the ONE SDL2_mixer device (shared by effects AND music)
+  // and set up music. I_InitMusic sets mixer_freq + sound_ok when the device opens,
+  // and allocates the effect channels. (I_ShutdownMusic pairs on the shutdown side.)
   I_InitMusic();
 
-  // Fallback: if the music device could not open, give effects their own standalone
-  // SDL device so they still play (the pre-DOOM-0047 behaviour, minus music).
-  if (!sfx_via_postmix)
+  // DOOM-0047: convert every sound lump once to a Mix_Chunk at the device's output
+  // rate (I_CacheSfxChunk). Effects then play via Mix_PlayChannel (see I_StartSound),
+  // on the same device as the music -- the fix for near-silent effects on Windows.
+  fprintf( stderr, "I_InitSound: ");
+  if (sound_ok)
   {
-    SDL_AudioSpec	want;
-
-    SDL_memset(&want, 0, sizeof(want));
-    want.freq = SAMPLERATE;
-    want.format = AUDIO_S16SYS;
-    want.channels = 2;
-    want.samples = SAMPLECOUNT;
-    want.callback = I_SDLAudioCallback;
-
-    if (SDL_OpenAudio(&want, NULL) < 0)
-      I_Error("I_InitSound: SDL_OpenAudio failed: %s", SDL_GetError());
-
-    sfx_out_freq = SAMPLERATE;
-    SDL_PauseAudio(0);
-    fprintf(stderr, "I_InitSound: effects on a standalone device (no music mixer)\n");
+    for (i=1 ; i<NUMSFX ; i++)
+    {
+      if (!S_sfx[i].link)
+	I_CacheSfxChunk(i);		// aliases resolve to their primary at play time
+      // Non-NULL marker so s_sound.c doesn't warn "not pre-cached"; the chunk path
+      // looks a sound up by id, not through this pointer.
+      S_sfx[i].data = (void*) &sfx_chunks[i];
+    }
   }
+  fprintf( stderr, " pre-cached all sound data\n");
 
   fprintf(stderr, "I_InitSound: sound module ready\n");
 
@@ -937,22 +996,33 @@ void I_InitMusic(void)
     songs[i].midi = NULL;
   }
 
-  // SDL2_mixer only exposes a MIDI decoder once MIX_INIT_MID succeeds.
+  // DOOM-0047: open the ONE audio device shared by effects (Mix_Chunks) AND music.
+  // Effects need it even when MIDI is unavailable, so open it BEFORE the MIDI check.
+  if (Mix_OpenAudioDevice(44100, MIX_DEFAULT_FORMAT, 2, 2048, NULL,
+			  SDL_AUDIO_ALLOW_FREQUENCY_CHANGE) < 0)
+  {
+    fprintf(stderr, "I_InitMusic: could not open audio device (%s); "
+	    "sound disabled\n", Mix_GetError());
+    return;			// sound_ok stays false -> no effects, no music
+  }
+
+  // Query the rate it actually opened at (ALLOW_FREQUENCY_CHANGE may pick 48 kHz);
+  // effect chunks are converted to this rate. Allocate DOOM's effect channels.
+  {
+    int		freq = 44100, chans = 2;
+    Uint16	fmt = MIX_DEFAULT_FORMAT;
+
+    if (Mix_QuerySpec(&freq, &fmt, &chans) && freq > 0)
+      mixer_freq = freq;
+  }
+  Mix_AllocateChannels(NUM_CHANNELS);
+  sound_ok = true;		// the shared device is up: effects can play
+
+  // MIDI music is optional. If the decoder is missing, keep effects and drop music.
   if ((Mix_Init(MIX_INIT_MID) & MIX_INIT_MID) == 0)
   {
     fprintf(stderr, "I_InitMusic: no MIDI support (%s); music disabled\n",
 	    Mix_GetError());
-    return;
-  }
-
-  // A SECOND audio device, separate from the 44100 Hz effects device, at full
-  // 44100 Hz stereo. The OS mixes the two output streams.
-  if (Mix_OpenAudioDevice(44100, MIX_DEFAULT_FORMAT, 2, 2048, NULL,
-			  SDL_AUDIO_ALLOW_FREQUENCY_CHANGE) < 0)
-  {
-    fprintf(stderr, "I_InitMusic: could not open music device (%s); "
-	    "music disabled\n", Mix_GetError());
-    Mix_Quit();
     return;
   }
 
@@ -965,25 +1035,6 @@ void I_InitMusic(void)
     Mix_SetSoundFonts(DEFAULT_SOUNDFONT);
 
   music_initialised = true;
-
-  // DOOM-0047: route the effects through THIS device via the post-mix hook, so they
-  // share the one working SDL2_mixer output (fixes near-silent effects on Windows,
-  // where a separate legacy SDL_OpenAudio device barely output). Query the rate it
-  // actually opened at (ALLOW_FREQUENCY_CHANGE may pick 48 kHz) so the effects step
-  // table (built later in I_SetChannels) targets it; the post-mix add assumes S16
-  // stereo, guaranteed here (MIX_DEFAULT_FORMAT / 2 ch, no format/channel changes).
-  {
-    int		freq = SAMPLERATE, chans = 2;
-    Uint16	fmt = MIX_DEFAULT_FORMAT;
-
-    if (Mix_QuerySpec(&freq, &fmt, &chans) && freq > 0
-	&& fmt == AUDIO_S16SYS && chans == 2)
-    {
-      sfx_out_freq = freq;
-      Mix_SetPostMix(I_SFXPostMix, NULL);
-      sfx_via_postmix = true;
-    }
-  }
 
   // Apply the volume the menu/config already chose (0-15 -> 0-128).
   I_SetMusicVolume(snd_MusicVolume);

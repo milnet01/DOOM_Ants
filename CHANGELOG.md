@@ -52,6 +52,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Sound effects on Windows: play them through SDL2_mixer like the music** (DOOM-0047)
+  Rewrote the effects engine to play each sound as an SDL2_mixer chunk on the same audio device as the music (the approach Chocolate Doom uses), replacing a hand-rolled mixer that was near-silent on Windows. Effects loudness is calibrated to match the previous Linux behaviour. No change expected on Linux.
+
 - **Sound effects silent on Windows (take 2): mix effects into the music device** (DOOM-0047)
   The game opened two separate audio devices — one for effects, one for music — and on Windows the effects device barely produced output. Effects now play through the same (working) device as the music, so they're audible on Windows. Music and Linux behaviour are unchanged.
 
