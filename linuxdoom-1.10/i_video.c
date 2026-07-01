@@ -233,7 +233,8 @@ static void I_PollGamepad(void)
     extern int rb_wireframe;            // r_vulkan.cpp: 3D wireframe debug toggle
     extern int rb_flashlight;           // r_vulkan.cpp: DOOM-0044 headlamp toggle
     static boolean strafe_r_held, strafe_l_held, esc_held, back_held, map_held;
-    static boolean share_held, flash_held, touchpad_held;
+    static boolean share_held, touchpad_held;
+    static boolean dpad_up_held, dpad_l_held, dpad_r_held;	// DOOM-0153 gamepad remap
 
     if (!gamepad)
 	return;
@@ -251,18 +252,23 @@ static void I_PollGamepad(void)
     event.data2 = 0;
     event.data3 = 0;
 
-    if (rx > GP_AXIS_DEADZONE
-	|| SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_DPAD_RIGHT))
+    // Read the D-pad once. It drives menu navigation (turn/forward channels) ONLY
+    // while a menu is open; in play it is the weapon/flashlight pad handled by the
+    // edge block lower down (LEFT/RIGHT cycle weapons, UP toggles the flashlight),
+    // so it no longer turns or walks (DOOM-0153 / user gamepad remap).
+    boolean	dp_l = SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_DPAD_LEFT);
+    boolean	dp_r = SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_DPAD_RIGHT);
+    boolean	dp_u = SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_DPAD_UP);
+    boolean	dp_d = SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_DPAD_DOWN);
+
+    if (rx > GP_AXIS_DEADZONE || (menuactive && dp_r))
 	event.data2 = 1;
-    else if (rx < -GP_AXIS_DEADZONE
-	|| SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_DPAD_LEFT))
+    else if (rx < -GP_AXIS_DEADZONE || (menuactive && dp_l))
 	event.data2 = -1;
 
-    if (ly < -GP_AXIS_DEADZONE
-	|| SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_DPAD_UP))
+    if (ly < -GP_AXIS_DEADZONE || (menuactive && dp_u))
 	event.data3 = -1;
-    else if (ly > GP_AXIS_DEADZONE
-	|| SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_DPAD_DOWN))
+    else if (ly > GP_AXIS_DEADZONE || (menuactive && dp_d))
 	event.data3 = 1;
 
     // data1 button mask, matching the joyb* defaults: bit0 fire (menu select),
@@ -276,10 +282,10 @@ static void I_PollGamepad(void)
     b_pressed = SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_B);
     if (b_pressed && !menuactive)
 	buttons |= 2;
-    // R1 / left-trigger = speed (run). L1 is no longer a run button: it toggles
-    // the flashlight on its press edge below (DOOM-0044, user mapping) -- R1 and
-    // the left trigger still cover run.
+    // Run (speed): R1, L1, or either trigger. L1 is a run button again (DOOM-0153,
+    // user mapping) -- the flashlight moved to D-pad UP in the edge block below.
     if (SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)
+	|| SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_LEFTSHOULDER)
 	|| lt > GP_TRIGGER_THRESH)
 	buttons |= 4;
     // Square (X) = use/open. Triangle (Y) is no longer a second use button; it
@@ -309,14 +315,29 @@ static void I_PollGamepad(void)
 	share_held = share;
     }
 
-    // L1 (left shoulder) toggles the player flashlight on its press edge
-    // (DOOM-0044). Edge-detected like Share above; flips the renderer flag
-    // directly (not a DOOM key). Harmless in Classic (no Vulkan path reads it).
+    // DOOM-0153 / user gamepad remap: in play, the D-pad is the weapon + flashlight
+    // pad. UP toggles the flashlight (DOOM-0044); RIGHT/LEFT cycle to the next/prev
+    // owned weapon (fed into g_game.c's weaponcycle, consumed by G_BuildTiccmd like
+    // a number key -- demo/net safe). Edge-detected so one press = one action, and
+    // suppressed unless we're in actual gameplay (while a menu is up the D-pad
+    // navigates it; in intermission/finale it does nothing).
     {
-	boolean l1 = SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_LEFTSHOULDER);
-	if (l1 && !flash_held)
+	extern int	weaponcycle;		// g_game.c
+	boolean		live = (gamestate == GS_LEVEL) && !menuactive;
+	boolean		up    = live && dp_u;
+	boolean		left  = live && dp_l;
+	boolean		right = live && dp_r;
+
+	if (up && !dpad_up_held)
 	    rb_flashlight = !rb_flashlight;
-	flash_held = l1;
+	if (right && !dpad_r_held)
+	    weaponcycle += 1;			// next weapon
+	if (left && !dpad_l_held)
+	    weaponcycle -= 1;			// previous weapon
+
+	dpad_up_held = up;
+	dpad_r_held  = right;
+	dpad_l_held  = left;
     }
 
     // DOOM-0136: clicking the RIGHT half of the touchpad toggles the path-tracer
@@ -416,6 +437,24 @@ static void I_GetEvent(SDL_Event* sdlevent)
 	event.data3 = -sdlevent->motion.yrel << 2;
 	if (event.data2 || event.data3)
 	    D_PostEvent(&event);
+	break;
+
+      case SDL_MOUSEWHEEL:
+	// DOOM-0153: scroll wheel cycles weapons. Post one notch per event; the
+	// game (G_BuildTiccmd) steps to the next/previous owned weapon. y > 0 is
+	// scroll-up = next weapon (flip handled by wheel.direction).
+	{
+	    int wy = sdlevent->wheel.y;
+	    if (sdlevent->wheel.direction == SDL_MOUSEWHEEL_FLIPPED)
+		wy = -wy;
+	    if (wy != 0)
+	    {
+		event.type = ev_mousewheel;
+		event.data1 = (wy > 0) ? 1 : -1;
+		event.data2 = event.data3 = 0;
+		D_PostEvent(&event);
+	    }
+	}
 	break;
 
       case SDL_QUIT:

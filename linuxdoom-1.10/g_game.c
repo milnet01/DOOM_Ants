@@ -191,9 +191,10 @@ int             turnheld;				// for accelerative turning
 boolean		mousearray[4]; 
 boolean*	mousebuttons = &mousearray[1];		// allow [-1]
 
-// mouse values are used once 
+// mouse values are used once
 int             mousex;
-int		mousey;         
+int		mousey;
+int		weaponcycle;	// DOOM-0153: pending weapon-cycle steps (+next/-prev): mouse wheel + D-pad
 
 int             dclicktime;
 int		dclickstate;
@@ -234,13 +235,54 @@ int G_CmdChecksum (ticcmd_t* cmd)
  
 
 //
+// DOOM-0153: weapon-cycling helpers (mouse wheel + gamepad D-pad).
+// A weapon maps to its number-key slot (0-6); the chainsaw shares the fist slot
+// (0) and the super shotgun shares the shotgun slot (2). Cycling walks to the next
+// slot the player owns and emits it through the normal BT_CHANGE weapon bits, so
+// it behaves exactly like tapping a number key (demo/net safe).
+//
+static int G_WeaponSlot (weapontype_t w)
+{
+    if (w == wp_chainsaw)		return 0;	// shares fist
+    if (w == wp_supershotgun)		return 2;	// shares shotgun
+    if (w >= wp_fist && w <= wp_bfg)	return (int)w;	// fist0 .. bfg6 map 1:1
+    return 0;
+}
+
+static boolean G_SlotOwned (player_t* p, int slot)
+{
+    if (slot == 0)	return true;			// fist always owned
+    if (slot == 2)	return p->weaponowned[wp_shotgun]
+			    || p->weaponowned[wp_supershotgun];
+    return p->weaponowned[slot];	// slots 1,3,4,5,6 == pistol,chaingun,missile,plasma,bfg
+}
+
+// Step one weapon in `dir` (+1 next / -1 previous) from slot `from` to the next
+// owned slot, wrapping the seven number-key slots. Fist (slot 0) is always owned,
+// so this always terminates.
+static int G_CycleWeaponSlot (player_t* p, int from, int dir)
+{
+    int	slot = from;
+    int	i;
+
+    for (i=0 ; i<7 ; i++)
+    {
+	slot = (slot + dir + 7) % 7;
+	if (G_SlotOwned(p, slot))
+	    break;
+    }
+    return slot;
+}
+
+
+//
 // G_BuildTiccmd
 // Builds a ticcmd from all of the available inputs
-// or reads it from the demo buffer. 
-// If recording a demo, write it out 
-// 
-void G_BuildTiccmd (ticcmd_t* cmd) 
-{ 
+// or reads it from the demo buffer.
+// If recording a demo, write it out
+//
+void G_BuildTiccmd (ticcmd_t* cmd)
+{
     int		i; 
     boolean	strafe;
     boolean	bstrafe; 
@@ -344,15 +386,31 @@ void G_BuildTiccmd (ticcmd_t* cmd)
 	dclicks = 0;                   
     } 
 
-    // chainsaw overrides 
-    for (i=0 ; i<NUMWEAPONS-1 ; i++)        
-	if (gamekeydown['1'+i]) 
-	{ 
-	    cmd->buttons |= BT_CHANGE; 
-	    cmd->buttons |= i<<BT_WEAPONSHIFT; 
-	    break; 
+    // chainsaw overrides
+    for (i=0 ; i<NUMWEAPONS-1 ; i++)
+	if (gamekeydown['1'+i])
+	{
+	    cmd->buttons |= BT_CHANGE;
+	    cmd->buttons |= i<<BT_WEAPONSHIFT;
+	    break;
 	}
-    
+
+    // DOOM-0153: mouse-wheel / D-pad weapon cycling, if a number key didn't already
+    // pick a weapon this tic. Consume one step per tic so a fast scroll switches one
+    // weapon at a time (can't outrun the switch animation); leftovers carry over.
+    if (weaponcycle && !(cmd->buttons & BT_CHANGE))
+    {
+	player_t*	p = &players[consoleplayer];
+	int		dir = (weaponcycle > 0) ? 1 : -1;
+	int		slot = G_CycleWeaponSlot(p, G_WeaponSlot(p->readyweapon), dir);
+
+	cmd->buttons |= BT_CHANGE;
+	cmd->buttons |= (slot << BT_WEAPONSHIFT) & BT_WEAPONMASK;
+
+	if (weaponcycle > 0)	weaponcycle--;
+	else			weaponcycle++;
+    }
+
     // mouse
     if (mousebuttons[mousebforward]) 
 	forward += forwardmove[speed];
@@ -588,16 +646,23 @@ boolean G_Responder (event_t* ev)
 	mousey = ev->data3*(mouseSensitivity+5)/10; 
 	return true;    // eat events 
  
-      case ev_joystick: 
-	joybuttons[0] = ev->data1 & 1; 
-	joybuttons[1] = ev->data1 & 2; 
-	joybuttons[2] = ev->data1 & 4; 
-	joybuttons[3] = ev->data1 & 8; 
-	joyxmove = ev->data2; 
-	joyymove = ev->data3; 
-	return true;    // eat events 
- 
-      default: 
+      case ev_joystick:
+	joybuttons[0] = ev->data1 & 1;
+	joybuttons[1] = ev->data1 & 2;
+	joybuttons[2] = ev->data1 & 4;
+	joybuttons[3] = ev->data1 & 8;
+	joyxmove = ev->data2;
+	joyymove = ev->data3;
+	return true;    // eat events
+
+      case ev_mousewheel:
+	// DOOM-0153: accrue wheel notches for weapon cycling; consumed a step per
+	// tic in G_BuildTiccmd. Only in-game (not while a menu is up).
+	if (gamestate == GS_LEVEL && !menuactive)
+	    weaponcycle += ev->data1;
+	return true;    // eat events
+
+      default:
 	break; 
     } 
  

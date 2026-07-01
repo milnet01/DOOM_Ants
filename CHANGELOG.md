@@ -8,6 +8,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Switch weapons with the mouse wheel and the gamepad D-pad** (DOOM-0153)
+  Scroll the mouse wheel up/down, or press the controller D-pad left/right, to cycle to the next/previous weapon you own. Works like tapping the number keys (so it's safe in demos and multiplayer).
+
 - **Widescreen and Fill Screen display toggles in the Renderer menu (DOOM-0147 Part C)** (DOOM-0147)
   Two persisted options (Options -> Renderer): "Widescreen" turns the authentic Hor+ widescreen on or off (Off forces classic 4:3 even on a wide monitor; takes effect on restart), and "Fill Screen" stretches the picture to fill the whole monitor, removing the black bars on displays whose shape isn't 4:3 (applies instantly). Both are saved to ~/.doomrc. Defaults reproduce the prior behaviour exactly.
 
@@ -23,6 +26,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
   confirmation on a 16:9 display. Part C (a 4:3<->Widescreen menu toggle) follows.
 
 ### Changed
+
+- **Gamepad remap: flashlight on D-pad Up, L1 is Run again** (DOOM-0153)
+  The controller D-pad is now the weapon/flashlight pad in-game (left/right change weapons, up toggles the flashlight), and L1 goes back to being a Run button. The D-pad still navigates menus.
 
 - **Widescreen now auto-detects the display and defaults off on non-widescreen screens** (DOOM-0147)
   On a 4:3 or 5:4 monitor (where widescreen has no effect), the Widescreen option now correctly reads Off instead of a misleading On. Displays wider than 4:3 keep the saved preference (on by default).

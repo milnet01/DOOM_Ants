@@ -37,7 +37,8 @@ typedef enum
     ev_keydown,
     ev_keyup,
     ev_mouse,
-    ev_joystick
+    ev_joystick,
+    ev_mousewheel	// DOOM-0153: one wheel notch; data1 = +1 (up) / -1 (down)
 } evtype_t;
 
 // Event structure.
