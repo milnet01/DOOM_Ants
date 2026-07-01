@@ -75,6 +75,12 @@ V_DrawPatch
   int		scrn,
   patch_t*	patch);
 
+// DOOM-0151: on a widescreen buffer, fill the side strips either side of a centred
+// 320-wide full-screen image by extending its edge columns outward (edge-clamp).
+// Uses only pixels already drawn in the buffer -- no external/licensed art. No-op
+// on the ORIGWIDTH scratch and at 4:3 (WIDESCREENDELTA == 0).
+void V_ExtendSides (int scrn);
+
 void
 V_DrawPatchDirect
 ( int		x,

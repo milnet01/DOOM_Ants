@@ -24,6 +24,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Widescreen title/menu screens fill the sides instead of showing black bars** (DOOM-0151)
+  On a display wider than 4:3, the title, credits, help and menu-background screens now extend their own edges outward to fill the black side strips, so they look intentional rather than pillar-boxed. Uses only the game's own on-screen pixels (no added art). No change at 4:3. Intermission and finale screens still to follow.
+
 - **The menu now shows the plain DOOM title behind it, not the attract-loop credits**
   Opening the menu while the credits/help screen was showing put red menu text over red credit text and was hard to read. The menu now always draws the plain TITLEPIC behind it and pauses the title/demo cycle until you close the menu.
 

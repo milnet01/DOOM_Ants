@@ -517,6 +517,7 @@ void D_PageDrawer (void)
     // illegible over; paired with D_PageTicker's freeze so the page stays put.
     V_DrawPatch (0,0, 0,
 		 W_CacheLumpName(menuactive ? "TITLEPIC" : pagename, PU_CACHE));
+    V_ExtendSides (0);		// DOOM-0151: fill widescreen side strips (no-op at 4:3)
 }
 
 

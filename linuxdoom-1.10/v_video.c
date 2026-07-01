@@ -228,11 +228,47 @@ V_CopyRect
 	}
     }
 }
- 
+
+
+//
+// V_ExtendSides  (DOOM-0151)
+//
+// Fill the widescreen side strips either side of a centred 320-wide full-screen
+// image by clamping (repeating) the image's edge column outward, so the black bars
+// on a wide display become a seamless continuation of the art. Reads/writes only
+// this buffer's own pixels -- no external art, nothing redistributed. No-op on the
+// ORIGWIDTH scratch and at 4:3, where WIDESCREENDELTA is 0 (zero-diff).
+//
+void V_ExtendSides (int scrn)
+{
+    int		y, x, dsw, left, right;
+    byte*	row;
+
+    if ((unsigned)scrn > 4)
+	return;
+    dsw = screenwidth[scrn];
+    if (dsw == ORIGWIDTH || WIDESCREENDELTA <= 0)
+	return;
+
+    left  = WIDESCREENDELTA * HIRES;		// first physical column of the art
+    right = left + ORIGWIDTH * HIRES;		// one past the art's last column
+
+    for (y=0 ; y<SCREENHEIGHT ; y++)
+    {
+	row = screens[scrn] + y*dsw;
+	byte lpx = row[left];			// art's left edge pixel
+	byte rpx = row[right-1];			// art's right edge pixel
+	for (x=0 ; x<left ; x++)
+	    row[x] = lpx;
+	for (x=right ; x<dsw ; x++)
+	    row[x] = rpx;
+    }
+}
+
 
 //
 // V_DrawPatch
-// Masks a column based masked pic to the screen. 
+// Masks a column based masked pic to the screen.
 //
 void
 V_DrawPatch
