@@ -1,0 +1,43 @@
+name: build
+
+# Light CI: confirm the engine still compiles on Linux and the unit tests pass on
+# every push / PR to master. This is a compile + test gate only -- it cannot run the
+# game (no display, GPU, or licensed WAD on the runner), and it deliberately does
+# NOT build the Windows cross-target or cut releases (those stay local, via
+# packaging/release.sh). See docs/RELEASE_README.txt.
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+# A newer push to the same branch cancels an in-flight run (saves runner minutes).
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux build + tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            libsdl2-dev libsdl2-mixer-dev \
+            libvulkan-dev \
+            glslc xxd
+          # (glslc + xxd build the Vulkan shaders into C headers; the Makefile links
+          #  -lvulkan even though the runner has no GPU. mold is optional -- the
+          #  Makefile falls back to the default linker when it is absent.)
+
+      - name: Build (Linux)
+        run: make -C linuxdoom-1.10 -j"$(nproc)"
+
+      - name: Unit tests
+        run: make -C linuxdoom-1.10 test
