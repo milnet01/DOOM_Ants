@@ -385,6 +385,10 @@ struct VulkanState
     VkBuffer       tlasUpdScratch  = VK_NULL_HANDLE;
     VkDeviceMemory tlasUpdScratchMem = VK_NULL_HANDLE;
     bool           blasDirty       = false;
+    // DOOM-0082: a switch press/revert (or an animated texture) swapped a face's
+    // live texture id last frame; rebuild the NEE emitter set from the live vertex
+    // buffer so a now-lit switch face pools light (and a reverted one stops).
+    bool           worldEmitDirty  = false;
     bool           refitTimed      = false;   // print the measured refit cost once
 
     // DOOM-0100: world sprites (monsters/items/barrels) in the traced view. Each
@@ -3895,6 +3899,53 @@ void BuildDynamicEmitters()
     }
 }
 
+// Fill the cached static NEE emitter set (g.staticEmit/g.staticWgt) from a mesh
+// vertex array: every triangle whose material Le > 0, with a 14-float record
+// (v0[3] v1[3] v2[3] Le[3] cdf pdf) and a power weight (luminance(Le) * area).
+// `v` is the STATIC baked mesh at level load, or the LIVE per-frame vertex buffer
+// (g.vbufMapped) on a refresh after a switch press/revert or an animated-texture
+// swap changed a face's live texnum (DOOM-0082) — reading the live buffer means a
+// now-lit switch enters the light set and a reverted one drops out. The Le table
+// is WAD-global (g.matEmissive); the vertex count is the mesh's (both buffers share it).
+static void BuildStaticEmitterSet(const rb_vertex_t* v)
+{
+    g.staticEmit.clear();
+    g.staticWgt.clear();
+    if (!g.levelMesh || g.matEmissive.empty() || !v)
+        return;
+
+    const int matCount = (int)(g.matEmissive.size() / 3);
+    const int numtris  = g.levelMesh->numverts / 3;
+    g.staticEmit.reserve(64 * 14);
+    g.staticWgt.reserve(64);
+    for (int t = 0; t < numtris; t++)
+    {
+        const rb_vertex_t* tri = &v[t * 3];
+        const int texnum = tri->texnum;
+        const int id = (tri->flags & RB_MESH_FLAT) ? g.matNumWall + texnum : texnum;
+        if (id < 0 || id >= matCount)
+            continue;
+        const float* le = &g.matEmissive[(size_t)id * 3];
+        if (le[0] + le[1] + le[2] <= 0.0f)
+            continue;   // material isn't a light source
+
+        for (int k = 0; k < 3; k++)
+        {
+            g.staticEmit.push_back(tri[k].x); g.staticEmit.push_back(tri[k].y); g.staticEmit.push_back(tri[k].z);
+        }
+        g.staticEmit.push_back(le[0]); g.staticEmit.push_back(le[1]); g.staticEmit.push_back(le[2]);
+        g.staticEmit.push_back(0.0f); g.staticEmit.push_back(0.0f);   // cdf, pdf — finalised later
+
+        const float ex1 = tri[1].x - tri[0].x, ey1 = tri[1].y - tri[0].y, ez1 = tri[1].z - tri[0].z;
+        const float ex2 = tri[2].x - tri[0].x, ey2 = tri[2].y - tri[0].y, ez2 = tri[2].z - tri[0].z;
+        const float cx = ey1 * ez2 - ez1 * ey2;
+        const float cy = ez1 * ex2 - ex1 * ez2;
+        const float cz = ex1 * ey2 - ey1 * ex2;
+        const float area = 0.5f * std::sqrt(cx * cx + cy * cy + cz * cz);
+        g.staticWgt.push_back(emis::luminance(le[0], le[1], le[2]) * area);
+    }
+}
+
 // Build this level's NEE emitter list (DOOM-0009 build step 3b): the subset of
 // static mesh triangles whose material is emissive (per-material Le from
 // ComputeMaterialEmissive). Each record is 14 tight floats — v0[3] v1[3] v2[3]
@@ -3921,46 +3972,10 @@ void BuildEmitterList()
     if (!g.rtEnabled || !g.levelMesh || g.matEmissive.empty())
         return;
 
-    const int matCount = (int)(g.matEmissive.size() / 3);
-    const rb_vertex_t* v = g.levelMesh->verts;
-    const int numtris = g.levelMesh->numverts / 3;
-
-    // Each emitter record is 14 tight floats: v0[3] v1[3] v2[3] Le[3] cdf pdf.
-    // The trailing cdf/pdf are a power-importance sampling table (build step
-    // 3c-2): the shader picks an emitter by binary-searching cdf, so a bright/large
-    // light is sampled proportionally more often than a dim/small one, then divides
-    // by pdf. Weight per emitter = luminance(Le) * triangle area (a radiant-power
-    // proxy). The static walls/flats set is cached (cdf/pdf zeroed; FinalizeEmitters
-    // builds the CDF over static + per-frame sprites — DOOM-0084).
-    g.staticEmit.reserve(64 * 14);
-    g.staticWgt.reserve(64);
-    for (int t = 0; t < numtris; t++)
-    {
-        const rb_vertex_t* tri = &v[t * 3];
-        const int texnum = tri->texnum;
-        const int id = (tri->flags & RB_MESH_FLAT) ? g.matNumWall + texnum : texnum;
-        if (id < 0 || id >= matCount)
-            continue;
-        const float* le = &g.matEmissive[(size_t)id * 3];
-        if (le[0] + le[1] + le[2] <= 0.0f)
-            continue;   // material isn't a light source
-
-        for (int k = 0; k < 3; k++)
-        {
-            g.staticEmit.push_back(tri[k].x); g.staticEmit.push_back(tri[k].y); g.staticEmit.push_back(tri[k].z);
-        }
-        g.staticEmit.push_back(le[0]); g.staticEmit.push_back(le[1]); g.staticEmit.push_back(le[2]);
-        g.staticEmit.push_back(0.0f); g.staticEmit.push_back(0.0f);   // cdf, pdf — finalised later
-
-        // Triangle area = 1/2 |(v1-v0) x (v2-v0)|, for the power weight.
-        const float ex1 = tri[1].x - tri[0].x, ey1 = tri[1].y - tri[0].y, ez1 = tri[1].z - tri[0].z;
-        const float ex2 = tri[2].x - tri[0].x, ey2 = tri[2].y - tri[0].y, ez2 = tri[2].z - tri[0].z;
-        const float cx = ey1 * ez2 - ez1 * ey2;
-        const float cy = ez1 * ex2 - ex1 * ez2;
-        const float cz = ex1 * ey2 - ey1 * ex2;
-        const float area = 0.5f * std::sqrt(cx * cx + cy * cy + cz * cz);
-        g.staticWgt.push_back(emis::luminance(le[0], le[1], le[2]) * area);
-    }
+    // Fill the cached static emitter set from the baked mesh. A later switch press
+    // or animated-texture swap re-runs BuildStaticEmitterSet on the LIVE vertex
+    // buffer (g.vbufMapped) so a now-lit switch enters the light set (DOOM-0082).
+    BuildStaticEmitterSet(g.levelMesh->verts);
 
     // Host-visible, persistently-mapped emitter buffer sized for the static set plus
     // a per-frame budget of emissive-sprite triangles (DOOM-0084). The megakernel
@@ -5145,6 +5160,16 @@ extern "C" void RB_Vulkan_Present(void)
             g.sprWorldVertCount = (uint32_t)RB_BuildSprites(&g.lastView,
                 (rb_vertex_t*)g.sprWorldMapped, (int)g.sprWorldVertCap);
 
+        // DOOM-0082: last frame RB_UpdateMeshHeights saw a switch press/revert (or an
+        // animated flat) change a face's live texture; rebuild the static emitter set
+        // from the live vertex buffer so a now-lit switch pools light — and stops when
+        // it reverts. Cheap and rare (only on an actual texture change).
+        if (g.worldEmitDirty && g.vbufMapped)
+        {
+            BuildStaticEmitterSet((const rb_vertex_t*)g.vbufMapped);
+            g.worldEmitDirty = false;
+        }
+
         // DOOM-0084: append this frame's emissive sprites (lamps/torches/barrels)
         // to the NEE light list so they pool light onto their surroundings.
         BuildDynamicEmitters();
@@ -5159,8 +5184,9 @@ extern "C" void RB_Vulkan_Present(void)
     // first time the trace is shown.
     if (g.levelMesh && g.vbufMapped)
     {
-        if (RB_UpdateMeshHeights(g.levelMesh, (rb_vertex_t*)g.vbufMapped))
-            g.blasDirty = true;
+        int upd = RB_UpdateMeshHeights(g.levelMesh, (rb_vertex_t*)g.vbufMapped);
+        if (upd & RB_UPD_MOVED) g.blasDirty = true;      // geometry shifted -> BLAS refit
+        if (upd & RB_UPD_RETEX) g.worldEmitDirty = true; // a face's texture swapped -> emitter rebuild
     }
 
     // DOOM-0131: the moving-sector world-BLAS refit (build step 5) is now recorded

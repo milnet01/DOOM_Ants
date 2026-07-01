@@ -692,6 +692,7 @@ int RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst)
 {
     int i;
     int moved = 0;          // any z actually changed this frame -> RT refit (step 5)
+    int retex = 0;          // any live texture id changed -> NEE emitter rebuild (DOOM-0082)
     if (!mesh || !dst)
         return 0;
     // Doors/lifts move sector floor/ceiling heights every tic; rewrite only the
@@ -707,13 +708,14 @@ int RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst)
         // the baked texnum reflects neither. Re-derive exactly what the software
         // renderer samples: texturetranslation[sidedef tex] for walls,
         // flattranslation[sector pic] for flats. Cheap: one array read per vertex.
+        int newtex = dst[i].texnum;
         if (v->flags & RB_MESH_FLAT)
         {
             int pic = (v->vplane == RB_PLANE_CEIL)
                       ? sectors[v->vsector].ceilingpic
                       : sectors[v->vsector].floorpic;
             if (pic != skyflatnum)
-                dst[i].texnum = flattranslation[pic];
+                newtex = flattranslation[pic];
         }
         else if (v->vtexside >= 0)
         {
@@ -722,7 +724,14 @@ int RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst)
                      : v->vtexslot == 2 ? sd->bottomtexture
                      : sd->midtexture;
             if (base > 0)
-                dst[i].texnum = texturetranslation[base];
+                newtex = texturetranslation[base];
+        }
+        // A pressed/reverted switch or an animated texture changes the live id;
+        // flag it so the RT back-end refreshes the NEE emitter set (DOOM-0082).
+        if (newtex != dst[i].texnum)
+        {
+            dst[i].texnum = newtex;
+            retex = 1;
         }
         if (v->vplane == RB_PLANE_FLOOR)
             newz = sectors[v->vsector].floorheight / (float)FRACUNIT;
@@ -746,7 +755,7 @@ int RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst)
             dst[i].v = (az + v->vtexoff) - newz;
         }
     }
-    return moved;
+    return (moved ? RB_UPD_MOVED : 0) | (retex ? RB_UPD_RETEX : 0);
 }
 
 //

@@ -135,9 +135,14 @@ void RB_FreeMesh(rb_mesh_t* mesh);
 // vertex buffer). Only vertices tagged RB_PLANE_FLOOR/CEIL have their z rewritten
 // (to the live sector plane height); static vertices are untouched. Call once
 // per frame so doors and lifts animate without rebuilding the mesh (DOOM-0049).
-// Returns non-zero if any vertex z actually changed this frame (a door/lift is
-// mid-move) so the RT back-end can refit its acceleration structure only when the
-// geometry really moved (DOOM-0009 build step 5).
+// Returns an OR of the RB_UPD_* bits below: RB_UPD_MOVED when any vertex z changed
+// this frame (a door/lift mid-move) so the RT back-end refits its acceleration
+// structure only when geometry really moved (DOOM-0009 build step 5); RB_UPD_RETEX
+// when any wall/flat live texture id changed (a switch pressed or reverted, or an
+// animated texture cycled) so the back-end can rebuild the NEE emitter set so a
+// now-lit switch face pools light and a reverted one stops (DOOM-0082).
+#define RB_UPD_MOVED    0x1
+#define RB_UPD_RETEX    0x2
 int RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst);
 
 // DOOM-0009 build step 4 (static GI bake): one irradiance probe per subsector.
