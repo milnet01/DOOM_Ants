@@ -6,6 +6,8 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-01
+
 ### Added
 
 - **Restored the subtle pitch variation on repeated sound effects** (DOOM-0156)
@@ -346,7 +348,8 @@ attached; the Windows build and a fully self-contained package come later.
 - **Get linuxdoom-1.10 compiling on modern 64-bit Linux.** (DOOM-0003)
   Fix the 1997 code so today's compiler can build it.
 
-[Unreleased]: https://github.com/milnet01/DOOM_Ants/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/milnet01/DOOM_Ants/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/milnet01/DOOM_Ants/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/milnet01/DOOM_Ants/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/milnet01/DOOM_Ants/releases/tag/v0.1.0
 
