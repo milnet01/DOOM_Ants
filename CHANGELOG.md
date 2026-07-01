@@ -27,6 +27,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Mouse now turns only — it no longer moves the player forward/back** (DOOM-0154)
+  Moving the mouse up/down no longer walks the player; the mouse only turns left/right. Use the arrow keys or WASD to move.
+
 - **Gamepad remap: flashlight on D-pad Up, L1 is Run again** (DOOM-0153)
   The controller D-pad is now the weapon/flashlight pad in-game (left/right change weapons, up toggles the flashlight), and L1 goes back to being a Run button. The D-pad still navigates menus.
 
@@ -48,6 +51,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 - **Rebalanced audio so sound effects are no longer drowned out by music: the music volume ceiling is lowered (quieter at every slider position) and new installs default to full sound-effects volume.** (DOOM-0047)
 
 ### Fixed
+
+- **Sound effects nearly silent on Windows** (DOOM-0047)
+  The effects mixer ran at 11025 Hz, which SDL's Windows (WASAPI) audio backend resamples badly to near-silence. The mixer now outputs at 44100 Hz (the common native rate, matching the music), so effects play at full volume on Windows. Pitch and Linux behaviour are unchanged.
 
 - **Music played at full volume until the volume slider was touched (and drowned the SFX on Windows)** (DOOM-0047)
   The saved music volume wasn't re-applied when a track actually started, so SDL2_mixer's MIDI backend (on Windows) played it at maximum until you nudged the slider -- which also made the sound effects seem far too quiet. The volume is now applied every time music starts.

@@ -466,13 +466,15 @@ void G_BuildTiccmd (ticcmd_t* cmd)
 	} 
     } 
  
-    forward += mousey; 
-    if (strafe) 
-	side += mousex*2; 
-    else 
-	cmd->angleturn -= mousex*0x8; 
+    // User request 2026-07-01: the mouse turns only -- vertical motion no longer
+    // walks the player forward/back (the arrow keys / WASD handle movement). Mouse X
+    // still turns, or strafes while the strafe modifier is held. (Was: forward += mousey.)
+    if (strafe)
+	side += mousex*2;
+    else
+	cmd->angleturn -= mousex*0x8;
 
-    mousex = mousey = 0; 
+    mousex = mousey = 0;
 	 
     if (forward > MAXPLMOVE) 
 	forward = MAXPLMOVE; 

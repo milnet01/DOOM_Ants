@@ -93,13 +93,22 @@ static int flag = 0;            // only referenced by the SNDINTR interrupt path
 
 
 // Needed for calling the actual sound output.
-#define SAMPLECOUNT		512
+// 1024 frames @ 44100 Hz is a ~23 ms buffer -- low latency but enough margin to
+// avoid WASAPI underruns on Windows at the higher output rate (DOOM-0047).
+#define SAMPLECOUNT		1024
 #define NUM_CHANNELS		8
 // It is 2 for 16bit, and 2 for two channels.
 #define BUFMUL                  4
 #define MIXBUFFERSIZE		(SAMPLECOUNT*BUFMUL)
 
-#define SAMPLERATE		11025	// Hz
+// DOOM-0047: the SFX mixer OUTPUT rate. Raised 11025 -> 44100 because SDL's Windows
+// WASAPI backend resamples an 11025 Hz device badly (near-silent effects; SDL bug
+// libsdl-org/SDL#1491). 44100 is the common native device rate (and matches the
+// music device), so WASAPI does no awkward resampling. The DOOM sound lumps are
+// SFXRATE (11025 Hz) sources; the step table below rescales them to this output
+// rate so pitch is unchanged. Linux was already fine and stays bit-identical.
+#define SAMPLERATE		44100	// Hz (SFX mixer output / device rate)
+#define SFXRATE			11025	// Hz (DOOM sound-lump source rate)
 #define SAMPLESIZE		2   	// 16bit
 
 // The actual lengths of all sound effects.
@@ -386,9 +395,13 @@ void I_SetChannels()
   }*/
 
   // This table provides step widths for pitch parameters.
-  // I fail to see that this is currently used.
+  // DOOM-0047: the base step (pitch 0) rescales an SFXRATE (11025 Hz) source to the
+  // SAMPLERATE (44100 Hz) output, so a normal-pitch sound advances SFXRATE/SAMPLERATE
+  // (0.25) source samples per output sample -- correct pitch at the higher rate.
+  // At SFXRATE == SAMPLERATE this reduces to the original 65536 (1.0).
   for (i=-128 ; i<128 ; i++)
-    steptablemid[i] = (int)(pow(2.0, (i/64.0))*65536.0);
+    steptablemid[i] = (int)(pow(2.0, (i/64.0))
+			    * ((double)SFXRATE / (double)SAMPLERATE) * 65536.0);
   
   
   // Generates volume lookup tables
@@ -414,7 +427,7 @@ void I_SetSfxVolume(int volume)
 // MUSIC API.
 //
 // Music plays on its OWN audio output via SDL2_mixer at 44100 Hz, fully
-// independent of the 11025 Hz effects mixer above (which is untouched). MUS
+// independent of the 44100 Hz effects mixer above (which is untouched). MUS
 // lumps are converted to MIDI in memory (mus2mid) and rendered by SDL2_mixer
 // through FluidSynth + a General-MIDI soundfont. Music is non-essential: any
 // failure logs a warning, disables music, and lets the game run with effects
@@ -457,13 +470,13 @@ void I_SetMusicVolume(int volume)
 
   if (music_initialised)
   {
-    // Scale 0-15 -> SDL2_mixer's 0-128, but cap well below full: music plays on
-    // a separate 44.1 kHz SDL2_mixer device that is perceptibly louder than the
-    // 11025 Hz software SFX mixer at equal settings, drowning the effects
-    // (DOOM-0047). SFX can't be boosted to compensate -- a channel volume >127
-    // is a hard I_Error (see I_UpdateSoundParams) -- so the rebalance lives
-    // entirely on the music side. 48/128 (~38%) at max; user-reported (2026-06-30)
-    // that 80/128 still dominated even with the music slider low. Tunable by ear.
+    // Scale 0-15 -> SDL2_mixer's 0-128, but cap well below full: MIDI music on the
+    // separate SDL2_mixer device is perceptibly louder than the software SFX mixer
+    // at equal settings, so it would drown the effects (DOOM-0047). SFX can't be
+    // boosted (a channel volume >127 is a hard I_Error in I_UpdateSoundParams), so
+    // the rebalance lives on the music side. 48/128 (~38%) at max; tunable by ear.
+    // (The SFX mixer now also outputs 44.1 kHz -- see SAMPLERATE -- which fixed the
+    // near-silent Windows effects, but the MIDI-vs-PCM loudness gap remains.)
     int v = (volume * 48) / 15;
     if (v < 0)   v = 0;
     if (v > 128) v = 128;
@@ -810,7 +823,7 @@ I_InitSound()
 #endif
     
   // Secure and configure the sound device through SDL. The mixer runs at
-  //  11025 Hz, signed 16-bit stereo - I_SDLAudioCallback pulls from it.
+  //  44100 Hz, signed 16-bit stereo - I_SDLAudioCallback pulls from it.
   fprintf( stderr, "I_InitSound: ");
   {
     SDL_AudioSpec	want;
@@ -906,7 +919,7 @@ void I_InitMusic(void)
     return;
   }
 
-  // A SECOND audio device, separate from the 11025 Hz effects device, at full
+  // A SECOND audio device, separate from the 44100 Hz effects device, at full
   // 44100 Hz stereo. The OS mixes the two output streams.
   if (Mix_OpenAudioDevice(44100, MIX_DEFAULT_FORMAT, 2, 2048, NULL,
 			  SDL_AUDIO_ALLOW_FREQUENCY_CHANGE) < 0)
