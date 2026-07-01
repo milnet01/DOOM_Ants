@@ -28,6 +28,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Crash ("Bad V_CopyRect") when starting a level in widescreen with the HUD on** (DOOM-0147)
+  The status-bar draw copied to a shifted position on a widescreen screen, which tripped an over-strict internal bounds check and aborted the game the moment a level loaded. The check now measures against the real (wider) screen, so widescreen play works with the HUD visible. No effect at 4:3.
+
 - **The Screen Size slider can no longer be raised high enough to hide the in-game HUD; the status bar now always stays on during play.** (DOOM-0148)
 
 - **Classic renderer now presents at authentic 4:3 instead of a stretched 16:10, so the picture has correct proportions and fills a 4:3 monitor (title and menu screens too).** (DOOM-0147)

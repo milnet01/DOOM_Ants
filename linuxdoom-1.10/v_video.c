@@ -173,25 +173,16 @@ V_CopyRect
     byte*	dest;
     int		ssw, dsw;	// per-buffer strides
     int		sf, df;		// per-buffer scale factors
+    int		slw, dlw;	// per-buffer LOGICAL widths (stride / scale)
     int		lx, ly, rx, ry;
 
     // All coordinates/dimensions are logical (320x200 space); each side scales
-    // by its own buffer's factor (DOOM-0027).
+    // by its own buffer's factor (DOOM-0027). Validate the screen indices first so
+    // the screenwidth[] lookups below are in-bounds.
 #ifdef RANGECHECK
-    if (srcx<0
-	||srcx+width >ORIGWIDTH
-	|| srcy<0
-	|| srcy+height>ORIGHEIGHT
-	||destx<0||destx+width >ORIGWIDTH
-	|| desty<0
-	|| desty+height>ORIGHEIGHT
-	|| (unsigned)srcscrn>4
-	|| (unsigned)destscrn>4)
-    {
-	I_Error ("Bad V_CopyRect");
-    }
+    if ((unsigned)srcscrn>4 || (unsigned)destscrn>4)
+	I_Error ("Bad V_CopyRect (screen index)");
 #endif
-    V_MarkRect (destx, desty, width, height);
 
     ssw = screenwidth[srcscrn];
     dsw = screenwidth[destscrn];
@@ -200,6 +191,27 @@ V_CopyRect
     // HIRES; dsw/ORIGWIDTH only stayed == HIRES by luck at 4:3.)
     sf = (ssw == ORIGWIDTH) ? 1 : HIRES;
     df = (dsw == ORIGWIDTH) ? 1 : HIRES;
+    // Each buffer's own logical width. A widescreen full-screen buffer is
+    // SCREENWIDTH/HIRES logical columns wide (> ORIGWIDTH), so a copy may land past
+    // 320 -- e.g. the status bar, drawn to a WIDESCREENDELTA-shifted x (DOOM-0147).
+    // At 4:3 both reduce to ORIGWIDTH, so the bound is identical (zero-diff).
+    slw = ssw / sf;
+    dlw = dsw / df;
+
+#ifdef RANGECHECK
+    if (srcx<0
+	|| srcx+width > slw
+	|| srcy<0
+	|| srcy+height>ORIGHEIGHT
+	|| destx<0
+	|| destx+width > dlw
+	|| desty<0
+	|| desty+height>ORIGHEIGHT)
+    {
+	I_Error ("Bad V_CopyRect");
+    }
+#endif
+    V_MarkRect (destx, desty, width, height);
 
     src = screens[srcscrn] + (srcy*sf)*ssw + (srcx*sf);
     dest = screens[destscrn] + (desty*df)*dsw + (destx*df);
