@@ -857,6 +857,14 @@ parked ideas (💭 considered) until we commit to and design each one.
   lit region may fall below kBrightLum=0.5 / kEmitterMinLum=0.02, needing a lowered
   threshold or a switch allow-list. Bonus: animated slime/panels (DOOM-0083) now
   refresh their emitters via the same retex path.
+  HW result 2026-07-01 (user): a pressed switch LIGHTS UP (SW2 texture shows) but
+  does NOT cast light onto its surroundings. Diagnosis: the live-swap emitter
+  refresh works, but the lit switch's material Le stays below kEmitterMinLum — its
+  bright indicator is a few texels and ComputeMaterialEmissive AREA-AVERAGES, so it
+  never enters the NEE set as a caster. Shared root cause with the new colour-cast
+  item (over-permissive/area-averaged emissive derivation): fixing that derivation
+  (peak near-fullbright gate instead of area-average) should make the switch cast
+  AND stop coloured walls from flooding the room. Tune together on the RX 6600.
 
 - 📋 [DOOM-0083] **Green slime/nukage emits a faint green glow onto its surroundings.**
   Same DOOM-0009 path-tracer emitter mechanism as [DOOM-0082]: the per-material emissive precompute (build step 3b) auto-derives a green Le from the slime/nukage flats' bright green texels, so those surfaces become NEE area emitters and cast a faint green tint on neighbours. Two data-dependent checks when 3c lands: (1) the nukage/slime flats (NUKAGE1-3, and bright-green floor flats) actually cross the emissive luminance threshold (may need a per-flat allow-list or lowered threshold for the "faint" case, since slime is darker than a lamp); (2) animated slime flats cycle via flattranslation each tic (DOOM-0066) — the emitter set should track the live flat so the glow animates. Intensity is the same "faint" tunable as DOOM-0082. Distinct from DOOM-0082 (switches/buttons) in surface class (environmental animated floor flats) but shares the implementation.
@@ -1401,3 +1409,25 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** The armour pickups have little green glowing eyes; those should cast a soft green glow when you are near them, instead of looking flat — they do not glow right now.
   Kind: feature.
   Source: user-request-2026-07-01.
+
+- 💭 [DOOM-0159] **Ultra mutes DOOM's vibrant art colours (door emblems, esp. yellow) vs Classic's flat display.**
+  User A/B screenshots 2026-07-01 (the "Z" emblem door, Gimp-highlighted): Classic
+  shows vibrant teal rings + a punchy yellow Z; Ultra renders it muted (dim teal,
+  olive yellow). ASSESSMENT (code-traced): this is EXPECTED PBR behaviour, not a
+  broken bug. Classic paints the texture's palette colours directly, dimmed only by
+  sector lightlevel (hue preserved) -> art stays vibrant. Ultra lights the door as a
+  real surface: final = albedo * illum (svgf_composite.comp:88). The room is dim and
+  its bounced light is slightly green, so the yellow albedo is both dimmed AND hue-
+  shifted toward olive -> muted. Physically correct; the cost is DOOM's punchy flat-
+  lit art vibrancy, which cuts against [[rt-aesthetic-north-star]]. User is OK to
+  leave it if correct -> logged as an OPTIONAL aesthetic tune, NOT a defect. Two
+  levers if we later choose to restore vibrancy: (1) desaturate the GI/indirect
+  colour-bleed a touch so coloured room light stops shifting hues (a mild scene-wide
+  green tint is real but secondary — do NOT re-open the earlier "walls are area
+  lights / whole-scene cast" theory, that was my over-read and is retracted);
+  (2) give emblem/switch/light textures a mild self-emissive lift so near-fullbright
+  DOOM art reads vibrant under low room light (ties into the emissive-derivation
+  tuning shared with DOOM-0082/0083/0157). Decide priority with user.
+  **Layman:** In Ultra the door emblem looks more muted/olive than Classic's bright yellow. That is because Ultra lights the door with the room's actual (dim, slightly green) light, while Classic just shows the art's colours directly. It is technically correct, but it loses DOOM's punchy look — optional to tune back toward vibrant if wanted.
+  Kind: enhancement.
+  Source: user-request-2026-07-01 (Classic vs Ultra door screenshots).
