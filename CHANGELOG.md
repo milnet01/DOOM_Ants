@@ -8,6 +8,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Restored the subtle pitch variation on repeated sound effects** (DOOM-0156)
+  Repeated sounds (gunshots, etc.) again vary slightly in pitch like classic DOOM, instead of sounding identical every time. Built on demand so it costs little memory.
+
 - **Switch weapons with the mouse wheel and the gamepad D-pad** (DOOM-0153)
   Scroll the mouse wheel up/down, or press the controller D-pad left/right, to cycle to the next/previous weapon you own. Works like tapping the number keys (so it's safe in demos and multiplayer).
 

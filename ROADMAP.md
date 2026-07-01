@@ -1312,8 +1312,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: ux.
   Source: user-request-2026-07-01.
 
-- 📋 [DOOM-0156] **Restore per-sound pitch variation lost in the SDL_mixer chunk rewrite.**
+- ✅ [DOOM-0156] **Restore per-sound pitch variation lost in the SDL_mixer chunk rewrite.**
   User request 2026-07-01. The DOOM-0047 chunk rewrite plays each effect via Mix_PlayChannel with no pitch shift (the old software mixer used steptable[pitch] and S_StartSoundAtVolume randomises pitch via M_Random for most sounds). Options: (a) build a few pre-shifted Mix_Chunk variants per sound and pick by pitch bucket (Chocolate Doom's snd_pitchshift approach; memory cost), or (b) resample on the fly. Low priority / cosmetic -- do after the base effects volume/balance is confirmed good. Cross-ref DOOM-0047.
   **Layman:** Classic DOOM slightly randomises the pitch of repeated sound effects so they don't sound identical every time. The new SDL_mixer effects path plays them at a fixed pitch; add the subtle variation back.
   Kind: enhancement.
   Source: user-request-2026-07-01.
+  Implemented 2026-07-01 alongside the dead-code cleanup. i_sound.c now stores each sound's raw 8-bit lump (I_CacheSfx keeps it cached) and builds S16 chunks LAZILY per pitch bucket (I_BuildPitched): bucket = DOOM pitch>>4 (16 buckets), representative pitch = bucket*16, and the 8-bit source is resampled as if at rate*pitch/128 to shift playback pitch. I_StartSound picks the bucket from the (randomised) pitch and plays that cached chunk, so repeated sounds vary subtly again. Bounded memory (<=16 variants per played sound, built on demand). ALSO did the promised cleanup: removed the dead software mixer (getsfx, addsfx, I_MixSoundInto, I_SFXPostMix, I_SDLAudioCallback and the mixbuffer/channels/steptable/vol_lookup globals) -- i_sound.c is ~370 lines lighter. Builds clean Linux+Windows (zero warnings); headless: device opens, sounds cache, a level runs with no crash. exe redeployed. Cross-ref DOOM-0047.
