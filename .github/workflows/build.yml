@@ -5,12 +5,34 @@ name: build
 # game (no display, GPU, or licensed WAD on the runner), and it deliberately does
 # NOT build the Windows cross-target or cut releases (those stay local, via
 # packaging/release.sh). See docs/RELEASE_README.txt.
+#
+# Run the exact same gate locally before pushing with:  packaging/ci-local.sh
+#
+# SPEED / SAFETY: the fast bits here are all deterministic and cannot cause a
+# false green -- (1) skip runs whose changes are docs-only, (2) cancel superseded
+# runs, (3) shallow clone, (4) parallel make, (5) --no-install-recommends. We
+# intentionally do NOT cache apt packages or compiler output (ccache): a stale or
+# poisoned build cache is exactly the "easily corruptable" speed-up to avoid, and
+# the full build is only ~90 s anyway. (ccache is hash-keyed and safe in practice
+# if we ever want it, but it's left out by choice.)
 
 on:
   push:
     branches: [ master ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
+      - 'LICENSE.TXT'
+      - 'README.TXT'
   pull_request:
     branches: [ master ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
+      - 'LICENSE.TXT'
+      - 'README.TXT'
 
 # A newer push to the same branch cancels an in-flight run (saves runner minutes).
 concurrency:
@@ -21,8 +43,11 @@ jobs:
   linux:
     name: Linux build + tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15          # a hung build never sits burning minutes
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1         # shallow: CI only needs the current tree
 
       - name: Install build dependencies
         run: |
