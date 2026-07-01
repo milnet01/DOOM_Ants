@@ -1002,6 +1002,12 @@ void I_PlaySong(int handle, int looping)
     return;
   // -1 loops forever; 1 plays the song once.
   Mix_PlayMusic(s->music, looping ? -1 : 1);
+  // DOOM-0047: re-apply the music volume AFTER starting playback. SDL2_mixer's
+  // MIDI backend (notably on Windows) begins a freshly-played track at full volume
+  // and ignores a Mix_VolumeMusic set before playback started, so the saved/menu
+  // level must be pushed again here. Otherwise music blared at max until the slider
+  // was first touched -- which also drowned the effects ("SFX too soft on Windows").
+  I_SetMusicVolume(snd_MusicVolume);
 }
 
 void I_PauseSong(int handle)

@@ -735,6 +735,13 @@ void I_InitWidescreen(void)
 	&& dm.h > 0)
 	aspect = (double)dm.w / (double)dm.h;
 
+    // DOOM-0147: auto-detect. A 4:3-or-narrower display (or a failed query) has no
+    // room for Hor+, so force the widescreen preference off there -- the menu then
+    // honestly reads "Off" instead of an "On" that does nothing. Only a display
+    // wider than 4:3 keeps the saved preference (default on).
+    if (aspect <= 4.0 / 3.0 + 0.001)
+	widescreen = 0;
+
     // active logical width = NONWIDEWIDTH * aspect / (4/3) = 240 * aspect, rounded.
     logical = (int)(240.0 * aspect + 0.5);
     if (!widescreen)			logical = NONWIDEWIDTH;		// Part C: user forced 4:3

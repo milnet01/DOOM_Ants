@@ -24,6 +24,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Widescreen now auto-detects the display and defaults off on non-widescreen screens** (DOOM-0147)
+  On a 4:3 or 5:4 monitor (where widescreen has no effect), the Widescreen option now correctly reads Off instead of a misleading On. Displays wider than 4:3 keep the saved preference (on by default).
+
 - **Widescreen intermission (level-end) screens fill the sides instead of showing stale pixels** (DOOM-0151)
   The "level finished" and "entering" map screens now extend their background to the edges on a widescreen display, matching the title and HUD. No change at 4:3.
 
@@ -39,6 +42,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 - **Rebalanced audio so sound effects are no longer drowned out by music: the music volume ceiling is lowered (quieter at every slider position) and new installs default to full sound-effects volume.** (DOOM-0047)
 
 ### Fixed
+
+- **Music played at full volume until the volume slider was touched (and drowned the SFX on Windows)** (DOOM-0047)
+  The saved music volume wasn't re-applied when a track actually started, so SDL2_mixer's MIDI backend (on Windows) played it at maximum until you nudged the slider -- which also made the sound effects seem far too quiet. The volume is now applied every time music starts.
 
 - **Grey squares covered parts of the HUD in widescreen** (DOOM-0147)
   Status-bar numbers/icons were drawn shifted for widescreen but their background was cleared at the old position, leaving grey rectangles over adjacent readouts (ammo, arms). The clear now follows the shifted position.
