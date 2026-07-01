@@ -6,6 +6,14 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **3D renderer tiers are now gated on descriptor-indexing support at probe time (DOOM-0059)**
+  On a GPU that lacks the Vulkan 1.2 descriptor-indexing features the bindless
+  material path needs, the menu now stays on Classic instead of erroring out
+  when a 3D mode is selected. The probe checks the same four features device
+  creation requires, so an unsupported GPU is never offered Solid/Ultra.
+
 ## [0.3.0] - 2026-07-01
 
 ### Added

@@ -626,11 +626,22 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: refactor.
   Source: in-session-2026-06-25 DOOM-0009 build step 1 increment 2.
 
-- 📋 [DOOM-0059] **Gate the 3D render tiers on descriptor-indexing support at probe time.**
+- ✅ [DOOM-0059] **Gate the 3D render tiers on descriptor-indexing support at probe time.**
   The bindless materials path (DOOM-0009 build step 1) requires four Vulkan 1.2 descriptor-indexing features. They are checked in PickPhysicalAndDevice (device creation, after the user has already switched to Solid/Ultra), so a GPU lacking them now I_Errors at init. Effectively unreachable on real hardware (any Vulkan-1.2 driver has them), but the clean fix is to fold the check into RB_Vulkan_Available / the tier probe so an unsupported GPU never offers the 3D tiers and the menu silently stays on Classic — no abort.
   **Layman:** On a very old GPU, keep the menu on Classic instead of crashing when 3D is picked.
   Kind: enhancement.
   Source: in-session-2026-06-25 DOOM-0009 build step 1 increment 2.
+  Shipped 2026-07-01. RB_VulkanProbe (r_vulkan.cpp) now queries the same four
+  Vulkan 1.2 descriptor-indexing features PickPhysicalAndDevice requires
+  (runtimeDescriptorArray / shaderSampledImageArrayNonUniformIndexing /
+  descriptorBindingVariableDescriptorCount / descriptorBindingPartiallyBound)
+  and skips any device lacking them, so a GPU without bindless support is
+  reported Classic-only and the menu never offers Solid/Ultra — no init-time
+  I_Error. The device-creation check is kept as a backstop (comment updated).
+  Confined to the probe; orthogonal to DOOM-0147's r_backend.c availability
+  rework. Builds clean (g++ -Wall, 0 warnings). On-HW verify still open: only
+  testable on a Vulkan-1.2 GPU that genuinely lacks descriptor indexing
+  (effectively none exist), so verified by code parity with the device path.
 
 - ✅ [DOOM-0061] **Port DOOM wall texture pegging into the 3D mesh (fixes vertically-misaligned uppers and switches).**
   Found 2026-06-25 (user testing, DOOM 1, Solid/Ultra): a wall switch (red-button panel) visible in Classic did not show in the 3D back-ends. Root cause: r_mesh.c emit_wall had NO texture pegging -- it top-aligned every wall (vtop = rowoffset only). DOOM picks the texture's vertical origin per wall kind and per the linedef ML_DONTPEGTOP/ML_DONTPEGBOTTOM flags (r_segs.c:448-605): default upper textures are bottom-pegged, and DONTPEGBOTTOM switch/step faces peg to the ceiling. Ignoring this slid those textures' art out of the visible band. Fix: emit_wall gains a pegkind (PEG_ONESIDED/UPPER/LOWER/MID) and computes vtop via the faithful r_segs rules using textureheight[] + linedef flags; the four call sites pass their kind. Default lower/one-sided/mid V origins are unchanged (only +rowoffset cases), so the only behaviour change is the previously-wrong uppers and DONTPEG faces now align. Built clean. Needs user GPU re-test (the switch should reappear and uppers should match Classic).

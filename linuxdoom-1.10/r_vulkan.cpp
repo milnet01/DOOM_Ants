@@ -109,13 +109,32 @@ extern "C" int RB_VulkanProbe(void)
     if (ndev)
         vkEnumeratePhysicalDevices(inst, &ndev, devs.data());
 
-    int best = (ndev > 0) ? TIER_RASTER3D : TIER_CLASSIC;
+    // Start pessimistic and upgrade only for a device that can actually run the
+    // 3D path (DOOM-0059): a device merely existing is no longer enough.
+    int best = TIER_CLASSIC;
     char bestName[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE] = "";
 
     for (VkPhysicalDevice d : devs)
     {
         VkPhysicalDeviceProperties props = {};
         vkGetPhysicalDeviceProperties(d, &props);
+
+        // DOOM-0059: the 3D renderer is bindless-only — it needs the four Vulkan
+        // 1.2 descriptor-indexing features PickPhysicalAndDevice enables (and
+        // I_Errors without). Gate the tier here on the SAME four so a GPU lacking
+        // them is reported Classic-only and never offered Solid/Ultra, instead of
+        // aborting at device creation after the user has picked a 3D mode.
+        VkPhysicalDeviceVulkan12Features f12 = {};
+        f12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+        VkPhysicalDeviceFeatures2 f2 = {};
+        f2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        f2.pNext = &f12;
+        vkGetPhysicalDeviceFeatures2(d, &f2);
+        if (!(f12.runtimeDescriptorArray &&
+              f12.shaderSampledImageArrayNonUniformIndexing &&
+              f12.descriptorBindingVariableDescriptorCount &&
+              f12.descriptorBindingPartiallyBound))
+            continue;  // cannot run the bindless 3D path — leave it on Classic.
 
         uint32_t next = 0;
         vkEnumerateDeviceExtensionProperties(d, nullptr, &next, nullptr);
@@ -138,6 +157,9 @@ extern "C" int RB_VulkanProbe(void)
             strncpy(bestName, props.deviceName, sizeof(bestName) - 1);
             break;  // RT-capable is the top tier; no need to look further.
         }
+        // Bindless-capable but no RT: at least the raster-3D tier. (An RT device
+        // always breaks above, so best is only ever CLASSIC or RASTER3D here.)
+        best = TIER_RASTER3D;
         if (bestName[0] == '\0')
             strncpy(bestName, props.deviceName, sizeof(bestName) - 1);
     }
@@ -819,8 +841,9 @@ void PickPhysicalAndDevice()
     // four features cannot run the 3D renderer — fail init clearly, the same way
     // a non-presenting device does above. This is effectively unreachable on real
     // hardware: any GPU whose driver exposes Vulkan 1.2 supports all four.
-    // (Graceful probe-time gating so the menu never offers 3D on such a GPU is
-    // tracked separately — see ROADMAP.)
+    // RB_VulkanProbe now applies this same four-feature gate at probe time
+    // (DOOM-0059), so the menu never offers Solid/Ultra on such a GPU and this
+    // I_Error is a belt-and-braces backstop rather than the primary guard.
     //
     // The same features-2 query also reads the RT feature bits (accelerationStructure
     // + rayQuery + bufferDeviceAddress, the AS build reads vertices by GPU address):
