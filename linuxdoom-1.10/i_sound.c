@@ -152,6 +152,16 @@ int		channelids[NUM_CHANNELS];
 // Pitch to stepping lookup, unused.
 int		steptable[256];
 
+// DOOM-0047: the effects mixer's actual OUTPUT rate. When effects ride the
+// SDL2_mixer device (the normal path) this is the rate that device opened at
+// (queried from Mix_QuerySpec, since ALLOW_FREQUENCY_CHANGE may pick 48 kHz); the
+// pitch step table is built for it so effects play at the right pitch. Defaults to
+// SAMPLERATE for the standalone-device fallback.
+static int	sfx_out_freq = SAMPLERATE;
+// True once effects are wired into SDL2_mixer's post-mix hook; false means the
+// standalone SDL device fallback is in use (music device failed to open).
+static boolean	sfx_via_postmix = false;
+
 // Volume lookups.
 int		vol_lookup[128*256];
 
@@ -401,7 +411,7 @@ void I_SetChannels()
   // At SFXRATE == SAMPLERATE this reduces to the original 65536 (1.0).
   for (i=-128 ; i<128 ; i++)
     steptablemid[i] = (int)(pow(2.0, (i/64.0))
-			    * ((double)SFXRATE / (double)SAMPLERATE) * 65536.0);
+			    * ((double)SFXRATE / (double)sfx_out_freq) * 65536.0);
   
   
   // Generates volume lookup tables
@@ -580,7 +590,11 @@ int I_SoundIsPlaying(int handle)
 //
 // This function currently supports only 16bit.
 //
-static void I_MixSound( void )
+// DOOM-0047: mix all active effect channels INTO `out` (adding to whatever is
+// already there -- music, in the SDL2_mixer post-mix path; silence in the
+// standalone-device fallback), clamping to 16-bit. `frames` is stereo sample
+// frames. Decoupled from SAMPLECOUNT so it fills whatever buffer the caller has.
+static void I_MixSoundInto( signed short* out, int frames )
 {
 #ifdef SNDINTR
   // Debug. Count buffer misses with interrupt.
@@ -606,22 +620,23 @@ static void I_MixSound( void )
     
     // Left and right channel
     //  are in global mixbuffer, alternating.
-    leftout = mixbuffer;
-    rightout = mixbuffer+1;
+    leftout = out;
+    rightout = out+1;
     step = 2;
 
     // Determine end, for left channel only
     //  (right channel is implicit).
-    leftend = mixbuffer + SAMPLECOUNT*step;
+    leftend = out + frames*step;
 
     // Mix sounds into the mixing buffer.
     // Loop over step*SAMPLECOUNT,
     //  that is 512 values for two channels.
     while (leftout != leftend)
     {
-	// Reset left/right value. 
-	dl = 0;
-	dr = 0;
+	// Start from whatever is already in the buffer, so effects ADD to it
+	// (music in the post-mix path; zero in the standalone fallback).
+	dl = *leftout;
+	dr = *rightout;
 
 	// Love thy L2 chache - made this a loop.
 	// Now more channels could be set at compile time
@@ -706,15 +721,25 @@ static void I_MixSound( void )
 // Mixing now done synchronous, and
 //  only output be done asynchronous?
 //
-// SDL pulls audio on its own thread: mix on demand and hand back the buffer.
+// DOOM-0047: preferred effects path. SDL2_mixer's post-mix hook hands us the FINAL
+// music stream (the device's S16 stereo output); we add the effects straight into
+// it, so effects and music share the ONE SDL2_mixer device. This fixes near-silent
+// effects on Windows, where opening a SECOND (legacy SDL_OpenAudio) device for
+// effects produced almost no output. len is bytes; a stereo S16 frame is 4 bytes.
+static void I_SFXPostMix(void* udata, Uint8* stream, int len)
+{
+  (void)udata;
+  I_MixSoundInto((signed short*)stream, len / (int)(2*sizeof(signed short)));
+}
+
+// Fallback effects path: a standalone SDL device, used only if the SDL2_mixer music
+// device could not be opened (so effects still play without music). SDL hands us an
+// uninitialised buffer, so zero it first, then mix effects in.
 static void I_SDLAudioCallback(void* unused, Uint8* stream, int len)
 {
   (void)unused;
-  I_MixSound();
-  // I_MixSound fills SAMPLECOUNT stereo 16-bit frames; never copy past that.
-  if (len > SAMPLECOUNT*2*(int)sizeof(signed short))
-    len = SAMPLECOUNT*2*(int)sizeof(signed short);
-  memcpy(stream, mixbuffer, len);
+  SDL_memset(stream, 0, len);
+  I_MixSoundInto((signed short*)stream, len / (int)(2*sizeof(signed short)));
 }
 
 // The game loop still calls these every frame. Mixing is now pull-driven by
@@ -779,7 +804,10 @@ void I_ShutdownSound(void)
 #endif
   
   // Cleaning up - releasing the audio device.
-  SDL_CloseAudio();
+  if (sfx_via_postmix)
+    Mix_SetPostMix(NULL, NULL);		// effects rode the SDL2_mixer device
+  else
+    SDL_CloseAudio();			// standalone fallback device
   SDL_QuitSubSystem(SDL_INIT_AUDIO);
 #endif
 
@@ -822,14 +850,46 @@ I_InitSound()
   I_SoundSetTimer( SOUND_INTERVAL );
 #endif
     
-  // Secure and configure the sound device through SDL. The mixer runs at
-  //  44100 Hz, signed 16-bit stereo - I_SDLAudioCallback pulls from it.
+  // Bring up the SDL audio subsystem (SDL2_mixer needs it too).
+  if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0)
+    I_Error("I_InitSound: SDL audio init failed: %s", SDL_GetError());
+
+  // Initialize external data (all sounds) at start, keep static.
   fprintf( stderr, "I_InitSound: ");
+
+  for (i=1 ; i<NUMSFX ; i++)
+  {
+    // Alias? Example is the chaingun sound linked to pistol.
+    if (!S_sfx[i].link)
+    {
+      // Load data from WAD file.
+      S_sfx[i].data = getsfx( S_sfx[i].name, &lengths[i] );
+    }
+    else
+    {
+      // Previously loaded already?
+      S_sfx[i].data = S_sfx[i].link->data;
+      lengths[i] = lengths[(S_sfx[i].link - S_sfx)/sizeof(sfxinfo_t)];
+    }
+  }
+
+  fprintf( stderr, " pre-cached all sound data\n");
+
+  // Now initialize mixbuffer with zero (only used by the standalone fallback).
+  for ( i = 0; i< MIXBUFFERSIZE; i++ )
+    mixbuffer[i] = 0;
+
+  // Bring up music on the SDL2_mixer device (DOOM-0016). DOOM-0047: effects now
+  // ride that SAME device via its post-mix hook, so start music FIRST -- if it
+  // opens, I_InitMusic sets sfx_via_postmix and effects are already wired in.
+  // (I_ShutdownMusic is already wired on the shutdown side, in i_system.c.)
+  I_InitMusic();
+
+  // Fallback: if the music device could not open, give effects their own standalone
+  // SDL device so they still play (the pre-DOOM-0047 behaviour, minus music).
+  if (!sfx_via_postmix)
   {
     SDL_AudioSpec	want;
-
-    if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0)
-      I_Error("I_InitSound: SDL audio init failed: %s", SDL_GetError());
 
     SDL_memset(&want, 0, sizeof(want));
     want.freq = SAMPLERATE;
@@ -840,47 +900,13 @@ I_InitSound()
 
     if (SDL_OpenAudio(&want, NULL) < 0)
       I_Error("I_InitSound: SDL_OpenAudio failed: %s", SDL_GetError());
+
+    sfx_out_freq = SAMPLERATE;
+    SDL_PauseAudio(0);
+    fprintf(stderr, "I_InitSound: effects on a standalone device (no music mixer)\n");
   }
 
-  fprintf(stderr, " configured audio device\n" );
-
-    
-  // Initialize external data (all sounds) at start, keep static.
-  fprintf( stderr, "I_InitSound: ");
-  
-  for (i=1 ; i<NUMSFX ; i++)
-  { 
-    // Alias? Example is the chaingun sound linked to pistol.
-    if (!S_sfx[i].link)
-    {
-      // Load data from WAD file.
-      S_sfx[i].data = getsfx( S_sfx[i].name, &lengths[i] );
-    }	
-    else
-    {
-      // Previously loaded already?
-      S_sfx[i].data = S_sfx[i].link->data;
-      lengths[i] = lengths[(S_sfx[i].link - S_sfx)/sizeof(sfxinfo_t)];
-    }
-  }
-
-  fprintf( stderr, " pre-cached all sound data\n");
-  
-  // Now initialize mixbuffer with zero.
-  for ( i = 0; i< MIXBUFFERSIZE; i++ )
-    mixbuffer[i] = 0;
-
-  // Everything is ready: let the callback start pulling audio.
-  SDL_PauseAudio(0);
-
-  // Finished initialization.
   fprintf(stderr, "I_InitSound: sound module ready\n");
-
-  // Bring up music on its own SDL2_mixer device (DOOM-0016). Stock linuxdoom
-  // never wired this call, so music stayed silent even with real code behind
-  // the API; init it here, in the platform sound layer, alongside effects.
-  // (I_ShutdownMusic is already wired on the shutdown side, in i_system.c.)
-  I_InitMusic();
 
 #endif
 }
@@ -939,6 +965,25 @@ void I_InitMusic(void)
     Mix_SetSoundFonts(DEFAULT_SOUNDFONT);
 
   music_initialised = true;
+
+  // DOOM-0047: route the effects through THIS device via the post-mix hook, so they
+  // share the one working SDL2_mixer output (fixes near-silent effects on Windows,
+  // where a separate legacy SDL_OpenAudio device barely output). Query the rate it
+  // actually opened at (ALLOW_FREQUENCY_CHANGE may pick 48 kHz) so the effects step
+  // table (built later in I_SetChannels) targets it; the post-mix add assumes S16
+  // stereo, guaranteed here (MIX_DEFAULT_FORMAT / 2 ch, no format/channel changes).
+  {
+    int		freq = SAMPLERATE, chans = 2;
+    Uint16	fmt = MIX_DEFAULT_FORMAT;
+
+    if (Mix_QuerySpec(&freq, &fmt, &chans) && freq > 0
+	&& fmt == AUDIO_S16SYS && chans == 2)
+    {
+      sfx_out_freq = freq;
+      Mix_SetPostMix(I_SFXPostMix, NULL);
+      sfx_via_postmix = true;
+    }
+  }
 
   // Apply the volume the menu/config already chose (0-15 -> 0-128).
   I_SetMusicVolume(snd_MusicVolume);

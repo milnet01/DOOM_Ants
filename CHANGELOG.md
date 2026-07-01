@@ -52,6 +52,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Sound effects silent on Windows (take 2): mix effects into the music device** (DOOM-0047)
+  The game opened two separate audio devices — one for effects, one for music — and on Windows the effects device barely produced output. Effects now play through the same (working) device as the music, so they're audible on Windows. Music and Linux behaviour are unchanged.
+
 - **Sound effects nearly silent on Windows** (DOOM-0047)
   The effects mixer ran at 11025 Hz, which SDL's Windows (WASAPI) audio backend resamples badly to near-silence. The mixer now outputs at 44100 Hz (the common native rate, matching the music), so effects play at full volume on Windows. Pitch and Linux behaviour are unchanged.
 
