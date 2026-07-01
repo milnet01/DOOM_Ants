@@ -1,0 +1,15 @@
+# Build dependencies for the Linux CI gate. SINGLE SOURCE OF TRUTH: both the
+# GitHub workflow (.github/workflows/build.yml) and the local mirror
+# (packaging/ci-local.sh) read this file, so the two can never drift.
+#
+# One apt (Debian/Ubuntu) package per line. Blank lines and lines whose first
+# field starts with '#' are ignored; a trailing "# ..." comment on a package
+# line is also ignored (only the first field is taken). Extract with:
+#     awk 'NF && $1 !~ /^#/ {print $1}' packaging/ci-deps.txt
+#
+build-essential      # gcc/g++, make, libc headers
+libsdl2-dev          # SDL2: window, input, audio device
+libsdl2-mixer-dev    # SDL2_mixer: music + SFX
+libvulkan-dev        # Vulkan loader + headers (3D back-end; linked even without a GPU)
+glslc                # compiles the Vulkan shaders to SPIR-V
+xxd                  # embeds the compiled shaders as C headers

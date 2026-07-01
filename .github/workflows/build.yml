@@ -50,16 +50,15 @@ jobs:
           fetch-depth: 1         # shallow: CI only needs the current tree
 
       - name: Install build dependencies
+        # The package list lives in packaging/ci-deps.txt (single source of truth,
+        # shared with packaging/ci-local.sh so the local mirror can't drift from CI).
+        # glslc + xxd build the Vulkan shaders into C headers; the Makefile links
+        # -lvulkan even though the runner has no GPU. mold is optional -- the Makefile
+        # falls back to the default linker when it is absent.
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            libsdl2-dev libsdl2-mixer-dev \
-            libvulkan-dev \
-            glslc xxd
-          # (glslc + xxd build the Vulkan shaders into C headers; the Makefile links
-          #  -lvulkan even though the runner has no GPU. mold is optional -- the
-          #  Makefile falls back to the default linker when it is absent.)
+            $(awk 'NF && $1 !~ /^#/ {print $1}' packaging/ci-deps.txt)
 
       - name: Build (Linux)
         run: make -C linuxdoom-1.10 -j"$(nproc)"
