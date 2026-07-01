@@ -158,7 +158,7 @@ TEST_SRCS=$(wildcard tests/*_test.cpp)
 TEST_BINS=$(TEST_SRCS:tests/%.cpp=$(O)/%)
 TEST_CXXFLAGS=$(CXXFLAGS) -O2 -MMD -MP
 
-$(O)/%_test:	tests/%_test.cpp
+$(O)/%_test:	tests/%_test.cpp | $(O)
 	$(CXX) $(TEST_CXXFLAGS) $< -o $@
 
 # Build all tests (parallel-friendly: the binaries are prerequisites, so -j builds
@@ -208,10 +208,16 @@ windows:	$(SHADER_HDRS)
 	  EXTRALIBS="-lws2_32" \
 	  mingw/doom_ants.exe
 
-$(O)/%.o:	%.c
+# Create the object output dir on demand. Order-only prerequisite (| $(O)) so its
+# mtime never forces a rebuild; needed on a fresh clone where linux/ doesn't exist
+# yet and -MMD would fail writing linux/*.d.
+$(O):
+	mkdir -p $(O)
+
+$(O)/%.o:	%.c | $(O)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(O)/%.o:	%.cpp
+$(O)/%.o:	%.cpp | $(O)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 # GLSL -> SPIR-V -> embedded C header. Stage is inferred from the .vert/.frag/
