@@ -208,9 +208,13 @@ void R_ClearPlanes (void)
     // left to right mapping
     angle = (viewangle-ANG90)>>ANGLETOFINESHIFT;
 	
-    // scale will be unit scale at SCREENWIDTH/2 distance
-    basexscale = FixedDiv (finecosine[angle],centerxfrac);
-    baseyscale = -FixedDiv (finesine[angle],centerxfrac);
+    // DOOM-0147 (Hor+): the flat texture step per screen column must match the
+    // horizontal projection, whose focal length references the *non-wide* 4:3
+    // half-width (centerxfrac_nonwide) -- not the wide geometric centre. Using the
+    // wide centerxfrac here scaled the floor/ceiling texels wrong, so flats swam
+    // relative to the walls on a widescreen view. At 4:3 the two are equal (zero-diff).
+    basexscale = FixedDiv (finecosine[angle],centerxfrac_nonwide);
+    baseyscale = -FixedDiv (finesine[angle],centerxfrac_nonwide);
 }
 
 

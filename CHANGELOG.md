@@ -24,6 +24,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Widescreen HUD sides now continue the grey status bar instead of black bars** (DOOM-0151)
+  The strips either side of the centred status bar are filled by extending the bar's own edge, matching the title-screen treatment. No change at 4:3.
+
 - **Widescreen title/menu screens fill the sides instead of showing black bars** (DOOM-0151)
   On a display wider than 4:3, the title, credits, help and menu-background screens now extend their own edges outward to fill the black side strips, so they look intentional rather than pillar-boxed. Uses only the game's own on-screen pixels (no added art). No change at 4:3. Intermission and finale screens still to follow.
 
@@ -33,6 +36,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 - **Rebalanced audio so sound effects are no longer drowned out by music: the music volume ceiling is lowered (quieter at every slider position) and new installs default to full sound-effects volume.** (DOOM-0047)
 
 ### Fixed
+
+- **Grey squares covered parts of the HUD in widescreen** (DOOM-0147)
+  Status-bar numbers/icons were drawn shifted for widescreen but their background was cleared at the old position, leaving grey rectangles over adjacent readouts (ammo, arms). The clear now follows the shifted position.
+
+- **Floor and ceiling textures swam relative to walls in widescreen (Classic renderer)** (DOOM-0147)
+  On a widescreen display the flat (floor/ceiling) texture scale didn't match the widened field of view, so floors appeared to slide as you moved. Now locked to the same 4:3 reference the rest of the view uses. No change at 4:3.
 
 - **Crash ("Bad V_CopyRect") when starting a level in widescreen with the HUD on** (DOOM-0147)
   The status-bar draw copied to a shifted position on a widescreen screen, which tripped an over-strict internal bounds check and aborted the game the moment a level loaded. The check now measures against the real (wider) screen, so widescreen play works with the HUD visible. No effect at 4:3.

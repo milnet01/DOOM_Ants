@@ -122,7 +122,11 @@ STlib_drawNum
     if (n->y - ST_Y < 0)
 	I_Error("drawNum: n->y - ST_Y < 0");
 
-    V_CopyRect(x, n->y - ST_Y, BG, w*numdigits, h, x, n->y, FG);
+    // DOOM-0147: the number is drawn with V_DrawPatch (auto-shifts by
+    // WIDESCREENDELTA on the widescreen FG buffer), so the background-erase must
+    // land at the same shifted x -- else the erased/grey rect sits left of the digit
+    // and covers adjacent HUD info. Source is the 320-wide BG scratch (un-shifted).
+    V_CopyRect(x, n->y - ST_Y, BG, w*numdigits, h, x + WIDESCREENDELTA, n->y, FG);
 
     // if non-number, do not draw it
     if (num == 1994)
@@ -232,7 +236,8 @@ STlib_updateMultIcon
 	    if (y - ST_Y < 0)
 		I_Error("updateMultIcon: y - ST_Y < 0");
 
-	    V_CopyRect(x, y-ST_Y, BG, w, h, x, y, FG);
+	    // DOOM-0147: shift the erase to match the icon's V_DrawPatch position.
+	    V_CopyRect(x, y-ST_Y, BG, w, h, x + WIDESCREENDELTA, y, FG);
 	}
 	V_DrawPatch(mi->x, mi->y, FG, mi->p[*mi->inum]);
 	mi->oldinum = *mi->inum;
@@ -284,7 +289,8 @@ STlib_updateBinIcon
 	if (*bi->val)
 	    V_DrawPatch(bi->x, bi->y, FG, bi->p);
 	else
-	    V_CopyRect(x, y-ST_Y, BG, w, h, x, y, FG);
+	    // DOOM-0147: shift the erase to match the icon's V_DrawPatch position.
+	    V_CopyRect(x, y-ST_Y, BG, w, h, x + WIDESCREENDELTA, y, FG);
 
 	bi->oldval = *bi->val;
     }

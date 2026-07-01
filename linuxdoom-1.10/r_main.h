@@ -49,6 +49,7 @@ extern int		centerx;
 extern int		centery;
 
 extern fixed_t		centerxfrac;
+extern fixed_t		centerxfrac_nonwide;	// DOOM-0147: 4:3 half-width projection reference
 extern fixed_t		centeryfrac;
 extern fixed_t		projection;
 

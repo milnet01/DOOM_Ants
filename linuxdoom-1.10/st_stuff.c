@@ -509,8 +509,10 @@ void ST_refreshBackground(void)
 	// DOOM-0147: centre the 320-wide bar in a widescreen frame (delta 0 at 4:3).
 	V_CopyRect(ST_X, 0, BG, ST_WIDTH, ST_HEIGHT, ST_X+WIDESCREENDELTA, ST_Y, FG);
 
-	// On a widescreen frame the bar is narrower than the strip; black out the
-	// sides so no stale pixels show beside it (skipped at 4:3 where delta is 0).
+	// DOOM-0151: on a widescreen frame the 320-wide bar is narrower than the
+	// strip. Fill the sides by extending the bar's own grey edge outward (per-row
+	// edge-clamp), so they read as a continuation of the status bar instead of
+	// black bars -- matching the title-screen side treatment. Skipped at 4:3.
 	if (WIDESCREENDELTA > 0)
 	{
 	    int		y;
@@ -519,8 +521,8 @@ void ST_refreshBackground(void)
 	    for (y = ST_Y*HIRES ; y < SCREENHEIGHT ; y++)
 	    {
 		byte*	row = screens[FG] + y*SCREENWIDTH;
-		memset(row, 0, left);
-		memset(row + right, 0, SCREENWIDTH - right);
+		memset(row, row[left], left);			// bar's left edge
+		memset(row + right, row[right-1], SCREENWIDTH - right);	// right edge
 	    }
 	}
     }
