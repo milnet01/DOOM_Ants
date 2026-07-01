@@ -1552,8 +1552,13 @@ void WI_loadData(void)
     }
 
     // background
-    bg = W_CacheLumpName(name, PU_CACHE);    
+    bg = W_CacheLumpName(name, PU_CACHE);
     V_DrawPatch(0, 0, 1, bg);
+    // DOOM-0151: the WIMAP is 320-wide and centred; extend its edges to fill the
+    // widescreen side strips so the "finished / entering" screens don't show stale
+    // pixels beside the map. Baked into screens[1] here, so WI_slamBackground's
+    // full-width copy carries it. No-op at 4:3 (WIDESCREENDELTA == 0).
+    V_ExtendSides(1);
 
 
     // UNUSED unsigned char *pic = screens[1];

@@ -24,6 +24,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Widescreen intermission (level-end) screens fill the sides instead of showing stale pixels** (DOOM-0151)
+  The "level finished" and "entering" map screens now extend their background to the edges on a widescreen display, matching the title and HUD. No change at 4:3.
+
 - **Widescreen HUD sides now continue the grey status bar instead of black bars** (DOOM-0151)
   The strips either side of the centred status bar are filled by extending the bar's own edge, matching the title-screen treatment. No change at 4:3.
 
