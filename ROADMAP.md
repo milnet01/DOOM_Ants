@@ -729,6 +729,19 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** In the 3D renderers the sky/mountains scroll about four times too fast as you turn, compared to Classic DOOM.
   Kind: fix.
   Source: indie-review-2026-06-26.
+  Investigated 2026-07-01 — the diagnosis is inverted; recommend closing as
+  working-as-intended. Verified against this repo's own Classic renderer:
+  r_sky.h:35 ANGLETOSKYSHIFT=22, sky texture 256 wide (r_sky.h:34),
+  r_plane.c:427 angle=(viewangle+xtoviewangle[x])>>22 then R_GetColumn masks
+  to width. A full circle 2^32 >>22 = 1024 column-steps per 360deg, masked to
+  256 => Classic repeats the sky 4x per 360deg, i.e. 90deg of yaw -> exactly
+  one texture width. That is the well-known DOOM sky (it tiles 4x per turn),
+  NOT one panorama per 360deg. The current shader col=ang/(PI*0.5)*sz.x already
+  reproduces this: 90deg -> one width, 4 repeats per 360deg, and the 90deg FOV
+  (atan over ndcX -1..1 = PI/2) shows exactly one width across the screen — so
+  pan rate AND tiling already match Classic. The proposed col=ang/(2*PI)*sz.x
+  would pan 4x too SLOW and show a single 360deg panorama — a regression, not a
+  fix. No code change made. If confirmed, flip to a closed/considered state.
 
 - ✅ [DOOM-0076] **Distant surfaces render black in the 3D back-ends where Classic shows them lit.**
   Found 2026-06-26 (user testing, E1M1 first courtyard, Solid/Ultra). Confirmed by a same-position Classic-vs-Ultra toggle: Classic renders the distant far-side structures (perimeter walls / building tops just below the sky) fully lit; Ultra shows a horizontal BLACK strip across that band. Distinct from DOOM-0069 (which fixed the near-overhang ceilings — the big black band is gone). The post-DOOM-0069 lighting is shade = vLight * distLight with distLight = clamp(1 - vDist/3000, 0.35, 1.0): the 0.35 floor means distance alone cannot drive a normally-lit surface to pure black (0.35*vLight*albedo > 0), so the cause is something else — candidates: (a) a specific surface getting vLight≈0 or a black/wrong texel (atlas/UV), (b) an upper-wall between the sky courtyard (ceilingpic F_SKY1, height 216) and a lower non-sky sector that is mis-lit, (c) the two sky-ceiling sectors at different heights (216 vs 24 in E1M1) interacting badly, or (d) a no-backface-cull back-face of a distant wall. Next step: a surface-type color-code debug shader (ceiling=red / floor=green / wall=blue, lighting bypassed) to ID the black surface in ONE screenshot, then fix the root cause. NOTE: pre-existing before DOOM-0069 (independent of the directional-light removal); only became the most-visible artifact once the near ceilings were fixed.
