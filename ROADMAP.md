@@ -269,6 +269,24 @@ with friends.
   Source: in-session-2026-06-28.
   Resolved (2026-06-28): root cause was tempstring[80] being too small for the longest quicksave/quickload prompt (~59 fixed chars + a 24-char savegame name = up to 83 bytes). Bumped the shared buffer to [128] and switched both M_QuickSave (QSPROMPT) and M_QuickLoad (QLPROMPT) from sprintf to snprintf(sizeof) for defense-in-depth. Clean build — both -Wformat-overflow and -Wformat-truncation gone.
 
+- 📋 [DOOM-0158] **Announce a found secret with an on-screen message + a distinct sound (all renderers).**
+  When the player steps into a secret sector, show a brief HUD message and play
+  a distinct chime — in Classic, Solid AND Ultra (a HUD/gameplay layer, renderer
+  -independent). Hook P_PlayerInSpecialSector, sector special 9 (p_spec.c:1048
+  -1052: player->secretcount++; sector->special = 0) — add a player->message
+  (the standard HU_ print path) and an S_StartSound there. Vanilla DOOM only
+  revealed secrets in the end-of-level tally; this is a QoL addition matching
+  modern ports / DOOM 2016's secret chime. Pick a sound that does not collide
+  with an existing sfx (confirm the cue with the user); message text TBD (e.g.
+  "A secret is revealed!"). Secret detection runs in the shared game tick so it
+  fires in all tiers, but the HUD message must render OVER the 3D view — the 3D
+  backends replicate SW-renderer side effects separately
+  ([[3d-backends-bypass-sw-renderer-sideeffects]]) and overlay compositing is
+  DOOM-0050-adjacent, so verify the popup shows in Solid/Ultra too.
+  **Layman:** When you find a hidden secret area, a short message pops up on screen and a sound plays to let you know — right now you only find out from the end-of-level stats.
+  Kind: feature.
+  Source: user-request-2026-07-01.
+
 ## Phase 2 — The Spin
 
 The creative overhaul: evolve the renderer toward true 3D with hardware
@@ -808,7 +826,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   (4) INV-6's "raise spp if 4096 shows visible noise" escape clause is subjective.
   The §5 formulas/ "does not exist yet" staleness was fixed inline this session.
 
-- 📋 [DOOM-0082] **Activated switches/buttons emit a faint coloured glow (red buttons glow red).**
+- 🚧 [DOOM-0082] **Activated switches/buttons emit a faint coloured glow (red buttons glow red).**
   Folds into the DOOM-0009 path-tracer emitter work (build step 3b/3c). The
   per-material emissive precompute auto-derives a switch's lit-variant texture
   colour (red buttons -> red Le), and the mesh already re-reads each surface's
@@ -821,6 +839,24 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** When you press a lit button or switch, it gives off a soft glow in its own colour — a red button casts a faint red light — instead of staying flat.
   Kind: feature.
   Source: user-request-2026-06-27.
+  Progress 2026-07-01: the live-swap emitter refresh (the missing mechanism) is
+  implemented. RB_UpdateMeshHeights (r_mesh.c) now returns RB_UPD_RETEX when a
+  wall/flat live texnum changes — a switch press, a button REVERT, or an animated
+  texture — and the RT back-end rebuilds the static NEE emitter set from the LIVE
+  vertex buffer (new BuildStaticEmitterSet on g.vbufMapped, r_vulkan.cpp) so a
+  now-lit switch face enters the light set and a reverted one drops out. The scan
+  was extracted into BuildStaticEmitterSet (level-load reads baked verts; the
+  refresh reads live). NO hardcoded switch list — the glow colour is auto-derived
+  from each texture's bright texels (ComputeMaterialEmissive, VALUE/max-channel so
+  saturated red/green is caught), which matches the user's switch taxonomy
+  (2026-07-01): plain up/down LEVERS have no lit region -> no glow (correct); red
+  button + indicator lamp -> red glow; green button -> green glow; DOOM2 green+red
+  -> both; timed buttons revert through the same retex path so the glow switches
+  off. Builds clean (0 warnings), nee_sampling_test green. PENDING on-HW verify on
+  the RX 6600: confirm lit SW2 textures actually glow, and TUNE — a small/"faint"
+  lit region may fall below kBrightLum=0.5 / kEmitterMinLum=0.02, needing a lowered
+  threshold or a switch allow-list. Bonus: animated slime/panels (DOOM-0083) now
+  refresh their emitters via the same retex path.
 
 - 📋 [DOOM-0083] **Green slime/nukage emits a faint green glow onto its surroundings.**
   Same DOOM-0009 path-tracer emitter mechanism as [DOOM-0082]: the per-material emissive precompute (build step 3b) auto-derives a green Le from the slime/nukage flats' bright green texels, so those surfaces become NEE area emitters and cast a faint green tint on neighbours. Two data-dependent checks when 3c lands: (1) the nukage/slime flats (NUKAGE1-3, and bright-green floor flats) actually cross the emissive luminance threshold (may need a per-flat allow-list or lowered threshold for the "faint" case, since slime is darker than a lamp); (2) animated slime flats cycle via flattranslation each tic (DOOM-0066) — the emitter set should track the live flat so the glow animates. Intensity is the same "faint" tunable as DOOM-0082. Distinct from DOOM-0082 (switches/buttons) in surface class (environmental animated floor flats) but shares the implementation.
@@ -1345,3 +1381,23 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: enhancement.
   Source: user-request-2026-07-01.
   Implemented 2026-07-01 alongside the dead-code cleanup. i_sound.c now stores each sound's raw 8-bit lump (I_CacheSfx keeps it cached) and builds S16 chunks LAZILY per pitch bucket (I_BuildPitched): bucket = DOOM pitch>>4 (16 buckets), representative pitch = bucket*16, and the 8-bit source is resampled as if at rate*pitch/128 to shift playback pitch. I_StartSound picks the bucket from the (randomised) pitch and plays that cached chunk, so repeated sounds vary subtly again. Bounded memory (<=16 variants per played sound, built on demand). ALSO did the promised cleanup: removed the dead software mixer (getsfx, addsfx, I_MixSoundInto, I_SFXPostMix, I_SDLAudioCallback and the mixbuffer/channels/steptable/vol_lookup globals) -- i_sound.c is ~370 lines lighter. Builds clean Linux+Windows (zero warnings); headless: device opens, sounds cache, a level runs with no crash. exe redeployed. Cross-ref DOOM-0047.
+
+- 📋 [DOOM-0157] **Armour pickups' green glowing eyes emit a faint green glow in the path tracer.**
+  The armour pickups (green/blue armor — the sprites with a face/helmet whose
+  eyes glow green) are sprite Things but are NOT flagged RB_MESH_EMISSIVE, so
+  BuildDynamicEmitters (r_vulkan.cpp:3817, DOOM-0084) skips them and they never
+  enter the NEE emitter set -> the glowing eyes cast no light in Ultra. Make the
+  armour pickups emissive so their bright green eye texels pool a faint green
+  light onto their surroundings, per the RTX-aesthetic north star
+  [[rt-aesthetic-north-star]]. Two pieces: (1) flag the armour-pickup sprites
+  RB_MESH_EMISSIVE where the sprite->mesh emissive flag is set (r_mesh.c ~1071);
+  (2) the eyes are only a few bright texels, so the area-averaged Le from
+  ComputeMaterialEmissive will likely fall below kEmitterMinLum — this probably
+  needs a per-sprite Le or a lowered/faint threshold rather than the pure
+  auto-derive (same data-dependent tuning as DOOM-0082/0083). Shares the
+  DOOM-0084 sprite-emitter mechanism. OPEN QUESTION for user: green armor only,
+  or both green + blue armor (and any other glowing-eye pickups)? Needs on-HW
+  verify on the RX 6600.
+  **Layman:** The armour pickups have little green glowing eyes; those should cast a soft green glow when you are near them, instead of looking flat — they do not glow right now.
+  Kind: feature.
+  Source: user-request-2026-07-01.
