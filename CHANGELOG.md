@@ -19,6 +19,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **3D renderer defensive-hardening bundle (indie-review deferred items).** (DOOM-0073)
+  Defensive hardening of the 3D renderer against corrupt or pathological (non-stock) level data — cap-carve buffer-overflow guard, per-frame texture-index bounds, sprite-rotation int overflow fix at the far map edge, a mid-session overlay-resize guard, and checked results on the load-bearing Vulkan setup calls. No change to normal play.
+
 - **3D renderer tiers are now gated on descriptor-indexing support at probe time (DOOM-0059)**
   On a GPU that lacks the Vulkan 1.2 descriptor-indexing features the bindless
   material path needs, the menu now stays on Classic instead of erroring out
