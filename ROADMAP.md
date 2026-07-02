@@ -1447,3 +1447,4 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** The "quit?" box now tells controller players which button to press to confirm, and shows the right name for their pad — "A" on an Xbox pad, "CROSS" on a PlayStation pad.
   Kind: enhancement.
   Source: user-request-2026-07-02.
+  Updated 2026-07-02 (user request): PlayStation label changed from "CROSS" to "X" -- only Sony calls it Cross; gamers call it X. I_ControllerConfirmLabel now returns "X" for PS3/4/5.

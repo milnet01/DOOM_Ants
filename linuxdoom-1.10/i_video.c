@@ -388,7 +388,7 @@ const char* I_ControllerConfirmLabel(void)
       case SDL_CONTROLLER_TYPE_PS3:
       case SDL_CONTROLLER_TYPE_PS4:
       case SDL_CONTROLLER_TYPE_PS5:
-	return "CROSS";		// PlayStation: the X-shaped bottom button
+	return "X";		// PlayStation: the X-shaped bottom button (gamers call it X, not "Cross")
       case SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_PRO:
 	return "B";		// Nintendo: the bottom face button is labelled B
       default:
