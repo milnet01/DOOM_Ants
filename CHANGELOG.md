@@ -28,6 +28,11 @@ All notable changes to DOOM_Ants are documented here. The format follows
   when a 3D mode is selected. The probe checks the same four features device
   creation requires, so an unsupported GPU is never offered Solid/Ultra.
 
+### Fixed
+
+- **Seam (black line + white sliver) where the RT sky cap meets a wall top.** (DOOM-0143)
+  With the new ray-traced sky, a thin dark line and a small bright sliver can show right where a wall meets the sky.
+
 ## [0.3.0] - 2026-07-01
 
 ### Added
