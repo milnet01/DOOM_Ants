@@ -1739,6 +1739,14 @@ boolean M_Responder (event_t* ev)
     // Take care of any messages that need input
     if (messageToPrint)
     {
+	// DOOM-0160: let the gamepad answer yes/no prompts (e.g. the Quit
+	// confirmation). The controller's select button -- the same A/Cross
+	// press that picked "Quit Game" from the menu -- arrives here as
+	// KEY_ENTER; treat it (and the keyboard Enter) as an affirmative so a
+	// controller-only player is no longer forced to reach for the keyboard Y.
+	if (messageNeedsInput == true && ch == KEY_ENTER)
+	    ch = 'y';
+
 	if (messageNeedsInput == true &&
 	    !(ch == ' ' || ch == 'n' || ch == 'y' || ch == KEY_ESCAPE))
 	    return false;

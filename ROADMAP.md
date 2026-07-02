@@ -1434,3 +1434,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** In Ultra the door emblem looks more muted/olive than Classic's bright yellow. That is because Ultra lights the door with the room's actual (dim, slightly green) light, while Classic just shows the art's colours directly. It is technically correct, but it loses DOOM's punchy look — optional to tune back toward vibrant if wanted.
   Kind: enhancement.
   Source: user-request-2026-07-01 (Classic vs Ultra door screenshots).
+
+- ✅ [DOOM-0160] **Answer the Quit (and other yes/no) confirmation prompts with the gamepad.**
+  User request 2026-07-02: opening the menu and choosing Quit Game works on the controller, but the follow-up "press Y to quit" prompt could only be answered on the keyboard. Root cause: M_Responder's messageToPrint input filter only passes ' '/'n'/'y'/ESCAPE to the message routine, and the gamepad's select button (A/Cross) arrives as KEY_ENTER -- which was dropped, so no controller button could say "yes". Fix (m_menu.c): in the messageToPrint branch, translate KEY_ENTER (the gamepad A/Cross select press, also the keyboard Enter) into 'y' for input-needing prompts, so the same button that selected "Quit Game" now confirms it. Contained to active yes/no prompts (Quit, End Game, quicksave/quickload overwrite); Escape/B still cancels. Chose the existing select button over binding a new one so there is nothing new to learn and it needs no i_video.c change. Builds clean. Verify: with a controller, Menu -> Quit Game -> press A/Cross quits; Escape/B backs out.
+  **Layman:** You can now confirm "Quit Game" with the controller instead of having to reach for the keyboard's Y key — the same button you use to pick the menu item confirms the prompt.
+  Kind: enhancement.
+  Source: user-request-2026-07-02.

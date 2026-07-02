@@ -8,6 +8,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Answer the Quit (and other yes/no) confirmation prompts with the gamepad.** (DOOM-0160)
+  You can now confirm "Quit Game" with the controller instead of having to reach for the keyboard's Y key — the same button you use to pick the menu item confirms the prompt.
+
 - **Announce a found secret with an on-screen message + a distinct sound (all renderers).** (DOOM-0158)
   Stepping into a secret area now shows "A secret is revealed!" centred on screen in bright yellow and plays a distinct chime, in all three renderers (Classic, Solid, Ultra) — previously secrets were only revealed in the end-of-level tally.
 
