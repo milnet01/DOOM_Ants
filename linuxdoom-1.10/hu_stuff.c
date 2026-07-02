@@ -593,9 +593,11 @@ static void HU_buildSecretGold(void)
     {
 	int r = pal[i*3], g = pal[i*3+1], b = pal[i*3+2];
 	int lum = (r*77 + g*150 + b*29) >> 8;	// 0..255 luminance (Rec.601-ish)
-	int tr = lum;				// gold target: full red,
-	int tg = (lum*200) >> 8;		//  ~0.78 green,
-	int tb = (lum*40)  >> 8;		//  a touch of blue
+	lum = lum + (lum>>2) + 24;		// lift toward the bright end (brighter popup)
+	if (lum > 255) lum = 255;
+	int tr = lum;				// yellow target: red == green
+	int tg = lum;				//  = pure, bright yellow
+	int tb = (lum*30) >> 8;			//  a hair of warmth so it isn't neon
 	int best = 0, bestd = 1<<30;
 
 	for (j=0 ; j<256 ; j++)
