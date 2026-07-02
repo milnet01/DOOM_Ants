@@ -32,7 +32,7 @@
 #include "r_defs.h"
 #include "r_state.h"    // segs/subsectors/sectors/nodes + counts, firstflat, textureheight
 #include "r_data.h"     // R_GetColumn
-#include "r_main.h"     // R_PointToAngle2 (sprite rotation pick)
+#include "r_main.h"     // R_PointInSubsector (RB_SectorAtPoint)
 #include "doomstat.h"   // skyflatnum, players, consoleplayer
 #include "p_mobj.h"     // mobj_t (the things billboarded as sprites)
 #include "p_pspr.h"     // FF_FRAMEMASK / FF_FULLBRIGHT
@@ -322,7 +322,7 @@ static poly_t clip_poly(const poly_t* in, float ox, float oy,
 {
     poly_t out;
     float  sgn = keepRight ? 1.0f : -1.0f;
-    int    i;
+    int    i, trunc = 0;
     out.n = 0;
     for (i = 0; i < in->n; i++)
     {
@@ -330,16 +330,31 @@ static poly_t clip_poly(const poly_t* in, float ox, float oy,
         float fi = sgn * (dx * (in->y[i] - oy) - dy * (in->x[i] - ox));
         float fj = sgn * (dx * (in->y[j] - oy) - dy * (in->x[j] - ox));
         int   ini = fi <= 0.0f, inj = fj <= 0.0f;   // inside == front half-plane
-        if (ini && out.n < POLYMAX)
-        { out.x[out.n] = in->x[i]; out.y[out.n] = in->y[i]; out.n++; }
-        if (ini != inj && out.n < POLYMAX)          // edge crosses: add the hit
+        if (ini)
         {
-            float t = fi / (fi - fj);
-            out.x[out.n] = in->x[i] + t * (in->x[j] - in->x[i]);
-            out.y[out.n] = in->y[i] + t * (in->y[j] - in->y[i]);
-            out.n++;
+            if (out.n < POLYMAX)
+            { out.x[out.n] = in->x[i]; out.y[out.n] = in->y[i]; out.n++; }
+            else trunc = 1;
+        }
+        if (ini != inj)                             // edge crosses: add the hit
+        {
+            if (out.n < POLYMAX)
+            {
+                float t = fi / (fi - fj);
+                out.x[out.n] = in->x[i] + t * (in->x[j] - in->x[i]);
+                out.y[out.n] = in->y[i] + t * (in->y[j] - in->y[i]);
+                out.n++;
+            }
+            else trunc = 1;
         }
     }
+    // DOOM-0073: a half-plane clip of a convex poly adds at most one vertex, so a
+    // carved cell stays well under POLYMAX on stock maps (<=8 verts on E1M1). A
+    // pathological custom sector could overflow the fixed buffer; rather than
+    // silently return a truncated (malformed) polygon that emit_cap_poly would fan
+    // into garbage triangles, drop the cell (n=0) so every caller skips it.
+    if (trunc)
+        out.n = 0;
     return out;
 }
 
@@ -444,22 +459,30 @@ static void emit_subsector_caps(builder_t* bld, int ssnum, const poly_t* cell)
 // children[0] is the front/right half-space, children[1] the back/left (DOOM's
 // R_PointOnSide convention); at a leaf the carried cell is the subsector's
 // exact floor/ceiling outline.
-static void carve_caps(builder_t* bld, int nodenum, poly_t poly)
+static void carve_caps(builder_t* bld, int nodenum, const poly_t* poly)
 {
     node_t* nd;
     float   ox, oy, dx, dy;
-    if (poly.n < 3)
+    poly_t  child;
+    if (poly->n < 3)
         return;
     if (nodenum & NF_SUBSECTOR)
     {
-        emit_subsector_caps(bld, nodenum & ~NF_SUBSECTOR, &poly);
+        emit_subsector_caps(bld, nodenum & ~NF_SUBSECTOR, poly);
         return;
     }
     nd = &nodes[nodenum];
     ox = nd->x  / (float)FRACUNIT; oy = nd->y  / (float)FRACUNIT;
     dx = nd->dx / (float)FRACUNIT; dy = nd->dy / (float)FRACUNIT;
-    carve_caps(bld, nd->children[0], clip_poly(&poly, ox, oy, dx, dy, 1));
-    carve_caps(bld, nd->children[1], clip_poly(&poly, ox, oy, dx, dy, 0));
+    // DOOM-0073: recurse with the carved child cell passed by pointer. poly_t is
+    // ~520 bytes; the old by-value parameter copied the whole cell into every BSP
+    // level (bounding a degenerate-tree stack blow-up). One reused buffer suffices:
+    // the front subtree is fully carved before `child` is overwritten for the back,
+    // and clip_poly only reads `poly` (the parent), so the two descents never alias.
+    child = clip_poly(poly, ox, oy, dx, dy, 1);
+    carve_caps(bld, nd->children[0], &child);
+    child = clip_poly(poly, ox, oy, dx, dy, 0);
+    carve_caps(bld, nd->children[1], &child);
 }
 
 rb_mesh_t* RB_BuildLevelMesh(void)
@@ -574,7 +597,7 @@ rb_mesh_t* RB_BuildLevelMesh(void)
         box.x[2] =  B; box.y[2] =  B;
         box.x[3] = -B; box.y[3] =  B;
         root = (numnodes > 0) ? (numnodes - 1) : NF_SUBSECTOR;
-        carve_caps(&bld, root, box);
+        carve_caps(&bld, root, &box);
     }
 
     free(seg2ss);
@@ -714,7 +737,12 @@ int RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst)
             int pic = (v->vplane == RB_PLANE_CEIL)
                       ? sectors[v->vsector].ceilingpic
                       : sectors[v->vsector].floorpic;
-            if (pic != skyflatnum)
+            // DOOM-0073: pic/base are WAD-loaded shorts re-read every frame; a
+            // corrupt map could push them out of range. flattranslation and
+            // texturetranslation are sized numflats/numtextures, so bound the
+            // lookups to those (skip the update, keeping the baked id) rather than
+            // reading past the array each frame.
+            if (pic != skyflatnum && pic >= 0 && pic < numflats)
                 newtex = flattranslation[pic];
         }
         else if (v->vtexside >= 0)
@@ -723,7 +751,7 @@ int RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst)
             int base = v->vtexslot == 0 ? sd->toptexture
                      : v->vtexslot == 2 ? sd->bottomtexture
                      : sd->midtexture;
-            if (base > 0)
+            if (base > 0 && base < numtextures)
                 newtex = texturetranslation[base];
         }
         // A pressed/reverted switch or an animated texture changes the live id;
@@ -1008,8 +1036,6 @@ int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts)
     float   a    = view->angle;
     float   rx   =  sinf(a), ry = -cosf(a);    // screen-right in world
     float   nx   = -cosf(a), ny = -sinf(a);    // billboard normal (toward eye)
-    fixed_t camx = (fixed_t)(view->x * FRACUNIT);
-    fixed_t camy = (fixed_t)(view->y * FRACUNIT);
     int     s, n = 0;
 
     if (numspritelumps <= 0)
@@ -1040,7 +1066,15 @@ int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts)
 
             if (sprframe->rotate)
             {
-                angle_t  ang = R_PointToAngle2(camx, camy, thing->x, thing->y);
+                // DOOM-0073: derive the view->thing angle from float deltas. The old
+                // (fixed_t)(view->x*FRACUNIT) overflowed int32 at the +/-32768 map
+                // edge, giving a wrong sprite rotation for that frame. angle_t is a
+                // 32-bit BAM (2^32 == 360deg); map atan2's [-pi,pi] onto it via an
+                // int64 cast (negative wraps to the correct unsigned angle).
+                float    dx  = thing->x / (float)FRACUNIT - view->x;
+                float    dy  = thing->y / (float)FRACUNIT - view->y;
+                angle_t  ang = (angle_t)(long long)
+                    (atan2f(dy, dx) * (4294967296.0 / (2.0 * 3.14159265358979)));
                 unsigned rot = (ang - thing->angle + (unsigned)(ANG45/2)*9) >> 29;
                 lump = sprframe->lump[rot];
                 flip = (boolean)sprframe->flip[rot];
@@ -1050,6 +1084,11 @@ int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts)
                 lump = sprframe->lump[0];
                 flip = (boolean)sprframe->flip[0];
             }
+            // DOOM-0073: an unassigned rotation is lump == -1 (R_InstallSpriteLump
+            // validates at load, so this is unreachable with stock WADs); guard it
+            // rather than index spritewidth[]/the atlas with a negative lump.
+            if (lump < 0)
+                continue;
 
             wpx  = spritewidth[lump]     / (float)FRACUNIT;
             hpx  = (float)sprite_h[lump];
