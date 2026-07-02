@@ -98,6 +98,12 @@ static boolean		always_off = false;
 static char		chat_dest[MAXPLAYERS];
 static hu_itext_t w_inputbuffer[MAXPLAYERS];
 
+// DOOM-0158: centred gold "secret revealed" popup, independent of plr->message.
+static int	secret_counter = 0;		// tics remaining for the popup
+static byte	secret_gold[256];		// HUD-font -> gold palette remap
+static boolean	secret_gold_built = false;
+static void	HU_drawSecret(void);		// defined below, used by HU_Drawer
+
 static boolean		message_on;
 boolean			message_dontfuckwithme;
 static boolean		message_nottobefuckedwith;
@@ -437,6 +443,7 @@ void HU_Start(void)
     message_dontfuckwithme = false;
     message_nottobefuckedwith = false;
     chat_on = false;
+    secret_counter = 0;			// DOOM-0158: clear any popup from the last level
 
     // create the message widget
     HUlib_initSText(&w_message,
@@ -497,6 +504,9 @@ void HU_Drawer(void)
     HUlib_drawIText(&w_chat);
     if (automapactive)
 	HUlib_drawTextLine(&w_title, false);
+
+    if (secret_counter)			// DOOM-0158: centred gold secret popup
+	HU_drawSecret();
 
 }
 
@@ -566,6 +576,90 @@ void HU_DrawFPS(void)
     }
 }
 
+//
+// HU_buildSecretGold  (DOOM-0158)
+// DOOM has no yellow letter font, so build a palette-translation table that
+// recolours the monochrome HUD font to gold: for each palette entry keep its
+// brightness, shift the hue toward gold, then snap to the nearest palette
+// colour. Built once from palette 0 of PLAYPAL -- palette-agnostic, no
+// hardcoded indices (mirrors how R_InitTranslationTables recolours ramps).
+//
+static void HU_buildSecretGold(void)
+{
+    const byte*	pal = W_CacheLumpName("PLAYPAL", PU_CACHE);	// 256 RGB triples
+    int		i, j;
+
+    for (i=0 ; i<256 ; i++)
+    {
+	int r = pal[i*3], g = pal[i*3+1], b = pal[i*3+2];
+	int lum = (r*77 + g*150 + b*29) >> 8;	// 0..255 luminance (Rec.601-ish)
+	int tr = lum;				// gold target: full red,
+	int tg = (lum*200) >> 8;		//  ~0.78 green,
+	int tb = (lum*40)  >> 8;		//  a touch of blue
+	int best = 0, bestd = 1<<30;
+
+	for (j=0 ; j<256 ; j++)
+	{
+	    int dr = pal[j*3]   - tr;
+	    int dg = pal[j*3+1] - tg;
+	    int db = pal[j*3+2] - tb;
+	    int d  = dr*dr + dg*dg + db*db;
+	    if (d < bestd) { bestd = d; best = j; }
+	}
+	secret_gold[i] = (byte)best;
+    }
+    secret_gold_built = true;
+}
+
+//
+// HU_TriggerSecret  (DOOM-0158)
+// Called when the player steps into a secret sector: raise the centred gold
+// popup for HU_MSGTIMEOUT tics. Separate from plr->message so the normal
+// top-left message feed is undisturbed.
+//
+void HU_TriggerSecret(void)
+{
+    secret_counter = HU_MSGTIMEOUT;
+}
+
+//
+// HU_drawSecret  (DOOM-0158)
+// Draw SECRETMESSAGE centred on screen in the gold-recoloured HUD font. Draws
+// into screens[0] in logical 320x200 space (like HU_DrawFPS), so it composites
+// under every renderer -- Classic blits screens[0], the 3D back-end composites it.
+//
+static void HU_drawSecret(void)
+{
+    const char*	msg = SECRETMESSAGE;
+    const char*	p;
+    int		x, y, w = 0, c;
+
+    if (!secret_gold_built)
+	HU_buildSecretGold();
+
+    // measure the string in the HUD font so it centres exactly
+    for (p=msg ; *p ; p++)
+    {
+	c = toupper(*p) - HU_FONTSTART;
+	w += (c < 0 || c >= HU_FONTSIZE) ? 4 : SHORT(hu_font[c]->width);
+    }
+
+    x = (ORIGWIDTH  - w) / 2;
+    y = (ORIGHEIGHT - SHORT(hu_font[0]->height)) / 2;	// centre of the screen
+
+    for (p=msg ; *p ; p++)
+    {
+	c = toupper(*p) - HU_FONTSTART;
+	if (c < 0 || c >= HU_FONTSIZE)
+	{
+	    x += 4;
+	    continue;
+	}
+	V_DrawPatchTranslated(x, y, 0, hu_font[c], secret_gold);
+	x += SHORT(hu_font[c]->width);
+    }
+}
+
 void HU_Erase(void)
 {
 
@@ -580,6 +674,10 @@ void HU_Ticker(void)
 
     int i, rc;
     char c;
+
+    // DOOM-0158: tick down the centred secret popup
+    if (secret_counter)
+	secret_counter--;
 
     // tick down message counter if message is up
     if (message_counter && !--message_counter)

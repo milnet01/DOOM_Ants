@@ -51,7 +51,8 @@ rcsid[] __attribute__((used)) = "$Id: p_spec.c,v 1.6 1997/02/03 22:45:12 b1 Exp 
 
 // Data.
 #include "sounds.h"
-#include "dstrings.h"
+
+#include "hu_stuff.h"	// DOOM-0158: HU_TriggerSecret (centred secret popup)
 
 
 //
@@ -1050,10 +1051,11 @@ void P_PlayerInSpecialSector (player_t* player)
 	// SECRET SECTOR
 	player->secretcount++;
 	sector->special = 0;
-	// DOOM-0158: announce the find with a HUD message + a distinct chime.
-	// The message rides the standard HU print path and the sound is global
-	// (S_StartSound(NULL, ...)), so both surface in Classic, Solid and Ultra.
-	player->message = SECRETMESSAGE;
+	// DOOM-0158: announce the find with a centred gold HUD popup + a distinct
+	// chime. HU_TriggerSecret draws the message itself (separate from the
+	// top-left plr->message feed); the sound is global (S_StartSound(NULL,...)).
+	// Both surface in Classic, Solid and Ultra.
+	HU_TriggerSecret();
 	S_StartSound(NULL, sfx_itmbk);
 	break;
 			

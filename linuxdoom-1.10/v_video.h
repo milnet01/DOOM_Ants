@@ -75,6 +75,16 @@ V_DrawPatch
   int		scrn,
   patch_t*	patch);
 
+// As V_DrawPatch, but every source pixel is remapped through a 256-entry
+// palette-translation table (e.g. to recolour the monochrome HUD font).
+void
+V_DrawPatchTranslated
+( int		x,
+  int		y,
+  int		scrn,
+  patch_t*	patch,
+  const byte*	trans );
+
 // DOOM-0151: on a widescreen buffer, fill the side strips either side of a centred
 // 320-wide full-screen image by extending its edge columns outward (edge-clamp).
 // Uses only pixels already drawn in the buffer -- no external/licensed art. No-op

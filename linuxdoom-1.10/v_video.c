@@ -267,16 +267,20 @@ void V_ExtendSides (int scrn)
 
 
 //
-// V_DrawPatch
-// Masks a column based masked pic to the screen.
+// V_DrawPatchGeneral
+// Masks a column based masked pic to the screen. When trans is non-NULL every
+// source pixel is remapped through it (a 256-entry palette-translation table),
+// e.g. to recolour the monochrome HUD font (DOOM-0158 centred secret message).
+// trans == NULL is the plain path, pixel-identical to the original V_DrawPatch.
 //
-void
-V_DrawPatch
+static void
+V_DrawPatchGeneral
 ( int		x,
   int		y,
   int		scrn,
-  patch_t*	patch ) 
-{ 
+  patch_t*	patch,
+  const byte*	trans )
+{
 
     int		count;
     int		col; 
@@ -332,6 +336,8 @@ V_DrawPatch
 	    while (count--)
 	    {
 		byte px = *source++;		// one source pixel -> f x f block
+		if (trans)
+		    px = trans[px];		// palette recolour (e.g. gold font)
 		byte* d = dest;
 		for (ry=0 ; ry<f ; ry++, d+=dsw)
 		    for (rx=0 ; rx<f ; rx++)
@@ -343,9 +349,23 @@ V_DrawPatch
 	}
     }
 }
- 
+
 //
-// V_DrawPatchFlipped 
+// V_DrawPatch / V_DrawPatchTranslated
+// Thin wrappers over V_DrawPatchGeneral: plain draw vs palette-remapped draw.
+//
+void V_DrawPatch (int x, int y, int scrn, patch_t* patch)
+{
+    V_DrawPatchGeneral (x, y, scrn, patch, NULL);
+}
+
+void V_DrawPatchTranslated (int x, int y, int scrn, patch_t* patch, const byte* trans)
+{
+    V_DrawPatchGeneral (x, y, scrn, patch, trans);
+}
+
+//
+// V_DrawPatchFlipped
 // Masks a column based masked pic to the screen.
 // Flips horizontally, e.g. to mirror face.
 //

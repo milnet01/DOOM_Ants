@@ -55,6 +55,7 @@ boolean HU_Responder(event_t* ev);
 void HU_Ticker(void);
 void HU_Drawer(void);
 void HU_DrawFPS(void);
+void HU_TriggerSecret(void);	// DOOM-0158: raise the centred gold secret popup
 char HU_dequeueChatChar(void);
 void HU_Erase(void);
 
