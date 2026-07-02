@@ -1230,11 +1230,21 @@ void M_QuitDOOM(int choice)
 {
   // We pick index 0 which is language sensitive,
   //  or one at random, between 1 and maximum number.
-  if (language != english )
-    sprintf(endstring,"%s\n\n"DOSY, endmsg[0] );
+  char* msg = (language != english)
+      ? endmsg[0]
+      : endmsg[ (gametic%(NUM_QUITMESSAGES-2))+1 ];
+
+  // DOOM-0161: when a gamepad is connected, add a second prompt line naming its
+  // confirm button (A on Xbox, CROSS on PlayStation, ...), so a controller
+  // player sees the button they should press -- not just the keyboard Y. The
+  // label follows the controller family (I_ControllerConfirmLabel); NULL means
+  // keyboard only, so we keep the classic single-line prompt.
+  const char* pad = I_ControllerConfirmLabel();
+  if (pad)
+    sprintf(endstring,"%s\n\n"DOSY"\n(or the %s button)", msg, pad);
   else
-    sprintf(endstring,"%s\n\n"DOSY, endmsg[ (gametic%(NUM_QUITMESSAGES-2))+1 ]);
-  
+    sprintf(endstring,"%s\n\n"DOSY, msg);
+
   M_StartMessage(endstring,M_QuitResponse,true);
 }
 

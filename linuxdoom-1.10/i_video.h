@@ -34,6 +34,10 @@
 // Called by D_DoomMain,
 // determines the hardware configuration
 // and sets up the video mode
+// DOOM-0161: uppercase label of the pad's confirm/menu-select face button
+// (A / CROSS / B by controller family), or NULL when no gamepad is connected.
+const char* I_ControllerConfirmLabel (void);
+
 void I_InitWidescreen (void);	// DOOM-0147: set runtime SCREENWIDTH before V_Init
 void I_SetAspect (void);	// DOOM-0147 Part C: apply 4:3 / fill-stretch present aspect
 void I_InitGraphics (void);

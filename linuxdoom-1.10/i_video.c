@@ -370,6 +370,33 @@ static void I_PollGamepad(void)
 }
 
 
+// DOOM-0161: name of the face button that confirms menu selections and yes/no
+// prompts on the connected pad, for on-screen text (e.g. the Quit dialog). The
+// engine's confirm is always SDL's BUTTON_A -- the bottom face button -- so we
+// just label it the way the player's hardware does. SDL already classifies the
+// controller family (SDL_GameControllerGetType), so no per-device database is
+// needed. Returns NULL when no pad is connected; the label is uppercase to suit
+// DOOM's uppercase-only menu font. Unknown pads fall back to "A": the vast
+// majority of generic PC pads are XInput/Xbox-style with A on the bottom.
+const char* I_ControllerConfirmLabel(void)
+{
+    if (!gamepad)
+	return NULL;
+
+    switch (SDL_GameControllerGetType(gamepad))
+    {
+      case SDL_CONTROLLER_TYPE_PS3:
+      case SDL_CONTROLLER_TYPE_PS4:
+      case SDL_CONTROLLER_TYPE_PS5:
+	return "CROSS";		// PlayStation: the X-shaped bottom button
+      case SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_PRO:
+	return "B";		// Nintendo: the bottom face button is labelled B
+      default:
+	return "A";		// Xbox + generic XInput default
+    }
+}
+
+
 static void I_GetEvent(SDL_Event* sdlevent)
 {
     event_t event;

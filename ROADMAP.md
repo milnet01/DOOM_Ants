@@ -1440,3 +1440,10 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** You can now confirm "Quit Game" with the controller instead of having to reach for the keyboard's Y key — the same button you use to pick the menu item confirms the prompt.
   Kind: enhancement.
   Source: user-request-2026-07-02.
+  Verified 2026-07-02: user tested in-game with their controller -- "Fantastic, it works." The ✕/Cross (SDL BUTTON_A) face button now confirms the Quit prompt; Circle/Escape backs out.
+
+- ✅ [DOOM-0161] **Name the gamepad confirm button in the Quit prompt, per controller family.**
+  Follow-up to DOOM-0160. With a gamepad connected, the Quit confirmation now adds a second line "(or the &lt;BUTTON&gt; button)" beneath the classic "(press y to quit)", naming the face button that actually confirms. The label tracks the controller family rather than a hardcoded name: SDL already classifies the pad (SDL_GameControllerGetType), so I_ControllerConfirmLabel (i_video.c) maps it -- PlayStation (PS3/4/5) -> "CROSS", Nintendo Switch Pro -> "B", Xbox and everything else -> "A" (the sane default, since generic PC pads are overwhelmingly XInput/Xbox-style with A on the bottom). No per-device database and no online layout scraping needed -- SDL's own classification does it. The engine's confirm is always SDL BUTTON_A (the bottom face button), so the label always matches the button that works. Returns NULL when no pad is connected, so keyboard-only players keep the unchanged single-line prompt. Label is uppercase to suit DOOM's uppercase-only menu font; the PlayStation glyph can't be drawn so the official name "CROSS" is spelled out. m_menu.c M_QuitDOOM builds the string; declared in i_video.h. Builds clean (no warnings). Verify: with an Xbox pad the prompt reads "...(or the A button)", with a PlayStation pad "...(or the CROSS button)", and with no pad the classic prompt.
+  **Layman:** The "quit?" box now tells controller players which button to press to confirm, and shows the right name for their pad — "A" on an Xbox pad, "CROSS" on a PlayStation pad.
+  Kind: enhancement.
+  Source: user-request-2026-07-02.
