@@ -6,6 +6,11 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Announce a found secret with an on-screen message + a distinct sound (all renderers).** (DOOM-0158)
+  Stepping into a secret area now shows "A secret is revealed!" centred on screen in bright yellow and plays a distinct chime, in all three renderers (Classic, Solid, Ultra) — previously secrets were only revealed in the end-of-level tally.
+
 ### Changed
 
 - **3D renderer tiers are now gated on descriptor-indexing support at probe time (DOOM-0059)**
