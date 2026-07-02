@@ -2026,16 +2026,25 @@ void M_Drawer (void)
 	y = 100 - M_StringHeight(messageString)/2;
 	while(*(messageString+start))
 	{
+	    boolean	split = false;		// DOOM-0161: did this line end at a '\n'?
 	    for (i = 0;i < strlen(messageString+start);i++)
 		if (*(messageString+start+i) == '\n')
 		{
 		    memset(string,0,40);
 		    strncpy(string,messageString+start,i);
 		    start += i+1;
+		    split = true;
 		    break;
 		}
-				
-	    if (i == strlen(messageString+start))
+
+	    // Final line (no trailing '\n'). The original test here was
+	    //   i == strlen(messageString+start)
+	    // but `start` is advanced inside the loop above, so that stale compare
+	    // could spuriously fire on a real line whose remainder-after-advance
+	    // happened to equal i -- silently dropping a line. It bit two equal-
+	    // length prompt lines (e.g. "(press y to quit)" / "(or the X button)").
+	    // Track whether we split on a '\n' instead.
+	    if (!split)
 	    {
 		strcpy(string,messageString+start);
 		start += i;
