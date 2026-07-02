@@ -343,6 +343,7 @@ struct VulkanState
     void*          overlayMapped  = nullptr;
     const unsigned char* overlaySrc = nullptr;  // this frame's screens[0]
     int            overlayW = 0, overlayH = 0;
+    int            overlayCapW = 0, overlayCapH = 0;   // size the resources were built at
     bool           overlayReady = false;
 
     // column-major MVP from RB_Vulkan_RenderView; identity until the first
@@ -745,7 +746,14 @@ void CreateInstance()
                 VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
                 VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
             dci.pfnUserCallback = DebugCallback;
-            create(g.instance, &dci, nullptr, &g.debug);
+            // DOOM-0073: the messenger is a debug-only convenience, so a failure is
+            // non-fatal (unlike the load-bearing Check() calls) — capture the result
+            // and warn rather than silently drop it or abort the app.
+            VkResult dbg = create(g.instance, &dci, nullptr, &g.debug);
+            if (dbg != VK_SUCCESS)
+                std::fprintf(stderr, "R_Vulkan: vkCreateDebugUtilsMessengerEXT "
+                             "failed (VkResult %d); continuing without validation logging\n",
+                             (int)dbg);
         }
     }
 }
@@ -791,10 +799,12 @@ int FindGraphicsPresentFamily(VkPhysicalDevice d)
 void PickPhysicalAndDevice()
 {
     uint32_t n = 0;
-    vkEnumeratePhysicalDevices(g.instance, &n, nullptr);
+    // DOOM-0073: device selection depends on this list; surface a failure precisely
+    // rather than proceed with an empty/garbage device set (Check-wrap, INV init path).
+    Check(vkEnumeratePhysicalDevices(g.instance, &n, nullptr), "vkEnumeratePhysicalDevices(count)");
     std::vector<VkPhysicalDevice> devs(n);
     if (n)
-        vkEnumeratePhysicalDevices(g.instance, &n, devs.data());
+        Check(vkEnumeratePhysicalDevices(g.instance, &n, devs.data()), "vkEnumeratePhysicalDevices(fill)");
 
     // Prefer an RT-capable device that can present; otherwise the first device
     // that can present. (The integrator chooses RT vs. raster later; a cleared
@@ -1026,9 +1036,13 @@ void CreateSwapchain()
     g.swapchain = created;
 
     uint32_t ic = 0;
-    vkGetSwapchainImagesKHR(g.device, g.swapchain, &ic, nullptr);
+    // DOOM-0073: the image count sizes every per-image resource; a dropped failure
+    // here would resize g.images from a garbage count. Check-wrap both calls.
+    Check(vkGetSwapchainImagesKHR(g.device, g.swapchain, &ic, nullptr),
+          "vkGetSwapchainImagesKHR(count)");
     g.images.resize(ic);
-    vkGetSwapchainImagesKHR(g.device, g.swapchain, &ic, g.images.data());
+    Check(vkGetSwapchainImagesKHR(g.device, g.swapchain, &ic, g.images.data()),
+          "vkGetSwapchainImagesKHR(fill)");
 }
 
 // (Re)create the per-swapchain-image renderFinished semaphores, sized to the
@@ -3765,7 +3779,29 @@ extern "C" void RB_Vulkan_SetOverlay(const unsigned char* pixels, int w, int h)
     if (!g.ready || !pixels || w <= 0 || h <= 0)
         return;
     if (!g.overlayReady)
+    {
         CreateOverlayResources(w, h);
+        g.overlayCapW = w;
+        g.overlayCapH = h;
+    }
+    else if (w != g.overlayCapW || h != g.overlayCapH)
+    {
+        // DOOM-0073: the overlay staging buffer + image are allocated once, at the
+        // first size (screens[0] is fixed for the session — V_Init allocates it
+        // once). A later size change would overrun the fixed-capacity staging buffer
+        // in Present (memcpy of overlayW*overlayH) and mismatch the image extent, so
+        // refuse the resized overlay rather than corrupt memory. A future runtime-
+        // resolution feature must recreate these resources here instead of latching.
+        static bool warned = false;
+        if (!warned)
+        {
+            std::fprintf(stderr, "RB_Vulkan_SetOverlay: overlay size changed "
+                         "%dx%d -> %dx%d; ignoring (mid-session resize unsupported)\n",
+                         g.overlayCapW, g.overlayCapH, w, h);
+            warned = true;
+        }
+        return;
+    }
     g.overlaySrc = pixels;
     g.overlayW   = w;
     g.overlayH   = h;
