@@ -154,7 +154,8 @@ static void sky_push_tri(builder_t* b, rb_vertex_t a, rb_vertex_t c, rb_vertex_t
 // DOOM-0141: emit a sky-border wall (the vertical gap between two open-sky sectors of
 // different ceiling height, where classic DOOM shows sky in place of an upper
 // texture) as sky backdrop geometry. Fills the [zb, zt] span across the seg so the
-// view can't see through to geometry beyond; flagged RB_MESH_SKY (UVs unused).
+// view can't see through to geometry beyond; flagged RB_MESH_SKYDOME (world-space
+// sky, UVs unused) so both the tracer and the raster occluder pass paint it as sky.
 static void emit_sky_wall(builder_t* bld, const seg_t* seg, fixed_t zb, fixed_t zt)
 {
     float x1 = seg->v1->x / (float)FRACUNIT, y1 = seg->v1->y / (float)FRACUNIT;
@@ -166,10 +167,10 @@ static void emit_sky_wall(builder_t* bld, const seg_t* seg, fixed_t zb, fixed_t 
     float ny = len > 0.0f ?  dx / len : 0.0f;
     rb_vertex_t a, b, c, d;
     if (ztf <= zbf) return;
-    a = mkv(x1, y1, zbf, nx, ny, 0.0f, 0.0f, 0.0f, skytexture, RB_MESH_SKY, 1.0f);
-    b = mkv(x2, y2, zbf, nx, ny, 0.0f, 0.0f, 0.0f, skytexture, RB_MESH_SKY, 1.0f);
-    c = mkv(x2, y2, ztf, nx, ny, 0.0f, 0.0f, 0.0f, skytexture, RB_MESH_SKY, 1.0f);
-    d = mkv(x1, y1, ztf, nx, ny, 0.0f, 0.0f, 0.0f, skytexture, RB_MESH_SKY, 1.0f);
+    a = mkv(x1, y1, zbf, nx, ny, 0.0f, 0.0f, 0.0f, skytexture, RB_MESH_SKYDOME, 1.0f);
+    b = mkv(x2, y2, zbf, nx, ny, 0.0f, 0.0f, 0.0f, skytexture, RB_MESH_SKYDOME, 1.0f);
+    c = mkv(x2, y2, ztf, nx, ny, 0.0f, 0.0f, 0.0f, skytexture, RB_MESH_SKYDOME, 1.0f);
+    d = mkv(x1, y1, ztf, nx, ny, 0.0f, 0.0f, 0.0f, skytexture, RB_MESH_SKYDOME, 1.0f);
     sky_push_tri(bld, a, b, c);
     sky_push_tri(bld, a, c, d);
 }
@@ -383,7 +384,7 @@ static void emit_cap_poly(builder_t* bld, const poly_t* p, fixed_t height,
 }
 
 // DOOM-0141: emit a sky-flat cap (a sector floor/ceiling textured F_SKY1) as sky
-// backdrop geometry — same convex cell as a normal cap, but flagged RB_MESH_SKY with
+// backdrop geometry — same convex cell as a normal cap, but flagged RB_MESH_SKYDOME with
 // the sky wall-texture so the tracer shades it as the panorama (fullbright; UVs
 // unused, the panorama is keyed on screen/ray yaw). `up` picks the normal direction
 // (a sky ceiling faces down). Mirrors emit_cap_poly's fan/winding into the sky list.
@@ -394,11 +395,11 @@ static void emit_sky_cap(builder_t* bld, const poly_t* p, fixed_t height, int up
     int   k;
     rb_vertex_t pivot;
     if (p->n < 3) return;
-    pivot = mkv(p->x[0], p->y[0], z, 0.0f, 0.0f, nz, 0.0f, 0.0f, skytexture, RB_MESH_SKY, 1.0f);
+    pivot = mkv(p->x[0], p->y[0], z, 0.0f, 0.0f, nz, 0.0f, 0.0f, skytexture, RB_MESH_SKYDOME, 1.0f);
     for (k = 1; k < p->n - 1; k++)
     {
-        rb_vertex_t va = mkv(p->x[k],   p->y[k],   z, 0.0f, 0.0f, nz, 0.0f, 0.0f, skytexture, RB_MESH_SKY, 1.0f);
-        rb_vertex_t vb = mkv(p->x[k+1], p->y[k+1], z, 0.0f, 0.0f, nz, 0.0f, 0.0f, skytexture, RB_MESH_SKY, 1.0f);
+        rb_vertex_t va = mkv(p->x[k],   p->y[k],   z, 0.0f, 0.0f, nz, 0.0f, 0.0f, skytexture, RB_MESH_SKYDOME, 1.0f);
+        rb_vertex_t vb = mkv(p->x[k+1], p->y[k+1], z, 0.0f, 0.0f, nz, 0.0f, 0.0f, skytexture, RB_MESH_SKYDOME, 1.0f);
         if (up) sky_push_tri(bld, pivot, va, vb);
         else    sky_push_tri(bld, pivot, vb, va);   // flip winding so -z faces down
     }

@@ -94,6 +94,12 @@ typedef struct
                               // not ammo pickups). Only these self-glow + cast NEE light
                               // in the path tracer; the per-texel value mask then
                               // localises the glow to the sprite's bright pixels.
+#define RB_MESH_SKYDOME 0x40  // DOOM-0162: world-space sky occluder (emit_sky_wall/
+                              // emit_sky_cap). Painted as the sky panorama like
+                              // RB_MESH_SKY, but its verts are WORLD-space, so the
+                              // vertex shader runs the view-projection on them (unlike
+                              // the NDC backdrop quad) and the depth test lets them
+                              // occlude distant geometry in the raster view.
 
 // Transparent-key palette index for the 2D HUD/menu compositor (DOOM-0008). In
 // the 3D back-ends the engine still draws every 2D element (status bar, menu,
@@ -117,8 +123,10 @@ typedef struct
     // the ray-traced view rays escaped through the gap (distant geometry "floated").
     // These tris ride their own acceleration structure on a ray mask only PRIMARY
     // rays see, so they occlude the view without casting shadows or perturbing the
-    // GI bake, and the raster path (its own RB_BuildSky quad) never draws them.
-    // texnum on each vertex is the sky wall-texture (skytexture); flags = RB_MESH_SKY.
+    // GI bake. DOOM-0162: the raster path now ALSO draws these (depth-tested) so
+    // distant geometry is occluded by sky there too, alongside its own full-screen
+    // RB_BuildSky backdrop quad.
+    // texnum on each vertex is the sky wall-texture (skytexture); flags = RB_MESH_SKYDOME.
     rb_vertex_t* sky;       // numsky entries (multiple of 3), or NULL. Owned here.
     int          numsky;    // sky vertex count (always a multiple of 3)
 } rb_mesh_t;

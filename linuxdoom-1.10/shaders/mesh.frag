@@ -26,7 +26,10 @@ layout(location = 1) in vec2  vUV;
 layout(location = 2) in float vLight;
 layout(location = 3) flat in int vTexnum;
 layout(location = 4) flat in int vFlags;
-layout(location = 5) in vec2  vScreenUV;   // [0,1] across the frame (sky only)
+// noperspective must match mesh.vert: vScreenUV is a screen-space sky-panorama
+// lookup, interpolated linearly in window space so the projected DOOM-0162 sky
+// dome resolves to the same per-pixel sky as the flat NDC backdrop quad.
+layout(location = 5) noperspective in vec2  vScreenUV;   // [0,1] across the frame (sky only)
 layout(location = 6) in float vDist;       // world distance camera->fragment
 layout(location = 7) in vec3  vWorldPos;   // world position (DOOM-0044 flashlight)
 
@@ -60,7 +63,8 @@ const int FLAG_FLAT    = 0x1;   // matches RB_MESH_FLAT in r_mesh.h
 const int FLAG_MASKED  = 0x2;   // matches RB_MESH_MASKED in r_mesh.h
 const int FLAG_SPRITE  = 0x4;   // matches RB_MESH_SPRITE in r_mesh.h
 const int FLAG_PSPRITE = 0x8;   // matches RB_MESH_PSPRITE in r_mesh.h
-const int FLAG_SKY     = 0x10;  // matches RB_MESH_SKY in r_mesh.h
+const int FLAG_SKY     = 0x10;  // matches RB_MESH_SKY in r_mesh.h (NDC backdrop quad)
+const int FLAG_SKYDOME = 0x40;  // matches RB_MESH_SKYDOME (world-space sky occluder)
 
 const float PI = 3.14159265358979;
 
@@ -73,7 +77,10 @@ void main()
     // the player turns. Vertically the 128px sky fills the top half of the
     // frame with the horizon at screen centre. Fullbright, so no shade term and
     // the muzzle flash never touches it.
-    if ((vFlags & FLAG_SKY) != 0)
+    // FLAG_SKY is the full-screen NDC backdrop quad; FLAG_SKYDOME is the DOOM-0162
+    // world-space occluder. Both sample the sky panorama identically (screen yaw +
+    // vScreenUV); they differ only in the vertex stage (NDC vs MVP-projected).
+    if ((vFlags & (FLAG_SKY | FLAG_SKYDOME)) != 0)
     {
         int   id    = vTexnum;                  // the sky is a wall texture
         vec2  sz    = vec2(textureSize(materialTex[nonuniformEXT(id)], 0));
@@ -82,18 +89,29 @@ void main()
         // +left/-right; ndcX is -left/+right, so the screen term is -atan(ndcX).
         float ang   = pc.yaw - atan(ndcX);
         float col   = ang / (PI * 0.5) * sz.x;  // REPEAT wraps the column
-        // Vertical: DOOM's fixed sky scale -- one 320x200 logical screen pixel
-        // per texel, with the texture's skytexturemid (row 100) pinned to the
-        // horizon at screen centre; REPEAT wraps the rest. Mirrors classic r_sky
-        // (dc_texturemid = skytexturemid = 100<<FRACBITS, dc_iscale = FRACUNIT).
-        // The old "* 2.0 then clamp to the bottom row" squashed the panorama into
-        // the top half and clamped everything below centre to the texture's dark
-        // base row, which showed as a black band across distant outdoor views
-        // wherever the floor did not reach the horizon (DOOM-0076).
+        // Vertical: DOOM's fixed sky scale -- one 320x200 logical screen pixel per
+        // texel, with the texture's skytexturemid (row 100) pinned to the horizon
+        // at screen centre. Mirrors classic r_sky (dc_texturemid = skytexturemid =
+        // 100<<FRACBITS, dc_iscale = FRACUNIT).
         float row   = 100.0 + (vScreenUV.y - 0.5) * 200.0;
-        vec2  uv    = vec2(col, row) / sz;      // u + v both REPEAT-wrap
+        // DOOM-0143/0162: below the horizon the fixed scale runs row past the 128px
+        // sky texture. The old "* 2.0 then clamp to the base row" squashed the
+        // panorama and showed a black band across distant outdoor views where the
+        // floor did not reach the horizon (DOOM-0076); leaving the vertical REPEAT
+        // instead wraps to the bright top-of-sky rows -- a bright band. Both are
+        // wrong: the pixel is undefined (classic never draws sky below the horizon).
+        // Clamp to stop the bright wrap, then fade the below-horizon strip into a
+        // soft haze so sky dissolves into mist at the wall line rather than either
+        // seam. This matters now DOOM-0162 draws the sky occluder in the raster view
+        // (it fills the window below eye level). Mirrors pathtrace.comp skyPanorama;
+        // col still REPEAT-wraps for the 360deg panorama.
+        row = min(row, sz.y - 0.5);
+        vec2  uv    = vec2(col, row) / sz;
         float idx   = texture(materialTex[nonuniformEXT(id)], uv).r * 255.0;
-        outColor    = vec4(texture(paletteTex, vec2((idx + 0.5) / 256.0, 0.5)).rgb, 1.0);
+        vec3  skyCol = texture(paletteTex, vec2((idx + 0.5) / 256.0, 0.5)).rgb;
+        const vec3 SKY_FOG_COL = vec3(0.5);     // neutral haze tone (see DOOM-0143)
+        float fog   = smoothstep(0.50, 0.63, vScreenUV.y);
+        outColor    = vec4(mix(skyCol, SKY_FOG_COL, fog), 1.0);
         return;
     }
 

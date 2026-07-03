@@ -4477,7 +4477,11 @@ extern "C" void RB_Vulkan_BuildLevel(void)
         VkDeviceSize ssz = (VkDeviceSize)g.levelMesh->numsky * sizeof(rb_vertex_t);
         CreateRtBuffer(ssz,
                        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
-                       | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                       | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+                       // DOOM-0162: also draw this occluder mesh in the raster pass
+                       // (depth-tested sky) so distant geometry stops floating there,
+                       // matching the RT view -- needs the vertex-buffer usage bit.
+                       | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                        &g.skyMeshBuf, &g.skyMeshMem);
         void* skyMapped = nullptr;
@@ -5335,6 +5339,20 @@ extern "C" void RB_Vulkan_Present(void)
         {
             vkCmdBindVertexBuffers(g.cmd, 0, 1, &g.vbuf, &off);
             vkCmdDraw(g.cmd, g.vertexCount, 1, 0, 0);
+        }
+        // DOOM-0162: draw the DOOM-0141 sky occluder mesh (the RT sky backdrop --
+        // emit_sky_wall/emit_sky_cap) here too, with the same world pipeline
+        // (cull-none, depth-ON). Its verts carry RB_MESH_SKYDOME so the vertex
+        // shader MVP-projects them (world-space, unlike the NDC backdrop quad) and
+        // mesh.frag paints them as the panorama; the depth test makes it occlude
+        // distant geometry and be occluded by nearer walls -- exactly what the tracer gets
+        // from the sky BLAS. Without this the raster sky is only the depth-OFF
+        // full-screen quad above, which cannot occlude, so far buildings hang in
+        // front of it (the "floating buildings" seen only in the raster view).
+        if (g.skyMeshBuf && g.skyMeshVerts)
+        {
+            vkCmdBindVertexBuffers(g.cmd, 0, 1, &g.skyMeshBuf, &off);
+            vkCmdDraw(g.cmd, g.skyMeshVerts, 1, 0, 0);
         }
         // Sprites + weapon: same buffer as the sky, but skip its leading verts.
         if (g.spriteVbuf && g.spriteVertCount)
