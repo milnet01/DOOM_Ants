@@ -48,6 +48,10 @@
 // unbiasedness test (tests/nee_sampling_test.cpp) so both use one implementation.
 #include "nee_sampling.h"
 
+// Per-material emitter derivation (build step 3b, §4.2), shared with
+// tests/emissive_derive_test.cpp. Defines the `emis` namespace used below.
+#include "emissive_derive.h"
+
 // Compiled shaders, embedded as byte arrays (Makefile: GLSL -> SPIR-V -> xxd).
 #include "shaders/mesh.vert.spv.h"
 #include "shaders/mesh.frag.spv.h"
@@ -3330,53 +3334,12 @@ void InitPaletteAndDescriptorSet()
     vkUpdateDescriptorSets(g.device, 1, &write, 0, nullptr);
 }
 
-// --- Per-material emission precompute (DOOM-0009 build step 3b, §4.2) ----------
-// Tuning constants. INV-7 backfill: these are provisional closed-form thresholds
-// authored inline (user-approved 2026-06-27); they migrate to a Vestige Formula
-// Workbench `shaders/formulas/*.glsl` artifact when 3c's curves are formalised.
-namespace emis {
-    // A palette texel counts as "bright" (an emitter contributor) when its linear
-    // luminance clears this. ~0.5 = brighter than mid-grey: lamp/screen/switch
-    // fullbrights and the brightest slime greens pass; ordinary wall/floor art does
-    // not. (§4.2 "palette colours above a threshold".)
-    constexpr float kBrightLum = 0.5f;
-    // A material becomes an NEE emitter only when its area-weighted emitted
-    // luminance clears this — keeps the candidate set to genuine light sources, not
-    // a stray bright speck. Below it the (tiny) Le is dropped to zero.
-    constexpr float kEmitterMinLum = 0.02f;
-    // Global emissive intensity (radiance) scale. INV-7 tunable. DOOM's emissive
-    // textures are small, so at palette brightness (1.0) they subtend too little
-    // solid angle to light a room — they need a high radiance to read as lights.
-    // 40 makes lamps/screens visibly pool light + cast shadows; the shader's
-    // per-sample radiance clamp bounds the near-field. (The kEmitterMinLum gate
-    // below scales by this too, so the emitter SET is unchanged — only intensity.)
-    constexpr float kEmissiveScale = 40.0f;
-    // Rec.709 luminance weights (linear RGB).
-    constexpr float kLumR = 0.2126f, kLumG = 0.7152f, kLumB = 0.0722f;
-
-    inline float srgb2lin(float c) {
-        return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f);
-    }
-    inline float luminance(float r, float gg, float b) {
-        return kLumR * r + kLumG * gg + kLumB * b;
-    }
-    // Brightness as VALUE (max channel), not luminance — luminance underweights
-    // saturated colours (pure red scores only 0.21), so a red ceiling light would
-    // miss the "bright"/emitter thresholds and never glow. Value is hue-agnostic, so
-    // a saturated red/blue/green light is rated by its intensity and emits in colour.
-    inline float value(float r, float gg, float b) {
-        return std::max(r, std::max(gg, b));
-    }
-}
-
-// Fill out[3*n] with each material's emitted radiance Le (linear RGB), computed
-// once from the packed atlas: for every texel of a tile, decode its palette index
-// to linear RGB; texels brighter than kBrightLum sum into the tile's emission,
-// divided by the tile's total texel count (area-weighted — a small bright lamp on
-// a dark plate emits proportionally less than a fully-lit screen). Materials whose
-// result is below kEmitterMinLum are zeroed (not light sources). The id ordering
-// matches RB_BuildAtlas (walls, then flats, then sprites), so the shader indexes
-// Le by the same unified id the textured decode uses.
+// Fill out[3*n] with each material's emitted radiance Le (linear RGB). The per-tile
+// derivation (bright-texel colour + the near-fullbright peak-region emitter gate)
+// lives in emissive_derive.h so it is shared with tests/emissive_derive_test.cpp;
+// this just decodes the palette once and walks every atlas tile through it. The id
+// ordering matches RB_BuildAtlas (walls, then flats, then sprites), so the shader
+// indexes Le by the same unified id the textured decode uses.
 static void ComputeMaterialEmissive(const rb_atlas_t* a, std::vector<float>& out)
 {
     const int n = a->numwall + a->numflat + a->numsprite;
@@ -3395,34 +3358,8 @@ static void ComputeMaterialEmissive(const rb_atlas_t* a, std::vector<float>& out
     {
         const int ox = (int)a->rects[id].ox, oy = (int)a->rects[id].oy;
         const int w  = (int)a->rects[id].w,  h  = (int)a->rects[id].h;
-        const int total = w * h;
-        if (total <= 0)
-            continue;
-
-        double sr = 0.0, sg = 0.0, sb = 0.0;
-        for (int row = 0; row < h; row++)
-        {
-            const unsigned char* line = a->pixels + (size_t)(oy + row) * a->atlasw + ox;
-            for (int col = 0; col < w; col++)
-            {
-                const float* c = palLin[line[col]];
-                if (emis::value(c[0], c[1], c[2]) > emis::kBrightLum)
-                {
-                    sr += c[0]; sg += c[1]; sb += c[2];
-                }
-            }
-        }
-
-        float le[3] = {
-            (float)(sr / total) * emis::kEmissiveScale,
-            (float)(sg / total) * emis::kEmissiveScale,
-            (float)(sb / total) * emis::kEmissiveScale,
-        };
-        if (emis::value(le[0], le[1], le[2]) < emis::kEmitterMinLum * emis::kEmissiveScale)
-            continue;   // not a light source — leave Le at zero
-        out[(size_t)id * 3 + 0] = le[0];
-        out[(size_t)id * 3 + 1] = le[1];
-        out[(size_t)id * 3 + 2] = le[2];
+        emis::derive_material_le(a->pixels, (int)a->atlasw, ox, oy, w, h,
+                                 palLin, &out[(size_t)id * 3]);
     }
 }
 
