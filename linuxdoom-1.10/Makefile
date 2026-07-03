@@ -25,8 +25,11 @@ VULKAN_LIBS:=$(shell pkg-config --libs vulkan 2>/dev/null || echo -lvulkan)
 # stale object with a mismatched struct layout. The .d files are -include'd below.
 DEPFLAGS=-MMD -MP
 CFLAGS=-g -Wall -std=gnu11 -DNORMALUNIX -DLINUX $(DEPFLAGS) $(SDL_CFLAGS) # -DUSEASM
-# C++17 for the Vulkan back-end (ADR 0001). Same defines + SDL include path.
-CXXFLAGS=-g -Wall -std=c++17 -DNORMALUNIX -DLINUX $(DEPFLAGS) $(SDL_CFLAGS)
+# C++23 for the Vulkan back-end (ADR 0001; bumped from C++17 2026-07-03 per the
+# latest-version dependency rule -- no caller changes needed). Same defines + SDL
+# include path. NB the Windows cross-build (target `windows`) inherits this flag;
+# its mingw g++ 13 accepts -std=c++23 and the back-end uses no C++23-only features.
+CXXFLAGS=-g -Wall -std=c++23 -DNORMALUNIX -DLINUX $(DEPFLAGS) $(SDL_CFLAGS)
 # Link with mold when present (a faster drop-in linker) — native build only; the
 # Windows cross-target overrides LDFLAGS, so the mingw link is untouched. Detected
 # once; empty (= the default ld) when mold isn't installed.

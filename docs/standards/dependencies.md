@@ -109,10 +109,10 @@ sub-Makefile is not built by CI or the default `make`, so it's out of scope):
 - **Build tools:** gcc, g++, `glslc` (shaderc), `xxd`, `mold` (optional faster
   linker), `pkg-config`, `make`.
 - **Language dialects:** C engine `-std=gnu11` (a frozen dialect — see Permanent
-  constraints); C++ renderer back-end `-std=c++17` (Makefile:28-29). C++17 has no
-  recorded breakage, so under this standard it is a bump candidate whenever a
-  sweep revisits it — moving it forward is allowed and encouraged, using current
-  idioms.
+  constraints); C++ renderer back-end `-std=c++23` (Makefile:28-32, bumped from
+  C++17 on 2026-07-03 per this rule — no caller changes needed; native build +
+  unit tests green). The back-end tracks the latest C++ standard, so it moves
+  forward on a sweep whenever a newer one lands, using current idioms.
 - **Windows cross-build:** `mingw64-cross-gcc`/`-c++` (Makefile:191-192) plus
   SDL2 / SDL2_mixer / Vulkan dev libs staged under `../mingw-deps/prefix`
   (Makefile:198-209). The staged versions are pinned in `mingw-deps/README.md:19-20`
