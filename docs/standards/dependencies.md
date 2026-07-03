@@ -120,7 +120,7 @@ sub-Makefile is not built by CI or the default `make`, so it's out of scope):
   snapshot*, the one place a version can silently go stale, so it gets the closest
   watch on the sweep.
 - **CI (GitHub Actions):** `.github/workflows/build.yml` pins the action
-  `actions/checkout@v4` and runs on the `ubuntu-latest` runner image. Its Linux
+  `actions/checkout@v7` and runs on the `ubuntu-latest` runner image. Its Linux
   build-deps are the single-source-of-truth apt list `packaging/ci-deps.txt`
   (`build-essential`, `libsdl2-dev`, `libsdl2-mixer-dev`, `libvulkan-dev`,
   `glslc`, `xxd`), shared with the local mirror `packaging/ci-local.sh`. Two
