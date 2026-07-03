@@ -31,6 +31,7 @@ These are the project's standards. Read the relevant one before working:
 - **Commits** — `docs/standards/commits.md`
 - **Documentation** — `docs/standards/documentation.md`
 - **Roadmap format** — `docs/standards/roadmap-format.md`
+- **Dependencies** — `docs/standards/dependencies.md`
 
 Quick summary of the load-bearing ones:
 
@@ -39,6 +40,10 @@ Quick summary of the load-bearing ones:
   append-only: never renumber, never reuse.
 - Shortest correct implementation; reuse before rewriting.
 - Keep `CHANGELOG.md` and any version line in lockstep when releasing.
+- Dependencies stay on the **latest stable** version (features *and* security).
+  An older pin is a last resort — only when the newer version explicitly breaks
+  a feature — and must be logged in the dependencies standard's Version
+  Exception Ledger, naming the version that broke it so it can be re-tested later.
 
 ## Licence
 
