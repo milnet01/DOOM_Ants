@@ -196,6 +196,31 @@ bool spriteCandidateOpaque(rayQueryEXT rq)
     return idx >= 0.5;            // palette index 0 == transparent
 }
 
+// DOOM-0163: the world BLAS is now NON-opaque, so every primary-ray world hit is a
+// triangle candidate. An ordinary wall/flat commits on the spot (one flag read); a
+// two-sided masked mid-wall (grate/fence, FLAG_MASKED) commits only where its paletted
+// texel is not index 0 -- the see-through cut-out key -- so rays pass through the gaps
+// like the raster path (mesh.frag FLAG_MASKED discard). Masked mid-walls index their
+// material by texnum direct (world walls, no atlas offset), matching the mode-3/4/6
+// decode. Only the primary ray sees this; shadow/NEE/muzzle/flashlight/bake rays force
+// gl_RayFlagsOpaqueEXT and treat the grate as solid.
+bool worldCandidateOpaque(rayQueryEXT rq)
+{
+    int  prim  = rayQueryGetIntersectionPrimitiveIndexEXT(rq, false);
+    uint i0    = uint(prim) * 3u * 18u;
+    int  flags = floatBitsToInt(pc.verts.v[i0 + 9u]);
+    if ((flags & FLAG_MASKED) == 0) return true;     // opaque wall/flat: commit
+    int  texnum = floatBitsToInt(pc.verts.v[i0 + 8u]);
+    vec2 bc = rayQueryGetIntersectionBarycentricsEXT(rq, false);
+    vec2 uv = (1.0 - bc.x - bc.y) * vec2(pc.verts.v[i0 +  6u], pc.verts.v[i0 +  7u])
+            +          bc.x        * vec2(pc.verts.v[i0 + 24u], pc.verts.v[i0 + 25u])
+            +          bc.y        * vec2(pc.verts.v[i0 + 42u], pc.verts.v[i0 + 43u]);
+    uint  id  = uint(texnum);
+    vec2  sz  = vec2(textureSize(materialTex[nonuniformEXT(id)], 0));
+    float idx = texture(materialTex[nonuniformEXT(id)], uv / sz).r * 255.0;
+    return idx >= 0.5;            // palette index 0 == transparent
+}
+
 // DOOM-0130: dynamic point-light deltas shared by the display (mode 4) and the
 // denoise-feed (mode 6) shading paths, which carried byte-identical muzzle-flash
 // and flashlight blocks save for the albedo factor. Each returns one light's added
@@ -325,18 +350,21 @@ void main()
     layout(constant_id = 0) const uint mode = 6u;
 
     rayQueryEXT rq;
-    // DOOM-0100: drop gl_RayFlagsOpaqueEXT. The world BLAS is OPAQUE_BIT (auto-
-    // commits with no candidate), while the sprite BLAS is non-opaque and yields
-    // triangle candidates we alpha-test against the billboard's cut-out key.
+    // DOOM-0100/0163: drop gl_RayFlagsOpaqueEXT. Both the world BLAS (instance 0,
+    // custom index 0) and the sprite BLAS (custom index 1) are non-opaque and yield
+    // triangle candidates; the sky backdrop (custom index 2) stays opaque and auto-
+    // commits. Sprite candidates alpha-test against the billboard cut-out; world
+    // candidates commit unless they are a masked mid-wall's index-0 gap (DOOM-0163).
     rayQueryInitializeEXT(rq, topAS, gl_RayFlagsNoneEXT, 0xFFu,
                           origin, 0.01, dir, 1.0e9);
     while (rayQueryProceedEXT(rq)) {
         if (rayQueryGetIntersectionTypeEXT(rq, false)
             == gl_RayQueryCandidateIntersectionTriangleEXT)
         {
-            // Only the sprite BLAS is non-opaque, so any triangle candidate is a
-            // sprite: commit it as the hit only where its texel is not cut out.
-            if (spriteCandidateOpaque(rq))
+            bool keep = (rayQueryGetIntersectionInstanceCustomIndexEXT(rq, false) == 1)
+                      ? spriteCandidateOpaque(rq)      // billboard sprite
+                      : worldCandidateOpaque(rq);      // world wall/flat, masked mid-wall alpha-tested
+            if (keep)
                 rayQueryConfirmIntersectionEXT(rq);
         }
     }

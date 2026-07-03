@@ -1317,7 +1317,14 @@ void BuildAccelerationStructures()
     VkAccelerationStructureGeometryKHR geom = {};
     geom.sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
     geom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-    geom.flags        = VK_GEOMETRY_OPAQUE_BIT_KHR;
+    // DOOM-0163: NON-opaque so the primary ray alpha-tests two-sided masked mid-walls
+    // (grates/fences) against palette index 0 in the trace candidate loop -- see-through
+    // in the ray-traced view like the raster path (mesh.frag FLAG_MASKED). Opaque
+    // walls/flats confirm on first candidate (one flag read), so they keep vanilla
+    // occlusion. Shadow/NEE/muzzle/flashlight/GI-bake rays all force gl_RayFlagsOpaqueEXT,
+    // so this only affects the (single, coherent) primary ray -- masked walls still cast
+    // solid shadows for now (patterned shadows deferred, cf. DOOM-0108 for sprites).
+    geom.flags        = 0;
     geom.geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
     geom.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
     geom.geometry.triangles.vertexData.deviceAddress = BufferAddress(g.vbuf);
@@ -1701,7 +1708,7 @@ void RecordRefitAS(VkCommandBuffer cb)
     VkAccelerationStructureGeometryKHR geom = {};
     geom.sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
     geom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-    geom.flags        = VK_GEOMETRY_OPAQUE_BIT_KHR;
+    geom.flags        = 0;   // DOOM-0163: NON-opaque, must match the build (masked mid-wall alpha test)
     geom.geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
     geom.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
     geom.geometry.triangles.vertexData.deviceAddress = BufferAddress(g.vbuf);

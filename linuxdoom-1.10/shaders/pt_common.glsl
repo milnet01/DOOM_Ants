@@ -18,6 +18,7 @@
 
 const float PI            = 3.14159265358979323846;
 const int   FLAG_FLAT     = 0x1;     // matches RB_MESH_FLAT in r_mesh.h (flats vs walls)
+const int   FLAG_MASKED   = 0x2;     // matches RB_MESH_MASKED — two-sided grate/fence mid-wall
 const int   FLAG_EMISSIVE = 0x20;    // matches RB_MESH_EMISSIVE — a fullbright light Thing
 
 // INV-7 backfill: provisional inline scene-light constants (user-approved
