@@ -30,6 +30,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Draw the DOOM-0141 sky occluder in the raster view too, so distant geometry stops floating there.** (DOOM-0162)
+  The raster 3D view (Solid tier / ~ toggle) now hides distant geometry behind the sky the same way the ray-traced view does, so far-off buildings no longer appear to float. The DOOM-0141 sky occluder mesh is drawn depth-tested in the raster pass via a new world-space sky-dome flag, and the DOOM-0143 below-horizon fog fade is mirrored into the raster sky shader.
+
 - **Seam (black line + white sliver) where the RT sky cap meets a wall top.** (DOOM-0143)
   With the new ray-traced sky, a thin dark line and a small bright sliver can show right where a wall meets the sky.
 
