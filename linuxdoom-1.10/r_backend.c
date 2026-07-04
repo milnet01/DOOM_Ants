@@ -289,6 +289,24 @@ rendermode_t RB_NextAvailableMode(rendermode_t cur)
     return cur;
 }
 
+// DOOM-0169: the selected render tier drives the ray-tracing default, so the menu
+// choice matches what is drawn and each tier gets its intended look (resolves the
+// DOOM-0135 open question; user-confirmed 2026-07-04). Solid renders the raster
+// "original" view (rb_rtdebug 0) so it stays buttery-smooth; Ultra renders the
+// ray-traced view (rb_rtdebug 6). The `~` key still toggles RT within a tier
+// (I_ToggleRtView). Skipped while Debug Views is on (rb_rtdebug_menu) so the
+// developer diagnostic cycle keeps control of rb_rtdebug. Classic is the software
+// renderer and does not use the Vulkan tracer, so its rb_rtdebug is left alone.
+static void RB_ApplyTierRt(void)
+{
+    extern int rb_rtdebug;          // r_vulkan.cpp
+    extern int rb_rtdebug_menu;     // r_vulkan.cpp (DOOM-0135)
+    if (rb_rtdebug_menu)
+        return;                     // developer diagnostic cycle owns rb_rtdebug
+    if      (rendermode == RB_RASTER3D) rb_rtdebug = 0;   // Solid: raster original view
+    else if (rendermode == RB_RT3D)     rb_rtdebug = 6;   // Ultra: ray-traced view
+}
+
 void RB_Init(void)
 {
     // DOOM-0008: log the 3D tier this machine supports. The Vulkan back-ends are
@@ -310,6 +328,10 @@ void RB_Init(void)
         if (rb_rtdebug < 0 || rb_rtdebug > 6 || rb_rtdebug == 5)
             rb_rtdebug = 6;
     }
+
+    // DOOM-0169: let the persisted tier pick its RT view before the back-end inits,
+    // so a fresh/persisted Solid config starts on the smooth raster path.
+    RB_ApplyTierRt();
 
     active = &backends[rendermode];
     if (active->Init)
@@ -348,6 +370,9 @@ void RB_SetMode(rendermode_t mode)
         active->Shutdown();
 
     rendermode = mode;
+    // DOOM-0169: entering a tier picks its RT default (Solid raster / Ultra traced)
+    // so the view matches the menu choice; `~` still overrides within a tier.
+    RB_ApplyTierRt();
     active = &backends[rendermode];
     if (active->Init)
         active->Init();
