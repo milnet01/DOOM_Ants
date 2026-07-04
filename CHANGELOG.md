@@ -8,6 +8,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Armour pickups' green glowing eyes emit a faint green glow in the path tracer.** (DOOM-0157)
+  The armour pickups have little green glowing eyes; those should cast a soft green glow when you are near them, instead of looking flat — they do not glow right now.
+
 - **Game-select boot menu: choose DOOM 1 or DOOM 2, switch back without relaunching by hand.** (DOOM-0060)
   When both DOOM 1 and DOOM 2 are installed, a startup chooser lets you pick which to play, and you can switch games mid-session from the main menu without relaunching by hand. The app remembers the last game you played and defaults to it next launch. If only one game is installed it boots straight in.
 
