@@ -1,8 +1,10 @@
 # DOOM-0060 — Game-select menu: choose DOOM 1 or DOOM 2, switch without relaunching by hand
 
-**Status:** **draft** 2026-07-03 — awaiting user confirmation of the two *Assumed
-decisions* below, then **/cold-eyes** (house rule 14) before implementation. Not
-yet implemented.
+**Status:** **cold-eyes converged** 2026-07-04 (5 loops — see the [Cold-eyes loop
+log](#cold-eyes-loop-log); CRITICAL/HIGH/MEDIUM all cleared by loop 4, LOW-precision
+only thereafter). Both decisions below confirmed by the user ("go with your
+recommendations"). Cleared for implementation pending a final user spec skim. **Not
+yet implemented.**
 **Roadmap:** DOOM-0060 (📋, `phase-1-build-modernise-share`). Stays 📋 until shipped.
 **Kind:** feature.
 **Depends on:** the existing `-iwad <file>` selector (d_main.c:702–724, already in
@@ -11,7 +13,7 @@ the fork) and the classic menu system (m_menu.c). No dependency on the 3D/RT wor
 ## Contents
 
 - [Goal](#goal)
-- [Assumed decisions (pending user confirmation)](#assumed-decisions-pending-user-confirmation)
+- [Confirmed decisions](#confirmed-decisions)
 - [Background — why a relauncher, not a live WAD swap](#background--why-a-relauncher-not-a-live-wad-swap)
 - [Approach](#approach)
 - [Boot & switch flow](#boot--switch-flow)
@@ -38,11 +40,10 @@ brings the chooser back so the other game can be picked. This is the convenience
 that lets a tester exercise a feature (e.g. the switch glow, the see-through
 grates) in *both* games without hand-editing a launch command.
 
-## Assumed decisions (pending user confirmation)
+## Confirmed decisions
 
-Two design choices were put to the user; both are set here to the recommended
-default and are **cheap to flip** — they change only which assets draw the picker
-and where one menu item sits.
+Two design choices were put to the user and **confirmed 2026-07-04** ("go with your
+recommendations"). Both are the recommended defaults below.
 
 - **A1 — Picker style: DOOM-styled, smart relaunch (recommended).** Boot loads
   whichever game auto-detection finds first (so palette + menu font + a live video
@@ -82,45 +83,106 @@ picker — no reload.
 Three pieces, each small and reusing existing machinery.
 
 **1. Two-family IWAD detection (d_main.c).** A new `D_DetectIwads()` scans the same
-directory and candidate names `IdentifyVersion()` already uses (d_main.c:673–818)
-and records, independently of which one got loaded:
-- a **DOOM 1** family path if any of `doom.wad` / `doomu.wad` / `doom1.wad` exists
-  (registered / retail / shareware);
-- a **DOOM 2** family path if any of `doom2.wad` / `doom2f.wad` / `plutonia.wad` /
-  `tnt.wad` exists (commercial).
+directory and candidate names `IdentifyVersion()` already uses (the `access()`
+sequence at d_main.c:767–818, candidate paths built at d_main.c:673–690) and
+records **one representative path per family**, independently of which one got
+loaded. When several WADs of a family coexist, the **first** by this fixed
+preference order wins (the order is part of the [unit-test acceptance](#verification)):
+- **DOOM 1** family — preference `doomu.wad` → `doom.wad` → `doom1.wad`
+  (retail → registered → shareware — best/most-complete version first; retail's
+  episode 4 "Thy Flesh Consumed" is a superset. This matches `IdentifyVersion`'s own
+  `access()` order, which checks `doomu` before `doom`, d_main.c:799–811).
+- **DOOM 2** family — preference `doom2.wad` → `doom2f.wad` → `plutonia.wad` →
+  `tnt.wad` (English retail commercial first; `doom2f` is the French `doom2` — note
+  this deliberately diverges from `IdentifyVersion`'s raw order, which checks
+  `doom2f` first).
+
+The per-candidate classification is a **pure helper** `D_IwadFamily(const char*
+filename)` → {DOOM 1, DOOM 2, none} that `D_DetectIwads()` applies to each candidate;
+factoring it out this way gives [Verification](#verification) step 8 a WAD-free,
+directory-free seam to unit-test. **House-rule-3 note:** the candidate path buffers in
+`IdentifyVersion` (declared d_main.c:656–663, built 673–690) are function-local stack
+arrays, so `D_DetectIwads()` cannot literally reuse them — it re-builds the
+`$DOOMWADDIR/<name>` paths. Extracting a shared path-builder is optional; the duplication is small and
+bounded to the candidate-name list.
 
 "Both present" ⇔ a DOOM 1 path **and** a DOOM 2 path were found. The picker offers
 exactly two entries, "DOOM" → the DOOM 1 path, "DOOM II" → the DOOM 2 path. TNT and
-Plutonia are treated as "DOOM II" for v1 (see [Out of scope](#out-of-scope-yagni)).
+Plutonia are folded under "DOOM II" for v1 (see [Out of scope](#out-of-scope-yagni)).
 The engine already knows which *family is currently loaded* from `gamemode`
 (`commercial` ⇒ DOOM 2, else DOOM 1), so the picker can tell "this one" from "the
-other".
+other". With **only one** family present the picker never shows (boot straight in,
+today's behaviour). With **zero** IWADs present nothing changes either — that is the
+existing no-IWAD path (`IdentifyVersion` leaves `gamemode = indetermined` and prints
+the "where to put the WAD" guidance, d_main.c:820+), and `bothPresent` is false, so no
+picker.
+
+**Family-vs-path limitation (v1).** "Continue instantly / relaunch the other" keys
+on the loaded **family** (`gamemode`), not on the specific loaded path. So if the
+loaded commercial WAD differs from the recorded DOOM 2 representative (e.g. the
+engine loaded `tnt.wad` but `doom2.wad` is also on disk), picking "DOOM II"
+continues the *loaded* `tnt.wad` instantly; the recorded `doom2.wad` is reached only
+by first switching to DOOM 1 and back. Reaching a *specific* commercial WAD from the
+menu is out of scope for v1 (consistent with folding TNT/Plutonia under "DOOM II").
 
 **2. In-process picker menu (m_menu.c).** A new `GameSelectDef` menu with two
 items reuses the entire existing menu pipeline — `M_WriteText`/`hu_font` drawing,
 `M_Responder` keyboard+gamepad input (the fork's controller support comes along for
 free), and the title screen behind it. It is opened:
-- **at boot**, from `D_DoomMain` just before `D_StartTitle()` (d_main.c:1302),
-  **iff** both families are present **and** no explicit `-iwad` was passed on the
-  command line (an explicit `-iwad` means "the caller already chose", so skip);
-- **mid-game**, from the new Options → "Return to Game Select" item (decision A2).
+- **at boot**, by wrapping the existing `D_StartTitle()` call at d_main.c:1302 as
+  `D_StartTitle(); M_OpenGameSelect();` — the picker opens **after** the title loop
+  starts, so it draws **on top of** the title screen. This placement inherits the
+  correct guard for free: that `D_StartTitle()` call is only reached when the engine
+  would otherwise sit on the title screen — i.e. `gameaction != ga_loadgame` **and**
+  not (`autostart` or `netgame`) (the `else` branch at d_main.c:1297–1304). So
+  `-warp` (autostart), `-loadgame` (`ga_loadgame`), and net play jump straight into a
+  game via that branch and bypass the picker. `-playdemo`/`-timedemo` also bypass it,
+  but earlier and by a different route — they call `D_DoomLoop()` directly
+  (d_main.c:1276 / 1283) and never reach line 1297 at all. Either way the hook is not
+  reached. `M_OpenGameSelect()` then additionally no-ops unless both families are
+  present **and** no explicit game was chosen on the command line.
+  "Explicit choice" = any of `-iwad`, `-shdev`, `-regdev`, `-comdev` (each makes
+  `IdentifyVersion()` early-return with a specific game, d_main.c:702–765). `gamemode`
+  alone cannot tell an auto-detected DOOM 2 from a `-iwad doom2.wad` one, so the hook
+  detects "explicit choice" by re-checking those four flags with `M_CheckParm`, not by
+  inspecting `gamemode`.
+- **from the Options menu** (decision A2), reachable both from the title screen and
+  mid-game.
 
 Selecting an entry:
-- **same family as loaded** → `M_ClearMenus()` and proceed (boot: title screen;
-  mid-game: back to play). **No relaunch.**
-- **other family** → confirm with the existing `M_StartMessage` yes/no prompt
-  (mid-game abandons the current game, exactly like "End Game"), then **relaunch**
-  `exe -iwad <other-path>`.
+- **same family as loaded** → `M_ClearMenus()` and proceed (title/attract or back to
+  play). **No relaunch.**
+- **other family** → **relaunch** `exe -iwad <other-path>`. The relaunch is confirmed
+  with the existing `M_StartMessage` yes/no prompt **iff a game is in progress**
+  (`usergame` is true — the same guard `M_EndGame` uses, m_menu.c:1140), since only
+  then is there progress to abandon. With no game in progress (the boot picker, or
+  Options opened from the title screen), the relaunch is **unconfirmed** — the pick
+  itself is the confirmation.
 
 Because the relaunch carries an explicit `-iwad`, the child process skips the boot
 picker and lands straight in the chosen game. "Return to Game Select" is the way
 back to the chooser; it does not need a relaunch of its own (the menu opens
 in-process over the running game).
 
-**3. Options menu item (m_menu.c).** One `menuitem_t` — "Return to Game Select" —
-added to `OptionsMenu[]` next to `M_ENDGAM` (m_menu.c:372), calling into the same
-`GameSelectDef` open path. It is hidden (drawn disabled / skipped) when only one
-family is present, so single-game installs see no new clutter.
+**3. Options menu item (m_menu.c).** A "Return to Game Select" entry next to
+`M_ENDGAM` (m_menu.c:372), calling into the same `GameSelectDef` open path. This is
+not literally "one line": the classic menu is a fixed-size table sized by an enum,
+so the edit touches three coupled places — the `options_e` enum (m_menu.c:355–368),
+the `OptionsMenu[]` array (m_menu.c:370–382), and the fixed row y-spacing in
+`M_DrawOptions`/`OptionsDef`. **Single-game installs must see no new item** (not a
+disabled row). The classic engine has no per-item hidden flag, so the concrete
+mechanism is: when only one family is present, register the *original*
+`OptionsMenu`/`OptionsDef` (item count `opt_end`); when both are present, register a
+one-larger variant that includes the extra item. Selecting the mechanism at menu-init
+time avoids adding a hidden-item concept to `M_Responder`/`M_Drawer`.
+
+The Options item is gated on `bothPresent` **only** — deliberately *not* on the
+explicit-choice skip that suppresses the boot picker. The two gates answer different
+questions: the boot picker asks "which game do you want to start?" (skip it if the
+launcher already said, via `-iwad`), whereas "Return to Game Select" asks "switch to
+the other game now?" — still useful after an explicit-`-iwad` launch. So launching
+`-iwad tnt.wad` with `doom.wad` also on disk shows no boot picker but *does* keep the
+Options switch available. This asymmetry is intended.
 
 ## Boot & switch flow
 
@@ -129,46 +191,70 @@ D_DoomMain
   IdentifyVersion()        # loads the auto-detected (or -iwad) IWAD as today
   D_DetectIwads()          # NEW: record DOOM1 path, DOOM2 path (both may be set)
   ... existing init (W_InitMultipleFiles, R_Init, menu, video) ...
-  if bothPresent && no -iwad on cmdline:
-      D_StartTitle()       # title screen up
-      M_OpenGameSelect()   # NEW: picker menu on top, drawn with loaded assets
-  else:
-      D_StartTitle()       # unchanged single-game boot
-  D_DoomLoop()             # never returns
+  if gameaction != ga_loadgame:          # existing d_main.c:1297-1304 structure
+      if autostart || netgame:
+          G_InitNew(...)                 # -warp / net: straight into a game, no picker
+      else:
+          D_StartTitle()                 # title loop up (unchanged)
+          M_OpenGameSelect()             # NEW: no-op unless bothPresent && no explicit
+                                         #      game chosen; else picker on top of title
+  D_DoomLoop()                           # never returns
 
-Pick "the other game"  ->  confirm  ->  M_SaveDefaults()
-                                          I_ShutdownSubsystems()   # video+audio
-                                          relaunch exe -iwad <other>
+Pick "the other game"  ->  [confirm iff usergame]  ->  D_RelaunchWithIwad(other)
+                             # POSIX:   M_SaveDefaults(), then execv  (kernel reclaims A/V)
+                             # Windows: I_Quit teardown minus exit(), then _spawnv + exit
+                             # (see "The relaunch mechanism" for the full per-platform rule)
 Pick "this game"       ->  M_ClearMenus()  (instant, no reload)
 ```
 
 ## The relaunch mechanism (the load-bearing correctness point)
 
-`exec` **replaces the process image immediately** and does **not** run C `atexit`
-handlers, so the engine must shut down cleanly *by hand* before relaunching, or the
-GPU/window/audio device leaks into the child:
+`D_RelaunchWithIwad(otherPath)`. Two facts drive the design: `exec` does **not**
+run C `atexit` handlers (so config must be saved by hand), and the teardown
+requirement differs by platform (below). The engine already has the exact teardown
+sequence to reuse — `I_Quit` (i_system.c:140–148) runs
+`D_QuitNetGame → I_ShutdownSound → I_ShutdownMusic → M_SaveDefaults → I_ShutdownGraphics → exit(0)`.
+The Windows relaunch is "the `I_Quit` body verbatim minus the final `exit(0)`, then
+spawn"; POSIX needs only `M_SaveDefaults` before `execv` (see Step 3).
 
-1. `M_SaveDefaults()` — persist config to `~/.doomrc` (shared across both games,
-   d_main.c:699), so renderer choice, volumes, etc. carry over.
-2. Explicitly tear down the display and audio (the reverse of the boot init:
-   SDL video + the Vulkan device if the 3D back-end is up, and the sound/music
-   device) so the child gets a free window and audio device.
-3. Resolve the current executable's real path (Linux: `readlink("/proc/self/exe")`;
-   Windows: `GetModuleFileNameA`), **not** `myargv[0]` (which may be a bare name or
-   relative path that won't re-exec reliably).
-4. Relaunch:
-   - **POSIX:** `execv(exePath, {exePath, "-iwad", otherPath, NULL})` — replaces the
-     process in place.
-   - **Windows:** `_spawnv(_P_NOWAIT, exePath, argv)` then a clean `exit(0)` — the
-     old process releases its window/device as it exits and the child takes over.
-     (`_execv` on Windows spawns-and-returns rather than replacing in place, so the
-     spawn-then-exit form is the portable choice.)
+**Step 1 — resolve the executable path (both platforms).** Linux:
+`readlink("/proc/self/exe")`; Windows: `GetModuleFileNameA`. **Not** `myargv[0]`
+(may be a bare name found via `$PATH`, or a relative path that won't re-exec after a
+`chdir`). If resolution fails or truncates, fall back to `myargv[0]`; if that is also
+unusable, `I_Error("game-select: cannot locate the engine executable to relaunch")`
+— never proceed to tear down subsystems when there is nothing to exec.
 
-The argv passed is intentionally minimal — just `-iwad <path>`. Per-resolution and
-per-device settings ride in the shared config, not the command line, so they do not
-need forwarding. Original one-shot flags (`-warp`, `-skill`, a `-file` PWAD) are
-**not** forwarded: a game-switch starts that game fresh at its title screen. (This
-is called out as a deliberate limitation, not an oversight.)
+**Step 2 — argv.** `{exePath, "-iwad", otherPath, NULL}`. Intentionally minimal:
+per-resolution/per-device settings ride in the shared config (`~/.doomrc`,
+d_main.c:699), not the command line. Original one-shot flags (`-warp`, `-skill`, a
+`-file` PWAD) are **not** forwarded — a game-switch starts that game fresh at its
+title screen (deliberate limitation, not an oversight).
+
+**Step 3 — relaunch, per platform:**
+
+- **POSIX:** `M_SaveDefaults()` (persist config; `atexit` won't run), then
+  `execv(exePath, argv)`. Manual A/V teardown is **not** required: `execv` replaces
+  the process image, and the kernel reclaims the window, GPU context, and audio
+  device with the old image, so the child boots on a clean slate. `execv` **returns
+  only on failure**; on return, `I_Error("game-select: relaunch failed: %s",
+  strerror(errno))` — do **not** fall through into `D_DoomLoop` with the config
+  half-changed.
+- **Windows:** the parent process **lingers** after `_spawnv`, so it must release the
+  window and audio device *before* the child grabs them. Run the `I_Quit` teardown
+  sequence **minus** `exit(0)` (which frees graphics + audio and saves defaults),
+  **then** `_spawnv(_P_NOWAIT, exePath, argv)`. On success `exit(0)`. On a **negative
+  return** (spawn failed — bad path, `ETXTBSY`, AV lock), `I_Error(...)` — **never
+  the unconditional `exit(0)`**, which would silently quit the running game reporting
+  success. (`_execv` on Windows terminates the parent immediately on success, racing
+  device release against the child; the spawn-then-exit form sequences the handoff.)
+
+**Windows device-handoff ordering (residual risk).** Even with release-before-spawn,
+`_P_NOWAIT` runs parent and child concurrently, so the child could momentarily reach
+audio-device open before the parent's `exit(0)` completes. The child's audio-init
+path must therefore tolerate a transient device-busy. Whether the current
+`I_InitSound` path already degrades gracefully on a busy device is **unverified** and
+is an [open implementation question](#open-implementation-questions-resolve-at-plan-time)
+to confirm at plan time; [Verification](#verification) step 6 exercises this on Windows.
 
 ## Alternatives considered
 
@@ -192,9 +278,12 @@ Each backed by a read of current source (house rule 13):
 - **`-iwad <file>` exists and infers `gamemode` from the filename, returning before
   auto-detect.** d_main.c:702–724 (`commercial`/`shareware`/`retail`/`registered`
   by substring; `D_AddFile(iwad); return;`).
-- **Auto-detect order and candidate paths.** d_main.c:673–818 — `doom2f`, `doom2`,
-  `plutonia`, `tnt`, `doomu`, `doom`, `doom1`, searched under `$DOOMWADDIR` (default
-  `.`). This is the exact set `D_DetectIwads()` reuses.
+- **Auto-detect order and candidate paths.** Candidate paths built at
+  d_main.c:673–690; the `access()` check order at d_main.c:767–818 — `doom2f`,
+  `doom2`, `plutonia`, `tnt`, `doomu`, `doom`, `doom1`, searched under `$DOOMWADDIR`
+  (default `.`). This is the exact candidate set `D_DetectIwads()` reuses (with the
+  family preference order defined in [Approach §1](#approach), which is *not* the
+  raw `access()` order — the picker prefers English `doom2` over French `doom2f`).
 - **The config path is shared across games.** d_main.c:699 sets
   `basedefault = "$HOME/.doomrc"` unconditionally, before the `-iwad` branch — so a
   relaunch preserves settings.
@@ -204,11 +293,13 @@ Each backed by a read of current source (house rule 13):
   point for the boot picker.
 - **`D_StartTitle()` just resets the demo sequence and advances the attract loop.**
   d_main.c:609–614 — nothing there conflicts with opening a menu on top afterwards.
-- **The menu system is the reusable substrate.** `MainMenu[]`/`OptionsMenu[]` and
-  `menu_t`/`menuitem_t` at m_menu.c:266–389; `M_EndGame` already returns to the
-  title via `D_StartTitle()` (m_menu.c:1137–1153); the Options menu's item 0 is
-  `M_ENDGAM` (m_menu.c:372) — the anchor for A2.
-- **`gamestate_t` and the `D_Display` state switch exist.** doomdef.h:141–145;
+- **The menu system is the reusable substrate.** The `menuitem_t`/`menu_t` typedefs
+  are at m_menu.c:146–173; the `MainMenu[]`/`OptionsMenu[]` tables and their `menu_t`
+  defs at m_menu.c:266–392. `M_EndGame` returns to the title via `D_StartTitle()`
+  called from `M_EndGameResponse` (m_menu.c:1127–1135), and guards on `usergame`
+  (m_menu.c:1140); the Options menu's item 0 is `M_ENDGAM` (m_menu.c:372) — the
+  anchor for A2.
+- **`gamestate_t` and the `D_Display` state switch exist.** doomdef.h:139–145;
   `D_Display` at d_main.c:197. (Relevant only if A1-alt needs a new gamestate;
   the recommended A1 avoids one by reusing the menu overlay.)
 
@@ -217,49 +308,74 @@ Each backed by a read of current source (house rule 13):
 These are implementation-level, not design-level; noted so cold-eyes can check the
 plan rather than the spec re-deriving them:
 
-- Exact names of the display/audio teardown calls to invoke before `exec` (the
-  boot init sequence in `D_DoomMain`/`I_InitGraphics`/`I_InitSound` must be read and
-  reversed). The spec asserts *that* teardown is required; the plan pins *which*
-  calls.
+- **Windows audio-busy tolerance.** The relaunch's Windows path can momentarily have
+  parent and child both wanting the audio device (see the relaunch section). Whether
+  `I_InitSound` already degrades gracefully on a transiently-busy device, or needs a
+  short retry, is unverified — confirm at plan time.
 - Whether opening the picker at boot should freeze the attract-demo timer so the
   title page stays put behind it (cosmetic; a one-liner if needed).
 - Whether to persist "last game played" so a cold boot defaults the picker cursor
   to it (nice-to-have; see Out of scope).
 
+- **Recorded IWAD path unreadable at switch time.** The DOOM 1 / DOOM 2 paths are
+  recorded once at boot; if the "other" file is moved/deleted before a switch, the
+  relaunch's `-iwad` will fail. Falls into the relaunch-failure branch (`I_Error`, not
+  a silent `exit`); [Verification](#verification) step 7 covers the failure branch
+  generally. Re-`access()`-checking the path just before relaunch is a cheap optional
+  guard for a friendlier message.
+
+*(Resolved in this spec, no longer open: the pre-relaunch teardown call names — it is
+the `I_Quit` body minus `exit(0)`, i_system.c:140–148, starting with `D_QuitNetGame`;
+and the exec-path fallback — `readlink`/`GetModuleFileNameA`, else `myargv[0]`, else
+`I_Error`.)*
+
 ## Components / affected files
 
-- **d_main.c** — `D_DetectIwads()` (new), stored DOOM1/DOOM2 paths + `bothPresent`
-  flag (new globals or a small struct), the boot-time picker hook before
-  d_main.c:1302, and the relaunch helper `D_RelaunchWithIwad(path)`.
+- **d_main.c** — `D_IwadFamily(filename)` (new, pure classifier), `D_DetectIwads()`
+  (new, scans + records the DOOM1/DOOM2 representative paths + `bothPresent` flag as
+  new globals or a small struct), the boot-time picker hook — `M_OpenGameSelect()`
+  called immediately **after** the `D_StartTitle()` at d_main.c:1302 — and the
+  relaunch helper `D_RelaunchWithIwad(path)`.
 - **d_main.h** (or the relevant shared header) — declarations for the picker-open
   and relaunch entry points the menu calls.
 - **m_menu.c** — `GameSelectDef` menu + its two handlers and draw routine; the
-  Options "Return to Game Select" item (A2) with show/hide on `bothPresent`.
-- **i_video.c / i_sound.c (or i_system.c)** — expose/confirm a clean
-  display+audio shutdown usable before `exec` (may already exist via the quit
-  path; reuse if so).
+  Options "Return to Game Select" item (A2) registered only in the both-present
+  Options variant (per [Approach §3](#approach) — enum + array + row-spacing edits,
+  no runtime hidden-item flag).
+- **i_system.c** — the Windows pre-relaunch teardown reuses the `I_Quit` **body**
+  (i_system.c:140–148, incl. its leading `D_QuitNetGame`) minus the final `exit(0)`;
+  factor that body out into a shared helper so `D_RelaunchWithIwad` and `I_Quit` don't
+  duplicate it. POSIX needs only `M_SaveDefaults` (no A/V teardown). No new shutdown
+  code needed.
 - **No shader, WAD, or renderer-backend changes.**
 
 ## Verification
 
 Manual, in both games (this is a UX/boot feature; the logic is I/O- and
 process-level, so an automated unit test has little to bite on — a small unit test
-over `D_DetectIwads()`'s family-classification of a list of filenames is the one
-worthwhile automated piece, added under `tests/`):
+over the pure `D_IwadFamily()` classifier is the one worthwhile automated piece,
+added under `tests/`):
 
 1. **Both present, cold boot** (no `-iwad`): Game Select appears over the title;
    arrow/gamepad navigation works; "DOOM II" (loaded) continues instantly; restart
    and pick "DOOM" → engine relaunches into DOOM 1.
 2. **Only one present:** no picker, boots straight in (regression: unchanged).
-3. **Explicit `-iwad doom2.wad`:** no picker even with both present.
+3. **Explicit choice skips the picker:** `-iwad doom2.wad` (and each of `-shdev` /
+   `-regdev` / `-comdev`) boots straight in even with both present.
 4. **Mid-game switch:** in DOOM 2, Options → Return to Game Select → "DOOM" →
    confirm → relaunches into DOOM 1; verify renderer/volume settings carried over
    (proves shared-config persistence).
 5. **Switch back:** in DOOM 1, Return to Game Select → "DOOM II" → back in DOOM 2.
 6. **Windows parity** (Charl's box): steps 1 and 4 relaunch cleanly (no orphaned
    window / lost audio device) via the spawn-then-exit path.
-7. `tests/` unit: `D_DetectIwads` classifies each candidate filename into the right
-   family and sets `bothPresent` correctly for representative directory listings.
+7. **Relaunch-failure path:** with a deliberately unresolvable exe path (or a
+   spawn forced to fail), the engine surfaces `I_Error` and does **not** silently
+   `exit(0)` — confirms the failure branch, not just the happy path.
+8. `tests/` unit: (a) `D_IwadFamily()` classifies each candidate filename into the
+   right family (and rejects non-IWAD names); (b) `D_DetectIwads` applies the family
+   **preference order** when several of a family are present (`doomu.wad` beats
+   `doom.wad` beats `doom1.wad`; `doom2.wad` beats `doom2f`/`tnt`/`plutonia`); and
+   (c) sets `bothPresent` correctly for representative directory listings.
 
 ## Out of scope (YAGNI)
 
@@ -270,10 +386,41 @@ worthwhile automated piece, added under `tests/`):
 - **Real `TITLEPIC` thumbnails of each game** in the picker (needs dual-WAD load).
 - **In-process IWAD hot-swap** (the whole reason for the relauncher).
 - **Forwarding one-shot launch flags** across a switch (`-warp`, `-file`, …).
+- **French `doom2f.wad` localisation across a switch.** A relaunch always uses the
+  `-iwad` path, and `IdentifyVersion`'s `-iwad` branch sets `gamemode = commercial`
+  but not `language = french` (French is only set on the auto-detect `doom2f` branch,
+  d_main.c:767–773). So switching *into* `doom2f.wad` via the picker loses the French
+  language selection until the next cold (no-`-iwad`) boot. Accepted v1 limitation;
+  fixable later by having the relaunch also infer/pass language.
 
 ## Cold-eyes loop log
 
-*(To be filled as the /cold-eyes loops run — house rule 14. Loop 2+ runs cold; an
-issue not raised again is the proof the fix held.)*
+*(Loop 2+ runs cold — reviewers are re-briefed with the doc + cited code only, never
+a list of prior findings; entries are count-summaries so a re-read stays independent.)*
 
-- Loop 1: _pending_.
+- **Loop 1 (2026-07-04, 2 reviewers):** 2 HIGH, 5 MEDIUM, several LOW verified and
+  fixed (relaunch failure/teardown correctness, family-precedence + explicit-choice
+  skip conditions, boot-vs-mid-game confirm, a fabricated symbol, and citation slips).
+  Convergent across both reviewers. All fixed in-place; re-running.
+- **Loop 2 (2026-07-04, 2 reviewers):** 0 CRITICAL, 0 HIGH; 3 MEDIUM + a few LOW
+  verified and fixed (incomplete `I_Quit` sequence, flow-diagram vs POSIX-teardown
+  conflict, confirm-rule keyed on `usergame`, ROADMAP drift — superseding note
+  appended, two line-slips, zero-IWAD case). Convergent. Re-running.
+- **Loop 3 (2026-07-04, 2 reviewers):** 0 CRITICAL, 0 HIGH; 4 MEDIUM + a few LOW
+  verified and fixed (deeper integration issues: boot-hook call order + skip set now
+  tied to the real `ga_loadgame`/autostart structure; DOOM 1 preference corrected to
+  retail-first; a pure `D_IwadFamily()` classifier named for the unit test; the
+  residual ROADMAP old-text contradiction edited in-place; French-`doom2f` and
+  stack-local-path-buffer limitations noted). Convergent. All fixed; re-running.
+- **Loop 4 (2026-07-04, 2 reviewers):** 0 findings in the **spec** — both reviewers
+  clean on it. The only verified findings were drift in the ROADMAP bullet's own
+  progress notes (stale DOOM 1 order + loop count from earlier passes) + one LOW spec
+  citation split; ROADMAP note rewritten drift-resistant (points here for the loop
+  record). Re-running to confirm.
+- **Loop 5 (2026-07-04, 2 reviewers):** 0 CRITICAL, 0 HIGH, 0 MEDIUM. Two LOW
+  precision nits (a `-playdemo`/`-timedemo` bypass mis-attributed to the else-branch
+  guard rather than their early `D_DoomLoop()` return; a boot-picker-vs-Options
+  gating asymmetry left undocumented) verified and fixed; ROADMAP↔spec fully
+  reconciled. **Converged** — reached the `--max-loops` cap of 5 with severity having
+  strictly decreased each pass (HIGH+MED → MED → MED → ROADMAP-only → LOW-only) and
+  every code citation independently re-verified line-for-line across passes.
