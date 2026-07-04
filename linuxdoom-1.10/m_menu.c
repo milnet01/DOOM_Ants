@@ -37,6 +37,7 @@ rcsid[] __attribute__((used)) = "$Id: m_menu.c,v 1.7 1997/02/03 22:45:10 b1 Exp 
 #include "dstrings.h"
 
 #include "d_main.h"
+#include "iwad_detect.h"   // DOOM-0060 game-select: IWAD_DOOM1/DOOM2 family codes
 
 #include "i_system.h"
 #include "i_video.h"
@@ -246,6 +247,11 @@ void M_StartMessage(char *string,void *routine,boolean input);
 void M_StopMessage(void);
 void M_ClearMenus (void);
 
+// DOOM-0060 game-select chooser.
+void M_DrawGameSelect(void);
+void M_GameSelectChoose(int choice);
+void M_ReturnToGameSelect(int choice);
+
 
 
 
@@ -271,7 +277,11 @@ menuitem_t MainMenu[]=
     {1,"M_SAVEG",M_SaveGame,'s'},
     // Another hickup with Special edition.
     {1,"M_RDTHIS",M_ReadThis,'r'},
-    {1,"M_QUITG",M_QuitDOOM,'q'}
+    {1,"M_QUITG",M_QuitDOOM,'q'},
+    // DOOM-0060: "Game Select" — no menu-art lump, so it draws as text
+    // (M_DrawMainMenu) and is spliced in by M_Init only when both games are
+    // installed. Lives at index main_end; hidden by the default numitems.
+    {1,"",M_ReturnToGameSelect,'g'}
 };
 
 menu_t  MainDef =
@@ -389,6 +399,35 @@ menu_t  OptionsDef =
     M_DrawOptions,
     60,37,
     0
+};
+
+//
+// GAME SELECT (DOOM-0060): choose DOOM 1 or DOOM 2 when both are installed.
+// Shown at boot over the title screen, and re-entered via the main-menu "Game
+// Select" item. The two rows have no menu-art lumps, so M_DrawGameSelect writes
+// them as text. See docs/specs/DOOM-0060-game-select.md.
+//
+enum
+{
+    gs_doom,        // DOOM 1
+    gs_doom2,       // DOOM 2
+    gs_end
+} gameselect_e;
+
+menuitem_t GameSelectMenu[]=
+{
+    {1,"",M_GameSelectChoose,'d'},
+    {1,"",M_GameSelectChoose,'i'}
+};
+
+menu_t  GameSelectDef =
+{
+    gs_end,
+    &MainDef,           // Back/Esc falls out to the main menu (or closes at boot)
+    GameSelectMenu,
+    M_DrawGameSelect,
+    100,80,
+    gs_doom
 };
 
 //
@@ -914,6 +953,13 @@ void M_MusicVol(int choice)
 void M_DrawMainMenu(void)
 {
     V_DrawPatchDirect (94,2,0,W_CacheLumpName("M_DOOM",PU_CACHE));
+
+    // DOOM-0060: the "Game Select" row (spliced in by M_Init when both games are
+    // installed) has no menu-art lump, so draw it as text like the Options
+    // "Renderer:" row. It is always the last visible item when present.
+    if (D_BothGamesPresent())
+	M_WriteText(MainDef.x, MainDef.y + (MainDef.numitems-1)*LINEHEIGHT,
+		    "Game Select");
 }
 
 
@@ -1153,6 +1199,70 @@ void M_EndGame(int choice)
 }
 
 
+//
+// M_GameSelect (DOOM-0060)
+//
+// GAMESWITCHPROMPT is only shown mid-game, where switching abandons progress
+// (like End Game). PRESSYN comes from dstrings.h.
+#define GAMESWITCHPROMPT	"end this game and switch\nto the other game?\n\n"PRESSYN
+
+// The IWAD path to relaunch into once a mid-game switch is confirmed.
+static const char*	gameSelectSwitchPath;
+
+void M_GameSelectResponse(int ch)
+{
+    if (ch != 'y')
+	return;
+    D_RelaunchWithIwad(gameSelectSwitchPath);   // never returns (re-execs)
+}
+
+// choice: gs_doom (DOOM 1) or gs_doom2 (DOOM 2).
+void M_GameSelectChoose(int choice)
+{
+    int	want   = (choice == gs_doom2) ? IWAD_DOOM2 : IWAD_DOOM1;
+    int	loaded = (gamemode == commercial) ? IWAD_DOOM2 : IWAD_DOOM1;
+
+    if (want == loaded)
+    {
+	// Already playing this game -> just dismiss the chooser and carry on.
+	M_ClearMenus();
+	return;
+    }
+
+    // Switching to the other game means a relaunch. Confirm only when a game is
+    // in progress (there is progress to abandon); at boot / on the title screen
+    // the pick itself is the confirmation.
+    if (usergame)
+    {
+	gameSelectSwitchPath = D_IwadPathForFamily(want);
+	M_StartMessage(GAMESWITCHPROMPT, M_GameSelectResponse, true);
+    }
+    else
+    {
+	D_RelaunchWithIwad(D_IwadPathForFamily(want));   // never returns
+    }
+}
+
+void M_DrawGameSelect(void)
+{
+    M_WriteText(GameSelectDef.x - 28, GameSelectDef.y - 24, "SELECT GAME");
+    M_WriteText(GameSelectDef.x, GameSelectDef.y + LINEHEIGHT*gs_doom,  "DOOM");
+    M_WriteText(GameSelectDef.x, GameSelectDef.y + LINEHEIGHT*gs_doom2, "DOOM II");
+}
+
+// Open the chooser. Called at boot (menuactive still 0) and from the main-menu
+// "Game Select" item (menuactive already 1); setting it again is harmless.
+void M_OpenGameSelect(void)
+{
+    menuactive = 1;
+    M_SetupNextMenu(&GameSelectDef);
+}
+
+void M_ReturnToGameSelect(int choice)
+{
+    choice = 0;
+    M_OpenGameSelect();
+}
 
 
 //
@@ -2172,6 +2282,16 @@ void M_Init (void)
       default:
 	break;
     }
-    
+
+    // DOOM-0060: when both games are installed, add "Game Select" to the main
+    // menu after Quit. Done here so it follows the commercial reshuffle above,
+    // which may have pulled Quit up to a lower index. The item template lives at
+    // MainMenu[main_end]; copy it to the slot right after the last visible item.
+    if (D_BothGamesPresent())
+    {
+	MainMenu[MainDef.numitems] = MainMenu[main_end];
+	MainDef.numitems++;
+	MainDef.y -= 8;         // one more row -> recenter (mirrors the +=8 above)
+    }
 }
 

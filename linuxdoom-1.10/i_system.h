@@ -81,6 +81,10 @@ ticcmd_t* I_BaseTiccmd (void);
 // Clean exit, displays sell blurb.
 void I_Quit (void);
 
+// Clean shutdown WITHOUT exit() — the shared body of I_Quit, reused by the
+// DOOM-0060 game-select relaunch. See i_system.c.
+void I_QuitTeardown (void);
+
 
 // Allocates from low memory under dos,
 // just mallocs under unix

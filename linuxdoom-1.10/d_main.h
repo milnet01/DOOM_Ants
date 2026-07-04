@@ -61,4 +61,13 @@ void D_PageDrawer (void);
 void D_AdvanceDemo (void);
 void D_StartTitle (void);
 
+//
+// DOOM-0060 game-select (see docs/specs/DOOM-0060-game-select.md).
+// Family codes (IWAD_DOOM1 / IWAD_DOOM2) come from iwad_detect.h.
+//
+void D_DetectIwads (void);              // scan for installed IWADs (call once at boot)
+int  D_BothGamesPresent (void);         // 1 iff a DOOM 1 and a DOOM 2 IWAD were found
+const char* D_IwadPathForFamily (int family);   // recorded path for IWAD_DOOM1/DOOM2
+void D_RelaunchWithIwad (const char* iwadpath);  // re-exec the engine into another IWAD
+
 #endif

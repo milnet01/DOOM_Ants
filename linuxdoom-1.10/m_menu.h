@@ -54,6 +54,10 @@ void M_Init (void);
 // does nothing if menu is already up.
 void M_StartControlPanel (void);
 
+// DOOM-0060: open the DOOM 1 / DOOM 2 game-select chooser. Called by D_DoomMain
+// at boot (when both games are installed) and by the main-menu "Game Select" item.
+void M_OpenGameSelect (void);
+
 
 
 

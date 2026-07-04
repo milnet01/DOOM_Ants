@@ -137,13 +137,23 @@ void I_Init (void)
 //
 // I_Quit
 //
-void I_Quit (void)
+// Shut everything down cleanly WITHOUT exiting: net, audio, config save, video.
+// Factored out of I_Quit (DOOM-0060) so the game-select relaunch can reuse the
+// exact same teardown before it re-execs the engine (on Windows, where the old
+// process lingers and must release the window + audio device before the child
+// grabs them).
+void I_QuitTeardown (void)
 {
     D_QuitNetGame ();
     I_ShutdownSound();
     I_ShutdownMusic();
     M_SaveDefaults ();
     I_ShutdownGraphics();
+}
+
+void I_Quit (void)
+{
+    I_QuitTeardown ();
     exit(0);
 }
 

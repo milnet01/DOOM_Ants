@@ -1,10 +1,12 @@
 # DOOM-0060 — Game-select menu: choose DOOM 1 or DOOM 2, switch without relaunching by hand
 
-**Status:** **cold-eyes converged** 2026-07-04 (5 loops — see the [Cold-eyes loop
-log](#cold-eyes-loop-log); CRITICAL/HIGH/MEDIUM all cleared by loop 4, LOW-precision
-only thereafter). Both decisions below confirmed by the user ("go with your
-recommendations"). Cleared for implementation pending a final user spec skim. **Not
-yet implemented.**
+**Status:** **implemented** 2026-07-04 (cold-eyes converged, 5 loops — see the
+[Cold-eyes loop log](#cold-eyes-loop-log)). Both decisions confirmed by the user;
+A2 landed as the **main-menu** variant ("Game Select" item), because the Options
+menu was full (10 rows already reach the screen bottom — an 11th would clip). Builds
+clean (0 warnings) Linux; `game_select_test` green; headless boot verified on both
+the both-games picker path and the explicit-`-iwad` skip path. **Awaiting user
+play-test** (the visual picker + the real relaunch into the other game) before ✅.
 **Roadmap:** DOOM-0060 (📋, `phase-1-build-modernise-share`). Stays 📋 until shipped.
 **Kind:** feature.
 **Depends on:** the existing `-iwad <file>` selector (d_main.c:702–724, already in

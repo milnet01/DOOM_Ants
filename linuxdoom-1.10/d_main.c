@@ -43,9 +43,16 @@ static const char rcsid[] __attribute__((used)) = "$Id: d_main.c,v 1.8 1997/02/0
 #endif
 
 #include <limits.h>		// PATH_MAX (used outside the NORMALUNIX guard)
+#include <errno.h>		// DOOM-0060 relaunch error reporting
+
+#ifdef _WIN32
+#include <windows.h>		// GetModuleFileNameA (DOOM-0060 relaunch)
+#include <process.h>		// _spawnv / _P_NOWAIT
+#endif
 
 #include "doomdef.h"
 #include "doomstat.h"
+#include "iwad_detect.h"	// DOOM-0060 game-select: pure IWAD-family classifier
 
 #include "dstrings.h"
 #include "sounds.h"
@@ -834,6 +841,113 @@ void IdentifyVersion (void)
 }
 
 //
+// DOOM-0060 game-select: detect installed IWADs + relaunch into the other game.
+//
+// D_DetectIwads records one representative path per family so the game-select
+// chooser (m_menu.c) can offer both and relaunch into the other. The pure
+// filename->family classification lives in iwad_detect.h (unit-tested); here we
+// only do the directory scan (I/O) and the relaunch. Independent of which IWAD
+// IdentifyVersion loaded. See docs/specs/DOOM-0060-game-select.md.
+//
+static char	iwadDoom1Path[PATH_MAX];
+static char	iwadDoom2Path[PATH_MAX];
+static boolean	iwadBothPresent;
+
+void D_DetectIwads (void)
+{
+    // IWAD_CANDIDATES (iwad_detect.h) is the preference-ordered candidate list;
+    // D_IwadFamily buckets each into its family and the first present hit per
+    // family wins. (The stack-local path buffers in IdentifyVersion can't be
+    // reused, so the directory paths are rebuilt here from that shared name list.)
+    const char* dir = getenv("DOOMWADDIR");
+    int i;
+
+    if (!dir)
+	dir = ".";
+    iwadDoom1Path[0] = iwadDoom2Path[0] = '\0';
+
+    for (i = 0; IWAD_CANDIDATES[i]; i++)
+    {
+	char	path[PATH_MAX];
+	int	fam  = D_IwadFamily(IWAD_CANDIDATES[i]);
+	char*	slot = (fam == IWAD_DOOM2) ? iwadDoom2Path
+		     : (fam == IWAD_DOOM1) ? iwadDoom1Path : NULL;
+
+	if (!slot || slot[0])           // unknown family, or family already found
+	    continue;
+	snprintf(path, sizeof(path), "%s/%s", dir, IWAD_CANDIDATES[i]);
+	if (!access(path, R_OK))
+	    snprintf(slot, PATH_MAX, "%s", path);
+    }
+    iwadBothPresent = (iwadDoom1Path[0] != '\0' && iwadDoom2Path[0] != '\0');
+}
+
+int D_BothGamesPresent (void)
+{
+    return iwadBothPresent;
+}
+
+const char* D_IwadPathForFamily (int family)
+{
+    return (family == IWAD_DOOM2) ? iwadDoom2Path : iwadDoom1Path;
+}
+
+// Relaunch the engine into a different IWAD in a fresh process (DOOM-0060's
+// chosen approach: a clean boot sidesteps tearing down WAD-global state). The
+// child gets an explicit -iwad, so it skips the game-select picker.
+void D_RelaunchWithIwad (const char* iwadpath)
+{
+    char	exe[PATH_MAX];
+    char*	newargv[4];
+
+    // Resolve our own executable's real path -- myargv[0] may be a bare name
+    // (found via $PATH) or a relative path that won't re-exec after a chdir.
+    exe[0] = '\0';
+#ifdef _WIN32
+    if (GetModuleFileNameA(NULL, exe, sizeof(exe)) == 0)
+	exe[0] = '\0';
+#else
+    {
+	ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+	if (n > 0)
+	    exe[n] = '\0';
+	else
+	    exe[0] = '\0';
+    }
+#endif
+    if (!exe[0])
+    {
+	if (myargv[0] && myargv[0][0])
+	    snprintf(exe, sizeof(exe), "%s", myargv[0]);
+	else
+	    I_Error("game-select: cannot locate the engine executable to relaunch");
+    }
+
+    newargv[0] = exe;
+    newargv[1] = "-iwad";
+    newargv[2] = (char*)iwadpath;
+    newargv[3] = NULL;
+
+#ifdef _WIN32
+    // The parent lingers after _spawnv, so release the window + audio device
+    // first (the I_Quit teardown, which also saves config), then hand off. A
+    // failed spawn must NOT fall through to exit(0) -- that would silently quit
+    // the running game reporting success.
+    I_QuitTeardown();
+    if (_spawnv(_P_NOWAIT, exe, newargv) < 0)
+	I_Error("game-select: could not relaunch %s: %s", exe, strerror(errno));
+    exit(0);
+#else
+    // execv replaces the process image; the kernel reclaims the window, GPU and
+    // audio device with the old image, so only the config must be saved by hand
+    // (atexit does not run across execv). execv returns only on failure.
+    M_SaveDefaults();
+    execv(exe, newargv);
+    I_Error("game-select: relaunch failed: %s", strerror(errno));
+#endif
+}
+
+//
 // Find a Response File
 //
 void FindResponseFile (void)
@@ -920,9 +1034,10 @@ void D_DoomMain (void)
     char                    file[256];
 
     FindResponseFile ();
-	
+
     IdentifyVersion ();
-	
+    D_DetectIwads ();       // DOOM-0060: note which games are installed (for the chooser)
+
     setbuf (stdout, NULL);
     modifiedgame = false;
 	
@@ -1299,7 +1414,17 @@ void D_DoomMain (void)
 	if (autostart || netgame)
 	    G_InitNew (startskill, startepisode, startmap);
 	else
+	{
 	    D_StartTitle ();                // start up intro loop
+	    // DOOM-0060: if both games are installed and the launcher did not
+	    // already pick one (an explicit -iwad / dev flag), show the game-select
+	    // chooser on top of the title screen. This rides the same path that
+	    // reaches D_StartTitle, so -warp/-loadgame/net play never see it.
+	    if (D_BothGamesPresent()
+		&& !M_CheckParm("-iwad") && !M_CheckParm("-shdev")
+		&& !M_CheckParm("-regdev") && !M_CheckParm("-comdev"))
+		M_OpenGameSelect ();
+	}
 
     }
 
