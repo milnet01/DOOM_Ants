@@ -99,6 +99,11 @@ sub-setting):
   the path-traced render (§4.4); the upscaler-*method* is settled (§4.4), while
   spp/render-scale exposure stays open (§9).
 
+  *These three are the Stage-2 **target** menu. Shipped so far: the Renderer and
+  Upscaler controls exist, but the Ray-Tracing axis is today the `~` debug toggle
+  (`rb_rtdebug`), not yet a menu item, and the Upscaler control cycles **Off / TAAU**
+  only — FSR 2 / FSR 3.1 are future entries. §9 tracks the remainder.*
+
 Because RT is now independent of the tier, the 3-value `rendermode_t` enum can no
 longer stand 1:1 for the player choice (it cannot express Ultra-with-RT-off). The
 enum stays frozen and continues to name the **active back-end** (`RB_RASTER3D` =
@@ -136,8 +141,9 @@ pipeline path is a later option, not Stage 2). One dispatch over screen pixels.
   latter wins for DOOM doors, whose wall-height change is non-rigid. This
   deliberately **overrides perf §2's [HIGH]-confidence "no refit"** — that finding
   rests on the premise "nothing in classic DOOM deforms," which DOOM-0049's
-  per-vertex patching disproves (door walls do deform). (DOOM-0008 is itself split
-  the same way — §Approach "instance transform" vs §Geometry "BLAS refit".) The
+  per-vertex patching disproves (door walls do deform). (DOOM-0008 §Approach and
+  §Geometry both state this — rigid movers → TLAS instance transform, moving
+  sectors → per-sector BLAS refit; this spec's §3 is what they defer to.) The
   *only* part left open (§9) is the **granularity**, not whether to refit.
 - **Materials → bindless** *(shipped — build step 1, 2026-06-25)*. The Stage-1
   single R8 atlas (which packed walls, flats *and* sprites — `rb_atlas_t::numsprite`)
@@ -157,7 +163,8 @@ pipeline path is a later option, not Stage 2). One dispatch over screen pixels.
   treat palette colour as albedo); do **not** bake COLORMAP light-diminishing into
   albedo (it double-darkens once GI runs). Tonemap with Khronos **PBR Neutral**
   (preserves DOOM's saturated palette). *PBR Neutral supersedes DOOM-0008's earlier
-  ACES default — a reconciliation DOOM-0008 §"The path tracer" already records
+  ACES default — a reconciliation `docs/specs/DOOM-0008-3d-renderer.md`
+  §"The path tracer" already records
   (`aces_tonemap`, a DOOM-0008 Workbench-formula name not yet in engine code,
   predated the PBR-Neutral choice and is retired as the default operator, returning
   only as an optional "filmic" toggle, never the Stage-2 default).* A
@@ -172,15 +179,21 @@ So split static from dynamic (the central performance lever):
 
 ### 4.1 Static GI bake + dynamic delta
 - **Bake** a converged static-GI solution once per level load (the same ray-query
-  integrator, amortised/async on a worker queue) into a **sector-keyed irradiance
+  integrator, run **synchronously at level load** — `RunGiBake` blocks, waiting
+  idle between each of its 3 bounces) into a **sector-keyed irradiance
   cache** (§4.3). The steady-state (player not firing) frame is then a cache
   lookup + primary visibility — near-zero ray cost.
 - **Dynamic delta:** when a muzzle flash is active, path-trace its **ray-traced
   shadows** for the few active frames only (dynamic-light gating), composited over
   the baked static. Idle frames stay cheap; firing frames pay for the delta.
   Note `player->extralight` is only the *gating signal* (a positionless `int`
-  screen-brighten); the flash's **world position and intensity** are derived from
-  the player viewpoint + weapon muzzle, not from `extralight`.
+  screen-brighten); the flash's **world position** is the view eye
+  (`camPos` = `viewx`/`viewy`/`viewz`) offset **forward** along the view direction
+  and **dropped** below it to the gun barrel (`muzzle = camPos + camDir·MUZZLE_FORWARD
+  − (0,0,MUZZLE_DROP)`, `pathtrace.comp` `muzzleFlashDelta`), while `player->extralight`
+  (set to 1/2 by the weapon fire states in `p_pspr.c`) stays the positionless on/off +
+  brightness gate. So the delta has a real world origin — one that swings with the view
+  — to cast shadows from, even though `extralight` itself carries no position.
 
 ### 4.2 Emission model (from DOOM-0008 spec)
 - Sector `lightlevel` seeds a surface emissive term (brighter sectors emit more).
@@ -199,9 +212,12 @@ So split static from dynamic (the central performance lever):
 
 ### 4.3 DOOM-native optimisations (from the research doc)
 - **REJECT-driven light selection:** use DOOM's `REJECT` sector-visibility lump to
-  cull, per shading point, the emissive sectors that cannot be seen — an exact,
-  tiny NEE candidate set instead of a CDF over all lights. Fall back to a shadow
-  ray where REJECT is conservative.
+  cull, per shading point, the emissive sectors that provably cannot be seen — a
+  conservatively-culled, tiny NEE candidate set instead of a CDF over all lights.
+  REJECT is sector-to-sector visibility, *not* point-exact occlusion, so a
+  surviving candidate still casts a shadow ray to confirm the actual light path.
+  (In the shipped code this cull gates the **omnidirectional sprite-light** NEE loop —
+  `pt_common.glsl`; the GI bake passes it off.)
 - **Sector-keyed irradiance cache:** key the cache by `(subsector, height band)`
   rather than a uniform world hash grid. DOOM sectors are exactly the regions of
   piecewise-constant lighting bounded by walls, so a few probes per subsector
@@ -216,10 +232,12 @@ So split static from dynamic (the central performance lever):
 ### 4.4 Integrator
 1 path/pixel (≈ primary hit + live direct/NEE shadow rays + a *cached* indirect
 lookup — the indirect bounce is baked, §4.1/§4.3, not traced live per pixel) + temporal
-accumulation + motion-vector reprojection · NEE + multiple
-importance sampling (power heuristic) · Lambertian diffuse + cosine sampling (GGX/
-VNDF specular gated to measured need — matte DOOM art rarely needs it) · Russian-
-roulette termination + firefly clamp + NaN guards · **half-resolution lighting**
+accumulation + motion-vector reprojection · NEE (next-event estimation) — **no MIS**:
+the shipped integrator is pure-Lambert, so there is no BSDF-light sampling to weight
+(MIS returns only if the GGX/VNDF specular path below lands) · Lambertian diffuse +
+cosine sampling (GGX/VNDF specular gated to measured need — matte DOOM art rarely
+needs it) · firefly clamp + NaN guards (Russian-roulette termination is moot while the
+live path stays single-bounce) · **half-resolution lighting**
 trace — the live noisy direct/NEE shadow-ray lighting is cast for one pixel per 2×2
 block (the fixed even/even sample — *straight* half-res, not checkerboard; the indirect
 bounce is already baked into the GI cache, §4.3, so the half-res lever applies to the
@@ -230,7 +248,10 @@ upsample at the temporal stage (guided by the full-res G-buffer) that then feeds
 biggest ms lever, near-free on matte art · **A-SVGF**
 (adaptive spatiotemporal variance-guided filtering) denoise (purpose-built for the
 muzzle-flash sudden-light case; clean-room from the paper, Q2RTX as readable GPL
-reference) · **upscale last** — decoupled, denoise-before-upscale, jitter-consistent
+reference). *On disk this ships as three passes that keep the shorter `svgf_*` file
+names — `svgf_temporal` + `svgf_atrous` + `svgf_composite`; the adaptive **A** is the
+step-6 anti-ghosting history-clamp inside `svgf_temporal`, not a separate stage.* ·
+**upscale last** — decoupled, denoise-before-upscale, jitter-consistent
 (the upscaler is fed the same per-frame sub-pixel jitter the path tracer used). No ReSTIR in
 Stage 2 (few lights; its reservoirs are RDNA2's worst register case).
 
@@ -252,8 +273,9 @@ the ceiling here. The selected method persists as its own `m_misc.c` default alo
 the tier + RT axes (§2). **Frame generation is explicitly out of scope for DOOM-0009:**
 FSR 3's frame-gen hooks the present/swapchain, needs HUD/UI composition handling, and is
 coupled to frame pacing — none of which has a clean seam while the engine is present-
-locked to the 35 Hz tic. It ships as its own roadmap item gated behind the render-rate
-decouple (DOOM-0048), not here. The upscaler integrates the FidelityFX SDK (MIT-licensed,
+locked to the 35 Hz tic. It ships as its own roadmap item (**DOOM-0088**) gated behind
+the render-rate decouple (DOOM-0048, now shipped — so the gate is cleared and DOOM-0088
+is unblocked), not here. The upscaler integrates the FidelityFX SDK (MIT-licensed,
 GPL-v2-compatible — confirm against the SDK LICENSE at integration).
 
 ## 5. Shading curves (Vestige Formula Workbench)
@@ -287,8 +309,13 @@ with different meanings — don't conflate across specs.)
   rel-MSE** on the white-furnace + a reference Cornell-style DOOM room (a small
   test scene this spec's implementer authors), measured against a **4096-samples-per-pixel (spp)
   brute-force reference** (the offline convergence point the 1-spp + temporal
-  result is compared to; raise it if 4096 itself still shows visible noise). This
-  is the threshold DOOM-0008 INV-6 explicitly defers here.
+  result is compared to). The reference counts as converged only when **doubling it
+  to 8192 spp shifts the image by < 0.5% rel-MSE** (the same bar); if that self-
+  consistency check fails, raise the reference spp until it holds — an objective
+  test, not a "looks noisy" judgement. This is the threshold DOOM-0008 INV-6
+  explicitly defers here. *(Known coverage gap: the shipped verify exercises the
+  static light-selection path only — `omniStart == emitCount` — so the
+  omnidirectional sprite-light NEE path is not yet covered by this bar; DOOM-0122.)*
 - **INV-7 (no magic constants):** §5.
 - **INV-8 (validation-clean):** zero Vulkan validation-layer errors over a
   multi-second run on every tier path. Must be exercised on a box with
@@ -305,25 +332,50 @@ with different meanings — don't conflate across specs.)
 
 ## 7. Build order (cheapest-first; each step independently verifiable)
 
+*Status audited against on-disk code 2026-07-04: steps 1–5 shipped (step 3 as
+NEE-only — see step 3); step 6 shipped bar the FSR upscaler backends (TAAU only on
+disk); step 7 ongoing (DOOM-0090). MIS and Russian-roulette appear in `formulas.glsl`
+but are **N/A for the shipped pure-Lambert NEE-only integrator**, not pending work
+(the DOOM-0092 research decision); they would return only if a future GGX-specular /
+multi-bounce path lands (§4.4).*
+
 1. **Bindless materials** — *shipped 2026-06-25* (the materials path is now
    bindless-only, no atlas fallback — `r_vulkan.cpp`). Migrated atlas →
    array-of-textures; Solid output unchanged (INV-10). Verified: screenshot parity
    with the atlas path.
-2. **BLAS + TLAS** on the static mesh; white-furnace + intersection test (INV-6/8).
-3. **Direct lighting only:** NEE + MIS + RR + firefly clamp + NaN guards via ray-
-   query, REJECT-culled light set. Reference-image regression (INV-6).
-4. **Static GI bake** into the sector-keyed cache at level load (§4.1, §4.3).
-5. **Dynamic delta:** muzzle-flash analytic light + ray-traced shadows, gated on
-   activity, composited over the baked static. Verify: a muzzle-flash shadow whose
-   *direction tracks the muzzle position* as the player rotates (a positionless
-   screen-brighten would fail this — it guards the §4.1 derivation).
-6. **Half-res direct/NEE trace + A-SVGF** (§4.4), then **upscale** (player-selectable
-   TAAU / FSR 2 / FSR 3.1, §4.4; frame generation excluded — DOOM-0048). Verify: stable
-   image; no visible trailing/smearing of
-   the flash highlight in the frames after it ends (the A-SVGF history clamp),
-   screenshot-compared frame N vs N+3.
-7. **Perf pass** toward the 60 FPS floor; reassess a runtime hash cache + optional
-   ReSTIR GI against measured noise (this tips into Stage 3 / DOOM-0012).
+2. **BLAS + TLAS** — *shipped* (`g.blas`/`g.tlas` in `r_vulkan.cpp`; ray-query
+   traversal `rayQueryInitializeEXT` in `pathtrace.comp`/`pt_common.glsl`, plus a
+   per-frame sprite BLAS and a static sky BLAS as extra TLAS instances).
+   White-furnace + intersection test (INV-6/8).
+3. **Direct lighting only:** — *shipped (NEE-only).* NEE + firefly clamp + NaN guards
+   via ray-query with a genuine `REJECT`-culled light set (`pt_common.glsl` reads the
+   packed REJECT bitmatrix fed by `RB_RejectMatrix`) are wired. **MIS is N/A** — the
+   shipped integrator is pure-Lambert with a cosine-hemisphere bounce, so there is no
+   BSDF-light sampling for MIS to weight (the DOOM-0092 research decision); **Russian-
+   roulette is likewise moot** — the live path is single-bounce (indirect is baked,
+   §4.1), so there is nothing to terminate. Both remain library-only `formulas.glsl`
+   functions (`mis_power_heuristic`, `rr_survival`, no call sites) held for a possible
+   future GGX-specular / multi-bounce path. Reference-image regression (INV-6).
+4. **Static GI bake** — *shipped* into the sector-keyed cache at level load (§4.1,
+   §4.3): `bake.comp` runs a 3-bounce ping-pong per level into one SH-L1 irradiance
+   probe per subsector; the megakernel reads the baked `probeBuf` (not live-traced).
+5. **Dynamic delta:** — *shipped.* `muzzleFlashDelta()` (`pathtrace.comp`) casts a
+   ray-traced shadow from a gun-barrel point light, composited over the baked static
+   and gated on `extralight` (set by the weapon fire states, §4.1). Verify: a
+   muzzle-flash shadow whose *direction tracks the muzzle position* as the player
+   rotates (a positionless screen-brighten would fail this — it guards the §4.1
+   derivation).
+6. **Half-res direct/NEE trace + A-SVGF** — *shipped* (50% render-scale default;
+   three real SVGF passes `svgf_temporal`/`svgf_atrous`/`svgf_composite`, §4.4), then
+   **upscale** — *TAAU shipped; FSR 2 / FSR 3.1 backends pending.* The upscale
+   plumbing is built once behind the TAAU resource contract (`taau.comp`); the FSR
+   backends wire in behind that same contract (frame generation excluded — DOOM-0088,
+   itself gated behind DOOM-0048).
+   Verify: stable image; no visible trailing/smearing of the flash highlight in the
+   frames after it ends (the A-SVGF history clamp), screenshot-compared frame N vs N+3.
+7. **Perf pass** — *ongoing (DOOM-0090)* toward the 60 FPS floor; reassess a runtime
+   hash cache + optional ReSTIR GI against measured noise (this tips into Stage 3 /
+   DOOM-0012).
 
 ## 8. Performance budget (planning; measure on the RX 6600)
 
@@ -347,22 +399,30 @@ traversal speedups are RDNA3/4-only, per the research doc).
 
 ## 9. Open questions (each names the build step that must close it)
 
-- **Bake storage** (gates **build step 4**): per-vertex irradiance vs per-subsector
-  probe volume — pick by the measured bake size/quality on E1M1 + a large WAD
-  *before* starting step 4, so the cache schema isn't built twice.
-- **Moving-sector AS granularity** (**hard gate** on **build step 5**): §3 settles *that*
-  non-rigid wall-height changes need a BLAS refit; the open part is the
-  granularity — refit the whole affected sector's BLAS, or split rigid caps into
-  TLAS instances and refit only the non-rigid jambs. Pick by the measured
-  per-frame AS cost against the shipped DOOM-0049 vertex-patching, before step 5.
-- **HDRI sun extraction** (**soft gate** — step 5 may start without it, deferrable
-  to DOOM-0043): brightest-texel vs a fitted directional — defer to DOOM-0043
-  (deliberate scene lights) if the procedural sun suffices for Stage 2.
-- **Quality sub-setting** (gates the **step-1 menu rework**, else deferred to
-  DOOM-0012): the **upscaler-method** selector (TAAU / FSR 2 / FSR 3.1) is *settled*
-  in §4.4 (the menu axis lands with the step-1 menu rework; the upscale backends wire in
-  build step 6); the still-open part is whether the "Ray Tracing"
-  toggle also exposes spp / render-scale in Stage 2.
+*Three of the four below were **resolved on disk** as their build steps shipped
+(audited 2026-07-04); the choice each made is recorded inline. Only the
+spp/render-scale exposure remains genuinely open.*
+
+- **Bake storage** (build step 4) — **resolved: per-subsector SH-L1 probe.** The bake
+  writes one spherical-harmonic (L1) irradiance probe per subsector (`bake.comp`,
+  `RunGiBake`), keyed triangle → subsector → probe via `triSsBuf` — not the per-vertex
+  alternative.
+- **Moving-sector AS granularity** (build step 5) — **resolved: whole-affected-BLAS
+  refit (the coarse option).** An in-place `ALLOW_UPDATE` refit re-reads the patched
+  vertex buffer on any frame `RB_UpdateMeshHeights` flags a moving door/lift; on DOOM's
+  ~2k-tri meshes it measures well under budget, so splitting rigid caps into separate
+  TLAS instances was judged unnecessary (`r_vulkan.cpp` moving-sector refit). §3 had
+  settled *that* a refit is needed; this settles the *granularity*.
+- **HDRI sun extraction** (soft gate — step 5 shipped without it) — **still open,
+  deferred to DOOM-0043:** brightest-texel vs a fitted directional; the procedural sun
+  suffices for Stage 2, so the extraction defers to DOOM-0043 (deliberate scene lights).
+- **Quality sub-setting** (the Stage-2 menu rework, §2) — **partially resolved.** An **upscaler**
+  menu control shipped (`M_ChangeUpscaler`, `rb_upscaler`) but today cycles only
+  **Off / TAAU**; FSR 2 / FSR 3.1 are future entries on that same control (the method is
+  settled in §4.4 — TAAU shipped, FSR pending). The
+  **Ray Tracing** On/Off axis is today the `~` debug toggle, not yet a dedicated menu
+  item. **Still open:** whether the Ray-Tracing control also exposes spp / render-scale
+  in Stage 2 (else deferred to DOOM-0012).
 
 ---
 
@@ -427,3 +487,4 @@ each pass briefed cold.
 model. No prior-pass findings handed to reviewers — each pass cold.)*
 - **2026-06-28 — §4.4 upscaler-method decision (2 cold passes, 2 lanes each)** — Recorded the player-selectable upscaler decision (custom TAAU / FSR 2 / FSR 3.1; frame-gen deferred to DOOM-0088, gated behind DOOM-0048). Loop 1 (2 lanes): 1 HIGH (§9 dangling "build step 6-d" — §7 has flat steps 1-7), 2 MED (§2 upscaler axis dangling; "no ghosting" untestable), several LOW (A-SVGF/spp/TAAU/FSR/VMA/RRA/DDGI unexpanded; FSR currency/license referents; jitter-consistent undefined). All verified + fixed. Loop 2 (2 lanes): loop-1 fixes held (none resurfaced); surfaced introduced-by-edit nits (m_misc 2-vs-3 defaults, "step 6 perf pass" → step 7, §7-6 frame-gen echo) — all fixed — plus PRE-EXISTING drift orthogonal to the upscaler decision: spec stale vs shipped 6a/6b (formulas/ now exists — fixed; build-step statuses, §2 tier×RT prose repeated 3-4x, A-SVGF vs svgf_* shader naming) — bundled onto DOOM-0081. Per user direction (move on when only verified polish remains, no structural/architectural findings), stopped the loop.
 - **2026-06-28 — §4.4 6-c half-res reconcile (1 quick cold pass)** — Reconciled §4.4 for the build-step-6c scope decision: the live indirect bounce is baked (§4.1/§4.3), so "half-res indirect" became "half-res LIGHTING" — the live direct/NEE shadow-ray trace is cast for one even/even pixel per 2×2 block, reconstructed in the denoiser (joint-bilateral upsample at the temporal stage → à-trous), G-buffer + albedo full-res. One quick cold pass (1 lane): 2 HIGH (§7 step 6 still said "indirect"; §4.4's "+1 indirect bounce" cost formula contradicted the baked-cache reality), 1 MED (à-trous-vs-A-SVGF read as two stages not one), 2 LOW (sample-placement unspecified; sentence density). All verified + fixed: §7 step 6 → "Half-res direct/NEE trace"; line 217 → "cached indirect lookup … baked, not traced live"; à-trous named as the A-SVGF spatial filter; pinned "fixed even/even sample, straight half-res". Per user direction (move on when only verified polish remains), did not re-loop.
+- **2026-07-04 — DOOM-0057 + DOOM-0081 reconciliation (5 cold passes)** — Closed the two deferred doc-fix bundles: DOOM-0057 (align DOOM-0008 §Approach with §Geometry + this spec's §3 on moving-sector AS) and DOOM-0081 (six §3/§4/§7 polish nits). Loop 1 (2 lanes, DOOM-0008 + DOOM-0009): DOOM-0057 confirmed clean by both lanes; surfaced the now-stale §3 "DOOM-0008 is split" parenthetical + pre-existing DOOM-0008 drift (seam described as `R_VulkanBackend()` vs shipped `RB_Vulkan_*` set; settings-model superseded by §2). Loop 2: all loop-1 accuracy fixes held; found H1 — my §7 shipped-status audit now conflicted with §9's "gates step N" framing. Loop 3: §7↔§9 reconciled clean; fixed M1 (upscaler menu is Off/TAAU, not a 3-way method axis), M2 (§7-6 frame-gen cite DOOM-0048 → DOOM-0088), M3 (MIS/RR reframed **N/A** not "pending", per DOOM-0092 — resolves DOOM-0124). Loop 4: verified clean; fixed DOOM-0008 stage-table row + §2 shipped-vs-target note + INV-6 DOOM-0122 coverage-gap disclosure. Loop 5: **0 CRITICAL/HIGH**, doc-vs-code clean; last fix = supersession banner on DOOM-0008's integrator prose (MIS/RR/multi-bounce). **Verified against disk each loop:** muzzle origin (`pathtrace.comp` `muzzleFlashDelta`), synchronous `RunGiBake`, per-subsector SH-L1 bake, whole-BLAS coarse refit, `mis_power_heuristic`/`rr_survival` uncalled, Off/TAAU menu. Deferred by scope decision (surgical doc-fix, not a rewrite): §2 tier×RT prose collapse + §4.4/§3 sentence density + TOC → **DOOM-0168**; residual DOOM-0008 seam/settings-model drift → **DOOM-0167**. Stopped at the rule-14 max-loop cap with only those tracked readability items outstanding.

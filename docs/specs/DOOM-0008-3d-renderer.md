@@ -134,9 +134,13 @@ binary is self-contained.
 The scene is built **once per level** (hooked at the end of `P_SetupLevel`) into
 GPU buffers and a ray-tracing **acceleration structure** (BLAS per mesh, one
 TLAS). Per frame: set the camera from the view globals, refresh dynamic instance
-transforms (doors/lifts/things), trace, accumulate, denoise, composite the UI,
-present. Moving sectors (doors/lifts) update TLAS instance transforms, not BLAS
-geometry; only genuine geometry changes rebuild a BLAS.
+transforms (things/sprites) and refit the BLAS of any moving sector (doors/lifts),
+trace, accumulate, denoise, composite the UI,
+present. Rigid movers (things/sprites) update TLAS instance transforms. Moving
+sectors (doors/lifts) change wall/cap heights *non-rigidly* (§Geometry), so the
+affected sector's BLAS is **refit** (not rebuilt) each active frame — a rigid
+instance transform cannot express a wall-height change; DOOM-0009 §3 resolves this.
+Only new or topology-changing geometry rebuilds a BLAS from scratch.
 
 **Rasterised primary visibility (a performance lever).** Full path tracing is the
 quality target; for performance the primary-visibility hit can be produced by a
@@ -294,6 +298,16 @@ Per pixel, per frame:
 Determinism/quality guards: per-pixel RNG seeded by pixel + frame; safe-math
 guards (from the Workbench GLSL prelude) prevent NaN fireflies; a firefly clamp
 on first-bounce radiance.
+
+*(Superseded — Stage-2 shipping model: DOOM-0009 §3/§4 narrowed this integrator to a
+**pure-Lambert, NEE-only** direct pass with **baked** static GI (per-subsector SH-L1)
+plus a single live direct/shadow bounce — **no** live multi-bounce recursion, **no
+MIS**, and Russian-roulette moot (nothing multi-bounce to terminate), per the DOOM-0092
+research decision. The BRDF / MIS / multi-bounce / Russian-roulette description above —
+and the `MIS power-heuristic (requested)` + `Russian-roulette survival (requested)`
+Workbench curves listed below — are the original DOOM-0008 aspiration, not what ships;
+DOOM-0009 is canonical for the Stage-2 integrator. This matches the corrected Stage-2
+row in the stage table below.)*
 
 ## Formula Workbench integration
 
@@ -477,7 +491,7 @@ Not touched: all `r_*.c` software-renderer internals, all UI drawing logic
 | Stage | Roadmap | Delivers | Ships when |
 |---|---|---|---|
 | 1 | DOOM-0008 | 3D meshes + materials + AS + sprites + UI composite; correct image via primary-ray/G-buffer; "Renderer: 3D" live | Scene renders, validation-clean, selectable |
-| 2 | DOOM-0009 (+ DOOM-0010 seed) | Monte-Carlo path tracer: NEE, MIS, BRDF importance sampling, multi-bounce GI, hardware ray-traced shadows; plus the DOOM-0010 *seed* light (muzzle flash) so dynamic shadows are visible | Path-traced image converges; muzzle-flash dynamic shadows |
+| 2 | DOOM-0009 (+ DOOM-0010 seed) | Monte-Carlo path tracer: NEE direct lighting (pure-Lambert — no MIS/BRDF sampling), **baked** static GI (per-subsector SH-L1) + live direct/shadow rays, hardware ray-traced shadows; plus the DOOM-0010 *seed* light (muzzle flash) so dynamic shadows are visible | Path-traced image converges; muzzle-flash dynamic shadows |
 | 3 | DOOM-0010 (full) / 0011 / 0012 | Full dynamic lighting (coloured/flicker/strobe), volumetrics, and the performance work (temporal/ReSTIR/denoise/adaptive) to the 60 FPS floor | Each its own spec, layered on the Stage-1/2 base |
 
 ## Cold-eyes loop log
