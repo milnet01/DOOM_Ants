@@ -75,9 +75,17 @@ namespace emis {
     //   palLin  : the 256 palette entries pre-decoded to linear RGB (palLin[i][c]).
     // Writes Le to out[3] and returns true iff the tile qualifies as an NEE emitter;
     // a non-emitter leaves out at {0,0,0} (matching the downstream `sum <= 0` skip).
+    //
+    // allowFaint (DOOM-0157): a glowing collectible — a key-skull's green eyes, the
+    // armour bonus's gleam — has only a few near-fullbright texels, below the peak
+    // gate, so it would normally derive Le=0 and stay dark even in a pitch-black room.
+    // When the caller flags such a tile (the sprite_glows allow-list), a tile that
+    // fails the peak gate but still holds a genuine bright speck emits a FAINT Le from
+    // those bright texels instead of zero, so the eyes self-illuminate. The Le is the
+    // bright texels averaged over the whole tile, so a few-texel glow is naturally dim.
     inline bool derive_material_le(const uint8_t* pix, int stride, int ox, int oy,
                                    int w, int h, const float palLin[256][3],
-                                   float out[3])
+                                   float out[3], bool allowFaint = false)
     {
         out[0] = out[1] = out[2] = 0.0f;
         const int total = w * h;
@@ -101,7 +109,13 @@ namespace emis {
         const int minBright = std::max(kEmitterMinBrightTexels,
                                        (int)(kEmitterMinBrightFrac * (float)total));
         if (peakCount < minBright)
-            return false;   // no genuine near-fullbright region — not a light source
+        {
+            // No room-lighting near-fullbright region. A flagged glowing collectible
+            // still self-illuminates from any bright speck it does have (DOOM-0157);
+            // anything else is not a light source.
+            if (!allowFaint || (sr + sg + sb) <= 0.0)
+                return false;
+        }
 
         out[0] = (float)(sr / total) * kEmissiveScale;
         out[1] = (float)(sg / total) * kEmissiveScale;

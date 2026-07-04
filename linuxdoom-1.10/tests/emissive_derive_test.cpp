@@ -14,6 +14,9 @@
 //   3. A lamp (large fullbright region) QUALIFIES strongly — regression guard that the
 //      new peak gate did not dim the lights that already worked.
 //   4. A fully dark tile, and a lone bright speck below the region floor, are REJECTED.
+//   5. DOOM-0157: with allowFaint (a sprite_glows collectible), a few-texel glow that
+//      the strict gate rejects self-illuminates FAINTLY in its own colour — but a
+//      genuinely dark tile still stays dark.
 //
 // Intensity/threshold *tuning* (how faint is "faint", the exact peak level) is an
 // on-HW dial; this test locks the STRUCTURE (who qualifies, and in what colour) that
@@ -127,6 +130,40 @@ int main()
         float le[3] = { -1, -1, -1 };
         bool emitter = emis::derive_material_le(tile.data(), w, 0, 0, w, h, pal, le);
         check(!emitter, "lone speck (< min bright texels): REJECTED, not an emitter");
+    }
+
+    // --- DOOM-0157: glowing collectible (skull eyes) with allowFaint --------------
+    // A key skull's green eyes are a few bright texels on an otherwise dark sprite —
+    // below the peak gate, so a plain derive yields Le=0 and it stays dark. With
+    // allowFaint set (the sprite_glows allow-list), the same speck must self-illuminate
+    // faintly, in its own colour, so it reads in a pitch-black room.
+    {
+        const int w = 40, h = 48;
+        auto tile = make_tile(w, h, PAL_BLACK, PAL_GREEN, 4);   // 4 bright green "eye" texels
+        float strict[3] = { -1, -1, -1 };
+        bool e0 = emis::derive_material_le(tile.data(), w, 0, 0, w, h, pal, strict);
+        check(!e0 && strict[1] == 0.0f,
+              "skull eyes (strict gate): REJECTED, Le=0 (would stay dark)");
+
+        float faint[3] = { -1, -1, -1 };
+        bool e1 = emis::derive_material_le(tile.data(), w, 0, 0, w, h, pal, faint,
+                                           /*allowFaint=*/true);
+        check(e1, "skull eyes (allowFaint): QUALIFIES so the eyes self-illuminate");
+        check(faint[1] > 0.0f && faint[0] == 0.0f && faint[2] == 0.0f,
+              "skull eyes (allowFaint): glow is green (hue-correct)");
+        check(faint[1] < lampR, "skull eyes (allowFaint): glow is faint, not a lamp");
+        std::printf("  [skull]   Le=(%.3f, %.3f, %.3f)\n", faint[0], faint[1], faint[2]);
+    }
+
+    // allowFaint must NOT rescue a genuinely dark tile — no bright speck, no glow.
+    {
+        const int w = 40, h = 48;
+        std::vector<uint8_t> tile((size_t)w * h, PAL_BLACK);
+        float le[3] = { -1, -1, -1 };
+        bool emitter = emis::derive_material_le(tile.data(), w, 0, 0, w, h, pal, le,
+                                                /*allowFaint=*/true);
+        check(!emitter && le[1] == 0.0f,
+              "allowFaint + fully dark: still REJECTED (nothing bright to emit)");
     }
 
     // --- Green switch: colour derivation is hue-agnostic -----------------------------

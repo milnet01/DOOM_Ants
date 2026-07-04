@@ -1029,6 +1029,51 @@ static boolean sprite_glows(spritenum_t s)
     }
 }
 
+// DOOM-0157: sprite_glows() is keyed by spritenum, but the emissive back-end derives
+// per-material Le keyed by ATLAS LUMP (one tile per sprite-lump). This maps each
+// sprite lump back to "belongs to a glowing collectible", so ComputeMaterialEmissive
+// can grant those lumps a guaranteed faint Le — their glowing bit (skull eyes, armour
+// gleam) is only a few texels, below the room-lighting emitter gate, so without this
+// they derive Le=0 and stay dark even in an unlit room. Built once, cached.
+static boolean* sprite_lump_glow;
+
+static void ensure_sprite_glow_map(void)
+{
+    int sp, fr, rot, l;
+    if (sprite_lump_glow || numspritelumps <= 0)
+        return;
+    sprite_lump_glow = calloc((size_t)numspritelumps, sizeof(boolean));
+    if (!sprite_lump_glow)
+        I_Error("ensure_sprite_glow_map: out of memory for %d sprite lumps",
+                numspritelumps);
+    for (sp = 0; sp < numsprites; sp++)
+    {
+        if (!sprite_glows((spritenum_t)sp))
+            continue;
+        for (fr = 0; fr < sprites[sp].numframes; fr++)
+        {
+            spriteframe_t* f = &sprites[sp].spriteframes[fr];
+            for (rot = 0; rot < 8; rot++)
+            {
+                l = f->lump[rot];               // -1 for an unused rotation slot
+                if (l >= 0 && l < numspritelumps)
+                    sprite_lump_glow[l] = true;
+            }
+        }
+    }
+}
+
+// True when sprite-atlas lump `lump` (0-based, as carried on a billboard vertex's
+// texnum) belongs to a glowing collectible. The C++ Vulkan back-end calls this across
+// the seam, so it returns int (r_mesh.h stays DOOM-type-free).
+int RB_SpriteLumpGlows(int lump)
+{
+    ensure_sprite_glow_map();
+    if (!sprite_lump_glow || lump < 0 || lump >= numspritelumps)
+        return 0;
+    return sprite_lump_glow[lump] ? 1 : 0;
+}
+
 int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts)
 {
     // Camera right vector in world space, matching Mat4LookAt with up = +z:

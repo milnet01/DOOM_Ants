@@ -240,6 +240,14 @@ void RB_FreeAtlas(rb_atlas_t* atlas);
 // walls [0,numwall), flats next, sprites last.
 int RB_MaterialCount(void);
 
+// DOOM-0157: does sprite-atlas lump `lump` (0-based; the sprite id is numwall +
+// numflat + lump) belong to a glowing collectible (a key skull, armour/health bonus,
+// powerup sphere)? The emissive back-end grants these a guaranteed faint per-material
+// Le so their few-texel glow (skull eyes, armour gleam) self-illuminates in a dark
+// room, where the generic near-fullbright emitter gate would derive Le=0. Returns
+// 1/0; -1-out-of-range and pre-R_Init lumps return 0.
+int RB_SpriteLumpGlows(int lump);
+
 // WAD-global PLAYPAL (palette 0): 256 straight-RGB triples, pointing at the
 // cached lump. The back-end builds its colour LUT from this at init so the 2D
 // HUD/menu overlay can composite from the very first frame -- the title/demo
