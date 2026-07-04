@@ -8,6 +8,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Game-select boot menu: choose DOOM 1 or DOOM 2, switch back without relaunching by hand.** (DOOM-0060)
+  When both DOOM 1 and DOOM 2 are installed, a startup chooser lets you pick which to play, and you can switch games mid-session from the main menu without relaunching by hand. The app remembers the last game you played and defaults to it next launch. If only one game is installed it boots straight in.
+
 - **Name the gamepad confirm button in the Quit prompt, per controller family.** (DOOM-0161)
   The "quit?" box now tells controller players which button to press to confirm, and shows the right name for their pad — "A" on an Xbox pad, "X" on a PlayStation pad.
 
