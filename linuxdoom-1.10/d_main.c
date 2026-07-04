@@ -46,6 +46,9 @@ static const char rcsid[] __attribute__((used)) = "$Id: d_main.c,v 1.8 1997/02/0
 #include <errno.h>		// DOOM-0060 relaunch error reporting
 
 #ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN	// exclude <rpcndr.h>, which typedefs `boolean`
+				// (unsigned char) and clashes with doomtype.h's
+				// `typedef enum {false,true} boolean`
 #include <windows.h>		// GetModuleFileNameA (DOOM-0060 relaunch)
 #include <process.h>		// _spawnv / _P_NOWAIT
 #endif
