@@ -1254,6 +1254,10 @@ void M_DrawGameSelect(void)
 // "Game Select" item (menuactive already 1); setting it again is harmless.
 void M_OpenGameSelect(void)
 {
+    // DOOM-0060 remember-last-game: start the cursor on the currently-loaded game
+    // (which is the last one played, since the engine defaults to it), so a single
+    // select press just continues it.
+    GameSelectDef.lastOn = (gamemode == commercial) ? gs_doom2 : gs_doom;
     menuactive = 1;
     M_SetupNextMenu(&GameSelectDef);
 }

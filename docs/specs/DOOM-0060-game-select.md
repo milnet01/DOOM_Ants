@@ -383,8 +383,15 @@ added under `tests/`):
 
 - **TNT / Plutonia as their own picker entries.** v1 folds them under "DOOM II"
   (they *are* commercial DOOM 2 mapsets). A four-way picker is a later nicety.
-- **Remembering the last game across a full quit/relaunch** (cold boot always
-  auto-detects). Optional config key later.
+- ~~Remembering the last game across a full quit/relaunch~~ — **implemented
+  2026-07-04** (user request): the engine records the loaded IWAD path in
+  `$HOME/.doom_ants_lastgame` (`D_WriteLastGame` in `D_DoomMain`) and, on a
+  no-`-iwad` boot, defaults to it (`D_ReadLastGame` in `IdentifyVersion`, checked
+  after the dev flags and before the doom2-first auto-detect; a stored path that no
+  longer exists self-heals to auto-detect). The boot chooser still shows (Option A),
+  now pre-selecting the loaded=last game so a single select press continues it
+  (`M_OpenGameSelect` sets `GameSelectDef.lastOn`). A one-line change (skip the boot
+  chooser when a game is remembered) would make this Option B if desired.
 - **Real `TITLEPIC` thumbnails of each game** in the picker (needs dual-WAD load).
 - **In-process IWAD hot-swap** (the whole reason for the relauncher).
 - **Forwarding one-shot launch flags** across a switch (`-warp`, `-file`, …).

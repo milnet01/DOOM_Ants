@@ -647,6 +647,68 @@ void D_AddFile (char *file)
     wadfiles[numwadfiles] = newfile;
 }
 
+// DOOM-0060: infer gamemode from an IWAD filename. Shared by the -iwad path and
+// the remembered-last-game path.
+static GameMode_t D_InferGamemode (const char* iwadpath)
+{
+    const char* base = strrchr(iwadpath, '/');
+    base = base ? base + 1 : iwadpath;
+    if (strstr(base,"doom2") || strstr(base,"tnt") || strstr(base,"plutonia"))
+	return commercial;
+    if (strstr(base,"doom1"))
+	return shareware;
+    if (strstr(base,"doomu"))
+	return retail;
+    return registered;
+}
+
+// DOOM-0060 "remember last game": the app records which IWAD it last loaded in
+// $HOME/.doom_ants_lastgame and defaults to it on the next launch, instead of the
+// doom2.wad-first auto-detect. Best-effort — a missing/unreadable file, a
+// read-only HOME, or a stored path that no longer exists all fall back cleanly.
+static void D_LastGameFile (char* out, size_t n)
+{
+    const char* home = getenv("HOME");
+#ifdef _WIN32
+    if (!home) home = getenv("USERPROFILE");
+#endif
+    if (!home) home = ".";
+    snprintf(out, n, "%s/.doom_ants_lastgame", home);
+}
+
+static int D_ReadLastGame (char* out, size_t n)
+{
+    char	file[PATH_MAX];
+    FILE*	f;
+    size_t	len;
+
+    D_LastGameFile(file, sizeof(file));
+    f = fopen(file, "r");
+    if (!f)
+	return 0;
+    if (!fgets(out, (int)n, f)) { fclose(f); return 0; }
+    fclose(f);
+    len = strlen(out);
+    while (len > 0 && (out[len-1] == '\n' || out[len-1] == '\r' || out[len-1] == ' '))
+	out[--len] = '\0';
+    return out[0] != '\0';
+}
+
+static void D_WriteLastGame (const char* iwadpath)
+{
+    char	file[PATH_MAX];
+    FILE*	f;
+
+    if (!iwadpath || !iwadpath[0])
+	return;
+    D_LastGameFile(file, sizeof(file));
+    f = fopen(file, "w");
+    if (!f)
+	return;                 // read-only HOME etc. -> remembering is simply off
+    fprintf(f, "%s\n", iwadpath);
+    fclose(f);
+}
+
 //
 // IdentifyVersion
 // Checks availability of IWAD files by name,
@@ -715,16 +777,7 @@ void IdentifyVersion (void)
 	if (iwadparm && iwadparm < myargc-1)
 	{
 	    char* iwad = myargv[iwadparm+1];
-	    char* base = strrchr(iwad, '/');
-	    base = base ? base+1 : iwad;
-	    if (strstr(base,"doom2") || strstr(base,"tnt") || strstr(base,"plutonia"))
-		gamemode = commercial;
-	    else if (strstr(base,"doom1"))
-		gamemode = shareware;
-	    else if (strstr(base,"doomu"))
-		gamemode = retail;
-	    else
-		gamemode = registered;
+	    gamemode = D_InferGamemode(iwad);
 	    D_AddFile (iwad);
 	    return;
 	}
@@ -769,6 +822,19 @@ void IdentifyVersion (void)
 	D_AddFile (DEVMAPS"cdata/pnames.lmp");
 	strcpy (basedefault,DEVDATA"default.cfg");
 	return;
+    }
+
+    // DOOM-0060: prefer the game the player last loaded (remembered across runs)
+    // over the doom2-first auto-detect below. A stored path that no longer exists
+    // just falls through to auto-detect.
+    {
+	char last[PATH_MAX];
+	if (D_ReadLastGame(last, sizeof(last)) && !access(last, R_OK))
+	{
+	    gamemode = D_InferGamemode(last);
+	    D_AddFile (last);
+	    return;
+	}
     }
 
     if ( !access (doom2fwad,R_OK) )
@@ -1037,6 +1103,10 @@ void D_DoomMain (void)
 
     IdentifyVersion ();
     D_DetectIwads ();       // DOOM-0060: note which games are installed (for the chooser)
+    // DOOM-0060: remember the game that just loaded, so the next launch defaults to
+    // it instead of the doom2-first auto-detect. wadfiles[0] is the IWAD.
+    if (gamemode != indetermined)
+	D_WriteLastGame (wadfiles[0]);
 
     setbuf (stdout, NULL);
     modifiedgame = false;
