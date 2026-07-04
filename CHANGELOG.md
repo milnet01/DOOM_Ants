@@ -36,6 +36,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Fix the DOOM-0060 game-select Windows cross-build (windows.h `boolean` clash).** (DOOM-0166)
+  The DOOM 1 / DOOM 2 chooser could not be compiled for Windows at all — this fixes that so it can be tested on Windows.
+
 - **Draw the DOOM-0141 sky occluder in the raster view too, so distant geometry stops floating there.** (DOOM-0162)
   The raster 3D view (Solid tier / ~ toggle) now hides distant geometry behind the sky the same way the ray-traced view does, so far-off buildings no longer appear to float. The DOOM-0141 sky occluder mesh is drawn depth-tested in the raster pass via a new world-space sky-dome flag, and the DOOM-0143 below-horizon fog fade is mirrored into the raster sky shader.
 
