@@ -111,6 +111,10 @@ I_PlaySong
 void I_StopSong(int handle);
 // See above (register), then think backwards
 void I_UnRegisterSong(int handle);
+// DOOM-0165: non-zero if the given song is actually playing. Lets s_sound.c
+// confirm a music-start succeeded (an SDL_mixer/FluidSynth cold warm-up can
+// silently fail the first start after launch) so it can retry.
+int I_QrySongPlaying(int handle);
 
 
 

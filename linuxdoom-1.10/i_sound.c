@@ -740,13 +740,25 @@ void I_PlaySong(int handle, int looping)
   if (!s)
     return;
   // -1 loops forever; 1 plays the song once.
-  Mix_PlayMusic(s->music, looping ? -1 : 1);
+  // DOOM-0165: log a start failure (a cold SDL_mixer/FluidSynth warm-up can fail
+  // the very first play after launch); s_sound.c retries via I_QrySongPlaying.
+  if (Mix_PlayMusic(s->music, looping ? -1 : 1) < 0)
+    fprintf(stderr, "I_PlaySong: could not start music (%s)\n", Mix_GetError());
   // DOOM-0047: re-apply the music volume AFTER starting playback. SDL2_mixer's
   // MIDI backend (notably on Windows) begins a freshly-played track at full volume
   // and ignores a Mix_VolumeMusic set before playback started, so the saved/menu
   // level must be pushed again here. Otherwise music blared at max until the slider
   // was first touched -- which also drowned the effects ("SFX too soft on Windows").
   I_SetMusicVolume(snd_MusicVolume);
+}
+
+// DOOM-0165: report whether the given song is actually playing. Used by
+// s_sound.c to confirm a music-start took hold; a cold FluidSynth warm-up can
+// fail the first start after launch, in which case the caller retries.
+int I_QrySongPlaying(int handle)
+{
+  song_t* s = song_for(handle);
+  return (music_initialised && s) ? Mix_PlayingMusic() : 0;
 }
 
 void I_PauseSong(int handle)

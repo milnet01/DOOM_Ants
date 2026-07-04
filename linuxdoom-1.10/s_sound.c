@@ -123,6 +123,20 @@ static boolean		mus_paused;
 // music currently being played
 static musicinfo_t*	mus_playing=0;
 
+// DOOM-0165: a music-start can silently fail once on a cold launch while
+// SDL_mixer/FluidSynth warms its soundfont (an immediate relaunch always works,
+// because the second launch hits a warm cache). Rather than leave the title
+// silent -- and rather than let the engine believe silence is "playing" -- we
+// keep the requested track pending and re-attempt it a few times a short wait
+// apart, mirroring what that manual relaunch does. Cleared on success or an
+// explicit S_StopMusic.
+static musicinfo_t*	mus_pending=0;
+static int		mus_pending_looping;
+static int		mus_pending_at_ms;	// I_GetTimeMS() when the retry is due
+static int		mus_retries_left;
+#define MUS_RETRY_MAX		4
+#define MUS_RETRY_DELAY_MS	400
+
 // following is set
 //  by the defaults code in M_misc:
 // number of channels available
@@ -150,6 +164,9 @@ S_AdjustSoundParams
   int*		pitch );
 
 void S_StopChannel(int cnum);
+
+// DOOM-0165: shared music-start (register + play + verify + cold-start retry).
+static void S_StartMusicInfo(musicinfo_t* music, int looping);
 
 
 
@@ -605,6 +622,19 @@ void S_UpdateSounds(void* listener_p)
 	    }
 	}
     }
+
+    // DOOM-0165: retry a cold-start music-start that did not take hold. The wait
+    // is wall-clock (I_GetTimeMS), so it is independent of the (possibly uncapped)
+    // frame rate this is called at. S_StartMusicInfo re-arms if it fails again,
+    // until the MUS_RETRY_MAX budget set by the original request runs out.
+    if (mus_pending && I_GetTimeMS() >= mus_pending_at_ms)
+    {
+	musicinfo_t*	m = mus_pending;
+	int		loop = mus_pending_looping;
+	mus_pending = 0;
+	S_StartMusicInfo(m, loop);
+    }
+
     // kill music if it is a single-play && finished
     // if (	mus_playing
     //      && !I_QrySongPlaying(mus_playing->handle)
@@ -646,27 +676,19 @@ void S_StartMusic(int m_id)
     S_ChangeMusic(m_id, false);
 }
 
-void
-S_ChangeMusic
-( int			musicnum,
-  int			looping )
+//
+// S_StartMusicInfo
+// DOOM-0165: the one place music is registered + played, shared by S_ChangeMusic
+// and the cold-start retry in S_UpdateSounds. Resolves the lump, registers and
+// plays the song, then verifies it actually started (I_QrySongPlaying). If it
+// did not -- an SDL_mixer/FluidSynth cold warm-up can fail the first start after
+// launch -- it undoes the half-done start, leaves mus_playing NULL (so nothing
+// treats the silence as "playing"), and schedules a short retry. mus_retries_left
+// (armed by the original S_ChangeMusic request) bounds the attempts.
+//
+static void S_StartMusicInfo(musicinfo_t* music, int looping)
 {
-    musicinfo_t*	music;
     char		namebuf[9];
-
-    if ( (musicnum <= mus_None)
-	 || (musicnum >= NUMMUSIC) )
-    {
-	I_Error("Bad music number %d", musicnum);
-    }
-    else
-	music = &S_music[musicnum];
-
-    if (mus_playing == music)
-	return;
-
-    // shutdown old music
-    S_StopMusic();
 
     // get lumpnum if neccessary
     if (!music->lumpnum)
@@ -682,12 +704,74 @@ S_ChangeMusic
     // play it
     I_PlaySong(music->handle, looping);
 
-    mus_playing = music;
+    if (music->handle && I_QrySongPlaying(music->handle))
+    {
+	// started cleanly
+	mus_playing = music;
+	mus_pending = 0;
+	return;
+    }
+
+    // Cold-start failure: undo the half-done start so a retry is clean.
+    if (music->handle)
+    {
+	I_StopSong(music->handle);
+	I_UnRegisterSong(music->handle);
+	music->handle = 0;
+    }
+    if (music->data)
+    {
+	Z_ChangeTag(music->data, PU_CACHE);
+	music->data = 0;
+    }
+
+    if (mus_retries_left > 0)
+    {
+	mus_retries_left--;
+	mus_pending = music;
+	mus_pending_looping = looping;
+	mus_pending_at_ms = I_GetTimeMS() + MUS_RETRY_DELAY_MS;
+	fprintf(stderr, "S_ChangeMusic: music did not start; retrying in "
+		"%d ms (%d attempt(s) left)\n", MUS_RETRY_DELAY_MS, mus_retries_left);
+    }
+    else
+    {
+	mus_pending = 0;
+	fprintf(stderr, "S_ChangeMusic: music failed to start after %d attempts\n",
+		MUS_RETRY_MAX);
+    }
+}
+
+void
+S_ChangeMusic
+( int			musicnum,
+  int			looping )
+{
+    musicinfo_t*	music;
+
+    if ( (musicnum <= mus_None)
+	 || (musicnum >= NUMMUSIC) )
+    {
+	I_Error("Bad music number %d", musicnum);
+    }
+    else
+	music = &S_music[musicnum];
+
+    if (mus_playing == music)
+	return;
+
+    // shutdown old music (also cancels any pending cold-start retry)
+    S_StopMusic();
+
+    // DOOM-0165: (re)arm the retry budget for this fresh request, then start.
+    mus_retries_left = MUS_RETRY_MAX;
+    S_StartMusicInfo(music, looping);
 }
 
 
 void S_StopMusic(void)
 {
+    mus_pending = 0;		// DOOM-0165: cancel any queued cold-start retry
     if (mus_playing)
     {
 	if (mus_paused)
