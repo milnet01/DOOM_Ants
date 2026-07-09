@@ -1,4 +1,6 @@
 #version 450
+#extension GL_EXT_buffer_reference     : require
+#extension GL_EXT_scalar_block_layout  : require
 //
 // DOOM-0008 Stage 1 — primary-visibility vertex shader. Transforms the level
 // mesh (r_mesh.c, world units: x east, y north, z up) by the camera's
@@ -10,6 +12,11 @@
 // shade term.
 //
 
+// DOOM-0170 L1a: the fragment stage reads baked GI probes through these; the vertex
+// stage ignores them, but the push block must match mesh.frag byte-for-byte.
+layout(buffer_reference, scalar) readonly buffer ProbesRO { float p[]; };
+layout(buffer_reference, scalar) readonly buffer TriSs    { uint  s[]; };
+
 layout(push_constant) uniform Push {
     mat4  mvp;          // projection * view, column-major (Vulkan clip space)
     float extralight;   // muzzle-flash view brighten, added to every shade [0,1]
@@ -20,6 +27,9 @@ layout(push_constant) uniform Push {
     int   numWall;      // material-id offsets (fragment-only; the vertex stage
     int   numFlat;      // ignores them, but the block must match mesh.frag's)
     float flashlight;   // DOOM-0044 headlamp on/off (1=on); Solid raster cone
+    ProbesRO probes;    // DOOM-0170 L1a (fragment-only; block must match mesh.frag)
+    TriSs    triSs;
+    uint     probeCount;
 } pc;
 
 layout(location = 0) in vec3  inPos;

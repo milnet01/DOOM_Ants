@@ -3129,9 +3129,11 @@ void CreatePipeline()
     VkPushConstantRange pcr = {};
     pcr.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     pcr.offset = 0;
-    pcr.size = 24 * sizeof(float);   // mat4 MVP + extralight + sky yaw + camera xyz
+    pcr.size = 29 * sizeof(float);   // mat4 MVP + extralight + sky yaw + camera xyz
                                      // + numWall/numFlat (material-id offsets)
                                      // + flashlight on/off (DOOM-0044)
+                                     // + DOOM-0170 L1a: probes/triSs device addrs
+                                     //   (2x u64) + probeCount (u32) = 116 B (<128 floor)
 
     VkPipelineLayoutCreateInfo plci = {};
     plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -5252,7 +5254,7 @@ extern "C" void RB_Vulkan_Present(void)
         // shade) and the view yaw (mesh.frag pans the sky by it). Push constants
         // and descriptor sets are layout-scoped, so they outlive the pipeline
         // binds below — set them once for both the sky and world pipelines.
-        float pcData[24];
+        float pcData[29] = {};
         std::memcpy(pcData, g.viewProj, 16 * sizeof(float));
         pcData[16] = g.lastView.extralight;
         pcData[17] = g.lastView.angle;
@@ -5264,9 +5266,19 @@ extern "C" void RB_Vulkan_Present(void)
         std::memcpy(&pcData[21], &g.matNumWall, sizeof(int));
         std::memcpy(&pcData[22], &g.matNumFlat, sizeof(int));
         pcData[23] = rb_flashlight ? 1.0f : 0.0f;   // DOOM-0044 raster flashlight cone
+        // DOOM-0170 L1a: baked-probe indirect bounce in the raster path. Pass the
+        // probe + triSs buffers by device address (8-byte aligned at float 24/26)
+        // and the probe count (float 28). Zero addr/count when the bake is absent
+        // (non-RT GPU) so mesh.frag falls back to the plain sector-lit look.
+        uint64_t probeAddr = (g.probeBuf && g.probeCount) ? BufferAddress(g.probeBuf) : 0;
+        uint64_t triSsAddr = (g.triSsBuf && g.probeCount) ? BufferAddress(g.triSsBuf) : 0;
+        uint32_t probeN    = (probeAddr && triSsAddr) ? g.probeCount : 0u;
+        std::memcpy(&pcData[24], &probeAddr, sizeof(uint64_t));
+        std::memcpy(&pcData[26], &triSsAddr, sizeof(uint64_t));
+        std::memcpy(&pcData[28], &probeN,    sizeof(uint32_t));
         vkCmdPushConstants(g.cmd, g.pipelineLayout,
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, 24 * sizeof(float), pcData);
+                           0, 29 * sizeof(float), pcData);
 
         VkDeviceSize off = 0;
         // Sky first, behind everything: depth-off pipeline, the 6 verts at the
