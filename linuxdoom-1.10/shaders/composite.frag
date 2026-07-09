@@ -11,7 +11,13 @@ layout(location = 0) out vec4 outColor;
 
 layout(set = 0, binding = 0) uniform sampler2D sceneTex;
 
+// DOOM-0170 L2a step 2: the world is drawn into the [0,uvScale] corner of a
+// full-size scene target (render-scale sub-rectangle). Sample that corner and let
+// the linear+clamp sampler upscale it to the full swapchain. uvScale = (1,1) at
+// 100% render scale, so the picture is byte-identical to the full-res path.
+layout(push_constant) uniform Push { vec2 uvScale; } pc;
+
 void main()
 {
-    outColor = vec4(texture(sceneTex, vUV).rgb, 1.0);
+    outColor = vec4(texture(sceneTex, vUV * pc.uvScale).rgb, 1.0);
 }

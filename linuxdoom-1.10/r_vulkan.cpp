@@ -280,12 +280,16 @@ struct VulkanState
 
     // DOOM-0170 L2a composite pass: its own 1-sampler descriptor set (the scene target),
     // kept separate from g.dsLayout whose variable-count material array must stay the last
-    // binding. compositePipeLayout binds only this set (no push constants).
+    // binding. compositePipeLayout binds this set + a vec2 push constant (the
+    // render-scale UV fraction the composite upscales from -- L2a step 2).
     VkPipeline            compositePipeline   = VK_NULL_HANDLE;
     VkPipelineLayout      compositePipeLayout = VK_NULL_HANDLE;
     VkDescriptorSetLayout compositeDsLayout   = VK_NULL_HANDLE;
     VkDescriptorPool      compositeDsPool     = VK_NULL_HANDLE;
     VkDescriptorSet       compositeDs         = VK_NULL_HANDLE;
+    // DOOM-0170 L2a step 2: linear + clamp sampler for the composite's upscale of the
+    // render-scaled scene (texSampler is nearest+repeat, wrong for a smooth upscale).
+    VkSampler             compositeSampler    = VK_NULL_HANDLE;
 
     VkCommandPool   cmdPool = VK_NULL_HANDLE;
     VkCommandBuffer cmd     = VK_NULL_HANDLE;
@@ -1074,7 +1078,31 @@ void CreateSwapchain()
     sci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;   // single graphics+present queue
     sci.preTransform = caps.currentTransform;
     sci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-    sci.presentMode = VK_PRESENT_MODE_FIFO_KHR;         // always supported; vsync
+    // Present mode: prefer MAILBOX so the render loop runs flat-out and shows its
+    // true frame rate with the lowest input lag and no tearing -- on a high-refresh
+    // monitor this delivers the full rate, and on a 60 Hz panel the engine still
+    // runs ahead of the display (snappier controls, honest FPS number). FIFO (plain
+    // vsync, always supported) is the fallback when MAILBOX is unavailable. Neither
+    // caps below the monitor's refresh -- the old FIFO-only path already rose to
+    // whatever the display could show; MAILBOX just stops it blocking on vsync.
+    VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;   // guaranteed present
+    {
+        uint32_t pmCount = 0;
+        vkGetPhysicalDeviceSurfacePresentModesKHR(g.phys, g.surface, &pmCount, nullptr);
+        std::vector<VkPresentModeKHR> modes(pmCount);
+        vkGetPhysicalDeviceSurfacePresentModesKHR(g.phys, g.surface, &pmCount, modes.data());
+        for (VkPresentModeKHR m : modes)
+            if (m == VK_PRESENT_MODE_MAILBOX_KHR) { presentMode = m; break; }
+    }
+    sci.presentMode = presentMode;
+    // MAILBOX needs a third image to hold the queued-but-not-presented frame; bump
+    // the count if the surface minimum left us at two (clamped to the max below).
+    if (presentMode == VK_PRESENT_MODE_MAILBOX_KHR && sci.minImageCount < 3)
+    {
+        sci.minImageCount = 3;
+        if (caps.maxImageCount && sci.minImageCount > caps.maxImageCount)
+            sci.minImageCount = caps.maxImageCount;
+    }
     sci.clipped = VK_TRUE;
     sci.oldSwapchain = g.swapchain;
 
@@ -3179,6 +3207,21 @@ void CreateDescriptors()
     sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     Check(vkCreateSampler(g.device, &sci, nullptr, &g.texSampler), "vkCreateSampler");
 
+    // DOOM-0170 L2a step 2: the composite samples a render-scaled scene target and
+    // upscales it to the swapchain, so it wants linear filtering (smooth, not blocky)
+    // and clamp-to-edge (the scene fills only the [0,scale] corner of a full-size
+    // image -- repeat would fold the far edge back in at the seam).
+    VkSamplerCreateInfo lci = {};
+    lci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    lci.magFilter = VK_FILTER_LINEAR;
+    lci.minFilter = VK_FILTER_LINEAR;
+    lci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    lci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    lci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    lci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    Check(vkCreateSampler(g.device, &lci, nullptr, &g.compositeSampler),
+          "vkCreateSampler(composite)");
+
     // DOOM-0170 L2a composite descriptor: one combined-image-sampler (the scene target),
     // its own layout/pool/set + a pipeline layout binding only it. Separate from
     // g.dsLayout so the variable-count material array there stays the last binding.
@@ -3212,10 +3255,19 @@ void CreateDescriptors()
         Check(vkAllocateDescriptorSets(g.device, &cdsai, &g.compositeDs),
               "vkAllocateDescriptorSets(composite)");
 
+        // DOOM-0170 L2a step 2: a vec2 push constant carries the fraction of the
+        // scene target the render-scaled world actually filled, so composite.frag
+        // samples only that [0,scale] corner and upscales it to the full swapchain.
+        VkPushConstantRange cpc = {};
+        cpc.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        cpc.offset = 0;
+        cpc.size = 2 * sizeof(float);
         VkPipelineLayoutCreateInfo cplci = {};
         cplci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         cplci.setLayoutCount = 1;
         cplci.pSetLayouts = &g.compositeDsLayout;
+        cplci.pushConstantRangeCount = 1;
+        cplci.pPushConstantRanges = &cpc;
         Check(vkCreatePipelineLayout(g.device, &cplci, nullptr, &g.compositePipeLayout),
               "vkCreatePipelineLayout(composite)");
     }
@@ -3228,7 +3280,7 @@ void UpdateCompositeDescriptor()
     if (!g.compositeDs || !g.sceneView)
         return;
     VkDescriptorImageInfo ii = {};
-    ii.sampler = g.texSampler;
+    ii.sampler = g.compositeSampler;   // linear + clamp: smooth upscale of the scaled scene
     ii.imageView = g.sceneView;
     ii.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     VkWriteDescriptorSet w = {};
@@ -5587,6 +5639,22 @@ extern "C" void RB_Vulkan_Present(void)
     if (drawOverlay)
         UploadOverlayImage();
 
+    // DOOM-0170 L2a step 2: render-scale the world. Draw it into the [0,sceneW]x[0,sceneH]
+    // corner of the full-size scene target (a fraction of the screen's pixels), then let the
+    // composite upscale that corner to the swapchain -- the same dynamic-resolution trick the
+    // path tracer uses (RecordRtTrace), so the render-scale menu takes effect per-frame with
+    // no swapchain rebuild. render_scale clamps to [25,100]; 100 renders full-res (uvScale 1,1
+    // -> byte-identical to before). The saving is the SHADING (fewer viewport pixels); the pass
+    // still clears the whole target to slate so the composite's linear edge tap never reads an
+    // un-rendered texel (which would seam the screen's right/bottom edge).
+    uint32_t rsc = (uint32_t)(rb_renderscale < 25 ? 25
+                              : (rb_renderscale > 100 ? 100 : rb_renderscale));
+    uint32_t sceneW = (g.extent.width  * rsc) / 100u; if (sceneW < 1u) sceneW = 1u;
+    uint32_t sceneH = (g.extent.height * rsc) / 100u; if (sceneH < 1u) sceneH = 1u;
+    VkExtent2D sceneExtent = { sceneW, sceneH };
+    float uvScale[2] = { (float)sceneW / (float)g.extent.width,
+                         (float)sceneH / (float)g.extent.height };
+
     // DOOM-0170 L2a: draw the world into the OFF-SCREEN scene target (scenePass leaves it
     // in SHADER_READ_ONLY); the composite pass below samples it to the swapchain. Clear to
     // a dark slate (world background) + far depth.
@@ -5598,7 +5666,7 @@ extern "C" void RB_Vulkan_Present(void)
     rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     rp.renderPass = g.scenePass;
     rp.framebuffer = g.sceneFb;
-    rp.renderArea.extent = g.extent;
+    rp.renderArea.extent = g.extent;   // clear the whole target (see note); viewport scales shading
     rp.clearValueCount = 2;
     rp.pClearValues = clears;
     vkCmdBeginRenderPass(g.cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
@@ -5610,11 +5678,11 @@ extern "C" void RB_Vulkan_Present(void)
     if (g.haveCamera && g.atlasReady)
     {
         VkViewport vpRect = {};
-        vpRect.width = (float)g.extent.width;
-        vpRect.height = (float)g.extent.height;
+        vpRect.width = (float)sceneW;         // render-scaled corner (L2a step 2)
+        vpRect.height = (float)sceneH;
         vpRect.maxDepth = 1.0f;
         vkCmdSetViewport(g.cmd, 0, 1, &vpRect);
-        VkRect2D scissor = { { 0, 0 }, g.extent };
+        VkRect2D scissor = { { 0, 0 }, sceneExtent };
         vkCmdSetScissor(g.cmd, 0, 1, &scissor);
 
         vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -5732,6 +5800,10 @@ extern "C" void RB_Vulkan_Present(void)
         vkCmdSetScissor(g.cmd, 0, 1, &scissor);
         vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                 g.compositePipeLayout, 0, 1, &g.compositeDs, 0, nullptr);
+        // Tell the composite which [0,uvScale] corner of the scene target the
+        // render-scaled world filled, so it upscales exactly that region.
+        vkCmdPushConstants(g.cmd, g.compositePipeLayout, VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0, 2 * sizeof(float), uvScale);
         vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.compositePipeline);
         vkCmdDraw(g.cmd, 3, 1, 0, 0);
     }
@@ -5877,6 +5949,7 @@ extern "C" void RB_Vulkan_Shutdown(void)
     if (g.dsPool)      vkDestroyDescriptorPool(g.device, g.dsPool, nullptr);
     if (g.dsLayout)    vkDestroyDescriptorSetLayout(g.device, g.dsLayout, nullptr);
     if (g.texSampler)  vkDestroySampler(g.device, g.texSampler, nullptr);
+    if (g.compositeSampler) vkDestroySampler(g.device, g.compositeSampler, nullptr);
     for (VkImageView v : g.matViews)  if (v) vkDestroyImageView(g.device, v, nullptr);
     for (VkImage    im : g.matImages) if (im) vkDestroyImage(g.device, im, nullptr);
     if (g.matMemory)   vkFreeMemory(g.device, g.matMemory, nullptr);
