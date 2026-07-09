@@ -595,6 +595,21 @@ struct VulkanState
     void*          emitSecMapped = nullptr;
     uint32_t       numSectors    = 0;            // REJECT matrix dimension (0 = cull off)
 
+    // DOOM-0170 L1b: per-subsector dynamic point lights (RT-off raster). lightBuf is a
+    // host-visible device-address SSBO — RASTER_MAX_LIGHTS_PER_SUBSECTOR records of 6
+    // floats (centroid[3] Le[3]) per subsector — refilled each raster frame by
+    // BuildRasterPointLights from the NEE emitter list. The CPU cull reuses the probe
+    // centroids (subCentroid), the per-subsector sector map + REJECT matrix (numSectors
+    // above / rejectCPU), and a reused emitter-centroid scratch. Allocated whenever
+    // probeCount>0, so mesh.frag's probeCount>0 guard also guarantees lightBuf is bound.
+    VkBuffer       lightBuf    = VK_NULL_HANDLE;
+    VkDeviceMemory lightMem    = VK_NULL_HANDLE;
+    void*          lightMapped = nullptr;
+    std::vector<rb_probe_t> subCentroid;         // per-subsector centroid (cull ranking)
+    std::vector<int32_t>    subSecSector;        // per-subsector sector (REJECT cull; empty = off)
+    const unsigned char*    rejectCPU = nullptr; // REJECT bitmatrix (PU_LEVEL, level lifetime)
+    std::vector<float>      emitCentroidScratch; // reused per-frame emitter centroids
+
     bool ready        = false;
     bool needRecreate = false;
 };
@@ -3138,11 +3153,11 @@ void CreatePipeline()
     VkPushConstantRange pcr = {};
     pcr.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     pcr.offset = 0;
-    pcr.size = 29 * sizeof(float);   // mat4 MVP + extralight + sky yaw + camera xyz
+    pcr.size = 31 * sizeof(float);   // mat4 MVP + extralight + sky yaw + camera xyz
                                      // + numWall/numFlat (material-id offsets)
                                      // + flashlight on/off (DOOM-0044)
-                                     // + DOOM-0170 L1a: probes/triSs device addrs
-                                     //   (2x u64) + probeCount (u32) = 116 B (<128 floor)
+                                     // + DOOM-0170 L1a/L1b: probes/triSs/lights device
+                                     //   addrs (3x u64) + probeCount (u32) = 124 B (<128 floor)
 
     VkPipelineLayoutCreateInfo plci = {};
     plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -3808,6 +3823,11 @@ void FinalizeEmitters(const std::vector<float>* dynEmit, const std::vector<float
     }
 }
 
+// DOOM-0170 L1b: per-subsector nearest-N dynamic point-light cap. Must match
+// RASTER_MAX_LIGHTS in mesh.frag. Each record is 6 floats: centroid[3] Le[3].
+static const uint32_t RASTER_MAX_LIGHTS_PER_SUBSECTOR = 16;
+static const uint32_t RASTER_LIGHT_FLOATS             = 6;
+
 // DOOM-0084: each traced frame, scan this frame's world-sprite billboards (already
 // built into g.sprWorldBuf for the trace, DOOM-0100) for emissive ones — a sprite
 // whose material has a non-zero Le (the same area-weighted bright-texel mean that
@@ -3893,6 +3913,102 @@ void BuildDynamicEmitters()
                "CDF sprite share %.4f%% -> now sampled directly).\n",
                (uint32_t)g.staticWgt.size(), litSprites, maxLe, frac * 100.0);
         fflush(stdout);
+    }
+}
+
+// DOOM-0170 L1b: rebuild the per-subsector nearest-N dynamic point-light lists the
+// raster fragment shader (mesh.frag) reads. Runs each raster frame right after the NEE
+// emitter list is finalised (BuildDynamicEmitters), deriving a point light from every
+// emitter triangle — centroid = mean(v0,v1,v2), colour + intensity = the record's Le.
+// For each subsector it keeps the N nearest emitters its sector can see (DOOM-0119
+// REJECT cull), packed nearest-first into g.lightBuf; the shader loops only its own
+// subsector's slots. The raw luminance(Le)*area power the NEE build computed is
+// normalised away in the finalised CDF, so the light reads Le straight from the record
+// (the same source the build used) rather than the unrecoverable per-record weight.
+// Bounded O(subsectors × emitters) with an early distance reject; well under the §6
+// 1 ms budget on id maps (REJECT prunes the inner set to a handful).
+void BuildRasterPointLights()
+{
+    if (!g.lightMapped || g.probeCount == 0)
+        return;
+    const uint32_t N      = RASTER_MAX_LIGHTS_PER_SUBSECTOR;
+    const int      numSub = (int)g.probeCount;
+    float*         out    = (float*)g.lightMapped;
+    std::memset(out, 0, (size_t)numSub * N * RASTER_LIGHT_FLOATS * sizeof(float));
+
+    const int ne = (int)g.emitCount;
+    if (ne <= 0 || !g.emitMapped)
+        return;                                   // buffer stays zeroed -> no lights
+
+    const float*    em = (const float*)g.emitMapped;
+    const uint32_t* es = (const uint32_t*)g.emitSecMapped;   // per-emitter sector (may be null)
+
+    // Precompute each emitter's 3D centroid once (reused across every subsector).
+    g.emitCentroidScratch.resize((size_t)ne * 3);
+    float* ec = g.emitCentroidScratch.data();
+    for (int e = 0; e < ne; e++)
+    {
+        const float* r = &em[(size_t)e * 14];
+        ec[e * 3 + 0] = (r[0] + r[3] + r[6]) * (1.0f / 3.0f);
+        ec[e * 3 + 1] = (r[1] + r[4] + r[7]) * (1.0f / 3.0f);
+        ec[e * 3 + 2] = (r[2] + r[5] + r[8]) * (1.0f / 3.0f);
+    }
+
+    const bool cull = (g.numSectors > 0 && g.rejectCPU &&
+                       (int)g.subSecSector.size() >= numSub && es);
+
+    for (int si = 0; si < numSub; si++)
+    {
+        const rb_probe_t& c   = g.subCentroid[si];
+        const int        secA = cull ? g.subSecSector[si] : -1;
+
+        // Nearest-N by 2D distance to the subsector centroid, kept sorted ascending.
+        float bestD[RASTER_MAX_LIGHTS_PER_SUBSECTOR];
+        int   bestI[RASTER_MAX_LIGHTS_PER_SUBSECTOR];
+        int   cnt = 0;
+
+        for (int e = 0; e < ne; e++)
+        {
+            if (cull && secA >= 0)
+            {
+                const uint32_t secE = es[e];
+                if (secE != 0xFFFFFFFFu && (int)secE < (int)g.numSectors)
+                {
+                    const int pnum = secA * (int)g.numSectors + (int)secE;
+                    if (g.rejectCPU[pnum >> 3] & (1 << (pnum & 7)))
+                        continue;                 // this sector provably can't see the emitter
+                }
+            }
+            const float dx = ec[e * 3 + 0] - c.x;
+            const float dy = ec[e * 3 + 1] - c.y;
+            const float d2 = dx * dx + dy * dy;
+            if (cnt == (int)N && d2 >= bestD[cnt - 1])
+                continue;                         // farther than the current worst kept
+            // insert into the sorted best[] (shift right; drop the last when full)
+            int pos = (cnt < (int)N) ? cnt : (int)N - 1;
+            while (pos > 0 && bestD[pos - 1] > d2)
+            {
+                bestD[pos] = bestD[pos - 1];
+                bestI[pos] = bestI[pos - 1];
+                pos--;
+            }
+            bestD[pos] = d2;
+            bestI[pos] = e;
+            if (cnt < (int)N)
+                cnt++;
+        }
+
+        float* slot = &out[(size_t)si * N * RASTER_LIGHT_FLOATS];
+        for (int k = 0; k < cnt; k++)
+        {
+            const float* r = &em[(size_t)bestI[k] * 14];
+            slot[k * 6 + 0] = ec[bestI[k] * 3 + 0];
+            slot[k * 6 + 1] = ec[bestI[k] * 3 + 1];
+            slot[k * 6 + 2] = ec[bestI[k] * 3 + 2];
+            slot[k * 6 + 3] = r[9];               // Le.r
+            slot[k * 6 + 4] = r[10];              // Le.g
+            slot[k * 6 + 5] = r[11];              // Le.b
+        }
     }
 }
 
@@ -4274,6 +4390,12 @@ void BuildProbes()
     if (g.subSecMem) { vkFreeMemory(g.device, g.subSecMem, nullptr);    g.subSecMem = VK_NULL_HANDLE; }
     if (g.rejectBuf) { vkDestroyBuffer(g.device, g.rejectBuf, nullptr); g.rejectBuf = VK_NULL_HANDLE; }
     if (g.rejectMem) { vkFreeMemory(g.device, g.rejectMem, nullptr);    g.rejectMem = VK_NULL_HANDLE; }
+    if (g.lightBuf)  { vkDestroyBuffer(g.device, g.lightBuf, nullptr);  g.lightBuf  = VK_NULL_HANDLE; }
+    if (g.lightMem)  { vkFreeMemory(g.device, g.lightMem, nullptr);     g.lightMem  = VK_NULL_HANDLE; }
+    g.lightMapped = nullptr;
+    g.subCentroid.clear();
+    g.subSecSector.clear();
+    g.rejectCPU  = nullptr;
     g.probeCount = 0;
     g.numSectors = 0;
 
@@ -4287,6 +4409,23 @@ void BuildProbes()
     std::vector<rb_probe_t> probes(n);
     const int got = RB_BuildProbes(probes.data(), n);
     g.probeCount = (uint32_t)got;
+
+    // DOOM-0170 L1b: cache the subsector centroids (the cull's per-subsector ranking
+    // point) and allocate the per-subsector point-light buffer. Host-visible + mapped:
+    // BuildRasterPointLights refills it each raster frame. Sized for `got` subsectors, so
+    // probeCount>0 guarantees mesh.frag's light buffer is bound (the same guard gates the
+    // bounce). Zeroed now so a frame drawn before the first fill reads no lights.
+    g.subCentroid.assign(probes.begin(), probes.begin() + got);
+    {
+        const VkDeviceSize lsz = (VkDeviceSize)got * RASTER_MAX_LIGHTS_PER_SUBSECTOR
+                               * RASTER_LIGHT_FLOATS * sizeof(float);
+        CreateRtBuffer(lsz,
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            &g.lightBuf, &g.lightMem);
+        Check(vkMapMemory(g.device, g.lightMem, 0, VK_WHOLE_SIZE, 0, &g.lightMapped), "vkMapMemory(light)");
+        std::memset(g.lightMapped, 0, (size_t)lsz);
+    }
 
     std::vector<float> rec((size_t)got * PROBE_FLOATS, 0.0f);   // SH zeroed
     for (int i = 0; i < got; i++)
@@ -4323,6 +4462,13 @@ void BuildProbes()
         RB_BuildSubsectorSectors(subSec.data(), n);
         UploadAddressBuffer(subSec.data(), (VkDeviceSize)subSec.size() * sizeof(int32_t),
                             &g.subSecBuf, &g.subSecMem);
+
+        // DOOM-0170 L1b: keep CPU copies for the raster point-light cull. The GPU path
+        // (megakernel) reads the uploaded buffers; the raster cull runs on the CPU each
+        // frame, so it needs the subsector->sector map + the raw REJECT bytes here. The
+        // reject pointer is the PU_LEVEL lump, valid for this level's lifetime.
+        g.subSecSector.assign(subSec.begin(), subSec.begin() + got);
+        g.rejectCPU = reject;
 
         // Pad the byte matrix up to a uint-word multiple so the shader's last word
         // read is fully backed; the high padding bytes are never addressed.
@@ -5143,6 +5289,26 @@ extern "C" void RB_Vulkan_Present(void)
         n += RB_BuildPSprites(buf + sky + n, (int)g.spriteVertCap - sky - n, aspect);
         g.skyVertCount    = (uint32_t)sky;
         g.spriteVertCount = (uint32_t)n;
+
+        // DOOM-0170 L1b: the raster point-light stack needs this frame's emissive
+        // sprites (torches/lamps/barrels) in the NEE emitter list. The traced branch
+        // below builds the world sprites into g.sprWorldBuf; the raster branch above
+        // only built the drawn billboards (into g.spriteMapped), so build the world-
+        // sprite set here too, refresh the emitter list, then rebuild the per-subsector
+        // nearest-N point-light lists the fragment shader reads. RT-GPU only (no
+        // emitters/probes without a bake); costs one sprite build + the <=1 ms cull.
+        if (g.rtEnabled && g.sprWorldMapped)
+        {
+            g.sprWorldVertCount = (uint32_t)RB_BuildSprites(&g.lastView,
+                (rb_vertex_t*)g.sprWorldMapped, (int)g.sprWorldVertCap);
+            if (g.worldEmitDirty && g.vbufMapped)
+            {
+                BuildStaticEmitterSet((const rb_vertex_t*)g.vbufMapped);
+                g.worldEmitDirty = false;
+            }
+            BuildDynamicEmitters();     // refill g.emitBuf (static + emissive sprites)
+            BuildRasterPointLights();   // -> g.lightBuf (per-subsector nearest-N)
+        }
     }
     // DOOM-0094/0100: in the path-traced view the world comes from the trace. The
     // player weapon is still a screen-space psprite drawn on top (g.spriteMapped),
@@ -5263,7 +5429,7 @@ extern "C" void RB_Vulkan_Present(void)
         // shade) and the view yaw (mesh.frag pans the sky by it). Push constants
         // and descriptor sets are layout-scoped, so they outlive the pipeline
         // binds below — set them once for both the sky and world pipelines.
-        float pcData[29] = {};
+        float pcData[31] = {};
         std::memcpy(pcData, g.viewProj, 16 * sizeof(float));
         pcData[16] = g.lastView.extralight;
         pcData[17] = g.lastView.angle;
@@ -5275,19 +5441,23 @@ extern "C" void RB_Vulkan_Present(void)
         std::memcpy(&pcData[21], &g.matNumWall, sizeof(int));
         std::memcpy(&pcData[22], &g.matNumFlat, sizeof(int));
         pcData[23] = rb_flashlight ? 1.0f : 0.0f;   // DOOM-0044 raster flashlight cone
-        // DOOM-0170 L1a: baked-probe indirect bounce in the raster path. Pass the
-        // probe + triSs buffers by device address (8-byte aligned at float 24/26)
-        // and the probe count (float 28). Zero addr/count when the bake is absent
-        // (non-RT GPU) so mesh.frag falls back to the plain sector-lit look.
+        // DOOM-0170 L1a/L1b: baked-probe indirect bounce + per-subsector point lights in
+        // the raster path. Pass the probe, triSs and light buffers by device address
+        // (8-byte aligned at float 24/26/28) and the probe/subsector count (float 30).
+        // Zero addr/count when the bake is absent (non-RT GPU) so mesh.frag falls back to
+        // the plain sector-lit look. probeCount is gated on all three addrs so mesh.frag's
+        // probeCount>0 guard never dereferences an unbound buffer.
         uint64_t probeAddr = (g.probeBuf && g.probeCount) ? BufferAddress(g.probeBuf) : 0;
         uint64_t triSsAddr = (g.triSsBuf && g.probeCount) ? BufferAddress(g.triSsBuf) : 0;
-        uint32_t probeN    = (probeAddr && triSsAddr) ? g.probeCount : 0u;
+        uint64_t lightAddr = (g.lightBuf && g.probeCount) ? BufferAddress(g.lightBuf) : 0;
+        uint32_t probeN    = (probeAddr && triSsAddr && lightAddr) ? g.probeCount : 0u;
         std::memcpy(&pcData[24], &probeAddr, sizeof(uint64_t));
         std::memcpy(&pcData[26], &triSsAddr, sizeof(uint64_t));
-        std::memcpy(&pcData[28], &probeN,    sizeof(uint32_t));
+        std::memcpy(&pcData[28], &lightAddr, sizeof(uint64_t));
+        std::memcpy(&pcData[30], &probeN,    sizeof(uint32_t));
         vkCmdPushConstants(g.cmd, g.pipelineLayout,
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, 29 * sizeof(float), pcData);
+                           0, 31 * sizeof(float), pcData);
 
         VkDeviceSize off = 0;
         // Sky first, behind everything: depth-off pipeline, the 6 verts at the
@@ -5446,6 +5616,9 @@ extern "C" void RB_Vulkan_Shutdown(void)
         if (g.emitMem)      vkFreeMemory(g.device, g.emitMem, nullptr);
         if (g.emitSecBuf)   vkDestroyBuffer(g.device, g.emitSecBuf, nullptr);
         if (g.emitSecMem)   vkFreeMemory(g.device, g.emitSecMem, nullptr);
+        // DOOM-0170 L1b per-subsector point-light buffer (host-visible, per-frame fill).
+        if (g.lightBuf)     vkDestroyBuffer(g.device, g.lightBuf, nullptr);
+        if (g.lightMem)     vkFreeMemory(g.device, g.lightMem, nullptr);
         if (g.matEmisBuf)   vkDestroyBuffer(g.device, g.matEmisBuf, nullptr);
         if (g.matEmisMem)   vkFreeMemory(g.device, g.matEmisMem, nullptr);
         // GI bake probes + per-triangle subsector map (step 4).

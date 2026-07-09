@@ -1518,9 +1518,10 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: fix.
   Source: user-request-2026-07-04 (Solid not buttery-smooth on RX 6600).
 
-- 📋 [DOOM-0170] **Raster "performance mode" — modern lighting/shadows/reflections when ray tracing is OFF (both Solid and Ultra).**
+- 🚧 [DOOM-0170] **Raster "performance mode" — modern lighting/shadows/reflections when ray tracing is OFF (both Solid and Ultra).**
   User model (PS5 quality/performance modes): RT-on = quality mode (path tracer, unchanged); RT-off (rb_rtdebug==0) = performance mode — the SAME lighting ideas done the cheap raster way, and it must beat Classic. Tier stays "which art" (Solid=classic, Ultra=HD); RT on/off is the quality/performance toggle INSIDE each tier. Mutual-exclusion holds (RT-off never runs the tracer; RT-on never runs this stack).
   Spec written: docs/specs/DOOM-0170-raster-performance-mode.md. /cold-eyes 4-loop polish-converged 2026-07-09 (0 CRITICAL/HIGH; also added a reciprocal supersession pointer to DOOM-0009 §2). Implementation-ready, layered build: L1 lighting (point lights + baked-probe bounce) first, then L2 shadows (SSAO + key-light shadow map + blob), then L3 scoped SSR — each rebuilt + play-tested on the RX 6600 before the next.
+  Progress (2026-07-09): L1 lighting landed. L1a baked-probe indirect bounce (mesh.frag reads probes via gl_PrimitiveID→triSs→subsector, buffer_reference-via-push; geometryShader feature enabled) shipped f748452. L1b dynamic point lights this commit: per-subsector nearest-N (N=16) cull from the NEE emitter list runs on the CPU each raster frame (BuildRasterPointLights, reusing probe centroids + DOOM-0119 REJECT matrix), uploaded to a host-visible SSBO mesh.frag loops per fragment (Le · 1/(1+(d/RADIUS)²) · N·L, no cast shadows). Also wired BuildDynamicEmitters into the raster frame branch so emissive sprites (torches/lamps/barrels) reach the emitter list in Solid (they only ran on traced frames before). Push block now 124 B (probes+triSs+lights addrs + probeCount). Spec §4.1/§6 reconciled to shipped reality (Le-as-intensity; raw luminance·area weight is unrecoverable post-merge). Build + make test green. NEXT: user play-test on RX 6600 (torch pools light? FPS ≥ 60? tune RADIUS/STRENGTH), then L2 shadows.
 
   Today mesh.frag is only "classic DOOM lighting in 3D" (sector light x distance + flashlight cone) — no dynamic point lights, shadows, reflections, or bounce. This feature grows the raster path into a short multi-pass pipeline.
 
@@ -1534,3 +1535,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** With ray tracing off, the classic view still gets modern shadows, lighting and reflections done the fast raster way — like a console's "Performance Mode" next to the ray-traced "Quality Mode".
   Kind: feature.
   Source: user-request-2026-07-09.
+
+- 📋 [DOOM-0171] **4K/widescreen HUD spams "V_DrawPatch: bad patch (ignored)" — status-bar patches exceed the 320-wide LFB.**
+  Seen in the run-doom-ants.sh console at 3840x2160: hundreds of "Patch at X,-3 exceeds LFB / V_DrawPatch: bad patch (ignored)" lines while compositing the status bar / HUD border. Pre-existing (not from DOOM-0170); the patches are ignored so it renders, but it's log spam and suggests the widescreen status-bar fill (cf. DOOM-0151 edge-extend) draws patches past the 320-wide low-res framebuffer bounds. Low priority; investigate the V_DrawPatch bounds/tiling for widescreen at high res.
+  **Layman:** On a 4K widescreen display the game floods the terminal with harmless "bad patch" warnings while drawing the bottom status bar — cosmetic log noise, but it hints the status bar isn't tiled correctly across the ultra-wide screen.
+  Kind: fix.
+  Source: observed-in-session-2026-07-09 (RX 6600, 3840x2160 play-test).

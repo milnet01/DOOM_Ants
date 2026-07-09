@@ -12,10 +12,12 @@
 // shade term.
 //
 
-// DOOM-0170 L1a: the fragment stage reads baked GI probes through these; the vertex
-// stage ignores them, but the push block must match mesh.frag byte-for-byte.
+// DOOM-0170 L1a/L1b: the fragment stage reads baked GI probes + per-subsector point
+// lights through these; the vertex stage ignores them, but the push block must match
+// mesh.frag byte-for-byte.
 layout(buffer_reference, scalar) readonly buffer ProbesRO { float p[]; };
 layout(buffer_reference, scalar) readonly buffer TriSs    { uint  s[]; };
+layout(buffer_reference, scalar) readonly buffer LightsRO { float d[]; };
 
 layout(push_constant) uniform Push {
     mat4  mvp;          // projection * view, column-major (Vulkan clip space)
@@ -27,8 +29,9 @@ layout(push_constant) uniform Push {
     int   numWall;      // material-id offsets (fragment-only; the vertex stage
     int   numFlat;      // ignores them, but the block must match mesh.frag's)
     float flashlight;   // DOOM-0044 headlamp on/off (1=on); Solid raster cone
-    ProbesRO probes;    // DOOM-0170 L1a (fragment-only; block must match mesh.frag)
+    ProbesRO probes;    // DOOM-0170 L1a/L1b (fragment-only; block must match mesh.frag)
     TriSs    triSs;
+    LightsRO lights;
     uint     probeCount;
 } pc;
 

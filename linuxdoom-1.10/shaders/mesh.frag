@@ -44,6 +44,12 @@ layout(location = 0) out vec4 outColor;
 layout(buffer_reference, scalar) readonly buffer ProbesRO { float p[]; };
 layout(buffer_reference, scalar) readonly buffer TriSs    { uint  s[]; };
 
+// DOOM-0170 L1b — per-subsector dynamic point lights derived from the same NEE
+// emitter list (torches/lamps/emissive walls). Flat float array: RASTER_MAX_LIGHTS
+// slots per subsector, 6 floats/light = centroid[3] Le[3]. Empty slots are zero and
+// packed nearest-first, so the shader stops at the first zero-Le slot.
+layout(buffer_reference, scalar) readonly buffer LightsRO { float d[]; };
+
 // Must match mesh.vert's block byte-for-byte (shared push-constant range). The
 // sky path reads pc.yaw to pan the panorama; numWall/numFlat give the material-id
 // offsets (walls|flats|sprites); eyeX/Y/Z are vertex-only (folded into vDist
@@ -58,12 +64,13 @@ layout(push_constant) uniform Push {
     int   numWall;      // flats start at this id; sprites at numWall + numFlat
     int   numFlat;
     float flashlight;   // DOOM-0044 headlamp on/off (1=on); Solid raster cone
-    // DOOM-0170 L1a: baked SH-L1 GI probes read in raster (RT-off). 64-bit device
-    // addresses (8-byte aligned; they sit at byte offset 96/104, probeCount at 112,
-    // keeping the block at 116 B — under the 128 B guaranteed push-constant floor).
+    // DOOM-0170 L1a/L1b: baked SH-L1 GI probes + per-subsector point lights read in
+    // raster (RT-off). 64-bit device addresses (8-byte aligned; byte offset 96/104/112,
+    // probeCount at 120) keep the block at 124 B — under the 128 B guaranteed floor.
     ProbesRO probes;    // baked per-subsector SH-L1 radiance (0 if no bake)
     TriSs    triSs;      // per-triangle primitive id -> subsector/probe index
-    uint     probeCount; // subsector/probe count; bounds triSs, 0 disables the bounce
+    LightsRO lights;     // DOOM-0170 L1b: per-subsector nearest-N point lights
+    uint     probeCount; // subsector/probe count; bounds triSs+lights, 0 disables both
 } pc;
 
 layout(set = 0, binding = 0) uniform sampler2D paletteTex;   // 256x1 PLAYPAL RGB
@@ -89,6 +96,15 @@ const float PI = 3.14159265358979;
 // of DOOM's bright flat sector light — the visible lift comes from L1b's direct
 // point lights + a later sector-light rebalance; kept here as the tunable dial.
 const float GI_BOUNCE_STRENGTH = 1.0;
+
+// DOOM-0170 L1b point-light dials (§6 seeds; §9 Q1/Q4 tuning). RASTER_MAX_LIGHTS must
+// match RASTER_MAX_LIGHTS_PER_SUBSECTOR in r_vulkan.cpp. RADIUS is the half-bright
+// distance (world units). Sprite lamp Le carries a ×12 build boost (BuildDynamicEmitters),
+// so STRENGTH is seeded < 1 to keep near lamps from blowing out; tune on play-test.
+const uint  RASTER_MAX_LIGHTS    = 16u;
+const float RASTER_LIGHT_RADIUS  = 512.0;
+const float RASTER_INV_RADIUS2   = 1.0 / (RASTER_LIGHT_RADIUS * RASTER_LIGHT_RADIUS);
+const float POINT_LIGHT_STRENGTH = 0.5;
 
 // Evaluate the baked SH-L1 GI cache for subsector `subId` along world normal `n`,
 // returning the diffuse reflected-radiance factor (multiply by albedo). Copied
@@ -231,7 +247,32 @@ void main()
     {
         uint sub = pc.triSs.s[uint(gl_PrimitiveID)];
         if (sub < pc.probeCount)
-            lit += GI_BOUNCE_STRENGTH * albedo * giIrradiance(pc.probes, sub, normalize(vNormal));
+        {
+            vec3 nrm = normalize(vNormal);
+            lit += GI_BOUNCE_STRENGTH * albedo * giIrradiance(pc.probes, sub, nrm);
+
+            // DOOM-0170 L1b: direct light from this subsector's nearest emitters. Each
+            // slot is a point approximation of an NEE area light — colour + intensity =
+            // the emitter Le, a smooth inverse-square falloff (half-bright at RADIUS) and
+            // a Lambert facing term. No cast shadows (that is the RT-on / key-light job,
+            // §4.4). Slots are nearest-packed; the first zero-Le slot ends the list.
+            uint base = sub * (RASTER_MAX_LIGHTS * 6u);
+            vec3 direct = vec3(0.0);
+            for (uint k = 0u; k < RASTER_MAX_LIGHTS; k++)
+            {
+                uint o  = base + k * 6u;
+                vec3 Le = vec3(pc.lights.d[o + 3u], pc.lights.d[o + 4u], pc.lights.d[o + 5u]);
+                if (Le.r + Le.g + Le.b <= 0.0)
+                    break;
+                vec3  c   = vec3(pc.lights.d[o], pc.lights.d[o + 1u], pc.lights.d[o + 2u]);
+                vec3  dd  = c - vWorldPos;
+                float d2  = dot(dd, dd);
+                float att = 1.0 / (1.0 + d2 * RASTER_INV_RADIUS2);
+                float ndl = max(dot(nrm, dd * inversesqrt(max(d2, 1e-8))), 0.0);
+                direct += Le * att * ndl;
+            }
+            lit += POINT_LIGHT_STRENGTH * albedo * direct;
+        }
     }
 
     outColor = vec4(lit, 1.0);

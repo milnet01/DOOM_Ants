@@ -169,21 +169,29 @@ loop-and-sort over the whole `emitBuf` is not affordable on the hot path. Instea
 right after `FinalizeEmitters`, a CPU pass buckets the finalized emitters into a
 **per-subsector candidate list**: for each subsector, apply the DOOM-0119
 `subSec`→sector + REJECT-matrix cull, then keep the **nearest N** emitters by
-centroid distance, storing each as a derived point light `{centroid, power, colour}`
-where `centroid = mean(v0,v1,v2)`, `colour = normalize(Le)`, and
-`power = luminance(Le) · triangle_area` (the emitter build already computes this
-`luminance(Le)·area` weight for the NEE CDF — reuse the stored value rather than
-recomputing it, per the reuse-before-rewrite rule). This compact per-subsector list (≤ N
-entries each) uploads to a new SSBO; the fragment shader indexes it by the
-fragment's subsector id (the per-vertex subsector-id attribute defined in §4.2) and
-loops **only its subsector's ≤ N entries** — no in-shader sort, bounded cost (INV-6):
+centroid distance, storing each as a derived point light `{centroid, Le}` (6 floats:
+`centroid = mean(v0,v1,v2)`, and the record's own `Le` as both colour and intensity).
+**Implementation note (as shipped):** the raw `luminance(Le)·area` power the NEE build
+computes is *not recoverable* from a finalized record — `nee_merge_emitters` keeps only
+the map-global-**normalized** `pdf` (a light in a dark room would read as tiny), so the
+raster light reads `Le` straight from the record (offsets 9–11, the same source the
+build derived its weight from) rather than a reconstructed absolute power. Intensity
+therefore comes from `Le` (sprite lamps already carry a ×12 build boost); the
+`triangle_area` weighting is dropped for L1b (a `STRENGTH` dial in §6 sets the overall
+level). This compact per-subsector list (≤ N entries each) uploads to a new SSBO,
+packed nearest-first; the fragment shader indexes it by the fragment's subsector id
+(`triSs[gl_PrimitiveID]`, the same triangle→subsector map §4.2 uses for the bounce — no
+new vertex attribute) and loops **only its subsector's ≤ N entries**, stopping at the
+first empty (`Le == 0`) slot — no in-shader sort, bounded cost (INV-6):
 
 ```
-for k in this fragment's subsector list (≤ N):
+for k in this fragment's subsector list (≤ N, nearest-packed):
+    Le      = light[k].Le;  if (Le == 0) break     // empty slot ends the list
     d       = light[k].centroid - worldPos
-    dist    = length(d)
-    atten   = light[k].power / (1 + (dist/RADIUS)^2)   // smooth inverse-square-ish; RADIUS a tuned constant (§6)
-    diffuse += light[k].colour * atten * max(dot(normal, normalize(d)), 0)
+    dist2   = dot(d, d)
+    atten   = 1 / (1 + dist2/RADIUS^2)             // smooth inverse-square-ish; RADIUS a tuned constant (§6)
+    diffuse += Le * atten * max(dot(normal, normalize(d)), 0)
+// final: lit += STRENGTH * albedo * diffuse       // STRENGTH seeded 0.5 (§6/§9 Q1)
 ```
 
 - **No cast shadows** here (that is the RT-on job, and the one raster shadow we do
@@ -207,6 +215,14 @@ prunes the inner set to a handful on id maps, so measured cost stays well under 
 **≤ 1 ms** budget in §6. It runs on the same per-frame cadence as `FinalizeEmitters`.
 If a pathological custom map blew the budget, the fallback is to bucket only the
 brightest M emitters (the CDF already ranks them) — the dim tail contributes little.
+
+- **Shipped wiring note.** `BuildDynamicEmitters` (which appends the emissive *sprites*
+  — the torches/lamps this loop is meant to pool — and re-finalizes the list) previously
+  ran **only on traced frames** (it reads `g.sprWorldBuf`, built only in the RT branch).
+  So L1b also builds the world-sprite set and calls `BuildDynamicEmitters` +
+  `BuildRasterPointLights` in the **raster** frame branch, gated on `g.rtEnabled` (no
+  emitters/probes without an RT-capable GPU). This is the "genuinely new per-frame CPU
+  work" for the raster tier; the traced branch is unchanged.
 
 ### 4.2 Baked-probe indirect bounce (the RT-off mechanism for DOOM-0043's deferred Solid call)
 
@@ -337,6 +353,7 @@ shine flag (§4.6). **New CPU per-frame pass:** the per-subsector light-list bui
 | Frame budget at the floor | 16.6 ms (60 FPS) | INV-2 |
 | Point lights per subsector, `N` | **16** (`RASTER_MAX_LIGHTS_PER_SUBSECTOR`) | §4.1, §9 Q4 |
 | Point-light falloff radius, `RADIUS` | seed 512 world-units (tune 256–768) | §4.1, §9 Q4 |
+| Point-light overall level, `POINT_LIGHT_STRENGTH` | seed 0.5 (sprite `Le` carries a ×12 build boost) | §4.1, §9 Q1 |
 | Point-light CPU cull budget | ≤ **1 ms** / frame | §4.1 |
 | SSAO resolution / taps | half-res / 16 depth taps | §4.3 |
 | SSR resolution | half-res | §4.6 |
