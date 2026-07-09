@@ -197,9 +197,17 @@ for k in this fragment's subsector list (≤ N, nearest-packed):
     dist2   = dot(d, d)
     atten   = 1 / (1 + dist2/RADIUS^2)             // smooth inverse-square-ish; RADIUS a tuned constant (§6)
     diffuse += col * atten * max(dot(normal, normalize(d)), 0)
+diffuse = diffuse * GAIN                            // GAIN: a single light climbs to visible fast (the pop)
 diffuse = diffuse / (1 + diffuse)                  // Reinhard: a cluster saturates to colour, not white
-lit += STRENGTH * albedo * diffuse                 // STRENGTH seeded 0.6 (§6/§9 Q1)
+lit += STRENGTH * albedo * diffuse                 // STRENGTH = the ceiling after roll-off (§6/§9 Q1)
 ```
+
+**Base sector-light rebalance (§9 Q1, shipped).** DOOM's flat sector light is bright, so
+the additive point lights + bounce have no headroom in already-lit areas (a white surface
+can't get brighter). The base shade is dimmed by `BASE_SECTOR_DIM` (§6); the point lights,
+bounce and flashlight lift lit areas back up while unlit areas sit a little darker — the
+performance-mode look. `1.0` = classic brightness; the seed is a play-test call (whether a
+room should go near-black for horror tension vs. stay softly lit stays §9 Q1).
 
 - **No cast shadows** here (that is the RT-on job, and the one raster shadow we do
   cast is the key light, §4.4). This matches DOOM-0010's stated RT-off behaviour:
@@ -360,7 +368,9 @@ shine flag (§4.6). **New CPU per-frame pass:** the per-subsector light-list bui
 | Frame budget at the floor | 16.6 ms (60 FPS) | INV-2 |
 | Point lights per subsector, `N` | **16** (`RASTER_MAX_LIGHTS_PER_SUBSECTOR`) | §4.1, §9 Q4 |
 | Point-light falloff radius, `RADIUS` | seed 512 world-units (tune 256–768) | §4.1, §9 Q4 |
-| Point-light overall level, `POINT_LIGHT_STRENGTH` | seed 0.6 (max additive after the Reinhard roll-off; `Le` is colour-only) | §4.1, §9 Q1 |
+| Point-light pop, `POINT_LIGHT_GAIN` | seed 3.0 (how fast a single light climbs to visible before the roll-off) | §4.1, §9 Q1 |
+| Point-light ceiling, `POINT_LIGHT_STRENGTH` | seed 0.7 (max additive after the Reinhard roll-off; `Le` is colour-only) | §4.1, §9 Q1 |
+| Base sector-light dim, `BASE_SECTOR_DIM` | seed 0.75 (1.0 = classic; gives the additive lights headroom) | §4.1, §9 Q1 |
 | Point-light CPU cull budget | ≤ **1 ms** / frame | §4.1 |
 | SSAO resolution / taps | half-res / 16 depth taps | §4.3 |
 | SSR resolution | half-res | §4.6 |

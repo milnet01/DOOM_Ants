@@ -106,7 +106,17 @@ const float GI_BOUNCE_STRENGTH = 1.0;
 const uint  RASTER_MAX_LIGHTS    = 16u;
 const float RASTER_LIGHT_RADIUS  = 512.0;
 const float RASTER_INV_RADIUS2   = 1.0 / (RASTER_LIGHT_RADIUS * RASTER_LIGHT_RADIUS);
-const float POINT_LIGHT_STRENGTH = 0.6;
+// Two decoupled dials so "how obvious a single lamp is" and "the ceiling that stops a
+// cluster blowing to white" tune independently: GAIN sets how fast a light climbs to
+// full before the roll-off (the pop), STRENGTH is the max additive level after it.
+const float POINT_LIGHT_GAIN     = 3.0;
+const float POINT_LIGHT_STRENGTH = 0.7;
+
+// DOOM-0170 §9 Q1 — sector-light rebalance. DOOM's flat sector light is bright, so the
+// additive point lights + probe bounce have no headroom in already-bright areas. Dim the
+// base a touch; the lights/bounce/flashlight lift lit areas back up while unlit areas sit
+// a little darker (the "performance-mode" look). 1.0 = classic brightness; tune w/ user.
+const float BASE_SECTOR_DIM      = 0.75;
 
 // Evaluate the baked SH-L1 GI cache for subsector `subId` along world normal `n`,
 // returning the diffuse reflected-radiance factor (multiply by albedo). Copied
@@ -213,7 +223,7 @@ void main()
     if ((vFlags & FLAG_PSPRITE) == 0)
         distLight = clamp(1.0 - vDist / 3000.0, 0.35, 1.0);
 
-    float shade = vLight * distLight;
+    float shade = vLight * distLight * BASE_SECTOR_DIM;   // DOOM-0170 §9 Q1 rebalance
 
     // DOOM-0044 player flashlight (Solid tier / ray tracing OFF): an additive
     // raster spotlight at the eye, aimed along the view yaw. No cast shadows --
@@ -277,9 +287,11 @@ void main()
                 direct += col * att * ndl;
             }
             // A big emissive surface enters as many emitter triangles, so summing the
-            // nearest N over-counts one physical light. Roll the accumulated point light
-            // off to < 1 per channel (Reinhard) so a cluster saturates gracefully to its
-            // colour instead of stacking to white, then scale by the overall STRENGTH.
+            // nearest N over-counts one physical light. GAIN drives a single light up to
+            // visible fast, then a Reinhard roll-off caps the accumulated point light at
+            // < 1 per channel so a cluster saturates gracefully to its colour instead of
+            // stacking to white; STRENGTH is the max additive level after that.
+            direct *= POINT_LIGHT_GAIN;
             direct = direct / (1.0 + direct);
             lit += POINT_LIGHT_STRENGTH * albedo * direct;
         }
