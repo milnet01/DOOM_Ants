@@ -175,23 +175,30 @@ centroid distance, storing each as a derived point light `{centroid, Le}` (6 flo
 computes is *not recoverable* from a finalized record — `nee_merge_emitters` keeps only
 the map-global-**normalized** `pdf` (a light in a dark room would read as tiny), so the
 raster light reads `Le` straight from the record (offsets 9–11, the same source the
-build derived its weight from) rather than a reconstructed absolute power. Intensity
-therefore comes from `Le` (sprite lamps already carry a ×12 build boost); the
-`triangle_area` weighting is dropped for L1b (a `STRENGTH` dial in §6 sets the overall
-level). This compact per-subsector list (≤ N entries each) uploads to a new SSBO,
-packed nearest-first; the fragment shader indexes it by the fragment's subsector id
-(`triSs[gl_PrimitiveID]`, the same triangle→subsector map §4.2 uses for the bounce — no
-new vertex attribute) and loops **only its subsector's ≤ N entries**, stopping at the
-first empty (`Le == 0`) slot — no in-shader sort, bounded cost (INV-6):
+build derived its weight from) rather than a reconstructed absolute power. **`Le` is
+used as COLOUR only** (normalized by its max channel): the raw value is a radiometric
+NEE quantity — sprite lamps carry a ×12 build boost and a big surface enters as many
+triangles — so summing it as raw intensity blows straight to white (confirmed on the
+first play-test). Normalizing keeps hue (a white lamp stays white) and drops the ×12/area
+scale; a `STRENGTH` dial (§6) sets the overall level, and the summed contribution is
+**rolled off (Reinhard)** so a cluster of an emissive surface's triangles saturates
+gracefully to its colour instead of stacking past white. This compact per-subsector list
+(≤ N entries each) uploads to a new SSBO, packed nearest-first; the fragment shader
+indexes it by the fragment's subsector id (`triSs[gl_PrimitiveID]`, the same
+triangle→subsector map §4.2 uses for the bounce — no new vertex attribute) and loops
+**only its subsector's ≤ N entries**, stopping at the first empty (`Le == 0`) slot — no
+in-shader sort, bounded cost (INV-6):
 
 ```
 for k in this fragment's subsector list (≤ N, nearest-packed):
-    Le      = light[k].Le;  if (Le == 0) break     // empty slot ends the list
+    Le      = light[k].Le;  m = max(Le.r, Le.g, Le.b);  if (m == 0) break
+    col     = Le / m                               // COLOUR only — hue kept, raw NEE ×12/area scale dropped
     d       = light[k].centroid - worldPos
     dist2   = dot(d, d)
     atten   = 1 / (1 + dist2/RADIUS^2)             // smooth inverse-square-ish; RADIUS a tuned constant (§6)
-    diffuse += Le * atten * max(dot(normal, normalize(d)), 0)
-// final: lit += STRENGTH * albedo * diffuse       // STRENGTH seeded 0.5 (§6/§9 Q1)
+    diffuse += col * atten * max(dot(normal, normalize(d)), 0)
+diffuse = diffuse / (1 + diffuse)                  // Reinhard: a cluster saturates to colour, not white
+lit += STRENGTH * albedo * diffuse                 // STRENGTH seeded 0.6 (§6/§9 Q1)
 ```
 
 - **No cast shadows** here (that is the RT-on job, and the one raster shadow we do
@@ -353,7 +360,7 @@ shine flag (§4.6). **New CPU per-frame pass:** the per-subsector light-list bui
 | Frame budget at the floor | 16.6 ms (60 FPS) | INV-2 |
 | Point lights per subsector, `N` | **16** (`RASTER_MAX_LIGHTS_PER_SUBSECTOR`) | §4.1, §9 Q4 |
 | Point-light falloff radius, `RADIUS` | seed 512 world-units (tune 256–768) | §4.1, §9 Q4 |
-| Point-light overall level, `POINT_LIGHT_STRENGTH` | seed 0.5 (sprite `Le` carries a ×12 build boost) | §4.1, §9 Q1 |
+| Point-light overall level, `POINT_LIGHT_STRENGTH` | seed 0.6 (max additive after the Reinhard roll-off; `Le` is colour-only) | §4.1, §9 Q1 |
 | Point-light CPU cull budget | ≤ **1 ms** / frame | §4.1 |
 | SSAO resolution / taps | half-res / 16 depth taps | §4.3 |
 | SSR resolution | half-res | §4.6 |

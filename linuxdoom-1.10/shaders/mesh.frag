@@ -99,12 +99,14 @@ const float GI_BOUNCE_STRENGTH = 1.0;
 
 // DOOM-0170 L1b point-light dials (§6 seeds; §9 Q1/Q4 tuning). RASTER_MAX_LIGHTS must
 // match RASTER_MAX_LIGHTS_PER_SUBSECTOR in r_vulkan.cpp. RADIUS is the half-bright
-// distance (world units). Sprite lamp Le carries a ×12 build boost (BuildDynamicEmitters),
-// so STRENGTH is seeded < 1 to keep near lamps from blowing out; tune on play-test.
+// distance (world units). Each emitter's Le is used as COLOUR ONLY (normalized by its
+// max channel), because the raw Le is a radiometric NEE value (sprite lamps carry a ×12
+// build boost, big surfaces enter as many triangles) that summed as raw intensity blows
+// straight to white. STRENGTH sets the max additive level after the sum is rolled off.
 const uint  RASTER_MAX_LIGHTS    = 16u;
 const float RASTER_LIGHT_RADIUS  = 512.0;
 const float RASTER_INV_RADIUS2   = 1.0 / (RASTER_LIGHT_RADIUS * RASTER_LIGHT_RADIUS);
-const float POINT_LIGHT_STRENGTH = 0.5;
+const float POINT_LIGHT_STRENGTH = 0.6;
 
 // Evaluate the baked SH-L1 GI cache for subsector `subId` along world normal `n`,
 // returning the diffuse reflected-radiance factor (multiply by albedo). Copied
@@ -252,25 +254,33 @@ void main()
             lit += GI_BOUNCE_STRENGTH * albedo * giIrradiance(pc.probes, sub, nrm);
 
             // DOOM-0170 L1b: direct light from this subsector's nearest emitters. Each
-            // slot is a point approximation of an NEE area light — colour + intensity =
-            // the emitter Le, a smooth inverse-square falloff (half-bright at RADIUS) and
-            // a Lambert facing term. No cast shadows (that is the RT-on / key-light job,
-            // §4.4). Slots are nearest-packed; the first zero-Le slot ends the list.
+            // slot is a point approximation of an NEE area light — Le gives the COLOUR
+            // (normalized by its max channel so a white lamp stays white and the raw ×12
+            // NEE scale drops out), a smooth inverse-square falloff (half-bright at RADIUS)
+            // and a Lambert facing term. No cast shadows (that is the RT-on / key-light
+            // job, §4.4). Slots are nearest-packed; the first zero-Le slot ends the list.
             uint base = sub * (RASTER_MAX_LIGHTS * 6u);
             vec3 direct = vec3(0.0);
             for (uint k = 0u; k < RASTER_MAX_LIGHTS; k++)
             {
                 uint o  = base + k * 6u;
                 vec3 Le = vec3(pc.lights.d[o + 3u], pc.lights.d[o + 4u], pc.lights.d[o + 5u]);
-                if (Le.r + Le.g + Le.b <= 0.0)
+                float m = max(Le.r, max(Le.g, Le.b));
+                if (m <= 0.0)
                     break;
+                vec3  col = Le / m;                     // unit-max colour, hue preserved
                 vec3  c   = vec3(pc.lights.d[o], pc.lights.d[o + 1u], pc.lights.d[o + 2u]);
                 vec3  dd  = c - vWorldPos;
                 float d2  = dot(dd, dd);
                 float att = 1.0 / (1.0 + d2 * RASTER_INV_RADIUS2);
                 float ndl = max(dot(nrm, dd * inversesqrt(max(d2, 1e-8))), 0.0);
-                direct += Le * att * ndl;
+                direct += col * att * ndl;
             }
+            // A big emissive surface enters as many emitter triangles, so summing the
+            // nearest N over-counts one physical light. Roll the accumulated point light
+            // off to < 1 per channel (Reinhard) so a cluster saturates gracefully to its
+            // colour instead of stacking to white, then scale by the overall STRENGTH.
+            direct = direct / (1.0 + direct);
             lit += POINT_LIGHT_STRENGTH * albedo * direct;
         }
     }
