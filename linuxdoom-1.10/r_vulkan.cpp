@@ -948,6 +948,15 @@ void PickPhysicalAndDevice()
         printf("RB_Vulkan: WARNING — no shaderStorageImageArrayDynamicIndexing; "
                "the SVGF denoiser (~ mode 6) will not function.\n");
 
+    // DOOM-0170 L1a: the raster fragment shader reads gl_PrimitiveID (triangle ->
+    // subsector -> GI probe / point-light list), which SPIR-V exposes only under the
+    // Geometry capability, so the geometryShader feature must be enabled or the
+    // shader module reads garbage / is rejected. Core Vulkan 1.0, effectively
+    // universal on desktop GPUs (RX 6600, GTX 1050/2060). Enable when present; if a
+    // device genuinely lacks it the pipeline create below fails loudly via Check().
+    if (have2.features.geometryShader)
+        enableBase.geometryShader = VK_TRUE;
+
     VkDeviceCreateInfo dci = {};
     dci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     dci.pNext = &enable12;   // required (we I_Error above if unsupported)

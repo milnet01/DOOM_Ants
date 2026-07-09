@@ -83,6 +83,13 @@ const int FLAG_SKYDOME = 0x40;  // matches RB_MESH_SKYDOME (world-space sky occl
 
 const float PI = 3.14159265358979;
 
+// DOOM-0170 L1a bounce strength (§9 Q1 tuning dial). 1.0 = the physically-correct
+// baked indirect, matching the RT view (which reads the same probes). The bake's
+// indirect irradiance is low (mean DC ~0.013 on E1M1), so this fill is faint on top
+// of DOOM's bright flat sector light — the visible lift comes from L1b's direct
+// point lights + a later sector-light rebalance; kept here as the tunable dial.
+const float GI_BOUNCE_STRENGTH = 1.0;
+
 // Evaluate the baked SH-L1 GI cache for subsector `subId` along world normal `n`,
 // returning the diffuse reflected-radiance factor (multiply by albedo). Copied
 // verbatim from pt_common.glsl giIrradiance() so the raster bounce is identical to
@@ -224,7 +231,7 @@ void main()
     {
         uint sub = pc.triSs.s[uint(gl_PrimitiveID)];
         if (sub < pc.probeCount)
-            lit += albedo * giIrradiance(pc.probes, sub, normalize(vNormal));
+            lit += GI_BOUNCE_STRENGTH * albedo * giIrradiance(pc.probes, sub, normalize(vNormal));
     }
 
     outColor = vec4(lit, 1.0);
