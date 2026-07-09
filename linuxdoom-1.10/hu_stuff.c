@@ -512,37 +512,56 @@ void HU_Drawer(void)
 
 //
 // HU_DrawFPS
-// Optional on-screen frame-rate counter (DOOM-0046). Measured as a rolling
-// average over a ~half-second window (steadier than an instantaneous delta),
-// drawn with the small HUD font into screens[0] so it shows under every
-// renderer for free — Classic blits screens[0], and the 3D back-end composites
-// it over the Vulkan view. Anchored to the top corner picked by fpsCorner.
+// Optional on-screen frame-rate counter (DOOM-0046). Shows "avg/low": the mean
+// frame rate over a ~half-second window (steadier than an instantaneous delta)
+// AND the low — the rate implied by the SLOWEST single frame in that window, the
+// frame-pacing/stutter gauge (a plain average hides a hitch; the low does not).
+// If the low holds at/above the target, pacing never dropped below the floor.
+// Drawn with the small HUD font into screens[0] so it shows under every renderer
+// for free — Classic blits screens[0], and the 3D back-end composites it over the
+// Vulkan view. Anchored to the top corner picked by fpsCorner.
 //
 void HU_DrawFPS(void)
 {
     static int	frames = 0;
     static int	lastms = 0;
+    static int	prevms = 0;
+    static int	worst  = 0;     // slowest single-frame delta this window (ms)
     static int	fps = 0;
-    char	buf[8];
+    static int	low = 0;        // 1000/worst — the "never dropped below" figure
+    char	buf[16];
     int		now = I_GetTimeMS();
     int		elapsed = now - lastms;
     int		x, y, w, i, c;
 
     // Count every presented frame; refresh the displayed value twice a second.
+    // Track the largest inter-frame gap so a lone hitch surfaces as the low.
     if (!lastms)
+    {
 	lastms = now;               // first call: start the window, don't divide
+	prevms = now;
+    }
+    else
+    {
+	int d = now - prevms;
+	if (d > worst)
+	    worst = d;
+    }
+    prevms = now;
     frames++;
     if (elapsed >= 500)
     {
 	fps = (frames * 1000) / elapsed;
+	low = (worst > 0) ? (1000 / worst) : fps;
 	frames = 0;
+	worst = 0;
 	lastms = now;
     }
 
     if (!fpsCorner)
 	return;
 
-    sprintf(buf, "%d", fps);
+    sprintf(buf, "%d/%d", fps, low);
 
     // Measure the string in the HUD font so centre/right anchors line up.
     w = 0;
