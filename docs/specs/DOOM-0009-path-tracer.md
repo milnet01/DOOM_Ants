@@ -83,6 +83,14 @@ spec adds the flash's *ray-traced shadows* (§4.1); with RT **off** it is a plai
 raster flash. The broader dynamic-*atmosphere* lighting (DOOM-0010 — flickering
 lamps, coloured lights) stays an Ultra feature.
 
+**(Superseded for the RT-off case by DOOM-0170, per user request 2026-07-09.)** The
+RT-off raster "performance mode" (DOOM-0170) extends dynamic **point lights** and
+**baked-probe indirect bounce** to *both* 3D tiers — see DOOM-0170 §4.1/§4.2. So the
+"Solid deliberately leaves unlit rooms dark" stance and the "stays an Ultra feature"
+line above hold for RT-**on**; with RT **off**, DOOM-0170 is canonical (it is the
+shared RT-off back-end, mirroring this spec as the RT-on one). The Solid-dark
+soften-vs-keep call remains a play-test decision, now owned by DOOM-0170 §9 Q1.
+
 **Menu rework (Stage-2).** Today the Options menu has one `"Renderer:"` item that
 *cycles* Classic → Solid → Ultra (`m_menu.c` `M_ChangeRenderer` →
 `RB_NextAvailableMode`, via `cycleOrder[]`), with the three menu positions mapping

@@ -1517,3 +1517,20 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Picking the "Solid" graphics mode now gives the fast, classic-looking view instead of secretly running the heavy ray-traced renderer — so it's smooth. "Ultra" is the ray-traced one. You can still flip ray-tracing on/off within a mode with the ~ key.
   Kind: fix.
   Source: user-request-2026-07-04 (Solid not buttery-smooth on RX 6600).
+
+- 📋 [DOOM-0170] **Raster "performance mode" — modern lighting/shadows/reflections when ray tracing is OFF (both Solid and Ultra).**
+  User model (PS5 quality/performance modes): RT-on = quality mode (path tracer, unchanged); RT-off (rb_rtdebug==0) = performance mode — the SAME lighting ideas done the cheap raster way, and it must beat Classic. Tier stays "which art" (Solid=classic, Ultra=HD); RT on/off is the quality/performance toggle INSIDE each tier. Mutual-exclusion holds (RT-off never runs the tracer; RT-on never runs this stack).
+  Spec written: docs/specs/DOOM-0170-raster-performance-mode.md. /cold-eyes 4-loop polish-converged 2026-07-09 (0 CRITICAL/HIGH; also added a reciprocal supersession pointer to DOOM-0009 §2). Implementation-ready, layered build: L1 lighting (point lights + baked-probe bounce) first, then L2 shadows (SSAO + key-light shadow map + blob), then L3 scoped SSR — each rebuilt + play-tested on the RX 6600 before the next.
+
+  Today mesh.frag is only "classic DOOM lighting in 3D" (sector light x distance + flashlight cone) — no dynamic point lights, shadows, reflections, or bounce. This feature grows the raster path into a short multi-pass pipeline.
+
+  Design forks (user-decided 2026-07-09): (1) build EVERYTHING (lights+bounce+SSAO+key-light shadow map+blob shadows+scoped SSR) — implement in verifiable layers; (2) reflections = scoped SSR on liquids/metal only (nukage/water/blood/polished), half-res, blurred sheen, else matte; (3) shadows = SSAO contact + ONE dominant-light shadow map (flashlight/outdoor sun; monsters+items render into it) + cheap blob shadow under each monster/barrel.
+
+  Pipeline (per frame, RT-off): 1 key-light shadow map; 2 main pass (mesh.frag: albedo x sector-light + nearest ~12-16 point lights from the existing NEE emitter list + baked SH-L1 probe bounce + shadowed key light -> HDR colour + normals); 3 SSAO half-res; 4 scoped SSR half-res; 5 composite+tonemap -> swapchain, HUD on top; blob shadows.
+
+  Reuse: the per-frame emitter list (BuildStaticEmitterSet/BuildDynamicEmitters) and the one-time GI bake (RunGiBake SH-L1 probes) already exist — raster just isn't fed them yet. Non-RT GPUs: SSAO/SSR/shadows/blobs are pure raster (no RT); probe bounce falls back to flat ambient when no bake (no crash). 60 FPS floor is hard: half-res screen passes, one shadow map, capped point lights, scales with Render Scale. Each effect individually toggleable to isolate hardware issues.
+
+  Layered build: L1 lighting (point lights + probe bounce), L2 shadows (SSAO+shadow map+blob), L3 scoped SSR — each rebuilt + play-tested on the RX 6600 before the next. Spec: docs/specs. Needs /cold-eyes per house rule 14 before implementation.
+  **Layman:** With ray tracing off, the classic view still gets modern shadows, lighting and reflections done the fast raster way — like a console's "Performance Mode" next to the ray-traced "Quality Mode".
+  Kind: feature.
+  Source: user-request-2026-07-09.
