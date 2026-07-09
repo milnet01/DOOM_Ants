@@ -57,6 +57,8 @@
 #include "shaders/mesh.frag.spv.h"
 #include "shaders/overlay.vert.spv.h"
 #include "shaders/overlay.frag.spv.h"
+#include "shaders/composite.vert.spv.h"
+#include "shaders/composite.frag.spv.h"
 #include "shaders/pathtrace.comp.spv.h"
 #include "shaders/bake.comp.spv.h"
 #include "shaders/svgf_temporal.comp.spv.h"
@@ -244,6 +246,18 @@ struct VulkanState
     VkRenderPass               renderPass = VK_NULL_HANDLE;
     std::vector<VkFramebuffer> framebuffers;
 
+    // DOOM-0170 L2a — off-screen scene canvas. The world is drawn into sceneImage via
+    // scenePass (colour STORE, final layout SHADER_READ_ONLY); a full-screen composite
+    // pass (compositePipeline, in renderPass) then samples it to the swapchain. This is
+    // the seam where the HDR tone-map + the L2 shadow/AO composites land. sceneFb binds
+    // sceneView + the shared depthView. Same size/format as the swapchain (step 1); the
+    // format flips to HDR float in step 2.
+    VkImage        sceneImage  = VK_NULL_HANDLE;
+    VkDeviceMemory sceneMemory = VK_NULL_HANDLE;
+    VkImageView    sceneView   = VK_NULL_HANDLE;
+    VkFramebuffer  sceneFb     = VK_NULL_HANDLE;
+    VkRenderPass   scenePass   = VK_NULL_HANDLE;
+
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
     VkPipeline       pipeline       = VK_NULL_HANDLE;
     // Same layout/shaders as `pipeline`, but depth test + write disabled, so the
@@ -263,6 +277,15 @@ struct VulkanState
     // viewmodel + the 2D HUD/menu/FPS overlay over the traced view. Format-compatible
     // with renderPass, so it reuses g.framebuffers and the world/overlay pipelines.
     VkRenderPass     rtOverlayPass   = VK_NULL_HANDLE;
+
+    // DOOM-0170 L2a composite pass: its own 1-sampler descriptor set (the scene target),
+    // kept separate from g.dsLayout whose variable-count material array must stay the last
+    // binding. compositePipeLayout binds only this set (no push constants).
+    VkPipeline            compositePipeline   = VK_NULL_HANDLE;
+    VkPipelineLayout      compositePipeLayout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout compositeDsLayout   = VK_NULL_HANDLE;
+    VkDescriptorPool      compositeDsPool     = VK_NULL_HANDLE;
+    VkDescriptorSet       compositeDs         = VK_NULL_HANDLE;
 
     VkCommandPool   cmdPool = VK_NULL_HANDLE;
     VkCommandBuffer cmd     = VK_NULL_HANDLE;
@@ -2912,6 +2935,55 @@ void CreateDepthResources()
     Check(vkCreateImageView(g.device, &vci, nullptr, &g.depthView), "vkCreateImageView(depth)");
 }
 
+// DOOM-0170 L2a: (re)create the off-screen scene colour target the world renders into
+// before the composite pass. Swapchain-sized, swapchain format (step 1; HDR float in
+// step 2). usage COLOR_ATTACHMENT (rendered into) + SAMPLED (read by the composite).
+void CreateSceneTarget()
+{
+    VkImageCreateInfo ici = {};
+    ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ici.imageType = VK_IMAGE_TYPE_2D;
+    ici.format = g.format;
+    ici.extent = { g.extent.width, g.extent.height, 1 };
+    ici.mipLevels = 1;
+    ici.arrayLayers = 1;
+    ici.samples = VK_SAMPLE_COUNT_1_BIT;
+    ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ici.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    Check(vkCreateImage(g.device, &ici, nullptr, &g.sceneImage), "vkCreateImage(scene)");
+
+    VkMemoryRequirements req = {};
+    vkGetImageMemoryRequirements(g.device, g.sceneImage, &req);
+    VkMemoryAllocateInfo mai = {};
+    mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    mai.allocationSize = req.size;
+    mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    Check(vkAllocateMemory(g.device, &mai, nullptr, &g.sceneMemory), "vkAllocateMemory(scene)");
+    Check(vkBindImageMemory(g.device, g.sceneImage, g.sceneMemory, 0), "vkBindImageMemory(scene)");
+
+    VkImageViewCreateInfo vci = {};
+    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vci.image = g.sceneImage;
+    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vci.format = g.format;
+    vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    vci.subresourceRange.levelCount = 1;
+    vci.subresourceRange.layerCount = 1;
+    Check(vkCreateImageView(g.device, &vci, nullptr, &g.sceneView), "vkCreateImageView(scene)");
+}
+
+// Free the scene target (+ its framebuffer, built in CreateFramebuffers). Called from
+// DestroyFramebufferResources so it rides the existing resize/teardown path.
+void DestroySceneTarget()
+{
+    if (g.sceneFb)     { vkDestroyFramebuffer(g.device, g.sceneFb, nullptr); g.sceneFb = VK_NULL_HANDLE; }
+    if (g.sceneView)   { vkDestroyImageView(g.device, g.sceneView, nullptr); g.sceneView = VK_NULL_HANDLE; }
+    if (g.sceneImage)  { vkDestroyImage(g.device, g.sceneImage, nullptr);    g.sceneImage = VK_NULL_HANDLE; }
+    if (g.sceneMemory) { vkFreeMemory(g.device, g.sceneMemory, nullptr);     g.sceneMemory = VK_NULL_HANDLE; }
+}
+
 void CreateRenderPass()
 {
     VkAttachmentDescription att[2] = {};
@@ -2963,6 +3035,26 @@ void CreateRenderPass()
     Check(vkCreateRenderPass(g.device, &rpci, nullptr, &g.renderPass),
           "vkCreateRenderPass");
 
+    // DOOM-0170 L2a: scene pass — identical to renderPass but its colour attachment is
+    // the off-screen scene target, left in SHADER_READ_ONLY (the composite pass samples
+    // it) instead of the swapchain in PRESENT_SRC. Same format/samples as renderPass, so
+    // the world/sky/wire pipelines are render-pass-compatible with it (no rebuild). Built
+    // from copies so the shared att/dep/rpci are untouched for the rtOverlayPass below.
+    {
+        // Same attachments/subpass/dependency as renderPass (so the world pipelines,
+        // built against renderPass, stay render-pass-compatible — the validation layer
+        // counts dependencyCount toward compatibility), except the colour attachment is
+        // left in COLOR_ATTACHMENT_OPTIMAL. An explicit barrier after the pass transitions
+        // it to SHADER_READ_ONLY and makes the world writes visible to the composite's
+        // sample (a subpass dependency would bump dependencyCount and break compatibility).
+        VkAttachmentDescription satt[2] = { att[0], att[1] };
+        satt[0].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        VkRenderPassCreateInfo srpci = rpci;
+        srpci.pAttachments = satt;
+        Check(vkCreateRenderPass(g.device, &srpci, nullptr, &g.scenePass),
+              "vkCreateRenderPass(scene)");
+    }
+
     // DOOM-0094: a LOAD-variant for the path-traced present path. RecordRtTrace blits
     // the traced world to the swapchain and leaves it in PRESENT_SRC; this pass LOADs
     // that colour (loadOp=LOAD, initialLayout PRESENT_SRC) and draws the weapon + the
@@ -2999,6 +3091,21 @@ void CreateFramebuffers()
         Check(vkCreateFramebuffer(g.device, &fci, nullptr, &g.framebuffers[i]),
               "vkCreateFramebuffer");
     }
+
+    // DOOM-0170 L2a: the single off-screen scene framebuffer (scene colour + the shared
+    // depth), bound by scenePass. CreateSceneTarget (which makes g.sceneView) runs before
+    // this in both the init and resize paths.
+    VkImageView sattach[2] = { g.sceneView, g.depthView };
+    VkFramebufferCreateInfo sfci = {};
+    sfci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    sfci.renderPass = g.scenePass;
+    sfci.attachmentCount = 2;
+    sfci.pAttachments = sattach;
+    sfci.width = g.extent.width;
+    sfci.height = g.extent.height;
+    sfci.layers = 1;
+    Check(vkCreateFramebuffer(g.device, &sfci, nullptr, &g.sceneFb),
+          "vkCreateFramebuffer(scene)");
 }
 
 VkShaderModule MakeShader(const unsigned char* code, unsigned len)
@@ -3071,6 +3178,67 @@ void CreateDescriptors()
     sci.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     Check(vkCreateSampler(g.device, &sci, nullptr, &g.texSampler), "vkCreateSampler");
+
+    // DOOM-0170 L2a composite descriptor: one combined-image-sampler (the scene target),
+    // its own layout/pool/set + a pipeline layout binding only it. Separate from
+    // g.dsLayout so the variable-count material array there stays the last binding.
+    {
+        VkDescriptorSetLayoutBinding cb = {};
+        cb.binding = 0;
+        cb.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        cb.descriptorCount = 1;
+        cb.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        VkDescriptorSetLayoutCreateInfo clci = {};
+        clci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        clci.bindingCount = 1;
+        clci.pBindings = &cb;
+        Check(vkCreateDescriptorSetLayout(g.device, &clci, nullptr, &g.compositeDsLayout),
+              "vkCreateDescriptorSetLayout(composite)");
+
+        VkDescriptorPoolSize cps = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 };
+        VkDescriptorPoolCreateInfo cdpci = {};
+        cdpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        cdpci.maxSets = 1;
+        cdpci.poolSizeCount = 1;
+        cdpci.pPoolSizes = &cps;
+        Check(vkCreateDescriptorPool(g.device, &cdpci, nullptr, &g.compositeDsPool),
+              "vkCreateDescriptorPool(composite)");
+
+        VkDescriptorSetAllocateInfo cdsai = {};
+        cdsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        cdsai.descriptorPool = g.compositeDsPool;
+        cdsai.descriptorSetCount = 1;
+        cdsai.pSetLayouts = &g.compositeDsLayout;
+        Check(vkAllocateDescriptorSets(g.device, &cdsai, &g.compositeDs),
+              "vkAllocateDescriptorSets(composite)");
+
+        VkPipelineLayoutCreateInfo cplci = {};
+        cplci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        cplci.setLayoutCount = 1;
+        cplci.pSetLayouts = &g.compositeDsLayout;
+        Check(vkCreatePipelineLayout(g.device, &cplci, nullptr, &g.compositePipeLayout),
+              "vkCreatePipelineLayout(composite)");
+    }
+}
+
+// DOOM-0170 L2a: point the composite descriptor at the current scene view. The scene
+// image is recreated on every resize, so this runs after each CreateSceneTarget.
+void UpdateCompositeDescriptor()
+{
+    if (!g.compositeDs || !g.sceneView)
+        return;
+    VkDescriptorImageInfo ii = {};
+    ii.sampler = g.texSampler;
+    ii.imageView = g.sceneView;
+    ii.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet w = {};
+    w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    w.dstSet = g.compositeDs;
+    w.dstBinding = 0;
+    w.descriptorCount = 1;
+    w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    w.pImageInfo = &ii;
+    vkUpdateDescriptorSets(g.device, 1, &w, 0, nullptr);
 }
 
 void CreatePipeline()
@@ -3226,6 +3394,25 @@ void CreatePipeline()
     vkDestroyShaderModule(g.device, ovVert, nullptr);
     vkDestroyShaderModule(g.device, ovFrag, nullptr);
 
+    // DOOM-0170 L2a composite pipeline: vertexless full-screen tri (composite.vert) that
+    // samples the off-screen scene target (composite.frag) into the swapchain via
+    // renderPass. Depth off (reuse skyDs + the overlay's empty vertex input); binds only
+    // g.compositePipeLayout (the 1-sampler composite set), not g.pipelineLayout.
+    VkShaderModule coVert = MakeShader(composite_vert_spv, composite_vert_spv_len);
+    VkShaderModule coFrag = MakeShader(composite_frag_spv, composite_frag_spv_len);
+    VkPipelineShaderStageCreateInfo coStages[2] = { ovStages[0], ovStages[1] };
+    coStages[0].module = coVert;
+    coStages[1].module = coFrag;
+    pci.pStages = coStages;
+    pci.pVertexInputState = &ovVin;         // vertexless
+    pci.pDepthStencilState = &skyDs;        // depth test + write off
+    pci.layout = g.compositePipeLayout;
+    Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &pci, nullptr,
+                                    &g.compositePipeline), "vkCreateGraphicsPipelines(composite)");
+    pci.layout = g.pipelineLayout;          // restore (defensive)
+    vkDestroyShaderModule(g.device, coVert, nullptr);
+    vkDestroyShaderModule(g.device, coFrag, nullptr);
+
     vkDestroyShaderModule(g.device, vert, nullptr);
     vkDestroyShaderModule(g.device, frag, nullptr);
 }
@@ -3246,6 +3433,8 @@ void DestroyFramebufferResources()
     for (VkImageView v : g.imageViews)
         vkDestroyImageView(g.device, v, nullptr);
     g.imageViews.clear();
+
+    DestroySceneTarget();   // DOOM-0170 L2a off-screen colour + its framebuffer
 }
 
 void RecreateSwapchain()
@@ -3256,7 +3445,9 @@ void RecreateSwapchain()
     CreateSwapchain();   // reuses g.swapchain as oldSwapchain, then replaces it
     CreateImageViews();
     CreateDepthResources();
+    CreateSceneTarget();                // DOOM-0170 L2a off-screen colour (before its framebuffer)
     CreateFramebuffers();
+    UpdateCompositeDescriptor();        // re-point the composite sampler at the new scene view
     CreateRenderFinishedSemaphores();   // image count may have changed; resize set
     if (g.rtEnabled) CreateRtTargets();    // re-point the compute descriptor too
 }
@@ -3687,12 +3878,14 @@ extern "C" void RB_Vulkan_Init(void)
     CreateImageViews();
     CreateRenderPass();
     CreateDepthResources();
+    CreateSceneTarget();       // DOOM-0170 L2a off-screen colour (before its framebuffer)
     CreateFramebuffers();
     CreateDescriptors();       // set layout + sampler (needed by the pipeline layout)
     CreatePipeline();
     CreateCommandsAndSync();
     InitPaletteAndDescriptorSet();  // PLAYPAL LUT + descriptor set, so the HUD/menu
                                     // overlay composites from the first frame (DOOM-0045)
+    UpdateCompositeDescriptor();    // DOOM-0170 L2a: point the composite sampler at the scene view
     if (g.rtEnabled)
     {
         // Path-tracer compute pass (DOOM-0009 build step 2c). Pipeline first (it
@@ -5394,16 +5587,17 @@ extern "C" void RB_Vulkan_Present(void)
     if (drawOverlay)
         UploadOverlayImage();
 
-    // Clear to a dark slate (world background) + far depth, then draw the level
-    // mesh. The render pass transitions the colour image to PRESENT_SRC for us.
+    // DOOM-0170 L2a: draw the world into the OFF-SCREEN scene target (scenePass leaves it
+    // in SHADER_READ_ONLY); the composite pass below samples it to the swapchain. Clear to
+    // a dark slate (world background) + far depth.
     VkClearValue clears[2] = {};
     clears[0].color = { { 0.05f, 0.06f, 0.09f, 1.0f } };
     clears[1].depthStencil = { 1.0f, 0 };
 
     VkRenderPassBeginInfo rp = {};
     rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    rp.renderPass = g.renderPass;
-    rp.framebuffer = g.framebuffers[idx];
+    rp.renderPass = g.scenePass;
+    rp.framebuffer = g.sceneFb;
     rp.renderArea.extent = g.extent;
     rp.clearValueCount = 2;
     rp.pClearValues = clears;
@@ -5501,6 +5695,45 @@ extern "C" void RB_Vulkan_Present(void)
             vkCmdBindVertexBuffers(g.cmd, 0, 1, &g.spriteVbuf, &off);
             vkCmdDraw(g.cmd, g.spriteVertCount, 1, g.skyVertCount, 0);
         }
+    }
+
+    // DOOM-0170 L2a: the world is now in the off-screen scene target. Close that pass and
+    // open the swapchain pass; a full-screen composite samples the scene to the screen
+    // (this is the tone-map seam for step 2), then the HUD draws on top in the same pass.
+    vkCmdEndRenderPass(g.cmd);   // end scenePass
+
+    // Transition the scene target COLOR_ATTACHMENT -> SHADER_READ and make the world
+    // writes visible to the composite's sample (see the scenePass note above).
+    {
+        VkImageMemoryBarrier b = {};
+        b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        b.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        b.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = g.sceneImage;
+        b.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
+                             0, nullptr, 0, nullptr, 1, &b);
+    }
+
+    rp.renderPass = g.renderPass;
+    rp.framebuffer = g.framebuffers[idx];
+    vkCmdBeginRenderPass(g.cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
+    {
+        VkViewport vpRect = {};
+        vpRect.width = (float)g.extent.width;
+        vpRect.height = (float)g.extent.height;
+        vpRect.maxDepth = 1.0f;
+        vkCmdSetViewport(g.cmd, 0, 1, &vpRect);
+        VkRect2D scissor = { { 0, 0 }, g.extent };
+        vkCmdSetScissor(g.cmd, 0, 1, &scissor);
+        vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                g.compositePipeLayout, 0, 1, &g.compositeDs, 0, nullptr);
+        vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.compositePipeline);
+        vkCmdDraw(g.cmd, 3, 1, 0, 0);
     }
 
     // 2D HUD/menu compositor, last and over everything: a vertexless full-screen
@@ -5664,6 +5897,13 @@ extern "C" void RB_Vulkan_Shutdown(void)
     if (g.skyPipeline)    vkDestroyPipeline(g.device, g.skyPipeline, nullptr);
     if (g.overlayPipeline) vkDestroyPipeline(g.device, g.overlayPipeline, nullptr);
     if (g.pipelineLayout) vkDestroyPipelineLayout(g.device, g.pipelineLayout, nullptr);
+    // DOOM-0170 L2a composite objects (size-independent; the scene image/fb are freed by
+    // DestroyFramebufferResources above).
+    if (g.compositePipeline)   vkDestroyPipeline(g.device, g.compositePipeline, nullptr);
+    if (g.compositePipeLayout) vkDestroyPipelineLayout(g.device, g.compositePipeLayout, nullptr);
+    if (g.compositeDsPool)     vkDestroyDescriptorPool(g.device, g.compositeDsPool, nullptr);
+    if (g.compositeDsLayout)   vkDestroyDescriptorSetLayout(g.device, g.compositeDsLayout, nullptr);
+    if (g.scenePass)      vkDestroyRenderPass(g.device, g.scenePass, nullptr);
     if (g.rtOverlayPass)  vkDestroyRenderPass(g.device, g.rtOverlayPass, nullptr);
     if (g.renderPass)     vkDestroyRenderPass(g.device, g.renderPass, nullptr);
     if (g.inFlight)       vkDestroyFence(g.device, g.inFlight, nullptr);

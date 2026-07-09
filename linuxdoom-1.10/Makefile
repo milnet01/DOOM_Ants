@@ -63,6 +63,7 @@ O=linux
 SHADER_DIR=shaders
 SHADER_SRCS=$(SHADER_DIR)/mesh.vert $(SHADER_DIR)/mesh.frag \
 		$(SHADER_DIR)/overlay.vert $(SHADER_DIR)/overlay.frag \
+		$(SHADER_DIR)/composite.vert $(SHADER_DIR)/composite.frag \
 		$(SHADER_DIR)/pathtrace.comp $(SHADER_DIR)/bake.comp \
 		$(SHADER_DIR)/svgf_temporal.comp $(SHADER_DIR)/svgf_atrous.comp \
 		$(SHADER_DIR)/svgf_composite.comp $(SHADER_DIR)/label.comp \
