@@ -259,7 +259,15 @@ struct VulkanState
     VkRenderPass   scenePass   = VK_NULL_HANDLE;
 
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
+    // World pipeline. DOOM-0170 L2a step 3: built against the 16-bit-float g.scenePass
+    // (the raster path draws the whole scene into the HDR off-screen target), so it is
+    // NOT format-compatible with the 8-bit swapchain passes — the RT weapon overlay uses
+    // rtWeaponPipeline (below) instead.
     VkPipeline       pipeline       = VK_NULL_HANDLE;
+    // DOOM-0170 L2a step 3: 8-bit twin of `pipeline` (same shaders/state) built against
+    // renderPass, for the RT/Ultra weapon overlay which draws onto the 8-bit swapchain
+    // after the traced blit — the one place the world pipeline still meets an 8-bit target.
+    VkPipeline       rtWeaponPipeline = VK_NULL_HANDLE;
     // Same layout/shaders as `pipeline`, but depth test + write disabled, so the
     // sky backdrop paints behind everything and the world overdraws it.
     VkPipeline       skyPipeline    = VK_NULL_HANDLE;
@@ -383,6 +391,11 @@ struct VulkanState
     bool  haveCamera = false;
 
     static constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
+    // DOOM-0170 L2a step 3: the off-screen scene canvas is 16-bit float so the world
+    // shader's lighting can exceed 1.0 without clipping to flat white; the composite
+    // pass then tone-maps it back into [0,1]. R16G16B16A16_SFLOAT has universal
+    // colour-attachment + sampled + linear-filter support on desktop Vulkan.
+    static constexpr VkFormat kSceneFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 
     // Hardware ray tracing (DOOM-0009 build step 2). Enabled on the logical device
     // only when the chosen GPU advertises VK_KHR_acceleration_structure +
@@ -2964,14 +2977,15 @@ void CreateDepthResources()
 }
 
 // DOOM-0170 L2a: (re)create the off-screen scene colour target the world renders into
-// before the composite pass. Swapchain-sized, swapchain format (step 1; HDR float in
-// step 2). usage COLOR_ATTACHMENT (rendered into) + SAMPLED (read by the composite).
+// before the composite pass. Swapchain-sized, 16-bit float (kSceneFormat) so the world
+// shader's HDR lighting survives to the composite tone-map (step 3). usage
+// COLOR_ATTACHMENT (rendered into) + SAMPLED (read by the composite).
 void CreateSceneTarget()
 {
     VkImageCreateInfo ici = {};
     ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     ici.imageType = VK_IMAGE_TYPE_2D;
-    ici.format = g.format;
+    ici.format = VulkanState::kSceneFormat;
     ici.extent = { g.extent.width, g.extent.height, 1 };
     ici.mipLevels = 1;
     ici.arrayLayers = 1;
@@ -2995,7 +3009,7 @@ void CreateSceneTarget()
     vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     vci.image = g.sceneImage;
     vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    vci.format = g.format;
+    vci.format = VulkanState::kSceneFormat;
     vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     vci.subresourceRange.levelCount = 1;
     vci.subresourceRange.layerCount = 1;
@@ -3063,19 +3077,17 @@ void CreateRenderPass()
     Check(vkCreateRenderPass(g.device, &rpci, nullptr, &g.renderPass),
           "vkCreateRenderPass");
 
-    // DOOM-0170 L2a: scene pass — identical to renderPass but its colour attachment is
-    // the off-screen scene target, left in SHADER_READ_ONLY (the composite pass samples
-    // it) instead of the swapchain in PRESENT_SRC. Same format/samples as renderPass, so
-    // the world/sky/wire pipelines are render-pass-compatible with it (no rebuild). Built
-    // from copies so the shared att/dep/rpci are untouched for the rtOverlayPass below.
+    // DOOM-0170 L2a: scene pass — like renderPass but its colour attachment is the
+    // off-screen scene target in the 16-bit float kSceneFormat (step 3: HDR headroom for
+    // the composite tone-map), left in COLOR_ATTACHMENT_OPTIMAL (an explicit barrier after
+    // the pass transitions it to SHADER_READ_ONLY for the composite sample) instead of the
+    // swapchain in PRESENT_SRC. Because the colour format now differs from renderPass, the
+    // world/sky/wire pipelines are built against THIS pass (see g.scenePipeline &co below);
+    // the 8-bit g.pipeline is kept only for the RT weapon overlay. Built from copies so the
+    // shared att/dep/rpci stay intact for the rtOverlayPass below.
     {
-        // Same attachments/subpass/dependency as renderPass (so the world pipelines,
-        // built against renderPass, stay render-pass-compatible — the validation layer
-        // counts dependencyCount toward compatibility), except the colour attachment is
-        // left in COLOR_ATTACHMENT_OPTIMAL. An explicit barrier after the pass transitions
-        // it to SHADER_READ_ONLY and makes the world writes visible to the composite's
-        // sample (a subpass dependency would bump dependencyCount and break compatibility).
         VkAttachmentDescription satt[2] = { att[0], att[1] };
+        satt[0].format      = VulkanState::kSceneFormat;
         satt[0].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         VkRenderPassCreateInfo srpci = rpci;
         srpci.pAttachments = satt;
@@ -3401,7 +3413,11 @@ void CreatePipeline()
     pci.pColorBlendState = &cb;
     pci.pDynamicState = &dynState;
     pci.layout = g.pipelineLayout;
-    pci.renderPass = g.renderPass;
+    // DOOM-0170 L2a step 3: the world/sky/wire pipelines render into the HDR off-screen
+    // scene target, so they are built against the float g.scenePass (not the 8-bit
+    // swapchain renderPass). rtWeaponPipeline below rebuilds this config against renderPass
+    // for the RT weapon overlay.
+    pci.renderPass = g.scenePass;
     pci.subpass = 0;
     Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &pci, nullptr,
                                     &g.pipeline), "vkCreateGraphicsPipelines");
@@ -3426,6 +3442,18 @@ void CreatePipeline()
                                         &g.wirePipeline), "vkCreateGraphicsPipelines(wire)");
         rs.polygonMode = VK_POLYGON_MODE_FILL;
     }
+
+    // DOOM-0170 L2a step 3: 8-bit twin of the world pipeline for the RT weapon overlay.
+    // The scene pipelines above target the float g.scenePass, so they cannot draw onto the
+    // 8-bit swapchain; RecordRtOverlay draws the weapon over the traced blit and needs a
+    // renderPass-compatible pipeline. Identical state (FILL, depth-on) — only the pass
+    // differs. (rs is FILL and pDepthStencilState is left at &ds by the blocks above, but
+    // set both explicitly so this stays correct regardless of the wire branch.)
+    rs.polygonMode = VK_POLYGON_MODE_FILL;
+    pci.pDepthStencilState = &ds;
+    pci.renderPass = g.renderPass;
+    Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &pci, nullptr,
+                                    &g.rtWeaponPipeline), "vkCreateGraphicsPipelines(rtWeapon)");
 
     // 2D HUD/menu compositor: own shaders, no vertex input (a full-screen
     // triangle generated from gl_VertexIndex), depth off, drawn last over the
@@ -5406,7 +5434,9 @@ void RecordRtOverlay(uint32_t idx, bool drawOverlay)
                            0, 24 * sizeof(float), pcData);
 
         VkDeviceSize off = 0;
-        vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.pipeline);
+        // DOOM-0170 L2a step 3: the 8-bit twin (g.pipeline itself now targets the float
+        // scene pass and is not compatible with this 8-bit swapchain overlay pass).
+        vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.rtWeaponPipeline);
         vkCmdBindVertexBuffers(g.cmd, 0, 1, &g.spriteVbuf, &off);
         vkCmdDraw(g.cmd, g.spriteVertCount, 1, 0, 0);
     }
@@ -5966,6 +5996,7 @@ extern "C" void RB_Vulkan_Shutdown(void)
 
     DestroyFramebufferResources();   // framebuffers, depth, swapchain image views
     if (g.pipeline)       vkDestroyPipeline(g.device, g.pipeline, nullptr);
+    if (g.rtWeaponPipeline) vkDestroyPipeline(g.device, g.rtWeaponPipeline, nullptr);
     if (g.wirePipeline)   vkDestroyPipeline(g.device, g.wirePipeline, nullptr);
     if (g.skyPipeline)    vkDestroyPipeline(g.device, g.skyPipeline, nullptr);
     if (g.overlayPipeline) vkDestroyPipeline(g.device, g.overlayPipeline, nullptr);
