@@ -15,10 +15,10 @@
 layout(location = 1) in vec2  vUV;      // [-1,1] across the quad (radial coord)
 layout(location = 2) in float vLight;   // owning sector lightlevel, 0..1
 
-// DOOM-0170 L2b — the scene pass has two colour attachments now. outAmbient (0) carries the
-// dark oval that the blob pipeline alpha-blends onto the AMBIENT target; outDirect (1) is a
-// required output for the second attachment but the blob pipeline blends it as a no-op
-// (src×0), so its value is discarded — a blob never touches the DIRECT flashlight/lamp light.
+// DOOM-0170 L2b — the scene pass has two colour attachments. A blob is an opaque grounding
+// shadow: the thing blocks light reaching the floor from ALL sources, so it darkens BOTH the
+// AMBIENT and the DIRECT target (same alpha to each; the pipeline alpha-blends both). Darkening
+// ambient-only made blobs vanish on emitter-lit floors where DIRECT dominates.
 layout(location = 0) out vec4 outAmbient;
 layout(location = 1) out vec4 outDirect;
 
@@ -33,5 +33,5 @@ void main()
     float falloff = 1.0 - smoothstep(0.35, 1.0, r);
     float alpha   = falloff * BLOB_STRENGTH * vLight;
     outAmbient = vec4(0.0, 0.0, 0.0, alpha);
-    outDirect  = vec4(0.0);   // no-op on the DIRECT target (blended src×0 + dst×1)
+    outDirect  = vec4(0.0, 0.0, 0.0, alpha);   // darken DIRECT too -> total floor light drops
 }
