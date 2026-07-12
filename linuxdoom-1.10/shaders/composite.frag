@@ -14,12 +14,18 @@ layout(location = 0) out vec4 outColor;
 // SSAO factor (DIRECT + AO×AMBIENT) so contact shadows never dim directly-lit surfaces.
 layout(set = 0, binding = 0) uniform sampler2D ambientTex;
 layout(set = 0, binding = 1) uniform sampler2D directTex;
+// DOOM-0170 L2b — the half-res SSAO factor (§4.3). 1 = open, ->0 in corners/contacts. It maps
+// [0,1] over the WHOLE frame (unlike the scene targets, which fill only the render-scaled
+// corner), so it is sampled at vUV directly, not vUV*uvScale.
+layout(set = 0, binding = 2) uniform sampler2D aoTex;
 
 // DOOM-0170 L2a step 2: the world is drawn into the [0,uvScale] corner of a
 // full-size scene target (render-scale sub-rectangle). Sample that corner and let
 // the linear+clamp sampler upscale it to the full swapchain. uvScale = (1,1) at
 // 100% render scale, so the picture is byte-identical to the full-res path.
-layout(push_constant) uniform Push { vec2 uvScale; } pc;
+// DOOM-0170 L2b: aoEnable gates the SSAO multiply (0 -> ambient un-occluded) so the rb_ssao
+// toggle needs no separate pipeline; the SSAO pass is simply skipped and AO reads as 1.
+layout(push_constant) uniform Push { vec2 uvScale; float aoEnable; float pad; } pc;
 
 // DOOM-0170 L2a step 3: the SAME Khronos PBR-Neutral tone operator the RT denoiser uses
 // (svgf_composite.comp), so Solid and Ultra stay tone-matched. It is identity below its
@@ -34,8 +40,20 @@ void main()
     vec2  uv      = vUV * pc.uvScale;
     vec3  ambient = texture(ambientTex, uv).rgb;
     vec3  direct  = texture(directTex,  uv).rgb;
-    // L2b-2 will fold in the SSAO factor here (direct + ao*ambient); for now a plain sum,
-    // so the recombined image is identical to the pre-split single target.
-    vec3  hdr     = direct + ambient;
+
+    // DOOM-0170 L2b — ambient occlusion darkens AMBIENT only (never DIRECT), so corners and
+    // object-to-floor contacts get a soft shadow while flashlight/lamp-lit surfaces stay clean.
+    // A 4-tap bilinear box blur of the half-res AO removes the SSAO dither cheaply (no separate
+    // blur pass). Skipped entirely when the rb_ssao toggle is off (aoEnable = 0 -> ao = 1).
+    float ao = 1.0;
+    if (pc.aoEnable > 0.5)
+    {
+        vec2 t = 1.0 / vec2(textureSize(aoTex, 0));
+        ao = 0.25 * (texture(aoTex, vUV + vec2(-0.5, -0.5) * t).r
+                   + texture(aoTex, vUV + vec2( 0.5, -0.5) * t).r
+                   + texture(aoTex, vUV + vec2(-0.5,  0.5) * t).r
+                   + texture(aoTex, vUV + vec2( 0.5,  0.5) * t).r);
+    }
+    vec3  hdr = direct + ao * ambient;
     outColor = vec4(pbrNeutralToneMapping(hdr), 1.0);
 }

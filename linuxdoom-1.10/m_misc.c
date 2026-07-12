@@ -205,6 +205,7 @@ extern int	rb_upscaler;	// DOOM-0009 6-d temporal upscaler (0 Off, 1 TAAU)
 extern int	rb_renderscale;	// DOOM-0009 6-d render scale percent (100/75/67/50)
 extern int	rb_exposure;	// DOOM-0096 Ultra/denoiser brightness slider (0..15)
 extern int	rb_flashlight;	// DOOM-0044 player flashlight on/off (persisted)
+extern int	rb_ssao;	// DOOM-0170 L2b raster SSAO (contact shadows) on/off (persisted)
 extern int	rb_rtdebug;	// DOOM-0116 Ultra path-tracer view (6 = denoised; persisted)
 extern int	rb_rtdebug_menu;// DOOM-0135 Debug Views toggle (0 = ~ is RT on/off; 1 = ~ cycles diagnostics)
 extern int	rb_profile;	// DOOM-0090 per-pass GPU profiler toggle (0 Off; `\` key)
@@ -255,6 +256,7 @@ default_t	defaults[] =
     {"render_scale",&rb_renderscale, 50},	// so it boots playable, not 8 FPS at native
     {"rt_brightness",&rb_exposure, 10},
     {"flashlight",&rb_flashlight, 0},
+    {"ssao",&rb_ssao, 1},			// DOOM-0170 L2b: raster contact shadows, default on
     {"rt_view",&rb_rtdebug, 6},
     {"rt_debug_views",&rb_rtdebug_menu, 0},
     {"widescreen",&widescreen, 1},		// DOOM-0147 Part C: 0 = force 4:3 (restart)

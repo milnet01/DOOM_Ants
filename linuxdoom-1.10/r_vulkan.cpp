@@ -64,6 +64,7 @@
 #include "shaders/overlay.frag.spv.h"
 #include "shaders/composite.vert.spv.h"
 #include "shaders/composite.frag.spv.h"
+#include "shaders/ssao.frag.spv.h"          // DOOM-0170 L2b: half-res SSAO (contact shadows)
 #include "shaders/pathtrace.comp.spv.h"
 #include "shaders/bake.comp.spv.h"
 #include "shaders/svgf_temporal.comp.spv.h"
@@ -271,6 +272,23 @@ struct VulkanState
     VkImage        sceneDirImage  = VK_NULL_HANDLE;
     VkDeviceMemory sceneDirMemory = VK_NULL_HANDLE;
     VkImageView    sceneDirView   = VK_NULL_HANDLE;
+
+    // DOOM-0170 L2b — SSAO (contact shadows, §4.3). A HALF-resolution R8 occlusion image the
+    // ssao.frag pass writes (reading the DIRECT target's packed depth), which the composite
+    // blurs + multiplies into AMBIENT. aoImage/View/Memory + aoFb are size-dependent (rebuilt
+    // on resize with the scene target); aoPass/aoPipeline/aoPipeLayout + the ssaoDs (which
+    // samples the DIRECT target) are size-independent (viewport is dynamic).
+    VkImage        aoImage   = VK_NULL_HANDLE;
+    VkDeviceMemory aoMemory  = VK_NULL_HANDLE;
+    VkImageView    aoView    = VK_NULL_HANDLE;
+    VkFramebuffer  aoFb      = VK_NULL_HANDLE;
+    VkExtent2D     aoExtent  = { 0, 0 };
+    VkRenderPass   aoPass    = VK_NULL_HANDLE;
+    VkPipeline            aoPipeline    = VK_NULL_HANDLE;
+    VkPipelineLayout      aoPipeLayout  = VK_NULL_HANDLE;
+    VkDescriptorSetLayout ssaoDsLayout  = VK_NULL_HANDLE;
+    VkDescriptorPool      ssaoDsPool    = VK_NULL_HANDLE;
+    VkDescriptorSet       ssaoDs        = VK_NULL_HANDLE;
 
     // DOOM-0170 L2c — flashlight cast-shadow map (§4.4). A fixed 2048^2 depth image the
     // world is rendered into (depth-only) from the flashlight's viewpoint each torch-on
@@ -743,6 +761,19 @@ extern "C" { int rb_flashlight = 0; }
 // resolution as a percent of the display (100/75/67/50); only takes effect with an
 // upscaler active and on the mode-6 denoised path. C linkage for the C menu/config.
 extern "C" { int rb_upscaler = 1; int rb_renderscale = 50; int rb_exposure = 10; }   // DOOM-0090: TAAU @ 50% default
+
+// DOOM-0170 L2b — SSAO (contact/ambient shadows) on/off, persisted as "ssao". Per §6 each
+// screen-space effect gets its own gate so a misbehaving pass can be switched off in isolation.
+// 1 = on (default). Gates both the half-res SSAO pass and the composite's AO×ambient multiply.
+extern "C" { int rb_ssao = 1; }
+
+// DOOM-0170 L2b SSAO tuning dials (§4.3; §9 play-test). RADIUS is the hemisphere reach in
+// world units (DOOM scale: 16 = player radius, 56 = player height) — how far a corner/contact
+// darkens; INTENSITY how strong; POWER the contrast curve; BIAS kills self-occlusion acne.
+static const float kSsaoRadius    = 64.0f;
+static const float kSsaoBias      = 1.5f;
+static const float kSsaoIntensity = 1.6f;
+static const float kSsaoPower     = 1.5f;
 
 // DOOM-0090: per-pass GPU profiler toggle (the `\` key; persisted as rt_profile).
 // When on, the path tracer's per-stage GPU cost is timestamped and printed to the
@@ -3070,6 +3101,43 @@ void CreateSceneTarget()
     Check(vkBindImageMemory(g.device, g.sceneDirImage, g.sceneDirMemory, 0), "vkBindImageMemory(sceneDir)");
     vci.image = g.sceneDirImage;
     Check(vkCreateImageView(g.device, &vci, nullptr, &g.sceneDirView), "vkCreateImageView(sceneDir)");
+
+    // DOOM-0170 L2b — the half-res SSAO occlusion image (R8). Rendered by the ssao pass,
+    // sampled by the composite. Half of the swapchain extent (the effect is cheap and low-
+    // frequency, §4.3/§6). COLOR_ATTACHMENT (written) + SAMPLED (read by composite).
+    g.aoExtent = { g.extent.width / 2u  ? g.extent.width / 2u  : 1u,
+                   g.extent.height / 2u ? g.extent.height / 2u : 1u };
+    VkImageCreateInfo aci = ici;
+    aci.format = VK_FORMAT_R8_UNORM;
+    aci.extent = { g.aoExtent.width, g.aoExtent.height, 1 };
+    aci.usage  = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    Check(vkCreateImage(g.device, &aci, nullptr, &g.aoImage), "vkCreateImage(ao)");
+    vkGetImageMemoryRequirements(g.device, g.aoImage, &req);
+    mai.allocationSize = req.size;
+    mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    Check(vkAllocateMemory(g.device, &mai, nullptr, &g.aoMemory), "vkAllocateMemory(ao)");
+    Check(vkBindImageMemory(g.device, g.aoImage, g.aoMemory, 0), "vkBindImageMemory(ao)");
+    VkImageViewCreateInfo avci = vci;
+    avci.image  = g.aoImage;
+    avci.format = VK_FORMAT_R8_UNORM;
+    Check(vkCreateImageView(g.device, &avci, nullptr, &g.aoView), "vkCreateImageView(ao)");
+
+    // Park the AO image in SHADER_READ so the composite may sample it even on a frame where
+    // the SSAO pass is skipped (rb_ssao off). When the pass runs it re-clears via UNDEFINED.
+    {
+        VkCommandBuffer cb = BeginOneTime();
+        VkImageMemoryBarrier bar = {};
+        bar.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        bar.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        bar.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        bar.srcQueueFamilyIndex = bar.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        bar.image = g.aoImage;
+        bar.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        bar.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &bar);
+        EndOneTime(cb);
+    }
 }
 
 // Free the scene target (+ its framebuffer, built in CreateFramebuffers). Called from
@@ -3084,6 +3152,11 @@ void DestroySceneTarget()
     if (g.sceneDirView)   { vkDestroyImageView(g.device, g.sceneDirView, nullptr); g.sceneDirView = VK_NULL_HANDLE; }
     if (g.sceneDirImage)  { vkDestroyImage(g.device, g.sceneDirImage, nullptr);    g.sceneDirImage = VK_NULL_HANDLE; }
     if (g.sceneDirMemory) { vkFreeMemory(g.device, g.sceneDirMemory, nullptr);     g.sceneDirMemory = VK_NULL_HANDLE; }
+    // DOOM-0170 L2b — the half-res AO image + its framebuffer, same resize path.
+    if (g.aoFb)     { vkDestroyFramebuffer(g.device, g.aoFb, nullptr); g.aoFb = VK_NULL_HANDLE; }
+    if (g.aoView)   { vkDestroyImageView(g.device, g.aoView, nullptr); g.aoView = VK_NULL_HANDLE; }
+    if (g.aoImage)  { vkDestroyImage(g.device, g.aoImage, nullptr);    g.aoImage = VK_NULL_HANDLE; }
+    if (g.aoMemory) { vkFreeMemory(g.device, g.aoMemory, nullptr);     g.aoMemory = VK_NULL_HANDLE; }
 }
 
 // DOOM-0170 L2c — build the flashlight cast-shadow map (§4.4): a fixed 2048^2 depth image
@@ -3361,6 +3434,50 @@ void CreateRenderPass()
               "vkCreateRenderPass(scene)");
     }
 
+    // DOOM-0170 L2b — the SSAO pass: a single R8 colour attachment (the half-res occlusion
+    // image), no depth. Contents are fully written by the full-screen ssao.frag, so loadOp is
+    // DONT_CARE; it is left in SHADER_READ_ONLY for the composite to sample. The subpass->
+    // EXTERNAL dependency publishes the AO write to the composite's fragment read.
+    {
+        VkAttachmentDescription aatt = {};
+        aatt.format         = VK_FORMAT_R8_UNORM;
+        aatt.samples        = VK_SAMPLE_COUNT_1_BIT;
+        aatt.loadOp         = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        aatt.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+        aatt.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        aatt.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        aatt.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+        aatt.finalLayout    = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        VkAttachmentReference aref = { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
+        VkSubpassDescription asub = {};
+        asub.pipelineBindPoint    = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        asub.colorAttachmentCount = 1;
+        asub.pColorAttachments    = &aref;
+        VkSubpassDependency adep[2] = {};
+        adep[0].srcSubpass = VK_SUBPASS_EXTERNAL;   // DIRECT target read is ordered by the
+        adep[0].dstSubpass = 0;                     // explicit barrier in Present; this just
+        adep[0].srcStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;   // chains the colour write
+        adep[0].dstStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        adep[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        adep[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        adep[1].srcSubpass = 0;                     // publish the AO write to the composite read
+        adep[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+        adep[1].srcStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        adep[1].dstStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        adep[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        adep[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        VkRenderPassCreateInfo arpci = {};
+        arpci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        arpci.attachmentCount = 1;
+        arpci.pAttachments    = &aatt;
+        arpci.subpassCount    = 1;
+        arpci.pSubpasses      = &asub;
+        arpci.dependencyCount = 2;
+        arpci.pDependencies   = adep;
+        Check(vkCreateRenderPass(g.device, &arpci, nullptr, &g.aoPass),
+              "vkCreateRenderPass(ao)");
+    }
+
     // DOOM-0094: a LOAD-variant for the path-traced present path. RecordRtTrace blits
     // the traced world to the swapchain and leaves it in PRESENT_SRC; this pass LOADs
     // that colour (loadOp=LOAD, initialLayout PRESENT_SRC) and draws the weapon + the
@@ -3413,6 +3530,18 @@ void CreateFramebuffers()
     sfci.layers = 1;
     Check(vkCreateFramebuffer(g.device, &sfci, nullptr, &g.sceneFb),
           "vkCreateFramebuffer(scene)");
+
+    // DOOM-0170 L2b — the half-res SSAO framebuffer (one R8 colour attachment, no depth).
+    VkFramebufferCreateInfo afci = {};
+    afci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    afci.renderPass = g.aoPass;
+    afci.attachmentCount = 1;
+    afci.pAttachments = &g.aoView;
+    afci.width = g.aoExtent.width;
+    afci.height = g.aoExtent.height;
+    afci.layers = 1;
+    Check(vkCreateFramebuffer(g.device, &afci, nullptr, &g.aoFb),
+          "vkCreateFramebuffer(ao)");
 }
 
 VkShaderModule MakeShader(const unsigned char* code, unsigned len)
@@ -3505,24 +3634,24 @@ void CreateDescriptors()
     // its own layout/pool/set + a pipeline layout binding only it. Separate from
     // g.dsLayout so the variable-count material array there stays the last binding.
     {
-        // DOOM-0170 L2b — two combined-image-samplers: binding 0 = AMBIENT scene target,
-        // binding 1 = DIRECT scene target. The composite reads both and outputs DIRECT +
-        // AO×AMBIENT (AO added in L2b-2; until then a plain sum, visually identical).
-        VkDescriptorSetLayoutBinding cb[2] = {};
+        // DOOM-0170 L2b — three combined-image-samplers: binding 0 = AMBIENT scene target,
+        // binding 1 = DIRECT scene target, binding 2 = the half-res SSAO factor. The composite
+        // outputs DIRECT + AO×AMBIENT.
+        VkDescriptorSetLayoutBinding cb[3] = {};
         cb[0].binding = 0;
         cb[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         cb[0].descriptorCount = 1;
         cb[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-        cb[1] = cb[0];
-        cb[1].binding = 1;
+        cb[1] = cb[0]; cb[1].binding = 1;
+        cb[2] = cb[0]; cb[2].binding = 2;
         VkDescriptorSetLayoutCreateInfo clci = {};
         clci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        clci.bindingCount = 2;
+        clci.bindingCount = 3;
         clci.pBindings = cb;
         Check(vkCreateDescriptorSetLayout(g.device, &clci, nullptr, &g.compositeDsLayout),
               "vkCreateDescriptorSetLayout(composite)");
 
-        VkDescriptorPoolSize cps = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 };
+        VkDescriptorPoolSize cps = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3 };
         VkDescriptorPoolCreateInfo cdpci = {};
         cdpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         cdpci.maxSets = 1;
@@ -3545,7 +3674,7 @@ void CreateDescriptors()
         VkPushConstantRange cpc = {};
         cpc.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         cpc.offset = 0;
-        cpc.size = 2 * sizeof(float);
+        cpc.size = 4 * sizeof(float);   // DOOM-0170 L2b: vec2 uvScale + aoEnable + pad
         VkPipelineLayoutCreateInfo cplci = {};
         cplci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         cplci.setLayoutCount = 1;
@@ -3554,6 +3683,54 @@ void CreateDescriptors()
         cplci.pPushConstantRanges = &cpc;
         Check(vkCreatePipelineLayout(g.device, &cplci, nullptr, &g.compositePipeLayout),
               "vkCreatePipelineLayout(composite)");
+    }
+
+    // DOOM-0170 L2b — the SSAO pass descriptor + pipeline layout: one combined-image-sampler
+    // (the DIRECT scene target, whose alpha carries the packed depth) + an 8-float push block
+    // (uvScale, tanH, aspect, radius, bias, intensity, power). Separate small set/pool/layout,
+    // like the composite's, so it stays independent of the material set's variable-count array.
+    {
+        VkDescriptorSetLayoutBinding sb = {};
+        sb.binding = 0;
+        sb.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        sb.descriptorCount = 1;
+        sb.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        VkDescriptorSetLayoutCreateInfo slci = {};
+        slci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        slci.bindingCount = 1;
+        slci.pBindings = &sb;
+        Check(vkCreateDescriptorSetLayout(g.device, &slci, nullptr, &g.ssaoDsLayout),
+              "vkCreateDescriptorSetLayout(ssao)");
+
+        VkDescriptorPoolSize sps = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 };
+        VkDescriptorPoolCreateInfo sdpci = {};
+        sdpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        sdpci.maxSets = 1;
+        sdpci.poolSizeCount = 1;
+        sdpci.pPoolSizes = &sps;
+        Check(vkCreateDescriptorPool(g.device, &sdpci, nullptr, &g.ssaoDsPool),
+              "vkCreateDescriptorPool(ssao)");
+
+        VkDescriptorSetAllocateInfo sdsai = {};
+        sdsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        sdsai.descriptorPool = g.ssaoDsPool;
+        sdsai.descriptorSetCount = 1;
+        sdsai.pSetLayouts = &g.ssaoDsLayout;
+        Check(vkAllocateDescriptorSets(g.device, &sdsai, &g.ssaoDs),
+              "vkAllocateDescriptorSets(ssao)");
+
+        VkPushConstantRange spc = {};
+        spc.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        spc.offset = 0;
+        spc.size = 8 * sizeof(float);
+        VkPipelineLayoutCreateInfo splci = {};
+        splci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        splci.setLayoutCount = 1;
+        splci.pSetLayouts = &g.ssaoDsLayout;
+        splci.pushConstantRangeCount = 1;
+        splci.pPushConstantRanges = &spc;
+        Check(vkCreatePipelineLayout(g.device, &splci, nullptr, &g.aoPipeLayout),
+              "vkCreatePipelineLayout(ssao)");
     }
 
     // DOOM-0170 L2c — the flashlight shadow map's set-1 layout for the world pipeline:
@@ -3585,27 +3762,29 @@ void CreateDescriptors()
 // image is recreated on every resize, so this runs after each CreateSceneTarget.
 void UpdateCompositeDescriptor()
 {
-    if (!g.compositeDs || !g.sceneView || !g.sceneDirView)
+    if (!g.compositeDs || !g.sceneView || !g.sceneDirView || !g.aoView || !g.ssaoDs)
         return;
-    // DOOM-0170 L2b — point binding 0 at AMBIENT, binding 1 at DIRECT. Both use the linear+
-    // clamp composite sampler (smooth render-scale upscale). Recreated on every resize.
-    VkDescriptorImageInfo ii[2] = {};
+    // DOOM-0170 L2b — composite: binding 0 = AMBIENT, 1 = DIRECT, 2 = the half-res AO factor.
+    // The SSAO set samples the DIRECT target (its alpha carries the packed depth). All use the
+    // linear+clamp composite sampler (smooth upscale). Recreated on every resize.
+    VkDescriptorImageInfo ii[3] = {};
     ii[0].sampler = g.compositeSampler;
     ii[0].imageView = g.sceneView;
     ii[0].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    ii[1] = ii[0];
-    ii[1].imageView = g.sceneDirView;
-    VkWriteDescriptorSet w[2] = {};
+    ii[1] = ii[0]; ii[1].imageView = g.sceneDirView;
+    ii[2] = ii[0]; ii[2].imageView = g.aoView;
+    VkWriteDescriptorSet w[4] = {};
     w[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     w[0].dstSet = g.compositeDs;
     w[0].dstBinding = 0;
     w[0].descriptorCount = 1;
     w[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     w[0].pImageInfo = &ii[0];
-    w[1] = w[0];
-    w[1].dstBinding = 1;
-    w[1].pImageInfo = &ii[1];
-    vkUpdateDescriptorSets(g.device, 2, w, 0, nullptr);
+    w[1] = w[0]; w[1].dstBinding = 1; w[1].pImageInfo = &ii[1];
+    w[2] = w[0]; w[2].dstBinding = 2; w[2].pImageInfo = &ii[2];
+    // The SSAO pass's own set samples the DIRECT target for the packed depth.
+    w[3] = w[0]; w[3].dstSet = g.ssaoDs; w[3].dstBinding = 0; w[3].pImageInfo = &ii[1];
+    vkUpdateDescriptorSets(g.device, 4, w, 0, nullptr);
 }
 
 void CreatePipeline()
@@ -3921,6 +4100,24 @@ void CreatePipeline()
     pci.layout = g.compositePipeLayout;
     Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &pci, nullptr,
                                     &g.compositePipeline), "vkCreateGraphicsPipelines(composite)");
+
+    // DOOM-0170 L2b — the SSAO pass pipeline: reuses composite.vert (the same full-screen
+    // triangle) with ssao.frag, into the half-res g.aoPass, binding only g.aoPipeLayout (the
+    // 1-sampler SSAO set + its push block). Vertexless, depth off, 1 opaque R8 attachment.
+    VkShaderModule ssaoFrag = MakeShader(ssao_frag_spv, ssao_frag_spv_len);
+    VkPipelineShaderStageCreateInfo aoStages[2] = { coStages[0], coStages[1] };
+    aoStages[1].module = ssaoFrag;
+    pci.pStages = aoStages;
+    pci.pVertexInputState = &ovVin;         // vertexless
+    pci.pDepthStencilState = &skyDs;        // depth test + write off
+    pci.pColorBlendState = &cb;             // single opaque attachment
+    pci.layout = g.aoPipeLayout;
+    pci.renderPass = g.aoPass;
+    Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &pci, nullptr,
+                                    &g.aoPipeline), "vkCreateGraphicsPipelines(ssao)");
+    vkDestroyShaderModule(g.device, ssaoFrag, nullptr);
+
+    pci.renderPass = g.renderPass;          // restore (defensive)
     pci.layout = g.pipelineLayout;          // restore (defensive)
     vkDestroyShaderModule(g.device, coVert, nullptr);
     vkDestroyShaderModule(g.device, coFrag, nullptr);
@@ -4391,11 +4588,12 @@ extern "C" void RB_Vulkan_Init(void)
     CreateImageViews();
     CreateRenderPass();
     CreateDepthResources();
+    CreateCommandsAndSync();   // command pool up front: the one-time layout transitions in
+                               // CreateSceneTarget (DOOM-0170 L2b SSAO image park) and
+                               // CreateShadowResources (BeginOneTime) both need it
     CreateSceneTarget();       // DOOM-0170 L2a off-screen colour (before its framebuffer)
     CreateFramebuffers();
     CreateDescriptors();       // set layout + sampler (needed by the pipeline layout)
-    CreateCommandsAndSync();   // command pool up front: CreateShadowResources's one-time
-                               // layout transition (BeginOneTime) needs it
     CreateShadowResources();   // DOOM-0170 L2c flashlight shadow map (pass/fb/UBO/set 1);
                                // before CreatePipeline, which builds the shadow pipeline
     CreatePipeline();
@@ -6343,6 +6541,41 @@ extern "C" void RB_Vulkan_Present(void)
                              0, nullptr, 0, nullptr, 2, b);
     }
 
+    // DOOM-0170 L2b — SSAO pass (Pass C, §4.3). Half-res: reads the DIRECT target's packed
+    // forward-distance depth (now SHADER_READ from the barrier above) and writes the occlusion
+    // image the composite multiplies into AMBIENT. Gated by rb_ssao; when off it is skipped and
+    // the composite reads the parked AO image with aoEnable=0 (ignored). No clear (fully drawn).
+    if (rb_ssao && g.aoPipeline && g.ssaoDs && g.haveCamera && g.atlasReady)
+    {
+        VkRenderPassBeginInfo arp = {};
+        arp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        arp.renderPass  = g.aoPass;
+        arp.framebuffer = g.aoFb;
+        arp.renderArea.extent = g.aoExtent;
+        arp.clearValueCount = 0;
+        vkCmdBeginRenderPass(g.cmd, &arp, VK_SUBPASS_CONTENTS_INLINE);
+
+        VkViewport avp = {};
+        avp.width = (float)g.aoExtent.width;
+        avp.height = (float)g.aoExtent.height;
+        avp.maxDepth = 1.0f;
+        vkCmdSetViewport(g.cmd, 0, 1, &avp);
+        VkRect2D asc = { { 0, 0 }, g.aoExtent };
+        vkCmdSetScissor(g.cmd, 0, 1, &asc);
+
+        vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                g.aoPipeLayout, 0, 1, &g.ssaoDs, 0, nullptr);
+        float aoAspect = g.extent.height ? (float)g.extent.width / (float)g.extent.height : 1.0f;
+        // Matches ssao.frag's Push: uvScale, tanH (hfov 90 -> tan(45)=1), aspect, then the dials.
+        float sp[8] = { uvScale[0], uvScale[1], 1.0f, aoAspect,
+                        kSsaoRadius, kSsaoBias, kSsaoIntensity, kSsaoPower };
+        vkCmdPushConstants(g.cmd, g.aoPipeLayout, VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0, sizeof(sp), sp);
+        vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.aoPipeline);
+        vkCmdDraw(g.cmd, 3, 1, 0, 0);
+        vkCmdEndRenderPass(g.cmd);
+    }
+
     rp.renderPass = g.renderPass;
     rp.framebuffer = g.framebuffers[idx];
     vkCmdBeginRenderPass(g.cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
@@ -6356,10 +6589,12 @@ extern "C" void RB_Vulkan_Present(void)
         vkCmdSetScissor(g.cmd, 0, 1, &scissor);
         vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                 g.compositePipeLayout, 0, 1, &g.compositeDs, 0, nullptr);
-        // Tell the composite which [0,uvScale] corner of the scene target the
-        // render-scaled world filled, so it upscales exactly that region.
+        // Tell the composite which [0,uvScale] corner of the scene target the render-scaled
+        // world filled (so it upscales exactly that region), plus whether SSAO is on (aoEnable;
+        // 0 makes the composite ignore the AO texture and leave AMBIENT un-occluded).
+        float coPush[4] = { uvScale[0], uvScale[1], rb_ssao ? 1.0f : 0.0f, 0.0f };
         vkCmdPushConstants(g.cmd, g.compositePipeLayout, VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, 2 * sizeof(float), uvScale);
+                           0, sizeof(coPush), coPush);
         vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.compositePipeline);
         vkCmdDraw(g.cmd, 3, 1, 0, 0);
     }
@@ -6534,6 +6769,12 @@ extern "C" void RB_Vulkan_Shutdown(void)
     if (g.compositePipeLayout) vkDestroyPipelineLayout(g.device, g.compositePipeLayout, nullptr);
     if (g.compositeDsPool)     vkDestroyDescriptorPool(g.device, g.compositeDsPool, nullptr);
     if (g.compositeDsLayout)   vkDestroyDescriptorSetLayout(g.device, g.compositeDsLayout, nullptr);
+    // DOOM-0170 L2b — SSAO pipeline/pass/descriptors (aoImage + aoFb ride DestroySceneTarget).
+    if (g.aoPipeline)    vkDestroyPipeline(g.device, g.aoPipeline, nullptr);
+    if (g.aoPipeLayout)  vkDestroyPipelineLayout(g.device, g.aoPipeLayout, nullptr);
+    if (g.ssaoDsPool)    vkDestroyDescriptorPool(g.device, g.ssaoDsPool, nullptr);
+    if (g.ssaoDsLayout)  vkDestroyDescriptorSetLayout(g.device, g.ssaoDsLayout, nullptr);
+    if (g.aoPass)        vkDestroyRenderPass(g.device, g.aoPass, nullptr);
     // DOOM-0170 L2c flashlight shadow map (size-independent; built once in CreateShadowResources).
     if (g.shadowPipeline)   vkDestroyPipeline(g.device, g.shadowPipeline, nullptr);
     if (g.shadowPipeLayout) vkDestroyPipelineLayout(g.device, g.shadowPipeLayout, nullptr);

@@ -232,8 +232,8 @@ void main()
 #ifdef SINGLE_TARGET
         outColor    = vec4(skyOut, 1.0);
 #else
-        outDirect   = vec4(skyOut, 1.0);   // sky is fullbright -> all DIRECT
-        outAmbient  = vec4(0.0);           // ...and never AO-darkened
+        outDirect   = vec4(skyOut, 100000.0);   // sky: fullbright DIRECT + far depth (SSAO skips it)
+        outAmbient  = vec4(0.0);                 // ...and never AO-darkened
 #endif
         return;
     }
@@ -361,7 +361,15 @@ void main()
 #ifdef SINGLE_TARGET
     outColor   = vec4(ambient + direct, 1.0);   // RT weapon overlay: combined into one target
 #else
+    // DOOM-0170 L2b — pack forward-distance linear depth into DIRECT.a for the SSAO pass. The
+    // raster camera is yaw-only, so d = (worldPos - eye)·forward is exactly the projection's
+    // clip.w; ssao.frag reconstructs view positions from it. The weapon psprite has no world
+    // position (and is never AO'd), so it just writes the near plane.
+    vec3  vfwd  = vec3(cos(pc.yaw), sin(pc.yaw), 0.0);
+    float viewZ = ((vFlags & FLAG_PSPRITE) != 0)
+                ? 1.0
+                : max(dot(vWorldPos - vec3(pc.eyeX, pc.eyeY, pc.eyeZ), vfwd), 1.0);
     outAmbient = vec4(ambient, 1.0);
-    outDirect  = vec4(direct, 1.0);
+    outDirect  = vec4(direct, viewZ);
 #endif
 }
