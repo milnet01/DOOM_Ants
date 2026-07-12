@@ -35,7 +35,24 @@ layout(location = 5) noperspective in vec2  vScreenUV;   // [0,1] across the fra
 layout(location = 6) in float vDist;       // world distance camera->fragment
 layout(location = 7) in vec3  vWorldPos;   // world position (DOOM-0044 flashlight)
 
+// DOOM-0170 L2b — two colour outputs feeding the scene pass's two targets. outAmbient (0)
+// is DOOM's non-directional light (sector light × distance + baked indirect bounce) — the
+// term SSAO darkens (§4.3). outDirect (1) is the directional light (the DOOM-0044 flashlight
+// cone + the §4.1 point lights) plus the FULL colour of sprites/sky/psprite, so ambient
+// occlusion never dims a monster, the weapon, the sky, or a directly-lit surface. The
+// composite recombines them as DIRECT + AO×AMBIENT; before L2b-2's AO it is a plain sum,
+// so the split is invisible. Splitting HERE is the reason the scene pass grew a 2nd target.
+//
+// SINGLE_TARGET variant (mesh_overlay.frag.spv, built with -DSINGLE_TARGET): the RT weapon
+// overlay draws the weapon into the single-attachment swapchain pass, so that build writes
+// the COMBINED colour (ambient + direct) to one location — the weapon looks exactly as it did
+// before the split, keeping the RT view byte-for-byte unchanged (INV-4).
+#ifdef SINGLE_TARGET
 layout(location = 0) out vec4 outColor;
+#else
+layout(location = 0) out vec4 outAmbient;
+layout(location = 1) out vec4 outDirect;
+#endif
 
 // DOOM-0170 L1a — baked GI probes, read in the RASTER (RT-off) path so rooms get
 // the same soft coloured indirect bounce the path tracer bakes. Layout matches
@@ -211,7 +228,13 @@ void main()
         vec3  skyCol = texture(paletteTex, vec2((idx + 0.5) / 256.0, 0.5)).rgb;
         const vec3 SKY_FOG_COL = vec3(0.5);     // neutral haze tone (see DOOM-0143)
         float fog   = smoothstep(0.50, 0.63, vScreenUV.y);
-        outColor    = vec4(mix(skyCol, SKY_FOG_COL, fog), 1.0);
+        vec3 skyOut = mix(skyCol, SKY_FOG_COL, fog);
+#ifdef SINGLE_TARGET
+        outColor    = vec4(skyOut, 1.0);
+#else
+        outDirect   = vec4(skyOut, 1.0);   // sky is fullbright -> all DIRECT
+        outAmbient  = vec4(0.0);           // ...and never AO-darkened
+#endif
         return;
     }
 
@@ -252,16 +275,26 @@ void main()
     if ((vFlags & FLAG_PSPRITE) == 0)
         distLight = clamp(1.0 - vDist / 3000.0, 0.35, 1.0);
 
-    float shade = vLight * distLight * BASE_SECTOR_DIM;   // DOOM-0170 §9 Q1 rebalance
+    // DOOM's non-directional sector light (with distance diminishing). This is the ambient
+    // term SSAO occludes; an earlier Lambert key light here was dropped as unfaithful (see
+    // the DOOM-0069 note above). Max is 0.75 (BASE_SECTOR_DIM), so it never self-clips.
+    float sect = vLight * distLight * BASE_SECTOR_DIM;   // DOOM-0170 §9 Q1 rebalance
+
+    // DOOM-0170 L2b — accumulate AMBIENT (sector + bounce; AO-affected) and DIRECT (flashlight
+    // + point lights; never AO'd) into separate targets. Sprites and the weapon psprite are
+    // billboards/cut-outs, so their whole shade goes to DIRECT — a depth-based world-geometry
+    // AO must not darken a monster or the gun.
+    bool spriteLike = (vFlags & (FLAG_SPRITE | FLAG_PSPRITE)) != 0;
+    vec3 ambient = spriteLike ? vec3(0.0)        : albedo * sect;
+    vec3 direct  = spriteLike ? albedo * sect    : vec3(0.0);
 
     // DOOM-0044 player flashlight (Solid tier / ray tracing OFF): an additive
-    // raster spotlight at the eye, aimed along the view yaw. No cast shadows --
-    // that is the Ultra path-traced version (pathtrace.comp) -- just a cone, a
-    // distance falloff, and a gentle facing term so the beam reads as a real
-    // light on the surface it lands on. Skips the sky (returned above) and the
+    // raster spotlight at the eye, aimed along the view yaw. Cast shadows come from
+    // the L2c shadow map (flashlightShadow). Skips the sky (returned above) and the
     // NDC weapon psprite (vWorldPos is meaningless there). The cone cosines match
-    // the path tracer's so both tiers feel like the same lamp. Bring-up constants
-    // (INV-7 governs the path tracer; the raster shader is placeholder shading).
+    // the path tracer's so both tiers feel like the same lamp. It is a DIRECT term.
+    // The additive amount is capped at (1 - sect) so a fully-lit surface still tops out
+    // at albedo (matching the pre-L2b combined clamp(sect+flash,0,1)); the split is a no-op.
     if (pc.flashlight > 0.5 && (vFlags & FLAG_PSPRITE) == 0)
     {
         vec3  eye    = vec3(pc.eyeX, pc.eyeY, pc.eyeZ);
@@ -272,20 +305,16 @@ void main()
         float spot   = smoothstep(0.82, 0.92, dot(fdir, fwd));    // cone ~35->23 deg
         float fall   = clamp(1.0 - fdist / 1200.0, 0.0, 1.0);     // near-bright beam
         float facing = max(dot(normalize(vNormal), -fdir), 0.0);  // surface faces lamp
-        // DOOM-0170 L2c: gate the cone by the cast-shadow map, so pillars/monsters throw a
-        // shadow away from the torch. Only the additive flashlight term is shadowed.
-        float sh = flashlightShadow(vWorldPos);
-        shade = clamp(shade + spot * fall * facing * sh, 0.0, 1.0);
+        float sh     = flashlightShadow(vWorldPos);               // L2c cast-shadow PCF
+        float flash  = min(spot * fall * facing * sh, max(0.0, 1.0 - sect));
+        direct += albedo * flash;
     }
 
-    vec3 lit = albedo * shade;
-
-    // DOOM-0170 L1a: add the baked indirect bounce on world surfaces (RT-off). The
-    // fragment's subsector = triSs[gl_PrimitiveID] (the same triangle->subsector map
-    // the path tracer indexes by primitive id); giIrradiance gives the coloured
-    // bounce factor. Flag test first so sprites/psprite/sky short-circuit before
-    // reading probeCount. Off when probeCount==0 (non-RT GPU or no bake) -> the plain
-    // sector-lit look, no bounce.
+    // DOOM-0170 L1a/L1b: baked indirect bounce (AMBIENT) + this subsector's nearest point
+    // lights (DIRECT), on world surfaces (RT-off). The fragment's subsector =
+    // triSs[gl_PrimitiveID] (the same triangle->subsector map the path tracer indexes by
+    // primitive id). Flag test first so sprites/psprite/sky short-circuit before reading
+    // probeCount. Off when probeCount==0 (non-RT GPU or no bake) -> the plain sector-lit look.
     if ((vFlags & (FLAG_SPRITE | FLAG_PSPRITE | FLAG_SKY | FLAG_SKYDOME)) == 0 &&
         pc.probeCount > 0u)
     {
@@ -293,7 +322,7 @@ void main()
         if (sub < pc.probeCount)
         {
             vec3 nrm = normalize(vNormal);
-            lit += GI_BOUNCE_STRENGTH * albedo * giIrradiance(pc.probes, sub, nrm);
+            ambient += GI_BOUNCE_STRENGTH * albedo * giIrradiance(pc.probes, sub, nrm);
 
             // DOOM-0170 L1b: direct light from this subsector's nearest emitters. Each
             // slot is a point approximation of an NEE area light — Le gives the COLOUR
@@ -302,7 +331,7 @@ void main()
             // and a Lambert facing term. No cast shadows (that is the RT-on / key-light
             // job, §4.4). Slots are nearest-packed; the first zero-Le slot ends the list.
             uint base = sub * (RASTER_MAX_LIGHTS * 6u);
-            vec3 direct = vec3(0.0);
+            vec3 plight = vec3(0.0);
             for (uint k = 0u; k < RASTER_MAX_LIGHTS; k++)
             {
                 uint o  = base + k * 6u;
@@ -316,18 +345,23 @@ void main()
                 float d2  = dot(dd, dd);
                 float att = 1.0 / (1.0 + d2 * RASTER_INV_RADIUS2);
                 float ndl = max(dot(nrm, dd * inversesqrt(max(d2, 1e-8))), 0.0);
-                direct += col * att * ndl;
+                plight += col * att * ndl;
             }
             // A big emissive surface enters as many emitter triangles, so summing the
             // nearest N over-counts one physical light. GAIN drives a single light up to
             // visible fast, then a Reinhard roll-off caps the accumulated point light at
             // < 1 per channel so a cluster saturates gracefully to its colour instead of
             // stacking to white; STRENGTH is the max additive level after that.
-            direct *= POINT_LIGHT_GAIN;
-            direct = direct / (1.0 + direct);
-            lit += POINT_LIGHT_STRENGTH * albedo * direct;
+            plight *= POINT_LIGHT_GAIN;
+            plight = plight / (1.0 + plight);
+            direct += POINT_LIGHT_STRENGTH * albedo * plight;   // point lights are DIRECT
         }
     }
 
-    outColor = vec4(lit, 1.0);
+#ifdef SINGLE_TARGET
+    outColor   = vec4(ambient + direct, 1.0);   // RT weapon overlay: combined into one target
+#else
+    outAmbient = vec4(ambient, 1.0);
+    outDirect  = vec4(direct, 1.0);
+#endif
 }

@@ -71,6 +71,11 @@ SHADER_SRCS=$(SHADER_DIR)/mesh.vert $(SHADER_DIR)/mesh.frag \
 		$(SHADER_DIR)/svgf_composite.comp $(SHADER_DIR)/label.comp \
 		$(SHADER_DIR)/taau.comp
 SHADER_HDRS=$(SHADER_SRCS:=.spv.h)
+# DOOM-0170 L2b — a second build of mesh.frag with -DSINGLE_TARGET (one combined colour
+# output) for the RT weapon overlay, which draws into the single-attachment swapchain pass.
+# Not derived from a source file of its own (it IS mesh.frag), so it needs the explicit rule
+# below and is appended here so it builds + gates r_vulkan.o like the other shader headers.
+SHADER_HDRS+=$(SHADER_DIR)/mesh_overlay.frag.spv.h
 
 # not too sophisticated dependency
 OBJS=				\
@@ -247,6 +252,13 @@ $(SHADER_DIR)/pathtrace.comp.spv.h $(SHADER_DIR)/bake.comp.spv.h: \
 $(SHADER_DIR)/pathtrace.comp.spv.h $(SHADER_DIR)/svgf_composite.comp.spv.h: \
 		$(SHADER_DIR)/formulas/formulas.glsl \
 		$(SHADER_DIR)/formulas/pbr_neutral_tonemap.glsl
+
+# DOOM-0170 L2b — the SINGLE_TARGET variant of mesh.frag (RT weapon overlay). Explicit rule
+# (the pattern rule above can't produce it — there is no mesh_overlay.frag source); depends on
+# mesh.frag so editing the shader rebuilds both variants.
+$(SHADER_DIR)/mesh_overlay.frag.spv.h:	$(SHADER_DIR)/mesh.frag
+	glslc --target-env=vulkan1.2 -O -DSINGLE_TARGET $< -o $(SHADER_DIR)/mesh_overlay.frag.spv
+	xxd -i -n mesh_overlay_frag_spv $(SHADER_DIR)/mesh_overlay.frag.spv > $@
 
 # The Vulkan back-end embeds the compiled shaders.
 $(O)/r_vulkan.o:	$(SHADER_HDRS)

@@ -55,6 +55,7 @@
 // Compiled shaders, embedded as byte arrays (Makefile: GLSL -> SPIR-V -> xxd).
 #include "shaders/mesh.vert.spv.h"
 #include "shaders/mesh.frag.spv.h"
+#include "shaders/mesh_overlay.frag.spv.h"   // DOOM-0170 L2b: 1-output variant (RT weapon overlay)
 #include "shaders/shadow.vert.spv.h"
 #include "shaders/shadow.frag.spv.h"
 #include "shaders/blob.vert.spv.h"
@@ -261,6 +262,15 @@ struct VulkanState
     VkImageView    sceneView   = VK_NULL_HANDLE;
     VkFramebuffer  sceneFb     = VK_NULL_HANDLE;
     VkRenderPass   scenePass   = VK_NULL_HANDLE;
+    // DOOM-0170 L2b — the scene pass now writes TWO HDR colour targets so SSAO can darken
+    // ambient light without touching direct light (§3/§4.3). sceneImage is the AMBIENT
+    // target (attachment 0: sector light × dist + baked bounce — the term AO multiplies);
+    // sceneDirImage is the DIRECT target (attachment 1: flashlight cone + point lights, and
+    // the full colour of sprites/sky so AO never darkens them). The composite recombines
+    // them: DIRECT + AO×AMBIENT. Both kSceneFormat, same size, freed together.
+    VkImage        sceneDirImage  = VK_NULL_HANDLE;
+    VkDeviceMemory sceneDirMemory = VK_NULL_HANDLE;
+    VkImageView    sceneDirView   = VK_NULL_HANDLE;
 
     // DOOM-0170 L2c — flashlight cast-shadow map (§4.4). A fixed 2048^2 depth image the
     // world is rendered into (depth-only) from the flashlight's viewpoint each torch-on
@@ -3048,6 +3058,18 @@ void CreateSceneTarget()
     vci.subresourceRange.levelCount = 1;
     vci.subresourceRange.layerCount = 1;
     Check(vkCreateImageView(g.device, &vci, nullptr, &g.sceneView), "vkCreateImageView(scene)");
+
+    // DOOM-0170 L2b — the DIRECT target (attachment 1), identical to the AMBIENT one above.
+    // Same format/usage/size so the two are interchangeable framebuffer attachments; the
+    // composite samples both (ambient binding 0, direct binding 1).
+    Check(vkCreateImage(g.device, &ici, nullptr, &g.sceneDirImage), "vkCreateImage(sceneDir)");
+    vkGetImageMemoryRequirements(g.device, g.sceneDirImage, &req);
+    mai.allocationSize = req.size;
+    mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    Check(vkAllocateMemory(g.device, &mai, nullptr, &g.sceneDirMemory), "vkAllocateMemory(sceneDir)");
+    Check(vkBindImageMemory(g.device, g.sceneDirImage, g.sceneDirMemory, 0), "vkBindImageMemory(sceneDir)");
+    vci.image = g.sceneDirImage;
+    Check(vkCreateImageView(g.device, &vci, nullptr, &g.sceneDirView), "vkCreateImageView(sceneDir)");
 }
 
 // Free the scene target (+ its framebuffer, built in CreateFramebuffers). Called from
@@ -3058,6 +3080,10 @@ void DestroySceneTarget()
     if (g.sceneView)   { vkDestroyImageView(g.device, g.sceneView, nullptr); g.sceneView = VK_NULL_HANDLE; }
     if (g.sceneImage)  { vkDestroyImage(g.device, g.sceneImage, nullptr);    g.sceneImage = VK_NULL_HANDLE; }
     if (g.sceneMemory) { vkFreeMemory(g.device, g.sceneMemory, nullptr);     g.sceneMemory = VK_NULL_HANDLE; }
+    // DOOM-0170 L2b — the DIRECT target rides the same resize/teardown path.
+    if (g.sceneDirView)   { vkDestroyImageView(g.device, g.sceneDirView, nullptr); g.sceneDirView = VK_NULL_HANDLE; }
+    if (g.sceneDirImage)  { vkDestroyImage(g.device, g.sceneDirImage, nullptr);    g.sceneDirImage = VK_NULL_HANDLE; }
+    if (g.sceneDirMemory) { vkFreeMemory(g.device, g.sceneDirMemory, nullptr);     g.sceneDirMemory = VK_NULL_HANDLE; }
 }
 
 // DOOM-0170 L2c — build the flashlight cast-shadow map (§4.4): a fixed 2048^2 depth image
@@ -3306,12 +3332,31 @@ void CreateRenderPass()
     // world/sky/wire pipelines are built against THIS pass (see g.scenePipeline &co below);
     // the 8-bit g.pipeline is kept only for the RT weapon overlay. Built from copies so the
     // shared att/dep/rpci stay intact for the rtOverlayPass below.
+    // DOOM-0170 L2b — the scene pass gains a SECOND colour attachment: attachment 0 =
+    // AMBIENT (sceneImage), attachment 1 = DIRECT (sceneDirImage), attachment 2 = depth.
+    // Both colour targets are the HDR float format, cleared + stored, and left in
+    // COLOR_ATTACHMENT_OPTIMAL (the post-pass barrier transitions both to SHADER_READ for
+    // the composite). Every pipeline drawn into this pass writes both colour outputs.
     {
-        VkAttachmentDescription satt[2] = { att[0], att[1] };
+        VkAttachmentDescription satt[3] = { att[0], att[0], att[1] };
         satt[0].format      = VulkanState::kSceneFormat;
         satt[0].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        satt[1].format      = VulkanState::kSceneFormat;
+        satt[1].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        // satt[2] = depth (att[1]) unchanged.
+        VkAttachmentReference scolorRefs[2] = {
+            { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL },
+            { 1, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL },
+        };
+        VkAttachmentReference sdepthRef = { 2, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
+        VkSubpassDescription ssub = sub;
+        ssub.colorAttachmentCount = 2;
+        ssub.pColorAttachments    = scolorRefs;
+        ssub.pDepthStencilAttachment = &sdepthRef;
         VkRenderPassCreateInfo srpci = rpci;
-        srpci.pAttachments = satt;
+        srpci.attachmentCount = 3;
+        srpci.pAttachments    = satt;
+        srpci.pSubpasses      = &ssub;
         Check(vkCreateRenderPass(g.device, &srpci, nullptr, &g.scenePass),
               "vkCreateRenderPass(scene)");
     }
@@ -3356,11 +3401,12 @@ void CreateFramebuffers()
     // DOOM-0170 L2a: the single off-screen scene framebuffer (scene colour + the shared
     // depth), bound by scenePass. CreateSceneTarget (which makes g.sceneView) runs before
     // this in both the init and resize paths.
-    VkImageView sattach[2] = { g.sceneView, g.depthView };
+    // DOOM-0170 L2b — attachment order matches g.scenePass: AMBIENT, DIRECT, depth.
+    VkImageView sattach[3] = { g.sceneView, g.sceneDirView, g.depthView };
     VkFramebufferCreateInfo sfci = {};
     sfci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
     sfci.renderPass = g.scenePass;
-    sfci.attachmentCount = 2;
+    sfci.attachmentCount = 3;
     sfci.pAttachments = sattach;
     sfci.width = g.extent.width;
     sfci.height = g.extent.height;
@@ -3459,19 +3505,24 @@ void CreateDescriptors()
     // its own layout/pool/set + a pipeline layout binding only it. Separate from
     // g.dsLayout so the variable-count material array there stays the last binding.
     {
-        VkDescriptorSetLayoutBinding cb = {};
-        cb.binding = 0;
-        cb.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        cb.descriptorCount = 1;
-        cb.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        // DOOM-0170 L2b — two combined-image-samplers: binding 0 = AMBIENT scene target,
+        // binding 1 = DIRECT scene target. The composite reads both and outputs DIRECT +
+        // AO×AMBIENT (AO added in L2b-2; until then a plain sum, visually identical).
+        VkDescriptorSetLayoutBinding cb[2] = {};
+        cb[0].binding = 0;
+        cb[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        cb[0].descriptorCount = 1;
+        cb[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        cb[1] = cb[0];
+        cb[1].binding = 1;
         VkDescriptorSetLayoutCreateInfo clci = {};
         clci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        clci.bindingCount = 1;
-        clci.pBindings = &cb;
+        clci.bindingCount = 2;
+        clci.pBindings = cb;
         Check(vkCreateDescriptorSetLayout(g.device, &clci, nullptr, &g.compositeDsLayout),
               "vkCreateDescriptorSetLayout(composite)");
 
-        VkDescriptorPoolSize cps = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 };
+        VkDescriptorPoolSize cps = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 };
         VkDescriptorPoolCreateInfo cdpci = {};
         cdpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         cdpci.maxSets = 1;
@@ -3534,26 +3585,37 @@ void CreateDescriptors()
 // image is recreated on every resize, so this runs after each CreateSceneTarget.
 void UpdateCompositeDescriptor()
 {
-    if (!g.compositeDs || !g.sceneView)
+    if (!g.compositeDs || !g.sceneView || !g.sceneDirView)
         return;
-    VkDescriptorImageInfo ii = {};
-    ii.sampler = g.compositeSampler;   // linear + clamp: smooth upscale of the scaled scene
-    ii.imageView = g.sceneView;
-    ii.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    VkWriteDescriptorSet w = {};
-    w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    w.dstSet = g.compositeDs;
-    w.dstBinding = 0;
-    w.descriptorCount = 1;
-    w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    w.pImageInfo = &ii;
-    vkUpdateDescriptorSets(g.device, 1, &w, 0, nullptr);
+    // DOOM-0170 L2b — point binding 0 at AMBIENT, binding 1 at DIRECT. Both use the linear+
+    // clamp composite sampler (smooth render-scale upscale). Recreated on every resize.
+    VkDescriptorImageInfo ii[2] = {};
+    ii[0].sampler = g.compositeSampler;
+    ii[0].imageView = g.sceneView;
+    ii[0].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    ii[1] = ii[0];
+    ii[1].imageView = g.sceneDirView;
+    VkWriteDescriptorSet w[2] = {};
+    w[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    w[0].dstSet = g.compositeDs;
+    w[0].dstBinding = 0;
+    w[0].descriptorCount = 1;
+    w[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    w[0].pImageInfo = &ii[0];
+    w[1] = w[0];
+    w[1].dstBinding = 1;
+    w[1].pImageInfo = &ii[1];
+    vkUpdateDescriptorSets(g.device, 2, w, 0, nullptr);
 }
 
 void CreatePipeline()
 {
     VkShaderModule vert = MakeShader(mesh_vert_spv, mesh_vert_spv_len);
     VkShaderModule frag = MakeShader(mesh_frag_spv, mesh_frag_spv_len);
+    // DOOM-0170 L2b — 1-output build of mesh.frag for the RT weapon overlay (below), which
+    // targets the single-attachment swapchain pass; the 2-output `frag` would leave its
+    // location-1 write attachmentless there.
+    VkShaderModule fragOverlay = MakeShader(mesh_overlay_frag_spv, mesh_overlay_frag_spv_len);
 
     VkPipelineShaderStageCreateInfo stages[2] = {};
     stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -3616,10 +3678,19 @@ void CreatePipeline()
     VkPipelineColorBlendAttachmentState cba = {};
     cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                          VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    // 1-attachment blend for the swapchain-targeted pipelines (rtWeapon/overlay/composite).
     VkPipelineColorBlendStateCreateInfo cb = {};
     cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
     cb.attachmentCount = 1;
     cb.pAttachments = &cba;
+    // DOOM-0170 L2b — the scene pass now has TWO colour attachments (AMBIENT + DIRECT), so
+    // the pipelines drawn into it (world/sky/wire) need a matching 2-attachment blend state;
+    // both are opaque (blend off). A pipeline's blend-attachment count must equal its render
+    // pass's colour-attachment count, so the swapchain pipelines keep the 1-attachment `cb`.
+    VkPipelineColorBlendAttachmentState cbaScene[2] = { cba, cba };
+    VkPipelineColorBlendStateCreateInfo cbScene = cb;
+    cbScene.attachmentCount = 2;
+    cbScene.pAttachments = cbaScene;
 
     VkDynamicState dyn[2] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
     VkPipelineDynamicStateCreateInfo dynState = {};
@@ -3660,7 +3731,7 @@ void CreatePipeline()
     pci.pRasterizationState = &rs;
     pci.pMultisampleState = &ms;
     pci.pDepthStencilState = &ds;
-    pci.pColorBlendState = &cb;
+    pci.pColorBlendState = &cbScene;   // DOOM-0170 L2b: world/sky/wire target the 2-target scene pass
     pci.pDynamicState = &dynState;
     pci.layout = g.pipelineLayout;
     // DOOM-0170 L2a step 3: the world/sky/wire pipelines render into the HDR off-screen
@@ -3701,9 +3772,17 @@ void CreatePipeline()
     // set both explicitly so this stays correct regardless of the wire branch.)
     rs.polygonMode = VK_POLYGON_MODE_FILL;
     pci.pDepthStencilState = &ds;
+    pci.pColorBlendState = &cb;   // DOOM-0170 L2b: back to 1 attachment for the swapchain renderPass
     pci.renderPass = g.renderPass;
+    // DOOM-0170 L2b — the weapon overlay uses the SINGLE_TARGET mesh.frag (combined colour to
+    // location 0) so it matches this 1-attachment pass. Swap the frag module for this build,
+    // then restore `stages` for any pipeline created afterward.
+    VkPipelineShaderStageCreateInfo rwStages[2] = { stages[0], stages[1] };
+    rwStages[1].module = fragOverlay;
+    pci.pStages = rwStages;
     Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &pci, nullptr,
                                     &g.rtWeaponPipeline), "vkCreateGraphicsPipelines(rtWeapon)");
+    pci.pStages = stages;
 
     // DOOM-0170 L2c: flashlight cast-shadow map depth pass (Pass A). Same mesh vertex
     // layout (reuses `vin`), but shadow shaders, no colour attachment (depth-only), a
@@ -3770,6 +3849,13 @@ void CreatePipeline()
         VkPipelineDepthStencilStateCreateInfo blDs = ds;
         blDs.depthWriteEnable = VK_FALSE;   // decals don't occlude; overlapping blobs blend
 
+        // DOOM-0170 L2b — two attachments (AMBIENT + DIRECT), both the SAME alpha-blend state
+        // (the independentBlend feature is not enabled, so all attachments must be identical).
+        // The per-attachment effect is instead selected by blob.frag's per-output ALPHA: it
+        // writes alpha = darkening on AMBIENT (a grounding shadow on the always-present sector
+        // light, so blobs stay visible in unlit rooms) and alpha = 0 on DIRECT, which makes the
+        // identical blend a no-op there — a blob never touches the flashlight/lamp light (the
+        // L2c cast-shadow map owns that).
         VkPipelineColorBlendAttachmentState blAtt = {};
         blAtt.blendEnable         = VK_TRUE;
         blAtt.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
@@ -3780,10 +3866,11 @@ void CreatePipeline()
         blAtt.alphaBlendOp        = VK_BLEND_OP_ADD;
         blAtt.colorWriteMask      = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
                                   | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        VkPipelineColorBlendAttachmentState blAtts[2] = { blAtt, blAtt };
         VkPipelineColorBlendStateCreateInfo blCb = {};
         blCb.sType           = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-        blCb.attachmentCount  = 1;
-        blCb.pAttachments     = &blAtt;
+        blCb.attachmentCount  = 2;
+        blCb.pAttachments     = blAtts;
 
         VkGraphicsPipelineCreateInfo blPci = pci;
         blPci.pStages             = blStages;
@@ -3840,6 +3927,7 @@ void CreatePipeline()
 
     vkDestroyShaderModule(g.device, vert, nullptr);
     vkDestroyShaderModule(g.device, frag, nullptr);
+    vkDestroyShaderModule(g.device, fragOverlay, nullptr);   // DOOM-0170 L2b
 }
 
 // Destroy the size-dependent resources (framebuffers, depth, image views) so
@@ -6107,16 +6195,20 @@ extern "C" void RB_Vulkan_Present(void)
     // DOOM-0170 L2a: draw the world into the OFF-SCREEN scene target (scenePass leaves it
     // in SHADER_READ_ONLY); the composite pass below samples it to the swapchain. Clear to
     // a dark slate (world background) + far depth.
-    VkClearValue clears[2] = {};
-    clears[0].color = { { 0.05f, 0.06f, 0.09f, 1.0f } };
-    clears[1].depthStencil = { 1.0f, 0 };
+    // DOOM-0170 L2b — three clears matching the scene pass's attachments: AMBIENT to the dark
+    // slate background, DIRECT to black (nothing directly lit until a light writes it), depth
+    // to far. The composite sums AMBIENT+DIRECT, so the visible background stays the slate.
+    VkClearValue clears[3] = {};
+    clears[0].color = { { 0.05f, 0.06f, 0.09f, 1.0f } };   // AMBIENT background
+    clears[1].color = { { 0.0f, 0.0f, 0.0f, 1.0f } };      // DIRECT (additive) starts at black
+    clears[2].depthStencil = { 1.0f, 0 };
 
     VkRenderPassBeginInfo rp = {};
     rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     rp.renderPass = g.scenePass;
     rp.framebuffer = g.sceneFb;
     rp.renderArea.extent = g.extent;   // clear the whole target (see note); viewport scales shading
-    rp.clearValueCount = 2;
+    rp.clearValueCount = 3;
     rp.pClearValues = clears;
     vkCmdBeginRenderPass(g.cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
 
@@ -6232,21 +6324,23 @@ extern "C" void RB_Vulkan_Present(void)
     // (this is the tone-map seam for step 2), then the HUD draws on top in the same pass.
     vkCmdEndRenderPass(g.cmd);   // end scenePass
 
-    // Transition the scene target COLOR_ATTACHMENT -> SHADER_READ and make the world
-    // writes visible to the composite's sample (see the scenePass note above).
+    // Transition BOTH scene targets (AMBIENT + DIRECT) COLOR_ATTACHMENT -> SHADER_READ and
+    // make the world writes visible to the composite's sample (see the scenePass note above).
     {
-        VkImageMemoryBarrier b = {};
-        b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        b.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        b.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b.image = g.sceneImage;
-        b.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        VkImageMemoryBarrier b[2] = {};
+        b[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        b[0].oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        b[0].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        b[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        b[0].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        b[0].srcQueueFamilyIndex = b[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b[0].image = g.sceneImage;
+        b[0].subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        b[1] = b[0];
+        b[1].image = g.sceneDirImage;
         vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                              VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
-                             0, nullptr, 0, nullptr, 1, &b);
+                             0, nullptr, 0, nullptr, 2, b);
     }
 
     rp.renderPass = g.renderPass;

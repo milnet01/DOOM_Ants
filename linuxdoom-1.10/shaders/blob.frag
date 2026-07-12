@@ -15,7 +15,12 @@
 layout(location = 1) in vec2  vUV;      // [-1,1] across the quad (radial coord)
 layout(location = 2) in float vLight;   // owning sector lightlevel, 0..1
 
-layout(location = 0) out vec4 outColor;
+// DOOM-0170 L2b — the scene pass has two colour attachments now. outAmbient (0) carries the
+// dark oval that the blob pipeline alpha-blends onto the AMBIENT target; outDirect (1) is a
+// required output for the second attachment but the blob pipeline blends it as a no-op
+// (src×0), so its value is discarded — a blob never touches the DIRECT flashlight/lamp light.
+layout(location = 0) out vec4 outAmbient;
+layout(location = 1) out vec4 outDirect;
 
 const float BLOB_STRENGTH = 0.55;       // peak darkening at the centre, in full light
 
@@ -27,5 +32,6 @@ void main()
     // Solid core out to 0.35, then a soft feathered rim to 0 at the edge.
     float falloff = 1.0 - smoothstep(0.35, 1.0, r);
     float alpha   = falloff * BLOB_STRENGTH * vLight;
-    outColor = vec4(0.0, 0.0, 0.0, alpha);
+    outAmbient = vec4(0.0, 0.0, 0.0, alpha);
+    outDirect  = vec4(0.0);   // no-op on the DIRECT target (blended src×0 + dst×1)
 }

@@ -8,7 +8,12 @@
 layout(location = 0) in  vec2 vUV;
 layout(location = 0) out vec4 outColor;
 
-layout(set = 0, binding = 0) uniform sampler2D sceneTex;
+// DOOM-0170 L2b — the scene is now TWO HDR targets: AMBIENT (sector light + baked bounce)
+// and DIRECT (flashlight + point lights + sprite/sky colour). The composite recombines them
+// as DIRECT + AMBIENT. Keeping them separate is what lets L2b-2 darken only AMBIENT with the
+// SSAO factor (DIRECT + AO×AMBIENT) so contact shadows never dim directly-lit surfaces.
+layout(set = 0, binding = 0) uniform sampler2D ambientTex;
+layout(set = 0, binding = 1) uniform sampler2D directTex;
 
 // DOOM-0170 L2a step 2: the world is drawn into the [0,uvScale] corner of a
 // full-size scene target (render-scale sub-rectangle). Sample that corner and let
@@ -26,6 +31,11 @@ layout(push_constant) uniform Push { vec2 uvScale; } pc;
 
 void main()
 {
-    vec3 hdr = texture(sceneTex, vUV * pc.uvScale).rgb;
+    vec2  uv      = vUV * pc.uvScale;
+    vec3  ambient = texture(ambientTex, uv).rgb;
+    vec3  direct  = texture(directTex,  uv).rgb;
+    // L2b-2 will fold in the SSAO factor here (direct + ao*ambient); for now a plain sum,
+    // so the recombined image is identical to the pre-split single target.
+    vec3  hdr     = direct + ambient;
     outColor = vec4(pbrNeutralToneMapping(hdr), 1.0);
 }
