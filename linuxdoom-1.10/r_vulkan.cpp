@@ -57,6 +57,8 @@
 #include "shaders/mesh.frag.spv.h"
 #include "shaders/shadow.vert.spv.h"
 #include "shaders/shadow.frag.spv.h"
+#include "shaders/blob.vert.spv.h"
+#include "shaders/blob.frag.spv.h"
 #include "shaders/overlay.vert.spv.h"
 #include "shaders/overlay.frag.spv.h"
 #include "shaders/composite.vert.spv.h"
@@ -298,6 +300,10 @@ struct VulkanState
     // advertises fillModeNonSolid (wireSupported); else the toggle is a no-op.
     VkPipeline       wirePipeline   = VK_NULL_HANDLE;
     bool             wireSupported  = false;
+    // DOOM-0170 L2d: blob-shadow decals. Same mesh.vert + g.pipelineLayout as the world,
+    // but blob.frag + alpha blend + depth-test-on/write-off, so each floor quad darkens
+    // the floor without occluding. Drawn from g.spriteVbuf after the world, before sprites.
+    VkPipeline       blobPipeline   = VK_NULL_HANDLE;
     // 2D HUD/menu compositor (DOOM-0008): a vertexless full-screen pass that
     // draws the paletted screens[0] overlay over the rendered 3D scene, keying
     // out the transparent index. Shares pipelineLayout + descriptor set 0.
@@ -369,6 +375,8 @@ struct VulkanState
     uint32_t       spriteVertCap    = 0;
     uint32_t       spriteVertCount  = 0;
     uint32_t       skyVertCount     = 0;   // sky verts at the front of spriteVbuf
+    uint32_t       blobVertCount    = 0;   // DOOM-0170 L2d: blob-shadow verts...
+    uint32_t       blobVertOffset   = 0;   // ...at this offset in spriteVbuf (after sprites)
     rb_view_t      lastView         = {};
 
     // Bindless material array (DOOM-0009 build step 1): one R8 palette-index image
@@ -3740,6 +3748,58 @@ void CreatePipeline()
         vkDestroyShaderModule(g.device, svFrag, nullptr);
     }
 
+    // DOOM-0170 L2d: blob-shadow decal pipeline. Reuses mesh.vert (world MVP path) + the
+    // world pipeline layout/push, but blob.frag paints a soft dark oval and the state
+    // ALPHA-BLENDS it onto the floor: depth test ON (a wall in front occludes it; it sits
+    // on the floor it is emitted 1 unit above) but depth WRITE OFF, so blobs never occlude
+    // the billboards or each other and only darken what is already drawn. Same g.scenePass.
+    {
+        VkShaderModule blVert = MakeShader(blob_vert_spv, blob_vert_spv_len);
+        VkShaderModule blFrag = MakeShader(blob_frag_spv, blob_frag_spv_len);
+        VkPipelineShaderStageCreateInfo blStages[2] = { stages[0], stages[1] };
+        blStages[0].module = blVert;
+        blStages[1].module = blFrag;
+
+        // blob.vert consumes only position/UV/light; describe just those 3 attributes
+        // (same binding/stride) so the validator sees no unconsumed vertex inputs.
+        VkVertexInputAttributeDescription blAttrs[3] = { attrs[0], attrs[2], attrs[3] };
+        VkPipelineVertexInputStateCreateInfo blVin = vin;
+        blVin.vertexAttributeDescriptionCount = 3;
+        blVin.pVertexAttributeDescriptions    = blAttrs;
+
+        VkPipelineDepthStencilStateCreateInfo blDs = ds;
+        blDs.depthWriteEnable = VK_FALSE;   // decals don't occlude; overlapping blobs blend
+
+        VkPipelineColorBlendAttachmentState blAtt = {};
+        blAtt.blendEnable         = VK_TRUE;
+        blAtt.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+        blAtt.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        blAtt.colorBlendOp        = VK_BLEND_OP_ADD;   // out = 0*a + dst*(1-a) = darkened floor
+        blAtt.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+        blAtt.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        blAtt.alphaBlendOp        = VK_BLEND_OP_ADD;
+        blAtt.colorWriteMask      = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
+                                  | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        VkPipelineColorBlendStateCreateInfo blCb = {};
+        blCb.sType           = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+        blCb.attachmentCount  = 1;
+        blCb.pAttachments     = &blAtt;
+
+        VkGraphicsPipelineCreateInfo blPci = pci;
+        blPci.pStages             = blStages;
+        blPci.pVertexInputState   = &blVin;   // trimmed to pos/uv/light
+        blPci.pRasterizationState = &rs;    // FILL, cull-none
+        blPci.pDepthStencilState  = &blDs;
+        blPci.pColorBlendState    = &blCb;
+        blPci.layout              = g.pipelineLayout;
+        blPci.renderPass          = g.scenePass;
+        blPci.subpass             = 0;
+        Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &blPci, nullptr,
+                                        &g.blobPipeline), "vkCreateGraphicsPipelines(blob)");
+        vkDestroyShaderModule(g.device, blVert, nullptr);
+        vkDestroyShaderModule(g.device, blFrag, nullptr);
+    }
+
     // 2D HUD/menu compositor: own shaders, no vertex input (a full-screen
     // triangle generated from gl_VertexIndex), depth off, drawn last over the
     // 3D scene. Shares this pipeline layout (descriptor set 0 + push range),
@@ -5841,6 +5901,7 @@ extern "C" void RB_Vulkan_Present(void)
     // draw (which read this buffer) has finished. Host-coherent, so no flush.
     g.spriteVertCount = 0;
     g.skyVertCount    = 0;
+    g.blobVertCount   = 0;   // DOOM-0170 L2d
     g.sprWorldVertCount = 0;
     if (!rtActive && g.spriteMapped && g.haveCamera && g.atlasReady)
     {
@@ -5856,6 +5917,12 @@ extern "C" void RB_Vulkan_Present(void)
         n += RB_BuildPSprites(buf + sky + n, (int)g.spriteVertCap - sky - n, aspect);
         g.skyVertCount    = (uint32_t)sky;
         g.spriteVertCount = (uint32_t)n;
+
+        // DOOM-0170 L2d: blob shadows appended after the sprites+weapon; the blob pass
+        // (alpha-blend pipeline) reads them from this offset, drawn before the billboards.
+        g.blobVertOffset = (uint32_t)(sky + n);
+        g.blobVertCount  = (uint32_t)RB_BuildBlobs(&g.lastView, buf + sky + n,
+                                                   (int)g.spriteVertCap - sky - n);
 
         // DOOM-0170 L1b: the raster point-light stack needs this frame's emissive
         // sprites (torches/lamps/barrels) in the NEE emitter list. The traced branch
@@ -6142,6 +6209,16 @@ extern "C" void RB_Vulkan_Present(void)
             vkCmdBindVertexBuffers(g.cmd, 0, 1, &g.skyMeshBuf, &off);
             vkCmdDraw(g.cmd, g.skyMeshVerts, 1, 0, 0);
         }
+        // DOOM-0170 L2d: blob shadows. Drawn after the world (so they alpha-blend onto the
+        // floor) but before the billboards (so a Thing's sprite sits on top of its own
+        // shadow). The blob pipeline binds here, then worldPipe is restored for the sprites.
+        if (g.blobPipeline && g.spriteVbuf && g.blobVertCount)
+        {
+            vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.blobPipeline);
+            vkCmdBindVertexBuffers(g.cmd, 0, 1, &g.spriteVbuf, &off);
+            vkCmdDraw(g.cmd, g.blobVertCount, 1, g.blobVertOffset, 0);
+            vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, worldPipe);
+        }
         // Sprites + weapon: same buffer as the sky, but skip its leading verts.
         if (g.spriteVbuf && g.spriteVertCount)
         {
@@ -6353,6 +6430,7 @@ extern "C" void RB_Vulkan_Shutdown(void)
     if (g.pipeline)       vkDestroyPipeline(g.device, g.pipeline, nullptr);
     if (g.rtWeaponPipeline) vkDestroyPipeline(g.device, g.rtWeaponPipeline, nullptr);
     if (g.wirePipeline)   vkDestroyPipeline(g.device, g.wirePipeline, nullptr);
+    if (g.blobPipeline)   vkDestroyPipeline(g.device, g.blobPipeline, nullptr);
     if (g.skyPipeline)    vkDestroyPipeline(g.device, g.skyPipeline, nullptr);
     if (g.overlayPipeline) vkDestroyPipeline(g.device, g.overlayPipeline, nullptr);
     if (g.pipelineLayout) vkDestroyPipelineLayout(g.device, g.pipelineLayout, nullptr);

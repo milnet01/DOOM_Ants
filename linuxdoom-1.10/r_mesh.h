@@ -94,6 +94,10 @@ typedef struct
                               // not ammo pickups). Only these self-glow + cast NEE light
                               // in the path tracer; the per-texel value mask then
                               // localises the glow to the sprite's bright pixels.
+#define RB_MESH_BLOB    0x80  // DOOM-0170 L2d: blob-shadow decal — a horizontal quad on
+                              // the floor under a Thing, drawn by blob.frag as a soft
+                              // dark radial oval (u,v carry [-1,1] radial coords). Uses
+                              // mesh.vert's MVP path; a separate alpha-blend pipeline.
 #define RB_MESH_SKYDOME 0x40  // DOOM-0162: world-space sky occluder (emit_sky_wall/
                               // emit_sky_cap). Painted as the sky panorama like
                               // RB_MESH_SKY, but its verts are WORLD-space, so the
@@ -293,6 +297,11 @@ int RB_BuildPSprites(rb_vertex_t* out, int maxverts, float aspect);
 // of yaw per texture width) so it pans as the player turns. Returns the vertex
 // count written (6, or 0 if out has no room).
 int RB_BuildSky(const rb_view_t* view, rb_vertex_t* out, int maxverts);
+
+// DOOM-0170 L2d: one soft dark blob-shadow quad on the floor under each solid/pickup
+// Thing (monsters, barrels, items), so nothing floats even where the key light is off.
+// Same rb_vertex_t stream as the billboards; drawn with the alpha-blend blob pipeline.
+int RB_BuildBlobs(const rb_view_t* view, rb_vertex_t* out, int maxverts);
 
 #ifdef __cplusplus
 }

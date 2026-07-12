@@ -1184,6 +1184,55 @@ int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts)
     return n;
 }
 
+// DOOM-0170 L2d — blob shadows. One horizontal quad on the floor beneath each solid
+// or pickup Thing (monsters, barrels, keys/items), so things read as grounded even in
+// a room with no dominant light (§4.5). The quad's four corners carry [-1,1] radial UV;
+// blob.frag turns |uv| into a soft dark oval and fades it by the sector light. Skips the
+// player's own body, projectiles/puffs (MF_MISSILE), and non-solid non-pickup decor
+// (corpses, blood), which have no grounding to cue. Mirrors RB_BuildSprites' thing walk.
+int RB_BuildBlobs(const rb_view_t* view, rb_vertex_t* out, int maxverts)
+{
+    int s, n = 0;
+    (void)view;                                 // world-space; no view-facing needed
+    for (s = 0; s < numsectors; s++)
+    {
+        mobj_t* thing;
+        for (thing = sectors[s].thinglist; thing; thing = thing->snext)
+        {
+            float cx, cy, fz, rad, light;
+
+            if (thing == players[consoleplayer].mo)
+                continue;                       // no shadow under the first-person body
+            if (!(thing->flags & (MF_SOLID | MF_SPECIAL)))
+                continue;                       // corpses/blood/decals: nothing to ground
+            if (thing->flags & MF_MISSILE)
+                continue;                       // projectiles/puffs don't sit on the floor
+
+            cx    = thing->x / (float)FRACUNIT;
+            cy    = thing->y / (float)FRACUNIT;
+            fz    = thing->floorz / (float)FRACUNIT + 1.0f;   // 1 unit up: hug floor, no z-fight
+            rad   = (thing->radius / (float)FRACUNIT) * 1.35f; // a touch wider than the hitbox
+            light = thing->subsector->sector->lightlevel / 255.0f;
+            if (light < 0.0f) light = 0.0f;
+            if (light > 1.0f) light = 1.0f;
+
+            if (n + 6 > maxverts)
+                return n;                       // buffer full; drop the rest
+
+            // Horizontal quad (normal +z), UV = radial corner coords for blob.frag.
+            {
+                rb_vertex_t a = mkv(cx - rad, cy - rad, fz, 0.0f, 0.0f, 1.0f, -1.0f, -1.0f, 0, RB_MESH_BLOB, light);
+                rb_vertex_t b = mkv(cx + rad, cy - rad, fz, 0.0f, 0.0f, 1.0f,  1.0f, -1.0f, 0, RB_MESH_BLOB, light);
+                rb_vertex_t c = mkv(cx + rad, cy + rad, fz, 0.0f, 0.0f, 1.0f,  1.0f,  1.0f, 0, RB_MESH_BLOB, light);
+                rb_vertex_t d = mkv(cx - rad, cy + rad, fz, 0.0f, 0.0f, 1.0f, -1.0f,  1.0f, 0, RB_MESH_BLOB, light);
+                out[n++] = a; out[n++] = b; out[n++] = c;
+                out[n++] = a; out[n++] = c; out[n++] = d;
+            }
+        }
+    }
+    return n;
+}
+
 
 // Player weapon / muzzle-flash overlay. The psprites live in DOOM's 320x200 HUD
 // space; mirror R_DrawPSprite's placement (with pspritescale = 1, i.e. straight
