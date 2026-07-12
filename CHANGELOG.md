@@ -8,6 +8,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Activated switches/buttons emit a faint coloured glow (red buttons glow red).** (DOOM-0082)
+  When you press a lit button or switch, it gives off a soft glow in its own colour — a red button casts a faint red light — instead of staying flat.
+
 - **Armour pickups' green glowing eyes emit a faint green glow in the path tracer.** (DOOM-0157)
   The armour pickups have little green glowing eyes; those should cast a soft green glow when you are near them, instead of looking flat — they do not glow right now.
 
@@ -25,6 +28,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Render tier drives the ray-tracing default so Solid is the fast raster original view.** (DOOM-0169)
+  Picking the "Solid" graphics mode now gives the fast, classic-looking view instead of secretly running the heavy ray-traced renderer — so it's smooth. "Ultra" is the ray-traced one. You can still flip ray-tracing on/off within a mode with the ~ key.
+
 - **3D renderer defensive-hardening bundle (indie-review deferred items).** (DOOM-0073)
   Defensive hardening of the 3D renderer against corrupt or pathological (non-stock) level data — cap-carve buffer-overflow guard, per-frame texture-index bounds, sprite-rotation int overflow fix at the far map edge, a mid-session overlay-resize guard, and checked results on the load-bearing Vulkan setup calls. No change to normal play.
 
@@ -35,6 +41,15 @@ All notable changes to DOOM_Ants are documented here. The format follows
   creation requires, so an unsupported GPU is never offered Solid/Ultra.
 
 ### Fixed
+
+- **Render the DOOM sky in the ray-traced view (no more see-through floating geometry).** (DOOM-0141)
+  In the Ultra/Solid ray-traced view the sky was a hole, so distant buildings floated in mid-air and the sky showed as flat blue instead of the mountains you see in Classic. This makes the sky a solid backdrop again.
+
+- **Alpha-test two-sided masked mid-walls (grates/fences) in the ray-traced view so you can see through them.** (DOOM-0163)
+  In the ray-traced view, see-through grates and fences look like solid walls; make them see-through like they are in the classic and raster views.
+
+- **Title-screen music sometimes silent on the very first launch, plays on the next.** (DOOM-0165)
+  Sometimes when you first open the game there's no menu music, but if you quit and open it again the music plays fine. Track down why the first launch occasionally starts silent.
 
 - **Fix the DOOM-0060 game-select Windows cross-build (windows.h `boolean` clash).** (DOOM-0166)
   The DOOM 1 / DOOM 2 chooser could not be compiled for Windows at all — this fixes that so it can be tested on Windows.
