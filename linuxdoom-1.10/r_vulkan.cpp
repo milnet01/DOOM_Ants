@@ -55,6 +55,8 @@
 // Compiled shaders, embedded as byte arrays (Makefile: GLSL -> SPIR-V -> xxd).
 #include "shaders/mesh.vert.spv.h"
 #include "shaders/mesh.frag.spv.h"
+#include "shaders/shadow.vert.spv.h"
+#include "shaders/shadow.frag.spv.h"
 #include "shaders/overlay.vert.spv.h"
 #include "shaders/overlay.frag.spv.h"
 #include "shaders/composite.vert.spv.h"
@@ -258,6 +260,26 @@ struct VulkanState
     VkFramebuffer  sceneFb     = VK_NULL_HANDLE;
     VkRenderPass   scenePass   = VK_NULL_HANDLE;
 
+    // DOOM-0170 L2c — flashlight cast-shadow map (§4.4). A fixed 2048^2 depth image the
+    // world is rendered into (depth-only) from the flashlight's viewpoint each torch-on
+    // frame; mesh.frag samples it (3x3 PCF, set 1) to shadow the DOOM-0044 cone. Fixed
+    // size (independent of window/render-scale), so these are built once and never
+    // recreated on resize. shadowUbo carries lightVP to mesh.frag (the push block is full).
+    VkImage               shadowImage      = VK_NULL_HANDLE;
+    VkDeviceMemory        shadowMemory     = VK_NULL_HANDLE;
+    VkImageView           shadowView       = VK_NULL_HANDLE;
+    VkSampler             shadowSampler    = VK_NULL_HANDLE;
+    VkRenderPass          shadowPass       = VK_NULL_HANDLE;
+    VkFramebuffer         shadowFb         = VK_NULL_HANDLE;
+    VkPipeline            shadowPipeline   = VK_NULL_HANDLE;
+    VkPipelineLayout      shadowPipeLayout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout shadowDsLayout   = VK_NULL_HANDLE;   // set 1 for the world pipeline
+    VkDescriptorPool      shadowDsPool     = VK_NULL_HANDLE;
+    VkDescriptorSet       shadowDs         = VK_NULL_HANDLE;
+    VkBuffer              shadowUbo        = VK_NULL_HANDLE;    // lightVP, persistently mapped
+    VkDeviceMemory        shadowUboMemory  = VK_NULL_HANDLE;
+    void*                 shadowUboMapped  = nullptr;
+
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
     // World pipeline. DOOM-0170 L2a step 3: built against the 16-bit-float g.scenePass
     // (the raster path draws the whole scene into the HDR off-screen target), so it is
@@ -396,6 +418,10 @@ struct VulkanState
     // pass then tone-maps it back into [0,1]. R16G16B16A16_SFLOAT has universal
     // colour-attachment + sampled + linear-filter support on desktop Vulkan.
     static constexpr VkFormat kSceneFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+    // DOOM-0170 L2c — flashlight cast-shadow map (§4.4): a fixed 2048^2 D32 depth target,
+    // sized independently of the swapchain/render-scale.
+    static constexpr VkFormat kShadowFormat = VK_FORMAT_D32_SFLOAT;
+    static constexpr uint32_t kShadowDim    = 2048;
 
     // Hardware ray tracing (DOOM-0009 build step 2). Enabled on the logical device
     // only when the chosen GPU advertises VK_KHR_acceleration_structure +
@@ -3026,6 +3052,193 @@ void DestroySceneTarget()
     if (g.sceneMemory) { vkFreeMemory(g.device, g.sceneMemory, nullptr);     g.sceneMemory = VK_NULL_HANDLE; }
 }
 
+// DOOM-0170 L2c — build the flashlight cast-shadow map (§4.4): a fixed 2048^2 depth image
+// the world renders into from the torch's viewpoint, plus its render pass, framebuffer,
+// sampler, the lightVP uniform buffer mesh.frag reads, and the set-1 descriptor. All
+// size-independent (never rebuilt on resize), so this runs once at init. The shadow
+// PIPELINE is built in CreatePipeline (it reuses that function's vertex-input state);
+// this only needs g.shadowPass + g.shadowPipeLayout ready before then. Requires the
+// command pool (the one-time layout park) + g.dsLayout (the shadow pipeline layout binds
+// set 0 for the material array), so RB_Vulkan_Init calls it after CreateDescriptors.
+void CreateShadowResources()
+{
+    const uint32_t dim = VulkanState::kShadowDim;
+
+    // Depth image: DEPTH_STENCIL_ATTACHMENT (rendered into) + SAMPLED (mesh.frag PCF).
+    VkImageCreateInfo ici = {};
+    ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ici.imageType = VK_IMAGE_TYPE_2D;
+    ici.format = VulkanState::kShadowFormat;
+    ici.extent = { dim, dim, 1 };
+    ici.mipLevels = 1;
+    ici.arrayLayers = 1;
+    ici.samples = VK_SAMPLE_COUNT_1_BIT;
+    ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ici.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    Check(vkCreateImage(g.device, &ici, nullptr, &g.shadowImage), "vkCreateImage(shadow)");
+
+    VkMemoryRequirements req = {};
+    vkGetImageMemoryRequirements(g.device, g.shadowImage, &req);
+    VkMemoryAllocateInfo mai = {};
+    mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    mai.allocationSize = req.size;
+    mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    Check(vkAllocateMemory(g.device, &mai, nullptr, &g.shadowMemory), "vkAllocateMemory(shadow)");
+    Check(vkBindImageMemory(g.device, g.shadowImage, g.shadowMemory, 0), "vkBindImageMemory(shadow)");
+
+    VkImageViewCreateInfo vci = {};
+    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vci.image = g.shadowImage;
+    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vci.format = VulkanState::kShadowFormat;
+    vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    vci.subresourceRange.levelCount = 1;
+    vci.subresourceRange.layerCount = 1;
+    Check(vkCreateImageView(g.device, &vci, nullptr, &g.shadowView), "vkCreateImageView(shadow)");
+
+    // Depth sampler: point-sampled (we do our own 3x3 PCF), clamped to a white border so
+    // samples outside the light frustum read depth 1.0 (far) = "not shadowed" = lit.
+    VkSamplerCreateInfo sci = {};
+    sci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    sci.magFilter = VK_FILTER_NEAREST;
+    sci.minFilter = VK_FILTER_NEAREST;
+    sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    sci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    sci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    sci.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+    Check(vkCreateSampler(g.device, &sci, nullptr, &g.shadowSampler), "vkCreateSampler(shadow)");
+
+    // Depth-only render pass: one attachment, cleared to far, left in SHADER_READ_ONLY so
+    // the scene pass samples it. Dependencies order the previous frame's sampling before
+    // the write, and this write before mesh.frag's read.
+    VkAttachmentDescription datt = {};
+    datt.format = VulkanState::kShadowFormat;
+    datt.samples = VK_SAMPLE_COUNT_1_BIT;
+    datt.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    datt.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    datt.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    datt.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    datt.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    datt.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkAttachmentReference dref = { 0, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
+    VkSubpassDescription sub = {};
+    sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    sub.pDepthStencilAttachment = &dref;
+    VkSubpassDependency deps[2] = {};
+    deps[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+    deps[0].dstSubpass = 0;
+    deps[0].srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    deps[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    deps[0].dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    deps[0].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    deps[1].srcSubpass = 0;
+    deps[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+    deps[1].srcStageMask = VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    deps[1].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    deps[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    deps[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    VkRenderPassCreateInfo rpci = {};
+    rpci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    rpci.attachmentCount = 1;
+    rpci.pAttachments = &datt;
+    rpci.subpassCount = 1;
+    rpci.pSubpasses = &sub;
+    rpci.dependencyCount = 2;
+    rpci.pDependencies = deps;
+    Check(vkCreateRenderPass(g.device, &rpci, nullptr, &g.shadowPass), "vkCreateRenderPass(shadow)");
+
+    VkFramebufferCreateInfo fci = {};
+    fci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    fci.renderPass = g.shadowPass;
+    fci.attachmentCount = 1;
+    fci.pAttachments = &g.shadowView;
+    fci.width = dim;
+    fci.height = dim;
+    fci.layers = 1;
+    Check(vkCreateFramebuffer(g.device, &fci, nullptr, &g.shadowFb), "vkCreateFramebuffer(shadow)");
+
+    // lightVP uniform buffer (single mat4). Single-frame-in-flight (one g.inFlight fence),
+    // so one persistently-mapped buffer is safe to overwrite each frame.
+    CreateRtBuffer(16 * sizeof(float), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                   &g.shadowUbo, &g.shadowUboMemory);
+    Check(vkMapMemory(g.device, g.shadowUboMemory, 0, 16 * sizeof(float), 0, &g.shadowUboMapped),
+          "vkMapMemory(shadowUbo)");
+
+    // Shadow-pass pipeline layout: set 0 = the shared g.ds (material array for the cut-out
+    // alpha test) + a push range carrying lightVP and the material-id offsets.
+    VkPushConstantRange spcr = {};
+    spcr.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    spcr.offset = 0;
+    spcr.size = 16 * sizeof(float) + 2 * sizeof(int);   // mat4 lightVP + numWall/numFlat
+    VkPipelineLayoutCreateInfo splci = {};
+    splci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    splci.setLayoutCount = 1;
+    splci.pSetLayouts = &g.dsLayout;
+    splci.pushConstantRangeCount = 1;
+    splci.pPushConstantRanges = &spcr;
+    Check(vkCreatePipelineLayout(g.device, &splci, nullptr, &g.shadowPipeLayout),
+          "vkCreatePipelineLayout(shadow)");
+
+    // Set-1 descriptor for mesh.frag: the shadow map (binding 0) + lightVP UBO (binding 1).
+    // Written once (image view + buffer are stable for life).
+    VkDescriptorPoolSize sps[2] = {
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,         1 },
+    };
+    VkDescriptorPoolCreateInfo sdpci = {};
+    sdpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    sdpci.maxSets = 1;
+    sdpci.poolSizeCount = 2;
+    sdpci.pPoolSizes = sps;
+    Check(vkCreateDescriptorPool(g.device, &sdpci, nullptr, &g.shadowDsPool),
+          "vkCreateDescriptorPool(shadow)");
+
+    VkDescriptorSetAllocateInfo sdsai = {};
+    sdsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    sdsai.descriptorPool = g.shadowDsPool;
+    sdsai.descriptorSetCount = 1;
+    sdsai.pSetLayouts = &g.shadowDsLayout;
+    Check(vkAllocateDescriptorSets(g.device, &sdsai, &g.shadowDs), "vkAllocateDescriptorSets(shadow)");
+
+    VkDescriptorImageInfo sii = { g.shadowSampler, g.shadowView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+    VkDescriptorBufferInfo sbi = { g.shadowUbo, 0, 16 * sizeof(float) };
+    VkWriteDescriptorSet sw[2] = {};
+    sw[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    sw[0].dstSet = g.shadowDs; sw[0].dstBinding = 0; sw[0].descriptorCount = 1;
+    sw[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    sw[0].pImageInfo = &sii;
+    sw[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    sw[1].dstSet = g.shadowDs; sw[1].dstBinding = 1; sw[1].descriptorCount = 1;
+    sw[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    sw[1].pBufferInfo = &sbi;
+    vkUpdateDescriptorSets(g.device, 2, sw, 0, nullptr);
+
+    // Park the depth image in SHADER_READ_ONLY once. mesh.frag statically references the
+    // sampler (set 1), so on flashlight-off frames — when the shadow pass is skipped —
+    // the descriptor must still point at a validly-laid-out image. The first torch-on
+    // frame re-clears it via the render pass (initialLayout UNDEFINED).
+    {
+        VkCommandBuffer cb = BeginOneTime();
+        VkImageMemoryBarrier bar = {};
+        bar.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        bar.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        bar.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        bar.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        bar.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        bar.image = g.shadowImage;
+        bar.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1 };
+        bar.srcAccessMask = 0;
+        bar.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &bar);
+        EndOneTime(cb);
+    }
+}
+
 void CreateRenderPass()
 {
     VkAttachmentDescription att[2] = {};
@@ -3283,6 +3496,30 @@ void CreateDescriptors()
         Check(vkCreatePipelineLayout(g.device, &cplci, nullptr, &g.compositePipeLayout),
               "vkCreatePipelineLayout(composite)");
     }
+
+    // DOOM-0170 L2c — the flashlight shadow map's set-1 layout for the world pipeline:
+    // the depth map (binding 0) + the lightVP uniform buffer (binding 1), both read by
+    // mesh.frag. Kept a separate set (not appended to g.dsLayout) because that set's
+    // variable-count material array must stay its last binding. The descriptor SET, image
+    // and buffer are created later in CreateShadowResources; only the layout is needed
+    // here so CreatePipeline can put it at set 1 of the world pipeline layout.
+    {
+        VkDescriptorSetLayoutBinding sb[2] = {};
+        sb[0].binding = 0;   // shadow depth map
+        sb[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        sb[0].descriptorCount = 1;
+        sb[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        sb[1].binding = 1;   // lightVP
+        sb[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        sb[1].descriptorCount = 1;
+        sb[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        VkDescriptorSetLayoutCreateInfo slci = {};
+        slci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        slci.bindingCount = 2;
+        slci.pBindings = sb;
+        Check(vkCreateDescriptorSetLayout(g.device, &slci, nullptr, &g.shadowDsLayout),
+              "vkCreateDescriptorSetLayout(shadow)");
+    }
 }
 
 // DOOM-0170 L2a: point the composite descriptor at the current scene view. The scene
@@ -3391,10 +3628,15 @@ void CreatePipeline()
                                      // + DOOM-0170 L1a/L1b: probes/triSs/lights device
                                      //   addrs (3x u64) + probeCount (u32) = 124 B (<128 floor)
 
+    // DOOM-0170 L2c: set 0 = the shared g.ds (palette/materials/overlay); set 1 = the
+    // flashlight shadow map + lightVP (g.shadowDsLayout) that mesh.frag samples for the
+    // cast-shadow PCF. sky/wire/overlay/rtWeapon share this layout; only mesh.frag reads
+    // set 1, so the raster scene draw and RecordRtOverlay bind g.shadowDs at set 1.
+    VkDescriptorSetLayout worldSets[2] = { g.dsLayout, g.shadowDsLayout };
     VkPipelineLayoutCreateInfo plci = {};
     plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    plci.setLayoutCount = 1;
-    plci.pSetLayouts = &g.dsLayout;
+    plci.setLayoutCount = 2;
+    plci.pSetLayouts = worldSets;
     plci.pushConstantRangeCount = 1;
     plci.pPushConstantRanges = &pcr;
     Check(vkCreatePipelineLayout(g.device, &plci, nullptr, &g.pipelineLayout),
@@ -3454,6 +3696,49 @@ void CreatePipeline()
     pci.renderPass = g.renderPass;
     Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &pci, nullptr,
                                     &g.rtWeaponPipeline), "vkCreateGraphicsPipelines(rtWeapon)");
+
+    // DOOM-0170 L2c: flashlight cast-shadow map depth pass (Pass A). Same mesh vertex
+    // layout (reuses `vin`), but shadow shaders, no colour attachment (depth-only), a
+    // depth bias against shadow acne, and the g.shadowPass/g.shadowPipeLayout built in
+    // CreateShadowResources. Rendered each torch-on frame before the scene pass.
+    {
+        VkShaderModule svVert = MakeShader(shadow_vert_spv, shadow_vert_spv_len);
+        VkShaderModule svFrag = MakeShader(shadow_frag_spv, shadow_frag_spv_len);
+        VkPipelineShaderStageCreateInfo svStages[2] = { stages[0], stages[1] };
+        svStages[0].module = svVert;
+        svStages[1].module = svFrag;
+
+        VkPipelineRasterizationStateCreateInfo svRs = rs;   // FILL, cull-none
+        svRs.depthBiasEnable = VK_TRUE;
+        svRs.depthBiasConstantFactor = 1.25f;   // push casters slightly further from the
+        svRs.depthBiasSlopeFactor    = 1.75f;   // light so self-shadow acne does not creep
+
+        VkPipelineColorBlendStateCreateInfo svCb = {};   // depth-only: zero colour attachments
+        svCb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+        svCb.attachmentCount = 0;
+
+        // shadow.vert consumes only position/UV/texnum/flags (no normal, no sector light),
+        // so describe just those 4 attributes — same binding/stride, fewer locations — to
+        // keep the validator quiet about unconsumed inputs.
+        VkVertexInputAttributeDescription svAttrs[4] = { attrs[0], attrs[2], attrs[4], attrs[5] };
+        VkPipelineVertexInputStateCreateInfo svVin = vin;
+        svVin.vertexAttributeDescriptionCount = 4;
+        svVin.pVertexAttributeDescriptions = svAttrs;
+
+        VkGraphicsPipelineCreateInfo svPci = pci;
+        svPci.pStages = svStages;
+        svPci.pVertexInputState = &svVin;
+        svPci.pRasterizationState = &svRs;
+        svPci.pColorBlendState = &svCb;
+        svPci.pDepthStencilState = &ds;
+        svPci.layout = g.shadowPipeLayout;
+        svPci.renderPass = g.shadowPass;
+        svPci.subpass = 0;
+        Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &svPci, nullptr,
+                                        &g.shadowPipeline), "vkCreateGraphicsPipelines(shadow)");
+        vkDestroyShaderModule(g.device, svVert, nullptr);
+        vkDestroyShaderModule(g.device, svFrag, nullptr);
+    }
 
     // 2D HUD/menu compositor: own shaders, no vertex input (a full-screen
     // triangle generated from gl_VertexIndex), depth off, drawn last over the
@@ -3961,8 +4246,11 @@ extern "C" void RB_Vulkan_Init(void)
     CreateSceneTarget();       // DOOM-0170 L2a off-screen colour (before its framebuffer)
     CreateFramebuffers();
     CreateDescriptors();       // set layout + sampler (needed by the pipeline layout)
+    CreateCommandsAndSync();   // command pool up front: CreateShadowResources's one-time
+                               // layout transition (BeginOneTime) needs it
+    CreateShadowResources();   // DOOM-0170 L2c flashlight shadow map (pass/fb/UBO/set 1);
+                               // before CreatePipeline, which builds the shadow pipeline
     CreatePipeline();
-    CreateCommandsAndSync();
     InitPaletteAndDescriptorSet();  // PLAYPAL LUT + descriptor set, so the HUD/menu
                                     // overlay composites from the first frame (DOOM-0045)
     UpdateCompositeDescriptor();    // DOOM-0170 L2a: point the composite sampler at the scene view
@@ -5410,8 +5698,12 @@ void RecordRtOverlay(uint32_t idx, bool drawOverlay)
     VkRect2D scissor = { { 0, 0 }, g.extent };
     vkCmdSetScissor(g.cmd, 0, 1, &scissor);
 
+    // DOOM-0170 L2c: set 0 = g.ds (materials); set 1 = g.shadowDs (flashlight shadow map +
+    // lightVP). mesh.frag statically samples set 1, so bind it even where it goes unused
+    // (the weapon psprite / 2D overlay never take the flashlight branch).
+    VkDescriptorSet worldDs[2] = { g.ds, g.shadowDs };
     vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                            g.pipelineLayout, 0, 1, &g.ds, 0, nullptr);
+                            g.pipelineLayout, 0, 2, worldDs, 0, nullptr);
 
     // Player weapon: a screen-space psprite (NDC, MVP skipped by mesh.vert) drawn with
     // the world pipeline, so it needs the same push constants -- only the muzzle-flash
@@ -5685,6 +5977,66 @@ extern "C" void RB_Vulkan_Present(void)
     float uvScale[2] = { (float)sceneW / (float)g.extent.width,
                          (float)sceneH / (float)g.extent.height };
 
+    // DOOM-0170 L2c: flashlight cast-shadow map (Pass A). When the torch is on, render the
+    // world (walls/flats + monster/item billboards; the psprite/sky are clipped away in
+    // shadow.vert) depth-only from the flashlight's viewpoint, so mesh.frag can PCF-test the
+    // cone against it below. Recorded before (outside) the scene pass. Skipped — zero cost —
+    // when the torch is off; g.shadowDs then still points at the last-parked depth image.
+    if (rb_flashlight && g.haveCamera && g.atlasReady && g.vbuf && g.vertexCount)
+    {
+        // Light view-projection: at the eye, along the view yaw (matching the raster cone),
+        // a square 90-degree frustum that comfortably covers the ~70-degree beam.
+        float lcos = std::cos(g.lastView.angle), lsin = std::sin(g.lastView.angle);
+        float leye[3] = { g.lastView.x, g.lastView.y, g.lastView.z };
+        float lfwd[3] = { lcos, lsin, 0.0f };
+        float lup[3]  = { 0.0f, 0.0f, 1.0f };
+        float lview[16], lproj[16], lightVP[16];
+        Mat4LookAt(leye, lfwd, lup, lview);
+        Mat4PerspectiveH(kPi * 0.5f, 1.0f, 10.0f, 2000.0f, lproj);
+        Mat4Mul(lproj, lview, lightVP);
+        std::memcpy(g.shadowUboMapped, lightVP, 16 * sizeof(float));
+
+        VkClearValue sclear = {};
+        sclear.depthStencil = { 1.0f, 0 };
+        VkRenderPassBeginInfo srp = {};
+        srp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        srp.renderPass = g.shadowPass;
+        srp.framebuffer = g.shadowFb;
+        srp.renderArea.extent = { VulkanState::kShadowDim, VulkanState::kShadowDim };
+        srp.clearValueCount = 1;
+        srp.pClearValues = &sclear;
+        vkCmdBeginRenderPass(g.cmd, &srp, VK_SUBPASS_CONTENTS_INLINE);
+
+        VkViewport svp = {};
+        svp.width = (float)VulkanState::kShadowDim;
+        svp.height = (float)VulkanState::kShadowDim;
+        svp.maxDepth = 1.0f;
+        vkCmdSetViewport(g.cmd, 0, 1, &svp);
+        VkRect2D ssc = { { 0, 0 }, { VulkanState::kShadowDim, VulkanState::kShadowDim } };
+        vkCmdSetScissor(g.cmd, 0, 1, &ssc);
+
+        vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.shadowPipeline);
+        vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                g.shadowPipeLayout, 0, 1, &g.ds, 0, nullptr);
+        struct { float m[16]; int nw; int nf; } spc;   // matches shadow.vert/frag push block
+        std::memcpy(spc.m, lightVP, sizeof(spc.m));
+        spc.nw = g.matNumWall;
+        spc.nf = g.matNumFlat;
+        vkCmdPushConstants(g.cmd, g.shadowPipeLayout,
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0, sizeof(spc), &spc);
+
+        VkDeviceSize soff = 0;
+        vkCmdBindVertexBuffers(g.cmd, 0, 1, &g.vbuf, &soff);
+        vkCmdDraw(g.cmd, g.vertexCount, 1, 0, 0);
+        if (g.spriteVbuf && g.spriteVertCount)   // monsters/items cast (weapon clipped away)
+        {
+            vkCmdBindVertexBuffers(g.cmd, 0, 1, &g.spriteVbuf, &soff);
+            vkCmdDraw(g.cmd, g.spriteVertCount, 1, g.skyVertCount, 0);
+        }
+        vkCmdEndRenderPass(g.cmd);
+    }
+
     // DOOM-0170 L2a: draw the world into the OFF-SCREEN scene target (scenePass leaves it
     // in SHADER_READ_ONLY); the composite pass below samples it to the swapchain. Clear to
     // a dark slate (world background) + far depth.
@@ -5715,8 +6067,11 @@ extern "C" void RB_Vulkan_Present(void)
         VkRect2D scissor = { { 0, 0 }, sceneExtent };
         vkCmdSetScissor(g.cmd, 0, 1, &scissor);
 
+        // DOOM-0170 L2c: set 0 = g.ds (materials); set 1 = g.shadowDs (flashlight shadow
+        // map + lightVP), which mesh.frag samples. Both bound once for the sky+world draws.
+        VkDescriptorSet worldDs[2] = { g.ds, g.shadowDs };
         vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                g.pipelineLayout, 0, 1, &g.ds, 0, nullptr);
+                                g.pipelineLayout, 0, 2, worldDs, 0, nullptr);
         // mat4 MVP, then the muzzle-flash brighten (mesh.vert adds it to every
         // shade) and the view yaw (mesh.frag pans the sky by it). Push constants
         // and descriptor sets are layout-scoped, so they outlive the pipeline
@@ -6007,6 +6362,19 @@ extern "C" void RB_Vulkan_Shutdown(void)
     if (g.compositePipeLayout) vkDestroyPipelineLayout(g.device, g.compositePipeLayout, nullptr);
     if (g.compositeDsPool)     vkDestroyDescriptorPool(g.device, g.compositeDsPool, nullptr);
     if (g.compositeDsLayout)   vkDestroyDescriptorSetLayout(g.device, g.compositeDsLayout, nullptr);
+    // DOOM-0170 L2c flashlight shadow map (size-independent; built once in CreateShadowResources).
+    if (g.shadowPipeline)   vkDestroyPipeline(g.device, g.shadowPipeline, nullptr);
+    if (g.shadowPipeLayout) vkDestroyPipelineLayout(g.device, g.shadowPipeLayout, nullptr);
+    if (g.shadowDsPool)     vkDestroyDescriptorPool(g.device, g.shadowDsPool, nullptr);
+    if (g.shadowDsLayout)   vkDestroyDescriptorSetLayout(g.device, g.shadowDsLayout, nullptr);
+    if (g.shadowFb)         vkDestroyFramebuffer(g.device, g.shadowFb, nullptr);
+    if (g.shadowPass)       vkDestroyRenderPass(g.device, g.shadowPass, nullptr);
+    if (g.shadowSampler)    vkDestroySampler(g.device, g.shadowSampler, nullptr);
+    if (g.shadowView)       vkDestroyImageView(g.device, g.shadowView, nullptr);
+    if (g.shadowImage)      vkDestroyImage(g.device, g.shadowImage, nullptr);
+    if (g.shadowMemory)     vkFreeMemory(g.device, g.shadowMemory, nullptr);
+    if (g.shadowUbo)        vkDestroyBuffer(g.device, g.shadowUbo, nullptr);
+    if (g.shadowUboMemory)  vkFreeMemory(g.device, g.shadowUboMemory, nullptr);
     if (g.scenePass)      vkDestroyRenderPass(g.device, g.scenePass, nullptr);
     if (g.rtOverlayPass)  vkDestroyRenderPass(g.device, g.rtOverlayPass, nullptr);
     if (g.renderPass)     vkDestroyRenderPass(g.device, g.renderPass, nullptr);

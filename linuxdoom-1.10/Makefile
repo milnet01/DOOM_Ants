@@ -62,6 +62,7 @@ O=linux
 # files). r_vulkan.cpp #includes the generated *.spv.h headers.
 SHADER_DIR=shaders
 SHADER_SRCS=$(SHADER_DIR)/mesh.vert $(SHADER_DIR)/mesh.frag \
+		$(SHADER_DIR)/shadow.vert $(SHADER_DIR)/shadow.frag \
 		$(SHADER_DIR)/overlay.vert $(SHADER_DIR)/overlay.frag \
 		$(SHADER_DIR)/composite.vert $(SHADER_DIR)/composite.frag \
 		$(SHADER_DIR)/pathtrace.comp $(SHADER_DIR)/bake.comp \

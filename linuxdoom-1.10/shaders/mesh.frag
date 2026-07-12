@@ -81,6 +81,14 @@ layout(set = 0, binding = 0) uniform sampler2D paletteTex;   // 256x1 PLAYPAL RG
 // qualified. Unsized -> runtimeDescriptorArray (core Vulkan 1.2).
 layout(set = 0, binding = 2) uniform sampler2D materialTex[];
 
+// DOOM-0170 L2c — flashlight cast-shadow map (§4.4). shadowMap is the scene depth rendered
+// from the torch's viewpoint (Pass A, shadow.vert/frag); lightVP transforms a world
+// fragment into that light's clip space for a 3x3 PCF compare. Only the flashlight's
+// additive term is shadowed (the base sector light is untouched), and only when the torch
+// is on — when it is off the shadow pass is skipped and this is never sampled.
+layout(set = 1, binding = 0) uniform sampler2D shadowMap;
+layout(set = 1, binding = 1) uniform ShadowUbo { mat4 lightVP; } shadow;
+
 const int FLAG_FLAT    = 0x1;   // matches RB_MESH_FLAT in r_mesh.h
 const int FLAG_MASKED  = 0x2;   // matches RB_MESH_MASKED in r_mesh.h
 const int FLAG_SPRITE  = 0x4;   // matches RB_MESH_SPRITE in r_mesh.h
@@ -137,6 +145,27 @@ vec3 giIrradiance(ProbesRO pr, uint subId, vec3 n)
     gi.g = pr.p[b+4u]*y0 + k*(pr.p[b+5u]*y1 + pr.p[b+6u]*y2 + pr.p[b+7u]*y3);
     gi.b = pr.p[b+8u]*y0 + k*(pr.p[b+9u]*y1 + pr.p[b+10u]*y2 + pr.p[b+11u]*y3);
     return max(gi, vec3(0.0));
+}
+
+// DOOM-0170 L2c — 3x3 PCF against the flashlight shadow map. 1.0 = lit, 0.0 = fully
+// shadowed. Fragments outside/behind the light frustum return 1.0 (the cone + facing terms
+// already limit where the beam reaches, so "no shadow data" means "not occluded").
+float flashlightShadow(vec3 worldPos)
+{
+    vec4 lc = shadow.lightVP * vec4(worldPos, 1.0);
+    if (lc.w <= 0.0)
+        return 1.0;
+    vec3 ndc = lc.xyz / lc.w;                 // Vulkan clip: z already in [0,1]
+    vec2 uv = ndc.xy * 0.5 + 0.5;
+    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))))
+        return 1.0;
+    float cur = ndc.z - 0.0015;              // small depth bias vs. surface acne
+    const float texel = 1.0 / 2048.0;        // matches kShadowDim
+    float sum = 0.0;
+    for (int y = -1; y <= 1; ++y)
+    for (int x = -1; x <= 1; ++x)
+        sum += (cur <= texture(shadowMap, uv + vec2(x, y) * texel).r) ? 1.0 : 0.0;
+    return sum / 9.0;
 }
 
 void main()
@@ -243,7 +272,10 @@ void main()
         float spot   = smoothstep(0.82, 0.92, dot(fdir, fwd));    // cone ~35->23 deg
         float fall   = clamp(1.0 - fdist / 1200.0, 0.0, 1.0);     // near-bright beam
         float facing = max(dot(normalize(vNormal), -fdir), 0.0);  // surface faces lamp
-        shade = clamp(shade + spot * fall * facing, 0.0, 1.0);
+        // DOOM-0170 L2c: gate the cone by the cast-shadow map, so pillars/monsters throw a
+        // shadow away from the torch. Only the additive flashlight term is shadowed.
+        float sh = flashlightShadow(vWorldPos);
+        shade = clamp(shade + spot * fall * facing * sh, 0.0, 1.0);
     }
 
     vec3 lit = albedo * shade;
