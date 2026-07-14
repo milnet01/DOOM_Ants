@@ -65,6 +65,20 @@ layout(set = 2, binding = 3, rgba16f) uniform writeonly image2D gillum;    // de
 layout(set = 1, binding = 0) uniform sampler2D paletteTex;
 layout(set = 1, binding = 2) uniform sampler2D materialTex[];
 
+// DOOM-0042 HD PBR material set (set 3) — parallel to the paletted materialTex[].
+// binding 0 = the per-material control table (usePBR flag, map-slot indices, uvScale);
+// binding 1 = the bindless RGBA8 PBR map array. Built per level by EnsureHdMaterials
+// (r_vulkan.cpp); InitHdDefault seeds an all-paletted set so set 3 is valid for every
+// RT dispatch (the -rtverify path + the first frame) before a level's HD maps load.
+struct MatCtrl {
+    int   maps[7];    // [0]alb [1]nrm [2]rgh [3]met [4]ao [5]emis [6]hgt; -1 = none
+    float uvScale;
+    uint  flags;      // bit0 pom, bit1 noPom, bit2 sprite
+    uint  usePBR;     // 0 = paletted fallback
+};
+layout(set = 3, binding = 0, std430) readonly buffer MatCtrlBuf { MatCtrl ctrl[]; };
+layout(set = 3, binding = 1) uniform sampler2D hdTex[];   // bindless RGBA8 PBR maps
+
 // The level mesh, the step-3b emitter list, and the per-material Le table are read
 // by GPU address (buffer_reference). Their buffer layouts + the shared albedo
 // decode and NEE direct-lighting math live in pt_common.glsl, #included verbatim
@@ -78,6 +92,25 @@ layout(set = 1, binding = 2) uniform sampler2D materialTex[];
 // inline EXPOSURE=4.0 + Reinhard + pow(1/2.2) hack (INV-7 backfill paid down).
 #include "formulas/formulas.glsl"
 #include "formulas/pbr_neutral_tonemap.glsl"
+
+// DOOM-0042: linear albedo for the unified material id `id` at raw-texel coord `hitUV`.
+// An HD material (usePBR + an albedo map) samples its RGBA8 map directly — the sRGB image
+// VIEW does the gamma->linear decode in hardware, so no pow() here. `hitUV / sz` reuses the
+// DOOM texture's texel size so the HD map tiles across the surface exactly like the paletted
+// one (uvScale is the artist repeat multiplier). Everything else (sprites, unmapped walls,
+// the InitHdDefault fallback) routes to the paletted decodeAlbedo. `mc` is returned for the
+// later PBR maps (normal/AO/emissive/POM in tasks 11-14).
+vec3 hdAlbedo(uint id, vec2 hitUV, out MatCtrl mc)
+{
+    mc = ctrl[id];                                  // one SSBO, runtime array -> no nonuniformEXT
+    if (mc.usePBR != 0u && mc.maps[0] >= 0)
+    {
+        vec2 sz = vec2(textureSize(materialTex[nonuniformEXT(id)], 0));
+        vec2 uv = (hitUV / sz) * mc.uvScale;
+        return texture(hdTex[nonuniformEXT(mc.maps[0])], uv).rgb;   // sRGB view -> linear
+    }
+    return decodeAlbedo(id, hitUV);
+}
 
 layout(push_constant) uniform PC {
     vec4  camPos;    // xyz = ray origin (world); w = sub-pixel jitter X (6-d)
@@ -456,7 +489,7 @@ void main()
             uint  id     = isSprite ? (pc.misc4.x + uint(texnum))
                          : (((flags & FLAG_FLAT) != 0) ? (pc.misc.w + uint(texnum))
                                                        : uint(texnum));
-            vec3  albedo = decodeAlbedo(id, hitUV);
+            MatCtrl mc; vec3 albedo = hdAlbedo(id, hitUV, mc);   // HD if usePBR, else paletted
 
             float tHit = rayQueryGetIntersectionTEXT(rq, true);
             vec3  hitP = origin + dir * tHit;
@@ -519,7 +552,7 @@ void main()
             uint  id     = isSprite ? (pc.misc4.x + uint(texnum))
                          : (((flags & FLAG_FLAT) != 0) ? (pc.misc.w + uint(texnum))
                                                        : uint(texnum));
-            vec3  albedo = decodeAlbedo(id, hitUV);
+            MatCtrl mc; vec3 albedo = hdAlbedo(id, hitUV, mc);   // HD if usePBR, else paletted
             float tHit   = rayQueryGetIntersectionTEXT(rq, true);
             vec3  hitP   = origin + dir * tHit;
 
@@ -561,7 +594,7 @@ void main()
             uint  id     = isSprite ? (pc.misc4.x + uint(texnum))
                          : (((flags & FLAG_FLAT) != 0) ? (pc.misc.w + uint(texnum))
                                                        : uint(texnum));
-            vec3  albedo = decodeAlbedo(id, hitUV);
+            MatCtrl mc; vec3 albedo = hdAlbedo(id, hitUV, mc);   // HD if usePBR, else paletted
             float tHit   = rayQueryGetIntersectionTEXT(rq, true);
             vec3  hitP   = origin + dir * tHit;
 

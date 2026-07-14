@@ -2125,6 +2125,7 @@ static VkPipeline RtPipelineForMode(uint32_t mode)
 }
 
 static void CreateHdSetLayout();   // DOOM-0042: set-3 layout, needed by the RT pipeline layout
+static void InitHdDefault();       // DOOM-0042: seed an all-paletted set 3 at atlas time
 
 // Build the once-per-run compute pipeline: a descriptor set (TLAS + storage
 // image), an 88-byte push-constant range (camera basis + mode + vertex-buffer
@@ -4573,6 +4574,11 @@ void UploadAtlas()
 
     RB_FreeAtlas(a);
     g.atlasReady = true;
+
+    // DOOM-0042: the material array is live -> seed set 3 with an all-paletted default so
+    // every RT dispatch (verify + first frame) has a valid set 3 before a level's HD maps
+    // load. EnsureHdMaterials replaces it per level in Ultra.
+    InitHdDefault();
 }
 
 // Create the HUD/menu overlay's GPU resources (device-local R8 image + a
@@ -4957,6 +4963,26 @@ static void BuildHdSet(const std::vector<HdSrc>& srcsIn, const rb_matctrl_t* tab
     writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     writes[1].pImageInfo = imgInfos.data();
     vkUpdateDescriptorSets(g.device, 2, writes, 0, nullptr);
+}
+
+// DOOM-0042: seed set 3 with an all-paletted control table (usePBR=0 everywhere) and a
+// 1x1 dummy image, so the shader's ctrl[] read + set-3 bind are valid for EVERY RT
+// dispatch — including the -rtverify headless path (gated on g.rtEnabled, not the tier)
+// and the first frame before EnsureHdMaterials runs in Ultra. Called once at atlas time;
+// EnsureHdMaterials later frees this and rebuilds the real per-level set. No-op without an
+// RT pipeline (g.hdSetLayout unset -> set 3 is never bound, so nothing to seed).
+static void InitHdDefault()
+{
+    if (g.hdSetLayout == VK_NULL_HANDLE) return;
+    const int N = RB_MaterialCount();
+    std::vector<rb_matctrl_t> table(N);
+    for (int i = 0; i < N; i++) {
+        for (int m = 0; m < RB_MAP_COUNT; m++) table[i].maps[m] = -1;
+        table[i].uvScale = 1.0f;
+        table[i].flags   = 0u;
+        table[i].usePBR  = 0u;
+    }
+    BuildHdSet({}, table.data(), N);   // empty srcs -> 1x1 dummy image; all paletted
 }
 
 // Per-level (Ultra only): load the current map's HD material sets and rebuild the HD
@@ -5819,7 +5845,9 @@ void RB_RtVerify()
     pc.probeAddr   = g.probeBuf   ? BufferAddress(g.probeBuf)   : 0;   // unused by mode 5
     pc.triSsAddr   = g.triSsBuf   ? BufferAddress(g.triSsBuf)   : 0;
 
-    VkDescriptorSet sets[3] = { g.rtDs, g.ds, g.svgfDs };
+    // Set 3 = the DOOM-0042 HD materials, seeded all-paletted by InitHdDefault (this
+    // path runs before any level's Ultra Present, so g.hdSet is the default here).
+    VkDescriptorSet sets[4] = { g.rtDs, g.ds, g.svgfDs, g.hdSet };
 
     // The display image (binding 1) is statically referenced by the shader even in
     // mode 5, and its descriptor advertises GENERAL — but no frame has been rendered
@@ -5869,7 +5897,7 @@ void RB_RtVerify()
             VkCommandBuffer cb = BeginOneTime();
             vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, RtPipelineForMode(5u));
             vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE,
-                                    g.rtPipeLayout, 0, 3, sets, 0, nullptr);
+                                    g.rtPipeLayout, 0, 4, sets, 0, nullptr);
             vkCmdPushConstants(cb, g.rtPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
             vkCmdDispatch(cb, (W + 7) / 8, (H + 7) / 8, 1);
             EndOneTime(cb);
@@ -6355,15 +6383,17 @@ void RecordRtTrace(uint32_t idx)
 
     // Set 0 = RT (TLAS + output image); set 1 = the raster materials set (palette
     // LUT + bindless material array), so the textured trace samples the same
-    // materials as the raster pass (step 3a); set 2 = the SVGF G-buffer (step 6).
+    // materials as the raster pass (step 3a); set 2 = the SVGF G-buffer (step 6);
+    // set 3 = the DOOM-0042 HD PBR materials (control SSBO + RGBA8 map array).
     // rtActive gates on g.atlasReady, so the material array (binding 2) is written
-    // before this binds it. All three sets are bound (the megakernel statically
-    // references set 2 via mode 6, so it must be valid for every dispatch).
-    VkDescriptorSet sets[3] = { g.rtDs, g.ds, g.svgfDs };
+    // before this binds it; InitHdDefault seeds set 3 at the same atlas point. All
+    // four sets are bound (the megakernel statically references set 2 via mode 6 and
+    // set 3 via hdAlbedo, so both must be valid for every dispatch).
+    VkDescriptorSet sets[4] = { g.rtDs, g.ds, g.svgfDs, g.hdSet };
     vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
                       RtPipelineForMode((uint32_t)rb_rtdebug));
     vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-                            g.rtPipeLayout, 0, 3, sets, 0, nullptr);
+                            g.rtPipeLayout, 0, 4, sets, 0, nullptr);
     vkCmdPushConstants(g.cmd, g.rtPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT,
                        0, sizeof(pc), &pc);
     vkCmdDispatch(g.cmd, (w + 7) / 8, (h + 7) / 8, 1);
