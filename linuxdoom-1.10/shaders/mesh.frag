@@ -297,8 +297,16 @@ void main()
     // at albedo (matching the pre-L2b combined clamp(sect+flash,0,1)); the split is a no-op.
     if (pc.flashlight > 0.5 && (vFlags & FLAG_PSPRITE) == 0)
     {
-        vec3  eye    = vec3(pc.eyeX, pc.eyeY, pc.eyeZ);
+        // DOOM-0170 L2c: hold the torch UP and to the SIDE of the eye (Doom 3-style) so its cast
+        // shadows are visible — a light exactly at the eye casts none you can see (the shadow
+        // hides behind its caster). These offsets MUST match the shadow pass (kFlashOffRight/Up
+        // in r_vulkan.cpp) so the shadow lines up with the lit beam. View space: right + world up.
+        const float FLASH_OFF_RIGHT = 28.0;
+        const float FLASH_OFF_UP    = 22.0;
         vec3  fwd    = vec3(cos(pc.yaw), sin(pc.yaw), 0.0);
+        vec3  right  = vec3(sin(pc.yaw), -cos(pc.yaw), 0.0);   // fwd × worldUp
+        vec3  eye    = vec3(pc.eyeX, pc.eyeY, pc.eyeZ)
+                     + right * FLASH_OFF_RIGHT + vec3(0.0, 0.0, FLASH_OFF_UP);
         vec3  toFrag = vWorldPos - eye;
         float fdist  = length(toFrag);
         vec3  fdir   = toFrag / max(fdist, 1e-4);             // eye -> fragment

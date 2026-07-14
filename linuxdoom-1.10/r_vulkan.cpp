@@ -6344,10 +6344,20 @@ extern "C" void RB_Vulkan_Present(void)
     // when the torch is off; g.shadowDs then still points at the last-parked depth image.
     if (rb_flashlight && g.haveCamera && g.atlasReady && g.vbuf && g.vertexCount)
     {
-        // Light view-projection: at the eye, along the view yaw (matching the raster cone),
-        // a square 90-degree frustum that comfortably covers the ~70-degree beam.
+        // Light view-projection: the torch is held UP and to the SIDE of the eye (Doom 3-style),
+        // NOT exactly at it. A light co-located with the camera casts no VISIBLE shadow — every
+        // shadow falls directly behind its caster, hidden by that caster from the same viewpoint.
+        // Offsetting the light gives camera/light parallax so shadows swing into view. The offset
+        // is in view space (right vector + world up) and MUST match mesh.frag's flashlight cone
+        // (FLASH_OFF_RIGHT / FLASH_OFF_UP) so the shadow lines up with the lit beam. Aimed along
+        // the view yaw; a square 90-degree frustum comfortably covers the ~70-degree beam.
+        static const float kFlashOffRight = 28.0f;   // view-right offset, world units (tunable)
+        static const float kFlashOffUp    = 22.0f;   // world-up offset, world units (tunable)
         float lcos = std::cos(g.lastView.angle), lsin = std::sin(g.lastView.angle);
-        float leye[3] = { g.lastView.x, g.lastView.y, g.lastView.z };
+        float lright[3] = { lsin, -lcos, 0.0f };     // view-right = fwd × worldUp
+        float leye[3] = { g.lastView.x + lright[0] * kFlashOffRight,
+                          g.lastView.y + lright[1] * kFlashOffRight,
+                          g.lastView.z + kFlashOffUp };
         float lfwd[3] = { lcos, lsin, 0.0f };
         float lup[3]  = { 0.0f, 0.0f, 1.0f };
         float lview[16], lproj[16], lightVP[16];
