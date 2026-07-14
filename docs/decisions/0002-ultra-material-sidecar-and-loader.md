@@ -26,9 +26,10 @@ as decisions, not just design:
 2. **Vendored `stb_image.h`** (public-domain single-header) for PNG decode — not
    SDL2_image. The engine links SDL2 + SDL2_mixer + the Vulkan loader + libm
    (`linuxdoom-1.10/Makefile:16,38`); SDL2_image would be a *new* link
-   dependency, whereas `stb_image.h` adds none. Its vendored version is recorded
-   in `docs/standards/dependencies.md` §"Where this project's dependencies live"
-   so it can't silently rot.
+   dependency, whereas `stb_image.h` adds none. Its vendored version **will be
+   recorded** in `docs/standards/dependencies.md` §"Where this project's
+   dependencies live" (as part of DOOM-0042 — that section has no
+   vendored-single-header slot today) so it can't silently rot.
 
 ## Consequences
 
