@@ -726,6 +726,15 @@ struct VulkanState
     std::vector<int32_t>    subSecSector;        // per-subsector sector (REJECT cull; empty = off)
     const unsigned char*    rejectCPU = nullptr; // REJECT bitmatrix (PU_LEVEL, level lifetime)
     std::vector<float>      emitCentroidScratch; // reused per-frame emitter centroids
+    // DOOM-0170 perf: per-subsector nearest-N cache over the STATIC emitters only. Those
+    // records carry the no-reject sentinel, so each is tested against EVERY subsector —
+    // an unpruned O(subsectors × staticEmitters) cull that dominated the frame (~8 ms).
+    // It is camera- and frame-invariant, so RebuildStaticPointLightCache computes it once
+    // (on staticLightsDirty) and the per-frame BuildRasterPointLights copies it and merges
+    // only the handful of moving sprite emitters on top.
+    std::vector<float>      staticLightCache;    // sub × N × 6 floats (centroid[3] Le[3])
+    std::vector<int32_t>    staticLightCount;    // per-subsector count of cached static lights
+    bool                    staticLightsDirty = true;  // static emitter set changed -> recache
 
     bool ready        = false;
     bool needRecreate = false;
@@ -4842,75 +4851,54 @@ void BuildDynamicEmitters()
     }
 }
 
-// DOOM-0170 L1b: rebuild the per-subsector nearest-N dynamic point-light lists the
-// raster fragment shader (mesh.frag) reads. Runs each raster frame right after the NEE
-// emitter list is finalised (BuildDynamicEmitters), deriving a point light from every
-// emitter triangle — centroid = mean(v0,v1,v2), colour + intensity = the record's Le.
-// For each subsector it keeps the N nearest emitters its sector can see (DOOM-0119
-// REJECT cull), packed nearest-first into g.lightBuf; the shader loops only its own
-// subsector's slots. The raw luminance(Le)*area power the NEE build computed is
-// normalised away in the finalised CDF, so the light reads Le straight from the record
-// (the same source the build used) rather than the unrecoverable per-record weight.
-// Bounded O(subsectors × emitters) with an early distance reject; well under the §6
-// 1 ms budget on id maps (REJECT prunes the inner set to a handful).
-void BuildRasterPointLights()
+// DOOM-0170 perf: recompute the per-subsector nearest-N cache over the STATIC emitters
+// only (records [0, staticN) — wall/flat lights that never move and carry the DOOM-0119
+// no-reject sentinel, so each is tested against EVERY subsector). This unpruned
+// O(subsectors × staticEmitters) cull was the ~8 ms/frame hotspot the DOOM-0170 CPU
+// profiler pinpointed; it is camera- and frame-invariant, so it runs only when the static
+// set changes (level load / switch press / animated flat, via g.staticLightsDirty) instead
+// of every frame. The result is packed nearest-first into g.staticLightCache (same 6-float
+// centroid[3] Le[3] layout as g.lightBuf); BuildRasterPointLights copies it and merges the
+// per-frame dynamic sprite emitters on top. Reads the static records straight from the
+// merged emitter buffer (g.emitMapped[0, staticN)), which FinalizeEmitters lays out
+// static-first, so the cache stays in lock-step with what the shader would sample.
+static void RebuildStaticPointLightCache(int staticN)
 {
-    if (!g.lightMapped || g.probeCount == 0)
-        return;
     const uint32_t N      = RASTER_MAX_LIGHTS_PER_SUBSECTOR;
     const int      numSub = (int)g.probeCount;
-    float*         out    = (float*)g.lightMapped;
-    std::memset(out, 0, (size_t)numSub * N * RASTER_LIGHT_FLOATS * sizeof(float));
+    g.staticLightCache.assign((size_t)numSub * N * RASTER_LIGHT_FLOATS, 0.0f);
+    g.staticLightCount.assign((size_t)numSub, 0);
+    g.staticLightsDirty = false;
+    if (staticN <= 0 || numSub <= 0 || !g.emitMapped)
+        return;                                   // no static lights -> cache stays zeroed
+    const float* em = (const float*)g.emitMapped;
 
-    const int ne = (int)g.emitCount;
-    if (ne <= 0 || !g.emitMapped)
-        return;                                   // buffer stays zeroed -> no lights
-
-    const float*    em = (const float*)g.emitMapped;
-    const uint32_t* es = (const uint32_t*)g.emitSecMapped;   // per-emitter sector (may be null)
-
-    // Precompute each emitter's 3D centroid once (reused across every subsector).
-    g.emitCentroidScratch.resize((size_t)ne * 3);
-    float* ec = g.emitCentroidScratch.data();
-    for (int e = 0; e < ne; e++)
+    // Precompute each static emitter's 3D centroid once (reused across every subsector).
+    std::vector<float> sc((size_t)staticN * 3);
+    for (int e = 0; e < staticN; e++)
     {
         const float* r = &em[(size_t)e * 14];
-        ec[e * 3 + 0] = (r[0] + r[3] + r[6]) * (1.0f / 3.0f);
-        ec[e * 3 + 1] = (r[1] + r[4] + r[7]) * (1.0f / 3.0f);
-        ec[e * 3 + 2] = (r[2] + r[5] + r[8]) * (1.0f / 3.0f);
+        sc[e * 3 + 0] = (r[0] + r[3] + r[6]) * (1.0f / 3.0f);
+        sc[e * 3 + 1] = (r[1] + r[4] + r[7]) * (1.0f / 3.0f);
+        sc[e * 3 + 2] = (r[2] + r[5] + r[8]) * (1.0f / 3.0f);
     }
-
-    const bool cull = (g.numSectors > 0 && g.rejectCPU &&
-                       (int)g.subSecSector.size() >= numSub && es);
 
     for (int si = 0; si < numSub; si++)
     {
-        const rb_probe_t& c   = g.subCentroid[si];
-        const int        secA = cull ? g.subSecSector[si] : -1;
+        const rb_probe_t& c = g.subCentroid[si];
 
         // Nearest-N by 2D distance to the subsector centroid, kept sorted ascending.
+        // Static emitters carry the no-reject sentinel, so no REJECT cull here.
         float bestD[RASTER_MAX_LIGHTS_PER_SUBSECTOR];
         int   bestI[RASTER_MAX_LIGHTS_PER_SUBSECTOR];
         int   cnt = 0;
-
-        for (int e = 0; e < ne; e++)
+        for (int e = 0; e < staticN; e++)
         {
-            if (cull && secA >= 0)
-            {
-                const uint32_t secE = es[e];
-                if (secE != 0xFFFFFFFFu && (int)secE < (int)g.numSectors)
-                {
-                    const int pnum = secA * (int)g.numSectors + (int)secE;
-                    if (g.rejectCPU[pnum >> 3] & (1 << (pnum & 7)))
-                        continue;                 // this sector provably can't see the emitter
-                }
-            }
-            const float dx = ec[e * 3 + 0] - c.x;
-            const float dy = ec[e * 3 + 1] - c.y;
+            const float dx = sc[e * 3 + 0] - c.x;
+            const float dy = sc[e * 3 + 1] - c.y;
             const float d2 = dx * dx + dy * dy;
             if (cnt == (int)N && d2 >= bestD[cnt - 1])
                 continue;                         // farther than the current worst kept
-            // insert into the sorted best[] (shift right; drop the last when full)
             int pos = (cnt < (int)N) ? cnt : (int)N - 1;
             while (pos > 0 && bestD[pos - 1] > d2)
             {
@@ -4924,17 +4912,149 @@ void BuildRasterPointLights()
                 cnt++;
         }
 
-        float* slot = &out[(size_t)si * N * RASTER_LIGHT_FLOATS];
+        float* slot = &g.staticLightCache[(size_t)si * N * RASTER_LIGHT_FLOATS];
         for (int k = 0; k < cnt; k++)
         {
             const float* r = &em[(size_t)bestI[k] * 14];
-            slot[k * 6 + 0] = ec[bestI[k] * 3 + 0];
-            slot[k * 6 + 1] = ec[bestI[k] * 3 + 1];
-            slot[k * 6 + 2] = ec[bestI[k] * 3 + 2];
+            slot[k * 6 + 0] = sc[bestI[k] * 3 + 0];
+            slot[k * 6 + 1] = sc[bestI[k] * 3 + 1];
+            slot[k * 6 + 2] = sc[bestI[k] * 3 + 2];
             slot[k * 6 + 3] = r[9];               // Le.r
             slot[k * 6 + 4] = r[10];              // Le.g
             slot[k * 6 + 5] = r[11];              // Le.b
         }
+        g.staticLightCount[si] = cnt;
+    }
+}
+
+// DOOM-0170 L1b: fill the per-subsector nearest-N dynamic point-light lists the raster
+// fragment shader (mesh.frag) reads, each raster frame right after the NEE emitter list is
+// finalised (BuildDynamicEmitters). A point light per emitter triangle — centroid =
+// mean(v0,v1,v2), colour + intensity = the record's Le, packed nearest-first into g.lightBuf.
+//
+// DOOM-0170 perf split: the static emitters ([0, staticN), unpruned, unchanging) are culled
+// once into g.staticLightCache (RebuildStaticPointLightCache); this per-frame pass copies that
+// cache and merges only the handful of DYNAMIC sprite emitters ([staticN, emitCount) —
+// torches/lamps/flying fireballs, which move and use the DOOM-0119 REJECT cull). Merging the
+// dynamic set's nearest-N into the static set's cached nearest-N yields the exact nearest-N of
+// the union: any static light the merge drops was already farther than N nearer lights, so it
+// was never in the union's nearest-N either. Per-frame cost is now O(subsectors × dynEmitters)
+// (a handful), well under the §6 1 ms budget, instead of the old ~8 ms full cull.
+void BuildRasterPointLights()
+{
+    if (!g.lightMapped || g.probeCount == 0)
+        return;
+    const uint32_t N       = RASTER_MAX_LIGHTS_PER_SUBSECTOR;
+    const int      numSub  = (int)g.probeCount;
+    const size_t   subF    = (size_t)N * RASTER_LIGHT_FLOATS;
+    float*         out     = (float*)g.lightMapped;
+
+    const int emitN   = (int)g.emitCount;
+    int       staticN = (int)g.staticWgt.size();
+    if (staticN > emitN) staticN = emitN;          // clamp (over-cap merge)
+    const int dynN    = emitN - staticN;           // this frame's moving sprite emitters
+
+    // Recache the (frame-invariant) static cull only when the static set changed or the
+    // subsector count did (a new level reassigns subCentroid without touching the flag).
+    if (g.staticLightsDirty || (int)g.staticLightCount.size() != numSub)
+        RebuildStaticPointLightCache(staticN);
+
+    const bool haveCache = ((int)g.staticLightCount.size() == numSub &&
+                            (g.staticLightCache.size() >= (size_t)numSub * subF));
+
+    // No dynamic emitters this frame -> the cache IS the answer; copy it straight out.
+    if (dynN <= 0 || !g.emitMapped)
+    {
+        if (haveCache)
+            std::memcpy(out, g.staticLightCache.data(), (size_t)numSub * subF * sizeof(float));
+        else
+            std::memset(out, 0, (size_t)numSub * subF * sizeof(float));
+        return;
+    }
+
+    const float*    em = (const float*)g.emitMapped;
+    const uint32_t* es = (const uint32_t*)g.emitSecMapped;   // dynamic per-emitter sector
+
+    // Dynamic-emitter centroids (records [staticN, emitN)); reused across every subsector.
+    g.emitCentroidScratch.resize((size_t)dynN * 3);
+    float* ec = g.emitCentroidScratch.data();
+    for (int d = 0; d < dynN; d++)
+    {
+        const float* r = &em[(size_t)(staticN + d) * 14];
+        ec[d * 3 + 0] = (r[0] + r[3] + r[6]) * (1.0f / 3.0f);
+        ec[d * 3 + 1] = (r[1] + r[4] + r[7]) * (1.0f / 3.0f);
+        ec[d * 3 + 2] = (r[2] + r[5] + r[8]) * (1.0f / 3.0f);
+    }
+
+    const bool cull = (g.numSectors > 0 && g.rejectCPU &&
+                       (int)g.subSecSector.size() >= numSub && es);
+
+    // The whole merge runs in local cached RAM (rec[]/bestD[]); the mapped output buffer
+    // (out) is host-coherent write-combined memory, where reads and scattered read-modify-
+    // write are ruinously slow — so we read the seed from g.staticLightCache (plain RAM),
+    // sort in rec[], and write each subsector's N records to `out` exactly once, in order.
+    for (int si = 0; si < numSub; si++)
+    {
+        const rb_probe_t& c    = g.subCentroid[si];
+        const int         secA = cull ? g.subSecSector[si] : -1;
+
+        float rec[RASTER_MAX_LIGHTS_PER_SUBSECTOR * RASTER_LIGHT_FLOATS] = { 0 };
+        float bestD[RASTER_MAX_LIGHTS_PER_SUBSECTOR];
+        int   cnt = haveCache ? g.staticLightCount[si] : 0;
+
+        // Seed from the cached static nearest-N (plain RAM read), recovering each kept
+        // light's distance so dynamic emitters can be merged in by distance.
+        if (cnt > 0)
+        {
+            const float* cache = &g.staticLightCache[(size_t)si * subF];
+            std::memcpy(rec, cache, (size_t)cnt * RASTER_LIGHT_FLOATS * sizeof(float));
+            for (int k = 0; k < cnt; k++)
+            {
+                const float dx = rec[k * 6 + 0] - c.x;
+                const float dy = rec[k * 6 + 1] - c.y;
+                bestD[k] = dx * dx + dy * dy;
+            }
+        }
+
+        for (int d = 0; d < dynN; d++)
+        {
+            const int e = staticN + d;
+            if (cull && secA >= 0)
+            {
+                const uint32_t secE = es[e];
+                if (secE != 0xFFFFFFFFu && (int)secE < (int)g.numSectors)
+                {
+                    const int pnum = secA * (int)g.numSectors + (int)secE;
+                    if (g.rejectCPU[pnum >> 3] & (1 << (pnum & 7)))
+                        continue;                  // this sector provably can't see the emitter
+                }
+            }
+            const float dx = ec[d * 3 + 0] - c.x;
+            const float dy = ec[d * 3 + 1] - c.y;
+            const float d2 = dx * dx + dy * dy;
+            if (cnt == (int)N && d2 >= bestD[cnt - 1])
+                continue;                          // farther than the current worst kept
+            // insert into the sorted rec[] (shift the record right; drop the last when full)
+            int pos = (cnt < (int)N) ? cnt : (int)N - 1;
+            while (pos > 0 && bestD[pos - 1] > d2)
+            {
+                bestD[pos] = bestD[pos - 1];
+                std::memcpy(&rec[pos * 6], &rec[(pos - 1) * 6], 6 * sizeof(float));
+                pos--;
+            }
+            bestD[pos]       = d2;
+            rec[pos * 6 + 0] = ec[d * 3 + 0];
+            rec[pos * 6 + 1] = ec[d * 3 + 1];
+            rec[pos * 6 + 2] = ec[d * 3 + 2];
+            rec[pos * 6 + 3] = em[(size_t)e * 14 + 9];    // Le.r
+            rec[pos * 6 + 4] = em[(size_t)e * 14 + 10];   // Le.g
+            rec[pos * 6 + 5] = em[(size_t)e * 14 + 11];   // Le.b
+            if (cnt < (int)N)
+                cnt++;
+        }
+
+        // Single sequential write of the whole slot (records [cnt,N) already zeroed in rec).
+        std::memcpy(&out[(size_t)si * subF], rec, subF * sizeof(float));
     }
 }
 
@@ -4983,6 +5103,7 @@ static void BuildStaticEmitterSet(const rb_vertex_t* v)
         const float area = 0.5f * std::sqrt(cx * cx + cy * cy + cz * cz);
         g.staticWgt.push_back(emis::luminance(le[0], le[1], le[2]) * area);
     }
+    g.staticLightsDirty = true;   // DOOM-0170 perf: static set changed -> recache point lights
 }
 
 // Build this level's NEE emitter list (DOOM-0009 build step 3b): the subset of
