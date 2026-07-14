@@ -5,7 +5,20 @@ brought up before curated CC0 art is staged (Task 17 replaces these).
 Uses only the Python stdlib (a minimal PNG writer) so no external asset or pip
 install is needed. Normal is flat (+Z), height a horizontal ramp, ao mid-grey,
 albedo a blue-grey tech checker."""
-import struct, zlib, os
+import struct, zlib, os, math
+
+
+def bump_normal(x, y, w, h):
+    """A tangent-space normal (OpenGL Y+) for a grid of rounded bumps, one per 8px checker
+    tile, so Task 11's normal mapping has something visible to shade — the flat tiles catch
+    the flashlight/GI at a slant. Height field cos(a)cos(b); normal = norm(-dh/dx,-dh/dy,1)."""
+    a = 2.0 * math.pi * x / 8.0
+    b = 2.0 * math.pi * y / 8.0
+    k = 0.9                                   # slope strength (~40deg max tilt)
+    nx, ny, nz = k * math.sin(a) * math.cos(b), k * math.cos(a) * math.sin(b), 1.0
+    inv = 1.0 / math.sqrt(nx * nx + ny * ny + nz * nz)
+    nx, ny, nz = nx * inv, ny * inv, nz * inv
+    return (int((nx * 0.5 + 0.5) * 255), int((ny * 0.5 + 0.5) * 255), int((nz * 0.5 + 0.5) * 255))
 
 
 def write_png(path, w, h, rgb_fn):
@@ -31,8 +44,7 @@ D = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                  "assets", "ultra", "heroes", "bringup")
 write_png(os.path.join(D, "startan3_alb.png"), 64, 128,
           lambda x, y, w, h: (70, 90, 110) if (x // 8 + y // 8) % 2 else (60, 78, 96))
-write_png(os.path.join(D, "startan3_nrm.png"), 64, 128,
-          lambda x, y, w, h: (128, 128, 255))
+write_png(os.path.join(D, "startan3_nrm.png"), 64, 128, bump_normal)
 write_png(os.path.join(D, "startan3_ao.png"), 64, 128,
           lambda x, y, w, h: (180, 180, 180))
 write_png(os.path.join(D, "startan3_hgt.png"), 64, 128,
