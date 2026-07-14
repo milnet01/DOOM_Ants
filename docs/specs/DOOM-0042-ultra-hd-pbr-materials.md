@@ -4,7 +4,7 @@
 **Roadmap:** 💭→🚧 `ROADMAP.md` DOOM-0042 (Phase 2 — "the spin"). This spec consolidates the DOOM-0042 decisions recorded on the roadmap (2026-06-24 sourcing, 2026-06-27 Ultra binding, 2026-06-28 POM/height requirement) and adds two 2026-07-14 refinements: the **hybrid** asset pipeline and **RT-view-first** sequencing.
 **Kind:** feature.
 **Depends on:** DOOM-0009 (path tracer + bindless material pipeline — the Ultra RT view), DOOM-0008 (3D level mesh + material seam), DOOM-0043 (Ultra ambient floor — shipped), DOOM-0044 (flashlight — shipped). These provide the lighting the PBR maps react to.
-**Does NOT include:** 3D enemy models (separate, far-out roadmap item — enemies stay billboards here), Solid-tier HD art, hi-res title/menu art (DOOM-0053-area item).
+**Does NOT include:** 3D enemy models (separate, far-out roadmap item — enemies stay billboards here), Solid-tier HD art, hi-res title/menu art (DOOM-0086).
 
 ## Goal
 
@@ -32,7 +32,7 @@ This spec scopes a **first vertical slice**: the whole pipeline proven on **one 
 
 Grounded in a source survey (r_vulkan.cpp ≈7086 lines; r_mesh.c; r_things.c; pathtrace.comp). Every claim below is a citation the cold-eyes pass must re-verify.
 
-1. **Textures are 8-bit paletted, one image per material, no mipmaps.** Each material uploads as `VK_FORMAT_R8_UNORM` — one byte = a **palette index**, not colour (`r_vulkan.cpp:4403,4482`). Colour comes from sampling that index into a 256×1 PLAYPAL LUT in the shader (`pathtrace.comp:317-318`, mirrored in `mesh.frag`). The sampler is nearest / REPEAT / single-mip (`r_vulkan.cpp:440,3242,3654`).
+1. **Textures are 8-bit paletted, one image per material, no mipmaps.** Each material uploads as `VK_FORMAT_R8_UNORM` — one byte = a **palette index**, not colour (`r_vulkan.cpp:4403,4482`). Colour comes from sampling that index into a 256×1 PLAYPAL LUT; the shared albedo decode lives in `shaders/pt_common.glsl:91` (`#include`d by both the tracer and the GI bake), and `mesh.frag` mirrors it for the raster view (`pathtrace.comp:317-318` is the sky-panorama variant of the same sample, not the canonical hit path). The material sampler is nearest / REPEAT / single-mip (`g.texSampler`, declared `r_vulkan.cpp:440`, created `:3636-3644`).
 
 2. **The material array is already bindless and per-texture.** The CPU packs a paletted atlas (`RB_BuildAtlas`, `r_mesh.c:909`) but the uploader slices it back into **N separate images** bound as a variable-count descriptor array (`r_vulkan.cpp:4398-4495`). `texnum → GPU image` is a plain index into `materialTex[]` (`pathtrace.comp:66`, sampled `nonuniformEXT(id)`). Material order is walls, then flats, then sprites: `numtextures + numflats + numspritelumps` (`r_mesh.c:964-968`); the sprite base `numWall+numFlat` reaches the tracer in `misc4.x` (`pathtrace.comp:91`). **This bindless array is the seam HD plugs into — no atlas repack needed.**
 
@@ -50,26 +50,53 @@ Four layers: **(A) asset authoring** (offline), **(B) load & upload** (engine st
 
 ### A. Asset layer — the material sidecar + derive-generator (offline)
 
-- **Material sidecar** `assets/ultra/materials.csv` (repo-tracked, tiny). One row per DOOM texture/flat/sprite **name**:
-  `doom_name, source, albedo, normal, roughness, metallic, ao, emissive, height, uv_scale, flags`
-  where `source ∈ {hero, derive}`. A **hero** row names PNG map files (a curated CC0 set from the library); a **derive** row leaves the map columns blank and the generator fills them. `flags` carries per-material switches (`pom`, `emissive`, `noPom` for flat decals). This is the *only* hand-maintained mapping; extending coverage = adding rows.
+- **Material sidecar** `assets/ultra/materials.csv` (repo-tracked, tiny). **Format:** comma-delimited, one **header row** naming the columns, `#`-prefixed lines ignored as comments. One data row per DOOM texture/flat/sprite **name**:
+  `doom_name,source,albedo,normal,roughness,metallic,ao,emissive,height,uv_scale,flags`
+  - `source ∈ {hero, derive}`. A **hero** row names PNG map files (a curated CC0 set from the library); a **derive** row leaves the map columns blank and the generator fills them in.
+  - Map columns (`albedo`…`height`) hold a PNG path relative to the asset root, or **empty = "no map"** (the shader uses a sensible default: flat normal, roughness/metallic from the derive family table, no AO/emissive, no height).
+  - `uv_scale` — a float applied as a UV multiplier in the hit shader (tiles the material across its surface; `1.0` = one map span across the surface's native UVs; default `1.0` if blank).
+  - `flags` — a **`|`-separated** list (pipe, so it never collides with the CSV comma): `pom` (march POM on this material), `noPom` (force-skip POM — flat decals), `sprite` (alpha-keyed cutout, see §C). **Emissive is driven by the `emissive` map column, not a flag** — a non-empty `emissive` path means the material self-emits; there is no `emissive` flag.
+  - This is the *only* hand-maintained mapping; extending coverage = adding rows. Example:
+    ```
+    #doom_name,source,albedo,normal,roughness,metallic,ao,emissive,height,uv_scale,flags
+    TEKWALL1,hero,metal/tek_alb.png,metal/tek_nrm.png,metal/tek_rgh.png,metal/tek_met.png,metal/tek_ao.png,metal/tek_emis.png,metal/tek_hgt.png,1.0,pom
+    FLOOR4_8,derive,,,,,,,,1.0,noPom
+    ```
 - **Hero materials:** hand-match the ~1–2 dozen highest-traffic DOOM names (STARTAN/BROWN/TEKWALL tech panels, brick, metal, floors) to a CC0 set from `/mnt/Games/3D Engine Assets/Textures/…`. New downloads go into that library under its categories (CC0/free only).
-- **Derive-generator** `scripts/pbr_derive.py` (offline tool, **not** in the engine build): for every `derive` row, generate a believable PBR set **from the original WAD image** exported as PNG — height from luminance, normal from the height gradient (Sobel), roughness/metallic from simple per-family heuristics, AO from local occlusion of the height field. Keeps the classic look but adds relief. Output PNGs land beside the sidecar (or in the library) and are referenced back into the `derive` row so runtime never runs the generator.
-- **Licence hygiene:** every hero material's CC0/free provenance is recorded (a `LICENSES` note in `assets/ultra/`). No proprietary art enters the repo.
+- **Derive-generator** `scripts/pbr_derive.py` (offline tool, **not** in the engine build): for every `derive` row, generate a believable PBR set **from the original WAD image** exported as PNG — height from luminance, normal from the height gradient (Sobel), AO from local occlusion of the height field, and roughness/metallic from a **name-prefix → (roughness, metallic) family table** (a plain data map in the script, editable without code):
+
+  | Family (longest matching `doom_name` prefix) | roughness | metallic |
+  |----------------------------------------------|-----------|----------|
+  | `METAL` `TEK` `SILVER` `SHAWN` `SUPPORT`      | 0.35      | 1.0      |
+  | `BROWN` `BRONZE` `COMP` `PIPE`                | 0.55      | 1.0      |
+  | `BRICK` `STONE` `ROCK` `GRAY` `MARB`          | 0.85      | 0.0      |
+  | `WOOD` `PANEL` `DOOR`                         | 0.75      | 0.0      |
+  | `FLOOR` `FLAT` `CEIL` `RROCK` `MFLR` (flats)  | 0.80      | 0.0      |
+  | *(no prefix match — default)*                | 0.70      | 0.0      |
+
+  For `sprite`-flagged rows the generator carries the WAD's index-0 transparency into the albedo **alpha channel**, so derived sprites cut out like hero sprites. Keeps the classic look but adds relief.
+- **Derive outputs are NOT committed.** Generated PNGs are derivative works of id's WAD art, so — exactly like the WAD itself (see project `CLAUDE.md`) — they stay **out of the repo**: the script writes them into the local asset library (or a git-ignored `assets/ultra/derived/`), and the `derive` row's map paths point there. Runtime loads the pre-generated PNGs; it never runs the generator.
+- **Licence hygiene:** every hero material's CC0/free provenance is recorded (a `LICENSES` note in `assets/ultra/`). No proprietary art — original **or WAD-derived** — is committed to the repo; only the tiny CC0-hero PNGs + the sidecar + `LICENSES` are tracked.
 
 ### B. Load & upload layer (engine — new code)
 
 - **PNG decode via a single-header public-domain loader** (`stb_image.h`, PD/MIT — zero new link dependency; SDL2_image is the fallback if we prefer the existing SDL stack). Reuse-before-rewrite: only add the loader we actually need.
-- **Load only the current map's materials.** At map load the engine already knows which texnums the level uses; load HD sets for *those* only, and **downscale to a VRAM budget** (target ≈1–2K per map, not raw 4–8K). Bounds memory and load time. Log what was loaded/skipped (no silent truncation).
-- **Upload as a parallel bindless PBR array** alongside the existing R8 array: per HD material, RGBA8 images — **albedo sRGB, all others linear** — with **mipmaps** and a new **linear-filtering, REPEAT** sampler (distinct from the nearest paletted sampler). A per-material flag (`usePBR`) tells the shader which path to take, so paletted and HD materials coexist in one scene (a `derive`-less texture just stays paletted).
+- **Load only the current map's materials.** At map load the engine already knows which texnums the level uses; load HD sets for *those* only, under two **independent, configurable** bounds:
+  - **(i) Per-texture resolution** — clamp each map's longest edge to a max (**default 1024 px**; this is what the earlier "1–2K" shorthand meant — pixels, not MB). Source art larger than that is box-downscaled on load.
+  - **(ii) Per-map memory** — track total material VRAM as sets upload; on exceeding a soft ceiling (**default 768 MB**, comfortably within the ≥8 GB the RT path already requires) drop the **lowest-traffic** remaining materials back to paletted rather than growing unbounded.
+  - The load log prints each material's loaded resolution + the running MB total and lists everything skipped/downscaled/dropped — **no silent truncation**.
+- **Failure handling (never crash).** A missing/undecodable hero PNG, a sidecar row that names a file that isn't there, or a malformed row → that material **falls back to the paletted R8 path** and logs a one-line warning; the map still loads. The paletted array is always present, so fallback is always available.
+- **Upload as a parallel bindless PBR array** alongside the existing R8 array: per HD material, RGBA8 images — **albedo sRGB, all others linear** — with **mipmaps** and a new **linear-filtering, REPEAT** sampler (distinct from the nearest paletted sampler). A **per-material control SSBO** (one struct per matId, indexed by the same `texnum` the hit shader already decodes) carries `usePBR`, the seven map indices into the PBR array, `uv_scale`, and `flags`; it is uploaded at map load. So paletted and HD materials coexist in one scene (a material with no HD set keeps `usePBR = 0` and stays paletted).
 
 ### C. Shading layer (pathtrace.comp — the core new shader work)
 
-On a surface hit, branch on `usePBR[matId]`:
-- **Albedo:** sample the RGBA8 albedo directly (skip the index→PLAYPAL lookup). The transparency/alpha-test helpers (`spriteCandidateOpaque` `pathtrace.comp:184-196`) currently key on "palette index 0" — HD sprites key on the albedo **alpha channel** instead.
+On a surface hit, branch on the material's `usePBR` (read from the control SSBO, §B). POM (last bullet) computes the UV offset **first**; every map sample below uses that offset UV.
+- **Height / POM (option a):** for `flags:pom` materials, ray-march the height field along the **view direction in tangent space** and offset the UV so relief recesses and self-occludes *in the primary-hit shade only*. **Bounded march:** a fixed **16 linear steps at normal incidence, scaling up to 32 at grazing angles** (steeper view = more steps), then one binary-search refinement; the marched UV is **clamped to [0,1]** so an overshoot samples the edge texel, never tiles garbage. "Degrades gracefully at grazing angles" = that clamp + the step cap (no gaping holes), measured by the parallax check in Verification. `noPom`/flat-decal materials skip the march entirely. **Known limit (accepted for v1):** the displaced relief is invisible to RT shadow rays and the GI bake — a groove shades but casts no self-shadow. Options (b) height-field occlusion in NEE shadow rays and (c) true displacement-mapped BLAS are explicitly deferred.
+- **Albedo:** sample the RGBA8 albedo directly (skip the index→PLAYPAL lookup). The transparency/alpha-test helpers (`spriteCandidateOpaque` `pathtrace.comp:184-196`) currently key on "palette index 0" — HD `flags:sprite` materials key on the albedo **alpha channel** instead (`alpha < 0.5` = transparent).
 - **Normal mapping:** decode the tangent-space normal and rotate it into world space via a **tangent frame built from the surface**. Walls are axis-aligned quads → tangent from the wall direction + UV; flats (floors/ceilings) → world-XY tangent. (No per-vertex tangent attribute needed for v1; derive from geometry in the hit shader.)
 - **Roughness / metallic:** feed the sampled values into the existing GGX/BRDF path (pairs with the DOOM-0009 §4.4 specular lobe).
-- **Height / POM (option a):** before sampling the other maps, ray-march the height field along the **view direction in tangent space** and offset the UV so relief recesses and self-occludes *in the primary-hit shade only*. **Known limit (accepted for v1):** the displaced relief is invisible to RT shadow rays and the GI bake — a groove shades but casts no self-shadow. Options (b) height-field occlusion in NEE shadow rays and (c) true displacement-mapped BLAS are explicitly deferred. POM runs only on `flags:pom` materials; flat decals skip it.
+- **Ambient occlusion (AO):** multiply the sampled AO into the **indirect/ambient** term only — the GI-bake bounce + sky/sector ambient — **never** the direct flashlight/NEE contribution. AO darkens crevices under ambient light without dimming a surface the flashlight is directly lighting.
+- **Emissive:** if the material has an `emissive` map, add `emissive.rgb × kEmissiveScale` as self-emitted radiance on the **primary hit only** (v1). It is **not** registered as an NEE emitter / area light this slice — promoting hot emissives to real light sources is deferred alongside options (b)/(c). `kEmissiveScale` is a single tunable constant — reuse the existing `emissive_derive.h:52` `kEmissiveScale` the switch-glow path already uses.
 
 ### D. Tier hook (small)
 
@@ -82,7 +109,7 @@ On a surface hit, branch on `usePBR[matId]`:
 | Sidecar + heroes | `assets/ultra/materials.csv`, `assets/ultra/LICENSES`, hero PNGs (library) | new — the hand-maintained mapping + provenance |
 | Derive tool | `scripts/pbr_derive.py` | new — offline PBR-from-original generator (not built into the engine) |
 | Image loader | new `rb_image.*` (or vendored `stb_image.h`) | new — PNG decode |
-| Load/upload | `r_vulkan.cpp` material-upload loop (`:4398-4495`), new linear+mip sampler (cf. `:3242`), new bindless PBR descriptor array | parallel RGBA8 PBR path beside the R8 path; per-map current-set loading + downscale |
+| Load/upload | `r_vulkan.cpp` material-upload loop (`:4398-4495`), new linear+mip sampler (cf. the paletted `g.texSampler` at `:3636-3644`), new bindless PBR descriptor array, per-material control SSBO | parallel RGBA8 PBR path beside the R8 path; per-map current-set loading + downscale |
 | Sidecar parse + map | `r_mesh.c` (near `RB_MaterialCount` `:964`) | parse `materials.csv`; resolve each texnum → HD set or paletted |
 | Shading | `pathtrace.comp` (hit decode `:385-399`, sample `:317`, alpha `:184-196`) | `usePBR` branch: RGBA albedo, normal-map + tangent frame, roughness/metallic to BRDF, POM UV march |
 | Tier hook | `r_backend.c` / `r_vulkan.cpp` present path | load/enable HD when `rendermode==RB_RT3D` |
@@ -91,11 +118,14 @@ On a surface hit, branch on `usePBR[matId]`:
 
 ## Verification
 
-- **Look, Ultra RT view, E1M1:** hero surfaces read as modern PBR (wet metal shines, concrete is matte-deep, brick/tech relief recesses and self-shades under the flashlight as you strafe); derived surfaces keep the DOOM look but gain bump/roughness depth. Switch to **Solid**/**Classic** → original art, pixel-identical to today.
-- **Parallax:** on a `flags:pom` wall, grooves visibly deepen with view angle and don't swim; at grazing angles POM degrades gracefully (no gaping holes) — if it doesn't, that's the trigger to consider option (c) later, not to ship the artefact.
+- **Look, Ultra RT view, E1M1** (qualitative goal): hero surfaces read as modern PBR (wet metal shines, concrete is matte-deep, brick/tech relief recesses and self-shades under the flashlight as you strafe); derived surfaces keep the DOOM look but gain bump/roughness depth. Observable proxies for the subjective look:
+  - **Specular response:** a flashlight sweep across a hero metal wall produces a specular highlight that tracks the light — before/after screenshot pair shows the highlight move; the same wall in Solid shows none.
+  - **Normal/relief:** a normal-mapped wall shows shading change between two camera angles with the geometry fixed (screenshot pair) — proving the normal map, not geometry, drives it.
+  - **Hard gate:** switch to **Solid**/**Classic** → original art, **pixel-identical** to today (frame-diff = 0).
+- **Parallax:** on a `flags:pom` wall, a screenshot pair at two view angles shows grooves shift/deepen (the UV offset) without swimming; at grazing angles the clamp holds (no gaping holes / no garbage tiling) — a visible hole is the trigger to reconsider option (c), not to ship.
 - **Coexistence:** a map mixing hero + derive + still-paletted materials renders all three correctly in one frame (the `usePBR` branch).
-- **Memory/load:** loading E1M1's HD set stays within the stated VRAM budget; the load log lists what loaded and what was skipped/downscaled. No silent truncation.
-- **Licence:** every shipped hero material traces to a CC0/free source in `assets/ultra/LICENSES`; no proprietary art in the repo.
+- **Memory/load:** loading E1M1's HD set stays within the §B bounds — no texture exceeds the resolution clamp (default 1024 px longest edge) and total material VRAM stays under the ceiling (default 768 MB); the load log prints per-material resolution + running MB and lists everything skipped/downscaled/dropped. No silent truncation.
+- **Licence:** every shipped hero material traces to a CC0/free source in `assets/ultra/LICENSES`; no proprietary art — original or WAD-derived — committed to the repo (derive outputs resolve only to the local/gitignored library).
 - **No regression off-Ultra:** Solid and Classic are byte-for-byte unchanged (HD path is `RB_RT3D`-gated).
 - **Build:** `make` + `make test` clean, no new warnings; shaders compile (glslc) with 0 warnings.
 
