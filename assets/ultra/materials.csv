@@ -1,0 +1,7 @@
+#doom_name,source,albedo,normal,roughness,metallic,ao,emissive,height,uv_scale,flags
+# Hero rows name their PNG map files (relative to assets/ultra/). Derive rows leave
+# map columns blank — the loader resolves derived/<doom_name>_<suffix>.png by convention.
+# v1 = walls + flats only; no sprite rows. flags is |-separated (pom|noPom|sprite).
+STARTAN3,hero,heroes/bringup/startan3_alb.png,heroes/bringup/startan3_nrm.png,,,heroes/bringup/startan3_ao.png,,heroes/bringup/startan3_hgt.png,1.0,pom
+TEKWALL1,derive,,,,,,,,1.0,pom
+FLOOR4_8,derive,,,,,,,,1.0,noPom

@@ -1,0 +1,3 @@
+# DOOM-0042 hero-material provenance. Every committed hero PNG traces to a CC0/free source here.
+# Format: <path>  <source-url-or-library>  <licence>
+heroes/bringup/*  synthetic placeholder (scripts/make_bringup_hero.py)  CC0 (generated, no third-party art)
