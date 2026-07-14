@@ -59,7 +59,7 @@ void main()
     // there. Apply a FRACTION (AO_DIRECT_WEIGHT) of the occlusion to DIRECT too, so contact
     // shadows read on lit floors — but keep it partial so the flashlight/lamp beams and the
     // weapon/sprites (which are pure DIRECT and sit at AO≈1 in their interiors) stay bright.
-    const float AO_DIRECT_WEIGHT = 0.6;
+    const float AO_DIRECT_WEIGHT = 0.5;
     float aoDirect = mix(1.0, ao, AO_DIRECT_WEIGHT);
     vec3  hdr = direct * aoDirect + ambient * ao;
     outColor = vec4(pbrNeutralToneMapping(hdr), 1.0);

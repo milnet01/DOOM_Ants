@@ -365,10 +365,21 @@ void main()
     // raster camera is yaw-only, so d = (worldPos - eye)·forward is exactly the projection's
     // clip.w; ssao.frag reconstructs view positions from it. The weapon psprite has no world
     // position (and is never AO'd), so it just writes the near plane.
+    //
+    // Sprites (monsters/items) are flat billboards standing on the floor. Feeding their real
+    // depth to a screen-space AO makes the floor pixels beside them read the sprite as a near
+    // wall — a black halo around every monster — and darkens the sprite's own silhouette. They
+    // are grounded by blob shadows (L2d) instead, so they must not take part in SSAO at all.
+    // Mark them by NEGATING the packed depth: ssao.frag treats a negative sample as "skip"
+    // (neither receiver nor occluder). Sky stays +100000 (> its far guard); world stays [1, ∞).
     vec3  vfwd  = vec3(cos(pc.yaw), sin(pc.yaw), 0.0);
-    float viewZ = ((vFlags & FLAG_PSPRITE) != 0)
-                ? 1.0
-                : max(dot(vWorldPos - vec3(pc.eyeX, pc.eyeY, pc.eyeZ), vfwd), 1.0);
+    float viewZ;
+    if ((vFlags & FLAG_PSPRITE) != 0)
+        viewZ = 1.0;
+    else {
+        float d = max(dot(vWorldPos - vec3(pc.eyeX, pc.eyeY, pc.eyeZ), vfwd), 1.0);
+        viewZ = ((vFlags & FLAG_SPRITE) != 0) ? -d : d;   // sprites: negative = SSAO ignores
+    }
     outAmbient = vec4(ambient, 1.0);
     outDirect  = vec4(direct, viewZ);
 #endif

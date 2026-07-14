@@ -770,9 +770,13 @@ extern "C" { int rb_ssao = 1; }
 // DOOM-0170 L2b SSAO tuning dials (§4.3; §9 play-test). RADIUS is the hemisphere reach in
 // world units (DOOM scale: 16 = player radius, 56 = player height) — how far a corner/contact
 // darkens; INTENSITY how strong; POWER the contrast curve; BIAS kills self-occlusion acne.
-static const float kSsaoRadius    = 64.0f;
-static const float kSsaoBias      = 1.5f;
-static const float kSsaoIntensity = 1.6f;
+// Play-test 2026-07-14: RADIUS dropped 64->40 so taps stay near genuine contacts (a wide reach
+// amplified the normal-from-depth streak at convex wall corners and the view-dependent haloing);
+// BIAS 1.5->2.0 to kill the vertical corner acne; INTENSITY 1.6->1.3 as the floor AO read a touch
+// strong once it also weighted DIRECT (composite AO_DIRECT_WEIGHT).
+static const float kSsaoRadius    = 40.0f;
+static const float kSsaoBias      = 2.0f;
+static const float kSsaoIntensity = 1.3f;
 static const float kSsaoPower     = 1.5f;
 
 // DOOM-0090: per-pass GPU profiler toggle (the `\` key; persisted as rt_profile).

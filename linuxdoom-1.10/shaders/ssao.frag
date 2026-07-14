@@ -68,6 +68,7 @@ void main()
 {
     float z = sampleZ(vUV);
     if (z >= 50000.0) { outAO = 1.0; return; }   // sky / far backdrop: never occluded
+    if (z <= 0.0)     { outAO = 1.0; return; }   // sprite billboard (negative-tagged): no AO on monsters/items
 
     vec3 P = viewPos(vUV, z);
     // View normal from screen-space derivatives of the reconstructed position. Cheap, and it
@@ -93,6 +94,8 @@ void main()
         if (any(lessThan(suv, vec2(0.0))) || any(greaterThan(suv, vec2(1.0))))
             continue;
         float sceneZ = sampleZ(suv);   // real geometry depth at that screen position
+        if (sceneZ <= 0.0)
+            continue;                  // sprite billboard: never an occluder (no halo around monsters)
         // Occluded when real geometry sits closer to the camera than the sample point; the
         // range check fades out taps whose depth gap is larger than the radius (stops distant
         // background from darkening a foreground pixel across a silhouette).
