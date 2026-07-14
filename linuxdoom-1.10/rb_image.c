@@ -10,7 +10,15 @@
    brief's original `#define STBI_NO_STDIO 0` therefore failed to compile
    (`stbi_load` not declared); omitting the define entirely is stb's documented
    way to keep stdio support (the default). */
+/* STBI_ONLY_PNG leaves two int-overflow helpers (stbi__mul2shorts_valid /
+   stbi__addints_valid) compiled-but-unused, so vendored stb_image.h trips
+   -Wunused-function under -Wall. We don't edit vendored code (dependency rule),
+   and can't drop STBI_ONLY_PNG without pulling in every decoder — so scope-silence
+   just this header's warnings, not the project's. */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
 #include "stb_image.h"
+#pragma GCC diagnostic pop
 
 int rb_image_load(const char* path, rb_image_t* out) {
     int w = 0, h = 0, comp = 0;
