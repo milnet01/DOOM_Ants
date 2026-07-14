@@ -134,6 +134,9 @@ sub-Makefile is not built by CI or the default `make`, so it's out of scope):
   `type2-runtime` — from their `continuous` release tags (build-appimage.sh:34-36).
   Those `continuous` tags float like `ubuntu-latest` (no version to bump); the
   bundled libs ride whatever the build host provides.
+- `linuxdoom-1.10/stb_image.h` — vendored public-domain PNG decoder (stb_image v2.30),
+  added for DOOM-0042 HD material loading. No link dependency. Re-check upstream on a
+  sweep cadence; update the version noted here when bumped.
 
 ## Staying current (sweep posture)
 
