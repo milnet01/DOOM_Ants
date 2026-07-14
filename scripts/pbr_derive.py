@@ -56,11 +56,22 @@ class Wad:
         if magic not in (b"IWAD", b"PWAD"):
             raise ValueError("not a WAD (magic %r)" % magic)
         self.lumps = {}                                # NAME -> (filepos, size); last wins (PWAD override)
+        self.flats = set()                             # names inside F_START..F_END (the flat namespace)
+        in_flats = False
         off = dirofs
         for _ in range(numlumps):
             filepos, size = struct.unpack_from("<ii", self.data, off)
             name = self.data[off + 8:off + 16].split(b"\0")[0].decode("ascii", "replace").upper()
             off += 16
+            # Flat namespace tracking: only lumps between the F_START/F_END (or PWAD FF_*)
+            # markers are flats. The nested F1_/F2_/F3_ sub-markers sit inside that span and
+            # are size 0, so the `size == 4096` guard skips them without extra bookkeeping.
+            if name in ("F_START", "FF_START"):
+                in_flats = True
+            elif name in ("F_END", "FF_END"):
+                in_flats = False
+            elif in_flats and size == 4096:
+                self.flats.add(name)
             self.lumps[name] = (filepos, size)
         pp = self._lump("PLAYPAL")
         self.palette = [(pp[i * 3], pp[i * 3 + 1], pp[i * 3 + 2]) for i in range(256)]
@@ -145,15 +156,22 @@ class Wad:
 
     # --- raw 64x64 flat -> RGB bytes + (w,h) ---
     def flat_rgb(self, name):
-        d = self._lump(name)
-        w = h = 64
-        return self._indices_to_rgb(d, w, h), (w, h)
+        nm = name.upper()
+        if nm not in self.flats:
+            raise KeyError("%s is not a flat (not inside F_START..F_END)" % nm)
+        d = self._lump(nm)
+        if len(d) < 64 * 64:
+            raise ValueError("flat %s is %d bytes, expected 4096" % (nm, len(d)))
+        return self._indices_to_rgb(d, 64, 64), (64, 64)
 
-    # --- auto: composited texture if known, else flat ---
+    # --- auto: composited wall texture, else a flat; unknown names raise (caller skips) ---
     def image_rgb(self, name):
-        if name.upper() in self.textures:
-            return self.texture_rgb(name)
-        return self.flat_rgb(name)
+        nm = name.upper()
+        if nm in self.textures:
+            return self.texture_rgb(nm)
+        if nm in self.flats:
+            return self.flat_rgb(nm)
+        raise KeyError("%s: neither a composited texture nor a flat" % nm)
 
     def _indices_to_rgb(self, idx, w, h):
         out = bytearray(w * h * 3)
@@ -169,8 +187,9 @@ class Wad:
 # ---------------------------------------------------------------------------
 # Stage 2: map derivation from an RGB albedo image (flat RGB byte buffer, w, h).
 # ---------------------------------------------------------------------------
-# sRGB -> linear luminance weights (mirrors emissive_derive.h Rec.709), used for
-# the height field; peak gate for emissive mirrors the engine's value()>=0.9.
+# BT.601 luma weights for the HEIGHT field (the brief mandates exactly these). NOT the
+# engine's Rec.709 emissive weights (0.2126/0.7152/0.0722) — emissive uses a separate
+# max-channel value() gate below, mirroring emissive_derive.h. Keep these 601 weights.
 _LUM = (0.299, 0.587, 0.114)
 
 
@@ -353,8 +372,8 @@ def main():
         try:
             w, h = emit_maps(wad, name, args.out)
             print("derived %-10s %dx%d -> 7 maps" % (name, w, h))
-        except KeyError:
-            print("SKIP %s: not found in WAD (texture/flat)" % name, file=sys.stderr)
+        except (KeyError, IndexError, ValueError, struct.error) as e:
+            print("SKIP %s: %s" % (name, e), file=sys.stderr)   # bad/missing lump -> skip, keep going
     print("wrote derived maps to", args.out)
 
 
