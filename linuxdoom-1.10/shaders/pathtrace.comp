@@ -93,43 +93,34 @@ layout(set = 3, binding = 1) uniform sampler2D hdTex[];   // bindless RGBA8 PBR 
 #include "formulas/formulas.glsl"
 #include "formulas/pbr_neutral_tonemap.glsl"
 
-// DOOM-0042: linear albedo for the unified material id `id` at raw-texel coord `hitUV`.
-// An HD material (usePBR + an albedo map) samples its RGBA8 map directly — the sRGB image
-// VIEW does the gamma->linear decode in hardware, so no pow() here. `hitUV / sz` reuses the
-// DOOM texture's texel size so the HD map tiles across the surface exactly like the paletted
-// one (uvScale is the artist repeat multiplier). Everything else (sprites, unmapped walls,
-// the InitHdDefault fallback) routes to the paletted decodeAlbedo. `mc` is returned for the
-// later PBR maps (normal/AO/emissive/POM in tasks 11-14).
-vec3 hdAlbedo(uint id, vec2 hitUV, out MatCtrl mc)
+// DOOM-0042: self-radiance scale for an HD emissive map (Task 13). Reused from
+// emissive_derive.h:52; re-tune (lower) expected once a real emissive hero lands.
+const float kEmissiveScale = 40.0;
+// POM march depth (Task 14): the parallax offset spans at most this fraction of one UV tile.
+const float kPomHeightScale = 0.06;
+
+// DOOM-0042: the base HD sample UV for material id `id` at raw-texel coord `hitUV`. Dividing
+// by the paletted texture's texel size maps hitUV into [0,1) tile space so an HD map tiles
+// across the surface exactly like the paletted one; uvScale is the artist repeat multiplier.
+// Every HD map (albedo/normal/AO/emissive/height) samples at this UV — or at the POM-marched
+// offset of it (hdParallaxUV) — so they all line up.
+vec2 hdBaseUV(uint id, vec2 hitUV, float uvScale)
 {
-    mc = ctrl[id];                                  // one SSBO, runtime array -> no nonuniformEXT
-    if (mc.usePBR != 0u && mc.maps[0] >= 0)
-    {
-        vec2 sz = vec2(textureSize(materialTex[nonuniformEXT(id)], 0));
-        vec2 uv = (hitUV / sz) * mc.uvScale;
-        return texture(hdTex[nonuniformEXT(mc.maps[0])], uv).rgb;   // sRGB view -> linear
-    }
-    return decodeAlbedo(id, hitUV);
+    vec2 sz = vec2(textureSize(materialTex[nonuniformEXT(id)], 0));
+    return (hitUV / sz) * uvScale;
 }
 
-// DOOM-0042 (Task 11): world-space shading normal for an HD material. Builds a tangent
-// frame from the hit triangle's edges and UV deltas (T from dP/dU, B = n x T carrying the
-// sign(det) mirror flip that X-flipped DOOM walls need), unpacks the tangent-space normal
-// map (OpenGL Y+, no green flip), and rotates it into world space. Returns the geometric
-// normal `n` unchanged when the material has no normal map (maps[1] < 0) or isn't HD — so a
-// flat bring-up normal is an exact null result. Samples at the same hitUV/sz*uvScale as the
-// albedo, so every map lines up. Used as the LIGHTING normal; the caller keeps the geometric
-// `n` for the SVGF G-buffer (denoiser edge-stopping) and lifts the shadow-ray origin along it.
-vec3 hdShadingNormal(MatCtrl mc, uint id, vec2 hitUV, vec3 n,
-                     vec3 p0, vec3 p1, vec3 p2, vec2 uv0, vec2 uv1, vec2 uv2)
+// DOOM-0042 (Task 11): the hit triangle's tangent frame — T from dP/dU, B = n x T carrying
+// the sign(det) mirror flip that X-flipped DOOM walls need. Split out of the normal-map
+// unpack so Task 14's POM march can reuse the same frame for its view-space transform.
+// Degenerate UVs (det ~ 0) fall back to an arbitrary stable frame.
+void hdTangentFrame(vec3 n, vec3 p0, vec3 p1, vec3 p2, vec2 uv0, vec2 uv1, vec2 uv2,
+                    out vec3 T, out vec3 B)
 {
-    if (mc.usePBR == 0u || mc.maps[1] < 0) return n;
-
     vec3  e1 = p1 - p0, e2 = p2 - p0;
     vec2  d1 = uv1 - uv0, d2 = uv2 - uv0;
     float det = d1.x * d2.y - d1.y * d2.x;
-    vec3  T, B;
-    if (abs(det) < 1e-8) {                       // degenerate UVs -> arbitrary stable frame
+    if (abs(det) < 1e-8) {                        // degenerate UVs -> arbitrary stable frame
         T = normalize(abs(n.z) < 0.999 ? cross(vec3(0,0,1), n) : cross(vec3(1,0,0), n));
         B = cross(n, T);
     } else {
@@ -137,21 +128,82 @@ vec3 hdShadingNormal(MatCtrl mc, uint id, vec2 hitUV, vec3 n,
         T = normalize(T - n * dot(n, T));        // Gram-Schmidt against the geometric normal
         B = cross(n, T) * sign(det);             // handedness / mirror sign
     }
-    vec2 sz = vec2(textureSize(materialTex[nonuniformEXT(id)], 0));
-    vec3 tn = texture(hdTex[nonuniformEXT(mc.maps[1])], (hitUV / sz) * mc.uvScale).xyz * 2.0 - 1.0;
+}
+
+// DOOM-0042 (Task 14): parallax-occlusion-mapped sample UV. For a `pom`-flagged material with
+// a height map, march the view ray (in the tangent frame) INTO the surface — white = raised,
+// so the ray steps deeper until it dips below the height field, then one bisection refine.
+// The offset is bounded to kPomHeightScale of a tile (not UV-clamped): the REPEAT sampler wraps
+// the small overshoot rather than smearing an edge texel, which avoids grazing-angle holes.
+// `noPom` and non-pom / non-HD materials return baseUV unchanged (no march).
+vec2 hdParallaxUV(MatCtrl mc, vec2 baseUV, vec3 T, vec3 B, vec3 n, vec3 dir)
+{
+    if (mc.usePBR == 0u || (mc.flags & 1u) == 0u || mc.maps[6] < 0) return baseUV;  // bit0 = pom
+    vec3  vT = normalize(vec3(dot(-dir, T), dot(-dir, B), dot(-dir, n)));  // view dir, tangent space
+    float nv = clamp(vT.z, 0.05, 1.0);
+    int   steps = int(mix(32.0, 16.0, nv));      // 16 at normal incidence -> 32 grazing
+    vec2  maxOff = (vT.xy / nv) * kPomHeightScale;
+    float layer = 1.0 / float(steps);
+    float curH = 0.0, prevH = 0.0;
+    vec2  curUV = baseUV, prevUV = baseUV;
+    float curD = 0.0, prevD = 0.0;
+    for (int i = 0; i < steps; i++) {
+        prevUV = curUV; prevH = curH; prevD = curD;
+        curD += layer;                           // marched depth 0..1
+        curUV = baseUV - maxOff * curD;
+        curH = textureLod(hdTex[nonuniformEXT(mc.maps[6])], curUV, 0.0).r;  // white = raised
+        if (curD >= (1.0 - curH)) break;         // ray dipped below the height field
+    }
+    float h0 = (1.0 - prevH) - prevD;            // signed gap above the surface (prev step)
+    float h1 = (1.0 - curH)  - curD;             // signed gap below the surface (cur step)
+    float t  = h0 / max(h0 - h1, 1e-5);
+    return mix(prevUV, curUV, clamp(t, 0.0, 1.0));
+}
+
+// DOOM-0042 (Task 10): linear albedo. An HD material (usePBR + an albedo map) samples its
+// RGBA8 map at the shared `sUV` (base or POM-marched); the sRGB image VIEW does the
+// gamma->linear decode in hardware, so no pow() here. Everything else (sprites, unmapped
+// walls, the InitHdDefault fallback) routes to the paletted decodeAlbedo at raw `hitUV`.
+vec3 hdAlbedo(MatCtrl mc, uint id, vec2 hitUV, vec2 sUV)
+{
+    if (mc.usePBR != 0u && mc.maps[0] >= 0)
+        return texture(hdTex[nonuniformEXT(mc.maps[0])], sUV).rgb;   // sRGB view -> linear
+    return decodeAlbedo(id, hitUV);
+}
+
+// DOOM-0042 (Task 11): world-space shading normal for an HD material — unpacks the tangent-
+// space normal map (OpenGL Y+, no green flip) at the shared `sUV` and rotates it into world
+// space with the precomputed frame (T,B from hdTangentFrame). Returns the geometric normal
+// `n` unchanged when the material has no normal map (maps[1] < 0) or isn't HD, so a flat
+// bring-up normal is an exact null result. Used as the LIGHTING normal; the caller keeps the
+// geometric `n` for the SVGF G-buffer (denoiser edge-stopping) and lifts the shadow-ray origin.
+vec3 hdShadingNormal(MatCtrl mc, uint id, vec2 sUV, vec3 n, vec3 T, vec3 B)
+{
+    if (mc.usePBR == 0u || mc.maps[1] < 0) return n;
+    vec3 tn = texture(hdTex[nonuniformEXT(mc.maps[1])], sUV).xyz * 2.0 - 1.0;
     return normalize(tn.x * T + tn.y * B + tn.z * n);
 }
 
 // DOOM-0042 (Task 12): baked ambient-occlusion multiplier (single-channel .r, 1.0 = fully
-// open, 0 = fully occluded) sampled at the same hitUV/sz*uvScale as the albedo. 1.0 when the
-// material has no AO map. The caller multiplies this into the AMBIENT / GI-bounce term ONLY,
-// never the direct NEE or flashlight — so crevices darken under fill light without dimming a
-// surface a torch is shining straight onto.
-float hdAO(MatCtrl mc, uint id, vec2 hitUV)
+// open, 0 = fully occluded) sampled at the shared `sUV`. 1.0 when the material has no AO map.
+// The caller multiplies this into the AMBIENT / GI-bounce term ONLY, never the direct NEE or
+// flashlight — so crevices darken under fill light without dimming a surface a torch shines on.
+float hdAO(MatCtrl mc, uint id, vec2 sUV)
 {
     if (mc.usePBR == 0u || mc.maps[4] < 0) return 1.0;
-    vec2 sz = vec2(textureSize(materialTex[nonuniformEXT(id)], 0));
-    return texture(hdTex[nonuniformEXT(mc.maps[4])], (hitUV / sz) * mc.uvScale).r;
+    return texture(hdTex[nonuniformEXT(mc.maps[4])], sUV).r;
+}
+
+// DOOM-0042 (Task 13): HD self-radiance (linear) from the emissive map at the shared `sUV`,
+// black when the material has no emissive map. The sRGB image VIEW de-gammas in hardware. The
+// caller adds `emis * kEmissiveScale` to the outgoing radiance on the DISPLAY (mode-4) path;
+// the shipped denoised path (mode 6) keeps DOOM's existing per-material fullbright emission
+// (svgf_composite re-adds it) — a dedicated per-texel HD emissive channel there is deferred
+// (DOOM-0178), and v1 ships no emissive maps so nothing is lost meanwhile.
+vec3 hdEmissive(MatCtrl mc, uint id, vec2 sUV)
+{
+    if (mc.usePBR == 0u || mc.maps[5] < 0) return vec3(0.0);
+    return texture(hdTex[nonuniformEXT(mc.maps[5])], sUV).rgb;   // sRGB view -> linear
 }
 
 layout(push_constant) uniform PC {
@@ -541,7 +593,19 @@ void main()
             uint  id     = isSprite ? (pc.misc4.x + uint(texnum))
                          : (((flags & FLAG_FLAT) != 0) ? (pc.misc.w + uint(texnum))
                                                        : uint(texnum));
-            MatCtrl mc; vec3 albedo = hdAlbedo(id, hitUV, mc);   // HD if usePBR, else paletted
+            // DOOM-0042 shared HD prologue (Tasks 11/14): the tangent frame + POM march are
+            // computed ONCE per hit, then every map (albedo/normal/AO/emissive) samples at the
+            // resulting `sUV` so relief self-occludes consistently. Gated on usePBR: a paletted
+            // hit skips it entirely (sUV == baseUV, byte-identical to the pre-HD path).
+            MatCtrl mc     = ctrl[id];             // one SSBO, runtime array -> no nonuniformEXT
+            vec2    baseUV = hdBaseUV(id, hitUV, mc.uvScale);
+            vec2    sUV    = baseUV;
+            vec3    T = n, B = n;
+            if (mc.usePBR != 0u) {
+                hdTangentFrame(n, p0, p1, p2, uv0, uv1, uv2, T, B);
+                sUV = hdParallaxUV(mc, baseUV, T, B, n, dir);
+            }
+            vec3 albedo = hdAlbedo(mc, id, hitUV, sUV);   // HD if usePBR, else paletted
 
             float tHit = rayQueryGetIntersectionTEXT(rq, true);
             vec3  hitP = origin + dir * tHit;
@@ -562,7 +626,7 @@ void main()
                 uint ss = pc.triSs.s[uint(prim)];
                 if (ss < pc.misc2.y) hitSec = pc.subSec.s[ss];
             }
-            vec3 shadeN = hdShadingNormal(mc, id, hitUV, n, p0, p1, p2, uv0, uv1, uv2);
+            vec3 shadeN = hdShadingNormal(mc, id, sUV, n, T, B);
             // shadeSurface/*Delta offset their shadow-ray origin along the normal they're
             // handed; a tilted bump normal shrinks the clearance off the true triangle
             // plane, so for a normal-mapped surface lift the shading point along the
@@ -585,7 +649,7 @@ void main()
             uint  subId    = isSprite ? 0xFFFFFFFFu : pc.triSs.s[uint(prim)];
             vec3  gi       = (subId < pc.misc2.y) ? giIrradiance(pc.probes, subId, shadeN)
                                                   : vec3(0.0);
-            L += albedo * max(gi, ambient) * hdAO(mc, id, hitUV);   // AO dims fill light only
+            L += albedo * max(gi, ambient) * hdAO(mc, id, sUV);   // AO dims fill light only
 
             // Dynamic point-light deltas (build step 5): the muzzle flash + the
             // DOOM-0044 player flashlight, each a hard ray-traced shadow composited
@@ -593,6 +657,11 @@ void main()
             // adds the same, demodulated). Display path keeps the albedo factor.
             L += muzzleFlashDelta(shadeP, shadeN, albedo);
             L += flashlightDelta(shadeP, shadeN, albedo);
+
+            // DOOM-0042 (Task 13): HD self-radiance on the primary hit. Added after the lit
+            // terms so an emissive panel glows regardless of scene light. vec3(0) for materials
+            // with no emissive map, so ordinary walls are unchanged.
+            L += hdEmissive(mc, id, sUV) * kEmissiveScale;
 
             if (any(isnan(L)) || any(isinf(L))) L = vec3(0.0);
             colour = toneEncode(L);
@@ -610,7 +679,11 @@ void main()
             uint  id     = isSprite ? (pc.misc4.x + uint(texnum))
                          : (((flags & FLAG_FLAT) != 0) ? (pc.misc.w + uint(texnum))
                                                        : uint(texnum));
-            MatCtrl mc; vec3 albedo = hdAlbedo(id, hitUV, mc);   // HD if usePBR, else paletted
+            // Verify integrates DIRECT radiance with the geometric normal (an INV-6 math
+            // self-test, not the HD look): base-UV albedo, no POM / normal / AO.
+            MatCtrl mc     = ctrl[id];
+            vec2    baseUV = hdBaseUV(id, hitUV, mc.uvScale);
+            vec3    albedo = hdAlbedo(mc, id, hitUV, baseUV);   // HD if usePBR, else paletted
             float tHit   = rayQueryGetIntersectionTEXT(rq, true);
             vec3  hitP   = origin + dir * tHit;
 
@@ -652,7 +725,18 @@ void main()
             uint  id     = isSprite ? (pc.misc4.x + uint(texnum))
                          : (((flags & FLAG_FLAT) != 0) ? (pc.misc.w + uint(texnum))
                                                        : uint(texnum));
-            MatCtrl mc; vec3 albedo = hdAlbedo(id, hitUV, mc);   // HD if usePBR, else paletted
+            // DOOM-0042 shared HD prologue (Tasks 11/14) — same as mode 4: tangent frame +
+            // POM march once, every map samples the resulting `sUV`. HD emissive is NOT added
+            // here; the composite keeps DOOM's per-material fullbright emission (see hdEmissive).
+            MatCtrl mc     = ctrl[id];
+            vec2    baseUV = hdBaseUV(id, hitUV, mc.uvScale);
+            vec2    sUV    = baseUV;
+            vec3    T = n, B = n;
+            if (mc.usePBR != 0u) {
+                hdTangentFrame(n, p0, p1, p2, uv0, uv1, uv2, T, B);
+                sUV = hdParallaxUV(mc, baseUV, T, B, n, dir);
+            }
+            vec3 albedo = hdAlbedo(mc, id, hitUV, sUV);   // HD if usePBR, else paletted
             float tHit   = rayQueryGetIntersectionTEXT(rq, true);
             vec3  hitP   = origin + dir * tHit;
 
@@ -694,7 +778,7 @@ void main()
             // Lighting uses the normal-mapped shading normal; the G-buffer normal above
             // stays GEOMETRIC (the SVGF edge-stopping wants low-frequency normals, not the
             // high-frequency map detail, or it treats bumps as edges and under-denoises).
-            vec3 shadeN = hdShadingNormal(mc, id, hitUV, n, p0, p1, p2, uv0, uv1, uv2);
+            vec3 shadeN = hdShadingNormal(mc, id, sUV, n, T, B);
             // Geometric shadow-origin lift for normal-mapped surfaces (see mode 4); gpos
             // above stored the TRUE hitP, so only the shadow rays use the lifted point.
             vec3 shadeP = (mc.usePBR != 0u && mc.maps[1] >= 0) ? hitP + n * 2e-3 : hitP;
@@ -709,7 +793,7 @@ void main()
             uint  subId    = isSprite ? 0xFFFFFFFFu : pc.triSs.s[uint(prim)];  // sprites: no GI probe
             vec3  gi       = (subId < pc.misc2.y) ? giIrradiance(pc.probes, subId, shadeN)
                                                   : vec3(0.0);
-            illum += max(gi, ambient) * hdAO(mc, id, hitUV);   // AO dims fill light only
+            illum += max(gi, ambient) * hdAO(mc, id, sUV);   // AO dims fill light only
 
             // Muzzle flash + DOOM-0044 flashlight, demodulated (the composite re-
             // applies albedo). DOOM-0130 shared helpers — passing vec3(1.0) strips
