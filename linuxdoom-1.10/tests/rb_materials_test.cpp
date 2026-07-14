@@ -98,6 +98,33 @@ static void test_parser_coverage_gaps() {
     assert(rb_parse_material_line("A,hero,x,x,x,x,x,x,x,1.0,pom,extra", &r) == -1);
 }
 
+/* --- Task 5: Traffic-ordered budget --- */
+static void test_budget_drops_lowest_traffic() {
+    // 3 HD materials, each ~2 MB, ceiling 5 MB -> two fit, the third (lowest traffic) drops.
+    rb_matctrl_t table[3];
+    for (int i = 0; i < 3; i++) { table[i].usePBR = 1; table[i].flags = 0; table[i].uvScale = 1; }
+    float traffic[3] = { 100.0f, 300.0f, 50.0f };   // id1 biggest, id2 smallest
+    float est_mb[3]  = { 2.0f, 2.0f, 2.0f };
+    int   is_hero[3] = { 0, 0, 0 };
+    int order[3], nloaded = -1;
+    rb_apply_budget(table, 3, traffic, est_mb, is_hero, 5.0f, order, &nloaded);
+    assert(nloaded == 2);
+    assert(order[0] == 1 && order[1] == 0);         // descending traffic
+    assert(table[1].usePBR == 1 && table[0].usePBR == 1);
+    assert(table[2].usePBR == 0);                   // lowest-traffic dropped
+}
+static void test_budget_pins_hero_over_bigger_derived() {
+    rb_matctrl_t table[2];
+    for (int i = 0; i < 2; i++) { table[i].usePBR = 1; table[i].uvScale = 1; table[i].flags = 0; }
+    float traffic[2] = { 10.0f, 999.0f };           // id1 huge traffic but derived
+    float est_mb[2]  = { 4.0f, 4.0f };
+    int   is_hero[2] = { 1, 0 };                     // id0 is a hero
+    int order[2], nloaded = 0;
+    rb_apply_budget(table, 2, traffic, est_mb, is_hero, 5.0f, order, &nloaded);
+    assert(nloaded == 1 && order[0] == 0);           // hero pinned first, derived dropped
+    assert(table[0].usePBR == 1 && table[1].usePBR == 0);
+}
+
 int main() {
     test_hero_row();
     test_derive_row_blank_maps();
@@ -107,6 +134,8 @@ int main() {
     test_parser_coverage_gaps();
     test_ctrl_table_build();
     test_ctrl_table_dup_last_wins();
+    test_budget_drops_lowest_traffic();
+    test_budget_pins_hero_over_bigger_derived();
     printf("rb_materials: all passed\n");
     return 0;
 }

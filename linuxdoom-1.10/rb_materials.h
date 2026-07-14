@@ -119,4 +119,39 @@ static inline void rb_build_ctrl_table(const rb_matrow_t* rows, int nrows, int n
     if (dup_count) *dup_count = dups;
 }
 
+typedef struct { int id; float traffic; int is_hero; } rb_sortent_t;
+
+static inline int rb_cmp_ent(const void* a, const void* b) {
+    const rb_sortent_t* x = (const rb_sortent_t*)a;
+    const rb_sortent_t* y = (const rb_sortent_t*)b;
+    if (x->is_hero != y->is_hero) return y->is_hero - x->is_hero;   /* heroes first */
+    if (x->traffic < y->traffic) return 1;                          /* then desc traffic */
+    if (x->traffic > y->traffic) return -1;
+    return x->id - y->id;                                           /* stable tiebreak */
+}
+
+static inline void rb_apply_budget(rb_matctrl_t* table, int nmaterials,
+                     const float* traffic, const float* est_mb, const int* is_hero,
+                     float ceiling_mb, int* order_out, int* n_loaded) {
+    rb_sortent_t* ent = (rb_sortent_t*)malloc((size_t)nmaterials * sizeof(rb_sortent_t));
+    int m = 0;
+    for (int i = 0; i < nmaterials; i++)
+        if (table[i].usePBR) { ent[m].id = i; ent[m].traffic = traffic[i]; ent[m].is_hero = is_hero[i]; m++; }
+    qsort(ent, m, sizeof(rb_sortent_t), rb_cmp_ent);
+
+    float used = 0.0f;
+    int n = 0;
+    for (int k = 0; k < m; k++) {
+        int id = ent[k].id;
+        if (used + est_mb[id] <= ceiling_mb) {
+            used += est_mb[id];
+            order_out[n++] = id;                /* loaded, in upload order */
+        } else {
+            table[id].usePBR = 0;               /* over budget -> paletted */
+        }
+    }
+    *n_loaded = n;
+    free(ent);
+}
+
 #endif
