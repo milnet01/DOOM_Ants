@@ -6,7 +6,7 @@
 
 The Ultra tier gains a high-fidelity PBR material set (DOOM-0042). Two hard
 choices fall out of that, both of which the documentation standard
-(`docs/standards/documentation.md` §"hard architectural choice") wants recorded
+(the hard-architectural-choice rule in `docs/standards/documentation.md` §"Specs (design docs)") wants recorded
 as decisions, not just design:
 
 1. **How the original paletted texture names map to PBR map sets** — an on-disk
