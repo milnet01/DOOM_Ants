@@ -1627,3 +1627,18 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** DOOM paints one texture across many walls, so an HD texture repeats visibly and every wall looks identical. This adds a drifting layer of dirt, wear, and scorch marks placed by where each surface sits in the world — so no two walls look the same, and the tiling stops being obvious.
   Kind: feature.
   Source: user-request-2026-07-14 (DOOM-0042 T17 play-test discussion).
+
+- 📋 [DOOM-0180] **Thin bright diagonal seam on ceilings in the Ultra RT view.**
+  A thin, bright, diagonal line appears on dark ceiling flats in E1M1 Ultra (green
+  room; also faintly in the wood-panel room). NOT from DOOM-0042 HD materials —
+  ceilings are not heroed and run the paletted path (usePBR=0, byte-identical). Most
+  likely a pre-existing T-junction / triangulation crack in the RT flat mesh where a
+  sliver of a brighter neighbouring surface or the sky backdrop leaks through the
+  sub-pixel gap between two coplanar ceiling triangles. Investigate: (1) repro on a
+  pre-DOOM-0042 build to confirm pre-existing; (2) inspect the flat-triangulation in
+  r_mesh (T-junction handling at sector/subsector edges); (3) check if the bright
+  value is the sky backdrop or an adjacent lit flat. Low priority (hairline, not
+  gameplay-affecting) but a visible RT-view polish item.
+  **Layman:** A faint bright line shows up along some ceilings in the ray-traced view, like a hairline crack. Harmless, but it should be tracked down and sealed.
+  Kind: investigate.
+  Source: observed-2026-07-14 (DOOM-0042 T17 E1M1 Ultra play-test, images #8/#9).
