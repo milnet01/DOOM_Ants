@@ -1,6 +1,5 @@
 #include "rb_image.h"
 #include <stdlib.h>
-#include <string.h>
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG            /* v1 ships PNG heroes/derived only */
@@ -38,6 +37,7 @@ void rb_image_downscale_max(rb_image_t* img, int max_edge) {
     int nw = (int)(img->w * s); if (nw < 1) nw = 1;
     int nh = (int)(img->h * s); if (nh < 1) nh = 1;
     unsigned char* dst = (unsigned char*)malloc((size_t)nw * nh * 4);
+    if (!dst) return;                       /* OOM: leave img unchanged (never crash) */
     for (int y = 0; y < nh; y++) {
         int sy0 = (int)((double)y     * img->h / nh);
         int sy1 = (int)((double)(y+1) * img->h / nh); if (sy1 <= sy0) sy1 = sy0 + 1;
