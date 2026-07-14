@@ -133,9 +133,10 @@ void hdTangentFrame(vec3 n, vec3 p0, vec3 p1, vec3 p2, vec2 uv0, vec2 uv1, vec2 
 // DOOM-0042 (Task 14): parallax-occlusion-mapped sample UV. For a `pom`-flagged material with
 // a height map, march the view ray (in the tangent frame) INTO the surface — white = raised,
 // so the ray steps deeper until it dips below the height field, then one bisection refine.
-// The offset is bounded to kPomHeightScale of a tile (not UV-clamped): the REPEAT sampler wraps
-// the small overshoot rather than smearing an edge texel, which avoids grazing-angle holes.
-// `noPom` and non-pom / non-HD materials return baseUV unchanged (no march).
+// The step ramp + the nv floor bound the offset (worst case ~kPomHeightScale/0.05 of a tile at
+// a grazing angle); it's NOT UV-clamped, so the REPEAT sampler wraps the small overshoot rather
+// than smearing an edge texel, which avoids grazing-angle holes. `noPom` and non-pom / non-HD
+// materials return baseUV unchanged (no march).
 vec2 hdParallaxUV(MatCtrl mc, vec2 baseUV, vec3 T, vec3 B, vec3 n, vec3 dir)
 {
     if (mc.usePBR == 0u || (mc.flags & 1u) == 0u || mc.maps[6] < 0) return baseUV;  // bit0 = pom
@@ -144,14 +145,17 @@ vec2 hdParallaxUV(MatCtrl mc, vec2 baseUV, vec3 T, vec3 B, vec3 n, vec3 dir)
     int   steps = int(mix(32.0, 16.0, nv));      // 16 at normal incidence -> 32 grazing
     vec2  maxOff = (vT.xy / nv) * kPomHeightScale;
     float layer = 1.0 / float(steps);
-    float curH = 0.0, prevH = 0.0;
+    // Seed prev/cur from the TRUE height at the march origin (curD=0), so a first-step break
+    // (a sharp peak) bisects against the real surface, not a placeholder gap of 1.0.
+    float curH = textureLod(hdTex[nonuniformEXT(mc.maps[6])], baseUV, 0.0).r;   // white = raised
+    float prevH = curH;
     vec2  curUV = baseUV, prevUV = baseUV;
     float curD = 0.0, prevD = 0.0;
     for (int i = 0; i < steps; i++) {
         prevUV = curUV; prevH = curH; prevD = curD;
         curD += layer;                           // marched depth 0..1
         curUV = baseUV - maxOff * curD;
-        curH = textureLod(hdTex[nonuniformEXT(mc.maps[6])], curUV, 0.0).r;  // white = raised
+        curH = textureLod(hdTex[nonuniformEXT(mc.maps[6])], curUV, 0.0).r;
         if (curD >= (1.0 - curH)) break;         // ray dipped below the height field
     }
     float h0 = (1.0 - prevH) - prevD;            // signed gap above the surface (prev step)
@@ -593,15 +597,16 @@ void main()
             uint  id     = isSprite ? (pc.misc4.x + uint(texnum))
                          : (((flags & FLAG_FLAT) != 0) ? (pc.misc.w + uint(texnum))
                                                        : uint(texnum));
-            // DOOM-0042 shared HD prologue (Tasks 11/14): the tangent frame + POM march are
-            // computed ONCE per hit, then every map (albedo/normal/AO/emissive) samples at the
-            // resulting `sUV` so relief self-occludes consistently. Gated on usePBR: a paletted
-            // hit skips it entirely (sUV == baseUV, byte-identical to the pre-HD path).
-            MatCtrl mc     = ctrl[id];             // one SSBO, runtime array -> no nonuniformEXT
-            vec2    baseUV = hdBaseUV(id, hitUV, mc.uvScale);
-            vec2    sUV    = baseUV;
+            // DOOM-0042 shared HD prologue (Tasks 11/14): the base UV, tangent frame, and POM
+            // march are computed ONCE per hit, then every map (albedo/normal/AO/emissive)
+            // samples at the resulting `sUV` so relief self-occludes consistently. The whole
+            // block is gated on usePBR, so a paletted hit does NO extra work (sUV unused —
+            // hdAlbedo samples raw hitUV) and is byte-identical to the pre-HD path.
+            MatCtrl mc  = ctrl[id];                // one SSBO, runtime array -> no nonuniformEXT
+            vec2    sUV = hitUV;                    // paletted default (unused by the paletted branch)
             vec3    T = n, B = n;
             if (mc.usePBR != 0u) {
+                vec2 baseUV = hdBaseUV(id, hitUV, mc.uvScale);
                 hdTangentFrame(n, p0, p1, p2, uv0, uv1, uv2, T, B);
                 sUV = hdParallaxUV(mc, baseUV, T, B, n, dir);
             }
@@ -680,10 +685,11 @@ void main()
                          : (((flags & FLAG_FLAT) != 0) ? (pc.misc.w + uint(texnum))
                                                        : uint(texnum));
             // Verify integrates DIRECT radiance with the geometric normal (an INV-6 math
-            // self-test, not the HD look): base-UV albedo, no POM / normal / AO.
-            MatCtrl mc     = ctrl[id];
-            vec2    baseUV = hdBaseUV(id, hitUV, mc.uvScale);
-            vec3    albedo = hdAlbedo(mc, id, hitUV, baseUV);   // HD if usePBR, else paletted
+            // self-test, not the HD look): base-UV albedo, no POM / normal / AO. Base UV is
+            // computed only for an HD hit; a paletted hit samples raw hitUV (no extra work).
+            MatCtrl mc  = ctrl[id];
+            vec2    sUV = (mc.usePBR != 0u) ? hdBaseUV(id, hitUV, mc.uvScale) : hitUV;
+            vec3    albedo = hdAlbedo(mc, id, hitUV, sUV);   // HD if usePBR, else paletted
             float tHit   = rayQueryGetIntersectionTEXT(rq, true);
             vec3  hitP   = origin + dir * tHit;
 
@@ -725,14 +731,15 @@ void main()
             uint  id     = isSprite ? (pc.misc4.x + uint(texnum))
                          : (((flags & FLAG_FLAT) != 0) ? (pc.misc.w + uint(texnum))
                                                        : uint(texnum));
-            // DOOM-0042 shared HD prologue (Tasks 11/14) — same as mode 4: tangent frame +
-            // POM march once, every map samples the resulting `sUV`. HD emissive is NOT added
-            // here; the composite keeps DOOM's per-material fullbright emission (see hdEmissive).
-            MatCtrl mc     = ctrl[id];
-            vec2    baseUV = hdBaseUV(id, hitUV, mc.uvScale);
-            vec2    sUV    = baseUV;
+            // DOOM-0042 shared HD prologue (Tasks 11/14) — same as mode 4: base UV + tangent
+            // frame + POM march once (usePBR-gated), every map samples the resulting `sUV`. HD
+            // emissive is NOT added here; the composite keeps DOOM's per-material fullbright
+            // emission (see hdEmissive). Paletted hits do no extra work (byte-identical).
+            MatCtrl mc  = ctrl[id];
+            vec2    sUV = hitUV;                    // paletted default (unused by the paletted branch)
             vec3    T = n, B = n;
             if (mc.usePBR != 0u) {
+                vec2 baseUV = hdBaseUV(id, hitUV, mc.uvScale);
                 hdTangentFrame(n, p0, p1, p2, uv0, uv1, uv2, T, B);
                 sUV = hdParallaxUV(mc, baseUV, T, B, n, dir);
             }
