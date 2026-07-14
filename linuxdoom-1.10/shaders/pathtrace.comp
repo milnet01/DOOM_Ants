@@ -118,8 +118,8 @@ vec3 hdAlbedo(uint id, vec2 hitUV, out MatCtrl mc)
 // map (OpenGL Y+, no green flip), and rotates it into world space. Returns the geometric
 // normal `n` unchanged when the material has no normal map (maps[1] < 0) or isn't HD — so a
 // flat bring-up normal is an exact null result. Samples at the same hitUV/sz*uvScale as the
-// albedo, so every map lines up. Used for the LIGHTING normal only; the caller keeps the
-// geometric `n` for the SVGF G-buffer (denoiser edge-stopping) and ray offsets.
+// albedo, so every map lines up. Used as the LIGHTING normal; the caller keeps the geometric
+// `n` for the SVGF G-buffer (denoiser edge-stopping) and lifts the shadow-ray origin along it.
 vec3 hdShadingNormal(MatCtrl mc, uint id, vec2 hitUV, vec3 n,
                      vec3 p0, vec3 p1, vec3 p2, vec2 uv0, vec2 uv1, vec2 uv2)
 {
@@ -473,8 +473,9 @@ void main()
 
         // DOOM-0042 (Task 11): the hit triangle's three world-space vertex positions, for
         // the normal-map tangent frame (dP/dU, dP/dV) built in hdShadingNormal. Positions
-        // are floats [0,1,2] of each 18-float vertex. Dead-stripped by the glslc optimiser
-        // in the mode variants that never shade an HD normal (2/3/5, sprites).
+        // are floats [0,1,2] of each 18-float vertex. Unused in the mode variants that never
+        // shade an HD normal (2/3/5) — `mode` is a spec constant, so each pipeline is
+        // specialised at creation and the driver dead-strips the branches it can't reach.
         vec3 p0 = vec3(vb.v[i0 +  0u], vb.v[i0 +  1u], vb.v[i0 +  2u]);
         vec3 p1 = vec3(vb.v[i0 + 18u], vb.v[i0 + 19u], vb.v[i0 + 20u]);
         vec3 p2 = vec3(vb.v[i0 + 36u], vb.v[i0 + 37u], vb.v[i0 + 38u]);
@@ -550,7 +551,12 @@ void main()
                 if (ss < pc.misc2.y) hitSec = pc.subSec.s[ss];
             }
             vec3 shadeN = hdShadingNormal(mc, id, hitUV, n, p0, p1, p2, uv0, uv1, uv2);
-            vec3 L = shadeSurface(hitP, shadeN, albedo, id, pc.misc2.x, pc.misc4.y,
+            // shadeSurface/*Delta offset their shadow-ray origin along the normal they're
+            // handed; a tilted bump normal shrinks the clearance off the true triangle
+            // plane, so for a normal-mapped surface lift the shading point along the
+            // GEOMETRIC normal first (paletted is byte-identical: guard is false there).
+            vec3 shadeP = (mc.usePBR != 0u && mc.maps[1] >= 0) ? hitP + n * 2e-3 : hitP;
+            vec3 L = shadeSurface(shadeP, shadeN, albedo, id, pc.misc2.x, pc.misc4.y,
                                   pc.emit, pc.matEmis, NEE_SAMPLES, addEmis,
                                   hitSec, pc.misc4.z, pc.emitSec, pc.reject, seed);
 
@@ -573,8 +579,8 @@ void main()
             // DOOM-0044 player flashlight, each a hard ray-traced shadow composited
             // additively over the baked static (DOOM-0130 shared helpers; mode 6
             // adds the same, demodulated). Display path keeps the albedo factor.
-            L += muzzleFlashDelta(hitP, shadeN, albedo);
-            L += flashlightDelta(hitP, shadeN, albedo);
+            L += muzzleFlashDelta(shadeP, shadeN, albedo);
+            L += flashlightDelta(shadeP, shadeN, albedo);
 
             if (any(isnan(L)) || any(isinf(L))) L = vec3(0.0);
             colour = toneEncode(L);
@@ -677,7 +683,10 @@ void main()
             // stays GEOMETRIC (the SVGF edge-stopping wants low-frequency normals, not the
             // high-frequency map detail, or it treats bumps as edges and under-denoises).
             vec3 shadeN = hdShadingNormal(mc, id, hitUV, n, p0, p1, p2, uv0, uv1, uv2);
-            vec3 illum = shadeSurface(hitP, shadeN, vec3(1.0), id, pc.misc2.x, pc.misc4.y,
+            // Geometric shadow-origin lift for normal-mapped surfaces (see mode 4); gpos
+            // above stored the TRUE hitP, so only the shadow rays use the lifted point.
+            vec3 shadeP = (mc.usePBR != 0u && mc.maps[1] >= 0) ? hitP + n * 2e-3 : hitP;
+            vec3 illum = shadeSurface(shadeP, shadeN, vec3(1.0), id, pc.misc2.x, pc.misc4.y,
                                       pc.emit, pc.matEmis, NEE_SAMPLES, false,
                                       hitSec, pc.misc4.z, pc.emitSec, pc.reject, seed);
             // GI bounce + DOOM-0043 sector-light ambient floor (demodulated: the
@@ -693,8 +702,8 @@ void main()
             // Muzzle flash + DOOM-0044 flashlight, demodulated (the composite re-
             // applies albedo). DOOM-0130 shared helpers — passing vec3(1.0) strips
             // the albedo bit-exactly (1.0*x == x), matching the pre-refactor feed.
-            illum += muzzleFlashDelta(hitP, shadeN, vec3(1.0));
-            illum += flashlightDelta(hitP, shadeN, vec3(1.0));
+            illum += muzzleFlashDelta(shadeP, shadeN, vec3(1.0));
+            illum += flashlightDelta(shadeP, shadeN, vec3(1.0));
 
             if (any(isnan(illum)) || any(isinf(illum))) illum = vec3(0.0);
             imageStore(gillum, ivec2(px), vec4(illum, 1.0));
