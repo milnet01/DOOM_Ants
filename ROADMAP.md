@@ -1585,3 +1585,15 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** The game should start up in whatever view mode you last used, instead of resetting to a default each time you launch.
   Kind: enhancement.
   Source: user-request-2026-07-12.
+
+- 📋 [DOOM-0176] **Fix render-pass/framebuffer subpass-dependency incompatibility validation errors in the raster path.**
+  Validation (RADV, VUID-VkRenderPassBeginInfo-renderPass-00904 + VUID-vkCmdDraw-renderPass-02684): a VkRenderPass used to BEGIN a pass (0xf..) is incompatible with the VkRenderPass the framebuffer/pipeline was created against (0xc..) on the subpass dependency srcStageMask/srcAccessMask/dstAccessMask (VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT + TRANSFER_WRITE vs EARLY_FRAGMENT_TESTS|COLOR_ATTACHMENT_OUTPUT). ~20 messages/frame. NOT from DOOM-0042 (that change is compute-only, touches no render pass) — pre-existing raster, likely the DOOM-0170 L2b MRT/SSAO composite passes whose subpass dependency carries an ALL_TRANSFER src. Fix: align the offending render pass's subpass-dependency stage/access masks between the framebuffer-creation pass and the begun/pipeline pass. Benign on RADV (renders correctly) but spec-noncompliant.
+  **Layman:** The graphics card's debug checker complains that two rendering steps disagree about timing; harmless on this GPU but should be cleaned up.
+  Kind: fix.
+  Source: observed-2026-07-14 (DOOM-0042 E1M1 Ultra play-test log).
+
+- 📋 [DOOM-0177] **Fix a 2-object (1 VkBuffer + 1 VkDeviceMemory) leak at vkDestroyDevice shutdown.**
+  Validation at vkDestroyDevice: 'VkDevice has 2 leaked objects' — one VkDeviceMemory + one VkBuffer (adjacent handles = a buffer+its memory allocated together). NOT the DOOM-0042 HD resources: FreeHdMaterials() frees every HD buffer/memory (hdCtrlBuf/hdCtrlMem/hdMemory + images/views/pool) and is called at shutdown (r_vulkan.cpp:7540) before device destroy — audited create/destroy-balanced. Candidate: g.overlayStaging + g.overlayStagingMem (r_vulkan.cpp:7553-7554, only freed if non-null) or another subsystem's staging buffer. Confirm pre-existing with a Solid-only run (never enter Ultra, so no HD built) — if it still leaks 2, it is not HD-related. Shutdown-only; no gameplay impact.
+  **Layman:** When the game exits, it forgets to hand back one small chunk of graphics memory. No effect while playing; tidy-up on quit.
+  Kind: fix.
+  Source: observed-2026-07-14 (DOOM-0042 E1M1 Ultra play-test log).
