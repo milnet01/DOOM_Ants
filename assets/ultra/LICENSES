@@ -2,6 +2,10 @@
 # Each map is derived (downscaled <=1024, palette-tinted) from the listed CC0 source.
 # format: <repo-path>  <source-url>  <license>
 
+# DOOM-0179 world-space grime overlay: first-party, procedurally authored (no third-party
+# source) by scripts/make_grunge.py. Regenerate with: python3 scripts/make_grunge.py
+assets/ultra/overlays/grunge.png  scripts/make_grunge.py  CC0-first-party
+
 assets/ultra/heroes/tech/STARTAN3_alb.png  https://polyhaven.com/a/metal_plate_02  CC0
 assets/ultra/heroes/tech/STARTAN3_nrm.png  https://polyhaven.com/a/metal_plate_02  CC0
 assets/ultra/heroes/tech/STARTAN3_hgt.png  https://polyhaven.com/a/metal_plate_02  CC0

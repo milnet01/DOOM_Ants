@@ -98,6 +98,14 @@ layout(set = 3, binding = 1) uniform sampler2D hdTex[];   // bindless RGBA8 PBR 
 const float kEmissiveScale = 40.0;
 // POM march depth (Task 14): the parallax offset spans at most this fraction of one UV tile.
 const float kPomHeightScale = 0.06;
+// DOOM-0179: world-space grime overlay tunables (the playtest knobs — rebuild to re-tune).
+// One grime tile spans ~384 DOOM map units, so the pattern is LOW frequency vs the base
+// texture (which repeats every 64-128 units): grime drifts across a whole wall and differs
+// between adjacent walls at different world positions, breaking the visible tiling. Strength
+// is the ± mottle depth of the centred blend (0 = off). The base heroes are pre-weathered,
+// so keep this subtle — it ADDS variation, it isn't the primary dirt.
+const float kGrimeWorldScale = 1.0 / 384.0;
+const float kGrimeStrength    = 0.32;
 
 // DOOM-0042: the base HD sample UV for material id `id` at raw-texel coord `hitUV`. Dividing
 // by the paletted texture's texel size maps hitUV into [0,1) tile space so an HD map tiles
@@ -221,7 +229,9 @@ layout(push_constant) uniform PC {
                      // z = estimator (0 = power-NEE, 1 = brute-force), w reserved
     uvec4 misc4;     // DOOM-0100: x = sprite material base (numWall+numFlat);
                      // y = omniStart (DOOM-0084); z = numSectors (DOOM-0119 REJECT
-                     // cull dim, 0 = off); w reserved
+                     // cull dim, 0 = off); w = sky wall-texture id (DOOM-0141)
+    uvec4 misc5;     // DOOM-0179: x = world-grime overlay bindless id in hdTex[]
+                     // (0xFFFFFFFF = none); y,z,w reserved
     Verts    verts;    // level mesh vertex buffer (device address)
     Emitters emit;     // step-3b emitter list (device address; count in misc2.x)
     MatEmis  matEmis;  // per-material Le table (device address)
@@ -411,6 +421,28 @@ vec3 flashlightDelta(vec3 hitP, vec3 n, vec3 albedo)
     return albedo * (1.0 / PI) * FLASHLIGHT_COLOR
          * (FLASHLIGHT_INTENSITY * spot) * fcos
          / (fl2 + FLASHLIGHT_RADIUS2);
+}
+
+// DOOM-0179: world-space grime overlay. The base HD texture tiles with the surface (every
+// 64-128 units); this multiplies in a single low-frequency grunge map sampled by WORLD
+// position instead, so identical tiles on different walls pick up different grime and stop
+// reading as copies. Dominant-axis projection (DOOM geometry is axis-aligned, z up: floors/
+// ceilings face ±z, walls face ±x or ±y — so a hard axis pick is exact, no triplanar blend).
+// The blend is CENTRED on the map's 0.5 mean (m = 1 + (g-0.5)*2*strength): net-neutral
+// exposure, dark specks darken and clean spots lighten. Applied to HD (usePBR) surfaces only
+// — paletted/Classic art is left byte-identical. `gid` is the overlay's hdTex[] slot from the
+// host (pc.misc5.x); 0xFFFFFFFF (the default all-paletted set, or grime disabled) is a no-op.
+vec3 applyGrime(vec3 albedo, vec3 hitP, vec3 n)
+{
+    uint gid = pc.misc5.x;
+    if (gid == 0xFFFFFFFFu) return albedo;
+    vec3 an = abs(n);
+    vec2 wUV = (an.z >= an.x && an.z >= an.y) ? hitP.xy    // floor / ceiling (normal ±z)
+             : (an.x >= an.y)                 ? hitP.yz    // wall facing ±x
+                                              : hitP.xz;   // wall facing ±y
+    float g = texture(hdTex[nonuniformEXT(gid)], wUV * kGrimeWorldScale).r;   // UNORM: raw 0..1
+    float m = 1.0 + (g - 0.5) * 2.0 * kGrimeStrength;      // centred -> no net brightness shift
+    return albedo * clamp(m, 0.35, 1.65);
 }
 
 // DOOM-0141: sample the classic DOOM sky panorama for a primary ray. Mirrors the
@@ -614,6 +646,7 @@ void main()
 
             float tHit = rayQueryGetIntersectionTEXT(rq, true);
             vec3  hitP = origin + dir * tHit;
+            if (mc.usePBR != 0u) albedo = applyGrime(albedo, hitP, n);   // DOOM-0179 world grime
 
             // DOOM-0084: world surfaces self-emit as before; a sprite self-emits only
             // if it's a fullbright light Thing (lamp/torch/barrel), so ammo pickups and
@@ -746,6 +779,9 @@ void main()
             vec3 albedo = hdAlbedo(mc, id, hitUV, sUV);   // HD if usePBR, else paletted
             float tHit   = rayQueryGetIntersectionTEXT(rq, true);
             vec3  hitP   = origin + dir * tHit;
+            // DOOM-0179 world grime, applied BEFORE galbedo is stored so the composite's
+            // re-modulation (L = albedo*illum) carries the mottle. n is geometric here.
+            if (mc.usePBR != 0u) albedo = applyGrime(albedo, hitP, n);
 
             // build step 6c (half-resolution lighting): the G-buffer (position /
             // normal / albedo) is written at FULL resolution for EVERY pixel — it

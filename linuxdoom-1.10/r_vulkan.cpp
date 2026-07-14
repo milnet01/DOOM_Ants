@@ -474,6 +474,8 @@ struct VulkanState
     VkBuffer                 hdCtrlBuf   = VK_NULL_HANDLE;
     VkDeviceMemory           hdCtrlMem   = VK_NULL_HANDLE;
     bool                     hdBuilt     = false;   // per-level guard; reset on map change
+    int                      hdGrungeIdx = -1;      // DOOM-0179: world-grime overlay slot in
+                                                    // the hdTex[] array (-1 = none loaded)
 
     VkDescriptorSetLayout dsLayout = VK_NULL_HANDLE;
     VkDescriptorPool      dsPool   = VK_NULL_HANDLE;
@@ -2171,18 +2173,19 @@ void CreateRtComputePipeline()
     dai.pSetLayouts        = &g.rtDsLayout;
     Check(vkAllocateDescriptorSets(g.device, &dai, &g.rtDs), "vkAllocateDescriptorSets(rt)");
 
-    // Push constant: 4x vec4 (camera) + 4x uvec4 (mode/w/h/numWall, emitter+probe
+    // Push constant: 4x vec4 (camera) + 5x uvec4 (mode/w/h/numWall, emitter+probe
     // counts, verify seed/spp/estimator, DOOM-0100 sprite base + omni-emitter start +
-    // DOOM-0119 REJECT sector count) + 9x uint64 (vertex / emitter / Le / probe-cache /
-    // tri-subsector / sprite-vert + DOOM-0119 subsector-sector / emitter-sector /
-    // reject-matrix addresses) = 200 bytes. MUST match sizeof(RtPushConstants) in
-    // RecordRtTrace — a short range silently drops the trailing addresses, so the
-    // verify struct's 152-byte push is a valid partial of this 200-byte range. Within
+    // DOOM-0119 REJECT sector count + DOOM-0141 sky id, DOOM-0179 grime-overlay id) +
+    // 9x uint64 (vertex / emitter / Le / probe-cache / tri-subsector / sprite-vert +
+    // DOOM-0119 subsector-sector / emitter-sector / reject-matrix addresses) = 216 bytes.
+    // MUST match sizeof(RtPushConstants) in RecordRtTrace — a short range silently drops
+    // the trailing addresses, so the verify struct's 184-byte push (RB_RtVerify, which
+    // mirrors misc4/misc5 as padding) is a valid PREFIX of this 216-byte range. Within
     // the 256-byte device limit.
     VkPushConstantRange pcr = {};
     pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pcr.offset     = 0;
-    pcr.size       = 200;
+    pcr.size       = 216;
     // Three sets: 0 = RT (TLAS + output image), 1 = the raster materials set
     // (g.dsLayout: PLAYPAL LUT + bindless material array), reused verbatim so the
     // textured trace (step 3a) decodes surfaces with no parallel material path,
@@ -4982,6 +4985,7 @@ static void InitHdDefault()
         table[i].flags   = 0u;
         table[i].usePBR  = 0u;
     }
+    g.hdGrungeIdx = -1;                 // DOOM-0179: no grime on the default all-paletted set
     BuildHdSet({}, table.data(), N);   // empty srcs -> 1x1 dummy image; all paletted
 }
 
@@ -5119,10 +5123,32 @@ static void EnsureHdMaterials()
         printf("DOOM-0042: %d material(s) dropped to paletted (> %d-image bindless cap).\n",
                capDropped, kHdMaxImages);
 
+    // DOOM-0179: append the world-space grime overlay as one extra bindless image — a single
+    // GLOBAL map (not per-material) the shader multiplies over every usePBR surface, sampled by
+    // WORLD position to break the base tiling. Loaded only when at least one HD material exists
+    // (nothing else samples it); its bindless slot rides to the trace in pc.misc5.x. A missing
+    // or undecodable overlay just leaves grime off (index -1) — never fatal.
+    g.hdGrungeIdx = -1;
+    rb_image_t grunge; bool grungeOk = false;
+    if (!srcs.empty() && (int)srcs.size() < kHdMaxImages) {   // room in the bindless array
+        char gpath[720];
+        rb_asset_path(gpath, sizeof(gpath), "overlays/grunge.png");
+        if (rb_image_load(gpath, &grunge)) {
+            rb_image_downscale_max(&grunge, kHdMaxEdge);
+            g.hdGrungeIdx = (int)srcs.size();
+            srcs.push_back({ grunge.pixels, grunge.w, grunge.h, false });   // UNORM (raw values)
+            grungeOk = true;
+            printf("DOOM-0179: grime overlay id %d  %dx%d.\n", g.hdGrungeIdx, grunge.w, grunge.h);
+        } else {
+            printf("DOOM-0179: no %s - grime overlay off.\n", gpath);
+        }
+    }
+
     // 7. Build the set (uploads images + SSBO), then free every decoded image (kept
     //    ones were copied to staging; dropped ones were never uploaded).
     BuildHdSet(srcs, table.data(), N);
     for (Decoded& d : decoded) rb_image_free(&d.img);
+    if (grungeOk) rb_image_free(&grunge);
 
     printf("DOOM-0042: HD load done - %d material(s), %d image(s), %.1f MB.\n",
            nLoaded, (int)srcs.size(), usedMB);
@@ -5830,15 +5856,23 @@ void RB_RtVerify()
     struct RtPC {
         float    camPos[4]; float camDir[4]; float camRight[4]; float camUp[4];
         uint32_t misc[4]; uint32_t misc2[4]; uint32_t misc3[4];
+        // misc4/misc5 are unused by mode 5's MATH, but MUST be present so the buffer-address
+        // fields below land at the SAME push-constant offsets the shader reads them from. The
+        // megakernel reads pc.misc4.x (sprite id base, line 717) and dereferences pc.emit
+        // (line 736) in mode 5; without this padding those addresses shift 32 bytes and the
+        // NEE loop dereferences garbage (device-lost). (Latent since DOOM-0100 added misc4;
+        // DOOM-0179's misc5 widened it — fixed here so -rtverify matches the layout again.)
+        uint32_t misc4[4]; uint32_t misc5[4];
         uint64_t vertsAddr, emitAddr, matEmisAddr, probeAddr, triSsAddr;
     } pc = {};
-    static_assert(sizeof(RtPC) == 152, "verify push-constant layout must match the shader");
+    static_assert(sizeof(RtPC) == 184, "verify push-constant layout must match the shader");
     pc.camPos[0] = g.lastView.x; pc.camPos[1] = g.lastView.y; pc.camPos[2] = g.lastView.z;
     pc.camDir[0] = cc;           pc.camDir[1] = ss;
     pc.camRight[0] = ss;         pc.camRight[1] = -cc;        pc.camRight[3] = 1.0f;
     pc.camUp[2]  = 1.0f;         pc.camUp[3] = (float)H / (float)W;
     pc.misc[0] = 5u; pc.misc[1] = W; pc.misc[2] = H; pc.misc[3] = (uint32_t)g.matNumWall;
     pc.misc2[0] = g.emitCount; pc.misc2[1] = g.probeCount;
+    pc.misc4[0] = (uint32_t)(g.matNumWall + g.matNumFlat);   // sprite id base (mode 5 sprite decode)
     pc.vertsAddr   = BufferAddress(g.vbuf);
     pc.emitAddr    = g.emitBuf    ? BufferAddress(g.emitBuf)    : 0;
     pc.matEmisAddr = g.matEmisBuf ? BufferAddress(g.matEmisBuf) : 0;
@@ -6314,6 +6348,7 @@ void RecordRtTrace(uint32_t idx)
         uint32_t misc2[4];      // emitterCount, probeCount, muzzle-flash(z), flashlight(w)
         uint32_t misc3[4];      // 4d verify only (seed/spp/estimator); 0 for display
         uint32_t misc4[4];      // DOOM-0100: x = sprite material base (numWall+numFlat); rest reserved
+        uint32_t misc5[4];      // DOOM-0179: x = world-grime overlay id in hdTex[] (0xFFFFFFFF = none)
         uint64_t vertsAddr;
         uint64_t emitAddr;      // step-3b emitter list (0 if none)
         uint64_t matEmisAddr;   // per-material Le table
@@ -6324,7 +6359,7 @@ void RecordRtTrace(uint32_t idx)
         uint64_t emitSecAddr;     // DOOM-0119: per-emitter sector (0 if cull off)
         uint64_t rejectAddr;      // DOOM-0119: REJECT bitmatrix words (0 if cull off)
     } pc = {};
-    static_assert(sizeof(RtPushConstants) == 200, "RT push-constant layout must match the shader");
+    static_assert(sizeof(RtPushConstants) == 216, "RT push-constant layout must match the shader");
     pc.camPos[0] = g.lastView.x; pc.camPos[1] = g.lastView.y; pc.camPos[2] = g.lastView.z;
     pc.camDir[0] = c;            pc.camDir[1] = s;            pc.camDir[2] = 0.0f;
     pc.camRight[0] = s;          pc.camRight[1] = -c;         pc.camRight[2] = 0.0f;
@@ -6358,6 +6393,9 @@ void RecordRtTrace(uint32_t idx)
     // miss). 0xFFFFFFFF when the level has no sky geometry -> the shader falls back
     // to the flat SKY_COLOR fill (a miss in an enclosed level is degenerate anyway).
     pc.misc4[3]    = (g.skyMeshVerts > 0) ? (uint32_t)g.skyMeshTexnum : 0xFFFFFFFFu;
+    // DOOM-0179: world-grime overlay slot in hdTex[] (loaded per level by EnsureHdMaterials;
+    // -1 on the default all-paletted set -> 0xFFFFFFFF disables the shader's grime branch).
+    pc.misc5[0]    = (g.hdGrungeIdx >= 0) ? (uint32_t)g.hdGrungeIdx : 0xFFFFFFFFu;
     pc.vertsAddr   = BufferAddress(g.vbuf);
     pc.emitAddr    = g.emitBuf    ? BufferAddress(g.emitBuf)    : 0;
     pc.matEmisAddr = g.matEmisBuf ? BufferAddress(g.matEmisBuf) : 0;
