@@ -710,6 +710,7 @@ static inline void rb_apply_budget(rb_matctrl_t* table, int nmaterials,
                      const float* traffic, const float* est_mb, const int* is_hero,
                      float ceiling_mb, int* order_out, int* n_loaded) {
     rb_sortent_t* ent = (rb_sortent_t*)malloc((size_t)nmaterials * sizeof(rb_sortent_t));
+    if (!ent) { *n_loaded = 0; return; }    /* OOM: load nothing, leave table as-is (never crash) */
     int m = 0;
     for (int i = 0; i < nmaterials; i++)
         if (table[i].usePBR) { ent[m].id = i; ent[m].traffic = traffic[i]; ent[m].is_hero = is_hero[i]; m++; }
