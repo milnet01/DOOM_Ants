@@ -555,12 +555,21 @@ void rb_image_free(rb_image_t* img);
 ```c
 #include "rb_image.h"
 #include <stdlib.h>
-#include <string.h>
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG            /* v1 ships PNG heroes/derived only */
-#define STBI_NO_STDIO 0
+/* Do NOT define STBI_NO_STDIO: stb guards stbi_load(path,...) with a bare
+   `#ifndef STBI_NO_STDIO`, so even `#define STBI_NO_STDIO 0` strips the loader.
+   stdio support is stb's default — leave it undefined. */
+/* STBI_ONLY_PNG leaves two int-overflow helpers (stbi__mul2shorts_valid /
+   stbi__addints_valid) compiled-but-unused, so vendored stb_image.h trips
+   -Wunused-function under -Wall. We don't edit vendored code (dependency rule),
+   and can't drop STBI_ONLY_PNG without pulling in every decoder — so scope-silence
+   just this header's warnings, not the project's. */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
 #include "stb_image.h"
+#pragma GCC diagnostic pop
 
 int rb_image_load(const char* path, rb_image_t* out) {
     int w = 0, h = 0, comp = 0;
@@ -580,6 +589,7 @@ void rb_image_downscale_max(rb_image_t* img, int max_edge) {
     int nw = (int)(img->w * s); if (nw < 1) nw = 1;
     int nh = (int)(img->h * s); if (nh < 1) nh = 1;
     unsigned char* dst = (unsigned char*)malloc((size_t)nw * nh * 4);
+    if (!dst) return;                       /* OOM: leave img unchanged (never crash) */
     for (int y = 0; y < nh; y++) {
         int sy0 = (int)((double)y     * img->h / nh);
         int sy1 = (int)((double)(y+1) * img->h / nh); if (sy1 <= sy0) sy1 = sy0 + 1;
