@@ -434,7 +434,7 @@ static void I_GetEvent(SDL_Event* sdlevent)
 	{
 	    extern int rb_profile;          // r_vulkan.cpp
 	    rb_profile = !rb_profile;
-	    printf("RT per-pass GPU profiler %s\n", rb_profile ? "ON" : "OFF");
+	    printf("Per-pass GPU profiler %s (Solid + Ultra)\n", rb_profile ? "ON" : "OFF");
 	    fflush(stdout);
 	    break;
 	}

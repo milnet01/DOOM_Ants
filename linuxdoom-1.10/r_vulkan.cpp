@@ -376,6 +376,7 @@ struct VulkanState
     VkQueryPool gpuTimerPool    = VK_NULL_HANDLE;
     float       timestampPeriod = 0.0f;   // ns per tick (0 = timestamps unusable)
     bool        gpuTimersInUse  = false;  // last frame wrote timestamps
+    bool        profRasterFrame = false;  // last timed frame was raster (routes the readback: raster passes vs RT passes)
     // [0]=sprite-AS [1]=megakernel [2]=denoise+TAAU [3]=blit, then the DOOM-0144
     // sub-breakdown of [2]: [4]=temporal [5]=a-trous [6]=composite [7]=TAAU.
     double      profMs[8]       = { 0, 0, 0, 0, 0, 0, 0, 0 };
@@ -5960,6 +5961,7 @@ void RecordRtTrace(uint32_t idx)
     if (prof) {
         vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 4);
         g.gpuTimersInUse = true;   // results ready to read at the top of next frame
+        g.profRasterFrame = false; // this timed frame was the RT path -> RT readback interpretation
     }
 
     // Snapshot this frame's camera basis as "previous" for next frame's temporal
@@ -6112,36 +6114,64 @@ extern "C" void RB_Vulkan_Present(void)
 
     // DOOM-0090: read back the previous frame's per-pass GPU timestamps (the fence
     // wait above guarantees that frame is complete, so this never stalls), convert
-    // ticks -> ms, and print the running averages once a second. RT-only / opt-in.
+    // ticks -> ms, and print the running averages once a second. Raster or RT (routed by
+    // profRasterFrame) / opt-in.
     if (g.gpuTimersInUse && g.gpuTimerPool)
     {
         uint64_t ts[8] = {};
-        if (vkGetQueryPoolResults(g.device, g.gpuTimerPool, 0, 8, sizeof(ts), ts,
+        // Read only the slots the timed path actually wrote: raster wrote 6 (0..5), RT wrote 8
+        // (0..7). Querying an unwritten-but-reset slot returns VK_NOT_READY and drops the whole
+        // print, so the count must match the path (profRasterFrame, set when the frame recorded).
+        uint32_t nq = g.profRasterFrame ? 6u : 8u;
+        if (vkGetQueryPoolResults(g.device, g.gpuTimerPool, 0, nq, nq * sizeof(uint64_t), ts,
                 sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS)
         {
             const double k = (double)g.timestampPeriod / 1.0e6;   // ticks -> ms
-            g.profMs[0] += (double)(ts[1] - ts[0]) * k;   // sprite BLAS/TLAS rebuild
-            g.profMs[1] += (double)(ts[2] - ts[1]) * k;   // megakernel trace
-            g.profMs[2] += (double)(ts[3] - ts[2]) * k;   // denoiser chain + TAAU
-            g.profMs[3] += (double)(ts[4] - ts[3]) * k;   // label + blit + present
-            // DOOM-0144 sub-breakdown of the denoise+TAAU bucket:
-            g.profMs[4] += (double)(ts[5] - ts[2]) * k;   // temporal accumulation
-            g.profMs[5] += (double)(ts[6] - ts[5]) * k;   // a-trous (4 iterations)
-            g.profMs[6] += (double)(ts[7] - ts[6]) * k;   // composite
-            g.profMs[7] += (double)(ts[3] - ts[7]) * k;   // TAAU upscale (display res)
+            if (g.profRasterFrame)
+            {
+                // Solid raster passes (DOOM-0170): ts 0..5 = start / shadow / scene / SSAO /
+                // composite / HUD. A skipped optional pass (torch off, SSAO off) reads ~0 ms.
+                g.profMs[0] += (double)(ts[1] - ts[0]) * k;   // flashlight shadow map
+                g.profMs[1] += (double)(ts[2] - ts[1]) * k;   // scene MRT (world + lighting)
+                g.profMs[2] += (double)(ts[3] - ts[2]) * k;   // SSAO
+                g.profMs[3] += (double)(ts[4] - ts[3]) * k;   // composite / tone-map
+                g.profMs[4] += (double)(ts[5] - ts[4]) * k;   // HUD overlay + present
+            }
+            else
+            {
+                g.profMs[0] += (double)(ts[1] - ts[0]) * k;   // sprite BLAS/TLAS rebuild
+                g.profMs[1] += (double)(ts[2] - ts[1]) * k;   // megakernel trace
+                g.profMs[2] += (double)(ts[3] - ts[2]) * k;   // denoiser chain + TAAU
+                g.profMs[3] += (double)(ts[4] - ts[3]) * k;   // label + blit + present
+                // DOOM-0144 sub-breakdown of the denoise+TAAU bucket:
+                g.profMs[4] += (double)(ts[5] - ts[2]) * k;   // temporal accumulation
+                g.profMs[5] += (double)(ts[6] - ts[5]) * k;   // a-trous (4 iterations)
+                g.profMs[6] += (double)(ts[7] - ts[6]) * k;   // composite
+                g.profMs[7] += (double)(ts[3] - ts[7]) * k;   // TAAU upscale (display res)
+            }
             g.profFrames++;
             int now = I_GetTimeMS();
             if (g.profLastReport == 0) g.profLastReport = now;
             if (now - g.profLastReport >= 1000 && g.profFrames > 0)
             {
                 const double f = 1.0 / (double)g.profFrames;
-                int omni = (int)g.emitCount - (int)g.staticWgt.size();
-                printf("[rt_profile] %3d fps | sprites %.2f | megakernel %.2f | "
-                       "denoise+taau %.2f (temporal %.2f, atrous %.2f, composite %.2f, "
-                       "taau %.2f) | blit %.2f ms | omni %d/%d lights (avg/frame, RT GPU only)\n",
-                       g.profFrames, g.profMs[0] * f, g.profMs[1] * f, g.profMs[2] * f,
-                       g.profMs[4] * f, g.profMs[5] * f, g.profMs[6] * f, g.profMs[7] * f,
-                       g.profMs[3] * f, omni < 0 ? 0 : omni, (int)g.emitCount);
+                if (g.profRasterFrame)
+                {
+                    printf("[raster_profile] %3d fps | shadow %.2f | scene %.2f | ssao %.2f | "
+                           "composite %.2f | hud %.2f ms (avg/frame, Solid GPU only)\n",
+                           g.profFrames, g.profMs[0] * f, g.profMs[1] * f, g.profMs[2] * f,
+                           g.profMs[3] * f, g.profMs[4] * f);
+                }
+                else
+                {
+                    int omni = (int)g.emitCount - (int)g.staticWgt.size();
+                    printf("[rt_profile] %3d fps | sprites %.2f | megakernel %.2f | "
+                           "denoise+taau %.2f (temporal %.2f, atrous %.2f, composite %.2f, "
+                           "taau %.2f) | blit %.2f ms | omni %d/%d lights (avg/frame, RT GPU only)\n",
+                           g.profFrames, g.profMs[0] * f, g.profMs[1] * f, g.profMs[2] * f,
+                           g.profMs[4] * f, g.profMs[5] * f, g.profMs[6] * f, g.profMs[7] * f,
+                           g.profMs[3] * f, omni < 0 ? 0 : omni, (int)g.emitCount);
+                }
                 fflush(stdout);
                 for (int pi = 0; pi < 8; pi++) g.profMs[pi] = 0.0;
                 g.profFrames = 0;
@@ -6337,6 +6367,18 @@ extern "C" void RB_Vulkan_Present(void)
     float uvScale[2] = { (float)sceneW / (float)g.extent.width,
                          (float)sceneH / (float)g.extent.height };
 
+    // DOOM-0170 perf: per-pass raster GPU timer (opt-in, the `\` key / rb_profile). Reset the
+    // pool + stamp the raster frame start here (outside any render pass), then a timestamp at
+    // each pass boundary below (shadow / scene / SSAO / composite / HUD). Read back at the top
+    // of the next present; profRasterFrame routes that readback to the raster interpretation.
+    // RT frames drive the same 8-slot pool from RecordRtTrace, and the two are mutually
+    // exclusive per frame, so they never collide.
+    const bool rprof = rb_profile && g.gpuTimerPool;
+    if (rprof) {
+        vkCmdResetQueryPool(g.cmd, g.gpuTimerPool, 0, 8);
+        vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, g.gpuTimerPool, 0);
+    }
+
     // DOOM-0170 L2c: flashlight cast-shadow map (Pass A). When the torch is on, render the
     // world (walls/flats + monster/item billboards; the psprite/sky are clipped away in
     // shadow.vert) depth-only from the flashlight's viewpoint, so mesh.frag can PCF-test the
@@ -6406,6 +6448,8 @@ extern "C" void RB_Vulkan_Present(void)
         }
         vkCmdEndRenderPass(g.cmd);
     }
+
+    if (rprof) vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 1);  // after shadow pass
 
     // DOOM-0170 L2a: draw the world into the OFF-SCREEN scene target (scenePass leaves it
     // in SHADER_READ_ONLY); the composite pass below samples it to the swapchain. Clear to
@@ -6538,6 +6582,7 @@ extern "C" void RB_Vulkan_Present(void)
     // open the swapchain pass; a full-screen composite samples the scene to the screen
     // (this is the tone-map seam for step 2), then the HUD draws on top in the same pass.
     vkCmdEndRenderPass(g.cmd);   // end scenePass
+    if (rprof) vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 2);  // after scene pass
 
     // Transition BOTH scene targets (AMBIENT + DIRECT) COLOR_ATTACHMENT -> SHADER_READ and
     // make the world writes visible to the composite's sample (see the scenePass note above).
@@ -6593,6 +6638,8 @@ extern "C" void RB_Vulkan_Present(void)
         vkCmdEndRenderPass(g.cmd);
     }
 
+    if (rprof) vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 3);  // after SSAO pass
+
     rp.renderPass = g.renderPass;
     rp.framebuffer = g.framebuffers[idx];
     vkCmdBeginRenderPass(g.cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
@@ -6614,6 +6661,7 @@ extern "C" void RB_Vulkan_Present(void)
                            0, sizeof(coPush), coPush);
         vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.compositePipeline);
         vkCmdDraw(g.cmd, 3, 1, 0, 0);
+        if (rprof) vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 4);  // after composite
     }
 
     // 2D HUD/menu compositor, last and over everything: a vertexless full-screen
@@ -6639,6 +6687,11 @@ extern "C" void RB_Vulkan_Present(void)
     }
 
     vkCmdEndRenderPass(g.cmd);
+    if (rprof) {
+        vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 5);  // after HUD/present
+        g.gpuTimersInUse  = true;   // results ready to read at the top of next frame
+        g.profRasterFrame = true;   // this timed frame was the raster path -> raster readback
+    }
     }   // end of the non-RT (raster) recording branch
 
     Check(vkEndCommandBuffer(g.cmd), "vkEndCommandBuffer");
