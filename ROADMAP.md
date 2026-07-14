@@ -1613,7 +1613,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: enhancement.
   Source: in-session-2026-07-14 (DOOM-0042 T13).
 
-- 📋 [DOOM-0179] **World-position grime/blemish overlay so HD surfaces don't tile uniformly.**
+- 🚧 [DOOM-0179] **World-position grime/blemish overlay so HD surfaces don't tile uniformly.**
   Follow-on to DOOM-0042 (do AFTER the base hero textures land + sign off; user
   chose base-first). Approach: sample a low-frequency grunge/dirt map (the user's
   3D Engine Assets/Textures/Grunge/ library, CC0) by WORLD position (world XZ for
@@ -1627,6 +1627,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** DOOM paints one texture across many walls, so an HD texture repeats visibly and every wall looks identical. This adds a drifting layer of dirt, wear, and scorch marks placed by where each surface sits in the world — so no two walls look the same, and the tiling stops being obvious.
   Kind: feature.
   Source: user-request-2026-07-14 (DOOM-0042 T17 play-test discussion).
+  Progress (2026-07-14, 58bb59c): implemented for the Ultra RT view. A first-party, procedurally-authored, seamless CC0 grunge map (scripts/make_grunge.py -> assets/ultra/overlays/grunge.png) is sampled by WORLD position (dominant-axis projection) and multiplied over usePBR HD surfaces in pathtrace.comp modes 4/6, breaking the base tiling. New misc5 push-constant slot carries the overlay's bindless id; loaded as one extra bindless image in EnsureHdMaterials. Centred blend = net-neutral exposure; kGrimeStrength (0.32) + kGrimeWorldScale (1/384) are shader-const playtest knobs. Paletted/Classic untouched. Also fixed a latent -rtverify (mode 5) push-constant drift the change surfaced. AWAITING user play-test to tune strength/scale, then flip to shipped + CHANGELOG.
 
 - 📋 [DOOM-0180] **Thin bright diagonal seam on ceilings in the Ultra RT view.**
   A thin, bright, diagonal line appears on dark ceiling flats in E1M1 Ultra (green
