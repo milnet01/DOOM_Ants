@@ -20,6 +20,24 @@ def ao_bump(x, y, w, h):
     return (v, v, v)
 
 
+def bump_height(x, y, w, h):
+    """Height field for Task 14's parallax march — the SAME cos(a)cos(b) relief the normal and
+    AO maps use (32px period), so POM's recesses line up with the normal/AO valleys. White =
+    raised (peaks), black = sunk (valleys); the shader marches the view ray into the low bits."""
+    a = 2.0 * math.pi * x / 32.0
+    b = 2.0 * math.pi * y / 32.0
+    v = int((0.5 + 0.5 * math.cos(a) * math.cos(b)) * 255)   # 0 valley .. 255 peak
+    return (v, v, v)
+
+
+def emissive_dots(x, y, w, h):
+    """A warm glowing disc at the centre of each 32px tile, black elsewhere — a deliberately
+    obvious emissive so Task 13's self-radiance is unmistakable in the RT direct view (mode 4):
+    the dots glow regardless of scene light while the rest of the wall stays dark."""
+    cx, cy = (x % 32) - 16.0, (y % 32) - 16.0
+    return (255, 150, 60) if (cx * cx + cy * cy) <= 36.0 else (0, 0, 0)   # radius 6px disc
+
+
 def bump_normal(x, y, w, h):
     """A tangent-space normal (OpenGL Y+) for a grid of BIG rounded bumps (~32px period,
     steep) so Task 11's normal mapping is unmistakable in the play view — a fine 8px albedo
@@ -65,6 +83,6 @@ write_png(os.path.join(D, "startan3_ao.png"), 64, 128, ao_bump)
 # per task) so tweaking the look never breaks the decode/downscale unit test. Not referenced
 # by materials.csv, so the loader never touches it.
 write_png(os.path.join(D, "_unittest_solid.png"), 64, 128, lambda x, y, w, h: (180, 180, 180))
-write_png(os.path.join(D, "startan3_hgt.png"), 64, 128,
-          lambda x, y, w, h: (int(255 * (x / w)),) * 3)
+write_png(os.path.join(D, "startan3_hgt.png"), 64, 128, bump_height)
+write_png(os.path.join(D, "startan3_emis.png"), 64, 128, emissive_dots)
 print("wrote bring-up hero set to", D)
