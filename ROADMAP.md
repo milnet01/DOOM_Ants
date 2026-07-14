@@ -1612,3 +1612,18 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Glowing HD textures (e.g. a lit computer panel) currently only glow in the debug ray-traced view, not the normal denoised game view. Add a way for them to glow correctly in the real view too.
   Kind: enhancement.
   Source: in-session-2026-07-14 (DOOM-0042 T13).
+
+- 📋 [DOOM-0179] **World-position grime/blemish overlay so HD surfaces don't tile uniformly.**
+  Follow-on to DOOM-0042 (do AFTER the base hero textures land + sign off; user
+  chose base-first). Approach: sample a low-frequency grunge/dirt map (the user's
+  3D Engine Assets/Textures/Grunge/ library, CC0) by WORLD position (world XZ for
+  flats, world XY/Z projected for walls) rather than tile UV, so the grime drifts
+  across a whole surface and does NOT repeat with the base tile. Blend into albedo
+  (multiply/overlay) + optionally perturb roughness; a strength dial (menu or const,
+  tune with user). Breaks the repetition the user flagged. Ultra RT path first
+  (pathtrace.comp), same set-3 material infra as DOOM-0042. Consider a per-surface
+  hash tint/offset as a cheaper complementary trick. NB: user picked a PRE-WEATHERED
+  base for the heroes, so tune overlay strength to ADD variation, not double-grunge.
+  **Layman:** DOOM paints one texture across many walls, so an HD texture repeats visibly and every wall looks identical. This adds a drifting layer of dirt, wear, and scorch marks placed by where each surface sits in the world — so no two walls look the same, and the tiling stops being obvious.
+  Kind: feature.
+  Source: user-request-2026-07-14 (DOOM-0042 T17 play-test discussion).
