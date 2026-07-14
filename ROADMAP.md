@@ -1597,3 +1597,18 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** When the game exits, it forgets to hand back one small chunk of graphics memory. No effect while playing; tidy-up on quit.
   Kind: fix.
   Source: observed-2026-07-14 (DOOM-0042 E1M1 Ultra play-test log).
+
+- 📋 [DOOM-0178] **Per-texel HD emissive maps in the shipped denoised RT path (mode 6).**
+  DOOM-0042 T13 adds HD emissive (hdEmissive*kEmissiveScale) on the mode-4
+  display path only. The shipped denoised path (mode 6) demodulates albedo and
+  re-adds emission in svgf_composite.comp via the PALETTED per-material Le table
+  (matEmis) x an albedo-brightness mask — there is no HD descriptor set in the
+  composite, and galbedo.a is already taken by the emission-enable flag, so a
+  dedicated per-texel HD emissive map has no free channel there. v1 ships NO
+  emissive maps so this is currently DORMANT (no regression). Fix options: (a) a
+  new emissive G-buffer image the composite reads raw (un-denoised, not albedo-
+  modulated); (b) bind the HD set into svgf_composite and sample maps[5] there.
+  Prereq for any HD hero that carries a real emissive map.
+  **Layman:** Glowing HD textures (e.g. a lit computer panel) currently only glow in the debug ray-traced view, not the normal denoised game view. Add a way for them to glow correctly in the real view too.
+  Kind: enhancement.
+  Source: in-session-2026-07-14 (DOOM-0042 T13).
