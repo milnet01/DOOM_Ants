@@ -142,6 +142,18 @@ vec3 hdShadingNormal(MatCtrl mc, uint id, vec2 hitUV, vec3 n,
     return normalize(tn.x * T + tn.y * B + tn.z * n);
 }
 
+// DOOM-0042 (Task 12): baked ambient-occlusion multiplier (single-channel .r, 1.0 = fully
+// open, 0 = fully occluded) sampled at the same hitUV/sz*uvScale as the albedo. 1.0 when the
+// material has no AO map. The caller multiplies this into the AMBIENT / GI-bounce term ONLY,
+// never the direct NEE or flashlight — so crevices darken under fill light without dimming a
+// surface a torch is shining straight onto.
+float hdAO(MatCtrl mc, uint id, vec2 hitUV)
+{
+    if (mc.usePBR == 0u || mc.maps[4] < 0) return 1.0;
+    vec2 sz = vec2(textureSize(materialTex[nonuniformEXT(id)], 0));
+    return texture(hdTex[nonuniformEXT(mc.maps[4])], (hitUV / sz) * mc.uvScale).r;
+}
+
 layout(push_constant) uniform PC {
     vec4  camPos;    // xyz = ray origin (world); w = sub-pixel jitter X (6-d)
     vec4  camDir;    // xyz = forward;            w = sub-pixel jitter Y (6-d)
@@ -573,7 +585,7 @@ void main()
             uint  subId    = isSprite ? 0xFFFFFFFFu : pc.triSs.s[uint(prim)];
             vec3  gi       = (subId < pc.misc2.y) ? giIrradiance(pc.probes, subId, shadeN)
                                                   : vec3(0.0);
-            L += albedo * max(gi, ambient);
+            L += albedo * max(gi, ambient) * hdAO(mc, id, hitUV);   // AO dims fill light only
 
             // Dynamic point-light deltas (build step 5): the muzzle flash + the
             // DOOM-0044 player flashlight, each a hard ray-traced shadow composited
@@ -697,7 +709,7 @@ void main()
             uint  subId    = isSprite ? 0xFFFFFFFFu : pc.triSs.s[uint(prim)];  // sprites: no GI probe
             vec3  gi       = (subId < pc.misc2.y) ? giIrradiance(pc.probes, subId, shadeN)
                                                   : vec3(0.0);
-            illum += max(gi, ambient);
+            illum += max(gi, ambient) * hdAO(mc, id, hitUV);   // AO dims fill light only
 
             // Muzzle flash + DOOM-0044 flashlight, demodulated (the composite re-
             // applies albedo). DOOM-0130 shared helpers — passing vec3(1.0) strips
