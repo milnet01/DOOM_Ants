@@ -1,7 +1,16 @@
 #doom_name,source,albedo,normal,roughness,metallic,ao,emissive,height,uv_scale,flags
-# Hero rows name their PNG map files (relative to assets/ultra/). Derive rows leave
-# map columns blank — the loader resolves derived/<doom_name>_<suffix>.png by convention.
-# v1 = walls + flats only; no sprite rows. flags is |-separated (pom|noPom|sprite).
-STARTAN3,hero,heroes/bringup/startan3_alb.png,heroes/bringup/startan3_nrm.png,,,heroes/bringup/startan3_ao.png,heroes/bringup/startan3_emis.png,heroes/bringup/startan3_hgt.png,1.0,pom
+# v1 = walls + flats only. Hero rows point at curated CC0 maps (Poly Haven, palette-locked
+# to the original DOOM texture colour via scripts/stage_hero.py --tint-wad). Derive rows are
+# auto-generated from the WAD by scripts/pbr_derive.py (assets/ultra/derived/, gitignored).
+# flags is |-separated (pom|noPom|sprite). Provenance for every hero PNG is in LICENSES.
+STARTAN3,hero,heroes/tech/STARTAN3_alb.png,heroes/tech/STARTAN3_nrm.png,,,,,heroes/tech/STARTAN3_hgt.png,1.0,pom
+STARG3,hero,heroes/tech/STARG3_alb.png,heroes/tech/STARG3_nrm.png,,,,,heroes/tech/STARG3_hgt.png,1.0,pom
+STARGR1,hero,heroes/tech/STARGR1_alb.png,heroes/tech/STARGR1_nrm.png,,,,,heroes/tech/STARGR1_hgt.png,1.0,pom
+SUPPORT2,hero,heroes/tech/SUPPORT2_alb.png,heroes/tech/SUPPORT2_nrm.png,,,,,heroes/tech/SUPPORT2_hgt.png,1.0,pom
+BROWN1,hero,heroes/brownmetal/BROWN1_alb.png,heroes/brownmetal/BROWN1_nrm.png,,,,,heroes/brownmetal/BROWN1_hgt.png,1.0,pom
+BROWNGRN,hero,heroes/brownmetal/BROWNGRN_alb.png,heroes/brownmetal/BROWNGRN_nrm.png,,,,,heroes/brownmetal/BROWNGRN_hgt.png,1.0,pom
+BROWN144,hero,heroes/brownmetal/BROWN144_alb.png,heroes/brownmetal/BROWN144_nrm.png,,,,,heroes/brownmetal/BROWN144_hgt.png,1.0,pom
+FLOOR4_8,hero,heroes/floor/FLOOR4_8_alb.png,heroes/floor/FLOOR4_8_nrm.png,,,,,heroes/floor/FLOOR4_8_hgt.png,1.0,noPom
+FLOOR5_1,hero,heroes/floor/FLOOR5_1_alb.png,heroes/floor/FLOOR5_1_nrm.png,,,,,heroes/floor/FLOOR5_1_hgt.png,1.0,noPom
+FLOOR5_2,hero,heroes/floor/FLOOR5_2_alb.png,heroes/floor/FLOOR5_2_nrm.png,,,,,heroes/floor/FLOOR5_2_hgt.png,1.0,noPom
 TEKWALL1,derive,,,,,,,,1.0,pom
-FLOOR4_8,derive,,,,,,,,1.0,noPom
