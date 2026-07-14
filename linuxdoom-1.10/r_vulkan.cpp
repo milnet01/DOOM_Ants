@@ -5064,11 +5064,23 @@ static void EnsureHdMaterials()
     rb_apply_budget(table.data(), N, traffic.data(), estMB.data(), isHero.data(),
                     kHdBudgetMB, order.data(), &nLoaded);
 
-    // 6. Assemble the upload list in descending-traffic order; assign map slots.
+    // 6. Assemble the upload list in descending-traffic order; assign map slots. Cap the
+    //    total image count at kHdMaxImages (the bindless-array upper bound): if a material's
+    //    maps won't fit, drop the whole material to paletted (never a partial upload). Not
+    //    reachable by v1 (full DOOM1 ~2000 maps < 4096) but keeps the never-crash contract
+    //    and honours "no silent truncation" for a future full-WAD sidecar.
     std::vector<HdSrc> srcs;
     float usedMB = 0.0f;
+    int   capDropped = 0;
     for (int oi = 0; oi < nLoaded; oi++) {
         int id = order[oi];
+        int cnt = 0;
+        for (Decoded& d : decoded) if (d.id == id) cnt++;
+        if ((int)srcs.size() + cnt > kHdMaxImages) {
+            table[id].usePBR = 0;               // no room in the array -> paletted
+            capDropped++;
+            continue;
+        }
         for (Decoded& d : decoded) {
             if (d.id != id) continue;
             table[id].maps[d.k] = (int)srcs.size();
@@ -5077,6 +5089,9 @@ static void EnsureHdMaterials()
             printf("DOOM-0042: id %d map[%d] %dx%d  (%.1f MB)\n", id, d.k, d.img.w, d.img.h, usedMB);
         }
     }
+    if (capDropped)
+        printf("DOOM-0042: %d material(s) dropped to paletted (> %d-image bindless cap).\n",
+               capDropped, kHdMaxImages);
 
     // 7. Build the set (uploads images + SSBO), then free every decoded image (kept
     //    ones were copied to staging; dropped ones were never uploaded).
