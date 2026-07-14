@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <stdio.h>
 
 #define RB_MAP_COUNT 7
 enum { RB_ALB = 0, RB_NRM, RB_RGH, RB_MET, RB_AO, RB_EMIS, RB_HGT };
@@ -153,6 +154,21 @@ static inline void rb_apply_budget(rb_matctrl_t* table, int nmaterials,
     }
     *n_loaded = n;
     free(ent);
+}
+
+/* Asset root for HD material files: $DOOMASSETDIR, else "assets/ultra/" relative to
+   the CWD (mirrors how the WAD is found via DOOMWADDIR). */
+static inline const char* rb_asset_root(void) {
+    const char* e = getenv("DOOMASSETDIR");
+    return (e && *e) ? e : "assets/ultra/";
+}
+
+/* Join the asset root and a relative path into dst (e.g. root + "materials.csv"). */
+static inline void rb_asset_path(char* dst, int dstsz, const char* rel) {
+    const char* root = rb_asset_root();
+    size_t n = strlen(root);
+    int need_slash = (n > 0 && root[n-1] != '/');
+    snprintf(dst, dstsz, "%s%s%s", root, need_slash ? "/" : "", rel);
 }
 
 #endif

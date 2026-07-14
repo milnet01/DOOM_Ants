@@ -53,6 +53,26 @@
 // tests/emissive_derive_test.cpp. Defines the `emis` namespace used below.
 #include "emissive_derive.h"
 
+// DOOM-0042 Ultra HD PBR materials. rb_materials.h is header-only (inline pure
+// logic: sidecar parse, name->id resolution, control table, VRAM budget), shared
+// with tests/rb_materials_test.cpp. rb_image.h is the vendored-stb PNG decoder
+// (compiled in rb_image.c; self-guards extern "C").
+#include "rb_materials.h"
+#include "rb_image.h"
+
+// C engine symbols the HD material loader resolves DOOM names against (defined in
+// r_data.c / w_wad.c). Declared here since r_vulkan.cpp doesn't pull r_state.h.
+extern "C" {
+    int R_CheckTextureNumForName(char* name);   // wall texnum, or -1
+    int W_CheckNumForName(char* name);          // lump number, or -1
+    extern int firstflat;                       // lump index of the first flat
+    extern int numflats;                        // flat count
+    extern int rendermode;                      // r_backend.h: selected tier (TIER_* mirror below)
+}
+
+// The GPU control struct mirrors this byte-for-byte in pathtrace.comp (std430).
+static_assert(sizeof(rb_matctrl_t) == 40, "rb_matctrl_t must be 40 bytes (std430 MatCtrl)");
+
 // Compiled shaders, embedded as byte arrays (Makefile: GLSL -> SPIR-V -> xxd).
 #include "shaders/mesh.vert.spv.h"
 #include "shaders/mesh.frag.spv.h"
@@ -439,6 +459,21 @@ struct VulkanState
     VkImageView    palView     = VK_NULL_HANDLE;
     VkSampler      texSampler  = VK_NULL_HANDLE;   // nearest, REPEAT (native tiling)
     VkSampler hdSampler = VK_NULL_HANDLE;   // DOOM-0042: linear+mip+REPEAT for HD PBR maps
+
+    // DOOM-0042 HD PBR material path (parallel to the R8 matImages). A new descriptor
+    // set (set 3 of the RT pipeline): binding 0 = the per-material control SSBO, binding
+    // 1 = a variable-count bindless array of RGBA8 PBR maps. Built per level in Ultra by
+    // EnsureHdMaterials; always valid there (even with no materials.csv) so the shader's
+    // ctrl[] read is safe every dispatch.
+    VkDescriptorSetLayout    hdSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool         hdPool      = VK_NULL_HANDLE;
+    VkDescriptorSet          hdSet       = VK_NULL_HANDLE;
+    std::vector<VkImage>     hdImages;
+    std::vector<VkImageView> hdViews;
+    VkDeviceMemory           hdMemory    = VK_NULL_HANDLE;
+    VkBuffer                 hdCtrlBuf   = VK_NULL_HANDLE;
+    VkDeviceMemory           hdCtrlMem   = VK_NULL_HANDLE;
+    bool                     hdBuilt     = false;   // per-level guard; reset on map change
 
     VkDescriptorSetLayout dsLayout = VK_NULL_HANDLE;
     VkDescriptorPool      dsPool   = VK_NULL_HANDLE;
@@ -2089,6 +2124,8 @@ static VkPipeline RtPipelineForMode(uint32_t mode)
     return g.rtPipeline[mode];
 }
 
+static void CreateHdSetLayout();   // DOOM-0042: set-3 layout, needed by the RT pipeline layout
+
 // Build the once-per-run compute pipeline: a descriptor set (TLAS + storage
 // image), an 88-byte push-constant range (camera basis + mode + vertex-buffer
 // address), and the pathtrace.comp megakernel. RT-only; never called without it.
@@ -2152,10 +2189,15 @@ void CreateRtComputePipeline()
     // megakernel statically references set 2 (mode 6), so EVERY dispatch of this
     // pipeline must bind all three sets — RecordRtTrace + RB_RtVerify both do.
     // g.dsLayout + g.svgfDsLayout are created before this (Init order).
-    VkDescriptorSetLayout setLayouts[3] = { g.rtDsLayout, g.dsLayout, g.svgfDsLayout };
+    // DOOM-0042: set 3 = the HD PBR material set (control SSBO + bindless RGBA8 array).
+    // Added to the layout here; the per-frame bind of set 3 + the shader that samples
+    // it land together in Task 10. A 4-set layout with only 3 bound is valid (set 3 is
+    // unreferenced by the shader until then), so the existing RT path is unaffected.
+    CreateHdSetLayout();
+    VkDescriptorSetLayout setLayouts[4] = { g.rtDsLayout, g.dsLayout, g.svgfDsLayout, g.hdSetLayout };
     VkPipelineLayoutCreateInfo plci = {};
     plci.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    plci.setLayoutCount         = 3;
+    plci.setLayoutCount         = 4;
     plci.pSetLayouts            = setLayouts;
     plci.pushConstantRangeCount = 1;
     plci.pPushConstantRanges    = &pcr;
@@ -4604,6 +4646,448 @@ void CreateOverlayResources(int w, int h)
     g.overlayReady = true;
 }
 
+// ===========================================================================
+// DOOM-0042 — Ultra HD PBR material loader (walls + flats, RT view).
+//
+// A parallel bindless RGBA8 PBR image array + a per-material control SSBO live in
+// a NEW descriptor set (set 3 of the RT pipeline) beside the R8 paletted array
+// (set 1). The hit shader (DOOM-0042 Task 10) reads the control SSBO to branch
+// paletted-vs-HD per material. This file builds/uploads those resources; the
+// per-frame BIND of set 3 + the shader that samples it land together in Task 10.
+//
+// v1 scope: single-mip images (mip-gen is a fast-follow); roughness/metallic are
+// baked offline but NOT uploaded (they wait for DOOM-0103's GGX lobe); walls+flats
+// only (sprites stay paletted).
+// ===========================================================================
+
+static const int   kHdMaxImages = 4096;    // bindless image-array upper bound
+static const int   kHdMaxEdge   = 1024;    // per-map longest-edge clamp (px)
+static const float kHdBudgetMB  = 768.0f;  // per-map VRAM ceiling
+
+// v1 uploads 5 of the 7 maps; roughness (RB_RGH) and metallic (RB_MET) are skipped.
+struct HdMapSpec { int k; const char* suffix; bool srgb; };
+static const HdMapSpec kHdV1Maps[] = {
+    { RB_ALB,  "alb",  true  },   // sRGB (hardware de-gammas)
+    { RB_NRM,  "nrm",  false },   // linear
+    { RB_AO,   "ao",   false },
+    { RB_EMIS, "emis", true  },
+    { RB_HGT,  "hgt",  false },
+};
+
+// A raw RGBA8 image handed to BuildHdSet (pixels owned by the caller).
+struct HdSrc { const unsigned char* px; int w, h; bool srgb; };
+
+// Resolve a DOOM material name to its unified bindless id (walls direct, flats after
+// numWall). Sprites are excluded from v1 HD. Mirrors r_vulkan.cpp's id math (:5098).
+static int ResolveDoomName(const char* name, int* out_id)
+{
+    char n[9];
+    std::strncpy(n, name, 8); n[8] = '\0';
+    int t = R_CheckTextureNumForName(n);
+    if (t >= 0) { *out_id = t; return 1; }                       // wall
+    int lump = W_CheckNumForName(n);
+    if (lump >= 0) {
+        int flatIdx = lump - firstflat;
+        if (flatIdx >= 0 && flatIdx < numflats) { *out_id = g.matNumWall + flatIdx; return 1; }  // flat
+    }
+    return 0;                                                    // not in this WAD (sprite: v1 skips)
+}
+
+// Free the per-level HD GPU resources (pool/set, images, control buffer). Keeps
+// g.hdSetLayout (created once, referenced by the RT pipeline layout). Idempotent.
+static void FreeHdMaterials()
+{
+    if (g.device == VK_NULL_HANDLE) return;
+    vkDeviceWaitIdle(g.device);
+    for (VkImageView v : g.hdViews) if (v) vkDestroyImageView(g.device, v, nullptr);
+    for (VkImage im : g.hdImages)   if (im) vkDestroyImage(g.device, im, nullptr);
+    g.hdViews.clear(); g.hdImages.clear();
+    if (g.hdMemory)  { vkFreeMemory(g.device, g.hdMemory, nullptr);    g.hdMemory  = VK_NULL_HANDLE; }
+    if (g.hdCtrlBuf) { vkDestroyBuffer(g.device, g.hdCtrlBuf, nullptr); g.hdCtrlBuf = VK_NULL_HANDLE; }
+    if (g.hdCtrlMem) { vkFreeMemory(g.device, g.hdCtrlMem, nullptr);    g.hdCtrlMem = VK_NULL_HANDLE; }
+    if (g.hdPool)    { vkDestroyDescriptorPool(g.device, g.hdPool, nullptr); g.hdPool = VK_NULL_HANDLE; }
+    g.hdSet = VK_NULL_HANDLE;   // freed with the pool
+}
+
+// Create the HD descriptor SET LAYOUT once (before the RT pipeline layout). Binding
+// 0 = control SSBO; binding 1 = the variable-count bindless PBR image array (the
+// highest binding), VARIABLE_DESCRIPTOR_COUNT + PARTIALLY_BOUND — mirrors the R8
+// material array in CreateDescriptors. Compute stage only (RT megakernel).
+static void CreateHdSetLayout()
+{
+    VkDescriptorSetLayoutBinding binds[2] = {};
+    binds[0].binding = 0;
+    binds[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    binds[0].descriptorCount = 1;
+    binds[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    binds[1].binding = 1;
+    binds[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    binds[1].descriptorCount = kHdMaxImages;   // upper bound; the set alloc picks the actual count
+    binds[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    VkDescriptorBindingFlags flags[2] = {
+        0,
+        VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT |
+        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT,
+    };
+    VkDescriptorSetLayoutBindingFlagsCreateInfo bfci = {};
+    bfci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+    bfci.bindingCount = 2;
+    bfci.pBindingFlags = flags;
+
+    VkDescriptorSetLayoutCreateInfo dlci = {};
+    dlci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    dlci.pNext = &bfci;
+    dlci.bindingCount = 2;
+    dlci.pBindings = binds;
+    Check(vkCreateDescriptorSetLayout(g.device, &dlci, nullptr, &g.hdSetLayout),
+          "vkCreateDescriptorSetLayout(hd)");
+}
+
+// (Re)build the HD descriptor pool + set: upload the given RGBA8 maps into a fresh
+// bindless image array (single-mip in v1) and the control table into a device-local
+// SSBO, then write both bindings. An empty srcs list still creates one 1x1 dummy so
+// binding 1 is never a zero-length array. Frees any prior HD resources first. The
+// caller still owns srcs[].px and may free it once this returns (copied to staging).
+static void BuildHdSet(const std::vector<HdSrc>& srcsIn, const rb_matctrl_t* table, int nmat)
+{
+    FreeHdMaterials();
+
+    static const unsigned char kDummyPx[4] = { 0, 0, 0, 255 };
+    std::vector<HdSrc> srcs = srcsIn;
+    if (srcs.empty()) srcs.push_back({ kDummyPx, 1, 1, false });
+    const int nimg = (int)srcs.size();
+
+    // 1. Create the images (single-mip), backed by one device allocation.
+    g.hdImages.assign(nimg, VK_NULL_HANDLE);
+    g.hdViews.assign(nimg, VK_NULL_HANDLE);
+    std::vector<VkDeviceSize> imgOffset(nimg);
+    VkDeviceSize memBytes = 0;
+    uint32_t memTypeBits = 0xffffffffu;
+    for (int i = 0; i < nimg; i++) {
+        VkImageCreateInfo ici = {};
+        ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        ici.imageType = VK_IMAGE_TYPE_2D;
+        ici.format = srcs[i].srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+        ici.extent = { (uint32_t)srcs[i].w, (uint32_t)srcs[i].h, 1 };
+        ici.mipLevels = 1;
+        ici.arrayLayers = 1;
+        ici.samples = VK_SAMPLE_COUNT_1_BIT;
+        ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+        ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        Check(vkCreateImage(g.device, &ici, nullptr, &g.hdImages[i]), "vkCreateImage(hd)");
+        VkMemoryRequirements req = {};
+        vkGetImageMemoryRequirements(g.device, g.hdImages[i], &req);
+        memBytes = (memBytes + req.alignment - 1) & ~(req.alignment - 1);
+        imgOffset[i] = memBytes;
+        memBytes += req.size;
+        memTypeBits &= req.memoryTypeBits;
+    }
+    VkMemoryAllocateInfo mai = {};
+    mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    mai.allocationSize = memBytes;
+    mai.memoryTypeIndex = FindMemoryType(memTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    Check(vkAllocateMemory(g.device, &mai, nullptr, &g.hdMemory), "vkAllocateMemory(hd)");
+    for (int i = 0; i < nimg; i++)
+        Check(vkBindImageMemory(g.device, g.hdImages[i], g.hdMemory, imgOffset[i]), "vkBindImageMemory(hd)");
+
+    // 2. Staging buffer: every image's RGBA8 back to back (4-byte-aligned offsets).
+    std::vector<VkDeviceSize> texOffset(nimg);
+    VkDeviceSize stageBytes = 0;
+    for (int i = 0; i < nimg; i++) {
+        texOffset[i] = stageBytes;
+        VkDeviceSize sz = (VkDeviceSize)srcs[i].w * srcs[i].h * 4;
+        stageBytes += (sz + 3) & ~(VkDeviceSize)3;
+    }
+    VkBufferCreateInfo sbci = {};
+    sbci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    sbci.size = stageBytes;
+    sbci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    sbci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VkBuffer staging = VK_NULL_HANDLE;
+    Check(vkCreateBuffer(g.device, &sbci, nullptr, &staging), "vkCreateBuffer(hd staging)");
+    VkMemoryRequirements sreq = {};
+    vkGetBufferMemoryRequirements(g.device, staging, &sreq);
+    VkMemoryAllocateInfo smai = {};
+    smai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    smai.allocationSize = sreq.size;
+    smai.memoryTypeIndex = FindMemoryType(sreq.memoryTypeBits,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    VkDeviceMemory stagingMem = VK_NULL_HANDLE;
+    Check(vkAllocateMemory(g.device, &smai, nullptr, &stagingMem), "vkAllocateMemory(hd staging)");
+    Check(vkBindBufferMemory(g.device, staging, stagingMem, 0), "vkBindBufferMemory(hd staging)");
+    unsigned char* sp = nullptr;
+    Check(vkMapMemory(g.device, stagingMem, 0, stageBytes, 0, (void**)&sp), "vkMapMemory(hd staging)");
+    for (int i = 0; i < nimg; i++)
+        std::memcpy(sp + texOffset[i], srcs[i].px, (size_t)srcs[i].w * srcs[i].h * 4);
+    vkUnmapMemory(g.device, stagingMem);
+
+    // 3. Copy staging -> images (UNDEFINED->DST, copy, DST->SHADER_READ).
+    std::vector<VkImageMemoryBarrier> toDst(nimg), toRead(nimg);
+    for (int i = 0; i < nimg; i++) {
+        VkImageMemoryBarrier b = {};
+        b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = g.hdImages[i];
+        b.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        b.srcAccessMask = 0; b.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        toDst[i] = b;
+        b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        toRead[i] = b;
+    }
+    VkCommandBuffer cb = BeginOneTime();
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         0, 0, nullptr, 0, nullptr, (uint32_t)nimg, toDst.data());
+    for (int i = 0; i < nimg; i++) {
+        VkBufferImageCopy region = {};
+        region.bufferOffset = texOffset[i];
+        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.imageSubresource.layerCount = 1;
+        region.imageExtent = { (uint32_t)srcs[i].w, (uint32_t)srcs[i].h, 1 };
+        vkCmdCopyBufferToImage(cb, staging, g.hdImages[i], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    }
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                         0, 0, nullptr, 0, nullptr, (uint32_t)nimg, toRead.data());
+    EndOneTime(cb);
+    vkDestroyBuffer(g.device, staging, nullptr);
+    vkFreeMemory(g.device, stagingMem, nullptr);
+
+    // 4. Image views.
+    for (int i = 0; i < nimg; i++) {
+        VkImageViewCreateInfo vci = {};
+        vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        vci.image = g.hdImages[i];
+        vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        vci.format = srcs[i].srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+        vci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        Check(vkCreateImageView(g.device, &vci, nullptr, &g.hdViews[i]), "vkCreateImageView(hd)");
+    }
+
+    // 5. Control SSBO (device-local), staged upload.
+    VkDeviceSize ctrlBytes = (VkDeviceSize)nmat * sizeof(rb_matctrl_t);
+    {
+        VkBufferCreateInfo bci = {};
+        bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bci.size = ctrlBytes;
+        bci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        VkBuffer cs = VK_NULL_HANDLE;
+        Check(vkCreateBuffer(g.device, &bci, nullptr, &cs), "vkCreateBuffer(hd ctrl staging)");
+        VkMemoryRequirements creq = {};
+        vkGetBufferMemoryRequirements(g.device, cs, &creq);
+        VkMemoryAllocateInfo cmai = {};
+        cmai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        cmai.allocationSize = creq.size;
+        cmai.memoryTypeIndex = FindMemoryType(creq.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        VkDeviceMemory csMem = VK_NULL_HANDLE;
+        Check(vkAllocateMemory(g.device, &cmai, nullptr, &csMem), "vkAllocateMemory(hd ctrl staging)");
+        Check(vkBindBufferMemory(g.device, cs, csMem, 0), "vkBindBufferMemory(hd ctrl staging)");
+        void* cp = nullptr;
+        Check(vkMapMemory(g.device, csMem, 0, ctrlBytes, 0, &cp), "vkMapMemory(hd ctrl staging)");
+        std::memcpy(cp, table, (size_t)ctrlBytes);
+        vkUnmapMemory(g.device, csMem);
+
+        VkBufferCreateInfo dbci = {};
+        dbci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        dbci.size = ctrlBytes;
+        dbci.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        dbci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        Check(vkCreateBuffer(g.device, &dbci, nullptr, &g.hdCtrlBuf), "vkCreateBuffer(hd ctrl)");
+        VkMemoryRequirements dreq = {};
+        vkGetBufferMemoryRequirements(g.device, g.hdCtrlBuf, &dreq);
+        VkMemoryAllocateInfo dmai = {};
+        dmai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        dmai.allocationSize = dreq.size;
+        dmai.memoryTypeIndex = FindMemoryType(dreq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        Check(vkAllocateMemory(g.device, &dmai, nullptr, &g.hdCtrlMem), "vkAllocateMemory(hd ctrl)");
+        Check(vkBindBufferMemory(g.device, g.hdCtrlBuf, g.hdCtrlMem, 0), "vkBindBufferMemory(hd ctrl)");
+        VkCommandBuffer ccb = BeginOneTime();
+        VkBufferCopy cpy = { 0, 0, ctrlBytes };
+        vkCmdCopyBuffer(ccb, cs, g.hdCtrlBuf, 1, &cpy);
+        EndOneTime(ccb);
+        vkDestroyBuffer(g.device, cs, nullptr);
+        vkFreeMemory(g.device, csMem, nullptr);
+    }
+
+    // 6. Pool + set (variable image count).
+    VkDescriptorPoolSize psizes[2] = {};
+    psizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;         psizes[0].descriptorCount = 1;
+    psizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; psizes[1].descriptorCount = (uint32_t)nimg;
+    VkDescriptorPoolCreateInfo pci = {};
+    pci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pci.maxSets = 1;
+    pci.poolSizeCount = 2;
+    pci.pPoolSizes = psizes;
+    Check(vkCreateDescriptorPool(g.device, &pci, nullptr, &g.hdPool), "vkCreateDescriptorPool(hd)");
+
+    uint32_t varCount = (uint32_t)nimg;
+    VkDescriptorSetVariableDescriptorCountAllocateInfo vcai = {};
+    vcai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO;
+    vcai.descriptorSetCount = 1;
+    vcai.pDescriptorCounts = &varCount;
+    VkDescriptorSetAllocateInfo dai = {};
+    dai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dai.pNext = &vcai;
+    dai.descriptorPool = g.hdPool;
+    dai.descriptorSetCount = 1;
+    dai.pSetLayouts = &g.hdSetLayout;
+    Check(vkAllocateDescriptorSets(g.device, &dai, &g.hdSet), "vkAllocateDescriptorSets(hd)");
+
+    // 7. Write binding 0 (SSBO) + binding 1 (image array).
+    VkDescriptorBufferInfo bufInfo = { g.hdCtrlBuf, 0, ctrlBytes };
+    std::vector<VkDescriptorImageInfo> imgInfos(nimg);
+    for (int i = 0; i < nimg; i++)
+        imgInfos[i] = { g.hdSampler, g.hdViews[i], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+    VkWriteDescriptorSet writes[2] = {};
+    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet = g.hdSet; writes[0].dstBinding = 0; writes[0].descriptorCount = 1;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    writes[0].pBufferInfo = &bufInfo;
+    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[1].dstSet = g.hdSet; writes[1].dstBinding = 1; writes[1].dstArrayElement = 0;
+    writes[1].descriptorCount = (uint32_t)nimg;
+    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[1].pImageInfo = imgInfos.data();
+    vkUpdateDescriptorSets(g.device, 2, writes, 0, nullptr);
+}
+
+// Per-level (Ultra only): load the current map's HD material sets and rebuild the HD
+// descriptor set. Idempotent (guarded by g.hdBuilt). Any per-material failure leaves
+// that material paletted; a missing materials.csv leaves everything paletted. Always
+// ends with a valid g.hdSet.
+static void EnsureHdMaterials()
+{
+    if (rendermode != TIER_RT3D || g.hdBuilt) return;
+    const int N = RB_MaterialCount();
+
+    // 1. Load the sidecar (absent => all paletted; not an error).
+    char csvPath[512];
+    rb_asset_path(csvPath, sizeof(csvPath), "materials.csv");
+    std::vector<rb_matrow_t> rows;
+    if (FILE* f = fopen(csvPath, "r")) {
+        char line[1024]; int lineno = 0;
+        while (fgets(line, sizeof(line), f)) {
+            lineno++;
+            rb_matrow_t r;
+            int rc = rb_parse_material_line(line, &r);
+            if (rc == 1) rows.push_back(r);
+            else if (rc == -1) printf("DOOM-0042: %s:%d malformed row - skipped.\n", csvPath, lineno);
+        }
+        fclose(f);
+    } else {
+        printf("DOOM-0042: no %s - Ultra uses paletted art.\n", csvPath);
+    }
+
+    // 2. Resolve names -> unified ids into the control table.
+    std::vector<rb_matctrl_t> table(N);
+    int dups = 0;
+    rb_build_ctrl_table(rows.data(), (int)rows.size(), N, &ResolveDoomName, table.data(), &dups);
+    if (dups) printf("DOOM-0042: %d duplicate doom_name row(s) - last wins.\n", dups);
+
+    // last-wins row per id (matches rb_build_ctrl_table's overwrite policy).
+    std::vector<int> rowForId(N, -1);
+    for (int ri = 0; ri < (int)rows.size(); ri++) {
+        int id; if (ResolveDoomName(rows[ri].name, &id) && id >= 0 && id < N) rowForId[id] = ri;
+    }
+
+    // 3. Traffic (world surface area per unified id) from the level mesh.
+    std::vector<float> traffic(N, 0.0f);
+    if (g.levelMesh && g.levelMesh->verts) {
+        const rb_vertex_t* v = g.levelMesh->verts;
+        int ntri = g.levelMesh->numverts / 3;
+        for (int t = 0; t < ntri; t++) {
+            const rb_vertex_t& a = v[t*3+0], &b = v[t*3+1], &c = v[t*3+2];
+            float ax=b.x-a.x, ay=b.y-a.y, az=b.z-a.z;
+            float bx=c.x-a.x, by=c.y-a.y, bz=c.z-a.z;
+            float cx=ay*bz-az*by, cy=az*bx-ax*bz, cz=ax*by-ay*bx;
+            float area = 0.5f * sqrtf(cx*cx + cy*cy + cz*cz);
+            int id = (a.flags & RB_MESH_FLAT) ? g.matNumWall + a.texnum : a.texnum;
+            if (id >= 0 && id < N) traffic[id] += area;
+        }
+    }
+
+    // 4. Decode each HD material's v1 maps. Missing/undecodable ALBEDO -> that material
+    //    falls back to paletted; a missing non-albedo map -> that slot stays default.
+    struct Decoded { int id; int k; rb_image_t img; bool srgb; };
+    std::vector<Decoded> decoded;
+    std::vector<float> estMB(N, 0.0f);
+    std::vector<int>   isHero(N, 0);
+
+    for (int id = 0; id < N; id++) {
+        if (!table[id].usePBR || rowForId[id] < 0) continue;
+        const rb_matrow_t& r = rows[rowForId[id]];
+        isHero[id] = r.is_hero;
+
+        std::vector<Decoded> mine;
+        bool albedoOk = false;
+        for (const HdMapSpec& ms : kHdV1Maps) {
+            char rel[192]; const char* relPath = nullptr;
+            if (r.is_hero) {
+                if (r.maps[ms.k][0] == '\0') continue;      // empty hero cell = no map (default)
+                relPath = r.maps[ms.k];
+            } else {
+                snprintf(rel, sizeof(rel), "derived/%s_%s.png", r.name, ms.suffix);
+                relPath = rel;
+            }
+            char full[720];
+            rb_asset_path(full, sizeof(full), relPath);
+            rb_image_t img;
+            if (!rb_image_load(full, &img)) {
+                if (ms.k != RB_ALB)
+                    printf("DOOM-0042: %s: no %s map (%s) - default.\n", r.name, ms.suffix, full);
+                continue;
+            }
+            rb_image_downscale_max(&img, kHdMaxEdge);
+            if (ms.k == RB_ALB) albedoOk = true;
+            estMB[id] += (float)img.w * img.h * 4.0f / (1024.0f*1024.0f);
+            mine.push_back({ id, ms.k, img, ms.srgb });
+        }
+        if (!albedoOk) {
+            for (Decoded& d : mine) rb_image_free(&d.img);
+            table[id].usePBR = 0;
+            printf("DOOM-0042: %s: no usable albedo - paletted.\n", r.name);
+            continue;
+        }
+        for (Decoded& d : mine) decoded.push_back(d);
+    }
+
+    // 5. Budget: drop lowest-traffic over the ceiling; returns kept ids in upload order.
+    std::vector<int> order(N, -1); int nLoaded = 0;
+    rb_apply_budget(table.data(), N, traffic.data(), estMB.data(), isHero.data(),
+                    kHdBudgetMB, order.data(), &nLoaded);
+
+    // 6. Assemble the upload list in descending-traffic order; assign map slots.
+    std::vector<HdSrc> srcs;
+    float usedMB = 0.0f;
+    for (int oi = 0; oi < nLoaded; oi++) {
+        int id = order[oi];
+        for (Decoded& d : decoded) {
+            if (d.id != id) continue;
+            table[id].maps[d.k] = (int)srcs.size();
+            srcs.push_back({ d.img.pixels, d.img.w, d.img.h, d.srgb });
+            usedMB += (float)d.img.w * d.img.h * 4.0f / (1024.0f*1024.0f);
+            printf("DOOM-0042: id %d map[%d] %dx%d  (%.1f MB)\n", id, d.k, d.img.w, d.img.h, usedMB);
+        }
+    }
+
+    // 7. Build the set (uploads images + SSBO), then free every decoded image (kept
+    //    ones were copied to staging; dropped ones were never uploaded).
+    BuildHdSet(srcs, table.data(), N);
+    for (Decoded& d : decoded) rb_image_free(&d.img);
+
+    printf("DOOM-0042: HD load done - %d material(s), %d image(s), %.1f MB.\n",
+           nLoaded, (int)srcs.size(), usedMB);
+    g.hdBuilt = true;
+}
+
 } // namespace
 
 extern "C" int RB_Vulkan_Available(int want_rt)
@@ -5575,6 +6059,11 @@ extern "C" void RB_Vulkan_BuildLevel(void)
         g.levelMesh = nullptr;
     }
 
+    // DOOM-0042: a new map uses a different texnum set, so invalidate the HD material
+    // build. EnsureHdMaterials rebuilds it (in Ultra) at the next Present, freeing the
+    // prior set then — so the old set stays valid until replaced (no unbound window).
+    g.hdBuilt = false;
+
     // The texture atlas is WAD-global; build + upload it on the first level only.
     if (!g.atlasReady)
         UploadAtlas();
@@ -6260,6 +6749,11 @@ extern "C" void RB_Vulkan_Present(void)
 {
     if (!g.ready)
         return;
+
+    // DOOM-0042: in Ultra, ensure this level's HD material sets are loaded before the
+    // frame records. Idempotent (early-returns unless Ultra + not yet built); does its
+    // own one-time GPU submits, so it must run outside the frame's command buffer.
+    EnsureHdMaterials();
 
     // DOOM-0170 perf: CPU-side timing, same `\` toggle as the GPU pass timers. Captured
     // once here so all segments share the flag even if rb_profile flips mid-frame.
@@ -7028,6 +7522,8 @@ extern "C" void RB_Vulkan_Shutdown(void)
     if (g.texSampler)  vkDestroySampler(g.device, g.texSampler, nullptr);
     if (g.compositeSampler) vkDestroySampler(g.device, g.compositeSampler, nullptr);
     if (g.hdSampler)   vkDestroySampler(g.device, g.hdSampler, nullptr);   // DOOM-0042
+    FreeHdMaterials();                                                     // DOOM-0042: pool/images/SSBO
+    if (g.hdSetLayout) vkDestroyDescriptorSetLayout(g.device, g.hdSetLayout, nullptr);
     for (VkImageView v : g.matViews)  if (v) vkDestroyImageView(g.device, v, nullptr);
     for (VkImage    im : g.matImages) if (im) vkDestroyImage(g.device, im, nullptr);
     if (g.matMemory)   vkFreeMemory(g.device, g.matMemory, nullptr);
