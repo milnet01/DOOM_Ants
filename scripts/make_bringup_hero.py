@@ -9,12 +9,14 @@ import struct, zlib, os, math
 
 
 def bump_normal(x, y, w, h):
-    """A tangent-space normal (OpenGL Y+) for a grid of rounded bumps, one per 8px checker
-    tile, so Task 11's normal mapping has something visible to shade — the flat tiles catch
-    the flashlight/GI at a slant. Height field cos(a)cos(b); normal = norm(-dh/dx,-dh/dy,1)."""
-    a = 2.0 * math.pi * x / 8.0
-    b = 2.0 * math.pi * y / 8.0
-    k = 0.9                                   # slope strength (~40deg max tilt)
+    """A tangent-space normal (OpenGL Y+) for a grid of BIG rounded bumps (~32px period,
+    steep) so Task 11's normal mapping is unmistakable in the play view — a fine 8px albedo
+    checker would clash with the half-res denoiser (which smooths high-frequency lighting)
+    and wash out under soft ambient, so the bump is deliberately low-frequency + high-relief.
+    Height field cos(a)cos(b); normal = norm(-dh/dx,-dh/dy,1)."""
+    a = 2.0 * math.pi * x / 32.0
+    b = 2.0 * math.pi * y / 32.0
+    k = 2.0                                   # slope strength (~63deg max tilt — bold relief)
     nx, ny, nz = k * math.sin(a) * math.cos(b), k * math.cos(a) * math.sin(b), 1.0
     inv = 1.0 / math.sqrt(nx * nx + ny * ny + nz * nz)
     nx, ny, nz = nx * inv, ny * inv, nz * inv
