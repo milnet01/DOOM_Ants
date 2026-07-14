@@ -1,6 +1,6 @@
 # DOOM-0042 — Ultra tier: HD PBR material set (DOOM 3 / sci-fi-horror look)
 
-**Status:** Draft — design approved by user 2026-07-14 (via brainstorming); **pending `/cold-eyes` (CLAUDE.md rule 14) and user spec review before implementation.** No code written yet.
+**Status:** **Approved 2026-07-14** — design approved by user (via brainstorming); `/cold-eyes` (CLAUDE.md rule 14) run to convergence (12 loops, see Cold-eyes loop log) and signed off by Claude per the user's standing delegation. Ready for implementation (writing-plans). No code written yet.
 **Roadmap:** 🚧 `ROADMAP.md` DOOM-0042 (in progress; Phase 2 — "the spin"). This spec consolidates the DOOM-0042 decisions recorded on the roadmap (2026-06-24 sourcing, 2026-06-27 Ultra binding, 2026-06-28 POM/height requirement) and adds two 2026-07-14 refinements: the **hybrid** asset pipeline and **RT-view-first** sequencing.
 **Kind:** feature.
 **Depends on:** DOOM-0009 (path tracer + the **bindless material array** the HD path extends, its build-step-1 seam — the Ultra RT view; DOOM-0009 is 🚧, but that bindless seam and the NEE integrator DOOM-0043/0044 build on are functional), DOOM-0008 (3D level mesh + raster material atlas — shipped), DOOM-0043 (Ultra ambient floor — shipped), DOOM-0044 (flashlight — shipped). These provide the lighting the PBR maps react to. **Also depends on DOOM-0103** (GGX/VNDF specular lobe — planned) for the wet-metal/glossy response the roughness & metallic maps drive: DOOM-0042 supplies those maps, DOOM-0103 delivers the lobe (see Approach C). Until DOOM-0103 lands, roughness/metallic ride the diffuse term only — albedo/normal/AO/POM are still a clear upgrade.
@@ -40,7 +40,7 @@ Grounded in a source survey (r_vulkan.cpp ≈7086 lines; r_mesh.c; r_things.c; p
 
 4. **Geometry reaches the tracer as `rb_vertex_t` triangles.** World → static BLAS (`RB_BuildLevelMesh` `r_mesh.c:489`; `BuildAccelerationStructures` `r_vulkan.cpp:1503`); the megakernel decodes hits through the 18-float `rb_vertex_t` layout (`pathtrace.comp:385-399`). A vertex carries `texnum` as an `R32_SINT` attribute (`r_vulkan.cpp:3849`) and UVs. **No BVH change is needed for HD materials** (POM option (a) is a shader effect on existing triangles).
 
-5. **Tier + view selection.** `rendermode` ∈ {`RB_CLASSIC`, `RB_RASTER3D`="Solid", `RB_RT3D`="Ultra"} (labels in the `modeNames[]` array at `r_backend.c:246-248`). Solid pins `rb_rtdebug=0` (raster), Ultra pins `rb_rtdebug=6` (ray-traced) (`r_backend.c:306-307`); `~` toggles RT within a tier. **No art-set selection exists** — the DOOM-0042 gap.
+5. **Tier + view selection.** `rendermode` ∈ {`RB_CLASSIC`, `RB_RASTER3D`="Solid", `RB_RT3D`="Ultra"} (labels in the `modeNames[]` array at `r_backend.c:244-248`). Solid pins `rb_rtdebug=0` (raster), Ultra pins `rb_rtdebug=6` (ray-traced) (`r_backend.c:306-307`); `~` toggles RT within a tier. **No art-set selection exists** — the DOOM-0042 gap.
 
 6. **Reusable prior art.** The **Q2RTX `materials.csv` sidecar** pattern (paletted-name → PBR set, no map edits) is documented in `docs/research/3d-renderer-approaches.md:33,200` and is the model for our sidecar. The user's library `/mnt/Games/3D Engine Assets/` already holds CC0 PBR sets (`Textures/Metal/`, `Wall/`, `Grunge/`, `Wood/` …) categorised per `/mnt/Games/3D Engine Assets/ASSET_CATEGORIES.md` (external to the repo, like the WAD).
 
@@ -52,7 +52,7 @@ Four layers: **(A) asset authoring** (offline), **(B) load & upload** (engine st
 
 - **Material sidecar** `assets/ultra/materials.csv` (repo-tracked, tiny; format + loader rationale in ADR `docs/decisions/0002-ultra-material-sidecar-and-loader.md`). **Format:** comma-delimited, one **header row** naming the columns (itself a `#` comment — for humans; the parser keys columns by **position**), other `#`-prefixed lines ignored as comments. Cells are whitespace-trimmed; no quoting — a path must not contain a comma (rename such files). One data row per DOOM texture/flat/sprite **name**:
   `doom_name,source,albedo,normal,roughness,metallic,ao,emissive,height,uv_scale,flags`
-  - `source ∈ {hero, derive}`. A **hero** row names its PNG map files explicitly (a curated CC0 set). A **derive** row leaves the map columns **blank** in the committed CSV; the loader resolves each map by the fixed naming convention **`derived/<doom_name>_<suffix>.png`** (`suffix ∈ alb,nrm,rgh,met,ao,emis,hgt`) that `scripts/pbr_derive.py` writes — so the (un-committed) derived PNGs never appear as paths in the tracked file.
+  - `source ∈ {hero, derive}`. A **hero** row names its PNG map files explicitly (a curated CC0 set). A **derive** row leaves the map columns **blank** in the committed CSV; the loader resolves each map by the fixed naming convention **`derived/<doom_name>_<suffix>.png`** (`suffix ∈ alb,nrm,rgh,met,ao,emis,hgt`) that `scripts/pbr_derive.py` writes — so the (un-committed) derived PNGs never appear as paths in the tracked file. (These filenames key on `doom_name` alone, which assumes namespace-unique names in v1; the future `type` column would add a namespace tag if a texture and flat ever collide.)
   - **Hero** map columns hold a PNG path **relative to the asset root `assets/ultra/`** (e.g. `heroes/metal/tek_nrm.png`); an empty hero cell = **"no map"** → the shader uses a sensible default (flat normal, mid roughness, non-metal, no AO/emissive, no height). **Derive** map columns are always blank (resolved by the `derived/…` convention above).
   - `uv_scale` — a float applied as a UV multiplier in the hit shader (tiles the material across its surface; `1.0` = one map span across the surface's native UVs; default `1.0` if blank).
   - `flags` — a **`|`-separated** list (pipe, so it never collides with the CSV comma): `pom` (march POM on this material), `noPom` (force-skip POM — flat decals; if both appear the parser clears the `pom` bit, so the shader checks one bit), `sprite` (alpha-keyed cutout, see §C). **Emissive is driven by the `emissive` map column, not a flag** — a non-empty `emissive` path means the material self-emits; there is no `emissive` flag.
@@ -64,7 +64,7 @@ Four layers: **(A) asset authoring** (offline), **(B) load & upload** (engine st
     FLOOR4_8,derive,,,,,,,,1.0,noPom
     ```
 - **Hero materials:** hand-match the ~1–2 dozen highest-traffic DOOM names (STARTAN/BROWN/TEKWALL tech panels, brick, metal, floors) to a CC0 set. Downloads are **staged** in the user library `/mnt/Games/3D Engine Assets/Textures/…` under its categories (CC0/free only); the maps actually used are then **copied into the repo at `assets/ultra/heroes/` and committed** (CC0, tiny), so a fresh clone builds Ultra without the external drive.
-- **Derive-generator** `scripts/pbr_derive.py` (offline tool, **not** in the engine build) — **input:** it reads the IWAD (`doom1.wad`) directly, a standalone Python lump-directory + PLAYPAL parser (the engine's C `W_CacheLumpName` isn't reusable offline), exporting each `derive` texture/flat to an RGB PNG albedo source keyed by `doom_name`. For every `derive` row it then generates a believable PBR set **from that WAD image** — height from luminance (**brighter = raised**, which fixes both the Sobel normal orientation and the POM march direction), normal from the height gradient (Sobel, default strength ×2.0, emitting OpenGL **Y+**), AO from horizon-based local occlusion of the height field (default 4-px radius) — all three tunable in the script — and roughness/metallic from a **name-prefix → (roughness, metallic) family table** (a plain data map in the script, editable without code):
+- **Derive-generator** `scripts/pbr_derive.py` (offline tool, **not** in the engine build) — **input:** it reads the IWAD (`doom1.wad`) and `materials.csv` (for the `derive` rows) directly, a standalone Python lump-directory + PLAYPAL parser (the engine's C `W_CacheLumpName` isn't reusable offline), exporting each `derive` texture/flat to an RGB PNG albedo source keyed by `doom_name`. For every `derive` row it then generates a believable PBR set **from that WAD image** — height from luminance (**brighter = raised**, which fixes both the Sobel normal orientation and the POM march direction), normal from the height gradient (Sobel, default strength ×2.0, emitting OpenGL **Y+**), AO from horizon-based local occlusion of the height field (default 4-px radius) — all three tunable in the script — and roughness/metallic from a **name-prefix → (roughness, metallic) family table** (a plain data map in the script, editable without code):
 
   | Family (longest matching `doom_name` prefix) | roughness | metallic |
   |----------------------------------------------|-----------|----------|
@@ -81,7 +81,7 @@ Four layers: **(A) asset authoring** (offline), **(B) load & upload** (engine st
 
 ### B. Load & upload layer (engine — new code)
 
-- **PNG decode via a vendored single-header public-domain loader — `stb_image.h`** (PD/MIT, **no new *link* dependency**; chosen over SDL2_image, which would add a link dep — full rationale in **ADR 0002 §Decision 2**). At implementation, add a **vendored-header bullet** to `docs/standards/dependencies.md` §"Where this project's dependencies live" recording the `stb_image.h` version so it doesn't silently go stale (that section has no vendored-single-header slot today). Reuse-before-rewrite: only add the loader we actually need.
+- **PNG decode via a vendored single-header public-domain loader — `stb_image.h`** (PD/MIT, **no new *link* dependency**; chosen over SDL2_image, which would add a link dep — full rationale in **ADR 0002, Decision #2 (PNG loader)**). At implementation, add a **vendored-header bullet** to `docs/standards/dependencies.md` §"Where this project's dependencies live" recording the `stb_image.h` version so it doesn't silently go stale (that section has no vendored-single-header slot today). Reuse-before-rewrite: only add the loader we actually need.
 - **Locating the assets.** The engine resolves the asset root `assets/ultra/` via a `DOOMASSETDIR` env var (default: `assets/ultra/` relative to the executable/repo root), mirroring how the WAD is found through `DOOMWADDIR` (`d_main.c:740-742`, default `.`). A fresh clone finds the committed heroes there with no external drive.
 - **Load only the current map's materials.** At map load the engine already knows which texnums the level uses; load HD sets for *those* only, under two **independent, configurable** bounds:
   - **(i) Per-texture resolution** — clamp each map's longest edge to a max (**default 1024 px**; this is what the earlier "1–2K" shorthand meant — pixels, not MB). Source art larger than that is box-downscaled on load.
@@ -142,4 +142,21 @@ On a surface hit, branch on the material's `usePBR` (read from the control SSBO,
 
 ## Cold-eyes loop log
 
-*(to be filled by the `/cold-eyes` run — CLAUDE.md rule 14 — before implementation)*
+`/cold-eyes` run 2026-07-14 (3 lanes/loop: code-citation accuracy · cross-doc/roadmap/asset integrity · spec-as-implementer-contract). Verified verified-findings per loop (INFO not counted); every actionable severity fixed each pass; loops 2+ briefed cold (no prior-fix list).
+
+| Loop | C | H | M | L | Headline fixes |
+|------|---|---|---|---|----------------|
+| 1 | 0 | 7 | 7 | 3 | sampler/PLAYPAL citations; roadmap ID; licence (derive art out of repo); AO/emissive/POM contracts; CSV grammar; VRAM budget; usePBR SSBO; failure modes |
+| 2 | 0 | 1 | 6 | 5 | RT tracer is Lambert-only ("existing GGX" false); asset-root; normal Y+; derive polarity; uv_scale×POM order; lowest-traffic key |
+| 3 | 0 | 2 | 2 | 5 | GGX lobe → **depend on DOOM-0103** (not owned here); MIS wording; :422 white-furnace anchor; example `heroes/` prefix; SSBO order; roadmap dep edge |
+| 4 | 0 | 1 | 4 | 4 | derive-row resolution (blank cells + naming convention); maps[7] order + v1 upload set; missing-CSV/dup-name; record 0042↔0103 in both roadmap bullets |
+| 5 | 0 | 1 | 2 | 5 | pin `pbr_derive.py` WAD input; exclude sprites from v1 normal/POM; **ADR 0002** for the storage-format/loader decision; DOOMASSETDIR |
+| 6 | 0 | 1 | 0 | 6 | **POM UV clamp bug** (bound the offset, not the coord — REPEAT tiling); ceiling bitangent; emissive sRGB; std430 |
+| 7 | 0 | 1 | 2 | 3 | define `kPomHeightScale`; LOD-0 height taps; mip-gen method; re-attribute bindless seam |
+| 8 | 0 | 0 | 1 | 3 | `doom_name` namespace resolution; generic `∂P/∂U` tangent frame |
+| 9 | 0 | 0 | 1 | 3 | correct bindless=**DOOM-0009** / atlas=DOOM-0008; pom-no-height guard; single-channel `.r`; degenerate-UV fallback |
+| 10 | 0 | 0 | 1 | 3 | scope **HD sprite albedo out of v1** (walls+flats only); bitangent from `∂P/∂V` (mirror sign) |
+| 11 | 0 | 0 | 1 | 4 | specify **derived emissive** (black-except-fullbright via `emissive_derive.h`); dedup stb rationale to ADR |
+| 12 | 0 | 0 | 0 | 4 | **converged** — polish only (citation ranges, ADR anchor, namespace-unique note, tool input) |
+
+**Converged at loop 12** (polish convergence: no substantive finding — all three lanes returned "build-ready", citation accuracy 100%). Signed off by Claude per the user's standing delegation ("specs live in your domain — considered signed off once cold-eyes converges and I'm confident"). Ready for implementation (writing-plans).
