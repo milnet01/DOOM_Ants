@@ -86,4 +86,37 @@ static inline int rb_parse_material_line(const char* line, rb_matrow_t* out) {
     return 1;
 }
 
+/* GPU control struct — MUST match the std430 MatCtrl struct in pathtrace.comp.
+   int maps[7]=28, float uvScale=32, uint flags=36, uint usePBR=40 (no padding). */
+typedef struct {
+    int           maps[RB_MAP_COUNT];
+    float         uvScale;
+    unsigned int  flags;
+    unsigned int  usePBR;
+} rb_matctrl_t;
+
+typedef int (*rb_name_resolver_t)(const char* name, int* out_id);
+
+static inline void rb_build_ctrl_table(const rb_matrow_t* rows, int nrows, int nmaterials,
+                         rb_name_resolver_t resolve, rb_matctrl_t* table, int* dup_count) {
+    for (int i = 0; i < nmaterials; i++) {
+        for (int m = 0; m < RB_MAP_COUNT; m++) table[i].maps[m] = -1;
+        table[i].uvScale = 1.0f;
+        table[i].flags   = 0u;
+        table[i].usePBR  = 0u;                  /* default: paletted */
+    }
+    int dups = 0;
+    for (int r = 0; r < nrows; r++) {
+        int id = -1;
+        if (!resolve(rows[r].name, &id)) continue;   /* name not in this WAD */
+        if (id < 0 || id >= nmaterials)  continue;
+        if (table[id].usePBR) dups++;                /* already set -> last-wins */
+        for (int m = 0; m < RB_MAP_COUNT; m++) table[id].maps[m] = -1;  /* image load fills these */
+        table[id].uvScale = rows[r].uv_scale;
+        table[id].flags   = rows[r].flags;
+        table[id].usePBR  = 1u;
+    }
+    if (dup_count) *dup_count = dups;
+}
+
 #endif
