@@ -1,6 +1,6 @@
 # 0002 — Ultra HD material sidecar format + PNG loader
 
-**Status:** Accepted (2026-07-14) · Feature: DOOM-0042 (`docs/specs/DOOM-0042-ultra-hd-pbr-materials.md`) — the two decisions below are design-settled (spec §A/§B; the user approved the DOOM-0042 direction) but cold-eyes-pending — revisit if the DOOM-0042 cold-eyes pass alters the schema or loader choice.
+**Status:** Proposed (2026-07-14) — flips to Accepted when the DOOM-0042 spec clears its cold-eyes gate · Feature: DOOM-0042 (`docs/specs/DOOM-0042-ultra-hd-pbr-materials.md`). The two decisions below are design-settled (spec §A/§B; the user approved the DOOM-0042 direction); revisit if the cold-eyes pass alters the schema or loader choice.
 
 ## Context
 
@@ -17,7 +17,7 @@ as decisions, not just design:
 ## Decision
 
 1. **A `materials.csv` sidecar**, following the Q2RTX `materials.csv` pattern
-   (`docs/research/3d-renderer-approaches.md:33,182-190,200`): one row per DOOM
+   (`docs/research/3d-renderer-approaches.md:33,200`): one row per DOOM
    texture/flat/sprite name → PBR map set. Comma-delimited, positional columns,
    `#` comments, `|`-separated `flags`. The map geometry, sectors and UVs are
    never touched — only the material a `texnum` resolves to. Full schema lives in
