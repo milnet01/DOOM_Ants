@@ -32,6 +32,7 @@
 #include <SDL.h>
 #include <SDL_vulkan.h>
 
+#include <chrono>      // DOOM-0170 perf: CPU-side wall-clock frame profiler
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
@@ -382,6 +383,19 @@ struct VulkanState
     double      profMs[8]       = { 0, 0, 0, 0, 0, 0, 0, 0 };
     int         profFrames      = 0;
     int         profLastReport  = 0;      // I_GetTimeMS of the last printf
+
+    // DOOM-0170 perf: CPU-side wall-clock profiler (same `\` toggle). The GPU pass
+    // timers above only see GPU execution; this measures the CPU frame cost the
+    // single-frame-in-flight design can't overlap — the fence WAIT (CPU blocked on the
+    // previous frame's GPU: large => GPU-bound, ~0 => CPU-bound), plus CPU prep
+    // (sprite/emitter/point-light build) and command recording. Printed on the same
+    // 1-second cadence as the GPU line so both land together.
+    double      cpuMs[5]        = { 0, 0, 0, 0, 0 };  // fenceWait / build / record / submit / present-total
+    // Sub-breakdown of cpuMs[1] (build): [0] sprite/sky/blob billboard builds,
+    // [1] NEE emitter refill + per-subsector point-light cull, [2] moving-sector re-height.
+    double      cpuBuildMs[3]   = { 0, 0, 0 };
+    int         cpuFrames       = 0;
+    int         cpuLastReport   = 0;
 
     VkDebugUtilsMessengerEXT debug = VK_NULL_HANDLE;
 
@@ -6099,10 +6113,23 @@ void RecordRtOverlay(uint32_t idx, bool drawOverlay)
     vkCmdEndRenderPass(g.cmd);
 }
 
+// DOOM-0170 perf: monotonic wall clock in milliseconds for the CPU-side frame
+// profiler. steady_clock is immune to NTP/settimeofday jumps, unlike wall-time.
+static inline double CpuNowMs()
+{
+    using namespace std::chrono;
+    return duration<double, std::milli>(steady_clock::now().time_since_epoch()).count();
+}
+
 extern "C" void RB_Vulkan_Present(void)
 {
     if (!g.ready)
         return;
+
+    // DOOM-0170 perf: CPU-side timing, same `\` toggle as the GPU pass timers. Captured
+    // once here so all segments share the flag even if rb_profile flips mid-frame.
+    const bool cprof = rb_profile;
+    const double tPresent0 = cprof ? CpuNowMs() : 0.0;
 
     if (g.needRecreate)
     {
@@ -6110,7 +6137,12 @@ extern "C" void RB_Vulkan_Present(void)
         g.needRecreate = false;
     }
 
+    const double tFence0 = cprof ? CpuNowMs() : 0.0;
     vkWaitForFences(g.device, 1, &g.inFlight, VK_TRUE, UINT64_MAX);
+    // The CPU sits here blocked until the PREVIOUS frame's GPU work signals the fence.
+    // A large value means the GPU is the long pole (2-frames-in-flight would hide it);
+    // ~0 means the CPU work outran the GPU and the frame is CPU-bound.
+    if (cprof) g.cpuMs[0] += CpuNowMs() - tFence0;
 
     // DOOM-0090: read back the previous frame's per-pass GPU timestamps (the fence
     // wait above guarantees that frame is complete, so this never stalls), convert
@@ -6222,12 +6254,14 @@ extern "C" void RB_Vulkan_Present(void)
     // Rebuild this frame's billboard sprites into the persistently-mapped buffer.
     // Safe to overwrite now: the fence wait above guarantees the previous frame's
     // draw (which read this buffer) has finished. Host-coherent, so no flush.
+    const double tBuild0 = cprof ? CpuNowMs() : 0.0;   // DOOM-0170 CPU profiler: prep block
     g.spriteVertCount = 0;
     g.skyVertCount    = 0;
     g.blobVertCount   = 0;   // DOOM-0170 L2d
     g.sprWorldVertCount = 0;
     if (!rtActive && g.spriteMapped && g.haveCamera && g.atlasReady)
     {
+        const double tSpr0 = cprof ? CpuNowMs() : 0.0;   // sub-timer: billboard builds
         rb_vertex_t* buf = (rb_vertex_t*)g.spriteMapped;
         // Sky backdrop first (verts [0,sky)); it draws behind the world with the
         // depth-off pipeline. Sprites + weapon follow and share the main draw.
@@ -6246,6 +6280,7 @@ extern "C" void RB_Vulkan_Present(void)
         g.blobVertOffset = (uint32_t)(sky + n);
         g.blobVertCount  = (uint32_t)RB_BuildBlobs(&g.lastView, buf + sky + n,
                                                    (int)g.spriteVertCap - sky - n);
+        if (cprof) g.cpuBuildMs[0] += CpuNowMs() - tSpr0;   // sky/sprite/psprite/blob builds
 
         // DOOM-0170 L1b: the raster point-light stack needs this frame's emissive
         // sprites (torches/lamps/barrels) in the NEE emitter list. The traced branch
@@ -6256,8 +6291,11 @@ extern "C" void RB_Vulkan_Present(void)
         // emitters/probes without a bake); costs one sprite build + the <=1 ms cull.
         if (g.rtEnabled && g.sprWorldMapped)
         {
+            const double tW0 = cprof ? CpuNowMs() : 0.0;
             g.sprWorldVertCount = (uint32_t)RB_BuildSprites(&g.lastView,
                 (rb_vertex_t*)g.sprWorldMapped, (int)g.sprWorldVertCap);
+            const double tL0 = cprof ? CpuNowMs() : 0.0;
+            if (cprof) g.cpuBuildMs[0] += tL0 - tW0;   // 2nd (world) sprite build -> sprites
             if (g.worldEmitDirty && g.vbufMapped)
             {
                 BuildStaticEmitterSet((const rb_vertex_t*)g.vbufMapped);
@@ -6265,6 +6303,7 @@ extern "C" void RB_Vulkan_Present(void)
             }
             BuildDynamicEmitters();     // refill g.emitBuf (static + emissive sprites)
             BuildRasterPointLights();   // -> g.lightBuf (per-subsector nearest-N)
+            if (cprof) g.cpuBuildMs[1] += CpuNowMs() - tL0;   // emitter refill + point-light cull
         }
     }
     // DOOM-0094/0100: in the path-traced view the world comes from the trace. The
@@ -6308,9 +6347,11 @@ extern "C" void RB_Vulkan_Present(void)
     // first time the trace is shown.
     if (g.levelMesh && g.vbufMapped)
     {
+        const double tH0 = cprof ? CpuNowMs() : 0.0;
         int upd = RB_UpdateMeshHeights(g.levelMesh, (rb_vertex_t*)g.vbufMapped);
         if (upd & RB_UPD_MOVED) g.blasDirty = true;      // geometry shifted -> BLAS refit
         if (upd & RB_UPD_RETEX) g.worldEmitDirty = true; // a face's texture swapped -> emitter rebuild
+        if (cprof) g.cpuBuildMs[2] += CpuNowMs() - tH0;  // moving-sector re-height
     }
 
     // DOOM-0131: the moving-sector world-BLAS refit (build step 5) is now recorded
@@ -6327,6 +6368,11 @@ extern "C" void RB_Vulkan_Present(void)
     if (drawOverlay)
         std::memcpy(g.overlayMapped, g.overlaySrc,
                     (size_t)g.overlayW * g.overlayH);
+
+    // DOOM-0170 CPU profiler: end of the prep block (sprite/emitter/point-light build
+    // + moving-sector re-height + overlay upload), start of command recording.
+    const double tRecord0 = cprof ? CpuNowMs() : 0.0;
+    if (cprof) g.cpuMs[1] += tRecord0 - tBuild0;
 
     VkCommandBufferBeginInfo bi = {};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -6696,6 +6742,10 @@ extern "C" void RB_Vulkan_Present(void)
 
     Check(vkEndCommandBuffer(g.cmd), "vkEndCommandBuffer");
 
+    // DOOM-0170 CPU profiler: end of command recording, start of submit + present.
+    const double tSubmit0 = cprof ? CpuNowMs() : 0.0;
+    if (cprof) g.cpuMs[2] += tSubmit0 - tRecord0;
+
     // The RT path's first swapchain write is the blit (TRANSFER); the raster
     // path's is the colour attachment. Wait the acquire semaphore at the matching
     // stage so the image isn't written before it's acquired.
@@ -6725,6 +6775,37 @@ extern "C" void RB_Vulkan_Present(void)
         g.needRecreate = true;
     else if (pr != VK_SUCCESS)
         Fail("vkQueuePresentKHR", pr);
+
+    // DOOM-0170 perf: close the CPU-side segments and print once a second. cpuMs =
+    // fenceWait / build / record / submit / present-total. The gap between the FPS
+    // counter's frame time and present-total is the rest of the engine (game tick +
+    // the software 2D overlay drawn into screens[0] each frame). fenceWait is the key
+    // read: high => GPU-bound (2-frames-in-flight helps), ~0 => CPU-bound.
+    if (cprof)
+    {
+        const double tEnd = CpuNowMs();
+        g.cpuMs[3] += tEnd - tSubmit0;        // submit + present call
+        g.cpuMs[4] += tEnd - tPresent0;       // whole present (incl. fence wait idle)
+        g.cpuFrames++;
+        int nowc = I_GetTimeMS();
+        if (g.cpuLastReport == 0) g.cpuLastReport = nowc;
+        if (nowc - g.cpuLastReport >= 1000 && g.cpuFrames > 0)
+        {
+            const double f = 1.0 / (double)g.cpuFrames;
+            printf("[cpu_profile] %3d fps | fenceWait %.2f | build %.2f | record %.2f | "
+                   "submit %.2f | present-total %.2f ms (avg/frame, CPU wall clock)\n",
+                   g.cpuFrames, g.cpuMs[0] * f, g.cpuMs[1] * f, g.cpuMs[2] * f,
+                   g.cpuMs[3] * f, g.cpuMs[4] * f);
+            printf("[cpu_build]   build %.2f = sprites %.2f + lights %.2f + reheight %.2f ms "
+                   "(avg/frame; lights = NEE emitter refill + per-subsector point-light cull)\n",
+                   g.cpuMs[1] * f, g.cpuBuildMs[0] * f, g.cpuBuildMs[1] * f, g.cpuBuildMs[2] * f);
+            fflush(stdout);
+            for (int ci = 0; ci < 5; ci++) g.cpuMs[ci] = 0.0;
+            for (int ci = 0; ci < 3; ci++) g.cpuBuildMs[ci] = 0.0;
+            g.cpuFrames = 0;
+            g.cpuLastReport = nowc;
+        }
+    }
 }
 
 extern "C" void RB_Vulkan_Shutdown(void)
