@@ -5859,11 +5859,14 @@ void RecordRtTrace(uint32_t idx)
     // non-TAAU path). The label + blit below operate at display resolution on it.
     const VkImage finalImage = taauActive ? g.taImg[TA_OUT] : g.rtImage;
 
-    // On-screen mode label (debug): stamp the active `~` mode's title top-centre into
-    // the final image before the blit (the trace path skips the normal HUD, so this
-    // is the only on-screen mode proof). Runs for every RT display mode; the
-    // compute->compute barrier orders it after the megakernel (modes 1-4) / composite
-    // (mode 6) / TAAU (mode 6 upscaled) write, and it only touches the label box.
+    // On-screen mode label (debug ONLY): stamp the active `~` mode's title top-centre into
+    // the final image before the blit. Gated on rb_rtdebug_menu ("Debug Views" on) so it is
+    // the diagnostic cycle's on-screen proof and never shows during normal play — selecting
+    // Ultra from the menu drives mode 6 (DENOISED) without Debug Views, and the player already
+    // knows the tier they picked, so the "DENOISED"/"PROFILER" text would just be clutter
+    // (user request 2026-07-14). The compute->compute barrier orders it after the megakernel
+    // (modes 1-4) / composite (mode 6) / TAAU (mode 6 upscaled) write; it only touches the label box.
+    if (rb_rtdebug_menu)
     {
         VkMemoryBarrier mb = {};
         mb.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
