@@ -1,6 +1,6 @@
 # 0002 — Ultra HD material sidecar format + PNG loader
 
-**Status:** Accepted (2026-07-14) · Feature: DOOM-0042 (`docs/specs/DOOM-0042-ultra-hd-pbr-materials.md`)
+**Status:** Accepted (2026-07-14) · Feature: DOOM-0042 (`docs/specs/DOOM-0042-ultra-hd-pbr-materials.md`) — the two decisions below are user-settled (spec "Scope decisions" table); revisit if the DOOM-0042 cold-eyes pass alters the schema or loader choice.
 
 ## Context
 
