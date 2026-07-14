@@ -438,6 +438,7 @@ struct VulkanState
     VkDeviceMemory palMemory   = VK_NULL_HANDLE;
     VkImageView    palView     = VK_NULL_HANDLE;
     VkSampler      texSampler  = VK_NULL_HANDLE;   // nearest, REPEAT (native tiling)
+    VkSampler hdSampler = VK_NULL_HANDLE;   // DOOM-0042: linear+mip+REPEAT for HD PBR maps
 
     VkDescriptorSetLayout dsLayout = VK_NULL_HANDLE;
     VkDescriptorPool      dsPool   = VK_NULL_HANDLE;
@@ -3642,6 +3643,19 @@ void CreateDescriptors()
     sci.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     Check(vkCreateSampler(g.device, &sci, nullptr, &g.texSampler), "vkCreateSampler");
+
+    // DOOM-0042: HD material sampler — linear filtering + full mip chain + REPEAT
+    // tiling (walls tile U 0..N). Distinct from the nearest paletted g.texSampler.
+    VkSamplerCreateInfo hsci = {};
+    hsci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    hsci.magFilter = VK_FILTER_LINEAR;
+    hsci.minFilter = VK_FILTER_LINEAR;
+    hsci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    hsci.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    hsci.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    hsci.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    hsci.maxLod = VK_LOD_CLAMP_NONE;
+    Check(vkCreateSampler(g.device, &hsci, nullptr, &g.hdSampler), "vkCreateSampler(hd)");
 
     // DOOM-0170 L2a step 2: the composite samples a render-scaled scene target and
     // upscales it to the swapchain, so it wants linear filtering (smooth, not blocky)
@@ -7013,6 +7027,7 @@ extern "C" void RB_Vulkan_Shutdown(void)
     if (g.dsLayout)    vkDestroyDescriptorSetLayout(g.device, g.dsLayout, nullptr);
     if (g.texSampler)  vkDestroySampler(g.device, g.texSampler, nullptr);
     if (g.compositeSampler) vkDestroySampler(g.device, g.compositeSampler, nullptr);
+    if (g.hdSampler)   vkDestroySampler(g.device, g.hdSampler, nullptr);   // DOOM-0042
     for (VkImageView v : g.matViews)  if (v) vkDestroyImageView(g.device, v, nullptr);
     for (VkImage    im : g.matImages) if (im) vkDestroyImage(g.device, im, nullptr);
     if (g.matMemory)   vkFreeMemory(g.device, g.matMemory, nullptr);
