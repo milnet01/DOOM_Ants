@@ -105,14 +105,34 @@ const float kPomHeightScale = 0.06;
 // is the ± mottle depth of the centred blend (0 = off). The base heroes are pre-weathered,
 // so keep this subtle — it ADDS variation, it isn't the primary dirt.
 const float kGrimeWorldScale = 1.0 / 384.0;
-const float kGrimeStrength    = 0.32;
-// DOOM-0181 L4: "filth" — a monster-overrun base reads as neglected, not clean. Dirt pools in
-// AO-occluded crevices (kGrimeCrevice) and a faint grimy tint (grease/rust/mould) rides the
-// grimier spots. These apply even with no grunge overlay loaded (INV-7); the §10 Q3 knobs tune
-// lived-in <-> abandoned. Darkening stays inside applyGrime's clamp(0.35,1.65) ceiling (INV-6).
-const float kGrimeCrevice = 0.6;                     // extra darkening in AO-occluded crevices
-const vec3  kGrimeTint     = vec3(0.85, 0.80, 0.72); // muted grease/rust/mould
-const float kGrimeTintW    = 0.15;                   // tint weight at the grimiest
+const float kGrimeStrength    = 0.25;   // subtle large-scale brightness variation (grounding only)
+// DOOM-0181 L4 "filth" rework: distinct, hard-edged, multi-coloured DIRT STAINS — not a soft wash.
+// The old soft multiply could only fade, so it never read as dirt. Now a stain forms where the
+// multi-scale grunge (grungeFbm) is darkest, and a NARROW smoothstep gives a defined edge. Each
+// stain-region picks ONE colour from a small palette by a coarse world-cell hash, so a whole mark
+// is one colour and neighbours differ: brown dirt / near-black soot on any surface; green goo only
+// pools on floors. Applied to ALL world surfaces in the Ultra RT view (paletted included) so dirt
+// shows everywhere — never on sprites. The crevice term still darkens genuine recesses (INV-7);
+// darkening stays inside applyGrime's clamp(0.35,1.65) ceiling (INV-6).
+const float kGrimeCrevice  = 0.75;      // extra darkening in AO-occluded crevices (grounding)
+const float kStainThresh   = 0.44;      // grunge value below which a stain forms
+const float kStainEdge     = 0.07;      // smoothstep band (small = hard, defined edge)
+const float kStainOpacity  = 0.82;      // how opaque a stain sits over the albedo
+// Dirt is NOT one flat colour: a stain blends across earthy tones (brown -> ochre -> soot) by a
+// SMOOTH hue selector (a coarse overlay sample, not a cell grid — cells made straight seams), plus
+// per-texel brightness mottle, so colour varies within and between marks. Green goo pools on
+// floors, but never on an already-green (goo/slime) surface.
+const vec3  kDirtBrown     = vec3(0.22, 0.14, 0.08);  // core dirt
+const vec3  kDirtOchre     = vec3(0.30, 0.20, 0.09);  // lighter earthy streaks
+const vec3  kDirtDark      = vec3(0.11, 0.07, 0.04);  // deep dark-brown patches
+const vec3  kSootColour    = vec3(0.06, 0.05, 0.045); // dark grime
+const vec3  kGooColour     = vec3(0.12, 0.42, 0.06);  // green goo (floors only)
+const float kGooChance     = 0.40;      // goo share of floor stains
+// Marks come in a RANGE of sizes by summing the overlay at three world scales (big stains ->
+// medium -> fine speckle); one scale alone reads as a repeating stamp. Weights sum to 1 so the
+// combined value stays ~[0,1]. Per-octave UV offsets stop the scales aligning into a grid.
+const vec3  kGrimeOctaveScale  = vec3(0.35, 1.0, 2.6); // x kGrimeWorldScale: large / medium / fine
+const vec3  kGrimeOctaveWeight = vec3(0.50, 0.32, 0.18);
 
 // DOOM-0042: the base HD sample UV for material id `id` at raw-texel coord `hitUV`. Dividing
 // by the paletted texture's texel size maps hitUV into [0,1) tile space so an HD map tiles
@@ -558,22 +578,54 @@ vec2 detilePOM(MatCtrl mc, vec2 baseUV, vec3 T, vec3 B, vec3 n, vec3 dir, vec2 g
 // exposure, dark specks darken and clean spots lighten. Applied to HD (usePBR) surfaces only
 // — paletted/Classic art is left byte-identical. `gid` is the overlay's hdTex[] slot from the
 // host (pc.misc5.x); 0xFFFFFFFF (the default all-paletted set, or grime disabled) is a no-op.
+// Multi-scale ("randomly-sized") grunge: the overlay summed at three world scales + offsets so
+// marks range from big stains to fine speckle instead of one repeating size.
+float grungeFbm(uint gid, vec2 wUV)
+{
+    float s = kGrimeWorldScale;
+    return kGrimeOctaveWeight.x * texture(hdTex[nonuniformEXT(gid)], wUV * (s*kGrimeOctaveScale.x) + vec2(0.13, 0.71)).r
+         + kGrimeOctaveWeight.y * texture(hdTex[nonuniformEXT(gid)], wUV * (s*kGrimeOctaveScale.y) + vec2(0.51, 0.19)).r
+         + kGrimeOctaveWeight.z * texture(hdTex[nonuniformEXT(gid)], wUV * (s*kGrimeOctaveScale.z) + vec2(0.87, 0.43)).r;
+}
+
+// Smooth, mottled, MULTI-HUE dirt colour — no cell grid, so no straight seams. `hue` (a coarse
+// smooth overlay sample) picks the earthy tone; `bright` (the per-texel grunge) mottles it. Green
+// goo pools on up-facing floors, but never on an already-green (goo/slime) surface.
+// Layered, non-uniform dirt built from the grunge overlay at THREE scales — large tonal regions,
+// mid blotches, fine grain — mapped through an earthy brown ramp, to mimic a real photographed
+// dirt texture rather than a flat colour. Green goo pools on floors (never on already-green).
+vec3 stainColour(uint gid, vec2 wUV, vec3 n, vec3 albedo)
+{
+    float s     = kGrimeWorldScale;
+    float tone  = texture(hdTex[nonuniformEXT(gid)], wUV * (s * 0.12) + vec2(3.1, 1.7)).r;  // large tonal areas
+    float blot  = texture(hdTex[nonuniformEXT(gid)], wUV * (s * 0.90) + vec2(0.6, 4.2)).r;  // mid blotches
+    float grain = texture(hdTex[nonuniformEXT(gid)], wUV * (s * 3.30) + vec2(2.8, 0.4)).r;  // fine grain
+    vec3  dirt  = mix(kDirtDark, kDirtBrown, smoothstep(0.20, 0.55, tone));
+    dirt        = mix(dirt, kDirtOchre, smoothstep(0.55, 0.85, tone));        // earthy ramp
+    dirt       *= mix(0.60, 1.15, blot);                                      // blotchy light/dark
+    dirt       *= (0.85 + 0.30 * grain);                                      // fine grain
+    dirt        = mix(dirt, kSootColour, smoothstep(0.82, 0.97, blot) * 0.5); // occasional soot cores
+    bool green  = albedo.g > albedo.r * 1.15 && albedo.g > albedo.b * 1.15;   // already goo/slime
+    if (n.z > 0.6 && tone < kGooChance && !green) return kGooColour * (0.70 + 0.6 * grain);
+    return dirt;
+}
+
 vec3 applyGrime(vec3 albedo, vec3 hitP, vec3 n, float ao)
 {
+    vec2 wUV = detileWorldUV(hitP, n);                    // dominant-axis world projection (shared)
     uint gid = pc.misc5.x;
     float m = 1.0;
-    if (gid != 0xFFFFFFFFu) {                              // DOOM-0179 grunge overlay present
-        vec2 wUV = detileWorldUV(hitP, n);                // dominant-axis world projection (shared)
-        float g = texture(hdTex[nonuniformEXT(gid)], wUV * kGrimeWorldScale).r;   // UNORM raw 0..1
-        m = 1.0 + (g - 0.5) * 2.0 * kGrimeStrength;        // centred -> no net brightness shift
+    float stain = 0.0, g = 0.5;
+    if (gid != 0xFFFFFFFFu) {                             // DOOM-0179 grunge overlay present
+        g = grungeFbm(gid, wUV);                         // UNORM 0..1, mixed-size marks
+        m = 1.0 + (g - 0.5) * 2.0 * kGrimeStrength;       // subtle large-scale grounding
+        stain = smoothstep(kStainThresh, kStainThresh - kStainEdge, g);  // distinct hard-edged mark
     }
-    // DOOM-0181 L4: dirt pools in AO-occluded crevices. Independent of the overlay (INV-7), so a
-    // level with no grunge map still reads as filthy in its recesses.
-    m -= (1.0 - ao) * kGrimeCrevice;
-    vec3 c = albedo * clamp(m, 0.35, 1.65);               // INV-6 clamp preserved
-    // Faint grimy tint, weighted by how grimy this spot is (a darker m => more tint).
-    float tintAmt = kGrimeTintW * clamp(1.0 - m, 0.0, 1.0);
-    return mix(c, c * kGrimeTint, tintAmt);
+    m -= (1.0 - ao) * kGrimeCrevice;                     // dirt darkens genuine crevices (INV-7)
+    vec3 c = albedo * clamp(m, 0.35, 1.65);              // INV-6 clamp preserved
+    if (stain > 0.0 && gid != 0xFFFFFFFFu)               // distinct mottled dirt on top
+        c = mix(c, stainColour(gid, wUV, n, albedo), stain * kStainOpacity);
+    return c;
 }
 
 // DOOM-0141: sample the classic DOOM sky panorama for a primary ray. Mirrors the
@@ -794,7 +846,7 @@ void main()
             float ao = (mc.usePBR != 0u && mc.maps[4] >= 0 && detileOn())
                      ? detileR(uint(mc.maps[4]), sUV, detileWorldUV(hitP, n) / kDetileWorldCell)
                      : hdAO(mc, id, sUV);
-            if (mc.usePBR != 0u) albedo = applyGrime(albedo, hitP, n, ao);   // DOOM-0179/0181 filth
+            if (!isSprite) albedo = applyGrime(albedo, hitP, n, ao);   // DOOM-0179/0181 filth (all world surfaces)
 
             // DOOM-0084: world surfaces self-emit as before; a sprite self-emits only
             // if it's a fullbright light Thing (lamp/torch/barrel), so ammo pickups and
@@ -957,7 +1009,7 @@ void main()
                      : hdAO(mc, id, sUV);
             // DOOM-0179/0181 grime + filth, applied BEFORE galbedo is stored so the composite's
             // re-modulation (L = albedo*illum) carries the mottle. n is geometric here.
-            if (mc.usePBR != 0u) albedo = applyGrime(albedo, hitP, n, ao);
+            if (!isSprite) albedo = applyGrime(albedo, hitP, n, ao);   // DOOM-0179/0181 filth (all world surfaces)
 
             // build step 6c (half-resolution lighting): the G-buffer (position /
             // normal / albedo) is written at FULL resolution for EVERY pixel — it
