@@ -1,7 +1,10 @@
 # DOOM-0181 — De-tiled, grimy Ultra surfaces
 
-**Status:** Draft — pre-`/cold-eyes`. Design contract for stochastic de-tiling +
-filth on HD (`usePBR`) surfaces in the Ultra ray-traced view.
+**Status:** Reviewed — `/cold-eyes` loops 1–6, locked 2026-07-16 (loop 6, the
+confirming pass, caught a `mirrorProb` probability inversion — fixed). The design
+was stable and unchallenged from loop 1; later loops were precision/consistency
+only. Implementation-ready. Design contract for stochastic de-tiling + filth on HD
+(`usePBR`) surfaces in the Ultra ray-traced view.
 
 **Depends on:**
 - **DOOM-0042** (Ultra HD PBR materials) — provides the HD material set this
@@ -147,8 +150,10 @@ case (the one exception — a POM march crossing a boundary — is handled in §
   point `hitP` — the same projection `applyGrime` uses (z-up DOOM: floors/ceilings
   → `hitP.xy`, ±x walls → `hitP.yz`, ±y walls → `hitP.xz`) — into a 2-D world
   coordinate `w`, and quantise it by a world-unit cell size `kDetileWorldCell`:
-  `cell = floor(w / kDetileWorldCell)`, `f = fract(w / kDetileWorldCell)`. The
-  per-cell hash is a small `vec3 hash(ivec2 cell)` **wrapper built around the
+  `ivec2 cell = ivec2(floor(w / kDetileWorldCell))`,
+  `f = fract(w / kDetileWorldCell)` (note the `ivec2` cast — the hash below indexes
+  by integer cell). The per-cell hash is a small `vec3 hash(ivec2 cell)` **wrapper
+  built around the
   existing `pcgHash` primitive** (`pt_common.glsl:75`) — reuse that PRNG, do not
   invent a new algorithm. Recipe: fold the cell into one seed
   `s = pcgHash(uint(cell.x)*0x9E3779B1u ^ uint(cell.y)*0x85EBCA77u)`, then expand
@@ -173,7 +178,9 @@ case (the one exception — a POM march crossing a boundary — is handled in §
   `hash(cell).xy` would only ever shift positive) — plus an optional **horizontal
   mirror** — flip U *within the
   cell*, reflecting the fractional coordinate about the cell centre, when
-  `hash(cell).z > mirrorProb`. **No rotation, no vertical flip** — DOOM wall
+  `hash(cell).z < mirrorProb` (the `<` makes `mirrorProb` literally P(mirror) and
+  matches the codebase's `rnd() < threshold` idiom; a `>` would invert the knob).
+  **No rotation, no vertical flip** — DOOM wall
   textures are vertically oriented (panel lines, rivets), so only
   orientation-preserving transforms are allowed (INV-1).
 - **Seam handling.** The Inigo-Quilez 4-corner blend: a per-pixel weighted blend
@@ -181,7 +188,7 @@ case (the one exception — a POM march crossing a boundary — is handled in §
   4 taps; a 2-tap mode is the perf dial (§6). The blend is a **per-map wrapper**
   around each `texture(hdTex[m], …)` call — it does **not** mutate the one shared
   `sUV`, so a map that has not yet been wrapped (an L1/L2 interim build) keeps
-  reading the plain coordinate. It wraps the **non-height map fetches**
+  reading the plain coordinate. It wraps the **non-height-map fetches**
   (albedo/normal/AO); the POM **height march is not per-step blended** (that would
   cost taps × march-steps — see §4.4). Which maps carry the wrapper at each build
   layer is set in §7 (albedo from L1, normal/AO from L2, height/POM from L3).
@@ -237,8 +244,8 @@ over which cell a pixel is in.
 `baseUV` (a single de-tiled coordinate for the pixel), *then* run the POM march on
 that de-tiled coordinate using the de-tiled height map. The march is **not**
 4-corner-blended per step — it uses the pixel's single dominant cell — so POM cost
-stays ~unchanged (the blend's `taps×` multiplier applies only to the non-height
-map fetches, §4.2). Parallax relief, albedo, and normal then all come from the same
+stays ~unchanged (the blend's `taps×` multiplier applies only to the
+non-height-map fetches, §4.2). Parallax relief, albedo, and normal then all come from the same
 transformed tile. On a mirrored cell the march's tangent-space X is negated with
 the normal's (INV-2).
 
@@ -293,22 +300,26 @@ there — *not* the pre-de-tile coordinate. Play-test call (§10 Q1).
   profiled; folded into the L5 perf pass.
 - **Gate (evaluated at L5 only).** L1–L4 are visual play-test only, with **no FPS
   gate** — FPS numbers there are diagnostic. The single L5 pass/fail line: **4-tap
-  de-tiling must add ≤ 5 % to the average frame time** (measured in ms —
-  `[cpu_profile]` present-total — not FPS) **vs the measured RT-on baseline above.**
-  If it costs more, fall back to 2-tap via the `misc5.y` dial, or a cheaper
-  compile-time split (§10 Q4); once a fallback is selected it is accepted as the
-  shipped quality (the fallback is cheaper than 4-tap by construction, so it needs
-  no separate budget check). **Advisory, non-blocking:** de-tiling should avoid
-  being the change that drops RT-on Ultra below DOOM-0012's aspirational 60 FPS
-  floor (💭 considered — not yet an adopted commitment), but that floor is not this
-  feature's gate — the only L5 pass/fail is the ≤ 5 % rule above. Measure with the
-  `\` profiler.
+  de-tiling must add ≤ 5 % to the frame time vs the measured RT-on baseline.**
+  Measurement protocol (same for baseline and 4-tap): average the `[cpu_profile]`
+  present-total (ms, not FPS) over a fixed ~10-second walk of the green-goo room,
+  the same path both times.
+- **Fallback.** If 4-tap exceeds 5 %, fall back to 2-tap via the `misc5.y` dial, or
+  a cheaper compile-time split (§10 Q4). *Assumption:* a fallback is cheaper than
+  4-tap by construction (fewer fetches), so it clears the bar — but spot-check the
+  chosen fallback against the same ≤ 5 % number before accepting it.
+- **Advisory (non-blocking).** De-tiling should avoid being the change that drops
+  RT-on Ultra below DOOM-0012's aspirational 60 FPS floor (💭 considered — not yet
+  an adopted commitment), but that floor is not this feature's gate — the only L5
+  pass/fail is the ≤ 5 % rule above.
 
 ## 7. Build order
 
 Each layer is independently play-testable; stop and get user acceptance per
-layer (renderer look is a play-test call). Only **L5** gates ship on FPS (§6);
-L1–L4 FPS numbers are diagnostic.
+layer (renderer look is a play-test call). L1–L4 acceptance is **human play-test
+only** — no automated proxy metric, matching the renderer-look convention
+(DOOM-0179 / DOOM-0042); only **L5**'s ≤ 5 % perf check (§6) is objective. L1–L4
+FPS numbers are diagnostic.
 
 | Layer | Scope | Verify | FPS-gate? |
 |-------|-------|--------|-----------|
