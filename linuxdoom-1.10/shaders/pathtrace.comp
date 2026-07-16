@@ -481,6 +481,38 @@ vec3 detile(uint mapIdx, vec2 sUV, vec2 g) {
     return mix(mix(s00, s10, b.x), mix(s01, s11, b.x), b.y);
 }
 
+// DOOM-0181 L2: scalar (.r) de-tile — for the AO map. Same 4-corner blend as detile().
+float detileR(uint mapIdx, vec2 sUV, vec2 g) {
+    ivec2 cell = ivec2(floor(g)); vec2 f = fract(g);
+    vec2 b = smoothstep(vec2(0.25), vec2(0.75), f);
+    float s00 = texture(hdTex[nonuniformEXT(mapIdx)], detileCellUV(sUV, cell + ivec2(0,0))).r;
+    float s10 = texture(hdTex[nonuniformEXT(mapIdx)], detileCellUV(sUV, cell + ivec2(1,0))).r;
+    if (detileTaps() < 4) return mix(s00, s10, b.x);
+    float s01 = texture(hdTex[nonuniformEXT(mapIdx)], detileCellUV(sUV, cell + ivec2(0,1))).r;
+    float s11 = texture(hdTex[nonuniformEXT(mapIdx)], detileCellUV(sUV, cell + ivec2(1,1))).r;
+    return mix(mix(s00, s10, b.x), mix(s01, s11, b.x), b.y);
+}
+
+// DOOM-0181 L2: tangent-space normal de-tile. Unpack the normal PER cell and negate its X on a
+// mirrored cell (INV-2 — a horizontal flip reverses tangent handedness, so relief points the
+// right way), then blend. Returns the blended tangent-space normal (caller rotates by T,B,n).
+vec3 detileNormalTS(uint mapIdx, vec2 sUV, vec2 g) {
+    ivec2 cell = ivec2(floor(g)); vec2 f = fract(g);
+    vec2 b = smoothstep(vec2(0.25), vec2(0.75), f);
+    int taps = detileTaps();
+    vec3 acc = vec3(0.0); float wsum = 0.0;
+    for (int i = 0; i < (taps < 4 ? 2 : 4); i++) {
+        ivec2 corner = (taps < 4) ? ivec2(i, 0) : ivec2(i & 1, i >> 1);
+        ivec2 c = cell + corner;
+        vec3  tn = texture(hdTex[nonuniformEXT(mapIdx)], detileCellUV(sUV, c)).xyz * 2.0 - 1.0;
+        if (hash3(c).z < kDetileMirrorProb) tn.x = -tn.x;   // mirror flips tangent handedness
+        float wx = (corner.x == 0) ? (1.0 - b.x) : b.x;
+        float wy = (taps < 4) ? 1.0 : ((corner.y == 0) ? (1.0 - b.y) : b.y);
+        acc += tn * (wx * wy); wsum += wx * wy;
+    }
+    return acc / max(wsum, 1e-4);
+}
+
 // DOOM-0179: world-space grime overlay. The base HD texture tiles with the surface (every
 // 64-128 units); this multiplies in a single low-frequency grunge map sampled by WORLD
 // position instead, so identical tiles on different walls pick up different grime and stop
@@ -729,7 +761,17 @@ void main()
                 uint ss = pc.triSs.s[uint(prim)];
                 if (ss < pc.misc2.y) hitSec = pc.subSec.s[ss];
             }
-            vec3 shadeN = hdShadingNormal(mc, id, sUV, n, T, B);
+            // DOOM-0181 L2: de-tile the normal in lockstep with the albedo (same world cell), so a
+            // mirrored/offset tile's relief matches its colour. INV-2: detileNormalTS negates the
+            // per-cell tangent-X on a mirror. Paletted / no-normal-map hits keep hdShadingNormal.
+            vec3 shadeN;
+            if (mc.usePBR != 0u && mc.maps[1] >= 0 && detileOn()) {
+                vec2 gN = detileWorldUV(hitP, n) / kDetileWorldCell;
+                vec3 tn = detileNormalTS(uint(mc.maps[1]), sUV, gN);
+                shadeN  = normalize(tn.x * T + tn.y * B + tn.z * n);
+            } else {
+                shadeN = hdShadingNormal(mc, id, sUV, n, T, B);
+            }
             // shadeSurface/*Delta offset their shadow-ray origin along the normal they're
             // handed; a tilted bump normal shrinks the clearance off the true triangle
             // plane, so for a normal-mapped surface lift the shading point along the
@@ -752,7 +794,12 @@ void main()
             uint  subId    = isSprite ? 0xFFFFFFFFu : pc.triSs.s[uint(prim)];
             vec3  gi       = (subId < pc.misc2.y) ? giIrradiance(pc.probes, subId, shadeN)
                                                   : vec3(0.0);
-            L += albedo * max(gi, ambient) * hdAO(mc, id, sUV);   // AO dims fill light only
+            // DOOM-0181 L2: de-tile the AO too (same cell), so occlusion pooling matches the
+            // de-tiled albedo/normal. Paletted / no-AO hits fall back to hdAO (== 1.0 there).
+            float ao = (mc.usePBR != 0u && mc.maps[4] >= 0 && detileOn())
+                     ? detileR(uint(mc.maps[4]), sUV, detileWorldUV(hitP, n) / kDetileWorldCell)
+                     : hdAO(mc, id, sUV);
+            L += albedo * max(gi, ambient) * ao;   // AO dims fill light only
 
             // Dynamic point-light deltas (build step 5): the muzzle flash + the
             // DOOM-0044 player flashlight, each a hard ray-traced shadow composited
@@ -893,7 +940,17 @@ void main()
             // Lighting uses the normal-mapped shading normal; the G-buffer normal above
             // stays GEOMETRIC (the SVGF edge-stopping wants low-frequency normals, not the
             // high-frequency map detail, or it treats bumps as edges and under-denoises).
-            vec3 shadeN = hdShadingNormal(mc, id, sUV, n, T, B);
+            // DOOM-0181 L2: de-tile the normal in lockstep with the albedo (same world cell), so a
+            // mirrored/offset tile's relief matches its colour. INV-2: detileNormalTS negates the
+            // per-cell tangent-X on a mirror. Paletted / no-normal-map hits keep hdShadingNormal.
+            vec3 shadeN;
+            if (mc.usePBR != 0u && mc.maps[1] >= 0 && detileOn()) {
+                vec2 gN = detileWorldUV(hitP, n) / kDetileWorldCell;
+                vec3 tn = detileNormalTS(uint(mc.maps[1]), sUV, gN);
+                shadeN  = normalize(tn.x * T + tn.y * B + tn.z * n);
+            } else {
+                shadeN = hdShadingNormal(mc, id, sUV, n, T, B);
+            }
             // Geometric shadow-origin lift for normal-mapped surfaces (see mode 4); gpos
             // above stored the TRUE hitP, so only the shadow rays use the lifted point.
             vec3 shadeP = (mc.usePBR != 0u && mc.maps[1] >= 0) ? hitP + n * 2e-3 : hitP;
@@ -908,7 +965,11 @@ void main()
             uint  subId    = isSprite ? 0xFFFFFFFFu : pc.triSs.s[uint(prim)];  // sprites: no GI probe
             vec3  gi       = (subId < pc.misc2.y) ? giIrradiance(pc.probes, subId, shadeN)
                                                   : vec3(0.0);
-            illum += max(gi, ambient) * hdAO(mc, id, sUV);   // AO dims fill light only
+            // DOOM-0181 L2: de-tiled AO (same cell as albedo/normal), else hdAO fallback.
+            float ao = (mc.usePBR != 0u && mc.maps[4] >= 0 && detileOn())
+                     ? detileR(uint(mc.maps[4]), sUV, detileWorldUV(hitP, n) / kDetileWorldCell)
+                     : hdAO(mc, id, sUV);
+            illum += max(gi, ambient) * ao;   // AO dims fill light only
 
             // Muzzle flash + DOOM-0044 flashlight, demodulated (the composite re-
             // applies albedo). DOOM-0130 shared helpers — passing vec3(1.0) strips
