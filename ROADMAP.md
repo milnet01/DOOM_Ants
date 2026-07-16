@@ -1649,3 +1649,17 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: feature.
   Source: in-session-2026-07-16 (user: E1M1 walls "extremely tiled"; pairs with DOOM-0179 grime).
   Spec docs/specs/DOOM-0181-detile-grime.md written + /cold-eyes reviewed (2026-07-16): 6 loops, shared-cache reviewers. Design stable/unchallenged from loop 1; loops fixed data-flow, perf-baseline (RT-on vs DOOM-0170 raster), and precision. Confirming loop 6 caught a mirrorProb probability inversion (hash.z > vs < mirrorProb). Locked, implementation-ready. Next: writing-plans → subagent-driven build (L1 de-tile albedo → L5 perf/dial).
+
+- 📋 [DOOM-0182] **Extend DOOM-0042 HD materials to the Ultra raster sub-view (HD in all Ultra views, not just ray-traced).**
+  Today HD (usePBR) materials are sampled ONLY in the RT path (pathtrace.comp);
+  the raster fragment shader (mesh.frag) samples the paletted materialTex[], so
+  Ultra with RT off (rb_rtdebug 0) shows base textures. This was the DOOM-0042
+  "RT-view-first" sequencing; the raster HD pass was always a planned fast-follow.
+  Scope: bind the HD descriptor set (set 3) into the raster pipeline, add a
+  usePBR albedo/normal/AO sampling branch in mesh.frag mirroring the RT path, and
+  (for parity) port the DOOM-0181 de-tiling + filth wrappers so the raster view
+  matches the RT look. Keep Classic + paletted byte-identical. Depends on the
+  DOOMASSETDIR launcher fix (2026-07-16) so HD actually loads.
+  **Layman:** Make the fancy high-res wall textures show up in Ultra's fast (non-ray-traced) view too, so switching ray-tracing off doesn't drop you back to the blocky originals.
+  Kind: feature.
+  Source: user-request-2026-07-16.
