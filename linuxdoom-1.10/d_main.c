@@ -1003,7 +1003,8 @@ void D_RelaunchWithIwad (const char* iwadpath)
     // failed spawn must NOT fall through to exit(0) -- that would silently quit
     // the running game reporting success.
     I_QuitTeardown();
-    if (_spawnv(_P_NOWAIT, exe, newargv) < 0)
+    // _spawnv takes a const char* const* argv; newargv is a plain char*[].
+    if (_spawnv(_P_NOWAIT, exe, (const char* const*)newargv) < 0)
 	I_Error("game-select: could not relaunch %s: %s", exe, strerror(errno));
     exit(0);
 #else
