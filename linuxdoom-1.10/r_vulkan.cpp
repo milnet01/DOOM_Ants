@@ -847,6 +847,11 @@ static const float kSsaoPower     = 1.5f;
 extern "C" { int rb_profile = 0; }
 extern "C" int I_GetTimeMS(void);   // i_system.c; for the rt_profile once-a-second report
 
+// DOOM-0181: de-tile quality dial (the `]` key; persisted as rt_detile). 0 = off, 1 = 2-tap,
+// 2 = 4-tap. Drives pc.misc5.y on the Ultra RT path; the shader ignores it unless HD materials
+// are loaded (it is gated on g.hdBuilt at the populate site). Default 4-tap; RT-only.
+extern "C" { int rb_detile = 2; }
+
 // INV-6 headless self-test latch (DOOM-0009 build step 4d). Set from the
 // `-rtverify` command-line parm; the first ready present runs RB_RtVerify (the
 // rel-MSE + white-furnace proof) and exits. -1 = unchecked, 0 = off, 1 = armed.
@@ -6396,9 +6401,9 @@ void RecordRtTrace(uint32_t idx)
     // DOOM-0179: world-grime overlay slot in hdTex[] (loaded per level by EnsureHdMaterials;
     // -1 on the default all-paletted set -> 0xFFFFFFFF disables the shader's grime branch).
     pc.misc5[0]    = (g.hdGrungeIdx >= 0) ? (uint32_t)g.hdGrungeIdx : 0xFFFFFFFFu;
-    // DOOM-0181: de-tile quality dial (misc5.y). 0=off, 1=2-tap, 2=4-tap. Default 4-tap on the HD
-    // set, 0 when no HD materials are loaded (nothing to de-tile). Runtime-switchable in L5.
-    pc.misc5[1]    = (g.hdBuilt && g.matNumWall + g.matNumFlat > 0) ? 2u : 0u;
+    // DOOM-0181: de-tile quality dial (misc5.y) from rb_detile (0=off,1=2-tap,2=4-tap; `]` key).
+    // Forced 0 when no HD materials are loaded (nothing to de-tile), so the dial is a no-op there.
+    pc.misc5[1]    = (g.hdBuilt && g.matNumWall + g.matNumFlat > 0) ? (uint32_t)rb_detile : 0u;
     pc.vertsAddr   = BufferAddress(g.vbuf);
     pc.emitAddr    = g.emitBuf    ? BufferAddress(g.emitBuf)    : 0;
     pc.matEmisAddr = g.matEmisBuf ? BufferAddress(g.matEmisBuf) : 0;

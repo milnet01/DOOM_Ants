@@ -438,6 +438,18 @@ static void I_GetEvent(SDL_Event* sdlevent)
 	    fflush(stdout);
 	    break;
 	}
+	// Right-bracket (`]`) cycles the Ultra RT de-tile quality (DOOM-0181): off ->
+	// 2-tap -> 4-tap -> off. Lets the de-tiling be A/B'd live for the perf pass.
+	// Ultra RT + HD-materials only; a no-op elsewhere (the populate site forces 0).
+	if (sdlevent->key.keysym.sym == SDLK_RIGHTBRACKET && !sdlevent->key.repeat)
+	{
+	    extern int rb_detile;           // r_vulkan.cpp
+	    static const char* det_name[3] = { "OFF", "2-tap", "4-tap" };
+	    rb_detile = (rb_detile + 1) % 3;
+	    printf("Ultra de-tile %s (Ultra RT only)\n", det_name[rb_detile]);
+	    fflush(stdout);
+	    break;
+	}
 	event.type = ev_keydown;
 	event.data1 = xlatekey(&sdlevent->key.keysym);
 	D_PostEvent(&event);
