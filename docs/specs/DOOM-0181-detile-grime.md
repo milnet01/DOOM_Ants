@@ -19,9 +19,11 @@ filth on HD (`usePBR`) surfaces in the Ultra ray-traced view.
 - **DOOM-0179** (world-position grime overlay, in-progress) — becomes the
   **filth** layer here (§4.3). De-tiling (§4.2) is the primary anti-repeat
   mechanism the grime multiply alone could not deliver (user play-test
-  2026-07-14: "still a very, very tiled look"). **DOOM-0179 graduates only once
-  §7's L4 (Filth) ships and clears its own play-test** — merging this spec does
-  not flip it; it defers to DOOM-0179's existing play-test-then-CHANGELOG gate.
+  2026-07-14: "still a very, very tiled look"). This spec **supersedes
+  DOOM-0179's play-test gate**: DOOM-0179 stays 🚧 until §7's L4 (Filth) ships and
+  passes play-test, then graduates to ✅ + CHANGELOG. Merging this spec does not
+  flip it. DOOM-0179's ROADMAP bullet is updated to name this new dependency when
+  the spec is adopted (the bullet today predates it).
 
 **Defers:**
 - Grime-driven roughness / gloss smears (dirt goes matte, worn edges stay
@@ -49,8 +51,8 @@ today.
 Kill the "extremely tiled" look on HD walls and floors in the Ultra ray-traced
 view, and make E1M1 read as a **filthy, monster-overrun base** rather than the
 uniform clean surface it is today. Do it while keeping the DOOM feel and the
-**60 FPS floor** — measured against the ~65 FPS E1M1 baseline from the DOOM-0119
-perf split.
+**60 FPS floor** — measured against the ~65 FPS E1M1 baseline from the DOOM-0170
+raster-lights cache split (2026-07-14, ROADMAP DOOM-0170 progress note).
 
 Two mechanisms, layered:
 
@@ -74,6 +76,12 @@ untouched, exactly like Solid. The de-tiling and filth apply identically in mode
 mode 6 (the shipped denoised play path); mode 6 factors albedo into `galbedo`
 before the SVGF store, so any change to the sampled albedo/normal here rides
 into the denoised image exactly as the existing HD samples do.
+
+The offline GI bake (`bake.comp`) is **not** de-tiled and keeps sampling the flat
+albedo. This is deliberate and visually negligible: the offset + mirror transforms
+preserve each texture's mean albedo, so the low-frequency indirect-bounce colour
+the bake feeds back is essentially unchanged. A per-texel-accurate bake is out of
+scope (follow-up if ever needed).
 
 ## 3. The problem, precisely
 
@@ -107,43 +115,58 @@ DOOM-0181 interposes a **de-tiling fetch** that replaces the direct
 `texture(hdTex[m], sUV)` for the HD maps, and enriches the existing `applyGrime`
 into the filth layer. No change to the paletted (`usePBR == 0`) branch.
 
+**Precondition — two hoists (L1, day one).** The de-tile cell needs the world hit
+point `hitP` (§4.2), and the filth crevice term needs the AO sample (§4.3). Both
+are currently computed *after* the HD map fetches — `hitP` at `pathtrace.comp:648`
+(mode 4) / `:781` (mode 6), `hdAO` at `:690` / `:839`. Both must be **hoisted above
+the `hdBaseUV`/`hdParallaxUV`/`hdAlbedo` block**: `tHit`/`hitP` come free from the
+ray query (`rayQueryGetIntersectionTEXT`) before shading, and the AO fetch moves up
+with them. This is an L1 precondition, not a later refinement.
+
 ### 4.2 De-tiling — stochastic tile-blend (world-keyed, no rotation)
 
 The variation grid is defined in **world space**, so one coordinate system drives
 both the cell boundaries and the random seed — there is no texture-space vs
 world-space mismatch. For each cell we deterministically vary that copy of the
-texture, then blend across cell borders so the boundary never shows.
+texture, then blend across cell borders so the boundary is hidden in the common
+case (the one exception — a POM march crossing a boundary — is handled in §4.4).
 
 - **Cell & seed (one world grid).** Take the dominant-axis projection of the hit
   point `hitP` — the same projection `applyGrime` uses (z-up DOOM: floors/ceilings
   → `hitP.xy`, ±x walls → `hitP.yz`, ±y walls → `hitP.xz`) — into a 2-D world
-  coordinate `w`, and quantise it by a world-unit cell size `kDetileWorldCell` (a
-  tunable constant on the order of one texture tile, e.g. 96 units):
+  coordinate `w`, and quantise it by a world-unit cell size `kDetileWorldCell`:
   `cell = floor(w / kDetileWorldCell)`, `f = fract(w / kDetileWorldCell)`. The
-  per-cell hash is `hash(cell)`. Cell and seed can never disagree because both
-  come from this one grid (INV-4). World-keying is the crux: (a) adjacent cells
-  across one wall differ (breaks #1) and (b) cells on different walls at different
-  world coordinates differ (breaks #2) — no per-surface ID needed. Cells need
-  **not** align to the texture's own repeat; the border blend below hides the
-  boundary wherever it falls, exactly as the Inigo-Quilez / Heitz stochastic-
-  tiling methods do on arbitrary content.
+  per-cell hash is `hash(cell)` — a small integer hash returning a `vec3` in
+  `[0,1)`; **reuse the existing `pcgHash`-style helper, do not add a new one**.
+  Cell and seed can never disagree because both come from this one grid (INV-4).
+  World-keying is the crux: (a) adjacent cells across one wall differ (breaks #1)
+  and (b) cells on different walls at different world coordinates differ (breaks
+  #2) — no per-surface ID needed. Cells need **not** align to the texture's own
+  repeat; the border blend below hides the boundary wherever it falls, exactly as
+  the Inigo-Quilez / Heitz stochastic-tiling methods do on arbitrary content.
+  *Starting values* (all tuned per §10 Q2): `kDetileWorldCell` = 96 units,
+  `mirrorProb` = 0.5, offset up to ±0.5 tile.
 - **Per-cell transform.** Applied to the sampling coordinate (the `baseUV` /
   POM-marched `sUV` fed to the map fetches): a sub-tile UV **offset**
-  (`hash(cell).xy`) plus an optional **horizontal mirror** (flip U when
-  `hash(cell).z > mirrorProb`). **No rotation, no vertical flip** — DOOM wall
+  (`hash(cell).xy`) plus an optional **horizontal mirror** — flip U *within the
+  cell*, reflecting the fractional coordinate about the cell centre, when
+  `hash(cell).z > mirrorProb`. **No rotation, no vertical flip** — DOOM wall
   textures are vertically oriented (panel lines, rivets), so only
   orientation-preserving transforms are allowed (INV-1).
-- **Seam handling.** Blend the current cell's variant with its neighbours across
-  the border using smooth weights of `f` — the Inigo-Quilez 4-corner blend (4
-  taps); a 2-tap mode is the perf dial (§6). Which maps carry the blend at each
-  build layer is set in §7 (albedo from L1, all HD maps from L2).
+- **Seam handling.** The Inigo-Quilez 4-corner blend: a per-pixel weighted blend
+  of the (up to 4) neighbouring cell variants by `f` — **not** an edge-only band.
+  4 taps; a 2-tap mode is the perf dial (§6). The blend wraps the **flat map
+  fetches** (albedo/normal/AO); the POM **height march is not per-step blended**
+  (that would cost taps × march-steps — see §4.4). Which maps carry the blend at
+  each build layer is set in §7 (albedo from L1, normal/AO from L2, height/POM
+  from L3).
 - **Map consistency.** Albedo, normal, AO, and height use the **same** per-cell
   hash/transform, sampled at the same de-tiled coordinate, so they stay registered
   (INV-3). On a horizontal mirror the sampled tangent-space normal's **X is
   negated**, and the POM march's tangent-space X is negated in lockstep (§4.4), so
   lit relief and parallax depth do not invert (INV-2).
-- Applies to HD (`usePBR`) maps only; **sprites and paletted surfaces are
-  excluded** (INV-5, INV-8).
+- Applies to HD (`usePBR`) maps only, via the `usePBR` gate (INV-5, INV-8);
+  sprites never carry `usePBR` materials in v1, so the same gate excludes them.
 - *Assumption:* the dominant-axis projection is exact for DOOM's axis-aligned
   walls/flats; on a rare diagonal linedef it is approximate — the de-tile still
   varies and stays registered (no crash, no INV-3/4 break), it just is not
@@ -175,26 +198,35 @@ enrich the blend from a pure brightness multiply into *dirt*:
 POM (`hdParallaxUV`) marches the sampling coordinate along the height field per
 pixel; de-tiling also transforms that coordinate. The de-tile **cell is computed
 from world position (`hitP`), independent of POM** (§4.2), so the two never fight
-over which cell a pixel is in. Order: apply the per-cell offset/mirror to `baseUV`
-first, then let POM march in that **de-tiled** coordinate space using the de-tiled
-height map — so parallax relief, albedo, and normal all come from the same
+over which cell a pixel is in.
+
+**Order and cost.** Compute the per-cell offset/mirror **once** and apply it to
+`baseUV` (a single de-tiled coordinate for the pixel), *then* run the POM march on
+that de-tiled coordinate using the de-tiled height map. The march is **not**
+4-corner-blended per step — it uses the pixel's single dominant cell — so POM cost
+stays ~unchanged (the blend's `taps×` multiplier applies only to the flat map
+fetches, §4.2). Parallax relief, albedo, and normal then all come from the same
 transformed tile. On a mirrored cell the march's tangent-space X is negated with
-the normal's (INV-2). **Materials with no height map** (`mc.maps[6] < 0`) skip
-§4.4 entirely: `hdParallaxUV` already early-returns `baseUV` there, so the de-tiled
-`baseUV` is sampled directly. The one risk is a POM march crossing a cell boundary
-mid-step; the §4.2 border blend covers the common case. **Fallback if artefacts
-show:** skip the parallax march inside the blend band and sample the de-tiled
-(offset+mirror) `baseUV` there — *not* the pre-de-tile coordinate. Play-test call
-(§10 Q1).
+the normal's (INV-2).
+
+**Materials with no height map** (`mc.maps[6] < 0`) skip §4.4 entirely:
+`hdParallaxUV` already early-returns `baseUV`, so the de-tiled `baseUV` is sampled
+directly. Because the march uses a single cell, a pixel whose march crosses a cell
+boundary can show a faint relief seam there — the flat-map border blend does not
+cover the march. **Fallback if it shows:** skip the parallax march inside the blend
+band and sample the de-tiled (offset+mirror) `baseUV` there — *not* the pre-de-tile
+coordinate. Play-test call (§10 Q1).
 
 ## 5. Data & resources
 
 - **No new GPU buffers, descriptor bindings, or images.** Reuses the existing
   `hdTex[]` (including the DOOM-0179 grunge overlay via `misc5.x`), the `ctrl[]`
   SSBO, and the dominant-axis world projection.
-- **New tuning knobs.** De-tile offset magnitude, mirror probability, and
-  border-blend width; filth crevice + tint weights. Compile-time `const`s to
-  start (like `kGrimeStrength`/`kGrimeWorldScale`).
+- **New tuning knobs.** De-tile offset magnitude, mirror probability
+  (`mirrorProb`), and world cell size (`kDetileWorldCell`); filth crevice + tint
+  weights. (The 4-corner blend has no width knob — its weights come from `f`, the
+  fractional position in the cell.) Compile-time `const`s to start (like
+  `kGrimeStrength`/`kGrimeWorldScale`).
 - **Runtime quality/strength dial.** Use a currently-reserved `misc5` lane
   (`misc5.y` = de-tile quality/enable: 0 = off, 1 = 2-tap, 2 = 4-tap) so the
   effect can be toggled/tuned and profiled without a shader recompile. The
@@ -206,44 +238,43 @@ show:** skip the parallax march inside the blend band and sample the de-tiled
 ## 6. Performance budget
 
 - **Baseline:** E1M1 Ultra, 50 % render scale, flashlight ≈ **65 FPS**
-  (post-DOOM-0119 perf split). Profiled via the `\` key (`rb_profile`), which
+  (post-DOOM-0170 raster-lights cache split). Profiled via the `\` key
+  (`rb_profile`), which
   prints both the CPU build/frame timings (`[cpu_profile]`/`[cpu_build]`) and the
   GPU per-pass timings.
-- **De-tiling cost:** up to `(taps − 1)×` extra `hdTex` fetches **on the primary
-  hit only** (not secondary bounces), for each HD map used in shading (albedo,
-  normal, AO, height). 4-tap = up to 4× those primary-hit fetches. **Budget: hold
-  ≥ 62 FPS at 4-tap** at the baseline settings (≤ ~5 % off the 65 FPS baseline).
-  **If a build layer drops below the 60 FPS floor** (hard gate — < 60 fails),
-  fall back to 2-tap via the `misc5.y` dial, or to the compile-time
-  4-tap-albedo + 1-tap-other-maps split.
-- **Filth cost:** negligible — a few ALU ops on values already sampled.
-- Gate: must hold the **60 FPS floor (hard: ≥ 60 FPS)** at the baseline settings.
-  Only the final **L5** measurement gates ship; earlier layers are diagnostic
-  (§7). Measure with the `\` profiler before sign-off.
+- **De-tiling cost — flat maps:** up to `(taps − 1)×` extra `hdTex` fetches **on
+  the primary hit only** (not secondary bounces), for each *flat* HD map that
+  carries the 4-corner blend (albedo, normal, AO). 4-tap = up to 4× those
+  primary-hit fetches.
+- **De-tiling cost — height/POM:** ~unchanged. The de-tile offset/mirror is
+  applied once before the march (§4.4); the march is not per-step blended, so it
+  does **not** pay the `taps×` multiplier.
+- **Filth cost:** a few ALU ops on already-sampled values — not separately
+  profiled; folded into the L5 perf pass.
+- **Gate (evaluated at L5 only).** L1–L4 are visual play-test only, with **no FPS
+  gate** — FPS numbers there are diagnostic. At **L5**: hold **≥ 62 FPS at 4-tap**
+  at the baseline settings (≤ ~5 % off the 65 FPS baseline), and the **60 FPS
+  floor is a hard gate (< 60 fails)**. If L5 misses the floor, fall back to 2-tap
+  via the `misc5.y` dial, or the compile-time 4-tap-albedo + 1-tap-other-maps
+  split. Measure with the `\` profiler.
 
 ## 7. Build order
 
 Each layer is independently play-testable; stop and get user acceptance per
 layer (renderer look is a play-test call). Only **L5** gates ship on FPS (§6);
-earlier layers are diagnostic.
+L1–L4 FPS numbers are diagnostic.
 
-- **L1 — De-tile albedo.** Offset + mirror + world-keyed hash + 4-corner border
-  blend, **albedo map only**. *Verify:* the green-goo wall + perimeter wall no
-  longer read as repeated; two same-texture walls differ. Play-test.
-- **L2 — De-tile normal/AO/height.** Extend the *same* transform **and the same
-  4-corner border blend** to the remaining HD maps, with the INV-2 normal-X negate
-  on mirror — so no map ships with visible cell seams. *Verify:* relief and
-  lighting stay registered with the albedo; no colour-vs-relief mismatch.
-- **L3 — POM in de-tiled space.** Fold the parallax march into the de-tiled
-  coordinate (§4.4), with the mirror-march negate. *Verify:* POM relief agrees
-  with the de-tiled albedo/normal; no boundary artefacts. Apply the §4.4 fallback
-  if needed.
-- **L4 — Filth.** Hoist the `hdAO` fetch (§4.3), then crevice (AO) coupling + tint
-  + darken/desaturate on top. *Verify:* reads as neglect, not just dark; dials
-  behave; net exposure not too dark.
-- **L5 — Runtime dial + perf pass.** `misc5.y` quality/strength; measure against
-  the §6 floor. *Verify:* FPS within floor at baseline; quality knob works;
-  `-rtverify` still green.
+| Layer | Scope | Verify | FPS-gate? |
+|-------|-------|--------|-----------|
+| **L1** | De-tile **albedo** (offset + mirror + world hash + 4-corner blend); hoist `hitP` (§4.1) | Green-goo + perimeter walls no longer read as repeated; same-texture walls differ | no |
+| **L2** | Extend the same transform + blend to **normal, AO** (INV-2 normal-X negate) | Relief/lighting stay registered with albedo; no colour-vs-relief mismatch | no |
+| **L3** | De-tile **height** + fold POM march into de-tiled space (§4.4, mirror-march negate) | POM relief agrees with de-tiled albedo/normal; no boundary artefacts (else §4.4 fallback) | no |
+| **L4** | **Filth**: hoist `hdAO` (§4.1/§4.3), crevice coupling + tint + darken/desat | Reads as neglect not just dark; dials behave; not too dark | no |
+| **L5** | Runtime dial (`misc5.y`) + perf pass | FPS ≥ floor at baseline (§6); knob works; `-rtverify` green | **yes** |
+
+Height is de-tiled in **L3, not L2**: its only consumer is the POM march, which is
+not wired into de-tiled space until L3, so de-tiling it earlier would be
+unobservable.
 
 ## 8. Invariants
 
@@ -284,6 +315,12 @@ earlier layers are diagnostic.
   precompute pass and extra VRAM per material, for a quality gain the lite
   offset-+-mirror-+-blend variant mostly captures at lower cost and complexity.
   Revisit if the lite version blurs objectionably.
+
+**Technique references** (for the implementer): the chosen blend is Inigo Quilez,
+"Texture repetition" (iquilezles.org/articles/texturerepetition/) — variant 3, the
+per-tile-hash 4-corner blend. The rejected full method is Heitz & Neyret,
+"High-Performance By-Example Noise using a Histogram-Preserving Blending Operator"
+(HPG 2018).
 
 ## 10. Open questions (play-test)
 
