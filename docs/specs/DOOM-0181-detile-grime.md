@@ -31,9 +31,9 @@ filth on HD (`usePBR`) surfaces in the Ultra ray-traced view.
   primary shading, which it is **not** today (the tracer shades with albedo +
   normal + AO only; verified 2026-07-16). Picked up when specular lands.
 
-**Scope:** Ultra RT view only (`pathtrace.comp` modes 4 + 6). Classic, the Solid
-raster stack, and all paletted (non-`usePBR`) surfaces stay **byte-identical** to
-today.
+**Scope:** Ultra RT view only (`pathtrace.comp` modes 4 + 6). Classic, the raster
+stack (Solid, **and Ultra with RT off**), and all paletted (non-`usePBR`) surfaces
+stay **byte-identical** to today.
 
 ---
 
@@ -94,7 +94,7 @@ There are **two** kinds of repetition, and they need different tools:
 1. **Within-surface (dominant).** One wall shows the same tile many times
    horizontally; one floor shows an N×M grid of identical tiles. This is the
    user's complaint — the green-goo room's wall and the start-area perimeter
-   wall both read as "extremely tiled" (screenshots, session 2026-07-14).
+   wall both read as "extremely tiled" (user play-test, 2026-07-14).
 2. **Between-surface.** Two *different* walls sharing a texture look like clones.
 
 A **per-surface** offset/rotation fixes only #2 and does nothing for #1 (shifting
@@ -144,14 +144,21 @@ case (the one exception — a POM march crossing a boundary — is handled in §
   → `hitP.xy`, ±x walls → `hitP.yz`, ±y walls → `hitP.xz`) — into a 2-D world
   coordinate `w`, and quantise it by a world-unit cell size `kDetileWorldCell`:
   `cell = floor(w / kDetileWorldCell)`, `f = fract(w / kDetileWorldCell)`. The
-  per-cell hash is `hash(cell)` — a small integer hash returning a `vec3` in
-  `[0,1)`; **reuse the existing `pcgHash`-style helper, do not add a new one**.
-  Cell and seed can never disagree because both come from this one grid (INV-4).
-  World-keying is the crux: (a) adjacent cells across one wall differ (breaks #1)
-  and (b) cells on different walls at different world coordinates differ (breaks
-  #2) — no per-surface ID needed. Cells need **not** align to the texture's own
-  repeat; the border blend below hides the boundary wherever it falls, exactly as
-  the Inigo-Quilez / Heitz stochastic-tiling methods do on arbitrary content.
+  per-cell hash is a small `vec3 hash(ivec2 cell)` **wrapper built around the
+  existing `pcgHash` primitive** (`pt_common.glsl:75`) — reuse that PRNG, do not
+  invent a new algorithm. Recipe: fold the cell into one seed
+  `s = pcgHash(uint(cell.x)*0x9E3779B1u ^ uint(cell.y)*0x85EBCA77u)`, then expand
+  to three decorrelated channels
+  `vec3(pcgHash(s), pcgHash(s+1u), pcgHash(s+2u)) / float(0xFFFFFFFFu)`. (The
+  distinct odd multipliers before the XOR are what stop adjacent cells from
+  correlating — the load-bearing detail behind INV-4.) Cell and seed can never
+  disagree because both come from this one grid. World-keying is the crux:
+  (a) adjacent cells across one wall differ (breaks #1) and (b) cells on different
+  walls at different world coordinates differ (breaks #2) — no per-surface ID
+  needed. Cells need **not** align to the texture's own repeat; the border blend
+  below hides the boundary wherever it falls, exactly as the Inigo-Quilez
+  stochastic-tiling method does on arbitrary content (the Heitz–Neyret variant is
+  the rejected §9 alternative, not this one).
   *Starting values* (all tuned per §10 Q2): `kDetileWorldCell` = 96 units,
   `mirrorProb` = 0.5, offset up to ±0.5 tile.
 - **Per-cell transform.** Applied to the sampling coordinate (the `baseUV` /
@@ -194,9 +201,10 @@ an AO input for the crevice term — new signature
   recesses get dirtier — dirt collects where nothing wipes it. **The `hdAO` sample
   must be hoisted ahead of the filth call:** today `hdAO` is fetched later, at the
   ambient term (`pathtrace.comp:690` mode 4, `:839` mode 6), *after* `applyGrime`
-  (`:649` / `:784`) — so the implementation moves (or reuses) that fetch before the
-  filth call. Use the **de-tiled** AO (INV-3). Open surfaces (AO ≈ 1) still take
-  the base grime (INV-7).
+  (`:649` / `:784`) — so the ambient-term call is moved **up** to before the filth
+  call, and the ambient term then reuses that one value: a single (de-tiled) AO
+  fetch per hit, not two (INV-3). Open surfaces (AO ≈ 1) still take the base grime
+  (INV-7).
 - **Faint grimy tint.** A fixed muted colour (grease/rust/mould), low weight, so
   it is not merely "darker grey."
 - Applied **after** de-tiling, so filth sits on the de-tiled albedo.
@@ -226,11 +234,13 @@ the normal's (INV-2).
 
 **Materials with no height map** (`mc.maps[6] < 0`) skip §4.4 entirely:
 `hdParallaxUV` already early-returns `baseUV`, so the de-tiled `baseUV` is sampled
-directly. Because the march uses a single cell, a pixel whose march crosses a cell
-boundary can show a faint relief seam there — the flat-map border blend does not
-cover the march. **Fallback if it shows:** skip the parallax march inside the blend
-band and sample the de-tiled (offset+mirror) `baseUV` there — *not* the pre-de-tile
-coordinate. Play-test call (§10 Q1).
+directly. Because each pixel's march uses a single cell (its whole march stays in
+that cell's transform), two adjacent pixels near a cell boundary can resolve to
+different cells' transforms and show a faint relief seam there — the flat-map
+border blend does not cover the march. **Fallback if it shows:** inside a border
+band around each cell edge (start: within `0.1` of `f`'s 0/1 extremes on either
+axis) skip the parallax march and sample the de-tiled (offset+mirror) `baseUV`
+there — *not* the pre-de-tile coordinate. Play-test call (§10 Q1).
 
 ## 5. Data & resources
 
@@ -256,15 +266,15 @@ coordinate. Play-test call (§10 Q1).
 - **Baseline (measure first, at L5).** The reference is the *current* RT-on E1M1
   Ultra frame rate — path tracer, modes 4/6 — at 50 % render scale with flashlight,
   measured **before** de-tiling is enabled. This is **not** the ~65 FPS DOOM-0170
-  raster performance-mode number (that is the RT-*off* raster stack, a different and
-  cheaper workload); the RT-on megakernel runs lower, so the gate below is
+  raster performance-mode number — that is the RT-*off* raster stack, a different
+  and cheaper workload. The RT-on megakernel runs lower, so the gate below is
   *relative* to whatever this measured baseline is, not to an absolute FPS. Profiled
   via the `\` key (`rb_profile`), which prints both the CPU build/frame timings
   (`[cpu_profile]`/`[cpu_build]`) and the GPU per-pass timings.
 - **De-tiling cost — flat maps:** up to `(taps − 1)×` extra `hdTex` fetches **on
   the primary hit only** (not secondary bounces), for each *flat* HD map that
-  carries the 4-corner blend (albedo, normal, AO). 4-tap = up to 4× those
-  primary-hit fetches.
+  carries the 4-corner blend (albedo, normal, AO). 4-tap = up to 4× *total*
+  fetches per blended map (3× extra).
 - **De-tiling cost — height/POM:** ~unchanged. The de-tile offset/mirror is
   applied once before the march (§4.4); the march is not per-step blended, so it
   does **not** pay the `taps×` multiplier.
@@ -272,12 +282,14 @@ coordinate. Play-test call (§10 Q1).
   profiled; folded into the L5 perf pass.
 - **Gate (evaluated at L5 only).** L1–L4 are visual play-test only, with **no FPS
   gate** — FPS numbers there are diagnostic. The single L5 pass/fail line: **4-tap
-  de-tiling must cost ≤ 5 % of the measured RT-on baseline above.** If it costs
-  more, fall back to 2-tap via the `misc5.y` dial, or a cheaper compile-time split
-  (§10 Q4). Separately, de-tiling must not be the change that drops RT-on Ultra
-  below the project's 60 FPS floor (DOOM-0012) *where the baseline already met it* —
-  but that floor is DOOM-0012's goal, not this feature's own gate. Measure with the
-  `\` profiler.
+  de-tiling must add ≤ 5 % to the average frame time** (measured in ms —
+  `[cpu_profile]` present-total — not FPS) **vs the measured RT-on baseline above.**
+  If it costs more, fall back to 2-tap via the `misc5.y` dial, or a cheaper
+  compile-time split (§10 Q4). Separately, de-tiling must not be the change that
+  drops RT-on Ultra below the project's aspirational 60 FPS floor (DOOM-0012,
+  💭 considered — not yet an adopted commitment) *where the baseline already met
+  it* — but that floor is DOOM-0012's goal, not this feature's own gate. Measure
+  with the `\` profiler.
 
 ## 7. Build order
 
@@ -291,7 +303,7 @@ L1–L4 FPS numbers are diagnostic.
 | **L2** | Extend the same transform + blend to **normal, AO** (INV-2 normal-X negate) | Relief/lighting stay registered with albedo; no colour-vs-relief mismatch | no |
 | **L3** | De-tile **height** + fold POM march into de-tiled space (§4.4, mirror-march negate) | POM relief agrees with de-tiled albedo/normal; no boundary artefacts (else §4.4 fallback) | no |
 | **L4** | **Filth**: hoist `hdAO` (§4.1/§4.3), crevice coupling + tint + darken/desat | Reads as neglect not just dark; dials behave; not too dark | no |
-| **L5** | Runtime dial (`misc5.y`) + perf pass | FPS ≥ floor at baseline (§6); knob works; `-rtverify` green | **yes** |
+| **L5** | Runtime dial (`misc5.y`) + perf pass | 4-tap adds ≤ 5 % frame time vs measured RT-on baseline (§6); dial steps 0/1/2 = off→2-tap→4-tap; `-rtverify` green | **yes** |
 
 Height is de-tiled in **L3, not L2**: its only consumer is the POM march, which is
 not wired into de-tiled space until L3, so de-tiling it earlier would be
@@ -322,11 +334,12 @@ passes the §6 gate and the look is user-accepted.
   never brightens a surface beyond that ceiling (it must always read as dirt).
 - **INV-7:** Crevice coupling uses the same AO the ambient term uses; filth still
   applies at base strength where AO ≈ 1 (open surfaces).
-- **INV-8:** Ultra RT only; modes 4 and 6 get identical treatment. Classic, Solid
-  raster, and paletted surfaces stay byte-identical.
-- **INV-9:** `-rtverify` (mode 5) is unaffected — no *required* push-constant
-  layout change; the `misc5` lane used for the runtime dial already exists as
-  padding on the mode-5 verify struct (DOOM-0179).
+- **INV-8:** Ultra RT only; modes 4 and 6 get identical treatment. Classic, the
+  raster stack (Solid, **and Ultra with RT off**), and paletted surfaces stay
+  byte-identical.
+- **INV-9:** `-rtverify` (mode 5) is unaffected — no push-constant layout change
+  (the `misc5` lane used for the runtime dial already exists as padding on the
+  mode-5 verify struct, DOOM-0179).
 
 ## 9. Alternatives considered
 
