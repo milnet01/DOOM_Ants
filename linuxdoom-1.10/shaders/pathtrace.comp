@@ -423,6 +423,64 @@ vec3 flashlightDelta(vec3 hitP, vec3 n, vec3 albedo)
          / (fl2 + FLASHLIGHT_RADIUS2);
 }
 
+// DOOM-0181: stochastic de-tiling (world-keyed offset + mirror + 4-corner blend). Breaks the
+// within-surface repetition of an HD map by giving each world-space cell its own sub-tile UV
+// offset and (maybe) a horizontal mirror, then blending neighbouring cells so no hard seam
+// shows. World-keyed (INV-4): two same-texture walls at different world positions get different
+// variation. Transform set is {offset, mirror} ONLY (INV-1) — DOOM walls are vertical, so no
+// rotation / vertical-flip. Ultra RT view only, gated on detileOn() + usePBR.
+const float kDetileWorldCell  = 96.0;   // world units per variation cell (§10 Q2 tunable)
+const float kDetileOffsetMag  = 0.5;    // sub-tile offset magnitude, in tiles (±)
+const float kDetileMirrorProb = 0.5;    // P(a cell is horizontally mirrored)
+
+// vec3 hash of an integer cell, built on the existing pcgHash PRNG (no new algorithm). The two
+// odd multipliers decorrelate x and y before hashing; the +1u/+2u re-hashes give 3 independent
+// [0,1) channels (xy = offset, z = mirror decision).
+vec3 hash3(ivec2 cell) {
+    uint s = pcgHash(uint(cell.x) * 0x9E3779B1u ^ uint(cell.y) * 0x85EBCA77u);
+    return vec3(pcgHash(s), pcgHash(s + 1u), pcgHash(s + 2u)) * (1.0 / 4294967296.0);
+}
+
+// Dominant-axis world projection of the hit point (matches applyGrime): floors/ceilings->xy,
+// ±x walls->yz, ±y walls->xz. Returns the 2-D world coordinate the cell grid is quantised on.
+vec2 detileWorldUV(vec3 hitP, vec3 n) {
+    vec3 an = abs(n);
+    return (an.z >= an.x && an.z >= an.y) ? hitP.xy
+         : (an.x >= an.y)                 ? hitP.yz
+                                          : hitP.xz;
+}
+
+// misc5.y quality dial: 0 = off, 1 = 2-tap, 2 = 4-tap; any other value = off.
+bool detileOn()   { return pc.misc5.y == 1u || pc.misc5.y == 2u; }
+int  detileTaps() { return pc.misc5.y == 2u ? 4 : (pc.misc5.y == 1u ? 2 : 0); }
+
+// Per-cell transform of the sampling coordinate sUV: signed sub-tile offset + optional horizontal
+// mirror (flip U within the cell; INV-1). Returns the transformed UV for cell `c`.
+vec2 detileCellUV(vec2 sUV, ivec2 c) {
+    vec3 h = hash3(c);
+    vec2 off = (h.xy - 0.5) * 2.0 * kDetileOffsetMag;
+    vec2 uv = sUV + off;
+    if (h.z < kDetileMirrorProb) uv.x = -uv.x;   // horizontal mirror only
+    return uv;
+}
+
+// De-tiled sample of HD map `mapIdx` at surface UV `sUV`, world-cell coord `g = w/kDetileWorldCell`.
+// Inigo-Quilez 4-corner blend: sample the neighbouring cells' transformed UVs and blend by the
+// smooth fractional position. 2-tap mode blends the two nearest cells along X only.
+vec3 detile(uint mapIdx, vec2 sUV, vec2 g) {
+    ivec2 cell = ivec2(floor(g));
+    vec2  f    = fract(g);
+    vec2  b    = smoothstep(vec2(0.25), vec2(0.75), f);
+    vec3 s00 = texture(hdTex[nonuniformEXT(mapIdx)], detileCellUV(sUV, cell + ivec2(0,0))).rgb;
+    vec3 s10 = texture(hdTex[nonuniformEXT(mapIdx)], detileCellUV(sUV, cell + ivec2(1,0))).rgb;
+    if (detileTaps() < 4) {                       // 2-tap: blend the two nearest cells on X only
+        return mix(s00, s10, b.x);
+    }
+    vec3 s01 = texture(hdTex[nonuniformEXT(mapIdx)], detileCellUV(sUV, cell + ivec2(0,1))).rgb;
+    vec3 s11 = texture(hdTex[nonuniformEXT(mapIdx)], detileCellUV(sUV, cell + ivec2(1,1))).rgb;
+    return mix(mix(s00, s10, b.x), mix(s01, s11, b.x), b.y);
+}
+
 // DOOM-0179: world-space grime overlay. The base HD texture tiles with the surface (every
 // 64-128 units); this multiplies in a single low-frequency grunge map sampled by WORLD
 // position instead, so identical tiles on different walls pick up different grime and stop
@@ -637,15 +695,22 @@ void main()
             MatCtrl mc  = ctrl[id];                // one SSBO, runtime array -> no nonuniformEXT
             vec2    sUV = hitUV;                    // paletted default (unused by the paletted branch)
             vec3    T = n, B = n;
+            float   tHit = rayQueryGetIntersectionTEXT(rq, true);   // HOISTED (DOOM-0181: hitP feeds the detile world-key)
+            vec3    hitP = origin + dir * tHit;                     // HOISTED
             if (mc.usePBR != 0u) {
                 vec2 baseUV = hdBaseUV(id, hitUV, mc.uvScale);
                 hdTangentFrame(n, p0, p1, p2, uv0, uv1, uv2, T, B);
                 sUV = hdParallaxUV(mc, baseUV, T, B, n, dir);
             }
-            vec3 albedo = hdAlbedo(mc, id, hitUV, sUV);   // HD if usePBR, else paletted
-
-            float tHit = rayQueryGetIntersectionTEXT(rq, true);
-            vec3  hitP = origin + dir * tHit;
+            // DOOM-0181 L1: de-tile the albedo when the dial is on and this is an HD albedo map;
+            // else the unchanged hdAlbedo path (paletted / no-albedo hits stay byte-identical).
+            vec3 albedo;
+            if (mc.usePBR != 0u && mc.maps[0] >= 0 && detileOn()) {
+                vec2 g = detileWorldUV(hitP, n) / kDetileWorldCell;
+                albedo = detile(uint(mc.maps[0]), sUV, g);
+            } else {
+                albedo = hdAlbedo(mc, id, hitUV, sUV);   // HD if usePBR, else paletted
+            }
             if (mc.usePBR != 0u) albedo = applyGrime(albedo, hitP, n);   // DOOM-0179 world grime
 
             // DOOM-0084: world surfaces self-emit as before; a sprite self-emits only
@@ -771,14 +836,21 @@ void main()
             MatCtrl mc  = ctrl[id];
             vec2    sUV = hitUV;                    // paletted default (unused by the paletted branch)
             vec3    T = n, B = n;
+            float   tHit = rayQueryGetIntersectionTEXT(rq, true);   // HOISTED (DOOM-0181: hitP feeds the detile world-key)
+            vec3    hitP = origin + dir * tHit;                     // HOISTED
             if (mc.usePBR != 0u) {
                 vec2 baseUV = hdBaseUV(id, hitUV, mc.uvScale);
                 hdTangentFrame(n, p0, p1, p2, uv0, uv1, uv2, T, B);
                 sUV = hdParallaxUV(mc, baseUV, T, B, n, dir);
             }
-            vec3 albedo = hdAlbedo(mc, id, hitUV, sUV);   // HD if usePBR, else paletted
-            float tHit   = rayQueryGetIntersectionTEXT(rq, true);
-            vec3  hitP   = origin + dir * tHit;
+            // DOOM-0181 L1: de-tile the albedo (same branch as mode 4) before galbedo is stored.
+            vec3 albedo;
+            if (mc.usePBR != 0u && mc.maps[0] >= 0 && detileOn()) {
+                vec2 g = detileWorldUV(hitP, n) / kDetileWorldCell;
+                albedo = detile(uint(mc.maps[0]), sUV, g);
+            } else {
+                albedo = hdAlbedo(mc, id, hitUV, sUV);   // HD if usePBR, else paletted
+            }
             // DOOM-0179 world grime, applied BEFORE galbedo is stored so the composite's
             // re-modulation (L = albedo*illum) carries the mottle. n is geometric here.
             if (mc.usePBR != 0u) albedo = applyGrime(albedo, hitP, n);

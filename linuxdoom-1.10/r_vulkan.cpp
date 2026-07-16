@@ -6396,6 +6396,9 @@ void RecordRtTrace(uint32_t idx)
     // DOOM-0179: world-grime overlay slot in hdTex[] (loaded per level by EnsureHdMaterials;
     // -1 on the default all-paletted set -> 0xFFFFFFFF disables the shader's grime branch).
     pc.misc5[0]    = (g.hdGrungeIdx >= 0) ? (uint32_t)g.hdGrungeIdx : 0xFFFFFFFFu;
+    // DOOM-0181: de-tile quality dial (misc5.y). 0=off, 1=2-tap, 2=4-tap. Default 4-tap on the HD
+    // set, 0 when no HD materials are loaded (nothing to de-tile). Runtime-switchable in L5.
+    pc.misc5[1]    = (g.hdBuilt && g.matNumWall + g.matNumFlat > 0) ? 2u : 0u;
     pc.vertsAddr   = BufferAddress(g.vbuf);
     pc.emitAddr    = g.emitBuf    ? BufferAddress(g.emitBuf)    : 0;
     pc.matEmisAddr = g.matEmisBuf ? BufferAddress(g.matEmisBuf) : 0;
