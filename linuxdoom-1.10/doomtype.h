@@ -39,22 +39,39 @@ typedef unsigned char byte;
 
 // Predefined with some OS.
 // glibc supplies MAXINT/MININT/... via <values.h>; mingw (Windows) has no
-// such header, so fall through to the explicit definitions below (DOOM-0006).
+// such header (DOOM-0006). On Windows the same names come from <winnt.h> /
+// <basetsd.h> whenever a source file pulls in <windows.h>, with identical
+// values, so each definition below is #ifndef-guarded: we only supply one when
+// the platform has not already, avoiding "macro redefined" cross-build warnings.
 #if defined(LINUX) && !defined(_WIN32)
 #include <values.h>
 #else
+#ifndef MAXCHAR
 #define MAXCHAR		((char)0x7f)
+#endif
+#ifndef MAXSHORT
 #define MAXSHORT	((short)0x7fff)
-
+#endif
 // Max pos 32-bit int.
-#define MAXINT		((int)0x7fffffff)	
+#ifndef MAXINT
+#define MAXINT		((int)0x7fffffff)
+#endif
+#ifndef MAXLONG
 #define MAXLONG		((long)0x7fffffff)
+#endif
+#ifndef MINCHAR
 #define MINCHAR		((char)0x80)
+#endif
+#ifndef MINSHORT
 #define MINSHORT	((short)0x8000)
-
+#endif
 // Max negative 32-bit integer.
-#define MININT		((int)0x80000000)	
+#ifndef MININT
+#define MININT		((int)0x80000000)
+#endif
+#ifndef MINLONG
 #define MINLONG		((long)0x80000000)
+#endif
 #endif
 
 
