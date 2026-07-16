@@ -1663,3 +1663,32 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Make the fancy high-res wall textures show up in Ultra's fast (non-ray-traced) view too, so switching ray-tracing off doesn't drop you back to the blocky originals.
   Kind: feature.
   Source: user-request-2026-07-16.
+
+- 📋 [DOOM-0183] **Reflective, glowing, liquid goo (nukage) in the Ultra RT view.**
+  Grew out of the DOOM-0181 grime/stain iteration (see [[doom-0181-detile-grime]]). The stain system now paints green-goo puddles on floors; the user wants the goo (puddles AND the source nukage flat) to read as a wet liquid. Needs a design pass first (user chose "design properly"). Scope to settle in design:
+  - Light-green EMISSIVE glow on goo — the RT emissive channel already exists (pathtrace.comp self-radiance), so this part is cheap.
+  - Reflectivity — the path tracer currently does DIFFUSE bounces only (no glossy/specular reflection rays). True reflective goo needs a new glossy-reflection capability (also unlocks reflective metal/floors later); relates to the deferred scoped-SSR idea. This is the feature-sized part.
+  - A liquid-property replacement texture for the nukage (wet/animated normal, ripples).
+  - Contextual placement: goo puddles belong in/near goo sectors, never on the nukage liquid itself (it is the source) — needs the shader to know which sectors contain liquid. Current cheap guard only skips already-green albedo.
+  Related sub-item to fold in or split: dirt/stains that fall over an EMISSIVE surface (a light/panel) should tint & dim the emitted light, not just the albedo (user note 2026-07-16).
+  **Layman:** Make the green toxic sludge — both the puddles on the floor and the main pool it comes from — look like real glowing, reflective liquid instead of a flat green colour.
+  Kind: feature.
+  Source: user-request-2026-07-16.
+
+- 📋 [DOOM-0184] **Glowing fireball / projectile that casts light (Ultra RT).**
+  User: "I really like this fireball, can we replicate it?" (ref: Ultimate Doom RTX mod). A self-lit projectile sprite with a warm emissive core + a point light travelling with it so nearby walls/floor light up as it passes. Relates to the dynamic-light trio DOOM-0010/0101/0102 and the emissive sprite path (DOOM-0084). See [[rt-aesthetic-north-star]].
+  **Layman:** Make fireballs and other glowing shots light up the room as they fly, like a little moving torch.
+  Kind: feature.
+  Source: user-request-2026-07-16.
+
+- 📋 [DOOM-0185] **Coloured glow around key-locked doors (red/blue/yellow).**
+  User: "I like the red glow of the door requiring the red key card" (ref: Ultimate Doom RTX mod). Key-coloured emissive on the locked-door texture + a coloured light so the corridor glows. A gameplay-readability win too. Relates to dynamic lights DOOM-0010/0101/0102 and HD emissive.
+  **Layman:** Make the doors that need a coloured key glow in that colour, so you can spot them and they cast coloured light.
+  Kind: feature.
+  Source: user-request-2026-07-16.
+
+- 📋 [DOOM-0186] **Extend HD up-res + POM/PBR to ALL wall/floor/ceiling textures, not just the hero set.**
+  User observed the Ultimate Doom RTX mod up-ressed the ORIGINAL textures and added POM/PBR across the board (so the whole level looks HD, not just curated spots). Extends DOOM-0042 (v1 = walls+flats hero set only) to the full texture set — likely via the pbr_derive.py auto-derive path (WAD -> upscaled + normal/rough/AO/height) applied to every texture, with the VRAM budget (DOOM-0042 T5) managing the count. This also fixes DOOM-0181's "grime only shows on HD surfaces" reach. Big but high-impact.
+  **Layman:** Give every wall, floor and ceiling the high-detail 3D-looking treatment, not only the handful we've done so far.
+  Kind: feature.
+  Source: user-request-2026-07-16.
