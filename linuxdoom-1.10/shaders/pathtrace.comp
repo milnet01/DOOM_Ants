@@ -623,6 +623,9 @@ vec3 stainColour(uint gid, vec2 wUV, vec3 n, vec3 albedo)
 
 vec3 applyGrime(vec3 albedo, vec3 hitP, vec3 n, float ao)
 {
+    // Liquids (nukage/slime — a saturated-green albedo) are not a paintable surface: no dirt, no
+    // goo, no crevice grime lands on flowing liquid. Leave them untouched (user 2026-07-16).
+    if (albedo.g > albedo.r * 1.15 && albedo.g > albedo.b * 1.15) return albedo;
     vec2 wUV = detileWorldUV(hitP, n);                    // dominant-axis world projection (shared)
     uint gid = pc.misc5.x;
     float m = 1.0;
