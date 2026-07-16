@@ -50,9 +50,9 @@ today.
 
 Kill the "extremely tiled" look on HD walls and floors in the Ultra ray-traced
 view, and make E1M1 read as a **filthy, monster-overrun base** rather than the
-uniform clean surface it is today. Do it while keeping the DOOM feel and the
-**60 FPS floor** — measured against the ~65 FPS E1M1 baseline from the DOOM-0170
-raster-lights cache split (2026-07-14, ROADMAP DOOM-0170 progress note).
+uniform clean surface it is today. Do it while keeping the DOOM feel and holding
+performance — the de-tiling overhead is measured against the *current RT-on Ultra
+frame rate* and must stay small (§6).
 
 Two mechanisms, layered:
 
@@ -60,6 +60,11 @@ Two mechanisms, layered:
   single surface* and *between surfaces*.
 - **Filth (§4.3)** — grime that reads as *neglect*: darker matte stains pooling
   in crevices, a faint grimy tint; tunable from "lived-in" to "abandoned."
+
+*Terms:* **grunge** = the loaded overlay texture (`misc5.x`); **grime** = today's
+`applyGrime` brightness multiply (`kGrimeStrength`); **filth** = this spec's
+enrichment of grime (§4.3: darken + desaturate + crevice + tint); **de-tiling** =
+the §4.2 anti-repeat mechanism, independent of all three.
 
 ## 2. Where this sits
 
@@ -72,16 +77,15 @@ Two mechanisms, layered:
 The gate is *RT engaged* (path-trace modes 4/6), **not** the tier label: Ultra
 with ray tracing toggled off is the DOOM-0170 raster performance mode and is left
 untouched, exactly like Solid. The de-tiling and filth apply identically in mode
-4 (the NEE display path) and
-mode 6 (the shipped denoised play path); mode 6 factors albedo into `galbedo`
-before the SVGF store, so any change to the sampled albedo/normal here rides
-into the denoised image exactly as the existing HD samples do.
+4 (the NEE display path) and mode 6 (the shipped denoised play path). Mode 6
+factors albedo into `galbedo` before the SVGF store, so any change to the sampled
+albedo/normal here rides into the denoised image exactly as the existing HD
+samples do.
 
-The offline GI bake (`bake.comp`) is **not** de-tiled and keeps sampling the flat
-albedo. This is deliberate and visually negligible: the offset + mirror transforms
-preserve each texture's mean albedo, so the low-frequency indirect-bounce colour
-the bake feeds back is essentially unchanged. A per-texel-accurate bake is out of
-scope (follow-up if ever needed).
+The offline GI bake (`bake.comp`) does **not** sample the HD material path at all
+(it shares only `pt_common.glsl`; it never calls `hdAlbedo`/`applyGrime`). De-tiling
+lives entirely inside the HD fetch, so it cannot affect the bake — there is no
+divergence to reconcile.
 
 ## 3. The problem, precisely
 
@@ -95,9 +99,9 @@ There are **two** kinds of repetition, and they need different tools:
 
 A **per-surface** offset/rotation fixes only #2 and does nothing for #1 (shifting
 a whole floor by one offset leaves it tiling internally on the same grid). The
-grime multiply (DOOM-0179) camouflages #1 only weakly — even the current grime
-strength (`kGrimeStrength = 0.32`, `pathtrace.comp:108` — a ±32 % swing at the
-map's extremes but far less on its soft mid-tones) cannot hide sharp detail
+grime multiply (DOOM-0179) camouflages #1 only weakly. Even the current grime
+strength (`kGrimeStrength = 0.32`, `pathtrace.comp:108`) — a ±32 % swing at the
+map's extremes, far less on its soft mid-tones — cannot hide sharp detail
 repeating on a hard grid. Neither clears an *extreme* #1. De-tiling (§4.2) attacks
 #1 head-on, and because it is **world-keyed** it clears #2 for free (§4.2, INV-4).
 
@@ -115,13 +119,17 @@ DOOM-0181 interposes a **de-tiling fetch** that replaces the direct
 `texture(hdTex[m], sUV)` for the HD maps, and enriches the existing `applyGrime`
 into the filth layer. No change to the paletted (`usePBR == 0`) branch.
 
-**Precondition — two hoists (L1, day one).** The de-tile cell needs the world hit
-point `hitP` (§4.2), and the filth crevice term needs the AO sample (§4.3). Both
-are currently computed *after* the HD map fetches — `hitP` at `pathtrace.comp:648`
-(mode 4) / `:781` (mode 6), `hdAO` at `:690` / `:839`. Both must be **hoisted above
-the `hdBaseUV`/`hdParallaxUV`/`hdAlbedo` block**: `tHit`/`hitP` come free from the
-ray query (`rayQueryGetIntersectionTEXT`) before shading, and the AO fetch moves up
-with them. This is an L1 precondition, not a later refinement.
+**Precondition — the `hitP` hoist (L1).** The de-tile cell needs the world hit
+point `hitP` (§4.2), currently computed *after* the HD map fetches
+(`pathtrace.comp:648` mode 4 / `:781` mode 6). `hitP` must be **hoisted above the
+`hdBaseUV`/`hdParallaxUV`/`hdAlbedo` block** — `tHit`/`hitP` come free from the ray
+query (`rayQueryGetIntersectionTEXT`) before shading and have **no dependency on
+`sUV`**, so the hoist is trivial. This is an L1 precondition.
+
+The filth term needs a *separate* AO sample, but that is an **L4** concern, not L1:
+`hdAO(mc, id, sUV)` takes `sUV` as input, so it cannot move above the block that
+computes `sUV` — it is instead sampled right after `sUV`/`hdAlbedo` and before the
+filth call (§4.3, §7 L4).
 
 ### 4.2 De-tiling — stochastic tile-blend (world-keyed, no rotation)
 
@@ -175,7 +183,9 @@ case (the one exception — a POM march crossing a boundary — is handled in §
 ### 4.3 Filth — grime as neglect (completes DOOM-0179)
 
 Keep the world-space grunge sample (the `misc5.x` overlay, DOOM-0179), but
-enrich the blend from a pure brightness multiply into *dirt*:
+enrich the blend from a pure brightness multiply into *dirt*. `applyGrime` gains
+an AO input for the crevice term — new signature
+`applyGrime(albedo, hitP, n, ao)`:
 
 - **Darken + desaturate** in grimy areas (dirt is matte and dark), not just a
   symmetric brightness wobble — the blend is biased toward darkening (neglect),
@@ -190,6 +200,11 @@ enrich the blend from a pure brightness multiply into *dirt*:
 - **Faint grimy tint.** A fixed muted colour (grease/rust/mould), low weight, so
   it is not merely "darker grey."
 - Applied **after** de-tiling, so filth sits on the de-tiled albedo.
+- **Missing overlay.** `applyGrime` today early-returns when no grunge overlay is
+  loaded (`gid == 0xFFFFFFFF`). The crevice-AO darkening and the tint do **not**
+  need the grunge texture, so they still apply in that case — the early-return is
+  replaced by a path that skips only the grunge *sample* while keeping crevice +
+  tint.
 - **Dials:** `kGrimeStrength` (existing), `kGrimeCrevice` (AO coupling weight),
   `kGrimeTint` (colour + weight). Tunable from lived-in to abandoned.
 
@@ -228,8 +243,9 @@ coordinate. Play-test call (§10 Q1).
   fractional position in the cell.) Compile-time `const`s to start (like
   `kGrimeStrength`/`kGrimeWorldScale`).
 - **Runtime quality/strength dial.** Use a currently-reserved `misc5` lane
-  (`misc5.y` = de-tile quality/enable: 0 = off, 1 = 2-tap, 2 = 4-tap) so the
-  effect can be toggled/tuned and profiled without a shader recompile. The
+  (`misc5.y` = de-tile quality/enable: 0 = off, 1 = 2-tap, 2 = 4-tap; any other
+  value is treated as off) so the effect can be toggled/tuned and profiled without
+  a shader recompile. The
   "4-tap albedo + cheaper other maps" split (§6) is a **compile-time** variant,
   not a separate `misc5.y` value. This lane is already carried on the mode-5
   verify struct's `misc5` padding (DOOM-0179), so `-rtverify` is unaffected
@@ -237,11 +253,14 @@ coordinate. Play-test call (§10 Q1).
 
 ## 6. Performance budget
 
-- **Baseline:** E1M1 Ultra, 50 % render scale, flashlight ≈ **65 FPS**
-  (post-DOOM-0170 raster-lights cache split). Profiled via the `\` key
-  (`rb_profile`), which
-  prints both the CPU build/frame timings (`[cpu_profile]`/`[cpu_build]`) and the
-  GPU per-pass timings.
+- **Baseline (measure first, at L5).** The reference is the *current* RT-on E1M1
+  Ultra frame rate — path tracer, modes 4/6 — at 50 % render scale with flashlight,
+  measured **before** de-tiling is enabled. This is **not** the ~65 FPS DOOM-0170
+  raster performance-mode number (that is the RT-*off* raster stack, a different and
+  cheaper workload); the RT-on megakernel runs lower, so the gate below is
+  *relative* to whatever this measured baseline is, not to an absolute FPS. Profiled
+  via the `\` key (`rb_profile`), which prints both the CPU build/frame timings
+  (`[cpu_profile]`/`[cpu_build]`) and the GPU per-pass timings.
 - **De-tiling cost — flat maps:** up to `(taps − 1)×` extra `hdTex` fetches **on
   the primary hit only** (not secondary bounces), for each *flat* HD map that
   carries the 4-corner blend (albedo, normal, AO). 4-tap = up to 4× those
@@ -252,11 +271,13 @@ coordinate. Play-test call (§10 Q1).
 - **Filth cost:** a few ALU ops on already-sampled values — not separately
   profiled; folded into the L5 perf pass.
 - **Gate (evaluated at L5 only).** L1–L4 are visual play-test only, with **no FPS
-  gate** — FPS numbers there are diagnostic. At **L5**: hold **≥ 62 FPS at 4-tap**
-  at the baseline settings (≤ ~5 % off the 65 FPS baseline), and the **60 FPS
-  floor is a hard gate (< 60 fails)**. If L5 misses the floor, fall back to 2-tap
-  via the `misc5.y` dial, or the compile-time 4-tap-albedo + 1-tap-other-maps
-  split. Measure with the `\` profiler.
+  gate** — FPS numbers there are diagnostic. The single L5 pass/fail line: **4-tap
+  de-tiling must cost ≤ 5 % of the measured RT-on baseline above.** If it costs
+  more, fall back to 2-tap via the `misc5.y` dial, or a cheaper compile-time split
+  (§10 Q4). Separately, de-tiling must not be the change that drops RT-on Ultra
+  below the project's 60 FPS floor (DOOM-0012) *where the baseline already met it* —
+  but that floor is DOOM-0012's goal, not this feature's own gate. Measure with the
+  `\` profiler.
 
 ## 7. Build order
 
@@ -276,6 +297,9 @@ Height is de-tiled in **L3, not L2**: its only consumer is the POM march, which 
 not wired into de-tiled space until L3, so de-tiling it earlier would be
 unobservable.
 
+**DOOM-0181 ships** — and, with it, the filth layer graduates DOOM-0179 — when L5
+passes the §6 gate and the look is user-accepted.
+
 ## 8. Invariants
 
 - **INV-1:** De-tile transform set = {sub-tile offset, horizontal mirror} only.
@@ -283,7 +307,11 @@ unobservable.
 - **INV-2:** On a horizontal mirror, the sampled tangent-space normal's X
   component **and** the POM parallax march's tangent-space X are negated in
   lockstep, so lit relief and parallax depth do not invert.
-- **INV-3:** All HD maps of one hit share one de-tile transform (registration).
+- **INV-3:** In the **final (L3+) state**, all HD maps of one hit share one
+  de-tile transform (registration). L1/L2 interim builds de-tile only a subset
+  (albedo at L1; +normal/AO at L2), so registration between de-tiled and
+  not-yet-de-tiled maps is knowingly broken in those interim builds — expected,
+  not a regression; full registration holds from L3.
 - **INV-4:** The per-cell hash is seeded by **world position**, not by the
   texture-space cell index alone — otherwise two walls both starting at cell 0
   would clone.
@@ -326,7 +354,7 @@ per-tile-hash 4-corner blend. The rejected full method is Heitz & Neyret,
 
 - **Q1 (POM):** POM-in-de-tiled-space vs POM-off inside the blend band — which
   looks cleaner at cell boundaries?
-- **Q2 (aggressiveness):** mirror probability + offset magnitude — how far before
-  it looks unnatural on oriented textures?
+- **Q2 (aggressiveness):** mirror probability, offset magnitude, and cell size
+  (`kDetileWorldCell`) — how far before it looks unnatural on oriented textures?
 - **Q3 (filth level):** "lived-in" vs "abandoned" as the shipped default.
 - **Q4 (perf/quality):** 4-tap everywhere vs 4-tap albedo + cheaper rest.
