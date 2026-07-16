@@ -1648,3 +1648,4 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Stops HD walls and floors in the ray-traced view looking like the same tile pasted over and over — each repeat is secretly nudged/mirrored and keyed to its world position, so one wall stops cloning itself and different walls stop cloning each other.
   Kind: feature.
   Source: in-session-2026-07-16 (user: E1M1 walls "extremely tiled"; pairs with DOOM-0179 grime).
+  Spec docs/specs/DOOM-0181-detile-grime.md written + /cold-eyes reviewed (2026-07-16): 6 loops, shared-cache reviewers. Design stable/unchallenged from loop 1; loops fixed data-flow, perf-baseline (RT-on vs DOOM-0170 raster), and precision. Confirming loop 6 caught a mirrorProb probability inversion (hash.z > vs < mirrorProb). Locked, implementation-ready. Next: writing-plans → subagent-driven build (L1 de-tile albedo → L5 perf/dial).
