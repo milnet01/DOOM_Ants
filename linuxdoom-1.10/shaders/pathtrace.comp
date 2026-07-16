@@ -591,23 +591,34 @@ float grungeFbm(uint gid, vec2 wUV)
 // Smooth, mottled, MULTI-HUE dirt colour — no cell grid, so no straight seams. `hue` (a coarse
 // smooth overlay sample) picks the earthy tone; `bright` (the per-texel grunge) mottles it. Green
 // goo pools on up-facing floors, but never on an already-green (goo/slime) surface.
-// Layered, non-uniform dirt built from the grunge overlay at THREE scales — large tonal regions,
-// mid blotches, fine grain — mapped through an earthy brown ramp, to mimic a real photographed
-// dirt texture rather than a flat colour. Green goo pools on floors (never on already-green).
+// Dirt-stain colour. When a real dirt COLOUR texture is loaded (pc.misc5.z, DOOM-0181) it drives
+// the colour — sampled at a macro world scale for organic tonal/hue variation, times a finer
+// sample for close-up grain — so filth reads as a photographed dirt texture, not a flat tint.
+// Falls back to a procedural earthy ramp (three grunge scales) when no dirt texture is present.
+// Green goo pools on up-facing floors (coarse grunge selector) but never on already-green surfaces.
 vec3 stainColour(uint gid, vec2 wUV, vec3 n, vec3 albedo)
 {
-    float s     = kGrimeWorldScale;
-    float tone  = texture(hdTex[nonuniformEXT(gid)], wUV * (s * 0.12) + vec2(3.1, 1.7)).r;  // large tonal areas
-    float blot  = texture(hdTex[nonuniformEXT(gid)], wUV * (s * 0.90) + vec2(0.6, 4.2)).r;  // mid blotches
-    float grain = texture(hdTex[nonuniformEXT(gid)], wUV * (s * 3.30) + vec2(2.8, 0.4)).r;  // fine grain
+    bool green = albedo.g > albedo.r * 1.15 && albedo.g > albedo.b * 1.15;   // already goo/slime
+    if (n.z > 0.6 && !green) {
+        float goo = texture(hdTex[nonuniformEXT(gid)], wUV * (kGrimeWorldScale * 0.12) + vec2(3.1, 1.7)).r;
+        if (goo < kGooChance)
+            return kGooColour * (0.70 + 0.6 * texture(hdTex[nonuniformEXT(gid)], wUV * (kGrimeWorldScale * 3.3)).r);
+    }
+    uint did = pc.misc5.z;
+    if (did != 0xFFFFFFFFu) {                                                 // real dirt texture
+        vec3 macro = texture(hdTex[nonuniformEXT(did)], wUV * (kGrimeWorldScale * 0.5)).rgb;
+        float fine = texture(hdTex[nonuniformEXT(did)], wUV * (kGrimeWorldScale * 2.0) + vec2(0.37)).r;
+        return macro * (0.72 + 0.55 * fine);                                 // macro colour x fine grain
+    }
+    float s     = kGrimeWorldScale;                                          // procedural fallback
+    float tone  = texture(hdTex[nonuniformEXT(gid)], wUV * (s * 0.12) + vec2(3.1, 1.7)).r;
+    float blot  = texture(hdTex[nonuniformEXT(gid)], wUV * (s * 0.90) + vec2(0.6, 4.2)).r;
+    float grain = texture(hdTex[nonuniformEXT(gid)], wUV * (s * 3.30) + vec2(2.8, 0.4)).r;
     vec3  dirt  = mix(kDirtDark, kDirtBrown, smoothstep(0.20, 0.55, tone));
-    dirt        = mix(dirt, kDirtOchre, smoothstep(0.55, 0.85, tone));        // earthy ramp
-    dirt       *= mix(0.60, 1.15, blot);                                      // blotchy light/dark
-    dirt       *= (0.85 + 0.30 * grain);                                      // fine grain
-    dirt        = mix(dirt, kSootColour, smoothstep(0.82, 0.97, blot) * 0.5); // occasional soot cores
-    bool green  = albedo.g > albedo.r * 1.15 && albedo.g > albedo.b * 1.15;   // already goo/slime
-    if (n.z > 0.6 && tone < kGooChance && !green) return kGooColour * (0.70 + 0.6 * grain);
-    return dirt;
+    dirt        = mix(dirt, kDirtOchre, smoothstep(0.55, 0.85, tone));
+    dirt       *= mix(0.60, 1.15, blot);
+    dirt       *= (0.85 + 0.30 * grain);
+    return mix(dirt, kSootColour, smoothstep(0.82, 0.97, blot) * 0.5);
 }
 
 vec3 applyGrime(vec3 albedo, vec3 hitP, vec3 n, float ao)

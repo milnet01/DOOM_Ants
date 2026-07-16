@@ -8,6 +8,10 @@
 # source) by scripts/make_grunge.py. Regenerate with: python3 scripts/make_grunge.py
 assets/ultra/overlays/grunge.png  scripts/make_grunge.py  CC0-first-party
 
+# DOOM-0181 dirt colour texture: first-party, procedurally authored (FFT fractal noise ->
+# warm-brown palette). Regenerate with: python3 scripts/make_dirt.py
+assets/ultra/overlays/dirt.png  scripts/make_dirt.py  CC0-first-party
+
 assets/ultra/heroes/tech/STARTAN3_alb.png  https://polyhaven.com/a/metal_plate_02  CC0
 assets/ultra/heroes/tech/STARTAN3_nrm.png  https://polyhaven.com/a/metal_plate_02  CC0
 assets/ultra/heroes/tech/STARTAN3_hgt.png  https://polyhaven.com/a/metal_plate_02  CC0

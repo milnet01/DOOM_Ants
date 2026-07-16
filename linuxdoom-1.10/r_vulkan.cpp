@@ -476,6 +476,8 @@ struct VulkanState
     bool                     hdBuilt     = false;   // per-level guard; reset on map change
     int                      hdGrungeIdx = -1;      // DOOM-0179: world-grime overlay slot in
                                                     // the hdTex[] array (-1 = none loaded)
+    int                      hdDirtIdx = -1;        // DOOM-0181: world-space dirt colour texture
+                                                    // slot in hdTex[] (-1 = none loaded)
 
     VkDescriptorSetLayout dsLayout = VK_NULL_HANDLE;
     VkDescriptorPool      dsPool   = VK_NULL_HANDLE;
@@ -4991,6 +4993,7 @@ static void InitHdDefault()
         table[i].usePBR  = 0u;
     }
     g.hdGrungeIdx = -1;                 // DOOM-0179: no grime on the default all-paletted set
+    g.hdDirtIdx = -1;                   // DOOM-0181: no dirt-colour texture on the paletted set
     BuildHdSet({}, table.data(), N);   // empty srcs -> 1x1 dummy image; all paletted
 }
 
@@ -5149,11 +5152,31 @@ static void EnsureHdMaterials()
         }
     }
 
+    // DOOM-0181: a second global overlay — a real dirt COLOUR texture the shader samples in
+    // world space for the filth-stain colour, so dirt reads as a photographed texture (organic
+    // tonal + hue variation) instead of a flat tint. sRGB (a colour map, hardware de-gammas).
+    // Rides to the trace in pc.misc5.z; a missing/undecodable file just leaves it off (-1).
+    rb_image_t dirt; bool dirtOk = false;
+    if (!srcs.empty() && (int)srcs.size() < kHdMaxImages) {
+        char dpath[720];
+        rb_asset_path(dpath, sizeof(dpath), "overlays/dirt.png");
+        if (rb_image_load(dpath, &dirt)) {
+            rb_image_downscale_max(&dirt, kHdMaxEdge);
+            g.hdDirtIdx = (int)srcs.size();
+            srcs.push_back({ dirt.pixels, dirt.w, dirt.h, true });   // sRGB colour texture
+            dirtOk = true;
+            printf("DOOM-0181: dirt overlay id %d  %dx%d.\n", g.hdDirtIdx, dirt.w, dirt.h);
+        } else {
+            printf("DOOM-0181: no %s - dirt overlay off.\n", dpath);
+        }
+    }
+
     // 7. Build the set (uploads images + SSBO), then free every decoded image (kept
     //    ones were copied to staging; dropped ones were never uploaded).
     BuildHdSet(srcs, table.data(), N);
     for (Decoded& d : decoded) rb_image_free(&d.img);
     if (grungeOk) rb_image_free(&grunge);
+    if (dirtOk) rb_image_free(&dirt);
 
     printf("DOOM-0042: HD load done - %d material(s), %d image(s), %.1f MB.\n",
            nLoaded, (int)srcs.size(), usedMB);
@@ -6404,6 +6427,9 @@ void RecordRtTrace(uint32_t idx)
     // DOOM-0181: de-tile quality dial (misc5.y) from rb_detile (0=off,1=2-tap,2=4-tap; `]` key).
     // Forced 0 when no HD materials are loaded (nothing to de-tile), so the dial is a no-op there.
     pc.misc5[1]    = (g.hdBuilt && g.matNumWall + g.matNumFlat > 0) ? (uint32_t)rb_detile : 0u;
+    // DOOM-0181: dirt-colour texture slot in hdTex[] (misc5.z) for the filth-stain colour;
+    // 0xFFFFFFFF when absent -> shader falls back to its procedural earthy ramp.
+    pc.misc5[2]    = (g.hdDirtIdx >= 0) ? (uint32_t)g.hdDirtIdx : 0xFFFFFFFFu;
     pc.vertsAddr   = BufferAddress(g.vbuf);
     pc.emitAddr    = g.emitBuf    ? BufferAddress(g.emitBuf)    : 0;
     pc.matEmisAddr = g.matEmisBuf ? BufferAddress(g.matEmisBuf) : 0;
