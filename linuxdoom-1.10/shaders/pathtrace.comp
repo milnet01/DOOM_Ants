@@ -106,6 +106,13 @@ const float kPomHeightScale = 0.06;
 // so keep this subtle — it ADDS variation, it isn't the primary dirt.
 const float kGrimeWorldScale = 1.0 / 384.0;
 const float kGrimeStrength    = 0.32;
+// DOOM-0181 L4: "filth" — a monster-overrun base reads as neglected, not clean. Dirt pools in
+// AO-occluded crevices (kGrimeCrevice) and a faint grimy tint (grease/rust/mould) rides the
+// grimier spots. These apply even with no grunge overlay loaded (INV-7); the §10 Q3 knobs tune
+// lived-in <-> abandoned. Darkening stays inside applyGrime's clamp(0.35,1.65) ceiling (INV-6).
+const float kGrimeCrevice = 0.6;                     // extra darkening in AO-occluded crevices
+const vec3  kGrimeTint     = vec3(0.85, 0.80, 0.72); // muted grease/rust/mould
+const float kGrimeTintW    = 0.15;                   // tint weight at the grimiest
 
 // DOOM-0042: the base HD sample UV for material id `id` at raw-texel coord `hitUV`. Dividing
 // by the paletted texture's texel size maps hitUV into [0,1) tile space so an HD map tiles
@@ -548,17 +555,22 @@ vec2 detilePOM(MatCtrl mc, vec2 baseUV, vec3 T, vec3 B, vec3 n, vec3 dir, vec2 g
 // exposure, dark specks darken and clean spots lighten. Applied to HD (usePBR) surfaces only
 // — paletted/Classic art is left byte-identical. `gid` is the overlay's hdTex[] slot from the
 // host (pc.misc5.x); 0xFFFFFFFF (the default all-paletted set, or grime disabled) is a no-op.
-vec3 applyGrime(vec3 albedo, vec3 hitP, vec3 n)
+vec3 applyGrime(vec3 albedo, vec3 hitP, vec3 n, float ao)
 {
     uint gid = pc.misc5.x;
-    if (gid == 0xFFFFFFFFu) return albedo;
-    vec3 an = abs(n);
-    vec2 wUV = (an.z >= an.x && an.z >= an.y) ? hitP.xy    // floor / ceiling (normal ±z)
-             : (an.x >= an.y)                 ? hitP.yz    // wall facing ±x
-                                              : hitP.xz;   // wall facing ±y
-    float g = texture(hdTex[nonuniformEXT(gid)], wUV * kGrimeWorldScale).r;   // UNORM: raw 0..1
-    float m = 1.0 + (g - 0.5) * 2.0 * kGrimeStrength;      // centred -> no net brightness shift
-    return albedo * clamp(m, 0.35, 1.65);
+    float m = 1.0;
+    if (gid != 0xFFFFFFFFu) {                              // DOOM-0179 grunge overlay present
+        vec2 wUV = detileWorldUV(hitP, n);                // dominant-axis world projection (shared)
+        float g = texture(hdTex[nonuniformEXT(gid)], wUV * kGrimeWorldScale).r;   // UNORM raw 0..1
+        m = 1.0 + (g - 0.5) * 2.0 * kGrimeStrength;        // centred -> no net brightness shift
+    }
+    // DOOM-0181 L4: dirt pools in AO-occluded crevices. Independent of the overlay (INV-7), so a
+    // level with no grunge map still reads as filthy in its recesses.
+    m -= (1.0 - ao) * kGrimeCrevice;
+    vec3 c = albedo * clamp(m, 0.35, 1.65);               // INV-6 clamp preserved
+    // Faint grimy tint, weighted by how grimy this spot is (a darker m => more tint).
+    float tintAmt = kGrimeTintW * clamp(1.0 - m, 0.0, 1.0);
+    return mix(c, c * kGrimeTint, tintAmt);
 }
 
 // DOOM-0141: sample the classic DOOM sky panorama for a primary ray. Mirrors the
@@ -773,7 +785,13 @@ void main()
             } else {
                 albedo = hdAlbedo(mc, id, hitUV, sUV);   // HD if usePBR, else paletted
             }
-            if (mc.usePBR != 0u) albedo = applyGrime(albedo, hitP, n);   // DOOM-0179 world grime
+            // DOOM-0181 L4: fetch AO ONCE here (de-tiled to match albedo/normal; §4.3) — it feeds
+            // both the crevice-pooled filth in applyGrime and the ambient term below. Paletted /
+            // no-AO hits fall back to hdAO (== 1.0 there, so no crevice darkening).
+            float ao = (mc.usePBR != 0u && mc.maps[4] >= 0 && detileOn())
+                     ? detileR(uint(mc.maps[4]), sUV, detileWorldUV(hitP, n) / kDetileWorldCell)
+                     : hdAO(mc, id, sUV);
+            if (mc.usePBR != 0u) albedo = applyGrime(albedo, hitP, n, ao);   // DOOM-0179/0181 filth
 
             // DOOM-0084: world surfaces self-emit as before; a sprite self-emits only
             // if it's a fullbright light Thing (lamp/torch/barrel), so ammo pickups and
@@ -824,12 +842,7 @@ void main()
             uint  subId    = isSprite ? 0xFFFFFFFFu : pc.triSs.s[uint(prim)];
             vec3  gi       = (subId < pc.misc2.y) ? giIrradiance(pc.probes, subId, shadeN)
                                                   : vec3(0.0);
-            // DOOM-0181 L2: de-tile the AO too (same cell), so occlusion pooling matches the
-            // de-tiled albedo/normal. Paletted / no-AO hits fall back to hdAO (== 1.0 there).
-            float ao = (mc.usePBR != 0u && mc.maps[4] >= 0 && detileOn())
-                     ? detileR(uint(mc.maps[4]), sUV, detileWorldUV(hitP, n) / kDetileWorldCell)
-                     : hdAO(mc, id, sUV);
-            L += albedo * max(gi, ambient) * ao;   // AO dims fill light only
+            L += albedo * max(gi, ambient) * ao;   // AO dims fill light only (ao fetched above)
 
             // Dynamic point-light deltas (build step 5): the muzzle flash + the
             // DOOM-0044 player flashlight, each a hard ray-traced shadow composited
@@ -932,9 +945,16 @@ void main()
             } else {
                 albedo = hdAlbedo(mc, id, hitUV, sUV);   // HD if usePBR, else paletted
             }
-            // DOOM-0179 world grime, applied BEFORE galbedo is stored so the composite's
+            // DOOM-0181 L4: AO fetched ONCE here (de-tiled; §4.3) for the crevice-pooled filth and
+            // the ambient term below. Computed before the half-res early-return so every stored
+            // galbedo carries the filth (the 3/4 reconstructed pixels need it too); the one extra
+            // AO fetch on those pixels is the cost of baking filth into the demodulated albedo.
+            float ao = (mc.usePBR != 0u && mc.maps[4] >= 0 && detileOn())
+                     ? detileR(uint(mc.maps[4]), sUV, detileWorldUV(hitP, n) / kDetileWorldCell)
+                     : hdAO(mc, id, sUV);
+            // DOOM-0179/0181 grime + filth, applied BEFORE galbedo is stored so the composite's
             // re-modulation (L = albedo*illum) carries the mottle. n is geometric here.
-            if (mc.usePBR != 0u) albedo = applyGrime(albedo, hitP, n);
+            if (mc.usePBR != 0u) albedo = applyGrime(albedo, hitP, n, ao);
 
             // build step 6c (half-resolution lighting): the G-buffer (position /
             // normal / albedo) is written at FULL resolution for EVERY pixel — it
@@ -999,11 +1019,7 @@ void main()
             uint  subId    = isSprite ? 0xFFFFFFFFu : pc.triSs.s[uint(prim)];  // sprites: no GI probe
             vec3  gi       = (subId < pc.misc2.y) ? giIrradiance(pc.probes, subId, shadeN)
                                                   : vec3(0.0);
-            // DOOM-0181 L2: de-tiled AO (same cell as albedo/normal), else hdAO fallback.
-            float ao = (mc.usePBR != 0u && mc.maps[4] >= 0 && detileOn())
-                     ? detileR(uint(mc.maps[4]), sUV, detileWorldUV(hitP, n) / kDetileWorldCell)
-                     : hdAO(mc, id, sUV);
-            illum += max(gi, ambient) * ao;   // AO dims fill light only
+            illum += max(gi, ambient) * ao;   // AO dims fill light only (ao fetched above)
 
             // Muzzle flash + DOOM-0044 flashlight, demodulated (the composite re-
             // applies albedo). DOOM-0130 shared helpers — passing vec3(1.0) strips
