@@ -236,11 +236,16 @@ def derive_normal(rgb, w, h, strength=2.0):
     return bytes(out), 3
 
 
-def derive_ao(rgb, w, h, radius=4):
+def derive_ao(rgb, w, h, radius=4, strength=1.0):
     """Horizon-based local occlusion of the height field: for 8 compass directions, find the
     max elevation angle blocking the horizon within `radius` texels; AO = 1 - mean(sin angle).
-    A texel sunk below its neighbours darkens; an open peak stays ~1. Texture wraps."""
+    A texel sunk below its neighbours darkens; an open peak stays ~1. Texture wraps.
+    `strength` scales the height field before the horizon walk — >1 exaggerates gentle relief
+    so recesses pool more (used by hero_ao.py for the DOOM-0181 grime layer); the default 1.0
+    leaves the WAD-derived look unchanged."""
     hf = _height_field(rgb, w, h)
+    if strength != 1.0:
+        hf = [v * strength for v in hf]
     dirs = [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)]
     out = bytearray(w * h)
     for y in range(h):
