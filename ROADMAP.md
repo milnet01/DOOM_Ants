@@ -1643,3 +1643,8 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** A faint bright line shows up along some ceilings in the ray-traced view, like a hairline crack. Harmless, but it should be tracked down and sealed.
   Kind: investigate.
   Source: observed-2026-07-14 (DOOM-0042 T17 E1M1 Ultra play-test, images #8/#9).
+
+- 📋 [DOOM-0181] **Stochastic per-tile de-tiling for HD surfaces so walls/floors stop looking copy-pasted.**
+  **Layman:** Stops HD walls and floors in the ray-traced view looking like the same tile pasted over and over — each repeat is secretly nudged/mirrored and keyed to its world position, so one wall stops cloning itself and different walls stop cloning each other.
+  Kind: feature.
+  Source: in-session-2026-07-16 (user: E1M1 walls "extremely tiled"; pairs with DOOM-0179 grime).
