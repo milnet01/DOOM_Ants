@@ -1,10 +1,20 @@
 # DOOM-0183 — Glowing, wet nukage (and glowing lava) in the Ultra RT view
 
-**Status:** **Design — pre-implementation.** Not yet built; not yet run through
-`/cold-eyes` (rule 14 gate is **open** — this doc must loop clean before any
-implementation lands). Design approved by the user 2026-07-17 (scope: "cheap wins
-first" — glow + wet look now, **true mirror reflections deferred to DOOM-0103**;
-green nukage gets the full wet treatment; lava gets glow + cast-light only).
+**Status:** **Design — cold-eyes clean, ready to implement.** Not yet built.
+Design approved by the user 2026-07-17 (scope: "cheap wins first" — glow + wet
+look now, **true mirror reflections deferred to DOOM-0103**; green nukage gets the
+full wet treatment; lava gets glow + cast-light only).
+
+**Cold-eyes log** (rule 14 — looped until convergence, 2026-07-17):
+- **Loop 1** — CRITICAL 0 · HIGH 2 · MEDIUM 4 · LOW 6 · INFO 2, all verified & fixed.
+  Headline: the glow's `allowFaint` claim was wrong (it doesn't guarantee emission)
+  → reworked to a forced-constant `Le` path; the §4.6 goo-puddle case broke the
+  "all non-liquid byte-identical" framing → carved out across INV-3/5/§2/§4;
+  `rb_wet` can't disable the CPU-side glow → toggle scope clarified.
+- **Loop 2** — HIGH 1, verified & fixed: `misc2.z`/`.w` are muzzle-flash/flashlight,
+  not the "reserved" lanes a stale comment claimed → the time+toggle now take a new
+  `misc6` lane (no free lane exists in modes 4/6).
+- **Loop 3** — 0 findings (scoped confirm of the push-constant rework). **Converged.**
 
 This is the **first** of the goo work. It makes green nukage read as a *glowing,
 wet, rippling liquid* and makes lava *glow and cast coloured light* — using only
