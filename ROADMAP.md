@@ -1741,3 +1741,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Ray-traced DOOM videos push the glows harder than we currently do. Turn up the glow on the explosive barrels, make the green bonus-armour's 'eyes' glow MUCH more green, and nudge switch glow up a touch. The blue health bottles already look right — leave them.
   Kind: enhancement.
   Source: user-request-2026-07-17.
+
+- 📋 [DOOM-0194] **Fix the stale misc5 push-constant comment in pathtrace.comp.**
+  The `uvec4 misc5` comment in the pathtrace.comp push-constant block reads "x = world-grime overlay bindless id ... y,z,w reserved", but y/z/w are all in use: y = de-tile quality (DOOM-0181), z = dirt-colour texture id (DOOM-0181), w = filth master toggle (DOOM-0187). Same class of stale-comment trap DOOM-0183 Q8 fixed for misc2.z/.w. One-line comment correction; no behaviour change. Left un-fixed during DOOM-0183 to stay in-lane (rule 11).
+  **Layman:** A code comment describing one of the GPU data slots is out of date and could mislead the next person editing that file.
+  Kind: doc-fix.
+  Source: in-session-2026-07-17 (found during DOOM-0183 misc6 work).
