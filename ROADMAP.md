@@ -1694,3 +1694,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Give every wall, floor and ceiling the high-detail 3D-looking treatment, not only the handful we've done so far.
   Kind: feature.
   Source: user-request-2026-07-16.
+
+- 📋 [DOOM-0187] **Profile + isolate the DOOM-0181 filth stain-fetch cost; apply a perf lever if it bites.**
+  DOOM-0181's filth stain system was added AFTER the L5 de-tile perf pass and has never been isolated on the profiler (spec docs/specs/DOOM-0181-detile-grime.md §6, §10 Q4). Cost, as-built: applyGrime runs on EVERY non-sprite world hit; grungeFbm = 3 overlay fetches always, stainColour = +2-3 fetches only where a stain forms (gated behind the smoothstep threshold), 0 on liquids. Steady ~3 fetches/primary-hit, spiking ~5-6 in stains; paid once per pixel (GI is baked). Task: `\` profiler present-total over a ~10s green-goo-room walk with de-tiling off vs the shipped filth, at 50% render scale + flashlight; record the ms in §6. Perf levers already documented ready (spec §6): (1) grungeFbm 3->2 world scales; (2) a filth quality/off dial on the free misc5.w lane (no look change when on — cleanest); (3) distance/LOD gate on the fine-grain stain fetch. Lever 2 is the safe first move if a real cost shows. Needs the live profiler (user at the keyboard; RT view can't be driven headless).
+  **Layman:** The new dirt/stain layer adds a few texture look-ups to every wall and floor pixel in the ray-traced view. We shipped it because it looks right, but we never actually measured how much it costs. This is a reminder to run the built-in speed profiler over the goo room and, only if it's actually slowing things down, turn on one of the ready-made cheaper settings.
+  Kind: perf.
+  Source: in-session-2026-07-17 (DOOM-0181 ship-gate; user asked to keep performance in mind).
