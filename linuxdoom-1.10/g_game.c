@@ -521,11 +521,15 @@ void G_DoLoadLevel (void)
 
     // DOOM determines the sky texture to be used
     // depending on the current episode, and the game version.
-    // DOOM-0139: pack_tnt/pack_plut are GameMission_t; cast to GameMode_t to
-    // preserve the (numeric) vanilla comparison and silence -Wenum-compare.
+    // DOOM-0139: pack_tnt/pack_plut are GameMission_t, not GameMode_t. Vanilla
+    // compared them against gamemode; since pack_tnt==commercial==2 and
+    // pack_plut==retail==3 numerically, that wrongly pulled retail (Ultimate Doom)
+    // into the commercial map-range sky branch, forcing SKY1 over the episode sky
+    // G_InitNew already set. Compare the correct gamemission field so only
+    // Doom 2 / TNT / Plutonia take the commercial sky.
     if ( (gamemode == commercial)
-	 || ( gamemode == (GameMode_t)pack_tnt )
-	 || ( gamemode == (GameMode_t)pack_plut ) )
+	 || ( gamemission == pack_tnt )
+	 || ( gamemission == pack_plut ) )
     {
 	skytexture = R_TextureNumForName ("SKY3");
 	if (gamemap < 12)
