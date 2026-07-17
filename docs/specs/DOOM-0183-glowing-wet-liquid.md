@@ -65,8 +65,8 @@ non-liquid surface is byte-identical too — the sheen and ripple branches are
 gated on the liquid bit — **except** a floor carrying a DOOM-0181 green-goo
 puddle stain, which takes a light wet touch (sheen + faint glow) via the goo
 mask (§4.6). A wall or ordinary (non-puddle) floor takes no new work and no new
-look; the runtime scalars this feature needs ride existing reserved
-push-constant lanes where possible (§5, INV-6).
+look; the one shared change is a new `misc6` push-constant lane (§5, INV-6),
+which every non-liquid shading path simply ignores.
 
 ---
 
@@ -249,10 +249,10 @@ highlight — the honest "cheap win":
   tilt. World-XY-keyed (`hitP.xy`) so the pattern is continuous across a pool and
   does not swim with the camera.
 - **Time** is a float in **seconds** (frame-rate-independent, so `kRippleSpeed`
-  has a fixed meaning), supplied per frame on a push-constant lane — a **reserved
-  display lane** (`misc2.z`) if that is confirmed unused in modes 4/6, else a new
-  lane (§5). There is **no** existing time/animation uniform in the shader
-  (verified 2026-07-17), so a per-frame time value must be added (§5, INV-6).
+  has a fixed meaning), supplied per frame on the new `misc6.x` push-constant lane
+  (§5). There is **no** existing time/animation uniform in the shader, and no free
+  lane in modes 4/6 (verified 2026-07-17), so a per-frame time value must be added
+  (§5, INV-6).
 - Amplitude is deliberately **shallow** (`kRippleAmp`) — a wet shimmer, not a
   choppy sea; speed/scale are `kRippleSpeed`/`kRippleScale` `const`s. Because the
   rippled `n` feeds both `shadeSurface` and the sheen, the whole surface
@@ -287,21 +287,25 @@ should not undulate like a deep pool).
   AO maps.)
 - **No new GPU buffers / bindings / SSBOs.** The liquid bit rides the existing
   `MatCtrl.flags`; the glow rides the existing `g.matEmissive` + emitter set.
-- **Two runtime scalars reach the shader — ripple `time` and the wet toggle —
-  preferring existing reserved lanes over any struct growth:**
-  - `misc2.z` / `misc2.w` are declared **reserved** and are per-frame *display*
-    lanes (`pathtrace.comp:254`). If confirmed unread in modes 4/6 (an
-    implementation check), **`time`** (float-bits, seconds) rides `misc2.z` and the
-    **wet toggle** (`rb_wet`, 1/0) rides `misc2.w` — **no struct growth**, and the
-    216-byte layout + 184-byte `-rtverify` prefix are untouched.
-  - **Fallback only if no reserved display lane is free:** append a new `misc6`
-    uvec4 lane. It must respect std430 **16-byte alignment**, sit **after** the
-    184-byte `-rtverify` range (`RtPC == 184`, `r_vulkan.cpp:5902`) so verify is
-    unaffected, and update in lockstep — the C++ struct + its `static_assert`
+- **Two runtime scalars reach the shader — ripple `time` and the wet toggle — via
+  a new `misc6` uvec4 push-constant lane.** No existing lane is free in modes 4/6:
+  `misc`, `misc4`, `misc5` are fully assigned, and `misc2.z`/`.w` — despite the
+  **stale** "z,w reserved" comment at `pathtrace.comp:254` — actually carry the
+  muzzle-flash strobe (`misc2.z`, read in `muzzleFlashDelta`, `pathtrace.comp:405`)
+  and the flashlight toggle (`misc2.w`, `flashlightDelta`, `:432`); `r_vulkan.cpp:6382`
+  labels them correctly. `misc3` is verify-only (0 in display modes), and overloading
+  it with display data would repeat exactly this stale-comment trap — so it is **not**
+  reused. Hence a genuinely new lane:
+  - `misc6.x` = **`time`** (float-bits, seconds); `misc6.y` = **wet toggle**
+    (`rb_wet`, 1/0); `.z`/`.w` reserved 0.
+  - Appended so it respects std430 **16-byte alignment** (a `uvec4` at the current
+    216-byte tail is not 16-aligned, so alignment padding is required — the exact
+    resulting size, e.g. ~240 B, is pinned at implementation, not asserted here) and
+    sits **after** the 184-byte `-rtverify` range (`RtPC == 184`, `r_vulkan.cpp:5902`)
+    so verify is unaffected. Update in lockstep — the C++ struct + its `static_assert`
     (currently `216`, `r_vulkan.cpp:6396`), the `pcr.size` range (currently `216`,
     `r_vulkan.cpp:2201`), and the GLSL `layout(push_constant)` — staying within the
-    **256-byte** device limit (`r_vulkan.cpp:2197`). Exact size/placement is pinned
-    at implementation (the alignment makes a bare "+16 bytes" unsafe to assert).
+    **256-byte** device limit (`r_vulkan.cpp:2197`).
   - **What the toggle gates:** `rb_wet` gates only the **shader-side, view/time**
     layers — sheen (§4.4) + ripples (§4.5) + puddle wet (§4.6). It **cannot**
     disable the glow/cast-light (§4.3): that `Le` is CPU-built into
@@ -400,13 +404,14 @@ L4. Between L3 and L4 the glint is static — expected, mirroring DOOM-0181's
   Non-liquid RT surfaces are byte-identical too, **except** floors carrying a
   DOOM-0181 goo-stain (§4.6), which take sheen + a faint glow via the goo mask
   (not the liquid bit).
-- **INV-6:** The ripple `time` + wet toggle ride **existing reserved push-constant
-  lanes** (`misc2.z`/`misc2.w`, `pathtrace.comp:254`) when confirmed unused in
-  modes 4/6 — **no** struct growth, and the 216-byte layout + 184-byte `-rtverify`
-  prefix are untouched. Only if no reserved lane is free does a new `misc6` uvec4
-  lane get appended — std430-16-byte-aligned, beyond the 184-byte verify prefix,
-  within the 256-byte device limit (`r_vulkan.cpp:2195-2201`). (Contrast DOOM-0181
-  INV-9, which needed no per-frame runtime value at all.)
+- **INV-6:** The ripple `time` + wet toggle ride a **new `misc6` uvec4 lane** —
+  no existing lane is free in modes 4/6 (`misc2.z`/`.w` are muzzle-flash/flashlight
+  despite the stale `pathtrace.comp:254` comment; `misc3` is verify-only and not
+  reused). The lane is std430-16-byte-aligned (needs alignment padding past the
+  216-byte tail), sits beyond the 184-byte `-rtverify` prefix so verify is
+  unaffected, and stays within the 256-byte device limit (`r_vulkan.cpp:2195-2201`).
+  The C++ struct, `static_assert`, `pcr.size`, and GLSL block update in lockstep.
+  (Contrast DOOM-0181 INV-9, which needed no per-frame runtime value at all.)
 - **INV-7:** Cast-light reuses the existing NEE emitter path
   (`ComputeMaterialEmissive` → `g.matEmissive` → `BuildStaticEmitterSet`) — **no**
   new light type, buffer, or dispatch. The nukage/lava `Le` is a **forced constant**
@@ -460,6 +465,7 @@ L4. Between L3 and L4 the glint is static — expected, mirroring DOOM-0181's
 - **Q7 (tonemap headroom):** verify the sheen glint reads bright without clipping
   to a flat white disc under the PBR-Neutral tonemap (the tracer's first specular
   term — no prior art in this engine to inherit a strength from).
-- **Q8 (reserved-lane check):** confirm `misc2.z`/`misc2.w` are genuinely unread in
-  modes 4/6 before riding `time`/`rb_wet` on them (§5, INV-6); if either is used,
-  fall back to a new `misc6` lane. A one-time grep at implementation.
+- **Q8 (stale comment cleanup):** the `pathtrace.comp:254` comment calls `misc2.z`/
+  `.w` "reserved", but they carry the muzzle-flash strobe / flashlight toggle
+  (`:405`/`:432`). Fix that one-line comment while adding `misc6` so the next reader
+  isn't misled the same way (a trivial code cleanup, done during implementation).
