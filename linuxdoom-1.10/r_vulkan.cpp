@@ -5956,12 +5956,13 @@ void RB_RtVerify()
     struct RtPC {
         float    camPos[4]; float camDir[4]; float camRight[4]; float camUp[4];
         uint32_t misc[4]; uint32_t misc2[4]; uint32_t misc3[4];
-        // misc4/misc5 are unused by mode 5's MATH, but MUST be present so the buffer-address
+        // misc5 is pure padding for mode 5, but MUST be present so the buffer-address
         // fields below land at the SAME push-constant offsets the shader reads them from. The
-        // megakernel reads pc.misc4.x (sprite id base, line 717) and dereferences pc.emit
-        // (line 736) in mode 5; without this padding those addresses shift 32 bytes and the
-        // NEE loop dereferences garbage (device-lost). (Latent since DOOM-0100 added misc4;
-        // DOOM-0179's misc5 widened it — fixed here so -rtverify matches the layout again.)
+        // megakernel reads pc.misc4.x (sprite id base, line 717), pc.misc4.y (omniStart,
+        // DOOM-0122) and dereferences pc.emit (line 736) in mode 5; without this padding
+        // those addresses shift 32 bytes and the NEE loop dereferences garbage (device-lost).
+        // (Latent since DOOM-0100 added misc4; DOOM-0179's misc5 widened it — fixed here so
+        // -rtverify matches the layout again.)
         uint32_t misc4[4]; uint32_t misc5[4];
         uint64_t vertsAddr, emitAddr, matEmisAddr, probeAddr, triSsAddr;
     } pc = {};
@@ -5973,6 +5974,7 @@ void RB_RtVerify()
     pc.misc[0] = 5u; pc.misc[1] = W; pc.misc[2] = H; pc.misc[3] = (uint32_t)g.matNumWall;
     pc.misc2[0] = g.emitCount; pc.misc2[1] = g.probeCount;
     pc.misc4[0] = (uint32_t)(g.matNumWall + g.matNumFlat);   // sprite id base (mode 5 sprite decode)
+    pc.misc4[1] = (uint32_t)g.staticWgt.size();              // DOOM-0122: real omniStart (static|omni split) so the verify path exercises the omni NEE loop, matching the display path
     pc.vertsAddr   = BufferAddress(g.vbuf);
     pc.emitAddr    = g.emitBuf    ? BufferAddress(g.emitBuf)    : 0;
     pc.matEmisAddr = g.matEmisBuf ? BufferAddress(g.matEmisBuf) : 0;
@@ -6085,6 +6087,15 @@ void RB_RtVerify()
         double dev = std::fabs((double)f[0] / f[3] - 1.0);
         if (dev > furnMaxDev) furnMaxDev = dev;
     }
+
+    // DOOM-0122: report how much of the omni sprite-light NEE loop the verify view
+    // exercised. omniStart == emitCount means the view had no dynamic sprite emitters
+    // (static-only, as before DOOM-0084); a non-zero omni count means the omni branch
+    // was checked against the brute-force reference too.
+    const uint32_t vStaticN = (uint32_t)g.staticWgt.size();
+    const uint32_t vOmniN   = (g.emitCount > vStaticN) ? (g.emitCount - vStaticN) : 0u;
+    printf("[rtverify] emitters: %u total, omniStart=%u -> %u omni sprite emitter(s) "
+           "covered by the verify path (DOOM-0122)\n", g.emitCount, vStaticN, vOmniN);
 
     const double bar = 0.005;       // INV-6 acceptance: <= 0.5% rel-MSE
     printf("[rtverify] INV-6 direct-light rel-MSE = %.4f%% over %d lit px "
