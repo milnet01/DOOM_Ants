@@ -184,9 +184,9 @@ case (the one exception — a POM march crossing a boundary — is handled in §
   by integer cell). The per-cell hash is a small `vec3 hash3(ivec2 cell)` **wrapper
   built around the
   existing `pcgHash` primitive** (`pt_common.glsl:75`) — no new PRNG algorithm.
-  Recipe: fold the cell into one seed
-  `s = pcgHash(uint(cell.x)*0x9E3779B1u ^ uint(cell.y)*0x85EBCA77u)`, then expand
-  to three decorrelated channels
+  As built (`hash3`), it folds the cell into one seed
+  `s = pcgHash(uint(cell.x)*0x9E3779B1u ^ uint(cell.y)*0x85EBCA77u)`, then re-hashes
+  `s+1u`/`s+2u` for three decorrelated channels
   `vec3(pcgHash(s), pcgHash(s+1u), pcgHash(s+2u)) * (1.0 / 4294967296.0)` (the
   `1.0/4294967296.0` divisor is the existing `rnd()` idiom in `pt_common.glsl`, not
   a new one). (The
