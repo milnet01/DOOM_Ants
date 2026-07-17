@@ -1,10 +1,31 @@
 # DOOM-0181 — De-tiled, grimy Ultra surfaces
 
-**Status:** Reviewed — `/cold-eyes` loops 1–6, locked 2026-07-16 (loop 6, the
-confirming pass, caught a `mirrorProb` probability inversion — fixed). The design
-was stable and unchallenged from loop 1; later loops were precision/consistency
-only. Implementation-ready. Design contract for stochastic de-tiling + filth on HD
-(`usePBR`) surfaces in the Ultra ray-traced view.
+**Status:** **Shipped 2026-07-16** (L1–L5 built, user play-test accepted). This
+doc has been reconciled to the **as-built** implementation — see the *As-built
+divergences* box below and §4.3 / §5 / §8. Originally reviewed via `/cold-eyes`
+loops 1–6, locked 2026-07-16 pre-implementation (loop 6, the confirming pass,
+caught a `mirrorProb` probability inversion — fixed); the de-tiling design (§4.2)
+was stable and unchallenged from loop 1 and shipped as specified. The **filth
+layer (§4.3) evolved substantially during play-test** and is documented here as
+built. Design contract for stochastic de-tiling **on HD (`usePBR`) surfaces** +
+filth **on all non-sprite world surfaces** in the Ultra ray-traced view.
+
+> **As-built divergences from the pre-implementation spec** (folded in
+> 2026-07-16, re-run through `/cold-eyes`):
+> 1. **Filth is a stain system, not a wash (§4.3).** The soft darken/desaturate/
+>    tint could only fade, so it never read as "dirt." Replaced with distinct,
+>    hard-edged, multi-coloured **stains**: a 3-scale grunge sum (`grungeFbm`)
+>    thresholded by a narrow `smoothstep` into defined marks, coloured per-region
+>    from an earthy palette (brown/ochre/soot) or a real dirt texture.
+> 2. **Filth applies to all non-sprite world surfaces, not `usePBR`-only.** User
+>    wanted dirt "everywhere," not only on the 11 HD heroes. The grime call is
+>    gated on `!isSprite`; paletted RT surfaces now take filth too (INV-5/INV-8
+>    revised). **De-tiling (§4.2) stays HD-only** — it needs the HD maps.
+> 3. **A real dirt colour texture was added** (`dirt.png`, `misc5.z`) plus 10
+>    baked hero AO maps — §5's "no new images" no longer holds (revised).
+> 4. **Green-goo puddles** pool on floors near the goo room (§4.3).
+> 5. **Liquids are never painted** — a saturated-green albedo early-returns from
+>    `applyGrime` (INV-10), so no dirt/goo/crevice grime lands on flowing nukage.
 
 **Depends on:**
 - **DOOM-0042** (Ultra HD PBR materials) — provides the HD material set this
@@ -35,9 +56,12 @@ only. Implementation-ready. Design contract for stochastic de-tiling + filth on 
   primary shading, which it is **not** today (the tracer shades with albedo +
   normal + AO only; verified 2026-07-16). Picked up when specular lands.
 
-**Scope:** Ultra RT view only (`pathtrace.comp` modes 4 + 6). Classic, the raster
-stack (Solid, **and Ultra with RT off**), and all paletted (non-`usePBR`) surfaces
-stay **byte-identical** to today.
+**Scope:** Ultra RT view only (`pathtrace.comp` modes 4 + 6). Classic and the
+raster stack (Solid, **and Ultra with RT off**) stay **byte-identical** to today.
+Within the RT view, two different gates apply (as-built): **de-tiling (§4.2) is
+HD-only** — it needs the `usePBR` maps, so paletted surfaces are unchanged by it;
+**filth (§4.3) applies to every non-sprite world surface** — paletted included —
+so dirt shows everywhere, never on sprites, never on liquids (INV-10).
 
 ---
 
@@ -65,10 +89,11 @@ Two mechanisms, layered:
 - **Filth (§4.3)** — grime that reads as *neglect*: darker matte stains pooling
   in crevices, a faint grimy tint; tunable from "lived-in" to "abandoned."
 
-*Terms:* **grunge** = the loaded overlay texture (`misc5.x`); **grime** = today's
+*Terms:* **grunge** = the loaded overlay texture (`misc5.x`); **grime** = the
 `applyGrime` brightness multiply (`kGrimeStrength`); **filth** = this spec's
-enrichment of grime (§4.3: darken + desaturate + crevice + tint); **de-tiling** =
-the §4.2 anti-repeat mechanism, independent of all three. (Heads-up: the existing
+enrichment of grime (§4.3 as-built: distinct multi-coloured dirt **stains** +
+crevice pooling + green-goo floor puddles, sampling a real dirt texture);
+**de-tiling** = the §4.2 anti-repeat mechanism, independent of all three. (Heads-up: the existing
 code names the overlay *texture* itself "grime" — `hdGrungeIdx`, the "grime
 overlay id" printf — so grepping "grime" in the source finds what this spec calls
 "grunge.")
@@ -124,7 +149,11 @@ surface UV are resolved. Today the HD path computes
 
 DOOM-0181 interposes a **de-tiling fetch** that replaces the direct
 `texture(hdTex[m], sUV)` for the HD maps, and enriches the existing `applyGrime`
-into the filth layer. No change to the paletted (`usePBR == 0`) branch.
+into the filth layer. **De-tiling touches only the HD (`usePBR`) map fetches** —
+the paletted branch is unchanged by it. **Filth (`applyGrime`), as-built, runs on
+every non-sprite hit** (`if (!isSprite) …`, `pathtrace.comp:863`/`:1026`), so
+paletted surfaces do get stains — but with `ao == 1.0` (no AO map) they take no
+crevice darkening, only the grunge grounding + coloured stains.
 
 **Precondition — the `hitP` hoist (L1).** The de-tile cell needs the world hit
 point `hitP` (§4.2), currently computed *after* the HD map fetches
@@ -204,34 +233,67 @@ case (the one exception — a POM march crossing a boundary — is handled in §
   varies and stays registered (no crash, no INV-3/4 break), it just is not
   axis-perfect. Inherited from DOOM-0179's grime projection.
 
-### 4.3 Filth — grime as neglect (completes DOOM-0179)
+### 4.3 Filth — distinct dirt stains (as-built; completes DOOM-0179)
 
-Keep the world-space grunge sample (the `misc5.x` overlay, DOOM-0179), but
-enrich the blend from a pure brightness multiply into *dirt*. `applyGrime` gains
-an AO input for the crevice term — new signature
-`applyGrime(albedo, hitP, n, ao)`:
+> **As-built note.** The pre-implementation spec called for a soft
+> darken/desaturate/tint wash. Play-test showed a wash can only *fade* a surface —
+> it never reads as "dirt." What shipped is a **stain system**: defined,
+> hard-edged, multi-coloured marks that sit *on* the surface. `applyGrime` gains
+> an AO input — signature `applyGrime(albedo, hitP, n, ao)` — and runs on every
+> non-sprite hit (§4.1). Constants live at `pathtrace.comp:107–135`; the two
+> helpers are `grungeFbm` (`:583`) and `stainColour` (`:599`); `applyGrime` is at
+> `:624`.
 
-- **Darken + desaturate** in grimy areas (dirt is matte and dark), not just a
-  symmetric brightness wobble — the blend is biased toward darkening (neglect),
-  within a clamped floor so nothing goes black (INV-6).
-- **Crevice pooling.** Multiply the grime darkening by `(1 - AO)`, so corners and
-  recesses get dirtier — dirt collects where nothing wipes it. **The `hdAO` sample
-  must be hoisted ahead of the filth call:** today `hdAO` is fetched later, at the
-  ambient term (`pathtrace.comp:690` mode 4, `:839` mode 6), *after* `applyGrime`
-  (`:649` / `:784`) — so the ambient-term call is moved **up** to before the filth
-  call, and the ambient term then reuses that one value: a single (de-tiled) AO
-  fetch per hit, not two (INV-7). Open surfaces (AO ≈ 1) still take the base grime
-  (INV-7).
-- **Faint grimy tint.** A fixed muted colour (grease/rust/mould), low weight, so
-  it is not merely "darker grey."
-- Applied **after** de-tiling, so filth sits on the de-tiled albedo.
-- **Missing overlay.** `applyGrime` today early-returns when no grunge overlay is
-  loaded (`gid == 0xFFFFFFFF`). The crevice-AO darkening and the tint do **not**
-  need the grunge texture, so they still apply in that case — the early-return is
-  replaced by a path that skips only the grunge *sample* while keeping crevice +
-  tint.
-- **Dials:** `kGrimeStrength` (existing), `kGrimeCrevice` (AO coupling weight),
-  `kGrimeTint` (colour + weight). Tunable from lived-in to abandoned.
+The layer has three stacked terms, applied after de-tiling (so filth sits on the
+de-tiled albedo):
+
+- **Grunge grounding (subtle).** Sum the `misc5.x` grunge overlay at **three
+  world scales** (`grungeFbm`: `kGrimeOctaveScale` × `kGrimeWorldScale`, weights
+  summing to 1, per-octave UV offsets so the scales don't align into a grid) into
+  one value `g ∈ [0,1]` with **mixed-size marks**. A gentle centred multiply
+  `m = 1 + (g − 0.5)·2·kGrimeStrength` (`kGrimeStrength = 0.25`) grounds the
+  surface without dominating it.
+- **Crevice pooling.** Subtract `(1 − ao)·kGrimeCrevice` from `m` so genuine
+  recesses darken — dirt collects where nothing wipes it. The `ao` is the **same
+  de-tiled AO** the ambient term reuses (one fetch per hit, hoisted per §4.1,
+  INV-7). Paletted / no-AO hits have `ao == 1.0`, so they take no crevice term
+  (open-surface base still applies, INV-7). All darkening stays inside the
+  `clamp(m, 0.35, 1.65)` ceiling (INV-6).
+- **Distinct coloured stains.** Where `g` falls below `kStainThresh`, a **narrow**
+  `smoothstep(kStainThresh, kStainThresh − kStainEdge, g)` cuts a hard-edged stain
+  mask (`kStainEdge = 0.07` — small band = defined edge, not a fading dot). The
+  stain colour comes from `stainColour(gid, wUV, n, albedo)` and is mixed over the
+  grounded albedo at `stain · kStainOpacity` (`kStainOpacity = 0.82`).
+
+**`stainColour` — non-uniform, multi-hue dirt (`:599`):**
+- **Green-goo puddles (floors only).** On up-facing surfaces (`n.z > 0.6`) that
+  are **not already green** (`albedo.g > albedo.r·1.15 && > albedo.b·1.15`), a
+  coarse grunge selector opens goo puddles for `< kGooChance` (0.40) of floor
+  stains: `kGooColour` modulated by a finer grunge sample. This is what pools
+  green goo on the goo-room floor **without** painting it on the goo liquid
+  itself.
+- **Real dirt texture when present.** If a dirt colour texture is loaded
+  (`did = misc5.z`, DOOM-0181's `dirt.png`), the stain colour is a **macro** world
+  sample × a **finer** grain sample (`macro · (0.72 + 0.55·fine)`) — so dirt reads
+  as a photographed texture, mottled and non-uniform, not a flat tint.
+- **Procedural fallback** (no dirt texture): an earthy ramp built from three
+  grunge scales — `kDirtDark → kDirtBrown → kDirtOchre` by a coarse tone selector,
+  brightness-mottled, with `kSootColour` cores in the darkest blotches.
+- **No cell grid.** An early build keyed stain colour off an integer world-cell
+  hash; the axis-aligned cell borders showed as **straight seams**. Replaced with
+  smooth overlay samples (above), so colour varies continuously with no seams.
+- **Missing overlay.** When no grunge overlay is loaded (`gid == 0xFFFFFFFF`),
+  `grungeFbm`/stains are skipped (there is nothing to sample), but the crevice
+  term still darkens recesses from `ao` alone.
+- **Liquid guard.** `applyGrime` early-returns the albedo untouched for a
+  saturated-green (liquid) surface **before** any term runs (INV-10) — no dirt,
+  goo, or crevice grime on flowing nukage/slime.
+
+**Dials:** `kGrimeStrength` (grounding depth), `kGrimeCrevice` (AO coupling),
+`kStainThresh`/`kStainEdge`/`kStainOpacity` (stain coverage, edge hardness,
+opacity), `kGooChance` (goo share of floor stains), the earthy palette constants,
+and `kGrimeOctaveScale`/`Weight` (mark-size spread). Tunable from lived-in to
+abandoned.
 
 ### 4.4 POM interaction
 
@@ -261,9 +323,24 @@ there — *not* the pre-de-tile coordinate. Play-test call (§10 Q1).
 
 ## 5. Data & resources
 
-- **No new GPU buffers, descriptor bindings, or images.** Reuses the existing
-  `hdTex[]` (including the DOOM-0179 grunge overlay via `misc5.x`), the `ctrl[]`
-  SSBO, and the dominant-axis world projection.
+- **No new GPU buffers, descriptor bindings, or SSBOs.** Reuses the `hdTex[]`
+  bindless array, the `ctrl[]` SSBO, and the dominant-axis world projection.
+- **Two new bindless images** (as-built — revises the spec's original "no new
+  images"), both loaded in `EnsureHdMaterials` (`r_vulkan.cpp:5139`–`5168`) as
+  ordinary `hdTex[]` entries, no new binding:
+  - `assets/ultra/overlays/dirt.png` — a real dirt **colour** texture (sRGB),
+    first-party CC0, generated by `scripts/make_dirt.py` (FFT fractal noise →
+    warm-brown palette). Rides to the trace as `misc5.z`; missing/undecodable
+    leaves it off (`hdDirtIdx = -1` → `0xFFFFFFFF`), and `stainColour` falls back
+    to the procedural earthy ramp.
+  - 10 baked hero **AO** maps (`*_ao.png`, one per CC0 hero), produced by
+    `scripts/hero_ao.py` from each hero's `_hgt.png` relief. These feed the crevice
+    term for HD surfaces; second-order CC0 derivatives of the sibling height maps
+    (see `assets/ultra/LICENSES`).
+- **`misc5` lane map (as-built):** `.x` = grunge overlay id (DOOM-0179);
+  `.y` = de-tile dial (0=off, 1=2-tap, 2=4-tap; `]` key, `rb_detile`);
+  `.z` = dirt colour-texture id (this spec); `.w` = free. No push-constant layout
+  change (INV-9).
 - **New tuning knobs.** De-tile offset magnitude, mirror probability
   (`mirrorProb`), and world cell size (`kDetileWorldCell`); filth crevice + tint
   weights. (The 4-corner blend has no width knob — its weights come from `f`, the
@@ -296,8 +373,29 @@ there — *not* the pre-de-tile coordinate. Play-test call (§10 Q1).
 - **De-tiling cost — height/POM:** ~unchanged. The de-tile offset/mirror is
   applied once before the march (§4.4); the march is not per-step blended, so it
   does **not** pay the `taps×` multiplier.
-- **Filth cost:** a few ALU ops on already-sampled values — not separately
-  profiled; folded into the L5 perf pass.
+- **Filth cost (as-built — revised up).** The shipped stain system is **not** just
+  ALU: `applyGrime` now runs on **every non-sprite world hit** (not `usePBR`-only),
+  and each hit pays:
+  - **`grungeFbm`: 3 overlay fetches, always** (the 3 world scales) — needed for
+    both the grounding multiply and the stain threshold.
+  - **`stainColour`: +2–3 fetches, only where a stain forms** (`stain > 0`, gated
+    behind the `smoothstep` threshold, so a minority of pixels): 2 for the real
+    dirt texture (macro + fine), 1–2 for the goo path, or 3 for the procedural
+    fallback.
+  - **0 fetches on liquids** (early-return, INV-10).
+  So the steady per-pixel cost is ~3 overlay fetches at the primary hit, spiking to
+  ~5–6 inside stains. GI is baked (§2), so this is paid once per pixel, never per
+  bounce. **This cost was added post-L5 and has not yet been isolated on the
+  profiler** — it is the open perf item at ship (see the perf-levers note below).
+- **Perf levers held ready** (apply after a profiler capture shows a real cost —
+  measure before cutting, don't blind-optimize):
+  1. Drop `grungeFbm` from 3 world scales to 2 (fine speckle octave weight is only
+     0.18) — ~⅓ off the always-on cost, small look change.
+  2. Add a **filth quality/off dial** on the free `misc5.w` lane (mirrors the
+     de-tile `]` dial), so filth can be dropped or dialled for perf without a
+     recompile — the cleanest lever, no look change when left on.
+  3. Distance/LOD gate: skip the fine-grain stain fetch on far pixels.
+  Levers 1 & 3 change the look (play-test call); lever 2 does not.
 - **Gate (evaluated at L5 only).** L1–L4 are visual play-test only, with **no FPS
   gate** — FPS numbers there are diagnostic. The single L5 pass/fail line: **4-tap
   de-tiling must add ≤ 5 % to the frame time vs the measured RT-on baseline.**
@@ -326,7 +424,7 @@ FPS numbers are diagnostic.
 | **L1** | De-tile **albedo** (offset + mirror + world hash + 4-corner blend); hoist `hitP` (§4.1) | Green-goo + perimeter walls no longer read as repeated; same-texture walls differ | no |
 | **L2** | Extend the same transform + blend to **normal, AO** (INV-2 normal-X negate) | Relief/lighting stay registered with albedo; no colour-vs-relief mismatch | no |
 | **L3** | De-tile **height** + fold POM march into de-tiled space (§4.4, mirror-march negate) | POM relief agrees with de-tiled albedo/normal; no boundary artefacts (else §4.4 fallback) | no |
-| **L4** | **Filth**: hoist `hdAO` (§4.1/§4.3), crevice coupling + tint + darken/desat | Reads as neglect not just dark; dials behave; stays within the INV-6 clamp | no |
+| **L4** | **Filth**: hoist `hdAO`; **stain system** (§4.3 as-built — 3-scale grunge, hard-edged coloured stains, real dirt texture, floor goo puddles, liquid guard); applied to all non-sprite world surfaces | Reads as filthy neglect, not just dark; dials behave; stays within INV-6 clamp | no |
 | **L5** | Runtime dial (`misc5.y`) + perf pass | 4-tap adds ≤ 5 % frame time vs measured RT-on baseline (§6); dial steps 0/1/2 = off→2-tap→4-tap; `-rtverify` green | **yes** |
 
 Height is de-tiled in **L3, not L2**: its only consumer is the POM march, which is
@@ -351,19 +449,28 @@ passes the §6 gate and the look is user-accepted.
 - **INV-4:** The per-cell hash is seeded by **world position**, not by the
   texture-space cell index alone — otherwise two walls both starting at cell 0
   would clone.
-- **INV-5:** The paletted / non-`usePBR` path is unchanged (no de-tile, no
-  enriched filth).
+- **INV-5 (as-built):** The paletted / non-`usePBR` path gets **no de-tiling**
+  (de-tiling needs the HD maps). It **does** get filth (§4.3) like every non-sprite
+  world surface — but with `ao == 1.0` it takes only the grunge grounding +
+  coloured stains, no crevice darkening.
 - **INV-6:** Filth only darkens/tints within the existing grime clamp
   (`clamp(m, 0.35, 1.65)`, `pathtrace.comp:445`), biased toward the dark end; it
   never brightens a surface beyond that ceiling (it must always read as dirt).
 - **INV-7:** Crevice coupling uses the same AO the ambient term uses; filth still
   applies at base strength where AO ≈ 1 (open surfaces).
-- **INV-8:** Ultra RT only; modes 4 and 6 get identical treatment. Classic, the
-  raster stack (Solid, **and Ultra with RT off**), and paletted surfaces stay
-  byte-identical.
+- **INV-8 (as-built):** Ultra RT only; modes 4 and 6 get identical treatment.
+  Classic and the raster stack (Solid, **and Ultra with RT off**) stay
+  byte-identical. Paletted RT surfaces are **not** byte-identical — they take filth
+  (INV-5) — but sprites and liquids never do (INV-10).
 - **INV-9:** `-rtverify` (mode 5) is unaffected — no push-constant layout change
-  (the `misc5` lane used for the runtime dial already exists as padding on the
-  mode-5 verify struct, DOOM-0179).
+  (the `misc5` lanes used for the runtime dial + dirt id already exist as padding
+  on the mode-5 verify struct, DOOM-0179).
+- **INV-10:** Filth is applied only to **non-sprite, non-liquid** world surfaces.
+  Sprites are excluded at the call site (`if (!isSprite)`); liquids (a
+  saturated-green albedo, `g > r·1.15 && g > b·1.15`) early-return from `applyGrime`
+  before any term runs — no dirt, goo, or crevice grime on flowing nukage/slime.
+- **INV-11:** Green-goo puddles form only on **up-facing floors** (`n.z > 0.6`) and
+  never on an already-green surface — the goo pools *near* the liquid, not *on* it.
 
 ## 9. Alternatives considered
 
@@ -387,11 +494,17 @@ per-tile-hash 4-corner blend. The rejected full method is Heitz & Neyret,
 "High-Performance By-Example Noise using a Histogram-Preserving Blending Operator"
 (HPG 2018).
 
-## 10. Open questions (play-test)
+## 10. Open questions — resolutions at ship
 
-- **Q1 (POM):** POM-in-de-tiled-space vs POM-off inside the blend band — which
-  looks cleaner at cell boundaries?
-- **Q2 (aggressiveness):** mirror probability, offset magnitude, and cell size
-  (`kDetileWorldCell`) — how far before it looks unnatural on oriented textures?
-- **Q3 (filth level):** "lived-in" vs "abandoned" as the shipped default.
-- **Q4 (perf/quality):** 4-tap everywhere vs 4-tap albedo + cheaper rest.
+- **Q1 (POM):** *Resolved.* POM marched in de-tiled space (§4.4); no boundary
+  artefacts reported in play-test, so the blend-band fallback was not needed.
+- **Q2 (aggressiveness):** *Resolved.* Shipped `kDetileWorldCell = 96`,
+  `mirrorProb = 0.5`, `kDetileOffsetMag = 0.5` — user-accepted, reads natural on
+  oriented textures.
+- **Q3 (filth level):** *Superseded.* The wash gave way to the stain system
+  (§4.3); shipped default reads as a filthy, monster-overrun base, user-accepted.
+- **Q4 (perf/quality):** *Still open — the one item carried past ship.* The L5
+  ≤ 5 % de-tile gate was met, but the as-built **filth stain fetches** (§6) were
+  added after L5 and have **not been isolated on the profiler**. Next: a profiler
+  capture of a green-goo-room walk (`\` key) to measure filth's real cost, then
+  apply a §6 perf lever only if it shows a real hit. Tracked for follow-up.
