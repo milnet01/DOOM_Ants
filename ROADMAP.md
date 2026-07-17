@@ -1613,7 +1613,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: enhancement.
   Source: in-session-2026-07-14 (DOOM-0042 T13).
 
-- 🚧 [DOOM-0179] **World-position grime/blemish overlay so HD surfaces don't tile uniformly.**
+- ✅ [DOOM-0179] **World-position grime/blemish overlay so HD surfaces don't tile uniformly.**
   Follow-on to DOOM-0042 (do AFTER the base hero textures land + sign off; user
   chose base-first). Approach: sample a low-frequency grunge/dirt map (the user's
   3D Engine Assets/Textures/Grunge/ library, CC0) by WORLD position (world XZ for
@@ -1628,6 +1628,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: feature.
   Source: user-request-2026-07-14 (DOOM-0042 T17 play-test discussion).
   Progress (2026-07-14, 58bb59c): implemented for the Ultra RT view. A first-party, procedurally-authored, seamless CC0 grunge map (scripts/make_grunge.py -> assets/ultra/overlays/grunge.png) is sampled by WORLD position (dominant-axis projection) and multiplied over usePBR HD surfaces in pathtrace.comp modes 4/6, breaking the base tiling. New misc5 push-constant slot carries the overlay's bindless id; loaded as one extra bindless image in EnsureHdMaterials. Centred blend = net-neutral exposure; kGrimeStrength (0.32) + kGrimeWorldScale (1/384) are shader-const playtest knobs. Paletted/Classic untouched. Also fixed a latent -rtverify (mode 5) push-constant drift the change surfaced. AWAITING user play-test to tune strength/scale, then flip to shipped + CHANGELOG.
+  Resolved (2026-07-17): shipped as the filth layer of DOOM-0181. The world-position grunge overlay (misc5.x, world-projected) became the grounding term of the DOOM-0181 stain system; graduates ✅ per its ship-gate (DOOM-0181 accepted). See docs/specs/DOOM-0181-detile-grime.md §4.3.
 
 - 📋 [DOOM-0180] **Thin bright diagonal seam on ceilings in the Ultra RT view.**
   A thin, bright, diagonal line appears on dark ceiling flats in E1M1 Ultra (green
@@ -1644,11 +1645,12 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: investigate.
   Source: observed-2026-07-14 (DOOM-0042 T17 E1M1 Ultra play-test, images #8/#9).
 
-- 📋 [DOOM-0181] **Stochastic per-tile de-tiling for HD surfaces so walls/floors stop looking copy-pasted.**
+- ✅ [DOOM-0181] **Stochastic per-tile de-tiling for HD surfaces so walls/floors stop looking copy-pasted.**
   **Layman:** Stops HD walls and floors in the ray-traced view looking like the same tile pasted over and over — each repeat is secretly nudged/mirrored and keyed to its world position, so one wall stops cloning itself and different walls stop cloning each other.
   Kind: feature.
   Source: in-session-2026-07-16 (user: E1M1 walls "extremely tiled"; pairs with DOOM-0179 grime).
   Spec docs/specs/DOOM-0181-detile-grime.md written + /cold-eyes reviewed (2026-07-16): 6 loops, shared-cache reviewers. Design stable/unchallenged from loop 1; loops fixed data-flow, perf-baseline (RT-on vs DOOM-0170 raster), and precision. Confirming loop 6 caught a mirrorProb probability inversion (hash.z > vs < mirrorProb). Locked, implementation-ready. Next: writing-plans → subagent-driven build (L1 de-tile albedo → L5 perf/dial).
+  Resolved (2026-07-17): shipped. L1–L5 built (de-tile albedo/normal/AO/height+POM, runtime `]` dial 0/1/2) + L4 filth redesigned into a distinct multi-coloured dirt-stain system (grungeFbm 3-scale + hard smoothstep + stainColour sampling a real CC0 dirt texture dirt.png/misc5.z), goo puddles on floors, liquid-skip guard, applied to all non-sprite world surfaces. User play-test accepted. Spec docs/specs/DOOM-0181-detile-grime.md reconciled to as-built + re-run through /cold-eyes (3 loops). One perf follow-up open: the post-L5 filth stain fetch cost is not yet isolated on the profiler (spec §6/§10 Q4) — perf levers documented ready.
 
 - 📋 [DOOM-0182] **Extend DOOM-0042 HD materials to the Ultra raster sub-view (HD in all Ultra views, not just ray-traced).**
   Today HD (usePBR) materials are sampled ONLY in the RT path (pathtrace.comp);

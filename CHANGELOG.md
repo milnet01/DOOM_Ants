@@ -6,6 +6,19 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **De-tiled, grimy surfaces in the Ultra ray-traced view (DOOM-0181, DOOM-0179)** (DOOM-0181)
+  HD walls and floors no longer read as the same tile pasted over and over:
+  each repeat is stochastically offset/mirrored and keyed to its world
+  position (Inigo-Quilez 4-corner blend), breaking both within-surface and
+  between-surface tiling. Toggle/quality via the `]` key (off / 2-tap / 4-tap).
+  On top, a filth layer makes a monster-overrun base look filthy: distinct,
+  hard-edged, multi-coloured dirt stains (sampling a real first-party CC0 dirt
+  texture) with crevice pooling and green-goo puddles on floors — applied to
+  every non-sprite world surface, never on sprites or on the flowing green
+  liquid itself. Ultra RT view only; Classic and Solid are byte-identical.
+
 ## [0.4.0] - 2026-07-16
 
 ### Added
