@@ -1192,10 +1192,12 @@ int EV_DoDonut(line_t*	line)
 	s2 = getNextSector(s1->lines[0],s1);
 	for (i = 0;i < s2->linecount;i++)
 	{
-	    // DOOM-0138: vanilla bug preserved -- (!flags) is 0/1 so
-	    // (!flags) & ML_TWOSIDED is always 0 (intended: !(flags & ML_TWOSIDED)).
-	    // Parenthesised to keep shipped behaviour and silence -Wparentheses.
-	    if (((!s2->lines[i]->flags) & ML_TWOSIDED) ||
+	    // DOOM-0138: skip lines that aren't two-sided, or whose back sector is s1.
+	    // Vanilla wrote `!flags & ML_TWOSIDED`; ! binds tighter than &, so the term
+	    // was (0 or 1) & 4 == always 0 -- a no-op that let one-sided lines through.
+	    // Fixed to the intended !(flags & ML_TWOSIDED); this fork has no demo-compat
+	    // constraint, so the donut now skips non-two-sided lines as designed.
+	    if (!(s2->lines[i]->flags & ML_TWOSIDED) ||
 		(s2->lines[i]->backsector == s1))
 		continue;
 	    s3 = s2->lines[i]->backsector;
