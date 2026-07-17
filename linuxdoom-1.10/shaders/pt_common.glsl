@@ -325,9 +325,14 @@ vec3 cosineHemisphere(vec3 n, inout uint seed)
 // the invariant explicitly excludes. The display/bake path (shadeSurface) keeps its
 // clamp; only this verify path drops it.
 
-// One power-importance NEE sample (the shipping estimator's selection), unclamped.
-// Mirrors shadeSurface's emitter pick (cdf binary search, weight by 1/pdf) but
-// without the firefly clamp.
+// One power-importance NEE sample over the FULL emitter set [0, emitCount), unclamped:
+// a single cdf binary-search pick weighted by 1/pdf. This is INV-6's unbiased-selection
+// REFERENCE, not a literal mirror of shadeSurface's production pick -- after the
+// DOOM-0084 static/omni split shadeSurface selects static emitters by cdf but samples
+// the omni sprites in a separate RIS loop (DOOM-0120). omniStart only sets how
+// sampleEmitter interprets a picked emitter (oriented < omniStart, omni >=); the real
+// omniStart (pc.misc4.y) is now passed so the omni emitters are covered, and
+// directAllLights passes the same omniStart, so the importance identity holds (INV-6).
 vec3 directNEEVerify(vec3 hitP, vec3 n, vec3 albedo, uint emitCount,
                      uint omniStart, Emitters emit, inout uint seed)
 {

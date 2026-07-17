@@ -1052,9 +1052,9 @@ void main()
                 uint seed = pcgHash((px.x + px.y * w) * 2654435761u
                                     + pc.misc3.x + si);
                 if (pc.misc3.z == 0u)
-                    sum += directNEEVerify(hitP, n, albedo, pc.misc2.x, pc.misc2.x, pc.emit, seed);
+                    sum += directNEEVerify(hitP, n, albedo, pc.misc2.x, pc.misc4.y, pc.emit, seed);
                 else if (pc.misc3.z == 1u)
-                    sum += directAllLights(hitP, n, albedo, pc.misc2.x, pc.misc2.x, pc.emit, seed);
+                    sum += directAllLights(hitP, n, albedo, pc.misc2.x, pc.misc4.y, pc.emit, seed);
                 else
                 {
                     // White-furnace math check: one cosine bounce into a constant
