@@ -11,6 +11,11 @@ enum { RB_ALB = 0, RB_NRM, RB_RGH, RB_MET, RB_AO, RB_EMIS, RB_HGT };
 #define RB_FLAG_POM    1u
 #define RB_FLAG_NOPOM  2u
 #define RB_FLAG_SPRITE 4u
+/* DOOM-0183: liquid-identity bits set by FLAT NAME on the CPU (not CSV-parsed, so
+ * rb_parse_flags never emits them and they can't collide). Mirror pathtrace.comp
+ * MatCtrl.flags bit3/bit4: nukage gets the full wet treatment, lava glow only. */
+#define RB_FLAG_LIQUID_NUKAGE 8u
+#define RB_FLAG_LIQUID_LAVA   16u
 #define RB_FLAG_BAD    0x80000000u   /* unknown flags token — caller treats row malformed */
 
 typedef struct {

@@ -211,6 +211,7 @@ extern int	rb_rtdebug_menu;// DOOM-0135 Debug Views toggle (0 = ~ is RT on/off; 
 extern int	rb_profile;	// DOOM-0090 per-pass GPU profiler toggle (0 Off; `\` key)
 extern int	rb_detile;	// DOOM-0181 Ultra RT de-tile quality (0 off/1 2-tap/2 4-tap; `]` key)
 extern int	rb_filth;	// DOOM-0187 Ultra RT dirt-stain filth master (1 on/0 off; `[` key)
+extern int	rb_wet;		// DOOM-0183 Ultra RT wet-liquid layers (sheen/ripple/puddle; 1 on/0 off; `'` key)
 
 extern int	detailLevel;
 
@@ -266,6 +267,7 @@ default_t	defaults[] =
     {"rt_profile",&rb_profile, 0},
     {"rt_detile",&rb_detile, 2},		// DOOM-0181: de-tile quality, default 4-tap
     {"rt_filth",&rb_filth, 1},		// DOOM-0187: dirt-stain filth, default on
+    {"rt_wet",&rb_wet, 1},		// DOOM-0183: wet-liquid layers, default on
 
 
 #ifdef NORMALUNIX

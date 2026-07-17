@@ -73,7 +73,7 @@ layout(set = 1, binding = 2) uniform sampler2D materialTex[];
 struct MatCtrl {
     int   maps[7];    // [0]alb [1]nrm [2]rgh [3]met [4]ao [5]emis [6]hgt; -1 = none
     float uvScale;
-    uint  flags;      // bit0 pom, bit1 noPom, bit2 sprite
+    uint  flags;      // bit0 pom, bit1 noPom, bit2 sprite, bit3 nukage, bit4 lava (DOOM-0183)
     uint  usePBR;     // 0 = paletted fallback
 };
 layout(set = 3, binding = 0, std430) readonly buffer MatCtrlBuf { MatCtrl ctrl[]; };
@@ -251,7 +251,8 @@ layout(push_constant) uniform PC {
     vec4  camRight;  // xyz = right,  w = tan(hFov/2)
     vec4  camUp;     // xyz = up,     w = tan(vFov/2)
     uvec4 misc;      // x = mode, y = width, z = height, w = numWall (flat-id offset)
-    uvec4 misc2;     // x = emitter count (3b); y = probe count (4c); z,w reserved
+    uvec4 misc2;     // x = emitter count (3b); y = probe count (4c);
+                     // z = muzzle-flash strobe (muzzleFlashDelta); w = flashlight toggle (DOOM-0183 Q8)
     uvec4 misc3;     // step-4d verify: x = sample-seed base, y = spp this dispatch,
                      // z = estimator (0 = power-NEE, 1 = brute-force), w reserved
     uvec4 misc4;     // DOOM-0100: x = sprite material base (numWall+numFlat);
@@ -268,6 +269,9 @@ layout(push_constant) uniform PC {
     SubSec   subSec;   // DOOM-0119: subsector -> sector (device address; 0 if cull off)
     EmitSec  emitSec;  // DOOM-0119: per-emitter sector (device address; 0 if cull off)
     Reject   reject;   // DOOM-0119: REJECT bitmatrix words (device address; 0 if cull off)
+    uvec4    misc6;    // DOOM-0183: x = ripple time (float bits, seconds); y = wet toggle
+                       // (rb_wet: sheen/ripple/puddle only, not the glow); z,w reserved.
+                       // std430-aligned to offset 224 (C++ pads the 216-byte tail; INV-6).
 } pc;
 
 // --- Camera-only shading constants (build step 3c/4b-iii) --------------------
@@ -450,6 +454,64 @@ vec3 flashlightDelta(vec3 hitP, vec3 n, vec3 albedo)
          / (fl2 + FLASHLIGHT_RADIUS2);
 }
 
+// -----------------------------------------------------------------------------
+// DOOM-0183: glowing / wet nukage + glowing lava. Cheap, self-contained wet look —
+// a direct-light sheen (NO reflection ray, NO GGX lobe: those are DOOM-0103) plus a
+// procedural ripple normal. The glow + cast-light is CPU-built into the NEE emitter set
+// (g.matEmissive, forced Le), so it is NOT here (INV-7). Every layer below is Ultra-RT-only
+// by construction and gates on wetOn() (rb_wet); the glow it does not touch is permanent.
+// -----------------------------------------------------------------------------
+const uint LIQUID_NUKAGE = 8u;    // MatCtrl.flags bit3 (set by flat name on the CPU, §4.2)
+const uint LIQUID_LAVA   = 16u;   // bit4 — glow + cast-light only; no sheen/ripple (INV-9)
+
+const float kWetSheenPower    = 48.0;   // sheen tightness (large = smaller, sharper glint)
+const float kWetSheenStrength = 0.6;    // sheen brightness (respect tonemap headroom, Q7)
+const float kRippleScale = 1.0 / 48.0;  // 1/world-units: ripple field wavelength
+const float kRippleSpeed = 2.2;         // radians/second scroll (frame-rate independent)
+const float kRippleAmp   = 0.11;        // normal-tilt amplitude (shallow shimmer, not surf)
+const float kPuddleGlow       = 0.35;   // additive goo-puddle glow (well below the source pool)
+const float kPuddleSheenScale = 0.6;    // puddle sheen relative to the full nukage sheen
+
+bool  isNukage(MatCtrl mc) { return (mc.flags & LIQUID_NUKAGE) != 0u; }
+bool  wetOn()              { return pc.misc6.y == 1u; }
+float rippleTime()         { return uintBitsToFloat(pc.misc6.x); }
+
+// Perturb a floor normal with a shallow scrolling wave gradient (§4.5). Two layers at
+// different world scales + directions; the analytic gradient of sin() tilts n in world XY
+// (nukage flats are up-facing, so a world-XY tilt IS the tangent-plane tilt). World-XY keyed
+// (wp = hitP.xy) so the pattern is continuous across a pool and does not swim with the camera.
+vec3 rippleNormal(vec3 n, vec2 wp, float t) {
+    const vec2 d1 = vec2( 0.80,  0.60);
+    const vec2 d2 = vec2(-0.55,  0.83);
+    float p1 = dot(wp, d1) * kRippleScale        + t * kRippleSpeed;
+    float p2 = dot(wp, d2) * kRippleScale * 1.7  - t * kRippleSpeed * 0.8;
+    vec2  grad = kRippleAmp * (d1 * cos(p1) + d2 * cos(p2));
+    return normalize(n + vec3(grad, 0.0));
+}
+
+// A direct-light specular highlight of the ACTUAL lights (flashlight + muzzle) — not a mirror
+// of the room (INV-3: no reflection ray). Half-vector Blinn-Phong. The flashlight is eye-mounted
+// (L ~ V), a reliable forward gleam in dark goo rooms; the muzzle is offset, so its glint sweeps
+// as the player fires/turns. Reuses the DOOM-0044/0130 light consts; `n` is the rippled normal.
+vec3 wetSheen(vec3 hitP, vec3 n) {
+    vec3 V = normalize(pc.camPos.xyz - hitP);    // surface -> eye
+    vec3 sheen = vec3(0.0);
+    if (pc.misc2.w != 0u) {                      // flashlight on
+        vec3  H = normalize(V + V);              // L ~ V (co-located with the eye)
+        float s = pow(max(dot(n, H), 0.0), kWetSheenPower);
+        sheen += FLASHLIGHT_COLOR * (kWetSheenStrength * s);
+    }
+    float flash = uintBitsToFloat(pc.misc2.z);   // muzzle-flash strobe (0 = not firing)
+    if (flash > 0.0) {
+        vec3  muzzle = pc.camPos.xyz + pc.camDir.xyz * MUZZLE_FORWARD + vec3(0.0, 0.0, -MUZZLE_DROP);
+        vec3  L = normalize(muzzle - hitP);
+        vec3  H = normalize(V + L);
+        float s = pow(max(dot(n, H), 0.0), kWetSheenPower);
+        sheen += FLASH_COLOR * (kWetSheenStrength * flash * s);
+    }
+    return sheen;
+}
+
 // DOOM-0181: stochastic de-tiling (world-keyed offset + mirror + 4-corner blend). Breaks the
 // within-surface repetition of an HD map by giving each world-space cell its own sub-tile UV
 // offset and (maybe) a horizontal mirror, then blending neighbouring cells so no hard seam
@@ -626,8 +688,9 @@ vec3 stainColour(uint gid, vec2 wUV, vec3 n, vec3 albedo)
     return mix(dirt, kSootColour, smoothstep(0.82, 0.97, blot) * 0.5);
 }
 
-vec3 applyGrime(vec3 albedo, vec3 hitP, vec3 n, float ao)
+vec3 applyGrime(vec3 albedo, vec3 hitP, vec3 n, float ao, out float gooWet)
 {
+    gooWet = 0.0;                                        // DOOM-0183 L5: green-goo puddle coverage
     // Liquids (nukage/slime — a saturated-green albedo) are not a paintable surface: no dirt, no
     // goo, no crevice grime lands on flowing liquid. Leave them untouched (user 2026-07-16).
     if (albedo.g > albedo.r * 1.15 && albedo.g > albedo.b * 1.15) return albedo;
@@ -642,8 +705,16 @@ vec3 applyGrime(vec3 albedo, vec3 hitP, vec3 n, float ao)
     }
     m -= (1.0 - ao) * kGrimeCrevice;                     // dirt darkens genuine crevices (INV-7)
     vec3 c = albedo * clamp(m, 0.35, 1.65);              // INV-6 clamp preserved
-    if (stain > 0.0 && gid != 0xFFFFFFFFu)               // distinct mottled dirt on top
+    if (stain > 0.0 && gid != 0xFFFFFFFFu) {             // distinct mottled dirt on top
         c = mix(c, stainColour(gid, wUV, n, albedo), stain * kStainOpacity);
+        // DOOM-0183 L5: report the GREEN-GOO puddle coverage using the SAME floor + goo-selector
+        // test stainColour uses, so the mode block can wet those puddles (§4.6). Up-facing floor
+        // goo only — brown dirt on a wall is not wet. (albedo is already non-green: early return.)
+        if (n.z > 0.6) {
+            float goo = texture(hdTex[nonuniformEXT(gid)], wUV * (kGrimeWorldScale * 0.12) + vec2(3.1, 1.7)).r;
+            if (goo < kGooChance) gooWet = stain;
+        }
+    }
     return c;
 }
 
@@ -865,7 +936,8 @@ void main()
             float ao = (mc.usePBR != 0u && mc.maps[4] >= 0 && detileOn())
                      ? detileR(uint(mc.maps[4]), sUV, detileWorldUV(hitP, n) / kDetileWorldCell)
                      : hdAO(mc, id, sUV);
-            if (!isSprite && filthOn()) albedo = applyGrime(albedo, hitP, n, ao);   // DOOM-0179/0181 filth (all world surfaces; misc5.w toggle)
+            float gooWet = 0.0;   // DOOM-0183 L5: goo-puddle wet coverage (0 unless a green-goo puddle)
+            if (!isSprite && filthOn()) albedo = applyGrime(albedo, hitP, n, ao, gooWet);   // DOOM-0179/0181 filth (all world surfaces; misc5.w toggle)
 
             // DOOM-0084: world surfaces self-emit as before; a sprite self-emits only
             // if it's a fullbright light Thing (lamp/torch/barrel), so ammo pickups and
@@ -899,6 +971,10 @@ void main()
             // plane, so for a normal-mapped surface lift the shading point along the
             // GEOMETRIC normal first (paletted is byte-identical: guard is false there).
             vec3 shadeP = (mc.usePBR != 0u && mc.maps[1] >= 0) ? hitP + n * 2e-3 : hitP;
+            // DOOM-0183 L4: nukage ripples the LIGHTING normal so the diffuse shade AND the
+            // sheen shimmer coherently (INV-4: nukage only — lava + non-liquid keep n unperturbed).
+            bool nukage = isNukage(mc);
+            if (nukage && wetOn()) shadeN = rippleNormal(shadeN, hitP.xy, rippleTime());
             vec3 L = shadeSurface(shadeP, shadeN, albedo, id, pc.misc2.x, pc.misc4.y,
                                   pc.emit, pc.matEmis, NEE_SAMPLES, addEmis,
                                   hitSec, pc.misc4.z, pc.emitSec, pc.reject, seed);
@@ -917,6 +993,18 @@ void main()
             vec3  gi       = (subId < pc.misc2.y) ? giIrradiance(pc.probes, subId, shadeN)
                                                   : vec3(0.0);
             L += albedo * max(gi, ambient) * ao;   // AO dims fill light only (ao fetched above)
+
+            // DOOM-0183 L3/L5: wet sheen (direct-light specular, INV-3 — no reflection ray) on
+            // nukage + goo puddles, plus a faint additive glow on goo puddles. Added AFTER
+            // shadeSurface so it does not perturb diffuse GI. Puddles use the UN-rippled normal
+            // `n` (a thin film, not a deep pool — no ripples, §4.6). Gated on the wet toggle.
+            if (wetOn()) {
+                if (nukage) L += wetSheen(hitP, shadeN);
+                if (gooWet > 0.0) {
+                    L += wetSheen(hitP, n) * (gooWet * kPuddleSheenScale);
+                    L += kPuddleGlow * kGooColour * gooWet;
+                }
+            }
 
             // Dynamic point-light deltas (build step 5): the muzzle flash + the
             // DOOM-0044 player flashlight, each a hard ray-traced shadow composited
@@ -1028,7 +1116,8 @@ void main()
                      : hdAO(mc, id, sUV);
             // DOOM-0179/0181 grime + filth, applied BEFORE galbedo is stored so the composite's
             // re-modulation (L = albedo*illum) carries the mottle. n is geometric here.
-            if (!isSprite && filthOn()) albedo = applyGrime(albedo, hitP, n, ao);   // DOOM-0179/0181 filth (all world surfaces; misc5.w toggle)
+            float gooWet = 0.0;   // DOOM-0183 L5: goo-puddle wet coverage (0 unless a green-goo puddle)
+            if (!isSprite && filthOn()) albedo = applyGrime(albedo, hitP, n, ao, gooWet);   // DOOM-0179/0181 filth (all world surfaces; misc5.w toggle)
 
             // build step 6c (half-resolution lighting): the G-buffer (position /
             // normal / albedo) is written at FULL resolution for EVERY pixel — it
@@ -1082,6 +1171,10 @@ void main()
             // Geometric shadow-origin lift for normal-mapped surfaces (see mode 4); gpos
             // above stored the TRUE hitP, so only the shadow rays use the lifted point.
             vec3 shadeP = (mc.usePBR != 0u && mc.maps[1] >= 0) ? hitP + n * 2e-3 : hitP;
+            // DOOM-0183 L4: nukage ripples the LIGHTING normal (INV-4). The G-buffer normal
+            // (gnorm, stored above) stays GEOMETRIC — only this shading normal wobbles.
+            bool nukage = isNukage(mc);
+            if (nukage && wetOn()) shadeN = rippleNormal(shadeN, hitP.xy, rippleTime());
             vec3 illum = shadeSurface(shadeP, shadeN, vec3(1.0), id, pc.misc2.x, pc.misc4.y,
                                       pc.emit, pc.matEmis, NEE_SAMPLES, false,
                                       hitSec, pc.misc4.z, pc.emitSec, pc.reject, seed);
@@ -1094,6 +1187,20 @@ void main()
             vec3  gi       = (subId < pc.misc2.y) ? giIrradiance(pc.probes, subId, shadeN)
                                                   : vec3(0.0);
             illum += max(gi, ambient) * ao;   // AO dims fill light only (ao fetched above)
+
+            // DOOM-0183 L3/L5: wet sheen + goo-puddle glow, mirroring the mode-4 block. NOTE: this
+            // path is DEMODULATED (svgf_composite re-applies albedo), so the sheen/glow are tinted
+            // by the surface albedo downstream. For the green liquid this reads as a bright GREEN
+            // wet glint — on-theme; a neutral wet surface (water, deferred) would need a separate
+            // full-res specular channel (a DOOM-0103 follow-up). Half-res: computed on the grid
+            // sample pixels only (the early-return above skips the other 3/4), reconstructed by SVGF.
+            if (wetOn()) {
+                if (nukage) illum += wetSheen(hitP, shadeN);
+                if (gooWet > 0.0) {
+                    illum += wetSheen(hitP, n) * (gooWet * kPuddleSheenScale);
+                    illum += kPuddleGlow * kGooColour * gooWet;
+                }
+            }
 
             // Muzzle flash + DOOM-0044 flashlight, demodulated (the composite re-
             // applies albedo). DOOM-0130 shared helpers — passing vec3(1.0) strips

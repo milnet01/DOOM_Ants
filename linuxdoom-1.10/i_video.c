@@ -461,6 +461,18 @@ static void I_GetEvent(SDL_Event* sdlevent)
 	    fflush(stdout);
 	    break;
 	}
+	// Apostrophe (`'`) toggles the Ultra RT wet-liquid layers on/off (DOOM-0183):
+	// the sheen, nukage ripples, and goo-puddle wet. The glow/cast-light is permanent
+	// (CPU-built), so this is a sheen/ripple/puddle A/B, not a whole-feature switch.
+	// Ultra RT only; a no-op elsewhere.
+	if (sdlevent->key.keysym.sym == SDLK_QUOTE && !sdlevent->key.repeat)
+	{
+	    extern int rb_wet;              // r_vulkan.cpp
+	    rb_wet = !rb_wet;
+	    printf("Ultra wet-liquid %s (Ultra RT only)\n", rb_wet ? "ON" : "OFF");
+	    fflush(stdout);
+	    break;
+	}
 	event.type = ev_keydown;
 	event.data1 = xlatekey(&sdlevent->key.keysym);
 	D_PostEvent(&event);

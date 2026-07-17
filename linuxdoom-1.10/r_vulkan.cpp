@@ -860,6 +860,13 @@ extern "C" { int rb_detile = 2; }
 // and stands as a perf/quality option. Default on; RT-only (no effect in Classic/Solid).
 extern "C" { int rb_filth = 1; }
 
+// DOOM-0183: wet-liquid toggle (the `'` key; persisted as rt_wet). 1 = on (shipped look),
+// 0 = off. Drives pc.misc6.y on the Ultra RT path; gates ONLY the shader-side, view/time
+// layers — the wet sheen (§4.4), the nukage ripples (§4.5), and the goo-puddle wet (§4.6).
+// It does NOT gate the glow/cast-light: that Le is CPU-built into g.matEmissive + the NEE
+// emitter set + the GI bake, is permanent, and delivers DOOM-0083 (§5). Default on; RT-only.
+extern "C" { int rb_wet = 1; }
+
 // INV-6 headless self-test latch (DOOM-0009 build step 4d). Set from the
 // `-rtverify` command-line parm; the first ready present runs RB_RtVerify (the
 // rel-MSE + white-furnace proof) and exits. -1 = unchecked, 0 = off, 1 = armed.
@@ -2190,15 +2197,15 @@ void CreateRtComputePipeline()
     // counts, verify seed/spp/estimator, DOOM-0100 sprite base + omni-emitter start +
     // DOOM-0119 REJECT sector count + DOOM-0141 sky id, DOOM-0179 grime-overlay id) +
     // 9x uint64 (vertex / emitter / Le / probe-cache / tri-subsector / sprite-vert +
-    // DOOM-0119 subsector-sector / emitter-sector / reject-matrix addresses) = 216 bytes.
-    // MUST match sizeof(RtPushConstants) in RecordRtTrace — a short range silently drops
-    // the trailing addresses, so the verify struct's 184-byte push (RB_RtVerify, which
-    // mirrors misc4/misc5 as padding) is a valid PREFIX of this 216-byte range. Within
-    // the 256-byte device limit.
+    // DOOM-0119 subsector-sector / emitter-sector / reject-matrix addresses) = 216 bytes,
+    // + DOOM-0183 misc6 (8-byte std430 pad + uvec4) = 240 bytes. MUST match
+    // sizeof(RtPushConstants) in RecordRtTrace — a short range silently drops the trailing
+    // fields, so the verify struct's 184-byte push (RB_RtVerify, which mirrors misc4/misc5
+    // as padding) is a valid PREFIX of this 240-byte range. Within the 256-byte device limit.
     VkPushConstantRange pcr = {};
     pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pcr.offset     = 0;
-    pcr.size       = 216;
+    pcr.size       = 240;
     // Three sets: 0 = RT (TLAS + output image), 1 = the raster materials set
     // (g.dsLayout: PLAYPAL LUT + bindless material array), reused verbatim so the
     // textured trace (step 3a) decodes surfaces with no parallel material path,
@@ -4362,6 +4369,37 @@ void InitPaletteAndDescriptorSet()
     vkUpdateDescriptorSets(g.device, 1, &write, 0, nullptr);
 }
 
+// DOOM-0183 L2: forced-constant glow Le (linear RGB) for the liquid flats. Start faint —
+// the goo should TINT a room, not floodlight it (§4.3); tune on hardware (DOOM-0193 look).
+static const float kNukageLe[3] = { 0.35f, 1.30f, 0.15f };   // green toxic-sludge glow
+static const float kLavaLe[3]   = { 2.20f, 0.75f, 0.12f };   // hot orange lava glow
+
+// DOOM-0183 L2: force a guaranteed, tunable emissive Le on the nukage/lava flats by NAME,
+// OVERWRITING whatever the peak-gated derive produced. This is the whole cast-light
+// mechanism (INV-7): a material with Le>0 enters the NEE emitter set (BuildStaticEmitterSet)
+// and self-glows on the primary ray, with no new light type. Delivers DOOM-0083. The flat's
+// unified id is numWall + (lump - firstflat), matching the textured-decode id ordering.
+static void ForceLiquidEmissive(const rb_atlas_t* a, std::vector<float>& out)
+{
+    const struct { const char* name; const float* le; } lut[] = {
+        { "NUKAGE1", kNukageLe }, { "NUKAGE2", kNukageLe }, { "NUKAGE3", kNukageLe },
+        { "LAVA1", kLavaLe }, { "LAVA2", kLavaLe }, { "LAVA3", kLavaLe }, { "LAVA4", kLavaLe },
+    };
+    for (const auto& e : lut) {
+        char nm[9]; strncpy(nm, e.name, 8); nm[8] = '\0';
+        int lump = W_CheckNumForName(nm);
+        if (lump < 0) continue;
+        int fi = lump - firstflat;
+        if (fi < 0 || fi >= a->numflat) continue;
+        int id = a->numwall + fi;
+        if ((size_t)(id * 3 + 2) < out.size()) {
+            out[id * 3 + 0] = e.le[0];
+            out[id * 3 + 1] = e.le[1];
+            out[id * 3 + 2] = e.le[2];
+        }
+    }
+}
+
 // Fill out[3*n] with each material's emitted radiance Le (linear RGB). The per-tile
 // derivation (bright-texel colour + the near-fullbright peak-region emitter gate)
 // lives in emissive_derive.h so it is shared with tests/emissive_derive_test.cpp;
@@ -4395,6 +4433,8 @@ static void ComputeMaterialEmissive(const rb_atlas_t* a, std::vector<float>& out
         emis::derive_material_le(a->pixels, (int)a->atlasw, ox, oy, w, h,
                                  palLin, &out[(size_t)id * 3], faint);
     }
+
+    ForceLiquidEmissive(a, out);   // DOOM-0183 L2: forced glow Le on nukage/lava (delivers DOOM-0083)
 }
 
 void UploadAtlas()
@@ -5003,6 +5043,31 @@ static void InitHdDefault()
     BuildHdSet({}, table.data(), N);   // empty srcs -> 1x1 dummy image; all paletted
 }
 
+// DOOM-0183 L1: flag the liquid flats (nukage/lava) by NAME on the per-level control table
+// so the shader has a surface-true "is this liquid?" signal (§4.2), replacing DOOM-0181's
+// crude albedo-green guess as the effect trigger. Name-derived, not CSV: the bit rides
+// MatCtrl.flags even on a paletted flat (usePBR=0), so nukage/lava need no HD hero. The
+// flat's unified id is matNumWall + (lump - firstflat). INV-2: only NUKAGE1-3 / LAVA1-4 —
+// water/blood/SLIME* stay unflagged (some SLIME* frames are dry rock).
+static void FlagLiquidFlats(rb_matctrl_t* table, int N)
+{
+    const struct { const char* name; unsigned int bit; } lut[] = {
+        { "NUKAGE1", RB_FLAG_LIQUID_NUKAGE }, { "NUKAGE2", RB_FLAG_LIQUID_NUKAGE },
+        { "NUKAGE3", RB_FLAG_LIQUID_NUKAGE },
+        { "LAVA1", RB_FLAG_LIQUID_LAVA }, { "LAVA2", RB_FLAG_LIQUID_LAVA },
+        { "LAVA3", RB_FLAG_LIQUID_LAVA }, { "LAVA4", RB_FLAG_LIQUID_LAVA },
+    };
+    for (const auto& e : lut) {
+        char nm[9]; strncpy(nm, e.name, 8); nm[8] = '\0';
+        int lump = W_CheckNumForName(nm);
+        if (lump < 0) continue;
+        int fi = lump - firstflat;
+        if (fi < 0 || fi >= g.matNumFlat) continue;
+        int id = g.matNumWall + fi;
+        if (id >= 0 && id < N) table[id].flags |= e.bit;
+    }
+}
+
 // Per-level (Ultra only): load the current map's HD material sets and rebuild the HD
 // descriptor set. Idempotent (guarded by g.hdBuilt). Any per-material failure leaves
 // that material paletted; a missing materials.csv leaves everything paletted. Always
@@ -5035,6 +5100,7 @@ static void EnsureHdMaterials()
     int dups = 0;
     rb_build_ctrl_table(rows.data(), (int)rows.size(), N, &ResolveDoomName, table.data(), &dups);
     if (dups) printf("DOOM-0042: %d duplicate doom_name row(s) - last wins.\n", dups);
+    FlagLiquidFlats(table.data(), N);   // DOOM-0183 L1: name-derived liquid bit (nukage/lava)
 
     // last-wins row per id (matches rb_build_ctrl_table's overwrite policy).
     std::vector<int> rowForId(N, -1);
@@ -6392,8 +6458,14 @@ void RecordRtTrace(uint32_t idx)
         uint64_t subSecAddr;      // DOOM-0119: subsector -> sector (0 if cull off)
         uint64_t emitSecAddr;     // DOOM-0119: per-emitter sector (0 if cull off)
         uint64_t rejectAddr;      // DOOM-0119: REJECT bitmatrix words (0 if cull off)
+        // DOOM-0183: ripple time + wet toggle. std430 aligns a uvec4 to 16 bytes, so the
+        // shader places misc6 at offset 224 (padded from the 216-byte tail) — mirror that
+        // pad here or the GLSL block and this struct disagree (INV-6). Appended AFTER the
+        // 184-byte -rtverify prefix, so verify is unaffected; stays within the 256-byte limit.
+        uint32_t _pad_misc6[2];   // pad rejectAddr's 216 tail up to a 16-byte boundary (224)
+        uint32_t misc6[4];        // x = ripple time (float bits, seconds); y = wet toggle; z,w = 0
     } pc = {};
-    static_assert(sizeof(RtPushConstants) == 216, "RT push-constant layout must match the shader");
+    static_assert(sizeof(RtPushConstants) == 240, "RT push-constant layout must match the shader");
     pc.camPos[0] = g.lastView.x; pc.camPos[1] = g.lastView.y; pc.camPos[2] = g.lastView.z;
     pc.camDir[0] = c;            pc.camDir[1] = s;            pc.camDir[2] = 0.0f;
     pc.camRight[0] = s;          pc.camRight[1] = -c;         pc.camRight[2] = 0.0f;
@@ -6439,6 +6511,16 @@ void RecordRtTrace(uint32_t idx)
     // DOOM-0187: filth master toggle (misc5.w) from rb_filth (1=on,0=off; `[` key). Not HD-gated —
     // applyGrime paints paletted surfaces too — so this is a plain runtime on/off of the stain layer.
     pc.misc5[3]    = rb_filth ? 1u : 0u;
+    // DOOM-0183: ripple time (seconds, wall-clock) + wet toggle (misc6). steady_clock is
+    // frame-rate-independent so kRippleSpeed has a fixed meaning, and immune to NTP jumps;
+    // zeroed at first use so the seconds stay small (float precision). y gates the shader's
+    // sheen/ripple/puddle layers only (rb_wet) — never the glow (that Le is CPU-built).
+    static const auto rippleT0 = std::chrono::steady_clock::now();
+    float rippleSec = std::chrono::duration<float>(std::chrono::steady_clock::now() - rippleT0).count();
+    std::memcpy(&pc.misc6[0], &rippleSec, sizeof(float));
+    pc.misc6[1]    = rb_wet ? 1u : 0u;
+    pc.misc6[2]    = 0u;
+    pc.misc6[3]    = 0u;
     pc.vertsAddr   = BufferAddress(g.vbuf);
     pc.emitAddr    = g.emitBuf    ? BufferAddress(g.emitBuf)    : 0;
     pc.matEmisAddr = g.matEmisBuf ? BufferAddress(g.matEmisBuf) : 0;
