@@ -19,6 +19,16 @@ All notable changes to DOOM_Ants are documented here. The format follows
   every non-sprite world surface, never on sprites or on the flowing green
   liquid itself. Ultra RT view only; Classic and Solid are byte-identical.
 
+### Changed
+
+- **Solid (raster) 3D view now overlaps CPU frame-build with GPU rendering, roughly doubling its frame rate (DOOM-0074).**
+  The per-frame CPU work (moving-sector re-height, point-light cull, sprite
+  billboards) now runs ahead of the GPU fence in steady-state raster, so the
+  CPU prepares the next frame while the graphics card finishes the current one
+  instead of waiting for it. On the RX 6600 (E1M1) this took the Solid view
+  from ~70 to ~161 fps. The ray-traced Ultra view is unchanged (it stays
+  single-frame-in-flight; extending the overlap there is tracked separately).
+
 ### Fixed
 
 - **Fixed a long-standing operator-precedence bug in the "donut" sector effect that could misbehave (or crash) on hand-crafted donut sectors (DOOM-0138).**

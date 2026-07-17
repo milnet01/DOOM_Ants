@@ -389,6 +389,35 @@ struct VulkanState
     std::vector<VkSemaphore> renderFinished;
     VkFence     inFlight       = VK_NULL_HANDLE;
 
+    // DOOM-0074: build-ahead double-buffering. The expensive CPU work each frame is
+    // the "build" (moving-sector re-height + per-subsector point-light cull + sprite
+    // billboards), not command recording or the GPU. Running that build BEFORE the
+    // top-of-frame fence wait lets the CPU prepare frame N+1's data while the GPU is
+    // still rendering frame N -- recovering the CPU/GPU overlap the single-frame
+    // design left on the table (toward the 60 FPS floor). The GPU itself stays on ONE
+    // serialized timeline behind g.inFlight: one command buffer, one set of render
+    // targets, the BLAS/TLAS and the denoiser history are all untouched and race-free.
+    // Only the three buffers the build writes and the GPU then reads (vbuf vertex
+    // input, spriteVbuf vertex input, lightBuf point-light SSBO by device address)
+    // need one copy per in-flight slot: g.vbuf / g.spriteVbuf / g.lightBuf (+ memory +
+    // mapped ptr) are re-pointed at slot[frameSlot] at the top of each frame, so every
+    // downstream bind / device-address / re-height site keeps using g.<name>. Build-
+    // ahead is used only in steady-state raster (Solid); a traced frame or a render-
+    // mode toggle serializes instead (see RB_Vulkan_Present) so the single-copy RT
+    // resources are never in flight -- full RT-mode overlap is a separate follow-up.
+    static constexpr uint32_t kFramesInFlight = 2;
+    uint32_t       frameSlot = 0;
+    VkBuffer       vbufSlot[kFramesInFlight]       = {};
+    VkDeviceMemory vbufMemSlot[kFramesInFlight]    = {};
+    void*          vbufMappedSlot[kFramesInFlight] = {};
+    VkBuffer       spriteVbufSlot[kFramesInFlight]    = {};
+    VkDeviceMemory spriteVbufMemSlot[kFramesInFlight] = {};
+    void*          spriteMappedSlot[kFramesInFlight]  = {};
+    VkBuffer       lightBufSlot[kFramesInFlight]    = {};
+    VkDeviceMemory lightMemSlot[kFramesInFlight]    = {};
+    void*          lightMappedSlot[kFramesInFlight] = {};
+    bool           lastRtActive = false;   // last frame's render mode (toggle -> drain)
+
     // DOOM-0090: opt-in per-pass GPU timer (toggled by rb_profile / the `\` key).
     // A timestamp query pool is sampled at the path tracer's pass boundaries in
     // RecordRtTrace and read back at the top of the next frame. Single-frame-in-
@@ -4280,23 +4309,33 @@ void CreateSpriteBuffer()
     g.spriteVertCap = 4096 * 6;   // up to ~4096 things per frame, 6 verts each
     VkDeviceSize size = (VkDeviceSize)g.spriteVertCap * sizeof(rb_vertex_t);
 
-    VkBufferCreateInfo bci = {};
-    bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bci.size = size;
-    bci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-    bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    Check(vkCreateBuffer(g.device, &bci, nullptr, &g.spriteVbuf), "vkCreateBuffer(sprites)");
+    // DOOM-0074: one copy per in-flight slot so the next frame's build-ahead billboard
+    // fill can't clobber the copy the GPU is still drawing from.
+    for (uint32_t s = 0; s < VulkanState::kFramesInFlight; s++)
+    {
+        VkBufferCreateInfo bci = {};
+        bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bci.size = size;
+        bci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+        bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        Check(vkCreateBuffer(g.device, &bci, nullptr, &g.spriteVbufSlot[s]), "vkCreateBuffer(sprites)");
 
-    VkMemoryRequirements req = {};
-    vkGetBufferMemoryRequirements(g.device, g.spriteVbuf, &req);
-    VkMemoryAllocateInfo mai = {};
-    mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    mai.allocationSize = req.size;
-    mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    Check(vkAllocateMemory(g.device, &mai, nullptr, &g.spriteVbufMemory), "vkAllocateMemory(sprites)");
-    Check(vkBindBufferMemory(g.device, g.spriteVbuf, g.spriteVbufMemory, 0), "vkBindBufferMemory(sprites)");
-    Check(vkMapMemory(g.device, g.spriteVbufMemory, 0, size, 0, &g.spriteMapped), "vkMapMemory(sprites)");
+        VkMemoryRequirements req = {};
+        vkGetBufferMemoryRequirements(g.device, g.spriteVbufSlot[s], &req);
+        VkMemoryAllocateInfo mai = {};
+        mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        mai.allocationSize = req.size;
+        mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        Check(vkAllocateMemory(g.device, &mai, nullptr, &g.spriteVbufMemSlot[s]), "vkAllocateMemory(sprites)");
+        Check(vkBindBufferMemory(g.device, g.spriteVbufSlot[s], g.spriteVbufMemSlot[s], 0), "vkBindBufferMemory(sprites)");
+        Check(vkMapMemory(g.device, g.spriteVbufMemSlot[s], 0, size, 0, &g.spriteMappedSlot[s]), "vkMapMemory(sprites)");
+    }
+    // Point the g.<name> aliases at the active slot so a frame drawn before the first
+    // RB_Vulkan_Present re-point has valid handles.
+    g.spriteVbuf       = g.spriteVbufSlot[g.frameSlot];
+    g.spriteVbufMemory = g.spriteVbufMemSlot[g.frameSlot];
+    g.spriteMapped     = g.spriteMappedSlot[g.frameSlot];
 }
 
 // Build the WAD-global PLAYPAL colour LUT and the descriptor set at init, BEFORE
@@ -6123,9 +6162,13 @@ void BuildProbes()
     if (g.subSecMem) { vkFreeMemory(g.device, g.subSecMem, nullptr);    g.subSecMem = VK_NULL_HANDLE; }
     if (g.rejectBuf) { vkDestroyBuffer(g.device, g.rejectBuf, nullptr); g.rejectBuf = VK_NULL_HANDLE; }
     if (g.rejectMem) { vkFreeMemory(g.device, g.rejectMem, nullptr);    g.rejectMem = VK_NULL_HANDLE; }
-    if (g.lightBuf)  { vkDestroyBuffer(g.device, g.lightBuf, nullptr);  g.lightBuf  = VK_NULL_HANDLE; }
-    if (g.lightMem)  { vkFreeMemory(g.device, g.lightMem, nullptr);     g.lightMem  = VK_NULL_HANDLE; }
-    g.lightMapped = nullptr;
+    for (uint32_t s = 0; s < VulkanState::kFramesInFlight; s++)   // DOOM-0074: per-slot
+    {
+        if (g.lightBufSlot[s]) { vkDestroyBuffer(g.device, g.lightBufSlot[s], nullptr); g.lightBufSlot[s] = VK_NULL_HANDLE; }
+        if (g.lightMemSlot[s]) { vkFreeMemory(g.device, g.lightMemSlot[s], nullptr);    g.lightMemSlot[s] = VK_NULL_HANDLE; }
+        g.lightMappedSlot[s] = nullptr;
+    }
+    g.lightBuf = VK_NULL_HANDLE; g.lightMem = VK_NULL_HANDLE; g.lightMapped = nullptr;
     g.subCentroid.clear();
     g.subSecSector.clear();
     g.rejectCPU  = nullptr;
@@ -6152,12 +6195,20 @@ void BuildProbes()
     {
         const VkDeviceSize lsz = (VkDeviceSize)got * RASTER_MAX_LIGHTS_PER_SUBSECTOR
                                * RASTER_LIGHT_FLOATS * sizeof(float);
-        CreateRtBuffer(lsz,
-            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-            &g.lightBuf, &g.lightMem);
-        Check(vkMapMemory(g.device, g.lightMem, 0, VK_WHOLE_SIZE, 0, &g.lightMapped), "vkMapMemory(light)");
-        std::memset(g.lightMapped, 0, (size_t)lsz);
+        // DOOM-0074: one copy per in-flight slot (build-ahead writes the next frame's
+        // point-light list while the GPU shades the current frame from the other).
+        for (uint32_t s = 0; s < VulkanState::kFramesInFlight; s++)
+        {
+            CreateRtBuffer(lsz,
+                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                &g.lightBufSlot[s], &g.lightMemSlot[s]);
+            Check(vkMapMemory(g.device, g.lightMemSlot[s], 0, VK_WHOLE_SIZE, 0, &g.lightMappedSlot[s]), "vkMapMemory(light)");
+            std::memset(g.lightMappedSlot[s], 0, (size_t)lsz);
+        }
+        g.lightBuf    = g.lightBufSlot[g.frameSlot];
+        g.lightMem    = g.lightMemSlot[g.frameSlot];
+        g.lightMapped = g.lightMappedSlot[g.frameSlot];
     }
 
     std::vector<float> rec((size_t)got * PROBE_FLOATS, 0.0f);   // SH zeroed
@@ -6262,10 +6313,15 @@ extern "C" void RB_Vulkan_BuildLevel(void)
            g.levelMesh->numtris, g.levelMesh->numverts);
     fflush(stdout);
 
-    // (Re)create the vertex buffer sized to this level's mesh.
-    if (g.vbufMapped) { vkUnmapMemory(g.device, g.vbufMemory); g.vbufMapped = nullptr; }
-    if (g.vbuf)       { vkDestroyBuffer(g.device, g.vbuf, nullptr);  g.vbuf = VK_NULL_HANDLE; }
-    if (g.vbufMemory) { vkFreeMemory(g.device, g.vbufMemory, nullptr); g.vbufMemory = VK_NULL_HANDLE; }
+    // (Re)create the vertex buffer sized to this level's mesh. DOOM-0074: one copy per
+    // in-flight slot (the build-ahead re-height writes the next frame's slot).
+    for (uint32_t s = 0; s < VulkanState::kFramesInFlight; s++)
+    {
+        if (g.vbufMappedSlot[s]) { vkUnmapMemory(g.device, g.vbufMemSlot[s]); g.vbufMappedSlot[s] = nullptr; }
+        if (g.vbufSlot[s])       { vkDestroyBuffer(g.device, g.vbufSlot[s], nullptr); g.vbufSlot[s] = VK_NULL_HANDLE; }
+        if (g.vbufMemSlot[s])    { vkFreeMemory(g.device, g.vbufMemSlot[s], nullptr); g.vbufMemSlot[s] = VK_NULL_HANDLE; }
+    }
+    g.vbuf = VK_NULL_HANDLE; g.vbufMemory = VK_NULL_HANDLE; g.vbufMapped = nullptr;
     g.vertexCount = 0;
 
     // DOOM-0141: (re)create the RT-only sky backdrop vertex buffer for this level (the
@@ -6279,37 +6335,47 @@ extern "C" void RB_Vulkan_BuildLevel(void)
     if (size == 0)
         return;   // empty map (no drawable geometry); nothing to upload
 
-    VkBufferCreateInfo bci = {};
-    bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bci.size = size;
-    bci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-    // With RT on, the same buffer is read as BLAS build input (by GPU address), so
-    // it also needs the AS-input + device-address usage and a device-address alloc.
-    if (g.rtEnabled)
-        bci.usage |= VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
-                   | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-    bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    Check(vkCreateBuffer(g.device, &bci, nullptr, &g.vbuf), "vkCreateBuffer(vbuf)");
+    // DOOM-0074: allocate + fill both in-flight slots with identical geometry. The
+    // build-ahead re-height writes the next frame's slot while the GPU reads the other.
+    for (uint32_t s = 0; s < VulkanState::kFramesInFlight; s++)
+    {
+        VkBufferCreateInfo bci = {};
+        bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bci.size = size;
+        bci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+        // With RT on, the same buffer is read as BLAS build input (by GPU address), so
+        // it also needs the AS-input + device-address usage and a device-address alloc.
+        if (g.rtEnabled)
+            bci.usage |= VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+                       | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+        bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        Check(vkCreateBuffer(g.device, &bci, nullptr, &g.vbufSlot[s]), "vkCreateBuffer(vbuf)");
 
-    VkMemoryRequirements req = {};
-    vkGetBufferMemoryRequirements(g.device, g.vbuf, &req);
-    VkMemoryAllocateFlagsInfo vbufFlags = {};
-    vbufFlags.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
-    vbufFlags.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
-    VkMemoryAllocateInfo mai = {};
-    mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    mai.pNext = g.rtEnabled ? &vbufFlags : nullptr;
-    mai.allocationSize = req.size;
-    mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    Check(vkAllocateMemory(g.device, &mai, nullptr, &g.vbufMemory), "vkAllocateMemory(vbuf)");
-    Check(vkBindBufferMemory(g.device, g.vbuf, g.vbufMemory, 0), "vkBindBufferMemory(vbuf)");
+        VkMemoryRequirements req = {};
+        vkGetBufferMemoryRequirements(g.device, g.vbufSlot[s], &req);
+        VkMemoryAllocateFlagsInfo vbufFlags = {};
+        vbufFlags.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+        vbufFlags.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+        VkMemoryAllocateInfo mai = {};
+        mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        mai.pNext = g.rtEnabled ? &vbufFlags : nullptr;
+        mai.allocationSize = req.size;
+        mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        Check(vkAllocateMemory(g.device, &mai, nullptr, &g.vbufMemSlot[s]), "vkAllocateMemory(vbuf)");
+        Check(vkBindBufferMemory(g.device, g.vbufSlot[s], g.vbufMemSlot[s], 0), "vkBindBufferMemory(vbuf)");
 
-    // Kept mapped for the whole level: RB_UpdateMeshHeights patches moving-sector
-    // z's into it each frame (host-coherent, so no flush). Unmapped on rebuild
-    // (above) and shutdown.
-    Check(vkMapMemory(g.device, g.vbufMemory, 0, size, 0, &g.vbufMapped), "vkMapMemory(vbuf)");
-    std::memcpy(g.vbufMapped, g.levelMesh->verts, (size_t)size);
+        // Kept mapped for the whole level: RB_UpdateMeshHeights patches moving-sector
+        // z's into it each frame (host-coherent, so no flush). Unmapped on rebuild
+        // (above) and shutdown.
+        Check(vkMapMemory(g.device, g.vbufMemSlot[s], 0, size, 0, &g.vbufMappedSlot[s]), "vkMapMemory(vbuf)");
+        std::memcpy(g.vbufMappedSlot[s], g.levelMesh->verts, (size_t)size);
+    }
+    // Both slots hold identical geometry now, so the BLAS built below (from g.vbuf)
+    // matches whichever slot is active on the first traced frame.
+    g.vbuf       = g.vbufSlot[g.frameSlot];
+    g.vbufMemory = g.vbufMemSlot[g.frameSlot];
+    g.vbufMapped = g.vbufMappedSlot[g.frameSlot];
 
     g.vertexCount = (uint32_t)g.levelMesh->numverts;
 
@@ -6964,6 +7030,120 @@ static inline double CpuNowMs()
     return duration<double, std::milli>(steady_clock::now().time_since_epoch()).count();
 }
 
+// DOOM-0074: the per-frame CPU "build" — sky/sprite/weapon billboards, the NEE emitter
+// refill + per-subsector point-light cull, and moving-sector re-height. Split out of
+// RB_Vulkan_Present so it can run BEFORE the top-of-frame fence wait (build-ahead: the
+// CPU prepares the next frame's data while the GPU still renders the current one) in
+// steady-state raster, or after it (serialized) on a traced / mode-changing frame. It
+// writes the active frame-slot copies of g.spriteVbuf / g.lightBuf / g.vbuf and reads
+// live game state (sectors[], sprites). `cprof` gates the CPU profiler sub-timers; the
+// build total lands in g.cpuMs[1].
+static void BuildFrameInputs(bool rtActive, bool cprof)
+{
+    const double tBuild0 = cprof ? CpuNowMs() : 0.0;
+    g.spriteVertCount = 0;
+    g.skyVertCount    = 0;
+    g.blobVertCount   = 0;   // DOOM-0170 L2d
+    g.sprWorldVertCount = 0;
+    if (!rtActive && g.spriteMapped && g.haveCamera && g.atlasReady)
+    {
+        const double tSpr0 = cprof ? CpuNowMs() : 0.0;   // sub-timer: billboard builds
+        rb_vertex_t* buf = (rb_vertex_t*)g.spriteMapped;
+        // Sky backdrop first (verts [0,sky)); it draws behind the world with the
+        // depth-off pipeline. Sprites + weapon follow and share the main draw.
+        int sky = RB_BuildSky(&g.lastView, buf, (int)g.spriteVertCap);
+        int n   = RB_BuildSprites(&g.lastView, buf + sky, (int)g.spriteVertCap - sky);
+        // Weapon overlay shares the buffer/draw; appended last so it sits on top.
+        // Pass the swapchain aspect so the gun keeps DOOM's 4:3 proportions.
+        float aspect = g.extent.height ? (float)g.extent.width / (float)g.extent.height
+                                       : 1.0f;
+        n += RB_BuildPSprites(buf + sky + n, (int)g.spriteVertCap - sky - n, aspect);
+        g.skyVertCount    = (uint32_t)sky;
+        g.spriteVertCount = (uint32_t)n;
+
+        // DOOM-0170 L2d: blob shadows appended after the sprites+weapon; the blob pass
+        // (alpha-blend pipeline) reads them from this offset, drawn before the billboards.
+        g.blobVertOffset = (uint32_t)(sky + n);
+        g.blobVertCount  = (uint32_t)RB_BuildBlobs(&g.lastView, buf + sky + n,
+                                                   (int)g.spriteVertCap - sky - n);
+        if (cprof) g.cpuBuildMs[0] += CpuNowMs() - tSpr0;   // sky/sprite/psprite/blob builds
+
+        // DOOM-0170 L1b: the raster point-light stack needs this frame's emissive
+        // sprites (torches/lamps/barrels) in the NEE emitter list. The traced branch
+        // below builds the world sprites into g.sprWorldBuf; the raster branch above
+        // only built the drawn billboards (into g.spriteMapped), so build the world-
+        // sprite set here too, refresh the emitter list, then rebuild the per-subsector
+        // nearest-N point-light lists the fragment shader reads. RT-GPU only (no
+        // emitters/probes without a bake); costs one sprite build + the <=1 ms cull.
+        if (g.rtEnabled && g.sprWorldMapped)
+        {
+            const double tW0 = cprof ? CpuNowMs() : 0.0;
+            g.sprWorldVertCount = (uint32_t)RB_BuildSprites(&g.lastView,
+                (rb_vertex_t*)g.sprWorldMapped, (int)g.sprWorldVertCap);
+            const double tL0 = cprof ? CpuNowMs() : 0.0;
+            if (cprof) g.cpuBuildMs[0] += tL0 - tW0;   // 2nd (world) sprite build -> sprites
+            if (g.worldEmitDirty && g.vbufMapped)
+            {
+                BuildStaticEmitterSet((const rb_vertex_t*)g.vbufMapped);
+                g.worldEmitDirty = false;
+            }
+            BuildDynamicEmitters();     // refill g.emitBuf (static + emissive sprites)
+            BuildRasterPointLights();   // -> g.lightBuf (per-subsector nearest-N)
+            if (cprof) g.cpuBuildMs[1] += CpuNowMs() - tL0;   // emitter refill + point-light cull
+        }
+    }
+    // DOOM-0094/0100: in the path-traced view the world comes from the trace. The
+    // player weapon is still a screen-space psprite drawn on top (g.spriteMapped),
+    // but world sprites (monsters/items/barrels) are now traced as a per-frame TLAS
+    // instance (DOOM-0100): build their billboards into g.sprWorldBuf so BuildSpriteTlas
+    // can rebuild the sprite BLAS over them. No sky (the trace's miss shader is the sky).
+    else if (rtActive && g.spriteMapped && g.haveCamera && g.atlasReady)
+    {
+        rb_vertex_t* buf = (rb_vertex_t*)g.spriteMapped;
+        float aspect = g.extent.height ? (float)g.extent.width / (float)g.extent.height
+                                       : 1.0f;
+        g.spriteVertCount = (uint32_t)RB_BuildPSprites(buf, (int)g.spriteVertCap, aspect);
+
+        g.sprWorldVertCount = 0;
+        if (g.sprWorldMapped)
+            g.sprWorldVertCount = (uint32_t)RB_BuildSprites(&g.lastView,
+                (rb_vertex_t*)g.sprWorldMapped, (int)g.sprWorldVertCap);
+
+        // DOOM-0082: last frame RB_UpdateMeshHeights saw a switch press/revert (or an
+        // animated flat) change a face's live texture; rebuild the static emitter set
+        // from the live vertex buffer so a now-lit switch pools light — and stops when
+        // it reverts. Cheap and rare (only on an actual texture change).
+        if (g.worldEmitDirty && g.vbufMapped)
+        {
+            BuildStaticEmitterSet((const rb_vertex_t*)g.vbufMapped);
+            g.worldEmitDirty = false;
+        }
+
+        // DOOM-0084: append this frame's emissive sprites (lamps/torches/barrels)
+        // to the NEE light list so they pool light onto their surroundings.
+        BuildDynamicEmitters();
+    }
+
+    // Re-height moving sectors (doors/lifts) in the static level buffer from the
+    // live sector heights. host-coherent, no flush. A non-zero return means geometry
+    // actually shifted this frame -> latch the BLAS dirty so the trace refits it (build
+    // step 5). Latching (rather than refitting here) means a move that finished under
+    // the raster path is still caught the first time the trace is shown. The change-
+    // flags diff against this slot's buffer (its state from two frames ago under build-
+    // ahead); the writes are always from the authoritative sector heights, so geometry
+    // is correct regardless — only a stale-by-a-frame extra refit/emitter-rebuild can
+    // result, which is harmless (DOOM-0074).
+    if (g.levelMesh && g.vbufMapped)
+    {
+        const double tH0 = cprof ? CpuNowMs() : 0.0;
+        int upd = RB_UpdateMeshHeights(g.levelMesh, (rb_vertex_t*)g.vbufMapped);
+        if (upd & RB_UPD_MOVED) g.blasDirty = true;      // geometry shifted -> BLAS refit
+        if (upd & RB_UPD_RETEX) g.worldEmitDirty = true; // a face's texture swapped -> emitter rebuild
+        if (cprof) g.cpuBuildMs[2] += CpuNowMs() - tH0;  // moving-sector re-height
+    }
+    if (cprof) g.cpuMs[1] += CpuNowMs() - tBuild0;
+}
+
 extern "C" void RB_Vulkan_Present(void)
 {
     if (!g.ready)
@@ -6985,11 +7165,53 @@ extern "C" void RB_Vulkan_Present(void)
         g.needRecreate = false;
     }
 
+    // DOOM-0074: pick this frame's in-flight slot and re-point the double-buffered
+    // aliases (vbuf / spriteVbuf / lightBuf) at it. The build below writes slot
+    // [frameSlot]; the GPU is still reading the PREVIOUS frame's slot. The fence wait
+    // that follows guarantees slot[frameSlot]'s last user (two frames ago) is done, so
+    // it is free to overwrite. Only the CPU build runs ahead — one frame of GPU work is
+    // in flight as before, so the command buffer, sync objects and render targets stay
+    // single-copy.
+    g.frameSlot = (g.frameSlot + 1u) % VulkanState::kFramesInFlight;
+    g.vbuf       = g.vbufSlot[g.frameSlot];
+    g.vbufMemory = g.vbufMemSlot[g.frameSlot];
+    g.vbufMapped = g.vbufMappedSlot[g.frameSlot];
+    g.spriteVbuf       = g.spriteVbufSlot[g.frameSlot];
+    g.spriteVbufMemory = g.spriteVbufMemSlot[g.frameSlot];
+    g.spriteMapped     = g.spriteMappedSlot[g.frameSlot];
+    g.lightBuf    = g.lightBufSlot[g.frameSlot];
+    g.lightMem    = g.lightMemSlot[g.frameSlot];
+    g.lightMapped = g.lightMappedSlot[g.frameSlot];
+
+    // Whether this frame draws the path-traced view (vs the raster/Solid path). Computed
+    // before the fence so the CPU build can run ahead in steady-state raster. Same gate
+    // as the record path below (INV-10: the raster path stays byte-for-byte unaffected).
+    const bool rtActive = rb_rtdebug && g.rtEnabled && g.tlas != VK_NULL_HANDLE
+                       && g.rtModule != VK_NULL_HANDLE && g.haveCamera
+                       && g.vbuf != VK_NULL_HANDLE && g.atlasReady;
+
+    // A render-mode toggle (~ key) means the previous frame's GPU used resources this
+    // frame's mode treats as single-copy (the RT structures, or the raster targets).
+    // Drain once so nothing aliases across the transition; build-ahead resumes on the
+    // next same-mode frame.
+    const bool modeChanged = (rtActive != g.lastRtActive);
+    if (modeChanged)
+        vkDeviceWaitIdle(g.device);
+    g.lastRtActive = rtActive;
+
+    // Build-ahead only in steady-state raster: run the CPU build now, overlapping the
+    // previous frame's GPU. A traced or just-toggled frame builds after the fence
+    // (serialized) so its single-copy RT resources are never in flight.
+    const bool buildAhead = !rtActive && !modeChanged;
+    if (buildAhead)
+        BuildFrameInputs(false, cprof);
+
     const double tFence0 = cprof ? CpuNowMs() : 0.0;
     vkWaitForFences(g.device, 1, &g.inFlight, VK_TRUE, UINT64_MAX);
-    // The CPU sits here blocked until the PREVIOUS frame's GPU work signals the fence.
-    // A large value means the GPU is the long pole (2-frames-in-flight would hide it);
-    // ~0 means the CPU work outran the GPU and the frame is CPU-bound.
+    // The CPU blocks here until the PREVIOUS frame's GPU work signals the fence. With
+    // DOOM-0074 build-ahead the steady-state raster build already ran above (overlapping
+    // that GPU work), so this residual wait shrinks toward max(0, GPU - build): a large
+    // value still means the GPU is the long pole, ~0 means the CPU build outran it.
     if (cprof) g.cpuMs[0] += CpuNowMs() - tFence0;
 
     // DOOM-0090: read back the previous frame's per-pass GPU timestamps (the fence
@@ -7091,125 +7313,21 @@ extern "C" void RB_Vulkan_Present(void)
     vkResetFences(g.device, 1, &g.inFlight);
     vkResetCommandBuffer(g.cmd, 0);
 
-    // Path-tracer debug view (DOOM-0009 build step 2c): when the rb_rtdebug toggle
-    // is on and the GPU has RT with a built TLAS + a camera, the frame is the
-    // traced image blitted to the swapchain instead of the raster pass. Gated so
-    // the raster (Solid) path is byte-for-byte unaffected (INV-10).
-    const bool rtActive = rb_rtdebug && g.rtEnabled && g.tlas != VK_NULL_HANDLE
-                       && g.rtModule != VK_NULL_HANDLE && g.haveCamera
-                       && g.vbuf != VK_NULL_HANDLE && g.atlasReady;
+    // DOOM-0074: on a traced or just-toggled frame the build was NOT run ahead (its
+    // single-copy RT resources must not be in flight); run it now — after the fence, so
+    // the previous frame's GPU has finished reading everything. In steady-state raster
+    // it already ran before the fence (buildAhead), overlapping the GPU.
+    if (!buildAhead)
+        BuildFrameInputs(rtActive, cprof);
 
-    // Rebuild this frame's billboard sprites into the persistently-mapped buffer.
-    // Safe to overwrite now: the fence wait above guarantees the previous frame's
-    // draw (which read this buffer) has finished. Host-coherent, so no flush.
-    const double tBuild0 = cprof ? CpuNowMs() : 0.0;   // DOOM-0170 CPU profiler: prep block
-    g.spriteVertCount = 0;
-    g.skyVertCount    = 0;
-    g.blobVertCount   = 0;   // DOOM-0170 L2d
-    g.sprWorldVertCount = 0;
-    if (!rtActive && g.spriteMapped && g.haveCamera && g.atlasReady)
-    {
-        const double tSpr0 = cprof ? CpuNowMs() : 0.0;   // sub-timer: billboard builds
-        rb_vertex_t* buf = (rb_vertex_t*)g.spriteMapped;
-        // Sky backdrop first (verts [0,sky)); it draws behind the world with the
-        // depth-off pipeline. Sprites + weapon follow and share the main draw.
-        int sky = RB_BuildSky(&g.lastView, buf, (int)g.spriteVertCap);
-        int n   = RB_BuildSprites(&g.lastView, buf + sky, (int)g.spriteVertCap - sky);
-        // Weapon overlay shares the buffer/draw; appended last so it sits on top.
-        // Pass the swapchain aspect so the gun keeps DOOM's 4:3 proportions.
-        float aspect = g.extent.height ? (float)g.extent.width / (float)g.extent.height
-                                       : 1.0f;
-        n += RB_BuildPSprites(buf + sky + n, (int)g.spriteVertCap - sky - n, aspect);
-        g.skyVertCount    = (uint32_t)sky;
-        g.spriteVertCount = (uint32_t)n;
+    // DOOM-0131: the moving-sector world-BLAS refit (build step 5) is recorded into the
+    // frame command buffer inside RecordRtTrace (ahead of the TLAS rebuild). blasDirty
+    // stays latched until the first traced frame, so an off-screen move under raster is
+    // still caught.
 
-        // DOOM-0170 L2d: blob shadows appended after the sprites+weapon; the blob pass
-        // (alpha-blend pipeline) reads them from this offset, drawn before the billboards.
-        g.blobVertOffset = (uint32_t)(sky + n);
-        g.blobVertCount  = (uint32_t)RB_BuildBlobs(&g.lastView, buf + sky + n,
-                                                   (int)g.spriteVertCap - sky - n);
-        if (cprof) g.cpuBuildMs[0] += CpuNowMs() - tSpr0;   // sky/sprite/psprite/blob builds
-
-        // DOOM-0170 L1b: the raster point-light stack needs this frame's emissive
-        // sprites (torches/lamps/barrels) in the NEE emitter list. The traced branch
-        // below builds the world sprites into g.sprWorldBuf; the raster branch above
-        // only built the drawn billboards (into g.spriteMapped), so build the world-
-        // sprite set here too, refresh the emitter list, then rebuild the per-subsector
-        // nearest-N point-light lists the fragment shader reads. RT-GPU only (no
-        // emitters/probes without a bake); costs one sprite build + the <=1 ms cull.
-        if (g.rtEnabled && g.sprWorldMapped)
-        {
-            const double tW0 = cprof ? CpuNowMs() : 0.0;
-            g.sprWorldVertCount = (uint32_t)RB_BuildSprites(&g.lastView,
-                (rb_vertex_t*)g.sprWorldMapped, (int)g.sprWorldVertCap);
-            const double tL0 = cprof ? CpuNowMs() : 0.0;
-            if (cprof) g.cpuBuildMs[0] += tL0 - tW0;   // 2nd (world) sprite build -> sprites
-            if (g.worldEmitDirty && g.vbufMapped)
-            {
-                BuildStaticEmitterSet((const rb_vertex_t*)g.vbufMapped);
-                g.worldEmitDirty = false;
-            }
-            BuildDynamicEmitters();     // refill g.emitBuf (static + emissive sprites)
-            BuildRasterPointLights();   // -> g.lightBuf (per-subsector nearest-N)
-            if (cprof) g.cpuBuildMs[1] += CpuNowMs() - tL0;   // emitter refill + point-light cull
-        }
-    }
-    // DOOM-0094/0100: in the path-traced view the world comes from the trace. The
-    // player weapon is still a screen-space psprite drawn on top (g.spriteMapped),
-    // but world sprites (monsters/items/barrels) are now traced as a per-frame TLAS
-    // instance (DOOM-0100): build their billboards into g.sprWorldBuf so BuildSpriteTlas
-    // can rebuild the sprite BLAS over them. No sky (the trace's miss shader is the sky).
-    else if (rtActive && g.spriteMapped && g.haveCamera && g.atlasReady)
-    {
-        rb_vertex_t* buf = (rb_vertex_t*)g.spriteMapped;
-        float aspect = g.extent.height ? (float)g.extent.width / (float)g.extent.height
-                                       : 1.0f;
-        g.spriteVertCount = (uint32_t)RB_BuildPSprites(buf, (int)g.spriteVertCap, aspect);
-
-        g.sprWorldVertCount = 0;
-        if (g.sprWorldMapped)
-            g.sprWorldVertCount = (uint32_t)RB_BuildSprites(&g.lastView,
-                (rb_vertex_t*)g.sprWorldMapped, (int)g.sprWorldVertCap);
-
-        // DOOM-0082: last frame RB_UpdateMeshHeights saw a switch press/revert (or an
-        // animated flat) change a face's live texture; rebuild the static emitter set
-        // from the live vertex buffer so a now-lit switch pools light — and stops when
-        // it reverts. Cheap and rare (only on an actual texture change).
-        if (g.worldEmitDirty && g.vbufMapped)
-        {
-            BuildStaticEmitterSet((const rb_vertex_t*)g.vbufMapped);
-            g.worldEmitDirty = false;
-        }
-
-        // DOOM-0084: append this frame's emissive sprites (lamps/torches/barrels)
-        // to the NEE light list so they pool light onto their surroundings.
-        BuildDynamicEmitters();
-    }
-
-    // Re-height moving sectors (doors/lifts) in the static level buffer from the
-    // live sector heights. Same fence-safe window as the sprites above (the wait
-    // guarantees the previous frame's draw finished); host-coherent, no flush.
-    // A non-zero return means geometry actually shifted this frame -> latch the BLAS
-    // dirty so the trace refits it (build step 5). Latching (rather than refitting
-    // here) means a move that finished under the raster path is still caught the
-    // first time the trace is shown.
-    if (g.levelMesh && g.vbufMapped)
-    {
-        const double tH0 = cprof ? CpuNowMs() : 0.0;
-        int upd = RB_UpdateMeshHeights(g.levelMesh, (rb_vertex_t*)g.vbufMapped);
-        if (upd & RB_UPD_MOVED) g.blasDirty = true;      // geometry shifted -> BLAS refit
-        if (upd & RB_UPD_RETEX) g.worldEmitDirty = true; // a face's texture swapped -> emitter rebuild
-        if (cprof) g.cpuBuildMs[2] += CpuNowMs() - tH0;  // moving-sector re-height
-    }
-
-    // DOOM-0131: the moving-sector world-BLAS refit (build step 5) is now recorded
-    // into the frame command buffer inside RecordRtTrace (ahead of the TLAS rebuild)
-    // instead of a standalone one-time submit here. blasDirty stays latched until
-    // the first traced frame, so an off-screen move under raster is still caught.
-
-    // Copy this frame's 2D overlay (screens[0]) into the mapped staging buffer.
-    // Same race-safe window as the sprites above: the fence wait guarantees the
-    // previous frame's copy (which read this buffer) has finished.
+    // Copy this frame's 2D overlay (screens[0]) into the mapped staging buffer. Kept
+    // after the fence (not in the build-ahead block) so the previous frame's copy has
+    // finished — the single-copy staging buffer needs no double-buffering.
     // DOOM-0094: the 2D overlay (HUD/menu/messages/FPS, all composited from screens[0])
     // now draws in BOTH the raster and the path-traced present paths.
     bool drawOverlay = g.overlayReady && g.overlaySrc;
@@ -7217,10 +7335,9 @@ extern "C" void RB_Vulkan_Present(void)
         std::memcpy(g.overlayMapped, g.overlaySrc,
                     (size_t)g.overlayW * g.overlayH);
 
-    // DOOM-0170 CPU profiler: end of the prep block (sprite/emitter/point-light build
-    // + moving-sector re-height + overlay upload), start of command recording.
+    // DOOM-0170 CPU profiler: start of command recording. The build total (g.cpuMs[1])
+    // is set inside BuildFrameInputs, whether it ran before or after the fence.
     const double tRecord0 = cprof ? CpuNowMs() : 0.0;
-    if (cprof) g.cpuMs[1] += tRecord0 - tBuild0;
 
     VkCommandBufferBeginInfo bi = {};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -7711,9 +7828,13 @@ extern "C" void RB_Vulkan_Shutdown(void)
         if (g.emitMem)      vkFreeMemory(g.device, g.emitMem, nullptr);
         if (g.emitSecBuf)   vkDestroyBuffer(g.device, g.emitSecBuf, nullptr);
         if (g.emitSecMem)   vkFreeMemory(g.device, g.emitSecMem, nullptr);
-        // DOOM-0170 L1b per-subsector point-light buffer (host-visible, per-frame fill).
-        if (g.lightBuf)     vkDestroyBuffer(g.device, g.lightBuf, nullptr);
-        if (g.lightMem)     vkFreeMemory(g.device, g.lightMem, nullptr);
+        // DOOM-0170 L1b per-subsector point-light buffer (host-visible, per-frame fill;
+        // DOOM-0074: one copy per in-flight slot).
+        for (uint32_t s = 0; s < VulkanState::kFramesInFlight; s++)
+        {
+            if (g.lightBufSlot[s]) vkDestroyBuffer(g.device, g.lightBufSlot[s], nullptr);
+            if (g.lightMemSlot[s]) vkFreeMemory(g.device, g.lightMemSlot[s], nullptr);
+        }
         if (g.matEmisBuf)   vkDestroyBuffer(g.device, g.matEmisBuf, nullptr);
         if (g.matEmisMem)   vkFreeMemory(g.device, g.matEmisMem, nullptr);
         // GI bake probes + per-triangle subsector map (step 4).
@@ -7729,11 +7850,15 @@ extern "C" void RB_Vulkan_Shutdown(void)
         if (g.rejectBuf)    vkDestroyBuffer(g.device, g.rejectBuf, nullptr);
         if (g.rejectMem)    vkFreeMemory(g.device, g.rejectMem, nullptr);
     }
-    if (g.vbufMapped)       vkUnmapMemory(g.device, g.vbufMemory);
-    if (g.vbuf)             vkDestroyBuffer(g.device, g.vbuf, nullptr);
-    if (g.vbufMemory)       vkFreeMemory(g.device, g.vbufMemory, nullptr);
-    if (g.spriteVbuf)       vkDestroyBuffer(g.device, g.spriteVbuf, nullptr);
-    if (g.spriteVbufMemory) vkFreeMemory(g.device, g.spriteVbufMemory, nullptr);
+    // DOOM-0074: free every in-flight slot of the double-buffered vertex/sprite buffers.
+    for (uint32_t s = 0; s < VulkanState::kFramesInFlight; s++)
+    {
+        if (g.vbufMappedSlot[s])    vkUnmapMemory(g.device, g.vbufMemSlot[s]);
+        if (g.vbufSlot[s])          vkDestroyBuffer(g.device, g.vbufSlot[s], nullptr);
+        if (g.vbufMemSlot[s])       vkFreeMemory(g.device, g.vbufMemSlot[s], nullptr);
+        if (g.spriteVbufSlot[s])    vkDestroyBuffer(g.device, g.spriteVbufSlot[s], nullptr);
+        if (g.spriteVbufMemSlot[s]) vkFreeMemory(g.device, g.spriteVbufMemSlot[s], nullptr);
+    }
 
     // Material + palette resources.
     if (g.dsPool)      vkDestroyDescriptorPool(g.device, g.dsPool, nullptr);
