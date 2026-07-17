@@ -902,6 +902,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Glowing green slime pools cast a soft green light on the nearby floor and walls, instead of looking flat.
   Kind: feature.
   Source: user-request-2026-06-27.
+  Progress (2026-07-17): implemented as DOOM-0183 L2 (forced-constant green Le on NUKAGE1-3 via ComputeMaterialEmissive -> enters the NEE emitter set + self-glows). Code committed/pushed (ecf9a6c); graduates to shipped when DOOM-0183 clears its hardware play-test.
 
 - 📋 [DOOM-0084] **Make free-standing light objects (floor lamps, torches, burning barrels) emit light in the path tracer.**
   DOOM-0009's NEE emitter list (BuildEmitterList) is extracted only from the
@@ -1667,7 +1668,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: feature.
   Source: user-request-2026-07-16.
 
-- 📋 [DOOM-0183] **Reflective, glowing, liquid goo (nukage) in the Ultra RT view.**
+- 🚧 [DOOM-0183] **Reflective, glowing, liquid goo (nukage) in the Ultra RT view.**
   Grew out of the DOOM-0181 grime/stain iteration (see [[doom-0181-detile-grime]]). The stain system now paints green-goo puddles on floors; the user wants the goo (puddles AND the source nukage flat) to read as a wet liquid. Needs a design pass first (user chose "design properly"). Scope to settle in design:
   - Light-green EMISSIVE glow on goo — the RT emissive channel already exists (pathtrace.comp self-radiance), so this part is cheap.
   - Reflectivity — the path tracer currently does DIFFUSE bounces only (no glossy/specular reflection rays). True reflective goo needs a new glossy-reflection capability (also unlocks reflective metal/floors later); relates to the deferred scoped-SSR idea. This is the feature-sized part.
@@ -1678,6 +1679,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: feature.
   Source: user-request-2026-07-16.
   Design pass done (2026-07-17): spec docs/specs/DOOM-0183-glowing-wet-liquid.md written + cold-eyes clean (3 loops). Scope settled with the user: "cheap wins first" — green nukage gets glow + cast-light + wet direct-light sheen + procedural ripples; LAVA gets glow + orange cast-light (user add); true mirror reflections stay DOOM-0103; water/blood deferred. Liquid identity via a MatCtrl.flags bit from the flat name (NUKAGE1-3, LAVA1-4); cast-light = forced-constant Le through the existing NEE emitter path (delivers DOOM-0083). Build order L1 liquid bit -> L2 glow/cast-light -> L3 sheen -> L4 ripples -> L5 puddle-wet -> L6 toggle+perf. Cheaper-RT research from this pass captured separately as DOOM-0188..0192; RT-glow dial-up as DOOM-0193.
+  Progress (2026-07-17): L1-L6 implemented + committed/pushed (ecf9a6c). L1 liquid bit (MatCtrl.flags bit3/bit4 by flat name — NUKAGE1-3/LAVA1-4 — via FlagLiquidFlats); L2 forced-constant Le glow+cast-light via ForceLiquidEmissive (delivers DOOM-0083); L3 direct-light Blinn-Phong sheen (flashlight+muzzle, no reflection ray); L4 procedural ripple normal on nukage + new misc6 push-const lane for time (steady_clock seconds); L5 goo-puddle wet via gooWet mask exposed from applyGrime; L6 rb_wet toggle (' key, rt_wet config). misc6 appended after the 216-byte tail (std430-padded to offset 224, size 240) so the 184-byte -rtverify prefix is byte-identical (INV-6); static_assert+pcr.size 216->240. Fixed the stale misc2.z/.w comment (Q8). `make` + `make test` green. Tuning consts (kNukageLe/kLavaLe/kWetSheen*/kRipple*/kPuddle*) are placeholders. REMAINING (human-run L6 gate): on-hardware play-test of the look on the E1M1 goo room + a lava map, -rtverify green, and the <=5% perf measurement (rb_wet off vs on). Then flip to shipped + graduate DOOM-0083 + CHANGELOG. Known v1 note: mode-6 (denoised) sheen/puddle-glow are albedo-tinted by demodulation — reads as a green wet glint on the green liquid (on-theme); a neutral wet surface would need a full-res specular channel (DOOM-0103 follow-up).
 
 - 📋 [DOOM-0184] **Glowing fireball / projectile that casts light (Ultra RT).**
   User: "I really like this fireball, can we replicate it?" (ref: Ultimate Doom RTX mod). A self-lit projectile sprite with a warm emissive core + a point light travelling with it so nearby walls/floor light up as it passes. Relates to the dynamic-light trio DOOM-0010/0101/0102 and the emissive sprite path (DOOM-0084). See [[rt-aesthetic-north-star]].

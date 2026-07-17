@@ -1,9 +1,12 @@
 # DOOM-0183 — Glowing, wet nukage (and glowing lava) in the Ultra RT view
 
-**Status:** **Design — cold-eyes clean, ready to implement.** Not yet built.
+**Status:** **Implemented (L1–L6, commit ecf9a6c) — awaiting hardware play-test.**
 Design approved by the user 2026-07-17 (scope: "cheap wins first" — glow + wet
 look now, **true mirror reflections deferred to DOOM-0103**; green nukage gets the
-full wet treatment; lava gets glow + cast-light only).
+full wet treatment; lava gets glow + cast-light only). Build + `make test` green.
+Remaining before shipped: the human-run L6 gate — on-hardware look (E1M1 goo room +
+a lava map), `-rtverify` green, and the ≤ 5 % perf measurement — then tune the `k*`
+constants, graduate DOOM-0083, and update CHANGELOG.
 
 **Cold-eyes log** (rule 14 — looped until convergence, 2026-07-17):
 - **Loop 1** — CRITICAL 0 · HIGH 2 · MEDIUM 4 · LOW 6 · INFO 2, all verified & fixed.
