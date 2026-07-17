@@ -259,7 +259,9 @@ layout(push_constant) uniform PC {
                      // y = omniStart (DOOM-0084); z = numSectors (DOOM-0119 REJECT
                      // cull dim, 0 = off); w = sky wall-texture id (DOOM-0141)
     uvec4 misc5;     // DOOM-0179: x = world-grime overlay bindless id in hdTex[]
-                     // (0xFFFFFFFF = none); y,z,w reserved
+                     // (0xFFFFFFFF = none); y = de-tile quality (DOOM-0181,
+                     // 0/1/2 = off/2-tap/4-tap); z = dirt-colour texture id
+                     // (DOOM-0181); w = filth master toggle (DOOM-0187, 1 = on)
     Verts    verts;    // level mesh vertex buffer (device address)
     Emitters emit;     // step-3b emitter list (device address; count in misc2.x)
     MatEmis  matEmis;  // per-material Le table (device address)
