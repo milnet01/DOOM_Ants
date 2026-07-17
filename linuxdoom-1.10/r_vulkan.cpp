@@ -854,6 +854,12 @@ extern "C" int I_GetTimeMS(void);   // i_system.c; for the rt_profile once-a-sec
 // are loaded (it is gated on g.hdBuilt at the populate site). Default 4-tap; RT-only.
 extern "C" { int rb_detile = 2; }
 
+// DOOM-0187: filth (dirt-stain) master toggle (the `[` key; persisted as rt_filth). 1 = on
+// (shipped look), 0 = off. Drives pc.misc5.w on the Ultra RT path; gates applyGrime on ALL
+// non-sprite world surfaces (not HD-gated, unlike de-tile). Lets the stain cost be A/B'd live
+// and stands as a perf/quality option. Default on; RT-only (no effect in Classic/Solid).
+extern "C" { int rb_filth = 1; }
+
 // INV-6 headless self-test latch (DOOM-0009 build step 4d). Set from the
 // `-rtverify` command-line parm; the first ready present runs RB_RtVerify (the
 // rel-MSE + white-furnace proof) and exits. -1 = unchecked, 0 = off, 1 = armed.
@@ -6430,6 +6436,9 @@ void RecordRtTrace(uint32_t idx)
     // DOOM-0181: dirt-colour texture slot in hdTex[] (misc5.z) for the filth-stain colour;
     // 0xFFFFFFFF when absent -> shader falls back to its procedural earthy ramp.
     pc.misc5[2]    = (g.hdDirtIdx >= 0) ? (uint32_t)g.hdDirtIdx : 0xFFFFFFFFu;
+    // DOOM-0187: filth master toggle (misc5.w) from rb_filth (1=on,0=off; `[` key). Not HD-gated —
+    // applyGrime paints paletted surfaces too — so this is a plain runtime on/off of the stain layer.
+    pc.misc5[3]    = rb_filth ? 1u : 0u;
     pc.vertsAddr   = BufferAddress(g.vbuf);
     pc.emitAddr    = g.emitBuf    ? BufferAddress(g.emitBuf)    : 0;
     pc.matEmisAddr = g.matEmisBuf ? BufferAddress(g.matEmisBuf) : 0;

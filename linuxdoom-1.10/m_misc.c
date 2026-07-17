@@ -210,6 +210,7 @@ extern int	rb_rtdebug;	// DOOM-0116 Ultra path-tracer view (6 = denoised; persis
 extern int	rb_rtdebug_menu;// DOOM-0135 Debug Views toggle (0 = ~ is RT on/off; 1 = ~ cycles diagnostics)
 extern int	rb_profile;	// DOOM-0090 per-pass GPU profiler toggle (0 Off; `\` key)
 extern int	rb_detile;	// DOOM-0181 Ultra RT de-tile quality (0 off/1 2-tap/2 4-tap; `]` key)
+extern int	rb_filth;	// DOOM-0187 Ultra RT dirt-stain filth master (1 on/0 off; `[` key)
 
 extern int	detailLevel;
 
@@ -264,6 +265,7 @@ default_t	defaults[] =
     {"fillstretch",&fillstretch, 0},		// DOOM-0147 Part C: 1 = stretch to fill (live)
     {"rt_profile",&rb_profile, 0},
     {"rt_detile",&rb_detile, 2},		// DOOM-0181: de-tile quality, default 4-tap
+    {"rt_filth",&rb_filth, 1},		// DOOM-0187: dirt-stain filth, default on
 
 
 #ifdef NORMALUNIX

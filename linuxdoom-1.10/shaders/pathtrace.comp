@@ -484,6 +484,11 @@ vec2 detileWorldUV(vec3 hitP, vec3 n) {
 bool detileOn()   { return pc.misc5.y == 1u || pc.misc5.y == 2u; }
 int  detileTaps() { return pc.misc5.y == 2u ? 4 : (pc.misc5.y == 1u ? 2 : 0); }
 
+// misc5.w: filth (dirt-stain) master toggle — 1 = on (shipped look), 0 = off (`[` key).
+// DOOM-0187: lets applyGrime be A/B'd live to isolate the stain-fetch cost; off is also a
+// standing perf/quality option. Applies to ALL non-sprite world surfaces (not HD-gated).
+bool filthOn() { return pc.misc5.w == 1u; }
+
 // Per-cell transform of the sampling coordinate sUV: signed sub-tile offset + optional horizontal
 // mirror (flip U within the cell; INV-1). Returns the transformed UV for cell `c`.
 vec2 detileCellUV(vec2 sUV, ivec2 c) {
@@ -860,7 +865,7 @@ void main()
             float ao = (mc.usePBR != 0u && mc.maps[4] >= 0 && detileOn())
                      ? detileR(uint(mc.maps[4]), sUV, detileWorldUV(hitP, n) / kDetileWorldCell)
                      : hdAO(mc, id, sUV);
-            if (!isSprite) albedo = applyGrime(albedo, hitP, n, ao);   // DOOM-0179/0181 filth (all world surfaces)
+            if (!isSprite && filthOn()) albedo = applyGrime(albedo, hitP, n, ao);   // DOOM-0179/0181 filth (all world surfaces; misc5.w toggle)
 
             // DOOM-0084: world surfaces self-emit as before; a sprite self-emits only
             // if it's a fullbright light Thing (lamp/torch/barrel), so ammo pickups and
@@ -1023,7 +1028,7 @@ void main()
                      : hdAO(mc, id, sUV);
             // DOOM-0179/0181 grime + filth, applied BEFORE galbedo is stored so the composite's
             // re-modulation (L = albedo*illum) carries the mottle. n is geometric here.
-            if (!isSprite) albedo = applyGrime(albedo, hitP, n, ao);   // DOOM-0179/0181 filth (all world surfaces)
+            if (!isSprite && filthOn()) albedo = applyGrime(albedo, hitP, n, ao);   // DOOM-0179/0181 filth (all world surfaces; misc5.w toggle)
 
             // build step 6c (half-resolution lighting): the G-buffer (position /
             // normal / albedo) is written at FULL resolution for EVERY pixel — it

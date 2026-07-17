@@ -450,6 +450,17 @@ static void I_GetEvent(SDL_Event* sdlevent)
 	    fflush(stdout);
 	    break;
 	}
+	// Left-bracket (`[`) toggles the Ultra RT dirt-stain filth on/off (DOOM-0187).
+	// Lets the stain layer be A/B'd live for the perf pass; also a standing perf option.
+	// Ultra RT only; a no-op elsewhere.
+	if (sdlevent->key.keysym.sym == SDLK_LEFTBRACKET && !sdlevent->key.repeat)
+	{
+	    extern int rb_filth;            // r_vulkan.cpp
+	    rb_filth = !rb_filth;
+	    printf("Ultra filth %s (Ultra RT only)\n", rb_filth ? "ON" : "OFF");
+	    fflush(stdout);
+	    break;
+	}
 	event.type = ev_keydown;
 	event.data1 = xlatekey(&sdlevent->key.keysym);
 	D_PostEvent(&event);

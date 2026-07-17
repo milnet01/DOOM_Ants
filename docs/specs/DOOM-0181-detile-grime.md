@@ -1,9 +1,11 @@
 # DOOM-0181 — De-tiled, grimy Ultra surfaces
 
 **Status:** **Shipped** — L1–L5 built 2026-07-16, user play-test accepted
-2026-07-17 (ROADMAP DOOM-0181 + DOOM-0179 flipped ✅ in the same wrap-up). One
-perf follow-up remains open: the post-L5 filth stain cost is not yet isolated on
-the profiler (§6, §10 Q4). This doc has been reconciled to the **as-built**
+2026-07-17 (ROADMAP DOOM-0181 + DOOM-0179 flipped ✅ in the same wrap-up). The
+post-L5 filth-cost perf follow-up (DOOM-0187) is **closed** (2026-07-17): the
+stain cost measured **~0.40 ms on the ray-trace megakernel, ≈ 0 on the frame**
+(§6, §10 Q4), and a `misc5.w` filth on/off dial (`[` key) shipped as the isolation
+instrument + a standing perf option. This doc has been reconciled to the **as-built**
 implementation — see the *As-built divergences* box below and §4.3 / §5 / §8. Originally reviewed via `/cold-eyes`
 loops 1–6, locked 2026-07-16 pre-implementation (loop 6, the confirming pass,
 caught a `kDetileMirrorProb` probability inversion — fixed); the de-tiling design
@@ -343,8 +345,8 @@ the pre-de-tile coordinate. The `0.1` band width is the §10 Q1 tuning knob.
     (see `assets/ultra/LICENSES`).
 - **`misc5` lane map (as-built):** `.x` = grunge overlay id (DOOM-0179);
   `.y` = de-tile dial (0=off, 1=2-tap, 2=4-tap; `]` key, `rb_detile`);
-  `.z` = dirt colour-texture id (this spec); `.w` = free. No push-constant layout
-  change (INV-9).
+  `.z` = dirt colour-texture id (this spec); `.w` = filth on/off toggle (1=on/0=off;
+  `[` key, `rb_filth`; DOOM-0187). No push-constant layout change (INV-9).
 - **Tuning knobs (compile-time `const`s, like `kGrimeStrength`/`kGrimeWorldScale`).**
   De-tile offset magnitude, mirror probability (`kDetileMirrorProb`), and world
   cell size (`kDetileWorldCell`); filth crevice + stain weights. The 4-corner blend
@@ -365,11 +367,14 @@ the pre-de-tile coordinate. The `0.1` band width is the §10 Q1 tuning knob.
   performance-mode number — that is the RT-*off* raster stack, a different and
   cheaper workload. The RT-on megakernel runs lower, so the L5 gate below is
   *relative* to that measured baseline, not an absolute FPS. Profiled via the `\`
-  key (`rb_profile`) present-total (`[cpu_profile]`). **Caveat (honesty):** the L5
-  de-tile pass cleared the ≤ 5 % gate at ship (L5 sign-off, §10 Q4), but the
-  specific baseline/4-tap millisecond figures were **not captured into this doc** —
-  and the post-L5 **filth** cost (below) has not been isolated at all. Re-running
-  the capture and recording the numbers is the open perf follow-up.
+  key (`rb_profile`) present-total (`[cpu_profile]`). **Measured (DOOM-0187 —
+  green-goo room, Ultra RT-on, 50 % scale, flashlight, RX 6600):** de-tile **4-tap**
+  adds **0.70 ms / 3.0 %** to present-total vs de-tile off (24.55 vs 23.84 ms;
+  megakernel +0.68 ms) — inside the ≤ 5 % gate. **Filth** costs **~0.40 ms on the
+  ray-trace megakernel and ≈ 0 (noise) on the whole frame** (22.00 ms on vs 22.10 ms
+  off), isolated via the `misc5.w` toggle. Both are small riders on a GPU-bound
+  ~24 ms RT frame whose real cost is the megakernel (~12 ms) + denoiser (~7 ms) —
+  the ray tracer itself, not DOOM-0181. Perf follow-up **closed**.
 - **De-tiling cost — non-height maps:** up to `(taps − 1)×` extra `hdTex` fetches
   for each non-height HD map that carries the blend (albedo, normal, AO). GI
   bounces are baked (§2) and never sample HD materials, so this is paid once per
@@ -390,15 +395,18 @@ the pre-de-tile coordinate. The `0.1` band width is the §10 Q1 tuning knob.
   - **0 fetches on liquids** (early-return, INV-10).
   So the steady per-pixel cost is ~3 overlay fetches at the primary hit, spiking to
   ~5–6 inside stains. GI is baked (§2), so this is paid once per pixel, never per
-  bounce. **This cost was added post-L5 and has not yet been isolated on the
-  profiler** — it is the open perf item at ship (see the perf-levers note below).
+  bounce. **Measured (DOOM-0187): ~0.40 ms on the ray-trace megakernel, ≈ 0 on the
+  whole (GPU-bound) frame** — isolated by A/B'ing the `misc5.w` toggle, below the
+  profiler's frame-to-frame noise. No lever needed; the dial (lever 2) shipped
+  anyway as the isolation instrument and a standing perf/quality option.
 - **Perf levers held ready** (apply after a profiler capture shows a real cost —
   measure before cutting, don't blind-optimize):
   1. Drop `grungeFbm` from 3 world scales to 2 (fine speckle octave weight is only
      0.18) — ~⅓ off the always-on cost, small look change.
-  2. Add a **filth quality/off dial** on the free `misc5.w` lane (mirrors the
-     de-tile `]` dial), so filth can be dropped or dialled for perf without a
-     recompile — the cleanest lever, no look change when left on.
+  2. **[SHIPPED — DOOM-0187]** A **filth on/off dial** on the `misc5.w` lane (the
+     `[` key, `rb_filth`; mirrors the de-tile `]` dial), so filth can be dropped for
+     perf without a recompile — no look change when left on (default on). Added as
+     the isolation instrument; kept as a standing perf/quality option.
   3. Distance/LOD gate: skip the fine-grain stain fetch on far pixels.
   Levers 1 & 3 change the look (play-test call); lever 2 does not.
 - **Gate (evaluated at L5 only).** L1–L4 are visual play-test only, with **no FPS
@@ -512,8 +520,11 @@ per-tile-hash 4-corner blend. The rejected full method is Heitz & Neyret,
   user-accepted, reads natural on oriented textures.
 - **Q3 (filth level):** *Superseded.* The wash gave way to the stain system
   (§4.3); shipped default reads as a filthy, monster-overrun base, user-accepted.
-- **Q4 (perf/quality):** *Still open — the one item carried past ship.* The L5
-  ≤ 5 % de-tile gate was met, but the as-built **filth stain fetches** (§6) were
-  added after L5 and have **not been isolated on the profiler**. Next: a profiler
-  capture of a green-goo-room walk (`\` key) to measure filth's real cost, then
-  apply a §6 perf lever only if it shows a real hit. Tracked for follow-up.
+- **Q4 (perf/quality):** *Closed (DOOM-0187, 2026-07-17).* The L5 ≤ 5 % de-tile
+  gate was met and is now backed by a real capture: **de-tile 4-tap = 0.70 ms /
+  3.0 %** (§6). The as-built **filth stain fetches** were isolated with a `misc5.w`
+  on/off toggle (`[` key, added for exactly this measurement): **~0.40 ms on the
+  ray-trace megakernel, ≈ 0 on the whole GPU-bound frame** — below profiler noise,
+  so **no §6 lever was pulled** (default stays on). The toggle stays as a standing
+  perf/quality option. The green-goo room's ~40 fps is the megakernel + denoiser,
+  not DOOM-0181 (a small rider on both counts).
