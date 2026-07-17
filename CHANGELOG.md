@@ -21,6 +21,14 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Fixed a long-standing operator-precedence bug in the "donut" sector effect that could misbehave (or crash) on hand-crafted donut sectors (DOOM-0138).**
+
+- **Ultimate Doom now shows the correct per-episode sky (SKY1-SKY4) instead of always the E1 sky (DOOM-0139).**
+  The sky picker compared mission-pack values against the game-mode field;
+  because they overlap numerically, retail (Ultimate Doom) was wrongly
+  forced onto the Doom II map-range sky (always SKY1). Fixed to test the
+  mission field, so E2/E3/E4 get SKY2/SKY3/SKY4 as intended.
+
 - **Silenced the flood of "V_DrawPatch: bad patch (ignored)" warnings at startup and on 4K/widescreen HUD compositing (DOOM-0137, DOOM-0171).**
   The view-border bezel and widescreen status-bar fill legitimately draw
   UI art past the 320-wide low-res framebuffer; those patches were already
