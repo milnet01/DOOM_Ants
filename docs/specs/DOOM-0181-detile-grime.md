@@ -4,10 +4,11 @@
 doc has been reconciled to the **as-built** implementation — see the *As-built
 divergences* box below and §4.3 / §5 / §8. Originally reviewed via `/cold-eyes`
 loops 1–6, locked 2026-07-16 pre-implementation (loop 6, the confirming pass,
-caught a `mirrorProb` probability inversion — fixed); the de-tiling design (§4.2)
-was stable and unchallenged from loop 1 and shipped as specified. The **filth
-layer (§4.3) evolved substantially during play-test** and is documented here as
-built. Design contract for stochastic de-tiling **on HD (`usePBR`) surfaces** +
+caught a `kDetileMirrorProb` probability inversion — fixed); the de-tiling design
+(§4.2) shipped with its structure intact, though two constants were play-test-tuned
+(`kDetileWorldCell` 96→64, `kDetileOffsetMag` 0.5→0.65; see §4.2 / §10 Q2). The
+**filth layer (§4.3) evolved substantially during play-test** and is documented
+here as built. Design contract for stochastic de-tiling **on HD (`usePBR`) surfaces** +
 filth **on all non-sprite world surfaces** in the Ultra ray-traced view.
 
 > **As-built divergences from the pre-implementation spec** (folded in
@@ -35,9 +36,9 @@ filth **on all non-sprite world surfaces** in the Ultra ray-traced view.
   (`pathtrace.comp`: `ctrl[]` SSBO L79, `hdBaseUV` L115, `hdParallaxUV` L148,
   `hdAlbedo` L179, `hdShadingNormal` L192, `hdAO` L203).
 - **DOOM-0009** (path tracer) — the RT back-end. This hooks the primary hit in
-  `pathtrace.comp` **mode 4** (NEE display, `else if (mode == 4u)` at L620, hit
-  shading ~L637–649) and **mode 6** (denoised play path, `else if (mode == 6u)`
-  at L756, hit shading ~L762–784).
+  `pathtrace.comp` **mode 4** (NEE display, `else if (mode == 4u)` at `:817`,
+  `applyGrime` call at `:863`) and **mode 6** (denoised play path,
+  `else if (mode == 6u)` at `:980`, `applyGrime` call at `:1026`).
 
 **Extends / completes:**
 - **DOOM-0179** (world-position grime overlay, in-progress) — becomes the
@@ -131,8 +132,8 @@ There are **two** kinds of repetition, and they need different tools:
 
 A **per-surface** offset/rotation fixes only #2 and does nothing for #1 (shifting
 a whole floor by one offset leaves it tiling internally on the same grid). The
-grime multiply (DOOM-0179) camouflages #1 only weakly. Even the current grime
-strength (`kGrimeStrength = 0.32`, `pathtrace.comp:108`) — a ±32 % swing at the
+grime multiply (DOOM-0179) camouflages #1 only weakly. Even the grime strength
+(`kGrimeStrength = 0.25` as-built, `pathtrace.comp:108`) — a ±25 % swing at the
 map's extremes, far less on its soft mid-tones — cannot hide sharp detail
 repeating on a hard grid. Neither clears an *extreme* #1. De-tiling (§4.2) attacks
 #1 head-on, and because it is **world-keyed** it clears #2 for free (§4.2, INV-4).
@@ -155,12 +156,12 @@ every non-sprite hit** (`if (!isSprite) …`, `pathtrace.comp:863`/`:1026`), so
 paletted surfaces do get stains — but with `ao == 1.0` (no AO map) they take no
 crevice darkening, only the grunge grounding + coloured stains.
 
-**Precondition — the `hitP` hoist (L1).** The de-tile cell needs the world hit
-point `hitP` (§4.2), currently computed *after* the HD map fetches
-(`pathtrace.comp:648` mode 4 / `:781` mode 6). `hitP` must be **hoisted above the
-`hdBaseUV`/`hdParallaxUV`/`hdAlbedo` block** — `tHit`/`hitP` come free from the ray
-query (`rayQueryGetIntersectionTEXT`) before shading and have **no dependency on
-`sUV`**, so the hoist is trivial. This is an L1 precondition.
+**Precondition — the `hitP` hoist (L1, done as-built).** The de-tile cell needs
+the world hit point `hitP` (§4.2). As-built, `tHit`/`hitP` are **hoisted above the
+`hdBaseUV`/`hdParallaxUV`/`hdAlbedo` block** (`pathtrace.comp:837`, marked
+`// HOISTED (DOOM-0181: hitP feeds the detile world-key)`) — they come free from
+the ray query (`rayQueryGetIntersectionTEXT`) before shading and have no dependency
+on `sUV`, so the hoist was trivial.
 
 The filth term needs a *separate* AO sample, but that is an **L4** concern, not L1:
 `hdAO(mc, id, sUV)` takes `sUV` as input, so it cannot move above the block that
@@ -181,7 +182,7 @@ case (the one exception — a POM march crossing a boundary — is handled in §
   coordinate `w`, and quantise it by a world-unit cell size `kDetileWorldCell`:
   `ivec2 cell = ivec2(floor(w / kDetileWorldCell))`,
   `f = fract(w / kDetileWorldCell)` (note the `ivec2` cast — the hash below indexes
-  by integer cell). The per-cell hash is a small `vec3 hash(ivec2 cell)` **wrapper
+  by integer cell). The per-cell hash is a small `vec3 hash3(ivec2 cell)` **wrapper
   built around the
   existing `pcgHash` primitive** (`pt_common.glsl:75`) — reuse that PRNG, do not
   invent a new algorithm. Recipe: fold the cell into one seed
@@ -199,16 +200,18 @@ case (the one exception — a POM march crossing a boundary — is handled in §
   below hides the boundary wherever it falls, exactly as the Inigo-Quilez
   stochastic-tiling method does on arbitrary content (the Heitz–Neyret variant is
   the rejected §9 alternative, not this one).
-  *Starting values* (all tuned per §10 Q2): `kDetileWorldCell` = 96 units,
-  `mirrorProb` = 0.5, `kDetileOffsetMag` = 0.5 (→ ±0.5 tile).
+  *Shipped values* (play-test-tuned from the 96/0.5 starting point, §10 Q2):
+  `kDetileWorldCell` = 64 units, `kDetileMirrorProb` = 0.5, `kDetileOffsetMag` =
+  0.65 (→ ±0.65 tile).
 - **Per-cell transform.** Applied to the sampling coordinate (the `baseUV` /
   POM-marched `sUV` fed to the map fetches): a sub-tile UV **offset**, **centred**
-  so it is signed — `(hash(cell).xy - 0.5) * 2.0 * kDetileOffsetMag` (a raw
-  `hash(cell).xy` would only ever shift positive) — plus an optional **horizontal
-  mirror** — flip U *within the
-  cell*, reflecting the fractional coordinate about the cell centre, when
-  `hash(cell).z < mirrorProb` (the `<` makes `mirrorProb` literally P(mirror) and
-  matches the codebase's `rnd() < threshold` idiom; a `>` would invert the knob).
+  so it is signed — `(hash3(cell).xy - 0.5) * 2.0 * kDetileOffsetMag` (a raw
+  `hash3(cell).xy` would only ever shift positive) — plus an optional **horizontal
+  mirror**. As-built (`detileCellUV`, `pathtrace.comp:493`) the mirror simply
+  **negates U** (`uv.x = -uv.x`) and the texture's repeat-wrap folds the tile, when
+  `hash3(cell).z < kDetileMirrorProb` (the `<` makes `kDetileMirrorProb` literally
+  P(mirror) and matches the codebase's `rnd() < threshold` idiom; a `>` would invert
+  the knob).
   **No rotation, no vertical flip** — DOOM wall
   textures are vertically oriented (panel lines, rivets), so only
   orientation-preserving transforms are allowed (INV-1).
@@ -342,7 +345,7 @@ there — *not* the pre-de-tile coordinate. Play-test call (§10 Q1).
   `.z` = dirt colour-texture id (this spec); `.w` = free. No push-constant layout
   change (INV-9).
 - **New tuning knobs.** De-tile offset magnitude, mirror probability
-  (`mirrorProb`), and world cell size (`kDetileWorldCell`); filth crevice + tint
+  (`kDetileMirrorProb`), and world cell size (`kDetileWorldCell`); filth crevice + tint
   weights. (The 4-corner blend has no width knob — its weights come from `f`, the
   fractional position in the cell.) Compile-time `const`s to start (like
   `kGrimeStrength`/`kGrimeWorldScale`).
@@ -454,7 +457,7 @@ passes the §6 gate and the look is user-accepted.
   world surface — but with `ao == 1.0` it takes only the grunge grounding +
   coloured stains, no crevice darkening.
 - **INV-6:** Filth only darkens/tints within the existing grime clamp
-  (`clamp(m, 0.35, 1.65)`, `pathtrace.comp:445`), biased toward the dark end; it
+  (`clamp(m, 0.35, 1.65)`, `pathtrace.comp:639`), biased toward the dark end; it
   never brightens a surface beyond that ceiling (it must always read as dirt).
 - **INV-7:** Crevice coupling uses the same AO the ambient term uses; filth still
   applies at base strength where AO ≈ 1 (open surfaces).
@@ -498,9 +501,10 @@ per-tile-hash 4-corner blend. The rejected full method is Heitz & Neyret,
 
 - **Q1 (POM):** *Resolved.* POM marched in de-tiled space (§4.4); no boundary
   artefacts reported in play-test, so the blend-band fallback was not needed.
-- **Q2 (aggressiveness):** *Resolved.* Shipped `kDetileWorldCell = 96`,
-  `mirrorProb = 0.5`, `kDetileOffsetMag = 0.5` — user-accepted, reads natural on
-  oriented textures.
+- **Q2 (aggressiveness):** *Resolved.* Shipped `kDetileWorldCell = 64`,
+  `kDetileMirrorProb = 0.5`, `kDetileOffsetMag = 0.65` — play-test-tuned from the
+  96/0.5 starting point (a smaller cell + larger offset break the repeat harder),
+  user-accepted, reads natural on oriented textures.
 - **Q3 (filth level):** *Superseded.* The wash gave way to the stain system
   (§4.3); shipped default reads as a filthy, monster-overrun base, user-accepted.
 - **Q4 (perf/quality):** *Still open — the one item carried past ship.* The L5
