@@ -1677,6 +1677,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Make the green toxic sludge — both the puddles on the floor and the main pool it comes from — look like real glowing, reflective liquid instead of a flat green colour.
   Kind: feature.
   Source: user-request-2026-07-16.
+  Design pass done (2026-07-17): spec docs/specs/DOOM-0183-glowing-wet-liquid.md written + cold-eyes clean (3 loops). Scope settled with the user: "cheap wins first" — green nukage gets glow + cast-light + wet direct-light sheen + procedural ripples; LAVA gets glow + orange cast-light (user add); true mirror reflections stay DOOM-0103; water/blood deferred. Liquid identity via a MatCtrl.flags bit from the flat name (NUKAGE1-3, LAVA1-4); cast-light = forced-constant Le through the existing NEE emitter path (delivers DOOM-0083). Build order L1 liquid bit -> L2 glow/cast-light -> L3 sheen -> L4 ripples -> L5 puddle-wet -> L6 toggle+perf. Cheaper-RT research from this pass captured separately as DOOM-0188..0192; RT-glow dial-up as DOOM-0193.
 
 - 📋 [DOOM-0184] **Glowing fireball / projectile that casts light (Ultra RT).**
   User: "I really like this fireball, can we replicate it?" (ref: Ultimate Doom RTX mod). A self-lit projectile sprite with a warm emissive core + a point light travelling with it so nearby walls/floor light up as it passes. Relates to the dynamic-light trio DOOM-0010/0101/0102 and the emissive sprite path (DOOM-0084). See [[rt-aesthetic-north-star]].
