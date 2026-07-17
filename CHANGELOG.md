@@ -19,6 +19,15 @@ All notable changes to DOOM_Ants are documented here. The format follows
   every non-sprite world surface, never on sprites or on the flowing green
   liquid itself. Ultra RT view only; Classic and Solid are byte-identical.
 
+### Fixed
+
+- **Silenced the flood of "V_DrawPatch: bad patch (ignored)" warnings at startup and on 4K/widescreen HUD compositing (DOOM-0137, DOOM-0171).**
+  The view-border bezel and widescreen status-bar fill legitimately draw
+  UI art past the 320-wide low-res framebuffer; those patches were already
+  ignored (the frame renders correctly), but each printed two warning lines
+  — dozens at startup, hundreds at 4K. The diagnostic is now capped at the
+  first few occurrences with a suppression note. Log-hygiene only.
+
 ## [0.4.0] - 2026-07-16
 
 ### Added

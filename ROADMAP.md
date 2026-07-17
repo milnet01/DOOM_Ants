@@ -1153,11 +1153,12 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: implement.
   Source: research-2026-06-29 DOOM-0092 Q2.
 
-- 📋 [DOOM-0122] **INV-6 verify path runs with omniStart==emitCount, leaving the omni NEE loop unchecked.**
+- 🚧 [DOOM-0122] **INV-6 verify path runs with omniStart==emitCount, leaving the omni NEE loop unchecked.**
   Per docs/research/DOOM-0092-restir-cost-benefit.md §3. pathtrace.comp:427/429 call directNEEVerify/directAllLights with omniStart==emitCount (both args pc.misc2.x), so the post-DOOM-0084 omni direct-sampling branch in sampleEmitter is never exercised on the verify path. INV-6 currently proves only the STATIC power-importance selection unbiased. Fix: pass the real omniStart so the omni loop is checked against the brute-force reference; refresh the now-stale 'Mirrors shadeSurface's emitter pick' comment at pt_common.glsl:254-256.
   **Layman:** The self-test that proves the lighting math is unbiased doesn't actually cover the newer glowing-sprite lighting path -- a gap worth closing.
   Kind: review-fix.
   Source: research-2026-06-29 DOOM-0092 Q3.
+  Progress (2026-07-17): implemented — the two verify estimators now receive the real omniStart (pc.misc4.y, the split shadeSurface uses in production) instead of omniStart==emitCount, so the post-DOOM-0084 omni sprite-light NEE loop is exercised against the brute-force reference. Refreshed the stale "Mirrors shadeSurface's emitter pick" comment in pt_common.glsl. Safe: OMNI_CULL_VALUE (the one-sided omni bias) was removed by DOOM-0120's RIS reservoir, and both estimators forward the same omniStart into the same sampleEmitter, so they still differ only in selection and the unbiased importance-sampling identity holds. Shaders recompile clean; nee_sampling_test green. Commit 3b8982d. Graduates to shipped after an -rtverify hardware run confirms INV-6 stays within tolerance with the omni path now covered.
 
 - ✅ [DOOM-0123] **Quantify the omni-cull (OMNI_CULL_VALUE) one-sided bias against the brute-force reference.**
   Per docs/research/DOOM-0092-restir-cost-benefit.md §3 follow-up #2. The OMNI_CULL_VALUE=0.0025 cull drops a sprite's shadow ray when its UNSHADOWED contribution is below threshold -- a deliberate one-signed bias (shadowing only shrinks the term), bounded by threshold x culled-count. Measure it once vs directAllLights to record the bound instead of assuming it negligible.
@@ -1273,11 +1274,12 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: feature.
   Source: user-request-2026-06-29.
 
-- 📋 [DOOM-0137] **Stop the startup flood of "V_DrawPatch: bad patch (ignored) / exceeds LFB" border-bezel warnings.**
+- ✅ [DOOM-0137] **Stop the startup flood of "V_DrawPatch: bad patch (ignored) / exceeds LFB" border-bezel warnings.**
   Symptom (verified in a profiling run): ~80 lines of \"Patch at X,Y exceeds LFB\" + \"V_DrawPatch: bad patch (ignored)\" at startup, at coords like 0,-3 / 8,-3 ... / 320,168 (the viewport border bezel, drawn ~3px outside the play area at 8px steps).\n\nRoot: V_DrawPatch (v_video.c:245-253) rejects + warns when a patch's x/y (+ width/height) fall outside the 320x200 logical screen or scrn>4, then returns. The view-border bezel pieces are being drawn at out-of-bounds coordinates (negative / >=320), so each is skipped with a warning. Pre-existing (the id ChangeLog notes the same TNT.WAD case); surfaced loudly here, likely because the 3D backend's screen/viewport sizing (scaledviewwidth / viewwindowx/y) differs from the software path when the border is first drawn.\n\nFix options: (a) correct the border-draw geometry so the bezel patches land in-bounds (proper root fix); (b) if the bezel genuinely has no place at the current view size, skip drawing those pieces rather than calling V_DrawPatch and getting rejected; (c) at minimum, demote the per-patch fprintf to a single rate-limited/once message so the log isn't flooded. Cosmetic / log-noise only; no visible rendering defect reported.\nKind: fix.
   **Layman:** At startup the log spits out dozens of harmless 'bad patch' warnings while drawing the screen border. The picture is fine; it's just noise that should be silenced or the border draw fixed.
   Kind: fix.
   Source: terminal-log-2026-06-29.
+  Resolved (2026-07-17): rate-limited the V_DrawPatch RANGECHECK reject to the first 3 occurrences plus a one-line suppression note, so the startup border-bezel flood is gone. Log-hygiene only; no render change. The underlying constraint (UI art drawn past the 320-wide LFB) is named in the code comment and left as a separate border/tiling geometry task. Commit f026e8f.
 
 - 📋 [DOOM-0138] **EV_DoDonut two-sided check is a no-op: (!flags) & ML_TWOSIDED is always 0 (precedence bug).**
   p_spec.c EV_DoDonut (~line 1187): `if ((!s2->lines[i]->flags & ML_TWOSIDED) || ...)`. `!` binds tighter than `&`, so this is `((!flags) & ML_TWOSIDED)` -- !flags is 0 or 1, and 0&4 == 1&4 == 0, so the term is ALWAYS false. The intended test is `!(flags & ML_TWOSIDED)` (skip non-two-sided lines). This is a known vanilla 1997 bug; some source ports fix it, some keep it for demo compat. During the -Wall sweep (DOOM-0140) the expression was parenthesised to `((!flags) & ML_TWOSIDED)` to PRESERVE the shipped (always-false) behaviour and silence -Wparentheses. Decision needed: fix to `!(flags & ML_TWOSIDED)` (changes donut behaviour on some maps; no demo-compat concern in this fork) or keep vanilla. Kind: fix.
@@ -1559,11 +1561,12 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: feature.
   Source: user-request-2026-07-09.
 
-- 📋 [DOOM-0171] **4K/widescreen HUD spams "V_DrawPatch: bad patch (ignored)" — status-bar patches exceed the 320-wide LFB.**
+- ✅ [DOOM-0171] **4K/widescreen HUD spams "V_DrawPatch: bad patch (ignored)" — status-bar patches exceed the 320-wide LFB.**
   Seen in the run-doom-ants.sh console at 3840x2160: hundreds of "Patch at X,-3 exceeds LFB / V_DrawPatch: bad patch (ignored)" lines while compositing the status bar / HUD border. Pre-existing (not from DOOM-0170); the patches are ignored so it renders, but it's log spam and suggests the widescreen status-bar fill (cf. DOOM-0151 edge-extend) draws patches past the 320-wide low-res framebuffer bounds. Low priority; investigate the V_DrawPatch bounds/tiling for widescreen at high res.
   **Layman:** On a 4K widescreen display the game floods the terminal with harmless "bad patch" warnings while drawing the bottom status bar — cosmetic log noise, but it hints the status bar isn't tiled correctly across the ultra-wide screen.
   Kind: fix.
   Source: observed-in-session-2026-07-09 (RX 6600, 3840x2160 play-test).
+  Resolved (2026-07-17): same shared root as DOOM-0137 — the function-level rate-limit caps the 4K/widescreen status-bar bad-patch flood globally too. Patches were already ignored (frame renders fine), so there was no visible defect; the log-spam symptom is eliminated. Commit f026e8f.
 
 - 📋 [DOOM-0172] **Solid-tier art upscaling — smooth/enhance the low-res paletted textures & sprites like a PS1/2 emulator.**
   User ask: game art (wall/flat textures, pickups, enemy sprites) is still very low-res even as the render resolution rises; can we upscale it like PS1/2 emulators do, for the Solid renderer ONLY (Ultra gets its own hand-authored HD art). Two complementary routes, cheapest first:
@@ -1742,8 +1745,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: enhancement.
   Source: user-request-2026-07-17.
 
-- 📋 [DOOM-0194] **Fix the stale misc5 push-constant comment in pathtrace.comp.**
+- ✅ [DOOM-0194] **Fix the stale misc5 push-constant comment in pathtrace.comp.**
   The `uvec4 misc5` comment in the pathtrace.comp push-constant block reads "x = world-grime overlay bindless id ... y,z,w reserved", but y/z/w are all in use: y = de-tile quality (DOOM-0181), z = dirt-colour texture id (DOOM-0181), w = filth master toggle (DOOM-0187). Same class of stale-comment trap DOOM-0183 Q8 fixed for misc2.z/.w. One-line comment correction; no behaviour change. Left un-fixed during DOOM-0183 to stay in-lane (rule 11).
   **Layman:** A code comment describing one of the GPU data slots is out of date and could mislead the next person editing that file.
   Kind: doc-fix.
   Source: in-session-2026-07-17 (found during DOOM-0183 misc6 work).
+  Resolved (2026-07-17): corrected the misc5 push-constant comment (y = de-tile quality DOOM-0181, z = dirt-colour texture id DOOM-0181, w = filth master toggle DOOM-0187). Comment-only, no behaviour change. Commit a54d562.
