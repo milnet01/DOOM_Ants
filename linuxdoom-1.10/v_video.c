@@ -306,9 +306,21 @@ V_DrawPatchGeneral
 	|| y+SHORT(patch->height)>ORIGHEIGHT
 	|| (unsigned)scrn>4)
     {
-      fprintf( stderr, "Patch at %d,%d exceeds LFB\n", x,y );
-      // No I_Error abort - what is up with TNT.WAD?
-      fprintf( stderr, "V_DrawPatch: bad patch (ignored)\n");
+      // DOOM-0137/0171: RANGECHECK rejects patches drawn outside the 320x200
+      // logical screen (view-border bezel at startup; widescreen/4K status-bar
+      // fill). They are ignored and the frame renders fine, so the underlying
+      // constraint is cosmetic -- but the two fprintfs per patch flood the log.
+      // Rate-limit to a few lines then suppress; a real border/tiling geometry
+      // fix stays a separate task.
+      static int nbadpatch = 0;
+      if (nbadpatch < 3)
+      {
+        fprintf( stderr, "Patch at %d,%d exceeds LFB\n", x,y );
+        // No I_Error abort - what is up with TNT.WAD?
+        fprintf( stderr, "V_DrawPatch: bad patch (ignored)\n");
+        if (++nbadpatch == 3)
+          fprintf( stderr, "V_DrawPatch: further out-of-bounds patch warnings suppressed\n");
+      }
       return;
     }
 #endif
