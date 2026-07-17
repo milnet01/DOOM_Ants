@@ -21,7 +21,7 @@ filth **on all non-sprite world surfaces** in the Ultra ray-traced view.
 >    thresholded by a narrow `smoothstep` into defined marks, coloured per-region
 >    from an earthy palette (brown/ochre/soot) or a real dirt texture.
 > 2. **Filth applies to all non-sprite world surfaces, not `usePBR`-only.** User
->    wanted dirt "everywhere," not only on the 11 HD heroes. The grime call is
+>    wanted dirt "everywhere," not only on the 10 HD heroes. The grime call is
 >    gated on `!isSprite`; paletted RT surfaces now take filth too (INV-5/INV-8
 >    revised). **De-tiling (§4.2) stays HD-only** — it needs the HD maps.
 > 3. **A real dirt colour texture was added** (`dirt.png`, `misc5.z`) plus 10
@@ -43,15 +43,12 @@ filth **on all non-sprite world surfaces** in the Ultra ray-traced view.
   `else if (mode == 6u)` at `:980`, `applyGrime` call at `:1026`).
 
 **Extends / completes:**
-- **DOOM-0179** (world-position grime overlay, in-progress) — becomes the
-  **filth** layer here (§4.3). De-tiling (§4.2) is the primary anti-repeat
-  mechanism the grime multiply alone could not deliver (user play-test
-  2026-07-14: "still a very, very tiled look"). This spec **supersedes
-  DOOM-0179's play-test gate**: DOOM-0179 stays 🚧 until **DOOM-0181 ships** (§7's
-  L5 passes and the look is user-accepted — the point at which the filth layer
-  lands), then graduates to ✅ + CHANGELOG. Merging this spec does not flip it.
-  DOOM-0179's ROADMAP bullet is updated to name this new dependency when the spec
-  is adopted (the bullet today predates it).
+- **DOOM-0179** (world-position grime overlay) — **became the filth layer here**
+  (§4.3) and graduated to ✅ alongside DOOM-0181 (2026-07-17). De-tiling (§4.2) is
+  the primary anti-repeat mechanism the grime multiply alone could not deliver
+  (user play-test 2026-07-14: "still a very, very tiled look"); DOOM-0179's grunge
+  overlay (`misc5.x`) became the grounding term of the stain system. DOOM-0179's
+  ROADMAP bullet now names DOOM-0181 as its ship vehicle (its resolution note).
 
 **Defers:**
 - Grime-driven roughness / gloss smears (dirt goes matte, worn edges stay
@@ -440,8 +437,8 @@ Height is de-tiled in **L3, not L2**: its only consumer is the POM march, which 
 not wired into de-tiled space until L3, so de-tiling it earlier would be
 unobservable.
 
-**DOOM-0181 ships** — and, with it, the filth layer graduates DOOM-0179 — when L5
-passes the §6 gate and the look is user-accepted.
+**DOOM-0181 shipped** — and, with it, the filth layer graduated DOOM-0179 — once L5
+passed the §6 gate and the look was user-accepted (2026-07-17).
 
 ## 8. Invariants
 
