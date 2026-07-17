@@ -42,8 +42,10 @@ see the room mirrored in the goo" capability stays DOOM-0103.
 - **DOOM-0083** (green slime/nukage emits a faint green glow) — this feature
   *delivers* it: the nukage green `Le` + cast-light (§4.3) is exactly DOOM-0083's
   scope, done here as the glow layer. DOOM-0083 graduates when DOOM-0183 ships.
-- Part of **DOOM-0084**'s intent for lava-as-light (the lava glow half), though
-  DOOM-0084's floor lamps / torches / burning barrels remain its own item.
+- Lava glow + cast-light is **new** to this feature — no existing item owns
+  lava-*flat* lighting. (DOOM-0084 covers free-standing sprite light *objects* —
+  floor lamps, torches, burning barrels — a different surface class; it remains
+  its own item and does **not** cover lava flats.)
 
 **Defers (explicitly NOT in this build):**
 - **True reflections** — the room mirrored in the goo — needs reflection rays +
@@ -60,8 +62,11 @@ see the room mirrored in the goo" capability stays DOOM-0103.
 **Scope:** Ultra RT view only (`pathtrace.comp` modes 4 + 6). Classic and the
 raster stack (Solid, **and Ultra with RT off**) stay **byte-identical**. Every
 non-liquid surface is byte-identical too — the sheen and ripple branches are
-gated on the liquid bit, so a wall or ordinary floor takes no new work and no
-new look (the one shared change is the `misc6` push-constant lane, INV-6).
+gated on the liquid bit — **except** a floor carrying a DOOM-0181 green-goo
+puddle stain, which takes a light wet touch (sheen + faint glow) via the goo
+mask (§4.6). A wall or ordinary (non-puddle) floor takes no new work and no new
+look; the runtime scalars this feature needs ride existing reserved
+push-constant lanes where possible (§5, INV-6).
 
 ---
 
@@ -88,7 +93,8 @@ Four layered effects, each liquid-gated:
 - **Glow + cast-light (§4.3)** — nukage self-lights green and casts green light on
   nearby geometry; lava the same in orange. Reuses the existing emitter path.
 - **Wet sheen (§4.4)** — a bright, tight highlight where a light (flashlight,
-  lamp, muzzle) bounces toward the eye. A *direct-light* specular, nukage only.
+  lamp, muzzle) bounces toward the eye. A *direct-light* specular, on nukage
+  **and goo puddles** (not lava).
 - **Ripples (§4.5)** — a scrolling procedural wave normal wobbles the nukage
   surface so the sheen shimmers and the diffuse lighting ripples. Nukage only.
 - **Puddle wet (§4.6)** — the DOOM-0181 green-goo puddles get the sheen + a faint
@@ -103,13 +109,13 @@ no sheen, no ripples (user, 2026-07-17). Water and blood take nothing this build
 |-----------------|----------|-----------------------|
 | Classic | paletted software | No |
 | Solid, or Ultra with RT **off** | raster stack (DOOM-0170) | No |
-| Ultra with RT **on** (`rb_rtdebug` 4/6) | path tracer | **Yes** — on flagged liquid surfaces only |
+| Ultra with RT **on** (`rb_rtdebug` 4/6) | path tracer | **Yes** — flagged liquid surfaces, plus goo-puddle floors (§4.6) |
 
 The gate is *RT engaged* (path-trace modes 4/6), **not** the tier label — exactly
 like DOOM-0181. Modes 4 (NEE display) and 6 (denoised play) get identical
 treatment. The offline GI bake (`bake.comp`) shares only `pt_common.glsl` and never
-samples `ctrl[]`/the sheen/ripple branch, so the **view-dependent** wet effects
-(sheen, ripples) live only in the megakernel and cannot touch the bake. The
+samples `ctrl[]`/the sheen/ripple branch, so the **view- and time-dependent** wet
+effects (sheen, ripples) live only in the megakernel and cannot touch the bake. The
 **cast-light `Le`** (§4.3) *does* enter the shared emitter set, so the baked
 bounce and the directly-traced frame agree on the green/orange glow (INV-8).
 
@@ -147,16 +153,18 @@ albedo are computed, the liquid path runs in this order:
 2. **Shade** — the existing `shadeSurface` diffuse NEE + self-emission (unchanged;
    the green/orange `Le` from §4.3 is already in `g.matEmissive[id]`, so glow +
    cast-light come "for free" through the normal emitter path).
-3. **Wet sheen** (§4.4) — if nukage (or a §4.6 puddle), add the liquid-only
-   direct-light specular highlight on top of the shaded result.
+3. **Wet sheen** (§4.4) — if nukage **or a §4.6 goo puddle**, add the direct-light
+   specular highlight on top of the shaded result (nukage is triggered by the
+   liquid bit; a puddle by the DOOM-0181 goo-stain mask).
 
-Non-liquid hits skip 1 and 3 entirely (branch gated on the liquid bit) and are
-byte-identical to today. The whole block is Ultra-RT-only by construction.
+Non-liquid, non-puddle hits skip 1 and 3 entirely (nukage ripple/sheen gated on
+the liquid bit; puddle sheen gated on the goo mask) and are byte-identical to
+today. The whole block is Ultra-RT-only by construction.
 
 ### 4.2 Liquid identity — a per-material bit from the flat name
 
 - **`MatCtrl.flags` gains two bits** (the field already exists,
-  `pathtrace.comp:77`; `bit0 pom, bit1 noPom, bit2 sprite` are used, bits 3+ free):
+  `pathtrace.comp:76`; `bit0 pom, bit1 noPom, bit2 sprite` are used, bits 3+ free):
   - **`bit3 = LIQUID_NUKAGE`** — green toxic sludge (full wet treatment).
   - **`bit4 = LIQUID_LAVA`** — lava (glow + cast-light only).
 - **Set on the CPU at material build**, where the `ctrl[]` SSBO `flags` are
@@ -167,7 +175,7 @@ byte-identical to today. The whole block is Ultra-RT-only by construction.
     material id, so all three carry the bit).
   - Lava: **`LAVA1`–`LAVA4`**.
 - **Deliberately NOT flagged in v1** (INV-2): water (`FWATER1-4`, `SWATER1-4`),
-  blood (`BLOOD1-3`), and the DOOM II `SLIME01-16` flats — several `SLIME*` frames
+  blood (`BLOOD1-3`), and the DOOM II `SLIME01-12` flats — several `SLIME*` frames
   are dry rock / hazard-stripe floor, not liquid, so a blanket "SLIME = liquid"
   would mis-flag them. Extending to water/blood later is a one-line allow-list
   addition per flat.
@@ -177,37 +185,47 @@ byte-identical to today. The whole block is Ultra-RT-only by construction.
 
 ### 4.3 Glow + cast-light — reuse the emitter path
 
-- **Nukage and lava get a guaranteed material emissive `Le`** — green for nukage,
-  orange for lava — written into `g.matEmissive[id]` in `ComputeMaterialEmissive`
-  (`r_vulkan.cpp:4371`) for the allow-listed flats. Because a nukage/lava flat's
-  bright texels may not clear the DOOM-0082 peak-region gate (it is tuned for
-  lamp-bright regions, and slime is dim), the allow-listed liquids get a **floored
-  faint `Le`** — the same `allowFaint` fallback the glowing-pickup fix uses
-  (DOOM-0114 session, `emissive_derive.h derive_material_le`) — so they *always*
-  emit, tinted to the liquid's colour rather than derived per-texel.
+- **Nukage and lava get a guaranteed, constant material emissive `Le`** — a fixed
+  green for nukage (`kNukageLe`), orange for lava (`kLavaLe`) — **forced** for the
+  allow-listed flats in `ComputeMaterialEmissive` (`r_vulkan.cpp:4371`), written
+  into `g.matEmissive[id]`. This is a **new forced-constant path**, *not* the
+  existing `derive_material_le` fallback: that routine's `allowFaint`
+  (DOOM-0157, `emissive_derive.h:86`) is **conditional** (it returns 0 unless the
+  tile holds a texel over `kBrightLum`, `emissive_derive.h:116`) and **per-texel
+  derived** (`Le = Σ bright texels / total × kEmissiveScale`, `:120`) — so it
+  neither guarantees emission nor gives a controllable colour. Forcing a constant
+  `Le` for the named liquids sidesteps the peak-region gate entirely — the exact
+  "may need a per-flat allow-list or a lowered threshold" case DOOM-0083 flagged —
+  and makes the glow tunable.
 - **This is the entire cast-light mechanism.** A material with `matEmis > 0`
-  already (a) self-glows on the primary ray (`shadeSurface`: self-emission =
-  `matEmis[id] · emissiveMask(albedo)`, `pt_common.glsl`) and (b) enters the NEE
-  emitter set via `BuildStaticEmitterSet`, so it casts soft coloured light on
-  neighbours — no new light type, no new buffer (INV-7). Nukage animation already
-  triggers an emitter-set rebuild (the DOOM-0082 live-retex path), so a cycling
-  nukage flat keeps emitting.
+  (a) **enters the NEE emitter set** via `BuildStaticEmitterSet` (which reads
+  `g.matEmissive` directly, *unmodulated*), so it casts soft coloured light on
+  neighbours; and (b) **self-glows on the primary ray**, where the term is
+  `matEmis[id] · emissiveMask(albedo)` (`pt_common.glsl:213`; `emissiveMask` =
+  `smoothstep(0.30, 0.60, max-channel(albedo))`, `:46`) — i.e. the *self*-glow is
+  scaled by the surface's own brightness, so the saturated-green/orange liquid
+  albedo (max-channel well above 0.60) passes it and glows fully. No new light
+  type, no new buffer (INV-7). Nukage animation already triggers an emitter-set
+  rebuild (the DOOM-0082 live-retex path), so a cycling nukage flat keeps emitting.
 - **Colours and strength are compile-time `const`s** (`kNukageLe`, `kLavaLe` — the
   green/orange linear radiance), tuned on hardware toward the exaggerated RT-DOOM
   look (DOOM-0193). Start faint; the goo should tint a room, not floodlight it.
 
-### 4.4 Wet sheen — a liquid-only direct-light specular
+### 4.4 Wet sheen — a direct-light specular (no reflection rays)
 
 The tracer has no specular term. Rather than pull in DOOM-0103's general GGX lobe
-(F0/VNDF/MIS — a whole feature), this adds a **narrow, liquid-gated,
-direct-light** highlight — the honest "cheap win":
+(F0/VNDF/MIS — a whole feature), this adds a **narrow, gated, direct-light**
+highlight — the honest "cheap win":
 
-- For a liquid hit, add a **Blinn-Phong-style specular** term: `spec =
+- **Trigger:** a **nukage** hit (the liquid bit, §4.2) **or** a **goo puddle**
+  (the DOOM-0181 goo-stain mask, §4.6). Lava and every other surface get no sheen.
+- For a triggered hit, add a **Blinn-Phong-style specular** term: `spec =
   kWetSheenStrength · pow(max(dot(n, H), 0), kWetSheenPower)`, where `H` is the
   half-vector between the view direction and the **dominant light direction**, and
-  `n` is the *rippled* normal (§4.5). It is a highlight of *actual light sources*
-  (flashlight, nearby lamp/emitter, muzzle) — **not** a mirror of the room. No
-  reflection ray is cast (INV-3).
+  `n` is the *rippled* normal (§4.5, nukage only — a puddle uses its un-rippled
+  normal, §4.6). It is a highlight of *actual light sources* (flashlight, nearby
+  lamp/emitter, muzzle) — **not** a mirror of the room. No reflection ray is cast
+  (INV-3).
 - **Dominant-light choice is an implementation decision** (Q2): the simplest cut
   is the **flashlight** (always present, reliable in dark goo rooms) plus the
   muzzle flash; a fuller cut sums the sheen over the NEE-sampled lights. Start with
@@ -217,6 +235,10 @@ direct-light** highlight — the honest "cheap win":
 - **Tightness/strength are compile-time `const`s** (`kWetSheenPower` high = a small
   sharp glint; `kWetSheenStrength` its brightness). Must respect the PBR-Neutral
   tonemap headroom so a glint reads bright without blowing to a white disc (Q7).
+- **Fallback (drop-clean):** the sheen is the engine's *first* specular term, with
+  no prior strength to inherit and a real tonemap blow-out risk (Q7). If it cannot
+  be made to read bright-without-clipping, it **drops** without affecting the glow
+  (§4.3, permanent) or the ripples (§4.5) — mirroring the L5 puddle drop path.
 
 ### 4.5 Ripples — an animated procedural normal
 
@@ -226,10 +248,11 @@ direct-light** highlight — the honest "cheap win":
   at different world scales and directions, summed, driving a shallow tangent-plane
   tilt. World-XY-keyed (`hitP.xy`) so the pattern is continuous across a pool and
   does not swim with the camera.
-- **Time** comes from the new **`misc6.x`** push-constant lane (§5) — a float
-  seconds (or `leveltime` tics scaled) supplied per frame. There is **no** existing
-  time/animation uniform in the shader (verified 2026-07-17), so this lane is the
-  reason the push-constant struct grows (INV-6).
+- **Time** is a float in **seconds** (frame-rate-independent, so `kRippleSpeed`
+  has a fixed meaning), supplied per frame on a push-constant lane — a **reserved
+  display lane** (`misc2.z`) if that is confirmed unused in modes 4/6, else a new
+  lane (§5). There is **no** existing time/animation uniform in the shader
+  (verified 2026-07-17), so a per-frame time value must be added (§5, INV-6).
 - Amplitude is deliberately **shallow** (`kRippleAmp`) — a wet shimmer, not a
   choppy sea; speed/scale are `kRippleSpeed`/`kRippleScale` `const`s. Because the
   rippled `n` feeds both `shadeSurface` and the sheen, the whole surface
@@ -264,27 +287,38 @@ should not undulate like a deep pool).
   AO maps.)
 - **No new GPU buffers / bindings / SSBOs.** The liquid bit rides the existing
   `MatCtrl.flags`; the glow rides the existing `g.matEmissive` + emitter set.
-- **One new push-constant lane — `misc6` (uvec4):**
-  - `.x` = **time** (float-bits; seconds, for ripple animation).
-  - `.y` = **wet master toggle** (`rb_wet`, 1 = on / 0 = off; a new runtime key,
-    sibling to DOOM-0181's `]`/`[` — exact key is Q4).
-  - `.z`, `.w` = spare (reserved 0).
-  - This grows `RtPushConstants` **216 → 232 bytes** (`r_vulkan.cpp:6396`
-    `static_assert`), within the **256-byte** device limit (`r_vulkan.cpp:1723`).
-    The lane sits **after** the 184-byte `-rtverify` (mode 5) range
-    (`RtPC == 184`, `r_vulkan.cpp:5902`), so the verify path is unaffected
-    (INV-6). Update in lockstep: the C++ struct + its `static_assert(232)`, the
-    `pcr.size` range, and the GLSL `layout(push_constant)` in `pathtrace.comp`
-    (and `pt_common.glsl` if the shared struct declares the tail).
+- **Two runtime scalars reach the shader — ripple `time` and the wet toggle —
+  preferring existing reserved lanes over any struct growth:**
+  - `misc2.z` / `misc2.w` are declared **reserved** and are per-frame *display*
+    lanes (`pathtrace.comp:254`). If confirmed unread in modes 4/6 (an
+    implementation check), **`time`** (float-bits, seconds) rides `misc2.z` and the
+    **wet toggle** (`rb_wet`, 1/0) rides `misc2.w` — **no struct growth**, and the
+    216-byte layout + 184-byte `-rtverify` prefix are untouched.
+  - **Fallback only if no reserved display lane is free:** append a new `misc6`
+    uvec4 lane. It must respect std430 **16-byte alignment**, sit **after** the
+    184-byte `-rtverify` range (`RtPC == 184`, `r_vulkan.cpp:5902`) so verify is
+    unaffected, and update in lockstep — the C++ struct + its `static_assert`
+    (currently `216`, `r_vulkan.cpp:6396`), the `pcr.size` range (currently `216`,
+    `r_vulkan.cpp:2201`), and the GLSL `layout(push_constant)` — staying within the
+    **256-byte** device limit (`r_vulkan.cpp:2197`). Exact size/placement is pinned
+    at implementation (the alignment makes a bare "+16 bytes" unsafe to assert).
+  - **What the toggle gates:** `rb_wet` gates only the **shader-side, view/time**
+    layers — sheen (§4.4) + ripples (§4.5) + puddle wet (§4.6). It **cannot**
+    disable the glow/cast-light (§4.3): that `Le` is CPU-built into
+    `g.matEmissive`, the NEE emitter set, and the GI bake, none of which a
+    per-frame push constant can un-build — and the glow is *permanent* anyway
+    (it delivers DOOM-0083). So `rb_wet` is a **sheen/ripple/puddle** toggle, not a
+    whole-feature master switch.
 - **`MatCtrl.flags` bits:** `bit3 LIQUID_NUKAGE`, `bit4 LIQUID_LAVA` (set on the
   allow-listed flats at material build).
-- **`g.matEmissive` allow-list:** `NUKAGE1-3` → green `Le`; `LAVA1-4` → orange `Le`
-  (floored-faint, always-emit).
+- **`g.matEmissive` allow-list:** `NUKAGE1-3` → forced constant green `Le`
+  (`kNukageLe`); `LAVA1-4` → forced constant orange `Le` (`kLavaLe`) — set directly
+  in `ComputeMaterialEmissive`, bypassing `derive_material_le` (§4.3).
 - **Tuning knobs (compile-time `const`s, like DOOM-0181's `k*`):** `kNukageLe`,
   `kLavaLe` (glow colour/strength), `kWetSheenPower`, `kWetSheenStrength`,
   `kRippleSpeed`, `kRippleScale`, `kRippleAmp`, `kPuddleGlow`, `kPuddleSheenScale`.
   Per house convention (DOOM-0181 §5), *tuning* lives in `const`s, not push
-  constants — only the runtime *toggle* and *time* go in `misc6`.
+  constants — only the runtime *toggle* and *time* go in a push-constant lane.
 - **New runtime dial:** `rb_wet` (`int`, default 1) in `r_vulkan.cpp`, a config
   entry `rt_wet` in `m_misc.c` (mirroring `rt_detile`/`rt_filth`), and a keyboard
   toggle in `i_video.c` printing `Ultra wet-liquid ON/OFF`.
@@ -293,13 +327,17 @@ should not undulate like a deep pool).
 
 - **Baseline & method:** same protocol as DOOM-0181 §6 — average the `\`
   profiler (`[cpu_profile]` / `[rt_profile]`) present-total (ms, not FPS) over a
-  fixed ~10-second walk of a **liquid-heavy scene** (the E1M1 green-goo room; a
-  lava map if available), RT-on, 50 % render scale, flashlight, with `rb_wet`
-  **off** then **on** (the `misc6.y` toggle gives a same-walk A/B, avoiding
-  walk-to-walk variance — the DOOM-0187 lesson).
+  fixed ~10-second walk of the **authoritative gate scene — the E1M1 green-goo
+  room** (a lava map too, *when one is available*), RT-on, 50 % render scale,
+  flashlight, with `rb_wet` **off** then **on** (the toggle gives a same-walk A/B,
+  avoiding walk-to-walk variance — the DOOM-0187 lesson). Note the A/B isolates
+  only the **sheen + ripple + puddle** cost; the toggle does **not** gate the
+  glow/emitter cost (§5), which is measured separately (flag-present vs
+  flag-absent build) or accepted as a marginal always-on cost.
 - **Expected cost (to be measured, not asserted):**
   - **Glow + cast-light:** marginal — a few more entries in the NEE emitter set
-    (the goo/lava surfaces). Not a per-pixel cost; the DOOM-0176 REJECT cull and
+    (the goo/lava surfaces), plus a per-animation-tic emitter-set rebuild for the
+    cycling nukage flats. Not a per-pixel cost; the DOOM-0119 REJECT cull and
     the static-emitter cache (2026-07-14) already bound emitter cost.
   - **Wet sheen:** a few ALU + one `pow` per **liquid** pixel (a minority of the
     screen), no texture fetch. Cheapest layer.
@@ -308,13 +346,16 @@ should not undulate like a deep pool).
   - All three are **liquid-gated**, so a scene with no goo/lava on screen pays
     ~nothing (the branch is not taken).
 - **Perf levers held ready** (measure before cutting):
-  1. The **`rb_wet` toggle** (`misc6.y`) — already the isolation instrument and a
-     standing perf option (mirrors DOOM-0187's filth toggle). No look change on.
+  1. The **`rb_wet` toggle** — already the isolation instrument and a standing perf
+     option (mirrors DOOM-0187's filth toggle). No look change on. Gates
+     sheen/ripple/puddle only (§5), not the glow.
   2. Drop ripple layers 3 → 2.
   3. Distance/LOD-gate the sheen + ripples (far nukage goes flat).
-- **Gate (evaluated at the perf layer, §7 L6):** the wet layer must add **≤ 5 %**
-  to present-total vs the `rb_wet`-off RT-on baseline on the liquid-heavy walk —
-  the same ≤ 5 % bar DOOM-0181 held. L1–L5 are visual play-test only (no FPS gate).
+- **Gate (evaluated at the perf layer, §7 L6):** the sheen + ripple + puddle layer
+  must add **≤ 5 %** to present-total vs the `rb_wet`-off RT-on baseline on the
+  E1M1 goo-room walk — the same ≤ 5 % bar DOOM-0181 held. L1–L5 are visual
+  play-test only (no FPS gate). Lava's cast-light cost is gated on a lava map
+  when one is available, else measured when one is (Q6).
 
 ## 7. Build order
 
@@ -325,13 +366,18 @@ perf check is objective.
 | Layer | Scope | Verify | FPS-gate? |
 |-------|-------|--------|-----------|
 | **L1** | Liquid bit: `MatCtrl.flags` bit3/bit4 + flat-name allow-list on CPU; shader reads it (debug-tint nukage/lava to prove detection, then remove the tint) | Only actual nukage/lava flats light up; green *walls* do not; pool vs painted-puddle distinguished | no |
-| **L2** | Glow + cast-light: floored-faint green/orange `Le` for the allow-listed flats via `ComputeMaterialEmissive`; enters the emitter set (**delivers DOOM-0083**) | Nukage self-glows green + tints neighbours; lava glows orange + casts light; animation keeps emitting; dark room shows the goo | no |
-| **L3** | Wet sheen (§4.4): liquid-only direct-light specular, nukage (dominant light first) | A bright glint tracks the flashlight/lamp across the nukage; walls unaffected; no blow-out under tonemap | no |
-| **L4** | Ripples (§4.5): `misc6.x` time lane + procedural wave normal on nukage; feeds shade + sheen | The nukage surface shimmers; the sheen breaks up and moves; lava + non-liquid normals unchanged | no |
+| **L2** | Glow + cast-light: forced-constant green/orange `Le` for the allow-listed flats via `ComputeMaterialEmissive`; enters the emitter set (**delivers DOOM-0083**) | Nukage self-glows green + tints neighbours; lava glows orange + casts light; animation keeps emitting; dark room shows the goo. Colour/strength are const-tunable if wrong (glow is not dropped — it delivers DOOM-0083) | no |
+| **L3** | Wet sheen (§4.4): direct-light specular on nukage (dominant light first) | A bright glint tracks the flashlight/lamp across the nukage; walls unaffected; no blow-out under tonemap. Drops clean (§4.4) if it can't be made to read right | no |
+| **L4** | Ripples (§4.5): time lane (§5) + procedural wave normal on nukage; feeds shade + sheen | The nukage surface shimmers; the sheen breaks up and moves; lava + non-liquid normals unchanged | no |
 | **L5** | Puddle wet (§4.6): DOOM-0181 goo puddles take sheen + faint glow, **no** ripples | Puddles read wet, not floaty; drop this layer if it looks like floating film (no impact on L1–L4) | no |
-| **L6** | Runtime toggle (`rb_wet`/`misc6.y` + key) + perf pass | Wet layer adds ≤ 5 % vs `rb_wet`-off baseline (§6); toggle flips cleanly; `-rtverify` green | **yes** |
+| **L6** | Runtime toggle (`rb_wet` + key, §5) + perf pass | Sheen + ripple + puddle adds ≤ 5 % vs `rb_wet`-off baseline (§6); the sheen/ripple/puddle toggle flips cleanly (the glow stays — it is permanent); `-rtverify` green | **yes** |
 
 Lava is complete at **L2** (glow + cast-light); L3–L5 are nukage/puddle only.
+
+**Interim state (expected, not a regression):** L3 ships the sheen on the
+**un-rippled** normal; the ripple coupling (§4.4's "rippled normal") arrives at
+L4. Between L3 and L4 the glint is static — expected, mirroring DOOM-0181's
+"de-tile a subset first" interim (its INV-3).
 
 ## 8. Invariants
 
@@ -342,27 +388,36 @@ Lava is complete at **L2** (glow + cast-light); L3–L5 are nukage/puddle only.
 - **INV-2:** v1 flags **only** `NUKAGE1-3` (nukage) and `LAVA1-4` (lava). Water
   (`FWATER*`/`SWATER*`), blood (`BLOOD*`), and DOOM II `SLIME*` flats are **not**
   flagged (some `SLIME*` frames are dry rock — flagging them would wet a floor).
-- **INV-3:** The wet sheen is a **liquid-gated, direct-light specular** only — no
-  reflection ray, no GGX/VNDF/MIS lobe (that is DOOM-0103). Every non-liquid
-  surface takes **no** specular term and is byte-identical to today.
-- **INV-4:** Ripples perturb the normal on **flagged nukage only**. Lava and every
-  non-liquid surface keep an **unperturbed** normal (identical normal path).
+- **INV-3:** The wet sheen is a **direct-light specular** only — no reflection ray,
+  no GGX/VNDF/MIS lobe (that is DOOM-0103). Every non-liquid surface takes **no**
+  specular term and is byte-identical to today, **except** a floor carrying a
+  DOOM-0181 goo-stain, which takes the sheen via the goo mask (§4.6).
+- **INV-4:** Ripples perturb the normal on **flagged nukage only**. Lava, goo
+  puddles, and every non-liquid surface keep an **unperturbed** normal (identical
+  normal path).
 - **INV-5:** Ultra RT only; modes 4 and 6 get identical treatment. Classic and the
   raster stack (Solid, **and Ultra with RT off**) stay **byte-identical**.
-  Non-liquid RT surfaces are byte-identical too (all effects are liquid-gated).
-- **INV-6:** The push-constant struct grows by exactly one `uvec4` lane
-  (`misc6`), **216 → 232 bytes**, within the 256-byte device limit. The lane sits
-  **beyond** the 184-byte `-rtverify` (mode 5) range, so mode-5 verify is
-  unaffected. (Contrast DOOM-0181 INV-9, which added no bytes — this feature does,
-  because it needs a per-frame time and no free lane remains in `misc5`.)
+  Non-liquid RT surfaces are byte-identical too, **except** floors carrying a
+  DOOM-0181 goo-stain (§4.6), which take sheen + a faint glow via the goo mask
+  (not the liquid bit).
+- **INV-6:** The ripple `time` + wet toggle ride **existing reserved push-constant
+  lanes** (`misc2.z`/`misc2.w`, `pathtrace.comp:254`) when confirmed unused in
+  modes 4/6 — **no** struct growth, and the 216-byte layout + 184-byte `-rtverify`
+  prefix are untouched. Only if no reserved lane is free does a new `misc6` uvec4
+  lane get appended — std430-16-byte-aligned, beyond the 184-byte verify prefix,
+  within the 256-byte device limit (`r_vulkan.cpp:2195-2201`). (Contrast DOOM-0181
+  INV-9, which needed no per-frame runtime value at all.)
 - **INV-7:** Cast-light reuses the existing NEE emitter path
   (`ComputeMaterialEmissive` → `g.matEmissive` → `BuildStaticEmitterSet`) — **no**
-  new light type, buffer, or dispatch. Nukage/lava `Le` is allow-list-guaranteed
-  (floored-faint) so it always emits, unlike the peak-gated lamp path.
+  new light type, buffer, or dispatch. The nukage/lava `Le` is a **forced constant**
+  (`kNukageLe`/`kLavaLe`) set by a flat-name allow-list, bypassing the conditional
+  `derive_material_le`/`allowFaint` path so the glow is guaranteed and tunable,
+  unlike the peak-gated lamp path.
 - **INV-8:** The GI bake (`bake.comp`) never samples `ctrl[]` or the sheen/ripple
-  branch, so the **view-dependent** wet effects live only in the megakernel. The
-  cast-light `Le` **does** enter the shared emitter set, so the baked bounce and
-  the directly-traced glow agree (one `Le` source, no double-count).
+  branch, so the **view- and time-dependent** wet effects live only in the
+  megakernel. The cast-light `Le` **does** enter the shared emitter set, so the
+  baked bounce and the directly-traced glow agree (one `Le` source, no
+  double-count).
 - **INV-9:** Lava gets **glow + cast-light only** (L2). No sheen, no ripples — it
   reads molten, not wet (user 2026-07-17).
 
@@ -405,3 +460,6 @@ Lava is complete at **L2** (glow + cast-light); L3–L5 are nukage/puddle only.
 - **Q7 (tonemap headroom):** verify the sheen glint reads bright without clipping
   to a flat white disc under the PBR-Neutral tonemap (the tracer's first specular
   term — no prior art in this engine to inherit a strength from).
+- **Q8 (reserved-lane check):** confirm `misc2.z`/`misc2.w` are genuinely unread in
+  modes 4/6 before riding `time`/`rb_wet` on them (§5, INV-6); if either is used,
+  fall back to a new `misc6` lane. A one-time grep at implementation.
