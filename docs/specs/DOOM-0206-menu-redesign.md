@@ -78,11 +78,17 @@ time:
 - **Solid/Ultra** (`RB_RASTER3D` / `RB_RT3D`): the affected menus draw through
   the new crisp path (§4.2) on a dimmed backdrop (§4.3).
 
-Scope of the crisp skin v1: the **text-based** menus — `OptionsDef`, the new
-consolidated Video menu, and `SoundDef`. (Load/Save name-entry rows stay on the
-classic path in v1 — a follow-up, so §4.1 and L3 agree.) The big red graphic-lump
-menus (main, episode, skill) keep their art in every tier for v1 — they are
-already large and iconic; restyling them is a follow-up. The crisp path is a
+Scope of the crisp skin v1: the **new consolidated Video menu (`VideoDef`)
+only**. `OptionsDef` and `SoundDef` keep the classic path in v1 — their row
+labels are big-red graphic lumps (`M_MESSG`, `M_SVOL`, `M_MSENS`, `M_SCRNSZ`, …)
+drawn as patches, and several rows are thermometer sliders (`status == 2`), none
+of which the crisp text/slider API renders — and re-theming those lumps is a
+non-goal. `VideoDef` is built fresh from text rows plus one Brightness slider, so
+it needs no lump conversion; it is the menu that carries the render toggles the
+redesign is about. `OptionsDef`/`SoundDef` (and Load/Save name rows) are a
+follow-up. The big red graphic-lump menus (main, episode, skill) likewise keep
+their art in every tier for v1 — already large and iconic; restyling them is a
+follow-up. The crisp path is a
 strict superset draw for the same item data, so a menu that is not yet skinned
 falls back to the classic path with no missing rows.
 
@@ -98,10 +104,12 @@ Render menu text as textured quads sampled from a glyph atlas, at display res:
 - **A 2D textured-quad text pass** in `r_vulkan.cpp` — an orthographic,
   alpha-blended pipeline (extend the existing `overlay` pipeline family) that
   draws a per-frame vertex buffer of glyph quads in **display pixel coordinates**.
-- **A small text API** the menu skin calls: draw string at (x,y) in display
-  coords with a scale/colour; plus a `rb_text_width(str)` for centering and
-  right-aligned value columns. `m_menu.c`'s crisp skin builds its rows through
-  this API instead of `M_WriteText`.
+- **A small text + slider API** the menu skin calls: draw string at (x,y) in
+  display coords with a scale/colour; `rb_text_width(str)` for centering and
+  right-aligned value columns; and a horizontal **bar/thermo primitive** for the
+  one `status == 2` slider row (Brightness) — `VideoDef` has a slider, so a
+  glyph-only API is insufficient. `m_menu.c`'s crisp skin builds `VideoDef`'s rows
+  through this API instead of `M_WriteText` / `M_DrawThermo`.
 
 Colour: near-white with a subtle dark drop-shadow / outline for legibility over
 the dimmed scene (readability is the stated priority). The **bobbing skull
@@ -125,17 +133,19 @@ When a skinned menu is active in a 3D tier:
   `screenSize`/aspect). No glyph, slider, cursor, or backdrop element is ever
   positioned inside that band. This is INV-2 and is the user's non-negotiable
   requirement.
-- **When no status bar is drawn** — the title/main menu (no game in progress) or
-  a fullscreen view size (`screenblocks` ≥ 11) — the excluded band is empty and
-  the safe region is the full screen (with a small margin). The menu is reachable
-  from the main menu, so this case is real: the bound tracks the *current* bar,
-  not a fixed offset.
+- **When no status bar is drawn** — the title/main menu (no game in progress) —
+  the excluded band is empty and the safe region is the full screen (with a small
+  margin). (In-game the bar is always present: DOOM-0148 caps the view at
+  `screenblocks` 10, so it cannot be slid away.) This case is real — the menu is
+  reachable from the main menu — so the bound tracks the *current* bar, not a
+  fixed offset.
 
 ### 4.4 Scrolling when the list is taller than the safe region
 
-The consolidated Video menu (§4.5) has 16 toggle rows + 3 group headings = 19
-visual rows, and will not fit the safe region at a crisp, readable size on a
-4:3-height budget. So the crisp skin supports a **scrolling viewport**:
+The consolidated Video menu (§4.5) has 15 toggle rows + a Back row (16
+selectable) + 3 group headings = 19 visual rows, and will not fit the safe region
+at a crisp, readable size on a 4:3-height budget. So the crisp skin supports a
+**scrolling viewport**:
 
 - `scrollTop` is **derived each draw from `itemOn`** (the current cursor index)
   and the safe region's row capacity — it is NOT stored state updated on input,
@@ -220,6 +230,9 @@ scrolls (§4.4):
                      Back
 ```
 
+(The `Back` row is a `status == 1` item returning to Options; Esc also returns,
+per classic behaviour.)
+
 Every row maps to an existing config-bound `rb_*`/engine variable (§ the
 DOOM-0205 inventory), so menu, hotkey and `~/.doomrc` stay in lockstep — except
 the new Ray Tracing row, which needs a **new `M_ChangeRayTracing` handler**
@@ -236,7 +249,8 @@ the new Ray Tracing row, which needs a **new `M_ChangeRayTracing` handler**
   interactive), and Enter still fires the routine (INV-4 forbids touching
   `M_Responder`). Therefore "greyed" is **visual only**, and `M_ChangeRayTracing`
   **no-ops (returns early) when `rb_rtdebug_menu` is set** — that developer mode
-  owns `rb_rtdebug` and cycles it through its diagnostic set `{0,1,2,3,4,6}`.
+  owns `rb_rtdebug` (the `~` key then cycles it through the diagnostic set
+  `{0,1,2,3,4,6}`).
 - **Ray Tracing in Solid is a per-session choice.** Although `rb_rtdebug`
   persists (`rt_view`), `RB_ApplyTierRt` runs at boot (`RB_Init`) and on every
   tier switch and reclaims the tier default (`0` Solid, `6` Ultra) unless Debug
@@ -296,9 +310,10 @@ path (it happens only on resize, never during play).
   zero pixels drawn in the status-bar band.
 - **L3** — build the consolidated `VideoDef` `menu_t` (all toggles, incl. the new
   Ray Tracing row + its `M_ChangeRayTracing` handler) + the tier-conditional
-  entry branch, and route the crisp skin for it and `OptionsDef`/`SoundDef`.
+  entry branch + the tier re-route, and route the crisp skin for `VideoDef`.
   Verify: every §4.5 row present in the 3D tiers, Classic still opens
-  `RendererDef` unchanged, values live, changes persist to `~/.doomrc`.
+  `RendererDef` unchanged, `OptionsDef`/`SoundDef` still render classic, values
+  live, changes persist to `~/.doomrc`.
 - **L4** — `itemOn`-derived scrolling viewport + indicators. Verify: the full
   Video list is reachable by cursor with the selection always visible and never
   in the HUD band.
