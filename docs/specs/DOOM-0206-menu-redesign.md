@@ -111,6 +111,10 @@ Render menu text as textured quads sampled from a glyph atlas, at display res:
   glyph-only API is insufficient. `m_menu.c`'s crisp skin builds `VideoDef`'s rows
   through this API instead of `M_WriteText` / `M_DrawThermo`.
 
+All text within a menu uses **one glyph size** (INV-7): the title (`V I D E O`)
+and the group headings are the *same size* as the rows, set apart by weight /
+caps / letter-spacing, not by a bigger font.
+
 Colour: near-white with a subtle dark drop-shadow / outline for legibility over
 the dimmed scene (readability is the stated priority). The **bobbing skull
 cursor is kept** as the selection cue (user decision) — not an accent-colour row
@@ -350,6 +354,12 @@ path (it happens only on resize, never during play).
   truetype.h`) are latest-stable, pinned at commit, and recorded in the "Where
   this project's dependencies live" section of `docs/standards/dependencies.md`**
   (not the Version Exception Ledger — dependencies standard / ADR 0002 pattern).
+- **INV-7** — **Uniform font size per menu (user requirement).** Within any one
+  crisp (Solid/Ultra) menu or submenu, *all* text — title, group headings, row
+  labels, and value columns — is rendered at a **single glyph size**. Emphasis
+  (title, headings) is expressed with weight / colour / letter-spacing / caps,
+  **never a different font size**. The size may differ *between* menus if their
+  content densities differ, but is constant *within* one menu.
 
 ## 9. Alternatives considered
 
