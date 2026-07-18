@@ -213,6 +213,15 @@ void M_ChangeDebugViews(int choice);
 void M_ChangeBrightness(int choice);
 void M_ChangeWidescreen(int choice);
 void M_ChangeFillScreen(int choice);
+// DOOM-0205: Render Effects submenu (visible on/off state for the render toggles).
+void M_UltraEffects(int choice);
+void M_DrawEffectsMenu(void);
+void M_ChangeFlashlight(int choice);
+void M_ChangeSSAO(int choice);
+void M_ChangeDetile(int choice);
+void M_ChangeFilth(int choice);
+void M_ChangeWet(int choice);
+void M_ChangeProfiler(int choice);
 void M_SizeDisplay(int choice);
 void M_StartGame(int choice);
 void M_Sound(int choice);
@@ -443,6 +452,7 @@ enum
     rm_debugviews,
     rm_widescreen,
     rm_fillstretch,
+    rm_effects,
     rm_brightness,
     rm_end
 } renderer_e;
@@ -455,6 +465,7 @@ menuitem_t RendererMenu[]=
     {1,"",	M_ChangeDebugViews,'d'},
     {1,"",	M_ChangeWidescreen,'w'},
     {1,"",	M_ChangeFillScreen,'f'},
+    {1,"",	M_UltraEffects,'e'},
     {2,"",	M_ChangeBrightness,'b'}
 };
 
@@ -465,6 +476,45 @@ menu_t  RendererDef =
     RendererMenu,
     M_DrawRendererMenu,
     60,60,
+    0
+};
+
+//
+// DOOM-0205: RENDER EFFECTS SUB-MENU. One place that shows the live on/off (or
+// value) of every render toggle that was otherwise only reachable by an unlabelled
+// hotkey (F flashlight, [ filth, ] de-tile, ' wet, ...), so the state is visible
+// and screenshot-able. Reached from the Renderer menu's "Ultra Effects" row; back
+// returns there. Each row's variable is the same one bound in m_misc.c defaults[],
+// so a change persists to ~/.doomrc on exit like every other menu setting.
+//
+enum
+{
+    ef_flashlight,
+    ef_ssao,
+    ef_detile,
+    ef_filth,
+    ef_wet,
+    ef_profiler,
+    ef_end
+} effects_e;
+
+menuitem_t EffectsMenu[]=
+{
+    {1,"",	M_ChangeFlashlight,'f'},
+    {1,"",	M_ChangeSSAO,'s'},
+    {1,"",	M_ChangeDetile,'d'},
+    {1,"",	M_ChangeFilth,'g'},
+    {1,"",	M_ChangeWet,'w'},
+    {1,"",	M_ChangeProfiler,'p'}
+};
+
+menu_t  EffectsDef =
+{
+    ef_end,
+    &RendererDef,
+    EffectsMenu,
+    M_DrawEffectsMenu,
+    60,50,
     0
 };
 
@@ -1060,6 +1110,15 @@ extern int	rb_rtdebug_menu;	// DOOM-0135 Debug Views toggle
 char	upscalerNames[2][8]	= {"Off","TAAU"};
 int	renderScalePresets[4]	= {100,75,67,50};
 char	renderScaleNames[4][6]	= {"100%","75%","67%","50%"};
+// DOOM-0205: render-effect toggles surfaced in the Render Effects submenu. Each is the
+// same var bound in m_misc.c defaults[] (so a menu change persists to ~/.doomrc).
+extern int	rb_flashlight;		// F key      (rt config: flashlight)
+extern int	rb_ssao;		// SSAO       (rt config: ssao)
+extern int	rb_detile;		// ] key 0/1/2 (rt config: rt_detile)
+extern int	rb_filth;		// [ key      (rt config: rt_filth)
+extern int	rb_wet;			// ' key      (rt config: rt_wet)
+extern int	rb_profile;		// profiler   (rt config: rt_profile)
+char	detileNames[3][7]	= {"Off","2-tap","4-tap"};
 
 
 void M_DrawOptions(void)
@@ -1140,11 +1199,50 @@ void M_DrawRendererMenu(void)
     M_WriteText(RendererDef.x + 120,RendererDef.y+LINEHEIGHT*rm_fillstretch,
 		fillstretch ? "On" : "Off");
 
+    // DOOM-0205: entry to the Render Effects submenu (flashlight, SSAO, de-tile,
+    // filth, wet, profiler — each with a visible on/off).
+    M_WriteText(RendererDef.x,RendererDef.y+LINEHEIGHT*rm_effects,"Render Effects...");
+
     // DOOM-0096: Ultra/denoiser brightness. Label on its own line with a thermometer
     // slider below it (rb_exposure 0..15), the standard DOOM slider layout.
     M_WriteText(RendererDef.x,RendererDef.y+LINEHEIGHT*rm_brightness,"Brightness:");
     M_DrawThermo(RendererDef.x,RendererDef.y+LINEHEIGHT*(rm_brightness+1),
 		16,rb_exposure);
+}
+
+//
+// DOOM-0205: draw the Render Effects submenu — one row per toggle, label on the
+// left and its live state (On/Off, or the de-tile quality name) on the right, so a
+// glance (or a screenshot) shows exactly what is enabled. Values mirror the same
+// vars the hotkeys ([ ] ' F ...) flip.
+//
+void M_DrawEffectsMenu(void)
+{
+    M_WriteText(EffectsDef.x + 30,EffectsDef.y - 20,"RENDER EFFECTS");
+
+    M_WriteText(EffectsDef.x,EffectsDef.y+LINEHEIGHT*ef_flashlight,"Flashlight:");
+    M_WriteText(EffectsDef.x + 130,EffectsDef.y+LINEHEIGHT*ef_flashlight,
+		rb_flashlight ? "On" : "Off");
+
+    M_WriteText(EffectsDef.x,EffectsDef.y+LINEHEIGHT*ef_ssao,"SSAO:");
+    M_WriteText(EffectsDef.x + 130,EffectsDef.y+LINEHEIGHT*ef_ssao,
+		rb_ssao ? "On" : "Off");
+
+    M_WriteText(EffectsDef.x,EffectsDef.y+LINEHEIGHT*ef_detile,"De-tile:");
+    M_WriteText(EffectsDef.x + 130,EffectsDef.y+LINEHEIGHT*ef_detile,
+		detileNames[(rb_detile>=0 && rb_detile<=2) ? rb_detile : 0]);
+
+    M_WriteText(EffectsDef.x,EffectsDef.y+LINEHEIGHT*ef_filth,"Filth/grime:");
+    M_WriteText(EffectsDef.x + 130,EffectsDef.y+LINEHEIGHT*ef_filth,
+		rb_filth ? "On" : "Off");
+
+    M_WriteText(EffectsDef.x,EffectsDef.y+LINEHEIGHT*ef_wet,"Wet liquid:");
+    M_WriteText(EffectsDef.x + 130,EffectsDef.y+LINEHEIGHT*ef_wet,
+		rb_wet ? "On" : "Off");
+
+    M_WriteText(EffectsDef.x,EffectsDef.y+LINEHEIGHT*ef_profiler,"Profiler:");
+    M_WriteText(EffectsDef.x + 130,EffectsDef.y+LINEHEIGHT*ef_profiler,
+		rb_profile ? "On" : "Off");
 }
 
 
@@ -1437,6 +1535,53 @@ void M_ChangeUpscaler(int choice)
 {
     choice = 0;
     rb_upscaler = (rb_upscaler + 1) % 2;
+}
+
+//
+// DOOM-0205: Render Effects submenu. The entry point (opens the submenu) plus one
+// toggle handler per effect. Each flips the same var its hotkey does, so the menu,
+// the hotkey and the persisted ~/.doomrc all stay in lockstep.
+//
+void M_UltraEffects(int choice)
+{
+    choice = 0;
+    M_SetupNextMenu(&EffectsDef);
+}
+
+void M_ChangeFlashlight(int choice)
+{
+    choice = 0;
+    rb_flashlight = rb_flashlight ? 0 : 1;
+}
+
+void M_ChangeSSAO(int choice)
+{
+    choice = 0;
+    rb_ssao = rb_ssao ? 0 : 1;
+}
+
+void M_ChangeDetile(int choice)
+{
+    choice = 0;
+    rb_detile = (rb_detile + 1) % 3;   // Off -> 2-tap -> 4-tap
+}
+
+void M_ChangeFilth(int choice)
+{
+    choice = 0;
+    rb_filth = rb_filth ? 0 : 1;
+}
+
+void M_ChangeWet(int choice)
+{
+    choice = 0;
+    rb_wet = rb_wet ? 0 : 1;
+}
+
+void M_ChangeProfiler(int choice)
+{
+    choice = 0;
+    rb_profile = rb_profile ? 0 : 1;
 }
 
 //
