@@ -323,6 +323,7 @@ with friends.
   Kind: chore.
   Source: in-session-2026-07-18 (CC suggestion, for user review).
   Approved by user 2026-07-18 for implementation.
+  CORRECTION (2026-07-18): the suggestion's premise "there is no automated build/test gate today" was WRONG — I asserted it without checking .github/workflows/ (a verify-before-stating miss). The CORE of this item ALREADY EXISTS: .github/workflows/build.yml (added 2026-07-03) runs `make -C linuxdoom-1.10` + `make ... test` on every push/PR to master (docs-paths ignored, concurrency-cancel, actions/checkout@v7, deps from packaging/ci-deps.txt, mirrored locally by packaging/ci-local.sh). It has been GREEN on every recent push, incl. today's DOOM-0202 push (run 29639869154, 46s, success). So "minimal CI: build + make test" is DONE. Remaining (optional, genuinely not yet present): (1) a headless RUNTIME smoke — the runner has no WAD/display, but a free WAD (Freedoom, GPL-compatible, ships demo lumps) + SDL_VIDEODRIVER=dummy/SDL_AUDIODRIVER=dummy + the engine's existing -timedemo/-nodraw could boot+play+exit to catch boot/runtime regressions the compile gate misses (needs checking Freedoom demo-version compat first — a mismatch returns to title rather than quitting, per DOOM-0034); (2) the self-hosted-GPU gate running -rtverify + the new -shotverify (DOOM-0202) on the user's RX 6600. Narrowing this item to those two optional extras; the compile+test gate it mainly asked for is already live.
 
 ## Phase 2 — The Spin
 
