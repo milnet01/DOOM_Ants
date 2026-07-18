@@ -103,24 +103,23 @@ Render menu text as textured quads sampled from a glyph atlas, at display res:
   this API instead of `M_WriteText`.
 
 Colour: near-white with a subtle dark drop-shadow / outline for legibility over
-any dimmed scene (readability is the stated priority). Selected row highlighted
-(brighter / accent colour) in place of the bobbing skull, or the skull redrawn
-crisp — decided in the plan.
+the dimmed scene (readability is the stated priority). The **bobbing skull
+cursor is kept** as the selection cue, redrawn crisp alongside the new text
+(user decision) — not an accent-colour row highlight.
 
 ### 4.3 Dimmed backdrop + the HUD-safe bound (hard rule)
 
 When a skinned menu is active in a 3D tier:
 
-- Draw a **full-screen dim quad** (scene darkened to ~20–25% alpha-over-black)
-  before the text, so neither the 3D scene nor the HUD reads as clutter.
+- Draw a **dim quad over the play-view area only** (the region above the status
+  bar), darkening the 3D scene behind the menu to ~20–25% alpha-over-black so it
+  does not read as clutter. **The status bar is left undimmed and fully visible**
+  (user decision) — the dim never covers it.
 - **The menu content is confined to a safe rectangle that excludes the status-
   bar band.** The safe region is the display above the status bar's top edge
   (the display-space image of the `ST_HEIGHT` band at the current scale/aspect).
-  No glyph, slider, or backdrop-panel element is ever positioned inside that
+  No glyph, slider, cursor, or backdrop element is ever positioned inside that
   band. This is INV-2 and is the user's non-negotiable requirement.
-- The status bar itself may stay visible (undimmed) below the safe region or be
-  covered by the dim — either is acceptable as long as **no menu element draws
-  over it**. Chosen behaviour fixed in the plan; INV-2 holds regardless.
 
 ### 4.4 Scrolling when the list is taller than the safe region
 
@@ -179,10 +178,10 @@ wireframe) is intentionally omitted.
 
 ## 5. Data & resources
 
-- **Font file**: one bundled `.ttf`/`.otf` under a GPL-compatible licence (SIL
-  OFL). Candidate sci-fi-but-readable sans: Oxanium, Chakra Petch, Rajdhani
-  (all OFL). Final pick rendered as samples for the user before locking (§10).
-  Committed to the repo (small, ~50–200 KB) with its licence file.
+- **Font file**: **Oxanium** (SIL OFL, GPL-compatible) — user-selected. A clean,
+  slightly techy sci-fi sans. Committed to the repo (~50–200 KB) with its OFL
+  licence file. Samples are still rendered at L5 for a final on-hardware
+  confirmation, but Oxanium is the locked default.
 - **`stb_truetype.h`**: vendored single-header (public domain), compiled in one
   small TU like `rb_image.c` (ADR 0002 pattern).
 - **Glyph atlas**: an `R8` Vulkan image baked at startup; a CPU-side glyph
@@ -245,13 +244,16 @@ frames stay ≥ 60 FPS. `-rtverify` byte-prefix and numeric result unaffected
 - **Restructure into tabbed/side-panel navigation (option C)** — rejected by the
   user; keep the existing menu engine, reskin only.
 
-## 10. Open questions
+## 10. Resolved decisions & remaining open questions
 
-- **Font pick** — Oxanium vs Chakra Petch vs Rajdhani (or another OFL sans);
-  resolve by rendering samples for the user in L5. Default working pick: Oxanium.
-- **HUD in the backdrop** — leave the status bar visible (undimmed) below the
-  safe region, or cover it with the dim? Cosmetic; INV-2 holds either way.
-- **Selection cue** — brighter/accent highlight on the selected row vs a
-  crisp-redrawn skull cursor. Decide in L5 with the font.
+Resolved with the user (2026-07-18):
+
+- **Font** — **Oxanium** (OFL). Samples still shown at L5 for final confirmation.
+- **Status bar** — left **visible and undimmed**; the dim covers only the
+  play-view area above it. (INV-2 keeps the menu out of the status-bar band.)
+- **Selection cue** — **keep the bobbing skull cursor**, redrawn crisp.
+
+Remaining open (non-blocking, decide during build):
+
 - **Main/episode/skill art menus** — keep the red graphic lumps in v1 (current
   plan) or restyle later as a follow-up item.
