@@ -232,6 +232,11 @@ extern "C" void* I_GetWindow(void);
 extern "C" void  I_ShutdownGraphicsForVulkan(void);
 extern "C" [[noreturn]] void I_Error(const char* error, ...);
 extern "C" int M_CheckParm(const char* check);   // m_argv.c — for -rtverify (step 4d)
+// DOOM-0202: argv (optional -shotverify output path) + the vendored PNG writer
+// (stbi_write_png, implemented in rb_image.c). Used only by the -shotverify capture.
+extern "C" { extern int myargc; extern char** myargv; }
+extern "C" int stbi_write_png(const char* filename, int w, int h, int comp,
+                              const void* data, int stride_in_bytes);
 
 namespace {
 
@@ -671,6 +676,19 @@ struct VulkanState
     VkBuffer       rtReadback  = VK_NULL_HANDLE;   // host-visible copy target
     VkDeviceMemory rtReadbackMem = VK_NULL_HANDLE;
 
+    // DOOM-0202: -shotverify headless screenshot / visual-regression capture (Ultra RT
+    // first cut). A host-visible copy target for the RT finalImage + a small state
+    // machine driven from the present path: arm from the parm, let the SVGF denoiser
+    // settle for kShotWarmup rendered frames, capture the final display image on that
+    // frame, then write a PNG and exit. shotCapture is set BEFORE RecordRtTrace records
+    // this frame's copy; the PNG write + exit happen after the frame presents.
+    VkBuffer       shotBuf     = VK_NULL_HANDLE;   // host-visible RGBA8 copy of the final image
+    VkDeviceMemory shotBufMem  = VK_NULL_HANDLE;
+    VkDeviceSize   shotBufSize = 0;
+    int            shotFrame   = 0;                // rendered RT presents counted since arm
+    bool           shotCapture = false;            // record the copy into THIS frame's cmd
+    uint32_t       shotW = 0, shotH = 0;           // captured extent (display res)
+
     // SVGF denoiser (DOOM-0009 build step 6). Swapchain-sized G-buffer + history
     // images (recreated with the swapchain), one shared descriptor set, and three
     // compute pipelines (temporal accumulation 6a, edge-aware a-trous 6b, composite
@@ -900,6 +918,16 @@ extern "C" { int rb_wet = 1; }
 // `-rtverify` command-line parm; the first ready present runs RB_RtVerify (the
 // rel-MSE + white-furnace proof) and exits. -1 = unchecked, 0 = off, 1 = armed.
 int rb_rtverify = -1;
+
+// DOOM-0202: -shotverify headless screenshot / visual-regression latch. Set from the
+// `-shotverify [path]` parm; renders the Ultra RT view for kShotWarmup frames (so the
+// SVGF denoiser converges on the static spawn view), copies the final display image to
+// a PNG, and exits. -1 = unchecked, 0 = off, 1 = armed. First cut is Ultra-only (the
+// raster/Solid path renders straight into the swapchain with no TRANSFER_SRC image to
+// copy — a follow-up). A watchdog gives up if the RT view never becomes ready.
+int rb_shotverify = -1;
+static const int kShotWarmup   = 45;    // rendered RT frames before capture (denoiser settle)
+static const int kShotGiveUp   = 600;   // presents while armed w/o an RT frame -> bail (misconfig)
 
 // Verify accumulator resolution — small + fixed (independent of the swapchain) so
 // the high-sample-count convergence runs in well under a second per estimator.
@@ -6790,7 +6818,7 @@ void RecordRtTrace(uint32_t idx)
     // knows the tier they picked, so the "DENOISED"/"PROFILER" text would just be clutter
     // (user request 2026-07-14). The compute->compute barrier orders it after the megakernel
     // (modes 1-4) / composite (mode 6) / TAAU (mode 6 upscaled) write; it only touches the label box.
-    if (rb_rtdebug_menu)
+    if (rb_rtdebug_menu && !g.shotCapture)   // DOOM-0202: never bake the debug label into a -shotverify golden
     {
         VkMemoryBarrier mb = {};
         mb.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
@@ -6871,6 +6899,30 @@ void RecordRtTrace(uint32_t idx)
     vkCmdBlitImage(g.cmd, finalImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                    g.images[idx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                    1, &blit, VK_FILTER_NEAREST);
+
+    // DOOM-0202: -shotverify capture. finalImage is still TRANSFER_SRC here (the blit
+    // above just read it — a read/read alias, so no barrier), and it's R8G8B8A8_UNORM at
+    // display res: copy it into a host-visible buffer so the present path can write a PNG
+    // once this frame completes. The buffer is lazily sized to the (stable) display extent.
+    if (g.shotCapture)
+    {
+        const VkDeviceSize need = (VkDeviceSize)dispW * dispH * 4;
+        if (g.shotBuf == VK_NULL_HANDLE || g.shotBufSize < need)
+        {
+            if (g.shotBuf)    vkDestroyBuffer(g.device, g.shotBuf, nullptr);
+            if (g.shotBufMem) vkFreeMemory(g.device, g.shotBufMem, nullptr);
+            CreateRtBuffer(need, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                           VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                           &g.shotBuf, &g.shotBufMem);
+            g.shotBufSize = need;
+        }
+        VkBufferImageCopy region = {};
+        region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        region.imageExtent      = { dispW, dispH, 1 };
+        vkCmdCopyImageToBuffer(g.cmd, finalImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                               g.shotBuf, 1, &region);
+        g.shotW = dispW; g.shotH = dispH;
+    }
 
     // Swapchain TRANSFER_DST -> PRESENT_SRC for vkQueuePresentKHR.
     VkImageMemoryBarrier toPresent = toDst;
@@ -7297,6 +7349,31 @@ extern "C" void RB_Vulkan_Present(void)
         rb_rtverify = 0;
         RB_RtVerify();
         exit(0);
+    }
+
+    // DOOM-0202: -shotverify arm + warmup counter. Decide — before this frame records —
+    // whether it captures: armed AND the RT view is active AND the denoiser has had
+    // kShotWarmup rendered frames to settle on the static spawn view. The copy is recorded
+    // inside RecordRtTrace; the PNG write + exit happen after present (below). A watchdog
+    // bails if the RT view never becomes ready (launched in Solid, or no level warped in),
+    // so a misconfigured run exits instead of spinning forever.
+    if (rb_shotverify < 0)
+        rb_shotverify = M_CheckParm("-shotverify") ? 1 : 0;
+    g.shotCapture = false;
+    if (rb_shotverify == 1)
+    {
+        static int armedPresents = 0;
+        if (rtActive)
+        {
+            if (g.shotFrame >= kShotWarmup) g.shotCapture = true;
+            g.shotFrame++;
+        }
+        if (++armedPresents > kShotGiveUp && g.shotFrame == 0)
+        {
+            fprintf(stderr, "[shotverify] Ultra RT view never became ready after %d presents "
+                            "(need renderer 1 + a level warped in); giving up.\n", kShotGiveUp);
+            exit(2);
+        }
     }
 
     uint32_t idx = 0;
@@ -7741,6 +7818,27 @@ extern "C" void RB_Vulkan_Present(void)
     else if (pr != VK_SUCCESS)
         Fail("vkQueuePresentKHR", pr);
 
+    // DOOM-0202: -shotverify write + exit. The capture copy was recorded into the frame
+    // just submitted; wait for the GPU to finish, then read the host-visible buffer and
+    // write a PNG. Output path = the arg after -shotverify (when present and not another
+    // flag), else "shotverify.png" in the cwd. One-shot: the process exits after writing.
+    if (g.shotCapture && g.shotBuf)
+    {
+        vkDeviceWaitIdle(g.device);
+        const char* path = "shotverify.png";
+        int p = M_CheckParm("-shotverify");
+        if (p && p + 1 < myargc && myargv[p + 1][0] != '-')
+            path = myargv[p + 1];
+        void* mapped = nullptr;
+        Check(vkMapMemory(g.device, g.shotBufMem, 0, VK_WHOLE_SIZE, 0, &mapped), "vkMapMemory(shot)");
+        int ok = stbi_write_png(path, (int)g.shotW, (int)g.shotH, 4, mapped, (int)g.shotW * 4);
+        vkUnmapMemory(g.device, g.shotBufMem);
+        if (ok) printf("[shotverify] wrote %s (%ux%u, Ultra RT)\n", path, g.shotW, g.shotH);
+        else    fprintf(stderr, "[shotverify] stbi_write_png failed for %s\n", path);
+        fflush(stdout);
+        exit(ok ? 0 : 1);
+    }
+
     // DOOM-0170 perf: close the CPU-side segments and print once a second. cpuMs =
     // fenceWait / build / record / submit / present-total. The gap between the FPS
     // counter's frame time and present-total is the rest of the engine (game tick +
@@ -7804,6 +7902,8 @@ extern "C" void RB_Vulkan_Shutdown(void)
         if (g.rtAccumMem)   vkFreeMemory(g.device, g.rtAccumMem, nullptr);
         if (g.rtReadback)   vkDestroyBuffer(g.device, g.rtReadback, nullptr);
         if (g.rtReadbackMem) vkFreeMemory(g.device, g.rtReadbackMem, nullptr);
+        if (g.shotBuf)      vkDestroyBuffer(g.device, g.shotBuf, nullptr);   // DOOM-0202
+        if (g.shotBufMem)   vkFreeMemory(g.device, g.shotBufMem, nullptr);
         // GI bake pipeline (step 4b-ii).
         if (g.bakePipeline)   vkDestroyPipeline(g.device, g.bakePipeline, nullptr);
         if (g.bakePipeLayout) vkDestroyPipelineLayout(g.device, g.bakePipeLayout, nullptr);

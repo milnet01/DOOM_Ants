@@ -309,17 +309,20 @@ with friends.
   Kind: fix.
   Source: in-session-2026-07-04 (Windows deploy for user play-test).
 
-- 💭 [DOOM-0202] **Offscreen screenshot / golden-image visual-regression harness (-shotverify).**
+- 🚧 [DOOM-0202] **Offscreen screenshot / golden-image visual-regression harness (-shotverify).**
   Most of this project's renderer work is verified by launching and eyeballing; the only automated visual net is -rtverify (a NUMERIC direct-light rel-MSE + white-furnace proof, not a look check). Two pain points motivate this: (1) no automated catch for look regressions (a wrong composite, a broken tonemap, a mis-placed sprite) short of manual play-test; (2) headless self-verify is fragile — 2026-07-18 the xdotool/import recipe broke because SDL opened a native Wayland surface with no X window to capture (see [[doom-ants-launch-screenshot-harness]]). Proposal: a -shotverify mode that, like -rtverify, renders a deterministic set of fixed camera views (per tier: Classic / Solid / Ultra) to PNG on disk via an OFFSCREEN render target (no window/desktop dependency) and exit()s; a committed set of golden PNGs + a perceptual diff (e.g. per-pixel or SSIM threshold) flags regressions. Reuses the -rtverify determinism + first-present harness. Enables both CC and CI to self-verify the LOOK with zero window/input tooling. Suggestion only — scope the golden-image storage (git-LFS vs small refs) in design. Pairs with the CI suggestion below.
   **Layman:** A way for the engine to render a few fixed scenes straight to image files (no window needed) and automatically compare them against saved 'known-good' pictures — so a graphics change that accidentally breaks the look gets caught automatically instead of only by someone staring at the screen.
   Kind: test.
   Source: in-session-2026-07-18 (CC suggestion, for user review).
+  Approved by user 2026-07-18 for implementation.
+  First cut IMPLEMENTED + self-verified headlessly 2026-07-18. `-shotverify [path]` renders the Ultra RT view for kShotWarmup(45) frames (SVGF settle on the static spawn view), copies the final display image (finalImage, R8G8B8A8_UNORM, display-res, already TRANSFER_SRC at the swapchain blit) into a host-visible buffer, writes a PNG (vendored stb_image_write.h v1.16, implemented in rb_image.c per ADR 0002), and exits; a watchdog bails if the RT view never becomes ready. Debug label (DENOISED/PROFILER) suppressed during capture so goldens are clean. VERIFIED on RX 6600: -warp 1 1 Ultra wrote a correct 3840x2160 PNG (colours right — no channel swap; HD materials + denoise clean), build + `make test` green, -rtverify still PASS. Crucially this RESTORES headless visual self-verify (SDL now opens a Wayland surface xdotool/import can't drive — see [[doom-ants-launch-screenshot-harness]]); -shotverify needs no window to drive, only the offscreen copy. Harness gotcha: the game launch must be a foreground `timeout N ./linuxxdoom ... 2>&1 | grep` pipeline — file-redirect / trailing-command / `&` / foreground-`sleep` forms get killed by the harness with no output. REMAINING (still open under this ID): (1) raster/Solid + Classic tier capture (raster renders straight into the swapchain with no TRANSFER_SRC image — read back the swapchain image or add a capture target); (2) the golden-image DIFF + reference store (perceptual/SSIM threshold) that makes it a true regression gate; (3) fixed-resolution offscreen render so goldens don't depend on window size; (4) CI wiring (DOOM-0203).
 
-- 💭 [DOOM-0203] **Minimal CI on push: build + make test + headless smoke.**
+- 📋 [DOOM-0203] **Minimal CI on push: build + make test + headless smoke.**
   There is no automated build/test gate today — breakage is only caught locally. The repo is a PUBLIC GitHub repo (free Linux Actions minutes per [[push-freely-public-repo]]), so a lightweight workflow is essentially free. Proposal (first cut, CPU-only): on push/PR, run make + make test + a software-renderer headless boot smoke (SDL dummy drivers, warp a level, no crash — the recipe already used for early headless checks). Caveat: the GPU paths (Vulkan RT -rtverify, and the -shotverify Ultra views above) need a GPU runner — GitHub's hosted runners have none, so RT/visual gates would be a self-hosted-runner (the user's RX 6600 box) stretch goal, kept OPTIONAL and manual-dispatch to avoid burning the user's machine on every push. Respect the push-cadence rules (§6): CI is a gate, not a reason to auto-push. Suggestion only.
   **Layman:** Set up an automatic check that compiles the game and runs the tests every time code is pushed, so a change that fails to build or breaks a test is caught immediately — the repo is public, so this is free.
   Kind: chore.
   Source: in-session-2026-07-18 (CC suggestion, for user review).
+  Approved by user 2026-07-18 for implementation.
 
 ## Phase 2 — The Spin
 
@@ -1793,20 +1796,23 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: fix.
   Source: in-session-2026-07-17 (surfaced during DOOM-0074 hardware verify).
 
-- 💭 [DOOM-0199] **In-game Video / RT settings menu to surface the hidden renderer toggles.**
+- 📋 [DOOM-0199] **In-game Video / RT settings menu to surface the hidden renderer toggles.**
   The RT/raster renderer has grown a pile of runtime toggles that today are ALL undocumented single-key shortcuts or ~/.doomrc hand-edits, undiscoverable to a normal player: render tier (Classic/Solid/Ultra), rt_view raster-vs-denoised (~), de-tile ] , filth [ , wet-liquid ' , SSAO, render-scale, flashlight (F). Proposal: a new 'Video' / 'Ultra (RT)' submenu under the existing Options menu (reuse the m_menu.c machinery + gamepad nav already used by DOOM-0060's game-select picker), with on/off rows + a render-scale and FOV slider, persisted through the normal default-config path. Value: makes the whole DOOM-0042/0181/0183/L2 feature set actually reachable and configurable by the user, and gives a single discoverable home for future toggles. Suggestion only — scope/needs design + a /cold-eyes spec pass before implementing.
   **Layman:** Add a proper Options screen for the new graphics features, so you can turn them on/off from a menu instead of memorising secret keyboard keys or hand-editing a config file.
   Kind: ux.
   Source: in-session-2026-07-18 (CC suggestion, for user review).
+  Approved by user 2026-07-18 for implementation.
 
-- 💭 [DOOM-0200] **Optional mouse / free look (vertical aim) for the Solid and Ultra 3D views.**
+- 📋 [DOOM-0200] **Optional mouse / free look (vertical aim) for the Solid and Ultra 3D views.**
   Classic DOOM has no vertical aim (auto-aim only). With the true-3D Solid/Ultra renderers a look-up/down freelook becomes meaningful and is a common modern-source-port comfort feature. Proposal: an OPTIONAL, default-OFF freelook (pitch) bound to the mouse (and a right-stick option on gamepad), gated by a menu toggle (pairs with the settings-menu suggestion above). Must respect the aesthetic north-star ([[rt-aesthetic-north-star]]): keep the classic feel — so default off, and auto-aim stays authoritative for weapon targeting even when the camera pitches. Open questions to settle in design: does pitch affect projectile/hitscan aim or camera-only; sprite-billboard behaviour under pitch (relates to DOOM-0100/0080). Suggestion only.
   **Layman:** Now that the world is truly 3D, optionally let the player look up and down with the mouse — but off by default so classic DOOM still feels like classic DOOM.
   Kind: feature.
   Source: in-session-2026-07-18 (CC suggestion, for user review).
+  Approved by user 2026-07-18 for implementation.
 
-- 💭 [DOOM-0201] **Distance-attenuated, camera-relative 3D positional audio in the 3D views.**
+- 📋 [DOOM-0201] **Distance-attenuated, camera-relative 3D positional audio in the 3D views.**
   Audio today is SDL_mixer with stereo panning + a rough distance rolloff driven by the classic 2D S_sound.c model (see [[doom-ants-audio-architecture]]). With a true-3D camera we can drive panning + attenuation from the actual 3D listener orientation (yaw, and pitch if freelook lands) and 3D source position for a more convincing spatial mix — still via Mix_SetPanning / Mix_Volume on the same device (never a second device / custom mixer — that regressed on Windows before). Cheap-wins framing: better directional panning + smoother distance curve first; HRTF / occlusion (sound muffled through walls) is a bigger, later step. Suggestion only — verify how much of S_UpdateSounds already carries the needed geometry before scoping.
   **Layman:** Make sounds feel like they come from the right direction and fade with distance in the 3D modes — footsteps behind you sound behind you.
   Kind: feature.
   Source: in-session-2026-07-18 (CC suggestion, for user review).
+  Approved by user 2026-07-18 for implementation.

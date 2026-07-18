@@ -19,6 +19,17 @@
 #include "stb_image.h"
 #pragma GCC diagnostic pop
 
+/* DOOM-0202: PNG *writer* (stbi_write_png), used by the -shotverify headless
+   screenshot / visual-regression capture in r_vulkan.cpp. Same vendored-stb
+   pattern as the loader above (ADR docs/decisions/0002). Implementation lives
+   here so the 1.7k-line header is compiled once in this small C TU, not in the
+   big r_vulkan.cpp; r_vulkan.cpp just declares stbi_write_png extern "C". */
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#include "stb_image_write.h"
+#pragma GCC diagnostic pop
+
 int rb_image_load(const char* path, rb_image_t* out) {
     int w = 0, h = 0, comp = 0;
     unsigned char* p = stbi_load(path, &w, &h, &comp, 4);   /* force RGBA */
