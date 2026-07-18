@@ -920,14 +920,18 @@ extern "C" { int rb_wet = 1; }
 int rb_rtverify = -1;
 
 // DOOM-0202: -shotverify headless screenshot / visual-regression latch. Set from the
-// `-shotverify [path]` parm; renders the Ultra RT view for kShotWarmup frames (so the
-// SVGF denoiser converges on the static spawn view), copies the final display image to
-// a PNG, and exits. -1 = unchecked, 0 = off, 1 = armed. First cut is Ultra-only (the
-// raster/Solid path renders straight into the swapchain with no TRANSFER_SRC image to
-// copy — a follow-up). A watchdog gives up if the RT view never becomes ready.
+// `-shotverify [path]` OR `-shotcompare <ref.png>` parm; renders the Ultra RT view for
+// kShotWarmup frames (so the SVGF denoiser converges on the static spawn view), copies
+// the final display image, and exits. -1 = unchecked, 0 = off, 1 = armed. First cut is
+// Ultra-only (the raster/Solid path renders straight into the swapchain with no
+// TRANSFER_SRC image to copy — a follow-up). A watchdog gives up if the RT view never
+// becomes ready. -shotverify writes a full-res PNG (eyeballing); -shotcompare is the
+// automated regression gate (downscaled golden + mean-abs-error threshold, below).
 int rb_shotverify = -1;
-static const int kShotWarmup   = 45;    // rendered RT frames before capture (denoiser settle)
-static const int kShotGiveUp   = 600;   // presents while armed w/o an RT frame -> bail (misconfig)
+static const int    kShotWarmup = 45;    // rendered RT frames before capture (denoiser settle)
+static const int    kShotGiveUp = 600;   // presents while armed w/o an RT frame -> bail (misconfig)
+static const int    kGoldenEdge = 640;   // -shotcompare: canonical golden longest edge (git-friendly)
+static const double kGoldenMAE  = 3.0;   // -shotcompare: max mean-abs-error (0..255) before FAIL
 
 // Verify accumulator resolution — small + fixed (independent of the swapchain) so
 // the high-sample-count convergence runs in well under a second per estimator.
@@ -7358,7 +7362,7 @@ extern "C" void RB_Vulkan_Present(void)
     // bails if the RT view never becomes ready (launched in Solid, or no level warped in),
     // so a misconfigured run exits instead of spinning forever.
     if (rb_shotverify < 0)
-        rb_shotverify = M_CheckParm("-shotverify") ? 1 : 0;
+        rb_shotverify = (M_CheckParm("-shotverify") || M_CheckParm("-shotcompare")) ? 1 : 0;
     g.shotCapture = false;
     if (rb_shotverify == 1)
     {
@@ -7818,19 +7822,70 @@ extern "C" void RB_Vulkan_Present(void)
     else if (pr != VK_SUCCESS)
         Fail("vkQueuePresentKHR", pr);
 
-    // DOOM-0202: -shotverify write + exit. The capture copy was recorded into the frame
-    // just submitted; wait for the GPU to finish, then read the host-visible buffer and
-    // write a PNG. Output path = the arg after -shotverify (when present and not another
-    // flag), else "shotverify.png" in the cwd. One-shot: the process exits after writing.
+    // DOOM-0202: -shotverify write / -shotcompare gate + exit. The capture copy was
+    // recorded into the frame just submitted; wait for the GPU to finish, then read the
+    // host-visible buffer. One-shot: the process exits after writing / comparing.
     if (g.shotCapture && g.shotBuf)
     {
         vkDeviceWaitIdle(g.device);
+        void* mapped = nullptr;
+        Check(vkMapMemory(g.device, g.shotBufMem, 0, VK_WHOLE_SIZE, 0, &mapped), "vkMapMemory(shot)");
+
+        int cmp = M_CheckParm("-shotcompare");
+        if (cmp)
+        {
+            // Automated regression gate. Downscale the capture to a small, git-friendly
+            // canonical size (reusing rb_image.c's box filter), then either bootstrap the
+            // golden (ref missing — first run) or compare against it. Metric: mean-abs-error
+            // over RGB (alpha is a constant 255). Exit: 0 = pass/bootstrap, 3 = fail, 1 = i/o.
+            const char* ref = (cmp + 1 < myargc && myargv[cmp + 1][0] != '-')
+                              ? myargv[cmp + 1] : "shotgolden.png";
+            // Copy the mapped GPU buffer into a malloc'd rb_image_t (downscale frees it).
+            rb_image_t cap;
+            cap.w = (int)g.shotW; cap.h = (int)g.shotH;
+            size_t nbytes = (size_t)cap.w * cap.h * 4;
+            cap.pixels = (unsigned char*)malloc(nbytes);
+            if (cap.pixels) memcpy(cap.pixels, mapped, nbytes);
+            vkUnmapMemory(g.device, g.shotBufMem);
+            if (!cap.pixels) { fprintf(stderr, "[shotverify] OOM copying %zu-byte capture\n", nbytes); exit(1); }
+            rb_image_downscale_max(&cap, kGoldenEdge);
+
+            rb_image_t golden;
+            if (!rb_image_load(ref, &golden))
+            {
+                int ok = stbi_write_png(ref, cap.w, cap.h, 4, cap.pixels, cap.w * 4);
+                if (ok) printf("[shotverify] wrote golden %s (%dx%d) — commit it, re-run to gate\n",
+                               ref, cap.w, cap.h);
+                else    fprintf(stderr, "[shotverify] failed to write golden %s\n", ref);
+                free(cap.pixels);
+                fflush(stdout);
+                exit(ok ? 0 : 1);
+            }
+            if (golden.w != cap.w || golden.h != cap.h)
+            {
+                fprintf(stderr, "[shotverify] FAIL size mismatch: golden %dx%d vs capture %dx%d "
+                                "(delete %s to re-bootstrap)\n", golden.w, golden.h, cap.w, cap.h, ref);
+                rb_image_free(&golden); free(cap.pixels); fflush(stderr); exit(3);
+            }
+            double sum = 0.0; size_t n = (size_t)cap.w * cap.h;
+            for (size_t i = 0; i < n; i++)
+                for (int c = 0; c < 3; c++)
+                    sum += fabs((double)cap.pixels[i * 4 + c] - (double)golden.pixels[i * 4 + c]);
+            double mae = sum / (double)(n * 3);
+            rb_image_free(&golden); free(cap.pixels);
+            int pass = (mae <= kGoldenMAE);
+            printf("[shotverify] %s mae=%.3f (threshold %.3f, %dx%d) vs %s\n",
+                   pass ? "PASS" : "FAIL", mae, kGoldenMAE, cap.w, cap.h, ref);
+            fflush(stdout);
+            exit(pass ? 0 : 3);
+        }
+
+        // Plain -shotverify: full-res PNG for eyeballing. Path = the arg after -shotverify
+        // (when present and not another flag), else "shotverify.png" in the cwd.
         const char* path = "shotverify.png";
         int p = M_CheckParm("-shotverify");
         if (p && p + 1 < myargc && myargv[p + 1][0] != '-')
             path = myargv[p + 1];
-        void* mapped = nullptr;
-        Check(vkMapMemory(g.device, g.shotBufMem, 0, VK_WHOLE_SIZE, 0, &mapped), "vkMapMemory(shot)");
         int ok = stbi_write_png(path, (int)g.shotW, (int)g.shotH, 4, mapped, (int)g.shotW * 4);
         vkUnmapMemory(g.device, g.shotBufMem);
         if (ok) printf("[shotverify] wrote %s (%ux%u, Ultra RT)\n", path, g.shotW, g.shotH);
