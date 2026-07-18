@@ -1,7 +1,10 @@
 # DOOM-0206 — Redesigned in-game menu for the 3D tiers (crisp font, HUD-safe, dimmed backdrop)
 
-Status: DRAFT (awaiting /cold-eyes loop, then user review).
-Kind: feature. Tier: Solid + Ultra only — Classic is untouched.
+Status: DRAFT (cold-eyes: 5 loops complete; Classic-caveat + INV-7 additions
+post-date loop 5 and are not yet cold-reviewed).
+Kind: feature. Tier: the crisp glyph skin + dim backdrop + Video consolidation
+are Solid/Ultra only; Classic gets ONLY the two shared fixes — HUD-safe bound +
+uniform per-menu font size — and otherwise keeps its authentic bitmap/red menu.
 Depends on / reuses: DOOM-0205 (Render Effects toggles + handlers), the Vulkan
 2D overlay composite (r_vulkan.cpp), the classic menu engine (m_menu.c).
 
@@ -34,11 +37,17 @@ modern instead of the chunky, cluttered classic overlay:
   requirement. Scroll the list if it does not fit above the status bar.
 - **Surfaces every render toggle** (including Ray Tracing, currently reachable
   only by the `~` hotkey with no menu entry), grouped for scannability.
-- **Classic tier keeps its authentic 1997 red menu, byte-for-byte unchanged.**
+- **Classic tier keeps its authentic 1997 red bitmap menu** — but with the two
+  cross-tier user fixes applied: it must not overlap the HUD (scroll if needed),
+  and each menu is a single font size (its mixed big-red item lumps rendered at
+  the uniform row size, reducing size if needed). No crisp glyph font, dim, or
+  Video consolidation in Classic.
 
-Non-goals (YAGNI): no new navigation paradigm (tabs/side-panels), no menu
-restructuring beyond grouping the render settings, no re-theming of the big red
-graphic-lump title art (the `DOOM` logo + `New Game`/`Options` art stay).
+Non-goals (YAGNI): no new navigation paradigm (tabs/side-panels); no menu
+restructuring beyond grouping the render settings; in Classic, no glyph font / no
+dim / no consolidation, and the big red *title* art (the `DOOM` logo, the main /
+episode / skill screens) is left as-is in v1 — only the two shared fixes touch
+Classic.
 
 ## 2. Where this sits
 
@@ -67,16 +76,26 @@ Confirmed on hardware (user screenshots, 2026-07-18, Ultra):
 
 ## 4. Design
 
-### 4.1 Two menu skins, one menu engine
+### 4.1 One menu engine — shared fixes + a 3D-only crisp skin
 
 Keep `m_menu.c`'s state machine (item lists, cursor, input, persistence) as the
-single source of truth — no second menu system. Add a **skin** decision at draw
-time:
+single source of truth — no second menu system. The redesign is two layers:
 
-- **Classic tier** (`rendermode == RB_CLASSIC`): the existing `M_Drawer` /
-  `M_WriteText` / `V_DrawPatch` path, unchanged.
-- **Solid/Ultra** (`RB_RASTER3D` / `RB_RT3D`): the affected menus draw through
-  the new crisp path (§4.2) on a dimmed backdrop (§4.3).
+**Shared across ALL tiers (Classic included) — user requirement:**
+- **HUD-safe bound** (§4.3, INV-2): no menu ever draws over the status bar; if a
+  menu is taller than the space above the bar, it scrolls (§4.4).
+- **Uniform font size per menu** (INV-7): within any one menu, all text is one
+  size. In Classic this means the menus that today mix big-red graphic-lump
+  labels (`M_MESSG`, `M_SVOL`, …) with small `hu_font` rows (Options, Sound)
+  render those labels at the uniform row size instead — the user accepted
+  reducing the existing font size. Classic otherwise keeps its bitmap font and
+  red styling.
+
+**Crisp skin — Solid/Ultra only:** on top of the two shared fixes, the 3D tiers
+additionally get the display-resolution glyph font (§4.2), the dimmed backdrop
+(§4.3), and the consolidated `VideoDef` menu (§4.5). Classic gets **none** of
+those three — it stays bitmap/red, just HUD-safe and uniform-size. The skin is
+chosen at draw time on `rendermode`.
 
 Scope of the crisp skin v1: the **new consolidated Video menu (`VideoDef`)
 only**. `OptionsDef` and `SoundDef` keep the classic path in v1 — their row
@@ -123,20 +142,26 @@ highlight. The skull stays its existing paletted patch lump (`M_SKULL*` via
 coordinates; only the menu *text* is glyph-rendered (the skull is not converted
 to a glyph).
 
-### 4.3 Dimmed backdrop + the HUD-safe bound (hard rule)
+### 4.3 The HUD-safe bound (all tiers) + dimmed backdrop (3D only)
 
-When a skinned menu is active in a 3D tier:
+**HUD-safe bound — every tier (Classic, Solid, Ultra), hard rule (INV-2):**
 
-- Draw a **dim quad over the play-view area only** (the region above the status
-  bar), darkening the 3D scene behind the menu to ~20–25% alpha-over-black so it
-  does not read as clutter. **The status bar is left undimmed and fully visible**
-  (user decision) — the dim never covers it.
-- **The menu content is confined to a safe rectangle that excludes the current
-  status-bar band.** The safe region is the display above the status bar's top
-  edge (the display-space image of the `ST_HEIGHT` band at the current
-  `screenSize`/aspect). No glyph, slider, cursor, or backdrop element is ever
-  positioned inside that band. This is INV-2 and is the user's non-negotiable
-  requirement.
+- **Menu content is confined to a safe rectangle that excludes the current
+  status-bar band.** The safe region is the area above the status bar's top edge
+  (in Classic, the 320×200 rows above `ST_HEIGHT`; in the crisp skin, the
+  display-space image of that band at the current `screenSize`/aspect). No glyph,
+  slider, cursor, or backdrop element is ever positioned inside that band. If the
+  menu is taller than the safe region it scrolls (§4.4). This is the user's
+  non-negotiable requirement, and it applies to **all renderers**.
+
+**Dimmed backdrop — Solid/Ultra only:**
+
+- When a crisp menu is active in a 3D tier, draw a **dim quad over the play-view
+  area only** (the region above the status bar), darkening the 3D scene behind
+  the menu to ~20–25% alpha-over-black so it does not read as clutter. **The
+  status bar is left undimmed and fully visible** (user decision) — the dim never
+  covers it. **Classic has no dim** — it keeps its classic transparent-over-scene
+  look, just HUD-safe and uniform-size.
 - **When no status bar is drawn** — the title/main menu (no game in progress) —
   the excluded band is empty and the safe region is the full screen (with a small
   margin). (In-game the bar is always present: DOOM-0148 caps the view at
@@ -148,8 +173,9 @@ When a skinned menu is active in a 3D tier:
 
 The consolidated Video menu (§4.5) has 15 toggle rows + a Back row (16
 selectable) + 3 group headings = 19 visual rows, and will not fit the safe region
-at a crisp, readable size on a 4:3-height budget. So the crisp skin supports a
-**scrolling viewport**:
+at a crisp, readable size on a 4:3-height budget. So the skin supports a
+**scrolling viewport** — shared by any menu in any tier that exceeds the safe
+region (a tall Classic Options menu uses the same mechanism to stay HUD-safe):
 
 - `scrollTop` is **derived each draw from `itemOn`** (the current cursor index)
   and the safe region's row capacity — it is NOT stored state updated on input,
@@ -323,17 +349,28 @@ path (it happens only on resize, never during play).
   in the HUD band.
 - **L5** — font selection (user picks from samples) + polish (crisp skull cursor,
   drop-shadow, spacing). Verify: user look sign-off.
+- **L6** — apply the two **shared** fixes to **Classic**: the HUD-safe bound
+  (reusing L4's `itemOn`-derived scroll when a Classic menu exceeds the safe
+  region) + uniform per-menu font size (render each menu's mixed big-red item
+  lumps at the uniform row size). Verify: no Classic menu overlaps the status
+  bar; every Classic menu is a single font size; Classic otherwise unchanged (no
+  crisp glyph font, no dim, no `VideoDef`).
 
 ## 8. Invariants
 
-- **INV-1** — Classic tier (`RB_CLASSIC`) menu **rendering and navigation** are
-  unchanged: the crisp skin, the dim backdrop, and the `VideoDef` consolidation
-  are never reached when `rendermode == RB_CLASSIC`. Classic keeps the existing
-  `RendererDef`/`EffectsDef` menus and the classic draw path, byte-for-byte (the
-  tier-conditional entry row routes Classic to `RendererDef`, §4.5).
-- **INV-2** — In a skinned 3D-tier menu, **no menu element (glyph, slider,
-  backdrop panel, indicator) is ever drawn inside the status-bar band.** The
-  list scrolls rather than overrun it. (The user's hard requirement.)
+- **INV-1** — Classic tier (`RB_CLASSIC`) keeps its bitmap-font rendering
+  (`M_WriteText` / `V_DrawPatch`), red styling, and existing menu structure
+  (`RendererDef` / `EffectsDef`, reached via the tier-conditional entry row,
+  §4.5). Classic does **not** get the crisp glyph font, the dimmed backdrop, or
+  the `VideoDef` consolidation. The **only** changes to Classic are the two shared
+  fixes — the HUD-safe bound (INV-2) and uniform per-menu font size (INV-7, which
+  renders its mixed big-red item lumps at the uniform row size). Classic is
+  therefore no longer byte-for-byte identical: a deliberate, minimal change per
+  the user's requirement.
+- **INV-2** — In **every** tier's menu (Classic, Solid, Ultra), **no menu element
+  (glyph, patch, slider, cursor, backdrop, indicator) is ever drawn inside the
+  status-bar band.** The list scrolls rather than overrun it. (The user's hard
+  requirement — all renderers.)
 - **INV-3** — Every render toggle in the DOOM-0205 inventory appears in the
   consolidated Video menu, each bound to the same variable its hotkey flips, so
   menu/hotkey/`~/.doomrc` stay consistent.
@@ -354,11 +391,14 @@ path (it happens only on resize, never during play).
   truetype.h`) are latest-stable, pinned at commit, and recorded in the "Where
   this project's dependencies live" section of `docs/standards/dependencies.md`**
   (not the Version Exception Ledger — dependencies standard / ADR 0002 pattern).
-- **INV-7** — **Uniform font size per menu (user requirement).** Within any one
-  crisp (Solid/Ultra) menu or submenu, *all* text — title, group headings, row
-  labels, and value columns — is rendered at a **single glyph size**. Emphasis
-  (title, headings) is expressed with weight / colour / letter-spacing / caps,
-  **never a different font size**. The size may differ *between* menus if their
+- **INV-7** — **Uniform font size per menu (user requirement, all tiers).**
+  Within any one menu or submenu — Classic, Solid, or Ultra — *all* text (title,
+  group headings, row labels, value columns) is a **single size**. Emphasis is
+  expressed with weight / colour / letter-spacing / caps, **never a different
+  size**. In Classic this means the menus that mix big-red graphic-lump labels
+  with small `hu_font` rows render those labels at the uniform row size (reducing
+  the existing font size, per the user). The size may differ *between* menus if
+  their
   content densities differ, but is constant *within* one menu.
 
 ## 9. Alternatives considered
