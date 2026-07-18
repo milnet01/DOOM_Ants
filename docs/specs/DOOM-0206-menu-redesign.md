@@ -144,7 +144,7 @@ visual rows, and will not fit the safe region at a crisp, readable size on a
 - Because `scrollTop` tracks `itemOn`, the **selected row is always kept in
   view** (auto-scroll), and a small up/down indicator shows when more rows exist
   off-screen.
-- The skull cursor, drawn in `M_Drawer` at `y + itemOn*LINEHEIGHT` today, is
+- The skull cursor, drawn in `M_Drawer` at `y - 5 + itemOn*LINEHEIGHT` today, is
   repositioned into scrolled display coords by the crisp draw path (still
   draw-time, per INV-4). Scrolling changes **no** item indices, input handling,
   or persistence.
@@ -174,7 +174,9 @@ boundary re-routes `currentMenu`: cycling to Classic from `VideoDef` swaps to
 avoids a needless cursor jump). `M_ChangeRenderer` is shared with Classic's
 `RendererDef` tier row, so this edit touches a Classic-reachable handler — but
 the swap only fires on the Classic↔3D transition, so INV-1 (VideoDef never shown
-under `RB_CLASSIC`) holds. The cursor is kept on the tier row across the swap.
+under `RB_CLASSIC`) holds. The cursor is kept on the tier row across the swap by
+setting `itemOn` to the destination's tier-row index — `M_SetupNextMenu` alone
+would restore the destination menu's `lastOn`, which need not be that row.
 
 Ray tracing is an **independent on/off toggle within both 3D tiers**, not a
 property of the tier: `RB_ApplyTierRt` (r_backend.c) sets `rb_rtdebug = 0` for
@@ -234,7 +236,7 @@ the new Ray Tracing row, which needs a **new `M_ChangeRayTracing` handler**
   interactive), and Enter still fires the routine (INV-4 forbids touching
   `M_Responder`). Therefore "greyed" is **visual only**, and `M_ChangeRayTracing`
   **no-ops (returns early) when `rb_rtdebug_menu` is set** — that developer mode
-  owns `rb_rtdebug` and cycles it through `{1,2,3,4}`.
+  owns `rb_rtdebug` and cycles it through its diagnostic set `{0,1,2,3,4,6}`.
 - **Ray Tracing in Solid is a per-session choice.** Although `rb_rtdebug`
   persists (`rt_view`), `RB_ApplyTierRt` runs at boot (`RB_Init`) and on every
   tier switch and reclaims the tier default (`0` Solid, `6` Ultra) unless Debug
@@ -288,8 +290,10 @@ path (it happens only on resize, never during play).
 
 - **L1** — `stb_truetype` vendored + glyph atlas bake + the display-res text
   pipeline & API. Verify: a hard-coded test string renders crisp at display res.
-- **L2** — dim backdrop + the HUD-safe bound (INV-2). Verify: a screenshot shows
-  the dim + zero pixels drawn in the status-bar band.
+- **L2** — dim backdrop + the HUD-safe bound (INV-2), gated on "a skinned menu is
+  active in a 3D tier" **independently of the crisp-text routing** (so it is
+  testable before L3 wires the text path). Verify: a screenshot shows the dim +
+  zero pixels drawn in the status-bar band.
 - **L3** — build the consolidated `VideoDef` `menu_t` (all toggles, incl. the new
   Ray Tracing row + its `M_ChangeRayTracing` handler) + the tier-conditional
   entry branch, and route the crisp skin for it and `OptionsDef`/`SoundDef`.
@@ -321,9 +325,9 @@ path (it happens only on resize, never during play).
   does **not** change the existing classic menus' item lists, the `itemOn`
   cursor-*movement* semantics, `M_Responder`, or persistence — those are reused
   unchanged. The entry branch and the tier re-route act only through the existing
-  `M_SetupNextMenu` routing (swapping which `menu_t` is `currentMenu`), never by
-  editing `M_Responder`. The crisp skin, the scroll, and the skull reposition are
-  draw-time only.
+  `M_SetupNextMenu` routing (swapping which `menu_t` is `currentMenu`, plus one
+  `itemOn =` to keep the cursor on the tier row), never by editing `M_Responder`.
+  The crisp skin, the scroll, and the skull reposition are draw-time only.
 - **INV-5** — No change to any path-tracer push-constant, RT resource, or the
   `-rtverify` prefix; `-rtverify` still PASSES unchanged.
 - **INV-6** — The bundled font ships under a GPL-compatible licence with its
