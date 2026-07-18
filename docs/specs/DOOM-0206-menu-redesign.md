@@ -78,8 +78,9 @@ time:
 - **Solid/Ultra** (`RB_RASTER3D` / `RB_RT3D`): the affected menus draw through
   the new crisp path (§4.2) on a dimmed backdrop (§4.3).
 
-Scope of the crisp skin v1: the **text-based** menus (`OptionsDef`, the new
-consolidated Video menu, Sound, Load/Save name rows). The big red graphic-lump
+Scope of the crisp skin v1: the **text-based** menus — `OptionsDef`, the new
+consolidated Video menu, and `SoundDef`. (Load/Save name-entry rows stay on the
+classic path in v1 — a follow-up, so §4.1 and L3 agree.) The big red graphic-lump
 menus (main, episode, skill) keep their art in every tier for v1 — they are
 already large and iconic; restyling them is a follow-up. The crisp path is a
 strict superset draw for the same item data, so a menu that is not yet skinned
@@ -132,9 +133,9 @@ When a skinned menu is active in a 3D tier:
 
 ### 4.4 Scrolling when the list is taller than the safe region
 
-The consolidated Video menu (§4.5) has ~17 rows + group headings and will not
-fit the safe region at a crisp, readable size on a 4:3-height budget. So the
-crisp skin supports a **scrolling viewport**:
+The consolidated Video menu (§4.5) has 16 toggle rows + 3 group headings = 19
+visual rows, and will not fit the safe region at a crisp, readable size on a
+4:3-height budget. So the crisp skin supports a **scrolling viewport**:
 
 - `scrollTop` is **derived each draw from `itemOn`** (the current cursor index)
   and the safe region's row capacity — it is NOT stored state updated on input,
@@ -157,19 +158,23 @@ crisp skin supports a **scrolling viewport**:
 
 Add one grouped **Video** `menu_t` (`VideoDef`) for the 3D tiers that reuses the
 existing item handlers (incl. DOOM-0205's `M_Change*`) and adds the missing
-**Ray Tracing** row. **Entry is tier-conditional:** the Options-menu "Renderer"
-row opens `VideoDef` in the 3D tiers and the existing `RendererDef` in Classic —
-a one-line `rendermode` branch in that row's handler, the only navigation change
-(the classic menus stay intact for Classic, per INV-1).
+**Ray Tracing** row. **Entry is tier-conditional:** the Options menu's entry row
+— relabelled **"Video"** (from today's "Renderer") to avoid clashing with the
+tier-selector row inside — opens `VideoDef` in the 3D tiers and the existing
+`RendererDef` in Classic, via a `rendermode` branch in that row's handler
+(`M_RendererMenu`). This branch and the tier re-route below are the navigation
+edits; the classic menus stay intact for Classic (INV-1).
 
-**Tier changes re-route the menu.** The `Renderer` row reuses `M_ChangeRenderer`
-(→ `RB_SetMode`, cycling Classic→Solid→Ultra). Because tier and menu-skin are
-coupled, changing the tier immediately re-routes `currentMenu` to that tier's
-menu — cycling to Classic from `VideoDef` swaps to `RendererDef` (classic skin);
-cycling to a 3D tier from `RendererDef` swaps to `VideoDef` — cursor kept on the
-Renderer row. This closes the "sitting in VideoDef under Classic" hole and keeps
-INV-1 (VideoDef never shown under `RB_CLASSIC`); it is the same tier-conditional
-routing as the entry branch (INV-4).
+**Tier changes re-route the menu.** The in-menu tier-selector row reuses
+`M_ChangeRenderer` (→ `RB_SetMode`, cycling Classic→Solid→Ultra). Because the
+*skin* is tied to the tier, a tier change that crosses the **Classic↔3D**
+boundary re-routes `currentMenu`: cycling to Classic from `VideoDef` swaps to
+`RendererDef` (classic skin); cycling to a 3D tier from `RendererDef` swaps to
+`VideoDef`. A **Solid↔Ultra** change keeps the same `VideoDef` (no re-route —
+avoids a needless cursor jump). `M_ChangeRenderer` is shared with Classic's
+`RendererDef` tier row, so this edit touches a Classic-reachable handler — but
+the swap only fires on the Classic↔3D transition, so INV-1 (VideoDef never shown
+under `RB_CLASSIC`) holds. The cursor is kept on the tier row across the swap.
 
 Ray tracing is an **independent on/off toggle within both 3D tiers**, not a
 property of the tier: `RB_ApplyTierRt` (r_backend.c) sets `rb_rtdebug = 0` for
@@ -216,18 +221,20 @@ scrolls (§4.4):
 Every row maps to an existing config-bound `rb_*`/engine variable (§ the
 DOOM-0205 inventory), so menu, hotkey and `~/.doomrc` stay in lockstep — except
 the new Ray Tracing row, which needs a **new `M_ChangeRayTracing` handler**
-(there is none today; `rb_rtdebug` is currently written by config load
-(`rt_view`), the `RB_Init` clamp, `RB_ApplyTierRt`, and the `~` key — but never a
-menu row). Ray Tracing row contract:
+(there is none today — `rb_rtdebug` is currently written by config load
+(`rt_view`), the `RB_Init` clamp, `RB_ApplyTierRt`, `M_ChangeDebugViews`, and the
+`~` key, but by no dedicated RT on/off row). Ray Tracing row contract:
 
 - **On ⇔ `rb_rtdebug == 6`, Off ⇔ `rb_rtdebug == 0`**; `M_ChangeRayTracing`
   toggles between those two values.
 - **Greyed while Debug Views (`rb_rtdebug_menu`) is On.** The engine's
-  `menuitem_t.status` has no "disabled" state (only 1 / 2 / -1), so the cursor
-  can still land on the row and Enter still fires the routine (INV-4 forbids
-  touching `M_Responder`). Therefore "greyed" is **visual only**, and
-  `M_ChangeRayTracing` **no-ops (returns early) when `rb_rtdebug_menu` is set** —
-  that developer mode owns `rb_rtdebug` and cycles it through `{1,2,3,4}`.
+  `menuitem_t.status` has no "disabled" state (0 = inert/no-cursor, 1 = normal,
+  2 = slider, -1 = skipped spacer; only -1 is skipped by cursor movement). The
+  row stays `status == 1` (so the cursor still lands and it reads as
+  interactive), and Enter still fires the routine (INV-4 forbids touching
+  `M_Responder`). Therefore "greyed" is **visual only**, and `M_ChangeRayTracing`
+  **no-ops (returns early) when `rb_rtdebug_menu` is set** — that developer mode
+  owns `rb_rtdebug` and cycles it through `{1,2,3,4}`.
 - **Ray Tracing in Solid is a per-session choice.** Although `rb_rtdebug`
   persists (`rt_view`), `RB_ApplyTierRt` runs at boot (`RB_Init`) and on every
   tier switch and reclaims the tier default (`0` Solid, `6` Ultra) unless Debug
@@ -241,11 +248,12 @@ menu row). Ray Tracing row contract:
 ## 5. Data & resources
 
 - **Font file**: **Oxanium** (SIL OFL, GPL-compatible) — user-selected. A clean,
-  slightly techy sci-fi sans. Use the latest stable release, pinned at commit for
-  reproducibility; commit the `.ttf` (~50–200 KB) with its OFL licence file, and
-  **record it in the "Where this project's dependencies live" section of
-  `docs/standards/dependencies.md`** (where stb_image is recorded — NOT the
-  Version Exception Ledger, which is only for temporary older-version holds).
+  slightly techy sci-fi sans. Use the **latest stable release**; commit the
+  `.ttf` (~50–200 KB) with its OFL licence file, and **record its version in the
+  "Where this project's dependencies live" section of
+  `docs/standards/dependencies.md`** (where stb_image is recorded, and re-checked
+  on the dependency sweep — NOT the Version Exception Ledger, which is only for
+  temporary older-version holds).
   Samples still rendered at L5 for final on-hardware confirmation; Oxanium is the
   locked default.
 - **`stb_truetype.h`**: vendored single-header (public domain), latest stable
@@ -307,12 +315,15 @@ path (it happens only on resize, never during play).
   consolidated Video menu, each bound to the same variable its hotkey flips, so
   menu/hotkey/`~/.doomrc` stay consistent.
 - **INV-4** — The redesign ADDS a new consolidated `VideoDef` `menu_t` (its item
-  array + a new `M_ChangeRayTracing` handler + the tier-conditional entry branch)
-  and a crisp draw skin + `itemOn`-derived scrolling. It does **not** change the
-  existing classic menus' item lists, the `currentMenu`/`itemOn` cursor
-  semantics, `M_Responder` input handling, or persistence — those are reused
-  unchanged. The crisp skin, the scroll, and the skull reposition are draw-time
-  only (no input-path edits).
+  array + a new `M_ChangeRayTracing` handler + the tier-conditional entry branch
+  in `M_RendererMenu` + a `currentMenu` re-route in `M_ChangeRenderer` on a
+  Classic↔3D tier change) and a crisp draw skin + `itemOn`-derived scrolling. It
+  does **not** change the existing classic menus' item lists, the `itemOn`
+  cursor-*movement* semantics, `M_Responder`, or persistence — those are reused
+  unchanged. The entry branch and the tier re-route act only through the existing
+  `M_SetupNextMenu` routing (swapping which `menu_t` is `currentMenu`), never by
+  editing `M_Responder`. The crisp skin, the scroll, and the skull reposition are
+  draw-time only.
 - **INV-5** — No change to any path-tracer push-constant, RT resource, or the
   `-rtverify` prefix; `-rtverify` still PASSES unchanged.
 - **INV-6** — The bundled font ships under a GPL-compatible licence with its
