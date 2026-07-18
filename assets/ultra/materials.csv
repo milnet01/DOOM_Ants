@@ -14,3 +14,11 @@ FLOOR4_8,hero,heroes/floor/FLOOR4_8_alb.png,heroes/floor/FLOOR4_8_nrm.png,,,hero
 FLOOR5_1,hero,heroes/floor/FLOOR5_1_alb.png,heroes/floor/FLOOR5_1_nrm.png,,,heroes/floor/FLOOR5_1_ao.png,,heroes/floor/FLOOR5_1_hgt.png,1.0,noPom
 FLOOR5_2,hero,heroes/floor/FLOOR5_2_alb.png,heroes/floor/FLOOR5_2_nrm.png,,,heroes/floor/FLOOR5_2_ao.png,,heroes/floor/FLOOR5_2_hgt.png,1.0,noPom
 TEKWALL1,derive,,,,,,,,1.0,pom
+# --- DOOM-0042 T17 coverage batch 2 (E1M1 paletted-surface heroes) ---
+STARTAN1,hero,heroes/tech/STARTAN1_alb.png,heroes/tech/STARTAN1_nrm.png,,,heroes/tech/STARTAN1_ao.png,,heroes/tech/STARTAN1_hgt.png,1.0,pom
+BROWN96,hero,heroes/brownmetal/BROWN96_alb.png,heroes/brownmetal/BROWN96_nrm.png,,,heroes/brownmetal/BROWN96_ao.png,,heroes/brownmetal/BROWN96_hgt.png,1.0,pom
+STEP6,hero,heroes/metal/STEP6_alb.png,heroes/metal/STEP6_nrm.png,,,heroes/metal/STEP6_ao.png,,heroes/metal/STEP6_hgt.png,1.0,noPom
+CEIL3_5,hero,heroes/ceil/CEIL3_5_alb.png,heroes/ceil/CEIL3_5_nrm.png,,,heroes/ceil/CEIL3_5_ao.png,,heroes/ceil/CEIL3_5_hgt.png,1.0,noPom
+FLOOR7_2,hero,heroes/floor/FLOOR7_2_alb.png,heroes/floor/FLOOR7_2_nrm.png,,,heroes/floor/FLOOR7_2_ao.png,,heroes/floor/FLOOR7_2_hgt.png,1.0,noPom
+FLOOR7_1,hero,heroes/floor/FLOOR7_1_alb.png,heroes/floor/FLOOR7_1_nrm.png,,,heroes/floor/FLOOR7_1_ao.png,,heroes/floor/FLOOR7_1_hgt.png,1.0,noPom
+FLAT20,hero,heroes/floor/FLAT20_alb.png,heroes/floor/FLAT20_nrm.png,,,heroes/floor/FLAT20_ao.png,,heroes/floor/FLAT20_hgt.png,1.0,noPom

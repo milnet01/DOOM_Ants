@@ -52,3 +52,33 @@ assets/ultra/heroes/floor/FLOOR5_2_alb.png  https://polyhaven.com/a/concrete_flo
 assets/ultra/heroes/floor/FLOOR5_2_nrm.png  https://polyhaven.com/a/concrete_floor_worn_001  CC0
 assets/ultra/heroes/floor/FLOOR5_2_hgt.png  https://polyhaven.com/a/concrete_floor_worn_001  CC0
 assets/ultra/heroes/floor/FLOOR5_2_ao.png  https://polyhaven.com/a/concrete_floor_worn_001  CC0
+
+# DOOM-0042 T17 coverage batch 2 (E1M1 paletted-surface heroes)
+assets/ultra/heroes/tech/STARTAN1_alb.png  https://polyhaven.com/a/metal_plate_02  CC0
+assets/ultra/heroes/tech/STARTAN1_nrm.png  https://polyhaven.com/a/metal_plate_02  CC0
+assets/ultra/heroes/tech/STARTAN1_ao.png  https://polyhaven.com/a/metal_plate_02  CC0  (ao baked from _hgt by scripts/hero_ao.py)
+assets/ultra/heroes/tech/STARTAN1_hgt.png  https://polyhaven.com/a/metal_plate_02  CC0
+assets/ultra/heroes/brownmetal/BROWN96_alb.png  https://polyhaven.com/a/rusty_metal_05  CC0
+assets/ultra/heroes/brownmetal/BROWN96_nrm.png  https://polyhaven.com/a/rusty_metal_05  CC0
+assets/ultra/heroes/brownmetal/BROWN96_ao.png  https://polyhaven.com/a/rusty_metal_05  CC0  (ao baked from _hgt by scripts/hero_ao.py)
+assets/ultra/heroes/brownmetal/BROWN96_hgt.png  https://polyhaven.com/a/rusty_metal_05  CC0
+assets/ultra/heroes/metal/STEP6_alb.png  https://polyhaven.com/a/box_profile_metal_sheet  CC0
+assets/ultra/heroes/metal/STEP6_nrm.png  https://polyhaven.com/a/box_profile_metal_sheet  CC0
+assets/ultra/heroes/metal/STEP6_ao.png  https://polyhaven.com/a/box_profile_metal_sheet  CC0  (ao baked from _hgt by scripts/hero_ao.py)
+assets/ultra/heroes/metal/STEP6_hgt.png  https://polyhaven.com/a/box_profile_metal_sheet  CC0
+assets/ultra/heroes/ceil/CEIL3_5_alb.png  https://polyhaven.com/a/painted_concrete_02  CC0
+assets/ultra/heroes/ceil/CEIL3_5_nrm.png  https://polyhaven.com/a/painted_concrete_02  CC0
+assets/ultra/heroes/ceil/CEIL3_5_ao.png  https://polyhaven.com/a/painted_concrete_02  CC0  (ao baked from _hgt by scripts/hero_ao.py)
+assets/ultra/heroes/ceil/CEIL3_5_hgt.png  https://polyhaven.com/a/painted_concrete_02  CC0
+assets/ultra/heroes/floor/FLOOR7_2_alb.png  https://polyhaven.com/a/grey_tiles  CC0
+assets/ultra/heroes/floor/FLOOR7_2_nrm.png  https://polyhaven.com/a/grey_tiles  CC0
+assets/ultra/heroes/floor/FLOOR7_2_ao.png  https://polyhaven.com/a/grey_tiles  CC0  (ao baked from _hgt by scripts/hero_ao.py)
+assets/ultra/heroes/floor/FLOOR7_2_hgt.png  https://polyhaven.com/a/grey_tiles  CC0
+assets/ultra/heroes/floor/FLOOR7_1_alb.png  https://polyhaven.com/a/interior_tiles  CC0
+assets/ultra/heroes/floor/FLOOR7_1_nrm.png  https://polyhaven.com/a/interior_tiles  CC0
+assets/ultra/heroes/floor/FLOOR7_1_ao.png  https://polyhaven.com/a/interior_tiles  CC0  (ao baked from _hgt by scripts/hero_ao.py)
+assets/ultra/heroes/floor/FLOOR7_1_hgt.png  https://polyhaven.com/a/interior_tiles  CC0
+assets/ultra/heroes/floor/FLAT20_alb.png  https://polyhaven.com/a/brown_floor_tiles  CC0
+assets/ultra/heroes/floor/FLAT20_nrm.png  https://polyhaven.com/a/brown_floor_tiles  CC0
+assets/ultra/heroes/floor/FLAT20_ao.png  https://polyhaven.com/a/brown_floor_tiles  CC0  (ao baked from _hgt by scripts/hero_ao.py)
+assets/ultra/heroes/floor/FLAT20_hgt.png  https://polyhaven.com/a/brown_floor_tiles  CC0

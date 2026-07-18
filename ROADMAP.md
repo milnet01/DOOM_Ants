@@ -1817,3 +1817,18 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: feature.
   Source: in-session-2026-07-18 (CC suggestion, for user review).
   Approved by user 2026-07-18 for implementation.
+
+- 📋 [DOOM-0204] **Palette-lock brightness match so dark DOOM textures don't blow out to a bright HD hero.**
+  Found during DOOM-0042 T17 coverage batch 2. scripts/stage_hero.py
+  tint_to_doom() does `tinted = HD_luma * (doom_mean / doom_lum)` — it
+  preserves the HD SOURCE luminance and only matches DOOM hue. For a bright
+  CC0 source over a very dark DOOM texture the hero blows out (CEIL5_2 =
+  near-black in DOOM came out bright cream-yellow, rejected from the batch;
+  left paletted). Fix: optional brightness match — scale the tinted result so
+  its mean luma ~= DOOM mean luma (e.g. multiply by doom_lum / hd_mean_luma,
+  clamp to avoid crushing). Would let dark ceilings/floors take an HD hero
+  instead of falling back to paletted. Does not touch the 17 already-staged
+  heroes (already on disk). Re-test CEIL5_2 (concrete_wall_003) once added.
+  **Layman:** When we recolour a fancy HD texture to match a DOOM texture's colour, very dark DOOM textures (like the near-black CEIL5_2 ceiling) come out far too bright, because the recolour copies the DOOM hue but keeps the HD photo's brightness. Add an option to also match the DOOM texture's brightness so dark surfaces stay dark.
+  Kind: enhancement.
+  Source: in-session-2026-07-18.
