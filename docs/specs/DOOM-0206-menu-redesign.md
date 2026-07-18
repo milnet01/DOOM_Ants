@@ -104,8 +104,11 @@ Render menu text as textured quads sampled from a glyph atlas, at display res:
 
 Colour: near-white with a subtle dark drop-shadow / outline for legibility over
 the dimmed scene (readability is the stated priority). The **bobbing skull
-cursor is kept** as the selection cue, redrawn crisp alongside the new text
-(user decision) — not an accent-colour row highlight.
+cursor is kept** as the selection cue (user decision) — not an accent-colour row
+highlight. The skull stays its existing paletted patch lump (`M_SKULL*` via
+`V_DrawPatch`), positioned by the crisp path at the selected row's scrolled
+coordinates; only the menu *text* is glyph-rendered (the skull is not converted
+to a glyph).
 
 ### 4.3 Dimmed backdrop + the HUD-safe bound (hard rule)
 
@@ -115,11 +118,17 @@ When a skinned menu is active in a 3D tier:
   bar), darkening the 3D scene behind the menu to ~20–25% alpha-over-black so it
   does not read as clutter. **The status bar is left undimmed and fully visible**
   (user decision) — the dim never covers it.
-- **The menu content is confined to a safe rectangle that excludes the status-
-  bar band.** The safe region is the display above the status bar's top edge
-  (the display-space image of the `ST_HEIGHT` band at the current scale/aspect).
-  No glyph, slider, cursor, or backdrop element is ever positioned inside that
-  band. This is INV-2 and is the user's non-negotiable requirement.
+- **The menu content is confined to a safe rectangle that excludes the current
+  status-bar band.** The safe region is the display above the status bar's top
+  edge (the display-space image of the `ST_HEIGHT` band at the current
+  `screenSize`/aspect). No glyph, slider, cursor, or backdrop element is ever
+  positioned inside that band. This is INV-2 and is the user's non-negotiable
+  requirement.
+- **When no status bar is drawn** — the title/main menu (no game in progress) or
+  a fullscreen view size (`screenblocks` ≥ 11) — the excluded band is empty and
+  the safe region is the full screen (with a small margin). The menu is reachable
+  from the main menu, so this case is real: the bound tracks the *current* bar,
+  not a fixed offset.
 
 ### 4.4 Scrolling when the list is taller than the safe region
 
@@ -138,6 +147,11 @@ crisp skin supports a **scrolling viewport**:
   repositioned into scrolled display coords by the crisp draw path (still
   draw-time, per INV-4). Scrolling changes **no** item indices, input handling,
   or persistence.
+- **Group headings (`— Effects —`, …) are `status == -1` spacer `menuitem_t`
+  rows.** The cursor already skips them (`m_menu.c` does `while(status==-1)` on
+  up/down), and each occupies exactly one visual row — so the layout is a uniform
+  one-row-per-entry list and the `itemOn`→visual-row map (hence `scrollTop`)
+  stays a simple index. No separate heading-positioning logic is needed.
 
 ### 4.5 The consolidated Video menu (every render toggle)
 
@@ -148,6 +162,15 @@ row opens `VideoDef` in the 3D tiers and the existing `RendererDef` in Classic �
 a one-line `rendermode` branch in that row's handler, the only navigation change
 (the classic menus stay intact for Classic, per INV-1).
 
+**Tier changes re-route the menu.** The `Renderer` row reuses `M_ChangeRenderer`
+(→ `RB_SetMode`, cycling Classic→Solid→Ultra). Because tier and menu-skin are
+coupled, changing the tier immediately re-routes `currentMenu` to that tier's
+menu — cycling to Classic from `VideoDef` swaps to `RendererDef` (classic skin);
+cycling to a 3D tier from `RendererDef` swaps to `VideoDef` — cursor kept on the
+Renderer row. This closes the "sitting in VideoDef under Classic" hole and keeps
+INV-1 (VideoDef never shown under `RB_CLASSIC`); it is the same tier-conditional
+routing as the entry branch (INV-4).
+
 Ray tracing is an **independent on/off toggle within both 3D tiers**, not a
 property of the tier: `RB_ApplyTierRt` (r_backend.c) sets `rb_rtdebug = 0` for
 **Solid** (which therefore defaults to the raster / classic flat look) and
@@ -155,6 +178,12 @@ property of the tier: `RB_ApplyTierRt` (r_backend.c) sets `rb_rtdebug = 0` for
 the software renderer with no RT. Enabling RT in Solid yields ray tracing with
 the classic look. So the Ray Tracing row applies to both 3D tiers, greyed only
 in Classic:
+
+Layout is a **single column** — the DOOM cursor is one-dimensional (`itemOn ± 1`
+on up/down; left/right are consumed by sliders and never move the cursor), and
+the skull is drawn in one column. A two-column grid would need `M_Responder` and
+skull-layout changes (violating INV-4), so the list is one item per row and
+scrolls (§4.4):
 
 ```
                     V I D E O
@@ -166,16 +195,20 @@ in Classic:
    Brightness        <slider>
 
    —  Effects  —
-   Flashlight  On       SSAO          On
-   De-tile     4-tap    Dirt & Grime  On
-   Wet Liquid  On
+   Flashlight        On
+   SSAO              On
+   De-tile           4-tap
+   Dirt & Grime      On
+   Wet Liquid        On
 
    —  Display  —
-   Widescreen  On (restart)   Fill Screen  On
-   FPS Counter Top-Right
+   Widescreen        On (restart)
+   Fill Screen       On
+   FPS Counter       Top-Right
 
    —  Developer  —
-   Debug Views Off      Profiler      Off
+   Debug Views       Off
+   Profiler          Off
 
                      Back
 ```
@@ -183,27 +216,41 @@ in Classic:
 Every row maps to an existing config-bound `rb_*`/engine variable (§ the
 DOOM-0205 inventory), so menu, hotkey and `~/.doomrc` stay in lockstep — except
 the new Ray Tracing row, which needs a **new `M_ChangeRayTracing` handler**
-(there is none today; `rb_rtdebug` is written only at its default, the `RB_Init`
-clamp, and the `~` key). Ray Tracing row contract: **On ⇔ `rb_rtdebug == 6`,
-Off ⇔ `rb_rtdebug == 0`**, toggling between those two values. The row is
-**disabled/greyed while Debug Views (`rb_rtdebug_menu`) is On** — that developer
-mode owns `rb_rtdebug` and cycles it through the diagnostic views `{1,2,3,4}`, so
-the On/Off contract is undefined there. A tier switch calls `RB_ApplyTierRt`,
-which resets `rb_rtdebug` from the tier (unless Debug Views is on); the row
-simply reflects the resulting value. `rb_wireframe` (dev wireframe) is
-intentionally omitted.
+(there is none today; `rb_rtdebug` is currently written by config load
+(`rt_view`), the `RB_Init` clamp, `RB_ApplyTierRt`, and the `~` key — but never a
+menu row). Ray Tracing row contract:
+
+- **On ⇔ `rb_rtdebug == 6`, Off ⇔ `rb_rtdebug == 0`**; `M_ChangeRayTracing`
+  toggles between those two values.
+- **Greyed while Debug Views (`rb_rtdebug_menu`) is On.** The engine's
+  `menuitem_t.status` has no "disabled" state (only 1 / 2 / -1), so the cursor
+  can still land on the row and Enter still fires the routine (INV-4 forbids
+  touching `M_Responder`). Therefore "greyed" is **visual only**, and
+  `M_ChangeRayTracing` **no-ops (returns early) when `rb_rtdebug_menu` is set** —
+  that developer mode owns `rb_rtdebug` and cycles it through `{1,2,3,4}`.
+- **Ray Tracing in Solid is a per-session choice.** Although `rb_rtdebug`
+  persists (`rt_view`), `RB_ApplyTierRt` runs at boot (`RB_Init`) and on every
+  tier switch and reclaims the tier default (`0` Solid, `6` Ultra) unless Debug
+  Views is on — so RT enabled in Solid does **not** survive a restart (Ultra
+  stays on). INV-3's persistence guarantee applies to the other rows; this one
+  row inherits the engine's existing tier-reset behaviour, noted here so it is
+  not mistaken for a bug.
+
+`rb_wireframe` (dev wireframe) is intentionally omitted.
 
 ## 5. Data & resources
 
 - **Font file**: **Oxanium** (SIL OFL, GPL-compatible) — user-selected. A clean,
-  slightly techy sci-fi sans. Pin the exact released version at commit; commit
-  the `.ttf` (~50–200 KB) with its OFL licence file, and **record the version in
-  `docs/standards/dependencies.md`** (the dependency ledger — same as stb_image).
+  slightly techy sci-fi sans. Use the latest stable release, pinned at commit for
+  reproducibility; commit the `.ttf` (~50–200 KB) with its OFL licence file, and
+  **record it in the "Where this project's dependencies live" section of
+  `docs/standards/dependencies.md`** (where stb_image is recorded — NOT the
+  Version Exception Ledger, which is only for temporary older-version holds).
   Samples still rendered at L5 for final on-hardware confirmation; Oxanium is the
   locked default.
 - **`stb_truetype.h`**: vendored single-header (public domain), latest stable
-  (pin the exact version at commit), compiled in one small TU like `rb_image.c`
-  (ADR 0002 pattern), and **recorded in `docs/standards/dependencies.md`**
+  (pinned at commit), compiled in one small TU like `rb_image.c` (ADR 0002
+  pattern), and **recorded in the same "Where dependencies live" section**
   alongside stb_image.
 - **ADR**: a display-resolution text-render path + a bundled font is an
   architectural decision on the scale of ADR 0002 (stb_image). Write
@@ -270,8 +317,9 @@ path (it happens only on resize, never during play).
   `-rtverify` prefix; `-rtverify` still PASSES unchanged.
 - **INV-6** — The bundled font ships under a GPL-compatible licence with its
   licence file committed, and **both new vendored dependencies (Oxanium + `stb_
-  truetype.h`) are pinned to a specific version and recorded in
-  `docs/standards/dependencies.md`** (dependencies standard / ADR 0002 pattern).
+  truetype.h`) are latest-stable, pinned at commit, and recorded in the "Where
+  this project's dependencies live" section of `docs/standards/dependencies.md`**
+  (not the Version Exception Ledger — dependencies standard / ADR 0002 pattern).
 
 ## 9. Alternatives considered
 
@@ -293,7 +341,8 @@ Resolved with the user (2026-07-18):
 - **Font** — **Oxanium** (OFL). Samples still shown at L5 for final confirmation.
 - **Status bar** — left **visible and undimmed**; the dim covers only the
   play-view area above it. (INV-2 keeps the menu out of the status-bar band.)
-- **Selection cue** — **keep the bobbing skull cursor**, redrawn crisp.
+- **Selection cue** — **keep the bobbing skull cursor** (its existing patch lump,
+  repositioned by the crisp path; only text is glyph-rendered).
 
 Remaining open (non-blocking, decide during build):
 
