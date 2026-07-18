@@ -127,28 +127,39 @@ The consolidated Video menu (§4.5) has ~17 rows + group headings and will not
 fit the safe region at a crisp, readable size on a 4:3-height budget. So the
 crisp skin supports a **scrolling viewport**:
 
-- Rows are laid out from a `scrollTop` offset; only rows inside the safe region
-  are drawn (clipped), the rest are skipped.
-- Moving the cursor past the visible edge advances `scrollTop` so the **selected
-  row is always kept in view** (auto-scroll), and a small up/down indicator
-  shows when more rows exist off-screen.
-- Scrolling is a **draw-time concern only** — it does not change `m_menu.c`'s
-  item indices, input handling, or persistence. INV-1 (Classic unchanged) and
-  the existing key handling are untouched.
+- `scrollTop` is **derived each draw from `itemOn`** (the current cursor index)
+  and the safe region's row capacity — it is NOT stored state updated on input,
+  so `M_Responder` (the key/cursor handler) is never touched. Only rows inside
+  the safe region are drawn (clipped); the rest are skipped.
+- Because `scrollTop` tracks `itemOn`, the **selected row is always kept in
+  view** (auto-scroll), and a small up/down indicator shows when more rows exist
+  off-screen.
+- The skull cursor, drawn in `M_Drawer` at `y + itemOn*LINEHEIGHT` today, is
+  repositioned into scrolled display coords by the crisp draw path (still
+  draw-time, per INV-4). Scrolling changes **no** item indices, input handling,
+  or persistence.
 
 ### 4.5 The consolidated Video menu (every render toggle)
 
-Replace the three-level split with one grouped **Video** menu (reusing the
-existing item handlers, incl. DOOM-0205's `M_Change*`), plus the missing
-**Ray Tracing** row (`rb_rtdebug` 6↔0). Note both 3D tiers are ray-traced —
-**Ultra** is the HD/PBR look, **Solid** is the classic flat DOOM look (also
-RT-driven); only **Classic** is the pure software renderer. So the Ray Tracing
-row applies to both 3D tiers, not Ultra alone:
+Add one grouped **Video** `menu_t` (`VideoDef`) for the 3D tiers that reuses the
+existing item handlers (incl. DOOM-0205's `M_Change*`) and adds the missing
+**Ray Tracing** row. **Entry is tier-conditional:** the Options-menu "Renderer"
+row opens `VideoDef` in the 3D tiers and the existing `RendererDef` in Classic —
+a one-line `rendermode` branch in that row's handler, the only navigation change
+(the classic menus stay intact for Classic, per INV-1).
+
+Ray tracing is an **independent on/off toggle within both 3D tiers**, not a
+property of the tier: `RB_ApplyTierRt` (r_backend.c) sets `rb_rtdebug = 0` for
+**Solid** (which therefore defaults to the raster / classic flat look) and
+`rb_rtdebug = 6` for **Ultra** (defaults to RT + the HD/PBR look); Classic is
+the software renderer with no RT. Enabling RT in Solid yields ray tracing with
+the classic look. So the Ray Tracing row applies to both 3D tiers, greyed only
+in Classic:
 
 ```
                     V I D E O
 
-   Renderer          Ultra (Ray Traced)
+   Renderer          Ultra
    Ray Tracing       On
    Upscaler          TAAU
    Render Scale      50%
@@ -170,20 +181,33 @@ row applies to both 3D tiers, not Ultra alone:
 ```
 
 Every row maps to an existing config-bound `rb_*`/engine variable (§ the
-DOOM-0205 inventory), so menu, hotkey and `~/.doomrc` stay in lockstep. The
-`Ray Tracing` row is enabled in any tier whose backend supports RT (Ultra and
-Solid — both 3D tiers are RT-driven; Solid just wears the classic flat look),
-and greyed only in Classic (software renderer, no RT). `rb_wireframe` (dev
-wireframe) is intentionally omitted.
+DOOM-0205 inventory), so menu, hotkey and `~/.doomrc` stay in lockstep — except
+the new Ray Tracing row, which needs a **new `M_ChangeRayTracing` handler**
+(there is none today; `rb_rtdebug` is written only at its default, the `RB_Init`
+clamp, and the `~` key). Ray Tracing row contract: **On ⇔ `rb_rtdebug == 6`,
+Off ⇔ `rb_rtdebug == 0`**, toggling between those two values. The row is
+**disabled/greyed while Debug Views (`rb_rtdebug_menu`) is On** — that developer
+mode owns `rb_rtdebug` and cycles it through the diagnostic views `{1,2,3,4}`, so
+the On/Off contract is undefined there. A tier switch calls `RB_ApplyTierRt`,
+which resets `rb_rtdebug` from the tier (unless Debug Views is on); the row
+simply reflects the resulting value. `rb_wireframe` (dev wireframe) is
+intentionally omitted.
 
 ## 5. Data & resources
 
 - **Font file**: **Oxanium** (SIL OFL, GPL-compatible) — user-selected. A clean,
-  slightly techy sci-fi sans. Committed to the repo (~50–200 KB) with its OFL
-  licence file. Samples are still rendered at L5 for a final on-hardware
-  confirmation, but Oxanium is the locked default.
-- **`stb_truetype.h`**: vendored single-header (public domain), compiled in one
-  small TU like `rb_image.c` (ADR 0002 pattern).
+  slightly techy sci-fi sans. Pin the exact released version at commit; commit
+  the `.ttf` (~50–200 KB) with its OFL licence file, and **record the version in
+  `docs/standards/dependencies.md`** (the dependency ledger — same as stb_image).
+  Samples still rendered at L5 for final on-hardware confirmation; Oxanium is the
+  locked default.
+- **`stb_truetype.h`**: vendored single-header (public domain), latest stable
+  (pin the exact version at commit), compiled in one small TU like `rb_image.c`
+  (ADR 0002 pattern), and **recorded in `docs/standards/dependencies.md`**
+  alongside stb_image.
+- **ADR**: a display-resolution text-render path + a bundled font is an
+  architectural decision on the scale of ADR 0002 (stb_image). Write
+  `docs/decisions/0003-menu-text-rendering.md` alongside implementation.
 - **Glyph atlas**: an `R8` Vulkan image baked at startup; a CPU-side glyph
   metrics table (advance, bearing, uv rect) for layout + `rb_text_width`.
 - **Text pipeline**: one orthographic textured-quad pipeline + a per-frame
@@ -191,12 +215,19 @@ wireframe) is intentionally omitted.
 
 ## 6. Performance budget
 
-Negligible. The atlas bakes once at startup (or on swapchain recreate). The text
-pass runs **only while a menu is open** (gameplay frames are unaffected), draws a
-few hundred glyph quads, and the dim quad is one fullscreen blend. No path-tracer
-or per-gameplay-frame cost. Target: no measurable FPS change in gameplay; menu
-frames stay ≥ 60 FPS. `-rtverify` byte-prefix and numeric result unaffected
-(no push-constant or RT-resource change).
+Negligible. The atlas bakes once at startup. The text pass runs **only while a
+menu is open** (gameplay frames are unaffected), draws a few hundred glyph quads,
+and the dim quad is one fullscreen blend. No path-tracer or per-gameplay-frame
+cost. Target: no measurable FPS change in gameplay; menu frames stay ≥ 60 FPS.
+`-rtverify` byte-prefix and numeric result unaffected (no push-constant or
+RT-resource change).
+
+Concrete figures: the glyph atlas is one `R8` image — printable ASCII at a ~48px
+glyph height packs into ≤ 1024×1024 (≤ 1 MB VRAM). The one-time bake
+(stb_truetype rasterize + upload) is a few ms at startup, off the render path. A
+swapchain recreate (window resize) that changes the target glyph height triggers
+a re-bake that may cost one stalled frame — acceptable, and off the gameplay hot
+path (it happens only on resize, never during play).
 
 ## 7. Build order
 
@@ -204,32 +235,43 @@ frames stay ≥ 60 FPS. `-rtverify` byte-prefix and numeric result unaffected
   pipeline & API. Verify: a hard-coded test string renders crisp at display res.
 - **L2** — dim backdrop + the HUD-safe bound (INV-2). Verify: a screenshot shows
   the dim + zero pixels drawn in the status-bar band.
-- **L3** — route the crisp skin for `OptionsDef` + build the consolidated Video
-  menu (all toggles, incl. Ray Tracing). Verify: every §4.5 row present, values
-  live, changes persist to `~/.doomrc`.
-- **L4** — scrolling viewport + auto-scroll + indicators. Verify: the full Video
-  list is reachable by cursor with the selection always visible and never in the
-  HUD band.
-- **L5** — font selection (user picks from samples) + polish (selection
-  highlight, drop-shadow, spacing). Verify: user look sign-off.
+- **L3** — build the consolidated `VideoDef` `menu_t` (all toggles, incl. the new
+  Ray Tracing row + its `M_ChangeRayTracing` handler) + the tier-conditional
+  entry branch, and route the crisp skin for it and `OptionsDef`/`SoundDef`.
+  Verify: every §4.5 row present in the 3D tiers, Classic still opens
+  `RendererDef` unchanged, values live, changes persist to `~/.doomrc`.
+- **L4** — `itemOn`-derived scrolling viewport + indicators. Verify: the full
+  Video list is reachable by cursor with the selection always visible and never
+  in the HUD band.
+- **L5** — font selection (user picks from samples) + polish (crisp skull cursor,
+  drop-shadow, spacing). Verify: user look sign-off.
 
 ## 8. Invariants
 
-- **INV-1** — Classic tier (`RB_CLASSIC`) menu rendering is byte-for-byte
-  unchanged; the crisp path is never taken when `rendermode == RB_CLASSIC`.
+- **INV-1** — Classic tier (`RB_CLASSIC`) menu **rendering and navigation** are
+  unchanged: the crisp skin, the dim backdrop, and the `VideoDef` consolidation
+  are never reached when `rendermode == RB_CLASSIC`. Classic keeps the existing
+  `RendererDef`/`EffectsDef` menus and the classic draw path, byte-for-byte (the
+  tier-conditional entry row routes Classic to `RendererDef`, §4.5).
 - **INV-2** — In a skinned 3D-tier menu, **no menu element (glyph, slider,
   backdrop panel, indicator) is ever drawn inside the status-bar band.** The
   list scrolls rather than overrun it. (The user's hard requirement.)
 - **INV-3** — Every render toggle in the DOOM-0205 inventory appears in the
   consolidated Video menu, each bound to the same variable its hotkey flips, so
   menu/hotkey/`~/.doomrc` stay consistent.
-- **INV-4** — The redesign touches only menu **rendering/layout**; `m_menu.c`
-  item lists, cursor logic, input handling and persistence are unchanged (the
-  crisp skin and scrolling are draw-time only).
+- **INV-4** — The redesign ADDS a new consolidated `VideoDef` `menu_t` (its item
+  array + a new `M_ChangeRayTracing` handler + the tier-conditional entry branch)
+  and a crisp draw skin + `itemOn`-derived scrolling. It does **not** change the
+  existing classic menus' item lists, the `currentMenu`/`itemOn` cursor
+  semantics, `M_Responder` input handling, or persistence — those are reused
+  unchanged. The crisp skin, the scroll, and the skull reposition are draw-time
+  only (no input-path edits).
 - **INV-5** — No change to any path-tracer push-constant, RT resource, or the
   `-rtverify` prefix; `-rtverify` still PASSES unchanged.
 - **INV-6** — The bundled font ships under a GPL-compatible licence with its
-  licence file committed (dependencies standard).
+  licence file committed, and **both new vendored dependencies (Oxanium + `stb_
+  truetype.h`) are pinned to a specific version and recorded in
+  `docs/standards/dependencies.md`** (dependencies standard / ADR 0002 pattern).
 
 ## 9. Alternatives considered
 
