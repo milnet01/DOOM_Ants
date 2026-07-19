@@ -1171,12 +1171,10 @@ void M_Episode(int choice)
 //
 // M_Options
 //
-char    detailNames[2][9]	= {"M_GDHIGH","M_GDLOW"};
-char	msgNames[2][9]		= {"M_MSGOFF","M_MSGON"};
 // DOOM-0206 (L6 review fix): hu_font display strings for the Detail/Messages
-// value columns (INV-7: value columns share the uniform row size too). Same
-// index truth as detailNames[]/msgNames[] above -- just text instead of the
-// oversized big-red M_GD*/M_MSG* graphic lumps.
+// value columns (INV-7: value columns share the uniform row size too), drawn as
+// text instead of the oversized big-red M_GD*/M_MSG* graphic lumps. Indices:
+// detailLevel 0=High/1=Low; showMessages 0=Off/1=On (the original patch truth).
 static const char* detailValueNames[2]	= {"High","Low"};
 static const char* msgValueNames[2]	= {"Off","On"};
 char	fpsPosNames[4][11]	= {"Off","Top-Left","Top-Centre","Top-Right"};
