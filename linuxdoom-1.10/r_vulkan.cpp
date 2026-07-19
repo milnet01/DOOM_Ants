@@ -72,8 +72,9 @@ extern "C" {
     extern int numflats;                        // flat count
     extern int rendermode;                      // r_backend.h: selected tier (TIER_* mirror below)
     // DOOM-0206 (L2): gamestate/screenblocks drive the HUD-safe bound (rb_menu_safe_bottom).
-    // gamestate's real C type is gamestate_t (doomstat.h enum, GS_LEVEL==0); mirrored here as
-    // plain int rather than pulling doomdef.h/doomstat.h in (not C++-clean, see the probe
+    // gamestate's real C type is gamestate_t (doomdef.h enum typedef, GS_LEVEL==0; the extern
+    // lives in doomstat.h); mirrored here as plain int rather than pulling those headers in (not
+    // C++-clean, see the probe
     // comment below). Unlike rendermode (a genuine plain `int`, r_backend.c), this relies on
     // the enum's int-width representation under this toolchain (no -fshort-enums; enums default
     // to int width here), so declaring it `int` across the C/C++ boundary is safe but not a
