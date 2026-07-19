@@ -1972,7 +1972,6 @@ void M_ChangeRenderScale(int choice)
 //
 void M_ChangeDebugViews(int choice)
 {
-    extern int rb_rtdebug;          // r_vulkan.cpp
     choice = 0;
     rb_rtdebug_menu = rb_rtdebug_menu ? 0 : 1;
     if (!rb_rtdebug_menu && rb_rtdebug >= 1 && rb_rtdebug <= 4)
@@ -2696,7 +2695,16 @@ void M_Drawer (void)
 
     inhelpscreens = false;
 
-    
+    // DOOM-0206 (final review fix, Finding 2): default the gate off on every call. The present
+    // path's FlushMenuText only resets it to 0 after actually flushing a queued dim/text batch,
+    // but that flush is skipped whenever the swapchain present early-returns on
+    // VK_ERROR_OUT_OF_DATE_KHR (window resize/minimize) -- so a menu that was open on such a
+    // skipped frame could leave the gate armed for one extra frame even after closing. Clearing
+    // it here, before any early return or draw decision, means only a frame that actually draws
+    // the crisp VideoDef skin (below) re-arms it -- every other path (message prompt, no menu,
+    // classic-path bitmap menu) leaves it off.
+    rb_menu_text_active = 0;
+
     // Horiz. & Vertically center string and print it.
     if (messageToPrint)
     {
@@ -2754,15 +2762,16 @@ void M_Drawer (void)
 	return;
     }
 
-    // DOOM-0206 (L2): dim the play view behind the classic bitmap menus on the 3D tiers (Solid/
-    // Ultra) -- the paletted menu still draws on top unchanged below. Classic is untouched (dim
-    // is 3D-only; its own HUD-safe clip is Task 6).
-    if (rendermode != RB_CLASSIC)
-    {
-	rb_text_begin();
-	rb_menu_text_active = 1;
-	rb_menu_dim();
-    }
+    // DOOM-0206 (final review fix, Finding 1): classic bitmap menus (Options/Main/Load/Save/
+    // Sound/...) draw straight into screens[0] a few lines below, via the generic patch loop.
+    // A dim quad, by contrast, is queued into g.textVerts and flushed by FlushMenuText AFTER
+    // screens[0] is composited in the present path -- so queuing one here would land ON TOP of
+    // the classic menu (darkening it), not behind it, which is the opposite of "dim behind the
+    // classic menus". Only the crisp VideoDef skin (handled above, which queues its own dim
+    // before its own text in the SAME batch, so the ordering works out) gets a dim. Classic-path
+    // menus under Solid/Ultra therefore stay undimmed here -- exactly like Classic -- and the
+    // gate (cleared at the top of this function) stays 0, so FlushMenuText's early-return skips
+    // the draw entirely. Their HUD-safe shift below still applies under every tier.
 
     // DOOM-0206 (L6): slide the whole classic menu up so no element overruns the
     // status-bar band (INV-2). Bias currentMenu->y -- which every element (the
