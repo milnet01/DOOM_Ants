@@ -32,7 +32,8 @@ Give the **Solid** and **Ultra** tiers an in-game menu that reads as clean and
 modern instead of the chunky, cluttered classic overlay:
 
 - **Crisp text** at the display's real resolution (not the 320×200 upscale).
-- **A dimmed backdrop** so no 3D scene or HUD clutter shows through.
+- **A dimmed backdrop** so the 3D scene behind is darkened enough not to read as
+  clutter (the status bar stays undimmed).
 - **Never overlaps the bottom HUD / status bar** — the load-bearing user
   requirement. Scroll the list if it does not fit above the status bar.
 - **Surfaces every render toggle** (including Ray Tracing, currently reachable
@@ -85,11 +86,15 @@ single source of truth — no second menu system. The redesign is two layers:
 - **HUD-safe bound** (§4.3, INV-2): no menu ever draws over the status bar; if a
   menu is taller than the space above the bar, it scrolls (§4.4).
 - **Uniform font size per menu** (INV-7): within any one menu, all text is one
-  size. In Classic this means the menus that today mix big-red graphic-lump
+  size. Classic menus that are already single-size (e.g. the all-graphic-lump
+  Main menu) are untouched. The ones that today **mix** big-red graphic-lump
   labels (`M_MESSG`, `M_SVOL`, …) with small `hu_font` rows (Options, Sound)
-  render those labels at the uniform row size instead — the user accepted
-  reducing the existing font size. Classic otherwise keeps its bitmap font and
-  red styling.
+  are made uniform by rendering those labels **as `hu_font` text** at the row
+  size — a graphic patch cannot be fractionally scaled by `V_DrawPatch`, so the
+  oversized lumps are drawn as text instead. This is a deliberate, user-accepted
+  relaxation of Classic's red-graphic look **for those mixed menus only** (the
+  user asked for one size even at the cost of reducing/replacing the big labels).
+  Classic otherwise keeps its bitmap font and red styling.
 
 **Crisp skin — Solid/Ultra only:** on top of the two shared fixes, the 3D tiers
 additionally get the display-resolution glyph font (§4.2), the dimmed backdrop
@@ -158,7 +163,8 @@ to a glyph).
 
 - When a crisp menu is active in a 3D tier, draw a **dim quad over the play-view
   area only** (the region above the status bar), darkening the 3D scene behind
-  the menu to ~20–25% alpha-over-black so it does not read as clutter. **The
+  the menu (≈60% alpha-over-black, `0xA0`, in v1 — tunable at the look sign-off)
+  so it does not read as clutter. **The
   status bar is left undimmed and fully visible** (user decision) — the dim never
   covers it. **Classic has no dim** — it keeps its classic transparent-over-scene
   look, just HUD-safe and uniform-size.
@@ -174,8 +180,12 @@ to a glyph).
 The consolidated Video menu (§4.5) has 15 toggle rows + a Back row (16
 selectable) + 3 group headings = 19 visual rows, and will not fit the safe region
 at a crisp, readable size on a 4:3-height budget. So the skin supports a
-**scrolling viewport** — shared by any menu in any tier that exceeds the safe
-region (a tall Classic Options menu uses the same mechanism to stay HUD-safe):
+**scrolling viewport**. The *approach* — an `itemOn`-derived, draw-time scroll —
+is shared by any menu in any tier that exceeds the safe region, but it is
+implemented **per tier in its own coordinate space**: the crisp path scrolls in
+display pixels inside `M_DrawVideoMenu`, and a tall Classic menu gets a *parallel*
+320×200 implementation of the same approach (§L6), not a literal reuse of the
+crisp code:
 
 - `scrollTop` is **derived each draw from `itemOn`** (the current cursor index)
   and the safe region's row capacity — it is NOT stored state updated on input,
@@ -203,7 +213,8 @@ existing item handlers (incl. DOOM-0205's `M_Change*`) and adds the missing
 tier-selector row inside — opens `VideoDef` in the 3D tiers and the existing
 `RendererDef` in Classic, via a `rendermode` branch in that row's handler
 (`M_RendererMenu`). This branch and the tier re-route below are the navigation
-edits; the classic menus stay intact for Classic (INV-1).
+edits; the classic menus' **structure and routing** stay intact for Classic —
+the two shared fixes (HUD-safe, uniform size) are draw-time only (INV-1).
 
 **Tier changes re-route the menu.** The in-menu tier-selector row reuses
 `M_ChangeRenderer` (→ `RB_SetMode`, cycling Classic→Solid→Ultra). Because the
@@ -223,8 +234,9 @@ property of the tier: `RB_ApplyTierRt` (r_backend.c) sets `rb_rtdebug = 0` for
 **Solid** (which therefore defaults to the raster / classic flat look) and
 `rb_rtdebug = 6` for **Ultra** (defaults to RT + the HD/PBR look); Classic is
 the software renderer with no RT. Enabling RT in Solid yields ray tracing with
-the classic look. So the Ray Tracing row applies to both 3D tiers, greyed only
-in Classic:
+the classic look. So the Ray Tracing row applies to both 3D tiers; it never
+appears in Classic (which has no RT), and is greyed only while Debug Views owns
+`rb_rtdebug` (detailed in the row contract below):
 
 Layout is a **single column** — the DOOM cursor is one-dimensional (`itemOn ± 1`
 on up/down; left/right are consumed by sliders and never move the cursor), and
@@ -349,12 +361,20 @@ path (it happens only on resize, never during play).
   in the HUD band.
 - **L5** — font selection (user picks from samples) + polish (crisp skull cursor,
   drop-shadow, spacing). Verify: user look sign-off.
-- **L6** — apply the two **shared** fixes to **Classic**: the HUD-safe bound
-  (reusing L4's `itemOn`-derived scroll when a Classic menu exceeds the safe
-  region) + uniform per-menu font size (render each menu's mixed big-red item
-  lumps at the uniform row size). Verify: no Classic menu overlaps the status
-  bar; every Classic menu is a single font size; Classic otherwise unchanged (no
-  crisp glyph font, no dim, no `VideoDef`).
+- **L6** — apply the two **shared** fixes to **Classic**, both draw-time in the
+  generic `M_Drawer` 320×200 path (the L4 crisp scroll is display-pixel,
+  `VideoDef`-specific code — L6 is a *parallel* implementation of the same
+  `itemOn`-derived approach, not a literal reuse):
+  - **HUD-safe bound:** when a Classic menu's rows exceed the band above the
+    status bar (row capacity ≈ `(ORIGHEIGHT − ST_HEIGHT − menu.y) / LINEHEIGHT`),
+    scroll it with the same `itemOn`-derived, draw-time logic as L4, clipping both
+    the item rows and the skull cursor to that band.
+  - **Uniform per-menu font size:** render each *mixed* menu's big-red item lumps
+    **as `hu_font` text** at the uniform row size (they can't be scaled as
+    patches); already-uniform menus are left as-is.
+  Verify: no Classic menu overlaps the status bar; every Classic menu is a single
+  font size; Classic otherwise unchanged (no crisp glyph font, no dim, no
+  `VideoDef`; red styling kept on already-uniform menus).
 
 ## 8. Invariants
 
@@ -363,10 +383,12 @@ path (it happens only on resize, never during play).
   (`RendererDef` / `EffectsDef`, reached via the tier-conditional entry row,
   §4.5). Classic does **not** get the crisp glyph font, the dimmed backdrop, or
   the `VideoDef` consolidation. The **only** changes to Classic are the two shared
-  fixes — the HUD-safe bound (INV-2) and uniform per-menu font size (INV-7, which
-  renders its mixed big-red item lumps at the uniform row size). Classic is
-  therefore no longer byte-for-byte identical: a deliberate, minimal change per
-  the user's requirement.
+  fixes — the HUD-safe bound (INV-2) and uniform per-menu font size (INV-7). Its
+  red styling is preserved on every already-uniform menu (e.g. Main); it is
+  relaxed **only** on the mixed-size menus (Options, Sound), whose oversized
+  big-red graphic-lump labels are redrawn as uniform `hu_font` text because a
+  patch cannot be scaled to the row size. Classic is therefore no longer
+  byte-for-byte identical: a deliberate, minimal change per the user's requirement.
 - **INV-2** — In **every** tier's menu (Classic, Solid, Ultra), **no menu element
   (glyph, patch, slider, cursor, backdrop, indicator) is ever drawn inside the
   status-bar band.** The list scrolls rather than overrun it. (The user's hard
@@ -396,9 +418,11 @@ path (it happens only on resize, never during play).
   group headings, row labels, value columns) is a **single size**. Emphasis is
   expressed with weight / colour / letter-spacing / caps, **never a different
   size**. In Classic this means the menus that mix big-red graphic-lump labels
-  with small `hu_font` rows render those labels at the uniform row size (reducing
-  the existing font size, per the user). The size may differ *between* menus if
-  their
+  with small `hu_font` rows render those labels **as `hu_font` text** at the
+  uniform row size — the oversized graphic lumps cannot be scaled as patches, so
+  they are drawn as text (a deliberate, user-accepted relaxation of Classic's
+  red-graphic look for those mixed menus; see INV-1). The size may differ
+  *between* menus if their
   content densities differ, but is constant *within* one menu.
 
 ## 9. Alternatives considered
