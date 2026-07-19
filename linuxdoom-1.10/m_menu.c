@@ -1518,8 +1518,12 @@ void M_DrawVideoMenu(void)
     // rb_menu_safe_bottom), so map the selected row's display-Y centre back to virtual Y (skull
     // art ~16 tall -> -8 to centre it) and its X to just left of the label column. Chunky
     // beside the crisp text -- the user asked to keep the skull, not to make it crisp. Under
-    // scrolling the cursor's VISUAL row is (itemOn - scrollTop); scrollTop is clamped so the
-    // cursor is always inside the drawn window.
+    // scrolling the cursor's VISUAL row is (itemOn - scrollTop), which is inside [0, winRows)
+    // because scrollTop is clamped from itemOn -- but only when winRows > 0. When winRows == 0
+    // (maxRows==0: not even one row fits above the HUD-safe bound) no row was drawn for the
+    // cursor to sit on, so the skull must not draw either (L5 review fix 2: it used to draw
+    // unconditionally and could land well below the HUD-safe bound).
+    if (winRows > 0)
     {
 	int rowCenter = rowsTopY + (itemOn - scrollTop) * rowH + rowH / 2;
 	int vy = (int)((double)rowCenter * (double)ORIGHEIGHT / (double)dispH) - 8;
