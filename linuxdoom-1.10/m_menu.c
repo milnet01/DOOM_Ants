@@ -222,6 +222,10 @@ void M_ChangeDetile(int choice);
 void M_ChangeFilth(int choice);
 void M_ChangeWet(int choice);
 void M_ChangeProfiler(int choice);
+// DOOM-0206 (L3): consolidated crisp Video menu (3D tiers) + its new Ray Tracing row.
+void M_ChangeRayTracing(int choice);
+void M_VideoBack(int choice);
+void M_DrawVideoMenu(void);
 void M_SizeDisplay(int choice);
 void M_StartGame(int choice);
 void M_Sound(int choice);
@@ -515,6 +519,74 @@ menu_t  EffectsDef =
     EffectsMenu,
     M_DrawEffectsMenu,
     60,50,
+    0
+};
+
+//
+// DOOM-0206 (L3): the consolidated crisp VIDEO menu for the 3D tiers (Solid/Ultra).
+// A single column (the DOOM cursor is one-dimensional) grouping every render toggle
+// plus the new Ray Tracing row, drawn crisp (display-pixel font) by M_DrawVideoMenu —
+// which owns the dim, all rows, values, headings AND the skull, so M_Drawer skips its
+// generic patch/skull loop for this menu (M_MenuIsCrisp). Reuses the DOOM-0205
+// M_Change* handlers, so menu / hotkey / ~/.doomrc stay in lockstep. Entry is
+// tier-conditional (M_RendererMenu routes Classic -> RendererDef, 3D -> VideoDef);
+// INV-1 keeps VideoDef off the Classic tier. Rows follow spec §4.5's mockup order.
+// Spacer rows are status -1 (skipped by cursor movement); Back is status 1.
+//
+enum
+{
+    vid_renderer,       // tier selector (Classic/Solid/Ultra) — re-routes on Classic<->3D
+    vid_raytracing,     // NEW: RT on/off within the 3D tiers
+    vid_upscaler,
+    vid_renderscale,
+    vid_brightness,     // status 2 slider
+    vid_eff_head,       // "— Effects —" spacer
+    vid_flashlight,
+    vid_ssao,
+    vid_detile,
+    vid_filth,          // "Dirt & Grime"
+    vid_wet,            // "Wet Liquid"
+    vid_disp_head,      // "— Display —" spacer
+    vid_widescreen,
+    vid_fillscreen,
+    vid_fps,            // "FPS Counter"
+    vid_dev_head,       // "— Developer —" spacer
+    vid_debugviews,
+    vid_profiler,
+    vid_back,
+    vid_end
+} videoitem_e;
+
+menuitem_t VideoMenu[]=
+{
+    {1,"",	M_ChangeRenderer,'r'},
+    {1,"",	M_ChangeRayTracing,'t'},
+    {1,"",	M_ChangeUpscaler,'u'},
+    {1,"",	M_ChangeRenderScale,'c'},
+    {2,"",	M_ChangeBrightness,'b'},
+    {-1,"",0},
+    {1,"",	M_ChangeFlashlight,'f'},
+    {1,"",	M_ChangeSSAO,'s'},
+    {1,"",	M_ChangeDetile,'d'},
+    {1,"",	M_ChangeFilth,'g'},
+    {1,"",	M_ChangeWet,'w'},
+    {-1,"",0},
+    {1,"",	M_ChangeWidescreen,'i'},
+    {1,"",	M_ChangeFillScreen,'l'},
+    {1,"",	M_ChangeFPS,'p'},
+    {-1,"",0},
+    {1,"",	M_ChangeDebugViews,'v'},
+    {1,"",	M_ChangeProfiler,'o'},
+    {1,"",	M_VideoBack,'k'}
+};
+
+menu_t  VideoDef =
+{
+    vid_end,
+    &OptionsDef,
+    VideoMenu,
+    M_DrawVideoMenu,
+    60,40,
     0
 };
 
@@ -1124,6 +1196,14 @@ extern int	rb_menu_text_active;		// gates the text/dim flush in the present path
 extern void	rb_menu_dim(void);		// queues the play-view dim quad (0..rb_menu_safe_bottom())
 extern int	rb_menu_safe_bottom(void);	// display-pixel Y below which nothing may draw (INV-2)
 extern void	rb_text_begin(void);		// clears the queued-quad vector (call first, once/frame)
+// DOOM-0206 (L3): the rest of the crisp-text API the Video menu draws with — all display pixels.
+extern void	rb_text_draw(const char* s, int x, int y, float scale, unsigned rgba);
+extern int	rb_text_width(const char* s, float scale);
+extern int	rb_text_line_height(float scale);
+extern void	rb_menu_fill(int x, int y, int w, int h, unsigned rgba);   // solid quad (slider bar)
+extern int	rb_display_width(void);
+extern int	rb_display_height(void);
+extern int	rb_rtdebug;			// r_vulkan.cpp: RT view/debug mode (6 = RT on, 0 = off)
 
 
 void M_DrawOptions(void)
@@ -1136,9 +1216,11 @@ void M_DrawOptions(void)
     V_DrawPatchDirect (OptionsDef.x + 120,OptionsDef.y+LINEHEIGHT*messages,0,
 		       W_CacheLumpName(msgNames[showMessages],PU_CACHE));
 
-    // Renderer back-end (DOOM-0026): drawn as text since there is no menu-art
-    // lump for it. Shows the active back-end; cycles on selection.
-    M_WriteText(OptionsDef.x,OptionsDef.y+LINEHEIGHT*renderer,"Renderer:");
+    // DOOM-0206 (L3): entry row to the video settings, relabelled "Video" (from
+    // "Renderer") so it doesn't clash with the tier-selector row inside. Opens the
+    // crisp VideoDef in the 3D tiers, the classic RendererDef in Classic
+    // (M_RendererMenu branches on rendermode). The value still shows the active tier.
+    M_WriteText(OptionsDef.x,OptionsDef.y+LINEHEIGHT*renderer,"Video:");
     M_WriteText(OptionsDef.x + 88,OptionsDef.y+LINEHEIGHT*renderer,
 		(char *)RB_ModeName(rendermode));
 
@@ -1165,7 +1247,10 @@ void M_Options(int choice)
 void M_RendererMenu(int choice)
 {
     choice = 0;
-    M_SetupNextMenu(&RendererDef);
+    // DOOM-0206 (L3): tier-conditional entry. Classic keeps the original bitmap
+    // RendererDef (INV-1: VideoDef is never shown under RB_CLASSIC); the 3D tiers
+    // get the consolidated crisp VideoDef.
+    M_SetupNextMenu(rendermode==RB_CLASSIC ? &RendererDef : &VideoDef);
 }
 
 void M_DrawRendererMenu(void)
@@ -1248,6 +1333,155 @@ void M_DrawEffectsMenu(void)
     M_WriteText(EffectsDef.x,EffectsDef.y+LINEHEIGHT*ef_profiler,"Profiler:");
     M_WriteText(EffectsDef.x + 130,EffectsDef.y+LINEHEIGHT*ef_profiler,
 		rb_profile ? "On" : "Off");
+}
+
+//
+// DOOM-0206 (L3): draw the consolidated crisp Video menu — display-pixel font (rb_text_*),
+// ONE glyph size for every row (INV-7; headings get CAPS + colour, never a bigger size).
+// Self-contained: queues the dim backdrop, the title, every label + right-aligned value, the
+// Brightness slider bar, and the skull cursor. M_Drawer routes here via M_MenuIsCrisp and then
+// skips its generic patch/skull loop. The font auto-scales so all rows fit above the HUD-safe
+// bound (INV-2); true scrolling for very tall lists / small displays is Task 5.
+//
+static const char* videoLabels[vid_end] =
+{
+    "Renderer", "Ray Tracing", "Upscaler", "Render Scale", "Brightness",
+    "-  EFFECTS  -",
+    "Flashlight", "SSAO", "De-tile", "Dirt & Grime", "Wet Liquid",
+    "-  DISPLAY  -",
+    "Widescreen", "Fill Screen", "FPS Counter",
+    "-  DEVELOPER  -",
+    "Debug Views", "Profiler",
+    "Back"
+};
+
+void M_DrawVideoMenu(void)
+{
+    const unsigned labelCol = 0xE0E0E0FFu;
+    const unsigned valCol   = 0xB0B0B0FFu;
+    const unsigned selCol   = 0xFFF060FFu;   // highlight the cursor row (alongside the skull)
+    const unsigned headCol  = 0xE0A040FFu;   // section headings (CAPS + gold, same size)
+    const unsigned greyCol  = 0x707070FFu;   // greyed Ray Tracing value (Debug Views owns it)
+
+    int dispW  = rb_display_width();
+    int dispH  = rb_display_height();
+    int bottom = rb_menu_safe_bottom();
+    int px     = rb_text_line_height(1.0f);   // baked px_height
+    int rowH, rowsTopY, titleY, y, i, marginX, valRightX;
+    float scale;
+
+    // Menu backdrop (dim to the HUD-safe bound). Nothing else draws if the font never baked.
+    rb_menu_dim();
+    if (px < 1)
+	return;
+
+    // Auto-fit: title + all rows + padding, inside the HUD-safe height.
+    scale = (float)bottom / (float)((vid_end + 4) * px);
+    if (scale > 2.0f)  scale = 2.0f;
+    if (scale < 0.75f) scale = 0.75f;
+    rowH = rb_text_line_height(scale);
+    if (rowH < 1) rowH = 1;
+
+    marginX   = dispW / 5;
+    valRightX = dispW - dispW / 6;
+    titleY    = rowH;
+    rowsTopY  = titleY + rowH * 2;
+
+    // Title — centred, CAPS, same glyph size as the rows (INV-7).
+    {
+	const char* title = "VIDEO";
+	int tw = rb_text_width(title, scale);
+	rb_text_draw(title, (dispW - tw) / 2, titleY, scale, labelCol);
+    }
+
+    y = rowsTopY;
+    for (i = 0 ; i < vid_end ; i++)
+    {
+	int st  = VideoMenu[i].status;
+	int sel = (i == itemOn);
+	const char* label = videoLabels[i];
+
+	if (st == -1)
+	{
+	    // Section heading: CAPS + colour, no value (INV-7 keeps the size).
+	    rb_text_draw(label, marginX, y, scale, headCol);
+	}
+	else if (i == vid_back)
+	{
+	    int w = rb_text_width(label, scale);
+	    rb_text_draw(label, (dispW - w) / 2, y, scale, sel ? selCol : labelCol);
+	}
+	else if (i == vid_brightness)
+	{
+	    // Brightness slider: label left, a crisp bar filling with rb_exposure/15.
+	    int barW = dispW / 5;
+	    int barX = valRightX - barW;
+	    int barH = rowH / 3;
+	    int barY, fillW;
+	    if (barH < 2) barH = 2;
+	    barY = y + (rowH - barH) / 2;
+	    if (barY + barH > bottom) barY = bottom - barH;   // INV-2 clamp
+	    rb_text_draw(label, marginX, y, scale, sel ? selCol : labelCol);
+	    rb_menu_fill(barX, barY, barW, barH, 0x303030FFu);            // track
+	    fillW = barW * rb_exposure / 15;                             // rb_exposure 0..15
+	    if (fillW > 0)
+		rb_menu_fill(barX, barY, fillW, barH, sel ? selCol : 0xC0C0C0FFu);
+	}
+	else
+	{
+	    const char* val = "";
+	    unsigned vc = valCol;
+	    int rsi, k, w;
+
+	    rb_text_draw(label, marginX, y, scale, sel ? selCol : labelCol);
+
+	    switch (i)
+	    {
+	      case vid_renderer:
+		val = (const char*)RB_ModeName(rendermode); break;
+	      case vid_raytracing:
+		val = (rb_rtdebug == 6) ? "On" : "Off";
+		if (rb_rtdebug_menu) vc = greyCol;   // greyed while Debug Views owns rb_rtdebug
+		break;
+	      case vid_upscaler:
+		val = upscalerNames[(rb_upscaler == 1) ? 1 : 0]; break;
+	      case vid_renderscale:
+		rsi = 0;
+		for (k = 0 ; k < 4 ; k++)
+		    if (renderScalePresets[k] == rb_renderscale) rsi = k;
+		val = renderScaleNames[rsi]; break;
+	      case vid_flashlight: val = rb_flashlight ? "On" : "Off"; break;
+	      case vid_ssao:       val = rb_ssao ? "On" : "Off"; break;
+	      case vid_detile:
+		val = detileNames[(rb_detile >= 0 && rb_detile <= 2) ? rb_detile : 0]; break;
+	      case vid_filth:      val = rb_filth ? "On" : "Off"; break;
+	      case vid_wet:        val = rb_wet ? "On" : "Off"; break;
+	      case vid_widescreen: val = widescreen ? "On (restart)" : "Off (restart)"; break;
+	      case vid_fillscreen: val = fillstretch ? "On" : "Off"; break;
+	      case vid_fps:        val = fpsPosNames[fpsCorner]; break;
+	      case vid_debugviews: val = rb_rtdebug_menu ? "On" : "Off"; break;
+	      case vid_profiler:   val = rb_profile ? "On" : "Off"; break;
+	      default:             val = ""; break;
+	    }
+	    w = rb_text_width(val, scale);
+	    rb_text_draw(val, valRightX - w, y, scale, vc);
+	}
+
+	y += rowH;
+    }
+
+    // Skull cursor. The crisp rows are display-pixel; V_DrawPatchDirect draws in the 320x200
+    // virtual canvas that the paletted 2D overlay maps to full display (same convention as
+    // rb_menu_safe_bottom), so map the selected row's display-Y centre back to virtual Y (skull
+    // art ~16 tall -> -8 to centre it) and its X to just left of the label column. Chunky
+    // beside the crisp text -- the user asked to keep the skull, not to make it crisp; Task 5
+    // refines its placement under scrolling.
+    {
+	int rowCenter = rowsTopY + itemOn * rowH + rowH / 2;
+	int vy = (int)((double)rowCenter * (double)ORIGHEIGHT / (double)dispH) - 8;
+	int vx = (int)((double)marginX * (double)ORIGWIDTH / (double)dispW) - 16;
+	V_DrawPatchDirect(vx, vy, 0, W_CacheLumpName(skullName[whichSkull], PU_CACHE));
+    }
 }
 
 
@@ -1512,6 +1746,7 @@ void M_ChangeDetail(int choice)
 void M_ChangeRenderer(int choice)
 {
     rendermode_t next;
+    int prevClassic, nextClassic;
 
     choice = 0;
     next = RB_NextAvailableMode(rendermode);
@@ -1525,7 +1760,49 @@ void M_ChangeRenderer(int choice)
 	return;
     }
 
+    prevClassic = (rendermode == RB_CLASSIC);
     RB_SetMode(next);
+
+    // DOOM-0206 (L3): the menu skin is tied to the tier. A tier change that crosses
+    // the Classic<->3D boundary re-routes currentMenu so the classic bitmap skin
+    // (RendererDef) and the crisp skin (VideoDef) each only ever show under their own
+    // tiers. A Solid<->Ultra change keeps VideoDef (no needless cursor jump). itemOn
+    // is pinned to the destination's tier row so the cursor stays put across the swap
+    // (M_SetupNextMenu would restore lastOn, not necessarily that row).
+    nextClassic = (next == RB_CLASSIC);
+    if (prevClassic != nextClassic &&
+	(currentMenu == &VideoDef || currentMenu == &RendererDef))
+    {
+	if (nextClassic) { currentMenu = &RendererDef; itemOn = rm_renderer; }
+	else             { currentMenu = &VideoDef;    itemOn = vid_renderer; }
+    }
+}
+
+//
+// DOOM-0206 (L3): the new Ray Tracing on/off row (both 3D tiers). On <=> rb_rtdebug==6,
+// Off <=> rb_rtdebug==0. No-op when Debug Views (rb_rtdebug_menu) owns rb_rtdebug — that
+// developer mode cycles it through the diagnostic set via the `~` key, so this row goes
+// visually greyed and its handler returns early (INV-4 forbids touching M_Responder, so
+// the row stays status 1 and Enter still fires here — hence the guard). Not persistence-
+// stable in Solid: RB_ApplyTierRt reclaims the tier default (0 Solid / 6 Ultra) at boot
+// and on every tier switch unless Debug Views is on (spec §4.5).
+//
+void M_ChangeRayTracing(int choice)
+{
+    choice = 0;
+    if (rb_rtdebug_menu)
+	return;
+    rb_rtdebug = (rb_rtdebug == 6) ? 0 : 6;
+}
+
+//
+// DOOM-0206 (L3): Back row on the Video menu — return to Options (Esc does the same via
+// the classic prevMenu path).
+//
+void M_VideoBack(int choice)
+{
+    choice = 0;
+    M_SetupNextMenu(&OptionsDef);
 }
 
 
@@ -2271,6 +2548,16 @@ void M_StartControlPanel (void)
 // Called after the view has been rendered,
 // but before it has been blitted.
 //
+//
+// DOOM-0206 (L3): true when the active menu draws with the crisp display-pixel skin (which
+// owns its own dim + rows + skull). Only VideoDef does, and it is only ever reached in the 3D
+// tiers (M_RendererMenu routes Classic -> RendererDef), so this is inherently 3D-only.
+//
+static int M_MenuIsCrisp(void)
+{
+    return currentMenu == &VideoDef;
+}
+
 void M_Drawer (void)
 {
     static short	x;
@@ -2324,17 +2611,25 @@ void M_Drawer (void)
     if (!menuactive)
 	return;
 
-    // DOOM-0206 (L2, review fix): dim the play view behind the menu on the 3D tiers (Solid/
-    // Ultra). The crisp menu skin doesn't exist yet (Task 4) -- for now this just queues the
-    // HUD-safe dim quad ahead of the existing bitmap menu draw below, which still draws on top
-    // unchanged. Classic is untouched (dim is 3D-only; its own HUD-safe clip is Task 6).
-    //
-    // rb_text_begin() MUST run first: it clears the host quad vector, so each menu-open frame
-    // starts from empty instead of appending onto every prior frame's quads forever (unbounded
-    // growth -- FlushMenuText's GPU buffer has a fixed cap and would freeze on the oldest-queued
-    // content once the vector outgrew it). rb_menu_text_active is reset back to 0 by
-    // FlushMenuText after it draws, so a frame where this block doesn't run (menu closed) sees
-    // the gate already off and skips the draw -- the dim disappears the instant the menu closes.
+    // DOOM-0206 (L3): the crisp Video menu (3D tiers) draws itself entirely in display pixels --
+    // dim, title, rows, values, slider AND skull -- via M_DrawVideoMenu, which doesn't align with
+    // the generic 320x200 patch/skull loop below. So for the crisp menu we call its routine and
+    // return, skipping that loop. rb_text_begin() MUST run first: it clears the host quad vector
+    // so each frame starts empty (else it appends onto every prior frame's quads forever --
+    // FlushMenuText's GPU buffer has a fixed cap). rb_menu_text_active is reset to 0 by
+    // FlushMenuText after it draws, so the frame after the menu closes (M_Drawer doesn't run) sees
+    // the gate off and skips the draw -- the overlay disappears the instant the menu closes.
+    if (M_MenuIsCrisp())
+    {
+	rb_text_begin();
+	rb_menu_text_active = 1;
+	currentMenu->routine();         // M_DrawVideoMenu: dim + rows + skull, all display-pixel
+	return;
+    }
+
+    // DOOM-0206 (L2): dim the play view behind the classic bitmap menus on the 3D tiers (Solid/
+    // Ultra) -- the paletted menu still draws on top unchanged below. Classic is untouched (dim
+    // is 3D-only; its own HUD-safe clip is Task 6).
     if (rendermode != RB_CLASSIC)
     {
 	rb_text_begin();
@@ -2344,7 +2639,7 @@ void M_Drawer (void)
 
     if (currentMenu->routine)
 	currentMenu->routine();         // call Draw routine
-    
+
     // DRAW MENU
     x = currentMenu->x;
     y = currentMenu->y;

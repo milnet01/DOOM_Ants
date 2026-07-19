@@ -5163,25 +5163,43 @@ extern "C" int rb_menu_safe_bottom(void)
     return safeBottom;
 }
 
+// DOOM-0206 (L3): the display extent, in display pixels. The crisp Video menu (m_menu.c)
+// centres its title, right-aligns values and maps the skull's virtual-Y from these.
+extern "C" int rb_display_width(void)  { return (int)g.extent.width; }
+extern "C" int rb_display_height(void) { return (int)g.extent.height; }
+
+// DOOM-0206 (L3): a solid-colour quad in display pixels — the one quad path shared by the menu
+// dim and the crisp Brightness slider. Colour via the reserved full-coverage atlas texel (0,0),
+// so it needs no extra GPU pipeline. rgba is 0xRRGGBBAA. Queued into the same per-frame text
+// vector as rb_text_draw, drawn by FlushMenuText.
+extern "C" void rb_menu_fill(int x, int y, int w, int h, unsigned rgba)
+{
+    if (!g.menuFontReady) return;
+    const float u = 0.5f / (float)g.menuFont.w;           // texel (0,0) centre (full coverage)
+    const float v = 0.5f / (float)g.menuFont.h;
+    const unsigned char cr = (unsigned char)((rgba >> 24) & 0xFF);
+    const unsigned char cg = (unsigned char)((rgba >> 16) & 0xFF);
+    const unsigned char cb = (unsigned char)((rgba >>  8) & 0xFF);
+    const unsigned char ca = (unsigned char)( rgba        & 0xFF);
+    const float x0 = (float)x,     y0 = (float)y;
+    const float x1 = (float)(x+w), y1 = (float)(y+h);
+    const TextVertex q0 = { x0, y0, u, v, cr, cg, cb, ca };
+    const TextVertex q1 = { x1, y0, u, v, cr, cg, cb, ca };
+    const TextVertex q2 = { x1, y1, u, v, cr, cg, cb, ca };
+    const TextVertex q3 = { x0, y1, u, v, cr, cg, cb, ca };
+    g.textVerts.push_back(q0); g.textVerts.push_back(q1); g.textVerts.push_back(q2);
+    g.textVerts.push_back(q0); g.textVerts.push_back(q2); g.textVerts.push_back(q3);
+}
+
 // DOOM-0206 (L1b/L2): the play-view dim quad (menu backdrop). Darkens the world behind the
 // menu but leaves the status bar undimmed (rb_menu_safe_bottom, INV-2) so the HUD stays
-// readable. Solid colour via the reserved full-coverage atlas texel (0,0). Always queued; the
-// Classic-tier gate lives in the caller (m_menu), per the plan. The dim strength is tunable in
-// later menu tasks.
+// readable. One quad path via rb_menu_fill (L3). Always queued; the Classic-tier gate lives in
+// the caller (m_menu), per the plan. The dim strength is tunable in later menu tasks.
 extern "C" void rb_menu_dim(void)
 {
     if (!g.menuFontReady) return;
-    const float W = (float)g.extent.width;
-    const float barTop = (float)rb_menu_safe_bottom();    // status-bar top, display pixels
-    const float u = 0.5f / (float)g.menuFont.w;           // texel (0,0) centre (full coverage)
-    const float v = 0.5f / (float)g.menuFont.h;
-    const unsigned char a = 0xA0;   // ~63% black dim over the play view
-    const TextVertex q0 = { 0.0f, 0.0f,   u, v, 0, 0, 0, a };
-    const TextVertex q1 = { W,    0.0f,   u, v, 0, 0, 0, a };
-    const TextVertex q2 = { W,    barTop, u, v, 0, 0, 0, a };
-    const TextVertex q3 = { 0.0f, barTop, u, v, 0, 0, 0, a };
-    g.textVerts.push_back(q0); g.textVerts.push_back(q1); g.textVerts.push_back(q2);
-    g.textVerts.push_back(q0); g.textVerts.push_back(q2); g.textVerts.push_back(q3);
+    // 0x000000A0 == ~63% black over the play view, from y=0 to the status-bar top (INV-2).
+    rb_menu_fill(0, 0, (int)g.extent.width, rb_menu_safe_bottom(), 0x000000A0u);
 }
 
 // DOOM-0206 (L1b): draw this frame's queued glyph quads (rb_text_draw / rb_menu_dim) over the
