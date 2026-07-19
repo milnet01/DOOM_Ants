@@ -65,6 +65,7 @@ rcsid[] __attribute__((used)) = "$Id: m_menu.c,v 1.7 1997/02/03 22:45:10 b1 Exp 
 #include "m_menu.h"
 
 #include "r_backend.h"   // renderer back-end toggle (DOOM-0026)
+#include "st_stuff.h"    // ST_Y: 320x200 status-bar top, the classic HUD-safe bound (DOOM-0206 L6)
 
 
 
@@ -1206,10 +1207,40 @@ extern int	rb_display_height(void);
 extern int	rb_rtdebug;			// r_vulkan.cpp: RT view/debug mode (6 = RT on, 0 = off)
 
 
+// DOOM-0206 (L6): Classic Options row labels as hu_font display strings (INV-7:
+// one uniform row size). These replace the oversized big-red graphic-lump labels
+// (M_ENDGAM, M_MESSG, M_DETAIL, M_SCRNSZ, M_MSENS, M_SVOL) the generic patch loop
+// would draw -- that loop is suppressed for OptionsDef in M_Drawer. The classic
+// analogue of videoLabels[]. Spacer rows (option_empty*) and the already-text
+// Video/FPS rows carry "" (Video/FPS labels are drawn below; the title banner and
+// the value columns are kept as art). menuitem_t.name holds the lump name, not a
+// display string, so the strings must live here.
+static const char* optionsLabels[opt_end] =
+{
+    "End Game",           // endgame
+    "Messages",           // messages
+    "Graphic Detail",     // detail
+    "",                   // renderer  -- "Video:" drawn below (already hu_font)
+    "",                   // showfps   -- "FPS:"   drawn below (already hu_font)
+    "Screen Size",        // scrnsize  (status 2: thermo on the row below)
+    "",                   // option_empty1
+    "Mouse Sensitivity",  // mousesens (status 2: thermo on the row below)
+    "",                   // option_empty2
+    "Sound Volume"        // soundvol
+};
+
 void M_DrawOptions(void)
 {
+    int i;
+
+    // Title banner kept as art (INV-7 exempt).
     V_DrawPatchDirect (108,15,0,W_CacheLumpName("M_OPTTTL",PU_CACHE));
-	
+
+    // Uniform hu_font row labels (INV-7) -- one size for every Options row.
+    for (i = 0 ; i < opt_end ; i++)
+	if (optionsLabels[i][0])
+	    M_WriteText(OptionsDef.x,OptionsDef.y+LINEHEIGHT*i,(char *)optionsLabels[i]);
+
     V_DrawPatchDirect (OptionsDef.x + 175,OptionsDef.y+LINEHEIGHT*detail,0,
 		       W_CacheLumpName(detailNames[detailLevel],PU_CACHE));
 
@@ -1340,8 +1371,9 @@ void M_DrawEffectsMenu(void)
 // ONE glyph size for every row (INV-7; headings get CAPS + colour, never a bigger size).
 // Self-contained: queues the dim backdrop, the title, every label + right-aligned value, the
 // Brightness slider bar, and the skull cursor. M_Drawer routes here via M_MenuIsCrisp and then
-// skips its generic patch/skull loop. The font auto-scales so all rows fit above the HUD-safe
-// bound (INV-2); true scrolling for very tall lists / small displays is Task 5.
+// skips its generic patch/skull loop. The font is a fixed size (INV-7); when the list is taller
+// than the HUD-safe band an itemOn-derived scroll window with up/down arrows keeps the selection
+// visible and every element above the bound (INV-2), see the scroll block below (L4/L5).
 //
 static const char* videoLabels[vid_end] =
 {
@@ -2606,6 +2638,45 @@ static int M_MenuIsCrisp(void)
     return currentMenu == &VideoDef;
 }
 
+//
+// DOOM-0206 (L6): HUD-safe shift for the 320x200 classic menus (INV-2). Every
+// classic menu element -- the generic patch rows, the M_Draw* routine's
+// M_WriteText / M_DrawThermo output, and the skull -- derives its Y from
+// currentMenu->y, so a single bias on that field slides the whole menu up as a
+// unit (M_Drawer applies it, then restores). This returns how far up to bias.
+//
+// The overrun the spec cites lives in the routine-drawn menus: a status==2 item
+// draws its slider on the row BELOW its label (M_DrawThermo at LINEHEIGHT*(idx+1)),
+// so it occupies TWO rows -- e.g. RendererDef's Brightness thermo lands at
+// y+16*8=188 and Options' Sound Volume row at y+16*9=181, both below the 168
+// status-bar top in-game. Budget the extra row per thermo or a slider can still
+// land in the HUD band.
+//
+// The bound is ST_Y (=ORIGHEIGHT-ST_HEIGHT=168) whenever the status bar is drawn
+// (in a level: DOOM-0148 always draws it), else the full ORIGHEIGHT (200). Every
+// classic menu fits above the bound once shifted (max content ~160px vs a ~166px
+// safe band), so plain shift-to-fit suffices -- no per-menu scroll window is
+// needed (spec 7 L6's fallback path is unreachable for the current menus).
+//
+static int M_ClassicMenuShift(void)
+{
+    int i, maxRow = 0, bottom, bound, shift;
+
+    for (i = 0 ; i < currentMenu->numitems ; i++)
+    {
+	int row = i;
+	if (currentMenu->menuitems[i].status == 2)
+	    row = i + 1;                 // thermo draws on the row below its label
+	if (row > maxRow) maxRow = row;
+    }
+    bottom = currentMenu->y + (maxRow + 1) * LINEHEIGHT;   // 320x200 bottom edge
+    bound  = (gamestate == GS_LEVEL) ? ST_Y : ORIGHEIGHT;
+    shift  = bottom - bound;
+    if (shift <= 0)
+	return 0;
+    return shift + 2;                    // a small margin below the exact bound
+}
+
 void M_Drawer (void)
 {
     static short	x;
@@ -2614,6 +2685,8 @@ void M_Drawer (void)
     short		max;
     char		string[40];
     int			start;
+    short		savedMenuY;	// DOOM-0206 (L6): restore .y after the HUD-safe bias
+    int			hudShift;
 
     inhelpscreens = false;
 
@@ -2685,6 +2758,14 @@ void M_Drawer (void)
 	rb_menu_dim();
     }
 
+    // DOOM-0206 (L6): slide the whole classic menu up so no element overruns the
+    // status-bar band (INV-2). Bias currentMenu->y -- which every element (the
+    // routine's M_WriteText/M_DrawThermo rows, the generic patch loop, and the
+    // skull) reads -- for the duration of the draw, then restore it.
+    hudShift   = M_ClassicMenuShift();
+    savedMenuY = currentMenu->y;
+    currentMenu->y -= hudShift;
+
     if (currentMenu->routine)
 	currentMenu->routine();         // call Draw routine
 
@@ -2695,16 +2776,21 @@ void M_Drawer (void)
 
     for (i=0;i<max;i++)
     {
-	if (currentMenu->menuitems[i].name[0])
+	// DOOM-0206 (L6): Options draws its own uniform hu_font labels
+	// (M_DrawOptions / optionsLabels[]), so suppress the oversized big-red
+	// graphic lumps the generic loop would otherwise draw for it (INV-7).
+	if (currentMenu != &OptionsDef && currentMenu->menuitems[i].name[0])
 	    V_DrawPatchDirect (x,y,0,
 			       W_CacheLumpName(currentMenu->menuitems[i].name ,PU_CACHE));
 	y += LINEHEIGHT;
     }
 
-    
+
     // DRAW SKULL
     V_DrawPatchDirect(x + SKULLXOFF,currentMenu->y - 5 + itemOn*LINEHEIGHT, 0,
 		      W_CacheLumpName(skullName[whichSkull],PU_CACHE));
+
+    currentMenu->y = savedMenuY;        // restore the un-shifted layout
 
 }
 
