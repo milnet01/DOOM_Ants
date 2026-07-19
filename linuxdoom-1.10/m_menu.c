@@ -1367,7 +1367,7 @@ void M_DrawVideoMenu(void)
     int dispH  = rb_display_height();
     int bottom = rb_menu_safe_bottom();
     int rowH, rowsTopY, titleY, marginX, valRightX;
-    int availH, maxRows, winRows, scrollTop, v;
+    int availH, maxRows, winRows, scrollTop, arrowRoom, v;
     float scale = 1.5f;   // INV-7: one comfortable, fixed glyph size for the whole menu
 
     // Menu backdrop (dim to the HUD-safe bound). Nothing else draws if the font never baked.
@@ -1385,21 +1385,37 @@ void M_DrawVideoMenu(void)
     // maxRows = rows that fit between the title and the HUD-safe bound. If the whole list fits,
     // draw it all with no arrows; else centre a window on the cursor and reserve the bottom slot
     // for the down-arrow (the up-arrow sits in the gap above the list, so it costs no row).
+    //
+    // DOOM-0206 L5 review fix: the window is live-resizable with no minimum height, so at
+    // runtime `bottom` can land arbitrarily close to `rowsTopY` (rowH is baked at startup and
+    // NOT re-measured). Budget the down-arrow's row BEFORE computing winRows, and only ever
+    // draw it when a row was genuinely reserved for it — never force winRows up past what
+    // maxRows can actually afford (that was the overflow: forcing a row+arrow into a space
+    // that only fit one of them). maxRows==0 means not even one row fits above the HUD-safe
+    // bound: draw nothing rather than overflow it.
     availH  = bottom - rowsTopY;
     maxRows = availH / rowH;
-    if (maxRows < 1) maxRows = 1;
+    if (maxRows < 0) maxRows = 0;
     if (maxRows >= vid_end)
     {
 	scrollTop = 0;
 	winRows   = vid_end;
+	arrowRoom = 0;
     }
     else
     {
-	winRows = maxRows - 1;
-	if (winRows < 1) winRows = 1;
-	scrollTop = itemOn - winRows / 2;
-	if (scrollTop > vid_end - winRows) scrollTop = vid_end - winRows;
-	if (scrollTop < 0) scrollTop = 0;
+	arrowRoom = (maxRows >= 2) ? 1 : 0;   // room for a row AND the arrow needs maxRows>=2
+	winRows   = maxRows - arrowRoom;
+	if (winRows > 0)
+	{
+	    scrollTop = itemOn - winRows / 2;
+	    if (scrollTop > vid_end - winRows) scrollTop = vid_end - winRows;
+	    if (scrollTop < 0) scrollTop = 0;
+	}
+	else
+	{
+	    scrollTop = 0;   // nothing fits (maxRows==0): draw no rows, no arrows
+	}
     }
 
     // Title — centred, CAPS, same glyph size as the rows (INV-7).
@@ -1416,7 +1432,7 @@ void M_DrawVideoMenu(void)
 	int aw = rb_text_width("^", scale);
 	rb_text_draw("^", (dispW - aw) / 2, rowsTopY - rowH, scale, headCol);
     }
-    if (scrollTop + winRows < vid_end)
+    if (arrowRoom && scrollTop + winRows < vid_end)
     {
 	int aw = rb_text_width("v", scale);
 	rb_text_draw("v", (dispW - aw) / 2, rowsTopY + winRows * rowH, scale, headCol);
