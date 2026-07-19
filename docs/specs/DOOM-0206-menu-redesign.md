@@ -100,7 +100,8 @@ single source of truth — no second menu system. The redesign is two layers:
   only when both DOOM 1 + 2 WADs are installed, `m_menu.c` `M_ReturnToGameSelect`)
   is left untouched — a documented, accepted exception, not something this redesign
   converts. The one menu whose *editable* rows genuinely **mix** big-red
-  graphic-lump labels (`M_ENDGAM`, `M_MESSG`, `M_DETAIL`, `M_SCRNSZ`, `M_MSENS`,
+  graphic-lump labels (`M_ENDGAM`, `M_MESSG`, `M_DETAIL` [removed in v2, see §4.6],
+  `M_SCRNSZ`, `M_MSENS`,
   `M_SVOL` — here the Options "Sound Volume" row, distinct from the same lump's use
   as the Sound submenu *title*) with small `hu_font` rows (the "Video"/"FPS" rows)
   is **Options**; it is made uniform by rendering those big-red
@@ -335,24 +336,33 @@ red graphic wordmark's items with a small `hu_font` "Game Select" row (sizes can
 be matched in the fixed bitmap fonts), and the classic **Options** menu draws the
 big red `M_OPTTTL` banner *over* its red rows (red-on-red, unreadable). The user
 chose to **extend the crisp skin to every menu in the 3D tiers** — which is the
-original §1 goal ("redesign the Solid/Ultra menu"). This section supersedes §4.1's
-"Scope of the crisp skin v1: VideoDef only" and §4.5's VideoDef-only framing **for
-the 3D tiers**; the Classic *tier* is unaffected (see below).
+original §1 goal ("redesign the Solid/Ultra menu"). This section supersedes, **for
+the 3D tiers**: §4.1's "Scope of the crisp skin v1: VideoDef only"; §4.5's
+VideoDef-only framing; and §4.3 + the §L2 build-step's "classic-path menus under a
+3D tier are NOT dimmed" clause (v2 dims *every* 3D-tier menu, since they all become
+crisp). The Classic *tier* is unaffected (see below).
 
 - **What changes:** in Solid/Ultra, *all* menus draw through a **generic crisp
   renderer** `M_DrawCrispMenu(menu_t*)` — the same display-res Oxanium glyph pass,
   dim backdrop, `rb_menu_fill` sliders, `itemOn`-derived scroll, and skull cursor
-  that `M_DrawVideoMenu` already uses (which becomes the first caller / is
-  refactored into it). `M_MenuIsCrisp()` returns true for **any** menu when
-  `rendermode != RB_CLASSIC`, not just `VideoDef`.
+  that `M_DrawVideoMenu` already uses (`M_DrawVideoMenu` is refactored into it — it
+  becomes `M_DrawCrispMenu(&VideoDef)` with VideoDef's label table + value-getter).
+  `M_MenuIsCrisp()` returns true for **any** menu when `rendermode != RB_CLASSIC`,
+  not just `VideoDef`. **Dispatch:** `M_Drawer`'s crisp branch must call
+  `M_DrawCrispMenu(currentMenu)` **instead of** `currentMenu->routine()` — the
+  `routine` pointer is the *classic bitmap* draw (`M_DrawOptions`, `M_DrawMainMenu`,
+  …) and would draw the red banners/lumps; `M_DrawCrispMenu` also has the wrong
+  signature to be a `routine`, so it is invoked directly. (Menus with no bespoke
+  crisp value-getter still route through `M_DrawCrispMenu` with an empty value
+  column.)
 - **Per-menu crisp content:** each menu needs its item **labels as display
   strings** (the generic renderer can't read a `V_DrawPatch` lump). Provide a
   per-menu `const char* labels[]` table (like `videoLabels[]`) keyed by the menu's
   item enum. Menus that today draw only graphic-lump items with no value column
   (main, episode, skill, new-game) need only a label table. Menus with value
   columns / sliders (Options, Sound) supply a small value-getter for the right
-  column (reuse the existing per-menu draw logic's truth: `detailLevel`,
-  `showMessages`, the thermo `status==2` rows via `rb_menu_fill`). Load / Save
+  column (reuse the existing per-menu draw logic's truth: `showMessages`, and the
+  thermo `status==2` rows via `rb_menu_fill`). Load / Save
   render their editable slot strings crisp (the blinking edit caret stays). The
   **title** for each menu is drawn as a centred crisp caps string at the row size
   (INV-7), NOT the bitmap banner — so the `M_OPTTTL`/`M_DOOM` red banners are not
@@ -363,27 +373,38 @@ the 3D tiers**; the Classic *tier* is unaffected (see below).
   Options row-label conversion, §L6). The v2 generic crisp renderer is gated on
   `rendermode != RB_CLASSIC`, so Classic never sees it. The title *banners* (DOOM
   logo, OPTIONS) are kept in Classic exactly as before.
-- **Two content fixes requested in the same play-test (apply to all tiers unless
-  noted):**
+- **Two content fixes requested in the same play-test — these restructure the
+  shared Options/Renderer item arrays for *all* tiers (a deliberate v2 relaxation
+  of v1's INV-4 "no item-list change"; cursor-movement / `M_Responder` /
+  persistence semantics stay untouched):**
   - **Remove Graphic Detail** (`M_DETAIL` / `M_ChangeDetail`) from the Options
-    menu entirely — it is a confirmed no-op in this engine (the software-renderer
-    low-detail mode does nothing on the 3D backends). Drop the `menuitem_t`, its
-    `options_e` enum entry, and its draw/handler references.
-  - **De-duplicate the FPS-counter row.** It currently appears in both the Options
-    menu and the consolidated Video menu. FPS + the render-settings "Video" row are
-    render/display settings that belong in the **Video** menu, so in the **3D
-    tiers** the crisp Options omits the FPS and Video rows (they are reachable via
-    Options → Video). In **Classic** (no Video menu) the Options menu keeps its
-    FPS and "Renderer" rows — that is the only way to reach them there. Implement
-    as skin-conditional row inclusion, not by deleting the shared `menuitem_t`s.
-- **Invariants:** INV-1 (Classic tier bitmap/red + shared fixes) holds — v2 only
-  touches the 3D-tier draw. INV-2 (HUD-safe, all tiers) — the generic crisp
-  renderer reuses the same `rb_menu_safe_bottom` clamp + scroll as `VideoDef`.
-  INV-4 (no `M_Responder`/cursor-movement/persistence edits) — the generic
-  renderer is draw-time only; skin-conditional row inclusion for FPS/Video must
-  not change `itemOn` movement (use `status == -1`/skip semantics or a
-  draw-time-only row filter that the cursor already handles). INV-7 (one size per
-  menu) — every crisp menu's title + rows are one glyph size.
+    menu entirely — it is a confirmed **no-op on every backend** (`M_ChangeDetail`
+    has its `R_SetViewSize` call commented out and only prints "low detail mode
+    n.a."). Drop the `menuitem_t`, its `options_e` enum entry, and the menu draw
+    refs (`optionsLabels[]`'s Detail entry + the `detailValueNames[detailLevel]`
+    value draw). **Keep** the `detailLevel` variable and its `"detaillevel"` config
+    binding — `R_SetViewSize` (r_main.c) and `m_misc.c` still reference them; only
+    the menu *row* is removed. NOTE: this supersedes §4.1 / §L6 / INV-7's mentions
+    of `M_DETAIL` as an Options row to keep-and-convert — it is now removed, not
+    converted.
+  - **De-duplicate the FPS-counter row.** It currently appears in *both* the
+    Options menu (`OptionsMenu[showfps]`, `M_ChangeFPS`) and the consolidated Video
+    menu (`VideoMenu[vid_fps]`, same `M_ChangeFPS`). Resolve cleanly by **removing
+    the FPS row from `OptionsMenu` (all tiers)** and **adding an FPS row to the
+    Classic-only `RendererDef`** (Options → Renderer) so Classic retains access;
+    the Video menu already carries FPS for the 3D tiers. **Do NOT remove the
+    Options "Video" row** — it is the *only* entry into the render menu
+    (`M_RendererMenu` → `VideoDef` in 3D / `RendererDef` in Classic), so removing it
+    would strand that whole menu. This avoids any draw-time row-hiding (which
+    `M_Responder` cannot honour — it skips only `status == -1`, at input time).
+- **Invariants:** INV-1 (Classic tier bitmap/red + shared fixes) holds — v2's
+  crisp draw is 3D-only; the item-array edits change *which rows exist*, not the
+  Classic draw style. INV-2 (HUD-safe, all tiers) — the generic crisp renderer
+  reuses `VideoDef`'s `rb_menu_safe_bottom` clamp + scroll. INV-4 is **relaxed for
+  v2**: the two content fixes edit the shared Options/Renderer item arrays (add/
+  remove rows), but `M_Responder`, `itemOn` cursor-*movement* semantics, and
+  persistence are still untouched. INV-7 (one size per menu) — every crisp menu's
+  title + rows are one glyph size.
 - **Load/Save caveat:** the crisp Load/Save slots are the most involved (editable
   text + caret); if they prove large they may land as a follow-up increment, with
   Load/Save staying classic-bitmap in the interim (noted, not silently deferred).
@@ -479,10 +500,12 @@ path (it happens only on resize, never during play).
     not `rendermode`). Invariant: no element of any Classic menu, however drawn,
     sits below the bound (INV-2).
   - **Uniform per-menu row size:** the one mixed menu is **Options** — render its
-    big-red row-label lumps (`M_ENDGAM`, `M_MESSG`, `M_DETAIL`, `M_SCRNSZ`,
-    `M_MSENS`, `M_SVOL`) **as `hu_font` text** at the uniform row size (they can't
-    be scaled as patches). This needs a small Classic **display-string table**
-    (one string per converted row — "End Game", "Messages", "Graphic Detail",
+    big-red row-label lumps (`M_ENDGAM`, `M_MESSG`, `M_SCRNSZ`, `M_MSENS`, `M_SVOL`
+    — `M_DETAIL` is removed in v2, §4.6) **as `hu_font` text** at the uniform row
+    size (they can't be scaled as patches). This needs a small Classic
+    **display-string table**
+    (one string per converted row — "End Game", "Messages", [no "Graphic Detail" —
+    removed in v2, §4.6],
     "Screen Size", "Mouse Sensitivity", "Sound Volume"), the classic-path analogue
     of `VideoDef`'s `videoLabels[]` — the `menuitem_t.name` field holds the *lump*
     name, not a display string, so the strings must be added. Each menu's
