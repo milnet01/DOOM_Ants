@@ -59,6 +59,9 @@
 // (compiled in rb_image.c; self-guards extern "C").
 #include "rb_materials.h"
 #include "rb_image.h"
+// DOOM-0206 (L1b): the pure-logic stb_truetype glyph-atlas baker (compiled in rb_text.c;
+// self-guards extern "C"). The GPU side (atlas image + text pipeline + batch API) is here.
+#include "rb_text.h"
 
 // C engine symbols the HD material loader resolves DOOM names against (defined in
 // r_data.c / w_wad.c). Declared here since r_vulkan.cpp doesn't pull r_state.h.
@@ -85,6 +88,8 @@ static_assert(sizeof(rb_matctrl_t) == 40, "rb_matctrl_t must be 40 bytes (std430
 #include "shaders/overlay.frag.spv.h"
 #include "shaders/composite.vert.spv.h"
 #include "shaders/composite.frag.spv.h"
+#include "shaders/text.vert.spv.h"          // DOOM-0206 L1b: display-res menu glyph text
+#include "shaders/text.frag.spv.h"
 #include "shaders/ssao.frag.spv.h"          // DOOM-0170 L2b: half-res SSAO (contact shadows)
 #include "shaders/pathtrace.comp.spv.h"
 #include "shaders/bake.comp.spv.h"
@@ -254,6 +259,11 @@ enum {
 // build step 6-d TAAU targets (display-resolution): two history images that
 // ping-pong by frame parity, plus the upscaled output the present path blits.
 enum { TA_HIST0, TA_HIST1, TA_OUT, TA_COUNT };
+
+// DOOM-0206 (L1b): one textured glyph-quad vertex. Position is in DISPLAY PIXELS with a
+// top-left origin (text.vert converts to NDC via the invDisplay push constant), UV indexes
+// the R8 atlas, and the colour is R8G8B8A8_UNORM (decoded to a normalized vec4 tint).
+struct TextVertex { float x, y, u, v; unsigned char r, g, b, a; };
 
 struct VulkanState
 {
@@ -531,6 +541,36 @@ struct VulkanState
     int            overlayW = 0, overlayH = 0;
     int            overlayCapW = 0, overlayCapH = 0;   // size the resources were built at
     bool           overlayReady = false;
+
+    // DOOM-0206 (L1b): display-resolution crisp menu text. A stb_truetype glyph atlas
+    // (rb_text.c) baked ONCE at init into an R8 image, drawn as alpha-blended textured quads
+    // by a dedicated 2D pipeline AFTER the paletted overlay, in the same present render pass.
+    // Additive + 2D-only: no RT resource / push constant is touched (INV-5). menuFont keeps
+    // the CPU-side glyph metrics for the whole session; its pixel buffer is freed right after
+    // the one-time upload. menuFontReady=false (no system font) disables every text entry —
+    // the game still runs, text is a menu-only overlay. rb_menu_text_active (a free-standing
+    // extern) gates the per-frame flush so the paletted HUD/menu is untouched until m_menu
+    // opts in (Tasks 3-6).
+    rb_atlas_font_t menuFont       = {};
+    bool            menuFontReady  = false;
+    VkImage         textAtlas       = VK_NULL_HANDLE;
+    VkDeviceMemory  textAtlasMemory = VK_NULL_HANDLE;
+    VkImageView     textAtlasView   = VK_NULL_HANDLE;
+    VkSampler       textSampler     = VK_NULL_HANDLE;   // linear + clamp (smooth glyph edges)
+    VkPipeline            textPipeline       = VK_NULL_HANDLE;
+    VkPipelineLayout      textPipelineLayout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout textDsLayout       = VK_NULL_HANDLE;
+    VkDescriptorPool      textDsPool         = VK_NULL_HANDLE;
+    VkDescriptorSet       textDs             = VK_NULL_HANDLE;
+    // Per-frame glyph-quad vertex buffer (host-visible, persistently mapped). rb_text_draw
+    // appends to the host-side textVerts vector during the frame; FlushMenuText memcpys it in
+    // and draws it during command recording — after the top-of-frame fence, so the single copy
+    // the GPU read last frame is finished (no double-buffering needed, unlike spriteVbuf).
+    VkBuffer        textVbuf       = VK_NULL_HANDLE;
+    VkDeviceMemory  textVbufMemory = VK_NULL_HANDLE;
+    void*           textVbufMapped = nullptr;
+    uint32_t        textVbufCap    = 0;   // capacity in vertices
+    std::vector<TextVertex> textVerts;    // this frame's queued glyph quads
 
     // column-major MVP from RB_Vulkan_RenderView; identity until the first
     // camera update so a frame drawn before then is well-defined (DOOM-0037).
@@ -4779,6 +4819,367 @@ void CreateOverlayResources(int w, int h)
     g.overlayReady = true;
 }
 
+// DOOM-0206 (L1b): load a placeholder system TTF for the menu font. Task 5 replaces this
+// with the embedded Oxanium byte array — the ONLY line that changes then is the bake source;
+// everything downstream consumes g.menuFont. Until then the atlas bakes from DejaVu Sans,
+// which ships on ~every Linux desktop (its path differs by distro layout — the same probe as
+// tests/rb_text_test.cpp). Returns a malloc'd buffer (caller frees) + length, or nullptr.
+static unsigned char* LoadMenuFontBytes(int* out_len)
+{
+    static const char* kCandidates[] = {
+        "/usr/share/fonts/truetype/DejaVuSans.ttf",        // openSUSE (fonts-config, flat)
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", // Debian/Ubuntu (fonts-dejavu-core)
+        "/usr/share/fonts/dejavu/DejaVuSans.ttf",          // Fedora/RHEL (dejavu-sans-fonts)
+    };
+    for (size_t i = 0; i < sizeof(kCandidates) / sizeof(kCandidates[0]); i++)
+    {
+        FILE* f = std::fopen(kCandidates[i], "rb");
+        if (!f) continue;
+        std::fseek(f, 0, SEEK_END);
+        long len = std::ftell(f);
+        std::fseek(f, 0, SEEK_SET);
+        if (len <= 0) { std::fclose(f); continue; }
+        unsigned char* buf = (unsigned char*)std::malloc((size_t)len);
+        if (!buf) { std::fclose(f); return nullptr; }   // OOM: bail, text stays disabled
+        size_t rd = std::fread(buf, 1, (size_t)len, f);
+        std::fclose(f);
+        if (rd != (size_t)len) { std::free(buf); continue; }
+        *out_len = (int)len;
+        return buf;
+    }
+    return nullptr;
+}
+
+// DOOM-0206 (L1b): bake the menu glyph atlas and build the display-resolution text pipeline.
+// Called once from RB_Vulkan_Init after InitPaletteAndDescriptorSet (so the command pool +
+// g.renderPass exist). If no font is found the whole path is left disabled (menuFontReady
+// stays false) and the game runs without crisp text — it is a menu-only overlay.
+void CreateTextResources()
+{
+    int ttfLen = 0;
+    unsigned char* ttf = LoadMenuFontBytes(&ttfLen);
+    if (!ttf)
+    {
+        fprintf(stderr, "RB_Vulkan: no menu font found — crisp menu text disabled "
+                        "(paletted overlay unaffected).\n");
+        return;
+    }
+    // Glyph pixel height scaled to the display so text stays crisp at any resolution (~24 at
+    // 1080p, ~48 at 2160p), floored at 24 so low-res stays legible.
+    int px = (int)g.extent.height / 45;
+    if (px < 24) px = 24;
+    int baked = rb_text_bake(ttf, ttfLen, px, &g.menuFont);
+    std::free(ttf);
+    if (!baked)
+    {
+        fprintf(stderr, "RB_Vulkan: menu font bake failed — crisp menu text disabled.\n");
+        return;
+    }
+
+    // Reserve atlas texel (0,0) = full coverage: rb_menu_dim draws its solid dark quad by
+    // sampling it. stbtt leaves row 0 / column 0 empty, so this clobbers no glyph.
+    g.menuFont.pixels[0] = 255;
+
+    // Upload the R8 atlas once (static for the whole session), then free the CPU pixels —
+    // rb_text_free_font keeps the glyph metrics rb_text_draw / rb_text_measure still need.
+    CreateSampledImage((uint32_t)g.menuFont.w, (uint32_t)g.menuFont.h, VK_FORMAT_R8_UNORM,
+                       g.menuFont.pixels, (VkDeviceSize)g.menuFont.w * g.menuFont.h,
+                       &g.textAtlas, &g.textAtlasMemory, &g.textAtlasView);
+    rb_text_free_font(&g.menuFont);
+
+    // Linear + clamp sampler: the atlas is baked at ~display glyph size (scale ~1), so linear
+    // gives smooth edges without the paletted art's nearest blockiness.
+    VkSamplerCreateInfo sci = {};
+    sci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    sci.magFilter = VK_FILTER_LINEAR;
+    sci.minFilter = VK_FILTER_LINEAR;
+    sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    sci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    Check(vkCreateSampler(g.device, &sci, nullptr, &g.textSampler), "vkCreateSampler(text)");
+
+    // Descriptor set: one combined-image-sampler (the atlas), its own layout/pool/set.
+    VkDescriptorSetLayoutBinding b = {};
+    b.binding = 0;
+    b.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    b.descriptorCount = 1;
+    b.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutCreateInfo dlci = {};
+    dlci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    dlci.bindingCount = 1;
+    dlci.pBindings = &b;
+    Check(vkCreateDescriptorSetLayout(g.device, &dlci, nullptr, &g.textDsLayout),
+          "vkCreateDescriptorSetLayout(text)");
+
+    VkDescriptorPoolSize ps = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 };
+    VkDescriptorPoolCreateInfo dpci = {};
+    dpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    dpci.maxSets = 1;
+    dpci.poolSizeCount = 1;
+    dpci.pPoolSizes = &ps;
+    Check(vkCreateDescriptorPool(g.device, &dpci, nullptr, &g.textDsPool),
+          "vkCreateDescriptorPool(text)");
+
+    VkDescriptorSetAllocateInfo dsai = {};
+    dsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsai.descriptorPool = g.textDsPool;
+    dsai.descriptorSetCount = 1;
+    dsai.pSetLayouts = &g.textDsLayout;
+    Check(vkAllocateDescriptorSets(g.device, &dsai, &g.textDs),
+          "vkAllocateDescriptorSets(text)");
+
+    VkDescriptorImageInfo aInfo = { g.textSampler, g.textAtlasView,
+                                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+    VkWriteDescriptorSet w = {};
+    w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    w.dstSet = g.textDs; w.dstBinding = 0; w.descriptorCount = 1;
+    w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    w.pImageInfo = &aInfo;
+    vkUpdateDescriptorSets(g.device, 1, &w, 0, nullptr);
+
+    // Pipeline layout: the atlas set + a vec2 invDisplay push constant (vertex stage).
+    VkPushConstantRange pcr = {};
+    pcr.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    pcr.offset = 0;
+    pcr.size = 2 * sizeof(float);
+    VkPipelineLayoutCreateInfo plci = {};
+    plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plci.setLayoutCount = 1;
+    plci.pSetLayouts = &g.textDsLayout;
+    plci.pushConstantRangeCount = 1;
+    plci.pPushConstantRanges = &pcr;
+    Check(vkCreatePipelineLayout(g.device, &plci, nullptr, &g.textPipelineLayout),
+          "vkCreatePipelineLayout(text)");
+
+    // Graphics pipeline: textured quad, alpha blend ON, depth off, into g.renderPass (the
+    // 8-bit swapchain pass; format-compatible with g.rtOverlayPass, so this one pipeline draws
+    // in BOTH the raster and the RT-overlay present paths).
+    VkShaderModule vert = MakeShader(text_vert_spv, text_vert_spv_len);
+    VkShaderModule frag = MakeShader(text_frag_spv, text_frag_spv_len);
+    VkPipelineShaderStageCreateInfo stages[2] = {};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;   stages[0].module = vert; stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT; stages[1].module = frag; stages[1].pName = "main";
+
+    VkVertexInputBindingDescription bind = {};
+    bind.binding = 0;
+    bind.stride = sizeof(TextVertex);
+    bind.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    VkVertexInputAttributeDescription attrs[3] = {};
+    attrs[0] = { 0, 0, VK_FORMAT_R32G32_SFLOAT,  (uint32_t)offsetof(TextVertex, x) };
+    attrs[1] = { 1, 0, VK_FORMAT_R32G32_SFLOAT,  (uint32_t)offsetof(TextVertex, u) };
+    attrs[2] = { 2, 0, VK_FORMAT_R8G8B8A8_UNORM, (uint32_t)offsetof(TextVertex, r) };
+    VkPipelineVertexInputStateCreateInfo vin = {};
+    vin.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vin.vertexBindingDescriptionCount = 1;
+    vin.pVertexBindingDescriptions = &bind;
+    vin.vertexAttributeDescriptionCount = 3;
+    vin.pVertexAttributeDescriptions = attrs;
+
+    VkPipelineInputAssemblyStateCreateInfo ia = {};
+    ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkPipelineViewportStateCreateInfo vp = {};
+    vp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    vp.viewportCount = 1; vp.scissorCount = 1;   // viewport + scissor dynamic
+
+    VkPipelineRasterizationStateCreateInfo rs = {};
+    rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rs.polygonMode = VK_POLYGON_MODE_FILL;
+    rs.cullMode = VK_CULL_MODE_NONE;
+    rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rs.lineWidth = 1.0f;
+
+    VkPipelineMultisampleStateCreateInfo ms = {};
+    ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineDepthStencilStateCreateInfo dsst = {};   // depth test + write off (2D over all)
+    dsst.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+
+    // Premultiplied-alpha blend: text.frag outputs (rgb*a, a), so src factor is ONE.
+    VkPipelineColorBlendAttachmentState cba = {};
+    cba.blendEnable = VK_TRUE;
+    cba.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    cba.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    cba.colorBlendOp = VK_BLEND_OP_ADD;
+    cba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    cba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    cba.alphaBlendOp = VK_BLEND_OP_ADD;
+    cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
+                       | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    VkPipelineColorBlendStateCreateInfo cb = {};
+    cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    cb.attachmentCount = 1;
+    cb.pAttachments = &cba;
+
+    VkDynamicState dyn[2] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+    VkPipelineDynamicStateCreateInfo dynState = {};
+    dynState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynState.dynamicStateCount = 2;
+    dynState.pDynamicStates = dyn;
+
+    VkGraphicsPipelineCreateInfo pci = {};
+    pci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pci.stageCount = 2;
+    pci.pStages = stages;
+    pci.pVertexInputState = &vin;
+    pci.pInputAssemblyState = &ia;
+    pci.pViewportState = &vp;
+    pci.pRasterizationState = &rs;
+    pci.pMultisampleState = &ms;
+    pci.pDepthStencilState = &dsst;
+    pci.pColorBlendState = &cb;
+    pci.pDynamicState = &dynState;
+    pci.layout = g.textPipelineLayout;
+    pci.renderPass = g.renderPass;
+    pci.subpass = 0;
+    Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &pci, nullptr,
+                                    &g.textPipeline), "vkCreateGraphicsPipelines(text)");
+    vkDestroyShaderModule(g.device, vert, nullptr);
+    vkDestroyShaderModule(g.device, frag, nullptr);
+
+    // Per-frame glyph-quad vertex buffer (host-visible, persistently mapped). Single copy:
+    // FlushMenuText memcpys + draws it after the fence, so no in-flight double-buffering.
+    g.textVbufCap = 4096 * 6;   // up to ~4096 glyphs/frame, 6 verts each
+    VkDeviceSize vbytes = (VkDeviceSize)g.textVbufCap * sizeof(TextVertex);
+    VkBufferCreateInfo bci = {};
+    bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bci.size = vbytes;
+    bci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    Check(vkCreateBuffer(g.device, &bci, nullptr, &g.textVbuf), "vkCreateBuffer(text)");
+    VkMemoryRequirements req = {};
+    vkGetBufferMemoryRequirements(g.device, g.textVbuf, &req);
+    VkMemoryAllocateInfo mai = {};
+    mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    mai.allocationSize = req.size;
+    mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    Check(vkAllocateMemory(g.device, &mai, nullptr, &g.textVbufMemory), "vkAllocateMemory(text)");
+    Check(vkBindBufferMemory(g.device, g.textVbuf, g.textVbufMemory, 0), "vkBindBufferMemory(text)");
+    Check(vkMapMemory(g.device, g.textVbufMemory, 0, vbytes, 0, &g.textVbufMapped), "vkMapMemory(text)");
+
+    g.menuFontReady = true;
+    printf("RB_Vulkan: menu text ready (%dpx glyphs, %dx%d atlas).\n",
+           g.menuFont.px_height, g.menuFont.w, g.menuFont.h);
+    fflush(stdout);
+}
+
+// DOOM-0206 (L1b): the extern-"C" menu-text batch API m_menu.c drives (Tasks 3-6). Every entry
+// is a no-op until CreateTextResources baked a font (menuFontReady). rb_menu_text_active is set
+// by m_menu each frame the crisp skin drew; FlushMenuText draws the queued quads only when it
+// is set, so nothing changes for the paletted HUD/menu until the menu opts in.
+extern "C" { int rb_menu_text_active = 0; }
+
+extern "C" void rb_text_begin(void)
+{
+    g.textVerts.clear();
+}
+
+extern "C" int rb_text_width(const char* s, float scale)
+{
+    if (!g.menuFontReady) return 0;
+    return (int)(rb_text_measure(&g.menuFont, s) * scale + 0.5f);
+}
+
+extern "C" int rb_text_line_height(float scale)
+{
+    if (!g.menuFontReady) return 0;
+    return (int)((float)g.menuFont.px_height * scale + 0.5f);
+}
+
+extern "C" void rb_text_draw(const char* s, int x, int y, float scale, unsigned rgba)
+{
+    if (!g.menuFontReady || !s) return;
+    const unsigned char cr = (unsigned char)((rgba >> 24) & 0xFF);
+    const unsigned char cg = (unsigned char)((rgba >> 16) & 0xFF);
+    const unsigned char cb = (unsigned char)((rgba >>  8) & 0xFF);
+    const unsigned char ca = (unsigned char)( rgba        & 0xFF);
+    const float aw = (float)g.menuFont.w, ah = (float)g.menuFont.h;
+    float penX = (float)x;
+    // The API's y is the text's top-left; glyph xoff/yoff are baseline-relative, so drop the
+    // pen to the baseline (top + ascent). ascent was baked in pixels at px_height.
+    const float baseY = (float)y + (float)g.menuFont.ascent * scale;
+    for (const unsigned char* p = (const unsigned char*)s; *p; p++)
+    {
+        int idx = (int)*p - 32;
+        if (idx < 0 || idx >= 96) continue;   // non-printable / out of the baked ASCII range
+        const rb_glyph_t* gl = &g.menuFont.glyphs[idx];
+        const float x0 = penX + gl->xoff * scale;
+        const float y0 = baseY + gl->yoff * scale;
+        const float x1 = x0 + (float)(gl->x1 - gl->x0) * scale;
+        const float y1 = y0 + (float)(gl->y1 - gl->y0) * scale;
+        const float u0 = (float)gl->x0 / aw, v0 = (float)gl->y0 / ah;
+        const float u1 = (float)gl->x1 / aw, v1 = (float)gl->y1 / ah;
+        const TextVertex a0 = { x0, y0, u0, v0, cr, cg, cb, ca };
+        const TextVertex a1 = { x1, y0, u1, v0, cr, cg, cb, ca };
+        const TextVertex a2 = { x1, y1, u1, v1, cr, cg, cb, ca };
+        const TextVertex a3 = { x0, y1, u0, v1, cr, cg, cb, ca };
+        g.textVerts.push_back(a0); g.textVerts.push_back(a1); g.textVerts.push_back(a2);
+        g.textVerts.push_back(a0); g.textVerts.push_back(a2); g.textVerts.push_back(a3);
+        penX += gl->xadvance * scale;
+    }
+}
+
+// DOOM-0206 (L1b): the play-view dim quad (menu backdrop). Darkens the world behind the menu
+// but leaves the status bar (bottom 32 of DOOM's 200 rows) undimmed so the HUD stays readable.
+// Solid colour via the reserved full-coverage atlas texel (0,0). Always queued; the Classic-
+// tier gate lives in the caller (m_menu), per the plan. The dim strength is tunable in later
+// menu tasks.
+extern "C" void rb_menu_dim(void)
+{
+    if (!g.menuFontReady) return;
+    const float W = (float)g.extent.width;
+    const float H = (float)g.extent.height;
+    const float barTop = H * (200.0f - 32.0f) / 200.0f;   // status-bar top, display pixels
+    const float u = 0.5f / (float)g.menuFont.w;           // texel (0,0) centre (full coverage)
+    const float v = 0.5f / (float)g.menuFont.h;
+    const unsigned char a = 0xA0;   // ~63% black dim over the play view
+    const TextVertex q0 = { 0.0f, 0.0f,   u, v, 0, 0, 0, a };
+    const TextVertex q1 = { W,    0.0f,   u, v, 0, 0, 0, a };
+    const TextVertex q2 = { W,    barTop, u, v, 0, 0, 0, a };
+    const TextVertex q3 = { 0.0f, barTop, u, v, 0, 0, 0, a };
+    g.textVerts.push_back(q0); g.textVerts.push_back(q1); g.textVerts.push_back(q2);
+    g.textVerts.push_back(q0); g.textVerts.push_back(q2); g.textVerts.push_back(q3);
+}
+
+// DOOM-0206 (L1b): draw this frame's queued glyph quads (rb_text_draw / rb_menu_dim) over the
+// paletted 2D overlay, in the same present render pass. Self-contained: sets its own full-
+// display viewport/scissor, binds the text pipeline + atlas set, and pushes invDisplay so the
+// vertex shader maps display-pixel positions to NDC. The host vector is memcpy'd into the
+// mapped vertex buffer here — after the top-of-frame fence — so the single copy the GPU read
+// last frame is finished (no double-buffering). No-op unless the menu opted in this frame.
+static void FlushMenuText()
+{
+    if (!g.menuFontReady || !rb_menu_text_active || g.textVerts.empty())
+        return;
+    uint32_t verts = (uint32_t)g.textVerts.size();
+    if (verts > g.textVbufCap) verts = g.textVbufCap;   // over-cap frame just clips the tail
+    std::memcpy(g.textVbufMapped, g.textVerts.data(), (size_t)verts * sizeof(TextVertex));
+
+    VkViewport vpRect = {};
+    vpRect.width = (float)g.extent.width;
+    vpRect.height = (float)g.extent.height;
+    vpRect.maxDepth = 1.0f;
+    vkCmdSetViewport(g.cmd, 0, 1, &vpRect);
+    VkRect2D scissor = { { 0, 0 }, g.extent };
+    vkCmdSetScissor(g.cmd, 0, 1, &scissor);
+
+    float invDisplay[2] = { 2.0f / (float)g.extent.width, 2.0f / (float)g.extent.height };
+    vkCmdPushConstants(g.cmd, g.textPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
+                       0, sizeof(invDisplay), invDisplay);
+    vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            g.textPipelineLayout, 0, 1, &g.textDs, 0, nullptr);
+    vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.textPipeline);
+    VkDeviceSize off = 0;
+    vkCmdBindVertexBuffers(g.cmd, 0, 1, &g.textVbuf, &off);
+    vkCmdDraw(g.cmd, verts, 1, 0, 0);
+}
+
 // ===========================================================================
 // DOOM-0042 — Ultra HD PBR material loader (walls + flats, RT view).
 //
@@ -5364,6 +5765,7 @@ extern "C" void RB_Vulkan_Init(void)
     InitPaletteAndDescriptorSet();  // PLAYPAL LUT + descriptor set, so the HUD/menu
                                     // overlay composites from the first frame (DOOM-0045)
     UpdateCompositeDescriptor();    // DOOM-0170 L2a: point the composite sampler at the scene view
+    CreateTextResources();          // DOOM-0206 L1b: bake the menu glyph atlas + text pipeline
     if (g.rtEnabled)
     {
         // Path-tracer compute pass (DOOM-0009 build step 2c). Pipeline first (it
@@ -7075,6 +7477,8 @@ void RecordRtOverlay(uint32_t idx, bool drawOverlay)
         vkCmdDraw(g.cmd, 3, 1, 0, 0);
     }
 
+    FlushMenuText();   // DOOM-0206 L1b: crisp menu glyphs over the paletted overlay
+
     vkCmdEndRenderPass(g.cmd);
 }
 
@@ -7778,6 +8182,8 @@ extern "C" void RB_Vulkan_Present(void)
         vkCmdDraw(g.cmd, 3, 1, 0, 0);
     }
 
+    FlushMenuText();   // DOOM-0206 L1b: crisp menu glyphs over the paletted overlay
+
     vkCmdEndRenderPass(g.cmd);
     if (rprof) {
         vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 5);  // after HUD/present
@@ -8036,6 +8442,20 @@ extern "C" void RB_Vulkan_Shutdown(void)
     if (g.overlayMemory)     vkFreeMemory(g.device, g.overlayMemory, nullptr);
     if (g.overlayStaging)    vkDestroyBuffer(g.device, g.overlayStaging, nullptr);
     if (g.overlayStagingMem) vkFreeMemory(g.device, g.overlayStagingMem, nullptr);
+
+    // DOOM-0206 (L1b) menu-text resources. Descriptor set rides its pool.
+    if (g.textPipeline)       vkDestroyPipeline(g.device, g.textPipeline, nullptr);
+    if (g.textPipelineLayout) vkDestroyPipelineLayout(g.device, g.textPipelineLayout, nullptr);
+    if (g.textDsPool)         vkDestroyDescriptorPool(g.device, g.textDsPool, nullptr);
+    if (g.textDsLayout)       vkDestroyDescriptorSetLayout(g.device, g.textDsLayout, nullptr);
+    if (g.textSampler)        vkDestroySampler(g.device, g.textSampler, nullptr);
+    if (g.textAtlasView)      vkDestroyImageView(g.device, g.textAtlasView, nullptr);
+    if (g.textAtlas)          vkDestroyImage(g.device, g.textAtlas, nullptr);
+    if (g.textAtlasMemory)    vkFreeMemory(g.device, g.textAtlasMemory, nullptr);
+    if (g.textVbufMapped)     vkUnmapMemory(g.device, g.textVbufMemory);
+    if (g.textVbuf)           vkDestroyBuffer(g.device, g.textVbuf, nullptr);
+    if (g.textVbufMemory)     vkFreeMemory(g.device, g.textVbufMemory, nullptr);
+    rb_text_free_font(&g.menuFont);   // no-op if the pixels were already freed after upload
 
     DestroyFramebufferResources();   // framebuffers, depth, swapchain image views
     if (g.pipeline)       vkDestroyPipeline(g.device, g.pipeline, nullptr);

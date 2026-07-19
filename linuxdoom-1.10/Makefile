@@ -66,6 +66,7 @@ SHADER_SRCS=$(SHADER_DIR)/mesh.vert $(SHADER_DIR)/mesh.frag \
 		$(SHADER_DIR)/blob.vert $(SHADER_DIR)/blob.frag \
 		$(SHADER_DIR)/overlay.vert $(SHADER_DIR)/overlay.frag \
 		$(SHADER_DIR)/composite.vert $(SHADER_DIR)/composite.frag \
+		$(SHADER_DIR)/text.vert $(SHADER_DIR)/text.frag \
 		$(SHADER_DIR)/ssao.frag \
 		$(SHADER_DIR)/pathtrace.comp $(SHADER_DIR)/bake.comp \
 		$(SHADER_DIR)/svgf_temporal.comp $(SHADER_DIR)/svgf_atrous.comp \
