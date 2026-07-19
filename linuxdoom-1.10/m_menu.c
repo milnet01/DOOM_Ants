@@ -1173,6 +1173,12 @@ void M_Episode(int choice)
 //
 char    detailNames[2][9]	= {"M_GDHIGH","M_GDLOW"};
 char	msgNames[2][9]		= {"M_MSGOFF","M_MSGON"};
+// DOOM-0206 (L6 review fix): hu_font display strings for the Detail/Messages
+// value columns (INV-7: value columns share the uniform row size too). Same
+// index truth as detailNames[]/msgNames[] above -- just text instead of the
+// oversized big-red M_GD*/M_MSG* graphic lumps.
+static const char* detailValueNames[2]	= {"High","Low"};
+static const char* msgValueNames[2]	= {"Off","On"};
 char	fpsPosNames[4][11]	= {"Off","Top-Left","Top-Centre","Top-Right"};
 // Temporal upscaler (DOOM-0009 6-d): selector text + the render-scale presets.
 // rb_upscaler / rb_renderscale live in r_vulkan.cpp (read by the path tracer).
@@ -1241,11 +1247,13 @@ void M_DrawOptions(void)
 	if (optionsLabels[i][0])
 	    M_WriteText(OptionsDef.x,OptionsDef.y+LINEHEIGHT*i,(char *)optionsLabels[i]);
 
-    V_DrawPatchDirect (OptionsDef.x + 175,OptionsDef.y+LINEHEIGHT*detail,0,
-		       W_CacheLumpName(detailNames[detailLevel],PU_CACHE));
+    // DOOM-0206 (L6 review fix): value columns as hu_font text, not big-red
+    // patches -- mirrors Video:/FPS: below (INV-7 uniform row size).
+    M_WriteText(OptionsDef.x + 175,OptionsDef.y+LINEHEIGHT*detail,
+		(char *)detailValueNames[detailLevel]);
 
-    V_DrawPatchDirect (OptionsDef.x + 120,OptionsDef.y+LINEHEIGHT*messages,0,
-		       W_CacheLumpName(msgNames[showMessages],PU_CACHE));
+    M_WriteText(OptionsDef.x + 120,OptionsDef.y+LINEHEIGHT*messages,
+		(char *)msgValueNames[showMessages]);
 
     // DOOM-0206 (L3): entry row to the video settings, relabelled "Video" (from
     // "Renderer") so it doesn't clash with the tier-selector row inside. Opens the
