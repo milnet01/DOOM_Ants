@@ -6,11 +6,17 @@
 
 // No font ships in the repo yet (Oxanium arrives in DOOM-0206 Task 5), so the bake
 // logic is exercised against a real on-disk TTF rather than a fragile embedded blob:
-// DejaVu Sans ships with fonts-config on virtually every Linux desktop/CI image. If
-// it's ever absent (a minimal container), the test degrades to a skip instead of
-// failing the build over a missing system font -- see rb_text_test's own header
-// comment / DOOM-0206 Task 1 brief for why this is the chosen approach.
-static const char* SYSTEM_TTF = "/usr/share/fonts/truetype/DejaVuSans.ttf";
+// DejaVu Sans (fonts-dejavu-core / fonts-config) ships on virtually every Linux
+// desktop/CI image, but its install path differs by distro layout (verified via each
+// distro's package file list -- not assumed), so try each known location. If none is
+// present (a minimal container), the test degrades to a skip instead of failing the
+// build over a missing system font -- see the DOOM-0206 Task 1 brief for why this is
+// the chosen approach.
+static const char* SYSTEM_TTF_CANDIDATES[] = {
+    "/usr/share/fonts/truetype/DejaVuSans.ttf",         // openSUSE (fonts-config, flat)
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",  // Debian/Ubuntu (fonts-dejavu-core)
+    "/usr/share/fonts/dejavu/DejaVuSans.ttf",            // Fedora/RHEL (dejavu-sans-fonts)
+};
 
 static unsigned char* read_file(const char* path, long* out_len) {
     FILE* f = fopen(path, "rb");
@@ -32,9 +38,13 @@ int main() {
     assert(rb_text_bake(NULL, 0, 48, &bad) == 0);   // null input never crashes
 
     long len = 0;
-    unsigned char* ttf = read_file(SYSTEM_TTF, &len);
+    unsigned char* ttf = NULL;
+    for (size_t i = 0; i < sizeof(SYSTEM_TTF_CANDIDATES) / sizeof(SYSTEM_TTF_CANDIDATES[0]); i++) {
+        ttf = read_file(SYSTEM_TTF_CANDIDATES[i], &len);
+        if (ttf) break;
+    }
     if (!ttf) {
-        printf("rb_text: skipped (no system TTF at %s)\n", SYSTEM_TTF);
+        printf("rb_text: skipped (no system TTF found in any candidate path)\n");
         return 0;
     }
 

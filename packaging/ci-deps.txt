@@ -13,3 +13,7 @@ libsdl2-mixer-dev    # SDL2_mixer: music + SFX
 libvulkan-dev        # Vulkan loader + headers (3D back-end; linked even without a GPU)
 glslc                # compiles the Vulkan shaders to SPIR-V
 xxd                  # embeds the compiled shaders as C headers
+fonts-dejavu-core    # DOOM-0206: rb_text_test needs a real on-disk TTF to bake
+                     # (ubuntu-latest ships no fonts by default -- verified via
+                     # the runner-images manifest -- so without this the test
+                     # only exercises its no-font skip path, never the real bake)
