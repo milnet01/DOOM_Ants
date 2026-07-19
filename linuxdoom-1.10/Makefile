@@ -126,6 +126,7 @@ OBJS=				\
 		$(O)/r_backend.o		\
 		$(O)/r_mesh.o			\
 		$(O)/rb_image.o		\
+		$(O)/rb_text.o		\
 		$(O)/r_vulkan.o		\
 		$(O)/r_bsp.o			\
 		$(O)/r_data.o			\

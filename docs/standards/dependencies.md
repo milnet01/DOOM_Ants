@@ -137,6 +137,8 @@ sub-Makefile is not built by CI or the default `make`, so it's out of scope):
 - `linuxdoom-1.10/stb_image.h` — vendored public-domain PNG decoder (stb_image v2.30),
   added for DOOM-0042 HD material loading. No link dependency. Re-check upstream on a
   sweep cadence; update the version noted here when bumped.
+- `linuxdoom-1.10/stb_truetype.h` v1.26 — vendored single-header glyph rasterizer
+  (menu text, DOOM-0206). Bump on the dependency sweep.
 
 ## Staying current (sweep posture)
 
