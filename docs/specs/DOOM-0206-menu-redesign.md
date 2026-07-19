@@ -89,11 +89,17 @@ single source of truth — no second menu system. The redesign is two layers:
 - **Uniform option-text size per menu** (INV-7): within any one menu, all of the
   **option rows** are one size; the **title/header banner is exempt** (kept as
   art — user decision). Classic menus whose option rows are already single-size
-  (e.g. the Main menu — all equal-height red item lumps; Sound — two equal
-  `M_SFXVOL`/`M_MUSVOL` label lumps plus sliders) need no row change. The one menu
-  that today **mixes** big-red graphic-lump row labels (`M_ENDGAM`, `M_MESSG`,
-  `M_DETAIL`, `M_SCRNSZ`, `M_MSENS`, `M_SVOL`) with small `hu_font` rows (the
-  "Video"/"FPS" rows) is **Options**; it is made uniform by rendering those big-red
+  (Sound — two equal `M_SFXVOL`/`M_MUSVOL` label lumps plus sliders; Load/Save —
+  `hu_font` slot rows) need no row change. The **Main** menu is kept iconic as-is:
+  its big-red item lumps stay (converting them would destroy the classic screen),
+  and the pre-existing DOOM-0060 conditional "Game Select" `hu_font` row (shown
+  only when both DOOM 1 + 2 WADs are installed, `m_menu.c` `M_ReturnToGameSelect`)
+  is left untouched — a documented, accepted exception, not something this redesign
+  converts. The one menu whose *editable* rows genuinely **mix** big-red
+  graphic-lump labels (`M_ENDGAM`, `M_MESSG`, `M_DETAIL`, `M_SCRNSZ`, `M_MSENS`,
+  `M_SVOL` — here the Options "Sound Volume" row, distinct from the same lump's use
+  as the Sound submenu *title*) with small `hu_font` rows (the "Video"/"FPS" rows)
+  is **Options**; it is made uniform by rendering those big-red
   labels **as `hu_font` text** at the row size — a graphic patch cannot be
   fractionally scaled by `V_DrawPatch`, so the oversized lumps are drawn as text
   instead. This is a deliberate, user-accepted relaxation of Classic's red
@@ -385,7 +391,8 @@ path (it happens only on resize, never during play).
     of `VideoDef`'s `videoLabels[]` — the `menuitem_t.name` field holds the *lump*
     name, not a display string, so the strings must be added. Each menu's
     **title/header banner is left as art** (exempt, per INV-7); already-uniform
-    menus (Main, Sound, Load/Save) are left as-is.
+    menus (Main — kept iconic incl. its conditional Game Select row; Sound;
+    Load/Save) are left as-is.
   Verify: no Classic menu overlaps the status bar; every Classic menu's option
   rows are a single size (title banners exempt); Classic otherwise unchanged (no
   crisp glyph font, no dim, no `VideoDef`; red styling kept on the title banners
@@ -400,7 +407,8 @@ path (it happens only on resize, never during play).
   the `VideoDef` consolidation. The **only** changes to Classic are the two shared
   fixes — the HUD-safe bound (INV-2) and uniform per-menu **row** size (INV-7). Its
   title/header banner art is kept on every menu, and its red row styling is
-  preserved wherever the rows are already uniform (Main, Sound, Load/Save); the
+  preserved on the menus left as-is (Main — kept iconic, incl. its conditional
+  DOOM-0060 Game Select text row; Sound, Load/Save — already uniform); the
   red row-label look is relaxed **only** on **Options** (the single mixed menu),
   whose oversized big-red graphic-lump row labels are redrawn as uniform `hu_font`
   text because a patch cannot be scaled to the row size. Classic is therefore no
@@ -433,10 +441,13 @@ path (it happens only on resize, never during play).
 - **INV-7** — **Uniform option-text size per menu (user requirement, all tiers).**
   Within any one menu or submenu — Classic, Solid, or Ultra — all of the menu's
   **option text** (group headings, row labels, value columns) is a **single
-  size**. The menu's **title/header banner** (e.g. the `DOOM` logo, the
-  `M_OPTTTL`/`M_SVOL` title art) is a distinct element and is **exempt** — it
-  keeps its original size/art (user decision 2026-07-19: uniform rows, keep the
-  title banners). Emphasis in the option text is expressed with weight / colour /
+  size**. Classic's **bitmap title-art banners** (e.g. the `DOOM` logo, the
+  `M_OPTTTL` Options banner) are a distinct element and are **exempt** — they keep
+  their original art/size (user decision 2026-07-19: uniform rows, keep the title
+  banners). The 3D crisp menus carry no bitmap banner — their glyph title (e.g.
+  `VIDEO`) is drawn at the **row size**, set apart by weight / caps /
+  letter-spacing, not size (§4.2), so the exemption is a Classic-only concept.
+  Emphasis in the option text is expressed with weight / colour /
   letter-spacing / caps, **never a different size**. In Classic this means the one
   menu that mixes big-red graphic-lump row labels with small `hu_font` rows
   (Options) renders those labels **as `hu_font` text** at the uniform row size —
