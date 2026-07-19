@@ -71,6 +71,13 @@ extern "C" {
     extern int firstflat;                       // lump index of the first flat
     extern int numflats;                        // flat count
     extern int rendermode;                      // r_backend.h: selected tier (TIER_* mirror below)
+    // DOOM-0206 (L2): gamestate/screenblocks drive the HUD-safe bound (rb_menu_safe_bottom).
+    // gamestate's real C type is gamestate_t (doomdef.h enum, GS_LEVEL==0); mirrored here as
+    // plain int rather than pulling doomdef.h/doomstat.h in (not C++-clean, see the probe
+    // comment below) -- same dodge this file already uses for rendermode/rendermode_t.
+    // screenblocks is genuinely `int` in m_menu.c already, so no mismatch there.
+    extern int gamestate;                       // doomdef.h: gamestate_t, GS_LEVEL == 0
+    extern int screenblocks;                    // m_menu.c: HUD size 0-10 (DOOM-0148 clamp)
 }
 
 // The GPU control struct mirrors this byte-for-byte in pathtrace.comp (std430).
@@ -5125,17 +5132,43 @@ extern "C" void rb_text_draw(const char* s, int x, int y, float scale, unsigned 
     }
 }
 
-// DOOM-0206 (L1b): the play-view dim quad (menu backdrop). Darkens the world behind the menu
-// but leaves the status bar (bottom 32 of DOOM's 200 rows) undimmed so the HUD stays readable.
-// Solid colour via the reserved full-coverage atlas texel (0,0). Always queued; the Classic-
-// tier gate lives in the caller (m_menu), per the plan. The dim strength is tunable in later
-// menu tasks.
+// DOOM-0206 (L2): INV-2, the HUD-safe bound. Returns the display-pixel Y below which nothing
+// may draw -- the status bar's top edge while it's on screen, else the full display height
+// (nothing to avoid). Used by rb_menu_dim here, and will be used by the crisp skin (Task 4)
+// and the Classic clip (Task 6).
+//
+// screenblocks < 11 is DOOM-0148's always-true-in-game invariant (M_Init clamps screenblocks
+// to <= 10, so 11's fullscreen-no-HUD view is currently unreachable) -- checked anyway so this
+// stays correct if that clamp is ever lifted. 200/32 are ORIGHEIGHT/ST_HEIGHT (doomdef.h /
+// st_stuff.h); named literally here since this file avoids pulling those C headers in (see the
+// probe comment above RB_VulkanProbe).
+extern "C" int rb_menu_safe_bottom(void)
+{
+    const int dispH = (int)g.extent.height;
+    static bool logged = false;
+    int safeBottom = dispH;
+    if (gamestate == 0 /* GS_LEVEL */ && screenblocks < 11)
+        safeBottom = dispH * (200 - 32) / 200;   // 200=ORIGHEIGHT, 32=ST_HEIGHT
+    if (!logged)
+    {
+        printf("RB_Vulkan: rb_menu_safe_bottom = %d (dispH=%d, gamestate=%d, screenblocks=%d)\n",
+               safeBottom, dispH, gamestate, screenblocks);
+        fflush(stdout);
+        logged = true;
+    }
+    return safeBottom;
+}
+
+// DOOM-0206 (L1b/L2): the play-view dim quad (menu backdrop). Darkens the world behind the
+// menu but leaves the status bar undimmed (rb_menu_safe_bottom, INV-2) so the HUD stays
+// readable. Solid colour via the reserved full-coverage atlas texel (0,0). Always queued; the
+// Classic-tier gate lives in the caller (m_menu), per the plan. The dim strength is tunable in
+// later menu tasks.
 extern "C" void rb_menu_dim(void)
 {
     if (!g.menuFontReady) return;
     const float W = (float)g.extent.width;
-    const float H = (float)g.extent.height;
-    const float barTop = H * (200.0f - 32.0f) / 200.0f;   // status-bar top, display pixels
+    const float barTop = (float)rb_menu_safe_bottom();    // status-bar top, display pixels
     const float u = 0.5f / (float)g.menuFont.w;           // texel (0,0) centre (full coverage)
     const float v = 0.5f / (float)g.menuFont.h;
     const unsigned char a = 0xA0;   // ~63% black dim over the play view

@@ -1119,6 +1119,10 @@ extern int	rb_filth;		// [ key      (rt config: rt_filth)
 extern int	rb_wet;			// ' key      (rt config: rt_wet)
 extern int	rb_profile;		// profiler   (rt config: rt_profile)
 char	detileNames[3][7]	= {"Off","2-tap","4-tap"};
+// DOOM-0206 (L1b/L2): menu-text batch API + HUD-safe bound, in r_vulkan.cpp.
+extern int	rb_menu_text_active;		// gates the text/dim flush in the present path
+extern void	rb_menu_dim(void);		// queues the play-view dim quad (0..rb_menu_safe_bottom())
+extern int	rb_menu_safe_bottom(void);	// display-pixel Y below which nothing may draw (INV-2)
 
 
 void M_DrawOptions(void)
@@ -2318,6 +2322,16 @@ void M_Drawer (void)
 
     if (!menuactive)
 	return;
+
+    // DOOM-0206 (L2): dim the play view behind the menu on the 3D tiers (Solid/Ultra). The
+    // crisp menu skin doesn't exist yet (Task 4) -- for now this just queues the HUD-safe dim
+    // quad ahead of the existing bitmap menu draw below, which still draws on top unchanged.
+    // Classic is untouched (dim is 3D-only; its own HUD-safe clip is Task 6).
+    if (rendermode != RB_CLASSIC)
+    {
+	rb_menu_text_active = 1;
+	rb_menu_dim();
+    }
 
     if (currentMenu->routine)
 	currentMenu->routine();         // call Draw routine
