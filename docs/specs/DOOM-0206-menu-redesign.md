@@ -347,14 +347,20 @@ crisp). The Classic *tier* is unaffected (see below).
   dim backdrop, `rb_menu_fill` sliders, `itemOn`-derived scroll, and skull cursor
   that `M_DrawVideoMenu` already uses (`M_DrawVideoMenu` is refactored into it — it
   becomes `M_DrawCrispMenu(&VideoDef)` with VideoDef's label table + value-getter).
-  `M_MenuIsCrisp()` returns true for **any** menu when `rendermode != RB_CLASSIC`,
-  not just `VideoDef`. **Dispatch:** `M_Drawer`'s crisp branch must call
+  `M_MenuIsCrisp()` returns true for any **row-list** menu when
+  `rendermode != RB_CLASSIC`, not just `VideoDef`. **Carve-out — bespoke
+  fullscreen menus stay classic:** `ReadDef1`/`ReadDef2` (the HELP/HELP1 help
+  screens, `M_DrawReadThis1/2`) and `GameSelectDef` (the boot-time DOOM 1-vs-2
+  chooser, `M_DrawGameSelect`) draw a *single fullscreen patch*, not a row list —
+  `M_MenuIsCrisp()` must return **false** for these (keep their `routine()` draw in
+  every tier), or the crisp renderer would replace their art with an empty glyph
+  menu. **Dispatch:** for the crisp menus, `M_Drawer`'s crisp branch must call
   `M_DrawCrispMenu(currentMenu)` **instead of** `currentMenu->routine()` — the
   `routine` pointer is the *classic bitmap* draw (`M_DrawOptions`, `M_DrawMainMenu`,
   …) and would draw the red banners/lumps; `M_DrawCrispMenu` also has the wrong
-  signature to be a `routine`, so it is invoked directly. (Menus with no bespoke
-  crisp value-getter still route through `M_DrawCrispMenu` with an empty value
-  column.)
+  signature to be a `routine`, so it is invoked directly. (Row-list menus with no
+  bespoke crisp value-getter still route through `M_DrawCrispMenu` with an empty
+  value column.)
 - **Per-menu crisp content:** each menu needs its item **labels as display
   strings** (the generic renderer can't read a `V_DrawPatch` lump). Provide a
   per-menu `const char* labels[]` table (like `videoLabels[]`) keyed by the menu's
@@ -384,7 +390,7 @@ crisp). The Classic *tier* is unaffected (see below).
     refs (`optionsLabels[]`'s Detail entry + the `detailValueNames[detailLevel]`
     value draw). **Keep** the `detailLevel` variable and its `"detaillevel"` config
     binding — `R_SetViewSize` (r_main.c) and `m_misc.c` still reference them; only
-    the menu *row* is removed. NOTE: this supersedes §4.1 / §L6 / INV-7's mentions
+    the menu *row* is removed. NOTE: this supersedes §4.1 / §L6's mentions
     of `M_DETAIL` as an Options row to keep-and-convert — it is now removed, not
     converted.
   - **De-duplicate the FPS-counter row.** It currently appears in *both* the
@@ -397,6 +403,11 @@ crisp). The Classic *tier* is unaffected (see below).
     (`M_RendererMenu` → `VideoDef` in 3D / `RendererDef` in Classic), so removing it
     would strand that whole menu. This avoids any draw-time row-hiding (which
     `M_Responder` cannot honour — it skips only `status == -1`, at input time).
+    Draw refs to update (parallel to the Detail list): drop `M_DrawOptions`'s manual
+    `"FPS:"` + `fpsPosNames[fpsCorner]` draw at `LINEHEIGHT*showfps` and the
+    `showfps` `options_e` entry; add a value line for the new FPS row in
+    `M_DrawRendererMenu`. (Compiler-forced by the enum edit; `showfps`/`fpsCorner`
+    vars + config stay — they still back the Video-menu FPS row.)
 - **Invariants:** INV-1 (Classic tier bitmap/red + shared fixes) holds — v2's
   crisp draw is 3D-only; the item-array edits change *which rows exist*, not the
   Classic draw style. INV-2 (HUD-safe, all tiers) — the generic crisp renderer
@@ -548,9 +559,12 @@ path (it happens only on resize, never during play).
   array + a new `M_ChangeRayTracing` handler + the tier-conditional entry branch
   in `M_RendererMenu` + a `currentMenu` re-route in `M_ChangeRenderer` on a
   Classic↔3D tier change) and a crisp draw skin + `itemOn`-derived scrolling. It
-  does **not** change the existing classic menus' item lists, the `itemOn`
+  does **not** change the existing classic menus' item lists (v1), the `itemOn`
   cursor-*movement* semantics, `M_Responder`, or persistence — those are reused
-  unchanged. The entry branch routes through the existing `M_SetupNextMenu`; the
+  unchanged. **v2 relaxation (§4.6):** the two content fixes DO edit the shared
+  Options/Renderer item arrays (remove Graphic Detail + FPS from Options, add FPS
+  to `RendererDef`); the `itemOn` cursor-*movement* semantics, `M_Responder`, and
+  persistence remain untouched. The entry branch routes through the existing `M_SetupNextMenu`; the
   tier re-route sets `currentMenu`/`itemOn` **directly** (equivalent to
   `M_SetupNextMenu` plus the `itemOn =` cursor-pin — done inline because
   `M_SetupNextMenu` alone would restore `lastOn`, not the tier row). Both only swap
