@@ -377,8 +377,9 @@ crisp). The Classic *tier* is unaffected (see below).
   each row to either a display string (e.g. Messages `showMessages` → "On"/"Off")
   OR, for a `status==2` slider, a **fraction** `value/max` for `rb_menu_fill` — and
   each slider has its OWN variable and max, so the provider must know them, not just
-  return a string: Options `Screen Size` (`screenblocks`, max as in `M_SizeDisplay`)
-  and `Mouse Sensitivity` (`mouseSensitivity`, /9 per the classic thermo), Sound
+  return a string: Options `Screen Size` (`screenSize` = `screenblocks − 3`, range
+  0..7 → `/7` per `M_SizeDisplay`; NOT `screenblocks`, which is offset by +3) and
+  `Mouse Sensitivity` (`mouseSensitivity`, /9 per the classic thermo), Sound
   `M_SFXVOL`/`M_MUSVOL` (`snd_SfxVolume`/`snd_MusicVolume`, /15), like `VideoDef`'s
   Brightness (`rb_exposure`, /15). (Confirm each var + max against the classic
   `M_Draw*`/`M_DrawThermo` call for that row — do not guess the scale.) Load / Save
