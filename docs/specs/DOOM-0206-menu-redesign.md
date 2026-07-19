@@ -1,6 +1,6 @@
 # DOOM-0206 — Redesigned in-game menu for the 3D tiers (crisp font, HUD-safe, dimmed backdrop)
 
-Status: APPROVED for L6 (cold-eyes: 11 loops total — the Classic-caveat + INV-7
+Status: v1 (L1–L6) IMPLEMENTED; v2 (§4.6 — crisp skin for ALL 3D-tier menus) added 2026-07-19 per user play-test, cold-eyes in progress. (cold-eyes: 11 loops total — the Classic-caveat + INV-7
 additions were cold-reviewed over 6 further loops 2026-07-19, converging to
 polish; L1–L5 implemented, L6/L7 pending). Note for the L7 wrap-up: a light
 present-tense currency sweep is due — some clauses (e.g. §4.5 "there is none
@@ -324,6 +324,69 @@ the new Ray Tracing row, which needed a **new `M_ChangeRayTracing` handler**
   not mistaken for a bug.
 
 `rb_wireframe` (dev wireframe) is intentionally omitted.
+
+### 4.6 v2 scope — the crisp skin covers *every* Solid/Ultra menu
+
+**Decision (user play-test 2026-07-19):** v1 shipped the crisp skin for `VideoDef`
+only, leaving the other menus (main, Options, Sound, New Game / Episode / Skill,
+Load / Save) on the classic bitmap path *under all tiers*. In Solid/Ultra that
+left two problems the user hit immediately: the classic **main** menu mixes a big
+red graphic wordmark's items with a small `hu_font` "Game Select" row (sizes can't
+be matched in the fixed bitmap fonts), and the classic **Options** menu draws the
+big red `M_OPTTTL` banner *over* its red rows (red-on-red, unreadable). The user
+chose to **extend the crisp skin to every menu in the 3D tiers** — which is the
+original §1 goal ("redesign the Solid/Ultra menu"). This section supersedes §4.1's
+"Scope of the crisp skin v1: VideoDef only" and §4.5's VideoDef-only framing **for
+the 3D tiers**; the Classic *tier* is unaffected (see below).
+
+- **What changes:** in Solid/Ultra, *all* menus draw through a **generic crisp
+  renderer** `M_DrawCrispMenu(menu_t*)` — the same display-res Oxanium glyph pass,
+  dim backdrop, `rb_menu_fill` sliders, `itemOn`-derived scroll, and skull cursor
+  that `M_DrawVideoMenu` already uses (which becomes the first caller / is
+  refactored into it). `M_MenuIsCrisp()` returns true for **any** menu when
+  `rendermode != RB_CLASSIC`, not just `VideoDef`.
+- **Per-menu crisp content:** each menu needs its item **labels as display
+  strings** (the generic renderer can't read a `V_DrawPatch` lump). Provide a
+  per-menu `const char* labels[]` table (like `videoLabels[]`) keyed by the menu's
+  item enum. Menus that today draw only graphic-lump items with no value column
+  (main, episode, skill, new-game) need only a label table. Menus with value
+  columns / sliders (Options, Sound) supply a small value-getter for the right
+  column (reuse the existing per-menu draw logic's truth: `detailLevel`,
+  `showMessages`, the thermo `status==2` rows via `rb_menu_fill`). Load / Save
+  render their editable slot strings crisp (the blinking edit caret stays). The
+  **title** for each menu is drawn as a centred crisp caps string at the row size
+  (INV-7), NOT the bitmap banner — so the `M_OPTTTL`/`M_DOOM` red banners are not
+  drawn in the 3D tiers (they remain in Classic). This resolves the red-on-red
+  banner overlap by construction.
+- **The Classic *tier* is unchanged (INV-1):** under `RB_CLASSIC` every menu still
+  draws the 1997 bitmap path with the two shared fixes (HUD-safe shift + the
+  Options row-label conversion, §L6). The v2 generic crisp renderer is gated on
+  `rendermode != RB_CLASSIC`, so Classic never sees it. The title *banners* (DOOM
+  logo, OPTIONS) are kept in Classic exactly as before.
+- **Two content fixes requested in the same play-test (apply to all tiers unless
+  noted):**
+  - **Remove Graphic Detail** (`M_DETAIL` / `M_ChangeDetail`) from the Options
+    menu entirely — it is a confirmed no-op in this engine (the software-renderer
+    low-detail mode does nothing on the 3D backends). Drop the `menuitem_t`, its
+    `options_e` enum entry, and its draw/handler references.
+  - **De-duplicate the FPS-counter row.** It currently appears in both the Options
+    menu and the consolidated Video menu. FPS + the render-settings "Video" row are
+    render/display settings that belong in the **Video** menu, so in the **3D
+    tiers** the crisp Options omits the FPS and Video rows (they are reachable via
+    Options → Video). In **Classic** (no Video menu) the Options menu keeps its
+    FPS and "Renderer" rows — that is the only way to reach them there. Implement
+    as skin-conditional row inclusion, not by deleting the shared `menuitem_t`s.
+- **Invariants:** INV-1 (Classic tier bitmap/red + shared fixes) holds — v2 only
+  touches the 3D-tier draw. INV-2 (HUD-safe, all tiers) — the generic crisp
+  renderer reuses the same `rb_menu_safe_bottom` clamp + scroll as `VideoDef`.
+  INV-4 (no `M_Responder`/cursor-movement/persistence edits) — the generic
+  renderer is draw-time only; skin-conditional row inclusion for FPS/Video must
+  not change `itemOn` movement (use `status == -1`/skip semantics or a
+  draw-time-only row filter that the cursor already handles). INV-7 (one size per
+  menu) — every crisp menu's title + rows are one glyph size.
+- **Load/Save caveat:** the crisp Load/Save slots are the most involved (editable
+  text + caret); if they prove large they may land as a follow-up increment, with
+  Load/Save staying classic-bitmap in the interim (noted, not silently deferred).
 
 ## 5. Data & resources
 
