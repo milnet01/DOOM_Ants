@@ -176,15 +176,20 @@ to a glyph).
 
 **Dimmed backdrop — Solid/Ultra only:**
 
-- When **any** menu is active in a 3D tier (Solid/Ultra) — the crisp `VideoDef`
-  *and* the classic-path Options/Sound shown under a 3D tier — draw a **dim quad
-  over the play-view area only** (the region above the status bar), darkening the
-  3D scene behind the menu (≈60% alpha-over-black, `0xA0`, in v1 — tunable at the
-  look sign-off) so it does not read as clutter. (The dim is a 3D-tier behaviour,
-  keyed on `rendermode != RB_CLASSIC`, not on the crisp skin.) **The
+- When the crisp `VideoDef` menu is active (Solid/Ultra), draw a **dim quad over
+  the play-view area only** (the region above the status bar), darkening the 3D
+  scene behind the menu (≈60% alpha-over-black, `0xA0`, in v1 — tunable at the
+  look sign-off) so it does not read as clutter. The dim is **keyed on the crisp
+  skin** (`M_MenuIsCrisp()`), NOT on `rendermode`: the dim quad composites in the
+  post-overlay text pass, so it correctly sits *behind* the crisp text (queued in
+  the same batch, after the dim) but would land *on top of* a paletted bitmap
+  menu. So the **classic-path menus shown under a 3D tier** (main menu, Options,
+  Sound, Load/Save — not redesigned in v1) are **not** dimmed: they draw as the
+  normal bitmap menu over the live scene (same as the Classic tier), just
+  HUD-safe. (Dimming the scene behind those too — keeping the bitmap bright — is a
+  deferred enhancement; it needs a pre-overlay dim pass, out of v1 scope.) **The
   status bar is left undimmed and fully visible** (user decision) — the dim never
-  covers it. **Classic (the tier) has no dim** — it keeps its transparent-over-
-  scene look, just HUD-safe and uniform-size.
+  covers it. **Classic (the tier) has no dim** either.
 - **When no status bar is drawn** — the title/main menu (no game in progress) —
   the excluded band is empty and the safe region is the full screen (with a small
   margin). (In-game the bar is always present: DOOM-0148 caps the view at
@@ -294,10 +299,10 @@ per classic behaviour.)
 
 Every row maps to an existing config-bound `rb_*`/engine variable (§ the
 DOOM-0205 inventory), so menu, hotkey and `~/.doomrc` stay in lockstep — except
-the new Ray Tracing row, which needs a **new `M_ChangeRayTracing` handler**
-(there is none today — `rb_rtdebug` is currently written by config load
+the new Ray Tracing row, which needed a **new `M_ChangeRayTracing` handler**
+(added in L3 — before it, `rb_rtdebug` was written only by config load
 (`rt_view`), the `RB_Init` clamp, `RB_ApplyTierRt`, `M_ChangeDebugViews`, and the
-`~` key, but by no dedicated RT on/off row). Ray Tracing row contract:
+`~` key, with no dedicated RT on/off row). Ray Tracing row contract:
 
 - **On ⇔ `rb_rtdebug == 6`, Off ⇔ `rb_rtdebug == 0`**; `M_ChangeRayTracing`
   toggles between those two values.
@@ -363,11 +368,12 @@ path (it happens only on resize, never during play).
 
 - **L1** — `stb_truetype` vendored + glyph atlas bake + the display-res text
   pipeline & API. Verify: a hard-coded test string renders crisp at display res.
-- **L2** — dim backdrop + the HUD-safe bound (INV-2), the dim keyed on "any menu
-  active in a 3D tier" (`rendermode != RB_CLASSIC`, not the crisp skin — §4.3)
-  **independently of the crisp-text routing** (so it is testable before L3 wires
-  the text path). Verify: a screenshot shows the dim + zero pixels drawn in the
-  status-bar band.
+- **L2** — dim backdrop + the HUD-safe bound (INV-2). The dim is keyed on the
+  crisp skin (`M_MenuIsCrisp()` → `VideoDef`), so it darkens the scene only behind
+  the crisp menu, never a classic-path bitmap menu (§4.3). The HUD-safe bound is
+  independent of the dim (it applies to every 320×200 classic menu too, §L6).
+  Verify: a screenshot shows the dim behind the crisp Video menu + zero menu
+  pixels in the status-bar band.
 - **L3** — build the consolidated `VideoDef` `menu_t` (all toggles, incl. the new
   Ray Tracing row + its `M_ChangeRayTracing` handler) + the tier-conditional
   entry branch + the tier re-route, and route the crisp skin for `VideoDef`.
