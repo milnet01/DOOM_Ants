@@ -350,11 +350,18 @@ crisp). The Classic *tier* is unaffected (see below).
   `M_MenuIsCrisp()` returns true for any **row-list** menu when
   `rendermode != RB_CLASSIC`, not just `VideoDef`. **Carve-out — bespoke
   fullscreen menus stay classic:** `ReadDef1`/`ReadDef2` (the HELP/HELP1 help
-  screens, `M_DrawReadThis1/2`) and `GameSelectDef` (the boot-time DOOM 1-vs-2
-  chooser, `M_DrawGameSelect`) draw a *single fullscreen patch*, not a row list —
-  `M_MenuIsCrisp()` must return **false** for these (keep their `routine()` draw in
-  every tier), or the crisp renderer would replace their art with an empty glyph
-  menu. **Dispatch:** for the crisp menus, `M_Drawer`'s crisp branch must call
+  screens, `M_DrawReadThis1/2`) draw a *single fullscreen patch*, and
+  `GameSelectDef` (the boot-time DOOM 1-vs-2 chooser, `M_DrawGameSelect`) draws
+  bespoke `M_WriteText` strings with empty-`name` rows and no label table — none is
+  a normal row-list menu, so `M_MenuIsCrisp()` must return **false** for all three
+  (keep their `routine()` draw in every tier), or the crisp renderer would replace
+  their content with an empty glyph menu. (These three are the complete set: under
+  a 3D tier every other reachable menu is a row-list menu — `RendererDef`/`EffectsDef`
+  are never current in 3D since `M_RendererMenu` routes 3D → `VideoDef`.) Likewise
+  the yes/no **message prompts** (`messageToPrint`: Quit / End Game / overwrite
+  confirmations) are not `menu_t`s and return before the crisp branch — they stay
+  the classic bitmap overlay in 3D (out of v2 scope; "every Solid/Ultra menu" means
+  every `menu_t`, not these transient prompts). **Dispatch:** for the crisp menus, `M_Drawer`'s crisp branch must call
   `M_DrawCrispMenu(currentMenu)` **instead of** `currentMenu->routine()` — the
   `routine` pointer is the *classic bitmap* draw (`M_DrawOptions`, `M_DrawMainMenu`,
   …) and would draw the red banners/lumps; `M_DrawCrispMenu` also has the wrong
@@ -366,9 +373,15 @@ crisp). The Classic *tier* is unaffected (see below).
   per-menu `const char* labels[]` table (like `videoLabels[]`) keyed by the menu's
   item enum. Menus that today draw only graphic-lump items with no value column
   (main, episode, skill, new-game) need only a label table. Menus with value
-  columns / sliders (Options, Sound) supply a small value-getter for the right
-  column (reuse the existing per-menu draw logic's truth: `showMessages`, and the
-  thermo `status==2` rows via `rb_menu_fill`). Load / Save
+  columns / sliders (Options, Sound) supply a per-menu **value provider** that maps
+  each row to either a display string (e.g. Messages `showMessages` → "On"/"Off")
+  OR, for a `status==2` slider, a **fraction** `value/max` for `rb_menu_fill` — and
+  each slider has its OWN variable and max, so the provider must know them, not just
+  return a string: Options `Screen Size` (`screenblocks`, max as in `M_SizeDisplay`)
+  and `Mouse Sensitivity` (`mouseSensitivity`, /9 per the classic thermo), Sound
+  `M_SFXVOL`/`M_MUSVOL` (`snd_SfxVolume`/`snd_MusicVolume`, /15), like `VideoDef`'s
+  Brightness (`rb_exposure`, /15). (Confirm each var + max against the classic
+  `M_Draw*`/`M_DrawThermo` call for that row — do not guess the scale.) Load / Save
   render their editable slot strings crisp (the blinking edit caret stays). The
   **title** for each menu is drawn as a centred crisp caps string at the row size
   (INV-7), NOT the bitmap banner — so the `M_OPTTTL`/`M_DOOM` red banners are not
@@ -387,7 +400,8 @@ crisp). The Classic *tier* is unaffected (see below).
     menu entirely — it is a confirmed **no-op on every backend** (`M_ChangeDetail`
     has its `R_SetViewSize` call commented out and only prints "low detail mode
     n.a."). Drop the `menuitem_t`, its `options_e` enum entry, and the menu draw
-    refs (`optionsLabels[]`'s Detail entry + the `detailValueNames[detailLevel]`
+    refs (`optionsLabels[]`'s Detail entry + the now-orphaned `detailValueNames[]`
+    table and its `detailValueNames[detailLevel]`
     value draw). **Keep** the `detailLevel` variable and its `"detaillevel"` config
     binding — `R_SetViewSize` (r_main.c) and `m_misc.c` still reference them; only
     the menu *row* is removed. NOTE: this supersedes §4.1 / §L6's mentions
@@ -406,8 +420,11 @@ crisp). The Classic *tier* is unaffected (see below).
     Draw refs to update (parallel to the Detail list): drop `M_DrawOptions`'s manual
     `"FPS:"` + `fpsPosNames[fpsCorner]` draw at `LINEHEIGHT*showfps` and the
     `showfps` `options_e` entry; add a value line for the new FPS row in
-    `M_DrawRendererMenu`. (Compiler-forced by the enum edit; `showfps`/`fpsCorner`
-    vars + config stay — they still back the Video-menu FPS row.)
+    `M_DrawRendererMenu` (add the `rm_fps` `renderer_e` entry + `RendererMenu[]`
+    `menuitem_t`, e.g. before `rm_brightness`). (`showfps` is only an `options_e`
+    enum entry being removed — there is no `showfps` variable; the real var
+    `fpsCorner` + its `fps_corner` config stay, still backing the Video-menu FPS
+    row and the new RendererDef one.)
 - **Invariants:** INV-1 (Classic tier bitmap/red + shared fixes) holds — v2's
   crisp draw is 3D-only; the item-array edits change *which rows exist*, not the
   Classic draw style. INV-2 (HUD-safe, all tiers) — the generic crisp renderer
@@ -534,8 +551,12 @@ path (it happens only on resize, never during play).
   (`M_WriteText` / `V_DrawPatch`), red styling, and existing menu structure
   (`RendererDef` / `EffectsDef`, reached via the tier-conditional entry row,
   §4.5). Classic does **not** get the crisp glyph font, the dimmed backdrop, or
-  the `VideoDef` consolidation. The **only** changes to Classic are the two shared
-  fixes — the HUD-safe bound (INV-2) and uniform per-menu **row** size (INV-7). Its
+  the `VideoDef` consolidation. The changes to Classic are the two shared
+  fixes — the HUD-safe bound (INV-2) and uniform per-menu **row** size (INV-7) —
+  **plus one v2 structural edit (§4.6):** an FPS row is added to Classic's
+  `RendererDef` (so Classic keeps FPS access after the row is removed from Options),
+  and Graphic Detail is removed from Options. The Classic draw *style* (bitmap/red,
+  banners) is unchanged; only that row content differs. Its
   title/header banner art is kept on every menu, and its red row styling is
   preserved on the menus left as-is (Main — kept iconic, incl. its conditional
   DOOM-0060 Game Select text row; Sound, Load/Save — already uniform); the
