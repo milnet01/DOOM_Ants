@@ -1,7 +1,10 @@
 # DOOM-0206 — Redesigned in-game menu for the 3D tiers (crisp font, HUD-safe, dimmed backdrop)
 
-Status: DRAFT (cold-eyes: 5 loops complete; Classic-caveat + INV-7 additions
-post-date loop 5 and are not yet cold-reviewed).
+Status: APPROVED for L6 (cold-eyes: 11 loops total — the Classic-caveat + INV-7
+additions were cold-reviewed over 6 further loops 2026-07-19, converging to
+polish; L1–L5 implemented, L6/L7 pending). Note for the L7 wrap-up: a light
+present-tense currency sweep is due — some clauses (e.g. §4.5 "there is none
+today" for `M_ChangeRayTracing`) predate the L1–L5 implementation.
 Kind: feature. Tier: the crisp glyph skin + dim backdrop + Video consolidation
 are Solid/Ultra only; Classic gets ONLY the two shared fixes — HUD-safe bound +
 uniform per-menu font size — and otherwise keeps its authentic bitmap/red menu.
@@ -69,8 +72,9 @@ and routes the affected menus through it, leaving Classic on the existing path.
 Confirmed on hardware (user screenshots, 2026-07-18, Ultra):
 
 1. **Chunky text** — the `hu_font` bitmap upscaled from 320×200 to 3840×2160.
-2. **HUD overlap** — the Options menu's *Sound Volume* slider and the Renderer
-   menu's *Brightness* slider render on top of the status bar; the whole menu
+2. **HUD overlap** — the Options menu's *Sound Volume* row (a submenu opener,
+   y≈181) and the Renderer menu's *Brightness* slider (the true slider overlap,
+   its thermo at y≈188) render on top of the status bar; the whole menu
    shows the live 3D scene through its transparent background → cluttered.
 3. **Hidden/scattered toggles** — render settings are split three levels deep
    (Options → Renderer → Render Effects), and *Ray Tracing* (`rb_rtdebug`, the
@@ -444,7 +448,10 @@ path (it happens only on resize, never during play).
   requirement — all renderers.)
 - **INV-3** — Every render toggle in the DOOM-0205 inventory appears in the
   consolidated Video menu, each bound to the same variable its hotkey flips, so
-  menu/hotkey/`~/.doomrc` stay consistent.
+  menu/hotkey/`~/.doomrc` stay consistent. (The Ray Tracing row is bound to
+  `rb_rtdebug`/`rt_view` like the others, but has the restart-survival caveat in
+  §4.5 — RT-in-Solid is per-session because `RB_ApplyTierRt` reclaims the tier
+  default at boot.)
 - **INV-4** — The redesign ADDS a new consolidated `VideoDef` `menu_t` (its item
   array + a new `M_ChangeRayTracing` handler + the tier-conditional entry branch
   in `M_RendererMenu` + a `currentMenu` re-route in `M_ChangeRenderer` on a
