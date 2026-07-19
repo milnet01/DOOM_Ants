@@ -72,9 +72,12 @@ extern "C" {
     extern int numflats;                        // flat count
     extern int rendermode;                      // r_backend.h: selected tier (TIER_* mirror below)
     // DOOM-0206 (L2): gamestate/screenblocks drive the HUD-safe bound (rb_menu_safe_bottom).
-    // gamestate's real C type is gamestate_t (doomdef.h enum, GS_LEVEL==0); mirrored here as
+    // gamestate's real C type is gamestate_t (doomstat.h enum, GS_LEVEL==0); mirrored here as
     // plain int rather than pulling doomdef.h/doomstat.h in (not C++-clean, see the probe
-    // comment below) -- same dodge this file already uses for rendermode/rendermode_t.
+    // comment below). Unlike rendermode (a genuine plain `int`, r_backend.c), this relies on
+    // the enum's int-width representation under this toolchain (no -fshort-enums; enums default
+    // to int width here), so declaring it `int` across the C/C++ boundary is safe but not a
+    // like-for-like mirror of the rendermode dodge.
     // screenblocks is genuinely `int` in m_menu.c already, so no mismatch there.
     extern int gamestate;                       // doomdef.h: gamestate_t, GS_LEVEL == 0
     extern int screenblocks;                    // m_menu.c: HUD size 0-10 (DOOM-0148 clamp)
@@ -5211,6 +5214,14 @@ static void FlushMenuText()
     VkDeviceSize off = 0;
     vkCmdBindVertexBuffers(g.cmd, 0, 1, &g.textVbuf, &off);
     vkCmdDraw(g.cmd, verts, 1, 0, 0);
+
+    // DOOM-0206 (L2 review fix): consume-and-reset. rb_menu_text_active is a per-frame gate that
+    // m_menu.c sets to 1 only on a frame it actually queued a dim/text draw; resetting it here
+    // (the path that actually drew) rather than every frame means the NEXT frame's gate value
+    // reflects only what THAT frame's M_Drawer call decided. So the frame after the menu closes
+    // -- where M_Drawer doesn't run at all -- sees the gate already 0 and this function's early
+    // return above skips the draw, and the dim disappears immediately instead of sticking.
+    rb_menu_text_active = 0;
 }
 
 // ===========================================================================

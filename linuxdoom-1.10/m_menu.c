@@ -1123,6 +1123,7 @@ char	detileNames[3][7]	= {"Off","2-tap","4-tap"};
 extern int	rb_menu_text_active;		// gates the text/dim flush in the present path
 extern void	rb_menu_dim(void);		// queues the play-view dim quad (0..rb_menu_safe_bottom())
 extern int	rb_menu_safe_bottom(void);	// display-pixel Y below which nothing may draw (INV-2)
+extern void	rb_text_begin(void);		// clears the queued-quad vector (call first, once/frame)
 
 
 void M_DrawOptions(void)
@@ -2323,12 +2324,20 @@ void M_Drawer (void)
     if (!menuactive)
 	return;
 
-    // DOOM-0206 (L2): dim the play view behind the menu on the 3D tiers (Solid/Ultra). The
-    // crisp menu skin doesn't exist yet (Task 4) -- for now this just queues the HUD-safe dim
-    // quad ahead of the existing bitmap menu draw below, which still draws on top unchanged.
-    // Classic is untouched (dim is 3D-only; its own HUD-safe clip is Task 6).
+    // DOOM-0206 (L2, review fix): dim the play view behind the menu on the 3D tiers (Solid/
+    // Ultra). The crisp menu skin doesn't exist yet (Task 4) -- for now this just queues the
+    // HUD-safe dim quad ahead of the existing bitmap menu draw below, which still draws on top
+    // unchanged. Classic is untouched (dim is 3D-only; its own HUD-safe clip is Task 6).
+    //
+    // rb_text_begin() MUST run first: it clears the host quad vector, so each menu-open frame
+    // starts from empty instead of appending onto every prior frame's quads forever (unbounded
+    // growth -- FlushMenuText's GPU buffer has a fixed cap and would freeze on the oldest-queued
+    // content once the vector outgrew it). rb_menu_text_active is reset back to 0 by
+    // FlushMenuText after it draws, so a frame where this block doesn't run (menu closed) sees
+    // the gate already off and skips the draw -- the dim disappears the instant the menu closes.
     if (rendermode != RB_CLASSIC)
     {
+	rb_text_begin();
 	rb_menu_text_active = 1;
 	rb_menu_dim();
     }
