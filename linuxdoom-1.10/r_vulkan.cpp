@@ -109,6 +109,7 @@ static_assert(sizeof(rb_matctrl_t) == 40, "rb_matctrl_t must be 40 bytes (std430
 #include "shaders/svgf_composite.comp.spv.h"
 #include "shaders/label.comp.spv.h"
 #include "shaders/taau.comp.spv.h"
+#include "assets/Oxanium-SemiBold.ttf.h"    // DOOM-0206 L4: bundled OFL menu font (oxanium_ttf[])
 
 // Tier values returned by RB_VulkanProbe — kept numerically in lockstep with
 // rendermode_t in r_backend.h (RB_CLASSIC=0, RB_RT3D=1, RB_RASTER3D=2). The
@@ -4830,57 +4831,22 @@ void CreateOverlayResources(int w, int h)
     g.overlayReady = true;
 }
 
-// DOOM-0206 (L1b): load a placeholder system TTF for the menu font. Task 5 replaces this
-// with the embedded Oxanium byte array — the ONLY line that changes then is the bake source;
-// everything downstream consumes g.menuFont. Until then the atlas bakes from DejaVu Sans,
-// which ships on ~every Linux desktop (its path differs by distro layout — the same probe as
-// tests/rb_text_test.cpp). Returns a malloc'd buffer (caller frees) + length, or nullptr.
-static unsigned char* LoadMenuFontBytes(int* out_len)
-{
-    static const char* kCandidates[] = {
-        "/usr/share/fonts/truetype/DejaVuSans.ttf",        // openSUSE (fonts-config, flat)
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", // Debian/Ubuntu (fonts-dejavu-core)
-        "/usr/share/fonts/dejavu/DejaVuSans.ttf",          // Fedora/RHEL (dejavu-sans-fonts)
-    };
-    for (size_t i = 0; i < sizeof(kCandidates) / sizeof(kCandidates[0]); i++)
-    {
-        FILE* f = std::fopen(kCandidates[i], "rb");
-        if (!f) continue;
-        std::fseek(f, 0, SEEK_END);
-        long len = std::ftell(f);
-        std::fseek(f, 0, SEEK_SET);
-        if (len <= 0) { std::fclose(f); continue; }
-        unsigned char* buf = (unsigned char*)std::malloc((size_t)len);
-        if (!buf) { std::fclose(f); return nullptr; }   // OOM: bail, text stays disabled
-        size_t rd = std::fread(buf, 1, (size_t)len, f);
-        std::fclose(f);
-        if (rd != (size_t)len) { std::free(buf); continue; }
-        *out_len = (int)len;
-        return buf;
-    }
-    return nullptr;
-}
-
-// DOOM-0206 (L1b): bake the menu glyph atlas and build the display-resolution text pipeline.
+// DOOM-0206 (L4): bake the menu glyph atlas and build the display-resolution text pipeline.
 // Called once from RB_Vulkan_Init after InitPaletteAndDescriptorSet (so the command pool +
-// g.renderPass exist). If no font is found the whole path is left disabled (menuFontReady
+// g.renderPass exist). The font is the bundled Oxanium SemiBold (OFL), embedded as the
+// oxanium_ttf[] byte array (assets/Oxanium-SemiBold.ttf.h) so the game ships self-contained —
+// no system font dependency. If the bake fails the whole path is left disabled (menuFontReady
 // stays false) and the game runs without crisp text — it is a menu-only overlay.
 void CreateTextResources()
 {
-    int ttfLen = 0;
-    unsigned char* ttf = LoadMenuFontBytes(&ttfLen);
-    if (!ttf)
-    {
-        fprintf(stderr, "RB_Vulkan: no menu font found — crisp menu text disabled "
-                        "(paletted overlay unaffected).\n");
-        return;
-    }
     // Glyph pixel height scaled to the display so text stays crisp at any resolution (~24 at
     // 1080p, ~48 at 2160p), floored at 24 so low-res stays legible.
     int px = (int)g.extent.height / 45;
     if (px < 24) px = 24;
-    int baked = rb_text_bake(ttf, ttfLen, px, &g.menuFont);
-    std::free(ttf);
+    int baked = rb_text_bake(oxanium_ttf, (int)oxanium_ttf_len, px, &g.menuFont);
+    printf("RB_Vulkan: menu font = Oxanium SemiBold (bundled OFL), %u bytes, glyph px=%d\n",
+           oxanium_ttf_len, px);
+    fflush(stdout);
     if (!baked)
     {
         fprintf(stderr, "RB_Vulkan: menu font bake failed — crisp menu text disabled.\n");
@@ -5103,18 +5069,16 @@ extern "C" int rb_text_line_height(float scale)
     return (int)((float)g.menuFont.px_height * scale + 0.5f);
 }
 
-extern "C" void rb_text_draw(const char* s, int x, int y, float scale, unsigned rgba)
+// Emit one string's glyph quads at (x,y) top-left with an explicit RGBA. Shared by the shadow
+// pass and the main pass of rb_text_draw.
+static void EmitTextQuads(const char* s, float x, float y, float scale,
+                          unsigned char cr, unsigned char cg, unsigned char cb, unsigned char ca)
 {
-    if (!g.menuFontReady || !s) return;
-    const unsigned char cr = (unsigned char)((rgba >> 24) & 0xFF);
-    const unsigned char cg = (unsigned char)((rgba >> 16) & 0xFF);
-    const unsigned char cb = (unsigned char)((rgba >>  8) & 0xFF);
-    const unsigned char ca = (unsigned char)( rgba        & 0xFF);
     const float aw = (float)g.menuFont.w, ah = (float)g.menuFont.h;
-    float penX = (float)x;
+    float penX = x;
     // The API's y is the text's top-left; glyph xoff/yoff are baseline-relative, so drop the
     // pen to the baseline (top + ascent). ascent was baked in pixels at px_height.
-    const float baseY = (float)y + (float)g.menuFont.ascent * scale;
+    const float baseY = y + (float)g.menuFont.ascent * scale;
     for (const unsigned char* p = (const unsigned char*)s; *p; p++)
     {
         int idx = (int)*p - 32;
@@ -5134,6 +5098,23 @@ extern "C" void rb_text_draw(const char* s, int x, int y, float scale, unsigned 
         g.textVerts.push_back(a0); g.textVerts.push_back(a2); g.textVerts.push_back(a3);
         penX += gl->xadvance * scale;
     }
+}
+
+extern "C" void rb_text_draw(const char* s, int x, int y, float scale, unsigned rgba)
+{
+    if (!g.menuFontReady || !s) return;
+    const unsigned char cr = (unsigned char)((rgba >> 24) & 0xFF);
+    const unsigned char cg = (unsigned char)((rgba >> 16) & 0xFF);
+    const unsigned char cb = (unsigned char)((rgba >>  8) & 0xFF);
+    const unsigned char ca = (unsigned char)( rgba        & 0xFF);
+    // DOOM-0206 (L5): a soft drop-shadow for legibility over the dimmed 3D view. Draw the same
+    // string in near-black one glyph-fraction down-right first, then the real colour on top.
+    // Offset scales with the font so it reads the same at any resolution (clamped 1..3px).
+    float shOff = (float)g.menuFont.ascent * scale / 18.0f;
+    if (shOff < 1.0f) shOff = 1.0f;
+    if (shOff > 3.0f) shOff = 3.0f;
+    EmitTextQuads(s, (float)x + shOff, (float)y + shOff, scale, 0, 0, 0, (unsigned char)(ca * 3 / 4));
+    EmitTextQuads(s, (float)x, (float)y, scale, cr, cg, cb, ca);
 }
 
 // DOOM-0206 (L2): INV-2, the HUD-safe bound. Returns the display-pixel Y below which nothing

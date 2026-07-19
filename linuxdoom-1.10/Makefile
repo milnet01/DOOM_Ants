@@ -79,6 +79,12 @@ SHADER_HDRS=$(SHADER_SRCS:=.spv.h)
 # below and is appended here so it builds + gates r_vulkan.o like the other shader headers.
 SHADER_HDRS+=$(SHADER_DIR)/mesh_overlay.frag.spv.h
 
+# DOOM-0206 L4 — the bundled Oxanium menu font (OFL), embedded as a C byte array the same
+# way the shaders are (xxd -n). r_vulkan.cpp #includes the generated header and bakes the
+# glyph atlas from oxanium_ttf[] at init, so the game ships self-contained (no system font).
+ASSET_DIR=assets
+ASSET_HDRS=$(ASSET_DIR)/Oxanium-SemiBold.ttf.h
+
 # not too sophisticated dependency
 OBJS=				\
 		$(O)/doomdef.o		\
@@ -157,6 +163,7 @@ clean:
 	rm -f *.o *~ *.flc
 	rm -f linux/* mingw/*
 	rm -f $(SHADER_DIR)/*.spv $(SHADER_DIR)/*.spv.h
+	rm -f $(ASSET_DIR)/*.ttf.h
 
 # ---- Unit tests ----
 # Every tests/*_test.cpp is a self-contained unit test (includes the header under
@@ -211,7 +218,7 @@ $(O)/$(BIN):	$(OBJS) $(O)/i_main.o
 # driver, so it is linked (-lvulkan-1) but not bundled. Static libgcc/libstdc++
 # keep the GCC runtime out of the distributable.
 WIN_PREFIX=../mingw-deps/prefix
-windows:	$(SHADER_HDRS)
+windows:	$(SHADER_HDRS) $(ASSET_HDRS)
 	mkdir -p mingw
 	$(MAKE) O=mingw BIN=doom_ants.exe \
 	  CC=x86_64-w64-mingw32-gcc \
@@ -264,8 +271,14 @@ $(SHADER_DIR)/mesh_overlay.frag.spv.h:	$(SHADER_DIR)/mesh.frag
 	glslc --target-env=vulkan1.2 -O -DSINGLE_TARGET $< -o $(SHADER_DIR)/mesh_overlay.frag.spv
 	xxd -i -n mesh_overlay_frag_spv $(SHADER_DIR)/mesh_overlay.frag.spv > $@
 
-# The Vulkan back-end embeds the compiled shaders.
-$(O)/r_vulkan.o:	$(SHADER_HDRS)
+# DOOM-0206 L4 — bundled font (.ttf) -> embedded C byte array. Same vendored pattern as the
+# shader .spv.h step: xxd -i emits the bytes, -n pins the stable array name (oxanium_ttf +
+# oxanium_ttf_len) r_vulkan.cpp bakes the atlas from.
+$(ASSET_DIR)/Oxanium-SemiBold.ttf.h:	$(ASSET_DIR)/Oxanium-SemiBold.ttf
+	xxd -i -n oxanium_ttf $< > $@
+
+# The Vulkan back-end embeds the compiled shaders and the bundled menu font.
+$(O)/r_vulkan.o:	$(SHADER_HDRS) $(ASSET_HDRS)
 
 #############################################################
 #

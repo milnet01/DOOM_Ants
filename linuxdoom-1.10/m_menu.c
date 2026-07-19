@@ -1366,26 +1366,41 @@ void M_DrawVideoMenu(void)
     int dispW  = rb_display_width();
     int dispH  = rb_display_height();
     int bottom = rb_menu_safe_bottom();
-    int px     = rb_text_line_height(1.0f);   // baked px_height
-    int rowH, rowsTopY, titleY, y, i, marginX, valRightX;
-    float scale;
+    int rowH, rowsTopY, titleY, marginX, valRightX;
+    int availH, maxRows, winRows, scrollTop, v;
+    float scale = 1.5f;   // INV-7: one comfortable, fixed glyph size for the whole menu
 
     // Menu backdrop (dim to the HUD-safe bound). Nothing else draws if the font never baked.
     rb_menu_dim();
-    if (px < 1)
-	return;
-
-    // Auto-fit: title + all rows + padding, inside the HUD-safe height.
-    scale = (float)bottom / (float)((vid_end + 4) * px);
-    if (scale > 2.0f)  scale = 2.0f;
-    if (scale < 0.75f) scale = 0.75f;
     rowH = rb_text_line_height(scale);
-    if (rowH < 1) rowH = 1;
+    if (rowH < 1)
+	return;
 
     marginX   = dispW / 5;
     valRightX = dispW - dispW / 6;
     titleY    = rowH;
-    rowsTopY  = titleY + rowH * 2;
+    rowsTopY  = titleY + rowH * 2;   // title + one blank row of breathing space
+
+    // itemOn-derived scroll window (INV-4: derived from itemOn only; no M_Responder change).
+    // maxRows = rows that fit between the title and the HUD-safe bound. If the whole list fits,
+    // draw it all with no arrows; else centre a window on the cursor and reserve the bottom slot
+    // for the down-arrow (the up-arrow sits in the gap above the list, so it costs no row).
+    availH  = bottom - rowsTopY;
+    maxRows = availH / rowH;
+    if (maxRows < 1) maxRows = 1;
+    if (maxRows >= vid_end)
+    {
+	scrollTop = 0;
+	winRows   = vid_end;
+    }
+    else
+    {
+	winRows = maxRows - 1;
+	if (winRows < 1) winRows = 1;
+	scrollTop = itemOn - winRows / 2;
+	if (scrollTop > vid_end - winRows) scrollTop = vid_end - winRows;
+	if (scrollTop < 0) scrollTop = 0;
+    }
 
     // Title — centred, CAPS, same glyph size as the rows (INV-7).
     {
@@ -1394,9 +1409,23 @@ void M_DrawVideoMenu(void)
 	rb_text_draw(title, (dispW - tw) / 2, titleY, scale, labelCol);
     }
 
-    y = rowsTopY;
-    for (i = 0 ; i < vid_end ; i++)
+    // Up/down scroll arrows (same glyph size, INV-7), both inside the HUD-safe bound by
+    // construction: up in the gap above the list, down in the reserved bottom slot.
+    if (scrollTop > 0)
     {
+	int aw = rb_text_width("^", scale);
+	rb_text_draw("^", (dispW - aw) / 2, rowsTopY - rowH, scale, headCol);
+    }
+    if (scrollTop + winRows < vid_end)
+    {
+	int aw = rb_text_width("v", scale);
+	rb_text_draw("v", (dispW - aw) / 2, rowsTopY + winRows * rowH, scale, headCol);
+    }
+
+    for (v = 0 ; v < winRows ; v++)
+    {
+	int i   = scrollTop + v;
+	int y   = rowsTopY + v * rowH;
 	int st  = VideoMenu[i].status;
 	int sel = (i == itemOn);
 	const char* label = videoLabels[i];
@@ -1466,18 +1495,17 @@ void M_DrawVideoMenu(void)
 	    w = rb_text_width(val, scale);
 	    rb_text_draw(val, valRightX - w, y, scale, vc);
 	}
-
-	y += rowH;
     }
 
     // Skull cursor. The crisp rows are display-pixel; V_DrawPatchDirect draws in the 320x200
     // virtual canvas that the paletted 2D overlay maps to full display (same convention as
     // rb_menu_safe_bottom), so map the selected row's display-Y centre back to virtual Y (skull
     // art ~16 tall -> -8 to centre it) and its X to just left of the label column. Chunky
-    // beside the crisp text -- the user asked to keep the skull, not to make it crisp; Task 5
-    // refines its placement under scrolling.
+    // beside the crisp text -- the user asked to keep the skull, not to make it crisp. Under
+    // scrolling the cursor's VISUAL row is (itemOn - scrollTop); scrollTop is clamped so the
+    // cursor is always inside the drawn window.
     {
-	int rowCenter = rowsTopY + itemOn * rowH + rowH / 2;
+	int rowCenter = rowsTopY + (itemOn - scrollTop) * rowH + rowH / 2;
 	int vy = (int)((double)rowCenter * (double)ORIGHEIGHT / (double)dispH) - 8;
 	int vx = (int)((double)marginX * (double)ORIGWIDTH / (double)dispW) - 16;
 	V_DrawPatchDirect(vx, vy, 0, W_CacheLumpName(skullName[whichSkull], PU_CACHE));
