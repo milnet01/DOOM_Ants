@@ -46,9 +46,10 @@ modern instead of the chunky, cluttered classic overlay:
 
 Non-goals (YAGNI): no new navigation paradigm (tabs/side-panels); no menu
 restructuring beyond grouping the render settings; in Classic, no glyph font / no
-dim / no consolidation, and the big red *title* art (the `DOOM` logo, the main /
-episode / skill screens) is left as-is in v1 — only the two shared fixes touch
-Classic.
+dim / no consolidation, and every menu's big red *title / header banner* art (the
+`DOOM` logo, the main / episode / skill screens, and the `OPTIONS`/`SOUND VOLUME`
+banners) is left as-is in v1 — the uniform-size rule applies to option rows only,
+so only the two shared fixes touch Classic.
 
 ## 2. Where this sits
 
@@ -85,16 +86,20 @@ single source of truth — no second menu system. The redesign is two layers:
 **Shared across ALL tiers (Classic included) — user requirement:**
 - **HUD-safe bound** (§4.3, INV-2): no menu ever draws over the status bar; if a
   menu is taller than the space above the bar, it scrolls (§4.4).
-- **Uniform font size per menu** (INV-7): within any one menu, all text is one
-  size. Classic menus that are already single-size (e.g. the all-graphic-lump
-  Main menu) are untouched. The ones that today **mix** big-red graphic-lump
-  labels (`M_MESSG`, `M_SVOL`, …) with small `hu_font` rows (Options, Sound)
-  are made uniform by rendering those labels **as `hu_font` text** at the row
-  size — a graphic patch cannot be fractionally scaled by `V_DrawPatch`, so the
-  oversized lumps are drawn as text instead. This is a deliberate, user-accepted
-  relaxation of Classic's red-graphic look **for those mixed menus only** (the
-  user asked for one size even at the cost of reducing/replacing the big labels).
-  Classic otherwise keeps its bitmap font and red styling.
+- **Uniform option-text size per menu** (INV-7): within any one menu, all of the
+  **option rows** are one size; the **title/header banner is exempt** (kept as
+  art — user decision). Classic menus whose option rows are already single-size
+  (e.g. the Main menu — all equal-height red item lumps; Sound — two equal
+  `M_SFXVOL`/`M_MUSVOL` label lumps plus sliders) need no row change. The one menu
+  that today **mixes** big-red graphic-lump row labels (`M_ENDGAM`, `M_MESSG`,
+  `M_DETAIL`, `M_SCRNSZ`, `M_MSENS`, `M_SVOL`) with small `hu_font` rows (the
+  "Video"/"FPS" rows) is **Options**; it is made uniform by rendering those big-red
+  labels **as `hu_font` text** at the row size — a graphic patch cannot be
+  fractionally scaled by `V_DrawPatch`, so the oversized lumps are drawn as text
+  instead. This is a deliberate, user-accepted relaxation of Classic's red
+  row-label look **for Options only** (the user asked for one row size even at the
+  cost of reducing/replacing the big labels). Every menu's title banner and all
+  already-uniform menus keep their bitmap font and red styling.
 
 **Crisp skin — Solid/Ultra only:** on top of the two shared fixes, the 3D tiers
 additionally get the display-resolution glyph font (§4.2), the dimmed backdrop
@@ -161,13 +166,15 @@ to a glyph).
 
 **Dimmed backdrop — Solid/Ultra only:**
 
-- When a crisp menu is active in a 3D tier, draw a **dim quad over the play-view
-  area only** (the region above the status bar), darkening the 3D scene behind
-  the menu (≈60% alpha-over-black, `0xA0`, in v1 — tunable at the look sign-off)
-  so it does not read as clutter. **The
+- When **any** menu is active in a 3D tier (Solid/Ultra) — the crisp `VideoDef`
+  *and* the classic-path Options/Sound shown under a 3D tier — draw a **dim quad
+  over the play-view area only** (the region above the status bar), darkening the
+  3D scene behind the menu (≈60% alpha-over-black, `0xA0`, in v1 — tunable at the
+  look sign-off) so it does not read as clutter. (The dim is a 3D-tier behaviour,
+  keyed on `rendermode != RB_CLASSIC`, not on the crisp skin.) **The
   status bar is left undimmed and fully visible** (user decision) — the dim never
-  covers it. **Classic has no dim** — it keeps its classic transparent-over-scene
-  look, just HUD-safe and uniform-size.
+  covers it. **Classic (the tier) has no dim** — it keeps its transparent-over-
+  scene look, just HUD-safe and uniform-size.
 - **When no status bar is drawn** — the title/main menu (no game in progress) —
   the excluded band is empty and the safe region is the full screen (with a small
   margin). (In-game the bar is always present: DOOM-0148 caps the view at
@@ -369,12 +376,20 @@ path (it happens only on resize, never during play).
     status bar (row capacity ≈ `(ORIGHEIGHT − ST_HEIGHT − menu.y) / LINEHEIGHT`),
     scroll it with the same `itemOn`-derived, draw-time logic as L4, clipping both
     the item rows and the skull cursor to that band.
-  - **Uniform per-menu font size:** render each *mixed* menu's big-red item lumps
-    **as `hu_font` text** at the uniform row size (they can't be scaled as
-    patches); already-uniform menus are left as-is.
-  Verify: no Classic menu overlaps the status bar; every Classic menu is a single
-  font size; Classic otherwise unchanged (no crisp glyph font, no dim, no
-  `VideoDef`; red styling kept on already-uniform menus).
+  - **Uniform per-menu row size:** the one mixed menu is **Options** — render its
+    big-red row-label lumps (`M_ENDGAM`, `M_MESSG`, `M_DETAIL`, `M_SCRNSZ`,
+    `M_MSENS`, `M_SVOL`) **as `hu_font` text** at the uniform row size (they can't
+    be scaled as patches). This needs a small Classic **display-string table**
+    (one string per converted row — "End Game", "Messages", "Graphic Detail",
+    "Screen Size", "Mouse Sensitivity", "Sound Volume"), the classic-path analogue
+    of `VideoDef`'s `videoLabels[]` — the `menuitem_t.name` field holds the *lump*
+    name, not a display string, so the strings must be added. Each menu's
+    **title/header banner is left as art** (exempt, per INV-7); already-uniform
+    menus (Main, Sound, Load/Save) are left as-is.
+  Verify: no Classic menu overlaps the status bar; every Classic menu's option
+  rows are a single size (title banners exempt); Classic otherwise unchanged (no
+  crisp glyph font, no dim, no `VideoDef`; red styling kept on the title banners
+  and on already-uniform menus).
 
 ## 8. Invariants
 
@@ -383,12 +398,14 @@ path (it happens only on resize, never during play).
   (`RendererDef` / `EffectsDef`, reached via the tier-conditional entry row,
   §4.5). Classic does **not** get the crisp glyph font, the dimmed backdrop, or
   the `VideoDef` consolidation. The **only** changes to Classic are the two shared
-  fixes — the HUD-safe bound (INV-2) and uniform per-menu font size (INV-7). Its
-  red styling is preserved on every already-uniform menu (e.g. Main); it is
-  relaxed **only** on the mixed-size menus (Options, Sound), whose oversized
-  big-red graphic-lump labels are redrawn as uniform `hu_font` text because a
-  patch cannot be scaled to the row size. Classic is therefore no longer
-  byte-for-byte identical: a deliberate, minimal change per the user's requirement.
+  fixes — the HUD-safe bound (INV-2) and uniform per-menu **row** size (INV-7). Its
+  title/header banner art is kept on every menu, and its red row styling is
+  preserved wherever the rows are already uniform (Main, Sound, Load/Save); the
+  red row-label look is relaxed **only** on **Options** (the single mixed menu),
+  whose oversized big-red graphic-lump row labels are redrawn as uniform `hu_font`
+  text because a patch cannot be scaled to the row size. Classic is therefore no
+  longer byte-for-byte identical: a deliberate, minimal change per the user's
+  requirement.
 - **INV-2** — In **every** tier's menu (Classic, Solid, Ultra), **no menu element
   (glyph, patch, slider, cursor, backdrop, indicator) is ever drawn inside the
   status-bar band.** The list scrolls rather than overrun it. (The user's hard
@@ -413,16 +430,19 @@ path (it happens only on resize, never during play).
   truetype.h`) are latest-stable, pinned at commit, and recorded in the "Where
   this project's dependencies live" section of `docs/standards/dependencies.md`**
   (not the Version Exception Ledger — dependencies standard / ADR 0002 pattern).
-- **INV-7** — **Uniform font size per menu (user requirement, all tiers).**
-  Within any one menu or submenu — Classic, Solid, or Ultra — *all* text (title,
-  group headings, row labels, value columns) is a **single size**. Emphasis is
-  expressed with weight / colour / letter-spacing / caps, **never a different
-  size**. In Classic this means the menus that mix big-red graphic-lump labels
-  with small `hu_font` rows render those labels **as `hu_font` text** at the
-  uniform row size — the oversized graphic lumps cannot be scaled as patches, so
-  they are drawn as text (a deliberate, user-accepted relaxation of Classic's
-  red-graphic look for those mixed menus; see INV-1). The size may differ
-  *between* menus if their
+- **INV-7** — **Uniform option-text size per menu (user requirement, all tiers).**
+  Within any one menu or submenu — Classic, Solid, or Ultra — all of the menu's
+  **option text** (group headings, row labels, value columns) is a **single
+  size**. The menu's **title/header banner** (e.g. the `DOOM` logo, the
+  `M_OPTTTL`/`M_SVOL` title art) is a distinct element and is **exempt** — it
+  keeps its original size/art (user decision 2026-07-19: uniform rows, keep the
+  title banners). Emphasis in the option text is expressed with weight / colour /
+  letter-spacing / caps, **never a different size**. In Classic this means the one
+  menu that mixes big-red graphic-lump row labels with small `hu_font` rows
+  (Options) renders those labels **as `hu_font` text** at the uniform row size —
+  the oversized graphic lumps cannot be scaled as patches, so they are drawn as
+  text (a deliberate, user-accepted relaxation of Classic's red row-label look;
+  see INV-1). The size may differ *between* menus if their
   content densities differ, but is constant *within* one menu.
 
 ## 9. Alternatives considered
