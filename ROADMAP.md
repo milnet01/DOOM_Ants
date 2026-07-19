@@ -1845,3 +1845,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Give the 3D modes (Solid and Ultra) a nicer, more modern-looking menu — cleaner text and a layout that doesn't sit on top of the bottom status bar (HUD), which looks messy. The original Classic renderer keeps its authentic 1997 menu.
   Kind: feature.
   Source: user-request-2026-07-18.
+
+- 📋 [DOOM-0207] **Player casts a ray-traced shadow in the Ultra renderer.**
+  The player has no visible body/shadow in Ultra RT. Give the player a shadow-casting proxy (capsule or the player sprite billboard) in the TLAS so RT shadow rays hit it and the player casts shadows from point lights / flashlight / sun, matching how enemies and props already occlude light. Scope: Ultra (RB_RT3D) only. Relates to the flashlight offset work (a co-located light casts no visible shadow — DOOM-0.. flashlight fix) and enemy/prop shadow casting already in the TLAS.
+  **Layman:** In the ray-traced view, the player should throw a shadow on the floor and walls like everything else does — right now they don't.
+  Kind: feature.
+  Source: user-request-2026-07-19.
