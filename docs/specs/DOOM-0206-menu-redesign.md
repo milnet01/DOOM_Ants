@@ -359,10 +359,11 @@ path (it happens only on resize, never during play).
 
 - **L1** — `stb_truetype` vendored + glyph atlas bake + the display-res text
   pipeline & API. Verify: a hard-coded test string renders crisp at display res.
-- **L2** — dim backdrop + the HUD-safe bound (INV-2), gated on "a skinned menu is
-  active in a 3D tier" **independently of the crisp-text routing** (so it is
-  testable before L3 wires the text path). Verify: a screenshot shows the dim +
-  zero pixels drawn in the status-bar band.
+- **L2** — dim backdrop + the HUD-safe bound (INV-2), the dim keyed on "any menu
+  active in a 3D tier" (`rendermode != RB_CLASSIC`, not the crisp skin — §4.3)
+  **independently of the crisp-text routing** (so it is testable before L3 wires
+  the text path). Verify: a screenshot shows the dim + zero pixels drawn in the
+  status-bar band.
 - **L3** — build the consolidated `VideoDef` `menu_t` (all toggles, incl. the new
   Ray Tracing row + its `M_ChangeRayTracing` handler) + the tier-conditional
   entry branch + the tier re-route, and route the crisp skin for `VideoDef`.
@@ -379,22 +380,31 @@ path (it happens only on resize, never during play).
   code — L6 is a *parallel* implementation of the same `itemOn`-derived approach,
   not a literal reuse):
   - **HUD-safe bound:** every Classic menu element must sit above the status-bar
-    band (`y + rowHeight ≤ ORIGHEIGHT − ST_HEIGHT = 168`). Crucially, the overlap
-    §3 cites comes from the **routine-drawn** menus, **not** the generic patch
-    loop: `RendererDef`/`EffectsDef` have all-empty `name` fields — every row is
-    `M_WriteText`/`M_DrawThermo` emitted by `M_DrawRendererMenu`/`M_DrawEffectsMenu`
-    at fixed Y (e.g. `RendererDef` at `y=60` puts its Brightness thermo at
-    `60 + 16*8 = 188`, below 168) — and `M_DrawOptions`/`M_DrawSound` position
-    their value columns and thermometers the same way. So the fix is **path-based,
-    not generic-loop-based**: an `itemOn`-derived, draw-time scroll/offset (row
-    capacity ≈ `(ORIGHEIGHT − ST_HEIGHT − menu.y) / LINEHEIGHT`) applied to the
-    **whole** Classic menu draw — the generic patch loop, the skull cursor, **and**
-    each per-menu `M_Draw*` routine's `M_WriteText`/`M_DrawThermo` output (via a
-    shared menu-draw Y-offset the routines consult, or by scrolling/relocating the
-    affected menu). It fires whenever the 320×200 classic path draws a menu —
-    **including the classic-path Options/Sound/Renderer menus shown under a 3D
-    tier** (the clip is keyed on the draw path, not `rendermode`). Invariant: no
-    element of any Classic menu, however drawn, sits below 168 (INV-2).
+    band — `y + rowHeight ≤ rb_menu_safe_bottom()`'s 320×200 equivalent, which is
+    `ORIGHEIGHT − ST_HEIGHT = 168` whenever the bar is drawn (all of Classic's tall
+    menus appear in-game, where DOOM-0148 always draws the bar; the short no-bar
+    menus like Load/Save get the full 200, per §4.3's current-bar-aware bound).
+    Crucially, the overlap §3 cites comes from the **routine-drawn** menus, **not**
+    the generic patch loop: `RendererDef`/`EffectsDef` have all-empty `name` fields
+    — every row is `M_WriteText`/`M_DrawThermo` emitted by
+    `M_DrawRendererMenu`/`M_DrawEffectsMenu` at fixed Y (e.g. `RendererDef` at
+    `y=60` puts its Brightness thermo at `60 + 16*8 = 188`, below 168) — and
+    `M_DrawOptions`/`M_DrawSound` position their value columns and thermometers the
+    same way. So the fix is **path-based, not generic-loop-based**: an
+    `itemOn`-derived, draw-time scroll/offset applied to the **whole** Classic menu
+    draw — the generic patch loop, the skull cursor, **and** each per-menu
+    `M_Draw*` routine's `M_WriteText`/`M_DrawThermo` output (via a shared menu-draw
+    Y-offset the routines consult, or by scrolling/relocating the affected menu).
+    **Thermometer rows (`status == 2`) occupy TWO `LINEHEIGHT`s** — the slider
+    draws on a separate row below its label (`M_DrawThermo(… LINEHEIGHT*(idx+1) …)`,
+    e.g. Options `M_SCRNSZ`/`M_MSENS`, RendererDef Brightness) — so the capacity/
+    offset must budget two rows for each such item, not one, or a slider (the exact
+    overlap §3 reports) can still land in the band. The clip fires whenever the
+    320×200 classic path draws a menu — **including the classic-path Options/Sound
+    menus shown under a 3D tier** (`RendererDef` is never classic-path under a 3D
+    tier — it re-routes to `VideoDef` there; the clip is keyed on the draw path,
+    not `rendermode`). Invariant: no element of any Classic menu, however drawn,
+    sits below the bound (INV-2).
   - **Uniform per-menu row size:** the one mixed menu is **Options** — render its
     big-red row-label lumps (`M_ENDGAM`, `M_MESSG`, `M_DETAIL`, `M_SCRNSZ`,
     `M_MSENS`, `M_SVOL`) **as `hu_font` text** at the uniform row size (they can't
