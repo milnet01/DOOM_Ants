@@ -375,13 +375,26 @@ path (it happens only on resize, never during play).
 - **L5** — font selection (user picks from samples) + polish (crisp skull cursor,
   drop-shadow, spacing). Verify: user look sign-off.
 - **L6** — apply the two **shared** fixes to **Classic**, both draw-time in the
-  generic `M_Drawer` 320×200 path (the L4 crisp scroll is display-pixel,
-  `VideoDef`-specific code — L6 is a *parallel* implementation of the same
-  `itemOn`-derived approach, not a literal reuse):
-  - **HUD-safe bound:** when a Classic menu's rows exceed the band above the
-    status bar (row capacity ≈ `(ORIGHEIGHT − ST_HEIGHT − menu.y) / LINEHEIGHT`),
-    scroll it with the same `itemOn`-derived, draw-time logic as L4, clipping both
-    the item rows and the skull cursor to that band.
+  320×200 menu path (the L4 crisp scroll is display-pixel, `VideoDef`-specific
+  code — L6 is a *parallel* implementation of the same `itemOn`-derived approach,
+  not a literal reuse):
+  - **HUD-safe bound:** every Classic menu element must sit above the status-bar
+    band (`y + rowHeight ≤ ORIGHEIGHT − ST_HEIGHT = 168`). Crucially, the overlap
+    §3 cites comes from the **routine-drawn** menus, **not** the generic patch
+    loop: `RendererDef`/`EffectsDef` have all-empty `name` fields — every row is
+    `M_WriteText`/`M_DrawThermo` emitted by `M_DrawRendererMenu`/`M_DrawEffectsMenu`
+    at fixed Y (e.g. `RendererDef` at `y=60` puts its Brightness thermo at
+    `60 + 16*8 = 188`, below 168) — and `M_DrawOptions`/`M_DrawSound` position
+    their value columns and thermometers the same way. So the fix is **path-based,
+    not generic-loop-based**: an `itemOn`-derived, draw-time scroll/offset (row
+    capacity ≈ `(ORIGHEIGHT − ST_HEIGHT − menu.y) / LINEHEIGHT`) applied to the
+    **whole** Classic menu draw — the generic patch loop, the skull cursor, **and**
+    each per-menu `M_Draw*` routine's `M_WriteText`/`M_DrawThermo` output (via a
+    shared menu-draw Y-offset the routines consult, or by scrolling/relocating the
+    affected menu). It fires whenever the 320×200 classic path draws a menu —
+    **including the classic-path Options/Sound/Renderer menus shown under a 3D
+    tier** (the clip is keyed on the draw path, not `rendermode`). Invariant: no
+    element of any Classic menu, however drawn, sits below 168 (INV-2).
   - **Uniform per-menu row size:** the one mixed menu is **Options** — render its
     big-red row-label lumps (`M_ENDGAM`, `M_MESSG`, `M_DETAIL`, `M_SCRNSZ`,
     `M_MSENS`, `M_SVOL`) **as `hu_font` text** at the uniform row size (they can't
@@ -409,7 +422,8 @@ path (it happens only on resize, never during play).
   title/header banner art is kept on every menu, and its red row styling is
   preserved on the menus left as-is (Main — kept iconic, incl. its conditional
   DOOM-0060 Game Select text row; Sound, Load/Save — already uniform); the
-  red row-label look is relaxed **only** on **Options** (the single mixed menu),
+  red row-label look is relaxed **only** on **Options** (the one mixed menu this
+  redesign converts; Main also mixes in the both-WADs config but is kept iconic),
   whose oversized big-red graphic-lump row labels are redrawn as uniform `hu_font`
   text because a patch cannot be scaled to the row size. Classic is therefore no
   longer byte-for-byte identical: a deliberate, minimal change per the user's
@@ -427,9 +441,11 @@ path (it happens only on resize, never during play).
   Classic↔3D tier change) and a crisp draw skin + `itemOn`-derived scrolling. It
   does **not** change the existing classic menus' item lists, the `itemOn`
   cursor-*movement* semantics, `M_Responder`, or persistence — those are reused
-  unchanged. The entry branch and the tier re-route act only through the existing
-  `M_SetupNextMenu` routing (swapping which `menu_t` is `currentMenu`, plus one
-  `itemOn =` to keep the cursor on the tier row), never by editing `M_Responder`.
+  unchanged. The entry branch routes through the existing `M_SetupNextMenu`; the
+  tier re-route sets `currentMenu`/`itemOn` **directly** (equivalent to
+  `M_SetupNextMenu` plus the `itemOn =` cursor-pin — done inline because
+  `M_SetupNextMenu` alone would restore `lastOn`, not the tier row). Both only swap
+  which `menu_t` is `currentMenu` and pin the cursor, never editing `M_Responder`.
   The crisp skin, the scroll, and the skull reposition are draw-time only.
 - **INV-5** — No change to any path-tracer push-constant, RT resource, or the
   `-rtverify` prefix; `-rtverify` still PASSES unchanged.
@@ -448,12 +464,14 @@ path (it happens only on resize, never during play).
   `VIDEO`) is drawn at the **row size**, set apart by weight / caps /
   letter-spacing, not size (§4.2), so the exemption is a Classic-only concept.
   Emphasis in the option text is expressed with weight / colour /
-  letter-spacing / caps, **never a different size**. In Classic this means the one
-  menu that mixes big-red graphic-lump row labels with small `hu_font` rows
-  (Options) renders those labels **as `hu_font` text** at the uniform row size —
-  the oversized graphic lumps cannot be scaled as patches, so they are drawn as
-  text (a deliberate, user-accepted relaxation of Classic's red row-label look;
-  see INV-1). The size may differ *between* menus if their
+  letter-spacing / caps, **never a different size**. In Classic the one menu this
+  redesign **converts** is **Options** — it renders its big-red graphic-lump row
+  labels **as `hu_font` text** at the uniform row size, because the oversized lumps
+  cannot be scaled as patches (a deliberate, user-accepted relaxation of Classic's
+  red row-label look; see INV-1). The **Main** menu also technically mixes sizes in
+  the both-WADs config (its big-red item lumps plus the conditional DOOM-0060
+  "Game Select" `hu_font` row), but is **kept iconic and untouched** — an accepted
+  exception, not converted. The size may differ *between* menus if their
   content densities differ, but is constant *within* one menu.
 
 ## 9. Alternatives considered
