@@ -1555,7 +1555,7 @@ static void M_DrawCrispMenu(menu_t* menu)
     int dispH  = rb_display_height();
     int bottom = rb_menu_safe_bottom();
     int nItems = menu->numitems;
-    int rowH, rowsTopY, titleY, marginX, valRightX, colX, labelOnly;
+    int rowH, rowStride, rowsTopY, titleY, marginX, valRightX, colX, labelOnly;
     int availH, maxRows, winRows, scrollTop, arrowRoom, v;
     float scale = 1.7f;   // INV-7: one comfortable, fixed glyph size for the whole menu
 
@@ -1566,8 +1566,8 @@ static void M_DrawCrispMenu(menu_t* menu)
     if (rowH < 1 || !d)
 	return;
 
-    marginX   = dispW / 5;
-    valRightX = dispW - dispW / 6;
+    marginX   = dispW / 4;           // value menus: label column (narrower than v1 -> less "too wide")
+    valRightX = dispW - dispW / 4;   // value menus: right-aligned value column
     titleY    = rowH;
     rowsTopY  = titleY + rowH * 2;   // title + one blank row of breathing space
 
@@ -1590,6 +1590,12 @@ static void M_DrawCrispMenu(menu_t* menu)
 	if (colX < 0) colX = 0;
     }
 
+    // Row pitch. Label-only menus (few rows: main / episode / skill) get extra
+    // vertical breathing space so rows aren't cramped and the skull cursor clears its
+    // neighbours; value menus (e.g. the 19-row Video list) stay tight so the whole
+    // list still fits above the HUD without scrolling.
+    rowStride = labelOnly ? rowH + rowH / 2 : rowH;
+
     // itemOn-derived scroll window (INV-4: derived from itemOn only; no M_Responder change).
     // maxRows = rows that fit between the title and the HUD-safe bound. If the whole list fits,
     // draw it all with no arrows; else centre a window on the cursor and reserve the bottom slot
@@ -1603,7 +1609,7 @@ static void M_DrawCrispMenu(menu_t* menu)
     // that only fit one of them). maxRows==0 means not even one row fits above the HUD-safe
     // bound: draw nothing rather than overflow it.
     availH  = bottom - rowsTopY;
-    maxRows = availH / rowH;
+    maxRows = availH / rowStride;
     if (maxRows < 0) maxRows = 0;
     if (maxRows >= nItems)
     {
@@ -1644,13 +1650,13 @@ static void M_DrawCrispMenu(menu_t* menu)
     if (arrowRoom && scrollTop + winRows < nItems)
     {
 	int aw = rb_text_width("v", scale);
-	rb_text_draw("v", (dispW - aw) / 2, rowsTopY + winRows * rowH, scale, headCol);
+	rb_text_draw("v", (dispW - aw) / 2, rowsTopY + winRows * rowStride, scale, headCol);
     }
 
     for (v = 0 ; v < winRows ; v++)
     {
 	int i   = scrollTop + v;
-	int y   = rowsTopY + v * rowH;
+	int y   = rowsTopY + v * rowStride;
 	int st  = menu->menuitems[i].status;
 	int sel = (i == itemOn);
 	const char* label = d->labels[i];
@@ -1717,10 +1723,14 @@ static void M_DrawCrispMenu(menu_t* menu)
     // unconditionally and could land well below the HUD-safe bound).
     if (winRows > 0)
     {
-	int rowCenter = rowsTopY + (itemOn - scrollTop) * rowH + rowH / 2;
-	int vy = (int)((double)rowCenter * (double)ORIGHEIGHT / (double)dispH) - 8;
-	int vx = (int)((double)colX * (double)ORIGWIDTH / (double)dispW) - 16;   // left of the (maybe centred) column
-	V_DrawPatchDirect(vx, vy, 0, W_CacheLumpName(skullName[whichSkull], PU_CACHE));
+	patch_t* skp = (patch_t*)W_CacheLumpName(skullName[whichSkull], PU_CACHE);
+	int rowCenter = rowsTopY + (itemOn - scrollTop) * rowStride + rowH / 2;
+	// Map the row centre back to the 320x200 virtual canvas and centre the skull on
+	// it by its real height; place it fully LEFT of the (maybe centred) label column
+	// with a small gap so it never overlaps the first word.
+	int vy = (int)((double)rowCenter * (double)ORIGHEIGHT / (double)dispH) - SHORT(skp->height) / 2;
+	int vx = (int)((double)colX * (double)ORIGWIDTH / (double)dispW) - SHORT(skp->width) - 4;
+	V_DrawPatchDirect(vx, vy, 0, skp);
     }
 }
 
