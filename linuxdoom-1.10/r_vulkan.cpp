@@ -59,6 +59,7 @@
 // (compiled in rb_image.c; self-guards extern "C").
 #include "rb_materials.h"
 #include "rb_image.h"
+#include "stb_image.h"   // DOOM-0206 v2: decls only (impl in rb_image.c) — decode the embedded skull PNG
 // DOOM-0206 (L1b): the pure-logic stb_truetype glyph-atlas baker (compiled in rb_text.c;
 // self-guards extern "C"). The GPU side (atlas image + text pipeline + batch API) is here.
 #include "rb_text.h"
@@ -110,6 +111,7 @@ static_assert(sizeof(rb_matctrl_t) == 40, "rb_matctrl_t must be 40 bytes (std430
 #include "shaders/label.comp.spv.h"
 #include "shaders/taau.comp.spv.h"
 #include "assets/Oxanium-SemiBold.ttf.h"    // DOOM-0206 L4: bundled OFL menu font (oxanium_ttf[])
+#include "assets/skull_cursor.png.h"        // DOOM-0206 v2: original menu-cursor skull (skull_cursor_png[])
 
 // Tier values returned by RB_VulkanProbe — kept numerically in lockstep with
 // rendermode_t in r_backend.h (RB_CLASSIC=0, RB_RT3D=1, RB_RASTER3D=2). The
@@ -4857,6 +4859,23 @@ void CreateTextResources()
     // sampling it. stbtt leaves row 0 / column 0 empty, so this clobbers no glyph.
     g.menuFont.pixels[0] = 255;
 
+    // DOOM-0206 v2: bake the original skull cursor into an extra atlas strip. The PNG packs
+    // three coverage masks in its RGB channels (bone / dark / red eyes); decode it here (stbi,
+    // impl in rb_image.c) and hand the RGBA to rb_text_add_cursor, which splits the channels.
+    // Best-effort: on failure cur_layers stays 0 and M_DrawCrispMenu falls back to the paletted
+    // skull. Must run before the upload so the taller atlas is what reaches the GPU.
+    {
+        int sw = 0, sh = 0, comp = 0;
+        unsigned char* srgba = stbi_load_from_memory(skull_cursor_png, (int)skull_cursor_png_len,
+                                                     &sw, &sh, &comp, 4);
+        if (srgba && rb_text_add_cursor(&g.menuFont, srgba, sw, sh))
+            printf("RB_Vulkan: menu cursor skull baked (%d layers, %dx%d).\n",
+                   g.menuFont.cur_layers, sw, sh);
+        else
+            fprintf(stderr, "RB_Vulkan: menu cursor skull bake failed — using the paletted skull.\n");
+        if (srgba) stbi_image_free(srgba);
+    }
+
     // Upload the R8 atlas once (static for the whole session), then free the CPU pixels —
     // rb_text_free_font keeps the glyph metrics rb_text_draw / rb_text_measure still need.
     CreateSampledImage((uint32_t)g.menuFont.w, (uint32_t)g.menuFont.h, VK_FORMAT_R8_UNORM,
@@ -5170,6 +5189,64 @@ extern "C" void rb_menu_fill(int x, int y, int w, int h, unsigned rgba)
     const TextVertex q3 = { x0, y1, u, v, cr, cg, cb, ca };
     g.textVerts.push_back(q0); g.textVerts.push_back(q1); g.textVerts.push_back(q2);
     g.textVerts.push_back(q0); g.textVerts.push_back(q2); g.textVerts.push_back(q3);
+}
+
+// DOOM-0206 v2: the crisp menu cursor — the original skull sprite baked into the atlas
+// (rb_text_add_cursor), drawn as ONE tinted quad through the same R8 text pipeline. So it is
+// display-resolution sharp at any size, sized to the text, and bright: it is queued into the
+// SAME batch as the glyphs, drawn OVER the dim backdrop (the old paletted skull sat under it,
+// hence dim). Present only if the skull baked; m_menu falls back to the paletted skull otherwise.
+extern "C" int rb_menu_cursor_ready(void)
+{
+    return g.menuFontReady && g.menuFont.cur_layers > 0;
+}
+
+// Drawn width (px) of the cursor at target height h, keeping the sprite's aspect (layer 0 is
+// the full body) — m_menu uses it to place the cursor fully left of the label column.
+extern "C" int rb_menu_cursor_width(int h)
+{
+    if (!rb_menu_cursor_ready() || h <= 0) return 0;
+    const int cw = g.menuFont.cur_x1[0] - g.menuFont.cur_x0[0];
+    const int ch = g.menuFont.cur_y1[0] - g.menuFont.cur_y0[0];
+    return (ch > 0) ? (int)((float)h * (float)cw / (float)ch + 0.5f) : 0;
+}
+
+// Emit one atlas-rect quad tinted rgba (premultiplied via text.frag) — the shared body of the
+// cursor's stacked layers.
+static void EmitAtlasQuad(int ax0, int ay0, int ax1, int ay1,
+                          float x, float y, float w, float h, unsigned rgba)
+{
+    const float aw = (float)g.menuFont.w, ah = (float)g.menuFont.h;
+    const unsigned char cr = (unsigned char)((rgba >> 24) & 0xFF);
+    const unsigned char cg = (unsigned char)((rgba >> 16) & 0xFF);
+    const unsigned char cb = (unsigned char)((rgba >>  8) & 0xFF);
+    const unsigned char ca = (unsigned char)( rgba        & 0xFF);
+    const float u0 = (float)ax0 / aw, v0 = (float)ay0 / ah;
+    const float u1 = (float)ax1 / aw, v1 = (float)ay1 / ah;
+    const float x0 = x, y0 = y, x1 = x + w, y1 = y + h;
+    const TextVertex t0 = { x0, y0, u0, v0, cr, cg, cb, ca };
+    const TextVertex t1 = { x1, y0, u1, v0, cr, cg, cb, ca };
+    const TextVertex t2 = { x1, y1, u1, v1, cr, cg, cb, ca };
+    const TextVertex t3 = { x0, y1, u0, v1, cr, cg, cb, ca };
+    g.textVerts.push_back(t0); g.textVerts.push_back(t1); g.textVerts.push_back(t2);
+    g.textVerts.push_back(t0); g.textVerts.push_back(t2); g.textVerts.push_back(t3);
+}
+
+// Draw the skull cursor with its top-left at (x,y), target height h (px). The three baked
+// coverage masks are stacked in DOOM colours: pale bone, near-black recesses, red eye glow —
+// so the cursor reads like the original menu skull, but crisp and bright over the dim backdrop.
+extern "C" void rb_menu_draw_cursor(int x, int y, int h)
+{
+    if (!rb_menu_cursor_ready() || h <= 0) return;
+    static const unsigned kTint[3] = { 0xC9C2AEFFu /*bone*/, 0x120C0AFFu /*recess*/, 0xE0301AFFu /*eyes*/ };
+    const int cw = g.menuFont.cur_x1[0] - g.menuFont.cur_x0[0];
+    const int ch = g.menuFont.cur_y1[0] - g.menuFont.cur_y0[0];
+    if (ch <= 0) return;
+    const float dw = (float)h * (float)cw / (float)ch, dh = (float)h;
+    for (int L = 0; L < g.menuFont.cur_layers && L < 3; L++)
+        EmitAtlasQuad(g.menuFont.cur_x0[L], g.menuFont.cur_y0[L],
+                      g.menuFont.cur_x1[L], g.menuFont.cur_y1[L],
+                      (float)x, (float)y, dw, dh, kTint[L]);
 }
 
 // DOOM-0206 (L1b/L2): the play-view dim quad (menu backdrop). Darkens the world behind the

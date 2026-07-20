@@ -1211,6 +1211,10 @@ extern void	rb_text_draw(const char* s, int x, int y, float scale, unsigned rgba
 extern int	rb_text_width(const char* s, float scale);
 extern int	rb_text_line_height(float scale);
 extern void	rb_menu_fill(int x, int y, int w, int h, unsigned rgba);   // solid quad (slider bar)
+// DOOM-0206 (v2): the crisp menu cursor (original skull sprite baked into the atlas).
+extern int	rb_menu_cursor_ready(void);		// 1 if the crisp skull baked (else fall back)
+extern int	rb_menu_cursor_width(int h);		// drawn width for a target height (aspect-kept)
+extern void	rb_menu_draw_cursor(int x, int y, int h);   // draws the DOOM-coloured skull
 extern int	rb_display_width(void);
 extern int	rb_display_height(void);
 extern int	rb_rtdebug;			// r_vulkan.cpp: RT view/debug mode (6 = RT on, 0 = off)
@@ -1723,14 +1727,30 @@ static void M_DrawCrispMenu(menu_t* menu)
     // unconditionally and could land well below the HUD-safe bound).
     if (winRows > 0)
     {
-	patch_t* skp = (patch_t*)W_CacheLumpName(skullName[whichSkull], PU_CACHE);
-	int rowCenter = rowsTopY + (itemOn - scrollTop) * rowStride + rowH / 2;
-	// Map the row centre back to the 320x200 virtual canvas and centre the skull on
-	// it by its real height; place it fully LEFT of the (maybe centred) label column
-	// with a small gap so it never overlaps the first word.
-	int vy = (int)((double)rowCenter * (double)ORIGHEIGHT / (double)dispH) - SHORT(skp->height) / 2;
-	int vx = (int)((double)colX * (double)ORIGWIDTH / (double)dispW) - SHORT(skp->width) - 4;
-	V_DrawPatchDirect(vx, vy, 0, skp);
+	int rowTopY = rowsTopY + (itemOn - scrollTop) * rowStride;
+
+	if (rb_menu_cursor_ready())
+	{
+	    // Crisp skull cursor: display-res, bright, sized to one text row. Sit it fully
+	    // left of the (maybe centred) label column with a small gap; the selCol tint ties
+	    // it to the highlighted row. Drawn in the crisp layer (over the dim, hence bright).
+	    int ch = rowH;
+	    int cw = rb_menu_cursor_width(ch);
+	    int cx = colX - cw - rowH / 3;
+	    if (cx < 0) cx = 0;
+	    rb_menu_draw_cursor(cx, rowTopY, ch);
+	}
+	else
+	{
+	    // Fallback (crisp cursor sprite didn't bake): the original paletted skull in the
+	    // 320x200 overlay. Chunkier + dimmer, but keeps a cursor. Map the row centre back to
+	    // the virtual canvas, centre by the skull's real height, sit it left of the column.
+	    patch_t* skp = (patch_t*)W_CacheLumpName(skullName[whichSkull], PU_CACHE);
+	    int rowCenter = rowTopY + rowH / 2;
+	    int vy = (int)((double)rowCenter * (double)ORIGHEIGHT / (double)dispH) - SHORT(skp->height) / 2;
+	    int vx = (int)((double)colX * (double)ORIGWIDTH / (double)dispW) - SHORT(skp->width) - 4;
+	    V_DrawPatchDirect(vx, vy, 0, skp);
+	}
     }
 }
 
