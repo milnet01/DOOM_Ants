@@ -1877,3 +1877,27 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** In the ray-traced view, the player should throw a shadow on the floor and walls like everything else does — right now they don't.
   Kind: feature.
   Source: user-request-2026-07-19.
+
+- 📋 [DOOM-0209] **Decorative light-source sprites (candelabra, candle, torches) don't emit light in the Solid/Ultra renderers.**
+  Found in play-test (user, 2026-07-20, Image #9): the two gold candelabras
+  flanking a doorway have lit flames but cast NO light in the 3D tiers — the
+  room around them isn't lit by them. Classic DOOM's decorative light-source
+  Things (candelabra, candle, the tall/short techno floor lamps, the red/green
+  torches, burning barrel, etc.) are drawn as fullbright flame sprites and read
+  as light sources, but our RT/Solid emitter system derives emitters from
+  WALL/FLAT materials only (emis::derive_material_le — the DOOM-0082 peak-region
+  fullbright gate on textures/flats), so these sprite props never enter the
+  emitter set and stay dark.
+
+  Fix direction: feed decorative light-source sprite Things into the emitter
+  system — likely a curated set of DOOM thing types (Candelabra, Candle, the
+  lamp/torch/fire decorations) mapped to a warm point-light Le (colour + faint
+  intensity), placed at the flame's world position (top of the sprite, not the
+  base). Reuse the static-emitter cache path (these don't move) — see the
+  DOOM-0084 static/sprite emitter split + DOOM-0119 cull. Tune intensity/colour
+  with the user (candles = faint, torches = stronger). Relates to DOOM-0082
+  (switch/lamp emitters), DOOM-0083 (forced-Le liquids/lava). Needs its own
+  brainstorm -> spec -> cold-eyes cycle before implementing.
+  **Layman:** Lit props like candelabras and torches glow in real life but stay dark in the 3D renderer — they should cast a warm light like the real DOOM light sources they are.
+  Kind: enhancement.
+  Source: user-request-2026-07-20.
