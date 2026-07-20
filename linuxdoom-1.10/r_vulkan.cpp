@@ -5487,11 +5487,16 @@ extern "C" void rb_menu_dim(void)
 // last frame is finished (no double-buffering). No-op unless the menu opted in this frame.
 static void FlushMenuText()
 {
-    if (!g.menuFontReady || !rb_menu_text_active || g.textVerts.empty())
+    // Draw if the menu opted in AND queued anything this frame. The cursor/logo ride separate
+    // vectors (their own pipeline/descriptor), so a frame that queued ONLY a cursor -- e.g. the
+    // Game Select screen's brightened skull with no crisp text -- must not early-return here.
+    if (!g.menuFontReady || !rb_menu_text_active ||
+        (g.textVerts.empty() && g.cursorVerts.empty() && g.logoVerts.empty()))
         return;
     uint32_t verts = (uint32_t)g.textVerts.size();
     if (verts > g.textVbufCap) verts = g.textVbufCap;   // over-cap frame just clips the tail
-    std::memcpy(g.textVbufMapped, g.textVerts.data(), (size_t)verts * sizeof(TextVertex));
+    if (verts)   // a cursor-only frame (Game Select skull) has no glyph verts to copy
+        std::memcpy(g.textVbufMapped, g.textVerts.data(), (size_t)verts * sizeof(TextVertex));
 
     VkViewport vpRect = {};
     vpRect.width = (float)g.extent.width;

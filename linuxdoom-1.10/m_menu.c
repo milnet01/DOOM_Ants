@@ -3093,8 +3093,26 @@ void M_Drawer (void)
 
 
     // DRAW SKULL
-    V_DrawPatchDirect(x + SKULLXOFF,currentMenu->y - 5 + itemOn*LINEHEIGHT, 0,
-		      W_CacheLumpName(skullName[whichSkull],PU_CACHE));
+    // DOOM-0206 (v2): the Game Select screen is a carved-out classic-path menu, so its skull is
+    // the paletted M_SKULL at plain palette brightness -- dull beside the crisp menus' brightened
+    // skull. In the 3D tiers, draw the brightened crisp skull (the same M_SKULL1 lump, same size)
+    // in its place. Map the classic skull's 320x200 virtual placement to display pixels; height
+    // comes from the patch so the size matches the classic skull (user: brighten, keep the size).
+    if (currentMenu == &GameSelectDef && rendermode != RB_CLASSIC && rb_menu_cursor_ready())
+    {
+	patch_t* sk = (patch_t*)W_CacheLumpName(skullName[whichSkull],PU_CACHE);
+	int dW = rb_display_width(), dH = rb_display_height();
+	int vx = x + SKULLXOFF, vy = currentMenu->y - 5 + itemOn*LINEHEIGHT;
+	rb_text_begin();
+	rb_menu_text_active = 1;
+	rb_menu_draw_cursor(vx * dW / ORIGWIDTH, vy * dH / ORIGHEIGHT,
+			    SHORT(sk->height) * dH / ORIGHEIGHT);
+    }
+    else
+    {
+	V_DrawPatchDirect(x + SKULLXOFF,currentMenu->y - 5 + itemOn*LINEHEIGHT, 0,
+			  W_CacheLumpName(skullName[whichSkull],PU_CACHE));
+    }
 
     currentMenu->y = savedMenuY;        // restore the un-shifted layout
 
