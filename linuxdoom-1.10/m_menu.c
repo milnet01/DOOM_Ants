@@ -1219,6 +1219,53 @@ extern int	rb_display_width(void);
 extern int	rb_display_height(void);
 extern int	rb_rtdebug;			// r_vulkan.cpp: RT view/debug mode (6 = RT on, 0 = off)
 
+// DOOM-0206 v2: decode the real menu skull (M_SKULL1) to a brightened RGBA buffer for
+// the crisp cursor. Cached; returns NULL on failure. w*h*4 bytes, straight alpha (0 =
+// transparent where the patch has no post). r_vulkan uploads it as the cursor texture.
+// Plain C (this TU is compiled as C); r_vulkan.cpp declares it extern "C" to link.
+// Column walk mirrors V_DrawPatch (v_video.c): post source = column+3, next post =
+// column + column->length + 4.
+const unsigned char* M_CursorSkullRGBA(int* out_w, int* out_h)
+{
+    static unsigned char* cache = NULL;
+    static int cw = 0, ch = 0;
+    if (cache) { *out_w = cw; *out_h = ch; return cache; }
+    patch_t* p = (patch_t*)W_CacheLumpName("M_SKULL1", PU_CACHE);
+    if (!p) return NULL;
+    int w = SHORT(p->width), h = SHORT(p->height);
+    if (w <= 0 || h <= 0) return NULL;
+    const byte* pal = (const byte*)W_CacheLumpName("PLAYPAL", PU_CACHE);
+    if (!pal) return NULL;
+    unsigned char* rgba = (unsigned char*)calloc((size_t)w * h, 4);   // transparent
+    if (!rgba) return NULL;
+    for (int x = 0; x < w; x++)
+    {
+	const column_t* col = (const column_t*)((const byte*)p + LONG(p->columnofs[x]));
+	while (col->topdelta != 0xff)
+	{
+	    const byte* src = (const byte*)col + 3;
+	    for (int i = 0; i < col->length; i++)
+	    {
+		int y = col->topdelta + i;
+		if (y < 0 || y >= h) continue;
+		int idx = src[i];
+		unsigned char* d = rgba + ((size_t)y * w + x) * 4;
+		// Brighten ~1.35x, clamped, so the skull reads bright over the dim menu.
+		for (int k = 0; k < 3; k++)
+		{
+		    int v = pal[idx * 3 + k] * 135 / 100;
+		    d[k] = (unsigned char)(v > 255 ? 255 : v);
+		}
+		d[3] = 255;
+	    }
+	    col = (const column_t*)((const byte*)col + col->length + 4);
+	}
+    }
+    cache = rgba; cw = w; ch = h;
+    *out_w = w; *out_h = h;
+    return cache;
+}
+
 
 // DOOM-0206 (L6): Options row labels as hu_font display strings (INV-7: one
 // uniform row size). Under Classic these replace the oversized big-red graphic-

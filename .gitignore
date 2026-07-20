@@ -27,9 +27,8 @@ cmake-build-*/
 /linuxdoom-1.10/shaders/*.spv
 /linuxdoom-1.10/shaders/*.spv.h
 
-# Generated embedded-asset artifacts (DOOM-0206): bundled .ttf / .png -> C byte array
+# Generated embedded-asset artifacts (DOOM-0206): bundled .ttf -> C byte array
 /linuxdoom-1.10/assets/*.ttf.h
-/linuxdoom-1.10/assets/*.png.h
 
 # Editor / OS cruft
 *.swp

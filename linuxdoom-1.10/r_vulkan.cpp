@@ -59,7 +59,6 @@
 // (compiled in rb_image.c; self-guards extern "C").
 #include "rb_materials.h"
 #include "rb_image.h"
-#include "stb_image.h"   // DOOM-0206 v2: decls only (impl in rb_image.c) — decode the embedded skull PNG
 // DOOM-0206 (L1b): the pure-logic stb_truetype glyph-atlas baker (compiled in rb_text.c;
 // self-guards extern "C"). The GPU side (atlas image + text pipeline + batch API) is here.
 #include "rb_text.h"
@@ -102,6 +101,7 @@ static_assert(sizeof(rb_matctrl_t) == 40, "rb_matctrl_t must be 40 bytes (std430
 #include "shaders/composite.frag.spv.h"
 #include "shaders/text.vert.spv.h"          // DOOM-0206 L1b: display-res menu glyph text
 #include "shaders/text.frag.spv.h"
+#include "shaders/cursor.frag.spv.h"        // DOOM-0206 v2: RGBA menu skull cursor (M_SKULL1)
 #include "shaders/ssao.frag.spv.h"          // DOOM-0170 L2b: half-res SSAO (contact shadows)
 #include "shaders/pathtrace.comp.spv.h"
 #include "shaders/bake.comp.spv.h"
@@ -111,7 +111,6 @@ static_assert(sizeof(rb_matctrl_t) == 40, "rb_matctrl_t must be 40 bytes (std430
 #include "shaders/label.comp.spv.h"
 #include "shaders/taau.comp.spv.h"
 #include "assets/Oxanium-SemiBold.ttf.h"    // DOOM-0206 L4: bundled OFL menu font (oxanium_ttf[])
-#include "assets/skull_cursor.png.h"        // DOOM-0206 v2: original menu-cursor skull (skull_cursor_png[])
 
 // Tier values returned by RB_VulkanProbe — kept numerically in lockstep with
 // rendermode_t in r_backend.h (RB_CLASSIC=0, RB_RT3D=1, RB_RASTER3D=2). The
@@ -251,6 +250,9 @@ extern "C" void* I_GetWindow(void);
 extern "C" void  I_ShutdownGraphicsForVulkan(void);
 extern "C" [[noreturn]] void I_Error(const char* error, ...);
 extern "C" int M_CheckParm(const char* check);   // m_argv.c — for -rtverify (step 4d)
+// DOOM-0206 v2: decode the real WAD menu skull (M_SKULL1) to a brightened RGBA buffer,
+// cached in m_menu.c. Uploaded once as the crisp cursor texture (CreateTextResources).
+extern "C" const unsigned char* M_CursorSkullRGBA(int* out_w, int* out_h);
 // DOOM-0202: argv (optional -shotverify output path) + the vendored PNG writer
 // (stbi_write_png, implemented in rb_image.c). Used only by the -shotverify capture.
 extern "C" { extern int myargc; extern char** myargv; }
@@ -585,6 +587,21 @@ struct VulkanState
     void*           textVbufMapped = nullptr;
     uint32_t        textVbufCap    = 0;   // capacity in vertices
     std::vector<TextVertex> textVerts;    // this frame's queued glyph quads
+
+    // DOOM-0206 v2: the crisp menu skull cursor — the real WAD M_SKULL1 lump decoded to RGBA
+    // and drawn through its own RGBA-sampling pipeline (cursor.frag), sized to a text row and
+    // brightened. Reuses the text pipeline layout/DS-layout/sampler/vbuf; the verts are queued
+    // into cursorVerts and appended after the glyph draw in FlushMenuText. cursorReady=false
+    // (decode/upload failed) makes m_menu fall back to the paletted skull.
+    VkImage          cursorImage  = VK_NULL_HANDLE;
+    VkDeviceMemory   cursorMemory = VK_NULL_HANDLE;
+    VkImageView      cursorView   = VK_NULL_HANDLE;
+    VkDescriptorPool cursorDsPool = VK_NULL_HANDLE;
+    VkDescriptorSet  cursorDs     = VK_NULL_HANDLE;
+    VkPipeline       cursorPipeline = VK_NULL_HANDLE;
+    bool             cursorReady  = false;
+    int              cursorW = 0, cursorH = 0;
+    std::vector<TextVertex> cursorVerts;   // this frame's queued cursor quad
 
     // column-major MVP from RB_Vulkan_RenderView; identity until the first
     // camera update so a frame drawn before then is well-defined (DOOM-0037).
@@ -4859,23 +4876,6 @@ void CreateTextResources()
     // sampling it. stbtt leaves row 0 / column 0 empty, so this clobbers no glyph.
     g.menuFont.pixels[0] = 255;
 
-    // DOOM-0206 v2: bake the original skull cursor into an extra atlas strip. The PNG packs
-    // three coverage masks in its RGB channels (bone / dark / red eyes); decode it here (stbi,
-    // impl in rb_image.c) and hand the RGBA to rb_text_add_cursor, which splits the channels.
-    // Best-effort: on failure cur_layers stays 0 and M_DrawCrispMenu falls back to the paletted
-    // skull. Must run before the upload so the taller atlas is what reaches the GPU.
-    {
-        int sw = 0, sh = 0, comp = 0;
-        unsigned char* srgba = stbi_load_from_memory(skull_cursor_png, (int)skull_cursor_png_len,
-                                                     &sw, &sh, &comp, 4);
-        if (srgba && rb_text_add_cursor(&g.menuFont, srgba, sw, sh))
-            printf("RB_Vulkan: menu cursor skull baked (%d layers, %dx%d).\n",
-                   g.menuFont.cur_layers, sw, sh);
-        else
-            fprintf(stderr, "RB_Vulkan: menu cursor skull bake failed — using the paletted skull.\n");
-        if (srgba) stbi_image_free(srgba);
-    }
-
     // Upload the R8 atlas once (static for the whole session), then free the CPU pixels —
     // rb_text_free_font keeps the glyph metrics rb_text_draw / rb_text_measure still need.
     CreateSampledImage((uint32_t)g.menuFont.w, (uint32_t)g.menuFont.h, VK_FORMAT_R8_UNORM,
@@ -5063,6 +5063,150 @@ void CreateTextResources()
     printf("RB_Vulkan: menu text ready (%dpx glyphs, %dx%d atlas).\n",
            g.menuFont.px_height, g.menuFont.w, g.menuFont.h);
     fflush(stdout);
+
+    // DOOM-0206 v2: the crisp menu skull cursor. Decode the real WAD M_SKULL1 lump to a
+    // brightened RGBA buffer (M_CursorSkullRGBA, m_menu.c), upload it as an RGBA texture, and
+    // build a second pipeline that reuses the text vertex format + layout but samples RGBA
+    // (cursor.frag) instead of the R8 glyph atlas. On any failure cursorReady stays false and
+    // m_menu falls back to the paletted skull.
+    {
+        int sw = 0, sh = 0;
+        const unsigned char* pixels = M_CursorSkullRGBA(&sw, &sh);
+        if (!pixels || sw <= 0 || sh <= 0)
+        {
+            fprintf(stderr, "RB_Vulkan: menu cursor skull decode failed — using the paletted skull.\n");
+        }
+        else
+        {
+            // Upload the RGBA skull once (static for the session), same helper as the atlas.
+            CreateSampledImage((uint32_t)sw, (uint32_t)sh, VK_FORMAT_R8G8B8A8_UNORM,
+                               pixels, (VkDeviceSize)sw * sh * 4,
+                               &g.cursorImage, &g.cursorMemory, &g.cursorView);
+
+            // Descriptor set: one combined-image-sampler (the skull), its own pool; reuses the
+            // text DS layout (identical binding 0 = sampler2D at fragment stage) and sampler.
+            VkDescriptorPoolSize cps = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 };
+            VkDescriptorPoolCreateInfo cdpci = {};
+            cdpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+            cdpci.maxSets = 1;
+            cdpci.poolSizeCount = 1;
+            cdpci.pPoolSizes = &cps;
+            Check(vkCreateDescriptorPool(g.device, &cdpci, nullptr, &g.cursorDsPool),
+                  "vkCreateDescriptorPool(cursor)");
+
+            VkDescriptorSetAllocateInfo cdsai = {};
+            cdsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            cdsai.descriptorPool = g.cursorDsPool;
+            cdsai.descriptorSetCount = 1;
+            cdsai.pSetLayouts = &g.textDsLayout;
+            Check(vkAllocateDescriptorSets(g.device, &cdsai, &g.cursorDs),
+                  "vkAllocateDescriptorSets(cursor)");
+
+            VkDescriptorImageInfo cInfo = { g.textSampler, g.cursorView,
+                                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+            VkWriteDescriptorSet cw = {};
+            cw.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            cw.dstSet = g.cursorDs; cw.dstBinding = 0; cw.descriptorCount = 1;
+            cw.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            cw.pImageInfo = &cInfo;
+            vkUpdateDescriptorSets(g.device, 1, &cw, 0, nullptr);
+
+            // Pipeline: identical to the text pipeline except the fragment shader samples RGBA.
+            // Same TextVertex input, same premultiplied-alpha blend, same layout + render pass.
+            VkShaderModule cvert = MakeShader(text_vert_spv, text_vert_spv_len);
+            VkShaderModule cfrag = MakeShader(cursor_frag_spv, cursor_frag_spv_len);
+            VkPipelineShaderStageCreateInfo cstages[2] = {};
+            cstages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            cstages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;   cstages[0].module = cvert; cstages[0].pName = "main";
+            cstages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            cstages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT; cstages[1].module = cfrag; cstages[1].pName = "main";
+
+            VkVertexInputBindingDescription cbind = {};
+            cbind.binding = 0;
+            cbind.stride = sizeof(TextVertex);
+            cbind.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+            VkVertexInputAttributeDescription cattrs[3] = {};
+            cattrs[0] = { 0, 0, VK_FORMAT_R32G32_SFLOAT,  (uint32_t)offsetof(TextVertex, x) };
+            cattrs[1] = { 1, 0, VK_FORMAT_R32G32_SFLOAT,  (uint32_t)offsetof(TextVertex, u) };
+            cattrs[2] = { 2, 0, VK_FORMAT_R8G8B8A8_UNORM, (uint32_t)offsetof(TextVertex, r) };
+            VkPipelineVertexInputStateCreateInfo cvin = {};
+            cvin.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+            cvin.vertexBindingDescriptionCount = 1;
+            cvin.pVertexBindingDescriptions = &cbind;
+            cvin.vertexAttributeDescriptionCount = 3;
+            cvin.pVertexAttributeDescriptions = cattrs;
+
+            VkPipelineInputAssemblyStateCreateInfo cia = {};
+            cia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+            cia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+            VkPipelineViewportStateCreateInfo cvp = {};
+            cvp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+            cvp.viewportCount = 1; cvp.scissorCount = 1;   // viewport + scissor dynamic
+
+            VkPipelineRasterizationStateCreateInfo crs = {};
+            crs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+            crs.polygonMode = VK_POLYGON_MODE_FILL;
+            crs.cullMode = VK_CULL_MODE_NONE;
+            crs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+            crs.lineWidth = 1.0f;
+
+            VkPipelineMultisampleStateCreateInfo cms = {};
+            cms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+            cms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+            VkPipelineDepthStencilStateCreateInfo cdsst = {};   // depth test + write off
+            cdsst.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+
+            // Premultiplied-alpha blend: cursor.frag outputs (rgb*a, a), so src factor is ONE.
+            VkPipelineColorBlendAttachmentState ccba = {};
+            ccba.blendEnable = VK_TRUE;
+            ccba.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+            ccba.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            ccba.colorBlendOp = VK_BLEND_OP_ADD;
+            ccba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+            ccba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            ccba.alphaBlendOp = VK_BLEND_OP_ADD;
+            ccba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
+                                | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+            VkPipelineColorBlendStateCreateInfo ccb = {};
+            ccb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+            ccb.attachmentCount = 1;
+            ccb.pAttachments = &ccba;
+
+            VkDynamicState cdyn[2] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+            VkPipelineDynamicStateCreateInfo cdynState = {};
+            cdynState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+            cdynState.dynamicStateCount = 2;
+            cdynState.pDynamicStates = cdyn;
+
+            VkGraphicsPipelineCreateInfo cpci = {};
+            cpci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+            cpci.stageCount = 2;
+            cpci.pStages = cstages;
+            cpci.pVertexInputState = &cvin;
+            cpci.pInputAssemblyState = &cia;
+            cpci.pViewportState = &cvp;
+            cpci.pRasterizationState = &crs;
+            cpci.pMultisampleState = &cms;
+            cpci.pDepthStencilState = &cdsst;
+            cpci.pColorBlendState = &ccb;
+            cpci.pDynamicState = &cdynState;
+            cpci.layout = g.textPipelineLayout;
+            cpci.renderPass = g.renderPass;
+            cpci.subpass = 0;
+            Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &cpci, nullptr,
+                                            &g.cursorPipeline), "vkCreateGraphicsPipelines(cursor)");
+            vkDestroyShaderModule(g.device, cvert, nullptr);
+            vkDestroyShaderModule(g.device, cfrag, nullptr);
+
+            g.cursorReady = true;
+            g.cursorW = sw;
+            g.cursorH = sh;
+            printf("RB_Vulkan: menu cursor = real WAD skull M_SKULL1 (%dx%d RGBA, crisp).\n", sw, sh);
+            fflush(stdout);
+        }
+    }
 }
 
 // DOOM-0206 (L1b): the extern-"C" menu-text batch API m_menu.c drives (Tasks 3-6). Every entry
@@ -5074,6 +5218,7 @@ extern "C" { int rb_menu_text_active = 0; }
 extern "C" void rb_text_begin(void)
 {
     g.textVerts.clear();
+    g.cursorVerts.clear();
 }
 
 extern "C" int rb_text_width(const char* s, float scale)
@@ -5191,62 +5336,38 @@ extern "C" void rb_menu_fill(int x, int y, int w, int h, unsigned rgba)
     g.textVerts.push_back(q0); g.textVerts.push_back(q2); g.textVerts.push_back(q3);
 }
 
-// DOOM-0206 v2: the crisp menu cursor — the original skull sprite baked into the atlas
-// (rb_text_add_cursor), drawn as ONE tinted quad through the same R8 text pipeline. So it is
-// display-resolution sharp at any size, sized to the text, and bright: it is queued into the
-// SAME batch as the glyphs, drawn OVER the dim backdrop (the old paletted skull sat under it,
-// hence dim). Present only if the skull baked; m_menu falls back to the paletted skull otherwise.
+// DOOM-0206 v2: the crisp menu cursor — the real WAD skull M_SKULL1 decoded to RGBA and drawn
+// through its own RGBA-sampling pipeline (cursor.frag), sized to a text row and brightened. It
+// is queued into a SEPARATE per-frame vector (cursorVerts) because it needs the cursor pipeline
+// + descriptor, not the R8 text pipeline; FlushMenuText appends the draw after the glyphs.
+// Present only if the skull decoded + uploaded; m_menu falls back to the paletted skull otherwise.
 extern "C" int rb_menu_cursor_ready(void)
 {
-    return g.menuFontReady && g.menuFont.cur_layers > 0;
+    return g.cursorReady;
 }
 
-// Drawn width (px) of the cursor at target height h, keeping the sprite's aspect (layer 0 is
-// the full body) — m_menu uses it to place the cursor fully left of the label column.
+// Drawn width (px) of the cursor at target height h, keeping the sprite's aspect — m_menu uses
+// it to place the cursor fully left of the label column.
 extern "C" int rb_menu_cursor_width(int h)
 {
-    if (!rb_menu_cursor_ready() || h <= 0) return 0;
-    const int cw = g.menuFont.cur_x1[0] - g.menuFont.cur_x0[0];
-    const int ch = g.menuFont.cur_y1[0] - g.menuFont.cur_y0[0];
-    return (ch > 0) ? (int)((float)h * (float)cw / (float)ch + 0.5f) : 0;
+    if (!g.cursorReady || h <= 0 || g.cursorH <= 0) return 0;
+    return (int)((float)h * (float)g.cursorW / (float)g.cursorH + 0.5f);
 }
 
-// Emit one atlas-rect quad tinted rgba (premultiplied via text.frag) — the shared body of the
-// cursor's stacked layers.
-static void EmitAtlasQuad(int ax0, int ay0, int ax1, int ay1,
-                          float x, float y, float w, float h, unsigned rgba)
-{
-    const float aw = (float)g.menuFont.w, ah = (float)g.menuFont.h;
-    const unsigned char cr = (unsigned char)((rgba >> 24) & 0xFF);
-    const unsigned char cg = (unsigned char)((rgba >> 16) & 0xFF);
-    const unsigned char cb = (unsigned char)((rgba >>  8) & 0xFF);
-    const unsigned char ca = (unsigned char)( rgba        & 0xFF);
-    const float u0 = (float)ax0 / aw, v0 = (float)ay0 / ah;
-    const float u1 = (float)ax1 / aw, v1 = (float)ay1 / ah;
-    const float x0 = x, y0 = y, x1 = x + w, y1 = y + h;
-    const TextVertex t0 = { x0, y0, u0, v0, cr, cg, cb, ca };
-    const TextVertex t1 = { x1, y0, u1, v0, cr, cg, cb, ca };
-    const TextVertex t2 = { x1, y1, u1, v1, cr, cg, cb, ca };
-    const TextVertex t3 = { x0, y1, u0, v1, cr, cg, cb, ca };
-    g.textVerts.push_back(t0); g.textVerts.push_back(t1); g.textVerts.push_back(t2);
-    g.textVerts.push_back(t0); g.textVerts.push_back(t2); g.textVerts.push_back(t3);
-}
-
-// Draw the skull cursor with its top-left at (x,y), target height h (px). The three baked
-// coverage masks are stacked in DOOM colours: pale bone, near-black recesses, red eye glow —
-// so the cursor reads like the original menu skull, but crisp and bright over the dim backdrop.
+// Draw the skull cursor with its top-left at (x,y), target height h (px). One RGBA quad; the
+// brightness is baked into the texture (M_CursorSkullRGBA), so the tint is plain white.
 extern "C" void rb_menu_draw_cursor(int x, int y, int h)
 {
-    if (!rb_menu_cursor_ready() || h <= 0) return;
-    static const unsigned kTint[3] = { 0xC9C2AEFFu /*bone*/, 0x120C0AFFu /*recess*/, 0xE0301AFFu /*eyes*/ };
-    const int cw = g.menuFont.cur_x1[0] - g.menuFont.cur_x0[0];
-    const int ch = g.menuFont.cur_y1[0] - g.menuFont.cur_y0[0];
-    if (ch <= 0) return;
-    const float dw = (float)h * (float)cw / (float)ch, dh = (float)h;
-    for (int L = 0; L < g.menuFont.cur_layers && L < 3; L++)
-        EmitAtlasQuad(g.menuFont.cur_x0[L], g.menuFont.cur_y0[L],
-                      g.menuFont.cur_x1[L], g.menuFont.cur_y1[L],
-                      (float)x, (float)y, dw, dh, kTint[L]);
+    if (!g.cursorReady || h <= 0 || g.cursorH <= 0) return;
+    const float dw = (float)h * (float)g.cursorW / (float)g.cursorH, dh = (float)h;
+    const float x0 = (float)x, y0 = (float)y, x1 = x0 + dw, y1 = y0 + dh;
+    // uv 0..1 over the whole cursor texture; white tint (brightness baked into the RGBA).
+    const TextVertex t0 = { x0, y0, 0.f, 0.f, 255,255,255,255 };
+    const TextVertex t1 = { x1, y0, 1.f, 0.f, 255,255,255,255 };
+    const TextVertex t2 = { x1, y1, 1.f, 1.f, 255,255,255,255 };
+    const TextVertex t3 = { x0, y1, 0.f, 1.f, 255,255,255,255 };
+    g.cursorVerts.push_back(t0); g.cursorVerts.push_back(t1); g.cursorVerts.push_back(t2);
+    g.cursorVerts.push_back(t0); g.cursorVerts.push_back(t2); g.cursorVerts.push_back(t3);
 }
 
 // DOOM-0206 (L1b/L2): the play-view dim quad (menu backdrop). Darkens the world behind the
@@ -5291,6 +5412,26 @@ static void FlushMenuText()
     VkDeviceSize off = 0;
     vkCmdBindVertexBuffers(g.cmd, 0, 1, &g.textVbuf, &off);
     vkCmdDraw(g.cmd, verts, 1, 0, 0);
+
+    // DOOM-0206 v2: the skull cursor. It shares the vertex buffer (already bound) but needs its
+    // own RGBA pipeline + descriptor. Pack its verts right after the glyph verts (offset `verts`)
+    // and draw with firstVertex = verts. Guard the tail against the buffer capacity; the pushed
+    // constant + viewport/scissor already set above apply (same layout). The dim/glyph verts drew
+    // first, so the bright skull composites on top.
+    if (g.cursorReady && !g.cursorVerts.empty())
+    {
+        uint32_t cverts = (uint32_t)g.cursorVerts.size();
+        if (verts + cverts > g.textVbufCap) cverts = g.textVbufCap - verts;   // clip if no room
+        if (cverts > 0)
+        {
+            std::memcpy((unsigned char*)g.textVbufMapped + (size_t)verts * sizeof(TextVertex),
+                        g.cursorVerts.data(), (size_t)cverts * sizeof(TextVertex));
+            vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.cursorPipeline);
+            vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    g.textPipelineLayout, 0, 1, &g.cursorDs, 0, nullptr);
+            vkCmdDraw(g.cmd, cverts, 1, verts, 0);
+        }
+    }
 
     // DOOM-0206 (L2 review fix): consume-and-reset. rb_menu_text_active is a per-frame gate that
     // m_menu.c sets to 1 only on a frame it actually queued a dim/text draw; resetting it here
@@ -8576,6 +8717,13 @@ extern "C" void RB_Vulkan_Shutdown(void)
     if (g.textVbufMapped)     vkUnmapMemory(g.device, g.textVbufMemory);
     if (g.textVbuf)           vkDestroyBuffer(g.device, g.textVbuf, nullptr);
     if (g.textVbufMemory)     vkFreeMemory(g.device, g.textVbufMemory, nullptr);
+    // DOOM-0206 v2 crisp-cursor resources (reuse the text layout/sampler, freed above/below).
+    // The descriptor set rides its own pool.
+    if (g.cursorPipeline)     vkDestroyPipeline(g.device, g.cursorPipeline, nullptr);
+    if (g.cursorDsPool)       vkDestroyDescriptorPool(g.device, g.cursorDsPool, nullptr);
+    if (g.cursorView)         vkDestroyImageView(g.device, g.cursorView, nullptr);
+    if (g.cursorImage)        vkDestroyImage(g.device, g.cursorImage, nullptr);
+    if (g.cursorMemory)       vkFreeMemory(g.device, g.cursorMemory, nullptr);
     rb_text_free_font(&g.menuFont);   // no-op if the pixels were already freed after upload
 
     DestroyFramebufferResources();   // framebuffers, depth, swapchain image views

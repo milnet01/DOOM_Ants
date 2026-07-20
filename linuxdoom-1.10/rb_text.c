@@ -1,6 +1,5 @@
 #include "rb_text.h"
 #include <stdlib.h>
-#include <string.h>
 
 /* DOOM-0206: vendored single-header TrueType glyph rasterizer (menu text). Same
    vendored-stb pattern as rb_image.c/stb_image.h (ADR docs/decisions/0002): the
@@ -54,7 +53,6 @@ int rb_text_bake(const unsigned char* ttf, int ttf_len, int px_height, rb_atlas_
     out->w = size;
     out->h = size;
     out->px_height = px_height;
-    out->cur_layers = 0;   /* no cursor sprite yet */
     for (int i = 0; i < RB_NUM_CHARS; i++) {
         out->glyphs[i].x0 = chardata[i].x0;
         out->glyphs[i].y0 = chardata[i].y0;
@@ -71,37 +69,6 @@ int rb_text_bake(const unsigned char* ttf, int ttf_len, int px_height, rb_atlas_
     out->ascent   = (int)(ascent   * scale);
     out->descent  = (int)(descent  * scale);
     out->line_gap = (int)(line_gap * scale);
-    return 1;
-}
-
-int rb_text_add_cursor(rb_atlas_font_t* f, const unsigned char* rgba, int sw, int sh) {
-    const int L = 3;   /* R/G/B channels -> bone / dark / eye-glow coverage masks */
-    if (!f || !f->pixels || !rgba || sw <= 0 || sh <= 0) return 0;
-    if ((long)sw * L > f->w) return 0;   /* the three masks sit side by side in the strip */
-
-    /* Grow the atlas by sh rows and drop the glyph pixels back at the top: their rects are
-       absolute coords and the draw path divides by the (new) height, so a taller atlas leaves
-       every glyph sampling the same texels (and the reserved (0,0) full-coverage texel). */
-    int oldH = f->h, newH = f->h + sh;
-    unsigned char* np = (unsigned char*)malloc((size_t)f->w * (size_t)newH);
-    if (!np) return 0;
-    memcpy(np, f->pixels, (size_t)f->w * (size_t)oldH);
-    memset(np + (size_t)f->w * (size_t)oldH, 0, (size_t)f->w * (size_t)sh);
-
-    for (int layer = 0; layer < L; layer++) {
-        int ox = layer * sw;   /* this mask's column in the strip */
-        for (int y = 0; y < sh; y++)
-            for (int x = 0; x < sw; x++)
-                np[(size_t)(oldH + y) * f->w + ox + x] =
-                    rgba[((size_t)y * sw + x) * 4 + layer];   /* R (0) / G (1) / B (2) channel */
-        f->cur_x0[layer] = (unsigned short)ox;        f->cur_y0[layer] = (unsigned short)oldH;
-        f->cur_x1[layer] = (unsigned short)(ox + sw); f->cur_y1[layer] = (unsigned short)(oldH + sh);
-    }
-
-    free(f->pixels);
-    f->pixels = np;
-    f->h = newH;
-    f->cur_layers = L;
     return 1;
 }
 

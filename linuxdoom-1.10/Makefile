@@ -78,15 +78,17 @@ SHADER_HDRS=$(SHADER_SRCS:=.spv.h)
 # Not derived from a source file of its own (it IS mesh.frag), so it needs the explicit rule
 # below and is appended here so it builds + gates r_vulkan.o like the other shader headers.
 SHADER_HDRS+=$(SHADER_DIR)/mesh_overlay.frag.spv.h
+# DOOM-0206 v2 — crisp menu skull cursor: an RGBA-sampling fragment variant of the text
+# pipeline (samples the decoded WAD M_SKULL1 instead of the R8 glyph atlas). Built by the
+# generic $(SHADER_DIR)/%.spv.h rule (array name cursor_frag_spv); listed here so it builds
+# and gates r_vulkan.o like the other shader headers.
+SHADER_HDRS+=$(SHADER_DIR)/cursor.frag.spv.h
 
 # DOOM-0206 L4 — the bundled Oxanium menu font (OFL), embedded as a C byte array the same
 # way the shaders are (xxd -n). r_vulkan.cpp #includes the generated header and bakes the
 # glyph atlas from oxanium_ttf[] at init, so the game ships self-contained (no system font).
 ASSET_DIR=assets
 ASSET_HDRS=$(ASSET_DIR)/Oxanium-SemiBold.ttf.h
-# DOOM-0206 v2 — original menu-cursor skull (our own art, license-clean; regenerate
-# with assets/make_skull_cursor.py). Embedded as skull_cursor_png[] the same xxd way.
-ASSET_HDRS+=$(ASSET_DIR)/skull_cursor.png.h
 
 # not too sophisticated dependency
 OBJS=				\
@@ -166,7 +168,7 @@ clean:
 	rm -f *.o *~ *.flc
 	rm -f linux/* mingw/*
 	rm -f $(SHADER_DIR)/*.spv $(SHADER_DIR)/*.spv.h
-	rm -f $(ASSET_DIR)/*.ttf.h $(ASSET_DIR)/*.png.h
+	rm -f $(ASSET_DIR)/*.ttf.h
 
 # ---- Unit tests ----
 # Every tests/*_test.cpp is a self-contained unit test (includes the header under
@@ -279,9 +281,6 @@ $(SHADER_DIR)/mesh_overlay.frag.spv.h:	$(SHADER_DIR)/mesh.frag
 # oxanium_ttf_len) r_vulkan.cpp bakes the atlas from.
 $(ASSET_DIR)/Oxanium-SemiBold.ttf.h:	$(ASSET_DIR)/Oxanium-SemiBold.ttf
 	xxd -i -n oxanium_ttf $< > $@
-
-$(ASSET_DIR)/skull_cursor.png.h:	$(ASSET_DIR)/skull_cursor.png
-	xxd -i -n skull_cursor_png $< > $@
 
 # The Vulkan back-end embeds the compiled shaders and the bundled menu font.
 $(O)/r_vulkan.o:	$(SHADER_HDRS) $(ASSET_HDRS)
