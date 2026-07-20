@@ -862,6 +862,24 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: feature.
   Source: user-request-2026-06-27.
   Scope BROADENED + tier-bound (user 2026-07-14): not just enemies — in ULTRA, replace ALL sprites with 3D models: enemies/monsters, barrels, ALL pickups (health/armour/ammo/weapons/keys/powerups), decorations/scenery, and projectiles. Bind to the Ultra tier (parallel-asset rule, mirroring DOOM-0042's Ultra HD-art binding): Classic + Solid keep the original 2D billboards; Ultra swaps in 3D models. Still 💭/HARD/FAR-OUT and unspecced — the gating blocker is unchanged and now WIDER: freely-licensed (CC0/GPL-safe) 3D models with good coverage of DOOM's SPECIFIC roster (imp/demon/cacodemon/baron/… + barrels/medkits/etc.) barely exist, so expect heavy hand-authoring / AI-assisted modelling. Depends on DOOM-0042's material pipeline (models need PBR materials too) + the DOOM-0009 path tracer, and on per-object transforms in the TLAS (today all sprites share one camera-facing billboard BLAS — see DOOM-0100). Needs its own brainstorm → spec → cold-eyes cycle later; NOT part of the DOOM-0042 texture spec (which correctly keeps enemies as billboards). New sourced models go in /mnt/Games/3D Engine Assets/Models/ (CC0/free only) per ASSET_CATEGORIES.md.
+  Asset-source scout (2026-07-20): dengine.net/addons (Doomsday Engine
+  resource packs) evaluated as a model source and rejected — do NOT
+  re-investigate. Every notable pack is unusable for a GPL project on two
+  counts: (1) licensing — the one pack with a real licence (DHMP, the DOOM
+  High-Res Model Project) is CC BY-NC-SA (NonCommercial + a non-GPL
+  ShareAlike, both GPL-incompatible); the rest (jDRP, Abbspack, jDUI, the
+  music/SFX packs, Hexen/Heretic packs) state NO licence = all-rights-
+  reserved, or "fair-use for non-profit" (not a grant). (2) They are
+  derivative works of id/Raven/Bethesda DOOM art (fan recreations of the
+  actual monsters), so the underlying IP is Bethesda's regardless of the
+  repacker's stamp — and Bethesda enforces DOOM IP. Formats: Doomsday uses
+  DMD/MD5 models bound via DED text defs (engine-specific), PNG/DDS
+  textures. Bottom line: the model scarcity that blocks this item is real;
+  this source does not relieve it. Clean path stays original sculpts under a
+  licence we control (CC0 / CC-BY / GPL-compatible) — mirrors the DOOM-0042
+  CC0-hero-texture approach. See also DOOM-0042 (HD materials): dengine's
+  DHTP texture pack is the least-bad there but still a per-author
+  attribution patchwork over DOOM-shaped art — not worth vendoring.
 
 - ✅ [DOOM-0081] **Polish three pre-existing DOOM-0009 spec nits surfaced by the 2026-06-27 cold-eyes re-review.**
   Pre-existing §3/§4 items in docs/specs/DOOM-0009-path-tracer.md, outside the 2026-06-27 §2 tier-model revision's scope, deferred rather than reopened: (1) build step 5 (muzzle-flash dynamic delta) never names where the muzzle's WORLD position comes from — the verify ("shadow direction tracks the muzzle as the player rotates") is unbuildable without it; name the engine source (likely player->mo position + weapon state) or add it to §9 open questions. (2) §4.3 calls the REJECT-driven NEE candidate set "exact" — REJECT is conservative sector-to-sector visibility, not point-exact occlusion; reword "exact"→"conservative cull" to match the research doc's own caveat. (3) §3/§4 cite `DOOM-0008 §"The path tracer"` as a bare label; anchor it to docs/specs/DOOM-0008-3d-renderer.md + heading like the ADR-0001 citations. All three are LOW/MEDIUM polish; none blocks implementation.
