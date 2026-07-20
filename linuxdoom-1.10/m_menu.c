@@ -1215,6 +1215,10 @@ extern void	rb_menu_fill(int x, int y, int w, int h, unsigned rgba);   // solid 
 extern int	rb_menu_cursor_ready(void);		// 1 if the crisp skull baked (else fall back)
 extern int	rb_menu_cursor_width(int h);		// drawn width for a target height (aspect-kept)
 extern void	rb_menu_draw_cursor(int x, int y, int h);   // draws the DOOM-coloured skull
+// DOOM-0206: the real M_DOOM logo lump drawn bright in the crisp layer (main menu only).
+extern int	rb_menu_logo_ready(void);		// 1 if the M_DOOM logo baked (else fall back to text)
+extern int	rb_menu_logo_width(int h);		// drawn width for a target height (aspect-kept)
+extern void	rb_menu_draw_logo(int x, int y, int h);     // draws the M_DOOM logo bright
 extern int	rb_display_width(void);
 extern int	rb_display_height(void);
 extern int	rb_rtdebug;			// r_vulkan.cpp: RT view/debug mode (6 = RT on, 0 = off)
@@ -1225,12 +1229,13 @@ extern int	rb_rtdebug;			// r_vulkan.cpp: RT view/debug mode (6 = RT on, 0 = off
 // Plain C (this TU is compiled as C); r_vulkan.cpp declares it extern "C" to link.
 // Column walk mirrors V_DrawPatch (v_video.c): post source = column+3, next post =
 // column + column->length + 4.
-const unsigned char* M_CursorSkullRGBA(int* out_w, int* out_h)
+// Decode a WAD patch lump to a straight-alpha RGBA buffer via PLAYPAL, optionally
+// brightening every colour by brightPct/100 (clamped). brightPct=100 = no brighten
+// (the lump keeps its own colours). Caller owns the returned malloc'd buffer.
+// Returns NULL on failure. Column walk mirrors V_DrawPatch (v_video.c).
+static unsigned char* M_DecodePatchRGBA(const char* lump, int brightPct, int* out_w, int* out_h)
 {
-    static unsigned char* cache = NULL;
-    static int cw = 0, ch = 0;
-    if (cache) { *out_w = cw; *out_h = ch; return cache; }
-    patch_t* p = (patch_t*)W_CacheLumpName("M_SKULL1", PU_CACHE);
+    patch_t* p = (patch_t*)W_CacheLumpName((char*)lump, PU_CACHE);   // legacy API takes char*
     if (!p) return NULL;
     int w = SHORT(p->width), h = SHORT(p->height);
     if (w <= 0 || h <= 0) return NULL;
@@ -1250,10 +1255,9 @@ const unsigned char* M_CursorSkullRGBA(int* out_w, int* out_h)
 		if (y < 0 || y >= h) continue;
 		int idx = src[i];
 		unsigned char* d = rgba + ((size_t)y * w + x) * 4;
-		// Brighten ~1.35x, clamped, so the skull reads bright over the dim menu.
 		for (int k = 0; k < 3; k++)
 		{
-		    int v = pal[idx * 3 + k] * 135 / 100;
+		    int v = pal[idx * 3 + k] * brightPct / 100;
 		    d[k] = (unsigned char)(v > 255 ? 255 : v);
 		}
 		d[3] = 255;
@@ -1261,8 +1265,35 @@ const unsigned char* M_CursorSkullRGBA(int* out_w, int* out_h)
 	    col = (const column_t*)((const byte*)col + col->length + 4);
 	}
     }
-    cache = rgba; cw = w; ch = h;
     *out_w = w; *out_h = h;
+    return rgba;
+}
+
+const unsigned char* M_CursorSkullRGBA(int* out_w, int* out_h)
+{
+    static unsigned char* cache = NULL;
+    static int cw = 0, ch = 0;
+    if (cache) { *out_w = cw; *out_h = ch; return cache; }
+    // Brighten ~1.35x so the skull reads bright over the dim menu.
+    unsigned char* rgba = M_DecodePatchRGBA("M_SKULL1", 135, &cw, &ch);
+    if (!rgba) return NULL;
+    cache = rgba;
+    *out_w = cw; *out_h = ch;
+    return cache;
+}
+
+// DOOM-0206: decode the real M_DOOM logo lump to RGBA for the crisp main-menu title.
+// brightPct=100 — the logo already carries its own DOOM colours, so no brighten.
+// Cached like the skull; r_vulkan uploads it as a second RGBA menu sprite.
+const unsigned char* M_MenuLogoRGBA(int* out_w, int* out_h)
+{
+    static unsigned char* cache = NULL;
+    static int cw = 0, ch = 0;
+    if (cache) { *out_w = cw; *out_h = ch; return cache; }
+    unsigned char* rgba = M_DecodePatchRGBA("M_DOOM", 100, &cw, &ch);
+    if (!rgba) return NULL;
+    cache = rgba;
+    *out_w = cw; *out_h = ch;
     return cache;
 }
 
@@ -1686,6 +1717,15 @@ static void M_DrawCrispMenu(menu_t* menu)
 
     // Title — centred, CAPS, same glyph size as the rows (INV-7). Replaces the bitmap
     // banner (M_DOOM/M_OPTTTL/...) in the 3D tiers, so there is no red-on-red overlap.
+    // Main menu only: draw the real M_DOOM logo lump bright in the crisp layer instead
+    // of the "DOOM" crisp text; every other menu keeps its crisp text title.
+    if (menu == &MainDef && rb_menu_logo_ready())
+    {
+	int lh = rowH * 2;                         // logo occupies the title band (title..rowsTopY)
+	int lw = rb_menu_logo_width(lh);
+	rb_menu_draw_logo((dispW - lw) / 2, titleY, lh);
+    }
+    else
     {
 	int tw = rb_text_width(d->title, scale);
 	rb_text_draw(d->title, (dispW - tw) / 2, titleY, scale, labelCol);

@@ -253,6 +253,8 @@ extern "C" int M_CheckParm(const char* check);   // m_argv.c — for -rtverify (
 // DOOM-0206 v2: decode the real WAD menu skull (M_SKULL1) to a brightened RGBA buffer,
 // cached in m_menu.c. Uploaded once as the crisp cursor texture (CreateTextResources).
 extern "C" const unsigned char* M_CursorSkullRGBA(int* out_w, int* out_h);
+// DOOM-0206: the real M_DOOM logo lump decoded to RGBA (main-menu crisp title).
+extern "C" const unsigned char* M_MenuLogoRGBA(int* out_w, int* out_h);
 // DOOM-0202: argv (optional -shotverify output path) + the vendored PNG writer
 // (stbi_write_png, implemented in rb_image.c). Used only by the -shotverify capture.
 extern "C" { extern int myargc; extern char** myargv; }
@@ -602,6 +604,19 @@ struct VulkanState
     bool             cursorReady  = false;
     int              cursorW = 0, cursorH = 0;
     std::vector<TextVertex> cursorVerts;   // this frame's queued cursor quad
+
+    // DOOM-0206: the real M_DOOM logo lump, a SECOND RGBA menu sprite drawn on the main
+    // menu only (bright, undimmed). Reuses g.cursorPipeline + textPipelineLayout/sampler —
+    // only its own texture + descriptor + per-frame verts are new. logoReady=false falls
+    // back to the crisp "DOOM" text title.
+    VkImage          logoImage  = VK_NULL_HANDLE;
+    VkDeviceMemory   logoMemory = VK_NULL_HANDLE;
+    VkImageView      logoView   = VK_NULL_HANDLE;
+    VkDescriptorPool logoDsPool = VK_NULL_HANDLE;
+    VkDescriptorSet  logoDs     = VK_NULL_HANDLE;
+    bool             logoReady  = false;
+    int              logoW = 0, logoH = 0;
+    std::vector<TextVertex> logoVerts;   // this frame's queued logo quad
 
     // column-major MVP from RB_Vulkan_RenderView; identity until the first
     // camera update so a frame drawn before then is well-defined (DOOM-0037).
@@ -5207,6 +5222,58 @@ void CreateTextResources()
             fflush(stdout);
         }
     }
+
+    // DOOM-0206: the real M_DOOM logo lump, a SECOND RGBA menu sprite (main-menu crisp title).
+    // Only a texture + descriptor are new — it reuses g.cursorPipeline (identical RGBA sampling)
+    // and the text layout/sampler. On any failure logoReady stays false and the main menu falls
+    // back to the crisp "DOOM" text title.
+    if (g.cursorReady)   // cursorPipeline exists only if the cursor block succeeded
+    {
+        int lw = 0, lh = 0;
+        const unsigned char* pixels = M_MenuLogoRGBA(&lw, &lh);
+        if (!pixels || lw <= 0 || lh <= 0)
+        {
+            fprintf(stderr, "RB_Vulkan: menu logo M_DOOM decode failed — using the crisp text title.\n");
+        }
+        else
+        {
+            CreateSampledImage((uint32_t)lw, (uint32_t)lh, VK_FORMAT_R8G8B8A8_UNORM,
+                               pixels, (VkDeviceSize)lw * lh * 4,
+                               &g.logoImage, &g.logoMemory, &g.logoView);
+
+            VkDescriptorPoolSize lps = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 };
+            VkDescriptorPoolCreateInfo ldpci = {};
+            ldpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+            ldpci.maxSets = 1;
+            ldpci.poolSizeCount = 1;
+            ldpci.pPoolSizes = &lps;
+            Check(vkCreateDescriptorPool(g.device, &ldpci, nullptr, &g.logoDsPool),
+                  "vkCreateDescriptorPool(logo)");
+
+            VkDescriptorSetAllocateInfo ldsai = {};
+            ldsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            ldsai.descriptorPool = g.logoDsPool;
+            ldsai.descriptorSetCount = 1;
+            ldsai.pSetLayouts = &g.textDsLayout;
+            Check(vkAllocateDescriptorSets(g.device, &ldsai, &g.logoDs),
+                  "vkAllocateDescriptorSets(logo)");
+
+            VkDescriptorImageInfo lInfo = { g.textSampler, g.logoView,
+                                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+            VkWriteDescriptorSet lw2 = {};
+            lw2.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            lw2.dstSet = g.logoDs; lw2.dstBinding = 0; lw2.descriptorCount = 1;
+            lw2.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            lw2.pImageInfo = &lInfo;
+            vkUpdateDescriptorSets(g.device, 1, &lw2, 0, nullptr);
+
+            g.logoReady = true;
+            g.logoW = lw;
+            g.logoH = lh;
+            printf("RB_Vulkan: menu logo = real WAD M_DOOM (%dx%d RGBA, crisp).\n", lw, lh);
+            fflush(stdout);
+        }
+    }
 }
 
 // DOOM-0206 (L1b): the extern-"C" menu-text batch API m_menu.c drives (Tasks 3-6). Every entry
@@ -5219,6 +5286,7 @@ extern "C" void rb_text_begin(void)
 {
     g.textVerts.clear();
     g.cursorVerts.clear();
+    g.logoVerts.clear();
 }
 
 extern "C" int rb_text_width(const char* s, float scale)
@@ -5370,6 +5438,36 @@ extern "C" void rb_menu_draw_cursor(int x, int y, int h)
     g.cursorVerts.push_back(t0); g.cursorVerts.push_back(t2); g.cursorVerts.push_back(t3);
 }
 
+// DOOM-0206: the M_DOOM logo sprite (main-menu crisp title). Mirrors the cursor API — its own
+// per-frame vert vector, drawn through g.cursorPipeline + g.logoDs in FlushMenuText.
+extern "C" int rb_menu_logo_ready(void)
+{
+    return g.logoReady;
+}
+
+// Drawn width (px) of the logo at target height h, keeping the lump's aspect.
+extern "C" int rb_menu_logo_width(int h)
+{
+    if (!g.logoReady || h <= 0 || g.logoH <= 0) return 0;
+    return (int)((float)h * (float)g.logoW / (float)g.logoH + 0.5f);
+}
+
+// Draw the M_DOOM logo with its top-left at (x,y), target height h (px). One RGBA quad; the
+// logo carries its own colours (no brighten), so the tint is plain white and it draws bright
+// over the dim backdrop.
+extern "C" void rb_menu_draw_logo(int x, int y, int h)
+{
+    if (!g.logoReady || h <= 0 || g.logoH <= 0) return;
+    const float dw = (float)h * (float)g.logoW / (float)g.logoH, dh = (float)h;
+    const float x0 = (float)x, y0 = (float)y, x1 = x0 + dw, y1 = y0 + dh;
+    const TextVertex t0 = { x0, y0, 0.f, 0.f, 255,255,255,255 };
+    const TextVertex t1 = { x1, y0, 1.f, 0.f, 255,255,255,255 };
+    const TextVertex t2 = { x1, y1, 1.f, 1.f, 255,255,255,255 };
+    const TextVertex t3 = { x0, y1, 0.f, 1.f, 255,255,255,255 };
+    g.logoVerts.push_back(t0); g.logoVerts.push_back(t1); g.logoVerts.push_back(t2);
+    g.logoVerts.push_back(t0); g.logoVerts.push_back(t2); g.logoVerts.push_back(t3);
+}
+
 // DOOM-0206 (L1b/L2): the play-view dim quad (menu backdrop). Darkens the world behind the
 // menu but leaves the status bar undimmed (rb_menu_safe_bottom, INV-2) so the HUD stays
 // readable. One quad path via rb_menu_fill (L3). Always queued; the Classic-tier gate lives in
@@ -5418,18 +5516,39 @@ static void FlushMenuText()
     // and draw with firstVertex = verts. Guard the tail against the buffer capacity; the pushed
     // constant + viewport/scissor already set above apply (same layout). The dim/glyph verts drew
     // first, so the bright skull composites on top.
+    uint32_t used = verts;   // running vertex offset into the shared buffer
     if (g.cursorReady && !g.cursorVerts.empty())
     {
         uint32_t cverts = (uint32_t)g.cursorVerts.size();
-        if (verts + cverts > g.textVbufCap) cverts = g.textVbufCap - verts;   // clip if no room
+        if (used + cverts > g.textVbufCap) cverts = g.textVbufCap - used;   // clip if no room
         if (cverts > 0)
         {
-            std::memcpy((unsigned char*)g.textVbufMapped + (size_t)verts * sizeof(TextVertex),
+            std::memcpy((unsigned char*)g.textVbufMapped + (size_t)used * sizeof(TextVertex),
                         g.cursorVerts.data(), (size_t)cverts * sizeof(TextVertex));
             vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.cursorPipeline);
             vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     g.textPipelineLayout, 0, 1, &g.cursorDs, 0, nullptr);
-            vkCmdDraw(g.cmd, cverts, 1, verts, 0);
+            vkCmdDraw(g.cmd, cverts, 1, used, 0);
+            used += cverts;
+        }
+    }
+
+    // DOOM-0206: the M_DOOM logo (main-menu crisp title). Same shared vertex buffer, its own
+    // RGBA descriptor (g.logoDs) but the same g.cursorPipeline. Pack after whatever the cursor
+    // wrote (firstVertex = used), guarding the tail against capacity.
+    if (g.logoReady && !g.logoVerts.empty())
+    {
+        uint32_t lverts = (uint32_t)g.logoVerts.size();
+        if (used + lverts > g.textVbufCap) lverts = g.textVbufCap - used;   // clip if no room
+        if (lverts > 0)
+        {
+            std::memcpy((unsigned char*)g.textVbufMapped + (size_t)used * sizeof(TextVertex),
+                        g.logoVerts.data(), (size_t)lverts * sizeof(TextVertex));
+            vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.cursorPipeline);
+            vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    g.textPipelineLayout, 0, 1, &g.logoDs, 0, nullptr);
+            vkCmdDraw(g.cmd, lverts, 1, used, 0);
+            used += lverts;
         }
     }
 
@@ -8724,6 +8843,11 @@ extern "C" void RB_Vulkan_Shutdown(void)
     if (g.cursorView)         vkDestroyImageView(g.device, g.cursorView, nullptr);
     if (g.cursorImage)        vkDestroyImage(g.device, g.cursorImage, nullptr);
     if (g.cursorMemory)       vkFreeMemory(g.device, g.cursorMemory, nullptr);
+    // DOOM-0206 logo sprite (no pipeline of its own — reuses cursorPipeline).
+    if (g.logoDsPool)         vkDestroyDescriptorPool(g.device, g.logoDsPool, nullptr);
+    if (g.logoView)           vkDestroyImageView(g.device, g.logoView, nullptr);
+    if (g.logoImage)          vkDestroyImage(g.device, g.logoImage, nullptr);
+    if (g.logoMemory)         vkFreeMemory(g.device, g.logoMemory, nullptr);
     rb_text_free_font(&g.menuFont);   // no-op if the pixels were already freed after upload
 
     DestroyFramebufferResources();   // framebuffers, depth, swapchain image views
