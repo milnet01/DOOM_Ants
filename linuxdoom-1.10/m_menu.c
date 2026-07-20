@@ -1290,7 +1290,12 @@ void M_DrawRendererMenu(void)
 {
     int rsi, k;
 
-    M_WriteText(RendererDef.x + 50,RendererDef.y - 20,"RENDERER");
+    // DOOM-0206 (v2): no standalone "RENDERER" header. With the added FPS row this
+    // Classic menu is 9 rows tall (Brightness's thermo occupies a 10th), and a header
+    // drawn 20px ABOVE RendererDef.y would push the total above the in-level HUD-safe
+    // band (M_ClassicMenuShift shifts the rows up to clear ST_Y=168, which would then
+    // clip the header off the top). The menu is reached via the labelled "Video" row,
+    // so the header is redundant -- dropping it keeps every row HUD-safe (INV-2).
 
     M_WriteText(RendererDef.x,RendererDef.y+LINEHEIGHT*rm_renderer,"Renderer:");
     M_WriteText(RendererDef.x + 120,RendererDef.y+LINEHEIGHT*rm_renderer,
@@ -2815,16 +2820,20 @@ static int M_MenuIsCrisp(void)
 //
 // The overrun the spec cites lives in the routine-drawn menus: a status==2 item
 // draws its slider on the row BELOW its label (M_DrawThermo at LINEHEIGHT*(idx+1)),
-// so it occupies TWO rows -- e.g. RendererDef's Brightness thermo lands at
-// y+16*8=188 and Options' Sound Volume row at y+16*9=181, both below the 168
-// status-bar top in-game. Budget the extra row per thermo or a slider can still
-// land in the HUD band.
+// so it occupies TWO rows -- e.g. after the v2 FPS row RendererDef's Brightness
+// thermo (rm_brightness=8) lands at y+16*9=204 and Options' Sound Volume row
+// (soundvol=7) at y+16*7=172, both below the 168 status-bar top in-game. Budget
+// the extra row per thermo or a slider can still land in the HUD band.
 //
 // The bound is ST_Y (=ORIGHEIGHT-ST_HEIGHT=168) whenever the status bar is drawn
 // (in a level: DOOM-0148 always draws it), else the full ORIGHEIGHT (200). Every
-// classic menu fits above the bound once shifted (max content ~160px vs a ~166px
-// safe band), so plain shift-to-fit suffices -- no per-menu scroll window is
-// needed (spec 7 L6's fallback path is unreachable for the current menus).
+// classic menu's ROWS fit above the bound once shifted (RendererDef, the tallest at
+// 9 rows + a thermo = 160px, clears a ~166px in-level band), so plain shift-to-fit
+// suffices -- no per-menu scroll window is needed (spec 7 L6's fallback path is
+// unreachable for the current menus). NOTE: this budgets the menuitem ROWS only; a
+// routine that draws a header ABOVE currentMenu->y (as M_DrawRendererMenu once did)
+// is NOT in the budget and would clip off the top once shifted -- so such headers
+// were dropped from the tall menus (see M_DrawRendererMenu).
 //
 static int M_ClassicMenuShift(void)
 {
