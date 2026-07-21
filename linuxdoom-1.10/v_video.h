@@ -85,6 +85,17 @@ V_DrawPatchTranslated
   patch_t*	patch,
   const byte*	trans );
 
+// DOOM-0206: as V_DrawPatch, but blits the patch at an integer `scale` multiple of
+// its normal size (nearest-neighbour). Used by the Classic main menu to draw every
+// item in the red HUD font at one uniform "medium" size.
+void
+V_DrawPatchScaled
+( int		x,
+  int		y,
+  int		scrn,
+  patch_t*	patch,
+  int		scale );
+
 // DOOM-0151: on a widescreen buffer, fill the side strips either side of a centred
 // 320-wide full-screen image by extending its edge columns outward (edge-clamp).
 // Uses only pixels already drawn in the buffer -- no external/licensed art. No-op

@@ -363,6 +363,78 @@ V_DrawPatchGeneral
 }
 
 //
+// V_DrawPatchScaled
+// As V_DrawPatchGeneral's plain path, but every SOURCE pixel expands to a
+// (HIRES*scale) square instead of HIRES -- i.e. the patch is blitted at an
+// integer `scale` multiple of its normal size. DOOM-0206: the Classic main
+// menu draws all its items in the red HUD font at scale 2 ("medium"), so the
+// oversized big-red graphic lumps and the tiny "Game Select" text meet at one
+// uniform size. Coordinates stay in 320x200 virtual space; widescreen centring
+// and the HIRES buffer factor are honoured exactly like V_DrawPatch.
+//
+void
+V_DrawPatchScaled
+( int		x,
+  int		y,
+  int		scrn,
+  patch_t*	patch,
+  int		scale )
+{
+    int		count;
+    int		col;
+    column_t*	column;
+    byte*	desttop;
+    byte*	dest;
+    byte*	source;
+    int		w;
+
+    int		dsw = screenwidth[scrn];
+    int		f = (dsw == ORIGWIDTH) ? 1 : HIRES;
+    int		wsdelta = (dsw == ORIGWIDTH) ? 0 : WIDESCREENDELTA;
+    int		fs, rx, ry;
+
+    if (scale < 1) scale = 1;
+    fs = f * scale;				// physical pixels per source pixel
+
+    y -= SHORT(patch->topoffset) * scale;
+    x -= SHORT(patch->leftoffset) * scale;
+
+    if (!scrn)
+	V_MarkRect (x, y, SHORT(patch->width)*scale, SHORT(patch->height)*scale);
+
+    x += wsdelta;
+    col = 0;
+    desttop = screens[scrn] + (y*f)*dsw + (x*f);
+
+    w = SHORT(patch->width);
+
+    for ( ; col<w ; col++, desttop += fs)
+    {
+	column = (column_t *)((byte *)patch + LONG(patch->columnofs[col]));
+
+	// step through the posts in a column
+	while (column->topdelta != 0xff )
+	{
+	    source = (byte *)column + 3;
+	    dest = desttop + column->topdelta*fs*dsw;
+	    count = column->length;
+
+	    while (count--)
+	    {
+		byte px = *source++;		// one source pixel -> fs x fs block
+		byte* d = dest;
+		for (ry=0 ; ry<fs ; ry++, d+=dsw)
+		    for (rx=0 ; rx<fs ; rx++)
+			d[rx] = px;
+		dest += fs*dsw;
+	    }
+	    column = (column_t *)(  (byte *)column + column->length
+				    + 4 );
+	}
+    }
+}
+
+//
 // V_DrawPatch / V_DrawPatchTranslated
 // Thin wrappers over V_DrawPatchGeneral: plain draw vs palette-remapped draw.
 //

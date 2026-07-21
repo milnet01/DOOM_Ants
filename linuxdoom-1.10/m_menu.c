@@ -254,6 +254,7 @@ void M_DrawThermo(int x,int y,int thermWidth,int thermDot);
 void M_DrawEmptyCell(menu_t *menu,int item);
 void M_DrawSelCell(menu_t *menu,int item);
 void M_WriteText(int x, int y, char *string);
+void M_WriteTextScaled(int x, int y, char *string, int scale);
 int  M_StringWidth(char *string);
 int  M_StringHeight(char *string);
 void M_StartControlPanel(void);
@@ -1078,16 +1079,31 @@ void M_MusicVol(int choice)
 //
 // M_DrawMainMenu
 //
+// Display-string labels for the main-menu rows, in item order. Also feeds the
+// crisp 3D-tier registry (crispMenus[]). Sized main_end+1: MainDef gets a +1 for
+// the spliced "Game Select" row (DOOM-0060), drawn only when M_Init bumps
+// MainDef.numitems. M_Init keeps this in item order across the DOOM-II reshuffle.
+static const char* mainLabels[main_end + 1] =
+{
+    "New Game", "Options", "Load Game", "Save Game", "Read This!", "Quit Game",
+    "Game Select"
+};
+
 void M_DrawMainMenu(void)
 {
+    int i;
+
     V_DrawPatchDirect (94,2,0,W_CacheLumpName("M_DOOM",PU_CACHE));
 
-    // DOOM-0060: the "Game Select" row (spliced in by M_Init when both games are
-    // installed) has no menu-art lump, so draw it as text like the Options
-    // "Renderer:" row. It is always the last visible item when present.
-    if (D_BothGamesPresent())
-	M_WriteText(MainDef.x, MainDef.y + (MainDef.numitems-1)*LINEHEIGHT,
-		    "Game Select");
+    // DOOM-0206: draw every item in the red HUD font at one uniform "medium" size
+    // (scale 2), rather than the mixed big-red graphic lumps + tiny "Game Select"
+    // text. The generic patch loop in M_Drawer is suppressed for MainDef (like
+    // OptionsDef) so the big-red lumps don't draw underneath. mainLabels[] tracks
+    // the item order (incl. the DOOM-II reshuffle and the spliced Game Select row),
+    // so this covers whichever rows are currently visible.
+    for (i = 0; i < MainDef.numitems; i++)
+	M_WriteTextScaled(MainDef.x, MainDef.y + i*LINEHEIGHT,
+			  (char *)mainLabels[i], 2);
 }
 
 
@@ -1487,13 +1503,8 @@ static const char* videoLabels[vid_end] =
 // become crisp under the 3D tiers. menuitem_t.name holds a graphic-lump name, not
 // a display string, so the crisp renderer reads its text from these tables.
 // (optionsLabels[] and videoLabels[] above serve the same role for their menus.)
-// Sized to their menu's item count; MainDef gets +1 for the spliced "Game Select"
-// row (DOOM-0060), drawn only when M_Init bumps MainDef.numitems.
-static const char* mainLabels[main_end + 1] =
-{
-    "New Game", "Options", "Load Game", "Save Game", "Read This!", "Quit Game",
-    "Game Select"
-};
+// Sized to their menu's item count. mainLabels[] lives further up (it also feeds
+// the Classic main menu's uniform-font draw in M_DrawMainMenu).
 static const char* episodeLabels[ep_end] =
 {
     "Knee-Deep in the Dead", "The Shores of Hell", "Inferno", "Thy Flesh Consumed"
@@ -2499,6 +2510,57 @@ M_WriteText
 }
 
 
+//
+// M_WriteTextScaled
+// DOOM-0206: M_WriteText, but each red HUD-font glyph is blitted at an integer
+// `scale` multiple (V_DrawPatchScaled) and the pen advances by the scaled width.
+// Used by the Classic main menu to render every item at one uniform "medium" size.
+//
+void
+M_WriteTextScaled
+( int		x,
+  int		y,
+  char*		string,
+  int		scale )
+{
+    int		w;
+    char*	ch;
+    int		c;
+    int		cx;
+    int		cy;
+
+    ch = string;
+    cx = x;
+    cy = y;
+
+    while(1)
+    {
+	c = *ch++;
+	if (!c)
+	    break;
+	if (c == '\n')
+	{
+	    cx = x;
+	    cy += 12*scale;
+	    continue;
+	}
+
+	c = toupper(c) - HU_FONTSTART;
+	if (c < 0 || c>= HU_FONTSIZE)
+	{
+	    cx += 4*scale;
+	    continue;
+	}
+
+	w = SHORT (hu_font[c]->width);
+	if (cx+w*scale > ORIGWIDTH)
+	    break;
+	V_DrawPatchScaled(cx, cy, 0, hu_font[c], scale);
+	cx += w*scale;
+    }
+}
+
+
 
 //
 // CONTROL PANEL
@@ -3085,7 +3147,10 @@ void M_Drawer (void)
 	// DOOM-0206 (L6): Options draws its own uniform hu_font labels
 	// (M_DrawOptions / optionsLabels[]), so suppress the oversized big-red
 	// graphic lumps the generic loop would otherwise draw for it (INV-7).
-	if (currentMenu != &OptionsDef && currentMenu->menuitems[i].name[0])
+	// The Classic main menu (M_DrawMainMenu) does the same via M_WriteTextScaled,
+	// so MainDef is suppressed here too.
+	if (currentMenu != &OptionsDef && currentMenu != &MainDef
+	    && currentMenu->menuitems[i].name[0])
 	    V_DrawPatchDirect (x,y,0,
 			       W_CacheLumpName(currentMenu->menuitems[i].name ,PU_CACHE));
 	y += LINEHEIGHT;
