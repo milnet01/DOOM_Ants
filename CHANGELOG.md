@@ -8,6 +8,15 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **A cleaner, sharper in-game menu for the 3D modes, plus a consistent Classic main menu.** (DOOM-0206)
+  In the Solid and Ultra 3D modes, every menu now uses a crisp modern font
+  drawn at full display resolution over a dimmed backdrop, with a layout that
+  no longer overlaps the bottom status bar. The menu cursor is the real DOOM
+  skull and the main-menu title shows the real DOOM logo, both sharpened and
+  brightened. In the original Classic (1997 software) mode, the main-menu
+  items now all share one consistent size and font, instead of mixing large
+  graphic words with a tiny "Game Select" row.
+
 - **De-tiled, grimy surfaces in the Ultra ray-traced view (DOOM-0181, DOOM-0179)** (DOOM-0181)
   HD walls and floors no longer read as the same tile pasted over and over:
   each repeat is stochastically offset/mirrored and keyed to its world
