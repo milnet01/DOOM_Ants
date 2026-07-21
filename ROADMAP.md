@@ -1902,3 +1902,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Lit props like candelabras and torches glow in real life but stay dark in the 3D renderer — they should cast a warm light like the real DOOM light sources they are.
   Kind: enhancement.
   Source: user-request-2026-07-20.
+
+- 📋 [DOOM-0211] **Classic-tier menu font looks blocky — give Classic a nicer uniform menu font.**
+  Follow-up to DOOM-0206. The Classic main menu draws all items in the paletted HUD font at 2x (V_DrawPatchScaled / M_WriteTextScaled); nearest-neighbour doubling of the small STCFN bitmap font reads as blocky. User accepted it for now (2026-07-21) but wants a nicer look later. Root constraint: Classic = Classic_Present -> I_FinishUpdate (the 1997 software renderer), which never enters the Vulkan backend, so the crisp Oxanium font used by Solid/Ultra (FlushMenuText) is unavailable there. Options to scope: (a) route the Classic menu overlay through the Vulkan crisp-text path; (b) bundle/bake a higher-res paletted bitmap menu font for the software path; (c) tune the scale/spacing (1x for crispness vs 2x for size) as a cheap partial. Needs a small brainstorm before implementing.
+  **Layman:** In the original Classic mode, the menu items all share one size now, but the font looks chunky/blocky. Make it look nicer while staying consistent.
+  Kind: enhancement.
+  Source: user-request-2026-07-21.
