@@ -51,6 +51,9 @@ cmake-build-*/
 audit_rule_quality.json
 /run-doom-ants.sh
 
+# Ants MCP roadmap ID allocator — a purely local next-ID counter, not source.
+/.roadmap-counter
+
 # Python bytecode cache (scripts/pbr_derive.py, make_bringup_hero.py)
 __pycache__/
 *.pyc
