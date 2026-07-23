@@ -384,6 +384,10 @@ void D_Display (void)
 //
 extern  boolean         demorecording;
 
+// DOOM-0203: >0 when the headless CI boot-smoke (`-bootsmoke [N]`) is armed; the
+// number of game tics to simulate before exiting 0. Set in D_DoomMain.
+static int              bootsmoke_tics = 0;
+
 void D_DoomLoop (void)
 {
     if (demorecording)
@@ -399,9 +403,17 @@ void D_DoomLoop (void)
 	
     I_InitGraphics ();
 
+    // DOOM-0203: the headless CI boot-smoke runs on a GPU-less runner. Pin the
+    // software renderer so a stray software Vulkan ICD (e.g. lavapipe) can't pull
+    // us onto the GPU path that has no device to render on.
+    if (bootsmoke_tics > 0)
+	rendermode = RB_CLASSIC;
+
     // Pick + init the renderer back-end now the SDL/graphics device exists,
     // so a back-end's Available()/Init() can probe the GPU (DOOM-0026).
     RB_Init ();
+
+    int bootsmokeStart = gametic;   // DOOM-0203: baseline for the tic countdown
 
     while (1)
     {
@@ -477,6 +489,17 @@ void D_DoomLoop (void)
 
 	// Update display, next frame, with current state.
 	D_Display ();
+
+	// DOOM-0203: headless boot-smoke — once N tics have simulated (world stepped
+	// + software renderer drew each frame without crashing), the engine has proven
+	// it boots and renders; exit cleanly (0). Unlike -timedemo, no demo lump and
+	// no I_Error timing report, so a passing run is exit 0.
+	if (bootsmoke_tics > 0 && gametic - bootsmokeStart >= bootsmoke_tics)
+	{
+	    printf ("bootsmoke: %d tics simulated OK, exiting.\n",
+		    gametic - bootsmokeStart);
+	    I_Quit ();
+	}
 
 #ifndef SNDSERV
 	// Sound mixing for the buffer is snychronous.
@@ -1270,7 +1293,21 @@ void D_DoomMain (void)
 	D_AddFile (file);
 	printf("Playing demo %s.lmp.\n",myargv[p+1]);
     }
-    
+
+    // DOOM-0203: headless CI boot-smoke. `-bootsmoke [N]` runs N game tics through
+    // the normal software-render loop, then exits 0 (see D_DoomLoop). No demo lump,
+    // no GPU — a "did it boot and render without crashing?" gate for GitHub Actions.
+    // Distinct from -timedemo, which needs a version-matched demo lump and reports
+    // via I_Error (exit 255); here a passing run is a clean exit 0.
+    p = M_CheckParm ("-bootsmoke");
+    if (p)
+    {
+	bootsmoke_tics = (p < myargc-1 && myargv[p+1][0] != '-')
+		       ? atoi (myargv[p+1]) : 105;   // default 105 tics ~= 3 s @ 35 Hz
+	if (bootsmoke_tics <= 0)
+	    bootsmoke_tics = 105;
+    }
+
     // get skill / episode / map from parms
     startskill = sk_medium;
     startepisode = 1;

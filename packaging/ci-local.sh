@@ -79,6 +79,26 @@ if [ "$MODE" = "native" ]; then
   make -C "$WORK/linuxdoom-1.10" -j"$(nproc)"
   echo "==> Unit tests: make test"
   make -C "$WORK/linuxdoom-1.10" test
+  # DOOM-0203: best-effort headless boot smoke (native only — needs a local IWAD +
+  # SDL runtime). CI runs this against Freedoom; locally we reuse whatever IWAD is
+  # around. Skipped (not failed) when no WAD is found, so a WAD-less box still passes
+  # the build+test gate.
+  SMOKE_WAD=""
+  for w in "$REPO/wads/doom.wad" "$REPO/wads/doom1.wad" \
+           /usr/share/games/doom/freedoom1.wad /usr/share/games/doom/doom1.wad; do
+    [ -f "$w" ] && { SMOKE_WAD="$w"; break; }
+  done
+  if [ -n "$SMOKE_WAD" ]; then
+    echo "==> Headless boot smoke: -bootsmoke against $(basename "$SMOKE_WAD")"
+    SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
+      timeout 120 "$WORK/linuxdoom-1.10/linux/linuxxdoom" \
+      -iwad "$SMOKE_WAD" -warp 1 1 -bootsmoke 105 2>&1 \
+      | tee "$WORK/smoke.log" | grep -E 'bootsmoke|error|Error' || true
+    grep -q "bootsmoke: .* tics simulated OK" "$WORK/smoke.log"
+    echo "    boot smoke PASSED (engine booted + rendered 105 tics, exit 0)"
+  else
+    echo "==> Headless boot smoke SKIPPED (no IWAD found; CI runs it against Freedoom)"
+  fi
 else
   echo "==> MODE: container ($ENGINE, $CI_IMAGE) -- faithful mirror of GitHub CI"
   # Step-for-step mirror of build.yml inside the image: install the shared dep list,

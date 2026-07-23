@@ -65,3 +65,27 @@ jobs:
 
       - name: Unit tests
         run: make -C linuxdoom-1.10 test
+
+      # DOOM-0203: headless boot smoke. The compile + unit-test steps above never
+      # actually RUN the engine; this does — it boots the built binary on the GPU-free
+      # software renderer (SDL dummy video/audio, no display/GPU on the runner), warps
+      # into E1M1 of a freely-licensed Freedoom IWAD, simulates 105 tics (~3 s) through
+      # the real game loop, and exits 0 via the engine's -bootsmoke flag. This catches
+      # boot/runtime regressions (WAD load, renderer init, level setup, per-frame draw)
+      # that a build-only gate misses. The Vulkan RT/-shotverify gates need a real GPU
+      # and stay on the (optional, manual) self-hosted runner — not here.
+      - name: Install a free IWAD for the smoke
+        run: sudo apt-get install -y --no-install-recommends freedoom
+
+      - name: Headless boot smoke (software renderer)
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: |
+          set -eo pipefail
+          # timeout backstops a hang; pipefail makes the game's exit code (not tee's)
+          # decide the step, so a crash (non-zero) or timeout (124) fails CI.
+          timeout 120 ./linuxdoom-1.10/linux/linuxxdoom \
+            -iwad /usr/share/games/doom/freedoom1.wad \
+            -warp 1 1 -bootsmoke 105 2>&1 | tee smoke.log
+          grep -q "bootsmoke: .* tics simulated OK" smoke.log
