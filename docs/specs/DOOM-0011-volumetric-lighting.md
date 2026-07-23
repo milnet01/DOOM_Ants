@@ -152,8 +152,11 @@ primary-hit **material id / liquid flag** (the goo profile, §4.5). It returns t
 quantities:
 
 - **`inscatter`** (RGB) — light scattered *toward the eye* along the segment.
-- **`transmittance`** (RGB or scalar) — how much of the surface behind the fog
-  survives to the eye (`exp(-∫σ dt)`).
+- **`transmittance`** (**scalar** for v1) — how much of the surface behind the fog
+  survives to the eye (`exp(-∫σ dt)`). Scalar so `inscatter.rgb + transmittance` packs
+  into the one `RGBA16F` fog target (§4.6); the coloured look comes from the **RGB
+  `inscatter`**, not tinted absorption. Per-channel (coloured) transmittance is
+  deferred — it needs a wider target (Q11).
 
 The **compute** runs in the megakernel for both modes; the **apply**
 (`outColor = surfaceColor · transmittance + inscatter`) happens **in-megakernel** for
@@ -269,10 +272,12 @@ Profiles compose: a goo room *on* a hell level gets both (green pool + red haze)
 Fog is low-frequency, so compute it **cheaply and smooth it**:
 
 - **Half-res march.** Mirror mode 6's existing even/even 2×2 half-res gate
-  (`pathtrace.comp:1140-1142`): march fog on one pixel in four, into a **new
-  half-res fog target** (`inscatter.rgb` + `transmittance` packed, e.g. one
-  `RGBA16F` image). Mode 4 (display) may march full-res or half-res (Q4) — start
-  half-res in both for a single code path.
+  (`pathtrace.comp:1141`): march fog on one pixel in four, into a **new half-res fog
+  target** (`inscatter.rgb` + scalar `transmittance` packed into one `RGBA16F`
+  image). Mode 4 (NEE display) has **no** even/even gate and **no** SVGF upsample of
+  its own, so a half-res mode-4 march would need its **own** dither + in-megakernel
+  upsample; the simpler first cut is **full-res in mode 4**, half-res only in mode 6
+  (Q4).
 - **Denoise / upsample.** Fog **cannot** ride the SVGF illumination channel
   (albedo re-multiply, §3 gap 3). Two candidate paths (Q6): (a) a **bilateral upsample**
   of the half-res fog target guided by depth, cheapest and self-contained; (b) run
@@ -299,8 +304,10 @@ Fog is low-frequency, so compute it **cheaply and smooth it**:
 
 ## 5. Data & resources
 
-- **No new images beyond one half-res fog target** (`RGBA16F`, §4.6). No new SSBOs,
-  bindings, or emitter buffers — fog reuses the existing `Emitters` buffer + sky.
+- **One new image — a half-res fog target** (`RGBA16F`, §4.6) — **plus its descriptor
+  bindings**: a megakernel **write** target and a `svgf_composite.comp` **read** input
+  (mode 6). No new SSBOs, light/emitter buffers, or vertex data — fog reuses the
+  existing `Emitters` buffer + sky.
 - **Push constants — the two genuinely-free lanes.** DOOM-0183 grew
   `RtPushConstants` to **240 B** (`static_assert(sizeof==240)`, `r_vulkan.cpp:7374`;
   `pcr.size = 240`, `:2355`) and consumed `misc6.x` (ripple time), `misc6.y` (wet
@@ -332,12 +339,15 @@ Fog is low-frequency, so compute it **cheaply and smooth it**:
   (`r_backend.c:181`) from `gameepisode`/`gamemap` + the sky, and written to
   `misc6.w`. (`r_backend.c` does not reference `gameepisode`/`gamemap` today; the
   compute brings them into scope.)
-- **New runtime dial `rb_fog`** — mirror the `rb_wet`/`rb_detile` pattern exactly:
-  `extern "C" { int rb_fog = <default>; }` in `r_vulkan.cpp` (beside `rb_wet`
-  `:1001`); a config row `{"rt_fog", &rb_fog, <default>}` in `m_misc.c` defaults
-  (beside `rt_wet` `:270`); the value written to `pc.misc6[2]` (beside `misc6[1] =
-  rb_wet` `:7427`). `rb_fog` is a small **strength** integer (0..3, `0` = off), not
-  just a bool, so the menu "Strength" row and the on/off state share it.
+- **New runtime dial `rb_fog`** — `rb_detile`-style 0..3 value, `rb_wet`-style wiring:
+  `extern "C" { int rb_fog = 1; }` in `r_vulkan.cpp` (beside `rb_wet` `:1001`) — a
+  **subtle "Low" on by default**, matching the on-by-default effect siblings
+  (`rb_wet=1`, `rb_filth=1`, `rb_detile=2`) so atmosphere is present out of the box
+  (perf-gated at L6; flip to `0` for off-by-default if review prefers — Q10); a config
+  row `{"rt_fog", &rb_fog, 1}` in `m_misc.c` defaults (beside `rt_wet` `:270`); the
+  value written to `pc.misc6[2]` (beside `misc6[1] = rb_wet` `:7427`). `rb_fog` is a
+  small **strength** integer (0..3, `0` = off), so the menu "Strength" row and the
+  on/off state share it.
 - **Menu rows — place like `rb_wet` (both menus, DOOM-0206 doubled them), behave like
   `rb_detile` (a 0..3 cycle with a name table, NOT a boolean).** `rb_wet` shows as a
   row in the legacy Effects menu **and** the crisp Video menu, so the fog row goes to
@@ -392,6 +402,10 @@ Fog is low-frequency, so compute it **cheaply and smooth it**:
   Ultra must also stay above the 60 FPS floor where it is today; the goo room's
   existing ~40 FPS is the megakernel/denoiser (per DOOM-0183 framing), and fog must
   not make it materially worse.
+- **Gate reliability:** the `-shotcompare` / `-rtverify` gates leaned on here were
+  made config-independent and deterministic by DOOM-0208 (2026-07-23) — the historical
+  staleness/instability recorded in its ROADMAP body is *resolved*, so they are
+  reliable pass/fail gates now.
 
 ## 7. Build order
 
@@ -406,7 +420,7 @@ is objective.
 | **L3** | **Height pooling + torch shafts:** height-based density (`hitP.z` floor ref); iterate static emitters `k<omniStart` (nearest-few, no occlusion first). | Fog settles low into a floor layer; a torch in a dark room glows its surrounding air; dynamic/muzzle/flashlight do **not** scatter | no |
 | **L4** | **Area profiles + colour:** goo tint via the primary-hit `RB_FLAG_LIQUID_NUKAGE`; hell haze via the new `rb_view_t` field → `misc6.w`; `mediumTint` colouring (light×medium). | Goo rooms fill green and pool low; hell levels gain a faint red haze; a torch shaft reads warm-through-green in goo; clear levels stay neutral | no |
 | **L5** | **Denoise/quality pass:** dither tuning; escalate upsample→a-trous if it crawls (§4.6 Q6); phase/anisotropy tune. | Fog is smooth, not grainy or crawling, in a slow pan; shafts hold their shape | no |
-| **L6** | **Runtime dial + menu + key + perf:** `rb_fog` (`rt_fog` config), both menu rows, the `;` key, the profiler-slot growth, and the perf pass. | Toggle/strength flip cleanly off→low→high; adds **≤ 5 % present-total** vs off (§6); `-rtverify` **green** and `-shotcompare` golden unchanged at `rb_fog=0`; 60 FPS floor held | **yes** |
+| **L6** | **Runtime dial + menu + key + perf:** `rb_fog` (`rt_fog` config), both menu rows, the `;` key, the profiler-slot growth, the DOOM-0208 canonical-config pin (§8 INV-8), and the perf pass. | Toggle/strength flip cleanly off→low→high; adds **≤ 5 % present-total** vs off (§6); `-rtverify` **green**; `-shotcompare` re-blessed with subtle fog (fog-off byte-identity is by-construction, INV-8); 60 FPS floor held | **yes** |
 
 **Interim state (expected, not a regression):** L1 ships a flat sky-ambient glow
 with **no** shafts (the directional term arrives at L2) and **no** colour (profiles
@@ -445,11 +459,16 @@ arrive at L4) — mirroring DOOM-0183's "sheen-before-ripple" staged interim.
   unaffected**; the headless verify mode (5), the debug views (1–3), and RT-off (0)
   are untouched.
 - **INV-8:** Every fog cost is **`rb_fog`-gated** — `rb_fog == 0` skips the march
-  entirely (the branch is not taken), so the RT path with fog off is byte-identical
-  to today. Falsifiable via `-shotcompare` (which renders the Ultra-RT view) **with
-  `rb_fog` pinned to 0**: the DOOM-0208 shot-mode canonical config already pins the
-  effect toggles (e.g. `rb_wet`), so it must pin `rb_fog` too — 0 for the fog-off
-  byte-identity check (or the blessed value once fog is baked into the golden).
+  entirely (the branch is not taken), so the RT path with fog off is byte-identical to
+  today **by construction** (like INV-7 — no golden needed). Two *distinct*
+  `-shotcompare` roles, not to be conflated: **(a)** the DOOM-0208 canonical config
+  pins effect toggles to their **shipped defaults** (`rb_detile=2, rb_filth=1,
+  rb_wet=1`, `r_vulkan.cpp:8175-8177`), so when fog ships it pins `rb_fog` to *its*
+  shipped default (§5) and the golden is **re-blessed *with* subtle fog** — the gate
+  then guards the fog *look* (exactly how DOOM-0183 re-blessed for wet). **(b)** The
+  fog-*off* byte-identity is structural; if an empirical check is wanted, a temporary
+  `-config` forcing `rb_fog=0` vs the pre-feature golden proves it — that is *not* the
+  canonical run.
 
 ## 9. Alternatives considered
 
@@ -501,3 +520,11 @@ arrive at L4) — mirroring DOOM-0183's "sheen-before-ripple" staged interim.
   treating it as linear, compositing, then re-clamp/encode. Confirm that round-trip is
   a no-op for an un-fogged pixel, so a fog-off sky stays byte-identical (INV-7/INV-8)
   — a small implementation check at L1.
+- **Q10 (fog on/off by default):** ship `rb_fog=1` (subtle "Low" on, matching the
+  on-by-default effect siblings — the spec's current pick) vs `rb_fog=0` (off, user
+  opts in). On-by-default means the DOOM-0208 golden is re-blessed *with* fog
+  (§8 INV-8) — a review decision (§5).
+- **Q11 (coloured absorption):** v1 uses **scalar** transmittance (§4.1) so the fog
+  target stays one `RGBA16F`; per-channel transmittance (green goo darkening the
+  red/blue *behind* it, not just adding green inscatter) needs a wider target —
+  deferred; revisit if neutral dimming reads wrong.
