@@ -6,6 +6,15 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Headless boot-smoke CI gate that actually runs the engine (DOOM-0203)**
+  A new `-bootsmoke [N]` engine flag boots the game on the GPU-free software
+  renderer, simulates N tics (default ~3 s) through the real game loop, and
+  exits cleanly. CI now runs it after the build + unit tests (under SDL dummy
+  drivers against a free Freedoom IWAD), so a boot or per-frame render
+  regression is caught automatically instead of only on a manual play-test.
+
 ### Fixed
 
 - **Golden-image visual-regression gate is now config-independent (DOOM-0208).**
