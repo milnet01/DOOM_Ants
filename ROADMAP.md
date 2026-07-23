@@ -2058,3 +2058,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Automated tests that throw deliberately-broken WADs and packets at the game to prove the new guards hold.
   Kind: test.
   Source: indie-review 2026-07-23 (follow-up to DOOM-0212..0215).
+
+- ✅ [DOOM-0237] **Cold-eyes docs sweep (2026-07-23): fix doc-vs-code drift across specs + standards.**
+  Full /cold-eyes sweep of all 41 project docs (4 contracts, 12 standards, 3 ADRs, 13 specs, 5 research, 2 plans), 7 topic lanes, 2 loops (two-tier: haiku breadth -> Opus verify). 9 verified fixes, all doc-only, committed 7d10f81 + 4b977a4: renderer.md misc3/misc4 push-constant table corrected vs pathtrace.comp; DOOM-0008 renderer-seam description (extern-C entry points adapted by r_backend.c, not "one accessor"); DOOM-0027 currency note that DOOM-0147 made SCREENWIDTH runtime; DOOM-0206 status line + §4.1/§L2 v1->v2 supersession back-pointers; DOOM-0181 plan marked as-built/done; CLAUDE.md Windows scope + "stages" wording; packaging/README stale version example. 3 false positives logged to .ants_review_falsepos.jsonl (push-cadence vs global rule, cross-doc dedup vs private global file, misc5 stale-roadmap echo). Remaining substantive item — DOOM-0027 inline v_video.c line-citation drift — already tracked as DOOM-0150 (deferred doc-hygiene), not re-opened.
+  **Layman:** A full "fresh eyes" review of the project's design docs and house rules, fixing places where a doc had drifted out of sync with the code or with another doc.
+  Kind: doc-fix.
+  Source: cold-eyes-2026-07-23.
