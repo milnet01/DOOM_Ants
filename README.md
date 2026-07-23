@@ -13,27 +13,56 @@ every pixel on the CPU. **DOOM_Ants** takes that code and modernises it in
 two stages:
 
 1. **Make it run today.** Get the 1997 engine compiling and playing on
-   modern 64-bit Linux, replacing the ancient X11 graphics/sound code with
-   SDL2.
+   modern 64-bit Linux (and Windows), replacing the ancient X11 graphics /
+   OSS sound code with SDL2. ✅ *Done — the engine builds and plays.*
 2. **The spin.** Evolve the renderer toward *true* 3D with hardware ray
-   tracing (and path tracing where it's feasible), dynamic lighting,
-   volumetric "god-ray" lighting, and a solid 60 FPS floor — without
-   losing the feel of the original.
+   tracing (and path tracing where it's feasible), dynamic and volumetric
+   lighting, HD materials, and a solid 60 FPS floor — without losing the
+   feel of the original. 🚧 *In progress.*
 
 See [`ROADMAP.md`](ROADMAP.md) for the plan and [`CHANGELOG.md`](CHANGELOG.md)
 for what's shipped.
 
 ## Status
 
-🚧 **Early days — building the foundations.** The repo currently holds id's
-original source plus the project's documentation and standards. The "make it
-run today" work comes next.
+🎮 **Playable.** The 1997 engine runs on modern 64-bit Linux and Windows via
+SDL2, and you can pick between three ways of drawing the world:
+
+- **Classic** — the original 1997 software renderer, pixel-for-pixel, now
+  with widescreen support.
+- **Solid** — a hardware (Vulkan) rasteriser: the same DOOM world drawn on
+  the GPU, with dynamic lights and contact shadows.
+- **Ultra** — a hardware **path tracer**: ray-traced lighting and shadows,
+  HD PBR materials, a moving flashlight, ambient occlusion, and grimier,
+  de-tiled surfaces. (Needs a ray-tracing-capable GPU; developed and tested
+  on an AMD RX 6600.)
+
+You switch between them from the in-game menu. Latest release: **0.5.0**.
+Grab a build from the [Releases](https://github.com/milnet01/DOOM_Ants/releases)
+page, or build it yourself below.
 
 ## Building & running
 
-⏳ Not yet — modernising the build is the first milestone (see the roadmap).
-You will also need a DOOM `.wad` data file (e.g. the shareware `doom1.wad`),
-which is **not** included here for licensing reasons.
+You'll need a DOOM `.wad` data file (e.g. the shareware `doom1.wad`, or
+retail `doom.wad` / `doom2.wad`), which is **not** included here for
+licensing reasons.
+
+**Dependencies (Linux):** a C++23 compiler (GCC/Clang), `make`, the
+[`mold`](https://github.com/rui314/mold) linker, and the dev packages for
+**SDL2**, **SDL2_mixer**, and the **Vulkan** loader + headers.
+
+```sh
+cd linuxdoom-1.10
+make                     # builds linux/linuxxdoom
+./linux/linuxxdoom -iwad /path/to/doom.wad
+```
+
+Handy flags: `-iwad <file>` picks the game data explicitly; `-warp <map>`
+jumps straight into a level. The Solid and Ultra views need a working
+Vulkan driver; Classic runs anywhere SDL2 does.
+
+Windows builds are produced with a mingw-w64 cross-compile toolchain and
+published on the Releases page.
 
 ## Licence
 
