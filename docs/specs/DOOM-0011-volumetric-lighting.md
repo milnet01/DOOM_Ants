@@ -34,7 +34,7 @@ tuned on the user's RX 6600 together. Start subtle.
   mode 4, `:1093-1094` mode 6). Unlike those features there is **no existing
   shading point to extend** — the march is genuinely new code between the primary
   hit and the final composite.
-- **DOOM-0042 / DOOM-0119** (emitter set) — the fog's light sources are the
+- **DOOM-0009 / DOOM-0084** (emitter set + static slice; **DOOM-0119** cull) — the fog's light sources are the
   **existing** static emitters: the `Emitters` device-address buffer
   (14 floats/record, `pt_common.glsl:52-56`), sliced `[0, omniStart)` = oriented
   static wall/flat lights via `omniStart = pc.misc4.y` (`r_vulkan.cpp:7400`). Fog
@@ -110,8 +110,8 @@ Cheap and smooth, subtle by default, tuned on hardware.
 The gate is **RT engaged** (`rb_rtdebug` ∈ {4, 6}), **not** the tier label — so
 toggling RT on in Solid gets the same volumetrics as Ultra. Modes 4 (NEE display)
 and 6 (denoised play) get identical treatment (kept in lockstep, as with
-DOOM-0181/0183). The headless verify mode (5) and the debug modes (0–3) are
-untouched (§8 INV-7).
+DOOM-0181/0183). The headless verify mode (5), the debug views (1–3), and RT-off (0)
+are untouched (§8 INV-7).
 
 ## 3. The problem, precisely
 
@@ -145,7 +145,11 @@ concrete gaps:
 
 A new function `marchFog(ray origin, ray dir, float tHit, hitInfo)` runs in **both**
 mode 4 and mode 6, **after** the primary hit and its surface colour are resolved but
-**before** the value is written to the output image. It returns two quantities:
+**before** the value is written to the output image. `hitInfo` carries the three
+primary-hit fields the march reads: **`hitP`** (world hit, for the floor reference
+`hitP.z`, §4.3), the **geometric normal** (the up-facing floor test, §4.3), and the
+primary-hit **material id / liquid flag** (the goo profile, §4.5). It returns two
+quantities:
 
 - **`inscatter`** (RGB) — light scattered *toward the eye* along the segment.
 - **`transmittance`** (RGB or scalar) — how much of the surface behind the fog
@@ -217,7 +221,10 @@ iterated here — INV-3).
 `pathtrace.comp:816-817`) the sample is **sky-lit** — add
 `skyRadiance · phase · mediumTint`. Samples whose sun ray is blocked by geometry are
 dark. The bright/dark boundary *is* the shaft (a beam through a doorway/sky-hole).
-One ray per sample keeps it affordable at half-res (§4.6).
+One ray per sample keeps it affordable at half-res (§4.6). **Sky shafts require sky
+geometry:** on a fully enclosed level with no sky (sky tex id `misc4.w == 0xFFFFFFFF`
+/ no sky mesh, `pathtrace.comp:731-732`) no sun ray can reach a sky instance, so sky
+shafts vanish — only torch shafts (b) + the base/haze fog remain. Expected, not a bug.
 
 **(b) Torch shafts — the existing static emitters.** Iterate the static slice
 `k ∈ [0, omniStart)` (`omniStart = pc.misc4.y`, `r_vulkan.cpp:7400`; record layout
@@ -247,9 +254,13 @@ Three profiles select the density multiplier + `mediumTint`:
   around a corner (no per-sector volume in v1) — an accepted approximation (Q3);
   the honest alternative (a per-sector fog buffer) is deferred.
 - **Hell.** A per-**level** flag: a **thin global haze** everywhere with
-  `mediumTint = kHellTint` (faint red). Detected CPU-side from the level
-  (`gameepisode`/`gamemap` + a hell fire-sky check) and crossed to the shader via a
-  **new `rb_view_t` field** (§5) → the `misc6.w` lane. Default subtle; tunable.
+  `mediumTint = kHellTint` (faint red). Detected CPU-side and crossed to the shader
+  via a **new `rb_view_t` field** (§5) → the `misc6.w` lane. **v1 default rule
+  (concrete, so L4 is testable):** a level is "hell" when the DOOM-1 episode is
+  Inferno (`gamemode` registered/retail **and** `gameepisode >= 3`), **or** the
+  DOOM-II map is in the hell run (`gamemode` commercial **and** `gamemap >= 20`),
+  **or** the level uses a fire/hell sky. So L4 is checkable — E3M1 shows haze, E1M1
+  does not. Exact thresholds, density, and `kHellTint` are tuned on hardware (Q7).
 
 Profiles compose: a goo room *on* a hell level gets both (green pool + red haze).
 
@@ -263,16 +274,21 @@ Fog is low-frequency, so compute it **cheaply and smooth it**:
   `RGBA16F` image). Mode 4 (display) may march full-res or half-res (Q4) — start
   half-res in both for a single code path.
 - **Denoise / upsample.** Fog **cannot** ride the SVGF illumination channel
-  (albedo re-multiply, §3.3). Two candidate paths (Q6): (a) a **bilateral upsample**
+  (albedo re-multiply, §3 gap 3). Two candidate paths (Q6): (a) a **bilateral upsample**
   of the half-res fog target guided by depth, cheapest and self-contained; (b) run
   the existing edge-aware **a-trous** passes (`r_vulkan.cpp:7545`) on the fog channel
   too. Start with (a); escalate to (b) only if the fog crawls/flickers.
-- **Composite after re-modulation.** In `svgf_composite.comp`, after
-  `L = albedo * illum + emis * … ` (`:88`), apply
-  `L = L * transmittance + inscatter`. The **sky-passthrough** branch
-  (`:66-71`, which `return`s the stored sky before re-modulation) must apply the
-  **same** fog term to the sky (fog in front of a visible sky hole), so shafts read
-  against the sky too.
+- **Composite after re-modulation — in linear radiance, both branches.**
+  `inscatter`/`transmittance` are **linear radiance** (the space the march
+  accumulates in), applied **before** the tonemap. On the **surface** path, after
+  `L = albedo * illum + emis * … ` (`:88`, still linear), apply
+  `L = L * transmittance + inscatter` **then** `toneEncode(L)` (`:90`). The
+  **sky-passthrough** branch (`:66-71`) is the trap: it stores a **display-encoded,
+  fullbright** sky (`clamp(sky, 0, 1)`, deliberately *not* tonemapped, to match the
+  raster sky), so the fog must be folded in **in the same linear space** — treat the
+  sky as linear, apply `sky * transmittance + inscatter`, then re-clamp/encode — so
+  the fog matches at the sky/wall seam (where shafts read). Compositing the two
+  branches in *different* colour spaces is the failure mode to avoid (Q9).
 
 ## 5. Data & resources
 
@@ -284,10 +300,12 @@ Fog is low-frequency, so compute it **cheaply and smooth it**:
   toggle). The **only** free components today are **`misc6.z` and `misc6.w`**
   (`r_vulkan.cpp:7428-7429`, currently written 0). This feature uses **exactly those
   two**, needing **no** struct growth:
-  - **`misc6.z` = `rb_fog` strength** (float; `0` = off, which also *is* the on/off
-    state — one dial doubles as the toggle, §"dial" below).
-  - **`misc6.w` = global haze density** (float; the hell-level haze from `rb_view_t`,
-    §4.5; `0` on non-hell levels).
+  - **`misc6.z` = `rb_fog` strength** — a small **uint** (0..3; `0` = off, which also
+    *is* the on/off state), written/read exactly like `misc6.y = rb_wet`
+    (`pc.misc6[2] = (uint)rb_fog`; the shader reads a `uint`).
+  - **`misc6.w` = global haze density** — a **bit-cast float** (like `misc6.x` ripple
+    time: bit-cast in on the C++ side, `uintBitsToFloat` in the shader); the
+    hell-level haze from `rb_view_t` (§4.5), `0.0` on non-hell levels.
   - Everything else is a **compile-time `const`** per house convention
     (DOOM-0181/0183 §5): `kSunDir`, `kFogSteps`, `kFogBaseDensity`, `kFogMaxDist`,
     `kFogPoolHeight`, `kFogAnisotropy`, `kGooTint`, `kHellTint`, the per-source
@@ -305,19 +323,31 @@ Fog is low-frequency, so compute it **cheaply and smooth it**:
   currently carries only `x,y,z,angle,extralight,skytexnum`. Add one field
   (e.g. `float hazeDensity`), computed beside `view.skytexnum = skytexture`
   (`r_backend.c:181`) from `gameepisode`/`gamemap` + the sky, and written to
-  `misc6.w`. (`r_backend.c` does not reference the level globals today; the compute
-  brings them into scope.)
+  `misc6.w`. (`r_backend.c` does not reference `gameepisode`/`gamemap` today; the
+  compute brings them into scope.)
 - **New runtime dial `rb_fog`** — mirror the `rb_wet`/`rb_detile` pattern exactly:
   `extern "C" { int rb_fog = <default>; }` in `r_vulkan.cpp` (beside `rb_wet`
   `:1001`); a config row `{"rt_fog", &rb_fog, <default>}` in `m_misc.c` defaults
   (beside `rt_wet` `:270`); the value written to `pc.misc6[2]` (beside `misc6[1] =
-  rb_wet` `:7427`). `rb_fog` is a small **strength** integer (0..K, `0` = off), not
+  rb_wet` `:7427`). `rb_fog` is a small **strength** integer (0..3, `0` = off), not
   just a bool, so the menu "Strength" row and the on/off state share it.
-- **Menu rows — both menus (DOOM-0206 doubled them).** Add a fog row to **both**
-  the legacy `EffectsMenu[]`/`EffectsDef` (`m_menu.c:512-530`) **and** the crisp
-  `VideoMenu[]`/`VideoDef` (`m_menu.c:567-598`), a shared `M_ChangeFog` handler
-  (beside `M_ChangeWet` `:2234`), and a value-string case (beside `:1557-1560`).
-  A "Strength" presentation (Off / Low / Med / High) maps to `rb_fog` 0..3.
+- **Menu rows — mirror the `rb_wet` toggle EXACTLY (it lives in *both* menus;
+  DOOM-0206 doubled them).** `rb_wet` shows as a row in the legacy Effects menu **and**
+  the crisp Video menu; the fog row goes to the **same** sites. That is **six** edits,
+  not two — adding only the menuitem arrays ships a blank/mislabelled row:
+  1. **Enums:** `ef_fog` in `effects_e` and `vid_fog` in `videoitem_e`
+     (`m_menu.c:501-510` / `543-565`).
+  2. **Menuitem arrays:** the row in `EffectsMenu[]` (`:512-520`) and `VideoMenu[]`
+     (`:567-588`), both bound to `M_ChangeFog`.
+  3. **Legacy inline draw:** a label + value pair in `M_DrawEffectsMenu` keyed on
+     `ef_fog` (the `"Wet liquid:"` + `rb_wet?…` pattern at `m_menu.c:1470`).
+  4. **Crisp label table:** a `videoLabels[]` entry for `vid_fog` (`m_menu.c:1491`).
+  5. **Crisp value switch:** a `case vid_fog:` in `M_VideoCrispValue`
+     (`m_menu.c:1550-1565`) returning the strength string.
+  6. **Shared handler:** `M_ChangeFog` (beside `M_ChangeWet` `:2234`) cycling
+     `rb_fog`, used by both menus.
+  A "Strength" presentation (Off / Low / Med / High) maps to `rb_fog` 0..3. This is
+  RT-effect UI like `rb_wet` — put it wherever `rb_wet` is shown, no more, no less.
 - **New hotkey.** A free key in the `i_video.c:441-475` toggle block — `;`
   (`SDLK_SEMICOLON`) is unused (`]`=de-tile, `[`=filth, `'`=wet, `~`=view cycle,
   `` ` ``=profiler are taken). Cycles `rb_fog` and prints `Volumetric fog: <level>`.
@@ -341,12 +371,14 @@ Fog is low-frequency, so compute it **cheaply and smooth it**:
   itself the standing perf option (lower strength → cheaper is *not* automatic, so
   also:) reduce `kFogSteps`; drop the emitter occlusion ray (§4.4b); distance-gate
   the march (`kFogMaxDist`); half-res in mode 4 too.
-- **Gate (L6):** with `rb_fog` at its shipped default, the march adds **≤ a few FPS**
-  vs the `rb_fog`-off RT-on baseline on the goo-room walk (the user's "within a
-  handful of FPS" bar; the DOOM-0181 ≤ 5 % present-total figure is the reference).
-  Ultra must stay above the 60 FPS floor where it is today; the goo room's existing
-  ~40 FPS is the megakernel/denoiser (per DOOM-0183 framing), and fog must not make
-  it materially worse.
+- **Gate (L6, the pass/fail):** with `rb_fog` at its shipped default, the march adds
+  **≤ 5 % to present-total** (ms) vs the `rb_fog`-off RT-on baseline on the fixed
+  goo-room walk — the same measurable bar DOOM-0181 held. ("Within a handful of FPS"
+  is the user's informal phrasing; the **≤ 5 % present-total** figure is the actual
+  test, because FPS is non-linear — a few FPS at 160 is trivial, at 40 it is > 10 %.)
+  Ultra must also stay above the 60 FPS floor where it is today; the goo room's
+  existing ~40 FPS is the megakernel/denoiser (per DOOM-0183 framing), and fog must
+  not make it materially worse.
 
 ## 7. Build order
 
@@ -361,7 +393,7 @@ is objective.
 | **L3** | **Height pooling + torch shafts:** height-based density (`hitP.z` floor ref); iterate static emitters `k<omniStart` (nearest-few, no occlusion first). | Fog settles low into a floor layer; a torch in a dark room glows its surrounding air; dynamic/muzzle/flashlight do **not** scatter | no |
 | **L4** | **Area profiles + colour:** goo tint via the primary-hit `RB_FLAG_LIQUID_NUKAGE`; hell haze via the new `rb_view_t` field → `misc6.w`; `mediumTint` colouring (light×medium). | Goo rooms fill green and pool low; hell levels gain a faint red haze; a torch shaft reads warm-through-green in goo; clear levels stay neutral | no |
 | **L5** | **Denoise/quality pass:** dither tuning; escalate upsample→a-trous if it crawls (§4.6 Q6); phase/anisotropy tune. | Fog is smooth, not grainy or crawling, in a slow pan; shafts hold their shape | no |
-| **L6** | **Runtime dial + menu + key + perf:** `rb_fog` (`rt_fog` config), both menu rows, the `;` key, the profiler-slot growth, and the perf pass. | Toggle/strength flip cleanly off→low→high; adds ≤ a handful of FPS vs off (§6); `-rtverify` **green**; 60 FPS floor held | **yes** |
+| **L6** | **Runtime dial + menu + key + perf:** `rb_fog` (`rt_fog` config), both menu rows, the `;` key, the profiler-slot growth, and the perf pass. | Toggle/strength flip cleanly off→low→high; adds **≤ 5 % present-total** vs off (§6); `-rtverify` **green** and `-shotcompare` golden unchanged at `rb_fog=0`; 60 FPS floor held | **yes** |
 
 **Interim state (expected, not a regression):** L1 ships a flat sky-ambient glow
 with **no** shafts (the directional term arrives at L2) and **no** colour (profiles
@@ -380,8 +412,10 @@ arrive at L4) — mirroring DOOM-0183's "sheen-before-ripple" staged interim.
   `const`; per-level control is deferred (Q1).
 - **INV-4:** Fog is a **separate channel composited *after* the SVGF albedo
   re-multiply** (`svgf_composite.comp:88`) — it never rides `gillum`/`illum` (which
-  is multiplied by surface albedo). The sky-passthrough branch (`:66-71`) receives
-  the same fog term.
+  is multiplied by surface albedo). `inscatter`/`transmittance` are **linear
+  radiance**, folded in **before** the tonemap on **both** the surface path and the
+  sky-passthrough branch (`:66-71`) in the *same* colour space, so the sky/wall seam
+  matches (§4.6).
 - **INV-5:** The two runtime values ride **`misc6.z` (fog strength) + `misc6.w`
   (haze density)** — the **last two free components** of the 240-byte
   `RtPushConstants`. This feature adds **no** struct growth and does **not** append
@@ -390,12 +424,14 @@ arrive at L4) — mirroring DOOM-0183's "sheen-before-ripple" staged interim.
 - **INV-6:** The GI bake (`bake.comp`) is **untouched** — fog is a view-ray term and
   never enters the bake (which computes surface irradiance). No double-count.
 - **INV-7:** Ultra **and** Solid, **RT engaged only** (`rb_rtdebug` ∈ {4, 6}).
-  Classic and the raster path (RT off) are **byte-identical**. The fog lanes sit
-  beyond the 184-byte `-rtverify` prefix (`r_vulkan.cpp:6828`), so **`-rtverify` is
-  unaffected**; the headless verify mode (5) and debug modes (0–3) are untouched.
+  Classic and the raster path (RT off) are **byte-identical** — falsifiable with the
+  `-shotcompare` golden-image gate (DOOM-0202): the RT-off / raster output must match
+  the pre-feature golden. The fog lanes sit beyond the 184-byte `-rtverify` prefix
+  (`r_vulkan.cpp:6828`), so **`-rtverify` is unaffected**; the headless verify mode
+  (5), the debug views (1–3), and RT-off (0) are untouched.
 - **INV-8:** Every fog cost is **`rb_fog`-gated** — `rb_fog == 0` skips the march
   entirely (the branch is not taken), so the RT path with fog off is byte-identical
-  to today.
+  to today — falsifiable: the `-shotcompare` golden is unchanged at `rb_fog=0`.
 
 ## 9. Alternatives considered
 
@@ -436,8 +472,14 @@ arrive at L4) — mirroring DOOM-0183's "sheen-before-ripple" staged interim.
 - **Q6 (denoise path):** depth-guided bilateral upsample (cheap, self-contained) vs
   routing the fog channel through the a-trous passes (`:7545`). Start bilateral;
   escalate if the fog crawls (L5).
-- **Q7 (hell detection):** which `gameepisode`/`gamemap` + sky signals classify a
-  level as "hell" for the haze — a data/tuning call at L4 (default subtle, tunable).
+- **Q7 (hell-haze tuning):** the v1 hell rule (§4.5: Inferno E≥3 / DOOM-II map≥20 /
+  fire-sky) is a concrete default so L4 is testable; the exact map thresholds, haze
+  density, and `kHellTint` are tuned on hardware at L4.
 - **Q8 (tonemap headroom):** bright sky shafts must read strong without clipping to
   a flat white slab under the PBR-Neutral tonemap — verify at L2/L5 (same caution as
   DOOM-0183 Q7).
+- **Q9 (sky fog encode point):** the sky-passthrough branch stores a display-encoded
+  fullbright sky (`svgf_composite.comp:66-71`); folding fog in linear (§4.6) means
+  treating it as linear, compositing, then re-clamp/encode. Confirm that round-trip is
+  a no-op for an un-fogged pixel, so a fog-off sky stays byte-identical (INV-7/INV-8)
+  — a small implementation check at L1.
