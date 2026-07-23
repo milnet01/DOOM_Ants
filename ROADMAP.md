@@ -2066,3 +2066,21 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** A full "fresh eyes" review of the project's design docs and house rules, fixing places where a doc had drifted out of sync with the code or with another doc.
   Kind: doc-fix.
   Source: cold-eyes-2026-07-23.
+
+- 📋 [DOOM-0238] **Faked volumetric lighting (god-rays + fog) in the rasterised "Original" view.**
+  Companion to DOOM-0011 (RT volumetrics). The rasterised path (Solid/Ultra with RT
+  off — the "Original" view) cannot march light through the air, so volumetrics must
+  be FAKED in screen space. User direction 2026-07-23: "match the RT look as closely
+  as raster allows" (the most ambitious of the three options offered) — i.e. both
+  screen-space light shafts (radial/crepuscular scatter from the sky + bright
+  on-screen sources) AND coloured height/area fog (green goo rooms, hell haze, floor
+  pooling), chasing the DOOM-0011 RT look rather than settling for flat depth fog.
+  Sequenced AFTER DOOM-0011 ships (user chose "RT first, fake follows"). Needs its
+  own design spec → /cold-eyes → plan → implement. Distinct technique from DOOM-0011
+  (screen-space post-process in the raster composite, not a traced march), so it does
+  NOT share the RT push-constant lanes / SVGF path — it hooks the raster pipeline
+  (DOOM-0170) instead. Scope note: Classic (1997 software renderer) is excluded, as
+  in DOOM-0011.
+  **Layman:** Give the non-ray-traced "Original" view (Solid and Ultra with ray tracing off) the same shafts-of-light-and-fog look as the ray-traced view, faked with cheap screen tricks since the rasteriser can't trace light through air.
+  Kind: feature.
+  Source: user-request-2026-07-23.
