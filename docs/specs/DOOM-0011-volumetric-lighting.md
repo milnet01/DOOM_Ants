@@ -155,11 +155,11 @@ quantities:
 - **`transmittance`** (RGB or scalar) — how much of the surface behind the fog
   survives to the eye (`exp(-∫σ dt)`).
 
-Composite (both the surface path and the sky-passthrough path, §4.6):
-`outColor = surfaceColor * transmittance + inscatter`.
-
-Non-RT paths never call it (it lives only in the modes 4/6 megakernel). The bake
-never calls it (INV-6).
+The **compute** runs in the megakernel for both modes; the **apply**
+(`outColor = surfaceColor · transmittance + inscatter`) happens **in-megakernel** for
+mode 4 and in **`svgf_composite.comp`** for mode 6 — the exact sites and colour space
+are pinned in §4.6. Non-RT paths never march (it lives only in the modes 4/6
+megakernel). The bake never calls it (INV-6).
 
 ### 4.2 The march — single scattering, dithered, few steps
 
@@ -223,7 +223,7 @@ iterated here — INV-3).
 dark. The bright/dark boundary *is* the shaft (a beam through a doorway/sky-hole).
 One ray per sample keeps it affordable at half-res (§4.6). **Sky shafts require sky
 geometry:** on a fully enclosed level with no sky (sky tex id `misc4.w == 0xFFFFFFFF`
-/ no sky mesh, `pathtrace.comp:731-732`) no sun ray can reach a sky instance, so sky
+/ no sky mesh, `pathtrace.comp:731-733`) no sun ray can reach a sky instance, so sky
 shafts vanish — only torch shafts (b) + the base/haze fog remain. Expected, not a bug.
 
 **(b) Torch shafts — the existing static emitters.** Iterate the static slice
@@ -278,17 +278,24 @@ Fog is low-frequency, so compute it **cheaply and smooth it**:
   of the half-res fog target guided by depth, cheapest and self-contained; (b) run
   the existing edge-aware **a-trous** passes (`r_vulkan.cpp:7545`) on the fog channel
   too. Start with (a); escalate to (b) only if the fog crawls/flickers.
-- **Composite after re-modulation — in linear radiance, both branches.**
-  `inscatter`/`transmittance` are **linear radiance** (the space the march
-  accumulates in), applied **before** the tonemap. On the **surface** path, after
-  `L = albedo * illum + emis * … ` (`:88`, still linear), apply
-  `L = L * transmittance + inscatter` **then** `toneEncode(L)` (`:90`). The
-  **sky-passthrough** branch (`:66-71`) is the trap: it stores a **display-encoded,
-  fullbright** sky (`clamp(sky, 0, 1)`, deliberately *not* tonemapped, to match the
-  raster sky), so the fog must be folded in **in the same linear space** — treat the
-  sky as linear, apply `sky * transmittance + inscatter`, then re-clamp/encode — so
-  the fog matches at the sky/wall seam (where shafts read). Compositing the two
-  branches in *different* colour spaces is the failure mode to avoid (Q9).
+- **Composite — computed once, applied per-mode, always in linear radiance.**
+  `marchFog` *computes* `inscatter`/`transmittance` in the megakernel for **both**
+  modes; where they are *applied* differs by mode:
+  - **Mode 4 (NEE display, no denoiser):** fold into `L` **in the megakernel**, before
+    the mode-4 tonemap — `L = L * transmittance + inscatter`, then `colour =
+    toneEncode(L)` (`pathtrace.comp:1024`).
+  - **Mode 6 (denoised play):** the megakernel writes fog to the half-res fog target;
+    it is applied in `svgf_composite.comp` **after** the albedo re-multiply
+    `L = albedo * illum + emis * … ` (`:88`, still linear) — `L = L * transmittance +
+    inscatter`, then `toneEncode(L)` (`:91`).
+  - **Both fold fog in linear radiance before the tonemap.** The mode-6
+    **sky-passthrough** branch (`svgf_composite.comp:66-71`) is the trap: it stores a
+    **display-encoded, fullbright** sky (`clamp(sky, 0, 1)`, deliberately *not*
+    tonemapped, to match the raster sky), so fog must be folded in **in the same
+    linear space** — treat the sky as linear, apply `sky * transmittance + inscatter`,
+    then re-clamp/encode — so it matches at the sky/wall seam where shafts read.
+    Compositing the two branches (or the two modes) in *different* colour spaces is the
+    failure mode to avoid (Q9).
 
 ## 5. Data & resources
 
@@ -331,23 +338,29 @@ Fog is low-frequency, so compute it **cheaply and smooth it**:
   (beside `rt_wet` `:270`); the value written to `pc.misc6[2]` (beside `misc6[1] =
   rb_wet` `:7427`). `rb_fog` is a small **strength** integer (0..3, `0` = off), not
   just a bool, so the menu "Strength" row and the on/off state share it.
-- **Menu rows — mirror the `rb_wet` toggle EXACTLY (it lives in *both* menus;
-  DOOM-0206 doubled them).** `rb_wet` shows as a row in the legacy Effects menu **and**
-  the crisp Video menu; the fog row goes to the **same** sites. That is **six** edits,
-  not two — adding only the menuitem arrays ships a blank/mislabelled row:
+- **Menu rows — place like `rb_wet` (both menus, DOOM-0206 doubled them), behave like
+  `rb_detile` (a 0..3 cycle with a name table, NOT a boolean).** `rb_wet` shows as a
+  row in the legacy Effects menu **and** the crisp Video menu, so the fog row goes to
+  the same two menus; but a multi-value strength dial is the `rb_detile` pattern
+  (`M_ChangeDetile` cycles `0..2`, drawn via `detileNames[]`), not the boolean
+  `rb_wet`/`M_ChangeWet` On-Off. That is **six** edits + one string table, not two —
+  adding only the menuitem arrays ships a blank/mislabelled row:
   1. **Enums:** `ef_fog` in `effects_e` and `vid_fog` in `videoitem_e`
      (`m_menu.c:501-510` / `543-565`).
   2. **Menuitem arrays:** the row in `EffectsMenu[]` (`:512-520`) and `VideoMenu[]`
      (`:567-588`), both bound to `M_ChangeFog`.
   3. **Legacy inline draw:** a label + value pair in `M_DrawEffectsMenu` keyed on
-     `ef_fog` (the `"Wet liquid:"` + `rb_wet?…` pattern at `m_menu.c:1470`).
+     `ef_fog`, mirroring the `"De-tile:"` + `detileNames[rb_detile]` row
+     (`m_menu.c:1465`), not the boolean `"Wet liquid:"` row.
   4. **Crisp label table:** a `videoLabels[]` entry for `vid_fog` (`m_menu.c:1491`).
-  5. **Crisp value switch:** a `case vid_fog:` in `M_VideoCrispValue`
-     (`m_menu.c:1550-1565`) returning the strength string.
-  6. **Shared handler:** `M_ChangeFog` (beside `M_ChangeWet` `:2234`) cycling
-     `rb_fog`, used by both menus.
-  A "Strength" presentation (Off / Low / Med / High) maps to `rb_fog` 0..3. This is
-  RT-effect UI like `rb_wet` — put it wherever `rb_wet` is shown, no more, no less.
+  5. **Crisp value switch:** a `case vid_fog:` in `M_VideoCrispValue` returning
+     `fogNames[rb_fog]`, mirroring `case vid_detile:` (`m_menu.c:1558`), not the
+     `"On"/"Off"` `case vid_wet:`.
+  6. **Shared handler + name table:** `M_ChangeFog` mirroring `M_ChangeDetile`
+     (`rb_fog = (rb_fog + 1) % 4`), used by both menus, plus a new
+     `fogNames[] = {"Off","Low","Med","High"}` table (like `detileNames[]`).
+  So the "Strength" presentation Off/Low/Med/High maps to `rb_fog` 0..3. Placement =
+  wherever `rb_wet` sits; mechanism = the `rb_detile` multi-value pattern.
 - **New hotkey.** A free key in the `i_video.c:441-475` toggle block — `;`
   (`SDLK_SEMICOLON`) is unused (`]`=de-tile, `[`=filth, `'`=wet, `~`=view cycle,
   `` ` ``=profiler are taken). Cycles `rb_fog` and prints `Volumetric fog: <level>`.
@@ -388,7 +401,7 @@ is objective.
 
 | Layer | Scope | Verify | FPS-gate? |
 |-------|-------|--------|-----------|
-| **L1** | The march skeleton: `marchFog` over `[0,tHit]`, constant base density, **isotropic single scatter from the sky only** (no direction yet — flat sky ambient), composited via a new half-res fog target + bilateral upsample + the `svgf_composite.comp:88` post-multiply (incl. the sky-passthrough branch). Full RGB, no colour profiles. | Air picks up a faint uniform glow; surfaces behind thick fog fade; sky still visible through fog; no NaNs; modes 4 & 6 match | no |
+| **L1** | The march skeleton: `marchFog` over `[0,tHit]`, constant base density, **isotropic single scatter from the sky only** (no direction yet — flat sky ambient), composited via a new half-res fog target + bilateral upsample + the per-mode apply (§4.6: in-megakernel `toneEncode` for mode 4, `svgf_composite.comp:88`+sky-passthrough for mode 6). Full RGB, no colour profiles. | Air picks up a faint uniform glow; surfaces behind thick fog fade; sky still visible through fog; no NaNs; modes 4 & 6 match | no |
 | **L2** | **Sky shafts:** add `kSunDir` + the one-ray sky-visibility test per sample + HG phase. | A doorway/sky-hole open to sky throws a visible slanted beam; closed rooms stay clear; the beam moves correctly as the camera orbits | no |
 | **L3** | **Height pooling + torch shafts:** height-based density (`hitP.z` floor ref); iterate static emitters `k<omniStart` (nearest-few, no occlusion first). | Fog settles low into a floor layer; a torch in a dark room glows its surrounding air; dynamic/muzzle/flashlight do **not** scatter | no |
 | **L4** | **Area profiles + colour:** goo tint via the primary-hit `RB_FLAG_LIQUID_NUKAGE`; hell haze via the new `rb_view_t` field → `misc6.w`; `mediumTint` colouring (light×medium). | Goo rooms fill green and pool low; hell levels gain a faint red haze; a torch shaft reads warm-through-green in goo; clear levels stay neutral | no |
@@ -424,14 +437,19 @@ arrive at L4) — mirroring DOOM-0183's "sheen-before-ripple" staged interim.
 - **INV-6:** The GI bake (`bake.comp`) is **untouched** — fog is a view-ray term and
   never enters the bake (which computes surface irradiance). No double-count.
 - **INV-7:** Ultra **and** Solid, **RT engaged only** (`rb_rtdebug` ∈ {4, 6}).
-  Classic and the raster path (RT off) are **byte-identical** — falsifiable with the
-  `-shotcompare` golden-image gate (DOOM-0202): the RT-off / raster output must match
-  the pre-feature golden. The fog lanes sit beyond the 184-byte `-rtverify` prefix
-  (`r_vulkan.cpp:6828`), so **`-rtverify` is unaffected**; the headless verify mode
-  (5), the debug views (1–3), and RT-off (0) are untouched.
+  Classic and the raster path (RT off) are **byte-identical by construction** — fog
+  lives only in the RT megakernel, so no raster/Classic code is touched. (There is no
+  golden test for *this* claim: `-shotcompare` renders the Ultra-RT view only and
+  cannot exercise the raster path — that gate is INV-8's, below.) The fog lanes sit
+  beyond the 184-byte `-rtverify` prefix (`r_vulkan.cpp:6828`), so **`-rtverify` is
+  unaffected**; the headless verify mode (5), the debug views (1–3), and RT-off (0)
+  are untouched.
 - **INV-8:** Every fog cost is **`rb_fog`-gated** — `rb_fog == 0` skips the march
   entirely (the branch is not taken), so the RT path with fog off is byte-identical
-  to today — falsifiable: the `-shotcompare` golden is unchanged at `rb_fog=0`.
+  to today. Falsifiable via `-shotcompare` (which renders the Ultra-RT view) **with
+  `rb_fog` pinned to 0**: the DOOM-0208 shot-mode canonical config already pins the
+  effect toggles (e.g. `rb_wet`), so it must pin `rb_fog` too — 0 for the fog-off
+  byte-identity check (or the blessed value once fog is baked into the golden).
 
 ## 9. Alternatives considered
 
