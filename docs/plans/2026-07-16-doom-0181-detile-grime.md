@@ -47,7 +47,7 @@ Shader-source constants live near the existing grime consts (`pathtrace.comp:107
 - Consumes: existing `hdTex[]`, `MatCtrl mc`, `hdBaseUV(id, hitUV, uvScale)`, `pcgHash(uint)`/`rnd(inout uint)` from `pt_common.glsl`, the dominant-axis projection idiom from `applyGrime` (`pathtrace.comp:440-442`).
 - Produces: `vec3 hash3(ivec2 cell)`, `vec2 detileWorldUV(vec3 hitP, vec3 n)`, `vec3 detile(uint mapIdx, vec2 sUV, vec2 g)` (where `g = w/kDetileWorldCell`), and `bool detileOn()` — used by L2/L3.
 
-- [ ] **Step 1: Add constants + hash + world-projection helpers.** In `pathtrace.comp`, after the grime consts (`kGrimeStrength`, ~L108) add:
+- [x] **Step 1: Add constants + hash + world-projection helpers.** In `pathtrace.comp`, after the grime consts (`kGrimeStrength`, ~L108) add:
 
 ```glsl
 // DOOM-0181: stochastic de-tiling (world-keyed offset + mirror + 4-corner blend).
@@ -71,7 +71,7 @@ vec2 detileWorldUV(vec3 hitP, vec3 n) {
 }
 ```
 
-- [ ] **Step 2: Add the `detile()` 4-corner blend + the dial reader.** Add after `hash3`/`detileWorldUV`:
+- [x] **Step 2: Add the `detile()` 4-corner blend + the dial reader.** Add after `hash3`/`detileWorldUV`:
 
 ```glsl
 // misc5.y: 0 = off, 1 = 2-tap, 2 = 4-tap; any other value = off.
@@ -106,7 +106,7 @@ vec3 detile(uint mapIdx, vec2 sUV, vec2 g) {
 }
 ```
 
-- [ ] **Step 3: Hoist `hitP` above the HD block and wrap the albedo fetch — mode 4.** In `pathtrace.comp` mode 4 (~L637-649), move the `tHit`/`hitP` computation to *before* `hdBaseUV`, and replace the albedo fetch. The block becomes:
+- [x] **Step 3: Hoist `hitP` above the HD block and wrap the albedo fetch — mode 4.** In `pathtrace.comp` mode 4 (~L637-649), move the `tHit`/`hitP` computation to *before* `hdBaseUV`, and replace the albedo fetch. The block becomes:
 
 ```glsl
             MatCtrl mc  = ctrl[id];
@@ -130,9 +130,9 @@ vec3 detile(uint mapIdx, vec2 sUV, vec2 g) {
 
 > Note: `hdAlbedo` returns the sRGB→linear-decoded albedo; `detile` samples the same `hdTex[]` (sRGB view) so it is also linear — consistent. The `mc.maps[0] >= 0` guard keeps the paletted/no-albedo case on the original path.
 
-- [ ] **Step 4: Same hoist + wrap — mode 6.** In mode 6 (~L762-784) apply the identical change: hoist `tHit`/`hitP` above `hdBaseUV`, and wrap the albedo fetch with the same `detileOn()` branch. (Mode 6's surrounding variables are the same names; copy Step 3's albedo block verbatim.)
+- [x] **Step 4: Same hoist + wrap — mode 6.** In mode 6 (~L762-784) apply the identical change: hoist `tHit`/`hitP` above `hdBaseUV`, and wrap the albedo fetch with the same `detileOn()` branch. (Mode 6's surrounding variables are the same names; copy Step 3's albedo block verbatim.)
 
-- [ ] **Step 5: Host — populate the `misc5.y` dial.** In `r_vulkan.cpp`, right after the existing `pc.misc5[0] = ...` grime line (~L6398), add:
+- [x] **Step 5: Host — populate the `misc5.y` dial.** In `r_vulkan.cpp`, right after the existing `pc.misc5[0] = ...` grime line (~L6398), add:
 
 ```cpp
     // DOOM-0181: de-tile quality dial. 0=off,1=2-tap,2=4-tap. Default 2 (4-tap) on the HD set,
@@ -142,18 +142,18 @@ vec3 detile(uint mapIdx, vec2 sUV, vec2 g) {
 
 > `g.hdBuilt` and `g.matNumWall`/`g.matNumFlat` already exist (used by the HD material path). If a name differs, grep `hdBuilt`/`matNumWall` in `r_vulkan.cpp` and use the real field.
 
-- [ ] **Step 6: Build.** Run: `make -C linuxdoom-1.10 -j"$(nproc)"`
+- [x] **Step 6: Build.** Run: `make -C linuxdoom-1.10 -j"$(nproc)"`
   Expected: clean build, no new warnings. If `glslc` errors, fix the GLSL (common: missing `nonuniformEXT`, or `pc.misc5.y` not present — confirm the `misc5` field is in the `PC` block at ~L233).
 
-- [ ] **Step 7: Regression + RT math.** Run: `make -C linuxdoom-1.10 test` (expect all green — Classic/Solid/paletted untouched), then `cd linuxdoom-1.10 && ./linux/linuxxdoom -rtverify` headless if available (expect the mode-5 verify to pass; INV-9).
+- [x] **Step 7: Regression + RT math.** Run: `make -C linuxdoom-1.10 test` (expect all green — Classic/Solid/paletted untouched), then `cd linuxdoom-1.10 && ./linux/linuxxdoom -rtverify` headless if available (expect the mode-5 verify to pass; INV-9).
 
-- [ ] **Step 8: Commit.**
+- [x] **Step 8: Commit.**
 ```bash
 git add linuxdoom-1.10/shaders/pathtrace.comp linuxdoom-1.10/r_vulkan.cpp
 git commit -m "DOOM-0181: L1 de-tile albedo (world-keyed offset+mirror+4-corner blend)"
 ```
 
-- [ ] **Step 9: PLAY-TEST (user).** User launches Ultra + RT-on on E1M1. **Acceptance:** the green-goo room wall and the start-area perimeter wall no longer read as the same tile repeated; two different same-texture walls look different. `~` toggling RT off (raster) must look unchanged. **Stop for user sign-off before Task 2.**
+- [x] **Step 9: PLAY-TEST (user).** User launches Ultra + RT-on on E1M1. **Acceptance:** the green-goo room wall and the start-area perimeter wall no longer read as the same tile repeated; two different same-texture walls look different. `~` toggling RT off (raster) must look unchanged. **Stop for user sign-off before Task 2.**
 
 ---
 
@@ -166,7 +166,7 @@ git commit -m "DOOM-0181: L1 de-tile albedo (world-keyed offset+mirror+4-corner 
 - Consumes: `detile`/`detileCellUV`/`hash3` (Task 1).
 - Produces: `vec3 detileNormalTS(uint mapIdx, vec2 sUV, vec2 g)` (returns the blended *tangent-space* normal with per-cell X-negate applied), `float detileR(uint mapIdx, vec2 sUV, vec2 g)` (single-channel, for AO).
 
-- [ ] **Step 1: Add the normal + scalar de-tile helpers.** In `pathtrace.comp` after `detile()`:
+- [x] **Step 1: Add the normal + scalar de-tile helpers.** In `pathtrace.comp` after `detile()`:
 
 ```glsl
 // Scalar (.r) de-tile — for AO. Same blend as detile(), single channel.
@@ -200,7 +200,7 @@ vec3 detileNormalTS(uint mapIdx, vec2 sUV, vec2 g) {
 }
 ```
 
-- [ ] **Step 2: Wire the normal into `hdShadingNormal`, AO into `hdAO` — both modes.** Where the shading normal is computed (mode 4 uses `hdShadingNormal(mc, id, sUV, n, T, B)`), replace the tangent-space unpack with the de-tiled one when `detileOn()`. Concretely, change the shading-normal call site to:
+- [x] **Step 2: Wire the normal into `hdShadingNormal`, AO into `hdAO` — both modes.** Where the shading normal is computed (mode 4 uses `hdShadingNormal(mc, id, sUV, n, T, B)`), replace the tangent-space unpack with the de-tiled one when `detileOn()`. Concretely, change the shading-normal call site to:
 
 ```glsl
             vec3 shN;
@@ -223,15 +223,15 @@ Replace subsequent uses of the shading normal with `shN`. For AO, at the ambient
 
 and use `ao` in the ambient multiply.
 
-- [ ] **Step 3: Build + regression.** `make -C linuxdoom-1.10 -j"$(nproc)"` then `make -C linuxdoom-1.10 test` (green).
+- [x] **Step 3: Build + regression.** `make -C linuxdoom-1.10 -j"$(nproc)"` then `make -C linuxdoom-1.10 test` (green).
 
-- [ ] **Step 4: Commit.**
+- [x] **Step 4: Commit.**
 ```bash
 git add linuxdoom-1.10/shaders/pathtrace.comp
 git commit -m "DOOM-0181: L2 de-tile normal + AO (INV-2 normal-X negate on mirror)"
 ```
 
-- [ ] **Step 5: PLAY-TEST (user).** **Acceptance:** relief (bumps) and lighting stay registered with the de-tiled albedo — a mirrored tile's bumps read correctly (not inverted), no colour-vs-relief mismatch. **Stop for user sign-off before Task 3.**
+- [x] **Step 5: PLAY-TEST (user).** **Acceptance:** relief (bumps) and lighting stay registered with the de-tiled albedo — a mirrored tile's bumps read correctly (not inverted), no colour-vs-relief mismatch. **Stop for user sign-off before Task 3.**
 
 ---
 
@@ -244,7 +244,7 @@ git commit -m "DOOM-0181: L2 de-tile normal + AO (INV-2 normal-X negate on mirro
 - Consumes: `detileWorldUV`, `hash3`, `detileCellUV`, `hdParallaxUV`.
 - Produces: `vec2 detilePOM(MatCtrl mc, vec2 baseUV, vec3 T, vec3 B, vec3 n, vec3 dir, vec2 g)`.
 
-- [ ] **Step 1: Add the de-tiled POM wrapper.** The march uses the pixel's single dominant cell (no per-step blend — INV/§4.4). Add:
+- [x] **Step 1: Add the de-tiled POM wrapper.** The march uses the pixel's single dominant cell (no per-step blend — INV/§4.4). Add:
 
 ```glsl
 // De-tiled POM: transform baseUV by the pixel's dominant cell, march in that space. On a mirrored
@@ -264,7 +264,7 @@ vec2 detilePOM(MatCtrl mc, vec2 baseUV, vec3 T, vec3 B, vec3 n, vec3 dir, vec2 g
 }
 ```
 
-- [ ] **Step 2: Use `detilePOM` when de-tiling is on.** In both modes, where `sUV = hdParallaxUV(mc, baseUV, T, B, n, dir)` is computed inside the `usePBR` block, branch:
+- [x] **Step 2: Use `detilePOM` when de-tiling is on.** In both modes, where `sUV = hdParallaxUV(mc, baseUV, T, B, n, dir)` is computed inside the `usePBR` block, branch:
 
 ```glsl
                 sUV = detileOn()
@@ -274,15 +274,15 @@ vec2 detilePOM(MatCtrl mc, vec2 baseUV, vec3 T, vec3 B, vec3 n, vec3 dir, vec2 g
 
 > Because albedo/normal/AO (Tasks 1-2) already sample at `sUV` and add their own per-cell offset in `detileCellUV`, and `detilePOM` produces a `sUV` already in de-tiled space, keep the flat-map de-tile keyed on the *same* cell — they use `detileWorldUV(hitP,n)`, identical here, so registration holds (INV-3).
 
-- [ ] **Step 3: Build + regression.** `make -C linuxdoom-1.10 -j"$(nproc)"` then `make -C linuxdoom-1.10 test` (green).
+- [x] **Step 3: Build + regression.** `make -C linuxdoom-1.10 -j"$(nproc)"` then `make -C linuxdoom-1.10 test` (green).
 
-- [ ] **Step 4: Commit.**
+- [x] **Step 4: Commit.**
 ```bash
 git add linuxdoom-1.10/shaders/pathtrace.comp
 git commit -m "DOOM-0181: L3 POM + height in de-tiled space (border-band fallback)"
 ```
 
-- [ ] **Step 5: PLAY-TEST (user).** **Acceptance:** parallax depth agrees with the de-tiled albedo/normal; no visible relief seams at cell boundaries (if seams show, the border-band `0.1` is the tuning knob — §10 Q1). **Stop for user sign-off before Task 4.**
+- [x] **Step 5: PLAY-TEST (user).** **Acceptance:** parallax depth agrees with the de-tiled albedo/normal; no visible relief seams at cell boundaries (if seams show, the border-band `0.1` is the tuning knob — §10 Q1). **Stop for user sign-off before Task 4.**
 
 ---
 
@@ -295,7 +295,7 @@ git commit -m "DOOM-0181: L3 POM + height in de-tiled space (border-band fallbac
 - Consumes: `ao` (Task 2's de-tiled AO), the existing `applyGrime` + `misc5.x` grunge overlay.
 - Produces: `vec3 applyGrime(vec3 albedo, vec3 hitP, vec3 n, float ao)` (new 4-arg signature).
 
-- [ ] **Step 1: Add filth consts.** Near the grime consts:
+- [x] **Step 1: Add filth consts.** Near the grime consts:
 
 ```glsl
 const float kGrimeCrevice = 0.6;                 // extra darkening in AO-occluded crevices
@@ -303,7 +303,7 @@ const vec3  kGrimeTint     = vec3(0.85, 0.80, 0.72);  // muted grease/rust/mould
 const float kGrimeTintW    = 0.15;               // tint weight
 ```
 
-- [ ] **Step 2: Rewrite `applyGrime` to the 4-arg filth form.** Replace the body of `applyGrime` (~L435-446). Keep the existing centred grunge multiply + clamp (INV-6); add crevice darkening (survives a missing overlay) + tint:
+- [x] **Step 2: Rewrite `applyGrime` to the 4-arg filth form.** Replace the body of `applyGrime` (~L435-446). Keep the existing centred grunge multiply + clamp (INV-6); add crevice darkening (survives a missing overlay) + tint:
 
 ```glsl
 vec3 applyGrime(vec3 albedo, vec3 hitP, vec3 n, float ao) {
@@ -326,7 +326,7 @@ vec3 applyGrime(vec3 albedo, vec3 hitP, vec3 n, float ao) {
 
 > `detileWorldUV` (Task 1) replaces the inline dominant-axis ternary the old `applyGrime` had — same projection, DRY.
 
-- [ ] **Step 3: Hoist AO and pass it to `applyGrime` — both modes.** The `ao` value (Task 2) is computed at the ambient term (after `applyGrime` today). Move the `ao` computation up to right after `sUV`/`hdAlbedo`, before the `applyGrime(...)` call, and change the call to the 4-arg form:
+- [x] **Step 3: Hoist AO and pass it to `applyGrime` — both modes.** The `ao` value (Task 2) is computed at the ambient term (after `applyGrime` today). Move the `ao` computation up to right after `sUV`/`hdAlbedo`, before the `applyGrime(...)` call, and change the call to the 4-arg form:
 
 ```glsl
             float ao = (mc.usePBR != 0u && mc.maps[4] >= 0 && detileOn())
@@ -337,15 +337,15 @@ vec3 applyGrime(vec3 albedo, vec3 hitP, vec3 n, float ao) {
 
 Then in the ambient term below, reuse `ao` instead of calling `hdAO` again (single fetch — §4.3).
 
-- [ ] **Step 4: Build + regression.** `make -C linuxdoom-1.10 -j"$(nproc)"` then `make -C linuxdoom-1.10 test` (green).
+- [x] **Step 4: Build + regression.** `make -C linuxdoom-1.10 -j"$(nproc)"` then `make -C linuxdoom-1.10 test` (green).
 
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 ```bash
 git add linuxdoom-1.10/shaders/pathtrace.comp
 git commit -m "DOOM-0181: L4 filth (crevice-pooled + tinted grime), applyGrime gains AO"
 ```
 
-- [ ] **Step 6: PLAY-TEST (user).** **Acceptance:** E1M1 reads as a filthy, neglected base — dirt pools in corners/recesses, surfaces are grimier and less uniform-clean, but not so dark it's muddy. Dials (`kGrimeCrevice`, `kGrimeTintW`, `kGrimeStrength`) tune lived-in↔abandoned (§10 Q3). **Stop for user sign-off before Task 5.**
+- [x] **Step 6: PLAY-TEST (user).** **Acceptance:** E1M1 reads as a filthy, neglected base — dirt pools in corners/recesses, surfaces are grimier and less uniform-clean, but not so dark it's muddy. Dials (`kGrimeCrevice`, `kGrimeTintW`, `kGrimeStrength`) tune lived-in↔abandoned (§10 Q3). **Stop for user sign-off before Task 5.**
 
 ---
 
@@ -358,21 +358,21 @@ git commit -m "DOOM-0181: L4 filth (crevice-pooled + tinted grime), applyGrime g
 - Consumes: `pc.misc5[1]` (Task 1), the `\`-key `rb_profile` profiler.
 - Produces: (perf report only — no new interface.)
 
-- [ ] **Step 1: Make `misc5.y` runtime-switchable.** Add a small integer state `g.rb_detile` (default 2) toggled by an unused debug key, and set `pc.misc5[1] = g.hdBuilt && (g.matNumWall + g.matNumFlat > 0) ? (uint32_t)g.rb_detile : 0u;`. Follow the pattern of the existing `rb_rtdebug`/`rb_profile` toggles (grep `rb_profile` in `r_vulkan.cpp`/`i_video.c` for the key-handling idiom). Cycle 0→1→2→0.
+- [x] **Step 1: Make `misc5.y` runtime-switchable.** Add a small integer state `g.rb_detile` (default 2) toggled by an unused debug key, and set `pc.misc5[1] = g.hdBuilt && (g.matNumWall + g.matNumFlat > 0) ? (uint32_t)g.rb_detile : 0u;`. Follow the pattern of the existing `rb_rtdebug`/`rb_profile` toggles (grep `rb_profile` in `r_vulkan.cpp`/`i_video.c` for the key-handling idiom). Cycle 0→1→2→0.
 
-- [ ] **Step 2: Build.** `make -C linuxdoom-1.10 -j"$(nproc)"` (clean).
+- [x] **Step 2: Build.** `make -C linuxdoom-1.10 -j"$(nproc)"` (clean).
 
-- [ ] **Step 3: RT math + regression.** `make -C linuxdoom-1.10 test` (green) and `./linux/linuxxdoom -rtverify` (green — INV-9).
+- [x] **Step 3: RT math + regression.** `make -C linuxdoom-1.10 test` (green) and `./linux/linuxxdoom -rtverify` (green — INV-9).
 
-- [ ] **Step 4: PERF MEASURE (user + agent).** User walks a fixed ~10s path through the green-goo room in Ultra RT-on at 50% render scale with flashlight, with the `\` profiler on, twice: de-tile **off** (baseline) then **4-tap**. Record avg `[cpu_profile]` present-total (ms) each. **Gate:** 4-tap adds ≤ 5% (INV/§6). If over, the shipped default drops to 2-tap (`g.rb_detile = 1`), or a compile-time cheaper split; re-measure the fallback.
+- [x] **Step 4: PERF MEASURE (user + agent).** User walks a fixed ~10s path through the green-goo room in Ultra RT-on at 50% render scale with flashlight, with the `\` profiler on, twice: de-tile **off** (baseline) then **4-tap**. Record avg `[cpu_profile]` present-total (ms) each. **Gate:** 4-tap adds ≤ 5% (INV/§6). If over, the shipped default drops to 2-tap (`g.rb_detile = 1`), or a compile-time cheaper split; re-measure the fallback.
 
-- [ ] **Step 5: Commit.**
+- [x] **Step 5: Commit.**
 ```bash
 git add linuxdoom-1.10/r_vulkan.cpp
 git commit -m "DOOM-0181: L5 runtime de-tile quality dial + perf pass (<=5% at 4-tap)"
 ```
 
-- [ ] **Step 6: PLAY-TEST + close-out (user).** **Acceptance:** the dial visibly steps off→2-tap→4-tap; the shipped default holds the perf gate; `-rtverify` green. On user sign-off: flip **DOOM-0181** and **DOOM-0179** to ✅ in `ROADMAP.md`, add a `CHANGELOG.md [Unreleased]` entry (de-tiled + grimy Ultra surfaces), and run `/debt-sweep`.
+- [x] **Step 6: PLAY-TEST + close-out (user).** **Acceptance:** the dial visibly steps off→2-tap→4-tap; the shipped default holds the perf gate; `-rtverify` green. On user sign-off: flip **DOOM-0181** and **DOOM-0179** to ✅ in `ROADMAP.md`, add a `CHANGELOG.md [Unreleased]` entry (de-tiled + grimy Ultra surfaces), and run `/debt-sweep`.
 
 ---
 

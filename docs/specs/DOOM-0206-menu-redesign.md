@@ -1,10 +1,11 @@
 # DOOM-0206 — Redesigned in-game menu for the 3D tiers (crisp font, HUD-safe, dimmed backdrop)
 
-Status: v1 (L1–L6) IMPLEMENTED; v2 (§4.6 — crisp skin for ALL 3D-tier menus) added 2026-07-19 per user play-test, cold-eyes in progress. (cold-eyes: 11 loops total — the Classic-caveat + INV-7
-additions were cold-reviewed over 6 further loops 2026-07-19, converging to
-polish; L1–L5 implemented, L6/L7 pending). Note for the L7 wrap-up: a light
-present-tense currency sweep is due — some clauses (e.g. §4.5 "there is none
-today" for `M_ChangeRayTracing`) predate the L1–L5 implementation.
+Status: ✅ SHIPPED (2026-07-19, user-accepted) — v1 (L1–L6) + v2 (§4.6 — crisp
+skin for ALL 3D-tier menus) both implemented; see ROADMAP DOOM-0206. Cold-eyes:
+11 loops total (the Classic-caveat + INV-7 additions were cold-reviewed over 6
+further loops 2026-07-19, converging to polish). Retained as the as-built design
+record; §4.1/§4.5/§L2 keep their v1 framing with the §4.6 v2 supersession noted
+inline.
 Kind: feature. Tier: the crisp glyph skin + dim backdrop + Video consolidation
 are Solid/Ultra only; Classic gets ONLY the two shared fixes — HUD-safe bound +
 uniform per-menu font size — and otherwise keeps its authentic bitmap/red menu.
