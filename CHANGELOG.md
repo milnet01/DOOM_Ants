@@ -6,6 +6,37 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Fix three low-severity bounds nits: donut NULL-deref, sfx off-by-one, basedefault snprintf.** (DOOM-0220)
+  Three small safety tidy-ups: a malformed WAD donut, a sound-index edge, and a long $HOME path can no longer misbehave.
+
+- **Fix -warp E/M bounds so `-warp 3` on a non-commercial IWAD can't NULL-deref.** (DOOM-0219)
+  Typing `doom -warp 3` on DOOM 1 crashed at startup; now it's handled gracefully.
+
+- **Guard RB_BuildPSprites against a negative sprite lump index.** (DOOM-0218)
+  A missing weapon-sprite frame could read out of bounds; now it's skipped, matching the world-sprite path.
+
+- **Drain the GPU before RB_Vulkan_BuildLevel frees/recreates live buffers.** (DOOM-0217)
+  Loading a new level could, in rare timing, free graphics memory the GPU was still using; now the GPU is drained first.
+
+- **Clamp menu value-name indices (showMessages/fpsCorner) against a hand-edited config.** (DOOM-0216)
+  Editing ~/.doomrc to an out-of-range value could crash the game when opening the menu; the value is now clamped.
+
+### Security
+
+- **Clamp netconsole (packet player field) to MAXPLAYERS in d_net GetPackets.** (DOOM-0215)
+  A malformed network packet could write out of bounds using a bogus player number; now such packets are skipped.
+
+- **Clamp netgame packet numtics against BACKUPTICS in i_net PacketGet.** (DOOM-0214)
+  A malformed network packet could overflow an internal array before any validation; now oversized packets are dropped.
+
+- **Bound mus2mid MUS->MIDI reads by the real lump length, not the header's own claim.** (DOOM-0213)
+  A crafted in-WAD music track could make DOOM read up to ~64KB past the end of the lump; now reads are capped at the true lump size.
+
+- **Harden W_AddFile/W_Reload: validate the WAD directory against the real file size.** (DOOM-0212)
+  A hand-made/corrupt WAD could previously make DOOM read random memory while loading; now a bad directory is rejected cleanly.
+
 ## [0.5.0] - 2026-07-22
 
 ### Added

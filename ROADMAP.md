@@ -333,6 +333,18 @@ with friends.
   Source: in-session-2026-07-19 (DOOM-0206 wrap-up verification).
   Also affects -rtverify (same gate-instability family): during the same DOOM-0206 wrap-up, -rtverify direct-light rel-MSE read 0.0796% PASS early in the session (×many, all subagent + direct runs) but later read a deterministic 3.4943% FAIL (×3), lit-px 64000→63987. PROVEN not DOOM-0206: an isolated rebuild at base 1da136c gives the identical 3.4943%/63987 in the same environment (base==HEAD for BOTH the render and rtverify), so the menu work does not touch the RT path. The rel-MSE is CONSTANT across every ~/.doomrc toggle tried (render_scale 100/50, upscaler 0/1, rt_filth/rt_wet 0/1) — so it is NOT those configs. No disk GI-bake cache exists (the bake is a runtime GPU compute with atomic scatter). Leading hypothesis: GI-bake / RT-render GPU float-accumulation nondeterminism that is stable within a "GPU-state epoch" but shifts between epochs (early-session vs after dozens of heavy RT renders) — which would make BOTH gates (shotcompare mae + rtverify rel-MSE) epoch-sensitive. Action for DOOM-0208: make the RT gates robust to this (seed/determinism audit of the bake's atomic scatter, or widen/normalise the bars), and re-bless the golden once the render is stable. INV-5 for DOOM-0206 holds (base==HEAD).
 
+- 📋 [DOOM-0235] **In-game auto-update: check for a new release, download, install, and relaunch.**
+  Flow: on launch (or via a menu item) query the latest GitHub release (tag/version + asset URLs) over HTTPS; if newer than the built-in version, prompt the user; on accept, download the platform asset with a progress UI, verify it (checksum/signature), then hand off to a small updater/relaunch step (the running game can't overwrite itself in place -- spawn a helper that waits for exit, swaps files, relaunches). Per-platform: Linux AppImage self-replace; Windows installer/exe swap via helper. Respect §6 (no silent network calls without opt-in); make the update check user-toggleable. Reuse the existing version line + CHANGELOG for the 'what's new' text. Depends on packaging (installer item below) for the Windows path.
+  **Layman:** The game checks if a newer version exists and, if you agree, downloads it, closes, installs, and reopens itself -- no manual re-download.
+  Kind: feature.
+  Source: user-request 2026-07-23.
+
+- 📋 [DOOM-0236] **Windows: ship a signed installer to clear SmartScreen (signing, not file format, is the fix).**
+  IMPORTANT: an .msi by itself does NOT bypass SmartScreen -- the warning is driven by Authenticode code-signing + download reputation, not the file extension; an unsigned .msi warns exactly like the unsigned .exe. Real fix: sign the binary (and installer) with an Authenticode cert. An OV cert still needs reputation to build up; an EV cert clears SmartScreen immediately but is pricier and needs a hardware token / cloud HSM. Scope: (1) evaluate cert options (cost/EV-vs-OV, cloud signing e.g. Azure Trusted Signing); (2) add a WiX/MSI (or NSIS) installer target alongside the current .exe with Start-menu shortcut + uninstaller (also a natural home for the auto-update helper); (3) wire signing into the release pipeline. Offering the .msi is still worthwhile for UX/uninstall, but must be paired with signing to actually remove the warning.
+  **Layman:** Make the Windows download stop showing the blue 'unrecognised app' warning by code-signing it, and offer a proper installer.
+  Kind: package.
+  Source: user-request 2026-07-23.
+
 ## Phase 2 — The Spin
 
 The creative overhaul: evolve the renderer toward true 3D with hardware
@@ -1908,3 +1920,141 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** In the original Classic mode, the menu items all share one size now, but the font looks chunky/blocky. Make it look nicer while staying consistent.
   Kind: enhancement.
   Source: user-request-2026-07-21.
+
+- ✅ [DOOM-0212] **Harden W_AddFile/W_Reload: validate the WAD directory against the real file size.**
+  w_wad.c: numlumps*sizeof(filelump_t) truncated into int and read() returns ignored -> a crafted numlumps overflowed the size and yielded an OOB/uninitialised lump directory. Now numlumps/infotableofs are validated against filelength() and the directory read is length-checked. Verified: real doom.wad still loads.
+  **Layman:** A hand-made/corrupt WAD could previously make DOOM read random memory while loading; now a bad directory is rejected cleanly.
+  Kind: security.
+  Source: indie-review+audit 2026-07-23 (wad-data-misc lane, HIGH).
+
+- ✅ [DOOM-0213] **Bound mus2mid MUS->MIDI reads by the real lump length, not the header's own claim.**
+  mus2mid() took no length and trusted scorestart+scorelength from the header. Threaded W_LumpLength through I_RegisterSong; muslen is now min(header, real) with an 8-byte minimum. Regression test tests/mus2mid_test.cpp added.
+  **Layman:** A crafted in-WAD music track could make DOOM read up to ~64KB past the end of the lump; now reads are capped at the true lump size.
+  Kind: security.
+  Source: indie-review 2026-07-23 (wad-data-misc + platform-io, HIGH, corroborated).
+
+- ✅ [DOOM-0214] **Clamp netgame packet numtics against BACKUPTICS in i_net PacketGet.**
+  i_net.c: numtics is an attacker byte (0-255) copied into cmds[BACKUPTICS=12] before checksum validation -> heap/stack OOB. Now drops the packet when numtics > BACKUPTICS.
+  **Layman:** A malformed network packet could overflow an internal array before any validation; now oversized packets are dropped.
+  Kind: security.
+  Source: indie-review 2026-07-23 (platform-io, HIGH).
+
+- ✅ [DOOM-0215] **Clamp netconsole (packet player field) to MAXPLAYERS in d_net GetPackets.**
+  d_net.c: netconsole = player & ~PL_DRONE (0-127) indexed MAXPLAYERS-sized arrays (playeringame, nodeforplayer, netcmds) -> OOB write. Now skips packets naming a player >= MAXPLAYERS.
+  **Layman:** A malformed network packet could write out of bounds using a bogus player number; now such packets are skipped.
+  Kind: security.
+  Source: indie-review 2026-07-23 (platform-io, HIGH).
+
+- ✅ [DOOM-0216] **Clamp menu value-name indices (showMessages/fpsCorner) against a hand-edited config.**
+  m_menu.c: msgValueNames[2]/fpsPosNames[4] were indexed by config ints M_LoadDefaults never clamps -> OOB char* deref on menu open. Clamped inline, matching the existing detileNames idiom.
+  **Layman:** Editing ~/.doomrc to an out-of-range value could crash the game when opening the menu; the value is now clamped.
+  Kind: fix.
+  Source: indie-review 2026-07-23 (menu-hud, MEDIUM).
+
+- ✅ [DOOM-0217] **Drain the GPU before RB_Vulkan_BuildLevel frees/recreates live buffers.**
+  r_vulkan.cpp:7107 RB_Vulkan_BuildLevel destroyed vertex/sky/emitter buffers with no vkDeviceWaitIdle, unlike the mode-switch/recreate/shutdown paths -> latent GPU use-after-free of g.vbuf. Added a drain at function entry.
+  **Layman:** Loading a new level could, in rare timing, free graphics memory the GPU was still using; now the GPU is drained first.
+  Kind: fix.
+  Source: indie-review 2026-07-23 (vulkan-rt-render, MEDIUM).
+
+- ✅ [DOOM-0218] **Guard RB_BuildPSprites against a negative sprite lump index.**
+  r_mesh.c:1292 indexed spritewidth/sprite_h/... with an unguarded lump that can be -1, while the twin RB_BuildSprites guards it. Added the matching `if (lump < 0) continue;`.
+  **Layman:** A missing weapon-sprite frame could read out of bounds; now it's skipped, matching the world-sprite path.
+  Kind: fix.
+  Source: indie-review 2026-07-23 (vulkan-mesh-assets, MEDIUM).
+
+- ✅ [DOOM-0219] **Fix -warp E/M bounds so `-warp 3` on a non-commercial IWAD can't NULL-deref.**
+  d_main.c: the episode+map form read myargv[p+2] under only a p<myargc-1 guard -> argv[argc]==NULL deref. Split into p<myargc-1 (commercial) and p<myargc-2 (E/M). Verified: `-warp 3` no longer crashes.
+  **Layman:** Typing `doom -warp 3` on DOOM 1 crashed at startup; now it's handled gracefully.
+  Kind: fix.
+  Source: indie-review 2026-07-23 (platform-io, MEDIUM).
+
+- ✅ [DOOM-0220] **Fix three low-severity bounds nits: donut NULL-deref, sfx off-by-one, basedefault snprintf.**
+  p_spec.c:1192 EV_DoDonut derefs a possibly-NULL getNextSector result (now guarded like every other caller); s_sound.c:294 `sfx_id > NUMSFX` -> `>= NUMSFX` (S_sfx[NUMSFX] is one past); d_main.c basedefault sprintf($HOME) -> snprintf.
+  **Layman:** Three small safety tidy-ups: a malformed WAD donut, a sound-index edge, and a long $HOME path can no longer misbehave.
+  Kind: fix.
+  Source: indie-review+audit 2026-07-23 (playsim/platform-io, LOW).
+
+- 📋 [DOOM-0221] **Bound UploadAtlas WAD-derived material count / tile dimensions before GPU allocation.**
+  r_vulkan.cpp:4604 UploadAtlas feeds WAD material count n and per-tile w/h into vector resizes, staging sizes, descriptor counts and VkImage extents with no bounds check -> bad_alloc / I_Error abort (DoS, not corruption; all arithmetic is 64-bit). DOOM-0093-adjacent.
+  **Layman:** A corrupt WAD can make the Ultra renderer try a huge allocation and abort; validate sizes for a clean error instead.
+  Kind: security.
+  Source: indie-review 2026-07-23 (vulkan-rt-core, MEDIUM).
+
+- 📋 [DOOM-0222] **Bound G_ReadDemoTiccmd against the demo lump end (attract-mode demo from a PWAD).**
+  g_game.c:1577 G_ReadDemoTiccmd never bounds demo_p against the lump end; a marker-less DEMO lump auto-played in attract mode reads past the buffer.
+  **Layman:** A malformed demo embedded in a custom WAD (auto-played on the title screen) can run off the end of its buffer.
+  Kind: fix.
+  Source: indie-review 2026-07-23 (wad-data-misc, MEDIUM).
+
+- 📋 [DOOM-0223] **Hoist emitSecMapped out of the BuildRasterPointLights double loop (avoid WC readback).**
+  r_vulkan.cpp:6548 re-reads write-combined emitSecMapped[e] inside the per-subsector x per-emitter loop though it's loop-invariant; DOOM-0170 warns against WC readback. Hoist es[staticN..emitN) to RAM once.
+  **Layman:** A small performance nit in the light build loop; reads slow write-combined GPU memory repeatedly.
+  Kind: perf.
+  Source: indie-review 2026-07-23 (vulkan-rt-render, LOW).
+
+- 📋 [DOOM-0224] **Push all 31 push-constant floats in RecordRtOverlay (probe/tri/light lane undefined).**
+  r_vulkan.cpp:7836 pushes only 24 of the layout's 31 floats for the RT weapon draw; the raster draw pushes all 31. Safe only if the psprite shader never reads the probe lane -- push the full 31 zeroed.
+  **Layman:** A defensive fix in the RT weapon overlay; some GPU constants are left undefined but happen to be unread today.
+  Kind: fix.
+  Source: indie-review 2026-07-23 (vulkan-rt-render, LOW).
+
+- 📋 [DOOM-0225] **Prefer a present-capable device that also has bindless in PickPhysicalAndDevice.**
+  r_vulkan.cpp:1181 picks the first present-capable device then aborts if it lacks bindless, even when another present device (which RB_VulkanProbe accepts) has it.
+  **Layman:** On rare multi-GPU systems the renderer may pick a device that lacks a needed feature and abort.
+  Kind: fix.
+  Source: indie-review 2026-07-23 (vulkan-rt-core, LOW).
+
+- 📋 [DOOM-0226] **Avoid swapchain format fallback to formats[0] that may double-encode sRGB.**
+  r_vulkan.cpp:1357 swapchain format fallback to formats[0] could accept an _SRGB target the palette path double-encodes.
+  **Layman:** A cosmetic colour-accuracy edge on unusual GPUs; unreachable on the target hardware.
+  Kind: fix.
+  Source: indie-review 2026-07-23 (vulkan-rt-core, LOW).
+
+- 📋 [DOOM-0227] **Key R_InitLightTables zlight off centerxfrac_nonwide for consistent widescreen distance-light.**
+  r_main.c:633 R_InitLightTables keys zlight off wide SCREENWIDTH/2 while DOOM-0147 moved world projection to centerxfrac_nonwide. Cosmetic, widescreen-only, zero-diff at 4:3.
+  **Layman:** On a true-widescreen display, floor/ceiling distance-darkening fades at a slightly different rate than walls.
+  Kind: fix.
+  Source: indie-review 2026-07-23 (sw-renderer, LOW).
+
+- 📋 [DOOM-0228] **Bound r_mesh blit_tile against crafted flat/patch lump sizes (4096 assumption + post offsets).**
+  r_mesh.c blit_tile assumes flats are exactly 4096 bytes and trusts patch post offsets/lengths -- vanilla-parity but inconsistent with the file's own hardened paths. DOOM-0093-adjacent.
+  **Layman:** A crafted WAD with odd-sized graphics could make the mesh builder read out of bounds.
+  Kind: security.
+  Source: indie-review 2026-07-23 (vulkan-mesh-assets, LOW).
+
+- 📋 [DOOM-0229] **Widen rb_image box-filter accumulator to avoid overflow on pathological image sizes.**
+  rb_image.c:58 box-filter downscale uses unsigned acc[4], overflowing for >16M source texels per output texel.
+  **Layman:** A cosmetic overflow only on absurdly large source images (never real material art).
+  Kind: fix.
+  Source: indie-review 2026-07-23 (vulkan-mesh-assets, LOW).
+
+- 📋 [DOOM-0230] **Add RANGECHECK x/y to V_DrawPatchScaled and clip Y in M_WriteTextScaled.**
+  v_video.c:375 V_DrawPatchScaled (new for DOOM-0206) omits the RANGECHECK every sibling primitive has; caller M_WriteTextScaled clips X but not Y -> latent OOB write.
+  **Layman:** A defensive bounds guard on the new crisp-menu text drawing; safe with today's fixed content.
+  Kind: fix.
+  Source: indie-review 2026-07-23 (menu-hud, LOW).
+
+- 📋 [DOOM-0231] **Keep Classic main-menu scale-2 labels within ORIGWIDTH (no mid-word truncation).**
+  Classic main-menu labels drawn at scale 2 from x=97 can overrun ORIGWIDTH and truncate mid-word (Game Select / Load Game).
+  **Layman:** Cosmetic: some Classic menu labels can run off the edge and truncate.
+  Kind: ux.
+  Source: indie-review 2026-07-23 (menu-hud, LOW).
+
+- 📋 [DOOM-0232] **Harden d_main -wart bounds and FindResponseFile (ftell/fread/one-past-end).**
+  d_main.c: -wart reads myargv[p+1]/[p+2] under only `if(p)`; FindResponseFile has unchecked ftell/fread, a one-past-end write, and fixed moreargs[20]/MAXARGVS[100]. Dev-only, hence LOW.
+  **Layman:** Developer-only command-line paths that can misbehave with too few args or an odd response file.
+  Kind: fix.
+  Source: indie-review 2026-07-23 (platform-io, LOW).
+
+- 📋 [DOOM-0233] **Give I_StartSound an opaque handle -> channel map (avoid SDL channel aliasing).**
+  i_sound.c returns the Mix_PlayChannel number as the DOOM handle; a recycled channel can let a stale handle re-pan/halt the wrong effect. Add a handle->channel indirection (Chocolate DOOM pattern).
+  **Layman:** A rare audio glitch where a finished sound's controls could affect a different sound reusing its channel.
+  Kind: fix.
+  Source: indie-review 2026-07-23 (platform-io, LOW).
+
+- 📋 [DOOM-0234] **Add a crafted-WAD / malformed-packet fuzz + regression harness for the parse boundaries.**
+  Follow-up to the W_AddFile/mus2mid/i_net/d_net hardening: build crafted-WAD fixtures + a packet-parse harness so the untrusted-input guards get regression coverage beyond the mus2mid unit test.
+  **Layman:** Automated tests that throw deliberately-broken WADs and packets at the game to prove the new guards hold.
+  Kind: test.
+  Source: indie-review 2026-07-23 (follow-up to DOOM-0212..0215).

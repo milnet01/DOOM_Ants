@@ -48,6 +48,8 @@ cmake-build-*/
 
 # ants-audit tooling artifacts
 .audit_cache/
+# indie-review working reports (transient per-run; findings are folded into ROADMAP)
+.indie-review/
 audit_rule_quality.json
 /run-doom-ants.sh
 
