@@ -119,7 +119,8 @@ those three — it stays bitmap/red, just HUD-safe and uniform-size. The skin is
 chosen at draw time on `rendermode`.
 
 Scope of the crisp skin v1: the **new consolidated Video menu (`VideoDef`)
-only**. `OptionsDef` and `SoundDef` keep the classic path in v1 — their row
+only** *(v1 — **superseded by §4.6** for the 3D tiers, which extend the crisp
+skin to every Solid/Ultra menu)*. `OptionsDef` and `SoundDef` keep the classic path in v1 — their row
 labels are big-red graphic lumps (`M_MESSG`, `M_SVOL`, `M_MSENS`, `M_SCRNSZ`, …)
 drawn as patches, and several rows are thermometer sliders (`status == 2`), none
 of which the crisp text/slider API renders — and re-theming those lumps is a
@@ -483,7 +484,8 @@ path (it happens only on resize, never during play).
   pipeline & API. Verify: a hard-coded test string renders crisp at display res.
 - **L2** — dim backdrop + the HUD-safe bound (INV-2). The dim is keyed on the
   crisp skin (`M_MenuIsCrisp()` → `VideoDef`), so it darkens the scene only behind
-  the crisp menu, never a classic-path bitmap menu (§4.3). The HUD-safe bound is
+  the crisp menu, never a classic-path bitmap menu (§4.3). *(v1 framing; **§4.6
+  (v2) dims every 3D-tier menu**, since they all become crisp.)* The HUD-safe bound is
   independent of the dim (it applies to every 320×200 classic menu too, §L6).
   Verify: a screenshot shows the dim behind the crisp Video menu + zero menu
   pixels in the status-bar band.

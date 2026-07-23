@@ -124,8 +124,9 @@ problem is handled in [Window & device ownership](#window--device-ownership).
 
 ## Approach
 
-A new C++ back-end `r_vulkan.cpp` (+ helpers) implements `renderer_backend_t` and
-is registered through one `extern "C"` accessor that `r_backend.c` wires into the
+A new C++ back-end `r_vulkan.cpp` (+ helpers) exports a small set of `extern "C"`
+entry points (`RB_Vulkan_Available` / `Init` / `RenderView` / `Present` / …);
+`r_backend.c` wraps those in the `renderer_backend_t` structs it registers in the
 `RB_RT3D` / `RB_RASTER3D` slots. The C engine never sees a C++ type; the seam
 *is* the C/C++ boundary (ADR 0001). Vulkan is driven via `vulkan.hpp`, memory via
 VMA; shaders are GLSL → SPIR-V at build time, embedded as byte arrays so the

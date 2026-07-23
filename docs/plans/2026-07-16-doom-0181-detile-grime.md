@@ -1,5 +1,9 @@
 # DOOM-0181 — De-tiled, grimy Ultra surfaces Implementation Plan
 
+> **Status: completed 2026-07-16 (shipped, user-accepted 2026-07-17).** This plan
+> is retained as as-built implementation documentation — the checkbox tasks below
+> record work that is *done*, not open TODOs. See `docs/specs/DOOM-0181-detile-grime.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Kill the within-wall/floor texture repetition on HD surfaces in Ultra's ray-traced view, and add a filthy "monster-overrun" grime layer — by wrapping each HD map fetch in a world-keyed stochastic de-tiling blend and enriching `applyGrime`.

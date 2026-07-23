@@ -8,7 +8,7 @@ soundfont are bundled, so the game and its music work out of the box. Only a
 DOOM `.wad` is needed (not redistributable).
 
 ```sh
-packaging/build-appimage.sh 0.2.0-pre.1     # -> packaging/build/doom_ants-0.2.0-pre.1-x86_64.AppImage
+packaging/build-appimage.sh 0.5.0     # -> packaging/build/doom_ants-0.5.0-x86_64.AppImage
 ```
 
 - `doom_ants.desktop`, `doom_ants.png` — committed launcher entry + icon.

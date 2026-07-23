@@ -11,6 +11,12 @@
 > point here when the implementation landed (see the DOOM-0027 bullet in
 > `ROADMAP.md`).
 
+> **Currency note (2026-07-23):** DOOM-0147 later made `SCREENWIDTH` a *runtime*
+> value (widescreen, Hor+) and implemented the aspect-ratio correction this spec
+> lists as out of scope. This spec documents the *original* compile-time
+> fixed-2× (640×400) model; for how physical width is now chosen at startup from
+> the display aspect (`I_InitWidescreen`, `doomdef.h`), see DOOM-0147.
+
 ## Contents
 
 - **Goal** · **Background** — why a naïve resize breaks (the id "futile" warning)

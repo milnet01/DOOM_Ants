@@ -1,10 +1,10 @@
 # DOOM_Ants
 
 A GPL v2 fork of id Software's original **DOOM** source (`linuxdoom-1.10`,
-released 1997-12-23), being modernised in two movements:
+released 1997-12-23), being modernised in two stages:
 
 1. **Make it run today** — compile and play the 1997 engine on modern
-   64-bit Linux, swapping the legacy X11 video/sound layer for SDL2.
+   64-bit Linux and Windows, swapping the legacy X11 video/sound layer for SDL2.
 2. **The spin** — evolve the renderer toward true 3D with hardware
    ray/path tracing (global illumination + ray-traced shadows), dynamic and
    volumetric lighting, and a 60 FPS floor — while keeping it feeling like the
