@@ -32,6 +32,13 @@ These are the project's standards. Read the relevant one before working:
 - **Documentation** — `docs/standards/documentation.md`
 - **Roadmap format** — `docs/standards/roadmap-format.md`
 - **Dependencies** — `docs/standards/dependencies.md`
+- **Testing** — `docs/standards/testing.md`
+- **Security & untrusted input** — `docs/standards/security.md`
+- **Releases & versioning** — `docs/standards/releases.md`
+- **Renderer & shaders** — `docs/standards/renderer.md`
+- **Assets & licensing** — `docs/standards/assets.md`
+- **Review & QA** — `docs/standards/review.md`
+- **Performance** — `docs/standards/performance.md`
 
 Quick summary of the load-bearing ones:
 
