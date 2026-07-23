@@ -534,10 +534,11 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: feature.
   Source: in-session-2026-06-11.
   Scope clarification (2026-06-27, user): the muzzle flash must light up the room in BOTH 3D tiers (Solid AND Ultra), with ray tracing ON or OFF. RT off → a raster-lit flash (the room brightens, no cast shadows); RT on → the DOOM-0009 path tracer additionally casts the flash's ray-traced shadows + bounces. So muzzle-flash illumination is tier- and RT-agnostic (it is NOT an Ultra-only or RT-only effect); only the shadow quality scales with the RT toggle. Distinct from the pitch-black-room handling (DOOM-0043, Ultra-only): a flash lights any room momentarily regardless of tier.
-- 💭 [DOOM-0011] **Add volumetric lighting (god rays).**
+- 🚧 [DOOM-0011] **Add volumetric lighting (god rays).**
   **Layman:** Visible shafts of light through smoke and doorways.
   Kind: feature.
   Source: in-session-2026-06-11.
+  Spec written 2026-07-23: docs/specs/DOOM-0011-volumetric-lighting.md — RT single-scattering volumetrics (god-ray shafts + coloured height/area fog). Scope widened per user 2026-07-23: gated on RT ENGAGED (rb_rtdebug 4/6), so it covers BOTH Solid-RT and Ultra-RT, not Ultra alone. Sky + big-static emitters only (no dynamic/muzzle/flashlight); adds the engine's first directional "sun" vector for shafts; half-res + dithered + denoised; cheap&smooth ≤5% present-total gate; rb_fog 0..3 dial + `;` hotkey + both menus. Reuses misc6.z/.w (the last 2 free RT push lanes). Companion item DOOM-0238 = the FAKED rasterised-view version (Solid/Ultra "Original"), user chose "RT first, fake follows" + "match RT as closely as possible" — deferred. Cold-eyes CONVERGED after 4 loops (rule 14): loop1 HIGH1/MED5, loop2 MED3, loop3 HIGH1/MED2, loop4 MED1 — all verified & fixed (full log in the spec's Cold-eyes section); reviewer verdict "genuinely tight". NEXT: user sign-off on the spec → writing-plans → implement (L1-L6). Flipping 💭→🚧 (spec landed).
 - 💭 [DOOM-0012] **Hold a 60 FPS performance floor.**
   **Layman:** Keep it running smoothly — never below 60 frames per second.
   Kind: perf.
