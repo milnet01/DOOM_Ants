@@ -8161,7 +8161,23 @@ extern "C" void RB_Vulkan_Present(void)
     // bails if the RT view never becomes ready (launched in Solid, or no level warped in),
     // so a misconfigured run exits instead of spinning forever.
     if (rb_shotverify < 0)
+    {
         rb_shotverify = (M_CheckParm("-shotverify") || M_CheckParm("-shotcompare")) ? 1 : 0;
+        // DOOM-0208: pin a canonical, config-independent RT configuration for the
+        // golden-image gate. The shot modes render the normal path, which otherwise
+        // inherits ~/.doomrc — so a play-test tweak (a brighter rt_brightness, a
+        // stuck-on flashlight, a flipped effect toggle) silently poisons the golden.
+        // Force the shipped defaults (m_misc.c default table) so a capture is
+        // reproducible regardless of the user's live config, on both -shotverify
+        // (bless) and -shotcompare (compare).
+        if (rb_shotverify == 1)
+        {
+            rb_rtdebug = 6; rb_rtdebug_menu = 0; rb_profile = 0;
+            rb_upscaler = 1; rb_renderscale = 50; rb_exposure = 10;
+            rb_detile = 2; rb_filth = 1; rb_wet = 1;
+            rb_flashlight = 0;
+        }
+    }
     g.shotCapture = false;
     if (rb_shotverify == 1)
     {

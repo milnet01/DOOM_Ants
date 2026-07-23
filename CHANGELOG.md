@@ -8,6 +8,16 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Golden-image visual-regression gate is now config-independent (DOOM-0208).**
+  The -shotverify / -shotcompare modes rendered the normal path, which
+  inherited the live ~/.doomrc — so a play-test tweak (a brighter
+  rt_brightness, a stuck-on flashlight, a flipped effect toggle) silently
+  poisoned the golden and made the gate fail on an unchanged render. They
+  now pin a canonical, config-independent RT configuration (the shipped
+  defaults) whenever armed, so a capture is reproducible regardless of the
+  user's live config. Re-blessed the E1M1 Ultra-RT golden under the
+  canonical config (fresh compare is bit-exact, mae=0.000).
+
 - **Fix three low-severity bounds nits: donut NULL-deref, sfx off-by-one, basedefault snprintf.** (DOOM-0220)
   Three small safety tidy-ups: a malformed WAD donut, a sound-index edge, and a long $HOME path can no longer misbehave.
 
