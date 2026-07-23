@@ -7112,6 +7112,15 @@ extern "C" void RB_Vulkan_BuildLevel(void)
     // increment; a host-visible buffer (and plain device memory rather than VMA)
     // is enough for one static per-level mesh — VMA arrives with the many
     // image/buffer allocations of the materials increment.
+
+    // DOOM-0093/indie-review: this rebuild frees and recreates live GPU buffers
+    // (vertex slots, sky mesh, and via the rebuild the emitter/probe/light buffers)
+    // that the last submitted frame may still be reading. The mode-switch, recreate
+    // and shutdown paths all drain first; the level-load path must too, or the
+    // in-flight frame can use-after-free g.vbuf. Level load is not perf-critical.
+    if (g.device)
+        vkDeviceWaitIdle(g.device);
+
     if (g.levelMesh)
     {
         RB_FreeMesh(g.levelMesh);

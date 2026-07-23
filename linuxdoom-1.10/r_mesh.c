@@ -1291,6 +1291,8 @@ int RB_BuildPSprites(rb_vertex_t* out, int maxverts, float aspect)
         sprframe = &sprdef->spriteframes[psp->state->frame & FF_FRAMEMASK];
         lump = sprframe->lump[0];               // psprites are never rotated
         flip = (boolean)sprframe->flip[0];
+        if (lump < 0)                           // like RB_BuildSprites: a missing
+            continue;                           // rotation lump is -1 (OOB guard)
 
         wpx  = spritewidth[lump]     / (float)FRACUNIT;
         hpx  = (float)sprite_h[lump];

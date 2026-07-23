@@ -1350,7 +1350,7 @@ void M_DrawOptions(void)
     // DOOM-0206 (L6 review fix): value columns as hu_font text, not big-red
     // patches (INV-7 uniform row size).
     M_WriteText(OptionsDef.x + 120,OptionsDef.y+LINEHEIGHT*messages,
-		(char *)msgValueNames[showMessages]);
+		(char *)msgValueNames[(showMessages >= 0 && showMessages <= 1) ? showMessages : 0]);
 
     // DOOM-0206 (L3): the "Video" row (label from optionsLabels[renderer]) opens
     // the crisp VideoDef in the 3D tiers, the classic RendererDef in Classic
@@ -1434,7 +1434,7 @@ void M_DrawRendererMenu(void)
     // FPS access point once it left Options). Same fpsCorner var / M_ChangeFPS.
     M_WriteText(RendererDef.x,RendererDef.y+LINEHEIGHT*rm_fps,"FPS Counter:");
     M_WriteText(RendererDef.x + 120,RendererDef.y+LINEHEIGHT*rm_fps,
-		fpsPosNames[fpsCorner]);
+		fpsPosNames[(fpsCorner >= 0 && fpsCorner <= 3) ? fpsCorner : 0]);
 
     // DOOM-0096: Ultra/denoiser brightness. Label on its own line with a thermometer
     // slider below it (rb_exposure 0..15), the standard DOOM slider layout.
@@ -1560,7 +1560,7 @@ static void M_VideoCrispValue(int i, crispval_t* cv)
       case vid_wet:        cv->str = rb_wet ? "On" : "Off"; break;
       case vid_widescreen: cv->str = widescreen ? "On (restart)" : "Off (restart)"; break;
       case vid_fillscreen: cv->str = fillstretch ? "On" : "Off"; break;
-      case vid_fps:        cv->str = fpsPosNames[fpsCorner]; break;
+      case vid_fps:        cv->str = fpsPosNames[(fpsCorner >= 0 && fpsCorner <= 3) ? fpsCorner : 0]; break;
       case vid_debugviews: cv->str = rb_rtdebug_menu ? "On" : "Off"; break;
       case vid_profiler:   cv->str = rb_profile ? "On" : "Off"; break;
       case vid_back:       cv->centered = 1; break;
@@ -1572,7 +1572,7 @@ static void M_OptionsCrispValue(int i, crispval_t* cv)
 {
     switch (i)
     {
-      case messages:  cv->str = msgValueNames[showMessages]; break;
+      case messages:  cv->str = msgValueNames[(showMessages >= 0 && showMessages <= 1) ? showMessages : 0]; break;
       case renderer:  cv->str = (const char*)RB_ModeName(rendermode); break;
       // Sliders share the classic thermo scales: Screen Size 0..7 (M_SizeDisplay),
       // Mouse Sensitivity 0..9 (thermWidth 10). See the classic M_DrawThermo calls.
