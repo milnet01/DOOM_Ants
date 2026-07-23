@@ -23,16 +23,20 @@
 #ifndef __MUS2MID_H__
 #define __MUS2MID_H__
 
+#include <stddef.h>   // size_t
+
 // Convert the MUS lump at `mus` to a heap-allocated MIDI byte stream.
 //
-// The MUS header carries its own length (score start + score length), so no
-// separate length argument is needed (matching I_RegisterSong's bare pointer).
+// `muslen` is the real byte length of the source lump (from W_LumpLength). Reads
+// are bounded by it as well as by the MUS header's own declared length, so a
+// crafted/truncated lump that inflates its header length cannot read past the
+// buffer (DOOM-0093).
 //
 // On success returns 0, stores a malloc'd MIDI buffer in *mid_out and its
 // length in *mid_len (caller frees with free()). On failure returns non-zero
-// and leaves *mid_out NULL / *mid_len 0 (the lump is not MUS, or the score is
-// malformed).
-int mus2mid(const unsigned char *mus, unsigned char **mid_out, int *mid_len);
+// and leaves *mid_out NULL / *mid_len 0 (the lump is too small, not MUS, or the
+// score is malformed).
+int mus2mid(const unsigned char *mus, size_t muslen, unsigned char **mid_out, int *mid_len);
 
 #endif
 

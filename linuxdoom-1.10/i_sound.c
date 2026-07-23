@@ -689,7 +689,7 @@ void I_ShutdownMusic(void)
   music_initialised = false;
 }
 
-int I_RegisterSong(void* data)
+int I_RegisterSong(void* data, int length)
 {
   unsigned char*	midi;
   int			midilen;
@@ -700,8 +700,8 @@ int I_RegisterSong(void* data)
   if (!music_initialised)
     return 0;
 
-  // Convert MUS -> MIDI. The MUS header carries its own length.
-  if (mus2mid((const unsigned char*)data, &midi, &midilen) != 0)
+  // Convert MUS -> MIDI, bounding reads by the real lump length (DOOM-0093).
+  if (mus2mid((const unsigned char*)data, (size_t)length, &midi, &midilen) != 0)
   {
     fprintf(stderr, "I_RegisterSong: lump is not MUS music; skipping\n");
     return 0;

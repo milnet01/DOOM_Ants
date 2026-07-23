@@ -76,7 +76,7 @@ the platform implementations of these functions change:
 | Function | Today | After |
 |----------|-------|-------|
 | `I_InitMusic` | empty | init SDL2_mixer + open music device + set soundfont |
-| `I_RegisterSong(data)` | returns 1 | convert MUS→MIDI, load as a `Mix_Music`, return handle |
+| `I_RegisterSong(data, length)` | returns 1 | convert MUS→MIDI (reads bounded by `length`), load as a `Mix_Music`, return handle |
 | `I_PlaySong(h, looping)` | no-op | `Mix_PlayMusic` (loop forever when `looping`) |
 | `I_PauseSong` / `I_ResumeSong` | no-op | `Mix_PauseMusic` / `Mix_ResumeMusic` |
 | `I_StopSong` | no-op | `Mix_HaltMusic` |
@@ -84,10 +84,13 @@ the platform implementations of these functions change:
 | `I_UnRegisterSong(h)` | no-op | `Mix_FreeMusic` + free the song's MIDI buffer |
 | `I_ShutdownMusic` | empty | halt, close music device, `Mix_Quit` |
 
-`I_RegisterSong` receives a bare pointer to the lump with **no length**. The MUS
-header carries its own size (score start offset + score length), so the
-converter derives the byte count from the header. (Confirmed call site:
-`s_sound.c:679–680` → `music->data = W_CacheLumpNum(...)`; `I_RegisterSong(music->data)`.)
+`I_RegisterSong(data, length)` receives the lump pointer **and its real byte
+length** (`W_LumpLength`). The MUS header also carries its own declared size
+(score start offset + score length); the converter bounds every read by the
+smaller of the two, so a crafted/truncated lump that inflates its header length
+cannot read past the buffer (DOOM-0093, indie-review 2026-07-23). (Call site:
+`s_sound.c` → `music->data = W_CacheLumpNum(...)`;
+`I_RegisterSong(music->data, W_LumpLength(music->lumpnum))`.)
 
 The volume `v` reaching `I_SetMusicVolume` is DOOM's 0–15 scale: the music
 slider is capped at 15 (`m_menu.c:842`) and passed straight through

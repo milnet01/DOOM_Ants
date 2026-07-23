@@ -1190,6 +1190,10 @@ int EV_DoDonut(line_t*	line)
 			
 	rtn = 1;
 	s2 = getNextSector(s1->lines[0],s1);
+	// DOOM-0093: a malformed WAD can make lines[0] one-sided, so getNextSector
+	// returns NULL here -- skip rather than deref (every other caller guards this).
+	if (!s2)
+	    continue;
 	for (i = 0;i < s2->linecount;i++)
 	{
 	    // DOOM-0138: skip lines that aren't two-sided, or whose back sector is s1.

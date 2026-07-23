@@ -103,7 +103,7 @@ static void writebytes(musconv *c, const void *src, size_t n)
         while (newcap < c->len + n)
             newcap *= 2;
 
-        p = realloc(c->data, newcap);
+        p = (unsigned char *)realloc(c->data, newcap);
         if (!p)
         {
             c->error = 1;
@@ -293,7 +293,7 @@ static int get_midichannel(musconv *c, int mus_channel)
     return c->channel_map[mus_channel];
 }
 
-int mus2mid(const unsigned char *mus, unsigned char **mid_out, int *mid_len)
+int mus2mid(const unsigned char *mus, size_t muslen_real, unsigned char **mid_out, int *mid_len)
 {
     musconv c;
     size_t muslen, pos;
@@ -304,13 +304,22 @@ int mus2mid(const unsigned char *mus, unsigned char **mid_out, int *mid_len)
     *mid_out = NULL;
     *mid_len = 0;
 
+    // DOOM-0093: need the full 8-byte header (magic + scorelength + scorestart)
+    // present before reading any of it.
+    if (muslen_real < 8)
+        return 1;
+
     // Validate the MUS magic ("MUS\x1a").
     if (mus[0] != 'M' || mus[1] != 'U' || mus[2] != 'S' || mus[3] != 0x1a)
         return 1;
 
     scorelength = rd_u16le(mus + 4);
     scorestart  = rd_u16le(mus + 6);
+    // Bound the score by the REAL lump size, not just the header's declared length
+    // -- a crafted lump can inflate scorestart+scorelength past the buffer.
     muslen = (size_t)scorestart + scorelength;
+    if (muslen > muslen_real)
+        muslen = muslen_real;
     pos = scorestart;
 
     memset(&c, 0, sizeof c);
@@ -343,7 +352,7 @@ int mus2mid(const unsigned char *mus, unsigned char **mid_out, int *mid_len)
 
             READ_BYTE(eventdescriptor);
             channel = get_midichannel(&c, eventdescriptor & 0x0F);
-            event = eventdescriptor & 0x70;
+            event = (musevent)(eventdescriptor & 0x70);
 
             switch (event)
             {

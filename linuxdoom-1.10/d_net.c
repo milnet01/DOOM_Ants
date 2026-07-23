@@ -274,6 +274,12 @@ void GetPackets (void)
 			
 	netconsole = netbuffer->player & ~PL_DRONE;
 	netnode = doomcom->remotenode;
+
+	// DOOM-0093: player is an attacker-controlled byte; masking PL_DRONE leaves
+	// 0-127, but netconsole indexes MAXPLAYERS-sized arrays (playeringame,
+	// nodeforplayer, netcmds). Drop packets naming a bogus player.
+	if (netconsole < 0 || netconsole >= MAXPLAYERS)
+	    continue;
 	
 	// to save bytes, only the low byte of tic numbers are sent
 	// Figure out what the rest of the bytes are

@@ -768,7 +768,7 @@ void IdentifyVersion (void)
 #endif
     if (!home)
       I_Error("Please set $HOME to your home directory");
-    sprintf(basedefault, "%s/.doomrc", home);
+    snprintf(basedefault, sizeof(basedefault), "%s/.doomrc", home);
 #endif
 
     // DOOM_Ants: -iwad <file> selects the IWAD explicitly, so DOOM 1 and
@@ -1312,13 +1312,18 @@ void D_DoomMain (void)
     if (p && p < myargc-1)
     {
 	if (gamemode == commercial)
+	{
 	    startmap = atoi (myargv[p+1]);
-	else
+	    autostart = true;
+	}
+	// DOOM-0093: the E/M form also reads myargv[p+2]; without this p<myargc-2
+	// guard, `-warp 3` on a non-commercial IWAD derefs argv[argc] (NULL).
+	else if (p < myargc-2)
 	{
 	    startepisode = myargv[p+1][0]-'0';
 	    startmap = myargv[p+2][0]-'0';
+	    autostart = true;
 	}
-	autostart = true;
     }
     
     // init subsystems

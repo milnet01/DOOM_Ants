@@ -232,6 +232,15 @@ void PacketGet (void)
     netbuffer->starttic = sw.starttic;
     netbuffer->numtics = sw.numtics;
 
+    // DOOM-0093: numtics is an attacker-controlled byte (0-255) but cmds[] holds
+    // only BACKUPTICS entries -- a larger value overflows netbuffer->cmds (and
+    // over-reads sw.cmds). Drop the malformed packet.
+    if (netbuffer->numtics > BACKUPTICS)
+    {
+	doomcom->remotenode = -1;
+	return;
+    }
+
     for (c=0 ; c< netbuffer->numtics ; c++)
     {
 	netbuffer->cmds[c].forwardmove = sw.cmds[c].forwardmove;

@@ -205,6 +205,18 @@ void W_AddFile (char *filename)
 	}
 	header.numlumps = LONG(header.numlumps);
 	header.infotableofs = LONG(header.infotableofs);
+	// DOOM-0093: validate the directory against the real file size before trusting
+	// numlumps/infotableofs -- a crafted numlumps overflows the int `length`
+	// (numlumps*16) and the fill loop reads an OOB / uninitialised directory.
+	{
+	    long filelen = filelength(handle);
+	    if (header.numlumps < 0
+		|| (long)header.numlumps > filelen / (long)sizeof(filelump_t)
+		|| header.infotableofs < 0
+		|| (long)header.infotableofs
+		   + (long)header.numlumps * (long)sizeof(filelump_t) > filelen)
+		I_Error ("W_AddFile: %s has a corrupt lump directory", filename);
+	}
 	length = header.numlumps*sizeof(filelump_t);
 	// alloca() is obsolete and numlumps is attacker-controlled, so a huge
 	// request must fail gracefully: use a checked heap allocation.
@@ -213,7 +225,8 @@ void W_AddFile (char *filename)
 	    I_Error ("W_AddFile: couldn't malloc %i bytes for %s",
 		     length, filename);
 	lseek (handle, header.infotableofs, SEEK_SET);
-	read (handle, fileinfo, length);
+	if (read (handle, fileinfo, length) != length)
+	    I_Error ("W_AddFile: %s has a truncated lump directory", filename);
 	numlumps += header.numlumps;
     }
 
@@ -270,6 +283,16 @@ void W_Reload (void)
     read (handle, &header, sizeof(header));
     lumpcount = LONG(header.numlumps);
     header.infotableofs = LONG(header.infotableofs);
+    // DOOM-0093: same directory validation as W_AddFile (reload path).
+    {
+	long filelen = filelength(handle);
+	if (lumpcount < 0
+	    || (long)lumpcount > filelen / (long)sizeof(filelump_t)
+	    || header.infotableofs < 0
+	    || (long)header.infotableofs
+	       + (long)lumpcount * (long)sizeof(filelump_t) > filelen)
+	    I_Error ("W_Reload: %s has a corrupt lump directory", reloadname);
+    }
     length = lumpcount*sizeof(filelump_t);
     // alloca() is obsolete; use a checked heap allocation (lumpcount is
     // read straight from the file header, so a huge value must fail safely).
@@ -277,7 +300,8 @@ void W_Reload (void)
     if (!fileinfo)
 	I_Error ("W_Reload: couldn't malloc %i bytes", length);
     lseek (handle, header.infotableofs, SEEK_SET);
-    read (handle, fileinfo, length);
+    if (read (handle, fileinfo, length) != length)
+	I_Error ("W_Reload: %s has a truncated lump directory", reloadname);
     
     // Fill in lumpinfo
     lump_p = &lumpinfo[reloadlump];

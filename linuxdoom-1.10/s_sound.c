@@ -290,8 +290,8 @@ S_StartSoundAtVolume
   	   "S_StartSoundAtVolume: playing sound %d (%s)\n",
   	   sfx_id, S_sfx[sfx_id].name );*/
   
-  // check for bogus sound #
-  if (sfx_id < 1 || sfx_id > NUMSFX)
+  // check for bogus sound # (S_sfx has NUMSFX entries; index NUMSFX is one past)
+  if (sfx_id < 1 || sfx_id >= NUMSFX)
     I_Error("Bad sfx #: %d", sfx_id);
   
   sfx = &S_sfx[sfx_id];
@@ -699,7 +699,7 @@ static void S_StartMusicInfo(musicinfo_t* music, int looping)
 
     // load & register it
     music->data = (void *) W_CacheLumpNum(music->lumpnum, PU_MUSIC);
-    music->handle = I_RegisterSong(music->data);
+    music->handle = I_RegisterSong(music->data, W_LumpLength(music->lumpnum));
 
     // play it
     I_PlaySong(music->handle, looping);
