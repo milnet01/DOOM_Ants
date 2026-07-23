@@ -1,15 +1,34 @@
 # DOOM-0011 — Volumetric lighting (god-rays + fog) in the ray-traced view
 
-**Status:** **Draft — pre-`/cold-eyes`.** Design approved by the user 2026-07-21
-(brainstorm) and scope-widened 2026-07-23: the volumetrics run whenever the
-**ray-traced path is engaged**, so they cover **both Solid-RT and Ultra-RT**, not
-Ultra alone. The **rasterised** "Original" view (Solid-raster / Ultra-raster) gets a
-**separate, faked** screen-space treatment tracked as its own item
-(**DOOM-0238**, "match the RT look as closely as raster allows", user 2026-07-23) —
-**out of scope here**. This spec is the RT technique only. Not yet implemented; runs
-through `/cold-eyes` (rule 14) before any code.
+**Status:** **Reviewed — `/cold-eyes` converged (4 loops, 2026-07-23); awaiting user
+sign-off before implementation.** Design approved by the user 2026-07-21 (brainstorm)
+and scope-widened 2026-07-23: the volumetrics run whenever the **ray-traced path is
+engaged**, so they cover **both Solid-RT and Ultra-RT**, not Ultra alone. The
+**rasterised** "Original" view (Solid-raster / Ultra-raster) gets a **separate, faked**
+screen-space treatment tracked as its own item (**DOOM-0238**, "match the RT look as
+closely as raster allows", user 2026-07-23) — **out of scope here**. This spec is the
+RT technique only. Not yet implemented.
 
-**Cold-eyes log** (rule 14 — loop until convergence): _pending — loop 1 to run._
+**Cold-eyes log** (rule 14 — looped until convergence, 2026-07-23):
+- **Loop 1** (2 lanes) — CRITICAL 0 · HIGH 1 · MEDIUM 5 · LOW 4 · INFO 3, all verified
+  & fixed. Headline: the fog composite mixed colour spaces at the sky/wall seam (pinned
+  linear-radiance on both branches); the menu plumbing listed 2 of 6 sites; "DOOM-0042
+  (emitter set)" was the wrong ID (→ DOOM-0009 buffer / DOOM-0084 static slice); the
+  perf gate read in FPS not ≤ 5 % present-total; INV-7/8 named no falsifier
+  (→ `-shotcompare` / by-construction).
+- **Loop 2** — CRITICAL 0 · HIGH 0 · MEDIUM 3 · LOW 4 · INFO 2, all verified & fixed.
+  The mode-4 composite hook was unspecified (added `pathtrace.comp:1024`); the INV-7
+  `-shotcompare` falsifier was wrong — it renders RT-only, so reserved for INV-8;
+  "mirror `rb_wet` exactly" was the wrong menu template for a 0..3 dial (→ `rb_detile`).
+- **Loop 3** — CRITICAL 0 · HIGH 1 · MEDIUM 2 · LOW 4 · INFO 1, all verified & fixed.
+  `rb_fog`'s shipped default conflicted with DOOM-0208's canonical-config pin
+  (reconciled: default `=1`, golden re-blessed with fog, fog-off identity
+  by-construction); "no new bindings" vs the new fog image (reworded); transmittance
+  "RGB or scalar" vs the `RGBA16F` packing (pinned scalar; coloured absorption → Q11).
+- **Loop 4** — CRITICAL 0 · HIGH 0 · MEDIUM 1 · LOW 3, all verified & fixed. One
+  completeness gap — the half-res fog upsample at sky/far-depth pixels (added a
+  plain-bilinear fallback at the sky sentinel); the rest polish. Reviewer verdict:
+  "genuinely tight." **Converged** — no substantive finding remains.
 
 ---
 
@@ -282,7 +301,12 @@ Fog is low-frequency, so compute it **cheaply and smooth it**:
   (albedo re-multiply, §3 gap 3). Two candidate paths (Q6): (a) a **bilateral upsample**
   of the half-res fog target guided by depth, cheapest and self-contained; (b) run
   the existing edge-aware **a-trous** passes (`r_vulkan.cpp:7545`) on the fog channel
-  too. Start with (a); escalate to (b) only if the fog crawls/flickers.
+  too. Start with (a); escalate to (b) only if the fog crawls/flickers. **At sky /
+  far-depth pixels** (the `gp.w < 0.0` sentinel of the sky-passthrough branch,
+  `svgf_composite.comp:66`) a depth-guided weight has no valid neighbour depth right at
+  the sky/wall seam where shafts read — so there the upsample **falls back to a plain
+  bilinear fetch** of the fog target (no depth guide), keeping the shaft-against-sky
+  reconstruction smooth.
 - **Composite — computed once, applied per-mode, always in linear radiance.**
   `marchFog` *computes* `inscatter`/`transmittance` in the megakernel for **both**
   modes; where they are *applied* differs by mode:
@@ -391,9 +415,9 @@ Fog is low-frequency, so compute it **cheaply and smooth it**:
   the readback (`:8076-8086`) — a small, contained change made **with** the perf
   layer (L6), not silently skipped.
 - **Levers held ready** (measure before cutting): the `rb_fog` **strength** dial is
-  itself the standing perf option (lower strength → cheaper is *not* automatic, so
-  also:) reduce `kFogSteps`; drop the emitter occlusion ray (§4.4b); distance-gate
-  the march (`kFogMaxDist`); half-res in mode 4 too.
+  the standing perf option (though a lower strength is not automatically cheaper), plus
+  reduce `kFogSteps`; drop the emitter occlusion ray (§4.4b); distance-gate the march
+  (`kFogMaxDist`); make mode 4 half-res too.
 - **Gate (L6, the pass/fail):** with `rb_fog` at its shipped default, the march adds
   **≤ 5 % to present-total** (ms) vs the `rb_fog`-off RT-on baseline on the fixed
   goo-room walk — the same measurable bar DOOM-0181 held. ("Within a handful of FPS"
@@ -420,7 +444,7 @@ is objective.
 | **L3** | **Height pooling + torch shafts:** height-based density (`hitP.z` floor ref); iterate static emitters `k<omniStart` (nearest-few, no occlusion first). | Fog settles low into a floor layer; a torch in a dark room glows its surrounding air; dynamic/muzzle/flashlight do **not** scatter | no |
 | **L4** | **Area profiles + colour:** goo tint via the primary-hit `RB_FLAG_LIQUID_NUKAGE`; hell haze via the new `rb_view_t` field → `misc6.w`; `mediumTint` colouring (light×medium). | Goo rooms fill green and pool low; hell levels gain a faint red haze; a torch shaft reads warm-through-green in goo; clear levels stay neutral | no |
 | **L5** | **Denoise/quality pass:** dither tuning; escalate upsample→a-trous if it crawls (§4.6 Q6); phase/anisotropy tune. | Fog is smooth, not grainy or crawling, in a slow pan; shafts hold their shape | no |
-| **L6** | **Runtime dial + menu + key + perf:** `rb_fog` (`rt_fog` config), both menu rows, the `;` key, the profiler-slot growth, the DOOM-0208 canonical-config pin (§8 INV-8), and the perf pass. | Toggle/strength flip cleanly off→low→high; adds **≤ 5 % present-total** vs off (§6); `-rtverify` **green**; `-shotcompare` re-blessed with subtle fog (fog-off byte-identity is by-construction, INV-8); 60 FPS floor held | **yes** |
+| **L6** | **Runtime dial + menu + key + perf:** `rb_fog` (`rt_fog` config), both menu rows, the `;` key, the profiler-slot growth, the DOOM-0208 canonical-config pin (§8 INV-8), and the perf pass. | Toggle/strength flip cleanly off→low→high; adds **≤ 5 % present-total** vs off (§6); `-rtverify` **green**; if fog ships on-by-default (Q10) the `-shotcompare` golden is re-blessed with subtle fog, else fog-off stays byte-identical (INV-8); 60 FPS floor held | **yes** |
 
 **Interim state (expected, not a regression):** L1 ships a flat sky-ambient glow
 with **no** shafts (the directional term arrives at L2) and **no** colour (profiles
@@ -463,7 +487,7 @@ arrive at L4) — mirroring DOOM-0183's "sheen-before-ripple" staged interim.
   today **by construction** (like INV-7 — no golden needed). Two *distinct*
   `-shotcompare` roles, not to be conflated: **(a)** the DOOM-0208 canonical config
   pins effect toggles to their **shipped defaults** (`rb_detile=2, rb_filth=1,
-  rb_wet=1`, `r_vulkan.cpp:8175-8177`), so when fog ships it pins `rb_fog` to *its*
+  rb_wet=1`, `r_vulkan.cpp:8177`), so when fog ships it pins `rb_fog` to *its*
   shipped default (§5) and the golden is **re-blessed *with* subtle fog** — the gate
   then guards the fog *look* (exactly how DOOM-0183 re-blessed for wet). **(b)** The
   fog-*off* byte-identity is structural; if an empirical check is wanted, a temporary
