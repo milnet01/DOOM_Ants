@@ -61,14 +61,14 @@ tuned on the user's RX 6600 together. Start subtle.
 - **DOOM-0009** (path tracer) — the RT back-end. This adds a **view-ray march**
   over `t ∈ [0, tHit]` in `shaders/pathtrace.comp` **mode 4** (NEE display) and
   **mode 6** (denoised play), the same two display modes DOOM-0181/0183 hook, right
-  after the primary hit is resolved (`tHit`/`hitP` at `pathtrace.comp:915-916`
-  mode 4, `:1093-1094` mode 6). Unlike those features there is **no existing
-  shading point to extend** — the march is genuinely new code between the primary
-  hit and the final composite.
+  after the primary hit is resolved (`tHit`/`hitP` are passed into the `marchFog` calls,
+  `pathtrace.comp:1060-1064` mode 4 / `:1189-1195` mode 6). Unlike those features there
+  is **no existing shading point to extend** — the march is genuinely new code between
+  the primary hit and the final composite.
 - **DOOM-0009 / DOOM-0084** (emitter set + static slice; **DOOM-0119** cull) — the fog's light sources are the
   **existing** static emitters: the `Emitters` device-address buffer
-  (14 floats/record, `pt_common.glsl:52-56`), sliced `[0, omniStart)` = oriented
-  static wall/flat lights via `omniStart = pc.misc4.y` (`r_vulkan.cpp:7400`). Fog
+  (14 floats/record, `pt_common.glsl:84-87`), sliced `[0, omniStart)` = oriented
+  static wall/flat lights via `omniStart = pc.misc4.y` (`r_vulkan.cpp:7426`). Fog
   scatters **only** sky + those big static lights (§4.4) — no new light system.
 
 **Delivers / relates:**
@@ -322,7 +322,7 @@ remain. Expected, not a bug.
 
 **(b) Torch shafts — the existing static emitters.** Iterate the static slice
 `k ∈ [0, omniStart)` (`omniStart = pc.misc4.y`, written at `r_vulkan.cpp:7426`; record
-layout `pt_common.glsl:52-56`). For cost control, **do not** shadow-test every emitter at
+layout `pt_common.glsl:84-87`). For cost control, **do not** shadow-test every emitter at
 every sample — that is `steps × emitters` rays. Instead (Q2, start cheap):
 - pick the **nearest few** static emitters to the sample (distance from the record's
   centroid), and
@@ -372,7 +372,7 @@ Fog is low-frequency, so compute it **cheaply and smooth it**:
 - **Denoise / upsample.** Fog **cannot** ride the SVGF illumination channel
   (albedo re-multiply, §3 gap 3). Two candidate paths (Q6): (a) a **bilateral upsample**
   of the half-res fog target guided by depth, cheapest and self-contained; (b) run
-  the existing edge-aware **a-trous** passes (`r_vulkan.cpp:7545`) on the fog channel
+  the existing edge-aware **a-trous** passes (`r_vulkan.cpp:7564`) on the fog channel
   too. Start with (a); escalate to (b) only if the fog crawls/flickers. **At sky /
   far-depth pixels** (the `gp.w < 0.0` sentinel of the sky-passthrough branch,
   `svgf_composite.comp:93`) a depth-guided weight has no valid neighbour depth right at
@@ -401,7 +401,7 @@ Fog is low-frequency, so compute it **cheaply and smooth it**:
 ### 4.6a Fogging the sky backdrop (aerial perspective)
 
 **Why the mountains stay crisp today.** `marchFog` runs **only** inside the world-hit
-branch (`if (committed && !isSky)`, `pathtrace.comp:850-856`); it is called at
+branch (`if (committed && !isSky)`, `pathtrace.comp:849-856`); it is called at
 `pathtrace.comp:1060-1064` (mode 4) / `:1189-1195` (mode 6). A primary ray that hits
 the sky — a true miss, or a committed hit on the sky-backdrop instance (custom-index 2)
 — funnels to the sky `else` branch (`:1274-1297`) and **never marches**: no `tHit` is
@@ -534,27 +534,34 @@ at L1b (Q14).
   each with **one** sky shadow ray + a few emitter evaluations, at **half-res**
   (¼ the pixels) + denoise. The shadow rays are the pole; half-res + few steps +
   dither + denoise is what makes it affordable.
-- **A dedicated GPU-timer slot — probably a free slot, not pool growth.** The RT
-  profiler pool has **8 slots, 5 used** (`r_vulkan.cpp:1504`) — so **3 are free**. A
-  fog-pass timer should just claim a free slot (re-count the live `vkCmdWriteTimestamp`
-  sites at L6 to confirm). **Only if** the pool has since filled does a fog timer need
-  `queryCount` bumped + the resets and readback widened — a small, contained change made
-  **with** the perf layer (L6), not silently skipped.
+- **A dedicated GPU-timer slot needs the pool grown.** The RT profiler pool is sized
+  `queryCount = 8` (`r_vulkan.cpp:1518`) and the RT path **already writes all 8 indices
+  0–7** (`vkCmdWriteTimestamp` at `:7327`, `:7354`, `:7495`, `:7554`, `:7574`, `:7587`,
+  `:7634-7636`, `:7638`, `:7768` — note the code comment at `:1504` still says "5 used"
+  but is itself stale). So a fog-pass timer must **bump `queryCount` past 8** and widen
+  the resets + the readback — a small, contained change made **with** the perf layer
+  (L6), not silently skipped.
 - **Levers held ready** (measure before cutting): the `rb_fog` **strength** dial is
   the standing perf option (though a lower strength is not automatically cheaper), plus
   reduce `kFogSteps`; drop the emitter occlusion ray (§4.4b); distance-gate the march
   (`kFogMaxDist`); make mode 4 half-res too; and — the biggest new lever —
   **swap the per-sample open-sky up-ray (§4.3a) for the near-free per-surface
   `RB_MESH_OUTDOOR` flag**, trading the doorway cutoff for whole-view granularity.
-- **2026-07-24 amendment — the up-ray is a new pole; L1b spot-checks it.** The open-sky
-  up-ray (§4.3a) adds **one ray per march sample** — the same order as the L2 sun ray,
-  so at `kFogSteps`×half-res it roughly *doubles* the march's ray count (mode 6,
-  half-res — the full-res mode-4 display march pays proportionally more, but mode 4
-  isn't the FPS-gated play path). Because it
-  lands in **L1b** (§7), that layer carries its **own hardware perf spot-check** on the
-  RX 6600: if the per-sample up-ray drops Ultra below the 60 FPS floor, L1b ships the
-  `RB_MESH_OUTDOOR` fallback instead (built in the same layer). The **formal ≤ 5 %
-  present-total gate stays L6**; L1b's check is a go/no-go on which exposure method
+- **2026-07-24 amendment — the up-ray is the march's FIRST ray, and L1b spot-checks it.**
+  The shipped L1 `marchFog` (`pathtrace.comp:774-796`) does **zero** ray-queries per
+  sample — the loop is just `density × strength × flat-sky-ambient`. The open-sky up-ray
+  (§4.3a) adds **the first** ray-query, one per march sample: a `0 → 1` ray/sample jump
+  ×`kFogSteps`×half-res, so expect a **large, not incremental** cost step (a ray-query is
+  typically the priciest op in a march loop). (Mode 4's full-res march pays
+  proportionally more, but mode 4 isn't the FPS-gated play path; L2 later adds a *second*
+  ray, the sun shaft.) Because it lands in **L1b** (§7), that layer carries its **own
+  hardware perf spot-check** on the RX 6600, using the §6 A/B method: measure the up-ray's
+  **added present-total** (fog-off vs fog-on, same walk) — the goo room's ~40 FPS baseline
+  is a pre-existing megakernel/denoiser cost, so the check is the *added* Δ, plus a
+  confirmation that a **typical non-goo corridor scene** (where Ultra sits above 60 FPS
+  today) still holds 60 FPS with the up-ray on. If the added cost blows the budget, L1b
+  ships the `RB_MESH_OUTDOOR` fallback instead (built in the same layer). The **formal
+  ≤ 5 % present-total gate stays L6**; L1b's check is a go/no-go on which exposure method
   ships.
 - **Gate (L6, the pass/fail):** with `rb_fog` at its shipped default, the march adds
   **≤ 5 % to present-total** (ms) vs the `rb_fog`-off RT-on baseline on the fixed
@@ -584,6 +591,10 @@ is objective.
 | **L4** | **Area profiles + colour:** goo tint via the primary-hit `RB_FLAG_LIQUID_NUKAGE`; hell haze via the new `rb_view_t` field → `misc6.w`; `mediumTint` colouring (light×medium). | Goo rooms fill green and pool low; hell levels gain a faint red haze; a torch shaft reads warm-through-green in goo; clear levels stay neutral | no |
 | **L5** | **Denoise/quality pass:** dither tuning; escalate upsample→a-trous if it crawls (§4.6 Q6); phase/anisotropy tune. | Fog is smooth, not grainy or crawling, in a slow pan; shafts hold their shape | no |
 | **L6** | **Runtime dial + menu + key + perf:** `rb_fog` (`rt_fog` config), both menu rows, the `;` key, the fog-pass profiler-slot wiring (claim a free slot; grow the pool only if full — §6), the DOOM-0208 canonical-config pin (§8 INV-8), and the perf pass. | Toggle/strength flip cleanly off→low→high; adds **≤ 5 % present-total** vs off (§6); `-rtverify` **green**; if fog ships on-by-default (Q10) the `-shotcompare` golden is re-blessed with subtle fog, else fog-off stays byte-identical (INV-8); 60 FPS floor held | **yes** |
+
+**Footnote — the L1b "spot-check" FPS-gate:** *not* the formal perf gate (that stays
+L6-only, §6). It is an internal **go/no-go on which exposure method ships** — the
+per-sample up-ray if it holds the budget, the `RB_MESH_OUTDOOR` fallback if it doesn't.
 
 **Interim state (expected, not a regression):** L1 (shipped, e7753b3) is a flat
 **uniform** sky-ambient glow — the user play-test flagged it as too-uniform and
@@ -620,7 +631,7 @@ haze still has **no** shafts (the directional term arrives at L2) and **no** col
   lives only in the RT megakernel, so no raster/Classic code is touched. (There is no
   golden test for *this* claim: `-shotcompare` renders the Ultra-RT view only and
   cannot exercise the raster path — that gate is INV-8's, below.) The fog lanes sit
-  beyond the 184-byte `-rtverify` prefix (`r_vulkan.cpp:6828`), so **`-rtverify` is
+  beyond the 184-byte `-rtverify` prefix (`r_vulkan.cpp:6854`), so **`-rtverify` is
   unaffected**; the headless verify mode (5), the debug views (1–3), and RT-off (0)
   are untouched.
 - **INV-8:** Every fog cost is **`rb_fog`-gated** — `rb_fog == 0` skips the march
@@ -638,10 +649,12 @@ haze still has **no** shafts (the directional term arrives at L2) and **no** col
 - **INV-9 (open-sky standard, 2026-07-24):** fog density is gated by **open-sky
   exposure** — `σ_final = base · heightPool · areaMult · skyExposure`, with
   `skyExposure = 1` under open sky and `kIndoorFogScale` (`const`) under a solid roof
-  (§4.3a). v1 measures exposure **per march sample** via one up-ray to the sky
-  (custom-index 2 / miss), the user's "true volumetric" pick; the per-surface
-  `RB_MESH_OUTDOOR` flag is the cheap fallback, selected only if L1b's perf spot-check
-  demands it. "Open sky" = `ceilingpic == skyflatnum`, the engine's own open-air signal.
+  (§4.3a). v1 measures exposure **per march sample** via one up-ray with the shadow cull
+  mask `0x01` (the sky backdrop is a separate mask-`0x04` instance the ray can't hit, so
+  a **MISS = open sky**, a **hit on solid geometry = indoor**, §4.3a) — the user's "true
+  volumetric" pick; the per-surface `RB_MESH_OUTDOOR` flag is the cheap fallback,
+  selected only if L1b's perf spot-check demands it. "Open sky" = `ceilingpic ==
+  skyflatnum`, the engine's own open-air signal.
 - **INV-10 (sky-backdrop fog, 2026-07-24):** sky pixels receive **aerial-perspective
   fog** (`skyExposure = 1`) over `[0, kFogMaxDist]`, folded as `sky · transmittance +
   inscatter` on the mode-6 sky-passthrough branch (`svgf_composite.comp:93-104`) and the
@@ -690,7 +703,8 @@ haze still has **no** shafts (the directional term arrives at L2) and **no** col
 - **Q5 (phase):** Henyey–Greenstein forward-bias vs isotropic — a shaft-shape tune
   (L2/L5).
 - **Q6 (denoise path):** depth-guided bilateral upsample (cheap, self-contained) vs
-  routing the fog channel through the a-trous passes (`:7545`). Start bilateral;
+  routing the fog channel through the a-trous passes (`r_vulkan.cpp:7564`). Start
+  bilateral;
   escalate if the fog crawls (L5).
 - **Q7 (hell-haze tuning):** the v1 hell rule (§4.5: Inferno E≥3 / DOOM-II map≥20 /
   fire-sky) is a concrete default so L4 is testable; the exact map thresholds, haze
