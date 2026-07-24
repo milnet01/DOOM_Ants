@@ -1002,6 +1002,12 @@ extern "C" { int rb_filth = 1; }
 // emitter set + the GI bake, is permanent, and delivers DOOM-0083 (§5). Default on; RT-only.
 extern "C" { int rb_wet = 1; }
 
+// DOOM-0011: volumetric-fog strength dial (the `;` key; persisted as rt_fog). 0 = off,
+// 1 = Low, 2 = Med, 3 = High. Drives pc.misc6.z on the RT path (modes 4/6, either tier);
+// 0 skips the whole air-march (byte-identical to fog-off, INV-8). Default 1 (subtle "Low"
+// on, matching rb_wet/rb_filth/rb_detile); Q10 (on/off default) is the user's call at L6.
+extern "C" { int rb_fog = 1; }
+
 // INV-6 headless self-test latch (DOOM-0009 build step 4d). Set from the
 // `-rtverify` command-line parm; the first ready present runs RB_RtVerify (the
 // rel-MSE + white-furnace proof) and exits. -1 = unchecked, 0 = off, 1 = armed.
@@ -7445,7 +7451,7 @@ void RecordRtTrace(uint32_t idx)
     float rippleSec = std::chrono::duration<float>(std::chrono::steady_clock::now() - rippleT0).count();
     std::memcpy(&pc.misc6[0], &rippleSec, sizeof(float));
     pc.misc6[1]    = rb_wet ? 1u : 0u;
-    pc.misc6[2]    = 0u;    // DOOM-0011: rb_fog strength (wired at L6); 0 = fog off (INV-8)
+    pc.misc6[2]    = (uint32_t)rb_fog;  // DOOM-0011: fog strength 0..3 (`;` key); 0 skips the march (INV-8)
     pc.misc6[3]    = 0u;    // DOOM-0011: hell-haze density, bit-cast float (wired at L4)
     pc.vertsAddr   = BufferAddress(g.vbuf);
     pc.emitAddr    = g.emitBuf    ? BufferAddress(g.emitBuf)    : 0;

@@ -473,6 +473,18 @@ static void I_GetEvent(SDL_Event* sdlevent)
 	    fflush(stdout);
 	    break;
 	}
+	// Semicolon (`;`) cycles the volumetric-fog strength (DOOM-0011): Off -> Low ->
+	// Med -> High -> Off. Lets the fog be A/B'd live for the per-layer look + perf pass.
+	// RT engaged only (modes 4/6, either tier); a no-op on the raster/Classic path.
+	if (sdlevent->key.keysym.sym == SDLK_SEMICOLON && !sdlevent->key.repeat)
+	{
+	    extern int rb_fog;              // r_vulkan.cpp
+	    static const char* fog_name[4] = { "OFF", "Low", "Med", "High" };
+	    rb_fog = (rb_fog + 1) % 4;
+	    printf("Volumetric fog: %s (RT only)\n", fog_name[rb_fog]);
+	    fflush(stdout);
+	    break;
+	}
 	event.type = ev_keydown;
 	event.data1 = xlatekey(&sdlevent->key.keysym);
 	D_PostEvent(&event);
