@@ -36,7 +36,7 @@ const vec3  SKY_COLOR    = vec3(0.20, 0.26, 0.40);   // bounded sky-light on a m
 // DOOM-0011: volumetric fog (single-scatter view-ray march). All tune-on-hardware.
 const int   kFogSteps        = 24;               // fixed sample count (coherent, cheap)
 const float kFogMaxDist      = 2048.0;           // clamp tHit so a long corridor can't blow budget
-const float kFogBaseDensity  = 0.015;            // small always-on "clear air" so shafts read
+const float kFogBaseDensity  = 0.0008;           // "High"-level extinction/km-ish; subtle. tune-on-hw
 const float kFogPoolHeight   = 48.0;             // e-fold height (DOOM units) for floor pooling
 const float kFogAnisotropy   = 0.40;             // Henyey-Greenstein g (mild forward bias); 0 = isotropic
 const vec3  kSunDir          = normalize(vec3(0.30, 0.30, 1.0)); // world; +z is up (floor = hitP.z). L2.
@@ -55,6 +55,12 @@ float fogPhaseHG(float cosTheta, float g) {
 // L1: base density only (height pooling + profiles arrive at L3/L4).
 float fogDensity(vec3 p) {
     return kFogBaseDensity;
+}
+
+// rb_fog strength level (pc.misc6.z: 1=Low 2=Med 3=High; 0 is gated out by the caller)
+// -> density multiplier, so the `;` dial genuinely thins/thickens the air. tune-on-hardware.
+float fogStrengthScale(uint level) {
+    return (level <= 1u) ? 0.35 : (level == 2u) ? 0.65 : 1.0;
 }
 
 // DOOM-0084: self-emission is LOCALISED to a surface's bright texels — a lamp glows

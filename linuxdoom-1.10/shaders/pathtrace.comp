@@ -782,10 +782,11 @@ vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)
     vec3  inscatter = vec3(0.0);
     float trans     = 1.0;
     vec3  skyAmbient = SKY_COLOR * kSkyShaftStrength;   // L1: flat, non-directional
+    float strength   = fogStrengthScale(pc.misc6.z);   // the `;` dial: Low/Med/High thins the air
 
     for (int i = 0; i < kFogSteps; ++i, t += dt) {
         vec3  p     = ro + rd * t;
-        float sigma = fogDensity(p);
+        float sigma = fogDensity(p) * strength;
         vec3  Ls    = skyAmbient;                        // L2 adds directional sky + torches
         inscatter += trans * sigma * Ls * dt;
         trans     *= exp(-sigma * dt);
