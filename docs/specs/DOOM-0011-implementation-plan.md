@@ -291,6 +291,145 @@ git commit -m "DOOM-0011: L1 fog march skeleton — sky-ambient glow, half-res t
 
 ---
 
+## Task L1b — Fog-placement standard (open-sky gate) + sky-backdrop aerial fog
+
+**Goal:** Make the L1 haze obey the **open-sky standard** (spec §4.3a): full haze under open
+sky, near-clear under a solid roof, measured **per march sample** by a straight-up shadow ray;
+and give the distant **sky backdrop** aerial-perspective fog (spec §4.6a) so the mountains fade
+into haze instead of reading crisp. Addresses the user's 2026-07-24 L1 play-test feedback. Ultra/
+Solid **RT engaged only** (modes 4 + 6); `rb_fog`-gated (fog off = byte-identical, INV-8).
+
+**Files:**
+- Modify: `shaders/pt_common.glsl` — add `kIndoorFogScale` const; (fallback only) `FLAG_OUTDOOR`.
+- Modify: `shaders/pathtrace.comp` — per-sample up-ray in `marchFog`; `skyExposure` into `sigma`;
+  sky-backdrop closed-form fog in the mode-4 + mode-6 sky branches.
+- Modify (fallback path only, if the perf spot-check demands it): `r_mesh.c` / `r_mesh.h` —
+  `RB_MESH_OUTDOOR` bit set at mesh-build.
+
+**Interfaces:**
+- Consumes: the shipped `vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)` (`pathtrace.comp:774-796`),
+  its `sigma = fogDensity(p) * strength` line (`:789`), the half-res `fogImg` target (binding 9),
+  and the `committed`/`isSky` split (`:849-856`).
+- Produces: nothing new for later tasks — L2's sun ray (Task L2) reuses the same shadow-ray
+  helper this task first exercises for the up-ray.
+
+**Existing code to read first (reuse, do not reinvent):**
+- `pt_common.glsl` fog block (`kFogBaseDensity` etc. near `:36-64`) — add `kIndoorFogScale`
+  in the same style; `FLAG_FLAT/FLAG_MASKED/FLAG_EMISSIVE` at `:20-22` (all `const int`).
+- The existing **shadow/occlusion ray** helper `occluded()` (`pt_common.glsl:189-195`) and the
+  NEE shadow rays in `pathtrace.comp` — the up-ray is the SAME kind of ray-query (cull mask
+  `0x01`, `gl_RayFlagsTerminateOnFirstHit`). Mirror its `rayQueryEXT` init; do NOT invent a new one.
+- `marchFog` (`pathtrace.comp:774-796`), especially the `sigma` line `:789`.
+- Sky handling: `skyPanorama()` (`:735`), the `SKY_FOG_COL` screen-space band (`:761-763`),
+  the mode-4 sky write `colour = skyPanorama(...)` (`:1295`), the mode-6 sky branch that sets
+  `gpos.w=-1` + stores the sky into `gillum` and `return`s (`~:1283-1292`), and the whole sky
+  `else` block (`:1274-1297`).
+- Sky-instance mask: the TLAS sky backdrop is instance mask `0x04` (`r_vulkan.cpp:2015`), which
+  a `0x01` shadow ray **cannot** hit (`:1918`) — so "open sky" is detected by the up-ray **missing**.
+- `fogDensity`/`fogStrengthScale` in `pt_common.glsl`; the mode-4 fog fold + `toneEncode(L)`
+  (`pathtrace.comp:1063-1065`); the mode-6 `marchFog` call + `imageStore(fogImg,…)` (`:1189-1195`).
+
+- [ ] **Step 1: Add `kIndoorFogScale` to `pt_common.glsl`**
+
+Next to the other fog consts:
+
+```glsl
+const float kIndoorFogScale = 0.05;   // DOOM-0011 §4.3a: fog density multiplier under a solid
+                                       // roof (open sky = 1.0). 0.0 = interiors totally clear;
+                                       // ~0.05 keeps a faint indoor haze. Tune on hardware (Q12).
+```
+
+- [ ] **Step 2: Per-sample open-sky up-ray inside `marchFog` (`pathtrace.comp`)**
+
+The up-ray is a straight-up (`+Z`) shadow ray with cull mask `0x01`. It cannot hit the mask-`0x04`
+sky backdrop, so **MISS = open sky, hit = indoor** (spec §4.3a). Mirror the existing `occluded()`
+ray-query init (`pt_common.glsl:189-195`). Because `marchFog` runs in the megakernel it already has
+the TLAS in scope; if `occluded()` is directly callable pass it `p`, `vec3(0,0,1)`, a large `tMax`.
+Change the `sigma` line (`:789`) from `float sigma = fogDensity(p) * strength;` to:
+
+```glsl
+        // §4.3a open-sky exposure: up-ray misses all solid geometry => under open sky.
+        bool  openSky = !occluded(p, vec3(0.0, 0.0, 1.0), kFogMaxDist);  // 0x01 mask; sky is 0x04
+        float skyExposure = openSky ? 1.0 : kIndoorFogScale;
+        float sigma = fogDensity(p) * strength * skyExposure;
+```
+
+If `occluded()`'s signature differs, mirror it exactly (same cull mask + `TerminateOnFirstHit`);
+do not add a new ray-query variant. Keep the up-ray inside the `rb_fog>0` path (the caller already
+gates `marchFog`).
+
+- [ ] **Step 3: Sky-backdrop aerial fog — mode 6 (`pathtrace.comp` sky branch)**
+
+The sky backdrop is open-sky by definition, so give it full fog over `[0, kFogMaxDist]`. The sky
+ray sees constant outdoor density, so a **closed form** is exact (no second march loop):
+`trans = exp(-kFogBaseDensity * strength * kFogMaxDist)`, `inscatter = SKY_COLOR * (1 - trans)`.
+In the **mode-6 sky branch** (`~:1283-1292`), which currently writes `gpos.w=-1` + the sky into
+`gillum` and returns without touching `fogImg`, add — under `if (pc.misc6[2] != 0u)` and the same
+even/even half-res gate the surface path uses — an `imageStore(fogImg, ivec2(px)/2, vec4(inscatter, trans))`
+so the composite's **existing** `fetchFogBilinear` fold on the sky-passthrough branch
+(`svgf_composite.comp:100-103`, unchanged) picks it up. (svgf_composite.comp has no `pt_common`
+consts, so the value MUST be computed here — spec §4.6a.)
+
+- [ ] **Step 4: Sky-backdrop aerial fog — mode 4 (`pathtrace.comp` sky branch)**
+
+In the mode-4 sky branch, after `colour = skyPanorama(...)` (`:1295`) and under `if (pc.misc6[2] != 0u)`,
+fold the same closed-form fog before the write, in the same linear space as §4.6a:
+
+```glsl
+            colour = skyPanorama(px, w, h);
+            if (pc.misc6[2] != 0u) {
+                float strength = fogStrengthScale(pc.misc6.z);
+                float trans    = exp(-kFogBaseDensity * strength * kFogMaxDist);
+                colour = colour * trans + SKY_COLOR * (1.0 - trans);   // aerial haze on the mountains
+            }
+```
+
+Then reconcile the old screen-space `SKY_FOG_COL` band (`:761-763`): with real distance-fog now on
+the sky, dial `SKY_FOG_COL`'s `smoothstep` contribution down or remove it so the horizon is not
+**double-hazed** (spec Q14) — verify by eye at Step 7.
+
+- [ ] **Step 5: Build + smoke + tests**
+
+```bash
+make -C linuxdoom-1.10 -j"$(nproc)" && make -C linuxdoom-1.10 test
+SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
+  ./linuxdoom-1.10/linux/linuxxdoom -iwad wads/doom.wad -warp 1 1 -bootsmoke 105
+```
+Expected: build green (SPIR-V compiles — catches GLSL errors), tests green,
+`bootsmoke: 105 tics simulated OK, exiting.`
+
+- [ ] **Step 6: Hardware perf spot-check (RX 6600) — which exposure method ships**
+
+Per spec §6: with the profiler (`` ` `` key), A/B the **added** present-total (fog-off vs fog-on,
+same walk) in the goo room (its ~40 FPS baseline is pre-existing), AND confirm a **typical non-goo
+corridor** scene (Ultra >60 FPS today) still holds 60 FPS with the up-ray on. **If it holds** →
+the per-sample up-ray ships (done). **If it misses** → build the cheap fallback instead:
+- `r_mesh.h`: `#define RB_MESH_OUTDOOR 0x100` beside the other `RB_MESH_*` bits (`:82-101`).
+- `r_mesh.c`: OR the bit into the `flags` word from `seg->frontsector->ceilingpic == skyflatnum`
+  (walls — `emit_wall` has `seg`, near `:275`, or at the 4 call sites `529/554/568/582`) and
+  `sec->ceilingpic == skyflatnum` (flats — `emit_subsector_caps`, near `:452`).
+- `pt_common.glsl:20-22`: `const int FLAG_OUTDOOR = 0x100;`
+- In `marchFog`, replace the per-sample up-ray with `float skyExposure = (h.matFlags & uint(FLAG_OUTDOOR)) != 0u ? 1.0 : kIndoorFogScale;`
+  (whole-view granularity, no doorway cutoff — spec §4.3a fallback).
+
+- [ ] **Step 7: Play-test the look (RX 6600, RT engaged) — user sign-off**
+
+Launch RT-engaged, an open-air map (E1M1 start / the goo courtyard). **Accept (spec §7 L1b):**
+open/sky-exposed areas stay hazy; stepping under a roof **clears the air (mist wall at the
+threshold** with the up-ray path); distant **mountains fade into haze**, not crisp; sky still
+recognizable; `;`-key fog-off is byte-identical. Capture screenshots; report to the user for look
+sign-off. (Interim: still **no shafts, no colour** — those are L2/L4.)
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add linuxdoom-1.10/shaders/pt_common.glsl linuxdoom-1.10/shaders/pathtrace.comp
+# (+ r_mesh.c r_mesh.h only if the Step-6 fallback was built)
+git commit -m "DOOM-0011: L1b fog-placement standard (open-sky gate) + sky-backdrop aerial fog"
+```
+
+---
+
 ## Task L2 — Sky shafts: directional sun + per-sample sky-visibility ray + HG phase
 
 **Goal:** Turn the flat glow into **slanted beams**. Add the sun direction, cast one shadow ray
