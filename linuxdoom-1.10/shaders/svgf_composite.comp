@@ -23,6 +23,10 @@ layout(set = 0, binding = 2, rgba16f) uniform image2D galbedo;    // surface alb
 layout(set = 0, binding = 6, rgba16f) uniform image2D atrous[2];  // denoised illum
 layout(set = 0, binding = 7, rgba8)   uniform image2D outColor;   // swapchain blit source
 layout(set = 0, binding = 8, rg16f)   uniform writeonly image2D motion;  // 6-d motion vector
+// DOOM-0011 L1: half-res fog target (binding 9, chosen in pathtrace.comp — reused by
+// L4/L5/L6). rgb = inscatter (linear radiance), a = transmittance. READ side; the
+// megakernel (pathtrace.comp, set 2) is the WRITE side of this same binding.
+layout(set = 0, binding = 9, rgba16f) uniform image2D fogImg;
 
 // Per-material Le table (3 floats/material, linear RGB), same buffer the trace
 // reads for self-emission — passed by device address so the composite needs no
@@ -33,9 +37,32 @@ layout(push_constant) uniform PC {
     vec4  prevPos; vec4 prevDir; vec4 prevRight; vec4 prevUp;
     uvec4 misc;   // x = cur parity, y = width, z = height, w = final a-trous source index
     uvec4 misc2;
-    uvec4 misc3;
+    uvec4 misc3;  // x = exposure EV (bit-cast float); y = rb_fog gate (DOOM-0011,
+                  // mirrors the megakernel's pc.misc6.z — 0 = fog off, INV-8)
     MatEmis matEmis;
 } pc;
+
+// DOOM-0011 L1: manual bilinear upsample of the half-res fog target to this composite
+// pass's full-res pixel `p` (render-space — matches pathtrace.comp's `px`). Storage
+// images have no hardware filtering, so this is 4 imageLoads + a lerp. NOTE: the
+// megakernel's half-res gate is a POINT sample at each 2x2 block's even/even corner
+// (px & ~1), not a block average, so texel j lands exactly at full-res index 2j —
+// the texel-space coordinate is p/2 with NO pixel-centre offset (that offset formula
+// is for box-averaged downsamples, which this isn't). Depth-guided (bilateral)
+// upsample arrives at L5 (Q6); this is deliberately naive for L1.
+vec4 fetchFogBilinear(ivec2 p)
+{
+    vec2  hf = vec2(p) * 0.5;
+    ivec2 i0 = ivec2(floor(hf));
+    vec2  f  = hf - vec2(i0);
+    ivec2 lo = ivec2(0);
+    ivec2 hi = imageSize(fogImg) - ivec2(1);
+    vec4 c00 = imageLoad(fogImg, clamp(i0 + ivec2(0, 0), lo, hi));
+    vec4 c10 = imageLoad(fogImg, clamp(i0 + ivec2(1, 0), lo, hi));
+    vec4 c01 = imageLoad(fogImg, clamp(i0 + ivec2(0, 1), lo, hi));
+    vec4 c11 = imageLoad(fogImg, clamp(i0 + ivec2(1, 1), lo, hi));
+    return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
+}
 
 // DOOM-0096: the exposure EV is no longer a fixed constant — the host passes the
 // user's Brightness-slider value (rb_exposure) in misc3.x (bit-cast float) so the
@@ -66,6 +93,14 @@ void main()
     if (gp.w < 0.0) {
         vec3 sky = illum;
         if (any(isnan(sky)) || any(isinf(sky))) sky = vec3(0.0);
+        // DOOM-0011 L1: the sky is stored DISPLAY-encoded/fullbright (deliberately not
+        // tonemapped, above) — treat it as linear for the fold, then re-clamp, so fog
+        // matches at the sky/wall seam where shafts read (§4.6/Q9). rb_fog==0 -> fog.a=1,
+        // fog.rgb=0 -> sky*1+0 == sky, a byte-identical no-op.
+        if (pc.misc3.y != 0u) {
+            vec4 fog = fetchFogBilinear(p);
+            sky = sky * fog.a + fog.rgb;                // fog in front of visible sky
+        }
         imageStore(outColor, p, vec4(clamp(sky, 0.0, 1.0), 1.0));
         imageStore(motion, p, vec4(0.0));
         return;
@@ -86,6 +121,13 @@ void main()
         // (0 for a non-light sprite — pickup/monster). INV-7 backfill thresholds.
         float emisMask = smoothstep(0.30, 0.60, max(albedo.r, max(albedo.g, albedo.b)));
         L = albedo * illum + emis * emisMask * ga.a;
+    }
+    // DOOM-0011 L1: fog is a SEPARATE channel, folded AFTER the albedo re-multiply
+    // above (it has no surface albedo of its own) and BEFORE the tonemap, in linear
+    // radiance (§4.6). rb_fog==0 -> fog.a=1, fog.rgb=0 -> exact no-op (INV-8).
+    if (pc.misc3.y != 0u) {
+        vec4 fog = fetchFogBilinear(p);                 // half-res -> full-res, plain bilinear (L1)
+        L = L * fog.a + fog.rgb;                        // linear, before tonemap (§4.6)
     }
     if (any(isnan(L)) || any(isinf(L))) L = vec3(0.0);
     imageStore(outColor, p, vec4(toneEncode(L), 1.0));

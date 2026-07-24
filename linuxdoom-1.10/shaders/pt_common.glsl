@@ -32,6 +32,31 @@ const vec3  SKY_COLOR    = vec3(0.20, 0.26, 0.40);   // bounded sky-light on a m
                                                      // (linear radiance; the camera
                                                      // tonemaps it, the bake folds it
                                                      // into the probe as fill)
+
+// DOOM-0011: volumetric fog (single-scatter view-ray march). All tune-on-hardware.
+const int   kFogSteps        = 24;               // fixed sample count (coherent, cheap)
+const float kFogMaxDist      = 2048.0;           // clamp tHit so a long corridor can't blow budget
+const float kFogBaseDensity  = 0.015;            // small always-on "clear air" so shafts read
+const float kFogPoolHeight   = 48.0;             // e-fold height (DOOM units) for floor pooling
+const float kFogAnisotropy   = 0.40;             // Henyey-Greenstein g (mild forward bias); 0 = isotropic
+const vec3  kSunDir          = normalize(vec3(0.30, 0.30, 1.0)); // world; +z is up (floor = hitP.z). L2.
+const vec3  kGooTint         = vec3(0.35, 0.85, 0.30); // sickly green (L4)
+const vec3  kHellTint        = vec3(0.90, 0.35, 0.30); // faint red   (L4)
+const float kSkyShaftStrength   = 1.0;           // sky in-scatter gain (L1/L2)
+const float kTorchShaftStrength = 1.0;           // static-emitter in-scatter gain (L3)
+
+// Henyey-Greenstein phase (forward/back scatter weight); cosTheta = dot(viewDir, lightDir).
+float fogPhaseHG(float cosTheta, float g) {
+    float g2 = g * g;
+    float denom = 1.0 + g2 - 2.0 * g * cosTheta;
+    return (1.0 - g2) / (4.0 * 3.14159265 * pow(max(denom, 1e-4), 1.5));
+}
+
+// L1: base density only (height pooling + profiles arrive at L3/L4).
+float fogDensity(vec3 p) {
+    return kFogBaseDensity;
+}
+
 // DOOM-0084: self-emission is LOCALISED to a surface's bright texels — a lamp glows
 // from its lit top, a computer from its screen, not the whole sprite/face evenly.
 // The per-material Le (a tile-averaged value) is scaled by how bright THIS hit texel

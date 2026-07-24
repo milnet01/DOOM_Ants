@@ -271,6 +271,8 @@ enum {
     SV_GPOS0, SV_GPOS1, SV_GNORM0, SV_GNORM1, SV_ALBEDO, SV_ILLUM,
     SV_HCOL0, SV_HCOL1, SV_HMOM0, SV_HMOM1, SV_ATROUS0, SV_ATROUS1,
     SV_MOTION,   // build step 6-d: render-res motion vector (rg16f), composite writes it
+    SV_FOG,      // DOOM-0011 L1: HALF-res fog target (rgba16f) — binding 9 in both
+                 // pathtrace.comp (write, set 2) and svgf_composite.comp (read, set 0)
     SV_COUNT
 };
 
@@ -2532,15 +2534,17 @@ void CreateBakePipeline()
 // (blit). RT-only.
 // SVGF descriptor-set layout (DOOM-0009 build step 6). Created BEFORE the
 // path-trace pipeline (whose layout references it as set 2). One set shared by the
-// megakernel's mode-6 feed and all three denoiser passes: eight storage-image
-// bindings, the ping-pong targets as 2-element arrays the shaders index by parity.
+// megakernel's mode-6 feed and all three denoiser passes: nine storage-image
+// bindings (plus binding 9, DOOM-0011 L1's half-res fog target), the ping-pong
+// targets as 2-element arrays the shaders index by parity.
 void CreateSvgfDescriptorLayout()
 {
-    // gpos,gnorm,albedo,illum,hcol,hmom,atrous,out,motion (binding 8 = 6-d MV).
-    const uint32_t counts[9] = { 2, 2, 1, 1, 2, 2, 2, 1, 1 };
-    VkDescriptorSetLayoutBinding b[9] = {};
+    // gpos,gnorm,albedo,illum,hcol,hmom,atrous,out,motion,fog (binding 8 = 6-d MV;
+    // binding 9 = DOOM-0011 L1 half-res fog target, added without disturbing 0-8).
+    const uint32_t counts[10] = { 2, 2, 1, 1, 2, 2, 2, 1, 1, 1 };
+    VkDescriptorSetLayoutBinding b[10] = {};
     uint32_t total = 0;
-    for (uint32_t i = 0; i < 9; i++) {
+    for (uint32_t i = 0; i < 10; i++) {
         b[i].binding         = i;
         b[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         b[i].descriptorCount = counts[i];
@@ -2549,7 +2553,7 @@ void CreateSvgfDescriptorLayout()
     }
     VkDescriptorSetLayoutCreateInfo dlci = {};
     dlci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    dlci.bindingCount = 9;
+    dlci.bindingCount = 10;
     dlci.pBindings    = b;
     Check(vkCreateDescriptorSetLayout(g.device, &dlci, nullptr, &g.svgfDsLayout),
           "vkCreateDescriptorSetLayout(svgf)");
@@ -2740,8 +2744,8 @@ uint32_t ModeLabel(int mode, uint32_t* out)
 // present path already blits. Called from CreateSvgfTargets (init + each resize).
 void WriteSvgfDescriptor()
 {
-    VkDescriptorImageInfo info[14] = {};
-    const VkImageView views[14] = {
+    VkDescriptorImageInfo info[15] = {};
+    const VkImageView views[15] = {
         g.svView[SV_GPOS0],  g.svView[SV_GPOS1],            // b0 gpos[2]
         g.svView[SV_GNORM0], g.svView[SV_GNORM1],           // b1 gnorm[2]
         g.svView[SV_ALBEDO],                                // b2 albedo
@@ -2751,16 +2755,17 @@ void WriteSvgfDescriptor()
         g.svView[SV_ATROUS0],g.svView[SV_ATROUS1],          // b6 atrous[2]
         g.rtView,                                           // b7 outColor (rtImage)
         g.svView[SV_MOTION],                                // b8 motion vector (6-d)
+        g.svView[SV_FOG],                                   // b9 DOOM-0011 L1 fog target
     };
-    for (uint32_t i = 0; i < 14; i++) {
+    for (uint32_t i = 0; i < 15; i++) {
         info[i].imageView   = views[i];
         info[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
     }
-    struct { uint32_t binding, first, count; } map[9] = {
-        {0,0,2},{1,2,2},{2,4,1},{3,5,1},{4,6,2},{5,8,2},{6,10,2},{7,12,1},{8,13,1}
+    struct { uint32_t binding, first, count; } map[10] = {
+        {0,0,2},{1,2,2},{2,4,1},{3,5,1},{4,6,2},{5,8,2},{6,10,2},{7,12,1},{8,13,1},{9,14,1}
     };
-    VkWriteDescriptorSet wr[9] = {};
-    for (int i = 0; i < 9; i++) {
+    VkWriteDescriptorSet wr[10] = {};
+    for (int i = 0; i < 10; i++) {
         wr[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         wr[i].dstSet          = g.svgfDs;
         wr[i].dstBinding      = map[i].binding;
@@ -2768,7 +2773,7 @@ void WriteSvgfDescriptor()
         wr[i].descriptorCount = map[i].count;
         wr[i].pImageInfo      = &info[map[i].first];
     }
-    vkUpdateDescriptorSets(g.device, 9, wr, 0, nullptr);
+    vkUpdateDescriptorSets(g.device, 10, wr, 0, nullptr);
 }
 
 void DestroySvgfTargets()
@@ -2793,11 +2798,16 @@ void CreateSvgfTargets()
         VkFormat fmt = (i == SV_GPOS0 || i == SV_GPOS1) ? VK_FORMAT_R32G32B32A32_SFLOAT
                      : (i == SV_MOTION)                 ? VK_FORMAT_R16G16_SFLOAT
                                                         : VK_FORMAT_R16G16B16A16_SFLOAT;
+        // DOOM-0011 L1: the fog target is HALF the render extent (rounded up) — it is
+        // low-frequency (§4.6), so a quarter of the pixels' worth of storage/bandwidth
+        // is enough; the composite upsamples it back (fetchFogBilinear).
+        VkExtent3D ext = (i == SV_FOG) ? VkExtent3D{ (W + 1u) / 2u, (H + 1u) / 2u, 1u }
+                                       : VkExtent3D{ W, H, 1u };
         VkImageCreateInfo ici = {};
         ici.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
         ici.imageType     = VK_IMAGE_TYPE_2D;
         ici.format        = fmt;
-        ici.extent        = { W, H, 1 };
+        ici.extent        = ext;
         ici.mipLevels     = 1;
         ici.arrayLayers   = 1;
         ici.samples       = VK_SAMPLE_COUNT_1_BIT;
@@ -2847,10 +2857,17 @@ void CreateSvgfTargets()
         VkImageSubresourceRange range = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
         VkClearColorValue sky = {};  sky.float32[3] = -1.0f;   // matId < 0 -> never validates
         VkClearColorValue zero = {};
+        // DOOM-0011 L1: neutral no-fog value (rgb=0 inscatter, a=1 transmittance) so any
+        // half-res texel never written by this frame's megakernel (there is no rb_fog==0
+        // gate on this clear — it just guarantees no uninitialised/NaN read ever occurs,
+        // see fetchFogBilinear) reads as a no-op fold.
+        VkClearColorValue fogNeutral = {}; fogNeutral.float32[3] = 1.0f;
         const int clearSky[2]  = { SV_GPOS0, SV_GPOS1 };
         const int clearZero[4] = { SV_HCOL0, SV_HCOL1, SV_HMOM0, SV_HMOM1 };
+        const int clearFog[1]  = { SV_FOG };
         for (int i : clearSky)  vkCmdClearColorImage(cb, g.svImg[i], VK_IMAGE_LAYOUT_GENERAL, &sky,  1, &range);
         for (int i : clearZero) vkCmdClearColorImage(cb, g.svImg[i], VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &range);
+        for (int i : clearFog)  vkCmdClearColorImage(cb, g.svImg[i], VK_IMAGE_LAYOUT_GENERAL, &fogNeutral, 1, &range);
         EndOneTime(cb);
     }
 
@@ -2892,9 +2909,11 @@ void WriteTaauDescriptor()
     }
     vkUpdateDescriptorSets(g.device, 4, wr, 0, nullptr);
 
-    // labelTaauDs: same 9 bindings as svgfDs but binding 7 (output) = TAAU output.
-    VkDescriptorImageInfo lin[14] = {};
-    const VkImageView lviews[14] = {
+    // labelTaauDs: same 10 bindings as svgfDs but binding 7 (output) = TAAU output.
+    // Binding 9 (DOOM-0011 L1 fog) mirrors svgfDs verbatim — unread by the label shader,
+    // written anyway so every binding this layout declares stays valid (matches the rest).
+    VkDescriptorImageInfo lin[15] = {};
+    const VkImageView lviews[15] = {
         g.svView[SV_GPOS0],  g.svView[SV_GPOS1],
         g.svView[SV_GNORM0], g.svView[SV_GNORM1],
         g.svView[SV_ALBEDO], g.svView[SV_ILLUM],
@@ -2903,16 +2922,17 @@ void WriteTaauDescriptor()
         g.svView[SV_ATROUS0],g.svView[SV_ATROUS1],
         g.taView[TA_OUT],                                   // b7 -> upscaled output
         g.svView[SV_MOTION],
+        g.svView[SV_FOG],                                   // b9 DOOM-0011 L1 fog target
     };
-    for (uint32_t i = 0; i < 14; i++) {
+    for (uint32_t i = 0; i < 15; i++) {
         lin[i].imageView   = lviews[i];
         lin[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
     }
-    struct { uint32_t binding, first, count; } lmap[9] = {
-        {0,0,2},{1,2,2},{2,4,1},{3,5,1},{4,6,2},{5,8,2},{6,10,2},{7,12,1},{8,13,1}
+    struct { uint32_t binding, first, count; } lmap[10] = {
+        {0,0,2},{1,2,2},{2,4,1},{3,5,1},{4,6,2},{5,8,2},{6,10,2},{7,12,1},{8,13,1},{9,14,1}
     };
-    VkWriteDescriptorSet lwr[9] = {};
-    for (int i = 0; i < 9; i++) {
+    VkWriteDescriptorSet lwr[10] = {};
+    for (int i = 0; i < 10; i++) {
         lwr[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         lwr[i].dstSet          = g.labelTaauDs;
         lwr[i].dstBinding      = lmap[i].binding;
@@ -2920,7 +2940,7 @@ void WriteTaauDescriptor()
         lwr[i].descriptorCount = lmap[i].count;
         lwr[i].pImageInfo      = &lin[lmap[i].first];
     }
-    vkUpdateDescriptorSets(g.device, 9, lwr, 0, nullptr);
+    vkUpdateDescriptorSets(g.device, 10, lwr, 0, nullptr);
 }
 
 void DestroyTaauTargets()
@@ -7425,8 +7445,8 @@ void RecordRtTrace(uint32_t idx)
     float rippleSec = std::chrono::duration<float>(std::chrono::steady_clock::now() - rippleT0).count();
     std::memcpy(&pc.misc6[0], &rippleSec, sizeof(float));
     pc.misc6[1]    = rb_wet ? 1u : 0u;
-    pc.misc6[2]    = 0u;
-    pc.misc6[3]    = 0u;
+    pc.misc6[2]    = 0u;    // DOOM-0011: rb_fog strength (wired at L6); 0 = fog off (INV-8)
+    pc.misc6[3]    = 0u;    // DOOM-0011: hell-haze density, bit-cast float (wired at L4)
     pc.vertsAddr   = BufferAddress(g.vbuf);
     pc.emitAddr    = g.emitBuf    ? BufferAddress(g.emitBuf)    : 0;
     pc.matEmisAddr = g.matEmisBuf ? BufferAddress(g.matEmisBuf) : 0;
@@ -7552,6 +7572,10 @@ void RecordRtTrace(uint32_t idx)
         vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g.svgfComposite);
         spc.misc[3]  = ping;                      // final a-trous source index
         spc.matEmis  = g.matEmisBuf ? BufferAddress(g.matEmisBuf) : 0;
+        // DOOM-0011: mirror the megakernel's rb_fog gate (pc.misc6.z) into this smaller
+        // SvgfPC block (which has no misc6 of its own) via the free misc3.y lane — the
+        // composite's svgf_composite.comp reads it back as pc.misc3.y (INV-8).
+        spc.misc3[1] = pc.misc6[2];
         vkCmdPushConstants(g.cmd, g.svgfPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(spc), &spc);
         vkCmdDispatch(g.cmd, gx, gy, 1);
         if (prof) vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 7);
