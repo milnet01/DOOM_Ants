@@ -37,6 +37,12 @@ in full before starting — this plan implements it; every `§`/`INV`/`Q` refere
   (`svgf_composite.comp:88`) — it never rides `illum`/`gillum`. `inscatter`/`transmittance` are
   **linear radiance**, folded before the tonemap on **both** the surface path **and** the
   sky-passthrough branch (`:66-72`) in the **same** colour space (INV-4).
+- **L1 deviation (verified safe, now load-bearing):** `svgf_composite.comp` has a **separate,
+  smaller push struct (`SvgfPC`, 120 B) with no `misc6`**, so L1 routed the composite-side fog gate
+  through `SvgfPC`'s previously-unused **`misc3.y`**, written C++-side at `r_vulkan.cpp`
+  `spc.misc3[1] = pc.misc6[2];` just before the composite dispatch. **Later work touching the fog
+  gate inside `svgf_composite.comp` (L5 upsample) uses `misc3.y`, NOT `misc6.z`.** The megakernel
+  (`pathtrace.comp`) still uses `misc6.z`/`misc6.w` as specced.
 - **No push-struct growth.** Use exactly `misc6.z` + `misc6.w` (the last two free lanes). Do
   **not** append `misc7`; keep `RtPushConstants` at 240 B (`static_assert` `r_vulkan.cpp:7374`,
   `pcr.size` `:2355`) (INV-5).
@@ -620,7 +626,11 @@ objective gates**: `-rtverify` green, `-shotcompare` golden re-blessed (if on-by
   `M_VideoCrispValue` `case vid_detile:` (`:1558`), `M_ChangeDetile`.
 - `i_video.c:441-475` — the toggle-key block (`]`/`[`/`'`/`~`/`` ` ``); `;` (`SDLK_SEMICOLON`) is free.
 
-- [ ] **Step 1: `rb_fog` extern + config + push write + canonical pin**
+- [x] **Step 1: `rb_fog` extern + config + push write** — DONE EARLY in commit `f8c6b1f`
+  (pulled forward so L1–L5 are viewable). Remaining here: **only the DOOM-0208 canonical-config
+  pin** (`r_vulkan.cpp` arm block ~`:8177`) — add `rb_fog` beside `rb_detile=2, rb_filth=1,
+  rb_wet=1`.
+  *(original step, done except the pin:)*
 
 - `r_vulkan.cpp` beside `rb_wet` (`:1000`): `extern "C" { int rb_fog = 1; }`
   (subtle "Low" on by default — matches `rb_wet=1`/`rb_filth=1`/`rb_detile=2`; **Q10** — flip to
@@ -642,10 +652,8 @@ Per spec §5 (all six — adding only the menuitem arrays ships a blank row):
 6. `M_ChangeFog` mirroring `M_ChangeDetile` (`rb_fog = (rb_fog + 1) % 4;`), plus
    `static const char *fogNames[] = {"Off","Low","Med","High"};`.
 
-- [ ] **Step 3: `;` hotkey**
-
-In `i_video.c` (`:441-475`), add a `case SDLK_SEMICOLON:` that does `rb_fog = (rb_fog + 1) % 4;`
-and prints `Volumetric fog: <fogNames[rb_fog]>` (mirror the `]`/`[` toggles).
+- [x] **Step 3: `;` hotkey** — DONE EARLY in commit `f8c6b1f` (`SDLK_SEMICOLON` cycles
+  Off/Low/Med/High in `i_video.c`, mirroring the `]`/`[`/`'` toggles). Nothing left here.
 
 - [ ] **Step 4: Profiler slot for the fog pass**
 
