@@ -169,7 +169,7 @@ camera and surface contributes **nothing**. Three concrete gaps:
    `L = albedo * illum + emis * emisMask * ga.a` (`svgf_composite.comp:123`). A
    view-ray fog term has **no** surface albedo; multiplying it by the wall's albedo
    would be wrong. Fog must be a **separate channel composited *after* that
-   re-modulation** (§4.6), and the sky-passthrough path (`svgf_composite.comp:93-104`)
+   re-modulation** (§4.6), and the sky-passthrough path (`svgf_composite.comp:93-107`)
    must also receive the fog term (fog in front of visible sky).
 
 ## 4. Design
@@ -255,7 +255,11 @@ DOOM-native: an open-air area is exactly a sector whose ceiling is the sky flat
 `σ_final = kFogBaseDensity · heightPool(§4.3) · areaMult(§4.5) · skyExposure`
 
 where **`skyExposure ∈ [kIndoorFogScale, 1]`**: `1` under open sky, `kIndoorFogScale`
-(a small `const`, `0`..~`0.1`, a look-tune — Q12) under a roof.
+(a small `const`, `0`..~`0.1`, a look-tune — Q12) under a roof. **Per sample the value
+is binary** — exactly `1` (up-ray missed) or exactly `kIndoorFogScale` (up-ray hit a
+ceiling); the interval names the tunable endpoints, not a graded per-sample value. The
+*smooth* indoor↔outdoor gradient in the final image emerges from many binary samples
+averaged across the march + the half-res denoise (§4.6).
 
 **How `skyExposure` is measured — per march sample ("true volumetric", user's
 explicit pick 2026-07-24 over the cheaper per-surface flag).** At each sample point
@@ -390,7 +394,7 @@ Fog is low-frequency, so compute it **cheaply and smooth it**:
     `L = albedo * illum + emis * … ` (`:123`, still linear) — `L = L * transmittance +
     inscatter`, then `toneEncode(L)` (`:133`).
   - **Both fold fog in linear radiance before the tonemap.** The mode-6
-    **sky-passthrough** branch (`svgf_composite.comp:93-104`) is the trap: it stores a
+    **sky-passthrough** branch (`svgf_composite.comp:93-107`) is the trap: it stores a
     **display-encoded, fullbright** sky (`clamp(sky, 0, 1)`, deliberately *not*
     tonemapped, to match the raster sky), so fog must be folded in **in the same
     linear space** — treat the sky as linear, apply `sky * transmittance + inscatter`,
@@ -498,10 +502,10 @@ at L1b (Q14).
      (`:567-588`), both bound to `M_ChangeFog`.
   3. **Legacy inline draw:** a label + value pair in `M_DrawEffectsMenu` keyed on
      `ef_fog`, mirroring the `"De-tile:"` + `detileNames[rb_detile]` row
-     (`m_menu.c:1465`), not the boolean `"Wet liquid:"` row.
-  4. **Crisp label table:** a `videoLabels[]` entry for `vid_fog` (`m_menu.c:1491`).
+     (`m_menu.c:1464`), not the boolean `"Wet liquid:"` row.
+  4. **Crisp label table:** a `videoLabels[]` entry for `vid_fog` (`m_menu.c:1494`).
   5. **Crisp value switch:** a `case vid_fog:` in `M_VideoCrispValue` returning
-     `fogNames[rb_fog]`, mirroring `case vid_detile:` (`m_menu.c:1558`), not the
+     `fogNames[rb_fog]`, mirroring `case vid_detile:` (`m_menu.c:1557`), not the
      `"On"/"Off"` `case vid_wet:`.
   6. **Shared handler + name table:** `M_ChangeFog` mirroring `M_ChangeDetile`
      (`rb_fog = (rb_fog + 1) % 4`), used by both menus, plus a new
@@ -517,7 +521,13 @@ at L1b (Q14).
   `skyExposure` is measured per-sample by a ray-query up-ray (compute only), the sky
   fog is a per-pixel closed form, and `kIndoorFogScale` / `kFogMaxDist` are compile-time
   `const`s. So **INV-5 holds unchanged** — still 240 B, `misc6.z/.w` the only runtime
-  lanes. The **only** optional data addition is the fallback bit **`RB_MESH_OUTDOOR =
+  lanes *in `RtPushConstants`*. (Note the composite-side fog gate is a **separate**
+  pre-existing lane, not touched here: `svgf_composite.comp` has its own 120-byte
+  `SvgfPC` struct — `static_assert(sizeof(SvgfPC)==120)`, `r_vulkan.cpp:7524` — and L1
+  mirrors `rb_fog` into its free `misc3.y` since `SvgfPC` has no `misc6`, written at
+  `r_vulkan.cpp:7582`. That lane is out of scope for this "no new lane" claim, which is
+  about the megakernel push block.) The **only** optional data addition is the fallback
+  bit **`RB_MESH_OUTDOOR =
   0x100`** on the existing per-vertex `flags` int (`r_mesh.h:82-101`, no format change),
   set at mesh-build (walls via `emit_wall`'s `seg->frontsector`, `r_mesh.c:275`; flats
   `r_mesh.c:452`) and mirrored as a shader `const int FLAG_OUTDOOR = 0x100;` beside
@@ -617,7 +627,7 @@ haze still has **no** shafts (the directional term arrives at L2) and **no** col
   re-multiply** (`svgf_composite.comp:123`) — it never rides `gillum`/`illum` (which
   is multiplied by surface albedo). `inscatter`/`transmittance` are **linear
   radiance**, folded in **before** the tonemap on **both** the surface path and the
-  sky-passthrough branch (`:93-104`) in the *same* colour space, so the sky/wall seam
+  sky-passthrough branch (`:93-107`) in the *same* colour space, so the sky/wall seam
   matches (§4.6).
 - **INV-5:** The two runtime values ride **`misc6.z` (fog strength) + `misc6.w`
   (haze density)** — the **last two free components** of the 240-byte
@@ -639,7 +649,7 @@ haze still has **no** shafts (the directional term arrives at L2) and **no** col
   today **by construction** (like INV-7 — no golden needed). Two *distinct*
   `-shotcompare` roles, not to be conflated: **(a)** the DOOM-0208 canonical config
   pins effect toggles to their **shipped defaults** (`rb_detile=2, rb_filth=1,
-  rb_wet=1`, `r_vulkan.cpp:8177`), so when fog ships it pins `rb_fog` to *its*
+  rb_wet=1`, `r_vulkan.cpp:8207`), so when fog ships it pins `rb_fog` to *its*
   shipped default (§5) and the golden is **re-blessed *with* subtle fog** — the gate
   then guards the fog *look* (exactly how DOOM-0183 re-blessed for wet). **(b)** The
   fog-*off* byte-identity is structural; if an empirical check is wanted, a temporary
@@ -648,16 +658,15 @@ haze still has **no** shafts (the directional term arrives at L2) and **no** col
 
 - **INV-9 (open-sky standard, 2026-07-24):** fog density is gated by **open-sky
   exposure** — `σ_final = base · heightPool · areaMult · skyExposure`, with
-  `skyExposure = 1` under open sky and `kIndoorFogScale` (`const`) under a solid roof
-  (§4.3a). v1 measures exposure **per march sample** via one up-ray with the shadow cull
-  mask `0x01` (the sky backdrop is a separate mask-`0x04` instance the ray can't hit, so
-  a **MISS = open sky**, a **hit on solid geometry = indoor**, §4.3a) — the user's "true
-  volumetric" pick; the per-surface `RB_MESH_OUTDOOR` flag is the cheap fallback,
+  `skyExposure = 1` under open sky and `kIndoorFogScale` (`const`) under a solid roof.
+  v1 measures exposure **per march sample** via one up-ray — **MISS = open sky, solid-
+  geometry hit = indoor** (the mask mechanism is derived once in §4.3a). It is the user's
+  "true volumetric" pick; the per-surface `RB_MESH_OUTDOOR` flag is the cheap fallback,
   selected only if L1b's perf spot-check demands it. "Open sky" = `ceilingpic ==
   skyflatnum`, the engine's own open-air signal.
 - **INV-10 (sky-backdrop fog, 2026-07-24):** sky pixels receive **aerial-perspective
   fog** (`skyExposure = 1`) over `[0, kFogMaxDist]`, folded as `sky · transmittance +
-  inscatter` on the mode-6 sky-passthrough branch (`svgf_composite.comp:93-104`) and the
+  inscatter` on the mode-6 sky-passthrough branch (`svgf_composite.comp:93-107`) and the
   mode-4 sky branch (`pathtrace.comp:1295`), in the **same linear space** as every other
   fog fold (INV-4). Fog-off (`rb_fog == 0`) → `transmittance = 1, inscatter = 0`, so the
   sky is **byte-identical** to today (INV-7/INV-8). No up-ray and no new resource
@@ -713,7 +722,7 @@ haze still has **no** shafts (the directional term arrives at L2) and **no** col
   a flat white slab under the PBR-Neutral tonemap — verify at L2/L5 (same caution as
   DOOM-0183 Q7).
 - **Q9 (sky fog encode point):** the sky-passthrough branch stores a display-encoded
-  fullbright sky (`svgf_composite.comp:93-104`); folding fog in linear (§4.6) means
+  fullbright sky (`svgf_composite.comp:93-107`); folding fog in linear (§4.6) means
   treating it as linear, compositing, then re-clamp/encode. **L1 (shipped, e7753b3)**
   wired this fold with `rb_fog`-gated `fetchFogBilinear`; the round-trip is a **no-op by
   construction** for an un-fogged pixel (`rb_fog==0` → `fog.a=1, fog.rgb=0` →
