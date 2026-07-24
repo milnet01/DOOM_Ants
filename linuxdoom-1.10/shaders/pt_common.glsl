@@ -44,6 +44,9 @@ const vec3  kGooTint         = vec3(0.35, 0.85, 0.30); // sickly green (L4)
 const vec3  kHellTint        = vec3(0.90, 0.35, 0.30); // faint red   (L4)
 const float kSkyShaftStrength   = 1.0;           // sky in-scatter gain (L1/L2)
 const float kTorchShaftStrength = 1.0;           // static-emitter in-scatter gain (L3)
+const float kIndoorFogScale = 0.05;   // DOOM-0011 §4.3a: fog density multiplier under a solid
+                                       // roof (open sky = 1.0). 0.0 = interiors totally clear;
+                                       // ~0.05 keeps a faint indoor haze. Tune on hardware (Q12).
 
 // Henyey-Greenstein phase (forward/back scatter weight); cosTheta = dot(viewDir, lightDir).
 float fogPhaseHG(float cosTheta, float g) {
