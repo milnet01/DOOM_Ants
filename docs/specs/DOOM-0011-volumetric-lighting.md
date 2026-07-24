@@ -1,8 +1,9 @@
 # DOOM-0011 — Volumetric lighting (god-rays + fog) in the ray-traced view
 
 **Status:** **L1 implemented (uniform-haze skeleton, e7753b3); 2026-07-24 amendment
-adds the fog-placement standard (§4.3a + §4.6a) — pending its own `/cold-eyes` pass
-before the amended work is built.** Original design approved by the user 2026-07-21
+adds the fog-placement standard (§4.3a + §4.6a) — `/cold-eyes`-converged (3 loops,
+2026-07-24, log below); L1b ready to build.** Original design approved by the user
+2026-07-21
 (brainstorm), cold-eyes-converged 2026-07-23 (4 loops, below), scope-widened
 2026-07-23: the volumetrics run whenever the **ray-traced path is engaged**, so they
 cover **both Solid-RT and Ultra-RT**, not Ultra alone. The **rasterised** "Original"
@@ -18,8 +19,30 @@ pixels), and (2) the haze was **equally thick indoors and out**. The user asked 
 clear — measured **per march sample** ("true volumetric", user's explicit pick over the
 cheaper per-surface flag), plus **aerial-perspective fog on the sky backdrop** so the
 mountains fade into haze. New design in **§4.3a** (the standard) and **§4.6a** (the sky
-backdrop); build order revised in §7 (new **L1b**); INV-9/INV-10 added. This amendment
-awaits its own cold-eyes convergence before L1b is built.
+backdrop); build order revised in §7 (new **L1b**); INV-9/INV-10 added.
+
+**Cold-eyes log — 2026-07-24 amendment** (rule 14 — looped until convergence; 2 lanes
+= amendment-accuracy + whole-doc-coherence, each loop cold):
+- **Loop 1** — CRITICAL 0 · HIGH 3 · MEDIUM 3 · LOW 5 · INFO 3 (9 fixed, 2 dismissed).
+  The up-ray + L2 sun ray "reaches custom-index-2 sky" was wrong (shadow mask `0x01`
+  can't hit the mask-`0x04` sky instance → detect open sky via the **miss**); the mode-6
+  sky-distance fog can't run in `svgf_composite.comp` (no `pt_common` consts) → the
+  megakernel writes `fogImg`, the existing fold reads it; plus a sweep of post-L1
+  citation drift in the pre-existing body (`main()` 762→798, push-constant asserts,
+  etc.); profiler-pool "8/8 full" corrected.
+- **Loop 2** — CRITICAL 1 · HIGH 6 · MEDIUM 2 · LOW 3 · INFO 2 (10 fixed, 2 dismissed).
+  INV-9 still said "custom-index 2" (reconciled to the mask/miss mechanism); "up-ray
+  roughly doubles the ray count" was wrong — the shipped march does **zero** rays/sample,
+  so it is the *first* ray; the L1b 60 FPS spot-check collided with the goo room's
+  pre-existing ~40 FPS (pinned to a non-goo scene + added-Δ); more "Depends on"/INV-7
+  citation drift; the profiler pool is in fact **all 8 slots used** (loop-1 trusted a
+  stale code comment).
+- **Loop 3** — CRITICAL 0 · HIGH 1 · MEDIUM 1 · LOW 6 · INFO 2 (8 fixed, 1 dismissed).
+  Only citation-precision + wording left: sky-branch range `:93-104`→`:93-107`; INV-8
+  pin `:8177`→`:8207`; three menu draw citations; a note that L1's composite-side gate
+  rides a separate `SvgfPC.misc3.y` lane; `skyExposure` is binary per-sample. An
+  independent cold audit verified ~45 other citations byte-exact. **Converged**
+  (polish) — no design/structural/mechanism finding remains.
 
 **Cold-eyes log** (rule 14 — looped until convergence, 2026-07-23):
 - **Loop 1** (2 lanes) — CRITICAL 0 · HIGH 1 · MEDIUM 5 · LOW 4 · INFO 3, all verified
