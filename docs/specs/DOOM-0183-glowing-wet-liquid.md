@@ -310,7 +310,10 @@ should not undulate like a deep pool).
   it with display data would repeat exactly this stale-comment trap — so it is **not**
   reused. Hence a genuinely new lane:
   - `misc6.x` = **`time`** (float-bits, seconds); `misc6.y` = **wet toggle**
-    (`rb_wet`, 1/0); `.z`/`.w` reserved 0.
+    (`rb_wet`, 1/0). **`.z`/`.w` were reserved 0 here but are now DOOM-0011's**:
+    `.z` = fog strength `rb_fog` 0..3 (shipped), `.w` = hell-haze density (L4).
+    Note `misc6.x` is a **shared** lane — DOOM-0011's fog-wisp drift reads the same
+    seconds — so it must stay written **unconditionally**, never gated on `rb_wet`.
   - Appended so it respects std430 **16-byte alignment** (a `uvec4` at the current
     216-byte tail is not 16-aligned, so alignment padding is required — the exact
     resulting size, e.g. ~240 B, is pinned at implementation, not asserted here) and

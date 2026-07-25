@@ -12,6 +12,15 @@ The Ultra path tracer targets a **60 FPS floor** on the reference GPU (an AMD RX
 below the floor on the reference hardware is a regression to fix or a trade to
 justify, not something to ship quietly.
 
+**The floor is absolute for Classic and the raster path; for RT-engaged Ultra it is
+currently a target, not a guarantee.** Ultra with RT engaged already sits below it
+(~45 FPS on the reference GPU), and an accepted look-trade may relax it further — but
+only via the "trade to justify" branch above: state the before/after numbers, get the
+user's decision on the record, and ship a quality dial that lets them opt out. The
+worked example is **DOOM-0011 §6** (volumetric fog raised its own budget from ≤ 5 % to
+≤ 15 % of present-total, `~45 → ~39 FPS`, with `rb_fog` 0..3 as the opt-out). A feature
+may not relax the floor silently, and may never relax it for Classic or raster.
+
 ## The main lever: render scale
 
 `rb_renderscale` (config key `render_scale`) renders the world at a fraction of

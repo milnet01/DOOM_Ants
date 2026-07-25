@@ -539,6 +539,49 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: feature.
   Source: in-session-2026-06-11.
   Spec written 2026-07-23: docs/specs/DOOM-0011-volumetric-lighting.md — RT single-scattering volumetrics (god-ray shafts + coloured height/area fog). Scope widened per user 2026-07-23: gated on RT ENGAGED (rb_rtdebug 4/6), so it covers BOTH Solid-RT and Ultra-RT, not Ultra alone. Sky + big-static emitters only (no dynamic/muzzle/flashlight); adds the engine's first directional "sun" vector for shafts; half-res + dithered + denoised; cheap&smooth ≤5% present-total gate; rb_fog 0..3 dial + `;` hotkey + both menus. Reuses misc6.z/.w (the last 2 free RT push lanes). Companion item DOOM-0238 = the FAKED rasterised-view version (Solid/Ultra "Original"), user chose "RT first, fake follows" + "match RT as closely as possible" — deferred. Cold-eyes CONVERGED after 4 loops (rule 14): loop1 HIGH1/MED5, loop2 MED3, loop3 HIGH1/MED2, loop4 MED1 — all verified & fixed (full log in the spec's Cold-eyes section); reviewer verdict "genuinely tight". NEXT: user sign-off on the spec → writing-plans → implement (L1-L6). Flipping 💭→🚧 (spec landed).
+  Progress (2026-07-25): L1 (e7753b3, uniform-haze skeleton) and L1b
+  (1345c92, open-sky placement gate + sky-backdrop aerial fog) are
+  IMPLEMENTED and user-play-tested — "looking fantastic... covers the
+  mountains... outside and not inside". The 2026-07-24 open-sky amendment
+  cold-eyes-converged in 3 loops (log in the spec).
+
+  2026-07-25 amendment (user, with Silent Hill 2 named as the art target and
+  reference screenshots): (1) SH2 look — new spec §4.3b, near-white colourless
+  kFogColor replacing the cool-blue SKY_COLOR as the CLEAR-profile base, base
+  density ~2x, kFogSteps 24 -> ~40, and two octaves of drifting 3-D noise
+  modulating density (researched how SH2 actually does it: distance fog plus
+  two combined layers; the two-octave design is an analogy, not a derivation);
+  (2) outdoor-proximity seep — §4.3a's binary indoor gate becomes a graded fade
+  driven by a load-time distance field flood-filled through CONNECTED OPEN
+  SPACE only; (3) coloured fog "only where it makes sense" — the near-white
+  base is the clear profile, §4.5's mediumTint still multiplies it, so hell
+  reads red and goo green.
+
+  Perf gate RAISED 5% -> 15% present-total (user decision; the PS2-comparison
+  caveat and the 15%-vs-60-FPS-floor conflict are both recorded in §6).
+  docs/standards/performance.md updated to match.
+
+  Build order gains L1c (SH2 look) + L1d (seep). INV-9 amended, INV-11/INV-12
+  added, Q16-Q22 added. Two new sampled images (startup-generated 3-D noise
+  volume + per-level 2-D distance field) which need their OWN descriptor set —
+  neither set 1 nor set 3 can be appended to (both end in a variable-count
+  bindless array). No new push lane (drift reuses misc6.x).
+
+  Cold-eyes loop 1 (3 lanes, 2026-07-25): CRITICAL 1 / HIGH 10 / MEDIUM 15 /
+  LOW 12. Headline: skyExposure multiplied areaMult, which would have zeroed
+  goo/hell/torch fog in every roofed room — i.e. it would have broken the
+  Hell-colour wrinkle by construction. Also: the seep's connectivity test was
+  "not one-sided", but a closed DOOM door IS two-sided, so fog would have
+  poured through every shut door; the profiler key is `\` not `` ` ``; neither
+  descriptor set is appendable; kWispWeight2's "SH2 90/128" justification was
+  wrong twice over. Side-effects: docs/standards/renderer.md misc6 ledger was
+  stale for already-shipped code (rb_fog on .z) — fixed; DOOM-0183's spec still
+  claimed .z/.w reserved — fixed.
+
+  NEXT: further cold-eyes loops to convergence, then bring
+  DOOM-0011-implementation-plan.md up to date (it has no L1c/L1d tasks, still
+  carries the ≤5% gate, and its L2 task uses the custom-index-2 sky test that
+  the 2026-07-24 amendment already corrected), then implement L1c.
 - 💭 [DOOM-0012] **Hold a 60 FPS performance floor.**
   **Layman:** Keep it running smoothly — never below 60 frames per second.
   Kind: perf.

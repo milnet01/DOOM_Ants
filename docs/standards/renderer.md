@@ -69,10 +69,11 @@ Current allocation (verify against `pathtrace.comp` before relying on it):
 | `misc3` | sample-seed base | spp this dispatch | estimator (0 = power-NEE, 1 = brute-force) | reserved |
 | `misc4` | sprite material base (numWall+numFlat) | omniStart | numSectors (DOOM-0119 REJECT cull, 0 = off) | sky wall-tex bindless id (0xFFFFFFFF = procedural sky) |
 | `misc5` | world-grime overlay bindless id | de-tile quality (0 off / 1 2-tap / 2 4-tap) | dirt-colour texture bindless id | filth master toggle |
-| `misc6` | ripple time (float bits, seconds) | wet toggle | — | — |
+| `misc6` | ripple/wisp time (float bits, seconds) — **shared**: DOOM-0183 liquid ripples *and* DOOM-0011 fog-wisp drift, so it must stay written unconditionally | wet toggle | fog strength `rb_fog` 0..3 (DOOM-0011) | hell-haze density (float bits; DOOM-0011, reserved 0 until L4) |
 
-`misc5`/`misc6` are the DOOM-0179/0181/0183 lanes; the earlier lanes are
-DOOM-0009/0100 foundations.
+`misc5`/`misc6` are the DOOM-0179/0181/0183/0011 lanes; the earlier lanes are
+DOOM-0009/0100 foundations. **`misc6` is now full** — the next RT push value must append
+a `misc7 uvec4` (240 → 256 B, the documented device limit).
 
 ## RT correctness gate
 
