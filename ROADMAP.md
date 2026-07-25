@@ -2085,3 +2085,21 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Give the non-ray-traced "Original" view (Solid and Ultra with ray tracing off) the same shafts-of-light-and-fog look as the ray-traced view, faked with cheap screen tricks since the rasteriser can't trace light through air.
   Kind: feature.
   Source: user-request-2026-07-23.
+
+- 💭 [DOOM-0239] **Player-reactive fog swirl (the Silent Hill 2 "James influence" term).**
+  Split out of the DOOM-0011 2026-07-25 Silent Hill fog amendment. SH2
+  reverse-engineering (elishacloud/Silent-Hill-2-Enhancements #246) shows the
+  fog carries a player "influence" value of 200.0, reduced to 10.0 in the
+  Forest area — the fog is displaced around James as he moves.
+
+  Deferred by the user 2026-07-25 with a good reason: DOOM is FIRST-PERSON,
+  so there is no on-screen body for the fog to curl around and the player
+  would never see the effect on themselves. Would only pay off if it were
+  applied to MONSTERS instead (fog parting around a charging imp), which is
+  a different and larger feature (per-mobj displacement in the fog march).
+
+  Revisit only after DOOM-0011 L1c/L1d ship and the wisps have been judged
+  on hardware.
+  **Layman:** Fog that curls and thins around the player as they walk, the way it does around James in Silent Hill 2.
+  Kind: feature.
+  Source: in-session-2026-07-25.
