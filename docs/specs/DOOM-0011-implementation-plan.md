@@ -38,7 +38,7 @@ this plan implements it; every `§`/`INV`/`Q` reference points there.
 >   invariant count, `file:line` citations), but this plan is **not** cold-eyes-converged
 >   in its own right.
 > - Spec cold-eyes status: the original design converged in 4 loops; the **2026-07-25
->   amendment has run 11 loops (0 CRITICAL at loop 11)** — the `--max-loops` cap of 5 is long
+>   amendment has run 12 loops (0 CRITICAL, 0 HIGH at loops 11-12)** — the `--max-loops` cap of 5 is long
 >   passed, so each further loop is an explicit user call. The loop log lives in
 >   `docs/specs/DOOM-0011-fix-ledger.md`; the spec's header carries a summary.
 
@@ -1076,8 +1076,13 @@ In `r_mesh.h` (`:265-273`), add after `skytexnum`:
 Beside `view.skytexnum = skytexture;` (`:181`), apply the spec's concrete v1 rule (§4.5):
 ```c
     /* DOOM-0011: hell haze — Inferno (E>=3), DOOM-II hell run (map>=20), or a fire/hell sky. */
-    boolean hell = (gamemode != commercial && gameepisode >= 3)
+    boolean hell = ((gamemode == registered || gamemode == retail) && gameepisode >= 3)
                 || (gamemode == commercial && gamemap  >= 20);
+    /* Name the two DOOM-1 modes, do NOT write `gamemode != commercial`. GameMode_t is
+       { shareware, registered, commercial, retail, indetermined } (doomdef.h), so `!= commercial`
+       also admits shareware and the no-IWAD `indetermined` state. It is inert today — shareware
+       ships Episode 1 only — but it is not the rule spec §4.5 states, and a wider IWAD would
+       diverge silently. */
     /* (Optional: OR in a fire-sky texture test if skytexture names a hell sky.) */
     view.hazeDensity = hell ? kHazeDensityDefault : 0.0f;
 ```

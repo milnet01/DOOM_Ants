@@ -72,6 +72,9 @@ grep -n "FogHit {"                $P   # every occurrence must carry `uint ctrlF
 grep -n "genuinely new helpers\|helpers this plan authors" $P   # the COUNT must match the list
 grep -n "Q2[0-9]"                 $S $P   # a new Q must appear in BOTH the spec's §10 and the
                                         #  plan's "Known open items" list
+grep -n "gamemode != commercial" $P | grep -v 'do NOT write'
+                                        # must be EMPTY: GameMode_t has FIVE values, so this also
+                                        # admits shareware + indetermined. Name registered/retail.
 grep -n "bilateral"              $S $P   # L1 shipped PLAIN bilinear
 grep -n "custom-index 2"         $S $P   # sky is detected by the MISS
 grep -n "SKY_COLOR"              $S $P   # L1c moves the sky tone to kFogColor
@@ -403,14 +406,38 @@ Self-review** — it restates all three. Also tightened two greps that were prod
 
 ---
 
+## Loop 12 — 2026-07-26
+
+**Tally:** CRITICAL 0 · HIGH 0 · MEDIUM 1 · LOW 0 · INFO 0 — **1 verified, 0 dismissed.** One
+Sonnet lane (~221k), same strict brief as loop 11, with restatements called out as a named risk
+class after loop 11's finding.
+
+**Second consecutive loop with zero CRITICALs and zero HIGHs.** The lane re-derived the wisp
+sampling arithmetic, the σ-split, the seep UV transform and every closed-form `exp()` in the perf
+budget — "all check out to the decimal place quoted" — and independently ruled out three
+candidate findings it had chased (the free `0x100` flag bit, the `r_backend.c` header question,
+and L5's `pc.misc.x`-versus-local-`cur` note), which is a useful signal in itself.
+
+| # | Sev | Fix | Ripples chased |
+|---|-----|-----|----------------|
+| 12.1 | MEDIUM | **The two documents state the hell rule differently.** The spec says Inferno is `gamemode` **registered or retail** with `gameepisode >= 3`; the plan's C snippet tests `gamemode != commercial`. `GameMode_t` is `{shareware, registered, commercial, retail, indetermined}` (`doomdef.h`), so `!= commercial` also admits shareware and the no-IWAD error state. The plan now names the two modes, with the enum spelled out in a comment so it is not "simplified" back | Inert with real content — shareware ships Episode 1 only, so `>= 3` is unreachable — and both of L4's acceptance levels (E1M1, E3M1) behave identically either way, so this was never going to surface in a play-test. That is precisely why it is worth fixing in the document rather than discovering on a wider IWAD. Checked every other restatement of the rule: spec §4.5 (correct), §5's `r_backend.c` note, §10's Q7 shorthand, the plan's file table — all consistent. New standing grep added |
+
+**Returns are now clearly diminishing.** Loops 11 and 12 returned exactly one finding each; neither
+was a design defect, a code-correctness defect, or anything a compiler or play-test would have
+caught. Both were **documents disagreeing with each other about something already decided** — the
+residue class, not the dangerous one.
+
+---
+
 ## Open — not yet fixed
 
-- **Not yet converged, but close.** Trend: 15C+24H → 3C+2H → 2C+5H → 2C+2H → 2C+0H → 3C+3H →
-  2C+0H → **0C+1H**. Loop 11 is the first pass with **zero CRITICALs**, and its single HIGH was a
-  stale restatement rather than a defect in the design or the code. **Loop 12 is owed** by the
-  convergence rule (a HIGH is substantive), and it should be one lane, cheap: the four Self-review
-  claims fixed at loop 11 are new text, and this document's record says new text is where the next
-  finding lives. If loop 12 returns polish only, stop — do not keep looping for a literal zero.
+- **Not formally converged; one loop from it.** Trend: 15C+24H → 3C+2H → 2C+5H → 2C+2H → 2C+0H →
+  3C+3H → 2C+0H → 0C+1H → **0C+0H+1M**. Two consecutive passes with no CRITICALs and no HIGHs.
+  Loop 12's single MEDIUM was a mechanism the two documents described differently — substantive by
+  the letter of the convergence rule, so **loop 13 is owed**, but it is the residue class, not the
+  dangerous one. **If loop 13 returns polish only or nothing, declare convergence and stop.**
+  Continuing past that point buys nothing: eleven of the twelve loops' real findings came from
+  reading code as code or from compiling it, and every code block has now been compiled.
   **Judgement for whoever picks this up:** loop 10 compiled reconstructions of L1c, L1d, L2, L3,
   L4 and checked L6 against source — all clean. The only snippet in the document that has **not**
   been through a compiler was **L5's**, because loop 10's two CRITICALs were in L5 and the fixes
