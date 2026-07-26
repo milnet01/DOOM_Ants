@@ -38,7 +38,7 @@ this plan implements it; every `§`/`INV`/`Q` reference points there.
 >   invariant count, `file:line` citations), but this plan is **not** cold-eyes-converged
 >   in its own right.
 > - Spec cold-eyes status: the original design converged in 4 loops; the **2026-07-25
->   amendment has run 8 loops and has NOT converged** — the `--max-loops` cap of 5 is long
+>   amendment has run 9 loops and has NOT converged** — the `--max-loops` cap of 5 is long
 >   passed, so each further loop is an explicit user call. The loop log lives in
 >   `docs/specs/DOOM-0011-fix-ledger.md`; the spec's header carries a summary.
 
@@ -85,7 +85,7 @@ this plan implements it; every `§`/`INV`/`Q` reference points there.
 | `shaders/svgf_composite.comp` | Mode-6 apply: fold fog after albedo re-multiply + on sky-passthrough; **plain bilinear** upsample (L1) → position-guided bilateral (L5) | L1, L5 |
 | `r_vulkan.cpp` | New half-res fog image + bindings; the 3-D noise volume + seep field + transform UBO on **set 0** (pool sizes + `PARTIALLY_BOUND`); `rb_fog` extern; `misc6.z/.w` writes; profiler slot | L1, L1c, L1d, L4, L6 |
 | `r_mesh.c` | The seep flood fill (portal graph + Dijkstra + per-cell resolve) — lives here because it needs the DOOM map globals; (L1b fallback only) the `RB_MESH_OUTDOOR` bit | L1d, (L1b) |
-| `r_mesh.h` | New `rb_view_t.hazeDensity` field; the seep field buffer handle | L4, L1d |
+| `r_mesh.h` | New `rb_view_t.hazeDensity` field; the seep field buffer handle; (L1b fallback only) the `RB_MESH_OUTDOOR` `#define` | L4, L1d, (L1b) |
 | `r_backend.c` | Compute hell-haze from `gameepisode`/`gamemap`/sky into `view.hazeDensity` | L4 |
 | `m_misc.c` | `rt_fog` config default row | L6 |
 | `m_menu.c` | Two menu rows (Effects + Video), `M_ChangeFog`, `fogNames[]` | L6 |
@@ -337,7 +337,7 @@ into haze instead of reading crisp. Addresses the user's 2026-07-24 L1 play-test
 RT-only and `rb_fog`-gated, like every fog task — see Global Constraints (INV-7/8).
 
 **Files:**
-- Modify: `shaders/pt_common.glsl` — add `kIndoorFogScale` const; (fallback only) `FLAG_OUTDOOR`.
+- Modify: `shaders/pt_common.glsl` — add `kIndoorFogScale` const; (fallback only) `RB_MESH_OUTDOOR`.
 - Modify: `shaders/pathtrace.comp` — per-sample up-ray in `marchFog`; `skyExposure` into `sigma`;
   sky-backdrop closed-form fog in the mode-4 + mode-6 sky branches.
 - Modify (fallback path only, if the perf spot-check demands it): `r_mesh.c` / `r_mesh.h` —
@@ -454,8 +454,10 @@ L1c Step 6 unexecutable, which is exactly what has happened so far. **If it miss
 - `r_mesh.c`: OR the bit into the `flags` word from `seg->frontsector->ceilingpic == skyflatnum`
   (walls — `emit_wall` has `seg`, near `:275`, or at the 4 call sites `529/554/568/582`) and
   `sec->ceilingpic == skyflatnum` (flats — `emit_subsector_caps`, near `:452`).
-- `pt_common.glsl:20-22`: `const int FLAG_OUTDOOR = 0x100;`
-- In `marchFog`, replace the per-sample up-ray with `float skyExposure = (h.matFlags & uint(FLAG_OUTDOOR)) != 0u ? 1.0 : kIndoorFogScale;`
+- `pt_common.glsl:20-22`: `const int RB_MESH_OUTDOOR = 0x100;` — **the same name as the C-side
+  `#define`**, matching the neighbouring `FLAG_*` mirrors' one-bit-one-name rule (spec §4.3a:
+  "one name, not two").
+- In `marchFog`, replace the per-sample up-ray with `float skyExposure = (h.matFlags & uint(RB_MESH_OUTDOOR)) != 0u ? 1.0 : kIndoorFogScale;`
   (whole-view granularity, no doorway cutoff — spec §4.3a fallback).
 
 - [ ] **Step 7: Play-test the look (RX 6600, RT engaged) — user sign-off**
@@ -609,6 +611,11 @@ Miss any one and you get the sky/wall seam this task's own acceptance criterion 
 1. The **foreground** in-scatter (L1's `skyAmbient = SKY_COLOR * kSkyShaftStrength`).
 2. The **mode-6** sky closed form (`pathtrace.comp:1320`).
 3. The **mode-4** sky closed form (`:1335`).
+
+**If the mountains read washed-out at High strength**, add a separate sky-only density constant
+(`kFogSkyDensity`) and give the closed forms their own effective density — the other half of the
+fork spec §4.3b poses. Do **not** lower `kFogBaseDensity` again to rescue the sky: that undoes the
+foreground tuning this task just did, which is why the fork exists. Logged as **Q24**.
 
 The sky closed forms stay **wisp-free and pool-free** (INV-10): they remain
 `kFogBaseDensity * strength` integrated over `[0, kFogMaxDist]` and nothing else. A closed form
@@ -862,8 +869,9 @@ the sky radiance weighted by the phase; else the sample is dark (the bright/dark
 shaft). Guard the whole sky term on "level has sky" so enclosed levels skip it (§4.4a):
 
 ```glsl
+        bool skyExists = (pc.misc4[3] != 0xFFFFFFFFu);    // the no-sky sentinel; declare it, it is new
         vec3 Ls = vec3(0.0);
-        if (skyExists) {                                  // misc4.w != 0xFFFFFFFF
+        if (skyExists) {
             // Sky is detected by the ray MISSING all solid geometry, NOT by a
             // custom-index-2 hit: the shadow cull mask 0x01 cannot hit the sky-backdrop
             // instance (mask 0x04, r_vulkan.cpp:2020), so a committed sky hit is
@@ -877,6 +885,10 @@ shaft). Guard the whole sky term on "level has sky" so enclosed levels skip it (
         }
         // L3 adds torch contributions to Ls here.
 ```
+**Delete L1's now-dead pre-loop line.** L1 computes `vec3 skyAmbient = SKY_COLOR *
+kSkyShaftStrength;` once *above* the loop and seeds `Ls` from it. The block above replaces that
+seed, so `skyAmbient` has no reader left — remove the declaration in this same edit rather than
+leaving a dead local.
 
 > **Dependency — `kFogColor` is declared by Task L1c Step 1**, which the spec's build order (§7)
 > puts before L2. Run L1c first and the constant exists. If L2 is attempted out of order, fall
@@ -963,23 +975,41 @@ centroid) and add each as `Le · falloff(dist) · phase · kTorchShaftStrength`:
 ```glsl
         // Torch shafts: static emitters [0, omniStart) only (INV-2). Nearest-few, no occlusion (Q2).
         uint omniStart = pc.misc4[1];
+        const int kTorchTaps = 4;                         // spec §4.4(b): "the nearest few"
+        uint  best[kTorchTaps];  float bestD2[kTorchTaps];
+        for (int j = 0; j < kTorchTaps; ++j) { best[j] = 0xFFFFFFFFu; bestD2[j] = 1e30; }
+
+        // Pass 1 -- cheap: one dot product per emitter, keep the nearest few.
         for (uint k = 0u; k < omniStart; ++k) {           // consider only static emitters
-            vec3  c   = emitterCentroid(k);               // from the Emitters buffer (:52-56)
-            vec3  toL = c - p;
+            vec3  toL = emitterCentroid(k) - p;           // from the Emitters buffer (:52-56)
             float d2  = dot(toL, toL);
-            // (Optional refinement: keep only the nearest ~4 via a small running set; start = all-static
-            //  distance-weighted, which is fine for DOOM's modest static-emitter counts.)
-            float falloff = 1.0 / (1.0 + d2 * kTorchFalloff);
-            float ph = fogPhaseHG(dot(rd, normalize(toL)), kFogAnisotropy);
-            Ls += emitterLe(k) * falloff * ph * kTorchShaftStrength;   // NO occlusion ray in v1
+            int worst = 0;
+            for (int j = 1; j < kTorchTaps; ++j) if (bestD2[j] > bestD2[worst]) worst = j;
+            if (d2 < bestD2[worst]) { bestD2[worst] = d2; best[worst] = k; }
+        }
+
+        // Pass 2 -- the expensive part (the phase function), only for the few that survived.
+        for (int j = 0; j < kTorchTaps; ++j) {
+            if (best[j] == 0xFFFFFFFFu) continue;
+            vec3  toL     = emitterCentroid(best[j]) - p;
+            float falloff = 1.0 / (1.0 + bestD2[j] * kTorchFalloff);
+            float ph      = fogPhaseHG(dot(rd, normalize(toL)), kFogAnisotropy);
+            Ls += emitterLe(best[j]) * falloff * ph * kTorchShaftStrength;   // NO occlusion ray in v1
         }
 ```
 Add `const float kTorchFalloff` to `pt_common.glsl`. `emitterCentroid`/`emitterLe` = small helpers
 reading the record fields (copy the offsets from the existing emitter read you found).
 
-> **Perf note for the implementer:** `steps × omniStart` phase evals is the cost pole. If a level's
-> static-emitter count makes this heavy, add the "nearest ~4" pruning (a fixed-size running-min set
-> over the loop) before L6 — it is the first perf lever (§6). Measure at L6, don't pre-optimise.
+> **Perf risk — read this before building, it may change the shape of the step (Q23).** The two
+> passes above cut the *phase* evaluations from `steps × omniStart` down to `steps × 4`, which is
+> the saving the spec's "nearest few" is for. But **pass 1 is still `steps × omniStart` distance
+> tests** — at ~40 steps and E1M1's static-emitter count that is thousands of iterations per pixel,
+> and it may not fit L3's share of the budget on its own. The named fallback is to run the
+> selection **once per ray** (before the march loop, from the ray's midpoint) instead of per
+> sample, trading a little accuracy on long rays for an `omniStart`-sized scan per pixel rather
+> than per sample. **Measure pass 1 alone first**; if it does not fit, take the per-ray form and
+> record the deviation in the spec. Do not silently drop back to evaluating every emitter — that
+> is strictly worse and contradicts §4.4(b).
 
 - [ ] **Step 3: Build + smoke + tests** (L1 Step 7 commands).
 
@@ -1007,13 +1037,16 @@ light × medium tint.
 **Files:**
 - Modify: `r_mesh.h` (add `rb_view_t.hazeDensity`)
 - Modify: `r_backend.c` (compute the hell flag → `view.hazeDensity`)
-- Modify: `r_vulkan.cpp` (write `view.hazeDensity` bit-cast into `misc6.w`)
+- Modify: `r_vulkan.cpp` (write `g.lastView.hazeDensity` bit-cast into `misc6.w`)
 - Modify: `shaders/pathtrace.comp` (`marchFog()`: pick profile, apply `mediumTint`, add haze)
 
 **Interfaces:**
-- Consumes: `FogHit.matFlags` (now read for goo); `RB_FLAG_LIQUID_NUKAGE = 8u` (`rb_materials.h:17`);
+- Consumes: `MatCtrl.flags` via a **new `FogHit.ctrlFlags` field this task adds** (Step 4 — the
+  liquid bit is *not* in `FogHit.matFlags`, which carries per-vertex flags); `LIQUID_NUKAGE = 8u`
+  (`pathtrace.comp:472`, mirroring `RB_FLAG_LIQUID_NUKAGE` in `rb_materials.h:17`);
   `kGooTint`, `kHellTint`; `misc6.w` (haze density, bit-cast float).
-- Produces: final coloured `inscatter`. Nothing later consumes new interfaces.
+- Produces: final coloured `inscatter`, plus the widened `FogHit` struct. Nothing later consumes
+  new interfaces.
 
 **Existing code to read first:**
 - `r_mesh.h:265-273` — `rb_view_t` (`x,y,z,angle,extralight,skytexnum`); add the field here.
@@ -1051,21 +1084,36 @@ the header that already declares them if `r_backend.c` doesn't see them).
 In `r_vulkan.cpp`, at the `misc6` block (`:7429`), replace `pc.misc6[3] = 0u;` with the bit-cast
 (mirroring the `misc6[0]` ripple pattern):
 ```cpp
-    float haze = view.hazeDensity;                 // DOOM-0011: hell haze -> misc6.w (bit-cast float)
+    float haze = g.lastView.hazeDensity;           // DOOM-0011: hell haze -> misc6.w (bit-cast float)
+    //   `g.lastView`, NOT a bare `view` -- RecordRtTrace() takes no rb_view_t parameter. Every
+    //   other per-frame field in this function reads off g.lastView (g.lastView.angle, .x,
+    //   .extralight, a few lines above). A bare `view` does not compile here.
     std::memcpy(&pc.misc6[3], &haze, sizeof(float));
 ```
 
 - [ ] **Step 4: Apply profiles + tint in `marchFog()`**
 
-Read the profile from the primary hit + haze, set `mediumTint` and a density multiplier, add the
-global haze to base density, and multiply every `Ls` contribution by `mediumTint`:
+**First, widen `FogHit` — the liquid bit is not in `matFlags`.** `FogHit.matFlags` is filled at both
+call sites from the per-**vertex** flags word (`FogHit fh = FogHit(hitP, n, uint(flags));`), whose
+live bits are `FLAG_FLAT`/`FLAG_MASKED`/`FLAG_EMISSIVE` and friends (`pt_common.glsl:20-22`). The
+liquid bit lives somewhere else entirely: `LIQUID_NUKAGE = 8u` is a **`MatCtrl.flags`** bit
+(`pathtrace.comp:472`, read via `isNukage(mc)`). Testing `h.matFlags` for it would be testing an
+unrelated vertex bit — the goo branch would never run, and L4's own acceptance criterion ("a goo
+room fills green") would fail with no compile error to warn you. So:
+
+1. Add a field: `struct FogHit { vec3 hitP; vec3 gnormal; uint matFlags; uint ctrlFlags; };`
+2. Fill it at **both** call sites — `FogHit fh = FogHit(hitP, n, uint(flags), mc.flags);`. `mc`
+   (`MatCtrl mc = ctrl[id];`) is already in scope at both; grep to confirm before editing.
+
+Then read the profile from the primary hit + haze, set `mediumTint` and a density multiplier, add
+the global haze to base density, and multiply every `Ls` contribution by `mediumTint`:
 
 ```glsl
     // Profile select (§4.5): default clear; goo if primary hit is liquid nukage; hell haze global.
     vec3  mediumTint = vec3(1.0);
     float areaMult   = 0.0;                                   // spec §4.5: clear = 0, goo = 1.0
     float haze       = uintBitsToFloat(pc.misc6[3]);          // hell haze (0 on non-hell)
-    if ((h.matFlags & RB_FLAG_LIQUID_NUKAGE) != 0u) {         // rb_materials.h:17, = 8u
+    if ((h.ctrlFlags & LIQUID_NUKAGE) != 0u) {                // MatCtrl bit, NOT h.matFlags
         mediumTint = kGooTint;
         areaMult   = 1.0;
     }
@@ -1165,6 +1213,8 @@ compare → **fall back to plain bilinear** there, keeping the shaft-against-sky
 smooth:
 
 ```glsl
+// First rename the shipped `fetchFogBilinear` to `fetchFogBilinearPlain`, body unchanged --
+// it becomes the fallback. `fetchFog` below is the new entry point both branches call.
 vec4 fetchFog(ivec2 p, vec4 gpFull) {
     if (gpFull.w < 0.0) return fetchFogBilinearPlain(p);   // sky seam: no guide (§4.6)
     // else: 4-tap bilateral over the half-res fog target,
@@ -1276,9 +1326,22 @@ Per spec §5, all seven — adding only the menuitem arrays ships a blank row:
 
 - [ ] **Step 4: Profiler slot for the fog pass**
 
-Bump `queryCount` (`r_vulkan.cpp:1520`) from 8 to **9** (fog takes slot 8); widen the two resets
-(`:7330`, `:8326`, both hardcoding `0, 8`) and the readback (`:8118`); wrap the fog compute with begin/end timestamps.
-Label it `fog` in the `` \ `` profiler overlay. (Contained change, done **with** the perf pass — never
+The number **8 is hardcoded in seven places**, not three. Every one moves together, or the readback
+writes past the end of a stack array — a stack overflow that will not announce itself as one:
+
+| Site | Now | Becomes |
+|---|---|---|
+| `queryCount` (`r_vulkan.cpp:1520`) | `8` | `9` — fog takes slot 8 |
+| both `vkCmdResetQueryPool` calls (`:7330`, `:8326`) | `0, 8` | `0, 9` |
+| `uint64_t ts[8]` (`:8113`) | fixed array | `ts[9]` — **`vkGetQueryPoolResults` writes `nq * 8` bytes into it** |
+| `uint32_t nq = g.profRasterFrame ? 6u : 8u;` (`:8117`) | `8u` | `9u` on the **non-raster** branch only |
+| `double profMs[8]` (`:467`) | all 8 slots already assigned | `profMs[9]`, fog in slot 8 |
+| the reset loop `for (int pi = 0; pi < 8; ...)` (`:8168`) | `8` | `9` |
+| the printf format + accumulation lines | 8 fields | add the `fog` field |
+
+Then wrap the fog compute with begin/end timestamps and label it `fog` in the `` \ `` overlay.
+Grep `\b8\b` around the profiler block before declaring this done — the array sizes are the ones
+that bite, because they compile silently. (Contained change, done **with** the perf pass — never
 silently skipped, §6.)
 
 - [ ] **Step 5: Build + smoke + tests + toggle test**

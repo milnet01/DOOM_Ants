@@ -34,6 +34,10 @@ grep -n "depth-guided\|depth guide"  $S $P   # must be EMPTY: L5 guides on WORLD
                                         # gpos.w is a material id, there is no depth buffer
 grep -n "\* wisp \*"              $P   # must be EMPTY: wisp is a FUNCTION -- wisp(p, t_s)
 grep -n "fogHeightPool"          $P   # L3 defines it, L4 calls it; `pool` is not a local there
+grep -n "\bFLAG_OUTDOOR\b"        $P   # must be EMPTY: one bit, one name -- RB_MESH_OUTDOOR
+grep -n "h\.matFlags & .*LIQUID"  $P   # must be EMPTY: liquid rides MatCtrl -> FogHit.ctrlFlags
+grep -n "float haze = view\."     $P   # must be EMPTY: RecordRtTrace has no `view`, use g.lastView
+grep -n "skyExists"               $P   # must show a DECLARATION, not just the `if`
 ```
 
 **Also verify after every batch:** that each edit actually landed. A batched
@@ -217,17 +221,69 @@ with one checklist under-serves each. Loop 9, if run, should keep the split.
 
 ---
 
+## Loop 9 — 2026-07-26
+
+**Tally:** CRITICAL 3 · HIGH 3 · MEDIUM 2 · LOW 3 · INFO 1 — **11 verified, 0 dismissed** (+1 INFO
+noted, not actioned). Two Sonnet lanes (~465k), split by **failure mode** rather than by document,
+which loop 8's lesson predicted would pay: one lane did nothing but resolve every identifier in
+every code block against the real source; the other checked whole-doc coherence after loop 8's
+restructuring.
+
+**The split worked.** The code lane found all three CRITICALs and confirmed L1, L1b, L1c, L1d and
+L6 otherwise resolve cleanly — the first time any loop has been able to say that. The coherence
+lane found two spec-vs-plan divergences that eight prior loops had read past, and confirmed loop
+8's restructuring broke no seams.
+
+| # | Sev | Fix | Ripples chased |
+|---|-----|-----|----------------|
+| 9.1 | CRITICAL | **L2's sky term gated on `skyExists`, which is declared nowhere.** The plan described the test in prose (`misc4.w != 0xFFFFFFFF`) but never assigned it. Added the declaration | Confirmed the sentinel's real form against `skyPanorama()`; the comment that used to carry the expression is now redundant and was dropped |
+| 9.2 | CRITICAL | **L4's goo test read the wrong flags word — the feature was dead by construction.** It tested `h.matFlags` for `RB_FLAG_LIQUID_NUKAGE`, but `FogHit.matFlags` is filled from the per-**vertex** flags word at both call sites, whose live bits are `FLAG_FLAT`/`FLAG_MASKED`/`FLAG_EMISSIVE`…; the liquid bit is a **`MatCtrl.flags`** bit read via `isNukage(mc)`. No goo room would ever have rendered green, and nothing would have failed to compile. L4 now widens `FogHit` with a `ctrlFlags` field, filled from `mc.flags` at both sites | L4's **Interfaces/Consumes** line still said "`FogHit.matFlags` (now read for goo)" — caught by the post-batch sweep, not by either lane, and rewritten; "Produces" now names the widened struct; verified `mc` is in scope at both `FogHit` constructions; checked spec §4.5 and §7's L4 row, which describe the mechanism without naming the field, so neither needed changing |
+| 9.3 | CRITICAL | **L4's `misc6.w` write used `view.hazeDensity`, and there is no `view` in that function.** `RecordRtTrace()` takes no `rb_view_t` parameter; every other per-frame field it reads comes off the cached global `g.lastView`. Corrected, with the reason inline so it is not "fixed" back | The `r_backend.c` sites that legitimately *do* have a local `view` were checked and left alone — only the `r_vulkan.cpp` write was wrong; the Files line describing that same edit was tightened to `g.lastView` too |
+| 9.4 | HIGH | **The profiler widening named 3 sites; there are 7.** Missed: `uint64_t ts[8]` (a fixed stack array — `vkGetQueryPoolResults` would write 72 bytes into 64, silently), the `nq = g.profRasterFrame ? 6u : 8u` ternary's non-raster branch, `double profMs[8]` (all 8 slots already assigned, so there is no free slot for fog), and the `pi < 8` reset loop. Replaced the prose with a seven-row table | The `queryCount 8 → 9` standing grep still passes; added "grep `\b8\b` around the profiler block before declaring this done" — the array sizes compile silently, which is what makes them dangerous |
+| 9.5 | HIGH | **One bit, two names.** The spec says the C-side bit and its shader mirror share one identifier ("one name, not two"); the plan then declared `RB_MESH_OUTDOOR` in C and `FLAG_OUTDOOR` in GLSL | Both shader sites renamed plus the Files line; added a standing grep so `FLAG_OUTDOOR` cannot come back; the `r_mesh.h` row of the file table, which omitted L1b entirely although the `#define` lives there, now lists it |
+| 9.6 | HIGH | **L3's torch loop contradicted its own heading.** Task title, spec §4.4(b), §7's L3 row and Q2 all say *nearest-few*; the code looped over every static emitter, with nearest-few demoted to an optional tweak. Rewritten as the spec's two-pass form: a cheap distance scan keeping the nearest 4, then the expensive phase evaluation for those 4 only | **This one is not fully closed and says so.** The two-pass form cuts phase evals from `steps × omniStart` to `steps × 4`, but pass 1 is *still* `steps × omniStart` distance tests — thousands per pixel at ~40 steps. Rather than silently invent a design, logged **Q23** naming per-ray selection as the fallback and requiring pass 1 be measured alone at L3. Reverting to all-emitters is explicitly ruled out as strictly worse |
+| 9.7 | MEDIUM | **L5 called `fetchFogBilinearPlain`, which no step creates.** The shipped function is `fetchFogBilinear`; the plan meant "keep the old body under a new name" but never said so | The rename instruction now sits in the snippet itself, where an implementer reading only the code block will hit it |
+| 9.8 | MEDIUM | **L1c silently took one arm of a fork §4.3b poses, with no remedy if its acceptance check fails.** Added the contingency (a separate `kFogSkyDensity`, *not* another base-density change) and logged **Q24** | §10's question list extended; the plan's pointer and the spec's entry cross-reference each other |
+| 9.9 | LOW | L1's pre-loop `skyAmbient` local is left dead by L2's edit | L2 Step 1 now says to delete it in the same edit |
+| 9.10 | LOW | The file-structure table credited `r_mesh.c` with the outdoor bit but not `r_mesh.h`, where the `#define` lives | Folded into 9.5 |
+| 9.11 | LOW | **§6's budget table — loop 8's own fix.** Its column header read "Its own added cost" while the L2–L5 row holds a *floor*, so the cell could not be read without the footnote beneath it | Header reworded and the row daggered, so the table stands alone |
+
+**INFO, not actioned:** `fogDensity(vec3)` stays compiling-but-unused across the L3→L4 boundary.
+L4 already owns deleting it; noting that the cost is real but small and already assigned.
+
+**Post-batch ripple sweep:** all standing greps re-run plus the four new ones. `FLAG_OUTDOOR`,
+`RB_FLAG_LIQUID_NUKAGE` in a `h.matFlags` test, `view.hazeDensity` in `r_vulkan.cpp`, and
+`depth-guided` all return empty; `skyExists` shows a declaration; Q23/Q24 resolve in both
+directions. One ripple (9.2's Interfaces line) was caught only by this sweep — **the third
+consecutive batch where the greps caught something neither lane did.**
+
+**Lesson.** Splitting the lanes by *failure mode* rather than by document found strictly more than
+loop 8's split by document: three CRITICALs the previous eight loops had read past, all in code
+blocks, all in tasks a prose-oriented reviewer had "reviewed" before. Two of the three would have
+failed to compile, which is the harmless kind. **9.2 would have compiled and shipped a dead
+feature** — green fog that never appears, with nothing to point at. That is the one to fear, and a
+reviewer told "resolve every identifier against the source" finds it where one told "review this
+document" does not.
+
+---
+
 ## Open — not yet fixed
 
-- **Cold-eyes has not converged.** Loop 8 returned 2 CRITICALs, both unbuildable shader code, so
-  loop 9 is owed. Trend: 15C+24H → 3C+2H → 2C+5H → 2C+2H → **2C+0H**. The CRITICAL count has
-  been stuck at 2 for three loops while HIGH has fallen to zero — the tail is not thinning as
-  fast as it looks, because each loop reads a *different* part of the plan for the first time.
-  **Judgement for whoever picks this up:** loop 8's CRITICALs were in **L4 and L5**, tasks no
-  earlier loop had read as code. L1c and L1d have now been read twice and swept twice. The
-  remaining unread-as-code surface is **L2, L3 and L6**; a loop 9 aimed squarely at the GLSL and
-  C++ blocks in those three is the highest-yield run left, and it is a *narrow* one. A loop 9
-  that re-reads the spec's prose is likely wasted — loop 8's spec lane came back correctness-clean.
+- **Cold-eyes has not converged.** Loop 9 returned 3 CRITICALs, so loop 10 is owed.
+  Trend: 15C+24H → 3C+2H → 2C+5H → 2C+2H → 2C+0H → **3C+3H**. The count went *up*, and that is
+  informative rather than alarming: loop 9 was the first pass to read the code blocks as code
+  across every task, and it found what eight prose-oriented passes had walked past.
+  **Judgement for whoever picks this up:** every task's code blocks have now been identifier-
+  resolved once, and the lane reported L1, L1b, L1c, L1d and L6 otherwise clean. What has *not*
+  been re-read cold is **loop 9's own fixes** — and by this document's own five-loop record, that
+  is exactly where the next defect will be: the widened `FogHit`, the two-pass torch loop, the
+  seven-row profiler table and the `g.lastView` correction are all new text. A loop 10 aimed at
+  **just those four passages plus L2/L3/L4's code blocks** is narrow, cheap and the highest-value
+  run left. Re-reading the spec's prose is very likely wasted — two consecutive lanes have now
+  found it correctness-clean.
+- **Q23 (torch-emitter selection) is open and blocks nothing yet, but it will shape L3's code.**
+  The nearest-few scan may not fit the budget even in its two-pass form; the per-ray fallback is
+  named but undecided, and the decision needs a measurement, not a review loop.
 - ~~The plan has no L1c and no L1d task.~~ **Written 2026-07-26**, and **first cold-read at loop 7**
   (2 CRITICALs, both undeclared shader identifiers, both fixed).
 - **L1b's measured Δ is still unrecorded**, so L1c's `8 % − Δ(L1b)` allowance cannot be

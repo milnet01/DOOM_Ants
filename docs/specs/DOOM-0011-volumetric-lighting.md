@@ -5,9 +5,10 @@ tune e7753b3; fog-placement standard + sky-backdrop aerial fog 1345c92 — user 
 "looking fantastic… covers the mountains… outside and not inside"). **A 2026-07-25
 amendment retargets the look at Silent Hill 2 (§4.3b, wisps) and softens the indoor
 cutoff into an outdoor-proximity seep (§4.3a amendment); the perf gate rises to
-≤ 15 % (§6). `/cold-eyes` has run **8 loops** and has **not** converged — loop 8 still returned
-2 CRITICALs, both unbuildable shader code (this time in the L4 and L5 tasks). Every loop since 4
-has had its worst findings be defects in the *previous* loop's own fixes. **The `--max-loops` cap
+≤ 15 % (§6). `/cold-eyes` has run **9 loops** and has **not** converged — loop 9 returned
+3 CRITICALs, all in the plan's shader and C++ blocks, including one that would have **compiled
+and silently shipped a dead feature** (the goo tint read the wrong flags word). Loops 4–8 each
+had their worst findings inside the *previous* loop's own fixes. **The `--max-loops` cap
 of 5 is passed, so each further loop is an explicit user call.** The plan's **L1c and L1d tasks
 were written on 2026-07-26** and first reviewed at loop 7. Original design
 approved by the user
@@ -59,7 +60,7 @@ would have cost if it had reached the implementer — lives in
 |---|---|---|
 | Original spec (2026-07-23) | 4 | **Converged** — polish only by loop 4 |
 | 2026-07-24 amendment (fog follows open sky) | 3 | **Converged** — polish only by loop 3 |
-| 2026-07-25 amendment (SH2 look + seep) | 8 | **Not converged** — see the ledger |
+| 2026-07-25 amendment (SH2 look + seep) | 9 | **Not converged** — see the ledger |
 
 One lesson is repeated here because it shaped both documents: **for five loops running, the
 worst findings were defects in the previous loop's own fixes** — shader code written into
@@ -1114,16 +1115,16 @@ colour-frozen.
 eat the whole allowance and leave the later ones unbuildable. Only the last row is a
 pass/fail gate; the rest are go/no-go spot-checks.
 
-| Layer | Its own added cost | Running total must stay under |
+| Layer | Its own ceiling — unless marked † | Running total must stay under |
 |---|---|---|
 | **L1b** *(shipped)* | ≤ 4 % | 4 % |
 | **L1c** | `8 % − Δ(L1b)` — whatever L1b left | 8 % |
 | **L1d** | ≤ 1 % (the seep tap) | 9 % |
-| **L2–L5** | **≥ 6 % is reserved for the four of them to share** | 15 % |
+| **L2–L5** | † **≥ 6 % reserved for the four to share** | 15 % |
 | **L6** | measures, adds nothing | **15 % — the formal pass/fail** |
 
-Read the L2–L5 row as a *promise to them*, not a limit on them: after L1c and L1d have taken
-their slices, at least 6 % of the 15 % must still be unspent. All percentages are of
+† The L2–L5 figure is a **floor, not a ceiling** — a promise *to* those layers. After L1c and
+L1d have taken their slices, at least 6 % of the 15 % must still be unspent. All percentages are of
 **present-total in milliseconds**, fog-off vs fog-on over the same walk. The prose below
 derives these; the table is the version to check against.
 
@@ -1547,3 +1548,18 @@ reasoning stays there.
   build time is **not** an available option — it is exactly the leak INV-12 forbids, so
   choosing it would require amending the invariant. v1 takes spawn-state; judge at
   **L1d** whether the difference is even noticeable in play.
+- **Q23 (torch-emitter selection, per sample or per ray? 2026-07-26):** §4.4(b) says pick the
+  **nearest few** static emitters *to the sample*, which cuts the expensive phase evaluations
+  from `steps × omniStart` to `steps × 4`. But the selection scan itself is still
+  `steps × omniStart` — thousands of distance tests per pixel at ~40 steps. The alternative is
+  to select **once per ray**, before the march loop, from the ray's midpoint: an `omniStart`-sized
+  scan per *pixel* instead of per sample, at the cost of a stale pick on long rays that cross a
+  room boundary. **Measure the scan alone at L3**; if per-sample selection does not fit L3's
+  share, take the per-ray form and amend §4.4(b) to match. Reverting to "evaluate every emitter"
+  is not an option — it is strictly more expensive than either. **L3.**
+- **Q24 (sky density after the L1c raise, 2026-07-26):** §4.3b's fork — give the sky term its own
+  effective density/distance, or keep it sharing `kFogBaseDensity` and re-check the mountains
+  after the ≈2× raise. L1c takes the second path, with "distant sky still readable at High" as
+  its acceptance check. If that check fails, the resolution is a separate `kFogSkyDensity`, **not**
+  another `kFogBaseDensity` change — lowering the base would undo the foreground tuning L1c just
+  did. **L1c.**
