@@ -245,6 +245,22 @@ void main()
     else if ((vFlags & FLAG_FLAT) != 0) id = pc.numWall + vTexnum;
     else                                id = vTexnum;
 
+    // DOOM-0267: wall quads are ONE-SIDED, exactly like the software renderer.
+    // RB_BuildLevelMesh emits a step/shaft face once, from whichever sidedef
+    // carries the texture, with its normal pointing into that sidedef's front
+    // sector. This pipeline runs VK_CULL_MODE_NONE (winding is not guaranteed --
+    // DOOM-0068), so without this test the same quad is drawn from behind too,
+    // sealing a doorway that Classic shows open: R_StoreWallRange re-derives per
+    // frame that a two-sided line needs NO lower texture when worldlow <=
+    // worldbottom, so from the far side it draws nothing at all. Tested against
+    // the stored normal rather than gl_FrontFacing so it stays winding-agnostic.
+    // Excluded: masked mid-walls (grates/fences ARE genuinely two-sided), flats,
+    // sprites, the psprite, both sky kinds, and blob decals (0x80).
+    if ((vFlags & (FLAG_FLAT | FLAG_MASKED | FLAG_SPRITE | FLAG_PSPRITE
+                 | FLAG_SKY | FLAG_SKYDOME | 0x80)) == 0
+        && dot(vNormal, vWorldPos - vec3(pc.eyeX, pc.eyeY, pc.eyeZ)) > 0.0)
+        discard;
+
     // Native REPEAT tiling: divide the raw texel UV by the material's own size
     // and let the sampler wrap. (Sprite UVs are pre-inset half a texel and stay
     // in range, so REPEAT is a no-op for them — no bleed across a tile border.)
