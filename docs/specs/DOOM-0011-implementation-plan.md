@@ -80,7 +80,7 @@ this plan implements it; every `§`/`INV`/`Q` reference points there.
 |------|-------------------------------|-------|
 | `shaders/pathtrace.comp` | `marchFog()` definition + call site; mode-4 in-megakernel apply; mode-6 half-res write | L1–L5 |
 | `shaders/pt_common.glsl` | Fog `const`s (steps, density, tints, `kSunDir`), phase/density helpers | L1–L5 |
-| `shaders/svgf_composite.comp` | Mode-6 apply: fold fog after albedo re-multiply + on sky-passthrough; bilateral upsample | L1, L5 |
+| `shaders/svgf_composite.comp` | Mode-6 apply: fold fog after albedo re-multiply + on sky-passthrough; **plain bilinear** upsample (L1) → depth-guided bilateral (L5) | L1, L5 |
 | `r_vulkan.cpp` | New half-res fog image + bindings; `rb_fog` extern; `misc6.z/.w` writes; profiler slot | L1, L4, L6 |
 | `r_mesh.h` | New `rb_view_t.hazeDensity` field | L4 |
 | `r_backend.c` | Compute hell-haze from `gameepisode`/`gamemap`/sky into `view.hazeDensity` | L4 |
@@ -743,9 +743,10 @@ fallback; tune dither, phase, anisotropy.
 - Produces: the final upsampled fog fetch used by both composite branches. No new interfaces.
 
 **Existing code to read first:**
-- `svgf_composite.comp:58-72` — `gpos`/`gp.w` load + sky sentinel (the bilateral guide + the
+- `svgf_composite.comp:93` — the `gp.w < 0.0` sky sentinel; `:53-66` — `fetchFogBilinear`'s
+  four-texel load (the bilateral guide + the
   fallback trigger).
-- `r_vulkan.cpp:7545` — the a-trous passes (the **escalation** path, Q6, only if bilateral crawls).
+- `r_vulkan.cpp:7561-7568` — the a-trous passes (the **escalation** path, Q6, only if bilateral crawls).
 
 - [ ] **Step 1: Depth-guided bilateral upsample**
 
@@ -841,9 +842,11 @@ gate; the earlier layers carry their own measured spot-checks.
   Historical intent: pin `rb_fog` to its shipped default alongside
   `rb_detile=2, rb_filth=1, rb_wet=1`.
 
-- [ ] **Step 2: Menu rows (six edits + name table — clone `rb_detile`, place like `rb_wet`)**
+- [ ] **Step 2: Menu rows (seven edits + name table — clone `rb_detile`, place like `rb_wet`)**
 
-Per spec §5 (all six — adding only the menuitem arrays ships a blank row):
+Per spec §5 (all seven — adding only the menuitem arrays ships a blank row; the seventh is
+the **forward declaration** `void M_ChangeFog(int choice);` beside `M_ChangeWet` at
+`m_menu.c:224`, without which the file does not compile):
 1. `ef_fog` in `effects_e`, `vid_fog` in `videoitem_e`.
 2. Row in `EffectsMenu[]` and `VideoMenu[]`, both bound to `M_ChangeFog`.
 3. `M_DrawEffectsMenu`: a `"Volumetric fog:"` label + `fogNames[rb_fog]` value keyed on `ef_fog`
@@ -915,14 +918,16 @@ Update the memory file `doom-0011-volumetrics-design.md` to "shipped".
 
 ## Self-review (checked against the spec)
 
-**Spec coverage** — every spec section maps to a task:
+**Spec coverage** — PARTIAL. §4.3a's 2026-07-25 seep amendment and §4.3b (the Silent Hill 2
+look) have **no task**, because L1c/L1d were never written; everything below describes the
+coverage that does exist:
 - §4.1 hook / `FogHit` → L1 (struct + call sites, both modes). §4.2 march (steps, dither,
   early-out, HG) → L1 (march) + L2 (phase) + L5 (dither tune). §4.3 density/pooling/colour → L3
   (pooling) + L4 (tint). §4.4 sky shafts (`kSunDir`, one ray, no-sky case) → L2; torch shafts
   (static slice, nearest-few, no occlusion) → L3. §4.5 profiles (clear/goo/hell, the concrete hell
   rule) → L4. §4.6 half-res + per-mode composite + sky-seam bilinear fallback → L1 (skeleton +
   fallback) + L5 (bilateral). §5 data (fog image + bindings, `misc6.z/.w`, `rb_view_t` field,
-  `rb_fog`, six menu edits, `;` key) → L1 (image) + L4 (`rb_view_t`/`misc6.w`) + L6 (dial/menu/key).
+  `rb_fog`, seven menu edits, `;` key) → L1 (image) + L4 (`rb_view_t`/`misc6.w`) + L6 (dial/menu/key).
   §6 perf (profiler slot + ≤ 15 % gate) → L6. §8 INV-1..8 → Global Constraints + per-task guards.
 - **Invariant coverage is PARTIAL, and this is the plan's largest gap.** Only **INV-1..8**
   are pinned in Global Constraints and re-stated at their tasks (INV-2 in L3, INV-4 in L1,
