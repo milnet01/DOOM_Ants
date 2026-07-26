@@ -688,6 +688,53 @@ parked ideas (💭 considered) until we commit to and design each one.
   IMPLEMENTED and user-play-tested — "looking fantastic... covers the
   mountains... outside and not inside". The 2026-07-24 open-sky amendment
   cold-eyes-converged in 3 loops (log in the spec).
+  Progress (2026-07-26): cold-eyes loops 4 and 5 run on the
+  2026-07-25 SH2 amendment; all verified findings fixed and committed
+  (d2c0eb4, 18aef66, pushed). NOT yet converged — the /cold-eyes
+  --max-loops cap of 5 is reached and loop 5 still returned 3 CRITICALs,
+  so a loop 6 is owed before L1c is implementable.
+
+  Loop 4 (6 lanes): CRITICAL 15 / HIGH 24 / MEDIUM 34 / LOW 34 / INFO 8.
+  Two classes dominated. (1) The seep's traversal was broken twice over:
+  vanilla DOOM has no minisegs (P_LoadSegs gives every seg a linedef), so
+  the specified SUBSECTOR graph leaves every multi-leaf room disconnected
+  and `d` cannot propagate inward from a doorway at all; and resolving `d`
+  per graph node rather than per grid cell reproduces exactly the abrupt
+  room-boundary step the section rejects as option (C). Also unhandled:
+  self-referencing sectors, levels with no sky, the unreachable sentinel
+  (R16F +inf under a zero bilinear weight yields NaN), map-extent
+  overflow, and the sampler address mode. (2) EVERY file:line citation had
+  rotted again — r_vulkan.cpp by +4..+6 and pathtrace.comp by +2, because
+  both files grew under DOOM-0254/0263 AFTER loop 3 re-anchored them. 50
+  citations re-verified against source and corrected; three landed on
+  unrelated constructs. Plus: L2's sky term never said whether it replaces
+  or adds to L1's shipped flat sky ambient (it must replace — the other
+  reading double-counts); kSunDir was called "new" though already declared
+  at pt_common.glsl:42; L1 shipped a plain bilinear, not the "bilateral
+  upsample" §7 credited it with; L1b's spot-check reused the whole-feature
+  15% gate; L1c bound two thresholds (8% and 15%) to one decision; the
+  menu list was one edit short of compiling. The implementation plan
+  carried 9 CRITICALs of its own.
+
+  Loop 5 (2 narrowed lanes, citations excluded): CRITICAL 3 / HIGH 2 /
+  MEDIUM 2. Two of the three CRITICALs were defects in LOOP 4's OWN FIXES
+  — the argument for re-reading cold. (i) Moving the graph to sectors
+  dodged the miniseg problem but a sector-indexed Dijkstra settles one
+  distance per sector, i.e. the per-node value the next step forbids; the
+  search state must be the PORTAL. (ii) "Border cells are dMax by
+  construction" was asserted, not made true. (iii) In the plan, L4 was
+  charged with replacing the sigma-times-skyExposure form and never did,
+  so roofed goo/hell rooms would keep ~5% of intended density while the
+  play-test passed weakly on a thin green tint.
+
+  LESSON worth carrying: line-number citations in a 1340-line spec against
+  a 9000-line moving source re-rot on every code change — this is the
+  third loop-pair to "fix citation drift". Loops 2/3 fixed it; DOOM-0254
+  and DOOM-0263 then shifted the lines again. Consider anchoring to symbol
+  names + quoted code rather than bare line numbers.
+
+  NEXT: loop 6 (user decision — the cap was hit), then write the L1c/L1d
+  tasks the implementation plan still lacks, then implement L1c.
 
   2026-07-25 amendment (user, with Silent Hill 2 named as the art target and
   reference screenshots): (1) SH2 look — new spec §4.3b, near-white colourless
