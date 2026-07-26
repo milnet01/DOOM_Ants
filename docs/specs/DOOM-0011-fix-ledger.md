@@ -80,12 +80,46 @@ Triggered by the standing instruction that a fix must not make something else st
 | S.5 | Plan: "six menu edits" ×3, bilateral in the file table, "every spec section maps to a task" | fixes 4.7 + 4.9's missed ripples |
 | S.6 | Plan citations `svgf_composite.comp:58-72` → `:93`; `r_vulkan.cpp:7545` → `:7561-7568` | verified against source |
 
+## Loop 6 — 2026-07-26 — 2 Sonnet lanes, citations out of scope (~304k)
+
+Tally: **CRITICAL 2 · HIGH 5 · MEDIUM 3 · LOW 2 · INFO 0** — verified 12 / unverified 0, plus one
+found by the orchestrator while verifying and two found by the ripple greps. **15 fixes.**
+
+**The headline lesson of this loop:** *four* of the seven CRITICAL/HIGH findings were defects in
+**loop 5's own fixes** — specifically in fix 5.3, the `σ`-split block written into plan L4. That
+block introduced `gooMult` (never defined), kept a now-dead `densMul`, referenced `wisp` (an L1c
+term with no task), and told the implementer to add `kGooDensityMul` (a constant the spec does not
+name). Loop 4 → loop 5 had the same shape. **A fix that writes new code into a doc must be read as
+new code — against the surrounding block and against the spec's own constant inventory.**
+
+| # | Fix | Ripples chased |
+|---|-----|----------------|
+| 6.1 | §7 L1c row: the "≥ 7 % reserved" figure never subtracted L1d's own ≤ 1 % seep tap, though L1d draws on the same cumulative 15 % pool | §7 L1d row; §6 budget prose. L1d now named in the reservation; L2–L5's share restated as ≥ 6 % |
+| 6.2 | INV-10 + INV-11 given explicit `*Falsifiable:*` clauses (they were the only two amended invariants without one) | §7 L1c acceptance row supplies both falsifiers — checked they exist before citing them |
+| 6.3 | INV-4 + INV-5 likewise, so all twelve now carry the same tag | none (checked: INV-1,2,3,6,7,8,9,12 already had one inline or tagged) |
+| 6.4 | INV-12 now states the two conditions that make it **true** — the `frontsector != backsector` exclusion and the one-cell void padding ring. Both lived only in §4.3a prose, so an editor reading INV-12 alone could drop either and silently falsify it | §4.3a (already says both — confirmed consistent, not duplicated wording) |
+| 6.5 | §4.5 stated "profiles compose" but gave **no rule for combining `mediumTint`** — densities add, tints were undefined. Now: tints **multiply**, with the darkening caveat and the tuning dial named | plan L4's `mediumTint *= kHellTint` (already multiplicative — the spec was the side that was silent) |
+| 6.6 | `v₁`/`v₂` example speeds were ‖8.60‖ vs ‖8.62‖ while the text claimed they differ in speed | **§5 inventory still held the old `(−5, 7, 0.5)` — caught by the ripple grep, not by either lane** |
+| 6.7 | Plan L1's `marchFog` snippet omitted `strength` entirely, while L1b quotes the shipped line as `fogDensity(p) * strength` | Verified against shipped `pathtrace.comp:793`/`:807` — L1b was right, L1's snippet was incomplete |
+| 6.8 | Plan L2: snippet calls `sunRayMissesGeometry()`, prose defined `sunRayReachesSky()`; the defining sentence was also a half-applied edit ("the closest hit is the sky instance the ray **misses** all solid geometry") | **plan `:964` still listed the old name — caught by the ripple grep** |
+| 6.9 | Plan L2 uses `kFogColor`, which L1c declares and this plan has no L1c task for | Dependency called out inline; the banner already covers the general case |
+| 6.10 | Plan L4 (**fix 5.3's own block**): `densMul` set-and-never-read; `gooMult` undefined; `kGooDensityMul` invented | Replaced with `areaMult` matching spec §4.5's table; closing bullet now names `kAreaDensity` |
+| 6.11 | Plan L4: `wisp` and `pool` used with no stated provenance | Both annotated in-line; `wisp` flagged as a literal `1.0` placeholder until L1c exists |
+| 6.12 | Plan L4 bullet said `Ls += skyRadiance() * …` — a function that appears nowhere and contradicts L2's `kFogColor * …` (orchestrator-found while verifying 6.10) | none (checked: `skyRadiance` has no other occurrence) |
+
+**Standing greps re-run after this batch:** `≤ 5 %` survives only in explicitly historical framings
+("raised from", "is superseded", cold-eyes log entries); `60 FPS floor` only where it says it no
+longer binds; `queryCount` uniformly 8 → 9; `bilateral` only as L5's future work; `custom-index 2`
+only on the **primary** ray, which genuinely can hit the sky instance. All 18 edits re-grepped for
+presence individually.
+
 ---
 
 ## Open — not yet fixed
 
-- **Cold-eyes has not converged.** Loop 5 returned 3 CRITICALs; the `--max-loops` cap of 5
-  is reached. Loop 6 is owed.
+- **Cold-eyes has not converged.** Loop 6 returned 2 CRITICALs and 5 HIGHs, all substantive, so
+  loop 7 is owed. The `--max-loops` cap of 5 was passed at loop 6 — each further loop is an
+  explicit user call, not an automatic re-run. Trend across loops: 15C+24H → 3C+2H → 2C+5H.
 - **The plan has no L1c and no L1d task.** Its ⚠ banner says it must not be executed past
   L1b. Writing those tasks is the work that closes INV-9..12's coverage gap.
 - **L1b's measured Δ is still unrecorded**, so L1c's `8 % − Δ(L1b)` allowance cannot be

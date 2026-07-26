@@ -210,10 +210,11 @@ vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h) {
     vec3  inscatter = vec3(0.0);
     float trans     = 1.0;
     vec3  skyAmbient = SKY_COLOR * kSkyShaftStrength;   // L1: flat, non-directional
+    float strength   = fogStrengthScale(pc.misc6.z);    // the `;` dial: Low/Med/High thins the air
 
     for (int i = 0; i < kFogSteps; ++i, t += dt) {
         vec3  p     = ro + rd * t;
-        float sigma = fogDensity(p);
+        float sigma = fogDensity(p) * strength;
         vec3  Ls    = skyAmbient;                        // L2 adds directional sky + torches
         inscatter += trans * sigma * Ls * dt;
         trans     *= exp(-sigma * dt);
@@ -511,10 +512,20 @@ shaft). Guard the whole sky term on "level has sky" so enclosed levels skip it (
         // L3 adds torch contributions to Ls here.
 ```
 
-Define `sunRayReachesSky()` next to `marchFog()` using the confirmed ray-query helper; it traces
-from `p + kSunDir*eps` along `kSunDir` and returns true iff the closest hit is the sky instance
-the ray **misses** all solid geometry (mask `0x01` cannot reach the mask-`0x04` sky
-instance, so "reaches sky" *is* "missed everything" — spec §4.4(a)).
+> **Dependency — `kFogColor` is declared by L1c, and this plan has no L1c task** (see the status
+> banner). The spec's build order (§7) puts L1c before L2, so by the time L2 runs the constant
+> should exist. If L2 is attempted first, either land `kFogColor` with it or fall back to
+> `SKY_COLOR` here and swap it when L1c arrives — do not leave the symbol undefined.
+
+Define `sunRayMissesGeometry()` — the same name the snippet above calls — next to `marchFog()`
+using the confirmed ray-query helper; it traces from `p + kSunDir*eps` along `kSunDir` and returns
+true iff the ray **misses all solid geometry**. It never tests for a sky *hit*: cull mask `0x01`
+cannot reach the mask-`0x04` sky instance, so "reaches sky" *is* "missed everything"
+(spec §4.4(a)).
+
+- **Also fix the stale comment L1 shipped.** `pathtrace.comp:808` reads
+  `// L2 adds directional sky + torches`, but L2 **replaces** the flat `skyAmbient` — only L3
+  adds. Leaving it invites exactly the double-count §4.4(a) forbids.
 
 - [ ] **Step 2: Build + smoke + tests** (same three commands as L1 Step 7).
 
@@ -679,14 +690,14 @@ global haze to base density, and multiply every `Ls` contribution by `mediumTint
 ```glsl
     // Profile select (§4.5): default clear; goo if primary hit is liquid nukage; hell haze global.
     vec3  mediumTint = vec3(1.0);
-    float densMul    = 1.0;
+    float areaMult   = 0.0;                                   // spec §4.5: clear = 0, goo = 1.0
     float haze       = uintBitsToFloat(pc.misc6[3]);          // hell haze (0 on non-hell)
     if ((h.matFlags & RB_FLAG_LIQUID_NUKAGE) != 0u) {         // rb_materials.h:17, = 8u
         mediumTint = kGooTint;
-        densMul    = kGooDensityMul;                          // thicken (tune-on-hardware)
+        areaMult   = 1.0;
     }
     if (haze > 0.0) {
-        mediumTint *= kHellTint;                              // faint red over whatever we have
+        mediumTint *= kHellTint;                              // tints MULTIPLY (spec §4.5)
     }
 ```
 - **Split the `sigma` line — this is the step that discharges L1b's standing note and spec
@@ -701,16 +712,24 @@ global haze to base density, and multiply every `Ls` contribution by `mediumTint
 
 ```glsl
     // spec §4.3b sigma_final: skyExposure gates the SKY-SOURCED term ONLY (INV-9).
-    float skySigma  = kFogBaseDensity * skyExposure;   // outdoor haze, gated
-    float areaSigma = (kAreaDensity * gooMult) + haze; // profiles, NOT gated
+    float skySigma  = kFogBaseDensity * skyExposure;      // outdoor haze, gated
+    float areaSigma = (kAreaDensity * areaMult) + haze;   // profiles, NOT gated
     float sigma     = (skySigma + areaSigma) * pool * wisp * strength;
+    //   `areaMult` comes from the profile-select block above (spec §4.5's per-profile weight).
+    //   `pool`     is L3's height factor -- already in scope at L4, since L3 ships first.
+    //   `wisp`     is L1c's noise term, and L1c has NO task in this plan (see the banner).
+    //              Until it is written `wisp` does not exist: hold it at a literal 1.0 and
+    //              delete the placeholder when L1c lands. Do NOT drop the factor from the
+    //              expression -- keeping it is what makes L1c a one-line edit here.
 ```
 - **Verify by construction, not by eye:** with `rb_fog` on, a goo room under a solid roof
   must show green fog at a density independent of `kIndoorFogScale` — temporarily setting
   `kIndoorFogScale = 0` must NOT remove the goo pool. If it does, the split did not land.
 - Multiply the sky term **and** each torch term by `mediumTint` (colour = light × medium): so
-  `Ls += skyRadiance() * kSkyShaftStrength * ph * mediumTint;` and likewise for torches.
-- Add `const float kGooDensityMul` to `pt_common.glsl`.
+  L2's `Ls += kFogColor * kSkyShaftStrength * ph;` becomes
+  `Ls += kFogColor * kSkyShaftStrength * ph * mediumTint;`, and likewise for each torch term.
+- Add `const float kAreaDensity` (start `0.0020`) to `pt_common.glsl`. The spec's §5 inventory
+  names **`kAreaDensity`** — there is no `kGooDensityMul`.
 
 - [ ] **Step 5: Build + smoke + tests** (L1 Step 7 commands).
 
@@ -942,7 +961,7 @@ coverage that does exist:
 
 **Placeholder scan** — the `kFog*`/tint/`kHaze*` values are concrete starting numbers explicitly
 labelled *tune-on-hardware* (a spec requirement, not a TODO). Shader helper calls
-(`sunRayReachesSky`, `emitterCentroid`, `emitterLe`, ray-query pattern) are flagged
+(`sunRayMissesGeometry`, `emitterCentroid`, `emitterLe`, ray-query pattern) are flagged
 "read the existing helper first, confirm its signature" rather than invented — these consume
 **existing** engine interfaces the plan cannot restate without reading them; that read is a named
 step, not a placeholder.
