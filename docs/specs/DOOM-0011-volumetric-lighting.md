@@ -5,9 +5,11 @@ tune e7753b3; fog-placement standard + sky-backdrop aerial fog 1345c92 — user 
 "looking fantastic… covers the mountains… outside and not inside"). **A 2026-07-25
 amendment retargets the look at Silent Hill 2 (§4.3b, wisps) and softens the indoor
 cutoff into an outdoor-proximity seep (§4.3a amendment); the perf gate rises to
-≤ 15 % (§6). `/cold-eyes` has run **5 loops** (log below) and has **not** converged — loop 5 still
-returned 3 CRITICALs, two of them defects in loop 4's own fixes. The amendment is
-therefore still **not implementation-ready**; L1c + L1d are the next work once it is.** Original design
+≤ 15 % (§6). `/cold-eyes` has run **6 loops** (log below) and has **not** converged — loop 6 still
+returned 2 CRITICALs, four of its seven worst findings being defects in loop 5's own fixes
+(the same shape as loop 5's, which were defects in loop 4's). **The `--max-loops` cap of 5 is
+passed, so each further loop is an explicit user call.** The plan's **L1c and L1d tasks were
+written on 2026-07-26** from this amendment; they have not themselves had a cold read.** Original design
 approved by the user
 2026-07-21
 (brainstorm), cold-eyes-converged 2026-07-23 (4 loops, below), scope-widened
@@ -534,7 +536,8 @@ height comparison trivially, so the flood would walk straight through the wall a
 INV-12 in the common case. One-sidedness lives on the **linedef**, so the traversal must
 follow linedefs:
 
-**The graph is over SECTORS, not subsectors** — this matters and is easy to get wrong.
+**Adjacency comes from SECTORS, not subsectors — but the search's nodes are the PORTALS between
+them (step 1).** This matters and is easy to get wrong.
 Vanilla DOOM has **no minisegs**: `P_LoadSegs` gives every `seg_t` a `linedef`
 (`p_setup.c:196-198`), because the SEGS lump only ever contains linedef-backed segs. So
 two BSP leaves of the *same room*, split by a partition line, share **no seg at all** —
@@ -542,7 +545,8 @@ a subsector graph built from segs would leave every multi-leaf hall or courtyard
 disconnected, and `d` could not propagate inward from a doorway. A **sector** is the
 room, and segs give sector-to-sector adjacency through exactly the linedefs whose
 openings we want to test, so the partition problem disappears rather than being worked
-around.
+around. What the search *settles* is nevertheless one value per **portal**, never one per sector —
+step 1 gives the reason.
 
 1. **Nodes = portals, not sectors** — the search state has to be the *opening*, because
    step 3 needs two portals of the **same** sector to carry **different** distances, and a
@@ -1161,8 +1165,8 @@ colour-frozen.
     of shader code. It rides the same new descriptor set as the two images. INV-5 is
     about the **`RtPushConstants` block** and is unaffected by a UBO in a descriptor
     set.
-  - **Neither existing sampled-image set can be appended to — the two images need their
-    OWN descriptor set.** Both `set 1` and `set 3` end in a
+  - **Neither BINDLESS sampled-image set can be appended to — so the new resources go on a
+    FIXED set instead.** Both `set 1` and `set 3` end in a
     `VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT` bindless array
     (`set 1` binding 2 = the R8 material array, `r_vulkan.cpp:3859-3862`; `set 3`
     binding 1 = the bindless PBR array, `:5674-5677`), and Vulkan requires that binding

@@ -113,6 +113,27 @@ longer binds; `queryCount` uniformly 8 → 9; `bilateral` only as L5's future wo
 only on the **primary** ray, which genuinely can hit the sky instance. All 18 edits re-grepped for
 presence individually.
 
+## L1c + L1d authored — 2026-07-26 — the plan's largest gap closed
+
+Not a review loop: the two missing tasks were written from spec §4.3a/§4.3b + §7. Logged here
+because writing them made a dozen other statements stale — the exact failure mode this ledger
+exists for.
+
+| # | Change | Ripples chased |
+|---|--------|----------------|
+| A.1 | **Task L1c** written (8 steps): the 2026-07-25 `const`s, the noise volume + **set-0 plumbing**, `wisp()` in `pathtrace.comp` (never `pt_common.glsl` — INV-6), the `SKY_COLOR` → `kFogColor` swap at **all three** sites, the half-res/full-res spot-check, INV-11's `kWispAmp = 0` check | ⚠ banner; file table; L2's `kFogColor` dependency note; L4's `wisp` note; self-review coverage + invariant claims; spec status header |
+| A.2 | **Task L1d** written (8 steps): portal graph + Dijkstra + per-cell resolve in `r_mesh.c`, the three degenerate cases, `R16F` + `CLAMP_TO_EDGE` + transform UBO, the graded indoor branch, both budgets | same set, plus a new `r_mesh.c` row in the file table |
+| A.3 | Set-0 plumbing (pool sizes + `PARTIALLY_BOUND`) is needed by **both** tasks | Stated once in L1c with an explicit "whichever lands first pays for it" note in both, so it is not built twice or skipped by both |
+| A.4 | Verified the two anchors the spec left implicit rather than assuming them: `r_mesh.c` already calls `R_PointInSubsector` (`:692`) and has `skyflatnum` (`:36`), but does **not** include `p_local.h` for `P_LineOpening`; per-level hook is `RB_Vulkan_BuildLevel` (`r_vulkan.cpp:~7169`) | Both named in L1d's Files/Existing-code blocks |
+| A.5 | **L6 Step 2 contradicted spec §5 on the name table** — plan said `static const char *fogNames[]`, spec pins the fixed 2-D `char fogNames[4][6]` matching `detileNames`. Found while chasing the menu-edit count | The "seven edits" list also only had six numbered items; the forward declaration is now item 7 |
+| A.6 | **Spec §4.3a's topic sentence still said "The graph is over SECTORS, not subsectors"** — directly contradicting step 1's "Nodes = portals, not sectors" (loop-5 fix 5.1 changed the conclusion but left the heading) | Reworded to name portals as the nodes and sectors as the source of adjacency |
+| A.7 | **Spec §5's topic sentence still said the images "need their OWN descriptor set"** — contradicting its own resolution (put them on set 0; "keeps the set count at 4") and the note that L1 already appended to set 2. Same stale-headline shape as A.6 | Reworded to "neither BINDLESS set … so they go on a FIXED set" |
+
+**Lesson to carry:** A.6 and A.7 are the same defect twice — **a fix changed a passage's
+conclusion and left its topic sentence asserting the old one.** Neither cold-eyes lane caught
+either. When a fix reverses a decision, grep the passage's *opening* line, not just the part you
+edited.
+
 ---
 
 ## Open — not yet fixed
@@ -120,7 +141,8 @@ presence individually.
 - **Cold-eyes has not converged.** Loop 6 returned 2 CRITICALs and 5 HIGHs, all substantive, so
   loop 7 is owed. The `--max-loops` cap of 5 was passed at loop 6 — each further loop is an
   explicit user call, not an automatic re-run. Trend across loops: 15C+24H → 3C+2H → 2C+5H.
-- **The plan has no L1c and no L1d task.** Its ⚠ banner says it must not be executed past
-  L1b. Writing those tasks is the work that closes INV-9..12's coverage gap.
+- ~~The plan has no L1c and no L1d task.~~ **Written 2026-07-26** (see the section above).
+  They have **not** had a cold read — they were authored after loop 6, so a further loop or a
+  deliberate self-review should cover them before they are executed.
 - **L1b's measured Δ is still unrecorded**, so L1c's `8 % − Δ(L1b)` allowance cannot be
   computed yet (§6).

@@ -28,10 +28,10 @@ this plan implements it; every `§`/`INV`/`Q` reference points there.
 > - **L1 and L1b are SHIPPED and user-play-tested** (`84e8b35..e7753b3`, `1345c92`). Their
 >   unchecked `- [ ]` boxes below are historical, not work outstanding. **Do not
 >   re-implement them.**
-> - **This plan predates two spec amendments** (2026-07-24 open-sky standard, 2026-07-25
->   Silent Hill 2 look + seep). **It has no `L1c` and no `L1d` task**, which is exactly the
->   work the spec's §7 says comes next. **Do not proceed past L1b using this document** —
->   the L1c/L1d tasks must be written from the spec's §7 first.
+> - **`L1c` and `L1d` were written on 2026-07-26** from the spec's §4.3a/§4.3b amendments and
+>   §7 acceptance rows. They are the next work. **They have not themselves been through a cold
+>   review** — they were authored after cold-eyes loop 6, so treat their detail as careful but
+>   unverified, and re-read them against the spec before executing.
 > - **The spec is the authority on every number.** Where this plan and the spec disagree,
 >   the spec wins. The known-stale classes were swept on 2026-07-26 (perf gate, sky
 >   in-scatter tone, the `σ` split, the sky-visibility mechanism, the profiler key,
@@ -78,11 +78,12 @@ this plan implements it; every `§`/`INV`/`Q` reference points there.
 
 | File | Responsibility in this feature | Tasks |
 |------|-------------------------------|-------|
-| `shaders/pathtrace.comp` | `marchFog()` definition + call site; mode-4 in-megakernel apply; mode-6 half-res write | L1–L5 |
-| `shaders/pt_common.glsl` | Fog `const`s (steps, density, tints, `kSunDir`), phase/density helpers | L1–L5 |
+| `shaders/pathtrace.comp` | `marchFog()` definition + call site; mode-4 in-megakernel apply; mode-6 half-res write; `wisp()` + the noise tap (**never** in `pt_common.glsl` — INV-6) | L1–L5, incl. L1b–L1d |
+| `shaders/pt_common.glsl` | Fog `const`s (steps, density, tints, `kSunDir`, the 2026-07-25 wisp/seep set), phase/density helpers | L1–L5, incl. L1b–L1d |
 | `shaders/svgf_composite.comp` | Mode-6 apply: fold fog after albedo re-multiply + on sky-passthrough; **plain bilinear** upsample (L1) → depth-guided bilateral (L5) | L1, L5 |
-| `r_vulkan.cpp` | New half-res fog image + bindings; `rb_fog` extern; `misc6.z/.w` writes; profiler slot | L1, L4, L6 |
-| `r_mesh.h` | New `rb_view_t.hazeDensity` field | L4 |
+| `r_vulkan.cpp` | New half-res fog image + bindings; the 3-D noise volume + seep field + transform UBO on **set 0** (pool sizes + `PARTIALLY_BOUND`); `rb_fog` extern; `misc6.z/.w` writes; profiler slot | L1, L1c, L1d, L4, L6 |
+| `r_mesh.c` | The seep flood fill (portal graph + Dijkstra + per-cell resolve) — lives here because it needs the DOOM map globals; (L1b fallback only) the `RB_MESH_OUTDOOR` bit | L1d, (L1b) |
+| `r_mesh.h` | New `rb_view_t.hazeDensity` field; the seep field buffer handle | L4, L1d |
 | `r_backend.c` | Compute hell-haze from `gameepisode`/`gamemap`/sky into `view.hazeDensity` | L4 |
 | `m_misc.c` | `rt_fog` config default row | L6 |
 | `m_menu.c` | Two menu rows (Effects + Video), `M_ChangeFog`, `fogNames[]` | L6 |
@@ -465,6 +466,323 @@ git commit -m "DOOM-0011: L1b fog-placement standard (open-sky gate) + sky-backd
 
 ---
 
+## Task L1c — The Silent Hill 2 look: near-white fog + two-octave drifting wisps
+
+**Goal:** Turn L1b's flat blue-grey haze into the user's 2026-07-25 reference (spec §4.3b): fog
+that reads **near-white and colourless**, roughly twice as thick, and full of **billows of
+visibly varying thickness drifting slowly past** — with real depth, so a wisp passes in front of
+*and* behind a pillar as the camera turns. Ultra/Solid **RT engaged only** (modes 4 + 6);
+`rb_fog`-gated (fog off = byte-identical, INV-8).
+
+**Files:**
+- Modify: `shaders/pt_common.glsl` — the 2026-07-25 `const`s; `kFogSteps` 24 → ~40;
+  `kFogBaseDensity` 0.0008 → ~0.0016.
+- Modify: `shaders/pathtrace.comp` — the noise sampler declaration, `wisp()`, the `sigma`
+  multiply, and the `SKY_COLOR` → `kFogColor` swaps (foreground **and** both sky closed forms).
+- Modify: `r_vulkan.cpp` — generate + upload the 3-D noise volume at startup; **the set-0
+  descriptor plumbing** (new binding, pool sizes, `PARTIALLY_BOUND`).
+
+**Interfaces:**
+- Consumes: L1b's `skyExposure` line, `misc6.x` (DOOM-0183 ripple time, `r_vulkan.cpp:7455-7457`)
+  as the drift clock, and `g.rtDsLayout` (set 0, `r_vulkan.cpp:2335`).
+- Produces: **the set-0 plumbing L1d also needs.** Whichever of L1c/L1d lands first pays for the
+  pool sizes + `PARTIALLY_BOUND` once; the second only adds its own bindings. Do not build it twice.
+
+**Existing code to read first (reuse, do not reinvent):**
+- The fog `const` block in `pt_common.glsl` (`:37-47`) — add the new ones in the same style.
+- `marchFog` in `pathtrace.comp`, especially the `sigma` line L1b left as
+  `fogDensity(p) * strength * skyExposure`.
+- The two sky closed forms that in-scatter `SKY_COLOR` (`pathtrace.comp:1320` and `:1335`) and the
+  `SKY_FOG_COL` screen-space band (`:763-764`, mixed at `:771`) that L1b halved.
+- `g.rtDsLayout`'s three fixed bindings (`r_vulkan.cpp:2317-2330`), its pool (`:2346`), the set
+  alloc (`:2351-2353`), and the four-set layout array (`:2381`). Also the mode-5 `-rtverify` bind
+  site (`:6925`) — it binds **this same set**.
+- An existing startup image upload (`UploadAtlas`, called from `RB_Vulkan_BuildLevel:7167`) for the
+  create/upload/transition idiom — but note the noise volume is **level-independent**, so it is
+  built **once after device creation**, not per level.
+- `kGrimeWorldScale` (`pathtrace.comp:111`) — the house precedent for a world-scaled noise lookup.
+
+- [ ] **Step 1: Add the 2026-07-25 `const`s to `pt_common.glsl`**
+
+Beside the existing fog block. Every value is a **starting point**, tuned on hardware (Q21).
+
+```glsl
+const vec3  kFogColor    = vec3(0.55, 0.56, 0.56); // near-white, LINEAR radiance (spec Q9)
+const float kWispAmp     = 0.6;    // density swings 0.4x..1.6x -- billows, not grain
+const float kWispWeight2 = 0.7;    // octave-2 weight: CHOSEN, not SH2-derived (spec §4.3b)
+const float kWispFreq1   = 1.0/512.0;          // one texel spans 512 world units
+const float kWispFreq2   = 2.5 * kWispFreq1;   // finer octave
+const vec3  kWispVel1    = vec3( 8.0, 3.0, 1.0);  // world units/sec, INSIDE the freq scale
+const vec3  kWispVel2    = vec3(-3.0, 4.0, 0.3);  // deliberately SLOWER than kWispVel1
+const vec3  kWispOffset2 = vec3(17.3, 5.1, 23.7); // decorrelates the octaves at t=0 and p=0
+```
+
+And **change** two shipped values in the same block:
+- `kFogSteps` **24 → 40**. Structured density is a high-frequency signal along the ray and bands
+  at 24 (§4.3b). This is a **hypothesis to confirm by looking** — if 24 reads clean with wisps
+  on, revert it and bank the budget.
+- `kFogBaseDensity` **0.0008 → 0.0016**. Re-tune this **with wisps on**, never from the un-wisped
+  value: transmittance is non-linear in `σ`, so by Jensen wisped fog reads *thinner* on average
+  at the same base density (§4.3b).
+
+- [ ] **Step 2: Generate + upload the 3-D noise volume, and do the set-0 plumbing**
+
+In `r_vulkan.cpp`, once after the device exists (not per level — the volume is level-independent):
+
+- Fill a `64°` `R8_UNORM` staging buffer with uniform `[0,1]` value noise from a **fixed
+  compile-time seed**. **Determinism is load-bearing, not incidental:** `-shotcompare`'s golden
+  gate (§6) is only a valid pass/fail if the volume is byte-identical run to run, so a
+  time-seeded or address-seeded generator silently turns that gate into noise. Use an explicit
+  constant seed and a self-contained PRNG; do **not** call `rand()`.
+- Create the image `VK_IMAGE_TYPE_3D`, sampler **trilinear** with `REPEAT` on all three axes,
+  upload, transition to `SHADER_READ_ONLY_OPTIMAL`. ~256 KB. **No file enters the tree** — it is
+  synthesised, so `docs/standards/assets.md` does not apply.
+- **Add it to `g.rtDsLayout` (set 0)** as a new `COMBINED_IMAGE_SAMPLER` binding. Sets 1 and 3 are
+  **not** available: both end in a `VARIABLE_DESCRIPTOR_COUNT` bindless array, which Vulkan
+  requires to be the highest binding in its set (§5).
+- **Two consequences that must ship in this same step, or it fails at runtime:**
+  1. `g.rtDsPool` (`:2346`) is sized only for `ACCELERATION_STRUCTURE` + `STORAGE_IMAGE`. Add a
+     `COMBINED_IMAGE_SAMPLER` pool size (and, for L1d, `UNIFORM_BUFFER`) or the set allocation
+     fails outright.
+  2. Set 0 is **the same set the mode-5 `-rtverify` path binds** (`:6925`). The new binding needs
+     `VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT` (or a dummy descriptor bound on that path), or
+     "`-rtverify` is unaffected" (INV-6/INV-7) stops being true the moment the binding is declared.
+     **Run `-rtverify` in this step, not at L6** — it is the only cheap proof the plumbing is sound.
+
+- [ ] **Step 3: `wisp()` in `pathtrace.comp` — NOT in `pt_common.glsl`**
+
+`bake.comp` `#include`s `pt_common.glsl` verbatim, so a sampler declared there would force the
+bake to declare and bind the noise volume — breaking INV-6. Declare the sampler and the helper in
+`pathtrace.comp` only. The `const`s from Step 1 may stay in `pt_common.glsl` (unused consts cost
+the bake nothing); the **tap** may not.
+
+```glsl
+// DOOM-0011 §4.3b: two octaves of drifting 3-D value noise, mean 1.
+// noise(u) fetches at texture coord u/N (N = 64 texels), REPEAT-wrapped, so `u` is in
+// LATTICE units: one texel spans 1/kWispFreq1 world units. The velocity sits INSIDE the
+// frequency scale -- writing noise(p*f + v*t) instead would drift 512x too fast.
+float wisp(vec3 p, float t)
+{
+    float A = 2.0 * texture(uNoiseVol, kWispFreq1 * (p + kWispVel1 * t) / 64.0).r - 1.0;
+    float B = 2.0 * texture(uNoiseVol, kWispFreq2 * (p + kWispVel2 * t) + kWispOffset2).r - 1.0;
+    return 1.0 + kWispAmp * (A + kWispWeight2 * B) / (1.0 + kWispWeight2);
+}
+```
+
+**Mind the `/ 64.0`:** it is the `u → u/N` step of the sampling convention, and it must be applied
+to **both** taps (shown on one above only to keep the line readable — write it on both, or fold
+`1/N` into the frequency consts and drop it from both). Getting this wrong gives 512-unit tiling
+with 8-unit features, i.e. exactly the two failure modes §4.3b exists to avoid.
+
+Then multiply it into the density, reusing `misc6.x` as the clock — **no new push lane** (INV-5):
+
+```glsl
+        float t_s   = uintBitsToFloat(pc.misc6[0]);   // DOOM-0183 ripple time, seconds
+        float sigma = fogDensity(p) * strength * skyExposure * wisp(p, t_s);
+```
+
+- [ ] **Step 4: Move the in-scatter tone to `kFogColor` — all three sites**
+
+Miss any one and you get the sky/wall seam this task's own acceptance criterion exists to catch.
+
+1. The **foreground** in-scatter (L1's `skyAmbient = SKY_COLOR * kSkyShaftStrength`).
+2. The **mode-6** sky closed form (`pathtrace.comp:1320`).
+3. The **mode-4** sky closed form (`:1335`).
+
+The sky closed forms stay **wisp-free and pool-free** (INV-10): they remain
+`kFogBaseDensity * strength` integrated over `[0, kFogMaxDist]` and nothing else. A closed form
+requires constant density, and billow structure on the mountains would be sub-pixel anyway.
+
+Also **re-judge the `SKY_FOG_COL` screen-space band** (`:763-764`, mixed at `:771`) against the
+new near-white base — it overlaps the real distance fog and L1b only halved it (Q14). If the
+horizon now reads double-hazed, cut it further or drop it.
+
+- [ ] **Step 5: Build + smoke + tests** (same three commands as L1 Step 7), then **`-rtverify`**.
+
+- [ ] **Step 6: Measure — the half-res vs full-res decision (spec §7 spot-check)**
+
+This is a **go/no-go on which variant ships**, not the formal gate (that is L6's). Per §6's method:
+
+- Measure **half-res first**. Budget: **cumulative** fog-off → fog-on Δ ≤ **8 %** present-total —
+  L1c's own increment is `8 % − Δ(L1b)`, so **read L1b's recorded Δ before starting**. If L1b
+  already exceeds 8 %, the split gets re-cut; L1c does not simply fail.
+- Promote mode-6 fog to **full-res only if** wisps read soft at half-res AND the promotion still
+  fits the 8 %. Note the levers multiply: ×1.67 on steps and ×4 on pixels both multiply the
+  per-sample up-ray, which §4.3a calls the march's dominant cost.
+- **Record the measured Δ.** L2–L5 share what is left of the 15 % after L1c and L1d's ≤ 1 %.
+- If full-res ships, note it — **L5 may then largely dissolve** (no upsample left to harden, §6).
+
+- [ ] **Step 7: Play-test the look (RX 6600, RT engaged) — user sign-off**
+
+**Accept (spec §7 L1c):** fog reads **near-white and colourless**, not blue; **billows of visibly
+differing thickness drift slowly past**, sitting correctly **in depth** — passing in front of *and*
+behind pillars and monsters as the camera turns; no banding at wisp boundaries; no crawl or strobe
+in a slow pan; **distant sky still readable at High strength**; **no visible discontinuity at the
+sky/wall seam** (INV-10); and **the mountains haze the same near-white as the foreground**, proving
+the Step-4 swap landed on all three sites.
+
+**Plus one by-construction check that does not need eyes (INV-11):** with `kFogColor`,
+`kFogBaseDensity` and `kFogSteps` **temporarily held at their L1b values**, `kWispAmp = 0` must
+render **byte-identical to L1b**. It follows from the multiplicative form (`1 + 0·x ≡ 1`); if it
+does not hold, `wisp()` is being added somewhere rather than multiplied.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add linuxdoom-1.10/shaders/pt_common.glsl linuxdoom-1.10/shaders/pathtrace.comp \
+        linuxdoom-1.10/r_vulkan.cpp
+git commit -m "DOOM-0011: L1c Silent Hill 2 fog look -- near-white base + two-octave drifting wisps"
+```
+
+---
+
+## Task L1d — Outdoor-proximity seep: the load-time distance field
+
+**Goal:** Stop indoor fog being a flat floor everywhere. Fog should **drift in through a doorway
+and thin as you walk deeper** (spec §4.3a amendment), graded by a load-time flood-filled distance
+to outdoor air — while a **sealed** room that merely shares a wall with outdoors stays exactly as
+it was (INV-12). Ultra/Solid **RT engaged only**; `rb_fog`-gated.
+
+**Files:**
+- Modify: `linuxdoom-1.10/r_mesh.c` / `r_mesh.h` — the flood fill + the field buffer it produces.
+  **This is the right home:** the fill needs DOOM map globals (`segs`, `sectors`, `skyflatnum`,
+  `P_LineOpening`, `R_PointInSubsector`) and `r_mesh.c` already walks the BSP and already calls
+  `R_PointInSubsector` (`RB_SectorAtPoint`, `:692`); `skyflatnum` is already in scope (`:36`).
+  It does **not** currently include `p_local.h` — add it for `P_LineOpening`.
+- Modify: `r_vulkan.cpp` — upload the field as an `R16F` 2-D image + a small transform UBO, both
+  on set 0; rebuild per level in `RB_Vulkan_BuildLevel` beside `g.levelMesh = RB_BuildLevelMesh()`
+  (`:7169`).
+- Modify: `shaders/pt_common.glsl` — `kSeepMax`, `kSeepFalloff`, `dMax`.
+- Modify: `shaders/pathtrace.comp` — the graded indoor branch of `skyExposure`.
+
+**Interfaces:**
+- Consumes: L1b's `skyExposure` line; **L1c's set-0 plumbing** (pool sizes + `PARTIALLY_BOUND`).
+  If L1d lands first, build that plumbing here instead — see L1c Step 2, and add the
+  `UNIFORM_BUFFER` pool size either way.
+- Produces: nothing later tasks consume.
+
+**Existing code to read first:** `RB_SectorAtPoint` (`r_mesh.c:692`); `P_LineOpening`
+(`p_maputl.c:300-331`); `RB_Vulkan_BuildLevel` (`r_vulkan.cpp:~7145-7175`).
+
+- [ ] **Step 1: Build the portal graph and run Dijkstra (`r_mesh.c`)**
+
+Read spec §4.3a's numbered steps first — the node choice is the part that is easy to get wrong.
+
+- **Nodes are PORTALS, not sectors and not subsectors.** One node per surviving `seg_t`, sited at
+  its midpoint. A sector-indexed search settles **one** distance per sector, which is exactly the
+  flat-per-room result Step 2 forbids. A subsector graph fails differently: vanilla DOOM has **no
+  minisegs** (`P_LoadSegs` gives every seg a linedef, `p_setup.c:196-198`), so two BSP leaves of
+  the same room share no seg and every multi-leaf hall would come out disconnected.
+- A seg **survives** iff it has a `backsector`, its `linedef` is two-sided, **and**
+  `P_LineOpening(seg->linedef)` leaves `openrange > 0`. `P_LineOpening` returns **`void`** and
+  writes the file-scope globals `opentop`/`openbottom`/`openrange`/`lowfloor` — call it and read
+  the global; do not re-derive it. Those globals are **not re-entrant**, so keep the fill
+  **single-threaded**. A closed DOOM door is still a two-sided linedef, which is why the opening
+  test (not a one-sidedness test) is what stops fog leaking through every shut door.
+- **Also require `linedef->frontsector != linedef->backsector`.** A self-referencing sector (the
+  vanilla deep-water / fake-wall trick) is two-sided with a full-height opening but is *drawn*
+  solid — without this test the flood walks straight through it. This is INV-12's leak in another
+  costume, and INV-12 is false without it.
+- **Edges join two portals that share a sector**, weighted by the distance between their midpoints.
+  **Seed** every portal at `d = 0` if *either* of its sectors has `ceilingpic == skyflatnum`, then
+  run Dijkstra from the whole seed set at once. Weights are non-negative and the graph is finite,
+  so it terminates.
+
+- [ ] **Step 2: Resolve `d` per GRID CELL and rasterise the field (`r_mesh.c`)**
+
+64-unit cells over the map's XY extent, **padded by one cell of void beyond the bounding box**.
+
+```
+d(cell) = min over the portals of the cell's OWN sector of ( d(portal) + |cell centre - portal| )
+```
+
+clamped to `dMax`; an outdoor cell is `0`. `R_PointInSubsector` maps a cell centre to its leaf and
+thence to `->sector`. **Resolving per node instead would defeat the feature** — `d` would be
+constant across a room, so the seep would step at the room boundary and hold flat inside, which is
+precisely what the user asked to soften.
+
+**The three degenerate cases, pinned so you do not have to guess:**
+- **No open sky anywhere on the level** (most hell maps): the seed set is empty → **every cell gets
+  `dMax`** and the seep collapses to exactly `kIndoorFogScale`, i.e. the shipped L1b look. Correct
+  behaviour, not a failure.
+- **Unreachable cells** (a sealed room; any cell in void space): the **finite** sentinel
+  `dMax = 8 · kSeepFalloff`. It must be finite — an `R16F` `+inf` under a zero bilinear weight
+  yields `NaN`, which propagates into `σ` and blows the whole march.
+- **XY extent exceeds the budget** (sized for ≤ `256×256` cells): **double the cell size and
+  rebuild**, repeating until it fits. Coarser cells only blur the seep's edge; they cannot break
+  INV-12, because connectivity was decided on the seg graph before rasterisation.
+
+- [ ] **Step 3: Upload the field + its transform UBO (`r_vulkan.cpp`)**
+
+- **`R16F`, single channel** — **not `R8`**: normalising `d` against `kSeepFalloff` would cap
+  representable distance at 192 units, flooring `exp(-d/kSeepFalloff)` at `e⁻¹ = 0.368` and so
+  `skyExposure` at ≈`0.22`, four times the intended indoor floor, everywhere.
+- **Sampler state is part of the contract: `CLAMP_TO_EDGE` on both axes.** A march sample can
+  legitimately land outside the map's XY box (the `tHit` clamp lets `p` run toward the sky
+  backdrop), and under `REPEAT` an outdoor `d = 0` at one edge would wrap onto indoor air at the
+  opposite edge. The Step-2 padding ring is what makes `CLAMP_TO_EDGE` extend `dMax` outward
+  rather than an outdoor `0`.
+- **A small UBO carries the world→texel transform** (map XY origin, inverse cell size, texel
+  dimensions). This is **per-level runtime data**, so it can be neither a compile-time `const` nor
+  a push lane (INV-5 is full). Without it the shader cannot turn `p.xy` into a texture coordinate.
+  INV-5 is about the `RtPushConstants` block and is unaffected by a UBO in a descriptor set.
+- Rebuild both per level in `RB_Vulkan_BuildLevel`, beside `g.levelMesh = RB_BuildLevelMesh()`.
+
+- [ ] **Step 4: Grade the indoor branch (`pt_common.glsl` + `pathtrace.comp`)**
+
+```glsl
+const float kSeepMax     = 0.5;    // density multiplier right at an open doorway
+const float kSeepFalloff = 192.0;  // world units; e-folding distance inward
+const float dMax         = 8.0 * kSeepFalloff;  // finite unreachable/void sentinel
+```
+
+Then replace L1b's flat indoor floor — **one bilinear tap, no rays** (INV-12):
+
+```glsl
+        // §4.3a amendment: the open-sky branch is still exactly 1.0; only indoor changes.
+        float d = texture(uSeepField, worldToSeepUV(p.xy)).r;
+        float skyExposure = openSky ? 1.0
+                                    : mix(kIndoorFogScale, kSeepMax, exp(-d / kSeepFalloff));
+```
+
+**`kIndoorFogScale` must stay > 0** (Q12's `= 0` is struck): L3's torch shafts need a medium in
+roofed air to light. And this gates the **sky-sourced** term only — never `areaMult` (INV-9); L4's
+`σ` split is what keeps that true.
+
+- [ ] **Step 5: Build + smoke + tests** (L1 Step 7 commands), then **`-rtverify`**.
+
+- [ ] **Step 6: Measure — both budgets (spec §7 L1d)**
+
+Two separate numbers; neither substitutes for the other.
+- **Level load ≤ 20 ms on E1M1.** Time the flood fill directly — it runs once, beside the mesh
+  build. If it misses, coarsen the cell size before optimising the search.
+- **Runtime ≤ 1 % present-total** on the §6 walk. INV-12's "single bilinear tap" is **per march
+  sample**, inside the loop §6 calls the dominant cost — it is *not* free merely because the fill
+  is load-time. This 1 % comes out of the ≥ 7 % left after L1c, leaving ≥ 6 % for L2–L5.
+
+- [ ] **Step 7: Play-test the look (RX 6600, RT engaged) — user sign-off**
+
+**Accept (spec §7 L1d):** standing in a doorway onto a courtyard, **a little fog drifts in and
+thins as you walk deeper**; a **sealed** room that merely shares a wall with outdoors is
+**visually indistinguishable from the same room before L1d** — it shows the plain
+`kIndoorFogScale` floor and no seep, which is what proves the fill is through-open-space and not
+straight-line (INV-12); and the **outdoor look is unchanged from L1c**, since the seep touches
+only the indoor branch.
+
+**Pick the sealed-room test scene deliberately** — it is the only acceptance item that can falsify
+INV-12, so it needs a room you have confirmed *is* sealed and *does* share a wall with outdoor air,
+not whichever closet is nearest.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add linuxdoom-1.10/r_mesh.c linuxdoom-1.10/r_mesh.h linuxdoom-1.10/r_vulkan.cpp \
+        linuxdoom-1.10/shaders/pt_common.glsl linuxdoom-1.10/shaders/pathtrace.comp
+git commit -m "DOOM-0011: L1d outdoor-proximity fog seep via a load-time distance field"
+```
+
+---
+
 ## Task L2 — Sky shafts: directional sun + per-sample sky-visibility ray + HG phase
 
 **Goal:** Turn the flat glow into **slanted beams**. Add the sun direction, cast one shadow ray
@@ -512,10 +830,9 @@ shaft). Guard the whole sky term on "level has sky" so enclosed levels skip it (
         // L3 adds torch contributions to Ls here.
 ```
 
-> **Dependency — `kFogColor` is declared by L1c, and this plan has no L1c task** (see the status
-> banner). The spec's build order (§7) puts L1c before L2, so by the time L2 runs the constant
-> should exist. If L2 is attempted first, either land `kFogColor` with it or fall back to
-> `SKY_COLOR` here and swap it when L1c arrives — do not leave the symbol undefined.
+> **Dependency — `kFogColor` is declared by Task L1c Step 1**, which the spec's build order (§7)
+> puts before L2. Run L1c first and the constant exists. If L2 is attempted out of order, fall
+> back to `SKY_COLOR` here and swap it when L1c lands — do not leave the symbol undefined.
 
 Define `sunRayMissesGeometry()` — the same name the snippet above calls — next to `marchFog()`
 using the confirmed ray-query helper; it traces from `p + kSunDir*eps` along `kSunDir` and returns
@@ -717,10 +1034,9 @@ global haze to base density, and multiply every `Ls` contribution by `mediumTint
     float sigma     = (skySigma + areaSigma) * pool * wisp * strength;
     //   `areaMult` comes from the profile-select block above (spec §4.5's per-profile weight).
     //   `pool`     is L3's height factor -- already in scope at L4, since L3 ships first.
-    //   `wisp`     is L1c's noise term, and L1c has NO task in this plan (see the banner).
-    //              Until it is written `wisp` does not exist: hold it at a literal 1.0 and
-    //              delete the placeholder when L1c lands. Do NOT drop the factor from the
-    //              expression -- keeping it is what makes L1c a one-line edit here.
+    //   `wisp`     is L1c's noise term (Task L1c Step 3), which the spec's build order puts
+    //              first. If L4 is reached without L1c, hold `wisp` at a literal 1.0 rather
+    //              than dropping the factor -- keeping it is what makes L1c a one-line edit.
 ```
 - **Verify by construction, not by eye:** with `rb_fog` on, a goo room under a solid roof
   must show green fog at a density independent of `kIndoorFogScale` — temporarily setting
@@ -867,17 +1183,19 @@ gate; the earlier layers carry their own measured spot-checks.
 
 - [ ] **Step 2: Menu rows (seven edits + name table — clone `rb_detile`, place like `rb_wet`)**
 
-Per spec §5 (all seven — adding only the menuitem arrays ships a blank row; the seventh is
-the **forward declaration** `void M_ChangeFog(int choice);` beside `M_ChangeWet` at
-`m_menu.c:224`, without which the file does not compile):
+Per spec §5, all seven — adding only the menuitem arrays ships a blank row:
 1. `ef_fog` in `effects_e`, `vid_fog` in `videoitem_e`.
 2. Row in `EffectsMenu[]` and `VideoMenu[]`, both bound to `M_ChangeFog`.
 3. `M_DrawEffectsMenu`: a `"Volumetric fog:"` label + `fogNames[rb_fog]` value keyed on `ef_fog`
    (mirror the `"De-tile:"` row, **not** the boolean `"Wet liquid:"`).
 4. `videoLabels[]` entry for `vid_fog`.
 5. `M_VideoCrispValue`: `case vid_fog: return fogNames[rb_fog];` (mirror `case vid_detile:`).
-6. `M_ChangeFog` mirroring `M_ChangeDetile` (`rb_fog = (rb_fog + 1) % 4;`), plus
-   `static const char *fogNames[] = {"Off","Low","Med","High"};`.
+6. `M_ChangeFog` mirroring `M_ChangeDetile` (`rb_fog = (rb_fog + 1) % 4;`), plus the name table
+   `char fogNames[4][6] = {"Off","Low","Med","High"};` — spec §5 pins the **fixed 2-D form**
+   matching `detileNames` (`char detileNames[3][7]`, `m_menu.c:1229`), **not** a `const char*[]`.
+7. **Forward declaration** `void M_ChangeFog(int choice);` beside `void M_ChangeWet(int choice);`
+   (`m_menu.c:224`). Without it the menuitem arrays reference an undeclared function and the file
+   does not compile.
 
 - [x] **Step 3: `;` hotkey** — DONE EARLY in commit `f8c6b1f` (`SDLK_SEMICOLON` cycles
   Off/Low/Med/High in `i_video.c`, mirroring the `]`/`[`/`'` toggles). Nothing left here.
@@ -941,9 +1259,10 @@ Update the memory file `doom-0011-volumetrics-design.md` to "shipped".
 
 ## Self-review (checked against the spec)
 
-**Spec coverage** — PARTIAL. §4.3a's 2026-07-25 seep amendment and §4.3b (the Silent Hill 2
-look) have **no task**, because L1c/L1d were never written; everything below describes the
-coverage that does exist:
+**Spec coverage** — COMPLETE as of 2026-07-26, when L1c and L1d were written. §4.3b (the Silent
+Hill 2 look) → **L1c**; §4.3a's 2026-07-25 seep amendment → **L1d**; §5's two new sampled images
++ the transform UBO + the set-0 plumbing → **L1c** (noise volume, plumbing) + **L1d** (field, UBO).
+The rest:
 - §4.1 hook / `FogHit` → L1 (struct + call sites, both modes). §4.2 march (steps, dither,
   early-out, HG) → L1 (march) + L2 (phase) + L5 (dither tune). §4.3 density/pooling/colour → L3
   (pooling) + L4 (tint). §4.4 sky shafts (`kSunDir`, one ray, no-sky case) → L2; torch shafts
@@ -952,12 +1271,13 @@ coverage that does exist:
   fallback) + L5 (bilateral). §5 data (fog image + bindings, `misc6.z/.w`, `rb_view_t` field,
   `rb_fog`, seven menu edits, `;` key) → L1 (image) + L4 (`rb_view_t`/`misc6.w`) + L6 (dial/menu/key).
   §6 perf (profiler slot + ≤ 15 % gate) → L6. §8 INV-1..8 → Global Constraints + per-task guards.
-- **Invariant coverage is PARTIAL, and this is the plan's largest gap.** Only **INV-1..8**
-  are pinned in Global Constraints and re-stated at their tasks (INV-2 in L3, INV-4 in L1,
-  INV-5/7 in L6, INV-6 global, INV-8 in L6 gate). The spec now carries **twelve**: INV-9/10
-  (added 2026-07-24) and INV-11/12 (added 2026-07-25) are owned by the **L1c/L1d tasks that
-  this plan does not yet contain** — INV-9 appears once in passing (L1b's `sigma` note) and
-  INV-10/11/12 appear nowhere. Writing those tasks is what closes this.
+- **Invariant coverage — all twelve are now pinned.** INV-1..8 in Global Constraints, re-stated
+  at their tasks (INV-2 in L3, INV-4 in L1, INV-5/7 in L6, INV-6 global, INV-8 in L6 gate).
+  The four added by the amendments land in the new tasks: **INV-9** (`skyExposure` gates the
+  sky-sourced term only) in L1b's `sigma` note, L1d Step 4 and L4's split step; **INV-10** (the
+  sky closed form stays wisp-free and pool-free) in L1c Step 4; **INV-11** (`kWispAmp = 0` is an
+  exact no-op) as L1c Step 7's by-construction check; **INV-12** (the seep never leaks into a
+  sealed room) in L1d Steps 1–2 and its Step 7 acceptance.
 
 **Placeholder scan** — the `kFog*`/tint/`kHaze*` values are concrete starting numbers explicitly
 labelled *tune-on-hardware* (a spec requirement, not a TODO). Shader helper calls
