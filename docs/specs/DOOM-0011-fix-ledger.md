@@ -12,6 +12,49 @@ document, constant, count or threshold that referenced the thing you changed. Th
 each and confirm. An empty Ripples cell means "I checked and there are none", not "I did not
 look" — write `none (checked: <what you grepped>)`.
 
+## Pre-flight — run this BEFORE you write the fix, not after
+
+The Ripples column catches what a fix *breaks*. It does not catch a fix that is **wrong on
+arrival** — and that has been the dominant failure here: in loops 5, 6, 7, 8, 9 and 10, the
+worst finding of each loop was a defect inside the *previous* loop's own new text. Six for six.
+The cure is a check on new text before it lands.
+
+**For every fix:**
+
+1. **Read the passage you are about to change, in full, plus what surrounds it.** Not the grep
+   hit — the passage. Several fixes here contradicted a sentence two lines away.
+2. **Name the thing you are changing, and grep the whole doc set for it** — old name *and* new.
+   The old name finds what goes stale. The new name finds a **second name already in use for
+   the same thing**, which is how `FLAG_OUTDOOR` / `RB_MESH_OUTDOOR` survived nine loops.
+3. **If the fix changes a number, threshold, count or percentage**, grep for the old value
+   across both documents before replacing it, and check the direction of every `≤`/`≥` you
+   touch. Budget figures appear in a table, in prose, and in an acceptance row.
+4. **If the fix touches a heading, a table cell, or a task title**, re-read the body beneath it.
+   Two findings here were headings that contradicted their own contents.
+5. **Write the Ripples cell before you consider the fix done**, then re-run the standing greps
+   below — all of them, not the ones you think are relevant. Three separate batches had a
+   ripple that only the full sweep caught.
+6. **If the fix changed a struct, a count, an invariant, or added a question, re-read the plan's
+   Self-review section.** It *restates* struct shapes, helper counts, invariant counts and the
+   open-question list, so it goes stale silently every time one of those changes — and nobody
+   edits it, so nobody looks at it. Four loops' worth of fixes rotted there before loop 11 found
+   it. Restatements are where ripples hide; this document has exactly one, and that is it.
+
+**For any fix that touches a code block, one extra step, and it is not optional:**
+
+7. **Compile it.** Copy the real shader, paste the block in as the doc instructs, and run
+   `glslangValidator -V`. Every identifier must resolve against the actual tree — not against
+   what the doc says exists. This single step found two CRITICALs at loop 10 that ten cold
+   reads had missed, and it is the only check here that can clear a block *positively* rather
+   than by absence of suspicion. The specific defects it catches, all seen in this document:
+   an undeclared identifier; a function used as a bare value; a local read outside the function
+   that declares it; a bit tested against the wrong flag word; a constant declared in a file the
+   consuming shader does not `#include`; a fixed-size array grown on one side only.
+
+**The rule this all serves:** a fix is a change to a *system of documents*, not to a line. Treat
+every edit as capable of breaking something you are not looking at — because six loops running,
+that is exactly what happened.
+
 **Standing ripple-check greps** (run all of these after any fix batch):
 
 ```bash
@@ -22,7 +65,13 @@ grep -n "60 FPS floor"           $S $P   # relaxed for RT-engaged scenes
 grep -n "six\b.*edit\|all six"   $S $P   # menu edit count (now seven)
 grep -n "queryCount"             $S $P   # must all say 8 -> 9
 grep -n "≤ 4 %\|≤ 8 %\|≤ 15 %"  $S $P   # L1b / L1c / L6 budget split
-grep -n "eight invariants\|twelve invariants\|INV-1\.\.8"  $S $P
+grep -n "eight invariants"        $S $P   # must be EMPTY -- there are twelve
+grep -n "twelve invariants"       $S $P   # must HIT (bare `INV-1..8` is legitimate in the
+                                        #  self-review, which splits 1..8 from 9..12)
+grep -n "FogHit {"                $P   # every occurrence must carry `uint ctrlFlags` (L4)
+grep -n "genuinely new helpers\|helpers this plan authors" $P   # the COUNT must match the list
+grep -n "Q2[0-9]"                 $S $P   # a new Q must appear in BOTH the spec's §10 and the
+                                        #  plan's "Known open items" list
 grep -n "bilateral"              $S $P   # L1 shipped PLAIN bilinear
 grep -n "custom-index 2"         $S $P   # sky is detected by the MISS
 grep -n "SKY_COLOR"              $S $P   # L1c moves the sky tone to kFogColor
@@ -30,15 +79,19 @@ grep -n "f₁\|f₂\|v₁\|v₂"         $S      # renamed to kWispFreq1/2, kWis
 awk '/Step 6: Apply fog in .svgf_composite/,/Step 7/' $P | grep "misc6\[2\]"   # must be EMPTY:
                                         # svgf_composite.comp has no misc6 -- it gates on misc3.y
 grep -n "binding 3\|binding 4\|binding 5" $S $P   # set-0 bindings: noise 3, seep 4, UBO 5
-grep -n "depth-guided\|depth guide"  $S $P   # must be EMPTY: L5 guides on WORLD POSITION;
-                                        # gpos.w is a material id, there is no depth buffer
+grep -n "depth-guided\|depth guide"  $S $P | grep -v '"depth-guided"'
+                                        # must be EMPTY: L5 guides on WORLD POSITION; gpos.w is a
+                                        # material id, there is no depth buffer. The one QUOTED
+                                        # "depth-guided" is the stale shipped-source comment L5
+                                        # is told to fix -- excluded, not a regression.
 grep -n "\* wisp \*"              $P   # must be EMPTY: wisp is a FUNCTION -- wisp(p, t_s)
 grep -n "fogHeightPool"          $P   # L3 defines it, L4 calls it; `pool` is not a local there
 grep -n "\bFLAG_OUTDOOR\b"        $P   # must be EMPTY: one bit, one name -- RB_MESH_OUTDOOR
 grep -n "h\.matFlags & .*LIQUID"  $P   # must be EMPTY: liquid rides MatCtrl -> FogHit.ctrlFlags
 grep -n "float haze = view\."     $P   # must be EMPTY: RecordRtTrace has no `view`, use g.lastView
 grep -n "skyExists"               $P   # must show a DECLARATION, not just the `if`
-grep -n "gpos\[cur\]"             $P   # must be EMPTY: `cur` is local to main(); use pc.misc.x
+grep -n "imageLoad(gpos\[cur\]"   $P   # must be EMPTY: `cur` is local to main(); use pc.misc.x
+                                        # (anchored on imageLoad -- prose ABOUT the fix is fine)
 grep -n "kFogDepthSigma.*pt_common" $P # must be EMPTY (bar the warning): it lives in
                                         # svgf_composite.comp, which never includes pt_common.glsl
 ```
@@ -320,14 +373,48 @@ the document that has not been through the compiler.
 
 ---
 
+## Loop 11 — 2026-07-26
+
+**Tally:** CRITICAL 0 · HIGH 1 · MEDIUM 0 · LOW 0 · INFO 0 — **1 verified, 0 dismissed.** One
+Sonnet lane (~198k) reading both documents end to end, briefed to be strict about severity because
+its verdict decided whether review continued. **First loop with zero CRITICALs.**
+
+The lane re-verified the highest-risk claims against source independently — `marchFog`/`FogHit`,
+the TLAS instance masks, both push-constant struct sizes, the profiler pool, `P_LineOpening`,
+every `RB_MESH_*` bit (confirming `0x100` is genuinely free), the emitter record's 14-float
+layout, and `svgf_composite.comp`'s `#include` list — and found all of them accurate.
+
+**The one finding is a ripple this ledger should have caught and did not.**
+
+| # | Sev | Fix | Ripples chased |
+|---|-----|-----|----------------|
+| 11.1 | HIGH | **The plan's own Self-review still described the pre-fix `FogHit`.** Loop 9 widened the struct with `ctrlFlags`; the "Type consistency" paragraph went on asserting it is "consumed unchanged by L2–L4". A false claim by the document about its own contents | Entry 9.2's Ripples cell lists spec §4.5 and §7's L4 row — **the plan's Self-review section is not on it.** Chasing this one properly then found **three more stale claims in the same section**, all from loops 8–10 and none previously reported: the "three genuinely new helpers" count was four short (seven now, listed by name); the "Known open items" list never picked up **Q23/Q24** added at loop 9; and its closing pointer to a stale-comment sweep "noted below" pointed at nothing — the content it referred to no longer exists there. Same paragraph's `misc6.w` sentence also still said `view.hazeDensity`, the form loop 9 corrected; tightened to `rb_view_t.hazeDensity` written from `g.lastView` |
+
+**The lesson, and the ledger change it forced.** The Self-review section is a **restatement**: it
+summarises struct shapes, helper counts, invariant counts and open questions that live elsewhere.
+Every restatement is a place a fix goes stale, and this one was never on any Ripples list because
+it is not where anybody edits. Four separate loops' fixes rotted there undetected.
+
+Added to the standing set: greps that check the `FogHit` shape, the helper **count**, the
+invariant count, and that every `Q2x` appears in *both* documents' open-item lists. Added to the
+pre-flight: after any fix that changes a struct, a count, or adds a question, **re-read the
+Self-review** — it restates all three. Also tightened two greps that were producing false alarms
+(a grep that cries wolf gets ignored, which is its own failure mode).
+
+---
+
 ## Open — not yet fixed
 
-- **Cold-eyes has not converged**, but the remaining gap is now *narrow and named* rather than
-  open-ended. Trend: 15C+24H → 3C+2H → 2C+5H → 2C+2H → 2C+0H → 3C+3H → **2C+0H**.
+- **Not yet converged, but close.** Trend: 15C+24H → 3C+2H → 2C+5H → 2C+2H → 2C+0H → 3C+3H →
+  2C+0H → **0C+1H**. Loop 11 is the first pass with **zero CRITICALs**, and its single HIGH was a
+  stale restatement rather than a defect in the design or the code. **Loop 12 is owed** by the
+  convergence rule (a HIGH is substantive), and it should be one lane, cheap: the four Self-review
+  claims fixed at loop 11 are new text, and this document's record says new text is where the next
+  finding lives. If loop 12 returns polish only, stop — do not keep looping for a literal zero.
   **Judgement for whoever picks this up:** loop 10 compiled reconstructions of L1c, L1d, L2, L3,
   L4 and checked L6 against source — all clean. The only snippet in the document that has **not**
   been through a compiler was **L5's**, because loop 10's two CRITICALs were in L5 and the fixes
-  post-dated its compile pass. **That gap is now closed** — the orchestrator reconstructed L5
+  post-dated its compile pass. **That gap is closed** — the orchestrator reconstructed L5
   Step 1 into the real `svgf_composite.comp` (rename, the new const, `fetchFog()` in full, **both**
   call sites wired) and `glslangValidator -V` returned clean, 2026-07-26. **Every code block in
   the plan has now been through a compiler.** What remains is one cold pass to confirm the loop-10

@@ -5,10 +5,10 @@ tune e7753b3; fog-placement standard + sky-backdrop aerial fog 1345c92 — user 
 "looking fantastic… covers the mountains… outside and not inside"). **A 2026-07-25
 amendment retargets the look at Silent Hill 2 (§4.3b, wisps) and softens the indoor
 cutoff into an outdoor-proximity seep (§4.3a amendment); the perf gate rises to
-≤ 15 % (§6). `/cold-eyes` has run **10 loops** and has **not** converged — loop 10 returned
-2 CRITICALs, both caught by **compiling** the plan's shader snippets rather than reading them.
-Every code block in the plan has now been through `glslangValidator`. Loops 4–10 each had their
-worst findings inside the *previous* loop's own fixes. **The `--max-loops` cap
+≤ 15 % (§6). `/cold-eyes` has run **11 loops**. Loop 11 was the **first with zero CRITICALs** — one
+HIGH, a stale restatement in the plan's own self-review. Every code block in the plan has been
+through `glslangValidator`. Loops 4–11 each had their worst finding inside the *previous* loop's
+own fixes, which is why the fix ledger's pre-flight exists. **The `--max-loops` cap
 of 5 is passed, so each further loop is an explicit user call.** The plan's **L1c and L1d tasks
 were written on 2026-07-26** and first reviewed at loop 7. Original design
 approved by the user
@@ -60,7 +60,7 @@ would have cost if it had reached the implementer — lives in
 |---|---|---|
 | Original spec (2026-07-23) | 4 | **Converged** — polish only by loop 4 |
 | 2026-07-24 amendment (fog follows open sky) | 3 | **Converged** — polish only by loop 3 |
-| 2026-07-25 amendment (SH2 look + seep) | 10 | **Not converged** — see the ledger |
+| 2026-07-25 amendment (SH2 look + seep) | 11 | 0 CRITICAL at loop 11 — see the ledger |
 
 One lesson is repeated here because it shaped both documents: **for five loops running, the
 worst findings were defects in the previous loop's own fixes** — shader code written into

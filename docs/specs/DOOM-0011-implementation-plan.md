@@ -38,7 +38,7 @@ this plan implements it; every `§`/`INV`/`Q` reference points there.
 >   invariant count, `file:line` citations), but this plan is **not** cold-eyes-converged
 >   in its own right.
 > - Spec cold-eyes status: the original design converged in 4 loops; the **2026-07-25
->   amendment has run 10 loops and has NOT converged** — the `--max-loops` cap of 5 is long
+>   amendment has run 11 loops (0 CRITICAL at loop 11)** — the `--max-loops` cap of 5 is long
 >   passed, so each further loop is an explicit user call. The loop log lives in
 >   `docs/specs/DOOM-0011-fix-ledger.md`; the spec's header carries a summary.
 
@@ -1446,18 +1446,37 @@ The rest:
   sealed room) in L1d Steps 1–2 and its Step 7 acceptance.
 
 **Placeholder scan** — the `kFog*`/tint/`kHaze*` values are concrete starting numbers explicitly
-labelled *tune-on-hardware* (a spec requirement, not a TODO). Shader helpers: `sunRayMissesGeometry` (L2 Step 1),
-`emitterCentroid` and `emitterLe` (L3 Step 2) are **new functions this plan authors** — not
-existing interfaces. What already exists is the *pattern* each is built from (the ray-query call
-shape, the emitter-record read), and the plan names reading that pattern as its own step rather
-than restating it from memory. So: nothing is invented out of thin air, but three genuinely new
-helpers are written — that is a real cost, not a placeholder-free claim.
+labelled *tune-on-hardware* (a spec requirement, not a TODO). **Seven shader helpers are new
+functions this plan authors**, not existing interfaces: `wisp` (L1c Step 3), `worldToSeepUV`
+(L1d Step 3), `sunRayMissesGeometry` (L2 Step 1), `fogHeightPool` (L3 Step 1), `emitterCentroid`
+and `emitterLe` (L3 Step 2), and `fetchFog` (L5 Step 1, alongside renaming the shipped
+`fetchFogBilinear` to `fetchFogBilinearPlain`). What already exists is the *pattern* each is built
+from — the ray-query call shape, the emitter-record read, the bilinear fetch — and the plan makes
+reading that pattern its own step rather than restating it from memory. So nothing is invented out
+of thin air, but seven genuinely new helpers get written: a real cost, not a placeholder-free
+claim.
 
-**Type consistency** — `marchFog(vec3,vec3,float,FogHit) → vec4 (inscatter.rgb, transmittance)`
-and `FogHit {vec3 hitP; vec3 gnormal; uint matFlags;}` are fixed in L1 and consumed unchanged by
-L2–L4. `rb_fog` (int 0..3) ↔ `pc.misc6[2]` (uint) ↔ `fogNames[]` (4 entries) ↔ `M_ChangeFog`
-(`% 4`) are consistent across L1/L6. `misc6.w` = `view.hazeDensity` bit-cast float, read
+**Type consistency** — `marchFog(vec3,vec3,float,FogHit) → vec4 (inscatter.rgb, transmittance)` is
+fixed in L1 and unchanged throughout. `FogHit` starts at L1 as
+`{vec3 hitP; vec3 gnormal; uint matFlags;}` and is consumed unchanged through L3; **L4 Step 4
+widens it with `uint ctrlFlags`** — the `MatCtrl.flags` word, because `matFlags` carries only
+per-vertex flags and the liquid bit is not in it — updating both call sites in that same task.
+`rb_fog` (int 0..3) ↔ `pc.misc6[2]` (uint) ↔ `fogNames[]` (4 entries) ↔ `M_ChangeFog`
+(`% 4`) are consistent across L1/L6. `misc6.w` = `rb_view_t.hazeDensity` bit-cast float — written
+from `g.lastView.hazeDensity` in `RecordRtTrace` (there is no bare `view` there), read back as
 `uintBitsToFloat(pc.misc6[3])` — consistent L4.
 
-**Known open items surfaced to the user (not blockers):** Q10 (fog on/off default — plan ships
-`rb_fog=1`, one-line flip if review prefers 0) and the code-side stale-comment sweep noted below.
+**Known open items surfaced to the user.** One is a blocker; the rest are not.
+
+- ⛔ **Δ(L1b) is unmeasured** — L1c's perf gate is `8 % − Δ(L1b)`, and that number exists nowhere.
+  **L1c cannot be closed until it is recorded in spec §6** (see the notice at the top of that task).
+  This is hardware work, not review work.
+- **Q10** — fog on/off by default. The plan ships `rb_fog=1`; a one-line flip if review prefers 0.
+- **Q23** — torch-emitter selection, per sample or per ray. L3's two-pass loop still scans every
+  static emitter once per sample; the per-ray fallback is named but needs a measurement to decide.
+- **Q24** — whether the sky needs its own density after L1c's ≈2× raise. Decided by L1c's
+  "distant sky still readable at High" check; if it fails, the answer is a separate
+  `kFogSkyDensity`, never another `kFogBaseDensity` change.
+- **One stale comment in shipped source** — `svgf_composite.comp`'s comment above
+  `fetchFogBilinear` still calls the L5 upsample "depth-guided". **L5 Step 1 owns fixing it**;
+  flagged rather than edited, because that is engine source and this is a documentation pass.
