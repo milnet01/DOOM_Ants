@@ -38,7 +38,7 @@ this plan implements it; every `§`/`INV`/`Q` reference points there.
 >   invariant count, `file:line` citations), but this plan is **not** cold-eyes-converged
 >   in its own right.
 > - Spec cold-eyes status: the original design converged in 4 loops; the **2026-07-25
->   amendment has run 9 loops and has NOT converged** — the `--max-loops` cap of 5 is long
+>   amendment has run 10 loops and has NOT converged** — the `--max-loops` cap of 5 is long
 >   passed, so each further loop is an explicit user call. The loop log lives in
 >   `docs/specs/DOOM-0011-fix-ledger.md`; the spec's header carries a summary.
 
@@ -480,6 +480,12 @@ git commit -m "DOOM-0011: L1b fog-placement standard (open-sky gate) + sky-backd
 
 ## Task L1c — The Silent Hill 2 look: near-white fog + two-octave drifting wisps
 
+> ⛔ **BLOCKED until L1b's Δ is recorded.** This task's perf gate is `8 % − Δ(L1b)`, and Δ(L1b)
+> has never been measured — spec §6's budget table carries the formula, not a number. Until it
+> is written into §6, **L1c Step 6 has no threshold to test against and this task cannot be
+> closed.** Take the measurement first (L1b Step 6, on the RX 6600); it is a ten-minute A/B, and
+> every loop that has skipped it has left this note standing.
+
 **Goal:** Turn L1b's flat blue-grey haze into the user's 2026-07-25 reference (spec §4.3b): fog
 that reads **near-white and colourless**, roughly twice as thick, and full of **billows of
 visibly varying thickness drifting slowly past** — with real depth, so a wisp passes in front of
@@ -866,7 +872,7 @@ toward it per sample, and weight the in-scatter by the HG phase so shafts read a
 
 In `marchFog()`'s loop, cast one ray from `p` toward `kSunDir`; if it reaches a sky instance, add
 the sky radiance weighted by the phase; else the sample is dark (the bright/dark boundary *is* the
-shaft). Guard the whole sky term on "level has sky" so enclosed levels skip it (§4.4a):
+shaft). Guard the whole sky term on "level has sky" so enclosed levels skip it (§4.4(a)):
 
 ```glsl
         bool skyExists = (pc.misc4[3] != 0xFFFFFFFFu);    // the no-sky sentinel; declare it, it is new
@@ -1132,11 +1138,13 @@ the global haze to base density, and multiply every `Ls` contribution by `medium
   is why this needs a code-level check, not an eyeball. Write the split form instead:
 
 ```glsl
-    // spec §4.3b sigma_final: skyExposure gates the SKY-SOURCED term ONLY (INV-9).
-    float pool      = fogHeightPool(p, floorZ);           // L3 Step 1 -- CALL it, it is not a local here
-    float skySigma  = kFogBaseDensity * skyExposure;      // outdoor haze, gated
-    float areaSigma = (kAreaDensity * areaMult) + haze;   // profiles, NOT gated
-    float sigma     = (skySigma + areaSigma) * pool * wisp(p, t_s) * strength;
+        // spec §4.3b sigma_final: skyExposure gates the SKY-SOURCED term ONLY (INV-9).
+        // Loop body -- `p` and `skyExposure` are per-sample, so this goes INSIDE marchFog's for
+        // loop, replacing the old sigma line. (8-space fencing = loop body, as elsewhere here.)
+        float pool      = fogHeightPool(p, floorZ);       // L3 Step 1 -- CALL it, not a local here
+        float skySigma  = kFogBaseDensity * skyExposure;  // outdoor haze, gated
+        float areaSigma = (kAreaDensity * areaMult) + haze; // profiles, NOT gated
+        float sigma     = (skySigma + areaSigma) * pool * wisp(p, t_s) * strength;
     //   `areaMult` comes from the profile-select block above (spec §4.5's per-profile weight).
     //   `floorZ`   and `t_s` are both already local to `marchFog()`'s loop -- `floorZ` from
     //              L3 Step 1, `t_s` from L1c Step 3. Nothing new to plumb.
@@ -1206,7 +1214,7 @@ weight built from `gp.w` would be comparing material ids, which is meaningless. 
 `gp.xyz` needs no new image and no new push-constant lane.
 
 Replace `fetchFogBilinear` with a bilateral fetch: for each of the four half-res fog texels around
-`p`, read the gbuffer at **that texel's own full-res pixel** (`imageLoad(gpos[cur], q * 2)`) and
+`p`, read the gbuffer at **that texel's own full-res pixel** (`imageLoad(gpos[pc.misc.x], q * 2)`) and
 weight it by how far its hit point sits from the centre pixel's, so a shaft against a near wall
 doesn't bleed onto far geometry. **At sky pixels** (`gp.w < 0.0`, §4.6) there is no hit point to
 compare → **fall back to plain bilinear** there, keeping the shaft-against-sky reconstruction
@@ -1215,19 +1223,39 @@ smooth:
 ```glsl
 // First rename the shipped `fetchFogBilinear` to `fetchFogBilinearPlain`, body unchanged --
 // it becomes the fallback. `fetchFog` below is the new entry point both branches call.
+//
+// kFogDepthSigma is declared HERE, in svgf_composite.comp -- NOT in pt_common.glsl, which this
+// shader does not include (only formulas.glsl + pbr_neutral_tonemap.glsl). Spec 4.6a leans on
+// that same limitation to justify computing the sky fog in the megakernel; putting this const
+// in pt_common.glsl walks straight into it.
+const float kFogDepthSigma = 256.0;   // world (DOOM) units; tune -- see the note below
+
 vec4 fetchFog(ivec2 p, vec4 gpFull) {
     if (gpFull.w < 0.0) return fetchFogBilinearPlain(p);   // sky seam: no guide (§4.6)
     // else: 4-tap bilateral over the half-res fog target,
     //   weight_i = bilinear_i * exp(-length(hit_i - gpFull.xyz) / kFogDepthSigma)
-    //   where hit_i = imageLoad(gpos[cur], q_i * 2).xyz
+    //   where hit_i = imageLoad(gpos[pc.misc.x], q_i * 2).xyz
+    //   `pc.misc.x` -- NOT `cur`. `cur` is a local inside main(); this function sits above main()
+    //   like fetchFogBilinear does, so it cannot see it. Do NOT "fix" a compile error here by
+    //   hardcoding gpos[0] -- that reads the wrong half of the double-buffered gbuffer.
     // Skip any neighbour that is itself sky (its own gp.w < 0.0). If all four are skipped,
     // return fetchFogBilinearPlain(p) so the fetch always yields something.
     ...
 }
 ```
-Add `const float kFogDepthSigma` to `pt_common.glsl` — it is a **distance in world (DOOM) units**,
-not a depth ratio: start near a room width and tune down until fog stops bleeding across a
-near/far edge. Wire both composite branches to `fetchFog(p, gp)` — pass the whole `gp`, not `gp.w`.
+`kFogDepthSigma` is a **distance in world (DOOM) units**, not a depth ratio: start near a room
+width and tune down until fog stops bleeding across a near/far edge. Wire both composite branches
+to `fetchFog(p, gp)` — pass the whole `gp`, not `gp.w`.
+
+**Also fix the shipped comment above `fetchFogBilinear`.** It currently reads "Depth-guided
+(bilateral) upsample arrives at L5 (Q6)" — written before the guide moved to world position. Leave
+it and the source contradicts both documents. Change "Depth-guided" to "Position-guided" in the
+same edit that renames the function.
+
+> **Verified by compiler, 2026-07-26.** This step was reconstructed into the real
+> `svgf_composite.comp` — rename, the new const, `fetchFog()` written out in full, and **both**
+> call sites wired — and compiled with `glslangValidator -V`: clean. The two defects this check
+> caught (`gpos[cur]`, and the const in `pt_common.glsl`) are fixed above.
 
 - [ ] **Step 2: Tune dither + phase (look only)**
 

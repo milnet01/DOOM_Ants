@@ -38,7 +38,16 @@ grep -n "\bFLAG_OUTDOOR\b"        $P   # must be EMPTY: one bit, one name -- RB_
 grep -n "h\.matFlags & .*LIQUID"  $P   # must be EMPTY: liquid rides MatCtrl -> FogHit.ctrlFlags
 grep -n "float haze = view\."     $P   # must be EMPTY: RecordRtTrace has no `view`, use g.lastView
 grep -n "skyExists"               $P   # must show a DECLARATION, not just the `if`
+grep -n "gpos\[cur\]"             $P   # must be EMPTY: `cur` is local to main(); use pc.misc.x
+grep -n "kFogDepthSigma.*pt_common" $P # must be EMPTY (bar the warning): it lives in
+                                        # svgf_composite.comp, which never includes pt_common.glsl
 ```
+
+**Better than any grep: compile the snippet.** Loop 10's code lane lifted the real
+`svgf_composite.comp`, pasted in the doc's proposed function, and ran `glslangValidator -V`. It
+found in seconds two defects that nine cold reads had missed, and it cleared five other tasks
+positively rather than by absence of suspicion. **Reconstruct-and-compile is the check this
+document's code blocks actually need**; treat the greps as the cheap pre-filter.
 
 **Also verify after every batch:** that each edit actually landed. A batched
 exact-string replace that aborts part-way applies *nothing* — grep for a distinctive
@@ -267,20 +276,67 @@ document" does not.
 
 ---
 
+## Loop 10 — 2026-07-26
+
+**Tally:** CRITICAL 2 · HIGH 0 · MEDIUM 1 · LOW 2 · INFO 0 — **5 verified, 0 dismissed.** Two
+Sonnet lanes (~493k), same split by failure mode as loop 9.
+
+**The methodology changed, and it is the headline.** The code lane did not read the snippets — it
+**reconstructed them into the real shaders and compiled them with `glslangValidator`**. That found
+both CRITICALs immediately, and, just as valuable, let it clear L1c, L1d, L2, L3, L4 and L6
+*positively* (they compile) rather than by absence of suspicion. Nine previous loops read these
+same blocks and could not do either.
+
+**Both CRITICALs were in L5 — the passage loop 8 rewrote.** Sixth consecutive loop where the worst
+findings sat in the previous batch's own new text.
+
+| # | Sev | Fix | Ripples chased |
+|---|-----|-----|----------------|
+| 10.1 | CRITICAL | **`fetchFog()` read `gpos[cur]`, and `cur` is a local inside `main()`.** The new function sits above `main()` like the one it replaces, so it cannot see it — `glslangValidator` says `'cur' : undeclared identifier`. Changed to `pc.misc.x`, the push-constant `cur` is itself read from, so no call-site threading is needed | Both the prose sentence and the in-snippet comment carried `gpos[cur]`; both fixed. Added an explicit warning **not** to "fix" the compile error by hardcoding `gpos[0]` — that silently reads the wrong half of the double-buffered gbuffer, which is a worse outcome than the error. New standing grep |
+| 10.2 | CRITICAL | **`kFogDepthSigma` was to be declared in `pt_common.glsl`, which `svgf_composite.comp` does not include.** That shader includes only `formulas.glsl` and `pbr_neutral_tonemap.glsl` — **the exact limitation spec §4.6a leans on** to justify computing the sky fog in the megakernel instead. The plan walked into the trap its own spec documents two sections earlier. The const now sits in `svgf_composite.comp` with a starting value | Spec §5's constant inventory listed it among the `pt_common.glsl` consts — carved out with the reason, so the two documents cannot drift back. L5's Files line already named `svgf_composite.comp`, so no change there. New standing grep |
+| 10.3 | MEDIUM | **L1c is gated on a number no task has produced.** Its ceiling is `8 % − Δ(L1b)`; Δ(L1b) has never been measured, and prose asking for it has now survived several loops unactioned. L1c opens with a **blocking notice** — the task cannot be closed until the number is in spec §6 | This is the ledger's own oldest Open item, now enforced by task structure rather than by prose an implementer can skim past. The measurement itself is hardware work and remains outstanding |
+| 10.4 | LOW | L4's sigma block was fenced at function-scope indentation but reads `p` and `skyExposure`, which only exist inside `marchFog`'s per-sample loop | Re-indented to the document's own loop-body convention, with a comment saying so explicitly. Verified the other snippets' indentation already matches their scope |
+| 10.5 | LOW | One `§4.4a` citation among five `§4.4(a)`s — and §4.4 has no `4.4a` heading, unlike the real §4.3a/§4.3b | Normalised. Checked both documents for other bare-letter subsection citations; none |
+
+**What the compile pass cleared, positively:** L1c (noise binding 3, `wisp()`, the three
+`SKY_COLOR`→`kFogColor` sites), L1d (`SeepXform` UBO, bindings 4/5, `worldToSeepUV()`, and
+`P_LineOpening`'s globals), L2 (`sunRayMissesGeometry` against `occluded()`'s real 4-arg
+signature, `skyExists` against `pc.misc4[3]`), L3 (the two-pass nearest-4 torch loop with its new
+helpers, built from the real 14-float emitter record), L4 (the widened `FogHit`, `mc` in scope at
+both call sites), and L6 (all seven hardcoded `8`s confirmed, all eight `profMs` slots confirmed
+assigned, the menu symbols confirmed absent). That is a materially stronger statement than any
+prior loop could make.
+
+**Post-batch ripple sweep:** every standing grep re-run plus the two new ones. `gpos[cur]` and
+`kFogDepthSigma`-in-`pt_common` both return empty; `depth-guided`, `FLAG_OUTDOOR`,
+`view.hazeDensity` and the liquid-bit-on-`matFlags` test all still empty. No ledger-only ripple
+this time — the first batch in four where the greps found nothing the lanes had missed.
+
+**Lesson.** Ten loops of careful reading found real defects every single time, and the eleventh
+check that mattered was not reading at all — it was pasting the code into a compiler. For a
+document whose payload is source code, **review converges slowly and compilation converges
+immediately.** The remaining risk is now narrow and known: L5's own fixes are the only snippet in
+the document that has not been through the compiler.
+
+---
+
 ## Open — not yet fixed
 
-- **Cold-eyes has not converged.** Loop 9 returned 3 CRITICALs, so loop 10 is owed.
-  Trend: 15C+24H → 3C+2H → 2C+5H → 2C+2H → 2C+0H → **3C+3H**. The count went *up*, and that is
-  informative rather than alarming: loop 9 was the first pass to read the code blocks as code
-  across every task, and it found what eight prose-oriented passes had walked past.
-  **Judgement for whoever picks this up:** every task's code blocks have now been identifier-
-  resolved once, and the lane reported L1, L1b, L1c, L1d and L6 otherwise clean. What has *not*
-  been re-read cold is **loop 9's own fixes** — and by this document's own five-loop record, that
-  is exactly where the next defect will be: the widened `FogHit`, the two-pass torch loop, the
-  seven-row profiler table and the `g.lastView` correction are all new text. A loop 10 aimed at
-  **just those four passages plus L2/L3/L4's code blocks** is narrow, cheap and the highest-value
-  run left. Re-reading the spec's prose is very likely wasted — two consecutive lanes have now
-  found it correctness-clean.
+- **Cold-eyes has not converged**, but the remaining gap is now *narrow and named* rather than
+  open-ended. Trend: 15C+24H → 3C+2H → 2C+5H → 2C+2H → 2C+0H → 3C+3H → **2C+0H**.
+  **Judgement for whoever picks this up:** loop 10 compiled reconstructions of L1c, L1d, L2, L3,
+  L4 and checked L6 against source — all clean. The only snippet in the document that has **not**
+  been through a compiler was **L5's**, because loop 10's two CRITICALs were in L5 and the fixes
+  post-dated its compile pass. **That gap is now closed** — the orchestrator reconstructed L5
+  Step 1 into the real `svgf_composite.comp` (rename, the new const, `fetchFog()` in full, **both**
+  call sites wired) and `glslangValidator -V` returned clean, 2026-07-26. **Every code block in
+  the plan has now been through a compiler.** What remains is one cold pass to confirm the loop-10
+  fixes read correctly as prose. **Do not commission another prose-only sweep beyond that**: three
+  consecutive lanes have found the spec correctness-clean, and the last two rounds of real findings
+  came from compilation, not from reading.
+- **A shipped source comment is stale.** `svgf_composite.comp`'s comment above `fetchFogBilinear`
+  still says the L5 upsample will be "depth-guided". L5 now owns fixing it (noted in the task) —
+  flagged rather than edited, because this is a documentation pass and that is engine source.
 - **Q23 (torch-emitter selection) is open and blocks nothing yet, but it will shape L3's code.**
   The nearest-few scan may not fit the budget even in its two-pass form; the per-ray fallback is
   named but undecided, and the decision needs a measurement, not a review loop.
