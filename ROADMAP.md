@@ -316,7 +316,15 @@ with friends.
   Source: in-session-2026-07-18 (CC suggestion, for user review).
   Approved by user 2026-07-18 for implementation.
   First cut IMPLEMENTED + self-verified headlessly 2026-07-18. `-shotverify [path]` renders the Ultra RT view for kShotWarmup(45) frames (SVGF settle on the static spawn view), copies the final display image (finalImage, R8G8B8A8_UNORM, display-res, already TRANSFER_SRC at the swapchain blit) into a host-visible buffer, writes a PNG (vendored stb_image_write.h v1.16, implemented in rb_image.c per ADR 0002), and exits; a watchdog bails if the RT view never becomes ready. Debug label (DENOISED/PROFILER) suppressed during capture so goldens are clean. VERIFIED on RX 6600: -warp 1 1 Ultra wrote a correct 3840x2160 PNG (colours right — no channel swap; HD materials + denoise clean), build + `make test` green, -rtverify still PASS. Crucially this RESTORES headless visual self-verify (SDL now opens a Wayland surface xdotool/import can't drive — see [[doom-ants-launch-screenshot-harness]]); -shotverify needs no window to drive, only the offscreen copy. Harness gotcha: the game launch must be a foreground `timeout N ./linuxxdoom ... 2>&1 | grep` pipeline — file-redirect / trailing-command / `&` / foreground-`sleep` forms get killed by the harness with no output. REMAINING (still open under this ID): (1) raster/Solid + Classic tier capture (raster renders straight into the swapchain with no TRANSFER_SRC image — read back the swapchain image or add a capture target); (2) the golden-image DIFF + reference store (perceptual/SSIM threshold) that makes it a true regression gate; (3) fixed-resolution offscreen render so goldens don't depend on window size; (4) CI wiring (DOOM-0203).
-  Progress (2026-07-18): golden-image DIFF gate IMPLEMENTED — remaining-item (2). New `-shotcompare <ref.png>` parm arms the same Ultra-RT capture, downscales it to a canonical git-friendly size (longest edge 640, ~220 KB PNG — reuses rb_image.c's box filter + PNG loader, zero new deps), then bootstraps the golden if <ref> is missing (writes it, exit 0) or compares via mean-abs-error over RGB vs kGoldenMAE=3.0 (exit 0 PASS / 3 FAIL / 1 i/o). Self-verified on RX 6600: same scene PASS mae=0.000 (RT capture is bit-exact run-to-run, as -rtverify relies on → zero false-positive noise), different level (E1M2 vs E1M1 golden) FAIL mae=11.156 exit 3, plain -shotverify still writes full-res 3840x2160 (unchanged), -rtverify still PASS (rel-MSE 0.08%). First golden committed: linuxdoom-1.10/tests/goldens/e1m1_ultra_rt.png (+ README with the bless/re-bless workflow). Storage fork resolved as the roadmap's "small refs" option (downscaled PNGs in-tree, no LFS). STILL OPEN under this ID: (1) raster/Solid + Classic tier capture; (3) window-size-independent fixed-res render (partly mooted for goldens by the canonical downscale, but full-res -shotverify output is still display-sized); (4) CI wiring (DOOM-0203, GPU-runner only). Which additional views to bless as goldens is the user's call — the bootstrap flag makes adding one a one-liner.
+  Progress (2026-07-18): golden-image DIFF gate IMPLEMENTED — remaining-item (2). New `-shotcompare <ref.png>` parm arms the same Ultra-RT capture, downscales it to a canonical git-friendly size (longest edge 640, ~220 KB PNG — reuses rb_image.c's box filter + PNG loader, zero new deps), then bootstraps the golden if <ref> is missing (writes it, exit 0) or compares via mean-abs-error over RGB vs kGoldenMAE=3.0 (exit 0 PASS / 3 FAIL / 1 i/o). Self-verified on RX 6600: same scene PASS mae=0.000 (RT capture is bit-exact run-to-run, as -rtverify relies on → zero false-positive noise), different level (E1M2 vs E1M1 golden) FAIL mae=11.156 exit 3, plain -shotverify still writes full-res 3840x2160 (unchanged), -rtverify still PASS (rel-MSE 0.08%). First golden committed: linuxdoom-1.10/tests/goldens/e1m1_ultra_rt.png (+ README with the bless/re-bless workflow). Storage fork resolved as the roadmap's "small refs" option (downscaled PNGs in-tree, no LFS). STILL OPEN under this ID: (1) raster/Solid + Classic tier capture; (3) window-size-independent fixed-res render (partly mooted for goldens by the canonical downscale, but full-res -shotverify output is still display-sized); (4) CI wiring for the golden gate — needs a real GPU, so it was deliberately left OUT of DOOM-0203's ✅ headless gate and stays on the optional self-hosted runner. Which additional views to bless as goldens is the user's call — the bootstrap flag makes adding one a one-liner.
+  Progress (2026-07-26, debt sweep): the DOOM-0208 canonical-config pin was
+  missing `rb_fog`. DOOM-0011 shipped rt_fog (m_misc.c default 1) AFTER that
+  pin was written, so the volumetric-fog level leaked in from the user's
+  ~/.doomrc — exactly the config-dependence the pin exists to close. Fixed
+  (r_vulkan.cpp: `rb_fog = 1;` added to the pin). This does NOT by itself
+  explain the logged mae=17.622: the golden was blessed before fog shipped,
+  so a fog-on capture vs a fog-off golden is expected to differ. Re-blessing
+  is still owed and still deliberate — do not blind-re-bless.
 
 - ✅ [DOOM-0203] **Minimal CI on push: build + make test + headless smoke.**
   There is no automated build/test gate today — breakage is only caught locally. The repo is a PUBLIC GitHub repo (free Linux Actions minutes per [[push-freely-public-repo]]), so a lightweight workflow is essentially free. Proposal (first cut, CPU-only): on push/PR, run make + make test + a software-renderer headless boot smoke (SDL dummy drivers, warp a level, no crash — the recipe already used for early headless checks). Caveat: the GPU paths (Vulkan RT -rtverify, and the -shotverify Ultra views above) need a GPU runner — GitHub's hosted runners have none, so RT/visual gates would be a self-hosted-runner (the user's RX 6600 box) stretch goal, kept OPTIONAL and manual-dispatch to avoid burning the user's machine on every push. Respect the push-cadence rules (§6): CI is a gate, not a reason to auto-push. Suggestion only.
@@ -346,6 +354,54 @@ with friends.
   **Layman:** Make the Windows download stop showing the blue 'unrecognised app' warning by code-signing it, and offer a proper installer.
   Kind: package.
   Source: user-request 2026-07-23.
+
+- 📋 [DOOM-0240] **Add the missing regression tests for the netgame + WAD-bounds hardening fixes.**
+  docs/standards/testing.md cited the mus2mid, netgame and bounds fixes from the 2026-07-23 pass as the model for "every bug fix gets a regression test", but only tests/mus2mid_test.cpp exists. The standard has been corrected to name this gap; this item closes it. All three are pure input validation and CPU-testable: w_wad.c:208/286 (crafted numlumps/infotableofs vs real file size), i_net.c:235 (numtics > BACKUPTICS), d_net.c:277 (netconsole >= MAXPLAYERS), d_main.c:1356 (-warp 3 argv NULL-deref).
+  **Layman:** Three security fixes shipped without the automatic tests that prove they stay fixed — write those tests.
+  Kind: test.
+  Source: debt-sweep-2026-07-26.
+
+- 📋 [DOOM-0241] **Write INV conformance tests for the shipped renderer specs now the CI-has-no-WAD gate is gone.**
+  Only nee_sampling_test.cpp references an INV. DOOM-0026 (spec:290-319) and DOOM-0008 (spec:426-471) are both shipped and both defer their conformance test to "gated on CI having a WAD" — that gate no longer exists: build.yml installs freedoom and boots the engine headless (DOOM-0203). CPU-testable today: DOOM-0026 INV-1/INV-3, DOOM-0008 INV-3/INV-5, DOOM-0181 INV-9 (push-constant layout), the rb_fog 0..3 clamp.
+  **Layman:** Several finished features list rules they must obey, but nothing automatically checks them.
+  Kind: test.
+  Source: debt-sweep-2026-07-26.
+
+- 📋 [DOOM-0242] **Stop calling the function under test inside assert() — 15 sites compile away under NDEBUG.**
+  cppcheck assertWithSideEffect on 15 sites across mus2mid_test.cpp, rb_image_test.cpp, rb_materials_test.cpp and rb_text_test.cpp, e.g. assert(mus2mid(...) == 0). No -DNDEBUG is set today (Makefile TEST_CXXFLAGS), so the suite is correct as it stands — but anyone adding NDEBUG turns every one of these into a silent no-op that still reports PASS. Fix: assign to a local, then assert the local.
+  **Layman:** Some tests would silently do nothing if the build settings changed — make them robust.
+  Kind: test.
+  Source: debt-sweep-2026-07-26.
+
+- 📋 [DOOM-0243] **rb_text_test passes vacuously when no system TTF is present — use the bundled Oxanium instead.**
+  tests/rb_text_test.cpp:46-49 prints "skipped" and returns 0 when it cannot open a DejaVu TTF, so on any image lacking fonts-dejavu-core the file asserts only the NULL case. CI works around it by installing fonts-dejavu-core (ci-deps.txt:16). The repo already ships assets/Oxanium-SemiBold.ttf.h — bake from that instead and make an absent font a hard failure, which also drops the CI dependency.
+  **Layman:** A font test quietly skips itself on machines without a particular font, so it can pass without testing anything.
+  Kind: test.
+  Source: debt-sweep-2026-07-26.
+
+- 📋 [DOOM-0244] **game_select_test mirrors D_DetectIwads' loop instead of calling it, so it cannot catch a regression.**
+  tests/game_select_test.cpp:36-52 defines select_reps() as a hand-copied "Mirror of D_DetectIwads' pure selection loop". Changing the real loop in d_main.c cannot fail this test. Fix: extract the pure selection loop into iwad_detect.h (which already exists) and have both the engine and the test call it.
+  **Layman:** A test re-implements the code it is supposed to check, so breaking the real code doesn't fail the test.
+  Kind: test.
+  Source: debt-sweep-2026-07-26.
+
+- 📋 [DOOM-0245] **Bump the staged Vulkan-Headers pin from vulkan-sdk-1.4.350.0 to 1.4.350.1.**
+  mingw-deps/README.md:19-20,25-27 pins vulkan-sdk-1.4.350.0; upstream latest is vulkan-sdk-1.4.350.1. Not recorded in the dependencies.md Version Exception Ledger (which reads "_(none currently)_"), and dependencies.md repeats the stale number in its inventory. Deliberately NOT bumped in the debt sweep: it changes the Windows cross-build and could not be verified from this Linux session. Bump the two curl URLs and the dependencies.md line together, then run packaging/windows-build.sh.
+  **Layman:** A bundled Windows-build dependency is one patch release behind.
+  Kind: chore.
+  Source: debt-sweep-2026-07-26.
+
+- 📋 [DOOM-0246] **packaging/README.md hardcodes 0.5.0 in its usage example.**
+  packaging/README.md:11 embeds the literal 0.5.0. It is not part of the three-place version lockstep (releases.md), so nothing keeps it current. Replace with <ver>.
+  **Layman:** A copy-paste example in the packaging docs will read as out of date after the next release.
+  Kind: doc-fix.
+  Source: debt-sweep-2026-07-26.
+
+- 📋 [DOOM-0247] **Anchor the bare `doom` .gitignore rule so it can't swallow a future directory.**
+  .gitignore:9 is a bare `doom`, which matches any file OR directory named doom at any depth — a future docs/doom/ would vanish silently. Anchor it to /linuxdoom-1.10/doom. Nothing is currently shadowed (verified with git ls-files + git status --ignored).
+  **Layman:** An ignore rule is broader than intended and could hide a folder someone adds later.
+  Kind: chore.
+  Source: debt-sweep-2026-07-26.
 
 ## Phase 2 — The Spin
 
@@ -1074,6 +1130,15 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Make sure a malformed or malicious level file can't crash the graphics driver or read out-of-bounds GPU memory.
   Kind: security.
   Source: research-2026-06-28.
+  Note (2026-07-26, debt sweep): 11 source comments across w_wad.c, d_net.c,
+  i_net.c, i_sound.c, p_spec.c, d_main.c and mus2mid.{c,h} cite "DOOM-0093"
+  for the 2026-07-23 CPU-side hardening pass, which actually shipped under
+  DOOM-0212..DOOM-0220. The citations are self-consistent (DOOM-0093 was the
+  umbrella research item that motivated the pass), so they were left as-is
+  rather than re-pointed at 11 sites. THIS item's own scope is unchanged and
+  still 📋: it is the GPU-side axis — buffer_reference/bindless bounds,
+  NaN/inf hardening, AS-build limits against a crafted WAD. A reader who
+  follows a comment here should look to DOOM-0212..0220 for the CPU fix.
 
 - ✅ [DOOM-0094] **Draw the 2D presentation layer (HUD, menu, FPS, weapon) over the path-traced view.**
   The path-tracer present path (RecordRtTrace) writes only the traced WORLD to the swapchain (compute -> blit) and skips the entire 2D + sprite presentation the raster path draws: the 2D overlay screens[0] (HUD + in-game menu + on-screen messages + the DOOM-0046 FPS counter are ALL composited from screens[0]) and the weapon viewmodel billboard (RB_BuildPSprites). So the `~` trace modes show no HUD, menu, FPS or gun/hand — it reads as a diagnostic, not a playable mode. Plan: after the trace blit, run a render pass over the swapchain (loadOp=LOAD on colour to keep the trace, loadOp=CLEAR on depth) that draws (1) the weapon billboard via the existing world pipeline (depth-cleared so it sits on top, as the player weapon always does) and (2) the overlay compositor (existing overlayPipeline) — reusing g.framebuffers (a LOAD-variant render pass is format-compatible). Enable the screens[0] staging copy + RB_BuildPSprites for rtActive (currently gated !rtActive). SCOPE: the weapon (a screen-space psprite) is in; WORLD sprites (monsters/items) are NOT — they need correct depth occlusion against the traced world, which means putting them in the TLAS (DOOM-0084) or a depth-aware billboard pass, tracked separately. Relates to but distinct from DOOM-0050 (overlay ghosting in the raster 3D modes).
@@ -2146,3 +2211,27 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Fog that curls and thins around the player as they walk, the way it does around James in Silent Hill 2.
   Kind: feature.
   Source: in-session-2026-07-25.
+
+- 📋 [DOOM-0248] **cppcheck cannot parse r_vulkan.cpp, so the largest file in the project gets ZERO static-analysis coverage.**
+  The 2026-07-26 full audit reported parse_failures for r_vulkan.cpp (plus stb_image.h / stb_image_write.h). A file cppcheck cannot parse is absent from the findings, which reads as "clean" — the most dangerous kind of false negative, on the file holding the entire Vulkan renderer. The same C++23-frontend limitation makes the editor's clangd red on this file. Fix: feed cppcheck the real include paths / a compile_commands.json (the Makefile knows the SDL2 + Vulkan flags), or move it to clang-tidy which already resolves the compile DB.
+  **Layman:** The automatic bug-scanner silently skips our biggest source file — it reports clean because it never looked.
+  Kind: audit-fix.
+  Source: debt-sweep-2026-07-26.
+
+- 📋 [DOOM-0249] **Decide a policy for the ~1000 cppcheck style findings on id Software's 1997 tree.**
+  The full audit returned 2291 findings; ~1000 are cppcheck style on the original engine (316 staticLinkage, 219 variableScope, 93+68 constPointer, 64 unusedFunction). None were fixed in the debt sweep: mass-editing id's code violates the surgical-edit rule and would bury real signal in churn. Needs a deliberate policy — an .audit_allowlist.json baseline suppressing these rules on the pre-fork files so NEW findings stand out, versus a one-off cleanup sweep. Prefer the baseline.
+  **Layman:** The bug-scanner raises a thousand minor style complaints about the original 1997 code, drowning out real problems.
+  Kind: chore.
+  Source: debt-sweep-2026-07-26.
+
+- 📋 [DOOM-0250] **Review the 28 unbounded strcpy/strcat sites semgrep flags.**
+  semgrep insecure-use-string-copy-fn/strcat across d_main.c(5), m_menu.c(5), rb_materials.h(4), g_game.c(3), hu_stuff.c(2), m_misc.c(2), w_wad.c(2), wi_stuff.c(2), i_sound.c, d_net.c, r_data.c, sndserv/wadread.c. Most copy fixed-size lump names between fixed-size buffers and are safe by construction, but rb_materials.h is OUR code parsing an on-disk sidecar CSV — that one is attacker-adjacent (DOOM-0042 materials.csv) and should be checked first. Triage each; convert the genuinely unbounded ones to snprintf.
+  **Layman:** Old-style text-copying calls that don't check length — mostly harmless here, but worth a proper look.
+  Kind: security.
+  Source: debt-sweep-2026-07-26.
+
+- 📋 [DOOM-0251] **pt_common.glsl carries forward-staged fog helpers that are dead until DOOM-0011 L2-L4.**
+  fogPhaseHG() is defined but never called, and kFogAnisotropy, kFogPoolHeight, kSunDir, kGooTint, kHellTint and kTorchShaftStrength have zero references (pt_common.glsl:41-46,52-56). Verified by grep across shaders/. The comments tag them L2/L3/L4, so this is deliberate staging rather than an oversight — left in place. Fold each into the layer that uses it as DOOM-0011 lands, or drop them if the design moves on.
+  **Layman:** Some shader code was written early for a feature that isn't built yet, so it currently does nothing.
+  Kind: chore.
+  Source: debt-sweep-2026-07-26.

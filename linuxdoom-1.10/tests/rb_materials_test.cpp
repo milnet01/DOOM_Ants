@@ -50,8 +50,6 @@ static void test_malformed_wrong_column_count() {
 }
 
 /* --- Task 3 additions --- */
-#include <map>
-#include <string>
 static std::map<std::string,int>* g_names;      // test fixture: name -> id
 static int test_resolver(const char* name, int* out_id) {
     auto it = g_names->find(name);

@@ -155,7 +155,17 @@ else
     /^\[Unreleased\]:/         { print UL; print NL; next }
     { print }
   ' CHANGELOG.md > CHANGELOG.md.tmp && mv CHANGELOG.md.tmp CHANGELOG.md
-  git add CHANGELOG.md
+
+  # docs/standards/releases.md: the version lives in THREE places in lockstep --
+  # the tag, the CHANGELOG heading, and README's "Latest release" line -- and they
+  # move together, driven by this tool. The README leg was missing, so every
+  # release since shipped with a stale "Latest release" line.
+  if ! grep -q 'Latest release: \*\*[0-9]\+\.[0-9]\+\.[0-9]\+\*\*\.' README.md; then
+    echo "release.sh: could not find README 'Latest release' line to bump" >&2; exit 1
+  fi
+  sed -i -E "s/Latest release: \*\*[0-9]+\.[0-9]+\.[0-9]+\*\*\./Latest release: **$VERSION**./" README.md
+
+  git add CHANGELOG.md README.md
   git commit -m "$VERSION: ${THEME:-release}"
 fi
 

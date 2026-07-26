@@ -276,7 +276,9 @@ layout(push_constant) uniform PC {
     EmitSec  emitSec;  // DOOM-0119: per-emitter sector (device address; 0 if cull off)
     Reject   reject;   // DOOM-0119: REJECT bitmatrix words (device address; 0 if cull off)
     uvec4    misc6;    // DOOM-0183: x = ripple time (float bits, seconds); y = wet toggle
-                       // (rb_wet: sheen/ripple/puddle only, not the glow); z,w reserved.
+                       // (rb_wet: sheen/ripple/puddle only, not the glow).
+                       // DOOM-0011: z = fog strength (rb_fog 0..3; 0 skips the march, INV-8).
+                       // w = hell-haze density (reserved, wired at L4).
                        // std430-aligned to offset 224 (C++ pads the 216-byte tail; INV-6).
 } pc;
 

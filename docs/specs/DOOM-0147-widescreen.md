@@ -22,6 +22,7 @@ open item, **DOOM-0151** — closing DOOM-0147 does not close it.
 - [Components / affected files](#components--affected-files)
 - [Verification](#verification)
 - [Out of scope (YAGNI)](#out-of-scope-yagni)
+- [Implementation notes (2026-06-30)](#implementation-notes-2026-06-30)
 - [Cold-eyes loop log](#cold-eyes-loop-log)
 - [Part C — aspect toggle + fill-to-screen (persisted)](#part-c--aspect-toggle--fill-to-screen-persisted)
 

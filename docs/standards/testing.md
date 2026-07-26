@@ -30,8 +30,10 @@ unchanged tests are skipped.
 - **Every bug fix gets a regression test first.** Reproduce the bug with a
   failing test, confirm it fails for the right reason, *then* fix. Two wins in
   one move: it proves the diagnosis, and it locks the bug out for good. The
-  `mus2mid`, netgame, and bounds fixes from the 2026-07-23 hardening pass are the
-  model here.
+  `mus2mid` fix from the 2026-07-23 hardening pass (`tests/mus2mid_test.cpp`) is
+  the model here. The netgame and WAD-bounds fixes from that same pass shipped
+  *without* their regression tests — a known gap, tracked as `DOOM-0240`, not a
+  precedent to copy.
 - **Skip only for the mechanical.** A typo or a one-line off-by-one where writing
   a test would be pure ceremony can go without — judgement, not a loophole.
 

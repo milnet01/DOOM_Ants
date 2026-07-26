@@ -17,6 +17,18 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Corrected `mold` from a required to an optional dependency in the README.**
+  The README listed the `mold` linker among the required Linux dependencies. The Makefile detects it and falls back to the default linker when it's absent, so a first-time builder was being sent after a package they don't need.
+
+- **The local CI mirror now runs the same boot smoke as GitHub Actions.**
+  `packaging/ci-local.sh` announced itself as "exactly what GitHub Actions runs", but its container mode ran only build + unit tests and skipped the DOOM-0203 headless boot smoke. A boot regression could pass locally and still turn CI red. The container path now installs Freedoom and runs the smoke, as the workflow does.
+
+- **`release.sh` now updates README's "Latest release" line (DOOM-0202 debt sweep).**
+  The release standard says the version lives in three places in lockstep — the git tag, the CHANGELOG heading, and README's "Latest release" line — all moved by the release tool. The tool only ever moved two of them, so every release shipped with a stale README. It now rewrites the README line too, and fails loudly if it can't find it.
+
+- **Golden-image gate no longer inherits your fog setting (DOOM-0202).**
+  The `-shotverify` / `-shotcompare` capture pins a canonical render configuration so a screenshot comparison can't be poisoned by a play-test tweak left in `~/.doomrc`. Volumetric fog (`rt_fog`) shipped after that pin was written and was never added to it, so the fog level leaked back in — exactly the config-dependence the pin exists to prevent. It is now pinned with the rest.
+
 - **Golden-image visual-regression gate is now config-independent (DOOM-0208).**
   The -shotverify / -shotcompare modes rendered the normal path, which
   inherited the live ~/.doomrc — so a play-test tweak (a brighter

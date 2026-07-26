@@ -2,6 +2,11 @@
 # GitHub workflow (.github/workflows/build.yml) and the local mirror
 # (packaging/ci-local.sh) read this file, so the two can never drift.
 #
+# One deliberate exception: `freedoom` (the IWAD for the DOOM-0203 boot smoke) is
+# installed by the smoke step itself in both places, not from this list -- it is a
+# test fixture, not a build dependency, and the build+unit-test gate must not fail
+# because a game-data package is unavailable.
+#
 # One apt (Debian/Ubuntu) package per line. Blank lines and lines whose first
 # field starts with '#' are ignored; a trailing "# ..." comment on a package
 # line is also ignored (only the first field is taken). Extract with:

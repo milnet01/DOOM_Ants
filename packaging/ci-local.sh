@@ -20,9 +20,10 @@
 # a missing output directory, or a shader that won't compile, which a reused local tree
 # hides.
 #
-# The image, the apt package list (packaging/ci-deps.txt), and the build/test commands
-# below are the SAME ones build.yml uses. The package list is a shared file so it cannot
-# drift; if you change the image or the make commands, change them in build.yml too.
+# The image, the apt package list (packaging/ci-deps.txt), and the build/test/boot-smoke
+# commands below are the SAME ones build.yml uses. The package list is a shared file so it
+# cannot drift; if you change the image, the make commands, or the smoke step, change them
+# in build.yml too.
 #
 # Usage:
 #   packaging/ci-local.sh              # container if available, else native
@@ -106,6 +107,7 @@ else
   # mounted HEAD export is throwaway. ':Z' relabels the bind mount for SELinux and is
   # a no-op where SELinux is off.
   "$ENGINE" run --rm -v "$WORK":/src:Z -w /src "$CI_IMAGE" bash -euc '
+    set -o pipefail
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
     apt-get install -y --no-install-recommends \
@@ -113,6 +115,15 @@ else
     echo "container: $(gcc --version | head -1)"
     make -C linuxdoom-1.10 -j"$(nproc)"
     make -C linuxdoom-1.10 test
+    # DOOM-0203 boot smoke -- build.yml runs this too, so the container mirror has
+    # to as well or "exactly what GitHub Actions runs" is false and a boot
+    # regression passes here while CI goes red.
+    apt-get install -y --no-install-recommends freedoom
+    export SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+    timeout 120 ./linuxdoom-1.10/linux/linuxxdoom \
+      -iwad /usr/share/games/doom/freedoom1.wad \
+      -warp 1 1 -bootsmoke 105 2>&1 | tee smoke.log
+    grep -q "bootsmoke: .* tics simulated OK" smoke.log
   '
 fi
 

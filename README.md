@@ -47,9 +47,11 @@ You'll need a DOOM `.wad` data file (e.g. the shareware `doom1.wad`, or
 retail `doom.wad` / `doom2.wad`), which is **not** included here for
 licensing reasons.
 
-**Dependencies (Linux):** a C++23 compiler (GCC/Clang), `make`, the
-[`mold`](https://github.com/rui314/mold) linker, and the dev packages for
-**SDL2**, **SDL2_mixer**, and the **Vulkan** loader + headers.
+**Dependencies (Linux):** a C++23 compiler (GCC/Clang), `make`, and the dev
+packages for **SDL2**, **SDL2_mixer**, and the **Vulkan** loader + headers.
+The [`mold`](https://github.com/rui314/mold) linker is optional — the build
+uses it automatically when it's installed and falls back to the default
+linker when it isn't.
 
 ```sh
 cd linuxdoom-1.10

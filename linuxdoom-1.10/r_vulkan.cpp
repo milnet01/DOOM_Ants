@@ -7395,7 +7395,8 @@ void RecordRtTrace(uint32_t idx)
         // pad here or the GLSL block and this struct disagree (INV-6). Appended AFTER the
         // 184-byte -rtverify prefix, so verify is unaffected; stays within the 256-byte limit.
         uint32_t _pad_misc6[2];   // pad rejectAddr's 216 tail up to a 16-byte boundary (224)
-        uint32_t misc6[4];        // x = ripple time (float bits, seconds); y = wet toggle; z,w = 0
+        uint32_t misc6[4];        // x = ripple time (float bits, seconds); y = wet toggle;
+                                  // z = fog strength (rb_fog 0..3, DOOM-0011); w = hell-haze (L4)
     } pc = {};
     static_assert(sizeof(RtPushConstants) == 240, "RT push-constant layout must match the shader");
     pc.camPos[0] = g.lastView.x; pc.camPos[1] = g.lastView.y; pc.camPos[2] = g.lastView.z;
@@ -8206,6 +8207,12 @@ extern "C" void RB_Vulkan_Present(void)
             rb_upscaler = 1; rb_renderscale = 50; rb_exposure = 10;
             rb_detile = 2; rb_filth = 1; rb_wet = 1;
             rb_flashlight = 0;
+            // DOOM-0011 shipped rt_fog (m_misc.c default 1) AFTER this pin was
+            // written; fog drives the volumetric march, so leaving it unpinned
+            // let the user's ~/.doomrc fog level back into the golden -- the
+            // exact leak this block exists to close. NOTE: the current golden
+            // predates fog, so re-blessing is still owed (tracked on DOOM-0202).
+            rb_fog = 1;
         }
     }
     g.shotCapture = false;

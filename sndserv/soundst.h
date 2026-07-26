@@ -257,7 +257,9 @@ I_PlaySong
 void I_StopSong(int handle);
 
 // registers a song handle to song data
-int I_RegisterSong(void *data);
+// Keep in lockstep with linuxdoom-1.10/i_sound.h -- the `length` parameter
+// (MUS bounds, 2026-07-23 hardening pass) was added there but not here.
+int I_RegisterSong(void *data, int length);
 
 // see above then think backwards
 void I_UnRegisterSong(int handle);

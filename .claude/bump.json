@@ -1,11 +1,11 @@
 {
-  "_comment": "DOOM_Ants has no version-bearing source file. The version lives only as the git tag (v<X.Y.Z>) and the CHANGELOG heading. The single release entrypoint is packaging/release.sh, which runs the tests, builds the Linux AppImage + Windows zip, promotes the CHANGELOG [Unreleased] section, tags, pushes, and publishes the GitHub release with both artifacts attached. Prefer it over the generic /release skill's own build/commit/tag steps. For a single-OS rebuild, packaging/linux-build.sh or packaging/windows-build.sh build one artifact each.",
+  "_comment": "DOOM_Ants has no version-bearing SOURCE file, but per docs/standards/releases.md the version lives in three places in lockstep: the git tag (v<X.Y.Z>), the CHANGELOG heading, and README.md's 'Latest release' line. All three are moved by packaging/release.sh -- the single release entrypoint -- which runs the tests, builds the Linux AppImage + Windows zip, promotes the CHANGELOG [Unreleased] section, rewrites the README line, tags, pushes, and publishes the GitHub release with both artifacts attached. files[] is empty because release.sh owns every edit; do not add README here or it gets bumped twice. Prefer release.sh over the generic /release skill's own build/commit/tag steps. For a single-OS rebuild, packaging/linux-build.sh or packaging/windows-build.sh build one artifact each.",
   "version_source": "CHANGELOG.md",
   "version_pattern": "^## \\[([0-9]+\\.[0-9]+\\.[0-9]+)\\]",
   "tag": "v{NEW}",
   "files": [],
   "release_command": "packaging/release.sh {NEW} --publish --theme=\"<one-line theme>\"",
-  "post_check": "test -x packaging/release.sh && echo 'OK: packaging/release.sh is the single release entrypoint; no source file stores the version'",
+  "post_check": "test -x packaging/release.sh && CL=$(grep -m1 -oE '^## \\[[0-9]+\\.[0-9]+\\.[0-9]+\\]' CHANGELOG.md | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+') && RM=$(grep -m1 -oE 'Latest release: \\*\\*[0-9]+\\.[0-9]+\\.[0-9]+' README.md | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+') && [ \"$CL\" = \"$RM\" ] && echo \"OK: CHANGELOG $CL == README $RM; release.sh keeps tag/CHANGELOG/README in lockstep\"",
   "todos": [
     "Make sure CHANGELOG.md [Unreleased] holds the {NEW} changes — release.sh promotes it to `## [{NEW}] - {TODAY}` automatically on --publish."
   ]
