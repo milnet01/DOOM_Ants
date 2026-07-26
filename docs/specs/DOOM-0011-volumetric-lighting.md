@@ -5,9 +5,9 @@ tune e7753b3; fog-placement standard + sky-backdrop aerial fog 1345c92 — user 
 "looking fantastic… covers the mountains… outside and not inside"). **A 2026-07-25
 amendment retargets the look at Silent Hill 2 (§4.3b, wisps) and softens the indoor
 cutoff into an outdoor-proximity seep (§4.3a amendment); the perf gate rises to
-≤ 15 % (§6). `/cold-eyes` has run **4 loops** (log below) and has **not** converged — loop 4 was the
-heaviest yet (2 design CRITICALs in the seep alone), so the amendment is still not
-implementation-ready; L1c + L1d are the next work once it is.** Original design
+≤ 15 % (§6). `/cold-eyes` has run **5 loops** (log below) and has **not** converged — loop 5 still
+returned 3 CRITICALs, two of them defects in loop 4's own fixes. The amendment is
+therefore still **not implementation-ready**; L1c + L1d are the next work once it is.** Original design
 approved by the user
 2026-07-21
 (brainstorm), cold-eyes-converged 2026-07-23 (4 loops, below), scope-widened
@@ -67,6 +67,24 @@ taken** (DOOM is first-person — no body to swirl around); split out as **DOOM-
   room, so Q12's `kIndoorFogScale = 0` had to be struck; `kAreaDensity` appeared in every
   formula and was defined nowhere; the sky closed form still in-scattered `SKY_COLOR`,
   which would have hazed the mountains blue against a near-white foreground.
+- **Loop 5** — CRITICAL 3 · HIGH 2 · MEDIUM 2 · LOW 0 · INFO 0 (2 lanes, narrowed:
+  citations were excluded, having been re-verified against source mechanically). Notably,
+  **two of the three CRITICALs were defects in loop 4's own fixes**, which is the argument
+  for the cold re-read. (i) Loop 4 moved the seep graph to **sectors** to dodge the
+  miniseg problem, but a sector-indexed Dijkstra settles exactly **one** distance per
+  sector — the per-node value the very next step declares "would defeat the whole
+  feature". The search state has to be the **portal**; rewritten that way. (ii) The new
+  "border cells are `dMax` by construction" was asserted rather than made true — a level
+  whose outdoor sector runs flush to its bounding box has `d = 0` at the true edge texel,
+  which `CLAMP_TO_EDGE` would then project *outward*, inverting the guarantee the sentence
+  exists to give; fixed with an explicit one-cell void padding rule. (iii) In the plan,
+  **L4 was charged with replacing the `σ = … × skyExposure` form and never did** — its
+  edit folds profile density into `fogDensity()`, whose result is still multiplied by
+  `skyExposure`, so every roofed goo/hell room would have kept ~5 % of its intended
+  density while the play-test passed weakly on a thin green tint. Also: the plan's perf
+  gate was still `≤ 5 %` in the two places that actually decide pass/fail (heading said
+  15 %, criterion said 5 %), and loop 4's own "all twelve invariants are pinned" claim was
+  false — only INV-1..8 are, since INV-9..12 belong to the unwritten L1c/L1d tasks.
 - **Loop 4** — CRITICAL 15 · HIGH 24 · MEDIUM 34 · LOW 34 · INFO 8 (6 lanes; 3 findings
   dismissed unverified). Two classes dominated. **(1) The seep's traversal was broken in
   two independent ways.** Vanilla DOOM has **no minisegs** — `P_LoadSegs` gives every seg
@@ -358,7 +376,8 @@ fallback if HG reads busy (Q5).
 - **Area multiplier & tint** (§4.5) — the profile scales `σ` and sets the medium's
   **scattering tint** `mediumTint` (green in goo, red in hell, neutral in clear).
 - **Colour of a shaft = light colour × medium tint.** Sky shafts inherit the fog's sky
-  tone — **`kFogColor` since the 2026-07-25 amendment (§4.3b), no longer `SKY_COLOR`** —
+  tone — **`kFogColor` (§4.3b); `L1c` work, NOT yet shipped: the tree today still has only
+  `SKY_COLOR` (`pt_common.glsl:31`) and `marchFog` still in-scatters it** —
   torch shafts inherit the emitter's `Le`
   colour; both are then multiplied by `mediumTint`. So a torch shaft in a goo room
   is warm-through-green; a sky shaft in hell is sky-through-red. Tint colours and
@@ -513,8 +532,11 @@ room, and segs give sector-to-sector adjacency through exactly the linedefs whos
 openings we want to test, so the partition problem disappears rather than being worked
 around.
 
-1. **Nodes = sectors.** For each `seg_t` with a `backsector`, the edge
-   `seg->frontsector ↔ seg->backsector` exists iff `seg->linedef` is two-sided **and**
+1. **Nodes = portals, not sectors** — the search state has to be the *opening*, because
+   step 3 needs two portals of the **same** sector to carry **different** distances, and a
+   sector-indexed Dijkstra can only ever settle one value per sector (which is exactly the
+   flat-per-room result step 3 forbids). A **portal** is one surviving `seg_t`, sited at
+   its midpoint. A seg survives iff it has a `backsector`, its `linedef` is two-sided **and**
    `P_LineOpening(seg->linedef)` leaves the file-scope global `openrange > 0`
    (`p_maputl.c:300-331` — it returns **`void`** and writes `opentop`/`openbottom`/
    `openrange`/`lowfloor`; call it and read the global, don't re-derive it, and keep the
@@ -523,12 +545,13 @@ around.
    linedef->backsector`:** a self-referencing sector (the vanilla deep-water / fake-wall
    trick) is two-sided with a full-height opening but is *drawn* as a solid wall, so
    without this test the flood walks straight through it — the INV-12 leak in another
-   costume. Record each surviving edge's **portal point** — the midpoint of the seg — as
-   the place the fog physically comes through.
-2. **Seed** every sector with `ceilingpic == skyflatnum` at `d = 0`, then Dijkstra
-   outward over the portal graph, weighting each edge by the distance between its two
-   portal points. This yields `d(portal)` for every opening in the map: how far that
-   doorway is, through open space, from outdoor air.
+   costume. A one-sided seg is a wall and yields no portal.
+2. **Edges join two portals that share a sector**, weighted by the distance between their
+   midpoints — that is the path fog would actually travel across that room. **Seed** every
+   portal at `d = 0` if *either* of its sectors has `ceilingpic == skyflatnum`, then run
+   Dijkstra from the whole seed set at once. Weights are non-negative and the graph is
+   finite, so it terminates. The result is `d(portal)` for every opening in the map: how
+   far that doorway is, through open space, from outdoor air.
 3. **Resolve `d` per GRID CELL, not per node.** For each 64-unit cell, take
    `d(cell) = min over the portals of the cell's own sector of ( d(portal) + |cell centre
    − portal| )`, clamped to `dMax`; an outdoor cell is `0`. **A per-node value would
@@ -562,7 +585,11 @@ on E1M1** (§7, L1d).
 **Sampler state is part of the contract:** `CLAMP_TO_EDGE` on both axes. A march sample
 can legitimately land outside the map's XY box (the `tHit` clamp lets `p` run past the
 geometry toward the sky backdrop), and under `REPEAT` an outdoor `d = 0` at one map edge
-would wrap onto indoor air at the opposite edge. Border cells are `dMax` by construction.
+would wrap onto indoor air at the opposite edge. For that to be true rather than merely asserted, **pad the grid by one cell beyond the
+map's XY bounding box**: the padding ring lies outside every sector, so it takes the void
+value `dMax` by the rule above, and `CLAMP_TO_EDGE` then extends *that* outward. Without
+the padding a level whose outdoor sector runs flush to its bounding box would clamp an
+outdoor `d = 0` out past the map edge — the opposite of the guarantee.
 
 **Why a 2-D field is sufficient here.** Vanilla DOOM has **no room-over-room** — any XY
 column belongs to exactly one sector, and `r_mesh.c` emits exactly one floor and one

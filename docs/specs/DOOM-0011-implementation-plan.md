@@ -430,7 +430,9 @@ Expected: build green (SPIR-V compiles — catches GLSL errors), tests green,
 Per spec §6: with the profiler (`` \ `` **backslash** key — `` ` ``/`~` is the RT view cycle), A/B the **added** present-total (fog-off vs fog-on,
 same walk) in the goo room (its ~40 FPS baseline is pre-existing) fits **≤ 4 %** — L1b's slice
 of L1c's ≤ 8 % allocation, not the whole-feature gate — AND confirm a **typical non-goo
-corridor** scene (Ultra >60 FPS today) still holds 60 FPS with the up-ray on. **If it holds** →
+corridor** scene holds the same ≤ 4 % added share with the up-ray on. (This check originally
+read "still holds 60 FPS"; the spec's 2026-07-25 amendment relaxed that floor for RT-engaged
+scenes, so the share is the only currency now.) **If it holds** →
 the per-sample up-ray ships (done). **If it misses** → build the cheap fallback instead:
 - `r_mesh.h`: `#define RB_MESH_OUTDOOR 0x100` beside the other `RB_MESH_*` bits (`:82-101`).
 - `r_mesh.c`: OR the bit into the `flags` word from `seg->frontsector->ceilingpic == skyflatnum`
@@ -683,8 +685,25 @@ global haze to base density, and multiply every `Ls` contribution by `mediumTint
         mediumTint *= kHellTint;                              // faint red over whatever we have
     }
 ```
-- Fold `densMul` and `haze` into density: `return (kFogBaseDensity + haze) * pool * densMul;`
-  (thread `densMul`/`haze` into `fogDensity`, or apply at the call site — keep it one place).
+- **Split the `sigma` line — this is the step that discharges L1b's standing note and spec
+  INV-9, and it is easy to miss because the obvious edit (folding into `fogDensity`'s return)
+  does NOT do it.** The L1/L1b call site is
+  `float sigma = fogDensity(p) * strength * skyExposure;` — everything it returns gets
+  multiplied by `skyExposure`. Since goo and hell rooms are **roofed**,
+  `skyExposure = kIndoorFogScale ≈ 0.05` there, so folding the profile density into
+  `fogDensity` would crush it to ~5 % of intent and every goo/hell interior would lose the
+  fog L4 exists to tint. The play-test could still pass *weakly* (a thin green tint), which
+  is why this needs a code-level check, not an eyeball. Write the split form instead:
+
+```glsl
+    // spec §4.3b sigma_final: skyExposure gates the SKY-SOURCED term ONLY (INV-9).
+    float skySigma  = kFogBaseDensity * skyExposure;   // outdoor haze, gated
+    float areaSigma = (kAreaDensity * gooMult) + haze; // profiles, NOT gated
+    float sigma     = (skySigma + areaSigma) * pool * wisp * strength;
+```
+- **Verify by construction, not by eye:** with `rb_fog` on, a goo room under a solid roof
+  must show green fog at a density independent of `kIndoorFogScale` — temporarily setting
+  `kIndoorFogScale = 0` must NOT remove the goo pool. If it does, the split did not land.
 - Multiply the sky term **and** each torch term by `mediumTint` (colour = light × medium): so
   `Ls += skyRadiance() * kSkyShaftStrength * ph * mediumTint;` and likewise for torches.
 - Add `const float kGooDensityMul` to `pt_common.glsl`.
@@ -868,10 +887,10 @@ exactly as DOOM-0183 re-blessed for wet — the gate then guards the fog *look*.
 
 - [ ] **Step 7: Perf gate — ≤ 15 % present-total (the pass/fail)**
 
-Per spec §6: average the `` ` `` profiler **present-total (ms, not FPS)** over a fixed ~10 s walk
+Per spec §6: average the `` \ `` **backslash** profiler **present-total (ms, not FPS)** over a fixed ~10 s walk
 of the **E1M1 green-goo room** (with a sky-hole/doorway in view for shafts), **RT-on, 50 % render
 scale**, `rb_fog` **off then on** (same-walk A/B, tee the run log —
-`/tmp/doom-ants-run.log`). **Pass:** fog adds **≤ 5 % to present-total** vs the fog-off baseline;
+`/tmp/doom-ants-run.log`). **Pass:** fog adds **≤ 15 % to present-total** vs the fog-off baseline (spec §6, 2026-07-25);
 the goo room is not materially worse than its existing ~40 FPS. **The 60 FPS floor does NOT
 bind here:** the spec's 2026-07-25 amendment relaxed it for RT-engaged scenes (the user was
 shown the `~45 → ~39 FPS` trade and accepted it), and `docs/standards/performance.md` names
@@ -904,10 +923,13 @@ Update the memory file `doom-0011-volumetrics-design.md` to "shipped".
   rule) → L4. §4.6 half-res + per-mode composite + sky-seam bilinear fallback → L1 (skeleton +
   fallback) + L5 (bilateral). §5 data (fog image + bindings, `misc6.z/.w`, `rb_view_t` field,
   `rb_fog`, six menu edits, `;` key) → L1 (image) + L4 (`rb_view_t`/`misc6.w`) + L6 (dial/menu/key).
-  §6 perf (profiler slot + ≤5 % gate) → L6. §8 INV-1..8 → Global Constraints + per-task guards.
-- **All twelve invariants** (INV-1..INV-12; INV-9/10 added 2026-07-24, INV-11/12 added
-  2026-07-25 — this plan predates the last four) are pinned in Global Constraints and re-stated at their task
-  (INV-2 in L3, INV-4 in L1, INV-5/7 in L6, INV-6 global, INV-8 in L6 gate).
+  §6 perf (profiler slot + ≤ 15 % gate) → L6. §8 INV-1..8 → Global Constraints + per-task guards.
+- **Invariant coverage is PARTIAL, and this is the plan's largest gap.** Only **INV-1..8**
+  are pinned in Global Constraints and re-stated at their tasks (INV-2 in L3, INV-4 in L1,
+  INV-5/7 in L6, INV-6 global, INV-8 in L6 gate). The spec now carries **twelve**: INV-9/10
+  (added 2026-07-24) and INV-11/12 (added 2026-07-25) are owned by the **L1c/L1d tasks that
+  this plan does not yet contain** — INV-9 appears once in passing (L1b's `sigma` note) and
+  INV-10/11/12 appear nowhere. Writing those tasks is what closes this.
 
 **Placeholder scan** — the `kFog*`/tint/`kHaze*` values are concrete starting numbers explicitly
 labelled *tune-on-hardware* (a spec requirement, not a TODO). Shader helper calls
