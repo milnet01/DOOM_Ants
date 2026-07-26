@@ -115,9 +115,13 @@ Renderer **look** is a play-test call (per DOOM-0181/0183 and spec §7): L1–L5
 checks** — L1b a measured ≤ 4 % up-ray Δ, L1c a ≤ 8 % cumulative Δ, L1d a ≤ 20 ms level-load
 budget plus a ≤ 1 % runtime tap (spec §7).
 
-**A note on line numbers:** every `file:line` below was current at plan time, but **earlier tasks
-shift later line numbers**. Locate each insert by the **quoted surrounding code**, not the raw
-line number.
+**A note on line numbers:** the **symbol name or quoted code is authoritative; the line number
+is only a hint.** Locate each insert by the **quoted surrounding code**, never at a raw line
+number — earlier tasks shift later lines, and unrelated work shifts them all (DOOM-0254/0263
+moved `r_vulkan.cpp` by +4..+6 and `pathtrace.comp` by +2, invalidating every citation in both
+these documents at once). **All line numbers here were verified against commit `d925a29`
+(2026-07-26).** If HEAD has moved, treat them as advisory and log any drift you fix in
+`DOOM-0011-fix-ledger.md`.
 
 ---
 

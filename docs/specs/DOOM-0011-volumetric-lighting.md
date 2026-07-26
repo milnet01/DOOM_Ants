@@ -226,6 +226,18 @@ raster path (Solid/Ultra with RT off), stay **byte-identical**. The offline GI b
 
 ---
 
+**Citation convention — read this before following any `file:line` in this document.**
+The **symbol name or quoted code is authoritative; the line number is only a hint.**
+Locate the site by the quoted token (`static_assert(sizeof(RtPushConstants) == 240)`,
+`FlagLiquidFlats`, `if (committed && !isSky)`), then confirm the line — never edit at a raw
+line number. This is not pedantry: `r_vulkan.cpp` is ~9000 lines and `pathtrace.comp` ~1340,
+and both move under unrelated work, so every number here rots. Cold-eyes loops 2 and 3 both
+re-anchored these citations; DOOM-0254/0263 then shifted `r_vulkan.cpp` by +4..+6 and
+`pathtrace.comp` by +2, and loop 4 had to correct **50** of them again — three of which had
+come to point at entirely unrelated constructs. **All line numbers in this document were
+verified against commit `d925a29` (2026-07-26).** If HEAD has moved since, treat every
+number as advisory, and record any drift you fix in `DOOM-0011-fix-ledger.md`.
+
 ## Contents
 
 - §1 Goal — §2 Where this sits — §3 The problem, precisely — §4 Design
