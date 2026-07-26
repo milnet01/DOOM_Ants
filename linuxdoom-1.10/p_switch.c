@@ -118,7 +118,14 @@ void P_InitSwitchList(void)
 	if ( gamemode == commercial )
 	    episode = 3;
 		
-    for (index = 0,i = 0;i < MAXSWITCHES;i++)
+    // alphSwitchList is terminated by a zero-episode entry, but the table
+    // (41 entries) is smaller than MAXSWITCHES (50) — bound the scan by the
+    // table itself so a future edit that drops the terminator cannot read
+    // past its end.
+    const int	numalphswitches =
+	(int)(sizeof(alphSwitchList) / sizeof(alphSwitchList[0]));
+
+    for (index = 0,i = 0;i < MAXSWITCHES && i < numalphswitches;i++)
     {
 	if (!alphSwitchList[i].episode)
 	{

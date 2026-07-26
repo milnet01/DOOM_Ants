@@ -629,6 +629,11 @@ F_DrawPatchCol
     // step through the posts in a column
     while (column->topdelta != 0xff )
     {
+	// A post that overruns the patch's own height would write past the
+	// end of bunnyscreen[].
+	if (!V_PostInBounds (column, SHORT(patch->height)))
+	    break;
+
 	source = (byte *)column + 3;
 	dest = desttop + column->topdelta*ORIGWIDTH;
 	count = column->length;

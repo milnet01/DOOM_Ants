@@ -754,8 +754,18 @@ void M_ReadSaveStrings(void)
 	    LoadMenu[i].status = 0;
 	    continue;
 	}
-	read (handle, &savegamestrings[i], SAVESTRINGSIZE);
+	// DOOM-0254: a savegame is user data. A short read left the previous
+	// slot's text in place, and a save string with no terminator ran into
+	// the next entry on every strcpy/draw downstream.
+	if (read (handle, &savegamestrings[i], SAVESTRINGSIZE) != SAVESTRINGSIZE)
+	{
+	    close (handle);
+	    strcpy(&savegamestrings[i][0],EMPTYSTRING);
+	    LoadMenu[i].status = 0;
+	    continue;
+	}
 	close (handle);
+	savegamestrings[i][SAVESTRINGSIZE-1] = 0;
 	LoadMenu[i].status = 1;
     }
 }

@@ -1801,22 +1801,34 @@ void WI_initVariables(wbstartstruct_t* wbstartstruct)
 
     wbs = wbstartstruct;
 
-#ifdef RANGECHECKING
-    if (gamemode != commercial)
+    // DOOM-0254: this guard read `#ifdef RANGECHECKING` (the project's macro is
+    // RANGECHECK) around an RNGCHECK() that is defined nowhere, so it has never
+    // compiled. The fields it meant to guard index real arrays — epsd indexes
+    // lnodes[]/anims[], last/next index lnames[] (32 entries in commercial, 9
+    // otherwise), pnum indexes plyr[] — and they follow gamemap, so a PWAD with
+    // MAP33+ walks off the end. The intermission is cosmetic, so clamp rather
+    // than abort.
+    if (gamemode == commercial)
     {
-      if ( gamemode == retail )
-	RNGCHECK(wbs->epsd, 0, 3);
-      else
-	RNGCHECK(wbs->epsd, 0, 2);
+	if (wbs->last < 0)	wbs->last = 0;
+	if (wbs->last > 31)	wbs->last = 31;
+	if (wbs->next < 0)	wbs->next = 0;
+	if (wbs->next > 31)	wbs->next = 31;
     }
     else
     {
-	RNGCHECK(wbs->last, 0, 8);
-	RNGCHECK(wbs->next, 0, 8);
+	int	maxepsd = (gamemode == retail) ? 3 : 2;
+
+	if (wbs->epsd < 0)		wbs->epsd = 0;
+	if (wbs->epsd > maxepsd)	wbs->epsd = maxepsd;
+	if (wbs->last < 0)	wbs->last = 0;
+	if (wbs->last > 8)	wbs->last = 8;
+	if (wbs->next < 0)	wbs->next = 0;
+	if (wbs->next > 8)	wbs->next = 8;
     }
-    RNGCHECK(wbs->pnum, 0, MAXPLAYERS);
-    RNGCHECK(wbs->pnum, 0, MAXPLAYERS);
-#endif
+
+    if (wbs->pnum < 0)			wbs->pnum = 0;
+    if (wbs->pnum >= MAXPLAYERS)	wbs->pnum = MAXPLAYERS - 1;
 
     acceleratestage = 0;
     cnt = bcnt = 0;

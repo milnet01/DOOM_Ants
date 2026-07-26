@@ -35,6 +35,9 @@ rcsid[] __attribute__((used)) = "$Id: m_misc.c,v 1.6 1997/02/03 22:45:10 b1 Exp 
 #include <unistd.h>
 
 #include <ctype.h>
+#include <errno.h>
+#include <limits.h>	// PATH_MAX (M_SaveDefaults' temp-file path)
+#include <string.h>
 
 
 #include "doomdef.h"
@@ -343,11 +346,27 @@ void M_SaveDefaults (void)
     int		i;
     int		v;
     FILE*	f;
-	
-    f = fopen (defaultfile, "w");
+    char	tmpfile[PATH_MAX];
+
+    // DOOM-0254: vanilla truncated the real config first and wrote into it, so
+    // a crash or a full disk mid-write left the user with a half-written (or
+    // empty) ~/.doomrc. Write a sibling temp file and rename it into place —
+    // rename(2) is atomic within a directory.
+    if ((size_t)snprintf (tmpfile, sizeof(tmpfile), "%s.tmp", defaultfile)
+	>= sizeof(tmpfile))
+    {
+	fprintf (stderr, "M_SaveDefaults: config path too long, not saved\n");
+	return;
+    }
+
+    f = fopen (tmpfile, "w");
     if (!f)
-	return; // can't write the file, but don't complain
-		
+    {
+	fprintf (stderr, "M_SaveDefaults: can't write %s: %s\n",
+		 tmpfile, strerror (errno));
+	return;
+    }
+
     for (i=0 ; i<numdefaults ; i++)
     {
 	if (defaults[i].defaultvalue > -0xfff
@@ -360,8 +379,21 @@ void M_SaveDefaults (void)
 		     * (char **) (defaults[i].location));
 	}
     }
-	
-    fclose (f);
+
+    if (fclose (f) != 0)
+    {
+	fprintf (stderr, "M_SaveDefaults: write to %s failed: %s\n",
+		 tmpfile, strerror (errno));
+	remove (tmpfile);
+	return;
+    }
+
+    if (rename (tmpfile, defaultfile) != 0)
+    {
+	fprintf (stderr, "M_SaveDefaults: can't replace %s: %s\n",
+		 defaultfile, strerror (errno));
+	remove (tmpfile);
+    }
 }
 
 
@@ -441,9 +473,26 @@ void M_LoadDefaults (void)
 		    }
 	    }
 	}
-		
+
 	fclose (f);
     }
+
+    // DOOM-0254: ~/.doomrc is a plain text file the user (or anything else on
+    // the machine) can edit, and these four are used as array indices or as an
+    // allocation size — usegamma indexes gammatable[5] during I_SetPalette,
+    // screenblocks drives R_SetViewSize, detailLevel picks a column function,
+    // snd_channels sizes the channel table. Clamp them once, here, rather than
+    // at every use site. DOOM-0253 tracks sweeping the rest of the table.
+    if (usegamma < 0 || usegamma > 4)
+	usegamma = 0;
+    if (screenblocks < 3)
+	screenblocks = 3;
+    if (screenblocks > 11)
+	screenblocks = 11;
+    if (detailLevel < 0 || detailLevel > 1)
+	detailLevel = 0;
+    if (numChannels < 1 || numChannels > 32)
+	numChannels = 3;
 }
 
 

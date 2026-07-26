@@ -85,7 +85,11 @@ typedef	struct
 } cliprange_t;
 
 
-#define MAXSEGS		32
+// DOOM-0254: one clippost per visible column in the worst case. Vanilla's 32
+// was already an unguarded gamble at 320 columns; DOOM-0147's widescreen view
+// is up to MAXWIDTH columns wide, so size the list for the real worst case (a
+// few KB) and keep the overflow guard in R_ClipSolidWallSegment as a backstop.
+#define MAXSEGS		(MAXWIDTH/2+1)
 
 // newend is one past the last valid seg
 cliprange_t*	newend;
@@ -121,6 +125,10 @@ R_ClipSolidWallSegment
 	    // Post is entirely visible (above start),
 	    //  so insert a new clippost.
 	    R_StoreWallRange (first, last);
+	    // Backstop: a pathological map could still fill the list. Drop the
+	    // clippost rather than write past solidsegs[].
+	    if (newend >= solidsegs + MAXSEGS)
+		return;
 	    next = newend;
 	    newend++;
 	    

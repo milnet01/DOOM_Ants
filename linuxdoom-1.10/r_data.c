@@ -512,6 +512,15 @@ void R_InitTextures (void)
     names = W_CacheLumpName ("PNAMES", PU_STATIC);
     nummappatches = LONG ( *((int *)names) );
     name_p = names+4;
+    // DOOM-0254: PNAMES declares its own entry count, so a crafted lump can
+    // claim more 8-byte names than it actually holds. Bound it by the lump.
+    {
+	int	pnameslen = W_LumpLength (W_GetNumForName ("PNAMES"));
+
+	if (nummappatches < 0 || nummappatches > (pnameslen - 4) / 8)
+	    I_Error ("R_InitTextures: PNAMES declares %d patches but the lump "
+		     "holds %d", nummappatches, (pnameslen - 4) / 8);
+    }
     // alloca() is obsolete and nummappatches comes from the (untrusted)
     // PNAMES lump, so use a checked heap allocation; freed once the texture
     // build loop below is done with it.
@@ -587,7 +596,9 @@ void R_InitTextures (void)
 		
 	offset = LONG(*directory);
 
-	if (offset > maxoff)
+	// A negative offset passes an unsigned-free `> maxoff` test and then
+	// reads in front of the lump.
+	if (offset < 0 || offset > maxoff - (int)sizeof(maptexture_t))
 	    I_Error ("R_InitTextures: bad texture directory");
 	
 	mtexture = (maptexture_t *) ( (byte *)maptex + offset);
@@ -601,6 +612,14 @@ void R_InitTextures (void)
 	texture->height = SHORT(mtexture->height);
 	texture->patchcount = SHORT(mtexture->patchcount);
 
+	// patchcount is WAD-supplied and was used above to size this very
+	// allocation ((patchcount-1) underflows at 0); the width/height feed
+	// the column allocations below.
+	if (texture->patchcount <= 0 || texture->width <= 0
+	    || texture->height <= 0)
+	    I_Error ("R_InitTextures: bad texture header (%dx%d, %d patches)",
+		     texture->width, texture->height, texture->patchcount);
+
 	memcpy (texture->name, mtexture->name, sizeof(texture->name));
 	mpatch = &mtexture->patches[0];
 	patch = &texture->patches[0];
@@ -609,6 +628,12 @@ void R_InitTextures (void)
 	{
 	    patch->originx = SHORT(mpatch->originx);
 	    patch->originy = SHORT(mpatch->originy);
+	    // The patch number indexes patchlookup[]; SHORT() is signed, so an
+	    // unchecked value reads either side of the table.
+	    if (SHORT(mpatch->patch) < 0
+		|| SHORT(mpatch->patch) >= nummappatches)
+		I_Error ("R_InitTextures: texture %s names patch %d of %d",
+			 texture->name, SHORT(mpatch->patch), nummappatches);
 	    patch->patch = patchlookup[SHORT(mpatch->patch)];
 	    if (patch->patch == -1)
 	    {

@@ -156,6 +156,22 @@ void P_LoadVertexes (int lump)
 
 
 //
+// DOOM-0254: every index below is read straight out of the WAD and is therefore
+// attacker-controlled — a crafted PWAD can name any vertex/line/side/sector/seg.
+// Vanilla dereferenced them unchecked; refuse the map instead of reading (or
+// writing) past the array. Same posture as the W_ / P_ hardening already in
+// place for lump directories.
+//
+static int P_WadIndex (int value, int count, const char* what)
+{
+    if (value < 0 || value >= count)
+	I_Error ("P_SetupLevel: bad %s index %d (level has %d)",
+		 what, value, count);
+    return value;
+}
+
+
+//
 // P_LoadSegs
 //
 void P_LoadSegs (int lump)
@@ -177,24 +193,43 @@ void P_LoadSegs (int lump)
     li = segs;
     for (i=0 ; i<numsegs ; i++, li++, ml++)
     {
-	li->v1 = &vertexes[SHORT(ml->v1)];
-	li->v2 = &vertexes[SHORT(ml->v2)];
-					
+	li->v1 = &vertexes[P_WadIndex (SHORT(ml->v1), numvertexes, "seg vertex")];
+	li->v2 = &vertexes[P_WadIndex (SHORT(ml->v2), numvertexes, "seg vertex")];
+
 	li->angle = (SHORT(ml->angle))<<16;
 	li->offset = (SHORT(ml->offset))<<16;
-	linedef = SHORT(ml->linedef);
+	linedef = P_WadIndex (SHORT(ml->linedef), numlines, "seg linedef");
 	ldef = &lines[linedef];
 	li->linedef = ldef;
-	side = SHORT(ml->side);
-	li->sidedef = &sides[ldef->sidenum[side]];
-	li->frontsector = sides[ldef->sidenum[side]].sector;
+	// A seg's side selector is 0 or 1; any other value would read past
+	// sidenum[]'s two elements.
+	side = SHORT(ml->side) ? 1 : 0;
+	li->sidedef =
+	    &sides[P_WadIndex (ldef->sidenum[side], numsides, "seg sidedef")];
+	li->frontsector = li->sidedef->sector;
 	if (ldef-> flags & ML_TWOSIDED)
-	    li->backsector = sides[ldef->sidenum[side^1]].sector;
+	    li->backsector =
+		sides[P_WadIndex (ldef->sidenum[side^1], numsides,
+				  "seg back sidedef")].sector;
 	else
 	    li->backsector = 0;
     }
 	
     Z_Free (data);
+
+    // Subsectors load before segs, so their seg ranges can only be validated
+    // here, once numsegs is known. Both the software renderer and r_mesh.c walk
+    // segs[firstline .. firstline+numlines).
+    for (i=0 ; i<numsubsectors ; i++)
+    {
+	if (subsectors[i].numlines < 0
+	    || subsectors[i].firstline < 0
+	    || subsectors[i].firstline > numsegs - subsectors[i].numlines)
+	    I_Error ("P_SetupLevel: subsector %d spans segs %d..%d "
+		     "(level has %d)", i, subsectors[i].firstline,
+		     subsectors[i].firstline + subsectors[i].numlines,
+		     numsegs);
+    }
 }
 
 
@@ -288,6 +323,14 @@ void P_LoadNodes (int lump)
 	for (j=0 ; j<2 ; j++)
 	{
 	    no->children[j] = SHORT(mn->children[j]);
+	    // A child is either a subsector (NF_SUBSECTOR flagged) or another
+	    // node; both are WAD-supplied and drive the BSP descent in
+	    // r_bsp.c / r_mesh.c, so both must be in range.
+	    if (no->children[j] & NF_SUBSECTOR)
+		P_WadIndex (no->children[j] & ~NF_SUBSECTOR, numsubsectors,
+			    "node subsector child");
+	    else
+		P_WadIndex (no->children[j], numnodes, "node child");
 	    for (k=0 ; k<4 ; k++)
 		no->bbox[j][k] = SHORT(mn->bbox[j][k])<<FRACBITS;
 	}
@@ -419,13 +462,18 @@ void P_LoadLineDefs (int lump)
 	ld->sidenum[0] = SHORT(mld->sidenum[0]);
 	ld->sidenum[1] = SHORT(mld->sidenum[1]);
 
+	// -1 means "no side"; anything else must name a real sidedef.
 	if (ld->sidenum[0] != -1)
-	    ld->frontsector = sides[ld->sidenum[0]].sector;
+	    ld->frontsector =
+		sides[P_WadIndex (ld->sidenum[0], numsides,
+				  "linedef front sidedef")].sector;
 	else
 	    ld->frontsector = 0;
 
 	if (ld->sidenum[1] != -1)
-	    ld->backsector = sides[ld->sidenum[1]].sector;
+	    ld->backsector =
+		sides[P_WadIndex (ld->sidenum[1], numsides,
+				  "linedef back sidedef")].sector;
 	else
 	    ld->backsector = 0;
     }
@@ -458,7 +506,9 @@ void P_LoadSideDefs (int lump)
 	sd->toptexture = R_TextureNumForName(msd->toptexture);
 	sd->bottomtexture = R_TextureNumForName(msd->bottomtexture);
 	sd->midtexture = R_TextureNumForName(msd->midtexture);
-	sd->sector = &sectors[SHORT(msd->sector)];
+	sd->sector =
+	    &sectors[P_WadIndex (SHORT(msd->sector), numsectors,
+				 "sidedef sector")];
     }
 	
     Z_Free (data);
@@ -477,14 +527,29 @@ void P_LoadBlockMap (int lump)
     blockmap = blockmaplump+4;
     count = W_LumpLength (lump)/2;
 
+    // The four-short header is read below; a truncated BLOCKMAP lump would
+    // otherwise be read past its end.
+    if (count < 4)
+	I_Error ("P_SetupLevel: BLOCKMAP lump is %d shorts, need at least 4",
+		 count);
+
     for (i=0 ; i<count ; i++)
 	blockmaplump[i] = SHORT(blockmaplump[i]);
-		
+
     bmaporgx = blockmaplump[0]<<FRACBITS;
     bmaporgy = blockmaplump[1]<<FRACBITS;
     bmapwidth = blockmaplump[2];
     bmapheight = blockmaplump[3];
-	
+
+    // Both dimensions come from the WAD; the product below sizes an allocation
+    // and bounds every P_BlockLinesIterator walk, so a negative or absurd pair
+    // must not reach it (bmapwidth*bmapheight would overflow int).
+    if (bmapwidth < 0 || bmapheight < 0
+	|| (bmapheight != 0
+	    && bmapwidth > (int)(MAXINT / sizeof(*blocklinks)) / bmapheight))
+	I_Error ("P_SetupLevel: bad BLOCKMAP dimensions %dx%d",
+		 bmapwidth, bmapheight);
+
     // clear out mobj chains
     count = sizeof(*blocklinks)* bmapwidth*bmapheight;
     blocklinks = Z_Malloc (count,PU_LEVEL, 0);

@@ -729,7 +729,9 @@ void P_SpawnMapThing (mapthing_t* mthing)
     }
 	
     // check for players specially
-    if (mthing->type <= 4)
+    // DOOM-0254: type is WAD data and indexes playerstarts[type-1]; vanilla
+    // bounded it above but not below, so type <= 0 indexed backwards.
+    if (mthing->type >= 1 && mthing->type <= 4)
     {
 	// save spots for respawning in network games
 	playerstarts[mthing->type-1] = *mthing;

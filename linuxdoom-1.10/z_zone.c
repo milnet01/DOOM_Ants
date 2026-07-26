@@ -193,8 +193,14 @@ Z_Malloc
     memblock_t* newblock;
     memblock_t*	base;
 
+    // DOOM-0254: sizes reach here from WAD-derived counts. A negative or
+    // near-INT_MAX size would wrap in the rounding + header arithmetic below
+    // and hand back a block that overlaps the rest of the zone.
+    if (size < 0 || size > MAXINT - (int)sizeof(memblock_t) - 3)
+	I_Error ("Z_Malloc: bad allocation size %d", size);
+
     size = (size + 3) & ~3;
-    
+
     // scan through the block list,
     // looking for the first free block
     // of sufficient size,

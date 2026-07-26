@@ -473,6 +473,23 @@ void P_ArchiveSpecials (void)
 //
 // P_UnArchiveSpecials
 //
+//
+// P_SectorFromSave
+// DOOM-0254: a savegame stores each special's sector as a bare index and the
+// loader turns it straight back into a pointer. The file is user data (and may
+// have been written by a different level), so range-check before dereferencing.
+//
+static sector_t* P_SectorFromSave (const void* stored)
+{
+    int	index = (int)(intptr_t)stored;
+
+    if (index < 0 || index >= numsectors)
+	I_Error ("P_UnArchiveSpecials: sector index %d out of range (level has "
+		 "%d)", index, numsectors);
+    return &sectors[index];
+}
+
+
 void P_UnArchiveSpecials (void)
 {
     byte		tclass;
@@ -499,7 +516,7 @@ void P_UnArchiveSpecials (void)
 	    ceiling = Z_Malloc (sizeof(*ceiling), PU_LEVEL, NULL);
 	    memcpy (ceiling, save_p, sizeof(*ceiling));
 	    save_p += sizeof(*ceiling);
-	    ceiling->sector = &sectors[(int)(intptr_t)ceiling->sector];
+	    ceiling->sector = P_SectorFromSave (ceiling->sector);
 	    ceiling->sector->specialdata = ceiling;
 
 	    if (ceiling->thinker.function.acp1)
@@ -514,7 +531,7 @@ void P_UnArchiveSpecials (void)
 	    door = Z_Malloc (sizeof(*door), PU_LEVEL, NULL);
 	    memcpy (door, save_p, sizeof(*door));
 	    save_p += sizeof(*door);
-	    door->sector = &sectors[(int)(intptr_t)door->sector];
+	    door->sector = P_SectorFromSave (door->sector);
 	    door->sector->specialdata = door;
 	    door->thinker.function.acp1 = (actionf_p1)T_VerticalDoor;
 	    P_AddThinker (&door->thinker);
@@ -525,7 +542,7 @@ void P_UnArchiveSpecials (void)
 	    floor = Z_Malloc (sizeof(*floor), PU_LEVEL, NULL);
 	    memcpy (floor, save_p, sizeof(*floor));
 	    save_p += sizeof(*floor);
-	    floor->sector = &sectors[(int)(intptr_t)floor->sector];
+	    floor->sector = P_SectorFromSave (floor->sector);
 	    floor->sector->specialdata = floor;
 	    floor->thinker.function.acp1 = (actionf_p1)T_MoveFloor;
 	    P_AddThinker (&floor->thinker);
@@ -536,7 +553,7 @@ void P_UnArchiveSpecials (void)
 	    plat = Z_Malloc (sizeof(*plat), PU_LEVEL, NULL);
 	    memcpy (plat, save_p, sizeof(*plat));
 	    save_p += sizeof(*plat);
-	    plat->sector = &sectors[(int)(intptr_t)plat->sector];
+	    plat->sector = P_SectorFromSave (plat->sector);
 	    plat->sector->specialdata = plat;
 
 	    if (plat->thinker.function.acp1)
@@ -551,7 +568,7 @@ void P_UnArchiveSpecials (void)
 	    flash = Z_Malloc (sizeof(*flash), PU_LEVEL, NULL);
 	    memcpy (flash, save_p, sizeof(*flash));
 	    save_p += sizeof(*flash);
-	    flash->sector = &sectors[(int)(intptr_t)flash->sector];
+	    flash->sector = P_SectorFromSave (flash->sector);
 	    flash->thinker.function.acp1 = (actionf_p1)T_LightFlash;
 	    P_AddThinker (&flash->thinker);
 	    break;
@@ -561,7 +578,7 @@ void P_UnArchiveSpecials (void)
 	    strobe = Z_Malloc (sizeof(*strobe), PU_LEVEL, NULL);
 	    memcpy (strobe, save_p, sizeof(*strobe));
 	    save_p += sizeof(*strobe);
-	    strobe->sector = &sectors[(int)(intptr_t)strobe->sector];
+	    strobe->sector = P_SectorFromSave (strobe->sector);
 	    strobe->thinker.function.acp1 = (actionf_p1)T_StrobeFlash;
 	    P_AddThinker (&strobe->thinker);
 	    break;
@@ -571,7 +588,7 @@ void P_UnArchiveSpecials (void)
 	    glow = Z_Malloc (sizeof(*glow), PU_LEVEL, NULL);
 	    memcpy (glow, save_p, sizeof(*glow));
 	    save_p += sizeof(*glow);
-	    glow->sector = &sectors[(int)(intptr_t)glow->sector];
+	    glow->sector = P_SectorFromSave (glow->sector);
 	    glow->thinker.function.acp1 = (actionf_p1)T_Glow;
 	    P_AddThinker (&glow->thinker);
 	    break;

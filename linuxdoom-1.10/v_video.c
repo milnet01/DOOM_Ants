@@ -267,6 +267,21 @@ void V_ExtendSides (int scrn)
 
 
 //
+// V_PostInBounds
+// DOOM-0254: a patch column is a chain of posts whose topdelta and length come
+// straight out of the WAD, and those two bytes drive the destination pointer of
+// every blitter below. Vanilla trusted them, so a crafted patch could walk the
+// blit past the end of the destination buffer. A post that does not fit inside
+// the patch's own declared height is malformed; callers stop drawing that
+// column instead of writing out of bounds.
+//
+boolean V_PostInBounds (const column_t* column, int height)
+{
+    return (int)column->topdelta + (int)column->length <= height;
+}
+
+
+//
 // V_DrawPatchGeneral
 // Masks a column based masked pic to the screen. When trans is non-NULL every
 // source pixel is remapped through it (a 256-entry palette-translation table),
@@ -341,6 +356,11 @@ V_DrawPatchGeneral
 	// step through the posts in a column
 	while (column->topdelta != 0xff )
 	{
+	    // Malformed post (overruns the patch's own height): stop this column
+	    // rather than blit past the end of the screen buffer.
+	    if (!V_PostInBounds (column, SHORT(patch->height)))
+		break;
+
 	    source = (byte *)column + 3;
 	    dest = desttop + column->topdelta*f*dsw;
 	    count = column->length;
@@ -415,6 +435,11 @@ V_DrawPatchScaled
 	// step through the posts in a column
 	while (column->topdelta != 0xff )
 	{
+	    // Malformed post (overruns the patch's own height): stop this column
+	    // rather than blit past the end of the screen buffer.
+	    if (!V_PostInBounds (column, SHORT(patch->height)))
+		break;
+
 	    source = (byte *)column + 3;
 	    dest = desttop + column->topdelta*fs*dsw;
 	    count = column->length;
@@ -505,6 +530,11 @@ V_DrawPatchFlipped
 	// step through the posts in a column
 	while (column->topdelta != 0xff )
 	{
+	    // Malformed post (overruns the patch's own height): stop this column
+	    // rather than blit past the end of the screen buffer.
+	    if (!V_PostInBounds (column, SHORT(patch->height)))
+		break;
+
 	    source = (byte *)column + 3;
 	    dest = desttop + column->topdelta*f*dsw;
 	    count = column->length;

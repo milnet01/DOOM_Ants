@@ -1673,10 +1673,14 @@ void G_DoPlayDemo (void)
     int             i, episode, map; 
 	 
     gameaction = ga_nothing; 
-    demobuffer = demo_p = W_CacheLumpName (defdemoname, PU_STATIC); 
-    if ( *demo_p++ != VERSION)
+    demobuffer = demo_p = W_CacheLumpName (defdemoname, PU_STATIC);
+    // DOOM-0254: the demo lump is PWAD data, and the 13-byte header below is
+    // read before any bounds are known. A truncated lump takes the same
+    // graceful path as a version mismatch.
+    if (W_LumpLength (W_GetNumForName (defdemoname)) < 13
+	|| *demo_p++ != VERSION)
     {
-      fprintf( stderr, "Demo is from a different game version!\n");
+      fprintf( stderr, "Demo is truncated or from a different game version!\n");
       // A version-mismatched demo never loads a level, so the tick loop must
       // not run P_Ticker on a player with no mobj. Release the lump and either
       // quit (an explicit -playdemo / -timedemo) or fall back to the attract-

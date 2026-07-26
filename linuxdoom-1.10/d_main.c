@@ -1083,8 +1083,15 @@ void FindResponseFile (void)
 	    fclose (handle);
 			
 	    // KEEP ALL CMDLINE ARGS FOLLOWING @RESPONSEFILE ARG
+	    // DOOM-0254: moreargs[] holds 20; vanilla filled it unbounded.
 	    for (index = 0,k = i+1; k < myargc; k++)
+	    {
+		if (index >= (int)(sizeof(moreargs)/sizeof(moreargs[0])))
+		    I_Error ("FindResponseFile: more than %d arguments after "
+			     "the response file",
+			     (int)(sizeof(moreargs)/sizeof(moreargs[0])));
 		moreargs[index++] = myargv[k];
+	    }
 			
 	    firstargv = myargv[0];
 	    myargv = malloc(sizeof(char *)*MAXARGVS);
@@ -1098,6 +1105,12 @@ void FindResponseFile (void)
 	    indexinfile++;  // SKIP PAST ARGV[0] (KEEP IT)
 	    do
 	    {
+		// DOOM-0254: the rebuilt argv holds MAXARGVS entries; a
+		// response file with more tokens than that used to write past
+		// it. Two slots are reserved below for the trailing args.
+		if (indexinfile + index >= MAXARGVS)
+		    I_Error ("FindResponseFile: response file has more than "
+			     "%d arguments", MAXARGVS);
 		myargv[indexinfile++] = infile+k;
 		while(k < size &&
 		      ((*(infile+k)>= ' '+1) && (*(infile+k)<='z')))
@@ -1293,7 +1306,8 @@ void D_DoomMain (void)
 
     if (p && p < myargc-1)
     {
-	sprintf (file,"%s.lmp", myargv[p+1]);
+	// DOOM-0254: the demo name is an unbounded command-line argument.
+	snprintf (file,sizeof(file),"%s.lmp", myargv[p+1]);
 	D_AddFile (file);
 	printf("Playing demo %s.lmp.\n",myargv[p+1]);
     }
@@ -1323,6 +1337,12 @@ void D_DoomMain (void)
     if (p && p < myargc-1)
     {
 	startskill = myargv[p+1][0]-'1';
+	// DOOM-0254: `-skill 0` gave sk_baby-1, which reaches a negative shift
+	// in P_SpawnMapThing's skill test.
+	if (startskill < sk_baby)
+	    startskill = sk_baby;
+	if (startskill > sk_nightmare)
+	    startskill = sk_nightmare;
 	autostart = true;
     }
 

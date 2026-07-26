@@ -32,6 +32,12 @@
 // Needed because we are refering to patches.
 #include "r_data.h"
 
+// DOOM-0254: true when a patch column's post (topdelta + length, both WAD data)
+// fits inside the patch's own declared height. Every patch blitter checks this
+// before writing, so a crafted patch cannot walk the blit past its destination
+// buffer.
+boolean V_PostInBounds (const column_t* column, int height);
+
 //
 // VIDEO
 //

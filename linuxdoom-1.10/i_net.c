@@ -348,6 +348,12 @@ void I_InitNetwork (void)
     i++;
     while (++i < myargc && myargv[i][0] != '-')
     {
+	// DOOM-0254: sendaddress[] holds MAXNETNODES entries and numnodes also
+	// bounds playeringame[]/nodeingame[]; vanilla let the host list run on.
+	if (doomcom->numnodes >= MAXNETNODES)
+	    I_Error ("I_InitNetwork: more than %d nodes in the -net host list",
+		     MAXNETNODES);
+
 	sendaddress[doomcom->numnodes].sin_family = AF_INET;
 	sendaddress[doomcom->numnodes].sin_port = htons(DOOMPORT);
 	if (myargv[i][0] == '.')

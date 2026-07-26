@@ -921,7 +921,9 @@ boolean HU_Responder(event_t *ev)
 	{
 	    if (french)
 		c = ForeignTranslation(c);
-	    if (shiftdown || (c >= 'a' && c <= 'z'))
+	    // DOOM-0254: shiftxform[] covers the 128 ASCII codes only, but c can
+	    // be any key code (arrows and function keys are >= 0x80).
+	    if ((shiftdown || (c >= 'a' && c <= 'z')) && c < 128)
 		c = shiftxform[c];
 	    eatkey = HUlib_keyInIText(&w_chat, c);
 	    if (eatkey)

@@ -882,7 +882,11 @@ void I_InitGraphics(void)
     if ( (pnum = M_CheckParm("-scale")) && pnum < myargc-1 )
     {
 	scale = atoi(myargv[pnum+1]);
+	// DOOM-0254: scale multiplies SCREENWIDTH/SCREENHEIGHT into the window
+	// size and the blit loops; vanilla clamped only the low side, so a
+	// large value overflowed the products.
 	if (scale < 1) scale = 1;
+	if (scale > 8) scale = 8;
     }
 
     if (SDL_InitSubSystem(SDL_INIT_VIDEO) < 0)
