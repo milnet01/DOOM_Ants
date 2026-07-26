@@ -29,18 +29,18 @@ this plan implements it; every `§`/`INV`/`Q` reference points there.
 >   unchecked `- [ ]` boxes below are historical, not work outstanding. **Do not
 >   re-implement them.**
 > - **`L1c` and `L1d` were written on 2026-07-26** from the spec's §4.3a/§4.3b amendments and
->   §7 acceptance rows. They are the next work. **They have not themselves been through a cold
->   review** — they were authored after cold-eyes loop 6, so treat their detail as careful but
->   unverified, and re-read them against the spec before executing.
+>   §7 acceptance rows. **They are the next work**, and they have since been cold-reviewed
+>   through loops 7–13 and compiled.
 > - **The spec is the authority on every number.** Where this plan and the spec disagree,
->   the spec wins. The known-stale classes were swept on 2026-07-26 (perf gate, sky
->   in-scatter tone, the `σ` split, the sky-visibility mechanism, the profiler key,
->   invariant count, `file:line` citations), but this plan is **not** cold-eyes-converged
->   in its own right.
-> - Spec cold-eyes status: the original design converged in 4 loops; the **2026-07-25
->   amendment has run 12 loops (0 CRITICAL, 0 HIGH at loops 11-12)** — the `--max-loops` cap of 5 is long
->   passed, so each further loop is an explicit user call. The loop log lives in
->   `docs/specs/DOOM-0011-fix-ledger.md`; the spec's header carries a summary.
+>   the spec wins — though no known disagreement remains.
+> - **Cold-eyes status: CONVERGED (2026-07-26).** The original design converged in 4 loops; the
+>   2026-07-25 amendment took **13**, ending with a pass that returned zero findings. This plan
+>   was reviewed as a first-class document from loop 8 on, and **every code block in it has been
+>   compiled with `glslangValidator`**. The loop log and the standing regression greps live in
+>   `docs/specs/DOOM-0011-fix-ledger.md`; **re-run those greps after any edit** rather than
+>   commissioning another loop.
+> - ⛔ **One blocker survives review because no amount of reading can settle it:** Δ(L1b) is
+>   unmeasured, and L1c's perf gate is `8 % − Δ(L1b)`. Take that measurement first.
 
 ## Global Constraints
 

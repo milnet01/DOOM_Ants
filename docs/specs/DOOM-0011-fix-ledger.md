@@ -429,15 +429,64 @@ residue class, not the dangerous one.
 
 ---
 
+## Loop 13 — 2026-07-26 — **CONVERGED**
+
+**Tally:** CRITICAL 0 · HIGH 0 · MEDIUM 0 · LOW 0 · INFO 0. **Zero findings.** One Sonnet lane
+(~216k), same strict brief, explicitly told an empty list was an acceptable answer.
+
+The lane re-verified from scratch, without reading this ledger's prior findings: every shipped
+fog constant and its value; `occluded()`'s signature; both push-constant struct sizes and their
+`static_assert`s; all four descriptor set layouts including the two `VARIABLE_DESCRIPTOR_COUNT`
+precedent blocks; the profiler pool and all eight written timestamp slots; every `RB_MESH_*` bit
+(confirming `0x100` free); the emitter record's 14-float layout; the sky-versus-shadow ray masks;
+`P_LineOpening`'s void return and globals; the `GameMode_t` enum order; the shipped `rb_fog` /
+`rt_fog` / `;`-key / DOOM-0208 pin; the menu-clone precedent; **and re-computed** the
+sky-transmittance percentages, the step-cost multiplier and the gate-ratio claim. All matched.
+
+**Convergence declared.** Zero verified findings is the clean-convergence condition, and the
+stopping rule recorded at loop 12 said to stop here. **Do not commission loop 14.**
+
+The lane independently reached the same conclusion this ledger did about the one thing that can
+still stall an implementer: Δ(L1b) is unmeasured, and that is *desk-impossible* work, correctly
+represented as blocking in both documents rather than hidden. It is not a review defect.
+
+### What the thirteen loops actually cost, and what worked
+
+| Loop | C | H | Method |
+|---|---|---|---|
+| 1–3 | 1, 0, 1 | 10, 6, 2 | prose cold-read |
+| 4 | 15 | 24 | 6 lanes, breadth+depth (~730k — the breadth pass was pure overhead) |
+| 5–7 | 3, 2, 2 | 2, 5, 2 | 2 narrowed lanes, citations excluded |
+| 8 | 2 | 0 | split by document; added the prose/conciseness mandate |
+| 9 | 3 | 3 | **split by failure mode** — identifier resolution vs coherence |
+| 10 | 2 | 0 | **compiled the snippets** (`glslangValidator`) |
+| 11 | 0 | 1 | strict-severity single lane |
+| 12 | 0 | 0 | strict-severity single lane (1 MEDIUM) |
+| 13 | 0 | 0 | **zero findings — converged** |
+
+**The three changes that mattered**, in order of value:
+
+1. **Compiling the code blocks** (loop 10). Found in seconds what ten cold reads missed, and is
+   the only check that clears a block *positively*. Now a required pre-flight step.
+2. **Splitting lanes by failure mode, not by document** (loop 9). The spec rots into density; the
+   plan rots into code that will not build. One checklist under-serves both.
+3. **The fix ledger's pre-flight** (loop 11). Six consecutive loops found their worst defect in
+   the *previous* loop's own fixes. Recording ripples after the fact never broke that cycle;
+   checking new text before it lands did.
+
+**What did not pay:** loop 4's cheap-breadth-then-depth fan-out (~730k for findings the narrowed
+2-lane runs matched), and re-reading prose after loop 8 — four consecutive lanes found the spec
+correctness-clean.
+
+---
+
 ## Open — not yet fixed
 
-- **Not formally converged; one loop from it.** Trend: 15C+24H → 3C+2H → 2C+5H → 2C+2H → 2C+0H →
-  3C+3H → 2C+0H → 0C+1H → **0C+0H+1M**. Two consecutive passes with no CRITICALs and no HIGHs.
-  Loop 12's single MEDIUM was a mechanism the two documents described differently — substantive by
-  the letter of the convergence rule, so **loop 13 is owed**, but it is the residue class, not the
-  dangerous one. **If loop 13 returns polish only or nothing, declare convergence and stop.**
-  Continuing past that point buys nothing: eleven of the twelve loops' real findings came from
-  reading code as code or from compiling it, and every code block has now been compiled.
+- ~~**Cold-eyes has not converged.**~~ **CONVERGED at loop 13** (2026-07-26): zero verified
+  findings, after two consecutive passes with no CRITICALs and no HIGHs. Trend across all
+  thirteen: 1C+10H → 0C+6H → 1C+2H → 15C+24H → 3C+2H → 2C+5H → 2C+2H → 2C+0H → 3C+3H → 2C+0H →
+  0C+1H → 0C+0H → **0C+0H+0M**. **The documents are ready to build from.** Do not commission
+  another loop; re-run the standing greps after any future edit instead.
   **Judgement for whoever picks this up:** loop 10 compiled reconstructions of L1c, L1d, L2, L3,
   L4 and checked L6 against source — all clean. The only snippet in the document that has **not**
   been through a compiler was **L5's**, because loop 10's two CRITICALs were in L5 and the fixes
