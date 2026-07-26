@@ -25,6 +25,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Fix the correctness and doc-drift findings from the 2026-07-26 audit + indie-review sweep.** (DOOM-0263)
+  The baked global-illumination pass was reading the sky as if it were a wall; several smaller bugs and six stale documentation claims are fixed too.
+
 - **game_select_test drives the real IWAD selection loop rather than a copy of it (DOOM-0244)** (DOOM-0244)
   The preference scan moved from D_DetectIwads into iwad_select_reps() in iwad_detect.h, parameterised by an "is it installed?" predicate — access() for the engine, an in-memory set for the test. Changing the real selection order now fails the test, which it could not do before.
 
@@ -72,6 +75,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
   Editing ~/.doomrc to an out-of-range value could crash the game when opening the menu; the value is now clamped.
 
 ### Security
+
+- **Harden every untrusted-input boundary the 2026-07-26 audit + indie-review sweep found.** (DOOM-0254)
+  A hostile or broken WAD, savegame, config file or command line can no longer make the game read or write memory it does not own.
 
 - **Clamp netconsole (packet player field) to MAXPLAYERS in d_net GetPackets.** (DOOM-0215)
   A malformed network packet could write out of bounds using a bogus player number; now such packets are skipped.

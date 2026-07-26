@@ -412,12 +412,84 @@ with friends.
   **Layman:** A damaged or hand-edited save file can make the game read memory it doesn't own, because the load code trusts the numbers in the file.
   Kind: security.
   Source: test-audit-2026-07-26 lane-E.
+  Progress (2026-07-26): DOOM-0254 bounded the SPECIALS' sector indices (new P_SectorFromSave covers ceiling/door/floor/plat/flash/strobe/glow). P_UnArchiveThinkers' index->pointer casts are still unbounded, and the buffer-extent gap is DOOM-0255.
 
 - 📋 [DOOM-0253] **Audit whether any other ~/.doomrc int is used as an array index without a clamp.**
   DOOM-0216 clamped msgValueNames[showMessages] and fpsPosNames[fpsCorner] at their m_menu.c use sites, but m_misc.c's M_LoadDefaults loop itself still writes any int-shaped config value straight into its target with no range validation (m_misc.c:407-430) -- so the mitigation is per-known-site, not systemic. Sweep the defaults table for every entry whose value indexes an array or selects a mode, and either clamp on read in M_LoadDefaults or confirm each use site already clamps. Scope is small (the table is short); the point is to find out whether DOOM-0216 was the only one.
   **Layman:** Hand-editing the config file to a silly number crashed the game once already; check whether any other setting can still do that.
   Kind: investigate.
   Source: test-audit-2026-07-26 lane-E.
+  Progress (2026-07-26): DOOM-0254 clamped the four ~/.doomrc ints that index arrays or size allocations (usegamma, screenblocks, detaillevel, snd_channels) in M_LoadDefaults. The remaining table entries have not been swept.
+
+- ✅ [DOOM-0254] **Harden every untrusted-input boundary the 2026-07-26 audit + indie-review sweep found.**
+  Corroborated by 5 review lanes. Fixed: p_setup.c validates every WAD-derived
+  index (seg vertex/linedef/sidedef, subsector seg range, sidedef sector, linedef
+  sidenum, node children, BLOCKMAP header + dimensions); r_data.c bounds PNAMES
+  count, texture-directory offsets, patch indices and texture headers; v_video.c +
+  f_finale.c reject patch posts that overrun the patch height (new
+  V_PostInBounds); wi_stuff.c replaces a never-compiled `#ifdef RANGECHECKING`
+  guard with real clamps; hu_stuff.c bounds shiftxform[]; p_mobj.c bounds
+  mapthing type below; r_bsp.c sizes solidsegs[] for widescreen + guards the
+  insert; z_zone.c rejects bad allocation sizes; p_saveg.c validates the specials'
+  sector indices; d_main.c bounds the response-file arrays, snprintf's the demo
+  name and clamps -skill; m_misc.c clamps usegamma/screenblocks/detaillevel/
+  snd_channels from ~/.doomrc and writes the config atomically; m_menu.c
+  NUL-terminates savegame strings; i_net.c bounds the -net host list; i_video.c
+  clamps -scale; g_game.c length-checks the demo header.
+  Verified: build clean, 7 test suites pass, 8 maps across doom.wad + doom2.wad
+  boot-smoke clean.
+  **Layman:** A hostile or broken WAD, savegame, config file or command line can no longer make the game read or write memory it does not own.
+  Kind: security.
+  Source: audit+indie-review-2026-07-26.
+  Also in this sweep: p_switch.c now bounds the alphSwitchList scan by the table's own element count instead of MAXSWITCHES (the cppcheck arrayIndexOutOfBounds error — the terminator entry made it unreachable in practice, but the loop bound was two-thirds larger than the table).
+
+- 📋 [DOOM-0255] **Thread a buffer-end bound through every p_saveg Unarchive* function.**
+  G_DoLoadGame discards M_ReadFile's length and no Unarchive* tracks an end pointer, so strcmp/memcpy walk past the allocation on a short .dsg. DOOM-0254 bounded the sector INDICES; the buffer extent itself is still unchecked. Extends DOOM-0252.
+  **Layman:** A truncated or hand-edited savegame can still read past the end of the loaded file.
+  Kind: security.
+  Source: indie-review-2026-07-26 game-save-net.
+
+- 📋 [DOOM-0256] **d_net.c NetbufferChecksum() returns 0 under NORMALUNIX, so packet integrity is unchecked.**
+  The shipped Linux build defines NORMALUNIX, which compiles the checksum out; HGetPacket's integrity test is a no-op. Either implement an endian-safe checksum or record the vanilla-compatibility decision in the security standard.
+  **Layman:** Network games do not actually verify that packets arrived intact.
+  Kind: security.
+  Source: indie-review-2026-07-26 game-save-net.
+
+- 📋 [DOOM-0257] **BuildHdSet aborts on GPU allocation failure instead of falling back to the paletted set.**
+  r_vulkan.cpp:5956-5959 uses fatal Check()/I_Error, contradicting the documented contract that g.hdSet always ends valid with InitHdDefault's paletted fallback.
+  **Layman:** If the HD texture upload runs out of video memory the game quits instead of dropping to the classic textures.
+  Kind: fix.
+  Source: indie-review-2026-07-26 vk-frame.
+
+- 📋 [DOOM-0258] **Animated-texture retex dirties the whole static point-light cache every frame.**
+  RB_UPD_RETEX sets staticLightsDirty unconditionally (r_vulkan.cpp:6656, 8027), re-running the O(subsectors x emitters) cull the DOOM-0170 split removed. Only dirty when the retexed face is emissive.
+  **Layman:** Scrolling/animated wall textures make the renderer redo light work it already did.
+  Kind: perf.
+  Source: indie-review-2026-07-26 vk-frame.
+
+- 📋 [DOOM-0259] **AppImage build downloads continuous-tag tooling and executes it without verifying it.**
+  packaging/build-appimage.sh:33-36 fetches appimagetool from a rolling `continuous` tag and execs it. Pin a release tag and verify a recorded sha256 before running it.
+  **Layman:** The Linux packaging step runs a program it just downloaded, with no check that it is the expected one.
+  Kind: security.
+  Source: indie-review-2026-07-26 build-ci-packaging.
+
+- 📋 [DOOM-0260] **packaging/release.sh duplicates the Windows cross-build block from windows-build.sh.**
+  release.sh:80-109 repeats windows-build.sh:30-59 inline; call the script instead so one edit covers both paths.
+  **Layman:** Two copies of the same build steps can drift apart.
+  Kind: refactor.
+  Source: indie-review-2026-07-26 build-ci-packaging.
+
+- 📋 [DOOM-0261] **Decide whether to migrate SDL2 -> SDL3, or record the hold.**
+  SDL3 is the current major and SDL2 is maintenance-only; SDL2_mixer 2.8.2 and the staged Windows deps are all SDL2-series. The dependencies standard requires latest-stable or a logged reason, and today there is neither a migration nor a ledger entry.
+  **Layman:** The game uses the previous generation of the SDL library; we should decide whether to move.
+  Kind: chore.
+  Source: indie-review-2026-07-26 build-ci-packaging.
+
+- 📋 [DOOM-0262] **Extract a shared helper for the near-identical text and cursor pipeline builders.**
+  r_vulkan.cpp:4994-5078 and 5187-5240 build the same simple pipeline shape twice.
+  **Layman:** About ninety lines of near-identical setup code exist twice.
+  Kind: refactor.
+  Source: indie-review-2026-07-26 vk-frame.
 
 ## Phase 2 — The Spin
 
@@ -2113,6 +2185,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** A malformed demo embedded in a custom WAD (auto-played on the title screen) can run off the end of its buffer.
   Kind: fix.
   Source: indie-review 2026-07-23 (wad-data-misc, MEDIUM).
+  Progress (2026-07-26): DOOM-0254 added a 13-byte demo-lump length check before G_DoPlayDemo parses the header. The per-tic G_ReadDemoTiccmd bound this item names is still open.
 
 - 📋 [DOOM-0223] **Hoist emitSecMapped out of the BuildRasterPointLights double loop (avoid WC readback).**
   r_vulkan.cpp:6548 re-reads write-combined emitSecMapped[e] inside the per-subsector x per-emitter loop though it's loop-invariant; DOOM-0170 warns against WC readback. Hoist es[staticN..emitN) to RAM once.
@@ -2161,6 +2234,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** A defensive bounds guard on the new crisp-menu text drawing; safe with today's fixed content.
   Kind: fix.
   Source: indie-review 2026-07-23 (menu-hud, LOW).
+  Progress (2026-07-26): DOOM-0254 added per-post extent validation (V_PostInBounds) to V_DrawPatch/Scaled/Flipped and F_DrawPatchCol, which closes the OOB-WRITE half. The x/y RANGECHECK on V_DrawPatchScaled and the Y clip in M_WriteTextScaled named here remain open (they interact with DOOM-0231's scale-2 label overflow).
 
 - 📋 [DOOM-0231] **Keep Classic main-menu scale-2 labels within ORIGWIDTH (no mid-word truncation).**
   Classic main-menu labels drawn at scale 2 from x=97 can overrun ORIGWIDTH and truncate mid-word (Game Select / Load Game).
@@ -2173,6 +2247,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Developer-only command-line paths that can misbehave with too few args or an odd response file.
   Kind: fix.
   Source: indie-review 2026-07-23 (platform-io, LOW).
+  Progress (2026-07-26): DOOM-0254 bounded FindResponseFile's moreargs[20] and MAXARGVS argv rebuild, and snprintf'd the -playdemo name. The ftell/fread one-past-end handling and the -wart bounds named in this item are still open.
 
 - 📋 [DOOM-0233] **Give I_StartSound an opaque handle -> channel map (avoid SDL channel aliasing).**
   i_sound.c returns the Mix_PlayChannel number as the DOOM handle; a recycled channel can let a stale handle re-pan/halt the wrong effect. Add a handle->channel indirection (Chocolate DOOM pattern).
@@ -2233,6 +2308,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** The automatic bug-scanner silently skips our biggest source file — it reports clean because it never looked.
   Kind: audit-fix.
   Source: debt-sweep-2026-07-26.
+  Finding (2026-07-26): re-ran cppcheck by hand with -I/usr/include/SDL2. The missing include path is NOT the whole story -- it then fails with `internalAstError: AST broken, 'toDst' doesn't have a parent` at r_vulkan.cpp:4752 (a vkCmdPipelineBarrier call with a std::vector .data() argument). So cppcheck's C++ frontend cannot parse this TU regardless of includes; routing the file to clang-tidy is the realistic path to coverage.
 
 - 📋 [DOOM-0249] **Decide a policy for the ~1000 cppcheck style findings on id Software's 1997 tree.**
   The full audit returned 2291 findings; ~1000 are cppcheck style on the original engine (316 staticLinkage, 219 variableScope, 93+68 constPointer, 64 unusedFunction). None were fixed in the debt sweep: mass-editing id's code violates the surgical-edit rule and would bury real signal in churn. Needs a deliberate policy — an .audit_allowlist.json baseline suppressing these rules on the pre-fork files so NEW findings stand out, versus a one-off cleanup sweep. Prefer the baseline.
@@ -2251,3 +2327,29 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Some shader code was written early for a feature that isn't built yet, so it currently does nothing.
   Kind: chore.
   Source: debt-sweep-2026-07-26.
+
+- ✅ [DOOM-0263] **Fix the correctness and doc-drift findings from the 2026-07-26 audit + indie-review sweep.**
+  CRITICAL: bake.comp traced its GI sample rays with cull mask 0xFF, so a ray
+  that hit the sky backdrop (instance mask 0x04) or a sprite billboard (0x02) was
+  committed and then decoded through pc.verts (the WORLD mesh buffer) — reading
+  unrelated vertex data instead of taking the sky-radiance miss path, biasing the
+  irradiance bake on every sky-exposed probe. Mask is now 0x01 (world only),
+  matching the shadow-ray convention.
+  Also: am_map.c's bounds scan used else-if, so a map whose vertexes are stored in
+  descending order left the maxima at -MAXINT (garbage automap zoom range) and an
+  empty VERTEXES lump underflowed the subtraction; r_draw.c's full-view fast path
+  compared scaledviewwidth against a stale literal 320, so the view border was
+  refilled on every frame since DOOM-0027; I_GetTime/I_GetTimeMS now use
+  CLOCK_MONOTONIC, so an NTP or manual clock step no longer jumps game pacing;
+  a rejected soundfont is now reported instead of silently yielding inaudible
+  music; -shotcompare no longer overwrites a golden PNG that exists but fails to
+  decode. Doc drift fixed in ADR 0001 (VMA/vulkan.hpp never adopted),
+  docs/standards/renderer.md (misc3.w is SVGF frame parity, not reserved),
+  DOOM-0016 (I_QrySongPlaying revived by DOOM-0165), DOOM-0042 (status said "no
+  code written yet"), DOOM-0008 (R_VulkanBackend()/"placeholders"),
+  docs/RELEASE_README.txt (still described 0.1.0 as the first playable release),
+  plus two stale renderer comments (blob.frag's vertex stage and its DIRECT-alpha
+  behaviour).
+  **Layman:** The baked global-illumination pass was reading the sky as if it were a wall; several smaller bugs and six stale documentation claims are fixed too.
+  Kind: fix.
+  Source: audit+indie-review-2026-07-26.

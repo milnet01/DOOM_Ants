@@ -102,11 +102,12 @@ operating range — the live values are 0–15.) `S_SetMusicVolume` also makes a
 stray `I_SetMusicVolume(127)` call immediately before the real one
 (`s_sound.c:624–625`); the clamp to 0–128 makes that harmless.
 
-There is also a ninth, currently-dead music function, `I_QrySongPlaying`
-(`i_sound.c:869–874`) — its only caller is commented out (`s_sound.c:610`). It
-and the two file-statics it reads, `looping` and `musicdies` (`i_sound.c:823–824`),
-must be removed or rewritten alongside the eight above so the rewrite leaves no
-dangling reference. It is not part of the live contract.
+There is also a ninth music function, `I_QrySongPlaying`. It was dead when this
+spec was written (its only caller was commented out), and the plan was to delete
+it. **Superseded:** DOOM-0165 (silent title music on first launch) gave it a real
+implementation and a live caller — `S_StartMusicInfo` uses it to verify that a
+song actually started and to drive the retry. It is part of the live contract
+now; `looping` and `musicdies` stay with it.
 
 ## Components / affected files
 

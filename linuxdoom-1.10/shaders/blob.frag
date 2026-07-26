@@ -9,8 +9,8 @@
 // hard black spot. The stage outputs black with a falloff alpha; the blob pipeline
 // alpha-blends it (SRC_ALPHA, ONE_MINUS_SRC_ALPHA) so it only darkens the floor.
 //
-// Shares mesh.vert (the MVP path) with the world/sprite draws — it reads just the
-// interpolated radial UV and the sector light from that stage's outputs.
+// Paired with blob.vert (the blob pipeline's own vertex stage) — this stage reads
+// just the interpolated radial UV and the sector light from that stage's outputs.
 //
 layout(location = 1) in vec2  vUV;      // [-1,1] across the quad (radial coord)
 layout(location = 2) in float vLight;   // owning sector lightlevel, 0..1

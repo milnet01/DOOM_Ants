@@ -658,11 +658,21 @@ void I_InitMusic(void)
 
   // Soundfont: $DOOM_SOUNDFONT, then the system FluidR3_GM, else leave
   // SDL2_mixer to its built-in default backend (best-effort, not guaranteed).
+  // A readable-but-rejected soundfont is worth a line: the symptom otherwise is
+  // music that reports as playing but is silent.
   soundfont = getenv("DOOM_SOUNDFONT");
   if (soundfont && access(soundfont, R_OK) == 0)
-    Mix_SetSoundFonts(soundfont);
+  {
+    if (!Mix_SetSoundFonts(soundfont))
+      fprintf(stderr, "I_InitMusic: soundfont %s rejected (%s); "
+	      "using the default backend\n", soundfont, Mix_GetError());
+  }
   else if (access(DEFAULT_SOUNDFONT, R_OK) == 0)
-    Mix_SetSoundFonts(DEFAULT_SOUNDFONT);
+  {
+    if (!Mix_SetSoundFonts(DEFAULT_SOUNDFONT))
+      fprintf(stderr, "I_InitMusic: soundfont %s rejected (%s); "
+	      "using the default backend\n", DEFAULT_SOUNDFONT, Mix_GetError());
+  }
 
   music_initialised = true;
 

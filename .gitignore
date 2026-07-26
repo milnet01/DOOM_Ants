@@ -7,7 +7,7 @@
 linuxdoom
 linuxxdoom
 doom
-build/
+/packaging/build/
 cmake-build-*/
 # DOOM Makefile object dirs (O=linux native, O=mingw Windows cross-build)
 /linuxdoom-1.10/linux/

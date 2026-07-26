@@ -18,7 +18,15 @@ Usage:
         --name STARTAN3 --family tech --url https://polyhaven.com/a/metal_plate_02
   python3 scripts/stage_hero.py --dir path/to/loose/maps --name FOO --family stone --url ...
 """
-import argparse, os, re, subprocess, sys, tempfile, zipfile, glob, importlib.util
+import argparse
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import zipfile
+import glob
+import importlib.util
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HEROES = os.path.join(ROOT, "assets", "ultra", "heroes")
@@ -47,7 +55,8 @@ def tint_to_doom(alb_path, wad_path, doom_name, chroma_keep=0.12):
     import numpy as np
     from PIL import Image
     spec = importlib.util.spec_from_file_location("pbr", os.path.join(ROOT, "scripts", "pbr_derive.py"))
-    pbr = importlib.util.module_from_spec(spec); spec.loader.exec_module(pbr)
+    pbr = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pbr)
     rgb, (w, h) = pbr.Wad(wad_path).image_rgb(doom_name)
     W = np.array([0.299, 0.587, 0.114], np.float32)
     ref = np.asarray(Image.frombytes("RGB", (w, h), bytes(rgb)), np.float32).reshape(-1, 3)

@@ -68,7 +68,9 @@ for ch in (r, g, b):
 
 # Fine grain brightness + a touch of desaturated cool grit in the very darkest
 grainm = 0.88 + 0.24 * grain
-r *= grainm; g *= grainm; b *= grainm
+r *= grainm
+g *= grainm
+b *= grainm
 
 rgb = np.clip(np.stack([r, g, b], axis=-1), 0, 1)
 img = (rgb * 255 + 0.5).astype(np.uint8)

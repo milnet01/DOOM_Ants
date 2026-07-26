@@ -30,6 +30,7 @@ rcsid[] __attribute__((used)) = "$Id: m_bbox.c,v 1.1 1997/02/03 22:45:10 b1 Exp 
 
 #include <stdarg.h>
 #include <sys/time.h>
+#include <time.h>	// clock_gettime / CLOCK_MONOTONIC (I_GetTime)
 #include <unistd.h>
 
 #include "doomdef.h"
@@ -93,15 +94,18 @@ byte* I_ZoneBase (int*	size)
 //
 int  I_GetTime (void)
 {
-    struct timeval	tp;
-    struct timezone	tzp;
+    // DOOM-0254: CLOCK_MONOTONIC, not gettimeofday. Game pacing is driven by
+    // the delta between successive calls, so an NTP step or a manual clock
+    // change used to jump or stall the tic counter.
+    struct timespec	tp;
     int			newtics;
-    static int		basetime=0;
-  
-    gettimeofday(&tp, &tzp);
+    static time_t	basetime=0;
+
+    clock_gettime(CLOCK_MONOTONIC, &tp);
     if (!basetime)
 	basetime = tp.tv_sec;
-    newtics = (tp.tv_sec-basetime)*TICRATE + tp.tv_usec*TICRATE/1000000;
+    newtics = (int)((tp.tv_sec-basetime)*TICRATE
+		    + tp.tv_nsec*(long)TICRATE/1000000000L);
     return newtics;
 }
 
@@ -114,13 +118,15 @@ int  I_GetTime (void)
 //
 int  I_GetTimeMS (void)
 {
-    struct timeval	tp;
-    static int		basetime=0;
+    // Monotonic for the same reason as I_GetTime: this feeds the FPS counter's
+    // rolling average, which a backward clock step turned into a negative delta.
+    struct timespec	tp;
+    static time_t	basetime=0;
 
-    gettimeofday(&tp, NULL);
+    clock_gettime(CLOCK_MONOTONIC, &tp);
     if (!basetime)
 	basetime = tp.tv_sec;
-    return (tp.tv_sec-basetime)*1000 + tp.tv_usec/1000;
+    return (int)((tp.tv_sec-basetime)*1000 + tp.tv_nsec/1000000L);
 }
 
 

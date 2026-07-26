@@ -1417,9 +1417,11 @@ void CreateSwapchain()
     VkPresentModeKHR presentMode = VK_PRESENT_MODE_FIFO_KHR;   // guaranteed present
     {
         uint32_t pmCount = 0;
-        vkGetPhysicalDeviceSurfacePresentModesKHR(g.phys, g.surface, &pmCount, nullptr);
+        Check(vkGetPhysicalDeviceSurfacePresentModesKHR(g.phys, g.surface, &pmCount, nullptr),
+              "vkGetPhysicalDeviceSurfacePresentModesKHR(count)");
         std::vector<VkPresentModeKHR> modes(pmCount);
-        vkGetPhysicalDeviceSurfacePresentModesKHR(g.phys, g.surface, &pmCount, modes.data());
+        Check(vkGetPhysicalDeviceSurfacePresentModesKHR(g.phys, g.surface, &pmCount, modes.data()),
+              "vkGetPhysicalDeviceSurfacePresentModesKHR(modes)");
         for (VkPresentModeKHR m : modes)
             if (m == VK_PRESENT_MODE_MAILBOX_KHR) { presentMode = m; break; }
     }
@@ -1566,7 +1568,10 @@ void EndOneTime(VkCommandBuffer cb)
     si.commandBufferCount = 1;
     si.pCommandBuffers = &cb;
     Check(vkQueueSubmit(g.queue, 1, &si, VK_NULL_HANDLE), "vkQueueSubmit(oneTime)");
-    vkQueueWaitIdle(g.queue);
+    // Every one-shot upload and acceleration-structure build waits here; a
+    // device loss during one of them was silently ignored, so the caller
+    // carried on with a half-built resource.
+    Check(vkQueueWaitIdle(g.queue), "vkQueueWaitIdle(oneTime)");
     vkFreeCommandBuffers(g.device, g.cmdPool, 1, &cb);
 }
 
@@ -4311,11 +4316,10 @@ void CreatePipeline()
 
         // DOOM-0170 L2b — two attachments (AMBIENT + DIRECT), both the SAME alpha-blend state
         // (the independentBlend feature is not enabled, so all attachments must be identical).
-        // The per-attachment effect is instead selected by blob.frag's per-output ALPHA: it
-        // writes alpha = darkening on AMBIENT (a grounding shadow on the always-present sector
-        // light, so blobs stay visible in unlit rooms) and alpha = 0 on DIRECT, which makes the
-        // identical blend a no-op there — a blob never touches the flashlight/lamp light (the
-        // L2c cast-shadow map owns that).
+        // blob.frag writes the SAME darkening alpha to both attachments, so the shared blend
+        // darkens ambient and direct alike and the total floor light drops. (Darkening only
+        // AMBIENT was the first cut; blobs then vanished on emitter-lit floors where DIRECT
+        // dominates — see blob.frag's header.)
         VkPipelineColorBlendAttachmentState blAtt = {};
         blAtt.blendEnable         = VK_TRUE;
         blAtt.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
@@ -8707,6 +8711,21 @@ extern "C" void RB_Vulkan_Present(void)
             rb_image_t golden;
             if (!rb_image_load(ref, &golden))
             {
+                // rb_image_load returns 0 for "no such file" AND for "file is
+                // there but won't decode". Bootstrapping over the second case
+                // would silently replace a corrupt golden with whatever this
+                // run produced — i.e. the gate would pass by rewriting itself.
+                FILE* probe = fopen(ref, "rb");
+                if (probe)
+                {
+                    fclose(probe);
+                    fprintf(stderr, "[shotverify] FAIL golden %s exists but could not be "
+                                    "decoded; refusing to overwrite it (delete it to "
+                                    "re-bootstrap)\n", ref);
+                    free(cap.pixels);
+                    fflush(stderr);
+                    exit(3);
+                }
                 int ok = stbi_write_png(ref, cap.w, cap.h, 4, cap.pixels, cap.w * 4);
                 if (ok) printf("[shotverify] wrote golden %s (%dx%d) — commit it, re-run to gate\n",
                                ref, cap.w, cap.h);

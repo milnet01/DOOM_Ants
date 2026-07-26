@@ -104,7 +104,8 @@ sub-Makefile is not built by CI or the default `make`, so it's out of scope):
   **FluidSynth** + a General-MIDI soundfont — a shared-library dependency
   SDL2_mixer pulls in, not something the engine links itself (see
   docs/specs/DOOM-0016-music.md). These plus the full end-user runtime set are
-  the canonical list in `docs/RELEASE_README.txt:18-33`; keep that list current
+  the canonical list in `docs/RELEASE_README.txt` (its "What you need" section);
+  keep that list current
   with the rest.
 - **Build tools:** gcc, g++, `glslc` (shaderc), `xxd`, `mold` (optional faster
   linker), `pkg-config`, `make`.

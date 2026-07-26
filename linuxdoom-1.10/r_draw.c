@@ -749,7 +749,11 @@ void R_FillBackScreen (void)
 
     char*	name;
 	
-    if (scaledviewwidth == 320)
+    // DOOM-0254: the full-view fast path. The literal 320 predates DOOM-0027's
+    // hi-res buffer and DOOM-0147's widescreen, so scaledviewwidth (physical
+    // columns) never equalled it again and the border was refilled every time.
+    // R_DrawViewBorder below already compares against SCREENWIDTH.
+    if (scaledviewwidth == SCREENWIDTH)
 	return;
 	
     if ( gamemode == commercial)

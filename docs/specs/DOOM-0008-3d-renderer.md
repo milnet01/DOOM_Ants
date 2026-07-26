@@ -407,11 +407,11 @@ it is isolated to `v_video.c` + the composite shader.
 
 | File | Change |
 |---|---|
-| `r_vulkan.cpp` (new) | `R_Vulkan` back-end: instance/device/swapchain, scene + AS build, material/palette upload, G-buffer + path-tracer kernels, sprite billboards, temporal/denoise, UI composite, present. Exposes `extern "C" const renderer_backend_t* R_VulkanBackend(void)` + a level-load hook. |
+| `r_vulkan.cpp` (new) | `R_Vulkan` back-end: instance/device/swapchain, scene + AS build, material/palette upload, G-buffer + path-tracer kernels, sprite billboards, temporal/denoise, UI composite, present. *As implemented it exports the individual `extern "C"` entry points `r_backend.c` declares and wires into the tier tables (`RB_Vulkan_Available`, `RB_Vulkan_Init`, `RB_Vulkan_SetResolution`, `RB_Vulkan_RenderView`, `RB_Vulkan_SetOverlay`, `RB_Vulkan_Present`, `RB_Vulkan_Shutdown`, `RB_Vulkan_BuildLevel`), not a single `R_VulkanBackend()` accessor.* |
 | `r_vk_*.cpp/.hpp` (new) | Single-purpose helpers (device, resources, accel-structure, pipelines, denoiser) as `r_vulkan.cpp` grows — keep each unit focused. |
 | `shaders/*` (new) | GLSL: G-buffer, path-trace compute (ray-query), sprite, sky, denoise, UI composite; `shaders/formulas/*` = Workbench-exported BRDF/sampling/tonemap/denoise GLSL. |
 | `third_party/vk_mem_alloc.h` (new) | Vendored VMA single header (MIT). |
-| `r_backend.c` | Register `R_VulkanBackend()` for the `RB_RT3D`/`RB_RASTER3D` slots (currently placeholders); call the per-level build hook. `RB_Init` clamp already exists. |
+| `r_backend.c` | Wire the Vulkan entry points into the `RB_RT3D`/`RB_RASTER3D` slots; call the per-level build hook. `RB_Init` clamp already exists. *Shipped — the slots are live, not placeholders.* |
 | `i_video.c` | Add `I_GetWindow()` + `I_ShutdownGraphicsForVulkan()` (tear down SDL_Renderer/texture, recreate window `SDL_WINDOW_VULKAN`). Classic path otherwise unchanged. |
 | `v_video.c` | Coverage-mask stamp at blit chokepoints, active only under a 3D back-end (global flag); Classic path unaffected. |
 | `d_main.c` | Frame-start `screens[0]`+coverage clear in `D_Display`, guarded to 3D back-ends (before the `gamestate` switch). |

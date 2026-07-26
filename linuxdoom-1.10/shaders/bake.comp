@@ -84,7 +84,13 @@ void main()
 
         // Trace the sample ray from the probe.
         rayQueryEXT rq;
-        rayQueryInitializeEXT(rq, topAS, gl_RayFlagsOpaqueEXT, 0xFFu, P, 0.01, wi, 1.0e9);
+        // Mask 0x01 = the static world instance only. The sky backdrop (0x04) and
+        // sprite billboards (0x02) must NOT be committed here: this loop decodes
+        // every hit through pc.verts (the world mesh), so a hit on either of the
+        // other BLASes would read unrelated vertex data. Culling them lets a
+        // sky-facing sample fall through to the miss path, which is where the sky
+        // contributes its radiance.
+        rayQueryInitializeEXT(rq, topAS, gl_RayFlagsOpaqueEXT, 0x01u, P, 0.01, wi, 1.0e9);
         while (rayQueryProceedEXT(rq)) {}
 
         vec3 Li;

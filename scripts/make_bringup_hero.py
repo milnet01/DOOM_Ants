@@ -5,7 +5,10 @@ brought up before curated CC0 art is staged (Task 17 replaces these).
 Uses only the Python stdlib (a minimal PNG writer) so no external asset or pip
 install is needed. Normal is flat (+Z), height a horizontal ramp, ao mid-grey,
 albedo a blue-grey tech checker."""
-import struct, zlib, os, math
+import struct
+import zlib
+import os
+import math
 
 
 def ao_bump(x, y, w, h):

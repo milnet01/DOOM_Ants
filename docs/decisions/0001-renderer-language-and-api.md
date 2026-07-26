@@ -48,7 +48,10 @@ architecture is `docs/specs/DOOM-0026-renderer-backend.md`.
 - **C++ for the back-end:** Vulkan's hardware-RT API is verbose and handle-heavy.
   C++ RAII (resources freed automatically at scope exit) and the C++-first helper
   libraries (VMA for GPU memory, `vulkan.hpp`) cut a large class of leak/lifetime
-  bugs that hand-rolled C would invite. Keeping the engine in C preserves the
+  bugs that hand-rolled C would invite. *As shipped, `r_vulkan.cpp` uses the plain
+  C `vulkan.h` headers and a hand-rolled sub-allocator — neither VMA nor
+  `vulkan.hpp` has been adopted; swapping the allocator for VMA is tracked as
+  DOOM-0058. The C++ decision itself still stands on RAII and `std::` containers.* Keeping the engine in C preserves the
   "modern toolchain, original logic" principle for everything that isn't new.
 - **GLSL for shaders:** widest ray-tracing example base, ships with the Vulkan
   SDK, no extra toolchain. Slang and HLSL were considered; GLSL won on

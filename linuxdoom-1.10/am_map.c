@@ -399,19 +399,37 @@ void AM_findMinMaxBoundaries(void)
   
     for (i=0;i<numvertexes;i++)
     {
+	// Separate ifs, not else-if: with else-if a vertex list stored in
+	// descending order always takes the "< min" branch, so the maxima stay
+	// at -MAXINT and the zoom range comes out garbage.
 	if (vertexes[i].x < min_x)
 	    min_x = vertexes[i].x;
-	else if (vertexes[i].x > max_x)
+	if (vertexes[i].x > max_x)
 	    max_x = vertexes[i].x;
-    
+
 	if (vertexes[i].y < min_y)
 	    min_y = vertexes[i].y;
-	else if (vertexes[i].y > max_y)
+	if (vertexes[i].y > max_y)
 	    max_y = vertexes[i].y;
     }
-  
+
+    // A crafted WAD can declare an empty VERTEXES lump; the bounds are then
+    // still inverted and max_x - min_x would overflow.
+    if (numvertexes < 1)
+    {
+	min_x = min_y = 0;
+	max_x = max_y = FRACUNIT;
+    }
+
     max_w = max_x - min_x;
     max_h = max_y - min_y;
+
+    // Every vertex identical => zero-sized box; FixedDiv below would divide
+    // by zero.
+    if (max_w <= 0)
+	max_w = FRACUNIT;
+    if (max_h <= 0)
+	max_h = FRACUNIT;
 
     min_w = 2*PLAYERRADIUS; // const? never changed?
     min_h = 2*PLAYERRADIUS;

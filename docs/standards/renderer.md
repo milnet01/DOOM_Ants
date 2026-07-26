@@ -66,7 +66,7 @@ Current allocation (verify against `pathtrace.comp` before relying on it):
 |------|---|---|---|---|
 | `misc` | mode | width | height | numWall (flat-id offset) |
 | `misc2` | emitter count | probe count | muzzle-flash strobe (float bits; 0 = not firing) | flashlight on/off |
-| `misc3` | sample-seed base | spp this dispatch | estimator (0 = power-NEE, 1 = brute-force) | reserved |
+| `misc3` | sample-seed base | spp this dispatch | estimator (0 = power-NEE, 1 = brute-force) | SVGF frame parity (`r_vulkan.cpp:7476`; the G-buffer ping-pong `pathtrace.comp:1195` indexes) |
 | `misc4` | sprite material base (numWall+numFlat) | omniStart | numSectors (DOOM-0119 REJECT cull, 0 = off) | sky wall-tex bindless id (0xFFFFFFFF = procedural sky) |
 | `misc5` | world-grime overlay bindless id | de-tile quality (0 off / 1 2-tap / 2 4-tap) | dirt-colour texture bindless id | filth master toggle |
 | `misc6` | ripple/wisp time (float bits, seconds) — **shared**: DOOM-0183 liquid ripples *and* DOOM-0011 fog-wisp drift, so it must stay written unconditionally | wet toggle | fog strength `rb_fog` 0..3 (DOOM-0011) | hell-haze density (float bits; DOOM-0011, reserved 0 until L4) |

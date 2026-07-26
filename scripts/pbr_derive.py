@@ -15,7 +15,12 @@ Usage:
 Stages (each runnable): (1) WAD reader, (2) map derivation from an albedo image, (3) CSV
 driver. No external dependency — a minimal PNG writer + hand-rolled DOOM picture decoder.
 """
-import struct, zlib, os, sys, math, argparse
+import struct
+import zlib
+import os
+import sys
+import math
+import argparse
 
 
 # ---------------------------------------------------------------------------

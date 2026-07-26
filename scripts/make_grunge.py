@@ -18,7 +18,8 @@ indexing. So world-position REPEAT sampling has no seam at the 384-unit tile edg
 Usage:  python3 scripts/make_grunge.py            # regenerate the committed overlay
         python3 scripts/make_grunge.py --size 512 # smaller (faster) variant
 """
-import argparse, os
+import argparse
+import os
 import numpy as np
 from PIL import Image
 

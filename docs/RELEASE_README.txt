@@ -1,11 +1,12 @@
-DOOM_Ants 0.1.0 — Linux (x86-64)
-================================
+DOOM_Ants — Linux (x86-64)
+==========================
 
 id Software's 1997 DOOM engine, modernised to build and run on today's
 64-bit Linux through SDL2, with the music turned back on and the save
 system fixed. GPL v2 (see LICENSE.TXT).
 
-This is the FIRST playable release. Please report anything broken.
+The release version is in the download's file name and in CHANGELOG.md.
+Please report anything broken.
 
 
 What you need
@@ -62,7 +63,8 @@ Saving:
 Notes
 -----
 
-- The picture can be scaled to any window/fullscreen size, but the internal
-  rendering is still the original 320x200 — true high-resolution and the 3D
-  renderer are planned for a later phase.
+- Three view modes ship: Classic (the original software renderer, now at a
+  higher internal resolution and widescreen-aware), Solid (a Vulkan-rasterised
+  3D view), and Ultra (Vulkan ray tracing on hardware that supports it). Pick
+  one in Options -> Video.
 - Source code: https://github.com/milnet01/DOOM_Ants
