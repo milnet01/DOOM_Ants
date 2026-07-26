@@ -23,6 +23,19 @@ that everything else builds on.
   Source: in-session-2026-06-11.
   Resolved (2026-06-12): already live and public at https://github.com/milnet01/DOOM_Ants (visibility PUBLIC, non-empty, described). Origin remote is set; today's commits are pending a push.
 
+- ✅ [DOOM-0264] **Documentation standard: cite code by symbol, not by line number.**
+  Adds a "Citing code from docs" section to docs/standards/documentation.md: the
+  symbol name or a quoted line is the locator; a line number is at most an
+  approximate hint carried alongside it; never edit at a raw line number; re-anchor
+  bare numbers as you pass them. Evidence for the rule: DOOM-0011's spec carried
+  ~50 file:line citations, two unrelated commits shifted r_vulkan.cpp by 4-6 lines
+  and pathtrace.comp by 2, and all 50 needed re-checking - three had drifted onto
+  unrelated code. The DOOM-0011 spec's own citation block now cites the standard
+  rather than standing alone.
+  **Layman:** Docs now point at code by name (a function or constant) instead of by line number, so they stop going wrong every time the code above them shifts.
+  Kind: doc.
+  Source: user-request-2026-07-26.
+
 ## Phase 1 — Build, Modernise & Share
 
 Get the 1997 engine compiling, running, and playable on a modern machine —

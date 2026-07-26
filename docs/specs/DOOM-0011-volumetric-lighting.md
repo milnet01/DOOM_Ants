@@ -229,6 +229,8 @@ raster path (Solid/Ultra with RT off), stay **byte-identical**. The offline GI b
 ---
 
 **Citation convention — read this before following any `file:line` in this document.**
+This is the project rule (`docs/standards/documentation.md` § *Citing code from docs*),
+restated here because this document predates it and still carries many bare numbers.
 The **symbol name or quoted code is authoritative; the line number is only a hint.**
 Locate the site by the quoted token (`static_assert(sizeof(RtPushConstants) == 240)`,
 `FlagLiquidFlats`, `if (committed && !isSky)`), then confirm the line — never edit at a raw
