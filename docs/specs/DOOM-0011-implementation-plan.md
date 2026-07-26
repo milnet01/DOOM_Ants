@@ -38,7 +38,8 @@ this plan implements it; every `§`/`INV`/`Q` reference points there.
 >   invariant count, `file:line` citations), but this plan is **not** cold-eyes-converged
 >   in its own right.
 > - Spec cold-eyes status: the original design converged in 4 loops; the **2026-07-25
->   amendment has run 4 loops** and its log lives in the spec's header.
+>   amendment has run 7 loops and has NOT converged** — the `--max-loops` cap of 5 is long
+>   passed, so each further loop is an explicit user call. Its log lives in the spec's header.
 
 ## Global Constraints
 
@@ -261,12 +262,19 @@ neutral `vec4(0,0,0,1)` (zero inscatter, full transmittance) so the composite is
 
 Fold fog **after** the albedo re-multiply and **in** the sky-passthrough, in linear space. First a
 half-res **bilinear** fetch of the fog target (depth-guided upsample arrives at L5; L1 uses plain
-bilinear). Surface branch — replace `:88-91`:
+bilinear).
+
+**Gate on `pc.misc3.y` here, never `misc6.z`.** This shader has its own 120-byte `SvgfPC` push
+struct with no `misc6` at all (Global Constraints), so `rb_fog` is mirrored into its free
+`misc3.y`; the shipped code reads `pc.misc3.y`. L5 edits this exact block — copying a `misc6`
+gate out of here would not compile.
+
+Surface branch — replace `:88-91`:
 
 ```glsl
         L = albedo * illum + emis * emisMask * ga.a;   // existing, still linear
     }
-    if (pc.misc6[2] != 0u) {                            // rb_fog; 0 = no fetch, no change (INV-8)
+    if (pc.misc3.y != 0u) {                             // rb_fog MIRROR; 0 = no fetch, no change (INV-8)
         vec4 fog = fetchFogBilinear(p);                 // half-res -> full-res, plain bilinear (L1)
         L = L * fog.a + fog.rgb;                        // linear, before tonemap (§4.6)
     }
@@ -281,7 +289,7 @@ re-clamp (§4.6 / Q9 — confirm the round-trip is a no-op when `rb_fog==0`):
     if (gp.w < 0.0) {
         vec3 sky = illum;
         if (any(isnan(sky)) || any(isinf(sky))) sky = vec3(0.0);
-        if (pc.misc6[2] != 0u) {
+        if (pc.misc3.y != 0u) {                         // SvgfPC lane, NOT misc6.z
             vec4 fog = fetchFogBilinear(p);
             sky = sky * fog.a + fog.rgb;                // fog in front of visible sky
         }
@@ -372,12 +380,17 @@ const float kIndoorFogScale = 0.05;   // MUST stay > 0 (spec Q12: the `= 0` opti
 The up-ray is a straight-up (`+Z`) shadow ray with cull mask `0x01`. It cannot hit the mask-`0x04`
 sky backdrop, so **MISS = open sky, hit = indoor** (spec §4.3a). Mirror the existing `occluded()`
 ray-query init (`pt_common.glsl:189-195`). Because `marchFog` runs in the megakernel it already has
-the TLAS in scope; if `occluded()` is directly callable pass it `p`, `vec3(0,0,1)`, a large `tMax`.
+the TLAS in scope. If `occluded()` is directly callable, note its signature is
+`occluded(vec3 hitP, vec3 n, vec3 wi, float dist)` — **four** arguments. A fog sample has no
+surface, so there is no normal to pass: give the up-vector for both `n` and `wi` (`n` only offsets
+the ray origin off a surface to avoid self-intersection, and at a volume sample there is nothing
+to self-intersect).
 Change the `sigma` line (`:789`) from `float sigma = fogDensity(p) * strength;` to:
 
 ```glsl
         // §4.3a open-sky exposure: up-ray misses all solid geometry => under open sky.
-        bool  openSky = !occluded(p, vec3(0.0, 0.0, 1.0), kFogMaxDist);  // 0x01 mask; sky is 0x04
+        const vec3 up = vec3(0.0, 0.0, 1.0);
+        bool  openSky = !occluded(p, up, up, kFogMaxDist);   // 4 args; 0x01 mask, sky is 0x04
         float skyExposure = openSky ? 1.0 : kIndoorFogScale;
         // NOTE (2026-07-26): `skyExposure` gates the SKY-SOURCED term ONLY, never the
         // area profiles -- see spec INV-9 / §4.3b, which owns the single authoritative
@@ -439,7 +452,9 @@ of L1c's ≤ 8 % allocation, not the whole-feature gate — AND confirm a **typi
 corridor** scene holds the same ≤ 4 % added share with the up-ray on. (This check originally
 read "still holds 60 FPS"; the spec's 2026-07-25 amendment relaxed that floor for RT-engaged
 scenes, so the share is the only currency now.) **If it holds** →
-the per-sample up-ray ships (done). **If it misses** → build the cheap fallback instead:
+the per-sample up-ray ships — and **before closing this step, write the measured Δ into spec §6
+and the fix ledger.** L1c's own allowance is `8 % − Δ(L1b)`; leaving the number unrecorded makes
+L1c Step 6 unexecutable, which is exactly what has happened so far. **If it misses** → build the cheap fallback instead:
 - `r_mesh.h`: `#define RB_MESH_OUTDOOR 0x100` beside the other `RB_MESH_*` bits (`:82-101`).
 - `r_mesh.c`: OR the bit into the `flags` word from `seg->frontsector->ceilingpic == skyflatnum`
   (walls — `emit_wall` has `seg`, near `:275`, or at the 4 call sites `529/554/568/582`) and
@@ -537,7 +552,10 @@ In `r_vulkan.cpp`, once after the device exists (not per level — the volume is
 - Create the image `VK_IMAGE_TYPE_3D`, sampler **trilinear** with `REPEAT` on all three axes,
   upload, transition to `SHADER_READ_ONLY_OPTIMAL`. ~256 KB. **No file enters the tree** — it is
   synthesised, so `docs/standards/assets.md` does not apply.
-- **Add it to `g.rtDsLayout` (set 0)** as a new `COMBINED_IMAGE_SAMPLER` binding. Sets 1 and 3 are
+- **Add it to `g.rtDsLayout` (set 0) as binding 3.** `CreateRtComputePipeline` declares
+  `VkDescriptorSetLayoutBinding binds[3]` covering bindings 0–2 (TLAS, output storage image,
+  mode-5 verify accumulator), so **3 is the next free slot** — widen the array to `binds[4]` and
+  bump `dlci.bindingCount` to match. Type `COMBINED_IMAGE_SAMPLER`. Sets 1 and 3 are
   **not** available: both end in a `VARIABLE_DESCRIPTOR_COUNT` bindless array, which Vulkan
   requires to be the highest binding in its set (§5).
 - **Two consequences that must ship in this same step, or it fails at runtime:**
@@ -545,7 +563,9 @@ In `r_vulkan.cpp`, once after the device exists (not per level — the volume is
      `COMBINED_IMAGE_SAMPLER` pool size (and, for L1d, `UNIFORM_BUFFER`) or the set allocation
      fails outright.
   2. Set 0 is **the same set the mode-5 `-rtverify` path binds** (`:6925`). The new binding needs
-     `VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT` (or a dummy descriptor bound on that path), or
+     `VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT` (or a dummy descriptor bound on that path) —
+     **mirror the working `VkDescriptorSetLayoutBindingFlagsCreateInfo bfci` block in the set-1
+     bindless material layout** (`r_vulkan.cpp:~3868`), which already does exactly this — or
      "`-rtverify` is unaffected" (INV-6/INV-7) stops being true the moment the binding is declared.
      **Run `-rtverify` in this step, not at L6** — it is the only cheap proof the plumbing is sound.
 
@@ -557,6 +577,8 @@ bake to declare and bind the noise volume — breaking INV-6. Declare the sample
 the bake nothing); the **tap** may not.
 
 ```glsl
+layout(set = 0, binding = 3) uniform sampler3D uNoiseVol;   // Step 2's volume -- pathtrace.comp ONLY
+
 // DOOM-0011 §4.3b: two octaves of drifting 3-D value noise, mean 1.
 // noise(u) fetches at texture coord u/N (N = 64 texels), REPEAT-wrapped, so `u` is in
 // LATTICE units: one texel spans 1/kWispFreq1 world units. The velocity sits INSIDE the
@@ -564,14 +586,17 @@ the bake nothing); the **tap** may not.
 float wisp(vec3 p, float t)
 {
     float A = 2.0 * texture(uNoiseVol, kWispFreq1 * (p + kWispVel1 * t) / 64.0).r - 1.0;
-    float B = 2.0 * texture(uNoiseVol, kWispFreq2 * (p + kWispVel2 * t) + kWispOffset2).r - 1.0;
+    float B = 2.0 * texture(uNoiseVol, (kWispFreq2 * (p + kWispVel2 * t) + kWispOffset2) / 64.0).r - 1.0;
     return 1.0 + kWispAmp * (A + kWispWeight2 * B) / (1.0 + kWispWeight2);
 }
 ```
 
-**Mind the `/ 64.0`:** it is the `u → u/N` step of the sampling convention, and it must be applied
-to **both** taps (shown on one above only to keep the line readable — write it on both, or fold
-`1/N` into the frequency consts and drop it from both). Getting this wrong gives 512-unit tiling
+**Mind the `/ 64.0`:** it is the `u → u/N` step of the sampling convention and is applied to
+**both** taps above. On octave 2 the **whole** argument goes inside the division — frequency term
+*and* `kWispOffset2` — because §4.3b defines the offset as part of `u`, so dividing only the
+frequency term would shift the octave-2 lattice by 64× its intended offset. (The alternative is to
+fold `1/N` into the frequency consts and drop the divide from both taps; what must not happen is
+one tap scaled and the other not.) Getting this wrong gives 512-unit tiling
 with 8-unit features, i.e. exactly the two failure modes §4.3b exists to avoid.
 
 Then multiply it into the density, reusing `misc6.x` as the clock — **no new push lane** (INV-5):
@@ -727,6 +752,33 @@ precisely what the user asked to soften.
   a push lane (INV-5 is full). Without it the shader cannot turn `p.xy` into a texture coordinate.
   INV-5 is about the `RtPushConstants` block and is unaffected by a UBO in a descriptor set.
 - Rebuild both per level in `RB_Vulkan_BuildLevel`, beside `g.levelMesh = RB_BuildLevelMesh()`.
+
+**Fix the shader-side declarations here, so both sides agree.** Set 0, bindings **4** (field) and
+**5** (UBO), continuing from L1c's binding 3 — widen `binds[]` and `dlci.bindingCount` again, and
+add a `UNIFORM_BUFFER` pool size beside L1c's `COMBINED_IMAGE_SAMPLER` one:
+
+```glsl
+layout(set = 0, binding = 4) uniform sampler2D uSeepField;   // R16F, CLAMP_TO_EDGE both axes
+layout(set = 0, binding = 5) uniform SeepXform {
+    vec2 origin;    // world XY of texel (0,0)'s CENTRE -- inside the padding ring, see below
+    vec2 invCell;   // 1.0 / cell size per axis (world units -> cells)
+    vec2 dims;      // texel dimensions as float, for the UV divide
+} seep;
+
+vec2 worldToSeepUV(vec2 worldXY)
+{
+    return ((worldXY - seep.origin) * seep.invCell + 0.5) / seep.dims;
+}
+```
+
+C++ side: the same three `vec2`s in the same order (`float origin[2]; float invCell[2];
+float dims[2];` — `std140`-safe, 24 B, no padding surprises at this size).
+
+**`origin` is the PADDED grid's texel-0 centre, not the map's minimum corner.** Step 2 padded the
+grid by one cell of void beyond the XY bounding box, so texel (0,0) sits one full cell *outside*
+the map. Feed it the un-padded corner and every lookup is off by one cell, which quietly breaks the
+padding ring INV-12 depends on — the failure looks like fog leaking at map edges, not like a bad
+transform.
 
 - [ ] **Step 4: Grade the indoor branch (`pt_common.glsl` + `pathtrace.comp`)**
 
@@ -1270,7 +1322,8 @@ The rest:
   rule) → L4. §4.6 half-res + per-mode composite + sky-seam bilinear fallback → L1 (skeleton +
   fallback) + L5 (bilateral). §5 data (fog image + bindings, `misc6.z/.w`, `rb_view_t` field,
   `rb_fog`, seven menu edits, `;` key) → L1 (image) + L4 (`rb_view_t`/`misc6.w`) + L6 (dial/menu/key).
-  §6 perf (profiler slot + ≤ 15 % gate) → L6. §8 INV-1..8 → Global Constraints + per-task guards.
+  §6 perf (profiler slot + ≤ 15 % gate) → L6. §8 **INV-1..12** → Global Constraints (INV-1..8) +
+  the per-task guards listed in the next bullet (INV-9..12).
 - **Invariant coverage — all twelve are now pinned.** INV-1..8 in Global Constraints, re-stated
   at their tasks (INV-2 in L3, INV-4 in L1, INV-5/7 in L6, INV-6 global, INV-8 in L6 gate).
   The four added by the amendments land in the new tasks: **INV-9** (`skyExposure` gates the
@@ -1280,11 +1333,12 @@ The rest:
   sealed room) in L1d Steps 1–2 and its Step 7 acceptance.
 
 **Placeholder scan** — the `kFog*`/tint/`kHaze*` values are concrete starting numbers explicitly
-labelled *tune-on-hardware* (a spec requirement, not a TODO). Shader helper calls
-(`sunRayMissesGeometry`, `emitterCentroid`, `emitterLe`, ray-query pattern) are flagged
-"read the existing helper first, confirm its signature" rather than invented — these consume
-**existing** engine interfaces the plan cannot restate without reading them; that read is a named
-step, not a placeholder.
+labelled *tune-on-hardware* (a spec requirement, not a TODO). Shader helpers: `sunRayMissesGeometry` (L2 Step 1),
+`emitterCentroid` and `emitterLe` (L3 Step 2) are **new functions this plan authors** — not
+existing interfaces. What already exists is the *pattern* each is built from (the ray-query call
+shape, the emitter-record read), and the plan names reading that pattern as its own step rather
+than restating it from memory. So: nothing is invented out of thin air, but three genuinely new
+helpers are written — that is a real cost, not a placeholder-free claim.
 
 **Type consistency** — `marchFog(vec3,vec3,float,FogHit) → vec4 (inscatter.rgb, transmittance)`
 and `FogHit {vec3 hitP; vec3 gnormal; uint matFlags;}` are fixed in L1 and consumed unchanged by

@@ -5,11 +5,11 @@ tune e7753b3; fog-placement standard + sky-backdrop aerial fog 1345c92 — user 
 "looking fantastic… covers the mountains… outside and not inside"). **A 2026-07-25
 amendment retargets the look at Silent Hill 2 (§4.3b, wisps) and softens the indoor
 cutoff into an outdoor-proximity seep (§4.3a amendment); the perf gate rises to
-≤ 15 % (§6). `/cold-eyes` has run **6 loops** (log below) and has **not** converged — loop 6 still
-returned 2 CRITICALs, four of its seven worst findings being defects in loop 5's own fixes
-(the same shape as loop 5's, which were defects in loop 4's). **The `--max-loops` cap of 5 is
-passed, so each further loop is an explicit user call.** The plan's **L1c and L1d tasks were
-written on 2026-07-26** from this amendment; they have not themselves had a cold read.** Original design
+≤ 15 % (§6). `/cold-eyes` has run **7 loops** (log below) and has **not** converged — loop 7 still
+returned 2 CRITICALs, both unbuildable code inside the L1c/L1d tasks written after loop 6. Every
+loop since 4 has had its worst findings be defects in the *previous* loop's own fixes. **The
+`--max-loops` cap of 5 is passed, so each further loop is an explicit user call.** The plan's
+**L1c and L1d tasks were written on 2026-07-26** and first reviewed at loop 7. Original design
 approved by the user
 2026-07-21
 (brainstorm), cold-eyes-converged 2026-07-23 (4 loops, below), scope-widened
@@ -52,6 +52,22 @@ taken** (DOOM is first-person — no body to swirl around); split out as **DOOM-
 
 **Cold-eyes log — 2026-07-25 amendment** (rule 14 — looped until convergence; 3 lanes
 = amendment-vs-code accuracy + whole-doc coherence + cross-doc drift, each loop cold):
+- **Loop 7** — CRITICAL 2 · HIGH 2 · MEDIUM 4 · LOW 4 · INFO 0 (2 lanes + an orchestrator
+  standing-grep pre-pass; 12 verified, 0 dismissed). First loop to read the **L1c/L1d tasks**,
+  which had never been reviewed. Both CRITICALs were unbuildable code in those new tasks:
+  L1d's `uSeepField`/`worldToSeepUV` were used but **never declared** — no binding, no UBO layout,
+  no transform formula anywhere in either document — and the plan's `svgf_composite.comp` snippet
+  gated fog on `pc.misc6[2]`, a field that shader's 120-byte `SvgfPC` does not have (the shipped
+  code correctly uses `misc3.y`; L5 edits that same block). Also: the plan's own self-review
+  claimed `sunRayMissesGeometry`/`emitterCentroid`/`emitterLe` were pre-existing interfaces when
+  its own steps author all three; `occluded()` takes 4 args, not the 3 the L1b sketch passed; and
+  the octave-2 wisp tap was missing its `/64.0`. **The pattern held for a fourth loop: the worst
+  findings were defects in the previous batch's own new text.**
+- **Loop 6** — CRITICAL 2 · HIGH 5 · MEDIUM 3 · LOW 2 · INFO 0 (2 lanes, citations out of scope,
+  ~304k). Four of the seven worst findings were defects inside **loop 5's own `σ`-split fix**:
+  an undefined `gooMult`, a set-but-never-read `densMul`, a `wisp` term with no owning task, and
+  an invented `kGooDensityMul` the spec never names. Two further ripples were caught only by the
+  fix ledger's standing greps, not by either lane.
 - **Loop 1** — CRITICAL 1 · HIGH 10 · MEDIUM 15 · LOW 12 · INFO 2. Headline: `skyExposure`
   multiplied `areaMult`, so every roofed room (all goo, all hell interiors, every
   torch-lit room) would have had its fog driven to 0–10 % of base — cancelling the
@@ -86,7 +102,8 @@ taken** (DOOM is first-person — no body to swirl around); split out as **DOOM-
   density while the play-test passed weakly on a thin green tint. Also: the plan's perf
   gate was still `≤ 5 %` in the two places that actually decide pass/fail (heading said
   15 %, criterion said 5 %), and loop 4's own "all twelve invariants are pinned" claim was
-  false — only INV-1..8 are, since INV-9..12 belong to the unwritten L1c/L1d tasks.
+  false — only INV-1..8 were, since INV-9..12 belong to the L1c/L1d tasks, unwritten at the
+  time (written 2026-07-26; all twelve are pinned now).
 - **Loop 4** — CRITICAL 15 · HIGH 24 · MEDIUM 34 · LOW 34 · INFO 8 (6 lanes; 3 findings
   dismissed unverified). Two classes dominated. **(1) The seep's traversal was broken in
   two independent ways.** Vanilla DOOM has **no minisegs** — `P_LoadSegs` gives every seg
@@ -1049,7 +1066,9 @@ colour-frozen.
     L1c), `kFogBaseDensity` = 0.0008 (→ ~0.0016 at L1c), `kFogMaxDist` = 2048,
     `kFogPoolHeight` = 48, `kFogAnisotropy` = 0.40, `kGooTint` = `(0.35, 0.85, 0.30)`,
     `kHellTint` = `(0.90, 0.35, 0.30)`, `kIndoorFogScale` = 0.05, the per-source
-    strengths = 1.0, and **`kAreaDensity` = 0.0020** (§4.5's profile density). **Shipped today** (`pt_common.glsl:37-47`, verifiable by grep): `kFogSteps`,
+    strengths = 1.0, **`kAreaDensity` = 0.0020** (§4.5's profile density), **`kFogFloorFallback`**
+    and **`kTorchFalloff`** (both L3, §4.3/§4.4 — pooling floor height when no floor is known, and
+    the torch inverse-square falloff scale), plus **`kFogDepthSigma`** (L5's bilateral guide, §4.6). **Shipped today** (`pt_common.glsl:37-47`, verifiable by grep): `kFogSteps`,
     `kFogMaxDist`, `kFogBaseDensity`, `kSunDir`, `kSkyShaftStrength`,
     `kTorchShaftStrength`, `kIndoorFogScale`, `kFogPoolHeight`, `kFogAnisotropy`,
     `kGooTint`, `kHellTint`. **Not yet in the tree** — `kAreaDensity` and every
@@ -1164,7 +1183,9 @@ colour-frozen.
     cell size + texel dimensions). This is **per-level runtime data**, so it can be
     neither a compile-time `const` nor a push lane (INV-5 is full) — without it the
     shader cannot turn `p.xy` into a texture coordinate and L1d stops at its first line
-    of shader code. It rides the same new descriptor set as the two images. INV-5 is
+    of shader code. It rides the **same existing set 0** (`g.rtDsLayout`) as the two images —
+    there is no new set; see the next bullet. Concretely: noise volume = binding 3, seep field =
+    binding 4, this UBO = binding 5, continuing from the shipped bindings 0–2. INV-5 is
     about the **`RtPushConstants` block** and is unaffected by a UBO in a descriptor
     set.
   - **Neither BINDLESS sampled-image set can be appended to — so the new resources go on a

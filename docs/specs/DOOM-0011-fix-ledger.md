@@ -27,6 +27,9 @@ grep -n "bilateral"              $S $P   # L1 shipped PLAIN bilinear
 grep -n "custom-index 2"         $S $P   # sky is detected by the MISS
 grep -n "SKY_COLOR"              $S $P   # L1c moves the sky tone to kFogColor
 grep -n "f₁\|f₂\|v₁\|v₂"         $S      # renamed to kWispFreq1/2, kWispVel1/2
+awk '/Step 6: Apply fog in .svgf_composite/,/Step 7/' $P | grep "misc6\[2\]"   # must be EMPTY:
+                                        # svgf_composite.comp has no misc6 -- it gates on misc3.y
+grep -n "binding 3\|binding 4\|binding 5" $S $P   # set-0 bindings: noise 3, seep 4, UBO 5
 ```
 
 **Also verify after every batch:** that each edit actually landed. A batched
@@ -136,13 +139,51 @@ edited.
 
 ---
 
+## Loop 7 — 2026-07-26 — 2 Sonnet lanes + a standing-grep pre-pass (~360k)
+
+`CRITICAL 2 · HIGH 2 · MEDIUM 4 · LOW 4 · INFO 0` — **12 verified, 0 dismissed.** The first loop to
+read the L1c/L1d tasks, which were authored after loop 6 and had never been reviewed. Lane A read
+those two tasks against §4.3a/§4.3b/§5/§7; lane B read both documents for whole-doc coherence.
+
+| # | Severity | Finding | Fix | Ripples chased |
+|---|----------|---------|-----|----------------|
+| 7.1 | CRITICAL | **L1d Step 4 used `uSeepField` and `worldToSeepUV()` — both undeclared.** No binding, no UBO layout, no transform formula anywhere in either document. Repo-wide search: one use site, zero definitions. The task stopped at its first line of shader code. | Step 3 now fixes the exact `layout(set=0, binding=4/5)` declarations, the `SeepXform` UBO struct in both GLSL and C++ field order, and `worldToSeepUV()`'s formula | Spec §5's binding list; the "origin is the PADDED grid's texel-0 centre" note (off by one cell ⇒ INV-12's padding ring silently breaks) |
+| 7.2 | CRITICAL | **The plan's `svgf_composite.comp` snippets gated fog on `pc.misc6[2]`** — a field that shader's 120-byte `SvgfPC` does not have. The plan's OWN Global Constraints say to use `misc3.y`, and the shipped code does. L5 edits this exact block. | Both snippets moved to `pc.misc3.y`, plus an explicit "never `misc6.z` here" note above them | Verified against shipped `svgf_composite.comp` (`pc.misc3.y` at both sites); L5's task text checked; new standing grep added |
+| 7.3 | HIGH | Plan banner claimed the amendment **"has run 4 loops"** two bullets after saying the tasks were authored *after loop 6*; spec said 6 | Banner now says 7 loops, not converged, cap passed | Spec status header + log |
+| 7.4 | HIGH | **Self-review claimed `sunRayMissesGeometry`/`emitterCentroid`/`emitterLe` were pre-existing engine interfaces** — the plan's own L2 Step 1 and L3 Step 2 author all three | Reworded: the *patterns* exist, the three helpers are new code | none (checked: no other passage repeats the claim) |
+| 7.5 | MEDIUM | Spec header said `(log below)` but the log had **no Loop 6 entry** — it lived only in this ledger | Loop 6 and Loop 7 entries added to the spec's own log | Header loop count |
+| 7.6 | MEDIUM | **L1c's `uNoiseVol` was never declared** and Step 2 never named a binding index | Binding **3** pinned (verified: `CreateRtComputePipeline` declares `binds[3]`, bindings 0–2), declaration added to the Step-3 block | Spec §5 binding list; L1d continues at 4/5 |
+| 7.7 | MEDIUM | **The octave-2 wisp tap was missing its `/64.0`** while the prose below said both taps need it. Silently produces the exact 512-unit-tiling failure §4.3b exists to prevent | Whole argument (frequency **and** `kWispOffset2`) now divided, per §4.3b's definition of `u`; prose rewritten | none (checked: octave-1 tap already correct) |
+| 7.8 | MEDIUM | **L1c Step 6 says to read "L1b's recorded Δ" — which no task ever records.** L1b Step 6 ended without writing it down | L1b Step 6 now requires writing Δ into spec §6 + this ledger before closing | The Open section below — still open until L1b is actually re-measured |
+| 7.9 | LOW | Spec §5's inventory claims to make L2–L4 buildable but omits `kFogFloorFallback`, `kTorchFalloff` (both L3) and `kFogDepthSigma` (L5) | All three added | none |
+| 7.10 | LOW | **`occluded()` takes 4 args** (`hitP, n, wi, dist`); L1b's sketch passed 3 | Call and prose corrected, with a note on what to pass for `n` at a volume sample (no surface ⇒ no normal) | none |
+| 7.11 | LOW | `PARTIALLY_BOUND` required but no precedent cited, breaking the plan's own citation discipline | Points at the working `VkDescriptorSetLayoutBindingFlagsCreateInfo bfci` block in the set-1 bindless layout | none |
+| 7.12 | LOW | *(orchestrator standing greps, not either lane)* Self-review mapped §8 as **`INV-1..8`** one line above the bullet claiming all twelve | Mapping now `INV-1..12`, split across Global Constraints and per-task guards | none |
+
+**Ripple caught after the batch** (standing greps again, not a lane): spec §5 still said the UBO
+"rides the same **new** descriptor set as the two images" — contradicting the settled decision to
+use the existing set 0, and the same stale-topic-sentence family as A.6/A.7. Rewritten to name set 0
+and pin bindings 3/4/5. Also de-tensed loop 4's log entry, which still called L1c/L1d "unwritten".
+
+**Lesson to carry (fourth loop running):** *the worst findings are defects in the previous batch's
+own new text.* Loop 5 broke loop 4's fixes; loop 6 broke loop 5's; loop 7's two CRITICALs were both
+in the L1c/L1d tasks written immediately after loop 6. **Newly-written GLSL in a doc must be read as
+code** — every symbol it names either declared in the block, listed in §5, or proven to exist. Both
+CRITICALs here were undeclared identifiers, which a compiler would have caught in one second and
+two cold readers took two loops to notice.
+
+---
+
 ## Open — not yet fixed
 
-- **Cold-eyes has not converged.** Loop 6 returned 2 CRITICALs and 5 HIGHs, all substantive, so
-  loop 7 is owed. The `--max-loops` cap of 5 was passed at loop 6 — each further loop is an
-  explicit user call, not an automatic re-run. Trend across loops: 15C+24H → 3C+2H → 2C+5H.
-- ~~The plan has no L1c and no L1d task.~~ **Written 2026-07-26** (see the section above).
-  They have **not** had a cold read — they were authored after loop 6, so a further loop or a
-  deliberate self-review should cover them before they are executed.
+- **Cold-eyes has not converged.** Loop 7 returned 2 CRITICALs and 2 HIGHs, all substantive, so
+  loop 8 is owed. The `--max-loops` cap of 5 was passed at loop 6 — each further loop is an
+  explicit user call, not an automatic re-run. Trend: 15C+24H → 3C+2H → 2C+5H → 2C+2H.
+  **Judgement for whoever picks this up:** loop 7's findings were concentrated in the newly-written
+  L1c/L1d text, which has now been fixed and re-swept. A loop 8 that reads the *fixed* L1c/L1d is
+  worth running before implementation; a loop 8 over L1/L1b/L2–L6 is likely low yield — those have
+  been read cold five times.
+- ~~The plan has no L1c and no L1d task.~~ **Written 2026-07-26**, and **first cold-read at loop 7**
+  (2 CRITICALs, both undeclared shader identifiers, both fixed).
 - **L1b's measured Δ is still unrecorded**, so L1c's `8 % − Δ(L1b)` allowance cannot be
   computed yet (§6).
