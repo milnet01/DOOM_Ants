@@ -533,6 +533,28 @@ fallback*; the two are independent.
 
 ### 4.3b The Silent Hill 2 look — drifting two-octave wisps
 
+> **User play-test of the SHIPPED fog, 2026-07-26 — read before tuning L1c.** Verdict on L1/L1b at
+> High: *"I really like the fog, it can be slightly darker though. It is quite bright when
+> outside."*
+>
+> **This is in tension with L1c as specified, and the tension must be resolved deliberately.**
+> The outdoor brightness comes from the sky in-scatter term, gated to full strength outdoors by
+> L1b's `skyExposure`: `skyAmbient = SKY_COLOR * kSkyShaftStrength`, with `kSkyShaftStrength = 1.0`
+> shipped. L1c then plans to move the tone to a **near-white `kFogColor`** and roughly **double**
+> `kFogBaseDensity` — both of which make outdoor fog *brighter*, in the direction the user has just
+> said is already too far.
+>
+> **What L1c must do about it:** treat "slightly darker outside" as an acceptance criterion, not a
+> later polish pass. The cheapest lever is `kSkyShaftStrength` (a single `const`, no new plumbing);
+> the near-white `kFogColor` can also be taken down in value without losing its colourlessness —
+> near-white is about *saturation*, not brightness, and a light grey satisfies the Silent Hill 2
+> reference as well as a near-white does. Do **not** reach for `kFogBaseDensity` to fix
+> brightness: density is what the ≈2× raise and the wisps depend on, and lowering it undoes them.
+> This is the same trap Q24 guards on the sky side.
+>
+> **The user likes the effect** — this is a tuning note, not a rejection. Judge it at High
+> strength outdoors, which is where they saw it.
+
 **The target (user 2026-07-25, with reference screenshots).** Silent Hill 2 (original
 PS2, 2001): **near-white, colourless** fog, thick enough that the world fades toward
 flat grey at middling range, and — the quality L1b's uniform haze misses — full of
@@ -1283,6 +1305,9 @@ The other layers' Verify cells fit in a line. These two do not, so they live her
 **L1c — accept when:**
 
 - Fog reads **near-white and colourless**, not blue.
+- **Outdoors at High, it is not too bright.** The user's 2026-07-26 verdict on the shipped fog was
+  "slightly darker" (§4.3b) — and this layer pushes brightness *up*, so this is an acceptance
+  item, not polish. Tune `kSkyShaftStrength`, or the value of `kFogColor`; never `kFogBaseDensity`.
 - **Billows of visibly differing thickness drift slowly past**, and they sit correctly **in
   depth** — passing in front of *and* behind pillars and monsters as the camera turns.
 - No banding at wisp boundaries; no crawl or strobe in a slow pan.

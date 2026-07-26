@@ -2214,6 +2214,27 @@ parked ideas (💭 considered) until we commit to and design each one.
   Source: user-request-2026-07-20.
 
 - 📋 [DOOM-0211] **Classic-tier menu font looks blocky — give Classic a nicer uniform menu font.**
+  **SCOPE WIDENED by user 2026-07-26:** *"I think we need to make the Classic renderer rather use
+  the new menu we have. The Classic menu just doesn't look right the way it is. Let's just make
+  them all use the same menu."* So the goal is no longer "a nicer font for Classic" — it is **one
+  menu shared by all three tiers**, which means option (a) below, not (b) or (c). The layout is
+  already shared (DOOM-0206 gave every tier the same rows, sizes and HUD-safe placement); the only
+  thing that still differs is the glyph rendering.
+  **The load-bearing constraint, verified 2026-07-26:** `Classic_Present()` is literally
+  `{ I_FinishUpdate(); }` (`r_backend.c`) — the software renderer hands its 8-bit framebuffer
+  straight to SDL and never enters the Vulkan backend, where the crisp text lives (`FlushMenuText`,
+  `g.textVerts`). Sharing one menu therefore means routing Classic's finished frame through the
+  Vulkan present path: upload the paletted buffer as a texture, blit it, then draw the menu with
+  the same code the other tiers use. The game view's pixels are unchanged by that (it is the same
+  buffer, same palette) — only the overlay changes.
+  **The risk to weigh before building: Classic is the no-Vulkan fallback tier.** It currently runs
+  on a machine with no working Vulkan, and the headless test path depends on that. Routing it
+  through Vulkan would give the fallback a dependency on the thing it falls back FROM. Recommended
+  shape: share the menu whenever Vulkan is up, and keep the bitmap menu strictly as the
+  no-Vulkan path — accepting that the two skins then still both exist, but only one is ever seen
+  on a working install. Also re-bless `-shotcompare` if any golden captures a menu.
+  **Needs a short spec before implementation** (house rule: any design doc goes through
+  `/cold-eyes` first). Kind changes from enhancement to feature at that point.
   Follow-up to DOOM-0206. The Classic main menu draws all items in the paletted HUD font at 2x (V_DrawPatchScaled / M_WriteTextScaled); nearest-neighbour doubling of the small STCFN bitmap font reads as blocky. User accepted it for now (2026-07-21) but wants a nicer look later. Root constraint: Classic = Classic_Present -> I_FinishUpdate (the 1997 software renderer), which never enters the Vulkan backend, so the crisp Oxanium font used by Solid/Ultra (FlushMenuText) is unavailable there. Options to scope: (a) route the Classic menu overlay through the Vulkan crisp-text path; (b) bundle/bake a higher-res paletted bitmap menu font for the software path; (c) tune the scale/spacing (1x for crispness vs 2x for size) as a cheap partial. Needs a small brainstorm before implementing.
   **Layman:** In the original Classic mode, the menu items all share one size now, but the font looks chunky/blocky. Make it look nicer while staying consistent.
   Kind: enhancement.
@@ -2480,3 +2501,40 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** The fog has an on/off dial that works, but it's only reachable by a hidden key or by hand-editing a config file — this puts it in the settings screen next to the other graphics toggles, showing Off/Low/Med/High.
   Kind: ux.
   Source: user-request-2026-07-26.
+
+- 📋 [DOOM-0267] **Solid/Ultra draw a solid wall where Classic shows an open secret (E1M1).**
+  Found by user play-test 2026-07-26. Two screenshots at identical player state (98% health /
+  8% armour / 38 bullets), Solid vs Classic: Classic draws an open doorway into the next room,
+  Solid draws an unbroken wall. Ultra shows the same closed wall elsewhere in the same secret.
+  Evidence: ~/Pictures/ClaudePaste/paste_20260726_212923_362_c067f0b7.png (Solid),
+  paste_20260726_212936_805_83d2decf.png (Classic).
+  **DOOM-0068 predicted this exact failure and deferred it:** "backface culling is off
+  (VK_CULL_MODE_NONE), so the rare line textured on BOTH sides whose floors cross could show a
+  phantom inverted quad; not observed, acceptable edge case, revisit if reported." Now reported.
+  Mechanism (traced, not guessed). The 3D wall pipeline sets `rs.cullMode = VK_CULL_MODE_NONE`
+  ("both wall faces visible; winding-agnostic"), so every wall quad is visible from BOTH sides.
+  Classic is one-sided by construction: `R_StoreWallRange` re-derives per frame that a two-sided
+  line needs NO lower texture when `worldlow <= worldbottom`, so from the far side the step is
+  not drawn and you see through it. `RB_BuildLevelMesh` instead emits that step ONCE at load,
+  from whichever sidedef carries the texture, and then shows it from both sides forever.
+  DOOM-0068's `<=` lower gate widened the exposure: every flush two-sided line carrying a bottom
+  texture now gets a zero-height placeholder that `RB_UpdateMeshHeights` grows with no sign
+  check, so a quad can grow on the WRONG side of its line and stand up as a phantom wall. E1M1
+  has 45 such lines. Concrete candidate at the reported spot: line 460 joins sector 87 (the
+  tag-2 secret lift, special 9) to sector 58 at equal floor heights, with BROWNGRN as the bottom
+  texture on sector 87's side only — so while the lift is down the mesh holds a real ~152-unit
+  quad that Classic draws from the lift side and omits from the other.
+  Candidate fixes to weigh (needs a decision, then a targeted test): (a) restore backface
+  culling for wall quads and emit consistent winding — closest to Classic's semantics, but
+  DOOM-0068 chose CULL_NONE deliberately, so check what breaks; (b) make the re-height pass
+  sign-aware, collapsing a quad to zero height when its planes cross instead of letting it
+  invert — the narrower change, and it directly matches `emit_wall`'s own load-time
+  `if (topz < bottomz) return;` guard which has no runtime equivalent; (c) emit the step from
+  both sidedefs and let each be one-sided. **(b) is the cheapest and most targeted — start
+  there,** since the load-time and run-time paths disagreeing is a defect in its own right.
+  Verify against Classic at the same spot in all three tiers, and re-run `-shotcompare` +
+  `-rtverify`. Related: DOOM-0052, DOOM-0068 (the `<=` gate), DOOM-0142 (the opposite artifact,
+  holes where a wall is missing) — do not conflate.
+  **Layman:** In the 3D renderers a hidden passage in E1M1 looks like a plain wall, but the original renderer shows an open doorway. The 3D view is drawing the back of a wall panel that should only be visible from the other side.
+  Kind: fix.
+  Source: user-play-test-2026-07-26.

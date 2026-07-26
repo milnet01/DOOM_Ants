@@ -539,6 +539,11 @@ And **change** two shipped values in the same block:
 - `kFogSteps` **24 → 40**. Structured density is a high-frequency signal along the ray and bands
   at 24 (§4.3b). This is a **hypothesis to confirm by looking** — if 24 reads clean with wisps
   on, revert it and bank the budget.
+- **Darken the outdoor result while you are here.** The user's play-test of the shipped fog
+  (spec §4.3b, 2026-07-26) was "I really like the fog, it can be slightly darker though. It is
+  quite bright when outside" — and the two changes below both push brightness *up*. Take it out
+  of `kSkyShaftStrength` (currently `1.0`) or the value of `kFogColor`; **not** out of
+  `kFogBaseDensity`, which the wisps and the ≈2× raise depend on.
 - `kFogBaseDensity` **0.0008 → 0.0016**. Re-tune this **with wisps on**, never from the un-wisped
   value: transmittance is non-linear in `σ`, so by Jensen wisped fog reads *thinner* on average
   at the same base density (§4.3b).
