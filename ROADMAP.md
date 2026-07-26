@@ -360,6 +360,7 @@ with friends.
   **Layman:** Three security fixes shipped without the automatic tests that prove they stay fixed — write those tests.
   Kind: test.
   Source: debt-sweep-2026-07-26.
+  Progress (2026-07-26, /test-audit): the item's claim that all four are "pure input validation and CPU-testable" was checked per function and is only partly right — sizing the work before it starts. Cheap in this harness (single TU + a stub or two, mus2mid_test is the model): w_wad.c:206-219 W_AddFile and the twin W_Reload check at :284-296 — w_wad.c pulls only i_system.h/z_zone.h, I_Error is a plain extern (stub it), Z_Malloc/Z_Free are trivially faked; and s_sound.c:293-296 (the >=NUMSFX bound), a pure comparison against a compile-time constant. Moderate: i_net.c:235 PacketGet — the check is inline in a function that calls recvfrom(), so it needs a socketpair() fake or a small extract-the-bound-check refactor first. NOT cheap: d_net.c:277 GetPackets (needs a fake transport plus nodeingame/playeringame engine state) and d_main.c:1356 -warp (the guard sits inside the ~1000-line D_DoomMain; testing it means extracting the argv parse into its own function). Suggest taking the three cheap ones first — they are most of the security value for a fraction of the work.
 
 - 📋 [DOOM-0241] **Write INV conformance tests for the shipped renderer specs now the CI-has-no-WAD gate is gone.**
   Only nee_sampling_test.cpp references an INV. DOOM-0026 (spec:290-319) and DOOM-0008 (spec:426-471) are both shipped and both defer their conformance test to "gated on CI having a WAD" — that gate no longer exists: build.yml installs freedoom and boots the engine headless (DOOM-0203). CPU-testable today: DOOM-0026 INV-1/INV-3, DOOM-0008 INV-3/INV-5, DOOM-0181 INV-9 (push-constant layout), the rb_fog 0..3 clamp.
@@ -367,23 +368,26 @@ with friends.
   Kind: test.
   Source: debt-sweep-2026-07-26.
 
-- 📋 [DOOM-0242] **Stop calling the function under test inside assert() — 15 sites compile away under NDEBUG.**
+- ✅ [DOOM-0242] **Stop calling the function under test inside assert() — 15 sites compile away under NDEBUG.**
   cppcheck assertWithSideEffect on 15 sites across mus2mid_test.cpp, rb_image_test.cpp, rb_materials_test.cpp and rb_text_test.cpp, e.g. assert(mus2mid(...) == 0). No -DNDEBUG is set today (Makefile TEST_CXXFLAGS), so the suite is correct as it stands — but anyone adding NDEBUG turns every one of these into a silent no-op that still reports PASS. Fix: assign to a local, then assert the local.
   **Layman:** Some tests would silently do nothing if the build settings changed — make them robust.
   Kind: test.
   Source: debt-sweep-2026-07-26.
+  Resolved (2026-07-26, /test-audit): fixed by retiring assert() from the suite entirely rather than by hoisting each call. New tests/check_util.h provides check()/check_eq_int()/check_summary() -- ordinary functions, so nothing compiles away and a failure no longer aborts the binary. mus2mid_test, rb_image_test, rb_materials_test and rb_text_test converted; the other three already used the idiom and now share the header instead of each carrying a copy. Verified: building mus2mid_test with -DNDEBUG BEFORE the fix printed "all passed" with zero checks executed; after it, the same -DNDEBUG build catches a mutation of allocate_midichannel (exit 1). docs/standards/testing.md updated -- the convention was still "main() runs the cases with assert".
 
-- 📋 [DOOM-0243] **rb_text_test passes vacuously when no system TTF is present — use the bundled Oxanium instead.**
+- ✅ [DOOM-0243] **rb_text_test passes vacuously when no system TTF is present — use the bundled Oxanium instead.**
   tests/rb_text_test.cpp:46-49 prints "skipped" and returns 0 when it cannot open a DejaVu TTF, so on any image lacking fonts-dejavu-core the file asserts only the NULL case. CI works around it by installing fonts-dejavu-core (ci-deps.txt:16). The repo already ships assets/Oxanium-SemiBold.ttf.h — bake from that instead and make an absent font a hard failure, which also drops the CI dependency.
   **Layman:** A font test quietly skips itself on machines without a particular font, so it can pass without testing anything.
   Kind: test.
   Source: debt-sweep-2026-07-26.
+  Resolved (2026-07-26, /test-audit): rb_text_test now bakes the bundled assets/Oxanium-SemiBold.ttf (the same embedded array r_vulkan.cpp bakes at init) instead of hunting three system DejaVu paths, so the skip-to-green path is gone -- a missing font is now impossible, not silent. The Makefile gives every test binary an order-only $(ASSET_HDRS) prerequisite, so the generated header exists even on a fresh tree (verified by deleting it and re-running make test). fonts-dejavu-core dropped from packaging/ci-deps.txt. Coverage added while there: vertical metrics (ascent/descent/line_gap), the atlas-doubling retry at 96px, and exact -- not +/-0.5px -- equality on rb_text_measure. That tolerance mattered: 22 of Oxanium's 93 adjacent glyph pairs differ by under 0.5px and the digits are identical width, so an off-by-one glyph index on a numeric string was invisible under it.
 
-- 📋 [DOOM-0244] **game_select_test mirrors D_DetectIwads' loop instead of calling it, so it cannot catch a regression.**
+- ✅ [DOOM-0244] **game_select_test mirrors D_DetectIwads' loop instead of calling it, so it cannot catch a regression.**
   tests/game_select_test.cpp:36-52 defines select_reps() as a hand-copied "Mirror of D_DetectIwads' pure selection loop". Changing the real loop in d_main.c cannot fail this test. Fix: extract the pure selection loop into iwad_detect.h (which already exists) and have both the engine and the test call it.
   **Layman:** A test re-implements the code it is supposed to check, so breaking the real code doesn't fail the test.
   Kind: test.
   Source: debt-sweep-2026-07-26.
+  Resolved (2026-07-26, /test-audit): the preference-scan loop moved out of D_DetectIwads into iwad_select_reps() in iwad_detect.h, parameterised by an "is it installed?" predicate. d_main.c passes one that builds <dir>/<name> and calls access(); game_select_test passes one that checks an in-memory set, so the test now drives the REAL loop and stays hermetic. Verified by mutation: dropping the "family already found" guard in iwad_select_reps now fails the test with 4 preference-order failures (before the change, the same mutation could not fail it). Engine rebuilt with zero warnings; headless boot smoke green.
 
 - 📋 [DOOM-0245] **Bump the staged Vulkan-Headers pin from vulkan-sdk-1.4.350.0 to 1.4.350.1.**
   mingw-deps/README.md:19-20,25-27 pins vulkan-sdk-1.4.350.0; upstream latest is vulkan-sdk-1.4.350.1. Not recorded in the dependencies.md Version Exception Ledger (which reads "_(none currently)_"), and dependencies.md repeats the stale number in its inventory. Deliberately NOT bumped in the debt sweep: it changes the Windows cross-build and could not be verified from this Linux session. Bump the two curl URLs and the dependencies.md line together, then run packaging/windows-build.sh.
@@ -402,6 +406,18 @@ with friends.
   **Layman:** An ignore rule is broader than intended and could hide a folder someone adds later.
   Kind: chore.
   Source: debt-sweep-2026-07-26.
+
+- 📋 [DOOM-0252] **Bound the savegame indices P_UnArchiveThinkers turns straight back into pointers.**
+  p_saveg.c:303/307/311 rebuild mobj->state, mobj->player and mobj->info by indexing states[], players[] and mobjinfo[] with values memcpy'd raw out of the .dsg file, with no range check: mobj->state = &states[(int)(intptr_t)mobj->state]; mobj->player = &players[idx-1]; mobj->info = &mobjinfo[mobj->type]. A crafted or corrupted savegame therefore forms an out-of-bounds pointer that is dereferenced immediately (mobj->info->..., mobj->player->mo = mobj). Savegames are a named trust boundary in docs/standards/security.md, and the only one the 2026-07-23 hardening pass never reached -- git log on p_saveg.c shows no security commits, only the 2026-06-29 -Wall cast cleanup. Fix: validate against NUMSTATES / MAXPLAYERS / NUMMOBJTYPES before dereferencing and I_Error on violation, mirroring the existing default-case guard at p_saveg.c:319. Reproduce first (the load path is pure array indexing, so a test can supply small fake states[]/mobjinfo[] and a crafted byte buffer).
+  **Layman:** A damaged or hand-edited save file can make the game read memory it doesn't own, because the load code trusts the numbers in the file.
+  Kind: security.
+  Source: test-audit-2026-07-26 lane-E.
+
+- 📋 [DOOM-0253] **Audit whether any other ~/.doomrc int is used as an array index without a clamp.**
+  DOOM-0216 clamped msgValueNames[showMessages] and fpsPosNames[fpsCorner] at their m_menu.c use sites, but m_misc.c's M_LoadDefaults loop itself still writes any int-shaped config value straight into its target with no range validation (m_misc.c:407-430) -- so the mitigation is per-known-site, not systemic. Sweep the defaults table for every entry whose value indexes an array or selects a mode, and either clamp on read in M_LoadDefaults or confirm each use site already clamps. Scope is small (the table is short); the point is to find out whether DOOM-0216 was the only one.
+  **Layman:** Hand-editing the config file to a silly number crashed the game once already; check whether any other setting can still do that.
+  Kind: investigate.
+  Source: test-audit-2026-07-26 lane-E.
 
 ## Phase 2 — The Spin
 

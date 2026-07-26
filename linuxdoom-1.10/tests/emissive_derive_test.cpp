@@ -24,16 +24,11 @@
 //
 // Build/run: `make test` (from linuxdoom-1.10/). No WAD or GPU needed.
 #include "../emissive_derive.h"
+#include "check_util.h"
 
 #include <cstdio>
 #include <cstdint>
 #include <vector>
-
-static int g_failures = 0;
-static void check(bool ok, const char* what)
-{
-    if (!ok) { std::printf("  FAIL: %s\n", what); g_failures++; }
-}
 
 // A 256-entry linear-RGB palette with the handful of indices the tiles below use.
 // (derive_material_le takes an already-decoded palette, so no sRGB step here.)
@@ -190,9 +185,24 @@ int main()
         check(emitter && le[0] > 1.0f, "sub-rect tile: stride/origin honoured, tile qualifies");
     }
 
-    if (g_failures == 0)
-        std::printf("PASS: all checks green — peak-region emitter gate is structurally correct.\n");
-    else
-        std::printf("FAIL: %d check(s) failed.\n", g_failures);
-    return g_failures == 0 ? 0 : 1;
+    // --- Degenerate input: the early-out guard (test audit 2026-07-26) --------------
+    // A null pixel pointer or a zero-area tile must return false with Le cleared,
+    // not read memory. Reached in production when a material's atlas entry is
+    // missing or a patch has a zero dimension.
+    {
+        float le[3] = { -1, -1, -1 };
+        bool emitter = emis::derive_material_le(nullptr, 64, 0, 0, 64, 64, pal, le);
+        check(!emitter, "null pixel pointer: REJECTED, no read");
+        check(le[0] == 0.0f && le[1] == 0.0f && le[2] == 0.0f, "null pixel pointer: Le cleared");
+
+        std::vector<uint8_t> tile(64, PAL_WHITE);
+        float le2[3] = { -1, -1, -1 };
+        bool e2 = emis::derive_material_le(tile.data(), 64, 0, 0, 0, 64, pal, le2);
+        check(!e2, "zero-width tile: REJECTED");
+        float le3[3] = { -1, -1, -1 };
+        bool e3 = emis::derive_material_le(tile.data(), 64, 0, 0, 64, 0, pal, le3);
+        check(!e3, "zero-height tile: REJECTED");
+    }
+
+    return check_summary("emissive_derive");
 }

@@ -8,6 +8,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Test coverage for the mus2mid happy path, font metrics, asset-path resolution and degenerate emitter input**
+  mus2mid_test asserted only rejection paths; it now checks three hand-built scores byte for byte, covering note on/off encoding, the track-length back-patch, percussion-channel mapping, the DMX 0x80 clamp quirk and the MIDI-channel allocator's skip of channel 9. Also new: rb_text vertical metrics and the atlas-doubling retry, rb_materials' rb_asset_root/rb_asset_path joining, and emissive_derive's null/zero-area guard.
+
 - **Headless boot-smoke CI gate that actually runs the engine (DOOM-0203)**
   A new `-bootsmoke [N]` engine flag boots the game on the GPU-free software
   renderer, simulates N tics (default ~3 s) through the real game loop, and
@@ -15,7 +18,21 @@ All notable changes to DOOM_Ants are documented here. The format follows
   drivers against a free Freedoom IWAD), so a boot or per-frame render
   regression is caught automatically instead of only on a manual play-test.
 
+### Changed
+
+- **nee_sampling_test's unbiasedness bound is derived from the sample count instead of a flat 0.5%**
+  The old fixed tolerance sat only ~3.9 sigma from the estimator's true standard error on two of the five weight sets, well short of the 6 sigma the neighbouring frequency check uses. The bound is now computed from the exact estimator variance, so it scales with N and the weights; all five sets currently land within 1.6 sigma.
+
 ### Fixed
+
+- **game_select_test drives the real IWAD selection loop rather than a copy of it (DOOM-0244)** (DOOM-0244)
+  The preference scan moved from D_DetectIwads into iwad_select_reps() in iwad_detect.h, parameterised by an "is it installed?" predicate — access() for the engine, an in-memory set for the test. Changing the real selection order now fails the test, which it could not do before.
+
+- **rb_text_test bakes the bundled Oxanium instead of skipping itself when no system font is installed (DOOM-0243)** (DOOM-0243)
+  It used to look for DejaVu at three distro paths and, finding none, print "skipped" and exit 0 — a green result that ran none of its assertions. It now bakes the embedded assets/Oxanium-SemiBold.ttf the engine itself ships, so a missing font is impossible; fonts-dejavu-core is no longer a CI dependency.
+
+- **Test suite no longer passes vacuously — assert() retired for a check() helper (DOOM-0242)** (DOOM-0242)
+  assert() is deleted by -DNDEBUG along with any call inside it, so the four tests that wrote assert(function_under_test(...) == x) would have printed "all passed" while running nothing. Reproduced, then fixed by moving the whole suite onto tests/check_util.h, whose check() is an ordinary function that also records a failure and keeps going instead of aborting and hiding every later case.
 
 - **Corrected `mold` from a required to an optional dependency in the README.**
   The README listed the `mold` linker among the required Linux dependencies. The Makefile detects it and falls back to the default linker when it's absent, so a first-time builder was being sent after a package they don't need.

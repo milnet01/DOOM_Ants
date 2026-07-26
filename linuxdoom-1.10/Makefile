@@ -180,12 +180,17 @@ clean:
 #   * parallel — `make -j test` compiles every test concurrently (then runs them).
 #   * fast at runtime — -O2 (these CPU-only tests do millions of iterations; the
 #     optimisation is free speed since test code never ships).
+#   * host-independent — -DDOOM_TESTS_ROOT hands each test the absolute path of
+#     this directory, so a test that opens a fixture file finds it whatever the
+#     CWD is (rb_image_test.cpp), and the order-only $(ASSET_HDRS) prerequisite
+#     means a test may embed the bundled font the same way the engine does
+#     (rb_text_test.cpp) even on a fresh tree where the header isn't generated yet.
 # Adding a test is one file: drop tests/<name>_test.cpp in — no Makefile edit.
 TEST_SRCS=$(wildcard tests/*_test.cpp)
 TEST_BINS=$(TEST_SRCS:tests/%.cpp=$(O)/%)
-TEST_CXXFLAGS=$(CXXFLAGS) -O2 -MMD -MP
+TEST_CXXFLAGS=$(CXXFLAGS) -O2 -MMD -MP -DDOOM_TESTS_ROOT='"$(CURDIR)"'
 
-$(O)/%_test:	tests/%_test.cpp | $(O)
+$(O)/%_test:	tests/%_test.cpp | $(O) $(ASSET_HDRS)
 	$(CXX) $(TEST_CXXFLAGS) $< -o $@
 
 # Build all tests (parallel-friendly: the binaries are prerequisites, so -j builds

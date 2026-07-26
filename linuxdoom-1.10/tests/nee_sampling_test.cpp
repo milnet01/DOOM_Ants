@@ -14,8 +14,11 @@
 // rest of spec INV-6) lands at build step 4, when the integrator is complete and
 // a high-precision off-screen render target exists.
 //
-// Build/run: `make nee-test` (from linuxdoom-1.10/). No WAD or GPU needed.
+// Build/run: `make test` (from linuxdoom-1.10/) runs this with the rest of the
+// suite; `make nee-test` builds and runs just this one for a fast iteration
+// loop. No WAD or GPU needed.
 #include "../nee_sampling.h"
+#include "check_util.h"
 
 #include <cstdio>
 #include <cstdint>
@@ -31,12 +34,6 @@ static uint32_t pcgHash(uint32_t x)
     return (word >> 22u) ^ word;
 }
 static float rnd(uint32_t& s) { s = pcgHash(s); return (float)s * (1.0f / 4294967296.0f); }
-
-static int g_failures = 0;
-static void check(bool ok, const char* what)
-{
-    if (!ok) { std::printf("  FAIL: %s\n", what); g_failures++; }
-}
 
 // Structural invariants of the table: pdf is a normalised distribution, cdf is its
 // monotone running sum reaching exactly 1, and pdf[i] = cdf[i] - cdf[i-1].
@@ -86,6 +83,21 @@ static void check_distribution(const std::vector<float>& w, const char* label)
     }
 
     const long N = 16000000;
+
+    // Exact standard error of the importance-sampling estimator X = g[k]/pdf[k]:
+    //   Var(X) = sum_i g[i]^2 / pdf[i] - (sum g)^2,  SE = sqrt(Var/N)
+    // Computed from the table, not from the samples, so the bound below is a
+    // property of the distribution rather than of this run. The 2026-07-26 test
+    // audit measured the old flat 0.5% tolerance at only ~3.9 SE for the
+    // "dominant" weight set and ~4.1 SE for "skewed" — far short of the 6 sigma
+    // the frequency check above advertises, and a bound that would silently
+    // tighten further if a future edit changed N, the weights, or g.
+    double varG = 0.0;
+    for (int i = 0; i < n; i++)
+        if (pdf[i] > 0.0f) varG += (double)g[i] * (double)g[i] / (double)pdf[i];
+    varG -= trueSumG * trueSumG;
+    const double seG = std::sqrt(std::fmax(varG, 0.0) / (double)N);
+
     std::vector<long> hist(n, 0);
     double estG = 0.0, estW = 0.0;   // power-sampled estimators of sum(g), sum(w)
     uint32_t seed = 0x1234567u;
@@ -111,10 +123,12 @@ static void check_distribution(const std::vector<float>& w, const char* label)
     }
     check(freqOk, "selection frequency matches pdf (<=6 sigma) for all indices");
 
-    // 2) Estimator is unbiased: power-sampled mean(g/pdf) -> sum(g) within 0.5%.
+    // 2) Estimator is unbiased: power-sampled mean(g/pdf) -> sum(g) within the
+    //    6-sigma Monte-Carlo error derived above (1e-9 floor for the n==1 case,
+    //    where the estimator is exact and SE is 0).
     if (trueSumG > 0.0)
-        check(std::fabs(estG - trueSumG) / trueSumG < 0.005,
-              "power-sampled estimator of sum(g) within 0.5% (unbiased)");
+        check(std::fabs(estG - trueSumG) <= 6.0 * seG + 1e-9,
+              "power-sampled estimator of sum(g) within 6 sigma (unbiased)");
 
     // 3) Matched integrand g==w is the importance-sampling sweet spot: each sample
     //    of w/pdf equals the total, so the estimate hits sum(w) to float precision.
@@ -122,8 +136,9 @@ static void check_distribution(const std::vector<float>& w, const char* label)
         check(std::fabs(estW - trueSumW) / trueSumW < 1e-3,
               "matched estimator of sum(w) is near-exact (variance ~0)");
 
-    std::printf("  [%s] n=%d  est sum(g)=%.4f (true %.4f)  est sum(w)=%.4f (true %.4f)\n",
-                label, n, estG, trueSumG, estW, trueSumW);
+    std::printf("  [%s] n=%d  est sum(g)=%.4f (true %.4f, %.2f sigma out)  est sum(w)=%.4f (true %.4f)\n",
+                label, n, estG, trueSumG,
+                seG > 0.0 ? std::fabs(estG - trueSumG) / seG : 0.0, estW, trueSumW);
 }
 
 // Lock the static|sprite emitter split (DOOM-0084). nee_merge_emitters() — the exact
@@ -195,9 +210,5 @@ int main()
     std::printf("- static|sprite emitter split (DOOM-0084)\n");
     check_merge_ordering();
 
-    if (g_failures == 0)
-        std::printf("PASS: all checks green — 3c-2 power sampling is unbiased.\n");
-    else
-        std::printf("FAIL: %d check(s) failed.\n", g_failures);
-    return g_failures == 0 ? 0 : 1;
+    return check_summary("nee_sampling");
 }

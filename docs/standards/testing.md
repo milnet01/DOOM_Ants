@@ -16,11 +16,29 @@ harness relies on:
 - **Adding a test is one file.** `make test` auto-discovers every
   `tests/*_test.cpp` (`TEST_SRCS=$(wildcard tests/*_test.cpp)` in the Makefile).
   Drop the file in — **no Makefile edit**.
-- **Convention:** `main()` runs the cases with `assert`, prints
-  `"<name>: all passed\n"`, and returns non-zero if any case fails. A non-zero
+- **Convention:** `main()` runs the cases through `check()` from
+  `tests/check_util.h`, then `return check_summary("<name>")`, which prints
+  `"<name>: all passed\n"` and returns non-zero if any case failed. A non-zero
   exit from any test fails the whole `make test` target.
+- **Never `assert()`.** It is a macro: `-DNDEBUG` deletes it *and any call
+  inside it*, so `assert(mus2mid(...) != 0)` becomes a test that runs nothing
+  and still prints "all passed" — reproduced during the 2026-07-26 test audit.
+  It also aborts the process on the first failure, hiding every later case in
+  the same binary. `check()` has neither problem. (`static_assert` is fine —
+  it is a compile-time construct and `NDEBUG` does not touch it.)
+- **Fixtures come from the repo, not the host.** Load a bundled asset (e.g.
+  `rb_text_test.cpp` bakes the embedded `assets/Oxanium-SemiBold.ttf`) or a
+  committed file addressed via `DOOM_TESTS_ROOT` — the absolute path of
+  `linuxdoom-1.10/` that the Makefile passes to every test — so the test works
+  from any working directory. A test must **never** skip itself when something
+  is missing: a skip that exits 0 is indistinguishable from a pass.
 - Built at `-O2` (these are CPU-only and loop hard; the optimisation is free
   speed since test code never ships).
+- **Known limit of the single-TU pattern:** tests are `.cpp`, so a `.c` unit
+  under test is recompiled as C++23 (`g++`) while the shipping object is built
+  as gnu11 (`gcc`). The logic is the same, the language rules are not — these
+  tests validate the algorithm, not the exact object the game links. Anything
+  that turns on C-versus-C++ semantics needs the boot smoke or a play-test.
 
 Run them with `make test` from `linuxdoom-1.10/`. It is cheap and incremental —
 unchanged tests are skipped.

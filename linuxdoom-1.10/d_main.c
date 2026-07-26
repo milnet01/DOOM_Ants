@@ -945,32 +945,36 @@ static char	iwadDoom1Path[PATH_MAX];
 static char	iwadDoom2Path[PATH_MAX];
 static boolean	iwadBothPresent;
 
+// The "is it installed?" predicate iwad_select_reps calls: build <dir>/<name> and
+// test it for readability. `ctx` is the WAD directory.
+static int D_IwadPresent (const char* name, void* ctx)
+{
+    char path[PATH_MAX];
+
+    snprintf(path, sizeof(path), "%s/%s", (const char*)ctx, name);
+    return !access(path, R_OK);
+}
+
 void D_DetectIwads (void)
 {
-    // IWAD_CANDIDATES (iwad_detect.h) is the preference-ordered candidate list;
-    // D_IwadFamily buckets each into its family and the first present hit per
-    // family wins. (The stack-local path buffers in IdentifyVersion can't be
-    // reused, so the directory paths are rebuilt here from that shared name list.)
+    // The preference-ordered scan itself lives in iwad_detect.h (iwad_select_reps)
+    // so the unit test drives the same loop with an in-memory present-set instead
+    // of a copy of it. Here we supply the I/O half and rebuild the directory paths
+    // from the shared name list (the stack-local path buffers in IdentifyVersion
+    // can't be reused).
     const char* dir = getenv("DOOMWADDIR");
-    int i;
+    int d1, d2;
 
     if (!dir)
 	dir = ".";
     iwadDoom1Path[0] = iwadDoom2Path[0] = '\0';
 
-    for (i = 0; IWAD_CANDIDATES[i]; i++)
-    {
-	char	path[PATH_MAX];
-	int	fam  = D_IwadFamily(IWAD_CANDIDATES[i]);
-	char*	slot = (fam == IWAD_DOOM2) ? iwadDoom2Path
-		     : (fam == IWAD_DOOM1) ? iwadDoom1Path : NULL;
+    iwad_select_reps(D_IwadPresent, (void*)dir, &d1, &d2);
+    if (d1 >= 0)
+	snprintf(iwadDoom1Path, PATH_MAX, "%s/%s", dir, IWAD_CANDIDATES[d1]);
+    if (d2 >= 0)
+	snprintf(iwadDoom2Path, PATH_MAX, "%s/%s", dir, IWAD_CANDIDATES[d2]);
 
-	if (!slot || slot[0])           // unknown family, or family already found
-	    continue;
-	snprintf(path, sizeof(path), "%s/%s", dir, IWAD_CANDIDATES[i]);
-	if (!access(path, R_OK))
-	    snprintf(slot, PATH_MAX, "%s", path);
-    }
     iwadBothPresent = (iwadDoom1Path[0] != '\0' && iwadDoom2Path[0] != '\0');
 }
 

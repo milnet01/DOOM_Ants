@@ -13,42 +13,33 @@
 //
 // Build/run: `make test` (from linuxdoom-1.10/).
 #include "../iwad_detect.h"
+#include "check_util.h"
 
 #include <cstdio>
 
-static int g_failures = 0;
-static void check(bool ok, const char* what)
+// The presence predicate iwad_select_reps calls back into: is `name` in this
+// NULL-terminated present-set (case-insensitive)? Standing in for the engine's
+// access() probe, this is what keeps the test hermetic — no filesystem, no WADs.
+static int in_set(const char* name, void* ctx)
 {
-    if (!ok) { std::printf("  FAIL: %s\n", what); g_failures++; }
-}
-
-// Is `name` in the NULL-terminated present-set (case-insensitive)?
-static bool in_set(const char* name, const char* const* set)
-{
+    const char* const* set = (const char* const*)ctx;
     for (int i = 0; set[i]; i++)
         if (iwad_streqi(name, set[i]))
-            return true;
-    return false;
+            return 1;
+    return 0;
 }
 
-// Mirror of D_DetectIwads' pure selection loop (d_main.c): over the shared
-// preference-ordered IWAD_CANDIDATES, take the first present name per family.
-// Reuses the REAL D_IwadFamily + IWAD_CANDIDATES, so the preference order is
-// checked against production data, not a copy.
+// Drive the REAL selection loop — iwad_select_reps in iwad_detect.h, the same
+// function D_DetectIwads calls — over an in-memory present-set. This used to be a
+// hand-copied mirror of the loop in d_main.c, which meant a change to the real
+// selection order could not fail this test (DOOM-0244).
 static void select_reps(const char* const* present,
                         const char** doom1, const char** doom2)
 {
-    *doom1 = *doom2 = 0;
-    for (int i = 0; IWAD_CANDIDATES[i]; i++)
-    {
-        int fam = D_IwadFamily(IWAD_CANDIDATES[i]);
-        const char** slot = (fam == IWAD_DOOM2) ? doom2
-                          : (fam == IWAD_DOOM1) ? doom1 : 0;
-        if (!slot || *slot)
-            continue;
-        if (in_set(IWAD_CANDIDATES[i], present))
-            *slot = IWAD_CANDIDATES[i];
-    }
+    int d1 = -1, d2 = -1;
+    iwad_select_reps(in_set, const_cast<void*>(static_cast<const void*>(present)), &d1, &d2);
+    *doom1 = (d1 >= 0) ? IWAD_CANDIDATES[d1] : 0;
+    *doom2 = (d2 >= 0) ? IWAD_CANDIDATES[d2] : 0;
 }
 
 int main()
@@ -114,9 +105,5 @@ int main()
         check(d1 == 0 && d2 == 0, "no IWADs -> both reps NULL, not both present");
     }
 
-    if (g_failures == 0)
-        std::printf("PASS: all checks green — IWAD detection is correct.\n");
-    else
-        std::printf("FAIL: %d check(s) failed.\n", g_failures);
-    return g_failures == 0 ? 0 : 1;
+    return check_summary("game_select");
 }

@@ -63,4 +63,36 @@ static const char* const IWAD_CANDIDATES[] =
     (const char*)0
 };
 
+// "Is this candidate basename actually installed?" — supplied by the caller so the
+// selection loop below stays free of I/O. `ctx` is passed through untouched.
+typedef int (*iwad_present_fn)(const char* name, void* ctx);
+
+// Walk IWAD_CANDIDATES in preference order and take the FIRST present member of
+// each family. Writes the winning candidate's index into *doom1 / *doom2, or -1
+// when that family has no installed member.
+//
+// This loop lives here, rather than inside D_DetectIwads, so the engine and
+// tests/game_select_test.cpp run the SAME code: the engine passes a predicate that
+// builds a path and calls access(), the test passes an in-memory present-set. The
+// test used to hold a hand-copied mirror of the loop, which meant changing the real
+// one in d_main.c could not fail the test (DOOM-0244, 2026-07-26 test audit).
+static inline void iwad_select_reps(iwad_present_fn present, void* ctx,
+                                    int* doom1, int* doom2)
+{
+    int i;
+
+    *doom1 = *doom2 = -1;
+    for (i = 0; IWAD_CANDIDATES[i]; i++)
+    {
+        int  fam  = D_IwadFamily(IWAD_CANDIDATES[i]);
+        int* slot = (fam == IWAD_DOOM2) ? doom2
+                  : (fam == IWAD_DOOM1) ? doom1 : (int*)0;
+
+        if (!slot || *slot >= 0)        // unknown family, or family already found
+            continue;
+        if (present(IWAD_CANDIDATES[i], ctx))
+            *slot = i;
+    }
+}
+
 #endif // IWAD_DETECT_H
