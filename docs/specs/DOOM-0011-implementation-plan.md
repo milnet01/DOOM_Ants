@@ -1340,6 +1340,13 @@ gate; the earlier layers carry their own measured spot-checks.
 
 - [ ] **Step 2: Menu rows (seven edits + name table — clone `rb_detile`, place like `rb_wet`)**
 
+> **This step may land early as DOOM-0266.** That item splits the fog row out of this task,
+> because the `;`-key dial is user-facing *today* and defaults to **on**, while `EffectsMenu[]`
+> carries six rows and no fog row — the invisible-toggle problem DOOM-0205 exists to prevent.
+> If DOOM-0266 ships first, **tick this step rather than adding the row twice**, and check its
+> work against the seven-edit list below: leaving one edit short is the failure this step's own
+> history records.
+
 Per spec §5, all seven — adding only the menuitem arrays ships a blank row:
 1. `ef_fog` in `effects_e`, `vid_fog` in `videoitem_e`.
 2. Row in `EffectsMenu[]` and `VideoMenu[]`, both bound to `M_ChangeFog`.

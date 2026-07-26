@@ -2452,3 +2452,31 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** The baked global-illumination pass was reading the sky as if it were a wall; several smaller bugs and six stale documentation claims are fixed too.
   Kind: fix.
   Source: audit+indie-review-2026-07-26.
+
+- 📋 [DOOM-0266] **Add a Volumetric fog row to the Render Effects submenu.**
+  The dial shipped ahead of its menu row. `rb_fog` (0 off / 1 Low / 2 Med /
+  3 High) is live in `r_vulkan.cpp`, persisted as `rt_fog` in `m_misc.c`'s
+  defaults, and cycled by the `;` key in `i_video.c` — but `EffectsMenu[]`
+  in `m_menu.c` has six rows (flashlight, SSAO, de-tile, filth, wet,
+  profiler) and no fog row, so the only ways to turn fog off are an
+  unlabelled hotkey or hand-editing ~/.doomrc.
+
+  That is precisely the failure DOOM-0205 was created to fix: a toggle
+  whose state is invisible, which last time produced a false "regression"
+  report. Fog now makes it worse than the others, because it defaults to
+  **on** (`rt_fog` default 1) rather than off.
+
+  Scope: one row cloning the `ef_detile` 0..N pattern exactly (`ef_fog`
+  entry, `M_ChangeFog` handler with `% 4`, a `fogNames[4][5]` label table
+  matching `i_video.c`'s `fog_name[4]` = OFF/Low/Med/High, and the
+  forward declaration — the menu edit set the DOOM-0011 plan warns is
+  easy to leave one short). RT-engaged tiers only, like every other row.
+
+  Relationship to DOOM-0011: its **L6** task already owns this work as
+  part of the full volumetrics ship. Split out because the dial is
+  user-facing *today* and the menu row should not wait on L1c/L1d/L2-L5.
+  Whichever lands first, the other must not duplicate the row — if this
+  ships alone, mark L6's menu step done rather than re-adding it.
+  **Layman:** The fog has an on/off dial that works, but it's only reachable by a hidden key or by hand-editing a config file — this puts it in the settings screen next to the other graphics toggles, showing Off/Low/Med/High.
+  Kind: ux.
+  Source: user-request-2026-07-26.
