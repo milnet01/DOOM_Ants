@@ -20,8 +20,25 @@ values; everything else is a compile-time `const`.
 Vulkan C++ back-end (`r_vulkan.cpp`), DOOM C menu/config (`m_menu.c`, `m_misc.c`, `i_video.c`),
 the cross-thread view struct (`r_mesh.h`, `r_backend.c`). Build: `make` in `linuxdoom-1.10/`.
 
-**Spec:** `docs/specs/DOOM-0011-volumetric-lighting.md` (cold-eyes converged, 4 loops). Read it
-in full before starting — this plan implements it; every `§`/`INV`/`Q` reference points there.
+**Spec:** `docs/specs/DOOM-0011-volumetric-lighting.md`. Read it in full before starting —
+this plan implements it; every `§`/`INV`/`Q` reference points there.
+
+> ## ⚠ STATUS — READ BEFORE EXECUTING ANY TASK
+>
+> - **L1 and L1b are SHIPPED and user-play-tested** (`84e8b35..e7753b3`, `1345c92`). Their
+>   unchecked `- [ ]` boxes below are historical, not work outstanding. **Do not
+>   re-implement them.**
+> - **This plan predates two spec amendments** (2026-07-24 open-sky standard, 2026-07-25
+>   Silent Hill 2 look + seep). **It has no `L1c` and no `L1d` task**, which is exactly the
+>   work the spec's §7 says comes next. **Do not proceed past L1b using this document** —
+>   the L1c/L1d tasks must be written from the spec's §7 first.
+> - **The spec is the authority on every number.** Where this plan and the spec disagree,
+>   the spec wins. The known-stale classes were swept on 2026-07-26 (perf gate, sky
+>   in-scatter tone, the `σ` split, the sky-visibility mechanism, the profiler key,
+>   invariant count, `file:line` citations), but this plan is **not** cold-eyes-converged
+>   in its own right.
+> - Spec cold-eyes status: the original design converged in 4 loops; the **2026-07-25
+>   amendment has run 4 loops** and its log lives in the spec's header.
 
 ## Global Constraints
 
@@ -34,9 +51,9 @@ in full before starting — this plan implements it; every `§`/`INV`/`Q` refere
   Dynamic sprite lights `[omniStart, emitCount)`, muzzle (`misc2.z`), flashlight (`misc2.w`)
   **never** scatter (INV-2).
 - **Fog is a SEPARATE channel** composited **after** the SVGF albedo re-multiply
-  (`svgf_composite.comp:88`) — it never rides `illum`/`gillum`. `inscatter`/`transmittance` are
+  (`svgf_composite.comp:123`) — it never rides `illum`/`gillum`. `inscatter`/`transmittance` are
   **linear radiance**, folded before the tonemap on **both** the surface path **and** the
-  sky-passthrough branch (`:66-72`) in the **same** colour space (INV-4).
+  sky-passthrough branch (`:93-107`) in the **same** colour space (INV-4).
 - **L1 deviation (verified safe, now load-bearing):** `svgf_composite.comp` has a **separate,
   smaller push struct (`SvgfPC`, 120 B) with no `misc6`**, so L1 routed the composite-side fog gate
   through `SvgfPC`'s previously-unused **`misc3.y`**, written C++-side at `r_vulkan.cpp`
@@ -44,8 +61,8 @@ in full before starting — this plan implements it; every `§`/`INV`/`Q` refere
   gate inside `svgf_composite.comp` (L5 upsample) uses `misc3.y`, NOT `misc6.z`.** The megakernel
   (`pathtrace.comp`) still uses `misc6.z`/`misc6.w` as specced.
 - **No push-struct growth.** Use exactly `misc6.z` + `misc6.w` (the last two free lanes). Do
-  **not** append `misc7`; keep `RtPushConstants` at 240 B (`static_assert` `r_vulkan.cpp:7374`,
-  `pcr.size` `:2355`) (INV-5).
+  **not** append `misc7`; keep `RtPushConstants` at 240 B (`static_assert` `r_vulkan.cpp:7405`,
+  `pcr.size` `:2368`) (INV-5).
 - **Bake untouched** — `bake.comp` never calls fog; fog is a view-ray term (INV-6).
 - **Tuning consts start subtle.** All `kFog*`/tint/strength values below are **starting points**
   labelled *tune-on-hardware*; the look is dialed in with the user on the RX 6600.
@@ -92,8 +109,11 @@ Renderer **look** is a play-test call (per DOOM-0181/0183 and spec §7): L1–L5
    call** — the implementing session captures the screenshot and reports; the user signs off the
    look. Do not mark a layer "done" on build-green alone.
 
-Only **L6** adds objective pass/fail gates: `-rtverify` green, `-shotcompare` golden, and the
-**≤ 5 % present-total** perf bar. Those are real commands, given in Task 6.
+**L6** carries the formal pass/fail gates: `-rtverify` green, `-shotcompare` golden, and the
+**≤ 15 % present-total** perf bar (raised from ≤ 5 % by the spec's 2026-07-25 amendment;
+§6). Those are real commands, given in Task 6. **L1b, L1c and L1d also carry objective
+checks** — L1b a measured ≤ 4 % up-ray Δ, L1c a ≤ 8 % cumulative Δ, L1d a ≤ 20 ms level-load
+budget plus a ≤ 1 % runtime tap (spec §7).
 
 **A note on line numbers:** every `file:line` below was current at plan time, but **earlier tasks
 shift later line numbers**. Locate each insert by the **quoted surrounding code**, not the raw
@@ -115,7 +135,7 @@ spine; every later task fills it in.
 - Modify: `r_vulkan.cpp` (new half-res fog image + its megakernel-write and composite-read bindings)
 
 **Interfaces:**
-- Produces: `vec2 fog = vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)` returning
+- Produces: `vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)` returning
   `(inscatter.rgb, transmittance)` packed `RGBA16F`; the fog image binding indices (chosen here,
   reused by L4/L5/L6). `FogHit` struct = `{ vec3 hitP; vec3 gnormal; uint matFlags; }` — L1 only
   reads none of them yet (sky-ambient is position-independent) but the struct + call signature are
@@ -131,10 +151,10 @@ spine; every later task fills it in.
   (the call site is right after this, before the colour write).
 - `pathtrace.comp:1023-1024` — the mode-4 `L = 0 on NaN; colour = toneEncode(L);` apply point.
 - `pathtrace.comp:1141` — the mode-6 even/even 2×2 half-res gate to mirror.
-- `svgf_composite.comp:66-72` — sky-passthrough branch (`if (gp.w < 0.0)`).
-- `svgf_composite.comp:88` — `L = albedo * illum + emis * emisMask * ga.a;` and `:91`
+- `svgf_composite.comp:93-107` — sky-passthrough branch (`if (gp.w < 0.0)`).
+- `svgf_composite.comp:123` — `L = albedo * illum + emis * emisMask * ga.a;` and `:133`
   `imageStore(outColor, p, vec4(toneEncode(L), 1.0));`.
-- `r_vulkan.cpp` — how an existing storage image (e.g. a denoiser target near `:7300`) is created,
+- `r_vulkan.cpp` — how an existing storage image (e.g. a denoiser target near `:7330`) is created,
   bound in the descriptor set, and reset; copy that pattern for the fog image.
 
 - [ ] **Step 1: Add the fog consts + helpers to `pt_common.glsl`**
@@ -145,7 +165,7 @@ Place near `SKY_COLOR` (`:31`), matching the existing const style:
 // DOOM-0011: volumetric fog (single-scatter view-ray march). All tune-on-hardware.
 const int   kFogSteps        = 24;               // fixed sample count (coherent, cheap)
 const float kFogMaxDist      = 2048.0;           // clamp tHit so a long corridor can't blow budget
-const float kFogBaseDensity  = 0.015;            // small always-on "clear air" so shafts read
+const float kFogBaseDensity  = 0.0008;           // small always-on "clear air" so shafts read (SHIPPED value; L1c raises to ~0.0016)
 const float kFogPoolHeight   = 48.0;             // e-fold height (DOOM units) for floor pooling
 const float kFogAnisotropy   = 0.40;             // Henyey-Greenstein g (mild forward bias); 0 = isotropic
 const vec3  kSunDir          = normalize(vec3(0.30, 0.30, 1.0)); // world; +z is up (floor = hitP.z). L2.
@@ -202,7 +222,7 @@ vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h) {
 - [ ] **Step 3: Create the half-res fog image + bindings in `r_vulkan.cpp`**
 
 Mirror an existing storage-image target (copy the creation/binding/reset of a denoiser image near
-`:7300`). Add: one `RGBA16F` image at **half render resolution** (`renderExtent/2` rounded up),
+`:7330`). Add: one `RGBA16F` image at **half render resolution** (`renderExtent/2` rounded up),
 a **write** binding for the megakernel descriptor set, and a **read** binding for the
 `svgf_composite` descriptor set. Reset/transition it with the other RT targets each frame. Record
 the chosen `binding =` indices in a comment (L4/L5/L6 reuse them). Keep it in the RT-only path so
@@ -248,7 +268,7 @@ bilinear). Surface branch — replace `:88-91`:
     imageStore(outColor, p, vec4(toneEncode(L), 1.0));
 ```
 
-Sky-passthrough branch (`:66-72`) — fold fog treating the display-encoded sky as linear, then
+Sky-passthrough branch (`:93-107`) — fold fog treating the display-encoded sky as linear, then
 re-clamp (§4.6 / Q9 — confirm the round-trip is a no-op when `rb_fog==0`):
 
 ```glsl
@@ -334,7 +354,9 @@ Solid **RT engaged only** (modes 4 + 6); `rb_fog`-gated (fog off = byte-identica
 Next to the other fog consts:
 
 ```glsl
-const float kIndoorFogScale = 0.05;   // DOOM-0011 §4.3a: fog density multiplier under a solid
+const float kIndoorFogScale = 0.05;   // MUST stay > 0 (spec Q12: the `= 0` option is STRUCK --
+                                      // L3's torch shafts need a medium in roofed air to light).
+                                      // DOOM-0011 §4.3a: fog density multiplier under a solid
                                        // roof (open sky = 1.0). 0.0 = interiors totally clear;
                                        // ~0.05 keeps a faint indoor haze. Tune on hardware (Q12).
 ```
@@ -351,7 +373,12 @@ Change the `sigma` line (`:789`) from `float sigma = fogDensity(p) * strength;` 
         // §4.3a open-sky exposure: up-ray misses all solid geometry => under open sky.
         bool  openSky = !occluded(p, vec3(0.0, 0.0, 1.0), kFogMaxDist);  // 0x01 mask; sky is 0x04
         float skyExposure = openSky ? 1.0 : kIndoorFogScale;
-        float sigma = fogDensity(p) * strength * skyExposure;
+        // NOTE (2026-07-26): `skyExposure` gates the SKY-SOURCED term ONLY, never the
+        // area profiles -- see spec INV-9 / §4.3b, which owns the single authoritative
+        // `sigma_final`. The single-multiplier form below is correct ONLY while L1/L1b
+        // have no area profiles; L4 MUST replace it with the split form, or every roofed
+        // goo/hell room loses its fog by construction.
+        float sigma = fogDensity(p) * strength * skyExposure;   // L1/L1b only -- see note
 ```
 
 If `occluded()`'s signature differs, mirror it exactly (same cull mask + `TerminateOnFirstHit`);
@@ -372,7 +399,7 @@ consts, so the value MUST be computed here — spec §4.6a.)
 
 - [ ] **Step 4: Sky-backdrop aerial fog — mode 4 (`pathtrace.comp` sky branch)**
 
-In the mode-4 sky branch, after `colour = skyPanorama(...)` (`:1295`) and under `if (pc.misc6[2] != 0u)`,
+In the mode-4 sky branch, after `colour = skyPanorama(...)` (`:1328`) and under `if (pc.misc6[2] != 0u)`,
 fold the same closed-form fog before the write, in the same linear space as §4.6a:
 
 ```glsl
@@ -400,8 +427,9 @@ Expected: build green (SPIR-V compiles — catches GLSL errors), tests green,
 
 - [ ] **Step 6: Hardware perf spot-check (RX 6600) — which exposure method ships**
 
-Per spec §6: with the profiler (`` ` `` key), A/B the **added** present-total (fog-off vs fog-on,
-same walk) in the goo room (its ~40 FPS baseline is pre-existing), AND confirm a **typical non-goo
+Per spec §6: with the profiler (`` \ `` **backslash** key — `` ` ``/`~` is the RT view cycle), A/B the **added** present-total (fog-off vs fog-on,
+same walk) in the goo room (its ~40 FPS baseline is pre-existing) fits **≤ 4 %** — L1b's slice
+of L1c's ≤ 8 % allocation, not the whole-feature gate — AND confirm a **typical non-goo
 corridor** scene (Ultra >60 FPS today) still holds 60 FPS with the up-ray on. **If it holds** →
 the per-sample up-ray ships (done). **If it misses** → build the cheap fallback instead:
 - `r_mesh.h`: `#define RB_MESH_OUTDOOR 0x100` beside the other `RB_MESH_*` bits (`:82-101`).
@@ -441,12 +469,14 @@ toward it per sample, and weight the in-scatter by the HG phase so shafts read a
 
 **Interfaces:**
 - Consumes: `kSunDir`, `fogPhaseHG`, `kFogAnisotropy` (L1); the existing sky-visibility test
-  (`pathtrace.comp:816-817`, TLAS custom-index 2) + whatever shadow/any-hit ray-query helper the
+  (`pathtrace.comp:870-871`, the `isSky` test — but see the note in the code sketch: L2's own
+  sky detection is the ray MISS, not a custom-index hit) + whatever shadow/any-hit ray-query helper the
   primary trace uses.
 - Produces: directional `Ls` in `marchFog()` (torch sources add to it at L3).
 
 **Existing code to read first:**
-- `pathtrace.comp:816-817` — the sky-instance test (custom-index 2). Reuse the **same** predicate
+- `pathtrace.comp:870-871` — the primary-ray `isSky` test (custom-index 2). Read it for context,
+  but do **not** reuse it as L2's predicate
   to decide "did the sun ray reach sky?".
 - The primary trace's ray-query setup in `pathtrace.comp` — reuse its `rayQueryEXT` /
   `traceRayEXT` pattern for the one sun ray; **confirm the helper signature there**, do not invent.
@@ -461,9 +491,15 @@ shaft). Guard the whole sky term on "level has sky" so enclosed levels skip it (
 ```glsl
         vec3 Ls = vec3(0.0);
         if (skyExists) {                                  // misc4.w != 0xFFFFFFFF
-            if (sunRayReachesSky(p, kSunDir)) {           // one ray; reuse the :816-817 sky test
+            // Sky is detected by the ray MISSING all solid geometry, NOT by a
+            // custom-index-2 hit: the shadow cull mask 0x01 cannot hit the sky-backdrop
+            // instance (mask 0x04, r_vulkan.cpp:2020), so a committed sky hit is
+            // impossible on this ray. Spec §4.4(a) / cold-eyes loop 2.
+            if (sunRayMissesGeometry(p, kSunDir)) {      // one ray; mirrors the L1b up-ray
                 float ph = fogPhaseHG(dot(rd, kSunDir), kFogAnisotropy);
-                Ls += skyRadiance() * kSkyShaftStrength * ph;   // skyPanorama()/SKY_COLOR
+                Ls += kFogColor * kSkyShaftStrength * ph;   // spec §4.3b: kFogColor, NOT SKY_COLOR
+                // and this REPLACES L1's flat `skyAmbient` term -- it does not add to it,
+                // or open air in-scatters sky light twice (spec §4.4(a)).
             }
         }
         // L3 adds torch contributions to Ls here.
@@ -471,7 +507,8 @@ shaft). Guard the whole sky term on "level has sky" so enclosed levels skip it (
 
 Define `sunRayReachesSky()` next to `marchFog()` using the confirmed ray-query helper; it traces
 from `p + kSunDir*eps` along `kSunDir` and returns true iff the closest hit is the sky instance
-(custom-index 2) or the ray misses into sky.
+the ray **misses** all solid geometry (mask `0x01` cannot reach the mask-`0x04` sky
+instance, so "reaches sky" *is* "missed everything" — spec §4.4(a)).
 
 - [ ] **Step 2: Build + smoke + tests** (same three commands as L1 Step 7).
 
@@ -638,7 +675,7 @@ global haze to base density, and multiply every `Ls` contribution by `mediumTint
     vec3  mediumTint = vec3(1.0);
     float densMul    = 1.0;
     float haze       = uintBitsToFloat(pc.misc6[3]);          // hell haze (0 on non-hell)
-    if ((h.matFlags & 8u) != 0u) {                            // RB_FLAG_LIQUID_NUKAGE
+    if ((h.matFlags & RB_FLAG_LIQUID_NUKAGE) != 0u) {         // rb_materials.h:17, = 8u
         mediumTint = kGooTint;
         densMul    = kGooDensityMul;                          // thicken (tune-on-hardware)
     }
@@ -738,7 +775,8 @@ git commit -m "DOOM-0011: L5 denoise pass — depth-guided fog upsample + dither
 
 **Goal:** Wire the user-facing controls, add a GPU-timer slot for the fog pass, and **pass the
 objective gates**: `-rtverify` green, `-shotcompare` golden re-blessed (if on-by-default), and
-**≤ 5 % present-total** vs fog-off. This is the only task with hard pass/fail criteria.
+**≤ 15 % present-total** vs fog-off (spec §6, 2026-07-25). This task carries the *formal*
+gate; the earlier layers carry their own measured spot-checks.
 
 **Files:**
 - Modify: `r_vulkan.cpp` (`rb_fog` extern; `misc6.z` write; profiler `queryCount`+resets+readback;
@@ -749,25 +787,28 @@ objective gates**: `-rtverify` green, `-shotcompare` golden re-blessed (if on-by
 
 **Interfaces:**
 - Consumes: `misc6.z` (already read by the shaders since L1 as `pc.misc6[2]`); the DOOM-0208 arm
-  block (`r_vulkan.cpp:8177`).
+  block (`r_vulkan.cpp:8212`).
 - Produces: the shipped `rb_fog` dial (0..3) driving all fog cost.
 
 **Existing code to read first:**
 - `r_vulkan.cpp:1000` — `extern "C" { int rb_wet = 1; }` (place `rb_fog` beside it).
 - `r_vulkan.cpp:7427` — `pc.misc6[1] = rb_wet ? 1u : 0u;` (place the `rb_fog` write beside it).
-- `r_vulkan.cpp:8177` — DOOM-0208 canonical-config arm block (pin `rb_fog` here).
-- `r_vulkan.cpp:1510` `queryCount = 8` (profiler pool, full); `:7300`, `:8285` resets;
+- `r_vulkan.cpp:8212` — DOOM-0208 canonical-config arm block (`rb_fog` pinned there since 2026-07-26).
+- `r_vulkan.cpp:1520` `queryCount = 8` (profiler pool, full — fog takes slot 8, so it becomes
+  `9`); `:7330`, `:8326` resets (both hardcode `0, 8`); `:8118` readback;
   `:8076-8086` readback — the four sites to widen for the fog timer slot.
-- `m_misc.c:270` — `{"rt_wet", &rb_wet, 1}` config row (add `rt_fog` beside it).
+- `m_misc.c:274` — `{"rt_wet", &rb_wet, 1}` config row; `rt_fog` already added at `:275`.
 - `m_menu.c` — the `rb_detile` multi-value pattern to clone: `effects_e`/`videoitem_e` enums
   (`:501-510`/`:543-565`), `EffectsMenu[]`/`VideoMenu[]` (`:512-520`/`:567-588`),
-  `M_DrawEffectsMenu` `"De-tile:"`+`detileNames[]` row (`:1465`), `videoLabels[]` (`:1491`),
-  `M_VideoCrispValue` `case vid_detile:` (`:1558`), `M_ChangeDetile`.
-- `i_video.c:441-475` — the toggle-key block (`]`/`[`/`'`/`~`/`` ` ``); `;` (`SDLK_SEMICOLON`) is free.
+  `M_DrawEffectsMenu` `"De-tile:"`+`detileNames[]` row (`:1474-1476`), `videoLabels[]` (`:1500`),
+  `M_VideoCrispValue` `case vid_detile:` (`:1567`), `M_ChangeDetile`.
+- `i_video.c:412-487` — the toggle-key block (`]`/`[`/`'`/`~`/`` ` ``/`` \ ``); `;` (`SDLK_SEMICOLON`)
+  was free and now carries the fog dial. **The GPU profiler is `` \ `` (backslash)** — `` ` ``/`~`
+  is the RT view cycle, a different key (spec §6).
 
 - [x] **Step 1: `rb_fog` extern + config + push write** — DONE EARLY in commit `f8c6b1f`
   (pulled forward so L1–L5 are viewable). Remaining here: **only the DOOM-0208 canonical-config
-  pin** (`r_vulkan.cpp` arm block ~`:8177`) — add `rb_fog` beside `rb_detile=2, rb_filth=1,
+  pin** (`r_vulkan.cpp` arm block ~`:8212`) — add `rb_fog` beside `rb_detile=2, rb_filth=1,
   rb_wet=1`.
   *(original step, done except the pin:)*
 
@@ -776,7 +817,9 @@ objective gates**: `-rtverify` green, `-shotcompare` golden re-blessed (if on-by
   `0` if review prefers off-by-default; if `0`, skip the golden re-bless in Step 6).
 - `m_misc.c` beside `rt_wet` (`:270`): `{"rt_fog", &rb_fog, 1}` (match the `rb_fog` default).
 - `r_vulkan.cpp` beside `misc6[1]` (`:7427`): `pc.misc6[2] = (uint)rb_fog;` (replaces the `= 0u`).
-- `r_vulkan.cpp` DOOM-0208 arm block (`:8177`): pin `rb_fog` to its shipped default alongside
+- `r_vulkan.cpp` DOOM-0208 arm block (`:8212`): **DONE** (2026-07-26 debt sweep added
+  `rb_fog = 1;` to the pin). What remains owed is the golden **re-bless** with fog on.
+  Historical intent: pin `rb_fog` to its shipped default alongside
   `rb_detile=2, rb_filth=1, rb_wet=1`.
 
 - [ ] **Step 2: Menu rows (six edits + name table — clone `rb_detile`, place like `rb_wet`)**
@@ -796,9 +839,9 @@ Per spec §5 (all six — adding only the menuitem arrays ships a blank row):
 
 - [ ] **Step 4: Profiler slot for the fog pass**
 
-Bump `queryCount` (`r_vulkan.cpp:1510`) by the slots a fog timer needs; widen the two resets
-(`:7300`, `:8285`) and the readback (`:8076-8086`); wrap the fog compute with begin/end timestamps.
-Label it `fog` in the `` ` `` overlay. (Contained change, done **with** the perf pass — never
+Bump `queryCount` (`r_vulkan.cpp:1520`) from 8 to **9** (fog takes slot 8); widen the two resets
+(`:7330`, `:8326`, both hardcoding `0, 8`) and the readback (`:8118`); wrap the fog compute with begin/end timestamps.
+Label it `fog` in the `` \ `` profiler overlay. (Contained change, done **with** the perf pass — never
 silently skipped, §6.)
 
 - [ ] **Step 5: Build + smoke + tests + toggle test**
@@ -823,13 +866,17 @@ exactly as DOOM-0183 re-blessed for wet — the gate then guards the fog *look*.
 **off-by-default**, leave the golden untouched (fog-off is byte-identical, INV-8). Run
 `-shotcompare` and confirm it matches the (re-blessed) golden.
 
-- [ ] **Step 7: Perf gate — ≤ 5 % present-total (the pass/fail)**
+- [ ] **Step 7: Perf gate — ≤ 15 % present-total (the pass/fail)**
 
 Per spec §6: average the `` ` `` profiler **present-total (ms, not FPS)** over a fixed ~10 s walk
 of the **E1M1 green-goo room** (with a sky-hole/doorway in view for shafts), **RT-on, 50 % render
 scale**, `rb_fog` **off then on** (same-walk A/B, tee the run log —
 `/tmp/doom-ants-run.log`). **Pass:** fog adds **≤ 5 % to present-total** vs the fog-off baseline;
-**Ultra holds its 60 FPS floor** and the goo room is not materially worse than its existing ~40 FPS.
+the goo room is not materially worse than its existing ~40 FPS. **The 60 FPS floor does NOT
+bind here:** the spec's 2026-07-25 amendment relaxed it for RT-engaged scenes (the user was
+shown the `~45 → ~39 FPS` trade and accepted it), and `docs/standards/performance.md` names
+DOOM-0011 §6 as the worked example of that relaxation. The floor still binds Classic and the
+raster path, which this feature does not touch (INV-7).
 
 **If it fails**, pull levers in order (§6), re-measure after each: reduce `kFogSteps`; add the
 nearest-~4 emitter pruning (L3 note) / drop the emitter loop cost; tighten `kFogMaxDist`; make
@@ -858,7 +905,8 @@ Update the memory file `doom-0011-volumetrics-design.md` to "shipped".
   fallback) + L5 (bilateral). §5 data (fog image + bindings, `misc6.z/.w`, `rb_view_t` field,
   `rb_fog`, six menu edits, `;` key) → L1 (image) + L4 (`rb_view_t`/`misc6.w`) + L6 (dial/menu/key).
   §6 perf (profiler slot + ≤5 % gate) → L6. §8 INV-1..8 → Global Constraints + per-task guards.
-- **All eight invariants** are pinned in Global Constraints and re-stated at their task
+- **All twelve invariants** (INV-1..INV-12; INV-9/10 added 2026-07-24, INV-11/12 added
+  2026-07-25 — this plan predates the last four) are pinned in Global Constraints and re-stated at their task
   (INV-2 in L3, INV-4 in L1, INV-5/7 in L6, INV-6 global, INV-8 in L6 gate).
 
 **Placeholder scan** — the `kFog*`/tint/`kHaze*` values are concrete starting numbers explicitly
