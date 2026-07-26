@@ -17,13 +17,45 @@ without having to ask the author what was meant.
 
 ## Writing rules
 
+Write so a tired reader gets it on the first pass.
+
+**Plain language is not a courtesy — it is a bug-finding tool.** A muddled sentence
+hides a muddled idea. Forcing the simple version is what makes the gap in the thinking
+visible. Several of the worst defects caught in this project's specs were sitting inside
+sentences nobody could parse; once the sentence was split, the error was obvious.
+
 - **Plain language first.** Lead with what a change means for a player or a
   reader, then the mechanism if it matters. Define jargon inline on first use.
 - **Concrete over abstract.** Name the file, the function, the button. Show a
   short example rather than describing one.
-- **Short sentences, short paragraphs.** No walls of text.
+- **Short sentences, short paragraphs.** No walls of text. One idea per sentence.
+  If a sentence has to be re-read to parse, split it.
+- **Say it once.** State a rule in the place it belongs and cross-reference from
+  everywhere else. Three copies of a rule become three *different* rules the first
+  time one of them is edited.
+- **Cut ornament, keep precision.** Drop the theorem name, the hedge stacked on a
+  hedge, the parenthetical that breaks the sentence's spine. Never cut a number, a
+  symbol name, or a condition to make prose shorter — if brevity would cost
+  correctness, leave it long and say why.
+- **A table cell holds a line, not a paragraph.** When a cell outgrows a line or two,
+  the content wants a list underneath the table.
 - **State the why.** A doc that records a decision must say *why* the decision
   went that way, so a future reader doesn't reopen a settled question.
+
+**The read-aloud test.** Read the passage out loud. If you run out of breath, or have
+to back up to find the subject, rewrite it — and check the idea underneath while you're
+there, because that is usually what the tangle was hiding.
+
+### Karpathy's principles, applied to documents
+
+The same four rules the code follows. A doc is a contract; it earns the same discipline.
+
+| Principle | What it means in a document |
+|-----------|------------------------------|
+| **Think before writing — no silent assumptions** | Every claim about the code is checked against the source *before* it is written. Where the doc genuinely can't know, it says so plainly instead of sounding confident. |
+| **Simplicity first** | The shortest wording that is still exact. A worked example beats an abstract description. If a section can be a table, make it a table. |
+| **Surgical changes** | Edit the passage the change touches. Don't reflow, re-title or re-argue the sections around it on the way past. |
+| **Goal-driven — explicit verification** | Every requirement says how it will be checked. "Works correctly" is not a criterion; "fog-off renders byte-identical" is. |
 
 ## Specs (design docs)
 

@@ -36,6 +36,18 @@ that everything else builds on.
   Kind: doc.
   Source: user-request-2026-07-26.
 
+- ✅ [DOOM-0265] **Documentation standard requires plain, concise language.**
+  Expanded `docs/standards/documentation.md` § Writing rules: say it once,
+  cut ornament but never precision, one idea per sentence, a table cell
+  holds a line not a paragraph, plus a read-aloud test. Adds a table
+  mapping Karpathy's four principles (no silent assumptions, simplicity
+  first, surgical changes, explicit verification) onto documents.
+  Earned by DOOM-0011's cold-eyes loop 8, where the spec lane found zero
+  correctness defects and six readability ones.
+  **Layman:** Docs must be written simply and short — muddled sentences hide muddled ideas, so plain wording is how you find the mistakes.
+  Kind: doc.
+  Source: user-request-2026-07-26.
+
 ## Phase 1 — Build, Modernise & Share
 
 Get the 1997 engine compiling, running, and playable on a modern machine —
