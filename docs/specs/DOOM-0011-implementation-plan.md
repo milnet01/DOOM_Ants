@@ -38,8 +38,9 @@ this plan implements it; every `§`/`INV`/`Q` reference points there.
 >   invariant count, `file:line` citations), but this plan is **not** cold-eyes-converged
 >   in its own right.
 > - Spec cold-eyes status: the original design converged in 4 loops; the **2026-07-25
->   amendment has run 7 loops and has NOT converged** — the `--max-loops` cap of 5 is long
->   passed, so each further loop is an explicit user call. Its log lives in the spec's header.
+>   amendment has run 8 loops and has NOT converged** — the `--max-loops` cap of 5 is long
+>   passed, so each further loop is an explicit user call. The loop log lives in
+>   `docs/specs/DOOM-0011-fix-ledger.md`; the spec's header carries a summary.
 
 ## Global Constraints
 
@@ -81,7 +82,7 @@ this plan implements it; every `§`/`INV`/`Q` reference points there.
 |------|-------------------------------|-------|
 | `shaders/pathtrace.comp` | `marchFog()` definition + call site; mode-4 in-megakernel apply; mode-6 half-res write; `wisp()` + the noise tap (**never** in `pt_common.glsl` — INV-6) | L1–L5, incl. L1b–L1d |
 | `shaders/pt_common.glsl` | Fog `const`s (steps, density, tints, `kSunDir`, the 2026-07-25 wisp/seep set), phase/density helpers | L1–L5, incl. L1b–L1d |
-| `shaders/svgf_composite.comp` | Mode-6 apply: fold fog after albedo re-multiply + on sky-passthrough; **plain bilinear** upsample (L1) → depth-guided bilateral (L5) | L1, L5 |
+| `shaders/svgf_composite.comp` | Mode-6 apply: fold fog after albedo re-multiply + on sky-passthrough; **plain bilinear** upsample (L1) → position-guided bilateral (L5) | L1, L5 |
 | `r_vulkan.cpp` | New half-res fog image + bindings; the 3-D noise volume + seep field + transform UBO on **set 0** (pool sizes + `PARTIALLY_BOUND`); `rb_fog` extern; `misc6.z/.w` writes; profiler slot | L1, L1c, L1d, L4, L6 |
 | `r_mesh.c` | The seep flood fill (portal graph + Dijkstra + per-cell resolve) — lives here because it needs the DOOM map globals; (L1b fallback only) the `RB_MESH_OUTDOOR` bit | L1d, (L1b) |
 | `r_mesh.h` | New `rb_view_t.hazeDensity` field; the seep field buffer handle | L4, L1d |
@@ -261,7 +262,7 @@ neutral `vec4(0,0,0,1)` (zero inscatter, full transmittance) so the composite is
 - [ ] **Step 6: Apply fog in `svgf_composite.comp`, mode 6 (both branches)**
 
 Fold fog **after** the albedo re-multiply and **in** the sky-passthrough, in linear space. First a
-half-res **bilinear** fetch of the fog target (depth-guided upsample arrives at L5; L1 uses plain
+half-res **bilinear** fetch of the fog target (position-guided upsample arrives at L5; L1 uses plain
 bilinear).
 
 **Gate on `pc.misc3.y` here, never `misc6.z`.** This shader has its own 120-byte `SvgfPC` push
@@ -306,7 +307,9 @@ make -C linuxdoom-1.10 -j"$(nproc)" && make -C linuxdoom-1.10 test
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
   ./linuxdoom-1.10/linux/linuxxdoom -iwad wads/doom.wad -warp 1 1 -bootsmoke 105
 ```
-Expected: build green, tests green, `bootsmoke: 105 tics simulated OK, exiting.`
+Expected: build green (the SPIR-V compile is what catches GLSL errors), tests green,
+`bootsmoke: 105 tics simulated OK, exiting.` **Every later task's "Build + smoke + tests"
+step means exactly these three commands** — they are not repeated again.
 
 - [ ] **Step 8: Play-test the look (RX 6600, RT engaged)**
 
@@ -331,7 +334,7 @@ git commit -m "DOOM-0011: L1 fog march skeleton — sky-ambient glow, half-res t
 sky, near-clear under a solid roof, measured **per march sample** by a straight-up shadow ray;
 and give the distant **sky backdrop** aerial-perspective fog (spec §4.6a) so the mountains fade
 into haze instead of reading crisp. Addresses the user's 2026-07-24 L1 play-test feedback. Ultra/
-Solid **RT engaged only** (modes 4 + 6); `rb_fog`-gated (fog off = byte-identical, INV-8).
+RT-only and `rb_fog`-gated, like every fog task — see Global Constraints (INV-7/8).
 
 **Files:**
 - Modify: `shaders/pt_common.glsl` — add `kIndoorFogScale` const; (fallback only) `FLAG_OUTDOOR`.
@@ -434,15 +437,7 @@ Then reconcile the old screen-space `SKY_FOG_COL` band (`:761-763`): with real d
 the sky, dial `SKY_FOG_COL`'s `smoothstep` contribution down or remove it so the horizon is not
 **double-hazed** (spec Q14) — verify by eye at Step 7.
 
-- [ ] **Step 5: Build + smoke + tests**
-
-```bash
-make -C linuxdoom-1.10 -j"$(nproc)" && make -C linuxdoom-1.10 test
-SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
-  ./linuxdoom-1.10/linux/linuxxdoom -iwad wads/doom.wad -warp 1 1 -bootsmoke 105
-```
-Expected: build green (SPIR-V compiles — catches GLSL errors), tests green,
-`bootsmoke: 105 tics simulated OK, exiting.`
+- [ ] **Step 5: Build + smoke + tests** (L1 Step 7 commands).
 
 - [ ] **Step 6: Hardware perf spot-check (RX 6600) — which exposure method ships**
 
@@ -486,8 +481,8 @@ git commit -m "DOOM-0011: L1b fog-placement standard (open-sky gate) + sky-backd
 **Goal:** Turn L1b's flat blue-grey haze into the user's 2026-07-25 reference (spec §4.3b): fog
 that reads **near-white and colourless**, roughly twice as thick, and full of **billows of
 visibly varying thickness drifting slowly past** — with real depth, so a wisp passes in front of
-*and* behind a pillar as the camera turns. Ultra/Solid **RT engaged only** (modes 4 + 6);
-`rb_fog`-gated (fog off = byte-identical, INV-8).
+*and* behind a pillar as the camera turns. RT-only and `rb_fog`-gated, like every fog task —
+see Global Constraints (INV-7/8).
 
 **Files:**
 - Modify: `shaders/pt_common.glsl` — the 2026-07-25 `const`s; `kFogSteps` 24 → ~40;
@@ -591,13 +586,14 @@ float wisp(vec3 p, float t)
 }
 ```
 
-**Mind the `/ 64.0`:** it is the `u → u/N` step of the sampling convention and is applied to
-**both** taps above. On octave 2 the **whole** argument goes inside the division — frequency term
-*and* `kWispOffset2` — because §4.3b defines the offset as part of `u`, so dividing only the
-frequency term would shift the octave-2 lattice by 64× its intended offset. (The alternative is to
-fold `1/N` into the frequency consts and drop the divide from both taps; what must not happen is
-one tap scaled and the other not.) Getting this wrong gives 512-unit tiling
-with 8-unit features, i.e. exactly the two failure modes §4.3b exists to avoid.
+**Mind the `/ 64.0`.** It is the `u → u/N` step of the sampling convention, and **both** taps
+above get it. On octave 2 the **whole** argument goes inside the division — the frequency term
+*and* `kWispOffset2` — because §4.3b defines the offset as part of `u`. Divide only the frequency
+term and the octave-2 lattice shifts by 64× its intended offset. Get it wrong and you see 512-unit
+tiling with 8-unit features: exactly the two failure modes §4.3b exists to avoid.
+
+The one alternative is to fold `1/N` into the frequency consts and drop the divide from both taps.
+What must never happen is one tap scaled and the other not.
 
 Then multiply it into the density, reusing `misc6.x` as the clock — **no new push lane** (INV-5):
 
@@ -666,7 +662,7 @@ git commit -m "DOOM-0011: L1c Silent Hill 2 fog look -- near-white base + two-oc
 **Goal:** Stop indoor fog being a flat floor everywhere. Fog should **drift in through a doorway
 and thin as you walk deeper** (spec §4.3a amendment), graded by a load-time flood-filled distance
 to outdoor air — while a **sealed** room that merely shares a wall with outdoors stays exactly as
-it was (INV-12). Ultra/Solid **RT engaged only**; `rb_fog`-gated.
+it was (INV-12). RT-only and `rb_fog`-gated, like every fog task — see Global Constraints.
 
 **Files:**
 - Modify: `linuxdoom-1.10/r_mesh.c` / `r_mesh.h` — the flood fill + the field buffer it produces.
@@ -942,13 +938,21 @@ dark rooms — using only the existing static emitter slice.
 const `kFogFloorFallback`. Then:
 
 ```glsl
+float fogHeightPool(vec3 p, float floorZ) {
+    return exp(-max(0.0, p.z - floorZ) / kFogPoolHeight);         // denser near the floor
+}
+
 float fogDensity(vec3 p, float floorZ) {
-    float pool = exp(-max(0.0, p.z - floorZ) / kFogPoolHeight);   // denser near the floor
-    return kFogBaseDensity * pool;
+    return kFogBaseDensity * fogHeightPool(p, floorZ);
 }
 ```
 Update the call in `marchFog()` to `fogDensity(p, floorZ)` and add `const float kFogFloorFallback`
 to `pt_common.glsl` (tune-on-hardware; start at a low world Z).
+
+**Why the pool factor is its own function.** L4 stops calling `fogDensity()` and builds `sigma`
+from two separate terms, but it still needs the height pooling — and a local inside
+`fogDensity()`'s body is not visible to any caller. Splitting it out now is what makes L4's
+edit a one-liner; do not inline it back.
 
 - [ ] **Step 2: Torch shafts — nearest-few static emitters, no occlusion (Q2 start cheap)**
 
@@ -1081,15 +1085,21 @@ global haze to base density, and multiply every `Ls` contribution by `mediumTint
 
 ```glsl
     // spec §4.3b sigma_final: skyExposure gates the SKY-SOURCED term ONLY (INV-9).
+    float pool      = fogHeightPool(p, floorZ);           // L3 Step 1 -- CALL it, it is not a local here
     float skySigma  = kFogBaseDensity * skyExposure;      // outdoor haze, gated
     float areaSigma = (kAreaDensity * areaMult) + haze;   // profiles, NOT gated
-    float sigma     = (skySigma + areaSigma) * pool * wisp * strength;
+    float sigma     = (skySigma + areaSigma) * pool * wisp(p, t_s) * strength;
     //   `areaMult` comes from the profile-select block above (spec §4.5's per-profile weight).
-    //   `pool`     is L3's height factor -- already in scope at L4, since L3 ships first.
-    //   `wisp`     is L1c's noise term (Task L1c Step 3), which the spec's build order puts
-    //              first. If L4 is reached without L1c, hold `wisp` at a literal 1.0 rather
-    //              than dropping the factor -- keeping it is what makes L1c a one-line edit.
+    //   `floorZ`   and `t_s` are both already local to `marchFog()`'s loop -- `floorZ` from
+    //              L3 Step 1, `t_s` from L1c Step 3. Nothing new to plumb.
+    //   `wisp`     is a FUNCTION (L1c Step 3), so it must be called: `wisp(p, t_s)`. The bare
+    //              identifier is not a value and will not compile. If L4 is somehow reached
+    //              without L1c, substitute the literal `1.0` -- keeping the factor in place is
+    //              what makes L1c a one-line edit later.
 ```
+- **`fogDensity()` loses its last caller here.** Once `sigma` is built from the split terms,
+  grep for `fogDensity(` — if nothing else calls it, delete it in this same commit rather than
+  leaving a dead helper. `fogHeightPool()` stays; it is what the line above calls.
 - **Verify by construction, not by eye:** with `rb_fog` on, a goo room under a solid roof
   must show green fog at a density independent of `kIndoorFogScale` — temporarily setting
   `kIndoorFogScale = 0` must NOT remove the goo pool. If it does, the split did not land.
@@ -1118,19 +1128,19 @@ git commit -m "DOOM-0011: L4 area profiles + colour — goo tint, hell haze, med
 
 ---
 
-## Task L5 — Denoise / quality pass: depth-guided upsample, dither + phase tune
+## Task L5 — Denoise / quality pass: position-guided upsample, dither + phase tune
 
 **Goal:** Make the fog **smooth, not grainy or crawling** in a slow pan, holding shaft shape. Swap
-L1's plain-bilinear upsample for a **depth-guided bilateral** one, with the sky-seam bilinear
+L1's plain-bilinear upsample for a **position-guided bilateral** one, with the sky-seam bilinear
 fallback; tune dither, phase, anisotropy.
 
 **Files:**
-- Modify: `shaders/svgf_composite.comp` (`fetchFogBilinear` → depth-guided bilateral upsample)
+- Modify: `shaders/svgf_composite.comp` (`fetchFogBilinear` → position-guided bilateral upsample)
 - Modify: `shaders/pathtrace.comp` / `pt_common.glsl` (dither + `kFogAnisotropy` tuning only)
 
 **Interfaces:**
-- Consumes: the fog image (L1), the gbuffer depth (`gpos`, already read in `svgf_composite.comp`),
-  the sky sentinel `gp.w < 0.0` (`:66`).
+- Consumes: the fog image (L1), the gbuffer **world position** (`gpos`, already read in
+  `svgf_composite.comp`), the sky sentinel `gp.w < 0.0` (`:66`).
 - Produces: the final upsampled fog fetch used by both composite branches. No new interfaces.
 
 **Existing code to read first:**
@@ -1139,23 +1149,35 @@ fallback; tune dither, phase, anisotropy.
   fallback trigger).
 - `r_vulkan.cpp:7561-7568` — the a-trous passes (the **escalation** path, Q6, only if bilateral crawls).
 
-- [ ] **Step 1: Depth-guided bilateral upsample**
+- [ ] **Step 1: Position-guided bilateral upsample**
 
-Replace `fetchFogBilinear` with a bilateral fetch: sample the four half-res fog texels around `p`,
-weight each by `exp(-|depth_full − depth_half| / kFogDepthSigma)` (reject neighbours across a big
-depth step, so a shaft against a near wall doesn't bleed onto far geometry). **At sky / far-depth
-pixels** (`gp.w < 0.0`, §4.6) a depth guide has no valid neighbour depth at the sky/wall seam →
-**fall back to plain bilinear** there (no depth weighting), keeping the shaft-against-sky
-reconstruction smooth:
+**There is no depth buffer to guide this with — use the world position that is already there.**
+`gpos` holds the primary hit's **world position** in `gp.xyz`; `gp.w` is the **material id**
+(`uint id = uint(gp.w + 0.5);` on the surface branch), with `gp.w < 0.0` as the sky sentinel. A
+weight built from `gp.w` would be comparing material ids, which is meaningless. Guiding on
+`gp.xyz` needs no new image and no new push-constant lane.
+
+Replace `fetchFogBilinear` with a bilateral fetch: for each of the four half-res fog texels around
+`p`, read the gbuffer at **that texel's own full-res pixel** (`imageLoad(gpos[cur], q * 2)`) and
+weight it by how far its hit point sits from the centre pixel's, so a shaft against a near wall
+doesn't bleed onto far geometry. **At sky pixels** (`gp.w < 0.0`, §4.6) there is no hit point to
+compare → **fall back to plain bilinear** there, keeping the shaft-against-sky reconstruction
+smooth:
 
 ```glsl
-vec4 fetchFog(ivec2 p, float depthFull) {
-    if (depthFull < 0.0) return fetchFogBilinearPlain(p);   // sky seam: no depth guide (§4.6)
-    // else: 4-tap depth-weighted bilateral over the half-res fog target
+vec4 fetchFog(ivec2 p, vec4 gpFull) {
+    if (gpFull.w < 0.0) return fetchFogBilinearPlain(p);   // sky seam: no guide (§4.6)
+    // else: 4-tap bilateral over the half-res fog target,
+    //   weight_i = bilinear_i * exp(-length(hit_i - gpFull.xyz) / kFogDepthSigma)
+    //   where hit_i = imageLoad(gpos[cur], q_i * 2).xyz
+    // Skip any neighbour that is itself sky (its own gp.w < 0.0). If all four are skipped,
+    // return fetchFogBilinearPlain(p) so the fetch always yields something.
     ...
 }
 ```
-Add `const float kFogDepthSigma` (tune). Wire both composite branches to `fetchFog(p, gp.w)`.
+Add `const float kFogDepthSigma` to `pt_common.glsl` — it is a **distance in world (DOOM) units**,
+not a depth ratio: start near a room width and tune down until fog stops bleeding across a
+near/far edge. Wire both composite branches to `fetchFog(p, gp)` — pass the whole `gp`, not `gp.w`.
 
 - [ ] **Step 2: Tune dither + phase (look only)**
 
@@ -1177,7 +1199,7 @@ that decision in the commit. Screenshot; user sign-off.
 ```bash
 git add linuxdoom-1.10/shaders/svgf_composite.comp linuxdoom-1.10/shaders/pathtrace.comp \
         linuxdoom-1.10/shaders/pt_common.glsl
-git commit -m "DOOM-0011: L5 denoise pass — depth-guided fog upsample + dither/phase tune"
+git commit -m "DOOM-0011: L5 denoise pass — position-guided fog upsample + dither/phase tune"
 ```
 
 ---
@@ -1320,7 +1342,7 @@ The rest:
   (pooling) + L4 (tint). §4.4 sky shafts (`kSunDir`, one ray, no-sky case) → L2; torch shafts
   (static slice, nearest-few, no occlusion) → L3. §4.5 profiles (clear/goo/hell, the concrete hell
   rule) → L4. §4.6 half-res + per-mode composite + sky-seam bilinear fallback → L1 (skeleton +
-  fallback) + L5 (bilateral). §5 data (fog image + bindings, `misc6.z/.w`, `rb_view_t` field,
+  fallback) + L5 (position-guided bilateral). §5 data (fog image + bindings, `misc6.z/.w`, `rb_view_t` field,
   `rb_fog`, seven menu edits, `;` key) → L1 (image) + L4 (`rb_view_t`/`misc6.w`) + L6 (dial/menu/key).
   §6 perf (profiler slot + ≤ 15 % gate) → L6. §8 **INV-1..12** → Global Constraints (INV-1..8) +
   the per-task guards listed in the next bullet (INV-9..12).

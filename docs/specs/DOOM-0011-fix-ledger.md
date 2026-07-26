@@ -30,6 +30,10 @@ grep -n "f₁\|f₂\|v₁\|v₂"         $S      # renamed to kWispFreq1/2, kWis
 awk '/Step 6: Apply fog in .svgf_composite/,/Step 7/' $P | grep "misc6\[2\]"   # must be EMPTY:
                                         # svgf_composite.comp has no misc6 -- it gates on misc3.y
 grep -n "binding 3\|binding 4\|binding 5" $S $P   # set-0 bindings: noise 3, seep 4, UBO 5
+grep -n "depth-guided\|depth guide"  $S $P   # must be EMPTY: L5 guides on WORLD POSITION;
+                                        # gpos.w is a material id, there is no depth buffer
+grep -n "\* wisp \*"              $P   # must be EMPTY: wisp is a FUNCTION -- wisp(p, t_s)
+grep -n "fogHeightPool"          $P   # L3 defines it, L4 calls it; `pool` is not a local there
 ```
 
 **Also verify after every batch:** that each edit actually landed. A batched
@@ -174,16 +178,198 @@ two cold readers took two loops to notice.
 
 ---
 
+## Loop 8 — 2026-07-26
+
+**Tally:** CRITICAL 2 · HIGH 0 · MEDIUM 4 · LOW 5 · INFO 0 — **11 verified, 0 dismissed.**
+Two Sonnet lanes (~385k) plus the orchestrator's standing-grep pre-pass, which came back clean
+this time. First loop to carry a **second mandate**: the user asked for the docs to be made
+plainer and shorter, so both lanes reported prose findings alongside correctness ones.
+
+**The spec lane returned zero correctness findings** — the first clean correctness read in eight
+loops. Every symbol, struct field, constant, binding and derivation it checked matched the tree.
+All six of its findings were prose. **Both CRITICALs came from the plan lane**, and both were the
+same defect class as loops 5, 6 and 7: shader code written into the doc that could not compile.
+
+| # | Sev | Fix | Ripples chased |
+|---|-----|-----|----------------|
+| 8.1 | CRITICAL | **L4's `sigma` line used `pool` and `wisp` as bare values.** `pool` was a local inside `fogDensity()`'s body — invisible to any caller, and L4 stops calling `fogDensity()` anyway; `wisp` is a *function* (L1c Step 3), so the bare identifier is not a value. Split `fogHeightPool()` out of `fogDensity()` at L3 Step 1, and L4 now calls both: `fogHeightPool(p, floorZ)` and `wisp(p, t_s)` | L3 Step 1 code block rewritten (the split); a note added there explaining why the helper exists, so a later editor does not inline it back; a note at L4 that `fogDensity()` loses its last caller and should be deleted in the same commit; confirmed `floorZ` (L3) and `t_s` (L1c) are both already local to `marchFog()`'s loop, so nothing new is plumbed |
+| 8.2 | CRITICAL | **L5's "depth-guided bilateral" had no depth on either side.** It weighted by `gp.w`, which is the primary hit's **material id** (`uint id = uint(gp.w + 0.5);` in the shipped `svgf_composite.comp`), and no earlier task ever stored a depth for the four half-res fog neighbours. Rewritten as a **position-guided** filter: `gpos.xyz` already holds the hit's world position, and each neighbour's own full-res gbuffer texel supplies its comparison point — no new image, no new push lane, no current-camera constant | Every "depth-guided" mention retitled across both docs (task heading, goal, Files, Interfaces, commit message, the file-map table, L1's forward reference, spec §4.6, Q6, Q18, the §7 L1 row, the self-review's §4.6 mapping); `kFogDepthSigma`'s spec §5 entry now states its **units** (world units between two hit positions, not a depth ratio); the sky fallback reworded from "no depth guide" to "unguided"; a new standing grep added above so `depth-guided` can never creep back |
+| 8.3 | MEDIUM | **The spec's 132-line cold-eyes log** sat between the reader and §1, duplicating a document that exists for exactly this content. Moved **verbatim** into this ledger as an appendix; the spec keeps a three-row summary table and a pointer | Spec status header ("log below" → the ledger); the plan's banner ("Its log lives in the spec's header" → the ledger); loop count 7 → 8 in both; § Contents never listed the log, so no change there. Spec: 1599 → 1491 lines |
+| 8.4 | MEDIUM | **§7's L1b and L1c "Verify" cells were paragraph-length**, defeating the point of a table. Both cut to a one-line summary, with the full checklists moved to a new **"Acceptance detail — L1b and L1c"** subsection below the table | Every criterion preserved as a bullet, none dropped; the L1c gate bullet now points at §6's new budget table instead of re-deriving the arithmetic (see 8.5); INV-11 named explicitly on the `kWispAmp = 0` bullet, which the prose version left implicit |
+| 8.5 | MEDIUM | **The layered perf budget existed only as prose** — five percentages and two opposite senses of "≤/≥" spread across non-adjacent paragraphs, with "L2–L5 share ≥ 6 %" easy to misread as a ceiling when it is a floor. Added a five-row budget table at the top of §6, with a plain-English note that the L2–L5 row is a promise *to* those layers | The §7 L1c gate bullet now defers to it; the prose derivations below are left intact as the working, with the table declared the version to check against |
+| 8.6 | MEDIUM | **The same "RT-only, `rb_fog`-gated, fog-off byte-identical" clause opened L1b, L1c and L1d** near word-for-word, when Global Constraints already states it | All three shortened to one clause pointing at Global Constraints; INV-7/8 still named at each site so the tasks stay self-checking |
+| 8.7 | LOW | "Jensen's inequality" invoked with no gloss for a reader who is not a graphics programmer | Replaced with the plain statement ("averaging *through* a curve is not the same as taking the curve of the average"). The transmittance formula itself is load-bearing and stays |
+| 8.8 | LOW | The seg-flood-fill rationale was one run-on sentence carrying two independent reasons | Split into "for two reasons — First… Second… Either way…". No claim changed |
+| 8.9 | LOW | §9 "Alternatives considered" omitted the two rejected exposure methods argued inline in §4.3a, so it was not the complete index its title promises | A lead paragraph now indexes them and points at §4.3a, where the reasoning stays |
+| 8.10 | LOW | L1b Step 5 re-printed the three build commands verbatim; every other task references "L1 Step 7 commands" | L1b now references them too. The one detail L1b's copy carried and L1's lacked (that the SPIR-V compile is what catches GLSL errors) was **moved up into L1 Step 7**, not dropped, plus a line making it explicit that every later task means those same three commands |
+| 8.11 | LOW | L1c's `/64.0` explainer packed a claim, its reason, its consequence and an aside into one 45-word sentence | Split into four short sentences, with the "fold `1/N` into the consts instead" alternative moved to its own trailing paragraph. Precision kept — this one documents a bug that shipped wrong once |
+
+**Post-batch ripple sweep:** all standing greps re-run plus the three new ones. `depth-guided`
+returns empty across both docs; `fogHeightPool` appears in exactly the four expected places
+(L3 definition, L3 wrapper, L4 call, L4 orphan note); no bare `* wisp *` remains; no `7 loops`
+leftovers. The moved log left no dangling reference.
+
+**Lesson.** The prose mandate paid for itself in a way worth recording: the spec lane found
+**zero** correctness defects and six real readability ones, while the plan lane found two
+unbuildable code blocks and almost nothing else. The two documents have different failure modes —
+the spec rots into *density*, the plan rots into *code that does not compile*. Reviewing both
+with one checklist under-serves each. Loop 9, if run, should keep the split.
+
+---
+
 ## Open — not yet fixed
 
-- **Cold-eyes has not converged.** Loop 7 returned 2 CRITICALs and 2 HIGHs, all substantive, so
-  loop 8 is owed. The `--max-loops` cap of 5 was passed at loop 6 — each further loop is an
-  explicit user call, not an automatic re-run. Trend: 15C+24H → 3C+2H → 2C+5H → 2C+2H.
-  **Judgement for whoever picks this up:** loop 7's findings were concentrated in the newly-written
-  L1c/L1d text, which has now been fixed and re-swept. A loop 8 that reads the *fixed* L1c/L1d is
-  worth running before implementation; a loop 8 over L1/L1b/L2–L6 is likely low yield — those have
-  been read cold five times.
+- **Cold-eyes has not converged.** Loop 8 returned 2 CRITICALs, both unbuildable shader code, so
+  loop 9 is owed. Trend: 15C+24H → 3C+2H → 2C+5H → 2C+2H → **2C+0H**. The CRITICAL count has
+  been stuck at 2 for three loops while HIGH has fallen to zero — the tail is not thinning as
+  fast as it looks, because each loop reads a *different* part of the plan for the first time.
+  **Judgement for whoever picks this up:** loop 8's CRITICALs were in **L4 and L5**, tasks no
+  earlier loop had read as code. L1c and L1d have now been read twice and swept twice. The
+  remaining unread-as-code surface is **L2, L3 and L6**; a loop 9 aimed squarely at the GLSL and
+  C++ blocks in those three is the highest-yield run left, and it is a *narrow* one. A loop 9
+  that re-reads the spec's prose is likely wasted — loop 8's spec lane came back correctness-clean.
 - ~~The plan has no L1c and no L1d task.~~ **Written 2026-07-26**, and **first cold-read at loop 7**
   (2 CRITICALs, both undeclared shader identifiers, both fixed).
 - **L1b's measured Δ is still unrecorded**, so L1c's `8 % − Δ(L1b)` allowance cannot be
   computed yet (§6).
+
+---
+
+## Appendix — the cold-eyes loop log
+
+Moved here verbatim from `DOOM-0011-volumetric-lighting.md` on 2026-07-26 (loop 8): it is
+review history, and this is the review-history document. The spec keeps a summary table and
+a pointer to this appendix.
+
+**Cold-eyes log — 2026-07-25 amendment** (rule 14 — looped until convergence; 3 lanes
+= amendment-vs-code accuracy + whole-doc coherence + cross-doc drift, each loop cold):
+- **Loop 7** — CRITICAL 2 · HIGH 2 · MEDIUM 4 · LOW 4 · INFO 0 (2 lanes + an orchestrator
+  standing-grep pre-pass; 12 verified, 0 dismissed). First loop to read the **L1c/L1d tasks**,
+  which had never been reviewed. Both CRITICALs were unbuildable code in those new tasks:
+  L1d's `uSeepField`/`worldToSeepUV` were used but **never declared** — no binding, no UBO layout,
+  no transform formula anywhere in either document — and the plan's `svgf_composite.comp` snippet
+  gated fog on `pc.misc6[2]`, a field that shader's 120-byte `SvgfPC` does not have (the shipped
+  code correctly uses `misc3.y`; L5 edits that same block). Also: the plan's own self-review
+  claimed `sunRayMissesGeometry`/`emitterCentroid`/`emitterLe` were pre-existing interfaces when
+  its own steps author all three; `occluded()` takes 4 args, not the 3 the L1b sketch passed; and
+  the octave-2 wisp tap was missing its `/64.0`. **The pattern held for a fourth loop: the worst
+  findings were defects in the previous batch's own new text.**
+- **Loop 6** — CRITICAL 2 · HIGH 5 · MEDIUM 3 · LOW 2 · INFO 0 (2 lanes, citations out of scope,
+  ~304k). Four of the seven worst findings were defects inside **loop 5's own `σ`-split fix**:
+  an undefined `gooMult`, a set-but-never-read `densMul`, a `wisp` term with no owning task, and
+  an invented `kGooDensityMul` the spec never names. Two further ripples were caught only by the
+  fix ledger's standing greps, not by either lane.
+- **Loop 1** — CRITICAL 1 · HIGH 10 · MEDIUM 15 · LOW 12 · INFO 2. Headline: `skyExposure`
+  multiplied `areaMult`, so every roofed room (all goo, all hell interiors, every
+  torch-lit room) would have had its fog driven to 0–10 % of base — cancelling the
+  coloured-fog feature by construction. Also: the seep's connectivity test was "not
+  one-sided", but a **closed DOOM door is two-sided**, so fog would pour through every
+  shut door; the profiler is `` \ `` not `` ` ``; `kWispWeight2`'s "SH2 90/128"
+  justification was wrong twice over (90 is the Enhanced Edition's *modified* alpha, and
+  a 2-D compositing alpha is not an octave weight). Side-effects fixed outside this spec:
+  `docs/standards/renderer.md`'s push ledger was stale for **shipped** code, and
+  DOOM-0183's spec still claimed `misc6.z/.w` reserved.
+- **Loop 2** — CRITICAL 0 · HIGH 6 · MEDIUM 12 · LOW 12 · INFO 0. The wisp drift formula
+  put velocity **outside** the frequency scale, drifting the field 512× too fast; L1c's
+  spot-check reused the whole-feature gate, so passing L1c would have guaranteed L6
+  fails; loop 1's split-density fix rescued goo and hell but **not** the plain roofed
+  room, so Q12's `kIndoorFogScale = 0` had to be struck; `kAreaDensity` appeared in every
+  formula and was defined nowhere; the sky closed form still in-scattered `SKY_COLOR`,
+  which would have hazed the mountains blue against a near-white foreground.
+- **Loop 5** — CRITICAL 3 · HIGH 2 · MEDIUM 2 · LOW 0 · INFO 0 (2 lanes, narrowed:
+  citations were excluded, having been re-verified against source mechanically). Notably,
+  **two of the three CRITICALs were defects in loop 4's own fixes**, which is the argument
+  for the cold re-read. (i) Loop 4 moved the seep graph to **sectors** to dodge the
+  miniseg problem, but a sector-indexed Dijkstra settles exactly **one** distance per
+  sector — the per-node value the very next step declares "would defeat the whole
+  feature". The search state has to be the **portal**; rewritten that way. (ii) The new
+  "border cells are `dMax` by construction" was asserted rather than made true — a level
+  whose outdoor sector runs flush to its bounding box has `d = 0` at the true edge texel,
+  which `CLAMP_TO_EDGE` would then project *outward*, inverting the guarantee the sentence
+  exists to give; fixed with an explicit one-cell void padding rule. (iii) In the plan,
+  **L4 was charged with replacing the `σ = … × skyExposure` form and never did** — its
+  edit folds profile density into `fogDensity()`, whose result is still multiplied by
+  `skyExposure`, so every roofed goo/hell room would have kept ~5 % of its intended
+  density while the play-test passed weakly on a thin green tint. Also: the plan's perf
+  gate was still `≤ 5 %` in the two places that actually decide pass/fail (heading said
+  15 %, criterion said 5 %), and loop 4's own "all twelve invariants are pinned" claim was
+  false — only INV-1..8 were, since INV-9..12 belong to the L1c/L1d tasks, unwritten at the
+  time (written 2026-07-26; all twelve are pinned now).
+- **Loop 4** — CRITICAL 15 · HIGH 24 · MEDIUM 34 · LOW 34 · INFO 8 (6 lanes; 3 findings
+  dismissed unverified). Two classes dominated. **(1) The seep's traversal was broken in
+  two independent ways.** Vanilla DOOM has **no minisegs** — `P_LoadSegs` gives every seg
+  a linedef (`p_setup.c:196-198`) — so a *subsector* graph built from segs leaves every
+  multi-leaf room disconnected and `d` cannot propagate inward from a doorway at all; and
+  resolving `d` **per node** rather than per grid cell reproduces exactly the abrupt
+  room-boundary step the section itself rejects as option (C). Both fixed by moving the
+  graph to **sectors** and resolving distance **per cell** from portal points. Also
+  unhandled: self-referencing sectors (two-sided, full opening, drawn as a solid wall — a
+  fresh INV-12 leak), levels with no sky at all, the unreachable/void sentinel (an `R16F`
+  `+inf` under a zero bilinear weight yields `NaN`), the map-extent overflow, and the
+  sampler address mode (`REPEAT` would wrap outdoor `d = 0` onto indoor air at the
+  opposite map edge). **(2) Every `file:line` citation had rotted again** — `r_vulkan.cpp`
+  by +4..+6 and `pathtrace.comp` by +2, because both files grew under DOOM-0254/0263 after
+  loop 3 re-anchored them. 50 citations re-verified against the source and corrected;
+  three landed on entirely unrelated constructs (`m_menu.c:1464` was the menu *title*, not
+  the De-tile row). Also: L2's sky term never said whether it **replaces or adds to** L1's
+  shipped flat sky ambient (`marchFog`'s own comment reads "L2 adds…" — the double-count
+  class this doc has shipped before); `kSunDir` was called "new" though it is already
+  declared at `pt_common.glsl:42`; §7 credited L1 with a "bilateral upsample" when the
+  shipped code is a plain bilinear; L1b's spot-check reused the whole-feature ≤ 15 % gate
+  (the identical defect loop 2 fixed for L1c); L1c's own row bound two different
+  thresholds (8 % and 15 %) to one decision; the menu shopping list was one edit short (a
+  missing forward declaration — the build would not compile); and the implementation plan
+  carried nine CRITICALs of its own, including the struck `σ = … × skyExposure` form and a
+  `kFogBaseDensity` 19× the shipped value.
+- **Loop 3** — CRITICAL 1 · HIGH 2 · MEDIUM 11 · LOW 14 · INFO 2. The flood fill was
+  specified cell-to-cell, but comparing two cells' *sector heights* carries no
+  information about whether a **wall** stands between them — it would have walked
+  straight through walls in the common case. Rewritten to flood over **segs**
+  (`P_LineOpening`) and rasterise afterwards. Also: the distance field had no
+  world→texel transform and no lane to carry one (added a UBO); sets 0 and 2 were never
+  ruled out as descriptor homes — set 2 is where L1 already put `fogImg` — so the
+  "needs its own set" conclusion was over-engineered.
+
+**Cold-eyes log — 2026-07-24 amendment** (rule 14 — looped until convergence; 2 lanes
+= amendment-accuracy + whole-doc-coherence, each loop cold):
+- **Loop 1** — CRITICAL 0 · HIGH 3 · MEDIUM 3 · LOW 5 · INFO 3 (9 fixed, 2 dismissed).
+  The up-ray + L2 sun ray "reaches custom-index-2 sky" was wrong (shadow mask `0x01`
+  can't hit the mask-`0x04` sky instance → detect open sky via the **miss**); the mode-6
+  sky-distance fog can't run in `svgf_composite.comp` (no `pt_common` consts) → the
+  megakernel writes `fogImg`, the existing fold reads it; plus a sweep of post-L1
+  citation drift in the pre-existing body (`main()` 762→798, push-constant asserts,
+  etc.); profiler-pool "8/8 full" corrected.
+- **Loop 2** — CRITICAL 1 · HIGH 6 · MEDIUM 2 · LOW 3 · INFO 2 (10 fixed, 2 dismissed).
+  INV-9 still said "custom-index 2" (reconciled to the mask/miss mechanism); "up-ray
+  roughly doubles the ray count" was wrong — the shipped march does **zero** rays/sample,
+  so it is the *first* ray; the L1b 60 FPS spot-check collided with the goo room's
+  pre-existing ~40 FPS (pinned to a non-goo scene + added-Δ); more "Depends on"/INV-7
+  citation drift; the profiler pool is in fact **all 8 slots used** (loop-1 trusted a
+  stale code comment).
+- **Loop 3** — CRITICAL 0 · HIGH 1 · MEDIUM 1 · LOW 6 · INFO 2 (8 fixed, 1 dismissed).
+  Only citation-precision + wording left: sky-branch range `:93-104`→`:93-107`; INV-8
+  pin `:8177`→`:8207`; three menu draw citations; a note that L1's composite-side gate
+  rides a separate `SvgfPC.misc3.y` lane; `skyExposure` is binary per-sample. An
+  independent cold audit verified ~45 other citations byte-exact. **Converged**
+  (polish) — no design/structural/mechanism finding remains.
+
+**Cold-eyes log** (rule 14 — looped until convergence, 2026-07-23):
+- **Loop 1** (2 lanes) — CRITICAL 0 · HIGH 1 · MEDIUM 5 · LOW 4 · INFO 3, all verified
+  & fixed. Headline: the fog composite mixed colour spaces at the sky/wall seam (pinned
+  linear-radiance on both branches); the menu plumbing listed 2 of 6 sites; "DOOM-0042
+  (emitter set)" was the wrong ID (→ DOOM-0009 buffer / DOOM-0084 static slice); the
+  perf gate read in FPS not ≤ 5 % present-total; INV-7/8 named no falsifier
+  (→ `-shotcompare` / by-construction).
+- **Loop 2** — CRITICAL 0 · HIGH 0 · MEDIUM 3 · LOW 4 · INFO 2, all verified & fixed.
+  The mode-4 composite hook was unspecified (added `pathtrace.comp:1024`); the INV-7
+  `-shotcompare` falsifier was wrong — it renders RT-only, so reserved for INV-8;
+  "mirror `rb_wet` exactly" was the wrong menu template for a 0..3 dial (→ `rb_detile`).
+- **Loop 3** — CRITICAL 0 · HIGH 1 · MEDIUM 2 · LOW 4 · INFO 1, all verified & fixed.
+  `rb_fog`'s shipped default conflicted with DOOM-0208's canonical-config pin
+  (reconciled: default `=1`, golden re-blessed with fog, fog-off identity
+  by-construction); "no new bindings" vs the new fog image (reworded); transmittance
+  "RGB or scalar" vs the `RGBA16F` packing (pinned scalar; coloured absorption → Q11).
+- **Loop 4** — CRITICAL 0 · HIGH 0 · MEDIUM 1 · LOW 3, all verified & fixed. One
+  completeness gap — the half-res fog upsample at sky/far-depth pixels (added a
+  plain-bilinear fallback at the sky sentinel); the rest polish. Reviewer verdict:
+  "genuinely tight." **Converged** — no substantive finding remains.
