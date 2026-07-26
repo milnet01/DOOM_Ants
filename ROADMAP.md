@@ -693,6 +693,33 @@ parked ideas (💭 considered) until we commit to and design each one.
   (d2c0eb4, 18aef66, pushed). NOT yet converged — the /cold-eyes
   --max-loops cap of 5 is reached and loop 5 still returned 3 CRITICALs,
   so a loop 6 is owed before L1c is implementable.
+  Progress (2026-07-26, cont.): cold-eyes loop 6 run (2 Sonnet lanes,
+  citations out of scope, ~304k) — 2 CRITICAL, 5 HIGH, 3 MEDIUM, 2 LOW,
+  0 unverified; 15 fixes in 2420117. Four of the seven worst findings
+  were defects in loop 5's own sigma-split fix (undefined gooMult, dead
+  densMul, wisp with no owning task, an invented kGooDensityMul) — the
+  third consecutive loop where the previous loop's fixes seeded the next
+  loop's findings. Two further ripples were caught only by the fix
+  ledger's standing greps, not by either lane. Real new findings: the
+  L1c budget reservation never subtracted L1d's own 1% seep tap; §4.5
+  promised composable profiles but gave no mediumTint combination rule
+  (now: densities add, tints multiply); INV-4/5/10/11 gained falsifiers;
+  INV-12 now states the two guards that make it true.
+
+  Then, on the user's call, the plan's largest gap was closed rather
+  than looping again: **Tasks L1c and L1d are WRITTEN** (108fe9e, 8 steps
+  each). All twelve invariants are now pinned to tasks. Writing them
+  made a dozen statements stale (banner, file table, L2/L4 cross-refs,
+  self-review coverage) — all chased. Two further stale topic sentences
+  surfaced, both the same defect: a fix changed a passage's conclusion
+  and left its opening line asserting the old one (§4.3a "the graph is
+  over SECTORS" vs step 1's portals; §5 "need their OWN descriptor set"
+  vs its own set-0 resolution).
+
+  STATUS: cold-eyes has NOT converged (6 loops, cap of 5 passed — each
+  further loop is an explicit user call), and L1c/L1d have not had a
+  cold read. NEXT: implement L1c then L1d. Full audit trail in
+  docs/specs/DOOM-0011-fix-ledger.md.
 
   Loop 4 (6 lanes): CRITICAL 15 / HIGH 24 / MEDIUM 34 / LOW 34 / INFO 8.
   Two classes dominated. (1) The seep's traversal was broken twice over:
