@@ -397,6 +397,26 @@ const char* I_ControllerConfirmLabel(void)
 }
 
 
+// Report a debug hotkey's new state BOTH to the terminal and on screen. The
+// terminal alone is no good while the game has the display: a user pressing a
+// toggle mid-play-test has no way to tell whether it registered, or which of four
+// states it landed on (user, 2026-07-27, mid fog A/B). One shared buffer is
+// deliberate -- a second press overwrites the first, which is what you want when
+// the message IS the current state.
+static void I_DebugKeyMessage(const char* text)
+{
+    static char buf[64];
+
+    strncpy(buf, text, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+    printf("%s\n", buf);
+    fflush(stdout);
+    // Only during play -- the HUD message line does not exist in the menus, and
+    // players[] holds no mobj before a level is loaded.
+    if (players[consoleplayer].mo)
+	players[consoleplayer].message = buf;
+}
+
 static void I_GetEvent(SDL_Event* sdlevent)
 {
     event_t event;
@@ -434,8 +454,8 @@ static void I_GetEvent(SDL_Event* sdlevent)
 	{
 	    extern int rb_profile;          // r_vulkan.cpp
 	    rb_profile = !rb_profile;
-	    printf("Per-pass GPU profiler %s (Solid + Ultra)\n", rb_profile ? "ON" : "OFF");
-	    fflush(stdout);
+	    I_DebugKeyMessage(rb_profile ? "Per-pass GPU profiler ON"
+	                                 : "Per-pass GPU profiler OFF");
 	    break;
 	}
 	// Right-bracket (`]`) cycles the Ultra RT de-tile quality (DOOM-0181): off ->
@@ -479,10 +499,12 @@ static void I_GetEvent(SDL_Event* sdlevent)
 	if (sdlevent->key.keysym.sym == SDLK_SEMICOLON && !sdlevent->key.repeat)
 	{
 	    extern int rb_fog;              // r_vulkan.cpp
-	    static const char* fog_name[4] = { "OFF", "Low", "Med", "High" };
+	    static const char* fog_msg[4] = { "Volumetric fog: OFF",
+					      "Volumetric fog: Low",
+					      "Volumetric fog: Med",
+					      "Volumetric fog: High" };
 	    rb_fog = (rb_fog + 1) % 4;
-	    printf("Volumetric fog: %s (RT only)\n", fog_name[rb_fog]);
-	    fflush(stdout);
+	    I_DebugKeyMessage(fog_msg[rb_fog]);
 	    break;
 	}
 	// TEMPORARY DIAGNOSTIC (DOOM-0267) -- slash (`/`) dumps where the player is
