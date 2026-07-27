@@ -821,6 +821,37 @@ float skyFogOpticalDepth(vec3 ro, vec3 rd, float strength)
     float h0     = max(0.0, ro.z - uintBitsToFloat(pc.fogFloorZ));
     float sigma0 = kFogBaseDensity * exp(-h0 / kFogPoolHeight);
 
+    // DOOM-0011 L1e (§4.3c): the FLOOR layer's own closed form. Not optional and not a
+    // refinement -- sky pixels never enter marchFog, so leaving the floor layer out here would
+    // hand the skyline a ~37% step against the walls directly beneath it (0.010*exp(-41/24)*256
+    // = 0.46 optical depth of floor fog that the wall gets and the sky does not). That is the
+    // exact class of seam §4.6a exists to remove. Same two-branch shape as the aerial term,
+    // and the two branches meet exactly at rd.z = 0 (both -> sigmaF * kFloorFogRange).
+    float eH     = exp(-h0 / kFloorFogPool);
+    float sigmaF = kFloorFogDensity * eH;
+    float tauF;
+    if (rd.z > 0.0) {
+        // Ascending: INT[0..inf] D*exp(-(h0 + rd.z*t)/P) * exp(-t/R) dt, exactly. No graze
+        // clamp is needed here -- unlike the aerial layer, this one's exp(-t/R) IS its own
+        // finite extent, so a horizontal ray converges on its own.
+        tauF = sigmaF / (rd.z / kFloorFogPool + 1.0 / kFloorFogRange);
+    } else {
+        // Descending: the ray falls to the layer base over t1, below which the density clamps
+        // to the constant kFloorFogDensity (floorFogDensity()'s max(0,...)), and the remaining
+        // tail integrates to D*R*exp(-t1/R).
+        float dzF  = max(-rd.z, 1e-5);
+        float t1F  = h0 / dzF;
+        float aF   = dzF / kFloorFogPool - 1.0 / kFloorFogRange;
+        float eT   = exp(-t1F / kFloorFogRange);
+        // aF passes through zero at |rd.z| = kFloorFogPool/kFloorFogRange = 0.094 -- WELL
+        // inside the visible range, not a corner case -- and the quotient loses all of its
+        // precision to cancellation exactly there, which is where the two branches have to
+        // agree. Same trap as (exp(x)-1)/x below, at a different threshold.
+        float head = (abs(aF) > 1e-6) ? kFloorFogDensity * (eT - eH) / aF
+                                      : sigmaF * t1F * (1.0 + 0.5 * aF * t1F);
+        tauF = head + kFloorFogDensity * kFloorFogRange * eT;
+    }
+
     if (rd.z > 0.0) {
         // Looking UP: the exact integral to infinity is sigma0 * H/rd.z. Saturate it
         // SOFTLY -- 1/path = rd.z/H + 1/kFogSkyDist -- rather than with min(), which
@@ -828,8 +859,9 @@ float skyFogOpticalDepth(vec3 ro, vec3 rd, float strength)
         // value: a flat plateau whose top edge reads as a line. The layer is not
         // infinitely wide either, so kFogSkyDist is its finite horizontal extent, not
         // an arbitrary ceiling.
-        return sigma0 * strength * (kFogPoolHeight * kFogSkyDist)
-                                 / (kFogPoolHeight + kFogSkyDist * rd.z);
+        return strength * (sigma0 * (kFogPoolHeight * kFogSkyDist)
+                                  / (kFogPoolHeight + kFogSkyDist * rd.z)
+                           + tauF);
     }
 
     // Looking DOWN (sky seen below the horizon). `max(rd.z, 0.0)` used to collapse this
@@ -847,7 +879,8 @@ float skyFogOpticalDepth(vec3 ro, vec3 rd, float strength)
     // the horizon: as rd.z -> 0 from either side, both tend to sigma0 * kFogSkyDist.
     float f  = (x > 1e-4) ? (exp(x) - 1.0) / x : (1.0 + 0.5 * x);
     return strength * (sigma0 * t1 * f
-                       + kFogBaseDensity * max(0.0, kFogSkyDist - t1));
+                       + kFogBaseDensity * max(0.0, kFogSkyDist - t1)
+                       + tauF);
 }
 
 // Returns (inscatter.rgb, transmittance). Linear radiance. rb_fog>0 checked by the caller.
@@ -913,7 +946,13 @@ vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)
         // is a function of `p` alone -- see fogDensity()'s contract.
         float baseZ = openSky ? outdoorBase    : indoorBase;
         float poolH = openSky ? kFogPoolHeight : kFogIndoorPool;
-        float sigma = fogDensity(p, baseZ, poolH) * strength * skyExposure;
+        // DOOM-0011 L1e (§4.3c): the floor layer is a THIRD addend, and it sits on the
+        // skyExposure-gated side with the aerial term (INV-9). That is what makes "thicker
+        // outside" free -- no second up-ray, no fourth constant -- and it is what keeps the
+        // INDOOR half waiting for L1d: roofed air still scales by kIndoorFogScale, so a sealed
+        // room gets 5% of the bank, not a bank at your feet.
+        float sigma = (fogDensity(p, baseZ, poolH) + floorFogDensity(p, baseZ, t))
+                      * strength * skyExposure;
         vec3  Ls    = skyAmbient;                        // L2 adds directional sky + torches
         inscatter += trans * sigma * Ls * dt;
         trans     *= exp(-sigma * dt);

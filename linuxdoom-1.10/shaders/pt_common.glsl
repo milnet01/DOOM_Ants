@@ -89,6 +89,24 @@ const float kIndoorFogScale = 0.05;   // DOOM-0011 §4.3a: fog density multiplie
                                        // roof (open sky = 1.0). 0.0 = interiors totally clear;
                                        // ~0.05 keeps a faint indoor haze. Tune on hardware (Q12).
 
+// DOOM-0011 L1e / DOOM-0272 §4.3c: the SECOND fog layer. The aerial layer above is a real
+// participating medium, so its opacity only ever GROWS with distance -- which means the density
+// that makes the air at your feet misty is the same density that turns the far end of a courtyard
+// into a white sheet. The two wants fight inside one term, and no amount of tuning separates them
+// (every re-balance on 2026-07-27 traded one for the other). This layer breaks the conflict by
+// NOT being a medium: it also falls off with distance FROM THE CAMERA, so it can be thick
+// underfoot and gone by the far wall. Deliberately non-physical; it is the standard game trick
+// that makes ground mist readable. Free to evaluate -- marchFog already has `t`.
+const float kFloorFogDensity = 0.010;  // extinction AT THE FLOOR (3x kFogBaseDensity there)
+const float kFloorFogPool    = 24.0;   // e-fold HEIGHT: knee-deep, so you wade through it. At
+                                       // eye height (41) it is already down to 18%.
+const float kFloorFogRange   = 256.0;  // e-fold DISTANCE FROM THE CAMERA -- the whole trick.
+                                       // A horizontal eye-level ray therefore collects at most
+                                       // 0.010*exp(-41/24)*256 = 0.46 optical depth (~37% haze),
+                                       // against the aerial layer's 16% at 512 units.
+                                       // Also Q26's middle column: the warped march resolves a
+                                       // 256-unit range to 0.09%, so it cannot band.
+
 // Henyey-Greenstein phase (forward/back scatter weight); cosTheta = dot(viewDir, lightDir).
 float fogPhaseHG(float cosTheta, float g) {
     float g2 = g * g;
@@ -113,6 +131,18 @@ float fogPhaseHG(float cosTheta, float g) {
 // wall hazed and the floor in front of it did not.
 float fogDensity(vec3 p, float baseZ, float poolH) {
     return kFogBaseDensity * exp(-max(0.0, p.z - baseZ) / poolH);
+}
+
+// DOOM-0011 L1e: the floor layer (§4.3c). Unlike fogDensity() this takes `t`, the distance
+// along the view ray -- and that is the one deliberate relaxation of the contract above. The
+// height factor still depends on `p` alone (so the invariant that matters, "the air at a point
+// cannot depend on what the ray eventually hits", holds); the range factor depends on the ray's
+// own parameter, which is a property of the VIEW, not of the world. That is what buys mist at
+// your feet without a white wall at distance, and it is why this cannot be folded into
+// fogDensity(): the two layers must keep separate e-fold heights.
+float floorFogDensity(vec3 p, float baseZ, float t) {
+    return kFloorFogDensity * exp(-max(0.0, p.z - baseZ) / kFloorFogPool)
+                            * exp(-t / kFloorFogRange);
 }
 
 // rb_fog strength level (pc.misc6.z: 1=Low 2=Med 3=High; 0 is gated out by the caller)
