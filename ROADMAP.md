@@ -2660,6 +2660,13 @@ parked ideas (💭 considered) until we commit to and design each one.
   Spec §4.3c went through a one-lane /cold-eyes first (1c059ed): 0C/2H/3M,
   all fixed — no build task, no constant values, a code block that
   disagreed with its own prose, the sky gap above, and an unamended INV-9.
+  Progress (2026-07-27, second): the INDOOR half is in too, and it cost
+  no new code. Both layers share the skyExposure gate, and DOOM-0011 L1d
+  (f62f468) replaced that gate's flat indoor floor with the graded seep —
+  so a room with a window now gets the floor fog at up to kSeepMax (0.5)
+  of its outdoor strength, and a sealed room still gets kIndoorFogScale
+  (0.05), exactly as §4.3c predicted when it put both layers on the same
+  gate. Awaiting the play-test that covers both halves.
 
   The load-bearing new idea is that SECOND term's range. Today's fog is a
   pure medium: opacity only ever grows with distance, which is why

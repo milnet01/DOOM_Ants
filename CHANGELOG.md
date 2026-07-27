@@ -8,6 +8,13 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Fog now drifts indoors through doorways and windows** (DOOM-0011)
+  Indoor fog used to stop dead at a roofline. It now fades in near an
+  opening onto the outdoors and thins as you walk deeper in, while a
+  sealed room that merely shares a wall with the outside stays clear —
+  the game works out the route through doorways, not the straight line
+  through the wall.
+
 - **Floor fog outdoors — mist that pools around your feet** (DOOM-0272)
   A second fog layer that fades with distance from the camera as well as
   with height, so the air at your feet can be genuinely misty without the
