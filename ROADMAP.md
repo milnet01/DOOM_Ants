@@ -516,6 +516,37 @@ with friends.
   Kind: refactor.
   Source: indie-review-2026-07-26 vk-frame.
 
+- 🚧 [DOOM-0268] **Place the player anywhere on any map and capture it headlessly.**
+  User request 2026-07-27, after DOOM-0267 cost two wrong fixes: every diagnosis had to be
+  reasoned from source because the bug only reproduced at one spot that only a human could walk
+  to, and every candidate fix needed a play-test round-trip to disprove.
+  **Part 1 SHIPPED (`8542d2b`): `-warpto X Y [ANGLE]`** in `G_WarpToSpot` (`g_game.c`), called
+  from `G_DoLoadLevel` right after `P_SetupLevel`. X/Y are map units exactly as a map editor or
+  the `/` diagnostic prints them; ANGLE is optional degrees (0 = east, counter-clockwise, the
+  Thing convention); Z is taken from the destination sector's floor. It relinks the mobj via
+  `P_UnsetThingPosition`/`P_SetThingPosition` rather than assigning x/y, so the blockmap and
+  sector lists stay correct. It found DOOM-0267's real cause on its first use.
+  **Part 2 OUTSTANDING and the reason this is only half a harness: headless GPU capture.**
+  `-shotverify <path>` already renders, captures and writes a PNG, but it cannot be driven from
+  a non-interactive shell: Vulkan hangs at window/swapchain creation under `SDL_VIDEODRIVER=x11`,
+  `wayland` AND `offscreen` alike (verified 2026-07-27, and verified identical on an unmodified
+  build, so it is the environment and not any local change). Classic runs fine headless via
+  `-bootsmoke` + the dummy driver; only the Vulkan tiers are blocked.
+  Fix to scope: a **true headless render path that never creates a surface or swapchain**.
+  Vulkan does not need either to render — the engine already draws into offscreen targets
+  (DOOM-0170 L2a) and `-shotverify` already copies from one. So the work is to let
+  `RB_Vulkan_Init` skip SDL window + surface + swapchain when a `-headless` parm is present,
+  render N warm-up frames into the existing offscreen target, capture, and exit. That would make
+  Solid and Ultra as scriptable as Classic already is, and let a renderer change be checked
+  against a golden image without a person at the keyboard.
+  Then: pair `-warpto` with `-shotverify` per tier to build a small library of
+  known-tricky viewpoints (this secret, the zigzag slits of DOOM-0270, a lift mid-travel) as
+  regression goldens — which is what DOOM-0202's `-shotcompare` gate wants and currently only
+  has one of.
+  **Layman:** A way to drop the player at any spot on any map from the command line and take a screenshot without anyone playing, so a graphics bug that only shows up in one corner of one room can be reproduced and checked automatically instead of needing someone to walk there.
+  Kind: test.
+  Source: user-request-2026-07-27.
+
 ## Phase 2 — The Spin
 
 The creative overhaul: evolve the renderer toward true 3D with hardware
@@ -2538,3 +2569,22 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** In the 3D renderers a hidden passage in E1M1 looks like a plain wall, but the original renderer shows an open doorway. The 3D view is drawing the back of a wall panel that should only be visible from the other side.
   Kind: fix.
   Source: user-play-test-2026-07-26.
+
+- 📋 [DOOM-0270] **Zigzag wall slits render as criss-cross gaps in Solid, diagonal in Classic.**
+  Found by user play-test 2026-07-27, screenshots at the same spot: Classic draws the wall's
+  diagonal slots leaning one way; Solid draws them **crossed both ways**, a lattice the original
+  never shows. Evidence: ~/Pictures/ClaudePaste/paste_20260727_075959_715_78b48b40.png (Classic)
+  and paste_20260727_080036_021_a3695423.png (Solid).
+  **Likely already fixed by DOOM-0267 (`8542d2b`) — verify before investigating further.** That
+  change made sidedef faces one-sided, including two-sided MIDtextures. A criss-cross reads
+  exactly like seeing each diagonal slot's face from the front *and* the mirrored face of the
+  same recess from behind, which is the symptom DOOM-0267 removes. If it persists after that
+  fix, the next suspects are (a) the mid quad's REPEAT tiling: `r_mesh.c` emits a mid over the
+  full `max(floors)..min(ceilings)` opening with no clamp to `textureheight[]`, while Classic
+  draws a two-sided midtexture exactly ONCE with no vertical tiling — so a short slot texture
+  would repeat down the opening in 3D and not in Classic; and (b) the alpha test: Classic skips
+  palette-index-0 posts per column, the mesh alpha-tests per texel.
+  Re-test with `-warpto` (DOOM-0268) once headless capture lands, so this gets a golden.
+  **Layman:** A wall with diagonal slots in it looks wrong in the 3D renderers — the slots appear crossed both ways instead of leaning one way like the original.
+  Kind: fix.
+  Source: user-play-test-2026-07-27.
