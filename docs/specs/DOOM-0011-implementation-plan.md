@@ -409,9 +409,12 @@ gates `marchFog`).
 
 - [ ] **Step 3: Sky-backdrop aerial fog — mode 6 (`pathtrace.comp` sky branch)**
 
-The sky backdrop is open-sky by definition, so give it full fog over `[0, kFogMaxDist]`. The sky
+The sky backdrop is open-sky by definition, so give it full fog over `[0, kFogSkyDist]`. The sky
 ray sees constant outdoor density, so a **closed form** is exact (no second march loop):
-`trans = exp(-kFogBaseDensity * strength * kFogMaxDist)`, `inscatter = SKY_COLOR * (1 - trans)`.
+`trans = exp(-kFogBaseDensity * strength * kFogSkyDist)`, `inscatter = SKY_COLOR * (1 - trans)`.
+**`kFogSkyDist` (4096), not `kFogMaxDist`** — the backdrop depicts terrain at effectively infinite
+range, so handing it the wall clamp under-hazes it and the mountains read as nearer than a wall
+(spec Q24a, shipped 2026-07-27).
 In the **mode-6 sky branch** (`~:1283-1292`), which currently writes `gpos.w=-1` + the sky into
 `gillum` and returns without touching `fogImg`, add — under `if (pc.misc6[2] != 0u)` and the same
 even/even half-res gate the surface path uses — an `imageStore(fogImg, ivec2(px)/2, vec4(inscatter, trans))`
@@ -428,7 +431,7 @@ fold the same closed-form fog before the write, in the same linear space as §4.
             colour = skyPanorama(px, w, h);
             if (pc.misc6[2] != 0u) {
                 float strength = fogStrengthScale(pc.misc6.z);
-                float trans    = exp(-kFogBaseDensity * strength * kFogMaxDist);
+                float trans    = exp(-kFogBaseDensity * strength * kFogSkyDist);
                 colour = colour * trans + SKY_COLOR * (1.0 - trans);   // aerial haze on the mountains
             }
 ```
@@ -624,12 +627,15 @@ Miss any one and you get the sky/wall seam this task's own acceptance criterion 
 3. The **mode-4** sky closed form (`:1335`).
 
 **If the mountains read washed-out at High strength**, add a separate sky-only density constant
-(`kFogSkyDensity`) and give the closed forms their own effective density — the other half of the
-fork spec §4.3b poses. Do **not** lower `kFogBaseDensity` again to rescue the sky: that undoes the
-foreground tuning this task just did, which is why the fork exists. Logged as **Q24**.
+**lower `kFogSkyDist`** (shipped 2026-07-27 at 4096) rather than adding a second sky constant —
+only the product density × distance matters, so doubling `kFogBaseDensity` here means roughly
+halving it, 4096 → ≈ 2012. Do **not** lower `kFogBaseDensity` again to rescue the sky: that undoes
+the foreground tuning this task just did, which is why the fork exists. Logged as **Q24/Q24a**.
+**Check this the moment the density changes** — at 0.0016 with `kFogSkyDist` left at 4096 the
+peaks retain 0.14 % transmittance at High, i.e. they disappear.
 
 The sky closed forms stay **wisp-free and pool-free** (INV-10): they remain
-`kFogBaseDensity * strength` integrated over `[0, kFogMaxDist]` and nothing else. A closed form
+`kFogBaseDensity * strength` integrated over `[0, kFogSkyDist]` and nothing else. A closed form
 requires constant density, and billow structure on the mountains would be sub-pixel anyway.
 
 Also **re-judge the `SKY_FOG_COL` screen-space band** (`:763-764`, mixed at `:771`) against the
@@ -1491,9 +1497,12 @@ from `g.lastView.hazeDensity` in `RecordRtTrace` (there is no bare `view` there)
 - **Q10** — fog on/off by default. The plan ships `rb_fog=1`; a one-line flip if review prefers 0.
 - **Q23** — torch-emitter selection, per sample or per ray. L3's two-pass loop still scans every
   static emitter once per sample; the per-ray fallback is named but needs a measurement to decide.
-- **Q24** — whether the sky needs its own density after L1c's ≈2× raise. Decided by L1c's
-  "distant sky still readable at High" check; if it fails, the answer is a separate
-  `kFogSkyDensity`, never another `kFogBaseDensity` change.
+- **Q24 / Q24a** — the sky's haze. **Q24a shipped 2026-07-27**: the backdrop now has its own
+  distance, `kFogSkyDist` (4096), because sharing `kFogMaxDist` left the mountains reading as
+  *nearer* than a wall. **Q24 is the same lever from the density side and is still open**: when
+  L1c doubles `kFogBaseDensity`, `kFogSkyDist` must roughly halve (≈ 2012) or the peaks vanish
+  — 0.14 % transmittance at High. Adjust that one constant; never `kFogBaseDensity`, which would
+  undo L1c's foreground tuning.
 - **One stale comment in shipped source** — `svgf_composite.comp`'s comment above
   `fetchFogBilinear` still calls the L5 upsample "depth-guided". **L5 Step 1 owns fixing it**;
   flagged rather than edited, because that is engine source and this is a documentation pass.

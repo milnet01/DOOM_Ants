@@ -36,6 +36,15 @@ const vec3  SKY_COLOR    = vec3(0.20, 0.26, 0.40);   // bounded sky-light on a m
 // DOOM-0011: volumetric fog (single-scatter view-ray march). All tune-on-hardware.
 const int   kFogSteps        = 24;               // fixed sample count (coherent, cheap)
 const float kFogMaxDist      = 2048.0;           // clamp tHit so a long corridor can't blow budget
+const float kFogSkyDist      = 4096.0;           // DOOM-0011 Q24a: the SKY backdrop's effective
+                                 // haze distance. It depicts terrain at effectively infinite
+                                 // range, so handing it kFogMaxDist (as L1b did) gave the
+                                 // mountains exactly as much haze as a wall at the 2048 clamp --
+                                 // 80.6% for both at High -- and a nearer bright wall then read
+                                 // as MORE distant than the horizon behind it. 2x kFogMaxDist
+                                 // puts the backdrop at ~96%. This is the single sky lever:
+                                 // raise it to push the mountains further back, lower it if the
+                                 // sky ever washes out (e.g. after L1c's density raise).
 const float kFogBaseDensity  = 0.0008;           // "High"-level extinction/km-ish; subtle. tune-on-hw
 const float kFogPoolHeight   = 48.0;             // e-fold height (DOOM units) for floor pooling
 const float kFogAnisotropy   = 0.40;             // Henyey-Greenstein g (mild forward bias); 0 = isotropic
