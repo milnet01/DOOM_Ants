@@ -2533,7 +2533,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: ux.
   Source: user-request-2026-07-26.
 
-- 📋 [DOOM-0267] **Solid/Ultra draw a solid wall where Classic shows an open secret (E1M1).**
+- ✅ [DOOM-0267] **Solid/Ultra draw a solid wall where Classic shows an open secret (E1M1).**
   Found by user play-test 2026-07-26. Two screenshots at identical player state (98% health /
   8% armour / 38 bullets), Solid vs Classic: Classic draws an open doorway into the next room,
   Solid draws an unbroken wall. Ultra shows the same closed wall elsewhere in the same secret.
@@ -2569,8 +2569,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** In the 3D renderers a hidden passage in E1M1 looks like a plain wall, but the original renderer shows an open doorway. The 3D view is drawing the back of a wall panel that should only be visible from the other side.
   Kind: fix.
   Source: user-play-test-2026-07-26.
+  Resolved 2026-07-27 (`8542d2b`), user-confirmed in Solid and Ultra. Cause: E1M1 line 458, the secret room's own doorway, carries its BROWNGRN midtexture on sidedef 628 (outside) only; sidedef 629 (inside) has none. Classic draws a two-sided midtexture PER SIDEDEF, so from inside it draws nothing and the doorway is open. RB_BuildLevelMesh emitted one quad over the whole 104..176 opening and, under VK_CULL_MODE_NONE, showed it from both sides. Fix: sidedef faces are now one-sided in both renderers, tested against the stored normal (winding-agnostic) -- mesh.frag discards a back-facing fragment, and pathtrace.comp skips a back-facing candidate in worldCandidateOpaque, which only the primary ray reaches, so occlusion/GI/light transport are untouched. MASKED mid-walls are deliberately INCLUDED: a real grate carries a midtexture on both sidedefs, so the seg walk emits two quads, one per side. Cosmetic only -- the user could always walk through -- but it reads as a dead end to anyone new. Two earlier fixes were wrong because they were reasoned from source rather than measured; the `/` diagnostic plus DOOM-0268's -warpto found the real line in one step.
 
-- 📋 [DOOM-0270] **Zigzag wall slits render as criss-cross gaps in Solid, diagonal in Classic.**
+- ✅ [DOOM-0270] **Zigzag wall slits render as criss-cross gaps in Solid, diagonal in Classic.**
   Found by user play-test 2026-07-27, screenshots at the same spot: Classic draws the wall's
   diagonal slots leaning one way; Solid draws them **crossed both ways**, a lattice the original
   never shows. Evidence: ~/Pictures/ClaudePaste/paste_20260727_075959_715_78b48b40.png (Classic)
@@ -2588,3 +2589,4 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** A wall with diagonal slots in it looks wrong in the 3D renderers — the slots appear crossed both ways instead of leaning one way like the original.
   Kind: fix.
   Source: user-play-test-2026-07-27.
+  Resolved 2026-07-27 by DOOM-0267 (`8542d2b`), user-confirmed: "that is now working as it should". The criss-cross was exactly what the prediction said -- each diagonal recess drawn from the front AND its far face from behind, because sidedef faces were visible both ways. No separate fix needed; the REPEAT-tiling and alpha-test suspects listed here were not reached.
