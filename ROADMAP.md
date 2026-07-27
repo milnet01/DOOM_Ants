@@ -2635,7 +2635,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   before/after look at the WALLS, which the user has already approved and
   which this would also change.
 
-- 🚧 [DOOM-0272] **Split the fog into two layers: a general aerial layer plus a short-range floor fog.**
+- ✅ [DOOM-0272] **Split the fog into two layers: a general aerial layer plus a short-range floor fog.**
   **Layman:** Add a second, thicker mist that hugs the floor and only shows up near you — so you wade through it without the far end of the level turning white.
   Kind: feature.
   Lanes: renderer, shaders.
@@ -2667,7 +2667,6 @@ parked ideas (💭 considered) until we commit to and design each one.
   of its outdoor strength, and a sealed room still gets kIndoorFogScale
   (0.05), exactly as §4.3c predicted when it put both layers on the same
   gate. Awaiting the play-test that covers both halves.
-
   The load-bearing new idea is that SECOND term's range. Today's fog is a
   pure medium: opacity only ever grows with distance, which is why
   thickening it to make your feet misty also turns the far ground white.
@@ -2691,6 +2690,18 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   Gate: this is a design change to a converged multi-file spec, so
   CLAUDE.md rule 14 puts /cold-eyes between the amendment and the code.
+
+  Resolved (2026-07-27): shipped as L1e (6e3234b outdoor half, f62f468 seep) and
+  signed off on hardware - "All looks good to me, I went through doorways and it
+  all looks just fine and yes the fog does dissipate the further away from an
+  opening to the outside." Both layers ride the same skyExposure gate, so the
+  indoor half needed no extra code once L1d's seep graded that gate. The user's
+  sentence also closes L1d Step 7's last untested clause (that the seep THINS
+  with depth rather than being on/off) and DOOM-0276's one accepted cost (the
+  doorway threshold, where the half-cell grid error lives). Known gap found in
+  the same play-test, tracked separately as DOOM-0281: a wall that OPENS during
+  play does not re-flood the seep field, so fog does not roll into a room that
+  was sealed at level load.
 
 - 📋 [DOOM-0273] **Solid tier: upscale the ORIGINAL textures and give them PBR/POM, keeping the 1993 art.**
   **Layman:** Same DOOM pictures you know, just sharper, with real bumpiness and depth — as opposed to Ultra, which swaps the art out entirely.
@@ -2948,3 +2959,54 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: fix.
   Lanes: startup.
   Source: in-session-2026-07-27 (hit while measuring DOOM-0276).
+
+- 📋 [DOOM-0281] **Re-flood the seep field when a wall or door opens, so fog rolls into a newly-opened room.**
+  User, 2026-07-27, with a screenshot of a normally-closed E1M1 wall standing
+  open onto the courtyard: "if a wall opens like in this screenshot, the fog
+  doesn't roll in though. Usually this wall is closed."
+
+  Cause, verified: RB_BuildSeepField (r_mesh.c) runs P_LineOpening on every
+  two-sided seg and skips any with openrange <= 0 -- a shut door is two-sided but
+  has no opening, which is deliberate and is what INV-12 rests on. The field is
+  then built exactly once, in RB_Vulkan_BuildLevel (r_vulkan.cpp:7356), from
+  those spawn-state openings. Nothing re-floods it when a door or lift moves, so
+  the room behind a wall that opens in play keeps the "sealed" sentinel and the
+  indoor fog stays at the flat kIndoorFogScale floor. NOT a DOOM-0276 regression:
+  the open-sky mask that task added is per-cell ceilingpic, which a moving door
+  does not change; the stale part is the seep DISTANCE, and it was equally stale
+  before.
+
+  This is spec DOOM-0011 Q22, logged 2026-07-25, which deferred the decision with
+  "judge at L1d whether the difference is even noticeable in play". It is.
+
+  Q22 rejected re-flooding as "far too costly", but it reasoned from the BUDGET
+  (<= 20 ms per level load) rather than from a measurement. The fill actually
+  costs 0.6 ms on E1M1 -- 33x under that budget, and a fortieth of a 24 ms frame.
+  So the CPU side is not the obstacle.
+
+  The real work is the GPU re-upload. UploadSeepField destroys and recreates the
+  VkImage, which is only safe today because the level-load path has already
+  drained the device. Mid-play it needs either a device wait (a visible hitch) or
+  -- better, and not much harder -- a plain vkCmdCopyBufferToImage into the
+  EXISTING image with barriers, since the grid dimensions cannot change within a
+  level, so nothing needs reallocating.
+
+  Shape of the fix:
+    - set a dirty flag when a door/lift/platform finishes moving AND its
+      openrange crosses zero (only a connectivity change matters, so most sector
+      movement triggers nothing);
+    - re-flood on that flag, throttled to at most one rebuild every N frames;
+    - upload into the existing image rather than recreating it.
+
+  Second half, and it is what the user's word "roll" is asking for: a rebuild
+  makes the fog POP in over one frame. Easing the field toward its new values
+  over ~1 s would make the mist visibly drift in through the new opening, which
+  is the effect worth having. Cheap to do -- keep the previous field and lerp,
+  or lerp d per cell on the CPU during the throttled rebuild.
+
+  Note the inverse case too: a door that CLOSES should stop the seep. Same
+  mechanism, no extra work, but worth putting in the acceptance check.
+  **Layman:** When a wall slides open onto the outdoors, mist should start drifting into the room. Right now the game worked out where mist can reach when the level loaded, and never revisits it, so a room that was sealed at the time stays clear even after it opens.
+  Kind: enhancement.
+  Lanes: renderer, shaders.
+  Source: user-play-test-2026-07-27.

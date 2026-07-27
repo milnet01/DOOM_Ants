@@ -2077,6 +2077,21 @@ reasoning stays there.
   build time is **not** an available option — it is exactly the leak INV-12 forbids, so
   choosing it would require amending the invariant. v1 takes spawn-state; judge at
   **L1d** whether the difference is even noticeable in play.
+  **ANSWERED 2026-07-27 by the L1d play-test this question asked for: it IS noticeable.** The user
+  photographed a normally-closed E1M1 wall standing open onto the courtyard — *"the fog doesn't
+  roll in though"*. Follow-up is **DOOM-0281**.
+  **And the rejection above was wrong on its own terms.** It reasoned from the *budget* (≤ 20 ms
+  per level load) rather than from a measurement: the fill actually costs **0.6 ms** on E1M1, 33×
+  under that budget and a fortieth of a frame, so "ruinous on every door in play" does not survive
+  contact with the number. The real obstacle is the **GPU re-upload** — `UploadSeepField` destroys
+  and recreates the image, which is safe at level load only because the device is already drained
+  — and the fix for that is a `vkCmdCopyBufferToImage` into the existing image, since the grid
+  cannot change dimensions within a level. **The generalisable error: a cost rejected against a
+  budget instead of against a measurement, in a document that elsewhere insists on measuring.**
+  Note the third option this entry never listed, which is the one that should ship: re-flood on a
+  **dirty flag** raised only when a sector movement makes `openrange` cross zero. It keeps INV-12
+  exactly (connectivity is still decided by real openings, just re-decided), unlike the
+  treat-doors-as-open option correctly rejected above.
 - **Q23 (torch-emitter selection, per sample or per ray? 2026-07-26):** §4.4(b) says pick the
   **nearest few** static emitters *to the sample*, which cuts the expensive phase evaluations
   from `steps × omniStart` to `steps × 4`. But the selection scan itself is still

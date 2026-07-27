@@ -30,13 +30,20 @@ this plan implements it; every `§`/`INV`/`Q` reference points there.
 >   re-implement them.**
 > - **`L1c` and `L1d` were written on 2026-07-26** from the spec's §4.3a/§4.3b amendments and
 >   §7 acceptance rows, and have since been cold-reviewed through loops 7–13 and compiled.
-> - **`L1e` (the floor fog, §4.3c / DOOM-0272) is SHIPPED** (`6e3234b`, outdoor half) — it went
->   *before* L1c and L1d, because its outdoor half stands alone while its indoor half waits on
->   L1d's seep. The letters are identifiers, not a sequence.
-> - **`L1d` (the seep) is SHIPPED** — the fill, the upload and the graded indoor branch are in
->   the tree; E1M1 builds a 74×47 field in 0.6 ms. Its Step 6 runtime measurement and Step 7
->   play-test are still owed, and **four deviations from this task's text are recorded in the fix
->   ledger** — read them before writing L1c, since two concern the set-0 plumbing L1c shares.
+> - **`L1e` (the floor fog, §4.3c / DOOM-0272) is SHIPPED and SIGNED OFF** (`6e3234b`, outdoor
+>   half) — it went *before* L1c and L1d, because its outdoor half stands alone while its indoor
+>   half waits on L1d's seep. The letters are identifiers, not a sequence.
+> - **`L1d` (the seep) is SHIPPED and its Step 7 is SIGNED OFF** (user, 2026-07-27, after
+>   DOOM-0276: *"I went through doorways and it all looks just fine and yes the fog does dissipate
+>   the further away from an opening to the outside"*) — the fill, the upload and the graded indoor
+>   branch are in the tree; E1M1 builds a 75×47 field in 0.6 ms. All three acceptance clauses are
+>   now met: the seep **drifts in and thins with depth** (this sign-off), the **sealed room stays
+>   clear** (2026-07-27 play-test, INV-12), and the **outdoor look is unchanged** (signed off
+>   twice). **Step 6's runtime ≤ 1 % clause was never measured in isolation and is now moot** — the
+>   whole fog, tap included, measures **+4.2 %** against a ≤ 15 % gate, so the ≥ 6 % this clause
+>   existed to protect for L2–L5 is not in doubt (~11 % is free). **Four deviations from this
+>   task's text are recorded in the fix ledger** — read them before writing L1c, since two concern
+>   the set-0 plumbing L1c shares.
 > - **`L1c` is NOT the next work — a perf pass is.** Its blocker below is now *settled*, and
 >   settled badly: Δ was measured on 2026-07-27 at **+34.7 % present-total**, over the whole
 >   feature's ≤ 15 % gate, with 95 % of it inside `marchFog` (spec §6). L1c would make that

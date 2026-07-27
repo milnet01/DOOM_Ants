@@ -754,6 +754,45 @@ the image:** `-shotverify` at the same spawn view, both builds, MAE **2.93/255**
 **1.09/255** between two runs of the *same* build. ~1.8 of real difference, which is the roofline
 moving onto the grid. `-rtverify` PASS. Numbers and method in spec §6's second boxed notice.
 
+## PLAY-TESTED 2026-07-27 (post-DOOM-0276) — L1d Step 7 signed off, and Q22 answered against itself
+
+User, after walking E1M1 on the new build: *"All looks good to me, I went through doorways and it
+all looks just fine and yes the fog does dissipate the further away from an opening to the
+outside."*
+
+**That closes two separate open items in one sentence**, and it is worth naming which, because
+neither was closable by anything this project can do without a person at the keyboard:
+
+- **DOOM-0276's one accepted cost.** Moving `openSky` onto a 64-unit grid puts the roofline within
+  half a cell (32 units) of the real wall, and the mist wall at a **doorway threshold** is where
+  that error is most visible. A screenshot cannot judge it — you have to walk through. *"Went
+  through doorways and it all looks just fine."*
+- **L1d Step 7's third acceptance clause**, which had never been tested: that the seep **thins with
+  depth** rather than being merely on/off. The 2026-07-27 sealed-room test proved the *fill*
+  (INV-12); this proves the *grading*. `mix(kIndoorFogScale, kSeepMax, exp(−d/kSeepFalloff))` is
+  doing visible work, which also means `kSeepFalloff = 192` is in the right range.
+
+**In the same message, the finding that matters more than the sign-off** — a photograph of a
+normally-closed E1M1 wall standing open onto the courtyard, with no fog rolling in. Diagnosed to
+spawn-state door evaluation: `RB_BuildSeepField` skips `openrange <= 0` segs (correctly — INV-12
+depends on it), the field is built once at `r_vulkan.cpp:7356`, and nothing re-floods it when a
+sector moves. **Not a DOOM-0276 regression** — the mask that task added is per-cell `ceilingpic`,
+which a moving door does not change; the stale value is the seep *distance*, equally stale before.
+Logged as **DOOM-0281**; Q22 amended.
+
+**Two lessons, and the second is the one to carry:**
+
+1. **A question that defers to a play-test has to be re-read when the play-test happens.** Q22
+   ended with "judge at L1d whether the difference is even noticeable in play" — and L1d was
+   play-tested on 2026-07-27 without anyone re-opening Q22. It took the user finding it in
+   the wild a day later. A deferred question is a debt with no due date unless the task it defers
+   *to* names it in its own acceptance list.
+2. **Q22 rejected the fix by reasoning from a budget instead of a measurement** — "far too costly …
+   the fill is budgeted at ≤ 20 ms per level load, ruinous on every door in play". The fill measures
+   **0.6 ms**. The rejection was written before anything was built, was never revisited after the
+   number arrived, and closed off the right answer for two days. **In a document that insists on
+   measuring, a cost argued against a budget is an assumption wearing a number's clothes.**
+
 ## Open — not yet fixed
 
 - ~~**Cold-eyes has not converged.**~~ **CONVERGED at loop 13** (2026-07-26): zero verified
