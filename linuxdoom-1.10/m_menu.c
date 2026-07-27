@@ -220,6 +220,7 @@ void M_DrawEffectsMenu(void);
 void M_ChangeFlashlight(int choice);
 void M_ChangeSSAO(int choice);
 void M_ChangeDetile(int choice);
+void M_ChangeFog(int choice);
 void M_ChangeFilth(int choice);
 void M_ChangeWet(int choice);
 void M_ChangeProfiler(int choice);
@@ -505,6 +506,7 @@ enum
     ef_detile,
     ef_filth,
     ef_wet,
+    ef_fog,
     ef_profiler,
     ef_end
 } effects_e;
@@ -516,6 +518,7 @@ menuitem_t EffectsMenu[]=
     {1,"",	M_ChangeDetile,'d'},
     {1,"",	M_ChangeFilth,'g'},
     {1,"",	M_ChangeWet,'w'},
+    {1,"",	M_ChangeFog,'v'},
     {1,"",	M_ChangeProfiler,'p'}
 };
 
@@ -553,6 +556,7 @@ enum
     vid_detile,
     vid_filth,          // "Dirt & Grime"
     vid_wet,            // "Wet Liquid"
+    vid_fog,            // "Volumetric Fog" (DOOM-0266; `;` key's twin)
     vid_disp_head,      // "— Display —" spacer
     vid_widescreen,
     vid_fillscreen,
@@ -577,6 +581,7 @@ menuitem_t VideoMenu[]=
     {1,"",	M_ChangeDetile,'d'},
     {1,"",	M_ChangeFilth,'g'},
     {1,"",	M_ChangeWet,'w'},
+    {1,"",	M_ChangeFog,'v'},
     {-1,"",0},
     {1,"",	M_ChangeWidescreen,'i'},
     {1,"",	M_ChangeFillScreen,'l'},
@@ -1227,6 +1232,8 @@ extern int	rb_filth;		// [ key      (rt config: rt_filth)
 extern int	rb_wet;			// ' key      (rt config: rt_wet)
 extern int	rb_profile;		// profiler   (rt config: rt_profile)
 char	detileNames[3][7]	= {"Off","2-tap","4-tap"};
+extern int	rb_fog;			// DOOM-0011 volumetric fog strength (`;` key; rt config: rt_fog)
+char	fogNames[4][6]		= {"Off","Low","Med","High"};
 // DOOM-0206 (L1b/L2): menu-text batch API + HUD-safe bound, in r_vulkan.cpp.
 extern int	rb_menu_text_active;		// gates the text/dim flush in the present path
 extern void	rb_menu_dim(void);		// queues the play-view dim quad (0..rb_menu_safe_bottom())
@@ -1483,6 +1490,10 @@ void M_DrawEffectsMenu(void)
     M_WriteText(EffectsDef.x + 130,EffectsDef.y+LINEHEIGHT*ef_wet,
 		rb_wet ? "On" : "Off");
 
+    M_WriteText(EffectsDef.x,EffectsDef.y+LINEHEIGHT*ef_fog,"Volumetric fog:");
+    M_WriteText(EffectsDef.x + 130,EffectsDef.y+LINEHEIGHT*ef_fog,
+		fogNames[(rb_fog>=0 && rb_fog<=3) ? rb_fog : 0]);
+
     M_WriteText(EffectsDef.x,EffectsDef.y+LINEHEIGHT*ef_profiler,"Profiler:");
     M_WriteText(EffectsDef.x + 130,EffectsDef.y+LINEHEIGHT*ef_profiler,
 		rb_profile ? "On" : "Off");
@@ -1501,7 +1512,7 @@ static const char* videoLabels[vid_end] =
 {
     "Renderer", "Ray Tracing", "Upscaler", "Render Scale", "Brightness",
     "-  EFFECTS  -",
-    "Flashlight", "SSAO", "De-tile", "Dirt & Grime", "Wet Liquid",
+    "Flashlight", "SSAO", "De-tile", "Dirt & Grime", "Wet Liquid", "Volumetric Fog",
     "-  DISPLAY  -",
     "Widescreen", "Fill Screen", "FPS Counter",
     "-  DEVELOPER  -",
@@ -1568,6 +1579,8 @@ static void M_VideoCrispValue(int i, crispval_t* cv)
 	cv->str = detileNames[(rb_detile >= 0 && rb_detile <= 2) ? rb_detile : 0]; break;
       case vid_filth:      cv->str = rb_filth ? "On" : "Off"; break;
       case vid_wet:        cv->str = rb_wet ? "On" : "Off"; break;
+      case vid_fog:
+	cv->str = fogNames[(rb_fog >= 0 && rb_fog <= 3) ? rb_fog : 0]; break;
       case vid_widescreen: cv->str = widescreen ? "On (restart)" : "Off (restart)"; break;
       case vid_fillscreen: cv->str = fillstretch ? "On" : "Off"; break;
       case vid_fps:        cv->str = fpsPosNames[(fpsCorner >= 0 && fpsCorner <= 3) ? fpsCorner : 0]; break;
@@ -2233,6 +2246,14 @@ void M_ChangeDetile(int choice)
 {
     choice = 0;
     rb_detile = (rb_detile + 1) % 3;   // Off -> 2-tap -> 4-tap
+}
+
+// DOOM-0011 L6 / DOOM-0266: the menu twin of the `;` hotkey. Same variable, same
+// wrap, so menu / hotkey / ~/.doomrc (rt_fog) stay in lockstep by construction.
+void M_ChangeFog(int choice)
+{
+    choice = 0;
+    rb_fog = (rb_fog + 1) % 4;         // Off -> Low -> Med -> High
 }
 
 void M_ChangeFilth(int choice)

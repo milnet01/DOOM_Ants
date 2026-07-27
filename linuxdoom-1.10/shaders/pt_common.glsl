@@ -36,16 +36,18 @@ const vec3  SKY_COLOR    = vec3(0.20, 0.26, 0.40);   // bounded sky-light on a m
 // DOOM-0011: volumetric fog (single-scatter view-ray march). All tune-on-hardware.
 const int   kFogSteps        = 24;               // fixed sample count (coherent, cheap)
 const float kFogMaxDist      = 2048.0;           // clamp tHit so a long corridor can't blow budget
-const float kFogSkyDist      = 2048.0;           // DOOM-0011 Q24a: GRAZE CLAMP on the sky's slant
-                                 // path (skyFogOpticalDepth). Since 2026-07-27 the sky's haze is
-                                 // computed geometrically -- H/rd.z, the exact path through an
-                                 // exponential layer -- so this is no longer "the sky's distance"
-                                 // but the cap applied as that path goes to infinity at the
-                                 // horizon. Set to kFogMaxDist so the skyline is never charged
-                                 // more air than the furthest wall the march covers, which is
-                                 // what keeps aerial perspective the right way round (Q24a's
-                                 // whole point). Lower it to pull the horizon back out of the
-                                 // white; it has no effect more than a few degrees above it.
+const float kFogSkyDist      = 2048.0;           // DOOM-0011 Q24a: the fog layer's finite
+                                 // HORIZONTAL extent, used by skyFogOpticalDepth. Since
+                                 // 2026-07-27 the sky's haze is geometric -- H/rd.z, the exact
+                                 // path through an exponential layer -- so this is no longer
+                                 // "the sky's distance"; it is what a perfectly horizontal ray
+                                 // gets instead of an infinite path. Applied as a SOFT
+                                 // saturation (reciprocals added), never a min(): a hard clamp
+                                 // gave every pixel within ~3 degrees of the horizon the same
+                                 // value, i.e. a flat band with a visible top edge. Set to
+                                 // kFogMaxDist so the skyline is never charged more air than the
+                                 // furthest wall the march covers (Q24a's point). Lower it to
+                                 // pull the horizon back out of the white.
 const float kFogBaseDensity  = 0.0033;           // extinction AT FLOOR LEVEL at "High". tune-on-hw.
                                  // 2026-07-27: the pair below was re-balanced so the cloud reads as
                                  // a bank lying ON the ground. The eye-height product is HELD FIXED

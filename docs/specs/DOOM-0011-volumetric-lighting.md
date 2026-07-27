@@ -1025,10 +1025,23 @@ infinity has an exact closed form:
 real bank: look steeply up and the ray leaves the layer almost at once, so the peaks stay
 clear; look along the horizon and it grazes for miles, so the skyline goes white. The old
 form gave **every** sky pixel the same haze over a fixed `kFogSkyDist`, which can never let a
-mountain rise out of the mist. `kFogSkyDist` survives as the **graze clamp** on `H/rd.z` as
-it diverges at the horizon (2048 = `kFogMaxDist`, so the skyline is never charged more air
-than the furthest wall the march covers — Q24a's point, preserved). `rd.z ≤ 0` is a
-below-horizon sky fill: maximum graze, take the clamp. The helper is
+mountain rise out of the mist. `kFogSkyDist` survives as the layer's finite **horizontal
+extent** — what a perfectly horizontal ray gets instead of an infinite path (2048 =
+`kFogMaxDist`, so the skyline is never charged more air than the furthest wall the march
+covers — Q24a's point, preserved).
+
+**It must saturate SOFTLY.** The first cut wrote `min(H/rd.z, kFogSkyDist)`, which handed
+every pixel within ~3° of the horizon the identical clamped value: a flat band of uniform
+haze with a definite top edge, reported as *"the fog has a hard cut off line"*. Add the
+reciprocals instead —
+
+`1/path = rd.z / kFogPoolHeight + 1 / kFogSkyDist`
+
+— and the path approaches `kFogSkyDist` at the horizon and `H/rd.z` looking up with no kink
+anywhere between. `rd.z ≤ 0` (a below-horizon sky fill) falls out of the same expression.
+**Any future clamp on a smoothly-varying visual quantity should be read as this defect until
+proven otherwise:** a `min()` does not cap a gradient, it replaces part of it with a plateau,
+and a plateau in a gradient has an edge. The helper is
 `skyFogOpticalDepth(ro, rd, strength)` in `pathtrace.comp` — **not** `pt_common.glsl`, because
 it reads `pc` and the GI bake includes that header (INV-6). Fold with the same
 `sky = sky · transmittance + inscatter` used everywhere else:
@@ -1534,10 +1547,11 @@ The other layers' Verify cells fit in a line. These two do not, so they live her
   sky is **byte-identical** to today (INV-7/INV-8). No up-ray and no new resource
   (INV-5) — the sky is outdoors by definition, and `pc.fogFloorZ` is a push-constant, not a
   resource. **Amended 2026-07-25, re-amended twice on 2026-07-27:** the closed form omits `wisp`,
-  and its optical depth is `kFogBaseDensity · exp(−h₀/kFogPoolHeight) · fogStrengthScale ·
-  min(kFogPoolHeight / rd.z, kFogSkyDist)`, where `h₀ = max(0, ro.z − pc.fogFloorZ)` — the exact
-  integral through an exponential layer, so it is still a closed form with no loop, but the haze
-  now varies with the sky pixel's **elevation**. That is what lets a mountain rise out of the
+  and its optical depth is `kFogBaseDensity · exp(−h₀/kFogPoolHeight) · fogStrengthScale · path`,
+  where `h₀ = max(0, ro.z − pc.fogFloorZ)` and `1/path = rd.z/kFogPoolHeight + 1/kFogSkyDist` —
+  the exact integral through an exponential layer, softly saturated at the horizon, so it is still
+  a closed form with no loop but the haze varies with the sky pixel's **elevation** and has no
+  plateau. A hard `min()` here is a defect, not a clamp (§4.6a). That is what lets a mountain rise out of the
   mist; a fixed distance never could. The wisp exclusion is
   **deliberate** (`wisp ≡ 1` for sky pixels) — a closed form requires constant density, and
   billow structure on the mountains would be sub-pixel anyway. The consequence to watch is the
@@ -1659,11 +1673,16 @@ reasoning stays there.
   stays inside **L1b's own ≤ 4 % slice** (§7), flag otherwise. **Decided:
   the up-ray shipped in L1b (1345c92)** — this question is closed; the fallback remains
   documented as a standing perf lever.
-- **Q14 (double-haze, 2026-07-24):** The sky-distance fog (§4.6a) overlaps
-  `skyPanorama`'s existing screen-space `SKY_FOG_COL` band (`pathtrace.comp:763-764`).
-  L1b halved it (`fog *= 0.5`, `pathtrace.comp:770`); L1c's near-white base changes the
-  balance again, so this **re-opens at L1c** — dial the old band down further or remove
-  it so the horizon isn't hazed twice.
+- **Q14 (double-haze, 2026-07-24) — CLOSED 2026-07-27: the band is OFF whenever fog is on.**
+  `skyPanorama`'s `SKY_FOG_COL` band is a **screen-space** wash pinned to the frame's vertical
+  midpoint. It knows nothing about the world, so it cannot agree with real fog at any setting —
+  L1b's `fog *= 0.5` only halved the mismatch, and it painted a grey ramp starting on the same
+  screen row no matter where the camera stood. Shipped: `if (pc.misc6[2] != 0u) fog = 0.0;`.
+  The band existed to mask DOOM-0143's below-horizon row-clamp seam; real aerial fog now sits at
+  ~98 % right at the horizon, which hides that seam far better. **Fog OFF is untouched**, so
+  DOOM-0143's protection is intact there (INV-8). L1c's near-white base cannot re-open this — it
+  changes the fog's colour, and the band no longer runs. Contributed to the "hard cut off line"
+  report alongside the §4.6a hard clamp; both were fixed in the same pass.
 - **Q15 (up-ray direction, 2026-07-24):** straight world `+Z` up (simplest, chosen) vs
   a small cone / toward `kSunDir`. Straight up can misclassify a roofed room with a
   tiny sky-hole directly overhead as "outdoors"; L1b shipped straight-up and nothing
@@ -1729,10 +1748,12 @@ reasoning stays there.
   no longer has a fixed distance at all: §4.6a integrates the exact slant path through the layer,
   so haze varies with the sky pixel's elevation and the inversion cannot recur by construction —
   a horizon ray grazes the layer for longer than any wall ray, which is precisely what "further
-  away" should mean. `kFogSkyDist` survives only as the **graze clamp** on that path as it
-  diverges at the horizon, and is back to 2048 (= `kFogMaxDist`) so the skyline is never charged
-  more air than the furthest wall the march covers. The "halve it to cancel a density doubling"
-  trick is **gone**: the clamp only bites within a couple of degrees of the horizon (see Q24).
+  away" should mean. `kFogSkyDist` survives as the layer's finite **horizontal extent** — what a
+  level ray gets instead of an infinite path — applied as a SOFT saturation, never a `min()`
+  (§4.6a: a hard clamp put a flat plateau with a visible edge across the first ~3° of sky). It is
+  back to 2048 (= `kFogMaxDist`) so the skyline is never charged more air than the furthest wall
+  the march covers. The "halve it to cancel a density doubling" trick is **gone**: it only bites
+  within a couple of degrees of the horizon (see Q24).
   The "slightly darker outside" note in §4.3b is a separate knob and **was answered on
   2026-07-27**: `kSkyShaftStrength` 1.0 → 0.85.
 - **Q24 (sky density after the L1c raise, 2026-07-26):** §4.3b's fork — give the sky term its own

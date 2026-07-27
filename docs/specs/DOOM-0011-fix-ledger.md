@@ -570,6 +570,19 @@ no citation had drifted — the code did exactly what it said. The defect was in
 the fog was on the walls but not the floor. **Budget for that instrument.** A round trip to
 hardware is worth more than another lane on a doc that is already internally consistent.
 
+## Post-convergence edit — 2026-07-27 (third) — the sky's hard line, and the menu row
+
+| # | Fix | Ripples chased |
+|---|-----|----------------|
+| 16.1 | **The sky's graze clamp was a `min()`, and a `min()` on a gradient is a plateau with an edge.** Every pixel within ~3° of the horizon got the identical clamped optical depth — a flat band of uniform haze with a visible top boundary. Replaced by adding reciprocals, `1/path = rd.z/H + 1/kFogSkyDist`, which saturates smoothly and also reads better physically (the layer has a finite horizontal extent; even a level ray leaves it eventually) | `kFogSkyDist` changed meaning **again** — "graze clamp" → "the layer's finite horizontal extent". Every place batch 15 had just re-worded had to be re-worded once more: `pt_common.glsl`, spec §4.6a, INV-10's formula. **Generalised into a rule in §4.6a** so it is not re-learned per-constant: *a `min()` on a smoothly-varying visual quantity should be read as a defect until proven otherwise* |
+| 16.2 | **Q14 CLOSED**: `skyPanorama`'s screen-space `SKY_FOG_COL` band is now OFF whenever fog is on. It is pinned to the frame's vertical midpoint, so it can never agree with world fog at any strength; L1b's `fog *= 0.5` only halved a mismatch that should have been zero. It was the second contributor to the same reported line | Fog OFF is deliberately untouched, so DOOM-0143's below-horizon seam protection is intact there (INV-8). The plan's L1b Step 4 "reconcile the band" instruction, which had sat open across three loops, is now marked done rather than left as a standing chore |
+| 16.3 | **DOOM-0266 / L6 Step 2 shipped**: the Volumetric Fog row now exists in both the Effects submenu and the crisp Video menu. The user asked whether it was in the menus yet; it was not | The plan already enumerated all seven edits an implementer must make (enum, both menuitem arrays, both draw sites, the value provider, the handler + name table, the forward declaration). **They were followed verbatim and all seven were needed** — the list is kept as a record of what "add a menu row" actually costs here |
+
+**Two constants, three meanings, one day.** `kFogSkyDist` went "the sky's distance" → "graze clamp"
+→ "the layer's horizontal extent" between batches 15 and 16. Each rename was correct at the time
+and each invalidated prose written hours earlier. **When a constant's meaning changes, grep its
+name and re-read every hit** — the value being right is not evidence the sentence around it is.
+
 ## Open — not yet fixed
 
 - ~~**Cold-eyes has not converged.**~~ **CONVERGED at loop 13** (2026-07-26): zero verified

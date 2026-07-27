@@ -783,12 +783,15 @@ vec3 skyPanorama(uvec2 px, uint w, uint h)
     vec3  skyCol = texture(paletteTex, vec2((idx + 0.5) / 256.0, 0.5)).rgb;
     const vec3 SKY_FOG_COL = vec3(0.5);                // neutral haze tone
     float fog  = smoothstep(0.50, 0.63, suv.y);        // 0 at/above horizon -> 1 at the wall
-    // DOOM-0011 L1b §4.6a/Q14: real aerial-perspective fog is now folded onto this
-    // whole sky backdrop (pathtrace.comp mode-4/6 sky branches, closed-form), so at
-    // full strength this band would double-haze the horizon. Halve it -- it still
-    // masks the DOOM-0143 below-horizon vertical-wrap seam, just less aggressively.
-    // Byte-identical to before when fog is off (INV-8); final balance is a Step-7 eye-check.
-    if (pc.misc6[2] != 0u) fog *= 0.5;
+    // DOOM-0011 Q14, RESOLVED 2026-07-27: with fog on, drop this band entirely.
+    // It is a SCREEN-SPACE wash pinned to the frame's vertical midpoint -- it knows
+    // nothing about the world, so it cannot agree with the real fog, and it painted a
+    // fixed grey ramp starting at the same screen row no matter where the camera was.
+    // Halving it (the L1b compromise) only halved the mismatch. The band existed to mask
+    // the DOOM-0143 below-horizon row-clamp seam; real aerial fog now sits at ~98 % right
+    // at the horizon, which hides that seam far better than a grey mix ever did.
+    // Fog OFF is untouched, so DOOM-0143's protection is intact there (INV-8).
+    if (pc.misc6[2] != 0u) fog = 0.0;
     return mix(skyCol, SKY_FOG_COL, fog);
 }
 
@@ -817,7 +820,16 @@ float skyFogOpticalDepth(vec3 ro, vec3 rd, float strength)
 {
     float h0     = max(0.0, ro.z - uintBitsToFloat(pc.fogFloorZ));
     float sigma0 = kFogBaseDensity * exp(-h0 / kFogPoolHeight);
-    float path   = (rd.z > 1e-3) ? min(kFogPoolHeight / rd.z, kFogSkyDist) : kFogSkyDist;
+    // The clamp is a SOFT one, and it has to be. `min(H/rd.z, kFogSkyDist)` gave every
+    // pixel within ~3 degrees of the horizon the identical clamped value -- a flat band of
+    // uniform haze with a definite top edge, which the user reported as "the fog has a hard
+    // cut off line". Adding the reciprocals instead saturates smoothly: 1/path = rd.z/H +
+    // 1/kFogSkyDist, so path -> kFogSkyDist at the horizon and -> H/rd.z looking up, with no
+    // kink anywhere between. It also reads better physically -- the layer is not infinitely
+    // wide, so even a perfectly horizontal ray leaves it eventually, and kFogSkyDist is that
+    // finite extent rather than an arbitrary ceiling.
+    float path   = (kFogPoolHeight * kFogSkyDist)
+                 / (kFogPoolHeight + kFogSkyDist * max(rd.z, 0.0));
     return sigma0 * strength * path;
 }
 

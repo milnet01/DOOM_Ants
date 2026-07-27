@@ -450,9 +450,11 @@ fold the same closed-form fog before the write, in the same linear space as §4.
             }
 ```
 
-Then reconcile the old screen-space `SKY_FOG_COL` band (`:761-763`): with real distance-fog now on
-the sky, dial `SKY_FOG_COL`'s `smoothstep` contribution down or remove it so the horizon is not
-**double-hazed** (spec Q14) — verify by eye at Step 7.
+**DONE 2026-07-27:** the old screen-space `SKY_FOG_COL` band is now switched **off** whenever fog
+is on (`if (pc.misc6[2] != 0u) fog = 0.0;` in `skyPanorama`). It is a screen-space wash pinned to
+the frame's vertical midpoint, so it can never agree with world fog; L1b's halving only halved the
+mismatch, and it was one of the two causes of the reported "hard cut off line". Fog OFF keeps it,
+so DOOM-0143's seam protection is intact there. Spec Q14 is CLOSED.
 
 - [ ] **Step 5: Build + smoke + tests** (L1 Step 7 commands).
 
@@ -650,7 +652,8 @@ Miss any one and you get the sky/wall seam this task's own acceptance criterion 
 **If the mountains read washed-out at High strength**, add a separate sky-only density constant
 **lower `kFogSkyDist`** (shipped 2026-07-27 at 4096) rather than adding a second sky constant —
 **this no longer works as a cancellation.** Since 2026-07-27 the sky's path is geometric
-(`kFogPoolHeight / rd.z`, spec §4.6a) and `kFogSkyDist` is only the graze clamp — it bites within
+(`kFogPoolHeight / rd.z`, spec §4.6a) and `kFogSkyDist` is only the layer's horizontal extent, softly
+saturated — it bites within
 a couple of degrees of the horizon and nowhere else. So doubling the density **will** move the
 mountains and there is no one-constant fix. The honest levers are `kFogPoolHeight` (a shallower
 layer clears the sky faster with elevation) or a sky-only density. Do **not** lower
@@ -1390,7 +1393,7 @@ gate; the earlier layers carry their own measured spot-checks.
   Historical intent: pin `rb_fog` to its shipped default alongside
   `rb_detile=2, rb_filth=1, rb_wet=1`.
 
-- [ ] **Step 2: Menu rows (seven edits + name table — clone `rb_detile`, place like `rb_wet`)**
+- [x] **Step 2: Menu rows (seven edits + name table — clone `rb_detile`, place like `rb_wet`)**
 
 > **This step may land early as DOOM-0266.** That item splits the fog row out of this task,
 > because the `;`-key dial is user-facing *today* and defaults to **on**, while `EffectsMenu[]`
@@ -1399,7 +1402,9 @@ gate; the earlier layers carry their own measured spot-checks.
 > work against the seven-edit list below: leaving one edit short is the failure this step's own
 > history records.
 
-Per spec §5, all seven — adding only the menuitem arrays ships a blank row:
+**DONE 2026-07-27 (DOOM-0266)** — all seven landed together; the list is kept as the record of
+what "add a menu row" actually costs in this codebase. Per spec §5, adding only the menuitem
+arrays ships a blank row:
 1. `ef_fog` in `effects_e`, `vid_fog` in `videoitem_e`.
 2. Row in `EffectsMenu[]` and `VideoMenu[]`, both bound to `M_ChangeFog`.
 3. `M_DrawEffectsMenu`: a `"Volumetric fog:"` label + `fogNames[rb_fog]` value keyed on `ef_fog`
@@ -1543,9 +1548,9 @@ from `g.lastView.hazeDensity` in `RecordRtTrace` (there is no bare `view` there)
 - **Q24 / Q24a** — the sky's haze. **Q24a shipped 2026-07-27**: the backdrop now has its own
   distance, `kFogSkyDist`, because sharing `kFogMaxDist` left the mountains reading as *nearer*
   than a wall — since superseded by the geometric slant path, which makes the inversion impossible
-  by construction and demotes `kFogSkyDist` (now 2048) to a horizon graze clamp. **Q24 is the same lever from the density side and is still open**: when
+  by construction and demotes `kFogSkyDist` (now 2048) to the layer's horizontal extent. **Q24 is the same lever from the density side and is still open**: when
   L1c doubles `kFogBaseDensity` the mountains **will** move and there is no one-constant fix:
-  since 2026-07-27 the sky's path is geometric, so `kFogSkyDist` is only a horizon graze clamp.
+  since 2026-07-27 the sky's path is geometric, so `kFogSkyDist` only sets the horizon's soft cap.
   Levers are `kFogPoolHeight` or a sky-only density; never `kFogBaseDensity`, which would undo
   L1c's foreground tuning.
 - **One stale comment in shipped source** — `svgf_composite.comp`'s comment above
