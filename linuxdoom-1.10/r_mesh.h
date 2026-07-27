@@ -151,6 +151,37 @@ typedef struct
 // Must be called after P_SetupLevel has loaded the map.
 rb_mesh_t* RB_BuildLevelMesh(void);
 
+// DOOM-0011 L1d: the outdoor-proximity seep field (spec §4.3a amendment).
+// A coarse 2-D grid over the map holding, per cell, the distance to outdoor air
+// THROUGH OPEN SPACE -- i.e. the walk through doorways and windows, never the
+// straight line through a wall. The fog uses it to fade indoor haze in at a
+// threshold and out as you go deeper, instead of the flat indoor floor L1b ships
+// (which cuts off hard at a roofline). Built once per level; the runtime cost is
+// one texture tap per fog sample.
+//
+// Distances are in world units and saturate at RB_SEEP_DMAX, which doubles as the
+// "unreachable" sentinel for a sealed room and for the void ring around the map.
+// It is FINITE deliberately: an infinity here would meet a zero bilinear weight at
+// the grid edge and produce a NaN, which propagates through the whole fog march.
+#define RB_SEEP_FALLOFF  192.0f                    // must match kSeepFalloff (pt_common.glsl)
+#define RB_SEEP_DMAX     (8.0f * RB_SEEP_FALLOFF)  // must match dMax        (pt_common.glsl)
+
+typedef struct
+{
+    float* d;                 // w*h cells, row-major, world units (<= RB_SEEP_DMAX)
+    int    w, h;              // cell counts, including the one-cell void ring
+    float  originX, originY;  // world XY of cell (0,0)'s CENTRE -- inside the ring,
+                              // i.e. one full cell outside the map's bounding box
+    float  cell;              // world units per cell
+} rb_seep_t;
+
+// Flood-fill the seep field for the current level. Returns a heap-owned field;
+// call RB_FreeSeepField on it. Never returns NULL -- a level with no open sky at
+// all (most hell maps) yields an all-RB_SEEP_DMAX field, which is exactly the
+// pre-seep look rather than a failure. Must run after P_SetupLevel.
+rb_seep_t* RB_BuildSeepField(void);
+void       RB_FreeSeepField(rb_seep_t* field);
+
 void RB_FreeMesh(rb_mesh_t* mesh);
 
 // Re-height a built mesh from the current sector floor/ceiling heights, writing

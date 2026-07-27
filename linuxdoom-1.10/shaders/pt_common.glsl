@@ -89,6 +89,22 @@ const float kIndoorFogScale = 0.05;   // DOOM-0011 §4.3a: fog density multiplie
                                        // roof (open sky = 1.0). 0.0 = interiors totally clear;
                                        // ~0.05 keeps a faint indoor haze. Tune on hardware (Q12).
 
+// DOOM-0011 L1d §4.3a: the outdoor-proximity SEEP. kIndoorFogScale above is a flat
+// floor for every roofed sample, which cuts the fog off hard at a roofline: step
+// through a doorway and the mist stops dead at the threshold. The seep replaces that
+// with a grade -- strong just inside an opening, falling away as you walk deeper --
+// keyed on a load-time field holding the distance to outdoor air THROUGH OPEN SPACE
+// (r_mesh.c's RB_BuildSeepField; a straight line cannot tell a room with a window
+// from a sealed room sharing that wall). kIndoorFogScale stays the floor it decays
+// to, and must stay > 0: L3's torch shafts need a medium in roofed air to light.
+const float kSeepMax     = 0.5;               // density multiplier right at an opening
+const float kSeepFalloff = 192.0;             // world units; e-fold inward from it
+const float dMax         = 8.0 * kSeepFalloff;// the field's finite unreachable/void
+                                 // sentinel, mirrored by RB_SEEP_DMAX in r_mesh.h.
+                                 // FINITE deliberately: an infinity meeting a zero
+                                 // bilinear weight at the grid edge yields a NaN,
+                                 // and that propagates through the whole march.
+
 // DOOM-0011 L1e / DOOM-0272 §4.3c: the SECOND fog layer. The aerial layer above is a real
 // participating medium, so its opacity only ever GROWS with distance -- which means the density
 // that makes the air at your feet misty is the same density that turns the far end of a courtyard

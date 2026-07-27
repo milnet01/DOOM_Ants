@@ -34,6 +34,7 @@
 #include "r_data.h"     // R_GetColumn
 #include "r_main.h"     // R_PointInSubsector (RB_SectorAtPoint)
 #include "doomstat.h"   // skyflatnum, players, consoleplayer
+#include "p_local.h"    // P_LineOpening + openrange (DOOM-0011 L1d's seep fill)
 #include "p_mobj.h"     // mobj_t (the things billboarded as sprites)
 #include "p_pspr.h"     // FF_FRAMEMASK / FF_FULLBRIGHT
 #include "tables.h"     // ANG45
@@ -712,6 +713,284 @@ int RB_SectorAtPoint(float x, float y)
     // way RB_BuildProbes does (the first seg's frontsector) so this is valid even
     // before the first frame is drawn.
     return (int)(segs[ss->firstline].frontsector - sectors);
+}
+
+// ---------------------------------------------------------------------------
+// DOOM-0011 L1d: the outdoor-proximity seep field (spec §4.3a amendment).
+//
+// The question this answers is "how far is this patch of floor from outdoor air,
+// walking?" -- so that fog can drift in through a doorway and thin as you go
+// deeper, while a sealed room that merely shares a WALL with the courtyard stays
+// clear. Straight-line distance cannot tell those two apart; only connectivity can.
+//
+// Nodes are PORTALS (open two-sided segs), not sectors and not subsectors. A
+// sector-indexed search settles one distance per sector, which is the flat-per-room
+// answer this feature exists to avoid. A subsector graph breaks differently:
+// vanilla DOOM has no minisegs (P_LoadSegs gives every seg a linedef), so two BSP
+// leaves of the same room share no seg and every multi-leaf hall comes out
+// disconnected. Distance is then resolved per GRID CELL, not per node, so it varies
+// smoothly across a room instead of stepping at its boundary.
+// ---------------------------------------------------------------------------
+
+#define RB_SEEP_MAXDIM   256      // texture side cap; the cell size doubles until it fits
+#define RB_SEEP_CELL0    64.0f    // starting cell size (a DOOM flat's own 64x64 period)
+
+typedef struct
+{
+    float x, y;       // world midpoint of the opening
+    int   secA, secB; // the two sectors it joins
+    float d;          // distance to outdoor air, filled by the search
+} rb_portal_t;
+
+// Lazy-deletion binary min-heap over portal indices. Lazy because a portal can be
+// pushed more than once as shorter routes to it turn up; the pop checks the entry
+// against the node's settled distance and drops it if it has been beaten.
+typedef struct { float d; int node; } rb_heapent_t;
+
+static void RB_HeapPush(rb_heapent_t* h, int* n, float d, int node)
+{
+    int i = (*n)++;
+    h[i].d = d; h[i].node = node;
+    while (i > 0)
+    {
+        int parent = (i - 1) / 2;
+        rb_heapent_t t;
+        if (h[parent].d <= h[i].d)
+            break;
+        t = h[parent]; h[parent] = h[i]; h[i] = t;
+        i = parent;
+    }
+}
+
+static rb_heapent_t RB_HeapPop(rb_heapent_t* h, int* n)
+{
+    rb_heapent_t top = h[0];
+    int i = 0;
+    h[0] = h[--(*n)];
+    for (;;)
+    {
+        int l = 2 * i + 1, r = l + 1, small = i;
+        rb_heapent_t t;
+        if (l < *n && h[l].d < h[small].d) small = l;
+        if (r < *n && h[r].d < h[small].d) small = r;
+        if (small == i)
+            break;
+        t = h[small]; h[small] = h[i]; h[i] = t;
+        i = small;
+    }
+    return top;
+}
+
+rb_seep_t* RB_BuildSeepField(void)
+{
+    rb_seep_t*    field;
+    rb_portal_t*  portals = NULL;
+    rb_heapent_t* heap    = NULL;
+    int*          secFirst = NULL;   // per-sector index into secList (numsectors + 1 entries)
+    int*          secList  = NULL;   // portal indices grouped by sector
+    int           np = 0, heapN = 0, i, j, ix, iy;
+    float         minX, minY, maxX, maxY, cell;
+    int           gw, gh;
+
+    // --- 1. One node per OPEN two-sided seg --------------------------------
+    portals = (rb_portal_t*)malloc((size_t)(numsegs > 0 ? numsegs : 1) * sizeof(rb_portal_t));
+    if (!portals)
+        I_Error("RB_BuildSeepField: out of memory for %d portals", numsegs);
+
+    for (i = 0; i < numsegs; i++)
+    {
+        seg_t*  sg = &segs[i];
+        line_t* ld = sg->linedef;
+        if (!ld || !sg->backsector || !(ld->flags & ML_TWOSIDED))
+            continue;
+        // A self-referencing sector (the vanilla deep-water / fake-wall trick) is
+        // two-sided with a full-height opening but is DRAWN solid. Without this the
+        // flood walks straight through what the player sees as a wall.
+        if (ld->frontsector == ld->backsector)
+            continue;
+        // A shut DOOM door is still a two-sided linedef, so one-sidedness is the
+        // wrong test -- the opening is. P_LineOpening returns void and writes the
+        // file-scope globals, which are not re-entrant, so this stays single-threaded.
+        P_LineOpening(ld);
+        if (openrange <= 0)
+            continue;
+
+        portals[np].x    = 0.5f * (sg->v1->x / (float)FRACUNIT + sg->v2->x / (float)FRACUNIT);
+        portals[np].y    = 0.5f * (sg->v1->y / (float)FRACUNIT + sg->v2->y / (float)FRACUNIT);
+        portals[np].secA = (int)(sg->frontsector - sectors);
+        portals[np].secB = (int)(sg->backsector  - sectors);
+        // Seeded at zero if EITHER side is open to the sky: standing in that opening
+        // is standing in outdoor air.
+        portals[np].d    = (sectors[portals[np].secA].ceilingpic == skyflatnum ||
+                            sectors[portals[np].secB].ceilingpic == skyflatnum)
+                         ? 0.0f : RB_SEEP_DMAX;
+        np++;
+    }
+
+    // --- 2. Group portals by sector, so "shares a sector" is an O(1) lookup --
+    secFirst = (int*)calloc((size_t)numsectors + 1, sizeof(int));
+    secList  = (int*)malloc((size_t)(np * 2 > 0 ? np * 2 : 1) * sizeof(int));
+    if (!secFirst || !secList)
+        I_Error("RB_BuildSeepField: out of memory for the sector index");
+    for (i = 0; i < np; i++)
+    {
+        secFirst[portals[i].secA]++;
+        secFirst[portals[i].secB]++;
+    }
+    for (i = 0, j = 0; i < numsectors; i++)   // counts -> start offsets
+    {
+        int c = secFirst[i];
+        secFirst[i] = j;
+        j += c;
+    }
+    secFirst[numsectors] = j;
+    {
+        int* fill = (int*)malloc((size_t)(numsectors > 0 ? numsectors : 1) * sizeof(int));
+        if (!fill)
+            I_Error("RB_BuildSeepField: out of memory for the sector index");
+        memcpy(fill, secFirst, (size_t)numsectors * sizeof(int));
+        for (i = 0; i < np; i++)
+        {
+            secList[fill[portals[i].secA]++] = i;
+            secList[fill[portals[i].secB]++] = i;
+        }
+        free(fill);
+    }
+
+    // --- 3. Dijkstra from the whole seed set at once ------------------------
+    // Weights are portal-to-portal distances (non-negative) and the graph is finite,
+    // so this terminates. An empty seed set -- a level with no open sky at all --
+    // simply settles nothing and every cell ends at RB_SEEP_DMAX.
+    heap = (rb_heapent_t*)malloc((size_t)(np * 4 + 1) * sizeof(rb_heapent_t));
+    if (!heap)
+        I_Error("RB_BuildSeepField: out of memory for the search heap");
+    {
+        int cap = np * 4 + 1;
+        for (i = 0; i < np; i++)
+            if (portals[i].d == 0.0f)
+                RB_HeapPush(heap, &heapN, 0.0f, i);
+
+        while (heapN > 0)
+        {
+            rb_heapent_t e = RB_HeapPop(heap, &heapN);
+            int s;
+            if (e.d > portals[e.node].d)
+                continue;                       // beaten by a shorter route already
+            for (s = 0; s < 2; s++)
+            {
+                int sec = (s == 0) ? portals[e.node].secA : portals[e.node].secB;
+                int k;
+                for (k = secFirst[sec]; k < secFirst[sec + 1]; k++)
+                {
+                    int   v  = secList[k];
+                    float dx = portals[v].x - portals[e.node].x;
+                    float dy = portals[v].y - portals[e.node].y;
+                    float nd = e.d + sqrtf(dx * dx + dy * dy);
+                    if (nd >= portals[v].d || nd >= RB_SEEP_DMAX)
+                        continue;
+                    portals[v].d = nd;
+                    if (heapN < cap)
+                        RB_HeapPush(heap, &heapN, nd, v);
+                }
+            }
+        }
+    }
+    free(heap);
+
+    // --- 4. Rasterise: resolve d PER CELL, not per node ---------------------
+    minX = minY =  1e30f;
+    maxX = maxY = -1e30f;
+    for (i = 0; i < numvertexes; i++)
+    {
+        float vx = vertexes[i].x / (float)FRACUNIT;
+        float vy = vertexes[i].y / (float)FRACUNIT;
+        if (vx < minX) minX = vx;
+        if (vx > maxX) maxX = vx;
+        if (vy < minY) minY = vy;
+        if (vy > maxY) maxY = vy;
+    }
+    if (numvertexes <= 0) { minX = minY = 0.0f; maxX = maxY = 1.0f; }
+
+    // Coarser cells only blur the seep's edge; they cannot break the sealed-room
+    // guarantee, because connectivity was decided on the portal graph above --
+    // before anything was rasterised.
+    cell = RB_SEEP_CELL0;
+    for (;;)
+    {
+        gw = (int)((maxX - minX) / cell) + 3;   // +1 for the partial cell, +2 for the ring
+        gh = (int)((maxY - minY) / cell) + 3;
+        if (gw <= RB_SEEP_MAXDIM && gh <= RB_SEEP_MAXDIM)
+            break;
+        cell *= 2.0f;
+    }
+
+    field = (rb_seep_t*)malloc(sizeof(rb_seep_t));
+    if (!field)
+        I_Error("RB_BuildSeepField: out of memory for the field");
+    field->w       = gw;
+    field->h       = gh;
+    field->cell    = cell;
+    field->originX = minX - cell;   // cell (0,0)'s CENTRE, one full cell outside the map
+    field->originY = minY - cell;
+    field->d       = (float*)malloc((size_t)gw * (size_t)gh * sizeof(float));
+    if (!field->d)
+        I_Error("RB_BuildSeepField: out of memory for %dx%d cells", gw, gh);
+
+    for (iy = 0; iy < gh; iy++)
+    {
+        for (ix = 0; ix < gw; ix++)
+        {
+            float cx = field->originX + ix * cell;
+            float cy = field->originY + iy * cell;
+            float best = RB_SEEP_DMAX;
+            int   sec, k;
+
+            // The void ring is unreachable by construction. It has to be written
+            // explicitly rather than looked up: DOOM's BSP partitions the whole
+            // plane, so a point outside the map still lands in some leaf, and that
+            // leaf's sector could be an outdoor one -- which would wrap outdoor air
+            // onto the map edge under CLAMP_TO_EDGE.
+            if (ix == 0 || iy == 0 || ix == gw - 1 || iy == gh - 1)
+            {
+                field->d[iy * gw + ix] = RB_SEEP_DMAX;
+                continue;
+            }
+
+            sec = RB_SectorAtPoint(cx, cy);
+            if (sec >= 0)
+            {
+                if (sectors[sec].ceilingpic == skyflatnum)
+                {
+                    best = 0.0f;                       // this cell IS outdoor air
+                }
+                else
+                {
+                    for (k = secFirst[sec]; k < secFirst[sec + 1]; k++)
+                    {
+                        rb_portal_t* pt = &portals[secList[k]];
+                        float dx = pt->x - cx, dy = pt->y - cy;
+                        float nd = pt->d + sqrtf(dx * dx + dy * dy);
+                        if (nd < best)
+                            best = nd;
+                    }
+                }
+            }
+            field->d[iy * gw + ix] = (best < RB_SEEP_DMAX) ? best : RB_SEEP_DMAX;
+        }
+    }
+
+    free(portals);
+    free(secFirst);
+    free(secList);
+    return field;
+}
+
+void RB_FreeSeepField(rb_seep_t* f)
+{
+    if (!f)
+        return;
+    free(f->d);
+    free(f);
 }
 
 int RB_BuildSubsectorSectors(int* out, int n)

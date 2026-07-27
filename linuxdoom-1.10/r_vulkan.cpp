@@ -745,6 +745,19 @@ struct VulkanState
     VkDescriptorPool      rtDsPool   = VK_NULL_HANDLE;
     VkDescriptorSet       rtDs       = VK_NULL_HANDLE;
     VkPipelineLayout      rtPipeLayout = VK_NULL_HANDLE;
+    // DOOM-0011 L1d: the outdoor-proximity seep field. A per-level R32F image
+    // holding, per grid cell, the through-open-space distance to outdoor air, plus
+    // a 24-byte UBO turning a world XY into a texel. Set 0, bindings 4 and 5
+    // (3 is reserved for L1c's noise volume and is simply absent until then --
+    // descriptor bindings need not be contiguous, so nothing has to be made
+    // partially-bound to hold the number). Rebuilt per level; a 1x1 placeholder
+    // stands in from pipeline creation so the bindings are never unwritten.
+    VkImage               seepImage    = VK_NULL_HANDLE;
+    VkDeviceMemory        seepMemory   = VK_NULL_HANDLE;
+    VkImageView           seepView     = VK_NULL_HANDLE;
+    VkBuffer              seepUbo      = VK_NULL_HANDLE;
+    VkDeviceMemory        seepUboMem   = VK_NULL_HANDLE;
+    void*                 seepUboMapped = nullptr;
     // DOOM-0129: the megakernel's view-mode is a spec-constant, so each mode gets
     // its own specialised pipeline (the unused debug modes dead-strip out). The
     // module is kept alive to build variants lazily; rtPipeline is indexed by mode
@@ -2308,13 +2321,22 @@ static VkPipeline RtPipelineForMode(uint32_t mode)
 
 static void CreateHdSetLayout();   // DOOM-0042: set-3 layout, needed by the RT pipeline layout
 static void InitHdDefault();       // DOOM-0042: seed an all-paletted set 3 at atlas time
+// DOOM-0170 perf: monotonic wall clock in milliseconds for the CPU-side frame
+// profiler. steady_clock is immune to NTP/settimeofday jumps, unlike wall-time.
+// Defined up here rather than beside the profiler because DOOM-0011 L1d's seep fill,
+// which runs at level load, times itself against the same clock.
+static inline double CpuNowMs()
+{
+    using namespace std::chrono;
+    return duration<double, std::milli>(steady_clock::now().time_since_epoch()).count();
+}
 
 // Build the once-per-run compute pipeline: a descriptor set (TLAS + storage
 // image), an 88-byte push-constant range (camera basis + mode + vertex-buffer
 // address), and the pathtrace.comp megakernel. RT-only; never called without it.
 void CreateRtComputePipeline()
 {
-    VkDescriptorSetLayoutBinding binds[3] = {};
+    VkDescriptorSetLayoutBinding binds[5] = {};
     binds[0].binding         = 0;   // TLAS
     binds[0].descriptorType  = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
     binds[0].descriptorCount = 1;
@@ -2327,21 +2349,34 @@ void CreateRtComputePipeline()
     binds[2].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     binds[2].descriptorCount = 1;
     binds[2].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+    // DOOM-0011 L1d. Binding 3 is deliberately skipped -- it is L1c's noise volume,
+    // and the two tasks agreed the numbers in advance so whichever lands first does
+    // not renumber the other.
+    binds[3].binding         = 4;   // seep field (R32F, distance to outdoor air)
+    binds[3].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    binds[3].descriptorCount = 1;
+    binds[3].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+    binds[4].binding         = 5;   // its world->texel transform
+    binds[4].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    binds[4].descriptorCount = 1;
+    binds[4].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
 
     VkDescriptorSetLayoutCreateInfo dlci = {};
     dlci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    dlci.bindingCount = 3;
+    dlci.bindingCount = 5;
     dlci.pBindings    = binds;
     Check(vkCreateDescriptorSetLayout(g.device, &dlci, nullptr, &g.rtDsLayout),
           "vkCreateDescriptorSetLayout(rt)");
 
-    VkDescriptorPoolSize pools[2] = {};
+    VkDescriptorPoolSize pools[4] = {};
     pools[0].type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR; pools[0].descriptorCount = 1;
     pools[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;              pools[1].descriptorCount = 2;
+    pools[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;     pools[2].descriptorCount = 1;
+    pools[3].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;             pools[3].descriptorCount = 1;
     VkDescriptorPoolCreateInfo pci = {};
     pci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     pci.maxSets       = 1;
-    pci.poolSizeCount = 2;
+    pci.poolSizeCount = 4;
     pci.pPoolSizes    = pools;
     Check(vkCreateDescriptorPool(g.device, &pci, nullptr, &g.rtDsPool),
           "vkCreateDescriptorPool(rt)");
@@ -3214,6 +3249,130 @@ void CreateSampledImage(uint32_t w, uint32_t h, VkFormat fmt,
     vci.format = fmt;
     vci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
     Check(vkCreateImageView(g.device, &vci, nullptr, outView), "vkCreateImageView(sampled)");
+}
+
+// DOOM-0011 L1d: (re)upload the outdoor-proximity seep field and re-point set 0's
+// bindings 4 and 5 at it. Called once at pipeline creation with a 1x1 placeholder
+// -- the descriptors have to be valid before the first dispatch, and the first level
+// is not built until later -- then again from RB_Vulkan_BuildLevel with the real
+// field. `f` may be null, which means "use the placeholder": every cell reads
+// RB_SEEP_DMAX, so the seep contributes nothing and the fog falls back to exactly
+// the flat indoor floor it had before this task.
+static uint16_t FloatToHalf(float f)
+{
+    uint32_t x;
+    memcpy(&x, &f, sizeof(x));
+    uint32_t sign = (x >> 16) & 0x8000u;
+    int32_t  exp  = (int32_t)((x >> 23) & 0xFFu) - 127 + 15;
+    uint32_t man  = x & 0x7FFFFFu;
+    if (exp <= 0)  return (uint16_t)sign;                  // underflow -> signed zero
+    if (exp >= 31) return (uint16_t)(sign | 0x7BFFu);      // saturate; never emit an inf
+    return (uint16_t)(sign | ((uint32_t)exp << 10) | (man >> 13));
+}
+
+void UploadSeepField(const rb_seep_t* f)
+{
+    uint32_t w = 1, h = 1;
+    const float* src = nullptr;
+
+    if (f && f->d && f->w > 0 && f->h > 0)
+    {
+        w   = (uint32_t)f->w;
+        h   = (uint32_t)f->h;
+        src = f->d;
+    }
+
+    // R16_SFLOAT, and the 16 is load-bearing in a way R8-vs-R16 is not the whole of.
+    // Vulkan MANDATES SAMPLED_IMAGE_FILTER_LINEAR for R16_SFLOAT but leaves it
+    // OPTIONAL for R32_SFLOAT -- so sampling a 32-bit field with a linear sampler is
+    // undefined on any device that does not advertise the bit, even though it works
+    // on the AMD card this was written against. Half gives ~1-unit resolution at the
+    // 1536-unit sentinel, far finer than a 64-unit cell.
+    std::vector<uint16_t> texels((size_t)w * h,
+                                 FloatToHalf(RB_SEEP_DMAX));   // = "unreachable"
+    if (src)
+        for (size_t i = 0; i < texels.size(); i++)
+            texels[i] = FloatToHalf(src[i]);
+
+    // The image is per level, so the old one goes. The caller (level load, or
+    // pipeline creation) has already drained the device, so nothing is reading it.
+    if (g.seepView)   { vkDestroyImageView(g.device, g.seepView, nullptr);  g.seepView   = VK_NULL_HANDLE; }
+    if (g.seepImage)  { vkDestroyImage(g.device, g.seepImage, nullptr);     g.seepImage  = VK_NULL_HANDLE; }
+    if (g.seepMemory) { vkFreeMemory(g.device, g.seepMemory, nullptr);      g.seepMemory = VK_NULL_HANDLE; }
+
+    // Not R8: normalising the distance against kSeepFalloff would cap what is
+    // representable at 192 units, which floors exp(-d/kSeepFalloff) at 1/e and so
+    // floors skyExposure at ~0.22 -- four times the intended indoor value, on every
+    // sealed room in the game.
+    CreateSampledImage(w, h, VK_FORMAT_R16_SFLOAT, texels.data(),
+                       (VkDeviceSize)w * h * sizeof(uint16_t),
+                       &g.seepImage, &g.seepMemory, &g.seepView);
+
+    // The transform is per-level runtime data, so it can be neither a compile-time
+    // const nor a push lane (that block is full -- INV-5). 24 bytes, created once.
+    if (!g.seepUbo)
+    {
+        VkBufferCreateInfo bci = {};
+        bci.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bci.size        = 6 * sizeof(float);
+        bci.usage       = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+        bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        Check(vkCreateBuffer(g.device, &bci, nullptr, &g.seepUbo), "vkCreateBuffer(seep ubo)");
+        VkMemoryRequirements req = {};
+        vkGetBufferMemoryRequirements(g.device, g.seepUbo, &req);
+        VkMemoryAllocateInfo mai = {};
+        mai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        mai.allocationSize  = req.size;
+        mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        Check(vkAllocateMemory(g.device, &mai, nullptr, &g.seepUboMem), "vkAllocateMemory(seep ubo)");
+        Check(vkBindBufferMemory(g.device, g.seepUbo, g.seepUboMem, 0), "vkBindBufferMemory(seep ubo)");
+        Check(vkMapMemory(g.device, g.seepUboMem, 0, req.size, 0, &g.seepUboMapped),
+              "vkMapMemory(seep ubo)");
+    }
+
+    {
+        // Must match `SeepXform` in pathtrace.comp, in this order: three vec2s,
+        // std140-safe at this size (8-byte aligned members, 24 bytes total).
+        float* x = (float*)g.seepUboMapped;
+        // `origin` is the PADDED grid's cell-(0,0) CENTRE, one full cell outside the
+        // map's bounding box -- not the map's minimum corner. Feed it the un-padded
+        // corner and every lookup is off by one cell, which reads on screen as fog
+        // leaking at the map edges rather than as a bad transform.
+        x[0] = f ? f->originX : 0.0f;
+        x[1] = f ? f->originY : 0.0f;
+        x[2] = f ? 1.0f / f->cell : 1.0f;
+        x[3] = f ? 1.0f / f->cell : 1.0f;
+        x[4] = (float)w;
+        x[5] = (float)h;
+    }
+
+    if (g.rtDs == VK_NULL_HANDLE)
+        return;
+
+    VkDescriptorImageInfo imgInfo = {};
+    imgInfo.sampler     = g.compositeSampler;   // linear + CLAMP_TO_EDGE, exactly what
+    imgInfo.imageView   = g.seepView;           // the field wants; no second sampler
+    imgInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkDescriptorBufferInfo bufInfo = {};
+    bufInfo.buffer = g.seepUbo;
+    bufInfo.offset = 0;
+    bufInfo.range  = 6 * sizeof(float);
+
+    VkWriteDescriptorSet writes[2] = {};
+    writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet          = g.rtDs;
+    writes[0].dstBinding      = 4;
+    writes[0].descriptorCount = 1;
+    writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[0].pImageInfo      = &imgInfo;
+    writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[1].dstSet          = g.rtDs;
+    writes[1].dstBinding      = 5;
+    writes[1].descriptorCount = 1;
+    writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    writes[1].pBufferInfo     = &bufInfo;
+    vkUpdateDescriptorSets(g.device, 2, writes, 0, nullptr);
 }
 
 //
@@ -6190,6 +6349,11 @@ extern "C" void RB_Vulkan_Init(void)
         // written later, per level, by BuildAccelerationStructures.
         CreateSvgfDescriptorLayout();  // set-2 layout (the trace pipeline layout needs it)
         CreateRtComputePipeline();
+        // DOOM-0011 L1d: stand a 1x1 "unreachable everywhere" seep field in bindings
+        // 4/5 immediately. The real one arrives with the first level, but the set must
+        // never be dispatched with an unwritten binding, and the title screen can
+        // reach the RT path before any map is loaded.
+        UploadSeepField(nullptr);
         CreateBakePipeline();          // GI bake pass (step 4b-ii), dispatched per level
         CreateSvgfPipelines();         // denoiser passes (step 6); needs svgfDsLayout
         CreateLabelPipeline();         // on-screen mode label (debug); reuses svgfDsLayout
@@ -7172,6 +7336,28 @@ extern "C" void RB_Vulkan_BuildLevel(void)
            g.levelMesh->numtris, g.levelMesh->numverts);
     fflush(stdout);
 
+    // DOOM-0011 L1d: the outdoor-proximity seep field, rebuilt for this map. Runs
+    // once per level beside the mesh build; the device is already drained above, so
+    // replacing the image the last frame sampled is safe here.
+    if (g.rtEnabled)
+    {
+        double     t0 = CpuNowMs();
+        rb_seep_t* sf = RB_BuildSeepField();
+        double     ms = CpuNowMs() - t0;
+        UploadSeepField(sf);
+        // The cell split is the cheap proof the fill did what it claims: some cells
+        // outdoors, some graded, some unreachable. All-outdoor or all-unreachable
+        // means the portal graph is wrong, and neither shows up as a crash.
+        int nOut = 0, nSeep = 0, nOff = 0;
+        for (int c = 0; c < sf->w * sf->h; c++)
+            (sf->d[c] <= 0.0f) ? nOut++ : (sf->d[c] >= RB_SEEP_DMAX ? nOff++ : nSeep++);
+        printf("RB_Vulkan: DOOM-0011 seep field %dx%d cells at %.0f units, "
+               "%d outdoor / %d seeped / %d sealed (fill %.1f ms).\n",
+               sf->w, sf->h, sf->cell, nOut, nSeep, nOff, ms);
+        fflush(stdout);
+        RB_FreeSeepField(sf);
+    }
+
     // (Re)create the vertex buffer sized to this level's mesh. DOOM-0074: one copy per
     // in-flight slot (the build-ahead re-height writes the next frame's slot).
     for (uint32_t s = 0; s < VulkanState::kFramesInFlight; s++)
@@ -7921,13 +8107,6 @@ void RecordRtOverlay(uint32_t idx, bool drawOverlay)
     vkCmdEndRenderPass(g.cmd);
 }
 
-// DOOM-0170 perf: monotonic wall clock in milliseconds for the CPU-side frame
-// profiler. steady_clock is immune to NTP/settimeofday jumps, unlike wall-time.
-static inline double CpuNowMs()
-{
-    using namespace std::chrono;
-    return duration<double, std::milli>(steady_clock::now().time_since_epoch()).count();
-}
 
 // DOOM-0074: the per-frame CPU "build" — sky/sprite/weapon billboards, the NEE emitter
 // refill + per-subsector point-light cull, and moving-sector re-height. Split out of
@@ -8833,6 +9012,12 @@ extern "C" void RB_Vulkan_Shutdown(void)
         if (g.rtPipeLayout) vkDestroyPipelineLayout(g.device, g.rtPipeLayout, nullptr);
         if (g.rtDsPool)     vkDestroyDescriptorPool(g.device, g.rtDsPool, nullptr);
         if (g.rtDsLayout)   vkDestroyDescriptorSetLayout(g.device, g.rtDsLayout, nullptr);
+        // DOOM-0011 L1d seep field + its transform UBO.
+        if (g.seepView)     vkDestroyImageView(g.device, g.seepView, nullptr);
+        if (g.seepImage)    vkDestroyImage(g.device, g.seepImage, nullptr);
+        if (g.seepMemory)   vkFreeMemory(g.device, g.seepMemory, nullptr);
+        if (g.seepUbo)      vkDestroyBuffer(g.device, g.seepUbo, nullptr);
+        if (g.seepUboMem)   vkFreeMemory(g.device, g.seepUboMem, nullptr);
         // INV-6 verify accumulator + readback (step 4d).
         if (g.rtAccumView)  vkDestroyImageView(g.device, g.rtAccumView, nullptr);
         if (g.rtAccum)      vkDestroyImage(g.device, g.rtAccum, nullptr);

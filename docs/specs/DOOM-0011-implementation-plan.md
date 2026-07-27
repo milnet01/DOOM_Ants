@@ -30,10 +30,14 @@ this plan implements it; every `§`/`INV`/`Q` reference points there.
 >   re-implement them.**
 > - **`L1c` and `L1d` were written on 2026-07-26** from the spec's §4.3a/§4.3b amendments and
 >   §7 acceptance rows, and have since been cold-reviewed through loops 7–13 and compiled.
-> - **`L1e` (the floor fog, §4.3c / DOOM-0272) was written on 2026-07-27** and reviewed in its
->   own narrow lane. **It is the next work** — it ships *before* L1c and L1d, because its outdoor
->   half stands alone while its indoor half waits on L1d's seep. The letters are identifiers,
->   not a sequence.
+> - **`L1e` (the floor fog, §4.3c / DOOM-0272) is SHIPPED** (`6e3234b`, outdoor half) — it went
+>   *before* L1c and L1d, because its outdoor half stands alone while its indoor half waits on
+>   L1d's seep. The letters are identifiers, not a sequence.
+> - **`L1d` (the seep) is SHIPPED** — the fill, the upload and the graded indoor branch are in
+>   the tree; E1M1 builds a 74×47 field in 0.6 ms. Its Step 6 runtime measurement and Step 7
+>   play-test are still owed, and **four deviations from this task's text are recorded in the fix
+>   ledger** — read them before writing L1c, since two concern the set-0 plumbing L1c shares.
+> - **`L1c` is the next work.** Its blocker below still stands.
 > - **The spec is the authority on every number.** Where this plan and the spec disagree,
 >   the spec wins — though no known disagreement remains.
 > - **Cold-eyes status: CONVERGED (2026-07-26).** The original design converged in 4 loops; the

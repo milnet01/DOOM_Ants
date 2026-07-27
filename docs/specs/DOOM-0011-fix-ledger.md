@@ -689,6 +689,25 @@ described a mechanism correctly and then failed to place it in the documents' ow
 converged doc set does not inherit that set's scaffolding; it has to be threaded in by hand, and
 that threading is what a narrow lane is actually good at.
 
+## L1d implemented — 2026-07-27 — four deviations from the plan, one of them a real catch
+
+The seep shipped as written apart from the four below. Level-load cost on E1M1 is **0.6 ms**
+against the ≤ 20 ms budget, on a 74×47 grid at the starting 64-unit cell (no doubling needed), and
+the cell split is **920 outdoor / 1743 seeped / 815 sealed** — the cheap proof the portal graph
+works at all, since a broken one lands everything in a single bucket without crashing.
+
+| # | Deviation | Why |
+|---|---|---|
+| 20.1 | **The plan's `R16F` was right and my "improvement" to `R32F` was wrong.** I switched it on the reasoning that R32F is strictly better than R16F and skips a half-float conversion — then caught it before commit | Vulkan **mandates** `SAMPLED_IMAGE_FILTER_LINEAR` for `R16_SFLOAT` and leaves it **optional** for `R32_SFLOAT`. The field is sampled with a *linear* sampler, so R32F is undefined on any device that does not advertise the bit — it happened to work on the RX 6600 it was written against, and Charl tests on Windows. **The spec's stated reason for R16F was precision-vs-R8; the binding reason is filterability, and it is now recorded.** Restored to `R16_SFLOAT` with a `FloatToHalf` that saturates rather than emitting an inf |
+| 20.2 | **No `PARTIALLY_BOUND`,** which the plan asks for in both L1c and L1d | It exists to let binding 3 (L1c's noise volume) sit unwritten while only L1d has landed. But descriptor bindings **need not be contiguous** — the layout simply declares 0, 1, 2, 4, 5 and omits 3 until L1c adds it. The numbers still hold, so neither task renumbers the other, and nothing has to be made partially-bound to reserve a slot. L1c should re-check whether it needs the flag on its own merits |
+| 20.3 | **A 1×1 placeholder field is uploaded at pipeline creation,** which the plan does not mention | The set is allocated once, at pipeline creation; the real field arrives with the first level. Between those two points the RT path is reachable (the title screen), and dispatching with an unwritten binding is undefined. The placeholder reads `dMax` everywhere, so the fallback look is exactly the pre-L1d flat indoor floor |
+| 20.4 | **Reuses `g.compositeSampler`** instead of creating a seep sampler | It is already linear + `CLAMP_TO_EDGE` on all three axes, which is the whole of the sampler contract in the plan's Step 3 |
+
+**Also moved:** `CpuNowMs()` now sits above `RB_Vulkan_BuildLevel` rather than beside the frame
+profiler, because the fill times itself on the same clock. Declaring it forward instead does **not**
+work here — the file's contents are in an anonymous namespace, and GCC reads the declaration and the
+later `static inline` definition as two overloads and rejects every call site as ambiguous.
+
 ## Open — not yet fixed
 
 - ~~**Cold-eyes has not converged.**~~ **CONVERGED at loop 13** (2026-07-26): zero verified
