@@ -39,14 +39,30 @@ const float kFogMaxDist      = 2048.0;           // clamp tHit so a long corrido
 const float kFogSkyDist      = 4096.0;           // DOOM-0011 Q24a: the SKY backdrop's effective
                                  // haze distance. It depicts terrain at effectively infinite
                                  // range, so handing it kFogMaxDist (as L1b did) gave the
-                                 // mountains exactly as much haze as a wall at the 2048 clamp --
-                                 // 80.6% for both at High -- and a nearer bright wall then read
-                                 // as MORE distant than the horizon behind it. 2x kFogMaxDist
-                                 // puts the backdrop at ~96%. This is the single sky lever:
-                                 // raise it to push the mountains further back, lower it if the
-                                 // sky ever washes out (e.g. after L1c's density raise).
-const float kFogBaseDensity  = 0.0008;           // "High"-level extinction/km-ish; subtle. tune-on-hw
-const float kFogPoolHeight   = 48.0;             // e-fold height (DOOM units) for floor pooling
+                                 // mountains exactly as much haze as a wall at the 2048 clamp,
+                                 // and a nearer bright wall then read as MORE distant than the
+                                 // horizon behind it. At 2x kFogMaxDist, and with the sky ray
+                                 // crossing the cloud at EYE height, the backdrop sits at ~75%
+                                 // haze against ~50% for a wall at the 2048 clamp. This is the
+                                 // single sky lever: raise it to push the mountains further back,
+                                 // lower it if the sky ever washes out (e.g. after L1c's density
+                                 // raise). It did NOT need re-tuning for the 2026-07-27 ground-
+                                 // cloud re-balance, which held the eye-height density fixed.
+const float kFogBaseDensity  = 0.0033;           // extinction AT FLOOR LEVEL at "High". tune-on-hw.
+                                 // 2026-07-27: the pair below was re-balanced so the cloud reads as
+                                 // a bank lying ON the ground. The eye-height product is HELD FIXED
+                                 // -- kFogBaseDensity * exp(-kEyeAboveFloor / kFogPoolHeight) was
+                                 // 0.000340 (0.0008 / 48) and is now 0.000338 (0.0033 / 18) -- so
+                                 // walls, the sky backdrop and the mountains are unchanged to
+                                 // within a rounding error, and ONLY the near-ground air thickened.
+                                 // Measured at High: ground at 512 u 24 % -> 49 % hazed, at 1024 u
+                                 // 42 % -> 74 %; a wall at eye height is 16 % / 29 % either way.
+const float kFogPoolHeight   = 18.0;             // e-fold height (DOOM units) for floor pooling.
+                                 // ~knee height (the eye rides at kEyeAboveFloor = 41), so the bank
+                                 // has a soft top well below the horizon: the BASE of a distant wall
+                                 // sits in it (74 % at 1024 u) while its top stays nearly clear
+                                 // (7 %). That base/top split is what reads as a cloud rather than
+                                 // a tint. Raise it for a deeper bank, lower it to hug the floor.
 const float kEyeAboveFloor   = 41.0;             // DOOM's VIEWHEIGHT: how far the eye rides above
                                  // its own floor. Used as the height at which a SKY ray crosses
                                  // the ground cloud, and as the floor fallback when the primary
@@ -55,7 +71,13 @@ const float kFogAnisotropy   = 0.40;             // Henyey-Greenstein g (mild fo
 const vec3  kSunDir          = normalize(vec3(0.30, 0.30, 1.0)); // world; +z is up (floor = hitP.z). L2.
 const vec3  kGooTint         = vec3(0.35, 0.85, 0.30); // sickly green (L4)
 const vec3  kHellTint        = vec3(0.90, 0.35, 0.30); // faint red   (L4)
-const float kSkyShaftStrength   = 1.0;           // sky in-scatter gain (L1/L2)
+const float kSkyShaftStrength   = 0.85;          // sky in-scatter gain (L1/L2). Brightness of the
+                                 // fog ONLY -- extinction is kFogBaseDensity's job -- so this is
+                                 // the "the fog is a bit bright outside" dial (user, 2026-07-26)
+                                 // and it does not change how much the fog hides. 1.0 -> 0.85.
+                                 // It must be applied by every in-scatter site, the closed-form
+                                 // sky branches included, or the seam where sky meets wall shows
+                                 // two different fog brightnesses.
 const float kTorchShaftStrength = 1.0;           // static-emitter in-scatter gain (L3)
 const float kIndoorFogScale = 0.05;   // DOOM-0011 §4.3a: fog density multiplier under a solid
                                        // roof (open sky = 1.0). 0.0 = interiors totally clear;

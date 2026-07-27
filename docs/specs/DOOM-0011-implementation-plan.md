@@ -166,19 +166,21 @@ spine; every later task fills it in.
 
 - [ ] **Step 1: Add the fog consts + helpers to `pt_common.glsl`**
 
-Place near `SKY_COLOR` (`:31`), matching the existing const style:
+Place near `SKY_COLOR` (`:31`), matching the existing const style. **Values below track the live
+`pt_common.glsl`; three were re-tuned on 2026-07-27** (spec §4.3) and the L1 originals are noted
+inline. `kFogSkyDist` and `kEyeAboveFloor` arrived later (Q24a) and are not in this listing.
 
 ```glsl
 // DOOM-0011: volumetric fog (single-scatter view-ray march). All tune-on-hardware.
 const int   kFogSteps        = 24;               // fixed sample count (coherent, cheap)
 const float kFogMaxDist      = 2048.0;           // clamp tHit so a long corridor can't blow budget
-const float kFogBaseDensity  = 0.0008;           // small always-on "clear air" so shafts read (SHIPPED value; L1c raises to ~0.0016)
-const float kFogPoolHeight   = 48.0;             // e-fold height (DOOM units) for floor pooling
+const float kFogBaseDensity  = 0.0033;           // extinction at FLOOR level (L1 shipped 0.0008; re-balanced 2026-07-27)
+const float kFogPoolHeight   = 18.0;             // e-fold height (DOOM units) for floor pooling (L1 shipped 48)
 const float kFogAnisotropy   = 0.40;             // Henyey-Greenstein g (mild forward bias); 0 = isotropic
 const vec3  kSunDir          = normalize(vec3(0.30, 0.30, 1.0)); // world; +z is up (floor = hitP.z). L2.
 const vec3  kGooTint         = vec3(0.35, 0.85, 0.30); // sickly green (L4)
 const vec3  kHellTint        = vec3(0.90, 0.35, 0.30); // faint red   (L4)
-const float kSkyShaftStrength   = 1.0;           // sky in-scatter gain (L1/L2)
+const float kSkyShaftStrength   = 0.85;          // sky in-scatter gain (L1/L2); L1 shipped 1.0
 const float kTorchShaftStrength = 1.0;           // static-emitter in-scatter gain (L3)
 
 // Henyey-Greenstein phase (forward/back scatter weight); cosTheta = dot(viewDir, lightDir).
@@ -188,9 +190,10 @@ float fogPhaseHG(float cosTheta, float g) {
     return (1.0 - g2) / (4.0 * 3.14159265 * pow(max(denom, 1e-4), 1.5));
 }
 
-// L1: base density only (height pooling + profiles arrive at L3/L4).
-float fogDensity(vec3 p) {
-    return kFogBaseDensity;
+// L1 shipped this as `fogDensity(vec3 p) { return kFogBaseDensity; }` — a constant. L3's height
+// pooling was pulled forward on 2026-07-27, so it now takes a floor reference (see L3 Step 1).
+float fogDensity(vec3 p, float floorZ) {
+    return kFogBaseDensity * exp(-max(0.0, p.z - floorZ) / kFogPoolHeight);
 }
 ```
 
@@ -497,7 +500,7 @@ see Global Constraints (INV-7/8).
 
 **Files:**
 - Modify: `shaders/pt_common.glsl` — the 2026-07-25 `const`s; `kFogSteps` 24 → ~40;
-  `kFogBaseDensity` 0.0008 → ~0.0016.
+  `kFogBaseDensity` 0.0033 → ~0.0066 (a ×2 on the shipped value — see the caution in Interfaces).
 - Modify: `shaders/pathtrace.comp` — the noise sampler declaration, `wisp()`, the `sigma`
   multiply, and the `SKY_COLOR` → `kFogColor` swaps (foreground **and** both sky closed forms).
 - Modify: `r_vulkan.cpp` — generate + upload the 3-D noise volume at startup; **the set-0
@@ -542,14 +545,20 @@ And **change** two shipped values in the same block:
 - `kFogSteps` **24 → 40**. Structured density is a high-frequency signal along the ray and bands
   at 24 (§4.3b). This is a **hypothesis to confirm by looking** — if 24 reads clean with wisps
   on, revert it and bank the budget.
-- **Darken the outdoor result while you are here.** The user's play-test of the shipped fog
-  (spec §4.3b, 2026-07-26) was "I really like the fog, it can be slightly darker though. It is
-  quite bright when outside" — and the two changes below both push brightness *up*. Take it out
-  of `kSkyShaftStrength` (currently `1.0`) or the value of `kFogColor`; **not** out of
+- **Darkening is already applied — check before repeating it.** The user's play-test of the
+  shipped fog (spec §4.3b, 2026-07-26) was "I really like the fog, it can be slightly darker
+  though. It is quite bright when outside", and `kSkyShaftStrength` went `1.0` → **`0.85`** on
+  2026-07-27 in answer. The two changes below both push brightness back *up*, so if it reads
+  bright again, take it out of `kSkyShaftStrength` again or out of `kFogColor`; **not** out of
   `kFogBaseDensity`, which the wisps and the ≈2× raise depend on.
-- `kFogBaseDensity` **0.0008 → 0.0016**. Re-tune this **with wisps on**, never from the un-wisped
-  value: transmittance is non-linear in `σ`, so by Jensen wisped fog reads *thinner* on average
-  at the same base density (§4.3b).
+- `kFogBaseDensity` **0.0033 → 0.0066** (the shipped value moved; ×2 is the intent, not the
+  literal 0.0016 an earlier draft named). Two cautions:
+  **(a)** it is now the density *at floor level*, and it is paired with `kFogPoolHeight = 18` —
+  doubling it alone doubles the fog everywhere, ground bank and distant walls alike. If you want
+  only the far look to thicken, raise the **product** `kFogBaseDensity × exp(−41/kFogPoolHeight)`;
+  if you want only the ground bank, hold that product fixed and drop `kFogPoolHeight`.
+  **(b)** Re-tune **with wisps on**, never from the un-wisped value: transmittance is non-linear
+  in `σ`, so by Jensen wisped fog reads *thinner* on average at the same base density (§4.3b).
 
 - [ ] **Step 2: Generate + upload the 3-D noise volume, and do the set-0 plumbing**
 
@@ -628,15 +637,17 @@ Miss any one and you get the sky/wall seam this task's own acceptance criterion 
 
 **If the mountains read washed-out at High strength**, add a separate sky-only density constant
 **lower `kFogSkyDist`** (shipped 2026-07-27 at 4096) rather than adding a second sky constant —
-only the product density × distance matters, so doubling `kFogBaseDensity` here means roughly
-halving it, 4096 → ≈ 2012. Do **not** lower `kFogBaseDensity` again to rescue the sky: that undoes
-the foreground tuning this task just did, which is why the fork exists. Logged as **Q24/Q24a**.
-**Check this the moment the density changes** — at 0.0016 with `kFogSkyDist` left at 4096 the
-peaks retain 0.14 % transmittance at High, i.e. they disappear.
+only the product density × distance matters, so doubling `kFogBaseDensity` here means halving it,
+4096 → ≈ 2048. Do **not** lower `kFogBaseDensity` again to rescue the sky: that undoes the
+foreground tuning this task just did, which is why the fork exists. Logged as **Q24/Q24a**.
+**Check this the moment the density changes** — at 0.0066 with `kFogSkyDist` left at 4096 the
+peaks retain 6.3 % transmittance at High, i.e. they are washed rather than hazed.
 
-The sky closed forms stay **wisp-free and pool-free** (INV-10): they remain
-`kFogBaseDensity * strength` integrated over `[0, kFogSkyDist]` and nothing else. A closed form
-requires constant density, and billow structure on the mountains would be sub-pixel anyway.
+The sky closed forms stay **wisp-free** (INV-10): they remain
+`kFogBaseDensity * exp(-kEyeAboveFloor / kFogPoolHeight) * strength` integrated over
+`[0, kFogSkyDist]` and nothing else. That height term is a compile-time constant, so the density
+is still uniform and the closed form still holds. A closed form requires constant density, and
+billow structure on the mountains would be sub-pixel anyway.
 
 Also **re-judge the `SKY_FOG_COL` screen-space band** (`:763-764`, mixed at `:771`) against the
 new near-white base — it overlaps the real distance fog and L1b only halved it (Q14). If the
@@ -966,8 +977,13 @@ dark rooms — using only the existing static emitter slice.
   spec §4.3: the floor fallback is **camera-relative** (`ro.z - kEyeAboveFloor`) rather than a
   `kFogFloorFallback` const, and the sky closed forms now use the density at **eye height**
   (`kFogBaseDensity * exp(-kEyeAboveFloor / kFogPoolHeight)`) so the backdrop is not hazed as if
-  it lay on the ground. `kFogFloorFallback` was therefore never added. The draft is kept below as
-  the record of what was specified.
+  it lay on the ground. `kFogFloorFallback` was therefore never added. **Re-balanced the same
+  day**, on the first look: pooling at `kFogPoolHeight = 48` left the floor only 2.4× thicker than
+  eye height, so the ground still read as clear. `kFogBaseDensity` / `kFogPoolHeight` went
+  `0.0008 / 48` → **`0.0033 / 18`**, holding their eye-height product fixed so only the near-ground
+  air changed (spec §4.3). **`fogHeightPool()` was NOT split out** — the shipped `fogDensity()`
+  inlines the `exp()`. L4 Step 3 calls `fogHeightPool(p, floorZ)`, so **L4 must extract it first**;
+  it will not compile otherwise. The draft is kept below as the record of what was specified.
 
 `marchFog()` must pass the floor reference into density. Compute `floorZ` once in `marchFog()`:
 `hitP.z` when the primary hit faces up (`gnormal.z > 0.7`, a floor), else a level-min fallback
@@ -1164,7 +1180,8 @@ the global haze to base density, and multiply every `Ls` contribution by `medium
         // spec §4.3b sigma_final: skyExposure gates the SKY-SOURCED term ONLY (INV-9).
         // Loop body -- `p` and `skyExposure` are per-sample, so this goes INSIDE marchFog's for
         // loop, replacing the old sigma line. (8-space fencing = loop body, as elsewhere here.)
-        float pool      = fogHeightPool(p, floorZ);       // L3 Step 1 -- CALL it, not a local here
+        float pool      = fogHeightPool(p, floorZ);       // extract it from fogDensity() first --
+                                                         // L3 shipped it inlined (see L3 Step 1)
         float skySigma  = kFogBaseDensity * skyExposure;  // outdoor haze, gated
         float areaSigma = (kAreaDensity * areaMult) + haze; // profiles, NOT gated
         float sigma     = (skySigma + areaSigma) * pool * wisp(p, t_s) * strength;
@@ -1178,7 +1195,8 @@ the global haze to base density, and multiply every `Ls` contribution by `medium
 ```
 - **`fogDensity()` loses its last caller here.** Once `sigma` is built from the split terms,
   grep for `fogDensity(` — if nothing else calls it, delete it in this same commit rather than
-  leaving a dead helper. `fogHeightPool()` stays; it is what the line above calls.
+  leaving a dead helper. `fogHeightPool()` is what the line above calls — extract it out of the
+  shipped `fogDensity()`, which currently inlines the same `exp()`.
 - **Verify by construction, not by eye:** with `rb_fog` on, a goo room under a solid roof
   must show green fog at a density independent of `kIndoorFogScale` — temporarily setting
   `kIndoorFogScale = 0` must NOT remove the goo pool. If it does, the split did not land.
@@ -1471,14 +1489,16 @@ The rest:
   at their tasks (INV-2 in L3, INV-4 in L1, INV-5/7 in L6, INV-6 global, INV-8 in L6 gate).
   The four added by the amendments land in the new tasks: **INV-9** (`skyExposure` gates the
   sky-sourced term only) in L1b's `sigma` note, L1d Step 4 and L4's split step; **INV-10** (the
-  sky closed form stays wisp-free and pool-free) in L1c Step 4; **INV-11** (`kWispAmp = 0` is an
+  sky closed form stays wisp-free, and applies the height pool at a single constant height so it
+  is still a closed form — re-amended 2026-07-27) in L1c Step 4; **INV-11** (`kWispAmp = 0` is an
   exact no-op) as L1c Step 7's by-construction check; **INV-12** (the seep never leaks into a
   sealed room) in L1d Steps 1–2 and its Step 7 acceptance.
 
 **Placeholder scan** — the `kFog*`/tint/`kHaze*` values are concrete starting numbers explicitly
 labelled *tune-on-hardware* (a spec requirement, not a TODO). **Seven shader helpers are new
 functions this plan authors**, not existing interfaces: `wisp` (L1c Step 3), `worldToSeepUV`
-(L1d Step 3), `sunRayMissesGeometry` (L2 Step 1), `fogHeightPool` (L3 Step 1), `emitterCentroid`
+(L1d Step 3), `sunRayMissesGeometry` (L2 Step 1), `fogHeightPool` (specified at L3 Step 1 but
+**not** shipped when that step landed early — L4 Step 3 must extract it), `emitterCentroid`
 and `emitterLe` (L3 Step 2), and `fetchFog` (L5 Step 1, alongside renaming the shipped
 `fetchFogBilinear` to `fetchFogBilinearPlain`). What already exists is the *pattern* each is built
 from — the ray-query call shape, the emitter-record read, the bilinear fetch — and the plan makes
@@ -1507,8 +1527,8 @@ from `g.lastView.hazeDensity` in `RecordRtTrace` (there is no bare `view` there)
 - **Q24 / Q24a** — the sky's haze. **Q24a shipped 2026-07-27**: the backdrop now has its own
   distance, `kFogSkyDist` (4096), because sharing `kFogMaxDist` left the mountains reading as
   *nearer* than a wall. **Q24 is the same lever from the density side and is still open**: when
-  L1c doubles `kFogBaseDensity`, `kFogSkyDist` must roughly halve (≈ 2012) or the peaks vanish
-  — 0.14 % transmittance at High. Adjust that one constant; never `kFogBaseDensity`, which would
+  L1c doubles `kFogBaseDensity`, `kFogSkyDist` must halve (4096 → ≈ 2048) or the peaks wash out
+  — 6.3 % transmittance at High. Adjust that one constant; never `kFogBaseDensity`, which would
   undo L1c's foreground tuning.
 - **One stale comment in shipped source** — `svgf_composite.comp`'s comment above
   `fetchFogBilinear` still calls the L5 upsample "depth-guided". **L5 Step 1 owns fixing it**;

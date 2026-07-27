@@ -302,12 +302,23 @@ fallback if HG reads busy (Q5).
 > 2. **The sky closed form uses the density at EYE height, not floor height.** Once density falls
 >    off with height, a sky ray crossing the cloud at eye level must not be charged the floor
 >    density, or the backdrop is hazed as though it lay on the ground. Shipped:
->    `kFogBaseDensity * exp(-kEyeAboveFloor / kFogPoolHeight)` — a compile-time factor of 0.43.
+>    `kFogBaseDensity * exp(-kEyeAboveFloor / kFogPoolHeight)` — a compile-time factor of 0.10 at
+>    the shipped constants.
 >
-> Effect at High, horizontally at eye height: 512 units goes 33.6 % → 16.0 % hazed, 1024 goes
-> 55.9 % → 29.4 %, 2048 goes 80.6 % → 50.2 %. The air is thinner at head height and thickest at
-> your feet, which is the whole point. `kFogPoolHeight` (48) is the dial: raise it for a deeper
-> cloud, lower it for a shallower one hugging the floor.
+> **Re-balanced the same day, on the first look at the result.** Pooling alone did not deliver the
+> cloud: at `kFogPoolHeight = 48` the floor was only 2.4× thicker than eye height, so the ground
+> still read as clear while the walls hazed. User verdict: *"it is applied to the walls but not the
+> floor."* The pair was re-tuned to **`kFogBaseDensity = 0.0033`, `kFogPoolHeight = 18`** holding
+> the **eye-height product fixed** — `0.0008 × exp(−41/48) = 0.000340` vs `0.0033 × exp(−41/18) =
+> 0.000338` — so walls, mountains and the sky backdrop are unchanged and *only* the near-ground air
+> thickened. One variable moved, so the next look tests exactly one hypothesis.
+>
+> Effect at High. Ground, looking down at it: 512 units goes 24 % → 49 % hazed, 1024 goes 42 % →
+> 74 %. A wall at eye height is unchanged at 16 % / 29 %. The cue that reads as a cloud is the
+> **split up a single far wall**: at 1024 units its base is 74 % hazed and its top (+128) is 7 %.
+> `kFogPoolHeight` (18 ≈ knee height, against a 41-unit eye) is the dial: raise it for a deeper
+> bank, lower it to hug the floor. Raising it thins the ground cloud unless `kFogBaseDensity` rises
+> with it — **keep their eye-height product fixed** and the distant look never moves.
 
 - **Base density** `kFogBaseDensity` — a small always-on `const` so "clear air"
   still shows faint shafts (pure zero = no shafts at all). This is the "clear"
@@ -316,7 +327,8 @@ fallback if HG reads busy (Q5).
   `heightPool = exp(-max(0, p.z − floorZ) / kFogPoolHeight)` (called `heightPool`
   throughout; earlier drafts named it `σ_height`). The floor reference
   `floorZ` for v1 is the **primary hit's** `hitP.z` when the hit faces up (a floor);
-  otherwise a level-min fallback. This makes fog **settle low** without new geometry
+  otherwise the floor under the camera, `ro.z − kEyeAboveFloor` (deviation 1 above — *not* a
+  level-min constant). This makes fog **settle low** without new geometry
   data (uses only `hitP`, already in hand). Its coarseness (one floor reference per
   pixel) is an accepted v1 approximation (Q3).
 - **Area multiplier & tint** (§4.5) — the profile scales `σ` and sets the medium's
@@ -565,10 +577,13 @@ fallback*; the two are independent.
 >
 > **This is in tension with L1c as specified, and the tension must be resolved deliberately.**
 > The outdoor brightness comes from the sky in-scatter term, gated to full strength outdoors by
-> L1b's `skyExposure`: `skyAmbient = SKY_COLOR * kSkyShaftStrength`, with `kSkyShaftStrength = 1.0`
-> shipped. L1c then plans to move the tone to a **near-white `kFogColor`** and roughly **double**
-> `kFogBaseDensity` — both of which make outdoor fog *brighter*, in the direction the user has just
-> said is already too far.
+> L1b's `skyExposure`: `skyAmbient = SKY_COLOR * kSkyShaftStrength`. **Answered 2026-07-27:**
+> `kSkyShaftStrength` went `1.0` → **`0.85`**, and the same gain was added to both sky closed
+> forms, which had omitted it — a no-op only while the gain was 1.0, and a visible seam the moment
+> it moved. This constant is the right knob because it scales in-scatter *brightness* alone; how
+> much the fog hides is `kFogBaseDensity`'s job. L1c then plans to move the tone to a **near-white
+> `kFogColor`** and roughly **double** `kFogBaseDensity` — both of which push brightness back up,
+> so re-check this after L1c rather than assuming 0.85 still holds.
 >
 > **What L1c must do about it:** treat "slightly darker outside" as an acceptance criterion, not a
 > later polish pass. The cheapest lever is `kSkyShaftStrength` (a single `const`, no new plumbing);
@@ -721,33 +736,37 @@ linear**, but the sky branch it also feeds writes a *display-encoded* colour (`s
 output is deliberately not tonemapped, `pathtrace.comp:1293-1299`), so whether the same
 numeric triple is correct on both branches is **Q9's encode question** — resolve it there,
 do not assume the number transfers unchanged. `kFogBaseDensity`
-rises from `0.0008` toward ~`0.0016` (≈2×) — deliberately **not** the ~3× a wisp-free
+rises ≈2× (from the shipped `0.0033` toward ~`0.0066`) — deliberately **not** the ~3× a wisp-free
 haze would be *estimated* to need (an estimate, not a measurement — no density-to-look
 tuning has been done yet), because structure sells the look at lower average density, which also
 keeps enemies readable. Both tune on hardware, and the `;` strength dial still scales
 the whole thing.
 
-**The sky backdrop shares `kFogBaseDensity` — doubling it would erase the mountains.**
+**The sky backdrop shares `kFogBaseDensity` — doubling it costs the mountains most.**
 §4.6a's aerial-perspective term is a closed form using the *same* density constant, so doubling
 density **squares** the transmittance everywhere — which costs far more where optical depth is
 already high, i.e. on the sky.
 
-**Updated 2026-07-27 (Q24a shipped).** The sky's distance is now its own constant,
-**`kFogSkyDist` = 4096** (2× `kFogMaxDist`), because handing the backdrop the same 2048 clamp a
-wall gets left the mountains *under*-hazed — see Q24a. That makes this interaction sharper, not
-softer. Sky transmittance (how much of the mountain survives):
+**Updated 2026-07-27 (Q24a shipped, then the ground-cloud re-balance).** Two things changed here.
+The sky's distance is now its own constant, **`kFogSkyDist` = 4096** (2× `kFogMaxDist`), because
+handing the backdrop the same 2048 clamp a wall gets left the mountains *under*-hazed (Q24a). And
+the sky's **density** is no longer `kFogBaseDensity` itself but its value at eye height,
+`kFogBaseDensity × exp(−kEyeAboveFloor / kFogPoolHeight)` — a factor of **0.102** at the shipped
+constants — because a sky ray crosses the ground cloud at head height, not floor height. Sky
+transmittance (how much of the mountain survives), on that current model:
 
-| density | strength | was (2048) | now (4096) |
+| `kFogBaseDensity` | strength | at 2048 | at 4096 (shipped) |
 |---|---|---|---|
-| `0.0008` today | Low 0.35 (shipped default) | 56.4 % | **31.8 %** |
-| `0.0008` today | High | 19.4 % | **3.8 %** |
-| `0.0016` at L1c | Low 0.35 | 31.8 % | **10.1 %** |
-| `0.0016` at L1c | High | 3.8 % | **0.14 %** |
+| `0.0033` today | Low 0.35 (shipped default) | 78.5 % | **61.6 %** |
+| `0.0033` today | High | 50.0 % | **25.0 %** |
+| `0.0066` at L1c | Low 0.35 | 61.6 % | **37.9 %** |
+| `0.0066` at L1c | High | 25.0 % | **6.3 %** |
 
-So at L1c's doubled density, `kFogSkyDist = 4096` would leave **0.14 %** of the peaks at High —
-erased, not hazed. **`kFogSkyDist` must come back down to ≈ 2012 when the density doubles**, since
-only the *product* density × distance matters. It is deliberately the **single sky lever**: raise
-it to push the mountains back, lower it when density rises. Do not add a second sky constant.
+So at L1c's doubled density, `kFogSkyDist = 4096` leaves **6.3 %** of the peaks at High — heavily
+washed, and worth a look before accepting. Only the *product* density × distance matters, so
+**halving `kFogSkyDist` exactly cancels a doubling of the density** (4096 → ≈ 2048 restores the
+25 % the shipped build has today). It is deliberately the **single sky lever**: raise it to push
+the mountains back, lower it when density rises. Do not add a second sky constant.
 So L1c must **either** give the sky term its own
 effective density/distance **or** re-check the mountains after the raise; "distant sky
 still readable at High" is therefore an explicit L1c acceptance item (§7).
@@ -839,8 +858,8 @@ every sample — that is `steps × emitters` rays. Instead (Q2, start cheap):
 - pick the **nearest few** static emitters to the sample (distance from the record's
   centroid), and
 - add each as `Le · kTorchShaftStrength · falloff(dist) · phase · mediumTint`
-  (`kTorchShaftStrength`, `pt_common.glsl:46`, is the emitter-side gain — the sky's twin
-  is `kSkyShaftStrength`, `:45`; both ship at `1.0`), with an **optional single**
+  (`kTorchShaftStrength` is the emitter-side gain — the sky's twin is `kSkyShaftStrength`,
+  which ships at `0.85`; this one ships at `1.0`), with an **optional single**
   occlusion ray to the chosen emitter (start *without* occlusion — a torch glows its
   air even through a thin wall, usually acceptable and much cheaper; add occlusion
   only if light-through-wall reads wrong, Q2).
@@ -1018,10 +1037,10 @@ colour-frozen.
   - Everything else is a **compile-time `const`** per house convention
     (DOOM-0181/0183 §5), each with a starting value so L2–L4 are buildable without a
     round-trip: `kSunDir` = `normalize(0.30, 0.30, 1.0)`, `kFogSteps` = 24 (→ ~40 at
-    L1c), `kFogBaseDensity` = 0.0008 (→ ~0.0016 at L1c), `kFogMaxDist` = 2048,
-    **`kFogSkyDist` = 4096** (the sky backdrop's own haze distance — Q24a; must drop to ≈ 2012
-    if `kFogBaseDensity` doubles at L1c, since only density × distance matters),
-    `kFogPoolHeight` = 48, `kFogAnisotropy` = 0.40, `kGooTint` = `(0.35, 0.85, 0.30)`,
+    L1c), `kFogBaseDensity` = 0.0033 (→ ~0.0066 at L1c), `kFogMaxDist` = 2048,
+    **`kFogSkyDist` = 4096** (the sky backdrop's own haze distance — Q24a; halve it if
+    `kFogBaseDensity` doubles at L1c, since only density × distance matters),
+    `kFogPoolHeight` = 18, `kFogAnisotropy` = 0.40, `kGooTint` = `(0.35, 0.85, 0.30)`,
     `kHellTint` = `(0.90, 0.35, 0.30)`, `kIndoorFogScale` = 0.05, the per-source
     strengths = 1.0, **`kAreaDensity` = 0.0020** (§4.5's profile density), **`kFogFloorFallback`**
     and **`kTorchFalloff`** (both L3, §4.3/§4.4 — pooling floor height when no floor is known, and
@@ -1454,19 +1473,25 @@ The other layers' Verify cells fit in a line. These two do not, so they live her
   `kIndoorFogScale` — it is `mix(kIndoorFogScale, kSeepMax, exp(-d/kSeepFalloff))`,
   where `d` is the **through-open-space** distance to outdoor air (§4.3a amendment).
 - **INV-10 (sky-backdrop fog, 2026-07-24):** sky pixels receive **aerial-perspective
-  fog** (`skyExposure = 1`) over the sky's fade distance (`kFogMaxDist` as shipped in L1b;
-  L1c may substitute a sky-specific constant — §4.3b), folded as `sky · transmittance +
+  fog** (`skyExposure = 1`) over the sky's own fade distance (`kFogSkyDist`, shipped
+  2026-07-27 — Q24a), folded as `sky · transmittance +
   inscatter` on the mode-6 sky-passthrough branch (`svgf_composite.comp:93-107`) and the
   mode-4 sky branch (`pathtrace.comp:1326-1337`), in the **same linear space** as every other
   fog fold (INV-4). Fog-off (`rb_fog == 0`) → `transmittance = 1, inscatter = 0`, so the
   sky is **byte-identical** to today (INV-7/INV-8). No up-ray and no new resource
-  (INV-5) — the sky is outdoors by definition. **Amended 2026-07-25:** the closed form omits **both** `wisp` **and** `heightPool` —
-  it is `kFogBaseDensity · fogStrengthScale` integrated over `[0, kFogMaxDist]`, nothing
-  else. `heightPool` cannot apply (a sky ray has no `floorZ`), and the wisp exclusion is
-  **deliberate** (`wisp ≡ 1` for sky pixels) — a closed form requires
-  constant density, and billow structure on the mountains would be sub-pixel anyway. The
-  consequence to watch is the **sky/wall seam** between wisped foreground and un-wisped
-  sky, which is an explicit L1c acceptance item (§7). *Falsifiable:* that acceptance row — "no visible discontinuity at the sky/wall seam" — plus, by diff, the sky branch never samples the noise volume and never reads a floor reference.
+  (INV-5) — the sky is outdoors by definition. **Amended 2026-07-25, re-amended 2026-07-27:**
+  the closed form omits `wisp`, and applies `heightPool` at a **single constant height** rather
+  than per sample: `kFogBaseDensity · exp(−kEyeAboveFloor / kFogPoolHeight) · fogStrengthScale`
+  integrated over `[0, kFogSkyDist]`, nothing else. The height term is a compile-time constant,
+  so the density is still uniform and the closed form still holds — but the sky is charged the
+  air a ray actually crosses at head height, not the thick air at the floor, which is what
+  stopped the backdrop being hazed as though it lay on the ground. The wisp exclusion is
+  **deliberate** (`wisp ≡ 1` for sky pixels) — a closed form requires constant density, and
+  billow structure on the mountains would be sub-pixel anyway. The consequence to watch is the
+  **sky/wall seam** between wisped foreground and un-wisped sky, which is an explicit L1c
+  acceptance item (§7). *Falsifiable:* that acceptance row — "no visible discontinuity at the
+  sky/wall seam" — plus, by diff, the sky branch never samples the noise volume and never reads
+  a per-pixel floor reference (`FogHit.hitP`).
 - **INV-11 (wisps, 2026-07-25):** density is modulated by **two octaves of drifting 3-D
   value noise** read from a single CPU-generated noise volume —
   `wisp` multiplies the whole medium (so goo and hell billow too). **`kWispAmp = 0` is an
@@ -1638,27 +1663,28 @@ reasoning stays there.
   mist / fog but the distant mountains are much clearer."* **It is not right, and the cause is
   arithmetic, not tuning.** Both paths use the same formula and the same `SKY_COLOR`, so the only
   difference is the distance each is given — and the sky backdrop is handed exactly
-  `kFogMaxDist`, the same clamp a wall at 2048 units gets. At High that is
-  `1 - exp(-0.0008 x 2048)` = **80.6 % for both**. But the backdrop depicts terrain at
+  `kFogMaxDist`, the same clamp a wall at 2048 units gets — identical haze for both. But the
+  backdrop depicts terrain at
   effectively infinite distance, so it is systematically under-hazed against any surface at the
   clamp, and a nearer bright wall ends up looking *more* distant than the mountains behind it —
   aerial perspective inverted.
   **SHIPPED 2026-07-27** (not deferred to L1c — it was two constants): `kFogSkyDist = 4096.0`
   in `pt_common.glsl`, used by both sky closed forms in `pathtrace.comp` in place of
   `kFogMaxDist`. The world march and the §4.3a up-ray still use `kFogMaxDist` — only the sky
-  moved. At High the backdrop goes 80.6 % → 96.2 % hazed, so the peaks now sit *behind* anything
-  at the wall clamp instead of in front of it.
+  moved. At the current constants the backdrop sits at **75 %** hazed against **50 %** for a wall
+  at the 2048 clamp, so the peaks now read *behind* anything at that clamp instead of in front of
+  it. **User-confirmed 2026-07-27:** *"the mountains now look much better in terms of mist / fog."*
   **It is the single sky lever — do not add a second.** Only the product density × distance
-  matters, so when L1c doubles `kFogBaseDensity` this constant must come down to ≈ 2012 or the
-  peaks vanish outright (0.14 % transmittance at High — see the table in §4.3b). Q24 is the same
+  matters, so when L1c doubles `kFogBaseDensity`, halving this constant exactly cancels it; left
+  at 4096 the peaks drop to 6.3 % transmittance at High (see the table in §4.3b). Q24 is the same
   lever seen from the density side.
-  Awaiting the user's eye on hardware; the "slightly darker outside" note in §4.3b is a separate
-  knob (`kSkyShaftStrength`) and is still untouched.
+  The "slightly darker outside" note in §4.3b is a separate knob and **was answered on
+  2026-07-27**: `kSkyShaftStrength` 1.0 → 0.85.
 - **Q24 (sky density after the L1c raise, 2026-07-26):** §4.3b's fork — give the sky term its own
   effective density/distance, or keep it sharing `kFogBaseDensity` and re-check the mountains
   after the ≈2× raise. L1c takes the second path, with "distant sky still readable at High" as
   its acceptance check. **Superseded in mechanism by Q24a (shipped 2026-07-27):** the sky now has
   its own distance, `kFogSkyDist`, so the resolution is to **lower that one constant** — not to add
   a second sky constant, and not to touch `kFogBaseDensity`, which would undo the foreground tuning
-  L1c just did. Concretely, doubling the base density means halving `kFogSkyDist` (≈ 4096 → 2012)
+  L1c just did. Concretely, doubling the base density means halving `kFogSkyDist` (4096 → ≈ 2048)
   to hold the peaks where they read correctly today. **L1c.**

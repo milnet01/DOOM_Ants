@@ -1347,7 +1347,11 @@ void main()
                 // the ground (L3, 2026-07-27).
                 float skySigma  = kFogBaseDensity * exp(-kEyeAboveFloor / kFogPoolHeight);
                 float trans     = exp(-skySigma * strength * kFogSkyDist);   // Q24a: sky, not kFogMaxDist
-                vec3  inscatter = SKY_COLOR * (1.0 - trans);
+                // kSkyShaftStrength: the same in-scatter gain the world march applies
+                // (marchFog's skyAmbient). The closed form omitted it, which was a no-op
+                // only while the gain was 1.0; the moment it moves, the sky and the walls
+                // in front of it would haze at two different brightnesses.
+                vec3  inscatter = SKY_COLOR * kSkyShaftStrength * (1.0 - trans);
                 imageStore(fogImg, ivec2(px) / 2, vec4(inscatter, trans));
             }
             return;
@@ -1371,7 +1375,8 @@ void main()
                 // the world does, then tone-encode -- so the seam matches by construction.
                 vec3 skyLin = vec3(srgbToLinear(colour.r), srgbToLinear(colour.g),
                                    srgbToLinear(colour.b));
-                colour = toneEncode(skyLin * trans + SKY_COLOR * (1.0 - trans));
+                colour = toneEncode(skyLin * trans
+                                    + SKY_COLOR * kSkyShaftStrength * (1.0 - trans));
             }
         }
         else                 colour = vec3(0.02, 0.02, 0.05);

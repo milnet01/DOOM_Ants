@@ -66,8 +66,21 @@ grep -n "six\b.*edit\|all six"   $S $P   # menu edit count (now seven)
 grep -n "queryCount"             $S $P   # must all say 8 -> 9
 grep -n "≤ 4 %\|≤ 8 %\|≤ 15 %"  $S $P   # L1b / L1c / L6 budget split
 grep -n "eight invariants"        $S $P   # must be EMPTY -- there are twelve
-grep -n "twelve invariants"       $S $P   # must HIT (bare `INV-1..8` is legitimate in the
-                                        #  self-review, which splits 1..8 from 9..12)
+grep -n "all twelve"              $S $P   # must HIT (bare `INV-1..8` is legitimate in the
+                                        #  self-review, which splits 1..8 from 9..12).
+                                        #  Was "twelve invariants" -- a pattern that never once
+                                        #  matched the text it guards. A grep that cannot fire is
+                                        #  worse than no grep: it reads as a passing check.
+grep -n "pool-free"              $S $P   # must be EMPTY: the sky closed form applies the height
+                                        #  pool at a CONSTANT height (eye height) -- it is
+                                        #  wisp-free, not pool-free (INV-10, re-amended 2026-07-27)
+grep -n "0\.0008\|kFogPoolHeight = 48\|= 48\.0" $S $P
+                                        # the L1 density pair. Only legitimate inside the §4.3
+                                        # deviation block, which quotes both to show the
+                                        # before/after -- anywhere else is a stale value
+grep -n "fogHeightPool" $P              # L4 CALLS it; L3 shipped the exp() inlined, so whoever
+                                        # writes L4 must EXTRACT it first or the snippet
+                                        # will not compile
 grep -n "FogHit {"                $P   # every occurrence must carry `uint ctrlFlags` (L4)
 grep -n "genuinely new helpers\|helpers this plan authors" $P   # the COUNT must match the list
 grep -n "Q2[0-9]"                 $S $P   # a new Q must appear in BOTH the spec's §10 and the
@@ -479,6 +492,40 @@ represented as blocking in both documents rather than hidden. It is not a review
 correctness-clean.
 
 ---
+
+## Post-convergence edit — 2026-07-27 — the ground-cloud re-balance
+
+Not a review loop. A **code** change (`kFogBaseDensity` / `kFogPoolHeight` / `kSkyShaftStrength`)
+whose numbers the docs quote in eleven places, run through the pre-flight above instead of through
+a lane. This is the ledger working as intended: the cost was one pass of greps, not 200k tokens.
+
+**What changed in the tree:** `kFogBaseDensity` 0.0008 → **0.0033**, `kFogPoolHeight` 48 → **18**
+(re-balanced *together*, holding the eye-height product `D · exp(−41/H)` fixed at ≈ 0.00034, so
+walls / mountains / sky are unchanged and only the near-ground air thickened);
+`kSkyShaftStrength` 1.0 → **0.85**; and both sky closed forms now apply `kSkyShaftStrength`, which
+they had omitted.
+
+| # | Fix | Ripples chased |
+|---|-----|----------------|
+| 14.1 | Spec §4.3's deviation block: new numbers, and the *why* (pooling at H = 48 made the floor only 2.4× thicker than eye height, so the ground still read as clear) | §4.3's own inventory bullet still said the fallback was "a level-min fallback" — contradicting deviation 1 four lines above it. Fixed |
+| 14.2 | Spec §4.3b's sky-transmittance table recomputed | Every cell was derived from `σ = kFogBaseDensity`; the sky's σ is now the **eye-height** value, 0.102× that. The "0.14 % at High" scare number became 6.3 %. Same numbers restated in Q24a, Q24 and the plan's L1c note and self-review — all four found and fixed |
+| 14.3 | **INV-10 said the sky closed form is "wisp-free and pool-free"** — it now applies the pool at a constant height, and its falsifier ("never reads a floor reference") was false | Re-worded in the spec's INV list *and* in the plan's self-review restatement, which is where four earlier loops' fixes rotted. New standing grep on `pool-free` |
+| 14.4 | The plan's L1 const block carried the L1 values as if current | Updated to track the tree, with the L1 originals inline. Its `fogDensity(vec3 p)` signature was also pre-L3 — corrected |
+| 14.5 | **`fogHeightPool()` does not exist in the tree.** L3 Step 1 specified it, but the step shipped early with the `exp()` inlined — and L4 Step 3's snippet calls it | Flagged at all three sites (L3's shipped record, L4's call site, the self-review's helper list) as something **L4 must extract first**. A compile of L4 would have caught this; a read did not. New standing grep |
+| 14.6 | The standing grep `"twelve invariants"` has never matched the text it guards (`"all twelve are now pinned"`) | Pattern corrected. A check that cannot fire is worse than no check — it reads as passing |
+
+**L1c guidance re-expressed, not just re-numbered.** The plan told L1c to take `kFogBaseDensity`
+`0.0008 → 0.0016`. Left alone, an implementer would have halved the shipped density. It now names
+the ×2 *intent* against the current value, plus the thing that is easy to get wrong: the constant
+is the density **at floor level** and is paired with `kFogPoolHeight`, so doubling it thickens the
+ground bank *and* the distance together. Raise the **product** to move the far look; hold the
+product and drop `kFogPoolHeight` to move only the bank.
+
+**Lesson.** The re-balance itself was designed so that **exactly one variable moves** — the
+eye-height product was held fixed to a rounding error precisely so the next play-test tests one
+hypothesis. That discipline is worth as much as the ledger: two coupled constants changed, and the
+distant look is provably untouched, so if the user reports the walls looking different, the change
+is not the cause.
 
 ## Open — not yet fixed
 
