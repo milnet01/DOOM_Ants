@@ -29,8 +29,11 @@ this plan implements it; every `§`/`INV`/`Q` reference points there.
 >   unchecked `- [ ]` boxes below are historical, not work outstanding. **Do not
 >   re-implement them.**
 > - **`L1c` and `L1d` were written on 2026-07-26** from the spec's §4.3a/§4.3b amendments and
->   §7 acceptance rows. **They are the next work**, and they have since been cold-reviewed
->   through loops 7–13 and compiled.
+>   §7 acceptance rows, and have since been cold-reviewed through loops 7–13 and compiled.
+> - **`L1e` (the floor fog, §4.3c / DOOM-0272) was written on 2026-07-27** and reviewed in its
+>   own narrow lane. **It is the next work** — it ships *before* L1c and L1d, because its outdoor
+>   half stands alone while its indoor half waits on L1d's seep. The letters are identifiers,
+>   not a sequence.
 > - **The spec is the authority on every number.** Where this plan and the spec disagree,
 >   the spec wins — though no known disagreement remains.
 > - **Cold-eyes status: CONVERGED (2026-07-26).** The original design converged in 4 loops; the
@@ -499,6 +502,113 @@ sign-off. (Interim: still **no shafts, no colour** — those are L2/L4.)
 git add linuxdoom-1.10/shaders/pt_common.glsl linuxdoom-1.10/shaders/pathtrace.comp
 # (+ r_mesh.c r_mesh.h only if the Step-6 fallback was built)
 git commit -m "DOOM-0011: L1b fog-placement standard (open-sky gate) + sky-backdrop aerial fog"
+```
+
+---
+
+## Task L1e — The floor fog: a second, short-range density layer (outdoor half)
+
+**Goal:** Mist that pools around the player's feet without turning the far end of the courtyard
+white (spec §4.3c, DOOM-0272). One extra density term whose strength falls off with **distance
+from the camera** — deliberately not a physical medium, which is exactly why it can be thick at
+your feet and absent at 800 units. **Outdoor half only:** the indoor half needs L1d's seep to tell
+"room with a window" from "room three doors deep", so it arrives with that task, not this one.
+Letters are identifiers, not an order — this ships **before** L1c and L1d.
+
+**Files:**
+- Modify: `shaders/pt_common.glsl` — three `const`s + the `floorFogDensity()` helper.
+- Modify: `shaders/pathtrace.comp` — one addend in `marchFog`'s `sigma`; one addend in
+  `skyFogOpticalDepth`.
+
+**Interfaces:**
+- Consumes: `marchFog`'s existing loop variable `t` (the warped sample distance — Q26 shipped,
+  `t = tMax·s²`), its per-sample `baseZ`/`skyExposure`, and `skyFogOpticalDepth`'s `h₀`.
+- Produces: nothing new — **no descriptor, no push-constant lane, no ray.** INV-5 is untouched, so
+  `-rtverify`'s 184-byte prefix cannot move.
+
+**Existing code to read first (reuse, do not reinvent):**
+- `fogDensity()` in `pt_common.glsl` — the floor helper is its sibling and must obey the same
+  contract: *density at a point is a function of that point alone* (plus, here, `t`, which is a
+  property of the ray, not of the world — that asymmetry is the design, §4.3c, and it is the one
+  place in this spec where the invariant is knowingly relaxed).
+- `marchFog`'s `sigma` line — today `fogDensity(p, baseZ, poolH) * strength * skyExposure`.
+- `skyFogOpticalDepth`'s two branches and its `(exp(x) − 1)/x` expansion — the floor addend has the
+  same shape and the same near-zero trap, at a *different* threshold.
+
+- [ ] **Step 1: The three `const`s + the helper (`pt_common.glsl`)**
+
+Beside the existing fog block. All three are first guesses; §4.3c carries the arithmetic and Q25
+owns them on hardware.
+
+```glsl
+const float kFloorFogDensity = 0.010;   // floor-layer extinction AT THE FLOOR (3x the aerial
+                                        // layer's kFogBaseDensity there)
+const float kFloorFogPool    = 24.0;    // e-fold HEIGHT: knee-deep, so you wade through it
+const float kFloorFogRange   = 256.0;   // e-fold DISTANCE FROM THE CAMERA -- the whole trick
+
+// The floor layer. Unlike fogDensity() this takes `t`, the distance along the view ray: the
+// term fades with range so mist can be thick underfoot without integrating into a white wall
+// at distance. Not physical, and that is the point (spec 4.3c).
+float floorFogDensity(vec3 p, float baseZ, float t) {
+    return kFloorFogDensity * exp(-max(0.0, p.z - baseZ) / kFloorFogPool)
+                            * exp(-t / kFloorFogRange);
+}
+```
+
+- [ ] **Step 2: The third addend in `marchFog` (`pathtrace.comp`)**
+
+The sum is gated as a whole — INV-9's amended split, `(skySigma + floorSigma) · skyExposure`.
+Outdoors `skyExposure` is 1; indoors it is `kIndoorFogScale`, which is what keeps the indoor half
+waiting for L1d rather than shipping half-done here.
+
+```glsl
+float sigma = (fogDensity(p, baseZ, poolH) + floorFogDensity(p, baseZ, t))
+              * strength * skyExposure;
+```
+
+- [ ] **Step 3: The second addend in `skyFogOpticalDepth` (`pathtrace.comp`)**
+
+Not optional and not a refinement: leave it out and the skyline gains a ~37 % step against the
+walls beneath it (spec §4.3c, INV-10). Both branches, meeting exactly at `rd.z = 0`.
+
+```glsl
+    float eH     = exp(-h0 / kFloorFogPool);          // density where the eye is, / D
+    float sigmaF = kFloorFogDensity * eH;
+    float tauF;
+    if (rd.z > 0.0) {
+        // Ascending: the exact integral to infinity of the two exponentials' product.
+        tauF = sigmaF / (rd.z / kFloorFogPool + 1.0 / kFloorFogRange);
+    } else {
+        // Descending: falls to the layer base over t1, then a constant floor density below it.
+        float dzF = max(-rd.z, 1e-5);
+        float t1F = h0 / dzF;
+        float aF  = dzF / kFloorFogPool - 1.0 / kFloorFogRange;
+        float eT  = exp(-t1F / kFloorFogRange);
+        // aF passes through zero at |rd.z| = kFloorFogPool/kFloorFogRange (0.094) -- well
+        // inside the visible range, not a corner case -- and the quotient loses all its
+        // precision to cancellation there, which is exactly where the two branches must agree.
+        float head = (abs(aF) > 1e-6) ? kFloorFogDensity * (eT - eH) / aF
+                                      : sigmaF * t1F * (1.0 + 0.5 * aF * t1F);
+        tauF = head + kFloorFogDensity * kFloorFogRange * eT;   // + the constant-density tail
+    }
+```
+
+Then `return strength * (<the existing aerial expression> + tauF);` — one `strength`, applied
+once to the sum, in **both** branches of the existing function.
+
+- [ ] **Step 4: Build, verify, play-test, commit**
+
+`make` (the shader compile **is** the identifier check — every symbol above must resolve against
+the real tree), then `make test`, then `-rtverify` (must stay green; nothing here touches the push
+block). Look acceptance, in the E1M1 courtyard:
+
+- mist pools at your feet and thins as you look away — the far wall is **no whiter than before**;
+- **no line along the skyline** where sky meets a distant wall (Step 3's whole purpose);
+- indoors is unchanged from L1b — a roofed room shows the same faint haze, not a bank.
+
+```bash
+git add linuxdoom-1.10/shaders/pt_common.glsl linuxdoom-1.10/shaders/pathtrace.comp
+git commit -m "DOOM-0011/0272: add the outdoor floor fog (L1e)"
 ```
 
 ---
@@ -1559,8 +1669,10 @@ from `g.lastView.hazeDensity` in `RecordRtTrace` (there is no bare `view` there)
   (2026-07-27), ahead of the floor fog:** the march warps its samples toward the camera,
   `t = tMax·s²` with the Jacobian — measured 8-37 % error → 0.1-0.5 % at the *same* 24 steps,
   where 64 uniform steps still band. It went first because it changes the already-accepted look
-  by itself. Q25 remains a hardware judgement. **No task exists for the floor fog yet** — the
-  amendment is written, and CLAUDE.md rule 14 puts `/cold-eyes` between it and the code.
+  by itself. Q25 remains a hardware judgement — the three constants (`kFloorFogDensity` = 0.010,
+  `kFloorFogPool` = 24, `kFloorFogRange` = 256) are first guesses with the arithmetic in spec
+  §4.3c. **Task L1e** now carries the outdoor half (four steps, no new resource and no new ray);
+  the indoor half rides on L1d.
 - **Q24 / Q24a** — the sky's haze. **Q24a shipped 2026-07-27**: the backdrop now has its own
   distance, `kFogSkyDist`, because sharing `kFogMaxDist` left the mountains reading as *nearer*
   than a wall — since superseded by the geometric slant path, which makes the inversion impossible

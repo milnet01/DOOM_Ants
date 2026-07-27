@@ -606,7 +606,8 @@ cause in one pass; measuring the screenshot found the real one. Neither step alo
 now. Great work and the horizon fix is much, much better… happy to sign it off now."* One residual
 accepted rather than fixed: *"You can still see the cut off but I am happy with it."*
 
-**Written the same day and NOT through `/cold-eyes`: spec §4.3c, the two-layer fog** (DOOM-0272).
+**Written the same day and NOT through `/cold-eyes` *at the time of writing* — reviewed later the
+same day, see the narrow-lane entry below: spec §4.3c, the two-layer fog** (DOOM-0272).
 A short-range floor fog added to the existing aerial layer, whose density falls off with distance
 from the camera — deliberately non-physical, because one medium cannot be both thick at your feet
 and thin across a courtyard. **CLAUDE.md rule 14 puts a review between that amendment and any
@@ -647,6 +648,34 @@ that remain, and named them precisely: *"we just need the indoor fog (it is alre
 at a distance) and the Silent Hill 2 type fog."* The first is §4.3c's floor layer plus L1d's seep
 (indoors the fog reads only at distance because nothing puts mist at your feet in a room); the
 second is task L1c verbatim.
+
+## §4.3c review — 2026-07-27 — ONE narrow lane (Sonnet, ~143k)
+
+Rule 14's gate on the floor-fog amendment, deliberately run as a single lane scoped to §4.3c
+rather than a full loop: on this task the score is **zero findings from review against four from
+the user's screen**, so the lane was pointed only at what a screenshot cannot show. It returned
+**0C / 2H / 3M**, all five verified against current files, all five fixed. It also *positively*
+cleared two things worth recording: the Q26 warp text matches the shipped `marchFog` exactly, and
+no stale "uniform march" reasoning survives in either document.
+
+Two mechanical defects were found by the pre-flight before the lane ran, and fixed first so the
+lane's tokens went on judgement: **§4.3c's heading appeared twice** (the sign-off blockquote and
+the request blockquote each carried their own copy, and the second restated the sign-off quote it
+already sat under), and **§4.3c was missing from the spec's Contents line** entirely.
+
+| # | The change | What it cost elsewhere |
+|---|---|---|
+| 19.1 | **The floor fog had no build task and no build-order row** — the amendment scheduled itself to ship before L1c/L1d and then existed nowhere either document tracks work. Added **Task L1e** (4 steps, plan) + its §7 row + a §6 budget row | The plan's Self-review said *"No task exists for the floor fog yet"* and is now the opposite; the plan's ⚠ STATUS banner said L1c/L1d "are the next work" and L1e displaces them. Both rewritten. §6's running-total column did **not** move — see 19.2 |
+| 19.2 | **The three constants had no starting values,** breaking §5's own convention, and §5 credited Q26 with owning `kFloorFogRange`'s value, which Q26's closure text never gives. Set `kFloorFogDensity` = 0.010, `kFloorFogPool` = 24, `kFloorFogRange` = 256, with the arithmetic in §4.3c and ownership moved to **Q25** | The perf table gained an L1e row. `8 % − Δ(L1b)` was left **untouched at all nine sites**: L1e ships before the pending measurement, and that measurement is fog-off vs fog-on, so the Δ recorded will already include it. A footnote states that rather than redefining a symbol nine files-deep — the `kFogSkyDist` lesson (batch 16) |
+| 19.3 | **The one code block an implementer would copy disagreed with the prose two paragraphs below it** — `σ = σ_general + σ_floor` with no `fogStrengthScale` and no `skyExposure`, while the surrounding text says both layers carry both. The block now shows the full composition | Ripples into INV-9, which is what pins the gating (19.5) |
+| 19.4 | **The sky backdrop was never addressed.** Sky pixels bypass `marchFog` for `skyFogOpticalDepth`, so the floor layer would have been missing there — a **~37 % step along the skyline** (`σ_floor(eye)·kFloorFogRange` = 0.0018 × 256 ≈ 0.46 optical depth), which is precisely the defect §4.6a exists to remove. §4.3c now specifies the second closed form: both branches, the exact meeting at `rd.z = 0`, and the near-zero expansion of `a` | INV-10 amended. Note the threshold differs from the aerial branch's: `a` crosses zero at `|rd.z| = kFloorFogPool/kFloorFogRange` = **0.094**, not near zero — so "it is a corner case" is false here and the expansion is not optional |
+| 19.5 | **INV-9 was not amended for the third addend**, unlike INV-10 which tracks every amendment. Now states `(skySigma + floorSigma) · skyExposure + areaSigma` and *why* neither fold is allowed: into `areaSigma` and it stops clearing under a roof; into `skySigma` and it inherits the aerial `poolH`, the one thing it must not share | Gave INV-9 a falsifier it lacked for the floor term (a roofed room shows the floor fog at exactly `kIndoorFogScale`, i.e. unchanged from L1b) |
+
+**The finding class worth carrying:** four of the five are the same shape — *the amendment
+described a mechanism correctly and then failed to place it in the documents' own machinery*
+(no task, no budget row, no constant values, no invariant). A design amendment written into a
+converged doc set does not inherit that set's scaffolding; it has to be threaded in by hand, and
+that threading is what a narrow lane is actually good at.
 
 ## Open — not yet fixed
 
