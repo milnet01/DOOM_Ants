@@ -708,6 +708,26 @@ profiler, because the fill times itself on the same clock. Declaring it forward 
 work here — the file's contents are in an anonymous namespace, and GCC reads the declaration and the
 later `static inline` definition as two overloads and rejects every call site as ambiguous.
 
+## L1d PLAY-TESTED — 2026-07-27 — INV-12 confirmed on hardware
+
+User, after one run of E1M1: *"The fog comes in near windows (I didn't test doors to outside
+though). The final room in E1M1 is a sealed off room and it had no fog at all."*
+
+That second sentence is the **whole invariant**, tested. E1M1's final room shares walls with
+outdoor air, so a straight-line distance field would have fogged it; only a fill that walks
+through openings leaves it clear. It is the one acceptance item that can falsify INV-12, and it
+passed on the first run. **Still untested: a door (rather than a window) onto outdoors**, and the
+grading itself — that fog *thins* as you walk deeper, rather than simply being present or absent.
+
+**Found in the same breath, and it is a tooling defect rather than a fog one:** *"When I press /
+there is no feedback to let me know that the log is on or not."* Two causes, both real. `/` is not
+a profiler key at all — it is the temporary DOOM-0267 geometry dump, so it was never going to
+report anything about profiling. And the keys that *are* profiling and fog (`\` and `;`) reported
+only to stdout, which is invisible while the game owns the display. Fixed for those two; the rest
+of the hotkey set is **DOOM-0275**. The generalisation worth keeping: **a debug affordance whose
+only output channel is one the user cannot see during the activity it instruments is not an
+affordance.** Every measurement this project has asked the user for runs in exactly that state.
+
 ## Open — not yet fixed
 
 - ~~**Cold-eyes has not converged.**~~ **CONVERGED at loop 13** (2026-07-26): zero verified
