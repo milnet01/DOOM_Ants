@@ -8,6 +8,13 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Floor fog outdoors — mist that pools around your feet** (DOOM-0272)
+  A second fog layer that fades with distance from the camera as well as
+  with height, so the air at your feet can be genuinely misty without the
+  far end of a courtyard turning white. Outdoors only for now; indoor
+  rooms follow once the engine can tell a room with a window from a room
+  buried three doors deep.
+
 - **Test coverage for the mus2mid happy path, font metrics, asset-path resolution and degenerate emitter input**
   mus2mid_test asserted only rejection paths; it now checks three hand-built scores byte for byte, covering note on/off encoding, the track-length back-patch, percussion-channel mapping, the DMX 0x80 clamp quirk and the MIDI-channel allocator's skip of channel 9. Also new: rb_text vertical metrics and the atlas-doubling retry, rb_materials' rb_asset_root/rb_asset_path joining, and emissive_derive's null/zero-area guard.
 

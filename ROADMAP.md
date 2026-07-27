@@ -2635,7 +2635,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   before/after look at the WALLS, which the user has already approved and
   which this would also change.
 
-- 📋 [DOOM-0272] **Split the fog into two layers: a general aerial layer plus a short-range floor fog.**
+- 🚧 [DOOM-0272] **Split the fog into two layers: a general aerial layer plus a short-range floor fog.**
   **Layman:** Add a second, thicker mist that hugs the floor and only shows up near you — so you wade through it without the far end of the level turning white.
   Kind: feature.
   Lanes: renderer, shaders.
@@ -2646,6 +2646,20 @@ parked ideas (💭 considered) until we commit to and design each one.
   rooms exposed to outdoors via a window or door get the floor fog,
   "with a much smaller distance to the camera setting than the general
   fog".
+  Progress (2026-07-27): the OUTDOOR half is implemented as task L1e
+  (6e3234b) — kFloorFogDensity/Pool/Range + floorFogDensity() in
+  pt_common.glsl, a third addend in marchFog's sigma on the
+  skyExposure-gated side, and a matching second closed form in
+  skyFogOpticalDepth (without it the skyline steps ~37% against the walls
+  beneath it). The sky form was checked against a numeric integral: 0.00%
+  error, continuous through rd.z = 0. make + make test green, -rtverify
+  PASS. Awaiting hardware play-test.
+  The INDOOR half still waits on DOOM-0011 L1d (the seep), exactly as this
+  bullet said it would: roofed air scales by kIndoorFogScale, so a sealed
+  room shows 5% of the bank rather than a bank at your feet.
+  Spec §4.3c went through a one-lane /cold-eyes first (1c059ed): 0C/2H/3M,
+  all fixed — no build task, no constant values, a code block that
+  disagreed with its own prose, the sky gap above, and an unamended INV-9.
 
   The load-bearing new idea is that SECOND term's range. Today's fog is a
   pure medium: opacity only ever grows with distance, which is why
