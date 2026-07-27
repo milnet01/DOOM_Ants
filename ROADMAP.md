@@ -2764,3 +2764,132 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** When you press one of the developer keys, say what happened on screen instead of in a terminal window you cannot see while playing.
   Kind: ux.
   Source: user-report-2026-07-27.
+
+- 📋 [DOOM-0276] **Replace the fog march's per-sample up-ray with a seep-field lookup.**
+  Measured 2026-07-27 (spec DOOM-0011 6): the fog costs +8.38 ms /
+  +34.7% present-total, and 7.93 ms of that is inside the megakernel. The
+  pole is the per-sample open-sky test - one ray query straight up for
+  each of kFogSteps = 24 samples, per fog pixel.
+
+  It does not need a ray. Vanilla DOOM is flat-mapped: one floor and one
+  ceiling per XY, never a room above a room. The engine's own lookup is
+  the proof - R_PointInSubsector takes (x, y) only and returns exactly one
+  sector, hence one ceilingpic. So "is there sky above this point" is a
+  pure function of XY, and the up-ray is doing 3-D work on a 2-D question.
+
+  DOOM-0011 L1d already builds exactly that map: RB_BuildSeepField's cells
+  are 0 where the sector's ceilingpic == skyflatnum. Swap the ray for the
+  field tap the shader already performs for the seep, and the openSky test
+  becomes free rather than the dominant cost.
+
+  Risk to judge on screen, not here: the field is 64-unit cells, so the
+  sky/roof boundary blurs by up to a cell and the mist wall at a doorway
+  threshold could soften. Spec 6 warns that coarsening the open-sky test
+  also coarsens the seep that branches on it - but this is per-cell, not
+  the per-surface RB_MESH_OUTDOOR whole-view fallback that warning is
+  about.
+
+  Expected: most of the 7.93 ms, at no cost in look beyond that edge.
+  **Layman:** Stop asking the graphics card to fire a test ray straight up 24 times per pixel, when a small map we already build answers the same question for free.
+  Kind: perf.
+  Lanes: renderer, shaders.
+  Source: in-session-2026-07-27.
+
+- 📋 [DOOM-0277] **Pace Ultra's ray-traced view to an even 30 FPS instead of a variable one.**
+  User decision 2026-07-27, after the fog measurement: "for Ultra with ray
+  tracing, we can make it 30 FPS but we need to ensure proper frame
+  pacing." Accepting 30 is the right call; the pacing is what makes 30
+  feel like 30 rather than like a bad 40.
+
+  Today there is NO pacing of any kind. The swapchain prefers MAILBOX
+  (r_vulkan.cpp:1439) with FIFO only as a fallback, and there is no frame
+  limiter anywhere in the tree - so frames present the instant they are
+  ready, at whatever irregular cadence the scene produces. On a 60 Hz
+  display a ~31 FPS stream lands unevenly across refreshes, which reads as
+  judder even when the average is fine.
+
+  A paced 30 means presenting on a fixed cadence - every second refresh on
+  a 60 Hz panel - which requires the frame to reliably FIT in 33.3 ms.
+
+  It currently does not: measured mean is 32.53 ms with a 36.01 ms max, so
+  a naive lock would miss its slot constantly and alternate 33/50 ms,
+  which is worse than no lock. THE PACING WORK IS BLOCKED ON HEADROOM, not
+  the other way round - land the perf levers first.
+
+  Also needed: read the display's actual refresh rate rather than assuming
+  60, and decide what happens on a 120/144 Hz panel (present every 4th).
+  **Layman:** Lock the ray-traced mode to a steady 30 frames a second, evenly spaced, so it feels smooth instead of stuttery even though it is not fast.
+  Kind: perf.
+  Lanes: renderer.
+  Source: user-request-2026-07-27.
+
+- 📋 [DOOM-0278] **Motion blur for the 3-D views - camera-velocity first, per-object only once monsters are models.**
+  User asked (2026-07-27) for "perhaps some per object motion blur" as
+  part of accepting 30 FPS for Ultra RT. Splitting it, because the two
+  halves have very different costs here.
+
+  CAMERA-VELOCITY BLUR IS NEARLY FREE AND IS WHERE THE BENEFIT IS. The
+  SVGF temporal pass already reprojects every pixel's world hit point into
+  the PREVIOUS frame's camera (svgf_temporal.comp:102) - the screen-space
+  delta that falls out of that IS the camera motion vector. And in DOOM
+  the dominant motion is the camera: players turn fast and often.
+
+  PER-OBJECT BLUR NEEDS DATA THAT DOES NOT EXIST. The reprojection above
+  is world-position based and assumes the world is static; moving things
+  are handled by REJECTING the temporal match, not by tracking them. There
+  are no per-object velocities anywhere in the tree, so this means a new
+  velocity G-buffer plus per-thing previous transforms. And in Ultra the
+  monsters are still billboard sprites - blurring a flat card earns little
+  - so this should wait for DOOM-0080 (sprites to 3-D models).
+
+  Caution for a fast shooter: heavy blur reads as input lag. Ship it as a
+  menu toggle with a short shutter and a conservative default; judge it
+  with the user at a paced 30, since a smooth 30 may need less of it than
+  a juddering one.
+  **Layman:** Blur the picture slightly as you turn, so 30 frames a second looks smoother than it is.
+  Kind: feature.
+  Lanes: renderer, shaders.
+  Source: user-request-2026-07-27.
+
+- 📋 [DOOM-0279] **Get Ultra's ray-traced view back to 60 FPS - and give the remaining effects a budget to fit in.**
+  User, 2026-07-27: "please log a roadmap entry to try and get this back
+  to 60 FPS even though I probably have to resign myself to the fact that
+  it may not be possible on my hardware" - and, in the same breath, "keep
+  in mind we got more effects to add to this view."
+
+  THE HONEST ARITHMETIC, measured on the RX 6600 in E1M1 (Ultra RT, 50%
+  render scale, fog High): present-total 32.53 ms = fenceWait 28.54 (the
+  GPU wall: megakernel 21.21 + denoise/taau 7.01 + blit 0.29) + CPU build
+  3.61 + record/submit. 60 FPS needs 16.7 ms. So even deleting the fog
+  ENTIRELY leaves 24.15 ms - about 41 FPS. 60 is not a tuning problem on
+  this hardware; it needs the path tracer roughly halved, which is what
+  DOOM-0188 (quarter-res GI), DOOM-0189 (radiance cache), DOOM-0190 (async
+  + 2 frames in flight) and DOOM-0191 (A-SVGF) are for. Lowering the
+  render scale below 50% is the one lever that reaches 60 TODAY, at a cost
+  in sharpness.
+
+  TWO LEVERS THAT COST NOTHING IN LOOK, AND SHOULD LAND FIRST:
+  - DOOM-0276 - the fog's per-sample up-ray becomes a field lookup
+    (expect most of 7.93 ms).
+  - DOOM-0197 - extend the raster path's build-ahead overlap to RT. The
+    CPU build is 3.61 ms and it is SERIALISED in front of a 28.54 ms GPU
+    wait, so overlapping it is worth ~3.6 ms and touches no pixel. The
+    same change took the raster path from 70 to 161 FPS.
+
+  Together those two plausibly take 32.5 ms toward ~21 ms.
+
+  THE POINT OF THAT HEADROOM IS THE EFFECTS STILL QUEUED, not a higher
+  number. Still to land in this view: DOOM-0011 L2 (sky shafts - a SECOND
+  ray per fog sample), L3 (torch shafts), L4 (colour profiles), plus
+  DOOM-0103 reflections and whatever follows. Accepting 30 FPS at 32.5 ms
+  leaves 0.8 ms of slack under the 33.3 ms frame, which is not a budget -
+  it is a cliff, and the next effect goes over it.
+
+  So the deliverable here is not only speed: it is a PER-EFFECT ms BUDGET
+  for the RT view, in the manner of DOOM-0011 spec 6's table, so each new
+  effect is measured against a share rather than against "does it still
+  feel alright".
+  **Layman:** The ray-traced mode runs at about 30 frames a second on this card; this is the long-term push to double that, and to stop each new effect quietly eating the difference.
+  Kind: perf.
+  Lanes: renderer, shaders.
+  Source: user-request-2026-07-27.
