@@ -2590,3 +2590,28 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: fix.
   Source: user-play-test-2026-07-27.
   Resolved 2026-07-27 by DOOM-0267 (`8542d2b`), user-confirmed: "that is now working as it should". The criss-cross was exactly what the prediction said -- each diagonal recess drawn from the front AND its far face from behind, because sidedef faces were visible both ways. No separate fix needed; the REPEAT-tiling and alpha-test suspects listed here were not reached.
+
+- 📋 [DOOM-0271] **Outdoor floor flats still read as an obvious repeating grid despite de-tiling.**
+  **Layman:** The ground outside shows the same square tile over and over in a visible grid — the anti-repetition trick that fixed the walls is not doing its job on the floor.
+  Kind: fix.
+  Lanes: renderer, shaders.
+  Source: user-play-test-2026-07-27.
+  Reported alongside the DOOM-0011 ground-cloud work: with the walls
+  now hazed, the eye lands on the floor and its repetition is obvious.
+  Evidence: user screenshot, E1M1 outdoor courtyard, Ultra.
+  Leading hypothesis, UNVERIFIED — kDetileWorldCell is 64.0
+  (pathtrace.comp, "96->64" in its own comment), and a DOOM flat is
+  exactly 64x64 world units. The de-tile variation grid is therefore
+  EXACTLY commensurate with the flat's tiling period on every floor and
+  ceiling, so each cell's stochastic offset lands on the same phase of
+  the texture and the repetition survives. Walls escape this because
+  wall textures are 64-256 wide and 128 tall, so the cell rarely lines
+  up. Cheapest test: make the cell non-commensurate (80, 96 or 112) and
+  look. That changes walls too, which the user has already approved, so
+  measure the wall look before and after.
+  Second hypothesis, also unverified and cheaper to rule out: de-tiling
+  may simply be OFF in the user's config. rb_detile is the `]` key
+  (off / 2-tap / 4-tap) and ~/.doomrc has silently held a toggle at 0
+  before (see the menu/shotcompare config gotcha). Confirm the toggle
+  state before touching any constant.
+  Depends on nothing; DOOM-0181 shipped the de-tiler this refines.
