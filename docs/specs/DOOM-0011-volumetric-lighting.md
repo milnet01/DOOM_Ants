@@ -1588,6 +1588,22 @@ reasoning stays there.
   room boundary. **Measure the scan alone at L3**; if per-sample selection does not fit L3's
   share, take the per-ray form and amend §4.4(b) to match. Reverting to "evaluate every emitter"
   is not an option — it is strictly more expensive than either. **L3.**
+- **Q24a (the mountains are UNDER-hazed — user play-test 2026-07-27, evidence in hand):** the
+  user asked whether the shipped look is right: *"The far walls are nearly white because of the
+  mist / fog but the distant mountains are much clearer."* **It is not right, and the cause is
+  arithmetic, not tuning.** Both paths use the same formula and the same `SKY_COLOR`, so the only
+  difference is the distance each is given — and the sky backdrop is handed exactly
+  `kFogMaxDist`, the same clamp a wall at 2048 units gets. At High that is
+  `1 - exp(-0.0008 x 2048)` = **80.6 % for both**. But the backdrop depicts terrain at
+  effectively infinite distance, so it is systematically under-hazed against any surface at the
+  clamp, and a nearer bright wall ends up looking *more* distant than the mountains behind it —
+  aerial perspective inverted.
+  **Fix: give the sky its own effective distance** (a `kFogSkyDist`, or an equivalent density
+  twin) — the "sky-specific twin" §4.3b already floats. Sizing, at High: **95 % wants ≈ 3745
+  units (1.8x `kFogMaxDist`), 99 % wants ≈ 5756 (2.8x)**. Start near 2x and judge by eye; the
+  mountains should recede *further* than any wall, never less. This is L1c work and pairs with
+  the "slightly darker outside" note in §4.3b — both are about the outdoor look, and both are
+  cheap constant changes.
 - **Q24 (sky density after the L1c raise, 2026-07-26):** §4.3b's fork — give the sky term its own
   effective density/distance, or keep it sharing `kFogBaseDensity` and re-check the mountains
   after the ≈2× raise. L1c takes the second path, with "distant sky still readable at High" as
