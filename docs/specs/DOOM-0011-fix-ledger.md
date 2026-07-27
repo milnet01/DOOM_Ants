@@ -671,6 +671,18 @@ already sat under), and **§4.3c was missing from the spec's Contents line** ent
 | 19.4 | **The sky backdrop was never addressed.** Sky pixels bypass `marchFog` for `skyFogOpticalDepth`, so the floor layer would have been missing there — a **~37 % step along the skyline** (`σ_floor(eye)·kFloorFogRange` = 0.0018 × 256 ≈ 0.46 optical depth), which is precisely the defect §4.6a exists to remove. §4.3c now specifies the second closed form: both branches, the exact meeting at `rd.z = 0`, and the near-zero expansion of `a` | INV-10 amended. Note the threshold differs from the aerial branch's: `a` crosses zero at `|rd.z| = kFloorFogPool/kFloorFogRange` = **0.094**, not near zero — so "it is a corner case" is false here and the expansion is not optional |
 | 19.5 | **INV-9 was not amended for the third addend**, unlike INV-10 which tracks every amendment. Now states `(skySigma + floorSigma) · skyExposure + areaSigma` and *why* neither fold is allowed: into `areaSigma` and it stops clearing under a roof; into `skySigma` and it inherits the aerial `poolH`, the one thing it must not share | Gave INV-9 a falsifier it lacked for the floor term (a roofed room shows the floor fog at exactly `kIndoorFogScale`, i.e. unchanged from L1b) |
 
+**Found by the user on hardware, immediately after, and it is a defect in the acceptance criterion
+rather than in the code:** *"I can't say for sure that mist pools around the feet as I can't look
+down."* **DOOM_Ants' camera is yaw-only** — `pc.camUp` is world +Z (`r_vulkan.cpp:7417`), there is
+no pitch anywhere in the RT path — so "mist pools around your feet" is a criterion **no player can
+ever check**. It was written into §7's L1e row by this very review batch, so a doc pass wrote an
+untestable test one commit after a lane cleared the section. The row now names what the geometry
+actually allows: the bottom row of the 3-D view is a **29° downward ray meeting the floor ~84 units
+ahead**, and that is the whole of "at your feet". The floor layer does show there — measured
+against the shipped constants, it adds **28 % haze at the bottom of the view** and 41 % along a
+level ray, on top of the aerial layer's 21 % / 100 %. **The lesson generalises past fog: check an
+acceptance criterion against the camera's degrees of freedom before writing it down.**
+
 **The finding class worth carrying:** four of the five are the same shape — *the amendment
 described a mechanism correctly and then failed to place it in the documents' own machinery*
 (no task, no budget row, no constant values, no invariant). A design amendment written into a
