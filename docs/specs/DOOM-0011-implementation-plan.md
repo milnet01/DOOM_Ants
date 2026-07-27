@@ -233,6 +233,12 @@ vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h) {
 }
 ```
 
+**This block is the L1 listing, not the shipped body** — two later steps changed it and are
+authoritative over it: **L3 Step 1** replaced the one-argument `fogDensity(p)` with the
+per-sample outdoor/indoor base-and-height selection (§4.3 of the spec), and **Q26** replaced the
+uniform `t += dt` with the warped march `t = tMax·s²`, `dt = 2·tMax·s/N` (spec §4.3c). Read
+`pathtrace.comp:marchFog` before quoting anything here as current.
+
 - [ ] **Step 3: Create the half-res fog image + bindings in `r_vulkan.cpp`**
 
 Mirror an existing storage-image target (copy the creation/binding/reset of a denoiser image near
@@ -1549,10 +1555,11 @@ from `g.lastView.hazeDensity` in `RecordRtTrace` (there is no bare `view` there)
   signed off the single-layer version and asked for a short-range floor fog on top of it. **Q25**:
   does the floor layer need its own open-sky test, or does sharing `skyExposure` suffice? **Q26**:
   `kFloorFogRange` against `kFogSteps` — 24 steps over 2048 units is 85 units apart, so a short
-  range is resolved by two or three samples and will band. **Q26 is CLOSED (2026-07-27):** the
-  march warps its samples toward the camera, `t = tMax·s²` with the Jacobian — measured 8-37 %
-  error → 0.1-0.5 % at the *same* 24 steps, where 64 uniform steps still band. Q25 remains a
-  hardware judgement. **No task exists for this yet** — the
+  range is resolved by two or three samples and will band. **Q26 is CLOSED and SHIPPED
+  (2026-07-27), ahead of the floor fog:** the march warps its samples toward the camera,
+  `t = tMax·s²` with the Jacobian — measured 8-37 % error → 0.1-0.5 % at the *same* 24 steps,
+  where 64 uniform steps still band. It went first because it changes the already-accepted look
+  by itself. Q25 remains a hardware judgement. **No task exists for the floor fog yet** — the
   amendment is written, and CLAUDE.md rule 14 puts `/cold-eyes` between it and the code.
 - **Q24 / Q24a** — the sky's haze. **Q24a shipped 2026-07-27**: the backdrop now has its own
   distance, `kFogSkyDist`, because sharing `kFogMaxDist` left the mountains reading as *nearer*

@@ -622,6 +622,24 @@ anything whose acceptance criterion is "does it look right", a hardware round tr
 instrument, and review's remaining job is the things a screenshot cannot show (an undeclared
 symbol, a stale citation, a contradiction between two documents).
 
+## Post-sign-off edit — 2026-07-27 (fifth) — the march's samples are warped
+
+Q26's answer, shipped on its own **ahead of the floor fog it was asked for**, because it changes
+`marchFog` for both layers and alters the accepted look by itself — bundling it with a new layer
+would leave two unrelated causes for whatever the next screenshot shows.
+
+| # | The change | What it cost elsewhere |
+|---|---|---|
+| 18.1 | **`marchFog` no longer steps uniformly.** `t = tMax·s²` for `s = (i + jitter)/N`, carrying the substitution's Jacobian `dt = 2·tMax·s/N`. Same 24 samples, same up-ray count, no new constant — the fix is *where* the samples sit, not how many there are | The dither changed meaning: it now jitters `s` (position within the warp), not an offset in `t`. Spec §4.2's dither bullet said the latter and was rewritten, with the reason — jittering `t` directly fights the redistribution |
+| 18.2 | **Stale L1 listing in the plan.** Plan L1 Step 2 quotes `marchFog`'s body verbatim; it had *already* drifted at L3 (one-arg `fogDensity(p)`) and the warp made it a second lie | Rather than re-sync a historical snapshot on every change, the block is now labelled as the L1 listing and names both supersessions, pointing at the source as authoritative. Ledger entry 6.7 was an earlier round of exactly this drift on the same block |
+
+**A measurement worth carrying forward, from Q26's own check:** the uniform march was
+**under-integrating long rays by 8–15 % at High**. Nothing looked wrong, because a constant bias
+gets absorbed into whatever tuning happens on top of it. Expect the fog to read slightly *thicker*
+after this lands at unchanged constants — and treat that as the bias being removed, not as a new
+defect. Two-thirds of the fog work's defects have been quiet biases like this rather than visible
+errors, which is the argument for checking a quantity against its exact integral before tuning it.
+
 ## Open — not yet fixed
 
 - ~~**Cold-eyes has not converged.**~~ **CONVERGED at loop 13** (2026-07-26): zero verified

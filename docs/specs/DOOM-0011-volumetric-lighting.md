@@ -263,10 +263,20 @@ March `N` steps from the camera to the primary hit over `t ∈ [0, tHit]`:
   §4.6a; tuned at L1c) so a
   long sightline down a corridor does not blow the step budget (steps past
   `kFogMaxDist` contribute negligibly for the target densities).
-- **Dither the start offset** per pixel (interleaved-gradient / blue-noise, reusing
+- **The samples are warped, not evenly spaced** (Q26, shipped 2026-07-27). Sample `i` sits at
+  `t = tMax · s²` for `s = (i + jitter)/N`, and carries the substitution's Jacobian
+  `dt = 2 · tMax · s / N`. Quadrature error scales as *sample spacing ÷ the density's e-fold
+  range*, so an evenly-spaced march over 2048 units cannot resolve a layer that lives in the
+  first few hundred — and buying accuracy with steps is a losing trade (64 uniform steps still
+  band). §4.3c owns the measurement and the check that this does not starve the general fog.
+  **The Jacobian is load-bearing**: drop it and every sample is weighted as if the march were
+  still uniform, which silently rescales the whole fog instead of erroring.
+- **Dither** per pixel (interleaved-gradient / blue-noise, reusing
   the frame counter `pc.misc3.x` on the mode-6 path) so the fixed step count does
   not band; the denoise (§4.6) then cleans the dither noise. This is the standard
-  cheap-volumetrics recipe.
+  cheap-volumetrics recipe. Under the warp the jitter is applied to `s`, the position
+  *within the warp*, not as an offset in `t` — jittering `t` directly would fight the
+  redistribution the warp exists to do.
 - At each sample point `p = origin + t·dir`:
   1. Evaluate **density** `σ(p)` (§4.3).
   2. Evaluate **in-scattered light** `Ls(p)` from the fog's sources (§4.4), each
@@ -942,8 +952,10 @@ both layers at once.
   Exponent 3 is better still for the floor term but measurably worse for the general one — **use 2.**
 
 **Ripples if this ships.** The sample warp (Q26) changes `marchFog`'s loop for **both** layers and
-every future one, so it is a §4.2 change, not a §4.3c one — and it lands *before* the floor fog,
-because it alters the shipped look on its own (see the 8–15 % bias above). `fogDensity()` currently
+every future one, so it is a §4.2 change, not a §4.3c one — and it **landed first, on its own**
+(2026-07-27), because it alters the shipped look independently of any new layer (see the 8–15 %
+bias above); shipping it inside the floor fog would have left two causes for one screenshot.
+`fogDensity()` currently
 returns the whole density; L4's split-sigma
 form (`skySigma · skyExposure + areaSigma`, INV-9) must gain a third addend rather than folding the
 floor term into either existing one. `fogHeightPool()` — which L4 still has to extract — is reused
@@ -1866,12 +1878,14 @@ reasoning stays there.
   amendment assumes. The risk: the floor fog is densest exactly where the aerial layer is thinnest
   — at your feet, under an overhang — so a §4.3a misclassification that is invisible today could
   become obvious. **Hardware, not review. DOOM-0272.**
-- **Q26 (floor-fog range vs. the march's step count, 2026-07-27):** `kFogSteps` = 24 over
-  `kFogMaxDist` = 2048 gives 85-unit steps. If `kFloorFogRange` lands anywhere near that, the
-  floor fog is resolved by two or three samples and bands. Either raise `kFogSteps` (L1c already
-  plans 24 → 40) or bias the march toward the near end. **This is arithmetic, not taste, and it
-  is the one that can make the feature look broken — settle it before writing the shader.
-  DOOM-0272.**
+- **Q26 (floor-fog range vs. the march's step count, 2026-07-27): CLOSED, and SHIPPED
+  2026-07-27** — ahead of the floor fog itself, since it changes the accepted look on its own.
+  `kFogSteps` = 24 over `kFogMaxDist` = 2048 gave 85-unit steps, so any short `kFloorFogRange`
+  would have been resolved by two or three samples and banded. Raising the step count does **not**
+  fix it (64 uniform steps still band at a 128-unit range); the march now warps its samples toward
+  the camera instead — `t = tMax·s²` with the Jacobian, at the same 24 samples. Measurement,
+  the check against the general fog, and the choice of exponent are in §4.3c; the loop contract
+  is in §4.2.
 - **Q24 (sky density after the L1c raise, 2026-07-26):** §4.3b's fork — give the sky term its own
   effective density/distance, or keep it sharing `kFogBaseDensity` and re-check the mountains
   after the ≈2× raise. L1c takes the second path, with "distant sky still readable at High" as
