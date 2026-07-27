@@ -34,6 +34,13 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Ultra's ray-traced view is about 17% faster — 41 to 48 FPS on the test machine** (DOOM-0197)
+  The processor and the graphics card were taking turns instead of working
+  at the same time: each frame spent 3.6ms preparing moving doors and lifts
+  and only then started waiting on the card. That preparation now happens
+  while the card is still drawing the previous frame, which is time the
+  frame no longer spends. Nothing about the picture changes.
+
 - **Indoor mist now reaches further in from an opening, and no longer halves at the threshold** (DOOM-0281)
   Fog standing in a doorway was capped at half the density of the air just
   outside it, so it visibly halved the moment it crossed the opening; and it

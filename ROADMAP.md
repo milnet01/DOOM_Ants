@@ -2152,11 +2152,69 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: investigate.
   Source: in-session-2026-07-17 (found while completing DOOM-0122 on the RX 6600).
 
-- 📋 [DOOM-0197] **Extend build-ahead frame overlap to the RT/Ultra path.**
+- ✅ [DOOM-0197] **Extend build-ahead frame overlap to the RT/Ultra path.**
   DOOM-0074 shipped CPU/GPU build-ahead for the raster (Solid) path only; a traced frame still serializes (builds after the fence). RT is currently GPU-bound on the megakernel (~10.6ms) + SVGF denoise (~6.9ms), so the CPU build (~3ms reheight) overlapping would only trim a little today, but it becomes worth it once DOOM-0090 (megakernel occupancy) lands. Doing it needs more than the raster cut: the RT frame's per-frame GPU-read resources — sprWorldBuf (sprite BLAS input), tlasInstBuf, the sprite BLAS + world-BLAS refit, and the emitter buffers (emitBuf/emitSecBuf, GPU-read by the megakernel) — must be double-buffered per in-flight slot, and the BLAS/TLAS refit must target the active slot's vbuf. The SVGF denoiser history is intentionally temporal (reprojected each frame) so it must NOT be naively double-buffered — the reprojection already tolerates the 1-frame latency. Sequence AFTER DOOM-0090. Defer until then.
   **Layman:** Give the ray-traced Ultra view the same CPU/GPU overlap speedup the Solid view just got.
   Kind: perf.
   Source: in-session-2026-07-17 DOOM-0074 follow-up.
+  Resolved 2026-07-27: Ultra RT went 41 -> 48 FPS (present-total 24.1 -> 20.5 ms)
+  on the RX 6600 at E1M1, 50% render scale, WITH the HD material set loaded.
+
+  Sequenced BEFORE DOOM-0090, against this bullet's own "defer until then". The
+  deferral reasoned from a frame where the fog cost +8.4 ms; DOOM-0276 removed
+  7.4 ms of that, so the ~3.6 ms CPU build stopped being noise and became 15% of
+  the frame. The user asked for it next.
+
+  The bullet's scope estimate was too pessimistic, and measuring first is what
+  showed it. It listed sprWorldBuf, tlasInstBuf, the sprite BLAS, the world-BLAS
+  refit and emitBuf/emitSecBuf as all needing per-slot copies. In fact:
+  - The AS work (tlasInstBuf, sprite BLAS, world-BLAS refit) is written during
+  RECORDING, which already happens after the fence, so it never needed slotting
+  at all. Every site re-derives BufferAddress() at record time, so slot aliasing
+  is transparent to it.
+  - The traced CPU build measures 3.57 ms and the moving-sector RE-HEIGHT is 3.10
+  of it -- 87%. Re-height writes g.vbufMapped, which DOOM-0074 ALREADY
+  double-buffers. So the large majority of the win needed no new double-buffering
+  whatsoever.
+
+  Shipped the seam rather than the fleet: BuildFrameReheight() split out of
+  BuildFrameInputs and run before the fence on traced frames; the sprite + emitter
+  halves (~0.45 ms, writing the still-single-copy sprWorldBuf / emitBuf /
+  emitSecBuf) stay behind it. Raster is untouched -- it still runs the whole build
+  ahead. A just-toggled frame still runs everything after the fence.
+
+  Safety is DOOM-0074's argument unchanged: slot[frameSlot] was last read two
+  frames ago and that frame completed before the previous one was submitted. The
+  megakernel reads vertices through pc.vertsAddr = BufferAddress(g.vbuf), which
+  points at the OTHER slot while this one is written.
+
+  One deliberate behaviour change, called out in a comment: the re-height now runs
+  BEFORE the emitter rebuild instead of after, so a switch that changed texture is
+  picked up by BuildStaticEmitterSet on the same frame rather than the next. One
+  frame earlier, reading current heights instead of stale ones -- strictly better,
+  but it makes the old "last frame RB_UpdateMeshHeights saw..." comment untrue in
+  RT, so that is now stated where it matters.
+
+  Also fixed while here: the profiler's own arithmetic. The pre-fence re-height sat
+  outside BuildFrameInputs' timing span, so [cpu_build] printed a total SMALLER
+  than one of its own parts and ~3 ms of present-total belonged to no bucket. The
+  re-height now adds to the build total only when it is called standalone.
+
+  Gates, all with HD art loaded: -shotcompare vs a worktree build of 8b41786,
+  mae 0.006/255 against a same-build noise floor of 0.002 -- the denoiser's own
+  residue. -rtverify PASS, rel-MSE 0.0988%, matching the historical HD figure
+  recorded on DOOM-0074. make + make test green.
+
+  METHOD WARNING, and it cost a full set of measurements: HD materials resolve
+  relative to cwd, so a run that does not export DOOMASSETDIR silently renders
+  Ultra with PALETTED art. The first pass of these numbers (43 -> 53 FPS) was taken
+  that way and had to be discarded. The user caught it from a screenshot; no gate
+  did. Logged as DOOM-0283.
+
+  Remaining: ~0.45 ms still behind the fence (sprites + emitter refill), which
+  needs sprWorldBuf / emitBuf / emitSecBuf slotted -- and those are read by
+  RunGiBake and RB_RtVerify too, so it is a wider change for an eighth of the
+  prize. Left undone deliberately.
 
 - 📋 [DOOM-0198] **Vulkan validation: renderpass/framebuffer subpass-dependency incompatibility in the raster overlay pass.**
   With Vulkan validation layers on, the Solid raster path logs VUID-VkRenderPassBeginInfo-renderPass-00904 / VUID-vkCmdDraw-renderPass-02684: a render pass is begun with a framebuffer (and pipeline) created for a subpass-dependency-INCOMPATIBLE render pass — srcAccessMask TRANSFER_WRITE vs 0, srcStageMask ALL_TRANSFER vs EARLY_FRAGMENT/COLOR_ATTACHMENT_OUTPUT (renderPass 0xf vs 0xc). Pre-existing (confirmed: the DOOM-0074 diff touches no render-pass/framebuffer/pipeline creation code; the warning is a static setup mismatch, not a runtime one). Likely the overlay/composite or rtOverlay LOAD-variant pass whose pDependencies differ from the base renderPass its framebuffer/pipeline were built against, while still being format-compatible. Renders correctly (image is right), but the passes should be made subpass-dependency-compatible (or the framebuffer/pipeline rebuilt against the matching pass) to clear the warning. Low priority — cosmetic validation noise, no visible effect.
@@ -3133,3 +3191,36 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: fix.
   Lanes: renderer, shaders.
   Source: user-play-test-2026-07-27.
+
+- 📋 [DOOM-0283] **Ultra falls back to paletted art silently when the HD assets are not found.**
+  EnsureHdMaterials resolves the HD set relative to the CURRENT WORKING DIRECTORY
+  ("assets/ultra/") unless DOOMASSETDIR overrides it. cwd is linuxdoom-1.10/ (the
+  launcher keeps it there so savegames land where they always have), and
+  assets/ultra/ lives one level up at the repo root -- so any run that does not
+  export DOOMASSETDIR gets paletted art in Ultra. run-doom-ants.sh sets it and
+  carries a comment warning about exactly this; nothing else does.
+
+  The only signal is a stdout line -- "DOOM-0042: no assets/ultra/materials.csv -
+  Ultra uses paletted art." -- which is invisible while the game owns the display.
+  That is the same failure shape as the debug hotkeys in DOOM-0275: an affordance
+  whose only output channel is one the user cannot see during the activity it
+  describes.
+
+  Cost of it being silent, measured rather than imagined: an entire session of
+  DOOM-0197 perf measurements and -shotcompare golden captures were taken paletted
+  while believing they were Ultra HD, and the numbers had to be thrown away and
+  retaken (41->48 fps HD, vs 43->53 paletted -- different enough to matter). The
+  user spotted it from a screenshot; nothing in the harness did.
+
+  Two things worth doing, the first much more important:
+  - Say so ON SCREEN. The Ultra row in the render-mode menu could read "Ultra (HD
+  art not found - using original art)", or a one-line startup notice via
+  I_DebugKeyMessage's channel. A player who picked Ultra and got Solid's art has
+  no way to tell today.
+  - Consider resolving the default path relative to the EXECUTABLE or searching
+  "../assets/ultra/" as a fallback, so the common layout works without an env
+  var. Keep DOOMASSETDIR as the override.
+  **Layman:** If the high-definition texture pack cannot be found, Ultra quietly falls back to the original artwork and looks like Solid. Nothing on screen says so, so it reads as the setting not working.
+  Kind: enhancement.
+  Lanes: renderer.
+  Source: in-session-2026-07-27.

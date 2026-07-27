@@ -8314,7 +8314,61 @@ void RecordRtOverlay(uint32_t idx, bool drawOverlay)
 // writes the active frame-slot copies of g.spriteVbuf / g.lightBuf / g.vbuf and reads
 // live game state (sectors[], sprites). `cprof` gates the CPU profiler sub-timers; the
 // build total lands in g.cpuMs[1].
-static void BuildFrameInputs(bool rtActive, bool cprof)
+// Re-height moving sectors (doors/lifts) in the static level buffer from the live
+// sector heights. host-coherent, no flush. A non-zero return means geometry actually
+// shifted this frame -> latch the BLAS dirty so the trace refits it (build step 5).
+// Latching (rather than refitting here) means a move that finished under the raster
+// path is still caught the first time the trace is shown. The change-flags diff against
+// this slot's buffer (its state from two frames ago under build-ahead); the writes are
+// always from the authoritative sector heights, so geometry is correct regardless --
+// only a stale-by-a-frame extra refit/emitter-rebuild can result, which is harmless
+// (DOOM-0074).
+//
+// DOOM-0197: split out of BuildFrameInputs so the TRACED path can run this half ahead
+// of the fence. It is the only half that is ahead-safe in RT, and it is the half that
+// matters: measured on the RX 6600 at E1M1 the traced build is 3.57 ms and this is 3.10
+// of it. It writes g.vbufMapped, which DOOM-0074 already double-buffers per in-flight
+// slot -- so the frame still on the GPU is reading a different copy, and the megakernel's
+// own pc.vertsAddr points at that other copy too. The sprite and emitter halves write
+// single-copy buffers (sprWorldBuf, emitBuf, emitSecBuf) and must stay behind the fence
+// until those are slotted as well; they measure ~0.45 ms, so that is the remaining prize.
+static void BuildFrameReheight(bool cprof, bool ownTotal)
+{
+    if (!g.levelMesh || !g.vbufMapped)
+        return;
+    const double tH0 = cprof ? CpuNowMs() : 0.0;
+    int upd = RB_UpdateMeshHeights(g.levelMesh, (rb_vertex_t*)g.vbufMapped);
+    if (upd & RB_UPD_MOVED) g.blasDirty = true;      // geometry shifted -> BLAS refit
+    if (upd & RB_UPD_RETEX) g.worldEmitDirty = true; // a face's texture swapped -> emitter rebuild
+    // DOOM-0281: a plane moved, so an opening MAY have appeared or vanished -- check
+    // whether one actually did. Gated on RB_UPD_MOVED because connectivity cannot change
+    // without a plane moving, so a still map never pays for the scan; latched (like
+    // blasDirty) because only the traced path samples the field, and a door opened under
+    // raster must still be caught on the way back. Measured at 0.0039 ms per scan on
+    // E1M1, and only on the frames where a plane actually moved.
+    if ((upd & RB_UPD_MOVED) && g.rtEnabled && RB_SeepOpeningsChanged())
+        g.seepDirty = true;
+    // `ownTotal` when this is called on its own from the present path (traced, pre-fence):
+    // that time is outside BuildFrameInputs' own span, and leaving it out of the total made
+    // the [cpu_build] line report a sum smaller than one of its own parts, with ~3 ms of
+    // present-total in no bucket at all. Called from inside BuildFrameInputs it must NOT
+    // add to the total, which already covers it.
+    if (cprof)
+    {
+        const double dt = CpuNowMs() - tH0;
+        g.cpuBuildMs[2] += dt;                  // moving-sector re-height
+        if (ownTotal) g.cpuMs[1] += dt;         // ...and the build total the line prints
+    }
+}
+
+// `doReheight` is false only on the traced path, where BuildFrameReheight has already
+// run ahead of the fence (DOOM-0197). Note the consequence for ordering: the re-height
+// then happens BEFORE the emitter rebuild rather than after it, so a switch that changed
+// texture this frame is picked up by BuildStaticEmitterSet on THIS frame instead of the
+// next. One frame earlier, and reading heights that are now current rather than stale --
+// strictly the better order; it is called out because the old comment there says "last
+// frame RB_UpdateMeshHeights saw ...", which is no longer true in RT.
+static void BuildFrameInputs(bool rtActive, bool cprof, bool doReheight)
 {
     const double tBuild0 = cprof ? CpuNowMs() : 0.0;
     g.spriteVertCount = 0;
@@ -8400,32 +8454,8 @@ static void BuildFrameInputs(bool rtActive, bool cprof)
         BuildDynamicEmitters();
     }
 
-    // Re-height moving sectors (doors/lifts) in the static level buffer from the
-    // live sector heights. host-coherent, no flush. A non-zero return means geometry
-    // actually shifted this frame -> latch the BLAS dirty so the trace refits it (build
-    // step 5). Latching (rather than refitting here) means a move that finished under
-    // the raster path is still caught the first time the trace is shown. The change-
-    // flags diff against this slot's buffer (its state from two frames ago under build-
-    // ahead); the writes are always from the authoritative sector heights, so geometry
-    // is correct regardless — only a stale-by-a-frame extra refit/emitter-rebuild can
-    // result, which is harmless (DOOM-0074).
-    if (g.levelMesh && g.vbufMapped)
-    {
-        const double tH0 = cprof ? CpuNowMs() : 0.0;
-        int upd = RB_UpdateMeshHeights(g.levelMesh, (rb_vertex_t*)g.vbufMapped);
-        if (upd & RB_UPD_MOVED) g.blasDirty = true;      // geometry shifted -> BLAS refit
-        if (upd & RB_UPD_RETEX) g.worldEmitDirty = true; // a face's texture swapped -> emitter rebuild
-        // DOOM-0281: a plane moved, so an opening MAY have appeared or vanished --
-        // check whether one actually did. Gated on RB_UPD_MOVED because connectivity
-        // cannot change without a plane moving, so a still map never pays for the
-        // scan; latched (like blasDirty) because only the traced path samples the
-        // field, and a door opened under raster must still be caught on the way back.
-        // Measured at 0.0039 ms per scan on E1M1, and only on the frames where a plane
-        // actually moved -- 0.02% of a frame, on a fraction of them.
-        if ((upd & RB_UPD_MOVED) && g.rtEnabled && RB_SeepOpeningsChanged())
-            g.seepDirty = true;
-        if (cprof) g.cpuBuildMs[2] += CpuNowMs() - tH0;  // moving-sector re-height
-    }
+    if (doReheight)
+        BuildFrameReheight(cprof, false);
     if (cprof) g.cpuMs[1] += CpuNowMs() - tBuild0;
 }
 
@@ -8484,12 +8514,21 @@ extern "C" void RB_Vulkan_Present(void)
         vkDeviceWaitIdle(g.device);
     g.lastRtActive = rtActive;
 
-    // Build-ahead only in steady-state raster: run the CPU build now, overlapping the
-    // previous frame's GPU. A traced or just-toggled frame builds after the fence
-    // (serialized) so its single-copy RT resources are never in flight.
+    // Build-ahead: run the CPU build now, overlapping the previous frame's GPU. Raster
+    // runs the WHOLE build ahead (every buffer it writes is slotted). A just-toggled
+    // frame runs none of it, so its single-copy resources are never in flight.
     const bool buildAhead = !rtActive && !modeChanged;
+    // DOOM-0197: the traced path cannot run its whole build ahead -- the sprite and
+    // emitter buffers are still single-copy -- but the re-height can, and that is 3.10
+    // of the traced build's 3.57 ms. Before this, an RT frame was a textbook
+    // serialisation: 3.57 ms of build and THEN 19.1 ms blocked on a 19.6 ms GPU, for
+    // 23.2 ms total. Overlapping the re-height puts the frame back on the GPU's own
+    // pace. The remaining ~0.45 ms stays behind the fence.
+    const bool reheightAhead = rtActive && !modeChanged;
     if (buildAhead)
-        BuildFrameInputs(false, cprof);
+        BuildFrameInputs(false, cprof, true);
+    else if (reheightAhead)
+        BuildFrameReheight(cprof, true);
 
     const double tFence0 = cprof ? CpuNowMs() : 0.0;
     vkWaitForFences(g.device, 1, &g.inFlight, VK_TRUE, UINT64_MAX);
@@ -8650,7 +8689,7 @@ extern "C" void RB_Vulkan_Present(void)
     // the previous frame's GPU has finished reading everything. In steady-state raster
     // it already ran before the fence (buildAhead), overlapping the GPU.
     if (!buildAhead)
-        BuildFrameInputs(rtActive, cprof);
+        BuildFrameInputs(rtActive, cprof, !reheightAhead);
 
     // DOOM-0131: the moving-sector world-BLAS refit (build step 5) is recorded into the
     // frame command buffer inside RecordRtTrace (ahead of the TLAS rebuild). blasDirty
