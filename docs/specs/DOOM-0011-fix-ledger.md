@@ -640,6 +640,14 @@ after this lands at unchanged constants — and treat that as the bias being rem
 defect. Two-thirds of the fog work's defects have been quiet biases like this rather than visible
 errors, which is the argument for checking a quantity against its exact integral before tuning it.
 
+**SECOND SIGN-OFF, same day, on hardware:** *"Mist is now brilliant. It is exactly what I want."*
+The outdoor aerial fog is now **finished** — do not re-tune its constants without a fresh report;
+they are correct *with* the 8–15 % bias removed, not in spite of it. The user named the two things
+that remain, and named them precisely: *"we just need the indoor fog (it is already there but only
+at a distance) and the Silent Hill 2 type fog."* The first is §4.3c's floor layer plus L1d's seep
+(indoors the fog reads only at distance because nothing puts mist at your feet in a room); the
+second is task L1c verbatim.
+
 ## Open — not yet fixed
 
 - ~~**Cold-eyes has not converged.**~~ **CONVERGED at loop 13** (2026-07-26): zero verified
