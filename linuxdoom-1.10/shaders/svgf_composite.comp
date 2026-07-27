@@ -98,8 +98,13 @@ void main()
         // matches at the sky/wall seam where shafts read (§4.6/Q9). rb_fog==0 -> fog.a=1,
         // fog.rgb=0 -> sky*1+0 == sky, a byte-identical no-op.
         if (pc.misc3.y != 0u) {
+            // DOOM-0011 Q24b: `sky` is DISPLAY-encoded but fog.rgb is LINEAR radiance, so
+            // folding them directly showed the same fog ~2.5x darker here than on a wall,
+            // inverting aerial perspective at the very seam this fold exists to match.
+            // Decode, fold in linear exactly as the surface path does, re-encode.
             vec4 fog = fetchFogBilinear(p);
-            sky = sky * fog.a + fog.rgb;                // fog in front of visible sky
+            vec3 skyLin = vec3(srgbToLinear(sky.r), srgbToLinear(sky.g), srgbToLinear(sky.b));
+            sky = toneEncode(skyLin * fog.a + fog.rgb);   // fog in front of visible sky
         }
         imageStore(outColor, p, vec4(clamp(sky, 0.0, 1.0), 1.0));
         imageStore(motion, p, vec4(0.0));

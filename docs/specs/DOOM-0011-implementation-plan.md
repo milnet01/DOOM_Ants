@@ -960,7 +960,14 @@ dark rooms — using only the existing static emitter slice.
 - `r_vulkan.cpp:7395-7405` — `omniStart = pc.misc4[1]` write + the DOOM-0084 static/dynamic
   boundary comment (confirms `[0, omniStart)` is static).
 
-- [ ] **Step 1: Height pooling in `fogDensity()`**
+- [x] **Step 1: Height pooling in `fogDensity()`** — **SHIPPED EARLY 2026-07-27**, ahead of L2, on
+  user feedback that the uniform fog read as "a fog look applied to geometry instead of an actual
+  cloud near the ground". Shipped shape differs from the draft below in two ways, both recorded in
+  spec §4.3: the floor fallback is **camera-relative** (`ro.z - kEyeAboveFloor`) rather than a
+  `kFogFloorFallback` const, and the sky closed forms now use the density at **eye height**
+  (`kFogBaseDensity * exp(-kEyeAboveFloor / kFogPoolHeight)`) so the backdrop is not hazed as if
+  it lay on the ground. `kFogFloorFallback` was therefore never added. The draft is kept below as
+  the record of what was specified.
 
 `marchFog()` must pass the floor reference into density. Compute `floorZ` once in `marchFog()`:
 `hitP.z` when the primary hit faces up (`gnormal.z > 0.7`, a floor), else a level-min fallback

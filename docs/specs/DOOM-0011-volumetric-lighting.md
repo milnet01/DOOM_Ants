@@ -283,6 +283,32 @@ fallback if HG reads busy (Q5).
 
 ### 4.3 Density & colour
 
+> **L3's height pooling was PULLED FORWARD and shipped 2026-07-27, ahead of L2.** User verdict on
+> the uniform-density build: *"a fog look is applied to geometry instead of an actual cloud near
+> the ground. If we can emulate a cloud near the ground, that should resolve everything."* That is
+> the correct diagnosis — with `fogDensity()` returning a constant, every surface is simply greyed
+> in proportion to its distance and nothing ever reads as standing *in* anything. Pooling is what
+> turns the tint into a medium, so it stopped being an L3 nicety and became the point.
+>
+> **Two deliberate deviations from the drafted L3 Step 1, both recorded here rather than
+> discovered later:**
+>
+> 1. **The floor fallback is camera-relative, not a level-min constant.** The draft called for a
+>    `kFogFloorFallback` const used when the primary hit is not an up-facing surface. A single
+>    global Z is wrong the moment a map has a raised outdoor area — the cloud would sit at ankle
+>    height in one room and overhead in the next. Shipped instead: `ro.z - kEyeAboveFloor`, the
+>    floor under the camera. `kFogFloorFallback` is therefore **not** in the tree; §5's inventory
+>    reflects that.
+> 2. **The sky closed form uses the density at EYE height, not floor height.** Once density falls
+>    off with height, a sky ray crossing the cloud at eye level must not be charged the floor
+>    density, or the backdrop is hazed as though it lay on the ground. Shipped:
+>    `kFogBaseDensity * exp(-kEyeAboveFloor / kFogPoolHeight)` — a compile-time factor of 0.43.
+>
+> Effect at High, horizontally at eye height: 512 units goes 33.6 % → 16.0 % hazed, 1024 goes
+> 55.9 % → 29.4 %, 2048 goes 80.6 % → 50.2 %. The air is thinner at head height and thickest at
+> your feet, which is the whole point. `kFogPoolHeight` (48) is the dial: raise it for a deeper
+> cloud, lower it for a shallower one hugging the floor.
+
 - **Base density** `kFogBaseDensity` — a small always-on `const` so "clear air"
   still shows faint shafts (pure zero = no shafts at all). This is the "clear"
   profile.

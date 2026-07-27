@@ -47,6 +47,10 @@ const float kFogSkyDist      = 4096.0;           // DOOM-0011 Q24a: the SKY back
                                  // sky ever washes out (e.g. after L1c's density raise).
 const float kFogBaseDensity  = 0.0008;           // "High"-level extinction/km-ish; subtle. tune-on-hw
 const float kFogPoolHeight   = 48.0;             // e-fold height (DOOM units) for floor pooling
+const float kEyeAboveFloor   = 41.0;             // DOOM's VIEWHEIGHT: how far the eye rides above
+                                 // its own floor. Used as the height at which a SKY ray crosses
+                                 // the ground cloud, and as the floor fallback when the primary
+                                 // hit is not an up-facing surface.
 const float kFogAnisotropy   = 0.40;             // Henyey-Greenstein g (mild forward bias); 0 = isotropic
 const vec3  kSunDir          = normalize(vec3(0.30, 0.30, 1.0)); // world; +z is up (floor = hitP.z). L2.
 const vec3  kGooTint         = vec3(0.35, 0.85, 0.30); // sickly green (L4)
@@ -65,8 +69,16 @@ float fogPhaseHG(float cosTheta, float g) {
 }
 
 // L1: base density only (height pooling + profiles arrive at L3/L4).
-float fogDensity(vec3 p) {
-    return kFogBaseDensity;
+// DOOM-0011 L3 (pulled forward 2026-07-27 on user feedback): density falls off with
+// height above the floor, so the fog reads as a CLOUD LYING ON THE GROUND rather than a
+// uniform tint painted over everything by distance. Until now this returned a constant,
+// which is why the user described it as "a fog look applied to geometry instead of an
+// actual cloud near the ground" -- with uniform density every surface just gets greyed in
+// proportion to how far away it is, and nothing ever looks like it is standing IN
+// something. kFogPoolHeight is the e-fold height: at floorZ + kFogPoolHeight the air is
+// 1/e as thick, so the cloud has a soft top edge instead of a hard line.
+float fogDensity(vec3 p, float floorZ) {
+    return kFogBaseDensity * exp(-max(0.0, p.z - floorZ) / kFogPoolHeight);
 }
 
 // rb_fog strength level (pc.misc6.z: 1=Low 2=Med 3=High; 0 is gated out by the caller)
