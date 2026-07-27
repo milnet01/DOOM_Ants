@@ -950,24 +950,33 @@ vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)
         float t     = tMax * s * s;
         float dt    = 2.0 * tMax * s * invN;
         vec3  p     = ro + rd * t;
-        // §4.3a open-sky exposure standard: a straight-up shadow ray that MISSES all
-        // solid geometry means this sample sits under open sky (full haze); a HIT means
-        // indoors (near-clear). Mirrors occluded()'s cull-mask-0x01 ray-query exactly
-        // (pt_common.glsl) rather than inventing a new one; the sky backdrop itself is
-        // instance mask 0x04 (r_vulkan.cpp) which a 0x01 ray cannot hit, so it can never
-        // falsely register as "indoor". occluded() takes a surface normal to bias the ray
-        // origin off the surface -- p is a mid-air march sample, not a surface hit, so the
-        // up direction doubles as that bias (n == wi == up); harmless 1e-3-unit nudge.
-        bool  openSky = !occluded(p, vec3(0.0, 0.0, 1.0), vec3(0.0, 0.0, 1.0), kFogMaxDist);
+        // §4.3a open-sky exposure standard. Both facts this sample needs -- IS there sky
+        // above it, and how far is it from outdoor air -- ride the same seep field, so
+        // this is ONE bilinear tap and no rays at all.
+        //
+        // DOOM-0276 put the .g channel here. Until 2026-07-27 `openSky` was a shadow ray
+        // fired straight up per sample, and that ray was the single most expensive thing
+        // in the fog: 24 samples x every fog pixel, measured at ~7.9 ms of an 8.4 ms
+        // feature. It was also 3-D work on a 2-D question -- vanilla DOOM is flat-mapped,
+        // R_PointInSubsector takes (x, y) alone and yields exactly one ceilingpic, so
+        // "is there sky above this XY" is a pure function of XY and the field already
+        // knows it. Cost of the swap: the roofline follows the 64-unit grid instead of
+        // the wall, so it lands within half a cell of the real one.
+        //
+        // The mask MUST be its own channel. `d == 0` does mean outdoor, but a ROOFED cell
+        // one step inside a doorway also carries a near-zero `d` (the portal it walks to
+        // is seeded at zero), so any `d < eps` test would put the full outdoor bank inside
+        // the first room behind every door.
+        vec2  seep    = texture(uSeepField, worldToSeepUV(p.xy)).rg;
+        bool  openSky = seep.g > 0.5;
         // DOOM-0011 L1d: the open-sky branch is still exactly 1.0 -- only roofed air
         // changes. Instead of the flat kIndoorFogScale floor, roofed air is graded by
         // how far it sits from outdoor air THROUGH OPEN SPACE, so mist drifts in at a
         // doorway and thins as you go deeper, while a sealed room that merely shares a
         // wall with the courtyard reads dMax and so stays at exactly the old floor
-        // (INV-12). One bilinear tap, no ray.
-        float seepD = texture(uSeepField, worldToSeepUV(p.xy)).r;
+        // (INV-12).
         float skyExposure = openSky ? 1.0
-                                    : mix(kIndoorFogScale, kSeepMax, exp(-seepD / kSeepFalloff));
+                                    : mix(kIndoorFogScale, kSeepMax, exp(-seep.r / kSeepFalloff));
         // Outdoor air is a tall bank on the level's fog altitude; roofed air keeps the
         // shallow knee-height cloud. Both references are per-frame constants, so `sigma`
         // is a function of `p` alone -- see fogDensity()'s contract.

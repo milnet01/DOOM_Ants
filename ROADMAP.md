@@ -2765,7 +2765,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: ux.
   Source: user-report-2026-07-27.
 
-- 📋 [DOOM-0276] **Replace the fog march's per-sample up-ray with a seep-field lookup.**
+- ✅ [DOOM-0276] **Replace the fog march's per-sample up-ray with a seep-field lookup.**
   Measured 2026-07-27 (spec DOOM-0011 6): the fog costs +8.38 ms /
   +34.7% present-total, and 7.93 ms of that is inside the megakernel. The
   pole is the per-sample open-sky test - one ray query straight up for
@@ -2790,6 +2790,34 @@ parked ideas (💭 considered) until we commit to and design each one.
   about.
 
   Expected: most of the 7.93 ms, at no cost in look beyond that edge.
+
+  Resolved (2026-07-27): the up-ray is gone. The seep field grew a second
+  channel - .r is the L1d distance, .g a per-cell open-sky mask (1.0 where the
+  cell's sector has ceilingpic == skyflatnum) - so the march's ONE existing
+  bilinear tap now answers both questions and the march carries no rays at all.
+  The mask needed its own channel rather than an epsilon on .r: a roofed cell
+  one step inside a doorway also has a near-zero distance, so d < eps would
+  have put the full outdoor bank inside the first room behind every door.
+
+  Measured on the RX 6600, E1M1, 50% render scale, three runs per configuration
+  against a worktree build of 8522b23: fog costs +8.37 ms (+35.4%) before and
+  +0.98 ms (+4.2%) after; the fog-on frame goes 32.03 -> 24.53 ms
+  present-total, 31.2 -> 40.8 FPS. Fog-OFF is the control and is unchanged to
+  the hundredth of a millisecond on both builds, which is what makes the
+  comparison trustworthy - the expected saving landed, and the thing that
+  could not have moved did not.
+
+  Look checked before the number was believed: -shotverify at the same spawn
+  view, MAE 2.93/255 against 1.09/255 between two runs of the SAME build, so
+  ~1.8 of real change - the roofline moving onto the 64-unit grid, which is the
+  one cost this carries. -rtverify PASS. Fixed a latent L1d bug the review
+  turned up on the way: the field's grid was sized with a truncating divide, so
+  the void ring got bilinear weight on real air along the +X/+Y edges (E1M1
+  74x47 -> 75x47 once corrected). Spec DOOM-0011 4.3a amendment + 6's second
+  boxed notice; fix ledger batch 21.
+
+  Still owed: a user play-test of a DOORWAY threshold, which is where the
+  half-cell error lives.
   **Layman:** Stop asking the graphics card to fire a test ray straight up 24 times per pixel, when a small map we already build answers the same question for free.
   Kind: perf.
   Lanes: renderer, shaders.
@@ -2893,3 +2921,30 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: perf.
   Lanes: renderer, shaders.
   Source: user-request-2026-07-27.
+
+- 📋 [DOOM-0280] **The DOOM-0060 game chooser can pick a different IWAD across identical runs.**
+  Found while A/B-ing DOOM-0276. Two launches with the SAME config file, same
+  DOOMWADDIR (holding both doom.wad and doom2.wad), same env and no -iwad, and
+  no input at all: one started E1M1 (bounds x[-704,3758] y[-4856,-2080], 2227
+  tris) and the other started DOOM 2's MAP01 (bounds x[-1224,1892] y[-888,2608],
+  1610 tris). Nothing in the two invocations differed but the working directory
+  of the binary.
+
+  Why it matters beyond tidiness: it silently invalidates measurements. The first
+  before/after comparison for DOOM-0276 looked like the change had made the
+  renderer 4 ms FASTER with fog OFF, which is impossible - fog off skips the
+  march entirely. The two runs were rendering different games. Any perf or
+  -shotcompare work that does not pass -iwad explicitly is exposed to this.
+
+  Not yet diagnosed. The chooser is presumably waiting on input and falling
+  through to a default; the suspicion is that the fall-through depends on timing
+  or on the wad-scan order rather than on a stable preference. Worth checking
+  whether a remembered preference is meant to be persisted to the config and is
+  not being.
+
+  Workaround meanwhile: pass -iwad explicitly whenever a run has to be
+  reproducible.
+  **Layman:** With both DOOM 1 and DOOM 2 in the wads folder and no key pressed, the game sometimes starts one and sometimes the other - it should always make the same choice.
+  Kind: fix.
+  Lanes: startup.
+  Source: in-session-2026-07-27 (hit while measuring DOOM-0276).

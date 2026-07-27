@@ -3256,8 +3256,12 @@ void CreateSampledImage(uint32_t w, uint32_t h, VkFormat fmt,
 // -- the descriptors have to be valid before the first dispatch, and the first level
 // is not built until later -- then again from RB_Vulkan_BuildLevel with the real
 // field. `f` may be null, which means "use the placeholder": every cell reads
-// RB_SEEP_DMAX, so the seep contributes nothing and the fog falls back to exactly
-// the flat indoor floor it had before this task.
+// RB_SEEP_DMAX and "roofed", so the seep contributes nothing and every fog sample
+// takes the indoor branch. DOOM-0276 made that second half load-bearing -- the mask
+// now decides `openSky`, which the up-ray used to decide on its own -- so the
+// placeholder would flatten the outdoor fog too. It cannot be observed: it is live
+// only between pipeline creation and the first RB_Vulkan_BuildLevel, and there is no
+// level to render in that window.
 static uint16_t FloatToHalf(float f)
 {
     uint32_t x;
@@ -3273,26 +3277,33 @@ static uint16_t FloatToHalf(float f)
 void UploadSeepField(const rb_seep_t* f)
 {
     uint32_t w = 1, h = 1;
-    const float* src = nullptr;
+    const float* srcD   = nullptr;
+    const float* srcSky = nullptr;
 
-    if (f && f->d && f->w > 0 && f->h > 0)
+    if (f && f->d && f->sky && f->w > 0 && f->h > 0)
     {
-        w   = (uint32_t)f->w;
-        h   = (uint32_t)f->h;
-        src = f->d;
+        w      = (uint32_t)f->w;
+        h      = (uint32_t)f->h;
+        srcD   = f->d;
+        srcSky = f->sky;
     }
 
-    // R16_SFLOAT, and the 16 is load-bearing in a way R8-vs-R16 is not the whole of.
-    // Vulkan MANDATES SAMPLED_IMAGE_FILTER_LINEAR for R16_SFLOAT but leaves it
-    // OPTIONAL for R32_SFLOAT -- so sampling a 32-bit field with a linear sampler is
+    // R16G16_SFLOAT, and the 16 is load-bearing in a way R8-vs-R16 is not the whole of.
+    // Vulkan MANDATES SAMPLED_IMAGE_FILTER_LINEAR for both R16_SFLOAT and R16G16_SFLOAT
+    // but leaves it OPTIONAL for R32_SFLOAT (spec "Mandatory Format Support: 16-bit /
+    // 32-bit Components") -- so sampling a 32-bit field with a linear sampler is
     // undefined on any device that does not advertise the bit, even though it works
     // on the AMD card this was written against. Half gives ~1-unit resolution at the
     // 1536-unit sentinel, far finer than a 64-unit cell.
-    std::vector<uint16_t> texels((size_t)w * h,
-                                 FloatToHalf(RB_SEEP_DMAX));   // = "unreachable"
-    if (src)
-        for (size_t i = 0; i < texels.size(); i++)
-            texels[i] = FloatToHalf(src[i]);
+    //
+    // DOOM-0276: .r = seep distance, .g = the open-sky mask. Two facts on one grid, so
+    // the march's ONE existing tap answers both and the per-sample up-ray can go.
+    std::vector<uint16_t> texels((size_t)w * h * 2, 0);
+    for (size_t i = 0; i < (size_t)w * h; i++)
+    {
+        texels[i * 2 + 0] = FloatToHalf(srcD   ? srcD[i]   : RB_SEEP_DMAX);  // "unreachable"
+        texels[i * 2 + 1] = FloatToHalf(srcSky ? srcSky[i] : 0.0f);          // "roofed"
+    }
 
     // The image is per level, so the old one goes. The caller (level load, or
     // pipeline creation) has already drained the device, so nothing is reading it.
@@ -3304,8 +3315,8 @@ void UploadSeepField(const rb_seep_t* f)
     // representable at 192 units, which floors exp(-d/kSeepFalloff) at 1/e and so
     // floors skyExposure at ~0.22 -- four times the intended indoor value, on every
     // sealed room in the game.
-    CreateSampledImage(w, h, VK_FORMAT_R16_SFLOAT, texels.data(),
-                       (VkDeviceSize)w * h * sizeof(uint16_t),
+    CreateSampledImage(w, h, VK_FORMAT_R16G16_SFLOAT, texels.data(),
+                       (VkDeviceSize)w * h * 2 * sizeof(uint16_t),
                        &g.seepImage, &g.seepMemory, &g.seepView);
 
     // The transform is per-level runtime data, so it can be neither a compile-time

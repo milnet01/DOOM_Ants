@@ -169,6 +169,15 @@ rb_mesh_t* RB_BuildLevelMesh(void);
 typedef struct
 {
     float* d;                 // w*h cells, row-major, world units (<= RB_SEEP_DMAX)
+    // DOOM-0276: the open-sky mask, 1.0 where this cell's sector has
+    // ceilingpic == skyflatnum and 0.0 otherwise. Same grid, same tap -- the fog march
+    // reads BOTH from one texture, which is what let the per-sample up-ray go.
+    //
+    // It has to be its OWN channel and cannot be an epsilon on `d`: an outdoor cell is
+    // d == 0, but a ROOFED cell one step inside a doorway is also only a few units from
+    // the portal it walks to, so `d < eps` would report the first room behind every door
+    // as open sky and put the full outdoor fog bank inside it.
+    float* sky;               // w*h cells, row-major, 1.0 = open sky, 0.0 = roofed
     int    w, h;              // cell counts, including the one-cell void ring
     float  originX, originY;  // world XY of cell (0,0)'s CENTRE -- inside the ring,
                               // i.e. one full cell outside the map's bounding box

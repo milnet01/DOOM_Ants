@@ -37,7 +37,12 @@ this plan implements it; every `§`/`INV`/`Q` reference points there.
 >   the tree; E1M1 builds a 74×47 field in 0.6 ms. Its Step 6 runtime measurement and Step 7
 >   play-test are still owed, and **four deviations from this task's text are recorded in the fix
 >   ledger** — read them before writing L1c, since two concern the set-0 plumbing L1c shares.
-> - **`L1c` is the next work.** Its blocker below still stands.
+> - **`L1c` is NOT the next work — a perf pass is.** Its blocker below is now *settled*, and
+>   settled badly: Δ was measured on 2026-07-27 at **+34.7 % present-total**, over the whole
+>   feature's ≤ 15 % gate, with 95 % of it inside `marchFog` (spec §6). L1c would make that
+>   worse — it raises `kFogSteps` 24 → ~40 and doubles the density. **DOOM-0276 ships first**
+>   (the open-sky up-ray becomes a channel on L1d's field — spec §4.3a's 2026-07-27
+>   amendment, and Step 2 below is superseded by it), then DOOM-0197, then re-measure.
 > - **The spec is the authority on every number.** Where this plan and the spec disagree,
 >   the spec wins — though no known disagreement remains.
 > - **Cold-eyes status: CONVERGED (2026-07-26).** The original design converged in 4 loops; the
@@ -46,8 +51,10 @@ this plan implements it; every `§`/`INV`/`Q` reference points there.
 >   compiled with `glslangValidator`**. The loop log and the standing regression greps live in
 >   `docs/specs/DOOM-0011-fix-ledger.md`; **re-run those greps after any edit** rather than
 >   commissioning another loop.
-> - ⛔ **One blocker survives review because no amount of reading can settle it:** Δ(L1b) is
->   unmeasured, and L1c's perf gate is `8 % − Δ(L1b)`. Take that measurement first.
+> - ⛔ **The blocker that survived review is now MEASURED, and it failed.** Δ was fog-off vs
+>   fog-on over the same session, so it reads as Δ(L1b + L1d + L1e), not Δ(L1b): **+8.38 ms /
+>   +34.7 %**. L1c's gate was `8 % − Δ(L1b)`, which is negative. See spec §6's boxed notice
+>   for the per-pass split and the caveat on how the two halves were sampled.
 
 ## Global Constraints
 
@@ -399,6 +406,13 @@ const float kIndoorFogScale = 0.05;   // MUST stay > 0 (spec Q12: the `= 0` opti
 
 - [ ] **Step 2: Per-sample open-sky up-ray inside `marchFog` (`pathtrace.comp`)**
 
+> **SHIPPED, THEN REPLACED — 2026-07-27, DOOM-0276.** This step is kept as the record of
+> what L1b built and why the *granularity* is per-sample. The up-ray itself is gone: it
+> measured as the pole of a +34.7 % fog cost (spec §6), and `openSky` now reads the seep
+> field's open-sky mask channel — `texture(uSeepField, worldToSeepUV(p.xy)).g > 0.5` —
+> instead of tracing. Spec §4.3a's 2026-07-27 amendment owns the mechanism. **Do not build
+> the snippet below into a new tree**; the two branch *values* it sets are still current.
+
 The up-ray is a straight-up (`+Z`) shadow ray with cull mask `0x01`. It cannot hit the mask-`0x04`
 sky backdrop, so **MISS = open sky, hit = indoor** (spec §4.3a). Mirror the existing `occluded()`
 ray-query init (`pt_common.glsl:189-195`). Because `marchFog` runs in the megakernel it already has
@@ -472,6 +486,12 @@ so DOOM-0143's seam protection is intact there. Spec Q14 is CLOSED.
 - [ ] **Step 5: Build + smoke + tests** (L1 Step 7 commands).
 
 - [ ] **Step 6: Hardware perf spot-check (RX 6600) — which exposure method ships**
+
+> **SETTLED 2026-07-27, and NOT in the up-ray's favour.** The A/B was finally taken (spec §6's
+> boxed notice): fog costs **+8.38 ms / +34.7 %** present-total, 95 % of it inside `marchFog`.
+> The Δ this step exists to record is now recorded. The fallback below was **not** the answer
+> either — see spec §4.3a's 2026-07-27 amendment (DOOM-0276) for the third path that shipped,
+> and §6's lever list for why `RB_MESH_OUTDOOR` must **not** now be applied on top of it.
 
 Per spec §6: with the profiler (`` \ `` **backslash** key — `` ` ``/`~` is the RT view cycle), A/B the **added** present-total (fog-off vs fog-on,
 same walk) in the goo room (its ~40 FPS baseline is pre-existing) fits **≤ 4 %** — L1b's slice
@@ -840,7 +860,8 @@ it was (INV-12). RT-only and `rb_fog`-gated, like every fog task — see Global 
   `P_LineOpening`, `R_PointInSubsector`) and `r_mesh.c` already walks the BSP and already calls
   `R_PointInSubsector` (`RB_SectorAtPoint`, `:692`); `skyflatnum` is already in scope (`:36`).
   It does **not** currently include `p_local.h` — add it for `P_LineOpening`.
-- Modify: `r_vulkan.cpp` — upload the field as an `R16F` 2-D image + a small transform UBO, both
+- Modify: `r_vulkan.cpp` — upload the field as an `RG16F` 2-D image (`R16F` until DOOM-0276
+  added the mask channel) + a small transform UBO, both
   on set 0; rebuild per level in `RB_Vulkan_BuildLevel` beside `g.levelMesh = RB_BuildLevelMesh()`
   (`:7169`).
 - Modify: `shaders/pt_common.glsl` — `kSeepMax`, `kSeepFalloff`, `dMax`.
@@ -897,7 +918,7 @@ precisely what the user asked to soften.
   `dMax`** and the seep collapses to exactly `kIndoorFogScale`, i.e. the shipped L1b look. Correct
   behaviour, not a failure.
 - **Unreachable cells** (a sealed room; any cell in void space): the **finite** sentinel
-  `dMax = 8 · kSeepFalloff`. It must be finite — an `R16F` `+inf` under a zero bilinear weight
+  `dMax = 8 · kSeepFalloff`. It must be finite — a half-float `+inf` under a zero bilinear weight
   yields `NaN`, which propagates into `σ` and blows the whole march.
 - **XY extent exceeds the budget** (sized for ≤ `256×256` cells): **double the cell size and
   rebuild**, repeating until it fits. Coarser cells only blur the seep's edge; they cannot break
@@ -905,14 +926,22 @@ precisely what the user asked to soften.
 
 - [ ] **Step 3: Upload the field + its transform UBO (`r_vulkan.cpp`)**
 
-- **`R16F`, single channel** — **not `R8`**: normalising `d` against `kSeepFalloff` would cap
+- **`RG16F`, two channels since DOOM-0276** (`.r` = `d`, `.g` = the open-sky mask; it was
+  single-channel `R16F` as originally written) — **not `R8`**: normalising `d` against `kSeepFalloff` would cap
   representable distance at 192 units, flooring `exp(-d/kSeepFalloff)` at `e⁻¹ = 0.368` and so
   `skyExposure` at ≈`0.22`, four times the intended indoor floor, everywhere.
-- **Sampler state is part of the contract: `CLAMP_TO_EDGE` on both axes.** A march sample can
-  legitimately land outside the map's XY box (the `tHit` clamp lets `p` run toward the sky
-  backdrop), and under `REPEAT` an outdoor `d = 0` at one edge would wrap onto indoor air at the
-  opposite edge. The Step-2 padding ring is what makes `CLAMP_TO_EDGE` extend `dMax` outward
-  rather than an outdoor `0`.
+- **Sampler state is part of the contract: `CLAMP_TO_EDGE` on both axes.** Under `REPEAT` an
+  outdoor `d = 0` at one edge would wrap onto indoor air at the opposite edge. The Step-2 padding
+  ring is what makes `CLAMP_TO_EDGE` extend `dMax` outward rather than an outdoor `0`.
+  **Corrected 2026-07-27 (DOOM-0276):** this bullet used to justify itself with "a march sample
+  can legitimately land outside the map's XY box (the `tHit` clamp lets `p` run toward the sky
+  backdrop)", and **that is not true**. `marchFog` is called only on the surface-hit branch
+  (`pathtrace.comp:1255`, `:1384`); a sky pixel takes §4.6a's closed form and never marches. Every
+  sample therefore lies on the segment between the camera and a real geometry hit, both of which
+  are inside the box. Keep `CLAMP_TO_EDGE` — it is still the right sampler and costs nothing — but
+  do not reason from the false premise: it is what made a reviewer conclude the padding ring was
+  load-bearing at runtime, when the real edge defect was the grid's truncating extent (fixed with
+  `ceilf` in the same change).
 - **A small UBO carries the world→texel transform** (map XY origin, inverse cell size, texel
   dimensions). This is **per-level runtime data**, so it can be neither a compile-time `const` nor
   a push lane (INV-5 is full). Without it the shader cannot turn `p.xy` into a texture coordinate.
@@ -924,7 +953,9 @@ precisely what the user asked to soften.
 add a `UNIFORM_BUFFER` pool size beside L1c's `COMBINED_IMAGE_SAMPLER` one:
 
 ```glsl
-layout(set = 0, binding = 4) uniform sampler2D uSeepField;   // R16F, CLAMP_TO_EDGE both axes
+layout(set = 0, binding = 4) uniform sampler2D uSeepField;   // RG16F, CLAMP_TO_EDGE both axes
+                                                            // .r = seep distance (L1d)
+                                                            // .g = open-sky mask  (DOOM-0276)
 layout(set = 0, binding = 5) uniform SeepXform {
     vec2 origin;    // world XY of texel (0,0)'s CENTRE -- inside the padding ring, see below
     vec2 invCell;   // 1.0 / cell size per axis (world units -> cells)
@@ -958,9 +989,11 @@ Then replace L1b's flat indoor floor — **one bilinear tap, no rays** (INV-12):
 
 ```glsl
         // §4.3a amendment: the open-sky branch is still exactly 1.0; only indoor changes.
-        float d = texture(uSeepField, worldToSeepUV(p.xy)).r;
+        // DOOM-0276 folded the open-sky TEST into this same tap -- `.g` is the mask.
+        vec2  seep    = texture(uSeepField, worldToSeepUV(p.xy)).rg;
+        bool  openSky = seep.g > 0.5;
         float skyExposure = openSky ? 1.0
-                                    : mix(kIndoorFogScale, kSeepMax, exp(-d / kSeepFalloff));
+                                    : mix(kIndoorFogScale, kSeepMax, exp(-seep.r / kSeepFalloff));
 ```
 
 **`kIndoorFogScale` must stay > 0** (Q12's `= 0` is struck): L3's torch shafts need a medium in
@@ -1628,7 +1661,9 @@ The rest:
 - **Invariant coverage — all twelve are now pinned.** INV-1..8 in Global Constraints, re-stated
   at their tasks (INV-2 in L3, INV-4 in L1, INV-5/7 in L6, INV-6 global, INV-8 in L6 gate).
   The four added by the amendments land in the new tasks: **INV-9** (`skyExposure` gates the
-  sky-sourced term only) in L1b's `sigma` note, L1d Step 4 and L4's split step; **INV-10** (the
+  sky-sourced term only) in L1b's `sigma` note, L1d Step 4 and L4's split step — and, since
+  2026-07-27, its *measurement* clause is pinned by DOOM-0276's mask channel rather than by
+  L1b Step 2's up-ray; **INV-10** (the
   sky closed form stays wisp-free, and applies the height pool at a single constant height so it
   is still a closed form — re-amended 2026-07-27) in L1c Step 4; **INV-11** (`kWispAmp = 0` is an
   exact no-op) as L1c Step 7's by-construction check; **INV-12** (the seep never leaks into a
@@ -1659,9 +1694,11 @@ from `g.lastView.hazeDensity` in `RecordRtTrace` (there is no bare `view` there)
 
 **Known open items surfaced to the user.** One is a blocker; the rest are not.
 
-- ⛔ **Δ(L1b) is unmeasured** — L1c's perf gate is `8 % − Δ(L1b)`, and that number exists nowhere.
-  **L1c cannot be closed until it is recorded in spec §6** (see the notice at the top of that task).
-  This is hardware work, not review work.
+- ⛔ **Δ is MEASURED and it failed the gate** (2026-07-27, spec §6): **+8.38 ms / +34.7 %**
+  present-total, 95 % of it inside `marchFog`. L1c's gate was `8 % − Δ(L1b)`, so it is negative and
+  **L1c is blocked behind a perf pass**, not the other way round. First lever: **DOOM-0276**, the
+  open-sky up-ray → a mask channel on L1d's field (spec §4.3a, 2026-07-27 amendment); it supersedes
+  Step 2 of L1b above.
 - **Q10** — fog on/off by default. The plan ships `rb_fog=1`; a one-line flip if review prefers 0.
 - **Q23** — torch-emitter selection, per sample or per ray. L3's two-pass loop still scans every
   static emitter once per sample; the per-ray fallback is named but needs a measurement to decide.

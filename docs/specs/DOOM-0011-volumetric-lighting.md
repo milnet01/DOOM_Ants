@@ -415,16 +415,21 @@ goo outgassing and hell's haze are properties of **the room** and must not.
 
 where **`skyExposure ∈ [kIndoorFogScale, 1]`**: `1` under open sky, `kIndoorFogScale`
 (a small `const`, ~`0.02`..~`0.1` — `0` is struck, see below; Q12) under a roof. **As shipped in L1b the
-value is binary per sample** — exactly `1` (up-ray missed) or exactly `kIndoorFogScale`
-(up-ray hit a ceiling); the interval names the tunable endpoints, not a graded
+value is binary per sample** — exactly `1` (the open-sky test passed) or exactly `kIndoorFogScale`
+(it failed); the interval names the tunable endpoints, not a graded
 per-sample value. The *smooth* indoor↔outdoor gradient in the final image emerges from
 many binary samples averaged across the march + the half-res denoise (§4.6).
 **Superseded on the indoor side by the 2026-07-25 amendment at the end of this
 section** — the indoor branch becomes a position-dependent seep; the open-sky branch
-(`= 1`) is unchanged.
+(`= 1`) is unchanged. **The *test* that picks the branch is superseded in turn by the
+2026-07-27 amendment (DOOM-0276)** — it is a field lookup, not a ray. The two values
+either branch yields are untouched by that change.
 
 **How `skyExposure` is measured — per march sample ("true volumetric", user's
-explicit pick 2026-07-24 over the cheaper per-surface flag).** At each sample point
+explicit pick 2026-07-24 over the cheaper per-surface flag). The MECHANISM below —
+one ray per sample — is what L1b shipped and what the 2026-07-27 amendment replaces;
+the *granularity* it argues for (per sample, not per surface) survives that change.**
+At each sample point
 `p` the march casts **one shadow ray straight up** (world `+Z`) with the standard
 shadow-ray cull mask **`0x01`**, over a finite length `kFogMaxDist` (so a ceiling more
 than `kFogMaxDist` = **2048** units overhead reads as open sky — harmless in vanilla geometry, but state it
@@ -498,7 +503,9 @@ skyExposure = openSky ? 1.0
   half outdoor strength. This is the "a little bit" the user asked for; it must not
   become a second outdoors.
 - **`kSeepFalloff` ≈ `192`** DOOM units — roughly a doorway-to-back-wall depth (Q16).
-- **The up-ray still decides `openSky` unchanged.** The seep replaces only the *indoor*
+- **The open-sky test still decides `openSky`, and the seep does not touch it.** (Which
+  test that is changed on 2026-07-27 — see the DOOM-0276 amendment; at the time this
+  paragraph was written it was the up-ray.) The seep replaces only the *indoor*
   constant, so the outdoor look L1b shipped is preserved **exactly** (`openSky` → `1.0`
   on both sides of the amendment). Per sample the value is still one of two branches;
   what changed is that the indoor branch now varies with position instead of being
@@ -584,7 +591,7 @@ on E1M1** (§7, L1d).
   collapses to exactly `kIndoorFogScale` — i.e. the shipped L1b look, unchanged. This is
   the correct behaviour, not a failure: with no outdoors there is nothing to seep in.
 - **Unreachable cells** (a sealed room, and every cell in void space outside any sector)
-  take the **finite** sentinel `dMax = 8 · kSeepFalloff`. It must be finite: an `R16F`
+  take the **finite** sentinel `dMax = 8 · kSeepFalloff`. It must be finite: a half-float
   `+inf` multiplied by a zero bilinear weight yields `NaN`, which would propagate into
   `σ` and blow the whole march.
 - **A map whose XY extent exceeds the field budget** (§5 sizes it for ≤ `256×256` cells):
@@ -608,8 +615,10 @@ ceiling cap per subsector — so projecting to XY loses no *topology*.
 it is out of scope.) It is deliberately **not** claimed to be *exact*: `d` is a
 grid-quantised, 64-unit-cell connected distance, not a true geodesic (Q19), and it is
 **height-invariant**, so air near the ceiling of a tall hall reads the same `d` as air at
-the floor. Sufficient for a soft seep; not a distance oracle. Note the contrast with
-`openSky` itself, which **is** fully 3-D (the per-sample up-ray).
+the floor. Sufficient for a soft seep; not a distance oracle. (Until 2026-07-27 there
+was a contrast to draw here: `openSky` was fully 3-D while `d` was not. The DOOM-0276
+amendment moves `openSky` onto this same grid, so both now share its quantisation —
+which is the whole of what that amendment costs.)
 
 **Rejected alternatives** (all three were put to the user): **(B) extra sky-visibility
 rays per sample** — no load-time work and correct in full 3-D, but it multiplies the
@@ -618,6 +627,70 @@ as the indoor grade** — free, but fog would step abruptly at the room boundary
 than drifting in, which is precisely the behaviour the user asked to soften. Note (C)
 here is a **different role** from the same flag's use above as the up-ray's *perf
 fallback*; the two are independent.
+
+**2026-07-27 amendment (DOOM-0276) — the up-ray becomes a field lookup.** The A/B
+measurement in §6 put the whole fog at **+8.38 ms / +34.7 % present-total**, of which
+**7.93 ms is inside the megakernel** — over the ≤ 15 % gate, and the up-ray is the pole:
+one ray query per sample × `kFogSteps` = 24 × every fog pixel.
+
+**It does not need a ray, and the reason is the same one §4.3a's own "why a 2-D field is
+sufficient" paragraph already gives.** Vanilla DOOM is flat-mapped — `R_PointInSubsector`
+takes `(x, y)` only and returns exactly one sector, hence exactly one `ceilingpic`. "Is
+there sky above this point" is therefore a **pure function of XY**, and the up-ray was
+doing 3-D work on a 2-D question. The field L1d builds is indexed by exactly that key.
+
+**Mechanism: a second channel, not a threshold on the first.** The seep field becomes
+`R16G16_SFLOAT` — `R` = the through-open-space distance `d` exactly as L1d shipped it,
+`G` = an **open-sky mask**, `1.0` where the cell centre's sector has `ceilingpic ==
+skyflatnum`, `0.0` otherwise (and `0.0` on the void ring, which must read roofed for the
+same reason it reads `dMax`). The march's existing single tap answers both questions:
+
+```glsl
+vec2  seep    = texture(uSeepField, worldToSeepUV(p.xy)).rg;
+bool  openSky = seep.g > 0.5;
+float seepD   = seep.r;
+```
+
+**Why the mask cannot be `d < ε`.** `d = 0` does mean "outdoor cell", but a *roofed* cell
+one step inside a doorway carries a `d` of only a few units — the portal it walks to is
+seeded at zero. The two are not separable by any epsilon, and an epsilon that tried would
+put the full outdoor bank inside the first room behind every door. The mask is a distinct
+fact and gets a distinct channel.
+
+**What the change costs, stated so it can be judged on screen.** Three differences from
+the ray, none of them free:
+1. **The roofline moves onto the grid.** Bilinear + a `0.5` threshold puts the boundary
+   midway between differing cell centres, so it is accurate to **half a cell (32 units)**
+   and follows the grid rather than the wall. The mist wall at a doorway threshold softens
+   and may sit up to 32 units either side of the door. This is the one visible cost.
+2. **Height-invariance.** The ray was 3-D; the field is not. Air under a roof more than
+   `kFogMaxDist` = 2048 units up used to read *open sky* (the ray ran out) and now reads
+   roofed — the field is the more correct of the two here.
+3. **The void ring reads roofed** where an unbounded ray would have missed. This one is
+   free, but only after a **latent bug in L1d had to be fixed to make it so** (found by
+   the review of this amendment). Two facts have to hold together:
+   - *No march sample leaves the map's XY bounding box.* `marchFog` is called only on the
+     surface-hit branch (`pathtrace.comp:1255`, `:1384`) — sky pixels take §4.6a's closed
+     form and never march — so every sample sits on the segment from the camera to a real
+     geometry hit. Both endpoints are inside the box, so the whole segment is.
+   - *No in-box sample can weight a ring cell either.* That is what the ring being **one
+     full cell outside** buys — but it only holds if the interior cells reach **past**
+     `maxX`/`maxY`, and L1d sized the grid with a **truncating** divide
+     (`(int)((maxX-minX)/cell) + 3`), which left the last interior centre short of `maxX`
+     by up to a cell. Real air along the `+X`/`+Y` edges therefore got a bilinear weight on
+     the void's sentinel. Fixed to `ceilf` in the same change; `centre(gw-2) = minX +
+     ceil(Δ/cell)·cell ≥ maxX` is what makes the ring provably unreachable. E1M1's grid
+     goes 74×47 → 75×47, so this was live, not theoretical.
+
+**What it does not change.** Both branch *values* (`1.0` and the seeped indoor grade), the
+`σ` composition (INV-9), the sky-backdrop closed form (§4.6a — it never cast an up-ray),
+the field's build, its sampler, its transform, and the tap count in `marchFog`. The only
+new bytes are the field's second channel — it doubles a small texture: `≤ 256 × 256 × 4` =
+256 KB at the worst-case grid, and E1M1's actual 75 × 47 field is 14 KB.
+
+**Not to be confused with the `RB_MESH_OUTDOOR` fallback** named above and in §6. That
+lever traded the doorway cutoff for **whole-view** granularity and would have coarsened
+the seep with it; this keeps per-sample granularity and coarsens only to the cell.
 
 ### 4.3b The Silent Hill 2 look — drifting two-octave wisps
 
@@ -1393,11 +1466,13 @@ colour-frozen.
     all three axes. The two octaves are two taps at different scales, so **one** volume
     serves both; it is level-independent and built once.
   - **A 2-D outdoor-distance field** for the seep (§4.3a amendment) — single channel
-    **`R16F`** (not `R8`: normalising `d` against `kSeepFalloff` would cap representable
+    **`RG16F`** — `R16F` until DOOM-0276 added the `.g` open-sky mask channel (2026-07-27);
+    not `R8`, because normalising `d` against `kSeepFalloff` would cap representable
     distance at 192 units, flooring `exp(-d/kSeepFalloff)` at `e⁻¹ = 0.368` and so
     `skyExposure` at ≈`0.22`, four times the intended indoor floor, everywhere).
     Covers the map's XY extent at `64`-unit cells (a large vanilla map stays well under
-    `256×256`, i.e. ≤ 128 KB). **Rebuilt per level**, beside the existing mesh build.
+    `256×256`, i.e. ≤ 256 KB at two channels — ≤ 128 KB before DOOM-0276 added the mask).
+    **Rebuilt per level**, beside the existing mesh build.
   - **A small UBO carrying the field's world→texel transform** (map XY origin + inverse
     cell size + texel dimensions). This is **per-level runtime data**, so it can be
     neither a compile-time `const` nor a push lane (INV-5 is full) — without it the
@@ -1496,15 +1571,53 @@ derives these; the table is the version to check against.
 > lever list below was written for exactly this moment; the up-ray is named there as the pole and
 > the measurement agrees.
 
+> ### ✅ RE-MEASURED 2026-07-27 after DOOM-0276 — the fog now costs **+4 %**, inside the gate
+>
+> Same RX 6600, same E1M1, same 50 % render scale, RT view, fog **High** vs **OFF**. Method
+> tightened over the notice above: the camera **stands at the spawn point** instead of walking,
+> both builds get an explicit `-iwad` (without it the DOOM-0060 chooser picked a *different game*
+> across two otherwise-identical runs — DOOM-0280), each configuration is run **three times for 31
+> profiler samples each**, and the pre-change build is measured in a git worktree at `8522b23` so
+> the two are the same scene, same second, same machine state.
+>
+> | | fog High | fog OFF | Δ |
+> |---|---|---|---|
+> | **before** — present-total | 32.03 ms | 23.66 ms | **+8.37 ms = +35.4 %** |
+> | **before** — GPU megakernel | 20.04 ms | 11.85 ms | +8.19 ms |
+> | **after** — present-total | **24.53 ms** | 23.55 ms | **+0.98 ms = +4.2 %** |
+> | **after** — GPU megakernel | **12.56 ms** | 11.75 ms | +0.81 ms |
+>
+> **The fog-off column is the control**, and it is the reason to trust the rest: DOOM-0276 touches
+> only code inside the `rb_fog != 0` march, so fog-off *must* be unchanged — and its median is
+> 12.19 ms of megakernel on both builds, to the hundredth. The before-column also reproduces the
+> walk-based `+8.38 ms / +34.7 %` above to within 0.1 ms by a completely different sampling method.
+>
+> **Net on the frame that matters:** 32.03 → 24.53 ms present-total, **31.2 → 40.8 FPS**, and the
+> feature lands at **+4.2 %** against its ≤ 15 % gate. **L1c is unblocked**, with roughly 11 points
+> of gate left to spend — though the honest reading is that the fog is no longer where the frame
+> goes: 23.6 ms of the 24.5 is everything else.
+>
+> **Look, checked before the number was believed** (`-shotverify`, same spawn view, both builds):
+> mean-abs-error **2.93/255**, against **1.09/255** between two runs of the *same* build — so about
+> 1.8 of real change, which is the roofline moving onto the 64-unit grid, and nowhere near what
+> "the fog stopped being drawn" would score. Both sit under the project's own `-shotcompare` fail
+> bar of 3.0. `-rtverify` PASS (rel-MSE 0.0796 %, white furnace 0.000000). **The doorway threshold
+> is still a user play-test**, not a screenshot: that is where the half-cell error lives.
+
 - **Baseline & method:** the DOOM-0181/0183 §6 protocol — average the `` \ ``
   profiler (`rb_profile`, DOOM-0090 — the **backslash** key; `` ` ``/`~` is the RT view
   cycle, verified `i_video.c:425` / `:433`) present-total (ms, not FPS) over a fixed ~10 s walk of the **E1M1
   green-goo room** (a sky-hole/doorway scene too, for shafts), RT-on, 50 % render
   scale, with `rb_fog` **off** then **on** (same-walk A/B, the DOOM-0187 lesson).
 - **Cost shape (measure, don't assert):** the march is `kFogSteps` samples/pixel,
-  each with **up to two** shadow rays (the open-sky up-ray today; L2 adds the sun ray) + a few emitter evaluations, at **half-res**
+  each with **up to two** shadow rays (as written: the open-sky up-ray, plus the sun ray L2 adds — but see the 2026-07-27 note below, the up-ray is gone) + a few emitter evaluations, at **half-res**
   (¼ the pixels) + denoise. The shadow rays are the pole; half-res + few steps +
   dither + denoise is what makes it affordable.
+  **Confirmed and then acted on, 2026-07-27:** the rays *were* the pole — measured at
+  **7.9 of the fog's 8.2 ms** — and the up-ray is now gone (DOOM-0276, §4.3a amendment).
+  Post-swap the march carries **zero** rays per sample until L2 adds the sun ray, which
+  will make it the pole in its turn. Budget L2 against the ≈0.8 ms the fog costs now, not
+  against the 8.2 ms it used to.
 - **A dedicated GPU-timer slot needs the pool grown.** The RT profiler pool is sized
   `queryCount = 8` (`r_vulkan.cpp:1520`) and the RT path **already writes all 8 indices
   0–7** (`vkCmdWriteTimestamp` at `:7331`, `:7358`, `:7500`, `:7559`, `:7579`, `:7592`,
@@ -1523,7 +1636,16 @@ derives these; the table is the version to check against.
   coarsening it to whole-view granularity also degrades the graded seep back toward the
   abrupt room-boundary step the user asked to soften. Re-judge the look, not just the
   frame time.
+  **Superseded 2026-07-27 by DOOM-0276 — a third path was taken and this lever is spent.**
+  The up-ray is gone, but not in favour of the whole-view flag: the open-sky test moved onto
+  the seep field's own grid as a second channel, which keeps the per-sample granularity the
+  paragraph above says must not be lost and coarsens only to a 64-unit cell (§4.3a
+  amendment). Do **not** now also apply `RB_MESH_OUTDOOR` — there is no ray left to remove,
+  and it would cost exactly the look this warning protects.
 - **2026-07-24 amendment — the up-ray is the march's FIRST ray, and L1b spot-checks it.**
+  *(Historical. It was also the march's LAST ray: DOOM-0276 removed it on 2026-07-27 and the
+  march now casts none until L2. The reasoning below is why the check was demanded, and it
+  was vindicated — the ray did turn out to be the pole.)*
   L1's `marchFog` did **zero** ray-queries per
   sample — the loop is just `density × strength × flat-sky-ambient`. The open-sky up-ray
   (§4.3a) adds **the first** ray-query, one per march sample: a `0 → 1` ray/sample jump
@@ -1739,7 +1861,9 @@ The other layers' Verify cells fit in a line. These two do not, so they live her
   roof. **`skyExposure` gates the sky-sourced haze ONLY, never `areaMult`** — otherwise
   goo/hell/torch-lit interiors (all roofed) would lose their fog entirely (§4.3a).
   v1 measures exposure **per march sample** via one up-ray — **MISS = open sky, solid-
-  geometry hit = indoor** (the mask mechanism is derived once in §4.3a). It is the user's
+  geometry hit = indoor** (the mask mechanism is derived once in §4.3a; **superseded
+  2026-07-27 by DOOM-0276** — same per-sample granularity, but read from the seep
+  field's mask channel instead of traced). It is the user's
   "true volumetric" pick; the per-surface `RB_MESH_OUTDOOR` flag was the cheap fallback; L1b shipped the up-ray,
   so the flag stays unbuilt as a standing perf lever. "Open sky" = `ceilingpic ==
   skyflatnum`, the engine's own open-air signal. *Falsifiable:* L1b's acceptance row —
@@ -1756,6 +1880,14 @@ The other layers' Verify cells fit in a line. These two do not, so they live her
   aerial layer's `poolH`, which is the one thing it must not share. *Falsifiable:* a roofed room
   with no seep shows the floor fog at exactly `kIndoorFogScale` of its outdoor strength — i.e. the
   same faint haze as before L1e, not a bank at your feet.
+  **Amended 2026-07-27 (DOOM-0276) — the mechanism, not the values.** `openSky` is now
+  `texture(uSeepField, uv).g > 0.5`, a second channel on the field INV-12 already builds,
+  written `1` where the cell's sector has `ceilingpic == skyflatnum` and `0` otherwise.
+  Both branch values are untouched, so a frame's fog changes only where the grid disagrees
+  with the wall — within half a cell of a roofline. *Falsifiable:* the mask must be its own
+  channel, never an epsilon on `d`: a roofed cell one step inside a doorway also carries a
+  near-zero `d`, so `d < ε` would report the room behind a door as open sky and put the full
+  outdoor bank inside it.
 - **INV-10 (sky-backdrop fog, 2026-07-24):** sky pixels receive **aerial-perspective
   fog** (`skyExposure = 1`) along the ray's own slant path through the layer
   (`skyFogOpticalDepth`, §4.6a), folded as `sky · transmittance +

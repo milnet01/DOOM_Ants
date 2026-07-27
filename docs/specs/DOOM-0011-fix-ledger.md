@@ -728,6 +728,32 @@ of the hotkey set is **DOOM-0275**. The generalisation worth keeping: **a debug 
 only output channel is one the user cannot see during the activity it instruments is not an
 affordance.** Every measurement this project has asked the user for runs in exactly that state.
 
+## DOOM-0276 — 2026-07-27 — ONE narrow lane (Sonnet), and it paid for itself
+
+The up-ray → seep-field-channel swap. Spec §4.3a was amended first, then one cold lane was run on
+the amended passages only (rule 14's gate; the user's standing instruction on this document is
+"one narrow lane, not a full loop"). Four findings, all four verified, all four fixed.
+
+| # | Finding | Verdict after checking it against the tree |
+|---|---|---|
+| 21.1 | **CRITICAL — the amendment says "shipped" and nothing had shipped.** `pathtrace.comp:961` still ran the ray, `r_vulkan.cpp` still uploaded `R16_SFLOAT`, `rb_seep_t` had no second field, ROADMAP still said 📋 | **Correct, and the honest fix is to land the code, not to soften the tense.** Docs and implementation ship in one commit. Recorded because writing the past tense first is a habit worth catching: it converts a plan into a claim that a later reader has no way to distinguish from a verified one |
+| 21.2 | **HIGH — "the void ring is unreachable, so it costs nothing" is asserted, not shown.** The reviewer's own mechanism (samples flying past the map edge toward the sky) was **wrong** — `marchFog` is only called on the surface-hit branch, so every sample lies between the camera and a real hit, both inside the box | **But the conclusion was right, via a mechanism neither the reviewer nor the author had.** The grid was sized with a *truncating* divide, so the last interior cell centre could sit short of `maxX` and hand the void's `dMax` sentinel a real bilinear weight on real air along the `+X`/`+Y` edges. A **latent L1d bug**, live on E1M1 (74×47 → 75×47 once fixed). Fixed at the root with `ceilf`, which is also what makes the amendment's claim true rather than hopeful |
+| 21.3 | **MEDIUM — the `R16` → `R16G16` swap re-uses a portability guarantee without re-checking it.** The existing comment leans on `SAMPLED_IMAGE_FILTER_LINEAR` being *mandatory* for `R16_SFLOAT` and optional for `R32_SFLOAT` | **Checked against the spec source, not from memory.** `Vulkan-Docs/chapters/formats.adoc`, "Mandatory Format Support: 16-bit Components", column 3 = `SAMPLED_IMAGE_FILTER_LINEAR_BIT`: `R16_SFLOAT` `{sym1}`, `R16G16_SFLOAT` `{sym1}`, and in the 32-bit table `R32_SFLOAT` **blank**. The guarantee carries. (A driver probe on the RX 6600 says yes to all three — which is exactly why the probe is not the evidence: it is the same false positive that made ledger 20.1 wrong) |
+| 21.4 | **LOW — §6's "cost shape" bullet still calls the up-ray live**, with no forward pointer | Correct. Rewritten, and pointed at the post-swap figure so L2 is budgeted against ≈0.8 ms rather than 8.2 |
+
+**The lesson worth keeping, and it is about how to read a review, not how to write a doc.** Finding
+21.2 was *reasoned wrongly and concluded rightly*. Taking it at face value would have produced a
+fix for a failure mode that cannot happen; dismissing it because the mechanism was wrong would
+have left a real bug in the tree. The check that resolved it was neither reading nor arguing — it
+was `grep -n "marchFog("` for the call sites and then arithmetic on the grid's own extent
+formula. **When a finding's conclusion and its reasoning disagree, verify the conclusion
+independently rather than grading the reasoning.**
+
+**Also verified, since a perf change that improves the image is usually a perf change that deleted
+the image:** `-shotverify` at the same spawn view, both builds, MAE **2.93/255** — against
+**1.09/255** between two runs of the *same* build. ~1.8 of real difference, which is the roofline
+moving onto the grid. `-rtverify` PASS. Numbers and method in spec §6's second boxed notice.
+
 ## Open — not yet fixed
 
 - ~~**Cold-eyes has not converged.**~~ **CONVERGED at loop 13** (2026-07-26): zero verified

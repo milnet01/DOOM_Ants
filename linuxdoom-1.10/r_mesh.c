@@ -917,8 +917,15 @@ rb_seep_t* RB_BuildSeepField(void)
     cell = RB_SEEP_CELL0;
     for (;;)
     {
-        gw = (int)((maxX - minX) / cell) + 3;   // +1 for the partial cell, +2 for the ring
-        gh = (int)((maxY - minY) / cell) + 3;
+        // CEILING, not truncation (DOOM-0276). The ring is only "outside the map" if
+        // the interior cells reach PAST maxX/maxY: cell (gw-2)'s centre sits at
+        // minX + ceil(dx/cell)*cell >= maxX, so no in-map sample can ever weight the
+        // ring in a bilinear tap. Truncating left the last interior centre SHORT of
+        // maxX by up to a cell, which handed the void's sentinel a real weight on real
+        // air along the +X/+Y edges -- a thin strip of wrong seep, and, once the
+        // open-sky mask rides the same texture, a strip of wrong fog.
+        gw = (int)ceilf((maxX - minX) / cell) + 3;   // +1 for the partial cell, +2 for the ring
+        gh = (int)ceilf((maxY - minY) / cell) + 3;
         if (gw <= RB_SEEP_MAXDIM && gh <= RB_SEEP_MAXDIM)
             break;
         cell *= 2.0f;
@@ -933,7 +940,8 @@ rb_seep_t* RB_BuildSeepField(void)
     field->originX = minX - cell;   // cell (0,0)'s CENTRE, one full cell outside the map
     field->originY = minY - cell;
     field->d       = (float*)malloc((size_t)gw * (size_t)gh * sizeof(float));
-    if (!field->d)
+    field->sky     = (float*)malloc((size_t)gw * (size_t)gh * sizeof(float));
+    if (!field->d || !field->sky)
         I_Error("RB_BuildSeepField: out of memory for %dx%d cells", gw, gh);
 
     for (iy = 0; iy < gh; iy++)
@@ -943,6 +951,7 @@ rb_seep_t* RB_BuildSeepField(void)
             float cx = field->originX + ix * cell;
             float cy = field->originY + iy * cell;
             float best = RB_SEEP_DMAX;
+            float sky  = 0.0f;
             int   sec, k;
 
             // The void ring is unreachable by construction. It has to be written
@@ -952,7 +961,8 @@ rb_seep_t* RB_BuildSeepField(void)
             // onto the map edge under CLAMP_TO_EDGE.
             if (ix == 0 || iy == 0 || ix == gw - 1 || iy == gh - 1)
             {
-                field->d[iy * gw + ix] = RB_SEEP_DMAX;
+                field->d[iy * gw + ix]   = RB_SEEP_DMAX;
+                field->sky[iy * gw + ix] = 0.0f;
                 continue;
             }
 
@@ -962,6 +972,7 @@ rb_seep_t* RB_BuildSeepField(void)
                 if (sectors[sec].ceilingpic == skyflatnum)
                 {
                     best = 0.0f;                       // this cell IS outdoor air
+                    sky  = 1.0f;                       // ...and has no roof over it
                 }
                 else
                 {
@@ -975,7 +986,8 @@ rb_seep_t* RB_BuildSeepField(void)
                     }
                 }
             }
-            field->d[iy * gw + ix] = (best < RB_SEEP_DMAX) ? best : RB_SEEP_DMAX;
+            field->d[iy * gw + ix]   = (best < RB_SEEP_DMAX) ? best : RB_SEEP_DMAX;
+            field->sky[iy * gw + ix] = sky;
         }
     }
 
@@ -990,6 +1002,7 @@ void RB_FreeSeepField(rb_seep_t* f)
     if (!f)
         return;
     free(f->d);
+    free(f->sky);
     free(f);
 }
 

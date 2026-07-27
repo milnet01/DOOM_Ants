@@ -34,10 +34,16 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Ultra's ray-traced fog is ~7.5 ms/frame cheaper — 31 to 41 FPS with fog on** (DOOM-0276)
+  The fog used to fire a test ray straight up from every one of its 24 samples per pixel, just to ask "is there sky above here?". DOOM is flat-mapped — one ceiling per spot on the floor — so that answer was already in the small per-level map the fog builds for its doorway seep. It now reads it from there instead. Measured on an RX 6600 in E1M1 at 50% render scale: fog costs +35% of frame time before and +4% after. The one visible cost is that the line between misty outdoor air and clear indoor air now follows that map's 64-unit grid, so it can sit up to half a cell from the wall.
+
 - **nee_sampling_test's unbiasedness bound is derived from the sample count instead of a flat 0.5%**
   The old fixed tolerance sat only ~3.9 sigma from the estimator's true standard error on two of the five weight sets, well short of the 6 sigma the neighbouring frequency check uses. The bound is now computed from the exact estimator variance, so it scales with N and the weights; all five sets currently land within 1.6 sigma.
 
 ### Fixed
+
+- **Fog and seep no longer read the empty-space sentinel along a level's far edges** (DOOM-0276)
+  The seep map's grid was sized with a rounding-down divide, which left its outer "nothing here" ring overlapping real air at the top and right edges of a level. E1M1's grid was one column short. Found by the review of the change above, and it had to be fixed for that change to be correct.
 
 - **Fix the correctness and doc-drift findings from the 2026-07-26 audit + indie-review sweep.** (DOOM-0263)
   The baked global-illumination pass was reading the sky as if it were a wall; several smaller bugs and six stale documentation claims are fixed too.
