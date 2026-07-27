@@ -2615,3 +2615,12 @@ parked ideas (💭 considered) until we commit to and design each one.
   before (see the menu/shotcompare config gotcha). Confirm the toggle
   state before touching any constant.
   Depends on nothing; DOOM-0181 shipped the de-tiler this refines.
+  Update 2026-07-27: the user's VIDEO menu screenshot RULES OUT the
+  config hypothesis — De-tile reads "4-tap", so de-tiling is on at full
+  quality and the grid survives it. That leaves the commensurate-cell
+  hypothesis as the only one standing: kDetileWorldCell = 64.0 is exactly
+  a DOOM flat's 64x64 world period, so on every floor and ceiling each
+  variation cell lands on the same phase of the texture. Cheapest test is
+  still one constant (try 80, 96 or 112, none of which divides 64) plus a
+  before/after look at the WALLS, which the user has already approved and
+  which this would also change.

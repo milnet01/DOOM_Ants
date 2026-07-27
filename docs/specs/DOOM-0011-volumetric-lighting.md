@@ -472,6 +472,17 @@ skyExposure = openSky ? 1.0
 - **`d`** = distance from the sample to the nearest open-sky air, measured **through
   open space**, not straight-line — so fog cannot bleed through a solid wall into a
   sealed room next door.
+> **User target for the seep, given 2026-07-27 while looking at the shipped outdoor layer:**
+> *"that is how I want the fog indoors in rooms that have a window / door to the outside."*
+> "That" is the shallow knee-height bank — `kFogIndoorPool = 18` at roughly the pre-112 outdoor
+> thickness. So the seep's job is to raise `skyExposure` from the `kIndoorFogScale` floor toward
+> **≈ 1.0** near an opening, not toward the outdoor bank's full strength (which pairs with the
+> 112-unit pool, not the 18-unit one). `kSeepMax ≈ 0.5` below is therefore probably **too low** —
+> re-judge it against the shipped indoor pool when L1d lands. Until then interiors stay near-clear
+> at the flat `kIndoorFogScale = 0.05`, which is deliberate: nothing today can tell "room with a
+> window" from "room buried three doors deep", and the user was explicit at L1b that fog belongs
+> *"outside and not inside."*
+
 - **`kSeepMax` ≈ `0.5`** — even standing in the doorway, indoor air reaches at most
   half outdoor strength. This is the "a little bit" the user asked for; it must not
   become a second outdoors.
