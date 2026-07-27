@@ -191,6 +191,18 @@ typedef struct
 rb_seep_t* RB_BuildSeepField(void);
 void       RB_FreeSeepField(rb_seep_t* field);
 
+// DOOM-0281: has any linedef's OPENING appeared or vanished since the field was
+// last flooded? The flood skips segs with openrange <= 0 -- which is what makes a
+// shut door seal a room (INV-12) -- so a door or lift that opens in play leaves the
+// field describing a map that no longer exists, and the room behind it keeps the
+// sealed sentinel. Returns 1 when a re-flood is owed.
+//
+// Cheap, but not free: one P_LineOpening per linedef. Call it only on frames where
+// RB_UpdateMeshHeights reported RB_UPD_MOVED -- a connectivity change needs a plane
+// to have moved, so a still map never pays for this at all. RB_BuildSeepField
+// re-seeds the cache, so the answer is always relative to the LIVE field.
+int RB_SeepOpeningsChanged(void);
+
 void RB_FreeMesh(rb_mesh_t* mesh);
 
 // Re-height a built mesh from the current sector floor/ceiling heights, writing

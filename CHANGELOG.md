@@ -42,6 +42,15 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Fog now rolls into a room whose wall opens during play** (DOOM-0281)
+  The seep field that decides how far fog reaches indoors was flooded once
+  at level load from the doors' spawn state, so a wall that opened in play
+  left the room behind it permanently clear. It is now re-flooded when an
+  opening actually appears or vanishes, and the fog eases across to the new
+  answer over about a second so the mist drifts in through the opening
+  instead of popping into place. A door that shuts eases it back out.
+  Ultra's ray-traced view; costs nothing on a map where nothing has moved.
+
 - **Fog and seep no longer read the empty-space sentinel along a level's far edges** (DOOM-0276)
   The seep map's grid was sized with a rounding-down divide, which left its outer "nothing here" ring overlapping real air at the top and right edges of a level. E1M1's grid was one column short. Found by the review of the change above, and it had to be fixed for that change to be correct.
 

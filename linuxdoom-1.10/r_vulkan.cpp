@@ -758,6 +758,20 @@ struct VulkanState
     VkBuffer              seepUbo      = VK_NULL_HANDLE;
     VkDeviceMemory        seepUboMem   = VK_NULL_HANDLE;
     void*                 seepUboMapped = nullptr;
+    // DOOM-0281: the field is no longer write-once. A door that opens mid-play
+    // changes the connectivity the flood was built from, so it is re-flooded and
+    // re-uploaded in place. `cur` is what the GPU is sampling and `target` is the
+    // freshly flooded answer; the fog EASES from one to the other rather than
+    // snapping, because a mist bank that pops in over one frame reads as a bug and
+    // the point of the feature is that it rolls in. `sky` is kept beside them only
+    // so the two-channel texel pack has both halves without re-flooding for it.
+    std::vector<float>    seepCur, seepTarget, seepSky;
+    uint32_t              seepW = 0, seepH = 0;
+    bool                  seepDirty  = false;   // an opening flipped; re-flood when next traced
+    bool                  seepEasing = false;   // cur has not caught up with target yet
+    VkBuffer              seepStaging    = VK_NULL_HANDLE;
+    VkDeviceMemory        seepStagingMem = VK_NULL_HANDLE;
+    void*                 seepStagingMapped = nullptr;
     // DOOM-0129: the megakernel's view-mode is a spec-constant, so each mode gets
     // its own specialised pipeline (the unused debug modes dead-strip out). The
     // module is kept alive to build variants lazily; rtPipeline is indexed by mode
@@ -3274,19 +3288,51 @@ static uint16_t FloatToHalf(float f)
     return (uint16_t)(sign | ((uint32_t)exp << 10) | (man >> 13));
 }
 
+// DOOM-0281: pack the field the GPU should be sampling into its R16G16 texels.
+// Split out of UploadSeepField because the mid-play re-upload path needs the same
+// bytes without any of the image/UBO/descriptor work around them.
+//
+// .r = seep distance, .g = the open-sky mask (DOOM-0276). Two facts on one grid, so
+// the march's ONE existing tap answers both and the per-sample up-ray can go.
+static void PackSeepTexels(uint16_t* dst)
+{
+    const size_t n = (size_t)g.seepW * (size_t)g.seepH;
+    for (size_t i = 0; i < n; i++)
+    {
+        dst[i * 2 + 0] = FloatToHalf(g.seepCur[i]);   // RB_SEEP_DMAX = "unreachable"
+        dst[i * 2 + 1] = FloatToHalf(g.seepSky[i]);   // 0 = "roofed"
+    }
+}
+
 void UploadSeepField(const rb_seep_t* f)
 {
-    uint32_t w = 1, h = 1;
-    const float* srcD   = nullptr;
-    const float* srcSky = nullptr;
+    uint32_t   w = 1, h = 1;
+    const bool haveField = (f && f->d && f->sky && f->w > 0 && f->h > 0);
 
-    if (f && f->d && f->sky && f->w > 0 && f->h > 0)
+    if (haveField)
     {
-        w      = (uint32_t)f->w;
-        h      = (uint32_t)f->h;
-        srcD   = f->d;
-        srcSky = f->sky;
+        w = (uint32_t)f->w;
+        h = (uint32_t)f->h;
     }
+
+    // Keep the CPU-side field: DOOM-0281 re-floods and eases it in place, and the
+    // 1x1 placeholder case (no level yet) still needs well-formed arrays to pack --
+    // "unreachable" and "roofed", which is what the placeholder always meant.
+    g.seepW = w;
+    g.seepH = h;
+    if (haveField)
+    {
+        g.seepCur.assign(f->d,   f->d   + (size_t)w * h);
+        g.seepSky.assign(f->sky, f->sky + (size_t)w * h);
+    }
+    else
+    {
+        g.seepCur.assign((size_t)w * h, RB_SEEP_DMAX);
+        g.seepSky.assign((size_t)w * h, 0.0f);
+    }
+    g.seepTarget = g.seepCur;
+    g.seepEasing = false;
+    g.seepDirty  = false;
 
     // R16G16_SFLOAT, and the 16 is load-bearing in a way R8-vs-R16 is not the whole of.
     // Vulkan MANDATES SAMPLED_IMAGE_FILTER_LINEAR for both R16_SFLOAT and R16G16_SFLOAT
@@ -3295,21 +3341,44 @@ void UploadSeepField(const rb_seep_t* f)
     // undefined on any device that does not advertise the bit, even though it works
     // on the AMD card this was written against. Half gives ~1-unit resolution at the
     // 1536-unit sentinel, far finer than a 64-unit cell.
-    //
-    // DOOM-0276: .r = seep distance, .g = the open-sky mask. Two facts on one grid, so
-    // the march's ONE existing tap answers both and the per-sample up-ray can go.
     std::vector<uint16_t> texels((size_t)w * h * 2, 0);
-    for (size_t i = 0; i < (size_t)w * h; i++)
-    {
-        texels[i * 2 + 0] = FloatToHalf(srcD   ? srcD[i]   : RB_SEEP_DMAX);  // "unreachable"
-        texels[i * 2 + 1] = FloatToHalf(srcSky ? srcSky[i] : 0.0f);          // "roofed"
-    }
+    PackSeepTexels(texels.data());
 
     // The image is per level, so the old one goes. The caller (level load, or
     // pipeline creation) has already drained the device, so nothing is reading it.
+    // DOOM-0281's mid-play refresh deliberately does NOT come through here: it copies
+    // into this image instead, because destroying one the last frame is still reading
+    // needs a device wait, and a device wait mid-play is a visible hitch.
     if (g.seepView)   { vkDestroyImageView(g.device, g.seepView, nullptr);  g.seepView   = VK_NULL_HANDLE; }
     if (g.seepImage)  { vkDestroyImage(g.device, g.seepImage, nullptr);     g.seepImage  = VK_NULL_HANDLE; }
     if (g.seepMemory) { vkFreeMemory(g.device, g.seepMemory, nullptr);      g.seepMemory = VK_NULL_HANDLE; }
+
+    // Staging for that refresh, sized to this level's grid and left mapped. One copy
+    // is enough: the RT path is single-frame-in-flight and records after waiting
+    // g.inFlight, so no queued command buffer can still be reading these bytes.
+    if (g.seepStagingMapped) { vkUnmapMemory(g.device, g.seepStagingMem); g.seepStagingMapped = nullptr; }
+    if (g.seepStaging)    { vkDestroyBuffer(g.device, g.seepStaging, nullptr); g.seepStaging = VK_NULL_HANDLE; }
+    if (g.seepStagingMem) { vkFreeMemory(g.device, g.seepStagingMem, nullptr); g.seepStagingMem = VK_NULL_HANDLE; }
+    {
+        const VkDeviceSize bytes = (VkDeviceSize)w * h * 2 * sizeof(uint16_t);
+        VkBufferCreateInfo sbi = {};
+        sbi.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        sbi.size        = bytes;
+        sbi.usage       = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        sbi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        Check(vkCreateBuffer(g.device, &sbi, nullptr, &g.seepStaging), "vkCreateBuffer(seep staging)");
+        VkMemoryRequirements sreq = {};
+        vkGetBufferMemoryRequirements(g.device, g.seepStaging, &sreq);
+        VkMemoryAllocateInfo smai = {};
+        smai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        smai.allocationSize  = sreq.size;
+        smai.memoryTypeIndex = FindMemoryType(sreq.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        Check(vkAllocateMemory(g.device, &smai, nullptr, &g.seepStagingMem), "vkAllocateMemory(seep staging)");
+        Check(vkBindBufferMemory(g.device, g.seepStaging, g.seepStagingMem, 0), "vkBindBufferMemory(seep staging)");
+        Check(vkMapMemory(g.device, g.seepStagingMem, 0, bytes, 0, &g.seepStagingMapped),
+              "vkMapMemory(seep staging)");
+    }
 
     // Not R8: normalising the distance against kSeepFalloff would cap what is
     // representable at 192 units, which floors exp(-d/kSeepFalloff) at 1/e and so
@@ -3384,6 +3453,119 @@ void UploadSeepField(const rb_seep_t* f)
     writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     writes[1].pBufferInfo     = &bufInfo;
     vkUpdateDescriptorSets(g.device, 2, writes, 0, nullptr);
+}
+
+// DOOM-0281: keep the seep field honest while the map moves.
+//
+// Two jobs, in order: re-flood when an opening has flipped since the last flood,
+// then ease what the GPU is sampling toward that new answer and copy it into the
+// live image. Both are skipped outright on a map where nothing has opened, which is
+// nearly every frame.
+//
+// The ease is the feature, not a nicety. Swapping the field outright makes fog
+// appear in a room between one frame and the next, which reads as a glitch; easing
+// it over about a second makes the mist visibly drift in through the new opening,
+// and "roll in" is what was actually asked for. The inverse works for free: a door
+// that shuts eases the seep back out rather than snapping the room clear.
+static const float kSeepEaseTau = 0.32f;   // seconds; ~95% of the way there in 1 s
+
+void RecordSeepRefresh(VkCommandBuffer cb)
+{
+    // The clock is read before any early-out, so `dt` is always one frame rather
+    // than however long it has been since the last time fog needed to move.
+    static auto prevTick = std::chrono::steady_clock::now();
+    const auto  now      = std::chrono::steady_clock::now();
+    float       dt       = std::chrono::duration<float>(now - prevTick).count();
+    prevTick = now;
+    if (dt > 0.25f) dt = 0.25f;     // a level load or an alt-tab must not snap the field
+
+    if (!g.seepStaging || g.seepCur.empty())
+        return;
+
+    if (g.seepDirty)
+    {
+        g.seepDirty = false;
+        const double t0 = CpuNowMs();
+        rb_seep_t* sf = RB_BuildSeepField();
+        // The grid is sized from the map's vertices, which do not move within a
+        // level, so the dimensions always match; if they somehow do not, keeping the
+        // old field is the safe answer -- a stale seep beats a mis-indexed one.
+        if (sf && sf->w == (int)g.seepW && sf->h == (int)g.seepH)
+        {
+            g.seepTarget.assign(sf->d,   sf->d   + g.seepTarget.size());
+            g.seepSky.assign   (sf->sky, sf->sky + g.seepSky.size());
+            // A crusher cycling, or a door between two already-sealed rooms, flips an
+            // opening without changing a single distance. Comparing here means those
+            // cost one flood and no ease at all.
+            g.seepEasing = (g.seepTarget != g.seepCur);
+            // One line per re-flood, not per frame: the flip is the rare event. It
+            // carries the sealed-cell count for the same reason the level-load line
+            // carries the whole split -- it is the cheap proof the flood did what it
+            // claims. Opening a door onto the outdoors must make that number FALL, and
+            // a number that does not move is a detector firing on nothing. It also
+            // carries the fill cost, because Q22 rejected doing this at run time by
+            // reasoning from a budget rather than from a measurement.
+            int nSealed = 0;
+            for (size_t c = 0; c < g.seepTarget.size(); c++)
+                if (g.seepTarget[c] >= RB_SEEP_DMAX) nSealed++;
+            printf("RB_Vulkan: DOOM-0281 seep re-flood (%.1f ms), %d sealed cells, fog %s.\n",
+                   CpuNowMs() - t0, nSealed,
+                   g.seepEasing ? "easing to the new opening" : "unchanged");
+            fflush(stdout);
+        }
+        RB_FreeSeepField(sf);
+    }
+
+    if (!g.seepEasing)
+        return;
+
+    float worst = 0.0f;
+    const float k = 1.0f - std::exp(-dt / kSeepEaseTau);
+    for (size_t i = 0; i < g.seepCur.size(); i++)
+    {
+        const float d = g.seepTarget[i] - g.seepCur[i];
+        g.seepCur[i] += d * k;
+        if (std::fabs(d) > worst) worst = std::fabs(d);
+    }
+    // Half-float resolves to about a unit at the RB_SEEP_DMAX sentinel and a cell is
+    // 64 units wide, so anything finer than a unit cannot reach the texture anyway.
+    if (worst < 1.0f)
+    {
+        g.seepCur    = g.seepTarget;
+        g.seepEasing = false;
+    }
+
+    PackSeepTexels((uint16_t*)g.seepStagingMapped);
+
+    // Copy into the EXISTING image. Recreating it (the level-load path) would need the
+    // device drained first, and a drain mid-play is a visible hitch; the grid cannot
+    // change size within a level, so there is nothing to reallocate.
+    VkImageMemoryBarrier b = {};
+    b.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.image               = g.seepImage;
+    b.subresourceRange    = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    b.oldLayout           = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    b.newLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    b.srcAccessMask       = VK_ACCESS_SHADER_READ_BIT;
+    b.dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+
+    VkBufferImageCopy region = {};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageExtent                 = { g.seepW, g.seepH, 1 };
+    vkCmdCopyBufferToImage(cb, g.seepStaging, g.seepImage,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+    b.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    b.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
 }
 
 //
@@ -7528,6 +7710,11 @@ void RecordRtTrace(uint32_t idx)
         vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, g.gpuTimerPool, 0);
     }
 
+    // DOOM-0281: a door or lift that opened since the last flood has left the seep
+    // field describing a map that no longer exists. Re-flood and ease it here, so the
+    // copy lands ahead of the megakernel that samples it in this same buffer.
+    RecordSeepRefresh(g.cmd);
+
     // DOOM-0131: refit the moving-sector world BLAS in-line (build step 5) when a
     // door/lift shifted geometry this frame. Recorded into g.cmd ahead of the TLAS
     // rebuild below (which reads the BLAS extents); an AS write->read barrier orders
@@ -8228,6 +8415,15 @@ static void BuildFrameInputs(bool rtActive, bool cprof)
         int upd = RB_UpdateMeshHeights(g.levelMesh, (rb_vertex_t*)g.vbufMapped);
         if (upd & RB_UPD_MOVED) g.blasDirty = true;      // geometry shifted -> BLAS refit
         if (upd & RB_UPD_RETEX) g.worldEmitDirty = true; // a face's texture swapped -> emitter rebuild
+        // DOOM-0281: a plane moved, so an opening MAY have appeared or vanished --
+        // check whether one actually did. Gated on RB_UPD_MOVED because connectivity
+        // cannot change without a plane moving, so a still map never pays for the
+        // scan; latched (like blasDirty) because only the traced path samples the
+        // field, and a door opened under raster must still be caught on the way back.
+        // Measured at 0.0039 ms per scan on E1M1, and only on the frames where a plane
+        // actually moved -- 0.02% of a frame, on a fraction of them.
+        if ((upd & RB_UPD_MOVED) && g.rtEnabled && RB_SeepOpeningsChanged())
+            g.seepDirty = true;
         if (cprof) g.cpuBuildMs[2] += CpuNowMs() - tH0;  // moving-sector re-height
     }
     if (cprof) g.cpuMs[1] += CpuNowMs() - tBuild0;
@@ -9029,6 +9225,8 @@ extern "C" void RB_Vulkan_Shutdown(void)
         if (g.seepMemory)   vkFreeMemory(g.device, g.seepMemory, nullptr);
         if (g.seepUbo)      vkDestroyBuffer(g.device, g.seepUbo, nullptr);
         if (g.seepUboMem)   vkFreeMemory(g.device, g.seepUboMem, nullptr);
+        if (g.seepStaging)    vkDestroyBuffer(g.device, g.seepStaging, nullptr);   // DOOM-0281
+        if (g.seepStagingMem) vkFreeMemory(g.device, g.seepStagingMem, nullptr);
         // INV-6 verify accumulator + readback (step 4d).
         if (g.rtAccumView)  vkDestroyImageView(g.device, g.rtAccumView, nullptr);
         if (g.rtAccum)      vkDestroyImage(g.device, g.rtAccum, nullptr);

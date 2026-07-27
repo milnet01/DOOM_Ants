@@ -2960,10 +2960,54 @@ parked ideas (💭 considered) until we commit to and design each one.
   Lanes: startup.
   Source: in-session-2026-07-27 (hit while measuring DOOM-0276).
 
-- 📋 [DOOM-0281] **Re-flood the seep field when a wall or door opens, so fog rolls into a newly-opened room.**
+- 🚧 [DOOM-0281] **Re-flood the seep field when a wall or door opens, so fog rolls into a newly-opened room.**
   User, 2026-07-27, with a screenshot of a normally-closed E1M1 wall standing
   open onto the courtyard: "if a wall opens like in this screenshot, the fog
   doesn't roll in though. Usually this wall is closed."
+  Progress (2026-07-27): IMPLEMENTED and verified on the RX 6600; only the LOOK
+  is left, which needs a person at the keyboard.
+
+  Built as the bullet's three-part shape, and the shape held:
+  - Detector. RB_SeepOpeningsChanged (r_mesh.c) caches one open/shut bit per
+    linedef at flood time and diffs it. Gated on the RB_UPD_MOVED that
+    RB_UpdateMeshHeights already returns, because connectivity cannot change
+    without a plane moving -- so a still map never pays for it at all. NOT hooked
+    into the playsim: no p_doors/p_floor/p_plats edit, the renderer asks the map.
+  - Re-flood, latched like blasDirty and consumed in RecordRtTrace, so a door
+    opened while in Solid is still caught on the way back to Ultra.
+  - Upload. vkCmdCopyBufferToImage into the EXISTING image, from a persistent
+    mapped staging buffer, with a SHADER_READ->TRANSFER_DST->SHADER_READ barrier
+    pair in the frame's own command buffer. No destroy, no device wait, no hitch.
+    Safe with one staging copy because the RT path records after waiting
+    g.inFlight (single-frame-in-flight).
+  - Ease. Exponential, tau 0.32 s (~95% in 1 s), so the mist DRIFTS in rather than
+    popping. The inverse falls out for free: a door that shuts eases the seep back
+    out. If a re-flood produces a field identical to the current one -- a crusher
+    cycling, a door between two already-sealed rooms -- the ease is skipped
+    entirely, so those cost one flood and nothing else.
+
+  Measured, not budgeted -- which is the whole lesson of Q22:
+  - Detector scan: 0.0039 ms, and only on frames where a plane moved.
+  - Re-flood: 0.6-0.7 ms, once per opening flip (NOT per frame of door motion).
+  - Spawn frame: -shotcompare vs a worktree build of 462503c, mae 0.000/255 on a
+    same-build noise floor of 0.000. Bit-identical -- the change is inert until
+    something moves.
+  - -rtverify PASS, unchanged to 4 significant figures (rel-MSE 0.0796%,
+    white-furnace deviation 0.000000). No new Vulkan validation messages; zero
+    mentioning the copy or an image layout.
+
+  The proof the field moves the RIGHT way, which is what the print now carries:
+  E1M1 spawns with 835 sealed cells; opening one door drops it to 761 (74 cells
+  behind that door stop being sealed) and shutting it returns exactly 835.
+
+  Verification method worth reusing: the built-in attract demos are version-
+  mismatched against this WAD (109 vs 110) and xdotool cannot inject input under
+  Wayland, so neither could drive a door. A ~15-line throwaway hook in
+  P_UpdateSpecials called EV_VerticalDoor on tics 105 and 280 with no player
+  input -- deterministic, and removed before the commit.
+
+  REMAINING: the user's eyes on whether tau = 0.32 s reads as mist rolling in
+  rather than a fade. That is the one thing no automated check can answer.
 
   Cause, verified: RB_BuildSeepField (r_mesh.c) runs P_LineOpening on every
   two-sided seg and skips any with openrange <= 0 -- a shut door is two-sided but

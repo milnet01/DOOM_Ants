@@ -527,7 +527,10 @@ sector has `ceilingheight == floorheight`, as are windows, ledges and raised lif
 a one-sidedness test the flood would pour straight through every shut door, seeping fog
 into a door-sealed closet beside a courtyard. This is exactly `P_LineOpening`'s `openrange > 0`
 (`p_maputl.c:300-331`), so reuse it rather than re-deriving it. Doors are evaluated at
-their **spawn** state and the field is **not** rebuilt when a door opens in play (Q22).
+their state **at flood time**, and since **DOOM-0281** (2026-07-27) the field is re-flooded
+whenever one of those `openrange > 0` answers actually flips — so a wall that opens in play
+does let the fog in, and INV-12 still holds because connectivity is re-decided from real
+openings rather than assumed (Q22).
 
 **Flood over SEGS, then rasterise — not over grid cells.** A cell-to-cell test cannot work,
 for two reasons. First, two adjacent 64-unit cells have no single "linedef between them" to
@@ -2092,6 +2095,17 @@ reasoning stays there.
   **dirty flag** raised only when a sector movement makes `openrange` cross zero. It keeps INV-12
   exactly (connectivity is still decided by real openings, just re-decided), unlike the
   treat-doors-as-open option correctly rejected above.
+  **CLOSED 2026-07-27 — that third option shipped as DOOM-0281, and the estimates above held.**
+  The dirty flag is one cached open/shut bit per linedef, diffed only on frames where
+  `RB_UpdateMeshHeights` already reported `RB_UPD_MOVED` (**0.0039 ms**, and never on a still
+  map); the re-flood is the same **0.6–0.7 ms** fill, once per flip rather than once per frame
+  of door motion; the upload is the `vkCmdCopyBufferToImage` into the existing image this entry
+  predicted. One thing the entry did **not** anticipate and the user's wording did: a swapped
+  field makes the fog *pop*, so the answer is eased across with a 0.32 s time constant — *"roll
+  in"* was a requirement, not a turn of phrase. Proof it moves the right way: E1M1 spawns at 835
+  sealed cells, one door opening drops it to 761, shutting it returns exactly 835. The spawn
+  frame is bit-identical to the pre-change build (`-shotcompare` mae 0.000/255), so the whole
+  mechanism is inert until something moves.
 - **Q23 (torch-emitter selection, per sample or per ray? 2026-07-26):** §4.4(b) says pick the
   **nearest few** static emitters *to the sample*, which cuts the expensive phase evaluations
   from `steps × omniStart` to `steps × 4`. But the selection scan itself is still

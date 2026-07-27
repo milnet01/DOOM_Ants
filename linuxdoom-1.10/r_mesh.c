@@ -747,6 +747,9 @@ typedef struct
 // against the node's settled distance and drops it if it has been beaten.
 typedef struct { float d; int node; } rb_heapent_t;
 
+// DOOM-0281, defined with the rest of the change detector below the flood.
+static void RB_SeepSeedOpenings(void);
+
 static void RB_HeapPush(rb_heapent_t* h, int* n, float d, int node)
 {
     int i = (*n)++;
@@ -994,7 +997,74 @@ rb_seep_t* RB_BuildSeepField(void)
     free(portals);
     free(secFirst);
     free(secList);
+    // DOOM-0281: the openings this field was flooded from are now the baseline that
+    // RB_SeepOpeningsChanged diffs against. Re-seeding here (rather than at level
+    // load) is what makes the answer mean "stale relative to the LIVE field" on a
+    // mid-play re-flood as well as on the first build.
+    RB_SeepSeedOpenings();
     return field;
+}
+
+// ---------------------------------------------------------------------------
+// DOOM-0281: connectivity-change detection for the seep field.
+//
+// One byte per linedef: 1 if it currently has a vertical opening. A shut DOOM door
+// is a two-sided linedef with openrange 0, so this bit -- not one-sidedness -- is
+// what the flood treats as a wall, and a flip in it is exactly the event that
+// invalidates the field. Sector movement that does NOT cross zero (a lift running
+// between two open heights, a crusher not yet at the floor) flips nothing and
+// costs nothing beyond the scan.
+// ---------------------------------------------------------------------------
+
+static unsigned char* rb_seepOpen  = NULL;   // one byte per linedef
+static int            rb_seepOpenN = 0;      // numlines rb_seepOpen is sized for
+
+static int RB_SeepLineOpen(line_t* ld)
+{
+    // Same three rejections the flood applies to a seg, so the bit tracks what the
+    // flood would actually do with this line. P_LineOpening writes file-scope globals
+    // and is not re-entrant; this runs on the render thread between tics, where the
+    // playsim is not mid-P_TryMove -- the same window RB_BuildSeepField uses.
+    if (!(ld->flags & ML_TWOSIDED) || !ld->backsector)
+        return 0;
+    if (ld->frontsector == ld->backsector)   // self-referencing fake wall
+        return 0;
+    P_LineOpening(ld);
+    return openrange > 0;
+}
+
+// Fill the cache from the live map, discarding whatever was there.
+static void RB_SeepSeedOpenings(void)
+{
+    int i;
+    if (rb_seepOpenN != numlines)
+    {
+        free(rb_seepOpen);
+        rb_seepOpen = (unsigned char*)malloc((size_t)(numlines > 0 ? numlines : 1));
+        if (!rb_seepOpen)
+            I_Error("RB_SeepSeedOpenings: out of memory for %d lines", numlines);
+        rb_seepOpenN = numlines;
+    }
+    for (i = 0; i < numlines; i++)
+        rb_seepOpen[i] = (unsigned char)RB_SeepLineOpen(&lines[i]);
+}
+
+int RB_SeepOpeningsChanged(void)
+{
+    int i, changed = 0;
+    // No baseline yet means no field has been flooded yet, so nothing can be stale.
+    if (rb_seepOpenN != numlines)
+        return 0;
+    for (i = 0; i < numlines; i++)
+    {
+        unsigned char open = (unsigned char)RB_SeepLineOpen(&lines[i]);
+        if (open != rb_seepOpen[i])
+        {
+            rb_seepOpen[i] = open;
+            changed = 1;
+        }
+    }
+    return changed;
 }
 
 void RB_FreeSeepField(rb_seep_t* f)
