@@ -245,6 +245,29 @@ void main()
     else if ((vFlags & FLAG_FLAT) != 0) id = pc.numWall + vTexnum;
     else                                id = vTexnum;
 
+    // DOOM-0267: wall quads are ONE-SIDED, exactly like the software renderer.
+    // RB_BuildLevelMesh emits a wall face once, from whichever SIDEDEF carries the
+    // texture, with its normal pointing into that sidedef's own sector. This
+    // pipeline runs VK_CULL_MODE_NONE (winding is not guaranteed -- DOOM-0068), so
+    // without this test the same quad is drawn from behind as well.
+    //
+    // This includes MASKED mid-walls, which is the case that actually bit: E1M1's
+    // line 458 is the secret room's doorway, and only sidedef 628 (the outside,
+    // sector 53) carries the BROWNGRN midtexture -- sidedef 629 (inside, sector 58)
+    // has none. Classic draws a two-sided midtexture PER SIDEDEF, so from inside it
+    // draws nothing and the doorway is open; the mesh emitted one quad over the
+    // whole 104..176 opening and showed it both ways, sealing the secret. A genuine
+    // grate has a midtexture on BOTH sidedefs, so the seg walk emits TWO quads --
+    // one per side, each facing its own sector -- and stays visible both ways.
+    //
+    // Tested against the stored normal rather than gl_FrontFacing so it remains
+    // winding-agnostic. Flats, sprites, the psprite, both sky kinds and blob decals
+    // are excluded; none of them is a sidedef face.
+    if ((vFlags & (FLAG_FLAT | FLAG_SPRITE | FLAG_PSPRITE
+                 | FLAG_SKY | FLAG_SKYDOME | 0x80)) == 0
+        && dot(vNormal, vWorldPos - vec3(pc.eyeX, pc.eyeY, pc.eyeZ)) > 0.0)
+        discard;
+
     // Native REPEAT tiling: divide the raw texel UV by the material's own size
     // and let the sampler wrap. (Sprite UVs are pre-inset half a texel and stay
     // in range, so REPEAT is a no-op for them — no bleed across a tile border.)

@@ -384,11 +384,27 @@ bool spriteCandidateOpaque(rayQueryEXT rq)
 // material by texnum direct (world walls, no atlas offset), matching the mode-3/4/6
 // decode. Only the primary ray sees this; shadow/NEE/muzzle/flashlight/bake rays force
 // gl_RayFlagsOpaqueEXT and treat the grate as solid.
+// DOOM-0267: bits that are NOT a sidedef face. Mirrors r_mesh.h -- FLAT 0x1,
+// SPRITE 0x4, PSPRITE 0x8, SKY 0x10, SKYDOME 0x40, BLOB 0x80. MASKED (0x2) is
+// deliberately NOT here: a two-sided midtexture is per-sidedef in DOOM, so it is a
+// one-sided face too (see mesh.frag for the E1M1 line-458 case this fixes).
+const int FLAG_NOT_SIDEDEF = 0x1 | 0x4 | 0x8 | 0x10 | 0x40 | 0x80;
+
 bool worldCandidateOpaque(rayQueryEXT rq)
 {
     int  prim  = rayQueryGetIntersectionPrimitiveIndexEXT(rq, false);
     uint i0    = uint(prim) * 3u * 18u;
     int  flags = floatBitsToInt(pc.verts.v[i0 + 9u]);
+    // DOOM-0267: skip a BACK-FACING sidedef face so the primary ray passes through
+    // and hits whatever Classic shows behind it. Safe here and nowhere else: only
+    // the primary ray reaches this function -- shadow/NEE/muzzle/flashlight/bake
+    // rays force gl_RayFlagsOpaqueEXT and never call it -- so occlusion, GI and the
+    // light transport are untouched and nothing can leak through a wall.
+    if ((flags & FLAG_NOT_SIDEDEF) == 0)
+    {
+        vec3 wn = vec3(pc.verts.v[i0 + 3u], pc.verts.v[i0 + 4u], pc.verts.v[i0 + 5u]);
+        if (dot(wn, rayQueryGetWorldRayDirectionEXT(rq)) > 0.0) return false;
+    }
     if ((flags & FLAG_MASKED) == 0) return true;     // opaque wall/flat: commit
     int  texnum = floatBitsToInt(pc.verts.v[i0 + 8u]);
     vec2 bc = rayQueryGetIntersectionBarycentricsEXT(rq, false);

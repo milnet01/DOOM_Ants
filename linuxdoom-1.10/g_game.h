@@ -35,6 +35,10 @@ void G_DeathMatchSpawnPlayer (int playernum);
 
 void G_InitNew (skill_t skill, int episode, int map);
 
+// DOOM-0268: honour `-warpto X Y [ANGLE]` after a level loads, placing the player
+// at an arbitrary map spot so a location-specific bug can be captured headlessly.
+void G_WarpToSpot (void);
+
 // Can be called by the startup code or M_Responder.
 // A normal game starts at map 1,
 // but a warp test can start elsewhere

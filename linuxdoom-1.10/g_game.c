@@ -554,6 +554,7 @@ void G_DoLoadLevel (void)
     } 
 		 
     P_SetupLevel (gameepisode, gamemap, 0, gameskill);    
+    G_WarpToSpot ();                    // DOOM-0268: -warpto X Y [ANGLE]
     displayplayer = consoleplayer;		// view the guy you are playing    
     starttime = I_GetTime (); 
     gameaction = ga_nothing; 
@@ -569,6 +570,67 @@ void G_DoLoadLevel (void)
 } 
  
  
+//
+// G_WarpToSpot  (DOOM-0268)
+// `-warpto X Y [ANGLE]` drops the player at an arbitrary map position right after
+// the level loads, instead of at the map's start Thing. Its reason for existing is
+// testing: a renderer bug that only reproduces at one spot in one room previously
+// needed a human to walk there, which meant every diagnosis was a guess and every
+// fix needed a play-test round-trip to check. Paired with -shotverify (capture a
+// PNG and exit) this makes such a spot reproducible headlessly, in any tier.
+//
+// X and Y are DOOM map units, exactly as the `/` diagnostic and any map editor
+// print them. ANGLE is optional, in degrees, 0 = east and counter-clockwise (the
+// same convention as a Thing's angle); omitted leaves the start Thing's facing.
+// The player is dropped onto the destination sector's floor, so Z needs no arg.
+//
+void G_WarpToSpot (void)
+{
+    int       p;
+    mobj_t*   mo;
+    sector_t* sec;
+    fixed_t   x, y;
+
+    p = M_CheckParm ("-warpto");
+    if (!p || p >= myargc - 2)
+        return;
+
+    mo = players[consoleplayer].mo;
+    if (!mo)
+        return;
+
+    x = atoi (myargv[p+1]) << FRACBITS;
+    y = atoi (myargv[p+2]) << FRACBITS;
+
+    // Move the thing properly: unlink from the old blockmap/sector lists, set the
+    // position, relink. Setting mo->x/y directly would leave it indexed under its
+    // old subsector and every sight/collision test would use the wrong one.
+    P_UnsetThingPosition (mo);
+    mo->x = x;
+    mo->y = y;
+    P_SetThingPosition (mo);
+
+    sec        = mo->subsector->sector;
+    mo->z      = sec->floorheight;
+    mo->floorz = sec->floorheight;
+    mo->ceilingz = sec->ceilingheight;
+
+    // Optional third arg: facing, in degrees.
+    if (p < myargc - 3 && myargv[p+3][0] != '-')
+        mo->angle = (angle_t)(((int64_t)atoi (myargv[p+3]) * ANG90) / 90);
+
+    players[consoleplayer].viewz = mo->z + VIEWHEIGHT;
+    players[consoleplayer].mo->momx = players[consoleplayer].mo->momy = 0;
+    players[consoleplayer].mo->momz = 0;
+
+    printf ("-warpto: player placed at (%d,%d,%d) angle=%u sector=%d "
+            "floor=%d ceil=%d\n",
+            mo->x >> FRACBITS, mo->y >> FRACBITS, mo->z >> FRACBITS,
+            (unsigned)(mo->angle >> 24), (int)(sec - sectors),
+            sec->floorheight >> FRACBITS, sec->ceilingheight >> FRACBITS);
+    fflush (stdout);
+}
+
 //
 // G_Responder  
 // Get info needed to make ticcmd_ts for the players.
