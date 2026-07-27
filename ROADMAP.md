@@ -2742,3 +2742,25 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   Related: DOOM-0147 (the Classic 4:3-vs-fill aspect work that introduced
   this flag).
+
+- 📋 [DOOM-0275] **Every debug hotkey should report its new state on screen, not only to the terminal.**
+  Found when the user pressed a key mid-play-test and had no way to tell
+  whether it had registered: "When I press / there is no feedback to let me
+  know that the log is on or not."
+
+  The fog (`;`) and GPU profiler (`\`) keys were fixed on the spot, since
+  the DOOM-0011 perf A/B depends on knowing which state you are in. The
+  rest still printf to stdout only: `~` RT view cycle, `]` de-tile, `[`
+  filth, `'` wet, and the DOOM-0267 `/` geometry dump.
+
+  Use I_DebugKeyMessage in i_video.c — it prints AND posts the same line
+  to players[consoleplayer].message, so it shows on the HUD during play.
+
+  Related, and the reason this bit: `/` is NOT a profiler key at all — it
+  is the temporary DOOM-0267 geometry dump. A user reaching for the
+  profiler and getting silence from an unrelated key is the failure mode.
+  Worth auditing the whole hotkey set for keys that look like they should
+  do something and do something else.
+  **Layman:** When you press one of the developer keys, say what happened on screen instead of in a terminal window you cannot see while playing.
+  Kind: ux.
+  Source: user-report-2026-07-27.
