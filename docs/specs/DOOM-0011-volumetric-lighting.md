@@ -847,6 +847,86 @@ flag), tuned at **L4**; nothing here pre-empts it. The one new caution: `kHellTi
 `kGooTint` were picked against a **blue-grey** base and must be **re-judged against the
 near-white base** at L4, or they will read washed-out (Q20).
 
+### 4.3c Two layers: the aerial layer and the floor fog (2026-07-27 amendment)
+
+> **SIGNED OFF — the single-layer fog, 2026-07-27.** Everything §4.3, §4.6a and INV-10 describe
+> above is user-accepted on hardware: *"The fog / mist looks significantly better now. Great work
+> and the horizon fix is much, much better… happy to sign it off now."* One residual noted and
+> **accepted, not fixed**: *"You can still see the cut off but I am happy with it."* Do not
+> re-open that without a new report — it survived two rounds of correction and the remaining
+> visibility is the sky texture's own 128-row limit, not the fog.
+
+### 4.3c Two layers: the aerial layer and the floor fog (2026-07-27 amendment)
+
+> **User sign-off + the request that follows it.** The single-layer fog was signed off on
+> 2026-07-27: *"The fog / mist looks significantly better now… the horizon fix is much, much
+> better… happy to sign it off."* The remaining ask, in the same breath: *"I want fog thickest on
+> the floor. So, for those indoor rooms that are affected, they should have fog closest to the
+> floor with a much smaller distance to the camera setting than the general fog. In fact, the same
+> effect should apply outside as well… for outside you will have the general fog and the floor
+> fog. Outside, the floor fog can probably be thicker."*
+
+**Why one layer cannot deliver this, and no amount of tuning will change that.** Today's fog is a
+pure participating medium: opacity along a ray only ever *grows* with distance. So the density
+that makes the air at your feet visibly misty is the same density that, integrated over a thousand
+units, turns the far end of the courtyard into a white sheet. The two wants are in direct conflict
+inside one term. Every re-tune on 2026-07-27 traded one against the other.
+
+**The second term breaks the conflict by not being a medium.** The floor layer's density falls off
+with **distance from the camera**:
+
+```
+σ_floor(p, t) = kFloorFogDensity
+              · exp(−max(0, p.z − baseZ) / kFloorFogPool)   // hugs the ground
+              · exp(−t / kFloorFogRange)                    // and only NEAR you
+
+σ(p, t) = σ_general(p) + σ_floor(p, t)          // the two layers simply add
+```
+
+with `kFloorFogPool ≪ kFogPoolHeight` (112) and `kFloorFogRange ≪ kFogMaxDist` (2048).
+
+**This is deliberately not physical, and that is the point.** Real fog has no idea where the
+camera is. But a medium whose *visible contribution* is bounded in range is exactly what lets mist
+pool around the player's feet without accumulating into an opaque wall at distance — the trick
+that makes ground mist readable in games that ship it. It costs nothing to evaluate: `marchFog`
+already has `t`, the distance along the ray, as its loop variable.
+
+**Placement follows §4.3a's existing gate, with its own strengths.** Both layers are scaled by the
+same `skyExposure`, so the floor fog inherits the open-sky test and the L1d seep for free — no
+second placement mechanism, no second up-ray. Only the density constants differ:
+
+| | outdoors | roofed air |
+|---|---|---|
+| aerial layer | `kFogBaseDensity`, `kFogPoolHeight` = 112 | × `kIndoorFogScale`, `kFogIndoorPool` = 18 |
+| floor fog | `kFloorFogDensity` | `kFloorFogDensity` × `kIndoorFogScale` |
+
+The user asked for the outdoor floor fog to be **thicker**; that falls out of `skyExposure`
+already, without a fourth constant.
+
+**The indoor half depends on L1d and the outdoor half does not.** Nothing in the tree can yet
+distinguish "room with a window onto the courtyard" from "room buried three doors deep", which is
+what the outdoor-proximity seep (§4.3a, task L1d) exists to compute. The user was explicit at L1b
+that sealed interiors stay clear, and that has not changed. **So the outdoor floor fog can land
+first, and the indoor half arrives with L1d** — at which point §4.3a's `kSeepMax` note applies to
+both layers at once.
+
+**Open, and deliberately not guessed:**
+
+- **Q25 — does the floor fog need its own up-ray, or does sharing `skyExposure` suffice?** Sharing
+  is free and is the assumption above. The risk is that the floor fog is densest exactly where the
+  aerial layer is thinnest (at your feet, under an overhang), so a misclassification that is
+  invisible today could become obvious. Judge on hardware, not here.
+- **Q26 — `kFloorFogRange` against the march's step count.** `kFogSteps` = 24 over `kFogMaxDist`
+  gives 85-unit steps. If `kFloorFogRange` is of that order, the floor fog is resolved by two or
+  three samples and will band. Either raise `kFogSteps` (L1c already plans 24 → 40) or bias the
+  march's samples toward the near end. **This is the one that can make the feature look broken,
+  and it is arithmetic, not taste — settle it before writing the shader.**
+
+**Ripples if this ships.** `fogDensity()` currently returns the whole density; L4's split-sigma
+form (`skySigma · skyExposure + areaSigma`, INV-9) must gain a third addend rather than folding the
+floor term into either existing one. `fogHeightPool()` — which L4 still has to extract — is reused
+by both layers with different `poolH`, so it must keep taking the height as a parameter.
+
 ### 4.4 Light sources & shafts
 
 Fog scatters light from **two** sources only — sky and big static emitters
@@ -1122,6 +1202,9 @@ colour-frozen.
     `kFogColor` = `(0.55, 0.56, 0.56)`, `kWispAmp` = 0.6, `kWispWeight2` = 0.7,
     `kWispFreq1` = 1/512, `kWispFreq2` = 2.5·`kWispFreq1`, `kWispVel1` = `(8, 3, 1)`,
     `kWispVel2` = `(−3, 4, 0.3)` units/s (deliberately **slower** than `kWispVel1`, §4.3b), `kWispOffset2` = `(17.3, 5.1, 23.7)`,
+    **`kFloorFogDensity`**, **`kFloorFogPool`** and **`kFloorFogRange`** (§4.3c's second layer —
+    `kFloorFogPool` ≪ `kFogPoolHeight`, `kFloorFogRange` ≪ `kFogMaxDist`; **none of the three is
+    in the tree yet**, and Q26 owns the range's starting value),
     `kSeepMax` = 0.5, `kSeepFalloff` = 192, `dMax` = `8 · kSeepFalloff` (the seep field's
     finite unreachable/void sentinel — §4.3a) (values derived in §4.3a/§4.3b; `kWispAmp`
     and `kWispWeight2` are owned by Q21 alongside `kWispFreq1`). Only the runtime **strength** and the **per-level haze** vary at
@@ -1756,6 +1839,17 @@ reasoning stays there.
   within a couple of degrees of the horizon (see Q24).
   The "slightly darker outside" note in §4.3b is a separate knob and **was answered on
   2026-07-27**: `kSkyShaftStrength` 1.0 → 0.85.
+- **Q25 (floor-fog placement, 2026-07-27):** does the floor layer (§4.3c) need its own open-sky
+  test, or does sharing the aerial layer's `skyExposure` suffice? Sharing is free and is what the
+  amendment assumes. The risk: the floor fog is densest exactly where the aerial layer is thinnest
+  — at your feet, under an overhang — so a §4.3a misclassification that is invisible today could
+  become obvious. **Hardware, not review. DOOM-0272.**
+- **Q26 (floor-fog range vs. the march's step count, 2026-07-27):** `kFogSteps` = 24 over
+  `kFogMaxDist` = 2048 gives 85-unit steps. If `kFloorFogRange` lands anywhere near that, the
+  floor fog is resolved by two or three samples and bands. Either raise `kFogSteps` (L1c already
+  plans 24 → 40) or bias the march toward the near end. **This is arithmetic, not taste, and it
+  is the one that can make the feature look broken — settle it before writing the shader.
+  DOOM-0272.**
 - **Q24 (sky density after the L1c raise, 2026-07-26):** §4.3b's fork — give the sky term its own
   effective density/distance, or keep it sharing `kFogBaseDensity` and re-check the mountains
   after the ≈2× raise. L1c takes the second path, with "distant sky still readable at High" as

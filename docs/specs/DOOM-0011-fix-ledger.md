@@ -600,6 +600,28 @@ before declaring the class handled.
 changes brightness near geometry). Both halves were useful. Reading the code ruled out the named
 cause in one pass; measuring the screenshot found the real one. Neither step alone would have.
 
+## 2026-07-27 — SIGN-OFF, and a design amendment that is NOT yet reviewed
+
+**The single-layer fog is user-accepted on hardware.** *"The fog / mist looks significantly better
+now. Great work and the horizon fix is much, much better… happy to sign it off now."* One residual
+accepted rather than fixed: *"You can still see the cut off but I am happy with it."*
+
+**Written the same day and NOT through `/cold-eyes`: spec §4.3c, the two-layer fog** (DOOM-0272).
+A short-range floor fog added to the existing aerial layer, whose density falls off with distance
+from the camera — deliberately non-physical, because one medium cannot be both thick at your feet
+and thin across a courtyard. **CLAUDE.md rule 14 puts a review between that amendment and any
+code.** It is flagged here so nobody mistakes "it is in the spec" for "it is agreed".
+
+The amendment's own pre-flight found one defect immediately: the standing grep
+`grep -n "Q2[0-9]"` fired because **Q25/Q26 existed only in the spec**, not in the plan's open
+items. That grep was added at loop 9 for exactly this and has now paid for itself twice.
+
+Worth noting about the sign-off itself: **four rounds of fog correction produced zero findings
+from review and four from the user's screen.** The count is now lopsided enough to act on — for
+anything whose acceptance criterion is "does it look right", a hardware round trip is the cheaper
+instrument, and review's remaining job is the things a screenshot cannot show (an undeclared
+symbol, a stale citation, a contradiction between two documents).
+
 ## Open — not yet fixed
 
 - ~~**Cold-eyes has not converged.**~~ **CONVERGED at loop 13** (2026-07-26): zero verified

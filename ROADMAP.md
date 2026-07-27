@@ -2634,3 +2634,90 @@ parked ideas (💭 considered) until we commit to and design each one.
   still one constant (try 80, 96 or 112, none of which divides 64) plus a
   before/after look at the WALLS, which the user has already approved and
   which this would also change.
+
+- 📋 [DOOM-0272] **Split the fog into two layers: a general aerial layer plus a short-range floor fog.**
+  **Layman:** Add a second, thicker mist that hugs the floor and only shows up near you — so you wade through it without the far end of the level turning white.
+  Kind: feature.
+  Lanes: renderer, shaders.
+  Source: user-request-2026-07-27.
+  Design pinned by the user 2026-07-27, after signing off the single-layer
+  fog: "for outside you will have the general fog and the floor fog.
+  Outside, the floor fog can probably be thicker." And for interiors:
+  rooms exposed to outdoors via a window or door get the floor fog,
+  "with a much smaller distance to the camera setting than the general
+  fog".
+
+  The load-bearing new idea is that SECOND term's range. Today's fog is a
+  pure medium: opacity only ever grows with distance, which is why
+  thickening it to make your feet misty also turns the far ground white.
+  The floor layer instead FADES OUT with distance from the camera - not
+  physical, but exactly the game trick that makes ground mist readable.
+  It is free to evaluate: marchFog already knows t along the ray.
+
+  Sketch (spec DOOM-0011 4.3c owns the real version):
+    sigma_floor(p) = kFloorFogDensity
+                   * exp(-(p.z - baseZ) / kFloorFogPool)   // hugs the floor
+                   * exp(-t / kFloorFogRange)              // NEAR the camera only
+    sigma = sigma_general + sigma_floor
+  kFloorFogPool << kFogPoolHeight (112) and kFloorFogRange << kFogMaxDist
+  (2048). Outdoors gets a higher kFloorFogDensity than indoors.
+
+  Depends on DOOM-0011 L1d (the outdoor-proximity seep) for the INDOOR
+  half: nothing in the tree can yet tell "room with a window" from "room
+  buried three doors deep", and the user was explicit at L1b that sealed
+  interiors stay clear. The OUTDOOR half has no such dependency and can
+  land first.
+
+  Gate: this is a design change to a converged multi-file spec, so
+  CLAUDE.md rule 14 puts /cold-eyes between the amendment and the code.
+
+- 📋 [DOOM-0273] **Solid tier: upscale the ORIGINAL textures and give them PBR/POM, keeping the 1993 art.**
+  **Layman:** Same DOOM pictures you know, just sharper, with real bumpiness and depth — as opposed to Ultra, which swaps the art out entirely.
+  Kind: feature.
+  Lanes: renderer, assets.
+  Source: user-request-2026-07-27.
+  User redefinition of the three tiers, 2026-07-27 (see CLAUDE.md's
+  "Render tiers" section, which this item implements the middle row of).
+  Solid keeps the ORIGINAL 1993/97 art but upscaled, with PBR/POM and the
+  rest added on top; Ultra swaps the art out for HD replacements. The
+  user acknowledged this reverses an earlier position: "probably a
+  contradiction to what I said earlier but we grow as we go along."
+
+  Most of the machinery already exists and only needs re-pointing.
+  DOOM-0042's materials.csv sidecar already has TWO row kinds: `hero`
+  (curated CC0 replacement art) and `derive` (maps generated FROM the WAD
+  texture by scripts/pbr_derive.py). That derive path IS this request -
+  original art, upscaled, with normal/roughness/AO/height derived from
+  it. So the tier split falls out as: derive rows -> Solid, hero rows ->
+  Ultra. Check that assumption against the shipped loader before
+  planning; it is inferred from the sidecar's shape, not yet verified in
+  code.
+
+  Related, do not duplicate: DOOM-0172 (Solid-tier art UPSCALING, the
+  PS1/2-emulator-style smoothing - the resolution half of this item) and
+  DOOM-0238 (faked god-rays/fog in the rasterised view - the "bells and
+  whistles, cheaply" half). This item is the material half. Consider
+  whether the three should become one bundle.
+
+- 📋 [DOOM-0274] **Apply the widescreen toggle live, with no restart.**
+  **Layman:** Switching widescreen on or off should take effect immediately instead of asking you to quit and relaunch.
+  Kind: enhancement.
+  Lanes: video, renderer.
+  Source: user-request-2026-07-27.
+  The menu currently admits it: the row reads "On (restart)".
+
+  Why the restart exists (i_video.c, I_InitWidescreen): it sets
+  SCREENWIDTH and WIDESCREENDELTA and MUST run before V_Init/R_Init,
+  because both the screen buffers and the software renderer's projection
+  tables are sized from SCREENWIDTH. Changing it live therefore means
+  reallocating screens[], rebuilding R_Init's projection/view tables,
+  resizing the SDL window + texture, and re-laying-out the status bar and
+  HUD. Bounded, but it is a video-pipeline reinit, not a flag flip.
+
+  Worth checking first whether DOOM-0051's mid-game renderer switching
+  already tore down and rebuilt enough of this to reuse - that work
+  solved a structurally similar "reinit the view without restarting"
+  problem and is shipped.
+
+  Related: DOOM-0147 (the Classic 4:3-vs-fill aspect work that introduced
+  this flag).

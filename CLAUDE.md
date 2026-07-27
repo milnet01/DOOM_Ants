@@ -13,6 +13,34 @@ released 1997-12-23), being modernised in two stages:
 The roadmap (`ROADMAP.md`) is the source of truth for what's planned,
 in progress, and shipped. Finished items graduate into `CHANGELOG.md`.
 
+## Render tiers
+
+Three tiers, chosen in the menu. **What separates them is the ART, not the
+lighting** — every tier below Classic gets the full effect set; only the source
+of the textures changes. Each of Solid and Ultra has both a rasterised and a
+ray-traced view (the `~` key / the menu's Ray Tracing row), so "which tier" and
+"how it is traced" are independent choices.
+
+| Tier | Art | Effects |
+|---|---|---|
+| **Classic** | The 1993/97 game exactly as released | None — this is the original renderer. Widescreen is the one concession, and it is optional |
+| **Solid** | The **original** textures, upscaled, with PBR / POM added on top | The full set — fog, lighting, shadows — faked cheaply wherever a cheap fake holds up |
+| **Ultra** | **Replaced** with HD art | The full set, done properly, and first in line for anything new |
+
+Set by the user on 2026-07-27, revising an earlier position (Solid was previously
+"same renderer as Ultra, minus the HD art"). The distinction to hold on to:
+**Solid enhances DOOM's own art; Ultra substitutes for it.** A player who wants
+the game to still *look like DOOM* picks Solid.
+
+Two consequences worth stating, because they are easy to get backwards:
+
+- **Effects are not a tier ladder.** Do not gate a feature on Ultra because it is
+  expensive; gate it on the ray-traced view, or ship a cheap approximation for
+  Solid. "Ultra-only" is correct only for things that need the HD art itself.
+- **Performance is Solid's feature.** Solid in its rasterised view is currently
+  the smoothest way to play, and that is a property worth protecting when adding
+  to it.
+
 ## Repository layout
 
 - `linuxdoom-1.10/` — the DOOM engine (the main game code; most work lands here)
