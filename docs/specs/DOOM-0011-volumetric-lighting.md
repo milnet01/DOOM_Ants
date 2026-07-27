@@ -1051,7 +1051,7 @@ it reads `pc` and the GI bake includes that header (INV-6). Fold with the same
   cheap, plumbing-free way: have the **megakernel's mode-6 sky branch write the
   closed-form aerial fog into the half-res `fogImg`** for sky pixels (it already holds
   the `pt_common` consts) — the sky branch wrote **no** fog there before L1b — and the
-  composite's **existing** `fetchFogBilinearPlain` fold on the sky-passthrough branch
+  composite's **existing** fog fold on the sky-passthrough branch
   (`svgf_composite.comp:100-103`) then picks it up **unchanged**. No new composite-shader
   code, no duplicated consts (INV-5-consistent).
 - **Mode 4:** in the megakernel sky branch, after `colour = skyPanorama(...)`

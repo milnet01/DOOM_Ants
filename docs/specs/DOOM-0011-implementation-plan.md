@@ -426,7 +426,7 @@ the same haze (spec §4.6a, Q24a).
 In the **mode-6 sky branch** (`~:1283-1292`), which currently writes `gpos.w=-1` + the sky into
 `gillum` and returns without touching `fogImg`, add — under `if (pc.misc6[2] != 0u)` and the same
 even/even half-res gate the surface path uses — an `imageStore(fogImg, ivec2(px)/2, vec4(inscatter, trans))`
-so the composite's **existing** `fetchFogBilinearPlain` fold on the sky-passthrough branch
+so the composite's **existing** fog fold on the sky-passthrough branch
 (`svgf_composite.comp:100-103`, unchanged) picks it up. (svgf_composite.comp has no `pt_common`
 consts, so the value MUST be computed here — spec §4.6a.)
 
@@ -1251,7 +1251,7 @@ L1's plain-bilinear upsample for a **position-guided bilateral** one, with the s
 fallback; tune dither, phase, anisotropy.
 
 **Files:**
-- Modify: `shaders/svgf_composite.comp` (`fetchFogBilinearPlain` → position-guided bilateral upsample)
+- Modify: `shaders/svgf_composite.comp` (plain bilinear → the position-guided `fetchFog`; SHIPPED)
 - Modify: `shaders/pathtrace.comp` / `pt_common.glsl` (dither + `kFogAnisotropy` tuning only)
 
 **Interfaces:**
@@ -1273,7 +1273,7 @@ fallback; tune dither, phase, anisotropy.
 weight built from `gp.w` would be comparing material ids, which is meaningless. Guiding on
 `gp.xyz` needs no new image and no new push-constant lane.
 
-Replace `fetchFogBilinearPlain` with a bilateral fetch: for each of the four half-res fog texels around
+Replace the plain bilinear with a bilateral fetch: for each of the four half-res fog texels around
 `p`, read the gbuffer at **that texel's own full-res pixel** (`imageLoad(gpos[pc.misc.x], q * 2)`) and
 weight it by how far its hit point sits from the centre pixel's, so a shaft against a near wall
 doesn't bleed onto far geometry. **At sky pixels** (`gp.w < 0.0`, §4.6) there is no hit point to
@@ -1281,7 +1281,7 @@ compare → **fall back to plain bilinear** there, keeping the shaft-against-sky
 smooth:
 
 ```glsl
-// First rename the shipped `fetchFogBilinearPlain` to `fetchFogBilinearPlain`, body unchanged --
+// First rename the shipped `fetchFogBilinear` to `fetchFogBilinearPlain`, body unchanged --
 // it becomes the fallback. `fetchFog` below is the new entry point both branches call.
 //
 // kFogDepthSigma is declared HERE, in svgf_composite.comp -- NOT in pt_common.glsl, which this
@@ -1520,7 +1520,8 @@ functions this plan authors**, not existing interfaces: `wisp` (L1c Step 3), `wo
 (L1d Step 3), `sunRayMissesGeometry` (L2 Step 1), `fogHeightPool` (specified at L3 Step 1 but
 **not** shipped when that step landed early — L4 Step 3 must extract it), `emitterCentroid`
 and `emitterLe` (L3 Step 2), and `fetchFog` (L5 Step 1, alongside renaming the shipped
-`fetchFogBilinearPlain` to `fetchFogBilinearPlain`). What already exists is the *pattern* each is built
+the shipped `fetchFogBilinear` to `fetchFogBilinearPlain` — **both shipped 2026-07-27**). What
+already exists is the *pattern* each is built
 from — the ray-query call shape, the emitter-record read, the bilinear fetch — and the plan makes
 reading that pattern its own step rather than restating it from memory. So nothing is invented out
 of thin air, but seven genuinely new helpers get written: a real cost, not a placeholder-free
@@ -1553,5 +1554,5 @@ from `g.lastView.hazeDensity` in `RecordRtTrace` (there is no bare `view` there)
   Levers are `kFogPoolHeight` or a sky-only density; never `kFogBaseDensity`, which would undo
   L1c's foreground tuning.
 - **One stale comment in shipped source** — `svgf_composite.comp`'s comment above
-  `fetchFogBilinearPlain` still calls the L5 upsample "depth-guided". **L5 Step 1 owns fixing it**;
-  flagged rather than edited, because that is engine source and this is a documentation pass.
+  the fog fetch called the L5 upsample "depth-guided". **FIXED 2026-07-27** when L5 Step 1
+  shipped: it now reads "Position-guided", changed in the same edit as the rename.
