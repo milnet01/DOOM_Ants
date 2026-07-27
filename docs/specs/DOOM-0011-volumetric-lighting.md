@@ -1466,6 +1466,36 @@ L1d have taken their slices, at least 6 % of the 15 % must still be unspent. All
 **present-total in milliseconds**, fog-off vs fog-on over the same walk. The prose below
 derives these; the table is the version to check against.
 
+> ### ⛔ MEASURED 2026-07-27 — the fog costs **+35 %**, and the 15 % gate is already blown
+>
+> The A/B this section has owed since L1b shipped, taken on the RX 6600 in E1M1 (Ultra, RT view,
+> 50 % render scale, `\` profiler, one session, fog **High** then **OFF**):
+>
+> | | fog High | fog OFF | Δ |
+> |---|---|---|---|
+> | **present-total** | **32.53 ms** (median 32.84) | **24.15 ms** (median 24.36) | **+8.38 ms = +34.7 %** |
+> | GPU megakernel | 21.21 ms | 13.27 ms | **+7.93 ms** |
+> | GPU denoise+taau | 7.01 ms | 6.75 ms | +0.27 ms |
+> | GPU blit | 0.29 ms | 0.28 ms | +0.01 ms |
+> | CPU build | 3.61 ms | 3.51 ms | +0.10 ms |
+>
+> **Read it as Δ(L1b + L1d + L1e), not Δ(L1b).** The A/B is fog-off vs fog-on and all three had
+> landed, exactly as footnote ‡ anticipated. **95 % of the cost is in the megakernel**, i.e. inside
+> `marchFog` — not in the denoiser, not on the CPU, and not in L1d's texture tap (the seep fill is
+> load-time and its runtime tap rides in that same figure without moving the CPU column).
+>
+> **Caveat, stated because it changes what the number can be used for:** the two halves were *not*
+> the same walk — 74 samples with fog on against 18 with it off — so the present-total figure
+> carries whatever the scene difference contributes. It is not precise enough to tune against. It
+> is far more than precise enough for the decision it forces: an 8 ms step is not a walk artifact,
+> and the per-pass split corroborates it independently.
+>
+> **Consequences, and neither is optional.** L1c's allowance was `8 % − Δ(L1b)`, which is now
+> *negative*; and L1c would itself raise `kFogSteps` 24 → ~40 (**+67 % more samples, each carrying
+> the up-ray**) and double the density. **A perf pass has to come before L1c**, not after it. The
+> lever list below was written for exactly this moment; the up-ray is named there as the pole and
+> the measurement agrees.
+
 - **Baseline & method:** the DOOM-0181/0183 §6 protocol — average the `` \ ``
   profiler (`rb_profile`, DOOM-0090 — the **backslash** key; `` ` ``/`~` is the RT view
   cycle, verified `i_video.c:425` / `:433`) present-total (ms, not FPS) over a fixed ~10 s walk of the **E1M1
