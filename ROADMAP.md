@@ -2966,6 +2966,48 @@ parked ideas (💭 considered) until we commit to and design each one.
   doesn't roll in though. Usually this wall is closed."
   Progress (2026-07-27): IMPLEMENTED and verified on the RX 6600; only the LOOK
   is left, which needs a person at the keyboard.
+  Progress (2026-07-27, second pass): the user reported the fog STILL not coming in
+  through an opened wall. The mechanism was not at fault -- their own play log
+  (/tmp/doom-ants-run.log) shows the re-flood firing repeatedly through the
+  session, the field going 835 -> 819 -> 761 -> 721 -> 715 sealed cells as walls
+  opened. E1M1 throughout (2227 tris, one level all session).
+
+  The fault was entirely in two constants, and the arithmetic says so without a
+  play-test. skyExposure's roofed branch is
+  mix(kIndoorFogScale=0.05, kSeepMax=0.5, exp(-d/kSeepFalloff=192)) against 1.0
+  outdoors, which gives 50% of outdoor density standing IN the opening, 21% at 192
+  units in, 11% at 384, and ~7% by 600 -- indistinguishable from a sealed room. A
+  player standing back in a room, which is where players stand, could not have seen
+  anything no matter how well the re-flood worked.
+
+  Worse, kSeepMax = 0.5 is a 2x density STEP at every threshold: fog visibly HALVES
+  the instant it crosses an opening, which is the opposite of seeping through one.
+  Air standing in a doorway is outdoor air.
+
+  Re-tuned: kSeepMax 0.5 -> 0.9, kSeepFalloff 192 -> 384 (and RB_SEEP_FALLOFF in
+  r_mesh.h, which the header requires to match). New grade: 90% at the opening, 57%
+  at 192, 36% at 384, 17% at 768.
+
+  INV-12 survives BY CONSTRUCTION, not by luck: dMax is defined as 8 x kSeepFalloff
+  in both pt_common.glsl and r_mesh.h, so the sealed sentinel scales with the
+  falloff and a sealed room stays exactly 8 e-folds out -- 0.0503, i.e. the
+  kIndoorFogScale floor -- whatever the falloff becomes. Verified in the field
+  build: an unreachable cell's `best` is DMAX + dist, clamped back to DMAX.
+
+  Side effect, benign: the E1M1 cell split moves 920/1770/835 to 920/2020/585. The
+  250 cells that changed bucket were never sealed -- they were SATURATING the old
+  1536 sentinel, and now carry a real distance between 1536 and 3072, which grades
+  to 0.05-0.07. Below the floor's own visibility.
+
+  -rtverify PASS, unchanged. Spawn-frame capture shows the far half of the E1M1
+  start room now carrying visible mist off the courtyard windows with the near
+  floor still clear.
+
+  NOTE this overrides a signed-off look (2026-07-27: "the fog does dissipate the
+  further away from an opening"), on the strength of a FRESHER complaint about the
+  same feature. If it now overshoots, kSeepMax is the single dial -- pull it toward
+  0.7 before touching the falloff, since the falloff is what carries the depth the
+  user is asking for.
 
   Built as the bullet's three-part shape, and the shape held:
   - Detector. RB_SeepOpeningsChanged (r_mesh.c) caches one open/shut bit per
@@ -3052,5 +3094,42 @@ parked ideas (💭 considered) until we commit to and design each one.
   mechanism, no extra work, but worth putting in the acceptance check.
   **Layman:** When a wall slides open onto the outdoors, mist should start drifting into the room. Right now the game worked out where mist can reach when the level loaded, and never revisits it, so a room that was sealed at the time stays clear even after it opens.
   Kind: enhancement.
+  Lanes: renderer, shaders.
+  Source: user-play-test-2026-07-27.
+
+- 📋 [DOOM-0282] **A wall changes colour — goes blue — when the camera turns a few degrees.**
+  User, 2026-07-27, with a matched screenshot pair from a crate room with BLUE
+  liquid pooled on the floor: "notice this wall now ... notice that the wall now
+  turns blue by me just turning a few degrees." Camera position unchanged; only
+  the yaw differs between the two frames.
+
+  The two frames were registered against each other to confirm it is the same
+  surface and not a different wall coming into view: the pillar moves ~80 px right
+  between them (camera yawed left), and the panel that reads grey at x~920-1170 in
+  the first frame reads blue at x~1000-1250 in the second. Same wall, two colours,
+  same spot on the floor.
+
+  NOT YET DIAGNOSED, and the render mode is not yet known -- which matters more
+  than usual here, because the suspects share nothing between the two paths:
+
+  - If RAY-TRACED: the blue floor is a liquid, and DOOM-0183 gives liquids a
+  forced-constant Le, so the nukage is a real light in the NEE list. Candidates,
+  in rough order: (a) the DOOM-0183 sheen leaking onto a NON-liquid surface --
+  a specular sheen is view-dependent BY CONSTRUCTION, so a mis-set LIQUID_NUKAGE
+  bit or a material-slot collision would produce exactly this; (b) DOOM-0120 RIS
+  light resampling picking the nukage as the sample from one angle and not the
+  other; (c) SVGF disocclusion on turn handing the wall a poorly-converged
+  history. (a) fits best because the tint is CLEAN, not noisy -- (b) and (c)
+  would both read as grain.
+  - If RASTERISED: none of the above exists. The per-subsector nearest-N
+  point-light list is keyed on POSITION, not on yaw, so a pure rotation changing
+  a wall's lighting would itself be the bug.
+
+  First step is to establish the mode, then diff the two frames' shading inputs
+  for that wall rather than guessing. A view-dependent term on a diffuse wall is
+  the shape to look for either way: turning the camera must not change what a
+  matte surface's colour is.
+  **Layman:** A wall in a room with blue liquid on the floor turns blue when you turn on the spot, and back again when you turn away. Standing still and just looking around should never change what colour a wall is.
+  Kind: fix.
   Lanes: renderer, shaders.
   Source: user-play-test-2026-07-27.

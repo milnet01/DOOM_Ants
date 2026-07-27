@@ -34,6 +34,15 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Indoor mist now reaches further in from an opening, and no longer halves at the threshold** (DOOM-0281)
+  Fog standing in a doorway was capped at half the density of the air just
+  outside it, so it visibly halved the moment it crossed the opening; and it
+  faded out within about two door-widths, so anyone standing back in a room
+  saw none of it. Mist now carries most of the outdoor strength at an
+  opening and reaches roughly twice as far inside. A sealed room stays
+  clear, which is guaranteed by how the two dials are defined rather than by
+  the values chosen.
+
 - **Ultra's ray-traced fog is ~7.5 ms/frame cheaper — 31 to 41 FPS with fog on** (DOOM-0276)
   The fog used to fire a test ray straight up from every one of its 24 samples per pixel, just to ask "is there sky above here?". DOOM is flat-mapped — one ceiling per spot on the floor — so that answer was already in the small per-level map the fog builds for its doorway seep. It now reads it from there instead. Measured on an RX 6600 in E1M1 at 50% render scale: fog costs +35% of frame time before and +4% after. The one visible cost is that the line between misty outdoor air and clear indoor air now follows that map's 64-unit grid, so it can sit up to half a cell from the wall.
 

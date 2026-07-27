@@ -97,8 +97,26 @@ const float kIndoorFogScale = 0.05;   // DOOM-0011 §4.3a: fog density multiplie
 // (r_mesh.c's RB_BuildSeepField; a straight line cannot tell a room with a window
 // from a sealed room sharing that wall). kIndoorFogScale stays the floor it decays
 // to, and must stay > 0: L3's torch shafts need a medium in roofed air to light.
-const float kSeepMax     = 0.5;               // density multiplier right at an opening
-const float kSeepFalloff = 192.0;             // world units; e-fold inward from it
+// DOOM-0281 re-tune (2026-07-27), after the re-flood shipped and the fog still did not
+// read as coming in. The mechanism was firing -- the play log shows the field going
+// 835 -> 715 sealed cells as walls opened -- so the fault was entirely in these two
+// numbers, and both were wrong in the same direction:
+//
+//   kSeepMax 0.5 put a 2x density STEP at every threshold. Air standing in a doorway
+//   is outdoor air; capping it at half the outdoor density means fog visibly halves
+//   the instant it crosses the opening, which is the opposite of seeping through it.
+//   0.9 leaves a slight lip (a room is still not a courtyard) without the cliff.
+//
+//   kSeepFalloff 192 killed the grade within two door-widths: 21% of outdoor density
+//   at 192 units in, 11% at 384, indistinguishable from a sealed room by ~600. A
+//   player standing back in a room -- which is where players stand -- saw nothing.
+//
+// INV-12 is untouched, and by construction rather than by luck: dMax below is defined
+// as 8 x kSeepFalloff, so the sealed/unreachable sentinel scales with the falloff and
+// a sealed room stays exactly 8 e-folds out, i.e. at the kIndoorFogScale floor,
+// whatever this number becomes.
+const float kSeepMax     = 0.9;               // density multiplier right at an opening
+const float kSeepFalloff = 384.0;             // world units; e-fold inward from it
 const float dMax         = 8.0 * kSeepFalloff;// the field's finite unreachable/void
                                  // sentinel, mirrored by RB_SEEP_DMAX in r_mesh.h.
                                  // FINITE deliberately: an infinity meeting a zero

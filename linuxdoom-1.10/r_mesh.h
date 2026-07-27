@@ -163,7 +163,7 @@ rb_mesh_t* RB_BuildLevelMesh(void);
 // "unreachable" sentinel for a sealed room and for the void ring around the map.
 // It is FINITE deliberately: an infinity here would meet a zero bilinear weight at
 // the grid edge and produce a NaN, which propagates through the whole fog march.
-#define RB_SEEP_FALLOFF  192.0f                    // must match kSeepFalloff (pt_common.glsl)
+#define RB_SEEP_FALLOFF  384.0f                    // must match kSeepFalloff (pt_common.glsl)
 #define RB_SEEP_DMAX     (8.0f * RB_SEEP_FALLOFF)  // must match dMax        (pt_common.glsl)
 
 typedef struct

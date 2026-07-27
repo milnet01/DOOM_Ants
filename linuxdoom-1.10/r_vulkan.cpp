@@ -3339,8 +3339,8 @@ void UploadSeepField(const rb_seep_t* f)
     // but leaves it OPTIONAL for R32_SFLOAT (spec "Mandatory Format Support: 16-bit /
     // 32-bit Components") -- so sampling a 32-bit field with a linear sampler is
     // undefined on any device that does not advertise the bit, even though it works
-    // on the AMD card this was written against. Half gives ~1-unit resolution at the
-    // 1536-unit sentinel, far finer than a 64-unit cell.
+    // on the AMD card this was written against. Half gives ~2-unit resolution at the
+    // 3072-unit sentinel, far finer than a 64-unit cell.
     std::vector<uint16_t> texels((size_t)w * h * 2, 0);
     PackSeepTexels(texels.data());
 
