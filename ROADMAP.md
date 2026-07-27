@@ -2505,13 +2505,23 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: fix.
   Source: audit+indie-review-2026-07-26.
 
-- 📋 [DOOM-0266] **Add a Volumetric fog row to the Render Effects submenu.**
+- ✅ [DOOM-0266] **Add a Volumetric fog row to the Render Effects submenu.**
   The dial shipped ahead of its menu row. `rb_fog` (0 off / 1 Low / 2 Med /
   3 High) is live in `r_vulkan.cpp`, persisted as `rt_fog` in `m_misc.c`'s
   defaults, and cycled by the `;` key in `i_video.c` — but `EffectsMenu[]`
   in `m_menu.c` has six rows (flashlight, SSAO, de-tile, filth, wet,
   profiler) and no fog row, so the only ways to turn fog off are an
   unlabelled hotkey or hand-editing ~/.doomrc.
+  Shipped 2026-07-27 (346d4b8). "Volumetric Fog" row with
+  Off/Low/Med/High in BOTH the Effects submenu and the crisp Video menu,
+  driving the same rb_fog the `;` hotkey and the rt_fog config row use —
+  so menu, hotkey and ~/.doomrc stay in lockstep by construction rather
+  than by discipline. Seven edits per the DOOM-0011 plan's L6 Step 2
+  (enum in effects_e + videoitem_e, a row in both menuitem arrays, the
+  M_DrawEffectsMenu label/value pair, the videoLabels[] entry, the
+  M_VideoCrispValue case, M_ChangeFog + the fogNames[4][6] table, and the
+  forward declaration without which the arrays do not compile). Answers
+  the user's "is the fog setting in the menus yet?" — it was not.
 
   That is precisely the failure DOOM-0205 was created to fix: a toggle
   whose state is invisible, which last time produced a false "regression"
