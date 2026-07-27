@@ -3305,14 +3305,22 @@ void M_Init (void)
 	break;
     }
 
-    // DOOM-0060: when both games are installed, add "Game Select" to the main
-    // menu after Quit. Done here so it follows the commercial reshuffle above,
-    // which may have pulled Quit up to a lower index. The item template lives at
-    // MainMenu[main_end]; copy it to the slot right after the last visible item.
+    // DOOM-0060: when both games are installed, add "Game Select" to the main menu
+    // just BEFORE Quit, so Quit stays the last row (2026-07-27, user request — every
+    // other DOOM menu ends on the way out, and Quit reads wrong in the middle).
+    // Done here so it follows the commercial reshuffle above, which may have pulled
+    // Quit up to a lower index. The item template lives at MainMenu[main_end]; take a
+    // COPY of it first, because pushing Quit down one writes over that very slot in
+    // the non-commercial case (numitems == main_end, so Quit lands on main_end).
     if (D_BothGamesPresent())
     {
-	MainMenu[MainDef.numitems] = MainMenu[main_end];
-	mainLabels[MainDef.numitems] = mainLabels[main_end];  // DOOM-0206: crisp "Game Select" label follows the item slot
+	menuitem_t  gsItem  = MainMenu[main_end];
+	const char* gsLabel = mainLabels[main_end];
+	int         q       = MainDef.numitems - 1;   // Quit: the last visible row
+	MainMenu[q + 1]   = MainMenu[q];              // push Quit down one
+	mainLabels[q + 1] = mainLabels[q];
+	MainMenu[q]       = gsItem;                   // Game Select takes Quit's old slot
+	mainLabels[q]     = gsLabel;
 	MainDef.numitems++;
 	MainDef.y -= 8;         // one more row -> recenter (mirrors the +=8 above)
     }

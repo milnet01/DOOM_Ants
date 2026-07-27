@@ -48,9 +48,9 @@ layout(push_constant) uniform PC {
 // megakernel's half-res gate is a POINT sample at each 2x2 block's even/even corner
 // (px & ~1), not a block average, so texel j lands exactly at full-res index 2j —
 // the texel-space coordinate is p/2 with NO pixel-centre offset (that offset formula
-// is for box-averaged downsamples, which this isn't). Depth-guided (bilateral)
-// upsample arrives at L5 (Q6); this is deliberately naive for L1.
-vec4 fetchFogBilinear(ivec2 p)
+// is for box-averaged downsamples, which this isn't). Position-guided (bilateral)
+// upsample arrived at L5 (Q6) as fetchFog() below; this plain version is its fallback.
+vec4 fetchFogBilinearPlain(ivec2 p)
 {
     vec2  hf = vec2(p) * 0.5;
     ivec2 i0 = ivec2(floor(hf));
@@ -62,6 +62,62 @@ vec4 fetchFogBilinear(ivec2 p)
     vec4 c01 = imageLoad(fogImg, clamp(i0 + ivec2(0, 1), lo, hi));
     vec4 c11 = imageLoad(fogImg, clamp(i0 + ivec2(1, 1), lo, hi));
     return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
+}
+
+// DOOM-0011 L5: position-guided upsample of the same half-res fog target.
+//
+// WHY: the plain bilinear above blends four half-res fog texels regardless of what each
+// one was looking at, so along a silhouette it mixes the sky's near-total haze with the
+// wall's much smaller amount. That paints a fringe about one fog texel wide hugging every
+// edge -- measured at ~13-16 display pixels on a 50 %-render-scale frame, which is exactly
+// one half-res fog texel -- and the user reported it as the mist changing brightness where
+// geometry is. (They suspected AO. AO cannot reach the fog: it is baked into `albedo`, and
+// the fog is folded AFTER the albedo multiply below.)
+//
+// There is NO depth buffer to guide with. `gpos` already holds the primary hit's WORLD
+// POSITION in .xyz -- .w is a material id, so weighting by it would compare material ids
+// and mean nothing. Weight each of the four taps by how far its own hit point sits from
+// this pixel's, and a tap that was looking at something else stops contributing.
+//
+// `pc.misc.x` -- NOT `cur`: that is a local inside main(), which this function sits above
+// and cannot see. Do NOT resolve a compile error here by hardcoding gpos[0]; that reads
+// the wrong half of the double-buffered gbuffer, which is worse than not compiling.
+//
+// kFogDepthSigma is declared HERE and not in pt_common.glsl, which this shader does not
+// include (only formulas.glsl + pbr_neutral_tonemap.glsl) -- the same limitation that
+// forces the sky fog to be computed in the megakernel (spec 4.6a).
+const float kFogDepthSigma = 256.0;   // world (DOOM) units; ~a room width. Tune DOWN until
+                                      // fog stops bleeding across a near/far edge.
+
+vec4 fetchFog(ivec2 p, vec4 gpFull)
+{
+    if (gpFull.w < 0.0) return fetchFogBilinearPlain(p);   // sky: no hit point to guide with
+
+    vec2  hf = vec2(p) * 0.5;
+    ivec2 i0 = ivec2(floor(hf));
+    vec2  f  = hf - vec2(i0);
+    ivec2 lo = ivec2(0);
+    ivec2 hi = imageSize(fogImg) - ivec2(1);
+
+    vec4  sum  = vec4(0.0);
+    float wsum = 0.0;
+    for (int j = 0; j < 4; ++j)
+    {
+        ivec2 o  = ivec2(j & 1, j >> 1);
+        float wb = (o.x == 0 ? 1.0 - f.x : f.x) * (o.y == 0 ? 1.0 - f.y : f.y);
+        if (wb <= 0.0) continue;
+        ivec2 q  = clamp(i0 + o, lo, hi);
+        // Each half-res fog texel j was marched from full-res pixel 2*j (the even/even
+        // point sample), so that is the gbuffer texel carrying its hit point.
+        vec4 gq = imageLoad(gpos[pc.misc.x], q * 2);
+        if (gq.w < 0.0) continue;                          // that tap was looking at sky
+        float w = wb * exp(-length(gq.xyz - gpFull.xyz) / kFogDepthSigma);
+        sum  += w * imageLoad(fogImg, q);
+        wsum += w;
+    }
+    // Every neighbour rejected (a lone surface pixel surrounded by sky): fall back rather
+    // than divide by zero, so the fetch always yields something.
+    return (wsum > 1e-6) ? sum / wsum : fetchFogBilinearPlain(p);
 }
 
 // DOOM-0096: the exposure EV is no longer a fixed constant — the host passes the
@@ -102,7 +158,7 @@ void main()
             // folding them directly showed the same fog ~2.5x darker here than on a wall,
             // inverting aerial perspective at the very seam this fold exists to match.
             // Decode, fold in linear exactly as the surface path does, re-encode.
-            vec4 fog = fetchFogBilinear(p);
+            vec4 fog = fetchFog(p, gp);                  // sky -> plain bilinear inside
             vec3 skyLin = vec3(srgbToLinear(sky.r), srgbToLinear(sky.g), srgbToLinear(sky.b));
             sky = toneEncode(skyLin * fog.a + fog.rgb);   // fog in front of visible sky
         }
@@ -131,7 +187,7 @@ void main()
     // above (it has no surface albedo of its own) and BEFORE the tonemap, in linear
     // radiance (§4.6). rb_fog==0 -> fog.a=1, fog.rgb=0 -> exact no-op (INV-8).
     if (pc.misc3.y != 0u) {
-        vec4 fog = fetchFogBilinear(p);                 // half-res -> full-res, plain bilinear (L1)
+        vec4 fog = fetchFog(p, gp);                     // half-res -> full-res, position-guided (L5)
         L = L * fog.a + fog.rgb;                        // linear, before tonemap (§4.6)
     }
     if (any(isnan(L)) || any(isinf(L))) L = vec3(0.0);

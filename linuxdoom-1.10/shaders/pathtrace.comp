@@ -820,17 +820,34 @@ float skyFogOpticalDepth(vec3 ro, vec3 rd, float strength)
 {
     float h0     = max(0.0, ro.z - uintBitsToFloat(pc.fogFloorZ));
     float sigma0 = kFogBaseDensity * exp(-h0 / kFogPoolHeight);
-    // The clamp is a SOFT one, and it has to be. `min(H/rd.z, kFogSkyDist)` gave every
-    // pixel within ~3 degrees of the horizon the identical clamped value -- a flat band of
-    // uniform haze with a definite top edge, which the user reported as "the fog has a hard
-    // cut off line". Adding the reciprocals instead saturates smoothly: 1/path = rd.z/H +
-    // 1/kFogSkyDist, so path -> kFogSkyDist at the horizon and -> H/rd.z looking up, with no
-    // kink anywhere between. It also reads better physically -- the layer is not infinitely
-    // wide, so even a perfectly horizontal ray leaves it eventually, and kFogSkyDist is that
-    // finite extent rather than an arbitrary ceiling.
-    float path   = (kFogPoolHeight * kFogSkyDist)
-                 / (kFogPoolHeight + kFogSkyDist * max(rd.z, 0.0));
-    return sigma0 * strength * path;
+
+    if (rd.z > 0.0) {
+        // Looking UP: the exact integral to infinity is sigma0 * H/rd.z. Saturate it
+        // SOFTLY -- 1/path = rd.z/H + 1/kFogSkyDist -- rather than with min(), which
+        // handed every pixel within ~3 degrees of the horizon the identical clamped
+        // value: a flat plateau whose top edge reads as a line. The layer is not
+        // infinitely wide either, so kFogSkyDist is its finite horizontal extent, not
+        // an arbitrary ceiling.
+        return sigma0 * strength * (kFogPoolHeight * kFogSkyDist)
+                                 / (kFogPoolHeight + kFogSkyDist * rd.z);
+    }
+
+    // Looking DOWN (sky seen below the horizon). `max(rd.z, 0.0)` used to collapse this
+    // whole half to the single horizon value -- a second plateau, covering everything
+    // from the horizon down to whatever wall ends it, which is the line the user still
+    // saw after the first fix. A descending ray moves into THICKER air, so its haze must
+    // keep rising. Integrate exactly: the ray falls from h0 to the layer's base over
+    // t1 = h0/|rd.z| (capped by the layer's extent), then travels through the constant
+    // floor density fogDensity() clamps to below the base.
+    float dz = max(-rd.z, 1e-5);
+    float t1 = min(kFogSkyDist, h0 / dz);
+    float x  = dz * t1 / kFogPoolHeight;
+    // (exp(x) - 1) / x, expanded near zero where the naive form loses all its precision
+    // to catastrophic cancellation. This is what makes the two branches meet exactly at
+    // the horizon: as rd.z -> 0 from either side, both tend to sigma0 * kFogSkyDist.
+    float f  = (x > 1e-4) ? (exp(x) - 1.0) / x : (1.0 + 0.5 * x);
+    return strength * (sigma0 * t1 * f
+                       + kFogBaseDensity * max(0.0, kFogSkyDist - t1));
 }
 
 // Returns (inscatter.rgb, transmittance). Linear radiance. rb_fog>0 checked by the caller.

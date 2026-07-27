@@ -965,7 +965,7 @@ Fog is low-frequency, so compute it **cheaply and smooth it**:
   upsample; the simpler first cut is **full-res in mode 4**, half-res only in mode 6
   (Q4). **Mode 6's half-res is re-opened at L1c** — see §6 item 2 and Q18.
 - **Denoise / upsample.** Fog **cannot** ride the SVGF illumination channel
-  (albedo re-multiply, §3 gap 3). **What L1 actually shipped is a plain, un-guided bilinear** (`fetchFogBilinear`,
+  (albedo re-multiply, §3 gap 3). **What L1 actually shipped is a plain, un-guided bilinear** (`fetchFogBilinearPlain`,
   `svgf_composite.comp:53`, called at `:101` and `:129` — its own comment reads "plain
   bilinear (L1)"). The guided variant below is **L5 work, not shipped**. Two
   candidate paths (Q6): (a) a **bilateral upsample** of the half-res fog target guided by
@@ -1051,7 +1051,7 @@ it reads `pc` and the GI bake includes that header (INV-6). Fold with the same
   cheap, plumbing-free way: have the **megakernel's mode-6 sky branch write the
   closed-form aerial fog into the half-res `fogImg`** for sky pixels (it already holds
   the `pt_common` consts) — the sky branch wrote **no** fog there before L1b — and the
-  composite's **existing** `fetchFogBilinear` fold on the sky-passthrough branch
+  composite's **existing** `fetchFogBilinearPlain` fold on the sky-passthrough branch
   (`svgf_composite.comp:100-103`) then picks it up **unchanged**. No new composite-shader
   code, no duplicated consts (INV-5-consistent).
 - **Mode 4:** in the megakernel sky branch, after `colour = skyPanorama(...)`
@@ -1651,7 +1651,7 @@ reasoning stays there.
   foreground is wisped and the sky is not (INV-10).* The sky-passthrough branch stores a display-encoded
   fullbright sky (`svgf_composite.comp:93-107`); folding fog in linear (§4.6) means
   treating it as linear, compositing, then re-clamp/encode. **L1 (shipped, 84e8b35..e7753b3)**
-  wired this fold with `rb_fog`-gated `fetchFogBilinear`; the round-trip is a **no-op by
+  wired this fold with `rb_fog`-gated `fetchFogBilinearPlain`; the round-trip is a **no-op by
   construction** for an un-fogged pixel (`rb_fog==0` → `fog.a=1, fog.rgb=0` →
   `sky·1+0`), so the fog-off sky stays byte-identical (INV-7/INV-8). L1b re-verified this held once the sky-distance fog (§4.6a) began writing real values for
   sky pixels.

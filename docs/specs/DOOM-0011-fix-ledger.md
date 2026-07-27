@@ -583,6 +583,23 @@ hardware is worth more than another lane on a doc that is already internally con
 and each invalidated prose written hours earlier. **When a constant's meaning changes, grep its
 name and re-read every hit** — the value being right is not evidence the sentence around it is.
 
+## Post-convergence edit — 2026-07-27 (fourth) — the second plateau, and L5 pulled forward
+
+| # | Fix | Ripples chased |
+|---|-----|----------------|
+| 17.1 | **The same defect as 16.1, on the other side of the horizon, shipped in the same function.** `max(rd.z, 0.0)` collapsed every below-horizon sky ray to the single horizon value — a second plateau, running from the horizon down to whatever wall ends it. Fixed with the exact integral for a descending ray (it falls to the layer's base over `t1 = h0/|rd.z|`, then crosses the constant floor density below it), which **meets the up-branch exactly at `rd.z = 0`** — both tend to `sigma0 · kFogSkyDist` | The `(exp(x)−1)/x` factor is expanded near zero; the naive difference-of-exponentials loses its precision to cancellation exactly where the two branches must agree, which would have put a seam at the horizon — the very thing being fixed. Verified numerically before shipping: 97.7 % on both sides at the courtyard, 89.9 % on both at the ledge |
+| 17.2 | **L5 Step 1 pulled forward** (position-guided fog upsample). The user reported the mist changing brightness where geometry is and attributed it to AO. AO cannot reach the fog — verified by reading the composite's order, where fog is folded *after* the albedo multiply that carries AO. The real cause measured out of the screenshot: a **~13-16 display-pixel fringe** at silhouettes, which at 50 % render scale is exactly **one half-res fog texel** bled by the plain bilinear | The plan's compile-verified sketch left neighbour-rejection as `...`; shipped with sky taps skipped and an all-rejected fallback so it cannot divide by zero. Closed the ledger's oldest Open item (the stale "depth-guided" comment) in the same edit, since the rename touched that line |
+
+**The lesson batch 16 did not teach hard enough.** Batch 16 fixed a `min()` that flattened a
+gradient and wrote a rule about it into §4.6a — and the replacement shipped in that same batch
+contained a `max()` doing the identical thing on the other side of zero. **A clamp is not only
+suspicious where you were looking.** When one turns up, grep the whole expression for its siblings
+before declaring the class handled.
+
+**Also worth keeping:** the user's diagnosis was wrong (AO) and the report was right (the mist
+changes brightness near geometry). Both halves were useful. Reading the code ruled out the named
+cause in one pass; measuring the screenshot found the real one. Neither step alone would have.
+
 ## Open — not yet fixed
 
 - ~~**Cold-eyes has not converged.**~~ **CONVERGED at loop 13** (2026-07-26): zero verified
@@ -600,9 +617,8 @@ name and re-read every hit** — the value being right is not evidence the sente
   fixes read correctly as prose. **Do not commission another prose-only sweep beyond that**: three
   consecutive lanes have found the spec correctness-clean, and the last two rounds of real findings
   came from compilation, not from reading.
-- **A shipped source comment is stale.** `svgf_composite.comp`'s comment above `fetchFogBilinear`
-  still says the L5 upsample will be "depth-guided". L5 now owns fixing it (noted in the task) —
-  flagged rather than edited, because this is a documentation pass and that is engine source.
+- ~~**A shipped source comment is stale.**~~ **FIXED 2026-07-27** when L5 Step 1 shipped: the
+  comment above the renamed `fetchFogBilinearPlain` now reads "Position-guided".
 - **Q23 (torch-emitter selection) is open and blocks nothing yet, but it will shape L3's code.**
   The nearest-few scan may not fit the budget even in its two-pass form; the per-ray fallback is
   named but undecided, and the decision needs a measurement, not a review loop.

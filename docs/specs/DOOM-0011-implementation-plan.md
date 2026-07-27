@@ -426,7 +426,7 @@ the same haze (spec §4.6a, Q24a).
 In the **mode-6 sky branch** (`~:1283-1292`), which currently writes `gpos.w=-1` + the sky into
 `gillum` and returns without touching `fogImg`, add — under `if (pc.misc6[2] != 0u)` and the same
 even/even half-res gate the surface path uses — an `imageStore(fogImg, ivec2(px)/2, vec4(inscatter, trans))`
-so the composite's **existing** `fetchFogBilinear` fold on the sky-passthrough branch
+so the composite's **existing** `fetchFogBilinearPlain` fold on the sky-passthrough branch
 (`svgf_composite.comp:100-103`, unchanged) picks it up. (svgf_composite.comp has no `pt_common`
 consts, so the value MUST be computed here — spec §4.6a.)
 
@@ -1251,7 +1251,7 @@ L1's plain-bilinear upsample for a **position-guided bilateral** one, with the s
 fallback; tune dither, phase, anisotropy.
 
 **Files:**
-- Modify: `shaders/svgf_composite.comp` (`fetchFogBilinear` → position-guided bilateral upsample)
+- Modify: `shaders/svgf_composite.comp` (`fetchFogBilinearPlain` → position-guided bilateral upsample)
 - Modify: `shaders/pathtrace.comp` / `pt_common.glsl` (dither + `kFogAnisotropy` tuning only)
 
 **Interfaces:**
@@ -1260,12 +1260,12 @@ fallback; tune dither, phase, anisotropy.
 - Produces: the final upsampled fog fetch used by both composite branches. No new interfaces.
 
 **Existing code to read first:**
-- `svgf_composite.comp:93` — the `gp.w < 0.0` sky sentinel; `:53-66` — `fetchFogBilinear`'s
+- `svgf_composite.comp:93` — the `gp.w < 0.0` sky sentinel; `:53-66` — `fetchFogBilinearPlain`'s
   four-texel load (the bilateral guide + the
   fallback trigger).
 - `r_vulkan.cpp:7561-7568` — the a-trous passes (the **escalation** path, Q6, only if bilateral crawls).
 
-- [ ] **Step 1: Position-guided bilateral upsample**
+- [x] **Step 1: Position-guided bilateral upsample** — **SHIPPED 2026-07-27**, pulled forward because the artifact it fixes was reported from hardware: a fringe about one fog texel wide hugging every silhouette, measured at ~13-16 display pixels on a 50 %-render-scale frame. The shipped `fetchFog()` follows the sketch below, plus the one detail the sketch left as `...`: taps whose own gbuffer texel is sky are skipped, and if all four are skipped it falls back rather than dividing by zero.
 
 **There is no depth buffer to guide this with — use the world position that is already there.**
 `gpos` holds the primary hit's **world position** in `gp.xyz`; `gp.w` is the **material id**
@@ -1273,7 +1273,7 @@ fallback; tune dither, phase, anisotropy.
 weight built from `gp.w` would be comparing material ids, which is meaningless. Guiding on
 `gp.xyz` needs no new image and no new push-constant lane.
 
-Replace `fetchFogBilinear` with a bilateral fetch: for each of the four half-res fog texels around
+Replace `fetchFogBilinearPlain` with a bilateral fetch: for each of the four half-res fog texels around
 `p`, read the gbuffer at **that texel's own full-res pixel** (`imageLoad(gpos[pc.misc.x], q * 2)`) and
 weight it by how far its hit point sits from the centre pixel's, so a shaft against a near wall
 doesn't bleed onto far geometry. **At sky pixels** (`gp.w < 0.0`, §4.6) there is no hit point to
@@ -1281,7 +1281,7 @@ compare → **fall back to plain bilinear** there, keeping the shaft-against-sky
 smooth:
 
 ```glsl
-// First rename the shipped `fetchFogBilinear` to `fetchFogBilinearPlain`, body unchanged --
+// First rename the shipped `fetchFogBilinearPlain` to `fetchFogBilinearPlain`, body unchanged --
 // it becomes the fallback. `fetchFog` below is the new entry point both branches call.
 //
 // kFogDepthSigma is declared HERE, in svgf_composite.comp -- NOT in pt_common.glsl, which this
@@ -1307,10 +1307,9 @@ vec4 fetchFog(ivec2 p, vec4 gpFull) {
 width and tune down until fog stops bleeding across a near/far edge. Wire both composite branches
 to `fetchFog(p, gp)` — pass the whole `gp`, not `gp.w`.
 
-**Also fix the shipped comment above `fetchFogBilinear`.** It currently reads "Depth-guided
-(bilateral) upsample arrives at L5 (Q6)" — written before the guide moved to world position. Leave
-it and the source contradicts both documents. Change "Depth-guided" to "Position-guided" in the
-same edit that renames the function.
+**DONE:** the shipped comment above the (now renamed) `fetchFogBilinearPlain` said "Depth-guided
+(bilateral) upsample arrives at L5 (Q6)", written before the guide moved to world position. It now
+reads "Position-guided", changed in the same edit as the rename.
 
 > **Verified by compiler, 2026-07-26.** This step was reconstructed into the real
 > `svgf_composite.comp` — rename, the new const, `fetchFog()` written out in full, and **both**
@@ -1521,7 +1520,7 @@ functions this plan authors**, not existing interfaces: `wisp` (L1c Step 3), `wo
 (L1d Step 3), `sunRayMissesGeometry` (L2 Step 1), `fogHeightPool` (specified at L3 Step 1 but
 **not** shipped when that step landed early — L4 Step 3 must extract it), `emitterCentroid`
 and `emitterLe` (L3 Step 2), and `fetchFog` (L5 Step 1, alongside renaming the shipped
-`fetchFogBilinear` to `fetchFogBilinearPlain`). What already exists is the *pattern* each is built
+`fetchFogBilinearPlain` to `fetchFogBilinearPlain`). What already exists is the *pattern* each is built
 from — the ray-query call shape, the emitter-record read, the bilinear fetch — and the plan makes
 reading that pattern its own step rather than restating it from memory. So nothing is invented out
 of thin air, but seven genuinely new helpers get written: a real cost, not a placeholder-free
@@ -1554,5 +1553,5 @@ from `g.lastView.hazeDensity` in `RecordRtTrace` (there is no bare `view` there)
   Levers are `kFogPoolHeight` or a sky-only density; never `kFogBaseDensity`, which would undo
   L1c's foreground tuning.
 - **One stale comment in shipped source** — `svgf_composite.comp`'s comment above
-  `fetchFogBilinear` still calls the L5 upsample "depth-guided". **L5 Step 1 owns fixing it**;
+  `fetchFogBilinearPlain` still calls the L5 upsample "depth-guided". **L5 Step 1 owns fixing it**;
   flagged rather than edited, because that is engine source and this is a documentation pass.
