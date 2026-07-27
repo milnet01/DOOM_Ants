@@ -290,46 +290,74 @@ fallback if HG reads busy (Q5).
 > in proportion to its distance and nothing ever reads as standing *in* anything. Pooling is what
 > turns the tint into a medium, so it stopped being an L3 nicety and became the point.
 >
-> **Two deliberate deviations from the drafted L3 Step 1, both recorded here rather than
-> discovered later:**
+> It then took **three** passes on the same day to get right, and the two failures are worth
+> keeping because both were invisible to review and obvious in a screenshot.
 >
-> 1. **The floor fallback is camera-relative, not a level-min constant.** The draft called for a
->    `kFogFloorFallback` const used when the primary hit is not an up-facing surface. A single
->    global Z is wrong the moment a map has a raised outdoor area — the cloud would sit at ankle
->    height in one room and overhead in the next. Shipped instead: `ro.z - kEyeAboveFloor`, the
->    floor under the camera. `kFogFloorFallback` is therefore **not** in the tree; §5's inventory
->    reflects that.
-> 2. **The sky closed form uses the density at EYE height, not floor height.** Once density falls
->    off with height, a sky ray crossing the cloud at eye level must not be charged the floor
->    density, or the backdrop is hazed as though it lay on the ground. Shipped:
->    `kFogBaseDensity * exp(-kEyeAboveFloor / kFogPoolHeight)` — a compile-time factor of 0.10 at
->    the shipped constants.
+> **Pass 1 — pooling, at `kFogPoolHeight = 48`.** Too shallow a gradient: the floor was only 2.4×
+> thicker than eye height, which nobody can see. User: *"it is applied to the walls but not the
+> floor."*
 >
-> **Re-balanced the same day, on the first look at the result.** Pooling alone did not deliver the
-> cloud: at `kFogPoolHeight = 48` the floor was only 2.4× thicker than eye height, so the ground
-> still read as clear while the walls hazed. User verdict: *"it is applied to the walls but not the
-> floor."* The pair was re-tuned to **`kFogBaseDensity = 0.0033`, `kFogPoolHeight = 18`** holding
-> the **eye-height product fixed** — `0.0008 × exp(−41/48) = 0.000340` vs `0.0033 × exp(−41/18) =
-> 0.000338` — so walls, mountains and the sky backdrop are unchanged and *only* the near-ground air
-> thickened. One variable moved, so the next look tests exactly one hypothesis.
+> **Pass 2 — re-balance to `0.0033 / 18`,** holding the eye-height product fixed
+> (`0.0008 × exp(−41/48) = 0.000340` vs `0.0033 × exp(−41/18) = 0.000338`) so only the near-ground
+> air moved. The ground did thicken. It also exposed the real bug, which pass 1 had been hiding.
 >
-> Effect at High. Ground, looking down at it: 512 units goes 24 % → 49 % hazed, 1024 goes 42 % →
-> 74 %. A wall at eye height is unchanged at 16 % / 29 %. The cue that reads as a cloud is the
-> **split up a single far wall**: at 1024 units its base is 74 % hazed and its top (+128) is 7 %.
-> `kFogPoolHeight` (18 ≈ knee height, against a 41-unit eye) is the dial: raise it for a deeper
-> bank, lower it to hug the floor. Raising it thins the ground cloud unless `kFogBaseDensity` rises
-> with it — **keep their eye-height product fixed** and the distant look never moves.
+> **Pass 3 — THE DEFECT: density depended on what the ray hit.** `floorZ` came from the primary
+> hit — `hitP.z` when it faced up, else the camera's floor. Standing on a ledge above a courtyard,
+> that gives **two clouds at two heights in one view**: every wall pixel referenced the ledge, so
+> its cloud sat high and hazed the wall; every floor pixel referenced the courtyard, so its cloud
+> sat low and the eye looked down over the top of it and collected almost nothing. The user
+> photographed it and named it exactly: *"we are not actually rendering a cloud, we are simulating
+> the look of a cloud but only on some surfaces, not all."*
+>
+> **The invariant that fixes it, and that nothing may break again: the density at a point in
+> space must be a function of that point and nothing else.** In particular it must not depend on
+> what the ray carrying the sample eventually hits. The reference is now chosen per sample
+> position:
+>
+> | sample is | fog sits on | e-fold height |
+> |---|---|---|
+> | under open sky | `pc.fogFloorZ` — one altitude for the whole level | `kFogPoolHeight` = 112 |
+> | under a roof | the floor under the camera, `ro.z − kEyeAboveFloor` | `kFogIndoorPool` = 18 |
+>
+> `pc.fogFloorZ` is the lowest floor among the level's open-sky sectors, computed once in
+> `RB_BuildLevelMesh` (`rb_mesh_t::fogFloorZ`) and pushed as a bit-cast float in the pad word
+> `misc6`'s alignment already required — so the push range is unchanged at 240 bytes. A real fog
+> bank has an altitude, not a per-pixel one; stand on a high ledge and you now correctly look down
+> onto its top. Indoors keeps a camera-relative reference because a single global Z **is** wrong
+> there — interior rooms sit hundreds of units above and below the outdoor ground — and it is
+> still a per-frame constant, so the invariant holds.
+>
+> `kFogFloorFallback` was never added and is **not** in the tree; §5's inventory reflects that.
+>
+> **Outdoor thickness, same pass.** User: *"outside I want the fog much, much thicker and higher."*
+> Delivered by raising the outdoor e-fold height 18 → **112**, with `kFogBaseDensity` left alone.
+> The bank now reaches well up a courtyard wall instead of sitting below every sight line. At High,
+> standing on E1M1's courtyard (65 units above the fog altitude):
+>
+> | | 256 u | 512 u | 1024 u | 2048 u |
+> |---|---|---|---|---|
+> | ground | 44 % | 68 % | 90 % | 99 % |
+> | wall at eye height | 38 % | 61 % | 85 % | 98 % |
+>
+> **Ground and wall now agree to within a few points at every distance** — that agreement *is* the
+> fix, and the small residual is correct (a ground ray dips into thicker air). A far wall at 1024
+> reads 90 % at its base, 73 % at +128 and 58 % at +256: a vertical gradient, which is what a bank
+> looks like. Standing on the ledge instead (121 units up) everything drops by roughly a third,
+> because you are higher in the layer.
+>
+> **`kFogPoolHeight` is the outdoor dial** — raise for a deeper bank. It is no longer paired with
+> `kFogBaseDensity` the way pass 2 described: the sky term now derives its own path length from it
+> geometrically (§4.6a), so raising it thickens the horizon too.
 
 - **Base density** `kFogBaseDensity` — a small always-on `const` so "clear air"
   still shows faint shafts (pure zero = no shafts at all). This is the "clear"
   profile.
 - **Height pooling** — density scales up toward the floor:
-  `heightPool = exp(-max(0, p.z − floorZ) / kFogPoolHeight)` (called `heightPool`
-  throughout; earlier drafts named it `σ_height`). The floor reference
-  `floorZ` for v1 is the **primary hit's** `hitP.z` when the hit faces up (a floor);
-  otherwise the floor under the camera, `ro.z − kEyeAboveFloor` (deviation 1 above — *not* a
-  level-min constant). This makes fog **settle low** without new geometry
-  data (uses only `hitP`, already in hand). Its coarseness (one floor reference per
+  `heightPool = exp(-max(0, p.z − baseZ) / poolH)` (called `heightPool`
+  throughout; earlier drafts named it `σ_height`). `baseZ` and `poolH` come from the
+  open-sky test on the sample's own position, per the table above — **never** from the
+  primary hit, which is the pass-3 defect. This makes fog **settle low** without new
+  geometry data. Its coarseness (one indoor floor reference per
   pixel) is an accepted v1 approximation (Q3).
 - **Area multiplier & tint** (§4.5) — the profile scales `σ` and sets the medium's
   **scattering tint** `mediumTint` (green in goo, red in hell, neutral in clear).
@@ -747,29 +775,23 @@ the whole thing.
 density **squares** the transmittance everywhere — which costs far more where optical depth is
 already high, i.e. on the sky.
 
-**Updated 2026-07-27 (Q24a shipped, then the ground-cloud re-balance).** Two things changed here.
-The sky's distance is now its own constant, **`kFogSkyDist` = 4096** (2× `kFogMaxDist`), because
-handing the backdrop the same 2048 clamp a wall gets left the mountains *under*-hazed (Q24a). And
-the sky's **density** is no longer `kFogBaseDensity` itself but its value at eye height,
-`kFogBaseDensity × exp(−kEyeAboveFloor / kFogPoolHeight)` — a factor of **0.102** at the shipped
-constants — because a sky ray crosses the ground cloud at head height, not floor height. Sky
-transmittance (how much of the mountain survives), on that current model:
+**Rewritten 2026-07-27 — the sky's haze is now GEOMETRIC, so there is no single number to
+quote.** §4.6a's closed form takes the exact slant path through the layer, `H / rd.z`, clamped
+at `kFogSkyDist`. Haze therefore varies with how high up the sky pixel is, which is the whole
+point — the mountains rise out of the mist instead of sitting behind a uniform wash. At High,
+standing on E1M1's courtyard (65 units above the fog altitude), by elevation above the horizon:
 
-| `kFogBaseDensity` | strength | at 2048 | at 4096 (shipped) |
-|---|---|---|---|
-| `0.0033` today | Low 0.35 (shipped default) | 78.5 % | **61.6 %** |
-| `0.0033` today | High | 50.0 % | **25.0 %** |
-| `0.0066` at L1c | Low 0.35 | 61.6 % | **37.9 %** |
-| `0.0066` at L1c | High | 25.0 % | **6.3 %** |
+| 1° | 5° | 10° | 20° | 30° |
+|---|---|---|---|---|
+| 98 % | 91 % | 70 % | 45 % | 34 % |
 
-So at L1c's doubled density, `kFogSkyDist = 4096` leaves **6.3 %** of the peaks at High — heavily
-washed, and worth a look before accepting. Only the *product* density × distance matters, so
-**halving `kFogSkyDist` exactly cancels a doubling of the density** (4096 → ≈ 2048 restores the
-25 % the shipped build has today). It is deliberately the **single sky lever**: raise it to push
-the mountains back, lower it when density rises. Do not add a second sky constant.
-So L1c must **either** give the sky term its own
-effective density/distance **or** re-check the mountains after the raise; "distant sky
-still readable at High" is therefore an explicit L1c acceptance item (§7).
+Doubling `kFogBaseDensity` at L1c raises every one of those. There is no longer a "halve
+`kFogSkyDist` to cancel it" trick, because the clamp only bites within a couple of degrees of
+the horizon — above that the path length comes from `kFogPoolHeight / rd.z` and is untouched by
+it. **So L1c's density raise now genuinely moves the mountains**, and the honest levers are
+`kFogPoolHeight` (a shallower layer clears the sky faster with elevation) or a sky-only density.
+Take the decision with the screenshot in hand: "distant sky still readable at High" is an
+explicit L1c acceptance item (§7).
 
 **What the sky does about wisps.** §4.6a's sky term is a *closed form* precisely because
 a sky ray sees constant density — which the wisp modulation breaks. v1 resolves this the
@@ -981,12 +1003,23 @@ receive **no distance-fog** — only `skyPanorama()`'s own screen-space horizon 
 one-texel bilinear leak at the sky/wall seam. That is why the mountains read sharp.
 
 **The fix — aerial perspective on the sky (shipped in L1b, 1345c92; described here as the design).** A sky pixel is open-sky by definition
-(§4.3a), so give it the **full** fog over a fixed distance. A sky ray has no finite
-`tHit`, so march (or analytically integrate — a sky ray sees constant outdoor density,
-so a closed-form `inscatter`/`transmittance` over `[0, kFogSkyDist]` is exact and
-avoids a second loop — **`kFogSkyDist`, not `kFogMaxDist`**: the backdrop depicts terrain at
-effectively infinite range, and giving it the wall clamp under-hazes it (Q24a)) toward the
-backdrop with `skyExposure = 1`, then fold the same
+(§4.3a), so give it the **full** fog. A sky ray has no finite `tHit`, so integrate
+analytically rather than marching. **Amended 2026-07-27 — the integral is now geometric,
+not a fixed distance.** For an exponential layer the integral along a straight ray to
+infinity has an exact closed form:
+
+`∫₀^∞ D·exp(−(z₀ + rd.z·t − base)/H) dt  =  D·exp(−h₀/H) · H/rd.z`
+
+— "density where you are, times `H/rd.z`". That one term is what makes the sky behave like a
+real bank: look steeply up and the ray leaves the layer almost at once, so the peaks stay
+clear; look along the horizon and it grazes for miles, so the skyline goes white. The old
+form gave **every** sky pixel the same haze over a fixed `kFogSkyDist`, which can never let a
+mountain rise out of the mist. `kFogSkyDist` survives as the **graze clamp** on `H/rd.z` as
+it diverges at the horizon (2048 = `kFogMaxDist`, so the skyline is never charged more air
+than the furthest wall the march covers — Q24a's point, preserved). `rd.z ≤ 0` is a
+below-horizon sky fill: maximum graze, take the clamp. The helper is
+`skyFogOpticalDepth(ro, rd, strength)` in `pathtrace.comp` — **not** `pt_common.glsl`, because
+it reads `pc` and the GI bake includes that header (INV-6). Fold with the same
 `sky = sky · transmittance + inscatter` used everywhere else:
 - **Mode 6:** `svgf_composite.comp` **cannot** compute the sky fog itself — it
   `#include`s only `formulas.glsl` / `pbr_neutral_tonemap.glsl`, not `pt_common.glsl`,
@@ -1034,24 +1067,33 @@ colour-frozen.
   - **`misc6.w` = global haze density** — a **bit-cast float** (like `misc6.x` ripple
     time: bit-cast in on the C++ side, `uintBitsToFloat` in the shader); the
     hell-level haze from `rb_view_t` (§4.5), `0.0` on non-hell levels.
+  - **`pc.fogFloorZ` = the outdoor fog layer's altitude** (added 2026-07-27) — a **bit-cast
+    float** in world units, from `rb_mesh_t::fogFloorZ`, which `RB_BuildLevelMesh` sets to the
+    lowest floor among the level's open-sky sectors (`0` if it has none, in which case nothing
+    reads it: the up-ray never reports open sky). It costs **no push-constant budget** — it
+    occupies the first of the two pad words `misc6`'s 16-byte alignment already forced, so the
+    range stays 240 bytes and `-rtverify`'s 184-byte prefix is untouched. Per level, not per
+    frame, but it rides the same push as everything else rather than earning a UBO.
   - Everything else is a **compile-time `const`** per house convention
     (DOOM-0181/0183 §5), each with a starting value so L2–L4 are buildable without a
     round-trip: `kSunDir` = `normalize(0.30, 0.30, 1.0)`, `kFogSteps` = 24 (→ ~40 at
     L1c), `kFogBaseDensity` = 0.0033 (→ ~0.0066 at L1c), `kFogMaxDist` = 2048,
-    **`kFogSkyDist` = 4096** (the sky backdrop's own haze distance — Q24a; halve it if
-    `kFogBaseDensity` doubles at L1c, since only density × distance matters),
-    `kFogPoolHeight` = 18, `kFogAnisotropy` = 0.40, `kGooTint` = `(0.35, 0.85, 0.30)`,
+    **`kFogSkyDist` = 2048** (the sky's GRAZE CLAMP since 2026-07-27, no longer "the sky's
+    distance" — §4.6a), `kFogPoolHeight` = 112 (**outdoor** e-fold height),
+    **`kFogIndoorPool` = 18** (roofed air keeps the shallower bank),
+    `kFogAnisotropy` = 0.40, `kGooTint` = `(0.35, 0.85, 0.30)`,
     `kHellTint` = `(0.90, 0.35, 0.30)`, `kIndoorFogScale` = 0.05, the per-source
     strengths = 1.0, **`kAreaDensity` = 0.0020** (§4.5's profile density), **`kFogFloorFallback`**
-    and **`kTorchFalloff`** (both L3, §4.3/§4.4 — pooling floor height when no floor is known, and
-    the torch inverse-square falloff scale). **`kFogDepthSigma`** (L5's bilateral guide, §4.6 — a
+    and **`kTorchFalloff`** (§4.3/§4.4). **`kFogFloorFallback` was never needed** and is not in the
+    tree — the outdoor reference is the per-level `pc.fogFloorZ` and the indoor one is
+    camera-relative (§4.3).  `kTorchFalloff` is still owed by L3. **`kFogDepthSigma`** (L5's bilateral guide, §4.6 — a
     distance in **world units** between two hit positions, not a depth ratio) is the **one
     exception: it is declared in `svgf_composite.comp` itself, NOT in `pt_common.glsl`**, because
     that shader includes only `formulas.glsl` and `pbr_neutral_tonemap.glsl` — the same limitation
     §4.6a leans on to justify computing the sky fog in the megakernel. **Shipped today** (`pt_common.glsl:37-47`, verifiable by grep): `kFogSteps`,
     `kFogMaxDist`, **`kFogSkyDist`**, `kFogBaseDensity`, `kSunDir`, `kSkyShaftStrength`,
-    `kTorchShaftStrength`, `kIndoorFogScale`, `kFogPoolHeight`, `kFogAnisotropy`,
-    `kGooTint`, `kHellTint`. **Not yet in the tree** — `kAreaDensity` and every
+    `kTorchShaftStrength`, `kIndoorFogScale`, `kFogPoolHeight`, **`kFogIndoorPool`**,
+    `kEyeAboveFloor`, `kFogAnisotropy`, `kGooTint`, `kHellTint`. **Not yet in the tree** — `kAreaDensity` and every
     2026-07-25 constant below; each is a first guess owned by its layer's question. **The 2026-07-25 constants belong to the same inventory:**
     `kFogColor` = `(0.55, 0.56, 0.56)`, `kWispAmp` = 0.6, `kWispWeight2` = 0.7,
     `kWispFreq1` = 1/512, `kWispFreq2` = 2.5·`kWispFreq1`, `kWispVel1` = `(8, 3, 1)`,
@@ -1473,25 +1515,25 @@ The other layers' Verify cells fit in a line. These two do not, so they live her
   `kIndoorFogScale` — it is `mix(kIndoorFogScale, kSeepMax, exp(-d/kSeepFalloff))`,
   where `d` is the **through-open-space** distance to outdoor air (§4.3a amendment).
 - **INV-10 (sky-backdrop fog, 2026-07-24):** sky pixels receive **aerial-perspective
-  fog** (`skyExposure = 1`) over the sky's own fade distance (`kFogSkyDist`, shipped
-  2026-07-27 — Q24a), folded as `sky · transmittance +
+  fog** (`skyExposure = 1`) along the ray's own slant path through the layer
+  (`skyFogOpticalDepth`, §4.6a), folded as `sky · transmittance +
   inscatter` on the mode-6 sky-passthrough branch (`svgf_composite.comp:93-107`) and the
   mode-4 sky branch (`pathtrace.comp:1326-1337`), in the **same linear space** as every other
   fog fold (INV-4). Fog-off (`rb_fog == 0`) → `transmittance = 1, inscatter = 0`, so the
   sky is **byte-identical** to today (INV-7/INV-8). No up-ray and no new resource
-  (INV-5) — the sky is outdoors by definition. **Amended 2026-07-25, re-amended 2026-07-27:**
-  the closed form omits `wisp`, and applies `heightPool` at a **single constant height** rather
-  than per sample: `kFogBaseDensity · exp(−kEyeAboveFloor / kFogPoolHeight) · fogStrengthScale`
-  integrated over `[0, kFogSkyDist]`, nothing else. The height term is a compile-time constant,
-  so the density is still uniform and the closed form still holds — but the sky is charged the
-  air a ray actually crosses at head height, not the thick air at the floor, which is what
-  stopped the backdrop being hazed as though it lay on the ground. The wisp exclusion is
+  (INV-5) — the sky is outdoors by definition, and `pc.fogFloorZ` is a push-constant, not a
+  resource. **Amended 2026-07-25, re-amended twice on 2026-07-27:** the closed form omits `wisp`,
+  and its optical depth is `kFogBaseDensity · exp(−h₀/kFogPoolHeight) · fogStrengthScale ·
+  min(kFogPoolHeight / rd.z, kFogSkyDist)`, where `h₀ = max(0, ro.z − pc.fogFloorZ)` — the exact
+  integral through an exponential layer, so it is still a closed form with no loop, but the haze
+  now varies with the sky pixel's **elevation**. That is what lets a mountain rise out of the
+  mist; a fixed distance never could. The wisp exclusion is
   **deliberate** (`wisp ≡ 1` for sky pixels) — a closed form requires constant density, and
   billow structure on the mountains would be sub-pixel anyway. The consequence to watch is the
   **sky/wall seam** between wisped foreground and un-wisped sky, which is an explicit L1c
   acceptance item (§7). *Falsifiable:* that acceptance row — "no visible discontinuity at the
   sky/wall seam" — plus, by diff, the sky branch never samples the noise volume and never reads
-  a per-pixel floor reference (`FogHit.hitP`).
+  `FogHit` at all (it takes only `ro`, `rd` and the strength).
 - **INV-11 (wisps, 2026-07-25):** density is modulated by **two octaves of drifting 3-D
   value noise** read from a single CPU-generated noise volume —
   `wisp` multiplies the whole medium (so goo and hell billow too). **`kWispAmp = 0` is an
@@ -1559,9 +1601,11 @@ reasoning stays there.
   no-occlusion; add if light-through-wall reads wrong (L3).
 - **Q3 (density source + floor reference):** primary-hit-keyed goo density (v1, cheap,
   blind to goo behind/around corners) vs a per-sector fog buffer (correct, new plumbing).
-  **Also owns the height-pooling floor reference** — one `floorZ` per pixel from the
-  primary hit (§4.3), which is coarse wherever a pixel spans two floor heights (L3).
-  v1 takes the primary-hit key; revisit if the room-fill reads wrong (L4).
+  **CLOSED 2026-07-27 for the height-pooling floor reference:** it is *not* per pixel and not
+  from the primary hit — that was the pass-3 defect (§4.3). Outdoor air references the per-level
+  `pc.fogFloorZ`; roofed air references the camera's floor. Both are per-frame constants, so
+  density is a function of the sample position alone. Revisit only if a map's interiors need a
+  finer indoor reference than "the floor the player is standing on".
 - **Q4 — CLOSED for mode 4 (§4.6):** mode 4 (display) marches **full-res**, matching the
   shipped code (mode 4 has no even/even gate). Revisit only if its full-res march proves
   too costly. **Mode 6's resolution is *not* settled here — it is Q18's**, re-opened at
@@ -1668,16 +1712,16 @@ reasoning stays there.
   effectively infinite distance, so it is systematically under-hazed against any surface at the
   clamp, and a nearer bright wall ends up looking *more* distant than the mountains behind it —
   aerial perspective inverted.
-  **SHIPPED 2026-07-27** (not deferred to L1c — it was two constants): `kFogSkyDist = 4096.0`
-  in `pt_common.glsl`, used by both sky closed forms in `pathtrace.comp` in place of
-  `kFogMaxDist`. The world march and the §4.3a up-ray still use `kFogMaxDist` — only the sky
-  moved. At the current constants the backdrop sits at **75 %** hazed against **50 %** for a wall
-  at the 2048 clamp, so the peaks now read *behind* anything at that clamp instead of in front of
-  it. **User-confirmed 2026-07-27:** *"the mountains now look much better in terms of mist / fog."*
-  **It is the single sky lever — do not add a second.** Only the product density × distance
-  matters, so when L1c doubles `kFogBaseDensity`, halving this constant exactly cancels it; left
-  at 4096 the peaks drop to 6.3 % transmittance at High (see the table in §4.3b). Q24 is the same
-  lever seen from the density side.
+  **SHIPPED 2026-07-27** as `kFogSkyDist = 4096.0`, used by both sky closed forms in place of
+  `kFogMaxDist`. **User-confirmed the same day:** *"the mountains now look much better in terms of
+  mist / fog."* **Superseded later that day, and the constant now means something else.** The sky
+  no longer has a fixed distance at all: §4.6a integrates the exact slant path through the layer,
+  so haze varies with the sky pixel's elevation and the inversion cannot recur by construction —
+  a horizon ray grazes the layer for longer than any wall ray, which is precisely what "further
+  away" should mean. `kFogSkyDist` survives only as the **graze clamp** on that path as it
+  diverges at the horizon, and is back to 2048 (= `kFogMaxDist`) so the skyline is never charged
+  more air than the furthest wall the march covers. The "halve it to cancel a density doubling"
+  trick is **gone**: the clamp only bites within a couple of degrees of the horizon (see Q24).
   The "slightly darker outside" note in §4.3b is a separate knob and **was answered on
   2026-07-27**: `kSkyShaftStrength` 1.0 → 0.85.
 - **Q24 (sky density after the L1c raise, 2026-07-26):** §4.3b's fork — give the sky term its own
@@ -1686,5 +1730,8 @@ reasoning stays there.
   its acceptance check. **Superseded in mechanism by Q24a (shipped 2026-07-27):** the sky now has
   its own distance, `kFogSkyDist`, so the resolution is to **lower that one constant** — not to add
   a second sky constant, and not to touch `kFogBaseDensity`, which would undo the foreground tuning
-  L1c just did. Concretely, doubling the base density means halving `kFogSkyDist` (4096 → ≈ 2048)
-  to hold the peaks where they read correctly today. **L1c.**
+  L1c just did. **Re-opened 2026-07-27, wider than before:** since the sky's path is now geometric
+  (§4.6a), `kFogSkyDist` no longer cancels a density change except within a degree or two of the
+  horizon, so a doubling **will** move the mountains and there is no one-constant fix. The honest
+  levers are `kFogPoolHeight` (a shallower layer clears the sky faster with elevation) or a
+  sky-only density. Decide with the screenshot, not from the arithmetic. **L1c.**

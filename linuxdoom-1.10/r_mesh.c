@@ -612,6 +612,22 @@ rb_mesh_t* RB_BuildLevelMesh(void)
     mesh->tri_ss   = bld.ssid;   // one subsector id per triangle (step 4c)
     mesh->sky      = bld.sky;     // DOOM-0141: RT-only sky backdrop tris
     mesh->numsky   = bld.skycount;
+
+    // DOOM-0011: the outdoor fog layer's base altitude — the lowest floor under open
+    // sky. See rb_mesh_t's field comment for why this must be one level-wide number.
+    {
+        fixed_t lowest = 0;
+        int     found  = 0;
+        for (i = 0; i < numsectors; i++)
+        {
+            if (sectors[i].ceilingpic != skyflatnum)
+                continue;
+            if (!found || sectors[i].floorheight < lowest)
+                lowest = sectors[i].floorheight;
+            found = 1;
+        }
+        mesh->fogFloorZ = found ? lowest / (float)FRACUNIT : 0.0f;
+    }
     return mesh;
 }
 

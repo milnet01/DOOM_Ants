@@ -133,6 +133,17 @@ typedef struct
     // texnum on each vertex is the sky wall-texture (skytexture); flags = RB_MESH_SKYDOME.
     rb_vertex_t* sky;       // numsky entries (multiple of 3), or NULL. Owned here.
     int          numsky;    // sky vertex count (always a multiple of 3)
+    // DOOM-0011: the altitude the outdoor fog layer sits on, in world units — the
+    // LOWEST floor among this level's open-sky sectors (0 if the level has none, in
+    // which case nothing reads it: the fog's own up-ray never reports open sky).
+    // The fog needs ONE ground height for the whole view. Deriving it per pixel from
+    // whatever the ray happened to hit made a floor pixel and the wall pixel beside it
+    // disagree about where the cloud was, which is visible as fog on the walls and none
+    // on the ground in front of them. Density must be a function of a point in space
+    // and nothing else. Known limit: one deep outdoor pit drags the layer down under
+    // the rest of the map, thinning it everywhere; E1M1's open-sky floors span 80 units
+    // against a 112-unit falloff, so it does not bite there.
+    float        fogFloorZ;
 } rb_mesh_t;
 
 // Build the current level's mesh from the globals p_setup.c populated

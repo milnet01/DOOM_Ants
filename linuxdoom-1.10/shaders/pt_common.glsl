@@ -36,18 +36,16 @@ const vec3  SKY_COLOR    = vec3(0.20, 0.26, 0.40);   // bounded sky-light on a m
 // DOOM-0011: volumetric fog (single-scatter view-ray march). All tune-on-hardware.
 const int   kFogSteps        = 24;               // fixed sample count (coherent, cheap)
 const float kFogMaxDist      = 2048.0;           // clamp tHit so a long corridor can't blow budget
-const float kFogSkyDist      = 4096.0;           // DOOM-0011 Q24a: the SKY backdrop's effective
-                                 // haze distance. It depicts terrain at effectively infinite
-                                 // range, so handing it kFogMaxDist (as L1b did) gave the
-                                 // mountains exactly as much haze as a wall at the 2048 clamp,
-                                 // and a nearer bright wall then read as MORE distant than the
-                                 // horizon behind it. At 2x kFogMaxDist, and with the sky ray
-                                 // crossing the cloud at EYE height, the backdrop sits at ~75%
-                                 // haze against ~50% for a wall at the 2048 clamp. This is the
-                                 // single sky lever: raise it to push the mountains further back,
-                                 // lower it if the sky ever washes out (e.g. after L1c's density
-                                 // raise). It did NOT need re-tuning for the 2026-07-27 ground-
-                                 // cloud re-balance, which held the eye-height density fixed.
+const float kFogSkyDist      = 2048.0;           // DOOM-0011 Q24a: GRAZE CLAMP on the sky's slant
+                                 // path (skyFogOpticalDepth). Since 2026-07-27 the sky's haze is
+                                 // computed geometrically -- H/rd.z, the exact path through an
+                                 // exponential layer -- so this is no longer "the sky's distance"
+                                 // but the cap applied as that path goes to infinity at the
+                                 // horizon. Set to kFogMaxDist so the skyline is never charged
+                                 // more air than the furthest wall the march covers, which is
+                                 // what keeps aerial perspective the right way round (Q24a's
+                                 // whole point). Lower it to pull the horizon back out of the
+                                 // white; it has no effect more than a few degrees above it.
 const float kFogBaseDensity  = 0.0033;           // extinction AT FLOOR LEVEL at "High". tune-on-hw.
                                  // 2026-07-27: the pair below was re-balanced so the cloud reads as
                                  // a bank lying ON the ground. The eye-height product is HELD FIXED
@@ -57,12 +55,18 @@ const float kFogBaseDensity  = 0.0033;           // extinction AT FLOOR LEVEL at
                                  // within a rounding error, and ONLY the near-ground air thickened.
                                  // Measured at High: ground at 512 u 24 % -> 49 % hazed, at 1024 u
                                  // 42 % -> 74 %; a wall at eye height is 16 % / 29 % either way.
-const float kFogPoolHeight   = 18.0;             // e-fold height (DOOM units) for floor pooling.
-                                 // ~knee height (the eye rides at kEyeAboveFloor = 41), so the bank
-                                 // has a soft top well below the horizon: the BASE of a distant wall
-                                 // sits in it (74 % at 1024 u) while its top stays nearly clear
-                                 // (7 %). That base/top split is what reads as a cloud rather than
-                                 // a tint. Raise it for a deeper bank, lower it to hug the floor.
+const float kFogPoolHeight   = 112.0;            // OUTDOOR e-fold height (DOOM units) above the
+                                 // level's fog-layer altitude. 2026-07-27: 18 -> 112 on user
+                                 // request ("outside I want the fog much, much thicker and
+                                 // higher"). At 18 (~knee height) the bank was below every sight
+                                 // line; at 112 it reaches well up a courtyard wall, so you are
+                                 // inside it rather than looking over it. Raise for a deeper bank.
+const float kFogIndoorPool   = 18.0;             // INDOOR e-fold height. Roofed air keeps the
+                                 // shallow knee-height bank the outdoor fog had before the raise —
+                                 // the look the user asked to keep for interiors. Paired with
+                                 // kIndoorFogScale, which is what still holds sealed rooms clear
+                                 // until the L1d seep can tell "room with a window" from "room
+                                 // buried three doors deep".
 const float kEyeAboveFloor   = 41.0;             // DOOM's VIEWHEIGHT: how far the eye rides above
                                  // its own floor. Used as the height at which a SKY ray crosses
                                  // the ground cloud, and as the floor fallback when the primary
@@ -99,8 +103,14 @@ float fogPhaseHG(float cosTheta, float g) {
 // proportion to how far away it is, and nothing ever looks like it is standing IN
 // something. kFogPoolHeight is the e-fold height: at floorZ + kFogPoolHeight the air is
 // 1/e as thick, so the cloud has a soft top edge instead of a hard line.
-float fogDensity(vec3 p, float floorZ) {
-    return kFogBaseDensity * exp(-max(0.0, p.z - floorZ) / kFogPoolHeight);
+// `baseZ` is the altitude the cloud lies on and `poolH` its e-fold height. BOTH must
+// depend only on where `p` is -- never on what the ray that produced `p` went on to hit.
+// Breaking that is what produced the 2026-07-27 defect the user described as "we are
+// simulating the look of a cloud but only on some surfaces": the floor pixel and the wall
+// pixel beside it were shading the SAME air against two different ground heights, so the
+// wall hazed and the floor in front of it did not.
+float fogDensity(vec3 p, float baseZ, float poolH) {
+    return kFogBaseDensity * exp(-max(0.0, p.z - baseZ) / poolH);
 }
 
 // rb_fog strength level (pc.misc6.z: 1=Low 2=Med 3=High; 0 is gated out by the caller)

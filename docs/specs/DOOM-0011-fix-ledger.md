@@ -81,6 +81,17 @@ grep -n "0\.0008\|kFogPoolHeight = 48\|= 48\.0" $S $P
 grep -n "fogHeightPool" $P              # L4 CALLS it; L3 shipped the exp() inlined, so whoever
                                         # writes L4 must EXTRACT it first or the snippet
                                         # will not compile
+grep -n "floorZ" $S $P | grep -vi "not a per-pixel\|do not reintroduce\|came from the primary"
+                                        # THE load-bearing one, and it must come back EMPTY.
+                                        # Fog density must be a function of the SAMPLE POSITION
+                                        # alone -- never of what the ray hit. A per-pixel `floorZ`
+                                        # from the primary hit is the 2026-07-27 pass-3 defect
+                                        # (two clouds at two heights in one frame). The three
+                                        # excluded phrases are the warnings ABOUT it.
+grep -n "kFogSkyDist" $S $P             # since 2026-07-27 it is a GRAZE CLAMP on the sky's slant
+                                        # path, NOT "the sky's distance". Any text saying halving
+                                        # it cancels a density doubling is stale -- that only held
+                                        # for the old fixed-distance form.
 grep -n "FogHit {"                $P   # every occurrence must carry `uint ctrlFlags` (L4)
 grep -n "genuinely new helpers\|helpers this plan authors" $P   # the COUNT must match the list
 grep -n "Q2[0-9]"                 $S $P   # a new Q must appear in BOTH the spec's §10 and the
@@ -526,6 +537,38 @@ eye-height product was held fixed to a rounding error precisely so the next play
 hypothesis. That discipline is worth as much as the ledger: two coupled constants changed, and the
 distant look is provably untouched, so if the user reports the walls looking different, the change
 is not the cause.
+
+## Post-convergence edit — 2026-07-27 (second) — the fog becomes an actual layer
+
+Again not a review loop: a code change, run through the pre-flight. **This one is different in
+kind from batch 14** — batch 14 re-tuned numbers, this one found a design defect that eight
+review passes and a compile pass had all read straight past, because it is not visible in any
+single line of code. It took a screenshot.
+
+**The defect.** `marchFog` derived the cloud's ground height from the PRIMARY HIT — `hitP.z` when
+the hit faced up, else the camera's floor. Every line of that is individually reasonable. Together
+they mean **the density at a point in space depends on what the ray carrying it eventually hits**.
+Standing on a ledge above a courtyard, the wall pixels referenced the ledge and the floor pixels
+referenced the courtyard: two clouds, two heights, one frame. The user: *"we are not actually
+rendering a cloud, we are simulating the look of a cloud but only on some surfaces, not all."*
+
+**The invariant now written into spec §4.3, INV-10 and a standing grep:** *fog density at a point
+is a function of that point alone.* It is the kind of property that is trivially checkable once
+stated and invisible until someone states it.
+
+| # | Fix | Ripples chased |
+|---|-----|----------------|
+| 15.1 | Reference chosen per **sample position**: open sky → the per-level `pc.fogFloorZ`; roofed → the camera's floor. New `rb_mesh_t::fogFloorZ` (lowest open-sky floor, `RB_BuildLevelMesh`) and a push-constant lane that costs zero bytes — it fits in the pad `misc6`'s alignment already forced | Spec §4.3 rewritten as a three-pass narrative (pooling → re-balance → the defect), because the two failed passes are the useful part. §4.3's own inventory bullet, spec Q3's "one `floorZ` per pixel" (CLOSED), the plan's L3 Step 1 record, and L4's `fogHeightPool` call site all carried the per-pixel model |
+| 15.2 | Outdoor e-fold height 18 → **112** (user: *"outside I want the fog much, much thicker and higher"*), with a separate `kFogIndoorPool` = 18 keeping the shallow bank in roofed air — the look the user asked to keep for interiors | Every quoted percentage in §4.3 was recomputed; ground and wall now agree to within a few points at every distance, which is the check that the defect is gone |
+| 15.3 | **The sky's haze is now geometric.** `skyFogOpticalDepth()` integrates the exact slant path through an exponential layer, `H/rd.z`, clamped at `kFogSkyDist`. Haze varies with the sky pixel's elevation, so mountains rise out of the mist; the old fixed distance gave every sky pixel the same wash and never could | Invalidated a whole table in §4.3b, INV-10's formula and falsifier, §4.6a's derivation, Q24a, Q24, the plan's L1b Steps 3–4 and its self-review. **`kFogSkyDist` changed MEANING, not just value** — the "halve it to cancel a density doubling" advice appeared in five places and is now false everywhere; new standing grep |
+| 15.4 | `kFogSkyDist` 4096 → 2048 (= `kFogMaxDist`), so the skyline is never charged more air than the furthest wall the march covers | Q24a's original argument survives — the inversion is now impossible by construction rather than by tuning, which is a strictly better resolution |
+
+**What this batch says about review.** Thirteen cold-eyes loops, a compile pass over every code
+block, and a converged ledger did not find this. Nothing was undeclared, nothing failed to build,
+no citation had drifted — the code did exactly what it said. The defect was in what the design
+*meant*, and the only instrument that detected it was a person looking at the screen and saying
+the fog was on the walls but not the floor. **Budget for that instrument.** A round trip to
+hardware is worth more than another lane on a doc that is already internally consistent.
 
 ## Open — not yet fixed
 

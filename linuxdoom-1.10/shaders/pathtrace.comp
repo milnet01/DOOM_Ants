@@ -275,6 +275,11 @@ layout(push_constant) uniform PC {
     SubSec   subSec;   // DOOM-0119: subsector -> sector (device address; 0 if cull off)
     EmitSec  emitSec;  // DOOM-0119: per-emitter sector (device address; 0 if cull off)
     Reject   reject;   // DOOM-0119: REJECT bitmatrix words (device address; 0 if cull off)
+    uint     fogFloorZ;  // DOOM-0011: outdoor fog-layer altitude, world units, BIT-CAST float
+                         // (rb_mesh_t::fogFloorZ). Occupies the first of the two pad words
+                         // misc6's 16-byte alignment already required, so the push range is
+                         // still 240 bytes.
+    uint     _pad_misc6; // aligns misc6 to offset 224 (INV-6)
     uvec4    misc6;    // DOOM-0183: x = ripple time (float bits, seconds); y = wet toggle
                        // (rb_wet: sheen/ripple/puddle only, not the glow).
                        // DOOM-0011: z = fog strength (rb_fog 0..3; 0 skips the march, INV-8).
@@ -794,6 +799,28 @@ vec3 skyPanorama(uvec2 px, uint w, uint h)
 // now so L2-L4 fill fields without re-plumbing the call sites (§4.1).
 struct FogHit { vec3 hitP; vec3 gnormal; uint matFlags; }; // L2-L4 read these
 
+// DOOM-0011: optical depth for a ray that leaves the outdoor fog layer and never comes
+// back -- the sky backdrop. Closed form, no march. For an exponential layer the integral
+// along a straight ray has an exact answer:
+//
+//     INT[0..inf] D * exp(-(z0 + rd.z*t - base)/H) dt  =  D * exp(-h0/H) * H / rd.z
+//
+// so the whole thing collapses to "density where you are, times H/rd.z". That single term
+// is what makes the sky behave like a real bank instead of a flat wash: look steeply up
+// and the ray escapes the layer almost at once (peaks stay clear); look along the horizon
+// and it grazes for miles (the skyline goes white). Replaces L1b's flat
+// `density-at-eye-height x kFogSkyDist`, which gave every sky pixel the same haze and so
+// could never let a mountain rise out of the mist. Lives here, not in pt_common.glsl,
+// because it reads `pc` and the GI bake includes that header (INV-6).
+// rd.z <= 0 is a below-horizon sky fill: maximum graze, so take the clamp.
+float skyFogOpticalDepth(vec3 ro, vec3 rd, float strength)
+{
+    float h0     = max(0.0, ro.z - uintBitsToFloat(pc.fogFloorZ));
+    float sigma0 = kFogBaseDensity * exp(-h0 / kFogPoolHeight);
+    float path   = (rd.z > 1e-3) ? min(kFogPoolHeight / rd.z, kFogSkyDist) : kFogSkyDist;
+    return sigma0 * strength * path;
+}
+
 // Returns (inscatter.rgb, transmittance). Linear radiance. rb_fog>0 checked by the caller.
 vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)
 {
@@ -808,15 +835,23 @@ vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)
     vec3  skyAmbient = SKY_COLOR * kSkyShaftStrength;   // L1: flat, non-directional
     float strength   = fogStrengthScale(pc.misc6.z);   // the `;` dial: Low/Med/High thins the air
 
-    // DOOM-0011 L3: the floor the cloud lies on. Prefer the primary hit when it is a
-    // FLOOR (gnormal.z > 0.7 -- an up-facing surface); otherwise the ray ended on a wall,
-    // a ceiling or the sky and tells us nothing about ground height, so fall back to the
-    // floor under the CAMERA (eye minus DOOM's 41-unit view height). That fallback is
-    // camera-relative rather than the level-min constant the spec drafted, because a
-    // single global Z is wrong the moment a map has a raised outdoor area -- the cloud
-    // would sit at ankle height in one room and overhead in another. Deviation logged in
-    // spec 4.3.
-    float floorZ = (h.gnormal.z > 0.7) ? h.hitP.z : (ro.z - kEyeAboveFloor);
+    // DOOM-0011 L3, corrected 2026-07-27. The cloud's ground height USED to come from the
+    // primary hit -- hitP.z when the hit faced up, else the camera's floor. That is the
+    // defect the user photographed: standing on a ledge above a courtyard, every wall pixel
+    // referenced the LEDGE (so its cloud sat high and hazed the walls) while every floor
+    // pixel referenced the COURTYARD (so its cloud sat low, and the eye looked down over the
+    // top of it and collected almost nothing). Two clouds, at two heights, in one view --
+    // "a cloud on some surfaces, not all". The air at a point in space cannot depend on what
+    // the ray eventually hits, so the reference is now chosen per SAMPLE POSITION:
+    //   - open sky  -> pc.fogFloorZ, one altitude for the whole level (RB_BuildLevelMesh:
+    //                  the lowest floor under open sky). A real fog bank has an altitude,
+    //                  not a per-pixel one. Stand on a high ledge and you now correctly look
+    //                  down onto the top of it.
+    //   - roofed air -> the floor under the CAMERA. Still a per-frame constant, so the
+    //                  invariant holds; a global altitude would be wrong indoors, where
+    //                  rooms sit hundreds of units above and below the outdoor ground.
+    float outdoorBase = uintBitsToFloat(pc.fogFloorZ);
+    float indoorBase  = ro.z - kEyeAboveFloor;
 
     for (int i = 0; i < kFogSteps; ++i, t += dt) {
         vec3  p     = ro + rd * t;
@@ -830,7 +865,12 @@ vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)
         // up direction doubles as that bias (n == wi == up); harmless 1e-3-unit nudge.
         bool  openSky = !occluded(p, vec3(0.0, 0.0, 1.0), vec3(0.0, 0.0, 1.0), kFogMaxDist);
         float skyExposure = openSky ? 1.0 : kIndoorFogScale;
-        float sigma = fogDensity(p, floorZ) * strength * skyExposure;
+        // Outdoor air is a tall bank on the level's fog altitude; roofed air keeps the
+        // shallow knee-height cloud. Both references are per-frame constants, so `sigma`
+        // is a function of `p` alone -- see fogDensity()'s contract.
+        float baseZ = openSky ? outdoorBase    : indoorBase;
+        float poolH = openSky ? kFogPoolHeight : kFogIndoorPool;
+        float sigma = fogDensity(p, baseZ, poolH) * strength * skyExposure;
         vec3  Ls    = skyAmbient;                        // L2 adds directional sky + torches
         inscatter += trans * sigma * Ls * dt;
         trans     *= exp(-sigma * dt);
@@ -1342,11 +1382,7 @@ void main()
             // picks it up with no further wiring.
             if (pc.misc6[2] != 0u && ((px.x | px.y) & 1u) == 0u) {
                 float strength  = fogStrengthScale(pc.misc6.z);
-                // The cloud thins with height, and a sky ray crosses it at EYE height, not floor
-                // height -- so use the density there, or the sky would be hazed as if it lay on
-                // the ground (L3, 2026-07-27).
-                float skySigma  = kFogBaseDensity * exp(-kEyeAboveFloor / kFogPoolHeight);
-                float trans     = exp(-skySigma * strength * kFogSkyDist);   // Q24a: sky, not kFogMaxDist
+                float trans     = exp(-skyFogOpticalDepth(origin, dir, strength));
                 // kSkyShaftStrength: the same in-scatter gain the world march applies
                 // (marchFog's skyAmbient). The closed form omitted it, which was a no-op
                 // only while the gain was 1.0; the moment it moves, the sky and the walls
@@ -1365,8 +1401,7 @@ void main()
             // Full-res here (mode 4 has no half-res grid to gate on).
             if (pc.misc6[2] != 0u) {
                 float strength = fogStrengthScale(pc.misc6.z);
-                float skySigma = kFogBaseDensity * exp(-kEyeAboveFloor / kFogPoolHeight);  // eye height, see mode 6
-                float trans    = exp(-skySigma * strength * kFogSkyDist);   // Q24a: sky, not kFogMaxDist
+                float trans    = exp(-skyFogOpticalDepth(origin, dir, strength));  // see mode 6
                 // COLOUR SPACE (Q24b): skyPanorama returns a DISPLAY-encoded colour, but the
                 // in-scatter is LINEAR radiance -- the same units the world march works in.
                 // Adding them directly put the identical fog colour on screen ~2.5x darker on

@@ -7398,7 +7398,12 @@ void RecordRtTrace(uint32_t idx)
         // shader places misc6 at offset 224 (padded from the 216-byte tail) — mirror that
         // pad here or the GLSL block and this struct disagree (INV-6). Appended AFTER the
         // 184-byte -rtverify prefix, so verify is unaffected; stays within the 256-byte limit.
-        uint32_t _pad_misc6[2];   // pad rejectAddr's 216 tail up to a 16-byte boundary (224)
+        // DOOM-0011: the outdoor fog layer's base altitude (bit-cast float, world units,
+        // from RB_BuildLevelMesh). It lives in the FIRST of the two pad words the misc6
+        // alignment already forced, so the push range stays 240 bytes and -rtverify's
+        // 184-byte prefix is untouched.
+        uint32_t fogFloorZ;
+        uint32_t _pad_misc6;      // pads rejectAddr's 216 tail up to a 16-byte boundary (224)
         uint32_t misc6[4];        // x = ripple time (float bits, seconds); y = wet toggle;
                                   // z = fog strength (rb_fog 0..3, DOOM-0011); w = hell-haze (L4)
     } pc = {};
@@ -7457,6 +7462,10 @@ void RecordRtTrace(uint32_t idx)
     std::memcpy(&pc.misc6[0], &rippleSec, sizeof(float));
     pc.misc6[1]    = rb_wet ? 1u : 0u;
     pc.misc6[2]    = (uint32_t)rb_fog;  // DOOM-0011: fog strength 0..3 (`;` key); 0 skips the march (INV-8)
+    {   // DOOM-0011: the outdoor fog layer's altitude, per level (0 if no open-sky sector)
+        float fz = g.levelMesh ? g.levelMesh->fogFloorZ : 0.0f;
+        std::memcpy(&pc.fogFloorZ, &fz, sizeof(float));
+    }
     pc.misc6[3]    = 0u;    // DOOM-0011: hell-haze density, bit-cast float (wired at L4)
     pc.vertsAddr   = BufferAddress(g.vbuf);
     pc.emitAddr    = g.emitBuf    ? BufferAddress(g.emitBuf)    : 0;
