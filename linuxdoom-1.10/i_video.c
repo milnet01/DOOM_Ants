@@ -485,6 +485,46 @@ static void I_GetEvent(SDL_Event* sdlevent)
 	    fflush(stdout);
 	    break;
 	}
+	// TEMPORARY DIAGNOSTIC (DOOM-0267) -- slash (`/`) dumps where the player is
+	// standing and every linedef of the sector they are in, with both sides'
+	// live heights and textures. Lets a geometry bug that only reproduces at one
+	// spot be analysed offline against the WAD. REMOVE once DOOM-0267 is closed.
+	if (sdlevent->key.keysym.sym == SDLK_SLASH && !sdlevent->key.repeat)
+	{
+	    mobj_t*   pm = players[consoleplayer].mo;
+	    if (pm)
+	    {
+		sector_t* sec = pm->subsector->sector;
+		int       si  = (int)(sec - sectors);
+		int       i;
+		printf("\n[DOOM-0267] pos=(%d,%d,%d) angle=%u  sector=%d "
+		       "floor=%d ceil=%d type=%d tag=%d\n",
+		       pm->x >> FRACBITS, pm->y >> FRACBITS, pm->z >> FRACBITS,
+		       (unsigned)(pm->angle >> 24), si,
+		       sec->floorheight >> FRACBITS, sec->ceilingheight >> FRACBITS,
+		       sec->special, sec->tag);
+		for (i = 0; i < sec->linecount; i++)
+		{
+		    line_t*   ld = sec->lines[i];
+		    sector_t* fr = ld->frontsector;
+		    sector_t* bk = ld->backsector;
+		    printf("  line %4d flags=0x%03x special=%3d tag=%2d  ",
+			   (int)(ld - lines), ld->flags, ld->special, ld->tag);
+		    if (!bk)
+			printf("ONE-SIDED front sec %d f=%d c=%d\n",
+			       (int)(fr - sectors),
+			       fr->floorheight >> FRACBITS, fr->ceilingheight >> FRACBITS);
+		    else
+			printf("front sec %d f=%d c=%d | back sec %d f=%d c=%d\n",
+			       (int)(fr - sectors),
+			       fr->floorheight >> FRACBITS, fr->ceilingheight >> FRACBITS,
+			       (int)(bk - sectors),
+			       bk->floorheight >> FRACBITS, bk->ceilingheight >> FRACBITS);
+		}
+		fflush(stdout);
+	    }
+	    break;
+	}
 	event.type = ev_keydown;
 	event.data1 = xlatekey(&sdlevent->key.keysym);
 	D_PostEvent(&event);
