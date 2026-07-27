@@ -3155,11 +3155,40 @@ parked ideas (💭 considered) until we commit to and design each one.
   Lanes: renderer, shaders.
   Source: user-play-test-2026-07-27.
 
-- 📋 [DOOM-0282] **A wall changes colour — goes blue — when the camera turns a few degrees.**
+- ✅ [DOOM-0282] **A wall changes colour — goes blue — when the camera turns a few degrees.**
   User, 2026-07-27, with a matched screenshot pair from a crate room with BLUE
   liquid pooled on the floor: "notice this wall now ... notice that the wall now
   turns blue by me just turning a few degrees." Camera position unchanged; only
   the yaw differs between the two frames.
+  Resolved 2026-07-27 -- but by SIDE EFFECT, and the distinction is worth keeping.
+
+  User re-tested deliberately after the DOOM-0281 seep re-tune (8b41786): "I stood
+  at varying distances from the wall, rotated the camera left and right but no
+  change to the wall. This was with fog on." That is a better test than the one
+  that found it -- varying distance as well as yaw, and with the suspected
+  subsystem enabled rather than disabled.
+
+  The only thing that changed between the report and the re-test is kSeepMax
+  0.5 -> 0.9 and kSeepFalloff 192 -> 384. That clears the LIQUID hypotheses this
+  bullet led with (the DOOM-0183 sheen, RIS resampling, SVGF disocclusion) -- none
+  of them are touched by a fog constant -- and points at the fog itself.
+
+  Most likely mechanism, INFERRED AND NOT PROVEN: at kSeepFalloff 192 the seep
+  field crossed its whole range over about three 64-unit grid cells. The march
+  samples that field along the view ray, so a few degrees of yaw moved the samples
+  across a steep gradient and swung the in-scattered fog on that wall. Doubling
+  the falloff halves the spatial rate, and the wall stops flipping. It also fits
+  the tint being CLEAN rather than grainy, which is what argued against the
+  stochastic candidates in the first place.
+
+  The honest status: it does not reproduce, and the one change that plausibly
+  explains it is the one that was made. That is not the same as having found it.
+
+  What would bring it back, and is the thing to watch: any future TIGHTENING of
+  kSeepFalloff, or a steep seep gradient arriving some other way -- a small room
+  newly opened next to a sealed one, where the field steps by its full range
+  across one or two cells. If a wall ever swings colour on yaw again, come here
+  first and check the seep gradient before suspecting the liquid.
 
   The two frames were registered against each other to confirm it is the same
   surface and not a different wall coming into view: the pillar moves ~80 px right
