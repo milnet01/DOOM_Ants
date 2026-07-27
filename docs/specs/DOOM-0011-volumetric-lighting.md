@@ -916,13 +916,35 @@ both layers at once.
   is free and is the assumption above. The risk is that the floor fog is densest exactly where the
   aerial layer is thinnest (at your feet, under an overhang), so a misclassification that is
   invisible today could become obvious. Judge on hardware, not here.
-- **Q26 — `kFloorFogRange` against the march's step count.** `kFogSteps` = 24 over `kFogMaxDist`
-  gives 85-unit steps. If `kFloorFogRange` is of that order, the floor fog is resolved by two or
-  three samples and will band. Either raise `kFogSteps` (L1c already plans 24 → 40) or bias the
-  march's samples toward the near end. **This is the one that can make the feature look broken,
-  and it is arithmetic, not taste — settle it before writing the shader.**
+- **Q26 — CLOSED 2026-07-27, before any shader was written. The march must WARP its samples
+  toward the camera; raising the step count does not work.** Measured: the sampled floor term
+  against its exact integral `R(1 − e^(−tMax/R))`, over 400 jitters.
 
-**Ripples if this ships.** `fogDensity()` currently returns the whole density; L4's split-sigma
+  | | range 128 | range 256 | range 512 |
+  |---|---|---|---|
+  | 24 steps, uniform | 17 % (max 37 %) | 8 % (max 18 %) | 4 % (max 9 %) |
+  | 64 steps, uniform | 6 % (max 13 %) | 3 % (max 6 %) | 1.6 % (max 3 %) |
+  | **24 steps, `t = tMax·s²`** | **0.19 %** | **0.09 %** | **0.17 %** |
+
+  Error scales as `dt/R`, so buying accuracy with steps is a losing trade — **64 steps still
+  bands at a 128-unit range**, at 2.7× the cost. Redistributing the same 24 samples fixes it
+  outright. Substitute `t = tMax · s²` for `s = (i + jitter)/kFogSteps` and carry the warp's
+  Jacobian `dt = tMax · 2s · (1/kFogSteps)`; forgetting the Jacobian silently rescales the whole
+  fog, which will read as a tuning problem rather than a bug.
+
+  **Checked against the layer it is not for** — the general fog is roughly uniform out to 2048, so
+  a warp could have starved its far field. It does not: at the shipped High density the warp is
+  *better* (10 % error vs 15 %), and at the thinnest it costs ~0.5 %. Note what that table also
+  says — **the shipped uniform march already under-integrates long rays by 8–15 % at High.** It is
+  a constant bias, so it was absorbed into tuning rather than seen; expect the fog to read slightly
+  *thicker* after the warp lands, at unchanged constants.
+
+  Exponent 3 is better still for the floor term but measurably worse for the general one — **use 2.**
+
+**Ripples if this ships.** The sample warp (Q26) changes `marchFog`'s loop for **both** layers and
+every future one, so it is a §4.2 change, not a §4.3c one — and it lands *before* the floor fog,
+because it alters the shipped look on its own (see the 8–15 % bias above). `fogDensity()` currently
+returns the whole density; L4's split-sigma
 form (`skySigma · skyExposure + areaSigma`, INV-9) must gain a third addend rather than folding the
 floor term into either existing one. `fogHeightPool()` — which L4 still has to extract — is reused
 by both layers with different `poolH`, so it must keep taking the height as a parameter.

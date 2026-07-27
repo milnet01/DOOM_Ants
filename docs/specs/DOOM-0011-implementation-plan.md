@@ -1549,8 +1549,10 @@ from `g.lastView.hazeDensity` in `RecordRtTrace` (there is no bare `view` there)
   signed off the single-layer version and asked for a short-range floor fog on top of it. **Q25**:
   does the floor layer need its own open-sky test, or does sharing `skyExposure` suffice? **Q26**:
   `kFloorFogRange` against `kFogSteps` — 24 steps over 2048 units is 85 units apart, so a short
-  range is resolved by two or three samples and will band. Q26 is arithmetic and must be settled
-  before any shader is written; Q25 is a hardware judgement. **No task exists for this yet** — the
+  range is resolved by two or three samples and will band. **Q26 is CLOSED (2026-07-27):** the
+  march warps its samples toward the camera, `t = tMax·s²` with the Jacobian — measured 8-37 %
+  error → 0.1-0.5 % at the *same* 24 steps, where 64 uniform steps still band. Q25 remains a
+  hardware judgement. **No task exists for this yet** — the
   amendment is written, and CLAUDE.md rule 14 puts `/cold-eyes` between it and the code.
 - **Q24 / Q24a** — the sky's haze. **Q24a shipped 2026-07-27**: the backdrop now has its own
   distance, `kFogSkyDist`, because sharing `kFogMaxDist` left the mountains reading as *nearer*
