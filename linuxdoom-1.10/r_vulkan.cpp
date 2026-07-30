@@ -752,6 +752,10 @@ struct VulkanState
     // descriptor bindings need not be contiguous, so nothing has to be made
     // partially-bound to hold the number). Rebuilt per level; a 1x1 placeholder
     // stands in from pipeline creation so the bindings are never unwritten.
+    // DOOM-0011 L1c: the wisp noise volume (64^3 R8, synthesised once, level-independent).
+    VkImage               fogNoiseImage  = VK_NULL_HANDLE;
+    VkDeviceMemory        fogNoiseMemory = VK_NULL_HANDLE;
+    VkImageView           fogNoiseView   = VK_NULL_HANDLE;
     VkImage               seepImage    = VK_NULL_HANDLE;
     VkDeviceMemory        seepMemory   = VK_NULL_HANDLE;
     VkImageView           seepView     = VK_NULL_HANDLE;
@@ -2350,7 +2354,7 @@ static inline double CpuNowMs()
 // address), and the pathtrace.comp megakernel. RT-only; never called without it.
 void CreateRtComputePipeline()
 {
-    VkDescriptorSetLayoutBinding binds[5] = {};
+    VkDescriptorSetLayoutBinding binds[6] = {};
     binds[0].binding         = 0;   // TLAS
     binds[0].descriptorType  = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
     binds[0].descriptorCount = 1;
@@ -2363,21 +2367,25 @@ void CreateRtComputePipeline()
     binds[2].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     binds[2].descriptorCount = 1;
     binds[2].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
-    // DOOM-0011 L1d. Binding 3 is deliberately skipped -- it is L1c's noise volume,
-    // and the two tasks agreed the numbers in advance so whichever lands first does
-    // not renumber the other.
-    binds[3].binding         = 4;   // seep field (R32F, distance to outdoor air)
+    // DOOM-0011 L1c. Binding 3 was reserved for this when L1d took 4 and 5, so neither
+    // task had to renumber the other.
+    binds[3].binding         = 3;   // fog wisp noise volume (64^3 R8, 3-D)
     binds[3].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     binds[3].descriptorCount = 1;
     binds[3].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
-    binds[4].binding         = 5;   // its world->texel transform
-    binds[4].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    // DOOM-0011 L1d.
+    binds[4].binding         = 4;   // seep field (R16G16F: distance to outdoor air + sky mask)
+    binds[4].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     binds[4].descriptorCount = 1;
     binds[4].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+    binds[5].binding         = 5;   // its world->texel transform
+    binds[5].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    binds[5].descriptorCount = 1;
+    binds[5].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
 
     VkDescriptorSetLayoutCreateInfo dlci = {};
     dlci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    dlci.bindingCount = 5;
+    dlci.bindingCount = 6;
     dlci.pBindings    = binds;
     Check(vkCreateDescriptorSetLayout(g.device, &dlci, nullptr, &g.rtDsLayout),
           "vkCreateDescriptorSetLayout(rt)");
@@ -2385,7 +2393,7 @@ void CreateRtComputePipeline()
     VkDescriptorPoolSize pools[4] = {};
     pools[0].type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR; pools[0].descriptorCount = 1;
     pools[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;              pools[1].descriptorCount = 2;
-    pools[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;     pools[2].descriptorCount = 1;
+    pools[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;     pools[2].descriptorCount = 2;
     pools[3].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;             pools[3].descriptorCount = 1;
     VkDescriptorPoolCreateInfo pci = {};
     pci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -3169,7 +3177,7 @@ void UpdateRtComputeDescriptor()
 void CreateSampledImage(uint32_t w, uint32_t h, VkFormat fmt,
                         const void* pixels, VkDeviceSize bytes,
                         VkImage* outImage, VkDeviceMemory* outMem,
-                        VkImageView* outView)
+                        VkImageView* outView, uint32_t depth = 1)
 {
     // Staging buffer (host visible) holding the source texels.
     VkBufferCreateInfo bci = {};
@@ -3199,9 +3207,11 @@ void CreateSampledImage(uint32_t w, uint32_t h, VkFormat fmt,
     // Device-local sampled image.
     VkImageCreateInfo ici = {};
     ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    ici.imageType = VK_IMAGE_TYPE_2D;
+    // DOOM-0011 L1c: depth > 1 makes this a 3-D image (the fog wisp volume). Every other
+    // caller leaves the default, so the 2-D path is byte-for-byte what it always was.
+    ici.imageType = (depth > 1) ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
     ici.format = fmt;
-    ici.extent = { w, h, 1 };
+    ici.extent = { w, h, depth };
     ici.mipLevels = 1;
     ici.arrayLayers = 1;
     ici.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -3239,7 +3249,7 @@ void CreateSampledImage(uint32_t w, uint32_t h, VkFormat fmt,
     VkBufferImageCopy region = {};
     region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     region.imageSubresource.layerCount = 1;
-    region.imageExtent = { w, h, 1 };
+    region.imageExtent = { w, h, depth };
     vkCmdCopyBufferToImage(cb, staging, *outImage,
                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
@@ -3259,10 +3269,60 @@ void CreateSampledImage(uint32_t w, uint32_t h, VkFormat fmt,
     VkImageViewCreateInfo vci = {};
     vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     vci.image = *outImage;
-    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vci.viewType = (depth > 1) ? VK_IMAGE_VIEW_TYPE_3D : VK_IMAGE_VIEW_TYPE_2D;
     vci.format = fmt;
     vci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
     Check(vkCreateImageView(g.device, &vci, nullptr, outView), "vkCreateImageView(sampled)");
+}
+
+// DOOM-0011 L1c: synthesise the fog's wisp noise volume and point set 0's binding 3 at
+// it. The volume is level-INDEPENDENT, so unlike the seep field it is built once after
+// the device exists and never rebuilt -- 64^3 R8 = 256 KB. Nothing enters the source
+// tree; the bytes are generated, so docs/standards/assets.md does not apply.
+//
+// The seed is a compile-time constant on purpose. -shotcompare's golden gate is only a
+// real pass/fail if these bytes are identical from run to run, so a clock- or
+// address-seeded generator (rand() included) would quietly turn that gate into noise.
+void BuildFogNoiseVolume()
+{
+    const uint32_t N = 64;
+
+    if (!g.fogNoiseImage)
+    {
+        std::vector<uint8_t> texels((size_t)N * N * N);
+        uint32_t s = 0x9E3779B9u;                 // xorshift32, fixed seed, no libc RNG
+        for (size_t i = 0; i < texels.size(); i++)
+        {
+            s ^= s << 13; s ^= s >> 17; s ^= s << 5;
+            texels[i] = (uint8_t)(s >> 24);
+        }
+        // White noise on the lattice becomes VALUE noise at sample time: the trilinear
+        // sampler interpolates between neighbouring texels, and kWispFreq1 stretches one
+        // texel over 512 world units -- so the 64 texels span 32768 units, wider than any
+        // DOOM map, and the REPEAT wrap never shows.
+        CreateSampledImage(N, N, VK_FORMAT_R8_UNORM, texels.data(),
+                           (VkDeviceSize)texels.size(),
+                           &g.fogNoiseImage, &g.fogNoiseMemory, &g.fogNoiseView, N);
+    }
+
+    if (g.rtDs == VK_NULL_HANDLE)
+        return;
+
+    // g.hdSampler is linear + REPEAT on all three axes -- exactly what the volume wants,
+    // and its mip settings are inert on a single-level image. No second sampler needed.
+    VkDescriptorImageInfo imgInfo = {};
+    imgInfo.sampler     = g.hdSampler;
+    imgInfo.imageView   = g.fogNoiseView;
+    imgInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkWriteDescriptorSet wr = {};
+    wr.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    wr.dstSet          = g.rtDs;
+    wr.dstBinding      = 3;
+    wr.descriptorCount = 1;
+    wr.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    wr.pImageInfo      = &imgInfo;
+    vkUpdateDescriptorSets(g.device, 1, &wr, 0, nullptr);
 }
 
 // DOOM-0011 L1d: (re)upload the outdoor-proximity seep field and re-point set 0's
@@ -6547,6 +6607,7 @@ extern "C" void RB_Vulkan_Init(void)
         // never be dispatched with an unwritten binding, and the title screen can
         // reach the RT path before any map is loaded.
         UploadSeepField(nullptr);
+        BuildFogNoiseVolume();   // DOOM-0011 L1c: binding 3, once; never rebuilt
         CreateBakePipeline();          // GI bake pass (step 4b-ii), dispatched per level
         CreateSvgfPipelines();         // denoiser passes (step 6); needs svgfDsLayout
         CreateLabelPipeline();         // on-screen mode label (debug); reuses svgfDsLayout
@@ -7843,6 +7904,12 @@ void RecordRtTrace(uint32_t idx)
     // sheen/ripple/puddle layers only (rb_wet) — never the glow (that Le is CPU-built).
     static const auto rippleT0 = std::chrono::steady_clock::now();
     float rippleSec = std::chrono::duration<float>(std::chrono::steady_clock::now() - rippleT0).count();
+    // DOOM-0011 L1c: the shot modes must be time-INDEPENDENT. L1c's wisps ride this same
+    // clock and modulate the density of EVERY fog pixel, so a wall-clock reading would make
+    // each capture a different image and -shotcompare's MAE gate meaningless -- the same
+    // reason the noise volume itself is fixed-seed. Pin it to an arbitrary constant; the
+    // DOOM-0183 ripples riding this clock get the same determinism for free.
+    if (rb_shotverify == 1) rippleSec = 8.0f;
     std::memcpy(&pc.misc6[0], &rippleSec, sizeof(float));
     pc.misc6[1]    = rb_wet ? 1u : 0u;
     pc.misc6[2]    = (uint32_t)rb_fog;  // DOOM-0011: fog strength 0..3 (`;` key); 0 skips the march (INV-8)
@@ -9259,6 +9326,9 @@ extern "C" void RB_Vulkan_Shutdown(void)
         if (g.rtDsPool)     vkDestroyDescriptorPool(g.device, g.rtDsPool, nullptr);
         if (g.rtDsLayout)   vkDestroyDescriptorSetLayout(g.device, g.rtDsLayout, nullptr);
         // DOOM-0011 L1d seep field + its transform UBO.
+        if (g.fogNoiseView)   vkDestroyImageView(g.device, g.fogNoiseView, nullptr);
+        if (g.fogNoiseImage)  vkDestroyImage(g.device, g.fogNoiseImage, nullptr);
+        if (g.fogNoiseMemory) vkFreeMemory(g.device, g.fogNoiseMemory, nullptr);
         if (g.seepView)     vkDestroyImageView(g.device, g.seepView, nullptr);
         if (g.seepImage)    vkDestroyImage(g.device, g.seepImage, nullptr);
         if (g.seepMemory)   vkFreeMemory(g.device, g.seepMemory, nullptr);

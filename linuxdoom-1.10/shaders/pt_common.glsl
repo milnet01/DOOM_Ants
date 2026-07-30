@@ -34,7 +34,12 @@ const vec3  SKY_COLOR    = vec3(0.20, 0.26, 0.40);   // bounded sky-light on a m
                                                      // into the probe as fill)
 
 // DOOM-0011: volumetric fog (single-scatter view-ray march). All tune-on-hardware.
-const int   kFogSteps        = 24;               // fixed sample count (coherent, cheap)
+const int   kFogSteps        = 40;               // fixed sample count (coherent, cheap)
+                                 // DOOM-0011 L1c: 24 -> 40. The wisps put a HIGH-FREQUENCY
+                                 // signal along the ray (a billow is ~200 world units across,
+                                 // the march spans 2048), and 24 samples alias it into bands.
+                                 // This is a hypothesis to confirm by looking: if 24 reads
+                                 // clean with wisps on, revert it and bank the budget.
 const float kFogMaxDist      = 2048.0;           // clamp tHit so a long corridor can't blow budget
 const float kFogSkyDist      = 2048.0;           // DOOM-0011 Q24a: the fog layer's finite
                                  // HORIZONTAL extent, used by skyFogOpticalDepth. Since
@@ -49,6 +54,17 @@ const float kFogSkyDist      = 2048.0;           // DOOM-0011 Q24a: the fog laye
                                  // furthest wall the march covers (Q24a's point). Lower it to
                                  // pull the horizon back out of the white.
 const float kFogBaseDensity  = 0.0033;           // extinction AT FLOOR LEVEL at "High". tune-on-hw.
+                                 // DOOM-0011 L1c TRIED 0.0033 -> 0.0066 (the "roughly twice as
+                                 // thick" half of the 2026-07-25 reference) and REVERTED it, on
+                                 // a captured frame: at High the doubled layer saturates -- E1M1's
+                                 // start room goes to flat white, every sight line past ~3 optical
+                                 // depths -- and a saturated medium cannot show billows at all.
+                                 // The wisps are a +/-60 % swing in density, which is only VISIBLE
+                                 // where transmittance still varies with density, i.e. tau of
+                                 // roughly 0.5..2. Thicker fog and structured fog pull against
+                                 // each other; the user's 2026-07-30 call was billows over bulk.
+                                 // If the bulk is wanted back, raise kFogPoolHeight (a deeper
+                                 // bank, same peak density) before touching this.
                                  // 2026-07-27: the pair below was re-balanced so the cloud reads as
                                  // a bank lying ON the ground. The eye-height product is HELD FIXED
                                  // -- kFogBaseDensity * exp(-kEyeAboveFloor / kFogPoolHeight) was
@@ -88,6 +104,36 @@ const float kTorchShaftStrength = 1.0;           // static-emitter in-scatter ga
 const float kIndoorFogScale = 0.05;   // DOOM-0011 §4.3a: fog density multiplier under a solid
                                        // roof (open sky = 1.0). 0.0 = interiors totally clear;
                                        // ~0.05 keeps a faint indoor haze. Tune on hardware (Q12).
+
+// DOOM-0011 L1c (spec §4.3b): the Silent Hill 2 look. Two halves -- a near-white,
+// colourless base tone in place of the blue-grey sky fill, and billows of visibly
+// varying thickness drifting slowly past. The billows are a multiplier on density
+// (mean 1), never an addend: at kWispAmp = 0 the whole feature is the identity and
+// must render byte-identical to L1b (INV-11).
+const vec3  kFogColor    = vec3(0.55, 0.56, 0.56); // near-white, LINEAR radiance (Q9). Replaces
+                                 // SKY_COLOR at every fog in-scatter site -- foreground march and
+                                 // both sky closed forms -- or the sky/wall seam shows two tones.
+const float kWispAmp     = 1.0;    // density swings 0x..2x -- billows, not grain
+const float kWispWeight2 = 0.7;    // octave-2 weight: CHOSEN, not SH2-derived
+// Feature size is the whole game. The spec's 512 was tried first and read as NO structure
+// at all: a value-noise blob is about one lattice cell across, DOOM's rooms run 256..1024
+// units, so one cell spanned the entire view and the march integrated it to a flat wash.
+// 192 puts several blobs across a room and a dozen along a sight line, which is what reads
+// as billows. Lower still and it becomes grain along the ray -- which the step count, not
+// the eye, would have to pay for.
+const float kWispFreq1   = 1.0/192.0;          // one texel spans 192 world units
+const float kWispFreq2   = 2.5 * kWispFreq1;   // finer octave
+const vec3  kWispVel1    = vec3( 8.0, 3.0, 1.0);  // world units/sec, INSIDE the freq scale
+const vec3  kWispVel2    = vec3(-3.0, 4.0, 0.3);  // deliberately SLOWER than kWispVel1
+const vec3  kWispOffset2 = vec3(17.3, 5.1, 23.7); // decorrelates the octaves at t=0 and p=0
+// Vertical squash. A ray integrates the noise along its whole length, which averages
+// isotropic blobs back toward their mean -- the reason the first two tunings read as a
+// flat wash. Squashing the lattice in z makes the billows wide and SHALLOW, like real
+// banks of mist, so a sight line crosses few of them horizontally but the eye still sees
+// the layering stacked up a wall. It is also the cheapest place to buy contrast: no extra
+// tap, no extra step.
+const float kWispSquashZ = 2.5;
+const float kWispTexels  = 64.0;               // the noise volume's edge, in texels
 
 // DOOM-0011 L1d §4.3a: the outdoor-proximity SEEP. kIndoorFogScale above is a flat
 // floor for every roofed sample, which cuts the fog off hard at a roofline: step

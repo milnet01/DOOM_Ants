@@ -53,6 +53,12 @@ layout(set = 0, binding = 2, rgba32f) uniform image2D accumImg;
 // a set-0 binding (INV-6). R32F, CLAMP_TO_EDGE on both axes -- a march sample can
 // legitimately land outside the map's XY box, and REPEAT would wrap an outdoor 0 at
 // one edge onto indoor air at the other.
+// DOOM-0011 L1c: the wisp noise volume. 64^3 R8 value noise, trilinear + REPEAT on all
+// three axes, synthesised once at startup from a fixed seed (r_vulkan.cpp) -- so it is
+// byte-identical run to run and -shotcompare's golden gate stays a real pass/fail.
+// Declared HERE and not in pt_common.glsl: bake.comp includes that header verbatim and
+// would then have to declare and bind a set-0 volume it has no set for (INV-6).
+layout(set = 0, binding = 3) uniform sampler3D uNoiseVol;
 layout(set = 0, binding = 4) uniform sampler2D uSeepField;
 layout(set = 0, binding = 5) uniform SeepXform {
     vec2 origin;    // world XY of cell (0,0)'s CENTRE (inside the void ring)
@@ -814,6 +820,31 @@ vec3 skyPanorama(uvec2 px, uint w, uint h)
     return mix(skyCol, SKY_FOG_COL, fog);
 }
 
+// DOOM-0011 L1c (spec §4.3b): two octaves of drifting 3-D value noise, mean 1.
+//
+// texture() wants a normalised coord, so the lattice coordinate `u` is divided by the
+// volume's edge in texels. BOTH taps take that divide, and on octave 2 the WHOLE
+// argument goes inside it -- the frequency term and kWispOffset2 -- because the offset
+// is part of `u`. Divide only the frequency term and octave 2 shifts by 64x its intended
+// offset. The velocity likewise sits INSIDE the frequency scale: noise(p*f + v*t) would
+// drift 512x too fast.
+float wisp(vec3 p, float t)
+{
+    vec3 q1 = p + kWispVel1 * t;  q1.z *= kWispSquashZ;
+    vec3 q2 = p + kWispVel2 * t;  q2.z *= kWispSquashZ;
+    float A = 2.0 * texture(uNoiseVol, kWispFreq1 * q1 / kWispTexels).r - 1.0;
+    float B = 2.0 * texture(uNoiseVol, (kWispFreq2 * q2 + kWispOffset2) / kWispTexels).r - 1.0;
+    float n = clamp((A + kWispWeight2 * B) / (1.0 + kWispWeight2), -1.0, 1.0);
+    // An odd S-curve, not a bigger amplitude. Trilinear value noise piles most of its
+    // samples near the mean, and a view ray then averages ~10 of them, so the raw signal
+    // arrives at the pixel as a gentle wash -- measured at 6 % peak brightness, which the
+    // eye reads as "even fog", not as billows. This steepens the middle of the range where
+    // those samples actually live while pinning +/-1, and being odd it leaves the mean at
+    // 1 -- so the fog's overall thickness is untouched and INV-11 still holds.
+    n = n * (1.5 - 0.5 * n * n);
+    return 1.0 + kWispAmp * n;
+}
+
 // DOOM-0011: view-ray fog march, single scattering, mode 4 (full-res) + mode 6
 // (half-res). hitP/gnormal/matFlags are the primary-hit fields later layers (L2-L4)
 // read for height pooling / area profiles; L1's sky-ambient term is position- and
@@ -912,7 +943,7 @@ vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)
 
     vec3  inscatter = vec3(0.0);
     float trans     = 1.0;
-    vec3  skyAmbient = SKY_COLOR * kSkyShaftStrength;   // L1: flat, non-directional
+    vec3  skyAmbient = kFogColor * kSkyShaftStrength;   // L1c: near-white, non-directional
     float strength   = fogStrengthScale(pc.misc6.z);   // the `;` dial: Low/Med/High thins the air
 
     // DOOM-0011 L3, corrected 2026-07-27. The cloud's ground height USED to come from the
@@ -987,8 +1018,11 @@ vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)
         // outside" free -- no second up-ray, no fourth constant -- and it is what keeps the
         // INDOOR half waiting for L1d: roofed air still scales by kIndoorFogScale, so a sealed
         // room gets 5% of the bank, not a bank at your feet.
+        // DOOM-0011 L1c: the billows MULTIPLY the whole medium -- aerial layer and floor
+        // layer alike -- reusing DOOM-0183's ripple clock as the drift time, so no new push
+        // lane (INV-5). Multiplicative is what makes kWispAmp = 0 the exact identity (INV-11).
         float sigma = (fogDensity(p, baseZ, poolH) + floorFogDensity(p, baseZ, t))
-                      * strength * skyExposure;
+                      * strength * skyExposure * wisp(p, rippleTime());
         vec3  Ls    = skyAmbient;                        // L2 adds directional sky + torches
         inscatter += trans * sigma * Ls * dt;
         trans     *= exp(-sigma * dt);
@@ -1505,7 +1539,7 @@ void main()
                 // (marchFog's skyAmbient). The closed form omitted it, which was a no-op
                 // only while the gain was 1.0; the moment it moves, the sky and the walls
                 // in front of it would haze at two different brightnesses.
-                vec3  inscatter = SKY_COLOR * kSkyShaftStrength * (1.0 - trans);
+                vec3  inscatter = kFogColor * kSkyShaftStrength * (1.0 - trans);   // L1c tone
                 imageStore(fogImg, ivec2(px) / 2, vec4(inscatter, trans));
             }
             return;
@@ -1529,7 +1563,7 @@ void main()
                 vec3 skyLin = vec3(srgbToLinear(colour.r), srgbToLinear(colour.g),
                                    srgbToLinear(colour.b));
                 colour = toneEncode(skyLin * trans
-                                    + SKY_COLOR * kSkyShaftStrength * (1.0 - trans));
+                                    + kFogColor * kSkyShaftStrength * (1.0 - trans));   // L1c tone
             }
         }
         else                 colour = vec3(0.02, 0.02, 0.05);
