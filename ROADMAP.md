@@ -688,6 +688,12 @@ with friends.
   was far outside it. The kFogSteps 40-vs-24 result (signal 0.153) is
   safe by a wide margin; anything under ~3 MAE from earlier sessions is
   worth re-taking now that captures are input-proof.
+  CONFIRMED ON HARDWARE (2026-07-30, user): "I did test moving the mouse
+  at the start of the window and it no longer moved the camera." That
+  closes the one gap in the evidence above -- mouse input cannot be
+  injected under Wayland, so the fix could only be argued from the code
+  path here. It is now verified by the instrument that was missing, which
+  is the same instrument that DIAGNOSED it: a person at the keyboard.
 
 - 📋 [DOOM-0288] **Derive useful camera coordinates from the map data so a viewpoint can be chosen without walking to it.**
   The second half of DOOM-0268. `-warpto X Y [ANGLE]` can already put the
