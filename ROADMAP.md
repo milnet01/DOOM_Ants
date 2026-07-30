@@ -3493,6 +3493,43 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** The health/ammo bar at the bottom and the gun in your hands stay chunky and pixelated even at 4K — sharpen them to match the rest of the picture.
   Kind: enhancement.
   Source: user-request-2026-07-30.
+  Scope widened by the user, 2026-07-30 (same day, mid-session). The hand
+  and gun should ideally become REAL 3-D MODELS, lit and reflected by the
+  scene rather than flat sprites pasted over it -- including the
+  super-shotgun's reload animation, which is the case that most obviously
+  wants real geometry. "It doesn't have to be full on, it can be faked."
+
+  Per tier, as stated:
+    - ULTRA: models + lighting + reflections, in BOTH the rasterised and
+      the ray-traced view. Note this is the tier rule in CLAUDE.md working
+      as written -- the feature is gated on the ART (HD weapon models),
+      not on the view, so raster gets a cheap fake of the same look and
+      RT gets the real thing.
+    - SOLID: upres the existing sprites (no model swap), and fake the
+      lighting / reflections on them if it can be made to hold up. The
+      user's words: "if lighting / reflections can be faked there, that
+      would be great as well."
+    - CLASSIC: unchanged, as before.
+
+  This splits the item's three surfaces further apart than the body above
+  assumes, and the spec must not treat them as one job:
+    - the status bar stays a 2-D upres problem in every tier;
+    - the hand/gun becomes an ASSET + RENDERER problem in Ultra (geometry,
+      materials, a weapon-space transform, and a per-frame animation
+      driven by the existing p_pspr state) and stays a 2-D upres problem
+      in Solid.
+  So "upscale vs replace with HD art" is no longer one open question with
+  one answer -- it is answered differently per tier, and the Ultra answer
+  now reaches past art into the renderer.
+
+  Sequencing note, not yet decided: this overlaps DOOM-0080 (ALL sprites
+  -> 3-D models in Ultra), which memory records as a far-out project
+  because free DOOM-roster models are scarce. The weapon set is a much
+  smaller and much better-supplied subset than the monster roster -- one
+  first-person model per weapon, always seen from one angle -- so it may
+  be tractable well before DOOM-0080 is. Decide when this is specced
+  whether the weapons are a slice of DOOM-0080 or a separate, earlier
+  item.
 
 - 📋 [DOOM-0289] **Bake the sun's fixed direction into a load-time clearance field and delete L2's per-sample ray.**
   DOOM-0011 L2 shipped correct and far over budget (544ae84). Measured in
