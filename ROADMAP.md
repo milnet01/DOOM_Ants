@@ -3626,3 +3626,55 @@ parked ideas (💭 considered) until we commit to and design each one.
   0.6 ms: ~3.5 k cells on E1M1 x a march of order 100 cells is ~350 k
   steps, and it reuses the seep field's existing grid, transform UBO and
   upload path (vkCmdCopyBufferToImage into the existing image).
+  SPECCED AND GATED (2026-07-30). The design is now in
+  docs/specs/DOOM-0011-volumetric-lighting.md §4.4 (the 2026-07-30
+  amendment) with build steps as Task L2b in
+  docs/specs/DOOM-0011-implementation-plan.md. Rule 14's /cold-eyes gate
+  ran 3 loops x 3 lanes and converged by cap with ZERO findings deferred:
+  loop 1 C3/H5/M7/L5, loop 2 C2/H5/M10/L9, loop 3 C4/H4/M10/L8, every
+  verified finding fixed in its own loop. Commits 1a75192 (draft),
+  e19cb63 / 1e091a4 / 19ec1a0 (the three loops).
+
+  The roofed-air correction this item recorded survived review intact, and
+  the review then found five more things the sketch got wrong. Worth
+  carrying into the build:
+    - The march must NOT stop at the first sky cell, and "first" has to
+      mean first with a NON-EMPTY window -- a later sky sector with a
+      higher ceiling raises the escape threshold. Stopping early reports
+      an open courtyard as unlit below head height.
+    - The stored zHi is clamped to the cell's own ceiling to bound the
+      field's dynamic range, and in an OPEN-SKY cell that ceiling is a sky
+      plane rather than a barrier. The shader needs `p.z <= zHi ||
+      openSky` or a horizontal seam appears across outdoor fog.
+    - The padded void ring blocks for the seep and must ESCAPE for the
+      clearance -- and `solid = (cz <= fz)` means the natural `fz = cz = 0`
+      ring write silently makes it solid, carving an unlit band along
+      every +X/+Y map edge.
+    - DOOM-0281's flip detector is necessary but NOT sufficient: the
+      clearance is keyed on plane HEIGHTS, so a lift moving between two
+      open heights changes what it shadows without flipping anything. The
+      trigger widens, and the refresh splits in two so the height-only
+      case skips the Dijkstra.
+    - The step size is cell/(|u.x|+|u.y|) = 45.3 at the shipped 45-degree
+      heading, not the cell size -- so 107 units of rise per cell entered,
+      not 151. Several bounds were quoted against the wrong figure.
+
+  Also fixed in passing, and pre-existing rather than new: §4.4(a) still
+  specified that L2's directional term REPLACES the flat sky ambient, and
+  "roofed air in-scatters no sky light at all". What shipped is an
+  ambient/directional SPLIT (kSkyAmbientFrac = 0.65) because the
+  replacement measured a 3.4x darkening on hardware. An implementer
+  reconciling L2b against the spec would have removed the ambient share
+  the signed-off look depends on.
+
+  Two questions were opened and one closed by the user the day it was
+  asked: Q27 (a moving sun) is CLOSED -- "DOOM 1 + 2 doesn't feature a day
+  / night cycle. So, that's fine." -- which makes INV-3's fixed sun
+  structural rather than a v1 simplification. Q28 (RB_SUN_NEVER, the shaft
+  edge) and Q30 (the clearance-rebuild cadence) are hardware tunes owned
+  by L2b; Q29 asks whether the "escaped z is never re-shadowed"
+  approximation ever shows.
+
+  NOT IMPLEMENTED -- the next session builds Task L2b. Note for it: the
+  review's own trend says this spec is at 2.7k lines and past the gate's
+  design point, so a further amendment should split the document first.
