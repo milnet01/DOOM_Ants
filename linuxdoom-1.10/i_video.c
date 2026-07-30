@@ -223,6 +223,34 @@ static void I_ToggleRtView(void)
 // for buttons + turn + forward (reused for menu navigation), plus synthetic
 // strafe / Escape key edges for what the two-axis contract can't carry.
 //
+// DOOM-0287: true when this run must ignore the keyboard, mouse and gamepad entirely,
+// and must not hold the pointer. Two reasons, and the second is why it is a flag rather
+// than a property of the capture modes alone:
+//
+//   1. CORRECTNESS. -shotverify / -shotcompare render ~45 warm-up frames on a
+//      deliberately static view before grabbing one. The window holds the mouse, so a
+//      nudge of it anywhere in that window turns the player and silently changes the
+//      captured image -- measured as up to 10/255 mean-abs-error between two runs of an
+//      UNCHANGED build, against a golden gate that fails at 3.0. Those two modes imply
+//      this flag; they are never valid with input live.
+//
+//   2. COURTESY, which -noinput exists for. A profiling run is not a capture run -- it
+//      plays normally for tens of seconds -- yet it still seizes the pointer from whoever
+//      is using the machine. An automated run has no business taking the mouse away from
+//      the person at the desk, and its numbers are cleaner without stray input anyway.
+//
+// Read from argv, not from the renderer's rb_shotverify latch: that is not set until the
+// first present, by which time the window exists and input is already flowing.
+static boolean I_InputDisabled(void)
+{
+    static int cached = -1;
+    if (cached < 0)
+	cached = (M_CheckParm("-noinput")
+		  || M_CheckParm("-shotverify")
+		  || M_CheckParm("-shotcompare")) ? 1 : 0;
+    return cached ? true : false;
+}
+
 static void I_PollGamepad(void)
 {
     event_t	event;
@@ -237,6 +265,11 @@ static void I_PollGamepad(void)
     static boolean dpad_up_held, dpad_l_held, dpad_r_held;	// DOOM-0153 gamepad remap
 
     if (!gamepad)
+	return;
+    // DOOM-0287: the pad is read by STATE, not by events, so the event filter in
+    // I_GetEvent cannot reach it -- a stick resting off-centre would still steer a
+    // -noinput run's camera. Gate it at the source.
+    if (I_InputDisabled())
 	return;
 
     lx = SDL_GameControllerGetAxis(gamepad, SDL_CONTROLLER_AXIS_LEFTX);
@@ -422,6 +455,21 @@ static void I_GetEvent(SDL_Event* sdlevent)
     event_t event;
     extern boolean menuactive;          // m_menu.c: F still types in menu text entry
     extern int rb_flashlight;           // r_vulkan.cpp: DOOM-0044 headlamp toggle
+
+    // DOOM-0287: drop every input event on a -noinput / capture run. SDL_QUIT and window
+    // events deliberately still pass, so a run that never reaches its capture is still
+    // closeable. The gamepad is polled by state, not by events, so it cannot be filtered
+    // here and is gated inside I_PollGamepad instead.
+    if (I_InputDisabled())
+	switch (sdlevent->type)
+	{
+	  case SDL_KEYDOWN:  case SDL_KEYUP:
+	  case SDL_MOUSEMOTION: case SDL_MOUSEWHEEL:
+	  case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEBUTTONUP:
+	    return;
+	  default:
+	    break;
+	}
 
     switch (sdlevent->type)
     {
@@ -798,8 +846,9 @@ void I_ShutdownGraphicsForVulkan(void)
 	I_Error("I_ShutdownGraphicsForVulkan: could not create Vulkan window: %s",
 		SDL_GetError());
 
-    // Same input grab as the Classic window.
-    SDL_SetRelativeMouseMode(SDL_TRUE);
+    // Same input grab as the Classic window -- except on a -noinput / capture run, which
+    // must leave the pointer to whoever is using the desktop (DOOM-0287).
+    SDL_SetRelativeMouseMode(I_InputDisabled() ? SDL_FALSE : SDL_TRUE);
 }
 
 
@@ -871,8 +920,9 @@ static void CreateSoftwareWindow(void)
 	I_Error("I_InitGraphics: could not create texture: %s", SDL_GetError());
 
     // Trap and hide the cursor so relative motion drives turn/look,
-    //  the way the original -grabmouse did.
-    SDL_SetRelativeMouseMode(SDL_TRUE);
+    //  the way the original -grabmouse did. Not on a -noinput / capture run: that has no
+    //  business taking the pointer from the person at the desk (DOOM-0287).
+    SDL_SetRelativeMouseMode(I_InputDisabled() ? SDL_FALSE : SDL_TRUE);
 }
 
 
