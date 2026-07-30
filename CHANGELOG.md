@@ -64,6 +64,13 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **The -shotverify capture is not tic-deterministic, so a cold-cache run blesses a different golden.** (DOOM-0287)
+  Adds a `-noinput` flag so an automated test or profiling run ignores the
+  keyboard, mouse and gamepad and leaves the pointer to whoever is using the
+  desktop. The `-shotverify` / `-shotcompare` capture modes imply it, which
+  also makes their golden-image comparison trustworthy: a stray mouse
+  movement during a capture used to turn the camera and change the image.
+
 - **Screenshot captures are no longer time-dependent, so the visual-regression gate compares like with like** (DOOM-0011)
   The drifting fog and the liquid ripples both ride a wall clock, which made every capture a slightly different image.
 

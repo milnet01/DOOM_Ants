@@ -578,7 +578,7 @@ with friends.
   Kind: fix.
   Source: user-request-2026-07-30.
 
-- 📋 [DOOM-0287] **The -shotverify capture is not tic-deterministic, so a cold-cache run blesses a different golden.**
+- ✅ [DOOM-0287] **The -shotverify capture is not tic-deterministic, so a cold-cache run blesses a different golden.**
   Measured 2026-07-30 while setting up a DOOM-0011 A/B. Four consecutive
   warm `-shotcompare` runs of one unchanged build returned mae=9.247,
   9.247, 9.248, 9.247 against a golden blessed by that same build --
@@ -643,6 +643,51 @@ with friends.
 
   Method note worth keeping: capture THREE runs per build, not two. Two
   runs cannot tell you which of them is the outlier; three can.
+  Resolved (2026-07-30, b23d609): CAUSE FOUND BY THE USER, and it was
+  neither of the two theories logged above. They were moving the mouse
+  while a capture ran. The window grabs the pointer and the capture
+  renders ~45 warm-up frames before taking one, so a nudge in that window
+  turns the player and changes the image.
+
+  It fits every observation the game-clock theory could not: the whole
+  frame shifts at once rather than one animated thing changing; the
+  residual lands hardest on high-contrast light panels (a yaw shift moves
+  sharp edges furthest); gametic, svgfFrame and shotFrame are identical
+  across runs that differ; and it is intermittent precisely because it
+  depends on whether a person happened to touch the mouse. Confirmed
+  structurally too: rb_shotverify appeared in NO .c file, so the input
+  path had no knowledge of the capture modes at all.
+
+  Fix: I_InputDisabled() in i_video.c, true for -shotverify /
+  -shotcompare (never valid with input live) and for a new -noinput flag
+  any run can pass. Gated at three sites -- I_GetEvent drops key/mouse/
+  wheel events (SDL_QUIT and window events still pass, so a run that
+  never captures stays closeable); I_PollGamepad returns early, because
+  the pad is read by STATE not events and an off-centre stick would
+  otherwise still steer; and both SDL_SetRelativeMouseMode calls leave
+  the pointer alone. -noinput is separate because a PROFILING run is not
+  a capture run -- it plays normally for tens of seconds -- and still
+  seized the mouse from whoever was at the desk.
+
+  Evidence is the code path, not a measurement: mouse input cannot be
+  injected under Wayland, so the fix could not be A/B'd directly. Three
+  consecutive captures agree to 0.002-0.004/255, which is consistent but
+  not proof, since runs sometimes agreed before. -rtverify PASS, 7/7
+  tests.
+
+  Method lesson, and it is the expensive one: two theories were built and
+  one was disproved with a diagnostic, but BOTH searched inside the
+  program. The variable was a person at the desk, outside anything the
+  process could observe. When a defect is intermittent and correlates
+  with nothing measurable inside the system, ask whoever is present what
+  they were doing -- the user answered in one sentence what the
+  instrumentation could not.
+
+  Follow-on for the DOOM-0011 measurements: every image A/B taken this
+  session carries this noise, so the numbers stand only where the signal
+  was far outside it. The kFogSteps 40-vs-24 result (signal 0.153) is
+  safe by a wide margin; anything under ~3 MAE from earlier sessions is
+  worth re-taking now that captures are input-proof.
 
 - 📋 [DOOM-0288] **Derive useful camera coordinates from the map data so a viewpoint can be chosen without walking to it.**
   The second half of DOOM-0268. `-warpto X Y [ANGLE]` can already put the
