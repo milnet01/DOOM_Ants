@@ -312,7 +312,11 @@ default_t	defaults[] =
     {"joyb_use",&joybuse,3},
     {"joyb_speed",&joybspeed,2},
 
-    {"screenblocks",&screenblocks, 9},
+    /* DOOM-0285: 9 is vanilla's bordered view -- a shrunken play area inside a
+     * decorative wall-texture frame. Nobody wants that here (user, 2026-07-30):
+     * the play area is always full width. 10 is the largest the menu allows
+     * (DOOM-0148 keeps the status bar; 11 would hide it), so 10 is "borderless". */
+    {"screenblocks",&screenblocks, 10},
     {"detaillevel",&detailLevel, 0},
 
     {"snd_channels",&numChannels, 3},
