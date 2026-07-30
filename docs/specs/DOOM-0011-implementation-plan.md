@@ -116,7 +116,7 @@ this plan implements it; every `§`/`INV`/`Q` reference points there.
 | `shaders/svgf_composite.comp` | Mode-6 apply: fold fog after albedo re-multiply + on sky-passthrough; **plain bilinear** upsample (L1) → position-guided bilateral (L5) | L1, L5 |
 | `r_vulkan.cpp` | New half-res fog image + bindings; the 3-D noise volume + seep field + transform UBO on **set 0** (pool sizes + `PARTIALLY_BOUND`); the field's format/pack/upload and DOOM-0281's re-flood; `rb_fog` extern; `misc6.z/.w` writes; profiler slot | L1, L1c, L1d, L2b, L4, L6 |
 | `r_mesh.c` | The seep flood fill (portal graph + Dijkstra + per-cell resolve) and the sun-clearance march that rides the same grid — both live here because they need the DOOM map globals; (L1b fallback only) the `RB_MESH_OUTDOOR` bit | L1d, L2b, (L1b) |
-| `r_mesh.h` | New `rb_view_t.hazeDensity` field; the seep field buffer handle (+ its `zLo`/`zHi` arrays and the `kSunDir` mirror); (L1b fallback only) the `RB_MESH_OUTDOOR` `#define` | L4, L1d, L2b, (L1b) |
+| `r_mesh.h` | New `rb_view_t.hazeDensity` field; the seep field buffer handle (+ its `zLo`/`zHi` arrays, the retained `geom` cache, `RB_RefreshSunClearance` and the `kSunDir` mirror); (L1b fallback only) the `RB_MESH_OUTDOOR` `#define` | L4, L1d, L2b, (L1b) |
 | `r_backend.c` | Compute hell-haze from `gameepisode`/`gamemap`/sky into `view.hazeDensity` | L4 |
 | `m_misc.c` | `rt_fog` config default row | L6 |
 | `m_menu.c` | Two menu rows (Effects + Video), `M_ChangeFog`, `fogNames[]` | L6 |
@@ -1165,7 +1165,7 @@ git commit -m "DOOM-0011: L2 sky shafts — kSunDir + per-sample sky-visibility 
 
 ## Task L2b — The sun-clearance field: delete L2's per-sample ray (DOOM-0289)
 
-**Goal:** L2 shipped correct and **19× over budget** — its one shadow ray per march sample
+**Goal:** L2 shipped correct and far over budget — its one shadow ray per march sample
 measures **13.6 ms** against the whole rest of the fog's 0.7 ms, for **−15 fps at the
 shipped default strength**, and `master` carries that regression today. Answer the same
 question from a **load-time field** instead, exactly as DOOM-0276 did for the march's
@@ -1259,8 +1259,20 @@ E1M1, so a march re-querying per step would cost tens of milliseconds and land o
 DOOM-0281's door-open frame as a visible hitch. Cache instead:
 
 ```c
-typedef struct { float fz, cz; unsigned char sky, solid; } rb_cellgeom_t;
+typedef struct {
+    float         fz, cz;      // this cell's floor / ceiling, world units
+    int           sec;         // owning sector index, or -1 for the void ring
+    unsigned char sky, solid;  // sky ceiling? / no air here?
+} rb_cellgeom_t;
 ```
+
+⚠ **`sec` is what makes Step 5's clearance-only rebuild possible, and it is easy to leave
+out because the march itself never reads it.** Without it, "refresh the cache from the
+live sector heights" has no way to find the sector, and the refresh would have to
+re-descend the BSP 3.5 k times — the exact cost the retained cache exists to avoid.
+With it, the refresh is `fz = sectors[sec].floorheight/FRACUNIT`, `cz` likewise,
+`sky = (ceilingpic == skyflatnum)`, and `solid`'s **height** clause re-derived; the void
+verdict is geometry, not height, so it is computed once and kept.
 
 Add a companion to `RB_SectorAtPoint` rather than changing it (`r_vulkan.cpp` has its own
 caller). The companion shares the **one** `R_PointInSubsector` call, so the BSP is
@@ -1285,11 +1297,12 @@ static int RB_CellGeomAtPoint(float x, float y, rb_cellgeom_t* out)
     sector_t*    sc;
     int          i;
 
-    out->fz = 0.0f; out->cz = 0.0f; out->sky = 0; out->solid = 1;
+    out->fz = 0.0f; out->cz = 0.0f; out->sec = -1; out->sky = 0; out->solid = 1;
     if (!ss || ss->numlines <= 0)
         return -1;                         // same answer RB_SectorAtPoint gives
 
     sc = segs[ss->firstline].frontsector;   // same derivation RB_SectorAtPoint uses
+    out->sec = (int)(sc - sectors);
     out->fz    = sc->floorheight   / (float)FRACUNIT;
     out->cz    = sc->ceilingheight / (float)FRACUNIT;
     out->sky   = (sc->ceilingpic == skyflatnum);
@@ -1324,7 +1337,15 @@ static int RB_CellGeomAtPoint(float x, float y, rb_cellgeom_t* out)
         if (sg->linedef->frontsector == sg->linedef->backsector)
             continue;
         side = (sg->linedef->frontsector == sg->frontsector) ? 0 : 1;
-        if (P_PointOnLineSide(fx, fy, sg->linedef) != side)
+        // ON-THE-LINE IS NOT A RARE CASE HERE, and P_PointOnLineSide resolves it to 1
+        // (back) -- `if (right < left) return 0; return 1;`. DOOM geometry is 64-unit
+        // aligned and the seep cell is 64 units, so cell centres landing exactly on a
+        // linedef is systematic rather than incidental, and a doorway-threshold cell
+        // resolving to "back" would be marked solid -- deleting the very shaft this
+        // feature exists to draw. Nudge the sample a QUARTER-cell along +u before testing
+        // (nudgeX = 0.25f*cell*ux, nudgeY = 0.25f*cell*uy, hoisted out of the loop): well
+        // inside the cell either way, and biased toward the air the ray is about to enter.
+        if (P_PointOnLineSide(fx + nudgeX, fy + nudgeY, sg->linedef) != side)
         {
             out->solid = 1;                 // in the void -- but `sc` is still returned
             break;
@@ -1338,23 +1359,34 @@ Allocate a `gw*gh` `rb_cellgeom_t` grid and fill it in the existing rasterise lo
 **using the returned `sec` exactly where `RB_SectorAtPoint`'s was used** — the seep half
 of that loop does not change by one line.
 
-**The void ring keeps its explicit write** (`ix == 0 || iy == 0 || ...`), and it now has
-to write **four** values, not two: that branch `continue`s before anything else runs, so
-`zLo`/`zHi` would otherwise reach `FloatToHalf` as uninitialised `malloc` bytes — and a
-ring cell that happens to decode as a wide interval reads "always sunlit" through
-`CLAMP_TO_EDGE` at every map edge. Write the never-sentinel there
-(`zLo = +RB_SUN_NEVER`, `zHi = −RB_SUN_NEVER`, since `fz = cz = 0` for a ring cell).
+**The void ring's explicit write** (`ix == 0 || iy == 0 || ...`) now has to set **six**
+things, and the ring plays **opposite roles** in the two halves of the field — which is
+the whole reason to spell it out rather than reuse a default:
 
-⚠ **But mark the ring `escapes`, NOT `solid`, in the geometry cache** — the two roles pull
-opposite ways and getting this backwards is a visible, systematic artefact. For the *seep*
-the ring is a blocker (that is why it reads `dMax`/roofed). For the *clearance march* it is
-the open sky beyond the map's bounding box: there is no geometry out there, so a ray that
-reaches the ring has escaped. Mark it solid and every march leaving the map along `+u` —
-which is every outdoor cell near the `+X`/`+Y` edges, since the shipped `kSunDir` points
-that way — terminates blocked, carving an unlit band two or three cells deep along those
-edges. Give the ring `sky = 1` with a ceiling below any real floor (e.g. `fz = cz = −1e30`
-guarded, or simply a dedicated `escapes` flag the march reads before anything else) so it
-escapes immediately at whatever height the ray arrives.
+| | value | why |
+|---|---|---|
+| `field->d` | `RB_SEEP_DMAX` | unchanged — for the *seep* the ring is a blocker (INV-12) |
+| `field->sky` | `0` | unchanged — roofed, so no outdoor bank wraps under `CLAMP_TO_EDGE` |
+| `field->zLo` | `−RB_SUN_NEVER` | for the *clearance* the ring is **open sky**: it admits everything |
+| `field->zHi` | `+RB_SUN_NEVER` | …so the stored interval is maximally **wide**, not empty |
+| `geom[].sky` | `1` | a march that reaches the ring **escapes** |
+| `geom[].solid` | `0` | ← the trap: see below |
+
+The `zLo`/`zHi` writes are not optional bookkeeping — that branch `continue`s before
+anything else runs, so they would otherwise reach `FloatToHalf` as uninitialised `malloc`
+bytes, and a ring cell decoding as a wide interval by accident is the same artefact as one
+decoding as a narrow one, just luckier.
+
+⚠ **Do NOT give the ring `fz = cz`, and do not mark it `solid`.** `RB_CellGeomAtPoint`
+derives `solid = (cz <= fz)`, so *any* form with equal heights — including the natural
+`fz = cz = 0` — comes out **solid**, and `RB_SunClearance`'s first act is
+`if (g->solid) break;`. Every march leaving the map along `+u` would then terminate
+blocked, and since the shipped `kSunDir` points at `+X/+Y`, that carves a systematically
+unlit band two or three cells deep along exactly those edges of every outdoor area — the
+class of edge artefact §4.3a's `ceilf` fix was written for, in the feature L2b must leave
+look-identical. Write the ring's geom as `fz = 0, cz = 1e30f, sec = -1, sky = 1,
+solid = 0`: a sky ceiling above anything, so the march escapes at whatever height the ray
+arrives.
 
 - [ ] **Step 3: March each cell for its clearance interval (`r_mesh.c`)**
 
@@ -1493,7 +1525,11 @@ Derive `u` and `m` **once**, outside both loops:
     // heading to march along and would divide by zero here. It is not a state the shipped
     // constant can reach, but the guard is one line and a NaN would propagate through the
     // whole field and then through sigma.
-    if (ulen < 1e-6f) { ux = 1.0f; uy = 0.0f; m = 1e30f; }   // every cell sees the sun
+    // A degenerate heading has no march to run: every OPEN-SKY cell escapes at its own
+    // ceiling and every roofed cell falls to the never-sentinel (m = 1e30 drives any
+    // ceiling bound to -inf, so `lo > hi` fires at k = 0). Not a state the shipped
+    // constant can reach; the guard exists so a future tune cannot NaN the whole field.
+    if (ulen < 1e-6f) { ux = 1.0f; uy = 0.0f; m = 1e30f; }
     else              { ux = RB_SUN_DIR_X / ulen; uy = RB_SUN_DIR_Y / ulen;
                         m  = RB_SUN_DIR_Z / ulen; }          // 2.357 at the shipped kSunDir
 ```
@@ -1518,7 +1554,12 @@ than a validation error:
    two null pointers. The 1×1 placeholder case (no level yet) writes the never-sentinel
    against its zero column, i.e. `zLo = +RB_SUN_NEVER`, `zHi = −RB_SUN_NEVER` — nothing
    has sun before a level exists, which is what the placeholder has always meant.
-2. `PackSeepTexels` writes **4** halves per texel, not 2.
+2. `PackSeepTexels` writes **4** halves per texel, not 2, in the order the shader reads:
+   `.r` = `seepCur`, `.g` = `seepSky`, **`.b` = `zLo`, `.a` = `zHi`** (spec §4.4's channel
+   table — swap `.b`/`.a` and every cell reads as never-sunlit, since the test becomes
+   `p.z >= zHi && p.z <= zLo`). **Its header comment goes with it** — it currently says
+   "R16G16" and "Two facts on one grid", and a stale comment on the one function that
+   defines the channel layout is worse than none.
 3. `texels` sizing, the staging-buffer `bytes`, and `CreateSampledImage`'s size argument
    all go `w*h*2` → `w*h*4` `uint16_t`.
 4. `VK_FORMAT_R16G16_SFLOAT` → **`VK_FORMAT_R16G16B16A16_SFLOAT`**. Vulkan mandates
@@ -1582,6 +1623,9 @@ trigger**, two decisions, and one **pre-existing defect**:
     // Declared OUTSIDE the dirty block: a multi-frame ease still needs its copy on
     // frames where nothing newly changed.
     bool needUpload = g.seepEasing;
+    // Latch BEFORE the block clears it -- the clearance guard below tests "did a full
+    // re-flood just run?", and `g.seepDirty` is false by then either way.
+    const bool didReflood = g.seepDirty;
 
     if (g.seepDirty)
     {
@@ -1604,13 +1648,28 @@ trigger**, two decisions, and one **pre-existing defect**:
             // it settles; the snapped half needs exactly one, and it is not the eased
             // half's job to notice it (DOOM-0289).
             needUpload = needUpload || g.seepEasing || clearanceMoved;
-        }
-        RB_FreeSeepField(sf);
-    }
 
-    if (!needUpload)
-        return;
+            // SWAP the retained field -- do not free the new one and keep the old.
+            // `g.seepField` owns the retained `geom` cache that the clearance-only path
+            // below marches over; leave it pointing at the level-load build and it
+            // describes the pre-flood map forever, while its stale zLo/zHi then overwrite
+            // the correct ones this block just computed.
+            RB_FreeSeepField(g.seepField);
+            g.seepField = sf;                       // ownership transfers; do NOT free sf
+        }
+        else
+        {
+            RB_FreeSeepField(sf);                   // dimension mismatch: keep the old field
+        }
+    }
 ```
+
+⚠ **The clearance-only block below must sit BEFORE `if (!needUpload) return;`, not after
+it.** Read in document order the placement looks free, and it is not: a lift moving
+between two open heights sets `clearanceDirty` but neither `seepDirty` nor `seepEasing`,
+so `needUpload` is false on exactly the frames the block exists for and the function
+returns before reaching it. The failure is silent and it deletes §7's L2b acceptance
+clause outright.
 
   with the existing ease block still guarded on `g.seepEasing` alone, and `PackSeepTexels`
   + the barrier/copy reached whenever `needUpload`. **Extend the existing re-flood
@@ -1622,7 +1681,7 @@ trigger**, two decisions, and one **pre-existing defect**:
   and sets `needUpload` when the entry point reports the clearance moved:
 
 ```cpp
-    if (g.clearanceDirty && !g.seepDirty)      // a full re-flood already covers this
+    if (g.clearanceDirty && !didReflood && g.seepField)   // a re-flood already covered it
     {
         g.clearanceDirty = false;
         if (RB_RefreshSunClearance(g.seepField))
@@ -1635,11 +1694,22 @@ trigger**, two decisions, and one **pre-existing defect**:
     }
 ```
 
-  **This needs the field kept**, which `UploadSeepField` does not do today: it copies
-  `f->d`/`f->sky` into vectors and the caller frees the `rb_seep_t`. Retain it as
-  `g.seepField` (freed with `RB_FreeSeepField` on level teardown, beside the image
-  destruction) — the retained `geom` cache of Step 1 lives inside it, so the two go
-  together. **Rate-limiting is Q30's** and comes off Step 8's number, not off a guess.
+  **This needs the field kept, and the ownership change has three sites — name all three
+  or it is a leak or a double-free depending on which the implementer guesses.**
+  Today `UploadSeepField` copies `f->d`/`f->sky` into vectors and the **caller** frees the
+  `rb_seep_t` (`RB_Vulkan_BuildLevel`: `rb_seep_t* sf = RB_BuildSeepField(); …
+  UploadSeepField(sf); … RB_FreeSeepField(sf);`). So:
+  1. **`UploadSeepField` takes ownership** — it stores the pointer as `g.seepField`
+     (freeing any previous one first) instead of the caller freeing it. The
+     `f == nullptr` placeholder path sets `g.seepField = nullptr`, which is why the
+     clearance block above tests it.
+  2. **`RB_Vulkan_BuildLevel` stops calling `RB_FreeSeepField`** on the field it just
+     passed. This is the line that turns a working change into a use-after-free if missed.
+  3. **Level teardown frees `g.seepField`**, beside the existing image/staging/UBO
+     destruction. The retained `geom` cache of Step 1 lives inside it, so the two go
+     together and neither needs its own lifetime.
+
+  **Rate-limiting is Q30's** and comes off Step 8's number, not off a guess.
 
 - [ ] **Step 6: Swap the shader test and DELETE the ray (`pathtrace.comp`)**
 
@@ -1702,8 +1772,11 @@ scene, second and machine.
 capture the same scene on both builds and compare, rather than judging the new one alone.
 `-shotcompare`'s mean-abs-error is the instrument, with the **same-build pair as the noise
 floor** (DOOM-0276 measured 1.09/255 between two runs of one build against 2.93/255 for a
-real change). Expect a small real difference — the shaft edge moves onto the 64-unit grid,
-exactly as the roofline did — and **not** a shaft that has moved, split, or vanished.
+real change). **Pass bar: under the project's `-shotcompare` fail line of 3.0/255.** Expect
+a small real difference — the shaft edge moves onto the 64-unit grid, exactly as the
+roofline did — and **not** a shaft that has moved, split, or vanished. A score down at the
+same-build floor is the *worrying* result, not the reassuring one: it would mean the field
+is not driving the shaft at all.
 
 Then the three things a screenshot cannot settle:
 - the **doorway beam** still reads, and its edge is soft rather than stepped (Q28's
