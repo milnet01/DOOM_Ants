@@ -120,6 +120,12 @@ const float kSkyAmbientFrac  = 0.65;             // DOOM-0011 L2: how much of th
                                  // Raise toward 1.0 for flatter, more overcast air; lower toward 0.0
                                  // for a hard-edged clear-sky beam.
 const vec3  kSunDir          = normalize(vec3(0.30, 0.30, 1.0)); // world; +z is up (floor = hitP.z). L2.
+                                 // MIRRORED C-SIDE as RB_SUN_DIR_X/Y/Z in r_mesh.h, for
+                                 // DOOM-0289's load-time clearance field -- change both
+                                 // together, or the beam and its shadows point in different
+                                 // directions. Nothing fails to build if they drift; the
+                                 // symptom is shafts landing in the wrong place. This
+                                 // declaration is the authoritative one.
 const vec3  kGooTint         = vec3(0.35, 0.85, 0.30); // sickly green (L4)
 const vec3  kHellTint        = vec3(0.90, 0.35, 0.30); // faint red   (L4)
 const float kSkyShaftStrength   = 0.85;          // sky in-scatter gain (L1/L2). Brightness of the

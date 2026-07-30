@@ -39,6 +39,7 @@
 #include <cstring>
 #include <cstdint>
 #include <cstdlib>     // exit() for the -rtverify self-test
+#include <algorithm>   // std::equal (DOOM-0289's clearance-moved compare)
 #include <vector>
 
 // POD-only, DOOM-header-free seam: the C geometry builder (r_mesh.c) and the
@@ -745,9 +746,10 @@ struct VulkanState
     VkDescriptorPool      rtDsPool   = VK_NULL_HANDLE;
     VkDescriptorSet       rtDs       = VK_NULL_HANDLE;
     VkPipelineLayout      rtPipeLayout = VK_NULL_HANDLE;
-    // DOOM-0011 L1d: the outdoor-proximity seep field. A per-level R32F image
-    // holding, per grid cell, the through-open-space distance to outdoor air, plus
-    // a 24-byte UBO turning a world XY into a texel. Set 0, bindings 4 and 5
+    // DOOM-0011 L1d: the outdoor-proximity seep field. A per-level RGBA16F image
+    // holding, per grid cell, the through-open-space distance to outdoor air (.r), the
+    // open-sky mask (.g, DOOM-0276) and the sun-clearance interval (.b/.a, DOOM-0289),
+    // plus a 24-byte UBO turning a world XY into a texel. Set 0, bindings 4 and 5
     // (3 is reserved for L1c's noise volume and is simply absent until then --
     // descriptor bindings need not be contiguous, so nothing has to be made
     // partially-bound to hold the number). Rebuilt per level; a 1x1 placeholder
@@ -770,8 +772,20 @@ struct VulkanState
     // the point of the feature is that it rolls in. `sky` is kept beside them only
     // so the two-channel texel pack has both halves without re-flooding for it.
     std::vector<float>    seepCur, seepTarget, seepSky;
+    // DOOM-0289: the sun-clearance interval, riding the same grid on the .b/.a channels.
+    // SNAPPED, not eased -- mist genuinely rolls in, light does not: a door opening admits
+    // its beam in the same frame, which is both correct and simpler.
+    std::vector<float>    seepZLo, seepZHi;
+    // DOOM-0289: the built field is RETAINED, because it owns the per-cell geometry cache
+    // the clearance-only rebuild marches over. Previously the caller freed it right after
+    // UploadSeepField copied the two channels out.
+    rb_seep_t*            seepField = nullptr;
     uint32_t              seepW = 0, seepH = 0;
     bool                  seepDirty  = false;   // an opening flipped; re-flood when next traced
+    // DOOM-0289: a plane MOVED, flip or no flip. The clearance is baked from floorheight
+    // and ceilingheight, so it is suspect whenever a plane moves at all -- a lift running
+    // between two open heights flips no opening and would otherwise freeze its beam.
+    bool                  clearanceDirty = false;
     bool                  seepEasing = false;   // cur has not caught up with target yet
     VkBuffer              seepStaging    = VK_NULL_HANDLE;
     VkDeviceMemory        seepStagingMem = VK_NULL_HANDLE;
@@ -2374,7 +2388,8 @@ void CreateRtComputePipeline()
     binds[3].descriptorCount = 1;
     binds[3].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
     // DOOM-0011 L1d.
-    binds[4].binding         = 4;   // seep field (R16G16F: distance to outdoor air + sky mask)
+    binds[4].binding         = 4;   // seep field (RGBA16F: distance to outdoor air + sky mask
+                                    //             + DOOM-0289's sun-clearance interval)
     binds[4].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     binds[4].descriptorCount = 1;
     binds[4].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
@@ -3348,26 +3363,42 @@ static uint16_t FloatToHalf(float f)
     return (uint16_t)(sign | ((uint32_t)exp << 10) | (man >> 13));
 }
 
-// DOOM-0281: pack the field the GPU should be sampling into its R16G16 texels.
+// DOOM-0281: pack the field the GPU should be sampling into its R16G16B16A16 texels.
 // Split out of UploadSeepField because the mid-play re-upload path needs the same
 // bytes without any of the image/UBO/descriptor work around them.
 //
-// .r = seep distance, .g = the open-sky mask (DOOM-0276). Two facts on one grid, so
-// the march's ONE existing tap answers both and the per-sample up-ray can go.
+// FOUR facts on one grid, so the march's ONE existing tap answers all of them and both
+// of its former per-sample rays can go. This function is where the channel layout is
+// DEFINED, so the order below is the contract spec §4.4's channel table states:
+//   .r  seep distance to outdoor air through open space          (L1d)
+//   .g  open-sky mask, 0/1                                       (DOOM-0276)
+//   .b  zLo -- lowest world z in this cell that reaches the sun  (DOOM-0289)
+//   .a  zHi -- highest, before a solid ceiling stops it          (DOOM-0289)
+// Swap .b and .a and every cell reads as never-sunlit, since the shader's test becomes
+// `p.z >= zHi && p.z <= zLo`.
 static void PackSeepTexels(uint16_t* dst)
 {
     const size_t n = (size_t)g.seepW * (size_t)g.seepH;
     for (size_t i = 0; i < n; i++)
     {
-        dst[i * 2 + 0] = FloatToHalf(g.seepCur[i]);   // RB_SEEP_DMAX = "unreachable"
-        dst[i * 2 + 1] = FloatToHalf(g.seepSky[i]);   // 0 = "roofed"
+        dst[i * 4 + 0] = FloatToHalf(g.seepCur[i]);   // RB_SEEP_DMAX = "unreachable"
+        dst[i * 4 + 1] = FloatToHalf(g.seepSky[i]);   // 0 = "roofed"
+        dst[i * 4 + 2] = FloatToHalf(g.seepZLo[i]);
+        dst[i * 4 + 3] = FloatToHalf(g.seepZHi[i]);   // zHi < zLo = "the sun never gets here"
     }
 }
 
-void UploadSeepField(const rb_seep_t* f)
+// DOOM-0289: takes OWNERSHIP of `f`. It is retained as g.seepField because it carries
+// the per-cell geometry cache the clearance-only rebuild marches over; the caller must
+// NOT free it afterwards. Passing nullptr (the placeholder path) clears the retained
+// field, which is why RecordSeepRefresh's clearance block tests it.
+void UploadSeepField(rb_seep_t* f)
 {
     uint32_t   w = 1, h = 1;
-    const bool haveField = (f && f->d && f->sky && f->w > 0 && f->h > 0);
+    // Extended for DOOM-0289: without zLo/zHi here, a partially-built field would take
+    // the has-a-field branch and read two null pointers.
+    const bool haveField = (f && f->d && f->sky && f->zLo && f->zHi &&
+                            f->w > 0 && f->h > 0);
 
     if (haveField)
     {
@@ -3384,24 +3415,42 @@ void UploadSeepField(const rb_seep_t* f)
     {
         g.seepCur.assign(f->d,   f->d   + (size_t)w * h);
         g.seepSky.assign(f->sky, f->sky + (size_t)w * h);
+        g.seepZLo.assign(f->zLo, f->zLo + (size_t)w * h);
+        g.seepZHi.assign(f->zHi, f->zHi + (size_t)w * h);
     }
     else
     {
         g.seepCur.assign((size_t)w * h, RB_SEEP_DMAX);
         g.seepSky.assign((size_t)w * h, 0.0f);
+        // The never-sentinel against a zero air column: nothing has sun before a level
+        // exists, which is what the placeholder has always meant.
+        g.seepZLo.assign((size_t)w * h,  RB_SUN_NEVER);
+        g.seepZHi.assign((size_t)w * h, -RB_SUN_NEVER);
     }
     g.seepTarget = g.seepCur;
     g.seepEasing = false;
     g.seepDirty  = false;
+    g.clearanceDirty = false;
 
-    // R16G16_SFLOAT, and the 16 is load-bearing in a way R8-vs-R16 is not the whole of.
-    // Vulkan MANDATES SAMPLED_IMAGE_FILTER_LINEAR for both R16_SFLOAT and R16G16_SFLOAT
-    // but leaves it OPTIONAL for R32_SFLOAT (spec "Mandatory Format Support: 16-bit /
-    // 32-bit Components") -- so sampling a 32-bit field with a linear sampler is
-    // undefined on any device that does not advertise the bit, even though it works
-    // on the AMD card this was written against. Half gives ~2-unit resolution at the
-    // 3072-unit sentinel, far finer than a 64-unit cell.
-    std::vector<uint16_t> texels((size_t)w * h * 2, 0);
+    // Ownership transfer: the previous level's field (and its geometry cache) goes here.
+    if (g.seepField != f)
+    {
+        RB_FreeSeepField(g.seepField);
+        g.seepField = haveField ? f : nullptr;
+        if (!haveField)
+            RB_FreeSeepField(f);       // a malformed field still has to be released
+    }
+
+    // R16G16B16A16_SFLOAT (DOOM-0289 widened it from R16G16), and the 16 is load-bearing
+    // in a way R8-vs-R16 is not the whole of. Vulkan MANDATES SAMPLED_IMAGE_FILTER_LINEAR
+    // for R16_SFLOAT, R16G16_SFLOAT and R16G16B16A16_SFLOAT alike, but leaves it OPTIONAL
+    // for R32_SFLOAT (spec "Mandatory Format Support: 16-bit / 32-bit Components") -- so
+    // sampling a 32-bit field with a linear sampler is undefined on any device that does
+    // not advertise the bit, even though it works on the AMD card this was written
+    // against. Half gives ~2-unit resolution at the 3072-unit sentinel, far finer than a
+    // 64-unit cell, and ~1 unit at the |z| = 1024 the clearance channels reach.
+    // 256x256 worst case x 4 channels x 2 B = 512 KB; E1M1's 75x47 grid is 28 KB.
+    std::vector<uint16_t> texels((size_t)w * h * 4, 0);
     PackSeepTexels(texels.data());
 
     // The image is per level, so the old one goes. The caller (level load, or
@@ -3420,7 +3469,7 @@ void UploadSeepField(const rb_seep_t* f)
     if (g.seepStaging)    { vkDestroyBuffer(g.device, g.seepStaging, nullptr); g.seepStaging = VK_NULL_HANDLE; }
     if (g.seepStagingMem) { vkFreeMemory(g.device, g.seepStagingMem, nullptr); g.seepStagingMem = VK_NULL_HANDLE; }
     {
-        const VkDeviceSize bytes = (VkDeviceSize)w * h * 2 * sizeof(uint16_t);
+        const VkDeviceSize bytes = (VkDeviceSize)w * h * 4 * sizeof(uint16_t);
         VkBufferCreateInfo sbi = {};
         sbi.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
         sbi.size        = bytes;
@@ -3444,8 +3493,8 @@ void UploadSeepField(const rb_seep_t* f)
     // representable at 192 units, which floors exp(-d/kSeepFalloff) at 1/e and so
     // floors skyExposure at ~0.22 -- four times the intended indoor value, on every
     // sealed room in the game.
-    CreateSampledImage(w, h, VK_FORMAT_R16G16_SFLOAT, texels.data(),
-                       (VkDeviceSize)w * h * 2 * sizeof(uint16_t),
+    CreateSampledImage(w, h, VK_FORMAT_R16G16B16A16_SFLOAT, texels.data(),
+                       (VkDeviceSize)w * h * 4 * sizeof(uint16_t),
                        &g.seepImage, &g.seepMemory, &g.seepView);
 
     // The transform is per-level runtime data, so it can be neither a compile-time
@@ -3517,10 +3566,15 @@ void UploadSeepField(const rb_seep_t* f)
 
 // DOOM-0281: keep the seep field honest while the map moves.
 //
-// Two jobs, in order: re-flood when an opening has flipped since the last flood,
-// then ease what the GPU is sampling toward that new answer and copy it into the
-// live image. Both are skipped outright on a map where nothing has opened, which is
+// Three jobs, in order: re-flood when an opening has flipped since the last flood;
+// re-march DOOM-0289's sun clearance when a plane moved without flipping anything;
+// then ease what the GPU is sampling toward the new answer and copy it into the live
+// image. All three are skipped outright on a map where nothing has moved, which is
 // nearly every frame.
+//
+// The two halves have different triggers and different update rules, and mixing them
+// up is the defect DOOM-0289 had to fix here: the seep is CONNECTIVITY-keyed and EASES
+// (mist rolls in), the clearance is HEIGHT-keyed and SNAPS (light does not roll in).
 //
 // The ease is the feature, not a nicety. Swapping the field outright makes fog
 // appear in a room between one frame and the next, which reads as a glitch; easing
@@ -3542,6 +3596,15 @@ void RecordSeepRefresh(VkCommandBuffer cb)
     if (!g.seepStaging || g.seepCur.empty())
         return;
 
+    // DOOM-0289. Declared OUTSIDE the dirty block: a multi-frame ease still needs its
+    // copy on frames where nothing newly changed, so declaring it inside would stop
+    // DOOM-0281's roll-in after one frame.
+    bool needUpload = g.seepEasing;
+    // Latched BEFORE the block clears it -- the clearance-only guard below asks "did a
+    // full re-flood just run?", and g.seepDirty is false by then either way.
+    const bool didReflood = g.seepDirty;
+    bool clearanceMoved = false;
+
     if (g.seepDirty)
     {
         g.seepDirty = false;
@@ -3554,6 +3617,15 @@ void RecordSeepRefresh(VkCommandBuffer cb)
         {
             g.seepTarget.assign(sf->d,   sf->d   + g.seepTarget.size());
             g.seepSky.assign   (sf->sky, sf->sky + g.seepSky.size());
+
+            // DOOM-0289: COMPARE BEFORE ASSIGNING -- the other order makes this
+            // trivially false and re-creates the very defect the gate below fixes.
+            clearanceMoved =
+                !std::equal(sf->zLo, sf->zLo + g.seepZLo.size(), g.seepZLo.begin()) ||
+                !std::equal(sf->zHi, sf->zHi + g.seepZHi.size(), g.seepZHi.begin());
+            g.seepZLo.assign(sf->zLo, sf->zLo + g.seepZLo.size());  // snapped, not eased
+            g.seepZHi.assign(sf->zHi, sf->zHi + g.seepZHi.size());
+
             // A crusher cycling, or a door between two already-sealed rooms, flips an
             // opening without changing a single distance. Comparing here means those
             // cost one flood and no ease at all.
@@ -3565,34 +3637,87 @@ void RecordSeepRefresh(VkCommandBuffer cb)
             // a number that does not move is a detector firing on nothing. It also
             // carries the fill cost, because Q22 rejected doing this at run time by
             // reasoning from a budget rather than from a measurement.
-            int nSealed = 0;
+            int nSealed = 0, nNoSun = 0;
             for (size_t c = 0; c < g.seepTarget.size(); c++)
                 if (g.seepTarget[c] >= RB_SEEP_DMAX) nSealed++;
-            printf("RB_Vulkan: DOOM-0281 seep re-flood (%.1f ms), %d sealed cells, fog %s.\n",
-                   CpuNowMs() - t0, nSealed,
+            for (size_t c = 0; c < g.seepZLo.size(); c++)
+                if (g.seepZLo[c] > g.seepZHi[c]) nNoSun++;      // DOOM-0289
+            printf("RB_Vulkan: DOOM-0281 seep re-flood (%.1f ms), %d sealed cells, "
+                   "%d no-sun cells, fog %s.\n",
+                   CpuNowMs() - t0, nSealed, nNoSun,
                    g.seepEasing ? "easing to the new opening" : "unchanged");
             fflush(stdout);
+
+            // DOOM-0289: SWAP the retained field -- do not free the new one and keep the
+            // old. g.seepField owns the geometry cache the clearance-only path below
+            // marches over; leaving it pointing at the level-load build would describe
+            // the pre-flood map forever, and its stale zLo/zHi would then overwrite the
+            // correct ones this block just computed.
+            RB_FreeSeepField(g.seepField);
+            g.seepField = sf;                    // ownership transfers; do NOT free sf
         }
-        RB_FreeSeepField(sf);
+        else
+        {
+            RB_FreeSeepField(sf);                // dimension mismatch: keep the old field
+        }
     }
 
-    if (!g.seepEasing)
+    // DOOM-0289: the clearance-only rebuild. A plane that moved WITHOUT flipping an
+    // opening (a lift running between two open heights) cannot have changed a single
+    // seep distance -- those are pure connectivity -- but the clearance is baked from
+    // floorheight/ceilingheight, so it moves whenever a plane does. Re-run just the
+    // march over the retained geometry cache: no portal graph, no Dijkstra.
+    //
+    // This block MUST sit before the `if (!needUpload) return;` below. Read in document
+    // order the placement looks free, and it is not: a lift between two open heights sets
+    // clearanceDirty but neither seepDirty nor seepEasing, so needUpload is false on
+    // exactly the frames this block exists for.
+    if (g.clearanceDirty && !didReflood && g.seepField)   // a re-flood already covered it
+    {
+        g.clearanceDirty = false;
+        const double tc0 = CpuNowMs();
+        if (RB_RefreshSunClearance(g.seepField))
+        {
+            // Pull the refreshed interval into the CPU-side mirrors PackSeepTexels reads.
+            g.seepZLo.assign(g.seepField->zLo, g.seepField->zLo + g.seepZLo.size());
+            g.seepZHi.assign(g.seepField->zHi, g.seepField->zHi + g.seepZHi.size());
+            needUpload = true;
+            int nNoSun = 0;
+            for (size_t c = 0; c < g.seepZLo.size(); c++)
+                if (g.seepZLo[c] > g.seepZHi[c]) nNoSun++;
+            printf("RB_Vulkan: DOOM-0289 clearance rebuild (%.2f ms), %d no-sun cells.\n",
+                   CpuNowMs() - tc0, nNoSun);
+            fflush(stdout);
+        }
+    }
+
+    // Either half moving is enough. The eased half needs a copy every frame until it
+    // settles; the snapped half needs exactly one, and it is not the eased half's job to
+    // notice it. The shipped gate was `if (!g.seepEasing) return;`, which reached the
+    // pack-and-copy ONLY when a seep distance changed -- so a door that changes what the
+    // sun can reach without changing any distance-to-outdoor-air (a second route of the
+    // same length) would recompute the clearance and never upload it (DOOM-0289).
+    needUpload = needUpload || g.seepEasing || clearanceMoved;
+    if (!needUpload)
         return;
 
-    float worst = 0.0f;
-    const float k = 1.0f - std::exp(-dt / kSeepEaseTau);
-    for (size_t i = 0; i < g.seepCur.size(); i++)
+    if (g.seepEasing)
     {
-        const float d = g.seepTarget[i] - g.seepCur[i];
-        g.seepCur[i] += d * k;
-        if (std::fabs(d) > worst) worst = std::fabs(d);
-    }
-    // Half-float resolves to about a unit at the RB_SEEP_DMAX sentinel and a cell is
-    // 64 units wide, so anything finer than a unit cannot reach the texture anyway.
-    if (worst < 1.0f)
-    {
-        g.seepCur    = g.seepTarget;
-        g.seepEasing = false;
+        float worst = 0.0f;
+        const float k = 1.0f - std::exp(-dt / kSeepEaseTau);
+        for (size_t i = 0; i < g.seepCur.size(); i++)
+        {
+            const float d = g.seepTarget[i] - g.seepCur[i];
+            g.seepCur[i] += d * k;
+            if (std::fabs(d) > worst) worst = std::fabs(d);
+        }
+        // Half-float resolves to about a unit at the RB_SEEP_DMAX sentinel and a cell is
+        // 64 units wide, so anything finer than a unit cannot reach the texture anyway.
+        if (worst < 1.0f)
+        {
+            g.seepCur    = g.seepTarget;
+            g.seepEasing = false;
+        }
     }
 
     PackSeepTexels((uint16_t*)g.seepStagingMapped);
@@ -7598,18 +7723,36 @@ extern "C" void RB_Vulkan_BuildLevel(void)
         double     t0 = CpuNowMs();
         rb_seep_t* sf = RB_BuildSeepField();
         double     ms = CpuNowMs() - t0;
-        UploadSeepField(sf);
         // The cell split is the cheap proof the fill did what it claims: some cells
         // outdoors, some graded, some unreachable. All-outdoor or all-unreachable
         // means the portal graph is wrong, and neither shows up as a crash.
-        int nOut = 0, nSeep = 0, nOff = 0;
+        // Counted BEFORE the upload, which takes ownership of `sf` (DOOM-0289).
+        int nOut = 0, nSeep = 0, nOff = 0, nNoSun = 0, nSkyNoSun = 0;
         for (int c = 0; c < sf->w * sf->h; c++)
+        {
             (sf->d[c] <= 0.0f) ? nOut++ : (sf->d[c] >= RB_SEEP_DMAX ? nOff++ : nSeep++);
+            // DOOM-0289: the clearance's own falsifiable counts. An empty interval means
+            // the sun never reaches this cell. The plain total is a WEAK detector -- it
+            // only flips when an interval empties, so an open cell whose lit band merely
+            // shrinks still reads the same, and the total sits unmoved across sun
+            // elevations from 12 to 85 degrees. The OPEN-SKY subset is the sharp one:
+            // raise the sun toward vertical and it must fall to zero, because no wall can
+            // shadow a ray that leaves almost straight up.
+            if (sf->zLo[c] > sf->zHi[c])
+            {
+                nNoSun++;
+                if (sf->sky[c] > 0.5f) nSkyNoSun++;
+            }
+        }
         printf("RB_Vulkan: DOOM-0011 seep field %dx%d cells at %.0f units, "
-               "%d outdoor / %d seeped / %d sealed (fill %.1f ms).\n",
-               sf->w, sf->h, sf->cell, nOut, nSeep, nOff, ms);
+               "%d outdoor / %d seeped / %d sealed, %d no-sun (%d of them open-sky) "
+               "(fill %.1f ms).\n",
+               sf->w, sf->h, sf->cell, nOut, nSeep, nOff, nNoSun, nSkyNoSun, ms);
         fflush(stdout);
-        RB_FreeSeepField(sf);
+        // DOOM-0289: UploadSeepField now OWNS the field -- it retains the geometry cache
+        // the clearance-only rebuild marches over. There is deliberately no
+        // RB_FreeSeepField here; doing so would be a use-after-free on the next lift.
+        UploadSeepField(sf);
     }
 
     // (Re)create the vertex buffer sized to this level's mesh. DOOM-0074: one copy per
@@ -8413,8 +8556,19 @@ static void BuildFrameReheight(bool cprof, bool ownTotal)
     // blasDirty) because only the traced path samples the field, and a door opened under
     // raster must still be caught on the way back. Measured at 0.0039 ms per scan on
     // E1M1, and only on the frames where a plane actually moved.
-    if ((upd & RB_UPD_MOVED) && g.rtEnabled && RB_SeepOpeningsChanged())
-        g.seepDirty = true;
+    // DOOM-0289 widened this. RB_SeepOpeningsChanged is an openrange FLIP detector, and
+    // by its own comment "sector movement that does NOT cross zero (a lift running
+    // between two open heights, a crusher not yet at the floor) flips nothing". That is
+    // right for the seep, whose distances are pure connectivity, and WRONG for the
+    // clearance, which is baked from floorheight and ceilingheight and so moves whenever
+    // a plane moves at all. A lift rising in a courtyard changes what it shadows without
+    // flipping anything, and the beam beside it would otherwise freeze.
+    if ((upd & RB_UPD_MOVED) && g.rtEnabled)
+    {
+        g.clearanceDirty = true;                 // height-keyed: always suspect
+        if (RB_SeepOpeningsChanged())            // connectivity-keyed: only a flip counts
+            g.seepDirty = true;
+    }
     // `ownTotal` when this is called on its own from the present path (traced, pre-fence):
     // that time is outside BuildFrameInputs' own span, and leaving it out of the total made
     // the [cpu_build] line report a sum smaller than one of its own parts, with ~3 ms of
@@ -9336,6 +9490,11 @@ extern "C" void RB_Vulkan_Shutdown(void)
         if (g.seepUboMem)   vkFreeMemory(g.device, g.seepUboMem, nullptr);
         if (g.seepStaging)    vkDestroyBuffer(g.device, g.seepStaging, nullptr);   // DOOM-0281
         if (g.seepStagingMem) vkFreeMemory(g.device, g.seepStagingMem, nullptr);
+        // DOOM-0289: the retained CPU-side field, which owns the per-cell geometry cache
+        // the clearance-only rebuild marches over. It has no GPU lifetime of its own, so
+        // it goes here beside the image it feeds.
+        RB_FreeSeepField(g.seepField);
+        g.seepField = nullptr;
         // INV-6 verify accumulator + readback (step 4d).
         if (g.rtAccumView)  vkDestroyImageView(g.device, g.rtAccumView, nullptr);
         if (g.rtAccum)      vkDestroyImage(g.device, g.rtAccum, nullptr);

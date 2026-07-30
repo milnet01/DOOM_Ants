@@ -747,6 +747,300 @@ typedef struct
 // against the node's settled distance and drops it if it has been beaten.
 typedef struct { float d; int node; } rb_heapent_t;
 
+// DOOM-0289: what the sun-clearance march needs to know about a cell, cached in the
+// pass that already descends the BSP. The march itself then reads plain arrays -- the
+// whole ~3.5k-cell rasterise costs 0.6 ms on E1M1, so a march re-querying the BSP per
+// step would cost tens of milliseconds and land on DOOM-0281's door-open frame as a
+// visible hitch.
+typedef struct
+{
+    float         fz, cz;      // this cell's floor / ceiling, world units
+    int           sec;         // owning sector index, or -1 for the void ring
+    unsigned char sky;         // sky ceiling?
+    unsigned char isvoid;      // centre lies inside a wall / out past the map
+    unsigned char solid;       // no air here: isvoid, or a shut door / pillar (cz <= fz)
+} rb_cellgeom_t;
+
+// DOOM-0289. The sun's fixed horizontal heading (out) and its slope (returned), derived
+// from r_mesh.h's mirror of kSunDir. Both are invariant under a uniform scale of the
+// triple, which is why the mirror need not be normalised.
+static float RB_SunHeading(float* ux, float* uy)
+{
+    float ulen = sqrtf(RB_SUN_DIR_X * RB_SUN_DIR_X + RB_SUN_DIR_Y * RB_SUN_DIR_Y);
+    // A sun with no horizontal component (a hypothetical "straight overhead" tune) has
+    // no heading to march along and would divide by zero here. Not a state the shipped
+    // constant can reach; the guard is one line and a NaN would propagate through the
+    // whole field and then through sigma. A degenerate heading has no march to run:
+    // every OPEN-SKY cell escapes at its own ceiling and every roofed cell falls to the
+    // never-sentinel (m = 1e30 drives any ceiling bound to -inf, so `lo > hi` fires at
+    // k = 0).
+    if (ulen < 1e-6f) { *ux = 1.0f; *uy = 0.0f; return 1e30f; }
+    *ux = RB_SUN_DIR_X / ulen;
+    *uy = RB_SUN_DIR_Y / ulen;
+    return RB_SUN_DIR_Z / ulen;                           // 2.357 at the shipped kSunDir
+}
+
+// DOOM-0289. Returns EXACTLY the sector index RB_SectorAtPoint would, and additionally
+// fills the geometry the clearance march needs -- from the same single subsector lookup,
+// so the BSP is descended once per cell rather than twice.
+//
+// ONE lookup, TWO independent verdicts, and they must not contaminate each other. The
+// sector index is what the seep has always used and it comes out unchanged; the `solid`
+// flag is new and is the clearance march's alone. Returning -1 for a void cell would be
+// the natural-looking shortcut and it is a LOOK REGRESSION: the rasterise loop gates on
+// `sec >= 0`, so a wall-interior cell would flip from a real seep distance to
+// RB_SEEP_DMAX and from its BSP leaf's sky mask to 0 -- silently changing a shipped,
+// user-signed-off feature.
+static int RB_CellGeomAtPoint(float x, float y, fixed_t nudgeX, fixed_t nudgeY,
+                              rb_cellgeom_t* out)
+{
+    fixed_t      fx = (fixed_t)(x * FRACUNIT), fy = (fixed_t)(y * FRACUNIT);
+    subsector_t* ss = R_PointInSubsector(fx, fy);
+    sector_t*    sc;
+    int          i;
+
+    out->fz = 0.0f; out->cz = 0.0f; out->sec = -1;
+    out->sky = 0; out->isvoid = 1; out->solid = 1;
+    if (!ss || ss->numlines <= 0)
+        return -1;                          // same answer RB_SectorAtPoint gives
+
+    sc = segs[ss->firstline].frontsector;    // same derivation RB_SectorAtPoint uses
+    out->sec    = (int)(sc - sectors);
+    out->fz     = sc->floorheight   / (float)FRACUNIT;
+    out->cz     = sc->ceilingheight / (float)FRACUNIT;
+    out->sky    = (unsigned char)(sc->ceilingpic == skyflatnum);
+    out->isvoid = 0;
+    out->solid  = (unsigned char)(out->cz <= out->fz);   // a shut door, a solid pillar
+
+    // VOID TEST -- sets `isvoid`/`solid`, and NOTHING ELSE. DOOM's BSP partitions the
+    // whole plane, so a point inside a wall or out past the map still lands in SOME leaf
+    // and R_PointInSubsector hands back a NEIGHBOURING room's sector. The seep can live
+    // with that -- it decided connectivity on the portal graph before rasterising -- but
+    // the clearance march reads these heights directly, and without this test a solid
+    // building in a courtyard casts no shadow, which is exactly the shaft the feature
+    // exists to draw.
+    //
+    // The descent already guarantees the point is on the correct side of every node
+    // split, so the segs are the only remaining half of the leaf's boundary, and a convex
+    // leaf's segs face inward: behind any one of them means outside the leaf.
+    for (i = 0; i < ss->numlines; i++)
+    {
+        seg_t* sg = &segs[ss->firstline + i];
+        int    side;
+        // The flood loop guards `!ld` before touching a linedef and so must this:
+        // "vanilla has no minisegs" is a statement about WAD content, not an engine
+        // guarantee, and a PWAD built by a modern node builder can carry them.
+        if (!sg->linedef)
+            continue;
+        // A self-referencing sector (deep water / fake wall) names the SAME sector on
+        // both sides, so `side` below cannot distinguish them and would come out 0 for
+        // every seg -- misjudging about half of them as walls and stamping a spurious
+        // shadow across the room. The point is in that sector's air either way, so the
+        // seg simply carries no information here. RB_BuildSeepField excludes the same
+        // case from the portal graph, for a different reason.
+        if (sg->linedef->frontsector == sg->linedef->backsector)
+            continue;
+        side = (sg->linedef->frontsector == sg->frontsector) ? 0 : 1;
+        // ON-THE-LINE IS NOT A RARE CASE HERE, and P_PointOnLineSide resolves it to 1
+        // (back) -- which would mark a doorway-threshold cell solid and delete the very
+        // shaft this feature exists to draw. The caller nudges the sample off the line
+        // along +u by RB_SUN_NUDGE.
+        //
+        // The nudge is ONE WORLD UNIT, and the size is load-bearing rather than a taste
+        // call: `ss` was resolved at the UN-nudged point, so this test is only meaningful
+        // while the nudged point is still inside that leaf. Leaves are much smaller than
+        // the 64-unit cell, so a quarter-cell nudge walks out of them routinely and the
+        // "behind a seg" verdict then means "in the next room", not "in the void".
+        if (P_PointOnLineSide(fx + nudgeX, fy + nudgeY, sg->linedef) != side)
+        {
+            out->isvoid = 1;
+            out->solid  = 1;                // in the void -- but `sc` is still returned
+            break;
+        }
+    }
+    return (int)(sc - sectors);
+}
+
+// DOOM-0289 (spec §4.4's 2026-07-30 amendment). A ray leaving height z is at
+// h(s) = z + m*s. Inside a crossed cell it is LOWEST at the entry and HIGHEST at the
+// exit, so each cell contributes exactly one bound at exactly one end:
+//   floor          -> z >  floor - m*sIn    (lower bound; lo is a running MAX)
+//   ceiling, solid -> z <  ceil  - m*sOut   (upper bound; hi is a running MIN)
+//   ceiling, sky   -> z >= ceil  - m*sOut   ESCAPES
+// The march must NOT stop at the first sky cell: an open courtyard's first cell escapes
+// only above head height, and it is the second and third that bring the answer down to
+// the floor. Store the convex hull of the NON-EMPTY escape windows -- the `wLo <= hi`
+// guard below is load-bearing, because a later sky sector with a higher ceiling raises
+// zEsc, so the first sky cell reached is not necessarily the first that escapes, and
+// taking its `hi` would report air as lit that a ceiling in between blocks. The hull's
+// remaining error is one-sided (over-lights a gap between two separated openings, never
+// leaves a hole), which is the right direction for a beam.
+static void RB_SunClearance(const rb_cellgeom_t* geom, int gw, int gh,
+                            int ix, int iy, float cell,
+                            float ux, float uy, float m,
+                            float* outLo, float* outHi)
+{
+    const rb_cellgeom_t* own = &geom[iy * gw + ix];
+    float lo = -1e30f, hi = 1e30f;        // running bounds
+    float zLo = 1e30f, zHi = -1e30f;      // the hull, empty
+    float s = 0.0f;                       // entry distance of the current cell, world units
+    float tMaxX, tMaxY, tDeltaX, tDeltaY;
+    int   cx = ix, cy = iy, stepX, stepY, k;
+
+    // Distances are carried in CELLS and scaled by `cell` on use; u is a unit vector, so
+    // one unit of t is one cell of world travel. An axis-aligned sun (a component of 0)
+    // never crosses that axis' boundaries -- 1e30 is the "never" that expresses it.
+    //
+    // A cell is entered every cell/(|ux|+|uy|) world units on average -- 45.3 at the
+    // shipped 45-degree heading, NOT 64 -- so the rise per cell entered is m*45.3 = 107.
+    // At exactly 45 degrees tMaxX and tMaxY tie at every corner and the `else` branch
+    // takes it, so the walk staircases one axis at a time and sOut repeats in pairs
+    // (45.3, 45.3, 135.8, 135.8, ...). That is correct, not a degeneracy: both cells of
+    // each pair are genuinely crossed and both must contribute their bounds.
+    stepX   = (ux > 0.0f) ? 1 : -1;
+    stepY   = (uy > 0.0f) ? 1 : -1;
+    tDeltaX = (ux != 0.0f) ? (1.0f / fabsf(ux)) : 1e30f;
+    tDeltaY = (uy != 0.0f) ? (1.0f / fabsf(uy)) : 1e30f;
+    tMaxX   = 0.5f * tDeltaX;             // centre -> first boundary is half a cell
+    tMaxY   = 0.5f * tDeltaY;
+
+    for (k = 0; k < RB_SUN_MARCH_MAX; k++)
+    {
+        const rb_cellgeom_t* g = &geom[cy * gw + cx];
+        float sOut;
+
+        if (g->solid)
+            break;                        // wall, void or a shut door: blocked here
+
+        if (g->fz - m * s > lo)
+            lo = g->fz - m * s;
+        if (lo > hi)
+            break;
+
+        if (tMaxX < tMaxY) { sOut = tMaxX * cell; tMaxX += tDeltaX; cx += stepX; }
+        else               { sOut = tMaxY * cell; tMaxY += tDeltaY; cy += stepY; }
+
+        if (g->sky)
+        {
+            float zEsc = g->cz - m * sOut;
+            float wLo  = (zEsc > lo) ? zEsc : lo;
+            if (wLo <= hi)                // a non-empty escape window
+            {
+                if (wLo < zLo) zLo = wLo; // hull: the lowest escape wins
+                if (hi  > zHi) zHi = hi;  // hull: the first (and highest) hi wins
+            }
+        }
+        else
+        {
+            if (g->cz - m * sOut < hi)
+                hi = g->cz - m * sOut;
+            if (lo > hi)
+                break;
+        }
+
+        // SATURATION EXIT, and it is not an optimisation. Once the march leaves roofed
+        // air, `hi` stops falling (a sky cell contributes no ceiling bound) and `lo`
+        // stops rising, so the `lo > hi` exits above can never fire -- without this test
+        // every cell whose sun line reaches sky marches to RB_SUN_MARCH_MAX, the doorway
+        // case included.
+        //
+        // The condition is "a window was captured AND zLo has bottomed out", NOT
+        // "zHi >= own->cz": zHi is pinned below the cell's own ceiling for any ROOFED
+        // cell, so that form can never fire where it is needed most. This form is exact
+        // -- `hi` is non-increasing, so zHi (the FIRST non-empty window's hi) is already
+        // final once one window exists, and zLo is at the clamp floor.
+        if (zHi > -1e29f && zLo <= own->fz)
+            break;
+
+        if (cx < 0 || cy < 0 || cx >= gw || cy >= gh)
+            break;                        // walked off the padded grid
+        s = sOut;
+    }
+
+    // Clamp to the cell's OWN air column. A march sample always lies between the camera
+    // and a real geometry hit, so the interval is never consulted outside it -- and the
+    // clamp is what bounds the dynamic range RB_SUN_NEVER is sized against (INV-13).
+    // The shader carries the one correction this needs: an OPEN-SKY cell's "ceiling" is a
+    // sky plane rather than a barrier, so it tests `p.z <= zHi || openSky`.
+    if (zLo <= zHi)
+    {
+        float a = (zLo > own->fz) ? zLo : own->fz;
+        float b = (zHi < own->cz) ? zHi : own->cz;
+        if (a <= b) { *outLo = a; *outHi = b; return; }
+    }
+    // Never: an interval that is empty by construction, expressed relative to this cell's
+    // own column so it blends the same way in a corridor and in a hall. FINITE, for the
+    // reason dMax is (§4.3a): a half-float inf under a zero bilinear weight is a NaN, and
+    // a NaN in sigma blows the whole march.
+    *outLo = own->cz + RB_SUN_NEVER;
+    *outHi = own->fz - RB_SUN_NEVER;
+}
+
+// DOOM-0289: run the clearance march over every cell of an already-rasterised field.
+// Factored out because DOOM-0281's clearance-only rebuild needs exactly this and nothing
+// else -- no portal graph, no Dijkstra.
+static void RB_SunClearanceMarchAll(rb_seep_t* field)
+{
+    const rb_cellgeom_t* geom = (const rb_cellgeom_t*)field->geom;
+    float ux, uy, m = RB_SunHeading(&ux, &uy);
+    int   ix, iy;
+
+    for (iy = 0; iy < field->h; iy++)
+        for (ix = 0; ix < field->w; ix++)
+        {
+            // The ring is written explicitly by the rasterise loop -- open sky in the
+            // clearance's reading of it -- and marching from it would only walk further
+            // out of the map.
+            if (ix == 0 || iy == 0 || ix == field->w - 1 || iy == field->h - 1)
+                continue;
+            RB_SunClearance(geom, field->w, field->h, ix, iy, field->cell, ux, uy, m,
+                            &field->zLo[iy * field->w + ix],
+                            &field->zHi[iy * field->w + ix]);
+        }
+}
+
+int RB_RefreshSunClearance(rb_seep_t* field)
+{
+    rb_cellgeom_t* geom;
+    float*         snap;
+    size_t         n;
+    int            i, moved;
+
+    if (!field || !field->geom || !field->zLo || !field->zHi)
+        return 0;
+    geom = (rb_cellgeom_t*)field->geom;
+    n    = (size_t)field->w * (size_t)field->h;
+
+    // Refresh the cached HEIGHTS from the live sectors. The void verdict is geometry,
+    // not height -- walls do not move in DOOM -- so it is kept from the build rather than
+    // re-derived, which is the whole reason the cache is retained: re-deriving it means
+    // re-descending the BSP once per cell.
+    for (i = 0; i < (int)n; i++)
+    {
+        sector_t* sc;
+        if (geom[i].sec < 0)
+            continue;                        // the void ring: written once, never moves
+        sc = &sectors[geom[i].sec];
+        geom[i].fz    = sc->floorheight   / (float)FRACUNIT;
+        geom[i].cz    = sc->ceilingheight / (float)FRACUNIT;
+        geom[i].sky   = (unsigned char)(sc->ceilingpic == skyflatnum);
+        geom[i].solid = (unsigned char)(geom[i].isvoid || geom[i].cz <= geom[i].fz);
+    }
+
+    snap = (float*)malloc(n * 2 * sizeof(float));
+    if (!snap)
+        I_Error("RB_RefreshSunClearance: out of memory for %d cells", (int)n);
+    memcpy(snap,     field->zLo, n * sizeof(float));
+    memcpy(snap + n, field->zHi, n * sizeof(float));
+
+    RB_SunClearanceMarchAll(field);
+
+    moved = (memcmp(snap,     field->zLo, n * sizeof(float)) != 0) ||
+            (memcmp(snap + n, field->zHi, n * sizeof(float)) != 0);
+    free(snap);
+    return moved;
+}
+
 // DOOM-0281, defined with the rest of the change detector below the flood.
 static void RB_SeepSeedOpenings(void);
 
@@ -794,6 +1088,9 @@ rb_seep_t* RB_BuildSeepField(void)
     int           np = 0, heapN = 0, i, j, ix, iy;
     float         minX, minY, maxX, maxY, cell;
     int           gw, gh;
+    rb_cellgeom_t* geom = NULL;                    // DOOM-0289, retained on the field
+    float          sunUx, sunUy;
+    fixed_t        nudgeX, nudgeY;
 
     // --- 1. One node per OPEN two-sided seg --------------------------------
     portals = (rb_portal_t*)malloc((size_t)(numsegs > 0 ? numsegs : 1) * sizeof(rb_portal_t));
@@ -944,8 +1241,19 @@ rb_seep_t* RB_BuildSeepField(void)
     field->originY = minY - cell;
     field->d       = (float*)malloc((size_t)gw * (size_t)gh * sizeof(float));
     field->sky     = (float*)malloc((size_t)gw * (size_t)gh * sizeof(float));
-    if (!field->d || !field->sky)
+    field->zLo     = (float*)malloc((size_t)gw * (size_t)gh * sizeof(float));
+    field->zHi     = (float*)malloc((size_t)gw * (size_t)gh * sizeof(float));
+    field->geom    = malloc((size_t)gw * (size_t)gh * sizeof(rb_cellgeom_t));
+    if (!field->d || !field->sky || !field->zLo || !field->zHi || !field->geom)
         I_Error("RB_BuildSeepField: out of memory for %dx%d cells", gw, gh);
+    geom = (rb_cellgeom_t*)field->geom;
+    // DOOM-0289: the tie-break nudge that keeps a doorway-threshold cell centre off the
+    // linedef it sits exactly on, biased toward the air the sun ray is about to enter.
+    // Hoisted out of both loops -- the heading is fixed. See RB_SUN_NUDGE on why it is one
+    // unit and not a quarter cell.
+    (void)RB_SunHeading(&sunUx, &sunUy);
+    nudgeX = (fixed_t)(RB_SUN_NUDGE * sunUx * FRACUNIT);
+    nudgeY = (fixed_t)(RB_SUN_NUDGE * sunUy * FRACUNIT);
 
     for (iy = 0; iy < gh; iy++)
     {
@@ -962,14 +1270,34 @@ rb_seep_t* RB_BuildSeepField(void)
             // plane, so a point outside the map still lands in some leaf, and that
             // leaf's sector could be an outdoor one -- which would wrap outdoor air
             // onto the map edge under CLAMP_TO_EDGE.
+            //
+            // DOOM-0289: the ring plays OPPOSITE roles in the two halves of the field,
+            // which is why it is spelled out rather than left to a default. For the SEEP
+            // it is a blocker (INV-12), unchanged. For the CLEARANCE it is open sky: past
+            // the map's bounding box there is no geometry at all, so a march that reaches
+            // the ring has ESCAPED. Marking it solid -- which `fz = cz` of any form would,
+            // via `solid = (cz <= fz)` -- would block every march leaving the map along
+            // +u, and since the shipped kSunDir points at +X/+Y that carves a
+            // systematically unlit band two or three cells deep along exactly those edges
+            // of every outdoor area. The zLo/zHi writes are not optional bookkeeping
+            // either: this branch `continue`s, so they would otherwise reach FloatToHalf
+            // as uninitialised malloc bytes.
             if (ix == 0 || iy == 0 || ix == gw - 1 || iy == gh - 1)
             {
                 field->d[iy * gw + ix]   = RB_SEEP_DMAX;
                 field->sky[iy * gw + ix] = 0.0f;
+                field->zLo[iy * gw + ix] = -RB_SUN_NEVER;   // maximally WIDE, not empty
+                field->zHi[iy * gw + ix] =  RB_SUN_NEVER;
+                geom[iy * gw + ix].fz     = 0.0f;
+                geom[iy * gw + ix].cz     = 1e30f;          // a sky ceiling above anything
+                geom[iy * gw + ix].sec    = -1;
+                geom[iy * gw + ix].sky    = 1;
+                geom[iy * gw + ix].isvoid = 0;
+                geom[iy * gw + ix].solid  = 0;
                 continue;
             }
 
-            sec = RB_SectorAtPoint(cx, cy);
+            sec = RB_CellGeomAtPoint(cx, cy, nudgeX, nudgeY, &geom[iy * gw + ix]);
             if (sec >= 0)
             {
                 if (sectors[sec].ceilingpic == skyflatnum)
@@ -993,6 +1321,15 @@ rb_seep_t* RB_BuildSeepField(void)
             field->sky[iy * gw + ix] = sky;
         }
     }
+
+    // DOOM-0289: the clearance interval, from the geometry cache the loop above just
+    // filled. A SECOND double loop, run after the rasterise has finished -- not fused
+    // into it. That is not a style preference: the shipped kSunDir is (+0.30, +0.30, ...),
+    // so the DDA always walks toward INCREASING ix/iy, which under a single fused loop is
+    // exactly the set of cells not yet written. The march would read uninitialised malloc
+    // bytes every time, not intermittently, and the resulting field would look plausible
+    // rather than obviously broken.
+    RB_SunClearanceMarchAll(field);
 
     free(portals);
     free(secFirst);
@@ -1073,6 +1410,9 @@ void RB_FreeSeepField(rb_seep_t* f)
         return;
     free(f->d);
     free(f->sky);
+    free(f->zLo);       // DOOM-0289
+    free(f->zHi);
+    free(f->geom);      // the retained per-cell geometry cache
     free(f);
 }
 

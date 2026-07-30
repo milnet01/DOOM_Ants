@@ -166,6 +166,30 @@ rb_mesh_t* RB_BuildLevelMesh(void);
 #define RB_SEEP_FALLOFF  384.0f                    // must match kSeepFalloff (pt_common.glsl)
 #define RB_SEEP_DMAX     (8.0f * RB_SEEP_FALLOFF)  // must match dMax        (pt_common.glsl)
 
+// DOOM-0289. MIRROR of pt_common.glsl's kSunDir -- THE SHADER IS AUTHORITATIVE.
+// Same relationship dMax/RB_SEEP_DMAX already has, but a drift here is worse than that
+// one: the beam and its shadows would point in different directions, and nothing fails
+// to build. The triple need NOT be normalised -- both values derived from it (the
+// horizontal heading and the slope) are invariant under a uniform scale.
+#define RB_SUN_DIR_X       0.30f
+#define RB_SUN_DIR_Y       0.30f
+#define RB_SUN_DIR_Z       1.00f
+#define RB_SUN_NEVER       128.0f   // sentinel offset past a cell's own air column (Q28)
+// Tie-break offset for the void test, WORLD UNITS -- and small on purpose. DOOM geometry
+// is 64-unit aligned and the seep cell is 64 units, so a cell centre landing exactly on a
+// linedef is systematic rather than incidental, and P_PointOnLineSide resolves exactly-on
+// to "back" -- which would mark a doorway-threshold cell solid and delete the very shaft
+// this feature draws. So the sample is nudged off the line before testing.
+//
+// It must stay ~1 unit. The subsector is looked up at the UN-nudged point, so the nudge
+// has to be small enough that it cannot leave that leaf: BSP leaves are far smaller than
+// a 64-unit cell, and a quarter-cell (16-unit) nudge -- which is what DOOM-0289's plan
+// originally specified -- pushed any cell centre within 16 units of one of its own segs
+// outside its leaf and reported it as VOID. Measured on E1M1: 588 of 920 open-sky cells
+// falsely solid, unmoved by sun elevation, i.e. most of the courtyard's shafts deleted.
+#define RB_SUN_NUDGE       1.0f
+#define RB_SUN_MARCH_MAX   32       // cells; a backstop -- geometry terminates far sooner
+
 typedef struct
 {
     float* d;                 // w*h cells, row-major, world units (<= RB_SEEP_DMAX)
@@ -178,6 +202,20 @@ typedef struct
     // the portal it walks to, so `d < eps` would report the first room behind every door
     // as open sky and put the full outdoor fog bank inside it.
     float* sky;               // w*h cells, row-major, 1.0 = open sky, 0.0 = roofed
+    // DOOM-0289: the sun-clearance INTERVAL, per cell. Not a minimum height: in ROOFED
+    // air rising clears the wall ahead of you but runs you into the ceiling above you,
+    // so the set of heights that see the sun has BOTH ends (spec §4.4's 2026-07-30
+    // amendment). A cell the sun never reaches stores an interval that is empty by
+    // construction (zLo = cz + RB_SUN_NEVER, zHi = fz - RB_SUN_NEVER) rather than an
+    // infinity, for the reason RB_SEEP_DMAX is finite: a half-float inf meeting a zero
+    // bilinear weight is a NaN, and a NaN in sigma blows the whole fog march.
+    float* zLo;               // lowest world z in this cell that still reaches the sun
+    float* zHi;               // ...and the highest, before a solid ceiling stops it
+    // DOOM-0289: the rb_cellgeom_t grid, RETAINED for the life of the field. Not a build
+    // temporary like `portals`/`secList`: a plane that moves without flipping an opening
+    // needs the clearance march re-run, and re-deriving this grid means re-descending the
+    // BSP once per cell (~3.5k times on E1M1) to learn heights the sectors already know.
+    void*  geom;
     int    w, h;              // cell counts, including the one-cell void ring
     float  originX, originY;  // world XY of cell (0,0)'s CENTRE -- inside the ring,
                               // i.e. one full cell outside the map's bounding box
@@ -190,6 +228,13 @@ typedef struct
 // pre-seep look rather than a failure. Must run after P_SetupLevel.
 rb_seep_t* RB_BuildSeepField(void);
 void       RB_FreeSeepField(rb_seep_t* field);
+
+// DOOM-0289. Re-run ONLY the sun-clearance march over an existing field: refresh the
+// retained geometry cache from the live sector heights, then re-derive zLo/zHi. Skips the
+// portal graph and the Dijkstra entirely -- a plane that moved without flipping an opening
+// provably cannot have changed a single seep distance. Returns 1 if any cell's interval
+// moved, so the caller knows whether an upload is owed.
+int RB_RefreshSunClearance(rb_seep_t* field);
 
 // DOOM-0281: has any linedef's OPENING appeared or vanished since the field was
 // last flooded? The flood skips segs with openrange <= 0 -- which is what makes a

@@ -2093,6 +2093,145 @@ derives these; the table is the version to check against.
 > ALU). L2b carries the re-measurement; **L2 is not "done" until that number is in this
 > section.**
 
+> ### ✅ RE-MEASURED 2026-07-31 after DOOM-0289 (L2b) — the fog costs **+3.2 %**, and the gate passes
+>
+> RX 6600, E1M1 **standing at the spawn**, Ultra RT, 50 % render scale, explicit `-iwad`,
+> `-noinput` on every run, the `` \ `` profiler enabled via `rt_profile` in a throwaway
+> `-config` (a key press cannot reach a `-noinput` run). **Three runs per configuration**,
+> ~121 profiler samples pooled per cell, **medians**. The pre-change build is a git
+> worktree at `544ae84`, so both halves are the same scene, second and machine.
+>
+> | | present-total | vs its own fog-off | GPU megakernel | fps |
+> |---|---|---|---|---|
+> | **before** (`544ae84`) fog **off** | 24.88 ms | — | 14.41 ms | 40 |
+> | **before** fog **Low** | 35.75 ms | +10.87 ms = **+43.7 %** | 24.50 ms | 28 |
+> | **before** fog **High** | 35.93 ms | +11.05 ms = **+44.4 %** | 24.58 ms | 28 |
+> | **after** (L2b) fog **off** | 22.46 ms | — | 12.22 ms | 44 |
+> | **after** fog **Low** *(shipped default, Q10)* | 23.52 ms | +1.05 ms = **+4.7 %** | 13.17 ms | 42 |
+> | **after** fog **High** *(the gate)* | **23.18 ms** | +0.71 ms = **+3.2 %** | 13.01 ms | 42 |
+>
+> **The gate is High ≤ 15 % and it lands at 3.2 %.** The 13.6 ms sun ray is gone: the fog's
+> own megakernel share is **0.79 ms** where it was 10.17. On the frame that ships, Low goes
+> **35.75 → 23.52 ms present-total, 28 → 42 fps**.
+>
+> **Low and High are within noise of each other after the change** (23.52 vs 23.18 ms), which
+> is itself corroboration: `rb_fog` scales *density*, not sample count, so once the
+> per-sample ray is gone there is little left for the dial to move. Reported rather than
+> smoothed over — High measuring a shade cheaper than Low is a plausible early
+> `trans < 0.003` break, not a result to lean on either way.
+>
+> #### ⚠ The fog-off control MOVED, and the explanation is a finding in its own right
+>
+> Task L2b's Step 8 makes fog-off the control on the grounds that this change touches only
+> code inside the `rb_fog != 0` march. It moved anyway — **14.41 → 12.22 ms of megakernel**
+> — which on its face invalidates the A/B. It does not, and the reason was measured rather
+> than argued, on a third worktree at `b7f4329` (the commit *before* L2), same harness:
+>
+> | fog **off**, all three builds | megakernel | fps |
+> |---|---|---|
+> | pre-L2 `b7f4329` — no sun ray in the shader at all | **12.01 ms** | 45 |
+> | L2 `544ae84` — ray present, never executed | **14.41 ms** | 40 |
+> | L2b (this change) — ray deleted | **12.22 ms** | 44 |
+>
+> **L2's ray cost 2.40 ms per frame with fog switched OFF.** `rb_fog` is a *push constant*,
+> not a spec constant (unlike the view mode, DOOM-0129), so the `rayQueryEXT` sat in the
+> compiled megakernel on every pixel of every frame regardless of the dial, and a ray query
+> costs registers whether or not control flow reaches it. Deleting it returns 2.19 of those
+> 2.40 ms; the 0.21 ms residual against pre-L2 is the widened `RGBA16F` tap and run-to-run
+> noise. **So the honest control is pre-L2 vs L2b — 12.01 → 12.22 ms — and it holds.**
+>
+> Two consequences worth carrying forward. **(i)** L2's regression was *larger* than the
+> 2026-07-30 notice recorded: −15 fps with fog on, and ~5 fps more that nobody attributed to
+> it because fog was off. **(ii) "It is inside a `rb_fog`-gated branch, so it cannot cost
+> anything when fog is off" is false in this shader**, and any future layer that adds a ray
+> query to `marchFog` must be measured with fog **off** as well as on. That is a standing
+> correction to how this section's A/B is read, not a one-off.
+>
+> #### Method notes, both learned the hard way this session
+>
+> - **`-noinput` did not exist at `544ae84`.** It landed in `b23d609` (DOOM-0287), *after*
+>   the L2 commit, so the older half silently ignored the flag, grabbed the pointer, and a
+>   stray mouse movement turned its camera mid-run — caught by the user, not by the harness.
+>   The fix is to **cherry-pick `b23d609` into any pre-DOOM-0287 worktree** before measuring;
+>   it touches `i_video.c` only, nothing in the renderer. Both control worktrees here carry
+>   it. Any future A/B against a commit older than `b23d609` needs the same step.
+> - **Level-load fill:** 0.6–0.8 ms before, **0.8–0.9 ms after** on E1M1's 75×47 grid — the
+>   clearance march adds **~0.2 ms** to a load-time pass, against L1d's ≤ 20 ms budget. The
+>   field's own count is on the same line: **2937 no-sun cells of 3525, 572 of them
+>   open-sky**.
+> - **Clearance-only rebuild (Q30's number, and it settles Q30):** **0.08–0.18 ms**, typical
+>   **0.12 ms**, measured on a live frame with a throwaway hook moving a sector plane between
+>   two open heights (no opening flips, so only the clearance latch fires — the seep's
+>   detector correctly stays silent). A 40-tic lift therefore costs ~40 × 0.12 ms spread over
+>   a second, about **0.5 % of one frame each**. **No rate limit is needed**, and that is a
+>   measurement rather than a budget — the Q22 lesson applied rather than relearned.
+
+> ### The clearance march, verified against a falsifiable prediction (2026-07-31)
+>
+> The build line's no-sun count is a **weak** detector on its own and this is worth recording,
+> because the obvious reading of it is wrong. An open-sky cell's interval only *empties*
+> under a roof; a wall beside it merely raises `zLo`. So the count cannot respond to the sun
+> at all for outdoor air — measured flat at **2937 across sun elevations from 19° to 87°**,
+> which looks exactly like a march that is ignoring its input.
+>
+> **It is not. The statistic that must move is the lit band**, and it does, monotonically and
+> in the direction geometry demands (mean `zLo` over genuine open-sky cells, E1M1, by
+> temporarily varying `RB_SUN_DIR_Z`):
+>
+> | sun elevation | mean `zLo` |
+> |---|---|
+> | 19° | **109.7** — only high air is lit; low walls block the grazing ray |
+> | 50° | 15.3 |
+> | **67° (shipped)** | −12.7 |
+> | 82° | −38.6 |
+> | 87° | −38.6 — saturated at the own-column floor clamp |
+>
+> The cell arithmetic closes exactly and independently: of E1M1's 920 "outdoor" cells,
+> **348 are genuine open-sky air and every one is lit**, and the other **572 are void cells
+> outside the map** whose BSP leaf happens to name an outdoor sector — correctly blocked.
+> 348 + 572 = 920.
+>
+> ⚠ **That 572 is why the open-sky no-sun count reads high, and it is not a defect.** The
+> seep's `.g` mask takes its sky flag from the leaf's sector (INV-12, unchanged by L2b), so a
+> cell out past the map edge can read "open sky" while the clearance correctly calls it
+> solid. **One lookup, two verdicts** — the amendment's own rule, visible in the statistics.
+>
+> #### One correction to Task L2b Step 2, found by this check
+>
+> The plan specified nudging the void-test sample **a quarter cell** (16 units at
+> `cell = 64`) off the linedef before `P_PointOnLineSide`. That is too large by an order of
+> magnitude: the subsector is resolved at the **un-nudged** point, so the test is only
+> meaningful while the nudged point is still in that leaf — and **BSP leaves are far smaller
+> than a cell**. A 16-unit nudge pushes any cell centre within 16 units of one of its own
+> segs outside its leaf, where "behind a seg" means "in the next room", not "in the void".
+> Measured on E1M1: **588 open-sky cells falsely solid at 16 units, 572 at 1 unit, 542 with
+> no nudge at all**. The shipped value is **`RB_SUN_NUDGE = 1.0f` world unit** — enough to
+> break the exactly-on-the-line tie the nudge exists for (DOOM geometry is 64-unit aligned
+> and so is the cell, so those ties are systematic), small enough that it cannot leave a leaf
+> the point was comfortably inside.
+>
+> #### Look identity (Step 9's instrument)
+>
+> `-shotverify` on the same spawn view, both builds, 3840×2160, against the project's 3.0
+> fail bar — and against a **same-build noise floor of 0.003/255** (two runs of one build;
+> DOOM-0287's `-noinput` made this far more deterministic than the 1.09 DOOM-0276 measured
+> against):
+>
+> | scene | mean-abs-error |
+> |---|---|
+> | E1M1 | **0.066/255** |
+> | E1M3 | 0.079/255 |
+> | E1M6 | 0.051/255 |
+>
+> So the change is real — ~20× the floor, i.e. the field genuinely drives the shaft rather
+> than the channel being dead, which is the failure the plan warns to look for — and it is
+> very small on all three.
+>
+> **Read with its limit:** the E1M1 spawn is roofed, where the directional term is mostly off
+> in *both* builds, so this view can only bound how much moved, not confirm the outdoor
+> shafts. **The doorway beam and a building's shadow on open air remain a user play-test**,
+> exactly as §7's L2b row says.
+
 - **Baseline & method:** the DOOM-0181/0183 §6 protocol — average the `` \ ``
   profiler (`rb_profile`, DOOM-0090 — the **backslash** key; `` ` ``/`~` is the RT view
   cycle, verified `i_video.c:425` / `:433`) present-total (ms, not FPS) over a fixed ~10 s walk of the **E1M1
