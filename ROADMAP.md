@@ -3442,3 +3442,48 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** The health/ammo bar at the bottom and the gun in your hands stay chunky and pixelated even at 4K — sharpen them to match the rest of the picture.
   Kind: enhancement.
   Source: user-request-2026-07-30.
+
+- 📋 [DOOM-0289] **Bake the sun's fixed direction into a load-time clearance field and delete L2's per-sample ray.**
+  DOOM-0011 L2 shipped correct and far over budget (544ae84). Measured in
+  E1M1's courtyard, default rt_fog=1, render scale 50%:
+    pre-L2, fog off   43 fps, megakernel 12.7 ms
+    pre-L2, fog Low   40 fps, megakernel 13.4 ms   (the fog itself: 0.7 ms)
+    L2,     fog Low   25 fps, megakernel 27.0 ms   (the sun ray: 13.6 ms)
+  The ray alone is 19x the entire rest of the fog and costs 15 fps, against
+  a 15 % budget. At rt_fog=3 it is 26.5 ms of megakernel vs 15.4 off.
+
+  This is DOOM-0276 repeating. That item deleted this same feature's OTHER
+  per-sample ray -- the straight-up open-sky test, then 7.9 ms of an 8.4 ms
+  feature -- by answering it from a load-time 2-D field instead, and took
+  the fog from +35 % of frame time to +4 %. The sun ray is the same shape
+  of question and admits the same answer, for the same reason: DOOM is
+  flat-mapped, and kSunDir is a compile-time CONSTANT.
+
+  Proposed mechanism -- a sun-clearance field, one R16F channel on the grid
+  the seep field already uses. Because the sun direction never changes, the
+  question "can the sun be seen from (x,y,z)?" collapses to a THRESHOLD ON
+  Z: march each cell's 2-D projection along the sun's horizontal heading,
+  carry the running maximum of (obstruction top height - horizontal distance
+  travelled * tan(elevation)), and store it. Then the shader's test is
+    sunVisible = (p.z >= texture(uSunClearance, worldToSeepUV(p.xy)).r)
+  -- one bilinear tap, the cost of the seep tap already in the loop, and
+  the 13.6 ms goes to roughly nothing.
+
+  Known consequences to settle when specced, not hand-waved:
+    - Same trade DOOM-0276 accepted: the shaft edge follows the 64-unit
+      grid rather than the exact wall, so it lands within half a cell.
+      Softer beam edges are arguably a FEATURE here.
+    - Ties the sun to a fixed direction per level. It already is one
+      (kSunDir is a const), but this makes it structural -- a future
+      moving sun would need a rebuild per direction, so if a day/night
+      cycle is ever wanted, decide before this lands.
+    - Needs the same re-flood hook DOOM-0281 added for the seep field: a
+      door or lift that opens changes what the sun can reach.
+    - Doors/lifts that move mid-frame are the interesting case; the seep
+      field's existing dirty-flag path is the precedent.
+
+  Blocks the L6 perf gate, and blocks L3 (torch shafts) from being
+  measured honestly -- L3 adds its own per-sample work on top of this one.
+  **Layman:** The sunbeams currently cost nearly half the frame rate; precompute the answer once when the level loads instead of asking the graphics card millions of times per frame.
+  Kind: perf.
+  Source: in-session-2026-07-30.
