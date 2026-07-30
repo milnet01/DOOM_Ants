@@ -44,12 +44,13 @@ this plan implements it; every `§`/`INV`/`Q` reference points there.
 >   existed to protect for L2–L5 is not in doubt (~11 % is free). **Four deviations from this
 >   task's text are recorded in the fix ledger** — read them before writing L1c, since two concern
 >   the set-0 plumbing L1c shares.
-> - **`L1c` is NOT the next work — a perf pass is.** Its blocker below is now *settled*, and
->   settled badly: Δ was measured on 2026-07-27 at **+34.7 % present-total**, over the whole
->   feature's ≤ 15 % gate, with 95 % of it inside `marchFog` (spec §6). L1c would make that
->   worse — it raises `kFogSteps` 24 → ~40 and doubles the density. **DOOM-0276 ships first**
->   (the open-sky up-ray becomes a channel on L1d's field — spec §4.3a's 2026-07-27
->   amendment, and Step 2 below is superseded by it), then DOOM-0197, then re-measure.
+> - **`L1c`'s 2026-07-27 blocker is CLEARED — that queue has run.** It read "L1c is not the
+>   next work, a perf pass is": Δ measured **+34.7 % present-total** against a ≤ 15 % gate,
+>   so DOOM-0276 was to ship first, then DOOM-0197, then a re-measure. All three happened.
+>   The re-measure is spec §6's ✅ notice — **+0.98 ms = +4.2 %**, with ~11 points of gate
+>   free — and **L1c is unblocked**. (L1d's Step 2 is still superseded by DOOM-0276's
+>   channel, which is the one part of that bullet that outlives it.) L1c is nonetheless
+>   **not** the next work, for the different reason in the bullet below.
 > - ⛔ **`L2` is SHIPPED (`544ae84`) and SHIPPED A REGRESSION — `L2b` is the next work,
 >   and it is not optional.** The per-sample sun ray measures **13.6 ms** against the
 >   whole rest of the fog's 0.7 ms, costing **−15 fps at `rt_fog = 1` (Low)**, which is
@@ -65,10 +66,12 @@ this plan implements it; every `§`/`INV`/`Q` reference points there.
 >   compiled with `glslangValidator`**. The loop log and the standing regression greps live in
 >   `docs/specs/DOOM-0011-fix-ledger.md`; **re-run those greps after any edit** rather than
 >   commissioning another loop.
-> - ⛔ **The blocker that survived review is now MEASURED, and it failed.** Δ was fog-off vs
->   fog-on over the same session, so it reads as Δ(L1b + L1d + L1e), not Δ(L1b): **+8.38 ms /
->   +34.7 %**. L1c's gate was `8 % − Δ(L1b)`, which is negative. See spec §6's boxed notice
->   for the per-pass split and the caveat on how the two halves were sampled.
+> - **Δ history, for context rather than as a live blocker.** The 2026-07-27 fog-off vs
+>   fog-on A/B read Δ(L1b + L1d + L1e) = **+8.38 ms / +34.7 %**, which made L1c's
+>   `8 % − Δ(L1b)` gate negative. DOOM-0276 then took it to **+4.2 %** (spec §6's ✅
+>   notice), and L2 put it back over with a different ray (the ⛔ bullet above). Spec §6
+>   holds both measurements and the per-pass splits; this block holds no numbers of its own,
+>   so that there is only one place for them to go stale.
 
 ## Global Constraints
 
@@ -109,7 +112,7 @@ this plan implements it; every `§`/`INV`/`Q` reference points there.
 | File | Responsibility in this feature | Tasks |
 |------|-------------------------------|-------|
 | `shaders/pathtrace.comp` | `marchFog()` definition + call site; mode-4 in-megakernel apply; mode-6 half-res write; `wisp()` + the noise tap (**never** in `pt_common.glsl` — INV-6); the seep/clearance tap | L1–L5, incl. L1b–L1d, L2b |
-| `shaders/pt_common.glsl` | Fog `const`s (steps, density, tints, `kSunDir`, the 2026-07-25 wisp/seep set), phase/density helpers | L1–L5, incl. L1b–L1d |
+| `shaders/pt_common.glsl` | Fog `const`s (steps, density, tints, `kSunDir`, the 2026-07-25 wisp/seep set), phase/density helpers | L1–L5, incl. L1b–L1d, L2b (comment only) |
 | `shaders/svgf_composite.comp` | Mode-6 apply: fold fog after albedo re-multiply + on sky-passthrough; **plain bilinear** upsample (L1) → position-guided bilateral (L5) | L1, L5 |
 | `r_vulkan.cpp` | New half-res fog image + bindings; the 3-D noise volume + seep field + transform UBO on **set 0** (pool sizes + `PARTIALLY_BOUND`); the field's format/pack/upload and DOOM-0281's re-flood; `rb_fog` extern; `misc6.z/.w` writes; profiler slot | L1, L1c, L1d, L2b, L4, L6 |
 | `r_mesh.c` | The seep flood fill (portal graph + Dijkstra + per-cell resolve) and the sun-clearance march that rides the same grid — both live here because they need the DOOM map globals; (L1b fallback only) the `RB_MESH_OUTDOOR` bit | L1d, L2b, (L1b) |
@@ -1213,15 +1216,33 @@ loop in particular); `RB_SectorAtPoint` (`r_mesh.c`); `PackSeepTexels` + `Upload
 #define RB_SUN_MARCH_MAX   32       // cells; a backstop -- geometry terminates far sooner
 ```
 
-and two arrays on `rb_seep_t` beside `d` and `sky`:
+and **three** members on `rb_seep_t` beside `d` and `sky` — the third is what makes the
+clearance-only rebuild of Step 5 possible at all:
 
 ```c
     float* zLo;     // DOOM-0289: lowest world z in this cell that still reaches the sun
     float* zHi;     // ...and the highest, before a solid ceiling stops it
+    void*  geom;    // DOOM-0289: the rb_cellgeom_t grid, RETAINED for the life of the
+                    // field. Not a build temporary like `portals`/`secList`: a plane that
+                    // moves without flipping an opening needs the march re-run, and
+                    // re-deriving this grid means re-descending the BSP 3.5k times.
 ```
 
-`RB_FreeSeepField` frees them; the `I_Error` on the allocation follows the existing
-pattern.
+`RB_FreeSeepField` frees **all three**; the `I_Error` on each allocation follows the
+existing pattern. (`portals`, `secFirst` and `secList` stay build temporaries and are
+still freed at the end of the build — only `geom` is retained.)
+
+**Declare the clearance-only entry point in the same header**, because `r_vulkan.cpp` has
+no other way to reach any of this:
+
+```c
+// DOOM-0289. Re-run ONLY the sun-clearance march over an existing field: refresh the
+// retained geometry cache from the live sector heights, then re-derive zLo/zHi. Skips the
+// portal graph and the Dijkstra entirely -- a plane that moved without flipping an opening
+// provably cannot have changed a single seep distance. Returns 1 if any cell's interval
+// moved, so the caller knows whether an upload is owed.
+int RB_RefreshSunClearance(rb_seep_t* field);
+```
 
 **The mirror has two ends — write both in this step.** Add the matching note beside
 `kSunDir` in `pt_common.glsl` (comment only, value untouched): *"mirrored C-side as
@@ -1295,6 +1316,11 @@ static int RB_CellGeomAtPoint(float x, float y, rb_cellgeom_t* out)
         // shadow across the room. The point is in that sector's air either way, so the
         // seg simply carries no information here. RB_BuildSeepField excludes the same
         // case from the portal graph, for a different reason.
+        // The flood loop guards `!ld` before touching a linedef and so must this: "vanilla
+        // has no minisegs" is a statement about WAD content, not an engine guarantee, and
+        // a PWAD built by a modern node builder can carry them.
+        if (!sg->linedef)
+            continue;
         if (sg->linedef->frontsector == sg->linedef->backsector)
             continue;
         side = (sg->linedef->frontsector == sg->frontsector) ? 0 : 1;
@@ -1316,8 +1342,19 @@ of that loop does not change by one line.
 to write **four** values, not two: that branch `continue`s before anything else runs, so
 `zLo`/`zHi` would otherwise reach `FloatToHalf` as uninitialised `malloc` bytes — and a
 ring cell that happens to decode as a wide interval reads "always sunlit" through
-`CLAMP_TO_EDGE` at every map edge. Write the never-sentinel (`fz = cz = 0` there, so it
-is `zLo = +RB_SUN_NEVER`, `zHi = −RB_SUN_NEVER`) and mark the cell `solid`.
+`CLAMP_TO_EDGE` at every map edge. Write the never-sentinel there
+(`zLo = +RB_SUN_NEVER`, `zHi = −RB_SUN_NEVER`, since `fz = cz = 0` for a ring cell).
+
+⚠ **But mark the ring `escapes`, NOT `solid`, in the geometry cache** — the two roles pull
+opposite ways and getting this backwards is a visible, systematic artefact. For the *seep*
+the ring is a blocker (that is why it reads `dMax`/roofed). For the *clearance march* it is
+the open sky beyond the map's bounding box: there is no geometry out there, so a ray that
+reaches the ring has escaped. Mark it solid and every march leaving the map along `+u` —
+which is every outdoor cell near the `+X`/`+Y` edges, since the shipped `kSunDir` points
+that way — terminates blocked, carving an unlit band two or three cells deep along those
+edges. Give the ring `sky = 1` with a ceiling below any real floor (e.g. `fz = cz = −1e30`
+guarded, or simply a dedicated `escapes` flag the march reads before anything else) so it
+escapes immediately at whatever height the ray arrives.
 
 - [ ] **Step 3: March each cell for its clearance interval (`r_mesh.c`)**
 
@@ -1403,13 +1440,18 @@ static void RB_SunClearance(const rb_cellgeom_t* geom, int gw, int gh,
                 break;
         }
 
-        // SATURATION EXIT, and it is not an optimisation. A sky cell contributes no
-        // ceiling bound, so `hi` never falls in open air and the `lo > hi` exits above
-        // can never fire there -- without this test every open-sky cell marches to
-        // RB_SUN_MARCH_MAX. Once the hull already covers this cell's whole air column
-        // the final clamp makes any further improvement invisible: `zLo` can only fall
-        // and `hi` can only fall, so nothing later can widen the clamped answer.
-        if (zLo <= own->fz && zHi >= own->cz)
+        // SATURATION EXIT, and it is not an optimisation. Once the march leaves roofed
+        // air, `hi` stops falling (a sky cell contributes no ceiling bound) and `lo`
+        // stops rising, so the `lo > hi` exits above can never fire -- without this test
+        // every cell whose sun line reaches sky marches to RB_SUN_MARCH_MAX, the doorway
+        // case included.
+        //
+        // The condition is "a window was captured AND zLo has bottomed out", NOT
+        // "zHi >= own->cz": zHi is pinned below the cell's own ceiling for any ROOFED
+        // cell, so that form can never fire where it is needed most. This form is exact
+        // -- `hi` is non-increasing, so zHi (the FIRST non-empty window's hi) is already
+        // final once one window exists, and zLo is at the clamp floor.
+        if (zHi > -1e29f && zLo <= own->fz)
             break;
 
         if (cx < 0 || cy < 0 || cx >= gw || cy >= gh)
@@ -1435,13 +1477,30 @@ static void RB_SunClearance(const rb_cellgeom_t* geom, int gw, int gh,
 }
 ```
 
-Driven from the same double loop, with `u` and `m` derived **once** from the mirror:
+⚠ **Drive it from a SECOND `iy`/`ix` double loop, run after the rasterise loop has
+finished — not from inside it.** This is not a style preference: the shipped `kSunDir` is
+`(+0.30, +0.30, …)`, so the DDA always walks toward **increasing** `ix`/`iy`, which under
+a single fused loop is exactly the set of cells not yet written. The march would read
+uninitialised `malloc` bytes **every time**, not intermittently, and the resulting field
+would look plausible rather than obviously broken.
+
+Derive `u` and `m` **once**, outside both loops:
 
 ```c
     float ulen = sqrtf(RB_SUN_DIR_X * RB_SUN_DIR_X + RB_SUN_DIR_Y * RB_SUN_DIR_Y);
-    float ux   = RB_SUN_DIR_X / ulen, uy = RB_SUN_DIR_Y / ulen;
-    float m    = RB_SUN_DIR_Z / ulen;      // 2.357 at the shipped kSunDir (~67 deg)
+    float ux, uy, m;
+    // A sun with no horizontal component (a hypothetical "straight overhead" tune) has no
+    // heading to march along and would divide by zero here. It is not a state the shipped
+    // constant can reach, but the guard is one line and a NaN would propagate through the
+    // whole field and then through sigma.
+    if (ulen < 1e-6f) { ux = 1.0f; uy = 0.0f; m = 1e30f; }   // every cell sees the sun
+    else              { ux = RB_SUN_DIR_X / ulen; uy = RB_SUN_DIR_Y / ulen;
+                        m  = RB_SUN_DIR_Z / ulen; }          // 2.357 at the shipped kSunDir
 ```
+
+**Factor the second loop into `RB_RefreshSunClearance` (Step 1) and have the build call
+it**, rather than writing the loop inline and duplicating it later — Step 5's
+clearance-only path needs exactly this and nothing else.
 
 **Print the cost and one falsifiable count** beside the existing seep line — the number of
 cells with no sun. DOOM-0281's re-flood line proves itself by making its sealed-cell count
@@ -1449,7 +1508,7 @@ cells with no sun. DOOM-0281's re-flood line proves itself by making its sealed-
 
 - [ ] **Step 4: Widen the upload to `RGBA16F` (`r_vulkan.cpp`)**
 
-Mechanical, but **five sites move together** and missing one gives a garbled field rather
+Mechanical, but **four sites move together** and missing one gives a garbled field rather
 than a validation error:
 
 1. `g.seepZLo` / `g.seepZHi` `std::vector<float>` beside `g.seepSky`, filled in
@@ -1470,8 +1529,36 @@ than a validation error:
 
 - [ ] **Step 5: Extend DOOM-0281's re-flood — and fix its upload gate (`r_vulkan.cpp`)**
 
-The re-flood already rebuilds the whole field, so `zLo`/`zHi` arrive with it. Two
-decisions and one **pre-existing defect**:
+The re-flood already rebuilds the whole field, so `zLo`/`zHi` arrive with it. **One new
+trigger**, two decisions, and one **pre-existing defect**:
+
+- ⚠ **Widen the dirty condition — DOOM-0281's detector alone cannot deliver this task's
+  own acceptance clause.** The site today reads
+
+  ```cpp
+  if ((upd & RB_UPD_MOVED) && g.rtEnabled && RB_SeepOpeningsChanged())
+      g.seepDirty = true;
+  ```
+
+  `RB_SeepOpeningsChanged` is an `openrange` **flip** detector — by its own comment,
+  "sector movement that does NOT cross zero (a lift running between two open heights, a
+  crusher not yet at the floor) flips nothing". Correct for the seep, whose distances are
+  pure connectivity; **wrong for the clearance**, which is baked from `floorheight` and
+  `ceilingheight`. Add a **second, weaker latch** beside it:
+
+  ```cpp
+  if ((upd & RB_UPD_MOVED) && g.rtEnabled)
+  {
+      // A plane moved. The clearance is height-keyed, so it is always suspect...
+      g.clearanceDirty = true;
+      // ...while the seep is connectivity-keyed and only cares about a flip.
+      if (RB_SeepOpeningsChanged())
+          g.seepDirty = true;
+  }
+  ```
+
+  Spec §7's L2b row gates acceptance on "**a lift moving between two open heights updates
+  it too**", and without this latch there is nothing that could make that true.
 
 - **Snap the clearance, do not ease it.** `g.seepCur` eases toward `g.seepTarget` over
   `kSeepEaseTau` because mist genuinely rolls in; light does not. A door opening admits
@@ -1529,11 +1616,30 @@ decisions and one **pre-existing defect**:
   + the barrier/copy reached whenever `needUpload`. **Extend the existing re-flood
   `printf` with the count of no-sun cells** — DOOM-0281's sealed-cell count proves itself
   by moving when a door opens, and the clearance needs the same cheap proof.
-- **The clearance-only path (from the widened trigger above).** A plane that moved without
-  flipping an opening skips `RB_BuildSeepField` entirely: refresh the geometry cache and
-  re-run the march, leave `g.seepCur`/`g.seepTarget`/`g.seepSky` untouched, set
-  `needUpload` if the clearance moved. This is the cheaper half by construction — no
-  portal graph, no Dijkstra — and **Step 8 measures it** before Q30 fixes the cadence.
+- **The clearance-only path**, driven by `g.clearanceDirty` from the widened trigger above
+  and calling Step 1's `RB_RefreshSunClearance` on the retained field. It leaves
+  `g.seepCur` / `g.seepTarget` / `g.seepSky` untouched — no portal graph, no Dijkstra —
+  and sets `needUpload` when the entry point reports the clearance moved:
+
+```cpp
+    if (g.clearanceDirty && !g.seepDirty)      // a full re-flood already covers this
+    {
+        g.clearanceDirty = false;
+        if (RB_RefreshSunClearance(g.seepField))
+        {
+            // Pull the refreshed interval into the CPU-side mirrors PackSeepTexels reads.
+            g.seepZLo.assign(g.seepField->zLo, g.seepField->zLo + g.seepZLo.size());
+            g.seepZHi.assign(g.seepField->zHi, g.seepField->zHi + g.seepZHi.size());
+            needUpload = true;
+        }
+    }
+```
+
+  **This needs the field kept**, which `UploadSeepField` does not do today: it copies
+  `f->d`/`f->sky` into vectors and the caller frees the `rb_seep_t`. Retain it as
+  `g.seepField` (freed with `RB_FreeSeepField` on level teardown, beside the image
+  destruction) — the retained `geom` cache of Step 1 lives inside it, so the two go
+  together. **Rate-limiting is Q30's** and comes off Step 8's number, not off a guess.
 
 - [ ] **Step 6: Swap the shader test and DELETE the ray (`pathtrace.comp`)**
 
@@ -1613,7 +1719,7 @@ Then the three things a screenshot cannot settle:
 
 ```bash
 git add linuxdoom-1.10/r_mesh.c linuxdoom-1.10/r_mesh.h linuxdoom-1.10/r_vulkan.cpp \
-        linuxdoom-1.10/shaders/pathtrace.comp
+        linuxdoom-1.10/shaders/pathtrace.comp linuxdoom-1.10/shaders/pt_common.glsl
 git commit -m "DOOM-0289: bake the sun into a load-time clearance field and delete L2's ray"
 ```
 
@@ -2195,11 +2301,15 @@ from `g.lastView.hazeDensity` in `RecordRtTrace` (there is no bare `view` there)
 
 **Known open items surfaced to the user.** One is a blocker; the rest are not.
 
-- ⛔ **Δ is MEASURED and it failed the gate** (2026-07-27, spec §6): **+8.38 ms / +34.7 %**
-  present-total, 95 % of it inside `marchFog`. L1c's gate was `8 % − Δ(L1b)`, so it is negative and
-  **L1c is blocked behind a perf pass**, not the other way round. First lever: **DOOM-0276**, the
-  open-sky up-ray → a mask channel on L1d's field (spec §4.3a, 2026-07-27 amendment); it supersedes
-  Step 2 of L1b above.
+- ⛔ **Δ has failed the gate twice, for the same reason both times — a per-sample ray.**
+  *(1)* 2026-07-27: **+8.38 ms / +34.7 %** present-total, 95 % inside `marchFog`, the pole being
+  §4.3a's open-sky up-ray. **Resolved** — DOOM-0276 moved that test onto a channel of L1d's field
+  and the fog came back to **+4.2 %** (spec §6's ✅ notice), which also unblocked L1c.
+  *(2)* 2026-07-30: L2's sun ray, **13.6 ms** against the fog's other 0.7 ms, **−15 fps at the
+  shipped default strength**. **Open — this is the live blocker**, and `master` carries it. The
+  fix is **Task L2b** (DOOM-0289), which does to this ray what DOOM-0276 did to the last one.
+  **Nothing after L2b should be started until its Step 8 number is in spec §6**, L3 least of all:
+  it adds per-sample work of its own and cannot be measured honestly on top of this.
 - **Q10** — fog on/off by default. The plan ships `rb_fog=1`; a one-line flip if review prefers 0.
 - **Q23** — torch-emitter selection, per sample or per ray. L3's two-pass loop still scans every
   static emitter once per sample; the per-ray fallback is named but needs a measurement to decide.
