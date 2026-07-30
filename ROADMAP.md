@@ -578,6 +578,99 @@ with friends.
   Kind: fix.
   Source: user-request-2026-07-30.
 
+- 📋 [DOOM-0287] **The -shotverify capture is not tic-deterministic, so a cold-cache run blesses a different golden.**
+  Measured 2026-07-30 while setting up a DOOM-0011 A/B. Four consecutive
+  warm `-shotcompare` runs of one unchanged build returned mae=9.247,
+  9.247, 9.248, 9.247 against a golden blessed by that same build --
+  i.e. the runs are bit-identical to each other and all differ from the
+  golden by the same 9.25. The golden's run was the FIRST after a shader
+  rebuild, so its Vulkan pipeline cache was cold and startup was slower.
+  Two warm full-res captures of the same build differ by only 1.63.
+
+  Cause: the capture fires after a fixed count of RENDERED FRAMES
+  (kShotWarmup, r_vulkan.cpp:8724-8731) but the game's tic clock is
+  wall-clock driven, so a slower startup means more tics have run by the
+  capture frame and every animated flat / flickering sector / sprite
+  frame lands on a different phase. DOOM-0202 already pinned the ripple
+  clock (r_vulkan.cpp:7912) and the config (DOOM-0208, :8709) for exactly
+  this reason; the game clock itself was missed.
+
+  Consequence: the gate's 3.0 MAE threshold is smaller than the 9.25 a
+  cold bless injects, so a golden blessed on a cold cache fails every
+  warm run afterwards and vice versa. It also silently corrupts any
+  image A/B run across a rebuild -- the rebuild itself invalidates the
+  pipeline cache, so the "changed" build's first capture is always the
+  cold one.
+
+  Fix direction: under rb_shotverify, drive the game clock from the
+  rendered-frame counter instead of wall-clock (a fixed tics-per-frame),
+  so leveltime at the capture frame is a constant. Workaround until
+  then: after any rebuild, discard the first capture and use the second.
+  **Layman:** The automatic screenshot test can pass or fail depending on how fast the game loaded, not on whether anything actually changed.
+  Kind: fix.
+  Source: in-session-2026-07-30.
+  CORRECTION (2026-07-30, same session): the tic-clock diagnosis above is
+  WRONG and the fix direction it names would not fix this. A temporary
+  diagnostic printing gametic / leveltime / svgfFrame / shotFrame at the
+  capture site was added and run repeatedly.
+
+  What the counters actually show: gametic at capture does drift by +/-1
+  between runs (45 / 46 / 45 on one build, 47 on another) -- but three
+  runs whose gametic differed scored 0.003 MAE against each other, i.e.
+  a tic of drift is worth nothing. Meanwhile two runs with an IDENTICAL
+  gametic (47 and 47), identical svgfFrame (46) and identical shotFrame
+  scored 2.41 apart at High fog and 6.87 at Low. So the varying counter
+  is not the varying output, and pinning the game clock would leave this
+  in place.
+
+  Signature of the real defect: the difference lands on the LIT SURFACES
+  -- light panels and bright walls blow out, while open air, floors and
+  the fog volume are unchanged. That is a global-illumination difference,
+  not an animation-phase one. It is also INTERMITTENT rather than
+  bimodal-per-build: consecutive runs of one unchanged build are usually
+  bit-identical (0.002-0.007), and then one run in three or four lands
+  ~2.4-10 MAE away. Prime suspect is the GI bake / SVGF temporal history
+  -- something whose state at the capture frame depends on how many
+  frames ran before the bake had fed the accumulator -- but that has NOT
+  been verified and the counters above rule out the obvious candidates.
+
+  Impact is unchanged and now better quantified: the gate's threshold is
+  3.0 and the rogue run swings up to 10, so DOOM-0202 can fail on an
+  unchanged build. It also sets a floor on what any image A/B can
+  resolve: the DOOM-0011 step-count A/B measured a 0.15 signal against
+  this 2.4-6.9 noise, and only survived because the signal was small in
+  a direction that did not matter.
+
+  Method note worth keeping: capture THREE runs per build, not two. Two
+  runs cannot tell you which of them is the outlier; three can.
+
+- 📋 [DOOM-0288] **Derive useful camera coordinates from the map data so a viewpoint can be chosen without walking to it.**
+  The second half of DOOM-0268. `-warpto X Y [ANGLE]` can already put the
+  player anywhere, but nothing tells you WHICH X Y to ask for -- the
+  coordinates still have to come from a person who walked there, or from
+  reasoning over the WAD by hand. That is the remaining round-trip.
+
+  Wanted: a diagnostic that reads the loaded level and prints candidate
+  viewpoints with their coordinates and a suggested facing, so a session
+  can pick one and capture it. Useful classes to surface, since each one
+  is a different feature under test:
+    - player starts and teleport destinations
+    - open-sky sectors (the fog / sky-shaft work needs these by name)
+    - liquid sectors (nukage/lava -- DOOM-0183)
+    - the largest rooms, and sectors with the longest sight lines
+    - doors and lifts (a mid-travel capture)
+    - sectors with light-flicker specials
+  Each entry wants a spot that is actually STANDABLE and a facing that
+  looks INTO the room rather than at the nearest wall -- a raw sector
+  centroid is often inside a pillar or facing a corner, which is why
+  picking coordinates by hand keeps failing.
+
+  Pairs with DOOM-0268's headless capture to give the golden-image
+  library DOOM-0202 wants and currently has one entry of.
+  **Layman:** A way to ask the game "where are the interesting spots on this map?" and get coordinates back, so a screenshot can be taken anywhere without a person walking there first.
+  Kind: test.
+  Source: user-request-2026-07-30.
+
 ## Phase 2 — The Spin
 
 The creative overhaul: evolve the renderer toward true 3D with hardware
@@ -3322,3 +3415,30 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: enhancement.
   Lanes: renderer.
   Source: in-session-2026-07-27.
+
+- 📋 [DOOM-0286] **Upres the HUD / status bar and the first-person hand and gun to at least 1080p.**
+  The status bar, its number/face graphics and the first-person weapon
+  sprites are still drawn from the 320x200 paletted patches, so on a 4K
+  display they are the coarsest thing on screen while the world behind
+  them is HD. Target at least 1080p-native for all of them.
+
+  Scope named by the user (2026-07-30): the status bar AND the hand +
+  gun. Three surfaces, and they are NOT the same problem:
+    - status-bar background + digits + mugshot (st_stuff.c / st_lib.c,
+      V_DrawPatch into the 320x200 backbuffer)
+    - the first-person weapon sprites (p_pspr.c -> R_DrawPSprite, and the
+      3D backends' own overlay path)
+    - anything else drawn through the same 320x200 patch pipeline that
+      sits on top of the HD view
+
+  Open questions for the spec: upscale the existing art at load time (a
+  filter -- cheap, no new assets, no licence question) versus replacing
+  it with HD art (DOOM-0042's route, Ultra-only, needs art); and whether
+  this is shared across all three tiers or Solid/Ultra only. Classic must
+  keep its exact 1993 look either way.
+
+  Relates to DOOM-0042 (HD art set) and DOOM-0050 (2D overlay ghosting
+  over the status bar in 3D modes).
+  **Layman:** The health/ammo bar at the bottom and the gun in your hands stay chunky and pixelated even at 4K — sharpen them to match the rest of the picture.
+  Kind: enhancement.
+  Source: user-request-2026-07-30.

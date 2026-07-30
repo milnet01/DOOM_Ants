@@ -34,12 +34,23 @@ const vec3  SKY_COLOR    = vec3(0.20, 0.26, 0.40);   // bounded sky-light on a m
                                                      // into the probe as fill)
 
 // DOOM-0011: volumetric fog (single-scatter view-ray march). All tune-on-hardware.
-const int   kFogSteps        = 40;               // fixed sample count (coherent, cheap)
-                                 // DOOM-0011 L1c: 24 -> 40. The wisps put a HIGH-FREQUENCY
-                                 // signal along the ray (a billow is ~200 world units across,
-                                 // the march spans 2048), and 24 samples alias it into bands.
-                                 // This is a hypothesis to confirm by looking: if 24 reads
-                                 // clean with wisps on, revert it and bank the budget.
+const int   kFogSteps        = 24;               // fixed sample count (coherent, cheap)
+                                 // DOOM-0011 L1c raised this 24 -> 40 on the hypothesis that the
+                                 // wisps put a HIGH-FREQUENCY signal along the ray (a billow is
+                                 // ~200 world units across, the march spans 2048) which 24 samples
+                                 // would alias into bands. FALSIFIED and reverted 2026-07-30, on
+                                 // captured frames rather than argument: 40 vs 24 at the E1M1 spawn
+                                 // scores mean-abs-error 0.153/255 at Low fog and 2.86 at High --
+                                 // and at High the SAME build scores 2.41 against its own second
+                                 // run, so the difference is at or under the engine's own
+                                 // run-to-run noise. The residual also sits on the LIGHT PANELS,
+                                 // not in the open air: banding would read as arcs through the fog
+                                 // volume, and the volume is identical. Q26's quadratic march is
+                                 // what actually resolves the near-camera layer (see the loop in
+                                 // marchFog), and it does so at 24.
+                                 // This matters beyond one constant: L2 fires a sun ray PER SAMPLE,
+                                 // so every step here is multiplied by a ray query. Banking 16
+                                 // steps is a 40 % cut to L2's cost before L2 is written.
 const float kFogMaxDist      = 2048.0;           // clamp tHit so a long corridor can't blow budget
 const float kFogSkyDist      = 2048.0;           // DOOM-0011 Q24a: the fog layer's finite
                                  // HORIZONTAL extent, used by skyFogOpticalDepth. Since
