@@ -50,6 +50,13 @@ this plan implements it; every `§`/`INV`/`Q` reference points there.
 >   worse — it raises `kFogSteps` 24 → ~40 and doubles the density. **DOOM-0276 ships first**
 >   (the open-sky up-ray becomes a channel on L1d's field — spec §4.3a's 2026-07-27
 >   amendment, and Step 2 below is superseded by it), then DOOM-0197, then re-measure.
+> - ⛔ **`L2` is SHIPPED (`544ae84`) and SHIPPED A REGRESSION — `L2b` is the next work,
+>   and it is not optional.** The per-sample sun ray measures **13.6 ms** against the
+>   whole rest of the fog's 0.7 ms, costing **−15 fps at `rt_fog = 1` (Low)**, which is
+>   the shipped default — so `master` is live with it for anyone playing Ultra RT. It also
+>   blocks **L3**, which adds its own per-sample work and cannot be measured honestly on
+>   top. `L2b` (DOOM-0289) deletes the ray in favour of two channels on the seep field;
+>   spec §4.4's 2026-07-30 amendment is the design. **Do not start L3 or L1c before it.**
 > - **The spec is the authority on every number.** Where this plan and the spec disagree,
 >   the spec wins — though no known disagreement remains.
 > - **Cold-eyes status: CONVERGED (2026-07-26).** The original design converged in 4 loops; the
@@ -101,12 +108,12 @@ this plan implements it; every `§`/`INV`/`Q` reference points there.
 
 | File | Responsibility in this feature | Tasks |
 |------|-------------------------------|-------|
-| `shaders/pathtrace.comp` | `marchFog()` definition + call site; mode-4 in-megakernel apply; mode-6 half-res write; `wisp()` + the noise tap (**never** in `pt_common.glsl` — INV-6) | L1–L5, incl. L1b–L1d |
+| `shaders/pathtrace.comp` | `marchFog()` definition + call site; mode-4 in-megakernel apply; mode-6 half-res write; `wisp()` + the noise tap (**never** in `pt_common.glsl` — INV-6); the seep/clearance tap | L1–L5, incl. L1b–L1d, L2b |
 | `shaders/pt_common.glsl` | Fog `const`s (steps, density, tints, `kSunDir`, the 2026-07-25 wisp/seep set), phase/density helpers | L1–L5, incl. L1b–L1d |
 | `shaders/svgf_composite.comp` | Mode-6 apply: fold fog after albedo re-multiply + on sky-passthrough; **plain bilinear** upsample (L1) → position-guided bilateral (L5) | L1, L5 |
-| `r_vulkan.cpp` | New half-res fog image + bindings; the 3-D noise volume + seep field + transform UBO on **set 0** (pool sizes + `PARTIALLY_BOUND`); `rb_fog` extern; `misc6.z/.w` writes; profiler slot | L1, L1c, L1d, L4, L6 |
-| `r_mesh.c` | The seep flood fill (portal graph + Dijkstra + per-cell resolve) — lives here because it needs the DOOM map globals; (L1b fallback only) the `RB_MESH_OUTDOOR` bit | L1d, (L1b) |
-| `r_mesh.h` | New `rb_view_t.hazeDensity` field; the seep field buffer handle; (L1b fallback only) the `RB_MESH_OUTDOOR` `#define` | L4, L1d, (L1b) |
+| `r_vulkan.cpp` | New half-res fog image + bindings; the 3-D noise volume + seep field + transform UBO on **set 0** (pool sizes + `PARTIALLY_BOUND`); the field's format/pack/upload and DOOM-0281's re-flood; `rb_fog` extern; `misc6.z/.w` writes; profiler slot | L1, L1c, L1d, L2b, L4, L6 |
+| `r_mesh.c` | The seep flood fill (portal graph + Dijkstra + per-cell resolve) and the sun-clearance march that rides the same grid — both live here because they need the DOOM map globals; (L1b fallback only) the `RB_MESH_OUTDOOR` bit | L1d, L2b, (L1b) |
+| `r_mesh.h` | New `rb_view_t.hazeDensity` field; the seep field buffer handle (+ its `zLo`/`zHi` arrays and the `kSunDir` mirror); (L1b fallback only) the `RB_MESH_OUTDOOR` `#define` | L4, L1d, L2b, (L1b) |
 | `r_backend.c` | Compute hell-haze from `gameepisode`/`gamemap`/sky into `view.hazeDensity` | L4 |
 | `m_misc.c` | `rt_fog` config default row | L6 |
 | `m_menu.c` | Two menu rows (Effects + Video), `M_ChangeFog`, `fogNames[]` | L6 |
@@ -1141,6 +1148,358 @@ clipping to a flat white slab under the PBR-Neutral tonemap. Screenshot modes 4 
 ```bash
 git add linuxdoom-1.10/shaders/pathtrace.comp linuxdoom-1.10/shaders/pt_common.glsl
 git commit -m "DOOM-0011: L2 sky shafts — kSunDir + per-sample sky-visibility ray + HG phase"
+```
+
+---
+
+## Task L2b — The sun-clearance field: delete L2's per-sample ray (DOOM-0289)
+
+**Goal:** L2 shipped correct and **19× over budget** — its one shadow ray per march sample
+measures **13.6 ms** against the whole rest of the fog's 0.7 ms, for **−15 fps at the
+shipped default strength**, and `master` carries that regression today. Answer the same
+question from a **load-time field** instead, exactly as DOOM-0276 did for the march's
+other ray. **This is a perf task with a look-identity requirement: the shafts must land
+where they already do.** Spec §4.4's 2026-07-30 amendment is the design; INV-13 is the
+contract; §6's 2026-07-30 notice is the measurement that forces it.
+
+**Read the spec's amendment before Step 1.** Three things in it are counter-intuitive and
+each is a bug an implementer will otherwise write: sun visibility is an **interval**, not
+a minimum height; the march must **not stop at the first sky cell**; and a cell centre in
+the **void** must block even though `R_PointInSubsector` cheerfully returns a room for it.
+
+**Files:**
+- Modify: `linuxdoom-1.10/r_mesh.c` / `r_mesh.h` — the per-cell geometry cache, the void
+  test, the clearance march, the two new `rb_seep_t` arrays, the `kSunDir` mirror.
+- Modify: `linuxdoom-1.10/r_vulkan.cpp` — `RG16F → RGBA16F`; the widened texel pack and
+  staging size; DOOM-0281's re-flood and its upload gate.
+- Modify: `linuxdoom-1.10/shaders/pathtrace.comp` — the tap replaces the ray;
+  `sunRayMissesGeometry()` is **deleted**.
+
+**Interfaces:**
+- Consumes: `RB_BuildSeepField` (L1d) and its grid/transform/upload path; DOOM-0281's
+  `RecordSeepRefresh`; `kSunDir` and `sunGain` (L2).
+- Produces: a march with **zero rays per sample** again — which is the basis L3 must be
+  designed on (spec §6's cost-shape bullet, and Q2 is affected by it).
+
+**Existing code to read first:** `RB_BuildSeepField` (`r_mesh.c`, the `--- 4. Rasterise`
+loop in particular); `RB_SectorAtPoint` (`r_mesh.c`); `PackSeepTexels` + `UploadSeepField`
++ `RecordSeepRefresh` (`r_vulkan.cpp`); `P_PointOnLineSide` (`p_maputl.c:66`, returns
+**0 = front, 1 = back**); `marchFog`'s `sunLit` line and `sunRayMissesGeometry`
+(`pathtrace.comp`).
+
+- [ ] **Step 1: Mirror `kSunDir` C-side and add the constants (`r_mesh.h`)**
+
+```c
+// DOOM-0289. MIRROR of pt_common.glsl's kSunDir -- THE SHADER IS AUTHORITATIVE.
+// Same relationship dMax/RB_SEEP_DMAX already has, but a drift here is worse than that
+// one: the beam and its shadows would point in different directions, and nothing fails
+// to build. The triple need NOT be normalised -- both values derived from it (the
+// horizontal heading and the slope) are invariant under a uniform scale.
+#define RB_SUN_DIR_X       0.30f
+#define RB_SUN_DIR_Y       0.30f
+#define RB_SUN_DIR_Z       1.00f
+#define RB_SUN_NEVER       128.0f   // sentinel offset past a cell's own air column (Q28)
+#define RB_SUN_MARCH_MAX   32       // cells; a backstop -- geometry terminates far sooner
+```
+
+and two arrays on `rb_seep_t` beside `d` and `sky`:
+
+```c
+    float* zLo;     // DOOM-0289: lowest world z in this cell that still reaches the sun
+    float* zHi;     // ...and the highest, before a solid ceiling stops it
+```
+
+`RB_FreeSeepField` frees them; the `I_Error` on the allocation follows the existing
+pattern.
+
+- [ ] **Step 2: Cache the per-cell geometry in the pass that already exists (`r_mesh.c`)**
+
+The rasterise loop already calls `RB_SectorAtPoint(cx, cy)` per cell, which descends the
+BSP. **The march must not re-descend it** — the whole 3.5 k-cell pass costs 0.6 ms on
+E1M1, so a march re-querying per step would cost tens of milliseconds and land on
+DOOM-0281's door-open frame as a visible hitch. Cache instead:
+
+```c
+typedef struct { float fz, cz; unsigned char sky, solid; } rb_cellgeom_t;
+```
+
+Add a companion to `RB_SectorAtPoint` rather than changing it (`r_vulkan.cpp` has its own
+caller). The companion shares the **one** `R_PointInSubsector` call, so the BSP is
+descended once per cell, not twice:
+
+```c
+// Returns the sector index like RB_SectorAtPoint, and fills the geometry the DOOM-0289
+// march needs from the same subsector lookup.
+static int RB_CellGeomAtPoint(float x, float y, rb_cellgeom_t* out)
+{
+    fixed_t      fx = (fixed_t)(x * FRACUNIT), fy = (fixed_t)(y * FRACUNIT);
+    subsector_t* ss = R_PointInSubsector(fx, fy);
+    sector_t*    sc;
+    int          i;
+
+    out->fz = 0.0f; out->cz = 0.0f; out->sky = 0; out->solid = 1;
+    if (!ss || ss->numlines <= 0)
+        return -1;
+
+    // VOID TEST (INV-13). DOOM's BSP partitions the whole plane, so a point inside a wall
+    // or out past the map still lands in SOME leaf and R_PointInSubsector hands back a
+    // NEIGHBOURING room's sector. The seep can live with that -- it decided connectivity
+    // on the portal graph before rasterising -- but the clearance march reads these
+    // heights directly, and without this test a solid building in a courtyard casts no
+    // shadow, which is exactly the shaft the feature exists to draw.
+    //
+    // The descent already guarantees the point is on the correct side of every node
+    // split, so the segs are the only remaining half of the leaf's boundary, and a convex
+    // leaf's segs face inward: behind any one of them means outside the leaf.
+    for (i = 0; i < ss->numlines; i++)
+    {
+        seg_t* sg   = &segs[ss->firstline + i];
+        int    side = (sg->linedef->frontsector == sg->frontsector) ? 0 : 1;
+        if (P_PointOnLineSide(fx, fy, sg->linedef) != side)
+            return -1;                    // in the void: stays solid
+    }
+
+    sc = segs[ss->firstline].frontsector;  // same derivation RB_SectorAtPoint uses
+    out->fz    = sc->floorheight   / (float)FRACUNIT;
+    out->cz    = sc->ceilingheight / (float)FRACUNIT;
+    out->sky   = (sc->ceilingpic == skyflatnum);
+    out->solid = (out->cz <= out->fz);     // a shut door, a solid pillar sector
+    return (int)(sc - sectors);
+}
+```
+
+Allocate a `gw*gh` `rb_cellgeom_t` grid, fill it in the existing rasterise loop, and use
+its `sec` return where `RB_SectorAtPoint`'s was used. **The void ring keeps its explicit
+write** (`ix == 0 || iy == 0 || ...`) — mark those cells `solid`, and note that with the
+void test above they would now come out solid anyway; the explicit write stays because
+INV-12 leans on it and belt-and-braces is cheaper than re-deriving that argument.
+
+- [ ] **Step 3: March each cell for its clearance interval (`r_mesh.c`)**
+
+A second pass over the cached grid — no BSP, no allocation. Amanatides–Woo DDA in cell
+units from the cell **centre**, so `sIn`/`sOut` per crossed cell are exact given the
+cell-quantised heights.
+
+```c
+// DOOM-0289 (spec §4.4's 2026-07-30 amendment). A ray leaving height z is at
+// h(s) = z + m*s. Inside a crossed cell it is LOWEST at the entry and HIGHEST at the
+// exit, so each cell contributes exactly one bound at exactly one end:
+//   floor          -> z >  floor - m*sIn    (lower bound; lo is a running MAX)
+//   ceiling, solid -> z <  ceil  - m*sOut   (upper bound; hi is a running MIN)
+//   ceiling, sky   -> z >= ceil  - m*sOut   ESCAPES
+// The escape thresholds FALL with distance, so the march must NOT stop at the first sky
+// cell: an open courtyard's first cell escapes only above head height, and it is the
+// second and third that bring the answer down to the floor. Store the convex hull of the
+// escape windows -- the error is then one-sided (over-lights a gap between two separated
+// openings, never leaves a hole), which is the right direction for a beam.
+static void RB_SunClearance(const rb_cellgeom_t* geom, int gw, int gh,
+                            int ix, int iy, float cell,
+                            float ux, float uy, float m,
+                            float* outLo, float* outHi)
+{
+    const rb_cellgeom_t* own = &geom[iy * gw + ix];
+    float lo = -1e30f, hi = 1e30f;        // running bounds
+    float zLo = 1e30f, zHi = -1e30f;      // the hull, empty
+    float s = 0.0f;                       // entry distance of the current cell, world units
+    float tMaxX, tMaxY, tDeltaX, tDeltaY;
+    int   cx = ix, cy = iy, stepX, stepY, k;
+
+    // Distances are carried in CELLS and scaled by `cell` on use; u is a unit vector, so
+    // one unit of t is one cell of world travel. An axis-aligned sun (a component of 0)
+    // never crosses that axis' boundaries -- 1e30 is the "never" that expresses it.
+    stepX   = (ux > 0.0f) ? 1 : -1;
+    stepY   = (uy > 0.0f) ? 1 : -1;
+    tDeltaX = (ux != 0.0f) ? (1.0f / fabsf(ux)) : 1e30f;
+    tDeltaY = (uy != 0.0f) ? (1.0f / fabsf(uy)) : 1e30f;
+    tMaxX   = 0.5f * tDeltaX;             // centre -> first boundary is half a cell
+    tMaxY   = 0.5f * tDeltaY;
+
+    for (k = 0; k < RB_SUN_MARCH_MAX; k++)
+    {
+        const rb_cellgeom_t* g = &geom[cy * gw + cx];
+        float sOut;
+
+        if (g->solid)
+            break;                        // wall, void or a shut door: blocked here
+
+        if (g->fz - m * s > lo)
+            lo = g->fz - m * s;
+        if (lo > hi)
+            break;
+
+        if (tMaxX < tMaxY) { sOut = tMaxX * cell; tMaxX += tDeltaX; cx += stepX; }
+        else               { sOut = tMaxY * cell; tMaxY += tDeltaY; cy += stepY; }
+
+        if (g->sky)
+        {
+            float zEsc = g->cz - m * sOut;
+            float wLo  = (zEsc > lo) ? zEsc : lo;
+            if (wLo <= hi)                // a non-empty escape window
+            {
+                if (wLo < zLo) zLo = wLo; // hull: the lowest escape wins
+                if (hi  > zHi) zHi = hi;  // hull: the first (and highest) hi wins
+            }
+        }
+        else
+        {
+            if (g->cz - m * sOut < hi)
+                hi = g->cz - m * sOut;
+            if (lo > hi)
+                break;
+        }
+
+        if (cx < 0 || cy < 0 || cx >= gw || cy >= gh)
+            break;                        // walked off the padded grid
+        s = sOut;
+    }
+
+    // Clamp to the cell's OWN air column. A march sample always lies between the camera
+    // and a real geometry hit, so the interval is never consulted outside it -- and the
+    // clamp is what bounds the dynamic range RB_SUN_NEVER is sized against (INV-13).
+    if (zLo <= zHi)
+    {
+        float a = (zLo > own->fz) ? zLo : own->fz;
+        float b = (zHi < own->cz) ? zHi : own->cz;
+        if (a <= b) { *outLo = a; *outHi = b; return; }
+    }
+    // Never: an interval that is empty by construction, expressed relative to this cell's
+    // own column so it blends the same way in a corridor and in a hall. FINITE, for the
+    // reason dMax is (§4.3a): a half-float inf under a zero bilinear weight is a NaN, and
+    // a NaN in sigma blows the whole march.
+    *outLo = own->cz + RB_SUN_NEVER;
+    *outHi = own->fz - RB_SUN_NEVER;
+}
+```
+
+Driven from the same double loop, with `u` and `m` derived **once** from the mirror:
+
+```c
+    float ulen = sqrtf(RB_SUN_DIR_X * RB_SUN_DIR_X + RB_SUN_DIR_Y * RB_SUN_DIR_Y);
+    float ux   = RB_SUN_DIR_X / ulen, uy = RB_SUN_DIR_Y / ulen;
+    float m    = RB_SUN_DIR_Z / ulen;      // 2.357 at the shipped kSunDir (~67 deg)
+```
+
+**Print the cost and one falsifiable count** beside the existing seep line — the number of
+cells with no sun. DOOM-0281's re-flood line proves itself by making its sealed-cell count
+*move*; this one must do the same, or a detector is firing on nothing.
+
+- [ ] **Step 4: Widen the upload to `RGBA16F` (`r_vulkan.cpp`)**
+
+Mechanical, but **five sites move together** and missing one gives a garbled field rather
+than a validation error:
+
+1. `g.seepZLo` / `g.seepZHi` `std::vector<float>` beside `g.seepSky`, filled in
+   `UploadSeepField` from `f->zLo` / `f->zHi` (and with the never-sentinel in the 1×1
+   placeholder case — there is no level, so nothing has sun).
+2. `PackSeepTexels` writes **4** halves per texel, not 2.
+3. `texels` sizing, the staging-buffer `bytes`, and `CreateSampledImage`'s size argument
+   all go `w*h*2` → `w*h*4` `uint16_t`.
+4. `VK_FORMAT_R16G16_SFLOAT` → **`VK_FORMAT_R16G16B16A16_SFLOAT`**. Vulkan mandates
+   `SAMPLED_IMAGE_FILTER_LINEAR` for this format too, so the argument in the existing
+   comment (why not `R32`) still holds — extend it, do not delete it.
+5. Nothing else: same binding 4, same `g.compositeSampler`, same `CLAMP_TO_EDGE`, same
+   descriptor write, same `SeepXform` UBO.
+
+- [ ] **Step 5: Extend DOOM-0281's re-flood — and fix its upload gate (`r_vulkan.cpp`)**
+
+The re-flood already rebuilds the whole field, so `zLo`/`zHi` arrive with it. Two
+decisions and one **pre-existing defect**:
+
+- **Snap the clearance, do not ease it.** `g.seepCur` eases toward `g.seepTarget` over
+  `kSeepEaseTau` because mist genuinely rolls in; light does not. A door opening admits
+  its beam in the same frame — correct, and simpler. So `g.seepZLo`/`g.seepZHi` are
+  assigned outright from the new field, like `g.seepSky` already is.
+- ⚠ **The early-out is wrong for a snapped channel, and this task must fix it.**
+  `RecordSeepRefresh` sets `g.seepEasing = (g.seepTarget != g.seepCur)` and then
+  `if (!g.seepEasing) return;` — so the pack-and-copy is reached **only when a seep
+  distance changed**. A door whose opening changes what the sun can reach without changing
+  any distance-to-outdoor-air (a second route of the same length — entirely plausible)
+  would recompute the clearance and **never upload it**, leaving a stale shaft. Split the
+  two concerns:
+
+```cpp
+        const bool clearanceMoved = (newZLo != g.seepZLo || newZHi != g.seepZHi);
+        g.seepEasing = (g.seepTarget != g.seepCur);
+        // Upload when EITHER half moved. The eased half needs a copy every frame until it
+        // settles; the snapped half needs exactly one, and it is not the eased half's job
+        // to notice (DOOM-0289).
+        needUpload = g.seepEasing || clearanceMoved;
+    }
+    if (!needUpload)
+        return;
+```
+
+with the existing ease block guarded on `g.seepEasing` alone, and `PackSeepTexels` +
+the barrier/copy reached whenever `needUpload`.
+
+- [ ] **Step 6: Swap the shader test and DELETE the ray (`pathtrace.comp`)**
+
+```glsl
+        // was:  vec2 seep = texture(uSeepField, worldToSeepUV(p.xy)).rg;
+        vec4  fld     = texture(uSeepField, worldToSeepUV(p.xy));
+        bool  openSky = fld.g > 0.5;
+```
+
+with `fld.r` wherever `seep.r` was read, and the `sunLit` line becoming
+
+```glsl
+        // DOOM-0289: the sun ray is gone. Visibility is the clearance INTERVAL baked at
+        // level load (spec §4.4's 2026-07-30 amendment, INV-13) -- an interval and not a
+        // threshold because in ROOFED air rising clears the wall ahead but meets the
+        // ceiling above, and roofed air inside a doorway is where the shafts are. Same
+        // bilinear tap that already answered openSky; no ray, no second lookup.
+        bool  sunSeen = (p.z >= fld.b && p.z <= fld.a);
+        float sunLit  = (skyExists && kSkyAmbientFrac < 1.0 && sunSeen) ? sunGain : 0.0;
+```
+
+**Delete `sunRayMissesGeometry()` and its `rayQueryEXT` outright** — INV-13's diff clause
+is that it is *gone*, not merely unreferenced, because a live definition invites the ray
+back. Leave `kSunDir`, `sunGain`, the HG phase, `kSkyAmbientFrac` and the `skyExists`
+guard untouched: this task changes the cost, not the look.
+
+- [ ] **Step 7: Build + smoke + tests** (L1 Step 7 commands), then **`-rtverify`**
+  (`-warp 1 1` or it never reaches a level).
+
+- [ ] **Step 8: Measure — the gate this task exists for**
+
+Use §6's tightened method, not the walk: **stand at the E1M1 spawn**, explicit `-iwad`,
+`-noinput` on every automated run, three runs per configuration, the `` \ `` profiler.
+The pre-change build goes in a **git worktree at `544ae84`** so both halves are the same
+scene, second and machine.
+
+- **fog OFF is the control.** This task touches only code inside the `rb_fog != 0` march
+  plus a load-time fill, so fog-off megakernel **must** be unchanged between builds. A
+  control that cannot move is the cheapest validity check there is.
+- **The number:** the sun ray's 13.6 ms is gone and the fog is back inside **≤ 15 %**
+  present-total at `rb_fog = 3` (High), with the Low figure recorded too since Low is what
+  ships (Q10). **Write it into spec §6** — L2 is not done until it is there.
+- **Level-load cost:** the fill's own line, against L1d's ≤ 20 ms budget (the seep half
+  measures 0.6 ms today; the march adds a second pass over the same grid with no BSP).
+- **Re-flood cost:** the DOOM-0281 door-open path, which is a live frame, not a load.
+
+- [ ] **Step 9: Play-test (spec §7 L2b) — user sign-off**
+
+**Accept:** the shafts are **where they were before** — this is a look-*identity* test, so
+capture the same scene on both builds and compare, rather than judging the new one alone.
+`-shotcompare`'s mean-abs-error is the instrument, with the **same-build pair as the noise
+floor** (DOOM-0276 measured 1.09/255 between two runs of one build against 2.93/255 for a
+real change). Expect a small real difference — the shaft edge moves onto the 64-unit grid,
+exactly as the roofline did — and **not** a shaft that has moved, split, or vanished.
+
+Then the three things a screenshot cannot settle:
+- the **doorway beam** still reads, and its edge is soft rather than stepped (Q28's
+  `RB_SUN_NEVER` is the dial if it is stripey or if it bleeds through geometry);
+- a **building in the open** still shadows the air beside it (that is Step 2's void test
+  earning its place — if outdoor shadows vanished, that is where to look);
+- **light where there should be shadow** points at Q29's "escape is final", the one
+  approximation not bounded by the sun's steepness.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add linuxdoom-1.10/r_mesh.c linuxdoom-1.10/r_mesh.h linuxdoom-1.10/r_vulkan.cpp \
+        linuxdoom-1.10/shaders/pathtrace.comp
+git commit -m "DOOM-0289: bake the sun into a load-time clearance field and delete L2's ray"
 ```
 
 ---
