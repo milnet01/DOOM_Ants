@@ -547,6 +547,37 @@ with friends.
   Kind: test.
   Source: user-request-2026-07-27.
 
+- 📋 [DOOM-0284] **Surround sound on setups that support it, plus binaural audio for headphones.**
+  DOOM today pans SFX with Mix_SetPanning -- a stereo left/right balance
+  and nothing more, so a monster directly behind you sounds identical to
+  one directly in front. Two wants, one menu: (a) real multi-channel
+  output where the device offers it (SDL_mixer opens the device with a
+  channel count; the engine would need to place each sound in the
+  horizontal plane rather than on a L/R axis), and (b) an HRTF binaural
+  path for headphones, which is where the elevation and front/back cues
+  actually come from. Add a Sound-options row for the choice
+  (Stereo / Surround / Headphones-binaural), with auto-detect as the
+  default. Depends on the audio architecture already settled: SFX play as
+  SDL_mixer chunks on the SAME device as music -- never a second device
+  or a custom mixer, which is silent on Windows.
+  **Layman:** Proper 5.1/7.1 sound on a surround setup, and headphone audio that puts sounds above, behind and around you.
+  Kind: feature.
+  Source: user-request-2026-07-30.
+
+- ✅ [DOOM-0285] **Never frame the play area with a border -- default to the full-width view.**
+  The shipped screenblocks default was vanilla's 9: a reduced play area
+  inside a tiled wall-texture frame. The user's position is absolute --
+  "I will never ever want a border around the play area. It must be full
+  screen." Default moved to 10, which is already the largest the menu
+  allows (DOOM-0148 clamps to 10 so the status bar stays; 11 is the
+  HUD-less fullscreen view). Spotted by the user in a screenshot of a
+  throwaway -config test run, where the omitted key fell back to this
+  default -- so it was the shipped default that was wrong, not the test.
+  Resolved (2026-07-30): m_misc.c defaults table.
+  **Layman:** A fresh install no longer draws the old decorative frame around a shrunken picture; the game fills the screen.
+  Kind: fix.
+  Source: user-request-2026-07-30.
+
 ## Phase 2 — The Spin
 
 The creative overhaul: evolve the renderer toward true 3D with hardware
@@ -856,6 +887,44 @@ parked ideas (💭 considered) until we commit to and design each one.
   DOOM-0011-implementation-plan.md up to date (it has no L1c/L1d tasks, still
   carries the ≤5% gate, and its L2 task uses the custom-index-2 sky test that
   the 2026-07-24 amendment already corrected), then implement L1c.
+  Progress (2026-07-30): **L1c IMPLEMENTED** (b3ca70d) — near-white
+  kFogColor at all three in-scatter sites, and two octaves of drifting 3-D
+  value noise multiplying density. Build + tests green, -rtverify PASS
+  (rel-MSE 0.0796 %, white furnace 0.000000). AWAITING USER PLAY-TEST.
+
+  Measured (RX 6600, E1M1, Ultra RT, HD art loaded, dial the only
+  variable): fog off 42 fps / 19.07 ms GPU, fog on 39-40 fps / 20.72 ms =
+  **+8.6 % GPU, ~+6 % frame time** for the WHOLE feature — inside the 8 %
+  ceiling, up from the +4 % DOOM-0276 left. The blocked banner on L1c in
+  the plan was stale: §6 recorded that +4 % on 2026-07-27.
+
+  **Three of the spec's starting values did not survive contact**, each
+  judged on a captured frame:
+    - kFogBaseDensity 0.0033 -> 0.0066 REVERTED. The doubled layer
+      saturates, and a saturated medium cannot show billows at all —
+      thickness and structure pull against each other. User's call on the
+      day was billows over bulk.
+    - kWispFreq1 1/512 -> 1/192. At 512 one noise cell spanned the whole
+      view and the march integrated it to a flat wash.
+    - An odd, mean-preserving S-curve on the noise + a 2.5x vertical
+      squash, and kWispAmp 0.6 -> 1.0. Ray integration averages ~10
+      samples back toward the mean: measured, the raw signal reached the
+      pixel as a 6 % swing (MAE 4.0 vs wisps-off). After: MAE 13.0, peak
+      128/255.
+
+  Method worth keeping: **an A/B against the same build with kWispAmp = 0,
+  scored as MAE, turns "can you see it?" into a number.** A still frame
+  could not answer it and neither could argument.
+
+  Also found + fixed in the same pass: the shot modes inherited DOOM-0183's
+  WALL-CLOCK ripple time, which the wisps now ride — so every -shotcompare
+  capture was a different image and the golden gate was quietly meaningless.
+  Pinned under rb_shotverify.
+
+  STILL OPEN on L1c: kFogSteps 24 -> 40 was kept on the banding hypothesis
+  and has NOT been falsified (the plan says revert it and bank the budget
+  if 24 reads clean with wisps on — that wants a moving picture). L1c/L1d
+  have still had no cold read.
 - 💭 [DOOM-0012] **Hold a 60 FPS performance floor.**
   **Layman:** Keep it running smoothly — never below 60 frames per second.
   Kind: perf.

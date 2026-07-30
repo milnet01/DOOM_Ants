@@ -646,11 +646,31 @@ git commit -m "DOOM-0011/0272: add the outdoor floor fog (L1e)"
 
 ## Task L1c — The Silent Hill 2 look: near-white fog + two-octave drifting wisps
 
-> ⛔ **BLOCKED until L1b's Δ is recorded.** This task's perf gate is `8 % − Δ(L1b)`, and Δ(L1b)
-> has never been measured — spec §6's budget table carries the formula, not a number. Until it
-> is written into §6, **L1c Step 6 has no threshold to test against and this task cannot be
-> closed.** Take the measurement first (L1b Step 6, on the RX 6600); it is a ten-minute A/B, and
-> every loop that has skipped it has left this note standing.
+> ✅ **IMPLEMENTED 2026-07-30 (`b3ca70d`), awaiting the user play-test (Step 7).** The blocked
+> banner this replaces was stale: §6 recorded Δ = **+4 %** on 2026-07-27, after DOOM-0276. The
+> L1c A/B is now also taken — fog off 42 fps / 19.07 ms GPU, fog on 39–40 fps / 20.72 ms on the
+> RX 6600 at E1M1 in Ultra RT with HD art, i.e. **+8.6 % GPU / ≈ +6 % frame time** for the whole
+> feature, inside the 8 % ceiling. Half-res ships; full-res was not needed.
+>
+> **Three of the starting values below did not survive a captured frame**, and the reasons are
+> worth more than the numbers. (a) The ×2 on `kFogBaseDensity` was **reverted**: a saturated
+> medium cannot show billows at all, because in-scatter stops depending on density once
+> transmittance collapses — thickness and structure pull against each other, and the user's call
+> was billows over bulk. (b) `kWispFreq1` 1/512 → **1/192**: at 512 a single noise cell spanned
+> the whole view and the march integrated it to a flat wash. (c) The two octaves alone reach the
+> pixel as a **6 % swing** (measured: MAE 4.0 against the same build with `kWispAmp = 0`), because
+> a ray averages ~10 samples back toward the mean — fixed with an odd, mean-preserving S-curve on
+> the noise plus a 2.5× vertical squash, giving MAE 13.0. **That A/B-as-MAE is the reusable part:**
+> it answers "is the effect visible?" with a number, which neither a still frame nor an argument
+> could do.
+>
+> One defect this task exposed, fixed here: the shot modes inherited DOOM-0183's **wall-clock**
+> ripple time, which the wisps ride — so every `-shotcompare` capture was a different image and the
+> golden gate was quietly meaningless. Pinned under `rb_shotverify`.
+>
+> **Still owed:** `kFogSteps` 24 → 40 was kept on the banding hypothesis and has NOT been
+> falsified; the plan's own instruction is to revert it and bank the budget if 24 reads clean with
+> wisps on, and that needs a moving picture. L1c and L1d have still had no cold read.
 
 **Goal:** Turn L1b's flat blue-grey haze into the user's 2026-07-25 reference (spec §4.3b): fog
 that reads **near-white and colourless**, roughly twice as thick, and full of **billows of

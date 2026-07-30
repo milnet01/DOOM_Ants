@@ -8,6 +8,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Fog now billows: a near-white base with banks of visibly varying thickness drifting past (Ultra/Solid ray-traced view)** (DOOM-0011)
+  The haze is no longer even. Two layers of slowly drifting 3-D noise thicken and thin the air, so mist pools in one part of a room and clears in another, and a bank passes in front of and behind a pillar as you turn. Costs about 6% of frame time on an RX 6600; the `;` key still dials it Off / Low / Medium / High.
+
 - **Fog now drifts indoors through doorways and windows** (DOOM-0011)
   Indoor fog used to stop dead at a roofline. It now fades in near an
   opening onto the outdoors and thins as you walk deeper in, while a
@@ -34,6 +37,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **The play area is never framed by a border -- a fresh install fills the screen** (DOOM-0285)
+  The old default drew the 1993 decorative frame around a shrunken picture. The status bar stays; only the border goes.
+
 - **Ultra's ray-traced view is about 17% faster — 41 to 48 FPS on the test machine** (DOOM-0197)
   The processor and the graphics card were taking turns instead of working
   at the same time: each frame spent 3.6ms preparing moving doors and lifts
@@ -57,6 +63,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
   The old fixed tolerance sat only ~3.9 sigma from the estimator's true standard error on two of the five weight sets, well short of the 6 sigma the neighbouring frequency check uses. The bound is now computed from the exact estimator variance, so it scales with N and the weights; all five sets currently land within 1.6 sigma.
 
 ### Fixed
+
+- **Screenshot captures are no longer time-dependent, so the visual-regression gate compares like with like** (DOOM-0011)
+  The drifting fog and the liquid ripples both ride a wall clock, which made every capture a slightly different image.
 
 - **Fog now rolls into a room whose wall opens during play** (DOOM-0281)
   The seep field that decides how far fog reaches indoors was flooded once
