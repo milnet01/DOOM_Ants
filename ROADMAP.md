@@ -3538,3 +3538,54 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** The sunbeams currently cost nearly half the frame rate; precompute the answer once when the level loads instead of asking the graphics card millions of times per frame.
   Kind: perf.
   Source: in-session-2026-07-30.
+  Design notes (2026-07-30, before the spec is written). User chose the
+  full fix over a stopgap, so this goes through rule 14's gate first.
+
+  THE WRINKLE THE HEADLINE SKETCH ABOVE GETS WRONG. "Store the minimum z
+  at which the sun clears every obstruction" is only valid in OPEN-SKY
+  air, where rising can only ever help. In ROOFED air it is false in both
+  directions: rising clears a wall but also runs you into the ceiling. So
+  sun visibility is not a single threshold on z there -- and roofed air
+  near a doorway is exactly where the best shafts are, so this cannot be
+  waved through.
+
+  Stated properly. March the 2-D projection from the cell along the sun's
+  fixed horizontal heading u = normalize(kSunDir.xy), with slope
+  m = kSunDir.z / |kSunDir.xy| (= 2.357 at the shipped kSunDir, ~67 deg
+  elevation). A ray starting at height z is at h(s) = z + m*s after
+  horizontal distance s. Each cell c crossed at distance s contributes:
+    - floor:   need z >  floor(c) - m*s          (a lower bound)
+    - ceiling, non-sky: need z <  ceil(c)  - m*s (an upper bound)
+    - ceiling, SKY:     z >= ceil(c) - m*s ESCAPES -- sky reached, stop
+  So the admissible z is an intersection of bounds terminated by an
+  escape, i.e. an INTERVAL, not a threshold.
+
+  PROPOSED FIELD: two more channels carrying that interval per cell --
+  zLo (lowest z that still escapes) and zHi (highest z before a solid
+  ceiling stops it). Shader test becomes
+    sunVisible = (p.z >= tap.b && p.z <= tap.a)
+  which is still ONE bilinear tap, and the seep tap is ALREADY in the
+  march loop (RG16F today: .r = seep distance, .g = open-sky mask). Widen
+  that image to RGBA16F and the whole 13.6 ms goes to roughly nothing --
+  no new image, no new sampler, no new descriptor, no second tap.
+
+  KNOWN APPROXIMATION, to be argued explicitly in the spec rather than
+  discovered later: an interval cannot represent TWO separated openings
+  on one path (two windows at different heights on the same heading). The
+  error is one-sided -- it reports visible in the gap between them -- so
+  it over-lights rather than leaving a hole, and it is rare. Quantify or
+  bound it in the spec; do not leave it implied.
+
+  Also to settle in the spec, none of it new work but all of it easy to
+  forget: bilinear interpolation of zLo/zHi across cells softens the
+  shaft edge (probably a feature, matching DOOM-0276's accepted half-cell
+  error); DOOM-0281's re-flood hook must extend to these channels or an
+  opening door leaves stale shafts; and the whole scheme is structurally
+  tied to kSunDir being a compile-time constant, so a moving sun would
+  need a rebuild per direction -- decide before this lands if a day/night
+  cycle is ever wanted.
+
+  Build cost should be small and in line with the seep field's measured
+  0.6 ms: ~3.5 k cells on E1M1 x a march of order 100 cells is ~350 k
+  steps, and it reuses the seep field's existing grid, transform UBO and
+  upload path (vkCmdCopyBufferToImage into the existing image).
