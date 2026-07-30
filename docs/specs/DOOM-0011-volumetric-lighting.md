@@ -67,7 +67,7 @@ above, and roofed air just inside a doorway is precisely where the good shafts a
 field widens `RG16F → RGBA16F`; the shader's existing bilinear tap answers it with **no
 new image, sampler, descriptor or second lookup**. New design at the end of **§4.4**;
 build order gains **L2b** (§7); **INV-3 and INV-12 amended**, **INV-13** added;
-**Q27–Q29** added, with **Q27 (a moving sun) closed by the user** the day it was asked —
+**Q27–Q30** added, with **Q27 (a moving sun) closed by the user** the day it was asked —
 DOOM 1 and 2 have no day/night cycle, so the fixed sun this scheme requires is settled
 rather than deferred.
 
@@ -81,6 +81,7 @@ would have cost if it had reached the implementer — lives in
 | Original spec (2026-07-23) | 4 | **Converged** — polish only by loop 4 |
 | 2026-07-24 amendment (fog follows open sky) | 3 | **Converged** — polish only by loop 3 |
 | 2026-07-25 amendment (SH2 look + seep) | 13 | **Converged** — zero findings at loop 13 |
+| 2026-07-30 amendment (DOOM-0289 sun-clearance field) | *in progress* | loop 1: **C 3 · H 5 · M 7 · L 5** (20 verified / 2 not) — all fixed |
 
 One lesson is repeated here because it shaped both documents: **for five loops running, the
 worst findings were defects in the previous loop's own fixes** — shader code written into
@@ -660,7 +661,11 @@ takes `(x, y)` only and returns exactly one sector, hence exactly one `ceilingpi
 there sky above this point" is therefore a **pure function of XY**, and the up-ray was
 doing 3-D work on a 2-D question. The field L1d builds is indexed by exactly that key.
 
-**Mechanism: a second channel, not a threshold on the first.** The seep field becomes
+**Mechanism: a second channel, not a threshold on the first.** *(Format superseded
+2026-07-30: DOOM-0289 widened this image again, to `RGBA16F`, adding the sun-clearance
+interval on `.b`/`.a` — §4.4's amendment. Nothing about the `.r`/`.g` channels described
+here changed, but a snippet below that reads `.rg` into a `vec2` now reads a `vec4`.)*
+The seep field becomes
 `R16G16_SFLOAT` — `R` = the through-open-space distance `d` exactly as L1d shipped it,
 `G` = an **open-sky mask**, `1.0` where the cell centre's sector has `ceilingpic ==
 skyflatnum`, `0.0` otherwise (and `0.0` on the void ring, which must read roofed for the
@@ -1236,19 +1241,31 @@ window(k)  = [ max(lo_k, zEsc(k)) , hi_k ]        at each SKY cell k
 zLo, zHi   = the convex hull of every non-empty window(k)
 ```
 
-Two properties make this cheap and make the hull the right approximation. `lo` is a
-running **max** and `hi` a running **min**, so `lo` never falls and `hi` never rises;
-and `zEsc(k) = ceil(k) − m·sOut(k)` **falls** as the march goes further. Therefore the
-hull is simply `zHi = hi` at the **first** sky cell and `zLo = min over sky cells of
-max(lo_k, zEsc(k))` — both tracked in the loop with no storage.
+Both endpoints are tracked in the loop with no storage, because `lo` is a running **max**
+and `hi` a running **min** — so `hi` never rises and `zHi` is the `hi` of the **first
+non-empty** window, while `zLo` is the running minimum of `max(lo_k, zEsc(k))` over the
+non-empty ones.
+
+⚠ **"Non-empty" is load-bearing in both, and dropping it is the second bug this section
+exists to prevent.** `zEsc(k)` is *not* monotone — a later sky sector with a higher
+ceiling raises it — so the first sky cell reached is not necessarily the first that
+escapes. If its window is empty and a later one is not, `hi` may have fallen in between,
+and taking the first sky cell's `hi` reports air as sun-lit that a solid ceiling between
+them blocks. Guard **both** updates on `max(lo_k, zEsc(k)) ≤ hi_k`; the build sketch in
+the plan's Task L2b Step 3 is the normative form.
 
 **Worked, because the courtyard case is the one that looks wrong on first reading.**
-Open cell, floor 0, sky ceiling 256, cell 64 units, `m·64 ≈ 151`. Cell 0 escapes only
-above `256 − 75 = 181`; that alone would say the courtyard is unlit below head height,
-which is plainly false. But the march does not stop there: cell 1 gives
-`256 − 212 = 44`, cell 2 gives `256 − 350 < 0`, and the hull closes to `[0, ∞)` — the
-whole air column, which is correct. **Stopping at the first sky cell is a bug**, and it
-is the one an implementer will write.
+Open cell, floor 0, sky ceiling 256. First, the step size, since it is not the cell size:
+a DDA crosses a boundary every `cell / (|u.x| + |u.y|)` world units on average, which at
+the shipped 45° heading is `64 / 1.414 = 45.3` — so a cell entered costs `m·45.3 ≈ 107`
+units of rise, not `m·64`. At exactly 45° the DDA also ties at every corner and steps
+one axis at a time, so `sOut` repeats in pairs: `45.3, 45.3, 135.8, 135.8, …`
+
+Cell 0 therefore escapes only above `256 − m·45.3 = 149`; that alone would say the
+courtyard is unlit below head height, which is plainly false. But the march does not stop
+there: cell 1 repeats `149`, cell 2 gives `256 − m·135.8 = −64`, and the hull closes to
+`[0, ceil]` — the whole air column, which is correct. **Stopping at the first sky cell is
+a bug**, and it is the one an implementer will write.
 
 #### What is stored, and where
 
@@ -1267,27 +1284,53 @@ Memory: `256×256` worst case × 4 channels × 2 B = **512 KB** (E1M1's 75×47 g
 28 KB). Half-float resolves ~1 unit at `|z| = 1024`, far finer than the 64-unit cell.
 
 **Both stored values are clamped to the cell's own air column**, `zLo ≥ floor(own)` and
-`zHi ≤ ceil(own)`, and that clamp is load-bearing rather than tidy. A march sample lies
-on the segment between the camera and a real geometry hit, so it is always inside real
-air — the interval is never consulted outside that column, and clamping therefore loses
-nothing. What it buys is a **bounded dynamic range**, which is what makes the sentinel
-below behave the same way in a 96-unit corridor and a 1024-unit hall.
+`zHi ≤ ceil(own)`, and the clamp buys a **bounded dynamic range** — which is what makes
+the sentinel below behave the same way in a 96-unit corridor and a 1024-unit hall.
+
+⚠ **The upper clamp is wrong on its own for an OPEN-SKY cell, and the shader carries the
+correction.** A march sample lies between the camera and a real geometry hit, but that
+does **not** keep it under the cell's ceiling when the "ceiling" is a sky plane: a ray
+aimed at a distant wall passes hundreds of units above a courtyard's sky flat, and
+clamping `zHi` to it would fail every such sample and paint a **horizontal seam across
+outdoor fog at the sky-plane height** — in exactly the shafts L2b must leave unchanged.
+The fix is free, because the mask is already tapped: an open-sky cell has no solid
+ceiling *of its own*, so any `z` above its sky plane is outside the map and lit by
+definition. The test therefore reads
+
+```
+sunVisible = (p.z >= zLo) && (p.z <= zHi || openSky)
+```
+
+and the clamp stays, keeping the range bounded. (Above a sky plane the answer rests on
+approximation 3 below — a taller neighbour is not consulted — which is the same
+one-sided over-lighting already accepted there, not a new one.)
 
 **The "no sun here" sentinel is finite and local**, for the reason `dMax` is finite in
 §4.3a: a half-float `±inf` meeting a zero bilinear weight yields `NaN`, and a `NaN` in
 `σ` blows the whole march. A cell the sun never reaches stores
 
 ```
-zLo = ceil(own) + kSunNever      zHi = floor(own) − kSunNever      (kSunNever = 128 world units)
+zLo = ceil(own) + RB_SUN_NEVER    zHi = floor(own) − RB_SUN_NEVER    (RB_SUN_NEVER = 128 world units)
 ```
 
 i.e. an interval that is empty by construction, expressed **relative to the cell's own
-air column** so it blends consistently everywhere. The value sets **how far light bleeds
-into a shadowed cell**: blending a never-cell (weight `w`) against a lit neighbour whose
-window spans `W`, the interval closes once `2·w·kSunNever > (1−w)·W`. At `W = 256` and
-`kSunNever = 128` that is `w > 1/3` — the shaft edge lands about a third of the way into
-the shadowed cell, close to the half-cell error §4.3a already accepts. **Tuning is Q28**,
-and the two failure directions are named there.
+air column** so it blends consistently everywhere. **The name has no `k` prefix on
+purpose** — this constant lives C-side in `r_mesh.h` with the rest of the build, not in
+`pt_common.glsl`; the shader never reads it.
+
+The value sets **how far light bleeds into a shadowed cell**. Blending a never-cell of
+column height `H` (weight `w`) against a lit neighbour whose window spans `W`, the
+interval closes once
+
+```
+w · (H + 2·RB_SUN_NEVER)  >  (1 − w) · W
+```
+
+— the `H` term is part of it, because the sentinel is expressed relative to the cell's
+own column rather than as a bare ±constant. At `H = W = 256` and `RB_SUN_NEVER = 128`
+that is `w > 1/3`: the shaft edge lands about a third of the way into the shadowed cell,
+close to the half-cell error §4.3a already accepts. **Tuning is Q28**, and the two
+failure directions are named there.
 
 #### The shader change is one line
 
@@ -1296,18 +1339,27 @@ and the two failure directions are named there.
 float sunLit = (skyExists && kSkyAmbientFrac < 1.0 && sunRayMissesGeometry(p))
              ? sunGain : 0.0;
 
-// after (DOOM-0289) -- the tap is ALREADY in the loop; `seep` is widened from .rg to a vec4
+// after (DOOM-0289) -- the tap is ALREADY in the loop; the local `seep` widens .rg -> vec4
 vec4  fld     = texture(uSeepField, worldToSeepUV(p.xy));
-bool  openSky = fld.g > 0.5;                              // unchanged, DOOM-0276
-bool  sunSeen = (p.z >= fld.b && p.z <= fld.a);           // DOOM-0289, replaces the ray
+bool  openSky = fld.g > 0.5;                                  // unchanged, DOOM-0276
+bool  sunSeen = (p.z >= fld.b) && (p.z <= fld.a || openSky);  // DOOM-0289, replaces the ray
 float sunLit  = (skyExists && kSkyAmbientFrac < 1.0 && sunSeen) ? sunGain : 0.0;
 ```
 
+**Renaming the local is part of the edit, not cosmetic.** The shipped line declares
+`vec2 seep`, which *shadows* the `SeepXform` block instance also named `seep`; widening
+it to a `vec4` named `fld` means the downstream `exp(-seep.r / kSeepFalloff)` in the
+`skyExposure` line must become `fld.r` in the same edit, or it silently resolves to the
+UBO block and fails to compile.
+
 `sunRayMissesGeometry()` and its `rayQueryEXT` go with it — **deleting it is part of the
 change, not tidying afterwards**, because a live definition invites the ray back. Note
-what is *not* touched: `kSkyAmbientFrac`'s ambient/directional split, `sunGain` and the
-HG phase, the `skyExists` guard, and the `.r`/`.g` reads. `vis` stays binary, exactly as
-the ray gave it, so the shaft's character does not change in kind.
+what is *not* touched in **meaning**: `kSkyAmbientFrac`'s ambient/directional split,
+`sunGain` and the HG phase, the `skyExists` guard, and what the `.r`/`.g` channels say.
+`vis` stays binary, exactly as the ray gave it, so the shaft's character does not change
+in kind. (The bounds are derived as strict inequalities above and tested inclusively
+here; at the field's 64-unit cell and after bilinear filtering the difference is far
+below one texel and is not worth carrying through the arithmetic.)
 
 #### The build, and where it lives
 
@@ -1328,17 +1380,41 @@ grid and already resolves a sector per cell centre. Four additions, in order:
    the feature exists to draw. The test is cheap and exact enough: BSP descent already
    guarantees the point is on the right side of every node split, so the point is in the
    void **iff it lies on the back side of at least one seg of its own subsector** (leaves
-   are convex and their segs face inward). ~6 cross products per cell. A void cell, and a
-   cell whose sector has `ceil ≤ floor` (a shut door, a solid pillar sector), both block:
-   the march ends there with an empty interval.
+   are convex and their segs face inward), which the engine's own `P_PointOnLineSide`
+   answers. Three clauses come with it:
+   - **A void cell, and a cell whose sector has `ceil ≤ floor`** (a shut door, a solid
+     pillar sector), **block: the march ends there contributing no further window — the
+     hull collected from nearer sky cells still stands.** Not "the result is empty": a
+     wall further along the sun line cannot un-light a beam that already escaped through
+     a nearer opening, and reading it that way deletes real shafts, the opposite of
+     approximation 2's stated one-sidedness.
+   - **Skip a self-referencing seg** (`linedef->frontsector == backsector` — the
+     deep-water / fake-wall trick §4.3a already excludes from the portal graph). Both its
+     sides name the same sector, so the point is in that sector's air whichever side it
+     falls on; testing it anyway misclassifies about half such segs as walls and stamps a
+     spurious shadow across every deep-water room.
+   - ⚠ **The void verdict feeds the clearance march ONLY.** The seep's `.r`/`.g` keep
+     taking their sector from the existing `RB_SectorAtPoint` derivation, unchanged. The
+     rasterise loop gates on `sec >= 0`, so handing it "void" for a wall-interior cell
+     would flip that cell's distance to `RB_SEEP_DMAX` and its sky mask to 0 — silently
+     altering a shipped, user-signed-off look and breaking L2b's own look-identity gate.
+     **One lookup, two verdicts: a sector index for the seep, a solid/air flag for the
+     clearance.**
 3. **March each cell with a 2-D DDA** over the cached grid along `u`, exactly as derived
-   above. **The march is short and that is a property of the sun, not an assumption**:
-   at `m = 2.357` a ray gains 151 units of height per 64-unit cell, so from any floor it
-   meets the ceiling of a 128-unit room inside a single cell. Termination is geometric —
-   `hi` falls by ≥ `m·cell` per cell while `lo` does not fall at all, so the interval is
-   empty within `(ceil_max − floor_own)/(m·cell)` cells — but keep a `RB_SUN_MARCH_MAX`
-   = 32-cell cap as a backstop against a malformed map. Cost: ~3.5 k cells × 1–3 steps
-   typical, worst case × 32; either way well inside the seep's own 0.6 ms.
+   above. **The march is short, and that is a property of the sun rather than an
+   assumption** — a cell entered costs `m · cell/(|u.x|+|u.y|) ≈ 107` units of rise at the
+   shipped heading, so a ray from any floor meets the ceiling of a 128-unit room within
+   two cells. **Two exits, and the second one is not optional:**
+   - **Blocked** — `lo > hi`. In *roofed* air this arrives geometrically, because `hi`
+     falls by the per-cell rise while `lo` never falls.
+   - **Saturated** — the hull already spans `[floor(own), ceil(own)]`, so the clamp makes
+     any further improvement invisible. **This is the exit that matters outdoors**: a sky
+     cell contributes no ceiling bound at all, so `hi` never falls there and the blocked
+     exit never fires — without this test every open-sky cell marches to the cap.
+   `RB_SUN_MARCH_MAX = 32` then really is a malformed-map backstop rather than the common
+   outdoor path. Cost either way is ~3.5 k cells × a handful of steps, worst case × 32 —
+   a few hundred thousand iterations of float arithmetic with no BSP in them, well inside
+   the seep's own 0.6 ms. **Measure it rather than trusting this paragraph** (L2b Step 8).
 4. **`kSunDir` must be mirrored C-side**, as `dMax`/`RB_SEEP_DMAX` already are —
    `RB_SUN_DIR_X/Y/Z` in `r_mesh.h`, with `pt_common.glsl`'s `kSunDir` named as
    authoritative in a comment on **both** sides. A mismatch here is worse than the
@@ -1350,11 +1426,29 @@ grid and already resolves a sector per cell centre. Four additions, in order:
 
 DOOM-0281's hook (`RecordSeepRefresh`, `r_vulkan.cpp`) must carry the new channels or an
 opening door leaves **stale shafts** — worse than stale fog, because a beam through a
-wall reads as a bug rather than as thin air. Three specifics:
+wall reads as a bug rather than as thin air. Four specifics:
 
 - The re-flood already recomputes the whole field, so `zLo`/`zHi` come along for free
   once they are in `rb_seep_t`; add `g.seepZLo` / `g.seepZHi` beside `g.seepSky` and pack
   them in `PackSeepTexels`.
+- ⚠ **DOOM-0281's trigger is necessary but NOT sufficient, and this is the easiest thing
+  in the amendment to miss.** `RB_SeepOpeningsChanged` detects an `openrange` **flip** —
+  by its own comment, "sector movement that does NOT cross zero (a lift running between
+  two open heights, a crusher not yet at the floor) flips nothing". That is exactly right
+  for the seep, whose distances are pure connectivity. It is **wrong for the clearance**,
+  which is baked from `floorheight` and `ceilingheight` and therefore moves whenever a
+  plane moves at all. A lift rising in a courtyard changes what it shadows without
+  flipping anything, and the beam beside it would freeze. So the dirty condition widens
+  to **"an opening flipped, or any sector plane moved"** — the second half is already
+  free, since `RB_UpdateMeshHeights` reports `RB_UPD_MOVED` and that is the gate the
+  existing scan sits behind.
+- **Split the refresh in two, so the widened trigger stays cheap.** An opening flip needs
+  the **full** re-flood (portal graph + Dijkstra + rasterise + march). A plane that moved
+  without flipping needs **only** the geometry cache refreshed and the march re-run — the
+  seep's distances provably did not change, so its expensive half is skipped. Rate-limit
+  the clearance-only rebuild (a moving door runs for ~30 tics and does not need 30
+  rebuilds); **the cadence is Q30, to be set from Step 8's measurement rather than
+  guessed** — which is the DOOM-0281 lesson (Q22) applied before it has to be relearned.
 - **The clearance channels are snapped, not eased.** The seep distance eases over
   `kSeepEaseTau` because mist genuinely rolls in; light does not. A door opening admits
   its beam in the same frame, which is both correct and simpler.
@@ -1385,11 +1479,14 @@ wall reads as a bug rather than as thin air. Three specifics:
    *widest* window instead of the hull — is exact for the gap and drops the other
    window entirely, i.e. it errs toward missing shafts. Recorded so the choice is
    visible, not so it is re-litigated.
-3. **Escape is final.** Once the ray passes a sky ceiling the march stops, so a
-   structure *taller* than the sky sector it borders does not shadow across it. Also
-   one-sided toward over-lighting. This is the one of the three where a real ray and
-   the field can visibly disagree, so it is the thing to look at first if a play-test
-   finds light where it should not be.
+3. **An escaped `z` is never re-shadowed.** Once a starting height has cleared a sky
+   ceiling it is counted as sun-lit for good, so a structure *taller* than the sky sector
+   it borders does not shadow across it. **This is about a height, not about the loop:
+   the cell march itself continues** — stopping it at the first sky cell is the bug named
+   two sections above, and this approximation must not be read as licence for it. Also
+   one-sided toward over-lighting. It is the one of the three where a real ray and the
+   field can visibly disagree, so it is the thing to look at first if a play-test finds
+   light where it should not be.
 
 **What this does not change.** `kSunDir`, `kSkyShaftStrength`, `kSkyAmbientFrac`,
 `kFogAnisotropy`, the phase, the ambient/directional split, and every other constant keep
@@ -1624,7 +1721,23 @@ colour-frozen.
     Q25 owns them on hardware),
     `kSeepMax` = 0.5, `kSeepFalloff` = 192, `dMax` = `8 · kSeepFalloff` (the seep field's
     finite unreachable/void sentinel — §4.3a) (values derived in §4.3a/§4.3b; `kWispAmp`
-    and `kWispWeight2` are owned by Q21 alongside `kWispFreq1`). Only the runtime **strength** and the **per-level haze** vary at
+    and `kWispWeight2` are owned by Q21 alongside `kWispFreq1`).
+    **Five of the figures in the paragraph above are the values first written down, not
+    the values that shipped** (corrected 2026-07-30 — this bullet is the implementer's
+    lookup table, so a stale number here is read as authority): `kSeepMax` ships **0.9**
+    and `kSeepFalloff` **384** (the DOOM-0281 re-tune, §4.3a), `kWispAmp` ships **1.0**
+    and `kWispFreq1` **1/192** (L1c's tuning, §4.3b), and `kFogColor`, `kWispAmp`,
+    `kWispWeight2`, the octave frequencies/velocities, `kSeepMax`, `kSeepFalloff` and
+    `dMax` are all **in the tree now** rather than pending. `kAreaDensity`,
+    `kFloorFogDensity`, `kFloorFogPool`, `kFloorFogRange` and `kTorchFalloff` are the ones
+    still owed.
+    **DOOM-0289 adds three constants, and none of them is a `k*` shader const**
+    (2026-07-30). The sun-clearance field is built C-side, so they live in `r_mesh.h`
+    beside `RB_SEEP_DMAX`: **`RB_SUN_DIR_X/Y/Z`** (the mirror of `pt_common.glsl`'s
+    `kSunDir` — the shader stays authoritative), **`RB_SUN_NEVER`** = 128 (the finite
+    no-sun sentinel, Q28) and **`RB_SUN_MARCH_MAX`** = 32 (the march's backstop). The
+    shader gains **no** new constant at all: it reads two more channels of a texture it
+    already samples. Only the runtime **strength** and the **per-level haze** vary at
     runtime, so only they take lanes.
   - **Budget note (INV-5):** this consumes the **last two free components** of the
     shared RT push block. Any *further* RT push value must append the final
@@ -2028,7 +2141,7 @@ method at L1b, fog resolution at L1c), and only **L6** carries the formal pass/f
 | **L1d** | **Outdoor-proximity seep** (§4.3a amendment, 2026-07-25): the load-time flood-filled distance field (new per-level 2-D texture, §5) + the graded indoor `skyExposure`. | Standing in a doorway onto a courtyard, **a little fog drifts in and thins as you walk deeper**; a **sealed** room that merely shares a wall with outdoors is **visually indistinguishable from the same room before L1d** — i.e. it shows the plain `kIndoorFogScale` floor and no seep (proves the fill is through-open-space, not straight-line); the outdoor look is **unchanged from L1c** (the seep touches only the indoor branch); level load adds **≤ 20 ms** on E1M1 (measure the flood fill directly; it runs once, beside the mesh build); **and the runtime seep tap adds ≤ 1 % present-total** on the §6 walk — INV-12's "single bilinear tap" is *per march sample*, inside the loop §6 calls the dominant cost, so it is not free merely because the fill is load-time | spot-check |
 | **L1e** | **The floor fog** (§4.3c, DOOM-0272): the second, short-range density term — three new constants, a third addend in the march's `sigma`, and the matching second addend in the sky closed form (§4.6a). **Outdoor half only**; the indoor half rides on L1d's seep, so this row lands *before* L1c and L1d — the letters are identifiers, not a sequence. | **The camera is yaw-only — there is no looking down** (`camUp` is world +Z at `r_vulkan.cpp:7417`), so "mist at your feet" can only ever be judged from the **lower part of the view**, where the bottom row of the 3-D view is a 29° downward ray meeting the floor ~84 units ahead. Accept when: the near floor in the bottom third reads mistier than the same view before L1e, the far end of the courtyard is **no whiter than before** (that is the whole point of the range term), there is **no line along the skyline** where sky meets a distant wall, and indoors is unchanged from L1b | spot-check |
 | **L2** | **Sky shafts:** add `kSunDir` + the one-ray sky-visibility test per sample + HG phase (builds on L1b's up-ray machinery). | A doorway/sky-hole open to sky throws a visible slanted beam; closed rooms stay clear; the beam moves correctly as the camera orbits | no |
-| **L2b** | **The sun-clearance field** (§4.4's 2026-07-30 amendment, DOOM-0289): delete L2's per-sample sun ray; widen the seep field `RG16F → RGBA16F` with the `zLo`/`zHi` interval; build it in `RB_BuildSeepField`; extend DOOM-0281's re-flood (and fix its upload gate). **A pure perf change with a look-identity requirement** — it is not a new layer. | The shafts are **where they were before** (the field and the beam must agree about `kSunDir`); the doorway beam still reads; **the sun ray's 13.6 ms is gone** and the whole fog is back inside the ≤ 15 % gate; a door opening updates its shaft in the same frame; `-rtverify` green | **yes** — the regression it exists to fix |
+| **L2b** | **The sun-clearance field** (§4.4's 2026-07-30 amendment, DOOM-0289): delete L2's per-sample sun ray; widen the seep field `RG16F → RGBA16F` with the `zLo`/`zHi` interval; build it in `RB_BuildSeepField`; widen and split DOOM-0281's re-flood (and fix its upload gate). **A pure perf change with a look-identity requirement** — it is not a new layer. | The shafts are **where they were before** (the field and the beam must agree about `kSunDir`); the doorway beam still reads; a building in the open still shadows the air beside it; **the sun ray's 13.6 ms is gone** and the whole fog is back inside the ≤ 15 % gate; a door opening updates its shaft in the same frame, and **a lift moving between two open heights updates it too** (the clearance is height-keyed, so DOOM-0281's flip detector alone is not enough); `-rtverify` green | **yes** — the regression it exists to fix |
 | **L3** | **Height pooling + torch shafts:** height-based density (`hitP.z` floor ref); iterate static emitters `k<omniStart` (nearest-few, no occlusion first). | Fog settles low into a floor layer; a torch in a dark room glows its surrounding air; dynamic/muzzle/flashlight do **not** scatter | no |
 | **L4** | **Area profiles + colour:** goo tint via the primary-hit `RB_FLAG_LIQUID_NUKAGE`; hell haze via the new `rb_view_t` field → `misc6.w`; `mediumTint` colouring (light×medium). | Goo rooms fill green and pool low; hell levels gain a faint red haze; a torch shaft reads warm-through-green in goo; clear levels stay neutral | no |
 | **L5** | **Denoise/quality pass:** dither tuning; escalate upsample→a-trous if it crawls (§4.6 Q6); phase/anisotropy tune. **May be largely dissolved** if L1c promotes mode-6 fog to full-res (§6 item 2) — with no upsample there is no upsample to harden; the dither/phase tuning still applies. | Fog is smooth, not grainy or crawling, in a slow pan; shafts hold their shape | no |
@@ -2266,13 +2379,20 @@ The other layers' Verify cells fit in a line. These two do not, so they live her
   ceiling above, so a single lower bound is false there (§4.4's amendment derives it), and
   roofed air just inside a doorway is where the shafts are. Three further clauses are part
   of the guarantee, not detail: the stored interval is **clamped to the cell's own air
-  column** (which bounds the dynamic range the finite `kSunNever` sentinel is sized
+  column** (which bounds the dynamic range the finite `RB_SUN_NEVER` sentinel is sized
   against — an unbounded `zHi` blends a shadowed cell back into light); a cell whose
   centre lies in the **void or in solid** blocks the march (`R_PointInSubsector` answers
   for a point inside a wall with a *neighbouring* room's sector, so without the
-  back-of-a-seg test an outdoor building casts no shadow); and the march **does not stop
-  at the first sky cell** (escape thresholds fall with distance, so stopping early reports
-  an open courtyard as unlit below head height). Drop any of the three and INV-13 is
+  back-of-a-seg test an outdoor building casts no shadow), while leaving the seep's own
+  sector lookup untouched; and the march **does not stop at the first sky cell** (an
+  escape threshold usually falls with distance, so stopping early reports an open
+  courtyard as unlit below head height — but a later sky sector with a higher ceiling can
+  raise it, which is why "first" must mean **first with a non-empty window** and both hull
+  updates must be guarded).
+  A fourth clause is the shader's, not the builder's: because the clamp bounds `zHi` by
+  the cell's own ceiling, an **open-sky** cell needs `p.z <= zHi || openSky` or every
+  sample above a courtyard's sky plane fails the test and a horizontal seam appears across
+  outdoor fog. Drop any of the four and INV-13 is
   false. *Falsifiable:* L2b's own acceptance row — the shafts land **where they did before**
   the field replaced the ray (§7) — plus, by diff, `sunRayMissesGeometry` and its
   `rayQueryEXT` are **gone from `pathtrace.comp`**, not merely unreferenced.
@@ -2510,21 +2630,35 @@ reasoning stays there.
   ROADMAP body demanded. **Answer: "DOOM 1 + 2 doesn't feature a day / night cycle. So,
   that's fine."** — fixed sun, no door left open, INV-3 amended to say so. Re-opening this
   is a redesign, not a tune.
-- **Q28 (`kSunNever` — how far light bleeds into a shadowed cell, 2026-07-30):** the
-  never-sun sentinel is `zLo = ceil(own) + kSunNever`, `zHi = floor(own) − kSunNever`, and
-  the value decides where the shaft edge falls between two cell centres: the interval
-  closes once `2·w·kSunNever > (1−w)·W` for a neighbour window of width `W`. Starting
+- **Q28 (`RB_SUN_NEVER` — how far light bleeds into a shadowed cell, 2026-07-30):** the
+  never-sun sentinel is `zLo = ceil(own) + RB_SUN_NEVER`, `zHi = floor(own) −
+  RB_SUN_NEVER`, and the value decides where the shaft edge falls between two cell
+  centres: for a never-cell of column height `H` blended at weight `w` against a
+  neighbour window of width `W`, the interval closes once
+  `w·(H + 2·RB_SUN_NEVER) > (1−w)·W`. Starting
   value **128** puts the edge about a third of the way into the shadowed cell for a
   256-unit room, close to §4.3a's accepted half-cell error. **Both failure directions are
   visible, which is why this is a look-tune and not arithmetic:** too small and shafts
   bleed past the midpoint into geometry that should shadow them; too large and they pinch
   to narrow stripes around cell centres. Judge at **L2b**, on the doorway beam, against
   the pre-change screenshot.
-- **Q29 (does "escape is final" ever show? 2026-07-30):** the clearance march stops at the
-  first sky ceiling it clears, so a structure taller than the sky sector it borders does
-  not shadow across it (§4.4's amendment, approximation 3). This is the one of the three
-  approximations where a real ray and the field can visibly disagree, and unlike the other
-  two it is not bounded by the sun's steepness. **If L2b's play-test finds light where
-  there should be shadow, look here first**, and the cheap fix is to continue the march
-  past an escape while any later cell's ceiling exceeds the escape height. Not built
-  speculatively — measure the defect before paying for it. **L2b.**
+- **Q29 (does "an escaped `z` is never re-shadowed" ever show? 2026-07-30):** a starting
+  height that has cleared a sky ceiling stays counted as sun-lit, so a structure taller
+  than the sky sector it borders does not shadow across it (§4.4's amendment,
+  approximation 3). **This is a claim about a height, not about the loop** — the cell
+  march continues either way. It is the one of the three approximations where a real ray
+  and the field can visibly disagree, and unlike the other two it is not bounded by the
+  sun's steepness. **If L2b's play-test finds light where there should be shadow, look
+  here first**, and the cheap fix is to keep tightening `hi` past an escape whenever a
+  later cell's ceiling rises above the escape height. Not built speculatively — measure
+  the defect before paying for it. **L2b.**
+- **Q30 (clearance-rebuild cadence, 2026-07-30):** the clearance depends on plane
+  *heights*, not just on openings, so its dirty condition is wider than DOOM-0281's flip
+  detector and fires on every frame a lift or door is in motion (§4.4's amendment). The
+  rebuild is the geometry-cache pass plus the march — cheaper than a full re-flood, since
+  the seep's Dijkstra is provably unaffected — but it is not free, and a moving door runs
+  ~30 tics. **How often it should actually run is a measurement, not a guess:** rebuild
+  every frame of motion, every N-th frame, or once when the plane settles. Q22 is the
+  standing warning here — that entry rejected a per-door re-flood by reasoning from a
+  budget instead of a measurement, and was wrong by a factor of 33. **Take the number in
+  L2b Step 8 first. L2b.**
