@@ -933,6 +933,30 @@ float skyFogOpticalDepth(vec3 ro, vec3 rd, float strength)
                        + tauF);
 }
 
+// DOOM-0011 L2: one sky-visibility ray per march sample -- the whole of the shaft effect.
+// "Reaches the sky" IS "missed every solid thing", and is NOT a custom-index-2 sky hit:
+// cull mask 0x01 selects the world BLAS alone, and the sky-backdrop instance is mask 0x04,
+// so a committed hit on this ray is always real geometry (spec §4.4(a)). Same query shape
+// as occluded() and the muzzle / flashlight shadow rays above.
+//
+// Bounded at kFogMaxDist rather than fired to infinity. kSunDir rises 0.92 units per unit
+// travelled, so 2048 clears any DOOM ceiling by a wide margin, and it is the same horizon
+// the march itself already accepts -- while an unbounded ray would pay full BVH traversal
+// on every sample of every fog pixel to answer a question the map cannot pose.
+//
+// No normal offset: `p` is a point in open AIR, not a surface, so there is nothing to
+// self-intersect; tmin alone keeps the query well-formed.
+bool sunRayMissesGeometry(vec3 p)
+{
+    rayQueryEXT sq;
+    rayQueryInitializeEXT(sq, topAS,
+        gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0x01u,
+        p, 1e-3, kSunDir, kFogMaxDist);
+    while (rayQueryProceedEXT(sq)) {}
+    return rayQueryGetIntersectionTypeEXT(sq, true)
+           == gl_RayQueryCommittedIntersectionNoneEXT;
+}
+
 // Returns (inscatter.rgb, transmittance). Linear radiance. rb_fog>0 checked by the caller.
 vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)
 {
@@ -943,8 +967,22 @@ vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)
 
     vec3  inscatter = vec3(0.0);
     float trans     = 1.0;
-    vec3  skyAmbient = kFogColor * kSkyShaftStrength;   // L1c: near-white, non-directional
     float strength   = fogStrengthScale(pc.misc6.z);   // the `;` dial: Low/Med/High thins the air
+    // DOOM-0011 L2: levels with no sky (misc4.w is the sky texture's bindless id, 0xFFFFFFFF
+    // when the level has none) get no sun ray and no sky term at all -- hoisted out of the
+    // loop because it is one uniform read, not a per-sample fact (spec §4.4(a)).
+    bool  skyExists  = (pc.misc4.w != 0xFFFFFFFFu);
+    // The phase's forward gain, evaluated once: it depends on the VIEW ray and the sun, and
+    // both are constant along the march.
+    //
+    // NORMALISED by 4*PI, and that factor is load-bearing. fogPhaseHG integrates to 1 over
+    // the sphere, so its isotropic value is 1/(4*PI) = 0.0796 -- feeding it in raw (as the
+    // implementation plan's sketch did) would have scaled L1c's signed-off fog brightness
+    // down by 12.6x and read as "the fog went out", not as "the fog gained direction".
+    // Normalised, g = 0 reproduces L1's flat term EXACTLY, and the shipped g = 0.40 spends
+    // that same energy directionally: 3.89x looking into the sun, 0.67x across it, 0.31x
+    // with it behind you.
+    float sunGain    = 4.0 * PI * fogPhaseHG(dot(rd, kSunDir), kFogAnisotropy);
 
     // DOOM-0011 L3, corrected 2026-07-27. The cloud's ground height USED to come from the
     // primary hit -- hitP.z when the hit faced up, else the camera's floor. That is the
@@ -1023,7 +1061,18 @@ vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)
         // lane (INV-5). Multiplicative is what makes kWispAmp = 0 the exact identity (INV-11).
         float sigma = (fogDensity(p, baseZ, poolH) + floorFogDensity(p, baseZ, t))
                       * strength * skyExposure * wisp(p, rippleTime());
-        vec3  Ls    = skyAmbient;                        // L2 adds directional sky + torches
+        // DOOM-0011 L2: the sky term gains a DIRECTION. One ray toward the sun decides
+        // whether this sample gets the directional share on top of the ambient one; the
+        // two shares sum to 1, so this REPLACES L1's flat ambient (spec §4.4(a) -- adding
+        // a second full-strength term would in-scatter the sky twice) while still leaving
+        // shadowed air lit, which is what an overcast sky does. See kSkyAmbientFrac.
+        // The ray is the feature's whole cost, so it is asked only when it can change the
+        // answer: no sky in the level, or no directional share to win, and it is skipped.
+        // L3 adds torch contributions to Ls here.
+        float sunLit = (skyExists && kSkyAmbientFrac < 1.0 && sunRayMissesGeometry(p))
+                     ? sunGain : 0.0;
+        vec3  Ls    = kFogColor * kSkyShaftStrength
+                    * (kSkyAmbientFrac + (1.0 - kSkyAmbientFrac) * sunLit);
         inscatter += trans * sigma * Ls * dt;
         trans     *= exp(-sigma * dt);
         if (trans < 0.003) break;                        // thick fog occludes the rest cheaply

@@ -101,6 +101,24 @@ const float kEyeAboveFloor   = 41.0;             // DOOM's VIEWHEIGHT: how far t
                                  // the ground cloud, and as the floor fallback when the primary
                                  // hit is not an up-facing surface.
 const float kFogAnisotropy   = 0.40;             // Henyey-Greenstein g (mild forward bias); 0 = isotropic
+const float kSkyAmbientFrac  = 0.65;             // DOOM-0011 L2: how much of the sky's in-scatter is
+                                 // AMBIENT (reaches air the sun cannot) vs DIRECTIONAL (only air with
+                                 // an unoccluded sun ray). The two shares sum to 1, so the total energy
+                                 // is L1c's and only its DISTRIBUTION changes; at 1.0 this term is
+                                 // exactly L1c's flat ambient again, which is the falsifier.
+                                 // Why not 0.0, which is what the plan's L2 sketch specified: a pure
+                                 // directional term makes every sample the sun cannot see BLACK, and
+                                 // indoors no sample can, so the whole Silent Hill haze the user signed
+                                 // off on 2026-07-30 vanishes. Measured at the E1M1 spawn: mean frame
+                                 // brightness fell 60.6 -> 17.9 (a 3.4x darkening) and the fog was
+                                 // simply gone. The plan's "it must REPLACE or the sky is counted
+                                 // twice" is sound about energy and wrong about the sky: it models the
+                                 // sky as a sun DISC, while the art direction is an OVERCAST dome that
+                                 // lights fog from every direction at once. Splitting the same energy
+                                 // keeps both -- shadowed air stays milky, sunlit air gains the shaft,
+                                 // and the beam reads as CONTRAST rather than as black-vs-white.
+                                 // Raise toward 1.0 for flatter, more overcast air; lower toward 0.0
+                                 // for a hard-edged clear-sky beam.
 const vec3  kSunDir          = normalize(vec3(0.30, 0.30, 1.0)); // world; +z is up (floor = hitP.z). L2.
 const vec3  kGooTint         = vec3(0.35, 0.85, 0.30); // sickly green (L4)
 const vec3  kHellTint        = vec3(0.90, 0.35, 0.30); // faint red   (L4)
