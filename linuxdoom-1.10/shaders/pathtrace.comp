@@ -1033,8 +1033,14 @@ vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)
         // doorway and thins as you go deeper, while a sealed room that merely shares a
         // wall with the courtyard reads dMax and so stays at exactly the old floor
         // (INV-12).
-        float skyExposure = openSky ? 1.0
-                                    : mix(kIndoorFogScale, kSeepMax, exp(-fld.r / kSeepFalloff));
+        //
+        // DOOM-0292 hoisted the grade itself out of the density line: it now has a SECOND
+        // consumer (the ambient sky share, below), and evaluating the same exp() at two
+        // sites is how the two silently drift apart under a later edit. 1 right at an
+        // opening, 0 deep inside, and exactly 1 under open sky so both consumers reduce to
+        // their outdoor form by construction.
+        float seepT       = openSky ? 1.0 : exp(-fld.r / kSeepFalloff);
+        float skyExposure = openSky ? 1.0 : mix(kIndoorFogScale, kSeepMax, seepT);
         // Outdoor air is a tall bank on the level's fog altitude; roofed air keeps the
         // shallow knee-height cloud. Both references are per-frame constants, so `sigma`
         // is a function of `p` alone -- see fogDensity()'s contract.
@@ -1071,8 +1077,20 @@ vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)
         // sky-plane height, in exactly the shafts this task must leave unchanged.
         bool  sunSeen = (p.z >= fld.b) && (p.z <= fld.a || openSky);
         float sunLit  = (skyExists && kSkyAmbientFrac < 1.0 && sunSeen) ? sunGain : 0.0;
+        // DOOM-0292: the AMBIENT share is gated on sky exposure as well. Both shares are
+        // the sky's light, so both must ask whether this air can see any -- the difference
+        // is only in what "see" means. The directional share asks a geometric question and
+        // DOOM-0289's interval answers it exactly; the ambient share is a dome, reaching
+        // air the sun misses, so its question is one of degree and the seep grade is the
+        // right answer: full under open sky, most of it in a doorway, a floor deep inside.
+        //
+        // `sunLit` is deliberately NOT scaled by skyLight. If the interval says the sun
+        // reaches this sample then it reaches it -- a shaft through a roof light is bright
+        // BECAUSE the room around it is not, and dimming the beam with the room would
+        // destroy exactly the contrast L2 exists to produce.
+        float skyLight = mix(kIndoorSkyLight, 1.0, seepT);
         vec3  Ls    = kFogColor * kSkyShaftStrength
-                    * (kSkyAmbientFrac + (1.0 - kSkyAmbientFrac) * sunLit);
+                    * (kSkyAmbientFrac * skyLight + (1.0 - kSkyAmbientFrac) * sunLit);
         inscatter += trans * sigma * Ls * dt;
         trans     *= exp(-sigma * dt);
         if (trans < 0.003) break;                        // thick fog occludes the rest cheaply

@@ -204,6 +204,32 @@ const float dMax         = 8.0 * kSeepFalloff;// the field's finite unreachable/
                                  // bilinear weight at the grid edge yields a NaN,
                                  // and that propagates through the whole march.
 
+// DOOM-0292: the seep field's SECOND consumer -- the sky's AMBIENT share, graded by the
+// same distance for the same reason. L2 gates only the DIRECTIONAL share on visibility,
+// so until this constant existed kSkyAmbientFrac was applied at full strength everywhere
+// and a sealed room's air in-scattered exactly as much sky as a shadowed courtyard's.
+// That is the user's 2026-07-31 play-test note ("fog is generally very white when outside
+// as the sky / sun are lighting it up but under roof that won't be the case"), and it is
+// a gap in the model rather than a taste dial: there is no sky above a roofed sample, so
+// there is nothing to supply that light.
+//
+// This is deliberately NOT kIndoorFogScale, and not skyExposure reused. That factor
+// already multiplies DENSITY and bottoms out at 0.05; multiplying brightness by it as
+// well would square the interior's cut and take a deep room to black, which is neither
+// what was asked for nor what a real interior does -- a room with a doorway is dim, not
+// unlit. Two effects, two floors, one shared curve.
+//
+// The open-sky branch stays exactly 1.0, so the outdoor look -- the half the user signed
+// off on 2026-07-31 -- is unchanged by construction, not by tuning.
+const float kIndoorSkyLight = 0.45;   // ambient-sky in-scatter multiplier for air the seep
+                                 // field says is far from any opening (open sky = 1.0,
+                                 // and a doorway grades between). Lower = gloomier
+                                 // interiors. It is a FLOOR on light, not on density, so
+                                 // 0.0 is legal and means "only torches light this air"
+                                 // once L3 lands -- Task L3's torch gain is this same
+                                 // curve inverted (user: a light should read "a little
+                                 // bit outside but a lot more inside").
+
 // DOOM-0011 L1e / DOOM-0272 §4.3c: the SECOND fog layer. The aerial layer above is a real
 // participating medium, so its opacity only ever GROWS with distance -- which means the density
 // that makes the air at your feet misty is the same density that turns the far end of a courtyard
