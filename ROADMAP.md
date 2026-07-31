@@ -3735,7 +3735,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   DOOM-0293 (liquid pools want their own fog) and the local-light
   in-scatter, which is Task L3's existing job.
 
-- 📋 [DOOM-0292] **Roofed fog is lit as if the sky reached it -- gate the sky ambient on sky exposure.**
+- 🚧 [DOOM-0292] **Roofed fog is lit as if the sky reached it -- gate the sky ambient on sky exposure.**
   User, on the DOOM-0289 play-test: "fog is generally very white when
   outside as the sky / sun are lighting it up but under roof that won't
   be the case. So, the fog should be a little darker inside."
@@ -3772,6 +3772,23 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: fix.
   Lanes: shaders, fog.
   Source: user-play-test-2026-07-31.
+  Progress (2026-07-31): IMPLEMENTED (43c6413), awaiting the user
+  play-test. Built as described above -- one mix on the existing seep
+  tap, kIndoorSkyLight = 0.45, the directional share deliberately left
+  ungated so a shaft through a roof light keeps its contrast.
+
+  Verified: E1M1's roofed spawn falls 47.33 -> 37.36 mean (-21%), E1M6
+  71.09 -> 62.81, E1M3 -1.5 (a view already mostly open air). Rebuilt
+  with the constant at 1.0 and re-shot the same views -- MAE 0.0024 and
+  0.0036 /255 against the pre-change build, i.e. the same-build noise
+  floor, so the dial is the only thing that moved and outdoor air is
+  untouched by construction. Megakernel 12.9 -> 13.0 ms, 42 fps both.
+  make test 7/7, -rtverify PASS.
+
+  Left for the play-test, because a still frame cannot settle it: whether
+  0.45 is the right amount of darker. It is a floor on LIGHT, not on
+  density, so it can go to 0.0 once L3 gives torches something to say --
+  the number is the dial to bring to that session, not a value to defend.
 
 - 📋 [DOOM-0293] **Liquid pools should carry their own fog -- a per-cell liquid mask on the field.**
   User, on the DOOM-0289 play-test: "any liquid (not puddles on the
