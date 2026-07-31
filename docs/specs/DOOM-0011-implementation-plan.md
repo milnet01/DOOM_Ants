@@ -656,7 +656,8 @@ git commit -m "DOOM-0011/0272: add the outdoor floor fog (L1e)"
 
 ## Task L1c — The Silent Hill 2 look: near-white fog + two-octave drifting wisps
 
-> ✅ **IMPLEMENTED 2026-07-30 (`b3ca70d`), awaiting the user play-test (Step 7).** The blocked
+> ✅ **SHIPPED 2026-07-30 (`b3ca70d`); Step 7 play-test SIGNED OFF 2026-07-31** — taken in the
+> same session as L2b's, on the accept criteria below: "damn, I do love the fog." The blocked
 > banner this replaces was stale: §6 recorded Δ = **+4 %** on 2026-07-27, after DOOM-0276. The
 > L1c A/B is now also taken — fog off 42 fps / 19.07 ms GPU, fog on 39–40 fps / 20.72 ms on the
 > RX 6600 at E1M1 in Ultra RT with HD art, i.e. **+8.6 % GPU / ≈ +6 % frame time** for the whole
@@ -1164,6 +1165,20 @@ git commit -m "DOOM-0011: L2 sky shafts — kSunDir + per-sample sky-visibility 
 ---
 
 ## Task L2b — The sun-clearance field: delete L2's per-sample ray (DOOM-0289)
+
+> ✅ **SHIPPED 2026-07-31 (`d5f1ce7`), Step 9 play-test SIGNED OFF the same day.** Gate:
+> fog High **+3.2 %** against a 15 % bar (was +44.4 %), fog Low +4.7 %, **28 → 42 fps**.
+> The measurement, the fog-off control anomaly it exposed, and the two corrections this
+> task forced on the plan below (the void nudge is **1 unit**, not a quarter-cell; and
+> `rb_cellgeom_t` needs `isvoid` separate from `solid`) are all recorded in spec §6.
+>
+> The play-test opened three look items, none of them defects in this task:
+> **DOOM-0292** (roofed air receives the sky's ambient in-scatter at full strength — the
+> gap is in L2's model, not L2b's field), **DOOM-0293** (liquid pools want their own fog,
+> which needs a second image since this task filled the grid's fourth channel), and the
+> user's weighting for **Task L3** — a light should touch the fog "a little bit outside
+> but a lot more inside". Build DOOM-0292 before L3: it introduces the sky-exposure curve
+> whose inverse is exactly L3's indoor torch weighting.
 
 **Goal:** L2 shipped correct and far over budget — its one shadow ray per march sample
 measures **13.6 ms** against the whole rest of the fog's 0.7 ms, for **−15 fps at the

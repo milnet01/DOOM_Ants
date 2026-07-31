@@ -1069,6 +1069,24 @@ parked ideas (💭 considered) until we commit to and design each one.
   and has NOT been falsified (the plan says revert it and bank the budget
   if 24 reads clean with wisps on — that wants a moving picture). L1c/L1d
   have still had no cold read.
+  Progress (2026-07-31): L2b (DOOM-0289) shipped and play-tested --
+  the fog is back inside budget at +3.2% and 42 fps, and the user
+  signed off both it and L1c's look ("damn, I do love the fog").
+  L1c's Step 7 play-test is therefore also satisfied: near-white,
+  colourless, billows drifting. Remaining owed on L1c is unchanged --
+  kFogSteps 40 -> 24 has still not been falsified, and neither L1c nor
+  L1d has had a cold read.
+
+  The same play-test set Task L3's weighting, which the task text did
+  not previously fix: the user asked for a light near the fog to affect
+  it "a little bit outside but a lot more inside". That ordering is
+  physical rather than arbitrary -- outdoor air is already carrying the
+  sky's in-scatter, so a torch is a small addend against a large term,
+  while roofed air (once DOOM-0292 gates the sky share on sky exposure)
+  has almost nothing else lighting it and the same torch dominates. So
+  L3's torch gain should be scaled by the SAME sky-exposure curve
+  DOOM-0292 introduces, inverted -- one curve, two consumers, and no
+  third constant. Build DOOM-0292 before L3 for that reason.
 - 💭 [DOOM-0012] **Hold a 60 FPS performance floor.**
   **Layman:** Keep it running smoothly — never below 60 frames per second.
   Kind: perf.
@@ -3531,7 +3549,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   whether the weapons are a slice of DOOM-0080 or a separate, earlier
   item.
 
-- 📋 [DOOM-0289] **Bake the sun's fixed direction into a load-time clearance field and delete L2's per-sample ray.**
+- ✅ [DOOM-0289] **Bake the sun's fixed direction into a load-time clearance field and delete L2's per-sample ray.**
   DOOM-0011 L2 shipped correct and far over budget (544ae84). Measured in
   E1M1's courtyard, default rt_fog=1, render scale 50%:
     pre-L2, fog off   43 fps, megakernel 12.7 ms
@@ -3678,3 +3696,114 @@ parked ideas (💭 considered) until we commit to and design each one.
   NOT IMPLEMENTED -- the next session builds Task L2b. Note for it: the
   review's own trend says this spec is at 2.7k lines and past the gate's
   design point, so a further amendment should split the document first.
+  Resolved 2026-07-31 (d5f1ce7). Built as spec §4.4's 2026-07-30
+  amendment and plan Task L2b: the sun's visibility is a load-time
+  clearance INTERVAL on two new channels of the seep field (.b = zLo,
+  .a = zHi, the field widened to RGBA16F), read by the same bilinear tap
+  that already answered open-sky. The per-sample rayQueryEXT is deleted.
+
+  Measured on the RX 6600, E1M1 courtyard, 50% scale, three runs a cell,
+  -noinput throughout: fog High +11.05 ms / +44.4% -> +0.71 ms / +3.2%
+  against a 15% bar; fog Low (the shipped default) +43.7% -> +4.7%;
+  28 -> 42 fps. Level-load fill 0.8-0.9 ms; a clearance rebuild after a
+  plane moves is 0.12 ms typical, which closes Q30 with a number -- no
+  rate limit needed. -shotverify MAE 0.051-0.079/255 across E1M1/E1M3/E1M6
+  against a 3.0 bar; -rtverify PASS; make test 7/7.
+
+  Two findings worth keeping. (1) The fog-OFF control moved, 14.41 ->
+  12.22 ms, which the plan says must not happen -- so it was chased rather
+  than waved through: a third worktree at pre-L2 measures 12.01 ms, i.e.
+  L2's ray cost 2.40 ms/frame WITH FOG SWITCHED OFF. rb_fog is a push
+  constant, not a spec constant, so a ray inside the fog branch still
+  costs registers on every pixel. "It is gated, so it is free when off" is
+  false in this shader. (2) -noinput did not exist at the before-commit
+  (it landed in b23d609), so the old build grabbed the pointer and the
+  user's mouse turned its camera mid-run; any A/B against a pre-b23d609
+  commit must cherry-pick it into the worktree first.
+
+  Two corrections to the plan, both forced by measurement: the void
+  test's tie-break nudge is 1 world unit, not the plan's quarter-cell
+  (the subsector is resolved at the UN-nudged point and BSP leaves are
+  far smaller than a 64-unit cell -- 16 units falsely called 588 of
+  E1M1's 920 open-sky cells void); and rb_cellgeom_t must carry `isvoid`
+  separately from `solid`, or the clearance-only rebuild re-derives the
+  height clause and erases the void verdict.
+
+  User play-test sign-off 2026-07-31: "very happy with the result ...
+  damn, I do love the fog." Three look observations came out of the same
+  session -- DOOM-0292 (roofed fog lit as if the sky reached it),
+  DOOM-0293 (liquid pools want their own fog) and the local-light
+  in-scatter, which is Task L3's existing job.
+
+- 📋 [DOOM-0292] **Roofed fog is lit as if the sky reached it -- gate the sky ambient on sky exposure.**
+  User, on the DOOM-0289 play-test: "fog is generally very white when
+  outside as the sky / sun are lighting it up but under roof that won't
+  be the case. So, the fog should be a little darker inside."
+
+  Correct, and it is a real gap in L2's model rather than a taste dial.
+  marchFog builds the sample's in-scatter as
+
+    Ls = kFogColor * kSkyShaftStrength
+       * (kSkyAmbientFrac + (1 - kSkyAmbientFrac) * sunLit)
+
+  and only the DIRECTIONAL share is gated on visibility. The ambient
+  share (kSkyAmbientFrac = 0.65) is applied at full strength everywhere,
+  so a sealed room's air receives the same sky in-scatter as a courtyard
+  in shadow. L1d already grades roofed air's DENSITY by distance to
+  outdoor air; nothing grades its LIGHT.
+
+  The signal is already in hand and costs nothing: the same seep tap the
+  sample takes for openSky/density carries fld.r, distance-to-outdoor-air
+  through open space. Gating the ambient share on the same exp(-fld.r /
+  kSeepFalloff) curve keeps the doorway continuous (air one step inside a
+  door still sees most of the sky) and takes a sealed room to a floor --
+  so this is one mix and one new const, no extra tap and no ray.
+
+  Deliberately NOT a straight reuse of skyExposure: that already
+  multiplies density, and multiplying brightness by the same 0.05 floor
+  would take indoor fog to black rather than to "a little darker". The
+  light floor is its own, gentler constant.
+
+  Pairs with Task L3 (torch in-scatter): darkening the sky share is what
+  makes the torches worth adding, and L3 is what stops a deep room from
+  reading flat once its sky light is gone. Land this first, then L3 gives
+  the light back where a light actually is.
+  **Layman:** Fog indoors is as bright and white as fog outside in the sun. Under a roof there is no sky lighting it, so it should be darker.
+  Kind: fix.
+  Lanes: shaders, fog.
+  Source: user-play-test-2026-07-31.
+
+- 📋 [DOOM-0293] **Liquid pools should carry their own fog -- a per-cell liquid mask on the field.**
+  User, on the DOOM-0289 play-test: "any liquid (not puddles on the
+  floor but actual pools should have more fog too please." I.e. the
+  sector-sized nukage/lava/water flats, not DOOM-0181's wet-floor
+  grime.
+
+  DOOM-0183 already tags liquid, but on the MATERIAL, at the point a
+  surface is shaded -- and the fog march never touches a surface. What
+  the march needs is a function of (x, y): is there liquid under this
+  sample, and at what height is its surface. That is exactly the shape
+  DOOM-0276 and DOOM-0289 both answered from the seep grid.
+
+  The cost is that the grid is now FULL: R16G16B16A16_SFLOAT carrying
+  seep distance, the open-sky mask, and DOOM-0289's zLo/zHi. So this one
+  needs a second image (RG16F: .r = liquid coverage 0..1, .g = the
+  liquid surface z) and a second bilinear tap per fog sample -- the first
+  of these three fog items that is not free. Bilinear coverage is a
+  feature, not a cost: it gives the bank a soft edge at the pool's rim
+  instead of a 64-unit staircase.
+
+  Why the surface z has to travel with it: a pool sits BELOW the floor
+  around it, and L1e's floor layer is referenced to the camera's floor
+  indoors -- so without the pool's own height the steam would float at
+  the wrong altitude, which is the two-clouds defect the L3 correction
+  already fixed once.
+
+  Design change, so it wants the spec amendment and the rule-14 gate
+  before it is built -- and the review's own note on DOOM-0289 stands:
+  the spec is past 2.7k lines and should be SPLIT before it takes
+  another amendment.
+  **Layman:** Nukage and lava pools should steam -- thicker fog sitting over the liquid itself, not over the whole room.
+  Kind: enhancement.
+  Lanes: shaders, fog, r_mesh.
+  Source: user-play-test-2026-07-31.

@@ -37,6 +37,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Bake the sun's fixed direction into a load-time clearance field and delete L2's per-sample ray.** (DOOM-0289)
+  The volumetric fog's sun visibility is now baked into a load-time
+  field instead of a shadow ray fired from every fog sample, so the fog
+  costs 3.2% of a frame instead of 44% -- 28 fps back up to 42 on the
+  test machine, with the picture unchanged.
+
 - **The play area is never framed by a border -- a fresh install fills the screen** (DOOM-0285)
   The old default drew the 1993 decorative frame around a shrunken picture. The status bar stays; only the border goes.
 
