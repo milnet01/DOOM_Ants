@@ -98,6 +98,25 @@ void P_AllocateThinker (thinker_t*	thinker)
 //
 // P_RunThinkers
 //
+#ifdef DOOM_DEV
+// DOOM-0294 developer view: hold the monsters still so a moving thing can be
+// looked at from several angles. MONSTERS AND THEIR MISSILES ONLY -- doors,
+// lifts, platforms, animated textures and every other special keep running,
+// because freezing those would strand you behind whatever door happened to be
+// shut at the time. Developer builds only (make DEV=1).
+int	dev_freezemonsters;
+
+static boolean P_DevFrozen (thinker_t* th)
+{
+    mobj_t* mo;
+
+    if (!dev_freezemonsters || th->function.acp1 != (actionf_p1)P_MobjThinker)
+	return false;
+    mo = (mobj_t *)th;
+    return (mo->flags & (MF_COUNTKILL | MF_MISSILE)) != 0;
+}
+#endif
+
 void P_RunThinkers (void)
 {
     thinker_t*	currentthinker;
@@ -114,7 +133,11 @@ void P_RunThinkers (void)
 	}
 	else
 	{
-	    if (currentthinker->function.acp1)
+	    if (currentthinker->function.acp1
+#ifdef DOOM_DEV
+		&& !P_DevFrozen (currentthinker)
+#endif
+		)
 		currentthinker->function.acp1 (currentthinker);
 	}
 	currentthinker = currentthinker->next;
@@ -156,3 +179,4 @@ void P_Ticker (void)
     // for par times
     leveltime++;	
 }
+

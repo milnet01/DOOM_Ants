@@ -73,9 +73,10 @@ typedef enum
     CF_GODMODE		= 2,
     // Not really a cheat, just a debug aid.
     CF_NOMOMENTUM	= 4,
-    // DOOM-0294: monsters do not notice this player. Blocks acquisition in
-    // P_LookForPlayers and the sound-alert path in A_Look; P_ForgetPlayerTargets
-    // clears the monsters that were already awake when it was switched on.
+    // DOOM-0294: monsters do not notice this player. Only a developer build
+    // (make DEV=1) can set it -- the Developer menu and the gates that read it
+    // are compiled out otherwise -- but the value stays defined either way, so
+    // the bit is never reused for something else by a later change.
     CF_NOTARGET		= 8
 
 } cheat_t;

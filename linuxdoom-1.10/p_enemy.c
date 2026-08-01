@@ -526,11 +526,13 @@ P_LookForPlayers
 	if (player->health <= 0)
 	    continue;		// dead
 
+#ifdef DOOM_DEV
 	// DOOM-0294: the developer "monsters don't notice you" toggle. This is the
 	// single choke point for NEW acquisition -- A_Look, A_Chase (both call sites)
-	// and the respawn path all route through here.
+	// and the respawn path all route through here. Developer builds only.
 	if (player->cheats & CF_NOTARGET)
 	    continue;
+#endif
 
 	if (!P_CheckSight (actor, player->mo))
 	    continue;		// out of sight
@@ -561,6 +563,7 @@ P_LookForPlayers
 }
 
 
+#ifdef DOOM_DEV
 //
 // P_ForgetPlayerTargets  (DOOM-0294)
 // Make every monster that is ALREADY awake forget the player it is chasing.
@@ -598,6 +601,7 @@ void P_ForgetPlayerTargets (void)
     // writes sector->soundtarget); A_Look ignores a NOTARGET player's, so it
     // needs no sweep here.
 }
+#endif  // DOOM_DEV
 
 
 //
@@ -650,12 +654,14 @@ void A_Look (mobj_t* actor)
     actor->threshold = 0;	// any shot will wake up
     targ = actor->subsector->sector->soundtarget;
 
+#ifdef DOOM_DEV
     // DOOM-0294: the sound-alert path does NOT go through P_LookForPlayers, so a
     // monster would still wake on the noise a NOTARGET player makes (P_NoiseAlert
     // flood-fills soundtarget through the sector graph). Gate it here as well, or
     // the toggle only half-works: quiet rooms stay asleep, noisy ones do not.
     if (targ && targ->player && (targ->player->cheats & CF_NOTARGET))
 	targ = NULL;
+#endif
 
     if (targ
 	&& (targ->flags & MF_SHOOTABLE) )

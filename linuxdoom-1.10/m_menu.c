@@ -75,10 +75,14 @@ extern boolean		message_dontfuckwithme;
 
 extern boolean		chat_on;		// in heads-up code
 
-// DOOM-0294: defined in p_enemy.c and declared in p_local.h, which this file
-// cannot include -- p_spec.h's vldoor_e has a `close` enumerator that collides
-// with POSIX close() from <unistd.h> above. Hence the one repeated prototype.
-void P_ForgetPlayerTargets (void);
+#ifdef DOOM_DEV
+// DOOM-0294. Both are defined in the play sim and declared in p_local.h, which
+// this file cannot include -- p_spec.h's vldoor_e has a `close` enumerator that
+// collides with POSIX close() from <unistd.h> above. Hence the repeated
+// prototypes.
+void P_ForgetPlayerTargets (void);      // p_enemy.c
+extern int dev_freezemonsters;          // p_tick.c
+#endif
 
 //
 // defaulted values
@@ -274,14 +278,24 @@ void M_DrawGameSelect(void);
 void M_GameSelectChoose(int choice);
 void M_ReturnToGameSelect(int choice);
 
-// DOOM-0294 developer view: jump to any level, and stop the monsters noticing you.
+#ifdef DOOM_DEV
+// DOOM-0294 developer view.
 void M_DevMenu(int choice);
 void M_DrawDevMenu(void);
+void M_DevMode(int choice);
 void M_DevNoTarget(int choice);
-void M_DevPrintPos(int choice);
+void M_DevFreeze(int choice);
+void M_DevNoClip(int choice);
+void M_DevInvuln(int choice);
+void M_DevGive(int choice);
 void M_DevLevel(int choice);
+void M_DevSkill(int choice);
 void M_DevWarp(int choice);
+void M_DevPrintPos(int choice);
+void M_DevRtView(int choice);
+void M_DevVideo(int choice);
 void M_DevBack(int choice);
+#endif
 
 
 
@@ -410,12 +424,12 @@ enum
     mousesens,
     option_empty2,
     soundvol,
-    opt_end,
-    // DOOM-0294: the "Developer" row lives past opt_end and is hidden by the
-    // default numitems, exactly like the Game Select row on the main menu.
-    // M_Init splices it in only when developer mode is on, so it cannot be
-    // reached by accident in normal play.
-    opt_dev = opt_end
+    opt_end
+#ifdef DOOM_DEV
+    // DOOM-0294: the "Developer" row lives past opt_end, and M_Init raises
+    // numitems to reach it. Only a developer build (make DEV=1) has it at all.
+    , opt_dev = opt_end
+#endif
 } options_e;
 
 menuitem_t OptionsMenu[]=
@@ -427,8 +441,10 @@ menuitem_t OptionsMenu[]=
     {-1,"",0},
     {2,"M_MSENS",	M_ChangeSensitivity,'m'},
     {-1,"",0},
-    {1,"M_SVOL",	M_Sound,'s'},
-    {1,"",		M_DevMenu,'d'}          // DOOM-0294 (hidden unless devmode)
+    {1,"M_SVOL",	M_Sound,'s'}
+#ifdef DOOM_DEV
+    , {1,"",		M_DevMenu,'d'}      // DOOM-0294, developer build only
+#endif
 };
 
 menu_t  OptionsDef =
@@ -623,45 +639,76 @@ menu_t  VideoDef =
     0
 };
 
+#ifdef DOOM_DEV
 //
 // DEVELOPER MENU (DOOM-0294): the testing instrument.
 //
 // Two things every look task needs and neither the game nor the assistant can
-// supply: reaching a specific room, and being left alone once there. The level
+// supply: reaching a specific place, and being left alone once there. The level
 // jump replaces the idclev cheat (typed blind, and it does not reliably
 // register), and "Monsters Notice You" replaces god mode -- an invulnerable
 // player is still shot at and shoved around, which ruins a screenshot just as
 // thoroughly as dying does.
+//
+// The whole menu exists only in a developer build (make DEV=1). Every release
+// path runs a plain make, so a published binary has no developer mode in it --
+// see the Makefile's developer-build block for why the default is that way
+// round.
 //
 // ONE "Level" row rather than an episode row plus a map row: the level list is
 // flattened to a single index, so the row set does not have to change shape
 // between DOOM 1 (episodes) and DOOM 2 (a flat 32), and there is no dead row on
 // either. Which game is loaded is already known (gamemode), so nothing is asked.
 //
-// Reached from the Options menu's spliced "Developer" row, which M_Init only
-// adds when developer mode is on. Draws crisp in the 3D tiers via the DOOM-0206
-// registry and classic under Classic (M_DrawDevMenu), like every other menu:
-// INV-1 (Classic keeps its own style), INV-2 (HUD-safe -- the generic paths do
-// the clamping), INV-4 (no M_Responder change), INV-7 (one row size).
+// "Mode" is a PRESET, not a state: its displayed value is derived from the
+// switches below it (everything off reads Play), so it can never claim one thing
+// while the switches say another. Choosing it sets them all at once -- Play for
+// testing a level as a player meets it, Inspect for looking at one.
+//
+// Reached from the Options menu's spliced "Developer" row. Draws crisp in the 3D
+// tiers via the DOOM-0206 registry and classic under Classic (M_DrawDevMenu),
+// like every other menu: INV-1 (Classic keeps its own style), INV-2 (HUD-safe --
+// the generic paths clamp and scroll), INV-4 (no M_Responder change), INV-7 (one
+// row size).
 //
 enum
 {
+    dev_mode,           // Play <-> Inspect preset (derived value)
+    dev_world_head,     // "-  WORLD  -"
     dev_notarget,
-    dev_pos,
-    dev_lvl_head,       // "-  LEVEL JUMP  -"
+    dev_freeze,
+    dev_noclip,
+    dev_invuln,
+    dev_give,
+    dev_lvl_head,       // "-  LEVEL  -"
     dev_level,          // status 2: left/right steps through the level list
+    dev_skill,
     dev_warp,
+    dev_pos,
+    dev_view_head,      // "-  VIEW  -"
+    dev_rtview,
+    dev_video,
     dev_back,
     dev_end
 } developer_e;
 
 menuitem_t DeveloperMenu[]=
 {
-    {1,"",	M_DevNoTarget,'m'},
-    {1,"",	M_DevPrintPos,'p'},
+    {1,"",	M_DevMode,'m'},
+    {-1,"",0},
+    {1,"",	M_DevNoTarget,'n'},
+    {1,"",	M_DevFreeze,'f'},
+    {1,"",	M_DevNoClip,'c'},
+    {1,"",	M_DevInvuln,'i'},
+    {1,"",	M_DevGive,'g'},
     {-1,"",0},
     {2,"",	M_DevLevel,'l'},
+    {2,"",	M_DevSkill,'s'},
     {1,"",	M_DevWarp,'j'},
+    {1,"",	M_DevPrintPos,'p'},
+    {-1,"",0},
+    {2,"",	M_DevRtView,'r'},
+    {1,"",	M_DevVideo,'v'},
     {1,"",	M_DevBack,'b'}
 };
 
@@ -671,9 +718,10 @@ menu_t  DeveloperDef =
     &OptionsDef,
     DeveloperMenu,
     M_DrawDevMenu,
-    60,60,
+    60,32,
     0
 };
+#endif  // DOOM_DEV
 
 //
 // Read This! MENU 1 & 2
@@ -1413,7 +1461,11 @@ const unsigned char* M_MenuLogoRGBA(int* out_w, int* out_h)
 // display string, so the strings must live here. "Video" (renderer row) shows the
 // active tier name beside it; its value is supplied by the value provider / the
 // classic value draw below.
+#ifdef DOOM_DEV
 static const char* optionsLabels[opt_end + 1] =
+#else
+static const char* optionsLabels[opt_end] =
+#endif
 {
     "End Game",           // endgame
     "Messages",           // messages
@@ -1422,8 +1474,10 @@ static const char* optionsLabels[opt_end + 1] =
     "",                   // option_empty1
     "Mouse Sensitivity",  // mousesens  (status 2: thermo on the row below)
     "",                   // option_empty2
-    "Sound Volume",       // soundvol
-    "Developer"           // opt_dev    (DOOM-0294; spliced in by -devmode only)
+    "Sound Volume"        // soundvol
+#ifdef DOOM_DEV
+    , "Developer"         // opt_dev    (DOOM-0294, developer build only)
+#endif
 };
 
 void M_DrawOptions(void)
@@ -1615,12 +1669,35 @@ static const char* soundLabels[sound_end] =
 {
     "Sound Volume", "", "Music Volume", ""
 };
+#ifdef DOOM_DEV
 static const char* developerLabels[dev_end] =
 {
-    "Monsters Notice You", "Print Position",
-    "-  LEVEL JUMP  -",
-    "Level", "Jump to Level",
+    "Mode",
+    "-  WORLD  -",
+    "Monsters Notice You", "Freeze Monsters", "No Clip", "Invulnerable",
+    "Give Keys & Weapons",
+    "-  LEVEL  -",
+    "Level", "Skill", "Jump to Level", "Print Position",
+    "-  VIEW  -",
+    "RT View", "Video & Effects",
     "Back"
+};
+
+// Short enough for a value column; the full sentences live in skillLabels[].
+static const char* devSkillNames[5] =
+{
+    "Too Young", "Not Too Rough", "Hurt Me Plenty", "Ultra-Violence", "Nightmare"
+};
+
+// The path-tracer's diagnostic views, in the order the `~` key cycles them.
+// Mode 5 is the headless verify pass and is not a view, so it is not offered --
+// hence the explicit value table rather than an index (INV: devRtValues and
+// devRtNames are parallel).
+static const int   devRtValues[6] = { 0, 1, 2, 3, 4, 6 };
+static const char* devRtNames[6]  =
+{
+    "Original (raster)", "Hits / normals", "White furnace", "Textured",
+    "NEE direct (noisy)", "Denoised (SVGF)"
 };
 
 //
@@ -1631,6 +1708,7 @@ static const char* developerLabels[dev_end] =
 // cannot load is worse than not offering it.
 //
 static int devLevel;            // index into that list
+static int devSkill = sk_medium;// the skill a jump starts on
 
 static int M_DevLevelCount(void)
 {
@@ -1670,6 +1748,25 @@ static const char* M_DevLevelName(void)
 	sprintf(buf, "E%dM%d", episode, map);
     return buf;
 }
+
+// Every developer switch that alters the play sim, as one mask. "Mode" is
+// DERIVED from it rather than stored, so the row can never say Play while a
+// switch below it is still on.
+static int M_DevCheatMask(void)
+{
+    return (players[consoleplayer].cheats & (CF_NOTARGET | CF_NOCLIP | CF_GODMODE))
+	 | (dev_freezemonsters ? 1 : 0);
+}
+
+static const char* M_DevRtViewName(void)
+{
+    int i;
+    for (i = 0 ; i < 6 ; i++)
+	if (devRtValues[i] == rb_rtdebug)
+	    return devRtNames[i];
+    return "?";
+}
+#endif  // DOOM_DEV
 
 // DOOM-0206 (v2 §4.6): the crisp renderer is generic (M_DrawCrispMenu) and drives
 // every row-list menu in the 3D tiers from a registry. Each row's VALUE (right-
@@ -1746,21 +1843,29 @@ static void M_SoundCrispValue(int i, crispval_t* cv)
     }
 }
 
+#ifdef DOOM_DEV
 // DOOM-0294. "Monsters Notice You" is phrased as the state of the WORLD, not of
 // a cheat flag, so the row reads the way the user asked for it -- Yes is normal
 // play, No is the testing state (CF_NOTARGET set).
 static void M_DevCrispValue(int i, crispval_t* cv)
 {
+    player_t* p = &players[consoleplayer];
+
     switch (i)
     {
-      case dev_notarget:
-	cv->str = (players[consoleplayer].cheats & CF_NOTARGET) ? "No" : "Yes";
-	break;
-      case dev_level: cv->str = M_DevLevelName(); break;
-      case dev_back:  cv->centered = 1; break;
-      default: break;   // print/jump are action rows; the heading is st == -1
+      case dev_mode:     cv->str = M_DevCheatMask() ? "Inspect" : "Play"; break;
+      case dev_notarget: cv->str = (p->cheats & CF_NOTARGET) ? "No"  : "Yes"; break;
+      case dev_freeze:   cv->str = dev_freezemonsters        ? "On"  : "Off"; break;
+      case dev_noclip:   cv->str = (p->cheats & CF_NOCLIP)   ? "On"  : "Off"; break;
+      case dev_invuln:   cv->str = (p->cheats & CF_GODMODE)  ? "On"  : "Off"; break;
+      case dev_level:    cv->str = M_DevLevelName(); break;
+      case dev_skill:    cv->str = devSkillNames[(devSkill >= 0 && devSkill <= 4) ? devSkill : 2]; break;
+      case dev_rtview:   cv->str = M_DevRtViewName(); break;
+      case dev_back:     cv->centered = 1; break;
+      default: break;   // give/jump/print/video are action rows; headings are st == -1
     }
 }
+#endif
 
 typedef struct
 {
@@ -1783,8 +1888,10 @@ static const crispmenu_t crispMenus[] =
     { &NewDef,     "CHOOSE SKILL",   skillLabels,   NULL },
     { &OptionsDef, "OPTIONS",        optionsLabels, M_OptionsCrispValue },
     { &SoundDef,   "SOUND VOLUME",   soundLabels,   M_SoundCrispValue },
-    { &VideoDef,   "VIDEO",          videoLabels,   M_VideoCrispValue },
-    { &DeveloperDef, "DEVELOPER",    developerLabels, M_DevCrispValue }
+    { &VideoDef,   "VIDEO",          videoLabels,   M_VideoCrispValue }
+#ifdef DOOM_DEV
+    , { &DeveloperDef, "DEVELOPER",  developerLabels, M_DevCrispValue }
+#endif
 };
 
 static const crispmenu_t* M_FindCrispMenu(menu_t* m)
@@ -2354,6 +2461,7 @@ void M_VideoBack(int choice)
 }
 
 
+#ifdef DOOM_DEV
 //
 // DOOM-0294 developer view: the handlers + the Classic-tier draw.
 //
@@ -2363,38 +2471,49 @@ void M_DevMenu(int choice)
     choice = 0;
 
     // Open the level row on the level you are standing in, so a jump defaults to
-    // reloading this map rather than to E1M1 from wherever you happen to be.
+    // reloading this map rather than to E1M1 from wherever you happen to be, and
+    // the skill row on the skill you are actually playing.
     if (gamestate == GS_LEVEL)
     {
 	i = (gamemode == commercial) ? gamemap - 1
 				     : (gameepisode - 1) * 9 + gamemap - 1;
 	if (i >= 0 && i < M_DevLevelCount())
 	    devLevel = i;
+	if (usergame)
+	    devSkill = (int)gameskill;
     }
 
     M_SetupNextMenu(&DeveloperDef);
 }
 
-// status 2 row: choice 0 = left, 1 = right. Wraps, so either end of DOOM II's 32
-// maps is a few taps away.
-void M_DevLevel(int choice)
+// Play <-> Inspect. A preset over the switches below, not a mode of its own --
+// its displayed value is derived from them (M_DevCheatMask), so the two can
+// never disagree, and touching an individual switch afterwards simply moves the
+// reading rather than leaving a stale label.
+//
+// Play is the plain game: everything off, so a level can be tested the way a
+// player meets it. Inspect is for looking at one -- the monsters lose interest
+// and nothing in the world can kill you, which are the two things that end a
+// look early. No Clip is deliberately NOT part of the preset: it changes how
+// moving feels, and that is worth choosing rather than inheriting.
+void M_DevMode(int choice)
 {
-    int n = M_DevLevelCount();
-
-    devLevel = choice ? (devLevel + 1) % n : (devLevel + n - 1) % n;
-}
-
-void M_DevWarp(int choice)
-{
-    int episode, map;
+    player_t* p = &players[consoleplayer];
     choice = 0;
 
-    M_DevLevelSplit(devLevel, &episode, &map);
-    // From the title screen there is no game in progress and gameskill still
-    // holds its zero-initialised sk_baby, which is not what "jump to a level"
-    // should silently pick -- use the menu's own default there instead.
-    G_DeferedInitNew(usergame ? gameskill : sk_medium, episode, map);
-    M_ClearMenus();
+    if (M_DevCheatMask())               // currently Inspect (or partly) -> Play
+    {
+	p->cheats &= ~(CF_NOTARGET | CF_NOCLIP | CF_GODMODE);
+	dev_freezemonsters = 0;
+	p->message = "Play mode";
+    }
+    else                                // -> Inspect
+    {
+	p->cheats |= CF_NOTARGET | CF_GODMODE;
+	if (gamestate == GS_LEVEL)
+	    P_ForgetPlayerTargets();
+	p->message = "Inspect mode";
+    }
 }
 
 // The user's own correction to "invincibility": an invulnerable player is still
@@ -2417,6 +2536,79 @@ void M_DevNoTarget(int choice)
 
     p->message = (p->cheats & CF_NOTARGET) ? "Monsters ignore you"
 					   : "Monsters notice you";
+}
+
+// Monsters and their missiles only. Doors, lifts, platforms, animated textures
+// and the level's own specials keep running -- freezing those would strand you
+// behind whatever door happened to be shut, which is the objection the user
+// raised when this was proposed as a whole-world freeze.
+void M_DevFreeze(int choice)
+{
+    choice = 0;
+    dev_freezemonsters = !dev_freezemonsters;
+    players[consoleplayer].message = dev_freezemonsters ? "Monsters frozen"
+							: "Monsters running";
+}
+
+void M_DevNoClip(int choice)
+{
+    player_t* p = &players[consoleplayer];
+    choice = 0;
+    p->cheats ^= CF_NOCLIP;
+    p->message = (p->cheats & CF_NOCLIP) ? "No clip on" : "No clip off";
+}
+
+void M_DevInvuln(int choice)
+{
+    player_t* p = &players[consoleplayer];
+    choice = 0;
+    p->cheats ^= CF_GODMODE;
+    p->message = (p->cheats & CF_GODMODE) ? "Invulnerable" : "Mortal";
+}
+
+// Keys are the point of this row: a locked door is the usual reason a room
+// cannot be reached without playing the whole level to it. Weapons and full ammo
+// come along because the other reason is arriving somewhere unarmed.
+void M_DevGive(int choice)
+{
+    player_t* p = &players[consoleplayer];
+    int i;
+    choice = 0;
+
+    if (gamestate != GS_LEVEL)
+    {
+	p->message = "Not in a level";
+	return;
+    }
+
+    for (i = 0 ; i < NUMWEAPONS ; i++) p->weaponowned[i] = true;
+    for (i = 0 ; i < NUMAMMO ; i++)    p->ammo[i] = p->maxammo[i];
+    for (i = 0 ; i < NUMCARDS ; i++)   p->cards[i] = true;
+    p->message = "All keys and weapons";
+}
+
+// status 2 row: choice 0 = left, 1 = right. Wraps, so either end of DOOM II's 32
+// maps is a few taps away.
+void M_DevLevel(int choice)
+{
+    int n = M_DevLevelCount();
+
+    devLevel = choice ? (devLevel + 1) % n : (devLevel + n - 1) % n;
+}
+
+void M_DevSkill(int choice)
+{
+    devSkill = choice ? (devSkill + 1) % 5 : (devSkill + 4) % 5;
+}
+
+void M_DevWarp(int choice)
+{
+    int episode, map;
+    choice = 0;
+
+    M_DevLevelSplit(devLevel, &episode, &map);
+    G_DeferedInitNew((skill_t)devSkill, episode, map);
+    M_ClearMenus();
 }
 
 // Print the current spot as the -warpto line that reproduces it (DOOM-0268), so
@@ -2449,6 +2641,34 @@ void M_DevPrintPos(int choice)
     fflush(stdout);
 }
 
+// Pick a path-tracer view by name instead of tapping `~` until the right one
+// comes round. Choosing a DIAGNOSTIC view (hits / furnace / textured / NEE) also
+// turns Debug Views on, because that is the flag which stops RB_ApplyTierRt
+// reclaiming rb_rtdebug on the next tier switch -- without it the view would
+// silently revert. Returning to a normal view turns it back off, so `~` goes
+// back to being a plain ray-tracing on/off switch.
+void M_DevRtView(int choice)
+{
+    int i, cur = 0;
+
+    for (i = 0 ; i < 6 ; i++)
+	if (devRtValues[i] == rb_rtdebug) cur = i;
+
+    cur = choice ? (cur + 1) % 6 : (cur + 5) % 6;
+    rb_rtdebug = devRtValues[cur];
+    rb_rtdebug_menu = (rb_rtdebug != 0 && rb_rtdebug != 6) ? 1 : 0;
+}
+
+// The render toggles (flashlight, SSAO, de-tile, grime, wet, fog, upscaler,
+// render scale, brightness, FPS, profiler) are shipped features and live in the
+// Video menu, which is where a player finds them too. Linking rather than
+// copying keeps one switch per setting -- two copies would be two things to keep
+// in step, and they would eventually disagree.
+void M_DevVideo(int choice)
+{
+    M_RendererMenu(choice);             // Classic -> RendererDef, 3D -> VideoDef
+}
+
 void M_DevBack(int choice)
 {
     choice = 0;
@@ -2456,26 +2676,68 @@ void M_DevBack(int choice)
 }
 
 // Classic-tier draw (INV-1). The 3D tiers get the crisp skin from the DOOM-0206
-// registry; this is the same content in the paletted HUD font, one size for
-// every row (INV-7). Six rows from y=60 clear the status bar, so no shift is
-// needed beyond the generic one M_Drawer applies.
+// registry; this is the same content in the paletted HUD font at one size for
+// every row (INV-7).
+//
+// This menu is taller than a 320x200 screen can hold (16 rows x LINEHEIGHT =
+// 256px against ~144px of usable height above the status bar), so it scrolls the
+// same way the crisp renderer does: a window derived from itemOn alone, no
+// M_Responder change (INV-4). The generic HUD-safe shift assumes every row is
+// drawn and would push the top of a list this long off-screen, so the placement
+// is taken over here instead -- writing currentMenu->y is safe because M_Drawer
+// restores it after this routine returns, and it means the skull M_Drawer draws
+// afterwards lands on the right row for free.
 void M_DrawDevMenu(void)
 {
-    int i;
+    const int top   = 24;
+    int bound, maxRows, winRows, scrollTop, v;
 
-    M_WriteText(DeveloperDef.x + 30,DeveloperDef.y - 20,"DEVELOPER");
+    bound   = (gamestate == GS_LEVEL) ? ST_Y : ORIGHEIGHT;
+    maxRows = (bound - top) / LINEHEIGHT;
+    if (maxRows < 1) maxRows = 1;
 
-    for (i = 0 ; i < dev_end ; i++)
-	if (developerLabels[i][0])
-	    M_WriteText(DeveloperDef.x,DeveloperDef.y+LINEHEIGHT*i,
-			(char *)developerLabels[i]);
+    if (maxRows >= dev_end)
+    {
+	winRows   = dev_end;
+	scrollTop = 0;
+    }
+    else
+    {
+	winRows   = maxRows;
+	scrollTop = itemOn - winRows / 2;
+	if (scrollTop > dev_end - winRows) scrollTop = dev_end - winRows;
+	if (scrollTop < 0) scrollTop = 0;
+    }
 
-    M_WriteText(DeveloperDef.x + 170,DeveloperDef.y+LINEHEIGHT*dev_notarget,
-		(players[consoleplayer].cheats & CF_NOTARGET) ? "No" : "Yes");
+    // Bias y by the scrolled-past rows so row i draws at its window slot, and
+    // leave it biased: M_Drawer's skull reads the same field.
+    DeveloperDef.y = top - scrollTop * LINEHEIGHT;
 
-    M_WriteText(DeveloperDef.x + 170,DeveloperDef.y+LINEHEIGHT*dev_level,
-		(char *)M_DevLevelName());
+    for (v = 0 ; v < winRows ; v++)
+    {
+	int i = scrollTop + v;
+	int y = DeveloperDef.y + LINEHEIGHT * i;
+	crispval_t cv;
+
+	if (!developerLabels[i][0])
+	    continue;
+	M_WriteText(DeveloperDef.x, y, (char *)developerLabels[i]);
+
+	cv.str = ""; cv.slider = 0; cv.num = 0; cv.den = 1; cv.centered = 0; cv.valcol = 0;
+	M_DevCrispValue(i, &cv);
+	// Right-aligned to the screen edge rather than parked at a fixed offset:
+	// the longest value here ("Original (raster)") runs off a 320-wide screen
+	// from any column that also clears the longest label.
+	if (cv.str && cv.str[0])
+	    M_WriteText(ORIGWIDTH - 4 - M_StringWidth((char *)cv.str), y, (char *)cv.str);
+    }
+
+    if (scrollTop > 0)
+	M_WriteText(DeveloperDef.x + 140, top - LINEHEIGHT + 6, "^");
+    if (scrollTop + winRows < dev_end)
+	M_WriteText(DeveloperDef.x + 140, top + winRows * LINEHEIGHT - 4, "v");
 }
+#endif  // DOOM_DEV
 
 
 //
@@ -3597,14 +3859,12 @@ void M_Init (void)
 	MainDef.y -= 8;         // one more row -> recenter (mirrors the +=8 above)
     }
 
-    // DOOM-0294: `-devmode` splices the "Developer" row onto the Options menu.
-    // The row template lives at OptionsMenu[opt_dev], past the default numitems,
-    // so an ordinary launch cannot reach the developer tools at all -- the row
-    // is not merely disabled, it is not drawn and the cursor cannot land on it.
-    // A command-line flag rather than a config key on purpose: a remembered
-    // "on" would be a trapdoor that quietly stays open (item DOOM-0294's gating
-    // note).
-    if (M_CheckParm("-devmode"))
-	OptionsDef.numitems = opt_end + 1;
+#ifdef DOOM_DEV
+    // DOOM-0294: reach the "Developer" row at OptionsMenu[opt_dev]. The gate is
+    // the build, not a runtime flag -- a released binary is compiled without any
+    // of this (see the Makefile's developer-build block), so there is nothing
+    // here for a player to switch on.
+    OptionsDef.numitems = opt_end + 1;
+#endif
 }
 

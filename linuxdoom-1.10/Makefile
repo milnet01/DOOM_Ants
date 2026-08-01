@@ -160,6 +160,29 @@ OBJS=				\
 		$(O)/info.o				\
 		$(O)/sounds.o
 
+# ---- Developer build (DOOM-0294) ----
+# `make DEV=1` compiles the Developer menu and its testing tools in. A plain
+# `make` leaves them out of the binary entirely -- not merely unreachable, but
+# absent, strings and all.
+#
+# Default OFF is the load-bearing part, and it is a fail-safe choice rather than
+# a preference: every release path runs a plain `make` (packaging/linux-build.sh,
+# build-appimage.sh, windows-build.sh, release.sh and .github/workflows/build.yml
+# all do), so a published build is clean WITHOUT any of them having to remember
+# anything. Had the default been on, shipping the developer tools would be the
+# consequence of one forgotten flag; this way, forgetting the flag costs a
+# rebuild and is obvious the moment the menu is missing.
+ifeq ($(DEV),1)
+CFLAGS   += -DDOOM_DEV
+CXXFLAGS += -DDOOM_DEV
+endif
+
+# Toggling DEV must not leave objects from the other setting behind. The flag is
+# a -D, which the .d header-dependency files cannot see, so a stamp file carrying
+# the current setting is made a prerequisite of every object: switching rewrites
+# it and rebuilds, switching nothing rebuilds nothing.
+DEVSTAMP=$(O)/.dev-$(if $(filter 1,$(DEV)),on,off)
+
 .PHONY:	all clean windows test nee-test
 
 all:	 $(O)/$(BIN)
@@ -245,6 +268,14 @@ windows:	$(SHADER_HDRS) $(ASSET_HDRS)
 # yet and -MMD would fail writing linux/*.d.
 $(O):
 	mkdir -p $(O)
+
+# The DEV stamp (see the developer-build block above). Only one of the two names
+# ever exists, so creating the other is what makes every object out of date.
+$(DEVSTAMP): | $(O)
+	rm -f $(O)/.dev-on $(O)/.dev-off
+	touch $@
+
+$(OBJS) $(O)/i_main.o:	$(DEVSTAMP)
 
 $(O)/%.o:	%.c | $(O)
 	$(CC) $(CFLAGS) -c $< -o $@

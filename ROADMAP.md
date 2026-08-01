@@ -4137,3 +4137,78 @@ parked ideas (💭 considered) until we commit to and design each one.
   Not built, and deliberately: shooting still provokes retaliation
   (P_DamageMobj sets target from the damage source, which is the player
   noticing THEM). Say so if it is unwanted; it is a two-line gate.
+  Progress (2026-08-01, second pass): fleshed out on the user's ask,
+  and the GATING DECISION CHANGED -- read this before the note above,
+  which describes the superseded `-devmode` runtime flag.
+
+  User: "When we publish a release on GitHub I don't want the developer
+  menu part of it. So, whatever approach allows us to have the developer
+  mode but gamers do not, go with that option."
+
+  So the gate moved from runtime to COMPILE time: `make DEV=1` defines
+  DOOM_DEV and compiles the Developer menu and its tools in; a plain
+  `make` leaves them out of the binary entirely. Default OFF is
+  fail-safe rather than a preference -- every release path already runs
+  a plain make (packaging/linux-build.sh, build-appimage.sh,
+  windows-build.sh, release.sh, .github/workflows/build.yml), so a
+  published build is clean without any of them having to remember
+  anything, and shipping the tools can never be the consequence of one
+  forgotten flag. run-doom-ants.sh (the panel icon) builds DEV=1; the
+  -devmode parm is gone.
+
+  VERIFIED, not asserted: a plain-make binary greps 0 for every
+  developer string ("Monsters Notice You", "Jump to Level", "Give Keys
+  & Weapons", "Developer") where the DEV=1 one greps 1, and carries no
+  developer symbols. A DEV toggle also forces a rebuild -- a -D is
+  invisible to the .d files, so a stamp file carrying the current
+  setting is a prerequisite of every object.
+
+  The menu is now 16 rows: Mode (Play/Inspect); WORLD (monsters notice
+  you, freeze monsters, no clip, invulnerable, give keys & weapons);
+  LEVEL (level, skill, jump, print position); VIEW (RT view, video &
+  effects, back).
+
+  Three design points worth keeping:
+  - MODE IS DERIVED, not stored -- computed from the switches below it,
+  so it cannot claim Play while one is still on. Play = everything off
+  (test a level as a player meets it, which the user asked for);
+  Inspect = notarget + invulnerable. No Clip is deliberately not in the
+  preset: it changes how moving feels, so it is worth choosing.
+  - FREEZE IS MONSTERS + THEIR MISSILES ONLY. The user's objection to a
+  whole-world freeze was right -- "how will I move around the world if
+  doors don't work anymore?" Doors, lifts and animated textures are
+  excluded by construction: the guard fires only on P_MobjThinker,
+  which a door thinker can never equal.
+  - THE RENDER TOGGLES ARE NOT COPIED. They stay in the Video menu
+  (shipped features a player also gets); Developer links to it. Two
+  copies would be two things to keep in step.
+
+  The Classic tier needed its own scroll: 16 rows x LINEHEIGHT is 256px
+  against ~144px above the status bar, and the generic HUD-safe shift
+  assumes every row is drawn, so it would push the top off-screen.
+  M_DrawDevMenu takes the placement over and windows on itemOn the same
+  way the crisp renderer does (INV-4 holds). Writing currentMenu->y is
+  safe because M_Drawer restores it, and the skull then lands right for
+  free.
+
+  Verified headlessly on both IWADs with a temporary harness (removed;
+  grep TEMP-DEVTEST clean): mode derivation across Play -> Inspect ->
+  +noclip -> Play (cheats 0 -> 10 -> 11 -> 0); each switch; give (blue
+  card, BFG, ammo 200); skill/level wrap; RT view stepping 0,1,2,3,4,6
+  with Debug Views on for the four diagnostics only; the scroll window
+  (itemOn 0/5/10/15 -> scrollTop 0/1/6/7, clamped at 16-9);
+  print-position. make test 7/7 in BOTH configurations.
+
+  FREEZE: the first version of that test was BLIND, and why is worth
+  recording -- 10 thinker calls happened to land the monster's tic
+  counter back on its start value, so both legs read "unchanged" and
+  the control agreed with the experiment. Printing the reading per step
+  fixed it: frozen 7 7 7 7, running 6 5 4 3. A control that cannot move
+  is not a control.
+
+  STILL OWED: (1) the in-game screenshot the user asked for. The
+  existing -shotverify copy lives inside the RT path and exits after
+  writing; a general one wants the swapchain image (both 3D paths leave
+  it in PRESENT_SRC), and the swapchain is created without TRANSFER_SRC
+  usage, so that flag must be added where the surface supports it. NOT
+  started. (2) the play-test of the menu's look, unchanged.
