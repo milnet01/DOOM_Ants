@@ -8408,7 +8408,10 @@ void RecordRtTrace(uint32_t idx)
         // alignment already forced, so the push range stays 240 bytes and -rtverify's
         // 184-byte prefix is untouched.
         uint32_t fogFloorZ;
-        uint32_t _pad_misc6;      // pads rejectAddr's 216 tail up to a 16-byte boundary (224)
+        // DOOM-0300: this level's wisp drift heading (bit-cast float, radians, from
+        // RB_BuildLevelMesh). Takes the SECOND of those two pad words -- misc6 is full --
+        // so the push range stays 240 bytes and the 184-byte -rtverify prefix is untouched.
+        uint32_t wispAngle;       // (with fogFloorZ, pads rejectAddr's 216 tail to 224)
         uint32_t misc6[4];        // x = ripple time (float bits, seconds); y = wet toggle;
                                   // z = fog strength (rb_fog 0..3, DOOM-0011); w = hell-haze (L4)
     } pc = {};
@@ -8470,12 +8473,28 @@ void RecordRtTrace(uint32_t idx)
     // reason the noise volume itself is fixed-seed. Pin it to an arbitrary constant; the
     // DOOM-0183 ripples riding this clock get the same determinism for free.
     if (rb_shotverify == 1) rippleSec = 8.0f;
+    // DOOM-0300: `-rippletime <sec>` moves that pin. The wisps' whole job is to change over
+    // time, which is the one thing a single still frame cannot show -- measuring them means
+    // capturing the SAME view at several chosen instants and diffing. Without this the only
+    // way to move the pinned constant is a rebuild per sample. Verification affordance, in
+    // the same family as -warpto and -shotverify; it changes nothing unless passed.
+    {
+        static const float overrideSec = []() -> float {
+            int p = M_CheckParm("-rippletime");
+            return (p && p + 1 < myargc) ? (float)atof(myargv[p + 1]) : -1.0f;
+        }();
+        if (overrideSec >= 0.0f) rippleSec = overrideSec;
+    }
     std::memcpy(&pc.misc6[0], &rippleSec, sizeof(float));
     pc.misc6[1]    = rb_wet ? 1u : 0u;
     pc.misc6[2]    = (uint32_t)rb_fog;  // DOOM-0011: fog strength 0..3 (`;` key); 0 skips the march (INV-8)
     {   // DOOM-0011: the outdoor fog layer's altitude, per level (0 if no open-sky sector)
         float fz = g.levelMesh ? g.levelMesh->fogFloorZ : 0.0f;
         std::memcpy(&pc.fogFloorZ, &fz, sizeof(float));
+        // DOOM-0300: the wisp drift heading for this level (seeded from the map, so a
+        // -shotcompare golden capture stays bit-exact). 0 with no mesh is a valid heading.
+        float wa = g.levelMesh ? g.levelMesh->wispAngle : 0.0f;
+        std::memcpy(&pc.wispAngle, &wa, sizeof(float));
     }
     pc.misc6[3]    = 0u;    // DOOM-0011: hell-haze density, bit-cast float (wired at L4)
     pc.vertsAddr   = BufferAddress(g.vbuf);

@@ -331,7 +331,10 @@ layout(push_constant) uniform PC {
                          // (rb_mesh_t::fogFloorZ). Occupies the first of the two pad words
                          // misc6's 16-byte alignment already required, so the push range is
                          // still 240 bytes.
-    uint     _pad_misc6; // aligns misc6 to offset 224 (INV-6)
+    uint     wispAngle;  // DOOM-0300: the fog wisps' drift heading for this level, radians,
+                         // BIT-CAST float (rb_mesh_t::wispAngle). Occupies the SECOND of the
+                         // two pad words misc6's alignment forced -- misc6 itself is full --
+                         // so the push range is still 240 bytes and misc6 stays at offset 224.
     uvec4    misc6;    // DOOM-0183: x = ripple time (float bits, seconds); y = wet toggle
                        // (rb_wet: sheen/ripple/puddle only, not the glow).
                        // DOOM-0011: z = fog strength (rb_fog 0..3; 0 skips the march, INV-8).
@@ -855,10 +858,24 @@ vec3 skyPanorama(uvec2 px, uint w, uint h)
 // is part of `u`. Divide only the frequency term and octave 2 shifts by 64x its intended
 // offset. The velocity likewise sits INSIDE the frequency scale: noise(p*f + v*t) would
 // drift 512x too fast.
+//
+// DOOM-0300: the pair's heading is turned by a per-level angle. BOTH octaves rotate by the
+// SAME angle -- rotation is linear, so kWispVel2 = -kWispVel1 survives it and the net wind
+// stays exactly zero whatever angle the map drew. Rotating them independently would not.
+// Only xy turns: this is a heading on the ground plane, not a tilt.
+vec3 wispDrift(vec3 v, vec2 cs)
+{
+    return vec3(v.x * cs.x - v.y * cs.y, v.x * cs.y + v.y * cs.x, v.z);
+}
+
 float wisp(vec3 p, float t)
 {
-    vec3 q1 = p + kWispVel1 * t;  q1.z *= kWispSquashZ;
-    vec3 q2 = p + kWispVel2 * t;  q2.z *= kWispSquashZ;
+    // cos/sin of a push constant is loop-invariant, so this hoists out of the fog march
+    // rather than costing two transcendentals at every step.
+    float a  = uintBitsToFloat(pc.wispAngle);
+    vec2  cs = vec2(cos(a), sin(a));
+    vec3 q1 = p + wispDrift(kWispVel1, cs) * t;  q1.z *= kWispSquashZ;
+    vec3 q2 = p + wispDrift(kWispVel2, cs) * t;  q2.z *= kWispSquashZ;
     float A = 2.0 * texture(uNoiseVol, kWispFreq1 * q1 / kWispTexels).r - 1.0;
     float B = 2.0 * texture(uNoiseVol, (kWispFreq2 * q2 + kWispOffset2) / kWispTexels).r - 1.0;
     float n = clamp((A + kWispWeight2 * B) / (1.0 + kWispWeight2), -1.0, 1.0);

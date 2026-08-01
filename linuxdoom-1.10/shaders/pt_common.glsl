@@ -208,8 +208,27 @@ const float kWispWeight2 = 0.7;    // octave-2 weight: CHOSEN, not SH2-derived
 // the eye, would have to pay for.
 const float kWispFreq1   = 1.0/192.0;          // one texel spans 192 world units
 const float kWispFreq2   = 2.5 * kWispFreq1;   // finer octave
-const vec3  kWispVel1    = vec3( 8.0, 3.0, 1.0);  // world units/sec, INSIDE the freq scale
-const vec3  kWispVel2    = vec3(-3.0, 4.0, 0.3);  // deliberately SLOWER than kWispVel1
+// DOOM-0300, and both halves of it are measurements rather than taste.
+//
+// SPEED. Silent Hill 2's fog was captured in PCSX2 (two scenes, the forest path) and its
+// frame-to-frame change measured after a 12 px Gaussian blur, so grain could not flatter
+// it: 82-84 % of the life in that fog is large-scale billowing, and it restructures
+// completely in under ~2.2 s. Ours drifted 8 units/s across a 192-unit noise cell, so one
+// cell took 24 s -- an order of magnitude too slow. The modulation was always there (the
+// wisps swing the torch glow ~12.5 %), it just arrived far too slowly to read as weather,
+// which is why the glow looked like a painted patch over fog that was moving. 15x puts one
+// cell at ~1.5 s. Free: these are constants inside a lookup already being sampled.
+//
+// DIRECTION. The same capture found SH2's fog does NOT translate -- a +/-12 px best-shift
+// search over consecutive frames explained 0 % of the change in one scene and 1 % in the
+// other. There is no wind; it dissipates and reforms where it stands. So the two octaves
+// are EXACTLY opposed, and their sum is identically zero -- at any speed, and under any
+// rotation, which is what lets DOOM-0300's per-level heading be applied safely. What the
+// eye sees is the beat between two counter-moving patterns of different frequency, and a
+// beat has no direction to follow. Rolling the two vectors independently would break the
+// cancellation and reintroduce exactly the net wind the reference does not have.
+const vec3  kWispVel1    = 15.0 * vec3(8.0, 3.0, 1.0); // world units/sec, INSIDE the freq scale
+const vec3  kWispVel2    = -kWispVel1;                 // opposed EXACTLY -- zero net wind
 const vec3  kWispOffset2 = vec3(17.3, 5.1, 23.7); // decorrelates the octaves at t=0 and p=0
 // Vertical squash. A ray integrates the noise along its whole length, which averages
 // isotropic blobs back toward their mean -- the reason the first two tunings read as a

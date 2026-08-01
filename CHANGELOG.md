@@ -65,6 +65,15 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Fog wisps churn at Silent Hill 2's rate, and each map gets its own drift heading** (DOOM-0300)
+  The fog's glow read as a painted patch because the wisp pattern needed 24
+  seconds to cross one noise cell, where Silent Hill 2's fog fully
+  restructures in under 2.2. Both octaves now drift 15x faster and are
+  exactly opposed, so the fog dissipates and reforms in place instead of
+  blowing past -- measured at 0.4% of the change explained by translation,
+  against SH2's own 0-1%. Each level also draws its own heading, seeded
+  from the map so captures stay reproducible.
+
 - **Bake the sun's fixed direction into a load-time clearance field and delete L2's per-sample ray.** (DOOM-0289)
   The volumetric fog's sun visibility is now baked into a load-time
   field instead of a shadow ray fired from every fog sample, so the fog

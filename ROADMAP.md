@@ -4670,7 +4670,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   Lanes: shaders, assets, sprites.
   Source: user-request-2026-08-01.
 
-- 📋 [DOOM-0300] **The torch glow sits still while the fog behind it drifts -- give the light path the billows too.**
+- 🚧 [DOOM-0300] **The torch glow sits still while the fog behind it drifts -- give the light path the billows too.**
   User, 2026-08-01, on the DOOM-0011 L3 screenshots: "I love the glow of
   the nukage pools both indoors and outdoors. I also like that it isn't a
   uniform colour, however, it is static. This is where the Silent Hill 2
@@ -4910,6 +4910,71 @@ parked ideas (💭 considered) until we commit to and design each one.
   the glow reads as static is that the pattern needs ~24 s to cross one
   noise cell against SH2's under ~2.2 s. Randomising the angle without
   raising the speed changes nothing visible.
+  IMPLEMENTED 2026-08-01, verified with the instrument this bullet
+  specified rather than by eye.
+
+  WHAT SHIPPED. kWispVel1 = 15 x (8, 3, 1) and kWispVel2 = -kWispVel1
+  (pt_common.glsl): the 15x speed the measurement called for, with the two
+  octaves now EXACTLY opposed so their sum is identically zero. Plus a
+  per-level heading -- rb_mesh_t::wispAngle, seeded in RB_BuildLevelMesh
+  from (gameepisode, gamemap) through an avalanche mix, pushed as a
+  bit-cast float, applied to BOTH octaves in wisp(). Rotation is linear, so
+  the opposition (and therefore the zero net wind) survives any angle; that
+  is why the pair is rotated as a unit rather than rolled independently.
+
+  NO NEW PUSH LANE NEEDED. misc6 is full, but its 16-byte alignment had
+  already forced two pad words and only the first (fogFloorZ) was spent.
+  wispAngle takes the second, so the range stays 240 bytes and -rtverify's
+  184-byte prefix is untouched. Both pad words are now gone -- renderer.md
+  updated, since the next value really does need a misc7.
+
+  THE MEASUREMENTS. The analysis script was validated against the SH2
+  reference frames FIRST and reproduced both published findings (MAE flat
+  from the first sample; translation 0% on every consecutive pair), so it
+  is the same instrument, not a new one that happens to agree. Same-build
+  noise floor at one pinned time: blurred MAE 0.0087/255.
+
+  E1M1 courtyard (-warpto 1866 -3221 45), Ultra RT, rt_fog 3, 3840x2160,
+  12 px blur, ripple clock pinned via a new -rippletime flag.
+
+  blurred MAE against the t=8 s reference
+    elapsed   BEFORE   AFTER
+     0.25 s    0.213   5.416
+     1.00 s    0.831  11.556
+     1.50 s    1.217  18.732
+     3.00 s    2.251  17.115
+     9.00 s    4.400  21.054
+
+  (a) DECORRELATION: PASS. After reaches its plateau by ~1.5 s then sits at
+  15-21 for the remaining 7.5 s -- a saturated walk, SH2's own shape,
+  inside SH2's under-2.2 s bound. Before never plateaus: still climbing
+  linearly at 9 s, which is exactly the 24 s cell crossing diagnosed above
+  and exactly why the glow read as static. At 1.5 s the change is 15.4x
+  larger, the 15x arriving where predicted.
+
+  (b) TRANSLATION: PASS. Best-shift over +/-12 px, consecutive pairs: mean
+  0.4% explained, worst pair 2%. SH2 measures 0-1%. So it churns in place
+  and no net wind was introduced -- the failure this bullet warned of did
+  not occur. Before scores 0.0%, as expected: it barely moves.
+
+  FREE, as predicted. Paired A/B, two passes: BEFORE 45/44 fps, AFTER 44/44
+  -- inside run-to-run noise. Caveat: two unrelated processes were pegging
+  a core each, so 44 is not a clean absolute; the A/B is paired under
+  identical conditions, which is what the comparison needs. -rtverify PASSES,
+  make test green.
+
+  NEW TOOL, reusable: `-rippletime <sec>` overrides rb_shotverify's pinned
+  ripple clock, so a time-varying effect can be sampled at chosen instants
+  without a rebuild per sample. Same family as -warpto/-shotverify, a no-op
+  unless passed. DOOM-0295 can use it.
+
+  REMAINING GATE: play-test. The numbers say SH2-rate and wind-free;
+  whether the courtyard now READS as billowing, and whether 15x is too fast
+  rather than merely fast enough, is a look judgement. Speed is one
+  constant if it wants backing off.
+
+  NOT DONE: SH2's true timescale is still only an upper bound (~2.2 s) --
+  pinning it needs a screen recording and PCSX2 was not running.
 
 - 📋 [DOOM-0301] **The game should be able to play itself, so footage can be captured without a human at the keyboard.**
   User, 2026-08-01, with the reason stated plainly, which is what should

@@ -71,9 +71,20 @@ Current allocation (verify against `pathtrace.comp` before relying on it):
 | `misc5` | world-grime overlay bindless id | de-tile quality (0 off / 1 2-tap / 2 4-tap) | dirt-colour texture bindless id | filth master toggle |
 | `misc6` | ripple/wisp time (float bits, seconds) — **shared**: DOOM-0183 liquid ripples *and* DOOM-0011 fog-wisp drift, so it must stay written unconditionally | wet toggle | fog strength `rb_fog` 0..3 (DOOM-0011) | hell-haze density (float bits; DOOM-0011, reserved 0 until L4) |
 
+Beside the `uvec4` lanes sit two bare `uint` scalars, `fogFloorZ` and `wispAngle` — both
+bit-cast floats, both per-level rather than per-frame. They are not a sixth lane: they are
+the two pad words `misc6`'s 16-byte alignment forced anyway, spent instead of wasted, which
+is why the push range is still 240 bytes.
+
+| Scalar | Contents |
+|--------|----------|
+| `fogFloorZ` | outdoor fog-layer altitude, world units (DOOM-0011; `rb_mesh_t::fogFloorZ`) |
+| `wispAngle` | fog-wisp drift heading, radians, seeded per map (DOOM-0300; `rb_mesh_t::wispAngle`) |
+
 `misc5`/`misc6` are the DOOM-0179/0181/0183/0011 lanes; the earlier lanes are
-DOOM-0009/0100 foundations. **`misc6` is now full** — the next RT push value must append
-a `misc7 uvec4` (240 → 256 B, the documented device limit).
+DOOM-0009/0100 foundations. **`misc6` is full and so are both pad words** — DOOM-0300 spent
+the second one, so there is no longer any slack to borrow. The next RT push value must
+append a `misc7 uvec4` (240 → 256 B, the documented device limit).
 
 ## RT correctness gate
 

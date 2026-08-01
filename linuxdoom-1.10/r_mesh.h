@@ -144,6 +144,14 @@ typedef struct
     // the rest of the map, thinning it everywhere; E1M1's open-sky floors span 80 units
     // against a 112-unit falloff, so it does not bite there.
     float        fogFloorZ;
+    // DOOM-0300: the heading the fog wisps drift along on this map, in radians. The two
+    // noise octaves are exactly opposed (pt_common.glsl), so this turns the pair as a unit
+    // and the net wind stays zero -- it buys variety between maps, not a direction.
+    // SEEDED from the map, never rolled: DOOM-0202's -shotcompare golden gate needs the RT
+    // frame bit-exact run to run, and a genuinely random angle would make every capture a
+    // different image and quietly turn that gate into a no-op -- the same defect DOOM-0183's
+    // wall-clock ripple time caused once already.
+    float        wispAngle;
 } rb_mesh_t;
 
 // Build the current level's mesh from the globals p_setup.c populated

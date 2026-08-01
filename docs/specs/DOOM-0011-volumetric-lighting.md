@@ -1807,6 +1807,15 @@ colour-frozen.
     (`kFloorFogDensity`, `kFloorFogPool`, `kFloorFogRange` — `marchFog` calls
     `floorFogDensity()`), leaving only **`kAreaDensity`** (L4) and **`kTorchFalloff`** (L3)
     genuinely owed.
+    **The two octave velocities changed again on 2026-08-01 (DOOM-0300), and the reason
+    matters more than the numbers**: `kWispVel1` ships **`15 · (8, 3, 1)`** and `kWispVel2`
+    ships **`−kWispVel1`**, so the "deliberately slower second octave" noted above is no
+    longer true and the pair is now *exactly* opposed. Both halves are measurements against
+    Silent Hill 2 rather than taste — 15× because SH2's fog restructures in under ~2.2 s
+    where ours needed 24 s to cross one noise cell, and exact opposition because a
+    best-shift search over SH2 explains 0–1 % of its change by translation: that fog churns
+    in place and has no wind. Exact opposition also makes DOOM-0300's per-level
+    `wispAngle` safe, since rotating both by one angle leaves their sum identically zero.
     **DOOM-0289 adds three quantities (five `#define`s), and none is a `k*` shader const**
     (2026-07-30). The sun-clearance field is built C-side, so they live in `r_mesh.h`
     beside `RB_SEEP_DMAX`: **`RB_SUN_DIR_X/Y/Z`** (the mirror of `pt_common.glsl`'s

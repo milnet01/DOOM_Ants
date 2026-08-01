@@ -629,6 +629,18 @@ rb_mesh_t* RB_BuildLevelMesh(void)
         }
         mesh->fogFloorZ = found ? lowest / (float)FRACUNIT : 0.0f;
     }
+
+    // DOOM-0300: this level's wisp heading. A pure function of the map's own identity, so
+    // the same map always draws the same angle and different maps differ -- see the field
+    // comment in r_mesh.h for why this must not be a real roll. Two rounds of an integer
+    // avalanche mix, because episode and map are small adjacent integers and the low bits
+    // of a plain multiply would walk the angle in step with the map number.
+    {
+        unsigned int h = (unsigned int)gameepisode * 2654435761u
+                       + (unsigned int)gamemap     * 2246822519u;
+        h ^= h >> 15;  h *= 2654435761u;  h ^= h >> 13;
+        mesh->wispAngle = (float)(h & 0xFFFFu) * (6.28318530718f / 65536.0f);
+    }
     return mesh;
 }
 
