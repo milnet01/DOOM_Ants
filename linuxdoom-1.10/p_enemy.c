@@ -526,6 +526,12 @@ P_LookForPlayers
 	if (player->health <= 0)
 	    continue;		// dead
 
+	// DOOM-0294: the developer "monsters don't notice you" toggle. This is the
+	// single choke point for NEW acquisition -- A_Look, A_Chase (both call sites)
+	// and the respawn path all route through here.
+	if (player->cheats & CF_NOTARGET)
+	    continue;
+
 	if (!P_CheckSight (actor, player->mo))
 	    continue;		// out of sight
 			
@@ -552,6 +558,45 @@ P_LookForPlayers
     }
 
     return false;
+}
+
+
+//
+// P_ForgetPlayerTargets  (DOOM-0294)
+// Make every monster that is ALREADY awake forget the player it is chasing.
+//
+// The CF_NOTARGET gate above only blocks NEW acquisition, so without this the
+// toggle would appear not to work at all in the case that matters: a room you
+// have already walked into stays hostile for the rest of the level. Clearing
+// the target is enough to close the loop -- A_Chase re-runs P_LookForPlayers
+// when its target is gone, that call now fails, and the monster drops back to
+// its spawn (idle) state on its own.
+//
+// Targets that are not players (infighting, the Arch-vile's corpse target, a
+// Lost Soul's charge) are left alone: they are not the player noticing you.
+//
+void P_ForgetPlayerTargets (void)
+{
+    thinker_t*	th;
+    mobj_t*	mo;
+
+    for (th = thinkercap.next ; th != &thinkercap ; th = th->next)
+    {
+	if (th->function.acp1 != (actionf_p1)P_MobjThinker)
+	    continue;			// not a mobj
+
+	mo = (mobj_t *)th;
+
+	if (mo->target && mo->target->player)
+	{
+	    mo->target    = NULL;
+	    mo->threshold = 0;		// drop the "follow this one for 3s" lock
+	}
+    }
+
+    // The sound-alert path keeps its own pointer at the player (P_NoiseAlert
+    // writes sector->soundtarget); A_Look ignores a NOTARGET player's, so it
+    // needs no sweep here.
 }
 
 
@@ -604,6 +649,13 @@ void A_Look (mobj_t* actor)
 	
     actor->threshold = 0;	// any shot will wake up
     targ = actor->subsector->sector->soundtarget;
+
+    // DOOM-0294: the sound-alert path does NOT go through P_LookForPlayers, so a
+    // monster would still wake on the noise a NOTARGET player makes (P_NoiseAlert
+    // flood-fills soundtarget through the sector graph). Gate it here as well, or
+    // the toggle only half-works: quiet rooms stay asleep, noisy ones do not.
+    if (targ && targ->player && (targ->player->cheats & CF_NOTARGET))
+	targ = NULL;
 
     if (targ
 	&& (targ->flags & MF_SHOOTABLE) )

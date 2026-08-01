@@ -74,6 +74,10 @@ void P_InitThinkers (void);
 void P_AddThinker (thinker_t* thinker);
 void P_RemoveThinker (thinker_t* thinker);
 
+// DOOM-0294: clear every monster's player target (the other half of CF_NOTARGET,
+// which on its own only stops NEW acquisition). Lives in p_enemy.c.
+void P_ForgetPlayerTargets (void);
+
 
 //
 // P_PSPR

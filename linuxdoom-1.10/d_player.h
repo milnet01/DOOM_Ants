@@ -72,7 +72,11 @@ typedef enum
     // No damage, no health loss.
     CF_GODMODE		= 2,
     // Not really a cheat, just a debug aid.
-    CF_NOMOMENTUM	= 4
+    CF_NOMOMENTUM	= 4,
+    // DOOM-0294: monsters do not notice this player. Blocks acquisition in
+    // P_LookForPlayers and the sound-alert path in A_Look; P_ForgetPlayerTargets
+    // clears the monsters that were already awake when it was switched on.
+    CF_NOTARGET		= 8
 
 } cheat_t;
 

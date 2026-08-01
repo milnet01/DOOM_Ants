@@ -4021,7 +4021,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   names, which no hand-list can. That combination is what makes "apply
   it once and it is right everywhere" achievable rather than aspirational.
 
-- 📋 [DOOM-0294] **Developer view: jump to any level and stop the monsters noticing you, so the game can actually be tested.**
+- 🚧 [DOOM-0294] **Developer view: jump to any level and stop the monsters noticing you, so the game can actually be tested.**
   User, 2026-08-01: "I need a developer view in the game that allows me
   to jump to any stage, turn on invincibility (or rather make the enemies
   not see me) so that I can test the game more thoroughly."
@@ -4079,3 +4079,61 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** An in-game menu for testing: pick any level and jump straight to it, and switch off the monsters' attention so you can walk a map and look at it without fighting through it.
   Kind: feature.
   Source: user-request-2026-08-01.
+  Progress (2026-08-01): IMPLEMENTED, awaiting the user play-test.
+  Built as three small pieces, all in the existing mechanisms.
+
+  1. CF_NOTARGET = 8 (d_player.h) gated in P_LookForPlayers, plus
+  P_ForgetPlayerTargets (p_enemy.c) which walks the thinker list and
+  drops every monster whose target is a player. A THIRD gate the item
+  did not name turned out to be needed: A_Look reads
+  sector->soundtarget directly and never calls P_LookForPlayers, so
+  P_NoiseAlert would still wake a room on the noise a NOTARGET player
+  makes -- gated there too, or the toggle only works in quiet rooms.
+
+  2. A Developer menu (m_menu.c) reached from a "Developer" row spliced
+  onto Options by `-devmode`, using the Game Select row's own trick (the
+  template sits past the default numitems, so an ordinary launch does
+  not merely disable the row, it never draws it and the cursor cannot
+  land on it). A command-line flag rather than a config key on purpose:
+  a remembered "on" is a trapdoor that stays open.
+
+  3. ONE "Level" row, not an episode row plus a map row -- the level
+  list is flattened to a single index, so the row set is the same shape
+  in both games and neither carries a dead row. It opens on the level
+  you are standing in. "Print Position" prints the current spot AS the
+  -warpto line that reproduces it (DOOM-0268), to stdout and the HUD.
+
+  DOOM-0206 was read first as the item asked, and the item's claim about
+  it was STALE: it says the menu redesign is "written and gated but not
+  implemented", but DOOM-0206 shipped 2026-07-21. So the Developer menu
+  is a consumer of the shipped crisp registry rather than a fifth menu
+  the redesign would have to absorb -- one crispMenus[] entry plus a
+  classic-tier draw, holding INV-1/2/4/7.
+
+  Verified headlessly against both IWADs with a temporary in-engine
+  harness (removed before commit; `grep TEMP-DEVTEST` is clean):
+  - gate: Options is 9 rows with -devmode, 8 without.
+  - level list: retail 36 (E1M1..E4M9), commercial 32 (MAP01..MAP32),
+    wrap in both directions, opens on the current level (E3M5, MAP07).
+  - targets: E3M5 with all 63 monsters forced onto the player -> 0 after
+    the toggle; doom2 MAP07 12 -> 0.
+  - acquisition, with the player planted next to a monster so sight is
+    not the variable: acquiredWithFlag=0, acquiredWithoutFlag=1. The
+    CONTROL is the point -- run from a spawn point both legs read 0,
+    because nothing can see you there, and that proves nothing at all.
+  - round-trip: the printed `-warpto -544 640 180` fed back in placed
+    the player at (-544,640) angle=128 (=180 deg), i.e. the line is
+    consumable verbatim.
+  make test 7/7, -rtverify PASS (rel-MSE 0.0796%, white furnace
+  0.000000) -- no renderer file touched.
+
+  Left for the play-test, because headless capture cannot reach it: the
+  crisp menu's LOOK in Solid/Ultra (same standing limitation DOOM-0206
+  shipped under -- Wayland blocks input injection, so no automated run
+  can open a menu). Also worth confirming in play: that walking into a
+  room you already cleared stays quiet, which is the half CF_NOTARGET
+  alone would not give.
+
+  Not built, and deliberately: shooting still provokes retaliation
+  (P_DamageMobj sets target from the damage source, which is the player
+  noticing THEM). Say so if it is unwanted; it is a two-line gate.

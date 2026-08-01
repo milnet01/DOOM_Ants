@@ -30,6 +30,7 @@ rcsid[] __attribute__((used)) = "$Id: m_menu.c,v 1.7 1997/02/03 22:45:10 b1 Exp 
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <ctype.h>
 
 
@@ -73,6 +74,11 @@ extern patch_t*		hu_font[HU_FONTSIZE];
 extern boolean		message_dontfuckwithme;
 
 extern boolean		chat_on;		// in heads-up code
+
+// DOOM-0294: defined in p_enemy.c and declared in p_local.h, which this file
+// cannot include -- p_spec.h's vldoor_e has a `close` enumerator that collides
+// with POSIX close() from <unistd.h> above. Hence the one repeated prototype.
+void P_ForgetPlayerTargets (void);
 
 //
 // defaulted values
@@ -268,6 +274,15 @@ void M_DrawGameSelect(void);
 void M_GameSelectChoose(int choice);
 void M_ReturnToGameSelect(int choice);
 
+// DOOM-0294 developer view: jump to any level, and stop the monsters noticing you.
+void M_DevMenu(int choice);
+void M_DrawDevMenu(void);
+void M_DevNoTarget(int choice);
+void M_DevPrintPos(int choice);
+void M_DevLevel(int choice);
+void M_DevWarp(int choice);
+void M_DevBack(int choice);
+
 
 
 
@@ -395,7 +410,12 @@ enum
     mousesens,
     option_empty2,
     soundvol,
-    opt_end
+    opt_end,
+    // DOOM-0294: the "Developer" row lives past opt_end and is hidden by the
+    // default numitems, exactly like the Game Select row on the main menu.
+    // M_Init splices it in only when developer mode is on, so it cannot be
+    // reached by accident in normal play.
+    opt_dev = opt_end
 } options_e;
 
 menuitem_t OptionsMenu[]=
@@ -407,7 +427,8 @@ menuitem_t OptionsMenu[]=
     {-1,"",0},
     {2,"M_MSENS",	M_ChangeSensitivity,'m'},
     {-1,"",0},
-    {1,"M_SVOL",	M_Sound,'s'}
+    {1,"M_SVOL",	M_Sound,'s'},
+    {1,"",		M_DevMenu,'d'}          // DOOM-0294 (hidden unless devmode)
 };
 
 menu_t  OptionsDef =
@@ -599,6 +620,58 @@ menu_t  VideoDef =
     VideoMenu,
     M_DrawVideoMenu,
     60,40,
+    0
+};
+
+//
+// DEVELOPER MENU (DOOM-0294): the testing instrument.
+//
+// Two things every look task needs and neither the game nor the assistant can
+// supply: reaching a specific room, and being left alone once there. The level
+// jump replaces the idclev cheat (typed blind, and it does not reliably
+// register), and "Monsters Notice You" replaces god mode -- an invulnerable
+// player is still shot at and shoved around, which ruins a screenshot just as
+// thoroughly as dying does.
+//
+// ONE "Level" row rather than an episode row plus a map row: the level list is
+// flattened to a single index, so the row set does not have to change shape
+// between DOOM 1 (episodes) and DOOM 2 (a flat 32), and there is no dead row on
+// either. Which game is loaded is already known (gamemode), so nothing is asked.
+//
+// Reached from the Options menu's spliced "Developer" row, which M_Init only
+// adds when developer mode is on. Draws crisp in the 3D tiers via the DOOM-0206
+// registry and classic under Classic (M_DrawDevMenu), like every other menu:
+// INV-1 (Classic keeps its own style), INV-2 (HUD-safe -- the generic paths do
+// the clamping), INV-4 (no M_Responder change), INV-7 (one row size).
+//
+enum
+{
+    dev_notarget,
+    dev_pos,
+    dev_lvl_head,       // "-  LEVEL JUMP  -"
+    dev_level,          // status 2: left/right steps through the level list
+    dev_warp,
+    dev_back,
+    dev_end
+} developer_e;
+
+menuitem_t DeveloperMenu[]=
+{
+    {1,"",	M_DevNoTarget,'m'},
+    {1,"",	M_DevPrintPos,'p'},
+    {-1,"",0},
+    {2,"",	M_DevLevel,'l'},
+    {1,"",	M_DevWarp,'j'},
+    {1,"",	M_DevBack,'b'}
+};
+
+menu_t  DeveloperDef =
+{
+    dev_end,
+    &OptionsDef,
+    DeveloperMenu,
+    M_DrawDevMenu,
+    60,60,
     0
 };
 
@@ -1340,7 +1413,7 @@ const unsigned char* M_MenuLogoRGBA(int* out_w, int* out_h)
 // display string, so the strings must live here. "Video" (renderer row) shows the
 // active tier name beside it; its value is supplied by the value provider / the
 // classic value draw below.
-static const char* optionsLabels[opt_end] =
+static const char* optionsLabels[opt_end + 1] =
 {
     "End Game",           // endgame
     "Messages",           // messages
@@ -1349,7 +1422,8 @@ static const char* optionsLabels[opt_end] =
     "",                   // option_empty1
     "Mouse Sensitivity",  // mousesens  (status 2: thermo on the row below)
     "",                   // option_empty2
-    "Sound Volume"        // soundvol
+    "Sound Volume",       // soundvol
+    "Developer"           // opt_dev    (DOOM-0294; spliced in by -devmode only)
 };
 
 void M_DrawOptions(void)
@@ -1360,7 +1434,9 @@ void M_DrawOptions(void)
     V_DrawPatchDirect (108,15,0,W_CacheLumpName("M_OPTTTL",PU_CACHE));
 
     // Uniform hu_font row labels (INV-7) -- one size for every Options row.
-    for (i = 0 ; i < opt_end ; i++)
+    // Bounded by numitems, not opt_end, so the DOOM-0294 Developer row draws
+    // when it has been spliced in and stays invisible when it has not.
+    for (i = 0 ; i < OptionsDef.numitems ; i++)
 	if (optionsLabels[i][0])
 	    M_WriteText(OptionsDef.x,OptionsDef.y+LINEHEIGHT*i,(char *)optionsLabels[i]);
 
@@ -1539,6 +1615,61 @@ static const char* soundLabels[sound_end] =
 {
     "Sound Volume", "", "Music Volume", ""
 };
+static const char* developerLabels[dev_end] =
+{
+    "Monsters Notice You", "Print Position",
+    "-  LEVEL JUMP  -",
+    "Level", "Jump to Level",
+    "Back"
+};
+
+//
+// DOOM-0294: the level list, flattened to one 0-based index so a single "Level"
+// row covers both games. DOOM 1 is 9 maps per episode; DOOM 2 is a flat 32.
+// The counts are the IWAD's, not the cheat's -- idclev accepts DOOM II maps up
+// to 34 (two lumps the stock wad does not have), and offering a level that
+// cannot load is worse than not offering it.
+//
+static int devLevel;            // index into that list
+
+static int M_DevLevelCount(void)
+{
+    switch (gamemode)
+    {
+      case commercial: return 32;       // MAP01..MAP32
+      case shareware:  return 9;        // E1M1..E1M9
+      case registered: return 27;       // 3 episodes x 9
+      case retail:     return 36;       // Ultimate DOOM: 4 episodes x 9
+      default:         return 9;        // indetermined: assume one episode
+    }
+}
+
+static void M_DevLevelSplit(int idx, int* episode, int* map)
+{
+    if (gamemode == commercial)
+    {
+	*episode = 1;                   // G_InitNew ignores it for commercial
+	*map     = idx + 1;
+    }
+    else
+    {
+	*episode = idx / 9 + 1;
+	*map     = idx % 9 + 1;
+    }
+}
+
+static const char* M_DevLevelName(void)
+{
+    static char buf[12];
+    int episode, map;
+
+    M_DevLevelSplit(devLevel, &episode, &map);
+    if (gamemode == commercial)
+	sprintf(buf, "MAP%02d", map);
+    else
+	sprintf(buf, "E%dM%d", episode, map);
+    return buf;
+}
 
 // DOOM-0206 (v2 §4.6): the crisp renderer is generic (M_DrawCrispMenu) and drives
 // every row-list menu in the 3D tiers from a registry. Each row's VALUE (right-
@@ -1615,6 +1746,22 @@ static void M_SoundCrispValue(int i, crispval_t* cv)
     }
 }
 
+// DOOM-0294. "Monsters Notice You" is phrased as the state of the WORLD, not of
+// a cheat flag, so the row reads the way the user asked for it -- Yes is normal
+// play, No is the testing state (CF_NOTARGET set).
+static void M_DevCrispValue(int i, crispval_t* cv)
+{
+    switch (i)
+    {
+      case dev_notarget:
+	cv->str = (players[consoleplayer].cheats & CF_NOTARGET) ? "No" : "Yes";
+	break;
+      case dev_level: cv->str = M_DevLevelName(); break;
+      case dev_back:  cv->centered = 1; break;
+      default: break;   // print/jump are action rows; the heading is st == -1
+    }
+}
+
 typedef struct
 {
     menu_t*      menu;
@@ -1636,7 +1783,8 @@ static const crispmenu_t crispMenus[] =
     { &NewDef,     "CHOOSE SKILL",   skillLabels,   NULL },
     { &OptionsDef, "OPTIONS",        optionsLabels, M_OptionsCrispValue },
     { &SoundDef,   "SOUND VOLUME",   soundLabels,   M_SoundCrispValue },
-    { &VideoDef,   "VIDEO",          videoLabels,   M_VideoCrispValue }
+    { &VideoDef,   "VIDEO",          videoLabels,   M_VideoCrispValue },
+    { &DeveloperDef, "DEVELOPER",    developerLabels, M_DevCrispValue }
 };
 
 static const crispmenu_t* M_FindCrispMenu(menu_t* m)
@@ -2203,6 +2351,130 @@ void M_VideoBack(int choice)
 {
     choice = 0;
     M_SetupNextMenu(&OptionsDef);
+}
+
+
+//
+// DOOM-0294 developer view: the handlers + the Classic-tier draw.
+//
+void M_DevMenu(int choice)
+{
+    int i;
+    choice = 0;
+
+    // Open the level row on the level you are standing in, so a jump defaults to
+    // reloading this map rather than to E1M1 from wherever you happen to be.
+    if (gamestate == GS_LEVEL)
+    {
+	i = (gamemode == commercial) ? gamemap - 1
+				     : (gameepisode - 1) * 9 + gamemap - 1;
+	if (i >= 0 && i < M_DevLevelCount())
+	    devLevel = i;
+    }
+
+    M_SetupNextMenu(&DeveloperDef);
+}
+
+// status 2 row: choice 0 = left, 1 = right. Wraps, so either end of DOOM II's 32
+// maps is a few taps away.
+void M_DevLevel(int choice)
+{
+    int n = M_DevLevelCount();
+
+    devLevel = choice ? (devLevel + 1) % n : (devLevel + n - 1) % n;
+}
+
+void M_DevWarp(int choice)
+{
+    int episode, map;
+    choice = 0;
+
+    M_DevLevelSplit(devLevel, &episode, &map);
+    // From the title screen there is no game in progress and gameskill still
+    // holds its zero-initialised sk_baby, which is not what "jump to a level"
+    // should silently pick -- use the menu's own default there instead.
+    G_DeferedInitNew(usergame ? gameskill : sk_medium, episode, map);
+    M_ClearMenus();
+}
+
+// The user's own correction to "invincibility": an invulnerable player is still
+// shot at and shoved around, which ruins a look just as thoroughly as dying.
+// This makes the monsters not notice at all. Two halves -- CF_NOTARGET blocks
+// new acquisition, P_ForgetPlayerTargets drops the ones already awake -- and
+// only the pair of them is the feature; the flag alone leaves every room you
+// have already walked into hostile for the rest of the level.
+void M_DevNoTarget(int choice)
+{
+    player_t* p = &players[consoleplayer];
+    choice = 0;
+
+    p->cheats ^= CF_NOTARGET;
+
+    // Only sweep with a level loaded: before the first P_SetupLevel the thinker
+    // list has never been initialised and walking it would follow a null next.
+    if ((p->cheats & CF_NOTARGET) && gamestate == GS_LEVEL)
+	P_ForgetPlayerTargets();
+
+    p->message = (p->cheats & CF_NOTARGET) ? "Monsters ignore you"
+					   : "Monsters notice you";
+}
+
+// Print the current spot as the -warpto line that reproduces it (DOOM-0268), so
+// a place worth looking at can be handed to a headless capture verbatim. On
+// stdout, which run-doom-ants.sh already tees to a log, plus the HUD message so
+// it is visible without leaving the game.
+void M_DevPrintPos(int choice)
+{
+    static char buf[64];
+    mobj_t*     mo;
+    int         deg;
+    choice = 0;
+
+    if (gamestate != GS_LEVEL || !players[consoleplayer].mo)
+    {
+	players[consoleplayer].message = "Not in a level";
+	return;
+    }
+
+    mo  = players[consoleplayer].mo;
+    deg = (int)(((int64_t)mo->angle * 90) / ANG90);     // the inverse of G_WarpToSpot's
+
+    sprintf(buf, "-warpto %d %d %d", mo->x >> FRACBITS, mo->y >> FRACBITS, deg);
+    players[consoleplayer].message = buf;
+
+    if (gamemode == commercial)
+	printf("dev: MAP%02d  %s\n", gamemap, buf);
+    else
+	printf("dev: E%dM%d  %s\n", gameepisode, gamemap, buf);
+    fflush(stdout);
+}
+
+void M_DevBack(int choice)
+{
+    choice = 0;
+    M_SetupNextMenu(&OptionsDef);
+}
+
+// Classic-tier draw (INV-1). The 3D tiers get the crisp skin from the DOOM-0206
+// registry; this is the same content in the paletted HUD font, one size for
+// every row (INV-7). Six rows from y=60 clear the status bar, so no shift is
+// needed beyond the generic one M_Drawer applies.
+void M_DrawDevMenu(void)
+{
+    int i;
+
+    M_WriteText(DeveloperDef.x + 30,DeveloperDef.y - 20,"DEVELOPER");
+
+    for (i = 0 ; i < dev_end ; i++)
+	if (developerLabels[i][0])
+	    M_WriteText(DeveloperDef.x,DeveloperDef.y+LINEHEIGHT*i,
+			(char *)developerLabels[i]);
+
+    M_WriteText(DeveloperDef.x + 170,DeveloperDef.y+LINEHEIGHT*dev_notarget,
+		(players[consoleplayer].cheats & CF_NOTARGET) ? "No" : "Yes");
+
+    M_WriteText(DeveloperDef.x + 170,DeveloperDef.y+LINEHEIGHT*dev_level,
+		(char *)M_DevLevelName());
 }
 
 
@@ -3324,5 +3596,15 @@ void M_Init (void)
 	MainDef.numitems++;
 	MainDef.y -= 8;         // one more row -> recenter (mirrors the +=8 above)
     }
+
+    // DOOM-0294: `-devmode` splices the "Developer" row onto the Options menu.
+    // The row template lives at OptionsMenu[opt_dev], past the default numitems,
+    // so an ordinary launch cannot reach the developer tools at all -- the row
+    // is not merely disabled, it is not drawn and the cursor cannot land on it.
+    // A command-line flag rather than a config key on purpose: a remembered
+    // "on" would be a trapdoor that quietly stays open (item DOOM-0294's gating
+    // note).
+    if (M_CheckParm("-devmode"))
+	OptionsDef.numitems = opt_end + 1;
 }
 

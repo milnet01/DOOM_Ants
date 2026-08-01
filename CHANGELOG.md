@@ -8,6 +8,14 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Developer view: jump to any level, and stop the monsters noticing you** (DOOM-0294)
+  A testing instrument, behind the new `-devmode` launch flag: an
+  Options → Developer menu that jumps straight to any level in either
+  game, switches the monsters' attention off so a map can be walked and
+  looked at rather than fought through, and prints where you are
+  standing as the `-warpto` line that reproduces the spot. Without the
+  flag the row is not on the menu at all.
+
 - **Fog now billows: a near-white base with banks of visibly varying thickness drifting past (Ultra/Solid ray-traced view)** (DOOM-0011)
   The haze is no longer even. Two layers of slowly drifting 3-D noise thicken and thin the air, so mist pools in one part of a room and clears in another, and a bank passes in front of and behind a pillar as you turn. Costs about 6% of frame time on an RX 6600; the `;` key still dials it Off / Low / Medium / High.
 
