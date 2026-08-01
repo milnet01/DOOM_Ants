@@ -1177,8 +1177,12 @@ git commit -m "DOOM-0011: L2 sky shafts — kSunDir + per-sample sky-visibility 
 > gap is in L2's model, not L2b's field), **DOOM-0293** (liquid pools want their own fog,
 > which needs a second image since this task filled the grid's fourth channel), and the
 > user's weighting for **Task L3** — a light should touch the fog "a little bit outside
-> but a lot more inside". Build DOOM-0292 before L3: it introduces the sky-exposure curve
-> whose inverse is exactly L3's indoor torch weighting.
+> but a lot more inside". Build DOOM-0292 before L3 — but **not** to invert its curve for the
+> torches, which was this banner's first claim and is wrong. Light ADDS: once the sky's share
+> is honest under a roof, a torch is a few percent of a large number outdoors and most of a
+> small one indoors, with no weighting anywhere. See DOOM-0011's 2026-08-01 correction, which
+> also records the real risk in L3 — a torch with no occlusion test lights fog **through a
+> wall**, and after DOOM-0292 that leak is the brightest thing in a dark room.
 
 **Goal:** L2 shipped correct and far over budget — its one shadow ray per march sample
 measures **13.6 ms** against the whole rest of the fog's 0.7 ms, for **−15 fps at the

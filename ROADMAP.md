@@ -1084,9 +1084,92 @@ parked ideas (💭 considered) until we commit to and design each one.
   sky's in-scatter, so a torch is a small addend against a large term,
   while roofed air (once DOOM-0292 gates the sky share on sky exposure)
   has almost nothing else lighting it and the same torch dominates. So
-  L3's torch gain should be scaled by the SAME sky-exposure curve
-  DOOM-0292 introduces, inverted -- one curve, two consumers, and no
-  third constant. Build DOOM-0292 before L3 for that reason.
+  L3's torch gain needs NO indoor weighting at all -- see the
+  correction appended below (2026-08-01). This line first said to invert
+  DOOM-0292's curve, which double-counts. Still build DOOM-0292 first.
+  CORRECTION (2026-08-01) to the note above, from a design discussion
+  with the user. It asked for a formula that makes a placed light read
+  faintly outdoors and strongly indoors. There is no such formula to
+  write: LIGHT ADDS, and once DOOM-0292 makes the sky's contribution
+  honest under a roof, the ratio falls out of plain addition. Outdoors
+  the sky term is large and a torch moves it a few percent; indoors the
+  sky term is now small and the same torch dominates. Same number, no
+  indoor multiplier, no inverse curve.
+
+  So the earlier instruction to scale L3's torch gain by DOOM-0292's
+  curve inverted is WRONG and must not be built -- the contrast is
+  already paid for by the sky term being gated, and boosting the torch
+  on top would count it twice. An explicit indoor-boost knob is legal as
+  TASTE, defaulting to off; it is not the mechanism.
+
+  What L3 does still need a real formula for, and what the Formula
+  Workbench (/mnt/Games/Scripts/Linux/3D_Engine/) is the right tool for:
+  the falloff SHAPE. Brightness / distance^2 x phase x transmittance
+  blows up when a fog sample sits inside a light, so the softening curve
+  is a design choice, not a physics fact. Sun/Ramamoorthi/Narasimhan/
+  Nayar, SIGGRAPH 2005, "A Practical Analytic Single Scattering Model
+  for Real Time Rendering" integrates single scattering from a point
+  light in closed form and reduces it to a small lookup table -- the
+  reference to reach for if the per-sample torch loop measures expensive.
+
+  THE REAL RISK IN L3 IS NOT THE FORMULA, IT IS VISIBILITY. The task
+  text says nearest-few static emitters with NO occlusion test, so a
+  torch lights fog through a wall. That was tolerable while roofed air
+  was uniformly bright; after DOOM-0292 a leak through a wall is the
+  BRIGHTEST thing in a dark room. A ray per light per sample is exactly
+  what DOOM-0289 just deleted, so the cheap proxy to try first is
+  sector-scoped light lists -- only let an emitter touch air in its own
+  sector, reusing the per-subsector nearest-N lists the raster path
+  already builds (RebuildStaticPointLightCache).
+
+  User's framing question, worth keeping because the answer is not
+  obvious: does consolidating lighting features into one formula make it
+  cheaper? Half. Consolidating the DATA is where every win in this
+  feature came from -- one field now answers four questions. But on a
+  GPU a general formula holds every case's live values in registers for
+  every pixel, cutting occupancy, and this project has the measurement:
+  DOOM-0289 found L2's ray cost 2.40 ms/frame with fog switched OFF.
+  DOOM-0129 does the opposite deliberately -- one compiled pipeline
+  variant per view mode so unused branches are dead-stripped. The rule:
+  consolidate the thinking, specialise the code, and prize the kind of
+  consolidation that lets you SKIP work (the "light budget" idea) over
+  the kind that merely removes duplication.
+  STANDING CONSTRAINT set by the user 2026-08-01, and it applies to
+  every remaining fog task (L3, L4, DOOM-0292, DOOM-0293) rather than to
+  any one of them:
+
+    "Whatever we can do cheaply without losing the visual bang, let's do
+     it. For consistency though, I was hoping we apply it once and it
+     looks right across all maps in both games."
+
+  Two rules fall out, and the second is the one that constrains design
+  rather than effort:
+
+  1. Cheap is preferred, but not at the cost of the effect. The order to
+     evaluate options in is: does it read? then, what does it cost?
+     -- not the reverse. DOOM-0289 is the model (the cost went to ~0 and
+     the picture was held identical to 0.05 MAE).
+
+  2. NO PER-MAP AUTHORING, EVER. Every quantity must be DERIVED from the
+     WAD at load, not placed by hand and not tuned per level. This is
+     already how the feature works and it should stay that way: the seep
+     distance, the open-sky mask, the sun clearance and fogFloorZ are all
+     computed from the map's own geometry, which is exactly why they hold
+     on maps nobody has looked at. It also rules out the industry's usual
+     answer for localised fog -- hand-placed fog volumes -- for 32 + 36
+     maps across two IWADs, let alone custom WADs.
+
+     The corollary for CONSTANTS: prefer ones expressed relative to
+     something the map supplies (fogFloorZ, a sector's own floor, the
+     level's highest liquid surface) over absolute world numbers, and
+     distrust any dial that had to be re-tuned to make a second map look
+     right -- that is the signal that the quantity underneath it is the
+     wrong one.
+
+     The corollary for TESTING: the -shotverify gate set must span BOTH
+     IWADs, since doom2.wad carries flats, sector shapes and outdoor
+     scales that doom.wad never exercises (DOOM-0293's flat inventory is
+     the first case found -- 16 SLIME flats that exist only in DOOM 2).
 - 💭 [DOOM-0012] **Hold a 60 FPS performance floor.**
   **Layman:** Keep it running smoothly — never below 60 frames per second.
   Kind: perf.
@@ -3824,3 +3907,80 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: enhancement.
   Lanes: shaders, fog, r_mesh.
   Source: user-play-test-2026-07-31.
+  Design refinement (2026-08-01), from a discussion with the user plus
+  a read of how the industry does it. Three changes to the sketch above,
+  each making it cheaper than "a second image and a second tap" sounds:
+
+  1. ONE CHANNEL, NOT TWO. The bullet above says RG16F (coverage +
+     surface z). It only needs the STEAM LAYER'S TOP Z per cell, with
+     non-liquid cells storing a finite sentinel far BELOW any floor --
+     the same finite-sentinel idiom RB_SEEP_DMAX and RB_SUN_NEVER
+     already use, and for the same NaN reason. Bilinear then sinks the
+     layer smoothly to nothing across a pool's rim, so the soft edge
+     comes free from the sampler instead of costing a channel.
+
+  2. MOST SAMPLES SKIP THE TAP. Compute the level's highest liquid
+     surface once at load and push it as one scalar; any fog sample
+     above it plus a few steam heights never reads the image, and a
+     level with no liquid at all pays nothing. The march bunches its
+     samples near the camera (Q26's quadratic warp) and the steam layer
+     is shallow, so this kills the majority of the reads in practice.
+
+  3. IT MAY NEED NO NEW TERM. L1e's floor layer is already a
+     short-range, height-pooled addend. Pool steam may be that layer
+     with its baseZ and density driven by the liquid channel, which is
+     a far smaller change than a fourth kind of fog. Try that before
+     writing a new one (reuse before rewriting).
+
+  Rejected on inspection: folding the liquid signal into the existing
+  RGBA by making the open-sky mask signed (+1 sky / -1 liquid). Bilinear
+  between +1 and -1 crosses zero, so a cell between a sky cell and a
+  liquid cell would read "neither" -- an invisible coupling between two
+  unrelated facts, for one channel's saving.
+
+  ART, not code: fog forms over water when the water is WARMER than the
+  air, so the user's "cold liquids" framing inverts the physics -- which
+  does not matter for the look but does split it in two. Nukage and lava
+  are plausibly out-gassing, so they want RISING wisps; water wants a
+  flat, still, low mist. DOOM-0183's material bits already distinguish
+  nukage from lava (RB_FLAG_LIQUID_NUKAGE / _LAVA, rb_materials.h), so
+  the split is cheap -- but note only NUKAGE1-3 and LAVA1-4 are tagged
+  by name today (FlagLiquidFlats, r_vulkan.cpp). Water (FWATER1-4) and
+  DOOM 2's blood/slime flats are NOT, so they would steam not at all
+  until added.
+
+  Synergy worth taking: DOOM-0183 already makes lava glow and cast
+  light. Give it steam and the pool lights its own steam -- the emitter
+  and the medium are the same object, for no extra work.
+
+  Industry check (Unreal's local fog volumes; particle-injected
+  density): everyone bakes localised fog into a volume rather than
+  querying scene geometry per sample, which is the direction this bullet
+  already takes. Nothing found that beats a per-cell number for an
+  engine that already marches a grid.
+  Liquid-flat inventory, taken 2026-08-01 from the two IWADs and from
+  the engine's own animated-flat table (p_spec.c animdefs, ~:105-115) --
+  because the user's standing constraint is that this must be applied
+  ONCE and look right across every map in BOTH games, which makes "which
+  flats count" a question to answer from data, not from memory.
+
+  Tagged today (FlagLiquidFlats, r_vulkan.cpp): NUKAGE1-3, LAVA1-4.
+  Present in doom.wad AND doom2.wad but NOT tagged: FWATER1-4, BLOOD1-3.
+  Present in doom2.wad only, NOT tagged: SLIME01-16.
+
+  The engine's animdefs is the better source than a hand-list, since it
+  is what vanilla itself treats as a flowing surface: NUKAGE1-3,
+  FWATER1-4, LAVA1-4, BLOOD1-3, SLIME01-04, SLIME05-08, SLIME09-12.
+  Two cautions before copying it wholesale. RROCK05-08 animates and is
+  ROCK, so animation alone does not mean liquid. And SLIME09-12 (and the
+  un-animated SLIME13-16) need an eyeball -- some of that range is
+  corroded metal, not sludge. Check them on screen before tagging.
+
+  A second, independent signal worth combining rather than choosing
+  between: DOOM's DAMAGING FLOOR specials (p_spec.c ~:1025-1039 --
+  nukage damage, hellslime, super hellslime). Anything that hurts you to
+  stand in is liquid. It misses water, which is why it is a corroborate
+  and not a replacement -- but flat-name OR damaging-special covers both
+  IWADs and degrades sanely on a custom WAD that uses its own flat
+  names, which no hand-list can. That combination is what makes "apply
+  it once and it is right everywhere" achievable rather than aspirational.
