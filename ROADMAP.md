@@ -1276,6 +1276,43 @@ parked ideas (💭 considered) until we commit to and design each one.
   flashlight do NOT scatter", which holds by construction: the bake reads
   only [0, staticN). Known limit: DOOM-0296 (a door opening mid-play does
   not re-bake).
+  LOOK DECISION (user, 2026-08-01), after comparing our fog side by side
+  with the PCSX2 Silent Hill 2 reference captures: "Up close Silent Hill 2
+  fog is lighter than what we have in DOOM but I prefer what we have in
+  DOOM."
+
+  So the near-field density is SETTLED and stays where it is. Do not thin
+  kFogBaseDensity, kFogPoolHeight or kFloorFogDensity toward the
+  reference; the difference was seen, and ours was chosen.
+
+  **This scopes the whole SH2 reference, which is the part worth carrying
+  forward.** Silent Hill 2 is the art target for the fog's MOTION and its
+  COLOUR -- near-white, colourless, billows that dissipate and reform in
+  place (DOOM-0300 measured that at 82-84% large-scale structure and ~0-1%
+  translation, across two samples). It is NOT the target for the density
+  curve. A future session that captures the reference and "converges on
+  it" wholesale would thin the near field and undo a decision the user
+  made with both images in front of them.
+
+  Two earlier decisions this ratifies rather than changes:
+    - L1c tried kFogBaseDensity 0.0033 -> 0.0066 (the "roughly twice as
+      thick" half of the 2026-07-25 amendment) and REVERTED it, because a
+      saturated medium cannot show billows at all. Thickness and structure
+      pull against each other; the user chose billows then and has now
+      chosen the resulting near-field density explicitly.
+    - The user's 2026-07-27 "outside I want the fog much, much thicker and
+      higher" was delivered through kFogPoolHeight 18 -> 112, deliberately
+      NOT through kFogBaseDensity. Same separation, same reason.
+
+  DOC DEBT this exposes, flagged rather than fixed here because editing
+  the spec pulls in the rule-14 gate: docs/specs/DOOM-0011-volumetric-
+  lighting.md still states, in the §6 brightness passage, that "L1c then
+  plans to move the tone to a near-white kFogColor and roughly DOUBLE
+  kFogBaseDensity", and warns against lowering density because "the ~2x
+  raise and the wisps depend on it". That raise was tried and reverted on
+  2026-07-30. The passage now describes a plan that does not exist and
+  argues from a constant that was never adopted. Correct it -- and fold in
+  this decision -- next time that spec is opened for the gate.
 - 💭 [DOOM-0012] **Hold a 60 FPS performance floor.**
   **Layman:** Keep it running smoothly — never below 60 frames per second.
   Kind: perf.
