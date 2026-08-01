@@ -903,7 +903,20 @@ P_DamageMobj
 
     if ( (!target->threshold || target->type == MT_VILE)
 	 && source && source != target
-	 && source->type != MT_VILE)
+	 && source->type != MT_VILE
+#ifdef DOOM_DEV
+	 // DOOM-0294: being HURT by a developer-mode player is not a reason to
+	 // notice them either. This is the third acquisition path, and the one
+	 // that is easy to miss because it needs no line of sight and no noise:
+	 // a barrel the player set off damages a monster, the monster records
+	 // whoever caused it, and Inspect mode quietly ends. It still takes the
+	 // damage and still flinches -- it just does not decide the player is
+	 // its enemy. (A barrel shot by such a player likewise records no
+	 // owner, so its blast has nobody to blame; P_RadiusAttack already
+	 // handles a null source.)
+	 && !(source->player && (source->player->cheats & CF_NOTARGET))
+#endif
+	)
     {
 	// if not intent on another player,
 	// chase after this one

@@ -4267,3 +4267,47 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   STILL OWED: the play-test of the menu and the capture on hardware,
   driven by hand.
+  Progress (2026-08-01, fourth pass): USER PLAY-TESTED the menu and the
+  screenshot -- "works perfectly" on both -- with two defects, both now
+  fixed. The play-test owed on the earlier notes is therefore satisfied
+  except for confirming these two.
+
+  1. INSPECT MODE ENDED IF YOU HURT A MONSTER INDIRECTLY. User: "I had
+  it on inspect and so the enemies didn't notice me but I blew up a
+  barrel that damaged a monster and then that monster became aware of
+  me." Correct, and it is a THIRD acquisition path that neither of the
+  first two gates covers: P_DamageMobj sets target = source, which needs
+  no line of sight (P_LookForPlayers) and no noise (A_Look's
+  soundtarget). Gated the same way in p_inter.c. The monster still takes
+  the damage and still flinches; it just does not decide the player is
+  its enemy. The barrel case falls out for free: a barrel shot by a
+  NOTARGET player now records no owner either, so its blast has nobody
+  to blame (P_RadiusAttack already handles a null source).
+
+  Earlier notes called retaliation a deliberate non-feature -- "shooting
+  still provokes retaliation... say so if it is unwanted". The user has
+  said so, so that line is superseded.
+
+  2. THE MODE RESET ON EVERY LEVEL JUMP. G_PlayerReborn memsets the
+  player, which is what a pistol start IS, so the cheat bits went with
+  it. The three developer bits (NOTARGET / NOCLIP / GODMODE) are now
+  saved across that wipe: Inspect is a property of the testing session,
+  not of the player. In Play mode the bits are zero, so nothing carries.
+  Freeze already persisted (a plain global).
+
+  Both verified headlessly with live controls, which is what makes the
+  results mean anything:
+  - hurt in Inspect -> target=none; the same damage with Inspect off ->
+  target=PLAYER. The control moves.
+  - a barrel damaged by a NOTARGET player -> owner=none.
+  - across a real G_DeferedInitNew level jump, cheats 14 -> 10: the two
+  developer bits survived and CF_NOMOMENTUM (a NON-developer bit,
+  included precisely as the control) did NOT. That distinguishes
+  "the right bits persist" from "the wipe stopped working".
+
+  Both configurations build warning-free; make test 7/7 in each; the
+  release binary still greps 0 for every developer string.
+
+  NOTE for whoever reads the diff: the first cut of the G_PlayerReborn
+  edit also stripped trailing whitespace from ten untouched 1997 lines
+  (rule 11 -- stay in your lane). Redone as 15 pure insertions.

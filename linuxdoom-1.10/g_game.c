@@ -943,11 +943,23 @@ void G_PlayerReborn (int player)
     int		killcount;
     int		itemcount;
     int		secretcount; 
+#ifdef DOOM_DEV
+    int		devcheats;      // DOOM-0294: switches that outlive the wipe below
+#endif
 	 
     memcpy (frags,players[player].frags,sizeof(frags)); 
     killcount = players[player].killcount; 
     itemcount = players[player].itemcount; 
     secretcount = players[player].secretcount; 
+#ifdef DOOM_DEV
+    // DOOM-0294: the developer switches survive across levels. Wiping the player
+    // is the whole point of this function -- a level starts you with a pistol and
+    // 100% however you arrived -- but Inspect mode is a property of the testing
+    // session, not of the player, and jumping to the next map to look at it should
+    // not quietly hand the monsters their attention back. In Play mode these bits
+    // are zero, so nothing carries.
+    devcheats = players[player].cheats & (CF_NOTARGET | CF_NOCLIP | CF_GODMODE);
+#endif
 	 
     p = &players[player]; 
     memset (p, 0, sizeof(*p)); 
@@ -956,6 +968,9 @@ void G_PlayerReborn (int player)
     players[player].killcount = killcount; 
     players[player].itemcount = itemcount; 
     players[player].secretcount = secretcount; 
+#ifdef DOOM_DEV
+    p->cheats |= devcheats;
+#endif
  
     p->usedown = p->attackdown = true;	// don't do anything immediately 
     p->playerstate = PST_LIVE;       
