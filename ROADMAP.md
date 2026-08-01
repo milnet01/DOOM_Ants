@@ -4381,6 +4381,49 @@ parked ideas (💭 considered) until we commit to and design each one.
   NOTE for whoever reads the diff: the first cut of the G_PlayerReborn
   edit also stripped trailing whitespace from ten untouched 1997 lines
   (rule 11 -- stay in your lane). Redone as 15 pure insertions.
+  Verified headlessly (2026-08-01), closing the play-test the user was
+  owed on 948b0d1's two fixes. No playing needed: a throwaway P_Ticker
+  harness (armed by -l3devtest, reverted after) drove both cases and
+  printed the result, run twice -- once in Inspect mode and once as a
+  CONTROL in Play mode.
+
+    1. A BARREL BLAST MUST NOT WAKE THE MONSTER IT DAMAGES. Spawned a
+       barrel beside the toughest live monster on E1M2, had the player
+       shoot it, and read the monster's target after the blast:
+
+          INSPECT   barrel owner = NULL     monster target = NULL
+          CONTROL   barrel owner = PLAYER   monster target = PLAYER
+
+       Both hops move with the mode, which is the proof: the barrel
+       records no owner, so its blast carries source = NULL, and
+       P_DamageMobj's acquisition block is gated on `source &&`.
+
+    2. THE MODE SURVIVES A LEVEL JUMP. G_DeferedInitNew to E1M2, then
+       read the cheat word on the new level: 0x8 (NOTARGET set) in
+       Inspect, 0x0 in the control. It survives the G_PlayerReborn memset.
+
+  Two traps the harness hit first, worth recording because either one
+  produces a CONFIDENT FALSE PASS -- both arms agreeing, which reads as
+  "the fix works" when it means the test never ran:
+
+    - A LETHAL HIT PROVES NOTHING. P_DamageMobj reaches P_KillMobj and
+      RETURNS at p_inter.c:116, before the target-setting block at :149.
+      The first attempt killed both the barrel outright and the monster
+      with the blast, so neither arm ever executed the code under test
+      and both printed target=NULL. The damage has to be survivable at
+      each step: a non-lethal 5 to the barrel first (that is what records
+      the owner), and the monster far enough out that (128 - dist) wounds
+      rather than kills.
+    - AN UNSEEN BARREL DOES NOT EXPLODE ON ANYTHING. P_SpawnMobj does no
+      collision check, so a barrel placed blind can land where
+      PIT_RadiusAttack's own P_CheckSight then drops the blast -- the
+      monster took zero damage and, again, both arms agreed. Fixed by
+      testing 8 compass points with P_CheckSightTrace (DOOM-0011 L3's new
+      helper) and spawning at the first one the monster can see.
+
+  The general lesson for this project's headless self-verification: when
+  both arms of an A/B agree, suspect the harness before believing the
+  result. A control that cannot move is not a control.
 
 - 📋 [DOOM-0295] **L3's torch in-scatter costs 1.05 ms of megakernel -- find out where.**
   Measured on an RX 6600 at the E1M1 nukage courtyard, Ultra RT with HD
@@ -4466,3 +4509,178 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: investigate.
   Lanes: rt, test.
   Source: in-session-2026-08-01.
+
+- 📋 [DOOM-0298] **New liquid surfaces: bubbles in nukage, splashes on lava, and animation that does not visibly repeat.**
+  User, 2026-08-01, on the DOOM-0011 L3 nukage glow: "when we create new
+  surfaces for liquids (water / nukage / lava) please add bubbles to
+  nukage and splashes to the lava. All 3 should have animated surfaces
+  like they currently do in the old graphics, however, it should look
+  more realistic and not so repeated."
+
+  Three liquids, three asks, and the third one is the hard one.
+
+    1. NUKAGE gets bubbles -- rising, surfacing, popping.
+    2. LAVA gets splashes -- spitting, the surface breaking.
+    3. WATER, nukage and lava all keep a MOVING surface. The 1993 flats
+       already animate (NUKAGE1-3, LAVA1-4, a 3-4 frame loop on
+       flattranslation), so this is not a new behaviour -- it is the same
+       behaviour done convincingly.
+
+  "NOT SO REPEATED" IS THE LOAD-BEARING PHRASE, and it names a defect
+  this project has already solved once. DOOM's animated flats repeat in
+  BOTH axes at once: spatially, one 64x64 flat tiles across the whole
+  pool; and temporally, every tile plays the same 3-4 frame loop in
+  lockstep, so a large pool pulses as one surface. Replacing the art
+  alone fixes neither -- a prettier tile tiled the same way is still a
+  grid, which is exactly the "very very tiled" report that produced
+  DOOM-0181.
+
+  So the mechanism is likely to matter more than the texture:
+    - SPATIAL repetition: DOOM-0181's world-keyed stochastic de-tiling
+      (IQ 4-corner blend) already exists and already runs on HD walls and
+      flats. It should be the starting point here rather than a new idea.
+    - TEMPORAL repetition: de-correlate the phase per world position, so
+      neighbouring patches of a pool are at different points in the cycle
+      and the surface never pulses as a unit. DOOM-0183 L4's procedural
+      ripple normal already runs off a world position and a clock, so the
+      hook exists.
+    - BUBBLES and SPLASHES are EVENTS, not a loop, and that is what will
+      sell them. A loop of a bubble is still a loop. Cheapest derived
+      route: hash the world cell to a per-cell phase and spawn a bubble
+      on that cell's own schedule, so the pool is covered in independent
+      events without a particle system or any hand placement.
+
+  Relationship to what already shipped, because this is easy to
+  mis-scope as duplicate work:
+    - DOOM-0183 shipped the nukage's procedural RIPPLE normal (L4), its
+      glow and cast-light. Ripples are not bubbles; that item is about
+      the liquid's material, this one is about its SURFACE MOTION and its
+      art.
+    - DOOM-0042 owns the HD art programme; new liquid art belongs in that
+      pipeline (materials.csv sidecar, palette-locked) rather than beside
+      it.
+    - DOOM-0011 L3 now lights the air above these pools, and DOOM-0293
+      will give them their own fog. Both READ the liquid's identity from
+      the same flat-name flags DOOM-0183 established, so a new liquid
+      surface must keep those flags meaning what they mean or it silently
+      turns the glow and the fog off.
+    - Water has no liquid flag at all yet (DOOM-0183 deliberately
+      deferred water and blood), so item 3 needs that flag added first.
+
+  Needs a design pass before implementation -- /write-spec, then the
+  rule-14 gate. Sequence after DOOM-0293, so the liquid identity data
+  this depends on has settled.
+  **Layman:** Toxic sludge should bubble and lava should spit and splash, and both should keep moving the way they do in the original game -- just convincingly, without the same little loop playing over and over across the whole pool.
+  Kind: feature.
+  Lanes: shaders, assets, liquid.
+  Source: user-request-2026-08-01.
+  Scope narrowed by the user, 2026-08-01, same session: **ULTRA ONLY.**
+
+  That is consistent with the tier rule rather than an exception to it.
+  CLAUDE.md's standing warning is not to gate a feature on Ultra because
+  it is EXPENSIVE -- gate it on the ray-traced view, or ship a cheap
+  approximation for Solid. This one qualifies on the other clause:
+  "Ultra-only is correct only for things that need the HD art itself",
+  and new liquid surfaces are exactly that. Ultra SUBSTITUTES for DOOM's
+  art; Solid enhances it, so a replaced nukage surface is not a Solid
+  feature by definition.
+
+  One question to put to the user at design time rather than decide
+  quietly: the MECHANISM and the ART separate cleanly here. Bubbles and
+  splashes are new art and are Ultra's. But de-correlating the animation
+  phase per world position, so a big pool stops pulsing in lockstep,
+  would work just as well over the ORIGINAL 1993 flats -- and "enhance
+  DOOM's own art" is precisely Solid's brief. Worth asking whether the
+  anti-repetition half should follow into Solid once the Ultra version
+  has proven itself. Not assumed either way here.
+
+- 📋 [DOOM-0299] **Replace the barrel explosion with a modern one (Ultra only).**
+  User, 2026-08-01: "please replace the barrel explosions with better /
+  modern explosions in the Ultra view."
+
+  What is there today is DOOM's MT_BARREL death sequence: a handful of
+  billboard sprite frames (S_BEXP...), camera-facing, paletted, and the
+  same every time. A-Explode fires on one of those frames and does the
+  damage; the LOOK and the gameplay are already separate, which is what
+  makes this safe to replace.
+
+  Ultra only, and that is the tier rule applying rather than bending:
+  this is art SUBSTITUTION, which is Ultra's definition, not an effect
+  held back because it is expensive. Solid keeps DOOM's own explosion
+  sprites -- enhanced, per the tier table, not replaced.
+
+  What the engine can already give it, none of which existed when this
+  was last considered:
+    - Emissive materials feeding the NEE emitter set, so the blast can
+      genuinely LIGHT the room rather than being a bright sprite (the
+      same mechanism DOOM-0183 used for lava and DOOM-0011 L3 now reads
+      for fog).
+    - DOOM-0011's fog march, so the flash can light the smoke and the
+      air around it -- an explosion in fog is most of the effect.
+    - DOOM-0184 (glowing projectiles that cast light) is the same family
+      and should probably be designed with this rather than after it.
+
+  Open at design time: whether this is better art on a billboard, a
+  particle system, or a small volumetric puff -- and whether the smoke
+  should persist. The engine has no particle system today, so "modern
+  explosion" may be a bigger dependency than it sounds; scope that
+  before promising a look. Relates to DOOM-0080 (all sprites -> 3D
+  models in Ultra), which is the general form of this problem.
+
+  Needs a design pass -- /write-spec, then the rule-14 gate.
+  **Layman:** Blowing up a barrel should look like a real explosion -- fire, smoke, light thrown across the room -- instead of the original's few flat frames.
+  Kind: feature.
+  Lanes: shaders, assets, sprites.
+  Source: user-request-2026-08-01.
+
+- 📋 [DOOM-0300] **The torch glow sits still while the fog behind it drifts -- give the light path the billows too.**
+  User, 2026-08-01, on the DOOM-0011 L3 screenshots: "I love the glow of
+  the nukage pools both indoors and outdoors. I also like that it isn't a
+  uniform colour, however, it is static. This is where the Silent Hill 2
+  fog system will help."
+
+  The observation is right and the expected remedy is not, which is why
+  this is its own item. **L1c's SH2 wisps are already shipped and already
+  multiply this term, and they do not move it.** Measured, E1M1 nukage
+  courtyard, by pinning the ripple clock (rb_shotverify's rippleSec) at
+  8 s, 20 s and 32 s and diffing:
+
+      pool crop, drift between t=8 s and t=32 s
+        L3 ON    MAE 6.075 / 255
+        CONTROL  MAE 6.236 / 255   (torch gain 0 -- the sky fog alone)
+
+      the torch layer itself, same time, on vs control
+        t=8 s    MAE 35.790, peak 127
+        t=32 s   MAE 37.167, peak 134
+
+  So L3 adds a very large layer (MAE ~36) that contributes NO extra
+  motion -- turning it on leaves the drift statistically where it was,
+  and its own magnitude moves about 4% across 24 seconds. A big still
+  layer over a moving one is exactly what "it is static" describes.
+
+  Why, and it is not a wiring bug. The glow's brightness IS multiplied by
+  the wisp-modulated sigma, but its ENVELOPE -- Le / d^2 x phase around a
+  fixed lamp -- is what the eye tracks, and that is static by
+  construction. The glow is significant within roughly 64-128 units of
+  its light, while kWispFreq1's noise cell spans 192, so the entire glow
+  sits inside about one cell and brightens or dims as a unit instead of
+  developing internal structure. Octave 2 (2.5x, weight 0.7) is the only
+  part with a comparable scale.
+
+  The missing physics is the fix, and it is the term single scattering is
+  supposed to have: transmittance along the LIGHT path. Today the torch
+  reaches the sample unattenuated, so no billow can ever pass in front of
+  it. Attenuating by exp(-tau) from lamp to sample -- approximated by one
+  wisp tap at the midpoint of that segment, not a march -- makes drifting
+  billows visibly roll through the glow and cut it, which is the SH2 look
+  applied to the light rather than to the medium alone.
+
+  Cost is the reason this is not already done: one 3-D noise tap plus an
+  exp per light per sample, on a term that already measures 1.05 ms.
+  Sequence AFTER DOOM-0295 finds out where that 1.05 ms goes, because the
+  answer may change what this can afford. If it turns out to be register
+  pressure rather than ALU, one extra tap is nearly free.
+  **Layman:** The new glow around lights looks lovely but it does not move, so it reads as a painted patch floating in front of fog that is drifting past it.
+  Kind: enhancement.
+  Lanes: shaders, fog.
+  Source: user-play-test-2026-08-01.
