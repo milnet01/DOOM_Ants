@@ -229,6 +229,11 @@ typedef struct
 rb_seep_t* RB_BuildSeepField(void);
 void       RB_FreeSeepField(rb_seep_t* field);
 
+// DOOM-0011 L3: one cell's air column, in world units. Returns 0 (leaving *fz/*cz
+// untouched) when the cell holds no air at all -- a wall, the void ring, or a shut door.
+// The fog-light bake uses it to place its sight-test sample inside real air.
+int RB_SeepCellAir(const rb_seep_t* field, int ix, int iy, float* fz, float* cz);
+
 // DOOM-0289. Re-run ONLY the sun-clearance march over an existing field: refresh the
 // retained geometry cache from the live sector heights, then re-derive zLo/zHi. Skips the
 // portal graph and the Dijkstra entirely -- a plane that moved without flipping an opening

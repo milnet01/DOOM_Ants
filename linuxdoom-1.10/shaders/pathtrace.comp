@@ -71,6 +71,33 @@ vec2 worldToSeepUV(vec2 worldXY)
     return ((worldXY - seep.origin) * seep.invCell + 0.5) / seep.dims;
 }
 
+// DOOM-0011 L3: the per-cell torch list, on the SAME grid as the seep field (same origin,
+// same cell size, same dims) so it needs no transform of its own. kFogLightsPerCell
+// entries per cell, packed brightest-first and zero-padded:
+//   posR = (world centroid xyz, reach in world units)
+//   leW  = (Le rgb, visibility weight 0..1)
+// A cell with fewer lights than the cap stores reach = 0 in the first unused slot, which
+// is what the loop breaks on.
+//
+// Set 0, binding 6. A storage buffer and not a texture because a light's POSITION must
+// not be interpolated -- blending two neighbouring cells' torches would place a light
+// where there is none. The set changing at a cell edge is not a seam in practice: the
+// bake ranks by the same falloff the march evaluates, so the two lights that trade places
+// at a boundary contribute equally there by construction.
+layout(set = 0, binding = 6, scalar) readonly buffer FogLights {
+    vec4 e[];              // 2 vec4s per light: [2*(cell*N + j)] = posR, [+1] = leW
+} fogLights;
+
+// Cell index for a world XY. Mirrors worldToSeepUV's texel arithmetic exactly -- if the
+// two ever disagree, a fog sample reads its density from one cell and its torches from
+// another, and the mismatch would read as light with no fog around it.
+int fogLightCell(vec2 worldXY)
+{
+    ivec2 c = ivec2(floor((worldXY - seep.origin) * seep.invCell + 0.5));
+    c = clamp(c, ivec2(0), ivec2(seep.dims) - 1);
+    return c.y * int(seep.dims.x) + c.x;
+}
+
 // SVGF denoiser feed (set 2; DOOM-0009 build step 6). Mode 6 writes the G-buffer
 // the temporal/a-trous/composite passes consume instead of a tonemapped pixel:
 // world position+matId, world normal, surface albedo, and the noisy albedo-
@@ -942,6 +969,58 @@ float skyFogOpticalDepth(vec3 ro, vec3 rd, float strength)
 // and kSunDir is a compile-time const, so the question is decidable before the first
 // frame. See marchFog's sunSeen line and spec §4.4's 2026-07-30 amendment.
 
+// DOOM-0011 L3: in-scatter at `p` from the torches that reach it, for a view ray `rd`.
+//
+// The expensive question -- WHICH lights reach this air -- was answered at level load by a
+// real BSP sight test per cell (P_CheckSightTrace), so this is a table read. That is the
+// same substitution DOOM-0276 and DOOM-0289 made for the up-ray and the sun ray, and for
+// the same reason: static geometry plus static emitters means the answer is decidable
+// before the first frame. It is also what makes the term safe to add at all -- with no
+// visibility test a torch would light the air through a wall, and after DOOM-0292 a leak
+// like that is the brightest thing in a dark room.
+//
+// What the bake CANNOT see is a door opening later. The grid is baked with the map as it
+// stands at load, so a torch behind a door that opens mid-play stays unseen until the
+// level reloads. The error is one-directional and that is the point: doors are shut at
+// load, so the failure is a torch that does not light air it could, never one that lights
+// air through a wall.
+vec3 torchInscatter(vec3 p, vec3 rd)
+{
+    int  base = fogLightCell(p.xy) * kFogLightsPerCell * 2;
+    vec3 sum  = vec3(0.0);
+    for (int j = 0; j < kFogLightsPerCell; ++j)
+    {
+        vec4 posR = fogLights.e[base + j * 2];
+        if (posR.w <= 0.0)
+            break;                       // packed brightest-first: no reach, no more lights
+        vec4 leW  = fogLights.e[base + j * 2 + 1];
+
+        vec3  toL = posR.xyz - p;
+        float d2  = dot(toL, toL);
+        // Windowed inverse-square. `w` reaches 0 exactly at the light's own baked reach,
+        // so the list can be finite without the cut showing as a ring in the air.
+        //
+        // The square is written out rather than pow(x, 2.0) so the hottest line in the
+        // feature -- 24 march samples x 2 lights x every fog pixel -- does not depend on
+        // the driver folding a constant exponent. MEASURED, because the saving was assumed
+        // first and the assumption was wrong: RADV on an RX 6600 folds it already, and the
+        // megakernel is 11.18 ms either way. Kept as the multiply because it costs nothing
+        // and does not rely on that, but it is not where L3's 1.05 ms lives.
+        float x   = d2 / (posR.w * posR.w);
+        float w   = clamp(1.0 - x * x, 0.0, 1.0);
+        if (w <= 0.0)
+            continue;
+        float fall = (w * w) / (d2 + kTorchSoftR2);
+        // Same normalisation as the sun's sunGain: fogPhaseHG integrates to 1 over the
+        // sphere, so 4*PI makes g = 0 reproduce the isotropic answer exactly and g = 0.40
+        // spend that same energy directionally.
+        float ph   = 4.0 * PI * fogPhaseHG(dot(rd, toL * inversesqrt(max(d2, 1e-6))),
+                                           kFogAnisotropy);
+        sum += leW.rgb * leW.w * fall * ph;
+    }
+    return sum * kTorchShaftStrength;
+}
+
 // Returns (inscatter.rgb, transmittance). Linear radiance. rb_fog>0 checked by the caller.
 vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)
 {
@@ -1091,6 +1170,13 @@ vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)
         float skyLight = mix(kIndoorSkyLight, 1.0, seepT);
         vec3  Ls    = kFogColor * kSkyShaftStrength
                     * (kSkyAmbientFrac * skyLight + (1.0 - kSkyAmbientFrac) * sunLit);
+        // DOOM-0011 L3: the torches. A plain ADDEND, with no indoor weighting of any kind
+        // -- see kFogLightsPerCell on why the "faint outdoors, strong indoors" the user
+        // asked for is a consequence of this line being an addition rather than a curve
+        // written into it. Unlike the sky term this one is NOT tinted by kFogColor: a
+        // torch has its own colour (the emitter's Le) and painting it near-white would
+        // throw that away.
+        Ls += torchInscatter(p, rd);
         inscatter += trans * sigma * Ls * dt;
         trans     *= exp(-sigma * dt);
         if (trans < 0.003) break;                        // thick fog occludes the rest cheaply

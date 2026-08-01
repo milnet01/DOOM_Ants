@@ -220,6 +220,10 @@ boolean P_TryMove (mobj_t* thing, fixed_t x, fixed_t y);
 boolean P_TeleportMove (mobj_t* thing, fixed_t x, fixed_t y);
 void	P_SlideMove (mobj_t* mo);
 boolean P_CheckSight (mobj_t* t1, mobj_t* t2);
+// DOOM-0011 L3: the same BSP walk with both ends as world coordinates and no REJECT
+// pass, for callers that have points rather than objects (the fog-light bake).
+boolean P_CheckSightTrace (fixed_t x1, fixed_t y1, fixed_t z1,
+			   fixed_t x2, fixed_t y2, fixed_t zBot, fixed_t zTop);
 void 	P_UseLines (player_t* player);
 
 boolean P_ChangeSector (sector_t* sector, boolean crunch);

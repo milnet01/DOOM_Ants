@@ -291,6 +291,47 @@ boolean P_CrossBSPNode (int bspnum)
 
 
 //
+// P_CheckSightTrace
+// DOOM-0011 L3. The half of P_CheckSight that walks the BSP, with both ends given as
+// plain world coordinates instead of as mobjs. The fog-light bake asks "can this cell of
+// air see that torch?" and neither end of that question is an object, so this exists to
+// be called without inventing one. `zBot`/`zTop` are the TARGET's world-z extent -- the
+// band the trace must reach some part of -- which is what lets P_CheckSight hand over its
+// own (t2->z, t2->z + t2->height) unchanged.
+//
+// Deliberately NOT doing the REJECT check: that needs a subsector at each end to index
+// the matrix with, and the caller here has a grid cell rather than a leaf. Callers that
+// have both subsectors (P_CheckSight) still do it first, as the cheap rejection it is.
+//
+boolean
+P_CheckSightTrace
+( fixed_t	x1,
+  fixed_t	y1,
+  fixed_t	z1,
+  fixed_t	x2,
+  fixed_t	y2,
+  fixed_t	zBot,
+  fixed_t	zTop )
+{
+    validcount++;
+
+    sightzstart = z1;
+    topslope    = zTop - sightzstart;
+    bottomslope = zBot - sightzstart;
+
+    strace.x  = x1;
+    strace.y  = y1;
+    t2x       = x2;
+    t2y       = y2;
+    strace.dx = x2 - x1;
+    strace.dy = y2 - y1;
+
+    // the head node is the last node output
+    return P_CrossBSPNode (numnodes-1);
+}
+
+
+//
 // P_CheckSight
 // Returns true
 //  if a straight line between t1 and t2 is unobstructed.
@@ -329,21 +370,12 @@ P_CheckSight
     // Now look from eyes of t1 to any part of t2.
     sightcounts[1]++;
 
-    validcount++;
-	
-    sightzstart = t1->z + t1->height - (t1->height>>2);
-    topslope = (t2->z+t2->height) - sightzstart;
-    bottomslope = (t2->z) - sightzstart;
-	
-    strace.x = t1->x;
-    strace.y = t1->y;
-    t2x = t2->x;
-    t2y = t2->y;
-    strace.dx = t2->x - t1->x;
-    strace.dy = t2->y - t1->y;
-
-    // the head node is the last node output
-    return P_CrossBSPNode (numnodes-1);	
+    // Look from the eyes of t1 to any part of t2. The eye height and the target band are
+    // unchanged from the original; only the trace itself moved out (P_CheckSightTrace).
+    return P_CheckSightTrace (t1->x, t1->y,
+			      t1->z + t1->height - (t1->height>>2),
+			      t2->x, t2->y,
+			      t2->z, t2->z + t2->height);
 }
 
 

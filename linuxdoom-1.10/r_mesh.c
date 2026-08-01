@@ -1404,6 +1404,24 @@ int RB_SeepOpeningsChanged(void)
     return changed;
 }
 
+// DOOM-0011 L3: the air column of one cell, for the fog-light bake. rb_cellgeom_t is
+// private to this file -- the bake lives in r_vulkan.cpp because that is where the
+// emitter set is, and it needs exactly two numbers per cell: is there air here, and
+// between which heights. Everything else about the geometry cache stays behind this
+// accessor rather than leaking the struct into a second translation unit.
+int RB_SeepCellAir(const rb_seep_t* f, int ix, int iy, float* fz, float* cz)
+{
+    const rb_cellgeom_t* c;
+    if (!f || !f->geom || ix < 0 || iy < 0 || ix >= f->w || iy >= f->h)
+        return 0;
+    c = &((const rb_cellgeom_t*)f->geom)[iy * f->w + ix];
+    if (c->solid)
+        return 0;                       // wall, void, or a shut door: no air to light
+    if (fz) *fz = c->fz;
+    if (cz) *cz = c->cz;
+    return 1;
+}
+
 void RB_FreeSeepField(rb_seep_t* f)
 {
     if (!f)

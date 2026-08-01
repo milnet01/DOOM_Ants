@@ -43,6 +43,7 @@
 #ifdef DOOM_DEV
 #include <sys/stat.h>  // mkdir() for the DOOM-0294 developer screenshot folder
 #endif
+#include <unordered_map> // DOOM-0011 L3: emitter -> lattice-cell clustering for the fog lights
 #include <vector>
 
 // POD-only, DOOM-header-free seam: the C geometry builder (r_mesh.c) and the
@@ -86,6 +87,12 @@ extern "C" {
     // screenblocks is genuinely `int` in m_menu.c already, so no mismatch there.
     extern int gamestate;                       // doomdef.h: gamestate_t, GS_LEVEL == 0
     extern int screenblocks;                    // m_menu.c: HUD size 0-10 (DOOM-0148 clamp)
+    // DOOM-0011 L3: the map's own line-of-sight test, for the fog-light bake (p_sight.c).
+    // Mirrored here for the same reason as the externs above -- p_local.h pulls the whole
+    // playsim header chain, and this file needs exactly one function out of it. `fixed_t`
+    // is `int` (m_fixed.h) so the parameters are like-for-like; the return is DOOM's
+    // `boolean`, an int-width enum, mirrored as int by the same reasoning as gamestate.
+    int P_CheckSightTrace(int x1, int y1, int z1, int x2, int y2, int zBot, int zTop);
 }
 
 // The GPU control struct mirrors this byte-for-byte in pathtrace.comp (std430).
@@ -264,6 +271,14 @@ extern "C" const unsigned char* M_MenuLogoRGBA(int* out_w, int* out_h);
 extern "C" { extern int myargc; extern char** myargv; }
 extern "C" int stbi_write_png(const char* filename, int w, int h, int comp,
                               const void* data, int stride_in_bytes);
+
+// DOOM-0011 L3: both are defined beside the emitter set, because the grid is baked from
+// it — but RB_Vulkan_Init needs the upload half far earlier, to stand an empty grid in
+// binding 6 before any level exists. Declared out here rather than inside the anonymous
+// namespace below: the definitions are at file scope, and a declaration in the anonymous
+// namespace would be a DIFFERENT function that is never defined.
+void UploadFogLightGrid(const std::vector<float>& grid, uint32_t cells);
+void BuildFogLightGrid();
 
 namespace {
 
@@ -790,6 +805,15 @@ struct VulkanState
     // between two open heights flips no opening and would otherwise freeze its beam.
     bool                  clearanceDirty = false;
     bool                  seepEasing = false;   // cur has not caught up with target yet
+    // DOOM-0011 L3: the per-cell torch list, riding the SEEP GRID's cells (same origin,
+    // same cell size, same dims -- so it reuses the seep UBO's transform and adds none of
+    // its own). Set 0, binding 6. Baked at level load: which static emitters can actually
+    // SEE each cell of air, answered once with the map's own BSP rather than with a ray
+    // per sample per light. Two vec4s per light, RB_FOG_LIGHTS_PER_CELL lights per cell.
+    VkBuffer              fogLightBuf    = VK_NULL_HANDLE;
+    VkDeviceMemory        fogLightMem    = VK_NULL_HANDLE;
+    void*                 fogLightMapped = nullptr;
+    VkDeviceSize          fogLightBytes  = 0;
     VkBuffer              seepStaging    = VK_NULL_HANDLE;
     VkDeviceMemory        seepStagingMem = VK_NULL_HANDLE;
     void*                 seepStagingMapped = nullptr;
@@ -2408,7 +2432,7 @@ static inline double CpuNowMs()
 // address), and the pathtrace.comp megakernel. RT-only; never called without it.
 void CreateRtComputePipeline()
 {
-    VkDescriptorSetLayoutBinding binds[6] = {};
+    VkDescriptorSetLayoutBinding binds[7] = {};
     binds[0].binding         = 0;   // TLAS
     binds[0].descriptorType  = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
     binds[0].descriptorCount = 1;
@@ -2437,23 +2461,32 @@ void CreateRtComputePipeline()
     binds[5].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     binds[5].descriptorCount = 1;
     binds[5].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+    // DOOM-0011 L3. A storage buffer rather than a seventh channel on the seep image:
+    // torch POSITIONS must not be interpolated (blending two cells' lights would place a
+    // light where there is none), and the field's four half-float channels are full
+    // anyway. It rides the seep grid's cells, so binding 5's transform serves both.
+    binds[6].binding         = 6;   // per-cell torch list (2 vec4 per light)
+    binds[6].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    binds[6].descriptorCount = 1;
+    binds[6].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
 
     VkDescriptorSetLayoutCreateInfo dlci = {};
     dlci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    dlci.bindingCount = 6;
+    dlci.bindingCount = 7;
     dlci.pBindings    = binds;
     Check(vkCreateDescriptorSetLayout(g.device, &dlci, nullptr, &g.rtDsLayout),
           "vkCreateDescriptorSetLayout(rt)");
 
-    VkDescriptorPoolSize pools[4] = {};
+    VkDescriptorPoolSize pools[5] = {};
     pools[0].type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR; pools[0].descriptorCount = 1;
     pools[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;              pools[1].descriptorCount = 2;
     pools[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;     pools[2].descriptorCount = 2;
     pools[3].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;             pools[3].descriptorCount = 1;
+    pools[4].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;             pools[4].descriptorCount = 1;  // L3 fog lights
     VkDescriptorPoolCreateInfo pci = {};
     pci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     pci.maxSets       = 1;
-    pci.poolSizeCount = 4;
+    pci.poolSizeCount = 5;
     pci.pPoolSizes    = pools;
     Check(vkCreateDescriptorPool(g.device, &pci, nullptr, &g.rtDsPool),
           "vkCreateDescriptorPool(rt)");
@@ -6772,6 +6805,9 @@ extern "C" void RB_Vulkan_Init(void)
         // never be dispatched with an unwritten binding, and the title screen can
         // reach the RT path before any map is loaded.
         UploadSeepField(nullptr);
+        // DOOM-0011 L3: same reasoning for binding 6 — an empty grid, so every slot's
+        // reach is 0 and the march's torch loop breaks on its first iteration.
+        UploadFogLightGrid(std::vector<float>(), 0);
         BuildFogNoiseVolume();   // DOOM-0011 L1c: binding 3, once; never rebuilt
         CreateBakePipeline();          // GI bake pass (step 4b-ii), dispatched per level
         CreateSvgfPipelines();         // denoiser passes (step 6); needs svgfDsLayout
@@ -7300,6 +7336,341 @@ void BuildEmitterList()
     printf("RB_Vulkan: %u static emitter triangles for NEE (power-sampled; +emissive sprites/frame).\n",
            (uint32_t)g.staticWgt.size());
     fflush(stdout);
+}
+
+// ---------------------------------------------------------------------------
+// DOOM-0011 L3: the fog-light grid — which torches light which cell of air.
+//
+// The fog march needs local lights, and the expensive part of that is not the falloff
+// curve, it is VISIBILITY: with no occlusion test a torch lights the air through a wall,
+// and since DOOM-0292 gated the sky's share on sky exposure, a leak like that is the
+// brightest thing in a dark room. A ray per light per sample is exactly what DOOM-0289
+// deleted, so the answer is baked instead, once, at level load.
+//
+// It is the same substitution DOOM-0276 and DOOM-0289 already made twice over: the static
+// world plus the static emitter set means "can this air see that torch" is decidable
+// before the first frame. The difference is that this one does not have to approximate —
+// DOOM ships a line-of-sight test that every monster uses, so the bake asks the map's own
+// BSP (P_CheckSightTrace) rather than re-deriving visibility from the cell grid. Half a
+// cell of accuracy was acceptable for a roofline (DOOM-0276); it is not for a light leak,
+// because DOOM walls are routinely thinner than the 64-unit cell and a cell-centre test
+// would miss them.
+//
+// Runtime cost of all this: one buffer read per fog sample. No rays.
+// ---------------------------------------------------------------------------
+
+// MUST match kFogLightsPerCell (pt_common.glsl) — the buffer's stride is a function of it
+// on both sides, and a mismatch reads torches from the wrong cell rather than failing.
+static const uint32_t RB_FOG_LIGHTS_PER_CELL = 2;
+// Emitter triangles are clustered onto a 64-unit lattice before they become lights. Two
+// reasons, and the first is quality rather than cost: a single light panel is at least two
+// emitter TRIANGLES, so without this both of a cell's slots would go to the two halves of
+// one lamp and the room's second light would never appear. 64 is the DOOM flat's own
+// period and the seep grid's own starting cell — a number the map supplies, not one
+// chosen to make a map look right. Snapping to a lattice rather than merging greedily
+// also keeps the result independent of emitter order, and cannot chain a long light
+// strip into one point light at its centre.
+static const float    RB_FOG_LIGHT_CLUSTER = 64.0f;
+// A light's reach is derived from its OWN radiant intensity: contribution falls as I/d^2,
+// so the distance at which it stops mattering is sqrt(I / cutoff). That is what keeps one
+// constant working across both IWADs — a dim wall panel and a lava pool get different
+// reaches without either being tuned, and the measured medians agree closely across the
+// two (7987 on doom.wad, 9900 on doom2.wad), which is the evidence that one constant can
+// serve both.
+//
+// The cutoff is "the raw I/d^2 at which this light stops being worth carrying", and it is
+// pinned to something real rather than picked: 2% of the sky's indoor in-scatter floor,
+// which after kTorchShaftStrength works out at I/d^2 = 0.04. A median light therefore
+// reaches ~450 units and the brightest in DOOM 1 wants 1484, which the cap turns into a
+// smooth fade rather than a cut (the window is evaluated against the STORED reach, so
+// capping shortens the glow instead of leaving a ring at 512).
+static const float    RB_FOG_LIGHT_CUTOFF   = 0.04f;
+static const float    RB_FOG_LIGHT_MAXREACH = 512.0f;
+// Height above a cell's floor at which visibility is tested. Indoors the fog is a knee-high
+// pool (kFogIndoorPool = 18, an e-fold above the floor), so this is where the air that the
+// torch has to light actually is — testing at the light's own height would ask about air
+// the march barely samples.
+static const float    RB_FOG_LIGHT_TESTZ    = 24.0f;
+// Sight tests per cell, on a 2x2 sub-lattice. Visibility is otherwise binary per cell, and
+// a binary answer on a 64-unit grid puts a hard edge across the fog at every doorway; the
+// fraction that pass grades it instead. It is also the bake's whole cost multiplier, which
+// is why it is 4 and not 16.
+static const int      RB_FOG_LIGHT_SUBS     = 2;   // per axis -> 4 samples
+// How many candidates a cell will sight-test before giving up. Candidates are ranked by
+// their unoccluded contribution first, so this is "test the four that could matter", and
+// it is what bounds the bake on a map with hundreds of emitters rather than dozens.
+static const int      RB_FOG_LIGHT_PROBES   = 4;
+
+// One clustered light: a point-light stand-in for a group of emitter triangles.
+struct RbFogLight {
+    float x, y, z;          // power-weighted centroid, world units
+    float r, gr, b;         // radiant intensity = sum(Le * area) over the cluster
+    float lum;              // max(r, gr, b) — what the reach and the ranking key on
+    float reach;            // world units; contribution is exactly zero beyond it
+};
+
+// Build the clustered static-light set from the merged emitter buffer's STATIC slice.
+// [0, staticN) only — INV-2. Dynamic sprite emitters (flying fireballs, the muzzle flash,
+// the flashlight) must never scatter, and they are also not knowable at bake time.
+static std::vector<RbFogLight> ClusterStaticFogLights(int staticN)
+{
+    std::vector<RbFogLight> out;
+    if (staticN <= 0 || !g.emitMapped)
+        return out;
+    const float* em = (const float*)g.emitMapped;
+
+    // key -> index into `out`. The key is the lattice cell, so the clustering is a pure
+    // function of position: same map, same lights, in any emitter order.
+    std::unordered_map<uint64_t, int> byCell;
+    std::vector<float>                area;      // total emitting area per cluster
+
+    for (int e = 0; e < staticN; e++)
+    {
+        const float* rec = &em[(size_t)e * 14];
+        // Record layout (pt_common.glsl:52-56): v0[3] v1[3] v2[3] Le[3] cdf pdf.
+        const float e1[3] = { rec[3] - rec[0], rec[4] - rec[1], rec[5] - rec[2] };
+        const float e2[3] = { rec[6] - rec[0], rec[7] - rec[1], rec[8] - rec[2] };
+        const float nx = e1[1] * e2[2] - e1[2] * e2[1];
+        const float ny = e1[2] * e2[0] - e1[0] * e2[2];
+        const float nz = e1[0] * e2[1] - e1[1] * e2[0];
+        const float a  = 0.5f * sqrtf(nx * nx + ny * ny + nz * nz);
+        if (a < 1e-4f)
+            continue;                             // degenerate triangle emits nothing
+        const float cx = (rec[0] + rec[3] + rec[6]) * (1.0f / 3.0f);
+        const float cy = (rec[1] + rec[4] + rec[7]) * (1.0f / 3.0f);
+        const float cz = (rec[2] + rec[5] + rec[8]) * (1.0f / 3.0f);
+
+        // Le is RADIANCE (emissive_derive.h: palette mean x kEmissiveScale). A point
+        // light wants INTENSITY, which is radiance x area — so a big light panel really
+        // does glow more than a small one, without a size dial to set.
+        const int64_t kx = (int64_t)floorf(cx / RB_FOG_LIGHT_CLUSTER);
+        const int64_t ky = (int64_t)floorf(cy / RB_FOG_LIGHT_CLUSTER);
+        const int64_t kz = (int64_t)floorf(cz / RB_FOG_LIGHT_CLUSTER);
+        const uint64_t key = ((uint64_t)(kx & 0x1FFFFF) << 42)
+                           | ((uint64_t)(ky & 0x1FFFFF) << 21)
+                           |  (uint64_t)(kz & 0x1FFFFF);
+
+        auto it = byCell.find(key);
+        int  ci;
+        if (it == byCell.end())
+        {
+            ci = (int)out.size();
+            byCell.emplace(key, ci);
+            out.push_back(RbFogLight{ 0, 0, 0, 0, 0, 0, 0, 0 });
+            area.push_back(0.0f);
+        }
+        else
+            ci = it->second;
+
+        RbFogLight& L = out[(size_t)ci];
+        L.x  += cx * a;  L.y += cy * a;  L.z += cz * a;   // area-weighted centroid
+        L.r  += rec[9]  * a;                              // intensity = sum(Le * area)
+        L.gr += rec[10] * a;
+        L.b  += rec[11] * a;
+        area[(size_t)ci] += a;
+    }
+
+    // Finish the centroids, derive each reach, and DROP the lights that carry no light.
+    // A material can be in the emitter set with a black Le (INV-7's derive mechanism keys
+    // on Le > 0 per material, and a cluster can still average to nothing), and a zero-
+    // intensity entry would otherwise occupy one of a cell's four probe slots and push a
+    // real torch out of the ranking. Measured on E1M1 before this: the reported intensity
+    // range started at 0.
+    size_t keep = 0;
+    for (size_t i = 0; i < out.size(); i++)
+    {
+        RbFogLight& L = out[i];
+        const float inv = 1.0f / area[i];
+        L.x *= inv; L.y *= inv; L.z *= inv;
+        L.lum   = fmaxf(L.r, fmaxf(L.gr, L.b));
+        if (L.lum <= 0.0f)
+            continue;
+        L.reach = sqrtf(L.lum / RB_FOG_LIGHT_CUTOFF);
+        if (L.reach > RB_FOG_LIGHT_MAXREACH) L.reach = RB_FOG_LIGHT_MAXREACH;
+        out[keep++] = L;
+    }
+    out.resize(keep);
+    return out;
+}
+
+// (Re)create the fog-light buffer and point set 0's binding 6 at it. `cells` is the seep
+// grid's cell count; a level with no field at all still gets a one-cell buffer, because a
+// dispatched set may not have an unwritten binding and the title screen reaches the RT
+// path before any map is loaded (same reason UploadSeepField stands up a 1x1 image).
+void UploadFogLightGrid(const std::vector<float>& grid, uint32_t cells)
+{
+    const VkDeviceSize want = (VkDeviceSize)(cells ? cells : 1u)
+                            * RB_FOG_LIGHTS_PER_CELL * 8u * sizeof(float);
+
+    if (g.fogLightBytes < want)
+    {
+        if (g.fogLightMapped) { vkUnmapMemory(g.device, g.fogLightMem); g.fogLightMapped = nullptr; }
+        if (g.fogLightBuf)    { vkDestroyBuffer(g.device, g.fogLightBuf, nullptr); g.fogLightBuf = VK_NULL_HANDLE; }
+        if (g.fogLightMem)    { vkFreeMemory(g.device, g.fogLightMem, nullptr);    g.fogLightMem = VK_NULL_HANDLE; }
+        CreateRtBuffer(want, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                       &g.fogLightBuf, &g.fogLightMem);
+        Check(vkMapMemory(g.device, g.fogLightMem, 0, VK_WHOLE_SIZE, 0, &g.fogLightMapped),
+              "vkMapMemory(fog lights)");
+        g.fogLightBytes = want;
+    }
+
+    std::memset(g.fogLightMapped, 0, (size_t)g.fogLightBytes);
+    if (!grid.empty())
+        std::memcpy(g.fogLightMapped, grid.data(),
+                    std::min((size_t)g.fogLightBytes, grid.size() * sizeof(float)));
+
+    if (g.rtDs == VK_NULL_HANDLE)
+        return;
+    VkDescriptorBufferInfo bi = {};
+    bi.buffer = g.fogLightBuf;
+    bi.offset = 0;
+    bi.range  = VK_WHOLE_SIZE;
+    VkWriteDescriptorSet w = {};
+    w.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    w.dstSet          = g.rtDs;
+    w.dstBinding      = 6;
+    w.descriptorCount = 1;
+    w.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    w.pBufferInfo     = &bi;
+    vkUpdateDescriptorSets(g.device, 1, &w, 0, nullptr);
+}
+
+// Bake the per-cell torch list for the current level and upload it. Runs once per level,
+// after both the seep field (which owns the grid and its per-cell geometry) and the static
+// emitter set exist. Safe to call with neither: it uploads an empty grid, and the shader's
+// reach == 0 test then skips every slot, so the fog is exactly its pre-L3 self.
+void BuildFogLightGrid()
+{
+    const rb_seep_t* f = g.seepField;
+    const uint32_t   cells = (f ? (uint32_t)(f->w * f->h) : 0u);
+    std::vector<float> grid;
+
+    if (!g.rtEnabled || !f || cells == 0)
+    {
+        UploadFogLightGrid(grid, cells);
+        return;
+    }
+
+    const double t0     = CpuNowMs();
+    const auto   lights = ClusterStaticFogLights((int)g.staticWgt.size());
+    grid.assign((size_t)cells * RB_FOG_LIGHTS_PER_CELL * 8u, 0.0f);
+
+    // Ranking key, and it is deliberately the SAME curve the shader evaluates
+    // (torchInscatter): the two lights that trade places at a cell boundary then contribute
+    // equally there by construction, so the set changing between cells is a second-order
+    // step rather than a seam. Phase is left out — it depends on the view ray, which the
+    // bake does not have, and it is a per-sample factor common to every light anyway.
+    const float kSoftR2 = 32.0f * 32.0f;         // mirrors kTorchSoftR2 (pt_common.glsl)
+    auto score = [&](const RbFogLight& L, float d2) -> float {
+        const float r2 = L.reach * L.reach;
+        if (d2 >= r2) return 0.0f;
+        const float win = 1.0f - (d2 / r2) * (d2 / r2);   // mirrors kTorchWindowPow = 2
+        return L.lum * win * win / (d2 + kSoftR2);
+    };
+
+    // Intensity stats, and the MEDIAN is the load-bearing one: kTorchShaftStrength is set
+    // against a typical light, not the brightest. Tuning it against the maximum was tried
+    // first and left every ordinary wall panel about 17x too dim to see (measured on E1M1,
+    // where one lava-lit cluster is 83741 against a median of a few thousand).
+    int    lit = 0, sightTests = 0, air = 0, candCells = 0;
+    double statMin = 0.0, statMed = 0.0, statMax = 0.0;
+    if (!lights.empty())
+    {
+        std::vector<float> lums;
+        lums.reserve(lights.size());
+        for (size_t i = 0; i < lights.size(); i++)
+            lums.push_back(lights[i].lum);
+        std::sort(lums.begin(), lums.end());
+        statMin = lums.front();
+        statMed = lums[lums.size() / 2];
+        statMax = lums.back();
+    }
+
+    std::vector<std::pair<float, int>> cand;     // (unoccluded score, light index)
+    for (int iy = 0; iy < f->h; iy++)
+    for (int ix = 0; ix < f->w; ix++)
+    {
+        float fz, cz;
+        if (!RB_SeepCellAir(f, ix, iy, &fz, &cz))
+            continue;                            // wall, void or shut door: no air to light
+        air++;
+        const float cx = f->originX + ix * f->cell;
+        const float cy = f->originY + iy * f->cell;
+        // Test where the fog actually is, not where the light is: a knee-high indoor pool
+        // (kFogIndoorPool), clamped into this cell's own air column so a crawlspace does
+        // not put the sample inside its ceiling.
+        float tz = fz + RB_FOG_LIGHT_TESTZ;
+        if (tz > cz - 4.0f) tz = fz + 0.5f * (cz - fz);
+
+        cand.clear();
+        for (size_t li = 0; li < lights.size(); li++)
+        {
+            const RbFogLight& L = lights[li];
+            const float dx = L.x - cx, dy = L.y - cy, dz = L.z - tz;
+            const float d2 = dx * dx + dy * dy + dz * dz;
+            const float s  = score(L, d2);
+            if (s > 0.0f)
+                cand.emplace_back(s, (int)li);
+        }
+        if (!cand.empty()) candCells++;
+        if (cand.empty())
+            continue;
+        std::sort(cand.begin(), cand.end(),
+                  [](const std::pair<float,int>& a, const std::pair<float,int>& b) {
+                      return a.first > b.first;
+                  });
+
+        // Sight-test the best few and keep the first RB_FOG_LIGHTS_PER_CELL that any part
+        // of this cell can actually see. Ranking before testing is what bounds the bake:
+        // a map with hundreds of emitters pays the same handful of BSP walks per cell as
+        // one with a dozen.
+        const int probes = (int)std::min((size_t)RB_FOG_LIGHT_PROBES, cand.size());
+        uint32_t  kept   = 0;
+        float*    slot   = &grid[((size_t)iy * f->w + ix) * RB_FOG_LIGHTS_PER_CELL * 8u];
+        for (int c = 0; c < probes && kept < RB_FOG_LIGHTS_PER_CELL; c++)
+        {
+            const RbFogLight& L = lights[(size_t)cand[(size_t)c].second];
+            int seen = 0;
+            for (int sy = 0; sy < RB_FOG_LIGHT_SUBS; sy++)
+            for (int sx = 0; sx < RB_FOG_LIGHT_SUBS; sx++)
+            {
+                // Sub-lattice inside the cell, at the quarter points. A sample that lands
+                // inside a wall simply fails the trace, which is what grades the edge.
+                const float ox = ((sx + 0.5f) / RB_FOG_LIGHT_SUBS - 0.5f) * f->cell;
+                const float oy = ((sy + 0.5f) / RB_FOG_LIGHT_SUBS - 0.5f) * f->cell;
+                sightTests++;
+                if (P_CheckSightTrace((int)((cx + ox) * 65536.0f), (int)((cy + oy) * 65536.0f),
+                                      (int)(tz * 65536.0f),
+                                      (int)(L.x * 65536.0f), (int)(L.y * 65536.0f),
+                                      (int)((L.z - 8.0f) * 65536.0f),
+                                      (int)((L.z + 8.0f) * 65536.0f)))
+                    seen++;
+            }
+            if (!seen)
+                continue;
+            const float vis = (float)seen / (float)(RB_FOG_LIGHT_SUBS * RB_FOG_LIGHT_SUBS);
+            float* e = slot + kept * 8u;
+            e[0] = L.x;  e[1] = L.y;  e[2] = L.z;  e[3] = L.reach;
+            e[4] = L.r;  e[5] = L.gr; e[6] = L.b;  e[7] = vis;
+            kept++;
+        }
+        if (kept)
+            lit++;
+    }
+
+    const double ms = CpuNowMs() - t0;
+    // The counts are the cheap proof the bake did what it claims. "0 lit cells" with a
+    // non-zero light count means the sight test is rejecting everything (a bad z, or a
+    // grid/world transform mismatch) — which on screen looks exactly like L3 not being
+    // wired in at all, and would otherwise be indistinguishable from it.
+    printf("RB_Vulkan: DOOM-0011 L3 fog lights — %u emitter tris -> %u clustered lights "
+           "(intensity %.0f / %.0f med / %.0f), %d air / %d with a candidate / %d lit of %u cells, %d sight tests (%.1f ms).\n",
+           (uint32_t)g.staticWgt.size(), (uint32_t)lights.size(),
+           statMin, statMed, statMax, air, candCells, lit, cells, sightTests, ms);
+    fflush(stdout);
+
+    UploadFogLightGrid(grid, cells);
 }
 
 // 16 floats per GI probe: pos[3] + pad + SH-L1 directional irradiance (channel-
@@ -7893,6 +8264,12 @@ extern "C" void RB_Vulkan_BuildLevel(void)
     // Build step 3b: extract this level's NEE emitter triangles from the mesh +
     // the WAD-global Le table. No-op without RT (or before the atlas is uploaded).
     BuildEmitterList();
+
+    // DOOM-0011 L3: which of those emitters lights which cell of air. Must come after
+    // BOTH the emitter list (it clusters the static slice) and the seep field above (it
+    // rides that grid and sight-tests from its per-cell floors), which is why it sits
+    // here rather than beside either one.
+    BuildFogLightGrid();
 
     // Build step 4b-i: place this level's per-subsector GI probes. (The bake that
     // fills them — 4b-ii — runs after this; 4c reads them in the megakernel.)
@@ -9663,6 +10040,11 @@ extern "C" void RB_Vulkan_Shutdown(void)
         if (g.seepUboMem)   vkFreeMemory(g.device, g.seepUboMem, nullptr);
         if (g.seepStaging)    vkDestroyBuffer(g.device, g.seepStaging, nullptr);   // DOOM-0281
         if (g.seepStagingMem) vkFreeMemory(g.device, g.seepStagingMem, nullptr);
+        // DOOM-0011 L3: the per-cell torch list. Persistently mapped, so it unmaps here
+        // beside the buffer rather than at the end of each bake.
+        if (g.fogLightMapped) vkUnmapMemory(g.device, g.fogLightMem);
+        if (g.fogLightBuf)    vkDestroyBuffer(g.device, g.fogLightBuf, nullptr);
+        if (g.fogLightMem)    vkFreeMemory(g.device, g.fogLightMem, nullptr);
         // DOOM-0289: the retained CPU-side field, which owns the per-cell geometry cache
         // the clearance-only rebuild marches over. It has no GPU lifetime of its own, so
         // it goes here beside the image it feeds.

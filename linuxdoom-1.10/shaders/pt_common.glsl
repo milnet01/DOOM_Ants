@@ -135,7 +135,57 @@ const float kSkyShaftStrength   = 0.85;          // sky in-scatter gain (L1/L2).
                                  // It must be applied by every in-scatter site, the closed-form
                                  // sky branches included, or the seam where sky meets wall shows
                                  // two different fog brightnesses.
-const float kTorchShaftStrength = 1.0;           // static-emitter in-scatter gain (L3)
+// DOOM-0011 L3: static-emitter in-scatter gain. The plan carried 1.0 as a placeholder;
+// this is what the arithmetic gives once the buffer's units are settled.
+//
+// SET AGAINST THE MEDIAN LIGHT, NOT THE BRIGHTEST -- and that was learned the expensive
+// way. The bake stores radiant INTENSITY (Le x emitting area), and on E1M1 those run
+// 0 .. 7987 median .. 83741: one lava-lit cluster is seventeen times a typical wall panel.
+// Tuning against the maximum put the whole feature at the measurement noise floor (an A/B
+// against the same build with this constant at 0 scored MAE 0.001/255 -- i.e. nothing) and
+// a 1000x gain then proved the term was wired all along, just invisible on every ordinary
+// light in the map. The median is the number a player sees.
+//
+// So: peak at the lamp = intensity/kTorchSoftR2 = 7.8 for a median light, times the phase
+// (1.0 isotropic, 3.9 looking into it). Putting that peak at roughly 4x the sky's indoor
+// in-scatter floor -- kSkyAmbientFrac * kIndoorSkyLight * kFogColor * kSkyShaftStrength =
+// 0.137 -- fixes the constant at 0.55 / (7.8 * 1.5).
+//
+// What that buys, for a MEDIAN light, against the sky term it adds to:
+//     64 units:  equal to the indoor sky floor   (+45% on the outdoor sky term)
+//    128 units:  a quarter of it                 (+11% outdoors)
+//    450 units:  its derived reach; the window is 0 here
+// The outdoor:indoor ratio of ~2.2x is kIndoorSkyLight's 0.45 read back out, which is
+// the point: the contrast is DOOM-0292's, not a second curve written into this line.
+const float kTorchShaftStrength = 0.047;
+// DOOM-0011 L3: local lights in the fog. The three constants below are the SHAPE of a
+// torch's glow; the LIST of torches reaching a given cell of air is baked at level load
+// (RB_FogLightGrid in r_vulkan.cpp) onto the seep grid, so the march spends no ray on
+// visibility and no scan over the emitter set -- one buffer read per sample.
+//
+// There is deliberately NO indoor multiplier here, and that is the whole design rather
+// than an omission. The user asked for a light to read "a little bit outside but a lot
+// more inside"; light ADDS, so once DOOM-0292 gated the sky's ambient share on sky
+// exposure that ratio falls out of plain addition -- outdoors this term is a few percent
+// on top of a large sky term, indoors the sky term is at its floor and the same torch
+// dominates. Scaling the torch by the inverse of DOOM-0292's curve would count the same
+// contrast twice.
+const int   kFogLightsPerCell = 2;     // torches kept per grid cell, brightest-first. MUST
+                                 // match RB_FOG_LIGHTS_PER_CELL (r_vulkan.cpp) -- the
+                                 // buffer's stride is a function of it on both sides.
+// The softening radius, SQUARED. Brightness/distance^2 blows up when a fog sample sits
+// inside the light, and a march that steps through a torch would return a single white
+// pixel-worth of energy on one sample. Adding r0^2 to the denominator caps the peak at
+// Le/r0^2 without touching the far field, which is the standard windowed-inverse-square
+// (Karis 2013 / Frostbite) rather than an invented curve. 32 units = half a DOOM flat,
+// i.e. about the size of the wall panel actually doing the emitting.
+const float kTorchSoftR2      = 32.0 * 32.0;
+// The reach window is a SQUARED quadratic -- (1 - (d^2/R^2)^2)^2 -- written out inline in
+// torchInscatter rather than carried as an exponent constant here. A light's reach R is
+// derived per-light from its own brightness (RB_FOG_LIGHT_CUTOFF, host side) and stored
+// with it; the window smoothly takes its contribution to EXACTLY zero there. A hard cut
+// would show as a ring in the fog at each torch's reach, which is the same defect
+// kFogSkyDist's soft saturation exists to avoid at the horizon.
 const float kIndoorFogScale = 0.05;   // DOOM-0011 §4.3a: fog density multiplier under a solid
                                        // roof (open sky = 1.0). 0.0 = interiors totally clear;
                                        // ~0.05 keeps a faint indoor haze. Tune on hardware (Q12).
