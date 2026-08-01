@@ -4800,6 +4800,48 @@ parked ideas (💭 considered) until we commit to and design each one.
   Caveat on the absolute MAE values: SH2's scene, exposure and resolution
   are not ours, so 8-9/255 is not a target to hit. The TIMESCALE and the
   zero-translation result are the transferable facts.
+  CORRECTION to the timings in the note above, plus a second SH2 sample
+  and a look decision (2026-08-01, same session).
+
+  **THE ELAPSED TIMES WERE WRONG BY ~4.3x, AND THE INSTRUMENT LIED ABOUT
+  IT.** The bursts were requested at 0.5 s spacing and the analysis
+  labelled them that way, but spectacle has no burst mode: every shot is a
+  fresh process launch plus a portal round-trip, measured at ~1.75 s on
+  this box. Real spacing was 2.17-2.25 s. So "decorrelates in ~1.5 s"
+  should read: the FIRST step, at +2.2 s, is already at the plateau, and
+  this instrument cannot bound it any tighter than that.
+
+  Corrected, sample 2, true elapsed against frame 1 (blurred):
+      + 2.2 s  5.643      +10.9 s  5.471      +30.4 s  6.328
+      + 4.4 s  6.115      +19.5 s  6.923      +41.2 s  6.258
+      + 6.5 s  6.403
+  Flat from the first sample onward -- a saturated walk, no loop, no trend.
+
+  What survives the correction, which is everything that mattered: SH2's
+  fog fully restructures in UNDER ~2.2 s while ours needs 24 s to cross
+  one noise cell, so the mismatch is still an order of magnitude and the
+  conclusion is unchanged. What does NOT survive is any attempt to set our
+  constant to a precise SH2 figure -- there is no measured figure yet,
+  only an upper bound. Resolving it needs video (spectacle -R s, then
+  ffmpeg -i clip.mp4 -vf fps=10), not stills. screenshot-burst.sh now
+  measures its own cadence from the file mtimes and says so, rather than
+  repeating back the interval it was asked for.
+
+  SECOND SAMPLE, a different angle in the same forest, confirms both
+  structural findings independently:
+      large-scale share  82%  (sample 1: 84%)
+      translation        1%   (sample 1: 0%)  -- best shifts (+0,+0),
+                              (+2,+6), (+0,-2), (-2,+0), (-2,+6), (+0,+2)
+  Two different scenes agreeing is the evidence that "churns in place, no
+  wind" is a property of SH2's fog and not of one camera angle.
+
+  **LOOK DECISION (user, 2026-08-01): NO FILM GRAIN.** SH2 lays a grain
+  filter over everything and we are not copying it. The measurement says
+  that costs almost nothing: 82-84% of the frame-to-frame life in SH2's
+  fog is large-scale billowing that survives a 12 px blur, so the grain is
+  under a fifth of the effect and none of the part that reads as weather.
+  Do not add a grain pass to approximate the reference; it would be the
+  cheap 18% while leaving the 82% unbuilt.
 
 - 📋 [DOOM-0301] **The game should be able to play itself, so footage can be captured without a human at the keyboard.**
   User, 2026-08-01, with the reason stated plainly, which is what should
