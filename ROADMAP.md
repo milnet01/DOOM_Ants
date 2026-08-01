@@ -4879,6 +4879,37 @@ parked ideas (💭 considered) until we commit to and design each one.
   under a fifth of the effect and none of the part that reads as weather.
   Do not add a grain pass to approximate the reference; it would be the
   cheap 18% while leaving the 82% unbuilt.
+  DIRECTION DECISION (user, 2026-08-01): "For our purposes, the wisps
+  don't have to be going in any specific direction. Let's make it choose a
+  direction at random."
+
+  Accepted, and it composes with the measurement rather than overriding
+  it, provided one thing is kept: RANDOMISE THE PAIR'S ORIENTATION, NOT
+  EACH OCTAVE INDEPENDENTLY. kWispVel1 and kWispVel2 already move in
+  opposed directions, and that opposition is what makes their beat
+  dissipate and reform in place -- the ~0-1% translation SH2 measures.
+  Rotate both by the same random angle and the churn survives with an
+  arbitrary orientation; roll two independent vectors and the pair stops
+  cancelling, which reintroduces exactly the net wind the reference does
+  not have. So: one random angle per level, applied to both.
+
+  **IT MUST BE SEEDED, NOT ACTUALLY RANDOM.** DOOM-0202's -shotcompare
+  golden gate and DOOM-0208's canonical config depend on the RT frame
+  being bit-exact run to run -- that is why rb_shotverify already pins the
+  ripple clock to a constant (r_vulkan.cpp, `if (rb_shotverify == 1)
+  rippleSec = 8.0f`). A genuinely random direction would make every golden
+  capture a different image and quietly turn the gate into a no-op, which
+  is the same defect DOOM-0183's wall-clock ripple time caused once
+  already. Seed it from something stable and per-map -- the episode/map
+  number, or the level name -- so the same map always looks the same and
+  different maps differ. That also delivers the variety the user is
+  actually asking for, since the alternative (one global constant
+  direction) is what makes every level's fog blow the same way.
+
+  Still the main lever, unchanged: SPEED. Direction is variety; the reason
+  the glow reads as static is that the pattern needs ~24 s to cross one
+  noise cell against SH2's under ~2.2 s. Randomising the angle without
+  raising the speed changes nothing visible.
 
 - 📋 [DOOM-0301] **The game should be able to play itself, so footage can be captured without a human at the keyboard.**
   User, 2026-08-01, with the reason stated plainly, which is what should
