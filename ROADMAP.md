@@ -1150,13 +1150,13 @@ parked ideas (💭 considered) until we commit to and design each one.
      -- not the reverse. DOOM-0289 is the model (the cost went to ~0 and
      the picture was held identical to 0.05 MAE).
 
-  2. NO PER-MAP AUTHORING, EVER. Every quantity must be DERIVED from the
-     WAD at load, not placed by hand and not tuned per level. This is
+  2. PREFER DERIVED OVER HAND-PLACED -- a DEFAULT, not a ban (clarified
+     2026-08-01, below). Derived = computed from the WAD at load. This is
      already how the feature works and it should stay that way: the seep
      distance, the open-sky mask, the sun clearance and fogFloorZ are all
      computed from the map's own geometry, which is exactly why they hold
      on maps nobody has looked at. It also rules out the industry's usual
-     answer for localised fog -- hand-placed fog volumes -- for 32 + 36
+     answer for localised fog -- hand-placed volumes -- a poor DEFAULT for 32 + 36
      maps across two IWADs, let alone custom WADs.
 
      The corollary for CONSTANTS: prefer ones expressed relative to
@@ -1170,6 +1170,42 @@ parked ideas (💭 considered) until we commit to and design each one.
      IWADs, since doom2.wad carries flats, sector shapes and outdoor
      scales that doom.wad never exercises (DOOM-0293's flat inventory is
      the first case found -- 16 SLIME flats that exist only in DOOM 2).
+  CLARIFICATION (2026-08-01, same day, user rephrasing the constraint
+  above because the note had hardened it into a ban it never was):
+
+    "I would like it to be possible to do something once and it applies
+     everywhere. But in games I know that isn't always possible as we
+     would probably need significantly more powerful hardware to apply
+     real physics to the world. But we don't have that hardware and
+     people who will be playing this game probably don't have that
+     hardware either. So, let's not throw out the hand placed items but
+     only where it is feasible and makes sense to do, let's try the
+     approach of apply one to everywhere."
+
+  So the rule is a PREFERENCE ORDER, not a prohibition:
+
+    1. Derive it from the map if that is feasible and gives the look.
+    2. If it is not feasible -- or a derived version would cost more than
+       the hardware has -- hand-place it, deliberately, and say so.
+
+  Hand-authored data is a legitimate engineering answer here, not a
+  failure. The reason to reach for derivation FIRST is coverage across
+  32 + 36 stock maps plus custom WADs, and the reason not to insist on it
+  is that a fully derived answer sometimes means simulating what the
+  hardware cannot afford. The user is explicit that the target machine is
+  not a workstation.
+
+  Practical read for the fog tasks: keep deriving where it is already
+  working (seep, open-sky mask, sun clearance, fogFloorZ, and
+  DOOM-0293's liquid map -- all cheap because DOOM is flat-mapped and
+  the answers are 2-D). Do NOT contort a design to avoid a hand-placed
+  list where one is genuinely the cheap correct answer -- a per-map
+  override table, a hand-tuned constant for one Hell level under L4's
+  area profiles, or a placed volume for a set-piece would all be
+  acceptable if the derived route is expensive or does not read. What is
+  NOT acceptable is a derived mechanism that only works because someone
+  quietly tuned it against one map (see the corollary above: distrust a
+  dial that had to be re-tuned to make a second map look right).
 - 💭 [DOOM-0012] **Hold a 60 FPS performance floor.**
   **Layman:** Keep it running smoothly — never below 60 frames per second.
   Kind: perf.
@@ -3984,3 +4020,62 @@ parked ideas (💭 considered) until we commit to and design each one.
   IWADs and degrades sanely on a custom WAD that uses its own flat
   names, which no hand-list can. That combination is what makes "apply
   it once and it is right everywhere" achievable rather than aspirational.
+
+- 📋 [DOOM-0294] **Developer view: jump to any level and stop the monsters noticing you, so the game can actually be tested.**
+  User, 2026-08-01: "I need a developer view in the game that allows me
+  to jump to any stage, turn on invincibility (or rather make the enemies
+  not see me) so that I can test the game more thoroughly."
+
+  This is a TESTING instrument, and it is the bottleneck on every look
+  task in this project. Every renderer feature since DOOM-0011 started
+  has been signed off from one or two spawn views, because reaching a
+  specific room means playing there -- and the assistant cannot help:
+  xdotool cannot inject input under Wayland, and the attract demos are
+  version-mismatched against wads/doom.wad (109 vs 110) so they abort
+  before a level loads. The workaround used so far is a throwaway hook in
+  P_UpdateSpecials, compiled in and deleted before commit, which is not
+  something the user can drive.
+
+  Three parts, all small, and every one of them has its mechanism already
+  in the tree:
+
+  1. LEVEL JUMP. The cheat path exists (cheat_clev, st_stuff.c:453, into
+     G_DeferedInitNew) but is typed blind and, per DOOM-0287's session,
+     does not reliably register. Wanted as a MENU: pick episode+map for
+     DOOM 1 or map 1-32 for DOOM 2. Which game is loaded is already known
+     -- DOOM-0060 built the game-select chooser -- so the row set can
+     follow it rather than being asked for.
+
+  2. MONSTERS DO NOT NOTICE YOU. The user's own correction is the right
+     design: not invincibility, which leaves them shooting and shoving.
+     Add CF_NOTARGET = 8 to the flags in d_player.h:71-75 (CF_NOCLIP=1,
+     CF_GODMODE=2, CF_NOMOMENTUM=4 -- 8 is free) and test it in
+     P_LookForPlayers (p_enemy.c:499), which is the single choke point:
+     A_Look (:623), A_Chase (:705, :756) and the respawn path (:1979) all
+     route through it. CAUTION, and it is the whole difference between
+     this working and half-working: that only stops NEW acquisition. A
+     monster already awake keeps its target, so the toggle must also
+     clear existing ones, or every room you have already walked into
+     stays hostile.
+
+  3. GET TO A PLACE, not just a level. -warpto X Y ANGLE already exists
+     on the command line and is what the profiling recipe uses. Exposing
+     it (plus a "print where I am now", which cheat_mypos, st_stuff.c:460,
+     already computes) closes the loop with DOOM-0288's map-coordinate
+     discovery and the skyspots.py prototype: find a spot from the WAD,
+     jump to it, look at it. That is the whole test loop for a look task.
+
+  Menu placement: follow the pattern already proven four times over --
+  GameSelectDef, RendererDef, EffectsDef, VideoDef in m_menu.c are all
+  project-added menus. READ DOOM-0206 FIRST: the menu redesign spec is
+  written and gated but not implemented, so a Developer menu added now
+  should either follow its conventions or be explicitly listed as a
+  consumer of them, rather than becoming a fifth thing the redesign has
+  to absorb without knowing about it.
+
+  Gating: this is a developer tool in a GPL fork, not a shipped cheat
+  menu -- decide whether it hides behind a -devmode command-line flag or
+  a config key. Do not make it reachable by accident in normal play.
+  **Layman:** An in-game menu for testing: pick any level and jump straight to it, and switch off the monsters' attention so you can walk a map and look at it without fighting through it.
+  Kind: feature.
+  Source: user-request-2026-08-01.
