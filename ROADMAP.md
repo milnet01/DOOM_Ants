@@ -1206,6 +1206,76 @@ parked ideas (💭 considered) until we commit to and design each one.
   NOT acceptable is a derived mechanism that only works because someone
   quietly tuned it against one map (see the corollary above: distrust a
   dial that had to be re-tuned to make a second map look right).
+  Progress (2026-08-01): **Task L3 IMPLEMENTED** (7f78f02) -- static
+  emitters now light the fog. Step 1 (height pooling) shipped early on
+  2026-07-27; this is Step 2, and it did NOT take the shape the plan drew.
+
+  The plan's sketch scanned every static emitter per march sample and took
+  the nearest few with NO occlusion test. Both halves were replaced:
+
+    - Occlusion is not optional after DOOM-0292. The plan wrote the
+      no-occlusion form as "Q2 start cheap", but gating the sky's ambient
+      share means a torch leaking through a wall is now the brightest
+      thing in a dark room. The user flagged this as L3's real risk on
+      2026-08-01 and was right.
+    - The per-sample scan goes with it. WHICH cells of air can see WHICH
+      emitters is baked once at level load, onto the seep grid DOOM-0276/
+      0289 already established, using DOOM's own line-of-sight test
+      (P_CheckSight's BSP walk, factored out as P_CheckSightTrace so it
+      takes points rather than mobjs). Runtime: one buffer read per fog
+      sample, no rays. Set 0 gains binding 6; no new push lane (INV-5
+      holds, the struct is still 240 bytes).
+
+  The user's suggested proxy -- sector-scoped lists off the raster path's
+  RebuildStaticPointLightCache -- was considered and NOT taken, for a
+  reason worth keeping: DOOM sector boundaries ARE walls, so scoping to a
+  sector pops hard at every one, and that cache is keyed by SUBSECTOR,
+  which a fog sample in mid-air has no cheap way to look up. The seep grid
+  already answers "what is at this XY". Same idea, better-indexed home.
+
+  No indoor weighting was built, per the 2026-08-01 correction.
+
+  Two measurement lessons, both expensive:
+
+    1. SET THE GAIN AGAINST THE MEDIAN LIGHT, NOT THE BRIGHTEST. E1M1's
+       clustered intensities run 0 / 7987 med / 83741 -- one nukage
+       cluster is 17x an ordinary wall panel. Tuned against the maximum,
+       an A/B against the same build with the gain at 0 scored MAE
+       0.001/255: the noise floor, i.e. the whole feature invisible. A
+       deliberate 1000x gain then proved it had been wired all along. The
+       method is L1c's own -- A/B vs the same build with the constant at
+       0, scored as MAE.
+    2. A DEFAULT VIEWPOINT IS NOT A TEST. The first three A/Bs were shot
+       at the E1M1 spawn, which faces the courtyard and no light at all;
+       the effect measured as nothing there while working 200 units away.
+       -warpto (DOOM-0268), aimed at a light read out of the bake's own
+       log, is what made the measurement honest.
+
+  Measured, RX 6600, Ultra RT, HD art loaded:
+    - Nukage courtyard, L3 on vs gain 0: MAE 12.7/255, 71% of pixels
+      moved, frame mean 157.3 -> 170.0. The pool glows green into the air.
+    - megakernel 10.11 -> 11.16 ms, 58 -> 55 fps. Fog is then ~9% of
+      present-total, inside the 15% gate, but L3 is now its most
+      expensive piece -- DOOM-0295.
+    - Bake 4.4 ms / 7788 sight tests / 467 of 1085 air cells lit on E1M1;
+      1.3 ms / 48 lights on doom2 MAP01. Both IWADs exercised per the
+      standing constraint, and their medians agree closely (7987 vs 9900)
+      -- the evidence one global gain can serve both.
+    - make test 7/7; -rtverify PASS 0.0796% unchanged on doom.wad. It
+      FAILS on doom2.wad at 3.4943%, PROVEN pre-existing by a stashed
+      rebuild -- DOOM-0297.
+
+  AWAITING USER PLAY-TEST, and it carries DOOM-0292's open question with
+  it: whether kIndoorSkyLight stays at 0.45 now torches give light back
+  locally. Sheets rendered at 0.45 / 0.25 / 0.0 with L3 on. Also unjudged
+  on hardware: whether the strong glow off nukage/lava is wanted at that
+  strength, those clusters being ~10x a wall panel by construction.
+
+  Plan Steps 3 and 5 are done (build/tests, commit). Step 4 (play-test)
+  and the acceptance row are the user's -- including "dynamic/muzzle/
+  flashlight do NOT scatter", which holds by construction: the bake reads
+  only [0, staticN). Known limit: DOOM-0296 (a door opening mid-play does
+  not re-bake).
 - 💭 [DOOM-0012] **Hold a 60 FPS performance floor.**
   **Layman:** Keep it running smoothly — never below 60 frames per second.
   Kind: perf.
@@ -4311,3 +4381,88 @@ parked ideas (💭 considered) until we commit to and design each one.
   NOTE for whoever reads the diff: the first cut of the G_PlayerReborn
   edit also stripped trailing whitespace from ten untouched 1997 lines
   (rule 11 -- stay in your lane). Redone as 15 pure insertions.
+
+- 📋 [DOOM-0295] **L3's torch in-scatter costs 1.05 ms of megakernel -- find out where.**
+  Measured on an RX 6600 at the E1M1 nukage courtyard, Ultra RT with HD
+  art, the gain constant the only variable: megakernel 10.11 -> 11.16 ms,
+  58 -> 55 fps. That puts the whole fog feature at roughly 9% of
+  present-total (inside DOOM-0011's 15% gate) but makes L3 the single
+  most expensive part of it, ahead of everything DOOM-0289 saved.
+
+  What it is NOT: the window's squared term. That was assumed to be a
+  pow() the driver would not fold, rewritten as a multiply, and measured
+  at 11.18 ms either way -- RADV folds it already. The assumption is
+  recorded because it is the obvious first guess and it is wrong.
+
+  Remaining candidates, cheapest to test first: (a) fogPhaseHG's
+  pow(x, 1.5), evaluated 24 samples x 2 lights per fog pixel, against a
+  Schlick phase approximation which is a divide; (b) register pressure --
+  this is a megakernel and DOOM-0289 already measured L2's ray costing
+  2.40 ms with fog switched OFF, so occupancy is a known lever here and a
+  table lookup costing 1 ms smells like it; (c) kFogLightsPerCell 2 -> 1,
+  which is the quality trade of last resort (a room with two lamps loses
+  one) and should not be taken before (a) and (b) are measured.
+
+  Do NOT take the cost out of the effect first. The standing constraint
+  is "does it read? then, what does it cost?" -- and it took a full
+  re-tune to make this read at all.
+  **Layman:** The new torchlight-in-fog effect costs about 3 frames per second. Worth a look to see if it can be cheaper.
+  Kind: perf.
+  Lanes: shaders, fog, perf.
+  Source: in-session-2026-08-01.
+
+- 📋 [DOOM-0296] **The fog-light grid is baked at level load, so a door that opens later admits no torchlight.**
+  DOOM-0011 L3 bakes which cells of air can see which static emitters
+  once, at level load. A door that opens mid-play changes that answer and
+  nothing re-runs the bake.
+
+  The error is one-directional and that is why it shipped: doors are shut
+  when a level loads, so the failure mode is a torch that does NOT light
+  air it could, never one that lights air through a wall. A miss reads as
+  nothing happening; a leak reads as the brightest thing in a dark room.
+
+  The fix has a shape already, because DOOM-0281 solved the same problem
+  for the seep field: re-flood when an opening flips, and ease rather
+  than snap. The open question is cost -- the seep re-flood is a Dijkstra
+  over portals, while this bake is 7788 BSP sight tests (4.4 ms on E1M1),
+  which is affordable at load and probably not mid-frame. Likely answer
+  is to re-bake only the cells within reach of a light whose visibility
+  could have changed, keyed off RB_SeepOpeningsChanged's existing signal.
+
+  Sequence after DOOM-0295, since a cheaper per-sample term may change
+  what the re-bake has to produce.
+  **Layman:** Open a door and the torch behind it lights the room, but not the fog in it, until you reload the level.
+  Kind: fix.
+  Lanes: shaders, fog.
+  Source: in-session-2026-08-01.
+
+- 📋 [DOOM-0297] **-rtverify passes on doom.wad and deterministically fails on doom2.wad, same build.**
+  Found while gating DOOM-0011 L3 across both IWADs, which the standing
+  2026-08-01 constraint requires. On one build, at -warp 1 1:
+
+    doom.wad   INV-6 direct-light rel-MSE 0.0796%  PASS (bar 0.50%)
+    doom2.wad  INV-6 direct-light rel-MSE 3.4943%  FAIL, 63987 lit px
+
+  PROVEN pre-existing, not L3: git stash to the untouched tree, rebuild,
+  re-run -- identical 3.4943% to four decimal places. So the two IWADs
+  disagree reproducibly rather than the number drifting.
+
+  This matters beyond one number, because it is the SAME 3.4943%/63987
+  pair DOOM-0208 recorded on 2026-07-23 and closed as "a transient
+  environmental blip, not present now". It was never transient. It was
+  doom2.wad. That note should be corrected rather than left as a
+  falsified explanation on the record.
+
+  Leading hypothesis: the bar, not the renderer. MAP01's emitter set is
+  smaller and its brightest lights dominate more (48 clustered lights
+  spanning 1987..57320 vs doom.wad's 83 spanning 0..83741), so a
+  power-sampled NEE estimator at 16384 spp may genuinely converge slower
+  against the brute-force reference there. Check that before assuming a
+  defect: raise spp and see whether the number falls.
+
+  Until it is settled, -rtverify is a doom.wad-only gate, and any claim
+  that it passes should say which IWAD it passed on.
+  **Layman:** The renderer's automated self-check passes on DOOM 1 and fails on DOOM 2. Probably the check, not the renderer.
+  Kind: investigate.
+  Lanes: rt, test.
+  Source: in-session-2026-08-01.

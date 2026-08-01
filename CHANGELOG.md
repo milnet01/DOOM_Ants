@@ -8,6 +8,15 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Torches and lava now light the fog around them (ray-traced views)** (DOOM-0011)
+  A lamp, a light panel or a pool of nukage now glows into the air near
+  it instead of only lighting the walls. Which lights can reach which
+  patch of air is worked out once when the level loads, using the game's
+  own line-of-sight test, so a torch never shines through a wall and the
+  effect costs no extra ray tracing while you play. Indoors, where there
+  is no sky to light the mist, a nearby light is now the thing you see
+  by.
+
 - **Developer screenshot: F12 saves the frame you are looking at** (DOOM-0294)
   F12 (or Developer → Capture Screenshot) writes exactly what is on
   screen, HUD and all, to `dev-shots/shot-NNNN.png` — full display
