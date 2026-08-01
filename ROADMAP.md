@@ -4684,3 +4684,117 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: enhancement.
   Lanes: shaders, fog.
   Source: user-play-test-2026-08-01.
+  CORRECTION + refinement (2026-08-01, same day), after the user proposed
+  the mechanism themselves: "The nukage pool gives off a uniform glow from
+  the whole pool. Then, as the wisps of fog move around and dissipate and
+  new ones are created (the Silent Hill 2 look) it will make it look like
+  there is movement as some bit of fog will be thicker and some thinner."
+
+  That mechanism is REAL and already partly working. The bullet above says
+  the wisps contribute "NO extra motion" -- that was measured with
+  whole-frame MAE, where L3's large static envelope swamps the signal, and
+  with the glow layer's MEAN, which cannot see a pattern move at all. Two
+  sharper measurements, isolating the glow layer as (L3 on - L3 off) at a
+  fixed time:
+
+    DOES THE MEDIUM MODULATE THE GLOW AT ALL? Same frame, kWispAmp 1 vs 0:
+        glow layer mean 35.78 (wisps on) vs 34.76 (wisps off)
+        difference MAE 4.474, peak 27
+    -> yes: the wisps swing the glow by about 12.5%.
+
+    DOES IT MOVE? Glow layer at three pinned ripple times, per pixel:
+        t= 8 s vs t=20 s   MAE 2.191  peak 18  81.0% of pixels
+        t= 8 s vs t=32 s   MAE 3.037  peak 22  88.6%
+        t=20 s vs t=32 s   MAE 2.493  peak 16  90.6%
+    -> also yes, but only ~6-8% of the glow's own magnitude, spread over
+       tens of seconds. It is not frozen; it is slow and shallow, against
+       a static envelope of mean ~36. Next to fog that is visibly
+       billowing it therefore READS as static, which is exactly what the
+       user reported.
+
+  So the corrected diagnosis: the user's route is sound and the term is
+  already there -- it is under-driven, not absent.
+
+  THE CHEAPEST LEVER IS FREE, AND IT IS NOT AMPLITUDE. kWispAmp is already
+  1.0, i.e. density swinging 0x..2x, and cannot go further without going
+  negative. The gap between the 12.5% the wisps make spatially and the 7%
+  they make temporally is DRIFT SPEED: kWispVel1 is (8, 3, 1) world units
+  per second, so in 12 seconds the pattern moves 96 units -- half of
+  octave 1's 192-unit cell. Raising that velocity costs literally nothing
+  (it is a constant inside a noise lookup that is already being sampled)
+  and turns the same 12.5% spatial swing into a much faster temporal one.
+  Try that BEFORE the light-path transmittance term above, which costs a
+  tap and an exp per light per sample.
+
+  The user also named the other half -- wisps that "dissipate and new ones
+  are created". The shipped noise only TRANSLATES; nothing appears or
+  fades. Evolution needs the sample point to move through the volume on
+  the z axis as well (kWispVel1.z is 1.0, nearly nothing) or a second
+  time-varying seed. Also nearly free, and probably what sells
+  "dissipating" over "sliding past".
+
+  Revised order: (1) wisp velocity + z evolution, free, try first;
+  (2) light-path transmittance, only if (1) does not read.
+
+- 📋 [DOOM-0301] **The game should be able to play itself, so footage can be captured without a human at the keyboard.**
+  User, 2026-08-01, with the reason stated plainly, which is what should
+  shape the design: "I realise I need to publish videos on YouTube to try
+  and get more eyes on my GitHub projects in the hopes of getting
+  donations. And thus I need easy ways of creating DOOM 1 + 2 videos."
+
+  So the goal is NOT a competent DOOM bot as an end in itself. It is
+  FOOTAGE: long, unattended, watchable, across both IWADs, that shows off
+  what this fork actually does differently -- the lighting, the fog, the
+  HD art. Judge every design choice against that, not against how well it
+  plays. A bot that dies on MAP07 after four minutes fails; one that
+  strolls a level looking at things for twenty minutes succeeds.
+
+  That reframing matters because it makes the hard version optional.
+  DOOM has no navmesh and no pathfinding, so "plays DOOM well" is a real
+  research project. Three routes, cheapest first:
+
+    (a) A CAMERA, not a player. Fly a spectator through the level on a
+        route derived from the map -- the DOOM-0011 seep field already
+        holds a per-cell grid of where the open air is, and DOOM-0294's
+        developer view already has no-clip and free movement. Shows the
+        renderer off, needs no combat AI, and is the most likely thing to
+        produce a usable "look at this lighting" video. Probably the
+        first thing to build.
+    (b) A WALKER, reusing the monster AI. This is the reuse answer and it
+        is a good one: P_Move / P_TryWalk / P_NewChaseDir already
+        implement "step toward something, slide along walls, refuse to
+        walk off a ledge", and they run on any mobj. Point the player at
+        the level's exit switch (or at successive key pickups) and let
+        the same code walk it, firing at whatever ends up in front. The
+        hard part is not movement, it is knowing WHERE to go -- doors,
+        keys and lifts are a dependency graph the engine never builds.
+    (c) A real bot. Only if (a) and (b) prove insufficient.
+
+  Prior art in-tree, both of which need checking before anything is
+  written: DOOM's own DEMO system records and replays exact input
+  deterministically (-record / -playdemo / -timedemo), which would give
+  perfect unattended playback of a route a human walked ONCE -- that may
+  be most of the answer for a launch trailer. But this fork's attract
+  demos are already known version-mismatched (see
+  [[doom-ants-launch-screenshot-harness]]), so the demo format's health
+  here is an open question, not an assumption.
+
+  Ties to capture work rather than standing alone:
+    - It should be drivable from the command line and run unattended, so
+      it composes with a recorder. Same posture as -warpto, -shotverify
+      and -rtverify: the flag IS the interface.
+    - It wants a HUD-less / weapon-less presentation option for clean
+      footage, and probably a slow cinematic turn rate -- a bot's
+      instant snap-turns look like a bot.
+    - It would also close a real testing gap. Every fog and lighting
+      judgement in this project so far has been made on STILL FRAMES,
+      and DOOM-0300 exists precisely because a still cannot show whether
+      something moves. A self-playing camera is the instrument that
+      question needs.
+
+  Needs a design pass -- /write-spec, then the rule-14 gate. Sequence is
+  the user's call; it is not blocked by any of the fog work.
+  **Layman:** A mode where DOOM plays itself -- walks the level, fights, finds the exit -- so hours of video can be recorded for YouTube without anyone having to sit and play it.
+  Kind: feature.
+  Lanes: playsim, tooling.
+  Source: user-request-2026-08-01.
