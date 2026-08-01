@@ -4735,6 +4735,71 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   Revised order: (1) wisp velocity + z evolution, free, try first;
   (2) light-path transmittance, only if (1) does not read.
+  MEASURED AGAINST THE REAL THING (2026-08-01). The user loaded a Silent
+  Hill 2 save state in PCSX2 -- the forest path, James idle, fixed camera
+  -- and 20 screenshots were taken 0.5 s apart with
+  /mnt/Games/Scripts/Linux/screenshot-burst.sh -W "Silent Hill 2".
+  Reference frames: ~/Pictures/sh2-fog-study/.
+
+  Three numbers, and the third one overturns how our wisps are built.
+
+    1. IT IS NOT GRAIN. SH2 ships a noise/grain filter, so raw frame
+       difference would flatter it. Consecutive frames (0.5 s apart):
+       raw MAE 7.083, and after a 12 px Gaussian blur still 5.974 --
+       **84% of the change is large-scale structure**, i.e. real
+       billowing, not per-pixel shimmer.
+
+    2. IT DECORRELATES IN ABOUT 1.5 SECONDS. Blurred MAE against frame 1:
+           +0.5 s  5.173      +2.0 s  8.169      +6.0 s  8.996
+           +1.0 s  7.321      +3.0 s  7.246      +9.5 s  9.000
+           +1.5 s  8.789      +4.0 s  8.035
+       It climbs to ~8.8 by 1.5 s and then sits at 8-9 for the remaining
+       eight seconds. That is a saturated random walk: the fog restructures
+       completely in a second and a half and never returns.
+
+       OURS TAKES TENS OF SECONDS. kWispFreq1 is 1/192 and kWispVel1 is
+       8 units/s, so one noise cell takes 192/8 = 24 s to pass. That is a
+       ~15x mismatch in timescale, and it is the whole reason the glow
+       reads as static: the modulation is there (12.5%, measured above) but
+       it arrives an order of magnitude too slowly to see.
+
+    3. **IT DOES NOT TRANSLATE. IT CHURNS IN PLACE.** This is the finding
+       that matters, because our implementation does the opposite. Each
+       consecutive pair was matched against its neighbour over a +/-12 px
+       search for the best whole-frame shift:
+           pair 1  best shift (+0,+0)   0% explained by translation
+           pair 2  best shift (-2,+2)   0%
+           pair 3  best shift (+0,+2)   0%
+           pair 4  best shift (+0,+0)   0%
+           pair 5  best shift (+4,-4)   1%
+           pair 6  best shift (-2,-2)   1%
+           pair 7  best shift (+0,-2)   1%
+       Mean improvement from allowing ANY translation: 0%. There is no
+       wind direction. The fog dissipates and reforms where it stands --
+       precisely the user's own description ("wisps move around and
+       dissipate and new ones are created"), now with a number on it.
+
+       Our wisps are pure TRANSLATION: kWispVel1 = (8, 3, 1) and
+       kWispVel2 = (-3, 4, 0.3) slide the noise volume past the world.
+       Sliding faster would give SH2's rate with a wind SH2 does not have.
+
+  WHAT TO BUILD, revised again and now evidence-led. Do not simply raise
+  kWispVel1. The two octaves already drift in OPPOSED directions, and two
+  counter-moving patterns interfere: their beat dissipates and reforms
+  without net translation, which is the churn we want and is already the
+  shape of the code. Raise BOTH octave speeds by roughly 15x, keep them
+  opposed, and keep the net near zero. Cost: two vec3 constants in a
+  lookup that is already being sampled. Free.
+
+  Then verify with the same instrument rather than by eye: capture our own
+  fog at pinned ripple times, blur, and check (a) the decorrelation
+  half-life is ~1.5 s and (b) the best-shift search still explains ~0%.
+  A DOOM capture that scores a large translation component has the wrong
+  mechanism no matter how good the still looks.
+
+  Caveat on the absolute MAE values: SH2's scene, exposure and resolution
+  are not ours, so 8-9/255 is not a target to hit. The TIMESCALE and the
+  zero-translation result are the transferable facts.
 
 - 📋 [DOOM-0301] **The game should be able to play itself, so footage can be captured without a human at the keyboard.**
   User, 2026-08-01, with the reason stated plainly, which is what should
