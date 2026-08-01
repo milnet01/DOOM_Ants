@@ -40,6 +40,9 @@
 #include <cstdint>
 #include <cstdlib>     // exit() for the -rtverify self-test
 #include <algorithm>   // std::equal (DOOM-0289's clearance-moved compare)
+#ifdef DOOM_DEV
+#include <sys/stat.h>  // mkdir() for the DOOM-0294 developer screenshot folder
+#endif
 #include <vector>
 
 // POD-only, DOOM-header-free seam: the C geometry builder (r_mesh.c) and the
@@ -822,6 +825,19 @@ struct VulkanState
     bool           shotCapture = false;            // record the copy into THIS frame's cmd
     uint32_t       shotW = 0, shotH = 0;           // captured extent (display res)
 
+#ifdef DOOM_DEV
+    // DOOM-0294 developer screenshot. Deliberately NOT the buffer above: that one is
+    // the -shotverify path's, which captures the ray-traced finalImage only and exits
+    // after writing. This copies the SWAPCHAIN image instead -- the frame the screen
+    // is about to show -- which both the raster and ray-traced paths leave in
+    // PRESENT_SRC, so one capture covers every 3D view and whatever is drawn over it.
+    VkBuffer       devShotBuf     = VK_NULL_HANDLE;
+    VkDeviceMemory devShotBufMem  = VK_NULL_HANDLE;
+    VkDeviceSize   devShotBufSize = 0;
+    uint32_t       devShotW = 0, devShotH = 0;
+    bool           swapTransferSrc = false;        // surface allows reading the swapchain back
+#endif
+
     // SVGF denoiser (DOOM-0009 build step 6). Swapchain-sized G-buffer + history
     // images (recreated with the swapchain), one shared descriptor set, and three
     // compute pipelines (temporal accumulation 6a, edge-aware a-trous 6b, composite
@@ -1067,6 +1083,19 @@ int rb_rtverify = -1;
 // becomes ready. -shotverify writes a full-res PNG (eyeballing); -shotcompare is the
 // automated regression gate (downscaled golden + mean-abs-error threshold, below).
 int rb_shotverify = -1;
+
+#ifdef DOOM_DEV
+// DOOM-0294 developer screenshot request, counted in presents. The Developer menu's
+// "Capture Screenshot" row and the F12 key set it; each present counts it down and
+// the frame it reaches zero is the one captured. The delay is the point: it gives
+// the menu time to close, so the shot is of the game rather than of the menu that
+// asked for it.
+//
+// extern "C" like its rb_* siblings above: this whole region sits inside an
+// anonymous namespace, so a plain definition would be invisible to the C files
+// that set it (m_menu.c's menu row, i_video.c's F12).
+extern "C" { int rb_devshot = 0; }
+#endif
 static const int    kShotWarmup = 45;    // rendered RT frames before capture (denoiser settle)
 static const int    kShotGiveUp = 600;   // presents while armed w/o an RT frame -> bail (misconfig)
 static const int    kGoldenEdge = 640;   // -shotcompare: canonical golden longest edge (git-friendly)
@@ -1449,6 +1478,17 @@ void CreateSwapchain()
     // TRANSFER_DST so the clear path can vkCmdClearColorImage directly; later
     // increments add COLOR_ATTACHMENT for the G-buffer/composite passes.
     sci.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+#ifdef DOOM_DEV
+    // DOOM-0294: the developer screenshot reads the finished swapchain image back,
+    // which needs TRANSFER_SRC. The spec does not guarantee a surface offers it, so
+    // ask only when it does -- requesting an unsupported usage fails swapchain
+    // creation outright, i.e. it would cost the whole renderer to gain a screenshot.
+    // Without it the capture refuses with a message and everything else is unaffected.
+    // Developer builds only: a release swapchain is created exactly as before.
+    g.swapTransferSrc = (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
+    if (g.swapTransferSrc)
+        sci.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+#endif
     sci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;   // single graphics+present queue
     sci.preTransform = caps.currentTransform;
     sci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
@@ -9299,6 +9339,76 @@ extern "C" void RB_Vulkan_Present(void)
     }
     }   // end of the non-RT (raster) recording branch
 
+#ifdef DOOM_DEV
+    // DOOM-0294 developer screenshot: copy the finished swapchain image -- exactly
+    // what is about to be shown, HUD and all -- into a host-visible buffer. Both
+    // recording branches leave g.images[idx] in PRESENT_SRC by the time they get
+    // here, so this single block covers the raster and ray-traced views alike and
+    // needs no knowledge of either. Transition it, copy, put it straight back, so
+    // the present that follows is unaffected.
+    bool devShotThisFrame = false;
+    if (rb_devshot > 0 && --rb_devshot == 0)
+    {
+        if (!g.swapTransferSrc)
+        {
+            printf("dev: screenshot unavailable -- this surface will not allow the "
+                   "finished frame to be read back\n");
+            fflush(stdout);
+        }
+        else
+        {
+            const VkDeviceSize need = (VkDeviceSize)g.extent.width * g.extent.height * 4;
+            if (g.devShotBuf == VK_NULL_HANDLE || g.devShotBufSize < need)
+            {
+                if (g.devShotBuf)    vkDestroyBuffer(g.device, g.devShotBuf, nullptr);
+                if (g.devShotBufMem) vkFreeMemory(g.device, g.devShotBufMem, nullptr);
+                CreateRtBuffer(need, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                               &g.devShotBuf, &g.devShotBufMem);
+                g.devShotBufSize = need;
+            }
+
+            VkImageMemoryBarrier toSrc = {};
+            toSrc.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            toSrc.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+            toSrc.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            toSrc.srcQueueFamilyIndex = toSrc.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            toSrc.image = g.images[idx];
+            toSrc.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+            // srcAccessMask is 0, not the writes that got the image here: PRESENT_SRC
+            // has no pending access of its own to flush, and naming one is what the
+            // validation layer flags. The SRC STAGE still names both, because that is
+            // the execution dependency that matters -- the raster path's last write to
+            // this image is a colour attachment, the RT path's is the blit.
+            toSrc.srcAccessMask = 0;
+            toSrc.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            vkCmdPipelineBarrier(g.cmd,
+                                 VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 0, 0, nullptr, 0, nullptr, 1, &toSrc);
+
+            VkBufferImageCopy region = {};
+            region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+            region.imageExtent      = { g.extent.width, g.extent.height, 1 };
+            vkCmdCopyImageToBuffer(g.cmd, g.images[idx], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                   g.devShotBuf, 1, &region);
+
+            VkImageMemoryBarrier back = toSrc;
+            back.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            back.newLayout     = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+            back.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            back.dstAccessMask = 0;
+            vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                                 0, 0, nullptr, 0, nullptr, 1, &back);
+
+            g.devShotW = g.extent.width;
+            g.devShotH = g.extent.height;
+            devShotThisFrame = true;
+        }
+    }
+#endif
+
     Check(vkEndCommandBuffer(g.cmd), "vkEndCommandBuffer");
 
     // DOOM-0170 CPU profiler: end of command recording, start of submit + present.
@@ -9334,6 +9444,69 @@ extern "C" void RB_Vulkan_Present(void)
         g.needRecreate = true;
     else if (pr != VK_SUCCESS)
         Fail("vkQueuePresentKHR", pr);
+
+#ifdef DOOM_DEV
+    // DOOM-0294: write the developer screenshot. Same shape as the -shotverify write
+    // below EXCEPT that the game keeps running afterwards -- this is a tool used
+    // mid-play, not a headless one-shot gate.
+    if (devShotThisFrame && g.devShotBuf)
+    {
+        vkDeviceWaitIdle(g.device);
+        void* mapped = nullptr;
+        Check(vkMapMemory(g.device, g.devShotBufMem, 0, VK_WHOLE_SIZE, 0, &mapped),
+              "vkMapMemory(devshot)");
+
+        const size_t   n  = (size_t)g.devShotW * g.devShotH;
+        unsigned char* px = (unsigned char*)malloc(n * 4);
+        if (!px)
+        {
+            fprintf(stderr, "dev: out of memory copying a %zu-byte screenshot\n", n * 4);
+        }
+        else
+        {
+            char path[64];
+            int  i;
+            memcpy(px, mapped, n * 4);
+
+            // Swapchain colour order is the surface's choice, and on this hardware it
+            // is BGRA; stbi_write_png reads RGBA. Alpha is forced opaque because a
+            // presented image's alpha channel carries nothing meaningful -- left as it
+            // came, the PNG can open as a transparent mess in some viewers.
+            if (g.format == VK_FORMAT_B8G8R8A8_UNORM || g.format == VK_FORMAT_B8G8R8A8_SRGB)
+                for (size_t p = 0; p < n; p++)
+                {
+                    unsigned char t = px[p * 4];
+                    px[p * 4]     = px[p * 4 + 2];
+                    px[p * 4 + 2] = t;
+                }
+            for (size_t p = 0; p < n; p++) px[p * 4 + 3] = 255;
+
+            // First free name, so a shot never silently replaces an earlier one.
+            mkdir("dev-shots", 0755);
+            path[0] = '\0';
+            for (i = 1; i <= 9999; i++)
+            {
+                char try_[64];
+                FILE* f;
+                snprintf(try_, sizeof try_, "dev-shots/shot-%04d.png", i);
+                f = fopen(try_, "rb");
+                if (!f) { snprintf(path, sizeof path, "%s", try_); break; }
+                fclose(f);
+            }
+
+            if (!path[0])
+                fprintf(stderr, "dev: dev-shots/ already holds 9999 screenshots\n");
+            else if (stbi_write_png(path, (int)g.devShotW, (int)g.devShotH, 4, px,
+                                    (int)g.devShotW * 4))
+                printf("dev: wrote %s (%ux%u)\n", path, g.devShotW, g.devShotH);
+            else
+                fprintf(stderr, "dev: failed to write %s\n", path);
+            free(px);
+            fflush(stdout);
+        }
+        vkUnmapMemory(g.device, g.devShotBufMem);
+    }
+#endif
 
     // DOOM-0202: -shotverify write / -shotcompare gate + exit. The capture copy was
     // recorded into the frame just submitted; wait for the GPU to finish, then read the
@@ -9501,6 +9674,10 @@ extern "C" void RB_Vulkan_Shutdown(void)
         if (g.rtAccumMem)   vkFreeMemory(g.device, g.rtAccumMem, nullptr);
         if (g.rtReadback)   vkDestroyBuffer(g.device, g.rtReadback, nullptr);
         if (g.rtReadbackMem) vkFreeMemory(g.device, g.rtReadbackMem, nullptr);
+#ifdef DOOM_DEV
+        if (g.devShotBuf)    vkDestroyBuffer(g.device, g.devShotBuf, nullptr);   // DOOM-0294
+        if (g.devShotBufMem) vkFreeMemory(g.device, g.devShotBufMem, nullptr);
+#endif
         if (g.shotBuf)      vkDestroyBuffer(g.device, g.shotBuf, nullptr);   // DOOM-0202
         if (g.shotBufMem)   vkFreeMemory(g.device, g.shotBufMem, nullptr);
         // GI bake pipeline (step 4b-ii).

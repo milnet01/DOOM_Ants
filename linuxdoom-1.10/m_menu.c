@@ -82,6 +82,7 @@ extern boolean		chat_on;		// in heads-up code
 // prototypes.
 void P_ForgetPlayerTargets (void);      // p_enemy.c
 extern int dev_freezemonsters;          // p_tick.c
+extern int rb_devshot;                  // r_vulkan.cpp (screenshot request, in frames)
 #endif
 
 //
@@ -293,6 +294,7 @@ void M_DevSkill(int choice);
 void M_DevWarp(int choice);
 void M_DevPrintPos(int choice);
 void M_DevRtView(int choice);
+void M_DevShot(int choice);
 void M_DevVideo(int choice);
 void M_DevBack(int choice);
 #endif
@@ -687,6 +689,7 @@ enum
     dev_pos,
     dev_view_head,      // "-  VIEW  -"
     dev_rtview,
+    dev_shot,
     dev_video,
     dev_back,
     dev_end
@@ -708,6 +711,7 @@ menuitem_t DeveloperMenu[]=
     {1,"",	M_DevPrintPos,'p'},
     {-1,"",0},
     {2,"",	M_DevRtView,'r'},
+    {1,"",	M_DevShot,'t'},
     {1,"",	M_DevVideo,'v'},
     {1,"",	M_DevBack,'b'}
 };
@@ -1679,7 +1683,7 @@ static const char* developerLabels[dev_end] =
     "-  LEVEL  -",
     "Level", "Skill", "Jump to Level", "Print Position",
     "-  VIEW  -",
-    "RT View", "Video & Effects",
+    "RT View", "Capture Screenshot (F12)", "Video & Effects",
     "Back"
 };
 
@@ -2657,6 +2661,25 @@ void M_DevRtView(int choice)
     cur = choice ? (cur + 1) % 6 : (cur + 5) % 6;
     rb_rtdebug = devRtValues[cur];
     rb_rtdebug_menu = (rb_rtdebug != 0 && rb_rtdebug != 6) ? 1 : 0;
+}
+
+// Save the frame to dev-shots/shot-NNNN.png. The menu closes first and the capture
+// is taken a few frames later, so the picture is of the game and not of the menu
+// that asked for it -- which is also why the row cannot simply write the file here.
+// F12 does the same thing without the round trip through the menu.
+//
+// Classic is the 1997 software renderer and never builds an image for Vulkan to
+// present, so there it falls back to DOOM's own screenshot: a .pcx beside the
+// executable rather than a .png under dev-shots/.
+void M_DevShot(int choice)
+{
+    choice = 0;
+
+    if (rendermode == RB_CLASSIC)
+	G_ScreenShot();                 // deferred to the next frame, menu gone by then
+    else
+	rb_devshot = 3;                 // presents from now -- time for the menu to go
+    M_ClearMenus();
 }
 
 // The render toggles (flashlight, SSAO, de-tile, grime, wet, fog, upscaler,

@@ -4212,3 +4212,58 @@ parked ideas (💭 considered) until we commit to and design each one.
   it in PRESENT_SRC), and the swapchain is created without TRANSFER_SRC
   usage, so that flag must be added where the surface supports it. NOT
   started. (2) the play-test of the menu's look, unchanged.
+  Progress (2026-08-01, third pass): the in-game SCREENSHOT is done, so
+  the "still owed" item in the note above is closed except for the
+  play-test.
+
+  F12, or Developer > Capture Screenshot, writes the frame to
+  dev-shots/shot-NNNN.png at full display resolution. Both triggers set
+  a countdown in presents rather than capturing immediately -- the delay
+  is what lets the menu close first, so the picture is of the game and
+  not of the menu that asked for it.
+
+  WHERE it copies from is the design decision. -shotverify's existing
+  copy is inside RecordRtTrace, i.e. the ray-traced path only, and it
+  exits after writing. This one copies the SWAPCHAIN image instead --
+  the frame the screen is about to show -- which both recording branches
+  leave in PRESENT_SRC by the time the command buffer closes. One block
+  therefore covers the raster and ray-traced views alike, needs no
+  knowledge of either, and picks up the HUD and everything else drawn
+  over the scene. The swapchain had to gain TRANSFER_SRC usage to be
+  readable; that is asked for only when the surface reports it
+  (supportedUsageFlags), because requesting an unsupported usage fails
+  swapchain creation outright -- the whole renderer lost to gain a
+  screenshot. Without it the capture refuses with a message.
+
+  Classic routes to DOOM's own G_ScreenShot (.pcx) instead: the 1997
+  software renderer never builds an image for Vulkan to present. Worth
+  noting because the first version of this got it wrong in comments --
+  that path is normally reachable only as F1 under -devparm, which is no
+  use to someone who did not launch with the flag, so F12 now covers all
+  three tiers.
+
+  VERIFIED on hardware, by looking at the files rather than by trusting
+  the exit code: Solid raster and Ultra RT both wrote correct 3840x2160
+  PNGs of E1M1 (colours right -- the swapchain is BGRA and is swizzled;
+  alpha forced opaque, since a presented image's alpha means nothing and
+  left alone the PNG opens transparent in some viewers), and Classic
+  wrote a correct DOOM00.pcx.
+
+  THE VALIDATION CHECK IS WORTH RECORDING, because the first reading of
+  it was worthless. A plain run reported zero validation messages, which
+  proves nothing on its own -- an inactive layer and a clean frame look
+  identical. Re-running with best-practices enabled produced 31 messages
+  (so the messenger demonstrably reports) and ONE of them was against
+  this change: the PRESENT_SRC -> TRANSFER_SRC barrier named
+  COLOR_ATTACHMENT_WRITE|TRANSFER_WRITE as its source access, where an
+  image already in PRESENT_SRC has no pending access to flush and the
+  expected mask is 0. Fixed; the source STAGE still names both, since
+  that is the execution dependency that matters. Re-run: capture-related
+  messages 0, control still live at 31.
+
+  Both configurations build warning-free and make test is 7/7 in each;
+  the release binary still greps 0 for every developer string, now
+  including the new ones. dev-shots/ is gitignored.
+
+  STILL OWED: the play-test of the menu and the capture on hardware,
+  driven by hand.

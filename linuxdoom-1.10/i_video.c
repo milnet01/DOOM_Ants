@@ -33,6 +33,8 @@
 #include "v_video.h"
 #include "m_argv.h"
 #include "d_main.h"
+#include "r_backend.h"   // rendermode / RB_CLASSIC (DOOM-0294's F12 screenshot)
+#include "g_game.h"      // G_ScreenShot: the Classic tier's half of that key
 
 #include "doomdef.h"
 
@@ -555,6 +557,31 @@ static void I_GetEvent(SDL_Event* sdlevent)
 	    I_DebugKeyMessage(fog_msg[rb_fog]);
 	    break;
 	}
+#ifdef DOOM_DEV
+	// DOOM-0294 (developer builds only): F12 saves the current frame to
+	// dev-shots/shot-NNNN.png. Handled here, ahead of the game, so it works
+	// during play without opening the menu -- which also means it shadows the
+	// F12 spy key. That costs nothing here: spy cycles the view between players
+	// in a net game, and in single player it is already a no-op.
+	//
+	// Classic is the 1997 software renderer and never builds an image for Vulkan
+	// to present, so there it routes to DOOM's own screenshot instead (a .pcx
+	// beside the executable). That is normally reachable only as F1 under
+	// -devparm, which is no use to anyone who has not launched with the flag --
+	// one key covering all three tiers is the point of doing it here.
+	if (sdlevent->key.keysym.sym == SDLK_F12 && !sdlevent->key.repeat)
+	{
+	    extern int rb_devshot;          // r_vulkan.cpp
+	    if (rendermode == RB_CLASSIC)
+	    {
+		G_ScreenShot();             // deferred; writes DOOM<nn>.pcx in the cwd
+		I_DebugKeyMessage("Screenshot (Classic: .pcx in the game folder)");
+	    }
+	    else
+		rb_devshot = 2;             // next-but-one present
+	    break;
+	}
+#endif
 	// TEMPORARY DIAGNOSTIC (DOOM-0267) -- slash (`/`) dumps where the player is
 	// standing and every linedef of the sector they are in, with both sides'
 	// live heights and textures. Lets a geometry bug that only reproduces at one

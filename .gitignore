@@ -59,3 +59,6 @@ audit_rule_quality.json
 # Python bytecode cache (scripts/pbr_derive.py, make_bringup_hero.py)
 __pycache__/
 *.pyc
+
+# DOOM-0294 developer screenshots (make DEV=1 only; never part of a release)
+linuxdoom-1.10/dev-shots/

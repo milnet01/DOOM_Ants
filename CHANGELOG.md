@@ -8,6 +8,14 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Developer screenshot: F12 saves the frame you are looking at** (DOOM-0294)
+  F12 (or Developer → Capture Screenshot) writes exactly what is on
+  screen, HUD and all, to `dev-shots/shot-NNNN.png` — full display
+  resolution, in any 3D view, raster or ray-traced. The Classic tier
+  saves DOOM's own .pcx instead, since the software renderer never
+  builds an image for the GPU to present. Developer builds only
+  (`make DEV=1`).
+
 - **Developer view: a testing menu for jumping to any level and looking at it** (DOOM-0294)
   An Options → Developer menu that jumps straight to any level in either
   game at any skill, switches the monsters' attention off (or freezes
