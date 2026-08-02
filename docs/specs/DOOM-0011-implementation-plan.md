@@ -2047,12 +2047,17 @@ heights and is never revisited (spec §4.4's 2026-08-02 amendment; INV-14).
   2. **Lift between two already-open heights** (`EV_DoPlat`) — a second line must print.
      ⚠ **Check its existence, not the direction of any count.** A flip-keyed build never
      arms, so it prints nothing; and `lit` can legitimately move either way, because the
-     bake samples at `fz + RB_FOG_LIGHT_TESTZ` and a rising floor lifts the sample as well
-     as the occluder. This is the only fixture that catches the wrong trigger.
+     bake samples at `fz + RB_FOG_LIGHT_TESTZ`, clamped to mid-column by
+     `if (tz > cz - 4.0f) tz = fz + 0.5f * (cz - fz);`, and a rising floor lifts the sample
+     as well as the occluder. This is the only fixture that catches the wrong trigger.
   3. **Crusher** (`EV_DoCeiling`, `crushAndRaise`) — a second line every
      `kFogLightMaxWait`, indefinitely. Proves the cap path exists; also the fixture that
      shows the user whether the repeating snap is acceptable (spec §7 L3b).
-  4. ⚠ **Cache freshness is NOT observable from that line** — `P_CheckSightTrace` reads
+  4. **Perpetual platform** (`EV_DoPlat`, `perpetualRaise`) — the commoner recurring case,
+     and it does **not** use the cap: it waits 3 s at each end, so it settles and bakes
+     **twice per cycle**, indefinitely. Same question as the crusher, on a mover far more
+     likely to appear in a real map. Count the lines per cycle and judge the snap.
+  5. ⚠ **Cache freshness is NOT observable from that line** — `P_CheckSightTrace` reads
      live geometry whatever the cache holds, so a stale-cache bake still moves `lit`, and
      `air` only moves if a 64-unit cell centre happens to fall inside the door sector.
      Check it once, here, with a temporary print inside `BuildFogLightGrid`: for one cell
@@ -2066,14 +2071,18 @@ heights and is never revisited (spec §4.4's 2026-08-02 amendment; INV-14).
   that never mattered; per settled door it does. Move the timer to close after the upload
   (or add a second one), quote bake+upload, and **fold the figure back into spec §4.4's
   command box and §7's L3b row** — `/write-spec` Step 8, not an optional tidy.
+  **A verdict, not just a figure: ≤ 6 ms passes** (spec §4.4). Past that the answer is a
+  different shape — slice the bake across frames, or scope it — not a faster bake.
 
 - [ ] **Step 6: Build + tests + `-rtverify`** (L1 Step 7 commands). `-rtverify` on
   **doom.wad** only: `DOOM-0297` established that doom2's failure is estimator variance,
   not a defect, and until the gate samples a convergence slope it is a doom.wad-only gate.
 
-- [ ] **Step 7: Prove the still map is untouched.** `-shotcompare` must be
-  bit-identical: nothing arms without `RB_UPD_MOVED`, so the whole mechanism is inert
-  on a map where nothing moves. (Same proof DOOM-0281 shipped with.)
+- [ ] **Step 7: Prove the still map is untouched.** `-shotcompare` must pass — it is an
+  **MAE gate, not a bit-identity one** (`kGoldenMAE = 3.0` over a 640-px longest edge,
+  `r_vulkan.cpp`), so the claim is "unchanged within the golden bar", and the same-build
+  pair is the noise floor to read it against. Nothing arms without `RB_UPD_MOVED`, so the
+  mechanism is inert on a map where nothing moves. (Same proof DOOM-0281 shipped with.)
 
 - [ ] **Step 8: Visual A/B.** Two `-devshot` captures through an opened door — one on
   this build, one with the fire block disabled — and report the changed-pixel count.
