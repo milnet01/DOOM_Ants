@@ -4695,6 +4695,43 @@ parked ideas (💭 considered) until we commit to and design each one.
   door's re-bake to the 4 s cap while it runs. Accepted (a per-sector timer
   needs a dirty set the engine does not keep), but it is why the cap is not
   the rare path it looks like.
+  Progress (2026-08-02, second pass): the user's first play-test shot was
+  INCONCLUSIVE, and correctly so -- E1M1 courtyard, nothing had moved, and
+  the room was already brightly lit. The feature only changes cells whose
+  visibility to a torch changed BECAUSE a plane moved, so walking into a
+  lit room can never show it.
+
+  So rather than have them hunt for a level, every shut door in both IWADs
+  was scanned: open it, refresh the cell cache, re-bake, diff the lit
+  count, restore. Throwaway `-fogscan` diagnostic, reverted -- the answer
+  is below, so the tool is not needed again.
+
+  BEST PLAY-TEST LOCATION, by a wide margin:
+    doom2.wad MAP01, door sector 13 at (-863, 597).  base 158 lit -> +74,
+    a +47% increase in torch-lit fog cells from one door.
+    Stand at (-700, 597) and face west: verified open, heavily-fogged
+    outdoor ground right beside it.
+    ./linux/linuxxdoom -iwad wads/doom2.wad -warp 1 -warpto -700 597
+
+  Runners-up: MAP09 sector 105 (-1048, 508) +47 of 570; MAP15 sector 208
+  (-704, -2640) +37 of 639; MAP06 sector 34 (1820, 1696) +33 of 246.
+
+  ⚠ THE SCAN ALSO SAYS SOMETHING THE FEATURE'S OWN FRAMING DID NOT, and it
+  should temper what this item claims. In DOOM 1 the effect is SMALL: the
+  best door on any E1Mx map moves 21 cells (E1M5 sector 64 at (432, -32)),
+  and E1M1's own best is 5. Vanilla DOOM rarely puts a torch behind a shut
+  door within that torch's reach, so on DOOM 1 this is a correctness fix
+  whose visible payoff is marginal. DOOM 2 is where it reads. Worth saying
+  plainly rather than letting a play-test discover it as disappointment.
+
+  Two more facts the scan turned up, neither chased:
+    - MAP02 and MAP07 bake ZERO lit cells at spawn. Either they genuinely
+      have no static emitter within reach of any air cell, or the cluster
+      step is dropping their emitters. Unverified, and worth one look --
+      a map where L3 does nothing at all is not obviously intended.
+    - The LIFT case is the bigger visual mover on E1M1 (449 -> 353, 96
+      cells) than any door there. If the door demo underwhelms, a lift
+      rising in front of a torch is the stronger fixture.
 
 - 📋 [DOOM-0297] **-rtverify passes on doom.wad and deterministically fails on doom2.wad, same build.**
   Found while gating DOOM-0011 L3 across both IWADs, which the standing
@@ -4772,6 +4809,56 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   Still true and unchanged: -rtverify is a doom.wad-only gate until (a) or
   (b) lands, and any claim that it passes should name the IWAD.
+  Progress (2026-08-02, second pass): THE 1/N SLOPE GATE RECOMMENDED ABOVE
+  WAS BUILT ON PAPER, MEASURED, AND DOES NOT SURVIVE. Recording the
+  falsification because the recommendation was already given to the user
+  and would otherwise be implemented as written.
+
+  The derivation was sound. Model rel-MSE as E = a/N_nee + c/N_brute +
+  bias. Quadrupling BOTH counts quarters both variance terms, so the two
+  unknowns cancel and the bias falls out of two runs:
+      bias = (4*E_4x - E_1x) / 3
+  Cheaper than the three runs first assumed, and valid on any map.
+
+  Measured (idle, renderer 1 / rt_fog 2, -rtdisp <nee> <brute> dispatches):
+      doom.wad   E(256,64) 0.1091%  E(1024,256) 0.0374%  fall 2.92x
+      doom2.wad  E(256,64) 3.4993%  E(1024,256) 0.7330%  fall 4.77x
+      bias:  doom.wad +0.0135%   doom2.wad -0.1891%
+
+  Two things kill it as a gate. A NEGATIVE bias is unphysical, so -0.189%
+  is measurement slop rather than a reading -- and its magnitude is a third
+  of the 0.50% bar it was meant to replace, i.e. the new gate is noisier
+  than the old one. And the fall is 2.92x on one IWAD and 4.77x on the
+  other where pure variance predicts 4.00x both times, so a "did it fall
+  4x" test has no bar that passes both without being meaningless.
+
+  Cross-check confirming it is the model and not one bad run: the earlier
+  three-point solve (a=746.8, c=40.07, bias=-0.0439) predicts
+  E(1024,256) = 0.8419% and the direct measurement is 0.7330%. ~0.11 pp of
+  model error, which is the same order as the bias being extrapolated.
+
+  WHAT THE DATA DOES SUPPORT, unambiguously, is the thing the gate was
+  wanted for: doom2's failure is VARIANCE, NOT BIAS. 3.4993 -> 0.7330 ->
+  0.7245 as samples rise, falling hard with no floor anywhere near 3.5%.
+  That was the precondition this bullet set for touching the bar, and it is
+  now met.
+
+  REVISED RECOMMENDATION, and it is the option the first pass explicitly
+  withheld until the slope was checked: make the gate's sample count and
+  bar PER-IWAD, on the evidence above. It costs nothing at runtime and it
+  is now justified rather than assumed. Concretely, one of:
+    (i)  keep doom.wad at the shipped cost and the 0.50% bar (it passes at
+         0.1091%), and gate doom2 at 4x cost with a ~1.0% bar (0.7330%);
+    (ii) leave doom2 out of the gate entirely and say so in the runner,
+         rather than letting a red result sit there being re-diagnosed
+         every few months -- which is how DOOM-0208 happened.
+  (i) costs a 4x run on one IWAD and keeps both covered; (ii) is free and
+  covers less. Needs the user's call before implementing, because it
+  changes INV-6's acceptance (docs/specs/DOOM-0009-path-tracer.md) and so
+  pulls in the rule-14 spec gate either way.
+
+  NOT a defect either way: the renderer is fine, and this bullet's own
+  "probably the check, not the renderer" was right.
 
 - 📋 [DOOM-0298] **New liquid surfaces: bubbles in nukage, splashes on lava, and animation that does not visibly repeat.**
   User, 2026-08-01, on the DOOM-0011 L3 nukage glow: "when we create new
