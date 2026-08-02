@@ -1975,7 +1975,7 @@ heights and is never revisited (spec §4.4's 2026-08-02 amendment; INV-14).
   mid-play bake would grow and re-create it. That is safe here (post-fence), but it is the
   one path where the "never re-created" shorthand is untrue.
 
-- [ ] **Step 1: State + constants.** Three fields on `g` (`fogLightArmed`,
+- [x] **Step 1: State + constants.** Three fields on `g` (`fogLightArmed`,
   `fogLightStill`, `fogLightWait`) and two constants beside `kSeepEaseTau`:
   `kFogLightSettle = 0.15f` seconds of stillness before the bake, and
   `kFogLightMaxWait = 4.0f` seconds after which a never-settling map bakes anyway.
@@ -1988,7 +1988,7 @@ heights and is never revisited (spec §4.4's 2026-08-02 amendment; INV-14).
   *Verify:* builds; loading a level prints the L3 line once and no second line follows on
   a still map.
 
-- [ ] **Step 2: Arm on plane movement.** In `BuildFrameReheight`, inside the existing
+- [x] **Step 2: Arm on plane movement.** In `BuildFrameReheight`, inside the existing
   `RB_UPD_MOVED && g.rtEnabled` block, set `g.fogLightArmed = true; g.fogLightStill = 0;`.
   **Not** behind `RB_SeepOpeningsChanged()` — spec §4.4 D1 gives the reason (a lift that
   changes visibility without flipping an opening is the leak case).
@@ -1999,7 +1999,7 @@ heights and is never revisited (spec §4.4's 2026-08-02 amendment; INV-14).
   *Verify:* a temporary print in the block fires on a door and on a lift; never on a
   still map.
 
-- [ ] **Step 3: Fire — placement is the whole task.** Inside `RecordSeepRefresh`, **after
+- [x] **Step 3: Fire — placement is the whole task.** Inside `RecordSeepRefresh`, **after
   the clearance block and before `needUpload = needUpload || ...; if (!needUpload) return;`**.
   Both halves of that placement are load-bearing and both were caught by cold-eyes rather
   than by reading:
@@ -2038,7 +2038,7 @@ heights and is never revisited (spec §4.4's 2026-08-02 amendment; INV-14).
   *Verify:* the existing `RB_Vulkan: DOOM-0011 L3 fog lights` line prints **once** per
   door, about a beat after the door stops — not on the frame it cracks.
 
-- [ ] **Step 4: Falsify INV-14 — and one clause the printed line cannot carry.** Drive the
+- [x] **Step 4: Falsify INV-14 — and one clause the printed line cannot carry.** Drive the
   map with throwaway hooks in `P_UpdateSpecials` (xdotool cannot inject into a Wayland
   client; the memory of that trap is why this is written down). The level-load bake always
   prints one L3 line, so **the signal is always a second line**.
@@ -2065,7 +2065,7 @@ heights and is never revisited (spec §4.4's 2026-08-02 amendment; INV-14).
      `sectors[n].floorheight / FRACUNIT`. They must agree at bake time. Delete the print
      afterwards; it is a build-time proof of the placement, not a runtime gate.
 
-- [ ] **Step 5: Measure the event cost — bake AND upload.** The spec's 3.6 ms is the bake
+- [x] **Step 5: Measure the event cost — bake AND upload.** The spec's 3.6 ms is the bake
   alone; its timer stops before `UploadFogLightGrid`'s `memset` + ~225 KB `memcpy` into
   host-coherent (write-combined) memory and its `vkUpdateDescriptorSets`. At level load
   that never mattered; per settled door it does. Move the timer to close after the upload
@@ -2074,17 +2074,20 @@ heights and is never revisited (spec §4.4's 2026-08-02 amendment; INV-14).
   **A verdict, not just a figure: ≤ 6 ms passes** (spec §4.4). Past that the answer is a
   different shape — slice the bake across frames, or scope it — not a faster bake.
 
-- [ ] **Step 6: Build + tests + `-rtverify`** (L1 Step 7 commands). `-rtverify` on
+- [x] **Step 6: Build + tests + `-rtverify`** (L1 Step 7 commands). `-rtverify` on
   **doom.wad** only: `DOOM-0297` established that doom2's failure is estimator variance,
   not a defect, and until the gate samples a convergence slope it is a doom.wad-only gate.
 
-- [ ] **Step 7: Prove the still map is untouched.** `-shotcompare` must pass — it is an
+- [x] **Step 7: Prove the still map is untouched.** `-shotcompare` must pass — it is an
   **MAE gate, not a bit-identity one** (`kGoldenMAE = 3.0` over a 640-px longest edge,
   `r_vulkan.cpp`), so the claim is "unchanged within the golden bar", and the same-build
   pair is the noise floor to read it against. Nothing arms without `RB_UPD_MOVED`, so the
   mechanism is inert on a map where nothing moves. (Same proof DOOM-0281 shipped with.)
 
-- [ ] **Step 8: Visual A/B.** Two `-devshot` captures through an opened door — one on
+- [ ] **Step 8: Visual A/B.** *(NOT RUN 2026-08-02 — it needs the throwaway plane-driving
+  hook, which was removed after Step 4, and a door that actually reveals a torch. The
+  numeric proof of effect is Step 4's `449 → 454 lit` on the door and `449 → 353` on the
+  lift; the look itself goes to the user's play-test.)* Two `-devshot` captures through an opened door — one on
   this build, one with the fire block disabled — and report the changed-pixel count.
   **Not `-shotverify`**, which pins a canonical config and would photograph the same
   frame for both halves.

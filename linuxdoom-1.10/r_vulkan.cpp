@@ -805,6 +805,17 @@ struct VulkanState
     // between two open heights flips no opening and would otherwise freeze its beam.
     bool                  clearanceDirty = false;
     bool                  seepEasing = false;   // cur has not caught up with target yet
+    // DOOM-0296: the fog-light grid is baked from live door heights, so a plane that moves
+    // invalidates it exactly as it does the clearance above. Armed on the same RB_UPD_MOVED
+    // signal, but NOT serviced on the same frame: the bake is 3.6 ms and a 1.83 s door is
+    // ~80 traced frames, so it waits for the planes to stop (kFogLightSettle) and re-bakes
+    // once. `fogLightWait` is the escape hatch for a mover that never stops -- a crusher
+    // reverses at pastdest with no wait state -- and is deliberately NOT reset by re-arming,
+    // because it measures how long the bake has been owed rather than how long since the
+    // last movement. Spec DOOM-0011 4.4's DOOM-0296 amendment; INV-14.
+    bool                  fogLightArmed = false;
+    float                 fogLightStill = 0.0f;   // seconds since a plane last moved
+    float                 fogLightWait  = 0.0f;   // seconds this bake has been owed
     // DOOM-0011 L3: the per-cell torch list, riding the SEEP GRID's cells (same origin,
     // same cell size, same dims -- so it reuses the seep UBO's transform and adds none of
     // its own). Set 0, binding 6. Baked at level load: which static emitters can actually
@@ -3504,6 +3515,13 @@ void UploadSeepField(rb_seep_t* f)
     g.seepEasing = false;
     g.seepDirty  = false;
     g.clearanceDirty = false;
+    // DOOM-0296: a new level's grid is baked outright by BuildFogLightGrid further down the
+    // load path, so nothing may be left armed from the previous map. This is the ONLY place
+    // the three are cleared -- the other `g.seepDirty = false` is the mid-play re-flood in
+    // RecordSeepRefresh, which fires on every door and where clearing them would disarm the
+    // bake on exactly the event that should arm it.
+    g.fogLightArmed = false;
+    g.fogLightStill = g.fogLightWait = 0.0f;
 
     // Ownership transfer: the previous level's field (and its geometry cache) goes here.
     if (g.seepField != f)
@@ -3656,6 +3674,15 @@ void UploadSeepField(rb_seep_t* f)
 // that shuts eases the seep back out rather than snapping the room clear.
 static const float kSeepEaseTau = 0.32f;   // seconds; ~95% of the way there in 1 s
 
+// DOOM-0296. Neither is measurable -- what they trade is a wait against a hitch, and no
+// profiler produces that -- so both are play-test dials. kFogLightMaxWait IS argued: a
+// 128-unit door at VDOORSPEED (2 units/tic) takes 64 tics = 1.83 s, so 4.0 s clears any
+// ordinary door and only a travel over ~280 units trips it mid-motion, which self-corrects
+// because the cap path leaves the arm set. kFogLightSettle is a first guess: a few traced
+// frames, long enough that a door's last tic and its stop are not two bakes.
+static const float kFogLightSettle  = 0.15f;   // seconds of stillness before the re-bake
+static const float kFogLightMaxWait = 4.0f;    // ...or bake anyway; a crusher never settles
+
 void RecordSeepRefresh(VkCommandBuffer cb)
 {
     // The clock is read before any early-out, so `dt` is always one frame rather
@@ -3761,6 +3788,51 @@ void RecordSeepRefresh(VkCommandBuffer cb)
             printf("RB_Vulkan: DOOM-0289 clearance rebuild (%.2f ms), %d no-sun cells.\n",
                    CpuNowMs() - tc0, nNoSun);
             fflush(stdout);
+        }
+    }
+
+    // DOOM-0011 L3 / DOOM-0296: re-bake the fog-light grid once the planes have stopped.
+    //
+    // THIS BLOCK'S POSITION IS THE WHOLE FEATURE, and both halves of it are load-bearing.
+    //
+    // Before the `if (!needUpload) return;` below: a settle frame is by definition one
+    // where nothing is dirty and nothing is easing, so needUpload is FALSE on exactly the
+    // frames this exists for. Placed after that return it would never run at all -- the
+    // same trap the clearance block above already had to argue its way out of.
+    //
+    // After the clearance block: RB_SeepCellAir reads the per-cell geometry cache on
+    // g.seepField, and the two refresh paths are mutually exclusive per frame. A flip
+    // SWAPS that pointer for a fresh flood; a plane that moved without flipping -- the
+    // lift this trigger exists for -- is refreshed in place by RB_RefreshSunClearance
+    // just above. On a settle frame neither has run (nothing has been dirty for
+    // kFogLightSettle) and the cache is already current from the last moving frame, so
+    // the ordering bites on the cap path rather than the settle path. Correct on both.
+    //
+    // Safe to call BuildFogLightGrid from here: we are past vkWaitForFences and ahead of
+    // the megakernel's vkCmdBindDescriptorSets, which is what makes both the host write
+    // to the mapped grid and UploadFogLightGrid's vkUpdateDescriptorSets legal. Its
+    // P_CheckSightTrace runs on the render thread between tics -- the same window
+    // RB_BuildSeepField uses two blocks up.
+    if (g.fogLightArmed)
+    {
+        g.fogLightStill += dt;
+        g.fogLightWait  += dt;
+        if (g.fogLightStill >= kFogLightSettle)
+        {
+            BuildFogLightGrid();                 // planes stopped: the bake that counts
+            g.fogLightArmed = false;
+            g.fogLightStill = g.fogLightWait = 0.0f;
+        }
+        else if (g.fogLightWait >= kFogLightMaxWait)
+        {
+            // A mover that never settles (a crusher reverses at pastdest with no wait
+            // state) would otherwise leave the feature dead on that map. Deliberately
+            // does NOT clear fogLightArmed: on a merely-long travel this records the
+            // half-open state, and leaving the arm set is what lets the settle path
+            // above bake again with the door finished. Clearing it here would make
+            // that half-open answer permanent.
+            BuildFogLightGrid();
+            g.fogLightWait = 0.0f;
         }
     }
 
@@ -7668,18 +7740,22 @@ void BuildFogLightGrid()
             lit++;
     }
 
+    // DOOM-0296: the upload is inside the measurement, not after it. At level load the
+    // distinction never mattered; once this runs per settled door it does -- the memset and
+    // the ~225 KB memcpy into host-coherent (write-combined) memory are part of the hitch a
+    // player feels, and quoting the bake alone would be a partial number presented as the
+    // event cost. Spec DOOM-0011 4.4 gates the figure below at <= 6 ms.
+    UploadFogLightGrid(grid, cells);
     const double ms = CpuNowMs() - t0;
     // The counts are the cheap proof the bake did what it claims. "0 lit cells" with a
     // non-zero light count means the sight test is rejecting everything (a bad z, or a
     // grid/world transform mismatch) — which on screen looks exactly like L3 not being
     // wired in at all, and would otherwise be indistinguishable from it.
     printf("RB_Vulkan: DOOM-0011 L3 fog lights — %u emitter tris -> %u clustered lights "
-           "(intensity %.0f / %.0f med / %.0f), %d air / %d with a candidate / %d lit of %u cells, %d sight tests (%.1f ms).\n",
+           "(intensity %.0f / %.0f med / %.0f), %d air / %d with a candidate / %d lit of %u cells, %d sight tests (%.1f ms, bake+upload).\n",
            (uint32_t)g.staticWgt.size(), (uint32_t)lights.size(),
            statMin, statMed, statMax, air, candCells, lit, cells, sightTests, ms);
     fflush(stdout);
-
-    UploadFogLightGrid(grid, cells);
 }
 
 // 16 floats per GI probe: pos[3] + pad + SH-L1 directional irradiance (channel-
@@ -9013,6 +9089,16 @@ static void BuildFrameReheight(bool cprof, bool ownTotal)
         g.clearanceDirty = true;                 // height-keyed: always suspect
         if (RB_SeepOpeningsChanged())            // connectivity-keyed: only a flip counts
             g.seepDirty = true;
+        // DOOM-0296: the fog-light grid is height-keyed too, for the same reason and one
+        // more. Its bake asks P_CheckSightTrace, whose P_CrossSubsector narrows the slope
+        // range from opentop/openbottom -- so the answer moves CONTINUOUSLY with plane
+        // height, not only when openrange crosses zero. Keyed to the flip detector instead,
+        // a lift rising in front of a torch would leave the grid lighting air THROUGH it,
+        // which is the one error direction this defect otherwise never takes.
+        // Only `fogLightStill` is reset here. `fogLightWait` measures how long the bake has
+        // been owed, so re-arming must not restart it or a crusher would never reach the cap.
+        g.fogLightArmed = true;
+        g.fogLightStill = 0.0f;
     }
     // `ownTotal` when this is called on its own from the present path (traced, pre-fence):
     // that time is outside BuildFrameInputs' own span, and leaving it out of the total made
