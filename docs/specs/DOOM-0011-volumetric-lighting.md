@@ -1710,64 +1710,111 @@ the frame the door **cracks** — `openrange` is a few units — and at that mom
 every sight trace through it still fails, so a bake there records "still dark" and, with no
 second trigger, records it permanently. Doors are slow enough for this to be the normal
 case rather than a race: `VDOORSPEED = FRACUNIT*2` (`p_spec.h`) is 2 map units per tic, so
-a 128-unit door takes 64 tics ≈ **1.8 s** to finish opening. The bake therefore waits for
-`kFogLightSettle` of no plane movement before it runs, and a plane that never settles is
-bounded by `kFogLightMaxWait`, after which the bake runs anyway and the wait re-arms.
+a 128-unit door takes 64 tics ≈ **1.8 s** to finish opening. So:
 
-⚠ **`kFogLightMaxWait` exists for one case and buys a known cost.** Without it a map with a
-perpetual platform (`plat_perpetualRaise`) never settles, so the feature would be silently
-dead on that map — not merely unchanged, which is the trap: "no worse than today" is true
-of a still map and false of this one. With it, such a map pays one bake per
-`kFogLightMaxWait`: at the measured 3.6 ms against a ~20.8 ms Ultra-RT frame that is one
-frame **17 % longer** every ~96 frames, which is a stretched frame rather than a dropped
-one. Recorded as accepted rather than as free.
+| Constant | Value | What it is |
+|---|---|---|
+| `kFogLightSettle` | **0.15 s** | no plane has moved for this long → bake |
+| `kFogLightMaxWait` | **4.0 s** | armed this long without settling → bake anyway, stay armed |
 
-**D3 — the result is snapped, not eased.** §4.4's clearance section already draws this
-line and it is the same line: the seep is connectivity-keyed and **eases** because mist
-genuinely rolls in; light is height-keyed and **snaps**. Two further reasons specific to
-this grid, either of which would be sufficient on its own. First, D2 means the bake lands
-*after* the door has stopped, so there is no partial state for an ease to fade through —
-the ease would be fading between two answers that are both about a fully-open door.
-Second, a slot in this grid holds a light's **identity** (position, reach, colour) beside
-its visibility weight, and two different lights in one slot cannot be interpolated; an ease
-would need either a second grid or a crossfade through zero, which is real machinery bought
-for an effect D2 has already removed the need for. **The DOOM-0296 roadmap bullet says
-"ease rather than snap" — that bullet is superseded here**, and by the precedent it was
-itself citing.
+⚠ **`kFogLightMaxWait` is for a mover that never stops, and `plat_perpetualRaise` is not
+one — a crusher is.** The distinction matters because it decides how often the escape
+hatch is paid. A perpetual platform waits `35 · PLATWAIT` = 105 tics = **3 s** at each end
+(`p_plats.c`, `p_spec.h`), which is twenty times `kFogLightSettle`, so it settles twice
+per cycle and never reaches the cap at all. `crushAndRaise` (`p_ceilng.c`) is the real
+case: at `pastdest` it flips `direction` and moves off again with no wait state, so it
+never settles and without the cap the feature would be **silently dead on that map** —
+not merely unchanged, which is the trap, because "no worse than today" is true of a still
+map and false of this one.
+
+⚠ **A cap firing mid-travel is wasted, not wrong, and it self-corrects — the arm is not
+cleared on that path.** 4.0 s is longer than the 1.8 s the paragraph above computes for a
+standard door, but a tall enough opening (over ~280 units of travel) still exceeds it. Such
+a bake records the half-open state, then, because the planes are still moving, the arm
+survives and the settle path bakes again with the door finished. The cost is one extra
+3.6 ms bake, not a wrong grid. Stated because the obvious implementation — clearing the arm
+on both paths — turns that into a permanent half-open answer, which is D2's own failure
+wearing the escape hatch's clothes.
+
+**D3 — the result is snapped, not eased.** §4.4's clearance section above draws this line
+and it is the same line: the seep is connectivity-keyed and **eases** because mist
+genuinely rolls in; light is height-keyed and **snaps**. (The line is that section's, not
+INV-13's — INV-13 states where sun visibility is read from and carries no ease/snap
+clause.) Two further reasons specific to this grid, either sufficient alone. First, D2
+means the bake lands *after* the door has stopped, so there is no partial state for an ease
+to fade through. Second, a slot in this grid holds a light's **identity** (position, reach,
+colour) beside its visibility weight, and two different lights in one slot cannot be
+interpolated; an ease would need either a second grid or a crossfade through zero — real
+machinery bought for an effect D2 has already removed the need for. **The DOOM-0296
+roadmap bullet says "ease rather than snap" — that clause is superseded here**, and by the
+precedent it was itself citing. So are two other claims in that bullet: its cost figure
+(below) and its proposal to re-bake only cells within reach of a changed light (D4).
 
 **D4 — the whole grid re-bakes, not a scoped subset.** Measured, not budgeted (the Q22
 lesson): the full bake is **3.6 ms / 6320 sight tests on E1M1** and **3.4 ms / 5228 on
-MAP01**, against a seep re-flood of 0.8 / 0.7 ms on the same runs. A scope keyed to the
-changed linedef would be wrong — an opened door reveals a torch to every cell within that
-torch's `reach`, not to cells near the door — so a correct scope is a reach-radius sweep
-per changed opening, which is not obviously cheaper than 3.6 ms and is considerably easier
-to get wrong. Re-bake everything.
+MAP01**. A scope keyed to the changed linedef would be wrong — an opened door reveals a
+torch to every cell within that torch's `reach`, not to cells near the door — so a correct
+scope is a reach-radius sweep per changed opening, which is not obviously cheaper than
+3.6 ms and is considerably easier to get wrong. Re-bake everything.
 
-> **Command behind those numbers**, machine idle (no leftover `linuxxdoom`), config
-> `renderer 1` (Ultra) / `rt_fog 2` / `render_scale 50`:
+> **Command behind those two figures**, machine idle (no leftover `linuxxdoom` — checked
+> with `pgrep`), config `renderer 1` (Ultra) / `rt_fog 2` / `render_scale 50`:
 > `./linux/linuxxdoom -iwad wads/<doom|doom2>.wad -warp 1 1 -noinput`, reading the
 > `RB_Vulkan: DOOM-0011 L3 fog lights` line the bake already prints. E1M1 reports
-> `449 lit of 3525 cells`; MAP01 `158 lit of 3360`.
+> `449 lit of 3525 cells`; MAP01 `158 lit of 3360`. **The figure is the bake alone**: its
+> timer stops at the `printf`, before `UploadFogLightGrid` memsets and copies the ~225 KB
+> grid, so the upload is not in it. The same runs report the seep field's **level-load
+> fill** at 0.8 / 0.7 ms — that is the fill, *not* DOOM-0281's re-flood, which cannot
+> appear under `-noinput` because nothing opens a door.
 
-**Where it hooks, and why the ordering is not free.** `RecordSeepRefresh` is the host:
-it already runs once per frame, already owns the `dt` clock the settle timer needs, and
-already sits **after** `vkWaitForFences` and inside the frame's command buffer, which is
-what makes a host write to the fog-light buffer safe at all (single frame in flight, so
-nothing is reading it). Two ordering constraints come with that placement and both are
-load-bearing:
+**Where it hooks, and why the placement is not free.** `RecordSeepRefresh` is the host: it
+owns the `dt` clock the settle timer needs, and it is entered after `vkWaitForFences` and
+inside the frame's command buffer, which is what makes a host write to the fog-light buffer
+safe (single frame in flight, so nothing is reading it). Four constraints come with that
+placement, and the first is the one an implementer will get wrong:
 
-- The re-bake must run **after** the re-flood block in the same function. `RB_SeepCellAir`
-  reads the per-cell geometry cache on `g.seepField`, and the re-flood **swaps** that
-  pointer (DOOM-0289). Bake first and it reads the map as it was before the door.
-- `UploadFogLightGrid` writes a descriptor, so it must stay **before** the dispatch binds
-  the set — which the existing call site at the top of the path already satisfies. The
-  buffer itself is never re-created mid-level: `cells` comes from the seep grid, whose
-  dimensions cannot change within a level.
+- ⚠ **`RecordSeepRefresh` is entered once per frame but does NOT run to its end once per
+  frame.** It early-outs at `if (!needUpload) return;`, and the frames the settle timer
+  exists for are exactly the frames that early-out: the planes have stopped, so nothing is
+  dirty, nothing is easing, and `needUpload` is false. A timer block placed after that
+  return never accumulates and the bake never fires at all. It goes **after the clearance
+  block and before the `!needUpload` early-out** — the same placement the clearance block
+  itself had to argue for, and whose code comment already says "This block MUST sit before
+  the `if (!needUpload) return;` below".
+- ⚠ **After the clearance block, not merely after the re-flood — the two refresh the cell
+  cache on different paths.** `RB_SeepCellAir` reads the per-cell geometry cache on
+  `g.seepField`. An opening flip refreshes it by **swapping** that pointer for a fresh
+  flood (DOOM-0289); a plane that moved *without* flipping — D1's motivating lift, which is
+  the whole reason the trigger is `RB_UPD_MOVED` — is refreshed instead by
+  `RB_RefreshSunClearance`, which rewrites each cell's `fz`, `cz`, `sky` and `solid` from
+  the live sectors inside the clearance block. Honour only the re-flood ordering and D1's
+  own case bakes against stale air columns.
+- **The emitter set must be current, and it already is.** `BuildFogLightGrid` clusters
+  `g.staticWgt`, which `BuildStaticEmitterSet` rebuilds when `g.worldEmitDirty` is raised
+  by an `RB_UPD_RETEX` — a switch changing texture. That rebuild runs in `BuildFrameInputs`,
+  which the present path calls **before** `RecordPathTraceFrame`, so by the time this block
+  is reached the flag is already cleared for this frame. Recorded because it is a
+  precondition the level-load call site states explicitly ("must come after **both** the
+  emitter list and the seep field") and a mid-play caller could quietly lose.
+- **`P_CheckSightTrace` is playsim code on file-scope globals and is not re-entrant.** It
+  is safe here for the reason `RB_SeepLineOpen` already gives for `P_LineOpening`: this
+  runs on the render thread between tics, where the playsim is not mid-`P_TryMove` — the
+  same window `RB_BuildSeepField` uses, and this block sits inside the same function.
+
+**Traced frames only, and that is correct.** `RecordSeepRefresh` has one call site, inside
+the ray-traced record path, so the settle timer ticks only on traced frames. Only the
+megakernel reads this grid, so a raster interlude has nothing to keep current — and the arm
+is a latch (like `blasDirty`), so a door opened while rasterising is still baked on the
+first traced frame after it.
 
 **What this does not change.** No constant of the look moves, no push-constant lane is
-added, and no new resource appears in §5 — the grid, its stride and `kFogLightsPerCell`
-are exactly as L3 shipped them. Fog **off** is unaffected: the whole path sits behind the
-same `g.rtEnabled` gate `BuildFogLightGrid` already tests (INV-8).
+added, and no new resource appears in §5 — the grid, its stride and `kFogLightsPerCell` are
+exactly as L3 shipped them. **With `rb_fog` off the pixels are unchanged**, because only
+the `rb_fog`-gated march reads the grid (INV-8) — but the CPU bake is **not** gated on
+`rb_fog` and is paid whenever RT is on and a plane settles. That is deliberate: `rb_fog` is
+a runtime toggle (the `;` key), so a grid left un-baked while fog was off would be stale the
+moment it was switched back on, and the alternative — re-baking on the toggle — puts a
+3.6 ms hitch on a keypress instead of on a door.
 
 ### 4.5 Area profiles — clear / goo / hell
 
@@ -2591,7 +2638,7 @@ pass/fail rather than a go/no-go between variants.
 | **L2** *(shipped 544ae84 — the ray is superseded by L2b)* | **Sky shafts:** add `kSunDir` + the sky-visibility test per sample + HG phase. Shipped with an ambient/directional **split** (`kSkyAmbientFrac`), not the outright replacement §4.4(a) originally specified, and far over budget — the ray alone is **19× the rest of the fog** and about **4× the whole ≤ 15 % gate** (§6) — L2b replaces the per-sample ray with a load-time field. | A doorway/sky-hole open to sky throws a visible slanted beam; closed rooms stay clear; the beam moves correctly as the camera orbits | no — L2b carries the gate |
 | **L2b** | **The sun-clearance field** (§4.4's 2026-07-30 amendment, DOOM-0289): delete L2's per-sample sun ray; widen the seep field `RG16F → RGBA16F` with the `zLo`/`zHi` interval; build it in `RB_BuildSeepField`; widen and split DOOM-0281's re-flood (and fix its upload gate). **A pure perf change with a look-identity requirement** — it is not a new layer. | The shafts are **where they were before** (the field and the beam must agree about `kSunDir`); the doorway beam still reads; a building in the open still shadows the air beside it; **the sun ray's 13.6 ms is gone** and the whole fog is back inside the ≤ 15 % gate; a door opening updates its shaft within Q30's rebuild cadence (same frame on the full re-flood path), and **a lift moving between two open heights updates it too** (the clearance is height-keyed, so DOOM-0281's flip detector alone is not enough); `-rtverify` green | **yes** — the regression it exists to fix |
 | **L3** | **Height pooling + torch shafts:** height-based density (`hitP.z` floor ref); iterate static emitters `k<omniStart` (nearest-few, no occlusion first). | Fog settles low into a floor layer; a torch in a dark room glows its surrounding air; dynamic/muzzle/flashlight do **not** scatter | no |
-| **L3b** | **Re-bake the fog-light grid when the map moves** (§4.4's 2026-08-02 amendment, DOOM-0296, INV-14): arm on `RB_UPD_MOVED` beside `g.clearanceDirty`; fire from `RecordSeepRefresh` **after** its re-flood block once planes have been still for `kFogLightSettle`, or after `kFogLightMaxWait` regardless; call the existing `BuildFogLightGrid` unchanged. **A defect fix, not a new layer** — no constant of the look moves. (This row's **L3** sibling above still describes the per-sample emitter scan L3 never shipped; that is `DOOM-0304`, not this row.) | Open a door onto a torch-lit room and the fog behind it picks up the torch **within a beat of the door finishing**, not on reload; shut it and the glow goes; the printed `N lit of M cells` count rises and returns (INV-14); a **lift** rising in front of a torch stops the fog behind it being lit through the lift; a still map prints **no** line and is bit-identical (`-shotcompare`) | no — one 3.6 ms CPU bake per settled move, §4.4 |
+| **L3b** | **Re-bake the fog-light grid when the map moves** (§4.4's 2026-08-02 amendment, DOOM-0296, INV-14): arm on `RB_UPD_MOVED` beside `g.clearanceDirty`; fire from inside `RecordSeepRefresh`, **after its clearance block and before the `!needUpload` early-out** (a settle frame early-outs, so a block placed at the end never runs), once planes have been still for `kFogLightSettle` — or after `kFogLightMaxWait` for a mover that never settles, which bakes without clearing the arm; call the existing `BuildFogLightGrid` unchanged. **A defect fix, not a new layer** — no constant of the look moves. (This row's **L3** sibling above still describes the per-sample emitter scan L3 never shipped; that is `DOOM-0304`, not this row.) | Open a door onto a torch-lit room and the fog behind it picks up the torch **within `kFogLightSettle` (0.15 s) of the door finishing**, not on reload; shut it and the glow goes; the printed line's `lit` count rises and returns and its `air` count rises (INV-14 — `air` is the stale-cache discriminator); a **lift** rising between two open heights in front of a torch makes `lit` **fall**, which is the only fixture that catches a trigger keyed to the opening flip; a still map prints **no second** line and is bit-identical (`-shotcompare`) | no — one 3.6 ms CPU bake per settled move, §4.4 |
 | **L4** | **Area profiles + colour:** goo tint via the primary-hit `RB_FLAG_LIQUID_NUKAGE`; hell haze via the new `rb_view_t` field → `misc6.w`; `mediumTint` colouring (light×medium). | Goo rooms fill green and pool low; hell levels gain a faint red haze; a torch shaft reads warm-through-green in goo; clear levels stay neutral | no |
 | **L5** | **Denoise/quality pass:** dither tuning; escalate upsample→a-trous if it crawls (§4.6 Q6); phase/anisotropy tune. **May be largely dissolved** if L1c promotes mode-6 fog to full-res (§6 item 2) — with no upsample there is no upsample to harden; the dither/phase tuning still applies. | Fog is smooth, not grainy or crawling, in a slow pan; shafts hold their shape | no |
 | **L6** | **Menu + profiler + perf** (the dial, `rt_fog` config row and `;` key already shipped, `f8c6b1f` — §5): both menu rows, the fog-pass profiler wiring (**`queryCount` 8 → 9**, fog on slot 8, and widen both resets + the readback — the pool is full, §6), the DOOM-0208 canonical-config pin (§8 INV-8), and the perf pass. | Toggle/strength flip cleanly through all four states off→low→med→high (matching `fogNames[4]`, §5); adds **≤ 15 % present-total** vs off (§6, raised from ≤ 5 % by the 2026-07-25 amendment); `-rtverify` **green**; if fog ships on-by-default (Q10) the `-shotcompare` golden is re-blessed with subtle fog, else fog-off stays byte-identical (INV-8); Classic + the raster path unmoved (INV-7) — the 60 FPS floor no longer binds RT-engaged scenes (§6, 2026-07-25) | **yes** |
@@ -2832,7 +2879,9 @@ The other layers' Verify cells fit in a line. These two do not, so they live her
   connectivity on the portal graph *before* rasterising and so does not care, while the
   clearance march reads per-cell heights directly and therefore needs INV-13's void test.
 - **INV-13 (sun clearance, 2026-07-30):** sun visibility in the march is read from the
-  **load-time clearance interval** on the seep field's `.b`/`.a` channels —
+  **baked clearance interval** on the seep field's `.b`/`.a` channels — built at
+  level load and rebuilt whenever a plane moves (this section's re-flood and clearance
+  blocks; the word was "load-time" until DOOM-0289 made the rebuild part of the contract) —
   `sunSeen = (p.z >= tap.b) && (p.z <= tap.a || openSky)` — and **never traced**. The
   `|| openSky` term is part of the formula, not a caveat on it; the fourth clause below
   is its rationale. The march casts **zero rays per
@@ -2860,23 +2909,36 @@ The other layers' Verify cells fit in a line. These two do not, so they live her
   `rayQueryEXT` are **gone from `pathtrace.comp`**, not merely unreferenced.
 - **INV-14 (fog-light currency, 2026-08-02):** the fog-light grid describes the map **as it
   stands**, not as it spawned. A sector plane that moves invalidates it, and the grid is
-  re-baked from the **live** geometry — `P_CheckSightTrace` against current
-  `opentop`/`openbottom`, over the **re-flooded** `g.seepField`'s cell cache, never the
-  one the level loaded with. Three clauses are part of the guarantee rather than detail
-  (§4.4's DOOM-0296 amendment derives each): the trigger is **`RB_UPD_MOVED`, not an
-  `openrange` flip** — a lift that rises in front of a torch changes visibility without
-  flipping anything, and the stale grid would then light air **through** it, which is the
-  one error direction this feature otherwise never takes; the bake runs when planes
-  **settle**, not on the triggering edge, because a door's flip fires while it is still a
-  crack and a bake there records "dark" permanently (`VDOORSPEED` gives a 128-unit door
-  ≈ 1.8 s of travel); and a plane that never settles is bounded by `kFogLightMaxWait`, or
-  a map with a perpetual platform would silently never re-bake at all. The result is
-  **snapped**, not eased — INV-13's line, for INV-13's reason.
-  *Falsifiable:* the re-bake's own printed line. Open a door onto a torch-lit room and the
-  `N lit of M cells` count must **rise**; shut it and the count must return — the shape
-  DOOM-0281 proved its own re-flood with (835 → 761 → 835 sealed cells). A grid that never
-  re-baked prints no line; one that re-baked against the pre-flood cell cache prints a line
-  whose count does not move.
+  re-baked from the **live** map — `P_CheckSightTrace` against current
+  `opentop`/`openbottom`, over a cell cache refreshed for that movement. Four clauses are
+  part of the guarantee rather than detail (§4.4's DOOM-0296 amendment derives each): the
+  trigger is **`RB_UPD_MOVED`, not an `openrange` flip** — a lift that rises in front of a
+  torch changes visibility without flipping anything, and the stale grid would then light
+  air **through** it, which is the one error direction this feature otherwise never takes;
+  the bake runs when planes **settle**, not on the triggering edge, because a door's flip
+  fires while it is still a crack and a bake there records "dark" permanently (`VDOORSPEED`
+  gives a 128-unit door ≈ 1.8 s of travel); a mover that never settles — a crusher, not a
+  perpetual platform, which waits 3 s at each end — is bounded by `kFogLightMaxWait`, or
+  the feature is silently dead on that map; and the bake reads the cache **after both**
+  refresh paths have run, since a flip swaps `g.seepField` whole while a no-flip move is
+  refreshed in place by `RB_RefreshSunClearance`. The result is **snapped**, not eased —
+  §4.4's clearance section's line, for its reason.
+  *Falsifiable:* the bake's own printed line, which already carries every discriminator
+  needed. It reports `%d air / %d with a candidate / %d lit of %u cells`, and the three
+  failures separate cleanly, which is why one fixture is not enough:
+  - **It never re-baked** → no *second* line after the level-load one. (The load-time bake
+    always prints, so "no line at all" is not the signal.)
+  - **It re-baked against a stale cell cache** → `lit` still moves, because
+    `P_CheckSightTrace` reads live geometry regardless; the discriminator is **`air`**,
+    which is cache-derived and must **rise** as a door's own cells stop being solid.
+  - **It armed on the opening flip instead of `RB_UPD_MOVED`** → a door passes identically,
+    so the door fixture cannot see this at all. Raise a **lift** between two already-open
+    heights in front of a torch: `lit` must **fall**. Nothing else in the design makes that
+    number move, and an implementation keyed to `RB_SeepOpeningsChanged` leaves it frozen.
+
+  Opening a door remains the primary fixture (`lit` rises, and returns when it shuts — the
+  shape DOOM-0281 proved its own re-flood with, 835 → 761 → 835 sealed cells), but it is
+  the first of three, not the test.
 
 ## 9. Alternatives considered
 

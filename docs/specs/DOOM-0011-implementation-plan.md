@@ -1944,8 +1944,8 @@ heights and is never revisited (spec §4.4's 2026-08-02 amendment; INV-14).
 
 **Files:**
 - Modify: `linuxdoom-1.10/r_vulkan.cpp` — three fields on `g`, the arm beside
-  `g.clearanceDirty` in `BuildFrameReheight`, the fire block at the end of
-  `RecordSeepRefresh`, two `static const float` constants beside `kSeepEaseTau`.
+  `g.clearanceDirty` in `BuildFrameReheight`, the fire block inside `RecordSeepRefresh`,
+  two `static const float` constants beside `kSeepEaseTau`.
 
 **Interfaces:**
 - Consumes: `RB_UPD_MOVED` from `RB_UpdateMeshHeights` (already the gate
@@ -1956,48 +1956,97 @@ heights and is never revisited (spec §4.4's 2026-08-02 amendment; INV-14).
 
 **Existing code to read first:**
 - `RecordSeepRefresh` (`r_vulkan.cpp`) — the `dt` clock at the top, the `g.seepDirty`
-  re-flood block that **swaps `g.seepField`**, and the `clearanceDirty` block after it.
-  The new block goes **after both**, for the reason in spec §4.4 (`RB_SeepCellAir` reads
-  the swapped field's cell cache).
+  re-flood block that **swaps `g.seepField`**, the `g.clearanceDirty` block after it that
+  calls `RB_RefreshSunClearance`, and — decisively — the
+  `needUpload = needUpload || g.seepEasing || clearanceMoved; if (!needUpload) return;`
+  early-out that follows both. **The fire block goes after the clearance block and BEFORE
+  that early-out.** See Step 3.
 - `BuildFrameReheight` (`r_vulkan.cpp`) — the `if ((upd & RB_UPD_MOVED) && g.rtEnabled)`
   block that already raises `g.clearanceDirty`.
-- `BuildFogLightGrid` / `UploadFogLightGrid` (`r_vulkan.cpp`) — confirm for yourself that
-  the upload is safe here: it is reached **after** `vkWaitForFences` and **before** the
-  descriptor set is bound for the dispatch, and `cells` cannot change within a level, so
-  the buffer is never re-created mid-play.
+- `RB_RefreshSunClearance` (`r_mesh.c`) — confirm for yourself that it rewrites each
+  cell's `fz`/`cz`/`sky`/`solid` from the live sectors. That is what makes a no-flip
+  plane move visible to `RB_SeepCellAir`, and it is why the fire block must sit after the
+  clearance block and not merely after the re-flood.
+- `BuildFogLightGrid` / `UploadFogLightGrid` (`r_vulkan.cpp`) — confirm the upload is safe
+  here: it is reached **after** `vkWaitForFences` and **before** the descriptor set is
+  bound for the dispatch, and `cells` cannot change within a level, so the buffer is never
+  re-created mid-play.
 
 - [ ] **Step 1: State + constants.** Three fields on `g` (`fogLightArmed`,
   `fogLightStill`, `fogLightWait`) and two constants beside `kSeepEaseTau`:
   `kFogLightSettle = 0.15f` seconds of stillness before the bake, and
-  `kFogLightMaxWait = 2.0f` seconds after which a never-settling map bakes anyway.
-  Clear all three wherever `g.seepDirty` is cleared for a new level (`UploadSeepField`),
-  so a level load does not leave a bake armed from the previous map.
+  `kFogLightMaxWait = 4.0f` seconds after which a never-settling map bakes anyway.
+  ⚠ Clear the three fields **only at the level-load site** — `UploadSeepField`, where
+  `g.seepDirty` is reset for a new map. **Do NOT clear them at the other
+  `g.seepDirty = false;`**, which is the mid-play re-flood at the top of
+  `RecordSeepRefresh`: that one fires on every door flip, and clearing there disarms the
+  bake on exactly the event that should arm it.
 
-  *Verify:* builds; a still map never prints the L3 line after load.
+  *Verify:* builds; loading a level prints the L3 line once and no second line follows on
+  a still map.
 
 - [ ] **Step 2: Arm on plane movement.** In `BuildFrameReheight`, inside the existing
-  `RB_UPD_MOVED && g.rtEnabled` block, set `g.fogLightArmed = true; g.fogLightStill = 0`.
+  `RB_UPD_MOVED && g.rtEnabled` block, set `g.fogLightArmed = true; g.fogLightStill = 0;`.
   **Not** behind `RB_SeepOpeningsChanged()` — spec §4.4 D1 gives the reason (a lift that
   changes visibility without flipping an opening is the leak case).
+  `g.fogLightWait` is deliberately **not** reset here: it measures how long the bake has
+  been owed, and re-arming on every moving frame would make the cap unreachable, which is
+  the whole point of the cap.
 
   *Verify:* a temporary print in the block fires on a door and on a lift; never on a
   still map.
 
-- [ ] **Step 3: Fire on settle.** At the **end** of `RecordSeepRefresh` (after the
-  re-flood block and the clearance block), accumulate `g.fogLightStill += dt` and
-  `g.fogLightWait += dt` while armed, and when
-  `g.fogLightStill >= kFogLightSettle || g.fogLightWait >= kFogLightMaxWait`, call
-  `BuildFogLightGrid()` and clear all three.
+- [ ] **Step 3: Fire — placement is the whole task.** Inside `RecordSeepRefresh`, **after
+  the clearance block and before `needUpload = needUpload || ...; if (!needUpload) return;`**.
+  Both halves of that placement are load-bearing and both were caught by cold-eyes rather
+  than by reading:
+  - *Before the early-out*, because a settle frame is by definition one where nothing is
+    dirty and nothing is easing — so `needUpload` is false and any block after the return
+    **never runs at all**. The clearance block's own comment already makes this argument
+    for itself; this is the same trap one block later.
+  - *After the clearance block*, because that is what refreshes the cell cache on the
+    no-flip path (`RB_RefreshSunClearance`). A flip is covered by the re-flood's swap; a
+    lift is not.
+
+```c
+    if (g.fogLightArmed)
+    {
+        g.fogLightStill += dt;
+        g.fogLightWait  += dt;
+        if (g.fogLightStill >= kFogLightSettle)      // planes stopped: the real bake
+        {
+            BuildFogLightGrid();
+            g.fogLightArmed = false;
+            g.fogLightStill = g.fogLightWait = 0.0f;
+        }
+        else if (g.fogLightWait >= kFogLightMaxWait) // never settles: bake, stay armed
+        {
+            BuildFogLightGrid();
+            g.fogLightWait = 0.0f;                   // NOT fogLightArmed -- see below
+        }
+    }
+```
+
+  ⚠ **The cap path must NOT clear the arm.** If it does, a travel longer than
+  `kFogLightMaxWait` bakes the half-open state and then stops, making D2's "records dark
+  permanently" failure arrive through the escape hatch instead. Leaving the arm set means
+  the settle path bakes again once the plane finishes; the cost is one wasted 3.6 ms bake.
 
   *Verify:* the existing `RB_Vulkan: DOOM-0011 L3 fog lights` line prints **once** per
   door, about a beat after the door stops — not on the frame it cracks.
 
-- [ ] **Step 4: Falsify INV-14.** Drive a door open and shut with a throwaway
-  `EV_VerticalDoor` hook in `P_UpdateSpecials` (xdotool cannot inject into a Wayland
-  client; the memory of that trap is why this is written down). The `N lit of M cells`
-  count must **rise** on open and **return** on shut — the shape DOOM-0281 proved its
-  own re-flood with. A count that does not move means the bake read the pre-flood cell
-  cache; no line at all means it never fired.
+- [ ] **Step 4: Falsify INV-14 — three fixtures, not one.** Drive the map with a throwaway
+  hook in `P_UpdateSpecials` (xdotool cannot inject into a Wayland client; the memory of
+  that trap is why this is written down). Read the bake's own printed line each time:
+  1. **Door open/shut** (`EV_VerticalDoor`) — `lit` must **rise**, then **return**.
+     Proves the bake fires at all.
+  2. **The same door** — `air` must **rise** as the door's own cells stop being solid.
+     `air` is the cache-derived field; `lit` is not, because `P_CheckSightTrace` reads
+     live geometry either way. This is the only fixture that catches a bake run against a
+     stale cell cache, and without it fixture 1 signs that build off.
+  3. **A lift between two already-open heights, in front of a torch** (`EV_DoPlat`) —
+     `lit` must **fall**. This is the only fixture that catches an arm keyed to
+     `RB_SeepOpeningsChanged` rather than `RB_UPD_MOVED`; a door passes both ways.
 
 - [ ] **Step 5: Build + tests + `-rtverify`** (L1 Step 7 commands). `-rtverify` on
   **doom.wad** only until `DOOM-0297` settles which IWAD the gate is valid on.
