@@ -793,6 +793,69 @@ Logged as **DOOM-0281**; Q22 amended.
    number arrived, and closed off the right answer for two days. **In a document that insists on
    measuring, a cost argued against a budget is an assumption wearing a number's clothes.**
 
+## DOOM-0295 — 2026-08-02 — TWO cold lanes on the half-rate torch amendment
+
+Gate on the 2026-08-02 amendments only: the new §4.4(b) half-rate block and the INV-1
+note. Two `general-purpose` lanes, ~98k input each (over the 60k budget — the packet
+inlined the passages and the shader but left the lanes to chase the L3 cost figures and
+the constants inventory themselves).
+
+**Loop 1 — CRITICAL 0 · HIGH 2 · MEDIUM 6 · LOW 6 · INFO 1.** Both lanes independently
+returned the same two HIGHs, which is the useful signal in a two-lane run.
+
+| # | Sev | Finding | Fix |
+|---|---|---|---|
+| 1 | HIGH | **"Everything above about *what the shaft is* stands"** re-certified a mechanism the shipped code does not implement: §4.4(b) specifies an `omniStart` scan picking the *nearest few* emitters and multiplying by `mediumTint`; `torchInscatter` reads a per-cell brightest-first list of ≤ `kFogLightsPerCell` lights and applies no tint | Endorsement narrowed to *rate only*. The superseded mechanism is now stated in a note at the end of the amendment and **filed, not fixed** — the shipped per-cell scheme is undocumented anywhere in the spec and writing it up is a section, not a clause |
+| 2 | HIGH | `kTorchShaftStrength` **"ships at `1.0`"** — it ships at **0.047**, a 21× error, in text the amendment's own measurement floor leans on. Restated in §5's inventory ("the per-source strengths = 1.0"), which the spec calls the implementer's authority | Both corrected, with the stale value named so the correction is legible |
+| 3 | MED | **`kFogSteps` parity was an unstated precondition.** On an odd count the final even index has no partner and `sMid` samples past `tMax` — and §4.2 schedules 24 → "~40" at L1c | Fixed **in code**, not by comment: the offset drops for an unpaired final index, so it is correct for any count. Costs nothing (14.97 → 14.96 ms) |
+| 4 | MED | Figures were `rt_fog 3` (High) only, while the shipped default is `1` (Low) | **Measured at Low**: 15.31 → 14.96 ms, 0.35 ms — the saving is marginally *larger* at the default, because thin fog never trips the `trans < 0.003` early-out so more samples run. Both rows now tabled |
+| 5 | MED | The smoothness rationale — the sole safety argument for halving *this* term — omitted two genuinely sharp features: the light **list** changes at a `fogLightCell` boundary, and the phase argument swings fast on a near-miss ray | Both stated and their tolerance argued (per-pixel jitter → denoiser input), rather than the claim being left absolute |
+| 6 | MED | "second-order" ignored that a pair's two `dt` weights differ; `dt` grows with `s`, so near-camera pairs are weighted forward of their midpoint | Qualified as second-order **in `s`** — and this is exactly the band the measured difference landed in |
+| 7 | MED | 28% recovered where halving implies 50%, unreconciled | Explained: the floor build also deletes the loads, the addend and the register traffic a rate halving keeps. Anyone reusing the trick should predict 28% |
+| 8 | MED | The look MAE was quoted with no acceptance bar, unlike the rtverify figure two lines down | Quoted against `-shotcompare`'s `kGoldenMAE` = 3.0 (`r_vulkan.cpp:1126`) — the change is **55× under** the gate |
+| 9 | MED | INV-1's amendment conceded a tension and answered it with a disclaimer | **The tension does not exist**, which the review made visible: every sample still performs exactly one in-scatter event; what is half-rate is one *addend of `Ls`*. Rewritten as a clarification, invariant and falsifier untouched |
+| 10 | LOW ×6 | "half a pair-width" (it is half a *sample step*); "spent on both" unconditional vs the `trans` early-out; the amendment cited no file/function; the floor method (`kTorchShaftStrength = 0.0`) was unstated; two different enumerations of what still gets every sample; `kTorchSoftR2` absent from §5's inventory while the rationale rests on it | All fixed. `kTorchFalloff` also came off the "still owed" list — it shipped as `kTorchSoftR2` |
+
+**Blast-radius sweep caught one self-inflicted contradiction:** discharging
+`kTorchFalloff` at §5 left a later line still listing it as "genuinely owed". Fixed in
+the same pass. It also found a third L3 cost figure in the code (`1.05 ms` at
+`torchInscatter`) alongside the `1.55` the amendment corrected to `1.15` — all three are
+real, at different spots and different builds, and the code now says so.
+
+**Loop 2 — CRITICAL 0 · HIGH 4 · MEDIUM 6 · LOW 6 · INFO 4**, all verified, all fixed.
+Not a converged pass, and the shape is the interesting part: **rather more than half of
+it was collateral from loop 1's own fixes**, which is the pattern `/cold-eyes` Phase 5
+names as a reason to sweep harder rather than loop again.
+
+| # | Sev | Finding | Origin |
+|---|---|---|---|
+| 1 | HIGH | **"`kFogSteps` parity is a precondition, and the code satisfies it"** — self-contradictory: the guard *removes* the precondition. As written it tells an L1c retune it must pick an even value | collateral (loop 1 fix #3) |
+| 2 | HIGH | Loop 1 corrected `kTorchShaftStrength` to `0.047` **inside the superseded formula**, so a current constant now sat in a product (`· mediumTint`, no 4π normalisation) the shipped code does not compute — and the bullets still carried no inline marker, so a top-down reader hits the wrong contract first and the retraction only ~75 lines later | collateral (loop 1 fixes #1, #2) |
+| 3 | HIGH | The `0.047` pointer said "see §4.4(b)'s derivation" — **self-referential**, and no derivation exists in the spec. It lives in `pt_common.glsl`'s comment | collateral (loop 1 fix #2) |
+| 4 | HIGH | The superseded mechanism appears at **four sites, not one**: the bullets, the layer table's L3 row, Q2, and **Q23 — a live directive** to measure the scan and amend §4.4(b), when shipped code took a third option Q23 never contemplates | draft defect |
+| 5 | MED ×6 | §5's "Not yet in the tree — `kAreaDensity` and every 2026-07-25 constant below" is contradicted 18 lines later and by shipped `kFogColor`; `kFogLightsPerCell` and `kIndoorSkyLight` missing from the shipped inventory; the 28%-not-50% explanation wrongly claimed the buffer reads survive a rate halving (they halve too); the dead-code-elimination claim behind the whole floor was **unmeasured** in a feature with a falsified compiler assumption already on record; "filed" with no ID; the 1.05/1.55/1.15 reconciliation present in ROADMAP and code but absent here | mixed |
+| 6 | LOW ×6 | `kTorchSoftR2` described as "(32 units)" when it is the square; "would sample past `tMax`" → "can" (only for `jitter > 0.5`); an fps figure in a table of megakernel milliseconds; the High "after" quoted pre-parity-guard; two different localisations of the same measured band; INV-1's falsifier not covering the sub-claim the clarification rests on | mixed |
+
+**Fixes.** Parity sentence inverted; the bullets given a ⚠ SUPERSEDED banner naming
+`DOOM-0304`; the derivation pointed at `pt_common.glsl`; Q23 **closed** against the
+shipped answer; §5's inventory corrected and both missing constants added; the DCE claim
+backed with the shaderstats delta (28300 → 27660 bytes, VMEM 159 → 155); the three L3
+figures reconciled in-spec; INV-1 given a second falsifier (`marchFog`'s loop body holds
+exactly one `inscatter +=`). **`DOOM-0304` filed** for the per-cell scheme's write-up,
+carrying all four stale sites plus the plan's copies so the follow-up has the right blast
+radius.
+
+**Stopped at loop 2, deliberately, and not because it converged.** Loop 2's findings were
+majority fix-collateral, which Phase 5 says is answered by a harder sweep and not by a
+third cold read — a loop 3 would mostly find loop 2's collateral. The remaining known
+defect is `DOOM-0304`, which is filed at lane-level detail rather than left to be
+rediscovered.
+
+**Out of scope, surfaced not fixed:** `DOOM-0011-implementation-plan.md` still carries
+`kTorchShaftStrength = 1.0` (`:216`) and the superseded `omniStart` / nearest-few code
+sketch (`:1881-1905`). That is the *plan*, already executed; it is stale rather than
+harmful, and it was not the document under review.
+
 ## Open — not yet fixed
 
 - ~~**Cold-eyes has not converged.**~~ **CONVERGED at loop 13** (2026-07-26): zero verified

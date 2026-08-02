@@ -4560,6 +4560,55 @@ parked ideas (💭 considered) until we commit to and design each one.
         win by far, but density varies along the ray (pooling, wisps,
         seep), so it is an approximation with a look consequence and
         wants a spec before code.
+  Progress (2026-08-02, second): lever (d) shipped -- the torch term is now
+  integrated at HALF the march's rate, once per pair of samples at the
+  pair's midpoint, spent on both.
+
+  Same instrument and spot as the falsification above (RX 6600, Mesa
+  26.1.5, E1M1 nukage courtyard, Ultra RT + HD art, 50% scale, 3 runs x
+  21 samples, medians, idle machine):
+
+    rt_fog 3 High   15.29 -> 14.96 ms   floor 14.14   L3 1.15 -> 0.83 ms
+    rt_fog 1 Low    15.31 -> 14.96 ms                 0.35 ms recovered
+    (Low is the SHIPPED DEFAULT, and the saving is slightly LARGER there
+     -- thin fog never trips the trans < 0.003 early-out, so more samples
+     run and there are more evaluations to halve. Measured because a cold
+     reviewer asked, not assumed.)
+
+  The 1.15 ms independently REPRODUCES the figure this bullet recorded on
+  2026-08-01, even though both absolute numbers sit ~0.76 ms higher today
+  -- so the two sessions' machines differ but the delta does not.
+
+  Recovered 28%, not the 50% halving implies, and that gap is now written
+  into the spec: the floor deletes the whole term, while a rate halving
+  keeps the Ls addend on every sample and the carried register. Anyone
+  reusing the trick should predict 28%.
+
+  Look: MAE 0.055/255, worst pixel 10/255, over the 99.6% of frame a
+  same-build control pair holds stable (control MAE 0.0041). That is 13x
+  the noise floor and 55x UNDER -shotcompare's kGoldenMAE bar of 3.0.
+  Confined to near-floor fog, mottled not banded. -rtverify INV-6
+  identical either side (0.1091%, bar 0.50%) -- measured on both builds,
+  not assumed. make test green.
+
+  Also fixed, because a cold reviewer found it: an odd kFogSteps would
+  have sampled past tMax on the unpaired final index. The guard is in the
+  code rather than in a comment, so L1c's scheduled 24 -> ~40 retune
+  cannot break it. Costs nothing (14.97 -> 14.96, inside run agreement).
+
+  REMAINING: 0.83 ms. L3 is now 0.83 of a 14.96 ms megakernel. Levers left
+  are (e) cache the cell's light list across samples -- kills the loads,
+  leaves the VALU -- and (f) a closed-form per-light line integral, which
+  is the big one but changes the look and wants a spec. (c)
+  kFogLightsPerCell 2 -> 1 remains the last resort and is still untaken.
+
+  Spec amended (DOOM-0011 §4.4(b) + INV-1) and taken through /cold-eyes:
+  2 loops, 2 lanes each, 26 findings, all verified and fixed. Loop 2 was
+  majority collateral from loop 1's own fixes, so the run stopped there by
+  Phase 5's rule rather than spending a third read on its own wake. The
+  review's best catch was structural and NOT about this change: §4.4(b)
+  still specifies a torch-selection scheme L3 never shipped, at four
+  sites, one of them a live directive. Filed as DOOM-0304.
 
 - 📋 [DOOM-0296] **The fog-light grid is baked at level load, so a door that opens later admits no torchlight.**
   DOOM-0011 L3 bakes which cells of air can see which static emitters
@@ -5178,3 +5227,42 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: test.
   Lanes: rt, test.
   Source: in-session-2026-08-02.
+
+- 📋 [DOOM-0304] **The spec still describes a torch-selection scheme L3 never shipped.**
+  DOOM-0011 §4.4(b) specifies torch selection as: iterate the static
+  emitter slice `k in [0, omniStart)`, pick the NEAREST FEW by centroid
+  distance, and multiply each by `mediumTint`. The shipped
+  `torchInscatter` does none of those. It reads a per-cell,
+  brightest-first list of at most `kFogLightsPerCell` (= 2) lights,
+  baked at level load onto the seep grid and indexed by
+  `fogLightCell(p.xy)`, and it applies no medium tint -- deliberately,
+  since a torch carries the emitter's own Le colour.
+
+  Found by the two cold lanes gating DOOM-0295's half-rate amendment,
+  which is why the fix is filed rather than folded in: documenting the
+  shipped scheme is a section, and a perf amendment is the wrong place
+  to smuggle one.
+
+  FOUR sites carry the stale mechanism, not one -- the second lane's
+  contribution, and the reason this is worth an item rather than an
+  edit:
+    - §4.4(b)'s bullets (now marked SUPERSEDED inline, pointing here)
+    - the layer table's L3 row ("iterate static emitters k<omniStart
+      (nearest-few, no occlusion first)")
+    - Q2 ("nearest-few emitters with no occlusion ray")
+    - Q23, which is worse than stale: it is a LIVE DIRECTIVE telling an
+      implementer to measure the scan and amend §4.4(b) to match. The
+      shipped code took a third option Q23 does not contemplate. Closed
+      2026-08-02 against the shipped answer.
+
+  Also stale in the same family, and cheap to fold into the same pass:
+  `DOOM-0011-implementation-plan.md` carries `kTorchShaftStrength = 1.0`
+  (:216) and the superseded nearest-few code sketch (:1881-1905). That
+  is the plan, already executed, so it is stale rather than harmful.
+
+  Do NOT re-review to rediscover any of this -- it is written down here
+  and in the fix ledger's 2026-08-02 section. Fold it in directly.
+  **Layman:** A design document describes an older way the torch-in-fog lighting was going to work, not the way it actually works.
+  Kind: doc.
+  Lanes: docs, fog.
+  Source: cold-eyes-2026-08-02 (DOOM-0295 amendment gate).

@@ -1176,7 +1176,16 @@ to the sky:** on a fully enclosed level with no sky (sky tex id
 every sun ray, so sky shafts vanish — only torch shafts (b) + the base/haze fog
 remain. Expected, not a bug.
 
-**(b) Torch shafts — the existing static emitters.** Iterate the static slice
+**(b) Torch shafts — the existing static emitters.**
+
+> ⚠ **SUPERSEDED (2026-08-02, DOOM-0304) — the selection and tinting described in the
+> bullets below is NOT what shipped.** The shipped `torchInscatter` reads a per-cell,
+> brightest-first list of at most `kFogLightsPerCell` (= 2) lights baked at level load,
+> and applies no `mediumTint`. Read the superseded-mechanism note at the end of this
+> subsection before building anything from the bullets. What still holds is the *intent*:
+> an additive, unoccluded, per-sample in-scatter from static emitters.
+
+Iterate the static slice
 `k ∈ [0, omniStart)` (`omniStart = pc.misc4.y`, written at `r_vulkan.cpp:7431`; record
 layout `pt_common.glsl:84-87`). For cost control, **do not** shadow-test every emitter at
 every sample — that is `steps × emitters` rays. Instead (Q2, start cheap):
@@ -1184,7 +1193,11 @@ every sample — that is `steps × emitters` rays. Instead (Q2, start cheap):
   centroid), and
 - add each as `Le · kTorchShaftStrength · falloff(dist) · phase · mediumTint`
   (`kTorchShaftStrength` is the emitter-side gain — the sky's twin is `kSkyShaftStrength`,
-  which ships at `0.85`; this one ships at `1.0`), with an **optional single**
+  which ships at `0.85`. **This one's shipped value is `0.047`, and its derivation lives in
+  `pt_common.glsl`'s comment above the declaration, not in this spec** — it pins a median
+  torch's peak at roughly 4× the indoor sky in-scatter floor. Corrected 2026-08-02 from a
+  stale `1.0`; note the value is current but the product it appears in below is not, per
+  the SUPERSEDED banner), with an **optional single**
   occlusion ray to the chosen emitter (start *without* occlusion — a torch glows its
   air even through a thin wall, usually acceptable and much cheaper; add occlusion
   only if light-through-wall reads wrong, Q2).
@@ -1192,6 +1205,107 @@ every sample — that is `steps × emitters` rays. Instead (Q2, start cheap):
 Both sources feed the same `Ls(p)` accumulation (§4.2). The sky path is the primary
 shaft mechanism; torch shafts are the secondary "dark room glows around the flame"
 effect.
+
+**2026-08-02 amendment (DOOM-0295) — the torch term is integrated at HALF the march's
+rate.** The change is one of *rate only*: `torchInscatter` is called once per **pair**
+of march samples instead of once per sample. **It does not endorse the selection and
+tinting text above, which the shipped code has already superseded** — see the
+superseded-mechanism note at the end of this amendment. Implemented in `marchFog`
+(`pathtrace.comp`, the `if ((i & 1) == 0)` block inside the `kFogSteps` loop).
+
+The evaluation point is the pair's midpoint **in index space** (`i + 0.5`, with
+`jitter` inside it, so pair boundaries move per pixel exactly as the sample positions
+do), and the result is spent on both samples of the pair — except where the
+`trans < 0.003` early-out ends the loop on an even `i`, which spends that midpoint
+once. That case is worth ~0.3% of the ray by construction. Density, the seep grade and
+the sky term are untouched and still get every sample.
+
+**`kFogSteps` parity is NOT a precondition — the code removes the need for one.** On an
+odd count the final even index has no partner, and offsetting it by half a step can
+sample past `tMax` (whenever `jitter > 0.5`); the shipped expression drops the offset
+for that index instead. Stated because §4.2 schedules `kFogSteps` 24 → **~40** at L1c
+and "~40" invites an odd value, so the natural reading of a pairing scheme is that it
+constrains the retune. It does not.
+
+Why this term and not the others: it is the smooth one. A windowed inverse square whose
+peak is capped by `kTorchSoftR2` (a 32-unit softening radius, stored squared) has no
+feature finer than that radius, while
+the density it multiplies carries every sharp thing in the model — the wisps, the floor
+layer's knee, the seep grade at a threshold. Two things in the torch term are **not**
+smooth, and are tolerated rather than overlooked: the cell's light **list** changes
+discontinuously at a `fogLightCell` boundary, and the phase argument swings fast along a
+ray that passes close to a lamp, which can be well inside 32 units. Both are jittered
+per pixel and land in the denoiser's input, which is where the measured error stayed.
+
+Midpoint rather than the pair's leading sample, because holding the leading value would
+shift every shaft **half a sample step** toward the camera; the midpoint rule is
+second-order, the same error order as interpolating both ends, for one evaluation
+instead of two. Second-order **in `s`**, and only where a pair's two `dt` weights are
+close: `dt = 2·tMax·s/N` grows with `s`, so the first pair or two are weighted forward
+of their midpoint. That is the near-camera band — and near-camera and near-floor are the
+same pixels from this viewpoint, which is exactly where the measured difference landed.
+The claim is second-order, not exact.
+
+Measured on an RX 6600 (Mesa 26.1.5), E1M1 nukage courtyard (`-warpto 1866 -3221 45`),
+Ultra RT with HD art, 50% scale, `-noinput`, three runs of 21 samples each per build,
+medians, idle machine. The floor build sets `kTorchShaftStrength = 0.0`, which makes the
+whole torch loop dead code and is therefore a true feature-off floor, not a gain of zero
+— **confirmed rather than assumed**, since this feature already has one falsified compiler
+assumption on its record: `RADV_DEBUG=shaderstats` shows the floor build 640 bytes and 124
+instructions smaller (28300 → 27660, VMEM 159 → 155), which is the loop leaving.
+
+| `rt_fog` | before | after | floor | L3 before → after |
+|---|---|---|---|---|
+| `3` High | 15.29 ms | 14.97 ms | 14.14 ms | **1.15 → 0.83 ms** |
+| `1` Low — **the shipped default** | 15.31 ms | 14.96 ms | — | **0.35 ms** recovered |
+
+All figures are the megakernel pass alone, not whole-frame. Whole-frame went 38 → 39 fps
+at High, which is a rounding step on a 0.32 ms saving and is quoted only so the order of
+magnitude is visible. The High "after" re-measured at **14.96 ms** once the `kFogSteps`
+parity guard landed — inside the 0.02 ms run-to-run agreement, i.e. the guard is free —
+and 14.96 is the shipped build.
+
+The saving holds at the shipped default and is marginally *larger* there, which is the
+opposite of the intuition and worth recording: thinner fog never trips the
+`trans < 0.003` early-out, so more samples run and there are more evaluations to halve.
+
+**Halving the evaluations recovered 28%, not 50%, and the gap is the point.** L3's
+1.15 ms is not purely per-evaluation cost: the floor build deletes the whole term, while
+a rate halving keeps the `Ls += torchPair` addend on *every* sample, keeps the carried
+register, and still makes half the buffer reads. Anyone applying this trick to another
+term should predict ~28%, not ~50%, or they will over-promise by 1.8×.
+
+**Which of 1.05 / 1.55 / 1.15 ms is L3's cost?** All three, in different contexts, and
+the spec should not be the one record that omits the reconciliation. `1.05 ms` is
+DOOM-0295's original headline, taken at a lighter viewpoint; `1.55 ms` is the same term
+at this courtyard *before* the phase-function rewrite landed; `1.15 ms` is here and now,
+after it. The ROADMAP bullet and `torchInscatter`'s comment both carry this; now so does
+this spec.
+
+Look A/B at 3840×2160, ripple clock pinned with `-rippletime 8`: MAE **0.055/255**,
+worst pixel **10/255**, measured over the 99.6% of the frame a same-build control pair
+holds stable (the excluded remainder is sprite animation on the game clock, plus the fps
+readout). Control MAE is 0.0041/255, so the change is 13× the noise floor — and **55×
+under `-shotcompare`'s `kGoldenMAE` bar of 3.0** (`r_vulkan.cpp:1126`), which is the
+gate that decides whether a look change is acceptable. It is confined to near-floor fog,
+mottled rather than banded. `-rtverify` INV-6 is identical either side (0.1091%, bar
+0.50%), as it must be: this touches no direct-lighting path.
+
+> **Superseded-mechanism note (raised by the 2026-08-02 cold-eyes pass, filed not fixed —
+> `DOOM-0304`).** The bullets above describing torch selection are stale against shipped
+> code, and the gap predates this amendment: the spec says iterate `k ∈ [0, omniStart)`,
+> pick the **nearest few** by centroid distance, and multiply by `mediumTint`. The shipped
+> `torchInscatter` does none of those — it reads a **per-cell, brightest-first list of at
+> most `kFogLightsPerCell` (= 2) lights**, baked at level load onto the seep grid and
+> indexed by `fogLightCell(p.xy)`, and it applies **no medium tint** (deliberately: a torch
+> carries the emitter's own `Le` colour, and tinting it near-white would discard that).
+>
+> **FOUR sites carry the stale mechanism, not one**, which is why this is an item rather
+> than an edit: these bullets, the layer table's **L3 row**, **Q2**, and **Q23** — and Q23
+> was worse than stale, being a live directive to measure the scan and amend §4.4(b) to
+> match, when the shipped code took a third option Q23 never contemplates. Q23 is closed
+> against the shipped answer as of 2026-08-02; the rest is `DOOM-0304`. Writing the per-cell
+> scheme up properly is a section, and a perf amendment is the wrong place to smuggle one.
 
 **2026-07-30 amendment (DOOM-0289) — the sun ray becomes two more channels on the seep
 field.** Everything above about *what the shaft is* stands. What changes is **how the
@@ -1772,10 +1886,14 @@ colour-frozen.
     **`kFogIndoorPool` = 18** (roofed air keeps the shallower bank),
     `kFogAnisotropy` = 0.40, `kGooTint` = `(0.35, 0.85, 0.30)`,
     `kHellTint` = `(0.90, 0.35, 0.30)`, `kIndoorFogScale` = 0.05, the per-source
-    strengths = 1.0, **`kAreaDensity` = 0.0020** (§4.5's profile density), **`kFogFloorFallback`**
+    strengths (**shipped 2026-08-02: `kSkyShaftStrength` = 0.85, `kTorchShaftStrength`
+    = 0.047 — both were first guessed at 1.0 and this list said so until corrected**),
+    **`kAreaDensity` = 0.0020** (§4.5's profile density), **`kFogFloorFallback`**
     and **`kTorchFalloff`** (§4.3/§4.4). **`kFogFloorFallback` was never needed** and is not in the
     tree — the outdoor reference is the per-level `pc.fogFloorZ` and the indoor one is
-    camera-relative (§4.3).  `kTorchFalloff` is still owed by L3. **`kFogDepthSigma`** (L5's bilateral guide, §4.6 — a
+    camera-relative (§4.3).  **`kTorchFalloff` is discharged, corrected 2026-08-02:** it
+    shipped as **`kTorchSoftR2`** (= `32.0 * 32.0`, `pt_common.glsl`), the softening radius
+    SQUARED in the falloff denominator, so no constant of that name is owed. **`kFogDepthSigma`** (L5's bilateral guide, §4.6 — a
     distance in **world units** between two hit positions, not a depth ratio) is the **one
     exception: it is declared in `svgf_composite.comp` itself, NOT in `pt_common.glsl`**, because
     that shader includes only `formulas.glsl` and `pbr_neutral_tonemap.glsl` — the same limitation
@@ -1784,9 +1902,14 @@ colour-frozen.
     the most load-bearing constant in L2 and previously missing from this list),
     **`kWispSquashZ`**, **`kWispTexels`**,
     `kFogMaxDist`, **`kFogSkyDist`**, `kFogBaseDensity`, `kSunDir`, `kSkyShaftStrength`,
-    `kTorchShaftStrength`, `kIndoorFogScale`, `kFogPoolHeight`, **`kFogIndoorPool`**,
-    `kEyeAboveFloor`, `kFogAnisotropy`, `kGooTint`, `kHellTint`. **Not yet in the tree** — `kAreaDensity` and every
-    2026-07-25 constant below; each is a first guess owned by its layer's question. **The 2026-07-25 constants belong to the same inventory:**
+    `kTorchShaftStrength` (= 0.047), **`kTorchSoftR2`** (= `32.0 * 32.0`),
+    `kIndoorFogScale`, `kFogPoolHeight`, **`kFogIndoorPool`**,
+    `kEyeAboveFloor`, `kFogAnisotropy`, `kGooTint`, `kHellTint`, **`kFogLightsPerCell`**
+    (= 2 — L3's per-cell light budget, and the constant that bounds its per-sample cost),
+    **`kIndoorSkyLight`** (= 0.45). **Not yet in the tree** — `kAreaDensity` only
+    (corrected 2026-08-02: this line used to add "and every 2026-07-25 constant below",
+    which the paragraph below already contradicts — they shipped at L1c/L1d).
+    **The 2026-07-25 constants belong to the same inventory:**
     `kFogColor` = `(0.55, 0.56, 0.56)`, `kWispAmp` = 0.6, `kWispWeight2` = 0.7,
     `kWispFreq1` = 1/512, `kWispFreq2` = 2.5·`kWispFreq1`, `kWispVel1` = `(8, 3, 1)`,
     `kWispVel2` = `(−3, 4, 0.3)` units/s (deliberately **slower** than `kWispVel1`, §4.3b), `kWispOffset2` = `(17.3, 5.1, 23.7)`,
@@ -1805,8 +1928,8 @@ colour-frozen.
     `kWispWeight2`, the octave frequencies/velocities, `kSeepMax`, `kSeepFalloff` and
     `dMax` are all **in the tree now** rather than pending. **L1e shipped, so its three constants are in the tree too**
     (`kFloorFogDensity`, `kFloorFogPool`, `kFloorFogRange` — `marchFog` calls
-    `floorFogDensity()`), leaving only **`kAreaDensity`** (L4) and **`kTorchFalloff`** (L3)
-    genuinely owed.
+    `floorFogDensity()`), leaving only **`kAreaDensity`** (L4) genuinely owed —
+    `kTorchFalloff` came off this list on 2026-08-02, having shipped as `kTorchSoftR2`.
     **The two octave velocities changed again on 2026-08-01 (DOOM-0300), and the reason
     matters more than the numbers**: `kWispVel1` ships **`15 · (8, 3, 1)`** and `kWispVel2`
     ships **`−kWispVel1`**, so the "deliberately slower second octave" noted above is no
@@ -2446,6 +2569,17 @@ The other layers' Verify cells fit in a line. These two do not, so they live her
   It is composited as `surface·transmittance + inscatter` after the primary hit.
   *Falsifiable by diff:* `marchFog` contains no `rayQueryProceed` loop that spawns a
   secondary bounce, and no call site extends a path.
+  **Clarified 2026-08-02 (DOOM-0295) — this invariant is UNCHANGED, and the note exists
+  only to stop a misreading.** L3 now evaluates its torch **radiance** once per pair of
+  march samples (§4.4(b)), which looks at a glance like it halves the in-scatter rate.
+  It does not: every sample still performs exactly one in-scatter event
+  (`inscatter += trans · sigma · Ls · dt`, once per iteration). What is evaluated at
+  half rate is one **addend of `Ls`** — how finely that addend's radiance is sampled
+  along the ray, which this invariant has never constrained and which is a quadrature
+  choice. The *Falsifiable by diff* clause above is untouched. It does not, however, test
+  the sub-claim this clarification rests on, so one more falsifier joins it: *`marchFog`'s
+  loop body contains exactly one `inscatter +=`.* That is what "one in-scatter event per
+  march sample" means operationally, and it is checkable by grep.
 - **INV-2:** Fog scatters light from **sky + static emitters `[0, omniStart)`
   only** (`omniStart = pc.misc4.y`). Dynamic sprite lights `[omniStart, emitCount)`,
   the muzzle flash (`misc2.z`), and the flashlight (`misc2.w`) **never** scatter.
@@ -2802,6 +2936,14 @@ reasoning stays there.
   sealed cells, one door opening drops it to 761, shutting it returns exactly 835. The spawn
   frame is bit-identical to the pre-change build (`-shotcompare` mae 0.000/255), so the whole
   mechanism is inert until something moves.
+- **Q23 — CLOSED 2026-08-02, and the answer was neither option.** L3 shipped a third form
+  this question never contemplates: the selection happens **at level load**, not per sample
+  and not per ray. A per-cell, brightest-first list of at most `kFogLightsPerCell` (= 2)
+  lights is baked onto the seep grid, so the march does **no** selection scan at all — one
+  buffer read indexed by `fogLightCell(p.xy)`. The scan cost this question exists to bound
+  is therefore zero at runtime, and the "amend §4.4(b) to match" directive below is
+  discharged by `DOOM-0304` rather than by choosing between the two options. Left in place
+  because the reasoning still documents *why* a runtime scan was avoided. Original text:
 - **Q23 (torch-emitter selection, per sample or per ray? 2026-07-26):** §4.4(b) says pick the
   **nearest few** static emitters *to the sample*, which cuts the expensive phase evaluations
   from `steps × omniStart` to `steps × 4`. But the selection scan itself is still
