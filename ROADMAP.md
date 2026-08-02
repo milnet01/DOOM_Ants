@@ -4515,6 +4515,51 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   Tooling note for whoever picks this up: -shotverify PINS a canonical
   config and cannot be used for effect A/Bs; use -devshot N (DOOM-0303).
+  Progress (2026-08-02): candidate (b), register pressure, is FALSIFIED.
+  Measured, not argued: RADV_DEBUG=shaderstats on the RX 6600 (Mesa
+  26.1.5), -rtverify -warp 1 1 on doom.wad, the only variable
+  kTorchShaftStrength 0.047 vs 0.0 -- a const zero folds the whole torch
+  loop away, so that is the same floor build the 13.38 ms came from.
+
+  The megakernel (the 5133-instruction compute shader):
+
+                        L3 on   L3 off
+    VGPRs                  96       96
+    Spilled VGPRs           0        0
+    Subgroups per SIMD      8        8
+    Code size           28300    27660
+    Instructions         5133     5009
+    VALU                 3232     3132
+    VMEM                  159      155
+
+  Occupancy is bit-identical with the feature on and off, so occupancy
+  cannot be the mechanism. L3 costs zero registers and zero spills.
+
+  Nor is 8 waves/SIMD a register ceiling: 96 VGPRs would allow 10
+  (1024/96). The cap is the 8192-byte LDS the pipeline reports, and the
+  only two shaders in the whole build reporting 8192 are the two using
+  rayQueryEXT (pathtrace.comp, bake.comp) -- every non-ray-query compute
+  shader reports 0. 8192 = 128 bytes x an 8x8 group, i.e. a per-invocation
+  BVH traversal stack. That last step is a CORRELATION across this
+  build's 26 pipelines, not a read of RADV's source; if it holds, the
+  ceiling is the driver's and not ours to move. Flagged, not claimed.
+
+  What the 1.15 ms actually is: dynamic issue inside the march. The torch
+  loop IS unrolled (2 lights -> +4 VMEM statically) and the 24-sample
+  march is NOT, so every fog pixel pays the static delta 24 times --
+  roughly 2400 extra VALU and 96 extra vector loads.
+
+  So the remaining levers are structural or quality, never occupancy:
+    (c) kFogLightsPerCell 2 -> 1. Still the last resort.
+    (d) evaluate the torch term every OTHER march sample and lerp. The
+        term is smooth in t, so this is ~0.5 ms for little visible cost.
+    (e) cache the cell's light list across samples -- kills the 96 loads,
+        leaves the VALU, so it is the smaller half.
+    (f) a closed-form line integral per light in place of the 24-sample
+        sum: the same substitution DOOM-0276 and DOOM-0289 made. Biggest
+        win by far, but density varies along the ray (pooling, wisps,
+        seep), so it is an approximation with a look consequence and
+        wants a spec before code.
 
 - 📋 [DOOM-0296] **The fog-light grid is baked at level load, so a door that opens later admits no torchlight.**
   DOOM-0011 L3 bakes which cells of air can see which static emitters
