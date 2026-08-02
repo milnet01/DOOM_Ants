@@ -4610,7 +4610,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   still specifies a torch-selection scheme L3 never shipped, at four
   sites, one of them a live directive. Filed as DOOM-0304.
 
-- 📋 [DOOM-0296] **The fog-light grid is baked at level load, so a door that opens later admits no torchlight.**
+- 🚧 [DOOM-0296] **The fog-light grid is baked at level load, so a door that opens later admits no torchlight.**
   DOOM-0011 L3 bakes which cells of air can see which static emitters
   once, at level load. A door that opens mid-play changes that answer and
   nothing re-runs the bake.
@@ -4634,6 +4634,67 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: fix.
   Lanes: shaders, fog.
   Source: in-session-2026-08-01.
+  Progress (2026-08-02): IMPLEMENTED (9cd8add) and verified on the
+  RX 6600; only the LOOK is left, which needs a person at the keyboard.
+  Spec DOOM-0011 4.4 amendment + INV-14 + 7's L3b row through three
+  cold-eyes loops (2 -> 1 -> 0 CRITICAL); build steps as plan Task L3b.
+
+  Four claims in the headline above are SUPERSEDED, all by precedent this
+  bullet was itself citing:
+    - "ease rather than snap" -> it SNAPS. DOOM-0289's own line: the seep
+      eases because mist rolls in; light is height-keyed and snaps. The
+      settle timer also lands the bake after the door has stopped, so there
+      is no partial state to fade through -- and a slot holds a light's
+      IDENTITY beside its weight, so two different lights in one slot
+      cannot be interpolated anyway.
+    - "keyed off RB_SeepOpeningsChanged" -> keyed off RB_UPD_MOVED.
+      P_CheckSightTrace's P_CrossSubsector narrows its slope range from
+      opentop/openbottom, so the answer moves CONTINUOUSLY with plane
+      height. On the flip signal a lift rising in front of a torch would
+      leave the grid lighting air THROUGH it -- a leak, the one direction
+      this defect never takes for a door.
+    - "re-bake only the cells within reach" -> the whole grid re-bakes. An
+      opened door reveals a torch to every cell within that torch's reach,
+      not to cells near the door, so a correct scope is a reach-radius
+      sweep per opening: not obviously cheaper, much easier to get wrong.
+    - "7788 sight tests (4.4 ms)" is stale. It predates DOOM-0302
+      (63d5a2d), which cut kNukageLe 0.35/1.30/0.15 -> 0.05/0.19/0.02 and
+      kLavaLe 2.20/0.75/0.12 -> 0.55/0.19/0.03; reach is
+      sqrtf(lum / RB_FOG_LIGHT_CUTOFF), so dimmer liquids reach less far
+      and fewer cells have any candidate. 6320 tests now.
+
+  Measured on E1M1 (idle, renderer 1 / rt_fog 2 / render_scale 50):
+    still map     one L3 line, no second; -shotcompare mae 0.003 against a
+                  golden written by the PRE-change build (same-build
+                  control 0.004, i.e. at the noise floor)
+    door          449 -> 454 lit, 1085 -> 1090 air, and back on close
+    lift, no flip 449 -> 353 lit, and back -- the only fixture that catches
+                  a flip-keyed trigger, which emits nothing here
+    real door     exactly one bake per plane stop, not ~80
+    bake+upload   4.1 ms E1M1 / 2.9 ms MAP01 against a <= 6 ms gate. The
+                  upload is NOT separable from run variance (bake-alone
+                  spanned 3.6-4.7 ms over seven runs of one build), so do
+                  not quote it as a delta.
+    make test 7/7; -rtverify doom.wad PASS 0.1091%, furnace PASS.
+
+  Owed before shipped:
+    - The user's play-test. Two look calls: a torch's fog appearing ~0.15 s
+      after a door finishes (snap, not roll-in -- that supersession is mine
+      and is theirs to veto); and whether a repeating re-bake reads badly
+      on a map with a cycling mover. A perpetual platform waits 3 s at each
+      end, so it SETTLES and bakes twice per cycle indefinitely without
+      ever touching the cap -- the commoner case, and the one to watch. If
+      it reads badly, suppress re-bakes while such a mover runs rather than
+      shortening the cap.
+    - Plan Step 8's visual A/B was NOT run: it needs the throwaway
+      plane-driving hook (removed after Step 4) and a door that reveals a
+      torch. The lit-count moves above are the numeric proof of effect.
+
+  Found, not fixed: the timer is map-GLOBAL. RB_UPD_MOVED says SOME plane
+  moved, not which, so a lift cycling in an unvisited corner defers every
+  door's re-bake to the 4 s cap while it runs. Accepted (a per-sector timer
+  needs a dirty set the engine does not keep), but it is why the cap is not
+  the rare path it looks like.
 
 - 📋 [DOOM-0297] **-rtverify passes on doom.wad and deterministically fails on doom2.wad, same build.**
   Found while gating DOOM-0011 L3 across both IWADs, which the standing
@@ -5312,3 +5373,32 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: doc.
   Lanes: docs, fog.
   Source: cold-eyes-2026-08-02 (DOOM-0295 amendment gate).
+
+- 📋 [DOOM-0305] **The fog-light re-bake's settle timer is map-global, so one cycling lift defers every door.**
+  Found while building DOOM-0296, recorded rather than fixed there.
+
+  `RB_UPD_MOVED` reports that SOME sector plane moved this frame, not which
+  one. DOOM-0296's `g.fogLightStill` is a single global reset by that
+  signal, so a lift cycling in an unvisited corner of the map keeps
+  resetting it and no door ever reaches `kFogLightSettle`. Every re-bake
+  then falls through to the `kFogLightMaxWait` cap instead: the torchlight
+  arrives up to 4 s after the door finishes rather than 0.15 s, on any map
+  with a mover running somewhere.
+
+  Two things make this less bad than it sounds, which is why it shipped:
+  the cap bounds it, and vanilla DOOM 1/2 maps rarely have a plane in
+  motion at an arbitrary moment. It gets worse on a PWAD with ambient
+  machinery.
+
+  The fix needs a per-sector dirty set the engine does not currently keep.
+  `RB_UpdateMeshHeights` walks vertices and could report WHICH sectors
+  moved at little extra cost; the re-bake would then hold a timer keyed to
+  the nearest moved sector, or simply ignore movement outside any light's
+  reach of a cell it would change. The second is probably cheaper and is
+  the same reach bound DOOM-0296's D4 already computes.
+
+  Sequence after the DOOM-0296 play-test, which may make it moot: if the
+  snap reads fine at cap latency, this is not worth a dirty set.
+  **Layman:** If any platform anywhere on the map is moving, opening a door makes the mist wait a few seconds to catch the torchlight instead of a fraction of one.
+  Kind: enhancement.
+  Source: in-session-2026-08-02.
