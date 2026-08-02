@@ -5038,3 +5038,73 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: feature.
   Lanes: playsim, tooling.
   Source: user-request-2026-08-01.
+
+- 🚧 [DOOM-0302] **A nukage pool glowed only in patches, because the per-texel emissive mask was applied to liquids too.**
+  User report 2026-08-02, with four F12 captures: "it looks like there is
+  point lights placed at random" in the pools, "just parts of the pools
+  glowing". Ultra RT, confirmed by the Video menu in the fourth shot.
+
+  ROOT CAUSE: shadeSurface multiplied the material's Le by
+  emissiveMask(albedo) = smoothstep(0.30, 0.60, max channel of this
+  texel). That is DOOM-0084, and it is right for a lamp -- it glows from
+  its lit top, not its dark metal stand. It is wrong for a liquid.
+  NUKAGE's flat is deeply mottled, so its dark blobs fell UNDER the 0.30
+  threshold and emitted nothing at all while the bright ridges emitted
+  full Le. The pool therefore glowed in a field of patches that read
+  exactly as scattered point lights. Liquids are the one material whose
+  Le is not derived from the texture but FORCED CONSTANT by name
+  (ForceLiquidEmissive, INV-7), so there is no dark-stand problem to
+  solve there.
+
+  FIX: emisWeight(mc, albedo) returns 1.0 for a liquid and the DOOM-0084
+  mask otherwise. The decision moved to pathtrace.comp, the only place
+  that can see MatCtrl.flags; galbedo.a now carries the full emission
+  WEIGHT rather than a 0/1 enable, so svgf_composite.comp just
+  multiplies. That also deletes a duplicated smoothstep that two shaders
+  had to keep in step by hand.
+
+  A PROPORTIONAL variant was built and captured first -- smoothstep(0,
+  HI), no dead zone, so dark sludge emits less but never nothing. It did
+  NOT fix the report: tracking the albedo at all reproduces the same
+  blob field, just dimmer. The patchiness IS the texture, so only a
+  constant removes it. Recorded because it is the more conservative fix
+  and it looks right until captured.
+
+  RE-TUNE: with the whole surface emitting, the old constants measured
+  51x brighter in linear green at the E1M1 courtyard and blew out to a
+  flat white-green slab -- the old numbers were really the peak of a few
+  ridges, not the pool's brightness. kNukageLe 0.35/1.30/0.15 ->
+  0.05/0.19/0.02, kLavaLe 2.20/0.75/0.12 -> 0.55/0.19/0.03.
+
+  Gates: make test green; -rtverify PASS on doom.wad (rel-MSE 0.1091% vs
+  0.50% bar, white furnace 0.000000). AWAITING the user's eye on the
+  brightness -- the pool is uniform and clearly self-lit, but a flat
+  emitter necessarily flattens the surface texture, and that trade is a
+  look call, not a measurement.
+  **Layman:** Nukage pools looked like they had random glowing spots in them. Now the whole pool glows evenly.
+  Kind: fix.
+  Lanes: shaders, rt.
+  Source: user-report-2026-08-02.
+
+- ✅ [DOOM-0303] **-devshot N takes a developer screenshot headlessly, without -shotverify's canonical config pin.**
+  Found while investigating the liquid-glow report. -shotverify PINS a
+  canonical RT config (rb_fog, rb_wet, rb_flashlight, rb_renderscale,
+  ...) so the DOOM-0202 golden gate is reproducible regardless of
+  ~/.doomrc. That is correct for a gate and exactly wrong for a look
+  investigation: FIVE captures taken through it to A/B rt_fog 0 vs 2 and
+  rt_wet 0 vs 1 came back identical to within the 0.0087/255 noise
+  floor, because every one of them rendered the same pinned frame. The
+  toggles under test were the ones being overwritten.
+
+  -devshot N arms the existing DOOM-0294 rb_devshot capture after N
+  presents, so a shot can be taken under -noinput (F12 cannot be pressed
+  there, and xdotool cannot inject into a Wayland client). It pins
+  nothing. Re-running the same A/B with it moved the frame by MAE 140 of
+  255, which is what a fog toggle should do.
+
+  Lesson worth keeping: a capture harness that silently normalises the
+  variable under test reports a clean, confident, meaningless result.
+  **Layman:** A way to screenshot the game automatically for testing, showing your real settings.
+  Kind: test.
+  Lanes: rt, test.
+  Source: in-session-2026-08-02.

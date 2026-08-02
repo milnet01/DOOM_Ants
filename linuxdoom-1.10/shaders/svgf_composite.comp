@@ -175,13 +175,15 @@ void main()
         vec3 emis = vec3(pc.matEmis.m[id * 3u + 0u],
                          pc.matEmis.m[id * 3u + 1u],
                          pc.matEmis.m[id * 3u + 2u]);
-        // DOOM-0084: localise self-emission to this texel's VALUE (max channel, so a
-        // saturated red/blue light isn't suppressed) — a lamp glows from its lit top,
-        // not its dark stand — matching shadeSurface() in pt_common.glsl so the
-        // denoised view agrees with the raw mode-4 view. ga.a is the emission ENABLE
-        // (0 for a non-light sprite — pickup/monster). INV-7 backfill thresholds.
-        float emisMask = smoothstep(0.30, 0.60, max(albedo.r, max(albedo.g, albedo.b)));
-        L = albedo * illum + emis * emisMask * ga.a;
+        // DOOM-0302: ga.a is the emission WEIGHT, computed once in pathtrace.comp
+        // (emisWeight): the enable — 0 for a non-light sprite, pickup or monster —
+        // times DOOM-0084's per-texel value mask, which localises a lamp's glow to its
+        // lit top rather than its dark stand. This pass used to recompute that mask from
+        // the albedo, so the same smoothstep lived in two shaders that had to agree, and
+        // it sat where the material flags are invisible — which is why liquids could not
+        // be excepted from it and a nukage pool glowed only in the bright patches of its
+        // own mottled texture. The decision moved to the one place that can see MatCtrl.
+        L = albedo * illum + emis * ga.a;
     }
     // DOOM-0011 L1: fog is a SEPARATE channel, folded AFTER the albedo re-multiply
     // above (it has no surface albedo of its own) and BEFORE the tonemap, in linear

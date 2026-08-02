@@ -5168,8 +5168,17 @@ void InitPaletteAndDescriptorSet()
 
 // DOOM-0183 L2: forced-constant glow Le (linear RGB) for the liquid flats. Start faint —
 // the goo should TINT a room, not floodlight it (§4.3); tune on hardware (DOOM-0193 look).
-static const float kNukageLe[3] = { 0.35f, 1.30f, 0.15f };   // green toxic-sludge glow
-static const float kLavaLe[3]   = { 2.20f, 0.75f, 0.12f };   // hot orange lava glow
+// DOOM-0302 re-tune. These were set when the per-texel emissive mask (DOOM-0084) still
+// applied to liquids, which on NUKAGE's mottled flat left most of the surface BELOW the
+// mask's 0.30 threshold and emitting nothing -- so the tuned number was really the peak
+// of a few bright ridges, not the pool's brightness. With the whole surface now emitting
+// (emisWeight), the same constants measured 51x brighter in linear green at the E1M1
+// courtyard and blew out to a flat white-green slab. Scaled to put the pool at ~0.12
+// linear green there: clearly self-lit sludge that still reads as a TINT on the room
+// rather than a floodlight, with the surface texture and ripples still visible through
+// it. MEASURED, not guessed; expect the user's eye to move it.
+static const float kNukageLe[3] = { 0.05f, 0.19f, 0.02f };   // green toxic-sludge glow
+static const float kLavaLe[3]   = { 0.55f, 0.19f, 0.03f };   // hot orange lava glow
 
 // DOOM-0183 L2: force a guaranteed, tunable emissive Le on the nukage/lava flats by NAME,
 // OVERWRITING whatever the peak-gated derive produced. This is the whole cast-light
@@ -9742,6 +9751,22 @@ extern "C" void RB_Vulkan_Present(void)
     // here, so this single block covers the raster and ray-traced views alike and
     // needs no knowledge of either. Transition it, copy, put it straight back, so
     // the present that follows is unaffected.
+    // DOOM-0303: `-devshot N` arms that same capture after N presents, so a shot can be
+    // taken headlessly under -noinput (F12 cannot be pressed there, and xdotool cannot
+    // inject into a Wayland client). Unlike -shotverify this pins NOTHING: -shotverify
+    // forces the canonical golden config (rb_fog/rb_wet/rb_flashlight/... above), which is
+    // right for a reproducible gate and exactly wrong for a look investigation -- an A/B
+    // over an effect toggle taken through -shotverify silently photographs the same pinned
+    // frame twice. Costs nothing unless the flag is passed.
+    {
+        static bool devShotArmed = false;
+        if (!devShotArmed)
+        {
+            devShotArmed = true;
+            int p = M_CheckParm("-devshot");
+            if (p && p + 1 < myargc) rb_devshot = atoi(myargv[p + 1]);
+        }
+    }
     bool devShotThisFrame = false;
     if (rb_devshot > 0 && --rb_devshot == 0)
     {

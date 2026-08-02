@@ -557,6 +557,34 @@ const float kPuddleGlow       = 0.35;   // additive goo-puddle glow (well below 
 const float kPuddleSheenScale = 0.6;    // puddle sheen relative to the full nukage sheen
 
 bool  isNukage(MatCtrl mc) { return (mc.flags & LIQUID_NUKAGE) != 0u; }
+// DOOM-0302: nukage OR lava. A liquid's Le is FORCED CONSTANT on the CPU
+// (ForceLiquidEmissive, INV-7), so the whole pool is one light source and the
+// DOOM-0084 per-texel emissive mask must not be applied to it -- see emisWeight().
+bool  isLiquid(MatCtrl mc) { return (mc.flags & (LIQUID_NUKAGE | LIQUID_LAVA)) != 0u; }
+
+// DOOM-0302: how much of a material's Le this texel emits.
+//
+// DOOM-0084 localises self-emission to the BRIGHT texels of a surface, so a lamp glows
+// from its lit top and not its dark metal stand. That is right for a lamp and wrong for
+// a liquid: NUKAGE/LAVA flats are mottled, so the dark blobs of the texture fell below
+// EMIS_MASK_LO and emitted NOTHING while the bright ridges emitted the full Le. A pool
+// therefore glowed in patches that read as point lights scattered over it (user report,
+// 2026-08-02) rather than as one sheet of glowing sludge.
+//
+// A liquid is the one case where the material Le is not derived from the texture at all
+// but forced to a constant by name (kNukageLe / kLavaLe), so there is no dark-stand
+// problem to solve and the whole surface emits evenly.
+// A liquid emits FLAT, not proportionally to its own texel. A proportional variant was
+// built and captured first, on the theory that only the mask's dead zone was at fault:
+// smoothstep(0, HI) instead of smoothstep(LO, HI), so dark sludge emits less but never
+// nothing. It did NOT fix the report -- NUKAGE's flat is mottled deeply enough that
+// tracking its albedo at all reproduces the same field of dark blobs, just dimmer. The
+// patchiness is the TEXTURE, so any texel-dependent weight keeps it and only a constant
+// removes it. Recorded because it is the more conservative fix and it looks correct
+// right up until you capture it.
+float emisWeight(MatCtrl mc, vec3 albedo) {
+    return isLiquid(mc) ? 1.0 : emissiveMask(albedo);
+}
 bool  wetOn()              { return pc.misc6.y == 1u; }
 float rippleTime()         { return uintBitsToFloat(pc.misc6.x); }
 
@@ -1421,6 +1449,7 @@ void main()
             if (nukage && wetOn()) shadeN = rippleNormal(shadeN, hitP.xy, rippleTime());
             vec3 L = shadeSurface(shadeP, shadeN, albedo, id, pc.misc2.x, pc.misc4.y,
                                   pc.emit, pc.matEmis, NEE_SAMPLES, addEmis,
+                                  emisWeight(mc, albedo),
                                   hitSec, pc.misc4.z, pc.emitSec, pc.reject, seed);
 
             // Indirect GI (build step 4c) + DOOM-0043 sector-light ambient floor.
@@ -1583,7 +1612,13 @@ void main()
             uint par = pc.misc3.w;
             imageStore(gpos[par],  ivec2(px), vec4(hitP, float(id)));
             imageStore(gnorm[par], ivec2(px), vec4(n, 0.0));
-            imageStore(galbedo,    ivec2(px), vec4(albedo, addEmis ? 1.0 : 0.0));
+            // DOOM-0302: galbedo.a now carries the full emission WEIGHT, not a 0/1 enable
+            // -- the enable times the per-texel mask. The mask used to be recomputed in
+            // svgf_composite.comp from this same albedo, which meant two shaders had to
+            // keep one smoothstep in step; it also put the decision where the material
+            // flags are NOT visible, so a liquid could not be excepted. Deciding it here
+            // makes that impossible to get wrong, and the composite just multiplies.
+            imageStore(galbedo,    ivec2(px), vec4(albedo, addEmis ? emisWeight(mc, albedo) : 0.0));
             if (((px.x | px.y) & 1u) != 0u) {       // not an even/even grid sample
                 imageStore(gillum, ivec2(px), vec4(0.0));
                 return;
@@ -1637,6 +1672,8 @@ void main()
             if (nukage && wetOn()) shadeN = rippleNormal(shadeN, hitP.xy, rippleTime());
             vec3 illum = shadeSurface(shadeP, shadeN, vec3(1.0), id, pc.misc2.x, pc.misc4.y,
                                       pc.emit, pc.matEmis, NEE_SAMPLES, false,
+                                      1.0,   // addEmission is false here: the composite
+                                             // re-adds emission from galbedo.a instead
                                       hitSec, pc.misc4.z, pc.emitSec, pc.reject, seed);
             // GI bounce + DOOM-0043 sector-light ambient floor (demodulated: the
             // composite re-applies albedo). Same max() floor as mode 4 so a bright-

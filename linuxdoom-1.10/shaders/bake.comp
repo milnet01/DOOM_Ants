@@ -131,6 +131,7 @@ void main()
             // never culls; its omni loop is empty anyway).
             Li = shadeSurface(hitP, n, albedo, id, pc.misc.z, pc.misc.z,
                               pc.emit, pc.matEmis, BAKE_NEE, false,
+                              1.0,   // unused: addEmission is false for the bake
                               0xFFFFFFFFu, 0u, pc.emitSec, pc.reject, seed);
 
             // Multi-bounce: on passes 2+ (giEnabled), add the light this surface

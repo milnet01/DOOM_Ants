@@ -547,16 +547,19 @@ vec3 sampleEmitter(uint k, vec3 hitP, vec3 n, float pdfSel, uint omniStart, Emit
 // the GI bake passes numSectors 0 (its omni loop is empty, omniStart == emitCount).
 vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
                   uint omniStart, Emitters emit, MatEmis matEmis, uint nSamples,
-                  bool addEmission, uint hitSec, uint numSectors,
+                  bool addEmission, float emisMask, uint hitSec, uint numSectors,
                   EmitSec emitSec, Reject reject, inout uint seed)
 {
-    // Self-emission (linear) from the per-material Le table, LOCALISED to this hit
-    // texel's brightness (DOOM-0084) so a lamp glows from its lit top, not its dark
-    // stand. The GI bake passes addEmission=false (the emitter term is the frame's
-    // NEE job), so this only shapes the directly-visible glow.
+    // Self-emission (linear) from the per-material Le table, scaled by `emisMask`.
+    // DOOM-0302: the mask is now decided BY THE CALLER rather than computed here from
+    // the albedo, because the right answer depends on the material's flags (a liquid
+    // emits over its whole surface; everything else localises to its bright texels per
+    // DOOM-0084) and this function cannot see the material control table. Callers use
+    // emisWeight() in pathtrace.comp. The GI bake passes addEmission=false (the emitter
+    // term is the frame's NEE job), so this only shapes the directly-visible glow.
     vec3 L = addEmission ? vec3(matEmis.m[id * 3u + 0u],
                                 matEmis.m[id * 3u + 1u],
-                                matEmis.m[id * 3u + 2u]) * emissiveMask(albedo)
+                                matEmis.m[id * 3u + 2u]) * emisMask
                          : vec3(0.0);
 
     // Direct lighting splits by emitter kind (DOOM-0084). The MANY static wall/flat
