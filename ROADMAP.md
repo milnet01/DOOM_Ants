@@ -5573,3 +5573,44 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** If any platform anywhere on the map is moving, opening a door makes the mist wait a few seconds to catch the torchlight instead of a fraction of one.
   Kind: enhancement.
   Source: in-session-2026-08-02.
+
+- 📋 [DOOM-0306] **Two halves of INV-6 were specced and never built: the Cornell reference scene and the reference-convergence self-check.**
+  Found by the cold-eyes pass on DOOM-0297's INV-6 amendment, which asked
+  what else in that invariant is asserted rather than implemented. Two
+  things, both stated in the base paragraph since the spec was written:
+
+  1. **The authored Cornell-style test scene.** INV-6 says the bar is
+     measured "on the white-furnace + a reference Cornell-style DOOM room
+     (a small test scene this spec's implementer authors)". No such scene
+     exists. `RB_RtVerify` has always measured a real game map at whatever
+     camera the first ready present holds. That is why the score turned out
+     to depend on the IWAD at all (DOOM-0297) -- an authored scene would
+     have been IWAD-independent by construction, which is the property the
+     clause was there to provide.
+
+  2. **The reference-convergence self-check.** INV-6 says the reference
+     "counts as converged only when doubling it to 8192 spp shifts the
+     image by < 0.5% rel-MSE". `RB_RtVerify` runs exactly three estimators
+     and no doubling pass, and `8192` appears nowhere in the engine. So the
+     reference has never been checked for convergence by the mechanism its
+     own invariant names -- it has only ever been assumed converged.
+
+  Neither is urgent: DOOM-0297 established the shipped gate passes on both
+  IWADs with headroom, and (2)'s absence is why (1) matters less than it
+  looks -- with a per-gamemode reference spp, "doubling it to 8192" is not
+  even arithmetically meaningful any more and would have to be restated as
+  doubling that row's own count.
+
+  Worth doing because the two together are the reason a red gate took
+  months to diagnose (DOOM-0208 closed the doom2 failure as "a transient
+  environmental blip"; it was neither). An IWAD-independent authored scene
+  would make the gate's number mean one thing regardless of what is loaded,
+  and a real convergence check would stop the reference being the silent
+  unknown in every comparison.
+
+  Sequence: after any further DOOM-0297 follow-up. Doing (2) first is
+  cheaper and answers more -- it is one extra estimator run and a
+  comparison, against authoring a whole scene for (1).
+  **Layman:** The renderer's accuracy self-test is missing two checks its own design document says it has.
+  Kind: test.
+  Source: cold-eyes-2026-08-02.

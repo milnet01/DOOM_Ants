@@ -315,8 +315,8 @@ with different meanings — don't conflate across specs.)
   converged accumulation matches a brute-force reference within a small relative-
   MSE tolerance. **Acceptance bar (spec-chosen, not a research-doc figure): ≤ 0.5%
   rel-MSE** on the white-furnace + a reference Cornell-style DOOM room (a small
-  test scene this spec's implementer authors), measured against a **4096-samples-per-pixel (spp)
-  brute-force reference** (the offline convergence point the 1-spp + temporal
+  test scene this spec's implementer authors), measured against a **brute-force reference at that `gamemode`'s
+  spp (see the DOOM-0297 table below; it was a flat 4096 spp until then)** (the offline convergence point the 1-spp + temporal
   result is compared to). The reference counts as converged only when **doubling it
   to 8192 spp shifts the image by < 0.5% rel-MSE** (the same bar); if that self-
   consistency check fails, raise the reference spp until it holds — an objective
@@ -329,7 +329,8 @@ with different meanings — don't conflate across specs.)
   The shipped gate ran one configuration against whichever IWAD was loaded and
   deterministically failed on DOOM 2 (3.4993% rel-MSE) while passing on DOOM 1 (0.1091%)
   **on the same build** — `git stash` to an untouched tree reproduced it to four decimals.
-  That is an under-sampled gate, not a renderer defect, and the fix is more samples rather
+  That is consistent with an under-sampled gate rather than a renderer defect — no bias is
+  detected above the model's ~0.8% resolution (below) — and the fix is more samples rather
   than a looser bar:
 
   | `gamemode` | NEE spp | reference spp | bar | measured | wall clock | invocation |
@@ -355,9 +356,30 @@ with different meanings — don't conflate across specs.)
 
   - **From the NEE pair** (reference fixed): `a/65536 = (4/3)(0.7330 − 0.3665) = 0.489%`,
     leaving a remainder of **0.244%**.
-  - **From the reference pair** (NEE fixed at 16384 spp: 3.4993% at 4096 spp vs 2.9124% at
-    65536 spp): `c/16384 ≈ 0.157%`, which splits that remainder into the reference's own
-    variance and **`b² ≈ +0.088%`** — positive, and therefore physically admissible.
+  - **From the reference pair** (NEE fixed at 16384 spp, reference 4096 → 65536 spp, a
+    **16×** step so the factor is `16/15`, not the `4/3` above):
+    `c/4096 = (16/15)(3.4993 − 2.9124) = 0.626%`, hence `c/16384 ≈ 0.157%`. That would
+    split the remainder into the reference's own variance and `b² ≈ +0.088%`.
+
+  ⚠ **That `b²` figure does not survive checking, and is withdrawn.** Fitting those
+  parameters and evaluating them at *every* DOOM 2 reading shows the model reproduces
+  exactly the two points it was fitted to — inevitable, two points determine two parameters
+  — and **under-predicts every other reading, by up to +0.83%**:
+
+  | NEE spp | ref spp | measured | model | residual |
+  |---|---|---|---|---|
+  | 16384 | 4096 | 3.4993% | 2.6686% | **+0.8307%** |
+  | 16384 | 65536 | 2.9124% | 2.0817% | **+0.8307%** |
+  | 65536 | 16384 | 0.7330% | 0.7330% | +0.0000% *(fitted)* |
+  | 65536 | 65536 | 0.7245% | 0.6156% | +0.1089% |
+  | 262144 | 16384 | 0.3665% | 0.3665% | +0.0000% *(fitted)* |
+  | 262144 | 65536 | 0.3419% | 0.2491% | +0.0928% |
+
+  Every residual is positive, i.e. **systematic**, and the largest is ~9× the `b²` being
+  estimated. `1/N` is therefore a local linearisation near the high-sample end, not a global
+  description, and **`b²` is not estimable from these data at all** — neither as 0.088% nor
+  as any bound. An earlier draft quoted `b² = 0.088% ± ~0.09%` from a single residual; that
+  is withdrawn.
 
   ⚠ **A 2.0× fall is what this predicts, and is NOT a shortfall.** Only the NEE term
   quarters when the reference is held; `0.489/4 + 0.244 = 0.366%` against a measured
@@ -366,15 +388,23 @@ with different meanings — don't conflate across specs.)
   4.0× applies only when *both* counts rise. Nor is the exact fit evidence, since two points
   determine a two-parameter model exactly.
 
-  ⚠ **What is NOT established: that `b²` is zero.** The model does not hold across all four
-  measurements — it predicts 0.249% for NEE 262144 / reference 65536 and the measured value
-  is **0.3419%**, so its own residual error is ~0.09%, the same size as the `b²` it
-  estimates. The honest statement is that `b²` is **0.088% ± ~0.09%**: consistent with zero,
-  bounded by roughly ±0.2%, not shown to be absent. The gate does not need it to be:
-  0.3665% clears 0.50% with 27% headroom, against run-to-run scatter of ±16% measured on
-  DOOM 1 (0.0796–0.1091% across runs at the doom1 row's configuration; the table quotes the
-  worst). `commercial`'s own scatter is unmeasured. Raising the reference as well reaches
-  only 0.3419%, which is why the extra 4× is not spent.
+  ⚠ **So no bias claim is made, in either direction, and the gate does not rest on one.**
+  What the measurements establish is weaker and sufficient: the score **falls monotonically
+  with NEE spp and shows no plateau** — 3.4993% → 0.7330% → 0.3665% at a fixed reference —
+  and the apparent 0.72% floor was an artefact of a step that moved only the reference. The
+  gate's safety rests on **headroom and determinism**, not on a bias bound: 0.3665% against
+  a 0.50% bar is 27% of the bar in hand (36% of the measured value), and on a fixed build
+  and invocation the figure is **reproducible to four decimals** — `RB_RtVerify` seeds
+  deterministically, and doom1's 0.1091% repeated exactly across three runs of this build.
+  (The 0.0796% recorded for doom1 in earlier notes predates this build and is **not**
+  run-to-run scatter; treating it as such compares two different binaries.) `commercial`'s
+  own repeat scatter is unmeasured. Raising the reference as well reaches only 0.3419%,
+  which is why the extra 4× is not spent.
+
+  > **Provenance of the six readings above.** Only the two table rows are producible by the
+  > shipped binary. The rest come from a throwaway `-rtdisp <neeDispatches>
+  > <bruteDispatches>` override of the two dispatch constants, built and reverted; named
+  > here because otherwise the figures cannot be reproduced from the tree.
 
   **Cost.** `commercial` issues ~13× the dispatches, and each is its own one-time submit
   that waits the queue idle — but end to end the gate goes **10.2 s → 38.7 s**, not 13×,
@@ -383,10 +413,13 @@ with different meanings — don't conflate across specs.)
   changes.
 
   **Triage rule for the next FAIL, so this is not re-diagnosed from scratch.** Quadruple
-  that row's NEE spp and re-run. A fall of roughly 4× — or of ~2× with the reference held —
-  means under-sampling: raise the row's count. A **flat** reading means the residual is not
-  variance, and the integrator is the suspect. DOOM-0208 spent months treating one such
-  number as a transient environmental blip when it was simply the other IWAD.
+  that row's NEE spp **and nothing else**, then re-run. Holding the reference, a 4× fall is
+  unreachable by construction — only the NEE term moves — so the test is simply **does it
+  fall at all**: a fall of **1.5× or more** means under-sampling, and the fix is to raise
+  that row's count. A fall under **1.1×** means the residual is not NEE variance, and the
+  integrator is the suspect. Between the two, quadruple again before concluding anything.
+  DOOM-0208 spent months treating one such number as a transient environmental blip when it
+  was simply the other IWAD.
 
   ⚠ **A bias-extrapolation gate was derived and MEASURED before this was chosen, and it
   failed.** Model `E = a/N_nee + c/N_ref + b²` — the constant is **b²**, not `b`, because
@@ -398,22 +431,23 @@ with different meanings — don't conflate across specs.)
   Recorded so it is not re-proposed: it is the obvious next idea and it is worse than what
   it replaces at these counts.
 
-  **Scope.** This amendment governs the **NEE-vs-reference rel-MSE gate only**. Two
+  **Scope.** This amendment governs the **NEE-vs-reference rel-MSE gate only**. Three
   neighbouring clauses need their wording corrected by it rather than left standing:
   - The base paragraph's reference-convergence check says "doubling it to **8192 spp**",
     which is now arithmetically impossible for `commercial` (its reference is 16384 spp).
     Read it as **doubling that gamemode's own reference spp**. It is also no longer
     IWAD-independent, since the reference count now varies by row. ⚠ **And it appears never
     to have been implemented** — `RB_RtVerify` runs three estimators and no doubling pass,
-    and `8192` occurs nowhere in the engine. Recorded as a gap, not asserted as in force.
+    and `8192` occurs nowhere in the engine. Recorded as a gap (**DOOM-0306**), not asserted as in force.
   - The white-furnace bar is **`max |mean − 1.0| < 1e-3`**, a per-pixel deviation, *not* a
     rel-MSE — so the base paragraph's "≤ 0.5% rel-MSE on the white-furnace + …" states the
     wrong metric for that half. The ≤ 0.5% figure governs the NEE-vs-reference gate alone.
-    The furnace bar is analytic and scene-independent and is genuinely unchanged here. The authored Cornell-style
-  test scene named in the paragraph above **has never been built** — the shipped gate has
-  always measured a game map at the spawn view — so that clause describes intended future
-  coverage, not what `-rtverify` implements today; it is recorded here rather than left to
-  read as a contradiction.
+    The furnace bar is analytic and scene-independent and is genuinely unchanged here.
+  - The **authored Cornell-style test scene** named in the base paragraph **has never been
+    built** — the shipped gate has always measured a game map at the spawn view — so that
+    clause describes intended future coverage, not what `-rtverify` implements today. Filed
+    with the missing reference-doubling pass as **DOOM-0306**, rather than left to read as
+    a contradiction.
 
 - **INV-7 (no magic constants):** §5.
 - **INV-8 (validation-clean):** zero Vulkan validation-layer errors over a
