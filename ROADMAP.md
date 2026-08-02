@@ -4665,6 +4665,52 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: investigate.
   Lanes: rt, test.
   Source: in-session-2026-08-01.
+  Progress (2026-08-02): ANSWERED, and the leading hypothesis was right --
+  it is the bar, not the renderer. Measured by scaling each estimator's
+  dispatch count independently through a throwaway `-rtdisp <nee> <brute>`
+  parm in a worktree (not merged), machine idle:
+
+    doom2 MAP01   nee 16384 / brute  4096  ->  3.4993%   (the shipped gate)
+                  nee 16384 / brute 16384  ->  3.1607%
+                  nee 16384 / brute 65536  ->  2.9124%
+                  nee 65536 / brute 65536  ->  0.7245%
+    doom.wad E1M1 nee 16384 / brute  4096  ->  0.1091%
+                  nee 16384 / brute 65536  ->  0.1032%
+
+  Raising the brute-force REFERENCE 16x moved the number by 0.59 pp; raising
+  the NEE side 4x collapsed it from 2.9124 to 0.7245 -- a ratio of 4.02
+  against 4x the samples. That is textbook 1/N Monte-Carlo variance with no
+  bias floor, and it fits both arms: modelling rel-MSE as
+  (nee term)/N_nee + (brute term)/N_brute gives a brute term of ~0.63 at
+  4096 spp and a NEE term of ~2.87 at 16384 spp, which predicts 0.757 at
+  65536/65536 against 0.7245 observed.
+
+  So the two IWADs do not disagree about the renderer. They disagree about
+  how fast the estimator converges: MAP01's 48 clustered emitters spanning
+  1987..57320 leave the power-sampled NEE estimator ~26x noisier at equal
+  spp than E1M1's 83 spanning 0..83741. rel-MSE charges that residual
+  variance to the score, and a fixed 0.50% bar therefore measures the map as
+  much as the integrator.
+
+  What this means for the gate, in preference order:
+    (a) The unbiasedness claim INV-6 exists to make is proven by the error
+        falling as 1/N toward zero, which it demonstrably does -- not by a
+        fixed threshold. A gate that samples two spp counts and checks the
+        SLOPE is valid on any map and costs one extra run.
+    (b) Cheaper stopgap: raise the doom2 gate's spp. Extrapolating 1/N, the
+        0.50% bar needs roughly 1.5-2x the 65536 spp already measured, i.e.
+        about 8x the shipped gate's runtime -- affordable for a headless
+        gate, not for anything interactive.
+    (c) Do NOT relax the bar per-IWAD without doing (a) first; that hides a
+        real bias if one ever appears.
+
+  DOOM-0208's 2026-07-23 note should be corrected on the record: the
+  3.4943% / 63987 pair it closed as "a transient environmental blip" was
+  never transient and was never environmental. It was doom2.wad, and it is
+  estimator variance.
+
+  Still true and unchanged: -rtverify is a doom.wad-only gate until (a) or
+  (b) lands, and any claim that it passes should name the IWAD.
 
 - 📋 [DOOM-0298] **New liquid surfaces: bubbles in nukage, splashes on lava, and animation that does not visibly repeat.**
   User, 2026-08-01, on the DOOM-0011 L3 nukage glow: "when we create new

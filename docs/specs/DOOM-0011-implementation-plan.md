@@ -1970,7 +1970,10 @@ heights and is never revisited (spec §4.4's 2026-08-02 amendment; INV-14).
 - `BuildFogLightGrid` / `UploadFogLightGrid` (`r_vulkan.cpp`) — confirm the upload is safe
   here: it is reached **after** `vkWaitForFences` and **before** the descriptor set is
   bound for the dispatch, and `cells` cannot change within a level, so the buffer is never
-  re-created mid-play.
+  re-created mid-play — **with one exception worth knowing**: if the level-load bake ran
+  with no seep field, `UploadFogLightGrid` sized the buffer for zero cells, and the first
+  mid-play bake would grow and re-create it. That is safe here (post-fence), but it is the
+  one path where the "never re-created" shorthand is untrue.
 
 - [ ] **Step 1: State + constants.** Three fields on `g` (`fogLightArmed`,
   `fogLightStill`, `fogLightWait`) and two constants beside `kSeepEaseTau`:
@@ -2035,32 +2038,49 @@ heights and is never revisited (spec §4.4's 2026-08-02 amendment; INV-14).
   *Verify:* the existing `RB_Vulkan: DOOM-0011 L3 fog lights` line prints **once** per
   door, about a beat after the door stops — not on the frame it cracks.
 
-- [ ] **Step 4: Falsify INV-14 — three fixtures, not one.** Drive the map with a throwaway
-  hook in `P_UpdateSpecials` (xdotool cannot inject into a Wayland client; the memory of
-  that trap is why this is written down). Read the bake's own printed line each time:
-  1. **Door open/shut** (`EV_VerticalDoor`) — `lit` must **rise**, then **return**.
-     Proves the bake fires at all.
-  2. **The same door** — `air` must **rise** as the door's own cells stop being solid.
-     `air` is the cache-derived field; `lit` is not, because `P_CheckSightTrace` reads
-     live geometry either way. This is the only fixture that catches a bake run against a
-     stale cell cache, and without it fixture 1 signs that build off.
-  3. **A lift between two already-open heights, in front of a torch** (`EV_DoPlat`) —
-     `lit` must **fall**. This is the only fixture that catches an arm keyed to
-     `RB_SeepOpeningsChanged` rather than `RB_UPD_MOVED`; a door passes both ways.
+- [ ] **Step 4: Falsify INV-14 — and one clause the printed line cannot carry.** Drive the
+  map with throwaway hooks in `P_UpdateSpecials` (xdotool cannot inject into a Wayland
+  client; the memory of that trap is why this is written down). The level-load bake always
+  prints one L3 line, so **the signal is always a second line**.
+  1. **Door open/shut** (`EV_VerticalDoor`) — a second line, `lit` **risen**, and the count
+     returning when it shuts. Proves the bake fires.
+  2. **Lift between two already-open heights** (`EV_DoPlat`) — a second line must print.
+     ⚠ **Check its existence, not the direction of any count.** A flip-keyed build never
+     arms, so it prints nothing; and `lit` can legitimately move either way, because the
+     bake samples at `fz + RB_FOG_LIGHT_TESTZ` and a rising floor lifts the sample as well
+     as the occluder. This is the only fixture that catches the wrong trigger.
+  3. **Crusher** (`EV_DoCeiling`, `crushAndRaise`) — a second line every
+     `kFogLightMaxWait`, indefinitely. Proves the cap path exists; also the fixture that
+     shows the user whether the repeating snap is acceptable (spec §7 L3b).
+  4. ⚠ **Cache freshness is NOT observable from that line** — `P_CheckSightTrace` reads
+     live geometry whatever the cache holds, so a stale-cache bake still moves `lit`, and
+     `air` only moves if a 64-unit cell centre happens to fall inside the door sector.
+     Check it once, here, with a temporary print inside `BuildFogLightGrid`: for one cell
+     known to sit on the lift, print `fz` from `RB_SeepCellAir` beside
+     `sectors[n].floorheight / FRACUNIT`. They must agree at bake time. Delete the print
+     afterwards; it is a build-time proof of the placement, not a runtime gate.
 
-- [ ] **Step 5: Build + tests + `-rtverify`** (L1 Step 7 commands). `-rtverify` on
-  **doom.wad** only until `DOOM-0297` settles which IWAD the gate is valid on.
+- [ ] **Step 5: Measure the event cost — bake AND upload.** The spec's 3.6 ms is the bake
+  alone; its timer stops before `UploadFogLightGrid`'s `memset` + ~225 KB `memcpy` into
+  host-coherent (write-combined) memory and its `vkUpdateDescriptorSets`. At level load
+  that never mattered; per settled door it does. Move the timer to close after the upload
+  (or add a second one), quote bake+upload, and **fold the figure back into spec §4.4's
+  command box and §7's L3b row** — `/write-spec` Step 8, not an optional tidy.
 
-- [ ] **Step 6: Prove the still map is untouched.** `-shotcompare` must be
+- [ ] **Step 6: Build + tests + `-rtverify`** (L1 Step 7 commands). `-rtverify` on
+  **doom.wad** only: `DOOM-0297` established that doom2's failure is estimator variance,
+  not a defect, and until the gate samples a convergence slope it is a doom.wad-only gate.
+
+- [ ] **Step 7: Prove the still map is untouched.** `-shotcompare` must be
   bit-identical: nothing arms without `RB_UPD_MOVED`, so the whole mechanism is inert
   on a map where nothing moves. (Same proof DOOM-0281 shipped with.)
 
-- [ ] **Step 7: Visual A/B.** Two `-devshot` captures through an opened door — one on
+- [ ] **Step 8: Visual A/B.** Two `-devshot` captures through an opened door — one on
   this build, one with the fire block disabled — and report the changed-pixel count.
   **Not `-shotverify`**, which pins a canonical config and would photograph the same
   frame for both halves.
 
-- [ ] **Step 8: Play-test (spec §7 L3b), then commit.**
+- [ ] **Step 9: Play-test (spec §7 L3b), then commit.**
 
 ---
 
