@@ -332,10 +332,10 @@ with different meanings — don't conflate across specs.)
   That is an under-sampled gate, not a renderer defect, and the fix is more samples rather
   than a looser bar:
 
-  | `gamemode` | NEE spp | reference spp | bar | measured | invocation |
-  |---|---|---|---|---|---|
-  | `shareware` / `registered` / `retail` | 16384 | 4096 | **≤ 0.50%** | 0.1091% | `-iwad doom.wad -warp 1 1 -noinput -rtverify` |
-  | `commercial` | 262144 | 16384 | **≤ 0.50%** | 0.3665% | `-iwad doom2.wad -warp 1 -noinput -rtverify` |
+  | `gamemode` | NEE spp | reference spp | bar | measured | wall clock | invocation |
+  |---|---|---|---|---|---|---|
+  | any non-`commercial` (`shareware` / `registered` / `retail`, and `indetermined`) | 16384 | 4096 | **≤ 0.50%** | 0.1091% | 10.2 s | `-iwad doom.wad -warp 1 1 -noinput -rtverify` |
+  | `commercial` | 262144 | 16384 | **≤ 0.50%** | 0.3665% | 38.7 s | `-iwad doom2.wad -warp 1 -noinput -rtverify` |
 
   ⚠ **The score is a property of a map AND a camera, not of an IWAD.** `RB_RtVerify` builds
   its view from `g.lastView` at the first ready present, so a different `-warp` gives a
@@ -351,17 +351,42 @@ with different meanings — don't conflate across specs.)
   and quadrupling NEE: **0.7330% → 0.3665%**. An earlier reading suggested a floor near
   0.72%, and this disproves it — that apparent plateau came from a third point which
   quadrupled only the *reference* (0.7330% → 0.7245%) and so could not move the NEE term at
-  all. Separating the two terms from the pair that varied only the reference
-  (3.4993% at 4096 spp vs 2.9124% at 65536 spp, NEE fixed) puts the NEE variance at ~0.489%
-  of the 0.7330% reading and the whole remainder at ~0.244%.
+  all. Decomposing with `E = a/N_nee + c/N_ref + b²`:
 
-  ⚠ **What is NOT established: that the residual is exactly zero.** Quadrupling NEE gave a
-  2.0× fall where pure variance predicts 4.0×, and independent extrapolations of the
-  constant term scatter by about ±0.2% rel-MSE — so any true bias is bounded by roughly
-  that, not shown to be absent. The gate does not need it to be: 0.3665% clears 0.50% with
-  27% headroom, against run-to-run scatter measured at ±16% on DOOM 1 (0.0796–0.1091%
-  across runs; the table quotes the worst). Raising the reference as well moves it only to
-  0.3419%, which is why the extra 4× is not spent.
+  - **From the NEE pair** (reference fixed): `a/65536 = (4/3)(0.7330 − 0.3665) = 0.489%`,
+    leaving a remainder of **0.244%**.
+  - **From the reference pair** (NEE fixed at 16384 spp: 3.4993% at 4096 spp vs 2.9124% at
+    65536 spp): `c/16384 ≈ 0.157%`, which splits that remainder into the reference's own
+    variance and **`b² ≈ +0.088%`** — positive, and therefore physically admissible.
+
+  ⚠ **A 2.0× fall is what this predicts, and is NOT a shortfall.** Only the NEE term
+  quarters when the reference is held; `0.489/4 + 0.244 = 0.366%` against a measured
+  **0.3665%**. An earlier draft of this amendment read that 2.0× as falling short of a 4.0×
+  prediction and cited it as a caveat — wrong, and recorded because it is an easy misread:
+  4.0× applies only when *both* counts rise. Nor is the exact fit evidence, since two points
+  determine a two-parameter model exactly.
+
+  ⚠ **What is NOT established: that `b²` is zero.** The model does not hold across all four
+  measurements — it predicts 0.249% for NEE 262144 / reference 65536 and the measured value
+  is **0.3419%**, so its own residual error is ~0.09%, the same size as the `b²` it
+  estimates. The honest statement is that `b²` is **0.088% ± ~0.09%**: consistent with zero,
+  bounded by roughly ±0.2%, not shown to be absent. The gate does not need it to be:
+  0.3665% clears 0.50% with 27% headroom, against run-to-run scatter of ±16% measured on
+  DOOM 1 (0.0796–0.1091% across runs at the doom1 row's configuration; the table quotes the
+  worst). `commercial`'s own scatter is unmeasured. Raising the reference as well reaches
+  only 0.3419%, which is why the extra 4× is not spent.
+
+  **Cost.** `commercial` issues ~13× the dispatches, and each is its own one-time submit
+  that waits the queue idle — but end to end the gate goes **10.2 s → 38.7 s**, not 13×,
+  because level and asset load dominate the shorter run. Measured on the reference RX 6600
+  with `/usr/bin/time` around the invocations above. Headless gate only; nothing in play
+  changes.
+
+  **Triage rule for the next FAIL, so this is not re-diagnosed from scratch.** Quadruple
+  that row's NEE spp and re-run. A fall of roughly 4× — or of ~2× with the reference held —
+  means under-sampling: raise the row's count. A **flat** reading means the residual is not
+  variance, and the integrator is the suspect. DOOM-0208 spent months treating one such
+  number as a transient environmental blip when it was simply the other IWAD.
 
   ⚠ **A bias-extrapolation gate was derived and MEASURED before this was chosen, and it
   failed.** Model `E = a/N_nee + c/N_ref + b²` — the constant is **b²**, not `b`, because
@@ -373,9 +398,18 @@ with different meanings — don't conflate across specs.)
   Recorded so it is not re-proposed: it is the obvious next idea and it is worse than what
   it replaces at these counts.
 
-  **Scope.** This amendment governs the **NEE-vs-reference rel-MSE gate only**. The
-  reference-convergence self-check and the white-furnace bar (`< 1e-3`, analytic and
-  scene-independent) are unchanged and stay IWAD-independent. The authored Cornell-style
+  **Scope.** This amendment governs the **NEE-vs-reference rel-MSE gate only**. Two
+  neighbouring clauses need their wording corrected by it rather than left standing:
+  - The base paragraph's reference-convergence check says "doubling it to **8192 spp**",
+    which is now arithmetically impossible for `commercial` (its reference is 16384 spp).
+    Read it as **doubling that gamemode's own reference spp**. It is also no longer
+    IWAD-independent, since the reference count now varies by row. ⚠ **And it appears never
+    to have been implemented** — `RB_RtVerify` runs three estimators and no doubling pass,
+    and `8192` occurs nowhere in the engine. Recorded as a gap, not asserted as in force.
+  - The white-furnace bar is **`max |mean − 1.0| < 1e-3`**, a per-pixel deviation, *not* a
+    rel-MSE — so the base paragraph's "≤ 0.5% rel-MSE on the white-furnace + …" states the
+    wrong metric for that half. The ≤ 0.5% figure governs the NEE-vs-reference gate alone.
+    The furnace bar is analytic and scene-independent and is genuinely unchanged here. The authored Cornell-style
   test scene named in the paragraph above **has never been built** — the shipped gate has
   always measured a game map at the spawn view — so that clause describes intended future
   coverage, not what `-rtverify` implements today; it is recorded here rather than left to
