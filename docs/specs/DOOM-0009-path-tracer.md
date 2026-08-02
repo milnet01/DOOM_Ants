@@ -325,42 +325,62 @@ with different meanings — don't conflate across specs.)
   static light-selection path only — `omniStart == emitCount` — so the
   omnidirectional sprite-light NEE path is not yet covered by this bar; DOOM-0122.)*
 
-  **Amended 2026-08-02 (DOOM-0297) — the sample count and the bar are PER-IWAD, because
-  a single figure measures the map as much as it measures the integrator.** The shipped
-  gate ran one configuration and one 0.50% bar against whichever IWAD was loaded, and
-  deterministically failed on `doom2.wad` (3.4993% rel-MSE, 63987 lit px) while passing
-  on `doom.wad` (0.0796–0.1091%) **on the same build** — `git stash` to an untouched tree
-  reproduced the figure to four decimals. That is not a renderer defect:
+  **Amended 2026-08-02 (DOOM-0297) — the SAMPLE COUNT is per-`gamemode`; the BAR is not.**
+  The shipped gate ran one configuration against whichever IWAD was loaded and
+  deterministically failed on DOOM 2 (3.4993% rel-MSE) while passing on DOOM 1 (0.1091%)
+  **on the same build** — `git stash` to an untouched tree reproduced it to four decimals.
+  That is an under-sampled gate, not a renderer defect, and the fix is more samples rather
+  than a looser bar:
 
-  | IWAD | NEE spp | brute-force spp | bar | measured |
-  |---|---|---|---|---|
-  | `doom.wad` | 16384 | 4096 | **≤ 0.50%** | 0.1091% |
-  | `doom2.wad` | 65536 | 16384 | **≤ 1.00%** | 0.7330% |
+  | `gamemode` | NEE spp | reference spp | bar | measured | invocation |
+  |---|---|---|---|---|---|
+  | `shareware` / `registered` / `retail` | 16384 | 4096 | **≤ 0.50%** | 0.1091% | `-iwad doom.wad -warp 1 1 -noinput -rtverify` |
+  | `commercial` | 262144 | 16384 | **≤ 0.50%** | 0.3665% | `-iwad doom2.wad -warp 1 -noinput -rtverify` |
 
-  **Why the two disagree, and why it is variance rather than bias.** rel-MSE is
-  `Σ(nee−brute)² / Σbrute²`, so it charges the *residual variance of both estimators* to
-  the score. MAP01's emitter set is smaller and more clustered than E1M1's (48 lights
-  spanning 1987–57320 against 83 spanning 0–83741), so a power-sampled NEE estimator
-  converges slower there at equal spp. Raising samples drives it down with no floor —
-  **3.4993% → 0.7330% → 0.7245%** as NEE goes 16384 → 65536 and the reference 4096 →
-  16384 → 65536 — which is what a variance-limited disagreement does and what a biased
-  one cannot.
+  ⚠ **The score is a property of a map AND a camera, not of an IWAD.** `RB_RtVerify` builds
+  its view from `g.lastView` at the first ready present, so a different `-warp` gives a
+  different number. The rows above are defined **only** at the invocations quoted; running
+  `-rtverify` elsewhere is a diagnostic, not this gate. The `gamemode` key selects the
+  sample count, and `gamemode` is what the engine actually has — `plutonia.wad`, `tnt.wad`
+  and any PWAD loaded over DOOM 2 are all `commercial` and inherit the higher count.
+  **That is safe precisely because the bar did not move:** more samples can only tighten a
+  variance-limited gate, whereas an inherited *bar* would have hidden a real defect. It is
+  the reason the bar is left alone rather than raised to fit.
 
-  ⚠ **A bias-extrapolation gate was derived and MEASURED before this table was chosen,
-  and it failed.** Modelling `E = a/N_nee + c/N_brute + bias` and quadrupling both counts
-  quarters both variance terms, so `bias = (4·E_4x − E_1x)/3` from two runs. Measured, it
-  returns **+0.0135% on doom.wad and −0.1891% on doom2.wad**: a negative bias is
-  unphysical, so that figure is slop, and its magnitude is a third of the bar it was meant
-  to replace. The 4.00× fall the model predicts came out **2.92× and 4.77×**. Recorded so
-  it is not re-proposed — it is the obvious next idea, and it is worse than what it
-  replaces at these sample counts.
+  **Evidence that DOOM 2's residual is variance.** Holding the reference fixed at 16384 spp
+  and quadrupling NEE: **0.7330% → 0.3665%**. An earlier reading suggested a floor near
+  0.72%, and this disproves it — that apparent plateau came from a third point which
+  quadrupled only the *reference* (0.7330% → 0.7245%) and so could not move the NEE term at
+  all. Separating the two terms from the pair that varied only the reference
+  (3.4993% at 4096 spp vs 2.9124% at 65536 spp, NEE fixed) puts the NEE variance at ~0.489%
+  of the 0.7330% reading and the whole remainder at ~0.244%.
 
-  **What this does NOT license.** The per-IWAD bar is justified by the convergence
-  evidence above and by nothing else. A future IWAD or PWAD does not get a bar fitted to
-  whatever it happens to score; it gets the doom.wad configuration first, and only on
-  demonstrating the same falling-with-no-floor behaviour does it earn its own row. A bar
-  chosen to make a red result green, without that evidence, would hide the real bias this
-  invariant exists to catch.
+  ⚠ **What is NOT established: that the residual is exactly zero.** Quadrupling NEE gave a
+  2.0× fall where pure variance predicts 4.0×, and independent extrapolations of the
+  constant term scatter by about ±0.2% rel-MSE — so any true bias is bounded by roughly
+  that, not shown to be absent. The gate does not need it to be: 0.3665% clears 0.50% with
+  27% headroom, against run-to-run scatter measured at ±16% on DOOM 1 (0.0796–0.1091%
+  across runs; the table quotes the worst). Raising the reference as well moves it only to
+  0.3419%, which is why the extra 4× is not spent.
+
+  ⚠ **A bias-extrapolation gate was derived and MEASURED before this was chosen, and it
+  failed.** Model `E = a/N_nee + c/N_ref + b²` — the constant is **b²**, not `b`, because
+  rel-MSE is a squared metric, and it is a negative *b²* that is unphysical. Quadrupling
+  both counts quarters both variance terms, giving `b² = (4·E_4x − E_1x)/3` from two runs.
+  Measured: **+0.0135% on DOOM 1** (0.1091% → 0.0374%) and **−0.1891% on DOOM 2**
+  (3.4993% → 0.7330%). The negative is impossible, so the figure is slop of the same order
+  as the bar it would replace, and the 4.00× fall it tests for came out **2.92× and 4.77×**.
+  Recorded so it is not re-proposed: it is the obvious next idea and it is worse than what
+  it replaces at these counts.
+
+  **Scope.** This amendment governs the **NEE-vs-reference rel-MSE gate only**. The
+  reference-convergence self-check and the white-furnace bar (`< 1e-3`, analytic and
+  scene-independent) are unchanged and stay IWAD-independent. The authored Cornell-style
+  test scene named in the paragraph above **has never been built** — the shipped gate has
+  always measured a game map at the spawn view — so that clause describes intended future
+  coverage, not what `-rtverify` implements today; it is recorded here rather than left to
+  read as a contradiction.
+
 - **INV-7 (no magic constants):** §5.
 - **INV-8 (validation-clean):** zero Vulkan validation-layer errors over a
   multi-second run on every tier path. Must be exercised on a box with

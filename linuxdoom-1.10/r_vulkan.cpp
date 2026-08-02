@@ -86,6 +86,10 @@ extern "C" {
     // like-for-like mirror of the rendermode dodge.
     // screenblocks is genuinely `int` in m_menu.c already, so no mismatch there.
     extern int gamestate;                       // doomdef.h: gamestate_t, GS_LEVEL == 0
+    // DOOM-0297: -rtverify picks its sample count from the game, because DOOM 2's emitter
+    // set converges slower and one count cannot serve both (INV-6's per-gamemode table).
+    // Mirrored as int for exactly the reason gamestate is, and with the same caveat.
+    extern int gamemode;                        // doomdef.h: GameMode_t
     extern int screenblocks;                    // m_menu.c: HUD size 0-10 (DOOM-0148 clamp)
     // DOOM-0011 L3: the map's own line-of-sight test, for the fog-light bake (p_sight.c).
     // Mirrored here for the same reason as the externs above -- p_local.h pulls the whole
@@ -7982,9 +7986,24 @@ void RB_RtVerify()
         vkUnmapMemory(g.device, g.rtReadbackMem);
     };
 
+    // DOOM-0297: the sample count is per-gamemode; the BAR below is not, and that
+    // asymmetry is the whole point. The shipped gate ran one configuration and failed
+    // deterministically on DOOM 2 (3.4993% rel-MSE) while passing on DOOM 1 (0.1091%) on
+    // the same build -- an under-sampled gate, not a renderer defect. Holding the
+    // reference fixed and quadrupling NEE takes DOOM 2 from 0.7330% to 0.3665%, i.e. it
+    // is still falling, so more samples fixes it and a looser bar was never needed.
+    // Raising spp can only TIGHTEN a variance-limited gate, which is why plutonia, tnt
+    // and any PWAD over DOOM 2 can safely inherit the higher count -- an inherited BAR
+    // would have hidden a real defect instead. Spec DOOM-0009 INV-6.
+    //
+    // doomdef.h GameMode_t: shareware=0, registered=1, commercial=2, retail=3.
+    const int  kGameModeCommercial = 2;
+    const bool doom2   = (gamemode == kGameModeCommercial);
+    const uint32_t neeD   = doom2 ? 4096u : 256u;   // x64 spp: 262144 vs 16384
+    const uint32_t bruteD = doom2 ?  256u :  64u;   // x64 spp:  16384 vs  4096
     std::vector<float> nee, brute, furnace;
-    runEstimator(0u, 256u, 64u, nee);       // power-NEE:          16384 spp
-    runEstimator(1u,  64u, 64u, brute);     // brute (all lights):  4096 spp (low var)
+    runEstimator(0u, neeD,   64u, nee);     // power-NEE
+    runEstimator(1u, bruteD, 64u, brute);   // brute force (all lights), low variance
     runEstimator(2u,   4u, 64u, furnace);   // white furnace:        256 spp (exact)
 
     // rel-MSE between the two converged direct-light images over pixels both hit:
@@ -8026,9 +8045,14 @@ void RB_RtVerify()
            "covered by the verify path (DOOM-0122)\n", g.emitCount, vStaticN, vOmniN);
 
     const double bar = 0.005;       // INV-6 acceptance: <= 0.5% rel-MSE
+    // The configuration is printed beside the result on purpose: the score is a property
+    // of a map AND a camera as well as the integrator, so a bare percentage is not
+    // comparable across runs. DOOM-0208 spent months treating one such number as a
+    // transient blip when it was simply the other IWAD.
     printf("[rtverify] INV-6 direct-light rel-MSE = %.4f%% over %d lit px "
-           "(power-NEE 16384 spp vs brute-force/all-lights 4096 spp): %s (bar 0.50%%)\n",
-           relMSE * 100.0, litPx, (relMSE <= bar) ? "PASS" : "FAIL");
+           "(%s: power-NEE %u spp vs brute-force/all-lights %u spp): %s (bar 0.50%%)\n",
+           relMSE * 100.0, litPx, doom2 ? "commercial" : "doom1",
+           neeD * 64u, bruteD * 64u, (relMSE <= bar) ? "PASS" : "FAIL");
     printf("[rtverify] white-furnace max deviation from 1.0 = %.6f: %s\n",
            furnMaxDev, (furnMaxDev < 1e-3) ? "PASS" : "FAIL");
     fflush(stdout);
