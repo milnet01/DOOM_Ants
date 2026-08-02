@@ -8,6 +8,11 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Drifting fog now rolls through a torch's glow and cuts it, instead of sliding behind a still patch of light** (DOOM-0300)
+  Light reaching the fog is attenuated along its own path from the lamp, so
+  billows passing in front of a torch actually dim it. Before this the glow was
+  a fixed shape painted over moving fog; now the two move together.
+
 - **Torches and lava now light the fog around them (ray-traced views)** (DOOM-0011)
   A lamp, a light panel or a pool of nukage now glows into the air near
   it instead of only lighting the walls. Which lights can reach which
@@ -106,6 +111,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
   The old fixed tolerance sat only ~3.9 sigma from the estimator's true standard error on two of the five weight sets, well short of the 6 sigma the neighbouring frequency check uses. The bound is now computed from the exact estimator variance, so it scales with N and the weights; all five sets currently land within 1.6 sigma.
 
 ### Fixed
+
+- **A nukage pool glowed only in patches, because the per-texel emissive mask was applied to liquids too.** (DOOM-0302)
+  Nukage pools looked like they had random glowing spots in them. Now the whole pool glows evenly.
 
 - **The -shotverify capture is not tic-deterministic, so a cold-cache run blesses a different golden.** (DOOM-0287)
   Adds a `-noinput` flag so an automated test or profiling run ignores the

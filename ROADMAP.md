@@ -4896,7 +4896,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   Lanes: shaders, assets, sprites.
   Source: user-request-2026-08-01.
 
-- 🚧 [DOOM-0300] **The torch glow sits still while the fog behind it drifts -- give the light path the billows too.**
+- ✅ [DOOM-0300] **The torch glow sits still while the fog behind it drifts -- give the light path the billows too.**
   User, 2026-08-01, on the DOOM-0011 L3 screenshots: "I love the glow of
   the nukage pools both indoors and outdoors. I also like that it isn't a
   uniform colour, however, it is static. This is where the Silent Hill 2
@@ -5201,6 +5201,23 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   NOT DONE: SH2's true timescale is still only an upper bound (~2.2 s) --
   pinning it needs a screen recording and PCSX2 was not running.
+  SHIPPED 2026-08-02 -- user play-test sign-off: "I have checked it
+  already and it looks much, much better."
+
+  That clears the remaining gate as this bullet framed it. Both halves of
+  the look judgement it asked for are answered: the courtyard DOES now read
+  as billowing, and **15x is not too fast** -- the speed constant stays
+  where it is and does not want backing off.
+
+  One loose end is now MOOT rather than outstanding. The bullet recorded
+  that SH2's true timescale was still only an upper bound (~2.2 s), pinnable
+  only with a screen recording that PCSX2 was not up to make. It existed to
+  settle whether our rate was right; the eye has now settled that directly,
+  so the measurement has nothing left to decide. Not filed as follow-up.
+
+  Still true and reusable from this item: `-rippletime <sec>` overrides the
+  pinned ripple clock so a time-varying effect can be sampled at chosen
+  instants without a rebuild per sample.
 
 - 📋 [DOOM-0301] **The game should be able to play itself, so footage can be captured without a human at the keyboard.**
   User, 2026-08-01, with the reason stated plainly, which is what should
@@ -5265,7 +5282,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   Lanes: playsim, tooling.
   Source: user-request-2026-08-01.
 
-- 🚧 [DOOM-0302] **A nukage pool glowed only in patches, because the per-texel emissive mask was applied to liquids too.**
+- ✅ [DOOM-0302] **A nukage pool glowed only in patches, because the per-texel emissive mask was applied to liquids too.**
   User report 2026-08-02, with four F12 captures: "it looks like there is
   point lights placed at random" in the pools, "just parts of the pools
   glowing". Ultra RT, confirmed by the Video menu in the fourth shot.
@@ -5311,6 +5328,20 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: fix.
   Lanes: shaders, rt.
   Source: user-report-2026-08-02.
+  SHIPPED 2026-08-02 -- user play-test sign-off: "I have checked it
+  already and it looks much, much better."
+
+  That answers the specific question this bullet was held open on. The
+  trade it names -- a flat emitter necessarily flattens the pool's surface
+  texture, and whether that reads worse than the patchiness it replaced --
+  is resolved in favour of the uniform emitter. **kNukageLe 0.05/0.19/0.02
+  and kLavaLe 0.55/0.19/0.03 stand as tuned**; no further re-tune is owed.
+
+  Gates were already green before the play-test: make test, and -rtverify
+  PASS on doom.wad (rel-MSE 0.1091% vs the 0.50% bar, white furnace
+  0.000000). Note for anyone re-reading that number: DOOM-0297 has since
+  established it is a doom.wad-only gate, and that doom2's failure is
+  estimator variance rather than a defect.
 
 - ✅ [DOOM-0303] **-devshot N takes a developer screenshot headlessly, without -shotverify's canonical config pin.**
   Found while investigating the liquid-glow report. -shotverify PINS a
