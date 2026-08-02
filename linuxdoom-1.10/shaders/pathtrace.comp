@@ -1050,7 +1050,10 @@ vec3 torchInscatter(vec3 p, vec3 rd)
         // the driver folding a constant exponent. MEASURED, because the saving was assumed
         // first and the assumption was wrong: RADV on an RX 6600 folds it already, and the
         // megakernel is 11.18 ms either way. Kept as the multiply because it costs nothing
-        // and does not rely on that, but it is not where L3's 1.05 ms lives.
+        // and does not rely on that, but it is not where L3's 1.05 ms lives. (1.05 ms is the
+        // ORIGINAL DOOM-0295 headline, taken at a lighter viewpoint; at the nukage courtyard
+        // the same term measured 1.55 ms, then 1.15 ms once the phase rewrite landed. Three
+        // figures, one quantity, three contexts -- see the marchFog call site for the current.)
         float x   = d2 / (posR.w * posR.w);
         float w   = clamp(1.0 - x * x, 0.0, 1.0);
         if (w <= 0.0)
@@ -1123,6 +1126,11 @@ vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)
     // BETTER at the shipped High density (10% vs 15%) and ~0.5% worse at the thinnest.
     // The Jacobian is load-bearing -- drop it and every sample is weighted as if the march
     // were still uniform, which silently rescales the whole fog rather than erroring.
+    //
+    // DOOM-0295: the torch term (L3) is the one part of the loop NOT evaluated per sample.
+    // It is computed once per PAIR of samples and spent on both -- see the `i & 1` block
+    // below -- so this carries it across the odd sample.
+    vec3 torchPair = vec3(0.0);
     for (int i = 0; i < kFogSteps; ++i) {
         float s     = (float(i) + jitter) * invN;
         float t     = tMax * s * s;
@@ -1221,7 +1229,53 @@ vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)
         // written into it. Unlike the sky term this one is NOT tinted by kFogColor: a
         // torch has its own colour (the emitter's Le) and painting it near-white would
         // throw that away.
-        Ls += torchInscatter(p, rd);
+        //
+        // DOOM-0295: evaluated at HALF the march's rate -- once per pair of samples, at the
+        // pair's MIDPOINT, and spent on both. L3 measured 1.15 ms of megakernel at this spot
+        // and the 2026-08-02 shaderstats A/B ruled out the two mechanisms that would have had
+        // a free fix in them: the feature costs zero registers (96 VGPRs, 0 spilled, both with
+        // it and without) and zero occupancy (8 subgroups/SIMD either way, and that ceiling is
+        // LDS, not VGPRs). What is left is plain issue cost -- ~100 VALU and 4 vector loads,
+        // paid 24 times because the march loop is not unrolled -- so the only lever left is to
+        // pay it fewer times.
+        //
+        // Halving the rate is safe HERE and would not be for the density terms above, which is
+        // why this line moved and they did not. The torch term is the SMOOTH one: a windowed
+        // inverse square whose peak is already capped by kTorchSoftR2. The density it
+        // multiplies carries every sharp feature in the model (wisps, the floor layer's knee,
+        // the seep grade at a threshold) and still gets every sample. Two things in the torch
+        // term are NOT smooth and are tolerated rather than overlooked -- the cell's light LIST
+        // changes at a fogLightCell boundary, and the phase argument swings fast on a ray that
+        // passes close to a lamp. Both are sub-pixel-jittered by `jitter` and land in the
+        // denoiser's input, which is where the measured error stayed: worst pixel 10/255,
+        // against -shotcompare's kGoldenMAE bar of 3.0 mean.
+        //
+        // MIDPOINT rather than the pair's first sample, which is the whole reason this is a
+        // quadrature change and not a bias: holding the even sample's value across both would
+        // shift every torch shaft half a sample step toward the camera. Sampling the midpoint
+        // is the standard second-order rule -- same error order as interpolating the two ends,
+        // for one evaluation instead of two and no lookahead. `jitter` is inside sMid, so the
+        // pair boundaries move per pixel exactly as the sample positions do; any residual
+        // stepping lands as noise the denoiser already eats, not as a fixed ring. Second-order
+        // holds where the pair's two dt weights are close, which is everywhere except the first
+        // pair or two -- dt grows with s, so the near-camera pairs are weighted forward of their
+        // midpoint. That is exactly the band the measured difference landed in, and it is why
+        // the claim is "second order in s", not "exact".
+        //
+        // Index-space midpoint (i + 0.5), NOT the midpoint in t. The quadrature lives in s and
+        // the Jacobian above converts it, so halving in s is what keeps the weighting right.
+        if ((i & 1) == 0) {
+            // The +0.5 is the pair's midpoint. kFogSteps is even today (24), but §4.2 schedules
+            // it to ~40 at L1c: on an ODD count the final even index has no partner, and
+            // offsetting it would sample half a step PAST tMax. It evaluates at itself instead,
+            // so this stays correct for any kFogSteps rather than depending on a comment.
+            float sMid = (float(i) + (i + 1 < kFogSteps ? 0.5 : 0.0) + jitter) * invN;
+            torchPair  = torchInscatter(ro + rd * (tMax * sMid * sMid), rd);
+        }
+        // Spent on both samples of the pair -- except where `trans` breaks out below on an even
+        // i, which spends that last midpoint once. Harmless by construction: the break fires
+        // only once transmittance is under 0.003, so the sample it truncates is worth ~0.3%.
+        Ls += torchPair;
         inscatter += trans * sigma * Ls * dt;
         trans     *= exp(-sigma * dt);
         if (trans < 0.003) break;                        // thick fog occludes the rest cheaply
