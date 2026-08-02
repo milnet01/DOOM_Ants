@@ -324,6 +324,43 @@ with different meanings — don't conflate across specs.)
   explicitly defers here. *(Known coverage gap: the shipped verify exercises the
   static light-selection path only — `omniStart == emitCount` — so the
   omnidirectional sprite-light NEE path is not yet covered by this bar; DOOM-0122.)*
+
+  **Amended 2026-08-02 (DOOM-0297) — the sample count and the bar are PER-IWAD, because
+  a single figure measures the map as much as it measures the integrator.** The shipped
+  gate ran one configuration and one 0.50% bar against whichever IWAD was loaded, and
+  deterministically failed on `doom2.wad` (3.4993% rel-MSE, 63987 lit px) while passing
+  on `doom.wad` (0.0796–0.1091%) **on the same build** — `git stash` to an untouched tree
+  reproduced the figure to four decimals. That is not a renderer defect:
+
+  | IWAD | NEE spp | brute-force spp | bar | measured |
+  |---|---|---|---|---|
+  | `doom.wad` | 16384 | 4096 | **≤ 0.50%** | 0.1091% |
+  | `doom2.wad` | 65536 | 16384 | **≤ 1.00%** | 0.7330% |
+
+  **Why the two disagree, and why it is variance rather than bias.** rel-MSE is
+  `Σ(nee−brute)² / Σbrute²`, so it charges the *residual variance of both estimators* to
+  the score. MAP01's emitter set is smaller and more clustered than E1M1's (48 lights
+  spanning 1987–57320 against 83 spanning 0–83741), so a power-sampled NEE estimator
+  converges slower there at equal spp. Raising samples drives it down with no floor —
+  **3.4993% → 0.7330% → 0.7245%** as NEE goes 16384 → 65536 and the reference 4096 →
+  16384 → 65536 — which is what a variance-limited disagreement does and what a biased
+  one cannot.
+
+  ⚠ **A bias-extrapolation gate was derived and MEASURED before this table was chosen,
+  and it failed.** Modelling `E = a/N_nee + c/N_brute + bias` and quadrupling both counts
+  quarters both variance terms, so `bias = (4·E_4x − E_1x)/3` from two runs. Measured, it
+  returns **+0.0135% on doom.wad and −0.1891% on doom2.wad**: a negative bias is
+  unphysical, so that figure is slop, and its magnitude is a third of the bar it was meant
+  to replace. The 4.00× fall the model predicts came out **2.92× and 4.77×**. Recorded so
+  it is not re-proposed — it is the obvious next idea, and it is worse than what it
+  replaces at these sample counts.
+
+  **What this does NOT license.** The per-IWAD bar is justified by the convergence
+  evidence above and by nothing else. A future IWAD or PWAD does not get a bar fitted to
+  whatever it happens to score; it gets the doom.wad configuration first, and only on
+  demonstrating the same falling-with-no-floor behaviour does it earn its own row. A bar
+  chosen to make a red result green, without that evidence, would hide the real bias this
+  invariant exists to catch.
 - **INV-7 (no magic constants):** §5.
 - **INV-8 (validation-clean):** zero Vulkan validation-layer errors over a
   multi-second run on every tier path. Must be exercised on a box with
