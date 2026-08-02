@@ -1936,6 +1936,85 @@ git commit -m "DOOM-0011: L3 height pooling + torch shafts (static emitters, no 
 
 ---
 
+## Task L3b — Re-bake the fog-light grid when the map moves (DOOM-0296)
+
+**Goal:** a door that opens mid-play admits its torch's **fog** as well as its light. The
+grid `BuildFogLightGrid` bakes at level load currently answers from spawn-state door
+heights and is never revisited (spec §4.4's 2026-08-02 amendment; INV-14).
+
+**Files:**
+- Modify: `linuxdoom-1.10/r_vulkan.cpp` — three fields on `g`, the arm beside
+  `g.clearanceDirty` in `BuildFrameReheight`, the fire block at the end of
+  `RecordSeepRefresh`, two `static const float` constants beside `kSeepEaseTau`.
+
+**Interfaces:**
+- Consumes: `RB_UPD_MOVED` from `RB_UpdateMeshHeights` (already the gate
+  `g.clearanceDirty` sits behind); `RecordSeepRefresh`'s existing `dt` clock;
+  `BuildFogLightGrid()` **unchanged**.
+- Produces: nothing new. No shader change, no push-constant lane, no resource (spec §5
+  is untouched).
+
+**Existing code to read first:**
+- `RecordSeepRefresh` (`r_vulkan.cpp`) — the `dt` clock at the top, the `g.seepDirty`
+  re-flood block that **swaps `g.seepField`**, and the `clearanceDirty` block after it.
+  The new block goes **after both**, for the reason in spec §4.4 (`RB_SeepCellAir` reads
+  the swapped field's cell cache).
+- `BuildFrameReheight` (`r_vulkan.cpp`) — the `if ((upd & RB_UPD_MOVED) && g.rtEnabled)`
+  block that already raises `g.clearanceDirty`.
+- `BuildFogLightGrid` / `UploadFogLightGrid` (`r_vulkan.cpp`) — confirm for yourself that
+  the upload is safe here: it is reached **after** `vkWaitForFences` and **before** the
+  descriptor set is bound for the dispatch, and `cells` cannot change within a level, so
+  the buffer is never re-created mid-play.
+
+- [ ] **Step 1: State + constants.** Three fields on `g` (`fogLightArmed`,
+  `fogLightStill`, `fogLightWait`) and two constants beside `kSeepEaseTau`:
+  `kFogLightSettle = 0.15f` seconds of stillness before the bake, and
+  `kFogLightMaxWait = 2.0f` seconds after which a never-settling map bakes anyway.
+  Clear all three wherever `g.seepDirty` is cleared for a new level (`UploadSeepField`),
+  so a level load does not leave a bake armed from the previous map.
+
+  *Verify:* builds; a still map never prints the L3 line after load.
+
+- [ ] **Step 2: Arm on plane movement.** In `BuildFrameReheight`, inside the existing
+  `RB_UPD_MOVED && g.rtEnabled` block, set `g.fogLightArmed = true; g.fogLightStill = 0`.
+  **Not** behind `RB_SeepOpeningsChanged()` — spec §4.4 D1 gives the reason (a lift that
+  changes visibility without flipping an opening is the leak case).
+
+  *Verify:* a temporary print in the block fires on a door and on a lift; never on a
+  still map.
+
+- [ ] **Step 3: Fire on settle.** At the **end** of `RecordSeepRefresh` (after the
+  re-flood block and the clearance block), accumulate `g.fogLightStill += dt` and
+  `g.fogLightWait += dt` while armed, and when
+  `g.fogLightStill >= kFogLightSettle || g.fogLightWait >= kFogLightMaxWait`, call
+  `BuildFogLightGrid()` and clear all three.
+
+  *Verify:* the existing `RB_Vulkan: DOOM-0011 L3 fog lights` line prints **once** per
+  door, about a beat after the door stops — not on the frame it cracks.
+
+- [ ] **Step 4: Falsify INV-14.** Drive a door open and shut with a throwaway
+  `EV_VerticalDoor` hook in `P_UpdateSpecials` (xdotool cannot inject into a Wayland
+  client; the memory of that trap is why this is written down). The `N lit of M cells`
+  count must **rise** on open and **return** on shut — the shape DOOM-0281 proved its
+  own re-flood with. A count that does not move means the bake read the pre-flood cell
+  cache; no line at all means it never fired.
+
+- [ ] **Step 5: Build + tests + `-rtverify`** (L1 Step 7 commands). `-rtverify` on
+  **doom.wad** only until `DOOM-0297` settles which IWAD the gate is valid on.
+
+- [ ] **Step 6: Prove the still map is untouched.** `-shotcompare` must be
+  bit-identical: nothing arms without `RB_UPD_MOVED`, so the whole mechanism is inert
+  on a map where nothing moves. (Same proof DOOM-0281 shipped with.)
+
+- [ ] **Step 7: Visual A/B.** Two `-devshot` captures through an opened door — one on
+  this build, one with the fire block disabled — and report the changed-pixel count.
+  **Not `-shotverify`**, which pins a canonical config and would photograph the same
+  frame for both halves.
+
+- [ ] **Step 8: Play-test (spec §7 L3b), then commit.**
+
+---
+
 ## Task L4 — Area profiles + colour: goo tint, hell haze, medium tint
 
 **Goal:** Colour the fog by area — **green in goo rooms** (primary-hit liquid flag), **faint red
