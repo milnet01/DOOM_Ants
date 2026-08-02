@@ -4490,6 +4490,31 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: perf.
   Lanes: shaders, fog, perf.
   Source: in-session-2026-08-01.
+  Progress (2026-08-02, 7f68bbe): candidate (a) CONFIRMED but it is only
+  26% of the cost. pow(x, 1.5) needed no Schlick approximation -- it is
+  exactly (x^-0.5)^3, so an inversesqrt cubed is the SAME curve, no
+  re-tune. glslc -O does not fold a 1.5 exponent (33 Pow survive);
+  SPIR-V after: 4 Pow + 4 OpFDiv gone, 4 InverseSqrt added.
+
+  Re-measured today, 3 runs per build, 48 pooled samples each, medians,
+  idle machine, E1M1 nukage courtyard (-warpto 1866 -3221 45), Ultra RT
+  with HD art, 50% scale:
+
+    torch disabled (floor)   13.38 ms   46 fps
+    before                   14.93 ms   41 fps
+    after                    14.53 ms   43 fps
+
+  NOTE the baseline correction: L3 costs 1.55 ms at this spot, not the
+  1.05 ms in the headline -- more torches in view. The 0.40 ms recovered
+  is 26% of it.
+
+  STILL OPEN: the remaining 1.15 ms. Candidate (b) register pressure is
+  untested -- get VGPR/occupancy from RADV_DEBUG=shaderstats and compare
+  against the floor build. Candidate (c) kFogLightsPerCell 2 -> 1 remains
+  the quality trade of last resort.
+
+  Tooling note for whoever picks this up: -shotverify PINS a canonical
+  config and cannot be used for effect A/Bs; use -devshot N (DOOM-0303).
 
 - 📋 [DOOM-0296] **The fog-light grid is baked at level load, so a door that opens later admits no torchlight.**
   DOOM-0011 L3 bakes which cells of air can see which static emitters
