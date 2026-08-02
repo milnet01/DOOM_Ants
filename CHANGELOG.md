@@ -112,6 +112,13 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **The renderer's `-rtverify` self-test failed on DOOM 2 and passed on DOOM 1, on the same build** (DOOM-0297)
+  The check was under-sampled, not the renderer wrong. DOOM 2's lights are
+  fewer and more clustered, so the estimator needs more samples there to
+  settle; the test now takes them (262144 vs 16384) and both games pass the
+  same unchanged 0.50% bar. Raising the sample count can only make the test
+  stricter, so nothing was loosened to get there.
+
 - **A nukage pool glowed only in patches, because the per-texel emissive mask was applied to liquids too.** (DOOM-0302)
   Nukage pools looked like they had random glowing spots in them. Now the whole pool glows evenly.
 

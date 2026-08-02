@@ -4733,7 +4733,7 @@ parked ideas (💭 considered) until we commit to and design each one.
       cells) than any door there. If the door demo underwhelms, a lift
       rising in front of a torch is the stronger fixture.
 
-- 📋 [DOOM-0297] **-rtverify passes on doom.wad and deterministically fails on doom2.wad, same build.**
+- ✅ [DOOM-0297] **-rtverify passes on doom.wad and deterministically fails on doom2.wad, same build.**
   Found while gating DOOM-0011 L3 across both IWADs, which the standing
   2026-08-01 constraint requires. On one build, at -warp 1 1:
 
@@ -4859,6 +4859,59 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   NOT a defect either way: the renderer is fine, and this bullet's own
   "probably the check, not the renderer" was right.
+  SHIPPED 2026-08-02 (7adcd0a). -rtverify now picks its SAMPLE COUNT from
+  `gamemode` and leaves the bar alone. Both IWADs pass the same 0.50% bar:
+
+    doom.wad   0.1091%  NEE  16384 spp / reference  4096 spp   PASS
+    doom2.wad  0.3665%  NEE 262144 spp / reference 16384 spp   PASS
+    white furnace 0.000000 both; make test 7/7.
+
+  This is NOT the per-IWAD BAR the user approved -- it is that option with
+  the part worth disliking removed, and it is strictly stronger. Holding
+  the reference fixed and quadrupling NEE takes doom2 from 0.7330% to
+  0.3665%, which clears the EXISTING bar, so nothing was relaxed. That
+  matters beyond tidiness: raising spp can only TIGHTEN a variance-limited
+  gate, so plutonia, tnt and any PWAD loaded over doom2 inheriting the
+  higher count is harmless -- whereas an inherited BAR would have hidden a
+  real defect. Both cold-eyes lanes had flagged exactly that hole in the
+  bar-relaxing draft.
+
+  THE EVIDENCE HAD TO BE RE-MEASURED BEFORE IT COULD BE CLAIMED, and this
+  is the reusable lesson. The first draft argued "falling with no floor"
+  from three points of which only ONE moved the NEE count; the third
+  quadrupled the REFERENCE and moved 0.7330 -> 0.7245, which is exactly
+  what a bias floor at 0.72% would look like. Two independent lanes caught
+  it. A third NEE level at fixed reference settled it at 0.3665%.
+
+  NOT CLAIMED, and INV-6 now says so: that the residual is zero. The 4x NEE
+  step gave a 2.0x fall against a predicted 4.0x, and extrapolations of the
+  constant term scatter by ~+-0.2% rel-MSE, so any true bias is bounded by
+  about that rather than shown absent. The gate does not need zero --
+  0.3665% clears 0.50% with 27% headroom against +-16% measured run-to-run
+  scatter. Raising the reference as well only reaches 0.3419%, which is why
+  the extra 4x is not spent.
+
+  ALSO RECORDED IN INV-6 so it is not re-proposed: the bias-extrapolation
+  gate, derived, measured and falsified. Model E = a/N_nee + c/N_ref + b^2
+  -- the constant is b^2, not b, because rel-MSE is a SQUARED metric, so a
+  negative b^2 is what is unphysical (a cold-eyes lane corrected that
+  algebra). Quadrupling both counts gives b^2 = (4*E_4x - E_1x)/3, which
+  measured +0.0135% on doom.wad and -0.1891% on doom2 -- impossible, and
+  slop of the same order as the bar it would replace.
+
+  DOOM-0208's 2026-07-23 note stays corrected: the 3.4943% / 63987 pair it
+  closed as "a transient environmental blip" was never transient and never
+  environmental. It was doom2.wad, under-sampled.
+
+  CAVEAT worth knowing before quoting any of these numbers: the score is a
+  property of a map AND a camera as well as the integrator -- RB_RtVerify
+  builds its view from g.lastView at the first ready present. The rows are
+  defined only at the invocations INV-6 quotes (-warp 1 1 for doom.wad,
+  -warp 1 for doom2.wad). Running -rtverify elsewhere is a diagnostic, not
+  this gate. The result line now prints its configuration for that reason.
+
+  Cost: doom2's gate is ~13x the dispatches it was. Headless only, and it
+  is the price of a gate that is valid on both IWADs.
 
 - 📋 [DOOM-0298] **New liquid surfaces: bubbles in nukage, splashes on lava, and animation that does not visibly repeat.**
   User, 2026-08-01, on the DOOM-0011 L3 nukage glow: "when we create new
