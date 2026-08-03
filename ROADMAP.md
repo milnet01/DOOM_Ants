@@ -546,6 +546,30 @@ with friends.
   **Layman:** A way to drop the player at any spot on any map from the command line and take a screenshot without anyone playing, so a graphics bug that only shows up in one corner of one room can be reproduced and checked automatically instead of needing someone to walk there.
   Kind: test.
   Source: user-request-2026-07-27.
+  Progress (2026-08-03): Part 2's blocking claim needs qualifying, and the
+  qualification has a cost nobody had noticed.
+
+  `-shotverify` ran fine from a non-interactive shell today — a dozen
+  times, including a four-capture A/B matrix at 3840x2160 in Ultra RT for
+  DOOM-0296. So "cannot be driven from a non-interactive shell" is too
+  strong. What made it work is that the shell had DISPLAY=:0 and
+  WAYLAND_DISPLAY=wayland-0: a graphical session was present, so window and
+  swapchain creation succeeded. The 2026-07-27 verification stands for a
+  shell with NO display; Part 2's actual scope is unchanged.
+
+  THE COST, which is the part worth recording: because it still creates a
+  window, every capture STEALS FOCUS from whatever is on screen. Running
+  two of them while the user was mid-play-test ended their session — twice
+  in one day, on the very item the captures were meant to support. So
+  `-shotverify` is scriptable-with-a-display but NOT headless, and the
+  difference is not academic: it cannot be used at all while a human is
+  playing.
+
+  That sharpens the case for the `-headless` path Part 2 already scopes. It
+  is not only about CI or a display-less shell; it is what lets a
+  measurement run BESIDE a play-test instead of interrupting it. Until it
+  exists, the working rule is: never run the engine while the user is
+  playing.
 
 - 📋 [DOOM-0284] **Surround sound on setups that support it, plus binaural audio for headphones.**
   DOOM today pans SFX with Mix_SetPanning -- a stereo left/right balance
