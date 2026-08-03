@@ -338,7 +338,8 @@ layout(push_constant) uniform PC {
     uvec4    misc6;    // DOOM-0183: x = ripple time (float bits, seconds); y = wet toggle
                        // (rb_wet: sheen/ripple/puddle only, not the glow).
                        // DOOM-0011: z = fog strength (rb_fog 0..3; 0 skips the march, INV-8).
-                       // w = hell-haze density (reserved, wired at L4).
+                       // w = hell-haze density, BIT-CAST float (L4; 0 on non-hell levels,
+                       // from rb_view_t::hazeDensity via r_backend.c's per-level rule).
                        // std430-aligned to offset 224 (C++ pads the 216-byte tail; INV-6).
 } pc;
 
@@ -918,11 +919,15 @@ float wisp(vec3 p, float t)
 }
 
 // DOOM-0011: view-ray fog march, single scattering, mode 4 (full-res) + mode 6
-// (half-res). hitP/gnormal/matFlags are the primary-hit fields later layers (L2-L4)
-// read for height pooling / area profiles; L1's sky-ambient term is position- and
-// hit-independent, so it reads none of them yet — the struct + signature are fixed
-// now so L2-L4 fill fields without re-plumbing the call sites (§4.1).
-struct FogHit { vec3 hitP; vec3 gnormal; uint matFlags; }; // L2-L4 read these
+// (half-res). The fields are the primary hit, for height pooling / area profiles;
+// L4 reads ctrlFlags for the goo profile, and hitP/gnormal are still unread — the
+// struct + signature were fixed at L1 so later layers fill fields without
+// re-plumbing the call sites (§4.1).
+// ctrlFlags is the MatCtrl.flags word, and it is a SEPARATE field on purpose: matFlags
+// carries the per-VERTEX flags (FLAG_FLAT/FLAG_MASKED/FLAG_EMISSIVE...), which is where
+// the liquid bit is NOT. Testing matFlags for LIQUID_NUKAGE compiles cleanly and never
+// fires, so L4's goo profile would have been dead with nothing to warn you (DOOM-0011 L4).
+struct FogHit { vec3 hitP; vec3 gnormal; uint matFlags; uint ctrlFlags; }; // L2-L4 read these
 
 // DOOM-0011: optical depth for a ray that leaves the outdoor fog layer and never comes
 // back -- the sky backdrop. Closed form, no march. For an exponential layer the integral
@@ -1096,6 +1101,37 @@ vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)
     // with it behind you.
     float sunGain    = 4.0 * PI * fogPhaseHG(dot(rd, kSunDir), kFogAnisotropy);
 
+    // DOOM-0011 L4: the area profiles (spec §4.5). Two of them add fog of their own on
+    // top of the sky-sourced haze, and each tints the medium:
+    //   goo  -- this pixel's PRIMARY HIT is nukage. A declared relaxation of "density at
+    //           a point cannot depend on what the ray hits" (§4.1): the room reads
+    //           goo-foggy when you are looking at or across the goo, and is blind to goo
+    //           behind you. Every pixel of a goo room keys the same way -- walls, floor
+    //           and pool are all inside it -- so the error only shows as a doorway edge.
+    //   hell -- a per-LEVEL flag, so a frame constant, not hit-keyed at all. Its density
+    //           is computed CPU-side (r_backend.c) and rides misc6.w.
+    // Both are hoisted OUT of the march: one is per-pixel and one is per-frame, so
+    // evaluating them per sample would buy nothing and cost a branch 24 times over.
+    //
+    // Densities ADD (below) but tints MULTIPLY, so a goo room on a hell level reads
+    // green-through-red rather than one or the other. Multiplication keeps one vec3 on
+    // the hot path and needs no per-profile weight, at the cost of reading darker than
+    // either tint alone; if that reads muddy on hardware the dial is kHellTint toward
+    // white, NOT the composition rule (spec Q7/Q20).
+    float haze       = uintBitsToFloat(pc.misc6[3]);   // hell profile; exactly 0 elsewhere
+    vec3  mediumTint = vec3(1.0);                      // clear profile: EXACTLY 1, so the
+                                                       // no-profile frame stays bit-identical
+    float areaMult   = 0.0;                            // clear = 0, goo = 1.0 (spec §4.5)
+    if ((h.ctrlFlags & LIQUID_NUKAGE) != 0u) {         // MatCtrl bit, NOT h.matFlags
+        mediumTint = kGooTint;
+        areaMult   = 1.0;
+    }
+    if (haze > 0.0)
+        mediumTint *= kHellTint;
+    // The profile sum, ungated and unwisped -- `strength` and `wisp` are applied to it in
+    // the sigma line below, along with everything else (DOOM-0310 §4.1).
+    float areaSigma  = kAreaDensity * areaMult + haze;
+
     // DOOM-0011 L3, corrected 2026-07-27. The cloud's ground height USED to come from the
     // primary hit -- hitP.z when the hit faced up, else the camera's floor. That is the
     // defect the user photographed: standing on a ledge above a courtyard, every wall pixel
@@ -1186,8 +1222,18 @@ vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)
         // DOOM-0011 L1c: the billows MULTIPLY the whole medium -- aerial layer and floor
         // layer alike -- reusing DOOM-0183's ripple clock as the drift time, so no new push
         // lane (INV-5). Multiplicative is what makes kWispAmp = 0 the exact identity (INV-11).
-        float sigma = (fogDensity(p, baseZ, poolH) + floorFogDensity(p, baseZ, t))
-                      * strength * skyExposure * wisp(p, rippleTime());
+        // DOOM-0011 L4: the profile sum is a THIRD addend and it sits OUTSIDE the
+        // skyExposure gate (INV-9). Goo rooms and hell interiors are roofed, so gating it
+        // would drive them to kIndoorFogScale (5%) and silently cancel the feature -- the
+        // play-test would still pass weakly, as a thin tint, which is why this is a
+        // code-level rule and not something to eyeball. `strength` is distributed onto the
+        // new term rather than factored out, so every existing operation keeps its shipped
+        // ORDER and a frame with no profile in view is bit-identical, not merely equal
+        // (x + 0.0 == x exactly, and sigma is always finite and non-negative).
+        float sigma = ( (fogDensity(p, baseZ, poolH) + floorFogDensity(p, baseZ, t))
+                          * strength * skyExposure
+                        + areaSigma * strength )
+                      * wisp(p, rippleTime());
         // DOOM-0011 L2: the sky term gains a DIRECTION. Whether the sun reaches this
         // sample decides whether it gets the directional share on top of the ambient; the
         // two shares sum to 1, so this REPLACES L1's flat ambient (spec §4.4(a) -- adding
@@ -1221,7 +1267,14 @@ vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)
         // BECAUSE the room around it is not, and dimming the beam with the room would
         // destroy exactly the contrast L2 exists to produce.
         float skyLight = mix(kIndoorSkyLight, 1.0, seepT);
-        vec3  Ls    = kFogColor * kSkyShaftStrength
+        // DOOM-0011 L4: mediumTint multiplies the SKY term only -- colour = light x medium
+        // -- and it covers BOTH sky shares, so a shadowed hell interior tints the same as a
+        // sunlit one, which is what a coloured medium does. Before kSkyShaftStrength, so
+        // hue and brightness stay independently tunable (DOOM-0310 §4.6). The torch addend
+        // below is deliberately NOT tinted (user, 2026-08-03): a flame keeps its emitter's
+        // own Le and reads warm THROUGH green air, and the room's colour comes from the fog
+        // around it rather than from the shaft.
+        vec3  Ls    = kFogColor * mediumTint * kSkyShaftStrength
                     * (kSkyAmbientFrac * skyLight + (1.0 - kSkyAmbientFrac) * sunLit);
         // DOOM-0011 L3: the torches. A plain ADDEND, with no indoor weighting of any kind
         // -- see kFogLightsPerCell on why the "faint outdoors, strong indoors" the user
@@ -1547,7 +1600,7 @@ void main()
 
             if (any(isnan(L)) || any(isinf(L))) L = vec3(0.0);
             if (pc.misc6.z != 0u) {                  // rb_fog strength; 0 = skip entirely (INV-8)
-                FogHit fh = FogHit(hitP, n, uint(flags));
+                FogHit fh = FogHit(hitP, n, uint(flags), mc.flags);
                 vec4 fog = marchFog(origin, dir, tHit, fh);
                 L = L * fog.a + fog.rgb;             // linear radiance, before tonemap (§4.6)
             }
@@ -1682,7 +1735,7 @@ void main()
             // the shadow-ray half-res gate above). rb_fog-gated (INV-8); when off, store
             // the neutral no-fog value so the composite fetch is a byte-identical no-op.
             if (pc.misc6.z != 0u) {
-                FogHit fh = FogHit(hitP, n, uint(flags));
+                FogHit fh = FogHit(hitP, n, uint(flags), mc.flags);
                 vec4 fog = marchFog(origin, dir, tHit, fh);
                 imageStore(fogImg, ivec2(px) / 2, fog);
             } else {

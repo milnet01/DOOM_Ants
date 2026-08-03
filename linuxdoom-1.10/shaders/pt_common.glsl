@@ -128,6 +128,17 @@ const vec3  kSunDir          = normalize(vec3(0.30, 0.30, 1.0)); // world; +z is
                                  // declaration is the authoritative one.
 const vec3  kGooTint         = vec3(0.35, 0.85, 0.30); // sickly green (L4)
 const vec3  kHellTint        = vec3(0.90, 0.35, 0.30); // faint red   (L4)
+const float kAreaDensity     = 0.0020;           // L4: the GOO profile's extinction, added to
+                                 // sigma OUTSIDE the skyExposure gate (DOOM-0310 §4.1/§4.4) --
+                                 // goo rooms are roofed, so gating it would crush the pool to
+                                 // kIndoorFogScale (5%) and the feature would barely show.
+                                 // Deliberately below kFogBaseDensity (0.0033): sigma is clamped
+                                 // NOWHERE, so an OPEN-SKY nukage pool stacks this straight on
+                                 // top of a full-density aerial layer, and §4.2 recorded that a
+                                 // ~2x density raise alone washed the view out. If E1M1's
+                                 // courtyard nukage blows out, this is the lever -- not a clamp
+                                 // on sigma, which would silently cap hell-on-goo rooms too.
+                                 // Hell's equivalent is per-LEVEL and so runtime, on misc6.w.
 const float kSkyShaftStrength   = 0.85;          // sky in-scatter gain (L1/L2). Brightness of the
                                  // fog ONLY -- extinction is kFogBaseDensity's job -- so this is
                                  // the "the fog is a bit bright outside" dial (user, 2026-07-26)

@@ -31,6 +31,7 @@
 #include "i_video.h"    // I_FinishUpdate
 #include "m_fixed.h"    // FRACUNIT
 #include "r_sky.h"      // skytexture (the sky's wall-texture index)
+#include "doomstat.h"   // gamemode/gameepisode/gamemap (DOOM-0011 L4 hell haze)
 #include "r_mesh.h"     // rb_view_t (POD camera across the seam), RB_OVERLAY_KEY
 #include "v_video.h"    // screens[] (the paletted 2D overlay buffer)
 #include "st_stuff.h"   // ST_Start (force a full status-bar redraw on switch)
@@ -143,6 +144,12 @@ void RB_InterpSetFrac(double frac)
 // Render the live tic state with no lerp (net/demo/Classic, or a paused loop).
 void RB_InterpDisable(void) { rb_interpActive = false; }
 
+// DOOM-0011 L4: the hell profile's fog density. Half kAreaDensity (0.0020, the goo
+// profile's) because hell's haze covers the WHOLE level and so is collected along
+// every ray at every distance, where goo is a pool you stand in or look across.
+// A first guess, to be tuned on hardware with kHellTint (spec Q7).
+static const float kHazeDensityDefault = 0.0010f;
+
 // Convert the player's view to a POD camera and hand it across the seam. viewz
 // is the eye height (player->viewz); angle_t is a 32-bit binary angle (full
 // circle = 2^32), so scale it to radians. mo is always set for a live view.
@@ -179,6 +186,25 @@ static void Vulkan_RenderPlayerView(player_t* p)
     // 3D back-end can sample it (RB_BuildSky). skytexture is set per level by
     // R_SetupLevel; the C++ side never touches DOOM globals.
     view.skytexnum = skytexture;
+    // DOOM-0011 L4: the hell fog profile — a thin red haze over a whole level, as
+    // opposed to the goo profile, which the shader keys off the primary hit. Spec
+    // §4.5's concrete v1 rule: DOOM 1's Inferno (episode 3 and up), or DOOM II's
+    // hell run (map 20 and up).
+    //
+    // Name the two DOOM-1 modes rather than writing `gamemode != commercial`, which
+    // also admits `shareware` and the no-IWAD `indetermined` (doomdef.h's GameMode_t
+    // is { shareware, registered, commercial, retail, indetermined }). It is inert
+    // today — shareware ships Episode 1 only — but it is not the rule the spec states
+    // and a wider IWAD would diverge silently.
+    //
+    // The spec also allows "or a fire/hell sky" as a third disjunct. Not implemented,
+    // and deliberately: vanilla DOOM picks skytexture from these same two globals in
+    // G_DoLoadLevel, so the sky test can never fire where the two above do not. It
+    // would earn its keep only for a PWAD that sets the sky independently, which this
+    // engine has no way to express.
+    view.hazeDensity = (((gamemode == registered || gamemode == retail) && gameepisode >= 3)
+                        || (gamemode == commercial && gamemap >= 20))
+                     ? kHazeDensityDefault : 0.0f;
     RB_Vulkan_RenderView(&view);
 
     // Reveal the automap the same way Classic does: the software seg renderer

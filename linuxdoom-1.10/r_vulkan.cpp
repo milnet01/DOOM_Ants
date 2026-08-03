@@ -8638,7 +8638,14 @@ void RecordRtTrace(uint32_t idx)
         float wa = g.levelMesh ? g.levelMesh->wispAngle : 0.0f;
         std::memcpy(&pc.wispAngle, &wa, sizeof(float));
     }
-    pc.misc6[3]    = 0u;    // DOOM-0011: hell-haze density, bit-cast float (wired at L4)
+    {   // DOOM-0011 L4: the hell profile's fog density, bit-cast float. 0 on every
+        // non-hell level, which is what makes the whole profile term vanish there.
+        // g.lastView, NOT a bare `view` -- this function takes no rb_view_t; every
+        // other per-frame field it reads comes off the cached copy (g.lastView.angle,
+        // .x, .extralight, above).
+        float haze = g.lastView.hazeDensity;
+        std::memcpy(&pc.misc6[3], &haze, sizeof(float));
+    }
     pc.vertsAddr   = BufferAddress(g.vbuf);
     pc.emitAddr    = g.emitBuf    ? BufferAddress(g.emitBuf)    : 0;
     pc.matEmisAddr = g.matEmisBuf ? BufferAddress(g.matEmisBuf) : 0;

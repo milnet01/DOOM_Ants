@@ -399,6 +399,10 @@ typedef struct
                          // (classic DOOM's player->extralight, see r_backend.c)
     int   skytexnum;     // sky wall-texture index (DOOM's skytexture global); the
                          // sky backdrop samples this atlas tile, see RB_BuildSky
+    float hazeDensity;   // DOOM-0011 L4: hell-level global fog haze; 0 on non-hell
+                         // levels. Per LEVEL, not per frame, but it rides the view
+                         // because that is the only POD already crossing the seam
+                         // (r_backend.c computes it; misc6.w carries it to the shader)
 } rb_view_t;
 
 // Build this frame's billboard sprites (things + items) as camera-facing quads,
