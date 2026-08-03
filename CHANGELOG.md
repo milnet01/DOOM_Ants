@@ -112,6 +112,21 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- ****A torch revealed by a door that opens now lights the fog in front of it, instead of waiting for a level reload** (DOOM-0296)** (DOOM-0296)
+  Which torches can light which patches of air was worked out once, when
+  the level loaded — so a torch behind a shut door stayed unknown to the
+  fog even after you opened the door. The answer is now recalculated
+  whenever a door or lift finishes moving.
+
+  Honest note on what you will see: on the stock maps, very little. This
+  was measured rather than assumed — opening every door in DOOM 2's MAP01
+  changes the picture by about a five-hundredth of the threshold the
+  project uses to decide a look has changed at all. Vanilla DOOM rarely
+  puts a torch behind a shut door and close enough to matter. It is a
+  correctness fix that stops a wrong answer being possible, and any map or
+  texture set that does place a bright light behind a door gets it for
+  free.
+
 - **The renderer's `-rtverify` self-test failed on DOOM 2 and passed on DOOM 1, on the same build** (DOOM-0297)
   The check was under-sampled, not the renderer wrong. DOOM 2's lights are
   fewer and more clustered, so the estimator needs more samples there to

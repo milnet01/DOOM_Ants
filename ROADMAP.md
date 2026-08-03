@@ -4634,7 +4634,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   still specifies a torch-selection scheme L3 never shipped, at four
   sites, one of them a live directive. Filed as DOOM-0304.
 
-- 🚧 [DOOM-0296] **The fog-light grid is baked at level load, so a door that opens later admits no torchlight.**
+- ✅ [DOOM-0296] **The fog-light grid is baked at level load, so a door that opens later admits no torchlight.**
   DOOM-0011 L3 bakes which cells of air can see which static emitters
   once, at level load. A door that opens mid-play changes that answer and
   nothing re-runs the bake.
@@ -4868,6 +4868,24 @@ parked ideas (💭 considered) until we commit to and design each one.
   ship as that, not as a feature anyone will notice. Do not send the user
   hunting for it again; two play-tests failed because there was nothing
   there to find.
+  Resolved (2026-08-03, 9cd8add; A/B and verdict d018164). Shipped as a
+  CORRECTNESS fix with no visible payoff on the stock maps, which is the
+  honest description and is what the changelog entry says.
+
+  Closed on the measurement rather than on a play-test, deliberately. Two
+  play-tests failed to see it because the visual A/B (finally run today)
+  puts the fog's own contribution at ~500x under the -shotcompare bar and
+  at the same order as same-build noise. A third play-test would have
+  failed the same way. The user signed off on shipping it as-is.
+
+  NOT closed, and carried forward rather than buried: this bullet's
+  "+74 lit cells from door sector 13, a +47% increase" does not reproduce
+  (all four of MAP01's shut door sectors together give +15), and the
+  "with a candidate" count FALLS 420 -> 403 while lit rises. Two methods
+  were involved so the gap may be method rather than defect, but the
+  number should not be quoted again without re-deriving it. If a future
+  session wants a fog-light demo location, re-derive from scratch; do not
+  trust the BEST PLAY-TEST LOCATION section above.
 
 - ✅ [DOOM-0297] **-rtverify passes on doom.wad and deterministically fails on doom2.wad, same build.**
   Found while gating DOOM-0011 L3 across both IWADs, which the standing
