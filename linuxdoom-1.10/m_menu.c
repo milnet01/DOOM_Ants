@@ -3143,6 +3143,12 @@ M_WriteTextScaled
 	w = SHORT (hu_font[c]->width);
 	if (cx+w*scale > ORIGWIDTH)
 	    break;
+	// DOOM-0230: X was already clipped above; Y was not, so a string starting
+	// below the screen (or a '\n' run walking cy past it) reached the blitter
+	// with an out-of-range row. Stop rather than skip -- cy only increases here,
+	// so nothing later in the string can come back into view.
+	if (cy < 0 || cy + SHORT(hu_font[c]->height)*scale > ORIGHEIGHT)
+	    break;
 	V_DrawPatchScaled(cx, cy, 0, hu_font[c], scale);
 	cx += w*scale;
     }

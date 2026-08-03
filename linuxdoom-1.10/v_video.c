@@ -418,6 +418,30 @@ V_DrawPatchScaled
 
     y -= SHORT(patch->topoffset) * scale;
     x -= SHORT(patch->leftoffset) * scale;
+#ifdef RANGECHECK
+    // Same destination-bounds gate V_DrawPatchGeneral and V_DrawPatchFlipped carry;
+    // this scaled twin (DOOM-0206) shipped without one, so a patch whose WAD-supplied
+    // leftoffset/topoffset pushed x or y out of the 320x200 logical screen indexed
+    // screens[] out of range below -- and the multiply by `scale` makes it easier to
+    // reach here than in the unscaled siblings, not harder. V_PostInBounds further
+    // down guards the patch's own post data; it says nothing about where we WRITE.
+    // Ignore the patch rather than abort, matching the siblings' posture.
+    if (x < 0
+	|| x + SHORT(patch->width)*scale > ORIGWIDTH
+	|| y < 0
+	|| y + SHORT(patch->height)*scale > ORIGHEIGHT
+	|| (unsigned)scrn > 4)
+    {
+	static int nbadscaled = 0;
+	if (nbadscaled < 3)
+	{
+	    fprintf( stderr, "V_DrawPatchScaled: bad patch at %d,%d (ignored)\n", x, y );
+	    if (++nbadscaled == 3)
+		fprintf( stderr, "V_DrawPatchScaled: further reports suppressed\n" );
+	}
+	return;
+    }
+#endif
 
     if (!scrn)
 	V_MarkRect (x, y, SHORT(patch->width)*scale, SHORT(patch->height)*scale);
