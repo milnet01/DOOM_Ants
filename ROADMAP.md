@@ -5699,3 +5699,112 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   Do NOT re-measure to rediscover the above; the counts and the names are
   here.
+
+- 📋 [DOOM-0308] **The DOOM-0011 spec's verified cold-eyes tail, filed rather than looped — and the case for splitting the document.**
+  Two independent cold lanes read docs/specs/DOOM-0011-volumetric-
+  lighting.md (3381 lines) against the shipped renderer. Sixteen findings
+  were verified and fixed in that pass. These are the REST -- every one
+  verified against current source, none fixed.
+
+  DO NOT RE-REVIEW TO REDISCOVER THESE. A fresh loop costs a full
+  multi-agent dispatch to regenerate what is written here. Fold them in
+  directly.
+
+  TWO NEED A DECISION, NOT AN EDIT -- they are why this is filed rather
+  than finished:
+
+  1. THREE INCOMPATIBLE DENSITY FORMULAS, one of which declares itself
+     canonical. 4.3b's sigma_final block (~:806) says "This is the single
+     authoritative statement -- 4.3a and INV-9 point here rather than
+     restating it", and it carries NO floor-fog term. 4.3c (~:1000) gives
+     sigma = (sigma_general + sigma_floor) * fogStrengthScale *
+     skyExposure. INV-9 (~:2915) gives (skySigma + floorSigma) *
+     skyExposure + areaSigma. They disagree on the addends AND on what
+     skyExposure multiplies -- and 4.3a:419 calls that second point
+     "load-bearing and was got wrong in the first draft". Every layer's
+     density is built from one of these. Reconciling them is a structural
+     rewrite of the section, not a patch.
+
+  2. DOES A TORCH SHAFT TAKE THE MEDIUM'S COLOUR? 4.4(b) now carries this
+     as an explicit open decision (banner added 2026-08-03). The code has
+     no tint because L4 has not shipped -- mediumTint does not exist in
+     the shaders and kGooTint/kHellTint are declared unread. Meanwhile
+     4.3, 4.5 and 7's L4 acceptance row all specify the tint ("a torch
+     shaft in a goo room is warm-through-green"). L4 cannot be accepted
+     until the user picks. NOTE both review lanes read this as stale text
+     to delete; that was wrong, and deleting it would have silently
+     dropped a design decision.
+
+  MECHANICAL, HIGH VALUE (an implementer is blocked or misled):
+
+  3. 5 never lists L3's FogLights storage buffer (set 0 binding 6, stride
+     RB_FOG_LIGHTS_PER_CELL x 8 floats, ~225 KB on E1M1), while :2102
+     still says "No new SSBOs, light/emitter buffers" and 4.4:1916 asserts
+     "no new resource appears in 5". The whole RB_FOG_LIGHT_* family is
+     also undefined in the document though INV-14 uses it: CLUSTER 64,
+     TESTZ 24, SUBS 2, PROBES 4, CUTOFF 0.04f, MAXREACH 512. The bake is
+     not buildable from the spec as it stands.
+  4. 7's shipped markers are stale for L1c, L1d, L1e, L2b and L3 -- all
+     shipped per the body, none marked in the build order. A reader of 7
+     alone concludes L1c onward is unbuilt.
+  5. 4.3b's wisp constants are stale against 5 and the shader: kWispAmp
+     0.6 -> ships 1.0 (so the bound is 0x..2x, not 0.4x..1.6x); octave-1
+     scale 1/512 -> 1/192. Three derived figures rot with them -- the
+     "1/f1 = 512x too fast" drift claim, Q21's "tiling period is 13107
+     units" (should be ~4915), and "the finer octave drifts slower"
+     (kWispVel2 = -kWispVel1 since DOOM-0300).
+  6. Q30 is closed at :2545 ("No rate limit is needed, and that is a
+     measurement rather than a budget") but still listed OPEN in 10, and
+     4.4:1645 and :1883 issue binding instructions to "whoever closes
+     Q30" about a cadence that will never exist.
+
+  MECHANICAL, MEDIUM:
+
+  7. 4.4(b)'s bake write-up omits contract detail an implementer must
+     otherwise guess: the sight test runs at tz = floor + TESTZ (24),
+     clamped to mid-column when the ceiling is low; emitter triangles are
+     snapped to a 64-unit lattice with a power-weighted centroid and
+     intensity sum(Le*area) -- which is what `lum` in
+     reach = sqrt(lum/cutoff) actually measures; cells with no air are
+     skipped (RB_SeepCellAir) and clusters with lum <= 0 dropped.
+  8. No invariant pins L3's central guarantee -- selection is baked per
+     cell at load, the march does no emitter scan and no per-sample
+     occlusion ray. 6:2630 says "a per-sample ray is never affordable in
+     this march", but nothing forbids a later layer adding one for
+     torches.
+  9. 6 has no measured box for L3; its 0.83 ms lives only in 4.4's
+     amendment, and 6:2368's ">= 6% reserved for L2-L5" is never
+     reconciled against it. 6:2473 sets the precedent that a layer is not
+     done until its number is in 6.
+  10. Q24 is still posed as live for the reverted density raise.
+  11. :1019's "16% at 512 units" for the aerial layer contradicts 4.3's
+      own shipped table (61% at eye height, 512 u) -- and the "3x the
+      aerial layer" framing for kFloorFogDensity rests on that stale pair.
+  12. Two bake-cost pairs disagree 22 lines apart: :1812 says 3.6 ms /
+      6320 tests on E1M1 and 3.4 ms / 5228 on MAP01; :1834 says 4.1 ms
+      E1M1 and 2.9 ms MAP01. MAP01 falls, unexplained.
+
+  LOW: the :3 status header still says "L1 + L1b implemented"; Q16's
+  kSeepMax 0.5 / kSeepFalloff 192 against shipped 0.9 / 384; 14.97 vs
+  14.96 ms for one figure; 284 ms vs INV-14's 290 ms for the same 79
+  grids; :1136 reads as if DOOM-0289 cost 13.6 ms (that was L2's ray);
+  :881 and 6 item 2 still call the deleted up-ray "the march's dominant
+  cost"; two bullets both numbered Q23 and Q24a precedes Q24; "one indexed
+  read" is one index plus up to four vec4 loads; "same 64-unit cell" is
+  not guaranteed (the cell doubles until the grid fits 256x256).
+
+  AND THE STRUCTURAL POINT, which is the real recommendation: 3381 lines
+  produced ~30 verified findings on ONE loop, and the great majority had
+  nothing to do with the change being gated. The failure mode is legible
+  in the findings themselves -- amendments that supersede earlier text in
+  place, so a top-down reader hits the abandoned contract first and the
+  retraction a hundred lines later. Splitting is the cheaper fix than
+  looping: the natural seams are 4.3/4.3a-c (density + the fields),
+  4.4 (light sources + the bakes), and 4.6/4.6a (resolve + composite).
+  Per the standing rule, past loop 3 the tail is filed rather than looped
+  -- this stopped at loop 1 because the tail is dominated by pre-existing
+  debt a second cold read would only re-find.
+  **Layman:** A list of already-checked errors in the fog design document, written down so nobody has to find them again.
+  Kind: doc.
+  Lanes: docs, fog.
+  Source: cold-eyes-2026-08-03 (DOOM-0304 fold-in gate, 2 lanes).

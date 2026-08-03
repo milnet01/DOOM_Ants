@@ -253,8 +253,9 @@ camera and surface contributes **nothing**. Three concrete gaps:
 A new function `marchFog(ray origin, ray dir, float tHit, hitInfo)` runs in **both**
 mode 4 and mode 6, **after** the primary hit and its surface colour are resolved but
 **before** the value is written to the output image. `hitInfo` carries the three
-primary-hit fields the march reads: **`hitP`** (world hit, for the floor reference
-`hitP.z`, §4.3), the **geometric normal** (the up-facing floor test, §4.3), and the
+primary-hit fields the march reads: **`hitP`** (world hit — used for the *liquid/profile* lookup, **not** as the floor
+reference: density must be a function of the sample point alone, so the floor comes from
+`pc.fogFloorZ` outdoors and the camera's floor indoors, §4.3 / Q3), the **geometric normal** (the up-facing floor test, §4.3), and the
 primary-hit **material id / liquid flag** (the goo profile, §4.5). It returns two
 quantities:
 
@@ -275,9 +276,10 @@ megakernel). The bake never calls it (INV-6).
 
 March `N` steps from the camera to the primary hit over `t ∈ [0, tHit]`:
 
-- **Step count** `kFogSteps` (a compile-time `const`, start ~24; **raised to ~40 at
-  L1c** — owned by §4.3b's "Step count and the wisps" note, which states the banding
-  hypothesis and its cost) — fixed, not
+- **Step count** `kFogSteps` (a compile-time `const`, **24 — and it stays 24**: L1c raised
+  it to 40 on the banding hypothesis of §4.3b's "Step count and the wisps" note, and that
+  raise was **measured, falsified and reverted on 2026-07-30** — the 40-vs-24 difference at
+  the E1M1 spawn sat at or under the engine's own run-to-run noise) — fixed, not
   adaptive, for coherence and simplicity. `tHit` is clamped to `kFogMaxDist` (shipped value **2048** DOOM units,
   `pt_common.glsl:38` — load-bearing, since it is also the mountains' fade distance in
   §4.6a; tuned at L1c) so a
@@ -392,8 +394,10 @@ fallback if HG reads busy (Q5).
 - **Area multiplier & tint** (§4.5) — the profile scales `σ` and sets the medium's
   **scattering tint** `mediumTint` (green in goo, red in hell, neutral in clear).
 - **Colour of a shaft = light colour × medium tint.** Sky shafts inherit the fog's sky
-  tone — **`kFogColor` (§4.3b); `L1c` work, NOT yet shipped: the tree today still has only
-  `SKY_COLOR` (`pt_common.glsl:31`) and `marchFog` still in-scatters it** —
+  tone — **`kFogColor` (§4.3b), which SHIPS at `(0.55, 0.56, 0.56)` and is what `marchFog`
+  in-scatters (`pathtrace.comp`, the `Ls = kFogColor * kSkyShaftStrength` line). This
+  passage previously said it was unshipped and that the tree still used `SKY_COLOR`;
+  that was stale, corrected 2026-08-03** —
   torch shafts inherit the emitter's `Le`
   colour; both are then multiplied by `mediumTint`. So a torch shaft in a goo room
   is warm-through-green; a sky shaft in hell is sky-through-red. Tint colours and
@@ -838,8 +842,9 @@ where `wisp` is two octaves of value noise read from a single **3-D noise volume
   `exp(−∫σ dt)` and in-scatter is weighted by it — both curves, not straight lines — and
   averaging *through* a curve is not the same as taking the curve of the average. So at
   `kWispAmp = 0.6` the fog reads measurably **thinner** on average than un-wisped fog of the
-  same base density. That is ordinary maths, not a bug. It interacts directly with the ≈2×
-  density raise below, so **base density is re-tuned with wisps on**, never inferred from
+  same base density. That is ordinary maths, not a bug. It interacted directly with the ≈2×
+  density raise below — **which was tried and reverted 2026-07-30** — and the standing rule
+  survives the revert: **base density is re-tuned with wisps on**, never inferred from
   the un-wisped value.
 - **Amplitude is large, not a wobble.** `kWispAmp` starts ~`0.6`, bounding density to
   `1 ± kWispAmp` = **`0.4×`..`1.6×`** of base (and value noise rarely reaches its
@@ -872,15 +877,20 @@ where `wisp` is two octaves of value noise read from a single **3-D noise volume
   `steady_clock` zeroed at first use, `r_vulkan.cpp:7455-7457`), already
   frame-rate-independent and already in the push block. **No new push lane** (INV-5).
 
-**Step count and the wisps.** `kFogSteps` rises **24 → ~40** at L1c, and this section owns
-that decision because it is the wisps that force it: a *flat* haze integrates smoothly at
+**Step count and the wisps — the hypothesis, and its falsification.** L1c raised `kFogSteps`
+**24 → 40**, and this section owned that decision because it is the wisps that were thought to
+force it. **It was reverted on 2026-07-30**: measured on captured frames, 40 vs 24 scored MAE
+0.153/255 at Low and 2.86 at High, while the *same build* scored 2.41 against its own second
+run — i.e. at or under the engine's own noise. Q26's quadratic march is what actually resolves
+the near-camera layer, and it does so at 24. **`kFogSteps` ships at 24.** The reasoning below
+is kept because it is the argument the measurement answered: a *flat* haze integrates smoothly at
 24 steps, but a **structured** density field is a high-frequency signal along the ray, and
 undersampling it bands — the same reason a froxel fog needs more slices than a constant
 one. That is a **hypothesis to confirm at L1c by looking**, not an estimate: if 24 steps
 read clean with wisps on, bank the budget and leave it. The cost is **not independent of
 the resolution question** — ×1.67 on steps and ×4 on pixels both multiply the per-sample
-up-ray that §4.3a calls the march's dominant cost (§6 item 2). Together with the ≈2%
-density raise below, this is what L1c's ≤ 8 % cumulative spot-check (§7) measures.
+up-ray that §4.3a calls the march's dominant cost (§6 item 2). Together with the ≈2×
+density raise below (**proposed, then reverted 2026-07-30**), this is what L1c's ≤ 8 % cumulative spot-check (§7) measures.
 
 **Colour and thickness.** In-scatter tone moves from `SKY_COLOR`
 (`vec3(0.20, 0.26, 0.40)`, cool blue, `pt_common.glsl:31`) to a near-white desaturated
@@ -890,7 +900,9 @@ linear**, but the sky branch it also feeds writes a *display-encoded* colour (`s
 output is deliberately not tonemapped, `pathtrace.comp:1293-1299`), so whether the same
 numeric triple is correct on both branches is **Q9's encode question** — resolve it there,
 do not assume the number transfers unchanged. `kFogBaseDensity`
-rises ≈2× (from the shipped `0.0033` toward ~`0.0066`) — deliberately **not** the ~3× a wisp-free
+was to rise ≈2× (from `0.0033` toward ~`0.0066`) — **proposed, then reverted on 2026-07-30;
+`kFogBaseDensity` ships at `0.0033`.** The reasoning is kept for any future density move. It was
+deliberately **not** the ~3× a wisp-free
 haze would be *estimated* to need (an estimate, not a measurement — no density-to-look
 tuning has been done yet), because structure sells the look at lower average density, which also
 keeps enemies readable. Both tune on hardware, and the `;` strength dial still scales
@@ -1199,7 +1211,11 @@ clustered to lights; each light gets `lum` = its max channel and a
 `RB_FOG_LIGHT_MAXREACH` = 512 units. Then, for each cell of the **seep grid** (§4.3a's
 field, reused whole — same dims, same 64-unit cell, so no transform of its own):
 
-- rank every light whose reach covers the cell, brightest first;
+- rank every light whose reach covers the cell by its **unoccluded contribution at this
+  cell** — `lum · win² / (d² + kTorchSoftR2)`, deliberately the *same* windowed curve
+  `torchInscatter` evaluates, so the two agree about which light matters. **Not by raw
+  brightness**: a dim near lamp outranks a bright far one, and the cell-boundary
+  continuity below depends on the ranking matching the march's falloff;
 - **sight-test the best `RB_FOG_LIGHT_PROBES` (= 4) only** — ranking before testing is what
   bounds the bake, so a map with hundreds of emitters pays the same handful of BSP walks
   per cell as one with a dozen;
@@ -1219,12 +1235,20 @@ emitter-side gain, twin to the sky's `kSkyShaftStrength` = 0.85; its derivation 
 `pt_common.glsl`'s comment above the declaration, not here, and it pins a median torch's
 peak at roughly 4× the indoor sky in-scatter floor.
 
-**Two things the shipped form settles that the design posed as open.** Occlusion is not an
-"optional extra ray" — the bake's sight test *is* the occlusion, paid once at load instead
-of per sample, so a torch does **not** glow through a wall (Q2). And there is **no
-`mediumTint`** on this term, deliberately: a torch carries its own emitter `Le` colour, and
-tinting it toward the medium would discard exactly the thing that makes a warm shaft read
-warm in a green room (§4.5 tints the *sky* term only).
+**Occlusion is settled, and not the way the design posed it.** It is not an "optional extra
+ray" — the bake's sight test *is* the occlusion, paid once at load instead of per sample, so
+a torch does **not** glow through a wall (Q2, closed).
+
+> ⚠ **The medium tint on this term is an OPEN DECISION, not a settled one — do not build
+> either way from this section alone.** As shipped today the torch term carries no tint,
+> but that is only because **L4 has not shipped**: `mediumTint` does not exist in the
+> shaders, and `kGooTint` / `kHellTint` are declared and unread (`pt_common.glsl`, both
+> marked `(L4)`). So today's untinted term is L4's absence, not a decision against tinting.
+> Meanwhile §4.3, §4.5 and §7's L4 acceptance row all specify that L4 **will** multiply this
+> term by `mediumTint` ("a torch shaft in a goo room is warm-through-green"). The question
+> L4 must answer before it is built: does a torch shaft take the medium's colour, or keep
+> the emitter's own `Le` so a warm flame still reads warm through green air? Both are
+> defensible and the spec currently implies the first while the code implies the second.
 
 Two amendments below modify this, and neither changes the scheme above: DOOM-0295
 integrates the term at **half the march's rate**, and DOOM-0296 **re-bakes the grid when a
@@ -1250,8 +1274,8 @@ the sky term are untouched and still get every sample.
 **`kFogSteps` parity is NOT a precondition — the code removes the need for one.** On an
 odd count the final even index has no partner, and offsetting it by half a step can
 sample past `tMax` (whenever `jitter > 0.5`); the shipped expression drops the offset
-for that index instead. Stated because §4.2 schedules `kFogSteps` 24 → **~40** at L1c
-and "~40" invites an odd value, so the natural reading of a pairing scheme is that it
+for that index instead. Stated because §4.2 once scheduled `kFogSteps` 24 → **~40** at L1c
+(since reverted) and "~40" invites an odd value, so the natural reading of a pairing scheme is that it
 constrains the retune. It does not.
 
 Why this term and not the others: it is the smooth one. A windowed inverse square whose
@@ -1325,7 +1349,9 @@ mottled rather than banded. `-rtverify` INV-6 is identical either side (0.1091%,
 > it took a third form neither option contemplated, the load-time per-cell bake now
 > written up above — and the stale text survived in **four** places (§4.4(b), the §7 layer
 > table's L3 row, Q2 and Q23) through two later amendments that each cited it. All four are
-> corrected as of 2026-08-03.
+> corrected as of 2026-08-03. **Five, in fact** — §6's "drop the emitter occlusion ray" lever
+> and INV-2's `k < omniStart` falsifier were both missed by the count and corrected in the same
+> pass, which is the honest measure of how far a superseded mechanism spreads.
 >
 > Kept as a note rather than deleted because the *reasoning* that killed the runtime scan
 > is still the reason the current design is the right one: a per-sample scan is
@@ -2088,9 +2114,11 @@ screen-space band (`:763-764`, mixed at `:771`) overlaps the real distance-fog a
 reconciled so the horizon is not **double-hazed**; L1b halved it, and L1c re-judges it
 against the near-white base (Q14).
 
-**The sky's in-scatter tone follows `kFogColor` too (2026-07-25).** The shipped closed
-form in-scatters `SKY_COLOR` (`pathtrace.comp:1320` / `:1335`). L1c must move it to
-`kFogColor` alongside the foreground — otherwise the mountains haze **cool blue** while
+**The sky's in-scatter tone follows `kFogColor` too (2026-07-25; SHIPPED).** Both closed
+forms now in-scatter `kFogColor` (`pathtrace.comp`, the two `kFogColor * kSkyShaftStrength
+* (1.0 - trans)` lines, each marked "L1c tone") — this passage said the swap was still owed
+until 2026-08-03, when it had in fact landed with L1c. It had to move
+alongside the foreground — otherwise the mountains haze **cool blue** while
 everything in front of them goes near-white, producing precisely the sky/wall seam L1c's
 own acceptance criterion is there to catch. Wisp-free (INV-10), but **not**
 colour-frozen.
@@ -2125,7 +2153,7 @@ colour-frozen.
   - Everything else is a **compile-time `const`** per house convention
     (DOOM-0181/0183 §5), each with a starting value so L2–L4 are buildable without a
     round-trip: `kSunDir` = `normalize(0.30, 0.30, 1.0)`, `kFogSteps` = 24
-    (the L1c raise to ~40 has **not** been taken; still open, see §7's L1c row),
+    (**the L1c raise to ~40 was measured, falsified and reverted 2026-07-30** — not open),
     `kFogBaseDensity` = 0.0033 (**the L1c ≈2× raise was tried and REVERTED 2026-07-30 —
     this is the shipped value, not an interim one**), `kFogMaxDist` = 2048,
     **`kFogSkyDist` = 2048** (the sky's GRAZE CLAMP since 2026-07-27, no longer "the sky's
@@ -2617,7 +2645,7 @@ derives these; the table is the version to check against.
   green-goo room** (a sky-hole/doorway scene too, for shafts), RT-on, 50 % render
   scale, with `rb_fog` **off** then **on** (same-walk A/B, the DOOM-0187 lesson).
 - **Cost shape (measure, don't assert):** the march is `kFogSteps` samples/pixel,
-  each with **up to two** shadow rays (as written: the open-sky up-ray, plus the sun ray L2 adds — but see the 2026-07-27 note below, the up-ray is gone) + a few emitter evaluations, at **half-res**
+  each with **up to two** shadow rays (as written: the open-sky up-ray, plus the sun ray L2 adds — but see the 2026-07-27 note below, the up-ray is gone; and since L3 the emitter term is a baked buffer read, not an evaluation over emitters) at **half-res**
   (¼ the pixels) + denoise. The shadow rays are the pole; half-res + few steps +
   dither + denoise is what makes it affordable.
   **Confirmed and then acted on, 2026-07-27:** the rays *were* the pole — measured at
@@ -2642,7 +2670,8 @@ derives these; the table is the version to check against.
   A small, contained change made **with** the perf layer (L6), not silently skipped.
 - **Levers held ready** (measure before cutting): the `rb_fog` **strength** dial is
   the standing perf option (though a lower strength is not automatically cheaper), plus
-  reduce `kFogSteps`; drop the emitter occlusion ray (§4.4(b)); distance-gate the march
+  reduce `kFogSteps`; reduce the grid's `kFogLightsPerCell` (there is no per-sample emitter
+  occlusion ray to drop — occlusion is baked, §4.4(b)); distance-gate the march
   (`kFogMaxDist`); make mode 4 half-res too; and — the biggest new lever —
   **swap the per-sample open-sky up-ray (§4.3a) for the near-free per-surface
   `RB_MESH_OUTDOOR` flag**, trading the doorway cutoff for whole-view granularity.
@@ -2741,12 +2770,12 @@ pass/fail rather than a go/no-go between variants.
 |-------|-------|--------|-----------|
 | **L1** *(shipped 84e8b35..e7753b3)* | The march skeleton: `marchFog` over `[0,tHit]`, constant base density, **isotropic single scatter from the sky only** (no direction yet — flat sky ambient), composited via a new half-res fog target + a **plain (un-guided) bilinear** upsample — the position-guided variant is L5, not this row — + the per-mode apply (§4.6: in-megakernel `toneEncode` for mode 4, `svgf_composite.comp:123`+sky-passthrough for mode 6). Full RGB, no colour profiles. | Air picks up a faint uniform glow; surfaces behind thick fog fade; sky still visible through fog; no NaNs; modes 4 & 6 match | no |
 | **L1b** *(shipped 1345c92)* | **The fog-placement standard + the mountains** (2026-07-24 amendment). Two parts: **(i) sky-backdrop aerial fog** (§4.6a) — fog sky pixels over `[0,kFogMaxDist]`, folded on the sky-passthrough branch + mode-4 sky branch, reconciling the old `SKY_FOG_COL` band (Q14); **(ii) open-sky exposure gate** (§4.3a) — per-sample up-ray sky-visibility → `skyExposure` multiplier on density, with the `RB_MESH_OUTDOOR` flag path built in as the perf fallback. | Fog clears under a roof, mountains fade into haze — **full checklist below the table** | spot-check |
-| **L1c** | **The Silent Hill 2 look** (§4.3b, 2026-07-25 amendment): near-white `kFogColor`, ~~base density ≈2×~~ (**tried and reverted 2026-07-30 — `kFogBaseDensity` stays at `0.0033`; the wisps carry the look at the lower average density**), `kFogSteps` 24→~40, **the sky closed form's in-scatter tone `SKY_COLOR` → `kFogColor`** (§4.6a — omit this and the mountains haze cool blue against a near-white foreground, which is the seam this row's own acceptance criterion exists to catch), the sky term's effective density/distance (`kFogMaxDist` or a sky-specific twin — §4.3b), and the **two-octave drifting wisps** off a CPU-generated 3-D noise volume (new sampled image, §5), drift time reusing `misc6.x`. | Near-white colourless fog with slow drifting billows that sit correctly in depth — **full checklist below the table** | spot-check (≤ 8 % cumulative, §6 table) |
+| **L1c** | **The Silent Hill 2 look** (§4.3b, 2026-07-25 amendment): near-white `kFogColor`, ~~base density ≈2×~~ (**tried and reverted 2026-07-30 — `kFogBaseDensity` stays at `0.0033`; the wisps carry the look at the lower average density**), ~~`kFogSteps` 24→~40~~ (**measured, falsified and reverted 2026-07-30 — ships at 24**), **the sky closed form's in-scatter tone `SKY_COLOR` → `kFogColor`** (§4.6a — omit this and the mountains haze cool blue against a near-white foreground, which is the seam this row's own acceptance criterion exists to catch), the sky term's effective density/distance (`kFogMaxDist` or a sky-specific twin — §4.3b), and the **two-octave drifting wisps** off a CPU-generated 3-D noise volume (new sampled image, §5), drift time reusing `misc6.x`. | Near-white colourless fog with slow drifting billows that sit correctly in depth — **full checklist below the table** | spot-check (≤ 8 % cumulative, §6 table) |
 | **L1d** | **Outdoor-proximity seep** (§4.3a amendment, 2026-07-25): the load-time flood-filled distance field (new per-level 2-D texture, §5) + the graded indoor `skyExposure`. | Standing in a doorway onto a courtyard, **a little fog drifts in and thins as you walk deeper**; a **sealed** room that merely shares a wall with outdoors is **visually indistinguishable from the same room before L1d** — i.e. it shows the plain `kIndoorFogScale` floor and no seep (proves the fill is through-open-space, not straight-line); the outdoor look is **unchanged from L1c** (the seep touches only the indoor branch); level load adds **≤ 20 ms** on E1M1 (measure the flood fill directly; it runs once, beside the mesh build); **and the runtime seep tap adds ≤ 1 % present-total** on the §6 walk — INV-12's "single bilinear tap" is *per march sample*, inside the loop §6 calls the dominant cost, so it is not free merely because the fill is load-time | spot-check |
 | **L1e** | **The floor fog** (§4.3c, DOOM-0272): the second, short-range density term — three new constants, a third addend in the march's `sigma`, and the matching second addend in the sky closed form (§4.6a). **Outdoor half only**; the indoor half rides on L1d's seep, so this row lands *before* L1c and L1d — the letters are identifiers, not a sequence. | **The camera is yaw-only — there is no looking down** (`camUp` is world +Z at `r_vulkan.cpp:7417`), so "mist at your feet" can only ever be judged from the **lower part of the view**, where the bottom row of the 3-D view is a 29° downward ray meeting the floor ~84 units ahead. Accept when: the near floor in the bottom third reads mistier than the same view before L1e, the far end of the courtyard is **no whiter than before** (that is the whole point of the range term), there is **no line along the skyline** where sky meets a distant wall, and indoors is unchanged from L1b | spot-check |
 | **L2** *(shipped 544ae84 — the ray is superseded by L2b)* | **Sky shafts:** add `kSunDir` + the sky-visibility test per sample + HG phase. Shipped with an ambient/directional **split** (`kSkyAmbientFrac`), not the outright replacement §4.4(a) originally specified, and far over budget — the ray alone is **19× the rest of the fog** and about **4× the whole ≤ 15 % gate** (§6) — L2b replaces the per-sample ray with a load-time field. | A doorway/sky-hole open to sky throws a visible slanted beam; closed rooms stay clear; the beam moves correctly as the camera orbits | no — L2b carries the gate |
 | **L2b** | **The sun-clearance field** (§4.4's 2026-07-30 amendment, DOOM-0289): delete L2's per-sample sun ray; widen the seep field `RG16F → RGBA16F` with the `zLo`/`zHi` interval; build it in `RB_BuildSeepField`; widen and split DOOM-0281's re-flood (and fix its upload gate). **A pure perf change with a look-identity requirement** — it is not a new layer. | The shafts are **where they were before** (the field and the beam must agree about `kSunDir`); the doorway beam still reads; a building in the open still shadows the air beside it; **the sun ray's 13.6 ms is gone** and the whole fog is back inside the ≤ 15 % gate; a door opening updates its shaft within Q30's rebuild cadence (same frame on the full re-flood path), and **a lift moving between two open heights updates it too** (the clearance is height-keyed, so DOOM-0281's flip detector alone is not enough); `-rtverify` green | **yes** — the regression it exists to fix |
-| **L3** | **Height pooling + torch shafts:** height-based density (`hitP.z` floor ref); a per-cell torch list baked onto the seep grid at level load (≤ `kFogLightsPerCell` lights, ranked brightest-first and sight-tested), read by one indexed lookup per march sample — **no runtime emitter scan** (§4.4(b)). | Fog settles low into a floor layer; a torch in a dark room glows its surrounding air; dynamic/muzzle/flashlight do **not** scatter | no |
+| **L3** | **Height pooling + torch shafts:** height-based density (per-sample floor reference — `pc.fogFloorZ` outdoors, the camera's floor indoors, **never** `hitP.z`; §4.3 / Q3); a per-cell torch list baked onto the seep grid at level load (≤ `kFogLightsPerCell` lights, ranked by unoccluded contribution and sight-tested), read by one indexed lookup per march sample — **no runtime emitter scan** (§4.4(b)). | Fog settles low into a floor layer; a torch in a dark room glows its surrounding air; dynamic/muzzle/flashlight do **not** scatter | no |
 | **L3b** | **Re-bake the fog-light grid when the map moves** (§4.4's 2026-08-02 amendment, DOOM-0296, INV-14): arm on `RB_UPD_MOVED` beside `g.clearanceDirty`; fire from inside `RecordSeepRefresh`, **after its clearance block and before the `!needUpload` early-out** (a settle frame early-outs, so a block at the end never runs), once planes have been still for `kFogLightSettle` — or after `kFogLightMaxWait` for a mover that never settles, which bakes without clearing the arm; call the existing `BuildFogLightGrid` unchanged. **A defect fix, not a new layer** — no constant of the look moves. | Open a door onto a torch-lit room and the fog behind it picks up the torch **within ~`kFogLightSettle` (0.15 s) of the door finishing, at traced-frame granularity**, not on reload; shut it and the glow goes; a **second** L3 line prints with `lit` risen and returning (the load-time line always prints, so the second one is the signal). A **lift** between two already-open heights must also produce a second line — **its existence is the check, not the direction of any count** — which is the only fixture that catches a trigger keyed to the opening flip. On a **crusher** map the cap path fires every `kFogLightMaxWait`: judge whether the repeating fog snap reads acceptably, and if not suppress re-bakes while a cap-path mover runs rather than shortening the cap. **Exactly one** second line per door — a build that arms but never waits prints of order eighty. A **perpetual platform** settles twice per cycle and so bakes twice per cycle indefinitely without ever touching the cap: judge that snap too, it is the commoner mover. A still map prints **no second** line and is unchanged under `-shotcompare` (an **MAE ≤ 3.0** gate at 640 px, not bit-identity) | no — **4.1 ms (E1M1) / 2.9 ms (MAP01) bake+upload per settled move**, measured, against a ≤ 6 ms gate (§4.4) |
 | **L4** | **Area profiles + colour:** goo tint via the primary-hit `RB_FLAG_LIQUID_NUKAGE`; hell haze via the new `rb_view_t` field → `misc6.w`; `mediumTint` colouring (light×medium). | Goo rooms fill green and pool low; hell levels gain a faint red haze; a torch shaft reads warm-through-green in goo; clear levels stay neutral | no |
 | **L5** | **Denoise/quality pass:** dither tuning; escalate upsample→a-trous if it crawls (§4.6 Q6); phase/anisotropy tune. **May be largely dissolved** if L1c promotes mode-6 fog to full-res (§6 item 2) — with no upsample there is no upsample to harden; the dither/phase tuning still applies. | Fog is smooth, not grainy or crawling, in a slow pan; shafts hold their shape | no |
@@ -2832,7 +2861,9 @@ The other layers' Verify cells fit in a line. These two do not, so they live her
   only** (`omniStart = pc.misc4.y`). Dynamic sprite lights `[omniStart, emitCount)`,
   the muzzle flash (`misc2.z`), and the flashlight (`misc2.w`) **never** scatter.
   *Falsifiable:* L3's own acceptance row — "dynamic/muzzle/flashlight do **not** scatter"
-  (§7) — plus the loop bound `k < omniStart` read by diff.
+  (§7) — plus the **bake's** input slice read by diff: `BuildFogLightGrid` clusters the
+  static emitter set only, and the march's own loop bound is `kFogLightsPerCell`, not any
+  emitter count. (The pre-L3 falsifier named a `k < omniStart` march loop; L3 deleted it.)
 - **INV-3:** The sun direction stays a **compile-time `const`** in v1 — no runtime
   sun-direction control is added. (`kSunDir` is already declared but unread at
   `pt_common.glsl:42`; L2 wires it in. It is the engine's *first* directional light —
@@ -3242,7 +3273,7 @@ reasoning stays there.
   mechanism is inert until something moves.
 - **Q23 — CLOSED 2026-08-02, and the answer was neither option.** L3 shipped a third form
   this question never contemplates: the selection happens **at level load**, not per sample
-  and not per ray. A per-cell, brightest-first list of at most `kFogLightsPerCell` (= 2)
+  and not per ray. A per-cell list, ranked by unoccluded contribution, of at most `kFogLightsPerCell` (= 2)
   lights is baked onto the seep grid, so the march does **no** selection scan at all — one
   buffer read indexed by `fogLightCell(p.xy)`. The scan cost this question exists to bound
   is therefore zero at runtime, and the "amend §4.4(b) to match" directive below is
