@@ -2108,6 +2108,28 @@ heights and is never revisited (spec §4.4's 2026-08-02 amendment; INV-14).
 
 ## Task L4 — Area profiles + colour: goo tint, hell haze, medium tint
 
+> ⚠ **THREE STEPS BELOW ARE STALE — checked against HEAD 2026-08-03. The contract is now
+> [`DOOM-0310-fog-density-fields.md`](DOOM-0310-fog-density-fields.md); where the two
+> disagree, DOOM-0310 wins.** This task was written before L1e and before the 2026-08-03 tint
+> decision, and following it verbatim produces a defect or a broken build:
+>
+> 1. **Step 4's `sigma` line predates L1e** — no floor addend, and `pool` as a separate
+>    factor. **Use DOOM-0310 §4.1's L4 line**, which distributes `strength` onto the new term
+>    so an empty profile sum stays bit-identical.
+> 2. **Step 4 says to tint the torch term as well.** Superseded: **a torch shaft is NOT tinted
+>    by the medium** (user, 2026-08-03). Sky term only — DOOM-0310 §4.6 sites the multiply.
+> 3. **Step 4 says `fogDensity()` "loses its last caller here — delete it".** False against
+>    shipped code, which still calls `fogDensity(p, baseZ, poolH)`. L3 shipped differently from
+>    what this plan anticipated. Do **not** delete it, and do **not** extract
+>    `fogHeightPool()` — that extraction never happened and is not needed.
+>
+> **Steps 1, 2, 3 and the `FogHit` widening are good and already reviewed** (loop 9 of the
+> parent's campaign caught two CRITICALs in them, both folded in — see the two bold warnings
+> in Step 4). One correction to the widening: this plan says `mc` is "already in scope at
+> both" call sites. **It is not** — `MatCtrl mc = ctrl[id];` appears at neither
+> `FogHit(hitP, n, uint(flags))` site, so the `MatCtrl` has to be fetched or the flags
+> threaded there. Budget for it.
+
 **Goal:** Colour the fog by area — **green in goo rooms** (primary-hit liquid flag), **faint red
 haze on hell levels** (a new per-level flag crossing the thread seam), with shaft colour =
 light × medium tint.

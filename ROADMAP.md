@@ -6318,6 +6318,31 @@ parked ideas (💭 considered) until we commit to and design each one.
   Q9 and Q21 closed rather than carried: Q9 is answered by the shipped composite (the sky is decoded to linear before the fold, so one kFogColor triple is right on both branches and INV-4 is correct); Q21 closes on BOTH axes via the composite period (24576 u / 9830 u against a 2048 u clamp) instead of resting on map geometry. Q7, Q24b and Q32 newly tabled -- Q32 is a genuine user look call (does the sky closed form take L4's addend and tint, or is a coloured skyline seam accepted?).
 
   Parts 2 (DOOM-0011 §4.4) and 3 (§4.6/§4.6a) still need ids. The parent keeps the shared invariants plus a citation map for its remaining references to the moved sections; INV-9/11/12 moved with their ids unchanged, and INV-10 carries a tombstone so the sequence stays legible.
+  L4 PRE-FLIGHT (2026-08-03) — read before writing any L4 code. There is a fully reviewed L4 task in docs/specs/DOOM-0011-implementation-plan.md (search "## Task L4"), and THREE of its instructions are now stale. Following it verbatim produces a defect or a broken build:
+
+  1. ITS SIGMA LINE PREDATES L1e. The plan writes `(skySigma + areaSigma) * pool * wisp(...) * strength` with no floor addend and `pool` as a separate factor. The shipped line has two addends and no separate pool. USE DOOM-0310 section 4.1's L4 line instead -- it distributes `strength` onto the new term so an empty profile sum stays bit-identical.
+
+  2. IT TINTS THE TORCH TERM. The plan says "Multiply the sky term AND each torch term by mediumTint". SUPERSEDED by the user's 2026-08-03 decision: a torch shaft is NOT tinted by the medium. Sky term only (DOOM-0310 section 4.6 sites it: kFogColor * mediumTint across both sky shares, before kSkyShaftStrength).
+
+  3. IT SAYS DELETE fogDensity(). "fogDensity() loses its last caller here -- delete it." FALSE against shipped code: the sigma line still calls fogDensity(p, baseZ, poolH). L3 shipped differently from what the plan anticipated. Do not delete it, and do not extract fogHeightPool() -- that extraction never happened and is not needed.
+
+  STILL GOOD in that plan, and already cold-eyes-reviewed (loop 9 of the parent's campaign caught two CRITICALs in it, both folded in): Step 1 (rb_view_t.hazeDensity), Step 2 (the hell-detection rule in r_backend.c beside view.skytexnum), Step 3 (the misc6.w bit-cast), and the FogHit widening.
+
+  THE TWO CRITICALS THAT PLAN ALREADY FIXED -- do not reintroduce either:
+  - The goo test MUST read a NEW `FogHit.ctrlFlags` field carrying `MatCtrl.flags`. Testing `h.matFlags` for RB_FLAG_LIQUID_NUKAGE is testing an unrelated per-VERTEX bit: no goo room would ever render green and NOTHING WOULD FAIL TO COMPILE.
+  - The misc6.w write must read `g.lastView.hazeDensity`. RecordRtTrace() takes no rb_view_t parameter, so a bare `view` does not compile.
+
+  VERIFIED AT HEAD 2026-08-03 (line numbers are hints; the symbols are authoritative):
+  - `struct FogHit { vec3 hitP; vec3 gnormal; uint matFlags; }` at pathtrace.comp:925 -- no ctrlFlags yet.
+  - Both call sites are `FogHit fh = FogHit(hitP, n, uint(flags));` at pathtrace.comp:1550 and :1685.
+  - GOTCHA THE PLAN GETS WRONG: it says `mc` is "already in scope at both; grep to confirm". IT IS NOT. `MatCtrl mc = ctrl[id];` does not appear at either site; `isNukage(mc)` is at :559 and `mc` is live at :1502 and :1725. The widening needs the MatCtrl fetched (or the flags threaded) at the two FogHit sites -- budget for that rather than assuming a one-token edit.
+  - `pc.misc6[3] = 0u;  // hell-haze density, bit-cast float (wired at L4)` at r_vulkan.cpp:8641, with the ripple bit-cast pattern to mirror at :8630.
+  - `rb_view_t` ends `float angle; float extralight; int skytexnum;` in r_mesh.h (~:395-402).
+  - `view.skytexnum = skytexture;` at r_backend.c:181, `view.extralight` at :177.
+  - LIQUID_NUKAGE = 8u at pathtrace.comp:548 (mirrors RB_FLAG_LIQUID_NUKAGE, rb_materials.h:17).
+  - kAreaDensity does NOT exist in the tree; L4 declares it (start 0.0020).
+
+  Selection contract is DOOM-0011 section 4.5: goo = primary-hit LIQUID_NUKAGE, areaMult 1.0, density kAreaDensity; hell = per-level flag (registered/retail AND gameepisode>=3) OR (commercial AND gamemap>=20) OR a fire sky, density runtime on misc6.w. Densities ADD, tints MULTIPLY. Do NOT write `gamemode != commercial` -- it admits shareware and indetermined.
 
 - 📋 [DOOM-0311] **Validate the render push-constants on the CPU instead of catching their NaNs in the shaders.**
   Three shader inputs are divided by without being checked at the boundary:
