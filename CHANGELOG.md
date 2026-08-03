@@ -112,6 +112,17 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Ordinary walls no longer glow like lights, and DOOM's own light fixtures now do** (DOOM-0307)
+  A curated list of light-source wall textures replaces the brightness test
+  that decided this before. That test rated a texel by its strongest colour
+  channel, and DOOM's palette ramps nearly all end at 255 in some channel,
+  so the palest cement highlight scored exactly as pure fire did — 82 of
+  DOOM II's 428 wall textures cast light, including all nine CEMENTs and
+  every Wolfenstein wall. It was wrong in the other direction too: the
+  game's own light panels (LITE3, LITE5, LITEBLU, COMPSTA) sat below the
+  threshold and emitted nothing, so the lamps were dark while the walls
+  glowed. Both are fixed; sprites, flats and liquids are unchanged.
+
 - ****A torch revealed by a door that opens now lights the fog in front of it, instead of waiting for a level reload** (DOOM-0296)** (DOOM-0296)
   Which torches can light which patches of air was worked out once, when
   the level loaded — so a torch behind a shut door stayed unknown to the

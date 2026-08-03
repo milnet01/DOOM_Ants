@@ -5794,7 +5794,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: test.
   Source: cold-eyes-2026-08-02.
 
-- 📋 [DOOM-0307] **An ordinary wall texture emits light because its pale panels clear the emitter gate.**
+- ✅ [DOOM-0307] **An ordinary wall texture emits light because its pale panels clear the emitter gate.**
   User report 2026-08-03, three F12 captures from a doom2 MAP01
   play-test: "the perimeter wall looks like it is glowing". It does. The
   wall's pale rectangular panels read as blown-out white while the
@@ -5982,6 +5982,48 @@ parked ideas (💭 considered) until we commit to and design each one.
   panel. Physically defensible for a bank of fluorescents, but it is the same
   magnitude that made CEMENT look wrong, so it is the first thing to judge.
   REDWALL1 (19.93, doom only) is the other one to watch.
+  Resolved (2026-08-03): VISUALLY VERIFIED in-engine, both directions, by
+  capture rather than by play-test.
+
+  Method: same view, two builds -- the shipped binary and a worktree built
+  at the parent commit -- via
+    ./linux/linuxxdoom -iwad ../wads/doom2.wad -warp 1 -warpto -700 597 180
+        -config <renderer 1, rt_fog 0> -noinput -shotverify <out>.png
+  `DOOMASSETDIR` left unset (`HD load done - 0 material(s)`), matching the
+  paletted path the defect was reproduced on.
+
+  NOISE FLOOR IS EXACTLY ZERO. Two captures of the same build came back
+  byte-identical, so every changed pixel is signal, not sampling. (The
+  control proves determinism at the file level only -- it cannot validate a
+  decoder, so the pixel counts below were computed twice, with a hand-rolled
+  PNG reader and with PIL/numpy, and agree exactly. ImageMagick's
+  `compare -metric AE` disagreed by 20x and is the outlier.)
+
+    courtyard (the reported view)   53.79% of pixels changed, mean |d| 9.43,
+                                    max 119; 10.66% of pixels moved by >16
+    LITE5 alcove                    67.18% changed, mean |d| 7.28, max 154
+
+  THE DEFECT IS GONE. In the before capture the perimeter wall's pale panels
+  are clipped to pure white with no texture visible at all -- a bank of
+  backlit panels, which is what the user photographed. After, the same wall
+  reads as masonry: mottled stone, tan weathering, green mould and the panel
+  borders all legible. It is the CEMENT family, as this bullet predicted.
+
+  THE SECOND HALF WORKS TOO, and this is the half that had no evidence
+  before. MAP01 uses LITE5 (2 linedefs, 191 and 195). Head-on at
+  `-warpto 780 504 0`: before, the fixture is a dull GREY ladder lit only by
+  ambient -- it was not a light. After, it reads as a lit strip and throws a
+  modest glow onto the brown column beside it.
+
+  The Le = 24.3 worry recorded above did NOT materialise: the bright region
+  stays confined to the fixture's own bands and the surrounding wall gains
+  only a small lift, because the fixture subtends little of the frame. No
+  blowout. LITE3 (33.1) is unexercised on MAP01 -- it first appears on MAP04,
+  alongside LITEBLU4 and TEKLITE2 -- so if any dial-down is ever wanted, that
+  is the map to look at. 17 of the 32 maps contain a newly-emitting fixture.
+
+  Build green, all 7 test binaries pass. Follow-up filed as DOOM-0309 (the HD
+  material generator still uses the gate this change replaced).
 
 - 📋 [DOOM-0308] **The DOOM-0011 spec's verified cold-eyes tail, filed rather than looped — and the case for splitting the document.**
   Two independent cold lanes read docs/specs/DOOM-0011-volumetric-
@@ -6108,6 +6150,57 @@ parked ideas (💭 considered) until we commit to and design each one.
   is a visible defect on a shipped path. Note the split is the better
   moment to fix item 1: reconciling three density formulas is a rewrite of
   the section that would become its own document anyway.
+  Item 1 (the three incompatible density formulas) is CLOSED, 2026-08-03 --
+  and it turned out to be a measurement, not a judgement call. The shipped
+  shader decides it.
+
+  `pathtrace.comp` marchFog:
+
+      float sigma = (fogDensity(p, baseZ, poolH) + floorFogDensity(p, baseZ, t))
+                    * strength * skyExposure * wisp(p, rippleTime());
+
+  Two addends; strength, skyExposure and wisp all multiply the whole sum.
+  No area term, because L4 has not shipped. Against that:
+
+    4.3b's self-declared authoritative sigma_final -- STALE. It predates
+    L1e, so it has no floor addend at all. Its OTHER structure is right,
+    and is the half that matters: the sky-sourced term is gated by
+    skyExposure while the area-profile sum is NOT, which is 4.3a's
+    load-bearing rule ("skyExposure gates the SKY-SOURCED haze only --
+    never the area profiles", the thing 4.3a:419 says was got wrong in the
+    first draft).
+    4.3c's sigma -- structurally right, but written before L1c and so
+    missing the `wisp` multiplier, and it has no area term.
+    INV-9 -- wrong twice: no fogStrengthScale at all, and it predates the
+    wisp. Its `+ areaSigma` placement OUTSIDE the gate is right.
+
+  So no one of the three was correct, and each was right about something
+  the others got wrong. The single statement that is simultaneously true
+  of the shipped code and correct for L4:
+
+      sigma(p,t) = ( (sigma_aerial(p) + sigma_floor(p,t)) * skyExposure
+                   + SUM_profiles areaDensity(profile) * areaMult(profile) )
+                   * wisp(p,t)
+                   * fogStrengthScale
+
+  With L4 unshipped the sum is empty and this reduces EXACTLY to the
+  shipped line -- the three surviving factors commute, so it is the same
+  expression, not an approximation of it.
+
+  WHY THIS UNBLOCKS L4, which was the point of doing 4.3 first: the open
+  question was never "how thick is goo" but WHERE the area term attaches.
+  It attaches outside the skyExposure gate and inside wisp and the dial.
+  That placement is forced, not chosen -- gate it and a goo room under a
+  roof would be driven to kIndoorFogScale (5%) and the profile would
+  barely register, which is precisely the failure 4.3a:419 records from
+  the first draft. Pair it with the user's 2026-08-03 decision that a
+  torch shaft is NOT tinted by the medium (mediumTint applies to the sky
+  term only) and L4's contract is fully pinned.
+
+  This lands in the split's part 1 (DOOM-0310) as the section's single
+  authoritative sigma, with the other two statements deleted rather than
+  annotated -- leaving them as superseded text in place is the exact
+  failure mode this bullet identified.
 
 - 📋 [DOOM-0309] **The HD material generator still uses the emitter gate DOOM-0307 just proved cannot classify a wall.**
   Found 2026-08-03 while fixing DOOM-0307. That bullet's measurement shows
@@ -6141,3 +6234,29 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: fix.
   Lanes: shaders, assets.
   Source: in-session-2026-08-03 (found while fixing DOOM-0307).
+
+- 🚧 [DOOM-0310] **Split part 1 of 3 — fog density and the fields, extracted from the DOOM-0011 spec.**
+  First of the three-way split the user approved on DOOM-0308: density +
+  the fields (§4.3/§4.3a-c). Parts 2 and 3 are light sources + the bakes
+  (§4.4) and resolve + composite (§4.6/§4.6a).
+
+  Why this part first: it forces DOOM-0308's item 1, the only decision
+  still open on that list -- three incompatible sigma formulas, one of
+  which declares itself authoritative and omits the floor-fog term. Every
+  layer's density is built from one of them, and L4 (goo/hell profiles)
+  adds a term to exactly these formulas, so L4 is blocked until this part
+  lands.
+
+  The parent spec is 3383 lines and produced ~30 verified findings on ONE
+  cold-eyes loop, most unrelated to the change being gated. The failure
+  mode DOOM-0308 identified: amendments supersede earlier text in place,
+  so a top-down reader meets the abandoned contract first and its
+  retraction a hundred lines later. All three sigma statements are that
+  shape.
+
+  Each part runs the rule-14 gate from loop 1 on its own bytes -- the
+  parent's loops were run against a document that will no longer exist.
+  **Layman:** The fog design document is being split into three smaller ones; this is the part about how thick the fog is and where it sits.
+  Kind: doc.
+  Lanes: docs, fog.
+  Source: user-request-2026-08-03 (DOOM-0308's structural recommendation).
