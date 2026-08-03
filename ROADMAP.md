@@ -5506,7 +5506,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   Lanes: rt, test.
   Source: in-session-2026-08-02.
 
-- 📋 [DOOM-0304] **The spec still describes a torch-selection scheme L3 never shipped.**
+- ✅ [DOOM-0304] **The spec still describes a torch-selection scheme L3 never shipped.**
   DOOM-0011 §4.4(b) specifies torch selection as: iterate the static
   emitter slice `k in [0, omniStart)`, pick the NEAREST FEW by centroid
   distance, and multiply each by `mediumTint`. The shipped
@@ -5544,6 +5544,31 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: doc.
   Lanes: docs, fog.
   Source: cold-eyes-2026-08-02 (DOOM-0295 amendment gate).
+  Resolved (2026-08-03, 8febcc7 + 76fb0b7). §4.4(b) now documents the
+  shipped scheme; §7's L3 row, Q2 and the superseded-mechanism note follow
+  it; the plan gets stale-markers only.
+
+  The count in this bullet was WRONG and is corrected in the doc: FIVE
+  sites carried the superseded mechanism, not four. §6's "drop the emitter
+  occlusion ray" perf lever and INV-2's `k < omniStart` falsifier were both
+  missed by the original scan and found by the rule-14 gate.
+
+  The gate also caught two errors in the fix itself, which is the argument
+  for running it on a fold-in that "only" transcribes shipped behaviour:
+  "ranked brightest-first" (the bake ranks by unoccluded CONTRIBUTION, the
+  same windowed curve torchInscatter evaluates -- and the cell-boundary
+  continuity argument depends on that match), and kFogSteps written as
+  "still open" when the shader records the raise as falsified and reverted.
+
+  One thing this bullet asked for was NOT done, deliberately. Folding in
+  "the shipped scheme" tempted a claim that the torch term is untinted by
+  design. It is untinted because L4 has not shipped -- mediumTint does not
+  exist in the shaders. §4.4(b) now carries the tint as an OPEN DECISION
+  for the user rather than settling it. Both cold lanes independently got
+  this backwards and would have deleted the L4 contract.
+
+  The rest of the gate's verified tail is DOOM-0308, with a recommendation
+  to split the spec.
 
 - 📋 [DOOM-0305] **The fog-light re-bake's settle timer is map-global, so one cycling lift defers every door.**
   Found while building DOOM-0296, recorded rather than fixed there.
