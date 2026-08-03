@@ -373,6 +373,14 @@ int RB_MaterialCount(void);
 // 1/0; -1-out-of-range and pre-R_Init lumps return 0.
 int RB_SpriteLumpGlows(int lump);
 
+// DOOM-0307: is wall texture `texnum` (a unified atlas id below numwall) a light
+// source? Texels cannot answer this — DOOM's palette ramps top out at 255 in some
+// channel, so pale cement scores as brightly as fire, and the reverse: the game's own
+// light panels sit below the emitter gate. The answer is a curated list keyed by
+// texture name (r_mesh.c wall_light_tex). Returns 1/0; out-of-range and pre-R_Init
+// texnums return 0.
+int RB_WallTexEmits(int texnum);
+
 // WAD-global PLAYPAL (palette 0): 256 straight-RGB triples, pointing at the
 // cached lump. The back-end builds its colour LUT from this at init so the 2D
 // HUD/menu overlay can composite from the very first frame -- the title/demo

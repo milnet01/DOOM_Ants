@@ -5307,11 +5307,18 @@ static void ComputeMaterialEmissive(const rb_atlas_t* a, std::vector<float>& out
     {
         const int ox = (int)a->rects[id].ox, oy = (int)a->rects[id].oy;
         const int w  = (int)a->rects[id].w,  h  = (int)a->rects[id].h;
+        // DOOM-0307: for a WALL, the curated wall-light list is the whole answer — the
+        // peak gate cannot tell fire from pale cement (see r_mesh.c wall_light_tex), so
+        // an unlisted wall is not a light whatever its texels look like, and a listed one
+        // bypasses the gate (`faint`) because DOOM's own light panels sit below it.
+        if (id < a->numwall && !RB_WallTexEmits(id))
+            continue;                       // not a light: Le stays {0,0,0}
         // DOOM-0157: a glowing-collectible sprite lump (skull eyes, armour gleam) has
         // too few bright texels to clear the room-lighting peak gate, so grant it a
-        // faint self-emission floor; walls/flats and other sprites keep the strict gate.
-        const bool faint = id >= spriteBase &&
-                           RB_SpriteLumpGlows(id - spriteBase) != 0;
+        // faint self-emission floor; flats and other sprites keep the strict gate.
+        const bool faint = id < a->numwall ||
+                           (id >= spriteBase &&
+                            RB_SpriteLumpGlows(id - spriteBase) != 0);
         emis::derive_material_le(a->pixels, (int)a->atlasw, ox, oy, w, h,
                                  palLin, &out[(size_t)id * 3], faint);
     }

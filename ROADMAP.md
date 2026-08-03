@@ -5878,6 +5878,110 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   Do NOT re-measure to rediscover the above; the counts and the names are
   here.
+  Measured (2026-08-03), offline against the WAD lumps -- no engine run. A
+  throwaway Python probe reusing scripts/pbr_derive.py's Wad reader
+  reproduces the gate EXACTLY (82/428 doom2, 60/287 doom), so it is a
+  faithful stand-in for emis::derive_material_le.
+
+  RESULT: NO TEXEL STATISTIC SEPARATES THE TWO CLASSES. Do not spend
+  another pass looking for one.
+
+  Root cause, from the palette dump: every peak texel is merely the TOP OF
+  SOME PALETTE RAMP. value() = max channel, and DOOM's ramps almost all
+  top out at 255 in one channel, so "brightest tan" scores identically to
+  "pure red fire". Two pairs prove colour can never work --
+    FIREWALL peaks are #176(255,0,0) + #175(255,31,31); AASHITTY's peaks
+    are the SAME entries.
+    SW1CMT peaks are #209(255,235,219) + #52 + #226; CEMENT1's are the
+    SAME entries (SW1CMT is a switch drawn on cement).
+
+  Candidates measured and FALSIFIED, each with LIGHT/not ranges fully
+  overlapping: peak fraction, bright fraction, mean saturation, hue, tile
+  luminance, peak luminance, global contrast (peakLum/tileLum), LOCAL ring
+  contrast at r=3 (the standard brightmap heuristic), connected-component
+  count, largest-component fraction, tile area.
+
+  Exhaustive threshold search over 76 hand-labelled doom2 walls (27 light,
+  49 not): calling everything "not a light" costs 27 errors; the best
+  SINGLE-feature threshold costs 17; the best two-feature AND-rule costs
+  13 -- and it reaches 13 only by rejecting FIREWALL, FIREBLU1, DOORYEL2,
+  TEKLITE and LITEBLU1, i.e. by throwing away the textures everyone agrees
+  ARE lights. An automatic discriminator tops out at ~83% while getting
+  the headline case backwards.
+
+  WHAT DOES WORK -- the engine's own tables, no new hand-authored list.
+  Keeping the peak gate as a NECESSARY condition and additionally
+  requiring the texture to be named by animdefs[] (p_spec.c:103,
+  istexture entries, alpha/numeric frame runs expanded) or by
+  alphSwitchList (p_switch.c:48) admits 27 of the 82 in doom2 and 21 of
+  the 60 in doom, and drops every reported false positive: all nine
+  CEMENTs, every ZZWOLF, ZDOORB1/F1, SKINFACE/SKINLOW/SKSNAKE1/SKSPINE1/2,
+  AASHITTY, METAL6/7, BIGBRIK3, ZZZFACE3/4.
+
+  It also drops a short residue of real lights the two tables do not name:
+  LITEBLU1, LITEBLU2, LITERED, TEKLITE, DOORYEL2, DOORBLU2, SILVER2 (and
+  arguably BRICKLIT, TEKGREN5, REDWALL1). Eight to eleven names -- the
+  DOOM-0157 sprite_glows shape, and an order of magnitude shorter than the
+  94-name deny-list the bullet already ruled out. Imperfections it keeps:
+  BLODRIP1-4 (blood drips, animated but not lights) and ROCKRED1.
+
+  Probes are throwaway, in the session scratchpad, NOT committed.
+  Implemented 2026-08-03 (build green, all 7 test binaries pass). AWAITING
+  PLAY-TEST -- not flipped.
+
+  The fix is a curated wall-light list, because the measurement above says no
+  texel statistic can do it. Re-checked against the ART (every candidate
+  rendered from the WAD to a contact sheet and looked at), which corrected
+  two things this bullet had wrong:
+
+    * SW1CMT / SW2CMT (12.86) are NOT lights. That Le is the CEMENT wall
+      BEHIND the switch -- which is why it sat beside CEMENT1's 15.32. The
+      switch plate itself is unlit.
+    * The tables-only shape floated earlier would have DROPPED ~19 real
+      lights: METAL6/7, BIGBRIK3, BRONZE4, TEKGREN5 and SPCDOOR1/2 all carry
+      a genuine yellow lit strip (METAL6 and METAL7 are the same strip at top
+      and at bottom -- hence their identical texel counts), and BRICKLIT,
+      BSTONE3, CRACKLE2/4, EXITDOOR, SILVER2, TEKBRON2, TEKWALL1/4/6 all
+      carry a real fixture too.
+
+  SECOND DEFECT, found on the way and fixed in the same change: the gate was
+  wrong in BOTH directions. DOOM's own light panels -- LITE3, LITE5,
+  LITEBLU3/4, LITESTON, TEKLITE2, COMPSTA1/2, the FIRELAVA / FIREMAG family
+  -- peak at only ~0.53 linear, never cleared kEmitterPeakLum = 0.9, and
+  emitted NOTHING. The lamps were dark while the walls glowed.
+
+  MECHANISM (3 files, mirrors DOOM-0157's sprite_glows exactly):
+    r_mesh.c   wall_light_tex[59] + ensure_wall_light_map + RB_WallTexEmits.
+               Names absent from the loaded IWAD are skipped, so one table
+               serves DOOM and DOOM II. No per-map authoring.
+    r_mesh.h   RB_WallTexEmits declaration.
+    r_vulkan.cpp ComputeMaterialEmissive: an unlisted WALL skips derivation
+               (Le stays 0); a listed one passes allowFaint, so the gate is
+               BYPASSED for walls rather than narrowed -- the list, not the
+               texels, is the answer. Flats and sprites untouched.
+
+  MEASURED before/after, from the model that reproduces the shipped gate
+  exactly:
+    doom2   82 -> 47 emitters; 53 stop, 18 previously-dark fixtures start
+    doom    60 -> 37 emitters; 41 stop, 18 start
+  Everything reported is gone: ZDOORB1/F1 (38.47, the worst), all nine
+  CEMENTs, every ZZWOLF, SKINFACE/SKINLOW/SKSNAKE1/SKSPINE1/2, AASHITTY,
+  SP_FACE2, ZZZFACE3/4, the BLODRIPs and the unlit SW1 skull switches.
+
+  SKY2/SKY3/SKY4 also stop, and that is a no-op, not a change: their Le was
+  DEAD DATA. Verified two ways -- no stock linedef in either IWAD uses a SKY*
+  texture (scanned every map's SIDEDEFS: 377 and 245 distinct wall textures
+  in use, zero SKY*), and a sky flat never becomes world geometry
+  (emit_sky_cap writes the SEPARATE sky[] array, r_mesh.h:124, on a
+  primary-ray-only mask, while BuildStaticEmitterSet walks levelMesh only).
+  So the sun was always the only sky light; the double-count this bullet
+  worried about does not exist.
+
+  FOR THE USER'S EYE on play-test: LITE3 lands at Le 33.1 and LITE5 at 24.3
+  -- brighter than FIREWALL (11.25), because those textures are MOSTLY light
+  panel. Physically defensible for a bank of fluorescents, but it is the same
+  magnitude that made CEMENT look wrong, so it is the first thing to judge.
+  REDWALL1 (19.93, doom only) is the other one to watch.
 
 - 📋 [DOOM-0308] **The DOOM-0011 spec's verified cold-eyes tail, filed rather than looped — and the case for splitting the document.**
   Two independent cold lanes read docs/specs/DOOM-0011-volumetric-
@@ -6004,3 +6108,36 @@ parked ideas (💭 considered) until we commit to and design each one.
   is a visible defect on a shipped path. Note the split is the better
   moment to fix item 1: reconciling three density formulas is a rewrite of
   the section that would become its own document anyway.
+
+- 📋 [DOOM-0309] **The HD material generator still uses the emitter gate DOOM-0307 just proved cannot classify a wall.**
+  Found 2026-08-03 while fixing DOOM-0307. That bullet's measurement shows
+  the near-fullbright peak gate cannot tell a light from pale art, in
+  either direction. DOOM-0307 replaced it for the PALETTED wall path
+  (r_vulkan.cpp ComputeMaterialEmissive now asks r_mesh.c's
+  RB_WallTexEmits). The HD path was NOT touched and still uses it.
+
+  `scripts/pbr_derive.py:307` sets `peak = 0.9  # emissive_derive.h
+  kEmitterPeakLum` and derives each HD material's emissive map from it.
+  docs/specs/DOOM-0042-ultra-hd-pbr-materials.md:78 states the intent as
+  "so lit computer panels glow but ordinary walls stay dark" -- which is
+  exactly the claim DOOM-0307 measured and falsified. The same nine
+  CEMENTs and every ZZWOLF will carry an emissive map.
+
+  NOT the same defect DOOM-0307 reported, and do not conflate them: that
+  one was reproduced with `DOOMASSETDIR` unset (`HD load done - 0
+  material(s)`), so the paletted Le was the cause of the glowing wall the
+  user photographed. This is a second, latent instance in the offline
+  generator, and it bites only Ultra with HD art staged.
+
+  Cheapest shape: have the generator read the same list. It is C data
+  (r_mesh.c wall_light_tex), so either export it or move the list to a
+  shared data file both sides read -- worth deciding rather than
+  duplicating 59 names into Python, since a list that exists twice will
+  drift.
+
+  Depends on DOOM-0307. Related: DOOM-0042 (the HD pipeline),
+  DOOM-0084 (the per-texel mask), DOOM-0193 (dial UP intended glows).
+  **Layman:** The high-definition art pipeline decides what glows with the same broken test we just replaced for the normal art.
+  Kind: fix.
+  Lanes: shaders, assets.
+  Source: in-session-2026-08-03 (found while fixing DOOM-0307).

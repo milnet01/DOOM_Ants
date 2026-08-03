@@ -1822,6 +1822,79 @@ int RB_SpriteLumpGlows(int lump)
     return sprite_lump_glow[lump] ? 1 : 0;
 }
 
+// DOOM-0307: which WALL textures are light sources.
+//
+// The emissive back-end derives Le from texels alone, and texels cannot answer this.
+// DOOM's palette ramps nearly all top out at 255 in some channel, and the gate rates
+// brightness by VALUE (max channel), so the palest cement highlight scores exactly as
+// pure fire does. FIREWALL and AASHITTY clear the gate on the SAME two palette entries
+// (#176, #175); SW1CMT clears it on the cement wall BEHIND the switch, which is why its
+// Le (12.86) sat beside CEMENT1's (15.32). Measured across both IWADs 2026-08-03: no
+// texel statistic separates the two classes — peak fraction, saturation, hue, tile and
+// peak luminance, global contrast, local ring contrast, blob count and blob size all
+// have the light/not-light ranges fully overlapping, and the best two-feature threshold
+// rule still rejects FIREWALL. So the question is answered by NAME, judged from the art.
+//
+// This list REPLACES the peak gate for walls rather than narrowing it. The gate's job
+// was to guess this and it guessed wrong in both directions: 82 of doom2's 428 walls
+// emitted (nine CEMENTs, every ZZWOLF, the skin walls), while DOOM's own light panels —
+// LITE3, LITE5, LITEBLU*, COMPSTA* — peak at only ~0.53 linear, never cleared it, and
+// were dark. On the list, a tile emits whatever its bright texels come to; off it, a
+// tile is not a light however bright its art. Flats and sprites are untouched (liquids
+// are forced by name in ForceLiquidEmissive, sprites have RB_SpriteLumpGlows).
+//
+// Names absent from the loaded IWAD are skipped, so one table serves DOOM and DOOM II.
+static char wall_light_tex[][9] = {
+    // Fire, lava and hell glow
+    "FIREWALL", "FIREWALA", "FIREWALB", "FIREBLU1", "FIREBLU2",
+    "FIRELAVA", "FIRELAV2", "FIRELAV3", "FIREMAG1", "FIREMAG2", "FIREMAG3",
+    "ROCKRED1", "ROCKRED2", "ROCKRED3", "CRACKLE2", "CRACKLE4", "REDWALL1",
+    "DBRAIN1",  "DBRAIN2",  "DBRAIN3",  "DBRAIN4",
+    // Light panels and wall fixtures
+    "LITE3",    "LITE5",    "LITEBLU1", "LITEBLU2", "LITEBLU3", "LITEBLU4",
+    "LITERED",  "LITESTON", "TEKLITE",  "TEKLITE2", "BRICKLIT",
+    // Ordinary walls carrying a lit strip or slot (METAL6/7 are the same strip at
+    // the top and at the bottom — hence their identical texel counts)
+    "METAL6",   "METAL7",   "BIGBRIK3", "BRONZE4",  "TEKGREN5", "SPCDOOR1",
+    "SPCDOOR2", "TEKBRON2", "BSTONE3",  "SILVER2",  "EXITDOOR",
+    // Computer screens and readouts
+    "COMPSTA1", "COMPSTA2", "COMPUTE1", "COMPUTE2", "COMPUTE3", "PLANET1",
+    "TEKWALL1", "TEKWALL2", "TEKWALL3", "TEKWALL4", "TEKWALL5", "TEKWALL6",
+    // Switches whose face carries a LIT indicator (DOOM-0082). The SW1/SW2 skull and
+    // gargoyle switches are bronze relief, not lit, and are deliberately absent.
+    "SW2COMP",  "SW2EXIT",  "SW2GRAY",  "SW2STON6",
+};
+
+static byte* wall_tex_light;   // per-texture "is a light source" flag. Built once, cached.
+
+static void ensure_wall_light_map(void)
+{
+    int i, t;
+    if (wall_tex_light || numtextures <= 0)
+        return;
+    wall_tex_light = calloc((size_t)numtextures, sizeof(byte));
+    if (!wall_tex_light)
+        I_Error("ensure_wall_light_map: out of memory for %d wall textures",
+                numtextures);
+    for (i = 0; i < (int)(sizeof(wall_light_tex) / sizeof(wall_light_tex[0])); i++)
+    {
+        t = R_CheckTextureNumForName(wall_light_tex[i]);
+        if (t >= 0 && t < numtextures)
+            wall_tex_light[t] = 1;
+    }
+}
+
+// True when wall texture `texnum` (a unified atlas id below numwall) is a light
+// source. The C++ Vulkan back-end calls this across the seam, so it returns int
+// (r_mesh.h stays DOOM-type-free), mirroring RB_SpriteLumpGlows.
+int RB_WallTexEmits(int texnum)
+{
+    ensure_wall_light_map();
+    if (!wall_tex_light || texnum < 0 || texnum >= numtextures)
+        return 0;
+    return wall_tex_light[texnum] ? 1 : 0;
+}
+
 int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts)
 {
     // Camera right vector in world space, matching Mat4LookAt with up = +z:
