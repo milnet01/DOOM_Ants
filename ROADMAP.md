@@ -6229,6 +6229,19 @@ parked ideas (💭 considered) until we commit to and design each one.
   authoritative sigma, with the other two statements deleted rather than
   annotated -- leaving them as superseded text in place is the exact
   failure mode this bullet identified.
+  Progress (2026-08-03): ITEM 1 IS CLOSED AND LANDED, and the mechanical tail with it. The three incompatible density formulas are reconciled to one statement in docs/specs/DOOM-0310-fog-density-fields.md §4.1, decided by the shipped marchFog rather than by judgement, with the two superseded statements DELETED rather than annotated -- the failure mode this bullet identified.
+
+  It took THREE attempts, which is worth recording because it validates the bullet's own structural argument. Loop 1 of DOOM-0310's gate found the parent's §4.5 still carrying a partial sigma (omitting the floor addend, naming a heightPool factor §4.1 does not have). Loop 2 then found that the SPLIT'S OWN POINTER BLOCK, written into the parent's §4.3 during the extraction, was carrying a FOURTH partial sigma -- and it dropped the ray-distance/drift-clock distinction that loop 1 had just added a table to prevent. Both are now pointers. A partial restatement is worse than a link precisely because it reads as authoritative and is never updated when the real one moves.
+
+  FOLDED IN DIRECTLY, no re-review, each re-verified against pt_common.glsl at HEAD: item 5 (the wisp constants and all three derived figures), item 10 (Q24), item 11 (the 16%-at-512 contradiction), and the density/field LOW items -- Q16's kSeepMax/kSeepFalloff against the shipped 0.9/384, the ":881 up-ray is the march's dominant cost" claim (the up-ray is deleted), the cell-size assumption (64 units INITIALLY; it doubles until the grid fits RB_SEEP_MAXDIM), and the Q-numbering hygiene.
+
+  Item 11 turned out to matter more than LOW: the stale figure was not merely inconsistent, it was oversizing an obligation part 3 has to build to. The floor layer's 37% / tau 0.46 assume a baseZ the shipped code does not use outdoors; a sky pixel is open-sky by definition, so the sky-seam addend's size is the outdoor pair (~16% / 0.17), not the roofed one. The parent's live INV-10 has been corrected.
+
+  Items 3, 4, 6, 7, 8, 9, and 12 belong to parts 2 (DOOM-0011 §4.4, light sources and the bakes) and 3 (§4.6/§4.6a) and are NOT yet folded in -- they are the FogLights SSBO missing from §5, the RB_FOG_LIGHT_* family being undefined, §7's stale shipped markers, Q30's closed-but-listed-open state, the bake's contract detail, the missing L3 invariant and measured box, and the two disagreeing bake-cost pairs. They stay filed here and travel with those parts when their ids are allocated. DO NOT re-review to rediscover them.
+
+  Also found while doing this, and not on the original list: four shipped things the parent never documented (kWispSquashZ, the wisp S-curve and its load-bearing clamp, DOOM-0300's heading rotation, kIndoorSkyLight); the seep field's worst-case size stated as 256 KB when RGBA16F makes it 512 KiB; and Q21 claimed as cited from pt_common.glsl when it appears in no source file at all.
+
+  New code-side item filed: the shipped shader comments carry three figures this document corrects (pt_common.glsl's "+/-60 % swing" and "16% at 512 units"; pathtrace.comp's "would drift 512x too fast", now 192x) plus a sigma comment calling the floor layer "a THIRD addend" where the expression has two. Not fixed under a docs review.
 
 - 📋 [DOOM-0309] **The HD material generator still uses the emitter gate DOOM-0307 just proved cannot classify a wall.**
   Found 2026-08-03 while fixing DOOM-0307. That bullet's measurement shows
@@ -6288,6 +6301,23 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: doc.
   Lanes: docs, fog.
   Source: user-request-2026-08-03 (DOOM-0308's structural recommendation).
+  Progress (2026-08-03): DOCUMENT EXTRACTED AND GATED — docs/specs/DOOM-0310-fog-density-fields.md (1240 lines, from the parent's 825-line §4.3/§4.3a-c). Rule-14 gate ran from loop 1 on its own bytes; the parent's 23 loops were NOT inherited. **Converged-by-cap at 3 loops, zero findings deferred** (3 lanes, then 2, then 2). Draft defects 27 -> 14 -> 7, CRITICALs 3 -> 2 -> 0; collateral 0 -> 10 -> 9, outnumbering draft defects at loop 3, which is the documented signal to stop.
+
+  Item 1 of DOOM-0308 is CLOSED here: sigma is stated ONCE, reconciled against the shipped marchFog rather than by judgement, and the superseded statements are DELETED not annotated. It needed doing three times, which is itself the finding -- the extraction's own pointer block in the parent turned out to be carrying a FOURTH partial sigma, and loop 1's fix for the parent's §4.5 did not catch it.
+
+  The split's premise now has no mechanical guard, recorded as a `nothing` row: if a further sigma statement appears, the answer is a /doc-lint check greping the split's prose for a sigma composition outside §4.1.
+
+  FOLDED IN from DOOM-0308 (verified against pt_common.glsl at HEAD, not re-reviewed): the wisp constants (kWispAmp 0.6 -> 1.0, so the density bound is 0x..2x; kWispFreq1 1/512 -> 1/192) and the three figures derived from them; kSeepMax 0.5 -> 0.9 and kSeepFalloff 192 -> 384 (closing Q16 via the DOOM-0281 re-tune); and §4.3c's "16% at 512 units", which contradicted §4.3's own shipped table (61%).
+
+  FOUR shipped things the parent never recorded are now documented: kWispSquashZ, the odd S-curve contrast shaper and its load-bearing clamp (the cubic folds beyond +/-1), DOOM-0300's per-level heading rotation, and kIndoorSkyLight -- the seep field's SECOND consumer.
+
+  CORRECTED, and it changes what part 3 must build: the floor layer's headline 37% / tau 0.46 were computed against a baseZ the shipped code does not use outdoors. Both branches are now derived (roofed 37%, outdoors 16%) and the parent's live INV-10 was oversizing the sky-seam addend by ~2.7x. Sky pixels are open-sky by definition, so the outdoor pair is the size.
+
+  L4 IS NOW BUILDABLE FROM THIS DOCUMENT. Pinned: the area term attaches OUTSIDE the skyExposure gate and INSIDE wisp and the dial (forced, not chosen -- gate it and a sealed goo room drops to kIndoorFogScale); the exact GLSL line, distributing `strength` onto the new term so an empty profile sum stays bit-identical; areaSigma defined; kAreaDensity named (0.0020, does not exist yet); the goo addend is primary-hit-keyed (a DECLARED relaxation of the no-hit-dependence rule, since DOOM-0011 §4.5 requires it) while hell is a per-level misc6.w constant; densities ADD but tints MULTIPLY for goo-on-hell; mediumTint's site named (both sky shares, before kSkyShaftStrength); a >= 0.1 ms budget with the instrument corrected (the per-pass profiler, NOT shaderstats, which reports occupancy); and five acceptance rows including the one nothing covered before -- an OPEN-SKY goo pool, where the ungated addend stacks on air already at full density and nothing clamps sigma.
+
+  Q9 and Q21 closed rather than carried: Q9 is answered by the shipped composite (the sky is decoded to linear before the fold, so one kFogColor triple is right on both branches and INV-4 is correct); Q21 closes on BOTH axes via the composite period (24576 u / 9830 u against a 2048 u clamp) instead of resting on map geometry. Q7, Q24b and Q32 newly tabled -- Q32 is a genuine user look call (does the sky closed form take L4's addend and tint, or is a coloured skyline seam accepted?).
+
+  Parts 2 (DOOM-0011 §4.4) and 3 (§4.6/§4.6a) still need ids. The parent keeps the shared invariants plus a citation map for its remaining references to the moved sections; INV-9/11/12 moved with their ids unchanged, and INV-10 carries a tombstone so the sequence stays legible.
 
 - 📋 [DOOM-0311] **Validate the render push-constants on the CPU instead of catching their NaNs in the shaders.**
   Three shader inputs are divided by without being checked at the boundary:
@@ -6336,3 +6366,36 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Screenshots can only be taken from wherever the player starts, so the fog, torch and nukage effects cannot be photographed at the places they are meant to show up.
   Kind: test.
   Source: feature-review-2026-08-03.
+
+- 📋 [DOOM-0314] **Four fog-shader comments still quote figures the constants beside them contradict.**
+  Found by every lane of DOOM-0310's cold-eyes gate, and left alone because a
+  docs review does not edit code. Each is a comment sitting next to the very
+  constant that falsifies it, which is the worst place for one:
+
+  - pt_common.glsl, the kFogBaseDensity block: "The wisps are a +/-60 % swing
+    in density". kWispAmp ships at 1.0, so the swing is 0x..2x. The 60 %
+    figure is the spec's old 0.6.
+  - pt_common.glsl, the kFloorFogRange comment: "against the aerial layer's
+    16% at 512 units". That predates the outdoor pool rising to 112; the
+    shipped value is 61 %. DOOM-0310 section 4.2 derives it.
+  - pathtrace.comp, the wisp header: velocity outside the frequency scale
+    "would drift 512x too fast". kWispFreq1 is 1/192, so it is 192x.
+  - pathtrace.comp, the sigma line: calls the floor layer "a THIRD addend"
+    where the shipped expression has two (the third counted a future
+    area-profile term L4 has not added). Harmless, but it reads as a miscount.
+
+  None changes behaviour. They matter because the fog constants get tuned by
+  reading these comments -- the 16 % one especially, since it is the figure a
+  re-tune would compare against, and DOOM-0310 had to correct that same number
+  in the spec after it had already propagated into a stale comparison.
+
+  Cheapest shape: fix all four in one pass while the file is open for
+  something else. Do NOT re-derive the numbers -- DOOM-0310 sections 4.2, 4.3
+  and 4.6 carry them with the commands that produce them.
+
+  Related: DOOM-0310 (the spec that found them), DOOM-0308 (the filed tail),
+  DOOM-0300 (which set the wisp speed and freq).
+  **Layman:** Some notes written next to the fog code describe old numbers, so the next person to read them gets the wrong idea.
+  Kind: doc-fix.
+  Lanes: shaders, docs.
+  Source: cold-eyes-2026-08-03 (DOOM-0310's gate, surfaced by all five lanes).
