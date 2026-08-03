@@ -2,15 +2,25 @@
 
 **Status:** **Extracted 2026-08-03 from `docs/specs/DOOM-0011-volumetric-lighting.md`
 §4.3/§4.3a–c.** Everything this part specifies is **shipped and user-signed-off**
-(L1, L1b, L1c, L1d, L1e, plus the DOOM-0276/0281/0292/0300 amendments) **except the
-area-profile term of §4.1's σ, which is L4 and unbuilt** — this document exists to pin
-that term's placement before it is written.
+(L1, L1b, **L3's height pooling**, L1c, L1d, L1e, plus the DOOM-0276/0281/0292/0300
+amendments) **except the area-profile term of §4.1's σ, which is L4 and unbuilt** — this
+document exists to pin that term's placement before it is written.
+
+**"L3" is a shared label and this part owns only half of it.** The parent's L3 row covers
+*height pooling **and** torch shafts*; the pooling is this part's (§4.2) and the per-cell
+torch bake is part 2's — the shader uses `// DOOM-0011 L3:` for both. **L3b** (re-baking the
+fog-light grid when the map moves, INV-14) is entirely part 2's and appears nowhere below.
 
 **Parent:** DOOM-0011 remains the umbrella spec — the goal, the scope, the shared
-invariants (INV-1, INV-4, INV-5, INV-6, INV-7, INV-8) and the whole-feature performance
-gate stay there. This part owns **density and the two fields**, and with it
-**INV-9, INV-11 and INV-12**. Sibling parts: **§4.4 light sources + the bakes** and
-**§4.6/§4.6a resolve + composite** (ids not yet allocated).
+invariants and the whole-feature performance gate stay there. This part owns **density,
+colour and the two fields**, and with it **INV-9, INV-11 and INV-12**. Sibling parts, named
+by the parent's section numbers: **DOOM-0011 §4.4** (light sources + the bakes) and
+**DOOM-0011 §4.6/§4.6a** (resolve + composite); neither has an id yet. §2's table is the
+single statement of who owns which invariant — this line does not restate it.
+
+**Beware two numbering spaces.** A bare `§4.4` or `§4.6` in this document means *this
+document's* §4.4 (open-sky exposure) and §4.6 (the wisps). The parent's same-numbered
+sections are always written **`DOOM-0011 §4.4`** / **`DOOM-0011 §4.6`**.
 
 **Cold-eyes log (rule 14).** This part runs the gate **from loop 1 on its own bytes**.
 The parent's 23 loops ran against a document that no longer exists and **none of that
@@ -19,17 +29,27 @@ review is inherited**.
 | Loop | Tally | Outcome |
 |---|---|---|
 | **0-split** | — | **Not a review — no reviewer was dispatched.** Extraction of the parent's §4.3/§4.3a–c, with DOOM-0308's verified part-1 findings folded in directly (that bullet is a filed, already-verified list; it was deliberately not re-reviewed). Three incompatible σ statements reconciled to one against the shipped shader; the two superseded statements **deleted, not annotated**. Every constant re-grounded against `pt_common.glsl` at HEAD, which is where the stale-constant findings came from. |
+| **1** (2026-08-03, 3 lanes) | **C 3 · H 4 · M 14 · L 6 · INFO 5** — 27 verified / 0 unverified, all fixed | **Not converged — loop 2 owed.** The three CRITICALs were all build-changing and two were the split's own premise failing. **(1)** §4.1's σ wrote `wisp(p,t)`, overloading `t` — the ray distance `σ_floor` uses — onto the drift clock the shipped line passes `rippleTime()` to; σ now declares `p`, `t` and `τ` separately. **(2)** The claim "no second σ anywhere in the split" was false when written: the parent's §4.5 still carried a partial σ that omitted the floor addend and named a `heightPool` factor §4.1 does not have — the exact defect the split exists to end, reduced to a pointer. **(3)** The L4 profile addend's evaluation domain was unspecified, and §3's "density must not depend on what the ray hits" was stated absolutely while DOOM-0011 §4.5 requires goo to be **primary-hit-keyed** — so the document forbade the design it was written to enable; §3 now tables its two declared relaxations and INV-9 carries the carve-out. Worst HIGH: the floor layer's headline figures (37 %, τ 0.46) were computed against a `baseZ` the shipped code does not use outdoors, which oversized part 3's sky-seam obligation ~2.7× — both branches now derived (roofed 37 %, outdoors 16 %) and the "within 2 %" comparison, which mixed two reference heights, deleted. Also: `kAreaDensity`/`areaMult`/`mediumTint` were never named though L4 needs them; INV-4 was owned twice; §5's inventory command could not match its own `#define` rows; 256 KB → 512 KiB. |
 
 ---
 
 ## Contents
 
-- §1 Goal — §2 Where this sits (the split, and who owns the seep field's channels) —
-  §3 The problem, precisely — §4 Design (4.1 the one authoritative σ · 4.2 the aerial
-  layer · 4.3 the floor layer · 4.4 open-sky exposure — the fog-placement standard ·
-  4.5 the seep field · 4.6 the wisps) — §5 Data & resources — §6 Performance budget —
-  §7 Build order — §8 Invariants — §9 Alternatives considered — §10 Open questions —
-  §11 What checks this
+- **§1** Goal
+- **§2** Where this sits — the three-way split, who owns the seep field's channels, and the
+  two numbering spaces
+- **§3** The problem, precisely — and the two declared relaxations of its central rule
+- **§4** Design
+  - **4.1** σ — the single authoritative statement (and where L4's term attaches)
+  - **4.2** The aerial layer
+  - **4.3** The floor layer
+  - **4.4** Open-sky exposure — the fog-placement standard
+  - **4.5** The seep field
+  - **4.6** The wisps — the Silent Hill 2 look — **and the fog's colour**, including the
+    `mediumTint` rule L4 needs
+- **§5** Data & resources — **§6** Performance budget (incl. L4's) — **§7** Build order —
+  **§8** Invariants (INV-9, INV-11, INV-12) — **§9** Alternatives considered —
+  **§10** Open questions — **§11** What checks this
 
 **Citation convention.** The project rule
 (`docs/standards/documentation.md` § *Citing code from docs*): **the symbol or quoted
@@ -54,8 +74,9 @@ Two things follow, and they are the reason this part was split out first:
    replaces all three.
 2. **L4's term has a forced position.** The area profiles attach **outside** the
    `skyExposure` gate and **inside** `wisp` and the strength dial. That is not a
-   preference — §4.4 shows the alternative drives a roofed goo room to 5 % density and
-   cancels the feature.
+   preference — §4.4 shows the alternative drives a **sealed** goo room to as little as
+   5 % density (`kIndoorFogScale`; a room near an opening grades higher) and so cancels
+   the feature exactly where it is wanted.
 
 ## 2. Where this sits
 
@@ -69,15 +90,25 @@ later. All three σ statements were that shape.
 
 | Part | Owns | Invariants |
 |---|---|---|
-| **DOOM-0310** (this) | density; the aerial + floor layers; open-sky exposure; the seep field; the wisps | INV-9, INV-11, INV-12 |
-| part 2 (§4.4) | light sources, shafts, the sun-clearance bake, the fog-light bake | INV-2, INV-3, INV-13, INV-14 |
-| part 3 (§4.6/§4.6a) | half-res, denoise, composite, the sky backdrop's closed form | INV-4, INV-10 |
-| **DOOM-0011** (umbrella) | goal, scope, tiers, the whole-feature perf gate, shared invariants | INV-1, INV-5, INV-6, INV-7, INV-8 |
+| **DOOM-0310** (this) | density; the aerial + floor layers; open-sky exposure; the seep field; the wisps; the fog's colour and in-scatter brightness | INV-9, INV-11, INV-12 |
+| part 2 (DOOM-0011 §4.4) | light sources, shafts, the sun-clearance bake, the fog-light bake | INV-2, INV-3, INV-13, INV-14 |
+| part 3 (DOOM-0011 §4.6/§4.6a) | half-res, denoise, composite, the sky backdrop's closed form | INV-4, INV-10 |
+| **DOOM-0011** (umbrella) | goal, scope, tiers, the whole-feature perf gate, the profile *selection* of §4.5 | INV-1, INV-5, INV-6, INV-7, INV-8 |
+
+Every id INV-1..INV-14 appears in exactly one row. `rg -o 'INV-[0-9]+' ` over this table
+returns 14 distinct ids — recount it after any edit, because a doubly-owned invariant is
+one both owners will assume the other maintains.
 
 **Invariant ids are permanent and are NOT renumbered by the split** — they are cited from
-shader comments (`INV-9`, `INV-11`, `INV-12` all appear in `pathtrace.comp` and
-`pt_common.glsl`), from CHANGELOG and from the sibling plan. This part restates INV-9,
+shader comments, from CHANGELOG and from the sibling plan. This part restates INV-9,
 INV-11 and INV-12 as its own; the parent points here rather than keeping a second copy.
+
+**Their citation sites, since "grep for the id" is not a safe instruction:** INV-11 is cited
+from `pt_common.glsl` and `pathtrace.comp`, INV-12 from `pt_common.glsl`, `pathtrace.comp`
+and `r_mesh.c`, and **INV-9 from `pathtrace.comp` only**. Ids are **not unique across
+specs** — `rg 'INV-9' linuxdoom-1.10/` also returns a DOOM-0183 comment on `LIQUID_LAVA`,
+and `rg 'INV-11'` returns two `r_vulkan.cpp` hits belonging to another spec entirely. Read
+the surrounding comment, not the id alone.
 
 ### Who owns the seep field's four channels
 
@@ -102,7 +133,10 @@ needs its own void test.
 - **DOOM-0009** (path tracer) — the march lives in `pathtrace.comp`'s `marchFog`, modes
   4 (NEE display) and 6 (denoised play).
 - **DOOM-0183** — supplies the drift clock. `wisp` reads `misc6.x`, DOOM-0183's ripple
-  time, so the wisps add **no push lane** (INV-5).
+  time, so the wisps add **no new `uvec4` lane** (INV-5). They are not free of the push
+  block, though: DOOM-0300's `wispAngle` spends the **second of the two pad words**
+  `misc6`'s alignment had already forced (§4.6), which is the last spare word in the
+  240-byte block.
 
 ## 3. The problem, precisely
 
@@ -128,19 +162,46 @@ floor pixels referenced the courtyard so their cloud sat low and the eye looked 
 top of it. The user named it exactly: *"we are not actually rendering a cloud, we are
 simulating the look of a cloud but only on some surfaces, not all."*
 
+**The rule has exactly two declared relaxations, and a third would be a defect.** They are
+declared because the difference between a relaxation and the pass-3 bug is whether it is
+written down and bounded, not whether it touches the view:
+
+| term | depends on | why it is allowed |
+|---|---|---|
+| `σ_floor`'s range factor | `t`, the ray's own parameter | bounded contribution is the whole point of the layer (§4.3) — and its *height* factor still depends on `p` alone |
+| the L4 profile addend | `FogHit.matFlags`, the primary hit | every pixel of a profiled room keys the same way, so the error shows only at a doorway edge (§4.1) |
+
+**`σ_aerial` has none and must keep none** — that is the pass-3 fix itself. Anything that
+makes the *aerial* layer's `baseZ` or `poolH` depend on the hit reintroduces two clouds at
+two heights in one view.
+
 ## 4. Design
 
 ### 4.1 σ — the single authoritative statement
 
-**This is the only statement of fog density in this document, and there is no second one
-anywhere in the split.**
+**This is the only statement of fog density in this document.** Neither sibling part may
+restate it, in whole or in part — §11 records that nothing mechanical enforces that.
 
 ```
-σ(p,t) = ( ( σ_aerial(p) + σ_floor(p,t) ) · skyExposure(p)      // sky-sourced, §4.2/§4.3/§4.4
-         + Σ_profiles areaDensity(profile) · areaMult(profile) )  // room-sourced, L4 — UNBUILT
-         · wisp(p,t)                                              // §4.6
-         · fogStrengthScale(rb_fog)                               // the `;` dial
+σ(p, t, τ) = ( ( σ_aerial(p) + σ_floor(p,t) ) · skyExposure(p)     // sky-sourced, §4.2/§4.3/§4.4
+             + Σ_profiles areaDensity(profile) · areaMult(profile) ) // room-sourced, L4 — UNBUILT
+             · wisp(p, τ)                                           // §4.6
+             · fogStrengthScale(rb_fog)                              // the `;` dial
 ```
+
+**Three free variables, and two of them are easy to conflate — the shipped call passes a
+different value to each:**
+
+| symbol | is | source |
+|---|---|---|
+| `p` | the sample's world position | `ro + rd · t` |
+| `t` | **distance along the view ray** — a property of the *view*, not the world | the march's loop variable |
+| `τ` | **elapsed seconds** — the drift clock | `misc6.x`, via `rippleTime()` |
+
+`σ_floor` takes `t`; `wisp` takes `τ`. Writing `wisp(p, t)` would advect the billows by
+march distance instead of by time, which freezes the drift and smears the noise along
+every ray. The shader's `wisp` happens to *name* its own second parameter `t`, which is
+why this is worth spelling out rather than leaving to the reader.
 
 Four things the form has to carry, each of which one of the three superseded statements
 got wrong:
@@ -150,14 +211,46 @@ got wrong:
 2. **`skyExposure` gates the sky-sourced terms ONLY — never the area profiles.** §4.4
    derives why, and it is the load-bearing rule of the whole section.
 3. **The profile term is a sum over profiles**, each with its own `areaDensity`, because
-   goo takes a `const` while hell takes the per-level `misc6.w`, and a goo room *on* a
-   hell level must get both.
+   goo takes the compile-time `const` **`kAreaDensity`** (start `0.0020`) while hell takes
+   the per-level runtime value on **`misc6.w`**, and a goo room *on* a hell level must get
+   both. `areaMult` is the per-profile weight and `mediumTint` the medium's scattering
+   colour; **profile *selection* — which room is goo, which level is hell, and both
+   constants' per-profile values — is DOOM-0011 §4.5's, not this part's.** This part owns
+   only where the resulting density attaches. None of `kAreaDensity`, `areaMult` or
+   `mediumTint` exists in the tree today (`rg kAreaDensity linuxdoom-1.10/` → no match);
+   L4 declares them.
 4. **`wisp` and the dial multiply the whole medium**, so goo and hell billow too and the
    dial thins everything uniformly.
 
-**With L4 unshipped the profile sum is empty, and the expression above then reduces
-EXACTLY to the shipped line** — the three surviving factors commute, so it is the same
-expression and not an approximation of it. The shipped line, in `marchFog`:
+**The profile term is the one addend that is NOT a pure function of `p`, and L4 must not
+be left to infer that.** DOOM-0011 §4.5 keys the goo profile on the **primary hit** — "the
+room reads goo-foggy when you are looking at or across the goo", blind to goo behind you
+or around a corner, an accepted v1 approximation (Q3). So `areaMult` is evaluated **once
+per pixel from `FogHit.matFlags`**, not per march sample, and `pathtrace.comp`'s `FogHit`
+comment already reserves those fields for exactly this ("the primary-hit fields later
+layers (L2-L4) read for height pooling / area profiles"). §3's rule — density at a point
+must not depend on what the ray hits — is therefore **relaxed for this addend, in the same
+declared way §4.3 relaxes it for the floor layer's `t`**, and INV-9 records the carve-out.
+Hell is exempt from the tension entirely: it is a per-*level* flag, so it is constant
+across the frame.
+
+**Why the relaxation is tolerable here and was a defect in §3.** The pass-3 defect put
+*two different densities in one view* for the same air, because `baseZ` came from each
+pixel's own hit. Primary-hit keying does the same thing in principle — and the reason it
+is accepted rather than forbidden is that the error is **invisible in the case that
+matters**: a goo room's walls, floor and the goo itself all sit inside the profiled room,
+so every pixel of that view keys the same way. The visible failure is a doorway edge where
+half the screen keys goo and half does not, which is the artefact Q3's per-sector fog
+buffer would remove. **Judge it on hardware at L4; do not silently upgrade it to
+per-sample, which costs a material lookup per march step.**
+
+**With L4 unshipped the profile sum is empty, and the expression above is then the same
+expression as the shipped line** — not an approximation of it. The three surviving factors
+differ only in written order, and multiplication is commutative, so the *value* is
+identical. **In floating point the reordering is a re-association, which is not
+bit-exact — so keep the shipped factor order when L4 edits this line.** §7's
+byte-identity acceptance row depends on that, and it is the kind of thing an implementer
+tidies without noticing. The shipped line, in `marchFog`:
 
 ```glsl
 float sigma = (fogDensity(p, baseZ, poolH) + floorFogDensity(p, baseZ, t))
@@ -201,14 +294,16 @@ bank has an altitude, not a per-pixel one, so standing on a high ledge you corre
 down onto its top. Indoors keeps a camera-relative reference because a single global Z
 **is** wrong there — interior rooms sit hundreds of units above and below the outdoor
 ground — and it is still a per-frame constant, so the invariant holds. Both references
-being per-frame constants is exactly what makes `σ` a function of `p` alone.
+being per-frame constants is exactly what makes **`σ_aerial`** a function of `p` alone.
+(`σ` as a whole is not — §3's table lists its two declared relaxations.)
 
 `kFogFloorFallback` was never added and is **not** in the tree.
 
 **Outdoor thickness.** The user asked for fog *"much, much thicker and higher"* outside;
 delivered by raising the outdoor e-fold height 18 → **112** with `kFogBaseDensity` left
 alone. At High, standing on E1M1's courtyard with the eye **65 units above the fog
-altitude**:
+altitude** — **the aerial layer alone**, since the floor layer adds its own bounded share
+on top (§4.3):
 
 | | 256 u | 512 u | 1024 u | 2048 u |
 |---|---|---|---|---|
@@ -256,25 +351,43 @@ while the range factor depends on the ray's own parameter, which is a property o
 **view**, not of the world. This is also why it cannot be folded into `fogDensity()`: the
 two layers must keep separate e-fold heights.
 
-**What the constants trade** (all at High; `kEyeAboveFloor` = 41):
+**`baseZ` is SHARED with the aerial term — the floor layer does not get its own, and every
+figure below turns on that.** The shipped call is `floorFogDensity(p, baseZ, t)` with the
+same `baseZ` §4.2's table selects. So the layer behaves differently in the two branches,
+and the difference is not a tuning artefact but the mechanism:
 
-| | value | |
+| at High, eye height | roofed air | outdoors, eye 65 u above `pc.fogFloorZ` |
 |---|---|---|
-| at the floor | `0.010` | **3.03×** the aerial layer's density there (`0.010 / 0.0033`) |
-| at eye height | `0.010 · exp(−41/24)` = `0.00181` | **18 %** of its own floor value |
-| saturated haze | `1 − exp(−0.00181 · 256)` = **37 %** | its whole contribution, at any distance |
+| height above `baseZ` | **41 by construction** (`indoorBase = ro.z − kEyeAboveFloor`) | however high the eye rides — 65 in §4.2's scenario |
+| `σ_floor` at the eye | `0.010 · exp(−41/24)` = **0.00181** | `0.010 · exp(−65/24)` = **0.00067** |
+| its saturated haze | **37 %** (τ = 0.46) | **16 %** (τ = 0.17) |
+| `σ_aerial` at the eye | `0.0033 · exp(−41/18)` = 0.00034 *(`kFogIndoorPool` = 18)* | `0.0033 · exp(−65/112)` = 0.00185 |
+| floor ÷ aerial | **5.4×** — the floor layer *dominates* roofed air | **0.36×** — a minority term outdoors |
 
 ```
-python3 -c "from math import exp; s=0.010*exp(-41/24); print(round(s,7), round(s*256,4), round(100*(1-exp(-s*256)),1))"
-→ 0.0018117 0.4638 37.1
+python3 -c "
+from math import exp
+for lbl,h,pool in (('roofed',41,18),('outdoors',65,112)):
+    sf=0.010*exp(-h/24); sa=0.0033*exp(-h/pool)
+    print(lbl, round(sf,7), round(sf*256,4), round(100*(1-exp(-sf*256)),1), round(sa,7), round(sf/sa,2))"
+→ roofed   0.0018117 0.4638 37.1 0.0003383 5.36
+→ outdoors 0.0006665 0.1706 15.7 0.0018470 0.36
 ```
 
-**The honest contrast is not "3× the aerial layer".** At eye height the two layers are
-within 2 % of each other in density (`0.00181` floor vs `0.00185` aerial). What separates
-them is that the floor layer's contribution **saturates at ≈37 %** while the aerial
-layer's keeps growing — 61 % at 512 u, 98 % at 2048 u. *(The parent compared this against
-"the aerial layer's 16 % at 512 units", which was measured before the pool rose to 112 and
-contradicts its own shipped table above. Corrected here.)*
+**Only at the fog altitude itself is the floor layer "3× the aerial layer"** — `0.010`
+against `0.0033`, i.e. `p.z == baseZ`, which is the bank's own base and not where the eye
+usually is. Quoting that 3× as though it described eye-level air is how the parent came to
+compare it against a stale figure of *"the aerial layer's 16 % at 512 units"* — measured
+before the outdoor pool rose to 112, and contradicting the parent's own shipped table, which
+gives **61 %** there (§4.2). Both errors are corrected here. **Do not confuse that dead
+number with the live 16 % in the table above**, which is the *floor* layer's saturated haze
+outdoors and is unrelated to it.
+
+**What actually separates the two layers is saturation, not density.** The floor layer's
+contribution is **bounded** — it reaches its 37 % (roofed) or 16 % (outdoors) and stops,
+because `exp(−t/kFloorFogRange)` cuts it off — while the aerial layer's keeps growing with
+distance: 61 % at 512 u, 98 % at 2048 u outdoors at eye height. That bound is the entire
+reason the layer exists (§3).
 
 `kFloorFogRange` = 256 is also the middle column of Q26's error table, so the warped march
 resolves it to 0.09 % and it cannot band.
@@ -291,12 +404,16 @@ second placement mechanism, no second up-ray. Only the density constants differ:
 The user asked for the outdoor floor fog to be **thicker**; that falls out of
 `skyExposure` already, without a fourth constant.
 
-**Part 3 inherits an obligation here.** The sky backdrop never enters `marchFog`, so its
-closed form needs a **second addend** for this layer. Omit it and a horizon-grazing sky
-pixel disagrees with the wall pixel directly beneath it by ≈0.46 optical depth — a hard
-line along the skyline, the exact defect the sky closed form exists to remove. The
-derivation, both branches and the cancellation trap near `|rd.z| = kFloorFogPool /
-kFloorFogRange` are part 3's (INV-10).
+**Part 3 inherits an obligation here, and its size is the OUTDOOR figure.** The sky
+backdrop never enters `marchFog`, so its closed form needs a **second addend** for this
+layer. Omit it and a horizon-grazing sky pixel disagrees with the wall pixel directly
+beneath it — a hard line along the skyline, the exact defect the sky closed form exists to
+remove. **A sky pixel is open-sky by definition**, so the disagreement is the outdoor pair
+above (**≈0.17 optical depth, ≈16 % haze** with the eye 65 u up), not the roofed 0.46/37 %:
+the closed form's `h₀ = max(0, ro.z − pc.fogFloorZ)` is the same reference the outdoor
+column uses. It is still far too large to leave on the skyline, and it shrinks as the eye
+rises. The derivation, both branches and the cancellation trap near
+`|rd.z| = kFloorFogPool / kFloorFogRange` are part 3's (INV-10).
 
 ### 4.4 Open-sky exposure — the fog-placement standard
 
@@ -608,11 +725,20 @@ the world origin and the finer octave contributes nothing there.
 
 **Tiling, and the claim that actually matters (Q21).** Octave 1 repeats every
 `64 · 192` = **12288** units, but **the binding period is the finer octave's**:
-`kWispTexels / kWispFreq2` = `64 · 192 / 2.5` = **4915 units**. Vertically the squash
-brings that to `4915 / 2.5` = **1966 units**, comfortably above any vanilla ceiling height.
-The repeat **cannot appear within a single sight line**, and this is now provable rather
-than argued from map sizes: the march is clamped to `kFogMaxDist` = **2048** < 4915.
+`kWispTexels / kWispFreq2` = `64 · 192 / 2.5` = **4915 units**.
 *(The parent quoted 13107 units, derived from the superseded `1/512`.)*
+
+**Horizontally the no-visible-repeat claim is provable rather than argued from map sizes:**
+the march is clamped to `kFogMaxDist` = **2048**, and 2048 < 4915, so no single sight line
+can span a period.
+
+**Vertically it is not, and the difference is worth stating rather than glossing.** The
+z-squash divides the period by `kWispSquashZ`: `4915 / 2.5` = **1966 units**, which is
+*below* `kFogMaxDist`. So the vertical argument still rests on vanilla sector heights
+rather than on the march clamp — comfortably, since a 1966-unit floor-to-ceiling span does
+not occur in stock DOOM geometry, but it is an assertion about the maps and not a proof
+about the march. A ray would in any case have to travel near-vertically for 1966 units to
+see it, which the clamp does bound.
 
 ```
 python3 -c "print(64*192, 64*192/2.5, 64*192/2.5/2.5)"
@@ -675,7 +801,7 @@ wisps present (Q17).
 
 | Resource | Shape | Notes |
 |---|---|---|
-| seep field | `VK_FORMAT_R16G16B16A16_SFLOAT`, ≤ `256×256` | `.r`/`.g` this part, `.b`/`.a` part 2. `CLAMP_TO_EDGE`, bilinear. E1M1: 75×47. Worst case 256 KB |
+| seep field | `VK_FORMAT_R16G16B16A16_SFLOAT`, ≤ `256×256` | `.r`/`.g` this part, `.b`/`.a` part 2. `CLAMP_TO_EDGE`, bilinear. **8 B/texel**, so the worst case is `256·256·8` = **512 KiB** and E1M1's 75×47 is **27.5 KiB**. *(The parent said 256 KB / 14 KB — correct for the `R16G16` era, halved per texel, and stale since DOOM-0289 widened the format.)* |
 | noise volume | `64³` single-channel, `REPEAT`, trilinear | **generated at startup, never shipped as an asset** |
 | `misc6.x` | ripple/wisp time (bit-cast float) | shared with DOOM-0183 — must stay written unconditionally |
 | `misc6.z` | `rb_fog` strength 0..3 | 0 gates the whole march out |
@@ -705,17 +831,48 @@ wisps present (Q17).
 | `kWispOffset2` | (17.3, 5.1, 23.7) | decorrelates the octaves at the origin |
 | `kWispSquashZ` / `kWispTexels` | 2.5 / 64.0 | wide-and-shallow banks; volume edge |
 | `kGooTint` / `kHellTint` | (0.35,0.85,0.30) / (0.90,0.35,0.30) | **declared, unread until L4** |
+| `kAreaDensity` | **0.0020 (first guess) — DOES NOT EXIST YET** | goo's profile density; L4 declares it. Hell's equivalent is runtime, on `misc6.w`. Per-profile `areaMult` and `mediumTint` values are DOOM-0011 §4.5's |
 | `RB_SEEP_CELL0` / `RB_SEEP_MAXDIM` | 64.0f / 256 | `r_mesh.c`; the cell **doubles** until it fits |
 | `RB_SEEP_FALLOFF` / `RB_SEEP_DMAX` | 384.0f / `8×` that | `r_mesh.h`; mirrors of the GLSL pair |
 
-*Inventory taken from the declarations themselves:*
-`rg -n '^\s*(const|#define)\s+\S+\s+(kFog|kWisp|kSeep|kFloorFog|kIndoorFog|kSkyShaft|kEyeAbove|kGooTint|kHellTint|dMax|RB_SEEP)' linuxdoom-1.10/`
+*Inventory enumerated from the declarations, not from this table — an inventory is wrong by
+**omission** more often than by a bad entry, so the command must be able to return things
+the table lacks:*
+
+```
+rg -no '^\s*(const\s+\S+|#define)\s+(kFog\w*|kWisp\w*|kSeep\w*|kFloorFog\w*|kIndoorFog\w*|kIndoorSky\w*|kSkyShaft\w*|kEyeAbove\w*|kGooTint|kHellTint|dMax|RB_SEEP\w*)' linuxdoom-1.10/ \
+  | sed 's/.*[[:space:]]//' | sort -u
+→ 35 constants
+```
+
+**The `const|#define` alternation is load-bearing:** an earlier form wrote
+`(const|#define)\s+\S+\s+(k…)`, which requires a type token between the keyword and the
+name and therefore **silently skipped every `#define`** — all four `RB_SEEP_*` rows went
+unchecked by a command that looked like it checked them.
+
+**31 of the 35 are tabled. The four excluded belong to sibling parts, and are named so the
+diff runs in both directions:** `kFogAnisotropy` (the Henyey-Greenstein phase term) and
+`kFogLightsPerCell` are part 2's; `kFogSkyDist` (the sky closed form's finite extent) and
+`kFogDepthSigma` (the denoiser's depth weight, in `svgf_composite.comp`) are part 3's.
 
 ## 6. Performance budget
 
-**The whole fog is 0.83 ms of a 14.96 ms megakernel** (2026-08-02, after DOOM-0296 and
-the L2b optimisation). This part's terms are not separately resolvable at that scale;
-what the history establishes is which levers are real:
+**The gate is the parent's and it is whole-feature: fog-off → fog-on Δ ≤ 15 % of
+present-total at High** (raised from 5 % by the user 2026-07-25, on the reasoning that a PS2
+ran this look). **The whole fog currently sits at 0.83 ms of a 14.96 ms megakernel**
+(2026-08-02, after DOOM-0296 and the L2b optimisation) — about 5.5 % — so roughly nine
+points of the gate are unspent.
+
+**L4's budget, since it is the one unbuilt term this part governs.** The profile addend is
+a per-sample multiply-add over a value that is *constant for the frame* (hell) or *constant
+for the pixel* (goo, primary-hit-keyed — §4.1), so it needs **no new texture tap, no ray and
+no per-sample material lookup**, and it should be at or near free. **Budget: ≤ 0.1 ms added
+to the 0.83 ms fog total, measured at High on E1M1 with `RADV_DEBUG=shaderstats` and
+`-rtverify -warp 1 1 -noinput`.** A measurement materially above that means the addend was
+implemented per-sample rather than per-pixel, which is the mistake §4.1 warns against.
+
+This part's shipped terms are not separately resolvable at 0.83 ms; what the history
+establishes is which levers are real:
 
 | Change | Effect | Verdict |
 |---|---|---|
@@ -723,7 +880,7 @@ what the history establishes is which levers are real:
 | `kFogSteps` 24 → 40 | MAE 0.153/255 at Low, 2.86 at High — against **2.41** for the same build vs its own second run | **reverted**: at or under the engine's own noise floor |
 | `kFogBaseDensity` ≈2× | moves the sky's aerial perspective most (see below) | **reverted** |
 | the L1c wisps | two taps per sample | shipped; the tap is the cost, and the S-curve and squash are free |
-| the seep field | **one bilinear tap, no rays** | shipped; load-time build budgeted ≤ 20 ms on E1M1 |
+| the seep field | **one bilinear tap, no rays** | shipped. Load-time build **target** ≤ 20 ms on E1M1 — a target, never measured and with no §11 row; the in-play re-flood (DOOM-0281) has no budget stated either, and part 2's clearance re-bake measured 4.1 ms / 2.9 ms against a ≤ 6 ms gate, which is the nearest comparable |
 
 **Registers and occupancy are NOT levers on this megakernel** — 96 VGPR, 0 spills and 8
 waves-per-SIMD are identical with fog on and off; the 8-wave ceiling is RADV's ray-query
@@ -761,10 +918,18 @@ Everything below is **shipped and user-signed-off** except L4.
 | **L4** area profiles — goo / hell | 📋 **not built.** §4.1 pins the term's placement; §4.4 pins the gate; the tint decision is pinned above |
 
 **L4's acceptance rows**, since this part owns the density term it adds:
-a goo room shows green fog **under a roof** (which fails by construction if `skyExposure`
-ever multiplies `areaMult`); **E3M1 shows haze** with no open sky anywhere; a torch shaft
-inside a goo room reads **warm, not warm-through-green**; and `misc6.w` at `0` renders
-byte-identical to today.
+
+- a goo room shows green fog **under a roof** — fails by construction if `skyExposure` ever
+  multiplies `areaMult`;
+- **E3M1 shows haze** with no open sky anywhere in the level;
+- a torch shaft inside a goo room reads **warm, not warm-through-green** (the 2026-08-03
+  tint decision);
+- **byte-identity, stated so it can actually pass:** on a level with **no goo profile in
+  view** *and* `misc6.w = 0`, the frame is byte-identical to today. **Not "`misc6.w = 0`"
+  alone** — goo's density is the compile-time `kAreaDensity`, not that lane, so a nukage
+  room gains its addend regardless of what `misc6.w` holds. A check written the shorter way
+  fails on the correct build;
+- **≤ 0.1 ms** added to the fog's 0.83 ms (§6).
 
 ## 8. Invariants
 
@@ -778,9 +943,14 @@ byte-identical to today.
   aerial term and it inherits `kFogPoolHeight`, the one thing it must not share. Exposure
   is measured **per march sample**, read from the field's mask channel — never traced, and
   never as an epsilon on `d`.
-  *What breaks it:* a fourth factor applied outside `wisp`; the profile sum moved inside
-  the gate (a roofed goo room drops to 5 % density and L4's own falsifier fails); the two
-  layers merged; `kIndoorFogScale` set to 0 (torch shafts lose their medium).
+  *What breaks it:* the profile sum moved **inside** the `skyExposure` gate — a sealed goo
+  room is then driven to `kIndoorFogScale` (5 %) and L4's "E3M1 shows haze" falsifier fails
+  by construction; a factor that multiplies only **part** of the sum rather than the whole
+  of it; a sky-sourced addend placed outside the gate; the two sky-sourced layers merged
+  into one term; `kIndoorFogScale` set to 0 (torch shafts lose the medium they light); and
+  the aerial layer's `baseZ` or `poolH` made hit-dependent (§3's pass-3 defect). *Note a
+  plain extra multiplicative factor is NOT a breach — the factors reorder freely, which is
+  why the falsifiers are about **placement relative to the gate and the sum**, not order.*
   *Test:* `rg -n 'float sigma =' -A1 linuxdoom-1.10/shaders/pathtrace.comp` must show the
   two addends, the gate, the dial and `wisp` — and, once L4 lands, the profile sum outside
   the gate. Plus L4's "E3M1 shows haze" row.
@@ -799,9 +969,13 @@ byte-identical to today.
   shaper even rather than odd (shifts the mean and silently re-thickens the fog); moving
   the tap into `pt_common.glsl` (drags the noise volume into `bake.comp`, breaking INV-6);
   shipping the volume as an asset.
-  *Test:* `kWispAmp = 0` renders byte-identical to the pre-L1c build, with `kFogColor`,
-  `kFogBaseDensity` and `kFogSteps` held; and by diff, no noise file enters the repo or a
-  WAD, and `bake.comp` declares no noise sampler.
+  *Test:* `kWispAmp = 0` renders byte-identical to **L1b plus L1c's colour swap** — the
+  comparison build has to be named, because L1c also replaced `SKY_COLOR` with `kFogColor`
+  at every in-scatter site, so a genuinely *pre*-L1c build differs in colour no matter what
+  else is held. Hold `kFogColor`, `kFogBaseDensity` and `kFogSteps` at their **shipped**
+  values on both sides. And by diff: no noise file enters the repo or a WAD, and
+  `bake.comp` declares no noise sampler
+  (`rg -c uNoiseVol linuxdoom-1.10/shaders/bake.comp` → 0).
 
 - **INV-12** — **the seep field.** The field is flood-filled **through connected open space
   only**, never straight-line, so fog can **never** reach a sealed room that merely shares
@@ -850,22 +1024,30 @@ byte-identical to today.
 
 | id | Question | State |
 |---|---|---|
-| **Q3** | The indoor floor reference is one value per pixel (the camera's floor), not per pocket | accepted v1 approximation |
+| **Q3** | **Two halves, both this part's.** (a) The indoor floor reference is one value per pixel (the camera's floor), not per pocket. (b) The profile density is **primary-hit-keyed** rather than read from a per-sector fog volume — so goo behind you or around a corner does not fog the air (§4.1) | both accepted as v1 approximations; the per-sector fog buffer is the deferred honest alternative |
+| **Q7** | L4's goo/hell **densities** and the hell-detection thresholds — all first guesses | **open — L4's other tuning task**, with Q20. *(Distinct from DOOM-0183's own Q7, which `pathtrace.comp` cites on `kWetSheenStrength`; Q-ids are not unique across specs either)* |
 | **Q9** | `kFogColor` is defined in **linear**, but the sky branch writes a display-encoded colour — does the same numeric triple transfer? | **open**, part 3's to close |
 | **Q12** | `kIndoorFogScale`'s value | **closed** — `= 0` struck; ships 0.05 |
 | **Q16** | Is `kSeepMax` too low against the shipped indoor pool? | **closed** by DOOM-0281 — 0.5 → 0.9, falloff 192 → 384 |
 | **Q17** | Judge `kFogPoolHeight` *with* the wisps present, not before | open, a look tune |
 | **Q19** | `d` is grid-quantised and height-invariant, not a geodesic | accepted |
 | **Q20** | `kHellTint`/`kGooTint` were picked against a **blue-grey** base and must be re-judged against the near-white one | **open — L4's first tuning task** |
-| **Q21** | Does the noise volume tile visibly? | **closed** — binding period 4915 u > `kFogMaxDist` 2048, so never within one sight line |
+| **Q21** | Does the noise volume tile visibly? | **closed horizontally** — binding period 4915 u > `kFogMaxDist` 2048, so never within one sight line. The **vertical** period is 1966 u (the z-squash), below the clamp, so that axis rests on vanilla ceiling heights rather than on a proof (§4.6) |
 | **Q24** | Does a `kFogBaseDensity` raise cost the mountains? | **closed** — yes, and the raise was reverted; §6 records the coupling for any future move |
 | **Q24a** | `kFogSkyDist` as the layer's finite horizontal extent | closed, shipped |
 | **Q25** | Does the floor fog need its own up-ray, or does sharing `skyExposure` suffice? | **open** — sharing is what shipped; the risk is that the floor fog is densest exactly where the aerial layer is thinnest |
 | **Q26** | Step count vs sample warp | **closed** before any shader was written — warp `t = tMax·s²`, exponent 2 |
 | **Q31** | **Is DOOM-0300's 15× drift speed right on hardware?** The measurement says SH2 restructures in ~2.2 s and ours now does ~1.5 s per cell, but nobody has judged it in play | **open — owed by the user, a genuine look call** |
 
-*(Q-ids are cited from shader comments — `Q9`, `Q12`, `Q21`, `Q24a`, `Q26` all appear in
-`pt_common.glsl` — so they are permanent and are not renumbered. Q31 is new here.)*
+*(Q-ids are permanent because the shaders cite them. Verified sites: `Q9`, `Q12`, `Q24a`
+and `Q26` appear in `pt_common.glsl`; `Q26` also in `pathtrace.comp`. **`Q21` is cited from
+no source file** — an earlier draft claimed it was. Q31 is new here and collides with
+nothing in `linuxdoom-1.10/`.)*
+
+```
+rg -no 'Q[0-9]+[a-z]?' linuxdoom-1.10/shaders/ | sed 's/.*://' | sort -u
+→ Q1 Q12 Q14 Q2 Q24a Q24b Q26 Q4 Q6 Q7 Q8 Q9        (no Q21)
+```
 
 ## 11. What checks this
 
@@ -876,16 +1058,26 @@ byte-identical to today.
 | the fog look overall | `-shotcompare` golden, re-blessed with fog at its shipped default |
 | no sealed-room leak | INV-12's acceptance row — visual, no automated gate |
 | the C/GLSL constant mirrors agree | INV-12's paired grep |
-| every constant in §5 | the `rg` inventory line under that table |
-| the aerial + floor haze figures | the two `python3` lines in §4.2 / §4.3 |
-| the tiling periods | the `python3` line in §4.6 |
+| every constant in §5 | the `rg` inventory line under that table — which enumerates **from the source**, so it can return entries the table lacks |
+| the aerial haze figures | the `python3` line in §4.2 — **the eye-height row only**; the ground row is a numerically integrated dipping ray carried from the parent and is **unchecked** |
+| the floor-layer figures, both branches | the `python3` line in §4.3 |
+| the tiling periods | the `python3` line in §4.6 (horizontal bound proved against `kFogMaxDist`; the vertical one rests on vanilla ceiling heights) |
+| the Q-id citation sites | the `rg` line under §10 |
+| invariant ownership is 1:1 | the `rg -o 'INV-[0-9]+'` recount under §2's table |
+| the seep field's build cost | **nothing** — §6's ≤ 20 ms is a target that was never measured, and the in-play re-flood has no budget at all |
 | RT path unaffected structurally | `-rtverify` (needs `-warp 1 1`) |
 | **that the σ statement stays singular** | **nothing.** No mechanical check forbids a second density formula being written into a sibling part. This is the failure that produced DOOM-0308, and the only guard is that all three parts cite §4.1 rather than restating it |
 | **that the seep field's channel ownership is respected** | **nothing.** Part 2 could re-describe the build; only §2's table says it must not |
 | **the look of L4's tints against the near-white base** | **nothing** — Q20, a human judgement |
 | **the drift speed** | **nothing** — Q31, a human judgement |
 
-**Four `nothing` rows.** Two are look judgements that no gate can hold. The other two are
-document-level and are exactly what the split created: three parts that must not
-re-diverge. If a fourth σ statement ever appears, the mechanical answer is a `/doc-lint`
-check that greps the split for `σ(p` / `sigma =` outside this file.
+**Five `nothing` rows** — one more than the first draft had, because the seep field's build
+cost turned out to be a target wearing a measurement's clothes. Two are look judgements
+that no gate can hold (Q20, Q31). Two are document-level and are exactly what the split
+created: three parts that must not re-diverge. One is an unmeasured cost.
+
+**The σ row has already been cashed once, which is the argument for mechanising it.** The
+first draft of this document claimed there was "no second σ statement anywhere in the
+split" — and the parent's §4.5 was carrying a partial one at that moment, omitting the floor
+addend. If a further σ statement appears, the mechanical answer is a `/doc-lint` check that
+greps every part of the split for `σ(` and `sigma =` outside this file's §4.1.

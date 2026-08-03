@@ -1193,7 +1193,7 @@ is a **runtime** value on `misc6.w`, not `kAreaDensity`, because it varies per l
 
 | Profile | `areaMult` | `mediumTint` | Source of the density |
 |---|---|---|---|
-| Clear (default) | `0` | neutral | none — its *profile* contribution is zero, so clear air is `kFogBaseDensity · skyExposure`; the shared `heightPool · wisp · fogStrengthScale` factors of DOOM-0310 §4.1 still apply |
+| Clear (default) | `0` | neutral | none — its *profile* contribution is exactly zero, so clear air is whatever DOOM-0310 §4.1's σ yields with the profile sum empty. **Do not restate σ's factors here** |
 | Goo / nukage | `1.0` | `kGooTint` | `kAreaDensity` (`const`) |
 | Hell | `1.0` | `kHellTint` | `misc6.w` (per-level, §5) |
 
