@@ -359,12 +359,17 @@ table is what resolves them. The one exception already rewritten in place is §4
 
 **What a reader of this document still needs from part 1:**
 
-- `σ(p,t) = ( (σ_aerial + σ_floor) · skyExposure + Σ areaDensity·areaMult ) · wisp ·
-  fogStrengthScale` — the area sum is **outside** the `skyExposure` gate and **inside**
-  `wisp` and the dial. With L4 unbuilt the sum is empty and this reduces exactly to the
-  shipped line.
-- `skyExposure` gates the **sky-sourced** terms only, never the area profiles. §4.4's
-  shafts and §4.5's profiles both depend on that split.
+- **σ itself: read [DOOM-0310 §4.1](DOOM-0310-fog-density-fields.md). It is not restated
+  here, and that is deliberate.** An earlier draft of this very block wrote the formula out
+  "for convenience" and immediately became the fourth incompatible copy — it dropped the
+  distinction between the ray distance and the drift clock, which §4.1 needs a table to
+  keep straight. **A partial σ is worse than a pointer**, because it reads as authoritative
+  and is never updated when the real one moves. That failure is the whole reason this
+  document was split.
+- The **one property** §4.4 and §4.5 below actually depend on, which is a statement about
+  *placement* rather than a formula: **`skyExposure` gates the sky-sourced terms only,
+  never the area profiles.** Everything else about σ — its addends, its factors, their
+  order — belongs to §4.1.
 - The seep field is one `RGBA16F` image with **split ownership**: `.r`/`.g` are part 1's,
   `.b`/`.a` carry INV-13's sun-clearance interval and are §4.4's. Its build, sampler,
   transform, cell-doubling rule and void ring are part 1's contract, inherited here
@@ -1218,7 +1223,7 @@ All three numbers are first guesses, tuned at L4 (Q7/Q20).
   does not. Exact thresholds, density, and `kHellTint` are tuned on hardware (Q7).
 
 Profiles compose: a goo room *on* a hell level gets both (green pool + red haze). **Densities add**
-(§4.3b's `Σ` term) but **tints multiply** — that room's `mediumTint` is `kGooTint · kHellTint`,
+(DOOM-0310 §4.1's `Σ` term) but **tints multiply** — that room's `mediumTint` is `kGooTint · kHellTint`,
 applied to the **sky** `Ls` contribution only (colour = light × medium); the torch term is
 untinted by decision (§4.4(b), 2026-08-03). Multiplication is the deliberate
 pick over a density-weighted blend: it keeps one `vec3` on the hot path and needs no per-profile
@@ -2180,8 +2185,12 @@ The other layers' Verify cells fit in a line. These two do not, so they live her
   a closed form with no loop but the haze varies with the sky pixel's **elevation** and has no
   plateau. **Amended again 2026-07-27 (§4.3c, DOOM-0272):** the optical depth is now a **sum of
   two** closed forms, the aerial one above plus the floor layer's (§4.3c) — omit the second and the
-  skyline gains a ~37 % step against the walls below it, which is the very seam this invariant
-  exists to prevent. The floor addend inherits every exclusion listed here: no `wisp`, no up-ray,
+  skyline gains a step against the walls below it, which is the very seam this invariant
+  exists to prevent. **The step's SIZE is the OUTDOOR pair — ≈0.17 optical depth / ≈16 % haze
+  with the eye 65 u above `pc.fogFloorZ`, not the ≈0.46 / 37 % an earlier draft quoted here.**
+  A sky pixel is open-sky by definition, so it takes the outdoor `baseZ`; 37 % is the *roofed*
+  case and cannot apply to a sky ray. DOOM-0310 §4.3 derives both, and this addend is sized by
+  the outdoor one. The floor addend inherits every exclusion listed here: no `wisp`, no up-ray,
   `skyExposure = 1`, `fogStrengthScale` applied once to the sum. A hard `min()` here is a defect, not a clamp (§4.6a). That is what lets a mountain rise out of the
   mist; a fixed distance never could. The wisp exclusion is
   **deliberate** (`wisp ≡ 1` for sky pixels) — a closed form requires constant density, and
