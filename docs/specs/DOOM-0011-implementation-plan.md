@@ -213,7 +213,9 @@ const vec3  kSunDir          = normalize(vec3(0.30, 0.30, 1.0)); // world; +z is
 const vec3  kGooTint         = vec3(0.35, 0.85, 0.30); // sickly green (L4)
 const vec3  kHellTint        = vec3(0.90, 0.35, 0.30); // faint red   (L4)
 const float kSkyShaftStrength   = 0.85;          // sky in-scatter gain (L1/L2); L1 shipped 1.0
-const float kTorchShaftStrength = 1.0;           // static-emitter in-scatter gain (L3)
+const float kTorchShaftStrength = 0.047;         // static-emitter in-scatter gain (L3). STALE
+                                                 // IN THIS PLAN AS 1.0 until 2026-08-03; 0.047
+                                                 // is what shipped. Spec §4.4(b) is authority.
 
 // Henyey-Greenstein phase (forward/back scatter weight); cosTheta = dot(viewDir, lightDir).
 float fogPhaseHG(float cosTheta, float g) {
@@ -1818,6 +1820,14 @@ git commit -m "DOOM-0289: bake the sun into a load-time clearance field and dele
 ---
 
 ## Task L3 — Height pooling + torch shafts (static emitters, nearest-few, no occlusion)
+
+> ⚠ **EXECUTED, AND THE TORCH HALF SHIPPED DIFFERENTLY (DOOM-0304, 2026-08-03).** This task
+> is done; the record below is kept as written, not rewritten. But do not build from its
+> torch sketch: the shipped `torchInscatter` does **no** runtime emitter scan and is **not**
+> unoccluded. Selection moved to a level-load bake — a per-cell, brightest-first list of at
+> most `kFogLightsPerCell` (= 2) lights on the seep grid, each sight-tested with
+> `P_CheckSightTrace`. The heading's "nearest-few, no occlusion" and Step 2's code sketch
+> both describe the superseded form. **Spec §4.4(b) is the authority.**
 
 **Goal:** Fog **settles low** into a floor layer, and **torches glow their surrounding air** in
 dark rooms — using only the existing static emitter slice.

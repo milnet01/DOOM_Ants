@@ -5614,3 +5614,88 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** The renderer's accuracy self-test is missing two checks its own design document says it has.
   Kind: test.
   Source: cold-eyes-2026-08-02.
+
+- 📋 [DOOM-0307] **An ordinary wall texture emits light because its pale panels clear the emitter gate.**
+  User report 2026-08-03, three F12 captures from a doom2 MAP01
+  play-test: "the perimeter wall looks like it is glowing". It does. The
+  wall's pale rectangular panels read as blown-out white while the
+  mottled green parts around them stay dark, so the wall reads as a bank
+  of lights rather than as masonry.
+
+  SAME SIGNATURE AS DOOM-0302, one layer earlier. There the per-texel
+  emissive mask made a nukage pool glow in patches; here the *material*
+  itself clears the emitter gate. `derive_material_le`
+  (`emissive_derive.h:86`) admits any tile whose near-fullbright texel
+  count clears `kEmitterPeakLum` / `kEmitterMinBrightFrac`, and it rates
+  brightness by VALUE (max channel) precisely so a saturated light is not
+  missed. A wall texture with large pale panels satisfies that as
+  readily as a lamp does, and nothing downstream asks whether the thing
+  is *supposed* to be a light. 1042 of 1962 materials are currently
+  flagged emissive.
+
+  REPRODUCED HEADLESSLY, and the two obvious explanations are both
+  excluded:
+    fog off      the panels are exactly as blown out at `rt_fog 0`, so it
+                 is not the volumetrics being milky
+    paletted art identical again with `DOOMASSETDIR` unset (`HD load done
+                 - 0 material(s)`), so DOOM-0042's HD art is not the
+                 source and DOOM-0178 is not implicated
+
+    ./linux/linuxxdoom -iwad ../wads/doom2.wad -warp 1 \
+        -warpto -700 597 180 -config <fog-off cfg> -shotverify out.png
+
+  NOT YET ESTABLISHED, and the fix shape depends on it: how many of the
+  428 wall textures clear the gate. The 1042 figure is dominated by the
+  1381 sprites and says nothing on its own. A per-class count is one
+  temporary print in `ComputeMaterialEmissive`, and is the first step —
+  if most walls qualify then the gate is wrong for walls as a class, and
+  if a handful do then it is a per-texture allow/deny question like
+  DOOM-0157's sprite_glows list.
+
+  Sequence: it is a look defect on a shipped path, so it outranks the
+  DOOM-0011 tail. Related but distinct: DOOM-0084 (the mask this reuses),
+  DOOM-0193 (dial UP the intended glows — do not confuse the two).
+  **Layman:** A plain outdoor wall glows white in patches, as if it were a light rather than a wall.
+  Kind: fix.
+  Lanes: shaders, rt.
+  Source: user-play-test-2026-08-03.
+  Measured (2026-08-03), and it is a CLASS problem, not a handful:
+
+    doom2.wad   82/428 walls, 20/153 flats, 940/1381 sprites emit
+    doom.wad    60/287 walls, 19/111 flats, 479/764 sprites emit
+
+  Roughly one wall texture in five is a light source. Temporary probe in
+  UploadAtlas printed the emissive wall ids with their summed Le; ids
+  mapped to names offline from the WAD's TEXTURE1 lump (the back end is
+  DOOM-header-free, so it cannot name them itself). Probe REVERTED.
+
+  The gate does not merely over-fire — it cannot tell the two apart. The
+  same threshold admits both of these:
+
+    legitimately a light      FIREWALL / FIREWALA / FIREWALB (11-12),
+                              DOORYEL2 (7.97), SW1CMT / SW2CMT (12.86)
+    plainly not a light       CEMENT1..CEMENT9 (7.5-17.1) -- nine plain
+                              grey concrete walls, and the likeliest
+                              match for the wall in the user's shots;
+                              ZZWOLF2/3/4/6/7/13 (5.2-16.3) and
+                              ZDOORB1 / ZDOORF1 (38.47, the two BRIGHTEST
+                              emitters in the IWAD) -- Wolfenstein walls
+                              and doors; SKINFACE / SKINLOW / SKSNAKE1 /
+                              SKSPINE1 / SKSPINE2 (7.1-14.6); AASHITTY
+
+  SKY2 (19.76) is its own question and should not be lumped in: the sky
+  arguably SHOULD be a light source, but it is already the sun via
+  kSunDir, so it may well be counted twice today.
+
+  What this rules out: a per-texture deny-list. Nine CEMENTs, six
+  ZZWOLFs and five skin walls is not a list, it is a missing distinction
+  -- "pale" is being read as "bright". Two shapes worth weighing before
+  building either: (a) require SATURATION or hue, so a near-neutral pale
+  panel fails where a coloured or fiery one passes; (b) require the
+  bright region to be a small fraction of the tile, so a lamp's lit face
+  passes and a whole pale wall does not -- note kEmitterMinBrightFrac is
+  currently a MINIMUM, so adding a maximum is a small change to an
+  existing gate rather than a new one.
+
+  Do NOT re-measure to rediscover the above; the counts and the names are
+  here.
