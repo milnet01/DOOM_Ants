@@ -1,6 +1,18 @@
 # DOOM-0011 — Volumetric lighting (god-rays + fog) in the ray-traced view
 
-**Status:** **L1 + L1b implemented and user-play-tested** (uniform-haze skeleton 84e8b35, base-density
+**Status:** **BEING SPLIT — part 1 is now [DOOM-0310](DOOM-0310-fog-density-fields.md)**
+(§4.3/§4.3a–c extracted 2026-08-03; see the §4.3 pointer below). Parts 2 (§4.4) and 3
+(§4.6/§4.6a) are still to be extracted and remain in this document.
+
+**Shipped:** L1, L1b, L1c, L1d, L1e, L2, L2b, L3 and L3b, all user-play-tested, plus the
+DOOM-0272/0276/0281/0289/0292/0295/0296/0300 amendments. Fog costs **0.83 ms of a
+14.96 ms megakernel** (2026-08-02). **Remaining layers: L4, L5, L6.** L4's density term
+and its gate are pinned in DOOM-0310 §4.1/§4.4; its tint decision is settled (a torch
+shaft is **not** tinted by the medium — `mediumTint` applies to the sky term only, user
+2026-08-03).
+
+*Historical status line, kept because the amendment log below is written against it:*
+**L1 + L1b implemented and user-play-tested** (uniform-haze skeleton 84e8b35, base-density
 tune e7753b3; fog-placement standard + sky-backdrop aerial fog 1345c92 — user 2026-07-25:
 "looking fantastic… covers the mountains… outside and not inside"). **A 2026-07-25
 amendment retargets the look at Silent Hill 2 (§4.3b, wisps) and softens the indoor
@@ -167,10 +179,9 @@ number as advisory, and record any drift you fix in `DOOM-0011-fix-ledger.md`.
 ## Contents
 
 - §1 Goal — §2 Where this sits — §3 The problem, precisely — §4 Design
-  (4.1 hook · 4.2 the march · 4.3 density & colour · **4.3a open-sky exposure — the
-  fog-placement standard** (+ the outdoor-proximity seep) · **4.3b the Silent Hill 2
-  look — drifting two-octave wisps** · **4.3c two layers: the aerial layer and the
-  floor fog** · 4.4 light sources & shafts (+ **the sun-clearance field**, DOOM-0289) ·
+  (4.1 hook · 4.2 the march · **4.3 density & the fields — MOVED to
+  [DOOM-0310](DOOM-0310-fog-density-fields.md), part 1 of 3** ·
+  4.4 light sources & shafts (+ **the sun-clearance field**, DOOM-0289) ·
   4.5 area profiles ·
   4.6 half-res, denoise, composite · **4.6a fogging the sky backdrop (aerial
   perspective)**) —
@@ -313,830 +324,51 @@ Phase: a **Henyey–Greenstein** phase with a mild forward bias `kFogAnisotropy`
 sky/torch shafts read as beams rather than a flat glow. Isotropic (g=0) is the
 fallback if HG reads busy (Q5).
 
-### 4.3 Density & colour
-
-> **L3's height pooling was PULLED FORWARD and shipped 2026-07-27, ahead of L2.** User verdict on
-> the uniform-density build: *"a fog look is applied to geometry instead of an actual cloud near
-> the ground. If we can emulate a cloud near the ground, that should resolve everything."* That is
-> the correct diagnosis — with `fogDensity()` returning a constant, every surface is simply greyed
-> in proportion to its distance and nothing ever reads as standing *in* anything. Pooling is what
-> turns the tint into a medium, so it stopped being an L3 nicety and became the point.
->
-> It then took **three** passes on the same day to get right, and the two failures are worth
-> keeping because both were invisible to review and obvious in a screenshot.
->
-> **Pass 1 — pooling, at `kFogPoolHeight = 48`.** Too shallow a gradient: the floor was only 2.4×
-> thicker than eye height, which nobody can see. User: *"it is applied to the walls but not the
-> floor."*
->
-> **Pass 2 — re-balance to `0.0033 / 18`,** holding the eye-height product fixed
-> (`0.0008 × exp(−41/48) = 0.000340` vs `0.0033 × exp(−41/18) = 0.000338`) so only the near-ground
-> air moved. The ground did thicken. It also exposed the real bug, which pass 1 had been hiding.
->
-> **Pass 3 — THE DEFECT: density depended on what the ray hit.** `floorZ` came from the primary
-> hit — `hitP.z` when it faced up, else the camera's floor. Standing on a ledge above a courtyard,
-> that gives **two clouds at two heights in one view**: every wall pixel referenced the ledge, so
-> its cloud sat high and hazed the wall; every floor pixel referenced the courtyard, so its cloud
-> sat low and the eye looked down over the top of it and collected almost nothing. The user
-> photographed it and named it exactly: *"we are not actually rendering a cloud, we are simulating
-> the look of a cloud but only on some surfaces, not all."*
->
-> **The invariant that fixes it, and that nothing may break again: the density at a point in
-> space must be a function of that point and nothing else.** In particular it must not depend on
-> what the ray carrying the sample eventually hits. The reference is now chosen per sample
-> position:
->
-> | sample is | fog sits on | e-fold height |
-> |---|---|---|
-> | under open sky | `pc.fogFloorZ` — one altitude for the whole level | `kFogPoolHeight` = 112 |
-> | under a roof | the floor under the camera, `ro.z − kEyeAboveFloor` | `kFogIndoorPool` = 18 |
->
-> `pc.fogFloorZ` is the lowest floor among the level's open-sky sectors, computed once in
-> `RB_BuildLevelMesh` (`rb_mesh_t::fogFloorZ`) and pushed as a bit-cast float in the pad word
-> `misc6`'s alignment already required — so the push range is unchanged at 240 bytes. A real fog
-> bank has an altitude, not a per-pixel one; stand on a high ledge and you now correctly look down
-> onto its top. Indoors keeps a camera-relative reference because a single global Z **is** wrong
-> there — interior rooms sit hundreds of units above and below the outdoor ground — and it is
-> still a per-frame constant, so the invariant holds.
->
-> `kFogFloorFallback` was never added and is **not** in the tree; §5's inventory reflects that.
->
-> **Outdoor thickness, same pass.** User: *"outside I want the fog much, much thicker and higher."*
-> Delivered by raising the outdoor e-fold height 18 → **112**, with `kFogBaseDensity` left alone.
-> The bank now reaches well up a courtyard wall instead of sitting below every sight line. At High,
-> standing on E1M1's courtyard (65 units above the fog altitude):
->
-> | | 256 u | 512 u | 1024 u | 2048 u |
-> |---|---|---|---|---|
-> | ground | 44 % | 68 % | 90 % | 99 % |
-> | wall at eye height | 38 % | 61 % | 85 % | 98 % |
->
-> **Ground and wall now agree to within a few points at every distance** — that agreement *is* the
-> fix, and the small residual is correct (a ground ray dips into thicker air). A far wall at 1024
-> reads 90 % at its base, 73 % at +128 and 58 % at +256: a vertical gradient, which is what a bank
-> looks like. Standing on the ledge instead (121 units up) everything drops by roughly a third,
-> because you are higher in the layer.
->
-> **`kFogPoolHeight` is the outdoor dial** — raise for a deeper bank. It is no longer paired with
-> `kFogBaseDensity` the way pass 2 described: the sky term now derives its own path length from it
-> geometrically (§4.6a), so raising it thickens the horizon too.
-
-- **Base density** `kFogBaseDensity` — a small always-on `const` so "clear air"
-  still shows faint shafts (pure zero = no shafts at all). This is the "clear"
-  profile.
-- **Height pooling** — density scales up toward the floor:
-  `heightPool = exp(-max(0, p.z − baseZ) / poolH)` (called `heightPool`
-  throughout; earlier drafts named it `σ_height`). `baseZ` and `poolH` come from the
-  open-sky test on the sample's own position, per the table above — **never** from the
-  primary hit, which is the pass-3 defect. This makes fog **settle low** without new
-  geometry data. Its coarseness (one indoor floor reference per
-  pixel) is an accepted v1 approximation (Q3).
-- **Area multiplier & tint** (§4.5) — the profile scales `σ` and sets the medium's
-  **scattering tint** `mediumTint` (green in goo, red in hell, neutral in clear).
-- **Colour of a shaft = light colour × medium tint.** Sky shafts inherit the fog's sky
-  tone — **`kFogColor` (§4.3b), which SHIPS at `(0.55, 0.56, 0.56)` and is what `marchFog`
-  in-scatters (`pathtrace.comp`, the `Ls = kFogColor * kSkyShaftStrength` line). This
-  passage previously said it was unshipped and that the tree still used `SKY_COLOR`;
-  that was stale, corrected 2026-08-03** —
-  torch shafts inherit the emitter's `Le`
-  colour. **Only the sky term is multiplied by `mediumTint`** (user decision 2026-08-03,
-  §4.4(b)): a sky shaft in hell is sky-through-red, but a torch shaft in a goo room stays
-  **warm**, not warm-through-green. Tint colours and
-  strengths are compile-time `const`s (`kGooTint`, `kHellTint`, …), tuned on
-  hardware toward the DOOM-0193 exaggerated look. Start subtle.
-
-### 4.3a Open-sky exposure — the fog-placement standard
-
-**The standard (user 2026-07-24):** *fog lives under open sky.* A pocket of air that
-can see the sky carries **full** density; a pocket under a solid roof carries **little
-to none**. This is the single rule for where the **sky-sourced haze** is thick vs thin (area
-profiles, §4.5, add their own density on top), and it is
-DOOM-native: an open-air area is exactly a sector whose ceiling is the sky flat
-(`ceilingpic == skyflatnum`) — the same signal the engine already uses to draw open-air
-(`r_mesh.c:452`). Formally, density gets one more multiplier:
-
-`σ_final` is spelled out **once**, in §4.3b — it is the single authority. In outline:
-the sky-sourced haze `kFogBaseDensity · skyExposure` plus the area profile's own density,
-all scaled by height pooling, the wisp term and the `rb_fog` strength dial.
-
-**`skyExposure` gates the SKY-SOURCED haze only — never the area profiles.** This is
-load-bearing and was got wrong in the first draft of this section. Goo rooms, hell
-interiors and torch-lit dark rooms are all **roofed**, so a formula that multiplied the
-*whole* product by `skyExposure` would drive their density to `kIndoorFogScale`
-(0–10 %; Q12 originally offered exactly `0`, since struck) — silently cancelling §4.5's green goo pool and
-§4.5's red hell haze, and making L4's own falsifier ("E3M1 shows haze") fail by
-construction.
-
-**What the split does NOT rescue: the plain roofed room.** A dark, dry, non-hell
-interior is the **clear** profile, which contributes no `areaMult` density — so its air
-is `kFogBaseDensity · kIndoorFogScale`, exactly the whole-product behaviour. L3's torch
-shafts need *something* in that air to light, so **`kIndoorFogScale` must be > 0**: Q12's
-`= 0` option is therefore **struck** (it would make L3's own falsifier, "a torch in a
-dark room glows its surrounding air", unachievable). The shipped value is `0.05`
-(`pt_common.glsl:47`). The two terms have different *sources* and so take
-different gates: outdoor haze comes **from the sky** and must vanish under a roof;
-goo outgassing and hell's haze are properties of **the room** and must not.
-
-where **`skyExposure ∈ [kIndoorFogScale, 1]`**: `1` under open sky, `kIndoorFogScale`
-(a small `const`, ~`0.02`..~`0.1` — `0` is struck, see below; Q12) under a roof. **As shipped in L1b the
-value is binary per sample** — exactly `1` (the open-sky test passed) or exactly `kIndoorFogScale`
-(it failed); the interval names the tunable endpoints, not a graded
-per-sample value. The *smooth* indoor↔outdoor gradient in the final image emerges from
-many binary samples averaged across the march + the half-res denoise (§4.6).
-**Superseded on the indoor side by the 2026-07-25 amendment at the end of this
-section** — the indoor branch becomes a position-dependent seep; the open-sky branch
-(`= 1`) is unchanged. **The *test* that picks the branch is superseded in turn by the
-2026-07-27 amendment (DOOM-0276)** — it is a field lookup, not a ray. The two values
-either branch yields are untouched by that change.
-
-**How `skyExposure` is measured — per march sample ("true volumetric", user's
-explicit pick 2026-07-24 over the cheaper per-surface flag). The MECHANISM below —
-one ray per sample — is what L1b shipped and what the 2026-07-27 amendment replaces;
-the *granularity* it argues for (per sample, not per surface) survives that change.**
-At each sample point
-`p` the march casts **one shadow ray straight up** (world `+Z`) with the standard
-shadow-ray cull mask **`0x01`**, over a finite length `kFogMaxDist` (so a ceiling more
-than `kFogMaxDist` = **2048** units overhead reads as open sky — harmless in vanilla geometry, but state it
-rather than implying an unbounded ray). That mask sees only solid world geometry — the sky
-backdrop is a separate TLAS instance on mask `0x04` (`r_vulkan.cpp:2020`) that
-"primary rays only" see (`:1923`), so a `0x01` up-ray **cannot hit the sky instance**.
-Therefore: **the up-ray MISSING all geometry means the pocket is under open sky** (the
-solid ceiling that would block it isn't there) → `skyExposure = 1`; a **hit on solid
-geometry** (a real ceiling) → `skyExposure = kIndoorFogScale`. (Detecting open sky via
-the *miss* needs no mask change; the alternative — widening the up-ray to `0x01|0x04`
-to hit the sky dome directly — is unnecessary here.) This is what makes the haze
-genuinely **fill the outdoor volume and cut off at a doorway threshold** — a sample
-just inside the roofline hits the ceiling above it and reads clear, so you get a wall
-of mist at the door, not fog leaking indoors. It reuses the existing ray-query
-machinery and is the **same order of ray as the L2 sky-visibility shaft test**
-(§4.4(a)) — no new buffers.
-
-**Cost + the built-in cheap fallback (perf lever, §6).** The up-ray adds **one ray per
-march sample** — at `kFogSteps`×half-res it is the dominant new cost, so L1b (§7)
-measured it on hardware, and **the up-ray shipped** (1345c92). The fallback below was
-not needed and is retained as a **standing perf lever** — a **per-surface openness bit**
-with near-zero cost:
-- A free flag bit **`RB_MESH_OUTDOOR = 0x100`** on the per-vertex geometry `flags`
-  word (bits `0x1..0x80` used, storage is a 32-bit int → `0x100` is free with no
-  format change, `r_mesh.h:82-101`).
-- Set at mesh-build time from `frontsector/sector->ceilingpic == skyflatnum`, OR-ed
-  into the `flags` word each surface already carries: **walls** — `emit_wall` receives
-  `seg_t* seg` and already dereferences `seg->frontsector` for lightlevel
-  (`r_mesh.c:275`), so derive the bit from `seg->frontsector->ceilingpic == skyflatnum`
-  there (or OR it into the `flags` argument at the four `emit_wall` call sites in
-  `RB_BuildLevelMesh`); **flats** — `emit_subsector_caps` already branches on
-  `sec->ceilingpic == skyflatnum` (`r_mesh.c:452`, inside the `:443-456` cap block).
-- Already carried to the march in `FogHit.matFlags` with **no** new plumbing (the raw
-  flags word is passed at both call sites, `pathtrace.comp:1079` / `:1208`), so
-  `marchFog` just tests `(h.matFlags & uint(RB_MESH_OUTDOOR)) != 0u` (the shader-side
-  mirror carries the same name as the C-side bit, so there is one name, not two).
-
-The fallback gates fog by whether the **surface you look at** is open-sky (whole-view
-granularity, no doorway cutoff) instead of per-pocket — cheaper, coarser. The primary
-path is the per-sample up-ray; the flag is the escape hatch and can also back a
-future cheaper "Low" quality tier. The **sky backdrop** (the mountains) is open-sky by
-definition → always `skyExposure = 1` (§4.6a); no up-ray is needed for a sky pixel.
-
-**2026-07-25 amendment — the indoor value becomes a graded seep.** The binary gate
-shipped in L1b and reads correctly (user play-test 2026-07-25: fog is "outside and not
-inside"). The user asked for one softening: *"have a little bit of the fog come in by
-open areas exposed to outside."* So the **indoor** value is no longer the flat
-`kIndoorFogScale`; it fades from a fraction of full strength at the opening down to
-`kIndoorFogScale` deep inside:
-
-```
-skyExposure = openSky ? 1.0
-                      : mix(kIndoorFogScale, kSeepMax, exp(-d / kSeepFalloff))
-```
-
-- **`d`** = distance from the sample to the nearest open-sky air, measured **through
-  open space**, not straight-line — so fog cannot bleed through a solid wall into a
-  sealed room next door.
-> **User target for the seep, given 2026-07-27 while looking at the shipped outdoor layer:**
-> *"that is how I want the fog indoors in rooms that have a window / door to the outside."*
-> "That" is the shallow knee-height bank — `kFogIndoorPool = 18` at roughly the pre-112 outdoor
-> thickness. So the seep's job is to raise `skyExposure` from the `kIndoorFogScale` floor toward
-> **≈ 1.0** near an opening, not toward the outdoor bank's full strength (which pairs with the
-> 112-unit pool, not the 18-unit one). `kSeepMax ≈ 0.5` below is therefore probably **too low** —
-> re-judge it against the shipped indoor pool when L1d lands. Until then interiors stay near-clear
-> at the flat `kIndoorFogScale = 0.05`, which is deliberate: nothing today can tell "room with a
-> window" from "room buried three doors deep", and the user was explicit at L1b that fog belongs
-> *"outside and not inside."*
-
-- **`kSeepMax` ≈ `0.5`** — even standing in the doorway, indoor air reaches at most
-  half outdoor strength. This is the "a little bit" the user asked for; it must not
-  become a second outdoors.
-- **`kSeepFalloff` ≈ `192`** DOOM units — roughly a doorway-to-back-wall depth (Q16).
-- **The open-sky test still decides `openSky`, and the seep does not touch it.** (Which
-  test that is changed on 2026-07-27 — see the DOOM-0276 amendment; at the time this
-  paragraph was written it was the up-ray.) The seep replaces only the *indoor*
-  constant, so the outdoor look L1b shipped is preserved **exactly** (`openSky` → `1.0`
-  on both sides of the amendment). Per sample the value is still one of two branches;
-  what changed is that the indoor branch now varies with position instead of being
-  constant.
-
-**Where `d` comes from — a load-time distance field (user's pick 2026-07-25, chosen
-from three offered options).** At level load, lay a coarse **2-D grid** over the map's
-XY extent (start `64`-unit cells, matching DOOM's flat grid), seed every cell in an
-open-sky sector (`ceilingpic == skyflatnum`) at `d = 0`, then **flood outward through
-connected open space only**, so the fill travels through doorways and archways but never
-through a wall.
-
-**The connectivity test is an OPENING test, not a one-sidedness test.** A step to a
-neighbouring cell is allowed only where the linedef between them is **two-sided *and* the
-two sectors' openings overlap** — `min(front.ceilingheight, back.ceilingheight) >
-max(front.floorheight, back.floorheight)`. Testing merely "not one-sided" is **wrong**
-and would break INV-12: in vanilla DOOM a **closed door is a two-sided linedef** whose
-sector has `ceilingheight == floorheight`, as are windows, ledges and raised lifts. Under
-a one-sidedness test the flood would pour straight through every shut door, seeping fog
-into a door-sealed closet beside a courtyard. This is exactly `P_LineOpening`'s `openrange > 0`
-(`p_maputl.c:300-331`), so reuse it rather than re-deriving it. Doors are evaluated at
-their state **at flood time**, and since **DOOM-0281** (2026-07-27) the field is re-flooded
-whenever one of those `openrange > 0` answers actually flips — so a wall that opens in play
-does let the fog in, and INV-12 still holds because connectivity is re-decided from real
-openings rather than assumed (Q22).
-
-**Flood over SEGS, then rasterise — not over grid cells.** A cell-to-cell test cannot work,
-for two reasons. First, two adjacent 64-unit cells have no single "linedef between them" to
-test. Second, comparing the two cells' *sector heights* says **nothing about whether a wall
-stands between them** — a courtyard and a sealed closet with matching floor and ceiling
-heights pass any height comparison trivially. Either way the flood walks straight through
-the wall and breaks INV-12 in the common case. One-sidedness lives on the **linedef**, so
-the traversal must follow linedefs:
-
-**Adjacency comes from SECTORS, not subsectors — but the search's nodes are the PORTALS between
-them (step 1).** This matters and is easy to get wrong.
-Vanilla DOOM has **no minisegs**: `P_LoadSegs` gives every `seg_t` a `linedef`
-(`p_setup.c:196-198`), because the SEGS lump only ever contains linedef-backed segs. So
-two BSP leaves of the *same room*, split by a partition line, share **no seg at all** —
-a subsector graph built from segs would leave every multi-leaf hall or courtyard
-disconnected, and `d` could not propagate inward from a doorway. A **sector** is the
-room, and segs give sector-to-sector adjacency through exactly the linedefs whose
-openings we want to test, so the partition problem disappears rather than being worked
-around. What the search *settles* is nevertheless one value per **portal**, never one per sector —
-step 1 gives the reason.
-
-1. **Nodes = portals, not sectors** — the search state has to be the *opening*, because
-   step 3 needs two portals of the **same** sector to carry **different** distances, and a
-   sector-indexed Dijkstra can only ever settle one value per sector (which is exactly the
-   flat-per-room result step 3 forbids). A **portal** is one surviving `seg_t`, sited at
-   its midpoint. A seg survives iff it has a `backsector`, its `linedef` is two-sided **and**
-   `P_LineOpening(seg->linedef)` leaves the file-scope global `openrange > 0`
-   (`p_maputl.c:300-331` — it returns **`void`** and writes `opentop`/`openbottom`/
-   `openrange`/`lowfloor`; call it and read the global, don't re-derive it, and keep the
-   flood **single-threaded** since those globals are not re-entrant). A one-sided seg is a
-   wall and contributes no edge. **Also require `linedef->frontsector !=
-   linedef->backsector`:** a self-referencing sector (the vanilla deep-water / fake-wall
-   trick) is two-sided with a full-height opening but is *drawn* as a solid wall, so
-   without this test the flood walks straight through it — the INV-12 leak in another
-   costume. A one-sided seg is a wall and yields no portal.
-2. **Edges join two portals that share a sector**, weighted by the distance between their
-   midpoints — that is the path fog would actually travel across that room. **Seed** every
-   portal at `d = 0` if *either* of its sectors has `ceilingpic == skyflatnum`, then run
-   Dijkstra from the whole seed set at once. Weights are non-negative and the graph is
-   finite, so it terminates. The result is `d(portal)` for every opening in the map: how
-   far that doorway is, through open space, from outdoor air.
-3. **Resolve `d` per GRID CELL, not per node.** For each 64-unit cell, take
-   `d(cell) = min over the portals of the cell's own sector of ( d(portal) + |cell centre
-   − portal| )`, clamped to `dMax`; an outdoor cell is `0`. **A per-node value would
-   defeat the whole feature:** `d` would be constant across an entire room, so
-   `exp(-d/kSeepFalloff)` would step abruptly at the room boundary and hold flat inside —
-   which is precisely the behaviour rejected as option (C) below and precisely what the
-   user asked to soften. The gradient must come from the cell's distance to its own
-   doorway. Cells that resolve into **void space** (outside any sector) take `dMax`.
-
-`R_PointInSubsector` maps a cell centre to its leaf and thence to `->sector`; `r_mesh.c`
-already walks the BSP and already calls it, so the machinery is in hand.
-
-Upload as a small single-channel 2-D texture (§5); the march takes **one bilinear tap**
-at `p.xy` per sample. No rays, no noise, and its load-time cost is budgeted at **≤ 20 ms
-on E1M1** (§7, L1d).
-
-**The three degenerate cases, pinned so the implementer does not have to guess:**
-- **A level with no open sky at all** (most hell maps: no sector has `ceilingpic ==
-  skyflatnum`). The seed set is empty, so **every cell gets `dMax`** and the seep term
-  collapses to exactly `kIndoorFogScale` — i.e. the shipped L1b look, unchanged. This is
-  the correct behaviour, not a failure: with no outdoors there is nothing to seep in.
-- **Unreachable cells** (a sealed room, and every cell in void space outside any sector)
-  take the **finite** sentinel `dMax = 8 · kSeepFalloff`. It must be finite: a half-float
-  `+inf` multiplied by a zero bilinear weight yields `NaN`, which would propagate into
-  `σ` and blow the whole march.
-- **A map whose XY extent exceeds the field budget** (§5 sizes it for ≤ `256×256` cells):
-  **double the cell size and rebuild**, repeating until it fits. Coarser cells only blur
-  the seep's edge (Q19); they cannot break INV-12, because connectivity was decided on
-  the seg graph before rasterisation.
-
-**Sampler state is part of the contract:** `CLAMP_TO_EDGE` on both axes. A march sample
-can legitimately land outside the map's XY box (the `tHit` clamp lets `p` run past the
-geometry toward the sky backdrop), and under `REPEAT` an outdoor `d = 0` at one map edge
-would wrap onto indoor air at the opposite edge. For that to be true rather than merely asserted, **pad the grid by one cell beyond the
-map's XY bounding box**: the padding ring lies outside every sector, so it takes the void
-value `dMax` by the rule above, and `CLAMP_TO_EDGE` then extends *that* outward. Without
-the padding a level whose outdoor sector runs flush to its bounding box would clamp an
-outdoor `d = 0` out past the map edge — the opposite of the guarantee.
-
-**Why a 2-D field is sufficient here.** Vanilla DOOM has **no room-over-room** — any XY
-column belongs to exactly one sector, and `r_mesh.c` emits exactly one floor and one
-ceiling cap per subsector — so projecting to XY loses no *topology*.
-(Source-port-style 3-D floors would break this; DOOM_Ants renders vanilla geometry, so
-it is out of scope.) It is deliberately **not** claimed to be *exact*: `d` is a
-grid-quantised, 64-unit-cell connected distance, not a true geodesic (Q19), and it is
-**height-invariant**, so air near the ceiling of a tall hall reads the same `d` as air at
-the floor. Sufficient for a soft seep; not a distance oracle. (Until 2026-07-27 there
-was a contrast to draw here: `openSky` was fully 3-D while `d` was not. The DOOM-0276
-amendment moves `openSky` onto this same grid, so both now share its quantisation —
-which is the whole of what that amendment costs.)
-
-**Rejected alternatives** (all three were put to the user): **(B) extra sky-visibility
-rays per sample** — no load-time work and correct in full 3-D, but it multiplies the
-march's ray cost and adds sparkle at half-res; **(C) the per-room `RB_MESH_OUTDOOR` flag
-as the indoor grade** — free, but fog would step abruptly at the room boundary rather
-than drifting in, which is precisely the behaviour the user asked to soften. Note (C)
-here is a **different role** from the same flag's use above as the up-ray's *perf
-fallback*; the two are independent.
-
-**2026-07-27 amendment (DOOM-0276) — the up-ray becomes a field lookup.** The A/B
-measurement in §6 put the whole fog at **+8.38 ms / +34.7 % present-total**, of which
-**7.93 ms is inside the megakernel** — over the ≤ 15 % gate, and the up-ray is the pole:
-one ray query per sample × `kFogSteps` = 24 × every fog pixel.
-
-**It does not need a ray, and the reason is the same one §4.3a's own "why a 2-D field is
-sufficient" paragraph already gives.** Vanilla DOOM is flat-mapped — `R_PointInSubsector`
-takes `(x, y)` only and returns exactly one sector, hence exactly one `ceilingpic`. "Is
-there sky above this point" is therefore a **pure function of XY**, and the up-ray was
-doing 3-D work on a 2-D question. The field L1d builds is indexed by exactly that key.
-
-**Mechanism: a second channel, not a threshold on the first.** *(Format superseded
-2026-07-30: DOOM-0289 widened this image again, to `RGBA16F`, adding the sun-clearance
-interval on `.b`/`.a` — §4.4's amendment. Nothing about the `.r`/`.g` channels described
-here changed, but a snippet below that reads `.rg` into a `vec2` now reads a `vec4`.)*
-The seep field becomes
-`R16G16_SFLOAT` — `R` = the through-open-space distance `d` exactly as L1d shipped it,
-`G` = an **open-sky mask**, `1.0` where the cell centre's sector has `ceilingpic ==
-skyflatnum`, `0.0` otherwise (and `0.0` on the void ring, which must read roofed for the
-same reason it reads `dMax`). The march's existing single tap answers both questions:
-
-```glsl
-vec2  seep    = texture(uSeepField, worldToSeepUV(p.xy)).rg;
-bool  openSky = seep.g > 0.5;
-float seepD   = seep.r;
-```
-
-**Why the mask cannot be `d < ε`.** `d = 0` does mean "outdoor cell", but a *roofed* cell
-one step inside a doorway carries a `d` of only a few units — the portal it walks to is
-seeded at zero. The two are not separable by any epsilon, and an epsilon that tried would
-put the full outdoor bank inside the first room behind every door. The mask is a distinct
-fact and gets a distinct channel.
-
-**What the change costs, stated so it can be judged on screen.** Three differences from
-the ray, none of them free:
-1. **The roofline moves onto the grid.** Bilinear + a `0.5` threshold puts the boundary
-   midway between differing cell centres, so it is accurate to **half a cell (32 units)**
-   and follows the grid rather than the wall. The mist wall at a doorway threshold softens
-   and may sit up to 32 units either side of the door. This is the one visible cost.
-2. **Height-invariance.** The ray was 3-D; the field is not. Air under a roof more than
-   `kFogMaxDist` = 2048 units up used to read *open sky* (the ray ran out) and now reads
-   roofed — the field is the more correct of the two here.
-3. **The void ring reads roofed** where an unbounded ray would have missed. This one is
-   free, but only after a **latent bug in L1d had to be fixed to make it so** (found by
-   the review of this amendment). Two facts have to hold together:
-   - *No march sample leaves the map's XY bounding box.* `marchFog` is called only on the
-     surface-hit branch (`pathtrace.comp:1255`, `:1384`) — sky pixels take §4.6a's closed
-     form and never march — so every sample sits on the segment from the camera to a real
-     geometry hit. Both endpoints are inside the box, so the whole segment is.
-   - *No in-box sample can weight a ring cell either.* That is what the ring being **one
-     full cell outside** buys — but it only holds if the interior cells reach **past**
-     `maxX`/`maxY`, and L1d sized the grid with a **truncating** divide
-     (`(int)((maxX-minX)/cell) + 3`), which left the last interior centre short of `maxX`
-     by up to a cell. Real air along the `+X`/`+Y` edges therefore got a bilinear weight on
-     the void's sentinel. Fixed to `ceilf` in the same change; `centre(gw-2) = minX +
-     ceil(Δ/cell)·cell ≥ maxX` is what makes the ring provably unreachable. E1M1's grid
-     goes 74×47 → 75×47, so this was live, not theoretical.
-
-**What it does not change.** Both branch *values* (`1.0` and the seeped indoor grade), the
-`σ` composition (INV-9), the sky-backdrop closed form (§4.6a — it never cast an up-ray),
-the field's build, its sampler, its transform, and the tap count in `marchFog`. The only
-new bytes are the field's second channel — it doubles a small texture: `≤ 256 × 256 × 4` =
-256 KB at the worst-case grid, and E1M1's actual 75 × 47 field is 14 KB.
-
-**Not to be confused with the `RB_MESH_OUTDOOR` fallback** named above and in §6. That
-lever traded the doorway cutoff for **whole-view** granularity and would have coarsened
-the seep with it; this keeps per-sample granularity and coarsens only to the cell.
-
-### 4.3b The Silent Hill 2 look — drifting two-octave wisps
-
-> **User play-test of the SHIPPED fog, 2026-07-26 — read before tuning L1c.** Verdict on L1/L1b at
-> High: *"I really like the fog, it can be slightly darker though. It is quite bright when
-> outside."*
->
-> **This is in tension with L1c as specified, and the tension must be resolved deliberately.**
-> The outdoor brightness comes from the sky in-scatter term, gated to full strength outdoors by
-> L1b's `skyExposure`: `skyAmbient = SKY_COLOR * kSkyShaftStrength`. **Answered 2026-07-27:**
-> `kSkyShaftStrength` went `1.0` → **`0.85`**, and the same gain was added to both sky closed
-> forms, which had omitted it — a no-op only while the gain was 1.0, and a visible seam the moment
-> it moved. This constant is the right knob because it scales in-scatter *brightness* alone; how
-> much the fog hides is `kFogBaseDensity`'s job.
->
-> **Settled by what L1c actually shipped (2026-07-30).** L1c planned two brightness-raising
-> moves and made only one. The near-white tone landed — `kFogColor` ships at
-> `(0.55, 0.56, 0.56)`, neutral by construction. The **≈2× `kFogBaseDensity` raise was tried
-> and reverted**; density still ships at `0.0033`. So `kSkyShaftStrength` = 0.85 was re-checked
-> against a smaller change than this passage anticipated, and it held.
->
-> **What L1c must do about it:** treat "slightly darker outside" as an acceptance criterion, not a
-> later polish pass. The cheapest lever is `kSkyShaftStrength` (a single `const`, no new plumbing);
-> the near-white `kFogColor` can also be taken down in value without losing its colourlessness —
-> near-white is about *saturation*, not brightness, and a light grey satisfies the Silent Hill 2
-> reference as well as a near-white does. Do **not** reach for `kFogBaseDensity` to fix
-> brightness: the wisps are a multiplier on density (§4.3b), so lowering it flattens the
-> billows along with the brightness.
-> This is the same trap Q24 guards on the sky side.
->
-> **The user likes the effect** — this is a tuning note, not a rejection. Judge it at High
-> strength outdoors, which is where they saw it.
-
-**The target (user 2026-07-25, with reference screenshots).** Silent Hill 2 (original
-PS2, 2001): **near-white, colourless** fog, thick enough that the world fades toward
-flat grey at middling range, and — the quality L1b's uniform haze misses — full of
-**billowing wisps of visibly varying thickness that drift slowly past**.
-
-**What SH2 actually does.** Researched 2026-07-25; it is three stacked things, not one.
-**One caveat on the evidence up front:** the `[FOG]` values below are reverse-engineered
-from the **PC port** by an enhancement project, so its "original" column means *the PC
-port's* originals — PS2 parity is assumed, not verified. Another reason the two-octave
-design is an analogy rather than a derivation.
-1. Hardware **distance fog** — the base grey-out. This is what L1/L1b already are.
-2. **Two fog layers combined at different densities and alphas**, at least one of them
-   scrolling. The Silent Hill 2 Enhancements project's reverse-engineered `[FOG]` block
-   gives as **original** values: both layer alphas `128`, layer-1 scroll `0.125`,
-   layer-2 density multiplier `1.0` with offset `0.0`. Its **modified**
-   (Enhanced-Edition) values are layer-1 X scroll `0.250`, layer-2 alpha `90`, density
-   multiplier `1.4`, offset `100.0`.
-   **Read that evidence carefully — it is thinner than it first looks.** No layer-2
-   scroll rate appears anywhere in the block, so "two layers scrolling at *different
-   speeds*" is **not** established by it. What *is* established: two layers, combined at
-   differing density and alpha, with motion on at least one. That is still enough to
-   motivate more-than-one-octave — a single layer reads as dirty glass — but the
-   two-octave design below is an **analogy**, not a derivation from these numbers.
-3. Local swirls (moving cylinders with a rotating texture) and a **player-reactive**
-   term (an "influence" of `200.0` around James, dropped to `10.0` in the Forest).
-
-The community's "Fog Speed Fix" exists because the PC port scrolled the fog *too fast*
-and lost the dread — **slow drift is part of the look**, not an accident.
-
-*Sources:* [gamedev.net thread 362970](https://www.gamedev.net/forums/topic/362970-fog-effect-in-silent-hill-2/);
-[elishacloud/Silent-Hill-2-Enhancements #246](https://github.com/elishacloud/Silent-Hill-2-Enhancements/issues/246)
-and its [README](https://github.com/elishacloud/Silent-Hill-2-Enhancements/blob/master/README.md)
-(`FogFix` / `FogSpeedFix`).
-
-**What we take, and what we deliberately do not.** SH2 pasted 2-D planes over the
-screen because a PS2 could not march a volume. We already march one, so the faithful
-translation is to modulate `σ(p)` with **drifting 3-D noise** — which buys what the
-original could not have: the wisps have **depth**, passing in front of *and* behind
-pillars and monsters and parallaxing correctly as the camera turns. Item (3)'s
-player-reactive swirl is **not** taken: DOOM is **first-person**, so there is no
-on-screen body for fog to curl around and the player would never see it. Split out as
-**DOOM-0239** (💭) rather than built.
-
-**The density modulation.** §4.3a's product gains one more mean-1 multiplier:
-
-```
-σ_final = ( kFogBaseDensity · skyExposure                 // sky-sourced haze (§4.3a)
-          + Σ_profiles areaDensity(profile) · areaMult(profile) )   // §4.5
-          · heightPool                                     // §4.3
-          · wisp(p, t)                                     // §4.3b
-          · fogStrengthScale(rb_fog)                       // the `;` dial
-```
-
-**This is the single authoritative statement** — §4.3a and INV-9 point here rather than
-restating it. Three things the form has to carry: `skyExposure` gates **only** the
-sky-sourced term (§4.3a); the profile term is a **sum over profiles**, each with its own
-`areaDensity`, because goo takes a `const` while hell takes the per-level `misc6.w` and
-§4.5 requires a goo room *on* a hell level to get both; and `wisp` multiplies the whole
-medium, so goo and hell billow too.
-
-where `wisp` is two octaves of value noise read from a single **3-D noise volume**
-(§5), each drifting on its own slow velocity:
-
-- `wisp(p,t) = 1 + kWispAmp · (A + kWispWeight2 · B) / (1 + kWispWeight2)`, with
-  `A = 2·noise(f₁·(p + v₁·t)) − 1` and
-  `B = 2·noise(f₂·(p + v₂·t) + kWispOffset2) − 1`.
-- **The maths symbols above have C identifiers** — every other constant here is a `kXxx`,
-  so name these too rather than leaving the implementer to invent them: `f₁` =
-  **`kWispFreq1`**, `f₂` = **`kWispFreq2`** (= `2.5 · kWispFreq1`), `v₁` = **`kWispVel1`**,
-  `v₂` = **`kWispVel2`**, plus **`kWispOffset2`** — a constant lattice offset (start
-  `vec3(17.3, 5.1, 23.7)`) that **decorrelates the two octaves at `t = 0`**. Both taps read
-  the *same* volume, so without an offset they are phase-locked at the world origin and the
-  finer octave contributes nothing there.
-- **Sampling convention — state it before reading any number below.** `noise(u)` is a
-  trilinear fetch from the `N³` volume at **texture coordinate `u / N`**, wrapped `REPEAT`,
-  where `N` is the volume's edge in texels (**64** today, §5). So `u` is in *lattice*
-  units: one texel spans `1/f₁` world units and the volume repeats every `N/f₁` world
-  units. Every number below is derived from `N = 64` and scales if the volume is resized. The velocity sits **inside** the `f₁` scale,
-  so `v` is a plain world-units/second velocity (mirrors the house precedent
-  `kGrimeWorldScale`, `pathtrace.comp:111`). Writing `noise(p·f₁ + v·t)` instead —
-  velocity *outside* the scale — would drift the field `1/f₁` = 512× too fast, crossing a
-  whole map every half-second.
-- **`kWispAmp = 0` is an exact no-op** — it follows from the *multiplicative* form
-  (`1 + 0·x ≡ 1`), so the wisp term can be switched off without touching anything else.
-  **But mean-1 does NOT mean "same look" at non-zero amplitude.** Transmittance is
-  `exp(−∫σ dt)` and in-scatter is weighted by it — both curves, not straight lines — and
-  averaging *through* a curve is not the same as taking the curve of the average. So at
-  `kWispAmp = 0.6` the fog reads measurably **thinner** on average than un-wisped fog of the
-  same base density. That is ordinary maths, not a bug. It interacted directly with the ≈2×
-  density raise below — **which was tried and reverted 2026-07-30** — and the standing rule
-  survives the revert: **base density is re-tuned with wisps on**, never inferred from
-  the un-wisped value.
-- **Amplitude is large, not a wobble.** `kWispAmp` starts ~`0.6`, bounding density to
-  `1 ± kWispAmp` = **`0.4×`..`1.6×`** of base (and value noise rarely reaches its
-  extremes, so the practical swing is narrower). That swing *is* the "various thickness"
-  the user asked for; a ±15 % grain would read as noise, not billows.
-- **Octave 2 is finer and fainter:** `f₂ ≈ 2.5·f₁`, `kWispWeight2 ≈ 0.7` — a **chosen
-  starting value, not an SH2-derived one**. (An earlier draft justified `0.7` as SH2's
-  `90/128` alpha ratio. That is wrong twice: `90` is the Enhanced Edition's *modified*
-  alpha — the original is `128`, a ratio of `1.0` — and a 2-D compositing alpha is not
-  an octave weight in a volumetric march.)
-- **Octave 1 scale `f₁ = 1/512`** — under the convention above, one **texel** spans
-  `1/f₁ = 512` DOOM units, a touch wider than a large room, so billows read at room scale
-  rather than as fog-coloured static; and octave 1 repeats every `N/f₁ = 32768`
-  units — but **the binding period is the finer octave's**: `N/f₂ = 64/(2.5/512) = 13107`
-  units is what tiles first, still comfortably longer than any vanilla map's longest
-  sightline, which is the claim that actually matters (Q21). Both
-  numbers depend on the convention being implemented as stated — get it wrong and you get
-  512-unit tiling with 8-unit features, i.e. exactly the two failure modes this avoids.
-- **Drift is slow and mostly horizontal**, with `v₁` and `v₂` differing in **direction**
-  as well as speed so the octaves never lock into a repeating pattern. Start
-  `v₁ ≈ (8, 3, 1)` (‖v₁‖ ≈ 8.6) and `v₂ ≈ (−3, 4, 0.3)` (‖v₂‖ ≈ 5.0) DOOM units/s — the finer
-  octave drifts **slower**, not merely elsewhere: at equal speeds the two octaves read as one
-  field being advected rather than as two layers at different depths. Erring **slow** is the
-  SH2-authentic direction.
-- **The tap lives in `marchFog` (`pathtrace.comp`), NOT in `fogDensity`.** `fogDensity`
-  sits in `pt_common.glsl`, which `bake.comp` `#include`s verbatim — putting a sampler
-  there would force the bake to declare and bind the noise volume, contradicting §5's
-  "the bake stays functionally untouched" and INV-6.
-- **Time comes from `misc6.x`** — DOOM-0183's ripple-time lane (float seconds from a
-  `steady_clock` zeroed at first use, `r_vulkan.cpp:7455-7457`), already
-  frame-rate-independent and already in the push block. **No new push lane** (INV-5).
-
-**Step count and the wisps — the hypothesis, and its falsification.** L1c raised `kFogSteps`
-**24 → 40**, and this section owned that decision because it is the wisps that were thought to
-force it. **It was reverted on 2026-07-30**: measured on captured frames, 40 vs 24 scored MAE
-0.153/255 at Low and 2.86 at High, while the *same build* scored 2.41 against its own second
-run — i.e. at or under the engine's own noise. Q26's quadratic march is what actually resolves
-the near-camera layer, and it does so at 24. **`kFogSteps` ships at 24.** The reasoning below
-is kept because it is the argument the measurement answered: a *flat* haze integrates smoothly at
-24 steps, but a **structured** density field is a high-frequency signal along the ray, and
-undersampling it bands — the same reason a froxel fog needs more slices than a constant
-one. That is a **hypothesis to confirm at L1c by looking**, not an estimate: if 24 steps
-read clean with wisps on, bank the budget and leave it. The cost is **not independent of
-the resolution question** — ×1.67 on steps and ×4 on pixels both multiply the per-sample
-up-ray that §4.3a calls the march's dominant cost (§6 item 2). Together with the ≈2×
-density raise below (**proposed, then reverted 2026-07-30**), this is what L1c's ≤ 8 % cumulative spot-check (§7) measures.
-
-**Colour and thickness.** In-scatter tone moves from `SKY_COLOR`
-(`vec3(0.20, 0.26, 0.40)`, cool blue, `pt_common.glsl:31`) to a near-white desaturated
-`kFogColor` — start ~`vec3(0.55, 0.56, 0.56)` in linear radiance: **brighter *and*
-colourless**, so distance reads as *pale* rather than merely dim. **The value is defined in
-linear**, but the sky branch it also feeds writes a *display-encoded* colour (`skyPanorama`'s
-output is deliberately not tonemapped, `pathtrace.comp:1293-1299`), so whether the same
-numeric triple is correct on both branches is **Q9's encode question** — resolve it there,
-do not assume the number transfers unchanged. `kFogBaseDensity`
-was to rise ≈2× (from `0.0033` toward ~`0.0066`) — **proposed, then reverted on 2026-07-30;
-`kFogBaseDensity` ships at `0.0033`.** The reasoning is kept for any future density move. It was
-deliberately **not** the ~3× a wisp-free
-haze would be *estimated* to need (an estimate, not a measurement — no density-to-look
-tuning has been done yet), because structure sells the look at lower average density, which also
-keeps enemies readable. Both tune on hardware, and the `;` strength dial still scales
-the whole thing.
-
-**The sky backdrop shares `kFogBaseDensity` — doubling it would cost the mountains most.**
-*(Historical: the doubling below was proposed for L1c, tried, and reverted on 2026-07-30 —
-density ships at `0.0033`. The coupling it describes is real and still governs any future
-density move, which is why the reasoning is kept in the conditional.)*
-§4.6a's aerial-perspective term is a closed form using the *same* density constant, so doubling
-density **squares** the transmittance everywhere — which costs far more where optical depth is
-already high, i.e. on the sky.
-
-**Rewritten 2026-07-27 — the sky's haze is now GEOMETRIC, so there is no single number to
-quote.** §4.6a's closed form takes the exact slant path through the layer, `H / rd.z`, clamped
-at `kFogSkyDist`. Haze therefore varies with how high up the sky pixel is, which is the whole
-point — the mountains rise out of the mist instead of sitting behind a uniform wash. At High,
-standing on E1M1's courtyard (65 units above the fog altitude), by elevation above the horizon:
-
-| 1° | 5° | 10° | 20° | 30° |
-|---|---|---|---|---|
-| 98 % | 91 % | 70 % | 45 % | 34 % |
-
-Doubling `kFogBaseDensity` would raise every one of those. There is no longer a "halve
-`kFogSkyDist` to cancel it" trick, because the clamp only bites within a couple of degrees of
-the horizon — above that the path length comes from `kFogPoolHeight / rd.z` and is untouched by
-it. **So a density raise genuinely moves the mountains** — which is part of why L1c's was
-reverted — and the honest levers are
-`kFogPoolHeight` (a shallower layer clears the sky faster with elevation) or a sky-only density.
-Take the decision with the screenshot in hand: "distant sky still readable at High" is an
-explicit L1c acceptance item (§7).
-
-**What the sky does about wisps.** §4.6a's sky term is a *closed form* precisely because
-a sky ray sees constant density — which the wisp modulation breaks. v1 resolves this the
-cheap way: **the sky backdrop keeps the un-wisped closed form** (`wisp ≡ 1` for sky
-pixels). The mountains are far enough that billow structure on them would be
-sub-pixel anyway. The risk this creates is at the **sky/wall seam**, where wisped
-foreground meets un-wisped sky — the exact seam §4.6/Q9 already protects — so "no visible
-discontinuity at the sky/wall seam with wisps on" is an L1c acceptance item too. INV-10
-is amended to record that the closed form is *deliberately* wisp-free rather than
-silently inconsistent.
-
-**Keep it from pooling.** SH2 fog is vertically uniform. L3's height pooling (§4.3)
-must stay **gentle** or it will undo this; `kFogPoolHeight` is a look-tune to be judged
-**with** the wisps present, not before (Q17).
-
-**How the near-white base coexists with coloured fog (user wrinkle, 2026-07-25:
-*"the fog must be lit with any relevant colours but only where it makes sense — like in
-Hell for example"*).** `kFogColor` is **not** a global override; it is the **clear
-profile's** base tone, and §4.5's area profiles still multiply it. The composition rule
-of §4.3 is unchanged and is what makes this work:
-
-```
-fog colour = sky term:   kFogColor × mediumTint     (§4.5)
-             torch term: emitter Le  (UNTINTED — §4.4(b), 2026-08-03)
-```
-
-- **Earth-side maps** (E1 Knee-Deep, most of DOOM II's city run) sit in the **clear**
-  profile → `mediumTint` is neutral → the fog reads **SH2 near-white**. This is the
-  default and the majority of play.
-- **Hell levels** take `kHellTint` → the same wisps, same drift, but lit **red/ember**.
-  The SH2 grey is deliberately *departed from* there, which is the point of the user's
-  "only where it makes sense".
-- **Goo/nukage rooms** take `kGooTint` → sickly green pooling, per §4.5.
-- **Emitter-lit fog is already coloured** by construction (§4.4(b)): a torch shaft
-  inherits its emitter's `Le`, so fog near a flame goes warm without any new mechanism —
-  a warm core against the near-white surround, which is exactly the SH2 street-lamp
-  look.
-
-So the SH2 amendment changes **what "neutral" means** — from cool blue to near-white —
-and leaves the colouring machinery of §4.4/§4.5 untouched. The judgement of *where*
-colour makes sense stays §4.5's profile selection (level flag + primary-hit liquid
-flag), tuned at **L4**; nothing here pre-empts it. The one new caution: `kHellTint` and
-`kGooTint` were picked against a **blue-grey** base and must be **re-judged against the
-near-white base** at L4, or they will read washed-out (Q20).
-
-### 4.3c Two layers: the aerial layer and the floor fog (2026-07-27 amendment)
-
-> **SIGNED OFF — the single-layer fog, 2026-07-27.** Everything §4.3, §4.6a and INV-10 describe
-> above is user-accepted on hardware: *"The fog / mist looks significantly better now. Great work
-> and the horizon fix is much, much better… happy to sign it off now."* One residual noted and
-> **accepted, not fixed**: *"You can still see the cut off but I am happy with it."* Do not
-> re-open that without a new report — it survived two rounds of correction and the remaining
-> visibility is the sky texture's own 128-row limit, not the fog.
-
-> **The request that follows it**, in the same breath: *"I want fog thickest on
-> the floor. So, for those indoor rooms that are affected, they should have fog closest to the
-> floor with a much smaller distance to the camera setting than the general fog. In fact, the same
-> effect should apply outside as well… for outside you will have the general fog and the floor
-> fog. Outside, the floor fog can probably be thicker."*
-
-**Why one layer cannot deliver this, and no amount of tuning will change that.** Today's fog is a
-pure participating medium: opacity along a ray only ever *grows* with distance. So the density
-that makes the air at your feet visibly misty is the same density that, integrated over a thousand
-units, turns the far end of the courtyard into a white sheet. The two wants are in direct conflict
-inside one term. Every re-tune on 2026-07-27 traded one against the other.
-
-**The second term breaks the conflict by not being a medium.** The floor layer's density falls off
-with **distance from the camera**:
-
-```
-σ_floor(p, t) = kFloorFogDensity
-              · exp(−max(0, p.z − baseZ) / kFloorFogPool)   // hugs the ground
-              · exp(−t / kFloorFogRange)                    // and only NEAR you
-
-// the two layers simply ADD, and the whole sum carries the existing two
-// multipliers — the `;` dial and the open-sky gate — exactly as today:
-σ(p, t) = (σ_general(p) + σ_floor(p, t)) · fogStrengthScale · skyExposure
-```
-
-with `kFloorFogPool ≪ kFogPoolHeight` (112) and `kFloorFogRange ≪ kFogMaxDist` (2048).
-The multipliers are written into the block deliberately: the shipped `marchFog` line is
-`fogDensity(p, baseZ, poolH) * strength * skyExposure`, and a block that shows only the bare
-`σ_floor` is the one an implementer copies.
-
-**First guesses** (tune on hardware; the shipped aerial pair is `kFogBaseDensity` = 0.0033,
-`kFogPoolHeight` = 112):
-
-| constant | first guess | what it means |
-|---|---|---|
-| `kFloorFogDensity` | **0.010** | 3× the aerial layer's density *at the floor itself* |
-| `kFloorFogPool` | **24.0** | e-fold height — knee-deep, so it reads as mist you wade through |
-| `kFloorFogRange` | **256.0** | e-fold distance from the camera |
-
-The arithmetic that picks them, so a re-tune knows what it is trading: the eye rides
-`kEyeAboveFloor` = 41 units up, so at eye level `σ_floor = 0.010 · exp(−41/24) = 0.0018` and a
-horizontal eye-level ray accumulates at most `σ · kFloorFogRange ≈ 0.46` optical depth — **≈37 %
-haze**, against the aerial layer's 16 % at 512 units. At the floor it is the full 0.010, 3× the
-aerial density there. Indoors both layers are additionally scaled by `kIndoorFogScale` = 0.05.
-`kFloorFogRange` = 256 is also the second column of Q26's error table (0.09 % with the shipped
-warp), so the march resolves it without banding.
-
-**This is deliberately not physical, and that is the point.** Real fog has no idea where the
-camera is. But a medium whose *visible contribution* is bounded in range is exactly what lets mist
-pool around the player's feet without accumulating into an opaque wall at distance — the trick
-that makes ground mist readable in games that ship it. It costs nothing to evaluate: `marchFog`
-already has `t`, the distance along the ray, as its loop variable.
-
-**Placement follows §4.3a's existing gate, with its own strengths.** Both layers are scaled by the
-same `skyExposure`, so the floor fog inherits the open-sky test and the L1d seep for free — no
-second placement mechanism, no second up-ray. Only the density constants differ:
-
-| | outdoors | roofed air |
-|---|---|---|
-| aerial layer | `kFogBaseDensity`, `kFogPoolHeight` = 112 | × `kIndoorFogScale`, `kFogIndoorPool` = 18 |
-| floor fog | `kFloorFogDensity` | `kFloorFogDensity` × `kIndoorFogScale` |
-
-The user asked for the outdoor floor fog to be **thicker**; that falls out of `skyExposure`
-already, without a fourth constant.
-
-**The sky backdrop needs the floor term too — this is not negligible.** Sky pixels never enter
-`marchFog`; they take the closed form `skyFogOpticalDepth()` (§4.6a, INV-10). Leave the floor layer
-out of it and a horizon-grazing sky pixel disagrees with the wall pixel directly beneath it by
-`σ_floor(eye) · kFloorFogRange` = 0.0018 × 256 ≈ **0.46 optical depth, ~37 % haze** — a hard line
-along the skyline, which is the exact defect §4.6a was written to remove. So the closed form gains
-a second addend, and it has an exact answer for the same reason the aerial one does:
-
-```
-σ_f0 = kFloorFogDensity · exp(−h₀ / kFloorFogPool)        // density where the eye is
-a    = |rd.z| / kFloorFogPool − 1 / kFloorFogRange
-t₁   = h₀ / |rd.z|                                        // where a falling ray reaches the base
-
-rd.z ≥ 0 (ascending):  τ_floor = σ_f0 / (rd.z / kFloorFogPool + 1 / kFloorFogRange)
-rd.z < 0 (descending): τ_floor = kFloorFogDensity · [ (e^(−t₁/R) − e^(−h₀/P)) / a
-                                                    + kFloorFogRange · e^(−t₁/R) ]
-```
-
-(`P` = `kFloorFogPool`, `R` = `kFloorFogRange`, `h₀ = max(0, ro.z − pc.fogFloorZ)` — the same `h₀`
-the aerial branch uses.) Three properties that make it safe, each checkable by substitution:
-
-- **The branches meet exactly at `rd.z = 0`,** both tending to `σ_f0 · kFloorFogRange`. That is the
-  test to run before believing an implementation: a seam at the horizon is what the 2026-07-27
-  plateau fixes were about.
-- **`a` passes through zero** when `|rd.z| = kFloorFogPool / kFloorFogRange` (0.094 with the first
-  guesses — well inside the visible range, not a corner case). Expand the first term as
-  `σ_f0 · t₁ · (1 + a·t₁/2)` near there; the naive quotient loses its precision to cancellation
-  exactly where the two must agree, the same trap `(e^x − 1)/x` already carries in the aerial branch.
-- **No `kFogSkyDist` analogue is needed.** The aerial layer needs a horizontal extent because an
-  exponential layer grazed at the horizon integrates to infinity; the floor layer's own
-  `exp(−t/kFloorFogRange)` already bounds it. Do **not** add a `min()` here (§4.6a).
-
-**The indoor half depends on L1d and the outdoor half does not.** Nothing in the tree can yet
-distinguish "room with a window onto the courtyard" from "room buried three doors deep", which is
-what the outdoor-proximity seep (§4.3a, task L1d) exists to compute. The user was explicit at L1b
-that sealed interiors stay clear, and that has not changed. **So the outdoor floor fog can land
-first, and the indoor half arrives with L1d** — at which point §4.3a's `kSeepMax` note applies to
-both layers at once.
-
-**Open, and deliberately not guessed:**
-
-- **Q25 — does the floor fog need its own up-ray, or does sharing `skyExposure` suffice?** Sharing
-  is free and is the assumption above. The risk is that the floor fog is densest exactly where the
-  aerial layer is thinnest (at your feet, under an overhang), so a misclassification that is
-  invisible today could become obvious. Judge on hardware, not here.
-- **Q26 — CLOSED 2026-07-27, before any shader was written. The march must WARP its samples
-  toward the camera; raising the step count does not work.** Measured: the sampled floor term
-  against its exact integral `R(1 − e^(−tMax/R))`, over 400 jitters.
-
-  | | range 128 | range 256 | range 512 |
-  |---|---|---|---|
-  | 24 steps, uniform | 17 % (max 37 %) | 8 % (max 18 %) | 4 % (max 9 %) |
-  | 64 steps, uniform | 6 % (max 13 %) | 3 % (max 6 %) | 1.6 % (max 3 %) |
-  | **24 steps, `t = tMax·s²`** | **0.19 %** | **0.09 %** | **0.17 %** |
-
-  Error scales as `dt/R`, so buying accuracy with steps is a losing trade — **64 steps still
-  bands at a 128-unit range**, at 2.7× the cost. Redistributing the same 24 samples fixes it
-  outright. Substitute `t = tMax · s²` for `s = (i + jitter)/kFogSteps` and carry the warp's
-  Jacobian `dt = tMax · 2s · (1/kFogSteps)`; forgetting the Jacobian silently rescales the whole
-  fog, which will read as a tuning problem rather than a bug.
-
-  **Checked against the layer it is not for** — the general fog is roughly uniform out to 2048, so
-  a warp could have starved its far field. It does not: at the shipped High density the warp is
-  *better* (10 % error vs 15 %), and at the thinnest it costs ~0.5 %. Note what that table also
-  says — **the shipped uniform march already under-integrates long rays by 8–15 % at High.** It is
-  a constant bias, so it was absorbed into tuning rather than seen; expect the fog to read slightly
-  *thicker* after the warp lands, at unchanged constants.
-
-  Exponent 3 is better still for the floor term but measurably worse for the general one — **use 2.**
-
-**Ripples if this ships.** The sample warp (Q26) changes `marchFog`'s loop for **both** layers and
-every future one, so it is a §4.2 change, not a §4.3c one — and it **landed first, on its own**
-(2026-07-27), because it alters the shipped look independently of any new layer (see the 8–15 %
-bias above); shipping it inside the floor fog would have left two causes for one screenshot.
-`fogDensity()` currently
-returns the whole density; L4's split-sigma
-form (`skySigma · skyExposure + areaSigma`, INV-9) must gain a third addend rather than folding the
-floor term into either existing one — the floor term sits on the **gated** side, with `skySigma`,
-because its placement question is the same one (`skyExposure` still never touches `areaMult`).
-`fogHeightPool()` — which L4 still has to extract — is reused
-by both layers with different `poolH`, so it must keep taking the height as a parameter.
-**INV-10 moves too:** the sky closed form gains the second addend above, and inherits the aerial
-branch's exclusions unchanged — no `wisp`, `skyExposure = 1` by definition, `fogStrengthScale`
-applied once to the sum.
+### 4.3 Density & the fields — MOVED TO DOOM-0310
+
+**§4.3, §4.3a, §4.3b and §4.3c were extracted on 2026-08-03 into
+[`DOOM-0310-fog-density-fields.md`](DOOM-0310-fog-density-fields.md)** — part 1 of the
+three-way split the user approved that day, on DOOM-0308's structural recommendation.
+Parts 2 (§4.4, light sources + the bakes) and 3 (§4.6/§4.6a, resolve + composite) are
+still to be extracted; until they are, they remain below.
+
+**Part 1 owns fog density and the two fields:** the single authoritative statement of
+`σ`, the aerial layer, the floor layer, open-sky exposure and the outdoor-proximity seep,
+the seep field's build and its `.r`/`.g` channels, and the wisps. It also owns
+**INV-9, INV-11 and INV-12**, which are restated there in full — the ids are unchanged,
+and §8 below no longer carries a second copy.
+
+**Do not restate `σ` here, or in either sibling part.** This document carried **three**
+incompatible statements of it — one self-declared authoritative and missing a shipped
+term — and that is what forced the split. DOOM-0310 §4.1 is the only one, it was
+reconciled against the shipped shader rather than by judgement, and the two superseded
+statements were deleted rather than annotated.
+
+**Where the old citations resolve.** This document still cites `§4.3`, `§4.3a`, `§4.3b`
+and `§4.3c` in many places — those references are kept rather than rewritten, and this
+table is what resolves them. The one exception already rewritten in place is §4.3b's
+`σ_final`, because that statement was **deleted** and a pointer to it would dangle.
+
+| cited as | now |
+|---|---|
+| §4.3 — density, height pooling, the per-sample reference | **DOOM-0310 §4.1** (σ) and **§4.2** (the aerial layer) |
+| §4.3a — the open-sky standard, `skyExposure`, the seep | **DOOM-0310 §4.4** (the standard) and **§4.5** (the field) |
+| §4.3b — the Silent Hill 2 look, the wisps, `kFogColor` | **DOOM-0310 §4.6** |
+| §4.3b's `σ_final` | **DOOM-0310 §4.1** — and it is no longer stated the way §4.3b stated it |
+| §4.3c — the two layers, the floor fog | **DOOM-0310 §4.3** |
+
+**What a reader of this document still needs from part 1:**
+
+- `σ(p,t) = ( (σ_aerial + σ_floor) · skyExposure + Σ areaDensity·areaMult ) · wisp ·
+  fogStrengthScale` — the area sum is **outside** the `skyExposure` gate and **inside**
+  `wisp` and the dial. With L4 unbuilt the sum is empty and this reduces exactly to the
+  shipped line.
+- `skyExposure` gates the **sky-sourced** terms only, never the area profiles. §4.4's
+  shafts and §4.5's profiles both depend on that split.
+- The seep field is one `RGBA16F` image with **split ownership**: `.r`/`.g` are part 1's,
+  `.b`/`.a` carry INV-13's sun-clearance interval and are §4.4's. Its build, sampler,
+  transform, cell-doubling rule and void ring are part 1's contract, inherited here
+  unchanged.
 
 ### 4.4 Light sources & shafts
 
@@ -1953,7 +1185,7 @@ hitch on a keypress instead of on a door.
 ### 4.5 Area profiles — clear / goo / hell
 
 Three profiles select a density multiplier `areaMult` + a `mediumTint`. The profile
-density enters **§4.3b's `σ_final`** (the single authoritative form) as the sum term
+density enters **DOOM-0310 §4.1's `σ`** (the single authoritative form) as the sum term
 `Σ areaDensity(profile) · areaMult(profile)`, where `areaDensity` is **`kAreaDensity`**
 for goo — a compile-time `const`, start `0.0020`, §5 — setting how thick a *fully*
 profiled medium is, and `areaMult` is the per-profile weight below. (Hell is the exception: its density
@@ -1961,7 +1193,7 @@ is a **runtime** value on `misc6.w`, not `kAreaDensity`, because it varies per l
 
 | Profile | `areaMult` | `mediumTint` | Source of the density |
 |---|---|---|---|
-| Clear (default) | `0` | neutral | none — its *profile* contribution is zero, so clear air is `kFogBaseDensity · skyExposure`; the shared `heightPool · wisp · fogStrengthScale` factors of §4.3b still apply |
+| Clear (default) | `0` | neutral | none — its *profile* contribution is zero, so clear air is `kFogBaseDensity · skyExposure`; the shared `heightPool · wisp · fogStrengthScale` factors of DOOM-0310 §4.1 still apply |
 | Goo / nukage | `1.0` | `kGooTint` | `kAreaDensity` (`const`) |
 | Hell | `1.0` | `kHellTint` | `misc6.w` (per-level, §5) |
 
@@ -2926,39 +2158,13 @@ The other layers' Verify cells fit in a line. These two do not, so they live her
   `-config` forcing `rb_fog=0` vs the pre-feature golden proves it — that is *not* the
   canonical run.
 
-- **INV-9 (open-sky standard, 2026-07-24):** fog density is gated by **open-sky
-  exposure** — see §4.3b for the single authoritative form of `σ_final`,
-  with `skyExposure = 1` under open sky and `kIndoorFogScale` (`const`) under a solid
-  roof. **`skyExposure` gates the sky-sourced haze ONLY, never `areaMult`** — otherwise
-  goo/hell/torch-lit interiors (all roofed) would lose their fog entirely (§4.3a).
-  v1 measures exposure **per march sample** via one up-ray — **MISS = open sky, solid-
-  geometry hit = indoor** (the mask mechanism is derived once in §4.3a; **superseded
-  2026-07-27 by DOOM-0276** — same per-sample granularity, but read from the seep
-  field's mask channel instead of traced). It is the user's
-  "true volumetric" pick; the per-surface `RB_MESH_OUTDOOR` flag was the cheap fallback; L1b shipped the up-ray,
-  so the flag stays unbuilt as a standing perf lever. "Open sky" = `ceilingpic ==
-  skyflatnum`, the engine's own open-air signal. *Falsifiable:* L1b's acceptance row —
-  roofed rooms clear, a mist wall at the threshold (§7) — and, for the split, L4's
-  "E3M1 shows haze" check, which fails by construction if `skyExposure` ever multiplies
-  `areaMult`. **Amended 2026-07-25:** the open-sky
-  branch is still exactly `1`, but the **indoor** branch is no longer the flat
-  `kIndoorFogScale` — it is `mix(kIndoorFogScale, kSeepMax, exp(-d/kSeepFalloff))`,
-  where `d` is the **through-open-space** distance to outdoor air (§4.3a amendment).
-  **Amended 2026-07-27 (§4.3c, DOOM-0272):** `σ` gains a **third** addend, the floor fog, and it
-  sits on the **gated** side — `(skySigma + floorSigma) · skyExposure + areaSigma`. That is what
-  makes "thicker outside" free, and it is why the split must not be collapsed: fold the floor term
-  into `areaSigma` and it stops clearing under a roof; fold it into `skySigma` and it inherits the
-  aerial layer's `poolH`, which is the one thing it must not share. *Falsifiable:* a roofed room
-  with no seep shows the floor fog at exactly `kIndoorFogScale` of its outdoor strength — i.e. the
-  same faint haze as before L1e, not a bank at your feet.
-  **Amended 2026-07-27 (DOOM-0276) — the mechanism, not the values.** `openSky` is now
-  `texture(uSeepField, uv).g > 0.5`, a second channel on the field INV-12 already builds,
-  written `1` where the cell's sector has `ceilingpic == skyflatnum` and `0` otherwise.
-  Both branch values are untouched, so a frame's fog changes only where the grid disagrees
-  with the wall — within half a cell of a roofline. *Falsifiable:* the mask must be its own
-  channel, never an epsilon on `d`: a roofed cell one step inside a doorway also carries a
-  near-zero `d`, so `d < ε` would report the room behind a door as open sky and put the full
-  outdoor bank inside it.
+- **INV-9 (density composition + the open-sky standard, 2026-07-24)** — **moved to
+  [DOOM-0310](DOOM-0310-fog-density-fields.md) §8.** It owns the σ composition and the
+  `skyExposure` gate, so it moved with them; the id is unchanged and it is not restated
+  here. The one clause the sections below depend on: **`skyExposure` gates the
+  sky-sourced addends ONLY, never `areaMult`.** §4.4's shafts and §4.5's profiles are
+  both built on that split, and L4's "E3M1 shows haze" falsifier fails by construction
+  if it is ever broken.
 - **INV-10 (sky-backdrop fog, 2026-07-24):** sky pixels receive **aerial-perspective
   fog** (`skyExposure = 1`) along the ray's own slant path through the layer
   (`skyFogOpticalDepth`, §4.6a), folded as `sky · transmittance +
@@ -2984,42 +2190,12 @@ The other layers' Verify cells fit in a line. These two do not, so they live her
   acceptance item (§7). *Falsifiable:* that acceptance row — "no visible discontinuity at the
   sky/wall seam" — plus, by diff, the sky branch never samples the noise volume and never reads
   `FogHit` at all (it takes only `ro`, `rd` and the strength).
-- **INV-11 (wisps, 2026-07-25):** density is modulated by **two octaves of drifting 3-D
-  value noise** read from a single CPU-generated noise volume —
-  `wisp` multiplies the whole medium (so goo and hell billow too). **`kWispAmp = 0` is an
-  exact no-op** — from the multiplicative form, not from mean-1. Mean-1 does **not**
-  preserve the look at non-zero amplitude: transmittance is non-linear in `σ`, so by
-  Jensen wisped fog reads *thinner* on average; base density is therefore re-tuned with
-  wisps **on** (§4.3b). Sky pixels are excluded (INV-10). Drift time is **`misc6.x`** (DOOM-0183's
-  ripple lane), so **no new push lane** is added (INV-5 holds). The noise volume is
-  **generated at startup, never shipped as an asset**. *Falsifiable:* L1c's own acceptance row —
-  with `kFogColor`/`kFogBaseDensity`/`kFogSteps` held at their L1b values, `kWispAmp = 0` renders
-  byte-identical to L1b (§7) — and, by diff, no noise file enters the repo or a WAD.
-- **INV-12 (seep field, 2026-07-25):** the outdoor-distance field is flood-filled
-  **through connected open space only**, never straight-line — so fog can **never**
-  reach a sealed room that merely shares a wall with an outdoor area — such a room keeps
-  the plain indoor floor `kIndoorFogScale`, no seep on top (it is *not* fog-free; the
-  floor is nonzero by design, §4.3a). Connectivity is
-  an **opening** test (two-sided **and** `min(ceilings) > max(floors)`), **not** a
-  one-sidedness test: a closed DOOM door is a two-sided linedef, so the weaker test would
-  leak fog through every shut door (§4.3a). **Two further conditions are part of this guarantee,
-  not incidental detail (§4.3a):** a portal whose `frontsector == backsector` is **excluded** (the
-  self-referencing-sector trick is two-sided with a full opening but draws solid — the same leak in
-  another costume), and the grid is **padded by one cell of void beyond the map's XY bounding box**
-  (without it, an outdoor sector flush to that box would `CLAMP_TO_EDGE` its `d = 0` out past the
-  map edge — the exact opposite of the guarantee). Drop either and INV-12 is false. It is rebuilt
-  **per level**, read with a **single bilinear tap**, and adds **no rays** to the march.
-  A 2-D field is **sufficient** (not exact) because vanilla DOOM has no room-over-room;
-  `d` is grid-quantised and height-invariant (§4.3a, Q19). *Falsifiable:* L1d's own
-  acceptance row — a sealed room sharing a wall with outdoors must be visually
-  indistinguishable from its pre-L1d self (§7).
-  **Amended 2026-07-30 (DOOM-0289):** the field is now `RGBA16F` and carries INV-13's
-  clearance interval on `.b`/`.a`. Nothing in this invariant changes — the flood, the
-  opening test, the self-referencing-sector exclusion and the padding ring all govern
-  `.r`/`.g` exactly as before. The one thing to keep straight is that the two halves have
-  **different tolerances for a wrong sector at a cell centre**: the seep decides
-  connectivity on the portal graph *before* rasterising and so does not care, while the
-  clearance march reads per-cell heights directly and therefore needs INV-13's void test.
+- **INV-11 (wisps, 2026-07-25)** and **INV-12 (seep field, 2026-07-25)** — **moved to
+  [DOOM-0310](DOOM-0310-fog-density-fields.md) §8**, which owns the wisps and the seep
+  field. Both are stated there in full, each with what breaks it and a test that runs;
+  the ids are unchanged. Not restated here. Note for §4.4's reader: INV-12 governs the
+  field's `.r`/`.g` channels, its build, its sampler and its void ring — INV-13's
+  clearance interval rides the same image on `.b`/`.a` and inherits all of that.
 - **INV-13 (sun clearance, 2026-07-30):** sun visibility in the march is read from the
   **baked clearance interval** on the seep field's `.b`/`.a` channels — built at
   level load and rebuilt whenever a plane moves (this section's re-flood and clearance
