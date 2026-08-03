@@ -4732,6 +4732,118 @@ parked ideas (💭 considered) until we commit to and design each one.
     - The LIFT case is the bigger visual mover on E1M1 (449 -> 353, 96
       cells) than any door there. If the door demo underwhelms, a lift
       rising in front of a torch is the stronger fixture.
+  Progress (2026-08-03, third pass): the play-test came back INCONCLUSIVE
+  a second time, and the two attempts together shift where the burden
+  sits.
+
+  Attempt 2 used this bullet's own "BEST PLAY-TEST LOCATION" —
+  `-warpto -700 597` on doom2 MAP01. That coordinate is BAD and this
+  bullet's reading of it was WRONG -- see the retraction at the end of this
+  note. (Retracted claim: that the spot puts the player on the map's rim.)
+  The user reported it as "a big hole in the geometry ... and it
+  is outside as well", which is a fair description of the view. The
+  coordinate came out of the `-fogscan` diagnostic, whose criterion was
+  lit-cell delta per door — never that the resulting view was playable.
+  A scan that ranks by cell count cannot rank by visibility.
+
+  Attempt 3 was a normal MAP01 start. The user walked the map and found
+  nowhere the effect reads, and suggested hell levels as more likely.
+  Worth answering with the scan data already in this bullet rather than
+  another play-test: the scan covered every shut door in BOTH IWADs, and
+  no hell map placed — MAP01's +74 beats MAP09 (+47), MAP15 (+37) and
+  MAP06 (+33). Hell maps carry more fire, but their emitters are largely
+  not behind shut doors. So MAP01 is the best case, and if the effect is
+  invisible there it is invisible everywhere.
+
+  WHAT THIS MEANS FOR THE ITEM. Two play-tests have now failed to see a
+  change that the counters say is real, which is exactly the gap Plan Step
+  8's visual A/B was supposed to close and never did (it needs the
+  throwaway plane-driving hook, removed after Step 4). The lit-count
+  numbers prove the MECHANISM; they have never been evidence of
+  VISIBILITY, and this bullet has been treating them as though they were.
+  Next action is mine, not the user's: run the A/B headlessly at MAP01
+  sector 13 with the hook restored, diff the frames, and record the
+  answer. A verdict of "correct but not visible" is a perfectly good
+  outcome to ship — it just has to be stated instead of left as a play-test
+  the user keeps failing.
+
+  Do NOT send the user to another location before that A/B exists.
+  RETRACTION (2026-08-03, same day, before any of it was acted on). The
+  paragraph above claiming `-warpto -700 597` puts the player on the map's
+  rim is FALSE. Checked against doom2.wad's MAP01 lumps directly rather
+  than inferred from a screenshot:
+
+    sector 11  floor 8, ceil 264, floortex GRASS1, ceiltex F_SKY1, light 224
+
+  That is MAP01's outdoor grass courtyard — a legitimate room, correctly
+  rendered, and exactly what the capture showed (grass underfoot, sky
+  above, the courtyard's boundary wall in the distance). The engine's own
+  `-warpto` print had said `sector=11 floor=8 ceil=264` all along; I read
+  an open outdoor area as "outside the map" because I was expecting a
+  corridor and a door.
+
+  The coordinate stands. What does NOT stand is the claim that it is a
+  good demo spot, and the reason is unchanged: the scan ranked doors by
+  lit-cell delta, which is not the same question as "can a player see
+  this happen from a sensible vantage".
+
+  The user's "big hole in the geometry ... see underneath the geometry"
+  is therefore still UNEXPLAINED and must not be written off as this
+  retracted mis-reading. Their capture shows the courtyard's wall band
+  with ground visible below its base; the innocent explanation is the
+  56-unit floor step between sector 11 (floor 8) and sectors 12/13
+  (floor 64), but that is a hypothesis and nobody has confirmed it. Ask
+  the user to point at the spot, or find it, before closing it.
+
+  METHOD NOTE worth keeping: three of this session's wrong turns —
+  "outside the map", "the wall is glowing because of the HD art", "the
+  step-count raise is still open" — were each an inference from an image
+  or a recollection when the authoritative data was one cheap read away
+  (the WAD's SECTORS lump, a paletted-art capture, the shader's own
+  comment). Read the source of truth first; it was cheaper than the
+  inference in all three cases.
+  THE VISUAL A/B FINALLY RAN (2026-08-03), and the answer is that on MAP01
+  there is nothing to see. Plan Step 8 owed this since the feature shipped;
+  it is done, and it supersedes "owed: the user's play-test".
+
+  Method: a throwaway `-fogdoor` hook opened every shut door sector BEFORE
+  RB_BuildLevel, so the fog-light bake sees what the doors were hiding
+  without needing a tic loop -shotverify has no time for. Four captures per
+  viewpoint: {doors shut, doors open} x {rt_fog 3 High, rt_fog 0 off}, the
+  fog-off pair being the control that subtracts the geometry change.
+  Ultra RT, doom2 MAP01, 3840x2160. Hook REVERTED.
+
+    viewpoint                   fog ON      fog OFF     fog's own share
+    outdoor courtyard           0.0075      0.0075      0.0000
+    (-warpto -700 597 180)      peak 2      peak 2
+    player start                0.0155      0.0096      0.0059
+    (-warpto -96 784 90)        peak 85     peak 8
+
+  MAE per 255. The -shotcompare bar for "a look change happened" is 3.0
+  (kGoldenMAE) and same-build noise is ~0.004. So the fog's contribution to
+  opening EVERY door in the map is at the noise floor -- roughly 500x under
+  the gate. At the courtyard it is bit-for-bit the same change with fog on
+  and off, i.e. exactly zero. The peak-85 pixels at the player start say a
+  handful of pixels do change; the eye will not find them.
+
+  AND THE HEADLINE NUMBER IN THIS BULLET DOES NOT REPRODUCE. MAP01 has only
+  FOUR shut door sectors, and opening all four together moves the bake
+  158 -> 173 lit cells, i.e. +15. This bullet claims +74 from door sector 13
+  ALONE ("a +47% increase"). Two different methods -- the reverted -fogscan
+  opened one door and re-baked at runtime; this opens them at load -- so the
+  gap may be method, not defect. Either way the +74 is not a number to quote
+  again without re-deriving it, and the "BEST PLAY-TEST LOCATION" section
+  above rests entirely on it. Cells "with a candidate" also FELL 420 -> 403
+  while lit rose, which nobody has explained.
+
+  VERDICT TO PUT TO THE USER: DOOM-0296 is correct, cheap and invisible.
+  The mechanism is proven (the counters move, the re-bake fires once per
+  settled move, the cost is 2.6-4.1 ms against a 6 ms gate) and the visible
+  payoff on MAP01 is nil. That is a perfectly shippable outcome for a
+  correctness fix -- a torch that could light air now does -- but it should
+  ship as that, not as a feature anyone will notice. Do not send the user
+  hunting for it again; two play-tests failed because there was nothing
+  there to find.
 
 - ✅ [DOOM-0297] **-rtverify passes on doom.wad and deterministically fails on doom2.wad, same build.**
   Found while gating DOOM-0011 L3 across both IWADs, which the standing
