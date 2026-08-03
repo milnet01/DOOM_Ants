@@ -467,6 +467,15 @@ with friends.
   Kind: security.
   Source: audit+indie-review-2026-07-26.
   Also in this sweep: p_switch.c now bounds the alphSwitchList scan by the table's own element count instead of MAXSWITCHES (the cppcheck arrayIndexOutOfBounds error — the terminator entry made it unreachable in practice, but the loop bound was two-thirds larger than the table).
+  Follow-up (2026-08-03, code-quality-review sweep): the claim above that
+  p_setup.c "validates every WAD-derived index" was two sites short, and the
+  p_saveg.c entry covered only the specials' sector indices. Closed now:
+  P_LoadLineDefs routed its v1/v2 through P_WadIndex (they were the one pair
+  the original pass missed, while P_LoadSegs guarded its own vertices), and
+  p_saveg.c gained a P_SaveIndex twin of that helper now bounding the psprite
+  state, mobj state, mobj type and mobj player indices -- the last of which is
+  stored 1-based, so a savegame holding 0 indexed players[-1]. security.md's
+  untrusted-input table already listed .dsg files; the code had not caught up.
 
 - 📋 [DOOM-0255] **Thread a buffer-end bound through every p_saveg Unarchive* function.**
   G_DoLoadGame discards M_ReadFile's length and no Unarchive* tracks an end pointer, so strcmp/memcpy walk past the allocation on a short .dsg. DOOM-0254 bounded the sector INDICES; the buffer extent itself is still unchecked. Extends DOOM-0252.
@@ -2003,6 +2012,14 @@ parked ideas (💭 considered) until we commit to and design each one.
   Design locked (2026-06-29, scoped via Explore map). Scope this first cut to the OMNI SPRITE loop only (the O(N)/pixel cliff; sprite sector is unambiguous = thing's subsector). Static wall emitters use the CDF (not the cliff) and their centroid sits on a linedef (ambiguous sector) -> defer to a later item. Mechanism (all build-time/per-frame baked, zero GPU BSP): (1) hit sector = subSec[triSs[prim]] — triSs already exists (r_vulkan.cpp BuildProbes), add a subSec buffer (subsector->sector); sprite hits carry triSs=0xFFFFFFFF -> bypass cull. (2) emitter sector: nee_merge_emitters does NOT reorder (static [0,staticN) then dynamic [staticN,n) in push order), so build a parallel dynSec[] in BuildDynamicEmitters (sector via R_PointInSubsector(centroid)); emitSec buffer = static sentinel 0xFFFFFFFF + dyn sectors, host-visible like g.emitBuf, refilled per frame in FinalizeEmitters. (3) upload REJECT matrix once per level + numsectors. Shader: gate the omni loop in pt_common.glsl shadeSurface — skip emitter k when rejectmatrix[(hitSec*numsectors+emitSec)>>3] & (1<<((..)&7)) AND both sectors known, BEFORE sampleEmitter (saves the unshadowed eval + the shadow ray; strictly better than OMNI_CULL_VALUE). New RB_ accessors in r_mesh.c/.h: RB_NumSectors, RB_RejectMatrix(+size), RB_SectorAtPoint(x,y), RB_BuildSubsectorSectors(out,n). Push-constant budget OK: append 3 uint64 addrs (subSec/emitSec/reject) -> struct 176->200B (device limit 256, comment r_vulkan.cpp:1723); numsectors into misc4[2] (reserved). Update RtPushConstants struct + static_assert(200) + pcr.size + the GLSL layout in BOTH pathtrace.comp and pt_common.glsl (verify 152B partial range unaffected — verify path doesn't cull). Verify: build green; INV-6 still passes (verify estimators run omniStart==emitCount, never see the cull); play-test E1M1 glowing room @50% with the `\` profiler — megakernel down in multi-sector scenes, no rooms gone dark. Caveat: a broken/over-aggressive REJECT lump in custom WADs could cull visible lights (darkening); fine for id maps; untrusted-WAD hardening tracked under DOOM-0073.
   Progress (2026-06-29): implementation complete, builds green (static_assert RtPushConstants==200, BakePush==80 both pass; glslc clean), unit tests green (nee_sampling_test incl. DOOM-0084 merge-order). 5 files: r_mesh.c/.h (RB_NumSectors/RB_RejectMatrix/RB_SectorAtPoint/RB_BuildSubsectorSectors); r_vulkan.cpp (subSec+reject per-level buffers in BuildProbes; host-visible emitSec mirrored to emitBuf, filled by FinalizeEmitters lock-step with nee_merge; push-constant 176->200B, numsectors in misc4.z); pt_common.glsl (SubSec/EmitSec/Reject buffer_refs; REJECT gate in shadeSurface omni loop, before sampleEmitter); pathtrace.comp (hitSec = subSec[triSs[prim]], both call sites); bake.comp (null cull args, omni loop empty so dead). Awaiting user play-test: E1M1 glowing room @50% with the \ profiler -- megakernel down in multi-sector scenes, no rooms gone dark. Flip to shipped on a clean play-test.
   Resolved (2026-06-29): play-test pass on E1M1-class light-heavy scene @50% scale. Cull active (log: "REJECT cull active (88 sectors, 968-byte matrix)"); scene ran 82 static + up to 48 sprite emitters. Same-scale (50%) result vs DOOM-0090 baseline (~37-46 fps): megakernel now 8.99-15.54 ms, fps 36-51 -- ceiling raised to 51 fps / ~9 ms megakernel on views where cross-room lights are culled; floor (~36-38 fps) unchanged on views facing the whole light cluster (little to cull), exactly as designed. Validation layer clean for the change: zero push-constant / device-address / buffer_reference / descriptor / OOB errors (the 200B push range + 3 new device-address buffers + REJECT indexing all verified by the layer). No dark-room regression reported. Commit 2873180.
+  Follow-up (2026-08-03, code-quality-review sweep): the cull accepted any
+  non-empty REJECT lump, but both readers address it as bit
+  (secA * numSectors + secE) -- the CPU cull in BuildRasterPointLights and the
+  megakernel over the uploaded copy. A PWAD's REJECT length is not tied to its
+  sector count, so a well-formed 5000-sector map shipping an 8-byte REJECT read
+  megabytes past the allocation on both sides. The gate now requires
+  ceil(numSec^2 / 8) bytes and otherwise leaves the cull off (the same path a
+  REJECT-less level takes), printing why rather than losing frame rate silently.
 
 - ✅ [DOOM-0120] **RIS light resampling without reservoirs (cheap-ladder step 2).**
   Per docs/research/DOOM-0092-restir-cost-benefit.md §1.4. Resampled Importance Sampling: pick M omni candidates, resample to 1 by contribution weight, cast ONE shadow ray -- NO cross-frame/neighbour reservoir (the part that hurts RDNA2 registers). Replaces the current O(N) omni loop with O(1) shadow rays + O(M) cheap weight evals. Build after REJECT cull. Full ReSTIR is only reconsidered if RIS still misses 60 fps AND the DOOM-0090 RGP capture shows occupancy headroom.
@@ -2919,12 +2936,23 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: fix.
   Source: indie-review 2026-07-23 (vulkan-mesh-assets, LOW).
 
-- 📋 [DOOM-0230] **Add RANGECHECK x/y to V_DrawPatchScaled and clip Y in M_WriteTextScaled.**
+- ✅ [DOOM-0230] **Add RANGECHECK x/y to V_DrawPatchScaled and clip Y in M_WriteTextScaled.**
   v_video.c:375 V_DrawPatchScaled (new for DOOM-0206) omits the RANGECHECK every sibling primitive has; caller M_WriteTextScaled clips X but not Y -> latent OOB write.
   **Layman:** A defensive bounds guard on the new crisp-menu text drawing; safe with today's fixed content.
   Kind: fix.
   Source: indie-review 2026-07-23 (menu-hud, LOW).
   Progress (2026-07-26): DOOM-0254 added per-post extent validation (V_PostInBounds) to V_DrawPatch/Scaled/Flipped and F_DrawPatchCol, which closes the OOB-WRITE half. The x/y RANGECHECK on V_DrawPatchScaled and the Y clip in M_WriteTextScaled named here remain open (they interact with DOOM-0231's scale-2 label overflow).
+  Resolved 2026-08-03 (code-quality-review sweep, re-found independently by the
+  classic-renderer lane). Both halves are in: V_DrawPatchScaled gained the x/y
+  RANGECHECK its siblings carry -- rejecting the patch and rate-limiting the
+  report, matching V_DrawPatchGeneral's posture rather than aborting -- and
+  M_WriteTextScaled now breaks on a row that would fall outside ORIGHEIGHT, the
+  Y clip to go with the X clip it already had. RANGECHECK is defined
+  (doomdef.h:75), so both guards are live in the shipping build, not just in a
+  debug one. DOOM-0231's scale-2 label overflow is untouched and stays open; the
+  interaction noted in the 2026-07-26 progress line is now one-sided, since an
+  overflowing label is dropped with a stderr note instead of writing out of
+  range. Build clean, 7 test suites pass.
 
 - 📋 [DOOM-0231] **Keep Classic main-menu scale-2 labels within ORIGWIDTH (no mid-word truncation).**
   Classic main-menu labels drawn at scale 2 from x=97 can overrun ORIGWIDTH and truncate mid-word (Game Select / Load Game).
@@ -6260,3 +6288,51 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: doc.
   Lanes: docs, fog.
   Source: user-request-2026-08-03 (DOOM-0308's structural recommendation).
+
+- 📋 [DOOM-0311] **Validate the render push-constants on the CPU instead of catching their NaNs in the shaders.**
+  Three shader inputs are divided by without being checked at the boundary:
+  ssao.frag divides by pc.aspect, taau.comp divides by the display
+  dimensions, and svgf_composite.comp bit-casts pc.misc3.x to an exposure
+  value. Each is recoverable today only because a downstream NaN guard
+  happens to catch it (svgf_composite.comp:195 and taau.comp:109), which is
+  recovery-by-clamping rather than prevention, and a new consumer of the
+  same push-constant would not inherit the guard. Cheap fix: assert/clamp
+  aspect, extent and exposure once where the push-constant block is filled.
+  No known reachable trigger -- the host always supplies real values today --
+  so this is hardening, not a live defect.
+  **Layman:** The graphics code currently cleans up bad numbers after they have already reached the graphics card; better to reject them before sending.
+  Kind: security.
+  Source: code-quality-review-2026-08-03 (shaders-raster lane, MEDIUM).
+
+- 📋 [DOOM-0312] **Keep the unbuilt DOS-era drivers out of the static-analysis sweeps.**
+  ipx/, sersrc/ and sndserv/ are retained as historical reference per
+  DOOM-0085 and are referenced by no build target, but every audit sweep
+  still parses them and reports findings in them -- including a genuine
+  sprintf overflow in sndserv/wadread.c:244 and unchecked read() calls,
+  none of which ship. The findings are real about the code and irrelevant
+  to the product, which is the worst combination for a review budget.
+  Either add them to the audit scope exclusions or move them under a
+  clearly-marked historical/ directory, and note the choice where the
+  next sweep will see it.
+  **Layman:** Three old folders that are kept only for history get scanned by the code-checking tools every time, producing warnings nobody will ever act on.
+  Kind: chore.
+  Source: code-quality-review-2026-08-03 (legacy-drivers lane).
+
+- 📋 [DOOM-0313] **Give -devshot a camera, so the visual features can be verified where they actually happen.**
+  -devshot (DOOM-0303) removed the keypress problem, but not the position
+  one: -warp drops you at the map's spawn and Wayland blocks synthetic
+  input, so a capture can only ever frame the start room. Five shipped
+  promises could not be verified end to end in the 2026-08-03 feature
+  review for exactly that reason -- floor fog pooling outdoors (DOOM-0272),
+  a torch's glow being cut by drifting fog (DOOM-0300), nukage glowing
+  evenly (DOOM-0302), fog re-flooding a room whose wall opens (DOOM-0281),
+  and per-map wisp drift (DOOM-0300). Each is observable; none is
+  reachable from a spawn point. Wanted: a dev-only way to place the camera
+  before the capture arms -- `-devcam x y z angle`, or reusing the
+  Developer menu's existing warp/pos rows from the command line. The door
+  case additionally needs the throwaway EV_VerticalDoor hook in
+  P_UpdateSpecials that DOOM-0281's own verification used. Cheap, and it
+  converts five permanent cannot-verifies into a repeatable gate.
+  **Layman:** Screenshots can only be taken from wherever the player starts, so the fog, torch and nukage effects cannot be photographed at the places they are meant to show up.
+  Kind: test.
+  Source: feature-review-2026-08-03.

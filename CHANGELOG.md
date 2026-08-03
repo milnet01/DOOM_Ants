@@ -8,6 +8,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Add a `make compile_commands.json` target for the static analysers**
+  cppcheck and clang-tidy take a file's language from its extension, so a
+  whole-tree sweep was parsing the 10k-line Vulkan back-end as C and
+  analysing none of it. A compilation database gives each file the
+  compiler, standard and include paths the real build used.
+
 - **Drifting fog now rolls through a torch's glow and cuts it, instead of sliding behind a still patch of light** (DOOM-0300)
   Light reaching the fog is attenuated along its own path from the lamp, so
   billows passing in front of a torch actually dim it. Before this the glow was
@@ -70,6 +76,11 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Say how to fix it when the HD art is missing** (DOOM-0042)
+  Ultra falling back to the 1997 art looks like a lighting regression in a
+  screenshot rather than a missing asset directory, so the message now
+  names DOOMASSETDIR as the thing to set.
+
 - **Fog wisps churn at Silent Hill 2's rate, and each map gets its own drift heading** (DOOM-0300)
   The fog's glow read as a painted patch because the wisp pattern needed 24
   seconds to cross one noise cell, where Silent Hill 2's fog fully
@@ -111,6 +122,16 @@ All notable changes to DOOM_Ants are documented here. The format follows
   The old fixed tolerance sat only ~3.9 sigma from the estimator's true standard error on two of the five weight sets, well short of the 6 sigma the neighbouring frequency check uses. The bound is now computed from the exact estimator variance, so it scales with N and the weights; all five sets currently land within 1.6 sigma.
 
 ### Fixed
+
+- **Bound the scaled patch blitter and the Classic menu's text rows** (DOOM-0230)
+  The scaled patch draw added for the menu work never got the on-screen
+  bounds check its two siblings have, and the menu text helper that
+  calls it clipped sideways but not vertically. Off-screen text is now
+  dropped with a one-off note instead of writing outside the frame.
+
+- **Skip the frame when the video texture cannot be locked**
+  A failed SDL_LockTexture leaves the pixel pointer untouched, and the
+  Classic renderer wrote the whole frame through it anyway.
 
 - **Ordinary walls no longer glow like lights, and DOOM's own light fixtures now do** (DOOM-0307)
   A curated list of light-source wall textures replaces the brightness test
@@ -220,6 +241,20 @@ All notable changes to DOOM_Ants are documented here. The format follows
   Editing ~/.doomrc to an out-of-range value could crash the game when opening the menu; the value is now clamped.
 
 ### Security
+
+- **Validate the REJECT lump against the map's sector count** (DOOM-0119)
+  The light cull indexed the REJECT visibility table by sector pair without
+  checking the lump was big enough to hold that many sectors, so a map
+  shipping a short REJECT read past the end of it on both the CPU and the
+  GPU. Too small now simply turns the cull off, and says so.
+
+- **Bound the last unguarded WAD and savegame indices** (DOOM-0254)
+  P_LoadLineDefs dereferenced its two vertex indices straight out of the
+  PWAD while the nine sibling indices around it were already guarded, and
+  savegame loading cast stored state, type and player indices back into
+  array subscripts unchecked -- a saved player index of 0 read players[-1].
+  Both now go through the same refuse-the-file guard the rest of the level
+  loader uses.
 
 - **Harden every untrusted-input boundary the 2026-07-26 audit + indie-review sweep found.** (DOOM-0254)
   A hostile or broken WAD, savegame, config file or command line can no longer make the game read or write memory it does not own.

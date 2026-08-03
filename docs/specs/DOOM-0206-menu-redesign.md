@@ -398,8 +398,10 @@ crisp). The Classic *tier* is unaffected (see below).
 - **Two content fixes requested in the same play-test — these restructure the
   shared Options/Renderer item arrays for *all* tiers (a deliberate v2 relaxation
   of v1's INV-4 "no item-list change"; cursor-movement / `M_Responder` /
-  persistence semantics stay untouched):**
-  - **Remove Graphic Detail** (`M_DETAIL` / `M_ChangeDetail`) from the Options
+  persistence semantics stay untouched).** **Both SHIPPED (verified in source
+  2026-08-03); the two bullets below are kept for their rationale, and their
+  present tense describes the pre-change state, not today's:**
+  - ✅ **Remove Graphic Detail** (`M_DETAIL` / `M_ChangeDetail`) from the Options
     menu entirely — it is a confirmed **no-op on every backend** (`M_ChangeDetail`
     has its `R_SetViewSize` call commented out and only prints "low detail mode
     n.a."). Drop the `menuitem_t`, its `options_e` enum entry, and the menu draw
@@ -410,7 +412,7 @@ crisp). The Classic *tier* is unaffected (see below).
     the menu *row* is removed. NOTE: this supersedes §4.1 / §L6's mentions
     of `M_DETAIL` as an Options row to keep-and-convert — it is now removed, not
     converted.
-  - **De-duplicate the FPS-counter row.** It currently appears in *both* the
+  - ✅ **De-duplicate the FPS-counter row.** Before the change it appeared in *both* the
     Options menu (`OptionsMenu[showfps]`, `M_ChangeFPS`) and the consolidated Video
     menu (`VideoMenu[vid_fps]`, same `M_ChangeFPS`). Resolve cleanly by **removing
     the FPS row from `OptionsMenu` (all tiers)** and **adding an FPS row to the
