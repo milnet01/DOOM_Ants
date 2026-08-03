@@ -753,8 +753,13 @@ void I_FinishUpdate (void)
 	    screens[0][ (SCREENHEIGHT-1)*SCREENWIDTH + i] = 0x0;
     }
 
-    // Expand the 8-bit paletted frame into the ARGB streaming texture.
-    SDL_LockTexture(texture, NULL, &pixels, &pitch);
+    // Expand the 8-bit paletted frame into the ARGB streaming texture. A failed lock
+    // leaves `pixels` untouched, so writing the frame anyway would run the loop below
+    // through an uninitialised pointer -- drop this frame instead. Recoverable: the
+    // next I_FinishUpdate re-locks, so a transient failure costs one frame, not the
+    // session.
+    if (SDL_LockTexture(texture, NULL, &pixels, &pitch) != 0)
+	return;
     src = screens[0];
     for (y=0 ; y<SCREENHEIGHT ; y++)
     {
