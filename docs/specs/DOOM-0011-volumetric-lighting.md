@@ -399,8 +399,9 @@ fallback if HG reads busy (Q5).
   passage previously said it was unshipped and that the tree still used `SKY_COLOR`;
   that was stale, corrected 2026-08-03** —
   torch shafts inherit the emitter's `Le`
-  colour; both are then multiplied by `mediumTint`. So a torch shaft in a goo room
-  is warm-through-green; a sky shaft in hell is sky-through-red. Tint colours and
+  colour. **Only the sky term is multiplied by `mediumTint`** (user decision 2026-08-03,
+  §4.4(b)): a sky shaft in hell is sky-through-red, but a torch shaft in a goo room stays
+  **warm**, not warm-through-green. Tint colours and
   strengths are compile-time `const`s (`kGooTint`, `kHellTint`, …), tuned on
   hardware toward the DOOM-0193 exaggerated look. Start subtle.
 
@@ -956,7 +957,8 @@ profile's** base tone, and §4.5's area profiles still multiply it. The composit
 of §4.3 is unchanged and is what makes this work:
 
 ```
-fog colour = (light colour: sky kFogColor / emitter Le) × mediumTint    (§4.5)
+fog colour = sky term:   kFogColor × mediumTint     (§4.5)
+             torch term: emitter Le  (UNTINTED — §4.4(b), 2026-08-03)
 ```
 
 - **Earth-side maps** (E1 Knee-Deep, most of DOOM II's city run) sit in the **clear**
@@ -1239,16 +1241,15 @@ peak at roughly 4× the indoor sky in-scatter floor.
 ray" — the bake's sight test *is* the occlusion, paid once at load instead of per sample, so
 a torch does **not** glow through a wall (Q2, closed).
 
-> ⚠ **The medium tint on this term is an OPEN DECISION, not a settled one — do not build
-> either way from this section alone.** As shipped today the torch term carries no tint,
-> but that is only because **L4 has not shipped**: `mediumTint` does not exist in the
-> shaders, and `kGooTint` / `kHellTint` are declared and unread (`pt_common.glsl`, both
-> marked `(L4)`). So today's untinted term is L4's absence, not a decision against tinting.
-> Meanwhile §4.3, §4.5 and §7's L4 acceptance row all specify that L4 **will** multiply this
-> term by `mediumTint` ("a torch shaft in a goo room is warm-through-green"). The question
-> L4 must answer before it is built: does a torch shaft take the medium's colour, or keep
-> the emitter's own `Le` so a warm flame still reads warm through green air? Both are
-> defensible and the spec currently implies the first while the code implies the second.
+**The torch term is NOT tinted by the medium — decided by the user, 2026-08-03, and this
+is now a contract on L4 rather than an accident of it being unbuilt.** A torch keeps its
+emitter's own `Le`, so a flame still reads warm through green air; the room's colour comes
+from the sky-lit fog around it, not from the flame. Recorded here because the state of the
+code could not settle it either way: `mediumTint` does not exist in the shaders at all —
+`kGooTint` / `kHellTint` are declared and unread (`pt_common.glsl`, both marked `(L4)`) —
+so today's untinted term is L4's absence, not a decision. Until this date §4.3, §4.5 and
+§7's L4 row all specified the opposite ("warm-through-green"); they now follow this.
+**L4 must therefore apply `mediumTint` to the SKY term only.**
 
 Two amendments below modify this, and neither changes the scheme above: DOOM-0295
 integrates the term at **half the march's rate**, and DOOM-0296 **re-bakes the grid when a
@@ -1986,7 +1987,8 @@ All three numbers are first guesses, tuned at L4 (Q7/Q20).
 
 Profiles compose: a goo room *on* a hell level gets both (green pool + red haze). **Densities add**
 (§4.3b's `Σ` term) but **tints multiply** — that room's `mediumTint` is `kGooTint · kHellTint`,
-applied once to every `Ls` contribution (colour = light × medium). Multiplication is the deliberate
+applied to the **sky** `Ls` contribution only (colour = light × medium); the torch term is
+untinted by decision (§4.4(b), 2026-08-03). Multiplication is the deliberate
 pick over a density-weighted blend: it keeps one `vec3` on the hot path and needs no per-profile
 weight, at the cost of reading *darker* than either tint alone. If goo-in-hell reads muddy on
 hardware that is an L4 tuning dial (Q7/Q20) — raise `kHellTint` toward white; do **not** switch the
@@ -2777,7 +2779,7 @@ pass/fail rather than a go/no-go between variants.
 | **L2b** | **The sun-clearance field** (§4.4's 2026-07-30 amendment, DOOM-0289): delete L2's per-sample sun ray; widen the seep field `RG16F → RGBA16F` with the `zLo`/`zHi` interval; build it in `RB_BuildSeepField`; widen and split DOOM-0281's re-flood (and fix its upload gate). **A pure perf change with a look-identity requirement** — it is not a new layer. | The shafts are **where they were before** (the field and the beam must agree about `kSunDir`); the doorway beam still reads; a building in the open still shadows the air beside it; **the sun ray's 13.6 ms is gone** and the whole fog is back inside the ≤ 15 % gate; a door opening updates its shaft within Q30's rebuild cadence (same frame on the full re-flood path), and **a lift moving between two open heights updates it too** (the clearance is height-keyed, so DOOM-0281's flip detector alone is not enough); `-rtverify` green | **yes** — the regression it exists to fix |
 | **L3** | **Height pooling + torch shafts:** height-based density (per-sample floor reference — `pc.fogFloorZ` outdoors, the camera's floor indoors, **never** `hitP.z`; §4.3 / Q3); a per-cell torch list baked onto the seep grid at level load (≤ `kFogLightsPerCell` lights, ranked by unoccluded contribution and sight-tested), read by one indexed lookup per march sample — **no runtime emitter scan** (§4.4(b)). | Fog settles low into a floor layer; a torch in a dark room glows its surrounding air; dynamic/muzzle/flashlight do **not** scatter | no |
 | **L3b** | **Re-bake the fog-light grid when the map moves** (§4.4's 2026-08-02 amendment, DOOM-0296, INV-14): arm on `RB_UPD_MOVED` beside `g.clearanceDirty`; fire from inside `RecordSeepRefresh`, **after its clearance block and before the `!needUpload` early-out** (a settle frame early-outs, so a block at the end never runs), once planes have been still for `kFogLightSettle` — or after `kFogLightMaxWait` for a mover that never settles, which bakes without clearing the arm; call the existing `BuildFogLightGrid` unchanged. **A defect fix, not a new layer** — no constant of the look moves. | Open a door onto a torch-lit room and the fog behind it picks up the torch **within ~`kFogLightSettle` (0.15 s) of the door finishing, at traced-frame granularity**, not on reload; shut it and the glow goes; a **second** L3 line prints with `lit` risen and returning (the load-time line always prints, so the second one is the signal). A **lift** between two already-open heights must also produce a second line — **its existence is the check, not the direction of any count** — which is the only fixture that catches a trigger keyed to the opening flip. On a **crusher** map the cap path fires every `kFogLightMaxWait`: judge whether the repeating fog snap reads acceptably, and if not suppress re-bakes while a cap-path mover runs rather than shortening the cap. **Exactly one** second line per door — a build that arms but never waits prints of order eighty. A **perpetual platform** settles twice per cycle and so bakes twice per cycle indefinitely without ever touching the cap: judge that snap too, it is the commoner mover. A still map prints **no second** line and is unchanged under `-shotcompare` (an **MAE ≤ 3.0** gate at 640 px, not bit-identity) | no — **4.1 ms (E1M1) / 2.9 ms (MAP01) bake+upload per settled move**, measured, against a ≤ 6 ms gate (§4.4) |
-| **L4** | **Area profiles + colour:** goo tint via the primary-hit `RB_FLAG_LIQUID_NUKAGE`; hell haze via the new `rb_view_t` field → `misc6.w`; `mediumTint` colouring (light×medium). | Goo rooms fill green and pool low; hell levels gain a faint red haze; a torch shaft reads warm-through-green in goo; clear levels stay neutral | no |
+| **L4** | **Area profiles + colour:** goo tint via the primary-hit `RB_FLAG_LIQUID_NUKAGE`; hell haze via the new `rb_view_t` field → `misc6.w`; `mediumTint` colouring (light×medium) on the **sky term only**. | Goo rooms fill green and pool low; hell levels gain a faint red haze; a torch shaft stays **warm** in goo (untinted — §4.4(b)); clear levels stay neutral | no |
 | **L5** | **Denoise/quality pass:** dither tuning; escalate upsample→a-trous if it crawls (§4.6 Q6); phase/anisotropy tune. **May be largely dissolved** if L1c promotes mode-6 fog to full-res (§6 item 2) — with no upsample there is no upsample to harden; the dither/phase tuning still applies. | Fog is smooth, not grainy or crawling, in a slow pan; shafts hold their shape | no |
 | **L6** | **Menu + profiler + perf** (the dial, `rt_fog` config row and `;` key already shipped, `f8c6b1f` — §5): both menu rows, the fog-pass profiler wiring (**`queryCount` 8 → 9**, fog on slot 8, and widen both resets + the readback — the pool is full, §6), the DOOM-0208 canonical-config pin (§8 INV-8), and the perf pass. | Toggle/strength flip cleanly through all four states off→low→med→high (matching `fogNames[4]`, §5); adds **≤ 15 % present-total** vs off (§6, raised from ≤ 5 % by the 2026-07-25 amendment); `-rtverify` **green**; if fog ships on-by-default (Q10) the `-shotcompare` golden is re-blessed with subtle fog, else fog-off stays byte-identical (INV-8); Classic + the raster path unmoved (INV-7) — the 60 FPS floor no longer binds RT-engaged scenes (§6, 2026-07-25) | **yes** |
 

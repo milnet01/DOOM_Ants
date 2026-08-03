@@ -5833,3 +5833,20 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: doc.
   Lanes: docs, fog.
   Source: cold-eyes-2026-08-03 (DOOM-0304 fold-in gate, 2 lanes).
+  Progress (2026-08-03): item 2 of the two decisions is CLOSED by the
+  user — **a torch shaft is NOT tinted by the medium.** It keeps its
+  emitter's own Le, so a flame reads warm through green air; the room's
+  colour comes from the fog around it. Folded into all five sites in the
+  same pass (§4.4(b) now states it as a contract on L4, and §4.3, §4.5's
+  colour formula, §4.5's compose paragraph and §7's L4 acceptance row all
+  follow it). **L4 applies mediumTint to the SKY term only.**
+
+  Item 1 (the three incompatible density formulas) is still open and is
+  now the only decision left on this list.
+
+  The user has also chosen to **SPLIT the spec three ways** — density +
+  the fields (§4.3/§4.3a-c), light sources + the bakes (§4.4), resolve +
+  composite (§4.6/§4.6a). Not started. Sequence it AFTER DOOM-0307, which
+  is a visible defect on a shipped path. Note the split is the better
+  moment to fix item 1: reconciling three density formulas is a rewrite of
+  the section that would become its own document anyway.
