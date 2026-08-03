@@ -1031,8 +1031,8 @@ degrees of the horizon. The honest levers are `kFogPoolHeight` or a sky-only den
 
 ## 7. Build order
 
-Everything below is **shipped** and user-signed-off, with one exception besides L4:
-DOOM-0300's drift speed still owes a look judgement (Q31).
+Everything below is **built**. All but two are user-signed-off: L4 landed 2026-08-03 and
+owes its look judgement (Q7/Q20/Q32), as does DOOM-0300's drift speed (Q31).
 
 | Task | State |
 |---|---|
@@ -1046,7 +1046,7 @@ DOOM-0300's drift speed still owes a look judgement (Q31).
 | **DOOM-0281** re-flood on a real opening flip | ✅ shipped (`e868b29` + re-tune `8b41786`) |
 | **DOOM-0292** `kIndoorSkyLight` | ✅ shipped |
 | **DOOM-0300** 15× drift speed + per-level heading | ✅ shipped — **the speed owes a user look judgement** (§10) |
-| **L4** area profiles — goo / hell | 📋 **not built.** §4.1 pins the term's placement; §4.4 pins the gate; the tint decision is pinned above |
+| **L4** area profiles — goo / hell | ✅ built 2026-08-03 to §4.1's placement, §4.4's gate and §4.6's tint site — **look sign-off owed** (Q7/Q20/Q32). Every acceptance row below measured; the wash-out risk did not materialise at `kAreaDensity` 0.0020 |
 
 **L4's acceptance rows**, since this part owns the density term it adds:
 

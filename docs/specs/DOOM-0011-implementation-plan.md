@@ -2158,14 +2158,14 @@ light × medium tint.
 - `rb_materials.h:17` — `RB_FLAG_LIQUID_NUKAGE`; `r_vulkan.cpp:5910` `FlagLiquidFlats` (how the
   flag is set on a flat) — confirms the flag reaches the primary-hit material.
 
-- [ ] **Step 1: Add the `rb_view_t` field**
+- [x] **Step 1: Add the `rb_view_t` field**
 
 In `r_mesh.h` (`:265-273`), add after `skytexnum`:
 ```c
     float hazeDensity;   /* DOOM-0011: hell-level global haze; 0 on non-hell levels */
 ```
 
-- [ ] **Step 2: Compute the hell flag in `r_backend.c`**
+- [x] **Step 2: Compute the hell flag in `r_backend.c`**
 
 Beside `view.skytexnum = skytexture;` (`:181`), apply the spec's concrete v1 rule (§4.5):
 ```c
@@ -2184,7 +2184,7 @@ Add `kHazeDensityDefault` as a small file-scope const in `r_backend.c` (tune-on-
 subtle). Confirm `gamemode`/`gameepisode`/`gamemap` are declared (they are DOOM globals — include
 the header that already declares them if `r_backend.c` doesn't see them).
 
-- [ ] **Step 3: Write `hazeDensity` into `misc6.w`**
+- [x] **Step 3: Write `hazeDensity` into `misc6.w`**
 
 In `r_vulkan.cpp`, at the `misc6` block (`:7429`), replace `pc.misc6[3] = 0u;` with the bit-cast
 (mirroring the `misc6[0]` ripple pattern):
@@ -2196,7 +2196,7 @@ In `r_vulkan.cpp`, at the `misc6` block (`:7429`), replace `pc.misc6[3] = 0u;` w
     std::memcpy(&pc.misc6[3], &haze, sizeof(float));
 ```
 
-- [ ] **Step 4: Apply profiles + tint in `marchFog()`**
+- [x] **Step 4: Apply profiles + tint in `marchFog()`**
 
 **First, widen `FogHit` — the liquid bit is not in `matFlags`.** `FogHit.matFlags` is filled at both
 call sites from the per-**vertex** flags word (`FogHit fh = FogHit(hitP, n, uint(flags));`), whose
@@ -2269,7 +2269,7 @@ the global haze to base density, and multiply every `Ls` contribution by `medium
 - Add `const float kAreaDensity` (start `0.0020`) to `pt_common.glsl`. The spec's §5 inventory
   names **`kAreaDensity`** — there is no `kGooDensityMul`.
 
-- [ ] **Step 5: Build + smoke + tests** (L1 Step 7 commands).
+- [x] **Step 5: Build + smoke + tests** (L1 Step 7 commands).
 
 - [ ] **Step 6: Play-test (spec §7 L4 — needs two levels)**
 
@@ -2278,7 +2278,7 @@ haze** while **E1M1 does not** (the concrete rule is checkable); a **torch shaft
 warm-through-green** in goo; clear levels stay neutral. Warp to E1M1 (goo room, no haze) and E3M1
 (haze). Screenshot; user sign-off.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add linuxdoom-1.10/r_mesh.h linuxdoom-1.10/r_backend.c linuxdoom-1.10/r_vulkan.cpp \

@@ -1346,6 +1346,62 @@ parked ideas (💭 considered) until we commit to and design each one.
   2026-07-30. The passage now describes a plan that does not exist and
   argues from a constant that was never adopted. Correct it -- and fold in
   this decision -- next time that spec is opened for the gate.
+  Progress (2026-08-03): L4 AREA PROFILES IMPLEMENTED — goo-green +
+  hell-red, built to DOOM-0310 §4.1/§4.4/§4.6 rather than to the plan's
+  three stale steps. Build + tests green; -rtverify PASS (INV-6 rel-MSE
+  0.2059% vs the 0.50% bar, white furnace exact). AWAITING USER LOOK
+  SIGN-OFF; nothing is blocked on it.
+
+  Shape: `rb_view_t.hazeDensity` (r_mesh.h) <- r_backend.c's per-level
+  rule beside `view.skytexnum` -> `g.lastView.hazeDensity` bit-cast into
+  `pc.misc6[3]` -> `uintBitsToFloat` in marchFog. Goo is primary-hit
+  keyed through a NEW `FogHit.ctrlFlags` carrying `MatCtrl.flags`.
+  `kAreaDensity` = 0.0020 (pt_common.glsl), `kHazeDensityDefault` =
+  0.0010f (r_backend.c) — both first guesses, Q7/Q20 dials.
+
+  CORRECTION to this bullet's own L4 pre-flight: it said `mc` is NOT in
+  scope at either FogHit call site. It IS — `MatCtrl mc = ctrl[id];` at
+  pathtrace.comp:1436 (mode 4) and :1620 (mode 6), both used again at
+  :1546 / :1675, above the two sites. The widening was a one-token edit,
+  not the budgeted plumbing job. Everything else in the pre-flight held.
+
+  The fire-sky disjunct of §4.5's hell rule is deliberately NOT built:
+  vanilla picks skytexture from gameepisode/gamemap in G_DoLoadLevel, so
+  it can never fire where the two implemented disjuncts do not.
+
+  MEASURED, pre-L4 worktree vs HEAD, same view, same config, quiet box:
+  - E1M1 spawn (no profile in view): MAE 0.004 against a same-build
+    control of 0.003 — inert, i.e. §7's byte-identity row as closely as
+    this harness can put it. NOTE the harness is NOT frame-deterministic:
+    the same build captured twice differs (md5 differs, MAE 0.003), so
+    literal byte-identity is unobservable here and the claim rests on the
+    algebra (`x + 0.0 == x`, `kFogColor * vec3(1.0)`) plus this bound.
+  - E1M1 roofed nukage (sector 53): MAE 1.42, 28.6% of px, shift
+    (-1.21, +0.67, -2.25) = green-ward, under a roof.
+  - E1M1 OPEN-SKY nukage (sector 0): MAE 6.89, shift (-8.42, +0.29,
+    -11.93); 0.000% of px above 250 on both builds and mean luma FELL, so
+    §7's wash-out risk did not materialise at kAreaDensity 0.0020.
+  - E3M1: MAE 12.1 over 100% of px, shift (+3.99, -11.67, -20.76) =
+    red-ward. E1M1 gains nothing. §4.5's falsifier passes both ways.
+  - CONSTRUCTION CHECK (§7, "not by eye"): with kIndoorFogScale forced to
+    0.0, toggling kAreaDensity still moves 29.2% of px at MAE 1.61 — the
+    profile term is provably OUTSIDE the skyExposure gate.
+  - Cost: megakernel, GPU per-pass profiler, rt_fog High, two runs each.
+    Goo room 15.177/15.178 vs 15.187/15.197 ms; E3M1 6.405/6.413 vs
+    6.410/6.402 ms. Delta within +-0.02 ms, under the 0.1 ms budget.
+
+  Reusable: `-warpto <x> <y> [deg]` + a WAD-lump parse for liquid sectors
+  beats cheat-nav for reaching a fixture headlessly. E1M1 carries BOTH goo
+  fixtures — sector 0 is open-sky nukage, sector 53 roofed. E3M1's liquid
+  is BLOOD3, which is not in FlagLiquidFlats' lut, so E3M1 tests hell
+  cleanly with no goo contamination. rt_profile is read from ~/.doomrc
+  AFTER the C default, so defaulting rb_profile=1 does nothing — pass a
+  temp `-config` with rt_profile 1 instead.
+
+  Still owed by the user, none blocking: Q7/Q20 (kGooTint/kHellTint and
+  the two densities re-judged in play), Q32 (does the sky backdrop's
+  closed form take the hell addend and mediumTint, or is a coloured
+  skyline seam accepted), Q31 (DOOM-0300's drift speed).
 - 💭 [DOOM-0012] **Hold a 60 FPS performance floor.**
   **Layman:** Keep it running smoothly — never below 60 frames per second.
   Kind: perf.
@@ -6424,3 +6480,35 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: doc-fix.
   Lanes: shaders, docs.
   Source: cold-eyes-2026-08-03 (DOOM-0310's gate, surfaced by all five lanes).
+
+- 📋 [DOOM-0315] **Make `-shotverify` frame-deterministic, or stop writing byte-identity acceptance rows.**
+  Found while discharging DOOM-0310 §7's byte-identity row for L4. Captured
+  E1M1's spawn view twice from ONE build, same args, `-noinput`: the PNGs
+  differ (different md5, MAE 0.003, max channel delta 4, 0.83% of pixels).
+  So the capture is not reproducible frame-to-frame, and any acceptance row
+  phrased as "byte-identical to today" cannot be executed as written — the
+  instrument's own noise is larger than the thing being asserted.
+
+  `-shotverify` already pins the things anyone thought of: `rippleSec = 8.0`
+  (r_vulkan.cpp, `rb_shotverify == 1`) and DOOM-0208's config pin (rt_view,
+  render scale, exposure, detile/filth/wet, flashlight, rt_fog). What is NOT
+  pinned is which frame gets captured, so the SVGF temporal accumulation and
+  TAAU have run a timing-dependent number of frames when the shot is taken.
+  That is the likely mechanism and it is a HYPOTHESIS, not a diagnosis — the
+  capture-trigger path has not been read.
+
+  Cheapest plausible fix: capture on a fixed frame INDEX rather than after a
+  wall-clock delay, so the denoiser history is always the same depth. Then a
+  same-build double capture is the regression test for this item itself.
+
+  Why it matters beyond tidiness: DOOM-0202's `-shotcompare` gate leans on the
+  same capture, and its `kGoldenMAE` of 3.0 is ~1000x this noise floor, so the
+  gate is not currently at risk — but a tighter bar could not be adopted, and
+  L4 had to substitute "within the same-build control" for a contract that said
+  "byte-identical". Until this lands, a byte-identity claim in a spec should be
+  written as an ALGEBRAIC one (the shipped association is preserved; `x + 0.0
+  == x`) with a measured noise-floor bound as its evidence, which is what
+  DOOM-0011's L4 note does.
+  **Layman:** Two screenshots of the exact same scene from the exact same build don't come out identical, which makes a whole class of "nothing changed" test impossible to run.
+  Kind: test.
+  Source: in-session-2026-08-03 (DOOM-0011 L4 verification).

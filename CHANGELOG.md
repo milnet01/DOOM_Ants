@@ -8,6 +8,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Volumetric fog now takes its colour from the room: green over nukage, a red haze through Hell (DOOM-0011 L4)**
+  Two area profiles feed the fog march. A nukage pool fogs green, and a Hell level (Inferno, or DOOM II from map 20) gains a thin red haze over everything. They stack — a goo room on a Hell level reads green through red. Torch shafts keep their own warm colour rather than taking the room's tint. Ultra's ray-traced view only; measured at under 0.02 ms.
+
 - **Add a `make compile_commands.json` target for the static analysers**
   cppcheck and clang-tidy take a file's language from its extension, so a
   whole-tree sweep was parsing the 10k-line Vulkan back-end as C and
