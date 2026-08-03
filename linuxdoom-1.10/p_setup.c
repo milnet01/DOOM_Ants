@@ -420,8 +420,13 @@ void P_LoadLineDefs (int lump)
 	ld->flags = SHORT(mld->flags);
 	ld->special = SHORT(mld->special);
 	ld->tag = SHORT(mld->tag);
-	v1 = ld->v1 = &vertexes[SHORT(mld->v1)];
-	v2 = ld->v2 = &vertexes[SHORT(mld->v2)];
+	// DOOM-0254 completion: these two were the one pair of WAD-supplied indices
+	// the original hardening pass missed. P_LoadSegs already guards its vertex
+	// indices the same way (see above); a linedef's are no more trustworthy.
+	v1 = ld->v1 = &vertexes[P_WadIndex (SHORT(mld->v1), numvertexes,
+					    "linedef vertex")];
+	v2 = ld->v2 = &vertexes[P_WadIndex (SHORT(mld->v2), numvertexes,
+					    "linedef vertex")];
 	ld->dx = v2->x - v1->x;
 	ld->dy = v2->y - v1->y;
 	

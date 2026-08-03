@@ -41,6 +41,22 @@ byte*		save_p;
 #define PADSAVEP()	save_p += (4 - ((uintptr_t) save_p & 3)) & 3
 
 
+//
+// A savegame is untrusted input for the same reason a PWAD is: it is a file the
+// engine is handed, not one it wrote this session, and players do trade them.
+// Vanilla stored array indices in pointer fields and cast them straight back on
+// load, so a truncated or edited .dsg dereferences whatever integer it contains.
+// Same posture and same shape as P_WadIndex in p_setup.c: refuse the save rather
+// than read past the array.
+//
+static int P_SaveIndex (int value, int count, const char* what)
+{
+    if (value < 0 || value >= count)
+	I_Error ("P_UnArchive: bad %s index %d (game has %d)", what, value, count);
+    return value;
+}
+
+
 
 //
 // P_ArchivePlayers
@@ -101,8 +117,9 @@ void P_UnArchivePlayers (void)
 	{
 	    if (players[i]. psprites[j].state)
 	    {
-		players[i]. psprites[j].state 
-		    = &states[ (int)(intptr_t)players[i].psprites[j].state ];
+		players[i]. psprites[j].state
+		    = &states[ P_SaveIndex ((int)(intptr_t)players[i].psprites[j].state,
+					    NUMSTATES, "psprite state") ];
 	    }
 	}
     }
@@ -300,15 +317,20 @@ void P_UnArchiveThinkers (void)
 	    mobj = Z_Malloc (sizeof(*mobj), PU_LEVEL, NULL);
 	    memcpy (mobj, save_p, sizeof(*mobj));
 	    save_p += sizeof(*mobj);
-	    mobj->state = &states[(int)(intptr_t)mobj->state];
+	    mobj->state = &states[P_SaveIndex ((int)(intptr_t)mobj->state,
+					       NUMSTATES, "mobj state")];
 	    mobj->target = NULL;
 	    if (mobj->player)
 	    {
-		mobj->player = &players[(int)(intptr_t)mobj->player-1];
+		// Stored 1-based so that 0 can mean "not a player" in the field
+		// above; index the array only after the -1 lands in range.
+		mobj->player = &players[P_SaveIndex ((int)(intptr_t)mobj->player - 1,
+						     MAXPLAYERS, "mobj player")];
 		mobj->player->mo = mobj;
 	    }
 	    P_SetThingPosition (mobj);
-	    mobj->info = &mobjinfo[mobj->type];
+	    mobj->info = &mobjinfo[P_SaveIndex (mobj->type, NUMMOBJTYPES,
+						"mobj type")];
 	    mobj->floorz = mobj->subsector->sector->floorheight;
 	    mobj->ceilingz = mobj->subsector->sector->ceilingheight;
 	    mobj->thinker.function.acp1 = (actionf_p1)P_MobjThinker;
