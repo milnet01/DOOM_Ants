@@ -183,7 +183,7 @@ endif
 # it and rebuilds, switching nothing rebuilds nothing.
 DEVSTAMP=$(O)/.dev-$(if $(filter 1,$(DEV)),on,off)
 
-.PHONY:	all clean windows test nee-test
+.PHONY:	all clean windows test nee-test compile_commands.json
 
 all:	 $(O)/$(BIN)
 
@@ -192,6 +192,27 @@ clean:
 	rm -f linux/* mingw/*
 	rm -f $(SHADER_DIR)/*.spv $(SHADER_DIR)/*.spv.h
 	rm -f $(ASSET_DIR)/*.ttf.h
+
+# ---- compile_commands.json (for the static analysers) ----
+# cppcheck and clang-tidy take a file's LANGUAGE from its extension, so a sweep that
+# picks one language for the whole project parses r_vulkan.cpp -- C++ -- as C. It then
+# reports a syntax error on the first std:: construct it meets and analyses nothing:
+# 10k lines, the most-changed file here, with silently ZERO coverage. Found 2026-08-03.
+#
+# A compilation database removes the guess. Each entry carries that file's real
+# compiler, -std (gnu11 for the 1997 C, c++23 for the Vulkan back-end), defines and
+# include paths, exactly as this Makefile invoked them:
+#     make compile_commands.json && cppcheck --project=compile_commands.json
+#
+# Phony rather than a file target on purpose: a database is only true of the build that
+# produced it, and a stale one is worse than none -- it reports on flags no longer used.
+# -B forces every TU through the compiler so bear observes them all (a no-op incremental
+# build would yield an empty database); `test` is included so tests/*.cpp is covered too.
+# Generated artifact, gitignored. bear is packaged (openSUSE: zypper in bear).
+compile_commands.json:
+	@command -v bear >/dev/null 2>&1 || \
+	  { echo "compile_commands.json needs 'bear' -- install it (zypper in bear)" >&2; exit 1; }
+	bear --output $@ -- $(MAKE) -B all test
 
 # ---- Unit tests ----
 # Every tests/*_test.cpp is a self-contained unit test (includes the header under

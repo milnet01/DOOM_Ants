@@ -23,6 +23,10 @@ cmake-build-*/
 /packaging/tools/
 /packaging/build/
 
+# Compilation database for the static analysers (`make compile_commands.json`).
+# Generated, and only true of the build that produced it — regenerate, don't commit.
+/linuxdoom-1.10/compile_commands.json
+
 # Generated shader artifacts (DOOM-0008): GLSL -> SPIR-V -> embedded C header
 /linuxdoom-1.10/shaders/*.spv
 /linuxdoom-1.10/shaders/*.spv.h
