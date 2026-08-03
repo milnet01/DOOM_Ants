@@ -6682,7 +6682,13 @@ static void EnsureHdMaterials()
         }
         fclose(f);
     } else {
-        printf("DOOM-0042: no %s - Ultra uses paletted art.\n", csvPath);
+        // Name the cause, not just the missing path. This fallback is silent in every
+        // way that matters -- Ultra still renders, just with the 1997 art -- and a
+        // screenshot of it looks like a lighting regression rather than a missing
+        // asset dir. An unset DOOMASSETDIR has already invalidated a measurement set
+        // once, so the message says which knob to turn.
+        printf("DOOM-0042: no %s - Ultra uses paletted art. "
+               "(Set DOOMASSETDIR to the HD asset directory to load it.)\n", csvPath);
     }
 
     // 2. Resolve names -> unified ids into the control table.
@@ -8160,7 +8166,18 @@ void BuildProbes()
     int rejectBytes = 0;
     const unsigned char* reject = RB_RejectMatrix(&rejectBytes);
     const int numSec = RB_NumSectors();
-    if (reject && rejectBytes > 0 && numSec > 0)
+    // The matrix must be big enough for the sector count it is indexed with. Both
+    // readers below address it as bit (secA * numSec + secE) -- the CPU cull at
+    // BuildRasterPointLights and the megakernel over the uploaded copy -- so a REJECT
+    // lump shorter than numSec^2 bits reads past the end of a PU_LEVEL allocation on
+    // the CPU and past the buffer on the GPU. The lump's length is attacker-controlled
+    // (it is whatever the PWAD says), and nothing upstream ties it to numSec: a 5000-
+    // sector map shipping an 8-byte REJECT is a well-formed WAD. Size is checked in
+    // 64-bit so the product itself cannot overflow the comparison. Too small = leave
+    // the cull off (numSectors stays 0), which is the same path a REJECT-less level
+    // already takes and costs only the cull's speed-up.
+    const long long rejectNeed = ((long long)numSec * (long long)numSec + 7) / 8;
+    if (reject && numSec > 0 && (long long)rejectBytes >= rejectNeed)
     {
         std::vector<int32_t> subSec(n);
         RB_BuildSubsectorSectors(subSec.data(), n);
@@ -8183,6 +8200,15 @@ void BuildProbes()
         g.numSectors = (uint32_t)numSec;
         printf("RB_Vulkan: DOOM-0119 REJECT cull active (%d sectors, %d-byte matrix).\n",
                numSec, rejectBytes);
+        fflush(stdout);
+    }
+    else if (reject && rejectBytes > 0 && numSec > 0)
+    {
+        // Present but too small to index safely. Say so rather than dropping the cull
+        // silently -- on a map that ships a REJECT this is a malformed lump, and the
+        // only visible symptom otherwise would be lost frame rate no one can explain.
+        printf("RB_Vulkan: DOOM-0119 REJECT cull OFF -- lump is %d bytes, "
+               "%lld needed for %d sectors.\n", rejectBytes, rejectNeed, numSec);
         fflush(stdout);
     }
 
@@ -9298,8 +9324,16 @@ extern "C" void RB_Vulkan_Present(void)
     g.lastRtActive = rtActive;
 
     // Build-ahead: run the CPU build now, overlapping the previous frame's GPU. Raster
-    // runs the WHOLE build ahead (every buffer it writes is slotted). A just-toggled
-    // frame runs none of it, so its single-copy resources are never in flight.
+    // runs the WHOLE build ahead. NOT because every buffer it writes is slotted -- the
+    // raster branch of BuildFrameInputs also writes g.sprWorldMapped and g.emitBuf,
+    // which BuildFrameReheight's comment above correctly calls single-copy. It is safe
+    // for the narrower reason that NOTHING GPU-SIDE READS THOSE TWO IN RASTER: they
+    // feed BuildSpriteTlas / RecordRtTrace / RunGiBake, none of which is recorded on a
+    // raster frame, and the mode toggle below drains before the modes swap. So the
+    // safety rests on the render path, not on the allocation -- add a raster GPU read
+    // of either buffer and this becomes a live CPU/GPU race with nothing to catch it.
+    // A just-toggled frame runs none of the build, so its single-copy resources are
+    // never in flight across the transition either.
     const bool buildAhead = !rtActive && !modeChanged;
     // DOOM-0197: the traced path cannot run its whole build ahead -- the sprite and
     // emitter buffers are still single-copy -- but the re-height can, and that is 3.10
