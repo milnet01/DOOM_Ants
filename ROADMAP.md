@@ -7372,3 +7372,22 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: fix.
   Lanes: renderer, shaders.
   Source: user-play-test-2026-08-04.
+  EVIDENCE, and it is the ONLY record of this vantage -- no dev-shots capture
+  of it exists, because the spot was reached by the user walking there and no
+  -warpto fixture is pinned yet.
+  15 user screenshots, /home/ants/Pictures/ClaudePaste/paste_20260804_17*.png
+  (timestamps 170704 to 173828). The three-tier comparison is inside that set:
+  Solid and Ultra show the black band; Classic shows the same band as a dark
+  grey rocky wall with visible texture. Several frames include the Video menu
+  open, which is how the tier and settings are confirmed rather than inferred
+  -- Renderer Ultra / Solid / Classic, Ray Tracing On / Off, render_scale 50,
+  rt_fog Med, TAAU, Fill Screen On.
+  Same set is the evidence for DOOM-0321 (the white blow-out); the two defects
+  were reported from the same session and the same landscape.
+  FIRST STEP when picking this up, before reading any code: pin a -warpto
+  fixture for the vantage so before/after is repeatable. The DOOM-0011 note
+  carries the method -- parse the map's SECTORS lump for `ceilingpic ==
+  F_SKY1`, take a vertex on a linedef whose sidedef faces one, warp there. The
+  E3M1 surface spot already found that way is `-warp 3 1 -warpto -600 576 300`,
+  but that is the blood room and is NOT this landscape; the user reached this
+  one by playing on from there.
