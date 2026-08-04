@@ -6576,3 +6576,86 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Two screenshots of the exact same scene from the exact same build don't come out identical, which makes a whole class of "nothing changed" test impossible to run.
   Kind: test.
   Source: in-session-2026-08-03 (DOOM-0011 L4 verification).
+
+- 📋 [DOOM-0316] **Split part 2 of 3 — fog light sources and the bakes, extracted from the DOOM-0011 spec.**
+  Second of the three-way split the user approved on DOOM-0308: §4.4 light
+  sources and shafts, plus the bakes. Part 1 is DOOM-0310 (density + the
+  fields, shipped); part 3 is resolve + composite (§4.6/§4.6a).
+
+  SCOPE GREW on 2026-08-04 from a user request, and the request turns out
+  to be exactly this part's subject: "dial up the fog around nukage and
+  water a bit more as a default, just to make it that much moodier (horror
+  ambience). That way we can show the nukage pools glowing. Also, wherever
+  there is nukage spilled on the floor, please make that glow as well."
+
+  MEASURED STATE, so the spec starts from the tree and not from recall
+  (headless ladder, E1M1 -warpto 3274 -3353 200, the roofed nukage room,
+  render_scale 100, Ultra RT):
+  - rt_fog 1 (Low, the shipped default) is very close to rt_fog 0 in this
+    room. The fog only reads at 2 and 3.
+  - The fog over a goo pool is NEUTRAL GREY, not green, at every strength.
+  - The pool casts NO light into the air above it.
+
+  ROOT CAUSE of the grey, and it is structural rather than a dial. In
+  marchFog (pathtrace.comp:1277) mediumTint multiplies the SKY term ALONE:
+      Ls = kFogColor * mediumTint * kSkyShaftStrength
+         * (kSkyAmbientFrac * skyLight + (1-kSkyAmbientFrac) * sunLit)
+  and skyLight = mix(kIndoorSkyLight, 1.0, seepT). In a roofed room seepT
+  is near 0, so the sky share is near kIndoorSkyLight and the goo tint is
+  multiplying a nearly-zero number. DOOM-0292 then gates the ambient share
+  on sky exposure as well, which is correct on its own terms and pushes the
+  same term further down. The two changes are not in conflict about what is
+  right; they jointly mean a coloured MEDIUM cannot show indoors, which is
+  where goo rooms are.
+
+  THE DESIGN QUESTION this part has to settle, therefore, is not "what is
+  kGooTint" but WHERE a liquid's colour enters the model. The promising
+  answer, and the one consistent with what is already decided: make liquid
+  surfaces FOG LIGHT SOURCES carrying their own Le, so a pool lights the
+  mist above it the way a torch does. That reuses the existing untinted
+  torch addend (pathtrace.comp:1280) and the user's own 2026-08-03 ruling
+  that an emitter keeps its own colour and reads THROUGH the medium rather
+  than being repainted by it -- so the green would come from the goo, not
+  from a tint applied to sky light that is not there.
+
+  OPEN, for the spec to answer:
+  - Do liquid flats enter the L3 fog-light bake as area emitters, and at
+    what cost? The bake ranks by unoccluded contribution and is capped by
+    kFogLightsPerCell; a large pool is not a point light and the ranking
+    assumes one.
+  - Spilled nukage on the floor is the DOOM-0181 stain/puddle layer, not a
+    liquid flat, so it carries no LIQUID_NUKAGE MatCtrl bit. Does it get
+    one, or its own weaker emitter class? DOOM-0302 already made
+    emisWeight() own the per-texel liquid mask.
+  - kAreaDensity (0.0020) and the shipped rt_fog default (1) are both first
+    guesses. Whether "moodier by default" is a density raise, a default
+    raise, or both is a look call -- take a ladder to it, do not pick.
+  - Does water get the same treatment as nukage? The user named both, and
+    water has no glow of its own.
+
+  Dependencies: DOOM-0310 (part 1) shipped. This part gates DOOM-0011 L5/L6.
+  Runs the rule-14 gate from loop 1 on its own bytes via /write-spec.
+  **Layman:** The part of the fog design document about what lights the fog up — and making the glowing green sludge actually light the mist above it.
+  Kind: doc.
+  Lanes: docs, fog, shaders.
+  Source: in-session-2026-08-04.
+
+- 📋 [DOOM-0317] **Split part 3 of 3 — fog resolve and composite, extracted from the DOOM-0011 spec.**
+  Third of the three-way split the user approved on DOOM-0308: §4.6 half-res,
+  denoise and composite, plus §4.6a fogging the sky backdrop (aerial
+  perspective). Part 1 is DOOM-0310 (density + fields, shipped); part 2 is
+  light sources + bakes.
+
+  Written after part 2, because the composite consumes whatever the light
+  model produces and part 2 may add a source (liquid emitters are under
+  consideration there). Extracting it first would gate it on a contract that
+  is still moving.
+
+  Carries DOOM-0011 Q32 (the sky backdrop's fog treatment), which is one of
+  the two look calls L4 still owes.
+
+  Runs the rule-14 gate from loop 1 on its own bytes via /write-spec.
+  **Layman:** The last part of the fog design document: how the fog is blended into the finished picture, including the sky behind it.
+  Kind: doc.
+  Lanes: docs, fog, shaders.
+  Source: in-session-2026-08-04.
