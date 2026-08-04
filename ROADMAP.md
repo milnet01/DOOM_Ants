@@ -1468,6 +1468,44 @@ parked ideas (💭 considered) until we commit to and design each one.
   exactly. E3M1's spawn also faces a wall and is useless as an outdoor hell
   fixture -- an open-landscape vantage is needed (E3M6, E4M2, or DOOM II
   MAP20+).
+  Q32 NARROWED BY MEASUREMENT 2026-08-04, and the earlier reading of the
+  user's report was wrong in a way worth recording. Their captures were the
+  E3M1 SURFACE (the level opens underground; a lift takes the player up --
+  which is also why the spawn-point capture was useless, it faces a wall).
+  Reached headlessly by finding an open-sky sector in the WAD directly --
+  parse E3M1's SECTORS for `ceilingpic == F_SKY1`, take a vertex on a linedef
+  whose sidedef faces one, and `-warpto` there. Spot used: -600 576, angle
+  300. Worth reusing: it turns "I cannot get to the place the user
+  photographed" into a lookup.
+  THE MARCH IS CORRECTLY TINTED. Measured on that capture, mean RGB:
+    upper sky     (153.3, 79.6, 79.6)   R/G 1.93
+    horizon band  (136.8, 78.4, 67.1)   R/G 1.75
+    ground        ( 85.8, 37.0, 25.2)   R/G 2.32
+  and E3M6's open landscape independently gives R/G 1.99-2.91. So kHellTint
+  IS reaching marchFog and "the fog is showing as white" is NOT a tint failure
+  in the march. User confirmed on the capture: "at least the fog is red."
+  WHAT IS ACTUALLY WHITE is the SKY BACKDROP -- the untinted pale band along
+  the horizon in the user's first screenshot, brightest at centre. That is
+  this question's subject exactly: the backdrop's closed form takes neither
+  mediumTint nor the profile density addend. Where a view is dominated by
+  backdrop rather than by world geometry, the scene reads washed-out and
+  neutral even though the march around it is red. So Q32 CLOSES TOWARD
+  TINTING THE BACKDROP, on evidence rather than on preference -- the
+  alternative it offered (accept a coloured skyline seam) is what the user
+  photographed and rejected.
+  TWO SEPARATE LOOK CALLS SURVIVE, and neither is answered by the tint work:
+  "it shouldn't be so bright under a red sky" (in-scatter brightness --
+  kSkyShaftStrength / kSkyAmbientFrac in a red-sky scene) and "the fog should
+  be a lot thicker" (density -- kFogBaseDensity, or the hell profile's own
+  haze addend). Do not fold these into Q32; tinting the backdrop will change
+  neither.
+  Method note, so the confounded attempt is not repeated: the hue-of-a-
+  difference test (fog on minus fog off) is invalid here. Fog attenuates the
+  surface behind it as well as adding in-scatter, so on reddish-brown hell
+  ground the transmittance term removes red and biases the delta green -- it
+  returned R/G 0.74, suggesting a goo tint on a level with no goo. Measure the
+  ABSOLUTE hue of the fogged frame instead, which is what the figures above
+  are.
 - 💭 [DOOM-0012] **Hold a 60 FPS performance floor.**
   **Layman:** Keep it running smoothly — never below 60 frames per second.
   Kind: perf.
@@ -7150,6 +7188,37 @@ parked ideas (💭 considered) until we commit to and design each one.
   STILL DEPENDS ON DOOM-0316 for the same reason as before: every one of the
   four sources needs a Le that lights its surroundings without blowing out its
   own surface, and that split is DOOM-0316's.
+  USER REQUEST 2026-08-04, on seeing the E3M1 surface capture: "That level
+  looks like it is a pool of blood, so, if it is blood, then it needs to be
+  treated as a liquid." Correct -- the floor there is BLOOD1-3, and the flats
+  exist in both IWADs (verified by reading the WAD directory: BLOOD1, BLOOD2,
+  BLOOD3 present in doom.wad and doom2.wad).
+  So the per-liquid table gains a fourth row. Membership so far, with the
+  columns deliberately independent as the earlier decision requires:
+    nukage  density yes,  tint green,  glow yes
+    lava    density yes,  tint --   ,  glow yes
+    water   density yes,  tint --   ,  glow NO   (user, earlier)
+    blood   density yes,  tint red? ,  glow ?    (NEW -- both undecided)
+  Blood's glow is NOT implied by this request and must not be assumed: the
+  user asked for it to be "treated as a liquid", which covers the wet/ripple
+  surface treatment and the fog density; whether a blood pool GLOWS is a
+  separate look call, and real blood does not. Ask before giving it an Le.
+  ⚠ THIS BREAKS THE PROJECT'S HELL TEST FIXTURE, and that is the thing to
+  handle before any code changes. Both DOOM-0011 and DOOM-0310 rely on E3M1
+  being a "hell with zero goo contamination" fixture, and the stated reason is
+  precisely that its liquid is BLOOD3, which FlagLiquidFlats' lut does not
+  contain -- so the hell haze can be judged without a liquid profile stacking
+  on it. The moment blood enters the lut that property is gone and every
+  hell-vs-goo comparison in those two specs silently starts measuring the
+  product of two tints.
+  Options for whoever builds this, none free:
+    (a) find a hell level with NO liquid at all and re-pin the fixture there;
+    (b) keep a build-time switch that excludes blood, used only by the fixture;
+    (c) accept the contamination and always compare hell against hell.
+  (a) is cleanest if such a level exists -- check before assuming; much of
+  Episode 3 is blood-floored. Whichever is chosen, the memory note and both
+  specs' fixture lines need updating in the same change, or a later session
+  will trust a fixture that no longer holds.
 
 - ✅ [DOOM-0320] **Classic -devshot captures are left-aligned with a false black bar whenever Fill Screen is off.**
   Found while verifying DOOM-0147, and it is a defect in the MEASUREMENT
