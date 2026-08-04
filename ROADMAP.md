@@ -1496,6 +1496,27 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: fix.
   Source: in-session-2026-06-25.
   Implemented 2026-06-25 (commit 7d19c64): force a full status-bar refresh each frame in 3D modes so stale overlay pixels are cleared. Builds clean. Pending on-screen re-test of the Sound Volume menu over the HUD.
+  Progress (2026-08-04, user): the artefact that prompted the re-test was
+  the user's KDE MAGNIFYING LENS, not the engine -- "we found that it was my
+  magnifying lens". Same class as DOOM-0173, where the "mystery box" turned
+  out to be a desktop overlay that appeared on the bare desktop too.
+  This does NOT retract the fix. The mechanism diagnosed in 2026-06-25 was
+  real and read from source: ST_Drawer runs with refresh=false (ST_diffDraw)
+  so it repaints only changed widgets, while the compositor clears just the
+  3D view rect to RB_OVERLAY_KEY -- stale overlay pixels over the status bar
+  were genuinely never erased. Commit 7d19c64 forces a full status-bar
+  refresh each frame in 3D modes. What the magnifier explains is the
+  SYMPTOM the user was looking at when asking for the re-test, which is why
+  the re-test kept seeming to fail.
+  WHAT IS ACTUALLY OUTSTANDING is therefore narrower than the bullet above
+  implies: not "does the smear still happen" but a plain confirmation that
+  the menu-over-HUD region is clean in Solid/Ultra with the magnifier off.
+  Note this cannot be captured headlessly today -- opening a menu needs a
+  keypress and Wayland will not let input be injected into the client, so
+  -inspect/-freeze/-devshot (DOOM-0294, 2026-08-04) reach every WORLD view
+  but no menu. Either a human looks with the lens off, or the developer
+  build gains a way to open a menu from argv. The latter is the general fix
+  and would also unblock DOOM-0205's on-screen check.
 
 - ✅ [DOOM-0047] **Verify sound-effect audibility vs music balance in the SDL2 build.**
   Found 2026-06-25 (user testing). SFX are fully wired (i_sound.c: addsfx -> I_MixSound -> SDL callback; s_sound.c S_StartSound -> I_StartSound; no stub), but the user can't tell they play. SFX are software-mixed at 11025 Hz; music plays via SDL2_mixer at 44100 Hz on a separate device, so music may dominate. Isolation test first: set Music Volume to 0 and confirm SFX are audible. If SFX are present but quiet, options: raise the default sfx_volume (m_misc.c, currently 8/15) or rebalance the mix; do not rewrite the mixer blind. Confirm by ear before changing audio.
