@@ -7173,13 +7173,16 @@ parked ideas (💭 considered) until we commit to and design each one.
      its base. `SPR_CEYE` (Evil Eye) and the skull keys are NOT the subject
      and must not be given a forced Le on this bullet's account -- that was
      the risk the old ⚠ warned about, and it is now closed.
-     Note before implementing: `SPR_BON2` is ALREADY in `sprite_glows()`
-     (r_mesh.c:1764-1778, DOOM-0112) and already receives DOOM-0157's
-     guaranteed faint Le, so the mechanism exists and this is a MAGNITUDE
-     change for the fog cast-light case, not a new entry. Which makes it the
-     same split DOOM-0316 measured for liquids -- one constant cannot serve
-     both the sprite's own look and its cast light -- so it inherits that
-     dependency rather than being independent of it.
+     ⚠ CORRECTION, measured later the same day and now filed as DOOM-0323:
+     `SPR_BON2` IS in `sprite_glows()` (r_mesh.c:1768) but it does NOT
+     receive a faint Le -- all four of its animation frames derive Le
+     exactly {0,0,0}, because every frame peaks below `kBrightLum` (0.5) and
+     DOOM-0157's escape hatch is guarded on a non-zero bright-texel sum. The
+     mechanism is wired up and dead. Read DOOM-0323 before doing anything
+     here; it carries the per-frame measurements and the threshold data.
+     The user has also since asked for the light to PULSE with the sprite's
+     fade in/out, which rules out a ForceLiquidEmissive-style constant --
+     see DOOM-0323's corollary. Magnitude still inherits DOOM-0316.
   INV-2 RESOLVED IN PRINCIPLE by the user, 2026-08-04: they accepted that
   barrels are static and said "we should be able to do something for them".
   That is the (b) route this bullet sketched -- keep non-moving props in the
@@ -7463,3 +7466,67 @@ parked ideas (💭 considered) until we commit to and design each one.
   the sky-hack gap must occlude nothing while the sky HOLE that DOOM-0141
   closed must keep occluding. Deleting the emit_sky_wall call would
   regress DOOM-0141's floating geometry. Spec it before coding.
+
+- 📋 [DOOM-0323] **The armour bonus's pulsing green eyes derive Le=0, so DOOM-0157's faint path never fires for the one sprite it was written for.**
+  User 2026-08-04, having identified the pickup as SPR_BON2 from a
+  photograph: "it's green eyes keep fading in and out, so I am hoping that
+  when it fades in, that it lights up the surrounding area."
+
+  THE PULSE IS REAL AND IS IN THE ARTWORK. info.c walks S_BON2 through
+  frames 0,1,2,3,2,1 at 6 tics each -- a ping-pong over four lumps, 36 tics
+  (~1.03 s) per cycle. Measured max-channel peak of each lump against
+  PLAYPAL, decoded to linear the same way emissive_derive.h does:
+    BON2A0 0.227   BON2B0 0.227   BON2C0 0.292   BON2D0 0.429
+  An 89% swing dimmest to brightest. The user's description is exactly right.
+
+  THE DEFECT. emissive_derive.h's kBrightLum is 0.5, and the bright-texel
+  sum only accumulates texels with value() > kBrightLum. EVERY armour-bonus
+  frame peaks below 0.5, so sr+sg+sb == 0 on all four. derive_material_le's
+  allowFaint escape hatch is guarded by `!allowFaint || (sr+sg+sb) <= 0.0`,
+  so it cannot fire when the sum is zero -- and the header comment at
+  emissive_derive.h:79-81 names "the armour bonus's gleam" as the very case
+  allowFaint exists for. DOOM-0157 wired the sprite up (SPR_BON2 is in
+  sprite_glows(), r_mesh.c:1768, and reaches the derive via
+  RB_SpriteLumpGlows) but the threshold below it makes the whole path dead
+  for this sprite. Verified by reimplementing the engine's own formula over
+  the WAD lumps: all four frames yield Le exactly {0,0,0}.
+  Contrast SPR_CEYE (the Evil Eye), which clears the strict PEAK gate on its
+  own with Le=(0.714,0.192,0.094) -- which is why that one glows and this one
+  does not, and why the two were easy to confuse.
+
+  FIX SHAPE, and the measured numbers that pick it. Lower the bright
+  threshold FOR allowFaint TILES ONLY. It must not move globally: kBrightLum
+  = 0.5 is what stops a uniformly tinted wall averaging up and flooding a
+  room with colour (emissive_derive.h:34-35), which is the exact failure the
+  peak gate was introduced to end.
+  Modelled Le.g per frame A..D at candidate thresholds:
+    thr 0.40 -> 0.000 0.000 0.000 0.143   only frame D lights: a BLINK
+    thr 0.25 -> 0.000 0.000 0.097 0.337   frames C and D: a genuine RAMP
+  0.25 is the one that delivers what the user asked for, because the
+  animation then reads 0, 0, 0.097, 0.337, 0.097, 0 across the cycle -- up
+  and back down -- rather than a single-frame flash. Colour comes out
+  correctly green-dominant, (0.066, 0.337, 0.046).
+
+  WHY THE PULSE NEEDS NO NEW MECHANISM. Le is derived per ATLAS LUMP
+  (ComputeMaterialEmissive, r_vulkan.cpp:5291) and each animation frame is
+  its own lump, so once the frames derive non-zero the modulation is
+  automatic. ⚠ COROLLARY, and it rules out the obvious shortcut: do NOT fix
+  this the way ForceLiquidEmissive fixes nukage, by overwriting Le with a
+  name-keyed CONSTANT. A constant is identical across the four lumps and
+  would flatten the pulse to a steady glow -- the one property the user
+  actually asked for. Scale or re-derive; never replace.
+
+  MAGNITUDE IS A SEPARATE QUESTION AND IT IS DOOM-0316'S. Le.g 0.337 makes
+  the eyes self-illuminate; whether it also throws light far enough to read
+  on the floor and in the fog is the same one-constant-cannot-serve-both
+  split DOOM-0316 measured for liquids. So this bullet's THRESHOLD half is
+  independent and shippable on its own; its CAST-LIGHT half inherits
+  DOOM-0316. Splitting it that way avoids blocking a verified one-line-class
+  defect behind a spec that has not been started.
+  Ordering note: this shares DOOM-0319's shape (a green prop that is green
+  without being bright), so whoever builds the barrel forced-Le should check
+  whether one threshold change serves both before adding a second mechanism.
+  **Layman:** The little armour helmets have green eyes that pulse brighter and dimmer, but they never light up the room around them — the code meant to make them glow can't actually trigger on them.
+  Kind: fix.
+  Lanes: renderer, shaders.
+  Source: user-request-2026-08-04.
