@@ -6639,6 +6639,63 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: doc.
   Lanes: docs, fog, shaders.
   Source: in-session-2026-08-04.
+  USER DECISIONS 2026-08-04, closing two of this part's open questions
+  before the spec is drafted:
+  - WATER GETS FOG TREATMENT ONLY, NOT GLOW. So the area-density profile
+    and the emissive-source work are separate mechanisms with separate
+    membership: nukage (and lava) are fog LIGHT SOURCES and also carry an
+    area density; water carries an area density and emits nothing. Do not
+    fold them into one "liquid" profile -- the spec needs a per-liquid
+    table with density and Le as independent columns, or water inherits a
+    glow nobody asked for.
+  - THE NEW DEFAULT FOG STRENGTH IS MEDIUM (rt_fog 2), chosen off the
+    headless ladder: Low is close to Off in the roofed nukage room, Medium
+    reads as atmosphere without obscuring the room, High is heavy for a
+    permanent default. Qualified by the user: "unless we can claw back
+    sufficient performance without affecting visuals" -- i.e. High is not
+    rejected on looks, it is rejected on cost, so this default is worth
+    revisiting if DOOM-0090 / DOOM-0091 free up budget. Record the reason
+    with the constant so a later session does not re-litigate the look.
+    Note the ladder was shot at render_scale 100; confirm Medium still
+    reads at the 50 the game boots on before pinning it.
+  CORRECTION 2026-08-04, before the spec was drafted: LIQUIDS ARE ALREADY
+  FOG LIGHT SOURCES. The earlier framing on this bullet -- "make liquid
+  surfaces fog light sources" -- proposed a mechanism that ships today, and
+  building to it would have re-implemented a working path.
+  The chain, verified in source rather than recalled:
+  `ForceLiquidEmissive` (r_vulkan.cpp) forces kNukageLe {0.05,0.19,0.02}
+  and kLavaLe {0.55,0.19,0.03} onto the NUKAGE1-3 / LAVA1-4 flats by name;
+  its own comment states that a material with Le>0 enters the NEE emitter
+  set via BuildStaticEmitterSet; and `BuildFogLightGrid` clusters
+  `g.staticWgt`, which is that set. So a nukage pool is already a candidate
+  fog light.
+  Measured on E1M1 (Ultra, rt_fog 2, render_scale 50, -noinput -inspect):
+    DOOM-0011 L3 fog lights -- 174 emitter tris -> 107 clustered lights
+    (intensity 0 / 6104 med / 67782), 1085 air / 758 with a candidate /
+    435 lit of 3525 cells, 7792 sight tests (5.0 ms, bake+upload).
+  Note `L.lum` is an AREA-WEIGHTED accumulation, not per-material Le --
+  `L.lum = max(L.r, L.gr, L.b)` at r_vulkan.cpp with only the centroid
+  divided by area -- so reach = sqrt(lum / RB_FOG_LIGHT_CUTOFF) puts a
+  median light at ~390 units, not the ~2 units a per-material reading of Le
+  would give. Do not repeat that arithmetic error; it was made and caught
+  in this session.
+  SO THE REAL QUESTION FOR THE SPEC NARROWS to why a pool that IS a
+  candidate produces no visible glow, and there are three live suspects,
+  none yet discriminated:
+    (a) DOOM-0302 re-tuned kNukageLe DOWN ~51x in linear green (0.35/1.30/
+        0.15 -> 0.05/0.19/0.02) to fix a blown-out surface once emisWeight
+        made the whole flat emit. That fix was right for the SURFACE and
+        its effect on the pool's FOG contribution was never considered --
+        reach and ranking both derive from the same Le. One constant is
+        serving two consumers with opposite needs, which is the shape of
+        the bug and is probably the answer.
+    (b) kFogLightsPerCell = 2. A pool competes for two slots against wall
+        lights ranked by lum*win^2/(d^2+kTorchSoftR2); a large dim pool can
+        lose to a small bright lamp even where the pool is what the player
+        is looking at.
+    (c) kTorchShaftStrength = 0.047 scales the whole emitter side.
+  Discriminate before designing: the bake already prints per-cell candidate
+  counts, and an A/B raising kNukageLe alone answers (a) directly.
 
 - 📋 [DOOM-0317] **Split part 3 of 3 — fog resolve and composite, extracted from the DOOM-0011 spec.**
   Third of the three-way split the user approved on DOOM-0308: §4.6 half-res,
