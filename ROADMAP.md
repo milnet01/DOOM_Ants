@@ -6735,6 +6735,44 @@ parked ideas (💭 considered) until we commit to and design each one.
   inherits unchanged.
   Format standard: the project has NO docs/standards/spec*.md, so
   ~/.claude/skills/_shared/spec-format.md governs (verified, not recalled).
+  DISCRIMINATED 2026-08-04, headless A/B on kNukageLe alone. Suspect (a) is
+  confirmed and, more usefully, is confirmed NOT fixable by a dial: the two
+  consumers saturate in the wrong order.
+  Ladder, E1M1 -warpto 3274 -3353 200, Ultra RT, rt_fog 2, render_scale 100,
+  -noinput -inspect -freeze -devshot 90, one binary rebuilt per rung.
+  Mean GREEN (0-255, sRGB frame) in two boxes; control = two runs of the same
+  binary, which moved the pool box by 0.01 and the wall box by 0.25, so
+  everything below is far above the noise floor:
+    Le x    pool surface   %clipped   glow band above pool edge
+    1x       133.01           0.0%       57.67   (shipped default)
+    2x       173.96           0.0%       66.94
+    5x       235.40           0.0%       86.86
+    10x      243.87          94.7%      112.55
+    20x      247.27          94.7%      148.23
+  The pool surface CLIPS between 5x and 10x -- at 10x, 94.7% of the surface
+  box is at G>=250, i.e. the flat white-green slab DOOM-0302 was tuned to
+  remove. The fog glow does not read until ~20x. There is no value of
+  kNukageLe that gives a visible fog glow and a textured surface, so the spec
+  must SPLIT the constant (surface Le vs fog-emitter Le) or give liquid
+  emitters their own fog-side gain. A single re-tune is not an option.
+  The fog response is real and correctly localised, not a global lift.
+  Isolating it against rt_fog 0 at the same Le:
+    glow band just above the pool: fog adds 34.8 at 1x, 104.1 at 20x
+    same wall, well above the pool: fog adds  5.3 at 1x,  10.6 at 20x
+  so the added radiance falls off with height away from the pool, which is
+  the signature of a working local fog light rather than an ambient raise.
+  Suspect (b) kFogLightsPerCell is NOT the limiter, and the bake print says so
+  directly: 174 emitter tris -> 107 clustered lights at EVERY rung, with cells
+  carrying a candidate at 758 / 782 / 782 for 1x / 5x / 20x. The pool is
+  already a candidate everywhere it should be; only its magnitude was short.
+  Worth noting for the ranking discussion: max cluster intensity holds at
+  67782 through 5x and only jumps to 244781 at 20x, so below ~10x the pool is
+  not the brightest emitter in its own room.
+  Suspect (c) kTorchShaftStrength (0.047) survives as the other half of the
+  same story -- it scales the whole emitter side of marchFog, so it is the
+  reason the required Le is ~20x rather than ~2x. Raising it globally would
+  brighten torch shafts too, so the per-liquid fog gain is the narrower knob.
+  Tree restored to the shipped constants and rebuilt; no source change landed.
 
 - 📋 [DOOM-0317] **Split part 3 of 3 — fog resolve and composite, extracted from the DOOM-0011 spec.**
   Third of the three-way split the user approved on DOOM-0308: §4.6 half-res,
