@@ -58,6 +58,13 @@ void M_StartControlPanel (void);
 // at boot (when both games are installed) and by the main-menu "Game Select" item.
 void M_OpenGameSelect (void);
 
+#ifdef DOOM_DEV
+// DOOM-0318: `-devmenu <name>` opens a named menu as the level loads, so an
+// automated capture can photograph one. Called from G_DoLoadLevel beside
+// G_DevInspectFromArgv.
+void M_DevMenuFromArgv (void);
+#endif
+
 
 
 

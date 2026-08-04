@@ -6849,3 +6849,61 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: doc.
   Lanes: docs, fog, shaders.
   Source: in-session-2026-08-04.
+
+- ✅ [DOOM-0318] **Open a menu from argv in the developer build, so menus can be captured headlessly.**
+  DOOM-0294 gave the developer build `-inspect` / `-freeze` / `-devshot`, and
+  those reach every WORLD view in all three tiers. They cannot reach a MENU:
+  opening one needs a keypress, and Wayland will not let input be injected
+  into the client, so no automated capture can photograph a menu at all.
+
+  That single gap is what blocks TWO items, which is the whole argument for
+  doing it rather than looking twice by hand:
+  - DOOM-0050 needs the menu-over-status-bar region seen in Solid/Ultra with
+    the user's magnifier off. Its own note says so: "Either a human looks
+    with the lens off, or the developer build gains a way to open a menu
+    from argv. The latter is the general fix and would also unblock
+    DOOM-0205's on-screen check."
+  - DOOM-0205's Render Effects submenu is implemented in `m_menu.c` (the
+    submenu, its per-toggle rows, the draw routine and the handler are all
+    present) but has never been confirmed on screen.
+
+  Scope, deliberately small: `-devmenu <name>` sets `menuactive`,
+  `currentMenu` and `itemOn` directly, exactly as `M_StartControlPanel`
+  already does, from the same level-load call site DOOM-0294's
+  `G_DevInspectFromArgv` uses. DOOM_DEV only. No new menu, no new state, no
+  change to how any menu draws or responds -- if a menu is wrong on screen
+  this makes it visible, it does not fix it.
+
+  Verified before writing: `m_menu.c` already includes `m_argv.h`, and the
+  `menu_t` definitions (`MainDef`, `OptionsDef`, `RendererDef`, `EffectsDef`,
+  `VideoDef`, `SoundDef`, `DeveloperDef`) all precede the file's tail, so the
+  lookup table needs no forward declarations. `M_DevMenu` is already taken by
+  the submenu's own item callback, hence `M_DevMenuFromArgv`, mirroring
+  `G_DevInspectFromArgv`'s name.
+
+  NOT in scope: driving a menu (moving the cursor, toggling a row). One frame
+  of a named menu is what both blocked items need; anything more is a second
+  item if it is ever wanted.
+  **Layman:** Let an automated screenshot open a settings screen, so menu bugs can be checked without a person clicking through to one.
+  Kind: test.
+  Lanes: renderer, tests.
+  Source: in-session-2026-08-04.
+  Resolved (2026-08-04): implemented and proven in the same session it was
+  filed. `M_DevMenuFromArgv` (m_menu.c) sets `menuactive` / `currentMenu` /
+  `itemOn` from a name lookup, declared in m_menu.h under DOOM_DEV and called
+  from G_DoLoadLevel beside `G_DevInspectFromArgv` (g_game.c). Seven names:
+  main, options, renderer, effects, video, sound, developer. Added
+  `#include <strings.h>` for `strcasecmp` rather than leaning on a transitive
+  include; `m_argv.c` is the precedent for using it.
+  Verified: DEV build clean, RELEASE build clean (the whole point of the
+  DOOM_DEV guards), `make test` 7/7. Three captures prove it end to end and
+  they are the acceptance:
+    dev-shots/M-effects-ultra.png  Render Effects, Ultra RT
+    dev-shots/N-effects-solid.png  Render Effects, Solid
+    dev-shots/O-video-ultra.png    the tall DOOM-0206 Video menu, Ultra RT
+  each logging `-devmenu: opened '<name>'`. Closes the gap DOOM-0294 left and
+  unblocked DOOM-0050 and DOOM-0205 in the same sitting, which was the whole
+  argument for building it rather than looking twice by hand.
+  Scope held: no menu was added, changed or re-laid-out. Driving a menu
+  (moving the cursor, toggling a row) remains deliberately out of scope --
+  one frame of a named menu is what the blocked items needed.

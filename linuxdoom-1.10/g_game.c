@@ -557,6 +557,7 @@ void G_DoLoadLevel (void)
     G_WarpToSpot ();                    // DOOM-0268: -warpto X Y [ANGLE]
 #ifdef DOOM_DEV
     G_DevInspectFromArgv ();            // DOOM-0294: -inspect / -freeze
+    M_DevMenuFromArgv ();               // DOOM-0318: -devmenu <name>
 #endif
     displayplayer = consoleplayer;		// view the guy you are playing    
     starttime = I_GetTime (); 

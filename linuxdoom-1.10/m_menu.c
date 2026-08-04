@@ -32,6 +32,7 @@ rcsid[] __attribute__((used)) = "$Id: m_menu.c,v 1.7 1997/02/03 22:45:10 b1 Exp 
 #include <stdlib.h>
 #include <stdint.h>
 #include <ctype.h>
+#include <strings.h>   // strcasecmp, for -devmenu's name lookup (DOOM-0318)
 
 
 #include "doomdef.h"
@@ -3562,6 +3563,69 @@ void M_StartControlPanel (void)
     currentMenu = &MainDef;         // JDC
     itemOn = currentMenu->lastOn;   // JDC
 }
+
+
+#ifdef DOOM_DEV
+//
+// M_DevMenuFromArgv  (DOOM-0318)
+// `-devmenu <name>` opens a named menu as the level loads, so an automated
+// capture can photograph one. DOOM-0294's -inspect/-freeze/-devshot reach every
+// WORLD view but no menu, because opening a menu needs a keypress and Wayland
+// will not let input be injected into the client.
+//
+// That gap blocks two items rather than one: DOOM-0050 needs the menu-over-status-bar
+// region seen in Solid/Ultra, and DOOM-0205's Render Effects submenu has never been
+// confirmed on screen. Both need exactly one frame of a named menu.
+//
+// Sets the same three globals M_StartControlPanel does, and nothing else -- this
+// makes a menu visible to a capture, it does not change how any menu draws or
+// responds. Runs per level load, like G_DevInspectFromArgv, so the state survives
+// a level change.
+//
+void M_DevMenuFromArgv (void)
+{
+    static const struct { const char* name; menu_t* def; } lut[] =
+    {
+	{ "main",      &MainDef      },
+	{ "options",   &OptionsDef   },
+	{ "renderer",  &RendererDef  },
+	{ "effects",   &EffectsDef   },
+	{ "video",     &VideoDef     },
+	{ "sound",     &SoundDef     },
+	{ "developer", &DeveloperDef },
+    };
+    int	p = M_CheckParm ("-devmenu");
+    int	i;
+
+    if (!p)
+	return;
+
+    // M_CheckParm returns 0 for "not found", so a hit is always >= 1; the name is
+    // the next argument and may be absent if -devmenu ends the command line.
+    if (p + 1 >= myargc)
+    {
+	printf ("-devmenu: needs a menu name\n");
+	fflush (stdout);
+	return;
+    }
+
+    for (i = 0; i < (int)(sizeof(lut)/sizeof(lut[0])); i++)
+    {
+	if (strcasecmp (myargv[p+1], lut[i].name))
+	    continue;
+
+	menuactive = 1;
+	currentMenu = lut[i].def;
+	itemOn = 0;
+	printf ("-devmenu: opened '%s'\n", lut[i].name);
+	fflush (stdout);
+	return;
+    }
+
+    printf ("-devmenu: unknown menu '%s'\n", myargv[p+1]);
+    fflush (stdout);
+}
+#endif  // DOOM_DEV
 
 
 //

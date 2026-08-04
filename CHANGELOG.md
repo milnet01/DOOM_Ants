@@ -8,6 +8,22 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **A Render Effects screen that shows what every graphics toggle is set to** (DOOM-0205)
+  Options -> Renderer -> Render Effects lists the flashlight, SSAO,
+  de-tile, dirt/grime, wet liquid, volumetric fog and the profiler, each
+  with its current setting beside it. The toggles were hidden behind
+  hotkeys, so the only way to know what was on was to remember — which
+  caused a false bug report when two effects were off in a saved config
+  and the game looked wrong for no visible reason.
+
+- **Menus can now be opened from the command line in developer builds, so they can be screenshotted** (DOOM-0318)
+  `-devmenu <name>` opens a named settings screen as the level loads —
+  main, options, renderer, effects, video, sound or developer. Automated
+  screenshots could already reach any view of the world but never a menu,
+  because opening one needs a keypress and the desktop will not let a
+  script press keys inside the game. Two long-open menu items had been
+  waiting on someone checking them by hand for that reason.
+
 - **`-inspect` and `-freeze` command-line flags for the developer view** (DOOM-0294)
   The Inspect preset (monsters ignore you, nothing can hurt you) and the
   freeze-monsters switch were reachable only through the developer menu, so
