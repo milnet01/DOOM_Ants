@@ -6717,6 +6717,24 @@ parked ideas (💭 considered) until we commit to and design each one.
     (c) kTorchShaftStrength = 0.047 scales the whole emitter side.
   Discriminate before designing: the bake already prints per-cell candidate
   counts, and an A/B raising kNukageLe alone answers (a) directly.
+  Extraction seam, measured 2026-08-04 so it is not re-derived: this part's
+  source is docs/specs/DOOM-0011-volumetric-lighting.md **lines 378-1189**
+  (`### 4.4 Light sources & shafts` through the end of the DOOM-0296
+  amendment, stopping before `### 4.5 Area profiles`, which is the
+  umbrella's). That span carries §4.4(a) sky shafts, §4.4(b) torch shafts,
+  the DOOM-0295 half-rate amendment, the DOOM-0289 sun-clearance amendment
+  (the interval derivation, the storage contract, the build, the re-flood,
+  the three bounded approximations) and the DOOM-0296 fog-light re-bake.
+  Follow docs/specs/DOOM-0310-fog-density-fields.md for shape: same eleven
+  sections, invariants RENUMBERED FROM 1 with a §2 mapping table back to the
+  umbrella's ids, and a hand-written `0-split` provenance row opening the
+  cold-eyes log (no reviewer dispatched, so no severity counts). Per §2 of
+  part 1 this part owns umbrella INV-2, INV-3, INV-13, INV-14 and the seep
+  field's `.b`/`.a` channels; part 1 owns `.r`/`.g` and its build, sampler
+  state, world->UV transform, cell-size rule and void ring, which this part
+  inherits unchanged.
+  Format standard: the project has NO docs/standards/spec*.md, so
+  ~/.claude/skills/_shared/spec-format.md governs (verified, not recalled).
 
 - 📋 [DOOM-0317] **Split part 3 of 3 — fog resolve and composite, extracted from the DOOM-0011 spec.**
   Third of the three-way split the user approved on DOOM-0308: §4.6 half-res,
