@@ -1432,6 +1432,42 @@ parked ideas (💭 considered) until we commit to and design each one.
   E3M1 is the standing fixture for hell in the headless harness, because its
   liquid is BLOOD3, which is NOT in FlagLiquidFlats' lut and so tests hell
   with zero goo contamination.
+  Q32 ANSWERED BY THE USER 2026-08-04, with two screenshots of an open hell
+  landscape (red sky, mountains, hazed ground). Verdict, verbatim: "The fog is
+  showing as white here (the sky is already red) and the fog needs to be
+  heavily tinted. It shouldn't be so bright under a red sky. And the fog
+  should be a lot thicker."
+  So Q32 closes toward TINT THE BACKDROP: the alternative it offered --
+  declare the hell profile march-only and accept a coloured skyline seam -- is
+  rejected, because the seam is precisely what the user photographed. In
+  image 1 there is a bright near-white band along the horizon, brightest at
+  centre, sitting under a correctly red sky. That is the signature of fog
+  folded onto the sky backdrop WITHOUT mediumTint, which is the exact question
+  Q32 asks. Three sub-answers, all in the user's words: the backdrop takes the
+  tint; the in-scatter is too BRIGHT for a red-sky scene; and the density is
+  too LOW.
+  ⚠ NOT YET ACTIONABLE, and the reason is a fork that must be settled before
+  any constant moves. The user's HUD reads 86 fps. Ultra's ray-traced view
+  measures ~40 fps on this hardware at 100% scale (this session: megakernel
+  15.8 ms, 40-41 fps at render_scale 50), so 86 fps points at a RASTERISED
+  view -- and by INV-7 the volumetric fog exists ONLY in the RT megakernel
+  (rb_rtdebug in {4,6}). If the captures are raster, then what is washing the
+  scene out is NOT this feature at all and no amount of kHellTint or
+  kAreaDensity will touch it; the work would belong to DOOM-0170's raster
+  path or to the sky backdrop's own fade. Asked of the user rather than
+  assumed.
+  Measurement attempted and DISCARDED as confounded, recorded so it is not
+  repeated: E3M1 captured in Ultra RT at rt_fog 2 vs rt_fog 0 and the hue of
+  the difference taken, giving R/G = 0.74 on the ground -- green-dominant,
+  which would suggest the goo tint on a level whose liquid (BLOOD3) is not
+  even in the lut. The subtraction is not pure in-scatter: fog also attenuates
+  the surface behind it, so on reddish-brown hell ground the transmittance
+  term removes red and biases the delta green. The technique worked in the
+  E1M1 goo room and does NOT transfer here. The honest test is to force
+  hazeDensity to 0 on the SAME level and diff that, which isolates kHellTint
+  exactly. E3M1's spawn also faces a wall and is useless as an outdoor hell
+  fixture -- an open-landscape vantage is needed (E3M6, E4M2, or DOOM II
+  MAP20+).
 - 💭 [DOOM-0012] **Hold a 60 FPS performance floor.**
   **Layman:** Keep it running smoothly — never below 60 frames per second.
   Kind: perf.
@@ -3718,7 +3754,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   Lanes: startup.
   Source: in-session-2026-07-27 (hit while measuring DOOM-0276).
 
-- 🚧 [DOOM-0281] **Re-flood the seep field when a wall or door opens, so fog rolls into a newly-opened room.**
+- ✅ [DOOM-0281] **Re-flood the seep field when a wall or door opens, so fog rolls into a newly-opened room.**
   User, 2026-07-27, with a screenshot of a normally-closed E1M1 wall standing
   open onto the courtyard: "if a wall opens like in this screenshot, the fog
   doesn't roll in though. Usually this wall is closed."
@@ -3854,6 +3890,27 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: enhancement.
   Lanes: renderer, shaders.
   Source: user-play-test-2026-07-27.
+  USER PLAY-TEST 2026-08-04 -- the observable behaviour is confirmed and the
+  item is closed on it. Their words: "fog rolls in where walls are removed",
+  with no counter-example found -- "I haven't found a place where this
+  applies yet... unless you know of a specific place that I can test, this one
+  we will leave as is for now."
+  That is the acceptance this bullet was waiting on. The mechanism half had
+  already been verified on the RX 6600 on 2026-07-27 (the re-flood firing
+  repeatedly through a live session, the field going 835 -> 819 -> 761 -> 721
+  -> 715 sealed cells as walls opened, all on E1M1), and the constants that
+  made it invisible to a player standing back in a room were re-tuned in the
+  same pass (kSeepMax 0.5 -> 0.9, kSeepFalloff 192 -> 384, mirrored in
+  RB_SEEP_FALLOFF as the header requires). What was missing was only a human
+  confirming the effect reads in play, and it does.
+  No specific fixture is owed back to the user: E1M1 is where the mechanism
+  was instrumented and the effect is general to any opening, so there is no
+  better place to send them. Closing rather than leaving open for a fixture
+  that would not sharpen the answer.
+  INV-12 survives by construction, not by luck -- dMax is 8 x kSeepFalloff in
+  BOTH pt_common.glsl and r_mesh.h, so the sealed-room sentinel scales with
+  the falloff and a sealed room stays exactly 8 e-folds out whatever the
+  falloff becomes. -rtverify PASS, unchanged.
 
 - ✅ [DOOM-0282] **A wall changes colour — goes blue — when the camera turns a few degrees.**
   User, 2026-07-27, with a matched screenshot pair from a crate room with BLUE
