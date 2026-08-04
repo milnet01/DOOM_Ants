@@ -7166,15 +7166,20 @@ parked ideas (💭 considered) until we commit to and design each one.
   3. BARRELS -- the original subject of this bullet. Static in practice, which
      the user confirmed, so they can be treated as static emitters and the
      INV-2 conflict below dissolves.
-  4. ARMOUR BONUS PICKUPS -- the small green pickups the user describes as
-     "skulls with green glowing eyes". Best candidate is `SPR_BON2` (the
-     armour bonus, `info.c`), which is the green pickup that animates through
-     four frames. ⚠ CONFIRM ON SCREEN BEFORE FORCING Le ON IT: DOOM also has
-     `SPR_CEYE` (the Evil Eye decoration) and the three skull keys
-     (`SPR_BSKU`/`RSKU`/`YSKU`), and "skull with green glowing eyes" could
-     describe the Evil Eye at least as well. Now cheap to settle -- DOOM-0318
-     plus -devshot can photograph any of them. Getting this wrong lights the
-     wrong prop in every level.
+  4. ARMOUR BONUS PICKUPS -- SETTLED 2026-08-04. The user photographed the
+     pickup they meant and it is `SPR_BON2`, the armour bonus (confirmed in
+     source: `p_inter.c:391` `case SPR_BON2:` awards `armorpoints++`). It
+     reads as a skull because it is a domed helmet with two green lights at
+     its base. `SPR_CEYE` (Evil Eye) and the skull keys are NOT the subject
+     and must not be given a forced Le on this bullet's account -- that was
+     the risk the old ⚠ warned about, and it is now closed.
+     Note before implementing: `SPR_BON2` is ALREADY in `sprite_glows()`
+     (r_mesh.c:1764-1778, DOOM-0112) and already receives DOOM-0157's
+     guaranteed faint Le, so the mechanism exists and this is a MAGNITUDE
+     change for the fog cast-light case, not a new entry. Which makes it the
+     same split DOOM-0316 measured for liquids -- one constant cannot serve
+     both the sprite's own look and its cast light -- so it inherits that
+     dependency rather than being independent of it.
   INV-2 RESOLVED IN PRINCIPLE by the user, 2026-08-04: they accepted that
   barrels are static and said "we should be able to do something for them".
   That is the (b) route this bullet sketched -- keep non-moving props in the
