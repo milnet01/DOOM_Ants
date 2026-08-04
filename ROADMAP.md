@@ -2685,6 +2685,42 @@ parked ideas (💭 considered) until we commit to and design each one.
   Design pass done (2026-07-17): spec docs/specs/DOOM-0183-glowing-wet-liquid.md written + cold-eyes clean (3 loops). Scope settled with the user: "cheap wins first" — green nukage gets glow + cast-light + wet direct-light sheen + procedural ripples; LAVA gets glow + orange cast-light (user add); true mirror reflections stay DOOM-0103; water/blood deferred. Liquid identity via a MatCtrl.flags bit from the flat name (NUKAGE1-3, LAVA1-4); cast-light = forced-constant Le through the existing NEE emitter path (delivers DOOM-0083). Build order L1 liquid bit -> L2 glow/cast-light -> L3 sheen -> L4 ripples -> L5 puddle-wet -> L6 toggle+perf. Cheaper-RT research from this pass captured separately as DOOM-0188..0192; RT-glow dial-up as DOOM-0193.
   Progress (2026-07-17): L1-L6 implemented + committed/pushed (ecf9a6c). L1 liquid bit (MatCtrl.flags bit3/bit4 by flat name — NUKAGE1-3/LAVA1-4 — via FlagLiquidFlats); L2 forced-constant Le glow+cast-light via ForceLiquidEmissive (delivers DOOM-0083); L3 direct-light Blinn-Phong sheen (flashlight+muzzle, no reflection ray); L4 procedural ripple normal on nukage + new misc6 push-const lane for time (steady_clock seconds); L5 goo-puddle wet via gooWet mask exposed from applyGrime; L6 rb_wet toggle (' key, rt_wet config). misc6 appended after the 216-byte tail (std430-padded to offset 224, size 240) so the 184-byte -rtverify prefix is byte-identical (INV-6); static_assert+pcr.size 216->240. Fixed the stale misc2.z/.w comment (Q8). `make` + `make test` green. Tuning consts (kNukageLe/kLavaLe/kWetSheen*/kRipple*/kPuddle*) are placeholders. REMAINING (human-run L6 gate): on-hardware play-test of the look on the E1M1 goo room + a lava map, -rtverify green, and the <=5% perf measurement (rb_wet off vs on). Then flip to shipped + graduate DOOM-0083 + CHANGELOG. Known v1 note: mode-6 (denoised) sheen/puddle-glow are albedo-tinted by demodulation — reads as a green wet glint on the green liquid (on-theme); a neutral wet surface would need a full-res specular channel (DOOM-0103 follow-up).
   Verify progress (2026-07-18): build green; -rtverify PASS (direct-light rel-MSE 0.1317% vs 0.50% bar, white-furnace 0.000000) — Ultra RT correctness holds with the liquid changes. No-liquid perf baseline unchanged: E1M1 spawn Ultra = 45 fps, megakernel 10.5ms, present-total 22ms (matches pre-0183 ~45fps GPU-bound), so the CPU-baked glow/cast-light (permanent Le in matEmissive+NEE+GI-bake) adds no general-frame regression. STILL OPEN (needs someone at the screen): (a) the per-liquid-pixel wet-shader cost (sheen §4.4 / ripples §4.5 / goo-wet §4.6) with nukage IN VIEW — rt_wet-gated, so A/B live with the ' key near a nukage pool and watch [rt_profile] megakernel for the ≤5% budget; (b) the subjective look. Headless self-drive is unavailable this session: SDL now opens a NATIVE WAYLAND surface (no X window for the pid, so xdotool/import can't target it) and this box has no grim/ydotool/wtype to inject Wayland input — the old X11 xdotool recipe in [[doom-ants-launch-screenshot-harness]] no longer applies. User play-test will close both.
+  USER PLAY-TEST 2026-08-04 -- HALF SIGNED OFF, HALF NOT, and the failing
+  half has a measured root cause from the same day.
+  "The colour is now uniform across the whole surface but it still doesn't
+  look like it is emitting green on to the fog or the surrounding
+  environment. This must also apply to barrels."
+  SIGNED OFF: the uniform surface. That is DOOM-0302's emisWeight() fix
+  confirmed by eye -- the pool reads as one sheet of glowing sludge rather
+  than the field of bright patches the 2026-08-02 report described.
+  NOT SIGNED OFF: the cast light, on BOTH the fog and nearby surfaces. This
+  is not a new discovery and it is not a tuning miss -- DOOM-0316's headless
+  ladder measured the cause hours earlier, and the user's eye independently
+  reproduced it, which is the strongest corroboration available:
+  kNukageLe serves TWO consumers that saturate in the wrong order. Mean green
+  in the E1M1 roofed goo room, Ultra RT, rt_fog 2, render_scale 100:
+    Le x    pool surface   %clipped   glow above the pool edge
+    1x       133.01           0.0%       57.67   (shipped)
+    5x       235.40           0.0%       86.86
+    10x      243.87          94.7%      112.55
+    20x      247.27          94.7%      148.23
+  The surface CLIPS between 5x and 10x -- at 10x, 94.7% of it is flat blown-out
+  green, the exact slab DOOM-0302 was tuned to remove -- while the cast light
+  does not read until ~20x. So no value of kNukageLe satisfies both, and
+  raising it is not the fix. The surrounding-surfaces half has the same cause:
+  at 20x the walls near the pool gained ~32 in green with fog OFF, so the pool
+  DOES light the room via NEE, just far too faintly at the shipped constant.
+  THEREFORE this item's remaining half is blocked on DOOM-0316, which owns the
+  constant split (a separate surface Le and fog/NEE Le) plus the position-keyed
+  liquid-proximity field. Not re-scoped into it: the deliverable is still this
+  bullet's, but the mechanism it needs is designed there. Do NOT attempt a
+  kNukageLe re-tune to close this -- it is measured not to work.
+  BARRELS ARE NEW SCOPE and are filed separately (see the barrel bullet in
+  this phase). They are not liquid and carry no LIQUID_* MatCtrl bit, and
+  sprite emitters are derived from artwork brightness via DOOM-0084's
+  peak-gated derive rather than from any name list -- a DOOM barrel is not
+  bright enough to pass that gate, so it emits nothing today. The fix shape is
+  the sprite analogue of ForceLiquidEmissive: a name-keyed forced Le on BAR1.
 
 - 📋 [DOOM-0184] **Glowing fireball / projectile that casts light (Ultra RT).**
   User: "I really like this fireball, can we replicate it?" (ref: Ultimate Doom RTX mod). A self-lit projectile sprite with a warm emissive core + a point light travelling with it so nearby walls/floor light up as it passes. Relates to the dynamic-light trio DOOM-0010/0101/0102 and the emissive sprite path (DOOM-0084). See [[rt-aesthetic-north-star]].
@@ -4132,7 +4168,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   DOOM-0293 (liquid pools want their own fog) and the local-light
   in-scatter, which is Task L3's existing job.
 
-- 🚧 [DOOM-0292] **Roofed fog is lit as if the sky reached it -- gate the sky ambient on sky exposure.**
+- ✅ [DOOM-0292] **Roofed fog is lit as if the sky reached it -- gate the sky ambient on sky exposure.**
   User, on the DOOM-0289 play-test: "fog is generally very white when
   outside as the sky / sun are lighting it up but under roof that won't
   be the case. So, the fog should be a little darker inside."
@@ -4186,6 +4222,19 @@ parked ideas (💭 considered) until we commit to and design each one.
   0.45 is the right amount of darker. It is a floor on LIGHT, not on
   density, so it can go to 0.0 once L3 gives torches something to say --
   the number is the dial to bring to that session, not a value to defend.
+  USER SIGN-OFF 2026-08-04: "Definitely, colour looks excellent." That closes
+  the one thing the bullet left open -- whether kIndoorSkyLight = 0.45 is the
+  right amount darker for roofed air, which a still frame could not settle.
+  The value is now a signed-off look, not a first guess.
+  Everything else had already been verified before this: the ambient share is
+  gated on the seep grade (pathtrace.comp, `skyLight = mix(kIndoorSkyLight,
+  1.0, seepT)`), the outdoor branch is untouched by construction (re-shot with
+  the constant at 1.0 -> MAE 0.0024 and 0.0036 /255 against the pre-change
+  build, i.e. the same-build noise floor), megakernel 12.9 -> 13.0 ms, make
+  test 7/7, -rtverify PASS.
+  Note the constant stays a dial rather than a defended value: it is a floor
+  on LIGHT, not on density, so it can still go toward 0 if L3's torches end up
+  giving roofed air enough to say on their own.
 
 - 📋 [DOOM-0293] **Liquid pools should carry their own fog -- a per-cell liquid mask on the field.**
   User, on the DOOM-0289 play-test: "any liquid (not puddles on the
@@ -6917,3 +6966,48 @@ parked ideas (💭 considered) until we commit to and design each one.
   Scope held: no menu was added, changed or re-laid-out. Driving a menu
   (moving the cursor, toggling a row) remains deliberately out of scope --
   one frame of a named menu is what the blocked items needed.
+
+- 📋 [DOOM-0319] **Toxic barrels should cast their green glow onto the fog and the room, like the nukage does.**
+  User, on the DOOM-0183 play-test: the nukage's cast light "must also apply
+  to barrels".
+
+  Barrels emit NOTHING today, and the reason is structural rather than a dial
+  being low. Verified 2026-08-04 rather than recalled:
+  - Sprite emitters are derived from the ARTWORK's brightness -- DOOM-0084's
+    peak-gated derive over the sprite's own texels. There is no name list for
+    sprites, unlike flats.
+  - The barrel is `SPR_BAR1` (`info.c`), a mid-green prop with no bright
+    region, so it does not clear the peak gate and never enters the emitter
+    set. Being green is not being bright.
+  - `ForceLiquidEmissive` (r_vulkan.cpp) already solves exactly this problem
+    for FLATS: it overwrites the derived Le by flat name for NUKAGE1-3 and
+    LAVA1-4, precisely because a derive keyed on artwork cannot know that
+    sludge glows. A barrel is the same case wearing a sprite.
+
+  So the fix shape is the sprite analogue of that function: a name-keyed
+  forced Le on `BAR1`, entering the emitter set the same way, with no new
+  light type.
+
+  DEPENDS ON DOOM-0316, and should not be attempted before it. DOOM-0316
+  measured that a liquid's single Le constant cannot serve both its own
+  surface and its cast light -- the surface clips between 5x and 10x while the
+  cast light needs ~20x -- and is splitting the constant in two. A barrel
+  inherits that problem exactly: pick one Le and either the barrel is a
+  blown-out white-green blob or it lights nothing. Build this on the split
+  once it exists.
+
+  Open, for whoever builds it:
+  - Which barrel states? `S_BAR1`/`S_BAR2` are the idle pair; `S_BEXP*` is the
+    explosion, which is already a bright sprite and may already emit. Do NOT
+    force Le on the explosion frames without checking -- doubling an emitter
+    that already derives one is the DOOM-0011 double-count class.
+  - Does the glow follow the barrel when it is moved or destroyed? Barrels are
+    `mobj`s, so they ride the DYNAMIC `[omniStart, emitCount)` slice, not the
+    static set -- which also means they are excluded from the fog by INV-2 and
+    would need that decided explicitly rather than assumed.
+  - How bright, relative to a nukage pool? A room of barrels must not out-light
+    the pool they were filled from.
+  **Layman:** The green waste barrels should light up the mist and the floor around them, instead of being flat green props.
+  Kind: feature.
+  Lanes: renderer, shaders.
+  Source: user-play-test-2026-08-04.
