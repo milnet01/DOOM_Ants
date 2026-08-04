@@ -7011,3 +7011,51 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: feature.
   Lanes: renderer, shaders.
   Source: user-play-test-2026-08-04.
+
+- 🚧 [DOOM-0320] **Classic -devshot captures are left-aligned with a false black bar whenever Fill Screen is off.**
+  Found while verifying DOOM-0147, and it is a defect in the MEASUREMENT
+  HARNESS rather than in the game -- which is the worse of the two places for
+  it, because it silently corrupts the evidence other items are judged on.
+
+  MEASURED, E1M1 -warpto 3274 -3353 200, Classic, output 3840x2160:
+    widescreen 0, fillstretch 0 -> content occupies columns 0..2879,
+                                   left bar 0 px, right bar 960 px
+    widescreen 0, fillstretch 1 -> content occupies columns 0..3839, no bars
+    widescreen 1                -> content occupies columns 0..3839, no bars
+  The 4:3 content is itself exactly right (2880x2160 = 1.333); it is the
+  PLACEMENT that is wrong. A correct pillarbox would be 480 px on each side.
+
+  CAUSE. `I_DevShotClassic` (i_video.c) sizes its buffer from
+  `SDL_GetRendererOutputSize` (full output, 3840) and then calls
+  `SDL_RenderReadPixels(renderer, NULL, ...)`, which reads the current
+  VIEWPORT -- and `I_SetAspect` sets `SDL_RenderSetLogicalSize(SCREENWIDTH,
+  SCREENHEIGHT*6/5)` whenever `fillstretch` is off, which makes the viewport
+  narrower than the output. So 2880 columns of a 3840-wide buffer are filled
+  and the remainder is never written, reading as a black bar on the right.
+  With `fillstretch` on, logical scaling is disabled, viewport == output, and
+  the same code path is correct -- which is exactly the A/B above.
+
+  THE GAME IS NOT AFFECTED. `SDL_RenderSetLogicalSize` centres the scaled
+  output in the window by SDL's own documented behaviour, so a player sees a
+  correctly centred picture with even bars. Verified by the fillstretch A/B
+  rather than assumed: the defect appears and disappears with the logical
+  size, not with anything DOOM draws.
+
+  The existing code comment is half-right and that is how this survived: it
+  warns that `SDL_RenderGetViewport` returns LOGICAL units and that sizing the
+  buffer from them "overruns it by the square of the scale factor", which is
+  true. It then concludes the buffer must be sized from the output, which is
+  the wrong half -- the right answer is the viewport in PIXELS,
+  `SDL_RenderGetViewport` multiplied by `SDL_RenderGetScale`. That also stays
+  correct when `fillstretch` is on, where viewport == output and scale == 1,
+  so the fix is a no-op on the path that works today.
+
+  Blast radius: every Classic `-devshot` taken since DOOM-0294 landed
+  (2026-08-04) with Fill Screen off. Solid and Ultra are NOT affected -- they
+  present through Vulkan and never touch `SDL_RenderSetLogicalSize`. No
+  conclusion in this session rests on a Classic capture; the DOOM-0316
+  measurements are all Ultra.
+  **Layman:** Screenshots of the original 1993 view came out shoved to one side with a black stripe that is not really on the screen.
+  Kind: fix.
+  Lanes: renderer, tests.
+  Source: in-session-2026-08-04.

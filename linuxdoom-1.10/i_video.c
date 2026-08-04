@@ -765,14 +765,43 @@ static void I_DevShotClassic (void)
     if (rb_devshot <= 0 || --rb_devshot != 0)
 	return;
 
-    // Output size in PIXELS, not SDL_RenderGetViewport's logical units: Classic sets
-    // a 320x200 logical size (i_video.c I_InitGraphics), so the viewport reports 320x200
-    // while SDL_RenderReadPixels(NULL) reads the whole output target -- sizing the
-    // buffer from the viewport overruns it by the square of the scale factor.
-    if (SDL_GetRendererOutputSize (renderer, &w, &h) != 0 || w <= 0 || h <= 0)
+    // Capture the VIEWPORT IN PIXELS -- viewport (logical units) x render scale.
+    //
+    // DOOM-0320: neither of the two obvious sizes is right, and picking either one
+    // produces a wrong image rather than an error. SDL_RenderGetViewport reports
+    // LOGICAL units (Classic's I_SetAspect sets a SCREENWIDTH x SCREENHEIGHT*6/5
+    // logical size), so sizing the buffer from it overruns by the square of the
+    // scale factor. But SDL_RenderReadPixels(NULL) reads the VIEWPORT, not the whole
+    // target, so sizing from SDL_GetRendererOutputSize leaves every column past the
+    // viewport unwritten -- which is a black bar down one side of a picture SDL
+    // actually centres on screen. Measured before this fix: a 4:3 Classic shot on a
+    // 3840x2160 output filled columns 0..2879 and left a false 960 px right bar.
+    //
+    // Multiplying the two gives the pixel rectangle SDL will actually hand back. It
+    // is also a no-op on the path that was already correct: with Fill Screen on,
+    // I_SetAspect passes (0,0) to disable logical scaling, so viewport == output and
+    // scale == 1.
     {
-	fprintf (stderr, "dev: screenshot size query failed: %s\n", SDL_GetError ());
-	return;
+	SDL_Rect	vp;
+	float		sx = 1.0f, sy = 1.0f;
+	int		ow, oh;
+
+	if (SDL_GetRendererOutputSize (renderer, &ow, &oh) != 0 || ow <= 0 || oh <= 0)
+	{
+	    fprintf (stderr, "dev: screenshot size query failed: %s\n", SDL_GetError ());
+	    return;
+	}
+
+	SDL_RenderGetViewport (renderer, &vp);
+	SDL_RenderGetScale (renderer, &sx, &sy);
+
+	w = (int)(vp.w * sx + 0.5f);
+	h = (int)(vp.h * sy + 0.5f);
+
+	// Clamp rather than trust the arithmetic: a rounding step past the output
+	// would size the buffer smaller than the rows SDL writes into it.
+	if (w <= 0 || w > ow) w = ow;
+	if (h <= 0 || h > oh) h = oh;
     }
 
     px = (Uint32 *)malloc ((size_t)w * h * 4);
