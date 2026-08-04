@@ -6773,6 +6773,59 @@ parked ideas (💭 considered) until we commit to and design each one.
   reason the required Le is ~20x rather than ~2x. Raising it globally would
   brighten torch shafts too, so the per-liquid fog gain is the narrower knob.
   Tree restored to the shipped constants and rebuilt; no source change landed.
+  ROOT CAUSE CORRECTED 2026-08-04, by measurement, BEFORE the spec was
+  drafted. The bullet's earlier root cause -- "in a roofed room seepT is near
+  0, so the sky share is near kIndoorSkyLight and the goo tint is multiplying
+  a nearly-zero number" -- is WRONG, and building to it would have chased a
+  magnitude problem that does not exist. kIndoorSkyLight is 0.45
+  (pt_common.glsl), not ~0, and kSkyAmbientFrac is 0.65, so the tinted sky
+  share is ~0.29 of full, not a rounding error.
+  THE REAL CAUSE IS THE KEYING, NOT THE MAGNITUDE. mediumTint and areaMult
+  are selected from the PRIMARY HIT's material (`h.ctrlFlags & LIQUID_NUKAGE`,
+  pathtrace.comp), so a ray that crosses a goo room and lands on a WALL is
+  never tinted and never thickened, however strong the constants.
+  Proof, and it is unambiguous: kGooTint was set to pure red (1,0,0) for one
+  throwaway build and the frame diffed against the shipped build. Exactly
+  4.04% of pixels moved (threshold 20, noise-floor max 18), and their bounding
+  box is the pool's own visible surface -- the two nukage polygons. Walls,
+  ceiling and all the air above the pool: unchanged. Capture retained as
+  dev-shots/MASK-gootint.png.
+  Corroborating hue measurement, fog-on minus fog-off at the shipped Le, mean
+  delta over the glow band just above the pool edge: dRGB (31.7, 34.8, 40.2),
+  G/R = 1.10 -- neutral, as kFogColor (0.55,0.56,0.56) is. At 20x kNukageLe
+  the same band reads dRGB (61.9, 104.1, 59.7), G/R = 1.68. So the ONLY route
+  by which liquid colour currently reaches the air is the untinted EMITTER
+  addend carrying the pool's own Le -- never mediumTint.
+  THIS FALSIFIES A DECLARED RELAXATION IN PART 1. DOOM-0310 §3 tables the
+  goo profile's primary-hit keying as bounded because "every pixel of a
+  profiled room keys the same way, so the error shows only at a doorway edge".
+  Measured in the E1M1 roofed goo room it is 4.04% of the frame that keys as
+  goo -- the error is the other 96%, not a doorway edge. Part 1's §3 table and
+  its INV-9 carve-out both need amending; that is a cross-part finding this
+  part must file rather than absorb.
+  AND IT BLOCKS THE WATER HALF OF THE REQUEST OUTRIGHT. The user's already-
+  recorded decision is that water gets fog density and no glow. Density is
+  areaSigma, which is behind the same primary-hit gate, and water carries no
+  emitter to route around it -- so "dial up the fog around water" is not
+  reachable by any tuning of the shipped mechanism.
+  USER DECISION 2026-08-04, taken on two captures rather than in the abstract
+  (dev-shots/B-20x-fog2.png = pool-as-lamp, dev-shots/H-goo-unkeyed.png = the
+  medium itself green, a deliberately over-applied throwaway probe): BOTH
+  MECHANISMS, with membership per liquid.
+  - A per-cell LIQUID-PROXIMITY FIELD decides "is this air near liquid",
+    keyed on position rather than on the primary hit, and drives BOTH the
+    density raise and the tint. This is what water rides; it is also what
+    makes the tint survive a ray that lands on a wall. The seep field is the
+    precedent to copy -- same grid, same cell, same build pass -- and the
+    channel budget is the first thing the spec must settle, since RGBA16F is
+    already fully spoken for (.r/.g part 1, .b/.a INV-13).
+  - The EMITTER path keeps the glow and stays untinted, per the user's
+    2026-08-03 ruling. It needs the surface/fog Le split the ladder above
+    forces.
+  - Water: density only, no glow, no tint of its own.
+  So the spec owns a per-liquid table with density, tint and Le as
+  INDEPENDENT columns, exactly as the earlier decision note required, plus
+  the field that makes the first two reachable at all.
 
 - 📋 [DOOM-0317] **Split part 3 of 3 — fog resolve and composite, extracted from the DOOM-0011 spec.**
   Third of the three-way split the user approved on DOOM-0308: §4.6 half-res,
