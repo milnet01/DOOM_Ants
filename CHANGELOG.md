@@ -8,6 +8,14 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **`-inspect` and `-freeze` command-line flags for the developer view** (DOOM-0294)
+  The Inspect preset (monsters ignore you, nothing can hurt you) and the
+  freeze-monsters switch were reachable only through the developer menu, so
+  an automated capture run could not use them. A capture taken in a live
+  level is not a measurement: an A/B of the wet-liquid layer reported 15% of
+  pixels moved where the real signal was 13.8%, the rest being a monster
+  walking through frame and the health counter ticking down.
+
 - **Volumetric fog now takes its colour from the room: green over nukage, a red haze through Hell (DOOM-0011 L4)**
   Two area profiles feed the fog march. A nukage pool fogs green, and a Hell level (Inferno, or DOOM II from map 20) gains a thin red haze over everything. They stack — a goo room on a Hell level reads green through red. Torch shafts keep their own warm colour rather than taking the room's tint. Ultra's ray-traced view only; measured at under 0.02 ms.
 
@@ -125,6 +133,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
   The old fixed tolerance sat only ~3.9 sigma from the estimator's true standard error on two of the five weight sets, well short of the 6 sigma the neighbouring frequency check uses. The bound is now computed from the exact estimator variance, so it scales with N and the weights; all five sets currently land within 1.6 sigma.
 
 ### Fixed
+
+- **`-devshot N` now captures the Classic tier as well as Solid and Ultra** (DOOM-0294)
+  Classic never builds a Vulkan swapchain image, so the flag was a silent
+  no-op there -- and a harness that finds no new file will happily read a
+  stale one. All three tiers now write dev-shots/shot-NNNN.png under one
+  shared naming helper.
 
 - **Bound the scaled patch blitter and the Classic menu's text rows** (DOOM-0230)
   The scaled patch draw added for the menu work never got the on-screen

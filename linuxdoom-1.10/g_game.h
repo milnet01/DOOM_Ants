@@ -39,6 +39,12 @@ void G_InitNew (skill_t skill, int episode, int map);
 // at an arbitrary map spot so a location-specific bug can be captured headlessly.
 void G_WarpToSpot (void);
 
+#ifdef DOOM_DEV
+// DOOM-0294 developer view (make DEV=1 only): honour `-inspect` and `-freeze`
+// after a level loads, so a headless capture is taken of a world that holds still.
+void G_DevInspectFromArgv (void);
+#endif
+
 // Can be called by the startup code or M_Responder.
 // A normal game starts at map 1,
 // but a warp test can start elsewhere

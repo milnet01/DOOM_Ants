@@ -35,6 +35,11 @@
 #include "d_main.h"
 #include "r_backend.h"   // rendermode / RB_CLASSIC (DOOM-0294's F12 screenshot)
 #include "g_game.h"      // G_ScreenShot: the Classic tier's half of that key
+#include "rb_image.h"    // rb_devshot_path: shared -devshot naming (DOOM-0294)
+
+// Implemented in rb_image.c (vendored stb), same declaration r_vulkan.cpp uses.
+extern int stbi_write_png(const char* filename, int w, int h, int comp,
+			  const void* data, int stride_bytes);
 
 #include "doomdef.h"
 
@@ -725,6 +730,84 @@ void I_UpdateNoBlit (void)
 }
 
 
+#ifdef DOOM_DEV
+//
+// I_DevShotClassic  (DOOM-0294 / DOOM-0303)
+// `-devshot N` in the Classic tier. The Vulkan tiers capture the swapchain image;
+// Classic never builds one, so the equivalent is the SDL backbuffer, read after the
+// frame is composed and before it is presented.
+//
+// Without this the flag was a silent no-op here -- and a silent no-op is worse than
+// an error, because an automated run then finds whatever PNG was already on disk and
+// reports a stale frame as this run's result. That is not hypothetical: it produced a
+// wrong "Classic shows the same seam" reading during the DOOM-0180 investigation.
+//
+// F12 still routes Classic to G_ScreenShot's .pcx (I_HandleKey); that is the
+// interactive path and unchanged. This is the scriptable one, and it writes the same
+// dev-shots/shot-NNNN.png every other tier writes so one harness covers all three.
+//
+static void I_DevShotClassic (void)
+{
+    extern int	rb_devshot;             // r_vulkan.cpp (shared counter, all tiers)
+    static boolean armed = false;
+    Uint32*	px;
+    char	path[64];
+    int		w, h, i, n;
+
+    if (!armed)                         // arm from argv once, as the Vulkan path does
+    {
+	int p = M_CheckParm ("-devshot");
+	armed = true;
+	if (p && p + 1 < myargc)
+	    rb_devshot = atoi (myargv[p + 1]);
+    }
+
+    if (rb_devshot <= 0 || --rb_devshot != 0)
+	return;
+
+    // Output size in PIXELS, not SDL_RenderGetViewport's logical units: Classic sets
+    // a 320x200 logical size (i_video.c I_InitGraphics), so the viewport reports 320x200
+    // while SDL_RenderReadPixels(NULL) reads the whole output target -- sizing the
+    // buffer from the viewport overruns it by the square of the scale factor.
+    if (SDL_GetRendererOutputSize (renderer, &w, &h) != 0 || w <= 0 || h <= 0)
+    {
+	fprintf (stderr, "dev: screenshot size query failed: %s\n", SDL_GetError ());
+	return;
+    }
+
+    px = (Uint32 *)malloc ((size_t)w * h * 4);
+    if (!px)
+    {
+	fprintf (stderr, "dev: out of memory copying a %dx%d screenshot\n", w, h);
+	return;
+    }
+
+    // ABGR8888 is the byte order stbi_write_png wants for RGBA on a little-endian
+    // host, so no channel swizzle is needed here -- unlike the Vulkan path, whose
+    // swapchain format is the surface's choice (BGRA on this hardware).
+    if (SDL_RenderReadPixels (renderer, NULL, SDL_PIXELFORMAT_ABGR8888,
+			      px, w * 4) != 0)
+    {
+	fprintf (stderr, "dev: screenshot read failed: %s\n", SDL_GetError ());
+	free (px);
+	return;
+    }
+
+    for (i = 0, n = w * h ; i < n ; i++)
+	((unsigned char *)px)[i * 4 + 3] = 255;         // presented alpha carries nothing
+
+    if (!rb_devshot_path (path, sizeof path))
+	fprintf (stderr, "dev: dev-shots/ already holds 9999 screenshots\n");
+    else if (stbi_write_png (path, w, h, 4, px, w * 4))
+	printf ("dev: wrote %s (%dx%d, Classic)\n", path, w, h);
+    else
+	fprintf (stderr, "dev: failed to write %s\n", path);
+
+    free (px);
+    fflush (stdout);
+}
+#endif
+
 //
 // I_FinishUpdate
 //
@@ -771,6 +854,11 @@ void I_FinishUpdate (void)
 
     SDL_RenderClear(renderer);
     SDL_RenderCopy(renderer, texture, NULL, NULL);
+
+#ifdef DOOM_DEV
+    I_DevShotClassic();         // DOOM-0294: -devshot N, read before the present
+#endif
+
     SDL_RenderPresent(renderer);
 }
 

@@ -10044,7 +10044,6 @@ extern "C" void RB_Vulkan_Present(void)
         else
         {
             char path[64];
-            int  i;
             memcpy(px, mapped, n * 4);
 
             // Swapchain colour order is the surface's choice, and on this hardware it
@@ -10061,19 +10060,9 @@ extern "C" void RB_Vulkan_Present(void)
             for (size_t p = 0; p < n; p++) px[p * 4 + 3] = 255;
 
             // First free name, so a shot never silently replaces an earlier one.
-            mkdir("dev-shots", 0755);
-            path[0] = '\0';
-            for (i = 1; i <= 9999; i++)
-            {
-                char try_[64];
-                FILE* f;
-                snprintf(try_, sizeof try_, "dev-shots/shot-%04d.png", i);
-                f = fopen(try_, "rb");
-                if (!f) { snprintf(path, sizeof path, "%s", try_); break; }
-                fclose(f);
-            }
-
-            if (!path[0])
+            // Shared with the Classic tier's capture (rb_image.c) so all three
+            // tiers write one naming scheme into one directory.
+            if (!rb_devshot_path(path, (int)sizeof path))
                 fprintf(stderr, "dev: dev-shots/ already holds 9999 screenshots\n");
             else if (stbi_write_png(path, (int)g.devShotW, (int)g.devShotH, 4, px,
                                     (int)g.devShotW * 4))

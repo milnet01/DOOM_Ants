@@ -1,5 +1,7 @@
 #include "rb_image.h"
 #include <stdlib.h>
+#include <stdio.h>
+#include <sys/stat.h>
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG            /* v1 ships PNG heroes/derived only */
@@ -29,6 +31,23 @@
 #pragma GCC diagnostic ignored "-Wunused-function"
 #include "stb_image_write.h"
 #pragma GCC diagnostic pop
+
+/* DOOM-0294: first free dev-shots/shot-NNNN.png, so a shot never silently
+   replaces an earlier one. Lives here rather than in either present path because
+   both need it and they are in different languages and translation units. */
+int rb_devshot_path(char* out, int outsz) {
+    int i;
+    mkdir("dev-shots", 0755);
+    for (i = 1; i <= 9999; i++) {
+        FILE* f;
+        snprintf(out, (size_t)outsz, "dev-shots/shot-%04d.png", i);
+        f = fopen(out, "rb");
+        if (!f) return 1;
+        fclose(f);
+    }
+    out[0] = '\0';
+    return 0;
+}
 
 int rb_image_load(const char* path, rb_image_t* out) {
     int w = 0, h = 0, comp = 0;

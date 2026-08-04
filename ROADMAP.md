@@ -2576,7 +2576,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   Progress (2026-07-14, 58bb59c): implemented for the Ultra RT view. A first-party, procedurally-authored, seamless CC0 grunge map (scripts/make_grunge.py -> assets/ultra/overlays/grunge.png) is sampled by WORLD position (dominant-axis projection) and multiplied over usePBR HD surfaces in pathtrace.comp modes 4/6, breaking the base tiling. New misc5 push-constant slot carries the overlay's bindless id; loaded as one extra bindless image in EnsureHdMaterials. Centred blend = net-neutral exposure; kGrimeStrength (0.32) + kGrimeWorldScale (1/384) are shader-const playtest knobs. Paletted/Classic untouched. Also fixed a latent -rtverify (mode 5) push-constant drift the change surfaced. AWAITING user play-test to tune strength/scale, then flip to shipped + CHANGELOG.
   Resolved (2026-07-17): shipped as the filth layer of DOOM-0181. The world-position grunge overlay (misc5.x, world-projected) became the grounding term of the DOOM-0181 stain system; graduates ✅ per its ship-gate (DOOM-0181 accepted). See docs/specs/DOOM-0181-detile-grime.md §4.3.
 
-- 📋 [DOOM-0180] **Thin bright diagonal seam on ceilings in the Ultra RT view.**
+- 🚧 [DOOM-0180] **Thin bright diagonal seam on ceilings in the Ultra RT view.**
   A thin, bright, diagonal line appears on dark ceiling flats in E1M1 Ultra (green
   room; also faintly in the wood-panel room). NOT from DOOM-0042 HD materials —
   ceilings are not heroed and run the paletted path (usePBR=0, byte-identical). Most
@@ -2590,6 +2590,37 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** A faint bright line shows up along some ceilings in the ray-traced view, like a hairline crack. Harmless, but it should be tracked down and sealed.
   Kind: investigate.
   Source: observed-2026-07-14 (DOOM-0042 T17 E1M1 Ultra play-test, images #8/#9).
+  Diagnosed 2026-08-04 (headless, E1M1 -warpto 3274 -3353 200 -- the
+  roofed nukage room, seam along the pit ledge rather than a ceiling).
+  ROOT CAUSE CLASS CONFIRMED: the seam is a genuine HOLE in the shared
+  Vulkan world mesh -- a ray miss, not a shading artefact. Evidence, each
+  by construction with a control that moved:
+  - HITS debug view (rt_view 1, rt_debug_views 1) renders the seam BLACK.
+    Black appears in exactly two places in that frame: the window opening
+    (looking outside) and the seam. Black = no hit.
+  - TEXTURED view (rt_view 3, unlit albedo) also renders it black, while
+    the shipping view renders it neutral white ~ (236,238,237). That pair
+    is the signature of a miss: DOOM-0143 established mode 6 returns
+    skyPanorama on a miss, so a crack shows sky, not black.
+  - Present in BOTH 3D tiers (Ultra RT and Solid raster) and ABSENT in
+    Classic (user-confirmed + own capture via the new Classic -devshot
+    path). Classic never builds the 3D mesh, which places the fault in the
+    mesh rather than in either shading path.
+  - Independent of HD art (identical with DOOMASSETDIR unset, a control
+    that moved 74.9% of the frame), of fog, and of the wet-liquid layer.
+  RULES OUT the original guess: not "coplanar ceiling triangles", not a
+  missing texture (emit_wall already drops the "-" side, r_mesh.c:566),
+  not atlas bleed (the paletted atlas samples NEAREST with no padding,
+  r_mesh.c:1541-1543).
+  STILL OPEN -- why the gap exists. The lower wall spans
+  front->floorheight..back->floorheight and the adjoining floor cap sits
+  at that same floorheight, so the two should meet exactly; the suspect is
+  the subsector floor cap being clipped a hair short of the linedef by the
+  BSP carve (r_mesh.c:588 "clipping a map-sized quad down through the node
+  tree"), i.e. a T-junction rather than a height mismatch. The gap reads
+  as a wedge that widens toward the camera, consistent with a small
+  world-space gap in perspective. Next step is to dump the cap polygon and
+  the wall quad's shared edge at this linedef and compare vertices.
 
 - ✅ [DOOM-0181] **Stochastic per-tile de-tiling for HD surfaces so walls/floors stop looking copy-pasted.**
   **Layman:** Stops HD walls and floors in the ray-traced view looking like the same tile pasted over and over — each repeat is secretly nudged/mirrored and keyed to its world position, so one wall stops cloning itself and different walls stop cloning each other.
@@ -4569,6 +4600,39 @@ parked ideas (💭 considered) until we commit to and design each one.
   The general lesson for this project's headless self-verification: when
   both arms of an A/B agree, suspect the harness before believing the
   result. A control that cannot move is not a control.
+  Progress (2026-08-04): the developer view gained the three things that
+  were stopping it being driven from a script, all DOOM_DEV-gated.
+  - `-inspect` (g_game.c G_DevInspectFromArgv, called from G_DoLoadLevel
+    beside G_WarpToSpot) applies the menu's Inspect preset from argv:
+    CF_NOTARGET | CF_GODMODE + P_ForgetPlayerTargets, exactly the pair
+    M_DevMode sets. `-freeze` sets dev_freezemonsters. Until now that
+    preset was reachable ONLY through the menu, and a menu is what an
+    automated run cannot reach (no Wayland input injection).
+    Why it mattered, measured: an A/B of the DOOM-0183 wet layer taken in
+    a live level reported 15.05% of pixels moved against a 0.15% control.
+    With the world held still the same A/B reads 13.83% against a 0.00%
+    control (max channel delta 1). The earlier figure was partly a monster
+    walking through frame and the nukage damage counter ticking down --
+    motion indistinguishable from the effect under test.
+  - `-devshot N` now works in the CLASSIC tier too (i_video.c
+    I_DevShotClassic, reading the SDL backbuffer after RenderCopy and
+    before RenderPresent). It was previously Vulkan-only, so in Classic
+    the flag was a SILENT no-op -- which is worse than an error, because a
+    harness then picks up whatever PNG was already on disk. That is not
+    hypothetical: it produced a wrong "Classic shows the same seam"
+    reading during the DOOM-0180 investigation before the harness was
+    made to fail on a missing file. F12's existing Classic .pcx route
+    (G_ScreenShot) is unchanged; this is the scriptable path and writes
+    the same dev-shots/shot-NNNN.png the other tiers write.
+    The first cut segfaulted: SDL_RenderGetViewport returns LOGICAL units
+    (320x200 under Classic's SDL_RenderSetLogicalSize) while
+    SDL_RenderReadPixels(NULL) reads the whole output target in pixels, so
+    sizing the buffer from the viewport overran it by the square of the
+    scale factor. Fixed to SDL_GetRendererOutputSize.
+  - The dev-shot naming loop is now shared (rb_image.c rb_devshot_path),
+    called by both present paths, so all three tiers write one scheme into
+    one directory.
+  Build green DEV and release; make test 7/7.
 
 - 📋 [DOOM-0295] **L3's torch in-scatter costs 1.05 ms of megakernel -- find out where.**
   Measured on an RX 6600 at the E1M1 nukage courtyard, Ultra RT with HD

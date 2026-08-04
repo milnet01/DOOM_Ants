@@ -555,6 +555,9 @@ void G_DoLoadLevel (void)
 		 
     P_SetupLevel (gameepisode, gamemap, 0, gameskill);    
     G_WarpToSpot ();                    // DOOM-0268: -warpto X Y [ANGLE]
+#ifdef DOOM_DEV
+    G_DevInspectFromArgv ();            // DOOM-0294: -inspect / -freeze
+#endif
     displayplayer = consoleplayer;		// view the guy you are playing    
     starttime = I_GetTime (); 
     gameaction = ga_nothing; 
@@ -631,7 +634,51 @@ void G_WarpToSpot (void)
     fflush (stdout);
 }
 
+#ifdef DOOM_DEV
 //
+// G_DevInspectFromArgv  (DOOM-0294)
+// `-inspect` applies the developer menu's Inspect preset as the level loads, and
+// `-freeze` holds the monsters still. Both already exist as menu rows; what they
+// did not have was a route in from argv, and a menu is exactly what an automated
+// run cannot reach -- keypresses cannot be injected into a Wayland client.
+// 
+// That gap is not cosmetic, because a capture taken in a live level is not a
+// measurement. Two captures meant to differ only by an effect toggle also differ
+// by however far a monster walked between them and by whatever the nukage took
+// off the health counter, and that motion is indistinguishable from the effect
+// under test -- measured here as 15% of pixels moved on an A/B whose real signal
+// was a tenth of that. An A/B needs the world to hold still.
+// 
+// Runs on every level load rather than once at startup, so the state survives
+// a level change the same way the menu's does.
+// 
+void G_DevInspectFromArgv (void)
+{
+    player_t*	p = &players[consoleplayer];
+
+    if (M_CheckParm ("-inspect"))
+    {
+	// The same pair M_DevMode sets, and it takes both: CF_NOTARGET blocks new
+	// acquisition, P_ForgetPlayerTargets drops the monsters already awake.
+	// God mode is what stops a nukage floor ending the shot -- the player is
+	// dropped onto the destination sector's floor, which for a liquid fixture
+	// is the liquid.
+	p->cheats |= CF_NOTARGET | CF_GODMODE;
+	P_ForgetPlayerTargets ();
+	printf ("-inspect: monsters ignore you, nothing can hurt you\n");
+	fflush (stdout);
+    }
+
+    if (M_CheckParm ("-freeze"))
+    {
+	dev_freezemonsters = 1;
+	printf ("-freeze: monsters and missiles held still\n");
+	fflush (stdout);
+    }
+}
+#endif
+
+// 
 // G_Responder  
 // Get info needed to make ticcmd_ts for the players.
 // 
