@@ -1402,6 +1402,36 @@ parked ideas (💭 considered) until we commit to and design each one.
   the two densities re-judged in play), Q32 (does the sky backdrop's
   closed form take the hell addend and mediumTint, or is a coloured
   skyline seam accepted), Q31 (DOOM-0300's drift speed).
+  USER PLAY-TEST 2026-08-04 -- three of the four open look calls answered.
+  Q31 (DOOM-0300's drift speed) SIGNED OFF: "I like the fog... this one I
+  think you can sign off." The 15x raise stands as a judged value rather than
+  a measured guess. CLOSED.
+    Carried forward as a SEPARATE observation, because it is not the drift
+    speed and must not be filed as if Q31 were still open: "it is hard to see
+    the drift as the fog wisps are not as visible as in Silent Hill 2". That
+    is wisp AMPLITUDE / contrast (kWispAmp and the S-curve shaping), not
+    velocity -- the reference look is the one §1 names, so this is a real gap
+    against the stated art direction rather than a preference. Part 1
+    (DOOM-0310 §4.6) owns the wisps; raise it there when the fog work resumes.
+  Q7 (goo/hell fog DENSITIES) and Q20 (kGooTint/kHellTint COLOURS) CANNOT BE
+  JUDGED YET, and the user said why: "As with DOOM-0183, the goo (nukage)
+  isn't really highlighting anything." Both questions ask the user to judge a
+  tint and a density on a pool that is not visibly lighting its surroundings
+  -- so the answer would be measuring the wrong thing. Blocked on DOOM-0316's
+  constant split; re-ask with before/after captures once it lands, NOT in the
+  abstract. This is the same root cause as DOOM-0183's failing half and it is
+  now confirmed from two independent directions (the headless ladder and the
+  user's eye).
+  Q32 (does the sky backdrop take the hell haze + tint, or is a coloured
+  skyline seam accepted) STILL OPEN, and the user asked which levels to judge
+  it on. Answered from `r_backend.c` rather than recalled -- `view.hazeDensity`
+  is non-zero for `((gamemode == registered || retail) && gameepisode >= 3) ||
+  (gamemode == commercial && gamemap >= 20)`:
+    DOOM 1  Episode 3 "Inferno"  E3M1-E3M9   (and Episode 4, Thy Flesh Consumed)
+    DOOM 2  MAP20 onward         MAP20-MAP32
+  E3M1 is the standing fixture for hell in the headless harness, because its
+  liquid is BLOOD3, which is NOT in FlagLiquidFlats' lut and so tests hell
+  with zero goo contamination.
 - 💭 [DOOM-0012] **Hold a 60 FPS performance floor.**
   **Layman:** Keep it running smoothly — never below 60 frames per second.
   Kind: perf.
@@ -2324,7 +2354,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   Source: user-request-2026-06-30 (Windows GTX 1050 has no Ultra option; design intent clarified).
   CORRECTION to the body's framing (user clarified 2026-06-30, matches memory render-mode-menu-names): the three renderers are Classic (90s software) / Solid (original art rasterized 3D) / Ultra (original art REPLACED with HD models, 3D). Ray tracing is an ORTHOGONAL on/off capability available in BOTH Solid AND Ultra when the GPU supports it — it is NOT the Solid-vs-Ultra distinction (that is purely the art set). So my earlier 'Ultra-without-RT ~= Solid' line is wrong: Solid can also run RT. Correct gating: Classic always; Solid AND Ultra both available whenever plain Vulkan works (RB_Vulkan_Available(0) for BOTH — Solid is already correct at r_backend.c:235; only Ultra at :230 must change from Vulkan_RT_Available/RB_Vulkan_Available(1) to the (0) check). Ray Tracing becomes a separate On/Off control, enableable only on RT-capable hardware, applied to whichever 3D renderer (Solid or Ultra) is active. This is the DOOM-0009 build-step-1 'two controls: Renderer + Ray Tracing' split that isn't fully implemented yet (the enum RB_RASTER3D/RB_RT3D still couples mode to RT). On the GTX 1050 the expected result is: BOTH Solid and Ultra appear and render without RT; the RT toggle stays disabled/greyed. Cross-ref DOOM-0009 §2 menu rework.
 
-- 🚧 [DOOM-0147] **Classic presents at 16:10 (square-pixel 320x200), not authentic 4:3 — letterboxes on 4:3 monitors; add a 4:3-vs-fill aspect choice.**
+- ✅ [DOOM-0147] **Classic presents at 16:10 (square-pixel 320x200), not authentic 4:3 — letterboxes on 4:3 monitors; add a 4:3-vs-fill aspect choice.**
   i_video.c:660 calls SDL_RenderSetLogicalSize(renderer, SCREENWIDTH=320, SCREENHEIGHT=200), so SDL preserves a 1.6:1 (16:10, square-pixel) aspect when scaling the software framebuffer to the window. DOOM's authentic display is 4:3 (VGA stretched the 200 lines ~1.2x vertically). On a 4:3 monitor the 1.6 image is letterboxed -> black bars top+bottom (confirmed screenshot 6, Classic, max screen size) and the geometry is vertically squished ~1.2x vs original. Same path drives the title/intermission screens (screenshot 3 'title not full screen'), so they bar too. Solid/Ultra are unaffected (Vulkan draws to the full window extent).
   
   Fix: present Classic at 4:3. Options: SDL_RenderSetLogicalSize(320,240) and let RenderCopy stretch the 320x200 texture to the 320x240 logical area (1.2x vertical = authentic 4:3), letterboxing 4:3 to the window (fills a 4:3 monitor; pillarbox on widescreen). PLUS add a player aspect option (per user request 2026-06-30): {4:3 authentic, Fill/Stretch-to-window}. 4:3 = correct proportions, may bar on non-4:3 monitors; Fill = edge-to-edge on any monitor, distorts off-4:3. Persist via m_misc.c; expose in the Options/Renderer menu. NOTE 'no HUD' in the user's max-screen-size shots is expected (screenblocks 11 hides the status bar) — dropping one notch restores it; not part of this fix. Verify on the 4:3 Windows monitor (no bars in 4:3 mode) and a 16:9 display (correct pillarbox vs fill).
@@ -2339,6 +2369,12 @@ parked ideas (💭 considered) until we commit to and design each one.
   CRASH FIX 2026-07-01 (found in first real-widescreen testing): entering a level with the HUD visible (Screen Size <= block 10) on a true-widescreen display aborted with I_Error "Bad V_CopyRect". Root cause: V_CopyRect range-checked the destination x against a fixed ORIGWIDTH (320), but the status-bar refresh (st_stuff) copies to a WIDESCREENDELTA-shifted x into a widescreen buffer whose logical width is SCREENWIDTH/HIRES (> 320), so destx+width exceeded 320 and tripped the guard. Fixed by range-checking each side against its own buffer's logical width (stride/scale); provably identical at 4:3 (both reduce to ORIGWIDTH). Reproduced headless under gdb (forced 16:9 aspect + -warp + block 10) before/after the fix. This is why widescreen appeared to crash "even with Widescreen off" -- Off only applies on restart, so widescreen was still active at runtime. v_video.c V_CopyRect. Builds clean Linux+Windows; exe redeployed.
   Widescreen render fixes 2026-07-01 (found in real 16:9 play, Classic renderer): (1) FLOOR/CEILING SWAM relative to walls -- r_plane.c R_ClearPlanes computed basexscale/baseyscale by dividing by centerxfrac (the WIDE geometric centre), but the Hor+ projection focal length references centerxfrac_nonwide (the 4:3 half-width); the flat texel step therefore didn't match the column-to-angle mapping, so flats drifted as the view moved. Fixed to divide by centerxfrac_nonwide (exported via r_main.h). Zero-diff at 4:3 (the two are equal). (2) GREY SQUARES OVER THE HUD hiding info -- st_lib.c STlib_drawNum/updateMultIcon/updateBinIcon draw the widget with V_DrawPatch (auto +WIDESCREENDELTA on the wide FG) but erased the previous value with V_CopyRect at an UN-shifted dest x, so the grey background-restore rect landed left of the digit and covered adjacent HUD fields. Added +WIDESCREENDELTA to the three erase dest-x (source stays the 320-wide BG scratch). Relies on the earlier V_CopyRect logical-width range-check fix. Builds clean Linux+Windows; exe redeployed.
   Auto-detect 2026-07-01 (user-reported: Windows 5:4 showed Widescreen "On" though the screen isn't widescreen). I_InitWidescreen now forces widescreen=0 when the detected desktop aspect is 4:3-or-narrower (aspect <= 4/3 + eps), or if the display query fails. Effect was already 4:3 there (Hor+ clamps a narrow display to NONWIDEWIDTH), but the menu misleadingly read "On"; now it honestly reads "Off". Displays wider than 4:3 keep the saved preference (default on). i_video.c I_InitWidescreen. Zero effect on true-widescreen displays. Builds clean Linux+Windows; exe redeployed.
+  Resolved (2026-08-04): all three aspect choices are shipped and the item has been quiet for five weeks with nothing outstanding stated -- Part A (authentic 4:3), Part B (authentic Hor+ widescreen per docs/specs/DOOM-0147-widescreen.md), Part C (the two persisted prefs), plus the V_CopyRect crash fix, the two widescreen render fixes (swimming flats, HUD erase rects) and the aspect auto-detect, every one of them driven by real testing on the Windows/5:4 machine.
+  Verified today rather than closed on the notes, and the verification found a real defect -- just not in this item. Captured Classic on the same fixture in all three modes:
+    widescreen 1              3840x2160, aspect 1.778, no bars, and genuinely Hor+ (more level visible left and right than the 4:3 shot, not a horizontal stretch)
+    widescreen 0              content exactly 4:3 (2880x2160 = 1.333)
+    widescreen 0 + fill       3840x2160, fills the output
+  The 4:3 shot initially appeared left-aligned with a 960 px bar on one side only, which looked like a pillarbox-centring bug in THIS item. It was not: `I_SetAspect` uses `SDL_RenderSetLogicalSize`, which centres by SDL's documented behaviour, and the asymmetry was the capture path reading the viewport into an output-sized buffer. Proved by A/B rather than by reading the docs -- the artefact vanishes with `fillstretch 1`, i.e. it tracks the logical size and not anything DOOM draws. Filed and fixed as DOOM-0320.
 
 - ✅ [DOOM-0148] **Keep the HUD always on in-game: cap the Screen Size slider at full-view-with-status-bar (screenblocks 10), never the HUD-less fullscreen (11).**
   DOOM maps screenSize 0..8 -> screenblocks 3..11 (m_menu.c). screenblocks 11 is the fullscreen view with NO status bar; 10 is full-width view WITH the status bar. Fix caps the slider at screenSize 7 (screenblocks 10) so the HUD can never be slid away: M_SizeDisplay case 1 guard 8->7; M_DrawDisplay thermo cells 9->8 so the maxed slider reads full; M_Init clamps a stale screenblocks 11 config down to 10 on load. Applies to all in-game renderers (status bar is composited for blocks<11 regardless of backend; confirmed via screenshots 9/10 where dropping one notch restored the HUD in both Classic and Solid). Title screen unaffected (no HUD there by design).
@@ -7011,8 +7047,54 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: feature.
   Lanes: renderer, shaders.
   Source: user-play-test-2026-08-04.
+  SCOPE BROADENED 2026-08-04 by the user, and the item is now "everything
+  green glows", not just barrels. Their words: the glow "needs to come from
+  barrels, pools and the areas it spilled on the floor (the dirt grime layer
+  you added for me but it should be only the green that glows)", plus "the
+  bonus armour pickups that look like skulls with green glowing eyes needs to
+  cast light as well".
+  So four emitter sources, of which one already half-exists:
+  1. POOLS -- the nukage flats. Already forced-emissive by name
+     (ForceLiquidEmissive); the problem is magnitude, owned by DOOM-0316.
+  2. SPILLED GOO on the floor -- DOOM-0181's stain/grime layer. NOTE this is
+     NOT unbuilt: `kPuddleGlow` (0.35) and `kPuddleSheenScale` already exist
+     in pathtrace.comp and add a faint additive glow on goo puddles via
+     `gooWet`, in both the mode-4 and mode-6 blocks. So the mechanism is
+     there and is simply too weak to read, which is the same story as the
+     pools. What it does NOT do is enter the emitter set, so it lights
+     nothing but itself.
+     ⚠ THE CONSTRAINT THE USER STATED EXPLICITLY: only the GREEN stains glow.
+     The grime layer also paints rust and dirt, and those must stay dark. The
+     existing `gooWet` selector already distinguishes green goo from the rest
+     (it is the same floor + goo-selector test `stainColour` uses), so the
+     discrimination exists -- do not widen it to the whole filth layer.
+  3. BARRELS -- the original subject of this bullet. Static in practice, which
+     the user confirmed, so they can be treated as static emitters and the
+     INV-2 conflict below dissolves.
+  4. ARMOUR BONUS PICKUPS -- the small green pickups the user describes as
+     "skulls with green glowing eyes". Best candidate is `SPR_BON2` (the
+     armour bonus, `info.c`), which is the green pickup that animates through
+     four frames. ⚠ CONFIRM ON SCREEN BEFORE FORCING Le ON IT: DOOM also has
+     `SPR_CEYE` (the Evil Eye decoration) and the three skull keys
+     (`SPR_BSKU`/`RSKU`/`YSKU`), and "skull with green glowing eyes" could
+     describe the Evil Eye at least as well. Now cheap to settle -- DOOM-0318
+     plus -devshot can photograph any of them. Getting this wrong lights the
+     wrong prop in every level.
+  INV-2 RESOLVED IN PRINCIPLE by the user, 2026-08-04: they accepted that
+  barrels are static and said "we should be able to do something for them".
+  That is the (b) route this bullet sketched -- keep non-moving props in the
+  STATIC emitter set so they are legal fog light sources, rather than
+  relaxing INV-2 to let dynamic lights scatter, which is the expensive option
+  INV-2 exists to prevent. The armour bonuses are the same case: they do not
+  move until picked up. The design owes an answer for what happens at the
+  moment a barrel explodes or a pickup is taken -- the emitter must leave the
+  static set, which is a rebuild trigger, and DOOM-0296's `RB_UPD_*` dirty
+  machinery is the precedent to copy rather than a new mechanism.
+  STILL DEPENDS ON DOOM-0316 for the same reason as before: every one of the
+  four sources needs a Le that lights its surroundings without blowing out its
+  own surface, and that split is DOOM-0316's.
 
-- 🚧 [DOOM-0320] **Classic -devshot captures are left-aligned with a false black bar whenever Fill Screen is off.**
+- ✅ [DOOM-0320] **Classic -devshot captures are left-aligned with a false black bar whenever Fill Screen is off.**
   Found while verifying DOOM-0147, and it is a defect in the MEASUREMENT
   HARNESS rather than in the game -- which is the worse of the two places for
   it, because it silently corrupts the evidence other items are judged on.
@@ -7059,3 +7141,10 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: fix.
   Lanes: renderer, tests.
   Source: in-session-2026-08-04.
+  Resolved (2026-08-04, d22b9dc): `I_DevShotClassic` now sizes its buffer from `SDL_RenderGetViewport` multiplied by `SDL_RenderGetScale` -- the viewport in PIXELS -- instead of from `SDL_GetRendererOutputSize`.
+  Verified across all three Classic modes on the same fixture (E1M1 -warpto 3274 -3353 200, 2160p output):
+    4:3, logical scaling ON   2880x2160, aspect 1.333, bars L0 R0   (was 3840 wide with a false 960 px right bar)
+    fill-stretch              3840x2160, aspect 1.778, bars L0 R0   (unchanged)
+    widescreen                3840x2158, aspect 1.779, bars L0 R0   (unchanged)
+  The two already-correct paths are byte-unaffected by construction, not merely by observation: with Fill Screen on, `I_SetAspect` passes (0,0) to disable logical scaling, so viewport == output and scale == 1 and the product reduces to the old expression.
+  Release build clean, make test 7/7. Captures retained: dev-shots/S-classic-43-fixed.png, T-classic-fill-fixed.png, U-classic-ws-fixed.png; the pre-fix evidence is Q-classic-43.png.
