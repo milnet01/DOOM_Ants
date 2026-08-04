@@ -7274,3 +7274,101 @@ parked ideas (💭 considered) until we commit to and design each one.
     widescreen                3840x2158, aspect 1.779, bars L0 R0   (unchanged)
   The two already-correct paths are byte-unaffected by construction, not merely by observation: with Fill Screen on, `I_SetAspect` passes (0,0) to disable logical scaling, so viewport == output and scale == 1 and the product reduces to the old expression.
   Release build clean, make test 7/7. Captures retained: dev-shots/S-classic-43-fixed.png, T-classic-fill-fixed.png, U-classic-ws-fixed.png; the pre-fix evidence is Q-classic-43.png.
+
+- 📋 [DOOM-0321] **Volumetric fog blows out to pure white across long open sight lines, losing its tint entirely.**
+  User play-test 2026-08-04, Ultra + ray tracing on, render_scale 50,
+  rt_fog Med, on an open hell landscape: "Something is definitely causing
+  the white blown out colour." Their captures show the lower half of the
+  frame going to near-pure white below a hard horizontal boundary, with the
+  red sky and mountains above rendering correctly.
+
+  THE DIAGNOSIS TO TEST FIRST, because it reconciles two observations that
+  look contradictory and would otherwise send the next session hunting a
+  tint bug that does not exist. Measured earlier the same day on the E3M1
+  SURFACE, mean RGB of the fogged frame: sky (153,80,80) R/G 1.93, horizon
+  (137,78,67) R/G 1.75, ground (86,37,25) R/G 2.32 -- clearly red-tinted --
+  and E3M6 gave R/G 1.99-2.91. So kHellTint IS reaching marchFog. Yet the
+  user's open-expanse captures are white. Both are true, and the reconciling
+  mechanism is SATURATION KILLING THE HUE.
+
+  In-scatter accumulates along the ray. Per unit of path the hell fog's
+  colour is kFogColor * kHellTint = (0.495, 0.196, 0.168) -- red-dominant.
+  But accumulate that over a long enough path and the channels clip in
+  order: red saturates first, then green, then blue, and once all three are
+  pinned the result is WHITE regardless of how strongly it was tinted. A
+  tint only survives while the brightest channel is below the ceiling. Short
+  paths (a walled courtyard, the E3M1 blood room) stay red; a sight line
+  across open ground runs far enough to saturate. That predicts exactly the
+  observed pattern -- red near geometry, white across the open -- and the
+  hard horizontal boundary is where the ground plane starts offering
+  unbounded path length.
+
+  How to test it, cheaply and without guessing: capture the same open view
+  at rt_fog 1 / 2 / 3. If this is saturation, the white REGION grows with
+  strength while its colour stays pinned at white, and at rt_fog 1 the same
+  pixels should read red rather than pale. If instead the colour is wrong at
+  every strength, the cause is elsewhere and this diagnosis is dropped.
+
+  RELATED BUT NOT THE SAME as the user's other two fog notes from the same
+  session ("it shouldn't be so bright under a red sky", "the fog should be a
+  lot thicker"), which are dials on DOOM-0011. This one is a defect: no dial
+  setting should produce a white sheet over the floor. Note the two pull in
+  OPPOSITE directions -- raising density to make the fog thicker makes this
+  saturation worse -- so this must be fixed BEFORE the density is re-tuned,
+  or the tuning will be done against a broken ceiling.
+
+  Candidate fixes, none chosen: clamp the accumulated in-scatter below the
+  saturation point; apply the tint AFTER accumulation so hue survives
+  clipping; or bound the effective path length the way kFogSkyDist already
+  bounds the sky term's.
+  **Layman:** Looking across a big open hell area, the mist goes blank white instead of staying red — and it hides the whole floor.
+  Kind: fix.
+  Lanes: shaders, fog.
+  Source: user-play-test-2026-08-04.
+
+- 📋 [DOOM-0322] **A tall wall renders black in Solid and Ultra where Classic draws its texture.**
+  User play-test 2026-08-04, same open hell landscape, reported as "the
+  geometry is being cut off at a certain height" and captured in all three
+  tiers -- which is what makes it diagnosable, because the tier that differs
+  is the one that is right.
+
+  WHAT THE CAPTURES SHOW. In CLASSIC the band above the brick building is a
+  dark grey rocky wall with visible texture, continuous up to the mountains.
+  In SOLID and in ULTRA the same band is SOLID BLACK across the full width
+  of the view, with the building, trees and ground below it drawn normally
+  and the sky and mountains above it drawn normally. So the defect is
+  confined to one horizontal span of wall, in both 3D tiers, and is absent
+  from the software renderer.
+
+  ⚠ "CUT OFF" IS THE SYMPTOM, NOT NECESSARILY THE CAUSE, and the distinction
+  decides where to look. Black could be (a) geometry genuinely missing, so
+  the ray/raster hits nothing and returns the clear colour, or (b) geometry
+  present but receiving no light. These have completely different fixes and
+  the captures alone cannot separate them. The engine already has the tool
+  to tell them apart: the HITS debug view renders a ray MISS as black
+  (rt_debug_views 1), so if the band is still black under HITS the geometry
+  is absent, and if it is not, the geometry is there and unlit. That is the
+  first thing to run, before any code is read -- it is the same test that
+  proved DOOM-0180's ceiling seam was a hole in the mesh rather than a
+  shading artefact.
+
+  LIKELY RELATED TO DOOM-0180, which is the other confirmed hole in the
+  shared Vulkan world mesh (a bright seam on ceilings, present in Ultra and
+  Solid, absent in Classic, root cause still unknown and suspected to be a
+  T-junction from the BSP carve in r_mesh.c). Same tier signature, same
+  mesh, same "3D backends only" pattern. Check whether one cause explains
+  both before fixing either separately -- a shared root cause is likely
+  enough that fixing them independently risks two patches for one defect.
+
+  Both 3D tiers share RB_BuildMesh, so a mesh fix lands in both at once;
+  that shared path is also why the two tiers agreeing is evidence for the
+  mesh rather than for either renderer.
+
+  No capture of this exists in dev-shots yet -- the user's screenshots are
+  the only record, and the vantage is an open hell landscape reached after
+  E3M1's opening lift. Pin a -warpto fixture for it before investigating, so
+  the before/after is repeatable.
+  **Layman:** In the 3D views, the top part of a big wall goes solid black instead of showing its stone texture — the old view draws it correctly.
+  Kind: fix.
+  Lanes: renderer, shaders.
+  Source: user-play-test-2026-08-04.
