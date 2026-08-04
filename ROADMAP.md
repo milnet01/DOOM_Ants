@@ -7325,6 +7325,19 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: fix.
   Lanes: shaders, fog.
   Source: user-play-test-2026-08-04.
+  Progress (2026-08-04): REPRODUCED HEADLESSLY, so this no longer depends
+  on the user's screenshots. Fixture `-warp 3 1 -warpto 192 -1400 90` on
+  E3M1's opening courtyard, Ultra + rt_view 6 + rt_fog 2: everything below
+  the horizon goes to near-white and the ASHWALL perimeter, the building
+  and the trees all disappear into it, exactly as captured. The same
+  fixture at rt_fog 0 renders the scene normally, so the blow-out is the
+  fog term and nothing else.
+  Note when re-measuring: fog exists ONLY in the RT view. Solid raster
+  (renderer 2, rt_view 0) is byte-identical at rt_fog 0 and rt_fog 2 --
+  verified, two captures compared -- so never A/B the fog dials in Solid
+  and conclude anything.
+  The white also swallows the DOOM-0322 vantage, which is why that defect
+  had to be diagnosed with fog off.
 
 - 📋 [DOOM-0322] **A tall wall renders black in Solid and Ultra where Classic draws its texture.**
   User play-test 2026-08-04, same open hell landscape, reported as "the
@@ -7391,3 +7404,57 @@ parked ideas (💭 considered) until we commit to and design each one.
   E3M1 surface spot already found that way is `-warp 3 1 -warpto -600 576 300`,
   but that is the blood room and is NOT this landscape; the user reached this
   one by playing on from there.
+  ANSWERED 2026-08-04 by the HITS capture, and the answer is (a): the
+  geometry is GENUINELY MISSING, not present-and-unlit. Do not re-run that
+  test.
+
+  FIXTURE PINNED (this bullet's first step, now done):
+  `-warp 3 1 -warpto 192 -980 90` on E3M1. That is the map's opening
+  courtyard (sector 31, floor SFLR6_1, sky ceiling at z=56, ASHWALL
+  perimeter), looking north through the x=32..352 opening at the SP_HOT1
+  building with its BIGDOOR7 door and SW1GARG plaques. Matches the user's
+  framing; distance was fitted by making the ASHWALL band subtend the same
+  pixel height as in their captures. Their earlier vantage was further out.
+
+  WHAT THE THREE CAPTURES SHOW, same fixture, fog off, no menu:
+  Classic draws the brick building rising ~200 units above the courtyard
+  wall. Solid draws its base only, up to z=56, and pure SKY above. HITS
+  (rt_debug_views 1, rt_view 1) is BLACK over that whole region = ray MISS
+  = no geometry there at all.
+
+  CORRECTION TO THIS BULLET'S OWN DESCRIPTION. "Solid black band" was
+  wrong -- it came from reading the user's screenshots, and two of the
+  frames read as Classic are actually Solid (the top-right counter is
+  cur/avg FPS: Classic runs ~35 at 4K native, Solid ~360 at 50% scale).
+  The region is not black, it is SKY. The user's own words -- "the geometry
+  is being cut off at a certain height" -- were the accurate description
+  all along, and the height is exactly the VIEWER's sector sky ceiling.
+
+  ROOT CAUSE, verified in source: r_mesh.c:547-553. For a two-sided seg
+  where both ceilings are sky and front > back, DOOM-0141 emits
+  `emit_sky_wall(seg, back->ceilingheight, front->ceilingheight)` -- an
+  opaque sky-textured quad filling the height gap, explicitly so "the
+  tracer occludes geometry beyond instead of seeing through the gap"
+  (r_mesh.c:155-158, :550-552). Segs are emitted per side, so the seg on
+  the FAR sector's side (front = sec32 ceil 192, back = sec31 ceil 56)
+  raises a sky quad from z=56 to z=192 standing between the camera and the
+  building. Sectors 32/33/34 do this across the full width of the opening.
+  Vanilla does the opposite: with both ceilings sky it skips the upper wall
+  and does NOT raise ceilingclip, so far geometry above the near ceiling
+  shows through. That is the classic sky hack, and the Classic capture
+  proves it. DOOM-0141 needed the sky to occlude the sky HOLE; it
+  over-applied that to the sky-hack GAP, which vanilla leaves transparent.
+
+  RELATIONSHIP TO THE OTHER TWO, both checked as this bullet asks:
+  NOT a shared cause with DOOM-0180 -- that is a bright seam on ceilings,
+  suspected T-junction from the BSP carve, a different mechanism. Fix them
+  separately.
+  DOOM-0142 IS the same subsystem with OPPOSITE polarity: there the 3D mesh
+  occludes too LITTLE (a wall Classic blocks with is missing), here it
+  occludes too MUCH. emit_sky_wall is itself an over-correction of the
+  DOOM-0142 class. Design the fix for both at once or they will fight.
+
+  FIX NOT STARTED, and it needs a design decision rather than a one-liner:
+  the sky-hack gap must occlude nothing while the sky HOLE that DOOM-0141
+  closed must keep occluding. Deleting the emit_sky_wall call would
+  regress DOOM-0141's floating geometry. Spec it before coding.
