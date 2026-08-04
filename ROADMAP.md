@@ -2112,13 +2112,14 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: implement.
   Source: research-2026-06-29 DOOM-0092 Q2.
 
-- 🚧 [DOOM-0122] **INV-6 verify path runs with omniStart==emitCount, leaving the omni NEE loop unchecked.**
+- ✅ [DOOM-0122] **INV-6 verify path runs with omniStart==emitCount, leaving the omni NEE loop unchecked.**
   Per docs/research/DOOM-0092-restir-cost-benefit.md §3. pathtrace.comp:427/429 call directNEEVerify/directAllLights with omniStart==emitCount (both args pc.misc2.x), so the post-DOOM-0084 omni direct-sampling branch in sampleEmitter is never exercised on the verify path. INV-6 currently proves only the STATIC power-importance selection unbiased. Fix: pass the real omniStart so the omni loop is checked against the brute-force reference; refresh the now-stale 'Mirrors shadeSurface's emitter pick' comment at pt_common.glsl:254-256.
   **Layman:** The self-test that proves the lighting math is unbiased doesn't actually cover the newer glowing-sprite lighting path -- a gap worth closing.
   Kind: review-fix.
   Source: research-2026-06-29 DOOM-0092 Q3.
   Progress (2026-07-17): implemented — the two verify estimators now receive the real omniStart (pc.misc4.y, the split shadeSurface uses in production) instead of omniStart==emitCount, so the post-DOOM-0084 omni sprite-light NEE loop is exercised against the brute-force reference. Refreshed the stale "Mirrors shadeSurface's emitter pick" comment in pt_common.glsl. Safe: OMNI_CULL_VALUE (the one-sided omni bias) was removed by DOOM-0120's RIS reservoir, and both estimators forward the same omniStart into the same sampleEmitter, so they still differ only in selection and the unbiased importance-sampling identity holds. Shaders recompile clean; nee_sampling_test green. Commit 3b8982d. Graduates to shipped after an -rtverify hardware run confirms INV-6 stays within tolerance with the omni path now covered.
   Progress (2026-07-17, cont.): completed the host half -- RB_RtVerify now sets pc.misc4.y = g.staticWgt.size() (the real static|omni split, matching the display path at r_vulkan.cpp:6494), so the committed shader read of misc4.y (3b8982d) is correct; also refreshed the stale struct comment and added omni-coverage reporting to the [rtverify] line (2ed8227). Verified on the RX 6600: -rtverify INV-6 rel-MSE PASS at E1M1 0.08% / E3M4 0.32% / E4M1 0.07%, white-furnace 0.000000 -- no regression (at these scenes staticN==emitCount, so the split is a no-op identical to the prior omniStart==emitCount path). HOWEVER the omni loop is now correctly WIRED but still NOT EXERCISED: every -rtverify run reports 0 omni emitters because the verify fires on the first present, before RecordRtTrace populates this frame's dynamic sprite emitters -- so only the level-load static set exists. Split that blocker to DOOM-0195; keeping DOOM-0122 in-progress until the omni loop is actually checked. Separately found a pre-existing INV-6 fail at E3M1 (1.61%), logged as DOOM-0196 (unrelated: DOOM-0122's change is a no-op there).
+  Resolved (2026-08-04): verified complete in the tree, not on recall. Both halves are live -- r_vulkan.cpp sets pc.misc4[1] = g.staticWgt.size() (the real static|omni split, matching the display path) and the verify run prints how much of the omni sprite-light NEE loop it covered. Nothing was left outstanding on the bullet; it had simply never been flipped. CHANGELOG entry added under Fixed.
 
 - ✅ [DOOM-0123] **Quantify the omni-cull (OMNI_CULL_VALUE) one-sided bias against the brute-force reference.**
   Per docs/research/DOOM-0092-restir-cost-benefit.md §3 follow-up #2. The OMNI_CULL_VALUE=0.0025 cull drops a sprite's shadow ray when its UNSHADOWED contribution is below threshold -- a deliberate one-signed bias (shadowing only shrinks the term), bounded by threshold x culled-count. Measure it once vs directAllLights to record the bound instead of assuming it negligible.
@@ -4288,7 +4289,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   names, which no hand-list can. That combination is what makes "apply
   it once and it is right everywhere" achievable rather than aspirational.
 
-- 🚧 [DOOM-0294] **Developer view: jump to any level and stop the monsters noticing you, so the game can actually be tested.**
+- ✅ [DOOM-0294] **Developer view: jump to any level and stop the monsters noticing you, so the game can actually be tested.**
   User, 2026-08-01: "I need a developer view in the game that allows me
   to jump to any stage, turn on invincibility (or rather make the enemies
   not see me) so that I can test the game more thoroughly."
@@ -4654,6 +4655,7 @@ parked ideas (💭 considered) until we commit to and design each one.
     called by both present paths, so all three tiers write one scheme into
     one directory.
   Build green DEV and release; make test 7/7.
+  Resolved (2026-08-04): -inspect / -freeze / -devshot are shipped and pushed, DEV and release builds clean, make test 7/7, and the flags were exercised roughly twenty times in this session's DOOM-0316 measurement work -- which is the strongest acceptance the item could ask for. Already carried four CHANGELOG entries; only the roadmap flip was owed. NOTE the scope boundary confirmed today: -devshot reaches every WORLD view but cannot open a menu, and it is NOT headless (verified 2026-08-04 -- with DISPLAY and WAYLAND_DISPLAY both unset SDL still opens a real window and the run hangs rather than exiting). Headless capture stays DOOM-0268's; menu capture stays blocked, see DOOM-0050.
 
 - 📋 [DOOM-0295] **L3's torch in-scatter costs 1.05 ms of megakernel -- find out where.**
   Measured on an RX 6600 at the E1M1 nukage courtyard, Ultra RT with HD
@@ -6417,7 +6419,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   Lanes: shaders, assets.
   Source: in-session-2026-08-03 (found while fixing DOOM-0307).
 
-- 🚧 [DOOM-0310] **Split part 1 of 3 — fog density and the fields, extracted from the DOOM-0011 spec.**
+- ✅ [DOOM-0310] **Split part 1 of 3 — fog density and the fields, extracted from the DOOM-0011 spec.**
   First of the three-way split the user approved on DOOM-0308: density +
   the fields (§4.3/§4.3a-c). Parts 2 and 3 are light sources + the bakes
   (§4.4) and resolve + composite (§4.6/§4.6a).
@@ -6484,6 +6486,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   - kAreaDensity does NOT exist in the tree; L4 declares it (start 0.0020).
 
   Selection contract is DOOM-0011 section 4.5: goo = primary-hit LIQUID_NUKAGE, areaMult 1.0, density kAreaDensity; hell = per-level flag (registered/retail AND gameepisode>=3) OR (commercial AND gamemap>=20) OR a fire sky, density runtime on misc6.w. Densities ADD, tints MULTIPLY. Do NOT write `gamemode != commercial` -- it admits shareware and indetermined.
+  Resolved (2026-08-04): docs/specs/DOOM-0310-fog-density-fields.md exists, carries the eleven-section shape, and its own cold-eyes log records convergence-by-cap at 3 loops with zero findings deferred (draft defects 27 -> 14 -> 7, CRITICALs 3 -> 2 -> 0). The rule-14 gate ran from loop 1 on its own bytes. No CHANGELOG entry: the corpus has no precedent for a spec-split doc item appearing there, and this changes no shipped behaviour.
 
 - 📋 [DOOM-0311] **Validate the render push-constants on the CPU instead of catching their NaNs in the shaders.**
   Three shader inputs are divided by without being checked at the boundary:

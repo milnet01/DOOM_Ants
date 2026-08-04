@@ -134,6 +134,14 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **The lighting self-test now covers the glowing-sprite light path it was skipping** (DOOM-0122)
+  `-rtverify` proves the renderer's lighting maths is unbiased by comparing
+  two estimators that should agree. Both were being handed a light list that
+  stopped short of the sprite lights — fireballs, glowing pickups — so the
+  newer half of the lighting code was never actually checked. Both estimators
+  now receive the real split, and the verify run reports how many lights of
+  each kind it covered, so a future gap is visible rather than silent.
+
 - **`-devshot N` now captures the Classic tier as well as Solid and Ultra** (DOOM-0294)
   Classic never builds a Vulkan swapchain image, so the flag was a silent
   no-op there -- and a harness that finds no new file will happily read a
