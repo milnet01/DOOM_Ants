@@ -27,3 +27,25 @@ want to support for the widest reach.
 
 Cross-compiled with mingw-w64 — see [`../mingw-deps/README.md`](../mingw-deps/README.md)
 and `make windows` in `../linuxdoom-1.10/`.
+
+### Testing the Windows build without cutting a release (DOOM-0324)
+
+CI builds Linux only, so the mingw target used to be exercised exactly once
+per release — long enough for two Windows-only compile errors to accumulate
+between 0.5.0 and 0.6.0.
+
+```sh
+packaging/windows-smoke.sh --syntax-only   # ~15 s, no Wine: does the tree compile for Windows?
+packaging/windows-smoke.sh                 # + link, then actually BOOT the .exe under Wine
+```
+
+The full run stages the `.exe` and its DLLs in a temp sandbox, starts a
+private `Xvfb` display, boots the game under Wine in a throwaway `WINEPREFIX`,
+and asserts the engine reached its `-bootsmoke` line. Exit codes are
+deliberately distinct — `2` never booted, `3` booted but never exited — so a
+shutdown hang cannot be normalised into "the smoke passes".
+
+Needs `wine` and `xorg-x11-server-Xvfb`; without them the script still runs the
+compile sweep and says plainly that the engine was not run. It never touches
+your desktop: the game is confined to the virtual display, and teardown kills
+only its own `wineserver`, never `wine` by name.
