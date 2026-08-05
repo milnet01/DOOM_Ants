@@ -1122,9 +1122,33 @@ vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)
     vec3  mediumTint = vec3(1.0);                      // clear profile: EXACTLY 1, so the
                                                        // no-profile frame stays bit-identical
     float areaMult   = 0.0;                            // clear = 0, goo = 1.0 (spec §4.5)
-    if ((h.ctrlFlags & LIQUID_NUKAGE) != 0u) {         // MatCtrl bit, NOT h.matFlags
-        mediumTint = kGooTint;
-        areaMult   = 1.0;
+    // DOOM-0330: the goo profile keeps its DENSITY here and has LOST its TINT, and the
+    // asymmetry is the whole point. Both were keyed on the primary hit, which is §4.5's
+    // declared relaxation -- but only the tint is visible enough for that to matter.
+    //
+    // Measured (E1M1 sector 0, `-warpto 1400 -3300 0`, rt_fog 2, three build A/Bs): with
+    // kGooTint applied, a pool pixel's ENTIRE march returns green in-scatter, including the
+    // air nowhere near the goo. Green is the tint's strongest channel (0.85), so the green
+    // added almost exactly replaces the green the surface loses to extinction -- pinned at
+    // 182 at the near edge and 182 at the far edge, while red and blue faded 109->150 and
+    // 96->144 across the same span. The pool was fogged correctly the whole time; it was
+    // fading into GREEN rather than grey, at a hue too close to its own to read as a fade.
+    // Dropping the tint lands the pool within ~5 levels of the stone rim beside it at the
+    // same distance (172,182,169 vs 177,180,172), and the user signed that off on hardware
+    // from a real sightline.
+    //
+    // The density stays because the same A/B says it is NOT the defect -- forcing areaMult
+    // to 0 moved the colour by one level -- and L4 added it deliberately so a goo room reads
+    // thicker. Keyed on the hit it is still wrong in principle; it is just not wrong enough
+    // to see, so it waits for the per-cell grid rather than being deleted on suspicion.
+    //
+    // This is HALF the fix. The tint is not gone for good: DOOM-0330 restores it as a
+    // property of the AIR (a per-cell goo-ness grid sampled per march sample, the way
+    // uSeepField already answers "is there sky above this XY"), which is what makes goo
+    // light the fog AROUND it -- the glow the user actually asked for and which keying on
+    // the primary hit could never produce. Do not re-add kGooTint here.
+    if ((h.ctrlFlags & LIQUID_NUKAGE) != 0u) {
+        areaMult = 1.0;                                // MatCtrl bit, NOT h.matFlags
     }
     if (haze > 0.0)
         mediumTint *= kHellTint;

@@ -126,6 +126,11 @@ const vec3  kSunDir          = normalize(vec3(0.30, 0.30, 1.0)); // world; +z is
                                  // directions. Nothing fails to build if they drift; the
                                  // symptom is shafts landing in the wrong place. This
                                  // declaration is the authoritative one.
+// DOOM-0330: currently UNREFERENCED, and deliberately kept rather than deleted. L4 applied
+// it to every pixel whose primary hit was nukage, which tinted the whole march green and hid
+// the pool's fade (see marchFog's comment for the measurements). It comes back the moment
+// goo-ness is a per-cell property of the AIR -- same constant, sampled per march sample --
+// so deleting it now would only mean re-deriving the same three numbers later.
 const vec3  kGooTint         = vec3(0.35, 0.85, 0.30); // sickly green (L4)
 const vec3  kHellTint        = vec3(0.90, 0.35, 0.30); // faint red   (L4)
 const float kAreaDensity     = 0.0020;           // L4: the GOO profile's extinction, added to
