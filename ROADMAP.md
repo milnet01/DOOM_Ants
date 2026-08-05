@@ -8170,6 +8170,59 @@ parked ideas (💭 considered) until we commit to and design each one.
   liquid's Le a forced constant. Rebuild that rather than reasoning about the
   grid from the source: the aggregate line the bake already prints cannot
   show slot competition, which was the whole question.
+  SURFACES HALF MEASURED 2026-08-05 (third session), and the answer is
+  DO NOT BUILD A MECHANISM -- it already works. This bullet asked for the
+  measurement before any design, and it discharges STILL-OPEN item (b).
+
+  Method: a temporary `RB_NOLIQUIDLE` env gate zeroing the Le that
+  ForceLiquidEmissive writes (removed before commit, as RB_FOGPROBE was).
+  That kills the surface Le, the NEE emitter and the GI bake in one move.
+  Captured Ultra RT @50% with `-inspect -freeze` so the world holds still,
+  and rt_fog 0 via a temp -config so ONLY surface light is in play (the
+  df4a30b fog-grid gain cannot contribute). Each fixture: Le on, Le off,
+  and a same-build control repeat.
+
+  The control is what makes the small numbers readable: `-inspect -freeze`
+  drives the noise floor to mean 0.01/255 with 0.0% of pixels moving. Take
+  the freeze away and a walking zombie alone moves ~15% of the frame.
+  Use this pair on every look A/B from now on.
+
+  Roofed nukage room (-warpto 3274 -3353 200), delta/255 and mean RGB:
+    goo surface (control)   63.46   (3.9,21.4,0.0) -> (62.1,137.4,16.2)
+    pit ledge / pool wall    4.70   (41.9,73.5,8.8) -> (46.2,82.1,9.9)
+    ceiling                  4.53   (15.2,12.9,7.3) -> (18.2,22.8,7.9)
+    floor beside pool        3.25   (47.4,43.7,4.4) -> (50.4,49.6,5.2)
+    far wall above pool      2.10 | left wall, further   0.79
+  23.9% of the frame moves. The ceiling's green channel rises 12.9 -> 22.8,
+  +77% -- a dark room taking ordinary green bounce off the pool, which is
+  the indoor half of the brief stated almost verbatim.
+
+  Open-sky pool (-warpto 1400 -3300 0):
+    goo surface (control)   63.17
+    pit bank, front rim     37.97   green 48.2 -> 116.8
+    pit bank right edge      6.51   green 50.2 -> 62.1
+    pit bank left edge       2.45 | courtyard floor ~3m back  3.02
+    far wall behind pool     0.61   (nothing, correctly)
+  So the outdoor "pool walls" ARE lit, strongly at contact and falling off
+  with distance. The earlier worry that sky ambient swamps it is true only
+  for surfaces far from the pool, where it SHOULD be.
+
+  CONCLUSION: DOOM-0083/DOOM-0183's forced-constant Le already delivers
+  both surface asks -- lit pool walls outdoors, ordinary bounce in a dark
+  room -- through NEE and the GI bake, with no new mechanism and no new
+  cost. Nothing to add here; adding one would double-count light the
+  tracer is already carrying. Raising kNukageLe to make it read louder is
+  still refused for the reason recorded above (it blows out the pool
+  surface DOOM-0302 tuned).
+
+  CAVEAT, stated rather than hidden: measured with fog OFF to isolate the
+  surface term. At the user's shipping rt_fog 3 the fog attenuates the
+  distant end of this on top of what is measured here; it does not remove
+  the near-field wall lighting, which is where all the signal is.
+
+  What remains on this bullet is unchanged: the user's HARDWARE look at
+  the glow (gain 4.0, bracket 3.0/5.0), and the -shotcompare golden
+  re-bless (DOOM-0202) which is still held behind it.
 
 - 📋 [DOOM-0331] **Bloom on the HDR views, so emissive things read as bright rather than merely light-coloured.**
   Found reviewing GZDoom at the user's request. GZDoom ships
@@ -8357,3 +8410,49 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Developer screenshots pile up as untracked files in the project folder instead of being ignored, because the ignore rule guesses the wrong folder.
   Kind: fix.
   Source: in-session-2026-08-05.
+
+- 📋 [DOOM-0336] **Controller rumble, capability-detected, with the DualSense extras where the pad has them.**
+  User request 2026-08-05. The engine already opens a pad through SDL2's
+  GameController API (i_video.c, `gamepad`) and already classifies its
+  family (`SDL_GameControllerGetType`, used by DOOM-0161's confirm-button
+  label), so both halves of this have a foothold. There is currently NO
+  haptics code anywhere -- grepped: not one rumble/haptic call in the tree.
+
+  DETECT, don't assume. SDL 2.32.70 on this box exposes the capability
+  queries directly, so no per-device database is needed and no pad is
+  driven with an effect it does not have:
+    - `SDL_GameControllerHasRumble` -> the two body motors
+      (`SDL_GameControllerRumble`, low + high frequency, duration_ms)
+    - `SDL_GameControllerHasRumbleTriggers` -> the trigger motors
+      (`SDL_GameControllerRumbleTriggers`)
+    - `SDL_GameControllerHasLED` -> the light bar (`SDL_GameControllerSetLED`)
+  A pad answering false to all three keeps today's behaviour exactly.
+
+  WHERE IT FIRES is the design work, and it is small: weapon discharge
+  (scaled by weapon -- pistol tap vs rocket thump), taking damage, a nearby
+  barrel/rocket explosion, and arguably the pain state. The natural seam is
+  the same one the sound code already uses, so the trigger points come free
+  rather than needing new plumbing. Wants a Rumble strength dial (off /
+  low / normal) in the options menu alongside the other toggles, and it
+  must default to something a player would not call intrusive -- DOOM fires
+  a LOT.
+
+  PS5 / DualSense specifically, and the honest split:
+    - Body rumble and the light bar are plain SDL2 calls and will just
+      work through the queries above. Tinting the bar with health is a
+      cheap, obvious win.
+    - ADAPTIVE TRIGGERS (the variable resistance) are NOT in SDL2's public
+      API. The only route is `SDL_GameControllerSendEffect` with a raw
+      DualSense HID output report, which depends on SDL's hidapi DualSense
+      driver being the one bound (it is not, when the kernel's hid-playstation
+      driver claims the pad first). So treat trigger resistance as a
+      SEPARATE, unverified stretch goal behind a capability probe -- do not
+      let it block the ordinary rumble, and MEASURE that it actually reaches
+      the hardware before claiming it.
+
+  Testing note: this cannot be verified headlessly or by screenshot. It
+  needs a pad in hand, and the Windows half needs Charl (see the Windows
+  tester note) since SDL's DualSense path differs per platform.
+  **Layman:** The gamepad should shake when you fire, take a hit, or an explosion goes off — and on a PS5 pad, use its fancier motors and light bar too.
+  Kind: feature.
+  Source: user-request-2026-08-05.
