@@ -8005,6 +8005,45 @@ parked ideas (💭 considered) until we commit to and design each one.
   https://claude.ai/code/artifact/8949a67e-e6a3-4b18-ad32-5e3feee49227
   The source captures were written to a session scratchpad and are gone;
   the page is the durable copy.
+  USER LOOK CALL on the probe (2026-08-05), and it settles the target
+  behaviour by observation rather than by argument.
+
+  Shown the `PROBE_NO_GOO` capture -- the goo profile disabled outright,
+  both tint and extra density -- the user reported: "There is still no glow
+  from the goo but the fog is looking better now that it shows over the
+  pool." So half 1 is confirmed fixed by removing the tint, and half 2 is
+  confirmed still open, by the same eye that reported the defect. The two
+  halves are now independently verified as separate symptoms of the one
+  cause.
+
+  The user had also read the shipped frame as "fog over every surface
+  EXCEPT the pools", which is worth recording because the measurement says
+  something more specific and both readings are right about what they see.
+  The pool is fogged, and by the correct AMOUNT: with the profile off it
+  lands within ~5 levels of the stone rim beside it at the same distance
+  (pool far 172,182,169 vs rim far 177,180,172). What is pinned in the
+  shipped build is the GREEN CHANNEL ALONE -- 182 at the near edge and 182
+  at the far edge, unchanged over the pool's whole span -- because
+  kGooTint's green is 0.85, so the green in-scatter added almost exactly
+  replaces the green the surface loses. Red and blue do fade across the
+  same span (109 -> 150 and 96 -> 144). The eye reads hue, so it reads "no
+  fog", which is precisely what was reported.
+
+  TARGET BEHAVIOUR, now agreed and matching the user's original words
+  ("there should be fog mostly obscuring the pool except for the green glow
+  in the fog itself"). Once goo-ness is a per-cell property of the AIR:
+    - Looking across the pool at the far wall, the ray passes over goo, so
+      THAT fog picks up the green cast -- the glow the user is still
+      missing.
+    - Looking at the pool itself from a distance, the ray spends most of
+      its length in ordinary air and only its last stretch over goo, so the
+      pool is mostly obscured by grey fog with a green cast near the
+      surface -- rather than by a wall of green.
+
+  FALLBACK, validated: if the per-cell grid proves too expensive, simply
+  deleting the tint is already a strict improvement on the shipped build --
+  the user said so looking at it. It loses the glow, which is a feature we
+  never had, rather than regressing one we did.
 
 - 📋 [DOOM-0331] **Bloom on the HDR views, so emissive things read as bright rather than merely light-coloured.**
   Found reviewing GZDoom at the user's request. GZDoom ships
@@ -8109,3 +8148,63 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Turning DOOM's flat cardboard-cutout monsters into real 3-D objects has been blocked by there being no free 3-D models. Voxels — little Lego-brick models — are a route around that, and the code to convert them into something we can ray-trace is a known, small problem.
   Kind: research.
   Source: upstream-review-2026-08-05 (gzdoom src/common/models/voxels.cpp + models_voxel.cpp).
+  USER DECISION 2026-08-05, and it re-homes this item to a tier: voxels
+  are "not the look I am going for" for Ultra, but "if there is no license
+  issue, we can use it for the Solid renderer along with the other visual
+  improvements we will be making there."
+
+  That is a better fit than the bullet originally proposed, and it follows
+  from CLAUDE.md's own tier rule rather than being an exception to it.
+  Solid ENHANCES DOOM's own art; Ultra SUBSTITUTES for it. A voxel model is
+  built from the original sprite -- same palette, same silhouette -- so it
+  is the sprite enhanced, not replaced. It belongs on the same shelf as the
+  upscaled-with-PBR wall textures. Ultra keeps its own answer: DOOM-0042's
+  HD art, and hand-made or commissioned meshes if DOOM-0080 ever gets them.
+
+  Note this is an ART-tier split, NOT an effects gate, so it does not
+  collide with the rule that a feature must never be gated on Ultra for
+  being expensive -- the tier table's own axis is exactly which art the
+  tier draws.
+
+  Sequencing unchanged: the licence question is still the gate, and it is
+  now the ONLY gate on starting, since the target tier is settled. Read the
+  licence before any code (docs/standards/assets.md). If it fails, this
+  closes and nothing is lost.
+
+- 📋 [DOOM-0334] **Eye adaptation: the view adjusts when moving between dark and bright, for the tension it buys.**
+  User approved 2026-08-05 on the upstream review: "eyes adjusting from
+  dark to light and vice versa, sure, can add some tension to certain
+  scenes." So this is filed for the TENSION, not for exposure correctness
+  -- which decides the tuning when the two disagree.
+
+  GZDoom ships the reference machinery as three post-process passes
+  (exposureextract / exposureaverage / exposurecombine,
+  wadsrc/static/shaders/pp). We have the harder half already: HDR float
+  targets and a PBR-Neutral tonemap (DOOM-0011 L2a), plus rb_exposure fed
+  from the Brightness slider through misc3.x (DOOM-0096).
+
+  Shape: measure the frame's average luminance by successive downsample to
+  1x1, smooth it over time with separate attack and decay rates, and drive
+  the existing exposure term with it. Two rates, not one -- the dazzle on
+  walking out and the blindness on walking in are different lengths in real
+  eyes, and the asymmetry IS the effect.
+
+  DECISIONS THIS OWES BEFORE IT IS BUILT, and they are the whole risk:
+    - It must not fight the art direction. DOOM's own lighting is authored;
+      an auto-exposure that flattens every room to mid-grey deletes the
+      contrast DOOM-0292 and DOOM-0011 L2 exist to create. Clamp the range
+      hard and default the effect subtle.
+    - It must not fight the player's Brightness slider. rb_exposure is a
+      user setting; adaptation should ride ON it as an offset, not replace
+      it, or the slider stops doing what it says.
+    - Off by default, or on? Decide with the user at look-call time, not in
+      the spec.
+    - Tier: raster and ray-traced views alike (it is a tonemap-stage
+      effect, not an art feature), never Classic.
+
+  Sequencing: this reads the same HDR frame bloom does and lands in the
+  same part of the pipeline, so it wants to come AFTER DOOM-0331 and reuse
+  its downsample chain rather than building a second one.
+  **Layman:** Step out of a dark corridor into daylight and the view is dazzling for a second before settling — and stepping back in, you are briefly blind. It makes dark places feel more dangerous.
+  Kind: feature.
+  Source: user-decision-2026-08-05 (upstream review follow-up).
