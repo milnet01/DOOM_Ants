@@ -780,6 +780,48 @@ with friends.
   Kind: chore.
   Lanes: ci, packaging.
   Source: in-session-2026-08-05 (0.6.0 release).
+  Progress (2026-08-05): the local half is DONE — packaging/windows-smoke.sh
+  now does the whole-tree mingw -fsyntax-only sweep AND boots the resulting
+  .exe under Wine on a private Xvfb display, asserting the -bootsmoke line.
+  Verified on this machine: the sweep is clean, and the Windows build really
+  runs (Wine even passes Vulkan through to the RX 6600). It found DOOM-0325
+  on its first run. Remaining work here is only the CI job — call the script
+  with --syntax-only on ubuntu-latest (no wine/Xvfb needed, seconds, and it
+  catches the exact class that broke 0.6.0), or install wine + Xvfb and run
+  it in full against the freedoom IWAD CI already installs.
+
+- 📋 [DOOM-0325] **The Windows build hangs on exit, inside I_ShutdownMusic.**
+  Reproduce in one command: packaging/windows-smoke.sh --no-build
+  (exit code 3 = booted fine, never exited).
+
+  The engine completes its work and prints "bootsmoke: 35 tics simulated
+  OK, exiting.", then I_Quit -> I_QuitTeardown never returns. Temporary
+  breadcrumbs through the teardown pinned it exactly:
+
+    TD: enter        printed
+    TD: net done     printed   (D_QuitNetGame)
+    TD: sound done   printed   (I_ShutdownSound)
+    TD: music done   NEVER     (I_ShutdownMusic hangs)
+
+  so the hang is inside i_sound.c I_ShutdownMusic, one of Mix_HaltMusic,
+  the I_UnRegisterSong loop, Mix_CloseAudio or Mix_Quit. Not yet narrowed
+  past the function; another breadcrumb round would pin the exact call.
+
+  NOT Wine: `wine cmd /c exit` returns in 2 s in the same prefix, and the
+  NATIVE Linux build runs the identical smoke and exits rc=0 in 2 s
+  against the Windows build's 90 s timeout. Windows-only, and it
+  reproduces with -nosound as well, so it is not the sfx side keeping the
+  device open.
+
+  Player-visible: quitting the game on Windows leaves the process alive.
+  Also note d_main.c's DOOM-0060 game-select relaunch calls the very same
+  I_QuitTeardown before re-exec'ing precisely so the old process releases
+  the audio device first -- so on Windows that relaunch likely hangs too.
+  Worth checking as part of the fix.
+  **Layman:** On Windows the game finishes what it was doing but the program never actually closes — it has to be forced shut.
+  Kind: fix.
+  Lanes: audio, platform.
+  Source: in-session-2026-08-05 (found by the new packaging/windows-smoke.sh).
 
 ## Phase 2 — The Spin
 
