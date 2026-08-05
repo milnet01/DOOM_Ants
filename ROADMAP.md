@@ -8155,6 +8155,10 @@ parked ideas (💭 considered) until we commit to and design each one.
   brief (pool walls, dark-room GI) is untouched here and still owes the
   measurement this bullet asks for; (c) the -shotcompare golden (DOOM-0202)
   is deliberately NOT re-blessed yet.
+  Look call (2026-08-05): the user kept RB_FOG_LIGHT_GOO_GAIN at 4.0, chosen
+  from the headless captures rather than on hardware. 3.0 and 5.0 were the
+  alternatives offered and both were captured. A hardware play-test is still
+  owed before this half is called shipped.
 
 - 📋 [DOOM-0331] **Bloom on the HDR views, so emissive things read as bright rather than merely light-coloured.**
   Found reviewing GZDoom at the user's request. GZDoom ships
