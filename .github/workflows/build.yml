@@ -123,5 +123,12 @@ jobs:
 
       # Stages the upstream SDL2 / SDL2_mixer / Vulkan headers and generates the
       # embedded shader + font headers itself, then sweeps every .c and .cpp.
+      #
+      # EXPECTED NOISE, not a failure: this step prints "Package 'sdl2' was not
+      # found" a few times. The Makefile resolves the *Linux* build's SDL2 flags
+      # via pkg-config when it is parsed, whatever target you asked for, and
+      # libsdl2-dev is deliberately not installed above -- nothing here links
+      # against it. Left unsilenced on purpose: the same message on a developer's
+      # box means SDL2 really is missing, and that is worth hearing.
       - name: Syntax-check the tree against the Windows compiler
         run: packaging/windows-smoke.sh --syntax-only
