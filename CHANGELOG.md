@@ -6,6 +6,8 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-05
+
 ### Added
 
 - **A Render Effects screen that shows what every graphics toggle is set to** (DOOM-0205)
@@ -772,7 +774,8 @@ attached; the Windows build and a fully self-contained package come later.
 - **Get linuxdoom-1.10 compiling on modern 64-bit Linux.** (DOOM-0003)
   Fix the 1997 code so today's compiler can build it.
 
-[Unreleased]: https://github.com/milnet01/DOOM_Ants/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/milnet01/DOOM_Ants/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/milnet01/DOOM_Ants/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/milnet01/DOOM_Ants/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/milnet01/DOOM_Ants/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/milnet01/DOOM_Ants/compare/v0.2.0...v0.3.0

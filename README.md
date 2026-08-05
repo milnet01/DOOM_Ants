@@ -37,7 +37,7 @@ SDL2, and you can pick between three ways of drawing the world:
   de-tiled surfaces. (Needs a ray-tracing-capable GPU; developed and tested
   on an AMD RX 6600.)
 
-You switch between them from the in-game menu. Latest release: **0.5.0**.
+You switch between them from the in-game menu. Latest release: **0.6.0**.
 Grab a build from the [Releases](https://github.com/milnet01/DOOM_Ants/releases)
 page, or build it yourself below.
 
