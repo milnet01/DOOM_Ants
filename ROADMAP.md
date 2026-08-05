@@ -8103,6 +8103,58 @@ parked ideas (💭 considered) until we commit to and design each one.
   bright pool bleeding a halo into the air above it) and is complementary,
   not a substitute. Do not let bloom's arrival be mistaken for closing
   this.
+  Progress (2026-08-05, second half): the GLOW is implemented as df4a30b,
+  awaiting the user's look call on intensity.
+
+  BOTH suspects this bullet named are FALSIFIED, by a temporary dump of the
+  clustered fog lights and the packed per-cell slots at the E1M1 pool
+  (1831,-3254):
+  - kFogLightsPerCell = 2 is NOT starving the pool. The nukage clusters hold
+    BOTH slots of every cell over and around it, at vis 1.00. No torch is
+    competing.
+  - The clusters are NOT dim. 23 of them; the brightest carries intensity
+    12239 against a MEDIAN light of 6104, with reach at the 512 cap.
+  - skyExposure is not swamping it either: the term is simply small.
+
+  CAUSE: a point light is the wrong stand-in for a POOL, and the error is
+  one-directional. Air a few tens of units above a broad flat sheet is inside
+  its near field, where the real falloff is ~1/d, not the 1/d^2 the clustered
+  point light applies -- a torch's air sits at its peak (kTorchSoftR2 caps
+  it), a pool's air is already 100-300 units from every centroid. And only 2
+  of the 23 clusters are summed, when the real pool contributes over its
+  whole solid angle.
+
+  Confirmed by a build A/B on the whole torch term at the user's fixture
+  (-warpto 1400 -3300 0, rt_fog 3, Ultra RT): 1x = no glow, 3x = a faint cast
+  on the air just over the pool, 5x = a clear green rise into the fog, 10x =
+  the accentuated look the user named as the ANTI-target. The mechanism was
+  working the whole time; only magnitude was wrong.
+
+  FIX: RB_FOG_LIGHT_GOO_GAIN (4.0), applied per emitter TRIANGLE on the way
+  into the fog-light grid ONLY. The surface's own Le, NEE and the GI bake all
+  keep the unscaled value. Scoped deliberately -- raising kTorchShaftStrength
+  would have brightened every torch shaft in the game (it is calibrated
+  against a median light), and raising kNukageLe would have blown out the
+  pool surface, which DOOM-0302 already re-tuned. Liquid triangles are tagged
+  in BuildStaticEmitterSet from the ids ForceLiquidEmissive already resolves
+  by name, so there is no second name table to disagree.
+
+  Verified scoped, not merely claimed: -rtverify direct-light rel-MSE is
+  0.2059%, unchanged to the digit, and the brightest NON-goo cluster is
+  identical at 67782. make test green, furnace 0.000000. Bake 4.5 -> 4.8 ms
+  against the spec's 6 ms gate; no shader change, so no per-frame cost.
+
+  Look, captured headlessly: outdoors the air over the pool takes a muted
+  green cast that falls off with distance while the mountains and the side
+  wall stay grey; indoors (-warpto 3274 -3353 200, the roofed nukage room) a
+  soft glow hugs the pool edge and the far floor without blowing the room
+  out, which is the "lights a room a little bit" half of the brief.
+
+  STILL OPEN: (a) the user's look call on the gain -- 3.0 and 5.0 are the
+  bracketing values and both were captured; (b) the SURFACES half of the
+  brief (pool walls, dark-room GI) is untouched here and still owes the
+  measurement this bullet asks for; (c) the -shotcompare golden (DOOM-0202)
+  is deliberately NOT re-blessed yet.
 
 - 📋 [DOOM-0331] **Bloom on the HDR views, so emissive things read as bright rather than merely light-coloured.**
   Found reviewing GZDoom at the user's request. GZDoom ships
