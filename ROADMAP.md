@@ -596,6 +596,27 @@ with friends.
   **Layman:** Proper 5.1/7.1 sound on a surround setup, and headphone audio that puts sounds above, behind and around you.
   Kind: feature.
   Source: user-request-2026-07-30.
+  Note (2026-08-05, upstream review): GZDoom's answer to both this and
+  DOOM-0201 is one thing -- it does not use SDL_mixer for effects at all.
+  src/common/audio/sound/oalsound.cpp is an OpenAL Soft backend that
+  already carries everything both bullets ask for: ALC_SOFT_HRTF behind an
+  snd_hrtf cvar with on / off / "don't care" (:598, :627-635), ALC_EXT_EFX
+  environmental reverb including the underwater case (snd_efx,
+  snd_waterreverb), AL_SOURCE_SPATIALIZE_SOFT and AL_SOURCE_RELATIVE for
+  per-source 3-D placement (:250-264), distance rolloff, and
+  AL_SOFT_source_latency for accurate playback position.
+
+  So the real decision is not "which panning curve" but whether to swap the
+  effects backend from SDL_mixer to OpenAL Soft. That is a big change and
+  it collides head-on with [[doom-ants-audio-architecture]], whose whole
+  lesson was that a second device / custom mixer went SILENT on Windows --
+  though note OpenAL is a different proposition from that: it is the only
+  device, not a second one alongside SDL_mixer's.
+
+  Worth scoping properly rather than deciding here. If the swap is judged
+  too big, DOOM-0201's cheap-wins framing (better panning + a smoother
+  distance curve on the existing device) still stands on its own, and this
+  bullet's surround/binaural half is the part that genuinely needs OpenAL.
 
 - ✅ [DOOM-0285] **Never frame the play area with a border -- default to the full-width view.**
   The shipped screenblocks default was vanilla's 9: a reduced play area
@@ -873,6 +894,76 @@ with friends.
   upstream in SDL2_mixer's native_midi_win32 (or in switching the Windows
   build off native MIDI). Music must have played: the deadlock needs a live
   MUS_MID song, and a run with music off will exit cleanly either way.
+  Progress (2026-08-05): upstream HAS the answer, and it is
+  architectural rather than a shutdown-ordering patch. Read from source,
+  not recall.
+
+  Our shipped SDL2_mixer is 2.8.2 and its DLL carries BOTH backends --
+  `strings mingw-deps/prefix/bin/SDL2_mixer.dll` shows NATIVEMIDI plus
+  midiOutPrepareHeader / midiOutSetVolume / midiOutUnprepareHeader (the
+  Win32 midiStream API) AND TIMIDITY, and it honours the SDL_NATIVE_MUSIC
+  env var. So the native path is what plays MIDI on Windows today, and a
+  software path is already compiled in.
+
+  GZDoom/ZMusic never take that path by default. `DEF_MIDIDEV -5`
+  (src/common/audio/music/music_midi_base.cpp:44) and ZMusic maps -5 ->
+  MDEV_FLUIDSYNTH (libraries/ZMusic/source/musicformats/music_midi.cpp
+  :227-236). CreateWinMIDIDevice is reached only when snd_mididevice >= 0,
+  i.e. when a user explicitly picks a hardware device (same file :282-284).
+  The Windows MIDI mapper is opt-in upstream, not the default.
+
+  And where they DO use it they engineer around this exact hazard:
+  ZMusic's WinMIDIDevice::Stop() signals its own player thread's ExitEvent
+  and WaitForSingleObject(..., INFINITE) BEFORE midiStreamStop /
+  midiOutReset, so teardown never depends on the MIDI callback. rheit/zdoom
+  's older Stop() (src/sound/music_win_mididevice.cpp:211-219) has no join
+  at all -- the hazard was found and fixed between the two ports.
+
+  Two routes for us, both small, and they are not exclusive:
+    (a) Set SDL_NATIVE_MUSIC=0 before Mix_OpenAudio on Windows so SDL_mixer
+        uses its Timidity backend. Needs a SoundFont/patch set to be
+        audible -- verify before shipping or the fix trades a hang for
+        silence, and the smoke test would not catch that.
+    (b) Ship our own softsynth path as upstream does, which also delivers
+        identical music on every platform instead of whatever GM set the
+        player's Windows happens to have.
+  Route (a) is the cheap experiment and settles whether native MIDI is
+  really the deadlock: if SDL_NATIVE_MUSIC=0 makes windows-smoke.sh exit 0,
+  the diagnosis is confirmed with no engine change at all.
+  Correction, same day (2026-08-05), and it retracts the note above's
+  route (a) AND casts doubt on this bullet's own recorded diagnosis.
+
+  Ran it: `SDL_NATIVE_MUSIC=0 packaging/windows-smoke.sh --no-build`
+  still hangs, identically to the control run immediately before it. The
+  reason is that the switch was already in that position.
+
+  SDL_mixer's music.c (SDL2 branch) gates native MIDI on
+  `SDL_GetHintBoolean("SDL_NATIVE_MUSIC", SDL_FALSE)` -- **default FALSE**,
+  so native MIDI is OPT-IN and is tried only after FluidSynth and Timidity.
+  We never set that hint (no SDL_SetHint for it anywhere in
+  linuxdoom-1.10), and the shipped DLL has TIMIDITY compiled in but NOT
+  FluidSynth. So the Windows build has been decoding MIDI with **Timidity,
+  in-process**, and has never touched Win32 midiStream at all.
+
+  Which means "SDL2_mixer's native-MIDI stop deadlocks" is very probably a
+  MISATTRIBUTION -- it is stated in this bullet, in the header of
+  packaging/windows-smoke.sh (~line 28) and in the FAIL message the script
+  prints on every run, so it greets every future session as fact. The
+  standalone no-DOOM-code repro the earlier session did still stands as
+  evidence the hang is inside SDL_mixer; only the named backend is wrong.
+
+  That re-points the next diagnostic rather than removing it. I_ShutdownMusic
+  now has four candidates and one of them owes nothing to MIDI:
+  Mix_HaltMusic, the I_UnRegisterSong loop, **Mix_CloseAudio** (plain SDL
+  audio-device teardown under Wine) and Mix_Quit. The breadcrumb round this
+  bullet already schedules is still the right next step -- it just should
+  not assume the answer is MIDI-shaped. Fix the script's two claims in the
+  same commit as the fix, not before: replacing a wrong cause with a vague
+  one buys nothing.
+
+  GZDoom's default is still worth copying on its own merits (see the note
+  above): a bundled in-process softsynth means every player hears the same
+  music instead of whatever GM set their OS ships.
 
 - 📋 [DOOM-0326] **Bump the staged Vulkan headers to 1.4.357.0.**
   packaging/mingw-deps.sh pins VULKAN_VER=1.4.350.0; Khronos has shipped
@@ -1724,6 +1815,20 @@ parked ideas (💭 considered) until we commit to and design each one.
   returned R/G 0.74, suggesting a goo tint on a level with no goo. Measure the
   ABSOLUTE hue of the fogged frame instead, which is what the figures above
   are.
+  Note (2026-08-05, upstream review): the user's instinct was right --
+  **nobody upstream does volumetric fog.** Grepped GZDoom's and UZDoom's
+  entire src/ and wadsrc/ trees for volumetric / godray / light shaft /
+  raymarch: **zero matches in either.** Their fog is per-sector DISTANCE
+  fog, a colour blended by depth, driven by the map's colormap and MAPINFO
+  (GetFogDensity, src/rendering/hwrenderer/scene/hw_lighting.cpp:168, and
+  fogboundary.fp for the sector seam). No march, no in-scatter, no shafts.
+
+  So there is nothing to take for the march itself, and this feature is
+  genuinely ahead of the field rather than catching up. One idea IS worth
+  borrowing though, and it lands directly on DOOM-0330's fix: GZDoom keys
+  fog PROPERTIES per sector, read from the WAD, rather than from one global
+  model. That is precedent for making our area profile a per-cell property
+  of the map instead of a property of what the ray happens to hit.
 - 💭 [DOOM-0012] **Hold a 60 FPS performance floor.**
   **Layman:** Keep it running smoothly — never below 60 frames per second.
   Kind: perf.
@@ -2231,6 +2336,13 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: perf.
   Source: research-2026-06-28.
   Progress (2026-06-29): BLAS compaction shipped. The static world BLAS is now built with ALLOW_COMPACTION_BIT, its compacted size queried (VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR), and copy-compacted into a right-sized AS at level load (r_vulkan.cpp BuildAccelerationStructures). ALLOW_UPDATE is retained so moving-sector refits still run on the compacted AS (verified safe per NVIDIA RTXMU / nvpro: compaction + update are not mutually exclusive). The per-frame sprite BLAS stays non-compacted (a query round-trip would stall the frame). Build prints "BLAS (N tris, X->Y KiB compacted)" so the win is observable at runtime. DEFERRED: "rebuild the TLAS on the compute queue" — the engine creates a single graphics+present queue (queueCount=1, r_vulkan.cpp PickPhysicalAndDevice), so moving the per-frame TLAS rebuild off the graphics queue needs a second queue + per-frame cross-queue ownership transfers/semaphores (medium/high risk); the research body itself flags that a budgeted per-frame rebuild on the graphics queue can be more frame-time-stable. Re-evaluate the compute-queue half only if profiling (DOOM-0090) shows the on-graphics-queue TLAS build is a bottleneck. Item kept in-progress for that remaining half.
+  Note (2026-08-05, upstream review): do NOT go looking at GZDoom or
+  UZDoom for this. Both ship the same 279-line
+  src/common/rendering/vulkan/renderer/vk_raytrace.cpp, and it builds its
+  acceleration structures with PREFER_FAST_TRACE and nothing else -- no
+  compaction query pool, no compute-queue build, no update/refit path. We
+  are ahead of them here, so this item has to be designed against the
+  Vulkan spec and vendor guidance rather than copied.
 
 - ✅ [DOOM-0092] **Research: ReSTIR DI/GI cost on RDNA2 and the static SH-L1 bake vs a dynamic DDGI probe field.**
   Coverage GAP from the 2026-06-28 research (§4): no external claims on this axis survived verification within budget, so it needs its own pass. Open questions: (1) the measured register-pressure / occupancy + frame-time cost of adding ReSTIR DI (then GI) to the inline-ray-query megakernel ON the RX 6600 specifically -- the spec's own §4.4 already flags ReSTIR as RDNA2's worst register case, so this must be MEASURED, not assumed (it interacts directly with the occupancy item above); (2) whether per-subsector SH-L1 probes go stale when doors/lifts change local visibility, and whether a dynamic DDGI/irradiance field is worth its cost; (3) an external correctness check on the NEE + power-importance + MIS variance. Decide before any Stage-3 / DOOM-0012 ReSTIR work.
@@ -7893,3 +8005,107 @@ parked ideas (💭 considered) until we commit to and design each one.
   https://claude.ai/code/artifact/8949a67e-e6a3-4b18-ad32-5e3feee49227
   The source captures were written to a session scratchpad and are gone;
   the page is the durable copy.
+
+- 📋 [DOOM-0331] **Bloom on the HDR views, so emissive things read as bright rather than merely light-coloured.**
+  Found reviewing GZDoom at the user's request. GZDoom ships
+  bloomextract.fp / bloomcombine.fp / blur.fp as post-process passes;
+  DOOM_Ants ships NONE of that -- grepped, and there is no bloom, no
+  auto-exposure, no FXAA and no depth-of-field anywhere in the shaders,
+  r_vulkan.cpp or the roadmap (DOOM-0278 motion blur is the only
+  post-process item filed).
+
+  Why this one first, of everything upstream has that we do not: we
+  already did the expensive half. DOOM-0011/L2a put HDR float render
+  targets and a PBR-Neutral tonemap in place, and DOOM-0084/0302/0183 fill
+  the scene with genuine emitters -- lamps, muzzle flashes, glowing
+  nukage, lava. Bloom is the pass that turns "this texel is 4.0 linear"
+  into something the eye reads as a light source. Without it every
+  emitter is capped by the tonemap at roughly paper-white and no brighter,
+  which is exactly why a lamp and a white wall can end up looking alike.
+
+  Applies to Solid and Ultra, both views (INV: nothing on Classic). Belongs
+  after the tonemap, before the HUD.
+
+  Cheapest-wins shape, matching GZDoom's: bright-pass extract at half or
+  quarter res, a separable blur pyramid, one additive combine. Costs one
+  small dial (threshold + intensity) and should sit under the Render
+  Effects submenu (DOOM-0205) like every other toggle.
+
+  Measure against the 60 fps floor before shipping; a quarter-res
+  three-level pyramid is normally well under a millisecond, but Solid's
+  smoothness is a protected property (CLAUDE.md).
+  **Layman:** Make lamps, fireballs and glowing goo bleed a little light into the air around them, the way bright things do in a photo — the single cheapest thing that makes the lighting read as "real".
+  Kind: feature.
+  Source: upstream-review-2026-08-05 (gzdoom wadsrc/static/shaders/pp).
+
+- 📋 [DOOM-0332] **1-D shadow maps for point lights in the rasterised view, exploiting DOOM's flat map.**
+  Found reviewing GZDoom at the user's request; feeds DOOM-0170's raster
+  "performance mode", where today the only real shadow caster is the
+  flashlight (DOOM-0170 L2c) plus blob shadows (L2d).
+
+  GZDoom's trick, from hw_shadowmap.cpp's design comment: because DOOM is
+  flat-mapped, a point light's shadow is a 1-D problem, not a cube map.
+  Each light gets ONE ROW of a single 1024x1024 R32F texture -- so 1024
+  lights in one texture -- and the row is split into four 256-texel
+  quadrants for +Y / +X / -Y / -X, the 2-D analogue of a cube face. The
+  whole thing is generated by ONE full-screen fragment pass that ray-tests
+  a GPU-uploaded AABB tree over the map's line segments; the lighting
+  shader then picks its quadrant from the direction to the light and does
+  a single texture fetch.
+
+  Worth taking here specifically because it is the substitution this
+  project already runs on: DOOM-0276 (the up-ray), DOOM-0289 (the sun ray)
+  and the seep field all replaced 3-D per-sample rays with a 2-D lookup on
+  exactly the same reasoning -- vanilla DOOM is flat-mapped, so the
+  question is decidable from XY alone. This is that argument applied to
+  shadows, and the BSP line data it needs is already parsed.
+
+  Known limits, inherited: a 2-D occluder set cannot shadow over or under
+  anything, so a light above a low wall still shadows as though the wall
+  were infinite. Acceptable in the rasterised view, whose whole premise is
+  cheap fakes that hold up (CLAUDE.md's tier table); Ultra's ray-traced
+  view keeps real geometry shadows and must not regress.
+
+  Scope note: this is a Solid/Ultra RASTER-view feature. Per the tier
+  rules, do not gate it on Ultra.
+  **Layman:** Let every lamp and fireball in the rasterised (non-ray-traced) view cast a real shadow, cheaply, by taking advantage of the fact that DOOM's world is really a 2-D floor plan.
+  Kind: feature.
+  Source: upstream-review-2026-08-05 (gzdoom src/common/rendering/hwrenderer/data/hw_shadowmap.cpp).
+
+- 💭 [DOOM-0333] **Voxel models as the route to 3-D monsters, instead of hand-made or commissioned meshes.**
+  Found reviewing GZDoom at the user's request. DOOM-0080 (every sprite ->
+  3-D in Ultra) has been parked on one blocker: freely-licensed models for
+  the DOOM roster are scarce. Voxels are a second supply route, and the
+  engine side is smaller than it sounds.
+
+  GZDoom does the whole job in two files, ~900 lines total:
+    - voxels.cpp -- R_LoadKVX reads Build-engine .KVX (slab-compressed
+      voxel columns), remaps the palette against the game's own, and reads
+      the mip chain.
+    - models_voxel.cpp -- MakeSlabPolys / AddFace walk the slabs and emit
+      QUADS per exposed voxel face, with an FVoxelMap neighbour check that
+      culls interior faces so only the skin is meshed.
+
+  That second half is the part that matters here: it produces ordinary
+  TRIANGLES, which is exactly what our BLAS wants, so a voxel actor would
+  ride the existing sprite-BLAS path rather than needing a new one. It
+  also side-steps the thing that makes DOOM-0080 hard aesthetically --
+  voxel models keep the original sprite's palette and silhouette by
+  construction, so they still read as DOOM, which a modern re-modelled
+  imp would not (see [[rt-aesthetic-north-star]]).
+
+  Filed as CONSIDERED, not planned, because the engine work is the easy
+  half and two questions are unanswered and are NOT code questions:
+    1. Does a freely-licensed voxel set covering the DOOM roster actually
+       exist, and on terms compatible with GPL v2 redistribution? Well-known
+       voxel packs exist for DOOM but their licences must be READ, not
+       assumed -- docs/standards/assets.md governs.
+    2. Per-frame cost: a voxel actor is thousands of triangles against a
+       sprite's two, times every monster on screen, and it moves -- so it
+       lands on the TLAS refit path every frame. Measure before committing.
+
+  Settle question 1 first. If the answer is no, this closes and DOOM-0080
+  stays parked on its original blocker.
+  **Layman:** Turning DOOM's flat cardboard-cutout monsters into real 3-D objects has been blocked by there being no free 3-D models. Voxels — little Lego-brick models — are a route around that, and the code to convert them into something we can ray-trace is a known, small problem.
+  Kind: research.
+  Source: upstream-review-2026-08-05 (gzdoom src/common/models/voxels.cpp + models_voxel.cpp).
