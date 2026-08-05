@@ -3114,6 +3114,15 @@ parked ideas (💭 considered) until we commit to and design each one.
   every one of them at the ledge. -rtverify PASS and UNCHANGED by the fix
   (rel-MSE 0.2059% pre / 0.2058% post, bar 0.50%; white furnace 0.000000).
   make + make test green.
+  The CEILING seam of the original 2026-07-14 report is photographed shut
+  as well, not merely argued from the shared polygon: same camera at yaw
+  120 and 150, the thin bright diagonal hairline on the dark ceiling is
+  present pre-fix and absent post-fix. Those two views carry more harness
+  noise than the ledge one (a same-build control moves up to 88/255 at yaw
+  120), so the seam pixels were isolated as "the fix moved it AND the
+  control did not" -- 480 px at yaw 120, 900 px at yaw 150, every one of
+  them in the top eighth of the frame. Quote that pairing, not the raw
+  signal, for any A/B at these angles.
   Regression lock: tests/seg_project_test.cpp carries E1M1's real numbers
   and asserts BOTH halves -- that the stored vertex really is off the line
   by the measured amount, and that projecting puts it back -- so it would
