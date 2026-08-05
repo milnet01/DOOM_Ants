@@ -838,6 +838,26 @@ with friends.
   Lanes: audio, platform.
   Source: in-session-2026-08-05 (found by the new packaging/windows-smoke.sh).
 
+- 📋 [DOOM-0326] **Bump the staged Vulkan headers to 1.4.357.0.**
+  packaging/mingw-deps.sh pins VULKAN_VER=1.4.350.0; Khronos has shipped
+  vulkan-sdk-1.4.357.0. Checked at the same time and deliberately NOT
+  bumped, to keep a dependency change out of a CI-gate commit.
+
+  The other two pins in that file were verified CURRENT on 2026-08-05 and
+  need no action: SDL2 2.32.10 and SDL2_mixer 2.8.2 are both the latest
+  within the SDL2 line. Note the engine is SDL2, not SDL3 — the GitHub
+  releases list is dominated by 3.x, so "latest release" there is the
+  wrong answer. Filter to release-2.*.
+
+  The fix is one variable in packaging/mingw-deps.sh, then
+  `packaging/mingw-deps.sh --force` and a full `packaging/windows-smoke.sh`
+  run to confirm the tree still compiles and links against the new
+  headers. mingw-deps.sh is the single source of truth for all three, so
+  there is nowhere else to edit.
+  **Layman:** The Windows build uses a slightly old copy of the Vulkan graphics headers; a newer one is out.
+  Kind: chore.
+  Source: in-session-2026-08-05 (DOOM-0324 version-pin check).
+
 ## Phase 2 — The Spin
 
 The creative overhaul: evolve the renderer toward true 3D with hardware
