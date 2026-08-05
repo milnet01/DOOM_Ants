@@ -894,6 +894,27 @@ with friends.
   Kind: chore.
   Source: in-session-2026-08-05 (DOOM-0324 version-pin check).
 
+- 📋 [DOOM-0327] **Honour -nosound and -nomusic on the command line.**
+  Neither flag exists: there is no M_CheckParm("-nosound") or
+  ("-nomusic") anywhere in the engine, so both are silently ignored and
+  audio always initialises. Every DOOM port in the family (Chocolate,
+  Crispy, PrBoom+) honours them, and a DOOM-0325 note in this file was
+  written believing -nosound had been tested -- it had not, because the
+  flag does nothing.
+
+  Wanted: -nosound skips I_InitSound entirely; -nomusic keeps effects but
+  skips the MIDI half (Mix_Init(MIX_INIT_MID) and everything downstream).
+  Small and self-contained in i_sound.c + d_main.c.
+
+  Second payoff: packaging/windows-smoke.sh could then boot with -nomusic
+  and reach exit 0 under Wine, since DOOM-0325's deadlock needs a live
+  MUS_MID song. That would turn the full smoke back into a usable
+  pass/fail gate without hiding the hang -- keep a music-on run for
+  whenever DOOM-0325 is settled.
+  **Layman:** Add the standard switches that let you start the game with no sound or no music.
+  Kind: feature.
+  Source: in-session-2026-08-05 (found while diagnosing DOOM-0325).
+
 ## Phase 2 — The Spin
 
 The creative overhaul: evolve the renderer toward true 3D with hardware
