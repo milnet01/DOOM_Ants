@@ -949,7 +949,7 @@ with friends.
   is deliberately NOT taken here -- it is a policy call about DOOM-0325's
   visibility, filed as DOOM-0329.
 
-- 📋 [DOOM-0329] **Decide whether the Windows smoke should boot with -nomusic.**
+- 💭 [DOOM-0329] **Decide whether the Windows smoke should boot with -nomusic.**
   DOOM-0327 gives packaging/windows-smoke.sh the option: a -nomusic boot
   never registers a MIDI song, so DOOM-0325's Mix_HaltMusic deadlock cannot
   fire and the full script would reach exit 0 instead of its designed exit
@@ -965,6 +965,13 @@ with friends.
   **Layman:** Choose whether the Windows test run should start the game with music off, so it can finish cleanly.
   Kind: chore.
   Source: in-session-2026-08-05 (split out of DOOM-0327).
+  Resolved (2026-08-05): NO -- the user's call. The full windows-smoke.sh
+  run keeps booting with music on and keeps exiting 3. Rationale, in the
+  user's terms: exit 3 is the only thing keeping DOOM-0325 visible, and a
+  green smoke would quietly retire that signal. The cost of leaving it is
+  nil today, because the run CI actually performs is --syntax-only, which
+  exits 0. Revisit only if DOOM-0325 is settled or if the full run is ever
+  promoted into CI.
 
 ## Phase 2 — The Spin
 
