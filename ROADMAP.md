@@ -7748,3 +7748,73 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: fix.
   Lanes: renderer, shaders.
   Source: user-request-2026-08-04.
+
+- 📋 [DOOM-0330] **A distant toxic pool ignores the fog, and never tints the air above it.**
+  User feedback taking the DOOM-0011 look call (2026-08-05), given
+  alongside sign-off on the fog DENSITY: "the green pool now seems to
+  override the fog even at distance ... there should be fog mostly
+  obscuring the pool except for the green glow in the fog itself."
+
+  Diagnosed by measurement, not by reading. BOTH halves are broken, and
+  the first one is the one the user photographed: the pool stays a flat,
+  uniform green all the way to its far edge while the mountains and the
+  wall behind it fade correctly into grey.
+
+  1. Fog DOES reach the pool -- the fold is present and correct in both
+     composite paths (`L = L * fog.a + fog.rgb` after the albedo
+     re-multiply, svgf_composite.comp:186-193; pathtrace.comp:1605 for
+     mode 4). What fails is that the effect is INVISIBLE and, worse,
+     FLAT WITH DISTANCE. Measured on the E1M1 open-sky pool
+     (-warpto 1831 -3254, 50% scale, fog off vs Low, same build and
+     view): pool pixels change by mean 39.4/255 with fog on, wall pixels
+     in the same rows change by 109.6 -- and across the pool's whole
+     visible span the colour holds at RGB ~(115, 207, 87), varying by
+     under 2 levels from near edge to far.
+
+     Cause: DOOM-0302 re-tuned the liquid Le 51x, which puts the pool's
+     radiance far above `pbrNeutralToneMapping`'s shoulder. Above the
+     shoulder the curve is nearly flat, so halving the linear radiance
+     (what fog transmittance does over that distance) moves the DISPLAYED
+     colour by almost nothing. The attenuation is real and is being
+     compressed away by the tonemap. Not clipping -- the green sits at
+     207, not 255.
+
+     This is a genuine trade-off, not a bug with an obvious fix: the 51x
+     was itself tuned to stop nukage glowing only in the bright patches
+     of its own mottled texture. Lowering it to let fog bite risks
+     re-opening exactly that. Options, in rough order of preference:
+     attenuate the emissive term toward the fog colour before the
+     tonemap; or give the emissive its own distance roll-off; or lower
+     Le and recover the patch-free glow another way. Needs a look call
+     of its own, against both fixtures.
+
+  2. The AIR above the pool is never tinted, and that is the defect. L4's
+     area profile is keyed on `FogHit.ctrlFlags`, which carries the
+     MatCtrl.flags of the PRIMARY HIT (pathtrace.comp:1603). So the goo
+     profile engages only when the ray's own hit is liquid. Looking ACROSS
+     a pool at a wall, ctrlFlags is the wall's, the goo term is zero, and
+     the march returns neutral `kFogColor` -- grey haze over green water.
+     The profile is a property of what you look AT rather than of the air
+     the ray travels THROUGH.
+
+  Liquids are already in the fog-light bake, so the plumbing exists:
+  BuildStaticEmitterSet admits any material with Le > 0 including flats
+  (r_vulkan.cpp:7355-7360), and BuildFogLightGrid clusters that same set.
+  Measured on E1M1: 174 emitter tris -> 107 clustered lights. What is
+  missing is that outdoors `skyExposure` is 1.0, so the neutral sky
+  ambient dominates and swamps whatever green in-scatter the emitters do
+  contribute.
+
+  Fix direction for half 2 (not yet designed): make the area term sample
+  the medium along the march -- per-sample sector/flat lookup, or fold
+  liquid emitters' colour into the in-scatter with a gain that survives
+  the sky term -- instead of reading the primary hit's flags once.
+  Belongs with the DOOM-0011 spec's section 4.4 lights+bakes split.
+
+  Density itself is SIGNED OFF as-is; do not thin it while fixing this.
+  The -shotcompare golden re-bless (DOOM-0202) is deliberately HELD until
+  this lands: re-blessing now would bake the flat-green pool into the
+  reference image the gate compares every future change against.
+  **Layman:** A green toxic pool stays the same flat green however far away it is, instead of fading into the fog like everything else does -- and the haze above it should glow green, but stays plain grey.
+  Kind: enhancement.
+  Source: user-look-call-2026-08-05 (DOOM-0011 L4/L5 sign-off).
