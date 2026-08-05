@@ -110,6 +110,8 @@ boolean		devparm;	// started game with -devparm
 boolean         nomonsters;	// checkparm of -nomonsters
 boolean         respawnparm;	// checkparm of -respawn
 boolean         fastparm;	// checkparm of -fast
+boolean         nosound;	// checkparm of -nosound
+boolean         nomusic;	// checkparm of -nomusic
 
 boolean         drone;
 
@@ -1158,6 +1160,10 @@ void D_DoomMain (void)
     nomonsters = M_CheckParm ("-nomonsters");
     respawnparm = M_CheckParm ("-respawn");
     fastparm = M_CheckParm ("-fast");
+    // DOOM-0327: read before I_Init() below, which is what opens the audio device.
+    // -nosound is the bigger hammer and covers music too, so nomusic follows it.
+    nosound = M_CheckParm ("-nosound") != 0;
+    nomusic = nosound || M_CheckParm ("-nomusic") != 0;
     devparm = M_CheckParm ("-devparm");
     if (M_CheckParm ("-altdeath"))
 	deathmatch = 2;

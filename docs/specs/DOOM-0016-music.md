@@ -169,9 +169,9 @@ must still boot and play effects with no music — never `I_Error` out over musi
 - **Music plays & loops:** boot a level, hear its track; let it run past the end
   to confirm it loops.
 - **Volume control:** the menu's music-volume slider changes loudness; setting
-  it to zero silences music. (This is the only disable path — the engine has no
-  `-nomusic`/`-nosound` command-line switch today, and adding one is out of
-  scope for this item.)
+  it to zero silences music. (This was the only disable path when this item
+  shipped; DOOM-0327 later added the `-nomusic` and `-nosound` command-line
+  switches, which skip `Mix_Init(MIX_INIT_MID)` and `I_InitSound` respectively.)
 - **Graceful degrade:** temporarily move the soundfont aside → the game still
   boots and plays effects, just without music; a warning is logged.
 - **Build:** `make` links cleanly with `SDL2_mixer`; no new warnings.

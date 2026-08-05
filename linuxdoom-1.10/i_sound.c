@@ -58,6 +58,7 @@ rcsid[] __attribute__((used)) = "$Id: i_unix.c,v 1.5 1997/02/03 22:45:10 b1 Exp 
 #include "w_wad.h"
 
 #include "doomdef.h"
+#include "doomstat.h"		// DOOM-0327: nosound / nomusic
 
 // UNIX hack, to be removed.
 #ifdef SNDSERV
@@ -540,7 +541,16 @@ void I_ShutdownSound(void)
 
 void
 I_InitSound()
-{ 
+{
+  // DOOM-0327: -nosound means the audio device is never opened at all. sound_ok
+  // and music_initialised both stay false, so every play/stop path below already
+  // no-ops -- there is nothing else to switch off.
+  if (nosound)
+  {
+    fprintf(stderr, "I_InitSound: sound disabled by -nosound\n");
+    return;
+  }
+
 #ifdef SNDSERV
   char buffer[256];
   
@@ -648,6 +658,14 @@ void I_InitMusic(void)
   Mix_AllocateChannels(NUM_CHANNELS);
   sound_ok = true;		// the shared device is up: effects can play
 
+  // DOOM-0327: -nomusic stops here -- the shared device is up (so effects still
+  // play), but the MIDI decoder is never loaded and no song is ever registered.
+  if (nomusic)
+  {
+    fprintf(stderr, "I_InitMusic: music disabled by -nomusic\n");
+    return;
+  }
+
   // MIDI music is optional. If the decoder is missing, keep effects and drop music.
   if ((Mix_Init(MIX_INIT_MID) & MIX_INIT_MID) == 0)
   {
@@ -686,17 +704,29 @@ void I_ShutdownMusic(void)
 {
   int i;
 
-  if (!music_initialised)
-    return;
+  if (music_initialised)
+  {
+    Mix_HaltMusic();
+    for (i = 0; i < MAX_SONGS; i++)
+      if (songs[i].in_use)
+	I_UnRegisterSong(i + 1);
+  }
 
-  Mix_HaltMusic();
-  for (i = 0; i < MAX_SONGS; i++)
-    if (songs[i].in_use)
-      I_UnRegisterSong(i + 1);
+  // DOOM-0327: the device is shared with the effects, so release it whenever it
+  // was opened -- including the runs where music never came up (-nomusic, or no
+  // MIDI decoder). It used to leak out with the music, which matters because
+  // DOOM-0060's relaunch teardown must hand the device to the child process.
+  if (sound_ok)
+  {
+    Mix_CloseAudio();
+    sound_ok = false;
+  }
 
-  Mix_CloseAudio();
-  Mix_Quit();
-  music_initialised = false;
+  if (music_initialised)
+  {
+    Mix_Quit();				// pairs with the Mix_Init above
+    music_initialised = false;
+  }
 }
 
 int I_RegisterSong(void* data, int length)

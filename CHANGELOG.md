@@ -8,6 +8,13 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **`-nosound` and `-nomusic` command-line switches** (DOOM-0327)
+  Start the game with no audio at all (`-nosound`, which never opens the
+  audio device) or with effects but no music (`-nomusic`). Both are the
+  switches every other DOOM port has; until now they were silently
+  ignored. `-nosound` implies `-nomusic`. The shared audio device is now
+  also released on quit in the runs where music never started.
+
 - **CI now compiles the whole tree against the Windows compiler on every push** (DOOM-0324)
   The Windows build used to be compiled only when a release was cut, so it
   could sit broken for months — and it did: two Windows-only compile errors

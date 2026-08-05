@@ -50,6 +50,12 @@ extern  boolean	nomonsters;	// checkparm of -nomonsters
 extern  boolean	respawnparm;	// checkparm of -respawn
 extern  boolean	fastparm;	// checkparm of -fast
 
+// DOOM-0327: audio kill switches. -nosound drops effects AND music (the audio
+// device is never opened); -nomusic keeps effects and drops only the MIDI half.
+// -nosound implies -nomusic, so a music path need only test nomusic.
+extern  boolean	nosound;	// checkparm of -nosound
+extern  boolean	nomusic;	// checkparm of -nomusic, or implied by -nosound
+
 extern  boolean	devparm;	// DEBUG: launched with -devparm
 
 

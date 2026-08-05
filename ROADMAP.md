@@ -894,7 +894,7 @@ with friends.
   Kind: chore.
   Source: in-session-2026-08-05 (DOOM-0324 version-pin check).
 
-- 📋 [DOOM-0327] **Honour -nosound and -nomusic on the command line.**
+- ✅ [DOOM-0327] **Honour -nosound and -nomusic on the command line.**
   Neither flag exists: there is no M_CheckParm("-nosound") or
   ("-nomusic") anywhere in the engine, so both are silently ignored and
   audio always initialises. Every DOOM port in the family (Chocolate,
@@ -914,6 +914,57 @@ with friends.
   **Layman:** Add the standard switches that let you start the game with no sound or no music.
   Kind: feature.
   Source: in-session-2026-08-05 (found while diagnosing DOOM-0325).
+  Resolved (2026-08-05): both flags land as `nosound` / `nomusic` in
+  doomstat.h, read in D_DoomMain beside -nomonsters and before I_Init.
+  -nosound returns from I_InitSound before SDL_InitSubSystem, so no device
+  is opened and sound_ok / music_initialised both stay false; -nosound
+  implies -nomusic, so music paths test nomusic alone.
+
+  Two consequences the flags forced, both in this change:
+    - s_sound.c needed guards too. With music off, I_RegisterSong returns 0
+      and DOOM-0165's cold-start path reads that as a failed start: 4
+      retries over 1.6 s plus a log line each, on EVERY music change. The
+      sfx side would likewise print "not pre-cached - wtf?" once per sound.
+      Guards in S_StartMusicInfo and S_StartSoundAtVolume.
+    - I_ShutdownMusic only closed the shared device when music had come up,
+      so -nomusic (and, already, a missing MIDI decoder) left it open
+      through I_QuitTeardown -- which DOOM-0060's relaunch needs to release
+      for the child process. It now closes on sound_ok and calls Mix_Quit
+      only where Mix_Init ran.
+
+  Verified headless (-bootsmoke 35, dummy video, doom.wad): baseline logs
+  "music ready" + "pre-cached all sound data"; -nomusic logs "music
+  disabled by -nomusic" and still pre-caches effects; -nosound logs
+  "sound disabled by -nosound" and nothing else. All exit 0. The music
+  guard was confirmed by breaking it once -- with it disabled the same
+  -nomusic run logs 4 "did not start" retry lines, with it in place, zero.
+  make + make test (7 suites) green, Windows --syntax-only PASS.
+
+  NOT verified by execution: the -nosound sfx guard. A headless run never
+  requests a sound effect -- a probe print in S_StartSoundAtVolume counted
+  zero calls across 10 s on MAP01/MAP07/MAP12 with the player standing
+  still, and input cannot be injected under Wayland. The branch is two
+  lines above an unchanged body, so a play-test with -nosound would settle
+  it. The second payoff (booting packaging/windows-smoke.sh with -nomusic)
+  is deliberately NOT taken here -- it is a policy call about DOOM-0325's
+  visibility, filed as DOOM-0329.
+
+- 📋 [DOOM-0329] **Decide whether the Windows smoke should boot with -nomusic.**
+  DOOM-0327 gives packaging/windows-smoke.sh the option: a -nomusic boot
+  never registers a MIDI song, so DOOM-0325's Mix_HaltMusic deadlock cannot
+  fire and the full script would reach exit 0 instead of its designed exit
+  3. That turns the full run back into a usable pass/fail gate.
+
+  The reason it was not just done: exit 3 is the only thing currently
+  making DOOM-0325 visible, and a green smoke would quietly retire that
+  signal. If it is taken, keep a music-on run alongside -- either a second
+  invocation or a flag -- so the deadlock still has somewhere to show up,
+  and revert to music-on once DOOM-0325 is settled.
+
+  Needs a call from the user, not a code decision.
+  **Layman:** Choose whether the Windows test run should start the game with music off, so it can finish cleanly.
+  Kind: chore.
+  Source: in-session-2026-08-05 (split out of DOOM-0327).
 
 ## Phase 2 — The Spin
 

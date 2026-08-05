@@ -293,7 +293,12 @@ S_StartSoundAtVolume
   // check for bogus sound # (S_sfx has NUMSFX entries; index NUMSFX is one past)
   if (sfx_id < 1 || sfx_id >= NUMSFX)
     I_Error("Bad sfx #: %d", sfx_id);
-  
+
+  // DOOM-0327: -nosound. Nothing was pre-cached, so going further would just
+  // print the "not pre-cached - wtf?" line below for every sound in the game.
+  if (nosound)
+    return;
+
   sfx = &S_sfx[sfx_id];
   
   // Initialize sound parameters
@@ -689,6 +694,12 @@ void S_StartMusic(int m_id)
 static void S_StartMusicInfo(musicinfo_t* music, int looping)
 {
     char		namebuf[9];
+
+    // DOOM-0327: -nomusic (or -nosound). Without this the register below fails,
+    // which the DOOM-0165 cold-start path reads as a failed start and retries
+    // four times over 1.6 s, logging each attempt -- on every music change.
+    if (nomusic)
+	return;
 
     // get lumpnum if neccessary
     if (!music->lumpnum)
