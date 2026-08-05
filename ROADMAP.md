@@ -865,6 +865,14 @@ with friends.
   this engine (no M_CheckParm for it anywhere), so "reproduces with -nosound"
   tested nothing; (b) "NOT Wine" is too strong -- it ruled out Wine being
   slow, not Wine's MIDI driver being broken.
+  How to settle it on a real Windows PC (2 minutes, no dev tools): unzip a
+  release build, run doom_ants.exe, let the title music play so the MIDI
+  device is actually open, quit from the menu, then open Task Manager ->
+  Details and look for doom_ants.exe. Gone = Windows is clean and this is
+  Wine-only, close as not-a-bug. Still listed = real, and the fix belongs
+  upstream in SDL2_mixer's native_midi_win32 (or in switching the Windows
+  build off native MIDI). Music must have played: the deadlock needs a live
+  MUS_MID song, and a run with music off will exit cleanly either way.
 
 - 📋 [DOOM-0326] **Bump the staged Vulkan headers to 1.4.357.0.**
   packaging/mingw-deps.sh pins VULKAN_VER=1.4.350.0; Khronos has shipped
