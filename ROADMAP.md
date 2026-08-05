@@ -755,6 +755,32 @@ with friends.
   Kind: test.
   Source: user-request-2026-07-30.
 
+- 📋 [DOOM-0324] **Build the Windows cross-target in CI, so it cannot rot again.**
+  .github/workflows/build.yml has ONE job — "Linux build + tests" on
+  ubuntu-latest. Nothing compiles the mingw target, so the Windows build
+  is exercised only by packaging/release.sh, i.e. once per release.
+
+  Found cutting 0.6.0: TWO independent Windows-only compile errors had
+  accumulated across the 193 commits since v0.5.0, both from the
+  DOOM-0294 developer-capture work and both invisible on Linux —
+  g_game.c used int64_t without stdint.h (glibc supplies it
+  transitively, mingw does not), and rb_image.c called the POSIX
+  two-argument mkdir where Windows takes one. Neither is subtle;
+  nothing was looking.
+
+  A whole-tree -fsyntax-only sweep under x86_64-w64-mingw32-gcc caught
+  both in seconds and needs no linking, no staged SDL2/Vulkan import
+  libs and no artifact upload — so the cheap version of this is a
+  syntax-check job, not a full cross-build. Add the link stage only if
+  a link-stage break ever appears.
+
+  Note d_main.c:1230 already carried the correct #ifdef _WIN32 mkdir
+  split, so the pattern to follow was in the tree the whole time.
+  **Layman:** The Windows version is only built when we cut a release, so it can stay broken for months without anyone noticing.
+  Kind: chore.
+  Lanes: ci, packaging.
+  Source: in-session-2026-08-05 (0.6.0 release).
+
 ## Phase 2 — The Spin
 
 The creative overhaul: evolve the renderer toward true 3D with hardware
