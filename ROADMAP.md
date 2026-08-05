@@ -837,6 +837,34 @@ with friends.
   Kind: fix.
   Lanes: audio, platform.
   Source: in-session-2026-08-05 (found by the new packaging/windows-smoke.sh).
+  Root cause found (2026-08-05) — NOT our code. Breadcrumbs narrowed the
+  hang to the FIRST call in I_ShutdownMusic: Mix_HaltMusic. Mix_GetMusicType
+  and Mix_PlayingMusic both return first, and both take the same audio lock,
+  so the lock is free; the hang is inside SDL2_mixer's backend stop. Music
+  type is MUS_MID (4) and the staged SDL2_mixer 2.8.2 DLL carries only
+  NATIVEMIDI + TIMIDITY (no FluidSynth), so playback is on NATIVEMIDI --
+  Windows winmm midiStreamStop/midiStreamClose.
+
+  Proved with a 40-line standalone program containing NO DOOM code: SDL_Init
+  + Mix_OpenAudioDevice + Mix_LoadMUS + Mix_PlayMusic + Mix_HaltMusic,
+  cross-compiled against the same mingw-deps/prefix and run in the same Wine
+  sandbox. It hangs at Mix_HaltMusic exactly as the engine does. The SAME
+  binary handed a WAV instead of a MIDI runs halt/free/close/quit/SDL_Quit
+  and exits rc=0. So the defect is SDL2_mixer's native-MIDI stop under Wine's
+  winmm, not DOOM_Ants and not SDL2_mixer generally.
+
+  Still UNKNOWN and blocking: whether real Windows is affected at all. Wine's
+  winmm MIDI here has only ALSA 'Midi Through' to talk to. Native MIDI is
+  SDL2_mixer's normal Windows path, so a hang there would be a widely-hit
+  upstream bug -- which makes a Wine-only fault the likelier reading. Needs
+  Charl to quit the game on real Windows and check Task Manager before any
+  engine-side change is justified; there is no root-cause fix to make in this
+  repo if Windows is clean.
+
+  Corrections to this bullet's original body: (a) there is NO -nosound flag in
+  this engine (no M_CheckParm for it anywhere), so "reproduces with -nosound"
+  tested nothing; (b) "NOT Wine" is too strong -- it ruled out Wine being
+  slow, not Wine's MIDI driver being broken.
 
 - 📋 [DOOM-0326] **Bump the staged Vulkan headers to 1.4.357.0.**
   packaging/mingw-deps.sh pins VULKAN_VER=1.4.350.0; Khronos has shipped

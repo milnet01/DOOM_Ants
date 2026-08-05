@@ -24,7 +24,9 @@
 #   0  the engine booted, simulated its tics and exited cleanly
 #   1  the build (or syntax sweep) failed
 #   2  the engine never reached the boot-smoke line — it died or hung early
-#   3  the engine booted fine but never exited (shutdown hang; DOOM-0325)
+#   3  the engine booted fine but never exited (shutdown hang; DOOM-0325 --
+#      currently EXPECTED here: SDL2_mixer's native-MIDI stop deadlocks under
+#      Wine, reproduced with no DOOM code in the picture. Not an engine fault)
 #
 # SAFETY: everything runs on a private Xvfb display and in a throwaway
 # WINEPREFIX under the sandbox dir, so the game can never appear on the user's
@@ -184,7 +186,9 @@ echo "    $(grep 'tics simulated OK' "$LOG")"
 
 if [ "$RUN_RC" -eq 124 ]; then
   echo "FAIL: booted and simulated $TICS tics, but the process never exited (${ELAPSED}s)."
-  echo "      Windows-only shutdown hang in I_QuitTeardown — see DOOM-0325."
+  echo "      Known: SDL2_mixer's native-MIDI Mix_HaltMusic deadlocks under Wine."
+  echo "      Reproduced with no DOOM code involved, so the compile+boot result"
+  echo "      above still stands. See DOOM-0325."
   exit 3
 fi
 if [ "$RUN_RC" -ne 0 ]; then
