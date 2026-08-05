@@ -7771,22 +7771,42 @@ parked ideas (💭 considered) until we commit to and design each one.
      visible span the colour holds at RGB ~(115, 207, 87), varying by
      under 2 levels from near edge to far.
 
-     Cause: DOOM-0302 re-tuned the liquid Le 51x, which puts the pool's
-     radiance far above `pbrNeutralToneMapping`'s shoulder. Above the
-     shoulder the curve is nearly flat, so halving the linear radiance
-     (what fog transmittance does over that distance) moves the DISPLAYED
-     colour by almost nothing. The attenuation is real and is being
-     compressed away by the tonemap. Not clipping -- the green sits at
-     207, not 255.
+     **CAUSE NOT YET ESTABLISHED.** Two candidates were proposed and both
+     were falsified against the source; they are recorded so the next
+     session does not re-propose them:
 
-     This is a genuine trade-off, not a bug with an obvious fix: the 51x
-     was itself tuned to stop nukage glowing only in the bright patches
-     of its own mottled texture. Lowering it to let fog bite risks
-     re-opening exactly that. Options, in rough order of preference:
-     attenuate the emissive term toward the fog colour before the
-     tonemap; or give the emissive its own distance roll-off; or lower
-     Le and recover the patch-free glow another way. Needs a look call
-     of its own, against both fixtures.
+     - *"The emission is too bright to veil, so the tonemap compresses
+       the attenuation away."* FALSE. `kNukageLe` is
+       `{0.05f, 0.19f, 0.02f}` (r_vulkan.cpp:5256). DOOM-0302 scaled
+       these DOWN by ~51x, not up -- its comment says the old constants
+       "measured 51x brighter ... and blew out to a flat white-green
+       slab". 0.19 linear green sits well inside
+       `pbrNeutralToneMapping`'s responsive range, so shoulder
+       compression cannot be the mechanism.
+     - *"The pool surface is simply not fogged."* FALSE. Fog moves pool
+       pixels by 39.4/255, so the fold is reaching them.
+
+     What the two solid facts imply is a contradiction worth chasing:
+     in-scatter IS being added to pool pixels while transmittance appears
+     to stay ~1 on them. Those share the same sigma along the same ray,
+     so they cannot honestly disagree -- which points at the fog FETCH
+     rather than the march. Prime suspect, unverified: `fetchFog`'s
+     position-guided upsample (svgf_composite.comp:92-120). At a grazing
+     angle across a flat pool, neighbouring half-res texels' hit points
+     are hundreds of world units apart, so every tap's
+     `exp(-dist/kFogDepthSigma)` weight (sigma = 256) collapses and the
+     fetch falls back to plain bilinear -- over exactly the geometry where
+     the four taps disagree most. A floor seen at grazing incidence is
+     the worst case for that guide, and a pool is always seen that way.
+
+     NEXT DIAGNOSTIC (do this before proposing a fix): reproduce the
+     user's own view rather than a stand-in -- they are looking OUT of
+     the E1M1 start room down a long sightline, whereas the fixture used
+     on 2026-08-05 (`-warpto 1831 -3254 90`) stands IN the pool looking
+     across it, which spans too little distance to show a gradient either
+     way. Then read the fog buffer directly (an rt_view debug mode showing
+     `fog.a`) instead of inferring transmittance from the composited
+     image, which is what made both wrong readings above look plausible.
 
   2. The AIR above the pool is never tinted, and that is the defect. L4's
      area profile is keyed on `FogHit.ctrlFlags`, which carries the
