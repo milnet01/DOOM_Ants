@@ -7838,3 +7838,22 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** A green toxic pool stays the same flat green however far away it is, instead of fading into the fog like everything else does -- and the haze above it should glow green, but stays plain grey.
   Kind: enhancement.
   Source: user-look-call-2026-08-05 (DOOM-0011 L4/L5 sign-off).
+  Reproduction detail (2026-08-05), easy to get wrong: the user's
+  screenshot was taken at their LIVE config, which is `rt_fog 2` (Med) with
+  `flashlight 1` -- NOT the shipped `rt_fog 1` default the 2026-08-05
+  measurements used. Low and Med differ by mean 18.4/255, so a session that
+  reproduces at Low is looking at a slightly different image than the one
+  that was reported. Check ~/.doomrc before concluding anything about
+  "their" view; it is the user's own file and is rewritten every time they
+  play.
+
+  Where this sits in the in-progress set: this IS the outstanding look
+  defect on DOOM-0183 (reflective/glowing liquid goo, still in progress),
+  and the -shotcompare golden re-bless that DOOM-0202 is waiting on is held
+  behind it. So DOOM-0330, DOOM-0183 and DOOM-0202 all close on one thread.
+
+  Evidence pack (side-by-side fog off / Low / High at three E1M1 fixtures,
+  plus the measured perf and correctness gates):
+  https://claude.ai/code/artifact/8949a67e-e6a3-4b18-ad32-5e3feee49227
+  The source captures were written to a session scratchpad and are gone;
+  the page is the durable copy.
