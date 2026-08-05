@@ -954,6 +954,10 @@ struct VulkanState
     // pool light + cast shadows onto their surroundings via the same NEE path.
     std::vector<float> staticEmit;                  // cached static emitter records
     std::vector<float> staticWgt;                   // cached static power weights
+    // DOOM-0330: one byte per static emitter record — "this triangle is nukage/lava".
+    // Parallel to staticWgt (same order, same length), read by ClusterStaticFogLights.
+    std::vector<uint8_t> staticEmitLiquid;
+    std::vector<int>     liquidMatIds;              // unified ids of the liquid flats
 
     // GI bake probes (DOOM-0009 build step 4). One irradiance probe per subsector
     // (placed by RB_BuildProbes at the convex-cell centroid), baked once per level
@@ -5267,6 +5271,10 @@ static void ForceLiquidEmissive(const rb_atlas_t* a, std::vector<float>& out)
         { "NUKAGE1", kNukageLe }, { "NUKAGE2", kNukageLe }, { "NUKAGE3", kNukageLe },
         { "LAVA1", kLavaLe }, { "LAVA2", kLavaLe }, { "LAVA3", kLavaLe }, { "LAVA4", kLavaLe },
     };
+    // DOOM-0330: the resolved ids are recorded as well as written. The fog-light bake needs
+    // "is this emitter a pool?" and this is the one place that already knows, by the same
+    // name lookup — a second table would be a second answer waiting to disagree.
+    g.liquidMatIds.clear();
     for (const auto& e : lut) {
         char nm[9]; strncpy(nm, e.name, 8); nm[8] = '\0';
         int lump = W_CheckNumForName(nm);
@@ -5278,6 +5286,7 @@ static void ForceLiquidEmissive(const rb_atlas_t* a, std::vector<float>& out)
             out[id * 3 + 0] = e.le[0];
             out[id * 3 + 1] = e.le[1];
             out[id * 3 + 2] = e.le[2];
+            g.liquidMatIds.push_back(id);
         }
     }
 }
@@ -7341,6 +7350,7 @@ static void BuildStaticEmitterSet(const rb_vertex_t* v)
 {
     g.staticEmit.clear();
     g.staticWgt.clear();
+    g.staticEmitLiquid.clear();
     if (!g.levelMesh || g.matEmissive.empty() || !v)
         return;
 
@@ -7373,6 +7383,10 @@ static void BuildStaticEmitterSet(const rb_vertex_t* v)
         const float cz = ex1 * ey2 - ey1 * ex2;
         const float area = 0.5f * std::sqrt(cx * cx + cy * cy + cz * cz);
         g.staticWgt.push_back(emis::luminance(le[0], le[1], le[2]) * area);
+        // DOOM-0330: tag the pools. Same order as staticWgt, so the fog-light bake can ask
+        // "is emitter e a pool?" by index without carrying the material id in the record.
+        g.staticEmitLiquid.push_back(std::find(g.liquidMatIds.begin(), g.liquidMatIds.end(), id)
+                                     != g.liquidMatIds.end() ? 1u : 0u);
     }
     g.staticLightsDirty = true;   // DOOM-0170 perf: static set changed -> recache point lights
 }
@@ -7484,6 +7498,30 @@ static const float    RB_FOG_LIGHT_CLUSTER = 64.0f;
 // capping shortens the glow instead of leaving a ring at 512).
 static const float    RB_FOG_LIGHT_CUTOFF   = 0.04f;
 static const float    RB_FOG_LIGHT_MAXREACH = 512.0f;
+// DOOM-0330: a pool's intensity is multiplied by this ON THE WAY INTO THE FOG GRID ONLY —
+// the surface's own Le, the NEE direct light and the GI bake all keep the unscaled value.
+//
+// It exists because a point light is the wrong stand-in for a POOL, and the error is
+// one-directional. Measured on E1M1 (the open-sky pool at 1831,-3254): the nukage clusters
+// are not dim and are not starved — 23 of them, the brightest at intensity 12239 against a
+// median light of 6104, reach capped at 512, vis 1.00, and they hold BOTH slots of every
+// cell over and around the pool. Yet the air above them reads grey. Two reasons, and both
+// are geometry rather than tuning:
+//   - Air a few tens of units above a broad flat sheet is inside its near field, where the
+//     real falloff is ~1/d, not the 1/d^2 a point light applies. A torch's air is at its
+//     peak (kTorchSoftR2 caps it); a pool's air is already 100-300 units from every
+//     clustered centroid, so the inverse square has spent most of the light before it gets
+//     there.
+//   - Only kFogLightsPerCell (2) of the 23 pool clusters are summed, and the pool's real
+//     contribution is spread across all of them rather than concentrated in the nearest.
+// Raising kTorchShaftStrength instead would have brightened every torch shaft in the game
+// (its own comment records that constant being calibrated against a median light), so the
+// gain is scoped to the material that is under-read.
+//
+// Calibrated by build A/B at that fixture: the whole term at 1x reads as no glow, 3x as a
+// faint cast on the air just over the pool, 5x as a clear green rise into the fog, 10x as
+// the accentuated look the user named as an ANTI-target. Sits in the muted half of that.
+static const float    RB_FOG_LIGHT_GOO_GAIN = 4.0f;
 // Height above a cell's floor at which visibility is tested. Indoors the fog is a knee-high
 // pool (kFogIndoorPool = 18, an e-fold above the floor), so this is where the air that the
 // torch has to light actually is — testing at the light's own height would ask about air
@@ -7560,11 +7598,16 @@ static std::vector<RbFogLight> ClusterStaticFogLights(int staticN)
         else
             ci = it->second;
 
+        // DOOM-0330: pools get their fog-only gain here, per TRIANGLE rather than per
+        // cluster, so a cell that mixes goo with a wall panel scales only the goo's share.
+        const float g_ = ((size_t)e < g.staticEmitLiquid.size() && g.staticEmitLiquid[(size_t)e])
+                       ? RB_FOG_LIGHT_GOO_GAIN : 1.0f;
+
         RbFogLight& L = out[(size_t)ci];
         L.x  += cx * a;  L.y += cy * a;  L.z += cz * a;   // area-weighted centroid
-        L.r  += rec[9]  * a;                              // intensity = sum(Le * area)
-        L.gr += rec[10] * a;
-        L.b  += rec[11] * a;
+        L.r  += rec[9]  * a * g_;                         // intensity = sum(Le * area)
+        L.gr += rec[10] * a * g_;
+        L.b  += rec[11] * a * g_;
         area[(size_t)ci] += a;
     }
 
@@ -7773,6 +7816,7 @@ void BuildFogLightGrid()
            (uint32_t)g.staticWgt.size(), (uint32_t)lights.size(),
            statMin, statMed, statMax, air, candCells, lit, cells, sightTests, ms);
     fflush(stdout);
+
 }
 
 // 16 floats per GI probe: pos[3] + pad + SH-L1 directional irradiance (channel-
