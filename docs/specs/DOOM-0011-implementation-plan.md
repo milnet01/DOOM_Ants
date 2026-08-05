@@ -2360,15 +2360,21 @@ reads "Position-guided", changed in the same edit as the rename.
 > call sites wired — and compiled with `glslangValidator -V`: clean. The two defects this check
 > caught (`gpos[cur]`, and the const in `pt_common.glsl`) are fixed above.
 
-- [ ] **Step 2: Tune dither + phase (look only)**
+- [x] **Step 2: Tune dither + phase (look only)** — **no change made, and that is the result.**
+  This step is conditional ("*if* shafts read busy or band"), and the condition did not fire. The
+  2026-08-05 look call put fog-off / Low / High captures at three E1M1 fixtures in front of the
+  user; no banding, dither crawl or busy-shaft complaint came back, and the density was signed off
+  as-is ("I like 2 a lot" — the leave-it-alone option). `kFogAnisotropy`, `kFogSteps` and the L1
+  hash therefore all stand unchanged. The one defect the call DID surface is about liquids, not
+  dither, and is filed as **DOOM-0330**.
 
-Adjust the dither (IGN vs the L1 hash) and `kFogAnisotropy` / `kFogSteps` if shafts read busy or
-band. Isotropic (`kFogAnisotropy = 0`) is the fallback if HG reads too busy (Q5). Keep changes to
-consts.
+- [x] **Step 3: Build + smoke + tests** (L1 Step 7 commands) — green 2026-08-05: clean `make`,
+  `make test` all suites passed, `-rtverify` PASS.
 
-- [ ] **Step 3: Build + smoke + tests** (L1 Step 7 commands).
-
-- [ ] **Step 4: Play-test (spec §7 L5)**
+- [x] **Step 4: Play-test (spec §7 L5)** — done 2026-08-05 as a captured look call rather than a
+  live play-test (stills at three fixtures, fog off / Low / High, monsters frozen and the player
+  invulnerable so each pair shows the identical scene). Density signed off; smoothness raised no
+  finding; DOOM-0330 filed. No escalation to the a-trous route (Q6) was needed.
 
 **Accept:** fog is **smooth**, not grainy or crawling, in a **slow pan**; shafts **hold their
 shape** (no swimming edges). Do a slow orbit in the goo room and at a sky shaft. If it **crawls**,
@@ -2464,7 +2470,24 @@ arrays ships a blank row:
 - [x] **Step 3: `;` hotkey** — DONE EARLY in commit `f8c6b1f` (`SDLK_SEMICOLON` cycles
   Off/Low/Med/High in `i_video.c`, mirroring the `]`/`[`/`'` toggles). Nothing left here.
 
-- [ ] **Step 4: Profiler slot for the fog pass**
+- [x] **Step 4: Profiler slot for the fog pass** — **NOT APPLICABLE, closed 2026-08-05.**
+  There is no fog pass to time. Every `vkCmdWriteTimestamp` in the file brackets a whole GPU
+  **dispatch or render pass** (`r_vulkan.cpp:8473-8961` in `RecordRtTrace`, `:9658-9899` in
+  `RB_Vulkan_Present`), and fog is not one: it is `marchFog()` running **inside** the megakernel
+  (`pathtrace.comp:1078`, called at `:1604`/`:1739`), with its upsample **inside**
+  `svgf_composite.comp`. A timestamp cannot bracket a function call inside a compute shader, so a
+  9th query slot would measure nothing. Making one would mean splitting fog into its own dispatch
+  — re-marching rays the megakernel has already traced — which is a large architectural change
+  in service of a measurement, and the plan never asked for that.
+
+  **The substitute is the honest measurement, and it is what Step 7 uses:** A/B the existing
+  `megakernel` slot with the `;` dial. It isolates fog exactly, because `rb_fog == 0` skips the
+  whole march (INV-8). Measured this way on E1M1's open-sky pool: megakernel 13.02 ms fog-off vs
+  14.69 ms at Low = **fog costs 1.67 ms of GPU**, against a run-to-run spread of 0.06 ms across
+  the three fog-on levels. No code change, and no seven-site edit to get wrong.
+
+  *(The original step is kept below as the record of what it would have cost, and because the
+  seven-site count is still correct should the profiler ever gain a genuinely separate pass.)*
 
 The number **8 is hardcoded in seven places**, not three. Every one moves together, or the readback
 writes past the end of a stack array — a stack overflow that will not announce itself as one:
@@ -2494,7 +2517,23 @@ SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
 Then on hardware: the `;` key and both menu rows flip **Off→Low→Med→High** cleanly; `rb_fog==0`
 visibly removes all fog (proves the gate). Expected: green + `bootsmoke: ... OK`.
 
-- [ ] **Step 6: `-rtverify` (must be green) + `-shotcompare` golden**
+- [~] **Step 6: `-rtverify` (must be green) + `-shotcompare` golden** — rtverify **PASS**
+  2026-08-05; the golden re-bless is **deliberately HELD**.
+
+  `-rtverify` (release build, `-warp 1 1`): INV-6 direct-light rel-MSE **0.2059 %** against a
+  0.50 % bar, white-furnace max deviation **0.000000**. Both PASS, unchanged by fog — as expected,
+  the fog lanes sit beyond the 184-byte prefix.
+
+  `-shotcompare` currently **FAILs at mae 27.022** (bar 3.0, 640×360) — *by construction*, not by
+  regression: the committed golden was blessed 2026-07-23 (`61677aa`) and predates fog entirely.
+  `r_vulkan.cpp:9472-9477` says so in the source. Re-blessing is the documented fix (delete the
+  golden, re-run `-shotcompare`, which bootstraps a fresh downscaled one).
+
+  **It is held on DOOM-0330.** Re-blessing now would bake the flat-green distant pool the user
+  photographed on 2026-08-05 into the very reference image every future change is gated against —
+  the gate would then defend the defect. Re-bless once DOOM-0330 lands, in the same commit.
+
+*(original step text follows)*
 
 ```bash
 # INV-6 RT self-test — fog lanes sit beyond the 184-byte -rtverify prefix, so this must PASS unchanged:
@@ -2506,7 +2545,34 @@ exactly as DOOM-0183 re-blessed for wet — the gate then guards the fog *look*.
 **off-by-default**, leave the golden untouched (fog-off is byte-identical, INV-8). Run
 `-shotcompare` and confirm it matches the (re-blessed) golden.
 
-- [ ] **Step 7: Perf gate — ≤ 15 % present-total (the pass/fail)**
+- [x] **Step 7: Perf gate — ≤ 15 % present-total (the pass/fail)** — **PASS, measured 2026-08-05.**
+
+| `rt_fog` | present-total | megakernel | fps | vs off |
+|---|---|---|---|---|
+| 0 (off) | 23.28 ms | 13.02 ms | 42.1 | — |
+| 1 Low (**shipped default**) | 25.23 ms | 14.69 ms | 39.0 | **+8.4 %** |
+| 2 Med | 25.19 ms | 14.71 ms | 39.0 | +8.2 % |
+| 3 High | 25.17 ms | 14.67 ms | 39.1 | +8.1 % |
+
+  RX 6600, Ultra RT, 50 % render scale, HD art loaded (`HD load done - 18 material(s)`), E1M1
+  open-sky nukage pool via `-warpto 1831 -3254 90` — goo, sky and shaft path all in one frame.
+  16 s per run, first 3 profiler samples dropped for GI bake / HD upload / TAAU settle.
+  **+8.4 % against a ≤ 15 % bar.** The 60 FPS floor does not bind (§6's 2026-07-25 relaxation).
+
+  **Finding worth carrying: the dial costs the same at every level** (0.06 ms spread across
+  Low/Med/High, far under the 1.95 ms fog delta). `fogStrengthScale` scales *density*
+  (0.35/0.65/1.0, `pt_common.glsl:386`), while `kFogSteps` stays 24 — so the march does identical
+  work whatever the setting. Consequences: any fog-on level is the worst case for perf, so there
+  is no cheap-mode lever here; and if §6 ever needs a saving, `kFogSteps` is the knob, not the dial.
+
+  **Harness note (cost a wasted measurement set):** `-bootsmoke` **pins `RB_CLASSIC`**
+  (`d_main.c:411-412`) so CI can boot on a GPU-less runner. A `-bootsmoke` "profiling" run
+  therefore measures the 1993 software renderer and reports **zero** profiler samples. Use a
+  timed run (`timeout -s TERM 16`) instead. Pair it with `-inspect -freeze` (a `DEV=1` build):
+  the fixture is a nukage floor, so without god mode the player takes damage and dies mid-run,
+  and frozen monsters keep both halves of the A/B looking at the same scene.
+
+*(original step text follows)*
 
 Per spec §6: average the `` \ `` **backslash** profiler **present-total (ms, not FPS)** over a fixed ~10 s walk
 of the **E1M1 green-goo room** (with a sky-hole/doorway in view for shafts), **RT-on, 50 % render
