@@ -37,7 +37,11 @@
    both need it and they are in different languages and translation units. */
 int rb_devshot_path(char* out, int outsz) {
     int i;
+#ifdef _WIN32
+    mkdir("dev-shots");			// Windows mkdir takes no mode arg
+#else
     mkdir("dev-shots", 0755);
+#endif
     for (i = 1; i <= 9999; i++) {
         FILE* f;
         snprintf(out, (size_t)outsz, "dev-shots/shot-%04d.png", i);

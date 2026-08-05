@@ -150,6 +150,17 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **The Windows build no longer fails to compile**
+  Two faults, both from the developer-capture work and both invisible on
+  Linux. `-warpto` used a 64-bit whole number without asking for the
+  header that defines one — Linux picked it up by accident from a
+  neighbouring header, the Windows cross-compiler did not. The F12
+  screenshot folder was then created with a two-argument call that
+  Windows spells with one, the way `-cdrom` already does elsewhere in the
+  engine. Every Windows build since those flags landed stopped with an
+  error. Caught by the release build, which makes both versions before it
+  publishes anything.
+
 - **The lighting self-test now covers the glowing-sprite light path it was skipping** (DOOM-0122)
   `-rtverify` proves the renderer's lighting maths is unbiased by comparing
   two estimators that should agree. Both were being handed a light list that
