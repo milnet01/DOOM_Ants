@@ -89,3 +89,39 @@ jobs:
             -iwad /usr/share/games/doom/freedoom1.wad \
             -warp 1 1 -bootsmoke 105 2>&1 | tee smoke.log
           grep -q "bootsmoke: .* tics simulated OK" smoke.log
+
+  # DOOM-0324: the Windows cross-target used to be compiled exactly once per
+  # release, by packaging/release.sh. Two Windows-only compile errors accumulated
+  # unnoticed across the 193 commits between v0.5.0 and v0.6.0 and surfaced only
+  # when 0.6.0 was cut -- a missing <stdint.h> that glibc supplies transitively
+  # and mingw does not, and a POSIX two-argument mkdir. Neither is subtle;
+  # nothing was looking.
+  #
+  # This is the SYNTAX half only: -fsyntax-only over every translation unit,
+  # which catches that whole class in seconds with no linking, no import
+  # libraries and no artifact upload. It runs in parallel with the Linux job, so
+  # it costs no wall-clock. Wine + Xvfb would be needed to actually boot the
+  # .exe; that stays local (packaging/windows-smoke.sh with no flags), not least
+  # because the Windows build currently never exits (DOOM-0325).
+  windows-syntax:
+    name: Windows cross-compile check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Install the Windows cross-toolchain
+        # Deliberately NOT packaging/ci-deps.txt: that list is the *Linux* build's
+        # dependencies, and nothing here links or runs. Only the cross-compilers
+        # plus the two generators for the embedded shader/font headers.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 glslc xxd
+
+      # Stages the upstream SDL2 / SDL2_mixer / Vulkan headers and generates the
+      # embedded shader + font headers itself, then sweeps every .c and .cpp.
+      - name: Syntax-check the tree against the Windows compiler
+        run: packaging/windows-smoke.sh --syntax-only

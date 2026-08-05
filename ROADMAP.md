@@ -755,7 +755,7 @@ with friends.
   Kind: test.
   Source: user-request-2026-07-30.
 
-- 📋 [DOOM-0324] **Build the Windows cross-target in CI, so it cannot rot again.**
+- ✅ [DOOM-0324] **Build the Windows cross-target in CI, so it cannot rot again.**
   .github/workflows/build.yml has ONE job — "Linux build + tests" on
   ubuntu-latest. Nothing compiles the mingw target, so the Windows build
   is exercised only by packaging/release.sh, i.e. once per release.
@@ -789,6 +789,21 @@ with friends.
   with --syntax-only on ubuntu-latest (no wine/Xvfb needed, seconds, and it
   catches the exact class that broke 0.6.0), or install wine + Xvfb and run
   it in full against the freedoom IWAD CI already installs.
+  Resolved (2026-08-05): build.yml now carries a second job,
+  "Windows cross-compile check", running packaging/windows-smoke.sh
+  --syntax-only on ubuntu-latest in parallel with the Linux job. Three
+  things had to exist first, none of them obvious from a warm tree:
+  packaging/mingw-deps.sh (stages the upstream SDL2 / SDL2_mixer / Vulkan
+  headers, and is now the single source of truth for those three version
+  pins -- mingw-deps/README.md defers to it); a `generated` phony Makefile
+  target, because r_vulkan.cpp #includes the shader/font headers that do
+  not exist on a fresh clone; and preconditions in windows-smoke.sh that
+  run both. Verified on a clean-checkout copy with mingw-deps/ and every
+  generated header stripped: 8 seconds, exit 0. Then verified NEGATIVELY
+  -- deleting g_game.c's #include <stdint.h> (one of the two faults that
+  broke 0.6.0) turns the gate red with the exact error. The link half is
+  still deliberately absent, per the original bullet; the Wine boot stays
+  local while DOOM-0325 stands.
 
 - 📋 [DOOM-0325] **The Windows build hangs on exit, inside I_ShutdownMusic.**
   Reproduce in one command: packaging/windows-smoke.sh --no-build

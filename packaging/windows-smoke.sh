@@ -16,6 +16,10 @@
 #   packaging/windows-smoke.sh --iwad path.wad # pick the data file
 #   packaging/windows-smoke.sh --keep          # keep the sandbox for poking at
 #
+# On a clean checkout this stages mingw-deps/prefix (packaging/mingw-deps.sh,
+# which downloads) and generates the embedded shader/font headers first. Both
+# are no-ops on a tree that has been built before.
+#
 # Exit codes — deliberately distinct, so a partial pass can't read as a pass:
 #   0  the engine booted, simulated its tics and exited cleanly
 #   1  the build (or syntax sweep) failed
@@ -51,6 +55,24 @@ for arg in "$@"; do
   esac
 done
 
+# ---- 0. preconditions --------------------------------------------------------
+# Both of these exist on a machine that has built the tree before, which is why
+# they went unnoticed until this ran on a clean checkout (a CI runner):
+#   - the upstream SDL2 / SDL2_mixer / Vulkan headers the sweep compiles against
+#   - the generated *.spv.h / *.ttf.h headers r_vulkan.cpp #includes
+# Both steps are no-ops once satisfied, so this costs nothing on a warm tree.
+command -v x86_64-w64-mingw32-gcc >/dev/null || {
+  echo "windows-smoke.sh: mingw cross-compiler not found" >&2; exit 1; }
+
+if [ "$SYNTAX_ONLY" = 1 ]; then
+  "$REPO/packaging/mingw-deps.sh" --headers-only || exit 1
+else
+  "$REPO/packaging/mingw-deps.sh" || exit 1
+fi
+
+echo "==> Generating the embedded shader / font headers..."
+make -C "$ENG" generated >/dev/null || { echo "FAIL: could not generate the embedded headers"; exit 1; }
+
 # ---- 1. compile sweep --------------------------------------------------------
 # -fsyntax-only over every TU catches the whole class that bit us (a POSIX-only
 # call, a header glibc supplies transitively and mingw does not) in seconds,
@@ -58,8 +80,6 @@ done
 # full build follows, because it reports EVERY broken file rather than stopping
 # at the first one make happens to schedule.
 echo "==> Syntax-checking every source file against the Windows compiler..."
-command -v x86_64-w64-mingw32-gcc >/dev/null || {
-  echo "windows-smoke.sh: mingw cross-compiler not found" >&2; exit 1; }
 INC=(-I"$WIN_PREFIX/include" -I"$WIN_PREFIX/include/SDL2" -I"$ENG")
 SWEEP_FAIL=0
 for f in "$ENG"/*.c; do

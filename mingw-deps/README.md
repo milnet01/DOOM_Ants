@@ -16,35 +16,24 @@ sudo zypper install wine
 
 ## 2. Libraries → `mingw-deps/prefix/`
 
-Versions below were current at last update (SDL2 2.32.10, SDL2_mixer 2.8.2,
-Vulkan-Headers 1.4.350.0); bump to the latest stable when refreshing.
-
 ```sh
-cd mingw-deps
-
-# Download official upstream mingw dev packages + Vulkan headers/loader def
-curl -L -o SDL2-mingw.tar.gz        https://github.com/libsdl-org/SDL/releases/download/release-2.32.10/SDL2-devel-2.32.10-mingw.tar.gz
-curl -L -o SDL2_mixer-mingw.tar.gz  https://github.com/libsdl-org/SDL_mixer/releases/download/release-2.8.2/SDL2_mixer-devel-2.8.2-mingw.tar.gz
-curl -L -o vulkan-headers.tar.gz    https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/vulkan-sdk-1.4.350.0.tar.gz
-curl -L -o vulkan-1.def             https://raw.githubusercontent.com/KhronosGroup/Vulkan-Loader/vulkan-sdk-1.4.350.0/loader/vulkan-1.def
-tar xzf SDL2-mingw.tar.gz && tar xzf SDL2_mixer-mingw.tar.gz && tar xzf vulkan-headers.tar.gz
-
-# Assemble the unified prefix the Makefile expects
-PREFIX=$PWD/prefix
-mkdir -p $PREFIX/include $PREFIX/lib $PREFIX/bin
-cp -r SDL2-2.32.10/x86_64-w64-mingw32/include/SDL2          $PREFIX/include/
-cp    SDL2-2.32.10/x86_64-w64-mingw32/lib/*.a               $PREFIX/lib/
-cp    SDL2-2.32.10/x86_64-w64-mingw32/bin/SDL2.dll          $PREFIX/bin/
-cp -r SDL2_mixer-2.8.2/x86_64-w64-mingw32/include/SDL2/*    $PREFIX/include/SDL2/
-cp    SDL2_mixer-2.8.2/x86_64-w64-mingw32/lib/*.a           $PREFIX/lib/
-cp    SDL2_mixer-2.8.2/x86_64-w64-mingw32/bin/*.dll         $PREFIX/bin/
-cp -r Vulkan-Headers-vulkan-sdk-1.4.350.0/include/vulkan    $PREFIX/include/
-cp -r Vulkan-Headers-vulkan-sdk-1.4.350.0/include/vk_video  $PREFIX/include/
-
-# The Vulkan loader (vulkan-1.dll) ships with the user's GPU driver, so we only
-# need an import library to link against — generate it from the official .def.
-x86_64-w64-mingw32-dlltool -d vulkan-1.def -l $PREFIX/lib/libvulkan-1.a -D vulkan-1.dll
+packaging/mingw-deps.sh          # from the repo root; --force to re-stage
 ```
+
+It downloads the official upstream mingw dev packages for SDL2 and SDL2_mixer
+plus the Vulkan headers, assembles the unified prefix the Makefile expects, and
+generates the `vulkan-1` import library from Khronos' own `.def` (the loader
+DLL itself ships with the user's GPU driver, so it is linked but not bundled).
+Re-running it is a no-op once the prefix is complete.
+
+**That script is the single source of truth for the versions** — they are three
+variables at the top of it, deliberately not repeated here, so this README and
+the CI job cannot drift out of step with what actually gets downloaded. Bump
+them to the latest stable within the SDL**2** line (the engine is not SDL3) and
+re-run `packaging/windows-smoke.sh` before committing the change.
+
+Everything the script downloads is unpacked in a temporary directory and thrown
+away; only `prefix/` is left behind.
 
 ## 3. Build + package
 

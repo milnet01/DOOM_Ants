@@ -6,6 +6,18 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **CI now compiles the whole tree against the Windows compiler on every push** (DOOM-0324)
+  The Windows build used to be compiled only when a release was cut, so it
+  could sit broken for months — and it did: two Windows-only compile errors
+  accumulated silently across the 193 commits between 0.5.0 and 0.6.0. A
+  second CI job now syntax-checks every source file with the Windows
+  compiler on every push, in parallel with the Linux job, in about eight
+  seconds. New `packaging/mingw-deps.sh` stages the upstream SDL2 /
+  SDL2_mixer / Vulkan headers it needs and is now the one place those
+  version numbers are written down.
+
 ## [0.6.0] - 2026-08-05
 
 ### Added

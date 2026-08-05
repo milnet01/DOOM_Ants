@@ -183,7 +183,7 @@ endif
 # it and rebuilds, switching nothing rebuilds nothing.
 DEVSTAMP=$(O)/.dev-$(if $(filter 1,$(DEV)),on,off)
 
-.PHONY:	all clean windows test nee-test compile_commands.json
+.PHONY:	all clean windows generated test nee-test compile_commands.json
 
 all:	 $(O)/$(BIN)
 
@@ -263,6 +263,12 @@ $(O)/$(BIN):	$(OBJS) $(O)/i_main.o
 	$(CXX) $(LDFLAGS) $(OBJS) $(O)/i_main.o \
 	-o $(O)/$(BIN) $(LIBS) $(EXTRALIBS)
 
+# The generated headers r_vulkan.cpp #includes: the shaders (GLSL -> SPIR-V -> C
+# byte array) and the bundled menu font. Broken out as its own phony target so a
+# syntax-only check, which never links, can materialise just these -- on a fresh
+# clone they don't exist yet and every #include of them fails.
+generated:	$(SHADER_HDRS) $(ASSET_HDRS)
+
 # ---- Windows cross-build (DOOM-0006) ----
 # mingw-w64 cross-compiler (zypper: mingw64-cross-gcc{,-c++}) plus upstream
 # SDL2 / SDL2_mixer / Vulkan dev libs staged under ../mingw-deps/prefix (see
@@ -272,7 +278,7 @@ $(O)/$(BIN):	$(OBJS) $(O)/i_main.o
 # driver, so it is linked (-lvulkan-1) but not bundled. Static libgcc/libstdc++
 # keep the GCC runtime out of the distributable.
 WIN_PREFIX=../mingw-deps/prefix
-windows:	$(SHADER_HDRS) $(ASSET_HDRS)
+windows:	generated
 	mkdir -p mingw
 	$(MAKE) O=mingw BIN=doom_ants.exe \
 	  CC=x86_64-w64-mingw32-gcc \
