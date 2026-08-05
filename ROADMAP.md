@@ -3122,7 +3122,14 @@ parked ideas (💭 considered) until we commit to and design each one.
   120), so the seam pixels were isolated as "the fix moved it AND the
   control did not" -- 480 px at yaw 120, 900 px at yaw 150, every one of
   them in the top eighth of the frame. Quote that pairing, not the raw
-  signal, for any A/B at these angles.
+  signal, for any A/B at these angles; ab_diff.py now prints it as its
+  EFFECT row so it does not have to be rebuilt by hand.
+  Tooling kept, not thrown away: scripts/wad_seg_probe.py is the probe that
+  found this, and it found it from the WAD alone -- before any engine edit
+  or any captured frame. Start there on the next "there is a crack in the
+  world" report; a map-data answer costs seconds. Its header carries the
+  full account, and `wad_seg_probe.py wads/doom.wad E1M1 -- 3274 -3353`
+  reproduces every number quoted above.
   Regression lock: tests/seg_project_test.cpp carries E1M1's real numbers
   and asserts BOTH halves -- that the stored vertex really is off the line
   by the measured amount, and that projecting puts it back -- so it would

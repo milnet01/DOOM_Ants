@@ -36,6 +36,23 @@ for name, d in (("SIGNAL on-vs-off ", sig), ("NOISE  on-vs-ctrl", noise)):
     print(f"{name}: mean {d.mean():6.2f}/255  max {d.max():6.1f}  "
           f"pixels>2: {100 * (d > 2).mean():5.1f}%")
 
+# DOOM-0180: the two rows above are enough only while the noise row is near zero.
+# At some camera angles it is not -- a same-build control moved up to 88/255 at
+# one E1M1 yaw -- and then a hairline effect is buried in both the mean and the
+# max, and the honest verdict from those two rows alone is "inconclusive".
+# What survives is the pixels the change moved that the control did NOT. On the
+# two noisy DOOM-0180 views that isolated 480 and 900 px, every one of them on
+# the ceiling where the seam was, and turned an ambiguous A/B into a clean one.
+# Quote THIS whenever NOISE is not near zero; the bounding box says where to crop.
+real = (sig > 20) & (noise < 5)
+n = int(real.sum())
+print(f"EFFECT moved-by-change-but-not-by-control: {n} px", end="")
+if n:
+    ys, xs = np.where(real)
+    print(f"  x {xs.min()}-{xs.max()}  y {ys.min()}-{ys.max()}")
+else:
+    print()
+
 bh, bw = H // 8, W // 12
 for name, d in (("SIGNAL", sig), ("NOISE", noise)):
     print(f"\n{name} block map (mean delta/255, top row first):")
