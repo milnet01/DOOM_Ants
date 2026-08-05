@@ -8044,6 +8044,65 @@ parked ideas (💭 considered) until we commit to and design each one.
   deleting the tint is already a strict improvement on the shipped build --
   the user said so looking at it. It loses the glow, which is a feature we
   never had, rather than regressing one we did.
+  Progress (2026-08-05): HALF SHIPPED as 16b073a -- the tint is gone, the
+  density stays, and the user signed the result off on hardware ("Yay, it
+  is fixed") from the E1M1 start-room window. Mid-pool at distance
+  150,182,144 -> 180,188,178, landing on the rim beside it (178,182,173).
+  make test green, -rtverify PASS (0.2059%, furnace 0.000000). What remains
+  is the GLOW, and the user's brief for it is below.
+
+  USER DESIGN BRIEF for the remaining half (2026-08-05, verbatim intent):
+    - The ask is that "the goo casts a light onto the surrounding area
+      (which would include fog)" -- so this is CAST LIGHT, not a medium
+      tint painted on. That is a different mechanism from what L4 shipped
+      and it is why the L4 approach could never satisfy it.
+    - MUTED, explicitly: "Many of the DOOM with ray tracing videos I have
+      watched really accentuate the glow of the pools. I want a more muted
+      view but I still want it to cast light." So the reference renders are
+      an ANTI-target on intensity. Tune down, not up.
+    - OUTDOORS the glow lands on "the fog and the pool walls" -- the
+      surrounding geometry and the air, not the whole sky-lit courtyard.
+    - INDOORS, "especially in darker rooms", it should behave as "normal
+      bounce light which in turn lights a room a little bit" -- i.e. GI,
+      not a special case. The indoor/outdoor difference is one of degree
+      and should fall out of the existing sky-vs-seep weighting rather than
+      being written in as a branch.
+    - Explicit permission to stop: "if we can't get that right, then let's
+      move on as it looks great as it currently is." The shipped half is an
+      acceptable resting point. Do NOT ship a bad glow to close the item.
+
+  WHAT THIS MEANS FOR THE DESIGN, and it re-points it: framing this as "put
+  kGooTint back, per cell" is probably WRONG, or at least incomplete. A
+  medium tint multiplies the SKY term (marchFog's Ls line), so it makes air
+  greener wherever sky light already reaches -- which is brightest outdoors
+  and nearly absent in the dark indoor rooms where the user wants the
+  strongest effect. It has the gradient backwards.
+
+  The machinery the brief actually asks for mostly EXISTS and is already
+  diagnosed in this bullet: liquids are admitted to BuildStaticEmitterSet
+  as emitters (any material with Le > 0, including flats, r_vulkan.cpp
+  :7355-7360) and BuildFogLightGrid clusters that same set -- measured 174
+  emitter tris -> 107 clustered lights on E1M1. torchInscatter already
+  in-scatters those emitters into the fog per march sample, ungated and
+  UNTINTED by design (user decision 2026-08-03: a shaft keeps its emitter's
+  own Le). So a nukage pool should ALREADY be lighting the fog green.
+  Verify why it does not read: this bullet's own earlier note says outdoors
+  skyExposure is 1.0 so the neutral sky ambient swamps it, and
+  kFogLightsPerCell is only 2 -- a pool clustered into 107 lights may be
+  losing its slots to brighter torches. Both are measurable before any
+  design work. Start there rather than at a new grid.
+
+  Same question for the surfaces: DOOM-0083/DOOM-0183 gave liquids a
+  forced-constant Le, so the pool walls and a dark room's GI should already
+  receive some. Measure what they get before adding a mechanism.
+
+  SEQUENCING NOTE: the user has separately approved bloom (DOOM-0331) and
+  assumed it would deliver this glow. It will not, and that was explained
+  -- bloom spreads light already on screen, and at distance the fogged pool
+  has nothing bright left to spread. Bloom helps the CLOSE-range case (a
+  bright pool bleeding a halo into the air above it) and is complementary,
+  not a substitute. Do not let bloom's arrival be mistaken for closing
+  this.
 
 - 📋 [DOOM-0331] **Bloom on the HDR views, so emissive things read as bright rather than merely light-coloured.**
   Found reviewing GZDoom at the user's request. GZDoom ships

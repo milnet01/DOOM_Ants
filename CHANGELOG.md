@@ -25,6 +25,16 @@ All notable changes to DOOM_Ants are documented here. The format follows
   SDL2_mixer / Vulkan headers it needs and is now the one place those
   version numbers are written down.
 
+### Fixed
+
+- **Distant toxic pools now fade into the fog like every other surface** (DOOM-0330)
+  A nukage pool used to hold one flat green all the way to its far edge
+  while the walls and mountains behind it greyed out correctly. The fog
+  was reaching it the whole time — it was fading into green fog rather
+  than grey, at a shade too close to the goo's own to look like fading at
+  all. Pools now haze over with distance at the same rate as the ground
+  beside them. The green glow in the air above the goo is still to come.
+
 ## [0.6.0] - 2026-08-05
 
 ### Added
