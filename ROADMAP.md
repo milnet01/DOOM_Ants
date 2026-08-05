@@ -7771,9 +7771,48 @@ parked ideas (💭 considered) until we commit to and design each one.
      visible span the colour holds at RGB ~(115, 207, 87), varying by
      under 2 levels from near edge to far.
 
-     **CAUSE NOT YET ESTABLISHED.** Two candidates were proposed and both
-     were falsified against the source; they are recorded so the next
-     session does not re-propose them:
+     **CAUSE ESTABLISHED 2026-08-05 (second session), by a build A/B, and
+     it is the SAME defect as half 2 below.** `kGooTint` multiplies the
+     in-scatter of every pixel whose PRIMARY HIT is nukage
+     (`mediumTint = kGooTint`, pathtrace.comp:1125-1128), so a pool pixel's
+     whole march -- including air nowhere near the goo -- returns GREEN
+     `fog.rgb`. The pool does not fail to fade; it fades into green fog
+     rather than grey, at a hue close enough to its own that the fade is
+     invisible. That reconciles the contradiction recorded below exactly:
+     in-scatter IS added while the pool APPEARS un-attenuated, because what
+     replaces the surface is the same colour as the surface.
+
+     Two one-token probe builds, same fixture, same config:
+
+     - `mediumTint` forced to `vec3(1.0)` for goo -> the pool washes out
+       with the rest of the scene and its far edge fades further than its
+       near edge. Mid-pool mean RGB (132,173,120) -> (174,181,170); the
+       green cast g-r collapses 41 -> 7 and the pool lands on the
+       surrounding fog's own brightness (~180).
+     - `areaMult` forced to 0.0 (the goo profile's extra density, the other
+       half of the same `if`) -> (127,169,114), g-r 42. **No effect.** The
+       density is not the mechanism; the tint is all of it.
+
+     This also falsifies the third suspect the previous session named:
+     `fetchFog`'s position-guided upsample (svgf_composite.comp:92-120) is
+     untouched by both probes and the defect still vanishes, so the fetch
+     is not implicated. Do not re-open it on the grazing-incidence argument.
+
+     Fixture (reproduces the user's photo; the 08-05 one stood IN the pool
+     and was too short to show a gradient): `-warpto 1400 -3300 0` on E1M1,
+     the courtyard's west edge looking east across sector 0 -- near edge
+     ~120 units, far edge ~730, wall behind ~1340.
+
+     **NEW TRAP, and it cost this session two captures: `-shotverify` PINS
+     `rb_fog = 1`** along with brightness / flashlight / every effect toggle
+     (DOOM-0208's golden pin, r_vulkan.cpp:9466-9478). A fog A/B taken
+     through `-shotverify` photographs the SAME frame twice -- measured mean
+     abs diff 0.0001 between an `rt_fog 2` and an `rt_fog 0` config. Use
+     `-devshot N` (pins nothing) for any look investigation; r_vulkan.cpp
+     :9914-9918 says so in as many words.
+
+     Superseded: the two candidates below were falsified against the source
+     by the previous session, and are kept so they are not re-proposed:
 
      - *"The emission is too bright to veil, so the tonemap compresses
        the attenuation away."* FALSE. `kNukageLe` is
@@ -7786,27 +7825,14 @@ parked ideas (💭 considered) until we commit to and design each one.
      - *"The pool surface is simply not fogged."* FALSE. Fog moves pool
        pixels by 39.4/255, so the fold is reaching them.
 
-     What the two solid facts imply is a contradiction worth chasing:
-     in-scatter IS being added to pool pixels while transmittance appears
-     to stay ~1 on them. Those share the same sigma along the same ray,
-     so they cannot honestly disagree -- which points at the fog FETCH
-     rather than the march. Prime suspect, unverified: `fetchFog`'s
-     position-guided upsample (svgf_composite.comp:92-120). At a grazing
-     angle across a flat pool, neighbouring half-res texels' hit points
-     are hundreds of world units apart, so every tap's
-     `exp(-dist/kFogDepthSigma)` weight (sigma = 256) collapses and the
-     fetch falls back to plain bilinear -- over exactly the geometry where
-     the four taps disagree most. A floor seen at grazing incidence is
-     the worst case for that guide, and a pool is always seen that way.
-
-     NEXT DIAGNOSTIC (do this before proposing a fix): reproduce the
-     user's own view rather than a stand-in -- they are looking OUT of
-     the E1M1 start room down a long sightline, whereas the fixture used
-     on 2026-08-05 (`-warpto 1831 -3254 90`) stands IN the pool looking
-     across it, which spans too little distance to show a gradient either
-     way. Then read the fog buffer directly (an rt_view debug mode showing
-     `fog.a`) instead of inferring transmittance from the composited
-     image, which is what made both wrong readings above look plausible.
+     Both readings were sound; the inference drawn from them was not.
+     Transmittance was never ~1 on the pool -- it falls exactly as it does
+     on the rim beside it. What the composited image could not show is that
+     the in-scatter replacing the surface is the SAME hue as the surface,
+     which is why inferring transmittance from a composite is the step that
+     made two wrong causes look plausible. The build A/B above measures the
+     term directly and needs no fog-buffer debug view; the `fog.a` rt_view
+     mode the previous session scheduled is NOT needed for this defect.
 
   2. The AIR above the pool is never tinted, and that is the defect. L4's
      area profile is keyed on `FogHit.ctrlFlags`, which carries the
@@ -7825,11 +7851,21 @@ parked ideas (💭 considered) until we commit to and design each one.
   ambient dominates and swamps whatever green in-scatter the emitters do
   contribute.
 
-  Fix direction for half 2 (not yet designed): make the area term sample
-  the medium along the march -- per-sample sector/flat lookup, or fold
-  liquid emitters' colour into the in-scatter with a gain that survives
-  the sky term -- instead of reading the primary hit's flags once.
-  Belongs with the DOOM-0011 spec's section 4.4 lights+bakes split.
+  ONE fix closes both halves, because both halves ARE §4.5's declared
+  relaxation -- "the room reads goo-foggy when you are looking at or across
+  the goo" -- read back out in each direction. Keyed on the primary hit, a
+  pool pixel tints its ENTIRE march green (half 1, air nowhere near goo)
+  while a wall-across-the-pool pixel tints NONE of it (half 2, air directly
+  over the goo). Make `areaMult` and `mediumTint` a function of the sample
+  position `p` instead of the hit: a per-cell goo-ness grid baked at level
+  load, tapped per march sample, exactly as `uSeepField` already answers
+  "is there sky above this XY" for the same loop. DOOM is flat-mapped, so
+  goo-ness is a pure function of XY and decidable before the first frame --
+  the same substitution DOOM-0276 and DOOM-0289 made. Then `mediumTint =
+  mix(vec3(1), kGooTint, goo(p.xy))` and `areaMult = goo(p.xy)`, and both
+  halves fall out. Belongs with the DOOM-0011 spec's section 4.4
+  lights+bakes split; needs a spec before it is built (§4.1's invariant is
+  being restored, not bent, so the relaxation text goes too).
 
   Density itself is SIGNED OFF as-is; do not thin it while fixing this.
   The -shotcompare golden re-bless (DOOM-0202) is deliberately HELD until
