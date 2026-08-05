@@ -42,6 +42,7 @@
 #include "i_system.h"   // I_Error
 #include "w_wad.h"      // W_CacheLumpNum/Name
 #include "z_zone.h"     // PU_CACHE
+#include "seg_project.h" // DOOM-0180 RB_ProjectOnLine (seg -> its linedef's line)
 #include "r_mesh.h"
 
 // Texture geometry tables from r_data.c (no public header declares them).
@@ -152,6 +153,26 @@ static void sky_push_tri(builder_t* b, rb_vertex_t a, rb_vertex_t c, rb_vertex_t
     b->sky[b->skycount++] = d;
 }
 
+// DOOM-0180: a seg's endpoints, snapped back onto its linedef's exact line.
+//
+// Use this for EVERY piece of mesh geometry built along a seg -- walls and the
+// half-planes the floor/ceiling caps are clipped to alike. The stored endpoints
+// are integers, so a node-builder split of a diagonal linedef rounds off the true
+// line, and because the two sides are split independently they trace different
+// polylines; a wall on one and the neighbouring caps on the other then miss each
+// other by up to a unit and leave a hole. seg_project.h has the full account.
+static void seg_line_xy(const seg_t* seg, float* x1, float* y1,
+                        float* x2, float* y2)
+{
+    const line_t* ld = seg->linedef;
+    double ax = ld->v1->x / (double)FRACUNIT, ay = ld->v1->y / (double)FRACUNIT;
+    double dx = ld->dx    / (double)FRACUNIT, dy = ld->dy    / (double)FRACUNIT;
+    RB_ProjectOnLine(ax, ay, dx, dy, seg->v1->x / (double)FRACUNIT,
+                     seg->v1->y / (double)FRACUNIT, x1, y1);
+    RB_ProjectOnLine(ax, ay, dx, dy, seg->v2->x / (double)FRACUNIT,
+                     seg->v2->y / (double)FRACUNIT, x2, y2);
+}
+
 // DOOM-0141: emit a sky-border wall (the vertical gap between two open-sky sectors of
 // different ceiling height, where classic DOOM shows sky in place of an upper
 // texture) as sky backdrop geometry. Fills the [zb, zt] span across the seg so the
@@ -159,15 +180,16 @@ static void sky_push_tri(builder_t* b, rb_vertex_t a, rb_vertex_t c, rb_vertex_t
 // sky, UVs unused) so both the tracer and the raster occluder pass paint it as sky.
 static void emit_sky_wall(builder_t* bld, const seg_t* seg, fixed_t zb, fixed_t zt)
 {
-    float x1 = seg->v1->x / (float)FRACUNIT, y1 = seg->v1->y / (float)FRACUNIT;
-    float x2 = seg->v2->x / (float)FRACUNIT, y2 = seg->v2->y / (float)FRACUNIT;
+    float x1, y1, x2, y2;
     float zbf = zb / (float)FRACUNIT, ztf = zt / (float)FRACUNIT;
-    float dx = x2 - x1, dy = y2 - y1;
-    float len = sqrtf(dx * dx + dy * dy);
-    float nx = len > 0.0f ? -dy / len : 0.0f;
-    float ny = len > 0.0f ?  dx / len : 0.0f;
+    float dx, dy, len, nx, ny;
     rb_vertex_t a, b, c, d;
     if (ztf <= zbf) return;
+    seg_line_xy(seg, &x1, &y1, &x2, &y2);
+    dx = x2 - x1; dy = y2 - y1;
+    len = sqrtf(dx * dx + dy * dy);
+    nx = len > 0.0f ? -dy / len : 0.0f;
+    ny = len > 0.0f ?  dx / len : 0.0f;
     a = mkv(x1, y1, zbf, nx, ny, 0.0f, 0.0f, 0.0f, skytexture, RB_MESH_SKYDOME, 1.0f);
     b = mkv(x2, y2, zbf, nx, ny, 0.0f, 0.0f, 0.0f, skytexture, RB_MESH_SKYDOME, 1.0f);
     c = mkv(x2, y2, ztf, nx, ny, 0.0f, 0.0f, 0.0f, skytexture, RB_MESH_SKYDOME, 1.0f);
@@ -192,8 +214,6 @@ static void emit_wall(builder_t* bld, seg_t* seg, fixed_t bottomz, fixed_t topz,
                       int texnum, int flags, int pegkind,
                       int botsec, int botplane, int topsec, int topplane)
 {
-    vertex_t* v1;
-    vertex_t* v2;
     float x1, y1, x2, y2, zb, zt;
     float dx, dy, len, nx, ny;
     float u0, u1, vtop, vbot, light, vtexoff;
@@ -209,10 +229,7 @@ static void emit_wall(builder_t* bld, seg_t* seg, fixed_t bottomz, fixed_t topz,
     if (topz < bottomz)    return;   // inverted: skip
     if (texnum <= 0)       return;   // "-" / no texture: nothing to draw here
 
-    v1 = seg->v1;
-    v2 = seg->v2;
-    x1 = v1->x / (float)FRACUNIT; y1 = v1->y / (float)FRACUNIT;
-    x2 = v2->x / (float)FRACUNIT; y2 = v2->y / (float)FRACUNIT;
+    seg_line_xy(seg, &x1, &y1, &x2, &y2);
     zb = bottomz / (float)FRACUNIT; zt = topz / (float)FRACUNIT;
 
     // Front-facing normal: the seg's front sector is on the right-hand side
@@ -434,10 +451,12 @@ static void emit_subsector_caps(builder_t* bld, int ssnum, const poly_t* cell)
     for (i = 0; i < ss->numlines; i++)
     {
         seg_t* sg = &segs[ss->firstline + i];
-        float  ox = sg->v1->x / (float)FRACUNIT, oy = sg->v1->y / (float)FRACUNIT;
-        float  dx = (sg->v2->x - sg->v1->x) / (float)FRACUNIT;
-        float  dy = (sg->v2->y - sg->v1->y) / (float)FRACUNIT;
-        clipped = clip_poly(&clipped, ox, oy, dx, dy, 1);   // keep front (sector) side
+        float  ox, oy, ex, ey;
+        // DOOM-0180: the seg's linedef line, NOT its stored (rounded) endpoints --
+        // the neighbouring sector's cap clips to this same line from the other
+        // side, and they only meet exactly if both use the linedef's own.
+        seg_line_xy(sg, &ox, &oy, &ex, &ey);
+        clipped = clip_poly(&clipped, ox, oy, ex - ox, ey - oy, 1);  // keep front side
         if (clipped.n < 3) return;                          // trimmed to nothing
     }
 

@@ -3045,7 +3045,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   Progress (2026-07-14, 58bb59c): implemented for the Ultra RT view. A first-party, procedurally-authored, seamless CC0 grunge map (scripts/make_grunge.py -> assets/ultra/overlays/grunge.png) is sampled by WORLD position (dominant-axis projection) and multiplied over usePBR HD surfaces in pathtrace.comp modes 4/6, breaking the base tiling. New misc5 push-constant slot carries the overlay's bindless id; loaded as one extra bindless image in EnsureHdMaterials. Centred blend = net-neutral exposure; kGrimeStrength (0.32) + kGrimeWorldScale (1/384) are shader-const playtest knobs. Paletted/Classic untouched. Also fixed a latent -rtverify (mode 5) push-constant drift the change surfaced. AWAITING user play-test to tune strength/scale, then flip to shipped + CHANGELOG.
   Resolved (2026-07-17): shipped as the filth layer of DOOM-0181. The world-position grunge overlay (misc5.x, world-projected) became the grounding term of the DOOM-0181 stain system; graduates ✅ per its ship-gate (DOOM-0181 accepted). See docs/specs/DOOM-0181-detile-grime.md §4.3.
 
-- 🚧 [DOOM-0180] **Thin bright diagonal seam on ceilings in the Ultra RT view.**
+- ✅ [DOOM-0180] **Thin bright diagonal seam on ceilings in the Ultra RT view.**
   A thin, bright, diagonal line appears on dark ceiling flats in E1M1 Ultra (green
   room; also faintly in the wood-panel room). NOT from DOOM-0042 HD materials —
   ceilings are not heroed and run the paletted path (usePBR=0, byte-identical). Most
@@ -3081,15 +3081,47 @@ parked ideas (💭 considered) until we commit to and design each one.
   missing texture (emit_wall already drops the "-" side, r_mesh.c:566),
   not atlas bleed (the paletted atlas samples NEAREST with no padding,
   r_mesh.c:1541-1543).
-  STILL OPEN -- why the gap exists. The lower wall spans
-  front->floorheight..back->floorheight and the adjoining floor cap sits
-  at that same floorheight, so the two should meet exactly; the suspect is
-  the subsector floor cap being clipped a hair short of the linedef by the
-  BSP carve (r_mesh.c:588 "clipping a map-sized quad down through the node
-  tree"), i.e. a T-junction rather than a height mismatch. The gap reads
-  as a wedge that widens toward the camera, consistent with a small
-  world-space gap in perspective. Next step is to dump the cap polygon and
-  the wall quad's shared edge at this linedef and compare vertices.
+  WAS STILL OPEN -- why the gap exists. The suspect recorded here was the
+  BSP carve clipping the cap a hair short of the linedef (r_mesh.c:588);
+  that was WRONG, and the carve is correct. The answer was one level
+  lower, in the map data itself. Do not re-follow the carve.
+  Resolved (2026-08-05): DOOM stores every vertex as a 16-bit INTEGER, so
+  when the node builder SPLITS a linedef the split vertex is rounded to
+  whole units. On an axis-aligned linedef that is exact; on a DIAGONAL one
+  it lands off the true line. Worse, the two sides of a linedef are split
+  independently at different points, so the front segs and the back segs
+  trace two DIFFERENT polylines between the same endpoints -- and r_mesh.c
+  built each wall quad on one side's seg while clipping the neighbouring
+  floor/ceiling caps to the other's. The two therefore missed each other
+  by that rounding, leaving the hole.
+  Measured straight from doom.wad, E1M1: 6 of its 180 two-sided linedefs
+  trace mismatched polylines, worst 0.97 units -- linedef 193, the pit
+  ledge, worst at (3215.8,-3404.6), 78 units from the 2026-08-04 camera
+  that photographed the seam (its back-side split vertex v442 sits 1.0165
+  units off the line; the front side's is 0.0549). ALL SIX are diagonal;
+  not one of the map's 381 axis-aligned linedefs mismatches. That is why
+  the seam was always diagonal, which the original 2026-07-14 report said
+  and nothing since had explained.
+  Fix: seg_project.h (RB_ProjectOnLine) + r_mesh.c seg_line_xy project
+  every seg endpoint onto its linedef's exact line, used by emit_wall,
+  emit_sky_wall AND the emit_subsector_caps half-plane clip, so both sides
+  build on one shared line. emit_subsector_caps caps the floor and the
+  ceiling from the SAME carved polygon, so the ceiling seam of the
+  original report closes by the same edit as the ledge.
+  Verified headless: E1M1 -warpto 3274 -3353 200, Ultra RT, fog off,
+  -inspect -freeze. Seam gone by eye; signal max 72.3/255 against a
+  same-build control noise floor of max 4.3, and 0.3% of pixels moved with
+  every one of them at the ledge. -rtverify PASS and UNCHANGED by the fix
+  (rel-MSE 0.2059% pre / 0.2058% post, bar 0.50%; white furnace 0.000000).
+  make + make test green.
+  Regression lock: tests/seg_project_test.cpp carries E1M1's real numbers
+  and asserts BOTH halves -- that the stored vertex really is off the line
+  by the measured amount, and that projecting puts it back -- so it would
+  also notice if a future WAD-loading change moved the input. Confirmed to
+  fail (8 checks) with RB_ProjectOnLine stubbed to the old behaviour.
+  Not swept: RB_BuildProbes and RB_BuildSeepField also read seg vertices,
+  but only to average them into a centroid, where a sub-unit shift cannot
+  matter. Left alone deliberately.
 
 - ✅ [DOOM-0181] **Stochastic per-tile de-tiling for HD surfaces so walls/floors stop looking copy-pasted.**
   **Layman:** Stops HD walls and floors in the ray-traced view looking like the same tile pasted over and over — each repeat is secretly nudged/mirrored and keyed to its world position, so one wall stops cloning itself and different walls stop cloning each other.

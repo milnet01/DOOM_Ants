@@ -27,6 +27,17 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Sealed the thin bright diagonal seam on ceilings and ledges in the Solid and Ultra views** (DOOM-0180)
+  DOOM stores map vertices as whole numbers, so where the level's own
+  geometry data splits a DIAGONAL wall in two, the split point gets
+  rounded — and the two sides of that wall round to different places.
+  The 3D views built the wall from one side's numbers and the floor and
+  ceiling around it from the other's, so the two stopped just short of
+  each other and left a real hairline hole you could see the sky
+  through. Every seg is now snapped back onto its wall's exact line, so
+  both sides agree and the hole closes. Only diagonal walls were ever
+  affected, which is why the seam was always a diagonal line.
+
 - **Distant toxic pools now fade into the fog like every other surface** (DOOM-0330)
   A nukage pool used to hold one flat green all the way to its far edge
   while the walls and mountains behind it greyed out correctly. The fog
