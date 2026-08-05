@@ -8159,6 +8159,17 @@ parked ideas (💭 considered) until we commit to and design each one.
   from the headless captures rather than on hardware. 3.0 and 5.0 were the
   alternatives offered and both were captured. A hardware play-test is still
   owed before this half is called shipped.
+  Instrument note, so the next session re-measures in minutes rather than
+  rebuilding it: the falsification above came from a TEMPORARY env-gated dump
+  at the tail of BuildFogLightGrid (r_vulkan.cpp), removed before commit.
+  `RB_FOGPROBE="x,y,radius"` printed (a) every clustered light within the
+  radius as pos/intensity/lum/reach, (b) the PACKED per-cell slots there --
+  which light won each of the kFogLightsPerCell slots, with its baked vis --
+  and (c) a count of nukage- vs lava-coloured clusters, identified by Le
+  COLOUR RATIO, which works precisely because ForceLiquidEmissive makes a
+  liquid's Le a forced constant. Rebuild that rather than reasoning about the
+  grid from the source: the aggregate line the bake already prints cannot
+  show slot competition, which was the whole question.
 
 - 📋 [DOOM-0331] **Bloom on the HDR views, so emissive things read as bright rather than merely light-coloured.**
   Found reviewing GZDoom at the user's request. GZDoom ships
@@ -8323,3 +8334,26 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Step out of a dark corridor into daylight and the view is dazzling for a second before settling — and stepping back in, you are briefly blind. It makes dark places feel more dangerous.
   Kind: feature.
   Source: user-decision-2026-08-05 (upstream review follow-up).
+
+- 📋 [DOOM-0335] **-devshot captures escape .gitignore when the game is launched from the repo root.**
+  Found while capturing the DOOM-0330 glow A/Bs (2026-08-05).
+
+  .gitignore:68 ignores `linuxdoom-1.10/dev-shots/`, but rb_devshot_path
+  creates `dev-shots/` relative to the PROCESS WORKING DIRECTORY, not to the
+  binary. Both run-doom-ants.sh and every headless capture recipe in the
+  memory notes launch from the REPO ROOT, so the directory that actually
+  fills up is `<repo>/dev-shots/` -- which no rule covers. `git status` then
+  reports it untracked forever, and a careless `git add -A` would commit
+  multi-megabyte PNGs.
+
+  Verified: `git check-ignore -v dev-shots/` returns nothing, and 7 captures
+  sat there untracked at the end of the session.
+
+  Fix is one line -- make the rule root-relative-anywhere (`dev-shots/`
+  rather than `linuxdoom-1.10/dev-shots/`), which covers both launch
+  directories. Kept as a bullet rather than done inline because it is
+  unrelated to the DOOM-0330 commits it was found during, and CLAUDE.md
+  rule 11 says stay in the lane of the request.
+  **Layman:** Developer screenshots pile up as untracked files in the project folder instead of being ignored, because the ignore rule guesses the wrong folder.
+  Kind: fix.
+  Source: in-session-2026-08-05.
