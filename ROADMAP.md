@@ -8524,3 +8524,26 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** A code comment says the brightness curve leaves dark and mid tones alone. It doesn't quite — it darkens everything a touch. Harmless today, but the comment would mislead the next person who trusts it.
   Kind: doc-fix.
   Source: in-session-2026-08-07 (found while writing the DOOM-0331 bloom spec).
+
+- 📋 [DOOM-0338] **Clamp rb_fog on use; a hand-edited rt_fog reads past its range.**
+  `rb_fog` is persisted as `rt_fog` in `~/.doomrc` and pushed to the
+  megakernel as `pc.misc6.z` with **no range clamp anywhere**. Verified:
+  grepping `rb_fog` in `r_vulkan.cpp` finds no clamp, no `% 4`, no
+  bounds test. The only guard is display-side, in `m_menu.c`
+  (`fogNames[(rb_fog>=0 && rb_fog<=3) ? rb_fog : 0]`), which protects the
+  menu label and not the value handed to the shader.
+
+  Compare `rb_renderscale`, which IS clamped at both of its use sites
+  (`rb_renderscale < 25 ? 25 : rb_renderscale > 100 ? 100 : ...`). That
+  is the pattern `rb_fog` should follow.
+
+  Not reachable through the menu (`M_ChangeFog` is `(rb_fog + 1) % 4`),
+  so this is a hand-edited-config / corrupt-config path only -- hence
+  `fix` rather than `security`. Worth closing because the fog strength
+  indexes density tables on the shader side.
+
+  Found while specifying DOOM-0331's own `bloom` dial, which needed a
+  clamp precedent to cite and could not use this one.
+  **Layman:** The fog setting in the config file isn't checked for a sensible value. Typing a silly number by hand could make the game read memory it shouldn't. Nobody would hit it by accident — the menu can only produce 0 to 3 — but it costs one line to close.
+  Kind: fix.
+  Source: in-session-2026-08-07 (cold-eyes loop 1 on the DOOM-0331 bloom spec).
