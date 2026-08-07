@@ -8759,6 +8759,42 @@ parked ideas (💭 considered) until we commit to and design each one.
   secrecy, and rewriting public history to retract a page of trailer copy
   would cost every clone a forced re-fetch for no benefit. Say so if the
   wording was actually sensitive and it can be revisited.
+  Correction + progress (2026-08-07, later): the earlier note on this bullet
+  claimed demoreel "discards the target app's stdout (its state dir is
+  cleaned up on exit)". **That mechanism was WRONG.** The output was going to
+  demoreel's own stdout the whole time, mixed in with the printed path — the
+  first capture run here piped it through `tail -12` and the engine's Vulkan
+  lines were plainly in it; the re-run then added `>/dev/null 2>&1` and the
+  absence got blamed on the tool. The dated note above is left as written
+  (it is a record, not a live claim); this is the correction that supersedes
+  it. The demoreel session found the real cause independently, which also
+  means their README's "prints the path and nothing else" had never been true.
+
+  **All three trailer blockers are now closed, verified here on Ultra:**
+
+  - `--app-log <path>` captures the engine's own output: 175 lines including
+    `DOOM-0042: HD load done - 18 material(s), 75 image(s), 213.9 MB`. So the
+    mandatory paletted-fallback check is one flag, and the `sh -c` wrapper the
+    earlier note prescribed is obsolete. demoreel's stdout is now the path
+    alone, so `out=$(demoreel record ...)` is clean.
+  - `--settle N` kills the black lead-in **completely**: without it t=0/1/2 s
+    are pure black (mean 0.00) and the picture arrives at t=3 s; with
+    `--settle 20`, **frame 0 is already the picture** (mean 46.59, 11,607
+    unique colours). No trimming step needed for startup black.
+    Caveat that does NOT bite us but would bite Classic or a future loading
+    screen: `--settle` waits for the display to stop being one flat colour,
+    not for the app to be READY, so anything painted over the black (a cursor,
+    a border) returns it early. DOOM_Ants' Vulkan startup is genuinely uniform
+    black, which is why it works.
+  - `-a` scripted input works on the `--gpu` compositor path (verified by the
+    demoreel session: a click selected a row, a following `key Down` moved the
+    selection, both visible in frames). So scripted input is available as well
+    as demo playback — though a recorded demo stays preferred, since only that
+    gives the SAME run of play across all six tier/view configurations.
+
+  What is left before a take is worth shooting is now purely a LOOK matter,
+  not tooling: the fog/exposure tuning, and whether bloom (DOOM-0331) lands
+  first. Both are on the shot script's open-questions list.
 
 - 📋 [DOOM-0340] **Ultra's non-ray-traced view is labelled "Original (raster)", but it shows the HD art.**
   `m_menu.c`'s mode-name array names the `rb_rtdebug == 0` view
