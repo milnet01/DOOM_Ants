@@ -8303,6 +8303,44 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Make lamps, fireballs and glowing goo bleed a little light into the air around them, the way bright things do in a photo — the single cheapest thing that makes the lighting read as "real".
   Kind: feature.
   Source: upstream-review-2026-08-05 (gzdoom wadsrc/static/shaders/pp).
+  Progress (2026-08-07): spec written and through the rule-14 gate —
+  `docs/specs/DOOM-0331-bloom.md`, **converged by cap at 3 cold-eyes loops**
+  (2 lanes each, 94 findings, 0 dismissed, 84 fixed). NOT yet implemented;
+  no engine code touched. Status: spec draft, awaiting the §10 Q3 answer
+  before L5 can be written.
+
+  Three findings the review caught that would each have shipped a defect:
+
+  1. The bright pass thresholded Rec.709 **luminance** while every
+     threshold and preset was written in linear **magnitude**. Those agree
+     only for greys, so a red fireball or pure-red lava at 4x white
+     (luminance 0.850) would have extracted ZERO, a blue emitter 0.289,
+     while a white wall at 1.0 sat right on the blooming threshold — this
+     bullet's own complaint with the causality reversed. Now thresholds the
+     max channel, which is what `pbrNeutralToneMapping` keys its own
+     compression on.
+  2. `toneEncode()` in `svgf_composite.comp` *contains* the exposure and is
+     local to that shader, so the plan to "move the tone-map out" would have
+     double-exposed the frame and broken the fogged sky (`rt_fog` defaults
+     on, and that branch calls `toneEncode` too).
+  3. The profiler widening needs **ten** sites, not the two first written —
+     including `uint64_t ts[8]`, a stack array `vkGetQueryPoolResults` would
+     have overflowed, and both `printf` sites, whose omission MISLABELS the
+     performance table rather than breaking it.
+
+  **One open question blocks the build**, not just the look: §10 Q3 — the
+  RT threshold is applied post-exposure, so what counts as a light source
+  moves with the player's Brightness slider, while the raster path applies
+  no exposure at all. The answer decides the line L5 writes.
+
+  **Size caveat for whoever implements this.** The spec is 1512 lines and
+  did not converge inside 3 loops; loops 2 and 3 each found new structural
+  draft defects, and 5 of loop 2's 10 CRIT+HIGH were collateral from loop
+  1's own fixes. Recommend splitting it along the raster / RT seam (the
+  raster chain + the dial in one part, the RT tone-map split in the other)
+  before implementing, per global rule 14's split-rather-than-loop guidance.
+  A 10-item editorial tail is filed in the spec's own loop log — fold it in,
+  do not re-review to rediscover it.
 
 - 📋 [DOOM-0332] **1-D shadow maps for point lights in the rasterised view, exploiting DOOM's flat map.**
   Found reviewing GZDoom at the user's request; feeds DOOM-0170's raster
