@@ -8728,3 +8728,36 @@ parked ideas (💭 considered) until we commit to and design each one.
   the command in `sh -c '... > log 2>&1'`. Worth asking for an `--app-log`
   flag; it is the same class as their own "fail loudly" fix (the run
   succeeded, but you cannot tell whether it recorded the RIGHT thing).
+
+- 📋 [DOOM-0340] **Ultra's non-ray-traced view is labelled "Original (raster)", but it shows the HD art.**
+  `m_menu.c`'s mode-name array names the `rb_rtdebug == 0` view
+  **"Original (raster)"**, and that one string serves BOTH 3D tiers. It is
+  accurate for Solid, whose raster view genuinely is DOOM's own art
+  upscaled with PBR/POM on top -- and wrong for Ultra, whose raster view
+  renders the DOOM-0042 HD replacement art. `CLAUDE.md`'s tier table is
+  explicit about the distinction the label erases: **Solid enhances DOOM's
+  own art; Ultra substitutes for it.**
+
+  So a player in Ultra who turns ray tracing off is told they are now
+  looking at the "original" graphics while looking at the replacements.
+
+  Fix: make the name tier-dependent -- "Original (raster)" under Solid,
+  something like "HD (raster)" under Ultra. Note the 320-wide constraint
+  already recorded beside that array ("the longest value here 'Original
+  (raster)' runs off a 320-wide screen"), so a longer string is not free;
+  "HD (raster)" is shorter, which helps.
+
+  Check the same wording in the two other places a view name surfaces
+  before calling this done: the `~`-key debug-cycle label stamped into the
+  frame by `label.comp` / `ModeLabel`, and the Ray Tracing row's own
+  On/Off value (which is fine as-is -- it says nothing about art).
+
+  Found while scripting the trailer (DOOM-0339): its card 9 says "the art
+  remade in high definition" and the very next shot is Ultra with ray
+  tracing off, so the trailer draws attention to exactly this label. Not a
+  blocker for shooting, but it should land before the trailer is
+  published. The shot script is `docs/trailer-script.md` § 4.
+  **Layman:** With ray tracing switched off, Ultra still shows the new high-definition artwork -- but the menu calls that view "Original", which tells the player the opposite of what they are looking at.
+  Kind: ux.
+  Lanes: menu, ux.
+  Source: user-request-2026-08-07 (trailer scripting, DOOM-0339).
