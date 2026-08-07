@@ -8637,18 +8637,21 @@ parked ideas (💭 considered) until we commit to and design each one.
   injection needed while the camera rolls. `-warp E M` gets straight into a
   level meanwhile.
 
-  **COPYRIGHT, which the user flagged and which gates YouTube not the
-  website.** The engine is ours under GPL v2; `doom.wad`'s art, music and
-  level data are id Software's and are NOT in this repo for exactly that
-  reason. A trailer showing commercial DOOM assets -- and especially the
-  music -- is someone else's copyrighted material regardless of how the
-  engine is licensed, and DOOM_Ants' Ultra tier ALSO shows the DOOM-0042
-  CC0 hero replacements, whose licences want checking per asset before
-  anything is published. SUPERSEDED, see the decision note below -- shoot on
-  **Freedoom** (already used in CI, and free content by design) and keep
-  doom.wad captures for local/dev use only. This paragraph was too cautious,
-  because it changes which IWAD every take uses. Not legal advice -- the
-  publish call is the user's.
+  **COPYRIGHT — this paragraph is SUPERSEDED by the decision note at the
+  end of this bullet. Read that, not this.** It originally recommended
+  shooting the trailer on Freedoom to avoid putting retail DOOM assets on
+  screen. That was too cautious and the user overruled it on 2026-08-07;
+  the facts below are still true, the recommendation drawn from them was
+  not. Kept rather than deleted so the reasoning that was rejected is
+  visible instead of looking like it was never considered.
+
+  The facts that stand: the engine is ours under GPL v2, while `doom.wad`'s
+  art, music and level data are id Software's and are NOT in this repo for
+  exactly that reason. DOOM_Ants' Ultra tier also shows the DOOM-0042 CC0
+  hero replacements, whose per-asset licences are worth a look before
+  publishing. Freedoom stays useful for CI and for a build with no IWAD to
+  hand. Not legal advice -- the publish call is the user's, and has been
+  made.
   **Layman:** A proper video of the game running -- picture and sound -- to put on the website. Wants the ray-traced tier on screen, which is the hard part: the offscreen recording trick only has a software graphics card, and Ultra needs a real one.
   Kind: investigate.
   Lanes: tooling, renderer, assets.
