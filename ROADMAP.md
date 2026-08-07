@@ -8644,12 +8644,42 @@ parked ideas (💭 considered) until we commit to and design each one.
   music -- is someone else's copyrighted material regardless of how the
   engine is licensed, and DOOM_Ants' Ultra tier ALSO shows the DOOM-0042
   CC0 hero replacements, whose licences want checking per asset before
-  anything is published. Safe path for a public trailer: shoot it on
+  anything is published. SUPERSEDED, see the decision note below -- shoot on
   **Freedoom** (already used in CI, and free content by design) and keep
-  doom.wad captures for local/dev use only. Decide this BEFORE shooting,
+  doom.wad captures for local/dev use only. This paragraph was too cautious,
   because it changes which IWAD every take uses. Not legal advice -- the
   publish call is the user's.
   **Layman:** A proper video of the game running -- picture and sound -- to put on the website. Wants the ray-traced tier on screen, which is the hard part: the offscreen recording trick only has a software graphics card, and Ultra needs a real one.
   Kind: investigate.
   Lanes: tooling, renderer, assets.
   Source: user-request-2026-08-07.
+  Decision (2026-08-07, user): **shoot on doom.wad, publish freely.** The
+  COPYRIGHT paragraph above is superseded and was too cautious -- treat this
+  note as the live position.
+
+  Reasoning, which is sound: DOOM gameplay footage has been ubiquitous on
+  YouTube for two decades, and id, then Bethesda, then Microsoft have never
+  pursued it. Let's Plays, speedruns and mod showcases using the retail IWADs
+  are a long-tolerated category, and this project is not selling anything.
+  So the practical risk on *picture* is about nil, and the earlier
+  recommendation to shoot everything on Freedoom was solving a problem that
+  does not exist. Freedoom stays useful for CI and for a build with no IWAD
+  to hand -- not as a copyright workaround.
+
+  The one thing that genuinely survives, and only because this feature wants
+  SOUND: **YouTube's Content ID** is an automated audio matcher, not a legal
+  process, so it operates whatever the fair-use position is. Consequence is a
+  monetisation claim or a muted stretch, not a strike or a takedown. The
+  engine renders the WAD's MUS/MIDI through SDL2_mixer, which is a distinct
+  performance from any commercial recording, so a match is less likely than
+  with a re-recorded soundtrack -- but the compositions are Bobby Prince's,
+  so a match is possible.
+
+  Practical handling, no decision needed up front: shoot with sound, and if a
+  claim lands on the uploaded video, either accept it or re-cut that stretch
+  with music off and SFX only. Cheaper than pre-emptively muting a trailer
+  nobody has claimed. Worth knowing BEFORE upload only so it is not a
+  surprise -- it does not change how the trailer is shot, which is what the
+  superseded paragraph got wrong.
+
+  Not legal advice; the publish call is the user's and has been made.
