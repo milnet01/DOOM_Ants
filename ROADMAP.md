@@ -8504,3 +8504,23 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** The gamepad should shake when you fire, take a hit, or an explosion goes off — and on a PS5 pad, use its fancier motors and light bar too.
   Kind: feature.
   Source: user-request-2026-08-05.
+
+- 📋 [DOOM-0337] **Fix the composite.frag comment that calls the tone operator identity below its knee.**
+  `composite.frag`'s step-3 comment says the Khronos PBR-Neutral operator
+  "is identity below its ~0.76 knee, so DOOM's palette and midtones are
+  untouched". It is not identity: `pbrNeutralToneMapping` subtracts a flat
+  0.04 for any input at or above 0.08 (with a soft toe below that), so
+  0.50 linear leaves as 0.4600 and 0.76 as 0.7200. Verified by running the
+  shipped formula's own constants (`formulas/pbr_neutral_tonemap.glsl`).
+
+  Comment-only defect -- the operator itself is the verbatim Khronos
+  reference and is correct; nothing renders wrong. It matters because the
+  claim is load-bearing for reasoning about thresholds: DOOM-0331's bright
+  pass had to re-derive the real curve after inheriting this sentence, and
+  the same trap is waiting for the next post-process feature.
+
+  Fix: correct the comment in `composite.frag`, and check whether
+  `svgf_composite.comp` and `pathtrace.comp` carry the same wording.
+  **Layman:** A code comment says the brightness curve leaves dark and mid tones alone. It doesn't quite — it darkens everything a touch. Harmless today, but the comment would mislead the next person who trusts it.
+  Kind: doc-fix.
+  Source: in-session-2026-08-07 (found while writing the DOOM-0331 bloom spec).
