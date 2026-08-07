@@ -79,7 +79,7 @@ scales it, and Off restores the current picture exactly.
 | Ultra, RT off (`rb_rtdebug == 0`) | raster stack | **Yes** — same chain |
 | **Solid, RT on** (`rb_rtdebug == 6`) | path tracer + denoiser | **Yes** — §4.1 RT chain |
 | Ultra, RT on (`rb_rtdebug == 6`) | path tracer + denoiser | **Yes** — same chain |
-| Path-tracer debug views (`rb_rtdebug` 1–4) | path tracer | **No** — §9 |
+| Path-tracer debug views (`rb_rtdebug` 1–4) | path tracer | **No** — gated, see below |
 
 **The gate is which chain drew the frame, never the tier label**, and the third
 row is the one that proves it: `rtActive` in `RB_Vulkan_Present` is
@@ -89,6 +89,14 @@ Tracing row on runs the RT chain, exactly as `CLAUDE.md` says ("Each of Solid
 and Ultra has both a rasterised and a ray-traced view"). An implementer who
 gates the RT hook on `rendermode == TIER_RT3D` ships a feature that vanishes in
 half its supported configurations.
+
+**The debug views are excluded by an explicit guard, not structurally.** `rtActive`
+is true for `rb_rtdebug` 1–4 as well, and those modes tone-map inside
+`pathtrace.comp` rather than in the composite — so the split, the bloom dispatches
+and `rt_tonemap` are recorded only when `rb_rtdebug == 6`. Without that guard,
+modes 1–4 would either take a bloom they were never designed for or read an
+`rtHdrImage` nothing wrote. Say it in code as one condition beside the `rb_bloom`
+gate (§4.4), not as two scattered tests.
 
 Solid and Ultra share one Vulkan backend (`renderer.md`), which is why the
 feature is not, and must not be, gated on Ultra: `CLAUDE.md` makes effects a
@@ -232,15 +240,41 @@ threshold ramps in rather than pops. `threshold` and `knee` both come from
 `kBloomPresets` (§4.5) — neither is a shader literal (INV-9):
 
 ```glsl
-// bloom_extract_*.comp — soft-knee bright pass
-float  lum    = dot(c, vec3(0.2126, 0.7152, 0.0722));
-float  soft   = clamp(lum - threshold + knee, 0.0, 2.0 * knee);
+// bloom_extract_*.comp — soft-knee bright pass.
+// peak, NOT Rec.709 luminance — see the note below; this is the same quantity
+// pbrNeutralToneMapping keys its own compression on.
+float  peak   = max(c.r, max(c.g, c.b));
+float  soft   = clamp(peak - threshold + knee, 0.0, 2.0 * knee);
 soft          = soft * soft / (4.0 * knee + 1e-4);
-float  weight = max(soft, lum - threshold) / max(lum, 1e-4);
-vec3   bright = c * weight;             // 0 below threshold-knee, c - threshold above
+float  weight = max(soft, peak - threshold) / max(peak, 1e-4);
+vec3   bright = c * weight;             // 0 below threshold-knee; above it, c scaled so peak -> peak-threshold
 ```
 
-Two properties this shape has to keep:
+**Threshold on the max channel, never on luminance.** This is the single easiest
+way to build a bloom that misses the things DOOM actually glows with, and it
+looks completely reasonable in code. Rec.709 luminance weights green at 0.7152
+and red at 0.2126, so a saturated emitter's luminance is a *fraction* of its
+linear magnitude — while every threshold and floor in this spec is stated in
+linear magnitude. Worked at the High preset (threshold 1.35), for emitters at
+magnitude 4.0:
+
+| Emitter | linear | Rec.709 `lum` | verdict on `lum` | `peak` | verdict on `peak` |
+|---|---|---|---|---|---|
+| red fireball / lava | (4,0,0) | 0.850 | **no bloom** | 4.000 | blooms |
+| blue | (0,0,4) | 0.289 | **no bloom** | 4.000 | blooms |
+| green nukage | (0,4,0) | 2.861 | blooms | 4.000 | blooms |
+| orange lava | (4,1.5,0) | 1.923 | blooms | 4.000 | blooms |
+| white lamp | (4,4,4) | 4.000 | blooms | 4.000 | blooms |
+| **white wall** | (1,1,1) | 1.000 | no bloom | 1.000 | no bloom |
+
+On luminance, a red fireball at four times white **does not bloom** while a white
+wall sits at the very edge of blooming — the roadmap bullet's complaint restated,
+with the causality inverted. `peak` also happens to be exactly what
+`pbrNeutralToneMapping` keys on (`float peak = max(color.r, max(color.g,
+color.b))`), so the threshold and the operator's knee end up measured in the same
+units, which is the whole point of §4.2.
+
+Two further properties this shape has to keep:
 
 - **The floor is `threshold − knee ≥ 1.0`, NOT `threshold ≥ 1.0`.** This is the
   easy thing to get wrong, and getting it wrong silently defeats the feature.
@@ -248,15 +282,26 @@ Two properties this shape has to keep:
   a threshold of 1.00 and a knee of 0.5, a wall at 0.9 linear gets
   `soft = clamp(0.9 − 1.0 + 0.5, 0, 1.0) = 0.4`, hence
   `weight = 0.4²/(4×0.5) / 0.9 = 0.089` — it blooms, faintly, and INV-5's own
-  test would fail on a faithful implementation. Paletted art at full sector
-  light tops out at 1.0 linear, so what must sit at or above 1.0 is the point
-  where the ramp *starts*. §4.5's presets are chosen to satisfy it, and INV-5
-  and INV-10 both rest on it.
+  test would fail on a faithful implementation. **Paletted art at full sector
+  light tops out at 1.0 linear in the AMBIENT term**, so what must sit at or above
+  1.0 is the point where the ramp *starts*. §4.5's presets are chosen to satisfy
+  it, and INV-5 and INV-10 both rest on it.
+
+  **What the floor does NOT bound: DIRECT.** The thresholded value is
+  `direct * aoDirect + ambient * ao`, a sum, and DIRECT (point lights, flashlight,
+  muzzle) has no ceiling — a wall with several lamps trained on it genuinely
+  exceeds 1.0 and *will* bloom. That is intended, not a leak: §3 decision 2
+  chose brightness over an emissive flag precisely so stacked point lights and
+  explosions glow. So the floor's guarantee is narrower than it first reads —
+  **ordinary art at ordinary sector light cannot bloom; art blasted by direct
+  light can** — and it is the same accepted case as §10 Q2's flashlight. INV-5's
+  test therefore samples walls *away* from lamps, or it is testing the wrong
+  thing.
 
   Verified against the extract above, at the High preset (threshold 1.35,
   knee 0.35, so the ramp starts at exactly 1.00):
 
-  | `lum` | `soft` | `weight` | `bright` |
+  | `peak` | `soft` (clamped, pre-square) | `weight` | `bright` |
   |---|---|---|---|
   | 0.90 | 0.00 | 0.000 | **0.000** — a lit wall, no bloom |
   | 1.00 | 0.00 | 0.000 | **0.000** — the floor, exactly zero |
@@ -297,10 +342,26 @@ row quotes the 100 % case because that is the expensive arm. This also means
 a quarter-res extract would be a 1:2 downsample and would need the same
 thresholding-first gather the half-res one does at 100 %.
 
-Both extracts write the whole half-res target, and the bloom targets stay mapped
-over the **whole** frame — the same convention `aoImage` already uses, which is
-why the blur needs no edge clamping and nothing has to be reallocated when the
-render-scale menu changes mid-frame.
+**Both extracts write the whole half-res target, and the bloom targets are mapped
+over the whole frame** — the same convention `aoImage` already uses, and the
+reason nothing has to be reallocated when the render-scale menu changes
+mid-frame. Stated precisely, because the alternative reading misplaces the entire
+halo in Ultra at the 50 % default:
+
+- Each extract covers **every** texel of `bloomImage[0]`, i.e.
+  `[0, dispW/2) × [0, dispH/2)`, with no unwritten region. It reaches its source
+  by scaling *inward* — the raster extract samples the scene at `vUV * uvScale`,
+  the RT extract at `p * 2 * renderExtent / dispExtent` — so a full-frame output
+  is filled from a corner-shaped input.
+- The blur therefore reads a fully-written target and needs no corner clamp, and
+  the combines sample bloom in **plain full-frame UV**. `rt_tonemap.comp`'s
+  sketch in §4.4 must not scale its bloom fetch by `renderScale`: its pixel `p`
+  is render-res, so the full-frame UV is
+  `(vec2(p) + 0.5) / vec2(renderExtent)` — the render-res normalisation *is* the
+  full-frame coordinate, with no second factor.
+- The samplers still use `CLAMP_TO_EDGE`, as the scene sampler does, so a blur
+  tap that lands outside the image at the frame border repeats the edge rather
+  than reading black and darkening the halo there.
 
 ### 4.3 The blur
 
@@ -321,6 +382,23 @@ below goes in `bloom_blur.comp` as named constants:
 | inner pair | ±1.4073 | 0.304005 each |
 | outer pair | ±3.2942 | 0.093913 each |
 
+**The offsets are in OUTPUT texels, and pass 1 must convert them.** Pass 1 writes
+quarter-res while *reading* half-res `bloomImage[0]`, so one output texel is two
+source texels: its UV step is `offset × 2 × srcTexelSize`. Pass 2 reads and writes
+quarter-res, so its step is `offset × 1 × srcTexelSize`. Getting this wrong is
+silent and asymmetric — the X blur comes out half as wide as the Y blur and the
+halo is subtly oval. Hence `srcTexelSize` in the push block, with the per-pass
+factor baked into the caller's dispatch.
+
+Pass 1's taps land at ±2.81 and ±6.59 half-res texels, so it does **not** sample
+every half-res texel it passes over. A lone one-texel emitter in `bloomImage[0]`
+can therefore be skipped by the downsample even though §4.2 was careful to keep it
+*in* the extract. Accepted for v1 rather than solved: the surviving case is a
+single half-res texel with no bright neighbour, which after a 16-pixel blur would
+have contributed a barely visible glow anyway. If §10 Q1's look call reports
+emitters flickering at distance, the fix is a 2×2 box per tap in pass 1 — noted
+here so the next reader does not have to re-derive why it flickers.
+
 Derived from `exp(−i²/2σ²)` for i = 0…4 at σ = 2.0, normalised, then each
 adjacent pair collapsed to one bilinear fetch at its weighted-average offset:
 
@@ -340,9 +418,9 @@ The weights sum to exactly 1.0, so the blur is energy-preserving and the
 intensity dial is the only thing scaling the halo.
 
 **Reach is ±4 quarter-res texels = ±16 display pixels at 1920×1080** — bounded by
-the kernel's extent, not by 3σ. That is a lamp halo, deliberately tight. §6
-lists widening to a 13-tap (7-fetch) kernel as the first lever if §10 Q1's look
-call says it reads too small.
+the kernel's extent, not by 3σ. That is a lamp halo, deliberately tight. §10 Q1
+owns widening to a 13-tap (7-fetch) kernel, if that look call says it reads too
+small.
 
 One level, not a pyramid. The roadmap bullet allowed "a separable blur
 pyramid"; a single quarter-res level is the cheapest thing that can work and is
@@ -363,10 +441,12 @@ if (pc.bloomIntensity > 0.0)
 ```
 
 ```glsl
-// rt_tonemap.comp (RT) — compute; p is the render-res pixel, so normalise it
+// rt_tonemap.comp (RT) — compute; p is the render-res pixel. Normalising by the
+// RENDER extent already gives the full-frame UV the bloom targets are mapped in
+// (§4.2), so there is no second renderScale factor here.
 if (pc.bloomIntensity > 0.0) {
     vec2 uv = (vec2(p) + 0.5) / vec2(pc.renderExtent);
-    L += texture(bloomTex, uv * pc.renderScale).rgb * pc.bloomIntensity;
+    L += texture(bloomTex, uv).rgb * pc.bloomIntensity;
 }
 ```
 
@@ -380,8 +460,9 @@ what makes INV-2 a structural guarantee rather than a floating-point argument.
 **Off must cost nothing, and on the RT path that takes one extra measure.** With
 the dial Off the raster chain simply records none of the three dispatches and is
 done. The RT chain cannot be, because §4.6 moves its tone-map into
-`rt_tonemap.comp` — so a naive split leaves Ultra paying for an extra full-res
-pass and a 15.8 MiB HDR round-trip on every frame, *including* frames where
+`rt_tonemap.comp` — so a naive split leaves Ultra paying for an extra
+render-res pass and an HDR round-trip (~4 MiB of traffic at the 50 % default;
+the 15.8 MiB in §5 is the allocation, not the per-frame cost) on every frame, *including* frames where
 bloom is switched off. `performance.md` requires a heavy effect's toggle to be a
 real opt-out, so the split is itself gated:
 
@@ -491,26 +572,39 @@ out into its own pass:
   the sky branch writes its finished display-encoded colour into `rtHdrImage`
   with `alpha = 0.0` and still returns early, and `toneEncode` **stays** in
   `svgf_composite` for it. Only the surface path's encode moves.
+- **`toneEncode()` must be split in two, because it currently contains the
+  exposure.** As shipped it is
+  `L = max(L,0) * exposureEv(EV); L = pbrNeutralToneMapping(L); return srgb(L)` —
+  a local function inside `svgf_composite.comp` reading that shader's own
+  `pc.misc3.x`. So it is **not** a shared helper and cannot simply be called from
+  a second shader, and calling it downstream of a store that already applied
+  exposure would double-expose the frame. Split it:
+  - `svgf_composite.comp` keeps the exposure and the non-negative clamp —
+    `max(L, 0) * exposureEv(EV)` — and stores that into `rtHdrImage`.
+  - A new **`toneMapEncode(vec3)`** — `pbrNeutralToneMapping` then `linearToSrgb`,
+    no exposure — is factored out into the shared `formulas/` include and called by
+    `rt_tonemap.comp`, and by `svgf_composite.comp`'s sky branch in place of its
+    `toneEncode` call (the sky's exposure is applied on the same line, unchanged).
+  This is why `rt_tonemap.comp` carries no EV in §5's push table: the exposure is
+  already baked into what it reads.
 - **`rt_tonemap.comp` is new** and finishes the surface path:
-  `if (a < 0.5) out = rgb; else out = toneEncode(rgb + bloom * intensity)`, then
-  writes `rtImage`. The `a < 0.5` arm is what carries the already-encoded sky
-  through untouched and unbloomed, exactly as today. Note `toneEncode` therefore
-  exists in two shaders on this path; it lives in
-  `formulas/pbr_neutral_tonemap.glsl` plus `formulas.glsl`'s `exposureEv` /
-  `linearToSrgb`, all three already shared, so this is one include in each and
-  not a second copy of the operator.
-- **`rt_tonemap.comp` carries no exposure EV.** `svgf_composite` already applied
-  `exposureEv(EV)` before the store, because §4.2 requires the threshold to be in
-  post-exposure units. Passing EV again would double-expose the frame.
+  `if (a < 0.5) out = rgb; else out = toneMapEncode(rgb + bloom * intensity)`,
+  then writes `rtImage`. The `a < 0.5` arm carries the already-encoded sky through
+  untouched and unbloomed, exactly as today; that arm keeps the sky store's
+  existing `clamp(sky, 0.0, 1.0)`.
 - Everything downstream — TAAU, the label stamp, the blit, `RecordRtOverlay`,
   the `-shotverify` capture — reads `rtImage` and is unchanged.
 
-**The split is not bit-exact, and the build order must not ask it to be.**
+**The split path is not bit-exact, and L4's gate must not ask it to be.**
 `rtHdrImage` is `kSceneFormat` (fp16, ~11-bit mantissa), so a value that reaches
 the tone-map through it has been rounded once more than today's fp32-register
 path before being quantised to `rtImage`'s 8 bits. Most pixels land on the same
-byte; some near a rounding boundary will not. L4's gate is therefore a tolerance,
-not byte-identity (§7), and INV-2's RT arm carries the same tolerance.
+byte; some near a rounding boundary will not. So L4's `bloom 2` arm is gated at a
+tolerance rather than byte-identity (§7).
+
+**This does not weaken INV-2.** `rb_bloom == 0` runs the *un-split* pipeline, which
+never touches `rtHdrImage` at all, so the Off arm stays byte-exact on both chains
+and INV-2 needs no tolerance. The tolerance belongs to L4's split arm alone.
 
 This split is what buys the two paths one shared behaviour instead of two. The
 alternative (leave `svgf_composite` alone and add the bloom to the tone-mapped
@@ -566,7 +660,8 @@ have to be named or an implementer discovers them at debug time.
 set 0 bindings 0/1/2 (`ambientTex`, `directTex`, `aoTex`); `bloomTex` becomes
 **binding 3**, which means the composite descriptor-set layout, its pool sizing
 and the `g.compositeDs` write in `UpdateCompositeDescriptor` all change. (The
-*push* block does not — §5's push table explains why.)
+push block does not change: `composite.frag` already carries an unused `float
+pad` after `aoEnable`, and the intensity goes there.)
 
 **`bloomImage[2]` is parked in `SHADER_READ_ONLY_OPTIMAL` at creation.** This is
 the same reason `aoImage` is parked, and the AO comment says it outright: the
@@ -583,6 +678,23 @@ dependency at each hop, and `bloomImage[2]` ends the chain in
 `SHADER_READ_ONLY_OPTIMAL` for the combine. On the RT chain the same applies
 between `svgf_composite` → extract and between blurV → `rt_tonemap`; the
 existing `svgfBarrier()` helper is the idiom to follow.
+
+**And one barrier that is easy to miss on the raster chain**, because it moves a
+read *earlier* in the frame: `bloom_extract_raster` samples `sceneImage`,
+`sceneDirImage` and `aoImage`, whose transition to `SHADER_READ_ONLY_OPTIMAL`
+today happens for the composite's benefit *inside* the swapchain pass. The extract
+now needs them readable before that pass begins, so the existing scene-pass →
+composite dependency has to be brought forward to scene-pass → extract (the SSAO
+pass's own output likewise). This is the one hop where "it already works for the
+composite" is not evidence.
+
+**Pipelines and descriptor sets for the new work.** Four new compute shaders means
+four pipelines, four set layouts and their pool allocations; and the
+`-DBLOOM_SPLIT` variant of `svgf_composite.comp` needs its own pipeline **and** a
+descriptor that points its output binding at `rtHdrImage` instead of `rtImage`
+(today binding 7 of `g.svgfDs` re-uses `g.rtView`). The `labelTaauDs` pattern —
+an extra set that retargets one binding at a different image, layout-compatible
+with the same pipeline layout — is the precedent already in the file.
 
 ### New shaders
 
@@ -604,12 +716,18 @@ alone — it is that *plus* the `aoEnable > 0.5` gate, the 4-tap bilinear box bl
 of the half-res AO, the `AO_DIRECT_WEIGHT = 0.5` mix, and the rule that AO is
 sampled at `vUV` while the scene targets are sampled at `vUV * uvScale`. If the
 include carries only the algebra and the extract re-derives the rest, the value
-the extract thresholds is **not** the value the composite blooms — and INV-2 and
+the extract thresholds is **not** the value the composite blooms. Note what the
+include can and cannot buy: it makes the *formula* identical, not the *value*,
+because the extract runs at half res and the composite at full res, so their scene
+fetches and the 4-tap AO blur land on different sample positions. Formula identity
+is the contract; the sub-texel difference is accepted, and is why the halo is a
+blurred approximation of the final picture rather than an exact function of it.
+INV-2 and
 INV-5 both rest on those being identical. So the include exposes one function
 taking the three samplers plus `uvScale` and `aoEnable`, both consumers call it
 and neither computes any part of `hdr` itself.
 
-Two files are edited: `composite.frag` (add the combine; move the recombination
+Two existing *shaders* are edited: `composite.frag` (add the combine; move the recombination
 wholesale into the new include) and `svgf_composite.comp` (write `rtHdrImage`
 instead of tone-mapping to `rtImage`, on the `-DBLOOM_SPLIT` variant only).
 
@@ -617,7 +735,12 @@ instead of tone-mapping to `rtImage`, on the `-DBLOOM_SPLIT` variant only).
 `composite.frag.spv.h` and `bloom_extract_raster.comp.spv.h` both need an
 explicit `scene_recombine.glsl` dependency line beside the existing
 `pt_common.glsl` and `formulas/` rules, or an edit to the include will not
-rebuild its consumers. The `-DBLOOM_SPLIT` variant of `svgf_composite.comp`
+rebuild its consumers. **The same hazard is already live for a file this feature
+edits:** `composite.frag` `#include`s `formulas/pbr_neutral_tonemap.glsl`, but the
+Makefile's existing `formulas/` dependency line names only `pathtrace.comp.spv.h`
+and `svgf_composite.comp.spv.h` — so `composite.frag` is today rebuilt only by
+luck when that include changes. Add it to that line in the same edit; the new
+`toneMapEncode` helper (§4.6) lands in exactly those files. The `-DBLOOM_SPLIT` variant of `svgf_composite.comp`
 needs its own `.spv.h` rule, modelled on the existing `mesh_overlay.frag.spv.h`
 rule (`glslc ... -DSINGLE_TARGET`) — the one precedent in this Makefile for two
 binaries from one shader source.
@@ -633,9 +756,9 @@ passes carry their own small push blocks:
 |---|---|
 | `bloom_extract_raster` | `uvScale.xy`, `aoEnable`, `threshold`, `knee` |
 | `bloom_extract_rt` | `renderScale.xy`, `threshold`, `knee` |
-| `bloom_blur` | `dir.xy`, `srcScale.xy` |
+| `bloom_blur` | `dir.xy`, `srcTexelSize.xy` (1/size of the image being read) |
 | `composite.frag` | existing `{uvScale, aoEnable, pad}` — `pad` becomes `bloomIntensity` |
-| `rt_tonemap` | `renderScale.xy`, `bloomIntensity` |
+| `rt_tonemap` | `renderExtent.xy` (render-res pixel dimensions), `bloomIntensity` |
 
 `rt_tonemap` carries **no** exposure EV: `svgf_composite` already applied
 `exposureEv(EV)` before writing `rtHdrImage` (§4.2 requires the threshold to be in
@@ -671,18 +794,51 @@ the current tree:
 
 Sites 5 and 6 are two *separate* reset calls — one per chain — and both must
 move, or the chain whose reset was missed queries unreset slots and
-`vkGetQueryPoolResults` drops the entire print that §6's gate depends on. Site 8
-exists so a non-mode-6 frame does not return `VK_NOT_READY`; the two new slots
-need the same treatment for the same reason. Close this out with the standing
-grep DOOM-0011's ledger prescribes — `grep -n '\b8\b'` around the profiler block
-— because every one of sites 2, 3 and 4 compiles silently when wrong.
+`vkGetQueryPoolResults` drops the entire print that §6's gate depends on.
+
+**Site 8 matters twice, and the second reason is easy to miss: the bloom dial is
+itself a gate.** `nq` is a compile-time-shaped constant, but the new slots are
+only *written* when `rb_bloom > 0` (§4.4 skips every bloom dispatch when the dial
+is Off). A reset-but-unwritten slot returns `VK_NOT_READY` and the readback drops
+the **whole** print — which would kill the profiler on precisely the `bloom 0` arm
+that §6's measurement and INV-6 compare against. So the dummy-timestamp mechanism
+site 8 already uses for the mode gate must also cover the bloom gate:
+
+```
+if (prof && !bloomActive)   // mirrors the existing `if (prof && !denoise)` block
+{
+    // collapse the bloom slots onto the preceding point so their segments read ~0
+    vkCmdWriteTimestamp(..., <raster slot 4 | RT slots 8 and 9>);
+}
+```
+
+Close the whole widening out with the standing grep DOOM-0011's ledger
+prescribes, because every one of sites 2, 3 and 4 compiles silently when wrong.
+**It must match the declarations only.** A bare `\b8\b` — or any pattern
+containing `ts\[8\]` or `profMs\[8\]` — also matches the new, correct
+`g.profMs[8] += (double)(ts[8] - ts[7]) * k;` assignments, so the loose form
+reports a breach against a good build. Anchoring on the type keywords separates
+them:
+
+```
+grep -nE 'queryCount = 8|uint64_t ts\[8\]|double +profMs\[8\]|pi < 8|Pool, 0, 8' \
+     linuxdoom-1.10/r_vulkan.cpp
+```
+
+Verified both ways against the current tree: today it returns exactly the six
+lines above (sites 1–6, the two resets being two of them), and it does **not**
+match the post-L6 `g.profMs[8] += … ts[8] …` use lines. Expected output after
+L6 is empty.
 
 **Slot numbering: raster inserts, RT appends. They differ, and the reason is that
 RT's existing slots are already out of chronological order.**
 
 - **Raster inserts in frame order**, because its slots are chronological today:
-  `... 3 = SSAO, 4 = bloom+blur, 5 = composite, 6 = HUD`. The five existing
-  `g.profMs[]` assignments shift up by one and gain a sixth.
+  `... 3 = SSAO, 4 = bloom+blur, 5 = composite, 6 = HUD`. **Only two of the five
+  `g.profMs[]` assignments move** — not all five: `[0]` shadow (`ts[1]-ts[0]`),
+  `[1]` scene and `[2]` SSAO all difference slots below the insert and are
+  untouched. `[3]` becomes bloom, `[4]` becomes composite, and a new `[5]` takes
+  HUD. Re-labelling all five would mislabel three correct rows.
 - **RT appends**, because its write order is chronologically `0,1,2,5,6,7,3,4` —
   slot 3 is written after TAAU and slot 4 after the blit, with 5–7 a
   sub-breakdown sitting *inside* the `[2,3]` interval. So the new passes take
@@ -736,8 +892,8 @@ same render scale, reference GPU, both arms from the same build:
 
 Levers, cheapest first, if the budget is missed:
 
-1. **Shrink the blur from 9 taps (5 fetches) to 5 taps (3 fetches).** Halves the
-   blur's fetch count; costs reach, which §4.3 already calls tight.
+1. **Shrink the blur from 9 taps (5 fetches) to 5 taps (3 fetches).** Cuts the
+   blur's fetch count by 40 %; costs reach, which §4.3 already calls tight.
 2. **Drop the extract to quarter res.** §9 records why it is not there already,
    and §4.2 records that the argument is scale-dependent.
 3. **Give `rtHdrImage` a packed format.** `B10G11R11_UFLOAT_PACK32` is 4 bytes
@@ -881,8 +1037,12 @@ already supports.
   awk '/^extern "C" void RB_Vulkan_Present/,/^}/' linuxdoom-1.10/r_vulkan.cpp \
     | grep -n 'compositePipeline\|overlayPipeline\|FlushMenuText'
   # expect compositePipeline BEFORE overlayPipeline before FlushMenuText
-  awk '/^void RecordRtOverlay/,/^}/' linuxdoom-1.10/r_vulkan.cpp | grep -c rt_tonemap
-  # expect 0 - rt_tonemap runs in RecordRtTrace, upstream of the blit
+  # rt_tonemap must be dispatched in RecordRtTrace (upstream of the blit), never
+  # in RecordRtOverlay. Grep the C++ PIPELINE identifier, not the GLSL filename -
+  # 'rt_tonemap' appears in no C++ line, so grepping that can only ever return 0
+  # and would pass whether the invariant holds or is breached.
+  awk '/^void RecordRtTrace/,/^}/'   linuxdoom-1.10/r_vulkan.cpp | grep -c rtTonemapPipeline  # expect >= 1
+  awk '/^void RecordRtOverlay/,/^}/' linuxdoom-1.10/r_vulkan.cpp | grep -c rtTonemapPipeline  # expect 0
   # 2. photographic: the status-bar strip is bit-identical (bottom 19.5%,
   #    the region ab_diff.py crops)
   python3 -c "import numpy,sys;from PIL import Image;\
@@ -916,7 +1076,9 @@ h=int(a.shape[0]*0.805);print(numpy.abs(a[h:]-b[h:]).max())" on.png off.png
   # for each row: threshold - knee >= 1.0   (Low 1.50, Med 1.15, High 1.00)
   # 2. E1M1, flashlight off, bloom 3 vs bloom 0 + a same-build control:
   #    ab_diff.py's block map moves only in blocks holding a lamp, a lit switch
-  #    or a liquid, and reads 0.00 mean on plain wall and floor blocks.
+  #    or a liquid, and reads 0.00 mean on plain wall and floor blocks
+  #    THAT ARE NOT UNDER A LAMP - the DIRECT term is unbounded by design
+  #    (see 4.2), so a heavily point-lit wall is expected to bloom.
   #    Quote the NOISE row beside SIGNAL.
   ```
   *Breaks when:* a preset's `threshold − knee` drops below 1.0 (the failure the
@@ -977,13 +1139,23 @@ h=int(a.shape[0]*0.805);print(numpy.abs(a[h:]-b[h:]).max())" on.png off.png
   *Breaks when:* the two paths need different tuning and someone answers that
   with a second table instead of a named per-path scale (§10 Q3).
 
-- **INV-10** — the sky never blooms. In RT the sky is flagged
+- **INV-10** — the sky never *generates* bloom. In RT the sky is flagged
   (`rtHdrImage.a == 0.0`) and the extract multiplies it out; in raster the sky is
   written at paletted magnitude and cannot reach a threshold at or above 1.0.
-  *Test:* a sky-facing capture (E1M1's outdoor courtyard), `bloom 3` vs
-  `bloom 0` → 0.00 mean delta in the sky blocks of `ab_diff.py`'s block map.
+  **This governs generation, not reception, and the two chains differ on
+  reception** — `rt_tonemap`'s `a < 0.5` arm adds no bloom to a sky pixel at all,
+  whereas the raster combine has no sky test, so a lamp beside a sky edge bleeds
+  its halo onto sky pixels there. That asymmetry is deliberate: the raster
+  behaviour is the physically right one (light does spill in front of a distant
+  backdrop) and the RT one falls out of the sky being display-encoded rather than
+  radiance. Neither is worth extra machinery to change.
+  *Test:* a sky-facing capture (E1M1's outdoor courtyard), fog **on** (the
+  default), `bloom 3` vs `bloom 0` + a control → 0.00 mean delta in sky blocks
+  **that have no bright neighbour**. Sky blocks adjacent to a lamp are expected to
+  move on the raster chain and not on the RT one.
   *Breaks when:* the RT extract is moved above `svgf_composite`'s `gp.w < 0.0`
-  early-out, or a raster threshold drops below 1.0.
+  early-out, or a raster threshold drops below 1.0 — at which point the sky
+  starts generating its own bloom rather than merely receiving a neighbour's.
 
 ### Trust boundary
 
@@ -1034,8 +1206,9 @@ oversight.
 - **A debug key** for bloom, matching `]` `[` `'` `;`. Rejected: the A/B harness
   drives effects through a temp config rather than the keyboard (`ab_capture.sh`
   copies and rewrites a config, and cannot inject keystrokes under Wayland
-  anyway), and the menu row is the player's control. Free letters do remain — `a`,
-  `e`, `h`, `j`, `n` and others are unused — so scarcity is not the reason.
+  anyway), and the menu row is the player's control. Unused *menu* hotkeys do remain (`a`, `e`, `h`, `j`, `n`), but that is a
+  different namespace from the punctuation debug keys, so scarcity is neither the
+  reason nor the counter-argument.
 - **Bloom on the path-tracer debug views** (`rb_rtdebug` 1–4). Rejected: those
   are diagnostics behind the Debug Views toggle, mode 4 tone-maps inside
   `pathtrace.comp` rather than in the composite, and adding a third hook site
@@ -1057,12 +1230,24 @@ what it blocks.
   §3 decision 2 accepted the possibility. **User**, same gate. *Blocks:* the
   ROADMAP flip only. The fix if it does is raising the presets' ramp start above
   1.0, not an emissive gate — that was weighed and rejected.
-- **Q3 — do Solid and Ultra need different intensities?** Their lighting
-  magnitudes are not identical, so the same threshold may catch different things.
-  **Claude to measure** at L6 (capture the same coordinate in both chains and
-  compare which blocks moved), **user to judge**. *Blocks:* nothing — a shared
-  table ships either way; if they do differ the answer is one named per-path scale
-  constant applied to that table, never a second table (INV-9).
+- **Q3 — the two chains' thresholds are not in the same units, and one of them
+  moves with the Brightness slider.** This is sharper than "may need different
+  intensities". §4.2 thresholds "the value the path is about to tone-map", which on
+  RT is `L * exposureEv(EV)` — scaled by the player's `rb_exposure` — and on raster
+  is raw `hdr`, because the raster path applies no exposure at all. So one shared
+  preset table (INV-9) meets a user-scaled quantity on one chain and an unscaled
+  one on the other, and a player dragging Brightness in Ultra silently changes what
+  counts as a light source. Not a defect in the design — it follows from the raster
+  path genuinely having no exposure control — but it must be a recorded decision
+  rather than a surprise.
+  **Claude to measure** (capture one coordinate in both chains at several
+  `rb_exposure` values, report which blocks bloom), **user to judge**.
+  *Blocks:* **L5**, not L6 — the answer decides whether the RT threshold is
+  defined pre- or post-exposure, and that is the line L5 writes. Three candidate
+  answers, cheapest first: accept it and document it; make the RT threshold
+  EV-relative (divide the preset by `exposureEv(EV)` so the dial means the same
+  thing at every brightness); or give the table one named per-chain scale constant.
+  Never a second table (INV-9).
 - **Q4 — does a 21st `VideoMenu` row still fit?** `VideoMenu` has 20 rows today
   (counted) and DOOM-0206's contract requires the menu stay HUD-safe and scroll if
   it outgrows the screen. **Claude to check** at L1, mechanically — open the menu
@@ -1129,6 +1314,7 @@ are now caught by a build-order gate rather than by review.
 | Loop | Date | Lanes | CRIT | HIGH | MED | LOW | Outcome |
 |------|------|-------|------|------|-----|-----|---------|
 | 1 | 2026-08-07 | 2 | 5 | 8 | 7 | 11 | All 31 verified against the tree, **0 dismissed**, all 31 fixed. Dimensions: dim 4×7, dim 5×7, dim 15×6, dim 2×4, dim 6×4, dim 13×2, dim 1×1, dim 9×1, dim 12×1. Doc 754 → 1132 lines. Not converged — re-dispatching. |
+| 2 | 2026-08-07 | 2 | 3 | 7 | 13 | 9 | All 32 verified, **0 dismissed**, all 32 fixed. Origin split: 5 of the 10 CRIT+HIGH were **fix collateral from loop 1**, 5 were draft defects. Dimensions: dim 2×11, dim 5×8, dim 4×7, dim 15×4, dim 6×4, dim 7×3, dim 11×1. Doc 1132 → 1331 lines. |
 
 **Loop 1 headline** (the five that would have shipped bugs): the profiler
 widening named 2 sites where 8 exist, one of them a `uint64_t ts[8]` stack array
@@ -1144,3 +1330,24 @@ passes. Two design changes followed: the RT tone-map split is now **gated** on
 `rb_bloom > 0` (so "Off costs nothing" is true on both chains, not just raster),
 and L4's byte-identity gate became a stated tolerance, because `rtHdrImage` is
 fp16 and no correct implementation could have passed byte-identity through it.
+
+**Loop 2 headline.** The worst finding in the whole review landed here, and it was
+a draft defect loop 1 had walked straight past: the bright pass thresholded
+**Rec.709 luminance** while every threshold, floor and preset was stated in
+**linear magnitude**. Those agree only for greys, so at the High preset a red
+fireball or pure-red lava at 4× white — luminance 0.850 — extracted **zero**,
+a blue emitter 0.289, while a white wall at 1.0 sat exactly on the blooming
+threshold. The feature would have shipped glowing pale walls and not lava, which is
+the roadmap bullet's own complaint with the causality reversed. Fixed by
+thresholding the **max channel**, which is also the quantity
+`pbrNeutralToneMapping` keys its own compression on, so threshold and knee are
+finally in the same units. Two more of the same class: `toneEncode()` *contains*
+the exposure and is local to `svgf_composite.comp`, so §4.6's "it is already
+shared, just call it" was false and would have double-exposed the frame (now split
+into an exposure-free `toneMapEncode()` in the shared include); and the floor was
+claimed over a **sum** (`direct + ambient`) while only bounding `ambient`, so a
+lamp-lit wall could bloom and INV-5's test would have failed a faithful build —
+now stated as the accepted, intended case it is. Five of loop 2's ten CRIT+HIGH
+were collateral from loop 1's own fixes, the widened profiler readback being the
+sharpest: it would have returned `VK_NOT_READY` and dropped the whole profiler
+print on exactly the `bloom 0` arm §6's measurement compares against.

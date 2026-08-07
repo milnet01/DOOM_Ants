@@ -8547,3 +8547,71 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** The fog setting in the config file isn't checked for a sensible value. Typing a silly number by hand could make the game read memory it shouldn't. Nobody would hit it by accident — the menu can only produce 0 to 3 — but it costs one line to close.
   Kind: fix.
   Source: in-session-2026-08-07 (cold-eyes loop 1 on the DOOM-0331 bloom spec).
+
+- 📋 [DOOM-0339] **Record a trailer of DOOM_Ants, with sound, for the website and possibly YouTube.**
+  The recorder is `/mnt/Games/Scripts/Linux/demoreel/` (records an app on a
+  private virtual display, so the user's desktop and magnifier stay out of
+  frame). Four things stand between it and a trailer; the first is solved,
+  the rest are open. All findings below were verified by running them
+  2026-08-07, not assumed.
+
+  **1. SOLVED -- the black-frame trap.** Recording DOOM_Ants on demoreel's
+  Xvfb display produced a pure black video (mean 0.01/255, 2 unique
+  colours) while the process ran fine and a window existed at the right
+  size. Cause: on this Wayland session the toolkit reaches the REAL
+  compositor and ignores `DISPLAY`. demoreel already pops
+  `WAYLAND_DISPLAY`, and **that is not sufficient** -- `wl_display_connect
+  (NULL)` then falls back to `$XDG_RUNTIME_DIR/wayland-0`, which exists
+  (`/run/user/1000/wayland-0`). Neutralising XDG_RUNTIME_DIR as well gives
+  real pixels (mean 54.31, 177 colours). This is demoreel's bug, not ours;
+  a prompt for that session was handed to the user.
+
+  **2. OPEN, and the real blocker -- Ultra/Solid need a GPU, Xvfb has
+  none.** Xvfb is a software X server with no DRI, so RADV cannot run
+  there and hardware ray tracing certainly cannot. Only the Classic
+  software renderer records today, which is the one tier a trailer least
+  wants to show. The fix is a headless GPU compositor rather than Xvfb:
+  `/dev/dri/renderD128` exists and `wlheadless-run` + `xwayland-run` are
+  ALREADY installed -- but every compositor backend they need is missing
+  (`cage`, `weston`, `sway`, `labwc`, `gamescope` all absent). So this is
+  one package install plus a second demoreel backend. Note demoreel's
+  charter currently says "No Wayland compositor backend while X and Xvfb
+  do the job" -- for a Vulkan path tracer they do not, so that line needs
+  the user's decision before demoreel grows the backend.
+
+  **3. OPEN -- sound.** demoreel's charter puts audio permanently out of
+  scope ("No audio, no webcam, no overlays"). So either that decision gets
+  revisited, or the audio is captured beside it: a PipeWire/PulseAudio
+  null sink for the engine's output, a parallel `ffmpeg` capture, and a mux
+  at the end. The second belongs in this project's own `scripts/`, not in
+  demoreel. NOTE: a headless run plays ZERO sound effects on the existing
+  `-bootsmoke`-style paths, so the audio arm needs a real device (or a null
+  sink) and cannot reuse the dummy-SDL recipe.
+
+  **4. OPEN -- "DOOM playing itself" needs a demo this engine recorded.**
+  The attract-mode demo loop FAILS on doom.wad: `g_game.c`'s check is
+  `W_LumpLength(...) < 13 || *demo_p++ != VERSION`, and the stock DEMO1/2/3
+  lumps carry a different VERSION, so the title sequence prints "Demo is
+  truncated or from a different game version!" and shows black. Do not
+  patch the check. The engine supports `-record` (`d_main.c`), so record a
+  demo once with this exact build and `-playdemo` it for every take --
+  version-matched by construction, deterministic across takes, and no input
+  injection needed while the camera rolls. `-warp E M` gets straight into a
+  level meanwhile.
+
+  **COPYRIGHT, which the user flagged and which gates YouTube not the
+  website.** The engine is ours under GPL v2; `doom.wad`'s art, music and
+  level data are id Software's and are NOT in this repo for exactly that
+  reason. A trailer showing commercial DOOM assets -- and especially the
+  music -- is someone else's copyrighted material regardless of how the
+  engine is licensed, and DOOM_Ants' Ultra tier ALSO shows the DOOM-0042
+  CC0 hero replacements, whose licences want checking per asset before
+  anything is published. Safe path for a public trailer: shoot it on
+  **Freedoom** (already used in CI, and free content by design) and keep
+  doom.wad captures for local/dev use only. Decide this BEFORE shooting,
+  because it changes which IWAD every take uses. Not legal advice -- the
+  publish call is the user's.
+  **Layman:** A proper video of the game running -- picture and sound -- to put on the website. Wants the ray-traced tier on screen, which is the hard part: the offscreen recording trick only has a software graphics card, and Ultra needs a real one.
+  Kind: investigate.
+  Lanes: tooling, renderer, assets.
+  Source: user-request-2026-08-07.
