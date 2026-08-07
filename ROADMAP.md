@@ -8885,3 +8885,84 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: ux.
   Lanes: menu, ux.
   Source: user-request-2026-08-07 (trailer scripting, DOOM-0339).
+
+- 📋 [DOOM-0341] **Demons' eyes glow, so you can see them watching you in a dark room.**
+  User's framing: "the demon's red eyes let off red light, not much but if
+  in a dark room, you would see their red eyes."
+
+  **The primary want is VISIBILITY, not cast light** -- the eyes should
+  self-illuminate so they read in the dark, exactly as the user clarified
+  for DOOM-0157's pickups ("if the environment is very dark, you should be
+  able to SEE the skulls because of the glowing green eyes"). Whether the
+  eyes also LIGHT THE ROOM is a separate, more expensive question; see
+  the cost note below. Scope this to self-emission first.
+
+  **DOOM-0157 already solved this exact problem for a different surface
+  class, and its machinery is the whole answer.** Reuse it rather than
+  inventing anything (CLAUDE.md rule 3). The identical failure applies:
+  a few bright eye texels fall below DOOM-0082's near-fullbright
+  peak-region gate (`kEmitterMinBrightTexels` = 8), so
+  `ComputeMaterialEmissive` derives Le = 0 and there is nothing to
+  self-illuminate. DOOM-0157's fix was three surgical pieces, all still
+  in place:
+
+  1. `emissive_derive.h`'s `derive_material_le` gained an `allowFaint`
+     param -- when the strict peak gate fails but the tile holds a genuine
+     bright speck, it emits a FAINT Le from those texels instead of 0.
+  2. `r_mesh.c`'s `RB_SpriteLumpGlows()` maps a sprite ATLAS LUMP back to
+     its spritenum and reports `sprite_glows` membership, bridging the
+     spritenum-keyed allow-list to the lump-keyed material array.
+  3. `r_vulkan.cpp`'s `ComputeMaterialEmissive` passes `allowFaint=true`
+     only for those lumps.
+
+  So the work is: decide which monster sprites join the allow-list, and
+  confirm the eye texels are bright enough for `allowFaint` to find them.
+
+  **Why only the eyes light up, for free:** `emisWeight(mc, albedo)`
+  returns `emissiveMask(albedo)` for a sprite, and DOOM-0302's per-texel
+  mask is what localises a lamp's glow to its lit top rather than its dark
+  stand. The same mask localises a demon's glow to its eyes rather than its
+  hide. No per-monster art or mask authoring needed, and the Le colour is
+  derived from the texels, so red eyes give red light with no colour table.
+
+  **The gate that currently blocks it, precisely:** `pathtrace.comp` stores
+  `addEmis ? emisWeight(mc, albedo) : 0.0` into `galbedo.a`, and for a
+  sprite `addEmis` is `FLAG_EMISSIVE`, set only for `sprite_glows` members.
+  A monster is not in that list, so its weight is 0 and both the
+  self-emission and any cast light are switched off at source. This is a
+  deliberate exclusion, not an oversight -- it is what stops every pickup
+  and corpse glowing.
+
+  **Three questions this needs answered before it is built:**
+
+  1. **Which monsters?** The user said "demons". Candidates with genuinely
+     bright eye texels: the Demon/Spectre (SARG) and the Imp (TROO). The
+     Cacodemon (HEAD) and Lost Soul (SKUL) are already large and bright
+     enough that they may pass the strict gate unaided -- check before
+     adding them, as DOOM-0157 found the Soulsphere did. Former humans have
+     no glowing eyes and must not be added.
+  2. **Dead monsters must not glow, and the allow-list cannot express
+     that.** `sprite_glows` is keyed per SPRITENUM and
+     `RB_SpriteLumpGlows` maps every lump of that sprite, so a corpse frame
+     and a death animation inherit the same faint Le. A dead demon with
+     glowing eyes is worse than no glow at all. Needs either a per-FRAME
+     allow-list (the walking/attack frames only), or a check against the
+     thing's state/health at emitter-build time. This is the real work in
+     this item -- not the Le derivation.
+  3. **Does the room get lit, or only the eyes?** Self-emission is nearly
+     free -- it is the primary-ray term and costs one already-computed
+     mask. Making the eyes CAST light means joining the NEE emitter set,
+     and monsters are DYNAMIC, so they land in the per-frame merged half of
+     the emitter path rather than the static cache
+     (`RebuildStaticPointLightCache` / `BuildRasterPointLights`). A
+     monster-heavy map would add dozens of moving emitters per frame, which
+     is exactly the pole that cost 8 ms before the DOOM-0119 perf split.
+     **Measure before promising cast light**; the user's "not much" suggests
+     they may not want it anyway.
+
+  Verification note: RT self-emission cannot be checked headless -- it needs
+  an on-hardware look in a dark room, same as DOOM-0157.
+  **Layman:** In a dark room you would see a demon's red eyes before you see the demon. Only the eyes light up, not the whole monster, and only faintly.
+  Kind: feature.
+  Lanes: renderer, sprites.
+  Source: user-request-2026-08-07 (seen in a YouTube video of another DOOM source port).
