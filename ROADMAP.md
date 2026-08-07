@@ -8686,3 +8686,45 @@ parked ideas (💭 considered) until we commit to and design each one.
   superseded paragraph got wrong.
 
   Not legal advice; the publish call is the user's and has been made.
+  Progress (2026-08-07): **blockers 1 and 2 are CLOSED, and Ultra now records
+  headlessly — verified end to end on this project, not just on a toy app.**
+  The demoreel session shipped the WAYLAND_DISPLAY fix and a `--gpu` backend
+  (a headless `cage` compositor hosting a real Xwayland, so the card is
+  reachable). Both verified present in `/mnt/Games/Scripts/Linux/demoreel/`.
+
+  What I recorded and checked, rather than assumed:
+
+  - 13 s / 1280x800 / 392 frames of **Ultra, ray-traced, on E1M1**, with the
+    full HD material set. The mandatory anti-trap check passed:
+    `DOOM-0042: HD load done - 18 material(s), 75 image(s), 213.9 MB` -- so
+    this is NOT the silent paletted fallback. `RB_VulkanProbe` reports
+    `RT3D (path-traced)` on the RX 6600, and the GI bake ran (239 probes,
+    3 bounces), so the path tracer really initialised on the GPU.
+  - Frames move over time (delta 2.61 between t=6 s and t=10 s), so it is a
+    live capture and not a frozen buffer.
+  - Nothing of the user's desktop or magnifier is in frame, which was the
+    whole point of using demoreel over a screen recorder.
+
+  Two things that shape how the trailer gets shot, both measured here:
+
+  1. **~2-3 s of BLACK lead-in.** t=1 s and t=2 s are pure black (mean 0.00);
+     the picture appears at t=3 s. That is the BLAS build + GI bake. Record
+     longer than you need and trim the head, or the trailer opens on black.
+  2. **The fog dominates the frame.** Shot with `rt_fog` at the value in
+     ~/.doomrc, E1M1's start reads washed-out grey rather than showing off the
+     ray tracing. Tune `rt_fog` (and probably `rb_exposure`) down for a trailer
+     take -- a look call, but a required one, since the current default hides
+     the thing the trailer exists to show.
+
+  Blocker 3 (audio) stands and is now confirmed OURS: demoreel documented
+  audio as permanently out of scope, so the sound step belongs in this
+  project's `scripts/` -- a PipeWire null sink + a parallel ffmpeg capture +
+  one mux, per the shape in the body above.
+
+  New, small, and demoreel-side: **the recorder discards the target app's
+  stdout** (its state dir is cleaned up on exit), so there is no way after a
+  run to confirm the HD-load line -- the one check this project's own notes
+  call mandatory before trusting any Ultra capture. Worked around by wrapping
+  the command in `sh -c '... > log 2>&1'`. Worth asking for an `--app-log`
+  flag; it is the same class as their own "fail loudly" fix (the run
+  succeeded, but you cannot tell whether it recorded the RIGHT thing).
