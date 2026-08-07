@@ -64,5 +64,15 @@ audit_rule_quality.json
 __pycache__/
 *.pyc
 
-# DOOM-0294 developer screenshots (make DEV=1 only; never part of a release)
-linuxdoom-1.10/dev-shots/
+# DOOM-0294 developer screenshots (make DEV=1 only; never part of a release).
+# DOOM-0335: NOT path-anchored on purpose. rb_devshot_path creates dev-shots/
+# relative to the process working directory, and run-doom-ants.sh plus every
+# headless capture recipe launch from the REPO ROOT — so the directory that
+# actually fills up is <repo>/dev-shots/, which the old
+# `linuxdoom-1.10/dev-shots/` rule never covered. This form covers both.
+dev-shots/
+
+# Trailer shooting script (DOOM-0339). Local working document: production notes
+# and title-card wording, of no use to anyone cloning the engine. Kept on disk
+# and edited freely; deliberately not versioned (user, 2026-08-07).
+docs/trailer-script.md

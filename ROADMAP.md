@@ -8474,7 +8474,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: feature.
   Source: user-decision-2026-08-05 (upstream review follow-up).
 
-- 📋 [DOOM-0335] **-devshot captures escape .gitignore when the game is launched from the repo root.**
+- ✅ [DOOM-0335] **-devshot captures escape .gitignore when the game is launched from the repo root.**
   Found while capturing the DOOM-0330 glow A/Bs (2026-08-05).
 
   .gitignore:68 ignores `linuxdoom-1.10/dev-shots/`, but rb_devshot_path
@@ -8496,6 +8496,18 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Developer screenshots pile up as untracked files in the project folder instead of being ignored, because the ignore rule guesses the wrong folder.
   Kind: fix.
   Source: in-session-2026-08-05.
+  Resolved (2026-08-07): the rule is now the un-anchored `dev-shots/`, so it
+  matches at any depth and covers both launch directories. Verified:
+  `git check-ignore -v dev-shots/` returns `.gitignore:73:dev-shots/`, where
+  before it returned nothing. The comment above it records WHY it is not
+  path-anchored, so nobody "tidies" it back to `linuxdoom-1.10/dev-shots/`.
+
+  Done inline rather than as its own task because .gitignore was already the
+  file being edited (untracking the DOOM-0339 trailer script), which makes it
+  the in-lane deterministic fix rule 11 allows rather than the drive-by it
+  would have been on 2026-08-05. It had cost two near-misses in this session
+  alone -- `dev-shots/` sat untracked across every capture and a `git add -A`
+  would have committed multi-megabyte PNGs.
 
 - 📋 [DOOM-0336] **Controller rumble, capability-detected, with the DualSense extras where the pad has them.**
   User request 2026-08-05. The engine already opens a pad through SDL2's
@@ -8728,6 +8740,25 @@ parked ideas (💭 considered) until we commit to and design each one.
   the command in `sh -c '... > log 2>&1'`. Worth asking for an `--app-log`
   flag; it is the same class as their own "fail loudly" fix (the run
   succeeded, but you cannot tell whether it recorded the RIGHT thing).
+  Note (2026-08-07): **the shot script `docs/trailer-script.md` is a LOCAL
+  file, deliberately not versioned** (user's call -- production notes and
+  title-card wording, of no use to anyone cloning the engine). It is
+  gitignored, lives on disk in the working tree, and is edited freely.
+
+  Flagged because this bullet and DOOM-0340 both cite it by path: **a fresh
+  clone will not have it**, so those citations are dead outside this working
+  tree. That is intended, not rot -- do not "fix" them by re-adding the file.
+  The trailer's *decisions* that outlive the shoot belong here on the bullet;
+  the shot list, timings and copy stay local.
+
+  One thing the user should know rather than assume: the script was committed
+  and pushed once (60ed87b) before being untracked, and this repo is PUBLIC,
+  so its contents remain in the pushed history. Untracking stops future
+  changes being published; it does not unpublish that snapshot. Left alone on
+  purpose -- the stated reason for ignoring it was "not useful to anyone", not
+  secrecy, and rewriting public history to retract a page of trailer copy
+  would cost every clone a forced re-fetch for no benefit. Say so if the
+  wording was actually sensitive and it can be revisited.
 
 - 📋 [DOOM-0340] **Ultra's non-ray-traced view is labelled "Original (raster)", but it shows the HD art.**
   `m_menu.c`'s mode-name array names the `rb_rtdebug == 0` view
