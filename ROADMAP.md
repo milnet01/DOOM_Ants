@@ -1881,6 +1881,15 @@ parked ideas (💭 considered) until we commit to and design each one.
   Follow-up (2026-06-27, user): the Ultra ambient-floor / scene-light treatment is ALSO provisional — the user may decide to leave Ultra rooms pitch black too. Decision deferred to playtest: play the levels first (cheats OK to traverse), then call whether Ultra keeps the gentle ambient floor + placed lights or goes fully dark like Solid. So BOTH tiers' dark-room handling is a play-it-first call; nothing here is final until playtest.
   Resolved (2026-06-29): Ultra ambient floor implemented in the path-tracer megakernel (pathtrace.comp modes 4 + 6). A gentle ambient term seeded by the DOOM sector lightlevel (per-vertex, 0..1) lifts rooms the mapper marked bright even when they hold no emissive lamp texture, via max(GI, sectorLight*AMBIENT_SECTOR_SCALE) so already-lit rooms are untouched (no double-count) and genuinely dark sectors stay dark for the flashlight (DOOM-0044) to matter. Ultra-only by construction — only the megakernel runs this; Solid is the raster path. Default AMBIENT_SECTOR_SCALE=0.25 is the INV-7 inline playtest knob. Scope note: the "deliberate scene lights" half (lamps/computer banks/exit signs as emitters) was already delivered by DOOM-0008's texture-derived emission (ComputeMaterialEmissive); free-standing light OBJECTS (barrels/torches) remain DOOM-0084, lit switches DOOM-0082, slime glow DOOM-0083. This whole feature stays provisional per the roadmap's play-it-first decision: after playtest the user may tune the scale or revert Ultra to fully dark like Solid.
   Playtest (2026-06-29, user): at AMBIENT_SECTOR_SCALE=0.25 rooms read bright enough (no longer too dark), BUT the flat ambient fill softens shadows/contrast — it lifts the shadowed side of surfaces, not just the lit side. User chose to leave it as-is for now and re-judge on later levels before tuning. Tuning options when revisited: (a) lower the scale to trade brightness back for contrast; (b) make the floor less flat — e.g. scale it by an occlusion/AO term or fold it into the GI bake so genuinely shadowed pockets stay dark while open lit rooms still read; (c) the standing revert-to-fully-dark option per this item's play-it-first decision.
+  Correction (2026-08-07): the 2026-06-27 scope decision above says "Solid
+  (RT on or off) ships no ambient floor", and the 2026-06-29 resolution says
+  "Ultra-only by construction — only the megakernel runs this; Solid is the
+  raster path". **Both are wrong about Solid's RAY-TRACED view.** `rtActive`
+  carries no `rendermode` term, so Solid with ray tracing on runs the
+  megakernel and gets this ambient floor. The dated notes are left as the
+  record; DOOM-0098 carries the corrected scope and the question it raises
+  (whether Solid's RT view *should* have the floor, which was never asked
+  because nobody thought that combination reached this code).
 
 - ✅ [DOOM-0044] **Add a player flashlight toggled by a key, lighting the path-traced scene with ray-traced shadows.**
   A camera-mounted spotlight (headlamp) the player toggles with a configurable, config-persisted key. Fed to the path tracer as a dynamic analytic light so it casts real ray-traced shadows and bounces, sampled by next-event estimation. Follows view position/angle each frame (no BLAS change — a light parameter, not geometry). Builds on the DOOM-0009 integrator and the dynamic-light path (DOOM-0010 seed). Makes the dark sci-fi-horror areas (previous item) tense rather than unplayable.
@@ -2397,6 +2406,35 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Refine the gentle room glow so it only fills genuinely dark/shadowed spots instead of washing out every shadow.
   Kind: enhancement.
   Source: user-request-2026-06-29.
+  Scope correction (2026-08-07): this bullet and DOOM-0043 both frame the
+  ambient floor as **"Ultra ... Ultra-only by construction"**, and DOOM-0043's
+  scope decision says outright "Solid (RT on or off) ships no ambient floor".
+  **That is no longer true, and probably never was.** The ambient floor lives in
+  `pathtrace.comp`, and the gate that decides whether the megakernel runs is
+  `rtActive` in `RB_Vulkan_Present` — verified to contain **no `rendermode`
+  term at all**: `rb_rtdebug && g.rtEnabled && g.tlas && g.rtModule &&
+  g.haveCamera && g.vbuf && g.atlasReady`. So **Solid with the Ray Tracing row
+  on runs the megakernel and gets the ambient floor**, exactly as Ultra does.
+
+  The reasoning behind the original claim was "only the megakernel runs this;
+  Solid is the raster path", which is true of Solid's *raster* view and false
+  of Solid's *ray-traced* view. `CLAUDE.md` is explicit that each of Solid and
+  Ultra has both views, and that effects belong to the view rather than the
+  tier — so the tier-scoped framing was the error.
+
+  Consequences for whoever picks this up:
+  - The fix is **not** Ultra-only. Both tiers' ray-traced views are affected,
+    and any test matrix needs `renderer 2` + `rt_view 6` as well as
+    `renderer 1` + `rt_view 6`.
+  - DOOM-0043's "Solid intentionally leaves unlit rooms pitch black" decision
+    is therefore only being honoured in Solid's RASTER view. Whether Solid's
+    ray-traced view *should* have the floor is a real question this bullet now
+    inherits — it was never asked, because nobody thought that combination
+    reached this code.
+
+  Prompted by the user asking where interior light comes from "in the ray
+  tracing modes in both Solid and Ultra" (2026-08-07) — the question assumed
+  the correct scope, which is what exposed the stale claim.
 
 - 📋 [DOOM-0099] **Fully eliminate the residual Ultra flashlight/muzzle toggle-off ghost (denoiser history).**
   Follow-up to DOOM-0044. The SVGF temporal anti-ghosting fix (commit 55bb080) made the flashlight toggle-off fade "significantly better" per playtest, but the user notes it still isn't a perfect instant cut in every case; they chose to leave it for now. Residual likely sources: (1) the a-trous SPATIAL pass + SVGF colour-feedback still carry a blurred remnant of the lit value into the next frame's history even after the temporal pass resets newHist=1 (the spatial filter pulls from neighbours that may still hold the lit colour in their fed-back history for a frame); (2) the half-res lighting reconstruction (6c) bilateral-upsamples from grid samples, so a 2x2 block clears only as fast as its grid pixel; (3) the gradient still needs a >2*sigma delta, so a low-contrast surface (already dim) resets more weakly. Candidate fixes (cheapest first): (a) also gate the colour-feedback / clamp the history colour to the current neighbourhood AABB (SVGF "history colour clamping") so a reset pixel can't re-pull a stale lit colour; (b) the principled fix -- composite the deterministic analytic dynamic lights (flashlight + muzzle) CRISP in svgf_composite.comp (recompute from the G-buffer, or carry them in a separate non-denoised channel) so they never enter temporal history at all, which also keeps their hard shadow edges sharp instead of denoised. Option (b) is the real answer and supersedes further temporal tuning; size it against the composite pass gaining a TLAS bind or an extra image. Not urgent (deferred by user).
@@ -8271,6 +8309,25 @@ parked ideas (💭 considered) until we commit to and design each one.
   What remains on this bullet is unchanged: the user's HARDWARE look at
   the glow (gain 4.0, bracket 3.0/5.0), and the -shotcompare golden
   re-bless (DOOM-0202) which is still held behind it.
+  Second sighting (2026-08-07, user): the same defect photographed INDOORS —
+  **E1M2's roofed nukage room**, where the pool reads as a flat bright green
+  slab with no haze in front of it and no green in the air above it. Half 2's
+  diagnosis explains it exactly: the goo profile keys on `FogHit.ctrlFlags`,
+  the material of the ray's OWN primary hit, so a ray crossing the room to a
+  wall gets no goo profile at all — which is every ray that shows you the room.
+
+  Worth recording because the fixture on this bullet so far has been E1M1's
+  **open-sky** courtyard, and `kAreaDensity`'s own comment in pt_common.glsl
+  specifically worried about the roofed case ("goo rooms are roofed, so gating
+  it would crush the pool to kIndoorFogScale (5%) and the feature would barely
+  show"). This confirms the indoor case is broken in the same way and not
+  worse — no separate defect, no separate fix.
+
+  Also confirms what is NOT broken, which narrows the fix: in the same photo
+  the **surface** lighting works — the walls around the pool are visibly green
+  and the ceiling carries the bounce. That is DOOM-0083/0183's forced-constant
+  Le through NEE and the GI bake, exactly as this bullet's conclusion says.
+  So the remaining work really is only the AIR term, per half 2.
 
 - 📋 [DOOM-0331] **Bloom on the HDR views, so emissive things read as bright rather than merely light-coloured.**
   Found reviewing GZDoom at the user's request. GZDoom ships
