@@ -126,6 +126,7 @@ static_assert(sizeof(rb_matctrl_t) == 40, "rb_matctrl_t must be 40 bytes (std430
 #include "shaders/label.comp.spv.h"
 #include "shaders/taau.comp.spv.h"
 #include "shaders/bloom_extract_raster.comp.spv.h"   // DOOM-0331 L2: raster bright pass
+#include "shaders/bloom_blur.comp.spv.h"             // DOOM-0331 L3: separable blur (both chains)
 #include "assets/Oxanium-SemiBold.ttf.h"    // DOOM-0206 L4: bundled OFL menu font (oxanium_ttf[])
 
 // Tier values returned by RB_VulkanProbe — kept numerically in lockstep with
@@ -387,6 +388,16 @@ struct VulkanState
     VkDescriptorSet       bloomExtractDs         = VK_NULL_HANDLE;
     VkPipelineLayout      bloomExtractPipeLayout = VK_NULL_HANDLE;
     VkPipeline            bloomExtractRasterPipeline = VK_NULL_HANDLE;
+
+    // DOOM-0331 L3 (§4.3) — the separable blur. ONE pipeline dispatched twice with the axis
+    // in a push constant, and TWO descriptor sets because the ping-pong reverses which target
+    // is read and which is written: [0] reads bloomImage[0] and writes [1], [1] reads [1] and
+    // writes [2]. Size-independent like the extract's — the views are re-pointed on resize.
+    VkDescriptorSetLayout bloomBlurDsLayout   = VK_NULL_HANDLE;
+    VkDescriptorPool      bloomBlurDsPool     = VK_NULL_HANDLE;
+    VkDescriptorSet       bloomBlurDs[2]      = {};
+    VkPipelineLayout      bloomBlurPipeLayout = VK_NULL_HANDLE;
+    VkPipeline            bloomBlurPipeline   = VK_NULL_HANDLE;
 
     // DOOM-0170 L2c — flashlight cast-shadow map (§4.4). A fixed 2048^2 depth image the
     // world is rendered into (depth-only) from the flashlight's viewpoint each torch-on
@@ -3017,6 +3028,77 @@ void CreateBloomPipeline()
                                    &g.bloomExtractRasterPipeline),
           "vkCreateComputePipelines(bloomExtract)");
     vkDestroyShaderModule(g.device, cs, nullptr);
+
+    // DOOM-0331 L3 (§4.3) — the blur: a 2-binding set (b0 = the target being read, through the
+    // linear+clamp composite sampler so pass 1's half -> quarter downsample rides the bilinear
+    // fetch; b1 = the target being written, as a storage image), TWO sets for the ping-pong,
+    // one pipeline dispatched twice. The push range is 16 bytes (dir, srcTexelSize).
+    {
+        VkDescriptorSetLayoutBinding bb[2] = {};
+        bb[0].binding         = 0;
+        bb[0].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bb[0].descriptorCount = 1;
+        bb[0].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+        bb[1] = bb[0];
+        bb[1].binding        = 1;
+        bb[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        VkDescriptorSetLayoutCreateInfo bdlci = {};
+        bdlci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        bdlci.bindingCount = 2;
+        bdlci.pBindings    = bb;
+        Check(vkCreateDescriptorSetLayout(g.device, &bdlci, nullptr, &g.bloomBlurDsLayout),
+              "vkCreateDescriptorSetLayout(bloomBlur)");
+
+        // Two of each descriptor, because the pool sizes count DESCRIPTORS across all sets,
+        // not bindings in the layout -- one sampler + one storage image per set, two sets.
+        VkDescriptorPoolSize bpool[2] = {};
+        bpool[0].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bpool[0].descriptorCount = 2;
+        bpool[1].type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        bpool[1].descriptorCount = 2;
+        VkDescriptorPoolCreateInfo bpci = {};
+        bpci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        bpci.maxSets       = 2;
+        bpci.poolSizeCount = 2;
+        bpci.pPoolSizes    = bpool;
+        Check(vkCreateDescriptorPool(g.device, &bpci, nullptr, &g.bloomBlurDsPool),
+              "vkCreateDescriptorPool(bloomBlur)");
+
+        VkDescriptorSetLayout bl[2] = { g.bloomBlurDsLayout, g.bloomBlurDsLayout };
+        VkDescriptorSetAllocateInfo bdai = {};
+        bdai.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        bdai.descriptorPool     = g.bloomBlurDsPool;
+        bdai.descriptorSetCount = 2;
+        bdai.pSetLayouts        = bl;
+        Check(vkAllocateDescriptorSets(g.device, &bdai, g.bloomBlurDs),
+              "vkAllocateDescriptorSets(bloomBlur)");
+
+        VkPushConstantRange bpcr = {};
+        bpcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+        bpcr.offset     = 0;
+        bpcr.size       = 4 * sizeof(float);   // vec2 dir + vec2 srcTexelSize
+        VkPipelineLayoutCreateInfo bplci = {};
+        bplci.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        bplci.setLayoutCount         = 1;
+        bplci.pSetLayouts            = &g.bloomBlurDsLayout;
+        bplci.pushConstantRangeCount = 1;
+        bplci.pPushConstantRanges    = &bpcr;
+        Check(vkCreatePipelineLayout(g.device, &bplci, nullptr, &g.bloomBlurPipeLayout),
+              "vkCreatePipelineLayout(bloomBlur)");
+
+        VkShaderModule bs = MakeShader(bloom_blur_comp_spv, bloom_blur_comp_spv_len);
+        VkComputePipelineCreateInfo bcpci = {};
+        bcpci.sType        = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+        bcpci.stage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        bcpci.stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
+        bcpci.stage.module = bs;
+        bcpci.stage.pName  = "main";
+        bcpci.layout       = g.bloomBlurPipeLayout;
+        Check(vkCreateComputePipelines(g.device, VK_NULL_HANDLE, 1, &bcpci, nullptr,
+                                       &g.bloomBlurPipeline),
+              "vkCreateComputePipelines(bloomBlur)");
+        vkDestroyShaderModule(g.device, bs, nullptr);
+    }
 }
 
 // Map an RT debug mode to its on-screen title as label.comp glyph indices (font
@@ -4780,21 +4862,26 @@ void CreateDescriptors()
         // DOOM-0170 L2b — three combined-image-samplers: binding 0 = AMBIENT scene target,
         // binding 1 = DIRECT scene target, binding 2 = the half-res SSAO factor. The composite
         // outputs DIRECT + AO×AMBIENT.
-        VkDescriptorSetLayoutBinding cb[3] = {};
+        // DOOM-0331 L3 (§5) — binding 3 = the blurred bloom (bloomImage[2]). It is bound on
+        // every frame, bloom Off included: the combine is gated by the intensity push being
+        // 0, not by the descriptor, which is why the target is parked SHADER_READ_ONLY at
+        // creation rather than left UNDEFINED on a frame where no dispatch ran.
+        VkDescriptorSetLayoutBinding cb[4] = {};
         cb[0].binding = 0;
         cb[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         cb[0].descriptorCount = 1;
         cb[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         cb[1] = cb[0]; cb[1].binding = 1;
         cb[2] = cb[0]; cb[2].binding = 2;
+        cb[3] = cb[0]; cb[3].binding = 3;
         VkDescriptorSetLayoutCreateInfo clci = {};
         clci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        clci.bindingCount = 3;
+        clci.bindingCount = 4;
         clci.pBindings = cb;
         Check(vkCreateDescriptorSetLayout(g.device, &clci, nullptr, &g.compositeDsLayout),
               "vkCreateDescriptorSetLayout(composite)");
 
-        VkDescriptorPoolSize cps = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3 };
+        VkDescriptorPoolSize cps = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4 };
         VkDescriptorPoolCreateInfo cdpci = {};
         cdpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         cdpci.maxSets = 1;
@@ -4905,18 +4992,25 @@ void CreateDescriptors()
 // image is recreated on every resize, so this runs after each CreateSceneTarget.
 void UpdateCompositeDescriptor()
 {
-    if (!g.compositeDs || !g.sceneView || !g.sceneDirView || !g.aoView || !g.ssaoDs)
+    // DOOM-0331 L3: bloomView[2] joins the guard because it is now composite binding 3, and a
+    // partially-written set is a validation error at bind time. All of these views come out of
+    // CreateSceneTarget together, so this is one condition, not a new failure mode.
+    if (!g.compositeDs || !g.sceneView || !g.sceneDirView || !g.aoView || !g.ssaoDs
+        || !g.bloomView[2])
         return;
     // DOOM-0170 L2b — composite: binding 0 = AMBIENT, 1 = DIRECT, 2 = the half-res AO factor.
     // The SSAO set samples the DIRECT target (its alpha carries the packed depth). All use the
     // linear+clamp composite sampler (smooth upscale). Recreated on every resize.
-    VkDescriptorImageInfo ii[3] = {};
+    // ii[3] is DOOM-0331 L3's addition: the blurred bloom, sampled through the same
+    // linear+clamp sampler so its quarter-res halo upscales smoothly to the swapchain.
+    VkDescriptorImageInfo ii[4] = {};
     ii[0].sampler = g.compositeSampler;
     ii[0].imageView = g.sceneView;
     ii[0].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     ii[1] = ii[0]; ii[1].imageView = g.sceneDirView;
     ii[2] = ii[0]; ii[2].imageView = g.aoView;
-    VkWriteDescriptorSet w[4] = {};
+    ii[3] = ii[0]; ii[3].imageView = g.bloomView[2];
+    VkWriteDescriptorSet w[5] = {};
     w[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     w[0].dstSet = g.compositeDs;
     w[0].dstBinding = 0;
@@ -4925,9 +5019,10 @@ void UpdateCompositeDescriptor()
     w[0].pImageInfo = &ii[0];
     w[1] = w[0]; w[1].dstBinding = 1; w[1].pImageInfo = &ii[1];
     w[2] = w[0]; w[2].dstBinding = 2; w[2].pImageInfo = &ii[2];
+    w[3] = w[0]; w[3].dstBinding = 3; w[3].pImageInfo = &ii[3];
     // The SSAO pass's own set samples the DIRECT target for the packed depth.
-    w[3] = w[0]; w[3].dstSet = g.ssaoDs; w[3].dstBinding = 0; w[3].pImageInfo = &ii[1];
-    vkUpdateDescriptorSets(g.device, 4, w, 0, nullptr);
+    w[4] = w[0]; w[4].dstSet = g.ssaoDs; w[4].dstBinding = 0; w[4].pImageInfo = &ii[1];
+    vkUpdateDescriptorSets(g.device, 5, w, 0, nullptr);
 
     // DOOM-0331 L2 — the bright pass reads the same three targets through the same sampler
     // (bindings 0/1/2, so its fetches match the composite's) and writes bloomImage[0] as a
@@ -4951,6 +5046,34 @@ void UpdateCompositeDescriptor()
         bw[i].pImageInfo      = &bi[i];
     }
     vkUpdateDescriptorSets(g.device, 4, bw, 0, nullptr);
+
+    // DOOM-0331 L3 — the two blur sets, the ping-pong written out explicitly: set 0 reads
+    // bloomImage[0] (half) and writes [1] (quarter); set 1 reads [1] and writes [2]. The read
+    // binding declares SHADER_READ_ONLY_OPTIMAL and the write binding GENERAL, which is the
+    // layout each image is actually in at the moment that dispatch runs -- the per-frame
+    // barriers in RB_Vulkan_Present move them there and back.
+    if (!g.bloomBlurDs[0] || !g.bloomView[1])
+        return;
+    VkDescriptorImageInfo blri[2] = { ii[0], ii[0] };   // read: sampler + SHADER_READ layout
+    blri[0].imageView = g.bloomView[0];
+    blri[1].imageView = g.bloomView[1];
+    VkDescriptorImageInfo blwi[2] = {};                 // write: storage image, GENERAL
+    blwi[0].imageView   = g.bloomView[1];
+    blwi[0].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    blwi[1] = blwi[0]; blwi[1].imageView = g.bloomView[2];
+    VkWriteDescriptorSet blw[4] = {};
+    for (uint32_t p = 0; p < 2; p++)
+    {
+        blw[2 * p]     = bw[0];
+        blw[2 * p].dstSet     = g.bloomBlurDs[p];
+        blw[2 * p].dstBinding = 0;
+        blw[2 * p].pImageInfo = &blri[p];
+        blw[2 * p + 1] = blw[2 * p];
+        blw[2 * p + 1].dstBinding     = 1;
+        blw[2 * p + 1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        blw[2 * p + 1].pImageInfo     = &blwi[p];
+    }
+    vkUpdateDescriptorSets(g.device, 4, blw, 0, nullptr);
 }
 
 void CreatePipeline()
@@ -10092,6 +10215,12 @@ extern "C" void RB_Vulkan_Present(void)
     // byte-identical (INV-2). L2 only EXTRACTS -- nothing samples bloomImage[0] yet, so the
     // frame is unchanged; the two blurs and the combine arrive at L3.
     const bool bloomActive = (rb_bloom > 0);
+    const BloomPreset& bloomPreset = CurrentBloomPreset();
+    // DOOM-0331 L3: whether the chain actually RAN this frame, which is not the same as the
+    // dial being on -- the composite draw below is outside the camera gate (it composites the
+    // menu and the intermission too), so on a frame with no world the halo in bloomImage[2] is
+    // last frame's. The combine reads this, not rb_bloom.
+    bool bloomRecorded = false;
     if (bloomActive && g.bloomExtractRasterPipeline && g.bloomExtractDs
         && g.haveCamera && g.atlasReady)
     {
@@ -10128,7 +10257,7 @@ extern "C" void RB_Vulkan_Present(void)
         // threshold + knee come from the ONE preset table (INV-8); aoEnable and uvScale are
         // the same two values the composite is handed below, so the extract thresholds the
         // value the composite will tone-map.
-        const BloomPreset& bp = CurrentBloomPreset();
+        const BloomPreset& bp = bloomPreset;
         float bpush[5] = { uvScale[0], uvScale[1], rb_ssao ? 1.0f : 0.0f, bp.threshold, bp.knee };
         vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
                                 g.bloomExtractPipeLayout, 0, 1, &g.bloomExtractDs, 0, nullptr);
@@ -10148,6 +10277,60 @@ extern "C" void RB_Vulkan_Present(void)
         vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                              VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
                              0, nullptr, 0, nullptr, 1, &ib);
+
+        // DOOM-0331 L3 (§4.3) — the separable blur, one pipeline dispatched twice: pass 0
+        // reads the half-res bloomImage[0] and writes the quarter-res [1] (the ½ -> ¼
+        // downsample rides the bilinear fetch, so it is free), pass 1 reads [1] and writes
+        // [2], which the composite samples.
+        if (g.bloomBlurPipeline && g.bloomBlurDs[0] && g.bloomBlurDs[1])
+        {
+            vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g.bloomBlurPipeline);
+            for (uint32_t p = 0; p < 2; p++)
+            {
+                // Same closed cycle the extract uses: the target being written comes back to
+                // GENERAL for the imageStore, and returns to SHADER_READ_ONLY afterwards. Both
+                // directions, every frame -- the write->read half alone leaves every store in
+                // an invalid layout, including the very first one (these are parked
+                // SHADER_READ_ONLY at creation, so it is not a second-frame-only concern).
+                ib.image         = g.bloomImage[1 + p];
+                ib.oldLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                ib.newLayout     = VK_IMAGE_LAYOUT_GENERAL;
+                ib.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                ib.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+                vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+                                     0, nullptr, 0, nullptr, 1, &ib);
+
+                // dir carries the axis AND the per-pass step factor (§4.3): pass 0 reads
+                // half-res and writes quarter, so its offsets are doubled; pass 1 reads and
+                // writes quarter, so they are not. srcTexelSize is exactly 1/size of the image
+                // being READ, with no factor folded in -- putting the factor here instead
+                // builds pass 0 at half its reach and the halo comes out silently oval.
+                const VkExtent2D& src = g.bloomExtent[p];
+                const VkExtent2D& dst = g.bloomExtent[1 + p];
+                float blpush[4] = { p == 0 ? 2.0f : 0.0f,
+                                    p == 0 ? 0.0f : 1.0f,
+                                    1.0f / (float)src.width,
+                                    1.0f / (float)src.height };
+                vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                        g.bloomBlurPipeLayout, 0, 1, &g.bloomBlurDs[p], 0, nullptr);
+                vkCmdPushConstants(g.cmd, g.bloomBlurPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+                                   0, sizeof(blpush), blpush);
+                vkCmdDispatch(g.cmd, (dst.width + 7) / 8, (dst.height + 7) / 8, 1);
+
+                // The reader this makes visible to differs by pass: pass 0's output feeds the
+                // next dispatch (compute), pass 1's feeds composite.frag (fragment).
+                ib.oldLayout     = VK_IMAGE_LAYOUT_GENERAL;
+                ib.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                ib.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+                ib.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                     p == 0 ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
+                                            : VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
+                                     0, nullptr, 0, nullptr, 1, &ib);
+            }
+            bloomRecorded = true;
+        }
     }
 
     rp.renderPass = g.renderPass;
@@ -10166,7 +10349,12 @@ extern "C" void RB_Vulkan_Present(void)
         // Tell the composite which [0,uvScale] corner of the scene target the render-scaled
         // world filled (so it upscales exactly that region), plus whether SSAO is on (aoEnable;
         // 0 makes the composite ignore the AO texture and leave AMBIENT un-occluded).
-        float coPush[4] = { uvScale[0], uvScale[1], rb_ssao ? 1.0f : 0.0f, 0.0f };
+        // DOOM-0331 L3: the fourth slot was a reserved `pad` and is now bloomIntensity, so the
+        // combine needs no push-layout change. 0 unless the chain actually ran this frame,
+        // which is what keeps `bloom 0` byte-identical (INV-2) and stops a stale halo showing
+        // over the menu or the intermission screen.
+        float coPush[4] = { uvScale[0], uvScale[1], rb_ssao ? 1.0f : 0.0f,
+                            bloomRecorded ? bloomPreset.intensity : 0.0f };
         vkCmdPushConstants(g.cmd, g.compositePipeLayout, VK_SHADER_STAGE_FRAGMENT_BIT,
                            0, sizeof(coPush), coPush);
         vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.compositePipeline);
@@ -10686,6 +10874,11 @@ extern "C" void RB_Vulkan_Shutdown(void)
     if (g.bloomExtractPipeLayout)     vkDestroyPipelineLayout(g.device, g.bloomExtractPipeLayout, nullptr);
     if (g.bloomExtractDsPool)         vkDestroyDescriptorPool(g.device, g.bloomExtractDsPool, nullptr);
     if (g.bloomExtractDsLayout)       vkDestroyDescriptorSetLayout(g.device, g.bloomExtractDsLayout, nullptr);
+    // DOOM-0331 L3 — the blur's pipeline/sets, same size-independent lifetime.
+    if (g.bloomBlurPipeline)   vkDestroyPipeline(g.device, g.bloomBlurPipeline, nullptr);
+    if (g.bloomBlurPipeLayout) vkDestroyPipelineLayout(g.device, g.bloomBlurPipeLayout, nullptr);
+    if (g.bloomBlurDsPool)     vkDestroyDescriptorPool(g.device, g.bloomBlurDsPool, nullptr);
+    if (g.bloomBlurDsLayout)   vkDestroyDescriptorSetLayout(g.device, g.bloomBlurDsLayout, nullptr);
     // DOOM-0170 L2c flashlight shadow map (size-independent; built once in CreateShadowResources).
     if (g.shadowPipeline)   vkDestroyPipeline(g.device, g.shadowPipeline, nullptr);
     if (g.shadowPipeLayout) vkDestroyPipelineLayout(g.device, g.shadowPipeLayout, nullptr);

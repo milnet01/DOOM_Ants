@@ -72,7 +72,8 @@ SHADER_SRCS=$(SHADER_DIR)/mesh.vert $(SHADER_DIR)/mesh.frag \
 		$(SHADER_DIR)/svgf_temporal.comp $(SHADER_DIR)/svgf_atrous.comp \
 		$(SHADER_DIR)/svgf_composite.comp $(SHADER_DIR)/label.comp \
 		$(SHADER_DIR)/taau.comp \
-		$(SHADER_DIR)/bloom_extract_raster.comp
+		$(SHADER_DIR)/bloom_extract_raster.comp \
+		$(SHADER_DIR)/bloom_blur.comp
 SHADER_HDRS=$(SHADER_SRCS:=.spv.h)
 # DOOM-0170 L2b — a second build of mesh.frag with -DSINGLE_TARGET (one combined colour
 # output) for the RT weapon overlay, which draws into the single-attachment swapchain pass.

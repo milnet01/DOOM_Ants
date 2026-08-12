@@ -18,6 +18,9 @@ layout(set = 0, binding = 1) uniform sampler2D directTex;
 // [0,1] over the WHOLE frame (unlike the scene targets, which fill only the render-scaled
 // corner), so it is sampled at vUV directly, not vUV*uvScale.
 layout(set = 0, binding = 2) uniform sampler2D aoTex;
+// DOOM-0331 L3 (§4.4) — the blurred bloom, quarter-display. It maps [0,1] over the WHOLE
+// frame like the AO factor does, so it is sampled at vUV directly, not vUV*uvScale.
+layout(set = 0, binding = 3) uniform sampler2D bloomTex;
 
 // DOOM-0170 L2a step 2: the world is drawn into the [0,uvScale] corner of a
 // full-size scene target (render-scale sub-rectangle). Sample that corner and let
@@ -25,7 +28,9 @@ layout(set = 0, binding = 2) uniform sampler2D aoTex;
 // 100% render scale, so the picture is byte-identical to the full-res path.
 // DOOM-0170 L2b: aoEnable gates the SSAO multiply (0 -> ambient un-occluded) so the rb_ssao
 // toggle needs no separate pipeline; the SSAO pass is simply skipped and AO reads as 1.
-layout(push_constant) uniform Push { vec2 uvScale; float aoEnable; float pad; } pc;
+// DOOM-0331 L3 (§5): the block's layout does not change — the unused `pad` that was already
+// reserved here becomes bloomIntensity, which is 0 whenever no bloom was recorded this frame.
+layout(push_constant) uniform Push { vec2 uvScale; float aoEnable; float bloomIntensity; } pc;
 
 // DOOM-0170 L2a step 3: the SAME Khronos PBR-Neutral tone operator the RT denoiser uses
 // (svgf_composite.comp), so Solid and Ultra stay tone-matched. It is identity below its
@@ -44,5 +49,16 @@ layout(push_constant) uniform Push { vec2 uvScale; float aoEnable; float pad; } 
 void main()
 {
     vec3 hdr = sceneRecombine(ambientTex, directTex, aoTex, vUV, pc.uvScale, pc.aoEnable);
+
+    // DOOM-0331 L3 (§4.4) — one additive term, BEFORE the tone-map so the halo rolls off with
+    // the highlight it came from. A branch and not a multiply by zero: `hdr + bloom * 0.0` is
+    // exact for finite bloom, but a NaN or Inf would survive the multiply and poison the frame,
+    // and the RT chain already guards against non-finite radiance, which says such values do
+    // occur here. With the branch, bloom Off cannot reach the add at all -- that is what makes
+    // INV-2 structural rather than a floating-point argument. (The dial being ON is guarded
+    // separately, by the extract's own NaN clamp, since one bad texel becomes a 16-pixel halo.)
+    if (pc.bloomIntensity > 0.0)
+        hdr += texture(bloomTex, vUV).rgb * pc.bloomIntensity;
+
     outColor = vec4(pbrNeutralToneMapping(hdr), 1.0);
 }

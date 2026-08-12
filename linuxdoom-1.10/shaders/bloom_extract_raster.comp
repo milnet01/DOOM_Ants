@@ -56,6 +56,14 @@ void main()
         vec2 uv = (vec2(px) + (vec2(i, j) + 0.5) / vec2(taps)) / vec2(sz);
 
         vec3  c    = sceneRecombine(ambientTex, directTex, aoTex, uv, pc.uvScale, pc.aoEnable);
+        // DOOM-0331 L3 (4.4) — the non-finite guard, and it goes HERE rather than at the
+        // combine: this is the only pass reading unguarded values, and one NaN texel that
+        // gets past it is thresholded and then blurred into a +-16-pixel hole in the frame.
+        // The RT chain guards its own radiance the same way (svgf_composite.comp), which is
+        // the evidence that such values do occur in this engine. Landed with L3 because
+        // until the combine existed nothing sampled the result.
+        if (any(isnan(c)) || any(isinf(c)))
+            c = vec3(0.0);
         // Soft knee so a surface crossing the threshold ramps in rather than pops.
         // peak, NOT Rec.709 luminance: luminance weights green at 0.7152 and red at
         // 0.2126, so a red fireball at four times white scores 0.85 and would not bloom

@@ -1,0 +1,63 @@
+#version 450
+//
+// DOOM-0331 L3 (spec 4.3) — the separable Gaussian, run twice with the axis in a push
+// constant. Chain-agnostic on purpose: it reads one bloom target and writes another and
+// knows nothing about how they were filled, which is what lets DOOM-0345 reuse it
+// UNCHANGED for the ray-traced chain.
+//
+// Compute for the same reason the extract is: this sits between two render passes.
+//
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D srcTex;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D dstImg;
+
+// dir carries BOTH the axis and the per-pass step factor -- (2,0) for pass 1, (0,1) for
+// pass 2 -- because pass 1 writes quarter-res while READING half-res, so one output texel
+// is two source texels. srcTexelSize is exactly 1/size-of-the-image-being-read with no
+// factor folded into it. Splitting it the other way (a unit dir, the factor in the texel
+// size) is the natural misreading and it builds pass 1 at half its intended reach: the X
+// blur comes out half as wide as the Y blur and the halo is a silently oval smear.
+layout(push_constant) uniform Push {
+    vec2 dir;
+    vec2 srcTexelSize;
+} pc;
+
+// A 9-tap Gaussian, sigma = 2.0 texels at quarter res, collapsed to 5 bilinear-paired
+// fetches; offsets are in OUTPUT texels. Fixed at author time -- there is no codegen step
+// in this Makefile -- and derived by the python3 one-liner in spec 4.3, which also proves
+// the weights sum to exactly 1.0. That is what makes the blur energy-preserving, so the
+// intensity dial is the only thing scaling the halo.
+const float kCentreWeight = 0.204164;
+const float kInnerWeight  = 0.304005;
+const float kOuterWeight  = 0.093913;
+const float kInnerOffset  = 1.4073;
+const float kOuterOffset  = 3.2942;
+
+void main()
+{
+    ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 sz = imageSize(dstImg);
+    if (px.x >= sz.x || px.y >= sz.y)
+        return;
+
+    // Output texel centre, normalised. Both images cover the whole display, so the same
+    // coordinate addresses the source correctly whatever the two resolutions are -- which
+    // is what makes pass 1's half -> quarter downsample free in the bilinear fetch.
+    vec2 uv = (vec2(px) + 0.5) / vec2(sz);
+
+    vec2 inner = kInnerOffset * pc.dir * pc.srcTexelSize;
+    vec2 outer = kOuterOffset * pc.dir * pc.srcTexelSize;
+
+    // textureLod, never texture(): compute has no derivatives, so implicit-LOD sampling is
+    // invalid here. All bloom targets are single-mip, so level 0 is the whole image.
+    vec3 sum = textureLod(srcTex, uv, 0.0).rgb * kCentreWeight;
+    sum += (textureLod(srcTex, uv + inner, 0.0).rgb
+          + textureLod(srcTex, uv - inner, 0.0).rgb) * kInnerWeight;
+    sum += (textureLod(srcTex, uv + outer, 0.0).rgb
+          + textureLod(srcTex, uv - outer, 0.0).rgb) * kOuterWeight;
+
+    // Taps past the edge are handled by the sampler's CLAMP_TO_EDGE address mode (the
+    // shared composite sampler), so a halo at the frame edge extends rather than darkens.
+    imageStore(dstImg, px, vec4(sum, 1.0));
+}
