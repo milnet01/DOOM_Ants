@@ -332,11 +332,12 @@ Two further properties this shape has to keep:
   | 1.00 | 0.00 | 0.000 | **0.000** — the floor, exactly zero |
   | 1.20 | 0.20 | 0.024 | 0.029 — ramping in |
   | 4.00 | 0.70 | 0.663 | 2.650 — `= peak − threshold`, fully in |
-- **The sky contributes nothing here.** In raster the sky is written at paletted
-  magnitude and falls below every preset's ramp start (`threshold − knee`,
-  floored at 1.0) on its own — INV-9 states the bound precisely, since the sky
-  rides in the *unbounded* DIRECT target and the AMBIENT ceiling does not cover
-  it.
+- **The sky contributes nothing here.** In raster the sky reaches the composite at
+  paletted magnitude and so cannot *exceed* any preset's ramp start
+  (`threshold − knee`, floored at 1.0) — at the High preset it sits exactly on it
+  and extracts exactly zero, per the worked table above. INV-9 states the bound
+  and its mechanism, which the AMBIENT ceiling above does **not** supply: the sky
+  rides in the *unbounded* DIRECT target.
 
 The extract runs at **half display resolution**, and each output texel gathers
 the source texels under it by **thresholding each one first and averaging
@@ -419,8 +420,14 @@ quarter-res while *reading* half-res `bloomImage[0]`, so one output texel is two
 source texels: its UV step is `offset × 2 × srcTexelSize`. Pass 2 reads and writes
 quarter-res, so its step is `offset × 1 × srcTexelSize`. Getting this wrong is
 silent and asymmetric — the X blur comes out half as wide as the Y blur and the
-halo is subtly oval. Hence `srcTexelSize` in the push block, with the per-pass
-factor baked into the caller's dispatch.
+halo is subtly oval.
+
+**`dir.xy` carries that per-pass factor; `srcTexelSize` never does.** The shader
+steps by `offset * pc.dir * pc.srcTexelSize`, where `srcTexelSize` is exactly
+`1 / size-of-the-image-being-read` and the caller passes `dir = (2, 0)` for
+pass 1 and `dir = (0, 1)` for pass 2. Said explicitly because a unit `dir`
+alongside a bare `1/size` is the natural reading of §5's push table, and it
+builds pass 1 at half its intended reach — the oval halo above.
 
 Pass 1's taps land at ±2.81 and ±6.59 half-res texels, so it does **not** sample
 every half-res texel it passes over. A lone one-texel emitter in `bloomImage[0]`
@@ -472,15 +479,16 @@ if (pc.bloomIntensity > 0.0)
 
 **A branch, not a multiply by zero.** `hdr + bloom * 0.0` is exact for finite
 `bloom`, but a NaN or Inf that reached `bloomImage[2]` would survive the multiply
-and poison the frame — and both chains already guard against non-finite radiance
-(`if (any(isnan(L)) || any(isinf(L))) L = vec3(0.0)`), which says such values do
-occur. With the branch, `rb_bloom == 0` cannot reach the add at all, which is
+and poison the frame — and the **RT** chain already guards against non-finite
+radiance (`if (any(isnan(L)) || any(isinf(L))) L = vec3(0.0)`, in
+`svgf_composite.comp`), which says such values do occur in this engine. The
+raster chain has no such guard anywhere, which is why the next paragraph puts one
+in the extract. With the branch, `rb_bloom == 0` cannot reach the add at all, which is
 what makes INV-2 a structural guarantee rather than a floating-point argument.
 
 **And the dial being ON needs its own guard, which the branch does not provide.**
-The raster scene targets carry no non-finite guard on the path the extract reads —
-so one NaN texel, thresholded and then blurred, spreads over a ±16-pixel halo. The
-extract therefore clamps as its first act: `if (any(isnan(c)) || any(isinf(c)))
+One NaN texel in the scene targets, thresholded and then blurred, spreads over a
+±16-pixel halo. The extract therefore clamps as its first act: `if (any(isnan(c)) || any(isinf(c)))
 c = vec3(0.0);`, before the threshold. Cheaper there than anywhere downstream,
 because it is the only pass that reads unguarded values. **DOOM-0345's extract
 carries the same clamp**, for the same reason.
@@ -503,6 +511,8 @@ config key and no menu row.**
 | `bloom` | `m_misc.c` config table, default `2` | persisted to `~/.doomrc` |
 | `vid_bloom` | `m_menu.c` `videoitem_e`, after `vid_fog` | row label `"Bloom"`, hotkey `'m'` |
 | `M_ChangeBloom` | `m_menu.c` | `rb_bloom = (rb_bloom + 1) % 4` |
+| `bloomNames` | `m_menu.c`, beside `fogNames` | `{"Off","Low","Med","High"}` — the **value** strings, indexed by `rb_bloom` |
+| `M_VideoCrispValue` | `m_menu.c`, a new `case vid_bloom:` | supplies this row's displayed value from `bloomNames` |
 | `kBloomPresets` | `r_vulkan.cpp`, one table | `{threshold, knee, intensity}` per level |
 
 **The knee lives in the preset table, not in the shaders.** It is a tuning
@@ -520,19 +530,27 @@ exactly:
 static const struct BloomPreset { float threshold, knee, intensity; } kBloomPresets[4] = {
 ```
 
-**`rb_bloom` is clamped where it indexes the table**, not trusted from the
-config file. `~/.doomrc` is a plain text file a user can hand-edit, and `bloom 9`
-would otherwise read past a four-entry array. Clamp at **every** read site, not
-just the preset index: `M_ChangeBloom`'s `(rb_bloom + 1) % 4` silently maps a
-hand-edited 9 to 2, and `videoLabels[vid_end]`'s label lookup indexes its name
-array before any keypress — the same shape as the `rb_fog` defect this paragraph
-files. A single clamp applied at config load, plus the use-site guard, closes
-both. Clamp the way `rb_renderscale` already is (`rb_renderscale < 25 ? 25 :
-rb_renderscale > 100 ? 100 : rb_renderscale`, two sites in `r_vulkan.cpp`) — that
-is the live precedent in this file. **Note the precedent is `rb_renderscale`, not
-`rb_fog`:** `rb_fog` turns out to have no clamp anywhere, only a display-side
-guard in the menu, which is its own latent out-of-range read and is filed as
-**DOOM-0338**.
+**`rb_bloom` is clamped at every site that indexes an array with it**, not
+trusted from the config file: `~/.doomrc` is plain text a user can hand-edit, and
+`bloom 9` would read past a four-entry array. There are exactly two such sites,
+and the second fires without any keypress:
+
+- `kBloomPresets[rb_bloom]` in `r_vulkan.cpp`, where the passes take their
+  threshold, knee and intensity.
+- `bloomNames[rb_bloom]` in `m_menu.c` — the **value**-name array this row needs,
+  read while the Video menu is drawn, before any input arrives.
+
+`M_ChangeBloom`'s `(rb_bloom + 1) % 4` is *not* a third site: it maps a
+hand-edited 9 to 2 rather than reading out of range. A single clamp at config
+load, plus a guard at each index above, closes all of it.
+
+**Copy `fogNames`, which already does this correctly** —
+`fogNames[(rb_fog >= 0 && rb_fog <= 3) ? rb_fog : 0]`, at both of its `m_menu.c`
+sites. `rb_renderscale`'s two-site clamp in `r_vulkan.cpp`
+(`rb_renderscale < 25 ? 25 : rb_renderscale > 100 ? 100 : rb_renderscale`) is the
+same shape on the engine side. Note what `videoLabels` is *not*: it is indexed by
+the `videoitem_e` **row**, never by a dial's value, so it is not one of the sites
+above and needs nothing.
 
 `'m'` for "blooM", because `'b'` is already `vid_brightness`. (`'v'` is
 currently used twice — `vid_fog` and `vid_debugviews` — a pre-existing collision
@@ -545,10 +563,17 @@ preset may put it below 1.00**:
 
 | Level | Threshold | Knee | Ramp starts | Intensity |
 |---|---|---|---|---|
-| Off | — | — | — | 0.00 |
+| Off | 1.00 | 0.00 | 1.00 | 0.00 |
 | Low | 1.80 | 0.30 | 1.50 | 0.20 |
 | Medium | 1.50 | 0.35 | 1.15 | 0.35 |
 | High | 1.35 | 0.35 | **1.00** | 0.55 |
+
+**Off's row carries real numbers, not dashes.** `kBloomPresets[4]` is an array of
+three floats per row, so row 0 needs values whatever they are — and with the dial
+Off nothing reads them, since no dispatch is recorded and the combine is behind a
+branch (§4.4). They are pinned at `{1.00f, 0.00f, 0.00f}` rather than left to the
+implementer so that INV-4's floor check can read **every** row without a special
+case: Off's ramp start is 1.00, on the floor, exactly like High's.
 
 Low → High *lowers* the ramp start (1.50 → 1.15 → 1.00), so more of the scene
 qualifies as a light source and the halo strengthens with it. High sits exactly on
@@ -637,14 +662,15 @@ dependency at each hop, and `bloomImage[2]` ends the chain in
 `SHADER_READ_ONLY_OPTIMAL` for the combine. The existing `svgfBarrier()` helper
 is the idiom to follow.
 
-**And one barrier that is easy to miss**, because it moves a read *earlier* in
-the frame: `bloom_extract_raster` samples `sceneImage`, `sceneDirImage` and
-`aoImage`, whose transition to `SHADER_READ_ONLY_OPTIMAL` today happens for the
-composite's benefit *inside* the swapchain pass. The extract now needs them
-readable before that pass begins, so the existing scene-pass → composite
-dependency has to be brought forward to scene-pass → extract (the SSAO pass's own
-output likewise). This is the one hop where "it already works for the composite"
-is not evidence.
+**The extract's three inputs need no new barrier.** Worth stating, because the
+opposite is the natural assumption for a pass being inserted earlier in the
+frame. `bloom_extract_raster` samples `sceneImage`, `sceneDirImage` and
+`aoImage`. The first two are already moved `COLOR_ATTACHMENT_OPTIMAL` →
+`SHADER_READ_ONLY_OPTIMAL` by an explicit `vkCmdPipelineBarrier` recorded
+immediately after the scene pass and **before** the SSAO pass — it has to be,
+since SSAO reads the DIRECT target's packed forward-distance depth — and
+`aoImage` reaches the same layout through its own render pass's `finalLayout`.
+The extract is recorded after both, so all three are already readable.
 
 **Pipelines and descriptor sets.** Two new compute shaders means two pipelines,
 two set layouts and their pool allocations: `g.bloomExtractRasterPipeline` and
@@ -706,7 +732,7 @@ luck when that include changes. Add it to that line in the same edit.
 | Pass | Push contents |
 |---|---|
 | `bloom_extract_raster` | `uvScale.xy`, `aoEnable`, `threshold`, `knee` |
-| `bloom_blur` | `dir.xy`, `srcTexelSize.xy` (1/size of the image being read) |
+| `bloom_blur` | `dir.xy` — blur axis **and** the per-pass step factor, `(2,0)` for pass 1 and `(0,1)` for pass 2 (§4.3); `srcTexelSize.xy` — exactly 1/size of the image being read, with no factor folded in |
 | `composite.frag` | existing `{uvScale, aoEnable, pad}` — `pad` becomes `bloomIntensity` |
 
 `composite.frag`'s existing push block already carries an unused `float pad`
@@ -795,7 +821,8 @@ rule — same map, same render scale, reference GPU, both arms from the same bui
 
 ```
 # Solid, 50% render scale, E1M1: bloom default vs bloom off
-#   read the [cpu_profile] fps line and the composite/bloom pass rows
+#   [cpu_profile]    -> fps and present-total  (the 60 fps floor; the 5% denominator)
+#   [raster_profile] -> the per-pass rows, incl. the new bloom bucket (the numerator)
 \   (rb_profile) with bloom=2, then with bloom=0
 ```
 
@@ -956,10 +983,12 @@ h=int(a.shape[0]*0.805);print(numpy.abs(a[h:]-b[h:]).max())" on.png off.png
 - **INV-5** — Solid keeps the 60 fps floor. With `bloom` at its shipped default,
   Solid at 50 % render scale on the reference RX 6600 stays at or above 60 fps
   on E1M1, and the bloom passes cost ≤ 5 % of present-total.
-  *Test:* the `rb_profile` (`\`) `[cpu_profile]` fps line and the per-pass rows,
-  `bloom 2` vs `bloom 0`, same map and same render scale (`performance.md`'s
-  comparison rule). No expected value — this is the L4 measurement, not a
-  recorded one.
+  *Test:* with `rb_profile` on (`\`), **two** prints, because neither carries
+  both halves: `[cpu_profile]` for fps and present-total (the floor, and the
+  denominator of the 5 % bound) and `[raster_profile]` for the per-pass rows
+  including the new bloom bucket (the numerator). `bloom 2` vs `bloom 0`, same map
+  and same render scale (`performance.md`'s comparison rule). No expected value —
+  this is the L4 measurement, not a recorded one.
   *Breaks when:* the blur is run at full resolution, or the single level grows
   into a pyramid without a re-measure.
 
@@ -972,7 +1001,11 @@ h=int(a.shape[0]*0.805);print(numpy.abs(a[h:]-b[h:]).max())" on.png off.png
   ```
   awk '/^extern "C" void RB_Vulkan_Present/,/^}/' linuxdoom-1.10/r_vulkan.cpp \
     | grep -o 'gpuTimerPool, [0-9]' | sort -u   # today 0-5; after L4 0-6
-  grep -c 'nq = g.profRasterFrame ? 7u : 8u;' linuxdoom-1.10/r_vulkan.cpp   # -> 1
+  # Anchor on the RASTER arm alone. DOOM-0345 rewrites the RT arm to `10u`, so
+  # pinning the whole line would make this clause return 0 on an intact tree the
+  # moment the sibling lands - and the obvious "fix" is to revert the RT arm to
+  # 8u, which silently truncates the RT readback.
+  grep -c 'nq = g.profRasterFrame ? 7u :' linuxdoom-1.10/r_vulkan.cpp   # -> 1
   # the print must carry six buckets, not five
   grep -A4 'raster_profile' linuxdoom-1.10/r_vulkan.cpp | grep -c 'bloom'   # -> 1
   ```
@@ -1001,12 +1034,16 @@ h=int(a.shape[0]*0.805);print(numpy.abs(a[h:]-b[h:]).max())" on.png off.png
   with a second table instead of a named per-chain scale constant (§10 Q3).
 
 - **INV-9** — the raster sky never *generates* bloom. The sky needs its own
-  argument, **not §4.2's AMBIENT floor**: `composite.frag` writes sky into the
-  **DIRECT** target ("flashlight + point lights + sprite/sky colour"), and §4.2 is
-  explicit that DIRECT is unbounded. What bounds the sky specifically is that it
-  is a palette colour written once, never multiplied by a light term, and scaled
-  only by `aoDirect ≤ 1` — so it cannot exceed 1.0 and cannot reach any preset's
-  ramp start.
+  argument, **not §4.2's AMBIENT floor**: the **scene pass** (`mesh.frag`) writes
+  sky into the **DIRECT** target, and §4.2 is explicit that DIRECT is unbounded.
+  (`composite.frag` only *reads* that target; its header comment describing the
+  contents as "flashlight + point lights + sprite/sky colour" is a description,
+  not the write.) What bounds the sky is `mesh.frag`'s sky branch, which writes
+  `outDirect = vec4(skyOut, 100000.0)` and `outAmbient = vec4(0.0)`: the sky's
+  AMBIENT term is exactly zero, and its DIRECT term is a palette colour written
+  once and never multiplied by a light term. The far depth makes SSAO skip the
+  sky, so `aoDirect` is 1 there and the thresholded value is `skyOut` itself —
+  which cannot exceed 1.0 and so cannot reach any preset's ramp start.
   **This governs generation, not reception.** The raster combine has no sky test,
   so a lamp beside a sky edge does bleed its halo onto sky pixels there. That is
   deliberate and physically right — light does spill in front of a distant
@@ -1170,9 +1207,10 @@ checkable — with only one bucket added on this chain, "the format string names
 
 ## 13. Cold-eyes loop log
 
-| Loop | Date | Lanes | CRIT | HIGH | MED | LOW | Outcome |
-|------|------|-------|------|------|-----|-----|---------|
+| Loop | Date | Lanes | Q1 | Q2 | Q3 | Q4 | Outcome |
+|------|------|-------|----|----|----|----|---------|
 | 0-split | 2026-08-12 | 0 | 0 | 0 | 0 | 0 | **No reviewer dispatched.** Narrowed in place from the 1496-line umbrella of this same id, which had converged by cap at 3 loops with build-changing findings still arriving. The RT chain left for DOOM-0345; invariants renumbered from 1 and mapped in §2. The umbrella's 10-item deferred tail was folded in rather than re-reviewed, and its §10 Q3 was closed by the user as §3 decision 5. **No review history is inherited** — the umbrella's three loops ran against a document that no longer exists, so this part runs the gate from loop 1 on its own bytes. |
+| 1 | 2026-08-12 | 2 | 5 | 1 | 1 | 1 | All 8 verified against the tree, **0 dismissed**, all 8 fixed. **Five of the eight were false claims about existing code**, and every one would have sent an implementer to the wrong place: INV-9 attributed the sky's DIRECT write to `composite.frag`, which only *reads* that target (`mesh.frag` writes it, and writes `outAmbient = vec4(0.0)` — so the sky's ambient term is exactly zero, which is what actually bounds it); §4.4 said "both chains already guard against non-finite radiance" when only the RT chain does, contradicting its own next paragraph; §5 instructed the implementer to bring a barrier forward that already fires immediately after the scene pass and before SSAO; §4.5 named `videoLabels` (indexed by menu *row*, never by a dial value) as a read site to clamp and called `rb_fog`'s already-guarded lookup a latent defect; and §6/INV-5 named `[cpu_profile]` for per-pass rows that only `[raster_profile]` prints. The Q2 was `srcTexelSize` carrying a per-pass ×2 factor that §5 defined away, the Q3 was the preset table's Off row having no values while INV-4 read "each row", and the Q4 was INV-6 pinning the whole `nq` line, which DOOM-0345 rewrites — so that clause would fail on an intact tree the moment the sibling landed. One collateral fix from the 4b sweep: §4.2's "falls below every ramp start" went imprecise once INV-9 was made exact — at the High preset the sky sits *on* the ramp start and extracts exactly zero. |
 
 **What the umbrella's review bought, kept here because the reasoning is load-bearing
 and the document it was written in is gone.** Three findings that would each have

@@ -391,11 +391,22 @@ the menu and a render-res allocation would have to be recreated mid-play.
 
 ### Descriptors, layouts and barriers
 
-**Barriers between the passes.** Each reads the previous one's output, so
-`svgf_composite` → extract → blurH → blurV → `rt_tonemap` needs a `GENERAL`
-(compute write) → `SHADER_READ_ONLY_OPTIMAL` (sampled read) transition plus an
-execution dependency at each hop. The existing `svgfBarrier()` helper is the
-idiom to follow.
+**Barriers between the passes — and the hops are not all the same kind.** Each
+pass reads the previous one's output, so every hop needs an execution and memory
+dependency, and the existing `svgfBarrier()` helper is the idiom. The **layout**
+differs by image, and stating one rule for the whole chain gets it wrong:
+
+- **`rtHdrImage` stays in `GENERAL` for its whole life.** Its usage is STORAGE
+  only (the table above) and both of its readers reach it with `imageLoad`
+  (`bloom_extract_rt` in §4.3, `rt_tonemap` in §4.4). So the
+  `svgf_composite` → extract hop and the → `rt_tonemap` hop take a memory barrier
+  with `oldLayout == newLayout == GENERAL`. Transitioning it to
+  `SHADER_READ_ONLY_OPTIMAL` is **invalid** — that layout is for a sampled
+  descriptor, and this image is never sampled.
+- **`bloomImage[0..2]` do take `GENERAL` → `SHADER_READ_ONLY_OPTIMAL`**, because
+  DOOM-0331 §5 gives them STORAGE **+ SAMPLED** and their readers sample them
+  (`texture(bloomTex, …)`). That covers extract → blurH → blurV, and leaves
+  `bloomImage[2]` in `SHADER_READ_ONLY_OPTIMAL` for `rt_tonemap`'s bloom fetch.
 
 **`bloomImage[2]` needs no park on this chain** — DOOM-0331 already parks it in
 `SHADER_READ_ONLY_OPTIMAL` at creation for the composite's benefit, and
@@ -490,7 +501,7 @@ Every site, verified present in the current tree:
 | 5 | `vkCmdResetQueryPool(g.cmd, g.gpuTimerPool, 0, 8)` in `RecordRtTrace` | `8` | `10` |
 | 6 | `vkCmdResetQueryPool(g.cmd, g.gpuTimerPool, 0, 8)` in `RB_Vulkan_Present` | `8` | `10` |
 | 7 | `uint32_t nq = g.profRasterFrame ? 7u : 8u` | `7 : 8` | `7 : 10` — RT arm only; the `7` is DOOM-0331's |
-| 8 | the `if (prof && !denoise)` dummy-timestamp block, slots 5–7 | 5,6,7 | 5,6,7,**8,9** |
+| 8 | a **new** `if (prof && !bloomActive)` dummy-timestamp block | — | writes **8,9**. The existing `if (prof && !denoise)` block is **unchanged** at 5,6,7 — see below |
 | 9 | the `[rt_profile]` `printf` — format string **and** its `profMs[0..7]` args | 8 buckets | 10 |
 
 **Site 9 corrupts the measurement rather than breaking it**, which makes it the
@@ -503,13 +514,13 @@ Sites 5 and 6 are two *separate* reset calls — one per chain — and both must
 move, or the chain whose reset was missed queries unreset slots and
 `vkGetQueryPoolResults` drops the entire print that §6's gate depends on.
 
-**Site 8 matters twice, and the second reason is easy to miss: the bloom dial is
-itself a gate.** `nq` is a compile-time-shaped constant, but the new slots are
-only *written* when `rb_bloom > 0` (§4.4 skips every bloom dispatch when the dial
-is Off). A reset-but-unwritten slot returns `VK_NOT_READY` and the readback drops
-the **whole** print — which would kill the profiler on precisely the `bloom 0` arm
-that §6's measurement and INV-9 compare against. So the dummy-timestamp mechanism
-site 8 already uses for the mode gate must also cover the bloom gate:
+**Site 8 exists because the bloom dial is itself a gate.** `nq` is a
+compile-time-shaped constant, but slots 8 and 9 are only *written* when
+`rb_bloom > 0` (§4.4 skips every bloom dispatch when the dial is Off). A
+reset-but-unwritten slot returns `VK_NOT_READY` and the readback drops the
+**whole** print — which would kill the profiler on precisely the `bloom 0` arm
+that §6's measurement and INV-9 compare against. So slots 8 and 9 get a
+dummy-timestamp block of their own, mirroring the existing mode-gate one:
 
 ```
 if (prof && !bloomActive)   // mirrors the existing `if (prof && !denoise)` block
@@ -518,6 +529,16 @@ if (prof && !bloomActive)   // mirrors the existing `if (prof && !denoise)` bloc
     vkCmdWriteTimestamp(..., <RT slots 8 and 9>);
 }
 ```
+
+**One block, and the existing `!denoise` block must NOT be extended to cover 8
+and 9.** `denoise` is `(rb_rtdebug == 6)` and bloom runs only in mode 6, so
+`!denoise` **implies** `!bloomActive`: the new block already fires on every frame
+the old one does. Extending both leaves two `vkCmdWriteTimestamp` calls writing
+each of slots 8 and 9 between resets, which is invalid. Extending the old one
+*instead of* adding this one is worse still — on the ordinary denoiser-on,
+`bloom 0` frame neither block fires, the two slots are reset but never written,
+and the entire `[rt_profile]` print vanishes, which is the failure this site
+exists to prevent.
 
 **RT appends rather than inserts, because its existing slots are already out of
 chronological order.** Its write order is chronologically `0,1,2,5,6,7,3,4` —
@@ -585,7 +606,8 @@ same render scale, reference GPU, both arms from the same build:
 
 ```
 # Ultra RT, 50% render scale, E1M1: bloom default vs bloom off
-#   read the [rt_profile] line's new bloom and rt_tonemap buckets
+#   [rt_profile]  -> the new bloom and rt_tonemap buckets   (the numerator)
+#   [cpu_profile] -> present-total                          (the denominator)
 \   (rb_profile) with bloom=2, then with bloom=0
 ```
 
@@ -744,10 +766,17 @@ h=int(a.shape[0]*0.805);print(numpy.abs(a[h:]-b[h:]).max())" on.png off.png
   *Test:* one grep and one capture sweep, because the grep can see a duplicated
   call but not a duplicated effect:
   ```
-  # the split variant's surface store must NOT be exposed: it stores max(L,0),
-  # and the only exposure call in that file is the sky branch's.
-  grep -c 'exposureEv\|toneExposeEncode' linuxdoom-1.10/shaders/svgf_composite.comp
-  # expect 1 - the sky branch's toneExposeEncode call, and nothing else
+  # Both variants are built from this ONE source file, so a correct build has
+  # exactly TWO call sites: the sky branch (either variant) and the un-split
+  # variant's surface store. Expecting 1 would be satisfied by deleting the
+  # un-split surface encode - which breaks INV-1's byte-identity on the bloom 0
+  # arm, so the wrong expected value here costs more than no test at all.
+  grep -c 'toneExposeEncode' linuxdoom-1.10/shaders/svgf_composite.comp
+  # expect 2
+  # ...and the split arm's surface store must carry no exposure of its own:
+  grep -c 'imageStore(rtHdrImage, p, vec4(max(L, vec3(0.0)), 1.0))' \
+       linuxdoom-1.10/shaders/svgf_composite.comp
+  # expect 1
   ```
   plus R1's `rb_exposure` sweep: capture the same coordinate at the slider's
   extremes with `bloom 2` and again with `bloom 0`, and the two arms must track
@@ -795,10 +824,12 @@ h=int(a.shape[0]*0.805);print(numpy.abs(a[h:]-b[h:]).max())" on.png off.png
   (DOOM-0331 §10 Q3).
 
 - **INV-9** — the bloom passes cost ≤ 5 % of present-total in Ultra RT.
-  *Test:* the `rb_profile` (`\`) `[rt_profile]` line's new bloom and
-  `rt_tonemap` buckets against present-total, `bloom 2` vs `bloom 0`, same map
-  and same render scale (`performance.md`'s comparison rule). No expected value —
-  this is the R3 measurement, not a recorded one.
+  *Test:* with `rb_profile` on (`\`), **two** prints, because neither carries
+  both halves of the ratio: `[rt_profile]` for the new bloom and `rt_tonemap`
+  buckets (the numerator) and `[cpu_profile]` for present-total (the
+  denominator — `[rt_profile]` does not print it). `bloom 2` vs `bloom 0`, same
+  map and same render scale (`performance.md`'s comparison rule). No expected
+  value — this is the R3 measurement, not a recorded one.
   *Breaks when:* the blur is run at full resolution, the single level grows into
   a pyramid without a re-measure, or the split is made unconditional so the
   round-trip is paid on every frame.
@@ -919,9 +950,10 @@ hides is at most one fp16 rounding step wide.
 
 ## 13. Cold-eyes loop log
 
-| Loop | Date | Lanes | CRIT | HIGH | MED | LOW | Outcome |
-|------|------|-------|------|------|-----|-----|---------|
+| Loop | Date | Lanes | Q1 | Q2 | Q3 | Q4 | Outcome |
+|------|------|-------|----|----|----|----|---------|
 | 0-split | 2026-08-12 | 0 | 0 | 0 | 0 | 0 | **No reviewer dispatched.** Split out of the 1496-line DOOM-0331 umbrella, which had converged by cap at 3 loops with build-changing findings still arriving and 5 of loop 2's 10 CRIT+HIGH being collateral from loop 1's own fixes. This part takes the RT chain; DOOM-0331 keeps the shared core and the raster chain. Invariants renumbered from 1 and mapped in DOOM-0331 §2. The umbrella's §10 Q3 was closed by the user as §3 decision 5, which **changed the mechanism** — the exposure moves downstream and `toneEncode` is lifted whole rather than split. **No review history is inherited**: the umbrella's three loops ran against a document that no longer exists, and the design in §4.2 is new since any of them. This part runs the gate from loop 1 on its own bytes. |
+| 1 | 2026-08-12 | 2 | 1 | 3 | 0 | 0 | All 4 verified, **1 dismissed**, all 4 fixed. Both lanes independently found three of them. **The sharpest was INV-6's own test**: it expected `grep -c 'toneExposeEncode'` to return `1`, but both shader variants are built from one source file, so a correct build has two call sites — satisfying the clause as written meant deleting the un-split surface encode, which breaks INV-1's byte-identity on the `bloom 0` arm. A test that fails a correct build and passes a broken one. Also: §5 stated one layout rule for the whole chain, but `rtHdrImage` is STORAGE-only and read with `imageLoad`, so transitioning it to `SHADER_READ_ONLY_OPTIMAL` is invalid for a storage descriptor; and the widening table and the prose beneath it *both* claimed profiler slots 8 and 9 — since `denoise` is `(rb_rtdebug == 6)` and bloom runs only in mode 6, `!denoise` implies `!bloomActive`, so two dummy blocks would double-write those slots between resets. The Q1 was §6/INV-9 naming `[rt_profile]` for a ratio whose denominator only `[cpu_profile]` prints. **Dismissed:** one lane called INV-1's Solid+RT arm unrunnable because `ab_capture.sh`'s HD guard is unconditional; the other lane checked and DOOM-0331 §7 already owns that fix, and this spec is blocked by it — verified, and the arm stands. |
 
 **What the umbrella's review bought, kept here because the reasoning is
 load-bearing and the document it was written in is gone.** Two findings that
