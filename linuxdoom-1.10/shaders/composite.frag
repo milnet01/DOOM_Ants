@@ -35,32 +35,14 @@ layout(push_constant) uniform Push { vec2 uvScale; float aoEnable; float pad; } 
 // the swapchain is a plain UNORM target, so the tone-mapped value is the final pixel.
 #include "formulas/pbr_neutral_tonemap.glsl"
 
+// DOOM-0331 L2 — the recombination (AMBIENT/DIRECT/AO -> the pre-tone-map HDR value) moved
+// wholesale into this include, because the bloom bright pass has to threshold exactly the
+// value this shader tone-maps. Nothing of it is computed here any more: a second copy of
+// the AO blur or the AO_DIRECT_WEIGHT mix is how the two drift apart (spec 5).
+#include "formulas/scene_recombine.glsl"
+
 void main()
 {
-    vec2  uv      = vUV * pc.uvScale;
-    vec3  ambient = texture(ambientTex, uv).rgb;
-    vec3  direct  = texture(directTex,  uv).rgb;
-
-    // DOOM-0170 L2b — ambient occlusion darkens AMBIENT only (never DIRECT), so corners and
-    // object-to-floor contacts get a soft shadow while flashlight/lamp-lit surfaces stay clean.
-    // A 4-tap bilinear box blur of the half-res AO removes the SSAO dither cheaply (no separate
-    // blur pass). Skipped entirely when the rb_ssao toggle is off (aoEnable = 0 -> ao = 1).
-    float ao = 1.0;
-    if (pc.aoEnable > 0.5)
-    {
-        vec2 t = 1.0 / vec2(textureSize(aoTex, 0));
-        ao = 0.25 * (texture(aoTex, vUV + vec2(-0.5, -0.5) * t).r
-                   + texture(aoTex, vUV + vec2( 0.5, -0.5) * t).r
-                   + texture(aoTex, vUV + vec2(-0.5,  0.5) * t).r
-                   + texture(aoTex, vUV + vec2( 0.5,  0.5) * t).r);
-    }
-    // DOOM-0170 L2b — AO darkens AMBIENT fully; on DOOM's emitter-heavy floors the sector
-    // light is diluted by point-light DIRECT, so pure ambient-only AO is nearly invisible
-    // there. Apply a FRACTION (AO_DIRECT_WEIGHT) of the occlusion to DIRECT too, so contact
-    // shadows read on lit floors — but keep it partial so the flashlight/lamp beams and the
-    // weapon/sprites (which are pure DIRECT and sit at AO≈1 in their interiors) stay bright.
-    const float AO_DIRECT_WEIGHT = 0.5;
-    float aoDirect = mix(1.0, ao, AO_DIRECT_WEIGHT);
-    vec3  hdr = direct * aoDirect + ambient * ao;
+    vec3 hdr = sceneRecombine(ambientTex, directTex, aoTex, vUV, pc.uvScale, pc.aoEnable);
     outColor = vec4(pbrNeutralToneMapping(hdr), 1.0);
 }

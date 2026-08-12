@@ -1,0 +1,73 @@
+#version 450
+//
+// DOOM-0331 L2 (spec 4.2) — the rasterised chain's bright pass. Reads the same three scene
+// targets composite.frag reads, recombines them through the SHARED include so the value
+// thresholded is the value the screen will show, applies a soft-knee threshold, and writes
+// the excess into the half-res bloomImage[0].
+//
+// Compute, not a fragment pass: dispatches cannot be recorded inside a render pass, and
+// this runs between the SSAO pass and the swapchain pass. Having no vUV varying is why the
+// include takes the sample coordinate as a parameter - this shader derives its own.
+//
+layout(local_size_x = 8, local_size_y = 8) in;
+
+// Bindings 0/1/2 mirror composite.frag's set exactly (AMBIENT, DIRECT, half-res AO), all
+// through the linear+clamp composite sampler. Binding 3 is the half-res bloom target.
+layout(set = 0, binding = 0) uniform sampler2D ambientTex;
+layout(set = 0, binding = 1) uniform sampler2D directTex;
+layout(set = 0, binding = 2) uniform sampler2D aoTex;
+layout(set = 0, binding = 3, rgba16f) uniform writeonly image2D bloomOut;
+
+// threshold and knee come from kBloomPresets in r_vulkan.cpp (INV-8) - never a literal here.
+layout(push_constant) uniform Push {
+    vec2  uvScale;
+    float aoEnable;
+    float threshold;
+    float knee;
+} pc;
+
+#include "formulas/scene_recombine.glsl"
+
+void main()
+{
+    ivec2 px  = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 sz  = imageSize(bloomOut);
+    if (px.x >= sz.x || px.y >= sz.y)
+        return;
+
+    // 4.2 — how many source texels sit under one output texel. The world fills only the
+    // [0,uvScale] corner of a full-size scene target and this target is half the display,
+    // so the ratio is 2*uvScale per axis: 1 at the shipped 50% render scale (a plain point
+    // read), 2 at 100%. The two intermediate scales give a fractional ratio, which is not
+    // implementable - round UP, so a tap is duplicated rather than a source texel missed.
+    // Derived, never hardcoded 2x2: at 50% a fixed 2x2 would read outside the output texel.
+    ivec2 taps = max(ivec2(1), ivec2(ceil(2.0 * pc.uvScale - 1e-3)));
+
+    // Threshold EACH source texel and average AFTER (4.2). Averaging first would dilute a
+    // lone bright texel below the threshold and lose thin emitters - a distant lamp, a lit
+    // switch - which is exactly what a bilinear fetch cannot avoid.
+    vec3 sum = vec3(0.0);
+    for (int j = 0; j < taps.y; ++j)
+    for (int i = 0; i < taps.x; ++i)
+    {
+        // Full-frame normalised coordinate of this tap's sub-texel centre. It is inside
+        // this output texel by construction, so it can never land outside the source
+        // region and needs no separate clamp.
+        vec2 uv = (vec2(px) + (vec2(i, j) + 0.5) / vec2(taps)) / vec2(sz);
+
+        vec3  c    = sceneRecombine(ambientTex, directTex, aoTex, uv, pc.uvScale, pc.aoEnable);
+        // Soft knee so a surface crossing the threshold ramps in rather than pops.
+        // peak, NOT Rec.709 luminance: luminance weights green at 0.7152 and red at
+        // 0.2126, so a red fireball at four times white scores 0.85 and would not bloom
+        // while a white wall sits on the threshold (4.2's table). peak is also what
+        // pbrNeutralToneMapping keys its own compression on, so the threshold and the
+        // operator's knee end up measured in the same units.
+        float peak = max(c.r, max(c.g, c.b));
+        float soft = clamp(peak - pc.threshold + pc.knee, 0.0, 2.0 * pc.knee);
+        soft       = soft * soft / (4.0 * pc.knee + 1e-4);
+        float w    = max(soft, peak - pc.threshold) / max(peak, 1e-4);
+        sum += c * w;
+    }
+
+    imageStore(bloomOut, px, vec4(sum / float(taps.x * taps.y), 1.0));
+}

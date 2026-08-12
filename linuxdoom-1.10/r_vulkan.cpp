@@ -125,6 +125,7 @@ static_assert(sizeof(rb_matctrl_t) == 40, "rb_matctrl_t must be 40 bytes (std430
 #include "shaders/svgf_composite.comp.spv.h"
 #include "shaders/label.comp.spv.h"
 #include "shaders/taau.comp.spv.h"
+#include "shaders/bloom_extract_raster.comp.spv.h"   // DOOM-0331 L2: raster bright pass
 #include "assets/Oxanium-SemiBold.ttf.h"    // DOOM-0206 L4: bundled OFL menu font (oxanium_ttf[])
 
 // Tier values returned by RB_VulkanProbe — kept numerically in lockstep with
@@ -368,6 +369,24 @@ struct VulkanState
     VkDescriptorSetLayout ssaoDsLayout  = VK_NULL_HANDLE;
     VkDescriptorPool      ssaoDsPool    = VK_NULL_HANDLE;
     VkDescriptorSet       ssaoDs        = VK_NULL_HANDLE;
+
+    // DOOM-0331 L2 (§5) — the bloom chain's three targets: [0] half-display (the bright
+    // pass's output), [1] and [2] quarter-display (the two blur passes' ping-pong, L3).
+    // kSceneFormat throughout so the halo keeps the HDR range it was extracted from;
+    // STORAGE (written by compute) + SAMPLED (read by the next pass / the composite).
+    // Size-dependent, so they ride CreateSceneTarget/DestroySceneTarget with the AO image;
+    // shared with DOOM-0345 because only one chain runs per frame and the mode toggle
+    // already drains the device. The extract's pipeline/set are size-independent (its
+    // views are re-pointed by UpdateCompositeDescriptor), so they are built once.
+    VkImage        bloomImage[3]  = {};
+    VkDeviceMemory bloomMemory[3] = {};
+    VkImageView    bloomView[3]   = {};
+    VkExtent2D     bloomExtent[3] = {};
+    VkDescriptorSetLayout bloomExtractDsLayout   = VK_NULL_HANDLE;
+    VkDescriptorPool      bloomExtractDsPool     = VK_NULL_HANDLE;
+    VkDescriptorSet       bloomExtractDs         = VK_NULL_HANDLE;
+    VkPipelineLayout      bloomExtractPipeLayout = VK_NULL_HANDLE;
+    VkPipeline            bloomExtractRasterPipeline = VK_NULL_HANDLE;
 
     // DOOM-0170 L2c — flashlight cast-shadow map (§4.4). A fixed 2048^2 depth image the
     // world is rendered into (depth-only) from the flashlight's viewpoint each torch-on
@@ -1140,11 +1159,15 @@ static const struct BloomPreset { float threshold, knee, intensity; } kBloomPres
 
 // §4.5: rb_bloom is clamped at EVERY site that indexes an array with it -- ~/.doomrc is
 // hand-editable and `rt_bloom 9` would otherwise read past this four-entry table. The
-// menu already guards its own bloomNames[] lookup, the way fogNames does. The
-// engine-side guard arrives at L2 with its first reader, in the shape rb_renderscale
-// already uses here: rb_bloom < 0 ? 0 : (rb_bloom > 3 ? 3 : rb_bloom). It is not
-// written yet because L1 has nothing that reads the table, and an accessor with no
-// caller is dead code wearing a contract's clothes.
+// menu already guards its own bloomNames[] lookup, the way fogNames does; this is the
+// engine-side guard, in the shape rb_renderscale already uses here. It arrived at L2 with
+// its first reader (the bright pass's push constants) rather than at L1, where it would
+// have been an accessor with no caller. DOOM-0345's chain is the second reader.
+static const BloomPreset& CurrentBloomPreset()
+{
+    const int i = rb_bloom < 0 ? 0 : (rb_bloom > 3 ? 3 : rb_bloom);
+    return kBloomPresets[i];
+}
 
 // INV-6 headless self-test latch (DOOM-0009 build step 4d). Set from the
 // `-rtverify` command-line parm; the first ready present runs RB_RtVerify (the
@@ -2924,6 +2947,78 @@ void CreateTaauPipeline()
     vkDestroyShaderModule(g.device, cs, nullptr);
 }
 
+// DOOM-0331 L2 (§5) — the raster bright pass: its own 4-binding descriptor set + compute
+// pipeline. b0/b1/b2 are the three targets composite.frag samples (AMBIENT, DIRECT, the
+// half-res AO), through the same linear+clamp composite sampler so the extract's fetches
+// match the composite's; b3 is the half-res bloomImage[0] as a storage image. The push
+// range is 20 bytes (uvScale, aoEnable, threshold, knee), matching the shader's block.
+// Size-INDEPENDENT: the image views change on resize, but they are re-pointed by
+// UpdateCompositeDescriptor, so this is built once with the other pipelines.
+void CreateBloomPipeline()
+{
+    VkDescriptorSetLayoutBinding b[4] = {};
+    for (uint32_t i = 0; i < 4; i++) {
+        b[i].binding         = i;
+        b[i].descriptorType  = (i < 3) ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
+                                       : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        b[i].descriptorCount = 1;
+        b[i].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+    }
+    VkDescriptorSetLayoutCreateInfo dlci = {};
+    dlci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    dlci.bindingCount = 4;
+    dlci.pBindings    = b;
+    Check(vkCreateDescriptorSetLayout(g.device, &dlci, nullptr, &g.bloomExtractDsLayout),
+          "vkCreateDescriptorSetLayout(bloomExtract)");
+
+    VkDescriptorPoolSize pool[2] = {};
+    pool[0].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    pool[0].descriptorCount = 3;
+    pool[1].type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    pool[1].descriptorCount = 1;
+    VkDescriptorPoolCreateInfo pci = {};
+    pci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pci.maxSets       = 1;
+    pci.poolSizeCount = 2;
+    pci.pPoolSizes    = pool;
+    Check(vkCreateDescriptorPool(g.device, &pci, nullptr, &g.bloomExtractDsPool),
+          "vkCreateDescriptorPool(bloomExtract)");
+
+    VkDescriptorSetAllocateInfo dai = {};
+    dai.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dai.descriptorPool     = g.bloomExtractDsPool;
+    dai.descriptorSetCount = 1;
+    dai.pSetLayouts        = &g.bloomExtractDsLayout;
+    Check(vkAllocateDescriptorSets(g.device, &dai, &g.bloomExtractDs),
+          "vkAllocateDescriptorSets(bloomExtract)");
+
+    VkPushConstantRange pcr = {};
+    pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pcr.offset     = 0;
+    pcr.size       = 5 * sizeof(float);   // vec2 uvScale + aoEnable + threshold + knee
+    VkPipelineLayoutCreateInfo plci = {};
+    plci.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plci.setLayoutCount         = 1;
+    plci.pSetLayouts            = &g.bloomExtractDsLayout;
+    plci.pushConstantRangeCount = 1;
+    plci.pPushConstantRanges    = &pcr;
+    Check(vkCreatePipelineLayout(g.device, &plci, nullptr, &g.bloomExtractPipeLayout),
+          "vkCreatePipelineLayout(bloomExtract)");
+
+    VkShaderModule cs = MakeShader(bloom_extract_raster_comp_spv, bloom_extract_raster_comp_spv_len);
+    VkComputePipelineCreateInfo cpci = {};
+    cpci.sType        = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    cpci.stage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    cpci.stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
+    cpci.stage.module = cs;
+    cpci.stage.pName  = "main";
+    cpci.layout       = g.bloomExtractPipeLayout;
+    Check(vkCreateComputePipelines(g.device, VK_NULL_HANDLE, 1, &cpci, nullptr,
+                                   &g.bloomExtractRasterPipeline),
+          "vkCreateComputePipelines(bloomExtract)");
+    vkDestroyShaderModule(g.device, cs, nullptr);
+}
+
 // Map an RT debug mode to its on-screen title as label.comp glyph indices (font
 // order: 0=space, A C D E F H I N O R S T U X Y). Returns the character count.
 uint32_t ModeLabel(int mode, uint32_t* out)
@@ -4119,8 +4214,35 @@ void CreateSceneTarget()
     avci.format = VK_FORMAT_R8_UNORM;
     Check(vkCreateImageView(g.device, &avci, nullptr, &g.aoView), "vkCreateImageView(ao)");
 
+    // DOOM-0331 L2 (§5) — the three bloom targets. [0] is half the display (the same
+    // halving rule the AO image uses, so it is exactly aoExtent); [1] and [2] are quarter.
+    VkImageCreateInfo bci = ici;
+    bci.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    g.bloomExtent[0] = g.aoExtent;
+    g.bloomExtent[1] = { g.extent.width  / 4u ? g.extent.width  / 4u : 1u,
+                         g.extent.height / 4u ? g.extent.height / 4u : 1u };
+    g.bloomExtent[2] = g.bloomExtent[1];
+    for (int i = 0; i < 3; i++)
+    {
+        bci.extent = { g.bloomExtent[i].width, g.bloomExtent[i].height, 1 };
+        Check(vkCreateImage(g.device, &bci, nullptr, &g.bloomImage[i]), "vkCreateImage(bloom)");
+        vkGetImageMemoryRequirements(g.device, g.bloomImage[i], &req);
+        mai.allocationSize = req.size;
+        mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        Check(vkAllocateMemory(g.device, &mai, nullptr, &g.bloomMemory[i]), "vkAllocateMemory(bloom)");
+        Check(vkBindImageMemory(g.device, g.bloomImage[i], g.bloomMemory[i], 0), "vkBindImageMemory(bloom)");
+        VkImageViewCreateInfo bvci = vci;
+        bvci.image = g.bloomImage[i];
+        Check(vkCreateImageView(g.device, &bvci, nullptr, &g.bloomView[i]), "vkCreateImageView(bloom)");
+    }
+
     // Park the AO image in SHADER_READ so the composite may sample it even on a frame where
     // the SSAO pass is skipped (rb_ssao off). When the pass runs it re-clears via UNDEFINED.
+    // DOOM-0331 L2: the three bloom targets are parked the same way and for the same reason
+    // -- bloomImage[2] because the composite samples it even on a `bloom 0` frame where no
+    // dispatch ran, and [0]/[1] so that every per-frame barrier ahead of an imageStore is
+    // uniformly SHADER_READ_ONLY -> GENERAL, first bloomed frame included. Without the park
+    // the very first frame's barrier would name a layout the image is not in.
     {
         VkCommandBuffer cb = BeginOneTime();
         VkImageMemoryBarrier bar = {};
@@ -4131,8 +4253,12 @@ void CreateSceneTarget()
         bar.image = g.aoImage;
         bar.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
         bar.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        VkImageMemoryBarrier bars[4] = { bar, bar, bar, bar };
+        for (int i = 0; i < 3; i++)
+            bars[1 + i].image = g.bloomImage[i];
         vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &bar);
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             0, 0, nullptr, 0, nullptr, 4, bars);
         EndOneTime(cb);
     }
 }
@@ -4154,6 +4280,13 @@ void DestroySceneTarget()
     if (g.aoView)   { vkDestroyImageView(g.device, g.aoView, nullptr); g.aoView = VK_NULL_HANDLE; }
     if (g.aoImage)  { vkDestroyImage(g.device, g.aoImage, nullptr);    g.aoImage = VK_NULL_HANDLE; }
     if (g.aoMemory) { vkFreeMemory(g.device, g.aoMemory, nullptr);     g.aoMemory = VK_NULL_HANDLE; }
+    // DOOM-0331 L2 — the three bloom targets, same resize path.
+    for (int i = 0; i < 3; i++)
+    {
+        if (g.bloomView[i])   { vkDestroyImageView(g.device, g.bloomView[i], nullptr); g.bloomView[i] = VK_NULL_HANDLE; }
+        if (g.bloomImage[i])  { vkDestroyImage(g.device, g.bloomImage[i], nullptr);    g.bloomImage[i] = VK_NULL_HANDLE; }
+        if (g.bloomMemory[i]) { vkFreeMemory(g.device, g.bloomMemory[i], nullptr);     g.bloomMemory[i] = VK_NULL_HANDLE; }
+    }
 }
 
 // DOOM-0170 L2c — build the flashlight cast-shadow map (§4.4): a fixed 2048^2 depth image
@@ -4795,6 +4928,29 @@ void UpdateCompositeDescriptor()
     // The SSAO pass's own set samples the DIRECT target for the packed depth.
     w[3] = w[0]; w[3].dstSet = g.ssaoDs; w[3].dstBinding = 0; w[3].pImageInfo = &ii[1];
     vkUpdateDescriptorSets(g.device, 4, w, 0, nullptr);
+
+    // DOOM-0331 L2 — the bright pass reads the same three targets through the same sampler
+    // (bindings 0/1/2, so its fetches match the composite's) and writes bloomImage[0] as a
+    // storage image (binding 3). All four views are recreated on resize, so this rides the
+    // same re-point. Its own guard, mirroring the early-out above: the set and the views
+    // come from different create paths, and neither may be written before it exists.
+    if (!g.bloomExtractDs || !g.bloomView[0])
+        return;
+    VkDescriptorImageInfo bi[4] = { ii[0], ii[1], ii[2], {} };
+    bi[3].imageView   = g.bloomView[0];
+    bi[3].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    VkWriteDescriptorSet bw[4] = {};
+    for (uint32_t i = 0; i < 4; i++)
+    {
+        bw[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        bw[i].dstSet          = g.bloomExtractDs;
+        bw[i].dstBinding      = i;
+        bw[i].descriptorCount = 1;
+        bw[i].descriptorType  = (i < 3) ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
+                                        : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        bw[i].pImageInfo      = &bi[i];
+    }
+    vkUpdateDescriptorSets(g.device, 4, bw, 0, nullptr);
 }
 
 void CreatePipeline()
@@ -6929,6 +7085,8 @@ extern "C" void RB_Vulkan_Init(void)
     CreateShadowResources();   // DOOM-0170 L2c flashlight shadow map (pass/fb/UBO/set 1);
                                // before CreatePipeline, which builds the shadow pipeline
     CreatePipeline();
+    CreateBloomPipeline();          // DOOM-0331 L2: raster bright pass (before the
+                                    // UpdateCompositeDescriptor below, which points its set)
     InitPaletteAndDescriptorSet();  // PLAYPAL LUT + descriptor set, so the HUD/menu
                                     // overlay composites from the first frame (DOOM-0045)
     UpdateCompositeDescriptor();    // DOOM-0170 L2a: point the composite sampler at the scene view
@@ -9928,6 +10086,70 @@ extern "C" void RB_Vulkan_Present(void)
 
     if (rprof) vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 3);  // after SSAO pass
 
+    // DOOM-0331 L2 (§4.1) — the bloom bright pass. A compute dispatch, so it has to sit
+    // between two render passes: the SSAO pass has ended and the swapchain pass has not
+    // begun. Skipped entirely when the dial is Off, so `bloom 0` records nothing and stays
+    // byte-identical (INV-2). L2 only EXTRACTS -- nothing samples bloomImage[0] yet, so the
+    // frame is unchanged; the two blurs and the combine arrive at L3.
+    const bool bloomActive = (rb_bloom > 0);
+    if (bloomActive && g.bloomExtractRasterPipeline && g.bloomExtractDs
+        && g.haveCamera && g.atlasReady)
+    {
+        // The extract's three inputs are already in SHADER_READ_ONLY_OPTIMAL -- but they are
+        // not SYNCHRONISED for a compute reader. The explicit barrier after the scene pass
+        // stops at FRAGMENT_SHADER and the AO render pass's implicit external dependency
+        // ends at BOTTOM_OF_PIPE with no access mask, so neither reaches a dispatch. One
+        // execution + memory dependency out to COMPUTE_SHADER, and no layout transition.
+        VkMemoryBarrier mb = {};
+        mb.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        mb.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+                             1, &mb, 0, nullptr, 0, nullptr);
+
+        // The RETURN transition, the half that gets forgotten: the target it is about to
+        // imageStore has to be back in GENERAL. It sits in SHADER_READ_ONLY_OPTIMAL both
+        // from the park at creation (so the FIRST bloomed frame needs this too, not just
+        // the second) and from the end of the previous bloomed frame below.
+        VkImageMemoryBarrier ib = {};
+        ib.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        ib.oldLayout        = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        ib.newLayout        = VK_IMAGE_LAYOUT_GENERAL;
+        ib.srcAccessMask    = VK_ACCESS_SHADER_READ_BIT;
+        ib.dstAccessMask    = VK_ACCESS_SHADER_WRITE_BIT;
+        ib.srcQueueFamilyIndex = ib.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        ib.image            = g.bloomImage[0];
+        ib.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+                             0, nullptr, 0, nullptr, 1, &ib);
+
+        // threshold + knee come from the ONE preset table (INV-8); aoEnable and uvScale are
+        // the same two values the composite is handed below, so the extract thresholds the
+        // value the composite will tone-map.
+        const BloomPreset& bp = CurrentBloomPreset();
+        float bpush[5] = { uvScale[0], uvScale[1], rb_ssao ? 1.0f : 0.0f, bp.threshold, bp.knee };
+        vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                g.bloomExtractPipeLayout, 0, 1, &g.bloomExtractDs, 0, nullptr);
+        vkCmdPushConstants(g.cmd, g.bloomExtractPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+                           0, sizeof(bpush), bpush);
+        vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g.bloomExtractRasterPipeline);
+        vkCmdDispatch(g.cmd, (g.bloomExtent[0].width + 7) / 8, (g.bloomExtent[0].height + 7) / 8, 1);
+
+        // Back to SHADER_READ_ONLY_OPTIMAL, closing the cycle: every bloom target sits in
+        // that layout outside this block, which is what lets the transition above name one
+        // old layout for the parked first frame and every frame after it. The sampled
+        // reader this makes visible to is L3's first blur pass.
+        ib.oldLayout     = VK_IMAGE_LAYOUT_GENERAL;
+        ib.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        ib.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        ib.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+                             0, nullptr, 0, nullptr, 1, &ib);
+    }
+
     rp.renderPass = g.renderPass;
     rp.framebuffer = g.framebuffers[idx];
     vkCmdBeginRenderPass(g.cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
@@ -10459,6 +10681,11 @@ extern "C" void RB_Vulkan_Shutdown(void)
     if (g.ssaoDsPool)    vkDestroyDescriptorPool(g.device, g.ssaoDsPool, nullptr);
     if (g.ssaoDsLayout)  vkDestroyDescriptorSetLayout(g.device, g.ssaoDsLayout, nullptr);
     if (g.aoPass)        vkDestroyRenderPass(g.device, g.aoPass, nullptr);
+    // DOOM-0331 L2 — the bright pass's pipeline/set (the bloom IMAGES ride DestroySceneTarget).
+    if (g.bloomExtractRasterPipeline) vkDestroyPipeline(g.device, g.bloomExtractRasterPipeline, nullptr);
+    if (g.bloomExtractPipeLayout)     vkDestroyPipelineLayout(g.device, g.bloomExtractPipeLayout, nullptr);
+    if (g.bloomExtractDsPool)         vkDestroyDescriptorPool(g.device, g.bloomExtractDsPool, nullptr);
+    if (g.bloomExtractDsLayout)       vkDestroyDescriptorSetLayout(g.device, g.bloomExtractDsLayout, nullptr);
     // DOOM-0170 L2c flashlight shadow map (size-independent; built once in CreateShadowResources).
     if (g.shadowPipeline)   vkDestroyPipeline(g.device, g.shadowPipeline, nullptr);
     if (g.shadowPipeLayout) vkDestroyPipelineLayout(g.device, g.shadowPipeLayout, nullptr);

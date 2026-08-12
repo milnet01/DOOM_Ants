@@ -71,7 +71,8 @@ SHADER_SRCS=$(SHADER_DIR)/mesh.vert $(SHADER_DIR)/mesh.frag \
 		$(SHADER_DIR)/pathtrace.comp $(SHADER_DIR)/bake.comp \
 		$(SHADER_DIR)/svgf_temporal.comp $(SHADER_DIR)/svgf_atrous.comp \
 		$(SHADER_DIR)/svgf_composite.comp $(SHADER_DIR)/label.comp \
-		$(SHADER_DIR)/taau.comp
+		$(SHADER_DIR)/taau.comp \
+		$(SHADER_DIR)/bloom_extract_raster.comp
 SHADER_HDRS=$(SHADER_SRCS:=.spv.h)
 # DOOM-0170 L2b — a second build of mesh.frag with -DSINGLE_TARGET (one combined colour
 # output) for the RT weapon overlay, which draws into the single-attachment swapchain pass.
@@ -328,9 +329,16 @@ $(SHADER_DIR)/pathtrace.comp.spv.h $(SHADER_DIR)/bake.comp.spv.h: \
 # pathtrace.comp also #includes the tone pipeline (Workbench-exported scalar curves
 # + the hand-written PBR-Neutral operator), step 4b-iii. The SVGF composite reuses
 # the same tone operator (step 6a).
-$(SHADER_DIR)/pathtrace.comp.spv.h $(SHADER_DIR)/svgf_composite.comp.spv.h: \
+$(SHADER_DIR)/pathtrace.comp.spv.h $(SHADER_DIR)/svgf_composite.comp.spv.h \
+$(SHADER_DIR)/composite.frag.spv.h: \
 		$(SHADER_DIR)/formulas/formulas.glsl \
 		$(SHADER_DIR)/formulas/pbr_neutral_tonemap.glsl
+
+# DOOM-0331 L2 — the raster HDR recombination is shared between the composite (which
+# tone-maps it) and the bloom bright pass (which thresholds it), so both consumers rebuild
+# when the include changes. Same missing-auto-dep hazard as the two rules above.
+$(SHADER_DIR)/composite.frag.spv.h $(SHADER_DIR)/bloom_extract_raster.comp.spv.h: \
+		$(SHADER_DIR)/formulas/scene_recombine.glsl
 
 # DOOM-0170 L2b — the SINGLE_TARGET variant of mesh.frag (RT weapon overlay). Explicit rule
 # (the pattern rule above can't produce it — there is no mesh_overlay.frag source); depends on

@@ -45,6 +45,13 @@ if [ ! -f dev-shots/shot-0001.png ]; then
     echo "FAIL $NAME — no shot written"; tail -5 "$OUT/$NAME.log"; exit 1
 fi
 mv dev-shots/shot-0001.png "$OUT/$NAME.png"
-grep -m1 'HD load done' "$OUT/$NAME.log" \
-    || { echo "!! $NAME: no HD load line — Ultra rendered PALETTED art"; exit 1; }
+# Only Ultra (renderer 1) loads HD art, so only Ultra owes the log line — EnsureHdMaterials
+# returns immediately on any other tier, so this guard is fatal to a Solid capture unless it
+# is conditional. The tier comes from the config the caller chose (DOOMCFG), never from a
+# flag: without an explicit DOOMCFG a capture inherits whatever tier was last played in,
+# which is how a "Solid" measurement silently becomes an Ultra one.
+if grep -qE '^renderer[[:space:]]+1$' "$CFG"; then
+    grep -m1 'HD load done' "$OUT/$NAME.log" \
+        || { echo "!! $NAME: no HD load line — Ultra rendered PALETTED art"; exit 1; }
+fi
 echo "OK $NAME.png"
