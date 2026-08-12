@@ -64,7 +64,7 @@ light sources.
 | Tier + RT state | Renderer | Touched by DOOM-0345? |
 |-----------------|----------|-----------------------|
 | Classic | paletted software renderer | **No** |
-| Solid / Ultra, RT off (`rb_rtdebug == 0`) | raster stack | **No** — DOOM-0331 |
+| Solid / Ultra, raster chain drawing (`!rtActive`) | raster stack | **No** — DOOM-0331 |
 | **Solid, RT on** (`rb_rtdebug == 6`) | path tracer + denoiser | **Yes** — §4.1 |
 | Ultra, RT on (`rb_rtdebug == 6`) | path tracer + denoiser | **Yes** — same chain |
 | Path-tracer debug views (`rb_rtdebug` 1–4) | path tracer | **No** — gated, see below |
@@ -269,11 +269,16 @@ sRGB-encode.
 - **Exposure is applied exactly once on every pixel, and the two arms apply it in
   different passes.** Surface pixels on the split path: once, in
   `rt_tonemap.comp`. Surface pixels on the un-split path: once, in
-  `svgf_composite.comp`. Sky pixels, either path: once, in `svgf_composite.comp`,
-  and `rt_tonemap` must not touch them. Leaving the exposure in the split
-  variant's surface store *and* applying it downstream double-exposes the frame —
-  a mistake that looks like a brightness bug rather than a logic one. INV-6 locks
-  it.
+  `svgf_composite.comp`. **Sky pixels, either path: once when fog is ON, and zero
+  times when it is off** — the sky arm's encode sits under
+  `if (pc.misc3.y != 0u)`, so with `rt_fog 0` the sky is stored raw and
+  un-tone-mapped, by design (DOOM-0141). Either way `rt_tonemap` must not touch
+  it. Read "exactly once" as a ceiling on the surface path and a
+  fog-conditional on the sky: an implementer who reads it unconditionally will
+  add an exposure to the no-fog sky arm and break both that design and INV-1's
+  byte-identity. Leaving the exposure in the split variant's surface store *and*
+  applying it downstream double-exposes the frame — a mistake that looks like a
+  brightness bug rather than a logic one. INV-6 locks it.
 
 **The split path is not bit-exact, and R1's gate must not ask it to be.**
 `rtHdrImage` is `kSceneFormat` (fp16, ~11-bit mantissa), so a value that reaches
@@ -426,6 +431,21 @@ differs by image, and stating one rule for the whole chain gets it wrong:
   DOOM-0331 §5 gives them STORAGE **+ SAMPLED** and their readers sample them
   (`texture(bloomTex, …)`). That covers extract → blurH → blurV, and leaves
   `bloomImage[2]` in `SHADER_READ_ONLY_OPTIMAL` for `rt_tonemap`'s bloom fetch.
+  **Each also needs the return transition to `GENERAL` before its own store** —
+  DOOM-0331 §5 owns that rule for both chains; it is not restated here.
+- **`rtImage`'s writer changes on the split path, and its barrier must move with
+  it.** Today `svgf_composite` writes `rtImage` and an existing dependency orders
+  TAAU's read after it. On the split path `svgf_composite` writes `rtHdrImage`
+  instead and **`rt_tonemap` becomes `rtImage`'s writer**, so that dependency has
+  to sit after `rt_tonemap`'s dispatch (`GENERAL` → `GENERAL`, compute → compute)
+  rather than where it is. Leave it in place and TAAU samples `rtImage` before
+  `rt_tonemap`'s stores are visible — a driver-dependent corruption that R1's
+  tolerance-gated A/B would read as noise rather than failure.
+- **`rtHdrImage` needs a one-time `UNDEFINED` → `GENERAL` transition in the
+  create path**, the same shape as DOOM-0331's `bloomImage[2]` park. A freshly
+  created image is `UNDEFINED`, and the first split frame's store into it is
+  otherwise invalid — on a path INV-1 never exercises, since `bloom 0` never
+  touches this image at all.
 
 **`bloomImage[2]` needs no park on this chain** — DOOM-0331 already parks it in
 `SHADER_READ_ONLY_OPTIMAL` at creation for the composite's benefit, and
@@ -523,7 +543,10 @@ and only this spec's two appended RT slots force it to ten.
 lesson: its fix ledger's row 9.4 records a profiler widening that "named 3 sites;
 there are 7", the misses including `uint64_t ts[8]`, a fixed stack array
 `vkGetQueryPoolResults` would have written 72 bytes into. Do not re-learn it.
-Every site, verified present in the current tree:
+Every site below is verified against the tree **as DOOM-0331 leaves it**, which
+is the state R3 starts from. Row 7 is the one where that distinction bites: the
+tree reads `? 6u : 8u` *today* and only becomes `? 7u : 8u` once the sibling
+lands, so grepping for the "Today" value before DOOM-0331 finds nothing.
 
 | # | Site | Today | After |
 |---|---|---|---|
@@ -556,6 +579,9 @@ that §6's measurement and INV-9 compare against. So slots 8 and 9 get a
 dummy-timestamp block of their own, mirroring the existing mode-gate one:
 
 ```
+// bloomActive == (rb_bloom > 0 && rb_rtdebug == 6) - the same condition 4.4
+// gates the split and the three dispatches on. `prof` is RecordRtTrace's own
+// gate variable (the raster arm's is `rprof`, in RB_Vulkan_Present).
 if (prof && denoise && !bloomActive)   // sited immediately after slot 7's real write
 {
     // collapse the bloom slots onto slot 7 so their segments read ~0
@@ -579,12 +605,14 @@ single site serves both:
   together is correct.
 
 Getting the placement wrong is silent in both directions, which is why it is
-specified rather than left to the implementer. A single block sited after slot
-7's real write also fires on a `!denoise` frame — *before* the old block writes
-ts[7] — so `profMs[8] = ts[8] - ts[7]` underflows in `uint64_t` and prints a
-garbage bucket. A single block sited beside the old one instead charges the whole
-TAAU interval to `profMs[8]` on the ordinary mode-6 `bloom 0` frame, while
-`profMs[7]` reads ~0 — the exact silent absorption INV-7 exists to catch.
+specified rather than left to the implementer. The real slot-5/6/7 writes sit
+**inside** the `if (denoise)` region, so a single block placed beside them never
+executes on a `!denoise` frame at all: slots 8 and 9 are reset and never written,
+`vkGetQueryPoolResults` returns `VK_NOT_READY`, and the whole `[rt_profile]`
+print disappears. A single block sited *outside* that region, beside the old
+dummy one, has the opposite fault — it charges the entire TAAU interval to
+`profMs[8]` on the ordinary mode-6 `bloom 0` frame while `profMs[7]` reads ~0,
+the exact silent absorption INV-7 exists to catch.
 
 **RT appends rather than inserts, because its existing slots are already out of
 chronological order.** Its write order is chronologically `0,1,2,5,6,7,3,4` —
@@ -724,9 +752,13 @@ follows the *chain* rather than the tier.
 - **R2 — the extract and the combine.** `bloom_extract_rt.comp` and the
   `rt_tonemap` add. *Verify:* the same lamp that gained a halo in Solid at
   DOOM-0331 L3 gains one in Ultra RT; the sky does not (INV-5); `bloom 0` is
-  still byte-identical to pre-R1. **And the decision-5 check:** capture one fixed
-  coordinate at several `rb_exposure` values with `bloom 2` — the set of blocks
-  that bloom must not change with the slider, though their brightness will.
+  still byte-identical to pre-R1. **And the decision-5 check, which needs PAIRED
+  captures:** at each of several `rb_exposure` values, take
+  `ab_diff.py <bloom2> <bloom0> <control>` *at that same exposure*, and the set of
+  blocks SIGNAL marks as moved must be identical across exposures. A `bloom 2`-only
+  series cannot show this — every block's value moves with the slider, so there is
+  nothing separating "bloomed" from "merely brighter". The `bloom 0` arm at the
+  same exposure is what supplies that separation.
 - **R3 — profiler slots, then the gate.** All nine widening sites (§5) plus the
   RT `profMs[]` re-mapping and the `[rt_profile]` `printf`, then §5's
   declaration-anchored standing grep, the §6 measurement, `-rtverify`, and the
@@ -789,10 +821,12 @@ h=int(a.shape[0]*0.805);print(numpy.abs(a[h:]-b[h:]).max())" on.png off.png
   at which point its rel-MSE would start moving with a look dial.
 
 - **INV-4** — the fogged sky keeps its display encode. `svgf_composite.comp`'s
-  `gp.w < 0.0` branch still exposes, tone-maps and sRGB-encodes its own pixel and
-  still returns early, on both shader variants; `rt_tonemap` passes it through
-  untouched. `rt_fog` defaults to 1, so this is the shipped path and not an edge
-  case.
+  `gp.w < 0.0` branch still exposes, tone-maps and sRGB-encodes its own pixel
+  **when fog is on** — the encode sits under `if (pc.misc3.y != 0u)`, and with
+  `rt_fog 0` the sky is stored raw and un-encoded, which is DOOM-0141's design
+  and must stay that way. It still returns early on both shader variants, and
+  `rt_tonemap` passes it through untouched. `rt_fog` defaults to 1
+  (`m_misc.c:275`), so the fogged arm is the shipped path and not an edge case.
   *Test:* the sky branch must still call the encode, and the split variant must
   not have deleted it:
   ```
@@ -819,10 +853,13 @@ h=int(a.shape[0]*0.805);print(numpy.abs(a[h:]-b[h:]).max())" on.png off.png
   early-out, or the alpha flag is dropped (which is what a packed
   `B10G11R11_UFLOAT_PACK32` `rtHdrImage` would do — §9).
 
-- **INV-6** — the exposure is applied exactly once per pixel. Surface pixels on
-  the split path take it in `rt_tonemap.comp`; surface pixels on the un-split path
-  take it in `svgf_composite.comp`; sky pixels take it in `svgf_composite.comp` on
-  either path and `rt_tonemap` does not touch them.
+- **INV-6** — the exposure is applied **at most** once per pixel, and never
+  twice. Surface pixels on the split path take it in `rt_tonemap.comp`; surface
+  pixels on the un-split path take it in `svgf_composite.comp`; sky pixels take
+  it in `svgf_composite.comp` **when fog is on and not at all when it is off**
+  (§4.2), on either path, and `rt_tonemap` never touches them. "At most once" is
+  the right form: the no-fog sky legitimately takes zero, and stating a flat
+  "exactly once" is what would send an implementer to add one.
   *Test:* one grep and one capture sweep, because the grep can see a duplicated
   call but not a duplicated effect:
   ```
@@ -1020,6 +1057,7 @@ hides is at most one fp16 rounding step wide.
 | 0-split | 2026-08-12 | 0 | 0 | 0 | 0 | 0 | **No reviewer dispatched.** Split out of the 1496-line DOOM-0331 umbrella, which had converged by cap at 3 loops with build-changing findings still arriving and 5 of loop 2's 10 CRIT+HIGH being collateral from loop 1's own fixes. This part takes the RT chain; DOOM-0331 keeps the shared core and the raster chain. Invariants renumbered from 1 and mapped in DOOM-0331 §2. The umbrella's §10 Q3 was closed by the user as §3 decision 5, which **changed the mechanism** — the exposure moves downstream and `toneEncode` is lifted whole rather than split. **No review history is inherited**: the umbrella's three loops ran against a document that no longer exists, and the design in §4.2 is new since any of them. This part runs the gate from loop 1 on its own bytes. |
 | 1 | 2026-08-12 | 2 | 1 | 3 | 0 | 0 | All 4 verified, **1 dismissed**, all 4 fixed. Both lanes independently found three of them. **The sharpest was INV-6's own test**: it expected `grep -c 'toneExposeEncode'` to return `1`, but both shader variants are built from one source file, so a correct build has two call sites — satisfying the clause as written meant deleting the un-split surface encode, which breaks INV-1's byte-identity on the `bloom 0` arm. A test that fails a correct build and passes a broken one. Also: §5 stated one layout rule for the whole chain, but `rtHdrImage` is STORAGE-only and read with `imageLoad`, so transitioning it to `SHADER_READ_ONLY_OPTIMAL` is invalid for a storage descriptor; and the widening table and the prose beneath it *both* claimed profiler slots 8 and 9 — since `denoise` is `(rb_rtdebug == 6)` and bloom runs only in mode 6, `!denoise` implies `!bloomActive`, so two dummy blocks would double-write those slots between resets. The Q1 was §6/INV-9 naming `[rt_profile]` for a ratio whose denominator only `[cpu_profile]` prints. **Dismissed:** one lane called INV-1's Solid+RT arm unrunnable because `ab_capture.sh`'s HD guard is unconditional; the other lane checked and DOOM-0331 §7 already owns that fix, and this spec is blocked by it — verified, and the arm stands. |
 | 2 | 2026-08-12 | 2 | 1 | 2 | 5 | 1 | All 9 verified, **0 dismissed**, all 9 fixed. **The worst was found while verifying, not by a lane**: binding 7 is declared `layout(set = 0, binding = 7, rgba8)`, an 8-bit UNORM format qualifier. Retargeting that descriptor at the fp16 `rtHdrImage` without also declaring it `rgba16f` clamps every HDR store to [0,1] — the intermediate would hold nothing above white, the bright pass would find nothing to extract, and the feature would ship doing visibly nothing while compiling, running and passing INV-1, with no validation error anywhere. Second: the sky store's **alpha** does change on the split variant (1.0 → 0.0) although §4.2 said the branch was "not changed at all" — leave it at 1.0 and the sky is tone-mapped twice and stops being masked, breaking INV-4, INV-5 and INV-6 together on the default fog path. **Two findings were loop 1's own fixes coming back**: the `imageStore(rtHdrImage, …)` grep loop 1 added can never match, because the descriptor retarget keeps the GLSL name `outColor`; and loop 1's "one dummy block, do not extend the existing one" was wrong — the two cases need different *positions*, and either single placement is silently wrong (a `uint64_t` underflow on debug-view frames, or the whole TAAU interval charged to the bloom bucket on the mode-6 `bloom 0` frame). The rest: `dispExtent` appeared in a formula and in no input; `rt_tonemap`'s "complete body" had no bounds guard against the round-up invocations of a render-res dispatch over a display-sized image; INV-3's grep could not falsify its own "or anything this feature adds" clause; the `ab_capture.sh` Solid-arm point dismissed in loop 1 resurfaced from a second lane, so it is now answered with a pointer rather than dismissed again; and §3 misstated how many scope decisions the sibling carries. |
+| 3 | 2026-08-12 | 2 | 1 | 1 | 2 | 1 | **Converged by cap.** All 5 verified, 0 dismissed, all 5 fixed; **no deferred tail**. The sharpest was a claim that reads as a safety property and is not one: §4.2 and INV-6 said the exposure lands on a sky pixel "exactly once", but the sky arm's encode sits under `if (pc.misc3.y != 0u)` — with `rt_fog 0` the sky takes **zero** exposures, by DOOM-0141's deliberate design. An implementer testing INV-6 with fog off would have "fixed" that by adding one, breaking both the raw-sky design and INV-1's byte-identity. Now stated as "at most once", fog-conditional on the sky. Two barrier gaps: on the split path `rtImage`'s **writer changes** from `svgf_composite` to `rt_tonemap`, so the existing dependency ordering TAAU's read has to move after `rt_tonemap`'s dispatch — left in place, TAAU samples `rtImage` before those stores are visible, and R1's tolerance-gated A/B would read the corruption as noise; and `rtHdrImage` had no creation-time `UNDEFINED` → `GENERAL` transition, on a path INV-1 never exercises. Also: §5's blanket "verified present in the current tree" was false for row 7 (`? 7u : 8u` is DOOM-0331's value, not today's), and R2's decision-5 check prescribed a `bloom 2`-only exposure series, which cannot separate "bloomed" from "merely brighter" — it needs a paired `bloom 0` capture at each exposure. One rationale correction carried over from loop 2: the real slot-5/6/7 writes sit **inside** `if (denoise)`, so a single dummy block there would never fire on a debug-view frame rather than underflowing as loop 2 claimed. The two-block prescription was right; its reasoning was not. |
 
 **What the umbrella's review bought, kept here because the reasoning is
 load-bearing and the document it was written in is gone.** Two findings that

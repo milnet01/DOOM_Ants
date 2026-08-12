@@ -44,8 +44,9 @@ stops looking like a pale wall and starts looking like a lamp.
 - **FXAA and depth of field** — the other two post-process passes GZDoom ships
   and this engine does not. Neither is filed; neither is in scope.
 
-**Scope:** Solid and Ultra, in their **rasterised** view (`rb_rtdebug == 0`).
-Classic is untouched (INV-1). Every surface is byte-identical when the dial is
+**Scope:** Solid and Ultra whenever the **raster chain draws the frame** — i.e.
+`!rtActive`, which is *wider* than `rb_rtdebug == 0` and must be gated as such
+(§2). Classic is untouched (INV-1). Every surface is byte-identical when the dial is
 Off (INV-2), and the HUD is never bloomed and never bloomed over (INV-3).
 
 ---
@@ -93,7 +94,19 @@ the RT chain, exactly as `CLAUDE.md` says ("Each of Solid and Ultra has both a
 rasterised and a ray-traced view"). An implementer who gates this feature's hook
 on `rendermode` ships something that appears in the wrong half of its
 configurations — this spec's hook belongs to `!rtActive`, and DOOM-0345's to
-`rtActive`.
+`rtActive && rb_rtdebug == 6`.
+
+**Gate on `!rtActive`, NOT on `rb_rtdebug == 0`, and the difference is most of
+the userbase.** `rb_rtdebug == 0` is a strict *subset* of `!rtActive`: the raster
+chain also draws whenever `g.rtEnabled`, `g.tlas`, `g.rtModule`, `g.haveCamera`,
+`g.vbuf` or `g.atlasReady` is false — which is every machine without working ray
+tracing, and every frame before the TLAS is built. On such a machine
+`rb_rtdebug` stays at its persisted default of **6** (`m_misc.c`:
+`{"rt_view",&rb_rtdebug, 6}`) while the raster chain draws every frame. Gate the
+three dispatches and the combine on `rb_rtdebug == 0` and bloom is silently
+absent on all of them at default config — and INV-2 still passes, because
+everything is off. The table's `rb_rtdebug` column above is illustration; the
+gate is `!rtActive`.
 
 Solid and Ultra share one Vulkan backend (`renderer.md`), which is why the
 feature is not, and must not be, gated on Ultra: `CLAUDE.md` makes effects a
@@ -168,10 +181,15 @@ otherwise be re-proposed.
    # 0.8690909090909091 0.9832558139534884 1.1314
    ```
 
-   The knee: `startCompression` is `0.8 - 0.04 = 0.76`, but it is compared
-   against the **post-offset** peak, so in *input* terms compression begins at
-   **0.80**. Harmless for every preset here (all thresholds ≥ 1.35) and stated
-   precisely because "the 0.76 knee" invites an off-by-0.04 comparison.
+   The knee: `startCompression` is `0.8 - 0.04 = 0.76`, compared against the
+   **post-offset** peak — and the offset is keyed on the **min** channel
+   (`float x = min(color.r, min(color.g, color.b)); float offset = x < 0.08 ?
+   x - 6.25*x*x : 0.04;`). So compression begins at **0.76 in input terms for a
+   fully saturated colour** (min channel 0, offset 0) and at **0.80 for grey**
+   (offset 0.04), sliding between the two. Worth stating precisely because §4.2
+   is built around saturated emitters — fireballs, lava, nukage — where the
+   0.04 shift does not apply at all. Harmless for every preset here regardless
+   (all thresholds ≥ 1.35).
 
    Worth recording while it is in front of us: the operator is **not** identity
    below the knee — it subtracts a flat 0.04 (0.50 linear → 0.4600), with a soft
@@ -224,7 +242,8 @@ are shared and defined here.
 
 ### 4.1 Where it hooks
 
-The rasterised view, `rb_rtdebug == 0`, in **either** tier. The frame today is:
+The rasterised view — every frame where `!rtActive` (§2), in **either** tier. The
+frame today is:
 shadow pass → scene pass (MRT: AMBIENT + DIRECT) → SSAO pass (half-res) →
 swapchain pass, inside which `composite.frag` tone-maps to the screen and the 2D
 overlay is drawn on top. Bloom inserts three compute dispatches between the SSAO
@@ -307,12 +326,28 @@ Two further properties this shape has to keep:
   a threshold of 1.00 and a knee of 0.5, a wall at 0.9 linear gets
   `soft = clamp(0.9 − 1.0 + 0.5, 0, 1.0) = 0.4`, hence
   `weight = 0.4²/(4×0.5) / 0.9 = 0.089` — it blooms, faintly, and INV-4's own
-  test would fail on a faithful implementation. **Paletted art at full sector
-  light tops out at 1.0 linear in the AMBIENT term**, so what must sit at or above
-  1.0 is the point where the ramp *starts*. §4.5's presets are chosen to satisfy
-  it, and INV-4 and INV-9 both rest on it.
+  test would fail on a faithful implementation. **The quantity that must clear
+  the art's brightness is the point where the ramp *starts*, not the threshold** —
+  and what it must clear is measured, not assumed; see the next paragraph.
+  §4.5's presets are a provisional answer to it.
 
-  **What the floor does NOT bound: DIRECT.** The thresholded value is
+  **The AMBIENT ceiling is NOT 1.0, and this is the floor argument's weakest
+  point.** `mesh.frag` writes `ambient = albedo * sect` and then, for any
+  subsector with a GI probe, **adds** `GI_BOUNCE_STRENGTH * albedo *
+  giIrradiance(...)` with `GI_BOUNCE_STRENGTH = 1.0`. Sector light alone tops out
+  at 1.0; sector light plus baked bounce does not, and nothing clamps the sum. So
+  a plain wall in a strongly bounce-lit room can exceed 1.0 in AMBIENT alone and
+  cross a preset's ramp start — the "pale walls glow" failure this whole feature
+  exists to avoid.
+
+  **So the floor is a measured gate, not an arithmetic guarantee.** L3 captures
+  the AMBIENT target's maximum over a non-emissive wall on E1M1 and the presets'
+  ramp start must sit above it; if it does not, the presets rise. §10 Q5 carries
+  the measurement and the presets stay provisional until it is taken. Stating
+  otherwise — as "paletted art tops out at 1.0" did — makes INV-4 read as proven
+  when it is not.
+
+  **What the floor does NOT bound either: DIRECT.** The thresholded value is
   `direct * aoDirect + ambient * ao`, a sum, and DIRECT (point lights, flashlight,
   muzzle) has no ceiling — a wall with several lamps trained on it genuinely
   exceeds 1.0 and *will* bloom. That is intended, not a leak: §3 decision 2
@@ -597,8 +632,11 @@ No debug key — §9 records why.
 **Row count.** `VideoMenu` carries 20 entries today, so `vid_bloom` makes 21:
 
 ```sh
-awk '/menuitem_t[[:space:]]+VideoMenu\[\]/,/^\};/' linuxdoom-1.10/m_menu.c | grep -c '^[[:space:]]*{'
-# 20  — counts the three {-1,"",0} separators too, which occupy rows on screen
+awk '/menuitem_t[[:space:]]+VideoMenu\[\]/,/^\};/' linuxdoom-1.10/m_menu.c \
+  | grep -c '^[[:space:]]\{1,\}{'
+# 20 today, 21 after L1 — counts the three {-1,"",0} separators, which occupy
+# rows on screen. The leading-whitespace requirement matters: `^[[:space:]]*{`
+# also matches the array's own opening brace at column 0 and returns 21 today.
 ```
 
 DOOM-0206's menu contract requires the result stay HUD-safe and scroll if it
@@ -660,12 +698,22 @@ the dial Off all three bloom dispatches are skipped (§4.4), so without the park
 binds it. Follow the `aoImage` pattern exactly — a one-time
 `BeginOneTime`/`EndOneTime` barrier in the create path.
 
-**Barriers between the three dispatches.** Each reads the previous one's output,
-so extract → blurH → blurV needs a `GENERAL` (compute write) →
+**Barriers between the three dispatches — and BOTH directions, which is the half
+that gets forgotten.** Each dispatch reads the previous one's output, so
+extract → blurH → blurV needs a `GENERAL` (compute write) →
 `SHADER_READ_ONLY_OPTIMAL` (sampled read) transition plus an execution
 dependency at each hop, and `bloomImage[2]` ends the chain in
 `SHADER_READ_ONLY_OPTIMAL` for the combine. The existing `svgfBarrier()` helper
 is the idiom to follow.
+
+**And each dispatch needs the RETURN transition on the image it writes**, back to
+`GENERAL` before the `imageStore` — from `SHADER_READ_ONLY_OPTIMAL` on every
+frame after the first, and from the parked layout on the very first bloomed
+frame. `bloomImage[2]` is parked in `SHADER_READ_ONLY_OPTIMAL` at creation (just
+below), so blurV's *first* store already targets an image in the wrong layout;
+this is not a second-frame-only concern. Stating only the write→read direction —
+which is the natural way to describe a chain — leaves every storage write in an
+invalid layout.
 
 **The extract's three inputs are already in the right LAYOUT, but are not
 synchronised for a COMPUTE reader.** The two halves come apart here, and the
@@ -825,7 +873,9 @@ that §6's measurement and INV-5 compare against. So mirror the existing
 `if (prof && !denoise)` dummy-timestamp block:
 
 ```
-if (prof && !bloomActive)
+// NOTE the gate variable: the raster arm's is `rprof` (declared in
+// RB_Vulkan_Present); `prof` belongs to the RT record path in RecordRtTrace.
+if (rprof && !bloomActive)          // bloomActive == (rb_bloom > 0)
 {
     // collapse the bloom slot onto the preceding point so its segment reads ~0
     vkCmdWriteTimestamp(..., <raster slot 4>);
@@ -914,7 +964,10 @@ not fail cleanly, it raises on unpacking.
   descriptor binding, and the `composite.frag` add. *Verify:* a lamp in Solid
   gains a halo; `bloom 0` is byte-identical (INV-2); a plain wall away from any
   lamp does not move (INV-4); a sky-facing capture does not generate bloom
-  (INV-9).
+  (INV-9). **And §10 Q5's measurement**: the AMBIENT ceiling over non-emissive
+  geometry, against each preset's ramp start. The presets are provisional until
+  it is taken, because §4.2's floor is a measured property of this engine's GI
+  bounce, not arithmetic.
 - **L4 — profiler slot, then the gate.** All **six** profiler sites (§5) — the
   new slot-4 write, the two renumbered writes above it, `nq`, the `printf`
   format string *and* its argument list, and the dummy block — then the §6 measurement,
@@ -971,7 +1024,9 @@ played in, which is how a "Solid" measurement silently becomes an Ultra one.
   the raster chain. No extract, blur or combine is recorded, and the combine sits
   behind a branch rather than a multiply by zero (§4.4).
   *Test:* `scripts/ab_capture.sh` at a fixed coordinate with `bloom 0`, against
-  the same capture from the commit before L2, plus a same-build control —
+  the **pre-L2 commit — or the post-L2 commit if L2 recorded a rounding delta**
+  (§7 L2's escape hatch; without this clause the invariant is unsatisfiable
+  whenever that hatch is taken), plus a same-build control —
   `ab_diff.py <bloom0> <pre-L2> <bloom0-control>` → SIGNAL mean 0.00, max 0.0,
   with the NOISE row quoted beside it. Run in Solid (`DOOMCFG` with
   `renderer 2`) and in Ultra with the ray-traced view off — **`renderer 1` plus
@@ -1009,9 +1064,12 @@ h=int(a.shape[0]*0.805);print(numpy.abs(a[h:]-b[h:]).max())" on.png off.png
 
 - **INV-4** — only genuinely over-white light blooms; paletted, non-emissive art
   does not. The threshold is applied to the pre-tone-map value, and the point at
-  which extraction *starts* — `threshold − knee`, not `threshold` (§4.2) — sits at
-  or above 1.0, the ceiling of a paletted colour at full sector light in the
-  AMBIENT term.
+  which extraction *starts* — `threshold − knee`, not `threshold` (§4.2) — sits
+  **above the measured AMBIENT ceiling for non-emissive art**. That ceiling is
+  not 1.0 and is not arithmetic: `mesh.frag` adds a GI bounce term on top of
+  `albedo * sect` with nothing clamping the sum (§4.2), so §10 Q5 measures it at
+  L3 and the presets clear whatever it turns out to be. Until then this invariant
+  is asserted, not proven.
   *Test:* two parts, the first because the arithmetic can be checked without a
   build and the second because the look cannot:
   ```
@@ -1058,8 +1116,11 @@ h=int(a.shape[0]*0.805);print(numpy.abs(a[h:]-b[h:]).max())" on.png off.png
   # moment the sibling lands - and the obvious "fix" is to revert the RT arm to
   # 8u, which silently truncates the RT readback.
   grep -c 'nq = g.profRasterFrame ? 7u :' linuxdoom-1.10/r_vulkan.cpp   # -> 1
-  # the print must carry six buckets, not five
-  grep -A4 'raster_profile' linuxdoom-1.10/r_vulkan.cpp | grep -c 'bloom'   # -> 1
+  # The print must carry six buckets, not five - and anchor on the FORMAT STRING,
+  # not a -A4 window. That window also spans the profMs[] argument list, so a
+  # build that widened the args and left the labels at five still scores 1 if any
+  # arg line carries a `// bloom` comment - the exact breach 5 site 5 describes.
+  grep -c 'bloom %\.2f' linuxdoom-1.10/r_vulkan.cpp   # -> 1
   ```
   Today those read `0 1 2 3 4 5`, the `nq` line is `? 6u : 8u`, and the print has
   no `bloom` — all verified against the current tree, and all three **must
@@ -1085,10 +1146,12 @@ h=int(a.shape[0]*0.805);print(numpy.abs(a[h:]-b[h:]).max())" on.png off.png
   ```
   # 1. one definition, plus the reads that consume it
   grep -rn 'kBloomPresets' linuxdoom-1.10/
-  # 2. no tuning literal hardcoded in a bloom shader. The only float literals
-  #    these files may carry are 4.3's five kernel weights and two offsets and
-  #    4.2's 1e-4 guards; anything else is a preset value that escaped the table.
-  grep -nE '[0-9]+\.[0-9]+' linuxdoom-1.10/shaders/bloom_*.comp
+  # 2. no TUNING literal hardcoded in a bloom shader. Allowed: 4.3's five kernel
+  #    weights and two offsets, and 4.2's own shape constants - the 0.0, 2.0 and
+  #    4.0 of the soft knee and its 1e-4 guards. Anything else is a preset value
+  #    that escaped the table. Note the exponent form: a plain [0-9]+\.[0-9]+
+  #    misses 1e-4 entirely while flagging the shape constants.
+  grep -nE '[0-9]*\.?[0-9]+(e-?[0-9]+)?' linuxdoom-1.10/shaders/bloom_*.comp
   # reviewed by eye against that allowed list
   ```
   *Breaks when:* the two chains need different tuning and someone answers that
@@ -1169,9 +1232,9 @@ omitted, because an absent boundary section reads as an oversight.
 
 ## 10. Open questions
 
-Four questions: two look calls, one measurement-then-judgement, one arithmetic
-check. **None blocks drafting, and none now blocks a build step except Q4's
-check at L1.** The umbrella's Q3 — which did block a build step — was answered by
+Five questions: two look calls, one measurement-then-judgement, one arithmetic
+check, and one measurement that gates the presets. **None blocks drafting; Q4's
+arithmetic gates L1 and Q5's measurement gates L3.** The umbrella's Q3 — which did block a build step — was answered by
 the user on 2026-08-12 and is recorded as §3 decision 5; what remains under Q3
 below is the look residual it leaves.
 
@@ -1205,6 +1268,16 @@ below is the look residual it leaves.
   open a menu under Wayland (§9). *Blocks:* L1's completion for the arithmetic
   half only. If it does not fit, that is DOOM-0206's scroll mechanism to
   exercise, not a reason to drop the row.
+- **Q5 — how high does AMBIENT actually go on non-emissive art?** §4.2's floor
+  argument originally assumed 1.0, and that is wrong: `mesh.frag` adds
+  `GI_BOUNCE_STRENGTH * albedo * giIrradiance(...)` on top of `albedo * sect`,
+  with nothing clamping the sum. Until the real ceiling is measured, no preset's
+  ramp start can be shown to sit above it, so INV-4 is asserted rather than
+  proven and the §4.5 values stay provisional. **Claude to measure** at L3 —
+  capture the AMBIENT target's maximum over plain wall and floor geometry away
+  from lamps on E1M1 (and one bounce-heavy room), and compare against each
+  preset's `threshold − knee`. *Blocks:* L3's completion. If the ceiling exceeds
+  1.00, the presets rise to clear it; that is a retune, not a redesign.
 
 ## 11. What checks this
 
@@ -1213,7 +1286,7 @@ below is the look residual it leaves.
 | INV-1 Classic untouched | the two INV-1 greps, run at L4 |
 | INV-2 `bloom 0` byte-identical | `ab_capture.sh` ×3 + `ab_diff.py` at L3 |
 | INV-3 HUD/weapon/menu never bloomed | INV-3's structural grep + the strip compare + the weapon/menu block map |
-| INV-4 paletted art does not bloom | the `kBloomPresets` floor read + `ab_diff.py` block map, E1M1, at L3 |
+| INV-4 paletted art does not bloom | the `kBloomPresets` floor read + §10 Q5's measured AMBIENT ceiling + `ab_diff.py` block map, E1M1, all at L3 |
 | INV-5 60 fps floor in Solid | `rb_profile` measurement at L4 |
 | INV-6 the bloom pass is timed | INV-6's slot and `nq` greps at L4 |
 | The profiler's LABELS still match its buckets | INV-6's third grep — the `bloom` label must appear in the `[raster_profile]` format string |
@@ -1274,6 +1347,7 @@ checkable — with only one bucket added on this chain, "the format string names
 | 0-split | 2026-08-12 | 0 | 0 | 0 | 0 | 0 | **No reviewer dispatched.** Narrowed in place from the 1496-line umbrella of this same id, which had converged by cap at 3 loops with build-changing findings still arriving. The RT chain left for DOOM-0345; invariants renumbered from 1 and mapped in §2. The umbrella's 10-item deferred tail was folded in rather than re-reviewed, and its §10 Q3 was closed by the user as §3 decision 5. **No review history is inherited** — the umbrella's three loops ran against a document that no longer exists, so this part runs the gate from loop 1 on its own bytes. |
 | 1 | 2026-08-12 | 2 | 5 | 1 | 1 | 1 | All 8 verified against the tree, **0 dismissed**, all 8 fixed. **Five of the eight were false claims about existing code**, and every one would have sent an implementer to the wrong place: INV-9 attributed the sky's DIRECT write to `composite.frag`, which only *reads* that target (`mesh.frag` writes it, and writes `outAmbient = vec4(0.0)` — so the sky's ambient term is exactly zero, which is what actually bounds it); §4.4 said "both chains already guard against non-finite radiance" when only the RT chain does, contradicting its own next paragraph; §5 instructed the implementer to bring a barrier forward that already fires immediately after the scene pass and before SSAO; §4.5 named `videoLabels` (indexed by menu *row*, never by a dial value) as a read site to clamp and called `rb_fog`'s already-guarded lookup a latent defect; and §6/INV-5 named `[cpu_profile]` for per-pass rows that only `[raster_profile]` prints. The Q2 was `srcTexelSize` carrying a per-pass ×2 factor that §5 defined away, the Q3 was the preset table's Off row having no values while INV-4 read "each row", and the Q4 was INV-6 pinning the whole `nq` line, which DOOM-0345 rewrites — so that clause would fail on an intact tree the moment the sibling landed. One collateral fix from the 4b sweep: §4.2's "falls below every ramp start" went imprecise once INV-9 was made exact — at the High preset the sky sits *on* the ramp start and extracts exactly zero. |
 | 2 | 2026-08-12 | 2 | 1 | 2 | 3 | 2 | All 8 verified, **0 dismissed**, all 8 fixed. **The profiler site table was the serious one**: it listed three sites where the frame-order insert needs six — a *new* slot-4 write plus renumbering the two existing writes above it — so an implementer working the table would set `nq = 7u`, never write slot 6, and lose the entire `[raster_profile]` print to `VK_NOT_READY`. That is DOOM-0011 row 9.4's failure again, in the section that cites it. Two findings landed on loop 1's own fixes: the barrier paragraph loop 1 rewrote was still wrong in the other direction (the layouts *are* already correct, but the existing dependency's `dstStageMask` stops at `FRAGMENT_SHADER` and the extract is a compute dispatch), and the §2 split map missed DOOM-0345's INV-9. The rest were unspecified detail an implementer would have had to invent: `sceneRecombine` never pinned `textureLod` over `texture()`, which cannot compile in a compute stage at all; `bloomTex`'s filter mode was unpinned, and `NEAREST` gives blocky halos that every invariant still passes; INV-2's Ultra arm named no `rt_view 0`, and that key defaults to **6**, so the arm would have run the RT chain and passed without exercising this spec's combine; INV-8's "no shader literals" clause had no command that could see it; and L2 admitted its refactor might not be bit-identical while defining no response. One collateral fix from the 4b sweep: L4 still said "all three profiler sites". |
+| 3 | 2026-08-12 | 2 | 4 | 3 | 1 | 1 | **Converged by cap.** All 9 verified, 0 dismissed, all 9 fixed; **no deferred tail**. Two were serious. First, the gate: §4.1 and Scope said `rb_rtdebug == 0`, but that is a strict *subset* of `!rtActive` — the raster chain also draws on any machine without working ray tracing, where `rb_rtdebug` sits at its persisted default of **6**. Gating on `rb_rtdebug == 0` would have made bloom silently absent on every non-RT machine at default config, with INV-2 passing because everything was off. Second, §4.2's floor rested on "paletted art tops out at 1.0 in the AMBIENT term", and `mesh.frag` **adds** `GI_BOUNCE_STRENGTH * albedo * giIrradiance(...)` on top of `albedo * sect` with nothing clamping the sum — so ordinary art in a bounce-lit room can exceed 1.0 and bloom, the very failure the feature exists to prevent. The floor is now a measured gate (§10 Q5, at L3) and INV-4 says it is asserted rather than proven. Also: the §4.5 row-count command returned **21**, not the 20 it claimed (the array's own opening brace matches `^[[:space:]]*{`) — both lanes ran it; the PBR-Neutral offset is keyed on the **min** channel, so compression begins at 0.76 for a saturated colour and 0.80 only for grey, and §4.2 is built on saturated emitters; §5 defined only the write→read barrier direction and never the return to `GENERAL` before each store, which bites on the first bloomed frame because `bloomImage[2]` is parked read-only; INV-8's allowed-literal list forbade the extract's own `0.0`/`2.0`/`4.0` shape constants while its regex could not match the `1e-4` it did allow; INV-6's `grep -A4` window could pass a mislabelled build; INV-2's baseline contradicted L2's own re-baseline hatch; and §5's dummy-timestamp snippet used `prof`, which is the RT record path's gate — the raster arm's is `rprof`. |
 
 **What the umbrella's review bought, kept here because the reasoning is load-bearing
 and the document it was written in is gone.** Three findings that would each have
