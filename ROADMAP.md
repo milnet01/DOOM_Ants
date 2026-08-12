@@ -1169,6 +1169,38 @@ with friends.
   Kind: fix.
   Source: user-request-2026-08-12.
 
+- 📋 [DOOM-0344] **The pre-push hook re-runs the whole gate on a tag push, which cannot tell it anything new.**
+  Found while cutting 0.7.0, in the hook added by DOOM-0343.
+
+  packaging/hooks/pre-push runs ci-local.sh for any push that is not
+  delete-only. That is right for a branch push, but a tag push reaches
+  it too — and ci-local.sh always builds HEAD (git archive HEAD),
+  never the ref being pushed. So `git push origin v0.7.0` gates a
+  commit that was already gated when the branch went up moments
+  before, and the run cannot return a different answer.
+
+  Observed in the 0.7.0 release: the branch push was correctly skipped
+  as docs-only in about a second (the release commit touches only
+  CHANGELOG.md and README.md), and then the tag push ran the full
+  container gate — both jobs, from scratch — for no added signal.
+  packaging/release.sh pushes the branch and the tag separately, so
+  every future release pays this.
+
+  Fix: in the hook, skip when every ref on stdin is a refs/tags/* ref
+  whose commit is already reachable from the upstream branch
+  (`git merge-base --is-ancestor <sha> @{u}`). That keeps the gate for
+  the case that actually matters — a tag pointing at a commit that has
+  never been pushed — while dropping the redundant run. Both halves of
+  the condition are needed; skipping on "it is a tag" alone would let
+  an ungated commit reach the remote via its tag.
+
+  Deliberately NOT fixed in the release itself: editing the push path
+  mid-release is how releases break. The redundant run is slow, not
+  wrong, so it waited.
+  **Layman:** Publishing a release waits about four minutes on a check that has already been done on exactly the same code.
+  Kind: fix.
+  Source: in-session-2026-08-12.
+
 ## Phase 2 — The Spin
 
 The creative overhaul: evolve the renderer toward true 3D with hardware
