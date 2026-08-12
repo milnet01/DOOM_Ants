@@ -8549,6 +8549,44 @@ parked ideas (💭 considered) until we commit to and design each one.
   before implementing, per global rule 14's split-rather-than-loop guidance.
   A 10-item editorial tail is filed in the spec's own loop log — fold it in,
   do not re-review to rediscover it.
+  Progress (2026-08-12): **split, and the blocking question answered.** Three
+  notes above are now superseded and are left as a record: the 1512-line size
+  caveat, the "one open question blocks the build" paragraph, and the 10-item
+  editorial tail.
+
+  1. **Split along the raster/RT seam**, per global rule 14's
+  split-rather-than-loop guidance. This bullet keeps the shared core (the
+  bright pass, the blur, the preset table, the menu dial) and the RASTER
+  chain; the ray-traced chain is now **DOOM-0345**, which is blocked by this
+  one. Spec is still `docs/specs/DOOM-0331-bloom.md` — path and id kept so
+  inbound citations stay valid — narrowed 1496 -> 1194 lines, with DOOM-0345
+  at 944. Invariants renumbered from 1 in each part; the umbrella's numbering
+  is dead and the map from old to new is DOOM-0331 §2.
+
+  2. **§10 Q3 answered by the user (2026-08-12), recorded as §3 decision 5:**
+  what counts as a light source does NOT move with the Brightness slider. The
+  threshold is defined in scene radiance units on both chains. This unblocks
+  the RT build step that was waiting on it.
+
+  It also SIMPLIFIED the RT design rather than complicating it. The old plan
+  had to carve the exposure out of `toneEncode()` and share an exposure-free
+  half; with the exposure applied one pass later instead, the whole function
+  lifts out intact as a shared `toneExposeEncode(L, ev)` and both extracts
+  become identical apart from their source. One rule the umbrella wrote is
+  inverted by this and is flagged where it lives: `rt_tonemap` DOES carry an
+  EV now (DOOM-0345 §5).
+
+  3. **The 10-item editorial tail is folded in**, not re-reviewed. One of the
+  ten was a factual disagreement and is settled: only mode 4 tone-maps inside
+  `pathtrace.comp` (verified — its two `toneEncode` call sites both sit in the
+  `mode == 4u` branch), so the umbrella's "modes 1-4" was wrong and its §9
+  "mode 4" was right.
+
+  Neither part inherits the umbrella's review history — those three loops ran
+  against a document that no longer exists, so each part runs the gate from
+  loop 1 on its own bytes. Both carry a `0-split` provenance row saying no
+  reviewer was dispatched. NOT yet gated, NOT implemented; no engine code
+  touched.
 
 - 📋 [DOOM-0332] **1-D shadow maps for point lights in the rasterised view, exploiting DOOM's flat map.**
   Found reviewing GZDoom at the user's request; feeds DOOM-0170's raster
@@ -9117,3 +9155,60 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: feature.
   Lanes: renderer, sprites.
   Source: user-request-2026-08-07 (seen in a YouTube video of another DOOM source port).
+
+- 📋 [DOOM-0345] **Bloom on the ray-traced view, which needs the RT tone-map split.**
+  Split out of DOOM-0331 on 2026-08-12, which had converged by cap at 3
+  cold-eyes loops and was 1496 lines — larger than the review's design
+  point, with 5 of loop 2's 10 CRIT+HIGH findings being collateral from
+  loop 1's own fixes. DOOM-0331 keeps the shared core (the bright pass,
+  the blur, the preset table, the menu dial) and the raster chain; this
+  item carries the ray-traced chain alone.
+
+  Blocked by DOOM-0331: this reuses its `bloom_blur.comp`, its
+  `bloomImage[0..2]` targets and its `kBloomPresets` table, and adds only
+  what the RT chain needs on top.
+
+  The whole of the risk lives here. `svgf_composite.comp` computes the
+  radiance and tone-maps it in one step, so there is no gap to add a
+  bloom term into — the surface tone-map has to move out into a new
+  `rt_tonemap.comp`, behind a `-DBLOOM_SPLIT` shader variant gated on
+  `rb_bloom > 0` so Off still costs nothing. Three traps the DOOM-0331
+  review already paid for and this spec inherits: `toneEncode()` contains
+  the exposure and is local to that shader, so it cannot simply be called
+  from a second one; the sky branch calls `toneEncode` too when fog is on
+  (the default), so moving it out wholesale ships a linear un-encoded
+  sky; and the RT profiler slots append rather than insert, or
+  `profMs[7]` silently absorbs the new passes.
+
+  Spec: docs/specs/DOOM-0345-bloom-ray-traced.md.
+  **Layman:** Make lamps, fireballs and glowing goo bleed light into the air around them in the ray-traced view too, not just the fast one.
+  Kind: feature.
+  Source: spec-split-2026-08-12 (DOOM-0331 §4.6).
+
+- 📋 [DOOM-0346] **Record the house spec section order so the structure check stops declining to run.**
+  `spec_lint` returns `sections_checked: false` on every spec in
+  `docs/specs/` — verified across all 19. The required-section check only
+  runs when the project's format standard carries a machine-readable
+  `<!-- required-sections -->` block, and this project has no spec-format
+  standard at all: `docs/standards/` has 12 files and none of them is
+  `spec-format.md` or `spec-format-overrides.md`.
+
+  So the check reports `ok: true` with no findings while never having
+  looked, which is the worst shape a check can have — it reads as a pass.
+
+  The fix is not to restructure the specs. The corpus has a consistent
+  house order (Goal / Where this sits / The problem / Design / Data &
+  resources / Performance budget / Build order / Invariants / Alternatives
+  / Open questions / What checks this / Cross-doc impact / Cold-eyes loop
+  log) that differs from the global standard's list, and 19 specs plus
+  their inbound section-number citations agree on it. The global standard
+  (`~/.claude/standards/spec-format.md`) explicitly provides for this: a
+  project that differs writes deltas at
+  `docs/standards/spec-format-overrides.md`. Writing that file records the
+  house order and gives the check something to read.
+
+  Note it is itself a standard, so it needs the rule-14 review gate
+  (`review-contract --genre standard`) before it counts.
+  **Layman:** A automatic checker that is supposed to confirm our design documents have all their required sections is silently skipping that check on every one of them.
+  Kind: doc.
+  Source: in-session-2026-08-12 (found while splitting DOOM-0331).
