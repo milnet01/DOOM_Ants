@@ -8480,7 +8480,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   Le through NEE and the GI bake, exactly as this bullet's conclusion says.
   So the remaining work really is only the AIR term, per half 2.
 
-- 📋 [DOOM-0331] **Bloom on the HDR views, so emissive things read as bright rather than merely light-coloured.**
+- 🚧 [DOOM-0331] **Bloom on the HDR views, so emissive things read as bright rather than merely light-coloured.**
   Found reviewing GZDoom at the user's request. GZDoom ships
   bloomextract.fp / bloomcombine.fp / blur.fp as post-process passes;
   DOOM_Ants ships NONE of that -- grepped, and there is no bloom, no
@@ -8619,6 +8619,40 @@ parked ideas (💭 considered) until we commit to and design each one.
   then verification depth — but loop 3 still produced two build-changing
   items. Options are recorded in the session summary: implement L1-L2 now
   (the settled half), split again, or run more loops past the cap.
+  Progress (2026-08-12): **L1 SHIPPED (e66df36, pushed).** The dial, doing
+  nothing yet — `rb_bloom` + `rt_bloom` config key + `kBloomPresets[4]` +
+  the `vid_bloom` menu row / `bloomNames` / `M_ChangeBloom` + the
+  `-shotverify` pin. No render change; nothing reads the preset table
+  until L2.
+
+  Verified, not asserted: `make` clean, `make test` green (9 binaries),
+  headless boot smoke exit 0, and the pre-push hook's container CI mirror
+  green on BOTH jobs. INV-1's two greps pass (exactly m_misc.c / m_menu.c /
+  r_vulkan.cpp; RendererMenu carries no bloom row), INV-7's pin grep
+  returns 1, VideoMenu is 21 rows with 21 matching labels, a temp-config
+  round-trip loads `rt_bloom 3` and writes back 3, and a hand-edited
+  `rt_bloom 9` boots and shuts down clean with the row reading "Off".
+
+  **DECIDED BY THE USER 2026-08-12 — do not reopen.** The gate ran its
+  three loops and did NOT converge (loop 3 was not empty on either spec).
+  Faced with implement-now / split-again / loop-past-the-cap, the user
+  chose **implement now**. The reasoning: the findings' character shifted
+  each loop — design-level falsehoods, then implementation detail, then
+  verification depth — so the remaining risk is the kind a compiler and
+  the first A/B capture catch in minutes, not the kind a reader catches.
+  A future session should NOT re-propose splitting these specs or running
+  further review loops on them as a precondition for building.
+
+  **Next: L2** (the extract) — `bloomImage[0..2]` with the park,
+  `bloom_extract_raster.comp`, `formulas/scene_recombine.glsl`, and
+  `composite.frag` refactored onto the include with the combine still
+  absent. Still no visible change; L2's gate is that the frame is
+  unchanged.
+
+  Owed and NOT done: three spec clauses were amended from contact with the
+  build (logged as the `3-impl` loop-log row), and rule 14 wants a re-gate
+  on them. Also §10 Q5 — the AMBIENT ceiling measurement — gates L3, and
+  the preset values stay provisional until it is taken.
 
 - 📋 [DOOM-0332] **1-D shadow maps for point lights in the rasterised view, exploiting DOOM's flat map.**
   Found reviewing GZDoom at the user's request; feeds DOOM-0170's raster
