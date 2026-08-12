@@ -8653,6 +8653,31 @@ parked ideas (💭 considered) until we commit to and design each one.
   build (logged as the `3-impl` loop-log row), and rule 14 wants a re-gate
   on them. Also §10 Q5 — the AMBIENT ceiling measurement — gates L3, and
   the preset values stay provisional until it is taken.
+  Progress (2026-08-12): L2 SHIPPED (0e5a486) — the extract, writing a
+  target nothing reads yet. bloomImage[0..2] (all three parked
+  SHADER_READ_ONLY_OPTIMAL so every per-frame barrier names one old
+  layout), formulas/scene_recombine.glsl carrying the WHOLE raster
+  recombination, composite.frag moved onto it, bloom_extract_raster.comp,
+  its pipeline/set/barriers/dispatch, and CurrentBloomPreset() clamping
+  rb_bloom at its first engine-side reader. Verified: make + make test
+  green, Classic bootsmoke exit 0, -rtverify PASS, zero validation output
+  with the dispatch confirmed running.
+
+  L2's A/B gate did NOT come back in the shape 7 predicts, and the
+  clause is the thing at fault rather than the build. Solid, E1M1
+  -warpto 3274 -3353 200, three captures: SIGNAL (post vs pre) mean 0.00
+  / max 13.7 / 0.0% of pixels > 2, NOISE (same build vs its own control)
+  mean 0.11 / max 102.7 / 0.3%, EFFECT 0 px. The control moves MORE than
+  the change, so 7's "max <= 1.0" cannot discriminate here: -freeze holds
+  mobj thinkers only (sector-light and animated-texture thinkers keep
+  running) and -devshot counts presents, not tics. A second spot behaves
+  the same. What carries the step instead is deterministic: composite.frag's
+  id-normalised SPIR-V function body is instruction-for-instruction
+  identical across the refactor, 109 lines each way, bar the six mandated
+  ImplicitLod -> ExplicitLod Lod 0 swaps and one hoisted aoEnable load.
+  INV-2's baseline stays the pre-L2 commit. Recorded in the spec's 7;
+  whether that clause's threshold changes is an open user decision, and
+  it would need rule 14's re-gate.
 
 - 📋 [DOOM-0332] **1-D shadow maps for point lights in the rasterised view, exploiting DOOM's flat map.**
   Found reviewing GZDoom at the user's request; feeds DOOM-0170's raster

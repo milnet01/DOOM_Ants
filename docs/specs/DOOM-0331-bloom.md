@@ -972,6 +972,30 @@ not fail cleanly, it raises on unpacking.
   pre-L2 one — INV-2 asks that the *dial* change nothing, and from L2 onward that
   is exactly what it measures. Anything larger is a real defect in the include
   rather than a rounding artefact, and stops the step.
+
+  **Measured 2026-08-12, and the clause above does not fit what came back.**
+  Solid, `renderer 2`, E1M1 `-warpto 3274 -3353 200`, three captures:
+  SIGNAL (post-L2 vs pre-L2) **mean 0.00 / max 13.7 / 0.0 % of pixels > 2**,
+  NOISE (post-L2 vs its own same-build control) **mean 0.11 / max 102.7 /
+  0.3 %**, EFFECT (moved by the change but not by the control) **0 px**. The
+  same-build control moves *more* than the change does, so `max ≤ 1.0` cannot
+  discriminate anything here: `-freeze` holds mobj thinkers only — sector-light
+  and animated-texture thinkers keep running — and `-devshot` counts presents,
+  not tics, so the shot lands on a different gametic run to run. A second spot
+  (`1056 -3616 90`) behaves the same: NOISE mean 0.14, max 97.3. The clause
+  states its bound against SIGNAL alone when the harness quotes a NOISE row
+  precisely because an absolute bound does not hold; **fixing the threshold is
+  an open decision, not something this step took.**
+
+  What carries the step instead is deterministic and stronger than the capture:
+  `composite.frag`'s SPIR-V function body, id-normalised after
+  `spirv-opt --strip-debug`, is **instruction-for-instruction identical** across
+  the refactor — 109 lines each way — with exactly two differences, both
+  expected: six `OpImageSampleImplicitLod` → `OpImageSampleExplicitLod … Lod 0`
+  (the `textureLod` requirement §5 states), and one `OpAccessChain`/`OpLoad` pair
+  for `aoEnable` scheduled earlier. Nothing dropped, no arithmetic changed — so
+  the AO blur and the `AO_DIRECT_WEIGHT` mix provably survived the move into the
+  include. INV-2's baseline therefore stays the **pre-L2** commit.
 - **L3 — the blur + combine.** `bloom_blur.comp` ×2, the composite's fourth
   descriptor binding, and the `composite.frag` add. *Verify:* a lamp in Solid
   gains a halo; `bloom 0` is byte-identical (INV-2); a plain wall away from any
