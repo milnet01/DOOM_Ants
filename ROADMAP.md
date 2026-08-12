@@ -8587,6 +8587,38 @@ parked ideas (💭 considered) until we commit to and design each one.
   loop 1 on its own bytes. Both carry a `0-split` provenance row saying no
   reviewer was dispatched. NOT yet gated, NOT implemented; no engine code
   touched.
+  Gate (2026-08-12): **3 cold-eyes loops, 2 lanes each, 29 verified
+  findings, 0 dismissed, all 29 fixed, no deferred tail. NOT converged —
+  loop 3 was not empty.** Spec is 1368 lines (it grew 1194 -> 1368 during
+  review, which is the documented over-size signal).
+
+  Two loop-3 findings would each have shipped a broken feature:
+
+  1. **The gate was wrong.** The spec said `rb_rtdebug == 0`; the correct
+  condition is `!rtActive`, which is strictly wider — the raster chain
+  also draws on any machine without working ray tracing, where
+  `rb_rtdebug` sits at its persisted default of 6. Bloom would have been
+  silently absent on every non-RT machine at default config, with INV-2
+  passing because everything was off.
+
+  2. **The floor rested on a false premise.** "Paletted art tops out at
+  1.0 in the AMBIENT term" is not true: `mesh.frag` ADDS
+  `GI_BOUNCE_STRENGTH * albedo * giIrradiance(...)` on top of
+  `albedo * sect`, unclamped. Ordinary art in a bounce-lit room can
+  exceed 1.0 and bloom — the "pale walls glow" complaint this bullet
+  opens with. The floor is now a MEASURED gate (§10 Q5 at L3) and the
+  preset values are provisional until it is taken.
+
+  Earlier loops caught the profiler widening being under-counted twice
+  (3 sites where 6 are needed), a barrier instruction that was work for
+  nothing, and several invariant tests that would have failed a correct
+  build or passed a broken one.
+
+  **Not converging is the honest status.** The findings' character did
+  shift each loop — design-level falsehoods, then implementation detail,
+  then verification depth — but loop 3 still produced two build-changing
+  items. Options are recorded in the session summary: implement L1-L2 now
+  (the settled half), split again, or run more loops past the cap.
 
 - 📋 [DOOM-0332] **1-D shadow maps for point lights in the rasterised view, exploiting DOOM's flat map.**
   Found reviewing GZDoom at the user's request; feeds DOOM-0170's raster
@@ -9184,6 +9216,33 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Make lamps, fireballs and glowing goo bleed light into the air around them in the ray-traced view too, not just the fast one.
   Kind: feature.
   Source: spec-split-2026-08-12 (DOOM-0331 §4.6).
+  Gate (2026-08-12): **3 cold-eyes loops, 2 lanes each, 18 verified
+  findings, 1 dismissed, all 18 fixed, no deferred tail. NOT converged —
+  loop 3 was not empty.** Spec is 1080 lines (grew 944 -> 1080 during
+  review).
+
+  The single most valuable finding of the whole run was found while
+  VERIFYING a lane's claim, not by a lane: binding 7 is declared
+  `layout(set = 0, binding = 7, rgba8)`. Retargeting that descriptor at
+  the fp16 `rtHdrImage` without also declaring it `rgba16f` clamps every
+  HDR store to [0,1] — the intermediate would hold nothing above white,
+  the bright pass would find nothing to extract, and the feature would
+  ship doing visibly nothing while compiling, running at full speed and
+  passing INV-1. No validation layer catches it.
+
+  Others that would have shipped defects: the sky store's alpha does
+  change on the split variant (1.0 -> 0.0), and leaving it breaks three
+  invariants together on the default fog path; "the exposure lands on a
+  sky pixel exactly once" is false with `rt_fog 0`, where it lands zero
+  times by DOOM-0141's design, and an implementer testing that invariant
+  would have added one; on the split path `rtImage`'s WRITER changes to
+  `rt_tonemap`, so the dependency ordering TAAU's read has to move with
+  it; and `rtHdrImage` had no creation-time `UNDEFINED` -> `GENERAL`
+  transition.
+
+  Four findings across loops 2 and 3 were earlier loops' own fixes coming
+  back — including one whose prescription was right and whose stated
+  reasoning was wrong. That is the cold re-read doing its job.
 
 - 📋 [DOOM-0346] **Record the house spec section order so the structure check stops declining to run.**
   `spec_lint` returns `sections_checked: false` on every spec in
