@@ -95,10 +95,10 @@ themselves" — one condition, not a mode set to keep in sync.
 
 ## 3. Scope decisions (agreed with the user)
 
-DOOM-0331 §3 carries decisions 1–4 (extract before the tone-map; brightness
-rather than an emissive flag; four presets on one row; on by default at Medium).
-They govern here unchanged and are not restated. **Decision 5 is the one this
-spec pays for**, so its consequences are worked out here:
+DOOM-0331 §3 carries all five scope decisions. Four of them — extract before the
+tone-map; brightness rather than an emissive flag; four presets on one row; on by
+default at Medium — govern here unchanged and are not restated. **Decision 5 is
+the one this spec pays for**, so its consequences are worked out here:
 
 5. **What counts as a light source does not move with the Brightness slider.**
    Taken with the user 2026-08-12, closing the umbrella's §10 Q3, which had been
@@ -243,17 +243,29 @@ sRGB-encode.
   re-add with the DOOM-0302 weight, the fog fold, the non-finite guard, the
   motion-vector write — is unchanged. The non-negative clamp travels with the
   store because the operator downstream assumes it.
-- **The sky branch is not moved and not changed at all.** This is the trap in
-  this section. The `gp.w < 0.0` branch is *not* simply "display-encoded, no
-  tone-map": when `pc.misc3.y != 0u` it calls
+- **The sky branch's ARITHMETIC does not move; its store's ALPHA does.** This is
+  the trap in this section, and it has two halves that pull in opposite
+  directions — so "the sky branch is unchanged" and "the sky branch is rewritten"
+  are both wrong.
+
+  *The arithmetic stays.* The `gp.w < 0.0` branch is *not* simply
+  "display-encoded, no tone-map": when `pc.misc3.y != 0u` it calls
   `sky = toneEncode(skyLin * fog.a + fog.rgb)` to fold fog in linear and
-  re-encode — and `rt_fog` **defaults to 1**, so that is the shipped path, not an
-  edge case. An implementer told "the tone-map moves out" who deletes the encode
-  from this branch ships a linear, un-encoded fogged sky. So: the sky branch
-  calls `toneExposeEncode(skyLin * fog.a + fog.rgb, EV)` — the same arithmetic it
-  performs today, under the shared name — and writes its finished
-  display-encoded colour into `rtHdrImage` with `alpha = 0.0`, keeping its
-  existing `clamp(sky, 0.0, 1.0)` and its early return. INV-4 locks it.
+  re-encode — and `rt_fog` **defaults to 1** (`m_misc.c`: `{"rt_fog",&rb_fog, 1}`),
+  so that is the shipped path, not an edge case. An implementer told "the
+  tone-map moves out" who deletes the encode from this branch ships a linear,
+  un-encoded fogged sky. So the branch calls
+  `toneExposeEncode(skyLin * fog.a + fog.rgb, EV)` — the same arithmetic under the
+  shared name — keeps its `clamp(sky, 0.0, 1.0)`, and still returns early.
+  INV-4 locks that.
+
+  *The alpha changes, on the split variant only.* Today the store is
+  `imageStore(outColor, p, vec4(clamp(sky, 0.0, 1.0), 1.0))` — **alpha 1.0**. On
+  the `-DBLOOM_SPLIT` variant it must become **0.0**, because that alpha is the
+  sky flag every downstream consumer keys on. Leave it at 1.0 and `rt_tonemap`'s
+  `h.a < 0.5` arm never fires: the sky is exposed and tone-mapped a second time,
+  and the extract's flag multiply stops masking it — INV-4, INV-5 and INV-6 all
+  break together, on the default fog path. INV-5 locks the alpha.
 - **Exposure is applied exactly once on every pixel, and the two arms apply it in
   different passes.** Surface pixels on the split path: once, in
   `rt_tonemap.comp`. Surface pixels on the un-split path: once, in
@@ -303,8 +315,10 @@ world fills only the `[0, renderW) × [0, renderH)` corner of `rtHdrImage`, so t
 source-to-output ratio is `renderScale / 50 %` and the tap count is `ceil()` of
 it, clamped to the source region: 1×1 at the 50 % default, 2×2 at 67 %, 75 % and
 100 %. The extract reaches its source by scaling *inward*, at
-`p * 2 * renderExtent / dispExtent` — the push field is `renderExtent`, in pixels
-(§5); there is no separate `renderScale` uniform.
+`p * 2 * renderExtent / dispExtent`, where `renderExtent` is the push field in
+pixels (§5) and **`dispExtent` is `imageSize(rtHdrImage)`** — that target is
+swapchain-sized (§5), so its own dimensions *are* the display extent and no
+second push field is needed. There is no `renderScale` uniform.
 
 **The extract writes every texel of `bloomImage[0]`**, i.e. the whole
 `[0, dispW/2) × [0, dispH/2)` target with no unwritten region, exactly as the
@@ -320,6 +334,11 @@ trap arriving one shader later:
 
 ```glsl
 // rt_tonemap.comp — compute; p is from gl_GlobalInvocationID, render-res.
+// Guard FIRST. The dispatch rounds up to the 8x8 workgroup and rtHdrImage is
+// DISPLAY-sized while this pass covers only the render corner, so the tail
+// invocations would imageLoad never-written texels - whose garbage alpha then
+// decides the sky branch below. svgf_composite.comp opens the same way.
+if (p.x >= int(pc.renderExtent.x) || p.y >= int(pc.renderExtent.y)) return;
 vec4 h = imageLoad(rtHdrImage, p);
 if (h.a < 0.5) { imageStore(rtImage, p, vec4(h.rgb, 1.0)); return; }  // sky: already encoded
 vec3 L = h.rgb;
@@ -421,7 +440,21 @@ for, so it is named here rather than left to the implementer. In addition, the
 descriptor that points its output binding at `rtHdrImage` instead of `rtImage`
 (today binding 7 of `g.svgfDs` re-uses `g.rtView`). The `labelTaauDs` pattern — an
 extra set that retargets one binding at a different image, layout-compatible with
-the same pipeline layout — is the precedent already in the file.
+the same pipeline layout — is the precedent already in the file. **It keeps the
+GLSL identifier**: the variable stays `outColor` in both variants, which is what
+INV-6's grep anchors on.
+
+**The binding's FORMAT QUALIFIER must change with it, and this is the one that
+fails silently.** Binding 7 is declared today as
+`layout(set = 0, binding = 7, rgba8) uniform image2D outColor;` — an 8-bit UNORM
+storage format, correct for `rtImage`. `rtHdrImage` is `kSceneFormat`
+(`R16G16B16A16_SFLOAT`), so the split variant must declare that binding
+**`rgba16f`** under the same `#ifdef`. Leave it `rgba8` and every store into the
+HDR target is **clamped to [0,1]**: the intermediate then holds nothing above
+white, the bright pass finds nothing over any preset's threshold, and the feature
+ships doing visibly nothing — while compiling cleanly, running at full speed, and
+passing INV-1. No validation layer catches it, because the descriptor write is
+the mismatch and it is legal to declare a narrower format.
 
 ### New shaders
 
@@ -501,7 +534,7 @@ Every site, verified present in the current tree:
 | 5 | `vkCmdResetQueryPool(g.cmd, g.gpuTimerPool, 0, 8)` in `RecordRtTrace` | `8` | `10` |
 | 6 | `vkCmdResetQueryPool(g.cmd, g.gpuTimerPool, 0, 8)` in `RB_Vulkan_Present` | `8` | `10` |
 | 7 | `uint32_t nq = g.profRasterFrame ? 7u : 8u` | `7 : 8` | `7 : 10` — RT arm only; the `7` is DOOM-0331's |
-| 8 | a **new** `if (prof && !bloomActive)` dummy-timestamp block | — | writes **8,9**. The existing `if (prof && !denoise)` block is **unchanged** at 5,6,7 — see below |
+| 8 | the dummy-timestamp mechanism — the existing `if (prof && !denoise)` block **plus** a new `if (prof && denoise && !bloomActive)` one | 5,6,7 | old block also writes **8,9**; new block writes **8,9** — two conditions, two positions, see below |
 | 9 | the `[rt_profile]` `printf` — format string **and** its `profMs[0..7]` args | 8 buckets | 10 |
 
 **Site 9 corrupts the measurement rather than breaking it**, which makes it the
@@ -523,22 +556,35 @@ that §6's measurement and INV-9 compare against. So slots 8 and 9 get a
 dummy-timestamp block of their own, mirroring the existing mode-gate one:
 
 ```
-if (prof && !bloomActive)   // mirrors the existing `if (prof && !denoise)` block
+if (prof && denoise && !bloomActive)   // sited immediately after slot 7's real write
 {
-    // collapse the bloom slots onto the preceding point so their segments read ~0
-    vkCmdWriteTimestamp(..., <RT slots 8 and 9>);
+    // collapse the bloom slots onto slot 7 so their segments read ~0
+    vkCmdWriteTimestamp(..., 8);
+    vkCmdWriteTimestamp(..., 9);
 }
 ```
 
-**One block, and the existing `!denoise` block must NOT be extended to cover 8
-and 9.** `denoise` is `(rb_rtdebug == 6)` and bloom runs only in mode 6, so
-`!denoise` **implies** `!bloomActive`: the new block already fires on every frame
-the old one does. Extending both leaves two `vkCmdWriteTimestamp` calls writing
-each of slots 8 and 9 between resets, which is invalid. Extending the old one
-*instead of* adding this one is worse still — on the ordinary denoiser-on,
-`bloom 0` frame neither block fires, the two slots are reset but never written,
-and the entire `[rt_profile]` print vanishes, which is the failure this site
-exists to prevent.
+**Two writes at two positions, and the condition is NOT simply `!bloomActive`.**
+`denoise` is `(rb_rtdebug == 6)` and bloom runs only in mode 6, so `!denoise`
+*implies* `!bloomActive` — but the two cases need different placements, and no
+single site serves both:
+
+- **`denoise && !bloomActive`** (mode 6, dial Off) — slot 7 is written for real
+  at the end of `svgf_composite`, so the collapse goes **immediately after it**,
+  as sketched. `profMs[8]` and `profMs[9]` then read ~0 and
+  `profMs[7] = ts[3] - ts[9]` still measures TAAU.
+- **`!denoise`** (modes 1–5) — slots 5, 6 and 7 are themselves dummies, written
+  *late* by the existing block just before slot 3. So **extend that block** to
+  write 8 and 9 after its 7. Nothing here runs TAAU either, so collapsing them
+  together is correct.
+
+Getting the placement wrong is silent in both directions, which is why it is
+specified rather than left to the implementer. A single block sited after slot
+7's real write also fires on a `!denoise` frame — *before* the old block writes
+ts[7] — so `profMs[8] = ts[8] - ts[7]` underflows in `uint64_t` and prints a
+garbage bucket. A single block sited beside the old one instead charges the whole
+TAAU interval to `profMs[8]` on the ordinary mode-6 `bloom 0` frame, while
+`profMs[7]` reads ~0 — the exact silent absorption INV-7 exists to catch.
 
 **RT appends rather than inserts, because its existing slots are already out of
 chronological order.** Its write order is chronologically `0,1,2,5,6,7,3,4` —
@@ -647,6 +693,15 @@ inherits whatever tier the user last played in. Confirm `HD load done` appears i
 the run log before trusting any Ultra capture — the HD-assets `cwd` trap renders
 1994 paletted art silently otherwise.
 
+**The Solid arm needs DOOM-0331 §7's script change, and it lands before this spec
+starts.** As shipped, `ab_capture.sh` ends in an *unconditional* `HD load done`
+check, and `EnsureHdMaterials` returns early unless the tier is Ultra — so a
+Solid capture exits 1 with no image. DOOM-0331 §7 makes that check conditional on
+the config's `renderer` value, and this spec is blocked by DOOM-0331, so the
+mechanism is in place by R1. Recorded because INV-1's Solid+RT arm is otherwise
+the arm an implementer quietly drops, and that arm is the one proving the feature
+follows the *chain* rather than the tier.
+
 - **R1 — the tone-map lift and the split, gated.** `formulas/tonemap_encode.glsl`
   and `svgf_composite.comp` moved onto `toneExposeEncode` (no behaviour change),
   then `rtHdrImage`, the `-DBLOOM_SPLIT` variant, and `rt_tonemap.comp` doing the
@@ -722,8 +777,13 @@ h=int(a.shape[0]*0.805);print(numpy.abs(a[h:]-b[h:]).max())" on.png off.png
 - **INV-3** — `-rtverify` is unaffected. `RB_RtVerify` binds only
   `RtPipelineForMode(5u)` and dispatches once; it never touches the denoiser,
   the composite, TAAU, or anything this feature adds.
-  *Test:* `awk '/^void RB_RtVerify\(\)/,/^\}/' linuxdoom-1.10/r_vulkan.cpp | grep -c 'svgfComposite\|taauPipeline\|svgfTemporal\|svgfAtrous'`
-  → `0` (verified against the current tree), and `-rtverify -warp 1 1 -noinput`
+  *Test:* the alternation must name **this feature's** pipelines too, or the
+  "anything this feature adds" half of the claim has nothing that could falsify
+  it — `RB_RtVerify` could bind `rtTonemapPipeline` and a grep for the
+  pre-existing four would still return 0.
+  `awk '/^void RB_RtVerify\(\)/,/^\}/' linuxdoom-1.10/r_vulkan.cpp | grep -c 'svgfComposite\|taauPipeline\|svgfTemporal\|svgfAtrous\|rtTonemapPipeline\|bloomExtractRtPipeline'`
+  → `0` (the four pre-existing names verified absent against the current tree),
+  and `-rtverify -warp 1 1 -noinput`
   prints PASS with an unchanged rel-MSE before and after R2.
   *Breaks when:* the verify path is ever routed through the display composite —
   at which point its rel-MSE would start moving with a look dial.
@@ -774,8 +834,13 @@ h=int(a.shape[0]*0.805);print(numpy.abs(a[h:]-b[h:]).max())" on.png off.png
   grep -c 'toneExposeEncode' linuxdoom-1.10/shaders/svgf_composite.comp
   # expect 2
   # ...and the split arm's surface store must carry no exposure of its own:
-  grep -c 'imageStore(rtHdrImage, p, vec4(max(L, vec3(0.0)), 1.0))' \
+  # The image VARIABLE stays `outColor` in both variants - the split is a
+  # descriptor retarget onto binding 7 (5), not a rename - so anchor on that.
+  grep -c 'imageStore(outColor, p, vec4(max(L, vec3(0.0)), 1.0))' \
        linuxdoom-1.10/shaders/svgf_composite.comp
+  # expect 1
+  # ...and the split arm's binding must be rgba16f, or every HDR store clamps:
+  grep -c 'binding = 7, rgba16f' linuxdoom-1.10/shaders/svgf_composite.comp
   # expect 1
   ```
   plus R1's `rb_exposure` sweep: capture the same coordinate at the slider's
@@ -954,6 +1019,7 @@ hides is at most one fp16 rounding step wide.
 |------|------|-------|----|----|----|----|---------|
 | 0-split | 2026-08-12 | 0 | 0 | 0 | 0 | 0 | **No reviewer dispatched.** Split out of the 1496-line DOOM-0331 umbrella, which had converged by cap at 3 loops with build-changing findings still arriving and 5 of loop 2's 10 CRIT+HIGH being collateral from loop 1's own fixes. This part takes the RT chain; DOOM-0331 keeps the shared core and the raster chain. Invariants renumbered from 1 and mapped in DOOM-0331 §2. The umbrella's §10 Q3 was closed by the user as §3 decision 5, which **changed the mechanism** — the exposure moves downstream and `toneEncode` is lifted whole rather than split. **No review history is inherited**: the umbrella's three loops ran against a document that no longer exists, and the design in §4.2 is new since any of them. This part runs the gate from loop 1 on its own bytes. |
 | 1 | 2026-08-12 | 2 | 1 | 3 | 0 | 0 | All 4 verified, **1 dismissed**, all 4 fixed. Both lanes independently found three of them. **The sharpest was INV-6's own test**: it expected `grep -c 'toneExposeEncode'` to return `1`, but both shader variants are built from one source file, so a correct build has two call sites — satisfying the clause as written meant deleting the un-split surface encode, which breaks INV-1's byte-identity on the `bloom 0` arm. A test that fails a correct build and passes a broken one. Also: §5 stated one layout rule for the whole chain, but `rtHdrImage` is STORAGE-only and read with `imageLoad`, so transitioning it to `SHADER_READ_ONLY_OPTIMAL` is invalid for a storage descriptor; and the widening table and the prose beneath it *both* claimed profiler slots 8 and 9 — since `denoise` is `(rb_rtdebug == 6)` and bloom runs only in mode 6, `!denoise` implies `!bloomActive`, so two dummy blocks would double-write those slots between resets. The Q1 was §6/INV-9 naming `[rt_profile]` for a ratio whose denominator only `[cpu_profile]` prints. **Dismissed:** one lane called INV-1's Solid+RT arm unrunnable because `ab_capture.sh`'s HD guard is unconditional; the other lane checked and DOOM-0331 §7 already owns that fix, and this spec is blocked by it — verified, and the arm stands. |
+| 2 | 2026-08-12 | 2 | 1 | 2 | 5 | 1 | All 9 verified, **0 dismissed**, all 9 fixed. **The worst was found while verifying, not by a lane**: binding 7 is declared `layout(set = 0, binding = 7, rgba8)`, an 8-bit UNORM format qualifier. Retargeting that descriptor at the fp16 `rtHdrImage` without also declaring it `rgba16f` clamps every HDR store to [0,1] — the intermediate would hold nothing above white, the bright pass would find nothing to extract, and the feature would ship doing visibly nothing while compiling, running and passing INV-1, with no validation error anywhere. Second: the sky store's **alpha** does change on the split variant (1.0 → 0.0) although §4.2 said the branch was "not changed at all" — leave it at 1.0 and the sky is tone-mapped twice and stops being masked, breaking INV-4, INV-5 and INV-6 together on the default fog path. **Two findings were loop 1's own fixes coming back**: the `imageStore(rtHdrImage, …)` grep loop 1 added can never match, because the descriptor retarget keeps the GLSL name `outColor`; and loop 1's "one dummy block, do not extend the existing one" was wrong — the two cases need different *positions*, and either single placement is silently wrong (a `uint64_t` underflow on debug-view frames, or the whole TAAU interval charged to the bloom bucket on the mode-6 `bloom 0` frame). The rest: `dispExtent` appeared in a formula and in no input; `rt_tonemap`'s "complete body" had no bounds guard against the round-up invocations of a render-res dispatch over a display-sized image; INV-3's grep could not falsify its own "or anything this feature adds" clause; the `ab_capture.sh` Solid-arm point dismissed in loop 1 resurfaced from a second lane, so it is now answered with a pointer rather than dismissed again; and §3 misstated how many scope decisions the sibling carries. |
 
 **What the umbrella's review bought, kept here because the reasoning is
 load-bearing and the document it was written in is gone.** Two findings that

@@ -134,7 +134,7 @@ from loop 1 on their own bytes.
 | INV-8 | `-shotverify` pin | **DOOM-0331 INV-7** |
 | INV-9 | one preset table | **DOOM-0331 INV-8** (defines it) + **DOOM-0345 INV-8** (must not add a second) |
 | INV-10 | sky never generates bloom | **DOOM-0331 INV-9** (raster arm) + **DOOM-0345 INV-5** (RT arm) |
-| — | *new* | **DOOM-0345 INV-4** (the fogged sky keeps its encode) and **INV-6** (exposure applied exactly once) — both promoted from What-checks-this rows, because §3 decision 5 gave them a way to fail |
+| — | *new* | **DOOM-0345 INV-4** (the fogged sky keeps its encode) and **INV-6** (exposure applied exactly once) — both promoted from What-checks-this rows, because §3 decision 5 gave them a way to fail; and **DOOM-0345 INV-9** (Ultra's ≤ 5 % bound), which the umbrella carried as a §6 budget rather than an invariant |
 
 ## 3. Scope decisions (agreed with the user)
 
@@ -388,9 +388,14 @@ mid-frame:
 - The blur therefore reads a fully-written target and needs no corner clamp, and
   the combine samples bloom in **plain full-frame UV** — which is what
   `composite.frag`'s existing `vUV` already is.
-- The samplers use `CLAMP_TO_EDGE`, as the scene sampler does, so a blur tap that
-  lands outside the image at the frame border repeats the edge rather than
-  reading black and darkening the halo there.
+- The bloom samplers use **`LINEAR` filtering** and **`CLAMP_TO_EDGE`
+  addressing**, both pinned because both are silently wrong-able.
+  `CLAMP_TO_EDGE` (as the scene sampler already does) stops a blur tap landing
+  outside the image at the frame border from reading black and darkening the halo
+  there. `LINEAR` matters most at the **combine**, which upsamples a quarter-res
+  target to full display resolution: a `NEAREST` sampler gives every halo
+  4×4-pixel blocky edges while INV-2, INV-4, INV-5 and INV-9 all still pass,
+  leaving only §10 Q1's human look to catch it.
 
 ### 4.3 The blur
 
@@ -662,15 +667,27 @@ dependency at each hop, and `bloomImage[2]` ends the chain in
 `SHADER_READ_ONLY_OPTIMAL` for the combine. The existing `svgfBarrier()` helper
 is the idiom to follow.
 
-**The extract's three inputs need no new barrier.** Worth stating, because the
-opposite is the natural assumption for a pass being inserted earlier in the
-frame. `bloom_extract_raster` samples `sceneImage`, `sceneDirImage` and
-`aoImage`. The first two are already moved `COLOR_ATTACHMENT_OPTIMAL` →
-`SHADER_READ_ONLY_OPTIMAL` by an explicit `vkCmdPipelineBarrier` recorded
-immediately after the scene pass and **before** the SSAO pass — it has to be,
-since SSAO reads the DIRECT target's packed forward-distance depth — and
-`aoImage` reaches the same layout through its own render pass's `finalLayout`.
-The extract is recorded after both, so all three are already readable.
+**The extract's three inputs are already in the right LAYOUT, but are not
+synchronised for a COMPUTE reader.** The two halves come apart here, and the
+layout half is the one that looks settled.
+
+*Layout — nothing to do.* `bloom_extract_raster` reads `sceneImage`,
+`sceneDirImage` and `aoImage`. The first two are already moved
+`COLOR_ATTACHMENT_OPTIMAL` → `SHADER_READ_ONLY_OPTIMAL` by an explicit
+`vkCmdPipelineBarrier` recorded immediately after the scene pass and **before**
+the SSAO pass — it has to be, since SSAO reads the DIRECT target's packed
+forward-distance depth — and `aoImage` reaches the same layout through its own
+render pass's `finalLayout`.
+
+*Dependency — one barrier to add.* Both of those existing dependencies stop at
+the **fragment** stage: the explicit barrier's `dstStageMask` is
+`VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT`, and the AO render pass's implicit
+external dependency ends at `BOTTOM_OF_PIPE` with no access mask. Neither
+synchronises a compute dispatch. So the extract needs one execution + memory
+barrier ahead of it — `COLOR_ATTACHMENT_OUTPUT | FRAGMENT_SHADER` →
+`COMPUTE_SHADER`, `dstAccessMask = SHADER_READ`, covering all three images, with
+**no layout transition**. Omit it and it is a read-after-write hazard: validation
+reports it, and stale or garbage halo texels appear on tiled and AMD drivers.
 
 **Pipelines and descriptor sets.** Two new compute shaders means two pipelines,
 two set layouts and their pool allocations: `g.bloomExtractRasterPipeline` and
@@ -714,6 +731,17 @@ vec3 sceneRecombine(sampler2D amb, sampler2D dir, sampler2D ao,
 
 Both consumers call it, and neither computes any part of `hdr` itself.
 
+**The include fetches with `textureLod(..., 0.0)`, never `texture()`.** Its two
+consumers are different shader stages: `composite.frag` is fragment, where
+implicit-LOD `texture()` is fine, but `bloom_extract_raster.comp` is **compute**,
+which has no derivatives and where implicit-LOD sampling is invalid. One body has
+to compile in both stages, so the explicit-LOD form is the only one available.
+It is behaviourally identical here — all three targets are single-mip — which is
+what keeps L2's bit-identity gate meaningful once `composite.frag` is moved onto
+the include. An implementer who leaves `texture()` in either fails to compile the
+`.comp`, and one who "fixes" it by editing only the fragment side has changed
+`composite.frag`'s sampling on a step the spec calls a no-op.
+
 One existing shader is edited: `composite.frag` — add the combine, and move the
 recombination wholesale into the new include.
 
@@ -754,15 +782,26 @@ profiler widening wrong** (it "named 3 sites; there are 7", the misses including
 the cheapest way not to repeat it is for the part that does not need the widening
 not to touch it.
 
-Three sites, all verified present:
+Six sites. Rows 2–5 exist in the tree today; rows 1 and 6 are new code:
 
 | # | Site | Today | After |
 |---|---|---|---|
-| 1 | `uint32_t nq = g.profRasterFrame ? 6u : 8u` | `6 : 8` | **`7 : 8`** — raster arm only |
-| 2 | the `[raster_profile]` `printf` — format string **and** its five `profMs[]` args | 5 buckets | 6 |
-| 3 | a dummy-timestamp block for the `bloom 0` arm | — | new, see below |
+| 1 | a **new** `vkCmdWriteTimestamp(..., 4)` recorded after the bloom dispatches | — | new |
+| 2 | the existing "after composite" write | slot `4` | slot **`5`** |
+| 3 | the existing "after HUD/present" write | slot `5` | slot **`6`** |
+| 4 | `uint32_t nq = g.profRasterFrame ? 6u : 8u` | `6 : 8` | **`7 : 8`** — raster arm only |
+| 5 | the `[raster_profile]` `printf` — format string **and** its five `profMs[]` args | 5 buckets | 6 |
+| 6 | a dummy-timestamp block for the `bloom 0` arm | — | new, see below |
 
-**Site 2 is the one that corrupts the measurement rather than breaking it.** The
+**Rows 1–3 are the ones a "widen `nq` and the print" reading misses**, and
+missing them is fatal rather than cosmetic: inserting bloom at slot 4 in frame
+order means a new write must exist *and* the two writes above it must be
+renumbered. Set `nq = 7u` without them and slot 6 is never written, so
+`vkGetQueryPoolResults` returns `VK_NOT_READY` and the **entire**
+`[raster_profile]` print disappears — silently disabling §6's gate and INV-5.
+That is the same shape as DOOM-0011 row 9.4's under-counted widening.
+
+**Site 5 is the one that corrupts the measurement rather than breaking it.** The
 `[raster_profile]` print passes five `profMs[]` values against five hard-coded
 labels (`shadow`, `scene`, `ssao`, `composite`, `hud`); insert bloom at slot 4 and
 the sixth bucket has nowhere to go, so bloom's cost is printed under the word
@@ -777,7 +816,7 @@ together.
 untouched. `[3]` becomes bloom, `[4]` becomes composite, and a new `[5]` takes
 HUD. Re-labelling all five would mislabel three correct rows.
 
-**Site 3 exists because the bloom dial is itself a gate.** `nq` is a
+**Site 6 exists because the bloom dial is itself a gate.** `nq` is a
 compile-time-shaped constant, but the new slot is only *written* when
 `rb_bloom > 0` (§4.4 skips every bloom dispatch when the dial is Off). A
 reset-but-unwritten slot returns `VK_NOT_READY` and the readback drops the
@@ -863,13 +902,22 @@ not fail cleanly, it raises on unpacking.
   **asserted by this gate**, not proved a priori — bit-identity under `glslc -O`
   is an empirical result, and this is where a `scene_recombine.glsl` that dropped
   the AO blur shows up.
+  **If SIGNAL is non-zero, the include is the cause — and the include stays.**
+  Reverting it so the extract re-derives `hdr` is the one thing §5 forbids, since
+  then the value thresholded is not the value bloomed. So: confirm the difference
+  is confined to sub-1/255 rounding (max ≤ 1.0, mean ≤ 0.01), record the measured
+  delta here, and re-baseline INV-2 against the **post-L2** commit instead of the
+  pre-L2 one — INV-2 asks that the *dial* change nothing, and from L2 onward that
+  is exactly what it measures. Anything larger is a real defect in the include
+  rather than a rounding artefact, and stops the step.
 - **L3 — the blur + combine.** `bloom_blur.comp` ×2, the composite's fourth
   descriptor binding, and the `composite.frag` add. *Verify:* a lamp in Solid
   gains a halo; `bloom 0` is byte-identical (INV-2); a plain wall away from any
   lamp does not move (INV-4); a sky-facing capture does not generate bloom
   (INV-9).
-- **L4 — profiler slot, then the gate.** All three profiler sites (§5) including
-  the `printf` format string and its argument list, then the §6 measurement,
+- **L4 — profiler slot, then the gate.** All **six** profiler sites (§5) — the
+  new slot-4 write, the two renumbered writes above it, `nq`, the `printf`
+  format string *and* its argument list, and the dummy block — then the §6 measurement,
   and the human look call on hardware (§10 Q1/Q2). Then the `-shotcompare`
   golden's re-bless is owed — see §12; it is already owed for `rt_fog`, so this
   adds to an existing debt rather than creating one. Only after all of that does
@@ -926,7 +974,11 @@ played in, which is how a "Solid" measurement silently becomes an Ultra one.
   the same capture from the commit before L2, plus a same-build control —
   `ab_diff.py <bloom0> <pre-L2> <bloom0-control>` → SIGNAL mean 0.00, max 0.0,
   with the NOISE row quoted beside it. Run in Solid (`DOOMCFG` with
-  `renderer 2`) and in Ultra with the Ray Tracing row **off**.
+  `renderer 2`) and in Ultra with the ray-traced view off — **`renderer 1` plus
+  `rt_view 0`**. Name that second key: `rt_view` defaults to **6**, so an
+  inherited config runs the RT chain, where this spec's combine does not execute
+  at all and the arm would pass without exercising anything. The harness cannot
+  toggle it by keystroke (§9), so it has to come from the config.
   *Breaks when:* a dispatch is recorded unconditionally, or the combine becomes
   `hdr += bloom * intensity` with no guard and a non-finite value reaches
   `bloomImage[2]`.
@@ -1027,9 +1079,18 @@ h=int(a.shape[0]*0.805);print(numpy.abs(a[h:]-b[h:]).max())" on.png off.png
 - **INV-8** — the threshold, knee and intensity presets exist in exactly one
   place, and every chain reads that one. This is the invariant DOOM-0345 is most
   able to breach, since it is the second consumer.
-  *Test:* `grep -rn 'kBloomPresets' linuxdoom-1.10/` shows one definition and
-  the reads that consume it; no threshold, knee or intensity literal appears in
-  any `.comp`, `.frag` or `.glsl` file.
+  *Test:* two clauses, and the second needs a command of its own because the
+  first cannot see it — a hardcoded `1.35` in a shader leaves
+  `grep -rn kBloomPresets` returning exactly one definition:
+  ```
+  # 1. one definition, plus the reads that consume it
+  grep -rn 'kBloomPresets' linuxdoom-1.10/
+  # 2. no tuning literal hardcoded in a bloom shader. The only float literals
+  #    these files may carry are 4.3's five kernel weights and two offsets and
+  #    4.2's 1e-4 guards; anything else is a preset value that escaped the table.
+  grep -nE '[0-9]+\.[0-9]+' linuxdoom-1.10/shaders/bloom_*.comp
+  # reviewed by eye against that allowed list
+  ```
   *Breaks when:* the two chains need different tuning and someone answers that
   with a second table instead of a named per-chain scale constant (§10 Q3).
 
@@ -1157,7 +1218,8 @@ below is the look residual it leaves.
 | INV-6 the bloom pass is timed | INV-6's slot and `nq` greps at L4 |
 | The profiler's LABELS still match its buckets | INV-6's third grep — the `bloom` label must appear in the `[raster_profile]` format string |
 | INV-7 golden gate pinned | the INV-7 grep at L1 |
-| INV-8 one preset table, no shader literals | the INV-8 grep at L4, and again when DOOM-0345 adds its consumer |
+| INV-8 clause 1 — one preset table, both chains read it | the `kBloomPresets` grep at L4, and again when DOOM-0345 adds its consumer |
+| INV-8 clause 2 — no tuning literal hardcoded in a bloom shader | the `bloom_*.comp` float-literal grep at L4, **reviewed by eye** against §4.3's kernel constants |
 | INV-9 raster sky never generates bloom | sky-facing `ab_diff.py` capture at L3 |
 | The extract and the composite compute the same `hdr` | L2's byte-identical refactor gate — a `scene_recombine.glsl` that dropped the AO blur fails it |
 | The 21-row menu still fits | Q4's arithmetic at L1 (mechanical) **plus** a user look at L4 |
@@ -1165,7 +1227,7 @@ below is the look residual it leaves.
 | Solid and Ultra agree on what glows | **nothing** mechanical — §10 Q3 is a measurement plus a judgement |
 | The preset values are the right ones | **nothing** — §10 Q1/Q2; the presets are tuning, not a contract |
 
-**Three `nothing` rows out of fifteen** (counted from the table above, not
+**Three `nothing` rows out of sixteen** (counted from the table above, not
 carried forward). All three are the same class — this feature's correctness is
 mechanically checkable and its *look* is not — and that is the honest error
 budget here, and why L4 is a human gate rather than a green test run.
@@ -1211,6 +1273,7 @@ checkable — with only one bucket added on this chain, "the format string names
 |------|------|-------|----|----|----|----|---------|
 | 0-split | 2026-08-12 | 0 | 0 | 0 | 0 | 0 | **No reviewer dispatched.** Narrowed in place from the 1496-line umbrella of this same id, which had converged by cap at 3 loops with build-changing findings still arriving. The RT chain left for DOOM-0345; invariants renumbered from 1 and mapped in §2. The umbrella's 10-item deferred tail was folded in rather than re-reviewed, and its §10 Q3 was closed by the user as §3 decision 5. **No review history is inherited** — the umbrella's three loops ran against a document that no longer exists, so this part runs the gate from loop 1 on its own bytes. |
 | 1 | 2026-08-12 | 2 | 5 | 1 | 1 | 1 | All 8 verified against the tree, **0 dismissed**, all 8 fixed. **Five of the eight were false claims about existing code**, and every one would have sent an implementer to the wrong place: INV-9 attributed the sky's DIRECT write to `composite.frag`, which only *reads* that target (`mesh.frag` writes it, and writes `outAmbient = vec4(0.0)` — so the sky's ambient term is exactly zero, which is what actually bounds it); §4.4 said "both chains already guard against non-finite radiance" when only the RT chain does, contradicting its own next paragraph; §5 instructed the implementer to bring a barrier forward that already fires immediately after the scene pass and before SSAO; §4.5 named `videoLabels` (indexed by menu *row*, never by a dial value) as a read site to clamp and called `rb_fog`'s already-guarded lookup a latent defect; and §6/INV-5 named `[cpu_profile]` for per-pass rows that only `[raster_profile]` prints. The Q2 was `srcTexelSize` carrying a per-pass ×2 factor that §5 defined away, the Q3 was the preset table's Off row having no values while INV-4 read "each row", and the Q4 was INV-6 pinning the whole `nq` line, which DOOM-0345 rewrites — so that clause would fail on an intact tree the moment the sibling landed. One collateral fix from the 4b sweep: §4.2's "falls below every ramp start" went imprecise once INV-9 was made exact — at the High preset the sky sits *on* the ramp start and extracts exactly zero. |
+| 2 | 2026-08-12 | 2 | 1 | 2 | 3 | 2 | All 8 verified, **0 dismissed**, all 8 fixed. **The profiler site table was the serious one**: it listed three sites where the frame-order insert needs six — a *new* slot-4 write plus renumbering the two existing writes above it — so an implementer working the table would set `nq = 7u`, never write slot 6, and lose the entire `[raster_profile]` print to `VK_NOT_READY`. That is DOOM-0011 row 9.4's failure again, in the section that cites it. Two findings landed on loop 1's own fixes: the barrier paragraph loop 1 rewrote was still wrong in the other direction (the layouts *are* already correct, but the existing dependency's `dstStageMask` stops at `FRAGMENT_SHADER` and the extract is a compute dispatch), and the §2 split map missed DOOM-0345's INV-9. The rest were unspecified detail an implementer would have had to invent: `sceneRecombine` never pinned `textureLod` over `texture()`, which cannot compile in a compute stage at all; `bloomTex`'s filter mode was unpinned, and `NEAREST` gives blocky halos that every invariant still passes; INV-2's Ultra arm named no `rt_view 0`, and that key defaults to **6**, so the arm would have run the RT chain and passed without exercising this spec's combine; INV-8's "no shader literals" clause had no command that could see it; and L2 admitted its refactor might not be bit-identical while defining no response. One collateral fix from the 4b sweep: L4 still said "all three profiler sites". |
 
 **What the umbrella's review bought, kept here because the reasoning is load-bearing
 and the document it was written in is gone.** Three findings that would each have
