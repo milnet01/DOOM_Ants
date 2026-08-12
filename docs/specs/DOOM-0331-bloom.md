@@ -548,7 +548,7 @@ config key and no menu row.**
 | Name | Where | Value |
 |---|---|---|
 | `rb_bloom` | `r_vulkan.cpp`, `extern "C"` alongside `rb_fog` | 0 Off / 1 Low / 2 Medium / 3 High |
-| `bloom` | `m_misc.c` config table, default `2` | persisted to `~/.doomrc` |
+| `rt_bloom` | `m_misc.c` config table, default `2` | persisted to `~/.doomrc`. The `rt_` prefix is the convention every render-effect toggle uses (`rt_fog`, `rt_wet`, `rt_filth`, `rt_detile`, `rt_profile`) — and "follow the `rb_fog` precedent exactly" means this, since `rb_fog`'s key is `rt_fog` |
 | `vid_bloom` | `m_menu.c` `videoitem_e`, after `vid_fog` | row label `"Bloom"`, hotkey `'m'` |
 | `M_ChangeBloom` | `m_menu.c` | `rb_bloom = (rb_bloom + 1) % 4` |
 | `bloomNames` | `m_menu.c`, beside `fogNames` | `{"Off","Low","Med","High"}` — the **value** strings, indexed by `rb_bloom` |
@@ -581,8 +581,17 @@ and the second fires without any keypress:
   read while the Video menu is drawn, before any input arrives.
 
 `M_ChangeBloom`'s `(rb_bloom + 1) % 4` is *not* a third site: it maps a
-hand-edited 9 to 2 rather than reading out of range. A single clamp at config
-load, plus a guard at each index above, closes all of it.
+hand-edited 9 to 2 rather than reading out of range.
+
+**The guards at those two sites are the whole defence — there is no clamp at
+config load.** An earlier draft asked for one as well; L1 showed it to be a
+special case with nothing to buy. `M_LoadDefaults` is a generic loop over
+`defaults[]` with no per-variable hook, so a bloom-only clamp there would read as
+an oddity beside `rb_fog`, `rb_detile` and `fpsCorner`, none of which has one.
+Verified at L1: a hand-edited `rt_bloom 9` boots and shuts down cleanly, the menu
+row reads "Off", and cycling it maps to Medium. The out-of-range value does
+persist in `~/.doomrc` rather than being healed on save, which is the accepted
+cost and matches every sibling dial's behaviour.
 
 **Copy `fogNames`, which already does this correctly** —
 `fogNames[(rb_fog >= 0 && rb_fog <= 3) ? rb_fog : 0]`, at both of its `m_menu.c`
@@ -937,13 +946,16 @@ capture from the *same* build with identical settings. Its own header says why:
 SIGNAL is meaningless unless NOISE is quoted beside it. A two-argument call does
 not fail cleanly, it raises on unpacking.
 
-- **L1 — the dial, doing nothing.** `rb_bloom` + the `bloom` config key + the
-  `vid_bloom` menu row + `M_ChangeBloom` + the `kBloomPresets` table in its
-  pinned declaration form + the use-site clamp + the `-shotverify` pin. No render
-  change. *Verify:* the row cycles Off/Low/Medium/High, survives a restart
-  (`grep bloom "$CFG"` against the temp config — never `~/.doomrc`, which the
-  engine rewrites on exit), is absent in Classic, and the 21-row menu clears
-  §10 Q4's arithmetic.
+- **L1 — the dial, doing nothing.** `rb_bloom` + the `rt_bloom` config key + the
+  `vid_bloom` menu row + `M_ChangeBloom` + `bloomNames[4]` + the `kBloomPresets`
+  table in its pinned declaration form + the menu's index guard + the
+  `-shotverify` pin. No render change. **The engine-side index guard is NOT part
+  of L1** — nothing reads `kBloomPresets` until L2, and an accessor with no caller
+  is dead code; it lands with its first reader. *Verify:* the row cycles
+  Off/Low/Medium/High, survives a restart (`grep rt_bloom "$CFG"` against the temp
+  config — never `~/.doomrc`, which the engine rewrites on exit), is absent in
+  Classic, a hand-edited out-of-range value boots clean, and the 21-row menu
+  clears §10 Q4's arithmetic.
 - **L2 — the extract.** `bloomImage[0..2]` with the `SHADER_READ_ONLY_OPTIMAL`
   park, `bloom_extract_raster.comp`, `formulas/scene_recombine.glsl`, and
   `composite.frag` refactored onto the include with the combine still absent.
@@ -1348,6 +1360,7 @@ checkable — with only one bucket added on this chain, "the format string names
 | 1 | 2026-08-12 | 2 | 5 | 1 | 1 | 1 | All 8 verified against the tree, **0 dismissed**, all 8 fixed. **Five of the eight were false claims about existing code**, and every one would have sent an implementer to the wrong place: INV-9 attributed the sky's DIRECT write to `composite.frag`, which only *reads* that target (`mesh.frag` writes it, and writes `outAmbient = vec4(0.0)` — so the sky's ambient term is exactly zero, which is what actually bounds it); §4.4 said "both chains already guard against non-finite radiance" when only the RT chain does, contradicting its own next paragraph; §5 instructed the implementer to bring a barrier forward that already fires immediately after the scene pass and before SSAO; §4.5 named `videoLabels` (indexed by menu *row*, never by a dial value) as a read site to clamp and called `rb_fog`'s already-guarded lookup a latent defect; and §6/INV-5 named `[cpu_profile]` for per-pass rows that only `[raster_profile]` prints. The Q2 was `srcTexelSize` carrying a per-pass ×2 factor that §5 defined away, the Q3 was the preset table's Off row having no values while INV-4 read "each row", and the Q4 was INV-6 pinning the whole `nq` line, which DOOM-0345 rewrites — so that clause would fail on an intact tree the moment the sibling landed. One collateral fix from the 4b sweep: §4.2's "falls below every ramp start" went imprecise once INV-9 was made exact — at the High preset the sky sits *on* the ramp start and extracts exactly zero. |
 | 2 | 2026-08-12 | 2 | 1 | 2 | 3 | 2 | All 8 verified, **0 dismissed**, all 8 fixed. **The profiler site table was the serious one**: it listed three sites where the frame-order insert needs six — a *new* slot-4 write plus renumbering the two existing writes above it — so an implementer working the table would set `nq = 7u`, never write slot 6, and lose the entire `[raster_profile]` print to `VK_NOT_READY`. That is DOOM-0011 row 9.4's failure again, in the section that cites it. Two findings landed on loop 1's own fixes: the barrier paragraph loop 1 rewrote was still wrong in the other direction (the layouts *are* already correct, but the existing dependency's `dstStageMask` stops at `FRAGMENT_SHADER` and the extract is a compute dispatch), and the §2 split map missed DOOM-0345's INV-9. The rest were unspecified detail an implementer would have had to invent: `sceneRecombine` never pinned `textureLod` over `texture()`, which cannot compile in a compute stage at all; `bloomTex`'s filter mode was unpinned, and `NEAREST` gives blocky halos that every invariant still passes; INV-2's Ultra arm named no `rt_view 0`, and that key defaults to **6**, so the arm would have run the RT chain and passed without exercising this spec's combine; INV-8's "no shader literals" clause had no command that could see it; and L2 admitted its refactor might not be bit-identical while defining no response. One collateral fix from the 4b sweep: L4 still said "all three profiler sites". |
 | 3 | 2026-08-12 | 2 | 4 | 3 | 1 | 1 | **Converged by cap.** All 9 verified, 0 dismissed, all 9 fixed; **no deferred tail**. Two were serious. First, the gate: §4.1 and Scope said `rb_rtdebug == 0`, but that is a strict *subset* of `!rtActive` — the raster chain also draws on any machine without working ray tracing, where `rb_rtdebug` sits at its persisted default of **6**. Gating on `rb_rtdebug == 0` would have made bloom silently absent on every non-RT machine at default config, with INV-2 passing because everything was off. Second, §4.2's floor rested on "paletted art tops out at 1.0 in the AMBIENT term", and `mesh.frag` **adds** `GI_BOUNCE_STRENGTH * albedo * giIrradiance(...)` on top of `albedo * sect` with nothing clamping the sum — so ordinary art in a bounce-lit room can exceed 1.0 and bloom, the very failure the feature exists to prevent. The floor is now a measured gate (§10 Q5, at L3) and INV-4 says it is asserted rather than proven. Also: the §4.5 row-count command returned **21**, not the 20 it claimed (the array's own opening brace matches `^[[:space:]]*{`) — both lanes ran it; the PBR-Neutral offset is keyed on the **min** channel, so compression begins at 0.76 for a saturated colour and 0.80 only for grey, and §4.2 is built on saturated emitters; §5 defined only the write→read barrier direction and never the return to `GENERAL` before each store, which bites on the first bloomed frame because `bloomImage[2]` is parked read-only; INV-8's allowed-literal list forbade the extract's own `0.0`/`2.0`/`4.0` shape constants while its regex could not match the `1e-4` it did allow; INV-6's `grep -A4` window could pass a mislabelled build; INV-2's baseline contradicted L2's own re-baseline hatch; and §5's dummy-timestamp snippet used `prof`, which is the RT record path's gate — the raster arm's is `rprof`. |
+| 3-impl | 2026-08-12 | 0 | 0 | 0 | 0 | 0 | **No reviewer dispatched** — fold-back from implementing L1, which built green and cleared every L1 gate. Three clauses the review could not have caught, because a reader has no compiler and no config file. **(1)** The config key is `rt_bloom`, not `bloom`: every render-effect toggle in `m_misc.c` uses the `rt_` prefix, and §4.5's own "follow the `rb_fog` precedent exactly" *means* this, since `rb_fog` persists as `rt_fog`. **(2)** The "single clamp at config load" is dropped. `M_LoadDefaults` is a generic loop over `defaults[]` with no per-variable hook, so a bloom-only clamp there is a special case no sibling dial carries; the two index-site guards are the whole defence, and L1 verified a hand-edited `rt_bloom 9` boots and shuts down cleanly with the row reading "Off". **(3)** L1's list included the engine-side index guard, but nothing reads `kBloomPresets` until L2 — writing the accessor now would ship an unused static function, which `-Wall` flags and which is dead code by definition. It lands with its first caller. **Owed:** these are contract edits, so rule 14 wants a re-gate; it has not been run. |
 
 **What the umbrella's review bought, kept here because the reasoning is load-bearing
 and the document it was written in is gone.** Three findings that would each have

@@ -216,6 +216,7 @@ extern int	rb_detile;	// DOOM-0181 Ultra RT de-tile quality (0 off/1 2-tap/2 4-t
 extern int	rb_filth;	// DOOM-0187 Ultra RT dirt-stain filth master (1 on/0 off; `[` key)
 extern int	rb_wet;		// DOOM-0183 Ultra RT wet-liquid layers (sheen/ripple/puddle; 1 on/0 off; `'` key)
 extern int	rb_fog;		// DOOM-0011 RT volumetric fog strength (0 off / 1 Low / 2 Med / 3 High; `;` key)
+extern int	rb_bloom;	// DOOM-0331 bloom strength (0 off / 1 Low / 2 Med / 3 High; menu row, no hotkey)
 
 extern int	detailLevel;
 
@@ -273,6 +274,7 @@ default_t	defaults[] =
     {"rt_filth",&rb_filth, 1},		// DOOM-0187: dirt-stain filth, default on
     {"rt_wet",&rb_wet, 1},		// DOOM-0183: wet-liquid layers, default on
     {"rt_fog",&rb_fog, 1},		// DOOM-0011: volumetric fog strength 0..3, default Low
+    {"rt_bloom",&rb_bloom, 2},		// DOOM-0331: bloom strength 0..3, default Medium
 
 
 #ifdef NORMALUNIX

@@ -1112,6 +1112,40 @@ extern "C" { int rb_wet = 1; }
 // on, matching rb_wet/rb_filth/rb_detile); Q10 (on/off default) is the user's call at L6.
 extern "C" { int rb_fog = 1; }
 
+// DOOM-0331 L1: bloom strength dial (persisted as rt_bloom; menu row only, no debug
+// key -- see the spec's §9). 0 = Off, 1 = Low, 2 = Medium, 3 = High. Default 2, so the
+// effect ships visible (§3 decision 4) and is pinned in the -shotverify block below.
+// Nothing reads this yet: L1 is the dial doing nothing, and the passes arrive at L2/L3.
+extern "C" { int rb_bloom = 2; }
+
+// DOOM-0331 §4.5: the ONE place the bright-pass tuning lives. Both chains read this
+// table (INV-8) and no shader carries a threshold, knee or intensity literal.
+//
+// `ramp starts` is threshold - knee: the point where extraction actually begins, NOT
+// the threshold (§4.2). It must clear the brightest non-emissive art in the scene, and
+// that ceiling is MEASURED at L3 (§10 Q5) rather than assumed -- mesh.frag adds a GI
+// bounce term on top of albedo*sect with nothing clamping the sum, so the old "paletted
+// art tops out at 1.0" reasoning was false. These four rows are a provisional opening
+// position pending that measurement, not a settled contract.
+//
+// Off carries real numbers rather than dashes: nothing reads them (no dispatch is
+// recorded and the combine sits behind a branch), but the array needs a row 0 and
+// INV-4's floor check reads every row without a special case.
+static const struct BloomPreset { float threshold, knee, intensity; } kBloomPresets[4] = {
+    { 1.00f, 0.00f, 0.00f },   // Off     ramp starts 1.00
+    { 1.80f, 0.30f, 0.20f },   // Low     ramp starts 1.50
+    { 1.50f, 0.35f, 0.35f },   // Medium  ramp starts 1.15
+    { 1.35f, 0.35f, 0.55f },   // High    ramp starts 1.00 (on the floor)
+};
+
+// §4.5: rb_bloom is clamped at EVERY site that indexes an array with it -- ~/.doomrc is
+// hand-editable and `rt_bloom 9` would otherwise read past this four-entry table. The
+// menu already guards its own bloomNames[] lookup, the way fogNames does. The
+// engine-side guard arrives at L2 with its first reader, in the shape rb_renderscale
+// already uses here: rb_bloom < 0 ? 0 : (rb_bloom > 3 ? 3 : rb_bloom). It is not
+// written yet because L1 has nothing that reads the table, and an accessor with no
+// caller is dead code wearing a contract's clothes.
+
 // INV-6 headless self-test latch (DOOM-0009 build step 4d). Set from the
 // `-rtverify` command-line parm; the first ready present runs RB_RtVerify (the
 // rel-MSE + white-furnace proof) and exits. -1 = unchecked, 0 = off, 1 = armed.
@@ -9512,6 +9546,10 @@ extern "C" void RB_Vulkan_Present(void)
             rb_rtdebug = 6; rb_rtdebug_menu = 0; rb_profile = 0;
             rb_upscaler = 1; rb_renderscale = 50; rb_exposure = 10;
             rb_detile = 2; rb_filth = 1; rb_wet = 1;
+            // DOOM-0331 INV-7: bloom ships on by default (§3 decision 4), so an
+            // unpinned dial would let ~/.doomrc back into the golden -- the same
+            // leak the rt_fog note above records. Pin it to the m_misc.c default.
+            rb_bloom = 2;
             rb_flashlight = 0;
             // DOOM-0011 shipped rt_fog (m_misc.c default 1) AFTER this pin was
             // written; fog drives the volumetric march, so leaving it unpinned
