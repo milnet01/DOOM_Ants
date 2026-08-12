@@ -46,6 +46,18 @@ All notable changes to DOOM_Ants are documented here. The format follows
   all. Pools now haze over with distance at the same rate as the ground
   beside them. The green glow in the air above the goo is still to come.
 
+### Security
+
+- **A truncated or hand-edited savegame is now refused instead of read past the end of the file** (DOOM-0255)
+  Loading a `.dsg` never knew how long the file was — the length was read
+  and thrown away, and every part of the load walked forward on trust. A
+  save that stopped early therefore kept reading whatever happened to sit
+  after it in memory; an empty one crashed the game outright. Savegames get
+  traded between players, so the engine now remembers where the file ends
+  and checks every read against it, naming the part that came up short
+  ("savegame ends 172 byte(s) before its players") instead of carrying on.
+  Saves written by earlier builds still load exactly as before.
+
 ## [0.6.0] - 2026-08-05
 
 ### Added

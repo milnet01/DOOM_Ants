@@ -28,6 +28,7 @@ rcsid[] __attribute__((used)) = "$Id: p_tick.c,v 1.4 1997/02/03 16:47:55 b1 Exp 
 #include <stdint.h>
 #include "z_zone.h"
 #include "p_local.h"
+#include "save_bounds.h"
 
 // State.
 #include "doomstat.h"
@@ -35,10 +36,44 @@ rcsid[] __attribute__((used)) = "$Id: p_tick.c,v 1.4 1997/02/03 16:47:55 b1 Exp 
 
 byte*		save_p;
 
+// One past the last byte of the loaded savegame. G_DoLoadGame sets it from
+// M_ReadFile's length, which vanilla discarded; the save path does not use it
+// (it has its own SAVEGAMESIZE overrun check).
+byte*		save_end;
+
 
 // Pads save_p to a 4-byte boundary
 //  so that the load/save works on SGI&Gecko.
 #define PADSAVEP()	save_p += (4 - ((uintptr_t) save_p & 3)) & 3
+
+
+//
+// P_SaveNeed / P_SaveNeedAligned — DOOM-0255.
+//
+// Every read in the load path goes through one of these first, so the file's own
+// extent bounds the cursor rather than the structures the file claims to hold.
+// Together they keep the invariant the checks depend on: save_p never moves past
+// save_end, because nothing advances it that has not been asked for here.
+//
+// The two forms exist because vanilla pads some reads and not others, and where
+// it pads is part of the on-disk layout. Padding where vanilla did not would
+// shift the cursor and make every existing .dsg unreadable.
+//
+void P_SaveNeed (size_t count, const char* what)
+{
+    if (!SaveFits ((size_t)(save_end - save_p), 0, count))
+	I_Error ("P_UnArchive: savegame ends %d byte(s) before its %s",
+		 (int)(count - (size_t)(save_end - save_p)), what);
+}
+
+void P_SaveNeedAligned (size_t count, const char* what)
+{
+    size_t	pad = SavePadBytes (save_p);
+
+    // pad is at most 3 and count is a sizeof, so the sum cannot wrap.
+    P_SaveNeed (pad + count, what);
+    save_p += pad;
+}
 
 
 //
@@ -102,8 +137,8 @@ void P_UnArchivePlayers (void)
     {
 	if (!playeringame[i])
 	    continue;
-	
-	PADSAVEP();
+
+	P_SaveNeedAligned (sizeof(player_t), "players");
 
 	memcpy (&players[i],save_p, sizeof(player_t));
 	save_p += sizeof(player_t);
@@ -190,9 +225,26 @@ void P_UnArchiveWorld (void)
     line_t*		li;
     side_t*		si;
     short*		get;
-	
+    size_t		need;
+
+    // The world block is a flat run of fixed-size shorts whose extent is fully
+    // determined by the level that G_InitNew just loaded, so it can be measured
+    // up front and checked once instead of per element — the loops below then
+    // read through a raw short* exactly as vanilla did. Sides are counted the
+    // same way the loop below visits them, so a one-sided linedef contributes
+    // its 3 shorts and no side record.
+    need = (size_t)numsectors * 7;
+    for (i=0, li = lines ; i<numlines ; i++,li++)
+    {
+	need += 3;
+	for (j=0 ; j<2 ; j++)
+	    if (li->sidenum[j] != -1)
+		need += 5;
+    }
+    P_SaveNeed (need * sizeof(short), "world state");
+
     get = (short *)save_p;
-    
+
     // do sectors
     for (i=0, sec = sectors ; i<numsectors ; i++,sec++)
     {
@@ -306,14 +358,15 @@ void P_UnArchiveThinkers (void)
     // read in saved thinkers
     while (1)
     {
+	P_SaveNeed (1, "thinker tag");
 	tclass = *save_p++;
 	switch (tclass)
 	{
 	  case tc_end:
 	    return; 	// end of list
-			
+
 	  case tc_mobj:
-	    PADSAVEP();
+	    P_SaveNeedAligned (sizeof(*mobj), "thinker");
 	    mobj = Z_Malloc (sizeof(*mobj), PU_LEVEL, NULL);
 	    memcpy (mobj, save_p, sizeof(*mobj));
 	    save_p += sizeof(*mobj);
@@ -527,14 +580,15 @@ void P_UnArchiveSpecials (void)
     // read in saved thinkers
     while (1)
     {
+	P_SaveNeed (1, "special tag");
 	tclass = *save_p++;
 	switch (tclass)
 	{
 	  case tc_endspecials:
 	    return;	// end of list
-			
+
 	  case tc_ceiling:
-	    PADSAVEP();
+	    P_SaveNeedAligned (sizeof(*ceiling), "ceiling");
 	    ceiling = Z_Malloc (sizeof(*ceiling), PU_LEVEL, NULL);
 	    memcpy (ceiling, save_p, sizeof(*ceiling));
 	    save_p += sizeof(*ceiling);
@@ -549,7 +603,7 @@ void P_UnArchiveSpecials (void)
 	    break;
 				
 	  case tc_door:
-	    PADSAVEP();
+	    P_SaveNeedAligned (sizeof(*door), "door");
 	    door = Z_Malloc (sizeof(*door), PU_LEVEL, NULL);
 	    memcpy (door, save_p, sizeof(*door));
 	    save_p += sizeof(*door);
@@ -560,7 +614,7 @@ void P_UnArchiveSpecials (void)
 	    break;
 				
 	  case tc_floor:
-	    PADSAVEP();
+	    P_SaveNeedAligned (sizeof(*floor), "floor");
 	    floor = Z_Malloc (sizeof(*floor), PU_LEVEL, NULL);
 	    memcpy (floor, save_p, sizeof(*floor));
 	    save_p += sizeof(*floor);
@@ -571,7 +625,7 @@ void P_UnArchiveSpecials (void)
 	    break;
 				
 	  case tc_plat:
-	    PADSAVEP();
+	    P_SaveNeedAligned (sizeof(*plat), "platform");
 	    plat = Z_Malloc (sizeof(*plat), PU_LEVEL, NULL);
 	    memcpy (plat, save_p, sizeof(*plat));
 	    save_p += sizeof(*plat);
@@ -586,7 +640,7 @@ void P_UnArchiveSpecials (void)
 	    break;
 				
 	  case tc_flash:
-	    PADSAVEP();
+	    P_SaveNeedAligned (sizeof(*flash), "light flash");
 	    flash = Z_Malloc (sizeof(*flash), PU_LEVEL, NULL);
 	    memcpy (flash, save_p, sizeof(*flash));
 	    save_p += sizeof(*flash);
@@ -596,7 +650,7 @@ void P_UnArchiveSpecials (void)
 	    break;
 				
 	  case tc_strobe:
-	    PADSAVEP();
+	    P_SaveNeedAligned (sizeof(*strobe), "strobe");
 	    strobe = Z_Malloc (sizeof(*strobe), PU_LEVEL, NULL);
 	    memcpy (strobe, save_p, sizeof(*strobe));
 	    save_p += sizeof(*strobe);
@@ -606,7 +660,7 @@ void P_UnArchiveSpecials (void)
 	    break;
 				
 	  case tc_glow:
-	    PADSAVEP();
+	    P_SaveNeedAligned (sizeof(*glow), "glow");
 	    glow = Z_Malloc (sizeof(*glow), PU_LEVEL, NULL);
 	    memcpy (glow, save_p, sizeof(*glow));
 	    save_p += sizeof(*glow);

@@ -1402,30 +1402,47 @@ void G_LoadGame (char* name)
 
 void G_DoLoadGame (void) 
 { 
-    int		i; 
-    int		a,b,c; 
-    char	vcheck[VERSIONSIZE]; 
-	 
-    gameaction = ga_nothing; 
-	 
-    M_ReadFile (savename, &savebuffer); 
-    save_p = savebuffer + SAVESTRINGSIZE;
-    
-    // skip the description field 
-    memset (vcheck,0,sizeof(vcheck)); 
-    sprintf (vcheck,"version %i",VERSION); 
-    if (strcmp ((char *)save_p, vcheck))
+    int		i;
+    int		a,b,c;
+    int		length;
+    char	vcheck[VERSIONSIZE];
+
+    gameaction = ga_nothing;
+
+    // DOOM-0255: vanilla discarded this length, so nothing downstream knew where
+    // the file ended and every read below walked the heap on faith. A .dsg is
+    // untrusted input (docs/standards/security.md), and a truncated one reached
+    // the version strcmp before a single struct was read back.
+    length = M_ReadFile (savename, &savebuffer);
+    save_p = savebuffer;
+    save_end = savebuffer + length;
+
+    // The header is fixed-size, so it is bounded in one go: the description
+    // field, then the version field the compare below reads. strncmp rather than
+    // strcmp for that compare — the stored version is exactly VERSIONSIZE bytes
+    // and a crafted file need not put a terminator in it.
+    P_SaveNeed (SAVESTRINGSIZE + VERSIONSIZE, "header");
+    save_p += SAVESTRINGSIZE;
+
+    // skip the description field
+    memset (vcheck,0,sizeof(vcheck));
+    sprintf (vcheck,"version %i",VERSION);
+    if (strncmp ((char *)save_p, vcheck, VERSIONSIZE))
     {
 	Z_Free (savebuffer);		// bad version: free the buffer M_ReadFile
 	return;				// allocated, matching the normal path's
     }					// Z_Free below (DOOM-0031)
     save_p += VERSIONSIZE;
-			 
-    gameskill = *save_p++; 
-    gameepisode = *save_p++; 
-    gamemap = *save_p++; 
-    for (i=0 ; i<MAXPLAYERS ; i++) 
-	playeringame[i] = *save_p++; 
+
+    // skill, episode and map, then one in-game flag per player, then the three
+    // bytes of leveltime read after G_InitNew.
+    P_SaveNeed (3 + MAXPLAYERS + 3, "header");
+
+    gameskill = *save_p++;
+    gameepisode = *save_p++;
+    gamemap = *save_p++;
+    for (i=0 ; i<MAXPLAYERS ; i++)
+	playeringame[i] = *save_p++;
 
     // load a base level 
     G_InitNew (gameskill, gameepisode, gamemap); 
@@ -1442,7 +1459,8 @@ void G_DoLoadGame (void)
     P_UnArchiveThinkers (); 
     P_UnArchiveSpecials (); 
  
-    if (*save_p != 0x1d) 
+    P_SaveNeed (1, "consistancy marker");
+    if (*save_p != 0x1d)
 	I_Error ("Bad savegame");
     
     // done 

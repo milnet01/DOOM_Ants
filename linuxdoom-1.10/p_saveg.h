@@ -28,6 +28,8 @@
 #pragma interface
 #endif
 
+#include <stddef.h>
+
 
 // Persistent storage/archiving.
 // These are the load / save game routines.
@@ -41,6 +43,15 @@ void P_ArchiveSpecials (void);
 void P_UnArchiveSpecials (void);
 
 extern byte*		save_p; 
+
+// DOOM-0255: the loaded file's extent, and the bound check every read in the
+// load path passes through first. G_DoLoadGame owns save_end (it is the only
+// place the length is known) and uses these for the fixed-size header it reads
+// before handing over to the P_UnArchive* functions above.
+extern byte*		save_end;
+
+void P_SaveNeed (size_t count, const char* what);
+void P_SaveNeedAligned (size_t count, const char* what);
 
 
 #endif

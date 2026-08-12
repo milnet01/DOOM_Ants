@@ -432,12 +432,20 @@ with friends.
   Kind: chore.
   Source: debt-sweep-2026-07-26.
 
-- 📋 [DOOM-0252] **Bound the savegame indices P_UnArchiveThinkers turns straight back into pointers.**
+- ✅ [DOOM-0252] **Bound the savegame indices P_UnArchiveThinkers turns straight back into pointers.**
   p_saveg.c:303/307/311 rebuild mobj->state, mobj->player and mobj->info by indexing states[], players[] and mobjinfo[] with values memcpy'd raw out of the .dsg file, with no range check: mobj->state = &states[(int)(intptr_t)mobj->state]; mobj->player = &players[idx-1]; mobj->info = &mobjinfo[mobj->type]. A crafted or corrupted savegame therefore forms an out-of-bounds pointer that is dereferenced immediately (mobj->info->..., mobj->player->mo = mobj). Savegames are a named trust boundary in docs/standards/security.md, and the only one the 2026-07-23 hardening pass never reached -- git log on p_saveg.c shows no security commits, only the 2026-06-29 -Wall cast cleanup. Fix: validate against NUMSTATES / MAXPLAYERS / NUMMOBJTYPES before dereferencing and I_Error on violation, mirroring the existing default-case guard at p_saveg.c:319. Reproduce first (the load path is pure array indexing, so a test can supply small fake states[]/mobjinfo[] and a crafted byte buffer).
   **Layman:** A damaged or hand-edited save file can make the game read memory it doesn't own, because the load code trusts the numbers in the file.
   Kind: security.
   Source: test-audit-2026-07-26 lane-E.
   Progress (2026-07-26): DOOM-0254 bounded the SPECIALS' sector indices (new P_SectorFromSave covers ceiling/door/floor/plat/flash/strobe/glow). P_UnArchiveThinkers' index->pointer casts are still unbounded, and the buffer-extent gap is DOOM-0255.
+  Resolved (2026-08-12): already shipped in 5bbfd76 (DOOM-0254)
+  and the bullet was never flipped. Verified against current source rather
+  than taken on recall: p_saveg.c:87 P_SaveIndex bounds all four casts this
+  item named -- psprite state and mobj state against NUMSTATES, mobj player
+  against MAXPLAYERS (after the 1-based -1 lands in range), and mobj type
+  against NUMMOBJTYPES -- each I_Erroring on violation, mirroring the
+  default-case guard. Closed while shipping DOOM-0255, which covers the
+  buffer extent the indices sit inside.
 
 - 📋 [DOOM-0253] **Audit whether any other ~/.doomrc int is used as an array index without a clamp.**
   DOOM-0216 clamped msgValueNames[showMessages] and fpsPosNames[fpsCorner] at their m_menu.c use sites, but m_misc.c's M_LoadDefaults loop itself still writes any int-shaped config value straight into its target with no range validation (m_misc.c:407-430) -- so the mitigation is per-known-site, not systemic. Sweep the defaults table for every entry whose value indexes an array or selects a mode, and either clamp on read in M_LoadDefaults or confirm each use site already clamps. Scope is small (the table is short); the point is to find out whether DOOM-0216 was the only one.
@@ -477,11 +485,38 @@ with friends.
   stored 1-based, so a savegame holding 0 indexed players[-1]. security.md's
   untrusted-input table already listed .dsg files; the code had not caught up.
 
-- 📋 [DOOM-0255] **Thread a buffer-end bound through every p_saveg Unarchive* function.**
+- ✅ [DOOM-0255] **Thread a buffer-end bound through every p_saveg Unarchive* function.**
   G_DoLoadGame discards M_ReadFile's length and no Unarchive* tracks an end pointer, so strcmp/memcpy walk past the allocation on a short .dsg. DOOM-0254 bounded the sector INDICES; the buffer extent itself is still unchecked. Extends DOOM-0252.
   **Layman:** A truncated or hand-edited savegame can still read past the end of the loaded file.
   Kind: security.
   Source: indie-review-2026-07-26 game-save-net.
+  Resolved (2026-08-12): G_DoLoadGame now keeps M_ReadFile's
+  length and publishes it as save_end (p_saveg.c), and every read in the
+  load path passes through P_SaveNeed / P_SaveNeedAligned first. The two
+  forms exist because vanilla pads some reads and not others, and where it
+  pads is part of the on-disk layout -- padding where vanilla did not would
+  shift the cursor and make every existing .dsg unreadable. The version
+  compare became strncmp for the same reason the bound exists: the stored
+  field is exactly VERSIONSIZE bytes and a crafted file need not terminate
+  it. The world block is measured up front (numsectors*7 shorts, plus 3 per
+  linedef and 5 per present side, counted exactly as the read loop visits
+  them) and checked once, so the hot loop still reads through a raw short*.
+  The two decisions -- SavePadBytes and SaveFits -- live in save_bounds.h so
+  tests/save_bounds_test.cpp can pin them with no WAD, level or Z_Malloc
+  (mirrors seg_project.h); SaveFits subtracts rather than adds so a count
+  near SIZE_MAX cannot wrap past the check.
+  Evidence: a save written by the PRE-change binary loads clean under the
+  patched one (bootsmoke exit 0), so the byte accounting is unchanged; the
+  same save truncated to 0/10/24/40/200/5000/18742 bytes is refused at
+  exactly the right block ("savegame ends N byte(s) before its header /
+  players / world state / consistancy marker"). On the unpatched binary the
+  empty-file case was accepted and then SEGV'd writing a null-page address
+  in P_PlayerThink (p_user.c:245) via the game loop. Both breaks of the new
+  test were confirmed red before shipping.
+  Caveat for a later session: ASAN cannot see this class directly -- the
+  save buffer comes from DOOM's Z_Malloc zone allocator, which hands out
+  memory from one big instrumented block, so an intra-zone overrun reports
+  as a downstream crash rather than a heap-buffer-overflow.
 
 - 📋 [DOOM-0256] **d_net.c NetbufferChecksum() returns 0 under NORMALUNIX, so packet integrity is unchecked.**
   The shipped Linux build defines NORMALUNIX, which compiles the checksum out; HGetPacket's integrity test is a no-op. Either implement an endian-safe checksum or record the vanilla-compatibility decision in the security standard.
@@ -1063,6 +1098,39 @@ with friends.
   nil today, because the run CI actually performs is --syntax-only, which
   exits 0. Revisit only if DOOM-0325 is settled or if the full run is ever
   promoted into CI.
+
+- 📋 [DOOM-0342] **R_InitSpriteDefs reads one element past sprnames[] on every startup.**
+  r_things.c:189-191 counts the sprite names with `check = namelist;
+  while (*check != NULL) check++;` -- it expects a NULL sentinel. Its only
+  caller passes sprnames (r_things.c:308, R_InitSprites), and info.c:40
+  declares `char *sprnames[NUMSPRITES]` with exactly NUMSPRITES initialisers
+  and no terminator, so the scan reads sprnames[NUMSPRITES] -- one element
+  past the array -- before stopping on whatever follows.
+
+  Confirmed with an AddressSanitizer build of HEAD (28e1910):
+  "global-buffer-overflow ... READ of size 8 ... in R_InitSpriteDefs
+  r_things.c:191", fired on EVERY startup, with both doom.wad and doom2.wad,
+  with and without a savegame, and the boot still completes ("bootsmoke: 30
+  tics simulated OK") because the adjacent global happens to read as zero.
+  That is luck, not a guarantee: it depends on link order, so a future
+  translation-unit or global change can turn it into a read of a non-zero
+  pointer and a crash at launch.
+
+  Not the 1997 code's fault in the usual sense -- vanilla passed the same
+  unterminated array; nothing has ever bounded it. Fix: pass NUMSPRITES in
+  alongside the list (R_InitSpriteDefs already takes namelist as a
+  parameter), or terminate sprnames with a NULL and size it
+  [NUMSPRITES + 1]. The first is preferable -- info.h:1159 declares the
+  array as [NUMSPRITES] and other code indexes it by sprite enum, so
+  changing its size touches more than this call.
+
+  Found while running ASAN over the pre-change engine to demonstrate the
+  DOOM-0255 savegame overrun; unrelated to savegames, and it masked that
+  demonstration by aborting the run before the load path was reached
+  (-fsanitize-recover=address is needed to get past it).
+  **Layman:** The game reads one slot beyond the end of its sprite-name list every time it launches — harmless today only because of what happens to sit next to it in memory.
+  Kind: security.
+  Source: in-session-2026-08-12 (ASAN run while shipping DOOM-0255).
 
 ## Phase 2 — The Spin
 
