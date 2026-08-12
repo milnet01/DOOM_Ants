@@ -7,6 +7,8 @@ name: build
 # packaging/release.sh). See docs/RELEASE_README.txt.
 #
 # Run the exact same gate locally before pushing with:  packaging/ci-local.sh
+# It mirrors BOTH jobs below and this workflow's docs-only paths-ignore. Install it as
+# a pre-push hook once per clone with:  git config core.hooksPath packaging/hooks
 #
 # SPEED / SAFETY: the fast bits here are all deterministic and cannot cause a
 # false green -- (1) skip runs whose changes are docs-only, (2) cancel superseded

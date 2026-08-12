@@ -1,5 +1,32 @@
 # Packaging
 
+## The local CI gate
+
+`ci-local.sh` runs the same gate as `.github/workflows/build.yml` — both jobs
+(Linux build + unit tests + headless boot smoke, and the Windows cross-compile
+syntax sweep) — from a clean `git archive` export of HEAD, so a red CI is caught
+before the push rather than after.
+
+```sh
+packaging/ci-local.sh              # container if podman/docker is present, else native
+packaging/ci-local.sh --native     # force native (fast, approximates CI's toolchain)
+packaging/ci-local.sh --container  # force container (exactly what GitHub runs)
+packaging/ci-local.sh --force      # run even on a docs-only change
+```
+
+It mirrors the workflow's `paths-ignore` too: a docs-only change exits 0 at once,
+because GitHub skips the workflow for one as well.
+
+**Run it before every push.** Install it as a pre-push hook, once per clone (git
+hooks are not themselves version-controlled):
+
+```sh
+git config core.hooksPath packaging/hooks
+```
+
+Then `git push` runs the gate first and aborts on failure; `git push --no-verify`
+bypasses it for a one-off.
+
 ## Linux AppImage (DOOM-0007)
 
 A single self-contained file that runs on a fresh Linux install with no
@@ -30,9 +57,10 @@ and `make windows` in `../linuxdoom-1.10/`.
 
 ### Testing the Windows build without cutting a release (DOOM-0324)
 
-CI builds Linux only, so the mingw target used to be exercised exactly once
-per release — long enough for two Windows-only compile errors to accumulate
-between 0.5.0 and 0.6.0.
+The mingw target used to be exercised exactly once per release — long enough for
+two Windows-only compile errors to accumulate between 0.5.0 and 0.6.0. CI now
+runs the `--syntax-only` half on every push (the `windows-syntax` job), and
+`ci-local.sh` mirrors it; the Wine boot half below stays local, needing a display.
 
 ```sh
 packaging/windows-smoke.sh --syntax-only   # ~15 s, no Wine: does the tree compile for Windows?

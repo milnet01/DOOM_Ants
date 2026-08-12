@@ -27,6 +27,16 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **The local CI gate now mirrors both CI jobs, and a transient download failure no longer reds the build** (DOOM-0343)
+  `packaging/ci-local.sh` ran only the workflow's Linux job, so the Windows
+  cross-compile job could go red on a tree the local gate called green — which
+  is exactly what happened. It now runs both jobs, and skips instantly on a
+  docs-only change just as the workflow's paths-ignore does. Separately, the
+  Windows job's dependency downloads had no retry, so a single transient HTTP
+  503 from GitHub's release CDN failed the build with nothing wrong in the
+  tree; they now retry. A new `packaging/hooks/pre-push` runs the gate before
+  every push (install with `git config core.hooksPath packaging/hooks`).
+
 - **Sealed the thin bright diagonal seam on ceilings and ledges in the Solid and Ultra views** (DOOM-0180)
   DOOM stores map vertices as whole numbers, so where the level's own
   geometry data splits a DIAGONAL wall in two, the split point gets

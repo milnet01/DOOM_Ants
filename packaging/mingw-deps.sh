@@ -58,12 +58,22 @@ fi
 WORK="$(mktemp -d -t doom-ants-mingw-deps-XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
 
+# Every fetch goes through this. GitHub's release CDN returns a transient 503
+# often enough to matter: on 2026-08-12 a single one on the first URL turned the
+# whole Windows CI job red (run 31622988836) with nothing wrong in the tree.
+# --retry-all-errors covers the connection-reset case too, which a bare --retry
+# (HTTP status codes only) does not.
+fetch() {
+  curl -fsSL --connect-timeout 20 --retry 5 --retry-delay 3 --retry-all-errors \
+    -o "$1" "$2"
+}
+
 echo "==> Downloading SDL2 $SDL2_VER, SDL2_mixer $SDL2_MIXER_VER, Vulkan-Headers $VULKAN_VER..."
-curl -fsSL -o "$WORK/sdl2.tar.gz" \
+fetch "$WORK/sdl2.tar.gz" \
   "https://github.com/libsdl-org/SDL/releases/download/release-$SDL2_VER/SDL2-devel-$SDL2_VER-mingw.tar.gz"
-curl -fsSL -o "$WORK/sdl2_mixer.tar.gz" \
+fetch "$WORK/sdl2_mixer.tar.gz" \
   "https://github.com/libsdl-org/SDL_mixer/releases/download/release-$SDL2_MIXER_VER/SDL2_mixer-devel-$SDL2_MIXER_VER-mingw.tar.gz"
-curl -fsSL -o "$WORK/vulkan-headers.tar.gz" \
+fetch "$WORK/vulkan-headers.tar.gz" \
   "https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/vulkan-sdk-$VULKAN_VER.tar.gz"
 
 tar xzf "$WORK/sdl2.tar.gz"          -C "$WORK"

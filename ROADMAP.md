@@ -1132,6 +1132,43 @@ with friends.
   Kind: security.
   Source: in-session-2026-08-12 (ASAN run while shipping DOOM-0255).
 
+- ✅ [DOOM-0343] **Make the local CI gate mirror both CI jobs, and stop a transient 503 reddening the build.**
+  CI run 31622988836 (push of 4d7bfc6) went red. The tree was fine: the
+  Windows job's first `curl` hit a transient HTTP 503 from GitHub's
+  release CDN and packaging/mingw-deps.sh had no retry, so one bad
+  response failed the job. All three URLs verified healthy minutes
+  later, and packaging/windows-smoke.sh --syntax-only passes on that
+  same commit.
+
+  Two fixes, one per cause:
+
+  1. mingw-deps.sh routes all four downloads through a `fetch` helper
+     with --retry 5 --retry-delay 3 --retry-all-errors and a connect
+     timeout. --retry alone covers HTTP status codes only; the
+     -all-errors form also covers a connection reset.
+
+  2. packaging/ci-local.sh mirrored ONLY the `linux` job, so the job
+     that failed had never been runnable locally — the local gate could
+     come back green on a tree CI would reject. It now runs the
+     `windows-syntax` job too, in both native and container modes, and
+     mirrors the workflow's docs-only paths-ignore (a docs-only change
+     exits 0 at once, because GitHub skips the workflow for one as
+     well; --force overrides).
+
+  Also added packaging/hooks/pre-push so the gate actually runs before
+  every push rather than by memory; install per clone with
+  `git config core.hooksPath packaging/hooks`, bypass with
+  `git push --no-verify`.
+
+  Doc drift corrected while here: packaging/README.md claimed "CI
+  builds Linux only" (untrue since DOOM-0324 added the Windows job),
+  and docs/standards/dependencies.md listed fonts-dejavu-core as a CI
+  dep (removed per DOOM-0243) and cited ci-local.sh by a line number
+  that was already off by one — now cited by symbol, per DOOM-0264.
+  **Layman:** Running the pre-push check now catches everything GitHub would, and a momentary download hiccup no longer fails the build.
+  Kind: fix.
+  Source: user-request-2026-08-12.
+
 ## Phase 2 — The Spin
 
 The creative overhaul: evolve the renderer toward true 3D with hardware

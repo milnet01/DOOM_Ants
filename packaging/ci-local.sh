@@ -1,8 +1,16 @@
 #!/usr/bin/env bash
 #
-# ci-local.sh -- run the SAME build + unit-test gate that the GitHub Actions "build"
-# workflow (.github/workflows/build.yml) runs, on your machine, so a red CI is caught
-# BEFORE pushing.
+# ci-local.sh -- run the SAME gate that the GitHub Actions "build" workflow
+# (.github/workflows/build.yml) runs, on your machine, so a red CI is caught BEFORE
+# pushing.
+#
+# It mirrors BOTH of the workflow's jobs, and its docs-only skip:
+#   linux          -- build + unit tests + headless boot smoke
+#   windows-syntax -- -fsyntax-only over every translation unit, cross-compiled
+#
+# Mirroring only the Linux job was the old gap, and it cost a red CI on 2026-08-12
+# (run 31622988836): the Linux job passed, the Windows job failed, and nothing local
+# had ever run the Windows job.
 #
 # TWO MODES:
 #   container (default when podman/docker is present) -- runs the gate INSIDE the same
@@ -43,12 +51,40 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
 
 MODE="auto"
-case "${1:-}" in
-  --native)    MODE="native" ;;
-  --container) MODE="container" ;;
-  "")          MODE="auto" ;;
-  *) echo "usage: $0 [--native|--container]" >&2; exit 2 ;;
-esac
+FORCE_RUN=0
+for arg in "$@"; do
+  case "$arg" in
+    --native)    MODE="native" ;;
+    --container) MODE="container" ;;
+    --force)     FORCE_RUN=1 ;;   # run even when the change is docs-only
+    *) echo "usage: $0 [--native|--container] [--force]" >&2; exit 2 ;;
+  esac
+done
+
+# --- docs-only skip: mirrors build.yml's paths-ignore ------------------------------
+# GitHub skips the whole workflow when every file changed in the push matches one of
+# the workflow's paths-ignore patterns, so a docs push has no gate to pre-run. The
+# patterns below are that list, and must be changed in both places together.
+docs_only_change() {
+  local upstream files f
+  upstream="$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)" || return 1
+  files="$(git diff --name-only "$upstream..HEAD")" || return 1
+  [ -n "$files" ] || return 1        # nothing to push -> nothing to conclude; run the gate
+  while IFS= read -r f; do
+    case "$f" in
+      *.md|docs/*|.gitignore|LICENSE.TXT|README.TXT) ;;   # == build.yml paths-ignore
+      *) return 1 ;;
+    esac
+  done <<< "$files"
+  return 0
+}
+
+if [ "$FORCE_RUN" = 0 ] && docs_only_change; then
+  echo "==> Docs-only change -- GitHub skips the workflow (paths-ignore), so there is"
+  echo "    nothing to pre-run. Push away.  (--force runs the gate anyway.)"
+  exit 0
+fi
+# ----------------------------------------------------------------------------------
 
 ENGINE=""
 if   command -v podman >/dev/null 2>&1; then ENGINE="podman"
@@ -127,8 +163,46 @@ else
   '
 fi
 
+# --- job 2 of 2: windows-syntax ----------------------------------------------------
+# Mirrors build.yml's `windows-syntax` job, which cross-compiles every translation
+# unit with -fsyntax-only and never links. Same one command the workflow runs.
+#
+# Deliberately NOT ci-deps.txt: as in the workflow, this job installs only the
+# cross-compilers plus the two header generators. windows-smoke.sh stages the
+# upstream SDL2 / SDL2_mixer / Vulkan headers itself (packaging/mingw-deps.sh), so a
+# fresh export downloads them -- which is what the runner does too.
+echo
+if [ "$MODE" = "native" ]; then
+  echo "==> Windows cross-compile check (native toolchain)"
+  if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
+    ( cd "$WORK" && packaging/windows-smoke.sh --syntax-only )
+  else
+    echo "    SKIPPED -- no mingw-w64 cross-compiler installed."
+    echo "    CI runs this job; install gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64,"
+    echo "    or use the default container mode, to cover it locally."
+  fi
+else
+  echo "==> Windows cross-compile check (container, $CI_IMAGE)"
+  "$ENGINE" run --rm -v "$WORK":/src:Z -w /src "$CI_IMAGE" bash -euc '
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    # The last four are what the GitHub runner image already has and a bare
+    # ubuntu:24.04 does not -- make drives the header generation, curl fetches the
+    # upstream headers. Adding them keeps the JOB identical, not the image.
+    # pkg-config is here only so the Makefile emits the same expected "Package
+    # sdl2 was not found" noise the workflow documents, rather than a different
+    # "pkg-config: No such file or directory"; nothing here links against SDL2.
+    apt-get install -y --no-install-recommends \
+      gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 glslc xxd \
+      make curl ca-certificates pkg-config
+    packaging/windows-smoke.sh --syntax-only
+  '
+fi
+
 echo
 echo "==================================================================="
-echo " ci-local: PASSED -- build + tests green on a clean HEAD checkout"
+echo " ci-local: PASSED -- both CI jobs green on a clean HEAD checkout"
+echo "   linux          build + unit tests + headless boot smoke"
+echo "   windows-syntax cross-compile syntax sweep"
 echo " (MODE=$MODE$( [ "$MODE" = container ] && echo '; this is exactly what GitHub Actions runs' ))"
 echo "==================================================================="

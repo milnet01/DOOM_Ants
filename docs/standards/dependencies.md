@@ -124,11 +124,11 @@ sub-Makefile is not built by CI or the default `make`, so it's out of scope):
   `actions/checkout@v7` and runs on the `ubuntu-latest` runner image. Its Linux
   build-deps are the single-source-of-truth apt list `packaging/ci-deps.txt`
   (`build-essential`, `libsdl2-dev`, `libsdl2-mixer-dev`, `libvulkan-dev`,
-  `glslc`, `xxd`, `fonts-dejavu-core`), shared with the local mirror
+  `glslc`, `xxd`), shared with the local mirror
   `packaging/ci-local.sh`. Two
   version pins here are ours to keep current: the `actions/checkout@vN` action,
   and the container image `packaging/ci-local.sh` hardcodes to mirror the runner
-  (`CI_IMAGE="docker.io/library/ubuntu:24.04"`, ci-local.sh:35). See the sweep
+  (the `CI_IMAGE` assignment near the top of that script). See the sweep
   posture below for the lockstep rule between them and `ubuntu-latest`.
 - **Release packaging (AppImage):** `packaging/build-appimage.sh` (driven by
   `packaging/release.sh`) bundles the runtime libs (SDL2, SDL2_mixer, FluidSynth

@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+#
+# pre-push -- run the local CI gate before anything leaves this machine.
+#
+# packaging/ci-local.sh mirrors both jobs of .github/workflows/build.yml, including
+# its docs-only paths-ignore: a docs-only push exits 0 immediately, because GitHub
+# skips the workflow for one too, so there is no gate to pre-run.
+#
+# INSTALL (once per clone -- git hooks are not themselves version-controlled):
+#     git config core.hooksPath packaging/hooks
+#
+# BYPASS a single push:  git push --no-verify
+#
+set -euo pipefail
+
+REPO="$(git rev-parse --show-toplevel)"
+
+# Nothing to gate on a delete-only push (`git push origin :branch`), and no commit to
+# build either -- the local-ref sha is all-zero for every line on stdin.
+all_deletes=1
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+  case "$local_sha" in
+    *[!0]*) all_deletes=0 ;;
+  esac
+done
+[ "$all_deletes" = 1 ] && exit 0
+
+echo "pre-push: running the local CI gate (packaging/ci-local.sh)..."
+echo "          bypass with 'git push --no-verify'"
+echo
+
+if ! "$REPO/packaging/ci-local.sh"; then
+  echo
+  echo "pre-push: LOCAL CI FAILED -- push aborted. Fix it, or bypass with --no-verify." >&2
+  exit 1
+fi
