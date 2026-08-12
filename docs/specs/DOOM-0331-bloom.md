@@ -1004,6 +1004,48 @@ not fail cleanly, it raises on unpacking.
   geometry, against each preset's ramp start. The presets are provisional until
   it is taken, because §4.2's floor is a measured property of this engine's GI
   bounce, not arithmetic.
+
+  **Measured 2026-08-13. Q5's ceiling is ~1.35, well above the 1.0 §4.2 assumed —
+  and the presets clear it anyway, because the soft knee's ramp start is not the
+  point where extraction becomes visible.** Solid, `renderer 2`, three E1M1 spots,
+  each swept with a HARD knee (knee 0, intensity 1.0) so the threshold read
+  directly as the ramp start:
+
+  | Spot | Extraction gone by |
+  |---|---|
+  | `3274 -3353 200` (corridor) | < 1.00 |
+  | `1056 -3616 270` (start room, light panels) | ~1.35 |
+  | `3000 -4400 90` (bounce-heavy room) | ~1.20 |
+
+  At the light-panel spot the frame-wide moved fraction falls 37.1 % (T 0.75) →
+  24.5 % (1.00) → 9.1 % (1.15) → 1.4 % (1.25) → 0.0 % (1.35), and its block map at
+  T 1.20 separates the lamp from the wall by 17× (23.4/255 in the lamp block, ≤ 1.4
+  everywhere else). So the *bulk* of non-emissive art sits under ~1.15 with a thin
+  tail to ~1.35.
+
+  **Two of the four presets' ramp starts (Medium 1.15, High 1.00) sit inside that
+  tail, and INV-4 still holds** — because a ramp start is where the quadratic soft
+  knee begins at *zero* weight, not where it contributes. At the shipped presets the
+  same spot moves 0.44/255 mean and 0.4 % of pixels at High and 0.30/255 at Medium,
+  against a same-build NOISE floor of 0.41/255 and 0.4 %: indistinguishable from the
+  harness's own noise. **No retune taken.** The `if the ceiling exceeds 1.00, the
+  presets rise to clear it` branch of Q5 is therefore NOT exercised: it was written
+  against a hard threshold, and the knee is what absorbs the difference. If Q1/Q2's
+  look call at L4 reports wall glow, the lever is the intensity column first.
+
+  The harness could not gate this photographically at the shipped presets — SIGNAL
+  and NOISE are equal there, and `ab_diff.py`'s EFFECT row at this spot is the
+  fullscreen HUD numerals changing between runs, not a halo. What carries L3 instead
+  is (a) the forced-threshold captures, where the light strips visibly bleed into the
+  dark gaps between them, and (b) INV-2 proved deterministically rather than
+  photographically: `composite.frag`'s SPIR-V after the combine is
+  **purely additive** against the pre-L3 build — id-normalised after
+  `spirv-opt --strip-debug`, 172 → 190 lines, every pre-existing instruction
+  unchanged and in the same order, the additions being only the binding-3
+  declaration, the push load at member 2, the `OpBranchConditional`, the sample, the
+  multiply-add and the `OpPhi`. With `bloomIntensity == 0` the phi returns the
+  original `hdr`, so `bloom 0` is byte-identical by construction.
+
 - **L4 — profiler slot, then the gate.** All **six** profiler sites (§5) — the
   new slot-4 write, the two renumbered writes above it, `nq`, the `printf`
   format string *and* its argument list, and the dummy block — then the §6 measurement,
@@ -1314,6 +1356,12 @@ below is the look residual it leaves.
   from lamps on E1M1 (and one bounce-heavy room), and compare against each
   preset's `threshold − knee`. *Blocks:* L3's completion. If the ceiling exceeds
   1.00, the presets rise to clear it; that is a retune, not a redesign.
+  **Answered at L3 on 2026-08-13; §7 L3 carries the numbers.** The ceiling is
+  ~1.35, so §4.2's 1.0 assumption was indeed wrong — but no retune followed. The
+  question was framed against a hard threshold, and the quadratic soft knee absorbs
+  the difference: at the shipped presets the residual over plain wall sits at the
+  capture harness's own noise floor. INV-4 is measured rather than asserted from
+  here on, and the §4.5 values stop being provisional.
 
 ## 11. What checks this
 

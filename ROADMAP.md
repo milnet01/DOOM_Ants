@@ -1215,6 +1215,23 @@ with friends.
   made with git commit-tree, so the "skipping is safe" claim rests on a
   measurement rather than on the argument for it.
 
+- 📋 [DOOM-0347] **Give -rtverify a give-up watchdog like -shotverify's.**
+  -rtverify waits for the first ready RT frame with no bound. Run it on a
+  config whose `renderer` is not 1 and it spins silently past any timeout,
+  printing nothing after the RB_VulkanProbe line -- which reads exactly
+  like an engine hang. -shotverify already has kShotGiveUp (600 presents
+  while armed without an RT frame); rtverify needs the same, plus a
+  one-line message naming the renderer it actually found.
+
+  Cost a session's debugging on 2026-08-13: the engine rewrote the temp
+  -config on exit (the known self-rewriting-config trap), flipping
+  `renderer` to 0, after which every -rtverify run ran Classic and hung.
+  Two builds were compared and a git stash cycle spent before the config
+  was suspected.
+  **Layman:** If the ray-traced self-test is pointed at the wrong renderer it hangs forever instead of saying so.
+  Kind: fix.
+  Source: in-session-2026-08-13 (DOOM-0331 L3).
+
 ## Phase 2 — The Spin
 
 The creative overhaul: evolve the renderer toward true 3D with hardware
@@ -8678,6 +8695,22 @@ parked ideas (💭 considered) until we commit to and design each one.
   INV-2's baseline stays the pre-L2 commit. Recorded in the spec's 7;
   whether that clause's threshold changes is an open user decision, and
   it would need rule 14's re-gate.
+  Progress (2026-08-13): L3 done -- bloom_blur.comp dispatched twice
+  (dir (2,0) then (0,1)), the composite's fourth binding, and the
+  additive combine in composite.frag. A lamp now blooms in Solid.
+  §10 Q5 measured and answered: the AMBIENT/recombined ceiling over
+  non-emissive E1M1 art is ~1.35, not the 1.0 §4.2 assumed -- but no
+  preset retune followed, because Q5 was framed against a hard
+  threshold and the quadratic soft knee absorbs the difference. At the
+  shipped presets the residual over plain wall (0.44/255 mean, 0.4 % of
+  pixels) is indistinguishable from the same-build noise floor
+  (0.41/255, 0.4 %). INV-4 is measured rather than asserted from here.
+  INV-2 proved deterministically instead of photographically:
+  composite.frag's SPIR-V is purely additive across the change (172 ->
+  190 id-normalised lines, every pre-existing instruction unchanged and
+  in order), so bloom 0 is byte-identical by construction. Next: L4 --
+  the six profiler sites, then the §6 measurement and the user look
+  call.
 
 - 📋 [DOOM-0332] **1-D shadow maps for point lights in the rasterised view, exploiting DOOM's flat map.**
   Found reviewing GZDoom at the user's request; feeds DOOM-0170's raster
