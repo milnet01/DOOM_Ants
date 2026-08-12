@@ -1169,7 +1169,7 @@ with friends.
   Kind: fix.
   Source: user-request-2026-08-12.
 
-- 📋 [DOOM-0344] **The pre-push hook re-runs the whole gate on a tag push, which cannot tell it anything new.**
+- ✅ [DOOM-0344] **The pre-push hook re-runs the whole gate on a tag push, which cannot tell it anything new.**
   Found while cutting 0.7.0, in the hook added by DOOM-0343.
 
   packaging/hooks/pre-push runs ci-local.sh for any push that is not
@@ -1200,6 +1200,20 @@ with friends.
   **Layman:** Publishing a release waits about four minutes on a check that has already been done on exactly the same code.
   Kind: fix.
   Source: in-session-2026-08-12.
+  Resolved (2026-08-12): the hook now classifies each ref on stdin
+  instead of treating every non-delete push alike. A ref is skipped when it
+  is a refs/tags/* ref whose commit is already reachable from the upstream
+  branch (git merge-base --is-ancestor); the gate runs if any ref fails
+  that test.
+
+  Both halves of the condition are load-bearing and were verified
+  separately, not reasoned about: a tag already upstream skips, a branch
+  push runs, a delete-only push skips, a branch and tag pushed together
+  still run (the branch commit is not upstream yet), and — the case that
+  makes it safe — a tag pointing at a commit that is on no branch still
+  runs the gate. That last one was checked against a real dangling commit
+  made with git commit-tree, so the "skipping is safe" claim rests on a
+  measurement rather than on the argument for it.
 
 ## Phase 2 — The Spin
 

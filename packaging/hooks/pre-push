@@ -15,15 +15,46 @@ set -euo pipefail
 
 REPO="$(git rev-parse --show-toplevel)"
 
-# Nothing to gate on a delete-only push (`git push origin :branch`), and no commit to
-# build either -- the local-ref sha is all-zero for every line on stdin.
+# Decide whether this particular push has anything the gate can actually answer.
+# Two cases exit early; anything else runs it.
+#
+#   1. A delete-only push (`git push origin :branch`) -- the local-ref sha is
+#      all-zero on every line of stdin, so there is no commit to build.
+#   2. DOOM-0344: a push of nothing but tags that already point at commits on the
+#      upstream branch. ci-local.sh always builds HEAD, never the ref being
+#      pushed, so re-gating such a tag cannot return a different answer than the
+#      branch push that put the commit there. packaging/release.sh pushes the
+#      branch and the tag separately, so without this every release paid for a
+#      second full run of both jobs.
+#
+# BOTH halves of case 2 are required. Skipping merely because a ref is a tag would
+# let a tag carry a never-pushed, never-gated commit to the remote.
 all_deletes=1
-while read -r _local_ref local_sha _remote_ref _remote_sha; do
+gateable=0
+while read -r local_ref local_sha _remote_ref _remote_sha; do
   case "$local_sha" in
-    *[!0]*) all_deletes=0 ;;
+    *[!0]*) ;;          # a real sha
+    *)      continue ;; # all-zero: a delete, nothing to build
   esac
+  all_deletes=0
+
+  case "$local_ref" in
+    refs/tags/*)
+      # Already reachable from the upstream branch => already gated.
+      if git merge-base --is-ancestor "$local_sha^{commit}" '@{u}' 2>/dev/null; then
+        continue
+      fi
+      ;;
+  esac
+  gateable=1
 done
+
 [ "$all_deletes" = 1 ] && exit 0
+if [ "$gateable" = 0 ]; then
+  echo "pre-push: tag(s) already on the upstream branch -- gated when that commit"
+  echo "          was pushed, so there is nothing new to check. Pushing."
+  exit 0
+fi
 
 echo "pre-push: running the local CI gate (packaging/ci-local.sh)..."
 echo "          bypass with 'git push --no-verify'"

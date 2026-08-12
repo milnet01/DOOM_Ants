@@ -6,6 +6,16 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Publishing a release no longer waits on a duplicate pre-push check** (DOOM-0344)
+  The pre-push check added in 0.7.0 ran on tag pushes as well as branch
+  pushes, but it always builds the current code rather than whatever ref is
+  being pushed — so tagging a release re-ran the entire four-minute check on
+  code it had verified seconds earlier. It now skips a tag whose commit is
+  already on the upstream branch, and still runs in full for a tag carrying a
+  commit that has never been pushed.
+
 ## [0.7.0] - 2026-08-12
 
 ### Added
