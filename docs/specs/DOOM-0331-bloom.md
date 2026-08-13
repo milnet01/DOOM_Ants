@@ -901,6 +901,17 @@ shader; the blur and the threshold are arithmetic.
 **Budget: ≤ 5 % of present-total in Solid, and Solid must stay above the 60 fps
 floor at 50 % render scale on the reference RX 6600.**
 
+**The numerator is the GPU-total delta between the two arms, not the bloom
+bucket** (decided with the user 2026-08-13, after L4's measurement found the two
+disagree by 2.8 points). The bucket is a `BOTTOM_OF_PIPE` segment fenced by the
+bloom barriers, so with the dial on it absorbs pipeline drain that the
+`composite` and `scene` buckets carried before — it over-reads bloom's true cost
+by roughly a third. Sum every `[raster_profile]` row in each arm and difference
+the totals; `[cpu_profile]`'s present-total stays the denominator. The bloom
+bucket is still what makes the pass *visible* to the profiler (INV-6), and it
+remains the right number for "is the blur itself getting expensive" — it is just
+not the number this budget divides.
+
 No number here is measured yet, and none will be quoted until it is. What the
 design costs, structurally:
 
@@ -1094,9 +1105,18 @@ not fail cleanly, it raises on unpacking.
   by the bloom barriers: with the dial on, drain that the `composite` and `scene`
   buckets absorbed before now lands in bloom's (composite falls 0.45 → 0.37 and
   scene 1.09 → 1.02 across the arms, which is where the 0.43 − 0.27 goes).
-  **Not resolved here** — the clause is §6's to fix, and picking a reading is a
-  spec amendment that changes what gets built, so it goes to the pending re-gate
-  rather than being decided at the measurement.
+
+  **Resolved with the user 2026-08-13: the numerator is the GPU-total delta, so
+  INV-5 PASSES at 4.7 %** — §6 now states it. The reasoning is that the bucket
+  charges bloom for drain the other buckets used to absorb, which is an artefact
+  of where the timestamp sits rather than work bloom does. **INV-5's remaining
+  arm is unmeasured, and deliberately so:** this budget was taken on a
+  CPU-build-bound frame (`build` 5.4 ms of a 5.7 ms present-total), where bloom's
+  GPU cost is hidden entirely. It is a true reading of the reference machine as
+  it stands today, not a claim that the cost is free — DOOM-0074's build-ahead is
+  what put the frame here, and a future CPU-side win moves the bottleneck back to
+  the GPU and re-arms this measurement. Re-measure if `fenceWait` ever climbs off
+  the floor.
 
 `scripts/ab_capture.sh` needs one change to serve L2 and L3, because **as written
 it cannot capture Solid at all.** It ends with
@@ -1479,6 +1499,7 @@ checkable — with only one bucket added on this chain, "the format string names
 | 3-impl | 2026-08-12 | 0 | 0 | 0 | 0 | 0 | **No reviewer dispatched** — fold-back from implementing L1, which built green and cleared every L1 gate. Three clauses the review could not have caught, because a reader has no compiler and no config file. **(1)** The config key is `rt_bloom`, not `bloom`: every render-effect toggle in `m_misc.c` uses the `rt_` prefix, and §4.5's own "follow the `rb_fog` precedent exactly" *means* this, since `rb_fog` persists as `rt_fog`. **(2)** The "single clamp at config load" is dropped. `M_LoadDefaults` is a generic loop over `defaults[]` with no per-variable hook, so a bloom-only clamp there is a special case no sibling dial carries; the two index-site guards are the whole defence, and L1 verified a hand-edited `rt_bloom 9` boots and shuts down cleanly with the row reading "Off". **(3)** L1's list included the engine-side index guard, but nothing reads `kBloomPresets` until L2 — writing the accessor now would ship an unused static function, which `-Wall` flags and which is dead code by definition. It lands with its first caller. **Owed:** these are contract edits, so rule 14 wants a re-gate; it has not been run. |
 
 | 3-L3 | 2026-08-13 | 0 | 0 | 0 | 0 | 0 | **No reviewer dispatched** — fold-back from implementing L2 and L3, both built green and cleared their gates. Two edits, neither a design change but the second one status-bearing. **(1)** §7 L2 and §7 L3 gained their measured gate results, including why L2's `max ≤ 1.0` clause did not fit what the harness returned and why L3 substituted a SPIR-V identity proof for a capture. Those are records, not contract. **(2)** §10 Q5 is answered and §4.5's preset values **stop being provisional** — the measured ceiling is ~1.35, above two presets' ramp starts, and INV-4 nevertheless holds because the quadratic soft knee's ramp start is not where extraction becomes visible. That last clause changes the table's status from provisional to settled, which is contract. **Owed:** rule 14 wants a re-gate for it, and it has not been run — this row now carries that debt jointly with `3-impl`. |
+| 3-L4 | 2026-08-13 | 0 | 0 | 0 | 0 | 0 | **No reviewer dispatched** — fold-back from implementing L4, which built green, cleared INV-6's three greps and took §6's measurement. Three edits. **(1)** §7 L4 gained the measured result and the five-sites-not-six record, including why §5 site 6's `!bloomActive` dummy uses the wrong predicate and leaves slot 4 unwritten on a no-camera frame. A record of what was built, plus a correction to a site table the implementer has now superseded. **(2)** §6 gained the numerator the ≤ 5 % bound divides — the GPU-total delta between arms, not the bloom bucket, decided with the user after the two readings came back 2.8 points apart. **That is contract**: it changes what a future implementer measures and therefore what passes. **(3)** §7 L4 records that INV-5 was taken on a CPU-build-bound frame and re-arms if `fenceWait` climbs. **Owed:** rule 14 wants a re-gate for edit (2); the user chose 2026-08-13 to batch it with `3-impl` and `3-L3` rather than spend a pass per amendment, so all three land in one gate before the ROADMAP bullet flips. |
 
 **What the umbrella's review bought, kept here because the reasoning is load-bearing
 and the document it was written in is gone.** Three findings that would each have
