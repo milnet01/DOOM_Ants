@@ -1045,6 +1045,29 @@ with friends.
   Wine, which is correct -- the Wine hang is real. Its header and FAIL
   message were corrected in the same commit to stop asserting the
   native-MIDI cause and to state that real Windows is clean.
+  CORRECTION (same day, 2026-08-13) to the note above: the startup hang is
+  NOT an artefact of launching over SSH, and the control that said so was
+  broken. Everything above about the SHUTDOWN hang stands -- that evidence
+  is the ~420 real-window runs and the breadcrumbs, and none of it depended
+  on the control.
+
+  The bad control: `set SDL_VIDEODRIVER=dummy && doom_ants.exe ...` in cmd
+  puts the trailing SPACE into the value. SDL rejected "dummy " with
+  `I_InitGraphics: SDL video init failed: dummy  not available`, the engine
+  died at I_Error, and the harness counted a dead process as a clean exit.
+  So "0 hung in 130 runs" measured 130 processes that never started. It
+  only surfaced because the DOOM-0348 fix made that I_Error line visible.
+
+  Re-run with the assignment quoted AND with the harness asserting the run
+  reached "tics simulated OK" rather than merely exiting: 100 headless
+  runs, 97 completed, 3 HUNG, 0 died early. Same ~2-3% as with a real
+  window, and stopping at the same place -- last line RB_VulkanProbe, no
+  tics line. So the window is irrelevant and this is a real intermittent
+  hang on real Windows, not a measurement artefact. Filed as DOOM-0350.
+
+  Lesson worth keeping: a harness that treats "the process went away" as
+  success cannot tell a clean exit from an early death, and both of this
+  session's false readings had that shape. Assert the work happened.
 
 - 📋 [DOOM-0326] **Bump the staged Vulkan headers to 1.4.357.0.**
   packaging/mingw-deps.sh pins VULKAN_VER=1.4.350.0; Khronos has shipped
@@ -1278,7 +1301,7 @@ with friends.
   Kind: fix.
   Source: in-session-2026-08-13 (DOOM-0331 L3).
 
-- 📋 [DOOM-0348] **Every stderr diagnostic is silently lost on Windows.**
+- ✅ [DOOM-0348] **Every stderr diagnostic is silently lost on Windows.**
   On Windows the engine's stderr is block-buffered into the pipe/file it is
   redirected to, and nothing flushes it before the process exits -- so every
   fprintf(stderr, ...) in the engine produces NOTHING. Measured 2026-08-13 on
@@ -1314,6 +1337,76 @@ with friends.
   **Layman:** On Windows the game's warning messages never appear, so a player reporting a problem has nothing useful to send back.
   Kind: fix.
   Lanes: platform, audio.
+  Source: in-session-2026-08-13 (found while measuring DOOM-0325 on real Windows).
+  Fixed 2026-08-13 in i_main.c: setvbuf(stderr, NULL, _IONBF, 0) and
+  setvbuf(stdout, NULL, _IOLBF, 0), before anything prints.
+
+  Unconditional rather than #ifdef _WIN32 -- unbuffered stderr is already
+  what Linux gives, so it is a no-op there and there is no second path to
+  keep in step. stdout is line-buffered, not unbuffered: nothing in the
+  engine prints per frame (both profilers report once a second, and the
+  cpu_profile block already fflushes by hand), so the extra syscalls cost
+  nothing and a crash can no longer truncate the log mid-run.
+
+  Verified on the real Windows box, which is the only place the bug
+  existed. The three lines that came back EMPTY before the change:
+
+    I_InitMusic: music ready (44100 Hz, SDL2_mixer)
+    I_InitSound:  pre-cached all sound data
+    I_InitSound: sound module ready
+
+  Both builds clean, make test green. Not verified under Wine, which never
+  reproduced the loss.
+
+  Worth knowing for later: there are 49 hand-rolled fflush calls across the
+  engine, several of them written to work around exactly this. They are
+  harmless now and were left alone rather than swept, but a future tidy has
+  a reason to remove them.
+
+- 📋 [DOOM-0350] **Windows startup hangs about 2-3% of the time, after the Vulkan probe.**
+  Split out of DOOM-0325, which is a SHUTDOWN hang and is closed as
+  Wine-only. This one is different and it is real on real Windows: the game
+  never starts at all.
+
+  Measured 2026-08-13 on SparePC (Win10 22H2, GTX 1050, GTX-era Vulkan, no
+  RT), Classic renderer, -bootsmoke 35:
+
+    real window   ~9 hangs in ~420 runs   (~2.1%)
+    headless      3 hangs in 100 runs     (3%, SDL_VIDEODRIVER=dummy)
+
+  The rate is the same with and without a window, so window creation is not
+  the cause -- an earlier reading that blamed launching over SSH was wrong
+  and rested on a broken control (see DOOM-0325's correction note).
+
+  Every hung run stops at the SAME point. Last line is always
+
+    RB_VulkanProbe: Vulkan device "NVIDIA GeForce GTX 1050" without hardware
+    ray tracing - raster-3D tier.
+
+  with no "tics simulated OK" and no teardown breadcrumb. stdout is
+  line-buffered as of DOOM-0348, so the log is current up to the freeze --
+  the missing lines are missing because they were never printed. The
+  process stays alive with ~10 threads until killed.
+
+  NOT yet narrowed: everything between that probe and the first tic is
+  unbroken by any print -- D_DoomLoop's I_InitGraphics (SDL video init,
+  window, Vulkan surface/swapchain) and then the tic loop itself. A
+  breadcrumb round through I_InitGraphics is the obvious next step, and it
+  is cheap now that stderr survives on Windows. Suspect the Vulkan
+  surface/swapchain bring-up before the software-renderer path, since the
+  probe runs even in Classic.
+
+  Reproduce: packaging/windows-smoke.sh cannot see this (it runs under
+  Wine). Needs the real box; the harness must assert the run reached "tics
+  simulated OK" rather than merely exiting, or an early death reads as a
+  pass. ~40 runs to expect one hang.
+
+  Player-visible: roughly 1 launch in 40 on Windows freezes on a black
+  screen or before the window appears, and needs Task Manager. Charl would
+  hit this within an evening's testing.
+  **Layman:** Roughly one Windows launch in forty freezes before the game starts, and has to be forced shut.
+  Kind: fix.
+  Lanes: platform, renderer.
   Source: in-session-2026-08-13 (found while measuring DOOM-0325 on real Windows).
 
 ## Phase 2 — The Spin

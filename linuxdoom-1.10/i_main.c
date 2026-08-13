@@ -26,6 +26,8 @@ rcsid[] __attribute__((used)) = "$Id: i_main.c,v 1.4 1997/02/03 22:45:10 b1 Exp 
 
 
 
+#include <stdio.h>
+
 #include "doomdef.h"
 
 #include "m_argv.h"
@@ -47,6 +49,20 @@ main
 #ifdef _WIN32
     SDL_SetMainReady ();
 #endif
+    // DOOM-0348: make the engine's own diagnostics survive to the console.
+    // Windows block-buffers both streams into a pipe or file and the exit path
+    // never flushes them, so every fprintf(stderr, ...) in the engine produced
+    // NOTHING there -- including the messages that say why sound or music is
+    // unavailable, which is exactly what a Windows bug report needs to carry.
+    // Only I_Error's survived, and only because it fflushes by hand.
+    // Unconditional rather than #ifdef _WIN32: this is already the behaviour
+    // Linux gives, so it is a no-op there and there is no second path to keep
+    // in step. stdout is line-buffered rather than unbuffered because nothing
+    // prints per frame (the profilers report once a second), so the syscalls
+    // cost nothing and a crash can no longer truncate the log mid-run.
+    setvbuf (stderr, NULL, _IONBF, 0);
+    setvbuf (stdout, NULL, _IOLBF, 0);
+
     myargc = argc;
     myargv = argv;
 
