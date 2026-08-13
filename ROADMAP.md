@@ -8948,6 +8948,28 @@ parked ideas (💭 considered) until we commit to and design each one.
   in order), so bloom 0 is byte-identical by construction. Next: L4 --
   the six profiler sites, then the §6 measurement and the user look
   call.
+  Progress (2026-08-13): L4 profiler slot DONE + pushed (14182d2). Bloom is
+  timed at raster slot 4 in frame order; composite moved 4->5, HUD 5->6, nq
+  6u->7u on the raster arm, and the [raster_profile] print carries six
+  buckets. Five sites, not the spec's six -- sites 1 and 6 collapse into one
+  unconditional `if (rprof)` write after the bloom block, which also closes a
+  hole in the spec's own `!bloomActive` dummy (it misses frames where the dial
+  is on but the chain is skipped for no camera/atlas, losing the whole print
+  to VK_NOT_READY). INV-6's three greps pass; build + 9 test binaries green;
+  zero Vulkan validation output.
+  Measured (RX 6600, Solid renderer 2, 50% scale, E1M1 -warpto 1056 -3616 270,
+  8 steady-state prints per arm): bloom 2 = 160.1 fps / present-total 5.75 ms /
+  bloom bucket 0.43 ms; bloom 0 = 161.1 fps / 5.71 ms / 0.01 ms. The 60 fps
+  floor is cleared 2.7x and the two arms are indistinguishable in fps.
+  OPEN: INV-5's "<= 5% of present-total" reads 7.5% against the bloom bucket
+  (what §6 calls the numerator), 4.7% against the arms' GPU delta, and 0%
+  against frame time -- the bucket over-reads because its BOTTOM_OF_PIPE
+  segment absorbs drain that `composite` and `scene` carried before. Which
+  numerator §6 means is undecided and goes to the pending re-gate.
+  STILL OWED before the bullet flips: the human look call on hardware (§10
+  Q1/Q2 -- halo size/strength, flashlight on a white wall; Claude cannot inject
+  menu keystrokes under Wayland), the -shotcompare golden re-bless (§12, already
+  owed for rt_fog), then CHANGELOG.
 
 - 📋 [DOOM-0332] **1-D shadow maps for point lights in the rasterised view, exploiting DOOM's flat map.**
   Found reviewing GZDoom at the user's request; feeds DOOM-0170's raster
