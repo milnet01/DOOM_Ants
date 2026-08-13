@@ -25,8 +25,13 @@
 #   1  the build (or syntax sweep) failed
 #   2  the engine never reached the boot-smoke line — it died or hung early
 #   3  the engine booted fine but never exited (shutdown hang; DOOM-0325 --
-#      currently EXPECTED here: SDL2_mixer's native-MIDI stop deadlocks under
-#      Wine, reproduced with no DOOM code in the picture. Not an engine fault)
+#      currently EXPECTED here, and it is a WINE fault, not an engine one.
+#      Reproduced with no DOOM code in the picture, and measured clean on real
+#      Windows: ~360 runs on Win10 22H2 exited every time, with breadcrumbs
+#      showing the whole teardown -- Mix_HaltMusic, Mix_CloseAudio, Mix_Quit --
+#      completing. Which SDL_mixer call Wine deadlocks in is NOT established;
+#      the earlier "native-MIDI stop" attribution was wrong (native MIDI is
+#      opt-in via the SDL_NATIVE_MUSIC hint, which this engine never sets)
 #
 # SAFETY: everything runs on a private Xvfb display and in a throwaway
 # WINEPREFIX under the sandbox dir, so the game can never appear on the user's
@@ -186,9 +191,10 @@ echo "    $(grep 'tics simulated OK' "$LOG")"
 
 if [ "$RUN_RC" -eq 124 ]; then
   echo "FAIL: booted and simulated $TICS tics, but the process never exited (${ELAPSED}s)."
-  echo "      Known: SDL2_mixer's native-MIDI Mix_HaltMusic deadlocks under Wine."
-  echo "      Reproduced with no DOOM code involved, so the compile+boot result"
-  echo "      above still stands. See DOOM-0325."
+  echo "      Known, and it is Wine's fault, not the engine's: SDL_mixer teardown"
+  echo "      deadlocks under Wine (reproduced with no DOOM code involved), while"
+  echo "      real Windows exits cleanly -- ~360 measured runs, whole teardown"
+  echo "      completing. The compile+boot result above still stands. DOOM-0325."
   exit 3
 fi
 if [ "$RUN_RC" -ne 0 ]; then

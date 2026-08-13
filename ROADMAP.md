@@ -861,7 +861,7 @@ with friends.
   still deliberately absent, per the original bullet; the Wine boot stays
   local while DOOM-0325 stands.
 
-- 📋 [DOOM-0325] **The Windows build hangs on exit, inside I_ShutdownMusic.**
+- ✅ [DOOM-0325] **The Windows build hangs on exit, inside I_ShutdownMusic.**
   Reproduce in one command: packaging/windows-smoke.sh --no-build
   (exit code 3 = booted fine, never exited).
 
@@ -999,6 +999,51 @@ with friends.
   GZDoom's default is still worth copying on its own merits (see the note
   above): a bundled in-process softsynth means every player hears the same
   music instead of whatever GM set their OS ships.
+  Resolved 2026-08-13 as NOT-A-BUG on real Windows, closing on the test this
+  bullet itself specified ("Gone = Windows is clean and this is Wine-only,
+  close as not-a-bug").
+
+  Measured on real hardware for the first time: SparePC, Windows 10 22H2
+  (10.0.19045.7548), GTX 1050, reached over SSH (see the session notes for
+  the host). ~360 runs of the cross-built doom_ants.exe, -bootsmoke 35,
+  Classic renderer, with a live audio device -- the user confirmed audible
+  sound from the machine's speakers, so music really was playing, which is
+  the precondition this bullet said the test needs.
+
+  NOT ONE run stopped inside I_ShutdownMusic. A temporary breadcrumb build
+  (printf + fflush, since stderr is lost -- see the new bullet on that)
+  showed the WHOLE teardown completing every time:
+
+    TD: enter / net done / sound done
+    MUS: enter / halt done / unregister done
+    MUS: calling Mix_CloseAudio / Mix_CloseAudio done
+    MUS: calling Mix_Quit / Mix_Quit done / leave
+    TD: music done / defaults done / graphics done
+    TD: teardown returned, calling exit(0) / atexit ran
+
+  So Mix_HaltMusic, the I_UnRegisterSong loop, Mix_CloseAudio and Mix_Quit
+  all return on real Windows. The deadlock is Wine's winmm/audio stack, as
+  the previous session's standalone no-DOOM-code repro already implied; the
+  engine has no defect here and there is no root-cause fix to make in this
+  repo. The GZDoom-style bundled softsynth idea recorded above stays worth
+  doing on its own merits (identical music everywhere), but it is now an
+  enhancement, not a fix -- if it is wanted, it needs its own bullet.
+
+  One correction to guard against: a ~2.5% intermittent hang DID show up
+  (5 in ~200 runs) and it is NOT this bug. It hangs at STARTUP, not
+  shutdown -- the log stops dead after RB_VulkanProbe with no "tics
+  simulated OK" line and no teardown breadcrumb, i.e. inside D_DoomLoop's
+  I_InitGraphics / SDL_CreateWindow (d_main.c:406). It is an artefact of
+  launching a windowed app from an SSH session, which has no interactive
+  desktop: with SDL_VIDEODRIVER=dummy it is 0 hung in 130 runs, against
+  5 in ~200 with a real window. Not filed as a defect because no player
+  launches the game that way; recorded so the next session measuring over
+  SSH does not rediscover it and mistake it for this bullet.
+
+  Left deliberately undone: packaging/windows-smoke.sh still exits 3 under
+  Wine, which is correct -- the Wine hang is real. Its header and FAIL
+  message were corrected in the same commit to stop asserting the
+  native-MIDI cause and to state that real Windows is clean.
 
 - 📋 [DOOM-0326] **Bump the staged Vulkan headers to 1.4.357.0.**
   packaging/mingw-deps.sh pins VULKAN_VER=1.4.350.0; Khronos has shipped
@@ -1231,6 +1276,44 @@ with friends.
   **Layman:** If the ray-traced self-test is pointed at the wrong renderer it hangs forever instead of saying so.
   Kind: fix.
   Source: in-session-2026-08-13 (DOOM-0331 L3).
+
+- 📋 [DOOM-0348] **Every stderr diagnostic is silently lost on Windows.**
+  On Windows the engine's stderr is block-buffered into the pipe/file it is
+  redirected to, and nothing flushes it before the process exits -- so every
+  fprintf(stderr, ...) in the engine produces NOTHING. Measured 2026-08-13 on
+  real hardware: a run that prints these on Linux
+
+    I_InitMusic: music ready (44100 Hz, SDL2_mixer)
+    I_InitSound:  pre-cached all sound data
+    I_InitSound: sound module ready
+
+  emits an EMPTY stderr on Windows, in the same run where stdout arrives
+  complete. The one message that does survive is I_Error's, and only because
+  it calls fflush(stderr) by hand (i_system.c:215) before exit(-1).
+
+  Why it matters beyond tidiness: these are the diagnostics that say WHY sound
+  or music is unavailable -- "could not open audio device", "no MIDI support",
+  "soundfont rejected", I_RegisterSong / I_PlaySong failures, and
+  S_ChangeMusic's retry warnings. On Windows a player (or Charl) hitting any of
+  them sees silence with no explanation, and a bug report cannot carry the one
+  line that would identify the cause. It also cost real time here: the missing
+  I_InitMusic line read as "audio never initialised", which nearly invalidated
+  the DOOM-0325 measurement until the user confirmed audible sound from the
+  machine's speakers.
+
+  Fix is one line at startup -- setvbuf(stderr, NULL, _IONBF, 0) in i_main.c,
+  matching the unbuffered stderr every other platform already gives us. Worth
+  checking whether stdout wants the same treatment: it is buffered too, and a
+  crash mid-run currently truncates it (the breadcrumb work needed explicit
+  fflush after every printf to be trustworthy).
+
+  Verify on Windows, not under Wine: run doom_ants.exe with stdout/stderr
+  redirected to a file and confirm the I_InitSound / I_InitMusic lines are
+  present. Wine did not reproduce the loss.
+  **Layman:** On Windows the game's warning messages never appear, so a player reporting a problem has nothing useful to send back.
+  Kind: fix.
+  Lanes: platform, audio.
+  Source: in-session-2026-08-13 (found while measuring DOOM-0325 on real Windows).
 
 ## Phase 2 — The Spin
 
