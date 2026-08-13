@@ -1054,6 +1054,50 @@ not fail cleanly, it raises on unpacking.
   adds to an existing debt rather than creating one. Only after all of that does
   the ROADMAP bullet flip and CHANGELOG gain an entry.
 
+  **Built 2026-08-13. Five sites, not six — sites 1 and 6 collapsed into one
+  unconditional write, and the collapse also closes a hole the spec's own
+  formulation left open.** §5 site 6 gates its dummy on `if (rprof &&
+  !bloomActive)`, but `bloomActive` is not the predicate that decides whether the
+  chain records: the block's full guard is `bloomActive &&
+  bloomExtractRasterPipeline && bloomExtractDs && haveCamera && atlasReady`. On a
+  frame where the dial is on and the camera is not up (the menu, the intermission,
+  the first frames of a level load) neither the real write nor the `!bloomActive`
+  dummy fires, slot 4 goes unwritten, and the print vanishes — the exact
+  `VK_NOT_READY` failure site 6 exists to prevent, on a different arm. A single
+  `if (rprof) vkCmdWriteTimestamp(…, 4)` placed *after* the bloom block covers
+  every case: with the chain recorded it closes the segment at the same
+  instruction, and with it skipped it collapses onto slot 3 and reads ~0 ms.
+  Sites 2–5 landed as written.
+
+  **§6's measurement, and INV-5.** Solid (`renderer 2`, `rt_view 0`), 50 % render
+  scale, E1M1 `-warpto 1056 -3616 270 -freeze -noinput`, reference RX 6600, both
+  arms from the same build, config regenerated per run (the engine rewrites it on
+  exit). Eight steady-state one-second prints each, no stray engine, zero Vulkan
+  validation output:
+
+  | | fps | present-total | shadow | scene | ssao | **bloom** | composite | hud | GPU total |
+  |---|---|---|---|---|---|---|---|---|---|
+  | `bloom 2` | 160.1 | 5.75 ms | 0.01 | 1.02 | 1.98 | **0.43** | 0.37 | 0.12 | 3.93 ms |
+  | `bloom 0` | 161.1 | 5.71 ms | 0.00 | 1.09 | 2.01 | **0.01** | 0.45 | 0.10 | 3.66 ms |
+
+  **The 60 fps floor is cleared by 2.7×** — 160 fps against a 60 fps floor, and
+  the two arms are indistinguishable in fps and present-total (0.04 ms apart,
+  inside the run-to-run spread). The frame is CPU-build-bound here, not GPU-bound
+  (`fenceWait` 0.03 ms, `build` 5.4 ms of a 5.7 ms present-total), so bloom's GPU
+  cost is hidden entirely.
+
+  **The ≤ 5 % clause reads differently depending on which numerator it means, and
+  §6 does not say.** Against the bloom bucket alone — which §6 names as "the
+  numerator" — 0.43 / 5.75 = **7.5 %, over budget**. Against the measured GPU
+  delta between the arms, 0.27 / 5.75 = **4.7 %, inside it**. Against frame time,
+  **0 %**. The bucket over-reads because it is a `BOTTOM_OF_PIPE` segment bounded
+  by the bloom barriers: with the dial on, drain that the `composite` and `scene`
+  buckets absorbed before now lands in bloom's (composite falls 0.45 → 0.37 and
+  scene 1.09 → 1.02 across the arms, which is where the 0.43 − 0.27 goes).
+  **Not resolved here** — the clause is §6's to fix, and picking a reading is a
+  spec amendment that changes what gets built, so it goes to the pending re-gate
+  rather than being decided at the measurement.
+
 `scripts/ab_capture.sh` needs one change to serve L2 and L3, because **as written
 it cannot capture Solid at all.** It ends with
 `grep -m1 'HD load done' "$OUT/$NAME.log" || { …; exit 1; }`, which is the right

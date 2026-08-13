@@ -9741,23 +9741,28 @@ extern "C" void RB_Vulkan_Present(void)
     if (g.gpuTimersInUse && g.gpuTimerPool)
     {
         uint64_t ts[8] = {};
-        // Read only the slots the timed path actually wrote: raster wrote 6 (0..5), RT wrote 8
-        // (0..7). Querying an unwritten-but-reset slot returns VK_NOT_READY and drops the whole
-        // print, so the count must match the path (profRasterFrame, set when the frame recorded).
-        uint32_t nq = g.profRasterFrame ? 6u : 8u;
+        // Read only the slots the timed path actually wrote: raster wrote 7 (0..6, DOOM-0331 L4
+        // added the bloom bucket), RT wrote 8 (0..7). Querying an unwritten-but-reset slot returns
+        // VK_NOT_READY and drops the whole print, so the count must match the path
+        // (profRasterFrame, set when the frame recorded).
+        uint32_t nq = g.profRasterFrame ? 7u : 8u;
         if (vkGetQueryPoolResults(g.device, g.gpuTimerPool, 0, nq, nq * sizeof(uint64_t), ts,
                 sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS)
         {
             const double k = (double)g.timestampPeriod / 1.0e6;   // ticks -> ms
             if (g.profRasterFrame)
             {
-                // Solid raster passes (DOOM-0170): ts 0..5 = start / shadow / scene / SSAO /
-                // composite / HUD. A skipped optional pass (torch off, SSAO off) reads ~0 ms.
+                // Solid raster passes (DOOM-0170): ts 0..6 = start / shadow / scene / SSAO /
+                // bloom / composite / HUD. A skipped optional pass (torch off, SSAO off, bloom
+                // Off) reads ~0 ms. DOOM-0331 L4 inserted bloom at slot 4, so only the two
+                // buckets ABOVE the insert move -- [0]..[2] difference slots below it and are
+                // untouched; re-labelling those would mislabel three correct rows.
                 g.profMs[0] += (double)(ts[1] - ts[0]) * k;   // flashlight shadow map
                 g.profMs[1] += (double)(ts[2] - ts[1]) * k;   // scene MRT (world + lighting)
                 g.profMs[2] += (double)(ts[3] - ts[2]) * k;   // SSAO
-                g.profMs[3] += (double)(ts[4] - ts[3]) * k;   // composite / tone-map
-                g.profMs[4] += (double)(ts[5] - ts[4]) * k;   // HUD overlay + present
+                g.profMs[3] += (double)(ts[4] - ts[3]) * k;   // bloom extract + blur (DOOM-0331)
+                g.profMs[4] += (double)(ts[5] - ts[4]) * k;   // composite / tone-map
+                g.profMs[5] += (double)(ts[6] - ts[5]) * k;   // HUD overlay + present
             }
             else
             {
@@ -9779,10 +9784,13 @@ extern "C" void RB_Vulkan_Present(void)
                 const double f = 1.0 / (double)g.profFrames;
                 if (g.profRasterFrame)
                 {
+                    // DOOM-0331 L4: six buckets, not five. The format string and the argument
+                    // list widen TOGETHER -- widening one alone prints a plausible wrong table
+                    // (bloom's cost under `composite`, composite's under `hud`, HUD not at all).
                     printf("[raster_profile] %3d fps | shadow %.2f | scene %.2f | ssao %.2f | "
-                           "composite %.2f | hud %.2f ms (avg/frame, Solid GPU only)\n",
+                           "bloom %.2f | composite %.2f | hud %.2f ms (avg/frame, Solid GPU only)\n",
                            g.profFrames, g.profMs[0] * f, g.profMs[1] * f, g.profMs[2] * f,
-                           g.profMs[3] * f, g.profMs[4] * f);
+                           g.profMs[3] * f, g.profMs[4] * f, g.profMs[5] * f);
                 }
                 else
                 {
@@ -10346,6 +10354,17 @@ extern "C" void RB_Vulkan_Present(void)
         }
     }
 
+    // DOOM-0331 L4 (§5) — the bloom bucket's closing timestamp, slot 4, inserted in FRAME
+    // ORDER so the raster slots stay chronological (3 = SSAO, 4 = bloom, 5 = composite,
+    // 6 = HUD). UNCONDITIONAL on rprof rather than paired with a separate `!bloomActive`
+    // dummy: every slot the readback asks for must be written or vkGetQueryPoolResults
+    // returns VK_NOT_READY and drops the WHOLE [raster_profile] print -- including on the
+    // `bloom 0` arm §6 measures against. One write covers both arms (with the chain
+    // skipped it collapses onto slot 3 and the segment reads ~0 ms) and, unlike a
+    // `!bloomActive` dummy, it also covers the frames where the dial is on but the chain
+    // was skipped anyway (no camera, no atlas, no blur pipeline).
+    if (rprof) vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 4);  // after bloom extract+blur
+
     rp.renderPass = g.renderPass;
     rp.framebuffer = g.framebuffers[idx];
     vkCmdBeginRenderPass(g.cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
@@ -10372,7 +10391,7 @@ extern "C" void RB_Vulkan_Present(void)
                            0, sizeof(coPush), coPush);
         vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.compositePipeline);
         vkCmdDraw(g.cmd, 3, 1, 0, 0);
-        if (rprof) vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 4);  // after composite
+        if (rprof) vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 5);  // after composite
     }
 
     // 2D HUD/menu compositor, last and over everything: a vertexless full-screen
@@ -10401,7 +10420,7 @@ extern "C" void RB_Vulkan_Present(void)
 
     vkCmdEndRenderPass(g.cmd);
     if (rprof) {
-        vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 5);  // after HUD/present
+        vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 6);  // after HUD/present
         g.gpuTimersInUse  = true;   // results ready to read at the top of next frame
         g.profRasterFrame = true;   // this timed frame was the raster path -> raster readback
     }
