@@ -34,6 +34,7 @@ rcsid[] __attribute__((used)) = "$Id: m_bbox.c,v 1.1 1997/02/03 22:45:10 b1 Exp 
 #include <unistd.h>
 
 #include "doomdef.h"
+#include "tic_time.h"	// DOOM-0350: I_TicsFrom (the I_GetTime arithmetic)
 #include "m_misc.h"
 #include "i_video.h"
 #include "i_sound.h"
@@ -104,8 +105,10 @@ int  I_GetTime (void)
     clock_gettime(CLOCK_MONOTONIC, &tp);
     if (!basetime)
 	basetime = tp.tv_sec;
-    newtics = (int)((tp.tv_sec-basetime)*TICRATE
-		    + tp.tv_nsec*(long)TICRATE/1000000000L);
+    // DOOM-0350: the arithmetic lives in tic_time.h so it can be unit tested,
+    // and is 64-bit there because `long` is 32 bits on Windows -- the overflow
+    // that made this function step backwards, and hang a launch in the melt.
+    newtics = I_TicsFrom (tp.tv_sec - basetime, tp.tv_nsec, TICRATE);
     return newtics;
 }
 
