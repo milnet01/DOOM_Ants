@@ -1463,6 +1463,10 @@ with friends.
 
   Windows timing is steadier generally as a side effect -- every `now -
   then` delta in the engine was exposed to the same backwards steps.
+  Real-window arm added after the flip: 100 runs with a real window on
+  the shipped binary, 0 hangs. 450 verification runs in total across both
+  arms, against ~11 hangs expected at the old rate. The original bug was
+  measured in both arms at the same rate, so both are closed.
 
 ## Phase 2 — The Spin
 
