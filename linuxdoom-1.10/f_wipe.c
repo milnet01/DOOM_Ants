@@ -185,7 +185,14 @@ wipe_doMelt
 
     width/=2;
 
-    while (ticks--)
+    // DOOM-0350: `> 0`, not a bare post-decrement. A negative tick count does
+    // not end the loop early -- it counts down through ~2 billion iterations of
+    // a full-screen melt, which is a freeze the player can only escape with Task
+    // Manager. The clock that produced one is fixed in tic_time.h and is the
+    // root cause; this guard is here because the cost of the amplifier is so
+    // lopsided. Zero ticks behaves exactly as before (no columns move, `done`
+    // stays true, the wipe ends).
+    while (ticks-- > 0)
     {
 	for (i=0;i<width;i++)
 	{
