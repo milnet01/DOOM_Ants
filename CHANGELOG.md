@@ -8,6 +8,15 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Windows launches no longer freeze on a black screen about one time in forty** (DOOM-0350)
+  The game clock's sub-second maths overflowed on Windows, where a
+  `long` is half the size it is on Linux, so the clock stepped
+  backwards several times a second. When that landed during the
+  screen-melt transition at startup, the melt was handed a negative
+  number of steps and spun forever. Measured on real Windows: 350
+  launches, no freezes, against a 2-3% rate before. Windows timing
+  is steadier throughout as a result, not just at startup.
+
 - **Vulkan validation: make the Ultra RT overlay pass render-pass-compatible with the framebuffers and pipelines it is used with (DOOM-0134, DOOM-0198)**
   The overlay pass that draws the weapon and HUD on top of the ray-traced
   image was set up with slightly different rules from the drawing surface it

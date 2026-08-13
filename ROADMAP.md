@@ -1363,7 +1363,7 @@ with friends.
   harmless now and were left alone rather than swept, but a future tidy has
   a reason to remove them.
 
-- 📋 [DOOM-0350] **Windows startup hangs about 2-3% of the time, after the Vulkan probe.**
+- ✅ [DOOM-0350] **Windows startup hangs about 2-3% of the time, after the Vulkan probe.**
   Split out of DOOM-0325, which is a SHUTDOWN hang and is closed as
   Wine-only. This one is different and it is real on real Windows: the game
   never starts at all.
@@ -1422,6 +1422,47 @@ with friends.
 
   Do NOT reuse dummy.ps1 (the earlier one, also still on the box) -- it has
   the trailing-space bug and scores a dead process as a pass.
+  Resolved 2026-08-13. Root cause found by breadcrumbing the gap and
+  catching a hang in the act; the suspect stretch named above was wrong
+  in a way worth recording. RB_VulkanProbe is called from RB_Init, which
+  D_DoomLoop runs AFTER I_InitGraphics -- so graphics init had already
+  completed when that last line printed, and the unbroken gap actually
+  ran from vkDestroyInstance through the first tic. Breadcrumbs through
+  it, plus the hung process's CPU time (climbing 3s per 3s of wall clock,
+  so a spin and not a deadlock), put it inside D_Display's screen-melt
+  loop on the very first frame.
+
+  The captured hang:
+
+    [c] I_GetTime BACKWARDS 37 -> 33 (sec=1213354 nsec=61356700 base=1213353)
+    [c] wipe: iter=3 tics=-4 now=33 spins=40367
+
+  I_GetTime computed `tv_nsec*(long)TICRATE/1000000000L`. `long` is 64
+  bits on Linux and 32 on Windows, so 61356700*35 = 2147484500 overflowed
+  INT32_MAX by 853, wrapped to -2147482796, and the sub-second term came
+  out -2 instead of +2 -- returning 35 + (-2) = 33 exactly as logged. The
+  term sawtoothed through about [-2,+2] eight times a second rather than
+  climbing 0..34 once, so the clock stepped backwards ~8 times a second
+  while still averaging the right rate, which is why the game otherwise
+  worked. wipe_doMelt's `while (ticks--)` then counted a -4 down through
+  ~2 billion iterations. The melt lasts ~30 frames, which is what makes
+  the rate 2-3% rather than constant.
+
+  Fixed in two commits: the arithmetic moved to tic_time.h and made
+  explicitly 64-bit (cd8094a), plus `while (ticks-- > 0)` in wipe_doMelt
+  so a negative count can never spin again (af1b077). Regression test
+  tests/tic_time_test.cpp pins the contract -- monotonic, in range, exact
+  at the boundary; it cannot fail on an LP64 host for the original defect
+  and says so, but fails all seven checks under any 32-bit narrowing
+  (verified by narrowing it deliberately).
+
+  Verified on SparePC (Win10 22H2, GTX 1050), Classic, -bootsmoke 35:
+  350 headless runs 0 hangs (200 on the arithmetic fix alone, 150 on the
+  shipped binary), against ~9 expected at the old rate. make + make
+  windows clean, 10 test binaries green.
+
+  Windows timing is steadier generally as a side effect -- every `now -
+  then` delta in the engine was exposed to the same backwards steps.
 
 ## Phase 2 — The Spin
 
