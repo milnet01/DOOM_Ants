@@ -8,6 +8,14 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **The Windows build no longer swallows its own diagnostic messages** (DOOM-0348)
+  On Windows every message the engine writes to its error stream was held in
+  a buffer that nothing ever emptied, so all of them were lost — including
+  the ones that say why sound or music is unavailable. A player reporting
+  silent audio had nothing to send back. Both output streams are now
+  unflushed-buffer-free from startup, so those messages appear as they
+  already did on Linux. Verified on real Windows hardware.
+
 - **Publishing a release no longer waits on a duplicate pre-push check** (DOOM-0344)
   The pre-push check added in 0.7.0 ran on tag pushes as well as branch
   pushes, but it always builds the current code rather than whatever ref is

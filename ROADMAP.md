@@ -1408,6 +1408,20 @@ with friends.
   Kind: fix.
   Lanes: platform, renderer.
   Source: in-session-2026-08-13 (found while measuring DOOM-0325 on real Windows).
+  The harness is already staged and working on the Windows box, so a new
+  session does not have to rebuild it: C:\doom-ants-test\ holds the exe,
+  SDL2.dll, SDL2_mixer.dll, libwinpthread-1.dll, game.wad, smoke.cfg.master
+  and dummy2.ps1. That script is the CORRECT one -- it quotes the env
+  assignment and reports completed / hung / died-early separately. Run it
+  with
+
+    ssh wintest 'powershell -NoProfile -ExecutionPolicy Bypass -File C:\doom-ants-test\dummy2.ps1 -Runs 100'
+
+  and pass -RealWindow to compare against a windowed run. Restage the exe
+  with scp after any rebuild; nothing does that automatically.
+
+  Do NOT reuse dummy.ps1 (the earlier one, also still on the box) -- it has
+  the trailing-space bug and scores a dead process as a pass.
 
 ## Phase 2 — The Spin
 
