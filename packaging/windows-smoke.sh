@@ -27,7 +27,7 @@
 #   3  the engine booted fine but never exited (shutdown hang; DOOM-0325 --
 #      currently EXPECTED here, and it is a WINE fault, not an engine one.
 #      Reproduced with no DOOM code in the picture, and measured clean on real
-#      Windows: ~360 runs on Win10 22H2 exited every time, with breadcrumbs
+#      Windows: ~550 runs on Win10 22H2 exited every time, with breadcrumbs
 #      showing the whole teardown -- Mix_HaltMusic, Mix_CloseAudio, Mix_Quit --
 #      completing. Which SDL_mixer call Wine deadlocks in is NOT established;
 #      the earlier "native-MIDI stop" attribution was wrong (native MIDI is
@@ -193,7 +193,7 @@ if [ "$RUN_RC" -eq 124 ]; then
   echo "FAIL: booted and simulated $TICS tics, but the process never exited (${ELAPSED}s)."
   echo "      Known, and it is Wine's fault, not the engine's: SDL_mixer teardown"
   echo "      deadlocks under Wine (reproduced with no DOOM code involved), while"
-  echo "      real Windows exits cleanly -- ~360 measured runs, whole teardown"
+  echo "      real Windows exits cleanly -- ~550 measured runs, whole teardown"
   echo "      completing. The compile+boot result above still stands. DOOM-0325."
   exit 3
 fi

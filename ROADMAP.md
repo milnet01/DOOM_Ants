@@ -1005,7 +1005,7 @@ with friends.
 
   Measured on real hardware for the first time: SparePC, Windows 10 22H2
   (10.0.19045.7548), GTX 1050, reached over SSH (see the session notes for
-  the host). ~360 runs of the cross-built doom_ants.exe, -bootsmoke 35,
+  the host). ~550 runs of the cross-built doom_ants.exe, -bootsmoke 35,
   Classic renderer, with a live audio device -- the user confirmed audible
   sound from the machine's speakers, so music really was playing, which is
   the precondition this bullet said the test needs.
@@ -1029,14 +1029,15 @@ with friends.
   doing on its own merits (identical music everywhere), but it is now an
   enhancement, not a fix -- if it is wanted, it needs its own bullet.
 
-  One correction to guard against: a ~2.5% intermittent hang DID show up
-  (5 in ~200 runs) and it is NOT this bug. It hangs at STARTUP, not
+  One correction to guard against: a ~2.1% intermittent hang DID show up
+  (9 in ~420 runs launched with a real window) and it is NOT this bug.
+  It hangs at STARTUP, not
   shutdown -- the log stops dead after RB_VulkanProbe with no "tics
   simulated OK" line and no teardown breadcrumb, i.e. inside D_DoomLoop's
   I_InitGraphics / SDL_CreateWindow (d_main.c:406). It is an artefact of
   launching a windowed app from an SSH session, which has no interactive
   desktop: with SDL_VIDEODRIVER=dummy it is 0 hung in 130 runs, against
-  5 in ~200 with a real window. Not filed as a defect because no player
+  ~2.1% with a real window. Not filed as a defect because no player
   launches the game that way; recorded so the next session measuring over
   SSH does not rediscover it and mistake it for this bullet.
 
