@@ -8,6 +8,15 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Vulkan validation: make the Ultra RT overlay pass render-pass-compatible with the framebuffers and pipelines it is used with (DOOM-0134, DOOM-0198)**
+  The overlay pass that draws the weapon and HUD on top of the ray-traced
+  image was set up with slightly different rules from the drawing surface it
+  was actually used with, which made the graphics debug layer log 20 rule
+  violations per run. The picture was always correct; the setup was not.
+  Both passes now share one set of rules. A ray-traced run on an RX 6600 goes
+  from 20 validation errors to none, with the lighting, geometry and HD
+  textures unchanged.
+
 - **The Windows build no longer swallows its own diagnostic messages** (DOOM-0348)
   On Windows every message the engine writes to its error stream was held in
   a buffer that nothing ever emptied, so all of them were lost — including

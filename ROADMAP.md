@@ -2899,6 +2899,49 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** The graphics debug layer is logging a few rule violations every frame. They aren't causing visible problems today, but they're real correctness bugs that can break on other drivers — clean them up.
   Kind: fix.
   Source: in-session-2026-06-29.
+  Verified both families (2026-08-13, RX 6600, VK_LAYER_KHRONOS_validation
+  confirmed loaded via VK_LOADER_DEBUG=layer).
+
+  FAMILY 1 (clear-colour usage) — STRUCK, already fixed by DOOM-0133.
+  Every image reaching vkCmdClearColorImage now declares TRANSFER_DST:
+  g.rtAccum (r_vulkan.cpp:2644 STORAGE|TRANSFER_SRC|TRANSFER_DST),
+  g.svImg[] (:3201), g.taImg[] non-TA_OUT (:3360, comment cites DOOM-0133).
+  The three call sites (:3254-3256 svImg, :3405-3406 taImg HIST0/HIST1,
+  :8330 rtAccum) target only those. Zero vkCmdClearColorImage validation
+  lines over full Solid and Ultra runs. Nothing left to do here.
+
+  FAMILY 2 (renderpass dependency mismatch) — LOCATED AND FIXED this session.
+  Root cause: CreateRenderPass built ONE shared VkSubpassDependency `dep`,
+  then MUTATED it in place (old :4703-4707: srcStage TRANSFER, srcAccess
+  TRANSFER_WRITE, dstAccess +COLOR_ATTACHMENT_READ) before creating
+  g.rtOverlayPass. But RecordRtOverlay (:9399-9400) begins that pass against
+  g.framebuffers[idx] — created from g.renderPass (:4720) — and draws with
+  pipelines built for g.renderPass (:5244/:6103/:6265). Render-pass
+  compatibility (Vulkan §8.2) covers subpass dependencies; only load/store
+  ops and image layouts are exempt. So the mutation is exactly what made the
+  pass incompatible, while the code comment at :4698 asserted the opposite.
+  Every other pass is self-consistent (shadowPass/shadowFb/shadowPipeline,
+  scenePass/sceneFb/scenePipeline, aoPass/aoFb/aoPipeline) — rtOverlayPass
+  was the sole offender, which is why only the Ultra RT path tripped it.
+
+  Fix: fold the TRANSFER src + COLOR_ATTACHMENT_READ dst into the SHARED base
+  dep so renderPass, scenePass and rtOverlayPass carry identical dependencies,
+  and stop mutating it for rtOverlayPass (only loadOp/initialLayout differ now,
+  both exempt). Widening an EXTERNAL dependency is strictly more
+  synchronisation, never less, so renderPass/scenePass cannot regress.
+
+  A/B evidence (Ultra, E1M1, -warp 1 1 -noinput):
+    pre-fix : 10x VUID-VkRenderPassBeginInfo-renderPass-00904
+            + 10x VUID-vkCmdDraw-renderPass-02684
+              ("VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT !=
+                EARLY_FRAGMENT_TESTS|COLOR_ATTACHMENT_OUTPUT", 0xf vs 0xc)
+    post-fix: 0 validation lines, BLAS/TLAS + GI bake + HD load (18 materials)
+              all still correct. Solid re-run also 0. `make test` all green.
+
+  Both families are now closed on the measurement side. Bullet deliberately
+  LEFT OPEN per the session instruction not to close it; flip to shipped
+  whenever you are happy. Duplicates DOOM-0126 (family 1), DOOM-0134 and
+  DOOM-0198 (family 2) flipped shipped in the same pass.
 
 - ✅ [DOOM-0116] **Persist the Ultra path-tracer view across sessions and default it to the denoised (SVGF) view.**
   The `~` path-tracer view selector (rb_rtdebug) defaulted to 0 (raster "Original") and was not persisted, so Ultra booted into the raster-looking view every launch until the user pressed `~` to reach mode 6 (denoised SVGF). Now persisted via m_misc.c defaults[] as "rt_view" (default 6) and clamped on load in RB_Init to a valid cycle value ({0,1,2,3,4,6}; 5 is the headless verify path). So a fresh Ultra user sees the denoised path-traced view immediately, and any `~` choice survives a restart. rendermode (Classic/Solid/Ultra) already persisted. Implemented 2026-06-29; awaiting play-test (held local with DOOM-0048 — needs a WAD to confirm Ultra shows the denoised view on boot). Implemented in-session.
@@ -2979,11 +3022,12 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: doc-fix.
   Source: research-2026-06-29 DOOM-0092 cold-eyes.
 
-- 📋 [DOOM-0126] **Vulkan validation: vkCmdClearColorImage on a STORAGE-only image (missing TRANSFER_DST_BIT).**
+- ✅ [DOOM-0126] **Vulkan validation: vkCmdClearColorImage on a STORAGE-only image (missing TRANSFER_DST_BIT).**
   Seen in the user's terminal_output.log line 40: "vkCmdClearColorImage(): image was created with usage VK_IMAGE_USAGE_STORAGE_BIT (missing VK_IMAGE_USAGE_TRANSFER_DST_BIT)". Pre-existing (NOT from DOOM-0119 -- no image-usage changes in that diff). Fix: add VK_IMAGE_USAGE_TRANSFER_DST_BIT to the offending image's usage flags at creation (likely an RT/SVGF storage image that is also vkCmdClearColorImage'd), or clear it via a compute store instead of vkCmdClearColorImage. Low urgency (works on RADV) but it pollutes the validation log and is spec-incorrect.
   **Layman:** A startup warning from the graphics driver's checker: an image is cleared without being marked as clearable. Harmless today but worth fixing so the validation log is clean.
   Kind: fix.
   Source: in-session-2026-06-29 DOOM-0119 play-test log.
+  Resolved (2026-08-13): duplicate of DOOM-0133, which added the missing VK_IMAGE_USAGE_TRANSFER_DST_BIT. Re-verified today on the RX 6600 with VK_LAYER_KHRONOS_validation confirmed loaded: all three vkCmdClearColorImage targets (g.rtAccum r_vulkan.cpp:2644, g.svImg[] :3201, g.taImg[] non-TA_OUT :3360) declare TRANSFER_DST, and full Solid + Ultra runs log zero vkCmdClearColorImage lines. Closed as already-fixed; see DOOM-0115 for the combined write-up.
 
 - 📋 [DOOM-0127] **Vulkan validation: renderpass dependency stage/access-mask incompatibility on overlay/blit framebuffers.**
   Seen in terminal_output.log lines ~226-291 (capped at the 10x duplicate limit): vkCmdBeginRenderPass reports pDependencies[0] srcStageMask/srcAccessMask/dstAccessMask incompatible between VkRenderPass 0xd and the one baked into the VkFramebuffer (0xc) -- VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT vs EARLY/LATE_FRAGMENT_TESTS, TRANSFER_WRITE vs 0, etc. Pre-existing (NOT from DOOM-0119 -- no renderpass changes in that diff). The framebuffer was created against a renderpass whose subpass dependencies don't match the renderpass used at begin time; they must be render-pass-compatible (same dependency stage/access masks). Fix: align the subpass dependency masks between the renderpass used to create the framebuffer and the one used in vkCmdBeginRenderPass (or reuse the same VkRenderPass object). Likely in the 2D overlay/blit path.
@@ -3045,12 +3089,13 @@ parked ideas (💭 considered) until we commit to and design each one.
   Source: terminal-log-2026-06-29.
   Resolved (2026-06-29): the TAAU history images (taImg, non-TA_OUT) were created STORAGE-only but are cleared at init/resize via vkCmdClearColorImage, which requires TRANSFER_DST. Added VK_IMAGE_USAGE_TRANSFER_DST_BIT to the non-output taImg usage (r_vulkan.cpp CreateTaauTargets). The svImg path already had it. Builds clean; confirm the two startup vkCmdClearColorImage validation errors are gone with a validation-layer run.
 
-- 📋 [DOOM-0134] **Fix render-pass/framebuffer incompatibility validation errors (srcStageMask/Access mismatch between two render passes).**
+- ✅ [DOOM-0134] **Fix render-pass/framebuffer incompatibility validation errors (srcStageMask/Access mismatch between two render passes).**
   vkCmdBeginRenderPass / vkCmdDraw report pDependencies[0] srcStageMask, srcAccessMask and dstAccessMask incompatible between VkRenderPass 0xd... and VkRenderPass 0xc... (the framebuffer was created against 0xc but begun/used with 0xd) — VUID-VkRenderPassBeginInfo-renderPass-00904 / VUID-vkCmdDraw-renderPass-02684. The two passes' subpass dependencies differ (ALL_TRANSFER vs EARLY_FRAGMENT_TESTS|COLOR_ATTACHMENT_OUTPUT). Fix: make the render pass used at BeginRenderPass / pipeline creation render-pass-compatible with the one the framebuffer was created from (align the subpass dependency stage/access masks, or create the framebuffer against the matching pass). Pre-existing raster-path issue (not from DOOM-0129/0130/0131). Validation-only.
   Kind: fix.
   **Layman:** Another startup/raster-path graphics warning: a drawing surface was set up with one recipe but used with a slightly different one. Cosmetic to the validation layer, but worth making consistent.
   Kind: fix.
   Source: terminal-log-2026-06-29.
+  Resolved (2026-08-13): same defect as DOOM-0198 and DOOM-0115 family 2. CreateRenderPass mutated its ONE shared VkSubpassDependency (srcStage TRANSFER / srcAccess TRANSFER_WRITE / dstAccess +COLOR_ATTACHMENT_READ) before creating g.rtOverlayPass, but RecordRtOverlay begins that pass against g.framebuffers[] and pipelines built for g.renderPass. Subpass dependencies are part of render-pass compatibility (Vulkan 8.2), so the mutation itself was the incompatibility. Fixed by folding TRANSFER + COLOR_ATTACHMENT_READ into the shared base dep (renderPass, scenePass and rtOverlayPass now identical) and dropping the per-pass mutation. A/B on Ultra E1M1: 10x VUID-...-00904 + 10x VUID-vkCmdDraw-renderPass-02684 before, 0 after; render output, GI bake and HD load unchanged.
 
 - ✅ [DOOM-0135] **Menu "Debug Views" toggle gating the ~ path-tracer diagnostic cycle; ~ becomes plain RT on/off when debug is off.**
   Current wiring (verified): rb_rtdebug (the ~ key, values 0=raster .. 6=denoised, 5=headless-verify-only) is the ONLY thing that switches the Vulkan backend between the flat raster view and the path-traced view. rb_rtdebug is written in exactly 3 places: r_vulkan.cpp:575 (default 6), r_backend.c:310-311 (init clamp), i_video.c:330-332 (the ~ cycle). The menu "Renderer" selector (Classic/Solid/Ultra via RB_SetMode) does NOT touch rb_rtdebug, and Solid (RB_RASTER3D) + Ultra (RB_RT3D) share the same Vulkan_Present/Vulkan_Init — only their Available() probe differs. So today picking "Solid" does not disable the tracer; the ~ key does. There is ONE shared RendererDef menu (m_menu.c:413), so a new item appears for both Solid and Ultra automatically.
@@ -3751,11 +3796,12 @@ parked ideas (💭 considered) until we commit to and design each one.
   RunGiBake and RB_RtVerify too, so it is a wider change for an eighth of the
   prize. Left undone deliberately.
 
-- 📋 [DOOM-0198] **Vulkan validation: renderpass/framebuffer subpass-dependency incompatibility in the raster overlay pass.**
+- ✅ [DOOM-0198] **Vulkan validation: renderpass/framebuffer subpass-dependency incompatibility in the raster overlay pass.**
   With Vulkan validation layers on, the Solid raster path logs VUID-VkRenderPassBeginInfo-renderPass-00904 / VUID-vkCmdDraw-renderPass-02684: a render pass is begun with a framebuffer (and pipeline) created for a subpass-dependency-INCOMPATIBLE render pass — srcAccessMask TRANSFER_WRITE vs 0, srcStageMask ALL_TRANSFER vs EARLY_FRAGMENT/COLOR_ATTACHMENT_OUTPUT (renderPass 0xf vs 0xc). Pre-existing (confirmed: the DOOM-0074 diff touches no render-pass/framebuffer/pipeline creation code; the warning is a static setup mismatch, not a runtime one). Likely the overlay/composite or rtOverlay LOAD-variant pass whose pDependencies differ from the base renderPass its framebuffer/pipeline were built against, while still being format-compatible. Renders correctly (image is right), but the passes should be made subpass-dependency-compatible (or the framebuffer/pipeline rebuilt against the matching pass) to clear the warning. Low priority — cosmetic validation noise, no visible effect.
   **Layman:** The graphics debug layer flags a mismatch in how one of the 2D-overlay render steps is set up; harmless in practice but should be cleaned up.
   Kind: fix.
   Source: in-session-2026-07-17 (surfaced during DOOM-0074 hardware verify).
+  Resolved (2026-08-13): confirmed to be the SAME defect as DOOM-0134 / DOOM-0115 family 2, and the 0xf-vs-0xc pair in this bullet matched exactly. One correction to the original triage: it is the Ultra RT overlay pass (g.rtOverlayPass, begun in RecordRtOverlay r_vulkan.cpp:9399), not the Solid raster overlay — a Solid run logs zero validation lines both before and after. Fixed by making g.rtOverlayPass carry the same subpass dependency as g.renderPass, whose framebuffers and pipelines it is used with. A/B on Ultra E1M1: 20 validation lines before, 0 after.
 
 - 📋 [DOOM-0199] **In-game Video / RT settings menu to surface the hidden renderer toggles.**
   The RT/raster renderer has grown a pile of runtime toggles that today are ALL undocumented single-key shortcuts or ~/.doomrc hand-edits, undiscoverable to a normal player: render tier (Classic/Solid/Ultra), rt_view raster-vs-denoised (~), de-tile ] , filth [ , wet-liquid ' , SSAO, render-scale, flashlight (F). Proposal: a new 'Video' / 'Ultra (RT)' submenu under the existing Options menu (reuse the m_menu.c machinery + gamepad nav already used by DOOM-0060's game-select picker), with on/off rows + a render-scale and FOV slider, persisted through the normal default-config path. Value: makes the whole DOOM-0042/0181/0183/L2 feature set actually reachable and configurable by the user, and gives a single discoverable home for future toggles. Suggestion only — scope/needs design + a /cold-eyes spec pass before implementing.

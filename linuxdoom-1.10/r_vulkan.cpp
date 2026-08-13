@@ -4587,15 +4587,30 @@ void CreateRenderPass()
     sub.pColorAttachments = &colorRef;
     sub.pDepthStencilAttachment = &depthRef;
 
+    // DOOM-0115 family 2: this ONE dependency is shared verbatim by renderPass,
+    // scenePass and rtOverlayPass. Render-pass compatibility (Vulkan §8.2) covers
+    // the subpass dependencies too — only load/store ops and image layouts are
+    // exempt — so rtOverlayPass, which is begun against g.framebuffers and drawn
+    // with the pipelines built for g.renderPass, must carry an IDENTICAL dep or
+    // every BeginRenderPass/Draw trips VUID-VkRenderPassBeginInfo-renderPass-00904
+    // / VUID-vkCmdDraw-renderPass-02684. It therefore carries the UNION of what the
+    // three need: the TRANSFER src orders rtOverlay's incoming blit (RecordRtTrace
+    // writes the swapchain image by transfer before the colour LOAD), and the
+    // COLOR_ATTACHMENT_READ dst covers that same loadOp=LOAD. Both are inert for
+    // renderPass/scenePass, whose colour is CLEARed and never transfer-written
+    // beforehand — a wider EXTERNAL dependency is strictly more synchronisation,
+    // never less, so widening cannot break them.
     VkSubpassDependency dep = {};
     dep.srcSubpass = VK_SUBPASS_EXTERNAL;
     dep.dstSubpass = 0;
     dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-                       VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+                       VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                       VK_PIPELINE_STAGE_TRANSFER_BIT;
     dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
                        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-    dep.srcAccessMask = 0;
-    dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+    dep.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
                         VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
     VkRenderPassCreateInfo rpci = {};
@@ -4696,15 +4711,13 @@ void CreateRenderPass()
     // 2D overlay on top, handing the image back in PRESENT_SRC. Depth is still cleared
     // (the weapon is a screen-space psprite that always sits on top). Same attachment
     // formats, so it is render-pass-compatible with g.framebuffers and the pipelines.
+    // DOOM-0115 family 2: only the loadOp/initialLayout may differ here — those two
+    // are the exemptions compatibility allows. `dep` is deliberately left UNTOUCHED
+    // (it already carries the TRANSFER src that orders the incoming blit); mutating
+    // it here is what made this pass incompatible with the framebuffers/pipelines
+    // it is used with.
     att[0].loadOp        = VK_ATTACHMENT_LOAD_OP_LOAD;
     att[0].initialLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;   // keep the blitted trace
-    // The blit that fills the colour image is a TRANSFER write; order it before the
-    // colour LOAD + attachment writes (the base dep only chains the colour/depth stages).
-    dep.srcStageMask  = VK_PIPELINE_STAGE_TRANSFER_BIT;
-    dep.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
-                        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
-                        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     Check(vkCreateRenderPass(g.device, &rpci, nullptr, &g.rtOverlayPass),
           "vkCreateRenderPass(rtOverlay)");
 }
