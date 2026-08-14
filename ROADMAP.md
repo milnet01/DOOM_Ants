@@ -9601,7 +9601,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   Lanes: renderer, sprites.
   Source: user-request-2026-08-07 (seen in a YouTube video of another DOOM source port).
 
-- 📋 [DOOM-0345] **Bloom on the ray-traced view, which needs the RT tone-map split.**
+- 🚧 [DOOM-0345] **Bloom on the ray-traced view, which needs the RT tone-map split.**
   Split out of DOOM-0331 on 2026-08-12, which had converged by cap at 3
   cold-eyes loops and was 1496 lines — larger than the review's design
   point, with 5 of loop 2's 10 CRIT+HIGH findings being collateral from
@@ -9656,6 +9656,39 @@ parked ideas (💭 considered) until we commit to and design each one.
   Four findings across loops 2 and 3 were earlier loops' own fixes coming
   back — including one whose prescription was right and whose stated
   reasoning was wrong. That is the cold re-read doing its job.
+  Progress (2026-08-14): **R1 SHIPPED (e7e7bdd)** -- the tone-map split,
+  gated, with nothing added yet. formulas/tonemap_encode.glsl carries
+  toneExposeEncode(L, ev); svgf_composite.comp calls it and, under
+  -DBLOOM_SPLIT, stores unexposed linear radiance into the new rtHdrImage
+  (binding 7 redeclared rgba16f, sky store's alpha 1.0 -> 0.0) while
+  rt_tonemap.comp exposes and encodes one pass later. rb_bloom == 0 runs
+  the un-split pipeline and never touches rtHdrImage.
+
+  The strongest evidence is deterministic rather than photographic: the
+  un-split shader's id-normalised SPIR-V function body is
+  instruction-for-instruction identical across the lift (993 lines each
+  way, 0 diff), so INV-1's byte-identity holds by construction. The split
+  path was separately proved LIVE on bloom 2 and never entered on bloom 0
+  -- without that, every "near-identical" number below would be trivially
+  true of a skipped path.
+
+  Measured (RX 6600, Ultra RT, 50% scale, three captures per arm):
+  E1M1 1056 -3616 270 SIGNAL 0.03/255 max 6.3 vs NOISE 0.03/255 max 5.3,
+  EFFECT 0 px. Sky-facing courtyard 1800 -3200 0 with fog ON: SIGNAL 0.38
+  max 3.3 vs NOISE 0.14 max 1.3, with the SKY blocks at 0.0-0.1 and the
+  floor blocks at 1.0-1.6 -- the fp16 dither is on the surface path and
+  the sky encode is intact (INV-4). rb_exposure sweep at both extremes:
+  SIGNAL equals NOISE at each end (0.08/0.07 at EV -4.0, 0.03/0.03 at EV
+  -0.25), so no double exposure (INV-6). -rtverify PASS both arms,
+  rel-MSE 0.2058% unchanged (INV-3).
+
+  OPEN, for the pending re-gate: **R1's stated tolerance fails a correct
+  build.** The spec gates the split arm at SIGNAL mean <= 0.02 / max <=
+  1.0; the harness's own same-build noise floor at these spots is 0.03 /
+  5.3, i.e. above the bound. The spec already records that this tolerance
+  was chosen by argument rather than measurement and that nothing checks
+  it -- this is the measurement, and it is the same shape as DOOM-0331's
+  own 7 clause. Next: R2 (the extract and the combine).
 
 - 📋 [DOOM-0346] **Record the house spec section order so the structure check stops declining to run.**
   `spec_lint` returns `sections_checked: false` on every spec in
