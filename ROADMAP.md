@@ -9015,6 +9015,23 @@ parked ideas (💭 considered) until we commit to and design each one.
   Q1/Q2 -- halo size/strength, flashlight on a white wall; Claude cannot inject
   menu keystrokes under Wayland), the -shotcompare golden re-bless (§12, already
   owed for rt_fog), then CHANGELOG.
+  Progress (2026-08-13): **the owed look call must be made on the
+  RASTERISED view, and the first attempt was not.** The user play-tested
+  E1M1 for the halo, saw no bloom at all, and reported it as missing.
+  Nothing was wrong: they were on Ultra with ray tracing on, and the
+  bloom chain is gated `!rtActive` (§4.4) -- the ray-traced chain is
+  DOOM-0345 and is not built. Their config had `rt_view 6`, the default
+  denoised RT view, so Ultra alone was enough to see nothing.
+
+  For whoever runs the look call: pick **Solid** in the menu, or press
+  `~` from Ultra to flip to the raster view. `rt_bloom` defaults to 2
+  (Medium) so no config change is needed. Worth saying out loud when
+  asking for the look call, because "Ultra is the best tier" is the
+  natural assumption and it is the one tier where this feature is
+  currently invisible.
+
+  Recording it here rather than in DOOM-0345 because it is DOOM-0331 that
+  owes the look call, and this is the trap standing in front of it.
 
 - 📋 [DOOM-0332] **1-D shadow maps for point lights in the rasterised view, exploiting DOOM's flat map.**
   Found reviewing GZDoom at the user's request; feeds DOOM-0170's raster
