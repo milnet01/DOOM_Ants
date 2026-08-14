@@ -520,7 +520,11 @@ struct VulkanState
     bool        profRasterFrame = false;  // last timed frame was raster (routes the readback: raster passes vs RT passes)
     // [0]=sprite-AS [1]=megakernel [2]=denoise+TAAU [3]=blit, then the DOOM-0144
     // sub-breakdown of [2]: [4]=temporal [5]=a-trous [6]=composite [7]=TAAU.
-    double      profMs[8]       = { 0, 0, 0, 0, 0, 0, 0, 0 };
+    // DOOM-0345 R3: ten slots, not eight — the RT chain APPENDS bloom (8) and rt_tonemap
+    // (9) rather than inserting them, because its existing slots are already out of
+    // chronological order (write order 0,1,2,5,6,7,3,4) and renumbering would break
+    // profMs[4..7]. The raster chain still writes 0..6.
+    double      profMs[10]      = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
     int         profFrames      = 0;
     int         profLastReport  = 0;      // I_GetTimeMS of the last printf
 
@@ -1752,7 +1756,7 @@ void CreateCommandsAndSync()
         VkQueryPoolCreateInfo qpci = {};
         qpci.sType      = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
         qpci.queryType  = VK_QUERY_TYPE_TIMESTAMP;
-        qpci.queryCount = 8;
+        qpci.queryCount = 10;   // DOOM-0345 R3: + bloom (8) and rt_tonemap (9) on the RT chain
         Check(vkCreateQueryPool(g.device, &qpci, nullptr, &g.gpuTimerPool),
               "vkCreateQueryPool(timers)");
     }
@@ -9144,7 +9148,7 @@ void RecordRtTrace(uint32_t idx)
     extern int rb_profile;
     const bool prof = rb_profile && g.gpuTimerPool;
     if (prof) {
-        vkCmdResetQueryPool(g.cmd, g.gpuTimerPool, 0, 8);
+        vkCmdResetQueryPool(g.cmd, g.gpuTimerPool, 0, 10);
         vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, g.gpuTimerPool, 0);
     }
 
@@ -9472,6 +9476,22 @@ void RecordRtTrace(uint32_t idx)
         vkCmdDispatch(g.cmd, gx, gy, 1);
         if (prof) vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 7);
 
+        // DOOM-0345 R3 (§5, site 8) — the mode-6, dial-OFF dummy. Slots 8 and 9 are only
+        // WRITTEN on the split path, but they are always RESET, and a reset-but-unwritten
+        // slot returns VK_NOT_READY and drops the WHOLE print — which would kill the
+        // profiler on precisely the `bloom 0` arm the §6 measurement compares against.
+        // Collapsing them onto slot 7 here makes both buckets read ~0 and leaves
+        // profMs[7] = ts[3] - ts[9] still measuring TAAU. This is a SECOND site, not a
+        // duplicate of the !denoise one below: the real slot-5/6/7 writes sit inside this
+        // `if (denoise)` region, so a single block beside them never runs on a !denoise
+        // frame, and a single block sited outside it charges the whole TAAU interval to
+        // profMs[8] on an ordinary mode-6 bloom-0 frame.
+        if (prof && !bloomActive)
+        {
+            vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 8);
+            vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 9);
+        }
+
         // 3b) DOOM-0345 R1 (§4.4) — rt_tonemap: rtHdrImage (+ the blurred bloom, from R2)
         //     -> expose -> tone-map -> encode -> rtImage. Only on the split path; with the
         //     dial off this whole block is skipped and nothing here costs anything.
@@ -9572,6 +9592,12 @@ void RecordRtTrace(uint32_t idx)
                     bloomRt = true;
                 }
             }
+            // DOOM-0345 R3 — slot 8 closes the bloom bucket, and it is UNCONDITIONAL within
+            // this branch rather than paired with the inner guard: a frame where the dial is
+            // on but the chain was skipped (a pipeline or view missing) would otherwise
+            // leave the slot reset-and-unwritten and lose the whole print. Skipped work then
+            // reads ~0 ms, which is the truth.
+            if (prof) vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 8);
 
             struct RtTonemapPC {
                 uint32_t renderExtent[2];
@@ -9597,6 +9623,8 @@ void RecordRtTrace(uint32_t idx)
             vkCmdPushConstants(g.cmd, g.rtTonemapPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT,
                                0, sizeof(tmpc), &tmpc);
             vkCmdDispatch(g.cmd, gx, gy, 1);
+            // DOOM-0345 R3 — slot 9 closes rt_tonemap's bucket and opens TAAU's.
+            if (prof) vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 9);
         }
 
         // 4) temporal upscale (build step 6-d): reconstruct the full display image
@@ -9647,6 +9675,12 @@ void RecordRtTrace(uint32_t idx)
         vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 5);
         vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 6);
         vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 7);
+        // DOOM-0345 R3: 8 and 9 join them. Modes 1-5 run neither bloom nor rt_tonemap and
+        // no TAAU either, so collapsing all five onto the same point is correct — and this
+        // block is LATE (just before slot 3), which is why the mode-6 dial-off case above
+        // needs a site of its own rather than sharing this one.
+        vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 8);
+        vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 9);
     }
     if (prof) vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 3);
 
@@ -10188,12 +10222,16 @@ extern "C" void RB_Vulkan_Present(void)
     // profRasterFrame) / opt-in.
     if (g.gpuTimersInUse && g.gpuTimerPool)
     {
-        uint64_t ts[8] = {};
+        uint64_t ts[10] = {};
         // Read only the slots the timed path actually wrote: raster wrote 7 (0..6, DOOM-0331 L4
-        // added the bloom bucket), RT wrote 8 (0..7). Querying an unwritten-but-reset slot returns
+        // added the bloom bucket), RT wrote 10 (0..9, DOOM-0345 R3 appending bloom and
+        // rt_tonemap). Querying an unwritten-but-reset slot returns
         // VK_NOT_READY and drops the whole print, so the count must match the path
-        // (profRasterFrame, set when the frame recorded).
-        uint32_t nq = g.profRasterFrame ? 7u : 8u;
+        // (profRasterFrame, set when the frame recorded). This array is a fixed stack
+        // buffer vkGetQueryPoolResults writes nq*8 bytes into — widening `nq` without
+        // widening it is a silent overflow, which is why DOOM-0011's fix ledger row 9.4
+        // names it.
+        uint32_t nq = g.profRasterFrame ? 7u : 10u;
         if (vkGetQueryPoolResults(g.device, g.gpuTimerPool, 0, nq, nq * sizeof(uint64_t), ts,
                 sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS)
         {
@@ -10216,13 +10254,21 @@ extern "C" void RB_Vulkan_Present(void)
             {
                 g.profMs[0] += (double)(ts[1] - ts[0]) * k;   // sprite BLAS/TLAS rebuild
                 g.profMs[1] += (double)(ts[2] - ts[1]) * k;   // megakernel trace
-                g.profMs[2] += (double)(ts[3] - ts[2]) * k;   // denoiser chain + TAAU
+                // DOOM-0345 R3: this umbrella bucket now also spans bloom and rt_tonemap,
+                // so its printed word changed with it — leave it saying "denoise+taau" and
+                // the two new buckets below read as double-counted.
+                g.profMs[2] += (double)(ts[3] - ts[2]) * k;   // denoise + bloom + tonemap + TAAU
                 g.profMs[3] += (double)(ts[4] - ts[3]) * k;   // label + blit + present
-                // DOOM-0144 sub-breakdown of the denoise+TAAU bucket:
+                // DOOM-0144 sub-breakdown of that bucket, DOOM-0345 R3 extending it:
                 g.profMs[4] += (double)(ts[5] - ts[2]) * k;   // temporal accumulation
                 g.profMs[5] += (double)(ts[6] - ts[5]) * k;   // a-trous (4 iterations)
                 g.profMs[6] += (double)(ts[7] - ts[6]) * k;   // composite
-                g.profMs[7] += (double)(ts[3] - ts[7]) * k;   // TAAU upscale (display res)
+                // TAAU's interval MOVES with the append: ts[3] - ts[7] would now span bloom
+                // and rt_tonemap as well, which is exactly the silent absorption INV-7
+                // exists to catch. It ends at slot 9, and the two new buckets fill the gap.
+                g.profMs[8] += (double)(ts[8] - ts[7]) * k;   // bloom extract + blur (RT)
+                g.profMs[9] += (double)(ts[9] - ts[8]) * k;   // rt_tonemap (expose + combine)
+                g.profMs[7] += (double)(ts[3] - ts[9]) * k;   // TAAU upscale (display res)
             }
             g.profFrames++;
             int now = I_GetTimeMS();
@@ -10243,15 +10289,24 @@ extern "C" void RB_Vulkan_Present(void)
                 else
                 {
                     int omni = (int)g.emitCount - (int)g.staticWgt.size();
+                    // DOOM-0345 R3: ten buckets, not eight. Format string and argument list
+                    // widen TOGETHER — widening one alone prints a plausible, WRONG table
+                    // that a performance gate would then read as fact. The umbrella is
+                    // renamed "denoise+post+taau" because its interval now also spans bloom
+                    // and rt_tonemap; "post" rather than "bloom" so the word `bloom` still
+                    // appears exactly once in this print, which is what INV-7's last grep
+                    // counts, and because the umbrella covers rt_tonemap too.
                     printf("[rt_profile] %3d fps | sprites %.2f | megakernel %.2f | "
-                           "denoise+taau %.2f (temporal %.2f, atrous %.2f, composite %.2f, "
-                           "taau %.2f) | blit %.2f ms | omni %d/%d lights (avg/frame, RT GPU only)\n",
+                           "denoise+post+taau %.2f (temporal %.2f, atrous %.2f, composite %.2f, "
+                           "bloom %.2f, tonemap %.2f, taau %.2f) | blit %.2f ms | "
+                           "omni %d/%d lights (avg/frame, RT GPU only)\n",
                            g.profFrames, g.profMs[0] * f, g.profMs[1] * f, g.profMs[2] * f,
-                           g.profMs[4] * f, g.profMs[5] * f, g.profMs[6] * f, g.profMs[7] * f,
+                           g.profMs[4] * f, g.profMs[5] * f, g.profMs[6] * f,
+                           g.profMs[8] * f, g.profMs[9] * f, g.profMs[7] * f,
                            g.profMs[3] * f, omni < 0 ? 0 : omni, (int)g.emitCount);
                 }
                 fflush(stdout);
-                for (int pi = 0; pi < 8; pi++) g.profMs[pi] = 0.0;
+                for (int pi = 0; pi < 10; pi++) g.profMs[pi] = 0.0;
                 g.profFrames = 0;
                 g.profLastReport = now;
             }
@@ -10413,7 +10468,7 @@ extern "C" void RB_Vulkan_Present(void)
     // exclusive per frame, so they never collide.
     const bool rprof = rb_profile && g.gpuTimerPool;
     if (rprof) {
-        vkCmdResetQueryPool(g.cmd, g.gpuTimerPool, 0, 8);
+        vkCmdResetQueryPool(g.cmd, g.gpuTimerPool, 0, 10);
         vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, g.gpuTimerPool, 0);
     }
 
