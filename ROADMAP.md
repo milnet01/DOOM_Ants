@@ -1468,6 +1468,37 @@ with friends.
   arms, against ~11 hangs expected at the old rate. The original bug was
   measured in both arms at the same rate, so both are closed.
 
+- 📋 [DOOM-0351] **No headless route to the Solid + ray-traced-view combination, so a per-chain look A/B cannot be measured.**
+  Found taking DOOM-0345 section 10 Q2's measurement, which asks whether the
+  same coordinate blooms the same on both chains. The three reachable
+  configurations are Classic, Solid-raster and Ultra-RT -- and the last of
+  those changes the ART as well as the chain, because EnsureHdMaterials
+  loads the HD set only on Ultra. So the measurement that actually
+  isolates the chain, Solid with the Ray Tracing row ON, is the one that
+  cannot be taken.
+
+  Why it is unreachable: r_backend.c:332-333 forces rb_rtdebug from the
+  tier at selection (Solid -> 0, Ultra -> 6), so a config carrying
+  `renderer 2` + `rt_view 6` is overridden at startup -- verified, the
+  [raster_profile] print appears rather than [rt_profile]. The `~` key and
+  the menu's Ray Tracing row are runtime-only, and Claude cannot inject
+  keystrokes under Wayland. -shotverify does pin rb_rtdebug = 6, but it
+  pins the whole canonical config with it, which is exactly wrong for an
+  A/B over one toggle (DOOM-0303's own reasoning).
+
+  Shape of the fix: a `-rtview N` parm applied AFTER the tier selection,
+  the same way -devshot is armed from argv, pinning nothing else. It would
+  also give the modes-1-4 profiler arm a headless route -- verifying
+  DOOM-0345 R3's !denoise dummy block needed a temporary source edit for
+  want of one.
+
+  Not urgent: it blocks a comparison, not a feature. Worth doing before
+  the next per-chain look question, of which DOOM-0331 section 10 Q3 is
+  already one.
+  **Layman:** The test harness can photograph the fast view and the ray-traced view, but not the one combination that would let us compare the two fairly — someone has to do that one by hand.
+  Kind: test.
+  Source: in-session-2026-08-14 (DOOM-0345 R3, blocked look-call measurement).
+
 ## Phase 2 — The Spin
 
 The creative overhaul: evolve the renderer toward true 3D with hardware
@@ -9032,6 +9063,42 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   Recording it here rather than in DOOM-0345 because it is DOOM-0331 that
   owes the look call, and this is the trap standing in front of it.
+  Progress (2026-08-14): **the -shotcompare golden re-bless was never
+  this feature's to owe, and the "STILL OWED" line above is wrong on that
+  point.** Corrected here rather than in the spec, for the reason at the
+  end.
+
+  The golden is `linuxdoom-1.10/tests/goldens/e1m1_ultra_rt.png` and
+  -shotverify/-shotcompare capture the **Ultra ray-traced** view: the
+  DOOM-0208 canonical pin sets `rb_rtdebug = 6` (r_vulkan.cpp:10351), so
+  the capture frame takes the `if (rtActive)` arm at r_vulkan.cpp:10432 --
+  RecordRtTrace + RecordRtOverlay -- and the `else` branch that closes at
+  r_vulkan.cpp:10930 never executes. Every DOOM-0331 bloom dispatch lives
+  inside that `else` (the chain starts at r_vulkan.cpp:10491). So pinning
+  `rb_bloom = 2` in the golden config changes the extract, the blur and
+  the combine that the golden frame does not run, and moves the stored
+  image by exactly zero.
+
+  What IS owed against that golden: rt_fog, from before this feature (the
+  pin block's own comment records it), and now **DOOM-0345**, whose R2
+  puts a real halo on the ray-traced view -- the one chain the golden
+  photographs. Both are DOOM-0202's decision to grant, as both specs say.
+
+  The claim came from this spec's section 12, which reasoned that shipping
+  `bloom = 2` by default plus INV-7's pin "means every -shotcompare run
+  differs from the stored golden". True of the pin in general, false of
+  this feature: DOOM-0345's own section 12 gets it right in passing when
+  it says "the golden is captured in the RT view, so this spec moves it
+  further than DOOM-0331 does".
+
+  **Deliberately not edited in the spec.** The clause is now moot rather
+  than merely wrong -- DOOM-0345 shipped the same day and a re-bless IS
+  owed against that golden, so nobody conforming to section 12 would now
+  do anything different. Editing it would re-arm rule 14's gate for a line
+  that no longer changes what anyone builds. Recorded here, where a future
+  session actually reads it. The empirical version of this proof is no
+  longer available, incidentally: with DOOM-0345 live, a bloom-on/off pair
+  of -shotcompare captures moves for 0345's reasons.
 
 - 📋 [DOOM-0332] **1-D shadow maps for point lights in the rasterised view, exploiting DOOM's flat map.**
   Found reviewing GZDoom at the user's request; feeds DOOM-0170's raster
@@ -9689,6 +9756,55 @@ parked ideas (💭 considered) until we commit to and design each one.
   was chosen by argument rather than measurement and that nothing checks
   it -- this is the measurement, and it is the same shape as DOOM-0331's
   own 7 clause. Next: R2 (the extract and the combine).
+  Progress (2026-08-14): **R2 and R3 SHIPPED (1dc9d3e, 62e99e7). The build
+  is complete; what is left is a human look call.**
+
+  R2 -- bloom_extract_rt.comp (sky masked by the alpha flag, no exposure
+  term, DOOM-0331's blur reused unmodified) and the combine going live.
+  Measured at E1M1 1056 -3616 270, Ultra RT, 50% scale, with the control
+  the harness actually asks for (a second capture of the ON arm): SIGNAL
+  6.16/255 max 224.7, 7.1% of pixels moved; NOISE 0.02/255; EFFECT
+  368,893 px. INV-5 proved harder than the spec's own test asks -- over
+  the sky region a bloom 3 vs bloom 2 capture is BIT-IDENTICAL (max 0,
+  0.00% moved) while the same frame's world strip moves 86% of its pixels
+  on that preset change.
+
+  R3 -- the pool widened 8 -> 10, all nine sites, TAAU's interval moved
+  to ts[3] - ts[9] so it cannot absorb the new passes, and both dummy
+  blocks verified BY RUN rather than by argument (mode 6 dial-off, and
+  modes 1-4 via a temporarily forced rb_rtdebug -- there is no headless
+  route to those, see the new bullet below).
+
+  **Section 6 / INV-9: the budget is cleared on every candidate
+  numerator.** RX 6600, Ultra RT, 50% scale, E1M1 1056 -3616 270, four
+  steady-state print pairs per arm: bloom 2 = 49 fps, present-total 20.05
+  ms, bloom 0.19-0.20 ms, rt_tonemap 0.13 ms; bloom 0 = 49-50 fps,
+  present-total 19.91 ms, both buckets 0.00. That is 1.6% against the two
+  new buckets, 2.1% against the arms' GPU delta and 0.7% against frame
+  time, so the numerator question DOOM-0331's INV-5 had to settle does
+  not arise here. The sub-buckets sum EXACTLY to their umbrella in both
+  arms, which is the arithmetic proof that nothing is silently absorbed.
+
+  **Section 10 Q2, the half assigned to Claude, is measured -- and the
+  answer is that the two chains do NOT currently agree.** At the same
+  coordinate and the same shipped preset: Ultra RT moves 48 of 96 blocks
+  with a peak block delta of 22.9/255; Solid raster moves NONE above 1.0
+  (peak block 0.2). Two further Solid spots (the courtyard 1800 -3200 0
+  and the nukage room 3274 -3353 200) read mean 0.00 with under 0.1% of
+  pixels moving. **The measurement is confounded and says so:** the Ultra
+  arm carries HD art as well as the RT chain, and both push the same way.
+  Isolating the chain needs Solid with the Ray Tracing row ON, which is
+  not reachable headlessly (see below), so the split between "the RT
+  chain blooms more" and "the HD art is brighter" is the user's to judge
+  by eye. This is the RT arm of DOOM-0331 section 10 Q3, and its answer
+  belongs there; INV-8 says the remedy, if one is wanted, is a named
+  per-chain scale constant and never a second preset table.
+
+  STILL OWED before the bullet flips: the look call on hardware (Q1 --
+  does TAAU smear a muzzle flash's halo into afterglow or ghosting; Q2 --
+  do the two chains feel like one feature), then the -shotcompare golden
+  re-bless, which is DOOM-0202's to grant and not this feature's, then
+  CHANGELOG.
 
 - 📋 [DOOM-0346] **Record the house spec section order so the structure check stops declining to run.**
   `spec_lint` returns `sections_checked: false` on every spec in
