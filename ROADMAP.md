@@ -1468,7 +1468,7 @@ with friends.
   arms, against ~11 hangs expected at the old rate. The original bug was
   measured in both arms at the same rate, so both are closed.
 
-- 📋 [DOOM-0351] **No headless route to the Solid + ray-traced-view combination, so a per-chain look A/B cannot be measured.**
+- ✅ [DOOM-0351] **No headless route to the Solid + ray-traced-view combination, so a per-chain look A/B cannot be measured.**
   Found taking DOOM-0345 section 10 Q2's measurement, which asks whether the
   same coordinate blooms the same on both chains. The three reachable
   configurations are Classic, Solid-raster and Ultra-RT -- and the last of
@@ -1498,6 +1498,21 @@ with friends.
   **Layman:** The test harness can photograph the fast view and the ray-traced view, but not the one combination that would let us compare the two fairly — someone has to do that one by hand.
   Kind: test.
   Source: in-session-2026-08-14 (DOOM-0345 R3, blocked look-call measurement).
+  Resolved (2026-08-14, d67085b): `-rtview N` in RB_ApplyTierRt, applied
+  after the tier default so it wins and pinning nothing else. Accepts
+  {0,1,2,3,4,6}; 5 is the verify-only path and an out-of-range value is
+  ignored rather than clamped, so a typo leaves the tier default.
+
+  Verified: `-rtview 6` on Solid prints [rt_profile] with the bloom bucket
+  timed and no `HD load done` line -- the paletted-art RT arm. `-rtview 3`
+  and `-rtview 99` both boot clean. make + make test green.
+
+  It answered its motivating question the same hour. E1M1 1056 -3616 270,
+  shipped Medium preset, bloom 2 vs bloom 0 in each configuration:
+  Solid+raster (paletted) peak block 0.2/255 and 0 of 96 blocks blooming;
+  Solid+RT (paletted) peak 20.5 and 48 of 96; Ultra+RT (HD art) peak 22.9
+  and 48 of 96. The chain accounts for essentially all of it and the HD
+  art for about 11% on top -- recorded against DOOM-0331 section 10 Q3.
 
 ## Phase 2 — The Spin
 
@@ -9099,6 +9114,35 @@ parked ideas (💭 considered) until we commit to and design each one.
   session actually reads it. The empirical version of this proof is no
   longer available, incidentally: with DOOM-0345 live, a bloom-on/off pair
   of -shotcompare captures moves for 0345's reasons.
+  Progress (2026-08-14): **section 10 Q3 has its measurement, and the
+  confound is gone -- the two chains disagree because of the CHAIN, not
+  the art.** DOOM-0351's new `-rtview` parm made the missing arm
+  photographable: Solid with the ray-traced view on, which keeps the
+  paletted art and changes only the chain.
+
+  E1M1 1056 -3616 270, the shipped Medium preset, bloom 2 vs bloom 0 in
+  each configuration, block map over the 12x8 grid:
+
+    Solid + raster (paletted) : peak block  0.2/255,  0 of 96 blocks
+    Solid + RT     (paletted) : peak block 20.5/255, 48 of 96 blocks
+    Ultra + RT     (HD art)   : peak block 22.9/255, 48 of 96 blocks
+
+  Two further raster spots agree with the first row: the courtyard
+  (1800 -3200 0) and the nukage room (3274 -3353 200) both read mean 0.00
+  with under 0.1% of pixels moving. So at the shipped preset the halo is
+  strong on the traced view and all but invisible on the rasterised one,
+  and HD art contributes only ~11% on top of the traced result.
+
+  The likely cause is the one L3 already measured from the other end: the
+  raster recombination's ceiling over ordinary art is ~1.35, and the
+  preset's soft knee was tuned to leave that alone, while path-traced
+  radiance around an emitter goes far higher. The remedy, if the user
+  wants the two to agree, is DOOM-0345 INV-8's: a named per-chain scale
+  constant, never a second preset table.
+
+  Not a defect and not fixed -- Q3 is a look question and this is the
+  measurement it was waiting on. The judgement is the user's, at the same
+  sitting as the Q1/Q2 look call.
 
 - 📋 [DOOM-0332] **1-D shadow maps for point lights in the rasterised view, exploiting DOOM's flat map.**
   Found reviewing GZDoom at the user's request; feeds DOOM-0170's raster
