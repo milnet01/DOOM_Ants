@@ -127,6 +127,8 @@ static_assert(sizeof(rb_matctrl_t) == 40, "rb_matctrl_t must be 40 bytes (std430
 #include "shaders/taau.comp.spv.h"
 #include "shaders/bloom_extract_raster.comp.spv.h"   // DOOM-0331 L2: raster bright pass
 #include "shaders/bloom_blur.comp.spv.h"             // DOOM-0331 L3: separable blur (both chains)
+#include "shaders/svgf_composite_split.comp.spv.h"   // DOOM-0345 R1: composite, -DBLOOM_SPLIT
+#include "shaders/rt_tonemap.comp.spv.h"             // DOOM-0345 R1: RT expose + tone-map + combine
 #include "assets/Oxanium-SemiBold.ttf.h"    // DOOM-0206 L4: bundled OFL menu font (oxanium_ttf[])
 
 // Tier values returned by RB_VulkanProbe — kept numerically in lockstep with
@@ -794,6 +796,16 @@ struct VulkanState
     VkImage               rtImage    = VK_NULL_HANDLE;   // R8G8B8A8 storage target
     VkDeviceMemory        rtMemory   = VK_NULL_HANDLE;
     VkImageView           rtView     = VK_NULL_HANDLE;
+    // DOOM-0345 R1 (§5) — the HDR intermediate the tone-map split writes. Same size as
+    // rtImage (swapchain-sized, because rb_renderscale changes per frame from the menu and
+    // a render-res allocation would have to be recreated mid-play), kSceneFormat so it can
+    // hold radiance above white, STORAGE only — both readers use imageLoad, so it lives its
+    // whole life in GENERAL and is never transitioned to SHADER_READ_ONLY_OPTIMAL. Written
+    // ONLY on the split path (rb_bloom > 0 && rb_rtdebug == 6): allocated either way,
+    // because per-frame reallocation is not cheap and an allocation is.
+    VkImage               rtHdrImage  = VK_NULL_HANDLE;
+    VkDeviceMemory        rtHdrMemory = VK_NULL_HANDLE;
+    VkImageView           rtHdrView   = VK_NULL_HANDLE;
     VkDescriptorSetLayout rtDsLayout = VK_NULL_HANDLE;
     VkDescriptorPool      rtDsPool   = VK_NULL_HANDLE;
     VkDescriptorSet       rtDs       = VK_NULL_HANDLE;
@@ -932,6 +944,23 @@ struct VulkanState
     // label shader). Allocated with svgfDs; its binding 7 is written by the TAAU
     // descriptor write (after the TAAU output exists).
     VkDescriptorSet       labelTaauDs     = VK_NULL_HANDLE;
+    // DOOM-0345 R1 (§5) — the tone-map split. `svgfCompositeSplit` is the same
+    // svgf_composite.comp built with -DBLOOM_SPLIT (stores unexposed linear radiance
+    // instead of tone-mapping in place); `svgfSplitDs` is a THIRD set on the same layout
+    // whose binding 7 points at rtHdrView rather than rtView — the labelTaauDs pattern, one
+    // binding retargeted at a different image, layout-compatible with the same pipeline
+    // layout. Both are used only while the bloom dial is on, so Off runs the un-split
+    // pipeline exactly as before (INV-1).
+    VkPipeline            svgfCompositeSplit = VK_NULL_HANDLE;
+    VkDescriptorSet       svgfSplitDs        = VK_NULL_HANDLE;
+    // DOOM-0345 R1 (§4.4) — rt_tonemap.comp: rtHdrImage + bloom -> expose -> tone-map ->
+    // rtImage. Its own small set (b0 = rtHdrImage, b1 = rtImage, b2 = the blurred bloom
+    // sampled through the composite sampler) and a 16-byte push.
+    VkDescriptorSetLayout rtTonemapDsLayout   = VK_NULL_HANDLE;
+    VkDescriptorPool      rtTonemapDsPool     = VK_NULL_HANDLE;
+    VkDescriptorSet       rtTonemapDs         = VK_NULL_HANDLE;
+    VkPipelineLayout      rtTonemapPipeLayout = VK_NULL_HANDLE;
+    VkPipeline            rtTonemapPipeline   = VK_NULL_HANDLE;
 
     // Temporal upscaler (DOOM-0009 build step 6-d). Display-resolution history +
     // output images, one descriptor set, one compute pipeline. Active only on the
@@ -2801,14 +2830,16 @@ void CreateSvgfDescriptorLayout()
     Check(vkCreateDescriptorSetLayout(g.device, &dlci, nullptr, &g.svgfDsLayout),
           "vkCreateDescriptorSetLayout(svgf)");
 
-    // Two sets from this layout: svgfDs (the denoiser chain) + labelTaauDs (the
-    // label-on-upscaled-output variant, binding 7 retargeted in WriteTaauDescriptor).
+    // Three sets from this layout: svgfDs (the denoiser chain), labelTaauDs (the
+    // label-on-upscaled-output variant, binding 7 retargeted in WriteTaauDescriptor) and
+    // DOOM-0345 R1's svgfSplitDs (binding 7 retargeted at rtHdrImage for the -DBLOOM_SPLIT
+    // composite; written in WriteSvgfDescriptor alongside svgfDs).
     VkDescriptorPoolSize pool = {};
     pool.type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    pool.descriptorCount = total * 2;
+    pool.descriptorCount = total * 3;
     VkDescriptorPoolCreateInfo pci = {};
     pci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pci.maxSets       = 2;
+    pci.maxSets       = 3;
     pci.poolSizeCount = 1;
     pci.pPoolSizes    = &pool;
     Check(vkCreateDescriptorPool(g.device, &pci, nullptr, &g.svgfDsPool),
@@ -2821,6 +2852,7 @@ void CreateSvgfDescriptorLayout()
     dai.pSetLayouts        = &g.svgfDsLayout;
     Check(vkAllocateDescriptorSets(g.device, &dai, &g.svgfDs), "vkAllocateDescriptorSets(svgf)");
     Check(vkAllocateDescriptorSets(g.device, &dai, &g.labelTaauDs), "vkAllocateDescriptorSets(labelTaau)");
+    Check(vkAllocateDescriptorSets(g.device, &dai, &g.svgfSplitDs), "vkAllocateDescriptorSets(svgfSplit)");
 }
 
 // The three SVGF compute pipelines (temporal accumulation, edge-aware a-trous,
@@ -2841,10 +2873,14 @@ void CreateSvgfPipelines()
     Check(vkCreatePipelineLayout(g.device, &plci, nullptr, &g.svgfPipeLayout),
           "vkCreatePipelineLayout(svgf)");
 
-    struct { const unsigned char* code; unsigned len; VkPipeline* out; } passes[3] = {
+    // DOOM-0345 R1: the fourth entry is the SAME composite source built with
+    // -DBLOOM_SPLIT. Same pipeline layout and same push block — only the surface store and
+    // binding 7's format qualifier differ — so it binds interchangeably with the third.
+    struct { const unsigned char* code; unsigned len; VkPipeline* out; } passes[4] = {
         { svgf_temporal_comp_spv,  svgf_temporal_comp_spv_len,  &g.svgfTemporal  },
         { svgf_atrous_comp_spv,    svgf_atrous_comp_spv_len,    &g.svgfAtrous    },
         { svgf_composite_comp_spv, svgf_composite_comp_spv_len, &g.svgfComposite },
+        { svgf_composite_split_comp_spv, svgf_composite_split_comp_spv_len, &g.svgfCompositeSplit },
     };
     for (auto& p : passes) {
         VkShaderModule cs = MakeShader(p.code, p.len);
@@ -2859,6 +2895,76 @@ void CreateSvgfPipelines()
               "vkCreateComputePipelines(svgf)");
         vkDestroyShaderModule(g.device, cs, nullptr);
     }
+}
+
+// DOOM-0345 R1 (§4.4/§5) — rt_tonemap.comp's pipeline. Three bindings: b0 = rtHdrImage
+// (storage, imageLoad), b1 = rtImage (storage, imageStore), b2 = the blurred bloom
+// (bloomImage[2]) as a combined image sampler through the composite's linear+clamp sampler,
+// so a quarter-res halo upscales smoothly — the same fetch the raster combine makes.
+// Created once (the images behind it are re-pointed on resize by UpdateRtTonemapDescriptor).
+void CreateRtTonemapPipeline()
+{
+    VkDescriptorSetLayoutBinding b[3] = {};
+    for (uint32_t i = 0; i < 3; i++) {
+        b[i].binding         = i;
+        b[i].descriptorCount = 1;
+        b[i].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+        b[i].descriptorType  = (i < 2) ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
+                                       : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    }
+    VkDescriptorSetLayoutCreateInfo dlci = {};
+    dlci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    dlci.bindingCount = 3;
+    dlci.pBindings    = b;
+    Check(vkCreateDescriptorSetLayout(g.device, &dlci, nullptr, &g.rtTonemapDsLayout),
+          "vkCreateDescriptorSetLayout(rtTonemap)");
+
+    VkDescriptorPoolSize ps[2] = {};
+    ps[0].type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    ps[0].descriptorCount = 2;
+    ps[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    ps[1].descriptorCount = 1;
+    VkDescriptorPoolCreateInfo pci = {};
+    pci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pci.maxSets       = 1;
+    pci.poolSizeCount = 2;
+    pci.pPoolSizes    = ps;
+    Check(vkCreateDescriptorPool(g.device, &pci, nullptr, &g.rtTonemapDsPool),
+          "vkCreateDescriptorPool(rtTonemap)");
+
+    VkDescriptorSetAllocateInfo dai = {};
+    dai.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dai.descriptorPool     = g.rtTonemapDsPool;
+    dai.descriptorSetCount = 1;
+    dai.pSetLayouts        = &g.rtTonemapDsLayout;
+    Check(vkAllocateDescriptorSets(g.device, &dai, &g.rtTonemapDs),
+          "vkAllocateDescriptorSets(rtTonemap)");
+
+    VkPushConstantRange pcr = {};
+    pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pcr.offset     = 0;
+    pcr.size       = 16;                         // uvec2 renderExtent + float intensity + float ev
+    VkPipelineLayoutCreateInfo plci = {};
+    plci.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plci.setLayoutCount         = 1;
+    plci.pSetLayouts            = &g.rtTonemapDsLayout;
+    plci.pushConstantRangeCount = 1;
+    plci.pPushConstantRanges    = &pcr;
+    Check(vkCreatePipelineLayout(g.device, &plci, nullptr, &g.rtTonemapPipeLayout),
+          "vkCreatePipelineLayout(rtTonemap)");
+
+    VkShaderModule cs = MakeShader(rt_tonemap_comp_spv, rt_tonemap_comp_spv_len);
+    VkComputePipelineCreateInfo cpci = {};
+    cpci.sType        = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    cpci.stage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    cpci.stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
+    cpci.stage.module = cs;
+    cpci.stage.pName  = "main";
+    cpci.layout       = g.rtTonemapPipeLayout;
+    Check(vkCreateComputePipelines(g.device, VK_NULL_HANDLE, 1, &cpci, nullptr,
+                                   &g.rtTonemapPipeline),
+          "vkCreateComputePipelines(rtTonemap)");
+    vkDestroyShaderModule(g.device, cs, nullptr);
 }
 
 // On-screen RT mode label pipeline (debug). Re-uses svgfDsLayout (it already binds
@@ -3160,6 +3266,57 @@ void WriteSvgfDescriptor()
         wr[i].pImageInfo      = &info[map[i].first];
     }
     vkUpdateDescriptorSets(g.device, 10, wr, 0, nullptr);
+
+    // DOOM-0345 R1 (§5) — svgfSplitDs: the same ten bindings, with binding 7 pointed at
+    // rtHdrImage instead of rtImage. Written here rather than in its own pass so the two
+    // sets can never disagree about the other nine; every binding is written, because a
+    // partially-written set is a validation error at bind time. rtHdrView is created in
+    // CreateRtTargets ahead of the CreateSvgfTargets call that reaches this, so it is live
+    // by now — the guard is belt-and-braces for a future reorder.
+    if (!g.svgfSplitDs || !g.rtHdrView)
+        return;
+    VkDescriptorImageInfo hdr = {};
+    hdr.imageView   = g.rtHdrView;
+    hdr.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    VkWriteDescriptorSet swr[10] = {};
+    for (int i = 0; i < 10; i++) {
+        swr[i]        = wr[i];
+        swr[i].dstSet = g.svgfSplitDs;
+        if (map[i].binding == 7)
+            swr[i].pImageInfo = &hdr;
+    }
+    vkUpdateDescriptorSets(g.device, 10, swr, 0, nullptr);
+}
+
+// DOOM-0345 R1 (§4.4) — point rt_tonemap's set at the current views. Its three images come
+// out of two different create paths (rtHdrImage/rtImage with the swapchain, bloomImage[2]
+// with the scene targets), so this is called from both and early-outs until all three
+// exist — the UpdateRtComputeDescriptor pattern.
+void UpdateRtTonemapDescriptor()
+{
+    if (!g.rtTonemapDs || !g.rtHdrView || !g.rtView || !g.bloomView[2] || !g.compositeSampler)
+        return;
+
+    VkDescriptorImageInfo ii[3] = {};
+    ii[0].imageView   = g.rtHdrView;                             // b0: read, GENERAL
+    ii[0].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    ii[1].imageView   = g.rtView;                                // b1: write, GENERAL
+    ii[1].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    ii[2].sampler     = g.compositeSampler;                      // b2: the blurred bloom
+    ii[2].imageView   = g.bloomView[2];
+    ii[2].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkWriteDescriptorSet w[3] = {};
+    for (uint32_t i = 0; i < 3; i++) {
+        w[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        w[i].dstSet          = g.rtTonemapDs;
+        w[i].dstBinding      = i;
+        w[i].descriptorCount = 1;
+        w[i].descriptorType  = (i < 2) ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
+                                       : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        w[i].pImageInfo      = &ii[i];
+    }
+    vkUpdateDescriptorSets(g.device, 3, w, 0, nullptr);
 }
 
 void DestroySvgfTargets()
@@ -3443,9 +3600,48 @@ void CreateRtTargets()
     vci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
     Check(vkCreateImageView(g.device, &vci, nullptr, &g.rtView), "vkCreateImageView(rt)");
 
+    // DOOM-0345 R1 (§5) — the HDR intermediate, alongside rtImage and the same size.
+    // STORAGE only: both readers use imageLoad, so it never needs SAMPLED and never leaves
+    // GENERAL. Created BEFORE CreateSvgfTargets, whose descriptor write points the split
+    // set's binding 7 at this view.
+    ici.format = VulkanState::kSceneFormat;
+    ici.usage  = VK_IMAGE_USAGE_STORAGE_BIT;
+    Check(vkCreateImage(g.device, &ici, nullptr, &g.rtHdrImage), "vkCreateImage(rtHdr)");
+    vkGetImageMemoryRequirements(g.device, g.rtHdrImage, &req);
+    mai.allocationSize  = req.size;
+    mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    Check(vkAllocateMemory(g.device, &mai, nullptr, &g.rtHdrMemory), "vkAllocateMemory(rtHdr)");
+    Check(vkBindImageMemory(g.device, g.rtHdrImage, g.rtHdrMemory, 0), "vkBindImageMemory(rtHdr)");
+    vci.image  = g.rtHdrImage;
+    vci.format = VulkanState::kSceneFormat;
+    Check(vkCreateImageView(g.device, &vci, nullptr, &g.rtHdrView), "vkCreateImageView(rtHdr)");
+
+    // One-time UNDEFINED -> GENERAL park, the same shape as DOOM-0331's bloom targets. A
+    // freshly created image is UNDEFINED and the first split frame's store into it would
+    // otherwise be invalid — on a path INV-1 never exercises, since `bloom 0` never touches
+    // this image at all.
+    {
+        VkCommandBuffer cb = BeginOneTime();
+        VkImageMemoryBarrier bar = {};
+        bar.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        bar.oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED;
+        bar.newLayout           = VK_IMAGE_LAYOUT_GENERAL;
+        bar.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        bar.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        bar.image               = g.rtHdrImage;
+        bar.subresourceRange    = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        bar.srcAccessMask       = 0;
+        bar.dstAccessMask       = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+                             0, nullptr, 0, nullptr, 1, &bar);
+        EndOneTime(cb);
+    }
+
     UpdateRtComputeDescriptor();   // re-point the storage-image half at the new view
     CreateSvgfTargets();           // SVGF G-buffer/history (binding 7 re-uses rtView)
     CreateTaauTargets();           // 6-d upscaler history/output (reads rtView + SV_MOTION)
+    UpdateRtTonemapDescriptor();   // DOOM-0345 R1: rtHdrImage + rtImage half of that set
 }
 
 void DestroyRtTargets()
@@ -3455,6 +3651,10 @@ void DestroyRtTargets()
     if (g.rtView)   { vkDestroyImageView(g.device, g.rtView, nullptr);  g.rtView = VK_NULL_HANDLE; }
     if (g.rtImage)  { vkDestroyImage(g.device, g.rtImage, nullptr);     g.rtImage = VK_NULL_HANDLE; }
     if (g.rtMemory) { vkFreeMemory(g.device, g.rtMemory, nullptr);      g.rtMemory = VK_NULL_HANDLE; }
+    // DOOM-0345 R1 — the HDR intermediate rides rtImage's lifetime exactly.
+    if (g.rtHdrView)   { vkDestroyImageView(g.device, g.rtHdrView, nullptr); g.rtHdrView = VK_NULL_HANDLE; }
+    if (g.rtHdrImage)  { vkDestroyImage(g.device, g.rtHdrImage, nullptr);    g.rtHdrImage = VK_NULL_HANDLE; }
+    if (g.rtHdrMemory) { vkFreeMemory(g.device, g.rtHdrMemory, nullptr);     g.rtHdrMemory = VK_NULL_HANDLE; }
 }
 
 void UpdateRtComputeDescriptor()
@@ -5036,6 +5236,11 @@ void UpdateCompositeDescriptor()
     // The SSAO pass's own set samples the DIRECT target for the packed depth.
     w[4] = w[0]; w[4].dstSet = g.ssaoDs; w[4].dstBinding = 0; w[4].pImageInfo = &ii[1];
     vkUpdateDescriptorSets(g.device, 5, w, 0, nullptr);
+
+    // DOOM-0345 R1: bloomImage[2] is rt_tonemap's third binding and is recreated here, on
+    // the scene-target path, while its other two come from CreateRtTargets. Re-point from
+    // both; the write early-outs until every view exists.
+    UpdateRtTonemapDescriptor();
 
     // DOOM-0331 L2 — the bright pass reads the same three targets through the same sampler
     // (bindings 0/1/2, so its fetches match the composite's) and writes bloomImage[0] as a
@@ -7248,6 +7453,7 @@ extern "C" void RB_Vulkan_Init(void)
         CreateSvgfPipelines();         // denoiser passes (step 6); needs svgfDsLayout
         CreateLabelPipeline();         // on-screen mode label (debug); reuses svgfDsLayout
         CreateTaauPipeline();          // 6-d temporal upscaler; needs its own set + pipeline
+        CreateRtTonemapPipeline();     // DOOM-0345 R1: the split's second half (before the images)
         CreateRtTargets();             // rt + svgf + taau images; writes the descriptor sets
     }
     g.ready = true;
@@ -9032,6 +9238,16 @@ void RecordRtTrace(uint32_t idx)
     // half into gpos[parity]/gnorm[parity]; the temporal pass reprojects last
     // frame's [parity^1]. Parity advances once per denoised frame (end of this fn).
     const bool     denoise    = (rb_rtdebug == 6);
+    // DOOM-0345 R1 (§4.4) — the one condition the whole feature is gated on, written once
+    // and reused, so the split, the dispatches and (at R3) the profiler's dummy block can
+    // never drift apart. `denoise` is the rb_rtdebug == 6 half: rtActive is true for the
+    // debug views 1-4 as well, and those either tone-map inside pathtrace.comp (mode 4) or
+    // never tone-map at all, so neither wants this chain. The pipeline/set tests are the
+    // usual "created?" guards — a missing one falls back to the un-split path rather than
+    // dropping the frame.
+    const bool bloomActive = denoise && rb_bloom > 0
+                          && g.svgfCompositeSplit && g.svgfSplitDs && g.rtHdrView
+                          && g.rtTonemapPipeline  && g.rtTonemapDs;
     const uint32_t svgfParity = g.svgfFrame & 1u;
     pc.misc3[3] = svgfParity;
     // Per-frame seed base for the mode-6 feed: SVGF needs each frame to be an
@@ -9139,8 +9355,16 @@ void RecordRtTrace(uint32_t idx)
         if (prof) vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 6);
 
         // 3) composite: re-modulate albedo + re-add emission + tonemap -> rtImage.
+        // DOOM-0345 R1: with the bloom dial on, the -DBLOOM_SPLIT variant runs instead and
+        // stores UNEXPOSED linear radiance into rtHdrImage (svgfSplitDs retargets binding
+        // 7 at it); rt_tonemap.comp below then adds the bloom, exposes and encodes. With
+        // the dial off this is byte-for-byte the pre-DOOM-0345 path (INV-1).
         svgfBarrier();
-        vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g.svgfComposite);
+        if (bloomActive)
+            vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                    g.svgfPipeLayout, 0, 1, &g.svgfSplitDs, 0, nullptr);
+        vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                          bloomActive ? g.svgfCompositeSplit : g.svgfComposite);
         spc.misc[3]  = ping;                      // final a-trous source index
         spc.matEmis  = g.matEmisBuf ? BufferAddress(g.matEmisBuf) : 0;
         // DOOM-0011: mirror the megakernel's rb_fog gate (pc.misc6.z) into this smaller
@@ -9150,6 +9374,40 @@ void RecordRtTrace(uint32_t idx)
         vkCmdPushConstants(g.cmd, g.svgfPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(spc), &spc);
         vkCmdDispatch(g.cmd, gx, gy, 1);
         if (prof) vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 7);
+
+        // 3b) DOOM-0345 R1 (§4.4) — rt_tonemap: rtHdrImage (+ the blurred bloom, from R2)
+        //     -> expose -> tone-map -> encode -> rtImage. Only on the split path; with the
+        //     dial off this whole block is skipped and nothing here costs anything.
+        //     It sits BEFORE TAAU, so the halo is reprojected with everything else (§10 Q1
+        //     is the look call on that), and long before RecordRtOverlay, which is what
+        //     keeps the weapon and HUD out of the bloom in both directions (INV-2).
+        if (bloomActive)
+        {
+            svgfBarrier();                        // composite's rtHdrImage stores -> loads here
+            struct RtTonemapPC {
+                uint32_t renderExtent[2];
+                float    bloomIntensity;
+                float    ev;
+            } tmpc = {};
+            static_assert(sizeof(RtTonemapPC) == 16,
+                          "rt_tonemap push-constant layout must match rt_tonemap.comp");
+            tmpc.renderExtent[0] = w;
+            tmpc.renderExtent[1] = h;
+            // R1 ships the pass with the bloom term ABSENT — the extract does not exist
+            // until R2, so bloomImage[2] holds whatever the raster chain last left there.
+            // Zero is the branch's own off switch in the shader, not a multiply by zero.
+            tmpc.bloomIntensity = 0.0f;
+            // The same EV svgf_composite receives (bit-cast in misc3.x), forwarded rather
+            // than recomputed so the two can never disagree — INV-6 is "applied exactly
+            // once", and on this path that once is here.
+            std::memcpy(&tmpc.ev, &spc.misc3[0], sizeof(float));
+            vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g.rtTonemapPipeline);
+            vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                    g.rtTonemapPipeLayout, 0, 1, &g.rtTonemapDs, 0, nullptr);
+            vkCmdPushConstants(g.cmd, g.rtTonemapPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+                               0, sizeof(tmpc), &tmpc);
+            vkCmdDispatch(g.cmd, gx, gy, 1);
+        }
 
         // 4) temporal upscale (build step 6-d): reconstruct the full display image
         //    from the render-res denoised colour (rtImage) + motion vectors + this
@@ -10786,6 +11044,14 @@ extern "C" void RB_Vulkan_Shutdown(void)
         if (g.svgfTemporal)   vkDestroyPipeline(g.device, g.svgfTemporal, nullptr);
         if (g.svgfAtrous)     vkDestroyPipeline(g.device, g.svgfAtrous, nullptr);
         if (g.svgfComposite)  vkDestroyPipeline(g.device, g.svgfComposite, nullptr);
+        // DOOM-0345 R1 — the BLOOM_SPLIT composite variant and the pass it feeds. The two
+        // extra descriptor SETS ride svgfDsPool / rtTonemapDsPool below; the images
+        // (rtHdrImage) ride DestroyRtTargets.
+        if (g.svgfCompositeSplit) vkDestroyPipeline(g.device, g.svgfCompositeSplit, nullptr);
+        if (g.rtTonemapPipeline)   vkDestroyPipeline(g.device, g.rtTonemapPipeline, nullptr);
+        if (g.rtTonemapPipeLayout) vkDestroyPipelineLayout(g.device, g.rtTonemapPipeLayout, nullptr);
+        if (g.rtTonemapDsPool)     vkDestroyDescriptorPool(g.device, g.rtTonemapDsPool, nullptr);
+        if (g.rtTonemapDsLayout)   vkDestroyDescriptorSetLayout(g.device, g.rtTonemapDsLayout, nullptr);
         if (g.svgfPipeLayout) vkDestroyPipelineLayout(g.device, g.svgfPipeLayout, nullptr);
         if (g.labelPipeline)   vkDestroyPipeline(g.device, g.labelPipeline, nullptr);
         if (g.labelPipeLayout) vkDestroyPipelineLayout(g.device, g.labelPipeLayout, nullptr);

@@ -1,0 +1,68 @@
+#version 460
+//
+// DOOM-0345 R1 (spec 4.4) — the ray-traced chain's final surface pass.
+//
+// It exists because svgf_composite.comp used to compute the radiance and tone-map it in
+// one step, leaving no gap a bloom term could be added into. On the split path
+// (rb_bloom > 0) that shader now stores UNEXPOSED linear radiance in rtHdrImage and this
+// pass finishes the job: add the blurred bloom, apply the exposure, compress, encode, and
+// write the rtImage the blit reads. The whole split is gated, so `bloom 0` never runs this
+// pass at all and pays nothing for it (INV-1).
+//
+// It runs BEFORE TAAU and therefore long before RecordRtOverlay, which is what keeps the
+// weapon sprite, the HUD and the menu out of the bloom in both directions (INV-2).
+//
+#extension GL_GOOGLE_include_directive : require
+
+#include "formulas/tonemap_encode.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0, rgba16f) uniform image2D rtHdrImage;  // linear radiance, a = !sky
+layout(set = 0, binding = 1, rgba8)   uniform image2D rtImage;     // swapchain blit source
+layout(set = 0, binding = 2) uniform sampler2D bloomTex;           // bloomImage[2], quarter-res
+
+// intensity comes from kBloomPresets in r_vulkan.cpp (INV-8) — never a literal here.
+layout(push_constant) uniform Push {
+    uvec2 renderExtent;    // the render-res corner of the display-sized targets
+    float bloomIntensity;
+    float ev;              // DOOM-0096 Brightness, the same value svgf_composite receives
+} pc;
+
+void main()
+{
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    // Guard FIRST. The dispatch rounds up to the 8x8 workgroup and rtHdrImage is
+    // DISPLAY-sized while this pass covers only the render corner, so the tail invocations
+    // would imageLoad never-written texels — whose garbage alpha then decides the sky
+    // branch below. svgf_composite.comp opens the same way.
+    if (p.x >= int(pc.renderExtent.x) || p.y >= int(pc.renderExtent.y))
+        return;
+
+    vec4 h = imageLoad(rtHdrImage, p);
+
+    // Sky: already display-encoded by svgf_composite (INV-4), so it takes neither an
+    // exposure nor a bloom term here. That is a deliberate asymmetry with the raster
+    // chain, which has no sky test and lets a lamp beside a sky edge bleed onto it
+    // (DOOM-0331 INV-9); here it falls out of the sky not being radiance.
+    if (h.a < 0.5)
+    {
+        imageStore(rtImage, p, vec4(h.rgb, 1.0));
+        return;
+    }
+
+    vec3 L = h.rgb;
+    // A branch, not a multiply by zero: `L + bloom * 0.0` is exact for finite bloom, but a
+    // NaN or Inf that reached bloomImage[2] would survive the multiply and poison the
+    // frame. This chain already guards non-finite radiance in svgf_composite.comp, which
+    // is the evidence that such values occur.
+    if (pc.bloomIntensity > 0.0)
+    {
+        // p is render-res; normalising by the RENDER extent already gives the full-frame
+        // UV the bloom targets are mapped in (4.3) — no second factor.
+        vec2 uv = (vec2(p) + 0.5) / vec2(pc.renderExtent);
+        L += texture(bloomTex, uv).rgb * pc.bloomIntensity;
+    }
+
+    imageStore(rtImage, p, vec4(toneExposeEncode(L, pc.ev), 1.0));
+}

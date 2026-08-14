@@ -13,15 +13,26 @@
 #extension GL_EXT_scalar_block_layout  : require
 #extension GL_GOOGLE_include_directive : require
 
-#include "formulas/formulas.glsl"
-#include "formulas/pbr_neutral_tonemap.glsl"
+// DOOM-0345 R1: the tone operator moved into this shared include (it pulls formulas.glsl
+// and pbr_neutral_tonemap.glsl in itself, so they are NOT included separately here).
+#include "formulas/tonemap_encode.glsl"
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(set = 0, binding = 0, rgba32f) uniform image2D gpos[2];    // .w = matId (<0 sky)
 layout(set = 0, binding = 2, rgba16f) uniform image2D galbedo;    // surface albedo
 layout(set = 0, binding = 6, rgba16f) uniform image2D atrous[2];  // denoised illum
+// DOOM-0345 R1 (spec 5): on the -DBLOOM_SPLIT variant a descriptor retarget points this
+// binding at rtHdrImage (kSceneFormat) instead of rtImage, so the FORMAT QUALIFIER has to
+// change with it. Leave it rgba8 and every store clamps to [0,1]: the intermediate would
+// hold nothing above white, the bright pass would find nothing to extract, and the feature
+// would ship doing visibly nothing -- compiling cleanly and passing INV-1. No validation
+// layer catches it. The VARIABLE name stays `outColor` in both variants (INV-6's anchor).
+#ifdef BLOOM_SPLIT
+layout(set = 0, binding = 7, rgba16f) uniform image2D outColor;   // rtHdrImage (linear radiance)
+#else
 layout(set = 0, binding = 7, rgba8)   uniform image2D outColor;   // swapchain blit source
+#endif
 layout(set = 0, binding = 8, rg16f)   uniform writeonly image2D motion;  // 6-d motion vector
 // DOOM-0011 L1: half-res fog target (binding 9, chosen in pathtrace.comp — reused by
 // L4/L5/L6). rgb = inscatter (linear radiance), a = transmittance. READ side; the
@@ -123,14 +134,10 @@ vec4 fetchFog(ivec2 p, vec4 gpFull)
 // DOOM-0096: the exposure EV is no longer a fixed constant — the host passes the
 // user's Brightness-slider value (rb_exposure) in misc3.x (bit-cast float) so the
 // Ultra/denoiser view brightness is adjustable from the Renderer menu.
-vec3 toneEncode(vec3 L)
-{
-    float EXPOSURE_EV = uintBitsToFloat(pc.misc3.x);
-    L = max(L, vec3(0.0)) * exposureEv(EXPOSURE_EV);
-    L = pbrNeutralToneMapping(L);
-    return vec3(linearToSrgb(L.r), linearToSrgb(L.g), linearToSrgb(L.b));
-}
-
+// DOOM-0345 R1: the operator itself now lives in formulas/tonemap_encode.glsl — the same
+// arithmetic, with this shader supplying the EV. Its name is deliberately NOT spelled in
+// this comment: INV-6 counts the occurrences in this file and expects exactly two, one per
+// call site, so a mention in prose would read as a third call.
 void main()
 {
     ivec2 p = ivec2(gl_GlobalInvocationID.xy);
@@ -160,9 +167,21 @@ void main()
             // Decode, fold in linear exactly as the surface path does, re-encode.
             vec4 fog = fetchFog(p, gp);                  // sky -> plain bilinear inside
             vec3 skyLin = vec3(srgbToLinear(sky.r), srgbToLinear(sky.g), srgbToLinear(sky.b));
-            sky = toneEncode(skyLin * fog.a + fog.rgb);   // fog in front of visible sky
+            // DOOM-0345 R1 / INV-4: this encode does NOT move out with the surface one.
+            // The fogged sky is folded in linear and re-encoded HERE, on both variants;
+            // deleting it because "the tone-map moved out" ships a linear, un-encoded sky
+            // on the default path (rt_fog defaults to 1).
+            sky = toneExposeEncode(skyLin * fog.a + fog.rgb, uintBitsToFloat(pc.misc3.x));
         }
+        // DOOM-0345 R1 / INV-5: on the split variant the alpha is the SKY FLAG that
+        // rt_tonemap and bloom_extract_rt both key on -- 0 means "already display-encoded,
+        // do not expose, do not threshold". Leaving it at 1.0 tone-maps the sky twice and
+        // lets it generate bloom, breaking INV-4/5/6 together on the default fog path.
+#ifdef BLOOM_SPLIT
+        imageStore(outColor, p, vec4(clamp(sky, 0.0, 1.0), 0.0));
+#else
         imageStore(outColor, p, vec4(clamp(sky, 0.0, 1.0), 1.0));
+#endif
         imageStore(motion, p, vec4(0.0));
         return;
     }
@@ -193,7 +212,16 @@ void main()
         L = L * fog.a + fog.rgb;                        // linear, before tonemap (§4.6)
     }
     if (any(isnan(L)) || any(isinf(L))) L = vec3(0.0);
-    imageStore(outColor, p, vec4(toneEncode(L), 1.0));
+    // DOOM-0345 R1 (spec 4.2) — the surface store is the ONE thing the split moves. The
+    // split variant writes UNEXPOSED linear radiance to rtHdrImage and rt_tonemap.comp
+    // does the expose + tone-map + encode one pass later, after the bloom term is added;
+    // the un-split variant is unchanged from before this feature, which is what keeps
+    // `bloom 0` byte-identical (INV-1). The exposure lands in exactly one of the two.
+#ifdef BLOOM_SPLIT
+    imageStore(outColor, p, vec4(max(L, vec3(0.0)), 1.0));
+#else
+    imageStore(outColor, p, vec4(toneExposeEncode(L, uintBitsToFloat(pc.misc3.x)), 1.0));
+#endif
 
     // Motion vector (build step 6-d): where this pixel's world point sat in the
     // PREVIOUS frame, as a displacement in render pixels (current -> previous). The

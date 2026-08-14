@@ -73,8 +73,14 @@ SHADER_SRCS=$(SHADER_DIR)/mesh.vert $(SHADER_DIR)/mesh.frag \
 		$(SHADER_DIR)/svgf_composite.comp $(SHADER_DIR)/label.comp \
 		$(SHADER_DIR)/taau.comp \
 		$(SHADER_DIR)/bloom_extract_raster.comp \
-		$(SHADER_DIR)/bloom_blur.comp
+		$(SHADER_DIR)/bloom_blur.comp \
+		$(SHADER_DIR)/rt_tonemap.comp
 SHADER_HDRS=$(SHADER_SRCS:=.spv.h)
+# DOOM-0345 R1 — a second build of svgf_composite.comp with -DBLOOM_SPLIT (stores unexposed
+# linear radiance into rtHdrImage instead of tone-mapping straight to rtImage), used only
+# when the bloom dial is on. Not derived from a source file of its own, so it needs the
+# explicit rule below and is appended here so it builds + gates r_vulkan.o like the rest.
+SHADER_HDRS+=$(SHADER_DIR)/svgf_composite_split.comp.spv.h
 # DOOM-0170 L2b — a second build of mesh.frag with -DSINGLE_TARGET (one combined colour
 # output) for the RT weapon overlay, which draws into the single-attachment swapchain pass.
 # Not derived from a source file of its own (it IS mesh.frag), so it needs the explicit rule
@@ -340,6 +346,23 @@ $(SHADER_DIR)/composite.frag.spv.h: \
 # when the include changes. Same missing-auto-dep hazard as the two rules above.
 $(SHADER_DIR)/composite.frag.spv.h $(SHADER_DIR)/bloom_extract_raster.comp.spv.h: \
 		$(SHADER_DIR)/formulas/scene_recombine.glsl
+
+# DOOM-0345 R1 — the RT tone operator is shared by the composite (both variants) and the
+# new rt_tonemap pass. Same missing-auto-dep hazard; the include pulls formulas.glsl and
+# pbr_neutral_tonemap.glsl in itself, so an edit to either still reaches these through the
+# rule above (svgf_composite) and through this one's own prerequisites (rt_tonemap).
+$(SHADER_DIR)/svgf_composite.comp.spv.h $(SHADER_DIR)/svgf_composite_split.comp.spv.h \
+$(SHADER_DIR)/rt_tonemap.comp.spv.h: \
+		$(SHADER_DIR)/formulas/tonemap_encode.glsl \
+		$(SHADER_DIR)/formulas/formulas.glsl \
+		$(SHADER_DIR)/formulas/pbr_neutral_tonemap.glsl
+
+# DOOM-0345 R1 — the BLOOM_SPLIT variant of svgf_composite.comp. Explicit rule (the pattern
+# rule above can't produce it — there is no svgf_composite_split.comp source); depends on
+# svgf_composite.comp so editing the shader rebuilds both variants.
+$(SHADER_DIR)/svgf_composite_split.comp.spv.h:	$(SHADER_DIR)/svgf_composite.comp
+	glslc --target-env=vulkan1.2 -O -DBLOOM_SPLIT $< -o $(SHADER_DIR)/svgf_composite_split.comp.spv
+	xxd -i -n svgf_composite_split_comp_spv $(SHADER_DIR)/svgf_composite_split.comp.spv > $@
 
 # DOOM-0170 L2b — the SINGLE_TARGET variant of mesh.frag (RT weapon overlay). Explicit rule
 # (the pattern rule above can't produce it — there is no mesh_overlay.frag source); depends on
