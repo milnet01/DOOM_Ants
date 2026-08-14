@@ -23,6 +23,7 @@
 //-----------------------------------------------------------------------------
 
 #include <math.h>
+#include <stdlib.h>     // atoi (DOOM-0351: -rtview)
 #include <string.h>     // memset (wipe screens[0] on a mode switch)
 
 #include "r_backend.h"
@@ -35,6 +36,7 @@
 #include "r_mesh.h"     // rb_view_t (POD camera across the seam), RB_OVERLAY_KEY
 #include "v_video.h"    // screens[] (the paletted 2D overlay buffer)
 #include "st_stuff.h"   // ST_Start (force a full status-bar redraw on switch)
+#include "m_argv.h"     // M_CheckParm / myargc / myargv (DOOM-0351: -rtview)
 
 // A level is loaded once the BSP segs exist (r_state.h). Used by RB_Init to
 // catch up the scene build when a map was loaded before the back-end came up
@@ -331,6 +333,33 @@ static void RB_ApplyTierRt(void)
         return;                     // developer diagnostic cycle owns rb_rtdebug
     if      (rendermode == RB_RASTER3D) rb_rtdebug = 0;   // Solid: raster original view
     else if (rendermode == RB_RT3D)     rb_rtdebug = 6;   // Ultra: ray-traced view
+
+    // DOOM-0351: `-rtview N` pins the path-tracer view for a headless run, applied AFTER
+    // the tier default so it wins -- which is the whole point. The tier owns rb_rtdebug
+    // from a config, so `renderer 2` + `rt_view 6` is silently overridden at startup, and
+    // the two ways to reach Solid-with-RT (the `~` key, the menu's Ray Tracing row) are
+    // both runtime-only and unreachable under -noinput. That left the one arm that
+    // separates "the ray-traced CHAIN looks different" from "the HD ART looks different"
+    // impossible to photograph, since Ultra changes both at once (EnsureHdMaterials loads
+    // the HD set on that tier alone).
+    //
+    // It pins NOTHING ELSE, deliberately: -shotverify also forces rb_rtdebug = 6 but drags
+    // the whole canonical golden config with it, which is right for a reproducible gate and
+    // exactly wrong for an A/B over one toggle (DOOM-0303's reasoning, same trap).
+    //
+    // Same accepted set as the sanitiser in RB_Init: {0,1,2,3,4,6}. 5 is the headless
+    // verify-only path (-rtverify) and is not a view; an out-of-range value is ignored
+    // rather than clamped, so a typo leaves the tier default rather than silently
+    // selecting a view nobody asked for.
+    {
+        int p = M_CheckParm("-rtview");
+        if (p && p + 1 < myargc)
+        {
+            int v = atoi(myargv[p + 1]);
+            if (v >= 0 && v <= 6 && v != 5)
+                rb_rtdebug = v;
+        }
+    }
 }
 
 void RB_Init(void)
