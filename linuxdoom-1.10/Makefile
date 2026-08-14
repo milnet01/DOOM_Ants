@@ -74,7 +74,8 @@ SHADER_SRCS=$(SHADER_DIR)/mesh.vert $(SHADER_DIR)/mesh.frag \
 		$(SHADER_DIR)/taau.comp \
 		$(SHADER_DIR)/bloom_extract_raster.comp \
 		$(SHADER_DIR)/bloom_blur.comp \
-		$(SHADER_DIR)/rt_tonemap.comp
+		$(SHADER_DIR)/rt_tonemap.comp \
+		$(SHADER_DIR)/bloom_extract_rt.comp
 SHADER_HDRS=$(SHADER_SRCS:=.spv.h)
 # DOOM-0345 R1 — a second build of svgf_composite.comp with -DBLOOM_SPLIT (stores unexposed
 # linear radiance into rtHdrImage instead of tone-mapping straight to rtImage), used only

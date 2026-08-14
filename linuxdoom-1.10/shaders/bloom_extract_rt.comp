@@ -1,0 +1,78 @@
+#version 450
+//
+// DOOM-0345 R2 (spec 4.3) — the ray-traced chain's bright pass. Reads the HDR intermediate
+// the split composite wrote (rtHdrImage: unexposed linear radiance, alpha = "not sky"),
+// applies the SAME soft-knee threshold the raster extract applies, and writes the excess
+// into the half-res bloomImage[0] that DOOM-0331's blur then takes over.
+//
+// The arithmetic is DOOM-0331 4.2's, unchanged and deliberately not re-derived here in any
+// other form: both chains threshold in SCENE RADIANCE units against the same kBloomPresets
+// entry (spec decision 5), so there is nothing chain-specific left in the maths and NO
+// exposure term appears in this shader. Two things differ from the raster extract, and only
+// two: the source is one image rather than three textures (rtHdrImage already holds the
+// fully-shaded radiance, so there is no recombination step), and the sky is masked out.
+//
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0, rgba16f) uniform image2D rtHdrImage;          // linear radiance
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D bloomOut;  // half-display
+
+// threshold and knee come from kBloomPresets in r_vulkan.cpp (INV-8) — never a literal here.
+layout(push_constant) uniform Push {
+    uvec2 renderExtent;    // the world's corner of the display-sized source
+    float threshold;
+    float knee;
+} pc;
+
+void main()
+{
+    ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 sz = imageSize(bloomOut);
+    if (px.x >= sz.x || px.y >= sz.y)
+        return;
+
+    // 4.3 — the world fills only the [0, renderExtent) corner of the display-sized source,
+    // and this target is half the display, so one output texel covers
+    // 2 * renderExtent / dispExtent source texels per axis: 1 at the 50% default (a plain
+    // point read), 2 at 100%. imageSize(rtHdrImage) IS the display extent, so no second
+    // push field is needed. Round UP, so a tap is duplicated rather than a source texel
+    // missed. Derived, never a hardcoded 2x2: at 50% a fixed 2x2 would read a neighbouring
+    // output texel's source and smear the halo.
+    vec2  ratio = 2.0 * vec2(pc.renderExtent) / vec2(imageSize(rtHdrImage));
+    ivec2 taps  = max(ivec2(1), ivec2(ceil(ratio - 1e-3)));
+    ivec2 base  = ivec2(vec2(px) * ratio);
+    ivec2 hi    = ivec2(pc.renderExtent) - ivec2(1);
+
+    // Threshold EACH source texel and average AFTER (4.2). Averaging first would dilute a
+    // lone bright texel below the threshold and lose thin emitters — a distant lamp, a lit
+    // switch — which is exactly what a bilinear fetch cannot avoid.
+    vec3 sum = vec3(0.0);
+    for (int j = 0; j < taps.y; ++j)
+    for (int i = 0; i < taps.x; ++i)
+    {
+        vec4 s = imageLoad(rtHdrImage, min(base + ivec2(i, j), hi));
+        // INV-5: alpha 0 flags a SKY texel, whose value is display-encoded rather than
+        // radiance and must not be thresholded as if it were. Multiply the flag in, so a
+        // sky texel contributes exactly zero — generation, not reception (rt_tonemap's own
+        // sky arm handles the receiving half).
+        vec3 c = s.rgb * step(0.5, s.a);
+        // The same non-finite guard the raster extract carries, and for the same reason:
+        // one NaN texel that gets past it is thresholded and then blurred into a
+        // +-16-pixel hole in the frame. svgf_composite guards its own radiance, which is
+        // the evidence that such values occur in this engine.
+        if (any(isnan(c)) || any(isinf(c)))
+            c = vec3(0.0);
+        // Soft knee so a surface crossing the threshold ramps in rather than pops. peak,
+        // NOT Rec.709 luminance: luminance weights green at 0.7152 and red at 0.2126, so a
+        // red fireball at four times white would score 0.85 and not bloom while a white
+        // wall sat on the threshold. peak is also what pbrNeutralToneMapping keys its own
+        // compression on, so threshold and operator knee end up in the same units.
+        float peak = max(c.r, max(c.g, c.b));
+        float soft = clamp(peak - pc.threshold + pc.knee, 0.0, 2.0 * pc.knee);
+        soft       = soft * soft / (4.0 * pc.knee + 1e-4);
+        float w    = max(soft, peak - pc.threshold) / max(peak, 1e-4);
+        sum += c * w;
+    }
+
+    imageStore(bloomOut, px, vec4(sum / float(taps.x * taps.y), 1.0));
+}

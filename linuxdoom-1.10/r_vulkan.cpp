@@ -129,6 +129,7 @@ static_assert(sizeof(rb_matctrl_t) == 40, "rb_matctrl_t must be 40 bytes (std430
 #include "shaders/bloom_blur.comp.spv.h"             // DOOM-0331 L3: separable blur (both chains)
 #include "shaders/svgf_composite_split.comp.spv.h"   // DOOM-0345 R1: composite, -DBLOOM_SPLIT
 #include "shaders/rt_tonemap.comp.spv.h"             // DOOM-0345 R1: RT expose + tone-map + combine
+#include "shaders/bloom_extract_rt.comp.spv.h"       // DOOM-0345 R2: RT bright pass
 #include "assets/Oxanium-SemiBold.ttf.h"    // DOOM-0206 L4: bundled OFL menu font (oxanium_ttf[])
 
 // Tier values returned by RB_VulkanProbe — kept numerically in lockstep with
@@ -961,6 +962,15 @@ struct VulkanState
     VkDescriptorSet       rtTonemapDs         = VK_NULL_HANDLE;
     VkPipelineLayout      rtTonemapPipeLayout = VK_NULL_HANDLE;
     VkPipeline            rtTonemapPipeline   = VK_NULL_HANDLE;
+    // DOOM-0345 R2 (§4.3) — the RT bright pass. Its own two-storage-image set (b0 =
+    // rtHdrImage, b1 = bloomImage[0]); the blur that follows is DOOM-0331's, used
+    // unmodified, because it reads and writes only bloom targets and knows nothing about
+    // which chain filled them.
+    VkDescriptorSetLayout bloomExtractRtDsLayout   = VK_NULL_HANDLE;
+    VkDescriptorPool      bloomExtractRtDsPool     = VK_NULL_HANDLE;
+    VkDescriptorSet       bloomExtractRtDs         = VK_NULL_HANDLE;
+    VkPipelineLayout      bloomExtractRtPipeLayout = VK_NULL_HANDLE;
+    VkPipeline            bloomExtractRtPipeline   = VK_NULL_HANDLE;
 
     // Temporal upscaler (DOOM-0009 build step 6-d). Display-resolution history +
     // output images, one descriptor set, one compute pipeline. Active only on the
@@ -2967,6 +2977,71 @@ void CreateRtTonemapPipeline()
     vkDestroyShaderModule(g.device, cs, nullptr);
 }
 
+// DOOM-0345 R2 (§4.3) — bloom_extract_rt.comp's pipeline. Two storage-image bindings, both
+// reached with imageLoad/imageStore, so neither image leaves GENERAL for this pass's sake
+// (bloomImage[0]'s own SHADER_READ_ONLY cycle belongs to the blur that reads it next).
+void CreateBloomExtractRtPipeline()
+{
+    VkDescriptorSetLayoutBinding b[2] = {};
+    for (uint32_t i = 0; i < 2; i++) {
+        b[i].binding         = i;
+        b[i].descriptorCount = 1;
+        b[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        b[i].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+    }
+    VkDescriptorSetLayoutCreateInfo dlci = {};
+    dlci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    dlci.bindingCount = 2;
+    dlci.pBindings    = b;
+    Check(vkCreateDescriptorSetLayout(g.device, &dlci, nullptr, &g.bloomExtractRtDsLayout),
+          "vkCreateDescriptorSetLayout(bloomExtractRt)");
+
+    VkDescriptorPoolSize ps = {};
+    ps.type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    ps.descriptorCount = 2;
+    VkDescriptorPoolCreateInfo pci = {};
+    pci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pci.maxSets       = 1;
+    pci.poolSizeCount = 1;
+    pci.pPoolSizes    = &ps;
+    Check(vkCreateDescriptorPool(g.device, &pci, nullptr, &g.bloomExtractRtDsPool),
+          "vkCreateDescriptorPool(bloomExtractRt)");
+
+    VkDescriptorSetAllocateInfo dai = {};
+    dai.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dai.descriptorPool     = g.bloomExtractRtDsPool;
+    dai.descriptorSetCount = 1;
+    dai.pSetLayouts        = &g.bloomExtractRtDsLayout;
+    Check(vkAllocateDescriptorSets(g.device, &dai, &g.bloomExtractRtDs),
+          "vkAllocateDescriptorSets(bloomExtractRt)");
+
+    VkPushConstantRange pcr = {};
+    pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pcr.offset     = 0;
+    pcr.size       = 16;                        // uvec2 renderExtent + threshold + knee
+    VkPipelineLayoutCreateInfo plci = {};
+    plci.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plci.setLayoutCount         = 1;
+    plci.pSetLayouts            = &g.bloomExtractRtDsLayout;
+    plci.pushConstantRangeCount = 1;
+    plci.pPushConstantRanges    = &pcr;
+    Check(vkCreatePipelineLayout(g.device, &plci, nullptr, &g.bloomExtractRtPipeLayout),
+          "vkCreatePipelineLayout(bloomExtractRt)");
+
+    VkShaderModule cs = MakeShader(bloom_extract_rt_comp_spv, bloom_extract_rt_comp_spv_len);
+    VkComputePipelineCreateInfo cpci = {};
+    cpci.sType        = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    cpci.stage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    cpci.stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
+    cpci.stage.module = cs;
+    cpci.stage.pName  = "main";
+    cpci.layout       = g.bloomExtractRtPipeLayout;
+    Check(vkCreateComputePipelines(g.device, VK_NULL_HANDLE, 1, &cpci, nullptr,
+                                   &g.bloomExtractRtPipeline),
+          "vkCreateComputePipelines(bloomExtractRt)");
+    vkDestroyShaderModule(g.device, cs, nullptr);
+}
+
 // On-screen RT mode label pipeline (debug). Re-uses svgfDsLayout (it already binds
 // rtImage at binding 7); its own pipeline layout carries the 64-byte label push.
 void CreateLabelPipeline()
@@ -3317,6 +3392,27 @@ void UpdateRtTonemapDescriptor()
         w[i].pImageInfo      = &ii[i];
     }
     vkUpdateDescriptorSets(g.device, 3, w, 0, nullptr);
+
+    // DOOM-0345 R2 — the RT bright pass rides the same re-point: it reads the same
+    // rtHdrImage and writes bloomImage[0], so its two views come out of the same two create
+    // paths this function already waits on.
+    if (!g.bloomExtractRtDs || !g.bloomView[0])
+        return;
+    VkDescriptorImageInfo ei[2] = {};
+    ei[0].imageView   = g.rtHdrView;
+    ei[0].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    ei[1].imageView   = g.bloomView[0];
+    ei[1].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    VkWriteDescriptorSet ew[2] = {};
+    for (uint32_t i = 0; i < 2; i++) {
+        ew[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        ew[i].dstSet          = g.bloomExtractRtDs;
+        ew[i].dstBinding      = i;
+        ew[i].descriptorCount = 1;
+        ew[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        ew[i].pImageInfo      = &ei[i];
+    }
+    vkUpdateDescriptorSets(g.device, 2, ew, 0, nullptr);
 }
 
 void DestroySvgfTargets()
@@ -7454,6 +7550,7 @@ extern "C" void RB_Vulkan_Init(void)
         CreateLabelPipeline();         // on-screen mode label (debug); reuses svgfDsLayout
         CreateTaauPipeline();          // 6-d temporal upscaler; needs its own set + pipeline
         CreateRtTonemapPipeline();     // DOOM-0345 R1: the split's second half (before the images)
+        CreateBloomExtractRtPipeline();// DOOM-0345 R2: the RT bright pass
         CreateRtTargets();             // rt + svgf + taau images; writes the descriptor sets
     }
     g.ready = true;
@@ -9384,6 +9481,98 @@ void RecordRtTrace(uint32_t idx)
         if (bloomActive)
         {
             svgfBarrier();                        // composite's rtHdrImage stores -> loads here
+
+            // 3a) DOOM-0345 R2 (§4.3) — the bright pass, then DOOM-0331's blur dispatched
+            //     twice. rtHdrImage stays in GENERAL throughout (STORAGE only, both readers
+            //     imageLoad it, so a SHADER_READ_ONLY transition would be invalid); the
+            //     bloom targets take the same closed GENERAL <-> SHADER_READ_ONLY cycle the
+            //     raster chain gives them, because their readers SAMPLE them. bloomRt is
+            //     "did the chain actually run", which is not the same as the dial being on.
+            bool bloomRt = false;
+            if (g.bloomExtractRtPipeline && g.bloomExtractRtDs && g.bloomView[0])
+            {
+                VkImageMemoryBarrier ib = {};
+                ib.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                ib.srcQueueFamilyIndex = ib.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                ib.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+                ib.image            = g.bloomImage[0];
+                ib.oldLayout        = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                ib.newLayout        = VK_IMAGE_LAYOUT_GENERAL;
+                ib.srcAccessMask    = VK_ACCESS_SHADER_READ_BIT;
+                ib.dstAccessMask    = VK_ACCESS_SHADER_WRITE_BIT;
+                vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+                                     0, nullptr, 0, nullptr, 1, &ib);
+
+                // threshold + knee from the ONE preset table (INV-8), and no EV: this chain
+                // thresholds UNEXPOSED radiance, which is the whole point of decision 5.
+                const BloomPreset& bp = CurrentBloomPreset();
+                struct { uint32_t renderExtent[2]; float threshold, knee; } epush =
+                    { { w, h }, bp.threshold, bp.knee };
+                vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g.bloomExtractRtPipeline);
+                vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                        g.bloomExtractRtPipeLayout, 0, 1,
+                                        &g.bloomExtractRtDs, 0, nullptr);
+                vkCmdPushConstants(g.cmd, g.bloomExtractRtPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+                                   0, sizeof(epush), &epush);
+                vkCmdDispatch(g.cmd, (g.bloomExtent[0].width + 7) / 8,
+                                     (g.bloomExtent[0].height + 7) / 8, 1);
+
+                ib.oldLayout     = VK_IMAGE_LAYOUT_GENERAL;
+                ib.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                ib.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+                ib.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+                                     0, nullptr, 0, nullptr, 1, &ib);
+
+                if (g.bloomBlurPipeline && g.bloomBlurDs[0] && g.bloomBlurDs[1])
+                {
+                    vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g.bloomBlurPipeline);
+                    for (uint32_t bp2 = 0; bp2 < 2; bp2++)
+                    {
+                        ib.image         = g.bloomImage[1 + bp2];
+                        ib.oldLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                        ib.newLayout     = VK_IMAGE_LAYOUT_GENERAL;
+                        ib.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                        ib.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+                        vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+                                             0, nullptr, 0, nullptr, 1, &ib);
+
+                        // dir carries the axis AND the per-pass step factor: pass 0 reads
+                        // half-res and writes quarter, so its offsets are doubled; pass 1
+                        // reads and writes quarter, so they are not. srcTexelSize is exactly
+                        // 1/size of the image being READ. Identical to the raster chain's —
+                        // this is DOOM-0331's shader, unmodified, driven the same way.
+                        const VkExtent2D& src = g.bloomExtent[bp2];
+                        const VkExtent2D& dst = g.bloomExtent[1 + bp2];
+                        float blpush[4] = { bp2 == 0 ? 2.0f : 0.0f,
+                                            bp2 == 0 ? 0.0f : 1.0f,
+                                            1.0f / (float)src.width,
+                                            1.0f / (float)src.height };
+                        vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                                g.bloomBlurPipeLayout, 0, 1,
+                                                &g.bloomBlurDs[bp2], 0, nullptr);
+                        vkCmdPushConstants(g.cmd, g.bloomBlurPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+                                           0, sizeof(blpush), blpush);
+                        vkCmdDispatch(g.cmd, (dst.width + 7) / 8, (dst.height + 7) / 8, 1);
+
+                        // Both readers are COMPUTE on this chain — pass 1's output feeds
+                        // rt_tonemap, not composite.frag, which is the one place the
+                        // raster chain's otherwise identical cycle differs.
+                        ib.oldLayout     = VK_IMAGE_LAYOUT_GENERAL;
+                        ib.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                        ib.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+                        ib.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                        vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+                                             0, nullptr, 0, nullptr, 1, &ib);
+                    }
+                    bloomRt = true;
+                }
+            }
+
             struct RtTonemapPC {
                 uint32_t renderExtent[2];
                 float    bloomIntensity;
@@ -9393,10 +9582,11 @@ void RecordRtTrace(uint32_t idx)
                           "rt_tonemap push-constant layout must match rt_tonemap.comp");
             tmpc.renderExtent[0] = w;
             tmpc.renderExtent[1] = h;
-            // R1 ships the pass with the bloom term ABSENT — the extract does not exist
-            // until R2, so bloomImage[2] holds whatever the raster chain last left there.
-            // Zero is the branch's own off switch in the shader, not a multiply by zero.
-            tmpc.bloomIntensity = 0.0f;
+            // DOOM-0345 R2 — the combine, gated on whether the chain actually RAN this
+            // frame rather than on the dial: a frame that skipped the extract would
+            // otherwise blend whatever the raster chain last left in bloomImage[2]. Zero
+            // is the shader's own branch, not a multiply by zero (a NaN would survive one).
+            tmpc.bloomIntensity = bloomRt ? CurrentBloomPreset().intensity : 0.0f;
             // The same EV svgf_composite receives (bit-cast in misc3.x), forwarded rather
             // than recomputed so the two can never disagree — INV-6 is "applied exactly
             // once", and on this path that once is here.
@@ -11048,6 +11238,10 @@ extern "C" void RB_Vulkan_Shutdown(void)
         // extra descriptor SETS ride svgfDsPool / rtTonemapDsPool below; the images
         // (rtHdrImage) ride DestroyRtTargets.
         if (g.svgfCompositeSplit) vkDestroyPipeline(g.device, g.svgfCompositeSplit, nullptr);
+        if (g.bloomExtractRtPipeline)   vkDestroyPipeline(g.device, g.bloomExtractRtPipeline, nullptr);
+        if (g.bloomExtractRtPipeLayout) vkDestroyPipelineLayout(g.device, g.bloomExtractRtPipeLayout, nullptr);
+        if (g.bloomExtractRtDsPool)     vkDestroyDescriptorPool(g.device, g.bloomExtractRtDsPool, nullptr);
+        if (g.bloomExtractRtDsLayout)   vkDestroyDescriptorSetLayout(g.device, g.bloomExtractRtDsLayout, nullptr);
         if (g.rtTonemapPipeline)   vkDestroyPipeline(g.device, g.rtTonemapPipeline, nullptr);
         if (g.rtTonemapPipeLayout) vkDestroyPipelineLayout(g.device, g.rtTonemapPipeLayout, nullptr);
         if (g.rtTonemapDsPool)     vkDestroyDescriptorPool(g.device, g.rtTonemapDsPool, nullptr);
