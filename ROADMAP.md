@@ -9877,3 +9877,39 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** A automatic checker that is supposed to confirm our design documents have all their required sections is silently skipping that check on every one of them.
   Kind: doc.
   Source: in-session-2026-08-12 (found while splitting DOOM-0331).
+
+- 📋 [DOOM-0352] **Nothing here says how we would know DOOM_Ants works.**
+  Diagnosed 2026-08-14 by `adopt-project`, run from ~/.claude. Two cold
+  readers, five documents each, plus a second pass. No source was read
+  and no test was run -- this is not an audit and says nothing about
+  code quality.
+
+  **Verdict: state 1**, on ~/.claude/workflow.md's five states. That is
+  the discovery state, and it holds however much code exists. This
+  project has 178 shipped roadmap bullets, 1,292 files, and ten items in
+  flight -- a claim of state 5, ten times over.
+
+  What the reading found:
+
+  - **What it is for: YES**, stated and quotable.
+  - **How we would know it works: NO.**
+
+  The second pass found exactly one criterion: *"The Ultra path tracer
+  targets a 60 FPS floor on the reference GPU (an AMD RX 6600)"* -- and
+  the same file calls it *"a target, not a guarantee"*.
+
+  The stated purpose is a game that still **looks and feels like DOOM**
+  at modern fidelity. *"The feel of the original"* is defined in none of
+  the five documents read. Fast is not working when half the purpose is
+  how it looks.
+
+  **What would close this.** One document a stranger could read to learn
+  what would count as this working -- covering feel and fidelity, not
+  only frame rate. Discovery is a conversation, not a writing task, so
+  this is not a doc someone drafts alone.
+
+  Recorded rather than acted on: the diagnosis was produced elsewhere,
+  and what to do about it is this project's call.
+  **Layman:** We can say what this project is for, but not what "done and working" looks like -- so nothing can tell us we got there.
+  Kind: doc.
+  Source: adopt-project-run-2026-08-14 (from ~/.claude).
