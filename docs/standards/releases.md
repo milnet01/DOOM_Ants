@@ -40,33 +40,47 @@ moves and README does not. Until DOOM-0357 lands, **leave the section as
 `[Unreleased]` and let the tool promote it**; that is the only route that moves
 every leg. Bumping README by hand instead still leaves the compare links unwritten.
 
-**A `-`-suffixed pre-release breaks the leg for every release after it.** The
-README rewrite matches a plain `X.Y.Z` only, so cutting `0.6.0-pre.1` writes a
-line the guard no longer recognises and the *next* release aborts with
-"could not find README 'Latest release' line to bump". Also DOOM-0357.
+**Do not cut a `-`-suffixed pre-release until DOOM-0357 lands.** The README
+rewrite matches a plain `X.Y.Z` only, so cutting `0.6.0-pre.1` writes a line the
+guard no longer recognises and the *next* release aborts with "could not find
+README 'Latest release' line to bump". If one has already been cut, restoring
+that line by hand to the last plain `X.Y.Z` is a **named exception** to the
+never-by-hand rule above — it is the only way to unblock the next release.
+DOOM-0357 covers this leg as well as the skipped-branch one.
+
+**Do not date the CHANGELOG section ahead of the release, by hand or by tool.**
+`changelog_log` has a `release` operation that closes `[Unreleased]` into
+`## [<ver>] - <date>`; running it before `release.sh` produces exactly the state
+above, from the tool this standard otherwise recommends. Let `release.sh` do the
+promotion.
 
 ## CHANGELOG
 
 `CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com). Shipped
 roadmap items graduate into it under `## [Unreleased]`, grouped by category
 (Added / Changed / Fixed / Security / …). Use the `changelog_log` Ants tool
-(it is Keep-a-Changelog-aware) rather than hand-editing. At release,
-`[Unreleased]` is promoted to `[<ver>] - <today>`.
+(it is Keep-a-Changelog-aware) rather than hand-editing. `release.sh` promotes
+`[Unreleased]` to `[<ver>] - <today>` at release — do not do it yourself, and
+see the lockstep section for why.
 
 ## Cutting a release
 
 One command does it all — don't tag or upload by hand:
 
 ```sh
-packaging/release.sh <ver>                                          # build both artifacts locally, no publish
+packaging/release.sh <ver> --rebuild                                # build both artifacts locally, no publish
 packaging/release.sh <ver> --publish --rebuild --theme="<one line>" # + promote changelog, tag, push, GitHub release
 ```
 
-`--theme` sets the release commit subject (`<ver>: <theme>`) and the GitHub
-release title; without it the commit reads `<ver>: release`.
+`--rebuild` is mandatory on **every** run until DOOM-0356 lands — the
+build-only run reuses a stale artifact exactly as the publishing one does (it
+prints "Reusing existing AppImage"), so a local build made to check a fix can
+silently not contain it. See the stale-artifact warning below.
 
-`--rebuild` is mandatory on the publishing run until DOOM-0356 lands — see the
-stale-artifact warning below.
+`--theme` sets the release commit subject (`<ver>: <theme>`). It does **not**
+set the GitHub release title: that is always `DOOM_Ants <ver>`, with the theme
+appended after an em dash. Without it the commit reads `<ver>: release` and the
+title is unsuffixed.
 
 In order, `release.sh`:
 
@@ -97,9 +111,11 @@ AppImage toolchain (auto-fetched), `zip`, and an authenticated `gh`.
 > Check **both** assets for something only the new code has — an imported
 > symbol, a new string — rather than trusting the file's timestamp. They open
 > differently: `unzip` the Windows zip, but an AppImage is not a zip, so use
-> `./<name>.AppImage --appimage-extract` (or `--appimage-extract-and-run`) and
-> inspect the extracted binary. 0.7.1 shipped **both** artifacts stale, so
-> checking only the Windows one would have missed half of it.
+> `./<name>.AppImage --appimage-extract` and inspect what lands in
+> `squashfs-root/`. Not `--appimage-extract-and-run`, which unpacks to a temp
+> directory, *runs* the game and cleans up — it leaves nothing to inspect and
+> takes over the display. 0.7.1 shipped **both** artifacts stale, so checking
+> only the Windows one would have missed half of it.
 >
 > **This applies to every publishing route, not just a hand-typed one.**
 > `.claude/bump.json`'s `release_command` records the canonical publish
@@ -187,3 +203,42 @@ AppImage toolchain (auto-fetched), `zip`, and an authenticated `gh`.
     `-R` (line 189); a build-only run exits before the publish guards (line 117),
     so the documented `--rebuild` recovery is reachable; `changelog_log` exists
     and is Keep-a-Changelog-aware.
+
+- **2026-08-19 — loop 3 (3 cold lanes, same brief). CAP REACHED (3 for a
+  standard): the run files its tail and ships.** **Q1 3 · Q2 1 · Q3 1 — five
+  verified, five fixed, one dismissed.**
+  - **This was a VIOLENT cap, and that is the honest reading.** Four of the five
+    findings — arguably all five — landed on text *this run* wrote, and the same
+    was true of loop 2. Nothing in the run suggested a fourth loop would stop:
+    each fix pass added assertive prose and the next loop found defects in it.
+    The body grew 90 → 150 lines. The lesson is 4a-min's, learned the expensive
+    way: **the cheapest fix is the one that writes no new text**, and this run
+    kept reaching for explanation instead of deletion.
+  - **All three lanes** found that the pre-release paragraph named a hazard and
+    gave no recovery, while the document elsewhere both sanctions pre-releases
+    and forbids the only repair. Now an explicit "do not cut one until DOOM-0357
+    lands", with the hand-restore named as a second sanctioned exception.
+  - **Q1, two lanes:** loop 2's claim that `--theme` "sets the GitHub release
+    title" is false — `TITLE="DOOM_Ants $VERSION"` then `TITLE="$TITLE — $THEME"`
+    appends it. A conformer writing a self-contained theme would have shipped a
+    doubled title.
+  - **Q1, one lane:** `--rebuild` was mandated for "the publishing run" only, but
+    the freshness test never consults `PUBLISH` — the build-only run reuses a
+    stale artifact too and says so ("Reusing existing AppImage"). So a local
+    build made to check a fix could silently not contain it. Now mandated on
+    every run.
+  - **Q1, one lane:** loop 2's verification step offered
+    `--appimage-extract-and-run` as an alternative to `--appimage-extract`. It
+    unpacks to a temp directory, *runs* the game and cleans up, leaving nothing
+    to inspect — so the one check that catches a stale AppImage would have
+    passed while checking nothing. Parenthetical removed.
+  - **Q2, orchestrator**, from a lane's open question: `changelog_log` has a
+    `release` op that dates `[Unreleased]`, so the tool this standard recommends
+    can itself produce the skip-branch state the lockstep section warns about.
+    Both sections now say `release.sh` owns the promotion.
+  - **One finding dismissed as unverified, and the fault was the packet's.** A
+    lane read "Also DOOM-0357" as a false citation because the packet carried
+    only that item's pre-annotation headline. The bullet body does cover the
+    pre-release leg. Two other lanes hit the same trap and one of them checked
+    the roadmap before filing. **Never summarise a cited item in a packet when
+    the lane's job is to check the citation.**
