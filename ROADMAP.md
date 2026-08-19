@@ -1527,7 +1527,7 @@ with friends.
   Windows zip on real Windows 10 (the `wintest` box) rather than under
   Wine. The last line of a clean boot is:
 
-    M_SaveDefaults: can't replace r.cfg: File exists
+  M_SaveDefaults: can't replace r.cfg: File exists
 
   DOOM-0254 made the config save crash-safe by writing a sibling
   `<config>.tmp` and `rename()`ing it into place, on the stated grounds
@@ -1558,8 +1558,8 @@ with friends.
   Verified by A/B on the real Windows 10 box, same WAD, same 68-byte config
   staged fresh for each arm:
 
-    OLD (0.7.1, rename())      cfg 68 -> 68 bytes   saved=NO   1x "can't replace"
-    NEW (MoveFileExA)          cfg 68 -> 1015 bytes saved=YES  0x "can't replace"
+  OLD (0.7.1, rename())      cfg 68 -> 68 bytes   saved=NO   1x "can't replace"
+  NEW (MoveFileExA)          cfg 68 -> 1015 bytes saved=YES  0x "can't replace"
 
   1015 bytes is the full defaults[] table, so the save completed rather than
   merely not erroring. No leftover .tmp in either arm. Linux re-checked and
@@ -1592,8 +1592,8 @@ with friends.
 
   But act itself prints on every run:
 
-    This version of 'act' is vulnerable to CVE-2026-34041 and
-    CVE-2026-34042 - please upgrade to 0.2.86 or later.
+  This version of 'act' is vulnerable to CVE-2026-34041 and
+  CVE-2026-34042 - please upgrade to 0.2.86 or later.
 
   openSUSE Tumbleweed's OSS repo ships 0.2.84-1.6; upstream is 0.2.89.
   This is developer tooling on the build host, not a shipped dependency,
@@ -1613,8 +1613,8 @@ with friends.
   and checking the binary for the fix that release claimed to carry. It did
   not have it. Both artifacts were stale, not just one.
 
-    packaging/release.sh:71  if [ "$REBUILD" = 1 ] || [ ! -f "$APPIMAGE" ]; then
-    packaging/release.sh:80  if [ "$REBUILD" = 1 ] || [ ! -f "$WINZIP" ]; then
+  packaging/release.sh:71  if [ "$REBUILD" = 1 ] || [ ! -f "$APPIMAGE" ]; then
+  packaging/release.sh:80  if [ "$REBUILD" = 1 ] || [ ! -f "$WINZIP" ]; then
 
   The freshness test is "does a file with this name exist". The name carries
   only the version, so it says nothing about the source it was built from.
@@ -1623,8 +1623,8 @@ with friends.
   This is not an exotic path -- it is the script's OWN documented workflow.
   Its usage block recommends:
 
-    packaging/release.sh 0.3.0            # build both artifacts locally
-    packaging/release.sh 0.3.0 --publish  # also tag, push, GitHub release
+  packaging/release.sh 0.3.0            # build both artifacts locally
+  packaging/release.sh 0.3.0 --publish  # also tag, push, GitHub release
 
   Run those two in order with any commit in between and the publish ships
   the first build. On 0.7.1 the artifacts were built 11:50, DOOM-0353 landed
@@ -1653,6 +1653,56 @@ with friends.
   **Layman:** The release tool can publish an old build by mistake -- it decides "already built" from the file name, which only carries the version number, so it never notices the code changed.
   Kind: fix.
   Source: release-gate-0.7.1-2026-08-19.
+
+- 📋 [DOOM-0357] **release.sh tags without bumping README when the CHANGELOG heading already exists.**
+  Found 2026-08-19 by the review-contract gate on docs/standards/releases.md.
+  All THREE cold lanes reported it independently, which is the strongest
+  signal that run produced. Confirmed against source.
+
+  The releases standard says the three version legs -- tag, CHANGELOG heading,
+  README "Latest release" line -- "move together, driven by the release tool --
+  never by hand, one at a time". That holds on only one of release.sh's two
+  paths.
+
+  packaging/release.sh:144
+
+    if grep -q "^## \[$VERSION\]" CHANGELOG.md; then
+      echo "==> CHANGELOG already has a [$VERSION] section; leaving it as-is"
+    else
+      ... promote CHANGELOG ...
+      sed -i -E "s/Latest release: .../Latest release: **$VERSION**./" README.md
+      git add CHANGELOG.md README.md
+      git commit -m "$VERSION: ${THEME:-release}"
+    fi
+
+    git tag -a "$TAG" -m "$VERSION"
+    git push origin HEAD
+    git push origin "$TAG"
+
+  The README bump, the git add and the commit all sit INSIDE the else. The
+  tagging sits outside it. So when the version heading already exists, the tool
+  moves the tag and leaves README advertising the previous version -- which is
+  the exact stale-README failure release.sh:160-162's own comment records
+  having shipped before, reintroduced through a different branch.
+
+  Two ordinary ways to reach it: dating the CHANGELOG section by hand before
+  publishing (what Keep-a-Changelog workflows and any pre-release readiness
+  check encourage), and a second publishing run of the same version.
+
+  Not hit on 0.7.1 -- the section was still [Unreleased] when release.sh ran,
+  so the promoting branch was taken and all three legs moved. Verified after
+  the fact: README and CHANGELOG both read 0.7.1. This is latent, not live.
+
+  Fix: lift the README bump and the commit out of the else so lockstep holds on
+  both paths, or refuse to tag when README's line does not already match the
+  version being tagged. The second is the stronger guard -- it also catches a
+  README edited by hand to the wrong value.
+
+  Documented as a caveat in docs/standards/releases.md meanwhile, so a
+  conformer is not told the tool guarantees something it does not.
+  **Layman:** If the changelog section for a version is already written by hand, the release tool tags the release but forgets to update the version shown in the README.
+  Kind: fix.
+  Source: review-contract-releases-md-2026-08-19.
 
 ## Phase 2 — The Spin
 
