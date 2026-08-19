@@ -1700,6 +1700,39 @@ with friends.
 
   Documented as a caveat in docs/standards/releases.md meanwhile, so a
   conformer is not told the tool guarantees something it does not.
+  Second leg of the same defect, found by loop 2 of the same gate
+  (2026-08-19): a `-`-suffixed pre-release poisons the README line for
+  every release after it.
+
+  The guard and the rewrite both match a plain X.Y.Z:
+
+    grep -q 'Latest release: \*\*[0-9]\+\.[0-9]\+\.[0-9]\+\*\*\.' README.md
+    sed  -i -E "s/Latest release: \*\*[0-9]+\.[0-9]+\.[0-9]+\*\*\./Latest release: **$VERSION**./"
+
+  The MATCH side requires plain X.Y.Z, but $VERSION on the replacement side
+  is unconstrained. So cutting 0.6.0-pre.1 writes `Latest release:
+  **0.6.0-pre.1**.`, which the guard then fails to match -- and release.sh
+  exits 1 with "could not find README 'Latest release' line to bump" on the
+  NEXT release, stable or not. Verified by running the guard's own grep
+  against both forms: the pre-release line does not match, the stable one
+  does.
+
+  The standard sanctions pre-releases explicitly ("release.sh publishes any
+  `-`-suffixed version as a GitHub pre-release"), so this is a supported
+  path that breaks the tool. Latent today -- the only pre-release in
+  packaging/build predates the README leg (DOOM-0202).
+
+  Fix alongside the else-branch defect. Decide first whether the README
+  line tracks the latest STABLE version (then a pre-release must skip the
+  leg entirely) or any version (then both regexes need the optional
+  `(-[A-Za-z0-9.]+)?` suffix the version validator already accepts). The
+  first is probably right -- "Latest release" on a README is what a player
+  should download.
+
+  Also from loop 2: a conformer who hand-bumps README to work around the
+  else-branch defect still leaves the CHANGELOG `[Unreleased]:` /
+  `[<ver>]:` compare links unwritten, because the else branch owns those
+  too. Whatever fix lands should keep all four legs together, not three.
   **Layman:** If the changelog section for a version is already written by hand, the release tool tags the release but forgets to update the version shown in the README.
   Kind: fix.
   Source: review-contract-releases-md-2026-08-19.

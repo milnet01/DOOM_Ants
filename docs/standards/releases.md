@@ -32,12 +32,18 @@ time. Keeping them in lockstep is the rule `CLAUDE.md` refers to; this is its
 home.
 
 **The tool moves all three only when it promotes `[Unreleased]`.** `release.sh`
-rewrites the CHANGELOG, rewrites README's "Latest release" line and commits both
-inside a single branch, taken only when no `## [<ver>]` heading exists yet. Where
-one already does — a section dated by hand, or a second publishing run of the
-same version — it skips all of that and still tags. So the tag moves and README
-does not. Until DOOM-0357 lands, either leave the section as `[Unreleased]` and
-let the tool promote it, or bump and commit README yourself before tagging.
+rewrites the CHANGELOG, rewrites README's "Latest release" line, adds the
+`[Unreleased]:` / `[<ver>]:` compare links and commits the lot inside a single
+branch, taken only when no `## [<ver>]` heading exists yet. Where one already
+does — a section dated by hand — it skips all of that and still tags, so the tag
+moves and README does not. Until DOOM-0357 lands, **leave the section as
+`[Unreleased]` and let the tool promote it**; that is the only route that moves
+every leg. Bumping README by hand instead still leaves the compare links unwritten.
+
+**A `-`-suffixed pre-release breaks the leg for every release after it.** The
+README rewrite matches a plain `X.Y.Z` only, so cutting `0.6.0-pre.1` writes a
+line the guard no longer recognises and the *next* release aborts with
+"could not find README 'Latest release' line to bump". Also DOOM-0357.
 
 ## CHANGELOG
 
@@ -52,9 +58,12 @@ roadmap items graduate into it under `## [Unreleased]`, grouped by category
 One command does it all — don't tag or upload by hand:
 
 ```sh
-packaging/release.sh <ver>                      # build both artifacts locally, no publish
-packaging/release.sh <ver> --publish --rebuild  # + promote changelog, tag, push, GitHub release
+packaging/release.sh <ver>                                          # build both artifacts locally, no publish
+packaging/release.sh <ver> --publish --rebuild --theme="<one line>" # + promote changelog, tag, push, GitHub release
 ```
+
+`--theme` sets the release commit subject (`<ver>: <theme>`) and the GitHub
+release title; without it the commit reads `<ver>: release`.
 
 `--rebuild` is mandatory on the publishing run until DOOM-0356 lands — see the
 stale-artifact warning below.
@@ -78,15 +87,19 @@ AppImage toolchain (auto-fetched), `zip`, and an authenticated `gh`.
 > publishing, download the released artifact and confirm it contains the change
 > the release claims.** `release.sh` decides an artifact is already built by
 > testing for a file of that name (lines 71 and 80), and the name carries only
-> the version. So running the two commands above in order — a build-only run,
-> then `--publish` — uploads the **first** build, and any commit made in
-> between is missing from what ships. Nothing else catches it: `make test` and
+> the version. So a build-only run followed by a `--publish` run **without
+> `--rebuild`** uploads the *first* build, and any commit made in between is
+> missing from what ships. Nothing else catches it: `make test` and
 > `packaging/ci-local.sh` both check the tree, not the artifact, and the tag,
 > the CHANGELOG and the release all come out correct. Observed on 0.7.1, where
 > the published binaries predated the fix the release was cut for.
 >
-> Unzip the asset and check for something only the new code has — an imported
-> symbol, a new string — rather than trusting the file's timestamp.
+> Check **both** assets for something only the new code has — an imported
+> symbol, a new string — rather than trusting the file's timestamp. They open
+> differently: `unzip` the Windows zip, but an AppImage is not a zip, so use
+> `./<name>.AppImage --appimage-extract` (or `--appimage-extract-and-run`) and
+> inspect the extracted binary. 0.7.1 shipped **both** artifacts stale, so
+> checking only the Windows one would have missed half of it.
 >
 > **This applies to every publishing route, not just a hand-typed one.**
 > `.claude/bump.json`'s `release_command` records the canonical publish
@@ -147,3 +160,30 @@ AppImage toolchain (auto-fetched), `zip`, and an authenticated `gh`.
     pipefail` is in force (line 28), so the `make test` gate really does stop the
     run; and `--publish` / `--rebuild` are independent case arms, so combining
     them is safe in either order.
+
+- **2026-08-19 — loop 2 (3 cold lanes, same brief, rebuilt from disk).**
+  **Q1 2 · Q2 2 · Q3 1 — five verified, five fixed, none dismissed.**
+  **Two of the five were loop 1's own additions**, which is the expected shape:
+  new assertive text is the blast radius.
+  - **All three lanes found the same Q2**, and it was self-inflicted: loop 1 put
+    `--rebuild` into the usage block but left the warning below still describing
+    "the two commands above" as the unsafe sequence — so the document said the
+    mandated flag did not help. The unsafe invocation is now named as the one
+    *without* the flag.
+  - **Q1, two lanes:** loop 1's "or a second publishing run of the same version"
+    cannot happen — the tag guard exits 1 before the promote branch is reached,
+    which the document itself said twenty lines later. Clause deleted.
+  - **Q1, one lane:** a `-`-suffixed pre-release writes a README line the guard
+    no longer matches, so the *next* release aborts. Verified by running the
+    guard's own grep against both forms. Folded into DOOM-0357.
+  - **Q2, one lane:** `--theme` was absent from the usage block while
+    `.claude/bump.json` treats it as canonical, so two conformers cutting one
+    release produced different commit subjects.
+  - **Q3, one lane:** the verification step said "unzip the asset", and an
+    AppImage is not a zip — so the check covered one of the two shipped
+    artifacts, and 0.7.1 shipped **both** stale. Confirmed by running `unzip`
+    against the published AppImage (fails) and `--appimage-extract` (works).
+  - Open questions resolved clean, not findings: `gh release create` does pass
+    `-R` (line 189); a build-only run exits before the publish guards (line 117),
+    so the documented `--rebuild` recovery is reachable; `changelog_log` exists
+    and is Keep-a-Changelog-aware.
