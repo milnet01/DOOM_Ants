@@ -75,9 +75,10 @@ Quick summary of the load-bearing ones:
   append-only: never renumber, never reuse.
 - Shortest correct implementation; reuse before rewriting.
 - Keep `CHANGELOG.md` and any version line in lockstep when releasing.
-- A release can ship a **stale binary** — `release.sh` reuses an artifact that
-  merely has the right filename. The releases standard's "Cutting a release"
-  section owns the rule and the workaround (DOOM-0356); read it before publishing.
+- A release could once ship a **stale binary**, because `release.sh` reused any
+  artifact with the right filename. It now stamps each build with the commit it
+  came from and re-checks the published assets; the releases standard's "Cutting
+  a release" section owns the story and what to do when an asset is wrong.
 - Dependencies stay on the **latest stable** version (features *and* security).
   An older pin is a last resort — only when the newer version explicitly breaks
   a feature — and must be logged in the dependencies standard's Version

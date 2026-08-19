@@ -31,28 +31,24 @@ They move **together**, driven by the release tool — never by hand, one at a
 time. Keeping them in lockstep is the rule `CLAUDE.md` refers to; this is its
 home.
 
-**The tool moves all three only when it promotes `[Unreleased]`.** `release.sh`
-rewrites the CHANGELOG, rewrites README's "Latest release" line, adds the
-`[Unreleased]:` / `[<ver>]:` compare links and commits the lot inside a single
-branch, taken only when no `## [<ver>]` heading exists yet. Where one already
-does — a section dated by hand — it skips all of that and still tags, so the tag
-moves and README does not. Until DOOM-0357 lands, **leave the section as
-`[Unreleased]` and let the tool promote it**; that is the only route that moves
-every leg. Bumping README by hand instead still leaves the compare links unwritten.
+**The tool brings each leg up to date wherever it is not already**, and the
+CHANGELOG's `[Unreleased]:` / `[<ver>]:` compare links travel with the heading as
+part of that leg. So a section dated by hand ahead of the release — `changelog_log`'s
+`release` operation does exactly that — no longer costs you the other three.
+Letting `release.sh` promote `[Unreleased]` is still the simplest route; it is no
+longer the only correct one (DOOM-0357).
 
-**Do not cut a `-`-suffixed pre-release until DOOM-0357 lands.** The README
-rewrite matches a plain `X.Y.Z` only, so cutting `0.6.0-pre.1` writes a line the
-guard no longer recognises and the *next* release aborts with "could not find
-README 'Latest release' line to bump". If one has already been cut, restoring
-that line by hand to the last plain `X.Y.Z` is a **named exception** to the
-never-by-hand rule above — it is the only way to unblock the next release.
-DOOM-0357 covers this leg as well as the skipped-branch one.
+**A leg that did not move blocks the tag.** Before tagging, `release.sh` checks
+that the CHANGELOG heading, its compare link and README's line all read the
+version being tagged, and refuses to tag if one lags — which also catches a leg
+edited by hand to the wrong value.
 
-**Do not date the CHANGELOG section ahead of the release, by hand or by tool.**
-`changelog_log` has a `release` operation that closes `[Unreleased]` into
-`## [<ver>] - <date>`; running it before `release.sh` produces exactly the state
-above, from the tool this standard otherwise recommends. Let `release.sh` do the
-promotion.
+**README's line tracks the latest *stable* version.** It is what a player
+arriving at the repo should download, so a `-`-suffixed pre-release deliberately
+leaves it pointing at the last plain `X.Y.Z`. The other legs still move for a
+pre-release. Decided 2026-08-19 with DOOM-0357, which also removed the older
+failure where a pre-release wrote a line the tool could no longer recognise and
+aborted the *next* release.
 
 ## CHANGELOG
 
@@ -68,14 +64,13 @@ see the lockstep section for why.
 One command does it all — don't tag or upload by hand:
 
 ```sh
-packaging/release.sh <ver> --rebuild                                # build both artifacts locally, no publish
-packaging/release.sh <ver> --publish --rebuild --theme="<one line>" # + promote changelog, tag, push, GitHub release
+packaging/release.sh <ver>                                # build both artifacts locally, no publish
+packaging/release.sh <ver> --publish --theme="<one line>" # + promote changelog, tag, push, GitHub release
 ```
 
-`--rebuild` is mandatory on **every** run until DOOM-0356 lands — the
-build-only run reuses a stale artifact exactly as the publishing one does (it
-prints "Reusing existing AppImage"), so a local build made to check a fix can
-silently not contain it. See the stale-artifact warning below.
+`--rebuild` forces a clean rebuild. It is not needed for correctness: an
+artifact is reused only when it was built from the commit being released. See
+the stale-artifact note below for what that buys and how it was learned.
 
 `--theme` sets the release commit subject (`<ver>: <theme>`). It does **not**
 set the GitHub release title: that is always `DOOM_Ants <ver>`, with the theme
@@ -88,54 +83,55 @@ In order, `release.sh`:
    is built or tagged;
 2. builds the **Linux AppImage** (`packaging/build-appimage.sh`);
 3. builds and zips the **Windows** cross-build;
-4. with `--publish`: promotes `CHANGELOG [Unreleased]` → `[<ver>] - <today>`,
-   rewrites README's "Latest release" line, commits both, tags `v<ver>`, pushes
-   branch + tag, and creates the GitHub release with both artifacts attached and
-   the CHANGELOG section as notes. The first three of those are skipped when a
-   `## [<ver>]` heading already exists — see the lockstep section above.
+4. with `--publish`: brings the CHANGELOG heading, its compare links and
+   README's "Latest release" line up to `<ver>` — each one only where it is not
+   already — commits whatever moved, refuses to tag if any leg still lags, then
+   tags `v<ver>`, pushes branch + tag, creates the GitHub release with both
+   artifacts attached and the CHANGELOG section as notes, and finally
+   re-downloads both published assets and checks they are byte-identical to what
+   it built.
 
 Requirements: the mingw-w64 cross toolchain + staged libs (`mingw-deps/`), the
 AppImage toolchain (auto-fetched), `zip`, and an authenticated `gh`.
 
-> **Until DOOM-0356 lands, pass `--rebuild` on every run — and after
-> publishing, download the released artifact and confirm it contains the change
-> the release claims.** `release.sh` decides an artifact is already built by
-> testing for a file of that name (lines 71 and 80), and the name carries only
-> the version. So a build-only run followed by a `--publish` run **without
-> `--rebuild`** uploads the *first* build, and any commit made in between is
-> missing from what ships. Nothing else catches it: `make test` and
-> `packaging/ci-local.sh` both check the tree, not the artifact, and the tag,
-> the CHANGELOG and the release all come out correct. Observed on 0.7.1, where
-> the published binaries predated the fix the release was cut for.
+> **A release can ship a binary that is not what you tagged, and almost nothing
+> catches it.** `release.sh` used to decide an artifact was already built by
+> testing for a file of that name, and the name carries only the version. So a
+> build-only run followed by a `--publish` run uploaded the *first* build, and
+> any commit made in between was missing from what shipped. Nothing else caught
+> it: `make test` and `packaging/ci-local.sh` both check the tree, not the
+> artifact, and the tag, the CHANGELOG and the release all came out correct.
+> Observed on 0.7.1, where the published binaries predated the fix the release
+> was cut for — **both** artifacts, not just one.
 >
-> Check **both** assets for something only the new code has — an imported
-> symbol, a new string — rather than trusting the file's timestamp. They open
-> differently: `unzip` the Windows zip, but an AppImage is not a zip, so use
-> `./<name>.AppImage --appimage-extract` and inspect what lands in
+> **Two checks now stand in the way (DOOM-0356), and they are a pair.** Each
+> build stamps `<artifact>.commit` with `git rev-parse HEAD`, and an artifact is
+> reused only when that stamp equals the commit being released — so the local
+> artifact provably comes from HEAD. Then, after publishing, `release.sh`
+> re-downloads both assets and compares them byte-for-byte with what it built —
+> so the published asset provably is that artifact. A dirty tree matches no
+> stamp and always rebuilds.
+>
+> **To inspect an artifact by hand anyway**, look for something only the new code
+> has — an imported symbol, a new string — rather than trusting the timestamp.
+> They open differently: `unzip` the Windows zip, but an AppImage is not a zip, so
+> use `./<name>.AppImage --appimage-extract` and inspect what lands in
 > `squashfs-root/`. Not `--appimage-extract-and-run`, which unpacks to a temp
 > directory, *runs* the game and cleans up — it leaves nothing to inspect and
-> takes over the display. 0.7.1 shipped **both** artifacts stale, so checking
-> only the Windows one would have missed half of it.
+> takes over the display.
 >
-> **This applies to every publishing route, not just a hand-typed one.**
-> `.claude/bump.json`'s `release_command` records the canonical publish
-> invocation and carries no `--rebuild`, so publishing through the recipe ships
-> the stale artifact while looking compliant. Add the flag there too until
-> DOOM-0356 lands.
->
-> **When the check fails, replace the assets — do not re-tag.** `release.sh`
+> **When an asset turns out wrong, replace it — do not re-tag.** `release.sh`
 > refuses a second `--publish` of an existing tag, and the tag is not the thing
 > that is wrong. Rebuild with `--rebuild`, then
 > `gh release upload <tag> --repo <owner>/<repo> --clobber <assets>`, leaving the
-> tag where it is. This is a sanctioned exception to "don't tag or upload by
-> hand" above — the other is the pre-release README repair — and it is what
-> 0.7.1 used.
+> tag where it is. This is the one sanctioned exception to "don't tag or upload
+> by hand" above, and it is what 0.7.1 used.
 
 > **`gh` repo gotcha:** this repo is a fork of `id-Software/DOOM`, so `gh`
 > defaults to the parent. **Hand-run `gh` commands** — the asset replacement
 > above, `gh release view` — must target the fork explicitly with
 > `-R milnet01/DOOM_Ants` (or `--repo`). `release.sh` needs no such flag and
-> accepts none: it derives the slug from `origin` itself (line 127) and passes
+> accepts none: it derives the slug from `origin` itself (line 158) and passes
 > `-R` on every `gh` call it makes.
 
 ## What ships, and when
