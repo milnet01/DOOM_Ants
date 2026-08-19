@@ -97,7 +97,7 @@ In order, `release.sh`:
 Requirements: the mingw-w64 cross toolchain + staged libs (`mingw-deps/`), the
 AppImage toolchain (auto-fetched), `zip`, and an authenticated `gh`.
 
-> **Until DOOM-0356 lands, pass `--rebuild` on the publishing run — and after
+> **Until DOOM-0356 lands, pass `--rebuild` on every run — and after
 > publishing, download the released artifact and confirm it contains the change
 > the release claims.** `release.sh` decides an artifact is already built by
 > testing for a file of that name (lines 71 and 80), and the name carries only
@@ -127,8 +127,9 @@ AppImage toolchain (auto-fetched), `zip`, and an authenticated `gh`.
 > refuses a second `--publish` of an existing tag, and the tag is not the thing
 > that is wrong. Rebuild with `--rebuild`, then
 > `gh release upload <tag> --repo <owner>/<repo> --clobber <assets>`, leaving the
-> tag where it is. This is the one sanctioned exception to "don't tag or upload
-> by hand" above; it is what 0.7.1 used.
+> tag where it is. This is a sanctioned exception to "don't tag or upload by
+> hand" above — the other is the pre-release README repair — and it is what
+> 0.7.1 used.
 
 > **`gh` repo gotcha:** this repo is a fork of `id-Software/DOOM`, so `gh`
 > defaults to the parent. **Hand-run `gh` commands** — the asset replacement
