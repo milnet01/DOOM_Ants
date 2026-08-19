@@ -1,3 +1,5 @@
+<!-- ants-roadmap-format: 1 -->
+
 # Roadmap
 
 The plan for DOOM_Ants, in three phases. Every actionable item carries a
@@ -17,6 +19,7 @@ that everything else builds on.
   Kind: doc.
   Source: in-session-2026-06-11.
   Resolved (2026-06-15): documentation & standards tree is in place — README.TXT, CLAUDE.md, ROADMAP.md, CHANGELOG.md, docs/specs/, and the four house-rule standards (docs/standards/coding.md, commits.md, documentation.md, roadmap-format.md), all with substantive content. Tree is established; further standards get added on demand per their own "add only when a real decision forces it" rule.
+
 - ✅ [DOOM-0002] **Publish DOOM_Ants as a public GitHub repository.**
   **Layman:** Put the project online, publicly, so it can be shared and downloaded.
   Kind: chore.
@@ -60,23 +63,27 @@ with friends.
   Kind: fix.
   Source: in-session-2026-06-11.
   Resolved (2026-06-12): builds under gcc 15 / C23 via -std=gnu11; m_misc.c config-table and am_map.c implicit-int repairs.
+
 - ✅ [DOOM-0004] **Replace legacy X11 video & sound with SDL2.**
   **Layman:** Swap the ancient display/sound code for a modern, cross-platform layer.
   Kind: refactor.
   Source: in-session-2026-06-11.
   Resolved (2026-06-12): SDL2 video (ARGB texture, integer scale) + in-process SDL audio mixer replace X11/sndserver; single self-contained binary.
+
 - ✅ [DOOM-0005] **Boot with a shareware WAD and confirm gameplay.**
   **Layman:** Actually run it with DOOM's data and check it plays like the original.
   Kind: test.
   Source: in-session-2026-06-11.
   Progress (2026-06-12): boots Ultimate Doom / DOOM II with SDL2 video+audio; renders a warped-in level for 25s+ with no crash (verified headless via SDL dummy drivers). Four 64-bit pointer fixes landed (r_data maptexture/array sizing, p_setup line list, colormap/translation alignment). Remaining: a human playtest on a real display to confirm input feel and visuals; shareware doom1.wad not yet exercised (tested with retail IWADs).
   Resolved (2026-06-12): user playtested DOOM II on a real display - boots, renders, controls respond, and SDL sound effects play. Plays like the original.
+
 - ✅ [DOOM-0006] **Add a Windows build target.**
   **Layman:** Produce a version that runs on Windows so friends can play it.
   Kind: feature.
   Source: in-session-2026-06-11.
   Deferred (2026-06-12, user): the Windows build only matters once the Phase 2 3D version exists, so it is parked until then. Survey notes for when we pick it up: openSUSE Tumbleweed ships mingw64-cross-gcc but NO mingw SDL2 / SDL2_mixer / fluidsynth packages (would need source cross-builds of those, incl. the FluidR3_GM soundfont bundled and pointed at via $DOOM_SOUNDFONT). Remaining POSIX porting surface: i_net.c (BSD sockets/ioctl), i_system.c (gettimeofday, usleep), unistd/sys-time includes in w_wad.c/m_misc.c/d_main.c/r_data.c/m_menu.c.
   Resolved (2026-06-17): added a `make windows` mingw-w64 cross-build target. mingw-w64 supplies DOOM's POSIX shims, so the only _WIN32-guarded divergences were i_net.c (BSD sockets -> Winsock2), i_main.c (SDL_MAIN_HANDLED), d_main.c ($HOME->%USERPROFILE%, one-arg mkdir), doomtype.h/m_bbox.h (portable MAXINT vs glibc <values.h>), and w_wad.c (don't redefine mingw strupr/filelength; conditional O_BINARY). SDL2 2.32.10 / SDL2_mixer 2.8.2 / Vulkan-Headers 1.4.350.0 mingw dev libs staged under mingw-deps/ (git-ignored; README documents fetch). Builds mingw/doom_ants.exe (PE32+ x86-64); verified under Wine through engine init to the expected no-WAD exit; native Linux build unchanged. Commit eac0cd4.
+
 - ✅ [DOOM-0007] **Publish downloadable Linux & Windows builds via GitHub Releases.**
   **Layman:** Put ready-to-run downloads online so anyone can grab a copy.
   Kind: release.
@@ -298,6 +305,7 @@ with friends.
   Kind: fix.
   Source: in-session-2026-06-28.
   Resolved (2026-06-28): root cause was tempstring[80] being too small for the longest quicksave/quickload prompt (~59 fixed chars + a 24-char savegame name = up to 83 bytes). Bumped the shared buffer to [128] and switched both M_QuickSave (QSPROMPT) and M_QuickLoad (QLPROMPT) from sprintf to snprintf(sizeof) for defense-in-depth. Clean build — both -Wformat-overflow and -Wformat-truncation gone.
+  Source: in-session-2026-06-28 (build warning).
 
 - ✅ [DOOM-0158] **Announce a found secret with an on-screen message + a distinct sound (all renderers).**
   When the player steps into a secret sector, show a brief HUD message and play
@@ -794,12 +802,12 @@ with friends.
   viewpoints with their coordinates and a suggested facing, so a session
   can pick one and capture it. Useful classes to surface, since each one
   is a different feature under test:
-    - player starts and teleport destinations
-    - open-sky sectors (the fog / sky-shaft work needs these by name)
-    - liquid sectors (nukage/lava -- DOOM-0183)
-    - the largest rooms, and sectors with the longest sight lines
-    - doors and lifts (a mid-travel capture)
-    - sectors with light-flicker specials
+  - player starts and teleport destinations
+  - open-sky sectors (the fog / sky-shaft work needs these by name)
+  - liquid sectors (nukage/lava -- DOOM-0183)
+  - the largest rooms, and sectors with the longest sight lines
+  - doors and lifts (a mid-travel capture)
+  - sectors with light-flicker specials
   Each entry wants a spot that is actually STANDABLE and a facing that
   looks INTO the room rather than at the nearest wall -- a raw sector
   centroid is often inside a pillar or facing a corner, which is why
@@ -869,10 +877,10 @@ with friends.
   OK, exiting.", then I_Quit -> I_QuitTeardown never returns. Temporary
   breadcrumbs through the teardown pinned it exactly:
 
-    TD: enter        printed
-    TD: net done     printed   (D_QuitNetGame)
-    TD: sound done   printed   (I_ShutdownSound)
-    TD: music done   NEVER     (I_ShutdownMusic hangs)
+  TD: enter        printed
+  TD: net done     printed   (D_QuitNetGame)
+  TD: sound done   printed   (I_ShutdownSound)
+  TD: music done   NEVER     (I_ShutdownMusic hangs)
 
   so the hang is inside i_sound.c I_ShutdownMusic, one of Mix_HaltMusic,
   the I_UnRegisterSong loop, Mix_CloseAudio or Mix_Quit. Not yet narrowed
@@ -955,13 +963,13 @@ with friends.
   at all -- the hazard was found and fixed between the two ports.
 
   Two routes for us, both small, and they are not exclusive:
-    (a) Set SDL_NATIVE_MUSIC=0 before Mix_OpenAudio on Windows so SDL_mixer
-        uses its Timidity backend. Needs a SoundFont/patch set to be
-        audible -- verify before shipping or the fix trades a hang for
-        silence, and the smoke test would not catch that.
-    (b) Ship our own softsynth path as upstream does, which also delivers
-        identical music on every platform instead of whatever GM set the
-        player's Windows happens to have.
+  (a) Set SDL_NATIVE_MUSIC=0 before Mix_OpenAudio on Windows so SDL_mixer
+  uses its Timidity backend. Needs a SoundFont/patch set to be
+  audible -- verify before shipping or the fix trades a hang for
+  silence, and the smoke test would not catch that.
+  (b) Ship our own softsynth path as upstream does, which also delivers
+  identical music on every platform instead of whatever GM set the
+  player's Windows happens to have.
   Route (a) is the cheap experiment and settles whether native MIDI is
   really the deadlock: if SDL_NATIVE_MUSIC=0 makes windows-smoke.sh exit 0,
   the diagnosis is confirmed with no engine change at all.
@@ -1014,12 +1022,12 @@ with friends.
   (printf + fflush, since stderr is lost -- see the new bullet on that)
   showed the WHOLE teardown completing every time:
 
-    TD: enter / net done / sound done
-    MUS: enter / halt done / unregister done
-    MUS: calling Mix_CloseAudio / Mix_CloseAudio done
-    MUS: calling Mix_Quit / Mix_Quit done / leave
-    TD: music done / defaults done / graphics done
-    TD: teardown returned, calling exit(0) / atexit ran
+  TD: enter / net done / sound done
+  MUS: enter / halt done / unregister done
+  MUS: calling Mix_CloseAudio / Mix_CloseAudio done
+  MUS: calling Mix_Quit / Mix_Quit done / leave
+  TD: music done / defaults done / graphics done
+  TD: teardown returned, calling exit(0) / atexit ran
 
   So Mix_HaltMusic, the I_UnRegisterSong loop, Mix_CloseAudio and Mix_Quit
   all return on real Windows. The deadlock is Wine's winmm/audio stack, as
@@ -1116,16 +1124,16 @@ with friends.
   implies -nomusic, so music paths test nomusic alone.
 
   Two consequences the flags forced, both in this change:
-    - s_sound.c needed guards too. With music off, I_RegisterSong returns 0
-      and DOOM-0165's cold-start path reads that as a failed start: 4
-      retries over 1.6 s plus a log line each, on EVERY music change. The
-      sfx side would likewise print "not pre-cached - wtf?" once per sound.
-      Guards in S_StartMusicInfo and S_StartSoundAtVolume.
-    - I_ShutdownMusic only closed the shared device when music had come up,
-      so -nomusic (and, already, a missing MIDI decoder) left it open
-      through I_QuitTeardown -- which DOOM-0060's relaunch needs to release
-      for the child process. It now closes on sound_ok and calls Mix_Quit
-      only where Mix_Init ran.
+  - s_sound.c needed guards too. With music off, I_RegisterSong returns 0
+  and DOOM-0165's cold-start path reads that as a failed start: 4
+  retries over 1.6 s plus a log line each, on EVERY music change. The
+  sfx side would likewise print "not pre-cached - wtf?" once per sound.
+  Guards in S_StartMusicInfo and S_StartSoundAtVolume.
+  - I_ShutdownMusic only closed the shared device when music had come up,
+  so -nomusic (and, already, a missing MIDI decoder) left it open
+  through I_QuitTeardown -- which DOOM-0060's relaunch needs to release
+  for the child process. It now closes on sound_ok and calls Mix_Quit
+  only where Mix_Init ran.
 
   Verified headless (-bootsmoke 35, dummy video, doom.wad): baseline logs
   "music ready" + "pre-cached all sound data"; -nomusic logs "music
@@ -1212,17 +1220,17 @@ with friends.
   Two fixes, one per cause:
 
   1. mingw-deps.sh routes all four downloads through a `fetch` helper
-     with --retry 5 --retry-delay 3 --retry-all-errors and a connect
-     timeout. --retry alone covers HTTP status codes only; the
-     -all-errors form also covers a connection reset.
+  with --retry 5 --retry-delay 3 --retry-all-errors and a connect
+  timeout. --retry alone covers HTTP status codes only; the
+  -all-errors form also covers a connection reset.
 
   2. packaging/ci-local.sh mirrored ONLY the `linux` job, so the job
-     that failed had never been runnable locally — the local gate could
-     come back green on a tree CI would reject. It now runs the
-     `windows-syntax` job too, in both native and container modes, and
-     mirrors the workflow's docs-only paths-ignore (a docs-only change
-     exits 0 at once, because GitHub skips the workflow for one as
-     well; --force overrides).
+  that failed had never been runnable locally — the local gate could
+  come back green on a tree CI would reject. It now runs the
+  `windows-syntax` job too, in both native and container modes, and
+  mirrors the workflow's docs-only paths-ignore (a docs-only change
+  exits 0 at once, because GitHub skips the workflow for one as
+  well; --force overrides).
 
   Also added packaging/hooks/pre-push so the gate actually runs before
   every push rather than by memory; install per clone with
@@ -1307,9 +1315,9 @@ with friends.
   fprintf(stderr, ...) in the engine produces NOTHING. Measured 2026-08-13 on
   real hardware: a run that prints these on Linux
 
-    I_InitMusic: music ready (44100 Hz, SDL2_mixer)
-    I_InitSound:  pre-cached all sound data
-    I_InitSound: sound module ready
+  I_InitMusic: music ready (44100 Hz, SDL2_mixer)
+  I_InitSound:  pre-cached all sound data
+  I_InitSound: sound module ready
 
   emits an EMPTY stderr on Windows, in the same run where stdout arrives
   complete. The one message that does survive is I_Error's, and only because
@@ -1351,9 +1359,9 @@ with friends.
   Verified on the real Windows box, which is the only place the bug
   existed. The three lines that came back EMPTY before the change:
 
-    I_InitMusic: music ready (44100 Hz, SDL2_mixer)
-    I_InitSound:  pre-cached all sound data
-    I_InitSound: sound module ready
+  I_InitMusic: music ready (44100 Hz, SDL2_mixer)
+  I_InitSound:  pre-cached all sound data
+  I_InitSound: sound module ready
 
   Both builds clean, make test green. Not verified under Wine, which never
   reproduced the loss.
@@ -1371,8 +1379,8 @@ with friends.
   Measured 2026-08-13 on SparePC (Win10 22H2, GTX 1050, GTX-era Vulkan, no
   RT), Classic renderer, -bootsmoke 35:
 
-    real window   ~9 hangs in ~420 runs   (~2.1%)
-    headless      3 hangs in 100 runs     (3%, SDL_VIDEODRIVER=dummy)
+  real window   ~9 hangs in ~420 runs   (~2.1%)
+  headless      3 hangs in 100 runs     (3%, SDL_VIDEODRIVER=dummy)
 
   The rate is the same with and without a window, so window creation is not
   the cause -- an earlier reading that blamed launching over SSH was wrong
@@ -1380,8 +1388,8 @@ with friends.
 
   Every hung run stops at the SAME point. Last line is always
 
-    RB_VulkanProbe: Vulkan device "NVIDIA GeForce GTX 1050" without hardware
-    ray tracing - raster-3D tier.
+  RB_VulkanProbe: Vulkan device "NVIDIA GeForce GTX 1050" without hardware
+  ray tracing - raster-3D tier.
 
   with no "tics simulated OK" and no teardown breadcrumb. stdout is
   line-buffered as of DOOM-0348, so the log is current up to the freeze --
@@ -1415,7 +1423,7 @@ with friends.
   assignment and reports completed / hung / died-early separately. Run it
   with
 
-    ssh wintest 'powershell -NoProfile -ExecutionPolicy Bypass -File C:\doom-ants-test\dummy2.ps1 -Runs 100'
+  ssh wintest 'powershell -NoProfile -ExecutionPolicy Bypass -File C:\doom-ants-test\dummy2.ps1 -Runs 100'
 
   and pass -RealWindow to compare against a windowed run. Restage the exe
   with scp after any rebuild; nothing does that automatically.
@@ -1434,8 +1442,8 @@ with friends.
 
   The captured hang:
 
-    [c] I_GetTime BACKWARDS 37 -> 33 (sec=1213354 nsec=61356700 base=1213353)
-    [c] wipe: iter=3 tics=-4 now=33 spins=40367
+  [c] I_GetTime BACKWARDS 37 -> 33 (sec=1213354 nsec=61356700 base=1213353)
+  [c] wipe: iter=3 tics=-4 now=33 spins=40367
 
   I_GetTime computed `tv_nsec*(long)TICRATE/1000000000L`. `long` is 64
   bits on Linux and 32 on Windows, so 61356700*35 = 2147484500 overflowed
@@ -1513,6 +1521,92 @@ with friends.
   Solid+RT (paletted) peak 20.5 and 48 of 96; Ultra+RT (HD art) peak 22.9
   and 48 of 96. The chain accounts for essentially all of it and the HD
   art for about 11% on top -- recorded against DOOM-0331 section 10 Q3.
+
+- ✅ [DOOM-0353] **Windows silently discards every settings change, because rename() will not overwrite.**
+  Found 2026-08-19 by the 0.7.1 release gate, running the SHIPPED
+  Windows zip on real Windows 10 (the `wintest` box) rather than under
+  Wine. The last line of a clean boot is:
+
+    M_SaveDefaults: can't replace r.cfg: File exists
+
+  DOOM-0254 made the config save crash-safe by writing a sibling
+  `<config>.tmp` and `rename()`ing it into place, on the stated grounds
+  that "rename(2) is atomic within a directory". That is true on POSIX,
+  where rename() silently replaces an existing destination. It is NOT
+  true on Windows: MSVCRT's rename() fails with EEXIST when the
+  destination exists, so the rename fails, the temp file is removed, and
+  the settings are dropped. m_misc.c:398.
+
+  Since the config always exists by the second launch, this means every
+  settings change made on Windows has been silently lost since DOOM-0254
+  landed -- volume, resolution, render tier, widescreen, key bindings.
+
+  It went unnoticed because the diagnostic goes to stderr, and DOOM-0348
+  (shipping in this same release) is what made Windows stderr visible at
+  all. This is the first Windows run that could show it.
+
+  Fix: on Windows use MoveFileExA(..., MOVEFILE_REPLACE_EXISTING), which
+  keeps DOOM-0254's replace-in-one-step intent rather than falling back
+  to remove()-then-rename() and opening a window with no config at all.
+  Linux keeps rename() unchanged.
+  Resolved 2026-08-19 (m_misc.c). Windows now replaces the config with
+  MoveFileExA(..., MOVEFILE_REPLACE_EXISTING); the POSIX rename() path is
+  unchanged behind #else. windows.h is included under WIN32_LEAN_AND_MEAN,
+  which is mandatory here -- <rpcndr.h> typedefs `boolean` and clashes with
+  doomtype.h (the same guard d_main.c:48 carries).
+
+  Verified by A/B on the real Windows 10 box, same WAD, same 68-byte config
+  staged fresh for each arm:
+
+    OLD (0.7.1, rename())      cfg 68 -> 68 bytes   saved=NO   1x "can't replace"
+    NEW (MoveFileExA)          cfg 68 -> 1015 bytes saved=YES  0x "can't replace"
+
+  1015 bytes is the full defaults[] table, so the save completed rather than
+  merely not erroring. No leftover .tmp in either arm. Linux re-checked and
+  unchanged: 14 -> 958 bytes, rc=0, no error, no leftover .tmp.
+
+  Linux build rc=0, Windows cross-build rc=0 (no warnings), make test 10/10.
+  **Layman:** On Windows the game throws away your settings every time you quit -- volume, resolution, render tier, key bindings. Linux is unaffected.
+  Kind: fix.
+  Source: release-gate-0.7.1-on-real-windows-2026-08-19.
+
+- 📋 [DOOM-0354] **m_misc.c includes dstrings.h without using it.**
+  Surfaced by clangd while editing m_misc.c for DOOM-0353: `Included
+  header dstrings.h is not used directly [unused-includes]`, m_misc.c:69.
+
+  Pre-existing and untouched by that fix -- coding.md 1.7 says a change
+  only carries lines that trace to its own reason, so it was surfaced
+  rather than swept up. Trivial to confirm and drop, but confirm rather
+  than assume: dstrings.h may be pulling in something transitively that
+  m_misc.c does rely on.
+  **Layman:** A leftover file reference in the settings code that nothing actually needs.
+  Kind: chore.
+  Source: release-gate-0.7.1-2026-08-19.
+
+- 📋 [DOOM-0355] **The `act` build used for local CI runs is behind two CVEs.**
+  Installed 2026-08-19 to run Phase 2b of the release gate -- executing
+  .github/workflows/build.yml itself, rather than the packaging/ci-local.sh
+  mirror, which commits.md 4.2 warns returns green for a pipeline that
+  will fail. It works: both jobs ran green against podman with
+  `-P ubuntu-latest=catthehacker/ubuntu:act-24.04`.
+
+  But act itself prints on every run:
+
+    This version of 'act' is vulnerable to CVE-2026-34041 and
+    CVE-2026-34042 - please upgrade to 0.2.86 or later.
+
+  openSUSE Tumbleweed's OSS repo ships 0.2.84-1.6; upstream is 0.2.89.
+  This is developer tooling on the build host, not a shipped dependency,
+  so it does not reach players -- but it parses untrusted workflow input
+  and is now part of how a release is verified.
+
+  Fix: install a current act outside the distro package (upstream release
+  binary), or wait for Tumbleweed to catch up and pin the check to >= 0.2.86.
+  Also worth recording the act invocation in the release docs -- it is not
+  written down anywhere yet, and the -P image mapping is not guessable.
+  **Layman:** The tool we now use to rehearse the automated build on this machine needs updating.
+  Kind: security.
+  Source: release-gate-0.7.1-2026-08-19.
 
 ## Phase 2 — The Spin
 
@@ -1661,6 +1755,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   gun/hand + solid floor -- user-confirmed "perfect". The horizontal 4:3
   mapping is untouched.
   Stage 1 shipped (2026-06-25, user-confirmed). The Vulkan 3D raster renderer is complete and playable: level meshes, per-texel paletted materials (atlas), world sprites + weapon, sky, muzzle-flash brighten, the Classic/Solid/Ultra menu, the 2D HUD/menu compositor, BSP floor caps, moving-sector animation (DOOM-0049), door-jamb geometry (DOOM-0052), and clean mid-game switching (DOOM-0051). Tested on DOOM 1 and DOOM 2 first levels. Stage 2 = the path tracer (DOOM-0009); the bindless-material migration and acceleration structure land there per docs/specs/DOOM-0009-path-tracer.md.
+
 - 🚧 [DOOM-0009] **Add hardware path tracing (Monte-Carlo GI + ray-traced shadows).**
   **Layman:** Use the graphics card to trace real light rays for accurate lighting, bounced light, and shadows.
   Kind: feature.
@@ -1696,11 +1791,13 @@ parked ideas (💭 considered) until we commit to and design each one.
   acceptance pending playtest. Next: 6-d upscalers.
   Progress (2026-06-28): build step 6-d (upscale) PHASE 1 landed — the in-engine TAAU plumbing the spec §4.4 names first (FSR 2 / FSR 3.1 are later phases on the SAME contract). Three parts: (a) pathtrace.comp jitters the primary ray by a Halton(2,3) sub-pixel offset (carried in camPos.w/camDir.w; 0 on the non-upscaled path, so it is a no-op there); (b) svgf_composite.comp writes a render-res motion-vector image (rg16f, set-2 binding 8) by reprojecting each pixel's world point through the prev-frame camera — the FSR-ready MV contract, reusing the prev-camera basis already in its push constants; (c) new shaders/taau.comp reconstructs the full DISPLAY image from the render-res denoised colour + MV + this frame's jitter (bilinear un-jittered current sample, motion-reprojected history, 3x3 neighbourhood colour-clamp anti-ghosting, history-weighted blend) into a display-res output the present path blits. Host (r_vulkan.cpp): SV_MOTION added to the SVGF descriptor set; a dedicated TAAU descriptor set + compute pipeline + display-res history[2]/output images; a labelTaauDs so the debug mode label stamps on the upscaled image. When active the trace + SVGF dispatch into a render-scale sub-rectangle of the (display-sized) storage images and TAAU upscales — no image-resize on scale change. Gated to the mode-6 denoised path with Upscaler=TAAU; modes 1-5 and mode-6 with Upscaler=Off are byte-identical (default Off). Menu: a new Renderer sub-menu hung off the Options "Renderer" row (the main Options menu is full at 320x200) — Renderer / Upscaler (Off, TAAU) / Render Scale (100/75/67/50%); persisted via m_misc.c (upscaler, render_scale). Build clean (glslc + g++, 0 warnings); cannot run/validate here (no GPU/WAD) -> PENDING USER ON-HARDWARE VERIFY on the RX 6600: (1) validation-clean mode-6 run with Upscaler=TAAU at 100% then 75/67/50%; (2) no jitter shimmer when still; (3) upscaled image holds edges/detail without obvious smearing when moving; (4) Off path unchanged. NOT yet done: jitter-aware variance clipping + depth/disocclusion confidence (tuning rides the step-7 perf pass); FSR 2 / FSR 3.1 backends (later 6-d phases); an optional linear/HDR upscale tap point if an FSR backend prefers it.
   Research note (2026-06-28, verified — docs/research/DOOM-0009-rt-denoiser-upscaler-bestpractices.md): findings that shape the 6-d FSR phases. (1) FSR 2's input contract is strict: three mandatory render-res buffers — colour + depth + motion vectors — plus an optional reactive mask + exposure for best quality, and the order is denoise-then-upscale (which the TAAU plumbing already follows). Convention is load-bearing: colour + depth are JITTERED, motion vectors are NOT jittered by default. Our TAAU motion vectors are computed geometrically (worldPos -> prev camera) and are already un-jittered -> FSR2-correct as-is. GAPS to close in 6-d phase 2: we do NOT yet produce a render-res DEPTH image (the G-buffer stores worldPos, not depth) — FSR2 needs one; and we need a reactive mask (sparse for DOOM — mostly opaque; the mask is for alpha/particle content that doesn't write depth/MVs, NOT for opaque emissive geometry) + an exposure input. (2) AMD FSR Ray Regeneration (the ML denoiser) is UNAVAILABLE on this stack — it requires RDNA4 (RX 9000+), DX12 + SM 6.6, Windows 11, and is DX12-exclusive (no Vulkan). So the custom SVGF/A-SVGF + TAAU->FSR2 path is THE route; do not pursue RR on the RX 6600. (Time-sensitive: FSR SDK support evolves — RDNA3 upscaling landed in SDK 2.3, RX 6000 upscaling slated ~2027 — re-check before an FSR milestone.) (3) Validated, no change needed: the inline ray-query compute megakernel choice (the wavefront-beats-megakernel claim was refuted 0-3 for low-divergence matte art), and the SVGF demodulate-before/remodulate-after + A-SVGF adaptive-alpha design are all confirmed canonical. Note: A-SVGF's adaptive alpha targets LIGHTING-change ghosting; geometric disocclusion is still the inherited depth/normal/mesh-id reprojection test's job. The dedicated perf + AS + lighting + security follow-ups are now DOOM-0090..0093.
+
 - 💭 [DOOM-0010] **Add dynamic lighting.**
   **Layman:** Let lights move and react — muzzle flashes, flickering lamps — lighting the scene live.
   Kind: feature.
   Source: in-session-2026-06-11.
   Scope clarification (2026-06-27, user): the muzzle flash must light up the room in BOTH 3D tiers (Solid AND Ultra), with ray tracing ON or OFF. RT off → a raster-lit flash (the room brightens, no cast shadows); RT on → the DOOM-0009 path tracer additionally casts the flash's ray-traced shadows + bounces. So muzzle-flash illumination is tier- and RT-agnostic (it is NOT an Ultra-only or RT-only effect); only the shadow quality scales with the RT toggle. Distinct from the pitch-black-room handling (DOOM-0043, Ultra-only): a flash lights any room momentarily regardless of tier.
+
 - 🚧 [DOOM-0011] **Add volumetric lighting (god rays).**
   **Layman:** Visible shafts of light through smoke and doorways.
   Kind: feature.
@@ -1836,17 +1933,17 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   **Three of the spec's starting values did not survive contact**, each
   judged on a captured frame:
-    - kFogBaseDensity 0.0033 -> 0.0066 REVERTED. The doubled layer
-      saturates, and a saturated medium cannot show billows at all —
-      thickness and structure pull against each other. User's call on the
-      day was billows over bulk.
-    - kWispFreq1 1/512 -> 1/192. At 512 one noise cell spanned the whole
-      view and the march integrated it to a flat wash.
-    - An odd, mean-preserving S-curve on the noise + a 2.5x vertical
-      squash, and kWispAmp 0.6 -> 1.0. Ray integration averages ~10
-      samples back toward the mean: measured, the raw signal reached the
-      pixel as a 6 % swing (MAE 4.0 vs wisps-off). After: MAE 13.0, peak
-      128/255.
+  - kFogBaseDensity 0.0033 -> 0.0066 REVERTED. The doubled layer
+  saturates, and a saturated medium cannot show billows at all —
+  thickness and structure pull against each other. User's call on the
+  day was billows over bulk.
+  - kWispFreq1 1/512 -> 1/192. At 512 one noise cell spanned the whole
+  view and the march integrated it to a flat wash.
+  - An odd, mean-preserving S-curve on the noise + a 2.5x vertical
+  squash, and kWispAmp 0.6 -> 1.0. Ray integration averages ~10
+  samples back toward the mean: measured, the raw signal reached the
+  pixel as a 6 % swing (MAE 4.0 vs wisps-off). After: MAE 13.0, peak
+  128/255.
 
   Method worth keeping: **an A/B against the same build with kWispAmp = 0,
   scored as MAE, turns "can you see it?" into a number.** A still frame
@@ -1930,55 +2027,55 @@ parked ideas (💭 considered) until we commit to and design each one.
   every remaining fog task (L3, L4, DOOM-0292, DOOM-0293) rather than to
   any one of them:
 
-    "Whatever we can do cheaply without losing the visual bang, let's do
-     it. For consistency though, I was hoping we apply it once and it
-     looks right across all maps in both games."
+  "Whatever we can do cheaply without losing the visual bang, let's do
+  it. For consistency though, I was hoping we apply it once and it
+  looks right across all maps in both games."
 
   Two rules fall out, and the second is the one that constrains design
   rather than effort:
 
   1. Cheap is preferred, but not at the cost of the effect. The order to
-     evaluate options in is: does it read? then, what does it cost?
-     -- not the reverse. DOOM-0289 is the model (the cost went to ~0 and
-     the picture was held identical to 0.05 MAE).
+  evaluate options in is: does it read? then, what does it cost?
+  -- not the reverse. DOOM-0289 is the model (the cost went to ~0 and
+  the picture was held identical to 0.05 MAE).
 
   2. PREFER DERIVED OVER HAND-PLACED -- a DEFAULT, not a ban (clarified
-     2026-08-01, below). Derived = computed from the WAD at load. This is
-     already how the feature works and it should stay that way: the seep
-     distance, the open-sky mask, the sun clearance and fogFloorZ are all
-     computed from the map's own geometry, which is exactly why they hold
-     on maps nobody has looked at. It also rules out the industry's usual
-     answer for localised fog -- hand-placed volumes -- a poor DEFAULT for 32 + 36
-     maps across two IWADs, let alone custom WADs.
+  2026-08-01, below). Derived = computed from the WAD at load. This is
+  already how the feature works and it should stay that way: the seep
+  distance, the open-sky mask, the sun clearance and fogFloorZ are all
+  computed from the map's own geometry, which is exactly why they hold
+  on maps nobody has looked at. It also rules out the industry's usual
+  answer for localised fog -- hand-placed volumes -- a poor DEFAULT for 32 + 36
+  maps across two IWADs, let alone custom WADs.
 
-     The corollary for CONSTANTS: prefer ones expressed relative to
-     something the map supplies (fogFloorZ, a sector's own floor, the
-     level's highest liquid surface) over absolute world numbers, and
-     distrust any dial that had to be re-tuned to make a second map look
-     right -- that is the signal that the quantity underneath it is the
-     wrong one.
+  The corollary for CONSTANTS: prefer ones expressed relative to
+  something the map supplies (fogFloorZ, a sector's own floor, the
+  level's highest liquid surface) over absolute world numbers, and
+  distrust any dial that had to be re-tuned to make a second map look
+  right -- that is the signal that the quantity underneath it is the
+  wrong one.
 
-     The corollary for TESTING: the -shotverify gate set must span BOTH
-     IWADs, since doom2.wad carries flats, sector shapes and outdoor
-     scales that doom.wad never exercises (DOOM-0293's flat inventory is
-     the first case found -- 16 SLIME flats that exist only in DOOM 2).
+  The corollary for TESTING: the -shotverify gate set must span BOTH
+  IWADs, since doom2.wad carries flats, sector shapes and outdoor
+  scales that doom.wad never exercises (DOOM-0293's flat inventory is
+  the first case found -- 16 SLIME flats that exist only in DOOM 2).
   CLARIFICATION (2026-08-01, same day, user rephrasing the constraint
   above because the note had hardened it into a ban it never was):
 
-    "I would like it to be possible to do something once and it applies
-     everywhere. But in games I know that isn't always possible as we
-     would probably need significantly more powerful hardware to apply
-     real physics to the world. But we don't have that hardware and
-     people who will be playing this game probably don't have that
-     hardware either. So, let's not throw out the hand placed items but
-     only where it is feasible and makes sense to do, let's try the
-     approach of apply one to everywhere."
+  "I would like it to be possible to do something once and it applies
+  everywhere. But in games I know that isn't always possible as we
+  would probably need significantly more powerful hardware to apply
+  real physics to the world. But we don't have that hardware and
+  people who will be playing this game probably don't have that
+  hardware either. So, let's not throw out the hand placed items but
+  only where it is feasible and makes sense to do, let's try the
+  approach of apply one to everywhere."
 
   So the rule is a PREFERENCE ORDER, not a prohibition:
 
-    1. Derive it from the map if that is feasible and gives the look.
-    2. If it is not feasible -- or a derived version would cost more than
-       the hardware has -- hand-place it, deliberately, and say so.
+  1. Derive it from the map if that is feasible and gives the look.
+  2. If it is not feasible -- or a derived version would cost more than
+  the hardware has -- hand-place it, deliberately, and say so.
 
   Hand-authored data is a legitimate engineering answer here, not a
   failure. The reason to reach for derivation FIRST is coverage across
@@ -2005,18 +2102,18 @@ parked ideas (💭 considered) until we commit to and design each one.
   The plan's sketch scanned every static emitter per march sample and took
   the nearest few with NO occlusion test. Both halves were replaced:
 
-    - Occlusion is not optional after DOOM-0292. The plan wrote the
-      no-occlusion form as "Q2 start cheap", but gating the sky's ambient
-      share means a torch leaking through a wall is now the brightest
-      thing in a dark room. The user flagged this as L3's real risk on
-      2026-08-01 and was right.
-    - The per-sample scan goes with it. WHICH cells of air can see WHICH
-      emitters is baked once at level load, onto the seep grid DOOM-0276/
-      0289 already established, using DOOM's own line-of-sight test
-      (P_CheckSight's BSP walk, factored out as P_CheckSightTrace so it
-      takes points rather than mobjs). Runtime: one buffer read per fog
-      sample, no rays. Set 0 gains binding 6; no new push lane (INV-5
-      holds, the struct is still 240 bytes).
+  - Occlusion is not optional after DOOM-0292. The plan wrote the
+  no-occlusion form as "Q2 start cheap", but gating the sky's ambient
+  share means a torch leaking through a wall is now the brightest
+  thing in a dark room. The user flagged this as L3's real risk on
+  2026-08-01 and was right.
+  - The per-sample scan goes with it. WHICH cells of air can see WHICH
+  emitters is baked once at level load, onto the seep grid DOOM-0276/
+  0289 already established, using DOOM's own line-of-sight test
+  (P_CheckSight's BSP walk, factored out as P_CheckSightTrace so it
+  takes points rather than mobjs). Runtime: one buffer read per fog
+  sample, no rays. Set 0 gains binding 6; no new push lane (INV-5
+  holds, the struct is still 240 bytes).
 
   The user's suggested proxy -- sector-scoped lists off the raster path's
   RebuildStaticPointLightCache -- was considered and NOT taken, for a
@@ -2029,33 +2126,33 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   Two measurement lessons, both expensive:
 
-    1. SET THE GAIN AGAINST THE MEDIAN LIGHT, NOT THE BRIGHTEST. E1M1's
-       clustered intensities run 0 / 7987 med / 83741 -- one nukage
-       cluster is 17x an ordinary wall panel. Tuned against the maximum,
-       an A/B against the same build with the gain at 0 scored MAE
-       0.001/255: the noise floor, i.e. the whole feature invisible. A
-       deliberate 1000x gain then proved it had been wired all along. The
-       method is L1c's own -- A/B vs the same build with the constant at
-       0, scored as MAE.
-    2. A DEFAULT VIEWPOINT IS NOT A TEST. The first three A/Bs were shot
-       at the E1M1 spawn, which faces the courtyard and no light at all;
-       the effect measured as nothing there while working 200 units away.
-       -warpto (DOOM-0268), aimed at a light read out of the bake's own
-       log, is what made the measurement honest.
+  1. SET THE GAIN AGAINST THE MEDIAN LIGHT, NOT THE BRIGHTEST. E1M1's
+  clustered intensities run 0 / 7987 med / 83741 -- one nukage
+  cluster is 17x an ordinary wall panel. Tuned against the maximum,
+  an A/B against the same build with the gain at 0 scored MAE
+  0.001/255: the noise floor, i.e. the whole feature invisible. A
+  deliberate 1000x gain then proved it had been wired all along. The
+  method is L1c's own -- A/B vs the same build with the constant at
+  0, scored as MAE.
+  2. A DEFAULT VIEWPOINT IS NOT A TEST. The first three A/Bs were shot
+  at the E1M1 spawn, which faces the courtyard and no light at all;
+  the effect measured as nothing there while working 200 units away.
+  -warpto (DOOM-0268), aimed at a light read out of the bake's own
+  log, is what made the measurement honest.
 
   Measured, RX 6600, Ultra RT, HD art loaded:
-    - Nukage courtyard, L3 on vs gain 0: MAE 12.7/255, 71% of pixels
-      moved, frame mean 157.3 -> 170.0. The pool glows green into the air.
-    - megakernel 10.11 -> 11.16 ms, 58 -> 55 fps. Fog is then ~9% of
-      present-total, inside the 15% gate, but L3 is now its most
-      expensive piece -- DOOM-0295.
-    - Bake 4.4 ms / 7788 sight tests / 467 of 1085 air cells lit on E1M1;
-      1.3 ms / 48 lights on doom2 MAP01. Both IWADs exercised per the
-      standing constraint, and their medians agree closely (7987 vs 9900)
-      -- the evidence one global gain can serve both.
-    - make test 7/7; -rtverify PASS 0.0796% unchanged on doom.wad. It
-      FAILS on doom2.wad at 3.4943%, PROVEN pre-existing by a stashed
-      rebuild -- DOOM-0297.
+  - Nukage courtyard, L3 on vs gain 0: MAE 12.7/255, 71% of pixels
+  moved, frame mean 157.3 -> 170.0. The pool glows green into the air.
+  - megakernel 10.11 -> 11.16 ms, 58 -> 55 fps. Fog is then ~9% of
+  present-total, inside the 15% gate, but L3 is now its most
+  expensive piece -- DOOM-0295.
+  - Bake 4.4 ms / 7788 sight tests / 467 of 1085 air cells lit on E1M1;
+  1.3 ms / 48 lights on doom2 MAP01. Both IWADs exercised per the
+  standing constraint, and their medians agree closely (7987 vs 9900)
+  -- the evidence one global gain can serve both.
+  - make test 7/7; -rtverify PASS 0.0796% unchanged on doom.wad. It
+  FAILS on doom2.wad at 3.4943%, PROVEN pre-existing by a stashed
+  rebuild -- DOOM-0297.
 
   AWAITING USER PLAY-TEST, and it carries DOOM-0292's open question with
   it: whether kIndoorSkyLight stays at 0.45 now torches give light back
@@ -2087,14 +2184,14 @@ parked ideas (💭 considered) until we commit to and design each one.
   made with both images in front of them.
 
   Two earlier decisions this ratifies rather than changes:
-    - L1c tried kFogBaseDensity 0.0033 -> 0.0066 (the "roughly twice as
-      thick" half of the 2026-07-25 amendment) and REVERTED it, because a
-      saturated medium cannot show billows at all. Thickness and structure
-      pull against each other; the user chose billows then and has now
-      chosen the resulting near-field density explicitly.
-    - The user's 2026-07-27 "outside I want the fog much, much thicker and
-      higher" was delivered through kFogPoolHeight 18 -> 112, deliberately
-      NOT through kFogBaseDensity. Same separation, same reason.
+  - L1c tried kFogBaseDensity 0.0033 -> 0.0066 (the "roughly twice as
+  thick" half of the 2026-07-25 amendment) and REVERTED it, because a
+  saturated medium cannot show billows at all. Thickness and structure
+  pull against each other; the user chose billows then and has now
+  chosen the resulting near-field density explicitly.
+  - The user's 2026-07-27 "outside I want the fog much, much thicker and
+  higher" was delivered through kFogPoolHeight 18 -> 112, deliberately
+  NOT through kFogBaseDensity. Same separation, same reason.
 
   DOC DEBT this exposes, flagged rather than fixed here because editing
   the spec pulls in the rule-14 gate: docs/specs/DOOM-0011-volumetric-
@@ -2130,24 +2227,24 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   MEASURED, pre-L4 worktree vs HEAD, same view, same config, quiet box:
   - E1M1 spawn (no profile in view): MAE 0.004 against a same-build
-    control of 0.003 — inert, i.e. §7's byte-identity row as closely as
-    this harness can put it. NOTE the harness is NOT frame-deterministic:
-    the same build captured twice differs (md5 differs, MAE 0.003), so
-    literal byte-identity is unobservable here and the claim rests on the
-    algebra (`x + 0.0 == x`, `kFogColor * vec3(1.0)`) plus this bound.
+  control of 0.003 — inert, i.e. §7's byte-identity row as closely as
+  this harness can put it. NOTE the harness is NOT frame-deterministic:
+  the same build captured twice differs (md5 differs, MAE 0.003), so
+  literal byte-identity is unobservable here and the claim rests on the
+  algebra (`x + 0.0 == x`, `kFogColor * vec3(1.0)`) plus this bound.
   - E1M1 roofed nukage (sector 53): MAE 1.42, 28.6% of px, shift
-    (-1.21, +0.67, -2.25) = green-ward, under a roof.
+  (-1.21, +0.67, -2.25) = green-ward, under a roof.
   - E1M1 OPEN-SKY nukage (sector 0): MAE 6.89, shift (-8.42, +0.29,
-    -11.93); 0.000% of px above 250 on both builds and mean luma FELL, so
-    §7's wash-out risk did not materialise at kAreaDensity 0.0020.
+  -11.93); 0.000% of px above 250 on both builds and mean luma FELL, so
+  §7's wash-out risk did not materialise at kAreaDensity 0.0020.
   - E3M1: MAE 12.1 over 100% of px, shift (+3.99, -11.67, -20.76) =
-    red-ward. E1M1 gains nothing. §4.5's falsifier passes both ways.
+  red-ward. E1M1 gains nothing. §4.5's falsifier passes both ways.
   - CONSTRUCTION CHECK (§7, "not by eye"): with kIndoorFogScale forced to
-    0.0, toggling kAreaDensity still moves 29.2% of px at MAE 1.61 — the
-    profile term is provably OUTSIDE the skyExposure gate.
+  0.0, toggling kAreaDensity still moves 29.2% of px at MAE 1.61 — the
+  profile term is provably OUTSIDE the skyExposure gate.
   - Cost: megakernel, GPU per-pass profiler, rt_fog High, two runs each.
-    Goo room 15.177/15.178 vs 15.187/15.197 ms; E3M1 6.405/6.413 vs
-    6.410/6.402 ms. Delta within +-0.02 ms, under the 0.1 ms budget.
+  Goo room 15.177/15.178 vs 15.187/15.197 ms; E3M1 6.405/6.413 vs
+  6.410/6.402 ms. Delta within +-0.02 ms, under the 0.1 ms budget.
 
   Reusable: `-warpto <x> <y> [deg]` + a WAD-lump parse for liquid sectors
   beats cheat-nav for reaching a fixture headlessly. E1M1 carries BOTH goo
@@ -2165,13 +2262,13 @@ parked ideas (💭 considered) until we commit to and design each one.
   Q31 (DOOM-0300's drift speed) SIGNED OFF: "I like the fog... this one I
   think you can sign off." The 15x raise stands as a judged value rather than
   a measured guess. CLOSED.
-    Carried forward as a SEPARATE observation, because it is not the drift
-    speed and must not be filed as if Q31 were still open: "it is hard to see
-    the drift as the fog wisps are not as visible as in Silent Hill 2". That
-    is wisp AMPLITUDE / contrast (kWispAmp and the S-curve shaping), not
-    velocity -- the reference look is the one §1 names, so this is a real gap
-    against the stated art direction rather than a preference. Part 1
-    (DOOM-0310 §4.6) owns the wisps; raise it there when the fog work resumes.
+  Carried forward as a SEPARATE observation, because it is not the drift
+  speed and must not be filed as if Q31 were still open: "it is hard to see
+  the drift as the fog wisps are not as visible as in Silent Hill 2". That
+  is wisp AMPLITUDE / contrast (kWispAmp and the S-curve shaping), not
+  velocity -- the reference look is the one §1 names, so this is a real gap
+  against the stated art direction rather than a preference. Part 1
+  (DOOM-0310 §4.6) owns the wisps; raise it there when the fog work resumes.
   Q7 (goo/hell fog DENSITIES) and Q20 (kGooTint/kHellTint COLOURS) CANNOT BE
   JUDGED YET, and the user said why: "As with DOOM-0183, the goo (nukage)
   isn't really highlighting anything." Both questions ask the user to judge a
@@ -2186,8 +2283,8 @@ parked ideas (💭 considered) until we commit to and design each one.
   it on. Answered from `r_backend.c` rather than recalled -- `view.hazeDensity`
   is non-zero for `((gamemode == registered || retail) && gameepisode >= 3) ||
   (gamemode == commercial && gamemap >= 20)`:
-    DOOM 1  Episode 3 "Inferno"  E3M1-E3M9   (and Episode 4, Thy Flesh Consumed)
-    DOOM 2  MAP20 onward         MAP20-MAP32
+  DOOM 1  Episode 3 "Inferno"  E3M1-E3M9   (and Episode 4, Thy Flesh Consumed)
+  DOOM 2  MAP20 onward         MAP20-MAP32
   E3M1 is the standing fixture for hell in the headless harness, because its
   liquid is BLOOD3, which is NOT in FlagLiquidFlats' lut and so tests hell
   with zero goo contamination.
@@ -2237,9 +2334,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   300. Worth reusing: it turns "I cannot get to the place the user
   photographed" into a lookup.
   THE MARCH IS CORRECTLY TINTED. Measured on that capture, mean RGB:
-    upper sky     (153.3, 79.6, 79.6)   R/G 1.93
-    horizon band  (136.8, 78.4, 67.1)   R/G 1.75
-    ground        ( 85.8, 37.0, 25.2)   R/G 2.32
+  upper sky     (153.3, 79.6, 79.6)   R/G 1.93
+  horizon band  (136.8, 78.4, 67.1)   R/G 1.75
+  ground        ( 85.8, 37.0, 25.2)   R/G 2.32
   and E3M6's open landscape independently gives R/G 1.99-2.91. So kHellTint
   IS reaching marchFog and "the fog is showing as white" is NOT a tint failure
   in the march. User confirmed on the capture: "at least the fog is red."
@@ -2279,6 +2376,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   fog PROPERTIES per sector, read from the WAD, rather than from one global
   model. That is precedent for making our area profile a per-cell property
   of the map instead of a property of what the ray happens to hit.
+
 - 💭 [DOOM-0012] **Hold a 60 FPS performance floor.**
   **Layman:** Keep it running smoothly — never below 60 frames per second.
   Kind: perf.
@@ -2405,9 +2503,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   and would also unblock DOOM-0205's on-screen check.
   Resolved (2026-08-04): the outstanding item was never a fix, it was a LOOK, and DOOM-0318 made that look capturable the same day. The bullet's own words: "not 'does the smear still happen' but a plain confirmation that the menu-over-HUD region is clean in Solid/Ultra with the magnifier off", blocked because no capture could open a menu.
   Confirmed clean in both 3D tiers, magnifier not involved (these are headless captures, so the user's lens cannot contaminate them -- which is what made the original report misleading):
-    dev-shots/N-effects-solid.png  Solid, Render Effects over the status bar
-    dev-shots/M-effects-ultra.png  Ultra RT, same menu
-    dev-shots/O-video-ultra.png    Ultra RT, the TALL DOOM-0206 Video menu -- the strongest fixture, because it runs the full height down to the status-bar boundary and ends in a scroll chevron
+  dev-shots/N-effects-solid.png  Solid, Render Effects over the status bar
+  dev-shots/M-effects-ultra.png  Ultra RT, same menu
+  dev-shots/O-video-ultra.png    Ultra RT, the TALL DOOM-0206 Video menu -- the strongest fixture, because it runs the full height down to the status-bar boundary and ends in a scroll chevron
   In all three the status bar is crisp and undimmed, the menu sits above it, and the boundary shows no ghosting, smear or double-draw.
   The fix itself shipped earlier as part of DOOM-0206's menu redesign, whose CHANGELOG entry already states it: "a layout that no longer overlaps the bottom status bar". No separate CHANGELOG entry, since a second one would describe the same change twice.
 
@@ -2522,9 +2620,9 @@ parked ideas (💭 considered) until we commit to and design each one.
 
 - ✅ [DOOM-0064] **Automap renders blank/frozen in the 3D back-ends (Solid/Ultra).**
   Found 2026-06-25 (user testing, DOOM 1, Triangle toggles map via DOOM-0063). Symptom: in Solid/Ultra the automap is blank when opened; what Classic last drew lingers (stale) until you move, after which it shows nothing until you switch back to Classic, which redraws it correctly. Classic is always correct.
-  
+
   Static analysis (this session) traced the WHOLE path and found it SHOULD work, which is the puzzle: (1) D_Display calls AM_Drawer() every frame whenever automapactive, in all render modes (d_main.c ~244); (2) AM_Drawer writes into fb = screens[0] at full hi-res (am_map.c: f_w=SCREENWIDTH, f_h=SCREENHEIGHT-HIRES*32, PUTDOT into screens[0]); (3) map background = BACKGROUND = BLACK = index 0, which is NOT the overlay key (RB_OVERLAY_KEY=251), so it is NOT keyed out; (4) when automapactive, RB_RenderPlayerView is skipped (d_main.c ~283) so the view-rect clear-to-key in r_backend.c does NOT run; (5) nothing between AM_Drawer and the overlay copy overwrites screens[0] in 3D (I_FinishUpdate/Classic-only; I_UpdateNoBlit empty); (6) Vulkan_Present re-uploads screens[0] and draws the overlay every frame with depth test+write OFF (skyDs, r_vulkan.cpp ~1143), full-screen, keying only 251. The HUD/status bar use this exact overlay path and update fine. So by every readable line the map should composite. Conclusion: the cause is a runtime detail not visible in static reading -- did NOT ship a speculative fix (cannot GPU-verify here).
-  
+
   Next step / discriminating probe needed: with the map open in Solid, observe whether the view area shows (a) solid black, (b) the dark-slate clear colour, or (c) a frozen 3D scene -- each points at a different cause (a=map bg present but lines missing/scale, b=overlay not sampling the map region, c=overlay not covering / present ordering). Cheapest instrument: a one-frame printf in AM_Drawer (confirm it runs in 3D) + dump screens[0] center byte. Candidate fixes to evaluate after the probe: treat automap-active as a pure-2D present (skip the stale mesh draw); verify AM_Start's fb=screens[0] is the same buffer the Vulkan overlay copies. Web research (Chocolate Doom blits the whole software buffer; GZDoom draws 2D via shaders over 3D) confirmed our keyed-overlay approach is a legitimate architecture, no documented match for this exact bug.
   **Layman:** The in-game map is blank in the 3D renderers and only updates in Classic; needs a runtime probe to finish diagnosing.
   Kind: fix.
@@ -2648,7 +2746,7 @@ parked ideas (💭 considered) until we commit to and design each one.
 
 - 💭 [DOOM-0080] **Replace the 2D billboard enemy sprites with real 3D monster models in the Solid/Ultra renderers.**
   Classic DOOM draws monsters as flat camera-facing sprites (8 rotation angles per animation frame). In the 3D tiers these read as cardboard cutouts up close and under ray-traced lighting. Goal: substitute real 3D models with skeletal animation mapped to DOOM's existing state/animation machine (spawn, walk, attack, pain, death frames), lit and shadowed by the path tracer like the rest of the scene.
-  
+
   HARD and FAR-OUT — parked deliberately late. Open problems: (1) Sourcing — id's monster models/sprites are proprietary and CANNOT ship in this GPL-v2 repo, same constraint as DOOM-0042's art set; routes are CC0/free model packs, commissioned/hand-authored originals, or AI-assisted modelling, none of which has good DOOM-monster coverage today. (2) Rigging + animation retargeting onto the 2D sprite-frame timing so behaviour stays vanilla. (3) Per-tier: only the 3D renderers swap models; Classic keeps the original sprites (parallel-asset rule, like DOOM-0042). Pairs with DOOM-0042 (HD art set) and depends on the DOOM-0009 path tracer being in place. Approach to be researched with the user when the tier reaches it — not committed in detail yet (hence Considered, not Planned).
   **Layman:** Way down the line: turn the flat cardboard-cutout monsters into proper 3D models that look right from every angle.
   Kind: feature.
@@ -2849,9 +2947,9 @@ parked ideas (💭 considered) until we commit to and design each one.
 - 📋 [DOOM-0098] **Make the Ultra ambient floor shadow-aware so it stops flattening contrast.**
   Refines DOOM-0043. The current ambient floor (max(GI, sectorLight*AMBIENT_SECTOR_SCALE) in pathtrace.comp modes 4 + 6) is added FLAT to every surface in a sector, so within a lit room it lifts the shadowed side of a surface as much as the lit side — softening shadows/contrast (user playtest 2026-06-29: "not too dark now but it kind of kills the shadows"). The per-sector keying is correct (bright-marked rooms read, dark sectors stay dark); the problem is the within-room flatness, which per-area targeting cannot fix because the shadow lives inside the same bright room that needs the glow.
   Approaches to evaluate (cheapest first):
-    (a) Occlusion/AO-modulate the floor: scale the ambient term by a cheap ambient-occlusion / short shadow-ray term so genuinely open surfaces get the fill but shadowed pockets keep their darkness. Preserves contrast while still rescuing dark rooms.
-    (b) Fold the floor into the GI bake (bake.comp) instead of adding it at the camera: treat the sector-light ambient as a small uniform emitter that participates in the bounce, so occlusion falls out of the existing GI solution naturally (no extra per-pixel ray) — but changes bake semantics and re-bake cost.
-    (c) Hemisphere/normal-aware fill (e.g. a faint sky-direction bias) so up-facing surfaces get more than tucked-under faces — partial contrast recovery, cheaper than a full AO term.
+  (a) Occlusion/AO-modulate the floor: scale the ambient term by a cheap ambient-occlusion / short shadow-ray term so genuinely open surfaces get the fill but shadowed pockets keep their darkness. Preserves contrast while still rescuing dark rooms.
+  (b) Fold the floor into the GI bake (bake.comp) instead of adding it at the camera: treat the sector-light ambient as a small uniform emitter that participates in the bounce, so occlusion falls out of the existing GI solution naturally (no extra per-pixel ray) — but changes bake semantics and re-bake cost.
+  (c) Hemisphere/normal-aware fill (e.g. a faint sky-direction bias) so up-facing surfaces get more than tucked-under faces — partial contrast recovery, cheaper than a full AO term.
   Defer until later levels are playtested (per DOOM-0043's play-it-first decision) and likely sequence AFTER the flashlight (DOOM-0044), which is the proper answer for genuinely dark corners and may reduce how hard the ambient floor has to work. AMBIENT_SECTOR_SCALE stays the master-strength knob regardless of approach.
   **Layman:** Refine the gentle room glow so it only fills genuinely dark/shadowed spots instead of washing out every shadow.
   Kind: enhancement.
@@ -2874,13 +2972,13 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   Consequences for whoever picks this up:
   - The fix is **not** Ultra-only. Both tiers' ray-traced views are affected,
-    and any test matrix needs `renderer 2` + `rt_view 6` as well as
-    `renderer 1` + `rt_view 6`.
+  and any test matrix needs `renderer 2` + `rt_view 6` as well as
+  `renderer 1` + `rt_view 6`.
   - DOOM-0043's "Solid intentionally leaves unlit rooms pitch black" decision
-    is therefore only being honoured in Solid's RASTER view. Whether Solid's
-    ray-traced view *should* have the floor is a real question this bullet now
-    inherits — it was never asked, because nobody thought that combination
-    reached this code.
+  is therefore only being honoured in Solid's RASTER view. Whether Solid's
+  ray-traced view *should* have the floor is a real question this bullet now
+  inherits — it was never asked, because nobody thought that combination
+  reached this code.
 
   Prompted by the user asking where interior light comes from "in the ray
   tracing modes in both Solid and Ultra" (2026-08-07) — the question assumed
@@ -3022,12 +3120,12 @@ parked ideas (💭 considered) until we commit to and design each one.
   synchronisation, never less, so renderPass/scenePass cannot regress.
 
   A/B evidence (Ultra, E1M1, -warp 1 1 -noinput):
-    pre-fix : 10x VUID-VkRenderPassBeginInfo-renderPass-00904
-            + 10x VUID-vkCmdDraw-renderPass-02684
-              ("VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT !=
-                EARLY_FRAGMENT_TESTS|COLOR_ATTACHMENT_OUTPUT", 0xf vs 0xc)
-    post-fix: 0 validation lines, BLAS/TLAS + GI bake + HD load (18 materials)
-              all still correct. Solid re-run also 0. `make test` all green.
+  pre-fix : 10x VUID-VkRenderPassBeginInfo-renderPass-00904
+  + 10x VUID-vkCmdDraw-renderPass-02684
+  ("VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT !=
+  EARLY_FRAGMENT_TESTS|COLOR_ATTACHMENT_OUTPUT", 0xf vs 0xc)
+  post-fix: 0 validation lines, BLAS/TLAS + GI bake + HD load (18 materials)
+  all still correct. Solid re-run also 0. `make test` all green.
 
   Both families are now closed on the measurement side. Bullet deliberately
   LEFT OPEN per the session instruction not to close it; flip to shipped
@@ -3155,18 +3253,18 @@ parked ideas (💭 considered) until we commit to and design each one.
 
 - 📋 [DOOM-0132] **Anisotropic texture filtering (with mipmaps) for grazing-angle surfaces, gated on a true-colour material path.**
   Goal: sharpen textures viewed at oblique/grazing angles (DOOM's long floors and corridor walls receding into the distance), where point-sampling without mipmaps currently shimmers/moires.
-  
+
   BLOCKER (verified): the material sampler is VK_FILTER_NEAREST + VK_SAMPLER_MIPMAP_MODE_NEAREST (r_vulkan.cpp:2870-2874, "paletted art: point sampling"). The material textures store PALETTE INDICES that are resolved through paletteTex; linear/anisotropic filtering of indices is invalid (averaging index 50 and 200 yields a garbage colour, not a blend of the two colours). So AF cannot be bolted onto the current paletted sampler.
-  
+
   Requires, in order:
   1. A true-colour material path: pre-expand the paletted material atlas to RGB(A) once (palette + any COLORMAP/sector-light handling resolved up front), so the sampled texels are colours that CAN be filtered. This is the load-bearing prerequisite and probably its own item.
   2. Mipmap generation for the material atlas (AF builds on mipmapping).
   3. Enable the samplerAnisotropy device feature + a sampler with maxAnisotropy (clamp to VkPhysicalDeviceLimits.maxSamplerAnisotropy, e.g. up to 16x), linear min/mag + linear mipmap mode.
   4. Raster (Solid) path gets hardware AF for free once 1-3 land (fragment shader has implicit derivatives).
   5. Ultra (path tracer, pathtrace.comp) has NO implicit derivatives in compute — AF needs explicit gradients via textureGrad with ray differentials (track the ray's footprint). Larger effort; can land after the raster path.
-  
+
   Aesthetic tension (per RT north star): AF + linear filtering smooths DOOM's deliberately crunchy pixels. Keep it a tunable level (Off / 2x / 4x / 8x / 16x) so the user can trade shimmer-reduction against the retro look; tune with the user. Off should remain byte-identical to today's NEAREST path.
-  
+
   Kind: enhancement.
   **Layman:** Floors and walls seen edge-on currently shimmer and smear; anisotropic filtering keeps them crisp into the distance — but it needs a true-colour texture path first and should stay tunable so DOOM's chunky-pixel look survives.
   Kind: enhancement.
@@ -3190,12 +3288,12 @@ parked ideas (💭 considered) until we commit to and design each one.
 
 - ✅ [DOOM-0135] **Menu "Debug Views" toggle gating the ~ path-tracer diagnostic cycle; ~ becomes plain RT on/off when debug is off.**
   Current wiring (verified): rb_rtdebug (the ~ key, values 0=raster .. 6=denoised, 5=headless-verify-only) is the ONLY thing that switches the Vulkan backend between the flat raster view and the path-traced view. rb_rtdebug is written in exactly 3 places: r_vulkan.cpp:575 (default 6), r_backend.c:310-311 (init clamp), i_video.c:330-332 (the ~ cycle). The menu "Renderer" selector (Classic/Solid/Ultra via RB_SetMode) does NOT touch rb_rtdebug, and Solid (RB_RASTER3D) + Ultra (RB_RT3D) share the same Vulkan_Present/Vulkan_Init — only their Available() probe differs. So today picking "Solid" does not disable the tracer; the ~ key does. There is ONE shared RendererDef menu (m_menu.c:413), so a new item appears for both Solid and Ultra automatically.
-  
+
   Plan:
   - New persisted int rb_rtdebug_menu (default 0 = off), m_misc.c default + extern in r_vulkan.cpp beside rb_rtdebug.
   - Menu: add rm_debugviews item to the RendererMenu[] enum/array + draw "Debug Views: On/Off" in M_DrawRendererMenu; handler toggles the flag. On turning it OFF, snap rb_rtdebug out of any diagnostic value (1-4) to 6 so the view doesn't stick on white-furnace etc.
   - ~ handler (i_video.c): if debug on -> existing full cycle (0,1,2,3,4,6, skip 5); if debug off -> toggle rb_rtdebug 6<->0 (RT on/off).
-  
+
   OPEN QUESTION (blocks final design): should selecting Solid vs Ultra in the Renderer menu also drive RT off/on (Solid forces rb_rtdebug=0, Ultra forces 6), so the menu label matches what's shown? Today they don't, which is likely the source of the confusion. Resolve with the user before implementing.
   Kind: feature.
   **Layman:** Add a Debug Views on/off switch to the Renderer menu. With it off (the normal case), the ~ key simply turns ray tracing on or off; with it on, ~ cycles through the developer diagnostic views (normals, white-furnace, etc.) as it does today.
@@ -3239,10 +3337,10 @@ parked ideas (💭 considered) until we commit to and design each one.
 
 - ✅ [DOOM-0141] **Render the DOOM sky in the ray-traced view (no more see-through floating geometry).**
   Root cause: the RT mesh builder SKIPS sky ceilings/sky-border walls (r_mesh.c:362, :446-448), so primary rays escape through the gap and either hit distant geometry (it "floats") or miss into the flat SKY_COLOR fill (pt_common.glsl:30). Classic DOOM fakes a solid sky backdrop that occludes everything behind it (r_plane.c); the tracer has no analogue. A full sky panorama already exists for the raster path (mesh.frag FLAG_SKY + RB_BuildSky) but is disabled under RT (r_vulkan.cpp:4951).
-  
+
   Fix (RT-only, isolates the change from the working raster/Solid path): emit sky surfaces into a SEPARATE mesh + static BLAS on a 3rd TLAS instance (customIndex 2, mask 0x04) that only PRIMARY rays see — shadow rays + the GI bake cull to 0x01 so they never hit it (no false shadows, GI unchanged, raster untouched).
-    Stage 1: emit sky geometry + sky BLAS/instance; tracer treats a sky hit like a miss (flat SKY_COLOR) but now OCCLUDING -> floating geometry gone.
-    Stage 2: shade the sky hit (and miss) as the real cylindrical sky-texture panorama by ray/screen yaw, mirroring mesh.frag; composite outputs sky raw (no tonemap) so Ultra matches Classic's mountains.
+  Stage 1: emit sky geometry + sky BLAS/instance; tracer treats a sky hit like a miss (flat SKY_COLOR) but now OCCLUDING -> floating geometry gone.
+  Stage 2: shade the sky hit (and miss) as the real cylindrical sky-texture panorama by ray/screen yaw, mirroring mesh.frag; composite outputs sky raw (no tonemap) so Ultra matches Classic's mountains.
   Files: r_mesh.c/.h (separate sky vert list), r_vulkan.cpp (sky buffer/BLAS/instance + skytexnum in misc4.w), pathtrace.comp (sky hit/miss panorama), svgf_composite.comp (raw sky out).
   **Layman:** In the Ultra/Solid ray-traced view the sky was a hole, so distant buildings floated in mid-air and the sky showed as flat blue instead of the mountains you see in Classic. This makes the sky a solid backdrop again.
   Kind: fix.
@@ -3271,9 +3369,9 @@ parked ideas (💭 considered) until we commit to and design each one.
 
 - 📋 [DOOM-0145] **Windows 0.2.0 build: 3D view renders as a small centered box with garbled (uninitialized) borders.**
   Reported on the shipped 0.2.0 Windows build. Symptoms: (1) fullscreen window, but the actual game view is a small centered rectangle with garbled imagery (fragments of the DOOM II title art + scattered text) filling the surrounding area; (2) the 2D menu + status-bar overlay render cleanly at full width ON TOP of the garbage (confirmed by screenshot of the in-game ESC menu); (3) audio "struggling" (unspecified — crackle vs missing music vs none).
-  
+
   Leading hypothesis (display): in a 3D mode (Solid/Ultra) the scene is traced into a render-scale sub-rectangle (default render_scale=50%, m_misc.c:255) that TAAU upscales to the display. If TAAU is not upscaling to fill the swapchain on this GPU, the present (which uses full g.extent, r_vulkan.cpp:4947) shows the 50% box + never-cleared swapchain borders = the garbage. Default renderer is RB_CLASSIC (m_misc.c:253), so this only bites if the friend selected Solid/Ultra, OR a config persisted a 3D mode. Alt hypotheses to rule out: a Classic-path SDL present/pitch bug specific to Windows; the DOOM-0050 2D-overlay-over-3D family.
-  
+
   Disambiguating facts needed (cannot reproduce without the friend's box): render mode selected; GPU + Windows version; whether switching to Classic and/or setting Render Scale 100% clears it; whether -windowed changes it. Likely real fixes once pinned: (a) clear the full swapchain image each frame so uncovered borders are black not garbage; (b) ensure TAAU upscales to full display extent (or blit the render sub-rect scaled to g.extent when TAAU off). Audio is a separate sub-investigation (SDL_OpenAudio 11025 Hz legacy device, i_sound.c:825).
   **Layman:** On Windows, the game view shows up as a small box in the middle of the screen with garbled junk around it; sound also struggles.
   Kind: fix.
@@ -3284,7 +3382,7 @@ parked ideas (💭 considered) until we commit to and design each one.
 
 - 📋 [DOOM-0146] **Ultra must be selectable on ALL Vulkan-capable machines; gate only the ray-casting on RT hardware, not the menu option.**
   Today backends[RB_RT3D] ("Ultra").Available = Vulkan_RT_Available = RB_Vulkan_Available(1) (r_backend.c:83,230), so on a non-RT GPU (e.g. GTX 1050 Pascal) Ultra is hidden from the Options->Renderer cycle and the ~/\\ RT keys no-op. User's design intent: Ultra must ALWAYS be offered wherever plain Vulkan runs, because HD graphics/assets are coming to the Ultra view that do NOT require ray tracing and must reach all users. The ONLY per-machine RT gate is whether actual rays are cast.
-  
+
   Change: point Ultra's Available() at RB_Vulkan_Available(0) (same as Solid) so it's listed whenever Vulkan works; add a runtime RT-capability guard INSIDE the Vulkan backend so selecting Ultra on a non-RT card renders the 3D view WITHOUT ray tracing (raster + future HD assets), never attempting ray-query/megakernel (which would crash or garbage). The menu/label should still convey RT on vs unavailable. Solid & Ultra already share one Vulkan backend differing only by rb_rtdebug RT on/off ([[solid-ultra-same-renderer]]), so "Ultra without RT" ~= Solid today until HD assets land. Cross-ref DOOM-0059 (descriptor-indexing probe gate) and DOOM-0145 (reduced-scale present). Needs on-HW verify: Ultra appears + renders (no RT) on the GTX 1050; still casts rays on RT cards (RX 6600 / GTX 2060).
   **Layman:** The Ultra graphics mode should appear for everyone, not just people with ray-tracing cards — because the upcoming HD visuals for Ultra are for all users. Only the ray-traced lighting itself should switch off on cards that can't do it.
   Kind: enhancement.
@@ -3293,7 +3391,7 @@ parked ideas (💭 considered) until we commit to and design each one.
 
 - ✅ [DOOM-0147] **Classic presents at 16:10 (square-pixel 320x200), not authentic 4:3 — letterboxes on 4:3 monitors; add a 4:3-vs-fill aspect choice.**
   i_video.c:660 calls SDL_RenderSetLogicalSize(renderer, SCREENWIDTH=320, SCREENHEIGHT=200), so SDL preserves a 1.6:1 (16:10, square-pixel) aspect when scaling the software framebuffer to the window. DOOM's authentic display is 4:3 (VGA stretched the 200 lines ~1.2x vertically). On a 4:3 monitor the 1.6 image is letterboxed -> black bars top+bottom (confirmed screenshot 6, Classic, max screen size) and the geometry is vertically squished ~1.2x vs original. Same path drives the title/intermission screens (screenshot 3 'title not full screen'), so they bar too. Solid/Ultra are unaffected (Vulkan draws to the full window extent).
-  
+
   Fix: present Classic at 4:3. Options: SDL_RenderSetLogicalSize(320,240) and let RenderCopy stretch the 320x200 texture to the 320x240 logical area (1.2x vertical = authentic 4:3), letterboxing 4:3 to the window (fills a 4:3 monitor; pillarbox on widescreen). PLUS add a player aspect option (per user request 2026-06-30): {4:3 authentic, Fill/Stretch-to-window}. 4:3 = correct proportions, may bar on non-4:3 monitors; Fill = edge-to-edge on any monitor, distorts off-4:3. Persist via m_misc.c; expose in the Options/Renderer menu. NOTE 'no HUD' in the user's max-screen-size shots is expected (screenblocks 11 hides the status bar) — dropping one notch restores it; not part of this fix. Verify on the 4:3 Windows monitor (no bars in 4:3 mode) and a 16:9 display (correct pillarbox vs fill).
   **Layman:** In Classic mode the old-style picture has black bars and isn't shaped quite right; we should make it fill the screen the authentic way, and let players choose 4:3 (original) or stretch-to-fill.
   Kind: fix.
@@ -3308,9 +3406,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   Auto-detect 2026-07-01 (user-reported: Windows 5:4 showed Widescreen "On" though the screen isn't widescreen). I_InitWidescreen now forces widescreen=0 when the detected desktop aspect is 4:3-or-narrower (aspect <= 4/3 + eps), or if the display query fails. Effect was already 4:3 there (Hor+ clamps a narrow display to NONWIDEWIDTH), but the menu misleadingly read "On"; now it honestly reads "Off". Displays wider than 4:3 keep the saved preference (default on). i_video.c I_InitWidescreen. Zero effect on true-widescreen displays. Builds clean Linux+Windows; exe redeployed.
   Resolved (2026-08-04): all three aspect choices are shipped and the item has been quiet for five weeks with nothing outstanding stated -- Part A (authentic 4:3), Part B (authentic Hor+ widescreen per docs/specs/DOOM-0147-widescreen.md), Part C (the two persisted prefs), plus the V_CopyRect crash fix, the two widescreen render fixes (swimming flats, HUD erase rects) and the aspect auto-detect, every one of them driven by real testing on the Windows/5:4 machine.
   Verified today rather than closed on the notes, and the verification found a real defect -- just not in this item. Captured Classic on the same fixture in all three modes:
-    widescreen 1              3840x2160, aspect 1.778, no bars, and genuinely Hor+ (more level visible left and right than the 4:3 shot, not a horizontal stretch)
-    widescreen 0              content exactly 4:3 (2880x2160 = 1.333)
-    widescreen 0 + fill       3840x2160, fills the output
+  widescreen 1              3840x2160, aspect 1.778, no bars, and genuinely Hor+ (more level visible left and right than the 4:3 shot, not a horizontal stretch)
+  widescreen 0              content exactly 4:3 (2880x2160 = 1.333)
+  widescreen 0 + fill       3840x2160, fills the output
   The 4:3 shot initially appeared left-aligned with a 960 px bar on one side only, which looked like a pillarbox-centring bug in THIS item. It was not: `I_SetAspect` uses `SDL_RenderSetLogicalSize`, which centres by SDL's documented behaviour, and the asymmetry was the capture path reading the viewport into an output-sized buffer. Proved by A/B rather than by reading the docs -- the artefact vanishes with `fillstretch 1`, i.e. it tracks the logical size and not anything DOOM draws. Filed and fixed as DOOM-0320.
 
 - ✅ [DOOM-0148] **Keep the HUD always on in-game: cap the Screen Size slider at full-view-with-status-bar (screenblocks 10), never the HUD-less fullscreen (11).**
@@ -3598,18 +3696,18 @@ parked ideas (💭 considered) until we commit to and design each one.
   Vulkan world mesh -- a ray miss, not a shading artefact. Evidence, each
   by construction with a control that moved:
   - HITS debug view (rt_view 1, rt_debug_views 1) renders the seam BLACK.
-    Black appears in exactly two places in that frame: the window opening
-    (looking outside) and the seam. Black = no hit.
+  Black appears in exactly two places in that frame: the window opening
+  (looking outside) and the seam. Black = no hit.
   - TEXTURED view (rt_view 3, unlit albedo) also renders it black, while
-    the shipping view renders it neutral white ~ (236,238,237). That pair
-    is the signature of a miss: DOOM-0143 established mode 6 returns
-    skyPanorama on a miss, so a crack shows sky, not black.
+  the shipping view renders it neutral white ~ (236,238,237). That pair
+  is the signature of a miss: DOOM-0143 established mode 6 returns
+  skyPanorama on a miss, so a crack shows sky, not black.
   - Present in BOTH 3D tiers (Ultra RT and Solid raster) and ABSENT in
-    Classic (user-confirmed + own capture via the new Classic -devshot
-    path). Classic never builds the 3D mesh, which places the fault in the
-    mesh rather than in either shading path.
+  Classic (user-confirmed + own capture via the new Classic -devshot
+  path). Classic never builds the 3D mesh, which places the fault in the
+  mesh rather than in either shading path.
   - Independent of HD art (identical with DOOMASSETDIR unset, a control
-    that moved 74.9% of the frame), of fog, and of the wet-liquid layer.
+  that moved 74.9% of the frame), of fog, and of the wet-liquid layer.
   RULES OUT the original guess: not "coplanar ceiling triangles", not a
   missing texture (emit_wall already drops the "-" side, r_mesh.c:566),
   not atlas bleed (the paletted atlas samples NEAREST with no padding,
@@ -3720,11 +3818,11 @@ parked ideas (💭 considered) until we commit to and design each one.
   reproduced it, which is the strongest corroboration available:
   kNukageLe serves TWO consumers that saturate in the wrong order. Mean green
   in the E1M1 roofed goo room, Ultra RT, rt_fog 2, render_scale 100:
-    Le x    pool surface   %clipped   glow above the pool edge
-    1x       133.01           0.0%       57.67   (shipped)
-    5x       235.40           0.0%       86.86
-    10x      243.87          94.7%      112.55
-    20x      247.27          94.7%      148.23
+  Le x    pool surface   %clipped   glow above the pool edge
+  1x       133.01           0.0%       57.67   (shipped)
+  5x       235.40           0.0%       86.86
+  10x      243.87          94.7%      112.55
+  20x      247.27          94.7%      148.23
   The surface CLIPS between 5x and 10x -- at 10x, 94.7% of it is flat blown-out
   green, the exact slab DOOM-0302 was tuned to remove -- while the cast light
   does not read until ~20x. So no value of kNukageLe satisfies both, and
@@ -4419,10 +4517,10 @@ parked ideas (💭 considered) until we commit to and design each one.
   It is free to evaluate: marchFog already knows t along the ray.
 
   Sketch (spec DOOM-0011 4.3c owns the real version):
-    sigma_floor(p) = kFloorFogDensity
-                   * exp(-(p.z - baseZ) / kFloorFogPool)   // hugs the floor
-                   * exp(-t / kFloorFogRange)              // NEAR the camera only
-    sigma = sigma_general + sigma_floor
+  sigma_floor(p) = kFloorFogDensity
+  * exp(-(p.z - baseZ) / kFloorFogPool)   // hugs the floor
+  * exp(-t / kFloorFogRange)              // NEAR the camera only
+  sigma = sigma_general + sigma_floor
   kFloorFogPool << kFogPoolHeight (112) and kFloorFogRange << kFogMaxDist
   (2048). Outdoors gets a higher kFloorFogDensity than indoors.
 
@@ -4653,11 +4751,11 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   TWO LEVERS THAT COST NOTHING IN LOOK, AND SHOULD LAND FIRST:
   - DOOM-0276 - the fog's per-sample up-ray becomes a field lookup
-    (expect most of 7.93 ms).
+  (expect most of 7.93 ms).
   - DOOM-0197 - extend the raster path's build-ahead overlap to RT. The
-    CPU build is 3.61 ms and it is SERIALISED in front of a 28.54 ms GPU
-    wait, so overlapping it is worth ~3.6 ms and touches no pixel. The
-    same change took the raster path from 70 to 161 FPS.
+  CPU build is 3.61 ms and it is SERIALISED in front of a 28.54 ms GPU
+  wait, so overlapping it is worth ~3.6 ms and touches no pixel. The
+  same change took the raster path from 70 to 161 FPS.
 
   Together those two plausibly take 32.5 ms toward ~21 ms.
 
@@ -4755,32 +4853,32 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   Built as the bullet's three-part shape, and the shape held:
   - Detector. RB_SeepOpeningsChanged (r_mesh.c) caches one open/shut bit per
-    linedef at flood time and diffs it. Gated on the RB_UPD_MOVED that
-    RB_UpdateMeshHeights already returns, because connectivity cannot change
-    without a plane moving -- so a still map never pays for it at all. NOT hooked
-    into the playsim: no p_doors/p_floor/p_plats edit, the renderer asks the map.
+  linedef at flood time and diffs it. Gated on the RB_UPD_MOVED that
+  RB_UpdateMeshHeights already returns, because connectivity cannot change
+  without a plane moving -- so a still map never pays for it at all. NOT hooked
+  into the playsim: no p_doors/p_floor/p_plats edit, the renderer asks the map.
   - Re-flood, latched like blasDirty and consumed in RecordRtTrace, so a door
-    opened while in Solid is still caught on the way back to Ultra.
+  opened while in Solid is still caught on the way back to Ultra.
   - Upload. vkCmdCopyBufferToImage into the EXISTING image, from a persistent
-    mapped staging buffer, with a SHADER_READ->TRANSFER_DST->SHADER_READ barrier
-    pair in the frame's own command buffer. No destroy, no device wait, no hitch.
-    Safe with one staging copy because the RT path records after waiting
-    g.inFlight (single-frame-in-flight).
+  mapped staging buffer, with a SHADER_READ->TRANSFER_DST->SHADER_READ barrier
+  pair in the frame's own command buffer. No destroy, no device wait, no hitch.
+  Safe with one staging copy because the RT path records after waiting
+  g.inFlight (single-frame-in-flight).
   - Ease. Exponential, tau 0.32 s (~95% in 1 s), so the mist DRIFTS in rather than
-    popping. The inverse falls out for free: a door that shuts eases the seep back
-    out. If a re-flood produces a field identical to the current one -- a crusher
-    cycling, a door between two already-sealed rooms -- the ease is skipped
-    entirely, so those cost one flood and nothing else.
+  popping. The inverse falls out for free: a door that shuts eases the seep back
+  out. If a re-flood produces a field identical to the current one -- a crusher
+  cycling, a door between two already-sealed rooms -- the ease is skipped
+  entirely, so those cost one flood and nothing else.
 
   Measured, not budgeted -- which is the whole lesson of Q22:
   - Detector scan: 0.0039 ms, and only on frames where a plane moved.
   - Re-flood: 0.6-0.7 ms, once per opening flip (NOT per frame of door motion).
   - Spawn frame: -shotcompare vs a worktree build of 462503c, mae 0.000/255 on a
-    same-build noise floor of 0.000. Bit-identical -- the change is inert until
-    something moves.
+  same-build noise floor of 0.000. Bit-identical -- the change is inert until
+  something moves.
   - -rtverify PASS, unchanged to 4 significant figures (rel-MSE 0.0796%,
-    white-furnace deviation 0.000000). No new Vulkan validation messages; zero
-    mentioning the copy or an image layout.
+  white-furnace deviation 0.000000). No new Vulkan validation messages; zero
+  mentioning the copy or an image layout.
 
   The proof the field moves the RIGHT way, which is what the print now carries:
   E1M1 spawns with 835 sealed cells; opening one door drops it to 761 (74 cells
@@ -4822,11 +4920,11 @@ parked ideas (💭 considered) until we commit to and design each one.
   level, so nothing needs reallocating.
 
   Shape of the fix:
-    - set a dirty flag when a door/lift/platform finishes moving AND its
-      openrange crosses zero (only a connectivity change matters, so most sector
-      movement triggers nothing);
-    - re-flood on that flag, throttled to at most one rebuild every N frames;
-    - upload into the existing image rather than recreating it.
+  - set a dirty flag when a door/lift/platform finishes moving AND its
+  openrange crosses zero (only a connectivity change matters, so most sector
+  movement triggers nothing);
+  - re-flood on that flag, throttled to at most one rebuild every N frames;
+  - upload into the existing image rather than recreating it.
 
   Second half, and it is what the user's word "roll" is asking for: a rebuild
   makes the fog POP in over one frame. Easing the field toward its new values
@@ -4969,12 +5067,12 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   Scope named by the user (2026-07-30): the status bar AND the hand +
   gun. Three surfaces, and they are NOT the same problem:
-    - status-bar background + digits + mugshot (st_stuff.c / st_lib.c,
-      V_DrawPatch into the 320x200 backbuffer)
-    - the first-person weapon sprites (p_pspr.c -> R_DrawPSprite, and the
-      3D backends' own overlay path)
-    - anything else drawn through the same 320x200 patch pipeline that
-      sits on top of the HD view
+  - status-bar background + digits + mugshot (st_stuff.c / st_lib.c,
+  V_DrawPatch into the 320x200 backbuffer)
+  - the first-person weapon sprites (p_pspr.c -> R_DrawPSprite, and the
+  3D backends' own overlay path)
+  - anything else drawn through the same 320x200 patch pipeline that
+  sits on top of the HD view
 
   Open questions for the spec: upscale the existing art at load time (a
   filter -- cheap, no new assets, no licence question) versus replacing
@@ -4994,24 +5092,24 @@ parked ideas (💭 considered) until we commit to and design each one.
   wants real geometry. "It doesn't have to be full on, it can be faked."
 
   Per tier, as stated:
-    - ULTRA: models + lighting + reflections, in BOTH the rasterised and
-      the ray-traced view. Note this is the tier rule in CLAUDE.md working
-      as written -- the feature is gated on the ART (HD weapon models),
-      not on the view, so raster gets a cheap fake of the same look and
-      RT gets the real thing.
-    - SOLID: upres the existing sprites (no model swap), and fake the
-      lighting / reflections on them if it can be made to hold up. The
-      user's words: "if lighting / reflections can be faked there, that
-      would be great as well."
-    - CLASSIC: unchanged, as before.
+  - ULTRA: models + lighting + reflections, in BOTH the rasterised and
+  the ray-traced view. Note this is the tier rule in CLAUDE.md working
+  as written -- the feature is gated on the ART (HD weapon models),
+  not on the view, so raster gets a cheap fake of the same look and
+  RT gets the real thing.
+  - SOLID: upres the existing sprites (no model swap), and fake the
+  lighting / reflections on them if it can be made to hold up. The
+  user's words: "if lighting / reflections can be faked there, that
+  would be great as well."
+  - CLASSIC: unchanged, as before.
 
   This splits the item's three surfaces further apart than the body above
   assumes, and the spec must not treat them as one job:
-    - the status bar stays a 2-D upres problem in every tier;
-    - the hand/gun becomes an ASSET + RENDERER problem in Ultra (geometry,
-      materials, a weapon-space transform, and a per-frame animation
-      driven by the existing p_pspr state) and stays a 2-D upres problem
-      in Solid.
+  - the status bar stays a 2-D upres problem in every tier;
+  - the hand/gun becomes an ASSET + RENDERER problem in Ultra (geometry,
+  materials, a weapon-space transform, and a per-frame animation
+  driven by the existing p_pspr state) and stays a 2-D upres problem
+  in Solid.
   So "upscale vs replace with HD art" is no longer one open question with
   one answer -- it is answered differently per tier, and the Ultra answer
   now reaches past art into the renderer.
@@ -5028,9 +5126,9 @@ parked ideas (💭 considered) until we commit to and design each one.
 - ✅ [DOOM-0289] **Bake the sun's fixed direction into a load-time clearance field and delete L2's per-sample ray.**
   DOOM-0011 L2 shipped correct and far over budget (544ae84). Measured in
   E1M1's courtyard, default rt_fog=1, render scale 50%:
-    pre-L2, fog off   43 fps, megakernel 12.7 ms
-    pre-L2, fog Low   40 fps, megakernel 13.4 ms   (the fog itself: 0.7 ms)
-    L2,     fog Low   25 fps, megakernel 27.0 ms   (the sun ray: 13.6 ms)
+  pre-L2, fog off   43 fps, megakernel 12.7 ms
+  pre-L2, fog Low   40 fps, megakernel 13.4 ms   (the fog itself: 0.7 ms)
+  L2,     fog Low   25 fps, megakernel 27.0 ms   (the sun ray: 13.6 ms)
   The ray alone is 19x the entire rest of the fog and costs 15 fps, against
   a 15 % budget. At rt_fog=3 it is 26.5 ms of megakernel vs 15.4 off.
 
@@ -5047,22 +5145,22 @@ parked ideas (💭 considered) until we commit to and design each one.
   Z: march each cell's 2-D projection along the sun's horizontal heading,
   carry the running maximum of (obstruction top height - horizontal distance
   travelled * tan(elevation)), and store it. Then the shader's test is
-    sunVisible = (p.z >= texture(uSunClearance, worldToSeepUV(p.xy)).r)
+  sunVisible = (p.z >= texture(uSunClearance, worldToSeepUV(p.xy)).r)
   -- one bilinear tap, the cost of the seep tap already in the loop, and
   the 13.6 ms goes to roughly nothing.
 
   Known consequences to settle when specced, not hand-waved:
-    - Same trade DOOM-0276 accepted: the shaft edge follows the 64-unit
-      grid rather than the exact wall, so it lands within half a cell.
-      Softer beam edges are arguably a FEATURE here.
-    - Ties the sun to a fixed direction per level. It already is one
-      (kSunDir is a const), but this makes it structural -- a future
-      moving sun would need a rebuild per direction, so if a day/night
-      cycle is ever wanted, decide before this lands.
-    - Needs the same re-flood hook DOOM-0281 added for the seep field: a
-      door or lift that opens changes what the sun can reach.
-    - Doors/lifts that move mid-frame are the interesting case; the seep
-      field's existing dirty-flag path is the precedent.
+  - Same trade DOOM-0276 accepted: the shaft edge follows the 64-unit
+  grid rather than the exact wall, so it lands within half a cell.
+  Softer beam edges are arguably a FEATURE here.
+  - Ties the sun to a fixed direction per level. It already is one
+  (kSunDir is a const), but this makes it structural -- a future
+  moving sun would need a rebuild per direction, so if a day/night
+  cycle is ever wanted, decide before this lands.
+  - Needs the same re-flood hook DOOM-0281 added for the seep field: a
+  door or lift that opens changes what the sun can reach.
+  - Doors/lifts that move mid-frame are the interesting case; the seep
+  field's existing dirty-flag path is the precedent.
 
   Blocks the L6 perf gate, and blocks L3 (torch shafts) from being
   measured honestly -- L3 adds its own per-sample work on top of this one.
@@ -5085,16 +5183,16 @@ parked ideas (💭 considered) until we commit to and design each one.
   m = kSunDir.z / |kSunDir.xy| (= 2.357 at the shipped kSunDir, ~67 deg
   elevation). A ray starting at height z is at h(s) = z + m*s after
   horizontal distance s. Each cell c crossed at distance s contributes:
-    - floor:   need z >  floor(c) - m*s          (a lower bound)
-    - ceiling, non-sky: need z <  ceil(c)  - m*s (an upper bound)
-    - ceiling, SKY:     z >= ceil(c) - m*s ESCAPES -- sky reached, stop
+  - floor:   need z >  floor(c) - m*s          (a lower bound)
+  - ceiling, non-sky: need z <  ceil(c)  - m*s (an upper bound)
+  - ceiling, SKY:     z >= ceil(c) - m*s ESCAPES -- sky reached, stop
   So the admissible z is an intersection of bounds terminated by an
   escape, i.e. an INTERVAL, not a threshold.
 
   PROPOSED FIELD: two more channels carrying that interval per cell --
   zLo (lowest z that still escapes) and zHi (highest z before a solid
   ceiling stops it). Shader test becomes
-    sunVisible = (p.z >= tap.b && p.z <= tap.a)
+  sunVisible = (p.z >= tap.b && p.z <= tap.a)
   which is still ONE bilinear tap, and the seep tap is ALREADY in the
   march loop (RG16F today: .r = seep distance, .g = open-sky mask). Widen
   that image to RGBA16F and the whole 13.6 ms goes to roughly nothing --
@@ -5132,26 +5230,26 @@ parked ideas (💭 considered) until we commit to and design each one.
   The roofed-air correction this item recorded survived review intact, and
   the review then found five more things the sketch got wrong. Worth
   carrying into the build:
-    - The march must NOT stop at the first sky cell, and "first" has to
-      mean first with a NON-EMPTY window -- a later sky sector with a
-      higher ceiling raises the escape threshold. Stopping early reports
-      an open courtyard as unlit below head height.
-    - The stored zHi is clamped to the cell's own ceiling to bound the
-      field's dynamic range, and in an OPEN-SKY cell that ceiling is a sky
-      plane rather than a barrier. The shader needs `p.z <= zHi ||
-      openSky` or a horizontal seam appears across outdoor fog.
-    - The padded void ring blocks for the seep and must ESCAPE for the
-      clearance -- and `solid = (cz <= fz)` means the natural `fz = cz = 0`
-      ring write silently makes it solid, carving an unlit band along
-      every +X/+Y map edge.
-    - DOOM-0281's flip detector is necessary but NOT sufficient: the
-      clearance is keyed on plane HEIGHTS, so a lift moving between two
-      open heights changes what it shadows without flipping anything. The
-      trigger widens, and the refresh splits in two so the height-only
-      case skips the Dijkstra.
-    - The step size is cell/(|u.x|+|u.y|) = 45.3 at the shipped 45-degree
-      heading, not the cell size -- so 107 units of rise per cell entered,
-      not 151. Several bounds were quoted against the wrong figure.
+  - The march must NOT stop at the first sky cell, and "first" has to
+  mean first with a NON-EMPTY window -- a later sky sector with a
+  higher ceiling raises the escape threshold. Stopping early reports
+  an open courtyard as unlit below head height.
+  - The stored zHi is clamped to the cell's own ceiling to bound the
+  field's dynamic range, and in an OPEN-SKY cell that ceiling is a sky
+  plane rather than a barrier. The shader needs `p.z <= zHi ||
+  openSky` or a horizontal seam appears across outdoor fog.
+  - The padded void ring blocks for the seep and must ESCAPE for the
+  clearance -- and `solid = (cz <= fz)` means the natural `fz = cz = 0`
+  ring write silently makes it solid, carving an unlit band along
+  every +X/+Y map edge.
+  - DOOM-0281's flip detector is necessary but NOT sufficient: the
+  clearance is keyed on plane HEIGHTS, so a lift moving between two
+  open heights changes what it shadows without flipping anything. The
+  trigger widens, and the refresh splits in two so the height-only
+  case skips the Dijkstra.
+  - The step size is cell/(|u.x|+|u.y|) = 45.3 at the shipped 45-degree
+  heading, not the cell size -- so 107 units of rise per cell entered,
+  not 151. Several bounds were quoted against the wrong figure.
 
   Also fixed in passing, and pre-existing rather than new: §4.4(a) still
   specified that L2's directional term REPLACES the flat sky ambient, and
@@ -5219,8 +5317,8 @@ parked ideas (💭 considered) until we commit to and design each one.
   Correct, and it is a real gap in L2's model rather than a taste dial.
   marchFog builds the sample's in-scatter as
 
-    Ls = kFogColor * kSkyShaftStrength
-       * (kSkyAmbientFrac + (1 - kSkyAmbientFrac) * sunLit)
+  Ls = kFogColor * kSkyShaftStrength
+  * (kSkyAmbientFrac + (1 - kSkyAmbientFrac) * sunLit)
 
   and only the DIRECTIONAL share is gated on visibility. The ambient
   share (kSkyAmbientFrac = 0.65) is applied at full strength everywhere,
@@ -5318,25 +5416,25 @@ parked ideas (💭 considered) until we commit to and design each one.
   each making it cheaper than "a second image and a second tap" sounds:
 
   1. ONE CHANNEL, NOT TWO. The bullet above says RG16F (coverage +
-     surface z). It only needs the STEAM LAYER'S TOP Z per cell, with
-     non-liquid cells storing a finite sentinel far BELOW any floor --
-     the same finite-sentinel idiom RB_SEEP_DMAX and RB_SUN_NEVER
-     already use, and for the same NaN reason. Bilinear then sinks the
-     layer smoothly to nothing across a pool's rim, so the soft edge
-     comes free from the sampler instead of costing a channel.
+  surface z). It only needs the STEAM LAYER'S TOP Z per cell, with
+  non-liquid cells storing a finite sentinel far BELOW any floor --
+  the same finite-sentinel idiom RB_SEEP_DMAX and RB_SUN_NEVER
+  already use, and for the same NaN reason. Bilinear then sinks the
+  layer smoothly to nothing across a pool's rim, so the soft edge
+  comes free from the sampler instead of costing a channel.
 
   2. MOST SAMPLES SKIP THE TAP. Compute the level's highest liquid
-     surface once at load and push it as one scalar; any fog sample
-     above it plus a few steam heights never reads the image, and a
-     level with no liquid at all pays nothing. The march bunches its
-     samples near the camera (Q26's quadratic warp) and the steam layer
-     is shallow, so this kills the majority of the reads in practice.
+  surface once at load and push it as one scalar; any fog sample
+  above it plus a few steam heights never reads the image, and a
+  level with no liquid at all pays nothing. The march bunches its
+  samples near the camera (Q26's quadratic warp) and the steam layer
+  is shallow, so this kills the majority of the reads in practice.
 
   3. IT MAY NEED NO NEW TERM. L1e's floor layer is already a
-     short-range, height-pooled addend. Pool steam may be that layer
-     with its baseZ and density driven by the liquid channel, which is
-     a far smaller change than a fourth kind of fog. Try that before
-     writing a new one (reuse before rewriting).
+  short-range, height-pooled addend. Pool steam may be that layer
+  with its baseZ and density driven by the liquid channel, which is
+  a far smaller change than a fourth kind of fog. Try that before
+  writing a new one (reuse before rewriting).
 
   Rejected on inspection: folding the liquid signal into the existing
   RGBA by making the open-sky mask signed (+1 sky / -1 liquid). Bilinear
@@ -5410,30 +5508,30 @@ parked ideas (💭 considered) until we commit to and design each one.
   in the tree:
 
   1. LEVEL JUMP. The cheat path exists (cheat_clev, st_stuff.c:453, into
-     G_DeferedInitNew) but is typed blind and, per DOOM-0287's session,
-     does not reliably register. Wanted as a MENU: pick episode+map for
-     DOOM 1 or map 1-32 for DOOM 2. Which game is loaded is already known
-     -- DOOM-0060 built the game-select chooser -- so the row set can
-     follow it rather than being asked for.
+  G_DeferedInitNew) but is typed blind and, per DOOM-0287's session,
+  does not reliably register. Wanted as a MENU: pick episode+map for
+  DOOM 1 or map 1-32 for DOOM 2. Which game is loaded is already known
+  -- DOOM-0060 built the game-select chooser -- so the row set can
+  follow it rather than being asked for.
 
   2. MONSTERS DO NOT NOTICE YOU. The user's own correction is the right
-     design: not invincibility, which leaves them shooting and shoving.
-     Add CF_NOTARGET = 8 to the flags in d_player.h:71-75 (CF_NOCLIP=1,
-     CF_GODMODE=2, CF_NOMOMENTUM=4 -- 8 is free) and test it in
-     P_LookForPlayers (p_enemy.c:499), which is the single choke point:
-     A_Look (:623), A_Chase (:705, :756) and the respawn path (:1979) all
-     route through it. CAUTION, and it is the whole difference between
-     this working and half-working: that only stops NEW acquisition. A
-     monster already awake keeps its target, so the toggle must also
-     clear existing ones, or every room you have already walked into
-     stays hostile.
+  design: not invincibility, which leaves them shooting and shoving.
+  Add CF_NOTARGET = 8 to the flags in d_player.h:71-75 (CF_NOCLIP=1,
+  CF_GODMODE=2, CF_NOMOMENTUM=4 -- 8 is free) and test it in
+  P_LookForPlayers (p_enemy.c:499), which is the single choke point:
+  A_Look (:623), A_Chase (:705, :756) and the respawn path (:1979) all
+  route through it. CAUTION, and it is the whole difference between
+  this working and half-working: that only stops NEW acquisition. A
+  monster already awake keeps its target, so the toggle must also
+  clear existing ones, or every room you have already walked into
+  stays hostile.
 
   3. GET TO A PLACE, not just a level. -warpto X Y ANGLE already exists
-     on the command line and is what the profiling recipe uses. Exposing
-     it (plus a "print where I am now", which cheat_mypos, st_stuff.c:460,
-     already computes) closes the loop with DOOM-0288's map-coordinate
-     discovery and the skyspots.py prototype: find a spot from the WAD,
-     jump to it, look at it. That is the whole test loop for a look task.
+  on the command line and is what the profiling recipe uses. Exposing
+  it (plus a "print where I am now", which cheat_mypos, st_stuff.c:460,
+  already computes) closes the loop with DOOM-0288's map-coordinate
+  discovery and the skyspots.py prototype: find a spot from the WAD,
+  jump to it, look at it. That is the whole test loop for a look task.
 
   Menu placement: follow the pattern already proven four times over --
   GameSelectDef, RendererDef, EffectsDef, VideoDef in m_menu.c are all
@@ -5484,16 +5582,16 @@ parked ideas (💭 considered) until we commit to and design each one.
   harness (removed before commit; `grep TEMP-DEVTEST` is clean):
   - gate: Options is 9 rows with -devmode, 8 without.
   - level list: retail 36 (E1M1..E4M9), commercial 32 (MAP01..MAP32),
-    wrap in both directions, opens on the current level (E3M5, MAP07).
+  wrap in both directions, opens on the current level (E3M5, MAP07).
   - targets: E3M5 with all 63 monsters forced onto the player -> 0 after
-    the toggle; doom2 MAP07 12 -> 0.
+  the toggle; doom2 MAP07 12 -> 0.
   - acquisition, with the player planted next to a monster so sight is
-    not the variable: acquiredWithFlag=0, acquiredWithoutFlag=1. The
-    CONTROL is the point -- run from a spawn point both legs read 0,
-    because nothing can see you there, and that proves nothing at all.
+  not the variable: acquiredWithFlag=0, acquiredWithoutFlag=1. The
+  CONTROL is the point -- run from a spawn point both legs read 0,
+  because nothing can see you there, and that proves nothing at all.
   - round-trip: the printed `-warpto -544 640 180` fed back in placed
-    the player at (-544,640) angle=128 (=180 deg), i.e. the line is
-    consumable verbatim.
+  the player at (-544,640) angle=128 (=180 deg), i.e. the line is
+  consumable verbatim.
   make test 7/7, -rtverify PASS (rel-MSE 0.0796%, white furnace
   0.000000) -- no renderer file touched.
 
@@ -5687,39 +5785,39 @@ parked ideas (💭 considered) until we commit to and design each one.
   printed the result, run twice -- once in Inspect mode and once as a
   CONTROL in Play mode.
 
-    1. A BARREL BLAST MUST NOT WAKE THE MONSTER IT DAMAGES. Spawned a
-       barrel beside the toughest live monster on E1M2, had the player
-       shoot it, and read the monster's target after the blast:
+  1. A BARREL BLAST MUST NOT WAKE THE MONSTER IT DAMAGES. Spawned a
+  barrel beside the toughest live monster on E1M2, had the player
+  shoot it, and read the monster's target after the blast:
 
-          INSPECT   barrel owner = NULL     monster target = NULL
-          CONTROL   barrel owner = PLAYER   monster target = PLAYER
+  INSPECT   barrel owner = NULL     monster target = NULL
+  CONTROL   barrel owner = PLAYER   monster target = PLAYER
 
-       Both hops move with the mode, which is the proof: the barrel
-       records no owner, so its blast carries source = NULL, and
-       P_DamageMobj's acquisition block is gated on `source &&`.
+  Both hops move with the mode, which is the proof: the barrel
+  records no owner, so its blast carries source = NULL, and
+  P_DamageMobj's acquisition block is gated on `source &&`.
 
-    2. THE MODE SURVIVES A LEVEL JUMP. G_DeferedInitNew to E1M2, then
-       read the cheat word on the new level: 0x8 (NOTARGET set) in
-       Inspect, 0x0 in the control. It survives the G_PlayerReborn memset.
+  2. THE MODE SURVIVES A LEVEL JUMP. G_DeferedInitNew to E1M2, then
+  read the cheat word on the new level: 0x8 (NOTARGET set) in
+  Inspect, 0x0 in the control. It survives the G_PlayerReborn memset.
 
   Two traps the harness hit first, worth recording because either one
   produces a CONFIDENT FALSE PASS -- both arms agreeing, which reads as
   "the fix works" when it means the test never ran:
 
-    - A LETHAL HIT PROVES NOTHING. P_DamageMobj reaches P_KillMobj and
-      RETURNS at p_inter.c:116, before the target-setting block at :149.
-      The first attempt killed both the barrel outright and the monster
-      with the blast, so neither arm ever executed the code under test
-      and both printed target=NULL. The damage has to be survivable at
-      each step: a non-lethal 5 to the barrel first (that is what records
-      the owner), and the monster far enough out that (128 - dist) wounds
-      rather than kills.
-    - AN UNSEEN BARREL DOES NOT EXPLODE ON ANYTHING. P_SpawnMobj does no
-      collision check, so a barrel placed blind can land where
-      PIT_RadiusAttack's own P_CheckSight then drops the blast -- the
-      monster took zero damage and, again, both arms agreed. Fixed by
-      testing 8 compass points with P_CheckSightTrace (DOOM-0011 L3's new
-      helper) and spawning at the first one the monster can see.
+  - A LETHAL HIT PROVES NOTHING. P_DamageMobj reaches P_KillMobj and
+  RETURNS at p_inter.c:116, before the target-setting block at :149.
+  The first attempt killed both the barrel outright and the monster
+  with the blast, so neither arm ever executed the code under test
+  and both printed target=NULL. The damage has to be survivable at
+  each step: a non-lethal 5 to the barrel first (that is what records
+  the owner), and the monster far enough out that (128 - dist) wounds
+  rather than kills.
+  - AN UNSEEN BARREL DOES NOT EXPLODE ON ANYTHING. P_SpawnMobj does no
+  collision check, so a barrel placed blind can land where
+  PIT_RadiusAttack's own P_CheckSight then drops the blast -- the
+  monster took zero damage and, again, both arms agreed. Fixed by
+  testing 8 compass points with P_CheckSightTrace (DOOM-0011 L3's new
+  helper) and spawning at the first one the monster can see.
 
   The general lesson for this project's headless self-verification: when
   both arms of an A/B agree, suspect the harness before believing the
@@ -5727,35 +5825,35 @@ parked ideas (💭 considered) until we commit to and design each one.
   Progress (2026-08-04): the developer view gained the three things that
   were stopping it being driven from a script, all DOOM_DEV-gated.
   - `-inspect` (g_game.c G_DevInspectFromArgv, called from G_DoLoadLevel
-    beside G_WarpToSpot) applies the menu's Inspect preset from argv:
-    CF_NOTARGET | CF_GODMODE + P_ForgetPlayerTargets, exactly the pair
-    M_DevMode sets. `-freeze` sets dev_freezemonsters. Until now that
-    preset was reachable ONLY through the menu, and a menu is what an
-    automated run cannot reach (no Wayland input injection).
-    Why it mattered, measured: an A/B of the DOOM-0183 wet layer taken in
-    a live level reported 15.05% of pixels moved against a 0.15% control.
-    With the world held still the same A/B reads 13.83% against a 0.00%
-    control (max channel delta 1). The earlier figure was partly a monster
-    walking through frame and the nukage damage counter ticking down --
-    motion indistinguishable from the effect under test.
+  beside G_WarpToSpot) applies the menu's Inspect preset from argv:
+  CF_NOTARGET | CF_GODMODE + P_ForgetPlayerTargets, exactly the pair
+  M_DevMode sets. `-freeze` sets dev_freezemonsters. Until now that
+  preset was reachable ONLY through the menu, and a menu is what an
+  automated run cannot reach (no Wayland input injection).
+  Why it mattered, measured: an A/B of the DOOM-0183 wet layer taken in
+  a live level reported 15.05% of pixels moved against a 0.15% control.
+  With the world held still the same A/B reads 13.83% against a 0.00%
+  control (max channel delta 1). The earlier figure was partly a monster
+  walking through frame and the nukage damage counter ticking down --
+  motion indistinguishable from the effect under test.
   - `-devshot N` now works in the CLASSIC tier too (i_video.c
-    I_DevShotClassic, reading the SDL backbuffer after RenderCopy and
-    before RenderPresent). It was previously Vulkan-only, so in Classic
-    the flag was a SILENT no-op -- which is worse than an error, because a
-    harness then picks up whatever PNG was already on disk. That is not
-    hypothetical: it produced a wrong "Classic shows the same seam"
-    reading during the DOOM-0180 investigation before the harness was
-    made to fail on a missing file. F12's existing Classic .pcx route
-    (G_ScreenShot) is unchanged; this is the scriptable path and writes
-    the same dev-shots/shot-NNNN.png the other tiers write.
-    The first cut segfaulted: SDL_RenderGetViewport returns LOGICAL units
-    (320x200 under Classic's SDL_RenderSetLogicalSize) while
-    SDL_RenderReadPixels(NULL) reads the whole output target in pixels, so
-    sizing the buffer from the viewport overran it by the square of the
-    scale factor. Fixed to SDL_GetRendererOutputSize.
+  I_DevShotClassic, reading the SDL backbuffer after RenderCopy and
+  before RenderPresent). It was previously Vulkan-only, so in Classic
+  the flag was a SILENT no-op -- which is worse than an error, because a
+  harness then picks up whatever PNG was already on disk. That is not
+  hypothetical: it produced a wrong "Classic shows the same seam"
+  reading during the DOOM-0180 investigation before the harness was
+  made to fail on a missing file. F12's existing Classic .pcx route
+  (G_ScreenShot) is unchanged; this is the scriptable path and writes
+  the same dev-shots/shot-NNNN.png the other tiers write.
+  The first cut segfaulted: SDL_RenderGetViewport returns LOGICAL units
+  (320x200 under Classic's SDL_RenderSetLogicalSize) while
+  SDL_RenderReadPixels(NULL) reads the whole output target in pixels, so
+  sizing the buffer from the viewport overran it by the square of the
+  scale factor. Fixed to SDL_GetRendererOutputSize.
   - The dev-shot naming loop is now shared (rb_image.c rb_devshot_path),
-    called by both present paths, so all three tiers write one scheme into
-    one directory.
+  called by both present paths, so all three tiers write one scheme into
+  one directory.
   Build green DEV and release; make test 7/7.
   Resolved (2026-08-04): -inspect / -freeze / -devshot are shipped and pushed, DEV and release builds clean, make test 7/7, and the flags were exercised roughly twenty times in this session's DOOM-0316 measurement work -- which is the strongest acceptance the item could ask for. Already carried four CHANGELOG entries; only the roadmap flip was owed. NOTE the scope boundary confirmed today: -devshot reaches every WORLD view but cannot open a menu, and it is NOT headless (verified 2026-08-04 -- with DISPLAY and WAYLAND_DISPLAY both unset SDL still opens a real window and the run hangs rather than exiting). Headless capture stays DOOM-0268's; menu capture stays blocked, see DOOM-0050.
 
@@ -5797,9 +5895,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   idle machine, E1M1 nukage courtyard (-warpto 1866 -3221 45), Ultra RT
   with HD art, 50% scale:
 
-    torch disabled (floor)   13.38 ms   46 fps
-    before                   14.93 ms   41 fps
-    after                    14.53 ms   43 fps
+  torch disabled (floor)   13.38 ms   46 fps
+  before                   14.93 ms   41 fps
+  after                    14.53 ms   43 fps
 
   NOTE the baseline correction: L3 costs 1.55 ms at this spot, not the
   1.05 ms in the headline -- more torches in view. The 0.40 ms recovered
@@ -5820,14 +5918,14 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   The megakernel (the 5133-instruction compute shader):
 
-                        L3 on   L3 off
-    VGPRs                  96       96
-    Spilled VGPRs           0        0
-    Subgroups per SIMD      8        8
-    Code size           28300    27660
-    Instructions         5133     5009
-    VALU                 3232     3132
-    VMEM                  159      155
+  L3 on   L3 off
+  VGPRs                  96       96
+  Spilled VGPRs           0        0
+  Subgroups per SIMD      8        8
+  Code size           28300    27660
+  Instructions         5133     5009
+  VALU                 3232     3132
+  VMEM                  159      155
 
   Occupancy is bit-identical with the feature on and off, so occupancy
   cannot be the mechanism. L3 costs zero registers and zero spills.
@@ -5847,16 +5945,16 @@ parked ideas (💭 considered) until we commit to and design each one.
   roughly 2400 extra VALU and 96 extra vector loads.
 
   So the remaining levers are structural or quality, never occupancy:
-    (c) kFogLightsPerCell 2 -> 1. Still the last resort.
-    (d) evaluate the torch term every OTHER march sample and lerp. The
-        term is smooth in t, so this is ~0.5 ms for little visible cost.
-    (e) cache the cell's light list across samples -- kills the 96 loads,
-        leaves the VALU, so it is the smaller half.
-    (f) a closed-form line integral per light in place of the 24-sample
-        sum: the same substitution DOOM-0276 and DOOM-0289 made. Biggest
-        win by far, but density varies along the ray (pooling, wisps,
-        seep), so it is an approximation with a look consequence and
-        wants a spec before code.
+  (c) kFogLightsPerCell 2 -> 1. Still the last resort.
+  (d) evaluate the torch term every OTHER march sample and lerp. The
+  term is smooth in t, so this is ~0.5 ms for little visible cost.
+  (e) cache the cell's light list across samples -- kills the 96 loads,
+  leaves the VALU, so it is the smaller half.
+  (f) a closed-form line integral per light in place of the 24-sample
+  sum: the same substitution DOOM-0276 and DOOM-0289 made. Biggest
+  win by far, but density varies along the ray (pooling, wisps,
+  seep), so it is an approximation with a look consequence and
+  wants a spec before code.
   Progress (2026-08-02, second): lever (d) shipped -- the torch term is now
   integrated at HALF the march's rate, once per pair of samples at the
   pair's midpoint, spent on both.
@@ -5865,12 +5963,12 @@ parked ideas (💭 considered) until we commit to and design each one.
   26.1.5, E1M1 nukage courtyard, Ultra RT + HD art, 50% scale, 3 runs x
   21 samples, medians, idle machine):
 
-    rt_fog 3 High   15.29 -> 14.96 ms   floor 14.14   L3 1.15 -> 0.83 ms
-    rt_fog 1 Low    15.31 -> 14.96 ms                 0.35 ms recovered
-    (Low is the SHIPPED DEFAULT, and the saving is slightly LARGER there
-     -- thin fog never trips the trans < 0.003 early-out, so more samples
-     run and there are more evaluations to halve. Measured because a cold
-     reviewer asked, not assumed.)
+  rt_fog 3 High   15.29 -> 14.96 ms   floor 14.14   L3 1.15 -> 0.83 ms
+  rt_fog 1 Low    15.31 -> 14.96 ms                 0.35 ms recovered
+  (Low is the SHIPPED DEFAULT, and the saving is slightly LARGER there
+  -- thin fog never trips the trans < 0.003 early-out, so more samples
+  run and there are more evaluations to halve. Measured because a cold
+  reviewer asked, not assumed.)
 
   The 1.15 ms independently REPRODUCES the figure this bullet recorded on
   2026-08-01, even though both absolute numbers sit ~0.76 ms higher today
@@ -5938,54 +6036,54 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   Four claims in the headline above are SUPERSEDED, all by precedent this
   bullet was itself citing:
-    - "ease rather than snap" -> it SNAPS. DOOM-0289's own line: the seep
-      eases because mist rolls in; light is height-keyed and snaps. The
-      settle timer also lands the bake after the door has stopped, so there
-      is no partial state to fade through -- and a slot holds a light's
-      IDENTITY beside its weight, so two different lights in one slot
-      cannot be interpolated anyway.
-    - "keyed off RB_SeepOpeningsChanged" -> keyed off RB_UPD_MOVED.
-      P_CheckSightTrace's P_CrossSubsector narrows its slope range from
-      opentop/openbottom, so the answer moves CONTINUOUSLY with plane
-      height. On the flip signal a lift rising in front of a torch would
-      leave the grid lighting air THROUGH it -- a leak, the one direction
-      this defect never takes for a door.
-    - "re-bake only the cells within reach" -> the whole grid re-bakes. An
-      opened door reveals a torch to every cell within that torch's reach,
-      not to cells near the door, so a correct scope is a reach-radius
-      sweep per opening: not obviously cheaper, much easier to get wrong.
-    - "7788 sight tests (4.4 ms)" is stale. It predates DOOM-0302
-      (63d5a2d), which cut kNukageLe 0.35/1.30/0.15 -> 0.05/0.19/0.02 and
-      kLavaLe 2.20/0.75/0.12 -> 0.55/0.19/0.03; reach is
-      sqrtf(lum / RB_FOG_LIGHT_CUTOFF), so dimmer liquids reach less far
-      and fewer cells have any candidate. 6320 tests now.
+  - "ease rather than snap" -> it SNAPS. DOOM-0289's own line: the seep
+  eases because mist rolls in; light is height-keyed and snaps. The
+  settle timer also lands the bake after the door has stopped, so there
+  is no partial state to fade through -- and a slot holds a light's
+  IDENTITY beside its weight, so two different lights in one slot
+  cannot be interpolated anyway.
+  - "keyed off RB_SeepOpeningsChanged" -> keyed off RB_UPD_MOVED.
+  P_CheckSightTrace's P_CrossSubsector narrows its slope range from
+  opentop/openbottom, so the answer moves CONTINUOUSLY with plane
+  height. On the flip signal a lift rising in front of a torch would
+  leave the grid lighting air THROUGH it -- a leak, the one direction
+  this defect never takes for a door.
+  - "re-bake only the cells within reach" -> the whole grid re-bakes. An
+  opened door reveals a torch to every cell within that torch's reach,
+  not to cells near the door, so a correct scope is a reach-radius
+  sweep per opening: not obviously cheaper, much easier to get wrong.
+  - "7788 sight tests (4.4 ms)" is stale. It predates DOOM-0302
+  (63d5a2d), which cut kNukageLe 0.35/1.30/0.15 -> 0.05/0.19/0.02 and
+  kLavaLe 2.20/0.75/0.12 -> 0.55/0.19/0.03; reach is
+  sqrtf(lum / RB_FOG_LIGHT_CUTOFF), so dimmer liquids reach less far
+  and fewer cells have any candidate. 6320 tests now.
 
   Measured on E1M1 (idle, renderer 1 / rt_fog 2 / render_scale 50):
-    still map     one L3 line, no second; -shotcompare mae 0.003 against a
-                  golden written by the PRE-change build (same-build
-                  control 0.004, i.e. at the noise floor)
-    door          449 -> 454 lit, 1085 -> 1090 air, and back on close
-    lift, no flip 449 -> 353 lit, and back -- the only fixture that catches
-                  a flip-keyed trigger, which emits nothing here
-    real door     exactly one bake per plane stop, not ~80
-    bake+upload   4.1 ms E1M1 / 2.9 ms MAP01 against a <= 6 ms gate. The
-                  upload is NOT separable from run variance (bake-alone
-                  spanned 3.6-4.7 ms over seven runs of one build), so do
-                  not quote it as a delta.
-    make test 7/7; -rtverify doom.wad PASS 0.1091%, furnace PASS.
+  still map     one L3 line, no second; -shotcompare mae 0.003 against a
+  golden written by the PRE-change build (same-build
+  control 0.004, i.e. at the noise floor)
+  door          449 -> 454 lit, 1085 -> 1090 air, and back on close
+  lift, no flip 449 -> 353 lit, and back -- the only fixture that catches
+  a flip-keyed trigger, which emits nothing here
+  real door     exactly one bake per plane stop, not ~80
+  bake+upload   4.1 ms E1M1 / 2.9 ms MAP01 against a <= 6 ms gate. The
+  upload is NOT separable from run variance (bake-alone
+  spanned 3.6-4.7 ms over seven runs of one build), so do
+  not quote it as a delta.
+  make test 7/7; -rtverify doom.wad PASS 0.1091%, furnace PASS.
 
   Owed before shipped:
-    - The user's play-test. Two look calls: a torch's fog appearing ~0.15 s
-      after a door finishes (snap, not roll-in -- that supersession is mine
-      and is theirs to veto); and whether a repeating re-bake reads badly
-      on a map with a cycling mover. A perpetual platform waits 3 s at each
-      end, so it SETTLES and bakes twice per cycle indefinitely without
-      ever touching the cap -- the commoner case, and the one to watch. If
-      it reads badly, suppress re-bakes while such a mover runs rather than
-      shortening the cap.
-    - Plan Step 8's visual A/B was NOT run: it needs the throwaway
-      plane-driving hook (removed after Step 4) and a door that reveals a
-      torch. The lit-count moves above are the numeric proof of effect.
+  - The user's play-test. Two look calls: a torch's fog appearing ~0.15 s
+  after a door finishes (snap, not roll-in -- that supersession is mine
+  and is theirs to veto); and whether a repeating re-bake reads badly
+  on a map with a cycling mover. A perpetual platform waits 3 s at each
+  end, so it SETTLES and bakes twice per cycle indefinitely without
+  ever touching the cap -- the commoner case, and the one to watch. If
+  it reads badly, suppress re-bakes while such a mover runs rather than
+  shortening the cap.
+  - Plan Step 8's visual A/B was NOT run: it needs the throwaway
+  plane-driving hook (removed after Step 4) and a door that reveals a
+  torch. The lit-count moves above are the numeric proof of effect.
 
   Found, not fixed: the timer is map-GLOBAL. RB_UPD_MOVED says SOME plane
   moved, not which, so a lift cycling in an unvisited corner defers every
@@ -6004,11 +6102,11 @@ parked ideas (💭 considered) until we commit to and design each one.
   is below, so the tool is not needed again.
 
   BEST PLAY-TEST LOCATION, by a wide margin:
-    doom2.wad MAP01, door sector 13 at (-863, 597).  base 158 lit -> +74,
-    a +47% increase in torch-lit fog cells from one door.
-    Stand at (-700, 597) and face west: verified open, heavily-fogged
-    outdoor ground right beside it.
-    ./linux/linuxxdoom -iwad wads/doom2.wad -warp 1 -warpto -700 597
+  doom2.wad MAP01, door sector 13 at (-863, 597).  base 158 lit -> +74,
+  a +47% increase in torch-lit fog cells from one door.
+  Stand at (-700, 597) and face west: verified open, heavily-fogged
+  outdoor ground right beside it.
+  ./linux/linuxxdoom -iwad wads/doom2.wad -warp 1 -warpto -700 597
 
   Runners-up: MAP09 sector 105 (-1048, 508) +47 of 570; MAP15 sector 208
   (-704, -2640) +37 of 639; MAP06 sector 34 (1820, 1696) +33 of 246.
@@ -6022,13 +6120,13 @@ parked ideas (💭 considered) until we commit to and design each one.
   plainly rather than letting a play-test discover it as disappointment.
 
   Two more facts the scan turned up, neither chased:
-    - MAP02 and MAP07 bake ZERO lit cells at spawn. Either they genuinely
-      have no static emitter within reach of any air cell, or the cluster
-      step is dropping their emitters. Unverified, and worth one look --
-      a map where L3 does nothing at all is not obviously intended.
-    - The LIFT case is the bigger visual mover on E1M1 (449 -> 353, 96
-      cells) than any door there. If the door demo underwhelms, a lift
-      rising in front of a torch is the stronger fixture.
+  - MAP02 and MAP07 bake ZERO lit cells at spawn. Either they genuinely
+  have no static emitter within reach of any air cell, or the cluster
+  step is dropping their emitters. Unverified, and worth one look --
+  a map where L3 does nothing at all is not obviously intended.
+  - The LIFT case is the bigger visual mover on E1M1 (449 -> 353, 96
+  cells) than any door there. If the door demo underwhelms, a lift
+  rising in front of a torch is the stronger fixture.
   Progress (2026-08-03, third pass): the play-test came back INCONCLUSIVE
   a second time, and the two attempts together shift where the burden
   sits.
@@ -6070,7 +6168,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   rim is FALSE. Checked against doom2.wad's MAP01 lumps directly rather
   than inferred from a screenshot:
 
-    sector 11  floor 8, ceil 264, floortex GRASS1, ceiltex F_SKY1, light 224
+  sector 11  floor 8, ceil 264, floortex GRASS1, ceiltex F_SKY1, light 224
 
   That is MAP01's outdoor grass courtyard — a legitimate room, correctly
   rendered, and exactly what the capture showed (grass underfoot, sky
@@ -6110,11 +6208,11 @@ parked ideas (💭 considered) until we commit to and design each one.
   fog-off pair being the control that subtracts the geometry change.
   Ultra RT, doom2 MAP01, 3840x2160. Hook REVERTED.
 
-    viewpoint                   fog ON      fog OFF     fog's own share
-    outdoor courtyard           0.0075      0.0075      0.0000
-    (-warpto -700 597 180)      peak 2      peak 2
-    player start                0.0155      0.0096      0.0059
-    (-warpto -96 784 90)        peak 85     peak 8
+  viewpoint                   fog ON      fog OFF     fog's own share
+  outdoor courtyard           0.0075      0.0075      0.0000
+  (-warpto -700 597 180)      peak 2      peak 2
+  player start                0.0155      0.0096      0.0059
+  (-warpto -96 784 90)        peak 85     peak 8
 
   MAE per 255. The -shotcompare bar for "a look change happened" is 3.0
   (kGoldenMAE) and same-build noise is ~0.004. So the fog's contribution to
@@ -6164,8 +6262,8 @@ parked ideas (💭 considered) until we commit to and design each one.
   Found while gating DOOM-0011 L3 across both IWADs, which the standing
   2026-08-01 constraint requires. On one build, at -warp 1 1:
 
-    doom.wad   INV-6 direct-light rel-MSE 0.0796%  PASS (bar 0.50%)
-    doom2.wad  INV-6 direct-light rel-MSE 3.4943%  FAIL, 63987 lit px
+  doom.wad   INV-6 direct-light rel-MSE 0.0796%  PASS (bar 0.50%)
+  doom2.wad  INV-6 direct-light rel-MSE 3.4943%  FAIL, 63987 lit px
 
   PROVEN pre-existing, not L3: git stash to the untouched tree, rebuild,
   re-run -- identical 3.4943% to four decimal places. So the two IWADs
@@ -6195,12 +6293,12 @@ parked ideas (💭 considered) until we commit to and design each one.
   dispatch count independently through a throwaway `-rtdisp <nee> <brute>`
   parm in a worktree (not merged), machine idle:
 
-    doom2 MAP01   nee 16384 / brute  4096  ->  3.4993%   (the shipped gate)
-                  nee 16384 / brute 16384  ->  3.1607%
-                  nee 16384 / brute 65536  ->  2.9124%
-                  nee 65536 / brute 65536  ->  0.7245%
-    doom.wad E1M1 nee 16384 / brute  4096  ->  0.1091%
-                  nee 16384 / brute 65536  ->  0.1032%
+  doom2 MAP01   nee 16384 / brute  4096  ->  3.4993%   (the shipped gate)
+  nee 16384 / brute 16384  ->  3.1607%
+  nee 16384 / brute 65536  ->  2.9124%
+  nee 65536 / brute 65536  ->  0.7245%
+  doom.wad E1M1 nee 16384 / brute  4096  ->  0.1091%
+  nee 16384 / brute 65536  ->  0.1032%
 
   Raising the brute-force REFERENCE 16x moved the number by 0.59 pp; raising
   the NEE side 4x collapsed it from 2.9124 to 0.7245 -- a ratio of 4.02
@@ -6218,16 +6316,16 @@ parked ideas (💭 considered) until we commit to and design each one.
   much as the integrator.
 
   What this means for the gate, in preference order:
-    (a) The unbiasedness claim INV-6 exists to make is proven by the error
-        falling as 1/N toward zero, which it demonstrably does -- not by a
-        fixed threshold. A gate that samples two spp counts and checks the
-        SLOPE is valid on any map and costs one extra run.
-    (b) Cheaper stopgap: raise the doom2 gate's spp. Extrapolating 1/N, the
-        0.50% bar needs roughly 1.5-2x the 65536 spp already measured, i.e.
-        about 8x the shipped gate's runtime -- affordable for a headless
-        gate, not for anything interactive.
-    (c) Do NOT relax the bar per-IWAD without doing (a) first; that hides a
-        real bias if one ever appears.
+  (a) The unbiasedness claim INV-6 exists to make is proven by the error
+  falling as 1/N toward zero, which it demonstrably does -- not by a
+  fixed threshold. A gate that samples two spp counts and checks the
+  SLOPE is valid on any map and costs one extra run.
+  (b) Cheaper stopgap: raise the doom2 gate's spp. Extrapolating 1/N, the
+  0.50% bar needs roughly 1.5-2x the 65536 spp already measured, i.e.
+  about 8x the shipped gate's runtime -- affordable for a headless
+  gate, not for anything interactive.
+  (c) Do NOT relax the bar per-IWAD without doing (a) first; that hides a
+  real bias if one ever appears.
 
   DOOM-0208's 2026-07-23 note should be corrected on the record: the
   3.4943% / 63987 pair it closed as "a transient environmental blip" was
@@ -6244,13 +6342,13 @@ parked ideas (💭 considered) until we commit to and design each one.
   The derivation was sound. Model rel-MSE as E = a/N_nee + c/N_brute +
   bias. Quadrupling BOTH counts quarters both variance terms, so the two
   unknowns cancel and the bias falls out of two runs:
-      bias = (4*E_4x - E_1x) / 3
+  bias = (4*E_4x - E_1x) / 3
   Cheaper than the three runs first assumed, and valid on any map.
 
   Measured (idle, renderer 1 / rt_fog 2, -rtdisp <nee> <brute> dispatches):
-      doom.wad   E(256,64) 0.1091%  E(1024,256) 0.0374%  fall 2.92x
-      doom2.wad  E(256,64) 3.4993%  E(1024,256) 0.7330%  fall 4.77x
-      bias:  doom.wad +0.0135%   doom2.wad -0.1891%
+  doom.wad   E(256,64) 0.1091%  E(1024,256) 0.0374%  fall 2.92x
+  doom2.wad  E(256,64) 3.4993%  E(1024,256) 0.7330%  fall 4.77x
+  bias:  doom.wad +0.0135%   doom2.wad -0.1891%
 
   Two things kill it as a gate. A NEGATIVE bias is unphysical, so -0.189%
   is measurement slop rather than a reading -- and its magnitude is a third
@@ -6274,11 +6372,11 @@ parked ideas (💭 considered) until we commit to and design each one.
   withheld until the slope was checked: make the gate's sample count and
   bar PER-IWAD, on the evidence above. It costs nothing at runtime and it
   is now justified rather than assumed. Concretely, one of:
-    (i)  keep doom.wad at the shipped cost and the 0.50% bar (it passes at
-         0.1091%), and gate doom2 at 4x cost with a ~1.0% bar (0.7330%);
-    (ii) leave doom2 out of the gate entirely and say so in the runner,
-         rather than letting a red result sit there being re-diagnosed
-         every few months -- which is how DOOM-0208 happened.
+  (i)  keep doom.wad at the shipped cost and the 0.50% bar (it passes at
+  0.1091%), and gate doom2 at 4x cost with a ~1.0% bar (0.7330%);
+  (ii) leave doom2 out of the gate entirely and say so in the runner,
+  rather than letting a red result sit there being re-diagnosed
+  every few months -- which is how DOOM-0208 happened.
   (i) costs a 4x run on one IWAD and keeps both covered; (ii) is free and
   covers less. Needs the user's call before implementing, because it
   changes INV-6's acceptance (docs/specs/DOOM-0009-path-tracer.md) and so
@@ -6289,9 +6387,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   SHIPPED 2026-08-02 (7adcd0a). -rtverify now picks its SAMPLE COUNT from
   `gamemode` and leaves the bar alone. Both IWADs pass the same 0.50% bar:
 
-    doom.wad   0.1091%  NEE  16384 spp / reference  4096 spp   PASS
-    doom2.wad  0.3665%  NEE 262144 spp / reference 16384 spp   PASS
-    white furnace 0.000000 both; make test 7/7.
+  doom.wad   0.1091%  NEE  16384 spp / reference  4096 spp   PASS
+  doom2.wad  0.3665%  NEE 262144 spp / reference 16384 spp   PASS
+  white furnace 0.000000 both; make test 7/7.
 
   This is NOT the per-IWAD BAR the user approved -- it is that option with
   the part worth disliking removed, and it is strictly stronger. Holding
@@ -6349,12 +6447,12 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   Three liquids, three asks, and the third one is the hard one.
 
-    1. NUKAGE gets bubbles -- rising, surfacing, popping.
-    2. LAVA gets splashes -- spitting, the surface breaking.
-    3. WATER, nukage and lava all keep a MOVING surface. The 1993 flats
-       already animate (NUKAGE1-3, LAVA1-4, a 3-4 frame loop on
-       flattranslation), so this is not a new behaviour -- it is the same
-       behaviour done convincingly.
+  1. NUKAGE gets bubbles -- rising, surfacing, popping.
+  2. LAVA gets splashes -- spitting, the surface breaking.
+  3. WATER, nukage and lava all keep a MOVING surface. The 1993 flats
+  already animate (NUKAGE1-3, LAVA1-4, a 3-4 frame loop on
+  flattranslation), so this is not a new behaviour -- it is the same
+  behaviour done convincingly.
 
   "NOT SO REPEATED" IS THE LOAD-BEARING PHRASE, and it names a defect
   this project has already solved once. DOOM's animated flats repeat in
@@ -6366,36 +6464,36 @@ parked ideas (💭 considered) until we commit to and design each one.
   DOOM-0181.
 
   So the mechanism is likely to matter more than the texture:
-    - SPATIAL repetition: DOOM-0181's world-keyed stochastic de-tiling
-      (IQ 4-corner blend) already exists and already runs on HD walls and
-      flats. It should be the starting point here rather than a new idea.
-    - TEMPORAL repetition: de-correlate the phase per world position, so
-      neighbouring patches of a pool are at different points in the cycle
-      and the surface never pulses as a unit. DOOM-0183 L4's procedural
-      ripple normal already runs off a world position and a clock, so the
-      hook exists.
-    - BUBBLES and SPLASHES are EVENTS, not a loop, and that is what will
-      sell them. A loop of a bubble is still a loop. Cheapest derived
-      route: hash the world cell to a per-cell phase and spawn a bubble
-      on that cell's own schedule, so the pool is covered in independent
-      events without a particle system or any hand placement.
+  - SPATIAL repetition: DOOM-0181's world-keyed stochastic de-tiling
+  (IQ 4-corner blend) already exists and already runs on HD walls and
+  flats. It should be the starting point here rather than a new idea.
+  - TEMPORAL repetition: de-correlate the phase per world position, so
+  neighbouring patches of a pool are at different points in the cycle
+  and the surface never pulses as a unit. DOOM-0183 L4's procedural
+  ripple normal already runs off a world position and a clock, so the
+  hook exists.
+  - BUBBLES and SPLASHES are EVENTS, not a loop, and that is what will
+  sell them. A loop of a bubble is still a loop. Cheapest derived
+  route: hash the world cell to a per-cell phase and spawn a bubble
+  on that cell's own schedule, so the pool is covered in independent
+  events without a particle system or any hand placement.
 
   Relationship to what already shipped, because this is easy to
   mis-scope as duplicate work:
-    - DOOM-0183 shipped the nukage's procedural RIPPLE normal (L4), its
-      glow and cast-light. Ripples are not bubbles; that item is about
-      the liquid's material, this one is about its SURFACE MOTION and its
-      art.
-    - DOOM-0042 owns the HD art programme; new liquid art belongs in that
-      pipeline (materials.csv sidecar, palette-locked) rather than beside
-      it.
-    - DOOM-0011 L3 now lights the air above these pools, and DOOM-0293
-      will give them their own fog. Both READ the liquid's identity from
-      the same flat-name flags DOOM-0183 established, so a new liquid
-      surface must keep those flags meaning what they mean or it silently
-      turns the glow and the fog off.
-    - Water has no liquid flag at all yet (DOOM-0183 deliberately
-      deferred water and blood), so item 3 needs that flag added first.
+  - DOOM-0183 shipped the nukage's procedural RIPPLE normal (L4), its
+  glow and cast-light. Ripples are not bubbles; that item is about
+  the liquid's material, this one is about its SURFACE MOTION and its
+  art.
+  - DOOM-0042 owns the HD art programme; new liquid art belongs in that
+  pipeline (materials.csv sidecar, palette-locked) rather than beside
+  it.
+  - DOOM-0011 L3 now lights the air above these pools, and DOOM-0293
+  will give them their own fog. Both READ the liquid's identity from
+  the same flat-name flags DOOM-0183 established, so a new liquid
+  surface must keep those flags meaning what they mean or it silently
+  turns the glow and the fog off.
+  - Water has no liquid flag at all yet (DOOM-0183 deliberately
+  deferred water and blood), so item 3 needs that flag added first.
 
   Needs a design pass before implementation -- /write-spec, then the
   rule-14 gate. Sequence after DOOM-0293, so the liquid identity data
@@ -6441,14 +6539,14 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   What the engine can already give it, none of which existed when this
   was last considered:
-    - Emissive materials feeding the NEE emitter set, so the blast can
-      genuinely LIGHT the room rather than being a bright sprite (the
-      same mechanism DOOM-0183 used for lava and DOOM-0011 L3 now reads
-      for fog).
-    - DOOM-0011's fog march, so the flash can light the smoke and the
-      air around it -- an explosion in fog is most of the effect.
-    - DOOM-0184 (glowing projectiles that cast light) is the same family
-      and should probably be designed with this rather than after it.
+  - Emissive materials feeding the NEE emitter set, so the blast can
+  genuinely LIGHT the room rather than being a bright sprite (the
+  same mechanism DOOM-0183 used for lava and DOOM-0011 L3 now reads
+  for fog).
+  - DOOM-0011's fog march, so the flash can light the smoke and the
+  air around it -- an explosion in fog is most of the effect.
+  - DOOM-0184 (glowing projectiles that cast light) is the same family
+  and should probably be designed with this rather than after it.
 
   Open at design time: whether this is better art on a billboard, a
   particle system, or a small volumetric puff -- and whether the smoke
@@ -6475,13 +6573,13 @@ parked ideas (💭 considered) until we commit to and design each one.
   courtyard, by pinning the ripple clock (rb_shotverify's rippleSec) at
   8 s, 20 s and 32 s and diffing:
 
-      pool crop, drift between t=8 s and t=32 s
-        L3 ON    MAE 6.075 / 255
-        CONTROL  MAE 6.236 / 255   (torch gain 0 -- the sky fog alone)
+  pool crop, drift between t=8 s and t=32 s
+  L3 ON    MAE 6.075 / 255
+  CONTROL  MAE 6.236 / 255   (torch gain 0 -- the sky fog alone)
 
-      the torch layer itself, same time, on vs control
-        t=8 s    MAE 35.790, peak 127
-        t=32 s   MAE 37.167, peak 134
+  the torch layer itself, same time, on vs control
+  t=8 s    MAE 35.790, peak 127
+  t=32 s   MAE 37.167, peak 134
 
   So L3 adds a very large layer (MAE ~36) that contributes NO extra
   motion -- turning it on leaves the drift statistically where it was,
@@ -6527,20 +6625,20 @@ parked ideas (💭 considered) until we commit to and design each one.
   sharper measurements, isolating the glow layer as (L3 on - L3 off) at a
   fixed time:
 
-    DOES THE MEDIUM MODULATE THE GLOW AT ALL? Same frame, kWispAmp 1 vs 0:
-        glow layer mean 35.78 (wisps on) vs 34.76 (wisps off)
-        difference MAE 4.474, peak 27
-    -> yes: the wisps swing the glow by about 12.5%.
+  DOES THE MEDIUM MODULATE THE GLOW AT ALL? Same frame, kWispAmp 1 vs 0:
+  glow layer mean 35.78 (wisps on) vs 34.76 (wisps off)
+  difference MAE 4.474, peak 27
+  -> yes: the wisps swing the glow by about 12.5%.
 
-    DOES IT MOVE? Glow layer at three pinned ripple times, per pixel:
-        t= 8 s vs t=20 s   MAE 2.191  peak 18  81.0% of pixels
-        t= 8 s vs t=32 s   MAE 3.037  peak 22  88.6%
-        t=20 s vs t=32 s   MAE 2.493  peak 16  90.6%
-    -> also yes, but only ~6-8% of the glow's own magnitude, spread over
-       tens of seconds. It is not frozen; it is slow and shallow, against
-       a static envelope of mean ~36. Next to fog that is visibly
-       billowing it therefore READS as static, which is exactly what the
-       user reported.
+  DOES IT MOVE? Glow layer at three pinned ripple times, per pixel:
+  t= 8 s vs t=20 s   MAE 2.191  peak 18  81.0% of pixels
+  t= 8 s vs t=32 s   MAE 3.037  peak 22  88.6%
+  t=20 s vs t=32 s   MAE 2.493  peak 16  90.6%
+  -> also yes, but only ~6-8% of the glow's own magnitude, spread over
+  tens of seconds. It is not frozen; it is slow and shallow, against
+  a static envelope of mean ~36. Next to fog that is visibly
+  billowing it therefore READS as static, which is exactly what the
+  user reported.
 
   So the corrected diagnosis: the user's route is sound and the term is
   already there -- it is under-driven, not absent.
@@ -6573,45 +6671,45 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   Three numbers, and the third one overturns how our wisps are built.
 
-    1. IT IS NOT GRAIN. SH2 ships a noise/grain filter, so raw frame
-       difference would flatter it. Consecutive frames (0.5 s apart):
-       raw MAE 7.083, and after a 12 px Gaussian blur still 5.974 --
-       **84% of the change is large-scale structure**, i.e. real
-       billowing, not per-pixel shimmer.
+  1. IT IS NOT GRAIN. SH2 ships a noise/grain filter, so raw frame
+  difference would flatter it. Consecutive frames (0.5 s apart):
+  raw MAE 7.083, and after a 12 px Gaussian blur still 5.974 --
+  **84% of the change is large-scale structure**, i.e. real
+  billowing, not per-pixel shimmer.
 
-    2. IT DECORRELATES IN ABOUT 1.5 SECONDS. Blurred MAE against frame 1:
-           +0.5 s  5.173      +2.0 s  8.169      +6.0 s  8.996
-           +1.0 s  7.321      +3.0 s  7.246      +9.5 s  9.000
-           +1.5 s  8.789      +4.0 s  8.035
-       It climbs to ~8.8 by 1.5 s and then sits at 8-9 for the remaining
-       eight seconds. That is a saturated random walk: the fog restructures
-       completely in a second and a half and never returns.
+  2. IT DECORRELATES IN ABOUT 1.5 SECONDS. Blurred MAE against frame 1:
+  +0.5 s  5.173      +2.0 s  8.169      +6.0 s  8.996
+  +1.0 s  7.321      +3.0 s  7.246      +9.5 s  9.000
+  +1.5 s  8.789      +4.0 s  8.035
+  It climbs to ~8.8 by 1.5 s and then sits at 8-9 for the remaining
+  eight seconds. That is a saturated random walk: the fog restructures
+  completely in a second and a half and never returns.
 
-       OURS TAKES TENS OF SECONDS. kWispFreq1 is 1/192 and kWispVel1 is
-       8 units/s, so one noise cell takes 192/8 = 24 s to pass. That is a
-       ~15x mismatch in timescale, and it is the whole reason the glow
-       reads as static: the modulation is there (12.5%, measured above) but
-       it arrives an order of magnitude too slowly to see.
+  OURS TAKES TENS OF SECONDS. kWispFreq1 is 1/192 and kWispVel1 is
+  8 units/s, so one noise cell takes 192/8 = 24 s to pass. That is a
+  ~15x mismatch in timescale, and it is the whole reason the glow
+  reads as static: the modulation is there (12.5%, measured above) but
+  it arrives an order of magnitude too slowly to see.
 
-    3. **IT DOES NOT TRANSLATE. IT CHURNS IN PLACE.** This is the finding
-       that matters, because our implementation does the opposite. Each
-       consecutive pair was matched against its neighbour over a +/-12 px
-       search for the best whole-frame shift:
-           pair 1  best shift (+0,+0)   0% explained by translation
-           pair 2  best shift (-2,+2)   0%
-           pair 3  best shift (+0,+2)   0%
-           pair 4  best shift (+0,+0)   0%
-           pair 5  best shift (+4,-4)   1%
-           pair 6  best shift (-2,-2)   1%
-           pair 7  best shift (+0,-2)   1%
-       Mean improvement from allowing ANY translation: 0%. There is no
-       wind direction. The fog dissipates and reforms where it stands --
-       precisely the user's own description ("wisps move around and
-       dissipate and new ones are created"), now with a number on it.
+  3. **IT DOES NOT TRANSLATE. IT CHURNS IN PLACE.** This is the finding
+  that matters, because our implementation does the opposite. Each
+  consecutive pair was matched against its neighbour over a +/-12 px
+  search for the best whole-frame shift:
+  pair 1  best shift (+0,+0)   0% explained by translation
+  pair 2  best shift (-2,+2)   0%
+  pair 3  best shift (+0,+2)   0%
+  pair 4  best shift (+0,+0)   0%
+  pair 5  best shift (+4,-4)   1%
+  pair 6  best shift (-2,-2)   1%
+  pair 7  best shift (+0,-2)   1%
+  Mean improvement from allowing ANY translation: 0%. There is no
+  wind direction. The fog dissipates and reforms where it stands --
+  precisely the user's own description ("wisps move around and
+  dissipate and new ones are created"), now with a number on it.
 
-       Our wisps are pure TRANSLATION: kWispVel1 = (8, 3, 1) and
-       kWispVel2 = (-3, 4, 0.3) slide the noise volume past the world.
-       Sliding faster would give SH2's rate with a wind SH2 does not have.
+  Our wisps are pure TRANSLATION: kWispVel1 = (8, 3, 1) and
+  kWispVel2 = (-3, 4, 0.3) slide the noise volume past the world.
+  Sliding faster would give SH2's rate with a wind SH2 does not have.
 
   WHAT TO BUILD, revised again and now evidence-led. Do not simply raise
   kWispVel1. The two octaves already drift in OPPOSED directions, and two
@@ -6642,9 +6740,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   this instrument cannot bound it any tighter than that.
 
   Corrected, sample 2, true elapsed against frame 1 (blurred):
-      + 2.2 s  5.643      +10.9 s  5.471      +30.4 s  6.328
-      + 4.4 s  6.115      +19.5 s  6.923      +41.2 s  6.258
-      + 6.5 s  6.403
+  + 2.2 s  5.643      +10.9 s  5.471      +30.4 s  6.328
+  + 4.4 s  6.115      +19.5 s  6.923      +41.2 s  6.258
+  + 6.5 s  6.403
   Flat from the first sample onward -- a saturated walk, no loop, no trend.
 
   What survives the correction, which is everything that mattered: SH2's
@@ -6659,9 +6757,9 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   SECOND SAMPLE, a different angle in the same forest, confirms both
   structural findings independently:
-      large-scale share  82%  (sample 1: 84%)
-      translation        1%   (sample 1: 0%)  -- best shifts (+0,+0),
-                              (+2,+6), (+0,-2), (-2,+0), (-2,+6), (+0,+2)
+  large-scale share  82%  (sample 1: 84%)
+  translation        1%   (sample 1: 0%)  -- best shifts (+0,+0),
+  (+2,+6), (+0,-2), (-2,+0), (-2,+6), (+0,+2)
   Two different scenes agreeing is the evidence that "churns in place, no
   wind" is a property of SH2's fog and not of one camera angle.
 
@@ -6731,12 +6829,12 @@ parked ideas (💭 considered) until we commit to and design each one.
   12 px blur, ripple clock pinned via a new -rippletime flag.
 
   blurred MAE against the t=8 s reference
-    elapsed   BEFORE   AFTER
-     0.25 s    0.213   5.416
-     1.00 s    0.831  11.556
-     1.50 s    1.217  18.732
-     3.00 s    2.251  17.115
-     9.00 s    4.400  21.054
+  elapsed   BEFORE   AFTER
+  0.25 s    0.213   5.416
+  1.00 s    0.831  11.556
+  1.50 s    1.217  18.732
+  3.00 s    2.251  17.115
+  9.00 s    4.400  21.054
 
   (a) DECORRELATION: PASS. After reaches its plateau by ~1.5 s then sits at
   15-21 for the remaining 7.5 s -- a saturated walk, SH2's own shape,
@@ -6803,22 +6901,22 @@ parked ideas (💭 considered) until we commit to and design each one.
   DOOM has no navmesh and no pathfinding, so "plays DOOM well" is a real
   research project. Three routes, cheapest first:
 
-    (a) A CAMERA, not a player. Fly a spectator through the level on a
-        route derived from the map -- the DOOM-0011 seep field already
-        holds a per-cell grid of where the open air is, and DOOM-0294's
-        developer view already has no-clip and free movement. Shows the
-        renderer off, needs no combat AI, and is the most likely thing to
-        produce a usable "look at this lighting" video. Probably the
-        first thing to build.
-    (b) A WALKER, reusing the monster AI. This is the reuse answer and it
-        is a good one: P_Move / P_TryWalk / P_NewChaseDir already
-        implement "step toward something, slide along walls, refuse to
-        walk off a ledge", and they run on any mobj. Point the player at
-        the level's exit switch (or at successive key pickups) and let
-        the same code walk it, firing at whatever ends up in front. The
-        hard part is not movement, it is knowing WHERE to go -- doors,
-        keys and lifts are a dependency graph the engine never builds.
-    (c) A real bot. Only if (a) and (b) prove insufficient.
+  (a) A CAMERA, not a player. Fly a spectator through the level on a
+  route derived from the map -- the DOOM-0011 seep field already
+  holds a per-cell grid of where the open air is, and DOOM-0294's
+  developer view already has no-clip and free movement. Shows the
+  renderer off, needs no combat AI, and is the most likely thing to
+  produce a usable "look at this lighting" video. Probably the
+  first thing to build.
+  (b) A WALKER, reusing the monster AI. This is the reuse answer and it
+  is a good one: P_Move / P_TryWalk / P_NewChaseDir already
+  implement "step toward something, slide along walls, refuse to
+  walk off a ledge", and they run on any mobj. Point the player at
+  the level's exit switch (or at successive key pickups) and let
+  the same code walk it, firing at whatever ends up in front. The
+  hard part is not movement, it is knowing WHERE to go -- doors,
+  keys and lifts are a dependency graph the engine never builds.
+  (c) A real bot. Only if (a) and (b) prove insufficient.
 
   Prior art in-tree, both of which need checking before anything is
   written: DOOM's own DEMO system records and replays exact input
@@ -6830,17 +6928,17 @@ parked ideas (💭 considered) until we commit to and design each one.
   here is an open question, not an assumption.
 
   Ties to capture work rather than standing alone:
-    - It should be drivable from the command line and run unattended, so
-      it composes with a recorder. Same posture as -warpto, -shotverify
-      and -rtverify: the flag IS the interface.
-    - It wants a HUD-less / weapon-less presentation option for clean
-      footage, and probably a slow cinematic turn rate -- a bot's
-      instant snap-turns look like a bot.
-    - It would also close a real testing gap. Every fog and lighting
-      judgement in this project so far has been made on STILL FRAMES,
-      and DOOM-0300 exists precisely because a still cannot show whether
-      something moves. A self-playing camera is the instrument that
-      question needs.
+  - It should be drivable from the command line and run unattended, so
+  it composes with a recorder. Same posture as -warpto, -shotverify
+  and -rtverify: the flag IS the interface.
+  - It wants a HUD-less / weapon-less presentation option for clean
+  footage, and probably a slow cinematic turn rate -- a bot's
+  instant snap-turns look like a bot.
+  - It would also close a real testing gap. Every fog and lighting
+  judgement in this project so far has been made on STILL FRAMES,
+  and DOOM-0300 exists precisely because a still cannot show whether
+  something moves. A self-playing camera is the instrument that
+  question needs.
 
   Needs a design pass -- /write-spec, then the rule-14 gate. Sequence is
   the user's call; it is not blocked by any of the fog work.
@@ -6951,14 +7049,14 @@ parked ideas (💭 considered) until we commit to and design each one.
   FOUR sites carry the stale mechanism, not one -- the second lane's
   contribution, and the reason this is worth an item rather than an
   edit:
-    - §4.4(b)'s bullets (now marked SUPERSEDED inline, pointing here)
-    - the layer table's L3 row ("iterate static emitters k<omniStart
-      (nearest-few, no occlusion first)")
-    - Q2 ("nearest-few emitters with no occlusion ray")
-    - Q23, which is worse than stale: it is a LIVE DIRECTIVE telling an
-      implementer to measure the scan and amend §4.4(b) to match. The
-      shipped code took a third option Q23 does not contemplate. Closed
-      2026-08-02 against the shipped answer.
+  - §4.4(b)'s bullets (now marked SUPERSEDED inline, pointing here)
+  - the layer table's L3 row ("iterate static emitters k<omniStart
+  (nearest-few, no occlusion first)")
+  - Q2 ("nearest-few emitters with no occlusion ray")
+  - Q23, which is worse than stale: it is a LIVE DIRECTIVE telling an
+  implementer to measure the scan and amend §4.4(b) to match. The
+  shipped code took a third option Q23 does not contemplate. Closed
+  2026-08-02 against the shipped answer.
 
   Also stale in the same family, and cheap to fold into the same pass:
   `DOOM-0011-implementation-plan.md` carries `kTorchShaftStrength = 1.0`
@@ -7032,20 +7130,20 @@ parked ideas (💭 considered) until we commit to and design each one.
   things, both stated in the base paragraph since the spec was written:
 
   1. **The authored Cornell-style test scene.** INV-6 says the bar is
-     measured "on the white-furnace + a reference Cornell-style DOOM room
-     (a small test scene this spec's implementer authors)". No such scene
-     exists. `RB_RtVerify` has always measured a real game map at whatever
-     camera the first ready present holds. That is why the score turned out
-     to depend on the IWAD at all (DOOM-0297) -- an authored scene would
-     have been IWAD-independent by construction, which is the property the
-     clause was there to provide.
+  measured "on the white-furnace + a reference Cornell-style DOOM room
+  (a small test scene this spec's implementer authors)". No such scene
+  exists. `RB_RtVerify` has always measured a real game map at whatever
+  camera the first ready present holds. That is why the score turned out
+  to depend on the IWAD at all (DOOM-0297) -- an authored scene would
+  have been IWAD-independent by construction, which is the property the
+  clause was there to provide.
 
   2. **The reference-convergence self-check.** INV-6 says the reference
-     "counts as converged only when doubling it to 8192 spp shifts the
-     image by < 0.5% rel-MSE". `RB_RtVerify` runs exactly three estimators
-     and no doubling pass, and `8192` appears nowhere in the engine. So the
-     reference has never been checked for convergence by the mechanism its
-     own invariant names -- it has only ever been assumed converged.
+  "counts as converged only when doubling it to 8192 spp shifts the
+  image by < 0.5% rel-MSE". `RB_RtVerify` runs exactly three estimators
+  and no doubling pass, and `8192` appears nowhere in the engine. So the
+  reference has never been checked for convergence by the mechanism its
+  own invariant names -- it has only ever been assumed converged.
 
   Neither is urgent: DOOM-0297 established the shipped gate passes on both
   IWADs with headroom, and (2)'s absence is why (1) matters less than it
@@ -7087,14 +7185,14 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   REPRODUCED HEADLESSLY, and the two obvious explanations are both
   excluded:
-    fog off      the panels are exactly as blown out at `rt_fog 0`, so it
-                 is not the volumetrics being milky
-    paletted art identical again with `DOOMASSETDIR` unset (`HD load done
-                 - 0 material(s)`), so DOOM-0042's HD art is not the
-                 source and DOOM-0178 is not implicated
+  fog off      the panels are exactly as blown out at `rt_fog 0`, so it
+  is not the volumetrics being milky
+  paletted art identical again with `DOOMASSETDIR` unset (`HD load done
+  - 0 material(s)`), so DOOM-0042's HD art is not the
+  source and DOOM-0178 is not implicated
 
-    ./linux/linuxxdoom -iwad ../wads/doom2.wad -warp 1 \
-        -warpto -700 597 180 -config <fog-off cfg> -shotverify out.png
+  ./linux/linuxxdoom -iwad ../wads/doom2.wad -warp 1 \
+  -warpto -700 597 180 -config <fog-off cfg> -shotverify out.png
 
   NOT YET ESTABLISHED, and the fix shape depends on it: how many of the
   428 wall textures clear the gate. The 1042 figure is dominated by the
@@ -7113,8 +7211,8 @@ parked ideas (💭 considered) until we commit to and design each one.
   Source: user-play-test-2026-08-03.
   Measured (2026-08-03), and it is a CLASS problem, not a handful:
 
-    doom2.wad   82/428 walls, 20/153 flats, 940/1381 sprites emit
-    doom.wad    60/287 walls, 19/111 flats, 479/764 sprites emit
+  doom2.wad   82/428 walls, 20/153 flats, 940/1381 sprites emit
+  doom.wad    60/287 walls, 19/111 flats, 479/764 sprites emit
 
   Roughly one wall texture in five is a light source. Temporary probe in
   UploadAtlas printed the emissive wall ids with their summed Le; ids
@@ -7124,16 +7222,16 @@ parked ideas (💭 considered) until we commit to and design each one.
   The gate does not merely over-fire — it cannot tell the two apart. The
   same threshold admits both of these:
 
-    legitimately a light      FIREWALL / FIREWALA / FIREWALB (11-12),
-                              DOORYEL2 (7.97), SW1CMT / SW2CMT (12.86)
-    plainly not a light       CEMENT1..CEMENT9 (7.5-17.1) -- nine plain
-                              grey concrete walls, and the likeliest
-                              match for the wall in the user's shots;
-                              ZZWOLF2/3/4/6/7/13 (5.2-16.3) and
-                              ZDOORB1 / ZDOORF1 (38.47, the two BRIGHTEST
-                              emitters in the IWAD) -- Wolfenstein walls
-                              and doors; SKINFACE / SKINLOW / SKSNAKE1 /
-                              SKSPINE1 / SKSPINE2 (7.1-14.6); AASHITTY
+  legitimately a light      FIREWALL / FIREWALA / FIREWALB (11-12),
+  DOORYEL2 (7.97), SW1CMT / SW2CMT (12.86)
+  plainly not a light       CEMENT1..CEMENT9 (7.5-17.1) -- nine plain
+  grey concrete walls, and the likeliest
+  match for the wall in the user's shots;
+  ZZWOLF2/3/4/6/7/13 (5.2-16.3) and
+  ZDOORB1 / ZDOORF1 (38.47, the two BRIGHTEST
+  emitters in the IWAD) -- Wolfenstein walls
+  and doors; SKINFACE / SKINLOW / SKSNAKE1 /
+  SKSPINE1 / SKSPINE2 (7.1-14.6); AASHITTY
 
   SKY2 (19.76) is its own question and should not be lumped in: the sky
   arguably SHOULD be a light source, but it is already the sun via
@@ -7163,10 +7261,10 @@ parked ideas (💭 considered) until we commit to and design each one.
   SOME PALETTE RAMP. value() = max channel, and DOOM's ramps almost all
   top out at 255 in one channel, so "brightest tan" scores identically to
   "pure red fire". Two pairs prove colour can never work --
-    FIREWALL peaks are #176(255,0,0) + #175(255,31,31); AASHITTY's peaks
-    are the SAME entries.
-    SW1CMT peaks are #209(255,235,219) + #52 + #226; CEMENT1's are the
-    SAME entries (SW1CMT is a switch drawn on cement).
+  FIREWALL peaks are #176(255,0,0) + #175(255,31,31); AASHITTY's peaks
+  are the SAME entries.
+  SW1CMT peaks are #209(255,235,219) + #52 + #226; CEMENT1's are the
+  SAME entries (SW1CMT is a switch drawn on cement).
 
   Candidates measured and FALSIFIED, each with LIGHT/not ranges fully
   overlapping: peak fraction, bright fraction, mean saturation, hue, tile
@@ -7207,15 +7305,15 @@ parked ideas (💭 considered) until we commit to and design each one.
   rendered from the WAD to a contact sheet and looked at), which corrected
   two things this bullet had wrong:
 
-    * SW1CMT / SW2CMT (12.86) are NOT lights. That Le is the CEMENT wall
-      BEHIND the switch -- which is why it sat beside CEMENT1's 15.32. The
-      switch plate itself is unlit.
-    * The tables-only shape floated earlier would have DROPPED ~19 real
-      lights: METAL6/7, BIGBRIK3, BRONZE4, TEKGREN5 and SPCDOOR1/2 all carry
-      a genuine yellow lit strip (METAL6 and METAL7 are the same strip at top
-      and at bottom -- hence their identical texel counts), and BRICKLIT,
-      BSTONE3, CRACKLE2/4, EXITDOOR, SILVER2, TEKBRON2, TEKWALL1/4/6 all
-      carry a real fixture too.
+  * SW1CMT / SW2CMT (12.86) are NOT lights. That Le is the CEMENT wall
+  BEHIND the switch -- which is why it sat beside CEMENT1's 15.32. The
+  switch plate itself is unlit.
+  * The tables-only shape floated earlier would have DROPPED ~19 real
+  lights: METAL6/7, BIGBRIK3, BRONZE4, TEKGREN5 and SPCDOOR1/2 all carry
+  a genuine yellow lit strip (METAL6 and METAL7 are the same strip at top
+  and at bottom -- hence their identical texel counts), and BRICKLIT,
+  BSTONE3, CRACKLE2/4, EXITDOOR, SILVER2, TEKBRON2, TEKWALL1/4/6 all
+  carry a real fixture too.
 
   SECOND DEFECT, found on the way and fixed in the same change: the gate was
   wrong in BOTH directions. DOOM's own light panels -- LITE3, LITE5,
@@ -7224,19 +7322,19 @@ parked ideas (💭 considered) until we commit to and design each one.
   emitted NOTHING. The lamps were dark while the walls glowed.
 
   MECHANISM (3 files, mirrors DOOM-0157's sprite_glows exactly):
-    r_mesh.c   wall_light_tex[59] + ensure_wall_light_map + RB_WallTexEmits.
-               Names absent from the loaded IWAD are skipped, so one table
-               serves DOOM and DOOM II. No per-map authoring.
-    r_mesh.h   RB_WallTexEmits declaration.
-    r_vulkan.cpp ComputeMaterialEmissive: an unlisted WALL skips derivation
-               (Le stays 0); a listed one passes allowFaint, so the gate is
-               BYPASSED for walls rather than narrowed -- the list, not the
-               texels, is the answer. Flats and sprites untouched.
+  r_mesh.c   wall_light_tex[59] + ensure_wall_light_map + RB_WallTexEmits.
+  Names absent from the loaded IWAD are skipped, so one table
+  serves DOOM and DOOM II. No per-map authoring.
+  r_mesh.h   RB_WallTexEmits declaration.
+  r_vulkan.cpp ComputeMaterialEmissive: an unlisted WALL skips derivation
+  (Le stays 0); a listed one passes allowFaint, so the gate is
+  BYPASSED for walls rather than narrowed -- the list, not the
+  texels, is the answer. Flats and sprites untouched.
 
   MEASURED before/after, from the model that reproduces the shipped gate
   exactly:
-    doom2   82 -> 47 emitters; 53 stop, 18 previously-dark fixtures start
-    doom    60 -> 37 emitters; 41 stop, 18 start
+  doom2   82 -> 47 emitters; 53 stop, 18 previously-dark fixtures start
+  doom    60 -> 37 emitters; 41 stop, 18 start
   Everything reported is gone: ZDOORB1/F1 (38.47, the worst), all nine
   CEMENTs, every ZZWOLF, SKINFACE/SKINLOW/SKSNAKE1/SKSPINE1/2, AASHITTY,
   SP_FACE2, ZZZFACE3/4, the BLODRIPs and the unlit SW1 skull switches.
@@ -7260,8 +7358,8 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   Method: same view, two builds -- the shipped binary and a worktree built
   at the parent commit -- via
-    ./linux/linuxxdoom -iwad ../wads/doom2.wad -warp 1 -warpto -700 597 180
-        -config <renderer 1, rt_fog 0> -noinput -shotverify <out>.png
+  ./linux/linuxxdoom -iwad ../wads/doom2.wad -warp 1 -warpto -700 597 180
+  -config <renderer 1, rt_fog 0> -noinput -shotverify <out>.png
   `DOOMASSETDIR` left unset (`HD load done - 0 material(s)`), matching the
   paletted path the defect was reproduced on.
 
@@ -7272,9 +7370,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   PNG reader and with PIL/numpy, and agree exactly. ImageMagick's
   `compare -metric AE` disagreed by 20x and is the outlier.)
 
-    courtyard (the reported view)   53.79% of pixels changed, mean |d| 9.43,
-                                    max 119; 10.66% of pixels moved by >16
-    LITE5 alcove                    67.18% changed, mean |d| 7.28, max 154
+  courtyard (the reported view)   53.79% of pixels changed, mean |d| 9.43,
+  max 119; 10.66% of pixels moved by >16
+  LITE5 alcove                    67.18% changed, mean |d| 7.28, max 154
 
   THE DEFECT IS GONE. In the before capture the perimeter wall's pale panels
   are clipped to pure white with no texture visible at all -- a bank of
@@ -7312,75 +7410,75 @@ parked ideas (💭 considered) until we commit to and design each one.
   than finished:
 
   1. THREE INCOMPATIBLE DENSITY FORMULAS, one of which declares itself
-     canonical. 4.3b's sigma_final block (~:806) says "This is the single
-     authoritative statement -- 4.3a and INV-9 point here rather than
-     restating it", and it carries NO floor-fog term. 4.3c (~:1000) gives
-     sigma = (sigma_general + sigma_floor) * fogStrengthScale *
-     skyExposure. INV-9 (~:2915) gives (skySigma + floorSigma) *
-     skyExposure + areaSigma. They disagree on the addends AND on what
-     skyExposure multiplies -- and 4.3a:419 calls that second point
-     "load-bearing and was got wrong in the first draft". Every layer's
-     density is built from one of these. Reconciling them is a structural
-     rewrite of the section, not a patch.
+  canonical. 4.3b's sigma_final block (~:806) says "This is the single
+  authoritative statement -- 4.3a and INV-9 point here rather than
+  restating it", and it carries NO floor-fog term. 4.3c (~:1000) gives
+  sigma = (sigma_general + sigma_floor) * fogStrengthScale *
+  skyExposure. INV-9 (~:2915) gives (skySigma + floorSigma) *
+  skyExposure + areaSigma. They disagree on the addends AND on what
+  skyExposure multiplies -- and 4.3a:419 calls that second point
+  "load-bearing and was got wrong in the first draft". Every layer's
+  density is built from one of these. Reconciling them is a structural
+  rewrite of the section, not a patch.
 
   2. DOES A TORCH SHAFT TAKE THE MEDIUM'S COLOUR? 4.4(b) now carries this
-     as an explicit open decision (banner added 2026-08-03). The code has
-     no tint because L4 has not shipped -- mediumTint does not exist in
-     the shaders and kGooTint/kHellTint are declared unread. Meanwhile
-     4.3, 4.5 and 7's L4 acceptance row all specify the tint ("a torch
-     shaft in a goo room is warm-through-green"). L4 cannot be accepted
-     until the user picks. NOTE both review lanes read this as stale text
-     to delete; that was wrong, and deleting it would have silently
-     dropped a design decision.
+  as an explicit open decision (banner added 2026-08-03). The code has
+  no tint because L4 has not shipped -- mediumTint does not exist in
+  the shaders and kGooTint/kHellTint are declared unread. Meanwhile
+  4.3, 4.5 and 7's L4 acceptance row all specify the tint ("a torch
+  shaft in a goo room is warm-through-green"). L4 cannot be accepted
+  until the user picks. NOTE both review lanes read this as stale text
+  to delete; that was wrong, and deleting it would have silently
+  dropped a design decision.
 
   MECHANICAL, HIGH VALUE (an implementer is blocked or misled):
 
   3. 5 never lists L3's FogLights storage buffer (set 0 binding 6, stride
-     RB_FOG_LIGHTS_PER_CELL x 8 floats, ~225 KB on E1M1), while :2102
-     still says "No new SSBOs, light/emitter buffers" and 4.4:1916 asserts
-     "no new resource appears in 5". The whole RB_FOG_LIGHT_* family is
-     also undefined in the document though INV-14 uses it: CLUSTER 64,
-     TESTZ 24, SUBS 2, PROBES 4, CUTOFF 0.04f, MAXREACH 512. The bake is
-     not buildable from the spec as it stands.
+  RB_FOG_LIGHTS_PER_CELL x 8 floats, ~225 KB on E1M1), while :2102
+  still says "No new SSBOs, light/emitter buffers" and 4.4:1916 asserts
+  "no new resource appears in 5". The whole RB_FOG_LIGHT_* family is
+  also undefined in the document though INV-14 uses it: CLUSTER 64,
+  TESTZ 24, SUBS 2, PROBES 4, CUTOFF 0.04f, MAXREACH 512. The bake is
+  not buildable from the spec as it stands.
   4. 7's shipped markers are stale for L1c, L1d, L1e, L2b and L3 -- all
-     shipped per the body, none marked in the build order. A reader of 7
-     alone concludes L1c onward is unbuilt.
+  shipped per the body, none marked in the build order. A reader of 7
+  alone concludes L1c onward is unbuilt.
   5. 4.3b's wisp constants are stale against 5 and the shader: kWispAmp
-     0.6 -> ships 1.0 (so the bound is 0x..2x, not 0.4x..1.6x); octave-1
-     scale 1/512 -> 1/192. Three derived figures rot with them -- the
-     "1/f1 = 512x too fast" drift claim, Q21's "tiling period is 13107
-     units" (should be ~4915), and "the finer octave drifts slower"
-     (kWispVel2 = -kWispVel1 since DOOM-0300).
+  0.6 -> ships 1.0 (so the bound is 0x..2x, not 0.4x..1.6x); octave-1
+  scale 1/512 -> 1/192. Three derived figures rot with them -- the
+  "1/f1 = 512x too fast" drift claim, Q21's "tiling period is 13107
+  units" (should be ~4915), and "the finer octave drifts slower"
+  (kWispVel2 = -kWispVel1 since DOOM-0300).
   6. Q30 is closed at :2545 ("No rate limit is needed, and that is a
-     measurement rather than a budget") but still listed OPEN in 10, and
-     4.4:1645 and :1883 issue binding instructions to "whoever closes
-     Q30" about a cadence that will never exist.
+  measurement rather than a budget") but still listed OPEN in 10, and
+  4.4:1645 and :1883 issue binding instructions to "whoever closes
+  Q30" about a cadence that will never exist.
 
   MECHANICAL, MEDIUM:
 
   7. 4.4(b)'s bake write-up omits contract detail an implementer must
-     otherwise guess: the sight test runs at tz = floor + TESTZ (24),
-     clamped to mid-column when the ceiling is low; emitter triangles are
-     snapped to a 64-unit lattice with a power-weighted centroid and
-     intensity sum(Le*area) -- which is what `lum` in
-     reach = sqrt(lum/cutoff) actually measures; cells with no air are
-     skipped (RB_SeepCellAir) and clusters with lum <= 0 dropped.
+  otherwise guess: the sight test runs at tz = floor + TESTZ (24),
+  clamped to mid-column when the ceiling is low; emitter triangles are
+  snapped to a 64-unit lattice with a power-weighted centroid and
+  intensity sum(Le*area) -- which is what `lum` in
+  reach = sqrt(lum/cutoff) actually measures; cells with no air are
+  skipped (RB_SeepCellAir) and clusters with lum <= 0 dropped.
   8. No invariant pins L3's central guarantee -- selection is baked per
-     cell at load, the march does no emitter scan and no per-sample
-     occlusion ray. 6:2630 says "a per-sample ray is never affordable in
-     this march", but nothing forbids a later layer adding one for
-     torches.
+  cell at load, the march does no emitter scan and no per-sample
+  occlusion ray. 6:2630 says "a per-sample ray is never affordable in
+  this march", but nothing forbids a later layer adding one for
+  torches.
   9. 6 has no measured box for L3; its 0.83 ms lives only in 4.4's
-     amendment, and 6:2368's ">= 6% reserved for L2-L5" is never
-     reconciled against it. 6:2473 sets the precedent that a layer is not
-     done until its number is in 6.
+  amendment, and 6:2368's ">= 6% reserved for L2-L5" is never
+  reconciled against it. 6:2473 sets the precedent that a layer is not
+  done until its number is in 6.
   10. Q24 is still posed as live for the reverted density raise.
   11. :1019's "16% at 512 units" for the aerial layer contradicts 4.3's
-      own shipped table (61% at eye height, 512 u) -- and the "3x the
-      aerial layer" framing for kFloorFogDensity rests on that stale pair.
+  own shipped table (61% at eye height, 512 u) -- and the "3x the
+  aerial layer" framing for kFloorFogDensity rests on that stale pair.
   12. Two bake-cost pairs disagree 22 lines apart: :1812 says 3.6 ms /
-      6320 tests on E1M1 and 3.4 ms / 5228 on MAP01; :1834 says 4.1 ms
-      E1M1 and 2.9 ms MAP01. MAP01 falls, unexplained.
+  6320 tests on E1M1 and 3.4 ms / 5228 on MAP01; :1834 says 4.1 ms
+  E1M1 and 2.9 ms MAP01. MAP01 falls, unexplained.
 
   LOW: the :3 status header still says "L1 + L1b implemented"; Q16's
   kSeepMax 0.5 / kSeepFalloff 192 against shipped 0.9 / 384; 14.97 vs
@@ -7429,32 +7527,32 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   `pathtrace.comp` marchFog:
 
-      float sigma = (fogDensity(p, baseZ, poolH) + floorFogDensity(p, baseZ, t))
-                    * strength * skyExposure * wisp(p, rippleTime());
+  float sigma = (fogDensity(p, baseZ, poolH) + floorFogDensity(p, baseZ, t))
+  * strength * skyExposure * wisp(p, rippleTime());
 
   Two addends; strength, skyExposure and wisp all multiply the whole sum.
   No area term, because L4 has not shipped. Against that:
 
-    4.3b's self-declared authoritative sigma_final -- STALE. It predates
-    L1e, so it has no floor addend at all. Its OTHER structure is right,
-    and is the half that matters: the sky-sourced term is gated by
-    skyExposure while the area-profile sum is NOT, which is 4.3a's
-    load-bearing rule ("skyExposure gates the SKY-SOURCED haze only --
-    never the area profiles", the thing 4.3a:419 says was got wrong in the
-    first draft).
-    4.3c's sigma -- structurally right, but written before L1c and so
-    missing the `wisp` multiplier, and it has no area term.
-    INV-9 -- wrong twice: no fogStrengthScale at all, and it predates the
-    wisp. Its `+ areaSigma` placement OUTSIDE the gate is right.
+  4.3b's self-declared authoritative sigma_final -- STALE. It predates
+  L1e, so it has no floor addend at all. Its OTHER structure is right,
+  and is the half that matters: the sky-sourced term is gated by
+  skyExposure while the area-profile sum is NOT, which is 4.3a's
+  load-bearing rule ("skyExposure gates the SKY-SOURCED haze only --
+  never the area profiles", the thing 4.3a:419 says was got wrong in the
+  first draft).
+  4.3c's sigma -- structurally right, but written before L1c and so
+  missing the `wisp` multiplier, and it has no area term.
+  INV-9 -- wrong twice: no fogStrengthScale at all, and it predates the
+  wisp. Its `+ areaSigma` placement OUTSIDE the gate is right.
 
   So no one of the three was correct, and each was right about something
   the others got wrong. The single statement that is simultaneously true
   of the shipped code and correct for L4:
 
-      sigma(p,t) = ( (sigma_aerial(p) + sigma_floor(p,t)) * skyExposure
-                   + SUM_profiles areaDensity(profile) * areaMult(profile) )
-                   * wisp(p,t)
-                   * fogStrengthScale
+  sigma(p,t) = ( (sigma_aerial(p) + sigma_floor(p,t)) * skyExposure
+  + SUM_profiles areaDensity(profile) * areaMult(profile) )
+  * wisp(p,t)
+  * fogStrengthScale
 
   With L4 unshipped the sum is empty and this reduces EXACTLY to the
   shipped line -- the three surviving factors commute, so it is the same
@@ -7644,16 +7742,16 @@ parked ideas (💭 considered) until we commit to and design each one.
   constant that falsifies it, which is the worst place for one:
 
   - pt_common.glsl, the kFogBaseDensity block: "The wisps are a +/-60 % swing
-    in density". kWispAmp ships at 1.0, so the swing is 0x..2x. The 60 %
-    figure is the spec's old 0.6.
+  in density". kWispAmp ships at 1.0, so the swing is 0x..2x. The 60 %
+  figure is the spec's old 0.6.
   - pt_common.glsl, the kFloorFogRange comment: "against the aerial layer's
-    16% at 512 units". That predates the outdoor pool rising to 112; the
-    shipped value is 61 %. DOOM-0310 section 4.2 derives it.
+  16% at 512 units". That predates the outdoor pool rising to 112; the
+  shipped value is 61 %. DOOM-0310 section 4.2 derives it.
   - pathtrace.comp, the wisp header: velocity outside the frequency scale
-    "would drift 512x too fast". kWispFreq1 is 1/192, so it is 192x.
+  "would drift 512x too fast". kWispFreq1 is 1/192, so it is 192x.
   - pathtrace.comp, the sigma line: calls the floor layer "a THIRD addend"
-    where the shipped expression has two (the third counted a future
-    area-profile term L4 has not added). Harmless, but it reads as a miscount.
+  where the shipped expression has two (the third counted a future
+  area-profile term L4 has not added). Harmless, but it reads as a miscount.
 
   None changes behaviour. They matter because the fog constants get tuned by
   reading these comments -- the 16 % one especially, since it is the figure a
@@ -7718,14 +7816,14 @@ parked ideas (💭 considered) until we commit to and design each one.
   (headless ladder, E1M1 -warpto 3274 -3353 200, the roofed nukage room,
   render_scale 100, Ultra RT):
   - rt_fog 1 (Low, the shipped default) is very close to rt_fog 0 in this
-    room. The fog only reads at 2 and 3.
+  room. The fog only reads at 2 and 3.
   - The fog over a goo pool is NEUTRAL GREY, not green, at every strength.
   - The pool casts NO light into the air above it.
 
   ROOT CAUSE of the grey, and it is structural rather than a dial. In
   marchFog (pathtrace.comp:1277) mediumTint multiplies the SKY term ALONE:
-      Ls = kFogColor * mediumTint * kSkyShaftStrength
-         * (kSkyAmbientFrac * skyLight + (1-kSkyAmbientFrac) * sunLit)
+  Ls = kFogColor * mediumTint * kSkyShaftStrength
+  * (kSkyAmbientFrac * skyLight + (1-kSkyAmbientFrac) * sunLit)
   and skyLight = mix(kIndoorSkyLight, 1.0, seepT). In a roofed room seepT
   is near 0, so the sky share is near kIndoorSkyLight and the goo tint is
   multiplying a nearly-zero number. DOOM-0292 then gates the ambient share
@@ -7746,18 +7844,18 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   OPEN, for the spec to answer:
   - Do liquid flats enter the L3 fog-light bake as area emitters, and at
-    what cost? The bake ranks by unoccluded contribution and is capped by
-    kFogLightsPerCell; a large pool is not a point light and the ranking
-    assumes one.
+  what cost? The bake ranks by unoccluded contribution and is capped by
+  kFogLightsPerCell; a large pool is not a point light and the ranking
+  assumes one.
   - Spilled nukage on the floor is the DOOM-0181 stain/puddle layer, not a
-    liquid flat, so it carries no LIQUID_NUKAGE MatCtrl bit. Does it get
-    one, or its own weaker emitter class? DOOM-0302 already made
-    emisWeight() own the per-texel liquid mask.
+  liquid flat, so it carries no LIQUID_NUKAGE MatCtrl bit. Does it get
+  one, or its own weaker emitter class? DOOM-0302 already made
+  emisWeight() own the per-texel liquid mask.
   - kAreaDensity (0.0020) and the shipped rt_fog default (1) are both first
-    guesses. Whether "moodier by default" is a density raise, a default
-    raise, or both is a look call -- take a ladder to it, do not pick.
+  guesses. Whether "moodier by default" is a density raise, a default
+  raise, or both is a look call -- take a ladder to it, do not pick.
   - Does water get the same treatment as nukage? The user named both, and
-    water has no glow of its own.
+  water has no glow of its own.
 
   Dependencies: DOOM-0310 (part 1) shipped. This part gates DOOM-0011 L5/L6.
   Runs the rule-14 gate from loop 1 on its own bytes via /write-spec.
@@ -7768,22 +7866,22 @@ parked ideas (💭 considered) until we commit to and design each one.
   USER DECISIONS 2026-08-04, closing two of this part's open questions
   before the spec is drafted:
   - WATER GETS FOG TREATMENT ONLY, NOT GLOW. So the area-density profile
-    and the emissive-source work are separate mechanisms with separate
-    membership: nukage (and lava) are fog LIGHT SOURCES and also carry an
-    area density; water carries an area density and emits nothing. Do not
-    fold them into one "liquid" profile -- the spec needs a per-liquid
-    table with density and Le as independent columns, or water inherits a
-    glow nobody asked for.
+  and the emissive-source work are separate mechanisms with separate
+  membership: nukage (and lava) are fog LIGHT SOURCES and also carry an
+  area density; water carries an area density and emits nothing. Do not
+  fold them into one "liquid" profile -- the spec needs a per-liquid
+  table with density and Le as independent columns, or water inherits a
+  glow nobody asked for.
   - THE NEW DEFAULT FOG STRENGTH IS MEDIUM (rt_fog 2), chosen off the
-    headless ladder: Low is close to Off in the roofed nukage room, Medium
-    reads as atmosphere without obscuring the room, High is heavy for a
-    permanent default. Qualified by the user: "unless we can claw back
-    sufficient performance without affecting visuals" -- i.e. High is not
-    rejected on looks, it is rejected on cost, so this default is worth
-    revisiting if DOOM-0090 / DOOM-0091 free up budget. Record the reason
-    with the constant so a later session does not re-litigate the look.
-    Note the ladder was shot at render_scale 100; confirm Medium still
-    reads at the 50 the game boots on before pinning it.
+  headless ladder: Low is close to Off in the roofed nukage room, Medium
+  reads as atmosphere without obscuring the room, High is heavy for a
+  permanent default. Qualified by the user: "unless we can claw back
+  sufficient performance without affecting visuals" -- i.e. High is not
+  rejected on looks, it is rejected on cost, so this default is worth
+  revisiting if DOOM-0090 / DOOM-0091 free up budget. Record the reason
+  with the constant so a later session does not re-litigate the look.
+  Note the ladder was shot at render_scale 100; confirm Medium still
+  reads at the 50 the game boots on before pinning it.
   CORRECTION 2026-08-04, before the spec was drafted: LIQUIDS ARE ALREADY
   FOG LIGHT SOURCES. The earlier framing on this bullet -- "make liquid
   surfaces fog light sources" -- proposed a mechanism that ships today, and
@@ -7796,9 +7894,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   `g.staticWgt`, which is that set. So a nukage pool is already a candidate
   fog light.
   Measured on E1M1 (Ultra, rt_fog 2, render_scale 50, -noinput -inspect):
-    DOOM-0011 L3 fog lights -- 174 emitter tris -> 107 clustered lights
-    (intensity 0 / 6104 med / 67782), 1085 air / 758 with a candidate /
-    435 lit of 3525 cells, 7792 sight tests (5.0 ms, bake+upload).
+  DOOM-0011 L3 fog lights -- 174 emitter tris -> 107 clustered lights
+  (intensity 0 / 6104 med / 67782), 1085 air / 758 with a candidate /
+  435 lit of 3525 cells, 7792 sight tests (5.0 ms, bake+upload).
   Note `L.lum` is an AREA-WEIGHTED accumulation, not per-material Le --
   `L.lum = max(L.r, L.gr, L.b)` at r_vulkan.cpp with only the centroid
   divided by area -- so reach = sqrt(lum / RB_FOG_LIGHT_CUTOFF) puts a
@@ -7808,18 +7906,18 @@ parked ideas (💭 considered) until we commit to and design each one.
   SO THE REAL QUESTION FOR THE SPEC NARROWS to why a pool that IS a
   candidate produces no visible glow, and there are three live suspects,
   none yet discriminated:
-    (a) DOOM-0302 re-tuned kNukageLe DOWN ~51x in linear green (0.35/1.30/
-        0.15 -> 0.05/0.19/0.02) to fix a blown-out surface once emisWeight
-        made the whole flat emit. That fix was right for the SURFACE and
-        its effect on the pool's FOG contribution was never considered --
-        reach and ranking both derive from the same Le. One constant is
-        serving two consumers with opposite needs, which is the shape of
-        the bug and is probably the answer.
-    (b) kFogLightsPerCell = 2. A pool competes for two slots against wall
-        lights ranked by lum*win^2/(d^2+kTorchSoftR2); a large dim pool can
-        lose to a small bright lamp even where the pool is what the player
-        is looking at.
-    (c) kTorchShaftStrength = 0.047 scales the whole emitter side.
+  (a) DOOM-0302 re-tuned kNukageLe DOWN ~51x in linear green (0.35/1.30/
+  0.15 -> 0.05/0.19/0.02) to fix a blown-out surface once emisWeight
+  made the whole flat emit. That fix was right for the SURFACE and
+  its effect on the pool's FOG contribution was never considered --
+  reach and ranking both derive from the same Le. One constant is
+  serving two consumers with opposite needs, which is the shape of
+  the bug and is probably the answer.
+  (b) kFogLightsPerCell = 2. A pool competes for two slots against wall
+  lights ranked by lum*win^2/(d^2+kTorchSoftR2); a large dim pool can
+  lose to a small bright lamp even where the pool is what the player
+  is looking at.
+  (c) kTorchShaftStrength = 0.047 scales the whole emitter side.
   Discriminate before designing: the bake already prints per-cell candidate
   counts, and an A/B raising kNukageLe alone answers (a) directly.
   Extraction seam, measured 2026-08-04 so it is not re-derived: this part's
@@ -7848,12 +7946,12 @@ parked ideas (💭 considered) until we commit to and design each one.
   Mean GREEN (0-255, sRGB frame) in two boxes; control = two runs of the same
   binary, which moved the pool box by 0.01 and the wall box by 0.25, so
   everything below is far above the noise floor:
-    Le x    pool surface   %clipped   glow band above pool edge
-    1x       133.01           0.0%       57.67   (shipped default)
-    2x       173.96           0.0%       66.94
-    5x       235.40           0.0%       86.86
-    10x      243.87          94.7%      112.55
-    20x      247.27          94.7%      148.23
+  Le x    pool surface   %clipped   glow band above pool edge
+  1x       133.01           0.0%       57.67   (shipped default)
+  2x       173.96           0.0%       66.94
+  5x       235.40           0.0%       86.86
+  10x      243.87          94.7%      112.55
+  20x      247.27          94.7%      148.23
   The pool surface CLIPS between 5x and 10x -- at 10x, 94.7% of the surface
   box is at G>=250, i.e. the flat white-green slab DOOM-0302 was tuned to
   remove. The fog glow does not read until ~20x. There is no value of
@@ -7862,8 +7960,8 @@ parked ideas (💭 considered) until we commit to and design each one.
   emitters their own fog-side gain. A single re-tune is not an option.
   The fog response is real and correctly localised, not a global lift.
   Isolating it against rt_fog 0 at the same Le:
-    glow band just above the pool: fog adds 34.8 at 1x, 104.1 at 20x
-    same wall, well above the pool: fog adds  5.3 at 1x,  10.6 at 20x
+  glow band just above the pool: fog adds 34.8 at 1x, 104.1 at 20x
+  same wall, well above the pool: fog adds  5.3 at 1x,  10.6 at 20x
   so the added radiance falls off with height away from the pool, which is
   the signature of a working local fog light rather than an ambient raise.
   Suspect (b) kFogLightsPerCell is NOT the limiter, and the bake print says so
@@ -7918,15 +8016,15 @@ parked ideas (💭 considered) until we commit to and design each one.
   medium itself green, a deliberately over-applied throwaway probe): BOTH
   MECHANISMS, with membership per liquid.
   - A per-cell LIQUID-PROXIMITY FIELD decides "is this air near liquid",
-    keyed on position rather than on the primary hit, and drives BOTH the
-    density raise and the tint. This is what water rides; it is also what
-    makes the tint survive a ray that lands on a wall. The seep field is the
-    precedent to copy -- same grid, same cell, same build pass -- and the
-    channel budget is the first thing the spec must settle, since RGBA16F is
-    already fully spoken for (.r/.g part 1, .b/.a INV-13).
+  keyed on position rather than on the primary hit, and drives BOTH the
+  density raise and the tint. This is what water rides; it is also what
+  makes the tint survive a ray that lands on a wall. The seep field is the
+  precedent to copy -- same grid, same cell, same build pass -- and the
+  channel budget is the first thing the spec must settle, since RGBA16F is
+  already fully spoken for (.r/.g part 1, .b/.a INV-13).
   - The EMITTER path keeps the glow and stays untinted, per the user's
-    2026-08-03 ruling. It needs the surface/fog Le split the ladder above
-    forces.
+  2026-08-03 ruling. It needs the surface/fog Le split the ladder above
+  forces.
   - Water: density only, no glow, no tint of its own.
   So the spec owns a per-liquid table with density, tint and Le as
   INDEPENDENT columns, exactly as the earlier decision note required, plus
@@ -7961,13 +8059,13 @@ parked ideas (💭 considered) until we commit to and design each one.
   That single gap is what blocks TWO items, which is the whole argument for
   doing it rather than looking twice by hand:
   - DOOM-0050 needs the menu-over-status-bar region seen in Solid/Ultra with
-    the user's magnifier off. Its own note says so: "Either a human looks
-    with the lens off, or the developer build gains a way to open a menu
-    from argv. The latter is the general fix and would also unblock
-    DOOM-0205's on-screen check."
+  the user's magnifier off. Its own note says so: "Either a human looks
+  with the lens off, or the developer build gains a way to open a menu
+  from argv. The latter is the general fix and would also unblock
+  DOOM-0205's on-screen check."
   - DOOM-0205's Render Effects submenu is implemented in `m_menu.c` (the
-    submenu, its per-toggle rows, the draw routine and the handler are all
-    present) but has never been confirmed on screen.
+  submenu, its per-toggle rows, the draw routine and the handler are all
+  present) but has never been confirmed on screen.
 
   Scope, deliberately small: `-devmenu <name>` sets `menuactive`,
   `currentMenu` and `itemOn` directly, exactly as `M_StartControlPanel`
@@ -8000,9 +8098,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   Verified: DEV build clean, RELEASE build clean (the whole point of the
   DOOM_DEV guards), `make test` 7/7. Three captures prove it end to end and
   they are the acceptance:
-    dev-shots/M-effects-ultra.png  Render Effects, Ultra RT
-    dev-shots/N-effects-solid.png  Render Effects, Solid
-    dev-shots/O-video-ultra.png    the tall DOOM-0206 Video menu, Ultra RT
+  dev-shots/M-effects-ultra.png  Render Effects, Ultra RT
+  dev-shots/N-effects-solid.png  Render Effects, Solid
+  dev-shots/O-video-ultra.png    the tall DOOM-0206 Video menu, Ultra RT
   each logging `-devmenu: opened '<name>'`. Closes the gap DOOM-0294 left and
   unblocked DOOM-0050 and DOOM-0205 in the same sitting, which was the whole
   argument for building it rather than looking twice by hand.
@@ -8017,15 +8115,15 @@ parked ideas (💭 considered) until we commit to and design each one.
   Barrels emit NOTHING today, and the reason is structural rather than a dial
   being low. Verified 2026-08-04 rather than recalled:
   - Sprite emitters are derived from the ARTWORK's brightness -- DOOM-0084's
-    peak-gated derive over the sprite's own texels. There is no name list for
-    sprites, unlike flats.
+  peak-gated derive over the sprite's own texels. There is no name list for
+  sprites, unlike flats.
   - The barrel is `SPR_BAR1` (`info.c`), a mid-green prop with no bright
-    region, so it does not clear the peak gate and never enters the emitter
-    set. Being green is not being bright.
+  region, so it does not clear the peak gate and never enters the emitter
+  set. Being green is not being bright.
   - `ForceLiquidEmissive` (r_vulkan.cpp) already solves exactly this problem
-    for FLATS: it overwrites the derived Le by flat name for NUKAGE1-3 and
-    LAVA1-4, precisely because a derive keyed on artwork cannot know that
-    sludge glows. A barrel is the same case wearing a sprite.
+  for FLATS: it overwrites the derived Le by flat name for NUKAGE1-3 and
+  LAVA1-4, precisely because a derive keyed on artwork cannot know that
+  sludge glows. A barrel is the same case wearing a sprite.
 
   So the fix shape is the sprite analogue of that function: a name-keyed
   forced Le on `BAR1`, entering the emitter set the same way, with no new
@@ -8041,15 +8139,15 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   Open, for whoever builds it:
   - Which barrel states? `S_BAR1`/`S_BAR2` are the idle pair; `S_BEXP*` is the
-    explosion, which is already a bright sprite and may already emit. Do NOT
-    force Le on the explosion frames without checking -- doubling an emitter
-    that already derives one is the DOOM-0011 double-count class.
+  explosion, which is already a bright sprite and may already emit. Do NOT
+  force Le on the explosion frames without checking -- doubling an emitter
+  that already derives one is the DOOM-0011 double-count class.
   - Does the glow follow the barrel when it is moved or destroyed? Barrels are
-    `mobj`s, so they ride the DYNAMIC `[omniStart, emitCount)` slice, not the
-    static set -- which also means they are excluded from the fog by INV-2 and
-    would need that decided explicitly rather than assumed.
+  `mobj`s, so they ride the DYNAMIC `[omniStart, emitCount)` slice, not the
+  static set -- which also means they are excluded from the fog by INV-2 and
+  would need that decided explicitly rather than assumed.
   - How bright, relative to a nukage pool? A room of barrels must not out-light
-    the pool they were filled from.
+  the pool they were filled from.
   **Layman:** The green waste barrels should light up the mist and the floor around them, instead of being flat green props.
   Kind: feature.
   Lanes: renderer, shaders.
@@ -8062,39 +8160,39 @@ parked ideas (💭 considered) until we commit to and design each one.
   cast light as well".
   So four emitter sources, of which one already half-exists:
   1. POOLS -- the nukage flats. Already forced-emissive by name
-     (ForceLiquidEmissive); the problem is magnitude, owned by DOOM-0316.
+  (ForceLiquidEmissive); the problem is magnitude, owned by DOOM-0316.
   2. SPILLED GOO on the floor -- DOOM-0181's stain/grime layer. NOTE this is
-     NOT unbuilt: `kPuddleGlow` (0.35) and `kPuddleSheenScale` already exist
-     in pathtrace.comp and add a faint additive glow on goo puddles via
-     `gooWet`, in both the mode-4 and mode-6 blocks. So the mechanism is
-     there and is simply too weak to read, which is the same story as the
-     pools. What it does NOT do is enter the emitter set, so it lights
-     nothing but itself.
-     ⚠ THE CONSTRAINT THE USER STATED EXPLICITLY: only the GREEN stains glow.
-     The grime layer also paints rust and dirt, and those must stay dark. The
-     existing `gooWet` selector already distinguishes green goo from the rest
-     (it is the same floor + goo-selector test `stainColour` uses), so the
-     discrimination exists -- do not widen it to the whole filth layer.
+  NOT unbuilt: `kPuddleGlow` (0.35) and `kPuddleSheenScale` already exist
+  in pathtrace.comp and add a faint additive glow on goo puddles via
+  `gooWet`, in both the mode-4 and mode-6 blocks. So the mechanism is
+  there and is simply too weak to read, which is the same story as the
+  pools. What it does NOT do is enter the emitter set, so it lights
+  nothing but itself.
+  ⚠ THE CONSTRAINT THE USER STATED EXPLICITLY: only the GREEN stains glow.
+  The grime layer also paints rust and dirt, and those must stay dark. The
+  existing `gooWet` selector already distinguishes green goo from the rest
+  (it is the same floor + goo-selector test `stainColour` uses), so the
+  discrimination exists -- do not widen it to the whole filth layer.
   3. BARRELS -- the original subject of this bullet. Static in practice, which
-     the user confirmed, so they can be treated as static emitters and the
-     INV-2 conflict below dissolves.
+  the user confirmed, so they can be treated as static emitters and the
+  INV-2 conflict below dissolves.
   4. ARMOUR BONUS PICKUPS -- SETTLED 2026-08-04. The user photographed the
-     pickup they meant and it is `SPR_BON2`, the armour bonus (confirmed in
-     source: `p_inter.c:391` `case SPR_BON2:` awards `armorpoints++`). It
-     reads as a skull because it is a domed helmet with two green lights at
-     its base. `SPR_CEYE` (Evil Eye) and the skull keys are NOT the subject
-     and must not be given a forced Le on this bullet's account -- that was
-     the risk the old ⚠ warned about, and it is now closed.
-     ⚠ CORRECTION, measured later the same day and now filed as DOOM-0323:
-     `SPR_BON2` IS in `sprite_glows()` (r_mesh.c:1768) but it does NOT
-     receive a faint Le -- all four of its animation frames derive Le
-     exactly {0,0,0}, because every frame peaks below `kBrightLum` (0.5) and
-     DOOM-0157's escape hatch is guarded on a non-zero bright-texel sum. The
-     mechanism is wired up and dead. Read DOOM-0323 before doing anything
-     here; it carries the per-frame measurements and the threshold data.
-     The user has also since asked for the light to PULSE with the sprite's
-     fade in/out, which rules out a ForceLiquidEmissive-style constant --
-     see DOOM-0323's corollary. Magnitude still inherits DOOM-0316.
+  pickup they meant and it is `SPR_BON2`, the armour bonus (confirmed in
+  source: `p_inter.c:391` `case SPR_BON2:` awards `armorpoints++`). It
+  reads as a skull because it is a domed helmet with two green lights at
+  its base. `SPR_CEYE` (Evil Eye) and the skull keys are NOT the subject
+  and must not be given a forced Le on this bullet's account -- that was
+  the risk the old ⚠ warned about, and it is now closed.
+  ⚠ CORRECTION, measured later the same day and now filed as DOOM-0323:
+  `SPR_BON2` IS in `sprite_glows()` (r_mesh.c:1768) but it does NOT
+  receive a faint Le -- all four of its animation frames derive Le
+  exactly {0,0,0}, because every frame peaks below `kBrightLum` (0.5) and
+  DOOM-0157's escape hatch is guarded on a non-zero bright-texel sum. The
+  mechanism is wired up and dead. Read DOOM-0323 before doing anything
+  here; it carries the per-frame measurements and the threshold data.
+  The user has also since asked for the light to PULSE with the sprite's
+  fade in/out, which rules out a ForceLiquidEmissive-style constant --
+  see DOOM-0323's corollary. Magnitude still inherits DOOM-0316.
   INV-2 RESOLVED IN PRINCIPLE by the user, 2026-08-04: they accepted that
   barrels are static and said "we should be able to do something for them".
   That is the (b) route this bullet sketched -- keep non-moving props in the
@@ -8115,10 +8213,10 @@ parked ideas (💭 considered) until we commit to and design each one.
   BLOOD3 present in doom.wad and doom2.wad).
   So the per-liquid table gains a fourth row. Membership so far, with the
   columns deliberately independent as the earlier decision requires:
-    nukage  density yes,  tint green,  glow yes
-    lava    density yes,  tint --   ,  glow yes
-    water   density yes,  tint --   ,  glow NO   (user, earlier)
-    blood   density yes,  tint red? ,  glow ?    (NEW -- both undecided)
+  nukage  density yes,  tint green,  glow yes
+  lava    density yes,  tint --   ,  glow yes
+  water   density yes,  tint --   ,  glow NO   (user, earlier)
+  blood   density yes,  tint red? ,  glow ?    (NEW -- both undecided)
   Blood's glow is NOT implied by this request and must not be assumed: the
   user asked for it to be "treated as a liquid", which covers the wet/ripple
   surface treatment and the fog density; whether a blood pool GLOWS is a
@@ -8132,9 +8230,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   hell-vs-goo comparison in those two specs silently starts measuring the
   product of two tints.
   Options for whoever builds this, none free:
-    (a) find a hell level with NO liquid at all and re-pin the fixture there;
-    (b) keep a build-time switch that excludes blood, used only by the fixture;
-    (c) accept the contamination and always compare hell against hell.
+  (a) find a hell level with NO liquid at all and re-pin the fixture there;
+  (b) keep a build-time switch that excludes blood, used only by the fixture;
+  (c) accept the contamination and always compare hell against hell.
   (a) is cleanest if such a level exists -- check before assuming; much of
   Episode 3 is blood-floored. Whichever is chosen, the memory note and both
   specs' fixture lines need updating in the same change, or a later session
@@ -8146,10 +8244,10 @@ parked ideas (💭 considered) until we commit to and design each one.
   it, because it silently corrupts the evidence other items are judged on.
 
   MEASURED, E1M1 -warpto 3274 -3353 200, Classic, output 3840x2160:
-    widescreen 0, fillstretch 0 -> content occupies columns 0..2879,
-                                   left bar 0 px, right bar 960 px
-    widescreen 0, fillstretch 1 -> content occupies columns 0..3839, no bars
-    widescreen 1                -> content occupies columns 0..3839, no bars
+  widescreen 0, fillstretch 0 -> content occupies columns 0..2879,
+  left bar 0 px, right bar 960 px
+  widescreen 0, fillstretch 1 -> content occupies columns 0..3839, no bars
+  widescreen 1                -> content occupies columns 0..3839, no bars
   The 4:3 content is itself exactly right (2880x2160 = 1.333); it is the
   PLACEMENT that is wrong. A correct pillarbox would be 480 px on each side.
 
@@ -8189,9 +8287,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   Source: in-session-2026-08-04.
   Resolved (2026-08-04, d22b9dc): `I_DevShotClassic` now sizes its buffer from `SDL_RenderGetViewport` multiplied by `SDL_RenderGetScale` -- the viewport in PIXELS -- instead of from `SDL_GetRendererOutputSize`.
   Verified across all three Classic modes on the same fixture (E1M1 -warpto 3274 -3353 200, 2160p output):
-    4:3, logical scaling ON   2880x2160, aspect 1.333, bars L0 R0   (was 3840 wide with a false 960 px right bar)
-    fill-stretch              3840x2160, aspect 1.778, bars L0 R0   (unchanged)
-    widescreen                3840x2158, aspect 1.779, bars L0 R0   (unchanged)
+  4:3, logical scaling ON   2880x2160, aspect 1.333, bars L0 R0   (was 3840 wide with a false 960 px right bar)
+  fill-stretch              3840x2160, aspect 1.778, bars L0 R0   (unchanged)
+  widescreen                3840x2158, aspect 1.779, bars L0 R0   (unchanged)
   The two already-correct paths are byte-unaffected by construction, not merely by observation: with Fill Screen on, `I_SetAspect` passes (0,0) to disable logical scaling, so viewport == output and scale == 1 and the product reduces to the old expression.
   Release build clean, make test 7/7. Captures retained: dev-shots/S-classic-43-fixed.png, T-classic-fill-fixed.png, U-classic-ws-fixed.png; the pre-fix evidence is Q-classic-43.png.
 
@@ -8388,7 +8486,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   frames 0,1,2,3,2,1 at 6 tics each -- a ping-pong over four lumps, 36 tics
   (~1.03 s) per cycle. Measured max-channel peak of each lump against
   PLAYPAL, decoded to linear the same way emissive_derive.h does:
-    BON2A0 0.227   BON2B0 0.227   BON2C0 0.292   BON2D0 0.429
+  BON2A0 0.227   BON2B0 0.227   BON2C0 0.292   BON2D0 0.429
   An 89% swing dimmest to brightest. The user's description is exactly right.
 
   THE DEFECT. emissive_derive.h's kBrightLum is 0.5, and the bright-texel
@@ -8412,8 +8510,8 @@ parked ideas (💭 considered) until we commit to and design each one.
   room with colour (emissive_derive.h:34-35), which is the exact failure the
   peak gate was introduced to end.
   Modelled Le.g per frame A..D at candidate thresholds:
-    thr 0.40 -> 0.000 0.000 0.000 0.143   only frame D lights: a BLINK
-    thr 0.25 -> 0.000 0.000 0.097 0.337   frames C and D: a genuine RAMP
+  thr 0.40 -> 0.000 0.000 0.000 0.143   only frame D lights: a BLINK
+  thr 0.25 -> 0.000 0.000 0.097 0.337   frames C and D: a genuine RAMP
   0.25 is the one that delivers what the user asked for, because the
   animation then reads 0, 0, 0.097, 0.337, 0.097, 0 across the cycle -- up
   and back down -- rather than a single-frame flash. Colour comes out
@@ -8455,87 +8553,87 @@ parked ideas (💭 considered) until we commit to and design each one.
   wall behind it fade correctly into grey.
 
   1. Fog DOES reach the pool -- the fold is present and correct in both
-     composite paths (`L = L * fog.a + fog.rgb` after the albedo
-     re-multiply, svgf_composite.comp:186-193; pathtrace.comp:1605 for
-     mode 4). What fails is that the effect is INVISIBLE and, worse,
-     FLAT WITH DISTANCE. Measured on the E1M1 open-sky pool
-     (-warpto 1831 -3254, 50% scale, fog off vs Low, same build and
-     view): pool pixels change by mean 39.4/255 with fog on, wall pixels
-     in the same rows change by 109.6 -- and across the pool's whole
-     visible span the colour holds at RGB ~(115, 207, 87), varying by
-     under 2 levels from near edge to far.
+  composite paths (`L = L * fog.a + fog.rgb` after the albedo
+  re-multiply, svgf_composite.comp:186-193; pathtrace.comp:1605 for
+  mode 4). What fails is that the effect is INVISIBLE and, worse,
+  FLAT WITH DISTANCE. Measured on the E1M1 open-sky pool
+  (-warpto 1831 -3254, 50% scale, fog off vs Low, same build and
+  view): pool pixels change by mean 39.4/255 with fog on, wall pixels
+  in the same rows change by 109.6 -- and across the pool's whole
+  visible span the colour holds at RGB ~(115, 207, 87), varying by
+  under 2 levels from near edge to far.
 
-     **CAUSE ESTABLISHED 2026-08-05 (second session), by a build A/B, and
-     it is the SAME defect as half 2 below.** `kGooTint` multiplies the
-     in-scatter of every pixel whose PRIMARY HIT is nukage
-     (`mediumTint = kGooTint`, pathtrace.comp:1125-1128), so a pool pixel's
-     whole march -- including air nowhere near the goo -- returns GREEN
-     `fog.rgb`. The pool does not fail to fade; it fades into green fog
-     rather than grey, at a hue close enough to its own that the fade is
-     invisible. That reconciles the contradiction recorded below exactly:
-     in-scatter IS added while the pool APPEARS un-attenuated, because what
-     replaces the surface is the same colour as the surface.
+  **CAUSE ESTABLISHED 2026-08-05 (second session), by a build A/B, and
+  it is the SAME defect as half 2 below.** `kGooTint` multiplies the
+  in-scatter of every pixel whose PRIMARY HIT is nukage
+  (`mediumTint = kGooTint`, pathtrace.comp:1125-1128), so a pool pixel's
+  whole march -- including air nowhere near the goo -- returns GREEN
+  `fog.rgb`. The pool does not fail to fade; it fades into green fog
+  rather than grey, at a hue close enough to its own that the fade is
+  invisible. That reconciles the contradiction recorded below exactly:
+  in-scatter IS added while the pool APPEARS un-attenuated, because what
+  replaces the surface is the same colour as the surface.
 
-     Two one-token probe builds, same fixture, same config:
+  Two one-token probe builds, same fixture, same config:
 
-     - `mediumTint` forced to `vec3(1.0)` for goo -> the pool washes out
-       with the rest of the scene and its far edge fades further than its
-       near edge. Mid-pool mean RGB (132,173,120) -> (174,181,170); the
-       green cast g-r collapses 41 -> 7 and the pool lands on the
-       surrounding fog's own brightness (~180).
-     - `areaMult` forced to 0.0 (the goo profile's extra density, the other
-       half of the same `if`) -> (127,169,114), g-r 42. **No effect.** The
-       density is not the mechanism; the tint is all of it.
+  - `mediumTint` forced to `vec3(1.0)` for goo -> the pool washes out
+  with the rest of the scene and its far edge fades further than its
+  near edge. Mid-pool mean RGB (132,173,120) -> (174,181,170); the
+  green cast g-r collapses 41 -> 7 and the pool lands on the
+  surrounding fog's own brightness (~180).
+  - `areaMult` forced to 0.0 (the goo profile's extra density, the other
+  half of the same `if`) -> (127,169,114), g-r 42. **No effect.** The
+  density is not the mechanism; the tint is all of it.
 
-     This also falsifies the third suspect the previous session named:
-     `fetchFog`'s position-guided upsample (svgf_composite.comp:92-120) is
-     untouched by both probes and the defect still vanishes, so the fetch
-     is not implicated. Do not re-open it on the grazing-incidence argument.
+  This also falsifies the third suspect the previous session named:
+  `fetchFog`'s position-guided upsample (svgf_composite.comp:92-120) is
+  untouched by both probes and the defect still vanishes, so the fetch
+  is not implicated. Do not re-open it on the grazing-incidence argument.
 
-     Fixture (reproduces the user's photo; the 08-05 one stood IN the pool
-     and was too short to show a gradient): `-warpto 1400 -3300 0` on E1M1,
-     the courtyard's west edge looking east across sector 0 -- near edge
-     ~120 units, far edge ~730, wall behind ~1340.
+  Fixture (reproduces the user's photo; the 08-05 one stood IN the pool
+  and was too short to show a gradient): `-warpto 1400 -3300 0` on E1M1,
+  the courtyard's west edge looking east across sector 0 -- near edge
+  ~120 units, far edge ~730, wall behind ~1340.
 
-     **NEW TRAP, and it cost this session two captures: `-shotverify` PINS
-     `rb_fog = 1`** along with brightness / flashlight / every effect toggle
-     (DOOM-0208's golden pin, r_vulkan.cpp:9466-9478). A fog A/B taken
-     through `-shotverify` photographs the SAME frame twice -- measured mean
-     abs diff 0.0001 between an `rt_fog 2` and an `rt_fog 0` config. Use
-     `-devshot N` (pins nothing) for any look investigation; r_vulkan.cpp
-     :9914-9918 says so in as many words.
+  **NEW TRAP, and it cost this session two captures: `-shotverify` PINS
+  `rb_fog = 1`** along with brightness / flashlight / every effect toggle
+  (DOOM-0208's golden pin, r_vulkan.cpp:9466-9478). A fog A/B taken
+  through `-shotverify` photographs the SAME frame twice -- measured mean
+  abs diff 0.0001 between an `rt_fog 2` and an `rt_fog 0` config. Use
+  `-devshot N` (pins nothing) for any look investigation; r_vulkan.cpp
+  :9914-9918 says so in as many words.
 
-     Superseded: the two candidates below were falsified against the source
-     by the previous session, and are kept so they are not re-proposed:
+  Superseded: the two candidates below were falsified against the source
+  by the previous session, and are kept so they are not re-proposed:
 
-     - *"The emission is too bright to veil, so the tonemap compresses
-       the attenuation away."* FALSE. `kNukageLe` is
-       `{0.05f, 0.19f, 0.02f}` (r_vulkan.cpp:5256). DOOM-0302 scaled
-       these DOWN by ~51x, not up -- its comment says the old constants
-       "measured 51x brighter ... and blew out to a flat white-green
-       slab". 0.19 linear green sits well inside
-       `pbrNeutralToneMapping`'s responsive range, so shoulder
-       compression cannot be the mechanism.
-     - *"The pool surface is simply not fogged."* FALSE. Fog moves pool
-       pixels by 39.4/255, so the fold is reaching them.
+  - *"The emission is too bright to veil, so the tonemap compresses
+  the attenuation away."* FALSE. `kNukageLe` is
+  `{0.05f, 0.19f, 0.02f}` (r_vulkan.cpp:5256). DOOM-0302 scaled
+  these DOWN by ~51x, not up -- its comment says the old constants
+  "measured 51x brighter ... and blew out to a flat white-green
+  slab". 0.19 linear green sits well inside
+  `pbrNeutralToneMapping`'s responsive range, so shoulder
+  compression cannot be the mechanism.
+  - *"The pool surface is simply not fogged."* FALSE. Fog moves pool
+  pixels by 39.4/255, so the fold is reaching them.
 
-     Both readings were sound; the inference drawn from them was not.
-     Transmittance was never ~1 on the pool -- it falls exactly as it does
-     on the rim beside it. What the composited image could not show is that
-     the in-scatter replacing the surface is the SAME hue as the surface,
-     which is why inferring transmittance from a composite is the step that
-     made two wrong causes look plausible. The build A/B above measures the
-     term directly and needs no fog-buffer debug view; the `fog.a` rt_view
-     mode the previous session scheduled is NOT needed for this defect.
+  Both readings were sound; the inference drawn from them was not.
+  Transmittance was never ~1 on the pool -- it falls exactly as it does
+  on the rim beside it. What the composited image could not show is that
+  the in-scatter replacing the surface is the SAME hue as the surface,
+  which is why inferring transmittance from a composite is the step that
+  made two wrong causes look plausible. The build A/B above measures the
+  term directly and needs no fog-buffer debug view; the `fog.a` rt_view
+  mode the previous session scheduled is NOT needed for this defect.
 
   2. The AIR above the pool is never tinted, and that is the defect. L4's
-     area profile is keyed on `FogHit.ctrlFlags`, which carries the
-     MatCtrl.flags of the PRIMARY HIT (pathtrace.comp:1603). So the goo
-     profile engages only when the ray's own hit is liquid. Looking ACROSS
-     a pool at a wall, ctrlFlags is the wall's, the goo term is zero, and
-     the march returns neutral `kFogColor` -- grey haze over green water.
-     The profile is a property of what you look AT rather than of the air
-     the ray travels THROUGH.
+  area profile is keyed on `FogHit.ctrlFlags`, which carries the
+  MatCtrl.flags of the PRIMARY HIT (pathtrace.comp:1603). So the goo
+  profile engages only when the ray's own hit is liquid. Looking ACROSS
+  a pool at a wall, ctrlFlags is the wall's, the goo term is zero, and
+  the march returns neutral `kFogColor` -- grey haze over green water.
+  The profile is a property of what you look AT rather than of the air
+  the ray travels THROUGH.
 
   Liquids are already in the fog-light bake, so the plumbing exists:
   BuildStaticEmitterSet admits any material with Le > 0 including flats
@@ -8614,13 +8712,13 @@ parked ideas (💭 considered) until we commit to and design each one.
   TARGET BEHAVIOUR, now agreed and matching the user's original words
   ("there should be fog mostly obscuring the pool except for the green glow
   in the fog itself"). Once goo-ness is a per-cell property of the AIR:
-    - Looking across the pool at the far wall, the ray passes over goo, so
-      THAT fog picks up the green cast -- the glow the user is still
-      missing.
-    - Looking at the pool itself from a distance, the ray spends most of
-      its length in ordinary air and only its last stretch over goo, so the
-      pool is mostly obscured by grey fog with a green cast near the
-      surface -- rather than by a wall of green.
+  - Looking across the pool at the far wall, the ray passes over goo, so
+  THAT fog picks up the green cast -- the glow the user is still
+  missing.
+  - Looking at the pool itself from a distance, the ray spends most of
+  its length in ordinary air and only its last stretch over goo, so the
+  pool is mostly obscured by grey fog with a green cast near the
+  surface -- rather than by a wall of green.
 
   FALLBACK, validated: if the per-cell grid proves too expensive, simply
   deleting the tint is already a strict improvement on the shipped build --
@@ -8634,24 +8732,24 @@ parked ideas (💭 considered) until we commit to and design each one.
   is the GLOW, and the user's brief for it is below.
 
   USER DESIGN BRIEF for the remaining half (2026-08-05, verbatim intent):
-    - The ask is that "the goo casts a light onto the surrounding area
-      (which would include fog)" -- so this is CAST LIGHT, not a medium
-      tint painted on. That is a different mechanism from what L4 shipped
-      and it is why the L4 approach could never satisfy it.
-    - MUTED, explicitly: "Many of the DOOM with ray tracing videos I have
-      watched really accentuate the glow of the pools. I want a more muted
-      view but I still want it to cast light." So the reference renders are
-      an ANTI-target on intensity. Tune down, not up.
-    - OUTDOORS the glow lands on "the fog and the pool walls" -- the
-      surrounding geometry and the air, not the whole sky-lit courtyard.
-    - INDOORS, "especially in darker rooms", it should behave as "normal
-      bounce light which in turn lights a room a little bit" -- i.e. GI,
-      not a special case. The indoor/outdoor difference is one of degree
-      and should fall out of the existing sky-vs-seep weighting rather than
-      being written in as a branch.
-    - Explicit permission to stop: "if we can't get that right, then let's
-      move on as it looks great as it currently is." The shipped half is an
-      acceptable resting point. Do NOT ship a bad glow to close the item.
+  - The ask is that "the goo casts a light onto the surrounding area
+  (which would include fog)" -- so this is CAST LIGHT, not a medium
+  tint painted on. That is a different mechanism from what L4 shipped
+  and it is why the L4 approach could never satisfy it.
+  - MUTED, explicitly: "Many of the DOOM with ray tracing videos I have
+  watched really accentuate the glow of the pools. I want a more muted
+  view but I still want it to cast light." So the reference renders are
+  an ANTI-target on intensity. Tune down, not up.
+  - OUTDOORS the glow lands on "the fog and the pool walls" -- the
+  surrounding geometry and the air, not the whole sky-lit courtyard.
+  - INDOORS, "especially in darker rooms", it should behave as "normal
+  bounce light which in turn lights a room a little bit" -- i.e. GI,
+  not a special case. The indoor/outdoor difference is one of degree
+  and should fall out of the existing sky-vs-seep weighting rather than
+  being written in as a branch.
+  - Explicit permission to stop: "if we can't get that right, then let's
+  move on as it looks great as it currently is." The shipped half is an
+  acceptable resting point. Do NOT ship a bad glow to close the item.
 
   WHAT THIS MEANS FOR THE DESIGN, and it re-points it: framing this as "put
   kGooTint back, per cell" is probably WRONG, or at least incomplete. A
@@ -8692,10 +8790,10 @@ parked ideas (💭 considered) until we commit to and design each one.
   clustered fog lights and the packed per-cell slots at the E1M1 pool
   (1831,-3254):
   - kFogLightsPerCell = 2 is NOT starving the pool. The nukage clusters hold
-    BOTH slots of every cell over and around it, at vis 1.00. No torch is
-    competing.
+  BOTH slots of every cell over and around it, at vis 1.00. No torch is
+  competing.
   - The clusters are NOT dim. 23 of them; the brightest carries intensity
-    12239 against a MEDIAN light of 6104, with reach at the 512 cap.
+  12239 against a MEDIAN light of 6104, with reach at the 512 cap.
   - skyExposure is not swamping it either: the term is simply small.
 
   CAUSE: a point light is the wrong stand-in for a POOL, and the error is
@@ -8770,21 +8868,21 @@ parked ideas (💭 considered) until we commit to and design each one.
   Use this pair on every look A/B from now on.
 
   Roofed nukage room (-warpto 3274 -3353 200), delta/255 and mean RGB:
-    goo surface (control)   63.46   (3.9,21.4,0.0) -> (62.1,137.4,16.2)
-    pit ledge / pool wall    4.70   (41.9,73.5,8.8) -> (46.2,82.1,9.9)
-    ceiling                  4.53   (15.2,12.9,7.3) -> (18.2,22.8,7.9)
-    floor beside pool        3.25   (47.4,43.7,4.4) -> (50.4,49.6,5.2)
-    far wall above pool      2.10 | left wall, further   0.79
+  goo surface (control)   63.46   (3.9,21.4,0.0) -> (62.1,137.4,16.2)
+  pit ledge / pool wall    4.70   (41.9,73.5,8.8) -> (46.2,82.1,9.9)
+  ceiling                  4.53   (15.2,12.9,7.3) -> (18.2,22.8,7.9)
+  floor beside pool        3.25   (47.4,43.7,4.4) -> (50.4,49.6,5.2)
+  far wall above pool      2.10 | left wall, further   0.79
   23.9% of the frame moves. The ceiling's green channel rises 12.9 -> 22.8,
   +77% -- a dark room taking ordinary green bounce off the pool, which is
   the indoor half of the brief stated almost verbatim.
 
   Open-sky pool (-warpto 1400 -3300 0):
-    goo surface (control)   63.17
-    pit bank, front rim     37.97   green 48.2 -> 116.8
-    pit bank right edge      6.51   green 50.2 -> 62.1
-    pit bank left edge       2.45 | courtyard floor ~3m back  3.02
-    far wall behind pool     0.61   (nothing, correctly)
+  goo surface (control)   63.17
+  pit bank, front rim     37.97   green 48.2 -> 116.8
+  pit bank right edge      6.51   green 50.2 -> 62.1
+  pit bank left edge       2.45 | courtyard floor ~3m back  3.02
+  far wall behind pool     0.61   (nothing, correctly)
   So the outdoor "pool walls" ARE lit, strongly at contact and falling off
   with distance. The earlier worry that sky ambient swamps it is true only
   for surfaces far from the pool, where it SHOULD be.
@@ -8865,21 +8963,21 @@ parked ideas (💭 considered) until we commit to and design each one.
   Three findings the review caught that would each have shipped a defect:
 
   1. The bright pass thresholded Rec.709 **luminance** while every
-     threshold and preset was written in linear **magnitude**. Those agree
-     only for greys, so a red fireball or pure-red lava at 4x white
-     (luminance 0.850) would have extracted ZERO, a blue emitter 0.289,
-     while a white wall at 1.0 sat right on the blooming threshold — this
-     bullet's own complaint with the causality reversed. Now thresholds the
-     max channel, which is what `pbrNeutralToneMapping` keys its own
-     compression on.
+  threshold and preset was written in linear **magnitude**. Those agree
+  only for greys, so a red fireball or pure-red lava at 4x white
+  (luminance 0.850) would have extracted ZERO, a blue emitter 0.289,
+  while a white wall at 1.0 sat right on the blooming threshold — this
+  bullet's own complaint with the causality reversed. Now thresholds the
+  max channel, which is what `pbrNeutralToneMapping` keys its own
+  compression on.
   2. `toneEncode()` in `svgf_composite.comp` *contains* the exposure and is
-     local to that shader, so the plan to "move the tone-map out" would have
-     double-exposed the frame and broken the fogged sky (`rt_fog` defaults
-     on, and that branch calls `toneEncode` too).
+  local to that shader, so the plan to "move the tone-map out" would have
+  double-exposed the frame and broken the fogged sky (`rt_fog` defaults
+  on, and that branch calls `toneEncode` too).
   3. The profiler widening needs **ten** sites, not the two first written —
-     including `uint64_t ts[8]`, a stack array `vkGetQueryPoolResults` would
-     have overflowed, and both `printf` sites, whose omission MISLABELS the
-     performance table rather than breaking it.
+  including `uint64_t ts[8]`, a stack array `vkGetQueryPoolResults` would
+  have overflowed, and both `printf` sites, whose omission MISLABELS the
+  performance table rather than breaking it.
 
   **One open question blocks the build**, not just the look: §10 Q3 — the
   RT threshold is applied post-exposure, so what counts as a light source
@@ -9123,9 +9221,9 @@ parked ideas (💭 considered) until we commit to and design each one.
   E1M1 1056 -3616 270, the shipped Medium preset, bloom 2 vs bloom 0 in
   each configuration, block map over the 12x8 grid:
 
-    Solid + raster (paletted) : peak block  0.2/255,  0 of 96 blocks
-    Solid + RT     (paletted) : peak block 20.5/255, 48 of 96 blocks
-    Ultra + RT     (HD art)   : peak block 22.9/255, 48 of 96 blocks
+  Solid + raster (paletted) : peak block  0.2/255,  0 of 96 blocks
+  Solid + RT     (paletted) : peak block 20.5/255, 48 of 96 blocks
+  Ultra + RT     (HD art)   : peak block 22.9/255, 48 of 96 blocks
 
   Two further raster spots agree with the first row: the courtyard
   (1800 -3200 0) and the nukage room (3274 -3353 200) both read mean 0.00
@@ -9185,12 +9283,12 @@ parked ideas (💭 considered) until we commit to and design each one.
   engine side is smaller than it sounds.
 
   GZDoom does the whole job in two files, ~900 lines total:
-    - voxels.cpp -- R_LoadKVX reads Build-engine .KVX (slab-compressed
-      voxel columns), remaps the palette against the game's own, and reads
-      the mip chain.
-    - models_voxel.cpp -- MakeSlabPolys / AddFace walk the slabs and emit
-      QUADS per exposed voxel face, with an FVoxelMap neighbour check that
-      culls interior faces so only the skin is meshed.
+  - voxels.cpp -- R_LoadKVX reads Build-engine .KVX (slab-compressed
+  voxel columns), remaps the palette against the game's own, and reads
+  the mip chain.
+  - models_voxel.cpp -- MakeSlabPolys / AddFace walk the slabs and emit
+  QUADS per exposed voxel face, with an FVoxelMap neighbour check that
+  culls interior faces so only the skin is meshed.
 
   That second half is the part that matters here: it produces ordinary
   TRIANGLES, which is exactly what our BLAS wants, so a voxel actor would
@@ -9202,13 +9300,13 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   Filed as CONSIDERED, not planned, because the engine work is the easy
   half and two questions are unanswered and are NOT code questions:
-    1. Does a freely-licensed voxel set covering the DOOM roster actually
-       exist, and on terms compatible with GPL v2 redistribution? Well-known
-       voxel packs exist for DOOM but their licences must be READ, not
-       assumed -- docs/standards/assets.md governs.
-    2. Per-frame cost: a voxel actor is thousands of triangles against a
-       sprite's two, times every monster on screen, and it moves -- so it
-       lands on the TLAS refit path every frame. Measure before committing.
+  1. Does a freely-licensed voxel set covering the DOOM roster actually
+  exist, and on terms compatible with GPL v2 redistribution? Well-known
+  voxel packs exist for DOOM but their licences must be READ, not
+  assumed -- docs/standards/assets.md governs.
+  2. Per-frame cost: a voxel actor is thousands of triangles against a
+  sprite's two, times every monster on screen, and it moves -- so it
+  lands on the TLAS refit path every frame. Measure before committing.
 
   Settle question 1 first. If the answer is no, this closes and DOOM-0080
   stays parked on its original blocker.
@@ -9257,17 +9355,17 @@ parked ideas (💭 considered) until we commit to and design each one.
   eyes, and the asymmetry IS the effect.
 
   DECISIONS THIS OWES BEFORE IT IS BUILT, and they are the whole risk:
-    - It must not fight the art direction. DOOM's own lighting is authored;
-      an auto-exposure that flattens every room to mid-grey deletes the
-      contrast DOOM-0292 and DOOM-0011 L2 exist to create. Clamp the range
-      hard and default the effect subtle.
-    - It must not fight the player's Brightness slider. rb_exposure is a
-      user setting; adaptation should ride ON it as an offset, not replace
-      it, or the slider stops doing what it says.
-    - Off by default, or on? Decide with the user at look-call time, not in
-      the spec.
-    - Tier: raster and ray-traced views alike (it is a tonemap-stage
-      effect, not an art feature), never Classic.
+  - It must not fight the art direction. DOOM's own lighting is authored;
+  an auto-exposure that flattens every room to mid-grey deletes the
+  contrast DOOM-0292 and DOOM-0011 L2 exist to create. Clamp the range
+  hard and default the effect subtle.
+  - It must not fight the player's Brightness slider. rb_exposure is a
+  user setting; adaptation should ride ON it as an offset, not replace
+  it, or the slider stops doing what it says.
+  - Off by default, or on? Decide with the user at look-call time, not in
+  the spec.
+  - Tier: raster and ray-traced views alike (it is a tonemap-stage
+  effect, not an art feature), never Classic.
 
   Sequencing: this reads the same HDR frame bloom does and lands in the
   same part of the pipeline, so it wants to come AFTER DOOM-0331 and reuse
@@ -9321,11 +9419,11 @@ parked ideas (💭 considered) until we commit to and design each one.
   DETECT, don't assume. SDL 2.32.70 on this box exposes the capability
   queries directly, so no per-device database is needed and no pad is
   driven with an effect it does not have:
-    - `SDL_GameControllerHasRumble` -> the two body motors
-      (`SDL_GameControllerRumble`, low + high frequency, duration_ms)
-    - `SDL_GameControllerHasRumbleTriggers` -> the trigger motors
-      (`SDL_GameControllerRumbleTriggers`)
-    - `SDL_GameControllerHasLED` -> the light bar (`SDL_GameControllerSetLED`)
+  - `SDL_GameControllerHasRumble` -> the two body motors
+  (`SDL_GameControllerRumble`, low + high frequency, duration_ms)
+  - `SDL_GameControllerHasRumbleTriggers` -> the trigger motors
+  (`SDL_GameControllerRumbleTriggers`)
+  - `SDL_GameControllerHasLED` -> the light bar (`SDL_GameControllerSetLED`)
   A pad answering false to all three keeps today's behaviour exactly.
 
   WHERE IT FIRES is the design work, and it is small: weapon discharge
@@ -9338,17 +9436,17 @@ parked ideas (💭 considered) until we commit to and design each one.
   a LOT.
 
   PS5 / DualSense specifically, and the honest split:
-    - Body rumble and the light bar are plain SDL2 calls and will just
-      work through the queries above. Tinting the bar with health is a
-      cheap, obvious win.
-    - ADAPTIVE TRIGGERS (the variable resistance) are NOT in SDL2's public
-      API. The only route is `SDL_GameControllerSendEffect` with a raw
-      DualSense HID output report, which depends on SDL's hidapi DualSense
-      driver being the one bound (it is not, when the kernel's hid-playstation
-      driver claims the pad first). So treat trigger resistance as a
-      SEPARATE, unverified stretch goal behind a capability probe -- do not
-      let it block the ordinary rumble, and MEASURE that it actually reaches
-      the hardware before claiming it.
+  - Body rumble and the light bar are plain SDL2 calls and will just
+  work through the queries above. Tinting the bar with health is a
+  cheap, obvious win.
+  - ADAPTIVE TRIGGERS (the variable resistance) are NOT in SDL2's public
+  API. The only route is `SDL_GameControllerSendEffect` with a raw
+  DualSense HID output report, which depends on SDL's hidapi DualSense
+  driver being the one bound (it is not, when the kernel's hid-playstation
+  driver claims the pad first). So treat trigger resistance as a
+  SEPARATE, unverified stretch goal behind a capability probe -- do not
+  let it block the ordinary rumble, and MEASURE that it actually reaches
+  the hardware before claiming it.
 
   Testing note: this cannot be verified headlessly or by screenshot. It
   needs a pad in hand, and the Windows half needs Charl (see the Windows
@@ -9509,26 +9607,26 @@ parked ideas (💭 considered) until we commit to and design each one.
   What I recorded and checked, rather than assumed:
 
   - 13 s / 1280x800 / 392 frames of **Ultra, ray-traced, on E1M1**, with the
-    full HD material set. The mandatory anti-trap check passed:
-    `DOOM-0042: HD load done - 18 material(s), 75 image(s), 213.9 MB` -- so
-    this is NOT the silent paletted fallback. `RB_VulkanProbe` reports
-    `RT3D (path-traced)` on the RX 6600, and the GI bake ran (239 probes,
-    3 bounces), so the path tracer really initialised on the GPU.
+  full HD material set. The mandatory anti-trap check passed:
+  `DOOM-0042: HD load done - 18 material(s), 75 image(s), 213.9 MB` -- so
+  this is NOT the silent paletted fallback. `RB_VulkanProbe` reports
+  `RT3D (path-traced)` on the RX 6600, and the GI bake ran (239 probes,
+  3 bounces), so the path tracer really initialised on the GPU.
   - Frames move over time (delta 2.61 between t=6 s and t=10 s), so it is a
-    live capture and not a frozen buffer.
+  live capture and not a frozen buffer.
   - Nothing of the user's desktop or magnifier is in frame, which was the
-    whole point of using demoreel over a screen recorder.
+  whole point of using demoreel over a screen recorder.
 
   Two things that shape how the trailer gets shot, both measured here:
 
   1. **~2-3 s of BLACK lead-in.** t=1 s and t=2 s are pure black (mean 0.00);
-     the picture appears at t=3 s. That is the BLAS build + GI bake. Record
-     longer than you need and trim the head, or the trailer opens on black.
+  the picture appears at t=3 s. That is the BLAS build + GI bake. Record
+  longer than you need and trim the head, or the trailer opens on black.
   2. **The fog dominates the frame.** Shot with `rt_fog` at the value in
-     ~/.doomrc, E1M1's start reads washed-out grey rather than showing off the
-     ray tracing. Tune `rt_fog` (and probably `rb_exposure`) down for a trailer
-     take -- a look call, but a required one, since the current default hides
-     the thing the trailer exists to show.
+  ~/.doomrc, E1M1's start reads washed-out grey rather than showing off the
+  ray tracing. Tune `rt_fog` (and probably `rb_exposure`) down for a trailer
+  take -- a look call, but a required one, since the current default hides
+  the thing the trailer exists to show.
 
   Blocker 3 (audio) stands and is now confirmed OURS: demoreel documented
   audio as permanently out of scope, so the sound step belongs in this
@@ -9575,24 +9673,24 @@ parked ideas (💭 considered) until we commit to and design each one.
   **All three trailer blockers are now closed, verified here on Ultra:**
 
   - `--app-log <path>` captures the engine's own output: 175 lines including
-    `DOOM-0042: HD load done - 18 material(s), 75 image(s), 213.9 MB`. So the
-    mandatory paletted-fallback check is one flag, and the `sh -c` wrapper the
-    earlier note prescribed is obsolete. demoreel's stdout is now the path
-    alone, so `out=$(demoreel record ...)` is clean.
+  `DOOM-0042: HD load done - 18 material(s), 75 image(s), 213.9 MB`. So the
+  mandatory paletted-fallback check is one flag, and the `sh -c` wrapper the
+  earlier note prescribed is obsolete. demoreel's stdout is now the path
+  alone, so `out=$(demoreel record ...)` is clean.
   - `--settle N` kills the black lead-in **completely**: without it t=0/1/2 s
-    are pure black (mean 0.00) and the picture arrives at t=3 s; with
-    `--settle 20`, **frame 0 is already the picture** (mean 46.59, 11,607
-    unique colours). No trimming step needed for startup black.
-    Caveat that does NOT bite us but would bite Classic or a future loading
-    screen: `--settle` waits for the display to stop being one flat colour,
-    not for the app to be READY, so anything painted over the black (a cursor,
-    a border) returns it early. DOOM_Ants' Vulkan startup is genuinely uniform
-    black, which is why it works.
+  are pure black (mean 0.00) and the picture arrives at t=3 s; with
+  `--settle 20`, **frame 0 is already the picture** (mean 46.59, 11,607
+  unique colours). No trimming step needed for startup black.
+  Caveat that does NOT bite us but would bite Classic or a future loading
+  screen: `--settle` waits for the display to stop being one flat colour,
+  not for the app to be READY, so anything painted over the black (a cursor,
+  a border) returns it early. DOOM_Ants' Vulkan startup is genuinely uniform
+  black, which is why it works.
   - `-a` scripted input works on the `--gpu` compositor path (verified by the
-    demoreel session: a click selected a row, a following `key Down` moved the
-    selection, both visible in frames). So scripted input is available as well
-    as demo playback — though a recorded demo stays preferred, since only that
-    gives the SAME run of play across all six tier/view configurations.
+  demoreel session: a click selected a row, a following `key Down` moved the
+  selection, both visible in frames). So scripted input is available as well
+  as demo playback — though a recorded demo stays preferred, since only that
+  gives the SAME run of play across all six tier/view configurations.
 
   What is left before a take is worth shooting is now purely a LOOK matter,
   not tooling: the fog/exposure tuning, and whether bloom (DOOM-0331) lands
@@ -9652,13 +9750,13 @@ parked ideas (💭 considered) until we commit to and design each one.
   in place:
 
   1. `emissive_derive.h`'s `derive_material_le` gained an `allowFaint`
-     param -- when the strict peak gate fails but the tile holds a genuine
-     bright speck, it emits a FAINT Le from those texels instead of 0.
+  param -- when the strict peak gate fails but the tile holds a genuine
+  bright speck, it emits a FAINT Le from those texels instead of 0.
   2. `r_mesh.c`'s `RB_SpriteLumpGlows()` maps a sprite ATLAS LUMP back to
-     its spritenum and reports `sprite_glows` membership, bridging the
-     spritenum-keyed allow-list to the lump-keyed material array.
+  its spritenum and reports `sprite_glows` membership, bridging the
+  spritenum-keyed allow-list to the lump-keyed material array.
   3. `r_vulkan.cpp`'s `ComputeMaterialEmissive` passes `allowFaint=true`
-     only for those lumps.
+  only for those lumps.
 
   So the work is: decide which monster sprites join the allow-list, and
   confirm the eye texels are bright enough for `allowFaint` to find them.
@@ -9681,29 +9779,29 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Three questions this needs answered before it is built:**
 
   1. **Which monsters?** The user said "demons". Candidates with genuinely
-     bright eye texels: the Demon/Spectre (SARG) and the Imp (TROO). The
-     Cacodemon (HEAD) and Lost Soul (SKUL) are already large and bright
-     enough that they may pass the strict gate unaided -- check before
-     adding them, as DOOM-0157 found the Soulsphere did. Former humans have
-     no glowing eyes and must not be added.
+  bright eye texels: the Demon/Spectre (SARG) and the Imp (TROO). The
+  Cacodemon (HEAD) and Lost Soul (SKUL) are already large and bright
+  enough that they may pass the strict gate unaided -- check before
+  adding them, as DOOM-0157 found the Soulsphere did. Former humans have
+  no glowing eyes and must not be added.
   2. **Dead monsters must not glow, and the allow-list cannot express
-     that.** `sprite_glows` is keyed per SPRITENUM and
-     `RB_SpriteLumpGlows` maps every lump of that sprite, so a corpse frame
-     and a death animation inherit the same faint Le. A dead demon with
-     glowing eyes is worse than no glow at all. Needs either a per-FRAME
-     allow-list (the walking/attack frames only), or a check against the
-     thing's state/health at emitter-build time. This is the real work in
-     this item -- not the Le derivation.
+  that.** `sprite_glows` is keyed per SPRITENUM and
+  `RB_SpriteLumpGlows` maps every lump of that sprite, so a corpse frame
+  and a death animation inherit the same faint Le. A dead demon with
+  glowing eyes is worse than no glow at all. Needs either a per-FRAME
+  allow-list (the walking/attack frames only), or a check against the
+  thing's state/health at emitter-build time. This is the real work in
+  this item -- not the Le derivation.
   3. **Does the room get lit, or only the eyes?** Self-emission is nearly
-     free -- it is the primary-ray term and costs one already-computed
-     mask. Making the eyes CAST light means joining the NEE emitter set,
-     and monsters are DYNAMIC, so they land in the per-frame merged half of
-     the emitter path rather than the static cache
-     (`RebuildStaticPointLightCache` / `BuildRasterPointLights`). A
-     monster-heavy map would add dozens of moving emitters per frame, which
-     is exactly the pole that cost 8 ms before the DOOM-0119 perf split.
-     **Measure before promising cast light**; the user's "not much" suggests
-     they may not want it anyway.
+  free -- it is the primary-ray term and costs one already-computed
+  mask. Making the eyes CAST light means joining the NEE emitter set,
+  and monsters are DYNAMIC, so they land in the per-frame merged half of
+  the emitter path rather than the static cache
+  (`RebuildStaticPointLightCache` / `BuildRasterPointLights`). A
+  monster-heavy map would add dozens of moving emitters per frame, which
+  is exactly the pole that cost 8 ms before the DOOM-0119 perf split.
+  **Measure before promising cast light**; the user's "not much" suggests
+  they may not want it anyway.
 
   Verification note: RT self-emission cannot be checked headless -- it needs
   an on-hardware look in a dark room, same as DOOM-0157.

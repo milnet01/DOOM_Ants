@@ -8,6 +8,16 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Windows no longer throws away your settings every time you quit** (DOOM-0353)
+  Changing the volume, the resolution, the render tier or a key binding on
+  Windows worked until you quit, and was then silently lost — so the game
+  started with the same settings every time. The save writes to a temporary
+  file and moves it over the real one, which replaces the old file on Linux
+  but is refused by Windows once that file exists. Windows now uses its own
+  replace-in-one-step move, so the settings stick. Measured on real Windows:
+  the config file goes from unchanged to fully rewritten. Linux was never
+  affected and is unchanged.
+
 - **Windows launches no longer freeze on a black screen about one time in forty** (DOOM-0350)
   The game clock's sub-second maths overflowed on Windows, where a
   `long` is half the size it is on Linux, so the clock stepped

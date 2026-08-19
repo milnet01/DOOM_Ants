@@ -39,6 +39,13 @@ rcsid[] __attribute__((used)) = "$Id: m_misc.c,v 1.6 1997/02/03 22:45:10 b1 Exp 
 #include <limits.h>	// PATH_MAX (M_SaveDefaults' temp-file path)
 #include <string.h>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN	// exclude <rpcndr.h>, which typedefs `boolean`
+				// (unsigned char) and clashes with doomtype.h's
+				// `typedef enum {false,true} boolean`
+#include <windows.h>		// MoveFileExA (DOOM-0353 config replace)
+#endif
+
 
 #include "doomdef.h"
 
@@ -394,12 +401,27 @@ void M_SaveDefaults (void)
 	return;
     }
 
+    // DOOM-0353: rename(2) silently replaces an existing destination on POSIX,
+    // which is what makes the temp-file dance above atomic. Windows' rename()
+    // does NOT — it fails with EEXIST once a config exists — so every settings
+    // change was dropped from the second launch onward. MoveFileExA with
+    // MOVEFILE_REPLACE_EXISTING is the Win32 equivalent, and keeps the
+    // replace-in-one-step property; remove()-then-rename() would not.
+#ifdef _WIN32
+    if (!MoveFileExA (tmpfile, defaultfile, MOVEFILE_REPLACE_EXISTING))
+    {
+	fprintf (stderr, "M_SaveDefaults: can't replace %s: Win32 error %lu\n",
+		 defaultfile, (unsigned long) GetLastError ());
+	remove (tmpfile);
+    }
+#else
     if (rename (tmpfile, defaultfile) != 0)
     {
 	fprintf (stderr, "M_SaveDefaults: can't replace %s: %s\n",
 		 defaultfile, strerror (errno));
 	remove (tmpfile);
     }
+#endif
 }
 
 
