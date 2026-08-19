@@ -20,6 +20,12 @@
 #   6. Creates the GitHub release (notes = the CHANGELOG section, both artifacts
 #      attached). A version with a "-" suffix (e.g. 0.3.0-pre.1) is published as
 #      a pre-release; otherwise it is marked Latest.
+#   7. Re-downloads both published assets and checks they are byte-identical to
+#      what was built.
+#
+# An artifact is only reused when it was built from the commit being released
+# (each build stamps <artifact>.commit) -- so --rebuild is for forcing a clean
+# rebuild, never for correctness.
 #
 # Requirements: the mingw-w64 cross toolchain + staged libs (see
 # mingw-deps/README.md), the AppImage toolchain (auto-fetched by
@@ -63,21 +69,45 @@ WIN_PREFIX="$REPO/mingw-deps/prefix"
 WINPTHREAD="/usr/x86_64-w64-mingw32/sys-root/mingw/bin/libwinpthread-1.dll"
 case "$VERSION" in *-*) PRERELEASE=1 ;; *) PRERELEASE=0 ;; esac
 
+# ---- artifact freshness (DOOM-0356) ----
+# An artifact counts as "already built" only if it was built from the commit we
+# are about to release. The filename carries the version alone, which says
+# nothing about the source, so testing for the file shipped a stale binary
+# whenever one of that name happened to exist. Each build therefore writes
+# <artifact>.commit, and the test below compares that against HEAD.
+HEAD_SHA="$(git rev-parse HEAD)"
+TREE_DIRTY=0
+[ -n "$(git status --porcelain --untracked-files=no)" ] && TREE_DIRTY=1
+
+# A dirty tree never matches: what it built is not identified by any commit.
+artifact_is_fresh() {
+  [ "$REBUILD" = 0 ]     || return 1
+  [ "$TREE_DIRTY" = 0 ]  || return 1
+  [ -f "$1" ] && [ -f "$1.commit" ] && [ "$(cat "$1.commit")" = "$HEAD_SHA" ]
+}
+stamp_artifact() {
+  if [ "$TREE_DIRTY" = 1 ]; then rm -f "$1.commit"
+  else printf '%s\n' "$HEAD_SHA" > "$1.commit"; fi
+}
+
 # ---- 1. test gate ----
 echo "==> Running unit tests (make test)..."
 make -C "$REPO/linuxdoom-1.10" test
 
 # ---- 2. Linux AppImage ----
-if [ "$REBUILD" = 1 ] || [ ! -f "$APPIMAGE" ]; then
+if artifact_is_fresh "$APPIMAGE"; then
+  echo "==> Reusing existing AppImage, built from $HEAD_SHA: $APPIMAGE"
+else
   echo "==> Building Linux AppImage..."
   "$REPO/packaging/build-appimage.sh" "$VERSION"
-else
-  echo "==> Reusing existing AppImage: $APPIMAGE"
+  [ -f "$APPIMAGE" ] || { echo "release.sh: AppImage was not produced" >&2; exit 1; }
+  stamp_artifact "$APPIMAGE"
 fi
-[ -f "$APPIMAGE" ] || { echo "release.sh: AppImage was not produced" >&2; exit 1; }
 
 # ---- 3. Windows build + zip ----
-if [ "$REBUILD" = 1 ] || [ ! -f "$WINZIP" ]; then
+if artifact_is_fresh "$WINZIP"; then
+  echo "==> Reusing existing Windows zip, built from $HEAD_SHA: $WINZIP"
+else
   echo "==> Building Windows binary (make windows)..."
   make -C "$REPO/linuxdoom-1.10" windows
   EXE="$REPO/linuxdoom-1.10/mingw/doom_ants.exe"
@@ -104,10 +134,9 @@ EOF
   ( cd "$STAGE" && zip -r -q "$WINZIP" "$NAME" )
   rm -rf "$STAGE"
   trap - EXIT
-else
-  echo "==> Reusing existing Windows zip: $WINZIP"
+  [ -f "$WINZIP" ] || { echo "release.sh: Windows zip was not produced" >&2; exit 1; }
+  stamp_artifact "$WINZIP"
 fi
-[ -f "$WINZIP" ] || { echo "release.sh: Windows zip was not produced" >&2; exit 1; }
 
 echo
 echo "Artifacts:"
@@ -191,6 +220,24 @@ gh release create "$TAG" -R "$SLUG" \
   $LATEST_FLAG \
   --notes "$NOTES" \
   "$APPIMAGE" "$WINZIP"
+
+# Post-publish assertion (DOOM-0356). The stamp above proves the local artifacts
+# were built from HEAD; this proves the published assets are those artifacts. A
+# release that passes both carries the commit it claims.
+echo "==> Verifying the published assets are the ones just built..."
+VERIFY_DIR="$(mktemp -d)"
+trap 'rm -rf "$VERIFY_DIR"' EXIT
+gh release download "$TAG" -R "$SLUG" -D "$VERIFY_DIR" --clobber
+for f in "$APPIMAGE" "$WINZIP"; do
+  REMOTE="$VERIFY_DIR/$(basename "$f")"
+  [ -f "$REMOTE" ] || { echo "release.sh: published release is missing $(basename "$f")" >&2; exit 1; }
+  if [ "$(sha256sum <"$f" | cut -d' ' -f1)" != "$(sha256sum <"$REMOTE" | cut -d' ' -f1)" ]; then
+    echo "release.sh: published $(basename "$f") does not match the local build" >&2; exit 1
+  fi
+done
+rm -rf "$VERIFY_DIR"
+trap - EXIT
+echo "    both assets match the local build of $HEAD_SHA"
 
 echo
 echo "Released $TAG:"
