@@ -925,6 +925,19 @@ h=int(a.shape[0]*0.805);print(numpy.abs(a[h:]-b[h:]).max())" on.png off.png
   with a second table instead of a named per-chain scale constant
   (DOOM-0331 §10 Q3).
 
+  *Amended 2026-08-20, recording what was built.* Q3 was answered — match the
+  chains — and it took **two** named constants rather than the one this
+  invariant anticipated, because the chains differ in two independent ways.
+  `kBloomRasterScale` (1.5) carries the raster peak into this chain's units
+  for the threshold test alone; `kBloomRasterGain` (10.0) multiplies the
+  preset intensity at the raster combine. The scale alone left the result ~10×
+  too dim, since the soft-knee weight it produces is unitless and the
+  extracted colour stays in the raster chain's own low-ranged units. Both are
+  named constants in `r_vulkan.cpp` reading one preset table, so the thing
+  this invariant rules out — a second table — did not happen, and its grep
+  test is unchanged. Evidence and the rejected alternatives are on
+  DOOM-0331's bullet.
+
 - **INV-9** — the bloom passes cost ≤ 5 % of present-total in Ultra RT.
   *Test:* with `rb_profile` on (`\`), **two** prints, because neither carries
   both halves of the ratio: `[rt_profile]` for the new bloom and `rt_tonemap`

@@ -1204,11 +1204,18 @@ extern "C" { int rb_bloom = 2; }
 // Off carries real numbers rather than dashes: nothing reads them (no dispatch is
 // recorded and the combine sits behind a branch), but the array needs a row 0 and
 // INV-4's floor check reads every row without a special case.
+//
+// The intensity column was cut to 0.71x its shipped value on 2026-08-20, after the user's
+// look call found the default (Medium) "a little too strong" and "blurry" on Ultra with
+// the traced view. The whole ladder moves by one factor rather than Medium alone, so the
+// ladder keeps its shape and Low does not collapse into Medium; the thresholds are
+// untouched, because what changed is how bright the halo is and not what counts as a
+// light. Both chains read this column, so the two stay in step with each other.
 static const struct BloomPreset { float threshold, knee, intensity; } kBloomPresets[4] = {
     { 1.00f, 0.00f, 0.00f },   // Off     ramp starts 1.00
-    { 1.80f, 0.30f, 0.20f },   // Low     ramp starts 1.50
-    { 1.50f, 0.35f, 0.35f },   // Medium  ramp starts 1.15
-    { 1.35f, 0.35f, 0.55f },   // High    ramp starts 1.00 (on the floor)
+    { 1.80f, 0.30f, 0.14f },   // Low     ramp starts 1.50
+    { 1.50f, 0.35f, 0.25f },   // Medium  ramp starts 1.15
+    { 1.35f, 0.35f, 0.39f },   // High    ramp starts 1.00 (on the floor)
 };
 
 // §4.5: rb_bloom is clamped at EVERY site that indexes an array with it -- ~/.doomrc is
@@ -1217,6 +1224,36 @@ static const struct BloomPreset { float threshold, knee, intensity; } kBloomPres
 // engine-side guard, in the shape rb_renderscale already uses here. It arrived at L2 with
 // its first reader (the bright pass's push constants) rather than at L1, where it would
 // have been an accessor with no caller. DOOM-0345's chain is the second reader.
+// DOOM-0331 10 Q3 -- the named per-chain scale (DOOM-0345 INV-8), answering the user's
+// 2026-08-20 look call: the traced view glowed and the rasterised one did not, and the
+// cause measured as the CHAIN rather than the HD art. The two chains carry different
+// radiance ranges, so one threshold means two different things; this carries the raster
+// chain's peak into the traced chain's units for the threshold test alone. The RT chain
+// is the reference and needs no constant of its own -- a second one fixed at 1.0 would be
+// a knob nobody may turn.
+// It takes TWO numbers, not one, and that is a measured result rather than a design
+// preference. INV-8 anticipated "a named per-chain scale constant"; one constant cannot
+// do it, because the chains differ in two independent ways. kBloomRasterScale decides
+// WHAT counts as a light -- it carries the raster peak into the traced chain's units for
+// the threshold test alone -- and kBloomRasterGain decides how BRIGHT the resulting halo
+// is. Measured at E1M1 1056 -3616 270, Solid, bloom 2 vs 0, against the traced view's own
+// block map: at scale 1.5 the rasterised view reproduces the traced view's SHAPE exactly
+// (the same six centre blocks stay at 0.0 while the side blocks glow), and the gain then
+// sets the magnitude -- scale alone left it ~10x too dim, since the weight it produces is
+// unitless and the extracted colour stays in the raster chain's own low-ranged units.
+// Pushing the scale instead of the gain is the natural misreading and it is strictly
+// worse: 1.2/15 measured DIMMER than 1.5/10 (mean 1.66 vs 4.05) because a smaller scale
+// shrinks every pixel's weight as well as the population, and 2.5 lit the six centre
+// blocks the traced view leaves dark.
+//
+// What no pair of numbers fixes, so do not chase it: the rasterised halo is BROADER and
+// flatter -- 34% of pixels move against the traced view's 7% at matched magnitude. The
+// raster chain has a wide population of mid-bright surfaces just under the threshold
+// where the traced chain has a few very bright emitters, and that is the chains' own
+// dynamic range showing rather than a tuning miss.
+static const float kBloomRasterScale = 1.5f;
+static const float kBloomRasterGain  = 10.0f;
+
 static const BloomPreset& CurrentBloomPreset()
 {
     const int i = rb_bloom < 0 ? 0 : (rb_bloom > 3 ? 3 : rb_bloom);
@@ -3191,7 +3228,7 @@ void CreateBloomPipeline()
     VkPushConstantRange pcr = {};
     pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pcr.offset     = 0;
-    pcr.size       = 5 * sizeof(float);   // vec2 uvScale + aoEnable + threshold + knee
+    pcr.size       = 6 * sizeof(float);   // vec2 uvScale + aoEnable + threshold + knee + chainScale
     VkPipelineLayoutCreateInfo plci = {};
     plci.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     plci.setLayoutCount         = 1;
@@ -10782,7 +10819,8 @@ extern "C" void RB_Vulkan_Present(void)
         // the same two values the composite is handed below, so the extract thresholds the
         // value the composite will tone-map.
         const BloomPreset& bp = bloomPreset;
-        float bpush[5] = { uvScale[0], uvScale[1], rb_ssao ? 1.0f : 0.0f, bp.threshold, bp.knee };
+        float bpush[6] = { uvScale[0], uvScale[1], rb_ssao ? 1.0f : 0.0f, bp.threshold, bp.knee,
+                           kBloomRasterScale };
         vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
                                 g.bloomExtractPipeLayout, 0, 1, &g.bloomExtractDs, 0, nullptr);
         vkCmdPushConstants(g.cmd, g.bloomExtractPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT,
@@ -10889,7 +10927,7 @@ extern "C" void RB_Vulkan_Present(void)
         // which is what keeps `bloom 0` byte-identical (INV-2) and stops a stale halo showing
         // over the menu or the intermission screen.
         float coPush[4] = { uvScale[0], uvScale[1], rb_ssao ? 1.0f : 0.0f,
-                            bloomRecorded ? bloomPreset.intensity : 0.0f };
+                            bloomRecorded ? bloomPreset.intensity * kBloomRasterGain : 0.0f };
         vkCmdPushConstants(g.cmd, g.compositePipeLayout, VK_SHADER_STAGE_FRAGMENT_BIT,
                            0, sizeof(coPush), coPush);
         vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.compositePipeline);

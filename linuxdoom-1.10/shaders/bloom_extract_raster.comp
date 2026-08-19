@@ -24,6 +24,7 @@ layout(push_constant) uniform Push {
     float aoEnable;
     float threshold;
     float knee;
+    float chainScale;
 } pc;
 
 #include "formulas/scene_recombine.glsl"
@@ -70,7 +71,16 @@ void main()
         // while a white wall sits on the threshold (4.2's table). peak is also what
         // pbrNeutralToneMapping keys its own compression on, so the threshold and the
         // operator's knee end up measured in the same units.
-        float peak = max(c.r, max(c.g, c.b));
+        // DOOM-0331 10 Q3 / DOOM-0345 INV-8 -- chainScale carries this chain's radiance
+        // into the ray-traced chain's units so ONE threshold/knee pair means the same
+        // thing on both. It is one of the TWO named per-chain constants the measurement
+        // called for -- INV-8 anticipated one, and one cannot do it; the other is the
+        // gain at the combine (r_vulkan.cpp, kBloomRasterGain), which carries the
+        // magnitude. Still not a second preset table, which is what INV-8 rules out.
+        // It multiplies the peak alone, never the extracted colour:
+        // the weight below is unitless, so the halo stays in this chain's own units and
+        // the scale decides WHAT blooms rather than how brightly it does.
+        float peak = max(c.r, max(c.g, c.b)) * pc.chainScale;
         float soft = clamp(peak - pc.threshold + pc.knee, 0.0, 2.0 * pc.knee);
         soft       = soft * soft / (4.0 * pc.knee + 1e-4);
         float w    = max(soft, peak - pc.threshold) / max(peak, 1e-4);

@@ -9491,6 +9491,53 @@ parked ideas (💭 considered) until we commit to and design each one.
   Not a defect and not fixed -- Q3 is a look question and this is the
   measurement it was waiting on. The judgement is the user's, at the same
   sitting as the Q1/Q2 look call.
+  §10 Q3 ANSWERED and ACTED ON (2026-08-20). The user chose to MATCH the two
+  chains: the rasterised view now glows where the traced one does.
+
+  **It takes TWO named per-chain constants, not one, and that is measured
+  rather than preferred.** INV-8 anticipated "a named per-chain scale constant"
+  (singular). One cannot do it, because the chains differ in two independent
+  ways. `kBloomRasterScale` = 1.5 carries the raster peak into the traced
+  chain's units for the THRESHOLD test alone -- what counts as a light -- and
+  `kBloomRasterGain` = 10.0 multiplies the preset intensity at the raster
+  combine -- how bright the halo is. Neither is a second preset table, which is
+  what INV-8 actually rules out.
+
+  The threshold scale multiplies the peak and never the extracted colour: the
+  soft-knee weight it produces is unitless, so the halo stays in the raster
+  chain's own units. That is exactly why the scale alone left the result ~10x
+  too dim and a gain was needed on top.
+
+  Measured at E1M1 1056 -3616 270, Solid, bloom 2 vs 0, against the traced
+  view's own block map. At scale 1.5 the rasterised view reproduces the traced
+  view's SHAPE exactly -- the same six centre blocks stay at 0.0 while the side
+  blocks glow. Before: mean 0.34/255, and what little moved was the message
+  line, which the noise map carried too. After: mean 3.19/255, blocks 4.0-9.3,
+  centre still 0.0. The traced view at the same retuned preset reads 5.49, so
+  Solid lands at ~58% of its strength.
+
+  Two things the sweep settled that are worth not re-deriving. **Pushing the
+  scale instead of the gain is strictly worse**: 1.2/15 measured DIMMER than
+  1.5/10 (mean 1.66 vs 4.05), because a smaller scale shrinks every pixel's
+  weight as well as the population; and scale 2.5 lit the six centre blocks the
+  traced view leaves dark, which is the wash this design has to avoid. **And no
+  pair of numbers makes the two identical**: at matched magnitude the rasterised
+  halo moves 34% of pixels against the traced view's 7%. The raster chain has a
+  broad population of mid-bright surfaces just under the threshold where the
+  traced chain has a few very bright emitters. That is the chains' own dynamic
+  range showing, and it means Solid's glow is inherently broader and flatter.
+  Whether that reads as "one feature" is the user's call at the next sitting.
+
+  **Correction to what the user was told when they chose this:** it does NOT
+  cost Solid any speed. The extract and blur passes were already dispatched on
+  the raster chain every frame -- they were producing a near-zero result, not
+  being skipped -- so the cost was already being paid and only the values
+  changed.
+
+  §10 Q1/Q2 (halo size and strength; the flashlight on a white wall): strength
+  answered "a little too strong" and acted on via the shared intensity ladder
+  (details on DOOM-0345). **The flashlight arm is NOT tested** -- "didn't try"
+  -- and stays open.
 
 - 📋 [DOOM-0332] **1-D shadow maps for point lights in the rasterised view, exploiting DOOM's flat map.**
   Found reviewing GZDoom at the user's request; feeds DOOM-0170's raster
@@ -10197,6 +10244,34 @@ parked ideas (💭 considered) until we commit to and design each one.
   do the two chains feel like one feature), then the -shotcompare golden
   re-bless, which is DOOM-0202's to grant and not this feature's, then
   CHANGELOG.
+  LOOK CALL ANSWERED (2026-08-20), on Ultra with the traced view. The user's
+  words: bloom is "definitely visible" -- the feature reads.
+
+  - **Q1 (does TAAU smear a muzzle flash into afterglow or ghosting): NO.**
+    "I didn't notice an issue." Fires while moving, no trail. This closes the
+    one §10 question this bullet owned, and it closes it clean.
+  - **Halo strength: a little TOO STRONG, and "it looked blurry"**, seen mainly
+    around the white lights. Acted on -- the whole intensity ladder cut to 0.71x
+    (Low 0.20 -> 0.14, Medium 0.35 -> 0.25, High 0.55 -> 0.39). Thresholds
+    untouched: what was wrong is how bright the halo is, not what counts as a
+    light. Measured at E1M1 1056 -3616 270, Ultra RT, bloom 2 vs 0: SIGNAL mean
+    6.35 -> 5.49/255, peak block 23.7 -> 20.3, coverage 7.2% -> 7.0%. The mean
+    falls less than the dial does because the halo's core is already clipped.
+  - **Flashlight on a white wall: NOT TESTED.** "Didn't try." Still open; it is
+    DOOM-0331 §10's question, not this bullet's.
+
+  INV-1 and INV-3 re-checked after the retune, not assumed: bloom 0 is unmoved
+  in both views (0.17 and 0.48 mean against a 0.27/0.49 same-build noise floor)
+  and -rtverify PASSes with rel-MSE unchanged at 0.2058%.
+
+  The captures were proved to be Ultra with the traced view rather than assumed
+  -- the user asked. Three independent signs: the config carries renderer 1 +
+  rt_view 6, the log carries "HD load done - 18 material(s)" (which only Ultra
+  prints), and -rtverify run against that same config completes and PASSes,
+  where DOOM-0347 has it hang forever on a non-Ultra config.
+
+  Still owed before the flip: a second look at the retuned strength, the
+  flashlight question, and DOOM-0202's -shotcompare golden re-bless.
 
 - 📋 [DOOM-0346] **Record the house spec section order so the structure check stops declining to run.**
   `spec_lint` returns `sections_checked: false` on every spec in
@@ -10261,3 +10336,36 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** We can say what this project is for, but not what "done and working" looks like -- so nothing can tell us we got there.
   Kind: doc.
   Source: adopt-project-run-2026-08-14 (from ~/.claude).
+
+- 📋 [DOOM-0359] **Frame times are uneven -- smooth the pacing, not just the average frame rate.**
+  Asked by the user on 2026-08-20 while play-testing the bloom look call,
+  in their words: "any chance we can iron out the frame times?"
+
+  This is a PACING item, not a throughput one, and the distinction decides
+  what gets measured. DOOM-0074's build-ahead already cleared the 60 fps
+  floor in raster (70 -> 161 fps on E1M1, RX 6600) and DOOM-0170 closed the
+  lights pole, so the average is not the complaint. An uneven frame reads
+  as stutter at any average, and every profiler this project has reports a
+  MEAN: the `\` CPU profiler prints present-total and its buckets, the
+  `[rt_profile]` GPU one prints per-pass milliseconds, and neither prints a
+  distribution. So there is currently no instrument that can even see the
+  thing being reported.
+
+  First step is therefore measurement, not a fix: a frame-time histogram or
+  a 1%/0.1%-low figure over a run, beside the mean the profilers already
+  print. Until that exists any change is judged by feel.
+
+  Scope note -- the user did not say which tier or view, and they matter:
+  the RT view is GPU-bound at ~45 fps where a hitch has different causes
+  than the raster view's CPU build. Ask before assuming. Known suspects
+  worth ruling in or out once there is a histogram: the RT view has no
+  build-ahead overlap (DOOM-0197, deferred behind DOOM-0090), the
+  per-vertex REHEIGHT scan is ~3 ms of every raster build and also drives
+  animated-texture cycling so it cannot be blanket-skipped, and the
+  denoiser plus megakernel dominate the traced frame.
+
+  Related: DOOM-0170 (Solid perf), DOOM-0197 (RT build-ahead), DOOM-0074
+  (raster build-ahead, shipped).
+  **Layman:** The game's speed wobbles instead of holding steady. Even at a good average frame rate, uneven frames read as stutter -- this is about making each frame take the same time as the last.
+  Kind: perf.
+  Source: user-request-2026-08-20 (play-test of the DOOM-0345 bloom look call).
