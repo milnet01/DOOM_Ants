@@ -6,6 +6,24 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **A release can no longer ship a build older than the code it is tagged
+  against.** (DOOM-0356) The release tool used to treat any file with the right
+  name as "already built", so it could publish a binary made before the fix the
+  release was cut for -- which is how 0.7.1 first went out. Each build is now
+  stamped with the commit it came from and only reused for that commit, and
+  every published file is downloaded again afterwards and checked against what
+  was built.
+
+- **The version now moves everywhere at once when a release is cut.**
+  (DOOM-0357) The changelog heading, its links and the README's "Latest release"
+  line used to move only on one of the tool's two routes, so a changelog written
+  by hand left the README advertising the previous version. All of them are now
+  brought up to date on either route, the tool refuses to tag while any of them
+  lags behind, and a preview build deliberately leaves the README pointing at
+  the last full release.
+
 ## [0.7.1] - 2026-08-19
 
 ### Fixed

@@ -1608,7 +1608,7 @@ with friends.
   Kind: security.
   Source: release-gate-0.7.1-2026-08-19.
 
-- 📋 [DOOM-0356] **release.sh ships a STALE binary whenever an artifact of that name already exists.**
+- ✅ [DOOM-0356] **release.sh ships a STALE binary whenever an artifact of that name already exists.**
   Caught 2026-08-19 while cutting 0.7.1, by downloading the PUBLISHED zip
   and checking the binary for the fix that release claimed to carry. It did
   not have it. Both artifacts were stale, not just one.
@@ -1653,8 +1653,34 @@ with friends.
   **Layman:** The release tool can publish an old build by mistake -- it decides "already built" from the file name, which only carries the version number, so it never notices the code changed.
   Kind: fix.
   Source: release-gate-0.7.1-2026-08-19.
+  Resolved 2026-08-19 (40d997a). Each build now stamps <artifact>.commit with
+  `git rev-parse HEAD`, and an artifact is reused only when that stamp equals
+  the commit being released -- fix option (b), the one the bullet recommended.
+  A dirty tree matches no stamp and always rebuilds, and its stamp is removed
+  rather than written so a later clean run cannot trust it.
 
-- 📋 [DOOM-0357] **release.sh tags without bumping README when the CHANGELOG heading already exists.**
+  The bullet's second ask landed too: --publish re-downloads both published
+  assets and compares them byte-for-byte with the local build. The stamp proves
+  the local artifact came from HEAD; the download proves the published asset is
+  that artifact.
+
+  Verified in the real repo: run 1 with no artifact built both; run 2 at the
+  same commit reused both; run 3 with a doctored AppImage stamp rebuilt the
+  AppImage alone and reused the zip. Verified in an isolated sandbox (clone +
+  local bare origin + stubbed gh, nothing left the machine) that a published
+  asset differing from the build aborts with "published <name> does not match
+  the local build".
+
+  --rebuild still works and is now only about forcing a clean rebuild.
+  docs/standards/releases.md and CLAUDE.md updated (cbef0b7): the mandatory
+  --rebuild rule and the hand-check instruction are retired, the 0.7.1 story
+  and the artifact-opening know-how kept.
+
+  Not re-checked: whether earlier releases shipped stale, which the bullet
+  raised as worth knowing. Still open, and cheap now -- download each release's
+  assets and compare against a build of its tag.
+
+- ✅ [DOOM-0357] **release.sh tags without bumping README when the CHANGELOG heading already exists.**
   Found 2026-08-19 by the review-contract gate on docs/standards/releases.md.
   All THREE cold lanes reported it independently, which is the strongest
   signal that run produced. Confirmed against source.
@@ -1733,9 +1759,61 @@ with friends.
   else-branch defect still leaves the CHANGELOG `[Unreleased]:` /
   `[<ver>]:` compare links unwritten, because the else branch owns those
   too. Whatever fix lands should keep all four legs together, not three.
+  Resolved 2026-08-19 (b264463). The CHANGELOG heading, its compare links and
+  README's "Latest release" line are each applied where missing and skipped
+  where already right, so both of release.sh's paths converge on the same
+  state. A lockstep guard then refuses to tag while any leg still disagrees,
+  which also catches a leg edited by hand to the wrong value -- the stronger of
+  the two fixes the bullet offered, and both are in.
+
+  The pre-release leg was decided by the user, 2026-08-19: README's line tracks
+  the latest STABLE version, because it is what a player should download. A
+  `-`-suffixed version now skips that leg entirely rather than writing a line
+  the X.Y.Z match cannot recognise; the other legs still move for it.
+
+  Verified in an isolated sandbox (clone + local bare origin + stubbed gh):
+  normal path moves all four legs; hand-dated CHANGELOG now moves README and
+  the compare links (the defect); a pre-release leaves README at 0.7.1 and is
+  marked --prerelease; the stable release AFTER a pre-release completes instead
+  of aborting; and a leg sabotaged to not move aborts with "refusing to tag
+  v9.9.9 -- README's 'Latest release' line does not read 9.9.9", leaving no tag.
+
+  docs/standards/releases.md updated (cbef0b7): the "leave it as [Unreleased]"
+  and "do not cut a pre-release" caveats are retired, and the named exception
+  for repairing a poisoned README line is gone with the failure it repaired.
   **Layman:** If the changelog section for a version is already written by hand, the release tool tags the release but forgets to update the version shown in the README.
   Kind: fix.
   Source: review-contract-releases-md-2026-08-19.
+
+- 📋 [DOOM-0358] **release.sh publishes with EMPTY release notes when the CHANGELOG section has no entries.**
+  Found 2026-08-19 while sandbox-testing the DOOM-0356/0357 fixes, in the
+  stubbed `gh` call log: `gh release create v9.9.9 ... --notes  <assets>`.
+  The notes argument was empty.
+
+  packaging/release.sh, the NOTES block after tagging: the release notes are
+  the CHANGELOG section for the version, extracted with awk. Nothing checks
+  that the extraction returned anything. When `[Unreleased]` is empty -- which
+  is exactly the state right after a release -- the promoted section is empty
+  too, and the release is published with a blank body.
+
+  Reachable by ordinary use: cut a release, then cut another before any item
+  graduates into the changelog. The tool gates on `make test` and on a clean
+  tree, but not on having anything to say.
+
+  docs/standards/releases.md says the notes ARE the CHANGELOG section, and
+  `cut-release` refuses to run at all without a dated section carrying shipped
+  items -- so the standard's intent is already that an empty release is not a
+  release. release.sh does not enforce it.
+
+  Fix: refuse to publish when the extracted notes are empty (or whitespace),
+  naming the section that came back empty. Cheap -- one test beside the
+  existing lockstep guard, on the same path.
+
+  Not urgent: it produces an ugly release, not a wrong one, and no shipped
+  release has hit it.
+  **Layman:** If nobody wrote down what changed, the release tool still publishes the release -- with a completely blank description.
+  Kind: fix.
+  Source: release-sh-sandbox-run-2026-08-19.
 
 ## Phase 2 — The Spin
 
