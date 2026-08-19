@@ -75,6 +75,13 @@ Quick summary of the load-bearing ones:
   append-only: never renumber, never reuse.
 - Shortest correct implementation; reuse before rewriting.
 - Keep `CHANGELOG.md` and any version line in lockstep when releasing.
+- **After publishing, download the released artifact and confirm it contains the
+  change it claims.** `packaging/release.sh` decides an artifact is already built
+  from its *filename*, which carries only the version — so a build-only run
+  followed by `--publish` (the script's own documented two-step) uploads the
+  earlier binary, and every other signal stays green: `make test` and
+  `ci-local.sh` test the tree, not the artifact. Pass `--rebuild` until
+  DOOM-0356 lands. Caught this way on 0.7.1.
 - Dependencies stay on the **latest stable** version (features *and* security).
   An older pin is a last resort — only when the newer version explicitly breaks
   a feature — and must be logged in the dependencies standard's Version

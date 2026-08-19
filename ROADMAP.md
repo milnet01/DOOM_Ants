@@ -1608,6 +1608,52 @@ with friends.
   Kind: security.
   Source: release-gate-0.7.1-2026-08-19.
 
+- 📋 [DOOM-0356] **release.sh ships a STALE binary whenever an artifact of that name already exists.**
+  Caught 2026-08-19 while cutting 0.7.1, by downloading the PUBLISHED zip
+  and checking the binary for the fix that release claimed to carry. It did
+  not have it. Both artifacts were stale, not just one.
+
+    packaging/release.sh:71  if [ "$REBUILD" = 1 ] || [ ! -f "$APPIMAGE" ]; then
+    packaging/release.sh:80  if [ "$REBUILD" = 1 ] || [ ! -f "$WINZIP" ]; then
+
+  The freshness test is "does a file with this name exist". The name carries
+  only the version, so it says nothing about the source it was built from.
+  Any rebuild is skipped unless --rebuild is passed by hand.
+
+  This is not an exotic path -- it is the script's OWN documented workflow.
+  Its usage block recommends:
+
+    packaging/release.sh 0.3.0            # build both artifacts locally
+    packaging/release.sh 0.3.0 --publish  # also tag, push, GitHub release
+
+  Run those two in order with any commit in between and the publish ships
+  the first build. On 0.7.1 the artifacts were built 11:50, DOOM-0353 landed
+  11:59, and the 12:01 --publish uploaded the 11:50 binaries. Nothing warned:
+  `make test` passed (it tests the freshly built tree, not the artifact),
+  ci-local.sh passed, the tag and CHANGELOG were correct, and the release
+  reported success. Only unzipping the published asset showed it.
+
+  Remediated for 0.7.1 by rebuilding with --rebuild and replacing the assets
+  with `gh release upload --clobber`. The tag was NOT moved: the commit was
+  always correct and only the built files were stale.
+
+  Worth checking whether earlier releases shipped the same way -- the pattern
+  has been in the script since at least 0.2.0, and the two-step is the
+  documented one.
+
+  Fix options, cheapest first: (a) invert the default so --publish always
+  rebuilds, with an opt-out flag rather than an opt-in; (b) stamp the built
+  artifact with `git rev-parse HEAD` and rebuild when it differs from the
+  current commit; (c) refuse to publish when the artifact's mtime predates
+  the HEAD commit's. (b) is the honest one -- it answers "was this built from
+  what I am tagging?" rather than "is there a file here".
+
+  Also add a post-publish assertion that the uploaded artifact contains the
+  commit it claims, so this class cannot recur silently.
+  **Layman:** The release tool can publish an old build by mistake -- it decides "already built" from the file name, which only carries the version number, so it never notices the code changed.
+  Kind: fix.
+  Source: release-gate-0.7.1-2026-08-19.
+
 ## Phase 2 — The Spin
 
 The creative overhaul: evolve the renderer toward true 3D with hardware
