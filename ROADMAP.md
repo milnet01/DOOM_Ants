@@ -1785,7 +1785,7 @@ with friends.
   Kind: fix.
   Source: review-contract-releases-md-2026-08-19.
 
-- 📋 [DOOM-0358] **release.sh publishes with EMPTY release notes when the CHANGELOG section has no entries.**
+- ✅ [DOOM-0358] **release.sh publishes with EMPTY release notes when the CHANGELOG section has no entries.**
   Found 2026-08-19 while sandbox-testing the DOOM-0356/0357 fixes, in the
   stubbed `gh` call log: `gh release create v9.9.9 ... --notes  <assets>`.
   The notes argument was empty.
@@ -1811,6 +1811,14 @@ with friends.
 
   Not urgent: it produces an ugly release, not a wrong one, and no shipped
   release has hit it.
+  Resolved (2026-08-20): the notes extraction moved above the tag, beside
+  the lockstep guard, and refuses when the section is blank or
+  whitespace-only -- naming the section. Placement matters: after the tag
+  is pushed there is nothing left to refuse. Verified in the publish
+  sandbox: an emptied [Unreleased] aborts with "CHANGELOG section [9.9.9]
+  is empty; nothing to release", no tag created, no `gh release create`;
+  the same run with the section restored publishes with the real notes in
+  the `gh` call log. bash -n + shellcheck clean.
   **Layman:** If nobody wrote down what changed, the release tool still publishes the release -- with a completely blank description.
   Kind: fix.
   Source: release-sh-sandbox-run-2026-08-19.

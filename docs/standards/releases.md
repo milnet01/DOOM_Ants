@@ -85,7 +85,8 @@ In order, `release.sh`:
 3. builds and zips the **Windows** cross-build;
 4. with `--publish`: brings the CHANGELOG heading, its compare links and
    README's "Latest release" line up to `<ver>` — each one only where it is not
-   already — commits whatever moved, refuses to tag if any leg still lags, then
+   already — commits whatever moved, refuses to tag if any leg still lags or if
+   the CHANGELOG section for `<ver>` is empty, then
    tags `v<ver>`, pushes branch + tag, creates the GitHub release with both
    artifacts attached and the CHANGELOG section as notes, and finally
    re-downloads both published assets and checks they are byte-identical to what

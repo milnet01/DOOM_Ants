@@ -238,17 +238,21 @@ if [ "$PRERELEASE" = 0 ]; then
     lockstep_fail "README's 'Latest release' line does not read $VERSION"
 fi
 
-echo "==> Tagging $TAG and pushing..."
-git tag -a "$TAG" -m "$VERSION"
-git push origin HEAD
-git push origin "$TAG"
-
-# Release notes = the CHANGELOG section for this version.
+# Release notes = the CHANGELOG section for this version. Extracted here, before
+# the tag, because a release with a blank body is not a release -- and after the
+# tag is pushed there is nothing left to refuse (DOOM-0358).
 NOTES="$(awk -v v="$VERSION" '
   $0 ~ "^## \\[" v "\\]" { grab=1; next }
   grab && /^## \[/       { exit }
   grab                   { print }
 ' CHANGELOG.md)"
+[ -n "$(printf '%s' "$NOTES" | tr -d '[:space:]')" ] ||
+  lockstep_fail "CHANGELOG section [$VERSION] is empty; nothing to release"
+
+echo "==> Tagging $TAG and pushing..."
+git tag -a "$TAG" -m "$VERSION"
+git push origin HEAD
+git push origin "$TAG"
 
 echo "==> Creating GitHub release $TAG..."
 TITLE="DOOM_Ants $VERSION"

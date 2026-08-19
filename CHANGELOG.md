@@ -8,6 +8,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **A release with nothing written down about it is refused instead of published.** (DOOM-0358)
+  The release tool took its description straight from the changelog and
+  never checked there was anything there, so cutting a release with an
+  empty changelog section published it with a completely blank body. It
+  now stops before tagging and says which section came back empty.
+
 - **A release can no longer ship a build older than the code it is tagged
   against.** (DOOM-0356) The release tool used to treat any file with the right
   name as "already built", so it could publish a binary made before the fix the
