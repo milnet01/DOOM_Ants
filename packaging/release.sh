@@ -15,7 +15,9 @@
 #   2. Builds the Linux AppImage  -> packaging/build/doom_ants-<ver>-x86_64.AppImage
 #   3. Builds + zips the Windows build -> packaging/build/doom_ants-<ver>-windows-x86_64.zip
 #   With --publish, additionally:
-#   4. Promotes CHANGELOG [Unreleased] -> [<ver>] - <today> and commits it.
+#   4. Brings the CHANGELOG heading, its compare links and README's "Latest
+#      release" line up to <ver> -- whichever of them are not there already --
+#      and commits them.
 #   5. Tags v<ver>, pushes the branch + tag.
 #   6. Creates the GitHub release (notes = the CHANGELOG section, both artifacts
 #      attached). A version with a "-" suffix (e.g. 0.3.0-pre.1) is published as
@@ -169,33 +171,71 @@ if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   exit 1
 fi
 
-# Promote CHANGELOG [Unreleased] -> [<ver>] - <today>, including the link refs.
+# docs/standards/releases.md: the version lives in three places in lockstep --
+# the tag, the CHANGELOG heading and README's "Latest release" line -- plus the
+# CHANGELOG compare links, which move with the heading. They move together,
+# driven by this tool. Each leg below is applied only where it is missing, so a
+# CHANGELOG section dated by hand no longer skips the other three (DOOM-0357).
+CHANGED=0
+
 if grep -q "^## \[$VERSION\]" CHANGELOG.md; then
   echo "==> CHANGELOG already has a [$VERSION] section; leaving it as-is"
 else
   echo "==> Promoting CHANGELOG [Unreleased] -> [$VERSION]..."
   TODAY="$(date +%F)"
+  awk -v V="$VERSION" -v D="$TODAY" '
+    /^## \[Unreleased\]$/ && !h { print; print ""; print "## [" V "] - " D; h=1; next }
+    { print }
+  ' CHANGELOG.md > CHANGELOG.md.tmp && mv CHANGELOG.md.tmp CHANGELOG.md
+  CHANGED=1
+fi
+
+if grep -q "^\[$VERSION\]: " CHANGELOG.md; then
+  echo "==> CHANGELOG already has a [$VERSION] compare link"
+else
+  echo "==> Adding CHANGELOG compare links for $VERSION..."
   PREV="$(grep -m1 '^\[Unreleased\]:' CHANGELOG.md | sed -E 's#.*/compare/(.+)\.\.\.HEAD.*#\1#')"
   if [ -z "$PREV" ]; then echo "release.sh: could not find [Unreleased] compare link" >&2; exit 1; fi
   UL_NEW="[Unreleased]: $BASE_URL/compare/$TAG...HEAD"
   VER_LINK="[$VERSION]: $BASE_URL/compare/$PREV...$TAG"
-  awk -v V="$VERSION" -v D="$TODAY" -v UL="$UL_NEW" -v NL="$VER_LINK" '
-    /^## \[Unreleased\]$/ && !h { print; print ""; print "## [" V "] - " D; h=1; next }
-    /^\[Unreleased\]:/         { print UL; print NL; next }
+  awk -v UL="$UL_NEW" -v NL="$VER_LINK" '
+    /^\[Unreleased\]:/ { print UL; print NL; next }
     { print }
   ' CHANGELOG.md > CHANGELOG.md.tmp && mv CHANGELOG.md.tmp CHANGELOG.md
+  CHANGED=1
+fi
 
-  # docs/standards/releases.md: the version lives in THREE places in lockstep --
-  # the tag, the CHANGELOG heading, and README's "Latest release" line -- and they
-  # move together, driven by this tool. The README leg was missing, so every
-  # release since shipped with a stale "Latest release" line.
+# README's "Latest release" line tracks the latest STABLE version: it is what a
+# player should download. A `-`-suffixed pre-release therefore skips this leg
+# rather than writing a version the X.Y.Z match below would no longer recognise,
+# which used to abort the *next* release (DOOM-0357).
+if [ "$PRERELEASE" = 1 ]; then
+  echo "==> Pre-release: leaving README's 'Latest release' line at the last stable version"
+elif grep -qF "Latest release: **$VERSION**." README.md; then
+  echo "==> README already advertises $VERSION"
+else
   if ! grep -q 'Latest release: \*\*[0-9]\+\.[0-9]\+\.[0-9]\+\*\*\.' README.md; then
     echo "release.sh: could not find README 'Latest release' line to bump" >&2; exit 1
   fi
   sed -i -E "s/Latest release: \*\*[0-9]+\.[0-9]+\.[0-9]+\*\*\./Latest release: **$VERSION**./" README.md
+  CHANGED=1
+fi
 
+if [ "$CHANGED" = 1 ]; then
   git add CHANGELOG.md README.md
   git commit -m "$VERSION: ${THEME:-release}"
+else
+  echo "==> Version files already read $VERSION; nothing to commit"
+fi
+
+# Lockstep guard: never move the tag past a leg that did not move. This also
+# catches a leg edited by hand to the wrong value (DOOM-0357).
+lockstep_fail() { echo "release.sh: refusing to tag $TAG -- $1" >&2; exit 1; }
+grep -q "^## \[$VERSION\]" CHANGELOG.md || lockstep_fail "CHANGELOG has no [$VERSION] section"
+grep -q "^\[$VERSION\]: "  CHANGELOG.md || lockstep_fail "CHANGELOG has no [$VERSION] compare link"
+if [ "$PRERELEASE" = 0 ]; then
+  grep -qF "Latest release: **$VERSION**." README.md ||
+    lockstep_fail "README's 'Latest release' line does not read $VERSION"
 fi
 
 echo "==> Tagging $TAG and pushing..."
