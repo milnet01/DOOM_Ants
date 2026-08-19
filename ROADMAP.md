@@ -1677,8 +1677,43 @@ with friends.
   and the artifact-opening know-how kept.
 
   Not re-checked: whether earlier releases shipped stale, which the bullet
-  raised as worth knowing. Still open, and cheap now -- download each release's
+  raised as worth knowing. Answered 2026-08-20, in the note below -- download each release's
   assets and compare against a build of its tag.
+  Answer (2026-08-20): NO release before 0.7.1 shipped a stale artifact.
+  All ten are clean -- 0.1.0, both 0.2.0 pre-releases, and 0.2.0 through
+  0.7.0.
+
+  Rebuilding each tag and comparing bytes does not work: the AppImage and
+  the zip both embed timestamps, so a correct release fails a byte
+  comparison months later. Two signals that do work were used together.
+
+  Build time. Each shipped binary was opened (`--appimage-extract` for the
+  AppImage, `unzip` for the Windows zip) and its stored mtime read. Every
+  stable release built its binaries within ~1 minute of the version-bump
+  commit the tag points at -- 0.2.0 11:05 vs 11:06, 0.3.0 14:34 vs 14:34,
+  0.4.0 09:04 vs 09:05, 0.5.0 11:05 vs 11:05, 0.6.0 07:50 vs 07:51, 0.7.0
+  20:16 vs 20:16 -- which is exactly what release.sh's order produces when
+  it builds rather than reuses. A stale artifact carries an mtime from an
+  earlier session. The two 0.2.0 pre-releases were assembled by hand (one
+  carries a differently-named zip) and their binaries post-date their tags,
+  so neither can be stale either.
+
+  Content. For each release, the string literals ADDED in that release's
+  own commit window were extracted from the diff and looked for in the
+  shipped Linux binary, with the previous release's binary as the control.
+  Every release contains markers present in itself and absent from its
+  predecessor, including markers from the LAST engine commit before its tag
+  -- 0.2.0 the sky-mesh OOM message, 0.3.0 `I_InitSound: `, 0.4.0
+  `overlays/grunge.png`, 0.5.0 `Game Select`, 0.6.0 `dev-shots/shot-%04d.png`,
+  0.7.0 the savegame-bounds message.
+
+  Method validated against 0.7.1 as the control: its currently published
+  assets are the REBUILT ones (this bullet's own remediation, uploaded
+  12:03 against a 12:01 tag), and both signals report them fresh -- the
+  Windows exe imports MoveFileEx (DOOM-0353, 11:59) and the Linux binary
+  carries `-rtview` (DOOM-0351), neither present in 0.7.0.
+
+  Nothing was published or modified; downloads only, into a scratch dir.
 
 - ✅ [DOOM-0357] **release.sh tags without bumping README when the CHANGELOG heading already exists.**
   Found 2026-08-19 by the review-contract gate on docs/standards/releases.md.

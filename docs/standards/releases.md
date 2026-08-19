@@ -113,6 +113,16 @@ AppImage toolchain (auto-fetched), `zip`, and an authenticated `gh`.
 > so the published asset provably is that artifact. A dirty tree matches no
 > stamp and always rebuilds.
 >
+> **0.7.1 is the only release this happened to.** Every earlier release was
+> re-checked on 2026-08-20 and all ten are clean. Rebuilding a tag and comparing
+> bytes proves nothing — both artifact formats embed timestamps, so a correct
+> release fails that comparison months later. What works is opening the shipped
+> binary and reading two things: its stored build time against the version
+> commit the tag points at (every stable release built within ~1 minute of it),
+> and whether it carries string literals the diff for its own commit window
+> added, with the previous release's binary as the control. Evidence on
+> DOOM-0356.
+>
 > **To inspect an artifact by hand anyway**, look for something only the new code
 > has — an imported symbol, a new string — rather than trusting the timestamp.
 > They open differently: `unzip` the Windows zip, but an AppImage is not a zip, so
