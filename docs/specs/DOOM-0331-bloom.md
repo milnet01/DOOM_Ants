@@ -1386,10 +1386,23 @@ below is the look residual it leaves.
   *Blocks:* the ROADMAP flip only. If the halo reads too tight, the 13-tap kernel
   then §9's pyramid are the levers; if too strong, the intensity presets drop
   before the threshold does.
-- **Q2 — does a flashlight on a white wall bloom, and does that read badly?**
+- **Q2 — does a flashlight on a plain lit wall bloom, and does that read badly?**
   §3 decision 2 accepted the possibility. **User**, same gate. *Blocks:* the
   ROADMAP flip only. The fix if it does is raising the presets' ramp start above
   1.0, not an emissive gate — that was weighed and rejected.
+
+  *Reworded 2026-08-20, example only — the question is unchanged.* This asked
+  for **a white wall**, and the user pointed out that DOOM 1 and 2 have none:
+  the palette is browns, greys and greens, so the test named a surface that
+  does not exist and could not be run as written. What Q2 is actually asking
+  is whether an **ordinary, non-emissive surface** blooms when the flashlight
+  lights it hard — a false positive, where the halo should mark light
+  *sources* rather than anything merely bright. The surfaces to aim at are the
+  brightest ordinary art in the game: the pale tech panels (`STARTAN`,
+  `STARGR`) and the light concrete and metal flats, at point-blank range with
+  the flashlight on. The elsewhere-in-this-spec uses of "white wall" as the
+  **1.0-linear reference value** in §4.2's table and the luminance worked
+  example are a unit, not a surface, and are left alone.
 - **Q3 — does one shared preset table read the same on both chains?** §3
   decision 5 settled the *units* question: the threshold is in scene radiance on
   both chains, so what glows no longer moves with the Brightness slider. What it

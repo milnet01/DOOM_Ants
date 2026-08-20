@@ -9538,6 +9538,32 @@ parked ideas (💭 considered) until we commit to and design each one.
   answered "a little too strong" and acted on via the shared intensity ladder
   (details on DOOM-0345). **The flashlight arm is NOT tested** -- "didn't try"
   -- and stays open.
+  Q2's test named a surface that does not exist (2026-08-20). The user, asked
+  to try "the flashlight on a white wall": "There are no white walls in DOOM 1
+  or 2." Correct -- the palette is browns, greys and greens. The phrase came
+  from the spec's own §10 Q2 and had been repeated at them unchecked.
+
+  The QUESTION is unaffected, and it is a real one: does an ordinary,
+  non-emissive surface bloom when the flashlight lights it hard? That is the
+  false-positive arm -- the halo is meant to mark light SOURCES, not anything
+  merely bright. Spec §10 Q2 reworded to name surfaces that exist: the pale
+  tech panels (STARTAN, STARGR) and the light concrete and metal flats, at
+  point-blank range with the flashlight on. Example only, so no gate
+  (CLAUDE.md rule 14's No branch).
+
+  Left alone deliberately: "white wall" elsewhere in the spec -- §4.2's
+  threshold table and the luminance worked example -- where it means the
+  1.0-linear REFERENCE VALUE rather than a piece of art. Changing those would
+  break the arithmetic they document.
+
+  Next session can answer this WITHOUT the user. The flashlight is
+  `rb_flashlight` (r_vulkan.cpp) and persists as `flashlight` in ~/.doomrc, so
+  the capture harness can set it in a temp config exactly as it sets renderer /
+  rt_view / rt_bloom. Park the camera close to a pale tech wall with no emitter
+  in frame, capture bloom 2 vs bloom 0 with the flashlight on, and read the
+  block map: any lift on that wall IS the false positive. That turns the last
+  open look question into a measurement, and only the halo-strength judgement
+  then genuinely needs eyes.
 
 - 📋 [DOOM-0332] **1-D shadow maps for point lights in the rasterised view, exploiting DOOM's flat map.**
   Found reviewing GZDoom at the user's request; feeds DOOM-0170's raster
