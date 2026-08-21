@@ -9564,6 +9564,53 @@ parked ideas (💭 considered) until we commit to and design each one.
   block map: any lift on that wall IS the false positive. That turns the last
   open look question into a measurement, and only the halo-strength judgement
   then genuinely needs eyes.
+  Progress (2026-08-21): **§10 Q2's measurement half is ANSWERED, and the
+  answer is yes on ONE chain only.** E1M1 `1432 -3456 180` — point-blank
+  STARTAN3 filling the frame, sector light 255 (the brightest ordinary art
+  in the map), no emitter in view, flashlight on, bloom 2 vs 0, each arm
+  against a same-build control at 0.00/255.
+
+  - **Solid, rasterised view: the wall blooms.** SIGNAL mean 0.95/255, max
+    23.0, 15.9% of pixels. The lift sits on the brightest band — the top
+    371 rows of 1738 — and is deepest at the flashlight's up+right hot
+    spot, where the hottest 128 px tile rises from rgb 225/159/97 to
+    235/170/109, a 6.7% lift.
+  - **Solid + traced view, and Ultra + traced view: it does NOT.** Both
+    mean 0.02/255, max 1.0, 0.0% of pixels, EFFECT 0 px. Not a dead chain:
+    at the emitter fixture `1056 -3616 270` the same configs give 3.46 mean
+    / 37.0% (raster) and 5.84 mean / 7.0% / max 212 (traced).
+  - **The flashlight is an amplifier, not the cause.** With it OFF the same
+    wall still blooms — mean 0.33, 5.2%, confined to the top 130 rows. The
+    flashlight roughly triples both the area (5.2 → 15.9%) and the mean
+    (0.33 → 0.95) and pushes the band 130 → 371 rows down the wall.
+
+  **Cause, and it is arithmetic rather than a tuning miss.**
+  `bloom_extract_raster.comp:83` computes `peak = max(c.rgb) * pc.chainScale`
+  and *then* tests it against the shared threshold, so `kBloomRasterScale`
+  1.5 divides the raster chain's effective ramp start by itself: Medium's
+  1.50/0.35 ramps from 1.15 on the traced chain but from **0.767** on the
+  raster one — below paper-white. Any fully-lit bright texel qualifies
+  there and cannot qualify on the traced chain. That is why the arms split.
+
+  **The tension this exposes, for whoever picks the fix.** The constant that
+  makes the rasterised view match the traced one (DOOM-0345, the user's
+  2026-08-20 call) is the same constant that drops its ramp start below
+  white. §10 Q2 names the fix as "raising the presets' ramp start above
+  1.0"; on the raster chain that means raising the threshold to compensate
+  for `chainScale`, which by construction unpicks the shape match the
+  scale was chosen to produce. Not re-measured here: whether the wall
+  bloomed before the match landed.
+
+  **What is left of Q2 is the judgement half only** — does a 6.7% warm lift
+  on the brightest panel of a lit wall read badly? Captured side by side it
+  reads as a slight exposure lift on the orange panel, not as a halo, but
+  that is the user's call and it is a raster-view call, not an Ultra one.
+  Evidence (local, gitignored): `dev-shots/DOOM-0331-q2/` holds all 22
+  frames as `{solid_ras,solid_rt,ultra_rt,nofl,lampras,lamprt}_{on,off,ctrl}.png`
+  plus each run's log. Reproducible without them: the coordinates above, a
+  freshly-written config per run (trap 2) carrying only `renderer`,
+  `rt_view`, `rt_bloom`, `flashlight`, `rt_fog 0`, `render_scale 50`, and
+  `-inspect -freeze -noinput -devshot 150` off a `make DEV=1` build.
 
 - 📋 [DOOM-0332] **1-D shadow maps for point lights in the rasterised view, exploiting DOOM's flat map.**
   Found reviewing GZDoom at the user's request; feeds DOOM-0170's raster
