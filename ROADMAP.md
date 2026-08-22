@@ -9611,6 +9611,36 @@ parked ideas (💭 considered) until we commit to and design each one.
   freshly-written config per run (trap 2) carrying only `renderer`,
   `rt_view`, `rt_bloom`, `flashlight`, `rt_fog 0`, `render_scale 50`, and
   `-inspect -freeze -noinput -devshot 150` off a `make DEV=1` build.
+  Progress (2026-08-22): **what the Q2 measurement means for the spec's own
+  invariants, checked so the next session does not re-derive it.**
+
+  The flashlight half is **expected behaviour, not a leak**: §4.2's "What the
+  floor does NOT bound either: DIRECT" says outright that a wall with lamps
+  trained on it exceeds 1.0 and *will* bloom, and §3 decision 2 chose brightness
+  over an emissive flag precisely so that happens. The measurement confirms the
+  design's own prediction rather than contradicting it.
+
+  The **flashlight-OFF** half is the one that bites. With no DIRECT term the
+  wall still blooms (0.33 mean, 5.2%), and that is AMBIENT alone — the case
+  umbrella INV-5 / DOOM-0331 INV-4 ("only over-white light blooms") is supposed
+  to bound. §4.2 already flags the floor argument as provisional pending §10 Q5,
+  but its arithmetic is written in traced-chain units and **predates
+  `kBloomRasterScale`**, which DOOM-0345 added afterwards. Dividing the raster
+  ramp start by 1.5 puts it at 0.767 — below 1.0 — so on the raster chain INV-4
+  fails on arithmetic alone, without needing Q5's GI-bounce measurement at all.
+  Sector light tops out at 1.0 in AMBIENT and 1.0 > 0.767.
+
+  So Q5 is still owed (the AMBIENT ceiling is still unmeasured), but it is no
+  longer what decides INV-4 for the rasterised view. Nothing to un-ship: there
+  is no bloom test in `linuxdoom-1.10/tests/`, so no assertion was relying on
+  the floor. Left for the same call as Q2's judgement half, because raising the
+  raster ramp start above 1.0 and keeping DOOM-0345's shape match are the same
+  dial pulled two ways.
+
+  Reproduction tooling kept beside the frames in `dev-shots/DOOM-0331-q2/`:
+  `cap.sh` (writes a fresh config per run, per trap 2) and `wallprobe.py`
+  (finds a point-blank vantage on a named wall texture straight from the WAD —
+  that is how `1432 -3456 180` was chosen rather than walked to).
 
 - 📋 [DOOM-0332] **1-D shadow maps for point lights in the rasterised view, exploiting DOOM's flat map.**
   Found reviewing GZDoom at the user's request; feeds DOOM-0170's raster
