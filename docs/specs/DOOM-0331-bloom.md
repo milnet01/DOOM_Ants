@@ -1212,8 +1212,9 @@ h=int(a.shape[0]*0.805);print(numpy.abs(a[h:]-b[h:]).max())" on.png off.png
   `albedo * sect` with nothing clamping the sum (§4.2), so §10 Q5 measures it at
   L3 and the presets clear whatever it turns out to be. Until then this invariant
   is asserted, not proven.
-  *Test:* two parts, the first because the arithmetic can be checked without a
-  build and the second because the look cannot:
+  *Test:* three parts — the first because the arithmetic can be checked without a
+  build, the second because the look cannot, and the third because the ceiling the
+  first is compared against is runtime data that no source-scraping test can see:
   ```
   # 1. every preset's ramp start is >= 1.0 (the floor) AFTER every per-chain factor
   #    the threshold test applies -- see the 2026-08-25 amendment below; reading the
@@ -1229,6 +1230,14 @@ h=int(a.shape[0]*0.805);print(numpy.abs(a[h:]-b[h:]).max())" on.png off.png
   #    THAT ARE NOT UNDER A LAMP - the DIRECT term is unbounded by design
   #    (see 4.2), so a heavily point-lit wall is expected to bloom.
   #    Quote the NOISE row beside SIGNAL.
+  # 3. the map's AMBIENT ceiling, printed by RunGiBake on every level load. Aim
+  #    part 2 at the coordinate it names - that is the map's worst case, and it is
+  #    not usually the room that looks brightest:
+  grep 'GI bounce ceiling' <run log>
+  # Compare the printed bound against each preset's ramp start. A bound BELOW every
+  # ramp start proves this invariant outright; a bound above one is not a failure by
+  # itself (the knee's weight at the ramp start is zero), and what settles it is part
+  # 2 aimed at the probe. E1M1 on 2026-08-25: bound 1.174, above Medium and High.
   ```
   *Breaks when:* a preset's `threshold − knee` drops below 1.0 (the failure the
   knee makes easy — a threshold of 1.0 with a knee of 0.5 starts extracting at 0.5
@@ -1264,9 +1273,41 @@ h=int(a.shape[0]*0.805);print(numpy.abs(a[h:]-b[h:]).max())" on.png off.png
   and that is *toward* the traced view's 7 %, which is the match §10 Q3's look call
   asked for. `-rtverify` PASS, rel-MSE unchanged at 0.2058 %.
 
-  **§10 Q5 is still owed and this does not close it.** The bounce-heavy room at
-  `3000 -4400 90` still moves 1.5 % of pixels against a 0.5 % noise floor, which is
-  the GI-bounce ceiling this invariant's own text calls "asserted, not proven".
+  *Amended 2026-08-25, second pass — §10 Q5 answered arithmetically.* The AMBIENT
+  ceiling this invariant rests on is no longer estimated from photographs. `RunGiBake`
+  walks the SH-L1 payload it already maps and prints the map's bound:
+
+  ```
+  RB_Vulkan: GI bounce ceiling — max giIrradiance 0.424 at probe 22 (2080 -3648 80);
+  AMBIENT bound 1.174 = 0.75 sector + bounce (DOOM-0331 INV-4 floor is 1.00)
+  ```
+
+  On E1M1 that bound is **1.174**, so **Medium's ramp start of 1.15 does not clear it**
+  and neither does High's 1.00; **Low's 1.50 does, outright**. The ramp start is
+  nevertheless the wrong place to stop reading, because it is where the quadratic knee
+  begins at *zero* weight: at peak 1.174 the extract's own arithmetic gives
+  `w = 0.00035` at Medium and `w = 0.018` at High.
+
+  Photographed at the worst case the print names — `2080 -3648`, facing the brightest
+  plain wall in the room, Solid raster, each arm against a same-build control:
+
+  | Preset | Ramp start | World blocks | Noise |
+  |---|---|---|---|
+  | Low 1 | 1.50 | zero by arithmetic (1.50 > 1.174) | — |
+  | Medium 2 (default) | 1.15 | **0.0/255, every block** | 0.0 |
+  | High 3 | 1.00 | **0.1–0.6/255** | 0.0 |
+
+  So INV-4 holds at the shipped default with nothing to measure, and at High it is
+  breached by a quantity that peaks at 0.6/255 of one block's mean — real, and below a
+  quarter of one 8-bit step. That is recorded rather than retuned: the lever §10 Q5
+  wrote for this branch is the intensity column, and moving it would cost the halo the
+  user approved to remove something no play-test can see.
+
+  The earlier 1.5 % at `3000 -4400 90` is accounted for and was never AMBIENT. Its
+  block map moves only in the ceiling's red lamp array and in a nukage pool, both of
+  which reach the extract through DIRECT (`mesh.frag`: `direct += POINT_LIGHT_STRENGTH
+  * albedo * plight`), which this invariant exempts by name. The rest was the
+  fullscreen HUD numerals, which the same capture's NOISE row also moves.
 
 - **INV-5** — Solid keeps the 60 fps floor. With `bloom` at its shipped default,
   Solid at 50 % render scale on the reference RX 6600 stays at or above 60 fps
@@ -1500,6 +1541,27 @@ below is the look residual it leaves.
   capture harness's own noise floor. INV-4 is measured rather than asserted from
   here on, and the §4.5 values stop being provisional.
 
+  **Closed 2026-08-25 by computing it instead of photographing it.** The L3 answer was
+  a threshold sweep at three camera spots, which reads the *sum* and can only bound the
+  rooms it was pointed at — and its ~1.20 at `3000 -4400 90` was in fact the ceiling
+  lamps' DIRECT tail, not the bounce. The ceiling has a closed form: `mesh.frag` writes
+  `AMBIENT = albedo * sect + albedo * giIrradiance(probe, n)` with `albedo ≤ 1` and
+  `sect ≤ BASE_SECTOR_DIM`, and `giIrradiance` is an SH-L1 evaluation whose maximum over
+  a normal has an exact expression. `RunGiBake` now takes it over every probe on the map
+  during the readback it already performs, and prints the bound with the worst probe's
+  position, so the photographic half of INV-4's test can be aimed at the surface the
+  number describes rather than at a room somebody guessed was bright. On E1M1:
+  **max giIrradiance 0.424 at (2080 -3648 80), AMBIENT bound 1.174**. The two methods
+  agree within 0.03 where they overlap.
+
+  The bound is deliberately conservative — per channel independently, over every normal
+  DOOM can present, with `albedo`, `distLight` and AO all at their maxima — so it cannot
+  read low, and the measured residual at that spot is far under it. The verdict, the
+  per-preset weights and the captures are in INV-4's second 2026-08-25 amendment. Short
+  version: **the ramp start does not clear the ceiling at Medium or High, and INV-4
+  still holds at Medium with a photographic zero; High leaves 0.1–0.6/255 on the
+  brightest plain wall, recorded and not retuned.**
+
 ## 11. What checks this
 
 | Rule | What catches a breach |
@@ -1507,7 +1569,7 @@ below is the look residual it leaves.
 | INV-1 Classic untouched | the two INV-1 greps, run at L4 |
 | INV-2 `bloom 0` byte-identical | `ab_capture.sh` ×3 + `ab_diff.py` at L3 |
 | INV-3 HUD/weapon/menu never bloomed | INV-3's structural grep + the strip compare + the weapon/menu block map |
-| INV-4 paletted art does not bloom | the `kBloomPresets` floor read + §10 Q5's measured AMBIENT ceiling + `ab_diff.py` block map, E1M1, all at L3 |
+| INV-4 paletted art does not bloom | the `kBloomPresets` floor read (`bloom_threshold_test`, which also holds `kAmbientSectorMax` to `mesh.frag`'s `BASE_SECTOR_DIM`) + `RunGiBake`'s `GI bounce ceiling` line + `ab_diff.py` block map at the probe that line names |
 | INV-5 60 fps floor in Solid | `rb_profile` measurement at L4 |
 | INV-6 the bloom pass is timed | INV-6's slot and `nq` greps at L4 |
 | The profiler's LABELS still match its buckets | INV-6's third grep — the `bloom` label must appear in the `[raster_profile]` format string |

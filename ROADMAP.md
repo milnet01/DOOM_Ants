@@ -9688,6 +9688,46 @@ parked ideas (💭 considered) until we commit to and design each one.
   pixels against a 0.5% noise floor, which is the ceiling INV-4's own
   text calls "asserted, not proven". Also open: a second user look call
   on the softer Solid halo (19.2% vs the 33.8% they last saw).
+  Progress (2026-08-25b): §10 Q5 — the GI-bounce AMBIENT ceiling —
+  is ANSWERED, and by computing it rather than photographing it. INV-4's
+  own text called this ceiling "asserted, not proven"; L3's 2026-08-13
+  answer was a threshold sweep at three camera spots, which reads the SUM
+  and can only bound the rooms it was aimed at.
+
+  The ceiling has a closed form. mesh.frag writes
+  AMBIENT = albedo*sect + albedo*giIrradiance(probe,n), with albedo <= 1
+  and sect <= BASE_SECTOR_DIM; giIrradiance is an SH-L1 evaluation whose
+  maximum over a surface normal is exact. RunGiBake now takes it over
+  every probe during the readback it already does, and prints the bound
+  with the worst probe's position so INV-4's photographic half can be
+  aimed at the real worst case. E1M1: max giIrradiance 0.424 at
+  (2080 -3648 80), AMBIENT bound 1.174. The two methods agree within 0.03
+  where they overlap.
+
+  VERDICT: the ramp start does NOT clear the ceiling at Medium (1.15) or
+  High (1.00); Low (1.50) clears it outright. That is not a failure by
+  itself — the ramp start is where the knee begins at ZERO weight, and
+  the extract's own arithmetic at peak 1.174 gives w = 0.00035 (Medium)
+  and w = 0.018 (High). Photographed at (2080 -3648) facing the brightest
+  plain wall, Solid raster, each arm against a same-build control: Medium
+  moves 0.0/255 on EVERY world block; High moves 0.1-0.6/255 against a
+  0.0 noise floor. Recorded, not retuned — the lever is the intensity
+  column, and moving it would cost the halo the user approved to remove
+  something no play-test can see.
+
+  The 1.5% at 3000 -4400 90 that this question was still carrying was
+  never AMBIENT: its block map moves only in the ceiling's red lamp array
+  and a nukage pool, both of which reach the extract through DIRECT,
+  which INV-4 exempts by name. The rest was the fullscreen HUD numerals,
+  which the same capture's NOISE row also moves.
+
+  Guard: kAmbientSectorMax mirrors mesh.frag's BASE_SECTOR_DIM because
+  C++ cannot read a GLSL constant, and bloom_threshold_test now scrapes
+  both and reddens if they part company — the same shape of defect as
+  the Q2 breach. Mutation-probed.
+
+  Verified: make test 11/11, non-DEV build clean, -rtverify PASS with
+  rel-MSE unchanged at 0.2058%.
 
 - 📋 [DOOM-0332] **1-D shadow maps for point lights in the rasterised view, exploiting DOOM's flat map.**
   Found reviewing GZDoom at the user's request; feeds DOOM-0170's raster
