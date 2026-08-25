@@ -1215,8 +1215,12 @@ h=int(a.shape[0]*0.805);print(numpy.abs(a[h:]-b[h:]).max())" on.png off.png
   *Test:* two parts, the first because the arithmetic can be checked without a
   build and the second because the look cannot:
   ```
-  # 1. every preset's ramp start is >= 1.0 (the floor). Anchor on the pinned
-  #    declaration form (4.5), not a bare 'kBloomPresets[]' which does not match it:
+  # 1. every preset's ramp start is >= 1.0 (the floor) AFTER every per-chain factor
+  #    the threshold test applies -- see the 2026-08-25 amendment below; reading the
+  #    table alone is what missed the breach. `make test` runs it:
+  linuxdoom-1.10/tests/bloom_threshold_test.cpp
+  #    Its table half anchors on the pinned declaration form (4.5), not a bare
+  #    'kBloomPresets[]' which does not match it:
   awk '/kBloomPresets\[4\][[:space:]]*=/,/\};/' linuxdoom-1.10/r_vulkan.cpp
   # for each row: threshold - knee >= 1.0   (Low 1.50, Med 1.15, High 1.00)
   # 2. E1M1, flashlight off, bloom 3 vs bloom 0 + a same-build control:
@@ -1228,9 +1232,41 @@ h=int(a.shape[0]*0.805);print(numpy.abs(a[h:]-b[h:]).max())" on.png off.png
   ```
   *Breaks when:* a preset's `threshold − knee` drops below 1.0 (the failure the
   knee makes easy — a threshold of 1.0 with a knee of 0.5 starts extracting at 0.5
-  and blooms a lit wall), or the extract is moved to read the post-tone-map image,
-  where §3 decision 1's measured 1.13× compression leaves no threshold that
-  catches a lamp without catching a lit wall.
+  and blooms a lit wall), **or a per-chain factor divides that ramp start on its way
+  to the comparison** (the 2026-08-20 breach, below), or the extract is moved to read
+  the post-tone-map image, where §3 decision 1's measured 1.13× compression leaves no
+  threshold that catches a lamp without catching a lit wall.
+
+  *Amended 2026-08-25, recording what was built.* **This invariant was breached from
+  2026-08-20 to 2026-08-25 and part 1 of the test above could not see it.** DOOM-0345
+  added `kBloomRasterScale` (1.5) as a sixth push constant multiplying the raster
+  chain's peak *before* the threshold comparison. Multiplying the peak is
+  arithmetically a **division of every ramp start**: Medium's 1.15 became 0.767 on
+  that chain — below paper-white — while the preset table part 1 reads never moved.
+  Measured 2026-08-21: a plain STARTAN3 wall at sector light 255, no emitter in
+  frame, flashlight off, bloomed across 15.9 % of pixels on the raster chain while
+  both traced arms read 0.0 %.
+
+  The repair keeps the constant and narrows what it multiplies, because the ramp
+  start bounds **AMBIENT** and §4.2 says so: AMBIENT is sector light plus a GI bounce
+  and tops out near paper-white, while DIRECT is unbounded by design and this
+  invariant states outright that a heavily point-lit wall is expected to bloom. So
+  the unit conversion belongs on DIRECT alone — `pk = sp.direct * chainScale +
+  sp.ambient`, thresholded against the table's own numbers. `sceneRecombineParts()`
+  hands the extract the two terms separately; `sceneRecombine()` is defined as their
+  sum, so §5's one-derivation rule still holds and `composite.frag`'s compiled SPIR-V
+  is unchanged (opcode multiset identical; only two constant-pool entries reorder).
+
+  Measured at E1M1 `1432 -3456 180`, Solid raster, bloom 2 vs 0, each arm against a
+  same-build control: the wall goes from **0.60 mean / 5.1 % of pixels** (noise 0.16 /
+  0.3 %) to **0.10 / 0.2 %** (noise 0.03 / 0.1 %). The approved emitter glow at
+  `1056 -3616 270` survives at **19.2 %** of pixels (noise 0.2 %), down from 33.8 % —
+  and that is *toward* the traced view's 7 %, which is the match §10 Q3's look call
+  asked for. `-rtverify` PASS, rel-MSE unchanged at 0.2058 %.
+
+  **§10 Q5 is still owed and this does not close it.** The bounce-heavy room at
+  `3000 -4400 90` still moves 1.5 % of pixels against a 0.5 % noise floor, which is
+  the GI-bounce ceiling this invariant's own text calls "asserted, not proven".
 
 - **INV-5** — Solid keeps the 60 fps floor. With `bloom` at its shipped default,
   Solid at 50 % render scale on the reference RX 6600 stays at or above 60 fps
@@ -1320,6 +1356,30 @@ h=int(a.shape[0]*0.805);print(numpy.abs(a[h:]-b[h:]).max())" on.png off.png
   *Breaks when:* a preset's ramp start (`threshold − knee`) drops below 1.0, at
   which point the sky starts generating its own bloom rather than merely
   receiving a neighbour's.
+
+  *Amended 2026-08-25, recording what was built.* **This invariant went with INV-4,
+  by the same arithmetic and unmeasured at the time.** The reasoning above is sound
+  but it rests on a *comparison* — a sky texel's DIRECT is a palette colour that
+  cannot exceed 1.0, so it cannot reach a ramp start of 1.15 — and
+  `kBloomRasterScale` moved the other side of that comparison. At 1.5 a sky texel
+  reaches 1.5, and the invariant rode on whatever that constant happened to be.
+  Measured 2026-08-25 at E1M1 `1900 -3100 270` (the courtyard), Solid raster, bloom
+  2 vs 0: on the pre-fix build the sky band moved **0.55/255 against a 0.00 noise
+  floor** — a real, small breach.
+
+  Generation is now **stated** rather than left to arithmetic: `mesh.frag` writes the
+  sky as `outDirect = vec4(skyOut, 100000.0)` with `outAmbient = 0`, `ssao.frag`
+  already reads that same far depth at `>= 50000.0` to skip it, and the extract now
+  zeroes the weight there. **DOOM-0345 INV-5 is the precedent** — the RT extract
+  multiplies its own sky flag in for exactly this reason, so the two chains now agree
+  on *generation* and still differ on *reception*, which is the design.
+
+  **Reception is untouched, deliberately**: the combine still has no sky test, so a
+  lamp beside a sky edge bleeds its halo onto the backdrop as this invariant says it
+  should. The post-fix photographic arm cannot assert an exact zero — that spot's own
+  same-build control moves between 0.56 and 0.80/255 across runs, and the residual
+  signal sits inside it — so the structural guard, not the capture, is what this
+  invariant now rests on. `tests/bloom_threshold_test.cpp` locks it.
 
 ### Trust boundary
 

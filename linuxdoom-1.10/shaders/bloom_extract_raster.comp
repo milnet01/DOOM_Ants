@@ -56,15 +56,25 @@ void main()
         // region and needs no separate clamp.
         vec2 uv = (vec2(px) + (vec2(i, j) + 0.5) / vec2(taps)) / vec2(sz);
 
-        vec3  c    = sceneRecombine(ambientTex, directTex, aoTex, uv, pc.uvScale, pc.aoEnable);
+        SceneParts sp = sceneRecombineParts(ambientTex, directTex, aoTex, uv, pc.uvScale, pc.aoEnable);
+        vec3  c    = sp.direct + sp.ambient;
         // DOOM-0331 L3 (4.4) — the non-finite guard, and it goes HERE rather than at the
         // combine: this is the only pass reading unguarded values, and one NaN texel that
         // gets past it is thresholded and then blurred into a +-16-pixel hole in the frame.
         // The RT chain guards its own radiance the same way (svgf_composite.comp), which is
         // the evidence that such values do occur in this engine. Landed with L3 because
         // until the combine existed nothing sampled the result.
+        // Zero BOTH terms, not just the sum: the threshold below is built from
+        // sp.direct and sp.ambient rather than from c, so a non-finite AMBIENT with a
+        // finite DIRECT would leave peak -- and therefore w -- NaN, and `c * w` is NaN
+        // even with c already zeroed. Zeroing the parts reproduces exactly what the
+        // pre-DOOM-0331-Q2 guard achieved by zeroing c alone: peak 0, w 0, no halo.
         if (any(isnan(c)) || any(isinf(c)))
-            c = vec3(0.0);
+        {
+            c          = vec3(0.0);
+            sp.direct  = vec3(0.0);
+            sp.ambient = vec3(0.0);
+        }
         // Soft knee so a surface crossing the threshold ramps in rather than pops.
         // peak, NOT Rec.709 luminance: luminance weights green at 0.7152 and red at
         // 0.2126, so a red fireball at four times white scores 0.85 and would not bloom
@@ -80,10 +90,34 @@ void main()
         // It multiplies the peak alone, never the extracted colour:
         // the weight below is unitless, so the halo stays in this chain's own units and
         // the scale decides WHAT blooms rather than how brightly it does.
-        float peak = max(c.r, max(c.g, c.b)) * pc.chainScale;
+        //
+        // DOOM-0331 10 Q2 -- and it multiplies the DIRECT term alone, not the sum.
+        // Scaling the sum is arithmetically a DIVISION of every preset's ramp start:
+        // at chainScale 1.5, Medium's 1.15 becomes 0.767, below paper-white, and INV-4's
+        // floor is gone. Measured 2026-08-21: a plain STARTAN3 wall at sector light 255
+        // with no emitter in frame bloomed across 15.9 % of pixels on this chain while
+        // both traced arms read 0.0 %. 4.2 draws the line this arithmetic has to respect
+        // -- the ramp start bounds AMBIENT, which is sector light plus a GI bounce and
+        // tops out near paper-white, while DIRECT is unbounded BY DESIGN and INV-4 says
+        // outright that a heavily point-lit wall is expected to bloom. So the unit
+        // conversion belongs on the term whose units actually differ between the chains.
+        vec3  pk   = sp.direct * pc.chainScale + sp.ambient;
+        float peak = max(pk.r, max(pk.g, pk.b));
         float soft = clamp(peak - pc.threshold + pc.knee, 0.0, 2.0 * pc.knee);
         soft       = soft * soft / (4.0 * pc.knee + 1e-4);
         float w    = max(soft, peak - pc.threshold) / max(peak, 1e-4);
+        // DOOM-0331 INV-9 -- the sky never GENERATES bloom, and this states it rather
+        // than leaving it to arithmetic. INV-9 held because a sky texel's DIRECT is a
+        // palette colour that cannot exceed 1.0 and so could not reach a ramp start of
+        // 1.15; a per-chain scale on that term reaches it at 1.5, so the invariant would
+        // ride on whatever chainScale happens to be. mesh.frag writes the sky as
+        // outDirect = vec4(skyOut, 100000.0) with outAmbient = 0, and ssao.frag already
+        // reads that same far depth at >= 50000.0 to skip it. DOOM-0345 INV-5 is the
+        // precedent: the RT extract multiplies its own sky flag in for this reason.
+        // Generation only -- INV-9 keeps the combine free of any sky test, so a lamp
+        // beside a sky edge still bleeds its halo onto the backdrop.
+        if (sp.viewZ >= 50000.0)
+            w = 0.0;
         sum += c * w;
     }
 

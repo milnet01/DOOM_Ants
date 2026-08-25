@@ -9641,6 +9641,53 @@ parked ideas (💭 considered) until we commit to and design each one.
   `cap.sh` (writes a fresh config per run, per trap 2) and `wallprobe.py`
   (finds a point-blank vantage on a named wall texture straight from the WAD —
   that is how `1432 -3456 180` was chosen rather than walked to).
+  Resolved (2026-08-25): §10 Q2's fix half is built, and the answer is
+  that the false positive was ARITHMETIC rather than a taste call.
+  kBloomRasterScale multiplied the raster peak BEFORE the threshold
+  comparison, which is a DIVISION of every preset's ramp start —
+  Medium's 1.15 ran at 0.767, below paper-white — so INV-4 and INV-9
+  were both breached while the preset table part 1 of INV-4's test
+  reads never moved.
+
+  The repair keeps the constant and narrows what it multiplies. §4.2
+  bounds AMBIENT, not the sum: AMBIENT is sector light plus a GI bounce
+  and tops out near paper-white, while DIRECT is unbounded by design and
+  INV-4 says a heavily point-lit wall is MEANT to bloom. So the unit
+  conversion now applies to DIRECT alone — pk = sp.direct * chainScale +
+  sp.ambient. sceneRecombineParts() hands the extract the two terms and
+  sceneRecombine() is their sum, so §5's one-derivation rule holds:
+  composite.frag's compiled SPIR-V is unchanged (opcode multiset
+  identical, two constant-pool entries reorder).
+
+  Measured, Solid raster, bloom 2 vs 0, each arm against a same-build
+  control. Wall E1M1 1432 -3456 180: 0.60 mean / 5.1% of pixels (noise
+  0.16 / 0.3%) -> 0.10 / 0.2% (noise 0.03 / 0.1%). Emitter 1056 -3616
+  270: 33.8% -> 19.2% of pixels (noise 0.2%) — the approved glow
+  survives, and moves TOWARD the traced view's 7%, which is the match
+  §10 Q3's look call asked for. -rtverify PASS, rel-MSE unchanged at
+  0.2058%.
+
+  INV-9's half was real and had never been measured: at E1M1 1900 -3100
+  270 (the courtyard) the pre-fix sky band moved 0.55/255 against a
+  0.00 noise floor. Sky generation is now STATED rather than left to
+  arithmetic — the extract zeroes the weight at viewZ >= 50000.0, the
+  same far depth ssao.frag already uses, mirroring DOOM-0345 INV-5.
+  Reception is untouched, so a lamp beside a sky edge still bleeds onto
+  the backdrop. The post-fix photographic arm cannot assert an exact
+  zero: that spot's own control moves 0.56-0.80/255 between runs.
+
+  tests/bloom_threshold_test.cpp locks all of it and is the durable
+  half — INV-4's written test surface read the preset table and was
+  structurally blind to a per-chain factor applied downstream of it.
+  The new test computes the ramp start AFTER every such factor, and
+  prints the counterfactual (0.767) in its own output. Four mutations
+  verified it reddens for the right reason.
+
+  STILL OPEN and not closed by this: §10 Q5, the GI-bounce AMBIENT
+  ceiling. The bounce-heavy room at 3000 -4400 90 still moves 1.5% of
+  pixels against a 0.5% noise floor, which is the ceiling INV-4's own
+  text calls "asserted, not proven". Also open: a second user look call
+  on the softer Solid halo (19.2% vs the 33.8% they last saw).
 
 - 📋 [DOOM-0332] **1-D shadow maps for point lights in the rasterised view, exploiting DOOM's flat map.**
   Found reviewing GZDoom at the user's request; feeds DOOM-0170's raster
