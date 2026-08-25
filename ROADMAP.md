@@ -9728,6 +9728,34 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   Verified: make test 11/11, non-DEV build clean, -rtverify PASS with
   rel-MSE unchanged at 0.2058%.
+  Progress (2026-08-25, later): the user's look call came back "I don't
+  see the bloom", and they were right — §10 Q2's fix (23791db) carried a
+  regression nothing checked for. kBloomRasterGain (10.0) was measured
+  against the arithmetic that fix REPLACED. Scaling DIRECT alone instead
+  of the sum shrinks the peak, so the unitless weight, so the halo;
+  23791db re-measured the false positive it killed and never re-measured
+  the true positive.
+
+  Measured at the tuning spot E1M1 1056 -3616 270, Solid raster, bloom 2
+  vs 0, each arm against its own same-build control, restricted to the
+  light-strip region so the retired false positive cannot flatter the
+  number. The pre-fix arithmetic was rebuilt and captured rather than
+  cited: strip glow 7.03/255 before, 2.28 shipped, 11.74 on the traced
+  view. Gain 50.0 restores 6.54 and the plain far wall stays at 0.00 —
+  the gain scales the extracted halo, never the threshold that decides
+  what is extracted, so matching the magnitude cannot reintroduce Q2's
+  false positive.
+
+  Response is sub-linear (10 → 2.28, 30 → 4.92, 50 → 6.54, 110 → 9.43).
+  Parity with the traced view is NOT reachable from this constant: at 110
+  the glow eats the dark bars between the strips and still does not reach
+  into the room. The limit is bloom_blur.comp's single 9-tap Gaussian
+  (sigma 2 at quarter res, ±26 display px) against the mip pyramid the
+  reference implementations use — filed as DOOM-0360.
+
+  Verified: make test 11/11, non-DEV build clean, -rtverify PASS with
+  rel-MSE unchanged at 0.2058% (the constant is raster-only). Still owed:
+  the user's look call on gain 50 vs 110.
 
 - 📋 [DOOM-0332] **1-D shadow maps for point lights in the rasterised view, exploiting DOOM's flat map.**
   Found reviewing GZDoom at the user's request; feeds DOOM-0170's raster
@@ -10559,3 +10587,35 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** The game's speed wobbles instead of holding steady. Even at a good average frame rate, uneven frames read as stutter -- this is about making each frame take the same time as the last.
   Kind: perf.
   Source: user-request-2026-08-20 (play-test of the DOOM-0345 bloom look call).
+
+- 📋 [DOOM-0360] **Widen the bloom halo — replace the single Gaussian with a mip pyramid.**
+  bloom_blur.comp is ONE 9-tap separable Gaussian, sigma 2 texels at
+  quarter res — a reach of roughly ±26 display pixels, about 0.7% of
+  frame width at 3840. That is why the effect reads as a soft edge on
+  the light strips rather than as glow, and it is a property of the
+  CHAIN, not of the tuning: measured 2026-08-25, winding
+  kBloomRasterGain from 10 to 110 brightens the rim and still does not
+  reach into the room.
+
+  Both reference implementations run a progressive mip pyramid instead:
+  CoD:AW (Jimenez) uses a 13-tap downsample / 9-tap tent upsample over
+  ~5-6 levels, and Unreal uses 6 mips with a per-mip tint. The widest
+  level is what produces a halo that spreads.
+
+  Two further findings from the same research, deliberately NOT folded
+  in here because each retires a shipped invariant and needs its own
+  decision:
+    - Thresholding is largely abandoned. Unreal has defaulted its bloom
+      threshold to -1 (off) since 4.8; CoD:AW uses none and blends the
+      blurred image at a low weight (~0.04). That would retire DOOM-0331
+      INV-4 and INV-9, whose whole content is "only over-white light
+      blooms".
+    - Additive vs energy-conserving. The chain adds bloom on top; the
+      modern form is lerp(scene, bloom, weight), which conserves energy
+      rather than injecting it.
+
+  Sources: iryoku.com/next-generation-post-processing-in-call-of-duty-advanced-warfare/
+  and froyok.fr/blog/2021-12-ue4-custom-bloom/.
+  **Layman:** Makes lights actually glow into the room instead of just having a slightly soft edge.
+  Kind: enhancement.
+  Source: in-session-2026-08-25 (user look call: "I don't see the bloom").

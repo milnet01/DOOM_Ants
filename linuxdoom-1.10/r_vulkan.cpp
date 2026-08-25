@@ -1251,8 +1251,30 @@ static const struct BloomPreset { float threshold, knee, intensity; } kBloomPres
 // raster chain has a wide population of mid-bright surfaces just under the threshold
 // where the traced chain has a few very bright emitters, and that is the chains' own
 // dynamic range showing rather than a tuning miss.
+//
+// The gain was 10.0 from 2026-08-20 to 2026-08-25 and that value belonged to the
+// arithmetic 23791db replaced. It was measured against `peak = (direct + ambient) *
+// chainScale`; moving the scale onto DIRECT alone shrinks the peak, which shrinks the
+// unitless weight, which dims the halo -- and 23791db re-measured the false positive it
+// set out to kill without re-measuring the true positive. The user could no longer see
+// the effect at all. Measured 2026-08-25 at the same E1M1 1056 -3616 270 the pair above
+// was tuned at, Solid raster, bloom 2 vs 0, each against its own same-build control and
+// restricted to the light-strip region so the retired false positive cannot flatter the
+// figure: gain 10 gives 2.28/255 where the pre-23791db build gave 7.03 and the traced
+// view gives 11.74. 50.0 restores 6.54 -- the magnitude that shipped before the fix --
+// with the plain far wall still at 0.00, because the gain scales the extracted halo and
+// never the threshold that decides what is extracted.
+//
+// Response to the gain is SUB-LINEAR (3x gain bought 2.2x glow: 10 -> 2.28, 30 -> 4.92,
+// 50 -> 6.54, 110 -> 9.43), because the halo lands on already-bright texels and clips.
+// So do not solve a dim halo by extrapolating linearly, and do not reach for parity with
+// the traced view's 11.74 by winding this to ~110: measured there, the glow eats the dark
+// bars BETWEEN the strips and still does not reach into the room. What limits the reach is
+// bloom_blur.comp -- one 9-tap Gaussian, sigma 2 texels at quarter res, about +-26 display
+// pixels -- where the reference implementations (CoD:AW, Unreal) run a 5-6 level mip
+// pyramid. That is a chain change and it is DOOM-0360, not a constant to turn here.
 static const float kBloomRasterScale = 1.5f;
-static const float kBloomRasterGain  = 10.0f;
+static const float kBloomRasterGain  = 50.0f;
 
 // DOOM-0331 §10 Q5 — the largest value mesh.frag's sector term can reach, and therefore the
 // half of the AMBIENT ceiling that is not the GI bounce (RunGiBake prints their sum). It

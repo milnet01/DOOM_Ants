@@ -938,6 +938,26 @@ h=int(a.shape[0]*0.805);print(numpy.abs(a[h:]-b[h:]).max())" on.png off.png
   test is unchanged. Evidence and the rejected alternatives are on
   DOOM-0331's bullet.
 
+  *Amended 2026-08-25, recording what was built.* **The gain is 50.0, not
+  10.0.** 10.0 was measured against the arithmetic `23791db` replaced —
+  `peak = (direct + ambient) * chainScale`. Moving the scale onto DIRECT
+  alone shrinks the peak, so it shrinks the unitless weight, so it dims the
+  halo; `23791db` re-measured the false positive it set out to kill and did
+  not re-measure the true positive, and the effect became invisible to the
+  user. Measured 2026-08-25 at E1M1 `1056 -3616 270`, Solid raster, bloom 2
+  vs 0, each arm against its own same-build control and restricted to the
+  light-strip region so the retired false positive cannot flatter the
+  figure: gain 10 gave **2.28**/255 where the pre-`23791db` build gave
+  **7.03** and this chain gives **11.74**. 50.0 restores **6.54** with the
+  plain far wall still at **0.00** — the gain scales the extracted halo and
+  never the threshold that decides what is extracted, which is why matching
+  the magnitude cannot reintroduce §10 Q2's false positive. Response is
+  sub-linear (10 → 2.28, 30 → 4.92, 50 → 6.54, 110 → 9.43), so parity with
+  this chain's 11.74 is not reachable by winding the constant: at 110 the
+  glow eats the dark bars between the strips and still does not reach into
+  the room. What limits the reach is `bloom_blur.comp`'s single 9-tap
+  Gaussian rather than either constant, and widening it is DOOM-0360.
+
 - **INV-9** — the bloom passes cost ≤ 5 % of present-total in Ultra RT.
   *Test:* with `rb_profile` on (`\`), **two** prints, because neither carries
   both halves of the ratio: `[rt_profile]` for the new bloom and `rt_tonemap`
