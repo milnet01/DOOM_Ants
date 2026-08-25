@@ -1254,6 +1254,14 @@ static const struct BloomPreset { float threshold, knee, intensity; } kBloomPres
 static const float kBloomRasterScale = 1.5f;
 static const float kBloomRasterGain  = 10.0f;
 
+// DOOM-0331 §10 Q5 — the largest value mesh.frag's sector term can reach, and therefore the
+// half of the AMBIENT ceiling that is not the GI bounce (RunGiBake prints their sum). It
+// MIRRORS BASE_SECTOR_DIM in mesh.frag, because C++ cannot read a GLSL constant: `sect =
+// vLight * distLight * BASE_SECTOR_DIM` with both factors in [0,1]. A mirror that silently
+// parts company with its original is how INV-4's floor was breached once already, so
+// bloom_threshold_test.cpp scrapes both and reddens if they differ.
+static const float kAmbientSectorMax = 0.75f;
+
 static const BloomPreset& CurrentBloomPreset()
 {
     const int i = rb_bloom < 0 ? 0 : (rb_bloom > 3 ? 3 : rb_bloom);
@@ -8577,6 +8585,19 @@ void RunGiBake()
     const float* pf = (const float*)mapped;
     int   nonFinite = 0, nonZero = 0;
     double dcSum[3] = { 0, 0, 0 };
+    // DOOM-0331 §10 Q5 — the map's AMBIENT ceiling, which INV-4's ramp start has to clear.
+    // mesh.frag writes AMBIENT = albedo * sect + albedo * giIrradiance(probe, n), so with
+    // albedo <= 1 (paletted art) and sect <= BASE_SECTOR_DIM (0.75), map-wide
+    //     AMBIENT <= 0.75 + max over probes and normals of giIrradiance()
+    // and that second term is a closed form of the SH-L1 payload already mapped here, so
+    // the bound costs one pass over data the finiteness scan is walking anyway. It is a
+    // BOUND, not a sample: taken per channel independently and over every normal DOOM can
+    // present -- horizontal for walls, +-Z for flats -- so it cannot read low. §4.2 called
+    // this ceiling "not arithmetic"; this is the arithmetic, and a map whose number rises
+    // above a preset's ramp start is the retune signal §10 Q5 wrote the branch for.
+    float giMax = 0.0f, giProbePos[3] = { 0, 0, 0 };
+    uint32_t giMaxProbe = 0;
+    const float kY00 = 0.282095f, kL1 = (2.0f / 3.0f) * 0.488603f;
     for (uint32_t i = 0; i < g.probeCount; i++)
     {
         const float* sh = &pf[(size_t)i * PROBE_FLOATS + 4];   // 12 SH floats
@@ -8587,12 +8608,41 @@ void RunGiBake()
         }
         // DC term per channel (sh[0], sh[4], sh[8]) * Y00 = average radiance.
         dcSum[0] += sh[0] * 0.282095; dcSum[1] += sh[4] * 0.282095; dcSum[2] += sh[8] * 0.282095;
+
+        // Per channel: basis order is 1<-n.y, 2<-n.z, 3<-n.x (giIrradiance()). A horizontal
+        // normal maximises sqrt(c1^2 + c3^2); a flat's normal maximises |c2|. giIrradiance
+        // clamps its result to >= 0, so a negative lobe cannot lower the ceiling either.
+        for (int c = 0; c < 3; c++)
+        {
+            const float* q = &sh[c * 4];
+            if (!std::isfinite(q[0]) || !std::isfinite(q[1])
+                || !std::isfinite(q[2]) || !std::isfinite(q[3]))
+                continue;
+            float dc    = q[0] * kY00;
+            float horiz = dc + kL1 * sqrtf(q[1] * q[1] + q[3] * q[3]);
+            float vert  = dc + kL1 * fabsf(q[2]);
+            float m     = fmaxf(horiz, vert);
+            if (m > giMax)
+            {
+                giMax = m; giMaxProbe = i;
+                const float* pos = &pf[(size_t)i * PROBE_FLOATS];
+                giProbePos[0] = pos[0]; giProbePos[1] = pos[1]; giProbePos[2] = pos[2];
+            }
+        }
     }
     vkUnmapMemory(g.device, g.probeMem);
     printf("RB_Vulkan: GI bake done (3 bounces) — %u probes, %d non-finite SH coeffs, "
            "%d non-zero; mean DC irradiance rgb(%.3f, %.3f, %.3f)\n",
            g.probeCount, nonFinite, nonZero,
            dcSum[0] / g.probeCount, dcSum[1] / g.probeCount, dcSum[2] / g.probeCount);
+    // The probe's own position rides in floats 0..2 of its record, and printing it is what
+    // makes the number actionable: it is the `-warpto` coordinate of the worst case, so the
+    // photographic half of INV-4's test can be pointed at the surface this bound describes
+    // instead of at a room somebody guessed was bright.
+    printf("RB_Vulkan: GI bounce ceiling — max giIrradiance %.3f at probe %u (%.0f %.0f %.0f); "
+           "AMBIENT bound %.3f = %.2f sector + bounce (DOOM-0331 INV-4 floor is 1.00)\n",
+           giMax, giMaxProbe, giProbePos[0], giProbePos[1], giProbePos[2],
+           kAmbientSectorMax + giMax, kAmbientSectorMax);
     fflush(stdout);
 }
 

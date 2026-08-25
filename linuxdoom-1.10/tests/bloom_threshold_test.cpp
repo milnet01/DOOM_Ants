@@ -188,5 +188,27 @@ int main()
     check(has(exq, "sp.viewZ >= 50000.0) w = 0.0;"),
           "a sky texel contributes exactly zero weight to the extract");
 
+    // ---- 4. The AMBIENT ceiling's sector half is not a stale copy (§10 Q5). ----
+    // RunGiBake prints the map's AMBIENT bound as kAmbientSectorMax + max giIrradiance,
+    // and INV-4's floor is read against that number. The first half MIRRORS mesh.frag's
+    // BASE_SECTOR_DIM, because C++ cannot read a GLSL constant. Q2's breach was a factor
+    // applied in one place invalidating a check that read another, so the mirror gets a
+    // check of its own rather than a comment asking the next reader to keep them in step.
+    const std::string ms = slurp(DOOM_TESTS_ROOT "/shaders/mesh.frag");
+    check(!ms.empty(), "mesh.frag is readable");
+    float sectorMax = 0.0f, baseDim = 0.0f;
+    const bool haveMirror = scalar(vk, "kAmbientSectorMax", &sectorMax);
+    const bool haveBase   = !ms.empty() && scalar(ms, "BASE_SECTOR_DIM", &baseDim);
+    check(haveMirror, "kAmbientSectorMax is still a named constant in r_vulkan.cpp");
+    check(haveBase,   "BASE_SECTOR_DIM is still a named constant in mesh.frag");
+    if (haveMirror && haveBase)
+    {
+        char what[160];
+        std::snprintf(what, sizeof what,
+                      "the AMBIENT ceiling's sector half still equals mesh.frag's "
+                      "BASE_SECTOR_DIM (%.3f vs %.3f)", (double)sectorMax, (double)baseDim);
+        check(sectorMax == baseDim, what);
+    }
+
     return check_summary("bloom_threshold_test");
 }
