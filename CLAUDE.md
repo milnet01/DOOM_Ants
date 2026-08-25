@@ -74,6 +74,16 @@ Quick summary of the load-bearing ones:
 - Every actionable roadmap item carries a permanent `[DOOM-NNNN]` ID. IDs are
   append-only: never renumber, never reuse.
 - Shortest correct implementation; reuse before rewriting.
+- Tests live in `linuxdoom-1.10/tests/*_test.cpp` — one file, no Makefile edit.
+  **`make` does not build them; only `make test` does.** So running
+  `linux/<name>_test` straight after editing its source runs the *previous*
+  binary and passes, which is the most convincing false green there is. Rebuild
+  with `make test` before trusting a test you just changed — and before trying
+  to break one on purpose to check it fires.
+- A shader constant applied to a value *before* a threshold comparison is a
+  division of that threshold, and no check that reads the threshold's own table
+  can see it. DOOM-0331 INV-4 shipped a wall-blooming raster view that way; the
+  spec's INV-4 and INV-9 amendments carry the story.
 - Keep `CHANGELOG.md` and any version line in lockstep when releasing.
 - A release could once ship a **stale binary**, because `release.sh` reused any
   artifact with the right filename. It now stamps each build with the commit it
