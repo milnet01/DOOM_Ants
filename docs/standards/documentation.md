@@ -65,6 +65,9 @@ spec covers: the goal, the approach (with at least one alternative considered),
 the affected files/subsystems, and how it will be verified. Keep claims about
 the existing code honest — check the source, don't rely on memory.
 
+`spec-format.md` owns the layout — which `##` sections a spec carries, in which
+order, and which of them `spec_lint` checks.
+
 A *hard architectural choice* (language, API, protocol, storage format) is
 recorded in **both** places: the spec captures the **design** (how it works);
 an ADR in `docs/decisions/` captures the **decision** (what was chosen and

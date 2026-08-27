@@ -59,6 +59,7 @@ These are the project's standards. Read the relevant one before working:
 - **Commits** — `docs/standards/commits.md`
 - **Documentation** — `docs/standards/documentation.md`
 - **Roadmap format** — `docs/standards/roadmap-format.md`
+- **Spec format** — `docs/standards/spec-format.md`
 - **Dependencies** — `docs/standards/dependencies.md`
 - **Testing** — `docs/standards/testing.md`
 - **Security & untrusted input** — `docs/standards/security.md`
