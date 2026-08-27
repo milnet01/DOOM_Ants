@@ -1858,7 +1858,7 @@ with friends.
   Kind: fix.
   Source: release-sh-sandbox-run-2026-08-19.
 
-- 📋 [DOOM-0361] **Give the project its own spec-format standard, so spec_lint stops reporting nine phantom missing sections per spec.**
+- ✅ [DOOM-0361] **Give the project its own spec-format standard, so spec_lint stops reporting nine phantom missing sections per spec.**
   There is no `docs/standards/spec-format.md`, so `spec_lint` falls back
   to `~/.claude/standards/spec-format.md` and checks our specs against a
   section list none of them uses. Measured 2026-08-27: **0 of 19 specs**
@@ -1875,6 +1875,28 @@ with friends.
 
   Not urgent and nothing is wrong with the specs themselves — the check is
   aimed at the wrong contract.
+  Resolved (2026-08-27): docs/standards/spec-format.md written and
+  gated. spec_lint now reads it (sections_source is the in-project path)
+  and the corpus went from 210 missing_section findings to 81; the seven
+  specs on the current numbered convention report none.
+
+  This bullet's own figure was wrong and is corrected here: the phantom
+  findings were 9 to 12 per document, not a uniform nine.
+
+  The 81 that remain are NOT phantom. They fall on documents that cannot
+  conform: the pre-numbering specs, DOOM-0009, two build plans and a fix
+  ledger that are not specs at all, and DOOM-0170 -- whose findings are
+  mostly the ordinary fixable qualifier case rather than an era artefact.
+  The standard names each group so a maintainer does not renumber a
+  shipped spec. Clearing them is separate work and not filed here.
+
+  Gated with review-contract --genre standard: three loops, 22 verified
+  findings, 22 fixed, stopped at the cap for a standard. Two of the fixes
+  came from reading spec_lint's source rather than its description -- the
+  tombstone forms are two anchored regexes with literal asterisks and a
+  U+2014 em dash, and a non-blank line between the required-sections
+  marker and its fence silently stops missing_section for the whole
+  corpus.
   **Layman:** Stops the spec checker complaining about headings our specs deliberately do not use.
   Kind: doc.
   Source: in-session-2026-08-27 (spec_lint noise found while folding bloom answers into the specs).
