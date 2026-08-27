@@ -9756,6 +9756,13 @@ parked ideas (💭 considered) until we commit to and design each one.
   Verified: make test 11/11, non-DEV build clean, -rtverify PASS with
   rel-MSE unchanged at 0.2058% (the constant is raster-only). Still owed:
   the user's look call on gain 50 vs 110.
+  Resolved (2026-08-27): the gain 50 vs 110 look call is answered — the
+  user chose 50, which is what 09266b3 already ships, so no code change.
+  Re-shot at E1M1 1056 -3616 270, Solid raster, -inspect -freeze, off /
+  50 / 110 with the user's own fog setting: at 110 the halo spreads over
+  the dark bars between the light strips and starts thinning them, where
+  at 50 the bars stay bars. Neither reaches into the room — that is the
+  single 9-tap blur, DOOM-0360, not the gain.
 
 - 📋 [DOOM-0332] **1-D shadow maps for point lights in the rasterised view, exploiting DOOM's flat map.**
   Found reviewing GZDoom at the user's request; feeds DOOM-0170's raster
