@@ -13,6 +13,7 @@ without having to ask the author what was meant.
 | `CHANGELOG.md` | What actually shipped, per release (Keep a Changelog). |
 | `docs/standards/` | The house rules (this folder). |
 | `docs/specs/` | One design doc per large feature, written **before** building it. |
+| `docs/plans/` | The build order for a spec, when it needs one written down separately. |
 | `docs/decisions/` | ADR-style notes recording *why* a hard architectural choice went the way it did (numbered `NNNN-topic.md`). |
 
 ## Writing rules
