@@ -1487,6 +1487,13 @@ below is the look residual it leaves.
   *Blocks:* the ROADMAP flip only. If the halo reads too tight, the 13-tap kernel
   then §9's pyramid are the levers; if too strong, the intensity presets drop
   before the threshold does.
+
+  **Answered by the user on 2026-08-27, both halves.** *Strength:* gain 50 over
+  110 — at 110 the halo spreads over the dark bars between the light strips and
+  begins thinning them (shot at E1M1 `1056 -3616 270`, Solid raster, off / 50 /
+  110, under the user's own fog setting). *Size:* accepted as it stands, with the
+  widening deferred to DOOM-0360 rather than held against this spec. Neither
+  lever named above was pulled.
 - **Q2 — does a flashlight on a plain lit wall bloom, and does that read badly?**
   §3 decision 2 accepted the possibility. **User**, same gate. *Blocks:* the
   ROADMAP flip only. The fix if it does is raising the presets' ramp start above
@@ -1504,6 +1511,16 @@ below is the look residual it leaves.
   the flashlight on. The elsewhere-in-this-spec uses of "white wall" as the
   **1.0-linear reference value** in §4.2's table and the luminance worked
   example are a unit, not a surface, and are left alone.
+
+  **Answered 2026-08-27** — measured 2026-08-25, fixed in `23791db`, and recorded
+  here because the answer had until now been written only into the ROADMAP. The
+  false positive was real and raster-only: `kBloomRasterScale` was scaling the
+  SUM of AMBIENT and DIRECT, so an ordinary surface lit hard by the flashlight
+  crossed the threshold. Scaling DIRECT alone fixes it. At the shipped presets,
+  measured against each arm's own same-build control, the plain far wall and the
+  floor read 0.00/255 in the raster chain and 0.06 / 0.03 in the traced one —
+  the latter at or under that control's own noise (0.10 / 0.06). The presets'
+  ramp start was **not** raised; the lever this bullet names was not needed.
 - **Q3 — does one shared preset table read the same on both chains?** §3
   decision 5 settled the *units* question: the threshold is in scene radiance on
   both chains, so what glows no longer moves with the Brightness slider. What it
@@ -1514,6 +1531,17 @@ below is the look residual it leaves.
   landed and there is an RT arm to compare against. *Blocks:* nothing in this
   spec. If the answer is no, the fix is one named per-chain scale constant
   applied to the shared table — never a second table (INV-8).
+
+  **Answered 2026-08-27 — measured, then judged.** One coordinate (E1M1
+  `1056 -3616 270`), both chains on the **same Solid art** so the HD set is not a
+  confound, shipped presets, identical regions, each arm against its own
+  same-build control. Light strips: **6.64 / 7.11** raster, **10.89 / 11.04**
+  traced. Plain far wall and floor: **0.00 / 0.00** raster, **0.06 / 0.03**
+  traced, both at or under that arm's control noise. So the **same blocks bloom
+  in both chains** and neither false-positives; what differs is strength, by
+  about **1.6×**. The traced view is also darker at that spot (plain wall 81
+  against the raster's 149), so an equal halo reads stronger there. The user
+  accepted that as one feature: **no per-chain scale constant was added.**
 - **Q4 — does a 21st `VideoMenu` row still fit?** `VideoMenu` has 20 entries
   today (§4.5 carries the counting command) and DOOM-0206's contract requires the
   menu stay HUD-safe and scroll if it outgrows the screen. Two gates, and the
@@ -1524,6 +1552,10 @@ below is the look residual it leaves.
   open a menu under Wayland (§9). *Blocks:* L1's completion for the arithmetic
   half only. If it does not fit, that is DOOM-0206's scroll mechanism to
   exercise, not a reason to drop the row.
+
+  **Still open 2026-08-27.** The `vid_bloom` row is present in `m_menu.c`. The
+  user's visual half has not happened; with DOOM-0345 §10 Q1 it is one of the two
+  remaining checks before the ROADMAP flip.
 - **Q5 — how high does AMBIENT actually go on non-emissive art?** §4.2's floor
   argument originally assumed 1.0, and that is wrong: `mesh.frag` adds
   `GI_BOUNCE_STRENGTH * albedo * giIrradiance(...)` on top of `albedo * sect`,

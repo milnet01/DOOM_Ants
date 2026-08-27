@@ -1858,6 +1858,27 @@ with friends.
   Kind: fix.
   Source: release-sh-sandbox-run-2026-08-19.
 
+- 📋 [DOOM-0361] **Give the project its own spec-format standard, so spec_lint stops reporting nine phantom missing sections per spec.**
+  There is no `docs/standards/spec-format.md`, so `spec_lint` falls back
+  to `~/.claude/standards/spec-format.md` and checks our specs against a
+  section list none of them uses. Measured 2026-08-27: **0 of 19 specs**
+  carry the global template's `## 2. Problem`; seven use `## 2. Where this
+  sits` instead. Every spec therefore reports the same nine
+  `missing_section` findings, which is noise a reader has to re-triage on
+  every run — and noise is where a real finding hides.
+
+  Two ways out, and the choice is the work: write a
+  `docs/standards/spec-format.md` describing the section list the specs
+  actually use (CLAUDE.md already points at that path first), or change
+  the specs to the global template. The first is far cheaper and matches
+  what the project has converged on unprompted.
+
+  Not urgent and nothing is wrong with the specs themselves — the check is
+  aimed at the wrong contract.
+  **Layman:** Stops the spec checker complaining about headings our specs deliberately do not use.
+  Kind: doc.
+  Source: in-session-2026-08-27 (spec_lint noise found while folding bloom answers into the specs).
+
 ## Phase 2 — The Spin
 
 The creative overhaul: evolve the renderer toward true 3D with hardware
@@ -9763,6 +9784,25 @@ parked ideas (💭 considered) until we commit to and design each one.
   the dark bars between the light strips and starts thinning them, where
   at 50 the bars stay bars. Neither reaches into the room — that is the
   single 9-tap blur, DOOM-0360, not the gain.
+  Progress (2026-08-27): three of §10's five questions closed, and the
+  spec now carries the answers (it previously carried none of them —
+  Q2's answer had only ever been written here).
+    Q1 — user, both halves: gain 50 over 110, and the halo's size is
+      accepted as it stands, widening deferred to DOOM-0360.
+    Q2 — the false positive is fixed and measured: plain wall and floor
+      read 0.00/255 in the raster chain at the shipped presets.
+    Q3 — measured then judged. One coordinate, both chains on the same
+      Solid art, each arm against its own control: light strips 6.64 /
+      7.11 raster against 10.89 / 11.04 traced; plain wall and floor
+      0.00 / 0.00 raster and 0.06 / 0.03 traced, at or under control
+      noise. Same blocks bloom in both chains, neither false-positives,
+      strength differs by about 1.6×. Accepted as one feature; NO
+      per-chain scale constant was added.
+    Q5 — already closed 2026-08-25.
+  Remaining before the flip: Q4's visual half (open Video options and
+  confirm 21 rows stay HUD-safe) and DOOM-0345 §10 Q1 (fire a weapon and
+  see whether TAAU smears the muzzle flash's halo). Both need a keyboard —
+  the harness cannot inject input under Wayland.
 
 - 📋 [DOOM-0332] **1-D shadow maps for point lights in the rasterised view, exploiting DOOM's flat map.**
   Found reviewing GZDoom at the user's request; feeds DOOM-0170's raster
@@ -10497,6 +10537,13 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   Still owed before the flip: a second look at the retuned strength, the
   flashlight question, and DOOM-0202's -shotcompare golden re-bless.
+  Progress (2026-08-27): §10 Q2 is answered — the two chains read as one
+  feature. Measurement and judgement are recorded once, in DOOM-0331 §10
+  Q3, as this spec's bullet says they should be. Q1 (does TAAU smear a
+  muzzle flash's halo into afterglow or ghosting?) is still open and needs
+  the user at a keyboard: it takes a fired weapon, which the capture
+  harness cannot produce. It and DOOM-0331 §10 Q4's visual half are the
+  two remaining checks before either item flips.
 
 - 📋 [DOOM-0346] **Record the house spec section order so the structure check stops declining to run.**
   `spec_lint` returns `sections_checked: false` on every spec in
@@ -10623,6 +10670,20 @@ parked ideas (💭 considered) until we commit to and design each one.
 
   Sources: iryoku.com/next-generation-post-processing-in-call-of-duty-advanced-warfare/
   and froyok.fr/blog/2021-12-ue4-custom-bloom/.
+  Decisions (2026-08-27), so the two researched findings stop being
+  undecided. THRESHOLD: keep it. The user chose the threshold over the
+  modern thresholdless form — DOOM is not a film-camera look, and the
+  halo marking light SOURCES is what stops an ordinary lit surface
+  glowing. DOOM-0331 INV-4 and INV-9 stand; do not retire them under
+  this item. BLEND: additive vs energy-conserving lerp is DEFERRED to
+  when this item is built, deliberately — the two interact (a wide
+  pyramid plus an additive blend is what blows highlights out), so the
+  choice wants the pyramid in front of it. Every current preset and
+  measurement was tuned against additive.
+
+  Also settled 2026-08-27: the halo's SIZE is accepted as it stands at
+  DOOM-0331 §10 Q1, so this item widens it later rather than blocking
+  that spec's ROADMAP flip.
   **Layman:** Makes lights actually glow into the room instead of just having a slightly soft edge.
   Kind: enhancement.
   Source: in-session-2026-08-25 (user look call: "I don't see the bloom").

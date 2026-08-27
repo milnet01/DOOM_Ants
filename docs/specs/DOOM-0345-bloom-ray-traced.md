@@ -1030,6 +1030,12 @@ count (its Q4); none is restated here.
   there — a named per-chain scale constant if needed, never a second table
   (INV-8). *Blocks:* the ROADMAP flip only.
 
+  **Answered 2026-08-27.** The measurement and the user's judgement are recorded
+  once, in DOOM-0331 §10 Q3, as that bullet says they should be. Short version:
+  the same blocks bloom in both chains and neither false-positives, the traced
+  halo is about 1.6× the raster one, and the user accepted that as one feature.
+  No per-chain scale constant was added.
+
 ## 11. What checks this
 
 | Rule | What catches a breach |
