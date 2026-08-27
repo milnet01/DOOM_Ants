@@ -13,8 +13,7 @@ permanent `DOOM-NNNN` from the roadmap.
 ## The section run
 
 A spec opens with an unnumbered `## Contents`, then runs its numbered `##`
-sections in ascending order. Nothing checks either; they are the shape the
-corpus settled on.
+sections in ascending order. Both are required, and nothing checks them.
 
 **Sections 1 to 10 are all required.** The ones in this block are checked
 verbatim, and for those the number is part of the heading:
@@ -33,9 +32,9 @@ verbatim, and for those the number is part of the heading:
 **That block is read by machine.** `spec_lint` takes its list from it exactly as
 written, so edit it in the same commit as any change to the headings here.
 Nothing but blank lines may sit between the marker and the fence: put a sentence
-there and the list parses empty, the check is skipped, and every spec reports
-clean. So read a corpus-wide zero as the check being off, not as a clean
-corpus — `sections_checked` says which.
+there and the list parses empty and `missing_section` stops running. Every other
+check keeps firing, so a broken block does not look quiet — `sections_checked`
+coming back false is the only tell.
 
 The match is on the whole heading line, so each of those headings carries its
 number and its name and nothing else. A qualifier appended to one —
@@ -53,19 +52,20 @@ omitted section reads as an oversight, an explicit `none` reads as a decision.
 That applies to sections 1 to 10 and to nothing else.
 
 Sections 11 to 13 — `What checks this`, `Cross-doc impact`, `Cold-eyes loop
-log` — are the author's, and a good default. The review gate requires a loop
-log, so a spec that has been through it carries one wherever it lands.
+log` — are unchecked, and a good default. The review gate requires a loop log,
+so a spec that has been through it carries one wherever it lands.
 
 `documentation.md` requires a spec to cover how it will be verified and which
-files it touches. Neither has a slot of its own, so a spec carries them where it
-can — but one that omits them is short of what that standard asks, whatever
-`spec_lint` says.
+files it touches. Verification's home is section 11; which files it touches has
+no slot at all. A spec that omits either is short of what that standard asks,
+whatever `spec_lint` says.
 
 ## Invariants
 
 Number them `INV-1` upward with no gaps. A spec split out of another inherits
-the parent's ids unchanged instead, leaving the low numbers unused, so the
-citations already aimed at them still land.
+the parent's ids instead and never renumbers, so the citations already aimed at
+them still land — gaps included, wherever the inherited run is not contiguous.
+Say so in the section's opening line, as DOOM-0310 does.
 
 Each invariant carries a `*Test:*` clause naming what would catch a breach;
 `spec_lint` reports one that does not. It matches that marker literally, with
@@ -92,13 +92,16 @@ ledger are not specs. Plans belong in `docs/plans/`; two of this project's sit
 in `docs/specs/` beside its fix ledger, and all three report against the run
 permanently.
 
-Two earlier eras of spec cannot conform either. The pre-numbering specs use
+An earlier era of spec cannot conform either. The pre-numbering specs use
 unnumbered headings — Goal, Background, Approach, Components / affected files,
-Verification, Out of scope (YAGNI), Cold-eyes loop log. DOOM-0009 and DOOM-0170
-are numbered but assign the numbers differently. Neither era is being rewritten,
-so `spec_lint` reports both against the run permanently. Read a
-`missing_section` finding against the era its document comes from before acting
-on it.
+Verification, Out of scope (YAGNI), Cold-eyes loop log. DOOM-0009 is numbered
+but assigns the numbers differently. Neither is being rewritten, so `spec_lint`
+reports both against the run permanently.
+
+DOOM-0170 is not one of them: it keeps the numbers and fails on the qualifier
+rule above plus renamed headings at 4 and 5, so most of its findings are the
+ordinary fixable kind. Read a `missing_section` finding against the document it comes
+from before deciding it is permanent.
 
 ## Relationship to the global standard
 
