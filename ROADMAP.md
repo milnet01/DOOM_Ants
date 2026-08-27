@@ -1901,6 +1901,53 @@ with friends.
   Kind: doc.
   Source: in-session-2026-08-27 (spec_lint noise found while folding bloom answers into the specs).
 
+- 📋 [DOOM-0362] **Settle whether documentation.md or the global standard decides when a feature needs a spec.**
+  `docs/standards/documentation.md` says any large or non-obvious feature
+  gets a spec before implementation, with no skip case.
+  `~/.claude/standards/spec-format.md` section 1 gives five triggers plus an
+  explicit skip: one subsystem, obvious in shape, cheap to redo.
+
+  A large, non-obvious four-file change confined to one subsystem is
+  required to have a spec under the first and explicitly excluded under
+  the second. A session reading either one alone cannot tell it has
+  breached the other.
+
+  Found while gating DOOM-0361. That file no longer restates either rule
+  -- it points at one owner -- so the conflict is now purely between
+  those two documents. Deciding it is a call about how this project
+  works, not a wording fix, which is why it was surfaced rather than
+  settled.
+  **Layman:** Two rulebooks disagree about when a design document is required, so the answer depends on which you happen to read.
+  Kind: doc-fix.
+  Source: in-session-2026-08-27 (surfaced by the DOOM-0361 review-contract gate, loop 1).
+
+- 📋 [DOOM-0363] **Clear or exempt the specs that can never satisfy the spec-format run.**
+  DOOM-0361 cut spec_lint's missing_section findings from 210 to 81 by
+  giving the project its own section list. The 81 that remain are true
+  non-conformances rather than phantom ones, and every one is on a
+  document that cannot conform:
+
+  - the pre-numbering specs, which use unnumbered headings
+  - DOOM-0009, which assigns the numbers differently
+  - two build plans and a fix ledger, which are not specs at all
+  - DOOM-0170, whose failures are mostly the ordinary fixable case: a
+    qualifier appended to an otherwise correct heading, plus renamed
+    headings at 4 and 5
+
+  DOOM-0170 is the cheap one and worth doing on its own -- stripping the
+  qualifiers is the one-line fix spec-format.md already prescribes.
+
+  The rest is a choice, not a defect: rewrite the headings, move the
+  plans to docs/plans/, or leave them and accept a permanent baseline.
+  Ants MCP has been asked for a per-document exemption marker, which
+  would make the last option readable instead of noisy.
+
+  Until something changes, a reader re-triages the same rows on every
+  run, which is where a real finding hides.
+  **Layman:** The spec checker still reports 81 complaints about old documents that will never match the current format.
+  Kind: doc-fix.
+  Source: in-session-2026-08-27 (measured while shipping DOOM-0361).
+
 ## Phase 2 — The Spin
 
 The creative overhaul: evolve the renderer toward true 3D with hardware
