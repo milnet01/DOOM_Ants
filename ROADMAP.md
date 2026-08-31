@@ -8696,6 +8696,52 @@ parked ideas (💭 considered) until we commit to and design each one.
   and conclude anything.
   The white also swallows the DOOM-0322 vantage, which is why that defect
   had to be diagnosed with fog off.
+  Progress (2026-08-31): the saturation diagnosis is CONFIRMED by the
+  dial sweep this bullet asked for, and one half of its prediction is
+  falsified. Ultra + rt_view 6, render_scale 100, E3M1 `-warpto 192 -980
+  90`, horizon band (the longest sight line in frame), mean RGB:
+    fog 0: 86.8 / 37.0 / 19.3   R/G 2.35
+    fog 1: 230.2 / 149.1 / 113.2  R/G 1.54
+    fog 2: 244.8 / 169.9 / 138.0  R/G 1.44
+    fog 3: 248.5 / 181.5 / 153.8  R/G 1.37
+  Red pins while green and blue keep climbing -- red rises +143.4, then
+  +14.6, then +3.7, which is ceiling compression -- so the hue marches
+  monotonically toward grey exactly as predicted.
+  FALSIFIED: "at rt_fog 1 the same pixels should read red rather than
+  pale". They do not. rt_fog 1, the SHIPPED DEFAULT, has already lost
+  more than half the tint at this vantage (2.35 -> 1.54). So there is no
+  dial setting at which this vantage looks right, and the fix cannot be
+  to ship a lower default.
+  The mechanism is confined to open sight lines, which supports rather
+  than weakens the diagnosis: in a genuinely enclosed part of the same
+  level (sector 5, `-warpto -400 866 0`, left-hand wall region) the light
+  the fog ADDS is 40.1 / 12.7 / 11.4, R/G 3.16 -- strongly red, nowhere
+  near the ceiling. The tint is correct wherever the path is short.
+  Evidence: dev-shots/DOOM-0011-look/ (hell-fog0..3, hellroom-fog0..2).
+  CONSEQUENCE FOR DOOM-0011: this bullet's warning holds and now has
+  numbers behind it. The L4 look call on the hell tint (spec Q7/Q20)
+  cannot be taken on an open vantage until this is fixed, because the
+  user would be judging a hue the ceiling has already destroyed.
+  Progress (2026-08-31, cont.): the defect is WIDER than this bullet's
+  headline. It is not confined to hell and the tint loss is a symptom
+  rather than the disease. Same build and settings, E1M1's open-sky
+  courtyard `-warpto 1400 -3300 0` -- a level with no hell haze and no
+  kHellTint anywhere in the frame -- rt_fog 0 vs 2, mean RGB:
+    far ground band   44.5 / 34.8 / 22.2  ->  211.7 / 219.7 / 211.0
+    mid wall band     58.4 / 40.4 / 12.7  ->  223.3 / 239.5 / 220.4
+  Unfogged the two bands are plainly different surfaces; fogged they are
+  within ~12 levels of each other and both near-white. The scene has been
+  replaced by fog, not veiled by it.
+  So the mechanism to fix is the UNBOUNDED in-scatter on a long sight
+  line. Hell only makes it legible, because there a saturating red is the
+  thing that visibly turns grey. Any fix keyed on kHellTint or on the hell
+  profile would leave E1M1 exactly as it is.
+  Suggests the third of this bullet's candidate fixes -- bound the
+  effective path length, the way kFogSkyDist already bounds the sky term
+  -- since that is the only one of the three that acts on an untinted
+  level too. Not chosen here; recorded so the choice is made with this
+  case in view.
+  Evidence: dev-shots/DOOM-0011-look/ (goosky-fog0, goosky-fog2).
 
 - 📋 [DOOM-0322] **A tall wall renders black in Solid and Ultra where Classic draws its texture.**
   User play-test 2026-08-04, same open hell landscape, reported as "the
