@@ -137,6 +137,53 @@ that everything else builds on.
   Source: review-code 2026-09-01 -- stated as a coverage gap, not a finding.
   Lanes: docs.
 
+- 📋 [DOOM-0417] **Three false-positive ledger entries now describe code that no longer exists.**
+  DOOM-0364's fixes invalidated three records in .ants_review_falsepos.jsonl.
+  Each dismissed a cppcheck finding on the grounds that the code was harmless and
+  should be left alone; the code has since been removed, so the dismissal now
+  points at nothing. VERIFIED against current source 2026-09-01:
+
+    - "p_doors.c:223 identicalConditionAfterEarlyExit '!p' second condition always
+      false in EV_DoLockedDoor" -- the redundant check was removed. Occurrences of
+      `if ( !p )` in the blue-lock case now: 0.
+    - "g_game.c:1466 redundantAssignment 'viewactive' reassigned before use in
+      G_InitNew" -- the duplicate was removed. `viewactive = true` in G_InitNew
+      now: 1.
+    - "cppcheck style: duplicateAssignExpression ry/nx (r_mesh.c:1083) and
+      shadowVariable 'menuactive' (i_video.c:232,403)" -- the menuactive HALF is
+      stale, both block-scope externs were removed (count now 0). The r_mesh ry/nx
+      half is still live and correct, so this record needs splitting rather than
+      deleting.
+
+  Why it matters rather than being tidiness: this ledger is READ BY THE REVIEW
+  BRIEFS. audit_falsepos_log's own description says it is consumed by
+  cold_eyes_brief and indie_review_brief, and the 2026-09-01 sweep did in fact feed
+  all 118 records to every lane as "do not re-report these". A record describing
+  absent code either wastes a lane's attention or, worse, teaches it to dismiss a
+  finding about code that has since changed underneath the dismissal.
+
+  Also worth recording, because it is the same class one step removed: DOOM-0410
+  notes that the rb_materials.h atof dismissal in this ledger rests on reasoning
+  that is incomplete for NaN and inf. So of 118 records, at least four are now
+  known wrong or partly wrong.
+
+  How it was missed, so the process gap is visible too: the close-findings
+  blast-radius sweep on 2026-09-01 checked docs/, README.md, CLAUDE.md, ROADMAP.md
+  and CHANGELOG.md for every identifier the fixes changed, and did NOT check the
+  false-positive ledger -- although it is a record that cites code by file:line and
+  is therefore exactly the kind of thing a fix can falsify. Worth adding the ledger
+  to that sweep's target list. The mechanical audit that produced DOOM-0397..0416
+  could not see this either: it matched citations carrying a directory prefix, and
+  this finding cites a bare filename.
+
+  Note the related but distinct DOOM-0415, which records that no FINGERPRINT ledger
+  exists at all, so none of these 118 prose records suppresses anything in
+  audit_run.
+  **Layman:** The project keeps a list of checker warnings that were investigated and found harmless, so nobody re-investigates them. Three of those entries describe code that was deleted on 2026-09-01 — so the list now tells a future reviewer to ignore something that is not there.
+  Kind: doc-fix.
+  Source: review-code 2026-09-01 lane game-loop; verified against current source.
+  Lanes: docs, tooling.
+
 ## Phase 1 — Build, Modernise & Share
 
 Get the 1997 engine compiling, running, and playable on a modern machine —
