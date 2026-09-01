@@ -8,6 +8,21 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Asset and WAD tooling: a crash-on-typo path, a silent `rm -rf`, and dead code**
+  `stage_hero.py` dereferenced the result of `importlib.util.spec_from_file_location` and its `.loader` without a null check, turning a wrong path into an opaque `AttributeError`; it shelled out to `rm -rf` through `subprocess` with no error check, now `shutil.rmtree`; and it carried an unused `LICENSES` constant. `wad_seg_probe.py` gains an explicit `strict=` on a deliberately ragged `zip()` and loses an ambiguous `l` identifier.
+
+- **A failing `rb_materials` test read uninitialised memory instead of reporting**
+  `tests/rb_materials_test.cpp` read `order[1]` unconditionally, but `rb_apply_budget` writes only `n_loaded` entries and none at all on its out-of-memory path. Since `check()` deliberately does not abort, the array was read uninitialised exactly when an earlier assertion had already failed — undefined behaviour in the test precisely when it was diagnosing a regression.
+
+- **Dead code removed from the 1997 engine: eight defects, no behaviour change**
+  A redundant null check in `p_doors.c` after an identical early return; a duplicated `viewactive = true` in `g_game.c`; dead `patch` assignments in `r_data.c` (x2) and dead `thinker` assignments in `p_enemy.c` and `p_telept.c`, each immediately overwritten by the following `for` initialiser; unused `numplaying` in `d_net.c` and `totalwidth` in `r_data.c`; and the `frac`/`fracstep` pair in `R_DrawFuzzColumn`, which the fuzz effect never reads because it samples the framebuffer rather than the source column. The engine now builds with zero compiler warnings.
+
+- **`r_vulkan.cpp` no longer fails to compile under clang**
+  A block-scope `extern int rb_profile;` conflicted with the file-scope `extern "C"` definition of the same symbol in the same translation unit. GCC accepts this and clang rejects it outright, so the file was uncompilable on any clang-based toolchain while the normal build stayed green.
+
+- **A mistyped `-rtview` or `-rippletime` value no longer silently selects a different setting**
+  Both flags parsed their argument with `atoi`/`atof`, which report no error: `-rtview hgh` became view 0 and `-rippletime fast` pinned the ripple clock at zero, in each case overriding the default with nothing printed. `r_backend.c`'s own comment already promised the opposite. A value that is not wholly a number is now refused and the default kept, per DOOM-0026 INV-3. New `rb_argparse.h` + `tests/rb_argparse_test.cpp` (28 assertions, proved red before the fix).
+
 - **A release with nothing written down about it is refused instead of published.** (DOOM-0358)
   The release tool took its description straight from the changelog and
   never checked there was anything there, so cutting a release with an
@@ -29,6 +44,11 @@ All notable changes to DOOM_Ants are documented here. The format follows
   brought up to date on either route, the tool refuses to tag while any of them
   lags behind, and a preview build deliberately leaves the README pointing at
   the last full release.
+
+### Security
+
+- **CI workflow hardened: SHA-pinned action, least-privilege token, no persisted credentials**
+  `actions/checkout` was pinned to the mutable `v7` tag, which can be repointed at any commit; it is now pinned to the commit `v7.0.1` resolves to, with the version in a trailing comment. The workflow had no `permissions:` block, so it inherited the repository default — it now declares `contents: read`, which is all either job needs. Both checkouts set `persist-credentials: false`, since neither job pushes. zizmor goes from 7 findings to 0.
 
 ## [0.7.1] - 2026-08-19
 

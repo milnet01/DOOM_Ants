@@ -118,7 +118,7 @@ def perp_at(poly, t):
         return poly[0][1]
     if t >= poly[-1][0]:
         return poly[-1][1]
-    for (t0, d0), (t1, d1) in zip(poly, poly[1:]):
+    for (t0, d0), (t1, d1) in zip(poly, poly[1:], strict=False):
         if t0 <= t <= t1:
             return d0 if t1 == t0 else d0 + (d1 - d0) * (t - t0) / (t1 - t0)
     return poly[-1][1]
@@ -182,9 +182,9 @@ def main():
         dump_line(m, int(argv[2]))
         return
 
-    n_axis = sum(1 for l in m.lines
-                 if m.verts[l[0]][0] == m.verts[l[1]][0]
-                 or m.verts[l[0]][1] == m.verts[l[1]][1])
+    n_axis = sum(1 for ln in m.lines
+                 if m.verts[ln[0]][0] == m.verts[ln[1]][0]
+                 or m.verts[ln[0]][1] == m.verts[ln[1]][1])
     n_two = sum(1 for s in m.by_line.values() if len(s) == 2)
     rows = survey(m, cam)
     print(f"{mapname}: {len(m.verts)} vertexes, {len(m.lines)} linedefs "

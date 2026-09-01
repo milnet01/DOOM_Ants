@@ -21,6 +21,7 @@ Usage:
 import argparse
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -30,7 +31,6 @@ import importlib.util
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HEROES = os.path.join(ROOT, "assets", "ultra", "heroes")
-LICENSES = os.path.join(ROOT, "assets", "ultra", "LICENSES")
 MAXPX = 1024
 
 # suffix -> (regex over the source filename, is-sRGB, is-grayscale-single-channel)
@@ -54,7 +54,10 @@ def tint_to_doom(alb_path, wad_path, doom_name, chroma_keep=0.12):
     don't go dead-flat. Only the albedo is tinted; normal/height/AO are structure, left as-is."""
     import numpy as np
     from PIL import Image
-    spec = importlib.util.spec_from_file_location("pbr", os.path.join(ROOT, "scripts", "pbr_derive.py"))
+    pbr_path = os.path.join(ROOT, "scripts", "pbr_derive.py")
+    spec = importlib.util.spec_from_file_location("pbr", pbr_path)
+    if spec is None or spec.loader is None:
+        sys.exit("stage_hero: cannot load %s" % pbr_path)
     pbr = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(pbr)
     rgb, (w, h) = pbr.Wad(wad_path).image_rgb(doom_name)
@@ -141,7 +144,7 @@ def main():
         if suffix in rel:
             print("%s  %s  CC0" % (rel[suffix], args.url or "<source-url>"))
     if tmp:
-        subprocess.run(["rm", "-rf", tmp])
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":

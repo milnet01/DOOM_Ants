@@ -64,6 +64,7 @@
 // (compiled in rb_image.c; self-guards extern "C").
 #include "rb_materials.h"
 #include "rb_image.h"
+#include "rb_argparse.h"   // RB_ParseFloatArg -- refuse a non-numeric -rippletime value
 // DOOM-0206 (L1b): the pure-logic stb_truetype glyph-atlas baker (compiled in rb_text.c;
 // self-guards extern "C"). The GPU side (atlas image + text pipeline + batch API) is here.
 #include "rb_text.h"
@@ -9254,7 +9255,6 @@ void RecordRtTrace(uint32_t idx)
     // DOOM-0090: per-pass GPU timer. Reset the pool + stamp the frame's GPU start,
     // then stamp each pass boundary below. Read back next frame (single-frame-in-
     // flight, so it's complete). Segments: sprite-AS / megakernel / denoise+TAAU / blit.
-    extern int rb_profile;
     const bool prof = rb_profile && g.gpuTimerPool;
     if (prof) {
         vkCmdResetQueryPool(g.cmd, g.gpuTimerPool, 0, 10);
@@ -9410,8 +9410,12 @@ void RecordRtTrace(uint32_t idx)
     // the same family as -warpto and -shotverify; it changes nothing unless passed.
     {
         static const float overrideSec = []() -> float {
-            int p = M_CheckParm("-rippletime");
-            return (p && p + 1 < myargc) ? (float)atof(myargv[p + 1]) : -1.0f;
+            int   p = M_CheckParm("-rippletime");
+            float v;
+            // A value that is not wholly a number is refused, not read as 0.0:
+            // atof("fast") was 0.0, which passes the >= 0 test below and pinned
+            // the ripple clock at zero.
+            return (p && p + 1 < myargc && RB_ParseFloatArg(myargv[p + 1], &v)) ? v : -1.0f;
         }();
         if (overrideSec >= 0.0f) rippleSec = overrideSec;
     }

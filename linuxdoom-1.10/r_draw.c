@@ -291,8 +291,6 @@ void R_DrawFuzzColumn (void)
 { 
     int			count; 
     byte*		dest; 
-    fixed_t		frac;
-    fixed_t		fracstep;	 
 
     // Adjust borders. Low... 
     if (!dc_yl) 
@@ -347,9 +345,10 @@ void R_DrawFuzzColumn (void)
     // Does not work with blocky mode.
     dest = ylookup[dc_yl] + columnofs[dc_x];
 
-    // Looks familiar.
-    fracstep = dc_iscale; 
-    frac = dc_texturemid + (dc_yl-centery)*fracstep; 
+    // The fuzz effect samples the FRAMEBUFFER, never the source column, so the
+    // texture-coordinate walk the other column drawers keep here would be dead
+    // stores: id's original `fracstep`/`frac` pair was computed and stepped and
+    // never read. Dropped rather than kept for symmetry -- gcc -Wall flagged it.
 
     // Looks like an attempt at dithering,
     //  using the colormap #6 (of 0-31, a bit
@@ -367,8 +366,6 @@ void R_DrawFuzzColumn (void)
 	    fuzzpos = 0;
 	
 	dest += SCREENWIDTH;
-
-	frac += fracstep; 
     } while (count--); 
 } 
  

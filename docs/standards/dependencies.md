@@ -121,13 +121,18 @@ sub-Makefile is not built by CI or the default `make`, so it's out of scope):
   snapshot*, the one place a version can silently go stale, so it gets the closest
   watch on the sweep.
 - **CI (GitHub Actions):** `.github/workflows/build.yml` pins the action
-  `actions/checkout@v7` and runs on the `ubuntu-latest` runner image. Its Linux
+  `actions/checkout` **by commit SHA**, with the release it corresponds to in a
+  trailing comment (today `3d3c42e5…` / `# v7.0.1`), and runs on the
+  `ubuntu-latest` runner image. The SHA pin landed 2026-09-01: a tag can be
+  repointed at any commit, so pinning by tag trusts whoever can move it. Its Linux
   build-deps are the single-source-of-truth apt list `packaging/ci-deps.txt`
   (`build-essential`, `libsdl2-dev`, `libsdl2-mixer-dev`, `libvulkan-dev`,
   `glslc`, `xxd`), shared with the local mirror
   `packaging/ci-local.sh`. Two
-  version pins here are ours to keep current: the `actions/checkout@vN` action,
-  and the container image `packaging/ci-local.sh` hardcodes to mirror the runner
+  version pins here are ours to keep current: the `actions/checkout` SHA (bump
+  the SHA **and** its version comment together — a stale comment beside a live
+  SHA is worse than neither), and the container image `packaging/ci-local.sh`
+  hardcodes to mirror the runner
   (the `CI_IMAGE` assignment near the top of that script). See the sweep
   posture below for the lockstep rule between them and `ubuntu-latest`.
 - **Release packaging (AppImage):** `packaging/build-appimage.sh` (driven by

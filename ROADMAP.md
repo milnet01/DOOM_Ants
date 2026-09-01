@@ -1948,6 +1948,111 @@ with friends.
   Kind: doc-fix.
   Source: in-session-2026-08-27 (measured while shipping DOOM-0361).
 
+- 📋 [DOOM-0364] **The view-height ceiling clamp is dead whenever the player is airborne or has no momentum.**
+  P_CalcHeight's `(cheats & CF_NOMOMENTUM) || !onground` branch reads:
+
+      player->viewz = player->mo->z + VIEWHEIGHT;
+      if (player->viewz > player->mo->ceilingz-4*FRACUNIT)
+          player->viewz = player->mo->ceilingz-4*FRACUNIT;
+      player->viewz = player->mo->z + player->viewheight;
+      return;
+
+  The third assignment overwrites both earlier ones, so the ceiling clamp never
+  applies on that path and the view can pass through a low ceiling while airborne.
+  Verified against current source 2026-09-01; it is faithful id 1997 code, and
+  other ports treat it as a compatibility-flagged bug rather than a plain fix.
+
+  NOT fixed in the 2026-09-01 defect pass, deliberately. viewz feeds the software
+  renderer, so correcting it changes Classic's output — which DOOM-0008 INV-1 and
+  DOOM-0026 INV-1 both require to stay byte-identical. That makes this a decision
+  about which promise wins, not an edit: either the clamp is restored behind a
+  compatibility switch that leaves Classic untouched, or the bug is kept and
+  recorded as deliberate vanilla fidelity.
+  **Layman:** A long-standing bug inherited from the 1993 original: when you are in mid-air, the code that stops the camera poking up through the ceiling is thrown away a line after it runs. Fixing it would change what Classic looks like, which we have promised not to do — so it needs a decision first.
+  Kind: fix.
+  Source: check-code --tree 2026-09-01 (cppcheck style/redundantAssignment, p_user.c:104).
+  Lanes: playsim, renderer.
+
+- 📋 [DOOM-0365] **No static analyser covers the 30 shader files — the ray-traced renderer's own source.**
+  check-code's tool table has rows for C/C++, Python, shell, YAML and Dockerfiles
+  and no row for GLSL, so `linuxdoom-1.10/shaders/*.{comp,frag,vert,glsl}` — 30
+  files, 5,325 lines, including pathtrace.comp at 1,911 — were selected by no tool
+  and analysed by nothing on the 2026-09-01 whole-tree run.
+
+  The project already builds them with `glslc`, which is a real compiler and the
+  obvious candidate: a `glslangValidator`/`glslc` syntax-and-warning pass over
+  every shader would give the tier its first mechanical check. Filed rather than
+  done in that pass because adding a tool the skill's own table does not select is
+  a change to the tool set, not a finding.
+  **Layman:** The automated code checkers we run have no rule for shader files, so the 5,300 lines that actually draw the ray-traced picture are checked by nothing at all.
+  Kind: test.
+  Source: check-code --tree 2026-09-01 (language-signal gap).
+  Lanes: renderer, tooling.
+
+- 📋 [DOOM-0366] **clang-tidy analyses nothing here and still exits 0 — there is no .clang-tidy.**
+  Measured 2026-09-01: `clang-tidy -p . <file>` with no `.clang-tidy` anywhere in
+  the tree returns `Error: no checks enabled.` and produces zero findings. The
+  whole-tree run only got 217 findings out of it by passing an explicit
+  `-checks=-*,clang-analyzer-*,bugprone-*` on the command line — a flag the run
+  supplied, not the project.
+
+  So an ordinary invocation is the exact failure check-code names: a tool exiting 0
+  having analysed nothing, indistinguishable in a report from a clean pass. A
+  committed `.clang-tidy` naming the check set makes the result mean something and
+  makes two runs comparable.
+
+  Related, same pass: `linuxdoom-1.10/compile_commands.json` was 11 days stale
+  (2026-08-03 against a 2026-08-14 Makefile change) and is gitignored, so both
+  clang-tidy and clazy analysed a stale compilation database.
+  **Layman:** One of our code checkers has no settings file, so it runs, checks literally nothing, and reports success. A clean result from it currently means nothing at all.
+  Kind: chore.
+  Source: check-code --tree 2026-09-01.
+  Lanes: tooling.
+
+- 📋 [DOOM-0367] **No audit config, so every static-analysis run re-reports vendored and asset noise.**
+  Measured on the 2026-09-01 whole-tree run, with no project audit config present:
+
+    - cppcheck: 396 of 1,949 findings (20%) are in the vendored single-header
+      libraries stb_image.h, stb_image_write.h and stb_truetype.h — upstream's
+      code, which this project does not patch.
+    - typos: pointed at all 388 tracked files it returned 14,762 findings, of which
+      13,931 were inside asset PNGs (one normal map alone accounted for 572).
+      Restricted to text files it returns 831.
+    - gitleaks: pointed at the working tree it scanned 91 MB and its one hit was in
+      untracked mingw-deps/. Scoped to tracked files it scans 6 MB and is clean.
+
+  A config at docs/private/audit/audit-config.json, .claude/audit/audit-config.json
+  or tools/audit/audit-config.json (first match wins) carrying those path
+  exclusions would make future runs comparable instead of re-triaged. Worth
+  recording alongside it: `MIS` in this project is Multiple Importance Sampling and
+  `Parm`/`STSTR`/`Lod`/`vertexes`/`iy` are id's own 1993 identifiers, which
+  together account for most of the surviving typos count.
+  **Layman:** Our code checkers keep flagging third-party code we did not write and picking words out of image files. A small settings file would silence all of it permanently.
+  Kind: chore.
+  Source: check-code --tree 2026-09-01.
+  Lanes: tooling.
+
+- 💭 [DOOM-0368] **cppcheck's ~1,400-finding cosmetic tail on the inherited 1997 engine.**
+  What is left after the 2026-09-01 defect pass, all on inherited id code and all
+  cosmetic: unusedStructMember 609, staticFunction 338, variableScope 269,
+  cstyleCast 172, constVariablePointer 121, constParameterPointer 104,
+  constVariable 31.
+
+  Every one was examined as a class on 2026-09-01 and none is a defect. Acting on
+  them would touch nearly every file in the engine, produce a diff no behaviour
+  test can validate, and add regression surface to a renderer that is verified
+  largely by eye. Recorded as considered rather than planned: the decision to take
+  it is a judgement about the value of uniformity against that risk, and the
+  defects it might have hidden have now been separately triaged.
+
+  Of these, `staticFunction` is the only one with any mechanical value — internal
+  linkage lets the compiler optimise harder and catches an accidental export — so
+  if any of the tail is ever taken, take that one alone.
+  **Layman:** The code checker has about 1,400 style opinions about id Software's original 1993 code — things like how casts are written. None of them is a bug. Changing them would touch nearly every file for no behaviour change.
+  Kind: refactor.
+  Source: check-code --tree 2026-09-01, deferred by the user.
+  Lanes: engine.
+
 ## Phase 2 — The Spin
 
 The creative overhaul: evolve the renderer toward true 3D with hardware

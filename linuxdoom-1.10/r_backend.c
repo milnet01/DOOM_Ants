@@ -23,7 +23,7 @@
 //-----------------------------------------------------------------------------
 
 #include <math.h>
-#include <stdlib.h>     // atoi (DOOM-0351: -rtview)
+#include <stdlib.h>     // strtol via rb_argparse.h (DOOM-0351: -rtview)
 #include <string.h>     // memset (wipe screens[0] on a mode switch)
 
 #include "r_backend.h"
@@ -33,6 +33,7 @@
 #include "m_fixed.h"    // FRACUNIT
 #include "r_sky.h"      // skytexture (the sky's wall-texture index)
 #include "doomstat.h"   // gamemode/gameepisode/gamemap (DOOM-0011 L4 hell haze)
+#include "rb_argparse.h" // RB_ParseIntArg -- refuse a non-numeric -rtview value
 #include "r_mesh.h"     // rb_view_t (POD camera across the seam), RB_OVERLAY_KEY
 #include "v_video.h"    // screens[] (the paletted 2D overlay buffer)
 #include "st_stuff.h"   // ST_Start (force a full status-bar redraw on switch)
@@ -355,8 +356,8 @@ static void RB_ApplyTierRt(void)
         int p = M_CheckParm("-rtview");
         if (p && p + 1 < myargc)
         {
-            int v = atoi(myargv[p + 1]);
-            if (v >= 0 && v <= 6 && v != 5)
+            int v;
+            if (RB_ParseIntArg(myargv[p + 1], &v) && v >= 0 && v <= 6 && v != 5)
                 rb_rtdebug = v;
         }
     }

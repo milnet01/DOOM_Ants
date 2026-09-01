@@ -264,7 +264,6 @@ static void I_PollGamepad(void)
     int		lx, ly, rx, lt, rt;
     int		buttons = 0;
     boolean	b_pressed;
-    extern boolean menuactive;          // m_menu.c: lets B (Circle) close the menu
     extern int rb_wireframe;            // r_vulkan.cpp: 3D wireframe debug toggle
     extern int rb_flashlight;           // r_vulkan.cpp: DOOM-0044 headlamp toggle
     static boolean strafe_r_held, strafe_l_held, esc_held, back_held, map_held;
@@ -460,7 +459,6 @@ static void I_DebugKeyMessage(const char* text)
 static void I_GetEvent(SDL_Event* sdlevent)
 {
     event_t event;
-    extern boolean menuactive;          // m_menu.c: F still types in menu text entry
     extern int rb_flashlight;           // r_vulkan.cpp: DOOM-0044 headlamp toggle
 
     // DOOM-0287: drop every input event on a -noinput / capture run. SDL_QUIT and window

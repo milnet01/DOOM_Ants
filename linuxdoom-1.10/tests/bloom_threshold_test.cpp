@@ -110,7 +110,6 @@ int main()
     {
         size_t end = vk.find("};", tp);
         size_t p   = vk.find('{', tp);          // the initialiser's own brace
-        int    row = 0;
         while (p != std::string::npos && end != std::string::npos)
         {
             p = vk.find('{', p + 1);
@@ -119,7 +118,6 @@ int main()
             size_t c1 = vk.find(',', p);
             float knee = (c1 == std::string::npos) ? 0.0f : std::strtof(vk.c_str() + c1 + 1, nullptr);
             starts.push_back(thr - knee);
-            row++;
         }
         check_eq_int((long)starts.size(), 4, "the preset table still has four rows");
     }

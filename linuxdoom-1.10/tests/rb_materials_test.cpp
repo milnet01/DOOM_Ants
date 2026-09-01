@@ -135,7 +135,7 @@ static void test_budget_drops_lowest_traffic() {
     float traffic[3] = { 100.0f, 300.0f, 50.0f };   // id1 biggest, id2 smallest
     float est_mb[3]  = { 2.0f, 2.0f, 2.0f };
     int   is_hero[3] = { 0, 0, 0 };
-    int order[3], nloaded = -1;
+    int order[3] = { -1, -1, -1 }, nloaded = -1;
     rb_apply_budget(table, 3, traffic, est_mb, is_hero, 5.0f, order, &nloaded);
     check(nloaded == 2, "budget: a 5 MB ceiling admits two 2 MB materials");
     check(order[0] == 1 && order[1] == 0, "budget: load order is descending traffic");
