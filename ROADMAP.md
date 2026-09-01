@@ -2163,6 +2163,38 @@ with friends.
   is undefined today, so nothing well-defined is lost. Note the demo-compatibility
   question: some ports emulate the vanilla overflow for demo playback, and this
   project's vanilla-behaviour contract does not say which way it wants that.
+  AGREED PLAN 2026-09-01, and this bullet is the anchor for it. Fix the CRITICAL
+  memory-safety set FIRST, in this order, then run verify-delivery:
+
+    1. DOOM-0369 (here) -- five unbounded appends: intercepts, spechit,
+       braintargets, linespeciallist. Mostly two-line caps.
+    2. DOOM-0370 -- BLOCKMAP offset table (fix site p_setup.c:537, see DOOM-0399)
+       and the REJECT length. REJECT must zero-fill, NOT I_Error: zero-length
+       REJECT lumps are legitimate node-builder output.
+    3. DOOM-0372 -- the sidenum == -1 use sites; one shared helper closes all eight.
+    4. DOOM-0373 -- savegame indices (readyweapon/pendingweapon, fixedcolormap,
+       floorpic/ceilingpic) through the existing P_SaveIndex.
+    5. DOOM-0371 -- demo consoleplayer bound + demoend on the playback path.
+    6. DOOM-0381 -- bound R_FlatNumForName; r_mesh.c:1513 shows the guard's shape.
+
+  Then the two gates, because until they are fixed nothing else can be trusted to
+  have been checked: DOOM-0375 (ci-local.sh reports PASSED for skipped jobs) and
+  DOOM-0376 (-rtverify passes on zero measurement and exits 0 regardless).
+
+  Then verify-delivery, which has NOT been run on this project.
+
+  Constraints that bind every fix above, all verified this session:
+    - `make` does NOT build the tests; only `make test` does. Running a test binary
+      straight after editing its source runs the PREVIOUS build and passes.
+    - DOOM-0008 INV-1 and DOOM-0026 INV-1 require Classic to render BYTE-IDENTICALLY,
+      so a fix that changes software-renderer output is a spec breach, not a fix.
+      That is exactly why DOOM-0364's viewz clamp was filed instead of fixed.
+    - The real gate is the headless boot smoke, and it does catch things a build
+      does not: SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy ./linux/linuxxdoom
+      -iwad <abs path to wads/doom.wad> -config <temp cfg with `renderer 0`>
+      -bootsmoke 70   -> must exit 0. Run it on doom.wad AND doom2.wad.
+    - Baseline to beat, measured 2026-09-01 after DOOM-0364: make exit 0 with ZERO
+      compiler warnings, make test 12/12, boot smoke exit 0 on both IWADs.
   **Layman:** Five places in the original 1993 game code add items to a fixed-size list without ever checking it is full. A map file downloaded from the internet can make them overflow and write over memory they do not own. Nothing crashes reliably — it corrupts whatever sits next in memory.
   Kind: security.
   Source: review-code 2026-09-01, lanes playsim and playsim-world.
