@@ -51,6 +51,92 @@ that everything else builds on.
   Kind: doc.
   Source: user-request-2026-07-26.
 
+- 📋 [DOOM-0415] **Eight project files the tools and review skills look for do not exist, and their absence is silent.**
+  Verified 2026-09-01 by listing each path. Each absence changes what a tool or
+  skill does, and none of them announces itself.
+
+    - .clang-tidy -- MISSING. clang-tidy's defaults enable NO checks here, so an
+      unconfigured run analyses nothing and exits 0. Already DOOM-0366; repeated
+      here so the set is complete in one place.
+    - audit-config.json -- MISSING at all three probe paths (docs/private/audit/,
+      .claude/audit/, tools/audit/). Already DOOM-0367.
+    - .yamllint -- MISSING. yamllint therefore runs on library defaults the project
+      never adopted: 29 of its 32 findings are "line too long (>80)" in a workflow
+      whose established style is longer than that, and it flags `on:` as a truthy
+      value when `on:` is required spelling for a GitHub Actions workflow. A config
+      declaring the project's real style makes the tool's output mean something.
+    - .editorconfig -- MISSING. check-code skips shfmt entirely for want of a
+      declared shell style, so the eight shell scripts get no formatter at all. Note
+      the trap the skill records: a blanket [*] section does NOT count, because it
+      is what a project writes when it has not thought about shell -- the section's
+      glob must actually select *.sh.
+    - docs/subsystems.md and .indie-review/partition.json -- BOTH MISSING. This is
+      the one that cost real time on 2026-09-01: with neither present,
+      indie_review_partition falls back to grouping by directory and then by
+      arbitrary 25-file alphabetical chunks. It returned a partition that mixed the
+      playsim with the software renderer, split f_finale.c from f_finale.h, buried
+      the 11,574-line r_vulkan.cpp in a 25-file lane, and OMITTED every shell
+      script, every Python script and the CI workflow -- where three CRITICALs and
+      four HIGHs turned out to live. A committed partition file would have made the
+      sweep both cheaper and more complete, and would make the next one repeatable.
+    - .claude/code-pairs.json -- MISSING. This is the list of facts that must change
+      together but share no searchable token (a limit and the code that clamps to
+      it, a C++ constant and the GLSL constant mirroring it). close-findings walks
+      it on every sweep. This project has at least six real pairs already known --
+      kShadowDim/mesh.frag:180, kFlashOffRight/Up, RASTER_MAX_LIGHTS,
+      BASE_SECTOR_DIM/kAmbientSectorMax, RB_FOG_LIGHTS_PER_CELL/kFogLightsPerCell,
+      kBloomPresets and its two consumers -- and DOOM-0409 and DOOM-0411 are both
+      findings about a mirror with no enforcement. Seeding the file with those pairs
+      turns a recurring review finding into a mechanical check.
+    - .audit_cache/learned-fp.jsonl and .audit_allowlist.json -- BOTH MISSING. The
+      project has a 118-record PROSE false-positive ledger
+      (.ants_review_falsepos.jsonl), which audit_falsepos_log's own description says
+      suppresses NOTHING in audit_run: the engine's suppressions filter reads the
+      FINGERPRINT ledger, which audit_dismiss writes. So every dismissed
+      static-analysis finding is re-reported on every run and re-triaged by hand.
+      That is most of the cost of a check-code pass on this tree.
+
+  Not filed as missing, deliberately: CONTRIBUTING.md and .gitattributes are also
+  absent, but nothing in this project's own standards or tooling asks for either.
+  **Layman:** The automated checkers and review tools each look for a settings file to tell them how this project works. Eight of them are missing, so each tool either runs on somebody else's defaults or silently does nothing — and in both cases the result looks like a pass.
+  Kind: chore.
+  Source: review-code and check-code 2026-09-01; verified by listing the tree.
+  Lanes: tooling.
+
+- 📋 [DOOM-0416] **Nobody has checked whether every shipped feature has the spec its own standards require.**
+  Recorded so the gap is visible rather than assumed closed.
+
+  What the 2026-09-01 sweep DID cover on the document side: places where a
+  contract document and the code disagree (DOOM-0395, nine of them, each naming
+  which side the lane judged wrong), and project/tool config files that are absent
+  (DOOM-0415). Both are "a document that exists is wrong" or "a config file is
+  absent".
+
+  What it did NOT cover: whether a feature that shipped has the spec, ADR or
+  standard that spec-format.md section 1 would have required for it. review-code
+  reviews source against the contracts a subsystem is bound by; it cannot see a
+  contract that was never written, because there is nothing to read. The tree holds
+  19 specs and 3 ADRs against ~390 roadmap items, which is not itself evidence of a
+  gap -- spec-format.md section 1's whole point is that most work needs no spec --
+  but it means nobody has asked the question.
+
+  The two skills that answer it are review-ledger (does the record match what git
+  and the tree actually contain?) and verify-delivery (does a feature claimed as
+  shipped actually run?). Neither has been run on this project in this session.
+
+  Two concrete prompts for whoever picks this up, both surfaced by the sweep:
+    - DOOM-0410 records that r_vulkan.cpp ships single-mip HD materials while
+      DOOM-0042 promises a vkCmdBlitImage down-chain and derives its VRAM budget
+      from it. The code comment calls single-mip a v1 decision -- but NO contract
+      records that deferral, so a decision was taken and never written down.
+    - DOOM-0412 records that the shipped sprite design contradicts both DOOM-0008
+      and DOOM-0009, and that DOOM-0009 contradicts itself 200 lines apart. That is
+      the shape of a design that changed without an amendment.
+  **Layman:** The review looked at whether the code is correct and whether the documents that exist are accurate. It did not check the third thing: whether a document that SHOULD exist is missing entirely. That needs a different pass.
+  Kind: investigate.
+  Source: review-code 2026-09-01 -- stated as a coverage gap, not a finding.
+  Lanes: docs.
+
 ## Phase 1 — Build, Modernise & Share
 
 Get the 1997 engine compiling, running, and playable on a modern machine —
@@ -2571,6 +2657,384 @@ with friends.
   Kind: security.
   Source: review-code 2026-09-01, lane platform.
   Lanes: audio, network, security.
+
+- 📋 [DOOM-0397] **Playsim review tail: three findings not covered by DOOM-0369 or DOOM-0372.**
+  Verified against current source by the lane. Filed so each has an addressable
+  home; none is covered by DOOM-0369 or DOOM-0372.
+
+    - MEDIUM p_enemy.c:593 -- P_ForgetPlayerTargets nulls target on every mobj
+      pointing at a player, but for a missile `target` means OWNER. A_BFGSpray
+      (p_pspr.c:795) passes mo->target to P_AimLineAttack with no NULL check,
+      dereferenced at p_map.c:1034. Toggling the DOOM-0294 monsters-ignore-you row
+      with a BFG ball in flight is a NULL deref. DEV builds only. Fix: also test
+      !(mo->flags & MF_MISSILE).
+    - LOW p_mobj.c:734 -- a type <= 0 thing falls through to I_Error at
+      p_mobj.c:763, a hard level-load failure where vanilla mishandled it and
+      continued.
+    - LOW p_user.c:242 -- P_SetupLevel never verifies a start exists per
+      playeringame[i]; a map with no player-1 start NULL-derefs in the first
+      P_PlayerThink.
+  **Layman:** The leftovers from the review of the game-logic code, after the serious memory bugs were filed separately. Each needs checking and then fixing or dismissing.
+  Kind: investigate.
+  Source: review-code 2026-09-01, lane playsim.
+  Lanes: playsim.
+
+- 📋 [DOOM-0398] **World-machinery review tail: eight findings on doors, floors, ceilings, platforms and switches.**
+  Verified against current source by the lane. Not covered by DOOM-0372.
+
+    - MEDIUM p_plats.c:197 -- raiseAndChange and raiseToNearestAndChange never set
+      plat->low, and Z_Malloc does not zero, so T_PlatRaise's crushed path descends
+      toward a garbage height. Also count = wait = 0, so a later waiting state
+      counts 0 -> -1 and sticks for ~2^31 tics. Line specials 14/15/22/66/67/95.
+    - MEDIUM p_floor.c:403 -- lowerAndChange sets floor->texture unconditionally
+      but floor->newspecial only inside the height-match branch. When the sector is
+      already the lowest around it, newspecial is uninitialised and is copied into
+      sector->special; the next P_PlayerInSpecialSector then hits I_Error at
+      p_spec.c:1073 and the game exits. Line specials 37 and 84, reachable in
+      ordinary play. One line: set newspecial alongside texture.
+    - MEDIUM p_ceilng.c:251 -- P_AddActiveCeiling falls off the end silently when
+      all 30 slots are full, while the sibling p_plats.c:288 I_Errors. The 31st
+      ceiling still owns sec->specialdata but P_RemoveActiveCeiling can never find
+      it, so the sector is permanently unusable and the thinker runs all level.
+    - MEDIUM p_spec.c:1159 -- S_StartSound is passed &buttonlist[i].soundorg, the
+      address of the pointer field rather than the pointer. soundorg is the last
+      member, so it reads into the next button_t, and past the global array for
+      i == MAXBUTTONS-1. Fixing it moves where the switch click is heard, so it
+      needs the vanilla-fidelity call.
+    - LOW p_tick.c:132 -- Z_Free then read currentthinker->next; works only because
+      Z_Free does not scrub. UB, would trip ASan.
+    - LOW p_spec.c:1073 -- any PWAD sector special outside {4,5,7,9,11,16} aborts
+      the game when a player lands in it. Boom made this a no-op.
+    - INFO p_doors.c:233 and p_doors.c:245 still carry the identical `if (!p)
+      return 0;` that was removed from the blue-lock case in DOOM-0364, so three
+      copies of one guard have diverged into two shapes. Finish or revert.
+    - INFO p_switch.c:121 -- if the switch-table terminator were dropped the loop
+      exits without executing `numswitches = index/2`, so numswitches stays 0 and
+      every switch silently stops working.
+  **Layman:** The leftovers from reviewing the code that runs doors, lifts and switches. Two of them use memory that was never initialised, and one can make the game quit to the desktop during ordinary play.
+  Kind: investigate.
+  Source: review-code 2026-09-01, lane playsim-world.
+  Lanes: playsim.
+
+- 📋 [DOOM-0399] **Savegame and level-load review tail: eleven findings, including the BLOCKMAP guard's own line.**
+  DOOM-0370 covers the BLOCKMAP defect and cites p_maputl.c:491; the guard itself
+  is at p_setup.c:537 and is repeated here so the fix site is addressable.
+
+    - CRITICAL p_setup.c:537 -- P_LoadBlockMap checks only `count < 4` (the header)
+      and the dimension product against the blocklinks allocation. Nothing checks
+      the lump holds 4 + bmapwidth*bmapheight shorts, and no offset is validated.
+      This is the fix site for DOOM-0370.
+    - MEDIUM p_setup.c:598 -- li->frontsector->linecount++ dereferenced
+      unconditionally; frontsector is set to 0 at p_setup.c:476 when
+      sidenum[0] == -1. Null deref on a malformed but craftable linedef.
+    - MEDIUM p_setup.c:212 -- DOOM-0254 turns a two-sided linedef with
+      sidenum[1] == -1 into a fatal I_Error where vanilla read sides[-1] and
+      continued, so it refuses maps the engine previously played. Needs the
+      compatibility call: refuse, or treat as backsector = 0.
+    - MEDIUM p_saveg.c:113 -- the on-disk format is a raw struct image; the only
+      version gate is g_game.c:1430's strncmp on the GAME version, which does not
+      move when a struct does. Two builds of one version, or 32- vs 64-bit, load
+      each other's saves as garbage -- and that garbage is the attacker-controlled
+      state DOOM-0373's write primitives consume.
+    - MEDIUM g_game.c:1430 -- a version-mismatched save is rejected with no message
+      and no diagnostic; from the menu the load is a silent no-op.
+    - LOW p_setup.c:188 -- numsegs*sizeof(seg_t) computed in 64 bits and truncated
+      by Z_Malloc(int). Same shape at p_setup.c:136, :247, :276, :311, :412, :501,
+      :609.
+    - LOW p_saveg.c:380 -- mobj->player bounded to the array but not against
+      playeringame[].
+    - LOW save_bounds.h:40 -- SaveFits' documented overflow property is exercised by
+      no shipping caller; p_saveg.c:64 passes pad = 0 and P_SaveNeedAligned folds
+      pad into count instead. The tested function and the used function differ.
+    - LOW p_setup.c:611 -- P_GroupLines is O(sectors x linedefs) per level load;
+      ~360M iterations on a 6k-sector map.
+    - LOW p_setup.c:381 -- verbatim id bug, `break` should be `continue`: the first
+      DOOM 2 thing type aborts the whole THINGS load in a non-commercial game.
+      Preserved-vanilla; recorded, not proposed for change.
+    - LOW g_game.c:1540 -- the save slot is overwritten in place with no
+      temp-plus-rename, so a crash mid-write destroys the previous save.
+  **Layman:** The leftovers from reviewing saved games and map loading, including the exact line where the map-block check stops short.
+  Kind: investigate.
+  Source: review-code 2026-09-01, lane savegame.
+  Lanes: savegame.
+
+- 📋 [DOOM-0400] **WAD and zone review tail: twelve findings not covered by DOOM-0384.**
+    - MEDIUM w_wad.c:307 -- TOCTOU heap overflow on the `-file ~pwad` reload path:
+      lumpcount is re-read from the file on every level load (p_setup.c:698) while
+      lumpinfo and lumpcache were sized at startup. Grow the file between the two
+      and the loop writes attacker-controlled position/size past both allocations
+      and Z_Frees past lumpcache's end. Opt-in, hence MEDIUM. Open question worth
+      settling first: is `-file ~name.wad` supported or vestigial? Deleting the path
+      is cheaper than hardening it.
+    - MEDIUM w_wad.c:505 -- `c < l->size` cannot detect a failed read when size is
+      negative: read() returns -1 and -1 < -1 is false, so W_ReadLump reports
+      success with dest untouched. Not reachable today only because Z_Malloc's
+      DOOM-0254 guard aborts first, but W_ReadLump is public API.
+    - LOW v_video.c:141 -- int usegamma is the adjacent global the m_misc.c:495
+      kind-confusion primitive (DOOM-0384) overwrites.
+    - LOW w_wad.c:182 -- strcmpi(filename+strlen(filename)-3, "wad") reads before
+      the buffer for a filename under 3 characters. Same class at w_wad.c:102.
+    - LOW w_wad.c:565 -- int info[2500][10] indexed by an unbounded profilecount;
+      dead today (its only caller, p_setup.c:694, is commented out) so it is a trap
+      for whoever uncomments it.
+    - LOW w_wad.c:357 -- numlumps * sizeof(*lumpcache) truncates to int.
+    - LOW m_misc.c:368 -- a predictable "%s.tmp" opened with fopen "w" follows
+      symlinks; harmless for ~/.doomrc, a real trap for -config /tmp/foo.
+    - LOW m_misc.c:396 -- no fflush/fsync before the rename, so a power loss can
+      land an empty config -- the outcome the temp-plus-rename exists to prevent.
+    - LOW z_zone.c:133 vs z_zone.c:447 -- the same "is this a real user pointer"
+      test written two ways; Z_ChangeTag2 was modernised and Z_Free was not.
+    - LOW w_wad.c:425 -- W_CheckNumForName is a linear backward scan and
+      r_things.c:219 runs it per sprite name over every lump, so sprite init is
+      O(sprites x lumps) and scales with a hostile PWAD's lump count.
+    - INFO m_misc.c:383 -- M_SaveDefaults writes only keys in defaults[], so running
+      an older build silently drops every newer key. No schema version exists.
+  **Layman:** The leftovers from reviewing the WAD file reader, the memory allocator and the settings file.
+  Kind: investigate.
+  Source: review-code 2026-09-01, lane wad-io.
+  Lanes: wad-io.
+
+- 📋 [DOOM-0401] **Game-loop review tail: nine findings, including an out-of-bounds write from -net.**
+  Not covered by DOOM-0371, which files the demo half.
+
+    - HIGH d_net.c:593 -- playeringame[i] is filled for i < doomcom->numplayers,
+      but numplayers = numnodes, which i_net.c:353 bounds to MAXNETNODES (8), while
+      playeringame is MAXPLAYERS (4). So `-net 1 h1..h5` writes playeringame[4..5],
+      which in that translation unit is player_t players[]. The DOOM-0254 comment
+      at i_net.c:351 says "numnodes also bounds playeringame[]/nodeingame[]", which
+      is exactly what is not true -- the arrays are different sizes. Clamp here, or
+      reject numnodes > MAXPLAYERS in i_net.c. Open question: is a >4-host -net a
+      supported configuration at all?
+    - MEDIUM g_game.c:1538 -- the savegame overrun check runs after the archive has
+      written through save_p; the header comment at g_game.c:79 calls it a backstop,
+      which it cannot be. Same subject as DOOM-0374, recorded here as the check's
+      own site.
+    - MEDIUM d_main.c:1281 -- `-wart` reads two operands with no p < myargc-2 test,
+      while its twin `-warp` got exactly that guard at d_main.c:1388 whose comment
+      explains the NULL deref. The copies diverged when DOOM-0093 fixed one.
+    - MEDIUM g_game.c:1771 -- `-maxdemo` unvalidated: 0, or a value whose *1024
+      overflows int to 0, gives a zero-byte Z_Malloc, and G_BeginRecording then
+      writes 13 bytes past the block. Four lines below the DOOM-0070 fix.
+    - MEDIUM g_game.c:1321 -- pars is int[4][10] but G_InitNew permits episode 4 on
+      retail, so every Ultimate Doom E4 level except E4M8 reads pars[4][1..9]. This
+      fork WIDENED its reach: d_main.c:1417 promotes an ordinary doom.wad to retail
+      where vanilla reached retail only via the doomu.wad filename.
+    - MEDIUM d_main.c:1079 -- ftell and fread returns unchecked; security.md:37
+      states the rule verbatim. A short fread leaves the tail of the buffer
+      uninitialised and those bytes become myargv entries.
+    - LOW m_swap.c:35 -- SwapSHORT/SwapLONG are compiled only on little-endian while
+      m_swap.h:34 uses them only on big-endian: exact complements, so on big-endian
+      the build cannot link, and `unsigned long` is 64-bit on LP64 so the swap would
+      be wrong anyway. The false-positive ledger's big-endian justification for
+      keeping LONG()/SHORT() does not hold. Settle whether big-endian is a target.
+    - LOW g_game.c:607 -- `-warpto` operand shifted by FRACBITS without clamping;
+      signed-overflow UB.
+    - LOW d_main.c:1519 -- statcopy turns a CLI integer into a pointer that
+      g_game.c:1340 memcpy's sizeof(wminfo) bytes into.
+  **Layman:** The leftovers from reviewing startup, the main loop, demos and the network tic loop — including one case where joining a game with more than four hosts writes past the end of the player list.
+  Kind: investigate.
+  Source: review-code 2026-09-01, lane game-loop.
+  Lanes: game-loop.
+
+- 📋 [DOOM-0402] **Software-renderer review tail: eight findings, including two widescreen regressions.**
+  Not covered by DOOM-0381 or DOOM-0382.
+
+    - MEDIUM r_main.c:729 -- nonwideviewwidth is derived from the DISPLAY buffer
+      width, but at Screen Size <= 9 the view window does not scale with it
+      (r_main.c:709, scaledviewwidth = setblocks*32*HIRES). At setblocks 9 the
+      window is pixel-identical to the 4:3 one while nonwideviewwidth drops 576 ->
+      431, giving ~106 degrees of FOV in a window with no extra columns -- the
+      opposite of the Hor+ behaviour the comment at r_main.c:721 promises. Full-size
+      is correct. Fix: scale the windowed view with the buffer, which leaves 4:3
+      byte-identical.
+    - MEDIUM r_draw.c:783 -- the border bevel is computed in full logical
+      coordinates and passed to V_DrawPatch, which treats x as 320-canvas and adds
+      WIDESCREENDELTA itself (v_video.c:346). On widescreen at Screen Size <= 9,
+      brdr_r is dropped entirely and the other three land inside the view region
+      R_DrawViewBorder never copies, so they are invisible. Widescreen-only; the
+      note at v_video.c:324 acknowledges the log spam and asserts the frame renders
+      fine, which is false for this case.
+    - MEDIUM r_data.c:537 -- DOOM-0254 bounded PNAMES' self-declared count at
+      r_data.c:515 and the identical pattern five lines below is unbounded:
+      numtextures1/2 drive the directory walk at r_data.c:577, which reads past the
+      cached lump before the per-entry offset check can fire. Also r_data.c:611
+      validates patchcount > 0 but never against the bytes remaining, so
+      r_data.c:620 reads past.
+    - LOW r_data.c:415 -- R_GenerateLookup returns mid-loop leaving collump/colofs
+      for later columns at whatever Z_Malloc returned; R_GetColumn (r_data.c:451)
+      then reads a garbage lump number. id downgraded this from I_Error
+      deliberately, so it is reachable on real broken WADs. A memset before the
+      loop is behaviour-neutral for valid textures.
+    - LOW v_video.c:668 and v_video.c:708 -- V_DrawBlock and V_GetBlock bound
+      against SCREENWIDTH while striding by screenwidth[scrn]; V_CopyRect was
+      rewritten for per-buffer widths and these two were not. Not reachable today.
+    - LOW v_video.c:280 -- V_PostInBounds bounds the destination correctly, but the
+      patch's own columnofs and post source run stay unchecked against the lump
+      length, so a crafted patch still yields OOB reads blitted into the framebuffer.
+    - LOW r_bsp.c:186 -- `while (next++ != newend)` reads *newend on the final
+      iteration, and the DOOM-0254 backstop permits newend == solidsegs+MAXSEGS.
+    - LOW r_data.c:848 -- three precache VLAs sized from numflats/numtextures/
+      numsprites with no positivity check.
+  **Layman:** The leftovers from reviewing the original 1993 renderer. Two are widescreen bugs this project introduced: at smaller screen sizes the field of view is wrong, and the decorative border around the view is drawn off-screen.
+  Kind: investigate.
+  Source: review-code 2026-09-01, lane sw-renderer.
+  Lanes: sw-renderer.
+
+- 📋 [DOOM-0403] **Menu, HUD and finale review tail: eleven findings, including the screen wipe's own site.**
+  DOOM-0379 covers the wipe defect; f_wipe.c and r_backend.c:236 are named here so
+  the fix sites are addressable. DOOM-0383 covers the config clamps and DOOM-0391
+  the intermission bug.
+
+    - HIGH f_wipe.c with r_backend.c:236 -- the wipe package reads and writes
+      screens[0] only, while a 3D back-end fills the view footprint with the
+      transparency key 251 and the overlay shader keys it out. The melt copies bytes
+      verbatim, so melted pixels are still 251 and still keyed out. grep for
+      RB_OVERLAY_KEY or wipe in r_vulkan.cpp returns zero hits.
+    - MEDIUM m_menu.c:1517 -- DOOM-0026 INV-4's DISPLAY half is not implemented. The
+      no-op half is done (m_menu.c:2422) but the Options value, m_menu.c:1556 and
+      m_menu.c:1803 all print RB_ModeName with no availability signal, so on a
+      machine with no Vulkan device nothing on screen says why.
+    - MEDIUM m_menu.c:1248 -- the Main menu is converted to the scaled font though
+      DOOM-0206 INV-7 and INV-1 both name it as a kept-iconic exception. The code
+      looks deliberate and self-consistent, so the DOCUMENT is likely the wrong
+      side; see DOOM-0395.
+    - MEDIUM m_menu.c:884 -- open(name, O_RDONLY | 0, 0666) has no O_BINARY on a
+      binary savegame, in a project that ships Windows. m_misc.c:122 defines
+      O_BINARY and M_ReadFile/M_WriteFile both use it. Under MinGW a 0x1A byte ends
+      the read, and the DOOM-0254 short-read guard then blanks the slot -- the save
+      silently shows as empty.
+    - LOW m_menu.c:2770 -- the DEV menu's scroll indicator lands at y ~171, inside
+      the status-bar band (ST_Y 168), against DOOM-0206 INV-2. DEV builds only.
+    - LOW m_menu.c:3044 -- toupper on a plain signed char; also m_menu.c:3106,
+      m_misc.c:95, hu_stuff.c:570, f_finale.c:313. A savegame description or chat
+      line carrying a byte >= 0x80 passes a negative value, which is UB and which
+      the Windows CRT does not tolerate.
+    - LOW m_misc.c:396 -- no fflush/fsync before the rename.
+    - LOW m_misc.c:482 -- newstring leaked when the key matches no entry.
+    - LOW wi_stuff.c:1073 -- static int dofrags accumulates across levels and is
+      never reset, so once the frags column appears in a netgame it never goes away.
+    - LOW f_finale.c:134 -- the two "Ouch." default branches leave finaletext at its
+      previous value (NULL on first entry) and F_Ticker then strlen's it.
+    - LOW hu_stuff.c:534 -- elapsed is computed before the first-call initialiser,
+      so the first fps window reports ~2 fps for half a second.
+  **Layman:** The leftovers from reviewing the menus, status bar, automap and end-of-level screens.
+  Kind: investigate.
+  Source: review-code 2026-09-01, lane ui-hud.
+  Lanes: ui.
+
+- 📋 [DOOM-0404] **SDL2 platform-layer review tail: six findings, including a comment that describes the forbidden audio design.**
+  Not covered by DOOM-0385 or DOOM-0386.
+
+    - MEDIUM i_sound.c:187 -- the block comment heading the music API describes the
+      TWO-DEVICE design CLAUDE.md forbids by name ("Music plays on its OWN audio
+      output ... fully independent of the effects mixer"). The CODE is correct:
+      I_InitMusic opens exactly one device at i_sound.c:641 and says so, as do
+      i_sound.c:115 and :517. The comment is the wrong side, and the same error is
+      repeated at i_sound.c:232. It matters because CLAUDE.md's audio rule exists
+      precisely because the two-device shape is silent on Windows.
+    - LOW i_video.c:915 -- I_SetPalette reads a fixed 768 bytes through a pointer
+      with no length in its contract (i_video.h:47); callers pass
+      W_CacheLumpName("PLAYPAL") with no length check, so a short PLAYPAL over-reads
+      the zone block. Fix belongs at load time.
+    - LOW i_video.c:142 -- `return rc & 0xff` truncates every key SDL represents
+      with SDLK_SCANCODE_MASK to an unrelated character: keypad '.' becomes 'c'
+      (the automap clear-marks key), keypad 9 becomes 'a', Caps Lock becomes '9',
+      Home becomes 'J'. The original X11 layer left these as large unbound keysyms,
+      so the aliasing is new.
+    - LOW mus2mid.c:433 -- timedelay is unbounded while write_time's buffer holds
+      only four 7-bit groups, so a queuedtime >= 2^28 shifts its terminator out and
+      emits a malformed variable-length quantity. Memory-safe; the MIDI is wrong.
+    - LOW i_system.c:105 and i_system.c:129 -- clock_gettime's return is ignored and
+      tp is an uninitialised local, so a failure feeds garbage into the tic counter.
+    - LOW i_net.c:200 -- the errno test is Winsock-aware and the strerror message is
+      not; on Windows errno is unrelated to the socket error.
+  **Layman:** The leftovers from reviewing the SDL2 layer that replaced the original X11 code. One is a comment at the top of the music code describing exactly the two-device design the project forbids — the code is right, the comment is not, and it is the first thing anyone editing that file reads.
+  Kind: investigate.
+  Source: review-code 2026-09-01, lane platform.
+  Lanes: platform.
+
+- 📋 [DOOM-0405] **Backend-seam review tail: seven findings, including the missing invulnerability and visor effects.**
+  DOOM-0379 covers the palette half and DOOM-0380 the fallback; these are the rest.
+
+    - HIGH r_backend.c:161 -- player->fixedcolormap is an unreplicated
+      software-renderer side effect. renderer.md:29 makes replication a house rule
+      and cites ML_MAPPED as the precedent. p_user.c:367 sets INVERSECOLORMAP for
+      invulnerability and 1 for the light-amp visor; R_SetupFrame turns it into the
+      render-wide fixedcolormap consumed by r_segs.c:159, r_plane.c:166 and
+      r_things.c:586. rb_view_t carries extralight but not this, and grep finds it
+      nowhere in the 3D path. Both are gameplay-legible states in vanilla. Fix: one
+      field on rb_view_t, honoured as a shade override in the composite.
+    - MEDIUM rb_argparse.h:36 -- the overflow guard is 32-bit-long dependent and
+      errno is never checked. On Windows (LLP64) strtol saturates to LONG_MAX, which
+      PASSES this range test, so `-rtview 9999999999` is silently accepted as
+      INT_MAX -- the "lands on a plausible wrong value" failure the header's own
+      preamble was written to kill, reintroduced on one platform. tic_time.h:34 in
+      the same lane already says not to reintroduce long. Fix: strtoll, or errno
+      plus ERANGE. (This header was added in DOOM-0364; the finding is against
+      today's code.)
+    - MEDIUM r_backend.c:360 -- a rejected argument is still rejected in SILENCE, at
+      both new call sites. rb_argparse.h:5 names the original defect as garbage
+      accepted with nothing printed; the fix changed which wrong thing happens and
+      kept the silence, on a flag whose purpose is reproducible headless capture.
+    - MEDIUM r_backend.c:425 -- a Solid<->Ultra switch destroys and rebuilds the
+      whole graphics stack (window, device, swapchain, every pipeline, the atlas,
+      the level BLAS/TLAS, the HD material set) although the two backends[] rows
+      carry IDENTICAL function pointers and differ only in name and Available.
+    - LOW r_backend.c:73 -- the eight RB_Vulkan_* externs are a second independent
+      copy of the C++ definitions with no shared header, so a signature change on
+      either side links silently.
+    - LOW rb_argparse.h:59 -- strtod accepts inf, infinity, nan and 1e999 as "wholly
+      a number"; `-rippletime inf` passes the >= 0 test and reaches a shader push
+      constant.
+    - LOW r_main.c:918 -- R_RenderPlayerView calls NetUpdate four times and the 3D
+      path calls it zero times; those calls exist to service the net across a slow
+      frame, and a netgame can run on Solid/Ultra.
+  **Layman:** The leftovers from reviewing the switch between the old and new renderers — including the fact that the invulnerability sphere and the light-amplification visor have no visible effect in the 3D views.
+  Kind: investigate.
+  Source: review-code 2026-09-01, lane backend-seam.
+  Lanes: backend-seam.
+
+- 📋 [DOOM-0406] **Mesh-builder review tail: nine findings, including an unbounded WAD patch walk in new code.**
+    - HIGH r_mesh.c:1449 -- RB_SeepCellAir gates only on `solid`, so the void ring
+      reports breathable air, contradicting its own header contract at r_mesh.h:241
+      ("Returns 0 ... when the cell holds no air at all -- a wall, the void ring, or
+      a shut door"). DOOM-0289 flipped the ring to isvoid=0/solid=0 at r_mesh.c:1326
+      so the clearance march can escape through it. Consumer r_vulkan.cpp:8435 loops
+      the ring, and every ring cell returns fz=0, cz=1e30 and runs full sight-trace
+      scoring from outside the blockmap -- 236 of 3600 cells on a 60x60 grid,
+      against a spec-gated 6 ms budget paid on every settled door. Fix is one
+      clause: `|| c->sec < 0`.
+    - MEDIUM r_mesh.c:1646 -- the sprite-atlas blit trusts a WAD patch's columnofs
+      and post lengths with no bound against the lump. security.md names WAD lumps a
+      trust boundary and says never trust a self-declared size. Writes are bounded
+      (y < h, col < w) so the exposure is a wild read / segfault from a crafted
+      PWAD. This is 2026 code, so the preserved-1997 exemption does not apply.
+    - MEDIUM r_mesh.c:1658 -- sprite_opaque_black() lazily calls
+      W_CacheLumpName("PLAYPAL", PU_CACHE), and Z_Malloc can purge PU_CACHE blocks
+      from the rover forward -- including the very patch being walked. Pass 2 caches
+      every wall and flat first, so PLAYPAL having been evicted by then is the
+      expected state. One-line hoist out of the post loop.
+    - MEDIUM r_mesh.c:1223 -- a full Dijkstra heap silently drops the push while
+      KEEPING the relaxation, so neighbours keep distances that are too large and
+      the seep field under-reports connectivity (fog fails to reach rooms it
+      should). cap bounds pushes, but pushes scale with successful relaxations,
+      O(sum deg^2), not O(np). Nothing reports the overflow.
+    - MEDIUM r_mesh.c:1323 -- the ring's escape does not escape: the test at
+      r_mesh.c:956 is zEsc = cz - m*sOut, and cz = 1e30 demands a sample at z ~1e30.
+      A cell reaching the ring keeps a truncated air interval and reads unlit.
+    - LOW r_mesh.c:293 and r_mesh.c:463 -- sector lightlevel is a raw unvalidated
+      short from SECTORS; walls and flats do not clamp to [0,1] though sprites,
+      blobs and psprites all do.
+    - LOW r_mesh.h:92 -- RB_MESH_EMISSIVE is documented as FF_FULLBRIGHT only, but
+      r_mesh.c:2004 also sets it for sprite_glows (DOOM-0112 collectibles).
+    - LOW nee_sampling.h:72 -- the comment says dynamic overflow is dropped "never a
+      static light", which is false when staticN > cap.
+    - LOW nee_sampling.h:51 -- nee_pick returns 0 for count == 0, handing the caller
+      an index into an empty table.
+  **Layman:** The leftovers from reviewing the code that turns DOOM's 2-D map into 3-D geometry. One reads a downloaded map's texture data without checking its length — and unlike most of the engine, this is code this project wrote in 2026, so the ‘preserve id’s style’ exemption does not apply.
+  Kind: investigate.
+  Source: review-code 2026-09-01, lane r-mesh.
+  Lanes: renderer.
 
 ## Phase 2 — The Spin
 
@@ -11768,3 +12232,395 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: chore.
   Source: review-code 2026-09-01, tool-gap findings across lanes.
   Lanes: tooling.
+
+- 📋 [DOOM-0407] **Path-tracer shader review tail: eight findings not covered by DOOM-0377 or DOOM-0389.**
+    - MEDIUM pathtrace.comp:1880 and pathtrace.comp:1904 -- the sky closed form
+      omits mediumTint and the hell-haze density that the world march applies at
+      pathtrace.comp:1301 and :1157. pt_common.glsl:151 states the governing rule
+      explicitly: it must be applied by every in-scatter site, the closed-form sky
+      branches included, or the seam where sky meets wall shows two different fog
+      brightnesses. On a hell level walls fog red and thicker while the sky fogs
+      neutral and thinner -- inverted aerial perspective at every skyline. Distinct
+      from DOOM-0321, which is about magnitude.
+    - MEDIUM pt_common.glsl:452 -- decodeAlbedo uses pow(2.2) while the sky uses the
+      full IEC curve (pathtrace.comp:1901, svgf_composite.comp:169), and
+      formulas.glsl:223 ships the exact artifact. ~2% divergence at mid grey but 59%
+      at palette value 0.1 -- worst in DOOM's dark palette. Note the coupling:
+      switching decodeAlbedo moves EMIS_MASK_LO/HI too, so retune together.
+    - MEDIUM pathtrace.comp:1596 and pathtrace.comp:1814 -- dereference
+      pc.triSs.s[prim] BEFORE the guard that makes it safe, and r_vulkan.cpp:9445
+      legitimately passes address 0. The raster path was hardened for exactly this
+      at r_vulkan.cpp:10722, under a comment saying the guard never dereferences an
+      unbound buffer; the megakernel was not.
+    - MEDIUM pathtrace.comp:1679 -- the accumulator is the only radiance path with
+      no finite guard (modes 4 and 6 both have one). accumImg persists across the
+      many -rtverify dispatches, so one non-finite sample poisons that pixel for the
+      whole run -- and the rel-MSE that gates INV-6 is computed from it. Compounds
+      with DOOM-0376.
+    - LOW nee_sampling.h:31 -- the uniform-table fallback fires only when EVERY
+      weight is zero; a single zero-area emitter yields pdf = 0 -> Inf -> NaN.
+      BuildStaticEmitterSet (r_vulkan.cpp:8088) has no area > 0 test though
+      ClusterStaticFogLights (r_vulkan.cpp:8276) does.
+    - LOW pt_common.glsl:610 -- the comment says luminance clamp; it is per-channel,
+      so a saturated bright light desaturates rather than dims.
+    - LOW formulas.glsl:218 -- ships spotConeFalloff while pathtrace.comp:527
+      hand-rolls the flashlight cone with a different curve shape and different
+      constants. The sharpest single INV-7 citation; see DOOM-0388.
+    - LOW pathtrace.comp:827 -- re-fetches the goo selector already sampled with
+      byte-identical arguments at pt_common.glsl:783; one wasted dependent texture
+      fetch per stained floor texel.
+  **Layman:** The leftovers from reviewing the ray-tracing shader code. Nothing automated checks any of it, so these were all found by reading.
+  Kind: investigate.
+  Source: review-code 2026-09-01, lane shaders-pathtrace.
+  Lanes: renderer, shaders.
+
+- 📋 [DOOM-0408] **Raster shader review tail: nine findings, including a sentinel depth channel read through a blurring filter.**
+  Not covered by DOOM-0378.
+
+    - MEDIUM ssao.frag:45 -- the sentinel-encoded depth channel is sampled through a
+      LINEAR filter (g.compositeSampler, r_vulkan.cpp:5230). The channel carries
+      three sentinels -- sky 100000, sprites negative, psprite/void 1.0 -- and a
+      bilinear blend of a sentinel with a real depth is neither. The AO image is
+      fixed at display/2 while the world region is rb_renderscale-sized, so taps
+      land on exact source texel centres ONLY at 50%; at 100% every primary read is
+      a 2x2 average. A pixel 40% covered by sky reads z ~40060, which is under the
+      50000 sky test, so it is reconstructed as geometry 40000 units away and feeds
+      dFdx/dFdy normals for its neighbours. Fix: a NEAREST sampler, or texelFetch.
+    - MEDIUM composite.frag:60 -- the non-finite guard covers only the bloom add;
+      hdr itself goes unguarded to pbrNeutralToneMapping, which propagates NaN.
+      bloom_extract_raster.comp:61 justifies putting the guard there on the grounds
+      that it is the only pass reading unguarded values, which is false --
+      composite.frag:51 reads the same three targets through the same include. Move
+      the zeroing into sceneRecombineParts() so both consumers inherit it.
+    - MEDIUM ssao.frag:56 -- unguarded divide by p.z; sp.z can be <= 0 because P.z
+      is floored at 1.0 (mesh.frag:411) and the kernel offset is up to 40. A NaN
+      propagates through the range rejection as FALSE on both sides, so the tap is
+      not skipped and sampleZ is called with a NaN coordinate.
+    - MEDIUM mesh.frag:123 -- GI_BOUNCE_STRENGTH is invisible to the check INV-4
+      rests on: the printed AMBIENT ceiling at r_vulkan.cpp:8665 carries no such
+      factor. At the shipped 1.0 the print is right, but the comment advertises the
+      constant as the tuning dial, so raising it to 2.0 puts the true bound above
+      Low's ramp start while the print still says 1.174 and the preset table never
+      moves. Same shape as the 2026-08-20 kBloomRasterScale bug. Latent, and cited
+      by two lanes.
+    - LOW mesh.frag:336 -- all nine flashlight PCF taps run on every world fragment
+      whenever the torch is on, including where spot is already 0.
+    - LOW overlay.frag:48 -- sharp-bilinear anti-aliases texel seams while Classic
+      presents with SDL nearest (i_video.c:1155), so DOOM-0008 INV-4's "UI-region
+      pixels match Classic" cannot hold at a non-integer scale. Likely the document
+      is the wrong side; see DOOM-0395.
+    - LOW mesh.frag:180 -- three shader constants are bound to C++ ones by comment
+      only (kShadowDim, kFlashOffRight/Up, RASTER_MAX_LIGHTS). All three agree
+      today; the coupling is unenforced.
+    - LOW mesh.frag:274 -- materialTex[nonuniformEXT(id)] with no clamp against the
+      bindless array size, on a WAD-derived index.
+    - INFO mesh.frag:266 is a candidate cause for the OPEN DOOM-0322 (a tall wall
+      renders black in Solid and Ultra): it discards a wall face whose stored normal
+      points away from the eye, and a discarded wall shows the scene-pass clear
+      {0.05,0.06,0.09} -- a near-black band exactly where Classic draws the texture.
+      Cheap test: force the discard off and see whether the band fills.
+  **Layman:** The leftovers from reviewing the rasterised shading shaders. One reads a channel carrying special marker values through a filter that blends neighbouring pixels — and a blend of a marker and a real value is neither.
+  Kind: investigate.
+  Source: review-code 2026-09-01, lane shaders-raster.
+  Lanes: renderer, shaders.
+
+- 📋 [DOOM-0409] **Post-processing shader review tail: six findings, including a half-float overflow that permanently disables anti-ghosting.**
+  Not covered by DOOM-0387 or DOOM-0388.
+
+    - MEDIUM svgf_temporal.comp:169 -- the second luminance moment is stored in an
+      rgba16f image (r_vulkan.cpp:3511), so l*l saturates to +Inf at l > 255.998 --
+      squaring halves the usable range. Once m2 is +Inf, sigma (svgf_temporal.c:146)
+      is +Inf, so grad (:156) is 0 FOREVER and the history reset the block exists
+      for can never fire. The Inf then reaches svgf_atrous.comp:89 where Inf*0 is
+      NaN in the variance channel. UNCONDITIONALLY, and without any overflow,
+      m2 - m1*m1 is a catastrophic cancellation between near-equal half-floats: at
+      l ~100 the half spacing is 8, so sigma for a converged pixel is quantisation
+      noise on exactly the bright pixels it is for. Fix: widen to fp32, or store
+      (m1, var) and update variance directly.
+    - MEDIUM bloom_extract_raster.comp:57 -- at 67% and 75% render scale the raster
+      bright pass averages source texels BEFORE thresholding, which DOOM-0331 4.2
+      forbids by name ("averaging first would dilute a lone bright texel below the
+      threshold and lose thin emitters"). The taps land between texel centres and
+      the sampler is linear. The RT chain avoids it structurally with imageLoad at
+      bloom_extract_rt.comp:53, and nothing sanctions the difference.
+    - MEDIUM bake.comp:132 -- the non-finite guard applied to shadeSurface's result
+      at pathtrace.comp:1625 and :1839 is missing here. The existence of those two
+      guards is the evidence the value can be non-finite, and here a NaN poisons
+      that probe's SH coefficients in a buffer written once at level load and read
+      by giIrradiance for every pixel in that subsector, every frame, for the whole
+      level.
+    - MEDIUM rt_tonemap.comp:64 -- implicit-LOD texture() in a compute shader is
+      undefined per SPIR-V (OpImageSampleImplicitLod is Fragment-only) and a
+      candidate validation complaint against DOOM-0008 INV-8. This subsystem states
+      the rule against itself twice, at bloom_blur.comp:52 and
+      scene_recombine.glsl:15. Benign today only because the bloom targets are
+      single-mip. Fix: textureLod.
+    - LOW svgf_temporal.comp:98 -- the fallback reads the top-left grid sample
+      without re-testing gpos.w < 0, the very test that made the loop reject it, so
+      a one-pixel silhouette against sky takes the display-encoded sky panorama as
+      demodulated illumination and the composite multiplies it by albedo.
+    - LOW label.comp:76 -- FONT[g*7+row] with g unbounded from a push constant;
+      every shipped caller is in range, so this is defence-in-depth on a debug path.
+  **Layman:** The leftovers from reviewing the denoiser and bloom compute shaders. One stores a squared brightness in a format that cannot hold it, and once it overflows the anti-ghosting for that pixel can never switch back on.
+  Kind: investigate.
+  Source: review-code 2026-09-01, lane shaders-post.
+  Lanes: renderer, shaders.
+
+- 📋 [DOOM-0410] **HD material review tail: twelve findings, three of which make Ultra silently render the old art.**
+  Only the hdDirtIdx finding reached DOOM-0390; these are the rest.
+
+    - HIGH rb_image.c:67 -- every downscale is silent. DOOM-0042:89 requires the
+      load log to list everything skipped/downscaled/dropped ("no silent
+      truncation") and repeats it at :129 as a verification gate.
+      rb_image_downscale_max prints nothing and returns nothing, and the caller
+      (r_vulkan.cpp:7462) prints only the POST-downscale size, so a 4096px hero and
+      a 1024px hero produce byte-identical log lines. Fires today -- CC0 hero sets
+      are routinely 2K/4K.
+    - HIGH r_vulkan.cpp:7133 -- ici.mipLevels = 1. The spec promises a vkCmdBlitImage
+      mip down-chain and derives its 1.33x VRAM budget figure from it; no blit
+      exists, TRANSFER_SRC is not even requested (r_vulkan.cpp:7137), and estMB
+      counts the base level only. Meanwhile r_vulkan.cpp:5211's sampler comment
+      claims a full mip chain and maxLod = VK_LOD_CLAMP_NONE. Consequence:
+      minification aliasing on every HD surface at distance. Either implement the
+      down-chain or amend the spec to record single-mip v1 -- the code comment calls
+      it a v1 decision but no contract records the deferral.
+    - HIGH rb_materials.h:166 -- the default asset root is CWD-relative where the
+      spec says executable/repo root; the function's own comment concedes it.
+      Launching from anywhere but the repo root makes every Ultra material fall back
+      to paletted, with one printf among a wall of load output as the only signal.
+      This is the trap project memory records invalidating a measurement set. Note
+      the spec is internally ambiguous here (it also cites DOOMWADDIR's default of
+      "."), so the wording half is review-contract's.
+    - MEDIUM rb_materials.h:139 -- rb_apply_budget drops materials with no log line,
+      while the sibling bindless-cap drop 20 lines away IS counted and printed.
+    - MEDIUM rb_materials.h:87 -- the uv_scale guard does not reject NaN or inf:
+      NaN <= 0.0f is false, so NaN passes, reaches the control SSBO, and
+      pathtrace.comp:1650 multiplies hit UVs by it. materials.csv is hand-edited.
+      The clang-tidy atof finding here was dismissed in the ledger on reasoning that
+      is incomplete for exactly these cases -- fix the ledger entry too.
+    - MEDIUM r_vulkan.cpp:7042 -- ResolveDoomName drops an unresolvable sidecar row
+      in total silence (the most likely error in a hand-edited CSV), and applies
+      only the FIRST namespace match where the spec says every matching texnum, so a
+      name that is both a wall texture and a flat gets HD on one and not the other.
+    - MEDIUM r_vulkan.cpp:7438 -- every sidecar row is decoded to host RAM before
+      any budget is applied, and the spec says load only the current map's
+      materials. Peak host RAM during that step is bounded by nothing.
+    - LOW r_vulkan.cpp:7510 -- the two global overlays escape the budget and the
+      reported MB total, under-reporting VRAM by up to ~8 MB.
+    - LOW rb_materials.h:85 -- an over-long hero path is silently truncated to a
+      different, valid-looking path, and the material then reports "no usable
+      albedo", naming the wrong cause. Same at rb_materials.h:40 and :176.
+    - LOW rb_image.c:67 -- the resolution clamp fails OPEN on malloc failure, so an
+      oversized texture is uploaded and the spec invariant is breached with no
+      signal.
+    - LOW rb_text.c:28 -- ttf_len is taken, documented, and never passed to
+      stbtt_InitFont, which will read past a truncated font.
+    - LOW r_vulkan.cpp:7085 -- kHdMaxImages (4096) is never checked against
+      maxDescriptorSetUpdateAfterBindSampledImages, so a below-limit device aborts
+      the process rather than degrading to paletted.
+  **Layman:** The leftovers from reviewing the high-definition texture loader. Three of them cause Ultra to fall back to the original artwork without saying so — the exact trap that has already cost this project a whole set of measurements once.
+  Kind: investigate.
+  Source: review-code 2026-09-01, lane vk-materials.
+  Lanes: renderer, assets.
+
+- 📋 [DOOM-0411] **Acceleration-structure and lighting review tail: fourteen findings across two Vulkan lanes.**
+  Not covered by DOOM-0390. The sprite-architecture doc divergence is DOOM-0395's.
+
+  vk-accel:
+    - MEDIUM r_vulkan.cpp:2473 -- the shipped sprite design is the opposite of
+      DOOM-0008:260 and DOOM-0009:140 (a per-frame instance transform on a unit-quad
+      BLAS): the code rebuilds a throwaway triangle-soup BLAS every traced frame
+      with one identity instance. DOOM-0009:481 contradicts DOOM-0009:140 two
+      hundred lines later. Document side -- see DOOM-0395 -- but recorded here so
+      the code site is addressable.
+    - MEDIUM r_vulkan.cpp:2175 -- sprWorldVertCap hardcodes ~4096 things/frame and
+      r_mesh.c:2012 drops the rest with NO diagnostic, in sector-iteration order --
+      so on a map with more things than that, a monster directly in front of the
+      player can vanish from the traced view while one behind is drawn. Routine on
+      modern slaughtermaps. At minimum print a cap-reached line, as the REJECT path
+      does at r_vulkan.cpp:8999.
+    - LOW r_vulkan.cpp:2392 -- the "AS KiB" total omits the sky BLAS, so the one
+      number a session reads to check AS VRAM under-reports on every map with sky.
+    - LOW r_vulkan.cpp:4128 -- the comment claims ~1 unit precision at |z| = 1024
+      but nothing bounds clearance to that; legal WAD z reaches +/-32767, where
+      half-float quantisation is 32 units.
+    - LOW r_vulkan.cpp:4114 -- a malformed-but-retained seep field leaves
+      g.seepField pointing at a field the function has just declared unusable.
+    - LOW r_vulkan.cpp:9292 -- BuildSpriteTlas's return value is discarded though
+      its contract comment says it returns the instance count.
+    - LOW r_vulkan.cpp:2016 -- DestroyAccelerationStructures leaves sprWorldVertCap
+      and sprBlasMaxTris non-zero after freeing their buffers.
+
+  vk-lighting:
+    - MEDIUM r_vulkan.cpp:8613 -- the printed AMBIENT bound omits
+      GI_BOUNCE_STRENGTH. This print IS DOOM-0331 INV-4's test part 3, so moving the
+      dial makes a failing gate look like a passing one -- the same class as the
+      breach that shipped 2026-08-20 to 08-25. The sibling kAmbientSectorMax
+      (r_vulkan.cpp:1286) has a mirror guard; this constant has none. Cited by two
+      lanes.
+    - MEDIUM r_vulkan.cpp:8007 -- a write-combined es[e] read sits inside the
+      per-subsector x per-emitter double loop though loop-invariant in si, and the
+      block comment 30 lines above warns about exactly this. ALREADY FILED as
+      DOOM-0223; recorded here because it is still live.
+    - LOW r_vulkan.cpp:8487 -- (cx+ox)*65536.0f cast to int overflows INT_MAX at the
+      +X/+Y map coordinate extreme; UB, yields INT_MIN, so that sub-sample's sight
+      test starts from a garbage point.
+    - LOW r_vulkan.cpp:7820 -- the comment claims rate limiting; it is
+      change-detection, so any emissive Thing spawn or death fires a printf+fflush
+      from inside the per-frame build.
+    - LOW pathtrace.comp:76 and pt_common.glsl:189 say the per-cell list is "packed
+      brightest-first"; the CPU packs by the windowed score curve and DOOM-0011 4.4
+      says outright not by raw brightness. Comment-only.
+    - LOW r_vulkan.cpp:8367 -- an early return leaves binding 6 unwritten, the exact
+      state the comment at r_vulkan.cpp:8341 says must never happen.
+    - LOW r_vulkan.cpp:8094 -- staticLightsDirty is set unconditionally, so any
+      RB_UPD_RETEX re-runs the whole cull the DOOM-0170 split removed. ALREADY FILED
+      as DOOM-0258.
+  **Layman:** The leftovers from reviewing the ray-tracing scene structures and the lighting build. One means that on a busy map, monsters past a hidden limit simply do not appear in the ray-traced view, with no message.
+  Kind: investigate.
+  Source: review-code 2026-09-01, lanes vk-accel and vk-lighting.
+  Lanes: renderer.
+
+- 📋 [DOOM-0412] **Vulkan present and setup review tail: eight findings, mostly discarded VkResults.**
+  Not covered by DOOM-0390.
+
+    - MEDIUM DOOM-0331-bloom.md:1344 -- INV-6's third clause is
+      `grep -c 'bloom %.2f' -> 1` and returns 2 on an intact tree, since DOOM-0345
+      gave the RT print its own bloom bucket (r_vulkan.cpp:10398 and :10414 both
+      match). A gate that reports a breach on a healthy tree is worse than no gate,
+      and the spec itself predicts the wrong fix. Document side; see DOOM-0395.
+    - LOW r_vulkan.cpp:10325 -- vkWaitForFences' return is discarded, as are
+      vkResetFences (:10508), vkResetCommandBuffer (:10509) and vkDeviceWaitIdle at
+      :10297, :11174, :11225 and :11350. All can return VK_ERROR_DEVICE_LOST, after
+      which the function proceeds to acquire, record and submit against a dead
+      device and spins silently. Every NEIGHBOURING call in the same body uses
+      Check()/Fail(), so this is inconsistent within one function rather than a
+      house convention. Cited by two lanes.
+    - LOW r_vulkan.cpp:5826 -- the same for vkDeviceWaitIdle in RecreateSwapchain,
+      plus vkEnumerateInstanceLayerProperties (:1347) and
+      vkEnumerateDeviceExtensionProperties (:1437). The waitIdle sites matter most:
+      DEVICE_LOST there is exactly the case where the destroy-and-recreate that
+      follows is wrong.
+    - LOW r_vulkan.cpp:10489 -- the -shotverify/-shotcompare watchdog only fires
+      when the RT view was NEVER ready. If it becomes ready once and then stops --
+      level exit, an RT-target rebuild, a mode toggle -- the capture never arms and
+      the process spins forever with no message. Same silent-hang shape as the
+      recorded DOOM-0347.
+    - LOW r_vulkan.cpp:10580 -- the comment says the RT frames drive an 8-slot pool;
+      it is 10 (r_vulkan.cpp:1827), and the comment sits three lines from the block
+      warning about exactly this widening hazard.
+    - LOW r_vulkan.cpp:11194 -- the dev screenshot assumes 32 bpp everywhere and
+      swizzles only the two BGRA8 formats; a surface negotiating
+      A2B10G10R10_UNORM_PACK32 still copies 4 bytes per pixel, so no overflow, but
+      the PNG is silently wrong with a "wrote ..." success line.
+    - LOW r_vulkan.cpp:1661 -- a silent fallback to formats[0], which may be an
+      _SRGB format: precisely the double-gamma case the comment at r_vulkan.cpp:1646
+      says must be avoided, and which the RT blit at :2886 also assumes away.
+    - LOW r_vulkan.cpp:3218 -- the comment says the push range is 20 bytes; the code
+      six lines down is 24 and lists a sixth field.
+  **Layman:** The leftovers from reviewing the per-frame present path and Vulkan initialisation. Several calls that can report a lost graphics device throw the answer away and carry on regardless.
+  Kind: investigate.
+  Source: review-code 2026-09-01, lanes vk-present and vk-setup.
+  Lanes: renderer.
+
+- 📋 [DOOM-0413] **Packaging and asset-tooling review tail: seventeen findings across the release, CI and generator scripts.**
+  Not covered by DOOM-0392, DOOM-0393 or DOOM-0394.
+
+  build-scripts:
+    - MEDIUM mingw-deps.sh:110 -- a fourth download bypasses the fetch() wrapper
+      whose comment at mingw-deps.sh:61 says "Every fetch goes through this". The
+      wrapper exists for the GitHub-CDN 503 that turned the Windows CI job red on
+      2026-08-12; this call has no timeout and no retry, and hits a different host.
+    - MEDIUM release.sh:198 -- the diagnostic is unreachable: under set -euo
+      pipefail the grep at release.sh:197 exits 1 first, so the operator gets bare
+      status 1 with NO message, mid-release, immediately before tagging.
+    - MEDIUM release.sh:284 -- HEAD_SHA is captured at release.sh:80, before the
+      release commit at :226, so the closing line names the PARENT of the tagged
+      commit. Not a stale-binary vector (the two files in the release commit cannot
+      change a binary) but it misstates the fact the standard's forensic recipe asks
+      a future investigator to check.
+    - LOW windows-smoke.sh:200 -- a genuine crash during teardown returns exit 3,
+      the code the header reserves for the accepted benign Wine hang.
+    - LOW release.sh:264 -- unquoted $LATEST_FLAG in the gh release create argv; not
+      injectable, but shellcheck SC2086 did not surface it.
+    - LOW windows-smoke.sh:160 -- a TOCTOU on the X display number that the comment
+      at :158 denies; also ignores /tmp/.X<n>-lock, which any local user can
+      pre-create.
+    - LOW windows-smoke.sh:142 -- trap on EXIT only; SIGHUP or a closed terminal
+      leaves the throwaway WINEPREFIX, the sandbox and a live Xvfb behind.
+    - LOW release.sh:118 -- a near-verbatim copy of windows-build.sh:39 that HAS
+      diverged: the sibling has mkdir -p, release.sh has none for $DIST.
+    - LOW no download in this lane is checksum-verified (mingw-deps.sh:72 and :110,
+      build-appimage.sh:34). dependencies.md accepts the floating tags for the
+      AppImage tools; the three mingw tarballs are pinned by a movable tag.
+    - LOW windows-smoke.sh:151 -- cp has no || exit unlike the identical :146, and
+      this file uses set -uo pipefail without -e.
+
+  asset-tooling:
+    - MEDIUM stage_hero.py:39 -- the nrm rule's `_nor` alternative matches BOTH
+      nor_gl and nor_dx, and next() takes whichever glob returned first, i.e.
+      filesystem order. Picking the DX map inverts the green channel and silently
+      inverts all relief on that hero -- invisible except on hardware.
+    - MEDIUM stage_hero.py:14 -- the docstring promises `ao|arm.R -> ao` but
+      MAP_RULES has no arm pattern and convert_map has no channel extraction, so a
+      source shipping only a packed arm map produces NO AO map, silently. The
+      docstring is probably the wrong side, since implementing it needs extraction
+      the tool does not have.
+    - LOW ab_capture.sh:33 -- the sed anchor substitutes nothing when rt_fog is
+      absent from ~/.doomrc, so the capture runs at the default of 1 while the
+      comment asserts fog is off.
+    - LOW pbr_derive.py:371 -- --dump writes a WAD-derived PNG into the process CWD,
+      which the usage line makes the repo root, and .gitignore covers only
+      assets/ultra/derived/ -- against DOOM-0042:80.
+    - LOW pbr_derive.py:353 -- the seven PNGs are written one at a time, so an
+      exception on map 5 leaves a partial set the engine will happily load.
+    - LOW stage_hero.py:118 -- tmp is removed only on the success path, so an exit
+      or a magick failure leaks an extracted 4K EXR set into /tmp.
+    - LOW wad_seg_probe.py:76 -- LINEDEFS unpacked as all-unsigned, so a one-sided
+      linedef's sidenum -1 reads as 65535.
+  **Layman:** The leftovers from reviewing the build, release and asset scripts — including a diagnostic that can never print because the line above it exits first, immediately before a release is tagged.
+  Kind: investigate.
+  Source: review-code 2026-09-01, lanes build-scripts and asset-tooling.
+  Lanes: packaging, tooling.
+
+- 📋 [DOOM-0414] **Nine findings in the three dead helper trees, held until DOOM-0312 decides their fate.**
+  Liveness was ESTABLISHED, not assumed, three ways: no -DSNDSERV in
+  linuxdoom-1.10/Makefile:28; doomdef.h:85 comments out SNDSERV with a note that
+  the SDL2 backend mixes in-process; and ipx/ and sersrc/ have no Makefile at all
+  and are 16-bit DOS Borland C (dos.h, far pointers, int86x, `void main`). No
+  modern toolchain compiles them. So every finding below is INFO AS SHIPPED, with
+  its raw as-if-built severity in brackets.
+
+  This item exists because DOOM-0312 proposes either excluding these trees from the
+  sweeps or moving them to historical/. EXCLUDING them would freeze these findings
+  as unrecorded; this is the record either way.
+
+    - [raw CRITICAL] sndserv/wadread.c:173 -- numlumps and infotableofs used with NO
+      validation; numlumps*20 is signed-overflow UB, and a wrapped tablelength makes
+      malloc(4) succeed before the loop writes 214M x 20 bytes into it. The engine's
+      w_wad.c:205 carries the exact guard this lacks -- that delta IS the lane's
+      central finding.
+    - [raw CRITICAL] ipx/IPXNET.C:286 -- doomcom.datalength taken from a wire length
+      field with no validation, then memcpy'd into char data[512]; a PacketLength
+      under 38 gives a negative length and a size_t near SIZE_MAX.
+    - [raw CRITICAL] ipx/IPXSETUP.C:159 -- numnodes incremented per node seen on the
+      network and never bounded against MAXNETNODES (8).
+    - [raw HIGH] sndserv/soundsrv.c:684 -- sndnum is two hex nibbles from stdin
+      (0-255) against NUMSFX 109, then indexes S_sfx and lengths, and the result
+      becomes a mixing pointer. Repeated at soundsrv.c:708.
+    - [raw HIGH] sndserv/soundsrv.c:391 -- an already-element-count pointer
+      difference is divided by sizeof again, so the chaingun resolves to lengths[0],
+      which is never assigned: the chaingun would be silent.
+    - [raw HIGH] sndserv/wadread.c:168, :184, :223 -- three unchecked read() returns.
+    - [raw HIGH] sersrc/SERSETUP.C:503 -- sprintf(cmd,"ATDT%s",myargv[p+1]) into
+      char[80] with no myargc check. Reported despite the ~90-hit strcpy dismissal
+      because that ledger entry's own escape clause names this exact shape:
+      unbounded external input into an undersized buffer.
+    - [raw HIGH] sersrc/SERSETUP.C:315 -- packet[packetlen] = 0 with packetlen able
+      to reach exactly MAXPACKET (512); the other consumer at :223 gets it right.
+    - [raw MEDIUM] sersrc/PORT.C:386 -- the ISR receive loop has no iteration cap
+      (the TX arm at :372 has count = 16) and no queue-full check.
+  **Layman:** The old sound-server and DOS networking programs contain several serious-looking bugs — but none of them is built by anything, so none can currently affect you. They are recorded here so that if those directories are ever revived or excluded from scanning, the findings are not simply lost.
+  Kind: security.
+  Source: review-code 2026-09-01, lane net-drivers.
+  Lanes: dead-code.
