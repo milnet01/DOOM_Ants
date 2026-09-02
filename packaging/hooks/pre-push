@@ -60,7 +60,18 @@ echo "pre-push: running the local CI gate (packaging/ci-local.sh)..."
 echo "          bypass with 'git push --no-verify'"
 echo
 
-if ! "$REPO/packaging/ci-local.sh"; then
+# DOOM-0375: exit 2 means the gate could not run every check, which is not the
+# same as a failure and used to be reported as a pass.
+rc=0
+"$REPO/packaging/ci-local.sh" || rc=$?
+
+if [ "$rc" -eq 2 ]; then
+  echo
+  echo "pre-push: LOCAL CI INCOMPLETE -- a check could not run here, so this push is" >&2
+  echo "          not covered by the gate. Install what it named above, use container" >&2
+  echo "          mode, or bypass with --no-verify and rely on GitHub CI." >&2
+  exit 1
+elif [ "$rc" -ne 0 ]; then
   echo
   echo "pre-push: LOCAL CI FAILED -- push aborted. Fix it, or bypass with --no-verify." >&2
   exit 1

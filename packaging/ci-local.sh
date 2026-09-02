@@ -97,6 +97,11 @@ if [ "$MODE" = "container" ] && [ -z "$ENGINE" ]; then
   exit 1
 fi
 
+# DOOM-0375: every check this run could not perform, so the banner can say so.
+# A gate that reports PASSED for what it skipped is worse than no gate: the
+# pre-push hook reads the exit status, and the skips are silent.
+SKIPPED_JOBS=()
+
 # CI only ever sees committed code; this script builds HEAD. Warn on a dirty tree.
 if [ -n "$(git status --porcelain)" ]; then
   echo "NOTE: uncommitted changes present -- CI (and this script) build committed"
@@ -116,10 +121,10 @@ if [ "$MODE" = "native" ]; then
   make -C "$WORK/linuxdoom-1.10" -j"$(nproc)"
   echo "==> Unit tests: make test"
   make -C "$WORK/linuxdoom-1.10" test
-  # DOOM-0203: best-effort headless boot smoke (native only — needs a local IWAD +
-  # SDL runtime). CI runs this against Freedoom; locally we reuse whatever IWAD is
-  # around. Skipped (not failed) when no WAD is found, so a WAD-less box still passes
-  # the build+test gate.
+  # DOOM-0203: headless boot smoke (native only — needs a local IWAD + SDL
+  # runtime). CI runs this against Freedoom; locally we reuse whatever IWAD is
+  # around. DOOM-0375: a WAD-less box no longer passes silently — the skip is
+  # recorded and the run reports PARTIAL rather than PASSED.
   SMOKE_WAD=""
   for w in "$REPO/wads/doom.wad" "$REPO/wads/doom1.wad" \
            /usr/share/games/doom/freedoom1.wad /usr/share/games/doom/doom1.wad; do
@@ -135,6 +140,7 @@ if [ "$MODE" = "native" ]; then
     echo "    boot smoke PASSED (engine booted + rendered 105 tics, exit 0)"
   else
     echo "==> Headless boot smoke SKIPPED (no IWAD found; CI runs it against Freedoom)"
+    SKIPPED_JOBS+=("linux: headless boot smoke -- no IWAD found")
   fi
 else
   echo "==> MODE: container ($ENGINE, $CI_IMAGE) -- faithful mirror of GitHub CI"
@@ -180,6 +186,7 @@ if [ "$MODE" = "native" ]; then
     echo "    SKIPPED -- no mingw-w64 cross-compiler installed."
     echo "    CI runs this job; install gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64,"
     echo "    or use the default container mode, to cover it locally."
+    SKIPPED_JOBS+=("windows-syntax: cross-compile sweep -- no mingw-w64")
   fi
 else
   echo "==> Windows cross-compile check (container, $CI_IMAGE)"
@@ -201,8 +208,22 @@ fi
 
 echo
 echo "==================================================================="
-echo " ci-local: PASSED -- both CI jobs green on a clean HEAD checkout"
-echo "   linux          build + unit tests + headless boot smoke"
-echo "   windows-syntax cross-compile syntax sweep"
-echo " (MODE=$MODE$( [ "$MODE" = container ] && echo '; this is exactly what GitHub Actions runs' ))"
-echo "==================================================================="
+if [ ${#SKIPPED_JOBS[@]} -eq 0 ]; then
+  echo " ci-local: PASSED -- both CI jobs green on a clean HEAD checkout"
+  echo "   linux          build + unit tests + headless boot smoke"
+  echo "   windows-syntax cross-compile syntax sweep"
+  echo " (MODE=$MODE$( [ "$MODE" = container ] && echo '; this is exactly what GitHub Actions runs' ))"
+  echo "==================================================================="
+else
+  # DOOM-0375: what ran was green, but the gate did not cover this push. Exit 2
+  # rather than 0 or 1, so the pre-push hook can tell "could not check" from
+  # "checked and failed".
+  echo " ci-local: PARTIAL -- ${#SKIPPED_JOBS[@]} check(s) did not run here"
+  for job in "${SKIPPED_JOBS[@]}"; do
+    echo "   NOT RUN: $job"
+  done
+  echo " Everything that did run was green. CI will run the rest, unchecked by you."
+  echo " (MODE=$MODE)"
+  echo "==================================================================="
+  exit 2
+fi
