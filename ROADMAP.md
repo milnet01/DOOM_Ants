@@ -2253,6 +2253,14 @@ with friends.
   on overflow-triggering PWADs is still an open question for the user; no
   overflow emulation was added. No existing test reaches these functions,
   so no red run was possible for this fix.
+  Demo-compatibility question SETTLED by the user 2026-09-02: no overflow
+  emulation, and none is planned. The caps stand as shipped. Two reasons
+  recorded so this is not reopened from scratch: emulating the overflow
+  would mean deliberately restoring the out-of-bounds write on the demo
+  playback path, and this fork does not have demo-accurate playback to
+  protect in the first place — the shipped IWAD demos are version 109
+  against this engine's 110, so all six take the version-mismatch path and
+  refuse (measured 2026-09-02 across doom.wad and doom2.wad).
   **Layman:** Five places in the original 1993 game code add items to a fixed-size list without ever checking it is full. A map file downloaded from the internet can make them overflow and write over memory they do not own. Nothing crashes reliably — it corrupts whatever sits next in memory.
   Kind: security.
   Source: review-code 2026-09-01, lanes playsim and playsim-world.
@@ -2619,7 +2627,7 @@ with friends.
   Source: review-code 2026-09-01, lanes backend-seam and ui-hud.
   Lanes: renderer, backend-seam.
 
-- 📋 [DOOM-0380] **A non-RT GPU drops all the way to the 1997 software renderer instead of the best available tier.**
+- ✅ [DOOM-0380] **A non-RT GPU drops all the way to the 1997 software renderer instead of the best available tier.**
   r_backend.c:375 -- `if (!RB_ModeAvailable(rendermode)) rendermode = RB_CLASSIC;`
   resolves to Classic unconditionally. DOOM-0026 INV-3 reads: "A config renderer
   value naming an unavailable back-end resolves to THE BEST AVAILABLE ONE (never
@@ -2642,6 +2650,23 @@ with friends.
   rb_rtdebug_menu is persisted (m_misc.c:276). A config left with Debug Views on
   makes every -rtview N a silent no-op -- the invisible-toggle-state trap this
   project has already been bitten by once.
+  Resolved (2026-09-02, 9977295). User settled the wording question: INV-3
+  is right and the code was the defect, so this was a code change.
+  RB_BestAvailableAtOrBelow walks cycleOrder DOWNWARD from the requested
+  mode. Correcting this bullet: RB_NextAvailableMode could NOT be reused —
+  cycleOrder is ASCENDING (Classic -> Solid -> Ultra) and that walk goes
+  forward with wraparound, so from Ultra it yields Classic whatever else
+  the machine runs. An out-of-range value still takes Classic rather than
+  being promoted. INV-3's Test clause still holds (with no 3D back-end,
+  Solid is unavailable too and the walk ends on Classic) and the tier
+  prose is unchanged, so no document was falsified. The related rb_rtdebug
+  trap is fixed with it: Debug Views now guards the tier default only, so
+  an explicit -rtview pin wins over a persisted Debug Views state.
+  Verified by A/B with Vulkan_RT_Available forced to 0 and the config
+  asking for Ultra: fix in -> 16 Vulkan backend-init lines (Solid came
+  up); fix out -> 0 (software renderer). Mutation reverted and the real
+  machine re-checked. Note for tier measurements: -bootsmoke pins
+  RB_CLASSIC by design (DOOM-0203), so it cannot exercise a Vulkan tier.
   **Layman:** If your graphics card can run the Solid view but not ray tracing, and your config asks for Ultra, the game falls back to the original 1993 software renderer rather than to Solid. The correct fallback walk already exists in the same file.
   Kind: fix.
   Source: review-code 2026-09-01, lane backend-seam.

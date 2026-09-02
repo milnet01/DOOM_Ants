@@ -8,11 +8,26 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
-- **-rtverify prints PASS when it measured nothing, and exits 0 either way.** (DOOM-0376)
-  The ray-tracing self-test is the gate this project requires before shipping any ray-tracing change. Both of its verdicts start at zero and stay at zero when there is nothing to measure — and zero counts as a pass. So a run that tested nothing at all reports success twice, and the exit code is 0 whatever it printed.
+- **A graphics card that can run Solid but not ray tracing now falls back to Solid** (DOOM-0380)
+  If your settings asked for Ultra on such a card, the game dropped all the way
+  to the original 1993 renderer, with the Solid view sitting unused. It now
+  steps down one tier at a time and stops at the best one your machine can
+  actually run. A setting that names no tier at all still gives you Classic.
 
-- **The local CI gate prints PASSED for jobs it skipped, and the pre-push hook believes it.** (DOOM-0375)
-  Before every push, a script runs the same checks CI runs and reports whether they passed. If it cannot run one of them — no game file to test with, no Windows compiler installed — it skips it silently and still prints ‘both jobs green’. The push hook reads that as a pass and lets the push through.
+- **The ray-tracing self-test no longer passes when it measured nothing** (DOOM-0376)
+  This test is the gate the project requires before any ray-tracing change
+  ships. Both of its scores started at zero and stayed there when there was
+  nothing to measure, and zero counted as a pass — so a run that tested nothing
+  reported success twice. It now reports how much it actually measured, says
+  INCONCLUSIVE when that is nothing, and its exit code matches its verdict, so
+  a script or a build step can rely on it instead of a human reading the output.
+
+- **The pre-push check now says when it could not run a check** (DOOM-0375)
+  Before every push, a script runs the same checks the build server runs. If it
+  could not run one — no game file to test against, no Windows compiler
+  installed — it skipped it silently and still reported both jobs green, and
+  the push went through. It now names each check that did not run, reports the
+  run as partial, and refuses the push, telling you apart from a real failure.
 
 - **Asset and WAD tooling: a crash-on-typo path, a silent `rm -rf`, and dead code**
   `stage_hero.py` dereferenced the result of `importlib.util.spec_from_file_location` and its `.loader` without a null check, turning a wrong path into an opaque `AttributeError`; it shelled out to `rm -rf` through `subprocess` with no error check, now `shutil.rmtree`; and it carried an unused `LICENSES` constant. `wad_seg_probe.py` gains an explicit `strict=` on a deliberately ragged `zip()` and loses an ambiguous `l` identifier.
@@ -53,23 +68,47 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Security
 
-- **A sector naming a non-flat lump writes outside an array in the software renderer.** (DOOM-0381)
-  A map can name any lump in the WAD as its floor texture. The software renderer converts that name to a number without checking it is actually a floor texture, and the number is then used as an array position — including one that writes. The 3D renderer already guards this; the old one does not.
+- **A map naming something that is not a floor texture is now refused** (DOOM-0381)
+  A map could name any piece of data in the WAD as its floor, and the original
+  renderer turned that name into a position in a list without checking it was a
+  floor at all — then wrote to that position. The 3D renderer already guarded
+  this; the original one now does too. Every map in both official WADs was
+  booted to confirm real maps are unaffected.
 
-- **Savegame fields that index fixed tables are only half-guarded, and two of the gaps reach a write.** (DOOM-0373)
-  Loading a saved game trusts several numbers inside the file. Some are checked and some are not, which is the confusing kind of bug — the guard exists, so it looks done. Two of the unchecked ones let a handed-over save file write outside its array.
+- **Loading a saved game now checks every number in it that picks an entry from a list** (DOOM-0373)
+  Some of those numbers were checked and some were not, which is the confusing
+  kind of bug: the guard exists, so it looks finished. Two of the unchecked ones
+  let a save file you were handed write outside its list — your current weapon
+  and your floor and wall textures among them. All of them now go through the
+  same check the file already used elsewhere.
 
-- **Eight line-special handlers dereference a sidedef index the map loader deliberately allows to be -1.** (DOOM-0372)
-  The map loader knowingly records ‘no side here’ as -1, and eight places that act on doors, floors, switches and platforms use that number as an array position without checking. One of them writes through the resulting bad pointer every frame while a door moves.
+- **Doors, floors, switches and platforms no longer act on a wall that has no second side** (DOOM-0372)
+  The map loader deliberately records "no side here" as a marker value, and
+  eight places used that marker as a position in a list without checking. The
+  worst was a door: pressing use on a one-sided wall with a door action on it
+  produced a bad pointer that the engine then wrote through every frame while
+  the door moved. All eight are closed.
 
-- **A demo lump chooses which player slot the engine writes to, unbounded, and the attract loop plays it automatically.** (DOOM-0371)
-  The little demo clips DOOM plays when you leave it at the title screen come from the WAD file. One byte of that demo picks which of the four player slots the game uses, and nothing checks it is one of the four. Loading a hostile WAD is enough — you do not have to do anything.
+- **The demo clips at the title screen can no longer pick a player slot that does not exist** (DOOM-0371)
+  Those clips come from the WAD file, and one byte of a clip chose which of the
+  four player slots the game wrote to, unchecked. Loading a hostile WAD was
+  enough to trigger it — the title screen plays them on its own. Demo playback
+  also had no end marker check, so a clip missing its terminator was read past
+  the end of its own data, four bytes per frame, until it happened to stop.
 
-- **The BLOCKMAP and REJECT lumps are used unvalidated, and one of them reaches a write.** (DOOM-0370)
-  Two chunks of a map file are trusted without being checked against how big they actually are. A crafted map can make the game read far outside its own memory, and in one case write to it. A short REJECT lump is not even malicious — many normal map editors produce one.
+- **Two parts of a map file are now checked against their real size** (DOOM-0370)
+  Both were trusted for more than they contained, so a crafted map could make
+  the game read far outside its own memory and, in one case, write to it. The
+  second of the two is not even an attack: many ordinary map editors produce a
+  short or empty one, and the game now fills in the missing part with the safe
+  answer rather than reading whatever sat next to it.
 
-- **A downloaded PWAD can write outside an array, through five unbounded appends in the 1997 playsim.** (DOOM-0369)
-  Five places in the original 1993 game code add items to a fixed-size list without ever checking it is full. A map file downloaded from the internet can make them overflow and write over memory they do not own. Nothing crashes reliably — it corrupts whatever sits next in memory.
+- **Five fixed-size lists in the original game code are now bounded** (DOOM-0369)
+  Each added to a list without ever checking it was full, so a map downloaded
+  from the internet could overflow one and write over memory it did not own —
+  which rarely crashes outright, it just corrupts whatever sat next to it. One
+  of the five needed no hostile map at all: large community levels routinely
+  have more scrolling walls than the list could hold.
 
 - **CI workflow hardened: SHA-pinned action, least-privilege token, no persisted credentials**
   `actions/checkout` was pinned to the mutable `v7` tag, which can be repointed at any commit; it is now pinned to the commit `v7.0.1` resolves to, with the version in a trailing comment. The workflow had no `permissions:` block, so it inherited the repository default — it now declares `contents: read`, which is all either job needs. Both checkouts set `persist-credentials: false`, since neither job pushes. zizmor goes from 7 findings to 0.
