@@ -2186,7 +2186,7 @@ with friends.
   Source: check-code --tree 2026-09-01, deferred by the user.
   Lanes: engine.
 
-- 📋 [DOOM-0369] **A downloaded PWAD can write outside an array, through five unbounded appends in the 1997 playsim.**
+- ✅ [DOOM-0369] **A downloaded PWAD can write outside an array, through five unbounded appends in the 1997 playsim.**
   Five appends, each into a fixed array, none bounds-checked. All are reachable from
   map data alone.
 
@@ -2242,12 +2242,23 @@ with friends.
       -bootsmoke 70   -> must exit 0. Run it on doom.wad AND doom2.wad.
     - Baseline to beat, measured 2026-09-01 after DOOM-0364: make exit 0 with ZERO
       compiler warnings, make test 12/12, boot smoke exit 0 on both IWADs.
+  Resolved (2026-09-02, 1e27624): all five appends bounded. The two
+  PIT_Add*Intercepts stop the trace when intercepts[] is full, taking the
+  same "stop checking" path the earlyout branch already used; spechit[],
+  braintargets[] (now MAXBRAINTARGETS) and linespeciallist[] append only
+  while under their array size. Each cap fires only where vanilla wrote
+  out of bounds, so byte-identical Classic output holds for any WAD that
+  did not already overflow. Verified: build clean, make test all passed,
+  headless boot smoke exit 0 on doom.wad and doom2.wad. Demo compatibility
+  on overflow-triggering PWADs is still an open question for the user; no
+  overflow emulation was added. No existing test reaches these functions,
+  so no red run was possible for this fix.
   **Layman:** Five places in the original 1993 game code add items to a fixed-size list without ever checking it is full. A map file downloaded from the internet can make them overflow and write over memory they do not own. Nothing crashes reliably — it corrupts whatever sits next in memory.
   Kind: security.
   Source: review-code 2026-09-01, lanes playsim and playsim-world.
   Lanes: playsim, security.
 
-- 📋 [DOOM-0370] **The BLOCKMAP and REJECT lumps are used unvalidated, and one of them reaches a write.**
+- ✅ [DOOM-0370] **The BLOCKMAP and REJECT lumps are used unvalidated, and one of them reaches a write.**
   Corroborated independently by three lanes; indie_review_corroborate flagged
   p_maputl.c:491, p_setup.c:732 and p_sight.c:361 as cited by two lanes each.
 
@@ -2273,12 +2284,23 @@ with friends.
   output from several node builders. Allocate the correct size, copy what the lump
   has, zero-fill the rest (zero means visible, the conservative default), which is
   byte-identical for any WAD whose REJECT is already full length.
+  Resolved (2026-09-02, 423b040): P_LoadBlockMap now requires the lump to
+  hold the bmapwidth*bmapheight offset table and records its short count
+  in blockmapsize; P_BlockLinesIterator bounds its walk by that and each
+  line index by lines[], closing the validcount write. A truncated
+  BLOCKMAP is fatal, matching the count < 4 guard above it. REJECT is
+  allocated at the size its readers assume, filled from the lump and
+  zero-filled beyond -- byte-identical for a full-length lump, so
+  p_sight.c and r_mesh.c's RB_RejectMatrix are correct by construction
+  rather than by assumption, and no I_Error was added. Verified: build
+  clean, make test 12/12, boot smoke exit 0 on both IWADs. The guards were
+  not made to fire; that needs a crafted PWAD, which was not built.
   **Layman:** Two chunks of a map file are trusted without being checked against how big they actually are. A crafted map can make the game read far outside its own memory, and in one case write to it. A short REJECT lump is not even malicious — many normal map editors produce one.
   Kind: security.
   Source: review-code 2026-09-01, corroborated by lanes playsim, savegame and r-mesh.
   Lanes: playsim, security.
 
-- 📋 [DOOM-0371] **A demo lump chooses which player slot the engine writes to, unbounded, and the attract loop plays it automatically.**
+- ✅ [DOOM-0371] **A demo lump chooses which player slot the engine writes to, unbounded, and the attract loop plays it automatically.**
   g_game.c:1846 -- `consoleplayer = *demo_p++;` takes the demo header's 9th byte
   with no bound, and MAXPLAYERS is 4 (doomdef.h:131). The only other assignments
   to consoleplayer are 0 and doomcom->consoleplayer, so nothing clamps it. It then
@@ -2301,12 +2323,24 @@ with friends.
   per tic off the end of the lump until it happens to meet a 0x80. DOOM-0254 bounded
   the 13-byte header at g_game.c:1819 and left the body -- a half-applied fix, which
   is why it reads as done. W_LumpLength is already called two lines away.
+  Resolved (2026-09-02, 4cde38a): consoleplayer from the demo header is
+  clamped to MAXPLAYERS, keeping the attract loop alive on a malformed
+  demo; G_DoPlayDemo sets demoend from the lump length it already
+  computes for the header check, and G_ReadDemoTiccmd tests that bound
+  before dereferencing demo_p. Verified by A/B against three crafted
+  one-lump PWADs replacing DEMO1, through -timedemo on doom.wad: a
+  well-formed demo gives 30 gametics before and after; one with no
+  DEMOMARKER gave 121 before and 30 after (91 tics read past a 161-byte
+  lump); consoleplayer = 200 printed no timing line at all before and 30
+  after. The shipped IWAD demos are version 109 against this engine's
+  110, so they take the version-mismatch path and never exercise
+  playback -- which is why crafted lumps were needed.
   **Layman:** The little demo clips DOOM plays when you leave it at the title screen come from the WAD file. One byte of that demo picks which of the four player slots the game uses, and nothing checks it is one of the four. Loading a hostile WAD is enough — you do not have to do anything.
   Kind: security.
   Source: review-code 2026-09-01, lane game-loop.
   Lanes: game-loop, security.
 
-- 📋 [DOOM-0372] **Eight line-special handlers dereference a sidedef index the map loader deliberately allows to be -1.**
+- ✅ [DOOM-0372] **Eight line-special handlers dereference a sidedef index the map loader deliberately allows to be -1.**
   p_setup.c:478 deliberately permits sidenum[1] == -1 (its own comment says -1
   means no side; only non-(-1) values go through P_WadIndex). The DOOM-0093 pass
   hardened the LOAD path and left every USE site unchecked.
@@ -2328,12 +2362,24 @@ with friends.
 
   One shared helper returning NULL for -1, plus a guard at each site, closes the
   whole class.
+  Resolved (2026-09-02, 78aa4fc): closed without a new helper. twoSided()
+  now requires both sidenums to be real rather than trusting ML_TWOSIDED,
+  which covers all five getSide/getSector call sites at once; p_doors.c
+  and p_plats.c test line->backsector / line->frontsector, which already
+  carry 0 for a -1 sidenum; EV_BuildStairs guards both sector pointers
+  itself. P_ChangeSwitchTexture resolves the front sidedef once and
+  refuses the line without one, which also makes P_StartButton and the
+  button-restore writes safe by construction. The scrolling-line write is
+  fixed at the source: P_SpawnSpecials no longer lists a type-48 line with
+  no front sidedef. Verified: build clean, make test 12/12, boot smoke
+  exit 0 on both IWADs. The guards were not made to fire; that needs a
+  crafted PWAD, which was not built.
   **Layman:** The map loader knowingly records ‘no side here’ as -1, and eight places that act on doors, floors, switches and platforms use that number as an array position without checking. One of them writes through the resulting bad pointer every frame while a door moves.
   Kind: security.
   Source: review-code 2026-09-01, lane playsim-world.
   Lanes: playsim, security.
 
-- 📋 [DOOM-0373] **Savegame fields that index fixed tables are only half-guarded, and two of the gaps reach a write.**
+- ✅ [DOOM-0373] **Savegame fields that index fixed tables are only half-guarded, and two of the gaps reach a write.**
   P_SaveIndex is applied to four fields of the loaded player/mobj state and not to
   these. p_saveg.c:87 states the posture in its own comment -- refuse the save
   rather than read past the array -- so this is that posture half-applied.
@@ -2355,6 +2401,16 @@ with friends.
   firstline==numsegs, because `numsegs > numsegs` is false; p_setup.c:588 then does
   `seg = &segs[ss->firstline]` and dereferences seg->sidedef -- a one-past-the-end
   read whose result is used as a pointer.
+  Resolved (2026-09-02, 991df5e): P_SaveIndex now covers readyweapon,
+  pendingweapon (wp_nochange allowed explicitly), fixedcolormap (bounded
+  to [0, NUMCOLORMAPS], both ends valid), sector floorpic/ceilingpic and
+  the three side textures. numflats and numtextures had no extern
+  anywhere, so r_state.h now carries one each beside firstflat. The
+  subsector guard additionally requires firstline < numsegs, closing the
+  numlines == 0 case. NOT exercised at runtime: nothing can write a save
+  headlessly, so these guards have neither been made to fire nor shown
+  not to fire falsely on a real save -- a manual save-and-load is owed
+  before release.
   **Layman:** Loading a saved game trusts several numbers inside the file. Some are checked and some are not, which is the confusing kind of bug — the guard exists, so it looks done. Two of the unchecked ones let a handed-over save file write outside its array.
   Kind: security.
   Source: review-code 2026-09-01, lane savegame.
@@ -2567,7 +2623,7 @@ with friends.
   Source: review-code 2026-09-01, lane backend-seam.
   Lanes: backend-seam.
 
-- 📋 [DOOM-0381] **A sector naming a non-flat lump writes outside an array in the software renderer.**
+- ✅ [DOOM-0381] **A sector naming a non-flat lump writes outside an array in the software renderer.**
   r_data.c:774 -- R_FlatNumForName searches the WHOLE WAD via W_CheckNumForName and
   returns `i - firstflat` with no check that the lump lies inside F_START/F_END.
   p_setup.c:286 feeds the result straight into ss->floorpic / ceilingpic from
@@ -2591,6 +2647,15 @@ with friends.
 
   Bound it inside R_FlatNumForName, matching R_TextureNumForName's posture. Valid
   WADs are unaffected, so INV-1 holds.
+  Resolved (2026-09-02, ffb163f): R_FlatNumForName now refuses a lump
+  outside [firstflat, firstflat+numflats), taking P_WadIndex's posture on
+  the one surface the fork left open. A PWAD whose flats sit outside the
+  IWAD's F_START..F_END range gets a named error instead of an
+  out-of-bounds write; it was already broken here, since this engine does
+  not merge a PWAD's own flat block. Verified by booting EVERY map in
+  both IWADs -- 36 in doom.wad, 32 in doom2.wad, 35 tics each, headless
+  Classic -- 0 failures. That sweep also re-exercises the map-load guards
+  from DOOM-0369, 0370, 0372 and 0373 across 68 real maps.
   **Layman:** A map can name any lump in the WAD as its floor texture. The software renderer converts that name to a number without checking it is actually a floor texture, and the number is then used as an array position — including one that writes. The 3D renderer already guards this; the old one does not.
   Kind: security.
   Source: review-code 2026-09-01, lane sw-renderer; corroborated on r_plane.c:438 and r_mesh.c:1513 by the savegame lane.
@@ -3114,6 +3179,30 @@ with friends.
   Kind: investigate.
   Source: review-code 2026-09-01, lane r-mesh.
   Lanes: renderer.
+
+- 📋 [DOOM-0418] **More sides[-1] use sites than DOOM-0372 listed: door textures and monster sound propagation.**
+  Found by enumerating every `sidenum` use outside p_setup.c while fixing
+  DOOM-0372. Neither is covered by that item's eight sites, and neither is
+  closed by its fixes.
+
+    - p_doors.c -- the door midtexture reads and writes index
+      sides[line->sidenum[0]] and sides[line->sidenum[1]] with no check, in
+      T_VerticalDoor's texture handling. sidenum[1] is the one the loader
+      permits to be -1, and two of these are writes.
+    - p_enemy.c -- the sound-propagation walk reads
+      sides[check->sidenum[0]].sector and sides[check->sidenum[1]].sector
+      unguarded. Both are reads, but the resulting sector_t* is compared
+      and then followed.
+
+  p_saveg.c already tests for -1 at each of its four sites, so the save
+  path is not affected. p_spec.c's getSide and getSector remain unguarded
+  in themselves; DOOM-0372 closed them by hardening twoSided(), which is
+  their only route today, so a future caller that skips that test would
+  reopen the hole.
+  **Layman:** Fixing the eight known cases turned up more places doing the same unchecked thing with a map's "no side here" marker. None was in the original list.
+  Kind: security.
+  Source: in-session-2026-09-02, found while fixing DOOM-0372.
+  Lanes: playsim, security.
 
 ## Phase 2 — The Spin
 

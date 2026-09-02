@@ -47,6 +47,24 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Security
 
+- **A sector naming a non-flat lump writes outside an array in the software renderer.** (DOOM-0381)
+  A map can name any lump in the WAD as its floor texture. The software renderer converts that name to a number without checking it is actually a floor texture, and the number is then used as an array position — including one that writes. The 3D renderer already guards this; the old one does not.
+
+- **Savegame fields that index fixed tables are only half-guarded, and two of the gaps reach a write.** (DOOM-0373)
+  Loading a saved game trusts several numbers inside the file. Some are checked and some are not, which is the confusing kind of bug — the guard exists, so it looks done. Two of the unchecked ones let a handed-over save file write outside its array.
+
+- **Eight line-special handlers dereference a sidedef index the map loader deliberately allows to be -1.** (DOOM-0372)
+  The map loader knowingly records ‘no side here’ as -1, and eight places that act on doors, floors, switches and platforms use that number as an array position without checking. One of them writes through the resulting bad pointer every frame while a door moves.
+
+- **A demo lump chooses which player slot the engine writes to, unbounded, and the attract loop plays it automatically.** (DOOM-0371)
+  The little demo clips DOOM plays when you leave it at the title screen come from the WAD file. One byte of that demo picks which of the four player slots the game uses, and nothing checks it is one of the four. Loading a hostile WAD is enough — you do not have to do anything.
+
+- **The BLOCKMAP and REJECT lumps are used unvalidated, and one of them reaches a write.** (DOOM-0370)
+  Two chunks of a map file are trusted without being checked against how big they actually are. A crafted map can make the game read far outside its own memory, and in one case write to it. A short REJECT lump is not even malicious — many normal map editors produce one.
+
+- **A downloaded PWAD can write outside an array, through five unbounded appends in the 1997 playsim.** (DOOM-0369)
+  Five places in the original 1993 game code add items to a fixed-size list without ever checking it is full. A map file downloaded from the internet can make them overflow and write over memory they do not own. Nothing crashes reliably — it corrupts whatever sits next in memory.
+
 - **CI workflow hardened: SHA-pinned action, least-privilege token, no persisted credentials**
   `actions/checkout` was pinned to the mutable `v7` tag, which can be repointed at any commit; it is now pinned to the commit `v7.0.1` resolves to, with the version in a trailing comment. The workflow had no `permissions:` block, so it inherited the repository default — it now declares `contents: read`, which is all either job needs. Both checkouts set `persist-credentials: false`, since neither job pushes. zizmor goes from 7 findings to 0.
 
