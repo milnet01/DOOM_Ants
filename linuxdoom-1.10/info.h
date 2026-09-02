@@ -1156,7 +1156,7 @@ typedef struct
 } state_t;
 
 extern state_t	states[NUMSTATES];
-extern char *sprnames[NUMSPRITES];
+extern char *sprnames[NUMSPRITES + 1];	// DOOM-0423: + the NULL R_InitSpriteDefs scans for
 
 
 
