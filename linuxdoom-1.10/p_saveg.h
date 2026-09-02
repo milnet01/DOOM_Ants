@@ -53,6 +53,14 @@ extern byte*		save_end;
 void P_SaveNeed (size_t count, const char* what);
 void P_SaveNeedAligned (size_t count, const char* what);
 
+// DOOM-0374: the same pair for the write side. G_DoSaveGame owns save_max (it
+// makes the allocation) and uses these for the fixed-size header and the
+// trailing marker it writes around the P_Archive* functions above.
+extern byte*		save_max;
+
+void P_SaveRoom (size_t count, const char* what);
+void P_SaveRoomAligned (size_t count, const char* what);
+
 
 #endif
 //-----------------------------------------------------------------------------

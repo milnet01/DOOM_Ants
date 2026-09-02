@@ -38,14 +38,14 @@ rcsid[] __attribute__((used)) = "$Id: p_tick.c,v 1.4 1997/02/03 16:47:55 b1 Exp 
 byte*		save_p;
 
 // One past the last byte of the loaded savegame. G_DoLoadGame sets it from
-// M_ReadFile's length, which vanilla discarded; the save path does not use it
-// (it has its own SAVEGAMESIZE overrun check).
+// M_ReadFile's length, which vanilla discarded; the save path bounds itself
+// against save_max below instead.
 byte*		save_end;
 
+// One past the last byte the save buffer can hold. G_DoSaveGame sets it from the
+// allocation it makes; the load path does not use it.
+byte*		save_max;
 
-// Pads save_p to a 4-byte boundary
-//  so that the load/save works on SGI&Gecko.
-#define PADSAVEP()	save_p += (4 - ((uintptr_t) save_p & 3)) & 3
 
 
 //
@@ -73,6 +73,38 @@ void P_SaveNeedAligned (size_t count, const char* what)
 
     // pad is at most 3 and count is a sizeof, so the sum cannot wrap.
     P_SaveNeed (pad + count, what);
+    save_p += pad;
+}
+
+
+//
+// P_SaveRoom / P_SaveRoomAligned — DOOM-0374.
+//
+// The write side's mirror of P_SaveNeed, keeping the same invariant: save_p
+// never moves past save_max, because nothing advances it that has not been asked
+// for here. Vanilla's only check ran in G_DoSaveGame once the whole archive had
+// been written, so it reported an overrun of the Z_Malloc block that had already
+// happened — and the damage stays inside mainzone, where testing.md's savegame
+// section says ASAN cannot see it.
+//
+// This is reachable in ordinary play rather than only under attack: the shipped
+// IWADs archive well inside SAVEGAMESIZE, but a large modern PWAD's thinkers
+// alone run past it. Refusing is the answer rather than growing the buffer,
+// because the whole zone heap is a few megabytes and holds the level too.
+//
+void P_SaveRoom (size_t count, const char* what)
+{
+    if (!SaveFits ((size_t)(save_max - save_p), 0, count))
+	I_Error ("P_Archive: savegame buffer is %d byte(s) short of its %s",
+		 (int)(count - (size_t)(save_max - save_p)), what);
+}
+
+void P_SaveRoomAligned (size_t count, const char* what)
+{
+    size_t	pad = SavePadBytes (save_p);
+
+    // pad is at most 3 and count is a sizeof, so the sum cannot wrap.
+    P_SaveRoom (pad + count, what);
     save_p += pad;
 }
 
@@ -108,7 +140,7 @@ void P_ArchivePlayers (void)
 	if (!playeringame[i])
 	    continue;
 	
-	PADSAVEP();
+	P_SaveRoomAligned (sizeof(player_t), "players");
 
 	dest = (player_t *)save_p;
 	memcpy (dest,&players[i],sizeof(player_t));
@@ -182,6 +214,34 @@ void P_UnArchivePlayers (void)
 
 
 //
+// P_WorldBytes
+//
+// The world block is a flat run of fixed-size shorts whose extent is fully
+// determined by the level currently loaded, so both directions measure it up
+// front and check once instead of per element — their loops then walk a raw
+// short* exactly as vanilla did. Sides are counted the way those loops visit
+// them, so a one-sided linedef contributes its 3 shorts and no side record.
+//
+static size_t P_WorldBytes (void)
+{
+    int			i;
+    int			j;
+    line_t*		li;
+    size_t		need;
+
+    need = (size_t)numsectors * 7;
+    for (i=0, li = lines ; i<numlines ; i++,li++)
+    {
+	need += 3;
+	for (j=0 ; j<2 ; j++)
+	    if (li->sidenum[j] != -1)
+		need += 5;
+    }
+    return need * sizeof(short);
+}
+
+
+//
 // P_ArchiveWorld
 //
 void P_ArchiveWorld (void)
@@ -192,7 +252,9 @@ void P_ArchiveWorld (void)
     line_t*		li;
     side_t*		si;
     short*		put;
-	
+
+    P_SaveRoom (P_WorldBytes (), "world state");
+
     put = (short *)save_p;
     
     // do sectors
@@ -245,23 +307,8 @@ void P_UnArchiveWorld (void)
     line_t*		li;
     side_t*		si;
     short*		get;
-    size_t		need;
 
-    // The world block is a flat run of fixed-size shorts whose extent is fully
-    // determined by the level that G_InitNew just loaded, so it can be measured
-    // up front and checked once instead of per element — the loops below then
-    // read through a raw short* exactly as vanilla did. Sides are counted the
-    // same way the loop below visits them, so a one-sided linedef contributes
-    // its 3 shorts and no side record.
-    need = (size_t)numsectors * 7;
-    for (i=0, li = lines ; i<numlines ; i++,li++)
-    {
-	need += 3;
-	for (j=0 ; j<2 ; j++)
-	    if (li->sidenum[j] != -1)
-		need += 5;
-    }
-    P_SaveNeed (need * sizeof(short), "world state");
+    P_SaveNeed (P_WorldBytes (), "world state");
 
     get = (short *)save_p;
 
@@ -336,8 +383,9 @@ void P_ArchiveThinkers (void)
     {
 	if (th->function.acp1 == (actionf_p1)P_MobjThinker)
 	{
+	    P_SaveRoom (1, "thinker tag");
 	    *save_p++ = tc_mobj;
-	    PADSAVEP();
+	    P_SaveRoomAligned (sizeof(*mobj), "thinker");
 	    mobj = (mobj_t *)save_p;
 	    memcpy (mobj, th, sizeof(*mobj));
 	    save_p += sizeof(*mobj);
@@ -352,6 +400,7 @@ void P_ArchiveThinkers (void)
     }
 
     // add a terminating marker
+    P_SaveRoom (1, "thinker end marker");
     *save_p++ = tc_end;	
 }
 
@@ -478,8 +527,9 @@ void P_ArchiveSpecials (void)
 	    
 	    if (i<MAXCEILINGS)
 	    {
+		P_SaveRoom (1, "special tag");
 		*save_p++ = tc_ceiling;
-		PADSAVEP();
+		P_SaveRoomAligned (sizeof(*ceiling), "ceiling");
 		ceiling = (ceiling_t *)save_p;
 		memcpy (ceiling, th, sizeof(*ceiling));
 		save_p += sizeof(*ceiling);
@@ -490,8 +540,9 @@ void P_ArchiveSpecials (void)
 			
 	if (th->function.acp1 == (actionf_p1)T_MoveCeiling)
 	{
+	    P_SaveRoom (1, "special tag");
 	    *save_p++ = tc_ceiling;
-	    PADSAVEP();
+	    P_SaveRoomAligned (sizeof(*ceiling), "ceiling");
 	    ceiling = (ceiling_t *)save_p;
 	    memcpy (ceiling, th, sizeof(*ceiling));
 	    save_p += sizeof(*ceiling);
@@ -501,8 +552,9 @@ void P_ArchiveSpecials (void)
 			
 	if (th->function.acp1 == (actionf_p1)T_VerticalDoor)
 	{
+	    P_SaveRoom (1, "special tag");
 	    *save_p++ = tc_door;
-	    PADSAVEP();
+	    P_SaveRoomAligned (sizeof(*door), "door");
 	    door = (vldoor_t *)save_p;
 	    memcpy (door, th, sizeof(*door));
 	    save_p += sizeof(*door);
@@ -512,8 +564,9 @@ void P_ArchiveSpecials (void)
 			
 	if (th->function.acp1 == (actionf_p1)T_MoveFloor)
 	{
+	    P_SaveRoom (1, "special tag");
 	    *save_p++ = tc_floor;
-	    PADSAVEP();
+	    P_SaveRoomAligned (sizeof(*floor), "floor");
 	    floor = (floormove_t *)save_p;
 	    memcpy (floor, th, sizeof(*floor));
 	    save_p += sizeof(*floor);
@@ -523,8 +576,9 @@ void P_ArchiveSpecials (void)
 			
 	if (th->function.acp1 == (actionf_p1)T_PlatRaise)
 	{
+	    P_SaveRoom (1, "special tag");
 	    *save_p++ = tc_plat;
-	    PADSAVEP();
+	    P_SaveRoomAligned (sizeof(*plat), "platform");
 	    plat = (plat_t *)save_p;
 	    memcpy (plat, th, sizeof(*plat));
 	    save_p += sizeof(*plat);
@@ -534,8 +588,9 @@ void P_ArchiveSpecials (void)
 			
 	if (th->function.acp1 == (actionf_p1)T_LightFlash)
 	{
+	    P_SaveRoom (1, "special tag");
 	    *save_p++ = tc_flash;
-	    PADSAVEP();
+	    P_SaveRoomAligned (sizeof(*flash), "light flash");
 	    flash = (lightflash_t *)save_p;
 	    memcpy (flash, th, sizeof(*flash));
 	    save_p += sizeof(*flash);
@@ -545,8 +600,9 @@ void P_ArchiveSpecials (void)
 			
 	if (th->function.acp1 == (actionf_p1)T_StrobeFlash)
 	{
+	    P_SaveRoom (1, "special tag");
 	    *save_p++ = tc_strobe;
-	    PADSAVEP();
+	    P_SaveRoomAligned (sizeof(*strobe), "strobe");
 	    strobe = (strobe_t *)save_p;
 	    memcpy (strobe, th, sizeof(*strobe));
 	    save_p += sizeof(*strobe);
@@ -556,8 +612,9 @@ void P_ArchiveSpecials (void)
 			
 	if (th->function.acp1 == (actionf_p1)T_Glow)
 	{
+	    P_SaveRoom (1, "special tag");
 	    *save_p++ = tc_glow;
-	    PADSAVEP();
+	    P_SaveRoomAligned (sizeof(*glow), "glow");
 	    glow = (glow_t *)save_p;
 	    memcpy (glow, th, sizeof(*glow));
 	    save_p += sizeof(*glow);
@@ -567,6 +624,7 @@ void P_ArchiveSpecials (void)
     }
 	
     // add a terminating marker
+    P_SaveRoom (1, "special end marker");
     *save_p++ = tc_endspecials;	
 
 }

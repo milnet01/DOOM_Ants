@@ -20,11 +20,13 @@
 #include <stdint.h>
 
 // Bytes of 4-byte alignment padding sitting between `p` and the next aligned
-// position — exactly what the load path's PADSAVEP() advances by.
+// position — the alignment step vanilla's PADSAVEP macro made, which both
+// P_SaveNeedAligned and P_SaveRoomAligned now own.
 //
 // This has to be counted as part of the read, not applied before it: at the very
 // end of a truncated file the padding alone steps the cursor past the allocation
-// while the caller still believes it has not read anything yet.
+// while the caller still believes it has not read anything yet. The write side
+// has the same shape against the end of its buffer (DOOM-0374).
 static size_t SavePadBytes (const void* p)
 {
     return (size_t)((4u - ((uintptr_t)p & 3u)) & 3u);

@@ -1510,6 +1510,12 @@ void G_DoSaveGame (void)
     // crashed (worse on 64-bit, where the archived structs are larger). The
     // load path already uses a heap buffer via M_ReadFile/Z_Free; mirror it.
     save_p = savebuffer = Z_Malloc (SAVEGAMESIZE, PU_STATIC, NULL);
+    save_max = savebuffer + SAVEGAMESIZE;
+
+    // DOOM-0374: every write below is asked for first, so the buffer is checked
+    // before it is overrun rather than after. The header is fixed-size, so it is
+    // bounded in one go, mirroring the load path above.
+    P_SaveRoom (SAVESTRINGSIZE + VERSIONSIZE + 3 + MAXPLAYERS + 3, "header");
 
     memcpy (save_p, description, SAVESTRINGSIZE);
     save_p += SAVESTRINGSIZE; 
@@ -1532,11 +1538,10 @@ void G_DoSaveGame (void)
     P_ArchiveThinkers (); 
     P_ArchiveSpecials (); 
 	 
+    P_SaveRoom (1, "consistancy marker");
     *save_p++ = 0x1d;		// consistancy marker 
 	 
     length = save_p - savebuffer;
-    if (length > SAVEGAMESIZE)
-	I_Error ("Savegame buffer overrun");
     M_WriteFile (name, savebuffer, length);
     Z_Free (savebuffer);
     savebuffer = NULL;
