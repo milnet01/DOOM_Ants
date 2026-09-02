@@ -51,6 +51,7 @@ rcsid[] __attribute__((used)) = "$Id: w_wad.c,v 1.5 1997/02/03 16:47:57 b1 Exp $
 #ifdef __GNUG__
 #pragma implementation "w_wad.h"
 #endif
+#include "wad_bounds.h"
 #include "w_wad.h"
 
 
@@ -79,16 +80,51 @@ void strupr (char* s)
     while (*s) { *s = toupper(*s); s++; }
 }
 
-int filelength (int handle)
+// DOOM-0384: st_size is 64-bit and the int return truncated it, so a file over
+// 2 GiB reported a length two orders of magnitude wrong and every bound computed
+// from it was wrong with it. long matches the type mingw's own filelength()
+// returns, so the declaration agrees on both platforms; it is 64-bit here and
+// still 32-bit on Windows, where the shim is mingw's rather than ours.
+long filelength (int handle)
 {
     struct stat	fileinfo;
 
     if (fstat (handle,&fileinfo) == -1)
 	I_Error ("Error fstating");
 
-    return fileinfo.st_size;
+    return (long)fileinfo.st_size;
 }
 #endif
+
+
+//
+// W_CheckLumpExtent — DOOM-0384.
+//
+// DOOM-0093 bounded the directory's EXTENT and stopped there; every filepos and
+// size inside it was stored raw, and security.md is explicit that a self-declared
+// size is never trusted without bounding it against the real buffer. A lump
+// claiming a huge size reaches W_CacheLumpNum's Z_Malloc and aborts the game on
+// any downloaded PWAD; a negative position makes W_ReadLump's lseek fail
+// silently, after which read() takes its bytes from wherever the descriptor
+// already happened to be.
+//
+// A zero size stays legal: marker lumps (MAP01, S_START, F_END) are empty by
+// design and every real WAD is full of them.
+//
+static void
+W_CheckLumpExtent
+( long		pos,
+  long		size,
+  long		filelen,
+  const char*	what,
+  const char*	filename,
+  int		lump )
+{
+    if (!WadLumpFits (pos, size, filelen))
+	I_Error ("%s: %s lump %d runs outside the file "
+		 "(offset %ld, size %ld, file is %ld bytes)",
+		 what, filename, lump, pos, size, filelen);
+}
 
 
 void
@@ -159,6 +195,7 @@ void W_AddFile (char *filename)
     filelump_t*		fileinfo_heap = NULL;	// malloc'd base (WAD branch); freed at end, NULL-safe for the single-lump path
     filelump_t		singleinfo;
     int			storehandle;
+    long		filelen;
     
     // open the file and add to directory
 
@@ -178,20 +215,32 @@ void W_AddFile (char *filename)
 
     printf (" adding %s\n",filename);
     startlump = numlumps;
-	
+
+    // DOOM-0384: measured once and reused, so the directory check, the
+    // single-lump path and the per-lump bounds below all agree on one number.
+    filelen = filelength (handle);
+
     if (strcmpi (filename+strlen(filename)-3 , "wad" ) )
     {
 	// single lump file
 	fileinfo = &singleinfo;
 	singleinfo.filepos = 0;
-	singleinfo.size = LONG(filelength(handle));
+	// filelump_t's size field is 32-bit, so a larger file would be stored
+	// truncated and every later read of it would be short.
+	if (filelen > (long)MAXINT)
+	    I_Error ("W_AddFile: %s is too large to add as a single lump "
+		     "(%ld bytes)", filename, filelen);
+	singleinfo.size = LONG((int)filelen);
 	ExtractFileBase (filename, singleinfo.name);
 	numlumps++;
     }
     else 
     {
 	// WAD file
-	read (handle, &header, sizeof(header));
+	// DOOM-0384: vanilla discarded this return, so a file shorter than the
+	// header left it uninitialised and the strncmp below read stack garbage.
+	if (read (handle, &header, sizeof(header)) != (int)sizeof(header))
+	    I_Error ("W_AddFile: %s is too short to hold a WAD header", filename);
 	if (strncmp(header.identification,"IWAD",4))
 	{
 	    // Homebrew levels?
@@ -209,7 +258,6 @@ void W_AddFile (char *filename)
 	// numlumps/infotableofs -- a crafted numlumps overflows the int `length`
 	// (numlumps*16) and the fill loop reads an OOB / uninitialised directory.
 	{
-	    long filelen = filelength(handle);
 	    if (header.numlumps < 0
 		|| (long)header.numlumps > filelen / (long)sizeof(filelump_t)
 		|| header.infotableofs < 0
@@ -246,6 +294,10 @@ void W_AddFile (char *filename)
 	lump_p->handle = storehandle;
 	lump_p->position = LONG(fileinfo->filepos);
 	lump_p->size = LONG(fileinfo->size);
+	// i is the global lump number; report the index within THIS file, which
+	// is the only one that means anything to whoever holds the file.
+	W_CheckLumpExtent (lump_p->position, lump_p->size, filelen,
+			   "W_AddFile", filename, i - startlump);
 	strncpy (lump_p->name, fileinfo->name, 8);
     }
 
@@ -271,6 +323,7 @@ void W_Reload (void)
     unsigned		i;
     int			handle;
     int			length;
+    long		filelen;
     filelump_t*		fileinfo;
     filelump_t*		fileinfo_heap;
 
@@ -280,12 +333,13 @@ void W_Reload (void)
     if ( (handle = open (reloadname,O_RDONLY | O_BINARY)) == -1)
 	I_Error ("W_Reload: couldn't open %s",reloadname);
 
-    read (handle, &header, sizeof(header));
+    if (read (handle, &header, sizeof(header)) != (int)sizeof(header))
+	I_Error ("W_Reload: %s is too short to hold a WAD header", reloadname);
     lumpcount = LONG(header.numlumps);
     header.infotableofs = LONG(header.infotableofs);
     // DOOM-0093: same directory validation as W_AddFile (reload path).
+    filelen = filelength(handle);
     {
-	long filelen = filelength(handle);
 	if (lumpcount < 0
 	    || (long)lumpcount > filelen / (long)sizeof(filelump_t)
 	    || header.infotableofs < 0
@@ -315,6 +369,8 @@ void W_Reload (void)
 
 	lump_p->position = LONG(fileinfo->filepos);
 	lump_p->size = LONG(fileinfo->size);
+	W_CheckLumpExtent (lump_p->position, lump_p->size, filelen,
+			   "W_Reload", reloadname, (int)(i - reloadlump));
     }
 
     free (fileinfo_heap);
