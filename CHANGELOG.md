@@ -8,6 +8,17 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **A corrupted or hostile WAD or config file is now turned away instead of trusted** (DOOM-0384)
+  The WAD reader checked that a file's table of contents fitted inside the
+  file, then believed every entry in it. An add-on file could claim a piece
+  was enormous, or sat at a negative position, and the reader would try. Each
+  piece is now checked against the real file, and a file too short to hold a
+  header is refused rather than read as leftover memory. Separately, the
+  settings file could change a setting's type -- putting text where a number
+  belongs, or the reverse -- which wrote past the setting or left the game
+  following a bad address. Such a line is now ignored with a message and the
+  built-in default kept.
+
 - **Startup no longer reads past the end of the sprite-name table** (DOOM-0423)
   Sprite setup counted the game's sprite names by scanning for an end marker
   the table did not have, so every launch read a little past it. Nothing

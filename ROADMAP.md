@@ -2799,7 +2799,7 @@ with friends.
   Source: review-code 2026-09-01, corroborated by lanes ui-hud and wad-io.
   Lanes: config, security.
 
-- 📋 [DOOM-0384] **The engine's own WAD parser bounds the directory but not the lumps inside it.**
+- ✅ [DOOM-0384] **The engine's own WAD parser bounds the directory but not the lumps inside it.**
   DOOM-0212 validates the directory EXTENT (w_wad.c:208) and stops there; every
   filepos and size inside it is stored raw at w_wad.c:247. security.md says "Never
   trust a self-declared size. Bound a header's length against the actual buffer
@@ -2823,6 +2823,46 @@ with friends.
   stores an 8-byte pointer through an int* (a 4-byte OOB write over the adjacent
   global) and `chatmacro0 5` writes 4 bytes into a char*, leaving a wild pointer that
   hu_stuff.c:916 feeds to strcpy.
+  Resolved (2026-09-02), all four parts, in two commits.
+
+  Lump bounds. Both fill loops now check every directory entry against the
+  real file length, through one shared predicate in wad_bounds.h -- factored
+  out for the same reason save_bounds.h was, so it can be tested with no WAD
+  and no descriptor, and given the same non-overflowing shape: bound the
+  offset first, then compare the size against what is left. A zero size stays
+  legal, because marker lumps are empty by design and refusing them would
+  refuse every real WAD.
+
+  Header reads. Both discarded read() returns are checked, so a file shorter
+  than a header can no longer leave it uninitialised for the identification
+  strncmp to read.
+
+  filelength. Returns long rather than int, so a file over 2 GiB no longer
+  reports a truncated length. Worth recording: the truncation was fail-CLOSED
+  rather than exploitable -- a truncated length is smaller or negative, and
+  both make the directory check refuse -- so it was a correctness limit on
+  large files rather than the prerequisite the bullet took it for. It is
+  still 32-bit on Windows, where the shim is mingw's own.
+
+  Config kind. M_LoadDefaults took each value's type from the file and never
+  checked it against the table. The kind now comes from the table through one
+  helper the seeding loop and the parser share. A mismatched line is ignored
+  with a message and the default kept, rather than refusing to start, which is
+  the posture the DOOM-0254 clamps below it already take.
+
+  Proven, not assumed. scripts/make_wad_fixture.py builds the WAD cases: on
+  the patched engine hugesize, negpos, pasteof and shortheader are each
+  refused by name and the valid control loads; on the previous commit the
+  first three load without complaint. For the config half, ASAN on the
+  previous commit reports "WRITE of size 8 ... 0 bytes after global variable
+  'usegamma' ... of size 4" in M_LoadDefaults, and chatmacro0 5 exits 139;
+  with the fix ASAN reports nothing and both boot.
+
+  No false positives: every map in both IWADs boots (68 of 68), the DOOM-0420
+  map fixtures are unchanged, the 56-setting config the game writes for itself
+  re-reads with zero warnings, and so does a real ~/.doomrc.
+  tests/wad_bounds_test.cpp adds 18 checks including the wrap case; suite
+  14/14.
   **Layman:** The WAD reader checks that the file's table of contents fits inside the file, then trusts every entry in that table without checking. A crafted file can claim a lump is enormous, or sits at a negative position, and the reader believes it.
   Kind: security.
   Source: review-code 2026-09-01, lane wad-io.
