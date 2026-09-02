@@ -259,6 +259,20 @@ typedef struct
     int		untranslated;		// lousy hack
 } default_t;
 
+
+//
+// M_DefaultIsString — DOOM-0384.
+//
+// A setting's KIND is fixed by this table, never by the file. defaultvalue holds
+// a char* for a string default, which never falls inside the small-int range, so
+// the magnitude decides it. Both the seeding loop and the file parser ask here,
+// so the two cannot come to different conclusions about the same entry.
+//
+static boolean M_DefaultIsString (const default_t* d)
+{
+    return !(d->defaultvalue > -0xfff && d->defaultvalue < 0xfff);
+}
+
 default_t	defaults[] =
 {
     {"mouse_sensitivity",&mouseSensitivity, 5},
@@ -448,8 +462,7 @@ void M_LoadDefaults (void)
 	// String defaults carry a char* in defaultvalue (it falls outside
 	// the small-int range); write it full-width so the pointer survives
 	// on 64-bit. Numeric defaults write through the int* as before.
-	if (defaults[i].defaultvalue > -0xfff
-	    && defaults[i].defaultvalue < 0xfff)
+	if (!M_DefaultIsString (&defaults[i]))
 	    *defaults[i].location = defaults[i].defaultvalue;
 	else
 	    *(char **)defaults[i].location = (char *)defaults[i].defaultvalue;
@@ -492,6 +505,29 @@ void M_LoadDefaults (void)
 		for (i=0 ; i<numdefaults ; i++)
 		    if (!strcmp(def, defaults[i].name))
 		    {
+			// DOOM-0384: the file said what KIND this value is and
+			// nothing checked it against the table. Quoting a
+			// numeric setting (`usegamma "x"`) wrote a pointer
+			// through an int*, four bytes past it and over the
+			// adjacent global; leaving a string setting unquoted
+			// (`chatmacro0 5`) wrote an int into a char*, leaving a
+			// truncated pointer that HU_Init later hands to strcpy.
+			//
+			// Keep the built-in default and carry on, rather than
+			// refusing to start: this file is one the game itself
+			// writes, so a mismatch means it was corrupted or
+			// hand-edited, and that is the same posture the clamps
+			// below take (DOOM-0254).
+			if (isstring != M_DefaultIsString (&defaults[i]))
+			{
+			    printf ("M_LoadDefaults: ignoring %s -- expected "
+				    "%s, keeping the default\n", def,
+				    M_DefaultIsString (&defaults[i])
+					? "a quoted string" : "a number");
+			    if (isstring)
+				free (newstring);
+			    break;
+			}
 			if (!isstring)
 			    *defaults[i].location = parm;
 			else
