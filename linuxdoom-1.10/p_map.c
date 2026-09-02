@@ -239,8 +239,12 @@ boolean PIT_CheckLine (line_t* ld)
     // if contacted a special line, add it to the list
     if (ld->special)
     {
-	spechit[numspechit] = ld;
-	numspechit++;
+	// DOOM-0369: drop the overflow rather than writing past spechit[].
+	if (numspechit < MAXSPECIALCROSS)
+	{
+	    spechit[numspechit] = ld;
+	    numspechit++;
+	}
     }
 
     return true;

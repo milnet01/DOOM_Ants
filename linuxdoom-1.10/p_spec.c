@@ -1353,8 +1353,12 @@ void P_SpawnSpecials (void)
 	{
 	  case 48:
 	    // EFFECT FIRSTCOL SCROLL+
-	    linespeciallist[numlinespecials] = &lines[i];
-	    numlinespecials++;
+	    // DOOM-0369: MAXLINEANIMS entries only, and large maps exceed it.
+	    if (numlinespecials < MAXLINEANIMS)
+	    {
+		linespeciallist[numlinespecials] = &lines[i];
+		numlinespecials++;
+	    }
 	    break;
 	}
     }

@@ -1861,7 +1861,9 @@ A_CloseShotgun2
 
 
 
-mobj_t*		braintargets[32];
+#define MAXBRAINTARGETS	32
+
+mobj_t*		braintargets[MAXBRAINTARGETS];
 int		numbraintargets;
 int		braintargeton;
 
@@ -1885,6 +1887,11 @@ void A_BrainAwake (mobj_t* mo)
 
 	if (m->type == MT_BOSSTARGET )
 	{
+	    // DOOM-0369: numbraintargets is the next object in memory, so an
+	    // overrun corrupts the loop's own bound. Cap the spot list.
+	    if (numbraintargets == MAXBRAINTARGETS)
+		break;
+
 	    braintargets[numbraintargets] = m;
 	    numbraintargets++;
 	}

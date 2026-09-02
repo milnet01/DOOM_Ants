@@ -600,6 +600,11 @@ PIT_AddLineIntercepts (line_t* ld)
     }
     
 	
+    // DOOM-0369: intercepts[] is fixed size. Stop the trace rather than
+    // writing past its end.
+    if (intercept_p == &intercepts[MAXINTERCEPTS])
+	return false;	// list full, stop checking
+
     intercept_p->frac = frac;
     intercept_p->isaline = true;
     intercept_p->d.line = ld;
@@ -664,6 +669,11 @@ boolean PIT_AddThingIntercepts (mobj_t* thing)
 
     if (frac < 0)
 	return true;		// behind source
+
+    // DOOM-0369: intercepts[] is fixed size. Stop the trace rather than
+    // writing past its end.
+    if (intercept_p == &intercepts[MAXINTERCEPTS])
+	return false;		// list full, stop checking
 
     intercept_p->frac = frac;
     intercept_p->isaline = false;
