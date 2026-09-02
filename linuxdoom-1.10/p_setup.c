@@ -475,12 +475,19 @@ void P_LoadLineDefs (int lump)
 	ld->sidenum[1] = SHORT(mld->sidenum[1]);
 
 	// -1 means "no side"; anything else must name a real sidedef.
-	if (ld->sidenum[0] != -1)
-	    ld->frontsector =
-		sides[P_WadIndex (ld->sidenum[0], numsides,
-				  "linedef front sidedef")].sector;
-	else
-	    ld->frontsector = 0;
+	// DOOM-0422: the index is bounds-checked below, but -1 -- "no sidedef at
+	// all" -- is what the format lets a linedef say, and vanilla turned it
+	// into a null frontsector that P_GroupLines then dereferences. Refuse the
+	// map here instead, the posture P_WadIndex and the seg check already take:
+	// every use of a front sidedef runs after P_GroupLines, so the crash beats
+	// every guard downstream of it. No shipped map relies on this -- neither
+	// IWAD has a linedef without a front sidedef.
+	if (ld->sidenum[0] == -1)
+	    I_Error ("P_SetupLevel: linedef %d has no front sidedef", i);
+
+	ld->frontsector =
+	    sides[P_WadIndex (ld->sidenum[0], numsides,
+			      "linedef front sidedef")].sector;
 
 	if (ld->sidenum[1] != -1)
 	    ld->backsector =
