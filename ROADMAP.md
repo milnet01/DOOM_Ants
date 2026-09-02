@@ -2419,12 +2419,20 @@ with friends.
   headlessly, so these guards have neither been made to fire nor shown
   not to fire falsely on a real save -- a manual save-and-load is owed
   before release.
+  Verification closed (2026-09-02), during DOOM-0374: the round-trip gate the
+  testing standard asks for has now been run. A doom2 MAP05 save made with a
+  pre-change binary loads in the current one -- started on -warp 1, ending on
+  gamemap 5, with exactly one unread byte, so the file was consumed to the
+  byte with no field drift. Truncating that same file to seven lengths gives
+  seven refusals by name, one per stage (header, players, world state,
+  thinker, consistancy marker), with no read-through and no crash. The
+  save-and-load round trip this item was waiting on is done.
   **Layman:** Loading a saved game trusts several numbers inside the file. Some are checked and some are not, which is the confusing kind of bug — the guard exists, so it looks done. Two of the unchecked ones let a handed-over save file write outside its array.
   Kind: security.
   Source: review-code 2026-09-01, lane savegame.
   Lanes: savegame, security.
 
-- 📋 [DOOM-0374] **The savegame WRITE path has no bounds check at all, and its diagnostic fires after the damage.**
+- ✅ [DOOM-0374] **The savegame WRITE path has no bounds check at all, and its diagnostic fires after the damage.**
   p_saveg.c:176 -- P_ArchiveWorld, P_ArchiveThinkers and P_ArchiveSpecials all
   write through a bare cursor. p_saveg.h:47 says only the load path needs save_end
   because the write side has its own SAVEGAMESIZE overrun check -- that check is
@@ -2444,6 +2452,32 @@ with friends.
   corrupting the zone. Open question worth settling first: is SAVEGAMESIZE a hard
   limit or a headroom estimate? If saves should always succeed, the buffer needs to
   grow instead.
+  Resolved (2026-09-02): P_SaveRoom / P_SaveRoomAligned mirror the load
+  path's P_SaveNeed pair, and every tag byte, struct, header field and end
+  marker in the write path now goes through them, so save_p can no longer
+  move past the end of the buffer. PADSAVEP has no callers left and is
+  removed; the post-hoc length comparison is deleted rather than left
+  reading as a live guard. The load path's world-block measurement is
+  lifted into a shared P_WorldBytes so both directions cannot drift.
+
+  The open question is answered: SAVEGAMESIZE is a hard limit, and the
+  buffer cannot grow far because the whole zone heap is a few megabytes and
+  holds the level too. Refusing is therefore the fix, and it costs a player
+  nothing they do not already lose -- the old post-hoc check called I_Error
+  too, just after the damage. Measured: doom2 MAP05 archives 58 KB against
+  the 512 KiB buffer, and the worst map in either shipped IWAD is well
+  inside it, but a slaughtermap's thinkers alone run to megabytes. Letting
+  big PWADs save is separate work and is filed as DOOM-0421.
+
+  Verified: build clean with zero warnings; the suite green, with four new
+  write-side cases in save_bounds_test proven red when the guard is removed.
+  Round-trip gate per the testing standard -- a save written by the
+  pre-change binary loads in the patched one with gamemap 5 after starting
+  on -warp 1 and exactly one unread byte, and seven truncations of it are
+  each refused by name. Pre- and post-change saves are the same length with
+  header, players and world block byte-identical; the only differing bytes
+  are stale pointers that differ between any two builds and that the loader
+  re-derives.
   **Layman:** Saving a game writes into a fixed half-megabyte buffer with nothing stopping it running past the end. The check that is supposed to catch this runs after every byte has already been written, so it reports a problem that has already happened. On a big modern map that is ordinary play, not an attack.
   Kind: security.
   Source: review-code 2026-09-01, lanes savegame and game-loop.
@@ -3323,6 +3357,31 @@ with friends.
   Kind: test.
   Source: in-session-2026-09-02, from the first verify-delivery run on this project.
   Lanes: security, verification.
+
+- 📋 [DOOM-0421] **A very large PWAD cannot be saved at all, because the savegame buffer is a fixed size.**
+  DOOM-0374 made the write path refuse rather than overrun, which is strictly
+  better than the old post-hoc check, but it does not let a big map save. The
+  limit is real: SAVEGAMESIZE is 512 KiB and the whole zone heap is a few
+  megabytes with the level already in it, so the buffer cannot simply be
+  enlarged.
+
+  Measured while shipping DOOM-0374: doom2 MAP05 archives 58 KB and the worst
+  map in either shipped IWAD is well inside the buffer, so no shipping
+  content is affected today. A slaughtermap with ten thousand live things
+  needs megabytes of thinkers alone, and a Sunder-scale map's world block on
+  its own approaches the whole buffer.
+
+  Two candidate shapes, and the choice is the work. Grow the buffer on demand:
+  P_ArchiveWorld holds a short* cursor across its whole loop that a regrow
+  would invalidate, so that function has to be restructured, and the zone
+  almost certainly needs raising too. Or stream the archive to the file
+  instead of buffering it whole, which removes the limit rather than raising
+  it but changes error handling on a short write. Either way the load path
+  needs the matching treatment.
+  **Layman:** On a really big custom level, saving now stops with a clear message instead of corrupting memory -- but it still does not save. Making it always work needs a bigger, growable buffer.
+  Kind: enhancement.
+  Source: in-session-2026-09-02, split out of DOOM-0374.
+  Lanes: savegame.
 
 ## Phase 2 — The Spin
 

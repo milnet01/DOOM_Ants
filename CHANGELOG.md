@@ -8,6 +8,13 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Saving a game now checks it has room before each write, instead of reporting an overrun after it happened** (DOOM-0374)
+  Saving wrote into a fixed half-megabyte buffer with nothing stopping it
+  running past the end; the check that was meant to catch this only ran once
+  every byte had been written. On a large custom level that is ordinary play,
+  not an attack. A save that will not fit is now refused with a message
+  naming what did not fit, before anything is overwritten.
+
 - **A graphics card that can run Solid but not ray tracing now falls back to Solid** (DOOM-0380)
   If your settings asked for Ultra on such a card, the game dropped all the way
   to the original 1993 renderer, with the Solid view sitting unused. It now
