@@ -8679,7 +8679,9 @@ void RunGiBake()
 // mode-5 verify path over the rgba32f accumulator (binding 2), reads it back, and
 // computes the metrics on the CPU. Called once from the first ready present when
 // `-rtverify` is set; the caller exits afterward.
-void RB_RtVerify()
+// DOOM-0376: returns whether BOTH verdicts passed, so the caller can set an exit
+// status. Previously void, and the caller exited 0 whatever it printed.
+bool RB_RtVerify()
 {
     const uint32_t W = kVerifyW, H = kVerifyH;
     const uint32_t pxCount = W * H;
@@ -8829,10 +8831,12 @@ void RB_RtVerify()
 
     // White furnace: every hit pixel's converged mean must be 1.0 (brdf*cos/pdf==1).
     double furnMaxDev = 0.0;
+    int    furnPx = 0;
     for (uint32_t i = 0; i < pxCount; i++)
     {
         const float* f = &furnace[(size_t)i * 4];
         if (f[3] <= 0.0f) continue;
+        furnPx++;
         double dev = std::fabs((double)f[0] / f[3] - 1.0);
         if (dev > furnMaxDev) furnMaxDev = dev;
     }
@@ -8851,13 +8855,30 @@ void RB_RtVerify()
     // of a map AND a camera as well as the integrator, so a bare percentage is not
     // comparable across runs. DOOM-0208 spent months treating one such number as a
     // transient blip when it was simply the other IWAD.
-    printf("[rtverify] INV-6 direct-light rel-MSE = %.4f%% over %d lit px "
+    // DOOM-0376: coverage is a precondition, not a footnote. Both scores start at
+    // zero and stay there when nothing was measured -- no lit pixel, or emitters
+    // that all integrate to zero radiance -- and zero used to satisfy both bars.
+    // A run that verified nothing was textually identical to one that verified
+    // everything, except in litPx, which nobody was told to read.
+    const bool haveDirect  = (litPx > 0 && den > 0.0);
+    const bool haveFurnace = (furnPx > 0);
+    const bool directPass  = haveDirect  && (relMSE <= bar);
+    const bool furnacePass = haveFurnace && (furnMaxDev < 1e-3);
+
+    printf("[rtverify] INV-6 direct-light rel-MSE = %.4f%% over %d of %u px "
            "(%s: power-NEE %u spp vs brute-force/all-lights %u spp): %s (bar 0.50%%)\n",
-           relMSE * 100.0, litPx, doom2 ? "commercial" : "doom1",
-           neeD * 64u, bruteD * 64u, (relMSE <= bar) ? "PASS" : "FAIL");
-    printf("[rtverify] white-furnace max deviation from 1.0 = %.6f: %s\n",
-           furnMaxDev, (furnMaxDev < 1e-3) ? "PASS" : "FAIL");
+           relMSE * 100.0, litPx, pxCount, doom2 ? "commercial" : "doom1",
+           neeD * 64u, bruteD * 64u,
+           !haveDirect ? "INCONCLUSIVE - nothing measured"
+                       : (directPass ? "PASS" : "FAIL"));
+    printf("[rtverify] white-furnace max deviation from 1.0 = %.6f over %d of %u px: %s\n",
+           furnMaxDev, furnPx, pxCount,
+           !haveFurnace ? "INCONCLUSIVE - nothing measured"
+                        : (furnacePass ? "PASS" : "FAIL"));
+    printf("[rtverify] VERDICT: %s\n", (directPass && furnacePass) ? "PASS" : "FAIL");
     fflush(stdout);
+
+    return directPass && furnacePass;
 }
 
 // Place this level's GI-bake probes (DOOM-0009 build step 4b-i): one per subsector
@@ -10439,8 +10460,10 @@ extern "C" void RB_Vulkan_Present(void)
         g.vbuf != VK_NULL_HANDLE && g.atlasReady)
     {
         rb_rtverify = 0;
-        RB_RtVerify();
-        exit(0);
+        // DOOM-0376: the verdict is the exit status, so -rtverify works as a
+        // gate under set -e, in a Makefile target and in CI -- not only for a
+        // human reading stdout. Same shape as -bootsmoke.
+        exit(RB_RtVerify() ? 0 : 1);
     }
 
     // DOOM-0202: -shotverify arm + warmup counter. Decide — before this frame records —
