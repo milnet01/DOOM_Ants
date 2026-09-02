@@ -3284,6 +3284,46 @@ with friends.
   Source: in-session-2026-09-02, left open by DOOM-0376.
   Lanes: renderer, verification.
 
+- 📋 [DOOM-0420] **Most of the untrusted-input guards have never been proven to fire, only proven not to misfire.**
+  The CRITICAL memory-safety set shipped 2026-09-02. Every guard in it is
+  verified NOT to misfire -- every map in both IWADs boots, the suite passes
+  and the headless boot smoke exits 0 -- but only DOOM-0371's guards have
+  been observed actually stopping bad input.
+
+    - DOOM-0371 is DONE and is the working pattern. A crafted one-lump PWAD
+      replacing DEMO1, played through -timedemo, made the defect visible as a
+      gametics count: 121 before the fix against 30 after. The generator is
+      committed as scripts/make_demo_fixture.py and its header carries the
+      measurements.
+    - DOOM-0369, DOOM-0370, DOOM-0372 and DOOM-0381 need a crafted MAP -- a
+      PWAD supplying a full map lump group with, variously, an over-long
+      scrolling-line count, a truncated BLOCKMAP, a one-sided linedef carrying
+      a manual-door special, and a sector naming a non-flat lump. That is the
+      missing piece; the PWAD container code in the demo generator above is
+      reusable, the map lumps are not written.
+    - DOOM-0373 cannot be reached this way at all. Nothing writes a savegame
+      headlessly, so its guards are neither proven to fire nor proven not to
+      fire falsely on a legitimate save. A manual save-and-load is owed before
+      release and is the cheapest of these to close.
+
+  Recorded from the same run, so they are not rediscovered:
+
+    - -bootsmoke pins RB_CLASSIC by design (d_main.c, DOOM-0203), so it cannot
+      be used to exercise a Vulkan tier. Distinguishing Classic from Solid or
+      Ultra headlessly is done by whether the RB_Vulkan backend-init lines
+      appear on stdout.
+    - The 0.7.1 Windows promises (DOOM-0353, DOOM-0350, DOOM-0348) are
+      unverified here. The obstacle is a deployed Windows build, not access:
+      `ssh wintest` answered on 2026-09-02.
+    - The 21 review-code lane reports from 2026-09-01 are GONE. They lived in
+      /tmp and did not survive. The findings themselves are safe as
+      DOOM-0364..0416; what is lost is each lane's "looks correct" notes and
+      open questions.
+  **Layman:** The memory-safety fixes are known not to break normal play, but with one exception nobody has ever seen them actually stop a bad file. Proving that needs a deliberately broken map, which does not exist yet.
+  Kind: test.
+  Source: in-session-2026-09-02, from the first verify-delivery run on this project.
+  Lanes: security, verification.
+
 ## Phase 2 — The Spin
 
 The creative overhaul: evolve the renderer toward true 3D with hardware
