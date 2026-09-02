@@ -1718,7 +1718,11 @@ G_InitNew
 
 void G_ReadDemoTiccmd (ticcmd_t* cmd) 
 { 
-    if (*demo_p == DEMOMARKER) 
+    // DOOM-0371: stop at the end of the buffer as well as at the marker.
+    // Playback set no end bound at all, so a demo whose DEMOMARKER was
+    // truncated away was read four bytes per tic off the end of its lump.
+    // The bound is tested first, so *demo_p is never read past the end.
+    if (demo_p + 4 > demoend || *demo_p == DEMOMARKER) 
     {
 	// end of demo data stream 
 	G_CheckDemoStatus (); 
@@ -1813,13 +1817,18 @@ void G_DoPlayDemo (void)
 { 
     skill_t skill; 
     int             i, episode, map; 
+    int             demolength;
 	 
     gameaction = ga_nothing; 
     demobuffer = demo_p = W_CacheLumpName (defdemoname, PU_STATIC);
+    demolength = W_LumpLength (W_GetNumForName (defdemoname));
+    // DOOM-0371: demoend was written only by G_RecordDemo, so G_ReadDemoTiccmd
+    // had no end bound on the playback path. Set it from the lump.
+    demoend = demobuffer + demolength;
     // DOOM-0254: the demo lump is PWAD data, and the 13-byte header below is
     // read before any bounds are known. A truncated lump takes the same
     // graceful path as a version mismatch.
-    if (W_LumpLength (W_GetNumForName (defdemoname)) < 13
+    if (demolength < 13
 	|| *demo_p++ != VERSION)
     {
       fprintf( stderr, "Demo is truncated or from a different game version!\n");
@@ -1844,6 +1853,11 @@ void G_DoPlayDemo (void)
     fastparm = *demo_p++;
     nomonsters = *demo_p++;
     consoleplayer = *demo_p++;
+    // DOOM-0371: this byte picks the player slot that players[], netcmds[] and
+    // S_UpdateSounds all index, and D_DoAdvanceDemo plays demo lumps from any
+    // loaded WAD with no user action. MAXPLAYERS is 4; the byte is 0..255.
+    if (consoleplayer >= MAXPLAYERS)
+	consoleplayer = 0;
 	
     for (i=0 ; i<MAXPLAYERS ; i++) 
 	playeringame[i] = *demo_p++; 
