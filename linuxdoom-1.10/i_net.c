@@ -57,6 +57,9 @@ rcsid[] __attribute__((used)) = "$Id: m_bbox.c,v 1.1 1997/02/03 22:45:10 b1 Exp 
 #define socket_errno        errno
 #endif
 
+#include <stddef.h>		// offsetof, for the packet-length check
+
+#include "net_bounds.h"
 #include "i_system.h"
 #include "d_event.h"
 #include "d_net.h"
@@ -188,6 +191,7 @@ void PacketGet (void)
 {
     int			i;
     int			c;
+    int			received;	// recvfrom's byte count, kept before c is reused
     struct sockaddr_in	fromaddress;
     socklen_t			fromlen;
     doomdata_t		sw;
@@ -224,6 +228,7 @@ void PacketGet (void)
 	
     doomcom->remotenode = i;			// good packet from a game player
     doomcom->datalength = c;
+    received = c;			// `c` becomes a loop counter below
 	
     // byte swap
     netbuffer->checksum = ntohl(sw.checksum);
@@ -236,6 +241,20 @@ void PacketGet (void)
     // only BACKUPTICS entries -- a larger value overflows netbuffer->cmds (and
     // over-reads sw.cmds). Drop the malformed packet.
     if (netbuffer->numtics > BACKUPTICS)
+    {
+	doomcom->remotenode = -1;
+	return;
+    }
+
+    // DOOM-0386: that bounds numtics against the ARRAY and not against the bytes
+    // this datagram actually carried. recvfrom's count is in `c`, which the copy
+    // loop below reuses as its counter, so nothing downstream could have compared
+    // them. A 9-byte packet declaring 12 tics copied ~95 bytes of uninitialised
+    // stack into netbuffer->cmds, and from there into netcmds[][] as movement,
+    // buttons and consistancy -- from an unauthenticated UDP peer.
+    if (!NetPacketHoldsTics (received, netbuffer->numtics,
+			     (int)offsetof(doomdata_t, cmds),
+			     (int)sizeof(sw.cmds[0])))
     {
 	doomcom->remotenode = -1;
 	return;
@@ -326,6 +345,14 @@ void I_InitNetwork (void)
 	doomcom->consoleplayer = 0;
 	return;
     }
+
+    // DOOM-0386: -dup and -port are both bounded against myargc below; -net was
+    // not, so `doom -net` with nothing after it dereferenced myargv[myargc].
+    // After a response file d_main.c leaves that tail unfilled, so it is a wild
+    // pointer rather than the NULL the standard guarantees at argv[argc].
+    if (i >= myargc-1)
+	I_Error ("I_InitNetwork: -net needs a player number, "
+		 "e.g. -net 1 <host> ...");
 
     netsend = PacketSend;
     netget = PacketGet;

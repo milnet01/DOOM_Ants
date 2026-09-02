@@ -16,6 +16,11 @@ every lump's bytes alone and corrupts the table of contents that describes them.
     negpos        one lump declares a negative offset  refused by name
     pasteof       one lump ends one byte past EOF      refused by name
     shortheader   file truncated inside the header     refused by name
+    sfxrate       a DSPISTOL declaring 1 Hz             rate falls back to SFXRATE
+
+The sfxrate mode is about DOOM-0386 rather than the directory: a sound lump's
+declared sample rate is attacker-controlled, and 1 Hz made SDL build a ~44100x
+upsample whose conversion buffer came to about 11 GB for a 64 KB sound.
 
 Usage:  make_wad_fixture.py <mode> <out.wad>
 
@@ -36,6 +41,14 @@ def build(mode):
     # accepts and the malformed modes differ from it in one field only.
     lumps = [("FIXTURE1", b"\x01" * 64), ("MARKER", b""), ("FIXTURE2", b"\x02" * 32)]
 
+    if mode == "sfxrate":
+        # DMX sound: format, rate, sample count, then the 8-bit samples. The
+        # engine reads the rate from bytes 2-3 and the count from 4-7, and
+        # caches every sfx lump at startup, so this is reached without playing.
+        samples = 64000
+        lumps = [("DSPISTOL",
+                  struct.pack("<HHI", 3, 1, samples) + b"\x80" * samples)]
+
     payload = b""
     dirents = []
     off = HEADER_SIZE
@@ -53,7 +66,7 @@ def build(mode):
         dirents[0][0] = -1                 # lseek target the engine cannot reach
     elif mode == "pasteof":
         dirents[2][1] = total - dirents[2][0] + 1   # ends exactly one byte late
-    elif mode not in ("valid", "shortheader"):
+    elif mode not in ("valid", "shortheader", "sfxrate"):
         raise SystemExit("unknown mode: %s" % mode)
 
     header = b"PWAD" + struct.pack("<ii", len(dirents), diroff)
@@ -71,8 +84,8 @@ def build(mode):
 
 def main(argv):
     if len(argv) != 3:
-        raise SystemExit("usage: %s {valid|hugesize|negpos|pasteof|shortheader} "
-                         "<out.wad>" % argv[0])
+        raise SystemExit("usage: %s {valid|hugesize|negpos|pasteof|shortheader|"
+                         "sfxrate} <out.wad>" % argv[0])
     data = build(argv[1])
     open(argv[2], "wb").write(data)
     print("%s: %s (%d bytes)" % (argv[2], argv[1], len(data)))

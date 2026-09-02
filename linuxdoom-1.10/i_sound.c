@@ -120,6 +120,24 @@ static int flag = 0;            // only referenced by the SNDINTR interrupt path
 // is Mix_PlayChannel + Mix_SetPanning.
 #define SFX_PITCH_BUCKETS	16	// bucket = pitch >> 4 (DOOM pitch 0..255, 128 = normal)
 
+// DOOM-0386: a sound lump's declared sample rate is attacker-controlled and was
+// rejected only when non-positive. A lump declaring 1 Hz makes claimrate 1,
+// SDL_BuildAudioCVT then builds a ~44100x upsample, and I_BuildPitched's malloc
+// asks for nsamp * len_mult -- roughly 11 GB for a 64 KB lump. Under Linux
+// overcommit that malloc SUCCEEDS and SDL_ConvertAudio touches every page, so
+// the process is OOM-killed rather than failing cleanly.
+//
+// Both shipped IWADs declare only 11025 and 22050, so this band clears real
+// content by a wide margin; anything outside it takes the SFXRATE fallback a
+// non-positive rate already took.
+#define SFX_RATE_MIN		4000
+#define SFX_RATE_MAX		48000
+
+// Ceiling on one converted chunk. The largest legitimate request measured on the
+// shipped IWADs is about 7 MB -- the biggest sfx lump at bucket 1, the lowest
+// pitch the caller can reach -- so this leaves roughly nine times that.
+#define SFX_CONVERT_MAX		((size_t)64 * 1024 * 1024)
+
 typedef struct
 {
     boolean	loaded;				// source lump found + parsed
@@ -282,11 +300,23 @@ static boolean I_CacheSfx(int sfxid)
     lump = (byte*) W_CacheLumpNum(lumpnum, PU_STATIC);	// kept cached for pitch builds
     sfx_snd[sfxid].lumpnum = lumpnum;
     sfx_snd[sfxid].rate    = lump[2] | (lump[3] << 8);
-    if (sfx_snd[sfxid].rate <= 0)
+    if (sfx_snd[sfxid].rate < SFX_RATE_MIN || sfx_snd[sfxid].rate > SFX_RATE_MAX)
 	sfx_snd[sfxid].rate = SFXRATE;
-    sfx_snd[sfxid].nsamp = lump[4] | (lump[5] << 8) | (lump[6] << 16) | (lump[7] << 24);
-    if (sfx_snd[sfxid].nsamp <= 0 || sfx_snd[sfxid].nsamp > lumplen - 8)
-	sfx_snd[sfxid].nsamp = lumplen - 8;		// fall back to the raw byte count
+    {
+	// Built unsigned: lump[7] is promoted to int, so a byte >= 0x80 shifted
+	// left 24 overflows a signed int, which is undefined rather than merely
+	// large -- and the check that was meant to catch it ran afterwards.
+	unsigned	declared = (unsigned)lump[4]
+				 | ((unsigned)lump[5] << 8)
+				 | ((unsigned)lump[6] << 16)
+				 | ((unsigned)lump[7] << 24);
+
+	// lumplen > 8 was established above, so the subtraction is positive.
+	if (declared == 0 || declared > (unsigned)(lumplen - 8))
+	    sfx_snd[sfxid].nsamp = lumplen - 8;		// fall back to the raw byte count
+	else
+	    sfx_snd[sfxid].nsamp = (int)declared;
+    }
     sfx_snd[sfxid].loaded = true;
     return true;
 }
@@ -322,8 +352,18 @@ static Mix_Chunk* I_BuildPitched(int id, int bucket)
 
     lump = (byte*) W_CacheLumpNum(sfx_snd[id].lumpnum, PU_STATIC);
     convertor.len = sfx_snd[id].nsamp;
-    convertor.buf = (Uint8*) malloc((size_t)convertor.len
-				    * (convertor.len_mult > 0 ? convertor.len_mult : 1));
+    {
+	// DOOM-0386: len_mult is SDL's upsample factor and both operands trace
+	// back to the lump, so form the product in size_t and refuse an absurd
+	// one before asking the allocator for it. Returning NULL is the failure
+	// this function already has: the caller drops the sound.
+	size_t	mult = convertor.len_mult > 0 ? (size_t)convertor.len_mult : 1;
+	size_t	need = (size_t)convertor.len * mult;
+
+	if (need > SFX_CONVERT_MAX)
+	    return NULL;
+	convertor.buf = (Uint8*) malloc(need);
+    }
     if (!convertor.buf)
 	return NULL;
     memcpy(convertor.buf, lump + 8, sfx_snd[id].nsamp);
