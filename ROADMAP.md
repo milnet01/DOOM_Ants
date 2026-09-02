@@ -3484,7 +3484,7 @@ with friends.
   Source: in-session-2026-09-02, found by the DOOM-0420 map fixture.
   Lanes: security, map-loading.
 
-- 📋 [DOOM-0423] **Sprite setup reads past the end of sprnames on every startup, hunting a terminator that was never written.**
+- ✅ [DOOM-0423] **Sprite setup reads past the end of sprnames on every startup, hunting a terminator that was never written.**
   R_InitSpriteDefs counts the sprite names by walking the array until it
   finds a NULL:
 
@@ -3522,6 +3522,25 @@ with friends.
   or drop the scan and take the count that is already known at compile time.
   The second is shorter; the first keeps R_InitSpriteDefs usable for any
   name list, which is what its signature promises.
+  Resolved (2026-09-02): sprnames is sized NUMSPRITES + 1 and ends with a
+  NULL, so the scan stops inside the array. Terminating it was chosen over
+  replacing the scan because a null-terminated list is the contract
+  R_InitSpriteDefs documents and asks for; both declarations moved together
+  and nothing else references the array.
+
+  No behaviour change: numsprites reads 138 before and after, checked under
+  gdb on both binaries, which is NUMSPRITES and matches the 1104-byte table.
+
+  Before and after, same fixture, same ASAN flags: the previous commit
+  reports "global-buffer-overflow, READ of size 8, 0 bytes after global
+  variable 'sprnames'" in R_InitSpriteDefs on an ordinary doom2.wad launch;
+  this one reports nothing, on either IWAD, both reaching "tics simulated
+  OK".
+
+  tests/sprnames_test.cpp pins the shape by source scrape, since info.c
+  pulls in most of the playsim and cannot be compiled standalone. Each part
+  was mutated separately and fails on its own reason: drop the NULL, drop a
+  name (137 against 138), or shrink either declaration.
   **Layman:** Every time the game starts it reads a little way past the end of one of its own tables. It has not caused a visible problem, but it is reading memory that is not its own, and it happens on a completely normal launch.
   Kind: security.
   Source: in-session-2026-09-02, found by an ASAN run during DOOM-0420.

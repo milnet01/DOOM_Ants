@@ -8,6 +8,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Startup no longer reads past the end of the sprite-name table** (DOOM-0423)
+  Sprite setup counted the game's sprite names by scanning for an end marker
+  the table did not have, so every launch read a little past it. Nothing
+  visible went wrong, because the value just past the table happened to be
+  the marker it wanted. The table now carries the marker itself.
+
 - **A malformed level no longer crashes the game as it loads** (DOOM-0422)
   A level whose wall data omitted a required side made the engine follow a
   pointer that was never set, killing the game the moment the level loaded.
