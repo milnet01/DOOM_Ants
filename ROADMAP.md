@@ -3387,6 +3387,35 @@ with friends.
   Also recorded: an ASAN run is how a silent guard gets proven here, and
   the engine builds under -fsanitize=address with CFLAGS/CXXFLAGS/EXTRALIBS
   overrides on the existing Makefile, no edit needed.
+  Progress (2026-09-02): the Windows gap is closed. The current tree was
+  cross-built, deployed to the wintest box and re-checked against the three
+  0.7.1 promises. All three hold.
+
+    - DOOM-0353, settings survive: a staged 68-byte config came back 1015
+      bytes -- the full defaults table, so the save completed rather than
+      merely not erroring -- with no "can't replace" line and no leftover
+      .tmp. Matches the original A/B figure exactly.
+    - DOOM-0348, diagnostics visible: 39 lines of output, the Vulkan probe
+      line among them, ending in "tics simulated OK".
+    - DOOM-0350, startup hang: 224 launches across four batches, 0 hangs,
+      against roughly 6 expected at the old rate.
+
+  One anomaly came out of it and is filed as DOOM-0424 rather than buried:
+  the very first batch had its first five runs stall before the Vulkan probe
+  and nothing afterwards. A v0.7.1 control built with the same toolchain and
+  run on the same box was clean, so it is not a code regression, and neither
+  a cold cache nor an antivirus scan reproduced it.
+
+  Recorded so it is not rediscovered: launching the exe from PowerShell with
+  `& .\doom_ants.exe > log 2>&1` produced an EMPTY log and no config write,
+  which reads exactly like a failed launch. Start-Process cmd.exe with the
+  quoted env assignment -- what dummy2.ps1 already does -- works. Use the
+  existing harness rather than a fresh one-liner. Building a tagged worktree
+  for Windows also needs mingw-deps/prefix symlinked in, since it is
+  gitignored and absent from the worktree.
+
+  Remaining on this item: DOOM-0372's back-sidedef sites, which need either
+  player input or an ML_TWOSIDED-with-no-back-sidedef fixture.
   **Layman:** The memory-safety fixes are known not to break normal play, but with one exception nobody has ever seen them actually stop a bad file. Proving that needs a deliberately broken map, which does not exist yet.
   Kind: test.
   Source: in-session-2026-09-02, from the first verify-delivery run on this project.
@@ -3497,6 +3526,54 @@ with friends.
   Kind: security.
   Source: in-session-2026-09-02, found by an ASAN run during DOOM-0420.
   Lanes: renderer, security.
+
+- 📋 [DOOM-0424] **The first few Windows launches after the box has been idle for a long time stalled before the Vulkan probe.**
+  Observed once, on the first batch run against the Windows box since
+  2026-08-13. Of 100 headless launches: runs 1 to 5 hung and were killed at
+  the harness's 20-second timeout, run 6 exited without completing, runs 7 to
+  100 all completed. Every hung run's last line is
+
+      ST_Init: Init status bar.
+
+  so the stall is after ST_Init and before RB_VulkanProbe prints.
+
+  This is NOT DOOM-0350 returning. That defect stopped AFTER the probe line,
+  in the screen-melt loop, and was random at 2 to 3 percent rather than
+  clustered. Here the failures are the first five consecutive runs and
+  nothing afterwards.
+
+  Not reproduced in 224 further launches the same session, all on the same
+  box with the same harness:
+
+      v0.7.1 built with today's toolchain   100 runs   0 hangs
+      current build                         100 runs   0 hangs
+      current build, exe re-copied           12 runs   0 hangs
+      current build, hash-different exe      12 runs   0 hangs
+
+  The v0.7.1 control is what rules out a code regression: it was built from
+  the tag with the same toolchain and run on the same box minutes later, and
+  it was clean, but so was the current build in every batch after the first.
+
+  Two explanations were tested and refuted. A cold file cache does not
+  explain it -- re-copying the exe and running immediately was clean. An
+  antivirus scan of an unseen binary does not either -- a deliberately
+  hash-different copy, never seen by that machine before, was clean on its
+  first run.
+
+  What is left, and untested: the box had not run this engine since
+  2026-08-13, so the stall may be a once-per-boot cost in something RB_Init
+  touches -- the GPU driver's first Vulkan load, or audio device bring-up --
+  which would not reproduce without rebooting the box first. That is the
+  next step and it needs the machine rebooted, so it is not something to do
+  unasked.
+
+  Harness note: C:\doom-ants-test\dummy3.ps1 is dummy2.ps1 with an -Exe
+  parameter and its own log directory, so two binaries can be compared
+  without swapping files. doom_ants_071.exe beside it is the v0.7.1 control.
+  **Layman:** The first five launches on the Windows test box froze before the game started, then ninety-five in a row were fine, and nothing since has reproduced it. Worth watching rather than acting on -- it may be the machine warming up rather than the game.
+  Kind: investigate.
+  Source: in-session-2026-09-02, DOOM-0420 Windows re-verification.
+  Lanes: platform, verification.
 
 ## Phase 2 — The Spin
 
