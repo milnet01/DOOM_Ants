@@ -771,6 +771,21 @@ int R_FlatNumForName (char* name)
 	memcpy (namet, name,8);
 	I_Error ("R_FlatNumForName: %s not found",namet);
     }
+
+    // DOOM-0381: W_CheckNumForName searches the whole WAD, so a sector naming
+    // any lump at all -- PLAYPAL, say -- returned an index far outside
+    // [0, numflats). P_SetupLevel feeds the result straight into floorpic and
+    // ceilingpic, R_PrecacheLevel then WRITES flatpresent[] with it, and
+    // R_DrawPlanes reads flattranslation[] with it. The Vulkan path already
+    // bounds the same values (r_mesh.c, DOOM-0073); this is P_WadIndex's
+    // posture applied to the one surface the fork left open.
+    if (i < firstflat || i - firstflat >= numflats)
+    {
+	namet[8] = 0;
+	memcpy (namet, name,8);
+	I_Error ("R_FlatNumForName: %s is not a flat",namet);
+    }
+
     return i - firstflat;
 }
 
