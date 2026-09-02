@@ -33,6 +33,7 @@ rcsid[] __attribute__((used)) = "$Id: p_tick.c,v 1.4 1997/02/03 16:47:55 b1 Exp 
 // State.
 #include "doomstat.h"
 #include "r_state.h"
+#include "r_main.h"	// NUMCOLORMAPS, for the fixedcolormap bound
 
 byte*		save_p;
 
@@ -148,6 +149,25 @@ void P_UnArchivePlayers (void)
 	players[i].message = NULL;
 	players[i].attacker = NULL;
 
+	// DOOM-0373: these three index fixed tables, and two of them reach a
+	// write. weaponinfo[] is NUMWEAPONS entries and the ammo index it
+	// yields is used to decrement player->ammo[NUMAMMO]; fixedcolormap
+	// becomes a raw pointer offset into colormaps in R_SetupFrame, read
+	// once per rendered pixel. wp_nochange is a legitimate pendingweapon.
+	players[i].readyweapon =
+	    P_SaveIndex (players[i].readyweapon, NUMWEAPONS, "readyweapon");
+
+	if (players[i].pendingweapon != wp_nochange)
+	    players[i].pendingweapon =
+		P_SaveIndex (players[i].pendingweapon, NUMWEAPONS,
+			     "pendingweapon");
+
+	// 0 means "none" and NUMCOLORMAPS is the inverse map, so both ends
+	// of the range are valid.
+	players[i].fixedcolormap =
+	    P_SaveIndex (players[i].fixedcolormap, NUMCOLORMAPS + 1,
+			 "fixedcolormap");
+
 	for (j=0 ; j<NUMPSPRITES ; j++)
 	{
 	    if (players[i]. psprites[j].state)
@@ -250,8 +270,10 @@ void P_UnArchiveWorld (void)
     {
 	sec->floorheight = *get++ << FRACBITS;
 	sec->ceilingheight = *get++ << FRACBITS;
-	sec->floorpic = *get++;
-	sec->ceilingpic = *get++;
+	// DOOM-0373: raw shorts from the file, and r_plane.c indexes
+	// flattranslation[] with them unguarded.
+	sec->floorpic = P_SaveIndex (*get++, numflats, "sector floorpic");
+	sec->ceilingpic = P_SaveIndex (*get++, numflats, "sector ceilingpic");
 	sec->lightlevel = *get++;
 	sec->special = *get++;		// needed?
 	sec->tag = *get++;		// needed?
@@ -272,9 +294,14 @@ void P_UnArchiveWorld (void)
 	    si = &sides[li->sidenum[j]];
 	    si->textureoffset = *get++ << FRACBITS;
 	    si->rowoffset = *get++ << FRACBITS;
-	    si->toptexture = *get++;
-	    si->bottomtexture = *get++;
-	    si->midtexture = *get++;
+	    // DOOM-0373: raw shorts from the file, and r_segs.c indexes
+	    // texturetranslation[] with them unguarded.
+	    si->toptexture =
+		P_SaveIndex (*get++, numtextures, "side toptexture");
+	    si->bottomtexture =
+		P_SaveIndex (*get++, numtextures, "side bottomtexture");
+	    si->midtexture =
+		P_SaveIndex (*get++, numtextures, "side midtexture");
 	}
     }
     save_p = (byte *)get;	

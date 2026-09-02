@@ -224,8 +224,13 @@ void P_LoadSegs (int lump)
     // segs[firstline .. firstline+numlines).
     for (i=0 ; i<numsubsectors ; i++)
     {
+	// DOOM-0373: firstline is dereferenced in P_GroupLines whatever
+	// numlines says, so it must be a real seg. Without the second clause
+	// numlines == 0 with firstline == numsegs passes and reads one past
+	// the end.
 	if (subsectors[i].numlines < 0
 	    || subsectors[i].firstline < 0
+	    || subsectors[i].firstline >= numsegs
 	    || subsectors[i].firstline > numsegs - subsectors[i].numlines)
 	    I_Error ("P_SetupLevel: subsector %d spans segs %d..%d "
 		     "(level has %d)", i, subsectors[i].firstline,

@@ -56,6 +56,8 @@ extern int		scaledviewwidth;
 extern int		viewheight;
 
 extern int		firstflat;
+extern int		numflats;	// DOOM-0373: bounds a loaded floorpic
+extern int		numtextures;	// DOOM-0373: bounds a loaded wall texture
 
 // for global animation
 extern int*		flattranslation;	
