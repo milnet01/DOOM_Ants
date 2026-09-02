@@ -8,6 +8,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **A malformed level no longer crashes the game as it loads** (DOOM-0422)
+  A level whose wall data omitted a required side made the engine follow a
+  pointer that was never set, killing the game the moment the level loaded.
+  Such a level is now turned away with a message naming the offending wall.
+  No level in either shipped game is affected.
+
 - **Saving a game now checks it has room before each write, instead of reporting an overrun after it happened** (DOOM-0374)
   Saving wrote into a fixed half-megabyte buffer with nothing stopping it
   running past the end; the check that was meant to catch this only ran once

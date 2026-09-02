@@ -3318,7 +3318,7 @@ with friends.
   Source: in-session-2026-09-02, left open by DOOM-0376.
   Lanes: renderer, verification.
 
-- 📋 [DOOM-0420] **Most of the untrusted-input guards have never been proven to fire, only proven not to misfire.**
+- 🚧 [DOOM-0420] **Most of the untrusted-input guards have never been proven to fire, only proven not to misfire.**
   The CRITICAL memory-safety set shipped 2026-09-02. Every guard in it is
   verified NOT to misfire -- every map in both IWADs boots, the suite passes
   and the headless boot smoke exits 0 -- but only DOOM-0371's guards have
@@ -3353,6 +3353,40 @@ with friends.
       /tmp and did not survive. The findings themselves are safe as
       DOOM-0364..0416; what is lost is each lane's "looks correct" notes and
       open questions.
+  Progress (2026-09-02): the crafted-map fixture exists --
+  scripts/make_map_fixture.py, six modes, built by copying MAP01's lump group
+  out of an IWAD and mutating one lump. Three of the four guards are now
+  observed firing, and the savegame gap is closed.
+
+    - DOOM-0370, badblockmap mode: refused by name, quoting the short count
+      and the dimensions it needed.
+    - DOOM-0381, badflat mode: refused by name.
+    - DOOM-0369, manylines mode: proven by the counterfactual, since the
+      guard is a silent skip. An ASAN build of the commit before the fix
+      reports a global-buffer-overflow 0 bytes after linespeciallist in
+      P_SpawnSpecials on this fixture; an ASAN build of HEAD on the same
+      fixture does not.
+    - DOOM-0373: closed separately today by the round-trip gate; see that
+      bullet.
+
+  Still open, and the reason is worth keeping. DOOM-0372's scrolling-line
+  guard cannot be reached from map input at all: removing a linedef's front
+  sidedef is refused earlier, by the seg check where a seg points at the
+  line and by DOOM-0422 where none does. So that guard is defence in depth
+  rather than the live check. Its other sites read the BACK sidedef, which is
+  legitimately absent on a one-sided line, and reaching those needs either
+  player input (the manual-door path) or a fixture pairing an ML_TWOSIDED
+  flag with a missing back sidedef next to a light-special sector. Neither is
+  built.
+
+  Two defects came out of building this, which is the argument for having
+  built it. DOOM-0422, a null dereference in P_GroupLines that beat every
+  DOOM-0372 guard to the crash, found and fixed. DOOM-0423, a read past
+  sprnames on every startup, filed.
+
+  Also recorded: an ASAN run is how a silent guard gets proven here, and
+  the engine builds under -fsanitize=address with CFLAGS/CXXFLAGS/EXTRALIBS
+  overrides on the existing Makefile, no edit needed.
   **Layman:** The memory-safety fixes are known not to break normal play, but with one exception nobody has ever seen them actually stop a bad file. Proving that needs a deliberately broken map, which does not exist yet.
   Kind: test.
   Source: in-session-2026-09-02, from the first verify-delivery run on this project.
@@ -3382,6 +3416,87 @@ with friends.
   Kind: enhancement.
   Source: in-session-2026-09-02, split out of DOOM-0374.
   Lanes: savegame.
+
+- ✅ [DOOM-0422] **A linedef with no front sidedef crashes level setup with a null dereference.**
+  P_LoadLineDefs sets frontsector to NULL when a linedef names no front
+  sidedef, which is what the WAD format allows it to say. P_GroupLines then
+  does li-&gt;frontsector-&gt;linecount++ with no check, so the process dies on a
+  null pointer during P_SetupLevel.
+
+  Found by building the DOOM-0420 fixture: a crafted MAP01 carrying one extra
+  linedef with both sidedefs set to -1 segfaults, and the resolved backtrace
+  is P_GroupLines &lt;- P_SetupLevel &lt;- G_DoLoadLevel. Reproducer:
+  scripts/make_map_fixture.py orphanline.
+
+  This is the same trust boundary as the shipped CRITICAL set and is not
+  covered by it. DOOM-0372 guards the places that USE a front sidedef -- the
+  scroll, door, switch, plat and floor paths -- but every one of those runs
+  after P_GroupLines, so the crash happens first and none of them is ever
+  reached. The plain onesided mutation does not expose it because SEGS carry
+  a sidedef index and the seg check refuses that map earlier; only a linedef
+  no seg points at gets this far.
+
+  The sidedef INDICES are already bounds-checked by P_WadIndex. What is
+  unhandled is the legitimate-looking -1. Neither shipped IWAD relies on it:
+  zero of 57929 linedefs across both have no front sidedef, so refusing the
+  map by name -- the posture P_WadIndex and the seg check already take -- is
+  safe for shipping content.
+  Resolved (2026-09-02): P_LoadLineDefs now refuses a linedef whose front
+  sidedef is -1, by name, rather than storing a null frontsector for
+  P_GroupLines to dereference. That is the posture P_WadIndex and the seg
+  check already take, and it costs no shipped content -- zero of the 57929
+  linedefs across both IWADs have no front sidedef.
+
+  Verified: the orphan-line fixture that segfaulted is now refused with
+  "P_SetupLevel: linedef 370 has no front sidedef"; build clean with zero
+  warnings; suite green; every map in both IWADs still boots, 68 of 68.
+  **Layman:** A deliberately broken level file crashes the game the instant it loads, before any of the safety checks added for exactly this kind of file get a chance to run.
+  Kind: security.
+  Source: in-session-2026-09-02, found by the DOOM-0420 map fixture.
+  Lanes: security, map-loading.
+
+- 📋 [DOOM-0423] **Sprite setup reads past the end of sprnames on every startup, hunting a terminator that was never written.**
+  R_InitSpriteDefs counts the sprite names by walking the array until it
+  finds a NULL:
+
+      check = namelist;
+      while (*check != NULL)
+          check++;
+      numsprites = check - namelist;
+
+  sprnames is declared char *sprnames[NUMSPRITES] and initialised with
+  exactly NUMSPRITES names, so there is no NULL to find. The scan runs off
+  the end and reads whatever global follows.
+
+  Observed, not inferred. An ASAN build of HEAD reports on an ordinary
+  doom2.wad launch with no PWAD:
+
+      ERROR: AddressSanitizer: global-buffer-overflow
+      READ of size 8 ... 0 bytes after global variable 'sprnames'
+          defined in 'info.c' of size 1104
+      #0 R_InitSpriteDefs r_things.c
+      #1 R_InitSprites
+      #2 P_Init
+      #3 D_DoomMain
+
+  It is inherited from the 1997 source rather than introduced here, and it
+  has been benign so far only because the next global happens to read as
+  zero -- which is a property of the link order, not of the code. If it ever
+  read non-zero, numsprites would exceed NUMSPRITES and the Z_Malloc'd
+  sprites array would be walked past its own end by every later loop, with
+  the two bounds checks in R_ProjectSprite and R_DrawPSprite comparing
+  against the inflated count.
+
+  sprnames has exactly two references outside its own definition -- the
+  extern in info.h and the single R_InitSprites call in P_Init -- so either
+  fix is contained: give the array a NULL sentinel and size it NUMSPRITES+1,
+  or drop the scan and take the count that is already known at compile time.
+  The second is shorter; the first keeps R_InitSpriteDefs usable for any
+  name list, which is what its signature promises.
+  **Layman:** Every time the game starts it reads a little way past the end of one of its own tables. It has not caused a visible problem, but it is reading memory that is not its own, and it happens on a completely normal launch.
+  Kind: security.
+  Source: in-session-2026-09-02, found by an ASAN run during DOOM-0420.
+  Lanes: renderer, security.
 
 ## Phase 2 — The Spin
 
