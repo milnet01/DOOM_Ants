@@ -2897,7 +2897,7 @@ with friends.
   Source: review-code 2026-09-01, lane platform.
   Lanes: audio.
 
-- 📋 [DOOM-0386] **Untrusted sound and network data reach an unbounded allocation and uninitialised stack.**
+- ✅ [DOOM-0386] **Untrusted sound and network data reach an unbounded allocation and uninitialised stack.**
     - i_sound.c:284 -- a sound lump's declared sample rate is attacker-controlled
       and rejected only when <= 0. A lump declaring rate 1 makes claimrate 1 at
       i_sound.c:315, SDL_BuildAudioCVT builds a ~44100x upsample, len_mult reaches
@@ -2920,6 +2920,42 @@ with friends.
       (i_net.c:310) both got one in the same function. `doom -net` dereferences
       myargv[myargc]; after a response file, d_main.c:1099 leaves that tail
       unfilled, so it is a wild pointer rather than the standard's NULL.
+  Resolved (2026-09-02), all three parts plus the signed-shift note.
+
+  Sound. The declared rate takes the SFXRATE fallback outside a plausible
+  band, the same fallback a non-positive rate already took, and the
+  conversion size is formed in size_t and refused above a ceiling. Measured
+  rather than guessed: both IWADs declare only 11025 and 22050, and the
+  largest legitimate conversion is about 7 MB (biggest sfx lump at bucket 1,
+  the lowest pitch the caller can reach, since I_StartSound already clamps
+  bucket to at least 1) against a 64 MB ceiling. The sample count is built
+  unsigned and validated before it becomes an int, so lump[7] << 24 no longer
+  overflows a signed int.
+
+  Network. recvfrom's byte count is kept before the copy loop reuses it, and
+  the packet is checked against it.
+
+  Argument. -net is bounded against myargc like -dup and -port beside it.
+
+  Proven where it could be. The sound clamp is observed under gdb with a
+  crafted DSPISTOL declaring 1 Hz -- stored rate 1 before, 11025 after, while
+  the real pistol keeps 11025/5661 and the whole loaded set still spans
+  exactly 11025..22050, so nothing legitimate is clamped. `doom -net` exits
+  139 before and prints a usage error after. Fixture:
+  scripts/make_wad_fixture.py sfxrate.
+
+  Two honest limits. The 11 GB allocation was deliberately not executed --
+  triggering it risks OOM-killing the machine -- so that figure is arithmetic
+  rather than an observed kill. And the packet bound cannot be exercised
+  without a peer, while the defect is use of uninitialised stack rather than
+  an out-of-bounds read, so no sanitizer finds it either; it is pinned by
+  tests/net_bounds_test.cpp against net_bounds.h instead. offsetof(doomdata_t,
+  cmds) is 8 and sizeof(ticcmd_t) is 8, so the 9-byte/12-tic case in the
+  bullet is exactly the one the test names, and 12 is BACKUPTICS, which is why
+  the array check alone let it through.
+
+  No regression: 68 of 68 IWAD maps boot, every WAD and map fixture behaves as
+  before, suite 15/15.
   **Layman:** Two separate holes in the platform layer. A WAD can declare a silly sample rate that makes the game try to allocate about eleven gigabytes, and on Linux that gets the process killed rather than failing cleanly. And a short network packet can claim it holds more than it does, copying uninitialised memory into the game as player input.
   Kind: security.
   Source: review-code 2026-09-01, lane platform.

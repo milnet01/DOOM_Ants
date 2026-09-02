@@ -8,6 +8,16 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Hostile sound data, network packets and a bare -net switch can no longer take the game down** (DOOM-0386)
+  A sound in an add-on file could claim an absurd recording speed, which made
+  the game try to reserve about eleven gigabytes and get itself killed by the
+  system. Sounds outside a sensible range now fall back to the standard one,
+  and an oversized conversion is refused. A game packet from the network could
+  claim to hold more player input than it actually did, and the extra was read
+  out of leftover memory and treated as movement and button presses; a packet
+  is now checked against its real size. And starting the game with -net and
+  nothing after it crashed instead of explaining what was missing.
+
 - **A corrupted or hostile WAD or config file is now turned away instead of trusted** (DOOM-0384)
   The WAD reader checked that a file's table of contents fitted inside the
   file, then believed every entry in it. An add-on file could claim a piece
