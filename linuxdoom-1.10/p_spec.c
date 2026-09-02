@@ -238,7 +238,15 @@ twoSided
 ( int	sector,
   int	line )
 {
-    return (sectors[sector].lines[line])->flags & ML_TWOSIDED;
+    // DOOM-0372: ML_TWOSIDED is a map flag, not proof that either sidedef
+    // exists. getSide() and getSector() are only ever reached through this
+    // test, so requiring real sidenums here keeps sides[-1] out of all five
+    // of their call sites.
+    line_t*	ld = sectors[sector].lines[line];
+
+    return (ld->flags & ML_TWOSIDED)
+	&& ld->sidenum[0] != -1
+	&& ld->sidenum[1] != -1;
 }
 
 
@@ -1354,7 +1362,10 @@ void P_SpawnSpecials (void)
 	  case 48:
 	    // EFFECT FIRSTCOL SCROLL+
 	    // DOOM-0369: MAXLINEANIMS entries only, and large maps exceed it.
-	    if (numlinespecials < MAXLINEANIMS)
+	    // DOOM-0372: a scrolling line with no front sidedef would make the
+	    // per-tic textureoffset write below land on sides[-1].
+	    if (numlinespecials < MAXLINEANIMS
+		&& lines[i].sidenum[0] != -1)
 	    {
 		linespeciallist[numlinespecials] = &lines[i];
 		numlinespecials++;

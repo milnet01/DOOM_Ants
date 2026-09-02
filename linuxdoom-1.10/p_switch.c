@@ -214,13 +214,21 @@ P_ChangeSwitchTexture
     int     texBot;
     int     i;
     int     sound;
+    side_t* sd;
 	
+    // DOOM-0372: a switch special on a linedef with no front sidedef would
+    // read, and then WRITE, sides[-1]. There is nothing to switch.
+    if (line->sidenum[0] == -1)
+	return;
+
+    sd = &sides[line->sidenum[0]];
+
     if (!useAgain)
 	line->special = 0;
 
-    texTop = sides[line->sidenum[0]].toptexture;
-    texMid = sides[line->sidenum[0]].midtexture;
-    texBot = sides[line->sidenum[0]].bottomtexture;
+    texTop = sd->toptexture;
+    texMid = sd->midtexture;
+    texBot = sd->bottomtexture;
 	
     sound = sfx_swtchn;
 
@@ -233,7 +241,7 @@ P_ChangeSwitchTexture
 	if (switchlist[i] == texTop)
 	{
 	    S_StartSound(buttonlist->soundorg,sound);
-	    sides[line->sidenum[0]].toptexture = switchlist[i^1];
+	    sd->toptexture = switchlist[i^1];
 
 	    if (useAgain)
 		P_StartButton(line,top,switchlist[i],BUTTONTIME);
@@ -245,7 +253,7 @@ P_ChangeSwitchTexture
 	    if (switchlist[i] == texMid)
 	    {
 		S_StartSound(buttonlist->soundorg,sound);
-		sides[line->sidenum[0]].midtexture = switchlist[i^1];
+		sd->midtexture = switchlist[i^1];
 
 		if (useAgain)
 		    P_StartButton(line, middle,switchlist[i],BUTTONTIME);
@@ -257,7 +265,7 @@ P_ChangeSwitchTexture
 		if (switchlist[i] == texBot)
 		{
 		    S_StartSound(buttonlist->soundorg,sound);
-		    sides[line->sidenum[0]].bottomtexture = switchlist[i^1];
+		    sd->bottomtexture = switchlist[i^1];
 
 		    if (useAgain)
 			P_StartButton(line, bottom,switchlist[i],BUTTONTIME);

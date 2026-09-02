@@ -184,7 +184,9 @@ EV_DoPlat
 	{
 	  case raiseToNearestAndChange:
 	    plat->speed = PLATSPEED/2;
-	    sec->floorpic = sides[line->sidenum[0]].sector->floorpic;
+	    // DOOM-0372: no front sidedef means sides[-1].sector, a wild pointer.
+	    if (line->frontsector)
+		sec->floorpic = line->frontsector->floorpic;
 	    plat->high = P_FindNextHighestFloor(sec,sec->floorheight);
 	    plat->wait = 0;
 	    plat->status = up;
@@ -196,7 +198,9 @@ EV_DoPlat
 	    
 	  case raiseAndChange:
 	    plat->speed = PLATSPEED/2;
-	    sec->floorpic = sides[line->sidenum[0]].sector->floorpic;
+	    // DOOM-0372: no front sidedef means sides[-1].sector, a wild pointer.
+	    if (line->frontsector)
+		sec->floorpic = line->frontsector->floorpic;
 	    plat->high = sec->floorheight + amount*FRACUNIT;
 	    plat->wait = 0;
 	    plat->status = up;

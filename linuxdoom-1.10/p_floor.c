@@ -517,12 +517,18 @@ EV_BuildStairs
 		    continue;
 					
 		tsec = (sec->lines[i])->frontsector;
+		// DOOM-0372: ML_TWOSIDED above is a map flag, not proof a
+		// sidedef exists; p_spec.c's donut walker already guards this.
+		if (!tsec)
+		    continue;
 		newsecnum = tsec-sectors;
 		
 		if (secnum != newsecnum)
 		    continue;
 
 		tsec = (sec->lines[i])->backsector;
+		if (!tsec)
+		    continue;
 		newsecnum = tsec - sectors;
 
 		if (tsec->floorpic != texture)

@@ -407,6 +407,12 @@ EV_VerticalDoor
     }
 	
     // if the sector has an active thinker, use it
+    // DOOM-0372: side is the front, so this reads the BACK sidedef, and a
+    // manual-door special on a one-sided linedef has none. sides[-1].sector
+    // would be stored in door->sector and written through every tic.
+    if (line->sidenum[side^1] == -1)
+	return;
+
     sec = sides[ line->sidenum[side^1]] .sector;
 
     if (sec->specialdata)
