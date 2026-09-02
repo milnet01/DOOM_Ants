@@ -318,6 +318,36 @@ rendermode_t RB_NextAvailableMode(rendermode_t cur)
     return cur;
 }
 
+// DOOM-0380: the best available tier at or below `want`, walking cycleOrder[]
+// DOWNWARD from it. DOOM-0026 INV-3 says a config naming an unavailable back-end
+// resolves to the best available one, so a Vulkan-capable but non-RT machine
+// asking for Ultra lands on Solid rather than the 1997 software renderer.
+//
+// RB_NextAvailableMode above cannot serve this: it is the MENU cycle, walking
+// cycleOrder[] upward and wrapping, so from Ultra it yields Classic whatever else
+// the machine can run.
+//
+// Classic is cycleOrder[0] and always available, so the walk always terminates.
+static rendermode_t RB_BestAvailableAtOrBelow(rendermode_t want)
+{
+    int i;
+
+    // Not a mode at all (a hand-edited out-of-range value): take the one tier
+    // that always works rather than promoting a typo up the ladder.
+    if (want < 0 || want >= RB_NUMMODES)
+        return RB_CLASSIC;
+
+    for (i = RB_NUMMODES - 1; i >= 0; i--)
+        if (cycleOrder[i] == want)
+            break;
+
+    for (; i >= 0; i--)
+        if (RB_ModeAvailable(cycleOrder[i]))
+            return cycleOrder[i];
+
+    return RB_CLASSIC;
+}
+
 // DOOM-0169: the selected render tier drives the ray-tracing default, so the menu
 // choice matches what is drawn and each tier gets its intended look (resolves the
 // DOOM-0135 open question; user-confirmed 2026-07-04). Solid renders the raster
@@ -330,10 +360,15 @@ static void RB_ApplyTierRt(void)
 {
     extern int rb_rtdebug;          // r_vulkan.cpp
     extern int rb_rtdebug_menu;     // r_vulkan.cpp (DOOM-0135)
-    if (rb_rtdebug_menu)
-        return;                     // developer diagnostic cycle owns rb_rtdebug
-    if      (rendermode == RB_RASTER3D) rb_rtdebug = 0;   // Solid: raster original view
-    else if (rendermode == RB_RT3D)     rb_rtdebug = 6;   // Ultra: ray-traced view
+    // DOOM-0380: Debug Views guards the TIER DEFAULT only. This used to return
+    // outright, which left the -rtview pin below it -- and rb_rtdebug_menu is
+    // persisted (m_misc.c), so a config left with Debug Views on made every
+    // -rtview N a silent no-op. Same invisible-toggle-state trap as DOOM-0205.
+    if (!rb_rtdebug_menu)                 // developer diagnostic cycle owns rb_rtdebug
+    {
+        if      (rendermode == RB_RASTER3D) rb_rtdebug = 0;   // Solid: raster original view
+        else if (rendermode == RB_RT3D)     rb_rtdebug = 6;   // Ultra: ray-traced view
+    }
 
     // DOOM-0351: `-rtview N` pins the path-tracer view for a headless run, applied AFTER
     // the tier default so it wins -- which is the whole point. The tier owns rb_rtdebug
@@ -367,13 +402,17 @@ void RB_Init(void)
 {
     // DOOM-0008: log the 3D tier this machine supports. The Vulkan back-ends are
     // selectable via the menu (Solid/Ultra) and a persisted "renderer" choice;
-    // the clamp below keeps a config that names an unavailable mode on Classic.
+    // the clamp below resolves a config that names an unavailable mode to the
+    // best tier this machine can actually run (DOOM-0380).
     RB_VulkanProbe();
 
     // Clamp a persisted choice to a back-end that actually exists here.
     // Classic is always available, so this never leaves `active` NULL.
+    // DOOM-0380: to the BEST available tier (INV-3), not straight to Classic --
+    // that sent a Vulkan-capable but non-RT machine asking for Ultra all the way
+    // back to the software renderer with Solid sitting unused.
     if (!RB_ModeAvailable(rendermode))
-        rendermode = RB_CLASSIC;
+        rendermode = RB_BestAvailableAtOrBelow(rendermode);
 
     // Sanitise the persisted Ultra path-tracer view (DOOM-0116): the `~` cycle
     // only ever yields {0,1,2,3,4,6} (mode 5 is the headless verify path), so a
