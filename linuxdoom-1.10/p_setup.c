@@ -90,6 +90,8 @@ int		bmapheight;	// size in mapblocks
 short*		blockmap;	// int for larger maps
 // offsets in blockmap are from here
 short*		blockmaplump;		
+// DOOM-0370: shorts in the BLOCKMAP lump, so the iterator can bound its walk
+int		blockmapsize;
 // origin of block map
 fixed_t		bmaporgx;
 fixed_t		bmaporgy;
@@ -555,6 +557,15 @@ void P_LoadBlockMap (int lump)
 	I_Error ("P_SetupLevel: bad BLOCKMAP dimensions %dx%d",
 		 bmapwidth, bmapheight);
 
+    // DOOM-0370: the bmapwidth*bmapheight offset table follows the four-short
+    // header. A lump too short to hold it is read past its end by the block
+    // iterator, which trusts both the offset and the -1 terminator.
+    if (count < 4 + bmapwidth*bmapheight)
+	I_Error ("P_SetupLevel: BLOCKMAP lump is %d shorts, need %d for %dx%d",
+		 count, 4 + bmapwidth*bmapheight, bmapwidth, bmapheight);
+
+    blockmapsize = count;
+
     // clear out mobj chains
     count = sizeof(*blocklinks)* bmapwidth*bmapheight;
     blocklinks = Z_Malloc (count,PU_LEVEL, 0);
@@ -729,7 +740,36 @@ P_SetupLevel
     P_LoadNodes (lumpnum+ML_NODES);
     P_LoadSegs (lumpnum+ML_SEGS);
 	
-    rejectmatrix = W_CacheLumpNum (lumpnum+ML_REJECT,PU_LEVEL);
+    // DOOM-0370: P_CheckSight indexes the matrix to (numsectors^2-1)>>3, and a
+    // short or zero-length REJECT is ordinary node-builder output rather than
+    // an attack. Allocate the size every reader assumes, copy what the lump
+    // actually has, and zero-fill the rest -- a zero bit means "visible", the
+    // conservative default. Byte-identical for a full-length REJECT.
+    {
+	long long	need = ((long long)numsectors*numsectors + 7) / 8;
+	int		rejectsize;
+	int		lumpsize;
+	byte*		lump;
+
+	if (need > (long long)MAXINT)
+	    I_Error ("P_SetupLevel: REJECT matrix for %d sectors is too large",
+		     numsectors);
+
+	rejectsize = (int)need;
+	if (rejectsize < 1)
+	    rejectsize = 1;	// never ask the zone for a zero-byte block
+
+	rejectmatrix = Z_Malloc (rejectsize, PU_LEVEL, 0);
+	memset (rejectmatrix, 0, rejectsize);
+
+	lumpsize = W_LumpLength (lumpnum+ML_REJECT);
+	if (lumpsize > 0)
+	{
+	    lump = W_CacheLumpNum (lumpnum+ML_REJECT, PU_CACHE);
+	    memcpy (rejectmatrix, lump,
+		    lumpsize < rejectsize ? lumpsize : rejectsize);
+	}
+    }
     P_GroupLines ();
 
     bodyqueslot = 0;

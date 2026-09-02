@@ -490,8 +490,20 @@ P_BlockLinesIterator
 	
     offset = *(blockmap+offset);
 
-    for ( list = blockmaplump+offset ; *list != -1 ; list++)
+    // DOOM-0370: the offset, and the line indices it leads to, both come from
+    // the WAD. Bound the walk by the lump so a crafted offset or a missing -1
+    // terminator cannot run past it, and bound each index by lines[] so the
+    // validcount write below cannot land outside the array.
+    if (offset < 0 || offset >= blockmapsize)
+	return true;
+
+    for ( list = blockmaplump+offset ;
+	  list < blockmaplump+blockmapsize && *list != -1 ;
+	  list++)
     {
+	if (*list < 0 || *list >= numlines)
+	    continue;		// index outside lines[]
+
 	ld = &lines[*list];
 
 	if (ld->validcount == validcount)
