@@ -8,6 +8,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **-rtverify prints PASS when it measured nothing, and exits 0 either way.** (DOOM-0376)
+  The ray-tracing self-test is the gate this project requires before shipping any ray-tracing change. Both of its verdicts start at zero and stay at zero when there is nothing to measure — and zero counts as a pass. So a run that tested nothing at all reports success twice, and the exit code is 0 whatever it printed.
+
+- **The local CI gate prints PASSED for jobs it skipped, and the pre-push hook believes it.** (DOOM-0375)
+  Before every push, a script runs the same checks CI runs and reports whether they passed. If it cannot run one of them — no game file to test with, no Windows compiler installed — it skips it silently and still prints ‘both jobs green’. The push hook reads that as a pass and lets the push through.
+
 - **Asset and WAD tooling: a crash-on-typo path, a silent `rm -rf`, and dead code**
   `stage_hero.py` dereferenced the result of `importlib.util.spec_from_file_location` and its `.loader` without a null check, turning a wrong path into an opaque `AttributeError`; it shelled out to `rm -rf` through `subprocess` with no error check, now `shutil.rmtree`; and it carried an unused `LICENSES` constant. `wad_seg_probe.py` gains an explicit `strict=` on a deliberately ragged `zip()` and loses an ambiguous `l` identifier.
 

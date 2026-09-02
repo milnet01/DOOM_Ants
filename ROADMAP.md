@@ -2441,7 +2441,7 @@ with friends.
   Source: review-code 2026-09-01, lanes savegame and game-loop.
   Lanes: savegame.
 
-- 📋 [DOOM-0375] **The local CI gate prints PASSED for jobs it skipped, and the pre-push hook believes it.**
+- ✅ [DOOM-0375] **The local CI gate prints PASSED for jobs it skipped, and the pre-push hook believes it.**
   VERIFIED by reading the script. packaging/ci-local.sh:204 prints
   "ci-local: PASSED -- both CI jobs green on a clean HEAD checkout" and lists both
   the boot smoke and the Windows job UNCONDITIONALLY. In native mode the boot smoke
@@ -2464,12 +2464,22 @@ with friends.
 
   Note for whoever picks this up: the 2026-09-01 DOOM-0364 push ran in CONTAINER
   mode with neither skip line present, so that particular gate result was real.
+  Resolved (2026-09-02, a5d822b): both skips append to SKIPPED_JOBS; with
+  any entry the banner reports PARTIAL, names each check that did not run,
+  and exits 2. pre-push tells that from a failure -- 2 is "could not
+  check", 1 is "checked and failed", both refuse the push. Verified by
+  running the script, not reading it: in a worktree with no wads/ and
+  mingw present, --native printed "PARTIAL -- 1 check(s) did not run
+  here", named the boot smoke, and exited 2; the hook was then driven with
+  a stub gate at exit 2 (hook exits 1, LOCAL CI INCOMPLETE), exit 3 (hook
+  exits 1, LOCAL CI FAILED) and exit 0 (hook exits 0). The stale comment
+  saying a WAD-less box still passes was updated.
   **Layman:** Before every push, a script runs the same checks CI runs and reports whether they passed. If it cannot run one of them — no game file to test with, no Windows compiler installed — it skips it silently and still prints ‘both jobs green’. The push hook reads that as a pass and lets the push through.
   Kind: fix.
   Source: review-code 2026-09-01, lane build-scripts; verified against current source.
   Lanes: packaging, ci.
 
-- 📋 [DOOM-0376] **-rtverify prints PASS when it measured nothing, and exits 0 either way.**
+- ✅ [DOOM-0376] **-rtverify prints PASS when it measured nothing, and exits 0 either way.**
   VERIFIED by reading both verdicts.
 
     - r_vulkan.cpp:8828 -- `double relMSE = (den > 0.0) ? num / den : 0.0;` then
@@ -2495,6 +2505,20 @@ with friends.
 
   Every plan step citing this gate is written as "expect PASS" -- a human reading
   stdout. Under set -e, in a Makefile target, or in CI, a FAIL is currently invisible.
+  Resolved (2026-09-02, e64e198): coverage is a precondition -- the direct
+  verdict needs litPx > 0 and den > 0, the furnace counts hit pixels and
+  needs furnPx > 0, and either without coverage prints INCONCLUSIVE and
+  does not pass. Both lines report "N of M px" and a VERDICT line
+  summarises. RB_RtVerify returns the verdict and the caller exits with
+  it. Verified on the reference GPU (RX 6600), E1M1: unmodified bar gives
+  VERDICT PASS and exit 0 (rel-MSE 0.3031%, furnace dev 0.000000, both
+  over 64000 of 64000 px); the bar forced to 0 gives VERDICT FAIL and exit
+  1; restored, PASS and exit 0 again. The INCONCLUSIVE path itself was NOT
+  executed -- that needs a map with no lit pixel. Note for anyone touching
+  this: -rtverify cannot run headlessly (SDL's dummy driver has no Vulkan,
+  and Xvfb reached no verdict in seven minutes), so it needs a real
+  display on the reference GPU. Coverage floor and the hardcoded bar text
+  are DOOM-0419.
   **Layman:** The ray-tracing self-test is the gate this project requires before shipping any ray-tracing change. Both of its verdicts start at zero and stay at zero when there is nothing to measure — and zero counts as a pass. So a run that tested nothing at all reports success twice, and the exit code is 0 whatever it printed.
   Kind: fix.
   Source: review-code 2026-09-01, lane vk-rt-frame; verified against current source.
@@ -3203,6 +3227,31 @@ with friends.
   Kind: security.
   Source: in-session-2026-09-02, found while fixing DOOM-0372.
   Lanes: playsim, security.
+
+- 📋 [DOOM-0419] **-rtverify still has no coverage floor, and prints a pass bar it does not read.**
+  DOOM-0376 made zero coverage fail. Two parts of its prescription were
+  deliberately left, because both need a judgement one measurement cannot
+  support.
+
+    - No fractional coverage floor. A run covering a handful of pixels
+      still passes. The measurement to build one on: E1M1 on the reference
+      GPU covers 64000 of 64000 pixels for BOTH verdicts, so a floor well
+      under 100% is safe there -- but that is one map and one camera, and
+      the score is a property of both. Take the figure from two or three
+      maps before picking a number.
+    - The direct-light line prints "(bar 0.50%)" as literal text beside a
+      `bar` variable it does not read. Change `bar` and the printed bar
+      goes stale, which is the shape of defect this gate exists to catch.
+      Print the variable.
+
+  Also worth recording for whoever picks this up: -rtverify cannot be run
+  headlessly. SDL's dummy video driver has no Vulkan support, and under
+  Xvfb the run reached no verdict in seven minutes. It needs the reference
+  GPU on a real display, which is why the gate has no CI presence.
+  **Layman:** The ray-tracing self-test now refuses to pass when it measured nothing at all, but it still cannot tell "measured a little" from "measured everything". Two smaller things were left rather than guessed at.
+  Kind: fix.
+  Source: in-session-2026-09-02, left open by DOOM-0376.
+  Lanes: renderer, verification.
 
 ## Phase 2 — The Spin
 
