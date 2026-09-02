@@ -2946,6 +2946,12 @@ with friends.
       Preserved-vanilla; recorded, not proposed for change.
     - LOW g_game.c:1540 -- the save slot is overwritten in place with no
       temp-plus-rename, so a crash mid-write destroys the previous save.
+  Progress (2026-09-02): the CRITICAL in this list is CLOSED. Its fix site
+  p_setup.c:537 was the one DOOM-0370 names, and P_LoadBlockMap now
+  requires the lump to hold the whole bmapwidth*bmapheight offset table
+  (423b040). The remaining ten findings here are untouched. Recorded so a
+  later session does not re-fix it, and so a sweep for open CRITICALs does
+  not keep matching this bullet.
   **Layman:** The leftovers from reviewing saved games and map loading, including the exact line where the map-block check stops short.
   Kind: investigate.
   Source: review-code 2026-09-01, lane savegame.
