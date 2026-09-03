@@ -29,6 +29,7 @@ rather than deleting, and orphanline is the mode that gets past it.
     onesided      a scrolling line, no front side (see below)  I_Error, by name
     orphanline    ditto, on a line carrying no seg DOOM-0372    counterfactual
     twosidedstub  ML_TWOSIDED line, no back side  DOOM-0372    counterfactual
+    doorstub      manual door on a one-sided wall DOOM-0372    counterfactual
 
 Usage:  make_map_fixture.py <mode> <iwad> <out.wad>
 
@@ -58,6 +59,9 @@ ML_TWOSIDED = 4         # doomdata.h
 # first two-sided line it accepts, so it stops at whatever the NEW sector's
 # linecount is and never reaches a line appended at the end.
 RAISE_TO_TEXTURE = 30
+# Linedef special 1: "DR Door Open Wait Close", the manual door the player
+# opens with the use key -- the one EV_VerticalDoor path a map can reach.
+MANUAL_DOOR = 1
 
 
 def read_wad(path):
@@ -220,6 +224,35 @@ def mutate_twosidedstub(group):
     return replace(group, "LINEDEFS", bytes(linedefs) + stub)
 
 
+def mutate_doorstub(group):
+    """Put a manual-door special on every one-sided linedef.
+
+    This is the fixture for DOOM-0372's other reachable guard, in
+    EV_VerticalDoor. That one reads sidenum[side^1] -- the BACK sidedef, since
+    the player activates a door from its front -- and a one-sided wall has
+    none. Without the guard, sides[-1].sector is stored in door->sector and
+    written through on every tic the door runs, so it is a wild-pointer write
+    rather than the stray read the twosidedstub mode produces.
+
+    No linedef is appended here and none needs to be: P_UseLines finds lines
+    through the BLOCKMAP, which an appended linedef is absent from, and the
+    map's own walls are already one-sided. Every one of them is given the
+    special so that whichever wall the player ends up facing will do, which is
+    what lets the walkuse demo drive this with no display.
+    """
+    linedefs = bytearray(dict(group)["LINEDEFS"])
+    made = 0
+    for i in range(len(linedefs) // LINEDEF_SIZE):
+        base = i * LINEDEF_SIZE
+        if struct.unpack_from("<H", linedefs, base + 12)[0] != NO_SIDE:
+            continue                    # two-sided: it has a back sidedef
+        struct.pack_into("<h", linedefs, base + 6, MANUAL_DOOR)
+        made += 1
+    if not made:
+        raise SystemExit("map has no one-sided linedef to put a door on")
+    return replace(group, "LINEDEFS", bytes(linedefs))
+
+
 MODES = {
     "valid": lambda g: g,
     "orphanline": mutate_orphanline,
@@ -228,6 +261,7 @@ MODES = {
     "manylines": mutate_manylines,
     "onesided": mutate_onesided,
     "twosidedstub": mutate_twosidedstub,
+    "doorstub": mutate_doorstub,
 }
 
 

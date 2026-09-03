@@ -16,7 +16,7 @@ it says how many tics the engine actually read. Measured on DOOM-0371:
     consoleplayer    no timing line      30 gametics
       = 200            printed at all
 
-Usage:  make_demo_fixture.py {valid|badplayer|noterm|walk} <out.wad>
+Usage:  make_demo_fixture.py {valid|badplayer|noterm|walk|walkuse} <out.wad>
 
 Not a map fixture. Proving the DOOM-0369/0370/0372/0381 guards fire needs a
 crafted MAP, which is a bigger job and is filed separately -- see the roadmap.
@@ -27,6 +27,7 @@ import sys
 
 DEMO_VERSION = 110      # doomdef.h: enum { VERSION = 110 }
 DEMOMARKER = 0x80       # g_game.c
+BT_USE = 2              # d_event.h
 
 
 def pwad(path, lumps):
@@ -47,7 +48,8 @@ def pwad(path, lumps):
         f.write(header + data + directory)
 
 
-def demo(consoleplayer, tics, terminator, forwardmove=0):
+def demo(consoleplayer, tics, terminator, forwardmove=0, use=False,
+         angleturn=0):
     """A 13-byte demo header, `tics` ticcmds, and optionally its marker.
 
     A ticcmd is forwardmove, sidemove, angleturn, buttons. Empty ones are all
@@ -62,7 +64,12 @@ def demo(consoleplayer, tics, terminator, forwardmove=0):
         consoleplayer,  # the byte DOOM-0371 bounds; MAXPLAYERS is 4
         1, 0, 0, 0,     # playeringame[4]
     ])
-    body = bytes([forwardmove & 0xFF, 0, 0, 0]) * tics
+    body = b""
+    for t in range(tics):
+        # The use key fires on the press, not while held (P_PlayerThink tracks
+        # usedown), so it has to be released between taps.
+        buttons = BT_USE if (use and (t // 4) % 2 == 0) else 0
+        body += bytes([forwardmove & 0xFF, 0, angleturn & 0xFF, buttons])
     return head + body + (bytes([DEMOMARKER]) if terminator else b"")
 
 
@@ -77,6 +84,14 @@ CASES = {
     # supply input to a crafted MAP, for the guards that only a line the player
     # steps across can reach. 50 is the run-speed forwardmove (g_game.c).
     "walk":      lambda: demo(0, 70, True, forwardmove=50),
+    # Running in a slow circle while tapping use -- for a fixture whose special
+    # is a manual door, which only opens when the player presses use while
+    # facing a wall within reach. Walking straight is not enough: measured on
+    # MAP01, 70 tics of forward put the use ray in front of no special line at
+    # all. The demo stores angleturn as one byte shifted up 8, so 2 is about
+    # three degrees a tic and the sweep covers the room.
+    "walkuse":   lambda: demo(0, 350, True, forwardmove=50, use=True,
+                              angleturn=2),
 }
 
 
