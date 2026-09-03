@@ -3712,6 +3712,35 @@ with friends.
   Harness note: C:\doom-ants-test\dummy3.ps1 is dummy2.ps1 with an -Exe
   parameter and its own log directory, so two binaries can be compared
   without swapping files. doom_ants_071.exe beside it is the v0.7.1 control.
+  Progress (2026-09-03): the box was rebooted and 30 launches ran as the
+  first since that boot. 30 completed, 0 hung, 0 died early. But the reboot
+  was a Fast Startup HYBRID RESUME, not a cold boot, so this refutes less
+  than the run count suggests.
+
+  Evidence, all read before anything was launched:
+
+    - Kernel-Boot event 27 for today's boot (07:31Z) carries BootType 1.
+      0 is a cold boot, 1 is hybrid, 2 is resume from hibernation. The two
+      previous boots also logged 1.
+    - HiberbootEnabled is 0x1 under Session Manager\Power.
+    - WMI LastBootUpTime still reports 2026-09-01 17:17, two days back,
+      while the event log shows a boot today. That disagreement is itself
+      the hybrid-resume signature and is why the boot type was checked
+      rather than trusted.
+
+  A hybrid resume restores the hibernated kernel session, so loaded DRIVERS
+  come back initialised. Services and user sessions do restart. So this run
+  tests the service half of the theory and NOT the half it was aimed at --
+  the GPU driver's first Vulkan load after a genuine cold boot is still
+  untested, and a clean batch here is the expected result either way.
+
+  What this does establish: a hybrid resume does not reproduce it, so the
+  cost is not in anything a service restart resets. Running total since the
+  original batch: 254 launches, 0 hangs.
+
+  Getting a true cold boot needs HiberbootEnabled set to 0 before the
+  restart, since a plain restart on this box logged BootType 1 today. Not
+  done, because it edits the machine's power configuration.
   **Layman:** The first five launches on the Windows test box froze before the game started, then ninety-five in a row were fine, and nothing since has reproduced it. Worth watching rather than acting on -- it may be the machine warming up rather than the game.
   Kind: investigate.
   Source: in-session-2026-09-02, DOOM-0420 Windows re-verification.
