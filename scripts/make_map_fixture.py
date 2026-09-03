@@ -28,6 +28,7 @@ rather than deleting, and orphanline is the mode that gets past it.
     manylines     >MAXLINEANIMS scrolling lines   DOOM-0369    counterfactual
     onesided      a scrolling line, no front side (see below)  I_Error, by name
     orphanline    ditto, on a line carrying no seg DOOM-0372    counterfactual
+    twosidedstub  ML_TWOSIDED line, no back side  DOOM-0372    counterfactual
 
 Usage:  make_map_fixture.py <mode> <iwad> <out.wad>
 
@@ -46,8 +47,17 @@ SCROLL_SPECIAL = 48
 MAP_LUMPS = ["THINGS", "LINEDEFS", "SIDEDEFS", "VERTEXES", "SEGS",
              "SSECTORS", "NODES", "SECTORS", "REJECT", "BLOCKMAP"]
 LINEDEF_SIZE = 14       # v1 v2 flags special tag sidenum[0] sidenum[1]
+SIDEDEF_SIZE = 30       # textureoffset rowoffset top[8] bottom[8] mid[8] sector
 SECTOR_SIZE = 26        # floorheight ceilingheight floorpic[8] ceilingpic[8] ...
+SECTOR_TAG_OFF = 24     # last field of the sector record
 NO_SIDE = 0xFFFF        # stored as -1
+ML_TWOSIDED = 4         # doomdata.h
+# Linedef special 30: "W1 Raise Floor to Shortest Lower Texture", the walkover
+# that reaches EV_DoFloor(raiseToTexture) -- one of twoSided()'s two call sites.
+# The other, lowerAndChange, is no good here: its loop reassigns `sec` on the
+# first two-sided line it accepts, so it stops at whatever the NEW sector's
+# linecount is and never reaches a line appended at the end.
+RAISE_TO_TEXTURE = 30
 
 
 def read_wad(path):
@@ -157,6 +167,59 @@ def mutate_orphanline(group):
     return replace(group, "LINEDEFS", linedefs + orphan)
 
 
+def mutate_twosidedstub(group):
+    """Append an ML_TWOSIDED linedef whose back sidedef is absent, in a tagged
+    sector, and make every walkover lower-and-change that sector's floor.
+
+    This is the fixture for DOOM-0372's twoSided() guard, which is reached only
+    from EV_DoFloor -- so unlike the other modes it needs player input as well
+    as a map, and is played with the walk demo from make_demo_fixture.py.
+
+    Three mutations, and each is needed:
+
+      - The stub linedef is APPENDED, so no seg points at it. A seg on a
+        two-sided line makes P_LoadSegs resolve sidenum[side^1], which refuses
+        -1 before the level finishes loading. Its front sidedef is real, so
+        P_GroupLines files it under that sidedef's sector and DOOM-0422 (which
+        refuses a missing FRONT side) leaves it alone.
+      - That sector gets a tag no sector already uses, so EV_DoFloor finds it
+        and nothing else.
+      - Every linedef gets the walkover special and that tag, so whichever line
+        the player first steps across fires it. The map's own specials are lost,
+        which does not matter for a fixture that runs for two seconds.
+
+    Without the guard, twoSided() is a bare flag test, so the stub passes it and
+    getSide(secnum, i, 1) reads sides[-1]. That is zone memory, so neither ASAN
+    nor a segfault reports it: the observable is the guard's own decision on
+    this line, which differs between a pre-fix and a post-fix build.
+    """
+    sidedefs = dict(group)["SIDEDEFS"]
+    sectors = bytearray(dict(group)["SECTORS"])
+    linedefs = bytearray(dict(group)["LINEDEFS"])
+
+    # Any real sidedef will do; sidedef 0's sector becomes the target.
+    stub_side = 0
+    target = struct.unpack_from("<h", sidedefs, SIDEDEF_SIZE - 2)[0]
+
+    nsectors = len(sectors) // SECTOR_SIZE
+    if not 0 <= target < nsectors:
+        raise SystemExit("sidedef 0 names sector %d, which does not exist" % target)
+    tags = [struct.unpack_from("<h", sectors, i * SECTOR_SIZE + SECTOR_TAG_OFF)[0]
+            for i in range(nsectors)]
+    tag = max(tags) + 1
+    if tag > 0x7FFF:
+        raise SystemExit("no spare sector tag below the 16-bit limit")
+    struct.pack_into("<h", sectors, target * SECTOR_SIZE + SECTOR_TAG_OFF, tag)
+
+    for i in range(len(linedefs) // LINEDEF_SIZE):
+        base = i * LINEDEF_SIZE
+        struct.pack_into("<hh", linedefs, base + 6, RAISE_TO_TEXTURE, tag)
+
+    stub = struct.pack("<5hHh", 0, 1, ML_TWOSIDED, 0, 0, stub_side, -1)
+    group = replace(group, "SECTORS", bytes(sectors))
+    return replace(group, "LINEDEFS", bytes(linedefs) + stub)
+
+
 MODES = {
     "valid": lambda g: g,
     "orphanline": mutate_orphanline,
@@ -164,6 +227,7 @@ MODES = {
     "badflat": mutate_badflat,
     "manylines": mutate_manylines,
     "onesided": mutate_onesided,
+    "twosidedstub": mutate_twosidedstub,
 }
 
 

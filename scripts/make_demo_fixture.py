@@ -16,7 +16,7 @@ it says how many tics the engine actually read. Measured on DOOM-0371:
     consoleplayer    no timing line      30 gametics
       = 200            printed at all
 
-Usage:  make_demo_fixture.py {valid|badplayer|noterm} <out.wad>
+Usage:  make_demo_fixture.py {valid|badplayer|noterm|walk} <out.wad>
 
 Not a map fixture. Proving the DOOM-0369/0370/0372/0381 guards fire needs a
 crafted MAP, which is a bigger job and is filed separately -- see the roadmap.
@@ -47,8 +47,13 @@ def pwad(path, lumps):
         f.write(header + data + directory)
 
 
-def demo(consoleplayer, tics, terminator):
-    """A 13-byte demo header, `tics` empty ticcmds, and optionally its marker."""
+def demo(consoleplayer, tics, terminator, forwardmove=0):
+    """A 13-byte demo header, `tics` ticcmds, and optionally its marker.
+
+    A ticcmd is forwardmove, sidemove, angleturn, buttons. Empty ones are all
+    DOOM-0371 needed; `forwardmove` is what makes the player actually cross a
+    line, which is how a walkover special gets triggered with no display.
+    """
     head = bytes([
         DEMO_VERSION,
         2,              # skill
@@ -57,7 +62,7 @@ def demo(consoleplayer, tics, terminator):
         consoleplayer,  # the byte DOOM-0371 bounds; MAXPLAYERS is 4
         1, 0, 0, 0,     # playeringame[4]
     ])
-    body = bytes([0, 0, 0, 0]) * tics
+    body = bytes([forwardmove & 0xFF, 0, 0, 0]) * tics
     return head + body + (bytes([DEMOMARKER]) if terminator else b"")
 
 
@@ -68,6 +73,10 @@ CASES = {
     "badplayer": lambda: demo(200, 30, True),
     # no end marker -- DOOM-0371's second half, the unbounded read.
     "noterm":    lambda: demo(0, 30, False),
+    # Two seconds of running forward. Not a DOOM-0371 case: this one exists to
+    # supply input to a crafted MAP, for the guards that only a line the player
+    # steps across can reach. 50 is the run-speed forwardmove (g_game.c).
+    "walk":      lambda: demo(0, 70, True, forwardmove=50),
 }
 
 
