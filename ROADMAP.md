@@ -3394,7 +3394,7 @@ with friends.
   Source: in-session-2026-09-02, left open by DOOM-0376.
   Lanes: renderer, verification.
 
-- 🚧 [DOOM-0420] **Most of the untrusted-input guards have never been proven to fire, only proven not to misfire.**
+- ✅ [DOOM-0420] **Most of the untrusted-input guards have never been proven to fire, only proven not to misfire.**
   The CRITICAL memory-safety set shipped 2026-09-02. Every guard in it is
   verified NOT to misfire -- every map in both IWADs boots, the suite passes
   and the headless boot smoke exits 0 -- but only DOOM-0371's guards have
@@ -3492,6 +3492,53 @@ with friends.
 
   Remaining on this item: DOOM-0372's back-sidedef sites, which need either
   player input or an ML_TWOSIDED-with-no-back-sidedef fixture.
+  Resolved (2026-09-03): the tail is closed. DOOM-0372 turned out to
+  have shipped FIVE guards, not one, and separating them is what finished
+  this item.
+
+  Three read the FRONT sidedef -- p_floor.c and p_plats.c twice -- and
+  p_switch.c's reads sidenum[0]. DOOM-0422 refuses a linedef with no front
+  sidedef at load, so none of the three can be reached from map input. They
+  are defence in depth, on the same footing as the scroll path already
+  recorded above.
+
+  Two are reachable and both are now observed firing.
+
+    - twoSided(), reached from EV_DoFloor. New fixture mode twosidedstub:
+      an ML_TWOSIDED linedef with no back sidedef, appended so no seg points
+      at it, filed under a tagged sector whose floor every walkover raises.
+      Played with the new walk demo. Over sector 9's line list, the stub
+      (flags 0x4, sidenum {0,-1}) is accepted before the fix and skipped
+      after it, while the sector's two genuine two-sided lines are accepted
+      by both -- the guard firing and not misfiring, in one run.
+    - EV_VerticalDoor's, the severest of the set: it reads the BACK sidedef
+      and stores sides[-1].sector in door->sector, written through every
+      tic. New fixture mode doorstub, played with the new walkuse demo.
+      Over the same two linedefs (sidenum {26,-1} and {57,-1}), the pre-fix
+      build reaches sides[-1] on five activations and the fixed build
+      refuses all five.
+
+  Recorded so they are not rediscovered:
+
+    - sides[] is zone memory, so sides[-1] is inside one big allocation:
+      neither ASAN nor an exit code sees it. Where DOOM-0369 was proven by
+      an ASAN counterfactual on a global array, these are proven by the
+      guard's own decision, taken from a pre-fix and a post-fix build of the
+      same fixture. Neither build crashes and that is expected.
+    - EV_DoFloor's lowerAndChange case reassigns sec inside its own loop, so
+      the walk stops at whatever the new sector's linecount is. It cannot
+      reach a linedef appended at the end; raiseToTexture can.
+    - A linedef appended past the last one the BSP knows is absent from the
+      BLOCKMAP, so P_UseLines can never find it. A use-key fixture has to
+      mutate the map's own walls.
+    - The use key fires on the press, so a demo holding it activates one
+      line only, and 70 tics of walking straight put the use ray in front of
+      no special line at all. walkuse taps the key and turns as it moves.
+    - The engine waits on the PWAD "press enter to continue" banner. Give a
+      headless run stdin from /dev/null or it parks there looking hung.
+
+  The one thing not built is a fixture for the three front-sidedef guards,
+  and it cannot be: DOOM-0422 refuses that map at load.
   **Layman:** The memory-safety fixes are known not to break normal play, but with one exception nobody has ever seen them actually stop a bad file. Proving that needs a deliberately broken map, which does not exist yet.
   Kind: test.
   Source: in-session-2026-09-02, from the first verify-delivery run on this project.
