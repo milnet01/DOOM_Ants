@@ -3669,7 +3669,7 @@ with friends.
   Source: in-session-2026-09-02, found by an ASAN run during DOOM-0420.
   Lanes: renderer, security.
 
-- 📋 [DOOM-0424] **The first few Windows launches after the box has been idle for a long time stalled before the Vulkan probe.**
+- ✅ [DOOM-0424] **The first few Windows launches after the box has been idle for a long time stalled before the Vulkan probe.**
   Observed once, on the first batch run against the Windows box since
   2026-08-13. Of 100 headless launches: runs 1 to 5 hung and were killed at
   the harness's 20-second timeout, run 6 exited without completing, runs 7 to
@@ -3741,6 +3741,31 @@ with friends.
   Getting a true cold boot needs HiberbootEnabled set to 0 before the
   restart, since a plain restart on this box logged BootType 1 today. Not
   done, because it edits the machine's power configuration.
+  Resolved (2026-09-03): the once-per-boot theory is refuted, and with it
+  the last explanation this item had. The investigation is closed with no
+  code change; nothing was found to fix.
+
+  The cold boot was obtained deliberately, because the first attempt was
+  not one. HiberbootEnabled was set to 0, the box restarted, and the boot
+  type verified as 0 -- a real cold boot, drivers loading from scratch --
+  before anything was launched. Then 100 launches at the original batch
+  size, as the first since that boot:
+
+      100 completed, 0 hung, 0 died early
+
+  The setting was put back to 0x1 afterwards and the restore verified.
+
+  So every explanation the item raised has now been tested and refuted: a
+  cold file cache, an antivirus scan of an unseen binary, a code
+  regression (the v0.7.1 control), anything a service restart resets (the
+  hybrid resume), and now anything a driver reload resets. 354 launches
+  since the original batch with no repeat.
+
+  The original five hangs were real and their logs are consistent -- every
+  one stopped after ST_Init and before RB_VulkanProbe. What caused them is
+  not known and is no longer being chased. If it recurs, the thing worth
+  capturing is a stack from the hung process rather than another batch: the
+  run count has stopped being informative.
   **Layman:** The first five launches on the Windows test box froze before the game started, then ninety-five in a row were fine, and nothing since has reproduced it. Worth watching rather than acting on -- it may be the machine warming up rather than the game.
   Kind: investigate.
   Source: in-session-2026-09-02, DOOM-0420 Windows re-verification.
