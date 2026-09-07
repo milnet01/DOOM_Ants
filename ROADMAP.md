@@ -3007,7 +3007,7 @@ with friends.
   Source: review-code 2026-09-01, lane playsim.
   Lanes: playsim.
 
-- 📋 [DOOM-0398] **World-machinery review tail: eight findings on doors, floors, ceilings, platforms and switches.**
+- ✅ [DOOM-0398] **World-machinery review tail: eight findings on doors, floors, ceilings, platforms and switches.**
   Verified against current source by the lane. Not covered by DOOM-0372.
 
     - MEDIUM p_plats.c:197 -- raiseAndChange and raiseToNearestAndChange never set
@@ -3039,6 +3039,46 @@ with friends.
     - INFO p_switch.c:121 -- if the switch-table terminator were dropped the loop
       exits without executing `numswitches = index/2`, so numswitches stays 0 and
       every switch silently stops working.
+  Resolved (2026-09-07): all eight fixed, one commit each.
+
+  p_floor.c -- lowerAndChange seeded texture but not newspecial, and
+  T_MoveFloor copies both. Proven by its own decision, A/B against a
+  pre-fix build, on a new make_map_fixture.py mode "lowerchange" played
+  with the walk demo: pre-fix "P_PlayerInSpecialSector: unknown special
+  400", at HEAD the demo runs to the end (c768d9e).
+
+  p_plats.c -- plat->low assigned by no branch for the two "and change"
+  types, and the waiting counter wrapped on a zero wait. Proven by
+  listing the assignments inside EV_DoPlat; the crush branch needs a body
+  under a low ceiling and was not fixtured (c7aa1d7).
+
+  p_ceilng.c -- P_AddActiveCeiling now undoes EV_DoCeiling's registration
+  when full instead of leaving the sector owning an unfindable ceiling.
+  The sibling's I_Error was deliberately NOT copied: ceiling count is WAD
+  data (6de060f).
+
+  p_spec.c -- the switch click was started from &soundorg, the address of
+  the pointer field, reading the next button_t as coordinates (fa8eb57).
+
+  p_tick.c -- the thinker link is read before the Z_Free. Only the removal
+  branch was hoisted; the other must still read it after the thinker runs,
+  or a thinker spawned by the last one in the list is skipped (8f4043b).
+
+  p_spec.c -- an unknown sector special no longer quits the game. This
+  removed the "lowerchange" fixture's observable, which was that abort;
+  the mode's docstring records it (c5b87ec).
+
+  p_doors.c -- finished DOOM-0364 rather than reverting it: the red and
+  yellow !p guards are unreachable, EV_DoLockedDoor already returning on
+  !p before the switch (a9ccdd2).
+
+  p_switch.c -- numswitches and the terminator now follow the loop instead
+  of sitting on the terminator branch, and the bound moved onto index,
+  which is what switchlist overflows (e3f67ad).
+
+  Verified across the batch: all five demo fixtures byte-identical to the
+  pre-session baseline (30/30/30/70/350 gametics), so the playsim is
+  unchanged; 68 of 68 IWAD maps boot; make test 15/15.
   **Layman:** The leftovers from reviewing the code that runs doors, lifts and switches. Two of them use memory that was never initialised, and one can make the game quit to the desktop during ordinary play.
   Kind: investigate.
   Source: review-code 2026-09-01, lane playsim-world.

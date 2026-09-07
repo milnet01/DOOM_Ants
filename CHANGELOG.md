@@ -8,6 +8,26 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **A lift or floor that lowers and changes its surface no longer quits the game** (DOOM-0398)
+  The floor copied a leftover value into the sector when no neighbouring
+  floor sat at the height it was moving to, and standing in that sector
+  ended the session.
+
+- **A custom map's odd sector setting no longer quits the game** (DOOM-0398)
+  One unrecognised number in a downloaded map used to end the session as
+  soon as a player stood on that floor. It is now ignored, as in every
+  modern DOOM port. No original map contains one.
+
+- **A crushing lift caught on something no longer sinks to a random height or freezes** (DOOM-0398)
+
+- **A room that runs out of ceiling slots is released instead of being left unusable for the rest of the level** (DOOM-0398)
+
+- **A switch click is played from the switch rather than from an unrelated position** (DOOM-0398)
+
+- **Switches keep working even if the internal switch table loses its end marker** (DOOM-0398)
+  Previously that would have left every switch in the game silently doing
+  nothing.
+
 - **A map thing whose type is not positive no longer spawns a stray player or aborts the level load** (DOOM-0397)
   A THINGS record of type -1 matched MT_PLAYER's doomednum and spawned a
   player-shaped monster with no player behind it; type 0 quit the game
