@@ -30,6 +30,11 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Security
 
+- **The Linux download is now built with packaging tools that are checked before they run** (DOOM-0259)
+  The build used to fetch three helper programs from a moving link and
+  run them unchecked. They are now pinned to fixed releases and verified
+  against a recorded fingerprint on every build.
+
 - **Network games now check that packets arrived intact** (DOOM-0256)
   The check existed but had been switched off since 1997, so it passed
   everything. It now catches a damaged packet, and a packet from a

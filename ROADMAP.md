@@ -561,11 +561,15 @@ with friends.
   Kind: chore.
   Source: debt-sweep-2026-07-26.
 
-- 📋 [DOOM-0246] **packaging/README.md hardcodes 0.5.0 in its usage example.**
+- ✅ [DOOM-0246] **packaging/README.md hardcodes 0.5.0 in its usage example.**
   packaging/README.md:11 embeds the literal 0.5.0. It is not part of the three-place version lockstep (releases.md), so nothing keeps it current. Replace with <ver>.
   **Layman:** A copy-paste example in the packaging docs will read as out of date after the next release.
   Kind: doc-fix.
   Source: debt-sweep-2026-07-26.
+  Resolved (2026-09-07): the usage example now reads <version> rather
+  than naming one, so it cannot go stale again. The later mention of
+  0.5.0 and 0.6.0 is deliberately untouched -- it records what happened
+  between two releases, and bumping it would make it false.
 
 - 📋 [DOOM-0247] **Anchor the bare `doom` .gitignore rule so it can't swallow a future directory.**
   .gitignore:9 is a bare `doom`, which matches any file OR directory named doom at any depth — a future docs/doom/ would vanish silently. Anchor it to /linuxdoom-1.10/doom. Nothing is currently shadowed (verified with git ls-files + git status --ignored).
@@ -705,11 +709,20 @@ with friends.
   Kind: perf.
   Source: indie-review-2026-07-26 vk-frame.
 
-- 📋 [DOOM-0259] **AppImage build downloads continuous-tag tooling and executes it without verifying it.**
+- ✅ [DOOM-0259] **AppImage build downloads continuous-tag tooling and executes it without verifying it.**
   packaging/build-appimage.sh:33-36 fetches appimagetool from a rolling `continuous` tag and execs it. Pin a release tag and verify a recorded sha256 before running it.
   **Layman:** The Linux packaging step runs a program it just downloaded, with no check that it is the expected one.
   Kind: security.
   Source: indie-review-2026-07-26 build-ci-packaging.
+  Resolved (2026-09-07, b97e329): all three tools now come from release
+  tags with a recorded sha256, checked on every run rather than only
+  after a download -- a file already in the cache is as untrusted as one
+  arriving now. A mismatch prints both hashes and the URL, removes the
+  file and exits, so the next run re-fetches instead of failing forever.
+  The script says how to move a pin.
+  Verified: shellcheck clean; a build from an empty cache produces a
+  working AppImage; appending a byte to a cached tool makes the next
+  build refuse and name the mismatch; the run after that recovers.
 
 - 📋 [DOOM-0260] **packaging/release.sh duplicates the Windows cross-build block from windows-build.sh.**
   release.sh:80-109 repeats windows-build.sh:30-59 inline; call the script instead so one edit covers both paths.
@@ -1744,7 +1757,7 @@ with friends.
   Kind: chore.
   Source: release-gate-0.7.1-2026-08-19.
 
-- 📋 [DOOM-0355] **The `act` build used for local CI runs is behind two CVEs.**
+- ✅ [DOOM-0355] **The `act` build used for local CI runs is behind two CVEs.**
   Installed 2026-08-19 to run Phase 2b of the release gate -- executing
   .github/workflows/build.yml itself, rather than the packaging/ci-local.sh
   mirror, which commits.md 4.2 warns returns green for a pipeline that
@@ -1768,6 +1781,17 @@ with friends.
   **Layman:** The tool we now use to rehearse the automated build on this machine needs updating.
   Kind: security.
   Source: release-gate-0.7.1-2026-08-19.
+  Resolved (2026-09-07). The security half was already fixed: act is
+  installed from the upstream binary rather than the distro package, and
+  as of today reports 0.2.89 with no CVE notice -- past the 0.2.86 the
+  advisory asked for. Confirmed by running it, not assumed.
+  The documentation half is moot rather than done. Nothing in the tree
+  invokes act: packaging/ci-local.sh is the local gate, and it runs both
+  workflow jobs inside GitHub's own image via podman, sharing its apt
+  package list with build.yml so the two cannot drift. That is a stronger
+  route than act, and packaging/README.md already documents it. If act is
+  ever reintroduced, its invocation and -P image mapping still need
+  writing down.
 
 - ✅ [DOOM-0356] **release.sh ships a STALE binary whenever an artifact of that name already exists.**
   Caught 2026-08-19 while cutting 0.7.1, by downloading the PUBLISHED zip

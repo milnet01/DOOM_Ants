@@ -35,14 +35,15 @@ soundfont are bundled, so the game and its music work out of the box. Only a
 DOOM `.wad` is needed (not redistributable).
 
 ```sh
-packaging/build-appimage.sh 0.5.0     # -> packaging/build/doom_ants-0.5.0-x86_64.AppImage
+packaging/build-appimage.sh <version>   # -> packaging/build/doom_ants-<version>-x86_64.AppImage
 ```
 
 - `doom_ants.desktop`, `doom_ants.png` — committed launcher entry + icon.
 - `build-appimage.sh` — builds the binary, bundles libraries (linuxdeploy) and
-  packages the AppImage (appimagetool). The toolchain is cached under
-  `packaging/tools/` and the staging tree under `packaging/build/` (both
-  git-ignored).
+  packages the AppImage (appimagetool). The toolchain is pinned to release tags
+  and checked against a recorded sha256 on every run (DOOM-0259); the script's
+  own comments say how to move a pin. It is cached under `packaging/tools/` and
+  the staging tree under `packaging/build/` (both git-ignored).
 - `SOUNDFONT=/path/to.sf2 packaging/build-appimage.sh ...` swaps the bundled
   soundfont (e.g. the full 142 MB FluidR3_GM for higher-quality music).
 
