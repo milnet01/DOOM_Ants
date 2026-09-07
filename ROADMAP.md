@@ -1350,7 +1350,7 @@ with friends.
   exits 0. Revisit only if DOOM-0325 is settled or if the full run is ever
   promoted into CI.
 
-- 📋 [DOOM-0342] **R_InitSpriteDefs reads one element past sprnames[] on every startup.**
+- ✅ [DOOM-0342] **R_InitSpriteDefs reads one element past sprnames[] on every startup.**
   r_things.c:189-191 counts the sprite names with `check = namelist;
   while (*check != NULL) check++;` -- it expects a NULL sentinel. Its only
   caller passes sprnames (r_things.c:308, R_InitSprites), and info.c:40
@@ -1382,6 +1382,18 @@ with friends.
   **Layman:** The game reads one slot beyond the end of its sprite-name list every time it launches — harmless today only because of what happens to sit next to it in memory.
   Kind: security.
   Source: in-session-2026-08-12 (ASAN run while shipping DOOM-0255).
+  Resolved (2026-09-07) as a DUPLICATE of DOOM-0423, which shipped the
+  fix on 2026-09-02. Both describe the same defect from the same
+  evidence: R_InitSpriteDefs walks sprnames for a NULL terminator that
+  was never written, and ASAN reports a global-buffer-overflow read just
+  past sprnames on an ordinary launch. This one was filed first and never
+  closed when the other shipped.
+  Verified in the tree rather than assumed: info.h and info.c both
+  declare sprnames with room for the terminator and carry the DOOM-0423
+  comment, and tests/sprnames_test.cpp pins the shape.
+  DOOM-0423 took the sentinel route; this item preferred passing the
+  count in. Either was sound and the shipped one is tested, so no further
+  work.
 
 - ✅ [DOOM-0343] **Make the local CI gate mirror both CI jobs, and stop a transient 503 reddening the build.**
   CI run 31622988836 (push of 4d7bfc6) went red. The tree was fine: the
@@ -4075,7 +4087,7 @@ with friends.
   Source: user-request-2026-09-07.
   Lanes: testing, game-loop, backend-seam.
 
-- 📋 [DOOM-0426] **A savegame's only version gate is the engine version, which does not move when a struct does.**
+- ✅ [DOOM-0426] **A savegame's only version gate is the engine version, which does not move when a struct does.**
   Split out of DOOM-0399, whose other ten findings shipped 2026-09-07. Held
   back because every fix for it invalidates existing saves, which is the
   user's call and not a session's.
@@ -4105,6 +4117,28 @@ with friends.
 
   The related diagnosis half is already fixed: a rejected save now says so
   rather than being a silent no-op (c817508).
+  Resolved (2026-09-07, 68c75d5): a savegame now carries the layout it
+  was written in -- the sizes of the archived structs and the pointer
+  width, folded with FNV-1a so a byte moved between two structs cannot
+  cancel out -- and a mismatch is refused with a message instead of read
+  as this build's structs. Option 1 of the three listed, chosen by the
+  user.
+  What it does not catch is in save_signature.h rather than implied: two
+  layouts whose sizes all match. The other two options remain the larger
+  jobs they were.
+  Existing .dsg files stop loading, which is the intended effect. A
+  pre-signature save has skill/episode/map at that offset and cannot
+  spell the tag, so it fails the same test with no separate check.
+  Verified both directions against the engine: one of the repository's
+  saves is refused and falls back to the title without crashing, and the
+  same file with the correct signature spliced in loads and simulates.
+  Noted while verifying: sizeof(player_t) differs between the C build and
+  a C++ translation unit because doomtype.h makes `boolean` an enum in C
+  and a bool in C++. Harmless here -- the signature is computed inside
+  the C engine on both paths -- but a C++ test cannot speak for the
+  engine's layout, and the test says so. No live ABI hazard: r_vulkan.cpp
+  is the only C++ unit, it mirrors `boolean` as int deliberately, and no
+  C++ unit defines a boolean-returning function that C calls.
   **Layman:** Saved games are a raw copy of the game's memory. Two builds that call themselves the same version can lay that memory out differently, and each will read the other's saves as nonsense rather than refusing them.
   Kind: security.
   Source: review-code 2026-09-01, lane savegame; split out of DOOM-0399 on 2026-09-07.
