@@ -118,21 +118,26 @@ void P_InitSwitchList(void)
 	if ( gamemode == commercial )
 	    episode = 3;
 		
-    // alphSwitchList is terminated by a zero-episode entry, but the table
-    // (41 entries) is smaller than MAXSWITCHES (50) — bound the scan by the
-    // table itself so a future edit that drops the terminator cannot read
-    // past its end.
+    // alphSwitchList is terminated by a zero-episode entry, but the table is
+    // smaller than MAXSWITCHES — bound the scan by the table itself so a
+    // future edit that drops the terminator cannot read past its end.
     const int	numalphswitches =
 	(int)(sizeof(alphSwitchList) / sizeof(alphSwitchList[0]));
 
-    for (index = 0,i = 0;i < MAXSWITCHES && i < numalphswitches;i++)
+    // DOOM-0398: numswitches and the terminator were written ONLY on the
+    // zero-episode branch, so an exit by the bound above left numswitches at
+    // 0 and every switch in the game silently stopped working. They belong
+    // after the loop, which reaches them however it ended. The bound is on
+    // index rather than on i because switchlist is what overflows: i indexes
+    // alphSwitchList, and two entries are written per accepted switch, so
+    // i < MAXSWITCHES let index reach the array's length and the terminator
+    // land one past it.
+    for (index = 0,i = 0;
+	 i < numalphswitches && index < MAXSWITCHES*2 - 1;
+	 i++)
     {
 	if (!alphSwitchList[i].episode)
-	{
-	    numswitches = index/2;
-	    switchlist[index] = -1;
 	    break;
-	}
 		
 	if (alphSwitchList[i].episode <= episode)
 	{
@@ -152,6 +157,9 @@ void P_InitSwitchList(void)
 	    switchlist[index++] = R_TextureNumForName(alphSwitchList[i].name2);
 	}
     }
+
+    numswitches = index/2;
+    switchlist[index] = -1;
 }
 
 
