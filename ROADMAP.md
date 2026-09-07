@@ -6864,11 +6864,33 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: fix.
   Source: indie-review 2026-07-23 (sw-renderer, LOW).
 
-- 📋 [DOOM-0228] **Bound r_mesh blit_tile against crafted flat/patch lump sizes (4096 assumption + post offsets).**
+- ✅ [DOOM-0228] **Bound r_mesh blit_tile against crafted flat/patch lump sizes (4096 assumption + post offsets).**
   r_mesh.c blit_tile assumes flats are exactly 4096 bytes and trusts patch post offsets/lengths -- vanilla-parity but inconsistent with the file's own hardened paths. DOOM-0093-adjacent.
   **Layman:** A crafted WAD with odd-sized graphics could make the mesh builder read out of bounds.
   Kind: security.
   Source: indie-review 2026-07-23 (vulkan-mesh-assets, LOW).
+  Resolved (2026-09-07, 61840e6): patch_bounds.h holds the four decisions --
+  flat size, patch header, column offset, post extent -- with
+  tests/patch_bounds_test.cpp against them. A tile that does not fit is
+  skipped and its atlas slot stays pre-zeroed, which the shader shows as
+  transparent. Each guard is a subtraction, so a width or length taken from
+  the lump cannot overflow the check itself.
+
+  Verification is half done, deliberately recorded rather than implied. The
+  arithmetic is proven: neutering each predicate in turn reddens its own
+  checks, and stock shapes still pass. Build and full suite green.
+
+  NOT verified: the guards firing in the live renderer. blit_tile is reached
+  from RB_BuildAtlas, which needs the Vulkan backend up. Under the dummy SDL
+  driver there is no Vulkan at all; under Xvfb the backend starts but neither
+  -bootsmoke nor -devshot reached an atlas build. Probing blit_tile's entry
+  with an IWAD copy whose flats were all truncated gave zero calls, so that
+  zero is about the harness rather than the fix. blit_tile was confirmed to
+  have a real caller rather than assumed live. Firing needs a real display,
+  which is a play-test or a machine with one.
+
+  Related: the memory note claiming -rtview reaches Solid headlessly does not
+  hold for the atlas path.
 
 - 📋 [DOOM-0229] **Widen rb_image box-filter accumulator to avoid overflow on pathological image sizes.**
   rb_image.c:58 box-filter downscale uses unsigned acc[4], overflowing for >16M source texels per output texel.
@@ -13888,3 +13910,41 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: security.
   Source: review-code 2026-09-01, lane net-drivers.
   Lanes: dead-code.
+
+- 📋 [DOOM-0430] **Uncap the frame rate past the 1993 engine's 35 tics per second, as the id/Bethesda re-release does.**
+  DOOM runs its simulation at a fixed 35 tics per second and draws exactly
+  one frame per tic, so the frame rate is the tic rate. The 2024 id / Bethesda
+  re-release draws at the display's rate and interpolates between tics, which
+  is the shape to copy.
+
+  The simulation tic rate must NOT change. It is the demo format, the netgame
+  lockstep and every movement constant; altering it desynchronises demos and
+  breaks multiplayer. The work is to decouple RENDERING from it.
+
+  What that needs, roughly:
+    - Split the tic loop so the simulation still advances at 35 Hz while the
+      renderer runs free, carrying a fractional position between the last two
+      tics.
+    - Interpolate what the view is built from: player position and angle, the
+      view height bob, sector floor and ceiling heights, and moving sprites.
+      Anything not interpolated will visibly stutter against the rest.
+    - Keep the previous tic's state to interpolate FROM, which is new storage
+      on mobj_t and on the moving-plane thinkers.
+    - Decide what happens to the status bar and menus, which are drawn in
+      integer screen space and do not need it.
+
+  Interacts with several things already here: DOOM-0074's build-ahead overlap
+  already separates the CPU frame build from the GPU, INV-10 requires the
+  simulation to stay render-tier-independent, and DOOM-0085's netgame work
+  depends on the tic rate being untouched. Uncapping without interpolation
+  would raise the frame count and look WORSE -- the same 35 distinct positions,
+  shown unevenly -- so interpolation is part of the item, not a follow-up.
+
+  Applies to all three tiers: Classic benefits as much as Solid and Ultra.
+
+  Needs a spec before implementation (house rule 14): it touches the tic loop,
+  the renderer and every moving thing, which is well past the threshold in
+  spec-format.md section 1.
+  **Layman:** The game's movement and its drawing are locked together at 35 frames a second, which is why it can look choppy on a modern monitor. Unlock the drawing so it can run as fast as the screen allows, while the game itself keeps its original timing.
+  Kind: feature.
+  Source: user-request-2026-09-07.
