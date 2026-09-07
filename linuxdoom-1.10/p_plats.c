@@ -117,7 +117,11 @@ void T_PlatRaise(plat_t* plat)
 	break;
 	
       case	waiting:
-	if (!--plat->count)
+	// DOOM-0398: was !--count, so a plat that entered waiting with count 0
+	// -- which both "and change" types do, their wait being 0 -- decremented
+	// to -1, never compared equal, and sat in this state for ~2^31 tics.
+	// Identical for every positive wait, which is every other plat.
+	if (--plat->count <= 0)
 	{
 	    if (plat->sector->floorheight == plat->low)
 		plat->status = up;
@@ -184,6 +188,11 @@ EV_DoPlat
 	{
 	  case raiseToNearestAndChange:
 	    plat->speed = PLATSPEED/2;
+	    // DOOM-0398: neither "and change" type set low, and Z_Malloc does
+	    // not zero. T_PlatRaise's crushed path switches status to down,
+	    // which moves the plane toward low -- a garbage height. The plat
+	    // starts here, so here is where a retreat belongs.
+	    plat->low = sec->floorheight;
 	    // DOOM-0372: no front sidedef means sides[-1].sector, a wild pointer.
 	    if (line->frontsector)
 		sec->floorpic = line->frontsector->floorpic;
@@ -198,6 +207,7 @@ EV_DoPlat
 	    
 	  case raiseAndChange:
 	    plat->speed = PLATSPEED/2;
+	    plat->low = sec->floorheight;	// DOOM-0398, as above
 	    // DOOM-0372: no front sidedef means sides[-1].sector, a wild pointer.
 	    if (line->frontsector)
 		sec->floorpic = line->frontsector->floorpic;
