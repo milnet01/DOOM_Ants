@@ -138,6 +138,9 @@
 //	G_game.C
 //
 #define GGSAVED	"game saved."
+// DOOM-0399: a save from another build is rejected; without this the load
+// was a silent no-op and the menu simply closed.
+#define GGLOADFAIL	"that save is from a different version."
 
 //
 //	HU_stuff.C

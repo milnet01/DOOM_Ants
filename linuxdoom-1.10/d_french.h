@@ -130,6 +130,7 @@
 //	G_game.C
 //
 #define GGSAVED		"JEU SAUVEGARDE."
+#define GGLOADFAIL	"CETTE SAUVEGARDE VIENT D'UNE AUTRE VERSION."
 
 //
 //	HU_stuff.C

@@ -1430,8 +1430,16 @@ void G_DoLoadGame (void)
     if (strncmp ((char *)save_p, vcheck, VERSIONSIZE))
     {
 	Z_Free (savebuffer);		// bad version: free the buffer M_ReadFile
-	return;				// allocated, matching the normal path's
-    }					// Z_Free below (DOOM-0031)
+	savebuffer = NULL;		// allocated, matching the normal path's
+					// Z_Free below (DOOM-0031)
+
+	// DOOM-0399: this returned in silence, so from the menu a save written
+	// by another build simply did nothing -- no message, no diagnostic, and
+	// nothing to tell it apart from a load that worked.
+	players[consoleplayer].message = GGLOADFAIL;
+	printf ("G_DoLoadGame: %s is not a \"%s\" save\n", savename, vcheck);
+	return;
+    }
     save_p += VERSIONSIZE;
 
     // skill, episode and map, then one in-game flag per player, then the three
