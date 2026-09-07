@@ -39,6 +39,7 @@ rcsid[] __attribute__((used)) = "$Id: p_setup.c,v 1.5 1997/02/03 22:45:12 b1 Exp
 #include "w_wad.h"
 
 #include "doomdef.h"
+#include "level_bounds.h"
 #include "p_local.h"
 
 #include "s_sound.h"
@@ -115,6 +116,21 @@ byte*		rejectmatrix;
 mapthing_t	deathmatchstarts[MAX_DEATHMATCH_STARTS];
 mapthing_t*	deathmatch_p;
 mapthing_t	playerstarts[MAXPLAYERS];
+// DOOM-0399: allocate one per-level array, refusing a count whose byte size
+// Z_Malloc's int parameter cannot hold. The product is computed in size_t and
+// does not overflow -- it is the CALL that truncates, returning a small block
+// for a huge request, after which the loop that fills the array writes past it
+// using the count. level_bounds.h owns the arithmetic and its own test.
+static void* P_LevelAlloc (int count, size_t elemsize, const char* what)
+{
+    if (!LevelAllocFits (count, elemsize))
+	I_Error ("P_SetupLevel: %s count %d is too large to allocate",
+		 what, count);
+
+    return Z_Malloc (count*(int)elemsize, PU_LEVEL, 0);
+}
+
+
 
 
 
@@ -135,7 +151,7 @@ void P_LoadVertexes (int lump)
     numvertexes = W_LumpLength (lump) / sizeof(mapvertex_t);
 
     // Allocate zone memory for buffer.
-    vertexes = Z_Malloc (numvertexes*sizeof(vertex_t),PU_LEVEL,0);	
+    vertexes = P_LevelAlloc (numvertexes, sizeof(vertex_t), "vertexes");	
 
     // Load data into cache.
     data = W_CacheLumpNum (lump,PU_STATIC);
@@ -172,7 +188,6 @@ static int P_WadIndex (int value, int count, const char* what)
     return value;
 }
 
-
 //
 // P_LoadSegs
 //
@@ -187,7 +202,7 @@ void P_LoadSegs (int lump)
     int			side;
 	
     numsegs = W_LumpLength (lump) / sizeof(mapseg_t);
-    segs = Z_Malloc (numsegs*sizeof(seg_t),PU_LEVEL,0);	
+    segs = P_LevelAlloc (numsegs, sizeof(seg_t), "segs");	
     memset (segs, 0, numsegs*sizeof(seg_t));
     data = W_CacheLumpNum (lump,PU_STATIC);
 	
@@ -258,7 +273,7 @@ void P_LoadSubsectors (int lump)
     subsector_t*	ss;
 	
     numsubsectors = W_LumpLength (lump) / sizeof(mapsubsector_t);
-    subsectors = Z_Malloc (numsubsectors*sizeof(subsector_t),PU_LEVEL,0);	
+    subsectors = P_LevelAlloc (numsubsectors, sizeof(subsector_t), "subsectors");	
     data = W_CacheLumpNum (lump,PU_STATIC);
 	
     ms = (mapsubsector_t *)data;
@@ -287,7 +302,7 @@ void P_LoadSectors (int lump)
     sector_t*		ss;
 	
     numsectors = W_LumpLength (lump) / sizeof(mapsector_t);
-    sectors = Z_Malloc (numsectors*sizeof(sector_t),PU_LEVEL,0);	
+    sectors = P_LevelAlloc (numsectors, sizeof(sector_t), "sectors");	
     memset (sectors, 0, numsectors*sizeof(sector_t));
     data = W_CacheLumpNum (lump,PU_STATIC);
 	
@@ -322,7 +337,7 @@ void P_LoadNodes (int lump)
     node_t*	no;
 	
     numnodes = W_LumpLength (lump) / sizeof(mapnode_t);
-    nodes = Z_Malloc (numnodes*sizeof(node_t),PU_LEVEL,0);	
+    nodes = P_LevelAlloc (numnodes, sizeof(node_t), "nodes");	
     data = W_CacheLumpNum (lump,PU_STATIC);
 	
     mn = (mapnode_t *)data;
@@ -423,7 +438,7 @@ void P_LoadLineDefs (int lump)
     vertex_t*		v2;
 	
     numlines = W_LumpLength (lump) / sizeof(maplinedef_t);
-    lines = Z_Malloc (numlines*sizeof(line_t),PU_LEVEL,0);	
+    lines = P_LevelAlloc (numlines, sizeof(line_t), "lines");	
     memset (lines, 0, numlines*sizeof(line_t));
     data = W_CacheLumpNum (lump,PU_STATIC);
 	
@@ -519,7 +534,7 @@ void P_LoadSideDefs (int lump)
     side_t*		sd;
 	
     numsides = W_LumpLength (lump) / sizeof(mapsidedef_t);
-    sides = Z_Malloc (numsides*sizeof(side_t),PU_LEVEL,0);	
+    sides = P_LevelAlloc (numsides, sizeof(side_t), "sides");	
     memset (sides, 0, numsides*sizeof(side_t));
     data = W_CacheLumpNum (lump,PU_STATIC);
 	
@@ -636,7 +651,7 @@ void P_GroupLines (void)
 	
     // build line tables for each sector
     // sizeof(*linebuffer): line_t* is 8 bytes on 64-bit, not the original 4.
-    linebuffer = Z_Malloc (total*sizeof(*linebuffer), PU_LEVEL, 0);
+    linebuffer = P_LevelAlloc (total, sizeof(*linebuffer), "sector line list");
     sector = sectors;
     for (i=0 ; i<numsectors ; i++, sector++)
     {
