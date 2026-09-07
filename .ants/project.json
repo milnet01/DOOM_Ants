@@ -1,5 +1,5 @@
 {
-    "_comment": "DOOM-0312: source_roots is linuxdoom-1.10 ALONE, deliberately. ipx/, sersrc/ and sndserv/ are the 1990s DOS-era LAN, serial and sound-server helpers. They are kept as historical reference per DOOM-0085 and are referenced by no build target, but every static-analysis sweep used to parse them and report findings in them -- real about the code, irrelevant to the product, which is the worst combination for a review budget. Nine such findings are recorded and closed on DOOM-0414, including a genuine sprintf overflow in sndserv/wadread.c that cannot ship because nothing builds it. If any of those trees ever becomes a build target again -- DOOM-0085 would rebuild the transport rather than revive them -- put it back here first, and reopen DOOM-0414.",
+    "_comment": "DOOM-0312: source_roots is linuxdoom-1.10 alone, deliberately. ipx/, sersrc/ and sndserv/ are DOS-era helpers kept as historical reference per DOOM-0085 and built by nothing, but the static-analysis sweeps parsed them and reported findings that are real about the code and irrelevant to the product. Those findings are recorded and closed on DOOM-0414, unfixed. If any of these trees becomes a build target again, add it back here and reopen DOOM-0414 first.",
     "changelog": "CHANGELOG.md",
     "docs_dir": "docs",
     "roadmap": "ROADMAP.md",

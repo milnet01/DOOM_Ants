@@ -1,17 +1,14 @@
 // save_signature.h — DOOM-0426: which builds' savegames this build may read.
 //
-// A .dsg is a raw image of the engine's structs: P_ArchivePlayers and friends
-// memcpy player_t, sector_t and mobj_t straight out of memory. So the file's
-// meaning depends entirely on how this particular binary lays those structs
-// out.
+// A .dsg is a raw image of the engine's structs, so what it means depends on how
+// a particular binary lays player_t, mobj_t and sector_t out.
 //
-// The only gate on that was g_game.c's strncmp against "version %i" of VERSION
-// -- and VERSION is 110, id Software's DOOM 1.10 number. It has not moved since
-// 1997 and does not move when this fork adds a field to mobj_t. So two builds
-// of the same "version", or a 32- against a 64-bit build, loaded each other's
-// saves as garbage rather than refusing them. That garbage is then the
-// attacker-controlled state DOOM-0373's write primitives consume, which is why
-// this is a security question and not only a correctness one.
+// The only gate on that was a strncmp against "version %i" of VERSION -- id's
+// DOOM 1.10 number, which has not moved since 1997 and does not move when this
+// fork changes a struct. So two builds calling themselves the same version, or
+// a 32- against a 64-bit build, read each other's saves as garbage rather than
+// refusing them. That garbage is the attacker-controlled state DOOM-0373's
+// write primitives consume, which makes this a security question too.
 //
 // The fix is to stamp what the version cannot say: the sizes of the structs
 // actually archived, plus the pointer width. A build that changes any of them

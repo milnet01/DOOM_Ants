@@ -48,14 +48,11 @@ Two consequences worth stating, because they are easy to get backwards:
 - `sersrc/` — serial/modem multiplayer driver *(historical, see below)*
 - `ipx/` — IPX LAN multiplayer driver *(historical, see below)*
 
-Those three are kept as reference per DOOM-0085 and are built by nothing —
-`sndserv` needs a `-DSNDSERV` the Makefile does not pass, and `ipx`/`sersrc`
-are 16-bit DOS Borland C that no modern toolchain compiles. DOOM-0312 took
-them out of `.ants/project.json`'s `source_roots`, so the static-analysis
-sweeps no longer parse them; that file's `_comment` carries the reasoning and
-what to do if one is ever revived. The findings the sweeps did report in them
-are recorded on DOOM-0414 and are **not** fixed — none can reach a player,
-because nothing builds them.
+Those three are kept as reference per DOOM-0085 and are built by nothing.
+DOOM-0312 removed them from `.ants/project.json`'s `source_roots`, so the
+static-analysis sweeps no longer parse them; that file's `_comment` says why.
+The findings already reported in them are recorded on DOOM-0414 and are
+**not** fixed — none can reach a player, because nothing builds them.
 - `docs/standards/` — the house rules (read before contributing)
 - `docs/specs/` — one design doc per large feature
 - `LICENSE.TXT` / `README.TXT` — id Software's GPL licence and original release notes (keep verbatim)

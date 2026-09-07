@@ -22,26 +22,20 @@
 // HGetPacket.
 //
 // ---------------------------------------------------------------------------
-// On the byte order that got it switched off in 1997, because the obvious
-// reading of "endian-safe" is wrong here and would cost the next reader a day:
+// Do not read "byte-wise" as "endian-safe": the obvious reading is wrong here.
 //
-// Summing BYTES instead of `unsigned` words removes the dependence on how a
-// machine lays out a WORD, and it covers the trailing bytes vanilla's /4 loop
-// dropped. It does NOT make two peers of DIFFERENT endianness agree, and
-// nothing in this header could. The sum is taken over `netbuffer`, which is in
-// HOST order at both ends: i_net.c's PacketSend and PacketGet convert
-// field-by-field (htons on angleturn and consistancy) into a separate struct,
-// so the two peers hold the same VALUES in different BYTES. Their sums differ.
+// Summing bytes rather than `unsigned` words removes the dependence on word
+// layout, and covers the trailing bytes vanilla's /4 loop dropped. It does NOT
+// make peers of different endianness agree, and nothing in this header could:
+// the sum is over netbuffer, which is in HOST order at both ends, because
+// i_net.c converts field by field on the way out and back. Two such peers hold
+// the same values in different bytes.
 //
-// That is acceptable because every platform this project ships -- Linux and
-// Windows on x86-64 -- is little-endian, and the alternative in force until now
-// was no check whatever. Making it genuinely cross-endian means checksumming a
-// canonical wire form rather than the host-order struct, which is a change to
-// the protocol, not to this function.
-//
-// So: same-endian peers agree, which is all of them; a big-endian peer would
-// have its packets rejected rather than silently misread, which is the safer of
-// the two failures and better than what vanilla did.
+// Acceptable because every platform this project ships is little-endian, and
+// the alternative in force until now was no check at all. A big-endian peer
+// would have its packets refused rather than misread. Making it genuinely
+// cross-endian means checksumming a canonical wire form -- a protocol change,
+// not a change to this function.
 // ---------------------------------------------------------------------------
 //
 // Factored out here, rather than left inline in d_net.c, so tests can hold it

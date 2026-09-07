@@ -59,15 +59,13 @@ visplane_t*		ceilingplane;
 
 // DOOM-0147: sized at the compile-time MAXWIDTH cap, not the runtime SCREENWIDTH.
 //
-// DOOM-0382: sized at the real worst case, not at vanilla's 64x ratio. Every
-// write to lastopening is in R_StoreWallRange (r_segs.c), which claims at most
-// three spans of up to viewwidth shorts and returns early at r_segs.c:386 once
-// ds_p reaches &drawsegs[MAXDRAWSEGS] -- so MAXDRAWSEGS*3*MAXWIDTH is an exact
-// bound, and the array can no longer be overrun. Vanilla's 64x ratio was
-// already too small for its own 320-wide worst case (256*3*320 = 245,760 into
-// 20,480), and the only check was the post-hoc one in R_DrawPlanes below --
-// which fires after the write has already gone past openings[] into floorclip
-// and ceilingclip, declared immediately after it.
+// DOOM-0382: sized at the real worst case, not at vanilla's 64x ratio, which
+// was too small even for its own 320-wide screen. R_StoreWallRange (r_segs.c)
+// is the only writer; it claims at most RENDER_OPENINGS_SPANS_PER_SEG spans of
+// up to viewwidth shorts and returns early once ds_p reaches
+// &drawsegs[MAXDRAWSEGS], so this bound is exact and the array can no longer be
+// overrun. The old check was the post-hoc one in R_DrawPlanes below, which
+// fires after the write has already reached floorclip and ceilingclip.
 #define MAXOPENINGS	RENDER_OPENINGS_NEEDED(MAXDRAWSEGS, MAXWIDTH)
 short			openings[MAXOPENINGS];
 short*			lastopening;
