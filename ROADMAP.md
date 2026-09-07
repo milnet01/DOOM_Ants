@@ -588,12 +588,18 @@ with friends.
   default-case guard. Closed while shipping DOOM-0255, which covers the
   buffer extent the indices sit inside.
 
-- 📋 [DOOM-0253] **Audit whether any other ~/.doomrc int is used as an array index without a clamp.**
+- ✅ [DOOM-0253] **Audit whether any other ~/.doomrc int is used as an array index without a clamp.**
   DOOM-0216 clamped msgValueNames[showMessages] and fpsPosNames[fpsCorner] at their m_menu.c use sites, but m_misc.c's M_LoadDefaults loop itself still writes any int-shaped config value straight into its target with no range validation (m_misc.c:407-430) -- so the mitigation is per-known-site, not systemic. Sweep the defaults table for every entry whose value indexes an array or selects a mode, and either clamp on read in M_LoadDefaults or confirm each use site already clamps. Scope is small (the table is short); the point is to find out whether DOOM-0216 was the only one.
   **Layman:** Hand-editing the config file to a silly number crashed the game once already; check whether any other setting can still do that.
   Kind: investigate.
   Source: test-audit-2026-07-26 lane-E.
   Progress (2026-07-26): DOOM-0254 clamped the four ~/.doomrc ints that index arrays or size allocations (usegamma, screenblocks, detaillevel, snd_channels) in M_LoadDefaults. The remaining table entries have not been swept.
+  Resolved (2026-09-07, 9f0c7a8) by DOOM-0383, which is the sweep this
+  item asked for. The answer is yes: nineteen more values were reachable
+  as array indices or reached an I_Error, and all are now clamped in
+  M_LoadDefaults via config_bounds.h. The audit is complete for the
+  current table -- a value added to defaults[] in future still needs its
+  own clamp, as nothing enforces that mechanically.
 
 - ✅ [DOOM-0254] **Harden every untrusted-input boundary the 2026-07-26 audit + indie-review sweep found.**
   Corroborated by 5 review lanes. Fixed: p_setup.c validates every WAD-derived
@@ -2785,7 +2791,7 @@ with friends.
   Source: review-code 2026-09-01, lane sw-renderer.
   Lanes: sw-renderer, security.
 
-- 📋 [DOOM-0383] **Twelve more hand-editable config settings are used as array indices or abort the engine.**
+- ✅ [DOOM-0383] **Twelve more hand-editable config settings are used as array indices or abort the engine.**
   Corroborated: indie_review_corroborate flagged m_misc.c:514, m_misc.c:491 and
   g_game.c:379 as cited by two lanes each. m_misc.c:514's own comment already says
   DOOM-0253 tracks sweeping the rest of the table; this is the answer to that item,
@@ -2809,6 +2815,21 @@ with friends.
 
   Fix: extend the existing clamp block, and initialise parm plus test sscanf's
   return. Same shape as the already-open DOOM-0338.
+  Resolved (2026-09-07, 9f0c7a8): all nineteen values clamped and the
+  parse fixed. The two volumes clamp to the menu's own 0..15, the ten
+  key_* to 0..NUMKEYS-1, mouseb_* to -1..2 and joyb_* to -1..3 (the
+  offset arrays make -1 legal, meaning unbound). Out-of-range falls
+  back to the setting's own default rather than the nearest bound, so
+  a bad key index leaves a working control instead of a silently
+  unbound one. NUMKEYS moved to doomdef.h so the clamp and
+  gamekeydown[] cannot drift apart. M_LoadDefaults now initialises
+  parm and honours sscanf's return, reporting the bad line.
+  config_bounds.h + tests/config_bounds_test.cpp, both halves proven
+  by mutation. A/B against the pre-fix build confirms the
+  denial-of-launch: sfx_volume 9999 gave "Error: Attempt to set sfx
+  volume at 9999" and exit 255; the same file now boots to exit 0.
+  Trap: the engine rewrites its own -config on exit, so each A/B run
+  needs a fresh hostile file -- this produced one false negative.
   **Layman:** The settings file in your home directory is plain text and people edit it. Four values in it are range-checked; twelve more are not. Two of them make the game refuse to start — and since the menu is how you would fix them, there is no way back in.
   Kind: security.
   Source: review-code 2026-09-01, corroborated by lanes ui-hud and wad-io.

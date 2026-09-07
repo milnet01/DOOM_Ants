@@ -6,6 +6,18 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **A bad number in your settings file can no longer stop the game starting** (DOOM-0383)
+  The volume settings were passed straight through to a check that
+  shut the game down, and the menu you would have used to fix them is
+  behind the game that will not start. Out-of-range settings now
+  quietly go back to their normal value instead.
+
+- **A misspelled value in the settings file is reported and skipped** (DOOM-0383)
+  It used to be silently replaced by whatever the line above it said,
+  or by leftover nonsense if it was the first line.
+
 ### Security
 
 - **Two overflows inherited from the 1993 renderer can no longer be reached** (DOOM-0382)
