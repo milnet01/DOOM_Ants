@@ -44,6 +44,7 @@
 #include "z_zone.h"     // PU_CACHE
 #include "seg_project.h" // DOOM-0180 RB_ProjectOnLine (seg -> its linedef's line)
 #include "r_mesh.h"
+#include "patch_bounds.h"
 
 // Texture geometry tables from r_data.c (no public header declares them).
 // texturewidthmask+1 is the wall's tiling width (matches how R_GetColumn masks
@@ -1627,7 +1628,16 @@ static void blit_tile(unsigned char* dst, int dstw, int id, int ox, int oy,
     }
     else if (id < numtextures + numflats)
     {
-        const byte* flat = W_CacheLumpNum(firstflat + (id - numtextures), PU_CACHE);
+        // DOOM-0228: a flat is read as a fixed 64x64 block. Every stock flat is
+        // exactly that, but a crafted WAD can ship a shorter one and the read
+        // would run off the end. Leave the tile at its pre-zeroed value, which
+        // the shader shows as transparent, rather than reading past the lump.
+        const int   flatnum = firstflat + (id - numtextures);
+        const byte* flat    = W_CacheLumpNum(flatnum, PU_CACHE);
+
+        if (!FlatFits(W_LumpLength(flatnum), w, h))
+            return;
+
         for (row = 0; row < h; row++)
             for (col = 0; col < w; col++)
                 dst[(oy + row) * dstw + (ox + col)] = flat[row * 64 + col];
@@ -1639,15 +1649,33 @@ static void blit_tile(unsigned char* dst, int dstw, int id, int ox, int oy,
         // write only the opaque pixels each post lists. Same column walk the
         // software masked-column drawer uses: data at post+3, next post at
         // +length+4.
-        const patch_t* patch = W_CacheLumpNum(
-            firstspritelump + (id - numtextures - numflats), PU_CACHE);
+        // DOOM-0228: every offset below comes out of the lump itself, so each
+        // is checked against the lump's real length before it is followed. A
+        // column or post that does not fit is skipped; the slot is pre-zeroed,
+        // so the result is a transparent gap rather than a read past the end.
+        const int   sprnum  = firstspritelump + (id - numtextures - numflats);
+        const int   sprlen  = W_LumpLength(sprnum);
+        const patch_t* patch = W_CacheLumpNum(sprnum, PU_CACHE);
+
+        if (!PatchHeaderFits(sprlen, w))
+            return;
+
         for (col = 0; col < w; col++)
         {
-            const column_t* column = (const column_t*)
-                ((const byte*)patch + LONG(patch->columnofs[col]));
+            int             pos    = (int) LONG(patch->columnofs[col]);
+            const column_t* column;
+
+            if (!PatchColumnFits(pos, sprlen))
+                continue;
+
+            column = (const column_t*)((const byte*)patch + pos);
             while (column->topdelta != 0xff)
             {
                 const byte* src = (const byte*)column + 3;
+
+                if (!PatchPostFits(pos, column->length, sprlen))
+                    break;
+
                 for (row = 0; row < column->length; row++)
                 {
                     int  y     = column->topdelta + row;
@@ -1659,8 +1687,10 @@ static void blit_tile(unsigned char* dst, int dstw, int id, int ox, int oy,
                     if (y >= 0 && y < h)
                         dst[(oy + y) * dstw + (ox + col)] = texel;
                 }
-                column = (const column_t*)
-                    ((const byte*)column + column->length + 4);
+                pos += column->length + 4;
+                if (!PatchColumnFits(pos, sprlen))
+                    break;
+                column = (const column_t*)((const byte*)patch + pos);
             }
         }
     }
