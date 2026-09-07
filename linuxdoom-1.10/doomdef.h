@@ -127,6 +127,11 @@ extern int fillstretch;		// DOOM-0147 Part C: 1 = stretch present to fill the mo
 
 
 
+// DOOM-0383: the size of g_game.c's gamekeydown[], here rather than there so the
+// config clamp that keeps a hand-edited key_* inside it reads the same constant
+// the array is declared with.
+#define NUMKEYS			256
+
 // The maximum number of players, multiplayer/networking.
 #define MAXPLAYERS		4
 

@@ -55,6 +55,8 @@ rcsid[] __attribute__((used)) = "$Id: m_misc.c,v 1.6 1997/02/03 22:45:10 b1 Exp 
 
 #include "doomdef.h"
 
+#include "config_bounds.h"
+
 #include "z_zone.h"
 
 #include "m_swap.h"
@@ -624,10 +626,18 @@ void M_LoadDefaults (void)
 		    strparm[len-1] = 0;
 		    strcpy(newstring, strparm+1);
 		}
-		else if (strparm[0] == '0' && strparm[1] == 'x')
-		    sscanf(strparm+2, "%x", (unsigned int *)&parm);
-		else
-		    sscanf(strparm, "%i", &parm);
+		// DOOM-0383: vanilla ignored sscanf's return into a `parm` it
+		// never initialised, so a malformed value silently kept the
+		// PREVIOUS line's number -- and on the first line of the file,
+		// whatever was on the stack. That is how indeterminate values
+		// reached settings used as array indices. config_bounds.h owns
+		// the parse and its own tests.
+		else if (!ConfigParseInt (strparm, &parm))
+		{
+		    printf ("M_LoadDefaults: ignoring %s -- \"%s\" is not a "
+			    "number, keeping the default\n", def, strparm);
+		    continue;
+		}
 		for (i=0 ; i<numdefaults ; i++)
 		    if (!strcmp(def, defaults[i].name))
 		    {
@@ -683,6 +693,42 @@ void M_LoadDefaults (void)
 	detailLevel = 0;
     if (numChannels < 1 || numChannels > 32)
 	numChannels = 3;
+
+    // DOOM-0383: the rest of the table DOOM-0253 asked about. The answer is
+    // yes -- twelve more are used as array indices or reach an I_Error.
+    //
+    // The volumes are the worst of them: S_SetSfxVolume calls I_Error outside
+    // 0..127, and S_Init runs it at STARTUP, so a bad number here refuses to
+    // launch the game -- and the menu, which is how you would put it back, is
+    // behind the thing that will not start. The menu's own range is 0..15.
+    snd_SfxVolume   = ConfigClamp (snd_SfxVolume,   0, 15, 15);
+    snd_MusicVolume = ConfigClamp (snd_MusicVolume, 0, 15, 8);
+
+    // Every key_* indexes gamekeydown[NUMKEYS] in G_BuildTiccmd, once per tic.
+    // The WRITE side is already guarded (g_game.c, `if (ev->data1 < NUMKEYS)`);
+    // this is the config-fed READ, which was not.
+    key_right       = ConfigClamp (key_right,       0, NUMKEYS-1, KEY_RIGHTARROW);
+    key_left        = ConfigClamp (key_left,        0, NUMKEYS-1, KEY_LEFTARROW);
+    key_up          = ConfigClamp (key_up,          0, NUMKEYS-1, KEY_UPARROW);
+    key_down        = ConfigClamp (key_down,        0, NUMKEYS-1, KEY_DOWNARROW);
+    key_strafeleft  = ConfigClamp (key_strafeleft,  0, NUMKEYS-1, ',');
+    key_straferight = ConfigClamp (key_straferight, 0, NUMKEYS-1, '.');
+    key_fire        = ConfigClamp (key_fire,        0, NUMKEYS-1, KEY_RCTRL);
+    key_use         = ConfigClamp (key_use,         0, NUMKEYS-1, ' ');
+    key_strafe      = ConfigClamp (key_strafe,      0, NUMKEYS-1, KEY_RALT);
+    key_speed       = ConfigClamp (key_speed,       0, NUMKEYS-1, KEY_RSHIFT);
+
+    // mousebuttons is &mousearray[1] over boolean[4] and joybuttons is
+    // &joyarray[1] over boolean[5] -- the offset is deliberate, so that -1
+    // ("unbound") is a legal index. That makes the ranges -1..2 and -1..3.
+    mousebfire    = ConfigClamp (mousebfire,    -1, 2, 0);
+    mousebstrafe  = ConfigClamp (mousebstrafe,  -1, 2, 1);
+    mousebforward = ConfigClamp (mousebforward, -1, 2, 2);
+
+    joybfire   = ConfigClamp (joybfire,   -1, 3, 0);
+    joybstrafe = ConfigClamp (joybstrafe, -1, 3, 1);
+    joybuse    = ConfigClamp (joybuse,    -1, 3, 3);
+    joybspeed  = ConfigClamp (joybspeed,  -1, 3, 2);
 }
 
 
