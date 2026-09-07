@@ -39,6 +39,12 @@ rcsid[] __attribute__((used)) = "$Id: m_misc.c,v 1.6 1997/02/03 22:45:10 b1 Exp 
 #include <limits.h>	// PATH_MAX (M_SaveDefaults' temp-file path)
 #include <string.h>
 
+// DOOM-0400: O_NOFOLLOW is POSIX and MinGW has no symlink to follow, so it
+// costs nothing to define it away there.
+#ifndef O_NOFOLLOW
+#define O_NOFOLLOW 0
+#endif
+
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN	// exclude <rpcndr.h>, which typedefs `boolean`
 				// (unsigned char) and clashes with doomtype.h's
@@ -464,12 +470,35 @@ void M_SaveDefaults (void)
 	return;
     }
 
-    f = fopen (tmpfile, "w");
-    if (!f)
+    // DOOM-0400: fopen("w") follows a symlink, and this temp path is entirely
+    // predictable -- "<config>.tmp". Harmless for ~/.doomrc, but -config
+    // /tmp/foo puts it somewhere another user can pre-create the link. O_EXCL
+    // refuses to open anything that already exists, symlink included, so the
+    // stale temp is removed first (a crash can leave one) and the create is
+    // then exclusive. O_NOFOLLOW closes the dangling-symlink race where the
+    // platform has it.
+    remove (tmpfile);
     {
-	fprintf (stderr, "M_SaveDefaults: can't write %s: %s\n",
-		 tmpfile, strerror (errno));
-	return;
+	int	fd = open (tmpfile,
+			   O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_BINARY,
+			   0666);
+
+	if (fd == -1)
+	{
+	    fprintf (stderr, "M_SaveDefaults: can't create %s: %s\n",
+		     tmpfile, strerror (errno));
+	    return;
+	}
+
+	f = fdopen (fd, "w");
+	if (!f)
+	{
+	    fprintf (stderr, "M_SaveDefaults: can't write %s: %s\n",
+		     tmpfile, strerror (errno));
+	    close (fd);
+	    remove (tmpfile);
+	    return;
+	}
     }
 
     for (i=0 ; i<numdefaults ; i++)
@@ -483,6 +512,25 @@ void M_SaveDefaults (void)
 	    fprintf (f,"%s\t\t\"%s\"\n",defaults[i].name,
 		     * (char **) (defaults[i].location));
 	}
+    }
+
+    // DOOM-0400: the replace below is atomic with respect to what is ON DISK, so
+    // the bytes have to reach it first. Without this a power loss can commit the
+    // rename with the new contents still in the page cache and leave an empty
+    // config -- exactly the outcome the temp-plus-rename exists to prevent.
+    if (fflush (f) != 0
+#ifdef _WIN32
+	|| _commit (fileno (f)) != 0
+#else
+	|| fsync (fileno (f)) != 0
+#endif
+	)
+    {
+	fprintf (stderr, "M_SaveDefaults: can't flush %s: %s\n",
+		 tmpfile, strerror (errno));
+	fclose (f);
+	remove (tmpfile);
+	return;
     }
 
     if (fclose (f) != 0)
