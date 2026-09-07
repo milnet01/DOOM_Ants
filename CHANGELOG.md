@@ -14,6 +14,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Starting with a savegame the game cannot read now returns to the title screen instead of crashing** (DOOM-0429)
+  It was left with no level loaded at all and crashed a moment later.
+
 - **A power loss while saving settings can no longer leave them empty** (DOOM-0400)
   The new settings are now flushed to the disk before replacing the old
   ones.

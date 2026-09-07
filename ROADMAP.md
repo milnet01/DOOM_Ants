@@ -4079,6 +4079,56 @@ with friends.
   Source: in-session-2026-09-07, found while fixing DOOM-0400's reload TOCTOU.
   Lanes: wad-io.
 
+- ✅ [DOOM-0429] **A refused savegame load crashes the game instead of refusing it.**
+  Not one of the review's findings. Found by reading a core dump that a
+  DOOM-0399 verification run produced: the run printed the refusal message
+  the fix had just added and was reported as a pass, because the grep looked
+  at the message and nobody looked at the exit code. It was 139.
+
+  Pre-existing, and older than DOOM-0399: the pre-fix build crashes on the
+  same input, it just did so in silence.
+
+  Three faults on one path, each of which alone is enough:
+
+    d_main.c skips its title-screen and autostart branch entirely when
+    -loadgame has set gameaction, trusting G_DoLoadGame to establish a game.
+    When the version check refuses the save, nothing does.
+
+    gamestate is then whatever it was, and GS_LEVEL is the FIRST enumerator
+    -- so an untouched gamestate already reads as "in a level". G_Ticker
+    falls from its gameaction switch straight into its gamestate switch on
+    the same call, so P_Ticker runs before D_DoomLoop can act on any flag
+    raised here, and P_PlayerThink dereferences a NULL player mobj.
+
+    pagename is a global that starts NULL and only D_DoAdvanceDemo sets it,
+    so any route into GS_DEMOSCREEN that has not been through there arrives
+    at D_PageDrawer with NULL and W_CheckNumForName strncpy's it. This is
+    what the first two fixes exposed, and it is a latent fault in its own
+    right.
+
+  Fixed 2026-09-07. The test for "is there a game to go back to" is the
+  player's own body, not gamestate, which cannot tell an untouched value
+  from a real level; a player who IS in a game keeps it, which is what a
+  failed load from the in-game menu should do.
+  Resolved (2026-09-07): 9ed4da8. All three faults fixed in one commit,
+  each found only after the one before it was closed -- the second by the
+  run still crashing, the third by a gdb backtrace pointing somewhere new.
+
+  Proven by its own decision, A/B against a pre-fix build: SIGSEGV exit 139
+  before, refusal plus 40 tics OK and exit 0 after, three runs. A real
+  savegame still loads; the attract loop, which is D_PageDrawer's own path,
+  runs 200 tics clean; 68 of 68 maps boot; make test 16/16; Windows syntax
+  check passes.
+
+  Method note worth keeping: the verification run that produced the core
+  dump had ALREADY been recorded as a pass, because it grepped for the
+  expected message and never read the exit code. A run that prints the right
+  line and then dies looks identical to one that worked.
+  **Layman:** Starting the game with a saved game it cannot read left it with no level at all, and it crashed a fraction of a second later instead of just saying the save was no good.
+  Kind: fix.
+  Source: in-session-2026-09-07, found by reading a core dump while verifying DOOM-0399.
+  Lanes: game-loop, savegame.
+
 ## Phase 2 — The Spin
 
 The creative overhaul: evolve the renderer toward true 3D with hardware
