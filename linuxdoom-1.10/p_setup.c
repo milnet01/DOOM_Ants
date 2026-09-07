@@ -209,7 +209,14 @@ void P_LoadSegs (int lump)
 	li->sidedef =
 	    &sides[P_WadIndex (ldef->sidenum[side], numsides, "seg sidedef")];
 	li->frontsector = li->sidedef->sector;
-	if (ldef-> flags & ML_TWOSIDED)
+	// DOOM-0399: ML_TWOSIDED with no back sidedef is something the format
+	// lets a map say, and vanilla read sides[-1] and carried on. P_WadIndex
+	// refuses -1, so DOOM-0254 turned that into a refusal to LOAD a map the
+	// engine used to play. Take the answer the else branch already gives --
+	// and the one twoSided() and EV_VerticalDoor's DOOM-0372 guards reach
+	// for the same shape at runtime. The FRONT sidedef keeps its refusal
+	// (DOOM-0422): that one has no fallback, this one does.
+	if ((ldef-> flags & ML_TWOSIDED) && ldef->sidenum[side^1] != -1)
 	    li->backsector =
 		sides[P_WadIndex (ldef->sidenum[side^1], numsides,
 				  "seg back sidedef")].sector;

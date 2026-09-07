@@ -33,6 +33,7 @@ rather than deleting, and orphanline is the mode that gets past it.
     badthingtype  THINGS entries of type 0 and -1  DOOM-0397    I_Error, by name
     nostart       player-1 start retyped to an Imp DOOM-0397   I_Error, by name
     lowerchange   every walkover lower-and-changes DOOM-0398    counterfactual
+    segnoback     a two-sided line loses its back side DOOM-0399  I_Error, by name
 
 Usage:  make_map_fixture.py <mode> <iwad> <out.wad>
 
@@ -316,6 +317,48 @@ def mutate_lowerchange(group):
     return replace(group, "LINEDEFS", bytes(linedefs))
 
 
+def mutate_segnoback(group):
+    """Clear the BACK sidedef of a two-sided linedef that carries segs.
+
+    The fixture for DOOM-0399's compatibility call. ML_TWOSIDED with
+    sidenum[1] == -1 is something the WAD format lets a map say, and vanilla
+    read sides[-1] and carried on. P_WadIndex refuses -1, so the map stopped
+    loading at all -- P_LoadSegs resolves sidenum[side^1] for any seg on a
+    two-sided line.
+
+    Unlike twosidedstub, the linedef is an EXISTING one rather than an
+    appended one, precisely so its segs are present and P_LoadSegs has to
+    decide. The ML_TWOSIDED flag is left set: the point is a line that
+    CLAIMS two sides and supplies one.
+
+    What this mode demonstrates is that the relaxation did not weaken the
+    load-time refusal. Every two-sided linedef in MAP01 carries segs on BOTH
+    sides, and a back-side seg's OWN sidedef is the one that has just been
+    cleared -- so the map is still refused, by the seg-sidedef check rather
+    than the seg-back-sidedef one:
+
+        before   bad seg back sidedef index -1
+        after    bad seg sidedef index -1
+
+    It therefore does NOT exercise the case the relaxation rescues, which is
+    a two-sided line with no back sidedef and no seg on its back side. No
+    MAP01-derived fixture can: no such linedef exists there to mutate, and
+    manufacturing one means editing SEGS, whose indices the subsector ranges
+    depend on.
+    """
+    linedefs = bytearray(dict(group)["LINEDEFS"])
+    for i in range(len(linedefs) // LINEDEF_SIZE):
+        base = i * LINEDEF_SIZE
+        flags = struct.unpack_from("<h", linedefs, base + 4)[0]
+        back = struct.unpack_from("<H", linedefs, base + 12)[0]
+        if (flags & ML_TWOSIDED) and back != NO_SIDE:
+            struct.pack_into("<H", linedefs, base + 12, NO_SIDE)
+            break
+    else:
+        raise SystemExit("map has no two-sided linedef with a back sidedef")
+    return replace(group, "LINEDEFS", bytes(linedefs))
+
+
 def mutate_badthingtype(group):
     """Append two THINGS whose type is not positive: 0 and -1.
 
@@ -374,6 +417,7 @@ MODES = {
     "badthingtype": mutate_badthingtype,
     "nostart": mutate_nostart,
     "lowerchange": mutate_lowerchange,
+    "segnoback": mutate_segnoback,
 }
 
 
