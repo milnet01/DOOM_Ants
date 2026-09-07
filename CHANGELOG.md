@@ -6,6 +6,16 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+
+- **Two overflows inherited from the 1993 renderer can no longer be reached** (DOOM-0382)
+  Both were in the original game and had been made larger by this
+  project's widescreen and higher-resolution work, so a map could
+  scribble over memory it did not own. One is now impossible by
+  sizing; the other regained a guard the original already had a few
+  lines away. A floor-drawing check that was one row too generous
+  was corrected at the same time.
+
 ## [0.7.2] - 2026-09-07
 
 ### Changed

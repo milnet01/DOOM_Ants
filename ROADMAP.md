@@ -2744,7 +2744,7 @@ with friends.
   Source: review-code 2026-09-01, lane sw-renderer; corroborated on r_plane.c:438 and r_mesh.c:1513 by the savegame lane.
   Lanes: sw-renderer, security.
 
-- 📋 [DOOM-0382] **Two vanilla renderer overflows the fork made several times larger without noticing.**
+- ✅ [DOOM-0382] **Two vanilla renderer overflows the fork made several times larger without noticing.**
     - r_plane.c:326 -- R_CheckPlane allocates a visplane with NO MAXVISPLANES
       guard, while its sibling R_FindPlane has one at r_plane.c:254. This is the
       classic visplane overflow, and DOOM-0055 widened top[]/bottom[] to
@@ -2765,6 +2765,21 @@ with friends.
   ylookup beyond viewheight); it should be >=. That guard exists precisely because
   DOOM-0055's span logic is a known open bug, so "unreachable by construction" is
   the assumption it must not make.
+  Resolved (2026-09-07, ae05416): all three parts fixed.
+  openings[] is now sized at the exact worst case
+  (MAXDRAWSEGS*3*MAXWIDTH = 983,040 shorts, 1.8 MB BSS) rather than
+  vanilla's 64x ratio, which puts the r_segs.c overflow out of reach
+  instead of reporting it post-hoc -- R_StoreWallRange is the only
+  writer and returns at r_segs.c:386 once ds_p reaches MAXDRAWSEGS,
+  so the bound is exact. R_CheckPlane gained R_FindPlane's guard
+  verbatim. R_MapPlane's row test is now >= rather than >.
+  The span test and the sizing derivation live in render_bounds.h
+  with tests/render_bounds_test.cpp, following the four existing
+  *_bounds.h headers. Both testable halves proven by mutation;
+  the visplane guard is not covered (it needs 128 distinct
+  visplanes in a real frame) and is a verbatim copy of a guard
+  already in the file. Verified: 17 suites green, 68/68 maps boot
+  and simulate 70 tics headless in the Classic software renderer.
   **Layman:** Two known overflows in the original renderer are still unguarded, and changes this project made for widescreen and higher resolution enlarged how much memory each one can scribble over. In both cases the correct guard already exists a few lines away on a sibling function.
   Kind: security.
   Source: review-code 2026-09-01, lane sw-renderer.
