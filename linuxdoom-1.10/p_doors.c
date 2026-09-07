@@ -213,6 +213,9 @@ EV_DoLockedDoor
 	
     p = thing->player;
 	
+    // DOOM-0398: this is the ONLY !p test the three lock cases need. Each
+    // used to repeat it; DOOM-0364 removed the blue one and left two copies
+    // of a guard that cannot fire, in two shapes.
     if (!p)
 	return 0;
 		
@@ -230,8 +233,6 @@ EV_DoLockedDoor
 	
       case 134: // Red Lock
       case 135:
-	if ( !p )
-	    return 0;
 	if (!p->cards[it_redcard] && !p->cards[it_redskull])
 	{
 	    p->message = PD_REDO;
@@ -242,8 +243,6 @@ EV_DoLockedDoor
 	
       case 136:	// Yellow Lock
       case 137:
-	if ( !p )
-	    return 0;
 	if (!p->cards[it_yellowcard] &&
 	    !p->cards[it_yellowskull])
 	{
