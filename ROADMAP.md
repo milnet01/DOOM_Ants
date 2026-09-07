@@ -10282,7 +10282,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   Kind: security.
   Source: code-quality-review-2026-08-03 (shaders-raster lane, MEDIUM).
 
-- 📋 [DOOM-0312] **Keep the unbuilt DOS-era drivers out of the static-analysis sweeps.**
+- ✅ [DOOM-0312] **Keep the unbuilt DOS-era drivers out of the static-analysis sweeps.**
   ipx/, sersrc/ and sndserv/ are retained as historical reference per
   DOOM-0085 and are referenced by no build target, but every audit sweep
   still parses them and reports findings in them -- including a genuine
@@ -10295,6 +10295,17 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** Three old folders that are kept only for history get scanned by the code-checking tools every time, producing warnings nobody will ever act on.
   Kind: chore.
   Source: code-quality-review-2026-08-03 (legacy-drivers lane).
+  Resolved (2026-09-07): excluded from the sweeps rather than moved,
+  chosen by the user. `.ants/project.json`'s source_roots is now
+  linuxdoom-1.10 alone, and that file carries a `_comment` giving the
+  reasoning and naming DOOM-0414 -- which is where the next sweep
+  reads its scope from, satisfying this item's "note the choice where
+  the next sweep will see it". CLAUDE.md's repository layout says the
+  same for a human reader. Verified: codebase_index now reports 232
+  files (202 cpp + 30 glsl), exactly linuxdoom-1.10's own count, with
+  the 22 files in the three trees excluded. Nothing moved on disk, so
+  DOOM-0085 and the id-original READMEs in each directory are
+  untouched.
 
 - 📋 [DOOM-0313] **Give -devshot a camera, so the visual features can be verified where they actually happen.**
   -devshot (DOOM-0303) removed the keypress problem, but not the position
@@ -13734,7 +13745,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   Source: review-code 2026-09-01, lanes build-scripts and asset-tooling.
   Lanes: packaging, tooling.
 
-- 📋 [DOOM-0414] **Nine findings in the three dead helper trees, held until DOOM-0312 decides their fate.**
+- ✅ [DOOM-0414] **Nine findings in the three dead helper trees, held until DOOM-0312 decides their fate.**
   Liveness was ESTABLISHED, not assumed, three ways: no -DSNDSERV in
   linuxdoom-1.10/Makefile:28; doomdef.h:85 comments out SNDSERV with a note that
   the SDL2 backend mixes in-process; and ipx/ and sersrc/ have no Makefile at all
@@ -13771,6 +13782,22 @@ parked ideas (💭 considered) until we commit to and design each one.
       to reach exactly MAXPACKET (512); the other consumer at :223 gets it right.
     - [raw MEDIUM] sersrc/PORT.C:386 -- the ISR receive loop has no iteration cap
       (the TX arm at :372 has count = 16) and no queue-full check.
+  Resolved (2026-09-07) as the RECORD, and the findings are NOT FIXED --
+  read that first. This item's own text anticipated this outcome:
+  "EXCLUDING them would freeze these findings as unrecorded; this is the
+  record either way." DOOM-0312 excluded the three trees from the sweeps
+  on 2026-09-07, so nothing will report them again and this bullet is the
+  only place they exist.
+  All nine stand exactly as written above, including the two raw-CRITICAL
+  unvalidated-length overflows in sndserv/wadread.c and ipx/IPXNET.C.
+  None can reach a player: liveness was established three ways in the
+  body, and nothing builds any of these files. Closed because no further
+  work is planned, not because the code is sound.
+  If any of those trees is ever made a build target again -- DOOM-0085
+  would rebuild the transport rather than revive them -- reopen this item
+  and fix all nine BEFORE it builds. That instruction is also in
+  .ants/project.json's `_comment` and in CLAUDE.md's layout section, so a
+  session reviving one meets it wherever it starts.
   **Layman:** The old sound-server and DOS networking programs contain several serious-looking bugs — but none of them is built by anything, so none can currently affect you. They are recorded here so that if those directories are ever revived or excluded from scanning, the findings are not simply lost.
   Kind: security.
   Source: review-code 2026-09-01, lane net-drivers.

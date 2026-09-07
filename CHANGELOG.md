@@ -6,6 +6,16 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Saved games now record which build wrote them, and refuse to load into a different one** (DOOM-0426)
+  A saved game is a straight copy of the game's memory, so a different
+  build can lay it out differently and read it as nonsense. It now says
+  which layout it was written in and is politely refused if that does
+  not match, instead of loading a broken game.
+  Note: this makes saves from earlier versions unreadable. They were
+  already being misread rather than refused.
+
 ### Fixed
 
 - **A bad number in your settings file can no longer stop the game starting** (DOOM-0383)
