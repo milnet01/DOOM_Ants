@@ -148,6 +148,84 @@ M_WriteFile
 
 
 //
+// M_WriteFileAtomic
+//
+// DOOM-0399: M_WriteFile opens the destination with O_TRUNC, so the old file is
+// destroyed before a single new byte exists. For a savegame that means a crash
+// or a power cut mid-write takes the previous save with it -- the one the player
+// would want back. Write a temp beside it, get the bytes onto the disk, then
+// replace in one step, which is the same dance M_SaveDefaults does for the
+// config (DOOM-0353) and for the same reason.
+//
+boolean
+M_WriteFileAtomic
+( char const*	name,
+  void*		source,
+  int		length )
+{
+    char	tmpfile[PATH_MAX];
+    int		handle;
+    int		count;
+
+    if ((size_t) snprintf (tmpfile, sizeof(tmpfile), "%s.tmp", name)
+	>= sizeof(tmpfile))
+    {
+	fprintf (stderr, "M_WriteFileAtomic: %s is too long to make a temp "
+		 "name for\n", name);
+	return false;
+    }
+
+    handle = open (tmpfile, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, 0666);
+
+    if (handle == -1)
+	return false;
+
+    count = write (handle, source, length);
+
+    // The replace below is atomic with respect to what is ON DISK, so the bytes
+    // have to reach it first -- otherwise a power cut can leave the rename
+    // committed and the new file's contents still in the page cache, which is
+    // the outcome the whole dance exists to prevent.
+    if (count == length)
+    {
+#ifdef _WIN32
+	count = _commit (handle) == 0 ? count : -1;
+#else
+	count = fsync (handle) == 0 ? count : -1;
+#endif
+    }
+
+    close (handle);
+
+    if (count < length)
+    {
+	remove (tmpfile);
+	return false;
+    }
+
+#ifdef _WIN32
+    if (!MoveFileExA (tmpfile, name, MOVEFILE_REPLACE_EXISTING))
+    {
+	fprintf (stderr, "M_WriteFileAtomic: can't replace %s: Win32 error "
+		 "%lu\n", name, (unsigned long) GetLastError ());
+	remove (tmpfile);
+	return false;
+    }
+#else
+    if (rename (tmpfile, name) != 0)
+    {
+	fprintf (stderr, "M_WriteFileAtomic: can't replace %s: %s\n",
+		 name, strerror (errno));
+	remove (tmpfile);
+	return false;
+    }
+#endif
+
+    return true;
+}
+
+
+//
 // M_ReadFile
 //
 int

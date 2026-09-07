@@ -1550,7 +1550,10 @@ void G_DoSaveGame (void)
     *save_p++ = 0x1d;		// consistancy marker 
 	 
     length = save_p - savebuffer;
-    M_WriteFile (name, savebuffer, length);
+    // DOOM-0399: atomically, so a crash mid-write cannot destroy the save this
+    // one is replacing -- which is the save the player would want back.
+    if (!M_WriteFileAtomic (name, savebuffer, length))
+	fprintf (stderr, "G_DoSaveGame: could not write %s\n", name);
     Z_Free (savebuffer);
     savebuffer = NULL;
     gameaction = ga_nothing;

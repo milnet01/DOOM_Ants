@@ -37,6 +37,15 @@ M_WriteFile
   void*		source,
   int		length );
 
+// DOOM-0399: as M_WriteFile, but the destination is replaced in one step rather
+// than truncated and rewritten -- so an interrupted write leaves the previous
+// file intact instead of destroying it. Use it for anything worth keeping.
+boolean
+M_WriteFileAtomic
+( char const*	name,
+  void*		source,
+  int		length );
+
 int
 M_ReadFile
 ( char const*	name,
