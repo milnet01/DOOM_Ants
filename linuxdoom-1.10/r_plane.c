@@ -39,6 +39,8 @@ rcsid[] __attribute__((used)) = "$Id: r_plane.c,v 1.4 1997/02/03 16:47:55 b1 Exp
 #include "r_local.h"
 #include "r_sky.h"
 
+#include "render_bounds.h"
+
 
 
 planefunction_t		floorfunc;
@@ -56,7 +58,17 @@ visplane_t*		floorplane;
 visplane_t*		ceilingplane;
 
 // DOOM-0147: sized at the compile-time MAXWIDTH cap, not the runtime SCREENWIDTH.
-#define MAXOPENINGS	MAXWIDTH*64
+//
+// DOOM-0382: sized at the real worst case, not at vanilla's 64x ratio. Every
+// write to lastopening is in R_StoreWallRange (r_segs.c), which claims at most
+// three spans of up to viewwidth shorts and returns early at r_segs.c:386 once
+// ds_p reaches &drawsegs[MAXDRAWSEGS] -- so MAXDRAWSEGS*3*MAXWIDTH is an exact
+// bound, and the array can no longer be overrun. Vanilla's 64x ratio was
+// already too small for its own 320-wide worst case (256*3*320 = 245,760 into
+// 20,480), and the only check was the post-hoc one in R_DrawPlanes below --
+// which fires after the write has already gone past openings[] into floorclip
+// and ceilingclip, declared immediately after it.
+#define MAXOPENINGS	RENDER_OPENINGS_NEEDED(MAXDRAWSEGS, MAXWIDTH)
 short			openings[MAXOPENINGS];
 short*			lastopening;
 
@@ -135,10 +147,11 @@ R_MapPlane
     // no crash, no out-of-bounds write. A skipped span is the existing floor
     // smear, not a new symptom. Root cause (the visplane span open/close logic)
     // is tracked under DOOM-0055 and fixed separately; this is the safety guard.
-    if (x2 < x1
-	|| x1<0
-	|| x2>=viewwidth
-	|| (unsigned)y>(unsigned)viewheight)
+    //
+    // DOOM-0382: the test moved to render_bounds.h, which has its own tests and
+    // corrects the row bound from > to >= -- the old form admitted
+    // y == viewheight, one row past the last valid one.
+    if (!RenderSpanValid (x1, x2, y, viewwidth, viewheight))
     {
 	return;
     }
@@ -319,6 +332,14 @@ R_CheckPlane
     }
 	
     // make a new visplane
+    //
+    // DOOM-0382: the same guard R_FindPlane carries above. Without it this is
+    // the classic visplane overflow, and DOOM-0055 widened top[]/bottom[] to
+    // unsigned int[MAXWIDTH], so one overflowing plane now scribbles ~10 KB
+    // past the array rather than vanilla's ~660 bytes.
+    if (lastvisplane - visplanes == MAXVISPLANES)
+	I_Error ("R_CheckPlane: no more visplanes");
+
     lastvisplane->height = pl->height;
     lastvisplane->picnum = pl->picnum;
     lastvisplane->lightlevel = pl->lightlevel;
@@ -393,6 +414,12 @@ void R_DrawPlanes (void)
 	I_Error ("R_DrawPlanes: visplane overflow (%i)",
 		 lastvisplane - visplanes);
     
+    // DOOM-0382: this one can no longer fire -- openings[] is now sized at the
+    // exact worst case R_StoreWallRange can claim, so the array cannot be
+    // overrun. Kept as the assertion that says so: if a later change to
+    // MAXDRAWSEGS, MAXWIDTH or the number of spans per seg breaks the
+    // derivation, this is what reports it. It is not the guard, and it never
+    // was -- it runs after the write.
     if (lastopening - openings > MAXOPENINGS)
 	I_Error ("R_DrawPlanes: opening overflow (%i)",
 		 lastopening - openings);
