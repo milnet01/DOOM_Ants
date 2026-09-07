@@ -32,6 +32,7 @@ rather than deleting, and orphanline is the mode that gets past it.
     doorstub      manual door on a one-sided wall DOOM-0372    counterfactual
     badthingtype  THINGS entries of type 0 and -1  DOOM-0397    I_Error, by name
     nostart       player-1 start retyped to an Imp DOOM-0397   I_Error, by name
+    lowerchange   every walkover lower-and-changes DOOM-0398    counterfactual
 
 Usage:  make_map_fixture.py <mode> <iwad> <out.wad>
 
@@ -64,6 +65,10 @@ RAISE_TO_TEXTURE = 30
 # Linedef special 1: "DR Door Open Wait Close", the manual door the player
 # opens with the use key -- the one EV_VerticalDoor path a map can reach.
 MANUAL_DOOR = 1
+# Linedef special 37: "W1 Lower Floor to Lowest and Change", one of the two
+# walkovers that reach EV_DoFloor(lowerAndChange). Special 84 is the other.
+LOWER_AND_CHANGE = 37
+SECTOR_SPECIAL_OFF = 22 # sector record: ... lightlevel special tag
 THING_SIZE = 10         # x y angle type options
 # THINGS options bits 1/2/4 are the three skill classes P_SpawnMapThing tests;
 # bit 16 is multiplayer-only and would make the thing skip in a single-player
@@ -260,6 +265,50 @@ def mutate_doorstub(group):
     return replace(group, "LINEDEFS", bytes(linedefs))
 
 
+def mutate_lowerchange(group):
+    """Tag every sector and make every walkover lower-and-change it.
+
+    The fixture for DOOM-0398's lowerAndChange defect. EV_DoFloor seeds
+    floor->texture from the sector but seeded floor->newspecial only inside
+    the branch that finds a neighbour sitting at the destination height --
+    and P_FindLowestFloorSurrounding starts from the sector's OWN height and
+    only ever lowers, so for a sector already the lowest around it the
+    destination IS its own height, no neighbour matches, and the branch
+    cannot run. T_MoveFloor then copies both into the sector, so the sector
+    takes whatever Z_Malloc left in newspecial and P_PlayerInSpecialSector
+    aborts the game on it.
+
+    Every sector is tagged rather than one, because which sector the player
+    occupies cannot be computed from the lump group without walking the BSP.
+    Every linedef carries the special so whichever line the player first
+    steps across fires it, the same blunt approach twosidedstub takes; the
+    map's own specials are lost, which does not matter for a two-second
+    fixture. Sector specials are cleared so the only special a player can be
+    standing in is one this mutation produced.
+
+    Played with the walk demo from make_demo_fixture.py.
+    """
+    sectors = bytearray(dict(group)["SECTORS"])
+    linedefs = bytearray(dict(group)["LINEDEFS"])
+    nsectors = len(sectors) // SECTOR_SIZE
+
+    tags = [struct.unpack_from("<h", sectors, i * SECTOR_SIZE + SECTOR_TAG_OFF)[0]
+            for i in range(nsectors)]
+    tag = max(tags) + 1
+    if tag > 0x7FFF:
+        raise SystemExit("no spare sector tag below the 16-bit limit")
+    for i in range(nsectors):
+        struct.pack_into("<h", sectors, i * SECTOR_SIZE + SECTOR_TAG_OFF, tag)
+        struct.pack_into("<h", sectors, i * SECTOR_SIZE + SECTOR_SPECIAL_OFF, 0)
+
+    for i in range(len(linedefs) // LINEDEF_SIZE):
+        base = i * LINEDEF_SIZE
+        struct.pack_into("<hh", linedefs, base + 6, LOWER_AND_CHANGE, tag)
+
+    group = replace(group, "SECTORS", bytes(sectors))
+    return replace(group, "LINEDEFS", bytes(linedefs))
+
+
 def mutate_badthingtype(group):
     """Append two THINGS whose type is not positive: 0 and -1.
 
@@ -317,6 +366,7 @@ MODES = {
     "doorstub": mutate_doorstub,
     "badthingtype": mutate_badthingtype,
     "nostart": mutate_nostart,
+    "lowerchange": mutate_lowerchange,
 }
 
 

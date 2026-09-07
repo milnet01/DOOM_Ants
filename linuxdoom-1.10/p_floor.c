@@ -407,6 +407,13 @@ EV_DoFloor
 	    floor->floordestheight = 
 		P_FindLowestFloorSurrounding(sec);
 	    floor->texture = sec->floorpic;
+	    // DOOM-0398: texture and newspecial are copied together into the
+	    // sector when the move finishes, but only texture had a value for
+	    // the case where no neighbour matches the destination height --
+	    // Z_Malloc does not zero, so the sector took a garbage special and
+	    // P_PlayerInSpecialSector aborted the game on it. Seed both from
+	    // the sector's own state; the loop below overwrites both or neither.
+	    floor->newspecial = sec->special;
 
 	    for (i = 0; i < sec->linecount; i++)
 	    {
