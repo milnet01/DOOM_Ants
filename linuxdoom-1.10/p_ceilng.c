@@ -260,6 +260,15 @@ void P_AddActiveCeiling(ceiling_t* c)
 	    return;
 	}
     }
+
+    // DOOM-0398: no free slot. Falling off the end left the caller's sector
+    // owning a ceiling P_RemoveActiveCeiling can never find, so the sector
+    // was unusable for the rest of the level and its thinker ran forever.
+    // The sibling P_AddActivePlat I_Errors here, but how many ceilings a map
+    // opens at once is WAD data, and aborting the game on it is worse than
+    // declining the ceiling. Undo the registration EV_DoCeiling made instead.
+    c->sector->specialdata = NULL;
+    P_RemoveThinker (&c->thinker);
 }
 
 
