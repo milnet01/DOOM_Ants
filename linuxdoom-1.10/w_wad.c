@@ -52,6 +52,7 @@ rcsid[] __attribute__((used)) = "$Id: w_wad.c,v 1.5 1997/02/03 16:47:57 b1 Exp $
 #pragma implementation "w_wad.h"
 #endif
 #include "wad_bounds.h"
+#include "level_bounds.h"
 #include "w_wad.h"
 
 
@@ -181,6 +182,11 @@ ExtractFileBase
 
 int			reloadlump;
 char*			reloadname;
+// DOOM-0400: how many lumps the reload file contributed at startup. lumpinfo and
+// lumpcache were sized for exactly that many, and W_Reload re-reads the count
+// from the file every level load -- so without this the file growing between the
+// two writes past both allocations.
+static int		reloadcount;
 
 
 void W_AddFile (char *filename)
@@ -205,6 +211,7 @@ void W_AddFile (char *filename)
 	filename++;
 	reloadname = filename;
 	reloadlump = numlumps;
+	reloadcount = 0;		// set below, once the count is known
     }
 		
     if ( (handle = open (filename,O_RDONLY | O_BINARY)) == -1)
@@ -220,7 +227,9 @@ void W_AddFile (char *filename)
     // single-lump path and the per-lump bounds below all agree on one number.
     filelen = filelength (handle);
 
-    if (strcmpi (filename+strlen(filename)-3 , "wad" ) )
+    // DOOM-0400: filename+strlen(filename)-3 reads BEFORE the buffer for a name
+    // shorter than three characters, which "-file x" supplies.
+    if (strlen(filename) < 3 || strcmpi (filename+strlen(filename)-3 , "wad" ) )
     {
 	// single lump file
 	fileinfo = &singleinfo;
@@ -303,6 +312,11 @@ void W_AddFile (char *filename)
 
     free (fileinfo_heap);	// no-op when NULL (single-lump path)
 
+    // DOOM-0400: only for the file that just registered itself as reloadable --
+    // a later -file leaves reloadname pointing at the earlier one.
+    if (reloadname == filename)
+	reloadcount = numlumps - reloadlump;
+
     if (reloadname)
 	close (handle);
 }
@@ -347,6 +361,17 @@ void W_Reload (void)
 	       + (long)lumpcount * (long)sizeof(filelump_t) > filelen)
 	    I_Error ("W_Reload: %s has a corrupt lump directory", reloadname);
     }
+    // DOOM-0400: lumpinfo and lumpcache were sized at startup for the lumps this
+    // file held THEN, and the loop below indexes both by the count read from the
+    // file NOW. Growing the file between the two is a heap overflow in lumpinfo
+    // and a Z_Free walk past the end of lumpcache. The arrays cannot grow here,
+    // so a changed count is refused rather than clamped -- a clamp would load
+    // half a directory and call it a reload.
+    if (lumpcount != reloadcount)
+	I_Error ("W_Reload: %s now holds %d lump(s), not the %d it had at "
+		 "startup -- restart to pick that up",
+		 reloadname, lumpcount, reloadcount);
+
     length = lumpcount*sizeof(filelump_t);
     // alloca() is obsolete; use a checked heap allocation (lumpcount is
     // read straight from the file header, so a huge value must fail safely).
@@ -410,6 +435,13 @@ void W_InitMultipleFiles (char** filenames)
 	I_Error ("W_InitFiles: no files found");
     
     // set up caching
+    // DOOM-0400: numlumps comes from WAD headers and the product is computed in
+    // size_t, so it is the assignment to an int that truncates -- a huge lump
+    // count would allocate a small array that every W_CacheLumpNum then indexes
+    // by the real count. level_bounds.h owns the arithmetic and its own test.
+    if (!LevelAllocFits (numlumps, sizeof(*lumpcache)))
+	I_Error ("W_InitMultipleFiles: %i lumps is too many to cache", numlumps);
+
     size = numlumps * sizeof(*lumpcache);
     lumpcache = malloc (size);
     
@@ -541,10 +573,19 @@ W_ReadLump
     lumpinfo_t*	l;
     int		handle;
 	
-    if (lump >= numlumps)
-	I_Error ("W_ReadLump: %i >= numlumps",lump);
+    // DOOM-0400: this is public API, so it validates its own arguments rather
+    // than trusting every caller to. Vanilla bounded the top only.
+    if (lump < 0 || lump >= numlumps)
+	I_Error ("W_ReadLump: lump %i is outside 0..%i",lump,numlumps-1);
 
     l = lumpinfo+lump;
+
+    // A negative size reaches read() as a huge size_t, which fails with EINVAL
+    // and returns -1 -- and `-1 < -1` is false, so the check below reported
+    // SUCCESS with dest untouched. Refuse it before the read, not after.
+    if (l->size < 0)
+	I_Error ("W_ReadLump: lump %i declares a negative size %i",
+		 lump, l->size);
 	
     // ??? I_BeginRead ();
 	
@@ -560,7 +601,9 @@ W_ReadLump
     lseek (handle, l->position, SEEK_SET);
     c = read (handle, dest, l->size);
 
-    if (c < l->size)
+    // c is -1 on failure, so compare it as a signed count rather than against
+    // the size alone.
+    if (c < 0 || c < l->size)
 	I_Error ("W_ReadLump: only read %i of %i on lump %i",
 		 c,l->size,lump);	
 
