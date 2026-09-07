@@ -120,6 +120,21 @@ void Z_Init (void)
 //
 // Z_Free
 //
+// DOOM-0400: "is block->user a real pointer, or one of the small sentinel
+// values Z_Malloc stores there?" was written two ways -- Z_Free compared the
+// pointer itself against a cast integer, with a "Note: OS-dependend?" beside
+// it, while Z_ChangeTag2 had been modernised to a uintptr_t compare. The two
+// also disagreed at exactly 0x100, which neither could have intended. One
+// helper, used by both, so they cannot drift again.
+//
+// The threshold is the original's: Z_Malloc stores a small integer in `user`
+// to mean "no owner", and anything above that range is an address.
+static int Z_HasUser (memblock_t* block)
+{
+    return (uintptr_t)block->user > 0x100;
+}
+
+
 void Z_Free (void* ptr)
 {
     memblock_t*		block;
@@ -130,11 +145,8 @@ void Z_Free (void* ptr)
     if (block->id != ZONEID)
 	I_Error ("Z_Free: freed a pointer without ZONEID");
 		
-    if (block->user > (void **)0x100)
+    if (Z_HasUser (block))
     {
-	// smaller values are not pointers
-	// Note: OS-dependend?
-	
 	// clear the user's mark
 	*block->user = 0;
     }
@@ -444,7 +456,7 @@ Z_ChangeTag2
     if (block->id != ZONEID)
 	I_Error ("Z_ChangeTag: freed a pointer without ZONEID");
 
-    if (tag >= PU_PURGELEVEL && (uintptr_t)block->user < 0x100)
+    if (tag >= PU_PURGELEVEL && !Z_HasUser (block))
 	I_Error ("Z_ChangeTag: an owner is required for purgable blocks");
 
     block->tag = tag;
