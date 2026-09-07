@@ -1438,6 +1438,32 @@ void G_DoLoadGame (void)
 	// nothing to tell it apart from a load that worked.
 	players[consoleplayer].message = GGLOADFAIL;
 	printf ("G_DoLoadGame: %s is not a \"%s\" save\n", savename, vcheck);
+
+	// DOOM-0400: and it left the game with NO level. d_main.c skips its
+	// title-screen and autostart branch entirely when -loadgame set
+	// gameaction, so this early return was the only thing left to establish
+	// one -- and P_Ticker then ran with a NULL player mobj and the game
+	// segfaulted instead of refusing the save.
+	//
+	// The test is the player's body, not gamestate: GS_LEVEL is the first
+	// enumerator, so an untouched gamestate already reads as "in a level"
+	// and cannot tell the two apart. No body means no level to return to,
+	// so fall back to the title. A player who IS in a game keeps it, which
+	// is what a failed load from the in-game menu should do.
+	//
+	// gamestate must move HERE and not be left to D_StartTitle. That only
+	// raises the advancedemo flag, which D_DoomLoop reads at the top of the
+	// NEXT iteration -- while this function falls straight from the
+	// gameaction switch into the gamestate switch, reaching P_Ticker on this
+	// same call. GS_DEMOSCREEN is where D_DoAdvanceDemo is about to put it.
+	//
+	// Found by reading a core dump this refusal produced, not by the review.
+	if (!players[consoleplayer].mo)
+	{
+	    gamestate = GS_DEMOSCREEN;
+	    D_StartTitle ();
+	}
+
 	return;
     }
     save_p += VERSIONSIZE;

@@ -550,8 +550,13 @@ void D_PageDrawer (void)
     // DOOM-0152: with the menu open, always show the plain TITLEPIC behind it. The
     // attract loop's CREDIT/HELP pages are dense red text the (red) menu items are
     // illegible over; paired with D_PageTicker's freeze so the page stays put.
-    V_DrawPatch (0,0, 0,
-		 W_CacheLumpName(menuactive ? "TITLEPIC" : pagename, PU_CACHE));
+    // DOOM-0400: pagename is a global that starts NULL, and only D_DoAdvanceDemo
+    // ever sets it -- so any route into GS_DEMOSCREEN that has not been through
+    // there yet arrives here with NULL and W_CheckNumForName strncpy's it.
+    // TITLEPIC is what the attract loop opens with anyway.
+    const char*	page = (menuactive || !pagename) ? "TITLEPIC" : pagename;
+
+    V_DrawPatch (0,0, 0, W_CacheLumpName((char *)page, PU_CACHE));
     V_ExtendSides (0);		// DOOM-0151: fill widescreen side strips (no-op at 4:3)
 }
 
