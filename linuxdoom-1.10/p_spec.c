@@ -1079,9 +1079,11 @@ void P_PlayerInSpecialSector (player_t* player)
 	break;
 			
       default:
-	I_Error ("P_PlayerInSpecialSector: "
-		 "unknown special %i",
-		 sector->special);
+	// DOOM-0398: a sector special is WAD data, and vanilla quit the game on
+	// any value outside the set above -- so a single bad number in a PWAD's
+	// SECTORS lump ended the session the moment a player stood on it. No
+	// IWAD map carries one, so ignoring it changes nothing that ships;
+	// every modern port does the same.
 	break;
     };
 }

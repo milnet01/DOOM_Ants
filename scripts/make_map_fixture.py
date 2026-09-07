@@ -287,6 +287,13 @@ def mutate_lowerchange(group):
     standing in is one this mutation produced.
 
     Played with the walk demo from make_demo_fixture.py.
+
+    The observable is P_PlayerInSpecialSector's abort on an unknown special,
+    which DOOM-0398 also REMOVED -- a sector special is WAD data and quitting
+    the game on a bad one was its own defect. So the counterfactual only
+    speaks against a build predating that removal. Against a newer build both
+    sides run to the end and the mode proves nothing; it is kept because the
+    map it produces is still the one that reaches the branch.
     """
     sectors = bytearray(dict(group)["SECTORS"])
     linedefs = bytearray(dict(group)["LINEDEFS"])
