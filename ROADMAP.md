@@ -3796,6 +3796,53 @@ with friends.
   Source: in-session-2026-09-02, DOOM-0420 Windows re-verification.
   Lanes: platform, verification.
 
+- 📋 [DOOM-0425] **Scripted player: drive the game through an arbitrary sequence of actions, capturing and logging at chosen points.**
+  The pieces exist and do not compose. Today a session can reach a place
+  (-warp, -warpto), hold the world still (-freeze), stop monsters reacting
+  (-inspect), capture (-devshot, F12 in DEV builds), and replay one of a few
+  fixed demo shapes (scripts/make_demo_fixture.py). What none of that gives is
+  a STATE: a lift ridden to the top, a door opened, a weapon fired, a monster
+  killed, a key taken. Reaching one still needs a person at the keyboard, and
+  xdotool cannot inject input to the game under Wayland.
+
+  The engine already has the mechanism: a demo lump is a stream of ticcmds,
+  which is exactly "a sequence of player actions". So the work is a compiler,
+  not a new input path -- and it stays out of the playsim, which is what keeps
+  it from changing what it measures.
+
+  Proposed shape, cheapest first:
+
+    - A readable script (forward 30 tics, turn left 45 degrees, use, fire,
+      wait 20) compiled to a .lmp the engine plays as an ordinary demo. This
+      generalises make_demo_fixture.py's fixed modes rather than replacing
+      them; those become scripts.
+    - Capture and log triggers keyed to a TIC rather than a keypress, so a
+      shot is taken at a reproducible point. -devshot already writes the file;
+      what is missing is saying when.
+    - A per-tic state dump the harness can assert against -- player position,
+      angle, health, armour, weapon, keys, sector, and the counts the
+      intermission screen shows. This is what turns a screenshot into a
+      measurement, and it is what DOOM-0424 wanted when it asked for a stack
+      from a hung process rather than more launch batches.
+    - Works in all three tiers, since the point is to compare them.
+
+  Open questions to settle before building:
+    - Does the script compile to a demo, or drive a tic source directly? A
+      demo is replayable by any build and is already version-stamped, which
+      argues for it; but demo playback ends the level differently from live
+      play, and DOOM-0369's overflow behaviour is deliberately not emulated.
+    - Is this a DEV-only build (like DOOM-0294) or shipped? DEV-only is
+      cheaper and cannot regress a release.
+    - What does it assert against -- goldens (DOOM-0202's route) or the state
+      dump? The two answer different questions and both may be wanted.
+
+  Depends on nothing; overlaps DOOM-0202, whose golden-image half this would
+  feed rather than duplicate.
+  **Layman:** A way to make the game play itself to a written script, so a screenshot and a report can be taken from any point in any level without a person at the keyboard.
+  Kind: test.
+  Source: user-request-2026-09-07.
+  Lanes: testing, game-loop, backend-seam.
+
 ## Phase 2 — The Spin
 
 The creative overhaul: evolve the renderer toward true 3D with hardware
