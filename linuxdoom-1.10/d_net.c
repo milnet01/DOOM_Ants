@@ -35,11 +35,13 @@ static const char rcsid[] __attribute__((used)) = "$Id: d_net.c,v 1.3 1997/02/03
 #include "doomdef.h"
 #include "doomstat.h"
 
+#include "net_checksum.h"
+
 #define	NCMD_EXIT		0x80000000
 #define	NCMD_RETRANSMIT		0x40000000
 #define	NCMD_SETUP		0x20000000
 #define	NCMD_KILL		0x10000000	// kill game
-#define	NCMD_CHECKSUM	 	0x0fffffff
+#define	NCMD_CHECKSUM	 	NET_CHECKSUM_MASK  // DOOM-0256: net_checksum.h owns it
 
  
 doomcom_t*	doomcom;	
@@ -98,21 +100,25 @@ int NetbufferSize (void)
 //
 unsigned NetbufferChecksum (void)
 {
-    unsigned		c;
-    int		i,l;
-
-    c = 0x1234567;
-
-    // FIXME -endianess?
-#ifdef NORMALUNIX
-    return 0;			// byte order problems
-#endif
-
-    l = (NetbufferSize () - (int)(intptr_t)&(((doomdata_t *)0)->retransmitfrom))/4;
-    for (i=0 ; i<l ; i++)
-	c += ((unsigned *)&netbuffer->retransmitfrom)[i] * (i+1);
-
-    return c & NCMD_CHECKSUM;
+    // DOOM-0256: this used to return 0 under NORMALUNIX -- which every build
+    // this project ships defines -- so both peers computed 0, stored 0, and
+    // HGetPacket's integrity test compared 0 against 0 and passed on anything.
+    //
+    // net_checksum.h sums bytes rather than vanilla's `unsigned` words, which
+    // drops the dependence on word layout and covers the trailing bytes the /4
+    // loop ignored. Read its header before concluding this is cross-endian: the
+    // sum is over netbuffer, which is in HOST order at both ends, so two peers
+    // of different endianness still disagree. Every platform this project ships
+    // is little-endian, and the alternative was no check at all.
+    //
+    // The span starts at retransmitfrom, deliberately: the checksum field
+    // itself sits before it and cannot be part of its own sum. HGetPacket has
+    // already established that datalength equals NetbufferSize(), so every
+    // byte read here is one the datagram actually carried.
+    return NetPacketChecksum (
+	&netbuffer->retransmitfrom,
+	NetbufferSize ()
+	    - (int)(intptr_t)&(((doomdata_t *)0)->retransmitfrom));
 }
 
 //
