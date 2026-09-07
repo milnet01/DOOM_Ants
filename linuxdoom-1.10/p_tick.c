@@ -126,10 +126,19 @@ void P_RunThinkers (void)
     {
 	if ( currentthinker->function.acv == (actionf_v)(-1) )
 	{
+	    // DOOM-0398: the advance below used to read this thinker's next
+	    // link AFTER the Z_Free, which works only because Z_Free does not
+	    // scrub the block. Read it while it is still ours. Only this
+	    // branch is hoisted: on the other one the link must be read AFTER
+	    // the thinker runs, because P_AddThinker appends to the list and a
+	    // thinker spawned by the last one is meant to run this same tic.
+	    thinker_t*	nextthinker = currentthinker->next;
+
 	    // time to remove it
 	    currentthinker->next->prev = currentthinker->prev;
 	    currentthinker->prev->next = currentthinker->next;
 	    Z_Free (currentthinker);
+	    currentthinker = nextthinker;
 	}
 	else
 	{
@@ -139,8 +148,9 @@ void P_RunThinkers (void)
 #endif
 		)
 		currentthinker->function.acp1 (currentthinker);
+
+	    currentthinker = currentthinker->next;
 	}
-	currentthinker = currentthinker->next;
     }
 }
 
