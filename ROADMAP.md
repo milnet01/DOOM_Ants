@@ -665,11 +665,33 @@ with friends.
   memory from one big instrumented block, so an intra-zone overrun reports
   as a downstream crash rather than a heap-buffer-overflow.
 
-- 📋 [DOOM-0256] **d_net.c NetbufferChecksum() returns 0 under NORMALUNIX, so packet integrity is unchecked.**
+- ✅ [DOOM-0256] **d_net.c NetbufferChecksum() returns 0 under NORMALUNIX, so packet integrity is unchecked.**
   The shipped Linux build defines NORMALUNIX, which compiles the checksum out; HGetPacket's integrity test is a no-op. Either implement an endian-safe checksum or record the vanilla-compatibility decision in the security standard.
   **Layman:** Network games do not actually verify that packets arrived intact.
   Kind: security.
   Source: indie-review-2026-07-26 game-save-net.
+  Resolved (2026-09-07, 57b0591): implemented rather than documented as a
+  vanilla-compatibility decision. net_checksum.h sums bytes instead of
+  `unsigned` words, dropping the word-layout dependence that got it
+  switched off, and covering the trailing bytes vanilla's /4 loop ignored.
+  NOT cross-endian, and the header says so at length: the sum is over
+  netbuffer in HOST order at both ends, and i_net.c converts field by
+  field, so mixed-endian peers still disagree. Every platform this project
+  ships is little-endian. Its value is catching a damaged packet or one
+  from a differently-laid-out build; it is not a security control, since
+  the peer is unauthenticated -- net_bounds.h (DOOM-0386), the numtics
+  clamp (DOOM-0093) and HGetPacket's length check are what stop a
+  malicious packet.
+  Compatibility: this ends netplay with any build that had the checksum
+  compiled out -- every release to date, and vanilla linuxdoom. Intended:
+  those builds already disagree about struct layout and their packets were
+  being consumed rather than refused. Flagged to the user.
+  tests/net_checksum_test.cpp also mirrors PacketSend's swap and
+  PacketGet's un-swap end to end, since agreement across that round trip
+  is what netplay depends on; proven by mutation three ways. A live
+  two-process test is not possible -- I_InitNetwork binds INADDR_ANY on
+  one global DOOMPORT for send and receive, so two instances cannot
+  coexist on one machine.
 
 - 📋 [DOOM-0257] **BuildHdSet aborts on GPU allocation failure instead of falling back to the paletted set.**
   r_vulkan.cpp:5956-5959 uses fatal Check()/I_Error, contradicting the documented contract that g.hdSet always ends valid with InitHdDefault's paletted fallback.

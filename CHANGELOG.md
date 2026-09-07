@@ -20,6 +20,13 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Security
 
+- **Network games now check that packets arrived intact** (DOOM-0256)
+  The check existed but had been switched off since 1997, so it passed
+  everything. It now catches a damaged packet, and a packet from a
+  different build of the game, instead of playing them as movement.
+  Note that this means a network game only works between two copies of
+  this version or newer.
+
 - **Two overflows inherited from the 1993 renderer can no longer be reached** (DOOM-0382)
   Both were in the original game and had been made larger by this
   project's widescreen and higher-resolution work, so a map could
