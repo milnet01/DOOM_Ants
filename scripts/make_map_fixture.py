@@ -30,6 +30,7 @@ rather than deleting, and orphanline is the mode that gets past it.
     orphanline    ditto, on a line carrying no seg DOOM-0372    counterfactual
     twosidedstub  ML_TWOSIDED line, no back side  DOOM-0372    counterfactual
     doorstub      manual door on a one-sided wall DOOM-0372    counterfactual
+    badthingtype  THINGS entries of type 0 and -1  DOOM-0397    I_Error, by name
 
 Usage:  make_map_fixture.py <mode> <iwad> <out.wad>
 
@@ -62,6 +63,11 @@ RAISE_TO_TEXTURE = 30
 # Linedef special 1: "DR Door Open Wait Close", the manual door the player
 # opens with the use key -- the one EV_VerticalDoor path a map can reach.
 MANUAL_DOOR = 1
+THING_SIZE = 10         # x y angle type options
+# THINGS options bits 1/2/4 are the three skill classes P_SpawnMapThing tests;
+# bit 16 is multiplayer-only and would make the thing skip in a single-player
+# boot, which is the boot this fixture is checked with.
+ALL_SKILLS = 7
 
 
 def read_wad(path):
@@ -253,6 +259,34 @@ def mutate_doorstub(group):
     return replace(group, "LINEDEFS", bytes(linedefs))
 
 
+def mutate_badthingtype(group):
+    """Append two THINGS whose type is not positive: 0 and -1.
+
+    mapthing_t.type is a signed short read straight from the WAD.
+    P_SpawnMapThing's player-start test bounds it at 1..4 and everything
+    outside falls through to the doomednum walk, which is where the two
+    non-positive cases diverge. Type -1 MATCHES mobjinfo[0] -- MT_PLAYER,
+    whose doomednum is -1, one of 19 such entries -- and spawns a stray
+    player-shaped mobj with a NULL player field. Type 0 matches nothing and
+    reaches I_Error, aborting the level load.
+
+    The type-0 thing is what makes the fixture loud: pre-fix the map is
+    refused by name, and with the guard in place the map boots. Nothing is
+    mutated, only appended, so the map is otherwise the IWAD's own MAP01.
+    """
+    things = dict(group)["THINGS"]
+    # Sit them on the player-1 start so the coordinates are inside the map.
+    x = y = 0
+    for i in range(len(things) // THING_SIZE):
+        tx, ty, _, ttype, _ = struct.unpack_from("<hhhhh", things, i * THING_SIZE)
+        if ttype == 1:
+            x, y = tx, ty
+            break
+    extra = (struct.pack("<hhhhh", x, y, 0, -1, ALL_SKILLS)
+             + struct.pack("<hhhhh", x, y, 0, 0, ALL_SKILLS))
+    return replace(group, "THINGS", things + extra)
+
+
 MODES = {
     "valid": lambda g: g,
     "orphanline": mutate_orphanline,
@@ -262,6 +296,7 @@ MODES = {
     "onesided": mutate_onesided,
     "twosidedstub": mutate_twosidedstub,
     "doorstub": mutate_doorstub,
+    "badthingtype": mutate_badthingtype,
 }
 
 

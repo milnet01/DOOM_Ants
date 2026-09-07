@@ -741,6 +741,17 @@ void P_SpawnMapThing (mapthing_t* mthing)
 	return;
     }
 
+    // DOOM-0397: type is signed WAD data, and DOOM-0254's lower bound above
+    // only stopped it indexing playerstarts[] backwards -- it still falls
+    // through to the doomednum walk below. 19 mobjinfo entries carry
+    // doomednum -1, mobjinfo[0] (MT_PLAYER) among them, so a type of -1
+    // matches and spawns a stray player-shaped mobj with a NULL player.
+    // Every other non-positive type reaches I_Error and aborts the load.
+    // Neither is a thing a map can legitimately ask for: ignore it, the way
+    // vanilla continued past what it mishandled here.
+    if (mthing->type <= 0)
+	return;
+
     // check for apropriate skill level
     if (!netgame && (mthing->options & 16) )
 	return;
