@@ -453,8 +453,18 @@ void P_UnArchiveThinkers (void)
 	    {
 		// Stored 1-based so that 0 can mean "not a player" in the field
 		// above; index the array only after the -1 lands in range.
-		mobj->player = &players[P_SaveIndex ((int)(intptr_t)mobj->player - 1,
-						     MAXPLAYERS, "mobj player")];
+		int	pnum = P_SaveIndex ((int)(intptr_t)mobj->player - 1,
+					    MAXPLAYERS, "mobj player");
+
+		// DOOM-0399: in range is not the same as in the game. A save
+		// naming a slot that is not playing gets a body nothing drives,
+		// wearing a player pointer every "is this a player?" test in
+		// the playsim believes.
+		if (!playeringame[pnum])
+		    I_Error ("P_UnArchiveThinkers: save gives a body to "
+			     "player %d, who is not in this game", pnum + 1);
+
+		mobj->player = &players[pnum];
 		mobj->player->mo = mobj;
 	    }
 	    P_SetThingPosition (mobj);
