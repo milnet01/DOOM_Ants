@@ -3180,7 +3180,7 @@ with friends.
   Source: review-code 2026-09-01, lane savegame.
   Lanes: savegame.
 
-- 📋 [DOOM-0400] **WAD and zone review tail: twelve findings not covered by DOOM-0384.**
+- ✅ [DOOM-0400] **WAD and zone review tail: twelve findings not covered by DOOM-0384.**
     - MEDIUM w_wad.c:307 -- TOCTOU heap overflow on the `-file ~pwad` reload path:
       lumpcount is re-read from the file on every level load (p_setup.c:698) while
       lumpinfo and lumpcache were sized at startup. Grow the file between the two
@@ -3211,6 +3211,68 @@ with friends.
       O(sprites x lumps) and scales with a hostile PWAD's lump count.
     - INFO m_misc.c:383 -- M_SaveDefaults writes only keys in defaults[], so running
       an older build silently drops every newer key. No schema version exists.
+  Resolved (2026-09-07). The bullet's headline says twelve findings and the
+  list holds eleven; the eleven are accounted for below.
+
+  Eight fixed, across four commits:
+    w_wad.c   the -file ~pwad reload TOCTOU. The bundle asked whether that
+              path is supported or vestigial and suggested deleting it as
+              cheaper; hardening turned out cheaper still, since the count
+              the file contributed is knowable at registration. Proven
+              WITHOUT a race: a file not ending in ".wad" is added by the
+              single-lump path but W_Reload reads a WAD header from it
+              anyway, so a crafted 812-byte file claiming 50 lumps reaches
+              the loop at 50x the allocation -- pre-fix SIGSEGV exit 139,
+              at HEAD refused by name (78a78d0).
+    w_wad.c   W_ReadLump reported SUCCESS on a failed read; a negative size
+              now refused before the read, the result compared as a signed
+              count, and the lump index bounded below as well as above,
+              since it is public API. Same commit.
+    w_wad.c   the ".wad" suffix test read before the buffer for a name under
+              three characters. Same commit.
+    w_wad.c   lumpcache's size truncated through an int; guarded with
+              level_bounds.h, added earlier this session for the same shape
+              in p_setup.c. Same commit.
+    m_misc.c  the config temp file no longer follows a symlink, and its
+              bytes reach the disk before the rename. Proven by its own
+              decision: with the .tmp path pre-created as a link, pre-fix
+              overwrote the target with config contents, at HEAD the target
+              survives (29a6b59).
+    m_misc.c  the missing fflush/fsync, same commit -- a power loss could
+              commit the rename with an empty file, the outcome the
+              temp-plus-rename exists to prevent.
+    z_zone.c  one helper for "is block->user a real pointer", used by both
+              Z_Free and Z_ChangeTag2, which had diverged into two shapes
+              and disagreed at exactly 0x100 (5e5e6d1).
+    w_wad.c   the dead W_Profile's two unbounded array indices are bounded.
+              Bounded rather than deleted: it is id's code and it was the
+              trap that needed removing (515b64a).
+
+  Split out:
+    DOOM-0427  W_CheckNumForName's linear scan. A self-contained
+               optimisation of the hottest lookup in WAD handling, with a
+               stated equivalence test; squeezing it into a mixed batch is
+               how a core path gets a regression for a LOW-severity win.
+
+  No change needed:
+    v_video.c  usegamma as the DOOM-0384 overwrite target. That
+               kind-confusion primitive is fixed -- M_LoadDefaults refuses
+               a value whose kind disagrees with the table -- and usegamma
+               is clamped at BOTH its write sites (config load and the menu
+               increment), so the use site needs no guard. Verified against
+               current source.
+    m_misc.c   M_SaveDefaults dropping keys it does not know is INFO and
+               needs a config schema version to fix properly. Recorded, not
+               designed here.
+
+  Also found and filed, not in the review: DOOM-0428, where a -file added
+  AFTER a reloadable one has its lumps read out of the reload file.
+
+  Verified across the batch: demo fixtures byte-identical (30/70/350
+  gametics), 68 of 68 IWAD maps boot, make test 16/16,
+  packaging/windows-smoke.sh --syntax-only passes, a legitimate reloadable
+  PWAD still boots identically before and after, and a normal config write
+  produces a complete file with no stale temp left behind.
   **Layman:** The leftovers from reviewing the WAD file reader, the memory allocator and the settings file.
   Kind: investigate.
   Source: review-code 2026-09-01, lane wad-io.
@@ -3965,6 +4027,57 @@ with friends.
   Kind: security.
   Source: review-code 2026-09-01, lane savegame; split out of DOOM-0399 on 2026-09-07.
   Lanes: savegame, security.
+
+- 📋 [DOOM-0427] **W_CheckNumForName scans every lump for every name, so sprite init is quadratic in a PWAD's lump count.**
+  Split out of DOOM-0400, whose other findings shipped 2026-09-07. Held back
+  because it is a self-contained optimisation of the hottest lookup in WAD
+  handling, and squeezing it into a mixed fix batch is how a core path gets a
+  regression for a LOW-severity win.
+
+  W_CheckNumForName is a linear backward scan, and r_things.c runs it per
+  sprite name over every lump, so sprite init is O(sprites x lumps) and
+  scales with a hostile PWAD's lump count.
+
+  The fix is the one Boom and its descendants use: a hash of the 8-character
+  name to a chain of lump indices, built once after W_InitMultipleFiles.
+  Inserting in increasing index order and prepending makes each chain run in
+  DECREASING index order, so the first match is the highest index -- exactly
+  what the backward scan returns, and that equivalence is the whole
+  correctness condition. W_Reload rewrites position and size but never a
+  name, so the table does not need rebuilding.
+
+  Verify by equivalence, not by inspection: make the function compute both
+  the hash answer and the linear answer and abort on any disagreement, then
+  run the 68-map sweep and the demo fixtures. Remove the double-check once
+  clean.
+  **Layman:** Looking up anything in a WAD searches the whole file list from the end. Sprite setup does that once per sprite name, so a downloaded WAD with a lot of entries makes startup crawl.
+  Kind: perf.
+  Source: review-code 2026-09-01, lane wad-io; split out of DOOM-0400 on 2026-09-07.
+  Lanes: wad-io, performance.
+
+- 📋 [DOOM-0428] **A -file added after a reloadable one has its lumps read from the wrong file.**
+  Not one of the review's findings; noticed while fixing DOOM-0400's reload
+  TOCTOU and filed rather than fixed, because it is a separate defect and the
+  commit it would have ridden along in was about something else.
+
+  W_AddFile sets `storehandle = reloadname ? -1 : handle`, testing the GLOBAL
+  reloadname rather than whether THIS file is the reloadable one. So once any
+  -file has been given the `~` prefix, every file added after it also stores
+  handle -1 -- and W_ReadLump reads a handle of -1 by opening reloadname. Its
+  lumps are then read from the reload file at offsets that belong to their
+  own file. The close() at the end of W_AddFile is guarded the same way and
+  has the same problem.
+
+  So `-file ~a.wad b.wad` silently reads b's lumps out of a.wad. Opt-in and
+  undocumented, like the rest of the reload path, which is why it has gone
+  unnoticed.
+
+  The fix is the same shape as DOOM-0400's reloadcount: test whether this
+  file is the one that just registered itself, not whether any file ever did.
+  **Layman:** A rarely-used developer option makes the game reload one WAD as you play. Any WAD listed after it on the command line gets read from the wrong file, so its graphics and sounds come out as nonsense.
+  Kind: fix.
+  Source: in-session-2026-09-07, found while fixing DOOM-0400's reload TOCTOU.
+  Lanes: wad-io.
 
 ## Phase 2 — The Spin
 

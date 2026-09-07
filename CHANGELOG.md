@@ -14,6 +14,14 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **A power loss while saving settings can no longer leave them empty** (DOOM-0400)
+  The new settings are now flushed to the disk before replacing the old
+  ones.
+
+- **A failed read from a WAD is reported instead of silently returning an untouched buffer** (DOOM-0400)
+
+- **A WAD given on the command line with a very short name no longer reads past the start of it** (DOOM-0400)
+
 - **Saving no longer destroys the previous save if the write is interrupted** (DOOM-0399)
   The new save is written alongside the old one and swapped in only once it
   is safely on disk.
@@ -160,6 +168,15 @@ All notable changes to DOOM_Ants are documented here. The format follows
   the last full release.
 
 ### Security
+
+- **Saving settings can no longer be tricked into overwriting another file** (DOOM-0400)
+  The temporary file the game wrote alongside your settings had a
+  predictable name and followed a symbolic link, so anything else on the
+  machine could aim that write at a file of its choosing.
+
+- **Reloading a WAD that has changed size is refused instead of corrupting memory** (DOOM-0400)
+  Only reachable through the developer-only "-file ~name.wad" option. A
+  crafted file could crash the game outright.
 
 - **A crafted map or savegame can no longer trick the loader into an undersized allocation** (DOOM-0399)
 
