@@ -13911,40 +13911,50 @@ parked ideas (💭 considered) until we commit to and design each one.
   Source: review-code 2026-09-01, lane net-drivers.
   Lanes: dead-code.
 
-- 📋 [DOOM-0430] **Uncap the frame rate past the 1993 engine's 35 tics per second, as the id/Bethesda re-release does.**
-  DOOM runs its simulation at a fixed 35 tics per second and draws exactly
-  one frame per tic, so the frame rate is the tic rate. The 2024 id / Bethesda
-  re-release draws at the display's rate and interpolates between tics, which
-  is the shape to copy.
+- 📋 [DOOM-0430] **Draw more frames than the engine's 35 tics per second, as the id/Bethesda re-release does.**
+  This is what the 2024 id/Bethesda re-release does, and it is the fix rather
+  than a way around one. Verified 2026-09-07 before designing to it: that
+  release keeps the game's internal 35 tics per second and raises only the
+  DRAWING rate -- the cap went from 35 to 120, and `cl_engineFPS -1` removes it
+  (doomwiki.org KEX Engine; DOOM + DOOM II community discussion).
 
-  The simulation tic rate must NOT change. It is the demo format, the netgame
-  lockstep and every movement constant; altering it desynchronises demos and
-  breaks multiplayer. The work is to decouple RENDERING from it.
+  The tic rate is not a limitation to be removed. It is the demo format, the
+  netgame lockstep, every movement constant and every animation duration.
+  Raising it re-times the game and desynchronises every existing demo, which is
+  why no source port does it and why the re-release did not. What is wrong today
+  is narrower: the engine draws exactly one frame per tic, so the frame rate is
+  the tic rate.
 
-  What that needs, roughly:
-    - Split the tic loop so the simulation still advances at 35 Hz while the
-      renderer runs free, carrying a fractional position between the last two
-      tics.
-    - Interpolate what the view is built from: player position and angle, the
-      view height bob, sector floor and ceiling heights, and moving sprites.
-      Anything not interpolated will visibly stutter against the rest.
-    - Keep the previous tic's state to interpolate FROM, which is new storage
-      on mobj_t and on the moving-plane thinkers.
-    - Decide what happens to the status bar and menus, which are drawn in
-      integer screen space and do not need it.
+  The work is to let the renderer run free and draw where things genuinely are
+  BETWEEN two updates. Each such frame is a true picture of a real in-between
+  position, not a repeated or invented one.
 
-  Interacts with several things already here: DOOM-0074's build-ahead overlap
-  already separates the CPU frame build from the GPU, INV-10 requires the
-  simulation to stay render-tier-independent, and DOOM-0085's netgame work
-  depends on the tic rate being untouched. Uncapping without interpolation
-  would raise the frame count and look WORSE -- the same 35 distinct positions,
-  shown unevenly -- so interpolation is part of the item, not a follow-up.
+  What that needs:
+    - Split the loop so the simulation still advances at 35 Hz while the
+      renderer runs at the display's rate, carrying a fraction between the last
+      two tics.
+    - Carry that fraction through everything the view is built from: player
+      position and angle, the view bob, sector floor and ceiling heights, and
+      every moving sprite. Anything left out will visibly stutter against the
+      rest, which is the usual way this ships half-done.
+    - Keep the previous tic's state to work from, which is new storage on mobj_t
+      and on the moving-plane thinkers.
+    - Leave the status bar and menus alone; they are drawn in integer screen
+      space and gain nothing.
 
-  Applies to all three tiers: Classic benefits as much as Solid and Ultra.
+  Doing the split without the in-between positions makes things WORSE than the
+  cap -- the same 35 distinct positions shown at uneven intervals -- so the two
+  halves are one item, not a feature and a follow-up.
 
-  Needs a spec before implementation (house rule 14): it touches the tic loop,
-  the renderer and every moving thing, which is well past the threshold in
-  spec-format.md section 1.
+  Interacts with what is already here: DOOM-0074's build-ahead already separates
+  the CPU frame build from the GPU, INV-10 requires the simulation to stay
+  render-tier-independent, and DOOM-0085's netgame work depends on the tic rate
+  being untouched.
+
+  Applies to all three tiers; Classic gains as much as Solid and Ultra.
+
+  Needs a spec first (house rule 14): it touches the tic loop, the renderer and
+  every moving thing.
   **Layman:** The game's movement and its drawing are locked together at 35 frames a second, which is why it can look choppy on a modern monitor. Unlock the drawing so it can run as fast as the screen allows, while the game itself keeps its original timing.
   Kind: feature.
   Source: user-request-2026-09-07.
