@@ -60,19 +60,35 @@ byte*		save_max;
 // it pads is part of the on-disk layout. Padding where vanilla did not would
 // shift the cursor and make every existing .dsg unreadable.
 //
+// DOOM-0399: pad is passed THROUGH to SaveFits rather than folded into count.
+// Forming `pad + count` here is precisely the addition SaveFits was written to
+// avoid, and doing it one line before calling with pad = 0 left that function's
+// documented overflow property true of no shipping caller -- the tested function
+// and the used function were not the same function. The sum cannot wrap for
+// today's callers, which is why this was safe; it is not why it was right.
+static void P_SaveNeedPadded (size_t pad, size_t count, const char* what)
+{
+    size_t	left = (size_t)(save_end - save_p);
+
+    if (!SaveFits (left, pad, count))
+    {
+	size_t	avail = pad > left ? 0 : left - pad;
+
+	I_Error ("P_UnArchive: savegame ends %d byte(s) before its %s",
+		 (int)(count - avail), what);
+    }
+}
+
 void P_SaveNeed (size_t count, const char* what)
 {
-    if (!SaveFits ((size_t)(save_end - save_p), 0, count))
-	I_Error ("P_UnArchive: savegame ends %d byte(s) before its %s",
-		 (int)(count - (size_t)(save_end - save_p)), what);
+    P_SaveNeedPadded (0, count, what);
 }
 
 void P_SaveNeedAligned (size_t count, const char* what)
 {
     size_t	pad = SavePadBytes (save_p);
 
-    // pad is at most 3 and count is a sizeof, so the sum cannot wrap.
-    P_SaveNeed (pad + count, what);
+    P_SaveNeedPadded (pad, count, what);
     save_p += pad;
 }
 
@@ -92,19 +108,30 @@ void P_SaveNeedAligned (size_t count, const char* what)
 // alone run past it. Refusing is the answer rather than growing the buffer,
 // because the whole zone heap is a few megabytes and holds the level too.
 //
+// DOOM-0399: pad passed through rather than folded, as on the read side above.
+static void P_SaveRoomPadded (size_t pad, size_t count, const char* what)
+{
+    size_t	left = (size_t)(save_max - save_p);
+
+    if (!SaveFits (left, pad, count))
+    {
+	size_t	avail = pad > left ? 0 : left - pad;
+
+	I_Error ("P_Archive: savegame buffer is %d byte(s) short of its %s",
+		 (int)(count - avail), what);
+    }
+}
+
 void P_SaveRoom (size_t count, const char* what)
 {
-    if (!SaveFits ((size_t)(save_max - save_p), 0, count))
-	I_Error ("P_Archive: savegame buffer is %d byte(s) short of its %s",
-		 (int)(count - (size_t)(save_max - save_p)), what);
+    P_SaveRoomPadded (0, count, what);
 }
 
 void P_SaveRoomAligned (size_t count, const char* what)
 {
     size_t	pad = SavePadBytes (save_p);
 
-    // pad is at most 3 and count is a sizeof, so the sum cannot wrap.
-    P_SaveRoom (pad + count, what);
+    P_SaveRoomPadded (pad, count, what);
     save_p += pad;
 }
 
