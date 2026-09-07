@@ -652,24 +652,49 @@ void P_GroupLines (void)
     // build line tables for each sector
     // sizeof(*linebuffer): line_t* is 8 bytes on 64-bit, not the original 4.
     linebuffer = P_LevelAlloc (total, sizeof(*linebuffer), "sector line list");
+
+    // DOOM-0399: this used to scan every linedef once per sector, which is
+    // numsectors * numlines and reaches hundreds of millions of iterations on a
+    // large modern PWAD -- paid on every level load. Hand each sector its slice
+    // of the buffer first, then fill them all in ONE walk of the linedefs.
+    //
+    // linecount is borrowed as the per-sector fill cursor: it is correct after
+    // the counting loop above, is used here to size each slice, is zeroed, and
+    // is counted back up to exactly the same value by the walk. So it needs no
+    // second array and ends as it began.
+    //
+    // Order is preserved exactly. The old code appended in linedef order within
+    // each sector, and walking the linedefs once in the same order appends in
+    // the same order -- which matters, because the playsim iterates
+    // sector->lines and takes the first match.
+    sector = sectors;
+    for (i=0 ; i<numsectors ; i++, sector++)
+    {
+	sector->lines = linebuffer;
+	linebuffer += sector->linecount;
+	sector->linecount = 0;
+    }
+
+    li = lines;
+    for (i=0 ; i<numlines ; i++, li++)
+    {
+	li->frontsector->lines[li->frontsector->linecount++] = li;
+
+	if (li->backsector && li->backsector != li->frontsector)
+	    li->backsector->lines[li->backsector->linecount++] = li;
+    }
+
     sector = sectors;
     for (i=0 ; i<numsectors ; i++, sector++)
     {
 	M_ClearBox (bbox);
-	sector->lines = linebuffer;
-	li = lines;
-	for (j=0 ; j<numlines ; j++, li++)
+	for (j=0 ; j<sector->linecount ; j++)
 	{
-	    if (li->frontsector == sector || li->backsector == sector)
-	    {
-		*linebuffer++ = li;
-		M_AddToBox (bbox, li->v1->x, li->v1->y);
-		M_AddToBox (bbox, li->v2->x, li->v2->y);
-	    }
+	    li = sector->lines[j];
+	    M_AddToBox (bbox, li->v1->x, li->v1->y);
+	    M_AddToBox (bbox, li->v2->x, li->v2->y);
 	}
-	if (linebuffer - sector->lines != sector->linecount)
-	    I_Error ("P_GroupLines: miscounted");
-			
+
 	// set the degenmobj_t to the middle of the bounding box
 	sector->soundorg.x = (bbox[BOXRIGHT]+bbox[BOXLEFT])/2;
 	sector->soundorg.y = (bbox[BOXTOP]+bbox[BOXBOTTOM])/2;
@@ -691,6 +716,7 @@ void P_GroupLines (void)
 	block = block < 0 ? 0 : block;
 	sector->blockbox[BOXLEFT]=block;
     }
+
 	
 }
 
