@@ -691,9 +691,19 @@ void W_Profile (void)
 	    else
 		ch = 'P';
 	}
-	info[i][profilecount] = ch;
+	// DOOM-0400: info is int[2500][10] and both indices were unbounded --
+	// numlumps comes from the WAD directory and profilecount only grows.
+	// The function is dead (its one call site in p_setup.c is commented
+	// out), so this is a trap laid for whoever uncomments it rather than a
+	// live defect. Bounded here rather than deleted: it is id's code, and
+	// the trap is what needed removing.
+	if (i < (int)(sizeof(info)/sizeof(info[0]))
+	    && profilecount < (int)(sizeof(info[0])/sizeof(info[0][0])))
+	    info[i][profilecount] = ch;
     }
-    profilecount++;
+
+    if (profilecount < (int)(sizeof(info[0])/sizeof(info[0][0])))
+	profilecount++;
 	
     f = fopen ("waddump.txt","w");
     name[8] = 0;
