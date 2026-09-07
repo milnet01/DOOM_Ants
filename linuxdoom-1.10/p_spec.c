@@ -1164,7 +1164,11 @@ void P_UpdateSpecials (void)
 			buttonlist[i].btexture;
 		    break;
 		}
-		S_StartSound((mobj_t *)&buttonlist[i].soundorg,sfx_swtchn);
+		// DOOM-0398: was &buttonlist[i].soundorg -- the address of the
+		// pointer field, not the pointer. soundorg is the struct's last
+		// member, so S_StartSound read the NEXT button_t's bytes as
+		// coordinates, and past the array for the last slot.
+		S_StartSound(buttonlist[i].soundorg,sfx_swtchn);
 		memset(&buttonlist[i],0,sizeof(button_t));
 	    }
 	}
