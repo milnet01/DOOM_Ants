@@ -3614,7 +3614,7 @@ with friends.
   Source: review-code 2026-09-01, lane r-mesh.
   Lanes: renderer.
 
-- 📋 [DOOM-0418] **More sides[-1] use sites than DOOM-0372 listed: door textures and monster sound propagation.**
+- ✅ [DOOM-0418] **More sides[-1] use sites than DOOM-0372 listed: door textures and monster sound propagation.**
   Found by enumerating every `sidenum` use outside p_setup.c while fixing
   DOOM-0372. Neither is covered by that item's eight sites, and neither is
   closed by its fixes.
@@ -3633,6 +3633,34 @@ with friends.
   in themselves; DOOM-0372 closed them by hardening twoSided(), which is
   their only route today, so a future caller that skips that test would
   reopen the hole.
+  Resolved (2026-09-07) as NOT A DEFECT. No code change: both halves are
+  already covered, and a guard for either would have been dead code of the
+  kind DOOM-0400 removes. Investigated rather than accepted, because the
+  fix looked obvious.
+
+  p_enemy.c (P_RecursiveSound) -- unreachable. P_LineOpening opens with
+  `if (linedef->sidenum[1] == -1) { openrange = 0; return; }`, and the walk
+  does `P_LineOpening(check); if (openrange <= 0) continue;` BEFORE the
+  sides[] read. A line with no back sidedef is skipped there.
+  Proven, not reasoned: built the twosidedstub fixture (an appended
+  ML_TWOSIDED linedef with no back sidedef) plus a new firing demo, put a
+  temporary probe both at the top of P_RecursiveSound and where the guard
+  would sit, and played it. The sound walk ran 284 times; the guard site
+  was reached zero times. The call count is the load-bearing half -- zero
+  trips alone would also be what a demo that never fired looks like.
+
+  p_doors.c -- the item names T_VerticalDoor's texture handling, and that
+  function's sidenum use is already guarded by DOOM-0372. The unguarded
+  midtexture reads and writes are in the SLIDING-door code
+  (P_FindSlidingDoorType, T_SlidingDoor, EV_SlidingDoor), which DOOM never
+  shipped: both call sites are commented out, in p_spec.c and p_switch.c.
+  Real about the code, unreachable in the product -- the same disposition
+  as DOOM-0414. If sliding doors are ever enabled, guard those four sites
+  first.
+
+  Left behind: scripts/make_demo_fixture.py gained a `walkfire` mode. Firing
+  is the only route to P_NoiseAlert and so the only way any fixture can
+  reach the sound-propagation walk, and nothing could supply it before.
   **Layman:** Fixing the eight known cases turned up more places doing the same unchecked thing with a map's "no side here" marker. None was in the original list.
   Kind: security.
   Source: in-session-2026-09-02, found while fixing DOOM-0372.

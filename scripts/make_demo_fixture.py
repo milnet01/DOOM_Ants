@@ -27,6 +27,7 @@ import sys
 
 DEMO_VERSION = 110      # doomdef.h: enum { VERSION = 110 }
 DEMOMARKER = 0x80       # g_game.c
+BT_ATTACK = 1           # d_event.h
 BT_USE = 2              # d_event.h
 
 
@@ -49,7 +50,7 @@ def pwad(path, lumps):
 
 
 def demo(consoleplayer, tics, terminator, forwardmove=0, use=False,
-         angleturn=0):
+         angleturn=0, fire=False):
     """A 13-byte demo header, `tics` ticcmds, and optionally its marker.
 
     A ticcmd is forwardmove, sidemove, angleturn, buttons. Empty ones are all
@@ -69,6 +70,12 @@ def demo(consoleplayer, tics, terminator, forwardmove=0, use=False,
         # The use key fires on the press, not while held (P_PlayerThink tracks
         # usedown), so it has to be released between taps.
         buttons = BT_USE if (use and (t // 4) % 2 == 0) else 0
+        # Attack is held, not tapped: the pistol repeats while it is down, and
+        # each shot calls P_NoiseAlert -- which is the only way to reach
+        # P_RecursiveSound, and so the only way a fixture can exercise a guard
+        # on the sound-propagation walk.
+        if fire:
+            buttons |= BT_ATTACK
         body += bytes([forwardmove & 0xFF, 0, angleturn & 0xFF, buttons])
     return head + body + (bytes([DEMOMARKER]) if terminator else b"")
 
@@ -91,6 +98,12 @@ CASES = {
     # all. The demo stores angleturn as one byte shifted up 8, so 2 is about
     # three degrees a tic and the sweep covers the room.
     "walkuse":   lambda: demo(0, 350, True, forwardmove=50, use=True,
+                              angleturn=2),
+    # Running and shooting. Firing is what calls P_NoiseAlert, which floods
+    # sound through the sectors around the player -- the only route into
+    # P_RecursiveSound, and so the only way to reach a guard on that walk
+    # (DOOM-0418). Turning as well, so the flood reaches more of the map.
+    "walkfire":  lambda: demo(0, 350, True, forwardmove=50, fire=True,
                               angleturn=2),
 }
 
