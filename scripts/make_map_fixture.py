@@ -31,6 +31,7 @@ rather than deleting, and orphanline is the mode that gets past it.
     twosidedstub  ML_TWOSIDED line, no back side  DOOM-0372    counterfactual
     doorstub      manual door on a one-sided wall DOOM-0372    counterfactual
     badthingtype  THINGS entries of type 0 and -1  DOOM-0397    I_Error, by name
+    nostart       player-1 start retyped to an Imp DOOM-0397   I_Error, by name
 
 Usage:  make_map_fixture.py <mode> <iwad> <out.wad>
 
@@ -287,6 +288,24 @@ def mutate_badthingtype(group):
     return replace(group, "THINGS", things + extra)
 
 
+def mutate_nostart(group):
+    """Retype the player-1 start so the map has no start for player 1.
+
+    Type 3001 is an Imp -- a thing that spawns normally, so the map is
+    otherwise playable and the only thing missing is the start itself.
+    Nothing else in the lump group references THINGS, so no index moves.
+    """
+    things = bytearray(dict(group)["THINGS"])
+    for i in range(len(things) // THING_SIZE):
+        base = i * THING_SIZE
+        if struct.unpack_from("<h", things, base + 6)[0] == 1:
+            struct.pack_into("<h", things, base + 6, 3001)
+            break
+    else:
+        raise SystemExit("that map has no player-1 start to remove")
+    return replace(group, "THINGS", bytes(things))
+
+
 MODES = {
     "valid": lambda g: g,
     "orphanline": mutate_orphanline,
@@ -297,6 +316,7 @@ MODES = {
     "twosidedstub": mutate_twosidedstub,
     "doorstub": mutate_doorstub,
     "badthingtype": mutate_badthingtype,
+    "nostart": mutate_nostart,
 }
 
 

@@ -693,6 +693,11 @@ P_SetupLevel
     {
 	players[i].killcount = players[i].secretcount 
 	    = players[i].itemcount = 0;
+	// DOOM-0397: every mobj is about to be freed by the Z_FreeTags below,
+	// so this pointer is dangling from here on. Clearing it is what lets
+	// the post-spawn check at the end of this function tell "no start on
+	// this map" from "start found", instead of reading last level's mobj.
+	players[i].mo = NULL;
     }
 
     // Initial height of PointOfView
@@ -799,6 +804,14 @@ P_SetupLevel
 	    }
 			
     }
+
+    // DOOM-0397: a map with no start for an active player leaves players[i].mo
+    // NULL, and P_PlayerThink dereferences it on the very first tic. There is
+    // nowhere to put that player, so refuse the map here by name rather than
+    // crashing a tic later.
+    for (i=0 ; i<MAXPLAYERS ; i++)
+	if (playeringame[i] && !players[i].mo)
+	    I_Error ("P_SetupLevel: map has no player %d start", i+1);
 
     // clear special respawning que
     iquehead = iquetail = 0;		
