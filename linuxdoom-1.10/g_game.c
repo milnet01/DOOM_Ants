@@ -71,6 +71,8 @@ rcsid[] __attribute__((used)) = "$Id: g_game.c,v 1.8 1997/02/03 22:45:09 b1 Exp 
 
 #include "g_game.h"
 
+#include "save_signature.h"
+
 
 // 512 KiB. The original 0x2c000 (180 KiB) was sized for 1997 32-bit structs;
 // on 64-bit every saved pointer field doubles, so a busy stock level's save
@@ -1420,7 +1422,7 @@ void G_DoLoadGame (void)
     // field, then the version field the compare below reads. strncmp rather than
     // strcmp for that compare — the stored version is exactly VERSIONSIZE bytes
     // and a crafted file need not put a terminator in it.
-    P_SaveNeed (SAVESTRINGSIZE + VERSIONSIZE, "header");
+    P_SaveNeed (SAVESTRINGSIZE + VERSIONSIZE + SAVE_SIGNATURE_SIZE, "header");
     save_p += SAVESTRINGSIZE;
 
     // skip the description field
@@ -1466,6 +1468,46 @@ void G_DoLoadGame (void)
 	return;
     }
     save_p += VERSIONSIZE;
+
+    // DOOM-0426: the version above is id's 1.10 number, which does not move when
+    // this fork changes an archived struct -- so two builds that lay mobj_t out
+    // differently both call themselves "version 110" and read each other's saves
+    // as garbage. The stamped layout signature is what tells them apart.
+    //
+    // A save written before this field existed has skill/episode/map here
+    // instead, which will not match either, so it is refused by the same test.
+    {
+	char	scheck[SAVE_SIGNATURE_SIZE];
+
+	SaveFormatSignature (scheck,
+			     (unsigned) sizeof(mobj_t),
+			     (unsigned) sizeof(player_t),
+			     (unsigned) sizeof(sector_t),
+			     (unsigned) sizeof(void *));
+
+	if (memcmp (save_p, scheck, SAVE_SIGNATURE_SIZE))
+	{
+	    Z_Free (savebuffer);
+	    savebuffer = NULL;
+
+	    players[consoleplayer].message = GGLOADFAIL;
+	    printf ("G_DoLoadGame: %s was written by a build whose data layout "
+		    "differs from this one -- refusing it rather than reading "
+		    "it as this build's structs\n", savename);
+
+	    // The same recovery the version refusal above takes: without a
+	    // player body there is no level to return to, so fall back to the
+	    // title rather than letting P_Ticker run with a NULL mobj.
+	    if (!players[consoleplayer].mo)
+	    {
+		gamestate = GS_DEMOSCREEN;
+		D_StartTitle ();
+	    }
+
+	    return;
+	}
+    }
+    save_p += SAVE_SIGNATURE_SIZE;
 
     // skill, episode and map, then one in-game flag per player, then the three
     // bytes of leveltime read after G_InitNew.
@@ -1548,7 +1590,8 @@ void G_DoSaveGame (void)
     // DOOM-0374: every write below is asked for first, so the buffer is checked
     // before it is overrun rather than after. The header is fixed-size, so it is
     // bounded in one go, mirroring the load path above.
-    P_SaveRoom (SAVESTRINGSIZE + VERSIONSIZE + 3 + MAXPLAYERS + 3, "header");
+    P_SaveRoom (SAVESTRINGSIZE + VERSIONSIZE + SAVE_SIGNATURE_SIZE
+		+ 3 + MAXPLAYERS + 3, "header");
 
     memcpy (save_p, description, SAVESTRINGSIZE);
     save_p += SAVESTRINGSIZE; 
@@ -1556,6 +1599,16 @@ void G_DoSaveGame (void)
     sprintf (name2,"version %i",VERSION); 
     memcpy (save_p, name2, VERSIONSIZE); 
     save_p += VERSIONSIZE; 
+
+    // DOOM-0426: VERSION is id's 1.10 number and does not move when this fork
+    // changes an archived struct, so it cannot tell two builds apart. Stamp the
+    // layout the file is actually written in. save_signature.h owns the format.
+    SaveFormatSignature ((char *)save_p,
+			 (unsigned) sizeof(mobj_t),
+			 (unsigned) sizeof(player_t),
+			 (unsigned) sizeof(sector_t),
+			 (unsigned) sizeof(void *));
+    save_p += SAVE_SIGNATURE_SIZE;
 	 
     *save_p++ = gameskill; 
     *save_p++ = gameepisode; 
