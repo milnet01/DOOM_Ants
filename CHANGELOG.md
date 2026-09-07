@@ -8,6 +8,21 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **A map thing whose type is not positive no longer spawns a stray player or aborts the level load** (DOOM-0397)
+  A THINGS record of type -1 matched MT_PLAYER's doomednum and spawned a
+  player-shaped monster with no player behind it; type 0 quit the game
+  during level load. Both are now ignored.
+
+- **A map with no start position for a player is refused by name instead of crashing** (DOOM-0397)
+  On the first level the game crashed on a null pointer; on a level change
+  it read memory it had just released. It now says which player's start is
+  missing and stops.
+
+- **Telling monsters to forget you no longer crashes the game with a BFG shot in flight** (DOOM-0397)
+  Developer builds only. A missile stores its owner in the same field a
+  monster stores its prey, and clearing it left the BFG's spray with
+  nothing to aim from.
+
 - **Hostile sound data, network packets and a bare -net switch can no longer take the game down** (DOOM-0386)
   A sound in an add-on file could claim an absurd recording speed, which made
   the game try to reserve about eleven gigabytes and get itself killed by the

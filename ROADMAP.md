@@ -2961,7 +2961,7 @@ with friends.
   Source: review-code 2026-09-01, lane platform.
   Lanes: audio, network, security.
 
-- 📋 [DOOM-0397] **Playsim review tail: three findings not covered by DOOM-0369 or DOOM-0372.**
+- ✅ [DOOM-0397] **Playsim review tail: three findings not covered by DOOM-0369 or DOOM-0372.**
   Verified against current source by the lane. Filed so each has an addressable
   home; none is covered by DOOM-0369 or DOOM-0372.
 
@@ -2977,6 +2977,31 @@ with friends.
     - LOW p_user.c:242 -- P_SetupLevel never verifies a start exists per
       playeringame[i]; a map with no player-1 start NULL-derefs in the first
       P_PlayerThink.
+  Resolved (2026-09-07): all three fixed, one commit each.
+
+  p_enemy.c -- P_ForgetPlayerTargets now skips MF_MISSILE, so a BFG ball in
+  flight keeps the owner pointer A_BFGSpray hands to P_AimLineAttack. DEV
+  builds only; the guard's own decision needs a missile plus the menu toggle,
+  which is interactive input, so it is reasoned rather than observed firing
+  (9bfa011).
+
+  p_mobj.c -- a type <= 0 map thing is ignored. The filed claim understated
+  it: 19 mobjinfo entries carry doomednum -1 and mobjinfo[0] is MT_PLAYER, so
+  type -1 did not reach I_Error at all, it spawned a stray player-shaped mobj
+  with a NULL player field. Type 0 did abort the load. Both ignored; the
+  I_Error for unknown POSITIVE types is left as released (716db80).
+
+  p_setup.c -- a map with no start for an active player is refused by name.
+  Also worse than filed: on a level CHANGE players[i].mo was a dangling
+  pointer into memory Z_FreeTags had just released, not NULL, so no NULL test
+  would have caught it. mo is now cleared in the existing per-player reset
+  loop and checked after P_LoadThings (a2fd011).
+
+  Two guards proven by their own decision, A/B against a pre-fix build of
+  HEAD, on two new make_map_fixture.py modes: badthingtype (pre-fix
+  "Unknown type 0", exit 255; at HEAD boots) and nostart (pre-fix SIGSEGV
+  exit 139; at HEAD "map has no player 1 start"). No misfire: 68 of 68 IWAD
+  maps boot, all ten fixture modes generate, make test 15/15.
   **Layman:** The leftovers from the review of the game-logic code, after the serious memory bugs were filed separately. Each needs checking and then fixing or dismissing.
   Kind: investigate.
   Source: review-code 2026-09-01, lane playsim.
