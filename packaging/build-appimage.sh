@@ -29,11 +29,61 @@ OUT="$BUILD/doom_ants-$VERSION-x86_64.AppImage"
 make -C "$REPO/linuxdoom-1.10"
 
 # 2. Fetch the AppImage toolchain (cached under packaging/tools, git-ignored).
+#
+# DOOM-0259: pinned to release tags with recorded hashes. These are downloaded
+# and then EXECUTED, so the build has to know what it is running; the rolling
+# `continuous` tag it used before could change under us between two builds of
+# the same commit, and nothing would notice.
+#
+# To move a pin: change the tag, run this script, and copy the sha256 it prints
+# on the mismatch. Verify the new hash against the upstream release page before
+# committing it -- copying whatever came down defeats the point.
+LINUXDEPLOY_TAG=1-alpha-20251107-1
+LINUXDEPLOY_SHA=c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d
+
+APPIMAGETOOL_TAG=1.9.1
+APPIMAGETOOL_SHA=ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
+
+RUNTIME_TAG=20251108
+RUNTIME_SHA=2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
+
 mkdir -p "$TOOLS"
-fetch() { [ -f "$TOOLS/$1" ] || curl -fsSL -o "$TOOLS/$1" "$2"; chmod +x "$TOOLS/$1"; }
-fetch linuxdeploy.AppImage  https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-fetch appimagetool.AppImage https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
-fetch runtime-x86_64        https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64
+
+# fetch <name> <url> <sha256>
+#
+# The hash is checked on EVERY run, not only after a download: the cache is a
+# plain directory, so a file already sitting there is exactly as untrusted as
+# one arriving now. A mismatch removes the file, so the next run re-fetches
+# rather than failing forever on a bad cache entry.
+fetch() {
+    dest="$TOOLS/$1"
+
+    if [ ! -f "$dest" ]; then
+        curl -fsSL -o "$dest" "$2" || { rm -f "$dest"; exit 1; }
+    fi
+
+    got="$(sha256sum "$dest" | cut -d' ' -f1)"
+    if [ "$got" != "$3" ]; then
+        echo "build-appimage.sh: $1 is not the pinned build -- refusing to run it." >&2
+        echo "  expected $3" >&2
+        echo "  got      $got" >&2
+        echo "  from     $2" >&2
+        rm -f "$dest"
+        exit 1
+    fi
+
+    chmod +x "$dest"
+}
+
+fetch linuxdeploy.AppImage \
+      "https://github.com/linuxdeploy/linuxdeploy/releases/download/$LINUXDEPLOY_TAG/linuxdeploy-x86_64.AppImage" \
+      "$LINUXDEPLOY_SHA"
+fetch appimagetool.AppImage \
+      "https://github.com/AppImage/appimagetool/releases/download/$APPIMAGETOOL_TAG/appimagetool-x86_64.AppImage" \
+      "$APPIMAGETOOL_SHA"
+fetch runtime-x86_64 \
+      "https://github.com/AppImage/type2-runtime/releases/download/$RUNTIME_TAG/runtime-x86_64" \
+      "$RUNTIME_SHA"
 
 # 3. Assemble the AppDir.
 rm -rf "$APPDIR"
