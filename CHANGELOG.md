@@ -6,7 +6,25 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Levels load faster, noticeably so on large custom maps** (DOOM-0399)
+  Building each room's wall list used to re-scan every wall in the map once
+  per room. Verified to produce identical results on all 68 original maps.
+
 ### Fixed
+
+- **Saving no longer destroys the previous save if the write is interrupted** (DOOM-0399)
+  The new save is written alongside the old one and swapped in only once it
+  is safely on disk.
+
+- **Loading a save from a different build says so instead of doing nothing** (DOOM-0399)
+  The menu simply closed, with no way to tell a refused load from one that
+  worked.
+
+- **Maps that the original game played but this build refused now load again** (DOOM-0399)
+  A wall marked as having two sides but supplying only one is treated as
+  one-sided rather than rejected.
 
 - **A lift or floor that lowers and changes its surface no longer quits the game** (DOOM-0398)
   The floor copied a leftover value into the sector when no neighbouring
@@ -142,6 +160,8 @@ All notable changes to DOOM_Ants are documented here. The format follows
   the last full release.
 
 ### Security
+
+- **A crafted map or savegame can no longer trick the loader into an undersized allocation** (DOOM-0399)
 
 - **A map naming something that is not a floor texture is now refused** (DOOM-0381)
   A map could name any piece of data in the WAD as its floor, and the original

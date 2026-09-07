@@ -3084,7 +3084,7 @@ with friends.
   Source: review-code 2026-09-01, lane playsim-world.
   Lanes: playsim.
 
-- 📋 [DOOM-0399] **Savegame and level-load review tail: eleven findings, including the BLOCKMAP guard's own line.**
+- ✅ [DOOM-0399] **Savegame and level-load review tail: eleven findings, including the BLOCKMAP guard's own line.**
   DOOM-0370 covers the BLOCKMAP defect and cites p_maputl.c:491; the guard itself
   is at p_setup.c:537 and is repeated here so the fix site is addressable.
 
@@ -3127,6 +3127,54 @@ with friends.
   (423b040). The remaining ten findings here are untouched. Recorded so a
   later session does not re-fix it, and so a sweep for open CRITICALs does
   not keep matching this bullet.
+  Resolved (2026-09-07). The CRITICAL was already closed 2026-09-02. Of
+  the remaining ten: seven fixed, one split out for a decision, two need
+  no change.
+
+  Fixed, one commit each:
+    p_setup.c   a two-sided linedef with no back sidedef loads again, as
+                vanilla played it. This is the compatibility call the
+                finding asked for and it went the permissive way; the
+                FRONT sidedef keeps DOOM-0422's refusal, because that one
+                has no fallback and this one does (6163087).
+    p_saveg.c   a save may not give a body to a player who is not in the
+                game -- in range is not the same as in the game (e4b5023).
+    g_game.c    a version-mismatched save says so instead of being a
+                silent no-op. A/B on a crafted "version 109" save loaded
+                with -loadgame: pre-fix printed nothing at all (c817508).
+    p_setup.c   eight per-level allocations now refuse a count whose byte
+                size Z_Malloc's int cannot hold. New level_bounds.h +
+                tests/level_bounds_test.cpp, following wad_bounds.h's
+                pattern; the test was proven red before being trusted, and
+                that break caught a bug in the test itself (225540d).
+    m_misc.c    a savegame is replaced in one step rather than truncated
+                first, so an interrupted write no longer destroys the save
+                it replaces. New M_WriteFileAtomic, reusing DOOM-0353's
+                Windows MoveFileExA path (ebfc2e6).
+    p_setup.c   P_GroupLines builds the sector line tables in ONE walk
+                instead of one full scan per sector. Proven identical
+                rather than argued: both trees instrumented with a hash
+                over every sector's ordered line list, soundorg and
+                blockbox, 68 of 68 maps identical (0fc20a0).
+    p_saveg.c   SaveFits' pad argument is passed through instead of being
+                folded into count -- the tested function and the used
+                function were not the same function (1a7bd1c).
+
+  Split out: the save format's missing struct-version gate is DOOM-0426.
+  Every fix for it invalidates existing saves, which is the user's call.
+
+  No change needed:
+    p_setup.c   li->frontsector->linecount++ is no longer reachable with a
+                null frontsector: DOOM-0422 refuses a linedef with no front
+                sidedef at load, so the case the finding describes cannot
+                occur. Verified against current source.
+    p_setup.c   the break-should-be-continue THINGS bug is preserved
+                vanilla and the finding says so itself.
+
+  Verified across the batch: all five demo fixtures byte-identical to the
+  pre-session baseline (30/30/30/70/350 gametics), 68 of 68 IWAD maps boot,
+  make test 16/16, a real savegame loads unchanged, a truncated one is still
+  refused, and packaging/windows-smoke.sh --syntax-only passes.
   **Layman:** The leftovers from reviewing saved games and map loading, including the exact line where the map-block check stops short.
   Kind: investigate.
   Source: review-code 2026-09-01, lane savegame.
@@ -3882,6 +3930,41 @@ with friends.
   Kind: test.
   Source: user-request-2026-09-07.
   Lanes: testing, game-loop, backend-seam.
+
+- 📋 [DOOM-0426] **A savegame's only version gate is the engine version, which does not move when a struct does.**
+  Split out of DOOM-0399, whose other ten findings shipped 2026-09-07. Held
+  back because every fix for it invalidates existing saves, which is the
+  user's call and not a session's.
+
+  The on-disk format is a raw struct image. The only gate is g_game.c's
+  strncmp against "version %i" of VERSION -- the 1997 DOOM engine version,
+  which is 110 and does not move when this fork changes a struct. So two
+  builds of one version, or a 32- against a 64-bit build, load each other's
+  saves as garbage rather than refusing them. And that garbage is the
+  attacker-controlled state DOOM-0373's write primitives consume, so this is
+  a security question as well as a correctness one.
+
+  Options, cheapest first:
+    - Stamp a struct signature beside the version -- sizeof(mobj_t),
+      sizeof(player_t), sizeof(sector_t) and the pointer width -- and refuse
+      a mismatch. Cheap, catches every case named above, and needs no format
+      redesign.
+    - Add a format version this fork owns, bumped by hand whenever an
+      archived struct changes. Catches more, but only if someone remembers.
+    - Serialise field by field instead of memcpy-ing structs. Correct, and a
+      much bigger job; it would also make saves portable between builds
+      rather than merely refusing them.
+
+  Any of the three makes existing .dsg files unreadable, including the three
+  in the repository root. Worth deciding alongside whether those belong in
+  the repository at all.
+
+  The related diagnosis half is already fixed: a rejected save now says so
+  rather than being a silent no-op (c817508).
+  **Layman:** Saved games are a raw copy of the game's memory. Two builds that call themselves the same version can lay that memory out differently, and each will read the other's saves as nonsense rather than refusing them.
+  Kind: security.
+  Source: review-code 2026-09-01, lane savegame; split out of DOOM-0399 on 2026-09-07.
+  Lanes: savegame, security.
 
 ## Phase 2 — The Spin
 
