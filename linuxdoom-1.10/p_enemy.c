@@ -590,6 +590,13 @@ void P_ForgetPlayerTargets (void)
 
 	mo = (mobj_t *)th;
 
+	// DOOM-0397: for a missile, target is its OWNER, not its prey, and
+	// consumers dereference it without a NULL test -- A_BFGSpray hands it
+	// straight to P_AimLineAttack (p_map.c), which reads t1->x. Nulling it
+	// on a BFG ball already in flight crashes the frame it detonates.
+	if (mo->flags & MF_MISSILE)
+	    continue;
+
 	if (mo->target && mo->target->player)
 	{
 	    mo->target    = NULL;
