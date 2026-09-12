@@ -311,7 +311,14 @@ void D_Display (void)
     }
 
     // see if the border needs to be updated to the screen
-    if (gamestate == GS_LEVEL && !automapactive && scaledviewwidth != 320)
+    //
+    // DOOM-0402: SCREENWIDTH, not the literal 320. This is the second half of
+    // the stale comparison DOOM-0254 corrected in R_FillBackScreen and did not
+    // carry here: scaledviewwidth counts PHYSICAL columns, so since DOOM-0027's
+    // hi-res buffer it has never equalled 320 and the full-view case stopped
+    // being recognised. It was harmless only because R_DrawViewBorder repeats
+    // the same test correctly and returns, so the branch ran and did nothing.
+    if (gamestate == GS_LEVEL && !automapactive && scaledviewwidth != SCREENWIDTH)
     {
 	if (menuactive || menuactivestate || !viewactivestate)
 	    borderdrawcount = 3;
