@@ -23,6 +23,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **A broken wall texture no longer leaves the rest of its columns pointing at nothing** (DOOM-0402)
+  A texture with a gap in it stopped the engine part-way through preparing it, and every later column of that texture was left uninitialised.
+
+- **The field of view is now correct at smaller screen sizes on a widescreen display** (DOOM-0402)
+  Shrinking the view with Screen Size kept the wide field of view but not the extra width to draw it in, so the picture was squeezed horizontally. Only full-screen was right. Nothing changes on a 4:3 display.
+
 - **Bounded four more command-line options against bad input** (DOOM-0401)
   `-wart` with a missing map crashed; `-maxdemo 0` recorded into a zero-sized buffer; `-warpto` with a huge coordinate silently put the player somewhere else and said it had worked; an empty or unreadable @response file was read as garbage arguments.
 
@@ -43,6 +49,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
   or by leftover nonsense if it was the first line.
 
 ### Security
+
+- **Refuse a WAD whose texture lumps claim more than they hold** (DOOM-0402)
+  A crafted WAD could make the engine read past the end of its texture list. It now says which lump is wrong and stops.
+
+- **Refuse a WAD with no flats, no sprite lumps or no wall textures** (DOOM-0402)
+  These counts come from the WAD and could go to zero or below, which the engine then used as an array size.
 
 - **Refuse a network game with more players than DOOM can represent** (DOOM-0401)
   Joining with more than four hosts wrote past the end of the player list. The engine now says so and stops instead.

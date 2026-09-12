@@ -3501,6 +3501,34 @@ with friends.
       iteration, and the DOOM-0254 backstop permits newend == solidsegs+MAXSEGS.
     - LOW r_data.c:848 -- three precache VLAs sized from numflats/numtextures/
       numsprites with no positivity check.
+  Progress (2026-09-12): six of the eight findings fixed, one commit
+  each, all pushed. Done: the TEXTURE1/TEXTURE2 and per-texture patch
+  counts (WadCountFitsLump in wad_bounds.h, shared with PNAMES);
+  R_GenerateLookup finishing its loop instead of returning and leaving
+  later columns uninitialised; V_DrawBlock/V_GetBlock bounded against
+  their own buffer, with screenheight[] added beside screenwidth[];
+  the clip-list crunch pre-incrementing so it stops reading one past
+  newend; degenerate flat / sprite-lump / texture counts refused where
+  they are computed; and the Screen Size <= 9 widescreen FOV, where the
+  window now scales with the buffer.
+
+  Two left. The border bevel (r_draw.c, brdr_r dropped and the other
+  three invisible on widescreen at Screen Size <= 9) is next and
+  untouched. V_PostInBounds's siblings -- the patch's own columnofs and
+  post source run against the lump length -- is NOT fixable inside this
+  bundle: patch_bounds.h already has the three predicates, but
+  V_DrawPatch has no lump length to give them and there are over a
+  hundred call sites. That is an API change, and it is filed separately.
+
+  New tooling this bundle: make_wad_fixture.py gained texcount,
+  texpatches, texgap and noflats, and its scope widened from the lump
+  directory to the whole-WAD lumps R_InitTextures parses. A texture
+  fixture must carry an empty TEXTURE2 or the IWAD's own names patch
+  indices that no longer resolve.
+
+  Measured and worth keeping: the screen wipe advances by wall-clock
+  ticks in D_Display, so any framebuffer comparison must start after it
+  -- three runs of one binary at Screen Size 6 gave three hashes.
   **Layman:** The leftovers from reviewing the original 1993 renderer. Two are widescreen bugs this project introduced: at smaller screen sizes the field of view is wrong, and the decorative border around the view is drawn off-screen.
   Kind: investigate.
   Source: review-code 2026-09-01, lane sw-renderer.
@@ -4384,6 +4412,51 @@ with friends.
   Kind: implement.
   Source: user-request-2026-09-12.
   Lanes: renderer, tooling.
+
+- 📋 [DOOM-0432] **V_DrawPatch trusts a patch's own column offsets, because it is never told how long the lump is.**
+  Split out of DOOM-0402, whose other seven findings are fixed. This one is
+  an API change, not a bounds check, and doing it inside that bundle would
+  have been either a quadratic reverse lookup or a hundred-call-site
+  refactor performed under a LOW heading.
+
+  V_PostInBounds already refuses a post that overruns the patch's declared
+  HEIGHT, which is what stops the blit walking off the destination buffer.
+  What is still unchecked is the patch's own extent: LONG(patch->columnofs
+  [col]) is followed wherever it points, and the post chain is walked on the
+  lump's own say-so. Both are reads past the cached lump, and the bytes land
+  in the framebuffer. Three call sites: V_DrawPatchGeneral, V_DrawPatchScaled
+  and the third blitter beside them.
+
+  DOOM-0228 solved exactly this for the Vulkan atlas builder, and
+  patch_bounds.h already carries the decisions -- PatchHeaderFits,
+  PatchColumnFits, PatchPostFits. They all take a lump length. r_mesh.c had
+  one because it had the lump number; V_DrawPatch is handed a patch_t* and
+  nothing else.
+
+  So the work is to give the patch blitters an extent. Options, and this
+  item is to choose between them rather than assume one:
+
+    - Validate once at cache time -- a W_CacheLumpNumAsPatch that checks the
+      header, every column offset and every post chain against
+      W_LumpLength, and I_Errors or substitutes a safe stub. One check per
+      lump rather than per draw, and callers keep their signature. The
+      question is which of the 100-plus V_DrawPatch call sites route through
+      it, since a caller that keeps using W_CacheLumpName is unprotected and
+      looks identical.
+    - Carry the extent in the call -- a bounded entry point taking the lump
+      length, with V_DrawPatch as a wrapper. Honest but it moves the problem
+      to every caller.
+    - Reverse-lookup the length from the pointer via lumpinfo[].cache. Cheap
+      to write and O(numlumps) per draw; DOOM-0427 already files one
+      quadratic lump scan as a defect, so adding a second is the wrong
+      direction.
+
+  Not reachable from the shipped IWADs -- every stock patch is well formed.
+  A PWAD is untrusted input and this is a read primitive, not a write.
+  **Layman:** The software renderer draws pictures out of the WAD file while trusting the file's own description of where each piece of the picture lives. A crafted WAD can point that anywhere, and whatever is at that address gets drawn on screen.
+  Kind: security.
+  Source: review-code 2026-09-01, lane sw-renderer; split out of DOOM-0402 on 2026-09-12.
+  Lanes: sw-renderer.
 
 ## Phase 2 — The Spin
 
