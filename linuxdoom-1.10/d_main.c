@@ -1537,17 +1537,14 @@ void D_DoomMain (void)
     printf ("ST_Init: Init status bar.\n");
     ST_Init ();
 
-    // check for a driver that wants intermission stats
-    p = M_CheckParm ("-statcopy");
-    if (p && p<myargc-1)
-    {
-	// for statistics driver
-	extern  void*	statcopy;                            
+    // DOOM-0401: `-statcopy <address>` is gone. It turned a command-line
+    // integer into a pointer, and G_DoCompleted memcpy'd sizeof(wminfo) bytes
+    // through it -- an arbitrary write at an operator-chosen address. It was a
+    // 1997 DOS hook for an external statistics driver that ran in the same
+    // address space; nothing in this fork provides one, and on a 64-bit host an
+    // atoi result cannot name a valid address in this process anyway. There is
+    // no correct value to pass, so the flag is removed rather than bounded.
 
-	statcopy = (void*)(intptr_t)atoi(myargv[p+1]);
-	printf ("External statistics registered.\n");
-    }
-    
     // start the apropriate game based on parms
     p = M_CheckParm ("-record");
 

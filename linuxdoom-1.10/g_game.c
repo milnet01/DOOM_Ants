@@ -228,7 +228,6 @@ char		savedescription[32];
 mobj_t*		bodyque[BODYQUESIZE]; 
 int		bodyqueslot; 
  
-void*		statcopy;				// for statistics driver
  
  
  
@@ -1383,9 +1382,6 @@ void G_DoCompleted (void)
     viewactive = false; 
     automapactive = false; 
  
-    if (statcopy)
-	memcpy (statcopy, &wminfo, sizeof(wminfo));
-	
     WI_Start (&wminfo); 
 } 
 
