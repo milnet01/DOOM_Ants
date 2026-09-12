@@ -1080,13 +1080,28 @@ void FindResponseFile (void)
 		exit(1);
 	    }
 	    printf("Found response file %s!\n",&myargv[i][1]);
-	    fseek (handle,0,SEEK_END);
-	    size = ftell(handle);
-	    fseek (handle,0,SEEK_SET);
+	    // DOOM-0401: the response file is outside data and its length came
+	    // from an unchecked ftell (security.md's "check return values"
+	    // rule names ftell and fread by name). A failed ftell returns -1,
+	    // which became the malloc size; an empty file gave a zero-byte
+	    // block the token loop then read; and an unchecked fread left the
+	    // tail of the buffer uninitialised, from where those bytes became
+	    // myargv entries.
+	    if (fseek (handle,0,SEEK_END) != 0)
+		I_Error ("FindResponseFile: cannot seek %s", &myargv[i][1]);
+	    size = ftell (handle);
+	    if (size <= 0)
+		I_Error ("FindResponseFile: %s is empty or its size is unknown",
+			 &myargv[i][1]);
+	    if (fseek (handle,0,SEEK_SET) != 0)
+		I_Error ("FindResponseFile: cannot rewind %s", &myargv[i][1]);
 	    file = malloc (size);
 	    if (!file)
 		I_Error ("FindResponseFile: out of memory reading response file");
-	    fread (file,size,1,handle);
+	    // One item of `size` bytes, so a short read returns 0 rather than a
+	    // partial count -- there is no partially-filled buffer to accept.
+	    if (fread (file,size,1,handle) != 1)
+		I_Error ("FindResponseFile: short read on %s", &myargv[i][1]);
 	    fclose (handle);
 			
 	    // KEEP ALL CMDLINE ARGS FOLLOWING @RESPONSEFILE ARG
