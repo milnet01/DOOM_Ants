@@ -1521,7 +1521,7 @@ void M_DrawOptions(void)
     // (v2 §4.6: the FPS row that used to sit here was removed -- it now lives in
     // the Video menu / RendererDef only.)
     M_WriteText(OptionsDef.x + 88,OptionsDef.y+LINEHEIGHT*renderer,
-		(char *)RB_ModeName(rendermode));
+		(char *)RB_ModeMenuName(rendermode));
 
     M_DrawThermo(OptionsDef.x,OptionsDef.y+LINEHEIGHT*(mousesens+1),
 		 10,mouseSensitivity);
@@ -1560,7 +1560,7 @@ void M_DrawRendererMenu(void)
 
     M_WriteText(RendererDef.x,RendererDef.y+LINEHEIGHT*rm_renderer,"Renderer:");
     M_WriteText(RendererDef.x + 120,RendererDef.y+LINEHEIGHT*rm_renderer,
-		(char *)RB_ModeName(rendermode));
+		(char *)RB_ModeMenuName(rendermode));
 
     M_WriteText(RendererDef.x,RendererDef.y+LINEHEIGHT*rm_upscaler,"Upscaler:");
     M_WriteText(RendererDef.x + 120,RendererDef.y+LINEHEIGHT*rm_upscaler,
@@ -1806,7 +1806,7 @@ static void M_VideoCrispValue(int i, crispval_t* cv)
     int rsi, k;
     switch (i)
     {
-      case vid_renderer:   cv->str = (const char*)RB_ModeName(rendermode); break;
+      case vid_renderer:   cv->str = (const char*)RB_ModeMenuName(rendermode); break;
       case vid_raytracing:
 	cv->str = (rb_rtdebug == 6) ? "On" : "Off";
 	if (rb_rtdebug_menu) cv->valcol = 0x707070FFu;   // greyed while Debug Views owns rb_rtdebug
@@ -1843,7 +1843,7 @@ static void M_OptionsCrispValue(int i, crispval_t* cv)
     switch (i)
     {
       case messages:  cv->str = msgValueNames[(showMessages >= 0 && showMessages <= 1) ? showMessages : 0]; break;
-      case renderer:  cv->str = (const char*)RB_ModeName(rendermode); break;
+      case renderer:  cv->str = (const char*)RB_ModeMenuName(rendermode); break;
       // Sliders share the classic thermo scales: Screen Size 0..7 (M_SizeDisplay),
       // Mouse Sensitivity 0..9 (thermWidth 10). See the classic M_DrawThermo calls.
       case scrnsize:  cv->slider = 1; cv->num = screenSize;       cv->den = 7; break;
@@ -2728,23 +2728,43 @@ void M_DevBack(int choice)
 void M_DrawDevMenu(void)
 {
     const int top   = 24;
-    int bound, maxRows, winRows, scrollTop, v;
+    int bound, maxRows, winRows, scrollTop, arrowRoom, v;
 
     bound   = (gamestate == GS_LEVEL) ? ST_Y : ORIGHEIGHT;
     maxRows = (bound - top) / LINEHEIGHT;
-    if (maxRows < 1) maxRows = 1;
+    if (maxRows < 0) maxRows = 0;
 
     if (maxRows >= dev_end)
     {
 	winRows   = dev_end;
 	scrollTop = 0;
+	arrowRoom = 0;
     }
     else
     {
-	winRows   = maxRows;
-	scrollTop = itemOn - winRows / 2;
-	if (scrollTop > dev_end - winRows) scrollTop = dev_end - winRows;
-	if (scrollTop < 0) scrollTop = 0;
+	// DOOM-0403: reserve the bottom slot for the down-arrow before choosing
+	// winRows. Without this the rows consumed the whole band and the arrow
+	// was drawn one row further down, outside it: measured in a level at
+	// ST_Y 168, the arrow started at y 164 and its 7-pixel glyph ended at
+	// 171, three pixels into the status bar, against DOOM-0206 INV-2.
+	//
+	// This is the repair DOOM-0206 L5 already made to the crisp renderer's
+	// M_DrawCrispMenu, which carries the same reasoning at greater length.
+	// That fix never reached this Classic-tier twin. The up-arrow sits in
+	// the gap above the list and still costs no row.
+	arrowRoom = (maxRows >= 2) ? 1 : 0;   // a row AND an arrow needs two
+	winRows   = maxRows - arrowRoom;
+	if (winRows > 0)
+	{
+	    scrollTop = itemOn - winRows / 2;
+	    if (scrollTop > dev_end - winRows) scrollTop = dev_end - winRows;
+	    if (scrollTop < 0) scrollTop = 0;
+	}
+	else
+	{
+	    winRows   = 0;      // not even one row fits: draw nothing, not garbage
+	    scrollTop = 0;
+	}
     }
 
     // Bias y by the scrolled-past rows so row i draws at its window slot, and
@@ -2772,7 +2792,7 @@ void M_DrawDevMenu(void)
 
     if (scrollTop > 0)
 	M_WriteText(DeveloperDef.x + 140, top - LINEHEIGHT + 6, "^");
-    if (scrollTop + winRows < dev_end)
+    if (arrowRoom && scrollTop + winRows < dev_end)
 	M_WriteText(DeveloperDef.x + 140, top + winRows * LINEHEIGHT - 4, "v");
 }
 #endif  // DOOM_DEV
