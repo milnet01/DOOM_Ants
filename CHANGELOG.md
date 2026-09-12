@@ -23,6 +23,31 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Saved games with an unusual character in the name no longer show as empty on Windows** (DOOM-0403)
+  The file was being opened in text mode, where Windows stops reading at
+  certain bytes. A perfectly good save was then listed as an empty slot,
+  with nothing said about why. Linux was never affected.
+
+- **The FPS counter no longer opens on a nonsense figure** (DOOM-0403)
+  It started by measuring across the level load, when nothing is being
+  drawn, so the first reading was about 1 frame per second. It now waits
+  for a period it was actually drawing in. This applies to every level
+  change, not just the first.
+
+- **The Renderer setting now says when your machine cannot run the 3D tiers** (DOOM-0403)
+  With no suitable graphics device the setting would not change and gave
+  no reason. It now reads "Classic (no 3D)".
+
+- **The end-of-level frags column goes away again when nobody has fragged anyone** (DOOM-0403)
+  Once any level in a network game had a frag, the column stayed for the
+  rest of the session. Network games only.
+
+- **Three smaller fixes in the menus, the end-of-game text and the settings file** (DOOM-0403)
+  An unrecognised quoted setting leaked a small amount of memory each time
+  the settings were read; an add-on ending a level the original game has no
+  text for could crash instead of showing the first chapter's text; and the
+  developer menu's scroll arrow overlapped the status bar.
+
 - **The decorative border around the view is drawn again on a widescreen display** (DOOM-0402)
   At any Screen Size below full, the carved stone frame around the picture
   was measured against the old 4:3 canvas rather than the actual screen.

@@ -3545,7 +3545,7 @@ with friends.
   Source: review-code 2026-09-01, lane sw-renderer.
   Lanes: sw-renderer.
 
-- 📋 [DOOM-0403] **Menu, HUD and finale review tail: eleven findings, including the screen wipe's own site.**
+- ✅ [DOOM-0403] **Menu, HUD and finale review tail: eleven findings, including the screen wipe's own site.**
   DOOM-0379 covers the wipe defect; f_wipe.c and r_backend.c:236 are named here so
   the fix sites are addressable. DOOM-0383 covers the config clamps and DOOM-0391
   the intermission bug.
@@ -3582,6 +3582,21 @@ with friends.
       previous value (NULL on first entry) and F_Ticker then strlen's it.
     - LOW hu_stuff.c:534 -- elapsed is computed before the first-call initialiser,
       so the first fps window reports ~2 fps for half a second.
+  Resolved (2026-09-12): the nine findings this bundle owns are fixed, one commit each. Two of the eleven belong elsewhere and were named here only as locations -- the HIGH wipe defect is DOOM-0379's, and the Main-menu-font question is DOOM-0395's.
+
+  Fixed: the savegame read opened in text mode (O_BINARY); toupper on a signed char; the FPS counter's opening figure; dofrags never reset; the finale's two "Ouch." branches leaving finaletext NULL; the leaked string default; the DEV menu's down-arrow crossing ST_Y; and DOOM-0026 INV-4's display half. The eleventh finding, no fflush before the config rename, was already fixed by DOOM-0400 -- the review ran against an older tree.
+
+  Three findings grew past what was reported, each verified rather than assumed.
+
+  O_BINARY: measured on a real Windows CRT, a mingw build run under Wine. A description carrying 0x1A reads 5 of 24 bytes in text mode and the DOOM-0254 short-read guard then blanks the slot; binary reads 24. O_BINARY moved to doomtype.h -- m_misc.c and w_wad.c each had a private copy and m_menu.c had none, which is how the gap survived.
+
+  toupper: the review named twelve sites and said the Windows CRT "does not tolerate" a negative argument. Measured, the mingw release CRT tolerates it and returns the value unchanged; it is MSVC's debug CRT that asserts. Three more sites turned up in the same sweep -- two uppercasing WAD lump names straight out of an untrusted file. All fifteen now go through D_ToUpper. tests/char_case_test.cpp locks the contract and the mutation measures the gap: dropping the cast fails 2 checks on glibc, only at 0xFF where the byte collides with EOF, and 256 on the mingw CRT.
+
+  FPS counter: fixing the reported fault (elapsed computed before the first-call initialiser) left the symptom. The second cause is that a level load blocks the loop and its gap lands inside the next window. First published figure went 1 fps -> 37 fps; it affected every level change, not only the first.
+
+  DOOM-0026 INV-4's test text is amended to what shipped. It described one menu entry per tier; DOOM-0206 replaced that with a single cycling row, so the reason now lives in the row's own value. Verified by making the condition real -- this machine has a Vulkan device, and running headless does not remove it, so VK_DRIVER_FILES was pointed at nothing.
+
+  Regression check green throughout: demo fixtures 30/30/30/70/350, 23 test binaries, windows-smoke --syntax-only.
   **Layman:** The leftovers from reviewing the menus, status bar, automap and end-of-level screens.
   Kind: investigate.
   Source: review-code 2026-09-01, lane ui-hud.
