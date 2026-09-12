@@ -89,6 +89,30 @@ typedef unsigned char byte;
 #endif
 
 
+// DOOM-0403: toupper() is defined only for a value representable as unsigned
+// char, or EOF. `char` is signed on the platforms this builds for, so every
+// `toupper(*p)` over a string hands it a negative int the moment a byte reaches
+// 0x80 -- and WAD lump names, save descriptions, chat lines and a PWAD's finale
+// text are all bytes this engine does not choose.
+//
+// The two CRTs really do disagree, measured with one source file: for 0xE9,
+// glibc returns 233 and the mingw CRT under Wine returns -23. Every call site
+// range-checks the result and rejects both, so no character is drawn wrong
+// today -- what this removes is the undefined behaviour, not a visible defect.
+// MSVC's debug CRT asserts on it, which is the case that stops being quiet.
+//
+// tests/char_case_test.cpp holds this to its contract, and measures the gap:
+// dropping the cast fails 2 of its checks on glibc and 256 on the mingw CRT.
+//
+// A function rather than a macro: w_wad.c passes `*src++`, which a macro would
+// increment twice. No call site can hold EOF; they all walk a string.
+#include <ctype.h>
+static inline int D_ToUpper (int c)
+{
+    return toupper ((unsigned char) c);
+}
+
+
 
 
 #endif

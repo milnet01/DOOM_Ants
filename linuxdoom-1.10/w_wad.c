@@ -75,7 +75,7 @@ void**			lumpcache;
 #ifndef _WIN32
 void strupr (char* s)
 {
-    while (*s) { *s = toupper(*s); s++; }
+    while (*s) { *s = D_ToUpper(*s); s++; }
 }
 
 // DOOM-0384: st_size is 64-bit and the int return truncated it, so a file over
@@ -152,7 +152,7 @@ ExtractFileBase
 	if (++length == 9)
 	    I_Error ("Filename base of %s >8 chars",path);
 
-	*dest++ = toupper((int)*src++);
+	*dest++ = D_ToUpper(*src++);
     }
 }
 

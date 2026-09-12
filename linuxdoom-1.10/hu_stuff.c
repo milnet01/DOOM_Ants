@@ -27,6 +27,7 @@ rcsid[] __attribute__((used)) = "$Id: hu_stuff.c,v 1.4 1997/02/03 16:47:52 b1 Ex
 #include <stdio.h>
 
 #include "doomdef.h"
+#include "doomtype.h"	// D_ToUpper, O_BINARY (DOOM-0403)
 
 #include "z_zone.h"
 
@@ -588,7 +589,7 @@ void HU_DrawFPS(void)
     w = 0;
     for (i = 0; buf[i]; i++)
     {
-	c = toupper(buf[i]) - HU_FONTSTART;
+	c = D_ToUpper(buf[i]) - HU_FONTSTART;
 	w += (c < 0 || c >= HU_FONTSIZE) ? 4 : SHORT(hu_font[c]->width);
     }
 
@@ -605,7 +606,7 @@ void HU_DrawFPS(void)
 
     for (i = 0; buf[i]; i++)
     {
-	c = toupper(buf[i]) - HU_FONTSTART;
+	c = D_ToUpper(buf[i]) - HU_FONTSTART;
 	if (c < 0 || c >= HU_FONTSIZE)
 	{
 	    x += 4;
@@ -682,7 +683,7 @@ static void HU_drawSecret(void)
     // measure the string in the HUD font so it centres exactly
     for (p=msg ; *p ; p++)
     {
-	c = toupper(*p) - HU_FONTSTART;
+	c = D_ToUpper(*p) - HU_FONTSTART;
 	w += (c < 0 || c >= HU_FONTSIZE) ? 4 : SHORT(hu_font[c]->width);
     }
 
@@ -691,7 +692,7 @@ static void HU_drawSecret(void)
 
     for (p=msg ; *p ; p++)
     {
-	c = toupper(*p) - HU_FONTSTART;
+	c = D_ToUpper(*p) - HU_FONTSTART;
 	if (c < 0 || c >= HU_FONTSIZE)
 	{
 	    x += 4;

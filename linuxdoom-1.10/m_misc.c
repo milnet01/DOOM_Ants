@@ -101,7 +101,7 @@ M_DrawText
 
     while (*string)
     {
-	c = toupper(*string) - HU_FONTSTART;
+	c = D_ToUpper(*string) - HU_FONTSTART;
 	string++;
 	if (c < 0 || c >= HU_FONTSIZE)
 	{

@@ -28,6 +28,7 @@ rcsid[] __attribute__((used)) = "$Id: f_finale.c,v 1.5 1997/02/03 21:26:34 b1 Ex
 #include <ctype.h>
 
 // Functions.
+#include "doomtype.h"	// D_ToUpper (DOOM-0403)
 #include "i_system.h"
 #include "m_swap.h"
 #include "z_zone.h"
@@ -319,7 +320,7 @@ void F_TextWrite (void)
 	    continue;
 	}
 		
-	c = toupper(c) - HU_FONTSTART;
+	c = D_ToUpper(c) - HU_FONTSTART;
 	if (c < 0 || c >= HU_FONTSIZE)
 	{
 	    cx += 4;
@@ -546,7 +547,7 @@ void F_CastPrint (char* text)
 	c = *ch++;
 	if (!c)
 	    break;
-	c = toupper(c) - HU_FONTSTART;
+	c = D_ToUpper(c) - HU_FONTSTART;
 	if (c < 0 || c >= HU_FONTSIZE)
 	{
 	    width += 4;
@@ -565,7 +566,7 @@ void F_CastPrint (char* text)
 	c = *ch++;
 	if (!c)
 	    break;
-	c = toupper(c) - HU_FONTSTART;
+	c = D_ToUpper(c) - HU_FONTSTART;
 	if (c < 0 || c >= HU_FONTSIZE)
 	{
 	    cx += 4;

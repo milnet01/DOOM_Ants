@@ -26,6 +26,7 @@ rcsid[] __attribute__((used)) = "$Id: hu_lib.c,v 1.3 1997/01/26 07:44:58 b1 Exp 
 #include <ctype.h>
 
 #include "doomdef.h"
+#include "doomtype.h"	// D_ToUpper, O_BINARY (DOOM-0403)
 
 #include "v_video.h"
 #include "m_swap.h"
@@ -111,7 +112,7 @@ HUlib_drawTextLine
     x = l->x;
     for (i=0;i<l->len;i++)
     {
-	c = toupper(l->l[i]);
+	c = D_ToUpper(l->l[i]);
 	if (c != ' '
 	    && c >= l->sc
 	    && c <= '_')
