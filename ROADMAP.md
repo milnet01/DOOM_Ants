@@ -3462,7 +3462,7 @@ with friends.
   Source: review-code 2026-09-01, lane game-loop.
   Lanes: game-loop.
 
-- 📋 [DOOM-0402] **Software-renderer review tail: eight findings, including two widescreen regressions.**
+- ✅ [DOOM-0402] **Software-renderer review tail: eight findings, including two widescreen regressions.**
   Not covered by DOOM-0381 or DOOM-0382.
 
     - MEDIUM r_main.c:729 -- nonwideviewwidth is derived from the DISPLAY buffer
@@ -3529,6 +3529,17 @@ with friends.
   Measured and worth keeping: the screen wipe advances by wall-clock
   ticks in D_Display, so any framebuffer comparison must start after it
   -- three runs of one binary at Screen Size 6 gave three hashes.
+  Resolved (2026-09-12): all eight findings closed -- seven fixed here, one split out as DOOM-0432.
+
+  The last two landed together. The border bevel is fixed by giving the patch blitter a second logical space: V_DrawPatchAbs reads x in the destination buffer's own coordinates rather than the 320-wide UI canvas, so it neither adds WIDESCREENDELTA nor bounds x by ORIGWIDTH. The border is its caller because the border frames the view WINDOW, which on widescreen sits outside that canvas on both sides.
+
+  Two siblings found in the same class while fixing it, each its own commit. The PAUSE graphic is positioned from the same view geometry and was drawn 105 physical pixels right of the view centre at every screen size on widescreen; it now uses V_DrawPatchAbs too. And D_Display's `scaledviewwidth != 320` is the half of DOOM-0254's stale-literal fix that was never carried over -- harmless, since R_DrawViewBorder repeats the test correctly, but corrected and proved pixel-neutral over 20 runs.
+
+  Evidence, headless at 1920x1080 (Xvfb, SDL_VIDEODRIVER unset, SCREENWIDTH 854). Before: three "exceeds LFB" rejections, and the columns left of the view window byte-identical to the flat fill beneath -- no bevel present. After: no rejections at any screen size, and those columns match the 4:3 arm exactly. A full-frame difference of the two captures is the border and nothing else. 4:3 is byte-identical pre- and post-fix across screen sizes 3-11 on three maps.
+
+  Regression check green throughout: 68-map boot sweep 0 failures, demo fixtures 30/30/30/70/350, make test, windows-smoke --syntax-only.
+
+  The v_video.c note claiming a rejected patch was cosmetic and the frame rendered fine is corrected -- it named this bezel, and for this bezel it was false.
   **Layman:** The leftovers from reviewing the original 1993 renderer. Two are widescreen bugs this project introduced: at smaller screen sizes the field of view is wrong, and the decorative border around the view is drawn off-screen.
   Kind: investigate.
   Source: review-code 2026-09-01, lane sw-renderer.

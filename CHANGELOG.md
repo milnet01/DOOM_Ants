@@ -23,6 +23,18 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **The decorative border around the view is drawn again on a widescreen display** (DOOM-0402)
+  At any Screen Size below full, the carved stone frame around the picture
+  was measured against the old 4:3 canvas rather than the actual screen.
+  The right-hand edge was dropped entirely and the other three were pushed
+  into the picture, where nothing ever copies them to the screen -- so the
+  border was simply missing. A 4:3 display was never affected.
+
+- **The PAUSE graphic is centred on the picture again on a widescreen display** (DOOM-0402)
+  It was drawn about three-quarters of its own width to the right of
+  centre, at every Screen Size. Same cause as the missing border, found
+  while fixing it. A 4:3 display was never affected.
+
 - **A broken wall texture no longer leaves the rest of its columns pointing at nothing** (DOOM-0402)
   A texture with a gap in it stopped the engine part-way through preparing it, and every later column of that texture was left uninitialised.
 
