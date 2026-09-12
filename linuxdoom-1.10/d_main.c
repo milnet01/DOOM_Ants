@@ -1272,7 +1272,13 @@ void D_DoomMain (void)
     // convenience hack to allow -wart e m to add a wad file
     // prepend a tilde to the filename so wadfile will be reloadable
     p = M_CheckParm ("-wart");
-    if (p)
+    // DOOM-0401: the same missing-operand deref -warp got bounded against, in
+    // the twin that turns INTO -warp. The E/M form below reads myargv[p+1] AND
+    // myargv[p+2], the commercial form only myargv[p+1], so each branch is
+    // bounded for what it reads. After a response file d_main.c leaves the argv
+    // tail unfilled, so the slot past the end is a wild pointer rather than the
+    // NULL the standard guarantees at argv[argc].
+    if (p && p < myargc-1)
     {
 	myargv[p][4] = 'p';     // big hack, change to -warp
 
@@ -1282,6 +1288,8 @@ void D_DoomMain (void)
 	  case shareware:
 	  case retail:
 	  case registered:
+	    if (p >= myargc-2)
+		I_Error ("-wart needs an episode and a map, e.g. -wart 1 1");
 	    sprintf (file,"~"DEVMAPS"E%cM%c.wad",
 		     myargv[p+1][0], myargv[p+2][0]);
 	    printf("Warping to Episode %s, Map %s.\n",
