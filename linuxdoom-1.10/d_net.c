@@ -36,6 +36,7 @@ static const char rcsid[] __attribute__((used)) = "$Id: d_net.c,v 1.3 1997/02/03
 #include "doomstat.h"
 
 #include "net_checksum.h"
+#include "net_bounds.h"
 
 #define	NCMD_EXIT		0x80000000
 #define	NCMD_RETRANSMIT		0x40000000
@@ -583,6 +584,18 @@ void D_CheckNetGame (void)
 	I_Error ("Doomcom buffer invalid!");
     
     netbuffer = &doomcom->data;
+
+    // DOOM-0401: the two counts index arrays of different sizes, and the fill
+    // loops below trust both. numplayers comes straight from the host-list
+    // length in I_InitNetwork, so without this `-net 1` with five hosts wrote
+    // playeringame[] past its end. net_bounds.h carries the reasoning.
+    if (!NetPopulationFits (doomcom->numnodes, doomcom->numplayers,
+			    MAXNETNODES, MAXPLAYERS))
+	I_Error ("D_CheckNetGame: %d node(s) and %d player(s) -- DOOM supports "
+		 "at most %d players on %d nodes",
+		 doomcom->numnodes, doomcom->numplayers,
+		 MAXPLAYERS, MAXNETNODES);
+
     consoleplayer = displayplayer = doomcom->consoleplayer;
     if (netgame)
 	D_ArbitrateNetStart ();

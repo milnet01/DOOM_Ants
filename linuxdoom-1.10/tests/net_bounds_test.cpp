@@ -59,5 +59,44 @@ int main()
     check(NetPacketHoldsTics(64, 1, kHdr, 0) == 0, "a zero command size is refused");
     check(NetPacketHoldsTics(64, 1, -1, kCmd) == 0, "a negative header size is refused");
 
+    // --- DOOM-0401: a doomcom's population against the arrays it indexes. ---
+    // The two array sizes differ, which is the whole defect: MAXNETNODES is 8
+    // and MAXPLAYERS is 4. Named here rather than included, so a change to
+    // either is a deliberate edit to this test.
+    const int kNodes = 8;
+    const int kPlayers = 4;
+
+    check(NetPopulationFits(1, 1, kNodes, kPlayers) != 0,
+          "a single-player doomcom fits");
+    check(NetPopulationFits(4, 4, kNodes, kPlayers) != 0,
+          "a full four-player game fits");
+
+    // The roadmap's case: `-net 1 h1..h5` gives numnodes = numplayers = 6, which
+    // is inside MAXNETNODES and past the end of playeringame[].
+    check(NetPopulationFits(6, 6, kNodes, kPlayers) == 0,
+          "six nodes claiming six players is refused, not accepted as 6 <= 8");
+    check(NetPopulationFits(5, 5, kNodes, kPlayers) == 0,
+          "the first population past MAXPLAYERS is refused");
+    check(NetPopulationFits(8, 8, kNodes, kPlayers) == 0,
+          "a full MAXNETNODES host list is refused as a player count");
+
+    // A driver may legitimately run more nodes than players; the node count is
+    // bounded by its own array, not by MAXPLAYERS.
+    check(NetPopulationFits(8, 4, kNodes, kPlayers) != 0,
+          "eight nodes carrying four players fits both arrays");
+    check(NetPopulationFits(9, 4, kNodes, kPlayers) == 0,
+          "one node past MAXNETNODES is refused");
+
+    check(NetPopulationFits(0, 0, kNodes, kPlayers) == 0,
+          "an empty doomcom is refused");
+    check(NetPopulationFits(1, 0, kNodes, kPlayers) == 0,
+          "a game with no players is refused");
+    check(NetPopulationFits(-1, 1, kNodes, kPlayers) == 0,
+          "a negative node count is refused");
+    check(NetPopulationFits(1, -1, kNodes, kPlayers) == 0,
+          "a negative player count is refused");
+    check(NetPopulationFits(INT_MAX, INT_MAX, kNodes, kPlayers) == 0,
+          "counts near INT_MAX are refused");
+
     return check_summary("net_bounds_test");
 }

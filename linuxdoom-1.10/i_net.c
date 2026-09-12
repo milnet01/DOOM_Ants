@@ -375,8 +375,10 @@ void I_InitNetwork (void)
     i++;
     while (++i < myargc && myargv[i][0] != '-')
     {
-	// DOOM-0254: sendaddress[] holds MAXNETNODES entries and numnodes also
-	// bounds playeringame[]/nodeingame[]; vanilla let the host list run on.
+	// DOOM-0254: sendaddress[] holds MAXNETNODES entries; vanilla let the
+	// host list run on past it. This bounds sendaddress[] and nodeingame[],
+	// both MAXNETNODES-sized -- and NOT playeringame[], which is MAXPLAYERS
+	// and is half as long. D_CheckNetGame bounds that one (DOOM-0401).
 	if (doomcom->numnodes >= MAXNETNODES)
 	    I_Error ("I_InitNetwork: more than %d nodes in the -net host list",
 		     MAXNETNODES);

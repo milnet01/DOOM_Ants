@@ -26,13 +26,41 @@
 // The division is the point. Testing `headersize + numtics * cmdsize <= received`
 // multiplies an attacker-controlled count and can wrap; dividing what is left
 // after the header cannot.
-static int NetPacketHoldsTics (int received, int numtics, int headersize, int cmdsize)
+// `static inline`, not plain `static`: two translation units include this header
+// and each uses only one of the two predicates, so plain `static` warns about the
+// other under -Wall.
+static inline int NetPacketHoldsTics (int received, int numtics, int headersize, int cmdsize)
 {
     if (headersize < 0 || cmdsize <= 0 || numtics < 0)
 	return 0;
     if (received < headersize)
 	return 0;
     return numtics <= (received - headersize) / cmdsize;
+}
+
+// DOOM-0401: does a doomcom's declared population fit the arrays the engine
+// indexes with those counts? The two counts index arrays of DIFFERENT sizes:
+// numnodes indexes nodeingame[MAXNETNODES], numplayers indexes
+// playeringame[MAXPLAYERS], and MAXNETNODES is twice MAXPLAYERS.
+//
+// What that allowed: I_InitNetwork sets numplayers = numnodes and bounds only
+// numnodes, so `-net 1 h1 h2 h3 h4 h5` reached D_CheckNetGame with numplayers
+// of 6. Its fill loop then wrote playeringame[4] and [5], which in d_net.c's
+// translation unit is the memory after a MAXPLAYERS-sized boolean array -- a
+// write past the end of the array, from a plain command line.
+//
+// DOOM is a four-player game: players[], playeringame[], netcmds[] and the
+// demo format are all MAXPLAYERS. So a larger population is refused rather
+// than truncated -- dropping the extra hosts silently would start a game the
+// operator did not ask for.
+static inline int NetPopulationFits (int numnodes, int numplayers,
+			      int maxnetnodes, int maxplayers)
+{
+    if (numnodes < 1 || numplayers < 1)
+	return 0;
+    if (numnodes > maxnetnodes)
+	return 0;
+    return numplayers <= maxplayers;
 }
 
 #endif
