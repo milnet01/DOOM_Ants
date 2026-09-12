@@ -613,8 +613,22 @@ void G_WarpToSpot (void)
     if (!mo)
         return;
 
-    x = atoi (myargv[p+1]) << FRACBITS;
-    y = atoi (myargv[p+2]) << FRACBITS;
+    // DOOM-0401: the operands were shifted by FRACBITS with no range test, so
+    // a large number overflowed int -- signed overflow, which is undefined
+    // rather than merely wrong. A DOOM map coordinate is a short in the
+    // VERTEXES lump, so that range is the whole of what a real spot can be,
+    // and a value outside it is an operator typo worth naming.
+    {
+	int ax = atoi (myargv[p+1]);
+	int ay = atoi (myargv[p+2]);
+
+	if (ax < SHRT_MIN || ax > SHRT_MAX || ay < SHRT_MIN || ay > SHRT_MAX)
+	    I_Error ("-warpto: (%d,%d) is outside DOOM's map coordinate range "
+		     "(%d to %d)", ax, ay, SHRT_MIN, SHRT_MAX);
+
+	x = ax << FRACBITS;
+	y = ay << FRACBITS;
+    }
 
     // Move the thing properly: unlink from the old blockmap/sector lists, set the
     // position, relink. Setting mo->x/y directly would leave it indexed under its
