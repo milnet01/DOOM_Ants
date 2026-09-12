@@ -39,6 +39,10 @@ rcsid[] __attribute__((used)) = "$Id: v_video.c,v 1.5 1997/02/03 22:45:13 b1 Exp
 
 #include "v_video.h"
 
+// DOOM-0402: ST_WIDTH / ST_HEIGHT -- the size of the screens[4] scratch that
+// ST_Init allocates, which V_Init records and the block guards bound against.
+#include "st_stuff.h"
+
 
 // Each screen is [screenwidth[i]*<height>].  screens[0..3] are the physical
 // full-frame buffers (width SCREENWIDTH); screens[4] is the status-bar scratch,
@@ -46,6 +50,10 @@ rcsid[] __attribute__((used)) = "$Id: v_video.c,v 1.5 1997/02/03 22:45:13 b1 Exp
 // to each buffer's own width (DOOM-0027).
 byte*				screens[5];
 int				screenwidth[5];
+// DOOM-0402: each buffer's own height in pixels, the companion to
+// screenwidth[]. screens[4] is ST_HEIGHT tall, not SCREENHEIGHT, and the
+// RANGECHECK guards in V_DrawBlock / V_GetBlock had no way to say so.
+int				screenheight[5];
 
 int				dirtybox[4];
 
@@ -663,12 +671,19 @@ V_DrawBlock
 { 
     byte*	dest; 
 	 
+    // DOOM-0402: x and width are PIXELS in the destination buffer -- the copy
+    // below strides by screenwidth[scrn] and indexes x directly, with no
+    // logical-to-physical scaling. So the bound is that buffer's own size, not
+    // the full-screen one. V_CopyRect was rewritten for per-buffer widths and
+    // these two were left behind. The screen index is validated FIRST, so the
+    // screenwidth[] lookup is in bounds, as V_CopyRect does.
 #ifdef RANGECHECK 
+    if ((unsigned)scrn>4)
+	I_Error ("Bad V_DrawBlock (screen index)");
     if (x<0
-	||x+width >SCREENWIDTH
+	||x+width > screenwidth[scrn]
 	|| y<0
-	|| y+height>SCREENHEIGHT 
-	|| (unsigned)scrn>4 )
+	|| y+height > screenheight[scrn])
     {
 	I_Error ("Bad V_DrawBlock");
     }
@@ -703,12 +718,17 @@ V_GetBlock
 { 
     byte*	src; 
 	 
+    // DOOM-0402: as V_DrawBlock above -- pixel coordinates in the SOURCE
+    // buffer, so bound against that buffer. The message keeps its original
+    // wording, wrong function name and all, because it is what a player report
+    // would quote.
 #ifdef RANGECHECK 
+    if ((unsigned)scrn>4)
+	I_Error ("Bad V_DrawBlock (screen index)");
     if (x<0
-	||x+width >SCREENWIDTH
+	||x+width > screenwidth[scrn]
 	|| y<0
-	|| y+height>SCREENHEIGHT 
-	|| (unsigned)scrn>4 )
+	|| y+height > screenheight[scrn])
     {
 	I_Error ("Bad V_DrawBlock");
     }
@@ -743,9 +763,11 @@ void V_Init (void)
     {
 	screens[i] = base + i*SCREENWIDTH*SCREENHEIGHT;
 	screenwidth[i] = SCREENWIDTH;
+	screenheight[i] = SCREENHEIGHT;
     }
     // screens[4] (the status-bar scratch) is allocated by ST_Init, which runs
-    // after V_Init; its width is the compile-time logical ORIGWIDTH, so set it
-    // here so the array is fully valid before any draw (DOOM-0027).
-    screenwidth[4] = ORIGWIDTH;
+    // after V_Init; its size is the compile-time ST_WIDTH x ST_HEIGHT, so set
+    // both here so the arrays are fully valid before any draw (DOOM-0027).
+    screenwidth[4] = ST_WIDTH;
+    screenheight[4] = ST_HEIGHT;
 }
