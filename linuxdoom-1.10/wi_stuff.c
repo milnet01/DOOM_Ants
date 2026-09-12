@@ -1084,6 +1084,13 @@ void WI_initNetgameStats(void)
 
     cnt_pause = TICRATE;
 
+    // DOOM-0403: dofrags is a static and this loop accumulates INTO it, so
+    // without the reset it only ever grows. One frag anywhere in the session
+    // left the frags column and its narrower layout (NG_STATSX) switched on for
+    // every later level, including ones where nobody fragged anyone. Vanilla
+    // behaviour; the intent is plainly "does THIS level have frags".
+    dofrags = 0;
+
     for (i=0 ; i<MAXPLAYERS ; i++)
     {
 	if (!playeringame[i])
