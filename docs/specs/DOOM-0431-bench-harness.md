@@ -47,10 +47,17 @@ route and read a scrolling log. Those gates are not retro-fitted here; see §12.
 - **Optimising anything.** This spec ships a measuring device. What it finds is
   somebody else's roadmap item.
 
-**Scope:** a new engine flag, a new emitter module, and two new files under
-`tools/`. The engine's rendering behaviour does not change. Every tier is
-measurable — Classic, Solid and Ultra, rasterised and ray-traced — because the
-question "which tier is slow" is one of the questions.
+**Scope:** two new engine flags, a new emitter module, and two new files under
+`tools/`. The engine's rendering behaviour does not change.
+
+**Solid and Ultra only, rasterised and ray-traced. Classic is out of scope and
+cannot be measured by this design at all** — every counter this harness reads
+(`cpuMs`, `cpuBuildMs`, `profMs`) is a member of the Vulkan backend's own state
+struct in `r_vulkan.cpp`, the prints sit in the Vulkan present path, and there
+is no frame-time or FPS counter anywhere outside that file. A Classic scene
+would emit no `gpu` rows, no `cpu` rows and no `frame,total` row — nothing at
+all. Measuring Classic needs a timing path in the software renderer that does
+not exist; §10 Q6 carries it.
 
 ---
 
@@ -188,11 +195,36 @@ time_s,category,name,depth,ms,fps
 ```
 
 `category` is one of `frame`, `gpu`, `cpu`, `mem`. `name` is the metric's name
-within its category. `depth` is nesting depth, `0` for everything phase 1
-emits. `ms` carries milliseconds — except on `mem` rows, where it carries
-megabytes, which is Vestige's convention and is kept so its parser transfers
-unmodified. `fps` is filled only on the `frame,total` row and left blank
-elsewhere.
+within its category. `ms` carries milliseconds — except on `mem` rows, where it
+carries megabytes, which is Vestige's convention and is kept so its parser
+transfers unmodified. `fps` is filled only on the `frame,total` row and left
+blank elsewhere.
+
+**`depth` is load-bearing, because these counters nest.** A `depth` of 0 is a
+top-level cost; a `depth` of 1 is a *component* of the nearest depth-0 row
+above it in the same category, already counted inside it. Three of the existing
+families nest, and nothing in the counters themselves says so:
+
+| Umbrella (depth 0) | Components (depth 1) |
+|---|---|
+| `gpu,denoise+post+taau` (`profMs[2]`) | `temporal`, `atrous`, `composite`, `bloom`, `tonemap`, `taau` (`profMs[4..9]`) |
+| `cpu,present-total` (`cpuMs[4]`) | `fenceWait`, `record`, `submit` (`cpuMs[0]`, `[2]`, `[3]`) |
+| `cpu,build` (`cpuMs[1]`) | `sprites`, `lights`, `reheight` (`cpuBuildMs[0..2]`) |
+
+**`cpu,build` is the awkward one and the emitter must not assume its place.**
+`cpuMs[4]` is `tEnd - tPresent0`, and `fenceWait`, `record` and `submit` are
+all stamped inside that span. `build` is not reliably: `cpuMs[1]` is written
+from two sites, and under DOOM-0074's build-ahead the build runs inside the
+present span while on a non-build-ahead frame it does not. So `build` is
+emitted at depth 0 and **whether it is already inside `present-total` is a
+property of the frame, not of the schema**.
+
+**Therefore no sum check.** Depth separates a component from its umbrella,
+which is what the share column needs; it does not make the depth-0 rows a
+partition, because `build` may or may not be one. A verification demanding the
+rows add up would be unfalsifiable on one path and false on the other. §7 B4
+checks what is actually true instead: no depth-0 row exceeds `frame,total`, and
+every emitted name appears exactly once.
 
 **Rows are written once per completed interval, not per frame.** The engine
 already accumulates and divides by a frame count once a second; the log writes
@@ -230,11 +262,52 @@ name with no bucket cannot be read.
 its path's bucket count, so adding a pass without adding a name fails the
 build rather than shipping a mislabelled row. INV-3.
 
-**The names are the printed words, not new coinages.** `[raster_profile]`
-prints `shadow / scene / ssao / bloom / composite / hud`; `[rt_profile]` prints
-`sprites / megakernel / denoise+post+taau / temporal / atrous / composite /
-bloom / tonemap / taau / blit`. Reusing them means a CSV row and a terminal
-line name the same thing, and a reader who knows one knows the other.
+**The names are the printed words, not new coinages** — a CSV row and a
+terminal line then name the same thing. **But they are keyed by SLOT, and the
+RT print order is not slot order.** `[rt_profile]` prints its arguments as
+`profMs[0,1,2,4,5,6,8,9,7,3]`, so transcribing the printed line positionally
+mislabels slots 3 and 7 — the blit charged to TAAU and TAAU to the blit. That
+is the silent-absorption failure §2 cites DOOM-0345 INV-7 for, committed while
+copying the very list that warns about it. So the mapping is written out:
+
+| Path | Slot | Name | Depth |
+|---|---|---|---|
+| raster | 0 | `shadow` | 0 |
+| raster | 1 | `scene` | 0 |
+| raster | 2 | `ssao` | 0 |
+| raster | 3 | `bloom` | 0 |
+| raster | 4 | `composite` | 0 |
+| raster | 5 | `hud` | 0 |
+| RT | 0 | `sprites` | 0 |
+| RT | 1 | `megakernel` | 0 |
+| RT | 2 | `denoise+post+taau` | 0 |
+| RT | 3 | `blit` | 0 |
+| RT | 4 | `temporal` | 1 |
+| RT | 5 | `atrous` | 1 |
+| RT | 6 | `composite` | 1 |
+| RT | 7 | `taau` | 1 |
+| RT | 8 | `bloom` | 1 |
+| RT | 9 | `tonemap` | 1 |
+
+### The complete phase-1 metric set
+
+Three artefacts must agree on these names — the emitter, the committed
+baseline, and the comparator — so the set is closed here rather than left to
+each to infer:
+
+| Key | Source |
+|---|---|
+| `frame,total` | wall-clock interval frame time, with `fps` on the same row; the interval's frame count over its duration, which is what `[cpu_profile]`'s leading `%3d fps` already counts |
+| `gpu,<name>` | the sixteen rows above, whichever path ran |
+| `gpu,total` | the sum of the **depth-0** `gpu` rows for the path that ran |
+| `cpu,fenceWait` `cpu,build` `cpu,record` `cpu,submit` `cpu,present-total` | `cpuMs[0..4]` |
+| `cpu,sprites` `cpu,lights` `cpu,reheight` | `cpuBuildMs[0..2]`, depth 1 under `cpu,build` |
+
+**There is no `cpu,total`.** `cpu,present-total` is that number and a second
+name for it would be a duplicate that drifts. The default gate list in §4.7 is
+therefore `frame,total`, `gpu,total` and `cpu,present-total` — **not**
+`perf_gate.py`'s `mem,gpu_mb`, which phase 1 never emits and which would sit
+`MISSING` on every run.
 
 ### 4.3 The run sidecar
 
@@ -249,7 +322,8 @@ So `-benchlog <path>` also writes `<path>.meta.json` beside it, at open time:
   "schema": 1,
   "scene": "e1m1-start",
   "map": "E1M1",
-  "tier": "solid",
+  "tier_requested": "solid",
+  "tier_rendered": "solid",
   "rt_view": 0,
   "render_scale": 50,
   "width": 1920, "height": 1080,
@@ -257,6 +331,15 @@ So `-benchlog <path>` also writes `<path>.meta.json` beside it, at open time:
   "workload": "spot"
 }
 ```
+
+**`tier_rendered` is read from `rendermode` after the backend has initialised,
+and it is the field that makes INV-9 mechanical.** A tier can be overridden
+between the config being read and the frame being drawn — DOOM-0203's pin is
+one such override and there may be others, such as a machine with no working
+ray tracing. Recording only what was *asked for* makes every such substitution
+invisible, which is the whole failure INV-9 exists to catch. Recording both
+makes it a comparison the runner performs rather than a hazard a reader has to
+remember.
 
 The engine fills everything it knows. `scene` comes from an optional
 `-benchscene <name>` argument, defaulting to the empty string; the runner
@@ -298,6 +381,11 @@ instead of repeated on every row. Rejected alternative in §9.
 }
 ```
 
+A scene's `tier` is what the run **asks for**, and it lands in the sidecar as
+`tier_requested`; `tier_rendered` is what the engine actually drew, and §4.7
+compares against that one. The scene list has no field for it, because nothing
+in a request can state what a request will get.
+
 `workload` is `spot` or `demo` and decides which flags the runner builds.
 A `spot` entry carries `warp`, `warpto` and a duration; a `demo` entry carries
 a demo lump and runs to the demo's own end. `tier` and `rt_view` together
@@ -327,8 +415,10 @@ For each scene it builds one command line:
 | `warp` | `-warp E M` |
 | `warpto` | `-warpto X Y ANGLE` |
 | `demo` | `-timedemo <lump>` |
-| `tier`, `rt_view`, `render_scale` | written into a throwaway `-config` file |
-| always, on a `spot` | `-freeze -inspect` |
+| `seconds` (spot only) | `-benchtics <seconds × 35>` — see below |
+| `tier`, `render_scale` | written into a throwaway `-config` file |
+| `rt_view` | `-rtview N` on the command line, **not** the config |
+| always, on a `spot` | `-freeze -inspect`, which need a `DEV=1` build |
 | always | `-benchlog <tmp>/<scene>.csv -benchscene <name>` |
 
 The tier goes through a generated config rather than a flag because that is how
@@ -338,10 +428,35 @@ the default. The runner writes the config it wants and never touches
 `~/.doomrc`, so a benchmark run cannot disturb the user's settings and the
 user's settings cannot disturb a benchmark run.
 
-A `spot` scene needs an exit condition the engine does not currently have for
-this shape: it must render for a stated duration and then stop. `-bootsmoke N`
-already exits 0 after N tics, and is the mechanism — the runner converts
-`seconds` to tics at 35 per second. A `demo` scene ends when the demo does.
+**A `spot` scene needs a stop condition, and `-bootsmoke` is not it.** That
+flag exits 0 after N tics, which is the right shape — but it also pins the
+tier. `D_DoomLoop` runs `if (bootsmoke_tics > 0) rendermode = RB_CLASSIC;`
+before the backend is chosen, which is DOOM-0203 stopping a GPU-less CI runner
+being dragged onto the Vulkan path. It overrides the `renderer` key the runner
+just wrote. Every Solid and Ultra spot scene would render in Classic, exit 0,
+and produce a file with no `gpu` rows under a sidecar claiming Ultra.
+
+So this spec adds **`-benchtics N`**: exit 0 after N tics, pinning nothing.
+DOOM-0203's pin is left exactly as it is — it guards a CI path that has no GPU,
+and weakening it to serve a benchmark that only runs on a GPU would be the
+wrong trade. A `demo` scene needs no stop flag; it ends when the demo does.
+
+**`-freeze` and `-inspect` exist only in a `DEV=1` build.** The Makefile guards
+`-DDOOM_DEV` behind `ifeq ($(DEV),1)`, and its own comment records why the
+default is off: every release path runs a plain `make`, so a published build is
+clean without anyone having to remember a flag. An ordinary binary ignores both
+flags silently — monsters walk, the world is live, and INV-7's stability check
+fails for a reason nothing reports. **The runner therefore refuses to run a
+`spot` scene unless the launch printed `-inspect: monsters ignore you`**, which
+`G_DevInspectFromArgv` emits. A warning is not enough: the run would still
+produce numbers, and those numbers would be wrong.
+
+**The ray-traced view is selected by `-rtview N`, not by the config.** Both
+routes reach `rb_rtdebug` — `m_misc.c` carries `{"rt_view",&rb_rtdebug, 6}` —
+but DOOM-0351 added the argv flag for exactly this job, and its comment records
+that it "pins NOTHING ELSE, deliberately", unlike `-shotverify`, which drags a
+whole canonical config with it. A benchmark wants one knob moved and nothing
+else, so it takes the flag built for that.
 
 The runner collects each CSV and its sidecar, stamps `git rev-parse HEAD` and
 `git status --porcelain` emptiness into the result, and writes one
@@ -358,15 +473,20 @@ and a non-zero exit is preserved. INV-9.
 ### 4.6 The table
 
 `tools/bench.py` with no comparison flag prints, per scene, the reduced metrics
-sorted by cost descending, each with its share of `frame,total`:
+sorted by cost descending, each with its share of `frame,total`. **Depth-1 rows
+are indented under their umbrella and carry no share of their own** — they are
+already counted inside the row above, so giving them a frame share would print
+percentages that add to more than the frame:
 
 ```
 e1m1-start   solid/raster  scale 50%   1920x1080   58.3 fps (17.15 ms)
-  gpu   scene              5.20 ms   30.3%
-  cpu   build              3.10 ms   18.1%
-  gpu   ssao               1.80 ms   10.5%
+  gpu   scene                5.20 ms   30.3%
+  cpu   build                3.10 ms   18.1%
+    cpu   lights               2.80 ms       (of build)
+    cpu   reheight             0.27 ms       (of build)
+  gpu   ssao                 1.80 ms   10.5%
   ...
-  mem   gpu_mb           412.00 MB        —
+  mem   gpu_mb             412.00 MB        —
 ```
 
 The share column is the point: a millisecond figure alone does not say whether
@@ -396,11 +516,18 @@ regression.
 gated metric reached a conclusive verdict (re-runnable), `3` the baseline is
 unreadable or unsupported (fix the file; do not retry).
 
+**The gated set is `frame,total`, `gpu,total` and `cpu,present-total`** — §4.2
+closes the metric namespace those names come from. `perf_gate.py`'s own default
+list also carries `mem,gpu_mb`, which phase 1 does not emit; taking its list
+unchanged would leave a gated metric `MISSING` on every run.
+
 **A comparison across differing run conditions is refused, not scaled.** If a
-scene's sidecar `render_scale`, `tier`, `rt_view` or resolution differs from
-the baseline's for that scene, the metric is `SKIPPED` with the mismatch named.
-Scaling one to the other would manufacture a number that was never measured.
-INV-2.
+scene's sidecar `render_scale`, `tier_rendered`, `rt_view` or resolution
+differs from the baseline's for that scene, the metric is `SKIPPED` with the
+mismatch named. Scaling one to the other would manufacture a number that was
+never measured. **The comparison is against `tier_rendered`, not
+`tier_requested`** — comparing what was asked for would compare two runs that
+both asked for Ultra and one of which delivered Classic. INV-2.
 
 **`--selftest` runs the reduction and verdict arithmetic over committed
 fixtures and needs no GPU.** That is where this tool's correctness is actually
@@ -438,7 +565,7 @@ through the same log:
 | `overlay` | `cpu` | around the software 2D draw into `screens[0]` |
 | `sound` | `cpu` | around `S_UpdateSounds` and `I_UpdateSound` |
 | `wipe` | `cpu` | around the screen-wipe path |
-| `zone_kb` | `mem` | `Z_FreeMemory()`, declared in `z_zone.h` |
+| `zone_mb` | `mem` | `Z_FreeMemory()`, declared in `z_zone.h`, converted to MB |
 | `gpu_mb` | `mem` | summed Vulkan device allocations |
 | `level_load` | `frame` | level-start to first presented frame |
 
@@ -464,7 +591,7 @@ counter read — which is what keeps DOOM-0345 INV-7 out of this spec's way.
 | Path | Change |
 |---|---|
 | `linuxdoom-1.10/r_vulkan.cpp` | the two slot-name tables; call the emitter where the counters already reset |
-| `linuxdoom-1.10/d_main.c` | parse `-benchlog` / `-benchscene`; open and close the log |
+| `linuxdoom-1.10/d_main.c` | parse `-benchlog` / `-benchscene` / `-benchtics`; open and close the log; the `-benchtics` exit. DOOM-0203's `-bootsmoke` Classic pin is **not** touched |
 | `linuxdoom-1.10/g_game.c` | `G_CheckDemoStatus`'s `-benchlog` exit path |
 | `linuxdoom-1.10/Makefile` | one object; no test-wiring edit (tests are one file each) |
 
@@ -475,7 +602,7 @@ counter read — which is what keeps DOOM-0345 INV-7 out of this spec's way.
 | `time_s` | float | seconds since the log opened, at interval end |
 | `category` | enum | `frame` \| `gpu` \| `cpu` \| `mem` |
 | `name` | string | metric name within the category |
-| `depth` | int | nesting depth; `0` throughout phase 1 |
+| `depth` | int | `0` top-level, `1` a component of the depth-0 row above it in the same category (§4.1) |
 | `ms` | float | milliseconds — **megabytes on `mem` rows** |
 | `fps` | float | filled only on `frame,total`; blank elsewhere |
 
@@ -509,7 +636,11 @@ golden capture.
 
 **With `-benchlog` present: under 1 % of present-total**, measured as the
 `[cpu_profile]` present-total average over a scene run with the flag against
-the same scene run with `rb_profile` on and the flag off. The work per interval
+the same scene run with the profiler on and the flag off. **The control arm is
+reachable headlessly**: `rb_profile` has a config key, `rt_profile` in
+`m_misc.c`, so the runner writes `rt_profile 1` into the throwaway config
+rather than needing the `` \ `` keypress — which cannot be injected into a
+Wayland client at all. The work per interval
 is a few dozen `fprintf` calls once a second against a per-frame budget of
 roughly 17 ms at 60 FPS, so the bound is expected to be met with room; it is
 stated as a gate rather than assumed, and B6 measures it.
@@ -526,18 +657,31 @@ Phase 1 is B1–B6 and is the whole loop end to end. Phase 2 is B7–B8.
   as a pure function. *Verify:* a `*_test.cpp` in `linuxdoom-1.10/tests/` feeds
   a known sample and asserts the exact CSV lines, including the blank `fps` on
   non-total rows and megabytes on `mem` rows. `make test` green.
-- **B2 — wire it into the engine.** `-benchlog` / `-benchscene`, the two slot
-  name tables with their static assertions, the sidecar. *Verify:* a `-warp 1 1
-  -bootsmoke 400 -benchlog /tmp/a.csv` run produces a CSV with at least three
-  `frame,total` rows and a sidecar naming the tier and render scale it ran at.
+- **B2 — wire it into the engine.** `-benchlog` / `-benchscene` / `-benchtics`,
+  the two slot name tables with their static assertions, the sidecar. *Verify:*
+  four things, and the last two are what INV-1 and INV-3 are actually caught
+  by. (a) A `-warp 1 1 -benchtics 400 -benchlog /tmp/a.csv` run on a Solid
+  config produces a CSV with at least three `frame,total` rows, and a sidecar
+  whose `tier_rendered` is `solid` — **not Classic**, which is what the same
+  run with `-bootsmoke` would have recorded. (b) The same run on an Ultra RT
+  config emits exactly ten distinct `gpu` names, and the Solid one exactly six.
+  (c) A golden capture of the scene with `-benchlog` absent compares
+  byte-identical to a pre-feature build via `scripts/ab_diff.py`. (d) The
+  emitter's per-frame entry point is referenced exactly once in
+  `r_vulkan.cpp`, inside the existing `if (cprof)` gate.
 - **B3 — the `-timedemo` exit.** *Verify:* `-timedemo demo1 -benchlog` exits 0
   and prints to stdout; `-timedemo demo1` without the flag still exits non-zero
   with its `I_Error` line, and the five demo fixtures still report 30 / 30 /
   30 / 70 / 350 gametics.
 - **B4 — the scene list and the runner.** *Verify:* `tools/bench.py` runs every
-  scene and prints a table whose rows sum, within rounding, to `frame,total`;
-  a scene pointed at a tier the machine cannot reach reports `SKIPPED` and the
-  process still exits 0.
+  scene and prints a table in which **no depth-0 row exceeds `frame,total`** and
+  **every emitted metric name appears exactly once** (§4.1 says why this is the
+  check and a sum is not); a scene whose `render_scale` is omitted is rejected
+  by name rather than defaulted (INV-2); a `spot` scene launched against a
+  non-`DEV` binary is refused rather than measured; and a scene pointed at a
+  tier the machine cannot reach reports `SKIPPED` — with `tier_rendered`
+  disagreeing with `tier_requested` as one of the ways that is detected — while
+  the process still exits 0.
 - **B5 — the comparator and `--selftest`.** *Verify:* `--selftest` passes with
   no GPU present; a fixture with a 30 % regression on a gated metric exits 1; a
   fixture with two usable intervals exits 2; a truncated baseline exits 3.
@@ -549,8 +693,8 @@ Phase 1 is B1–B6 and is the whole loop end to end. Phase 2 is B7–B8.
   *Verify:* on a scene at a known frame time, `frame,total` minus the sum of
   the `cpu` rows is smaller than it was before B7 — the gap the comment
   describes has shrunk, and by how much is recorded.
-- **B8 — memory and load time.** `zone_kb`, `gpu_mb`, `level_load`. *Verify:*
-  `zone_kb` tracks `Z_FreeMemory()` across a level change; `level_load` is
+- **B8 — memory and load time.** `zone_mb`, `gpu_mb`, `level_load`. *Verify:*
+  `zone_mb` tracks `Z_FreeMemory()` across a level change; `level_load` is
   non-zero and differs between a small map and a large one.
 
 ## 8. Invariants
@@ -559,18 +703,24 @@ Phase 1 is B1–B6 and is the whole loop end to end. Phase 2 is B7–B8.
   behaves identically. *Breaks when:* the emitter is called unconditionally and
   gated inside itself, so an inactive log still costs a call and a branch per
   frame — or worse, formats rows it then discards.
-  *Test:* a golden capture of one scene with the flag absent, before and after
-  this feature, compares byte-identical via `scripts/ab_diff.py`; and
-  `-benchlog`'s parse site is the only reference to the emitter's `open`
-  entry point outside the module.
+  *Test:* the **per-frame emit** entry point is referenced exactly once outside
+  the module, and that one reference sits inside the existing `if (cprof)`
+  gate — not merely `open`, and not merely a byte-identical picture. A golden
+  capture is the weaker half and is kept as the second clause: an emitter called
+  every frame and self-gating internally renders identical pixels and passes a
+  capture compare, so a test resting on the capture alone would record this
+  invariant as held in exactly the case its *Breaks when* describes. B2 (c) and
+  (d) run both clauses.
 
-- **INV-2** — every measurement records the render scale, tier, ray-traced view
-  and resolution it was taken at, and a comparison across any difference in
-  those is refused rather than performed. *Breaks when:* a scene omits
-  `render_scale` and the runner falls back to the config's value, so the
-  workload changes when `~/.doomrc` does and two runs of "the same" scene are
-  compared across different pixel counts. This is `performance.md`'s comparison
-  rule, mechanised.
+- **INV-2** — every measurement records the render scale, the tier **actually
+  rendered**, the ray-traced view and the resolution it was taken at, and a
+  comparison across any difference in those is refused rather than performed.
+  *Breaks when:* a scene omits `render_scale` and the runner falls back to the
+  config's value, so the workload changes when `~/.doomrc` does and two runs of
+  "the same" scene are compared across different pixel counts — or the sidecar
+  records the tier *requested* rather than the one that drew, which makes a
+  silent substitution invisible to every later comparison. This is
+  `performance.md`'s comparison rule, mechanised.
   *Test:* a scene entry with no `render_scale` is rejected by the runner with a
   named error, not defaulted; and a `--selftest` fixture pair differing only in
   the sidecar's `render_scale` yields `SKIPPED` with the mismatch named, never
@@ -635,9 +785,14 @@ Phase 1 is B1–B6 and is the whole loop end to end. Phase 2 is B7–B8.
   stale-pickup half is a recorded trap in this project's capture harness, and
   DOOM-0347 records `-rtverify` hanging silently forever on a non-Ultra config.
   *Test:* the runner deletes each scene's CSV path before launching and treats
-  a missing file, a non-zero exit or a timeout as `SKIPPED`; a scene pointed at
-  a deliberately invalid tier reports `SKIPPED` with the cause named, and no
-  numeric row for it appears in the table.
+  a missing file, a non-zero exit or a timeout as `SKIPPED`; **and a run whose
+  sidecar `tier_rendered` differs from its `tier_requested` is `SKIPPED` on
+  that ground alone**, which is the clause that catches a substitution the
+  process exit code cannot see. A scene pointed at a deliberately invalid tier
+  reports `SKIPPED` with the cause named, and no numeric row for it appears in
+  the table. Swapping `-benchtics` back to `-bootsmoke` is the concrete fixture
+  for the substitution arm: it exits 0, writes a full CSV, and must still be
+  `SKIPPED` because Classic drew it.
 
 ## 9. Alternatives considered (and rejected)
 
@@ -697,25 +852,32 @@ steady state to reduce.
   trusts. The cost is that it changes whenever the reference machine's driver
   does, and a driver-caused diff will look like a regression. Confirm with the
   user before B6 captures it.
-- **Q5 — which metrics are gated?** `perf_gate.py`'s default allowlist is
-  `frame,total`, `gpu,total`, `cpu,total`, `mem,gpu_mb`. Gating every pass would
-  make the tool noisy; gating only the totals would miss a pass that doubled
-  while another halved. Settled at B6 against the measured run-to-run variance
-  from INV-7.
+- **Q5 — should any per-pass metric be gated as well as the three totals?**
+  §4.7 gates `frame,total`, `gpu,total` and `cpu,present-total`. Gating every
+  pass would make the tool noisy; gating only the totals misses a pass that
+  doubled while another halved. Settled at B6 against the measured run-to-run
+  variance from INV-7 — a pass whose variance is well inside `warn_pct` is a
+  candidate, one that is not never will be.
+- **Q6 — Classic.** This harness cannot measure it: the Scope section above
+  records why, and it is a real gap rather than a decision — Classic is a
+  shipped tier and "which tier is slow" is one of the questions this tool
+  exists to answer. Measuring it needs a frame timer in the software renderer
+  that does not exist today. Not filed; raise it as its own roadmap item if
+  Classic performance ever becomes a question.
 
 ## 11. What checks this
 
 | Claim | What catches it |
 |---|---|
-| INV-1 zero cost when absent | the golden capture compare at B2, plus the single-reference check |
-| INV-2 conditions recorded and mismatches refused | the runner's rejection of a scene with no `render_scale`, plus a `--selftest` mismatch fixture |
-| INV-3 every bucket named once | the static assertions (build-time), plus the distinct-name count per path at B2 |
+| INV-1 zero cost when absent | B2 (d), the single-reference-inside-the-gate check — the load-bearing half; B2 (c)'s golden capture alone cannot falsify it |
+| INV-2 conditions recorded and mismatches refused | B4's rejection of a scene with no `render_scale`, plus a `--selftest` mismatch fixture at B5 |
+| INV-3 every bucket named once | the static assertions (build-time), plus B2 (b)'s distinct-name count per path |
 | INV-4 completed run exits 0 | B3's three-part check, including the five demo fixtures |
 | INV-5 no single-interval verdicts | `--selftest` fixture at B5 |
 | INV-6 warm-up discarded | `--selftest` fixture at B5 |
 | INV-7 run-to-run stability | B6's double run — **this is the one that decides whether the harness is worth anything**, and it can only be run on the reference GPU |
 | INV-8 arithmetic covered | `--selftest` itself; its fixtures carry literal expected verdicts |
-| INV-9 unreachable scene is SKIPPED | B4's deliberately-invalid-tier scene |
+| INV-9 unreachable scene is SKIPPED | B4's deliberately-invalid-tier scene, and INV-9's `-bootsmoke` substitution fixture — the arm that exits 0 with a full CSV |
 | §6's under-1 % overhead bound | **Partial:** measured once at B6 on one scene. Nothing re-measures it if a later change makes the emitter expensive |
 | The scene list covers the situations that matter | **nothing** — a judgement call. A bottleneck in a situation no scene covers is invisible to this harness, and nothing will say so |
 | The metric names stay meaningful as passes change | **Partial:** INV-3 catches a *missing* name; nothing catches a name that is still present and now describes different work. That is DOOM-0345 INV-7's residue and it is a hand read |
@@ -744,3 +906,4 @@ steady state to reduce.
 
 | Loop | Date | Lanes | Q1 | Q2 | Q3 | Q4 | Outcome |
 |------|------|-------|----|----|----|----|---------|
+| 1 | 2026-09-12 | 3 | 3 | 3 | 2 | 2 | **10 verified, 0 dismissed, all 10 fixed.** Three lanes independently found the same first defect, and it was the one that would have wasted the most time: §4.5 used `-bootsmoke N` as the spot-scene stop condition, but `D_DoomLoop` runs `if (bootsmoke_tics > 0) rendermode = RB_CLASSIC;` before the backend is chosen (DOOM-0203, guarding a GPU-less CI runner), so **every Solid and Ultra spot scene would have rendered in Classic**, exited 0, and written a CSV with no `gpu` rows under a sidecar claiming Ultra. INV-9 was written to catch "falls back to another tier" and could not have, because nothing recorded which tier drew. Fixed by adding `-benchtics N` (exit after N tics, pinning nothing; DOOM-0203's pin deliberately untouched) and by splitting the sidecar's `tier` into `tier_requested` / `tier_rendered`, which makes INV-9 mechanical and gives it a fixture that exits 0 with a full CSV and must still be `SKIPPED`. One lane alone found the widest defect: § Scope claimed all three tiers were measurable, but `cpuMs`, `cpuBuildMs` and `profMs` are members of the Vulkan backend's own state struct and there is no frame timer anywhere outside `r_vulkan.cpp` — a Classic scene emits nothing at all, so Classic is now out of scope with §10 Q6 carrying the gap. Two lanes found that `-freeze` and `-inspect` exist only under `ifeq ($(DEV),1)`, so the runner now refuses a spot scene whose launch did not print `-inspect: monsters ignore you` rather than measuring a live world. Two found B4 demanding rows that sum to `frame,total` while §2 of this same document says `profMs[4..9]` nest inside `profMs[2]`; `depth` now marks components, and the sum check is replaced by one that can pass — no depth-0 row exceeds the total, every name appears once — because `cpu,build`'s containment varies with DOOM-0074's build-ahead path and no sum is true on both. Two found `zone_kb` written into a column the schema defines as megabytes, which would also have applied the 1 MB absolute floor to a kilobyte figure. One found the baseline's gate list naming `gpu,total`, `cpu,total` and `mem,gpu_mb` while nothing specified emitting any of them; §4.2 now closes the phase-1 metric namespace and the gated set is `frame,total` / `gpu,total` / `cpu,present-total`. One found §11 crediting checks to a B2 whose verify clause ran neither. One found INV-1's own test unable to falsify its *Breaks when*: a self-gating emitter called every frame renders identical pixels and passes a golden-capture compare, so the test now names the per-frame emit call site. Promoted from a lane's open question: §4.2 listed the RT names in **print** order (`profMs[0,1,2,4,5,6,8,9,7,3]`) while requiring a slot-keyed table, so a positional transcription would swap the blit and TAAU labels — the exact silent-absorption failure the section cites DOOM-0345 INV-7 for. The mapping is now written out slot by slot. Two open questions resolved clean and are not in the tally: `rb_profile` **is** reachable headlessly (config key `rt_profile`, now named in §6, since a `` \ `` keypress cannot be injected under Wayland), and §2's `uncapped`-excludes-`demoplayback` claim is correct. |
