@@ -1202,6 +1202,12 @@ int cpars[32] =
     240,150,180,150,150,300,330,420,300,180,	// 21-30
     120,30					// 31-32
 };
+
+// DOOM-0401: the extents the lookup in G_DoCompleted bounds against, derived
+// from the tables themselves so adding a row cannot leave the bound behind.
+#define NUM_PAR_EPISODES	((int)(sizeof(pars)/sizeof(pars[0])))
+#define NUM_PAR_MAPS		((int)(sizeof(pars[0])/sizeof(pars[0][0])))
+#define NUM_CPARS		((int)(sizeof(cpars)/sizeof(cpars[0])))
  
 
 //
@@ -1324,10 +1330,28 @@ void G_DoCompleted (void)
     wminfo.maxitems = totalitems; 
     wminfo.maxsecret = totalsecret; 
     wminfo.maxfrags = 0; 
+    // DOOM-0401: both par-time tables were indexed with no bound.
+    //
+    // pars is [4][10] and holds episodes 1-3. G_InitNew permits episode 4 on
+    // retail, and this fork WIDENED that: d_main.c promotes an ordinary
+    // doom.wad to retail, where vanilla reached retail only through the
+    // doomu.wad filename. So every Ultimate Doom E4 level except E4M8 -- which
+    // ends the game before this line -- read pars[4][1..9], past the array.
+    //
+    // cpars is [32] and gamemap is NOT clamped above on commercial, so a PWAD
+    // supplying a MAP33 or higher reads past that one. Unreachable from -warp
+    // alone (the level load fails first) but reachable from a WAD, which is
+    // untrusted input.
+    //
+    // id's 1.10 data has no episode-4 par times, so a level outside either
+    // table reports none rather than a fabricated figure.
     if ( gamemode == commercial )
-	wminfo.partime = 35*cpars[gamemap-1]; 
+	wminfo.partime = (gamemap >= 1 && gamemap <= NUM_CPARS)
+	    ? 35*cpars[gamemap-1] : 0;
     else
-	wminfo.partime = 35*pars[gameepisode][gamemap]; 
+	wminfo.partime = (gameepisode >= 0 && gameepisode < NUM_PAR_EPISODES
+			  && gamemap >= 0 && gamemap < NUM_PAR_MAPS)
+	    ? 35*pars[gameepisode][gamemap] : 0;
     wminfo.pnum = consoleplayer; 
  
     for (i=0 ; i<MAXPLAYERS ; i++) 
