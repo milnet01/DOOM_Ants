@@ -77,8 +77,15 @@ rcsid[] __attribute__((used)) = "$Id: g_game.c,v 1.8 1997/02/03 22:45:09 b1 Exp 
 // 512 KiB. The original 0x2c000 (180 KiB) was sized for 1997 32-bit structs;
 // on 64-bit every saved pointer field doubles, so a busy stock level's save
 // (mobjs are the bulk, ~700 * ~256 B on DOOM II's biggest maps ≈ 220 KiB)
-// can exceed it. 512 KiB leaves >2x headroom; the post-write guard in
-// G_DoSaveGame is the backstop for anything larger.
+// can exceed it. 512 KiB leaves >2x headroom.
+//
+// It is a HARD limit, not an estimate with a backstop behind it: DOOM-0374
+// made every write in G_DoSaveGame ask P_SaveRoom first, and a save that does
+// not fit is refused before any byte of it is written. This comment used to
+// name a post-write length comparison as the backstop; that check ran after
+// the whole archive had already been written into the block, could not be a
+// backstop for anything, and DOOM-0374 deleted it. Letting large PWADs save
+// is DOOM-0421.
 #define SAVEGAMESIZE	0x80000
 #define SAVESTRINGSIZE	24
 
