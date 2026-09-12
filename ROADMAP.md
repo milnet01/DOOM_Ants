@@ -4309,6 +4309,29 @@ with friends.
   (throttled CSV) and `tools/perf_gate.py` (baseline comparison with
   OK/WARN/FAIL/IMPROVED verdicts and real exit codes), MIT and by the same
   author.
+  Progress (2026-09-12): contract and build order written and gated, no code
+  yet. `docs/specs/DOOM-0431-bench-harness.md` (Status: Reviewed) and
+  `docs/plans/DOOM-0431-bench-harness.md` (Status: not started). Both ran
+  `review-contract` to their cap of 2; 31 verified findings across 18 cold
+  lanes, none dismissed, none deferred. The spec's cap was violent — most of
+  its loop 2 landed on loop 1's own repairs — so §13 routes it to
+  implementation rather than a third cold read.
+
+  Next action is build step B1, the CSV emitter and its unit test, which needs
+  no GPU.
+
+  Two things owed and recorded rather than done. The spec is long against
+  `/mnt/Games/CLAUDE.md`'s prose rules; stale-prone counts are stripped but the
+  explanation the fixes added is not, and a trim is owed as its own pass rather
+  than folded into a build step. And B6 must ask the user two questions before
+  capturing a baseline: whether it is committed to the tree at all (§10 Q4), and
+  which metrics are gated (§10 Q5).
+
+  The gates found one cross-document defect worth naming here because it reaches
+  outside this item: DOOM-0345 INV-7 carries a standing grep for the literal
+  `nq = g.profRasterFrame ? 7u : 10u;` in `r_vulkan.cpp`, and build step B2
+  rewrites that line to use named constants. The grep is updated in the same
+  change, or a shipped feature's invariant test reads as broken.
   **Layman:** One command that runs the game through the same fixed situations every time and tells you what is costing the most, and whether a change made it slower.
   Kind: implement.
   Source: user-request-2026-09-12.
