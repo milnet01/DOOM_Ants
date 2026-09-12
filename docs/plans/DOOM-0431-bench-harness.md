@@ -67,8 +67,17 @@ pure function taking a reduced sample and returning CSV lines.
       pins nothing.
 - [ ] `kRasterTimestamps` / `kRtTimestamps` in `r_vulkan.cpp`; rewrite `nq` to
       read them.
+- [ ] **In the same change**, update DOOM-0345 INV-7's standing grep to the
+      constant form. It greps for the literal `nq = g.profRasterFrame ? 7u :
+      10u;` and expects one hit; the rewrite takes it to zero, and a live test
+      on a shipped feature would read as broken.
 - [ ] The two slot-name tables, with a static assertion tying each table's
       length to the bucket count its path derives from those constants.
+- [ ] **A static assertion that `ts[]` is at least `kRtTimestamps` long.** The
+      readback buffer is a fixed `uint64_t ts[10]`, and the code's own comment
+      warns that widening `nq` without widening it is a silent overflow. These
+      constants exist so a future pass is added by touching one — which is that
+      edit. Nothing is wrong today; the assertion is what keeps it that way.
 - [ ] A flush call at each reset site, inside that site's own gate.
 - [ ] The sidecar, carrying `tier_requested` and `tier_rendered`. **Write it
       after `RB_Init` — not at log-open.** `RB_Init` runs inside `D_DoomLoop`,
@@ -113,6 +122,11 @@ reached by a path this plan did not expect.
       ready-to-paste `-warpto` line to stdout and the HUD. Needs `DEV=1`.
 - [ ] `tools/bench.py`: build each command line, run it, collect CSV + sidecar,
       stamp `git rev-parse HEAD`, write `bench-result.json`, print the table.
+- [ ] **The reduction, here and not in B5** — drop the first interval, require
+      at least three usable, take the median. The table is of reduced metrics,
+      so B4 cannot print it without this; left in B5 a builder invents an
+      ad-hoc reduction, and the table and `--compare` then disagree about the
+      same CSV.
 - [ ] Delete each scene's CSV path before launching. Timeout every launch.
 
 **Verify:**
@@ -132,8 +146,6 @@ reached by a path this plan did not expect.
 ### B5 — the comparator and `--selftest`
 
 - [ ] `--compare`, `--update-baseline`, `--selftest` in `tools/bench.py`.
-- [ ] Reduction: drop the first interval, require at least three usable, take
-      the median.
 - [ ] Refuse a comparison whose conditions differ; compare `tier_rendered`.
 - [ ] `tools/bench-fixtures/`, each fixture stating its expected verdict as a
       literal.
@@ -159,7 +171,15 @@ Reference hardware only (RX 6600).
       exit 3.
 - [ ] Run it again on the same unchanged tree and `--compare` against that
       provisional baseline.
-- [ ] Only once that comes back clean, commit `tools/bench-baseline.json`.
+- [ ] **Ask the user whether the baseline is committed at all** — spec §10 Q4
+      leaves it open, and the cost of committing is that a driver change will
+      read as a regression. Ask before capturing, not after.
+- [ ] **Settle the gate list** — spec §10 Q5. Take the per-pass run-to-run
+      variance from the double run, and gate a pass only where its variance
+      sits well inside `warn_pct`. Record the decision and the variance it
+      rested on.
+- [ ] Only once the double run comes back clean, commit
+      `tools/bench-baseline.json`.
 - [ ] Measure `-benchlog`'s overhead: present-total with the flag against the
       same scene with `rt_profile 1` and the flag off.
 
@@ -187,7 +207,9 @@ not pinned, and a baseline built on it is worthless.
 not a sum of depth-0 `cpu` rows, because `cpu,build` is also depth 0 and may
 already sit inside `present-total` (spec §4.1 forbids the sum for this reason).
 Measure that gap on a scene before B7, then require `tick` + `overlay` +
-`sound` + `wipe` to account for a stated share of it. Record the share.
+`sound` + `wipe` to account for **at least half** of it. Record the share.
+A floor is needed or nothing fails: four timers each measuring an empty span
+still produce a share, and "record the share" would tick the box.
 
 **Stop if** the four new rows sum to more than the measured gap — they are then
 timing spans that overlap each other or overlap the present.
@@ -217,3 +239,4 @@ timing spans that overlap each other or overlap the present.
 | Loop | Date | Lanes | Q1 | Q2 | Q3 | Q4 | Outcome |
 |------|------|-------|----|----|----|----|---------|
 | 1 | 2026-09-12 | 3 | 0 | 3 | 1 | 3 | **7 verified, 0 dismissed, all 7 fixed.** All three lanes found B8's direction claim: it required `zone_mb` to move "in the direction that says more in use", but a correct in-use figure FALLS when the next map is smaller, and the step directly above warns that logging the free figure is the bug — so the natural repair for the false failure was the inversion the spec forbids. B8 now checks `zone_mb` plus `Z_FreeMemory()` against the heap size and asserts no direction. All three also found B7 subtracting the summed depth-0 `cpu` rows, which double-counts `build` under DOOM-0074 build-ahead — spec §4.1 forbids that sum by name. The gap is `frame,total` minus `cpu,present-total`, which is what `r_vulkan.cpp`'s comment actually describes, and the new rows must now account for a stated share of it. One lane found the sidecar's write timing unsatisfiable, and it reached back into the contract: §4.3 wrote the sidecar "at open time" while reading `tier_rendered` "after the backend has initialised", and `RB_Init` runs inside `D_DoomLoop`, long after argv is parsed. Left alone, both fields would carry the config's renderer, always agree, and the loop-1 mismatch clause would never fire. Fixed in both documents; the spec's §13 carries the fold-back row. One found B2 checking `gpu` rows on the Ultra arm only, while INV-3 requires a run of each path and the static assertion is build-time and cannot see an unemitted row — a flush sited so raster emits nothing would have passed. One found the global constraint saying a measurement records "the tier that actually rendered", one tier, while B2 builds two fields and B5 compares them. One found B4's key-uniqueness check had lost its subject: it belongs to the printed table, and applied to the CSV it can never pass, since B5 needs several intervals and every key recurs per interval. One found B6 ordered to `--compare` before capturing the baseline it reads. Resolved clean and not in the tally: two lanes could not settle whether a menu row prints a pasteable `-warpto` line. `M_DevPrintPos` does, to stdout and the HUD; B4 now names it, and that it needs `DEV=1`. |
+| 2 | 2026-09-12 | 3 | 0 | 3 | 1 | 1 | **5 verified, 0 dismissed, all 5 fixed. A calm cap: 2 of the 5 landed on text loop 1 wrote.** The serious one was cross-document and neither gate had seen it: B2 rewrites `nq` to read the new timestamp constants, and DOOM-0345 INV-7 carries a standing grep for that exact literal expecting one hit. The rewrite takes it to zero, so a live invariant test on a shipped feature would read as broken — while this plan's own global constraint claimed INV-7 was untouched and the contract's §12 said no edit was owed. Both corrected; B2 now updates that grep in the same change. Two lanes found the contract's own B7 still prescribing the sum of the `cpu` rows that §4.1 forbids by name — drift this plan's loop 1 created by fixing only its own side. The spec now states the same `frame,total` minus `cpu,present-total` pairing. One lane found B4 printing a table of reduced metrics while the reduction was a B5 deliverable, so a builder would invent an ad-hoc one and the table and `--compare` would disagree about the same CSV; the reduction moves to B4. One found B7's "account for a stated share" unfalsifiable — four timers measuring empty spans still produce a share — so a floor is named. One found B6 silently settling two questions the contract schedules there: whether the baseline is committed at all (§10 Q4) and which metrics are gated (§10 Q5). Both are now explicit items, and Q4 asks the user before capture rather than after. Adopted from a lane's open question rather than filed as a finding: `ts[]` is a fixed `uint64_t ts[10]` whose own comment warns that widening `nq` without widening it is a silent overflow. Nothing is wrong today, but these constants exist so a future pass is added by touching one — which is that edit. B2 now asserts the buffer length too. |
