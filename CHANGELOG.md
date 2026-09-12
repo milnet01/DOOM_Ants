@@ -16,7 +16,21 @@ All notable changes to DOOM_Ants are documented here. The format follows
   Note: this makes saves from earlier versions unreadable. They were
   already being misread rather than refused.
 
+### Removed
+
+- **Removed `-statcopy`, which wrote game data to an address given on the command line** (DOOM-0401)
+  A 1997 hook for an external statistics program that no longer exists. Passing it crashed the game at the end of a level.
+
 ### Fixed
+
+- **Bounded four more command-line options against bad input** (DOOM-0401)
+  `-wart` with a missing map crashed; `-maxdemo 0` recorded into a zero-sized buffer; `-warpto` with a huge coordinate silently put the player somewhere else and said it had worked; an empty or unreadable @response file was read as garbage arguments.
+
+- **Ultimate Doom episode 4 no longer shows an invented par time** (DOOM-0401)
+  The par-time table only holds episodes 1 to 3, and episode 4 was reading past the end of it. There is no par time in the 1997 data for those levels, so none is shown.
+
+- **The byte-order swap helpers can be built, and are now tested** (DOOM-0401)
+  They were declared for big-endian machines and compiled only for little-endian ones, so a big-endian build could not link at all, and the types would have swapped the wrong width.
 
 - **A bad number in your settings file can no longer stop the game starting** (DOOM-0383)
   The volume settings were passed straight through to a check that
@@ -29,6 +43,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
   or by leftover nonsense if it was the first line.
 
 ### Security
+
+- **Refuse a network game with more players than DOOM can represent** (DOOM-0401)
+  Joining with more than four hosts wrote past the end of the player list. The engine now says so and stops instead.
 
 - **The Linux download is now built with packaging tools that are checked before they run** (DOOM-0259)
   The build used to fetch three helper programs from a moving link and

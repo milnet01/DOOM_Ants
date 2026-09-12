@@ -3372,7 +3372,7 @@ with friends.
   Source: review-code 2026-09-01, lane wad-io.
   Lanes: wad-io.
 
-- 📋 [DOOM-0401] **Game-loop review tail: nine findings, including an out-of-bounds write from -net.**
+- ✅ [DOOM-0401] **Game-loop review tail: nine findings, including an out-of-bounds write from -net.**
   Not covered by DOOM-0371, which files the demo half.
 
     - HIGH d_net.c:593 -- playeringame[i] is filled for i < doomcom->numplayers,
@@ -3409,6 +3409,54 @@ with friends.
       signed-overflow UB.
     - LOW d_main.c:1519 -- statcopy turns a CLI integer into a pointer that
       g_game.c:1340 memcpy's sizeof(wminfo) bytes into.
+  Resolved (2026-09-12): all nine findings, one commit each.
+
+  The HIGH is fixed at the seam rather than the producer. NetPopulationFits
+  in net_bounds.h takes BOTH array sizes, because the defect is that they
+  differ; D_CheckNetGame refuses a doomcom it cannot represent before it
+  fills either array. The open question is answered no: DOOM is a
+  four-player game, so a larger -net host list is refused rather than
+  truncated. i_net.c's DOOM-0254 comment, which claimed numnodes bounded
+  playeringame[], is corrected at its own site.
+
+  The savegame finding needed no code: DOOM-0374 replaced the post-hoc
+  check with P_SaveRoom and deleted it. What was left was SAVEGAMESIZE's
+  header comment still naming it as a backstop. Corrected.
+
+  -wart is bounded per branch for what each reads. -maxdemo is bounded on
+  the operand, before the *1024 that was wrapping. Both par-time tables are
+  bounded, not just pars: cpars has the same defect from a PWAD supplying
+  MAP33 or higher, and fixing one would have been a half-applied fix. E4
+  now reports no par time, since id's 1.10 data has none. FindResponseFile
+  checks fseek, ftell and fread.
+
+  m_swap's declarations and definitions were exact complements, so the
+  big-endian build could not link -- while the false-positive ledger cited
+  big-endian as the reason for keeping LONG()/SHORT(). Both functions are
+  now compiled unconditionally with fixed-width types; `unsigned long` is
+  64 bits on LP64 and would have swapped the wrong width. tests/m_swap_test
+  is new (suite is 17). Big-endian is still untested on hardware and this
+  does not claim otherwise.
+
+  -warpto's coordinates are bounded to DOOM's map range before the FRACBITS
+  shift. -statcopy is REMOVED: the operand was the destination of a memcpy,
+  so no bound makes it safe, and nothing in the fork or its scripts uses it.
+
+  Evidence is A/B against pre-change binaries throughout, each arm's exit
+  code read. -wart 1 dumped core before and errors after. -maxdemo 0
+  allocated nothing and recorded into it; -5 and two overflowing values
+  reached Z_Malloc as negatives. E4M1/E4M5/E4M9 read 3150/5250/3150 tics
+  from past pars -- cpars[1] and cpars[5] times 35, so the read was landing
+  in the next table -- and read 0 after. An empty response file and a
+  directory both ran on to the title screen before. -warpto 99999999 0
+  placed the player at x = -7937 and reported success. -statcopy 12345
+  segfaulted at the intermission. Two of those needed a throwaway probe
+  forcing a level exit under -bootsmoke, added to both trees and removed
+  from both.
+
+  Every commit: build clean with no new warnings, suite green, five demo
+  fixtures at 30/30/30/70/350, 68/68 IWAD maps boot. windows-smoke.sh
+  --syntax-only PASS on the m_swap change.
   **Layman:** The leftovers from reviewing startup, the main loop, demos and the network tic loop — including one case where joining a game with more than four hosts writes past the end of the player list.
   Kind: investigate.
   Source: review-code 2026-09-01, lane game-loop.
