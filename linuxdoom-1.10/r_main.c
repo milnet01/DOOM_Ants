@@ -706,7 +706,21 @@ void R_ExecuteSetViewSize (void)
 	// view still fills its share of the hi-res screen (DOOM-0027). Without
 	// the *HIRES, blocks==10 gave a 320x168 view marooned in the 640x400
 	// buffer (a small bordered square) instead of the intended 640x336.
-	scaledviewwidth = setblocks*32*HIRES;
+	// DOOM-0402: the windowed view must scale with the BUFFER, not stay at
+	// its 4:3 pixel width. nonwideviewwidth below is derived from
+	// SCREENWIDTH, so on a widescreen buffer the projection widens the FOV
+	// whatever this width is -- and if the window did not widen with it,
+	// the wider picture was drawn into the same number of columns. That is
+	// a horizontal squeeze, the opposite of the Hor+ behaviour the comment
+	// below promises. Screen Size 10 and 11 were already correct because
+	// they span the whole buffer.
+	//
+	// At 4:3 SCREENWIDTH == NONWIDEWIDTH*HIRES, so the scale is 1 and the
+	// &~7 is a no-op on a multiple of 32*HIRES -- this path stays exactly
+	// setblocks*32*HIRES there. The mask keeps the width even on a
+	// widescreen buffer, which low-detail mode halves.
+	scaledviewwidth = (setblocks*32*HIRES * SCREENWIDTH
+			   / (NONWIDEWIDTH*HIRES)) & ~7;
 	viewheight = (setblocks*168/10*HIRES)&~7;
     }
     
