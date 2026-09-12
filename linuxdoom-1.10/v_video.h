@@ -81,6 +81,18 @@ V_DrawPatch
   int		scrn,
   patch_t*	patch);
 
+// DOOM-0402: as V_DrawPatch, but x and y are logical coordinates in the DESTINATION
+// BUFFER's own space rather than the 320-wide UI canvas -- so no WIDESCREENDELTA
+// re-centring, and x is bounded by that buffer's logical width. For art positioned
+// against the physical frame, not against the 320 canvas: the view border, whose
+// window can be both left of x=0 and wider than 320 once the frame is widescreen.
+void
+V_DrawPatchAbs
+( int		x,
+  int		y,
+  int		scrn,
+  patch_t*	patch);
+
 // As V_DrawPatch, but every source pixel is remapped through a 256-entry
 // palette-translation table (e.g. to recolour the monochrome HUD font).
 void

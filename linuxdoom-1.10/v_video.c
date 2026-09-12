@@ -296,13 +296,20 @@ boolean V_PostInBounds (const column_t* column, int height)
 // e.g. to recolour the monochrome HUD font (DOOM-0158 centred secret message).
 // trans == NULL is the plain path, pixel-identical to the original V_DrawPatch.
 //
+// DOOM-0402: `bufspace` chooses which logical space x is in. false is the 320-wide
+// UI canvas every HUD/menu caller uses -- widescreen re-centres it by
+// WIDESCREENDELTA and the bounds check is ORIGWIDTH. true means x is already a
+// coordinate in the destination buffer's own logical space, which on widescreen is
+// wider than 320: no re-centring, and the bound is that buffer's own width.
+//
 static void
 V_DrawPatchGeneral
 ( int		x,
   int		y,
   int		scrn,
   patch_t*	patch,
-  const byte*	trans )
+  const byte*	trans,
+  boolean	bufspace )
 {
 
     int		count;
@@ -317,24 +324,33 @@ V_DrawPatchGeneral
     // DOOM-0147: HIRES for full-screen buffers, 1 for the ORIGWIDTH-wide scratch.
     int		f = (dsw == ORIGWIDTH) ? 1 : HIRES;
     // Re-centre 320-wide UI art in a widescreen frame (0 on the scratch and at 4:3).
-    int		wsdelta = (dsw == ORIGWIDTH) ? 0 : WIDESCREENDELTA;
+    int		wsdelta = (dsw == ORIGWIDTH || bufspace) ? 0 : WIDESCREENDELTA;
+    // The logical width x is bounded by: the UI canvas, or the buffer's own.
+    // Only the WIDTH differs -- widescreen is Hor+, so every buffer is still
+    // ORIGHEIGHT logical rows tall and y keeps its original bound.
+    int		maxw = bufspace ? dsw/f : ORIGWIDTH;
     int		rx, ry;
 
     y -= SHORT(patch->topoffset);
     x -= SHORT(patch->leftoffset);
 #ifdef RANGECHECK
     if (x<0
-	||x+SHORT(patch->width) >ORIGWIDTH
+	||x+SHORT(patch->width) >maxw
 	|| y<0
 	|| y+SHORT(patch->height)>ORIGHEIGHT
 	|| (unsigned)scrn>4)
     {
-      // DOOM-0137/0171: RANGECHECK rejects patches drawn outside the 320x200
-      // logical screen (view-border bezel at startup; widescreen/4K status-bar
-      // fill). They are ignored and the frame renders fine, so the underlying
-      // constraint is cosmetic -- but the two fprintfs per patch flood the log.
-      // Rate-limit to a few lines then suppress; a real border/tiling geometry
-      // fix stays a separate task.
+      // DOOM-0137/0171: RANGECHECK rejects patches drawn outside the logical
+      // screen, and the two fprintfs per patch flood the log. Rate-limit to a
+      // few lines then suppress.
+      //
+      // DOOM-0402: this note used to name the view-border bezel as an example
+      // of a rejection that was cosmetic, the frame rendering fine regardless.
+      // That was false for the bezel: it was measured against the wrong canvas,
+      // and the border was MISSING on screen wherever it was rejected. The
+      // bezel now draws through V_DrawPatchAbs. Do not read the remaining
+      // wording as a guarantee that a rejection is harmless -- treat a message
+      // here as a defect at the CALLER until its caller has been checked.
       static int nbadpatch = 0;
       if (nbadpatch < 3)
       {
@@ -492,17 +508,23 @@ V_DrawPatchScaled
 }
 
 //
-// V_DrawPatch / V_DrawPatchTranslated
-// Thin wrappers over V_DrawPatchGeneral: plain draw vs palette-remapped draw.
+// V_DrawPatch / V_DrawPatchTranslated / V_DrawPatchAbs
+// Thin wrappers over V_DrawPatchGeneral: plain draw, palette-remapped draw, and
+// (DOOM-0402) a draw whose x is already in the destination buffer's logical space.
 //
 void V_DrawPatch (int x, int y, int scrn, patch_t* patch)
 {
-    V_DrawPatchGeneral (x, y, scrn, patch, NULL);
+    V_DrawPatchGeneral (x, y, scrn, patch, NULL, false);
 }
 
 void V_DrawPatchTranslated (int x, int y, int scrn, patch_t* patch, const byte* trans)
 {
-    V_DrawPatchGeneral (x, y, scrn, patch, trans);
+    V_DrawPatchGeneral (x, y, scrn, patch, trans, false);
+}
+
+void V_DrawPatchAbs (int x, int y, int scrn, patch_t* patch)
+{
+    V_DrawPatchGeneral (x, y, scrn, patch, NULL, true);
 }
 
 //

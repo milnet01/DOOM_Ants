@@ -777,8 +777,14 @@ void R_FillBackScreen (void)
     } 
 	
     // The view geometry is physical; the brdr_* tiles are 320x200-logical art
-    // drawn through the scaling V_DrawPatch, so draw the border in LOGICAL space
+    // drawn through the scaling blitter, so draw the border in LOGICAL space
     // (divide the geometry by HIRES) and let the scaler double it (DOOM-0027).
+    //
+    // DOOM-0402: through V_DrawPatchAbs, not V_DrawPatch. The border frames the
+    // VIEW WINDOW, which on widescreen sits outside the 320-wide UI canvas
+    // V_DrawPatch assumes -- it would have re-centred every tile by
+    // WIDESCREENDELTA, into the view region R_DrawViewBorder never copies, and
+    // its ORIGWIDTH bounds check dropped the right-hand column outright.
     {
 	int	lvx = viewwindowx / HIRES;
 	int	lvy = viewwindowy / HIRES;
@@ -787,22 +793,22 @@ void R_FillBackScreen (void)
 
 	patch = W_CacheLumpName ("brdr_t",PU_CACHE);
 	for (x=0 ; x<lvw ; x+=8)
-	    V_DrawPatch (lvx+x,lvy-8,1,patch);
+	    V_DrawPatchAbs (lvx+x,lvy-8,1,patch);
 	patch = W_CacheLumpName ("brdr_b",PU_CACHE);
 	for (x=0 ; x<lvw ; x+=8)
-	    V_DrawPatch (lvx+x,lvy+lvh,1,patch);
+	    V_DrawPatchAbs (lvx+x,lvy+lvh,1,patch);
 	patch = W_CacheLumpName ("brdr_l",PU_CACHE);
 	for (y=0 ; y<lvh ; y+=8)
-	    V_DrawPatch (lvx-8,lvy+y,1,patch);
+	    V_DrawPatchAbs (lvx-8,lvy+y,1,patch);
 	patch = W_CacheLumpName ("brdr_r",PU_CACHE);
 	for (y=0 ; y<lvh ; y+=8)
-	    V_DrawPatch (lvx+lvw,lvy+y,1,patch);
+	    V_DrawPatchAbs (lvx+lvw,lvy+y,1,patch);
 
 	// Draw beveled edge.
-	V_DrawPatch (lvx-8, lvy-8,   1, W_CacheLumpName ("brdr_tl",PU_CACHE));
-	V_DrawPatch (lvx+lvw, lvy-8, 1, W_CacheLumpName ("brdr_tr",PU_CACHE));
-	V_DrawPatch (lvx-8, lvy+lvh, 1, W_CacheLumpName ("brdr_bl",PU_CACHE));
-	V_DrawPatch (lvx+lvw, lvy+lvh, 1, W_CacheLumpName ("brdr_br",PU_CACHE));
+	V_DrawPatchAbs (lvx-8, lvy-8,   1, W_CacheLumpName ("brdr_tl",PU_CACHE));
+	V_DrawPatchAbs (lvx+lvw, lvy-8, 1, W_CacheLumpName ("brdr_tr",PU_CACHE));
+	V_DrawPatchAbs (lvx-8, lvy+lvh, 1, W_CacheLumpName ("brdr_bl",PU_CACHE));
+	V_DrawPatchAbs (lvx+lvw, lvy+lvh, 1, W_CacheLumpName ("brdr_br",PU_CACHE));
     }
 }
  
