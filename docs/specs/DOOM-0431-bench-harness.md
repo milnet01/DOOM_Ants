@@ -1,6 +1,9 @@
 # DOOM-0431 — Repeatable benchmark harness
 
-**Status:** spec draft (2026-09-12).
+**Status:** Reviewed — `review-contract` loops 1–2 (see §13), stopped at the
+spec cap of 2 with every verified finding fixed and no deferred tail. Ready to
+implement; §13's loop-2 row records that the cap was a violent one and what
+that means for re-gating.
 **Kind:** implement.
 **Source:** ROADMAP DOOM-0431 (`user-request-2026-09-12`). Scope calls taken with
 the user 2026-09-12 — see §3. Reference design: the Vestige project
@@ -50,14 +53,18 @@ route and read a scrolling log. Those gates are not retro-fitted here; see §12.
 **Scope:** two new engine flags, a new emitter module, and two new files under
 `tools/`. The engine's rendering behaviour does not change.
 
-**Solid and Ultra only, rasterised and ray-traced. Classic is out of scope and
-cannot be measured by this design at all** — every counter this harness reads
-(`cpuMs`, `cpuBuildMs`, `profMs`) is a member of the Vulkan backend's own state
-struct in `r_vulkan.cpp`, the prints sit in the Vulkan present path, and there
-is no frame-time or FPS counter anywhere outside that file. A Classic scene
-would emit no `gpu` rows, no `cpu` rows and no `frame,total` row — nothing at
-all. Measuring Classic needs a timing path in the software renderer that does
-not exist; §10 Q6 carries it.
+**Solid and Ultra only, rasterised and ray-traced.** Classic is out of scope,
+and the reason is the breakdown rather than the frame time. Every per-pass
+counter this harness reads — `cpuMs`, `cpuBuildMs`, `profMs` — is a member of
+the Vulkan backend's state struct in `r_vulkan.cpp`, and both prints sit in the
+Vulkan present path. A Classic scene emits no `gpu` rows and no `cpu` rows,
+which is the whole of "where is the time going".
+
+**A renderer-independent frame rate does exist**, so the gap is narrower than
+no measurement at all. `HU_DrawFPS` in `hu_stuff.c` counts every presented
+frame and tracks the slowest in its window, drawing into `screens[0]` — its own
+comment records that this is deliberate, so the figure shows under every
+renderer. Whether a frame-time-only Classic scene earns its keep is §10 Q6.
 
 ---
 
@@ -142,8 +149,8 @@ make the scale part of every record and make a cross-scale comparison a refusal
 rather than a number.
 
 **DOOM-0345 INV-7** — *"every RT bloom pass is timed, and all nine widening
-sites moved"*. The RT path writes ten timestamp slots and the raster path
-seven; `vkGetQueryPoolResults` is asked for exactly `nq` of them and returns
+sites moved"*. Each path writes its own number of timestamp slots;
+`vkGetQueryPoolResults` is asked for exactly `nq` of them and returns
 `VK_NOT_READY` — dropping the whole print — if asked for a slot nobody wrote.
 The RT path's print order is also not its slot order: `profMs[3]` (blit) is
 printed last, and `profMs[4..9]` are a sub-breakdown of the `profMs[2]`
@@ -224,12 +231,27 @@ which is what the share column needs; it does not make the depth-0 rows a
 partition, because `build` may or may not be one. A verification demanding the
 rows add up would be unfalsifiable on one path and false on the other. §7 B4
 checks what is actually true instead: no depth-0 row exceeds `frame,total`, and
-every emitted name appears exactly once.
+every emitted `category,name` key appears exactly once.
 
 **Rows are written once per completed interval, not per frame.** The engine
 already accumulates and divides by a frame count once a second; the log writes
 that same reduced value. A per-frame log would be a different instrument (§10
 Q2) and would perturb what it measures.
+
+**The two counter families reset at different places on different clocks, and
+the emitter must not try to unify them.** `profMs` is zeroed inside
+`if (g.gpuTimersInUse && g.gpuTimerPool)` on its own `profLastReport` clock,
+near the top of the present; `cpuMs` and `cpuBuildMs` are zeroed inside
+`if (cprof)` on `cpuLastReport`, at the end of it. The GPU block is not inside
+the `cprof` gate.
+
+So the emitter exposes **one flush entry point, called at each of those two
+sites, inside that site's existing gate** — each call emitting its own family's
+rows with its own `time_s`. A single call sited in the `cprof` block would read
+`profMs` after the GPU block had already zeroed it that frame, and every `gpu`
+row would log `0.00` with all its names present, passing every name check.
+Differing interval boundaries between the families are harmless: the comparator
+reduces each metric independently, keyed by name.
 
 **Off unless opened.** With no `-benchlog` the module allocates nothing, opens
 nothing and is never called from the frame path. INV-1.
@@ -251,16 +273,24 @@ static const BenchSlotName kBenchRasterSlots[] = { /* 0..5 */ };
 static const BenchSlotName kBenchRtSlots[]     = { /* 0..9 */ };
 ```
 
-The raster table has one entry per bucket the raster arm fills (`profMs[0..5]`,
-six buckets from seven timestamps) and the RT table one per RT bucket
-(`profMs[0..9]`, ten buckets from ten timestamps). The emitter iterates the
+The raster table has one entry per bucket the raster arm fills (`profMs[0..5]`)
+and the RT table one per RT bucket (`profMs[0..9]`). The emitter iterates the
 table rather than the array, so a bucket with no name cannot be written and a
 name with no bucket cannot be read.
 
-**The count is tied to the readback, not restated.** `nq` is already computed as
-`g.profRasterFrame ? 7u : 10u`. A static assertion ties each table's length to
-its path's bucket count, so adding a pass without adding a name fails the
-build rather than shipping a mislabelled row. INV-3.
+**Tying the table to the readback needs a constant that does not exist yet.**
+`nq` is a runtime local — `g.profRasterFrame ? 7u : 10u` — and it counts
+*timestamps*, not buckets; the raster path derives one fewer bucket than it has
+timestamps, the RT path the same number. So a static assertion written against
+a hand-typed literal asserts nothing: widening the ternary and the `printf`
+leaves it green while a mislabelled row ships, which is INV-3's *Breaks when*
+exactly.
+
+**So this spec requires the constants and rewrites `nq` to read them.** Name
+`kRasterTimestamps` and `kRtTimestamps` beside the tables, assert each table's
+length against the bucket count its path derives from them, and replace the
+ternary's literals with the constants. Then adding a pass means touching a
+constant, and any table that did not grow with it fails the build. INV-3.
 
 **The names are the printed words, not new coinages** — a CSV row and a
 terminal line then name the same thing. **But they are keyed by SLOT, and the
@@ -298,8 +328,8 @@ each to infer:
 | Key | Source |
 |---|---|
 | `frame,total` | wall-clock interval frame time, with `fps` on the same row; the interval's frame count over its duration, which is what `[cpu_profile]`'s leading `%3d fps` already counts |
-| `gpu,<name>` | the sixteen rows above, whichever path ran |
-| `gpu,total` | the sum of the **depth-0** `gpu` rows for the path that ran |
+| `gpu,<slot name>` | one row per entry in the active path's slot table above |
+| `gpu,total` | the sum of the **depth-0** slot rows for the path that ran. Depth 0, and **not itself a slot row** — every count of "distinct `gpu` names" in this spec means slot rows, and `gpu,total` is one more besides |
 | `cpu,fenceWait` `cpu,build` `cpu,record` `cpu,submit` `cpu,present-total` | `cpuMs[0..4]` |
 | `cpu,sprites` `cpu,lights` `cpu,reheight` | `cpuBuildMs[0..2]`, depth 1 under `cpu,build` |
 
@@ -565,7 +595,7 @@ through the same log:
 | `overlay` | `cpu` | around the software 2D draw into `screens[0]` |
 | `sound` | `cpu` | around `S_UpdateSounds` and `I_UpdateSound` |
 | `wipe` | `cpu` | around the screen-wipe path |
-| `zone_mb` | `mem` | `Z_FreeMemory()`, declared in `z_zone.h`, converted to MB |
+| `zone_mb` | `mem` | zone memory **in use**, in MB — the heap size less `Z_FreeMemory()`, declared in `z_zone.h`. Not free memory: the comparator reads a rise as `FAIL`, so logging the free figure would report a leak as `IMPROVED` |
 | `gpu_mb` | `mem` | summed Vulkan device allocations |
 | `level_load` | `frame` | level-start to first presented frame |
 
@@ -611,9 +641,15 @@ counter read — which is what keeps DOOM-0345 INV-7 out of this spec's way.
 `schema`, a `reduction` block (`drop_warmup_intervals`, `min_usable_intervals`,
 `stat`), a `thresholds` block (`warn_pct`, `fail_pct`, `min_abs_ms`,
 `min_abs_mb`), a `gate` allowlist of `category,name` keys, and per scene the
-recorded conditions (`render_scale`, `tier`, `rt_view`, `width`, `height`) plus
-each metric's reduced value. Conditions are stored per scene because §4.7
-compares them before it compares numbers.
+recorded conditions (`render_scale`, `tier_rendered`, `rt_view`, `width`,
+`height`) plus
+each metric's reduced value — **and the tier field is `tier_rendered`, written
+from the sidecar and never from the scene list.** Conditions are stored per
+scene because §4.7 compares them before it compares numbers, and it compares
+against what rendered. A baseline that recorded the *requested* tier would
+launder a substitution: capture it on a run that silently fell back, and every
+later correct run is measured against numbers from a renderer nobody asked
+for.
 
 ### Exit codes
 
@@ -664,19 +700,21 @@ Phase 1 is B1–B6 and is the whole loop end to end. Phase 2 is B7–B8.
   config produces a CSV with at least three `frame,total` rows, and a sidecar
   whose `tier_rendered` is `solid` — **not Classic**, which is what the same
   run with `-bootsmoke` would have recorded. (b) The same run on an Ultra RT
-  config emits exactly ten distinct `gpu` names, and the Solid one exactly six.
-  (c) A golden capture of the scene with `-benchlog` absent compares
-  byte-identical to a pre-feature build via `scripts/ab_diff.py`. (d) The
-  emitter's per-frame entry point is referenced exactly once in
-  `r_vulkan.cpp`, inside the existing `if (cprof)` gate.
+  config emits one distinct `gpu` slot name per entry in that path's slot table,
+  plus `gpu,total`; likewise the Solid one against its own table. (c) A golden
+  capture of the scene with `-benchlog` absent compares byte-identical to a
+  pre-feature build via `scripts/ab_diff.py`. (d) Every reference to the
+  emitter's flush entry point in `r_vulkan.cpp` sits inside the gate that
+  resets its counter family, and there is none outside them.
 - **B3 — the `-timedemo` exit.** *Verify:* `-timedemo demo1 -benchlog` exits 0
   and prints to stdout; `-timedemo demo1` without the flag still exits non-zero
-  with its `I_Error` line, and the five demo fixtures still report 30 / 30 /
-  30 / 70 / 350 gametics.
+  with its `I_Error` line, and the demo fixtures still report the gametic
+  counts `ROADMAP.md` records for them.
 - **B4 — the scene list and the runner.** *Verify:* `tools/bench.py` runs every
   scene and prints a table in which **no depth-0 row exceeds `frame,total`** and
-  **every emitted metric name appears exactly once** (§4.1 says why this is the
-  check and a sum is not); a scene whose `render_scale` is omitted is rejected
+  **every emitted `category,name` key appears exactly once** — the key, not the
+  bare name, which repeats legitimately across categories (`frame,total` and
+  `gpu,total`); §4.1 says why this is the check and a sum is not; a scene whose `render_scale` is omitted is rejected
   by name rather than defaulted (INV-2); a `spot` scene launched against a
   non-`DEV` binary is refused rather than measured; and a scene pointed at a
   tier the machine cannot reach reports `SKIPPED` — with `tier_rendered`
@@ -703,10 +741,10 @@ Phase 1 is B1–B6 and is the whole loop end to end. Phase 2 is B7–B8.
   behaves identically. *Breaks when:* the emitter is called unconditionally and
   gated inside itself, so an inactive log still costs a call and a branch per
   frame — or worse, formats rows it then discards.
-  *Test:* the **per-frame emit** entry point is referenced exactly once outside
-  the module, and that one reference sits inside the existing `if (cprof)`
-  gate — not merely `open`, and not merely a byte-identical picture. A golden
-  capture is the weaker half and is kept as the second clause: an emitter called
+  *Test:* the emitter is never called unconditionally from the frame path —
+  every reference to its flush entry point sits inside the gate that resets
+  that counter family (§4.1 names both), and there is none outside those gates.
+  A golden capture is the second clause and the weaker one: an emitter called
   every frame and self-gating internally renders identical pixels and passes a
   capture compare, so a test resting on the capture alone would record this
   invariant as held in exactly the case its *Breaks when* describes. B2 (c) and
@@ -731,9 +769,11 @@ Phase 1 is B1–B6 and is the whole loop end to end. Phase 2 is B7–B8.
   added, `nq` and the print widen, and the CSV name table does not — so one
   bucket's time is written under its neighbour's name and every row still looks
   plausible. This is DOOM-0345 INV-7's failure in a new list.
-  *Test:* the static assertion tying each table's length to its bucket count
-  fails the build when a bucket is added without a name; and a run of each path
-  emits exactly as many distinct `gpu` names as that path has buckets.
+  *Test:* the static assertion tying each table's length to the bucket count its
+  path derives from `kRasterTimestamps` / `kRtTimestamps` fails the build when a
+  bucket is added without a name; and a run of each path emits one distinct
+  `gpu` slot name per entry in that path's table, with `gpu,total` the only
+  further `gpu` row.
 
 - **INV-4** — a benchmark run that completed exits 0, and a non-zero exit means
   a real failure. *Breaks when:* the `-timedemo` result keeps its `I_Error`
@@ -742,7 +782,7 @@ Phase 1 is B1–B6 and is the whole loop end to end. Phase 2 is B7–B8.
   regression check, which reads that `I_Error` line, stops finding it.
   *Test:* `-timedemo demo1 -benchlog <tmp>` exits 0; `-timedemo demo1` without
   the flag exits non-zero and still prints `timed N gametics in M realtics`;
-  the five fixtures still report 30 / 30 / 30 / 70 / 350.
+  the demo fixtures still report the gametic counts `ROADMAP.md` records.
 
 - **INV-5** — a verdict is decided from a reduced series, never a single
   interval, and a series too short to reduce reports `INCONCLUSIVE` rather than
@@ -766,8 +806,11 @@ Phase 1 is B1–B6 and is the whole loop end to end. Phase 2 is B7–B8.
   hold what matters — so run-to-run variance exceeds `warn_pct` and every real
   comparison is drowned in noise.
   *Test:* B6 runs the full scene list twice with no tree change and compares;
-  any metric not `OK` or `IMPROVED` identifies a scene that is not pinned, and
-  that scene is fixed or dropped before the baseline is committed.
+  any metric not `OK` identifies a scene that is not pinned, and that scene is
+  fixed or dropped before the baseline is committed. **`IMPROVED` fails this
+  test like any other verdict** — on an unchanged tree it means run-to-run
+  variance crossed the threshold, which is this invariant's *Breaks when*
+  rather than good news.
 
 - **INV-8** — the comparator's reduction and verdict arithmetic is covered by
   `--selftest`, and `--selftest` needs no GPU and no engine. *Breaks when:* the
@@ -790,9 +833,13 @@ Phase 1 is B1–B6 and is the whole loop end to end. Phase 2 is B7–B8.
   that ground alone**, which is the clause that catches a substitution the
   process exit code cannot see. A scene pointed at a deliberately invalid tier
   reports `SKIPPED` with the cause named, and no numeric row for it appears in
-  the table. Swapping `-benchtics` back to `-bootsmoke` is the concrete fixture
-  for the substitution arm: it exits 0, writes a full CSV, and must still be
-  `SKIPPED` because Classic drew it.
+  the table. **The substitution arm needs a fixture that renders**, and
+  `-bootsmoke` is not one: Classic emits no rows at all, so that run is caught
+  by the missing-or-empty arm and the `tier_rendered` clause — the one an exit
+  code cannot see — is never exercised. Its fixture is therefore a
+  `--selftest` sidecar pair whose `tier_rendered` and `tier_requested` disagree
+  over an otherwise complete CSV, asserted `SKIPPED`. The `-bootsmoke` run is
+  still worth keeping as the fixture for the empty-CSV arm.
 
 ## 9. Alternatives considered (and rejected)
 
@@ -833,11 +880,11 @@ steady state to reduce.
 
 ## 10. Open questions
 
-- **Q1 — which spots?** The scene list needs real coordinates, and they have to
-  be read off a running engine (the menu prints the current spot as a `-warpto`
-  line, per DOOM-0268). Four are wanted: the E1M1 open start, the goo room, a
-  monster-heavy fight, and a wide outdoor sky view. Resolved during B4 by
-  capturing them; blocks nothing before then.
+- **Q1 — which spots?** The scene list needs real coordinates, read off a
+  running engine (the menu prints the current spot as a `-warpto` line, per
+  DOOM-0268). Wanted: the E1M1 open start, the goo room, a monster-heavy fight,
+  and a wide outdoor sky view. Resolved during B4 by capturing them; blocks
+  nothing before then.
 - **Q2 — per-frame capture later?** A frame-by-frame log would answer "what
   caused that stutter", which interval averages cannot. Not filed, not in this
   build. Worth a roadmap item if stutter rather than throughput becomes the
@@ -858,12 +905,12 @@ steady state to reduce.
   doubled while another halved. Settled at B6 against the measured run-to-run
   variance from INV-7 — a pass whose variance is well inside `warn_pct` is a
   candidate, one that is not never will be.
-- **Q6 — Classic.** This harness cannot measure it: the Scope section above
-  records why, and it is a real gap rather than a decision — Classic is a
-  shipped tier and "which tier is slow" is one of the questions this tool
-  exists to answer. Measuring it needs a frame timer in the software renderer
-  that does not exist today. Not filed; raise it as its own roadmap item if
-  Classic performance ever becomes a question.
+- **Q6 — a frame-time-only Classic scene?** Classic has no per-pass counters,
+  so it can never answer "where is the time going". It can answer "how fast",
+  because `HU_DrawFPS` already measures frame rate under every renderer. A
+  Classic scene would therefore carry `frame,total` and nothing else. Whether
+  that is worth a scene, or is misleading sitting in a table whose other rows
+  are breakdowns, is unresolved. Not filed.
 
 ## 11. What checks this
 
@@ -907,3 +954,4 @@ steady state to reduce.
 | Loop | Date | Lanes | Q1 | Q2 | Q3 | Q4 | Outcome |
 |------|------|-------|----|----|----|----|---------|
 | 1 | 2026-09-12 | 3 | 3 | 3 | 2 | 2 | **10 verified, 0 dismissed, all 10 fixed.** Three lanes independently found the same first defect, and it was the one that would have wasted the most time: §4.5 used `-bootsmoke N` as the spot-scene stop condition, but `D_DoomLoop` runs `if (bootsmoke_tics > 0) rendermode = RB_CLASSIC;` before the backend is chosen (DOOM-0203, guarding a GPU-less CI runner), so **every Solid and Ultra spot scene would have rendered in Classic**, exited 0, and written a CSV with no `gpu` rows under a sidecar claiming Ultra. INV-9 was written to catch "falls back to another tier" and could not have, because nothing recorded which tier drew. Fixed by adding `-benchtics N` (exit after N tics, pinning nothing; DOOM-0203's pin deliberately untouched) and by splitting the sidecar's `tier` into `tier_requested` / `tier_rendered`, which makes INV-9 mechanical and gives it a fixture that exits 0 with a full CSV and must still be `SKIPPED`. One lane alone found the widest defect: § Scope claimed all three tiers were measurable, but `cpuMs`, `cpuBuildMs` and `profMs` are members of the Vulkan backend's own state struct and there is no frame timer anywhere outside `r_vulkan.cpp` — a Classic scene emits nothing at all, so Classic is now out of scope with §10 Q6 carrying the gap. Two lanes found that `-freeze` and `-inspect` exist only under `ifeq ($(DEV),1)`, so the runner now refuses a spot scene whose launch did not print `-inspect: monsters ignore you` rather than measuring a live world. Two found B4 demanding rows that sum to `frame,total` while §2 of this same document says `profMs[4..9]` nest inside `profMs[2]`; `depth` now marks components, and the sum check is replaced by one that can pass — no depth-0 row exceeds the total, every name appears once — because `cpu,build`'s containment varies with DOOM-0074's build-ahead path and no sum is true on both. Two found `zone_kb` written into a column the schema defines as megabytes, which would also have applied the 1 MB absolute floor to a kilobyte figure. One found the baseline's gate list naming `gpu,total`, `cpu,total` and `mem,gpu_mb` while nothing specified emitting any of them; §4.2 now closes the phase-1 metric namespace and the gated set is `frame,total` / `gpu,total` / `cpu,present-total`. One found §11 crediting checks to a B2 whose verify clause ran neither. One found INV-1's own test unable to falsify its *Breaks when*: a self-gating emitter called every frame renders identical pixels and passes a golden-capture compare, so the test now names the per-frame emit call site. Promoted from a lane's open question: §4.2 listed the RT names in **print** order (`profMs[0,1,2,4,5,6,8,9,7,3]`) while requiring a slot-keyed table, so a positional transcription would swap the blit and TAAU labels — the exact silent-absorption failure the section cites DOOM-0345 INV-7 for. The mapping is now written out slot by slot. Two open questions resolved clean and are not in the tally: `rb_profile` **is** reachable headlessly (config key `rt_profile`, now named in §6, since a `` \ `` keypress cannot be injected under Wayland), and §2's `uncapped`-excludes-`demoplayback` claim is correct. |
+| 2 | 2026-09-12 | 3 | 2 | 5 | 1 | 1 | **9 verified, 0 dismissed, all 9 fixed. A violent cap: 6 of the 9 landed on text loop 1 itself wrote.** All three lanes independently found the same one — loop 1 required the emitter's flush to be "referenced exactly once, inside the existing `if (cprof)` gate", but the two counter families reset at different sites on different clocks (`profMs` inside `if (g.gpuTimersInUse && g.gpuTimerPool)` on `profLastReport`, near the top of the present; `cpuMs`/`cpuBuildMs` inside `if (cprof)` on `cpuLastReport`, at its end), and the GPU block is not inside the `cprof` gate. A single call sited there would read `profMs` after the GPU block had zeroed it, logging every `gpu` row as `0.00` with all its names present — passing loop 1's own name check. The emitter now has one flush entry point called at both sites, each inside its own gate, and INV-1's test is "never called unconditionally" rather than a reference count. Two lanes found that `gpu,total` is itself a `gpu` row, so loop 1's "exactly ten distinct `gpu` names" made a correct build fail its own gate; counts of `gpu` names now mean slot rows, with `gpu,total` named as one more besides. One lane found loop 1's INV-9 substitution fixture impossible: a `-bootsmoke` run renders Classic, which this spec's own Scope says emits nothing, so it is caught by the empty-CSV arm and the `tier_rendered` clause — the one an exit code cannot see — is never exercised; that arm is now a `--selftest` sidecar pair over a complete CSV. One found the baseline still storing `tier` from the scene list while §4.7 compares `tier_rendered`, which would have laundered a substitution into the baseline itself. Three were pre-existing rather than loop-1 collateral. INV-7 read "compares `OK` on every gated metric" while its own test accepted `IMPROVED`; on an unchanged tree `IMPROVED` means variance crossed the threshold, which is that invariant's *Breaks when*. `nq` is a runtime local counting *timestamps*, not a compile-time bucket count, so loop 1's static assertion could not be written as described — the spec now requires `kRasterTimestamps` / `kRtTimestamps` and rewrites `nq` to read them. And `Z_FreeMemory()` returns **free** bytes, so a phase-2 leak would have been reported as `IMPROVED`; `zone_mb` now logs memory in use. One finding was the orchestrator's, while settling an open question two lanes raised: loop 1's Scope claimed "there is no frame-time or FPS counter anywhere outside that file", and `HU_DrawFPS` in `hu_stuff.c` is exactly that — it counts every presented frame and draws into `screens[0]` so the figure shows under every renderer, deliberately. Classic stays out of scope because it has no per-pass breakdown, but the stated reason was false and §10 Q6 now asks the real question. Also folded in this loop, at the user's instruction and not from a lane: `/mnt/Games/CLAUDE.md`'s prose rules, which forbid counts that go stale. Every census of timestamps, buckets, rows, spots and demo fixtures is replaced by a name — and the `gpu,total` finding above is a worked example of why, since that count was wrong the moment a synthesised row joined the category. |
