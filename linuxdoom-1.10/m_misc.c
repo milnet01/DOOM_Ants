@@ -671,6 +671,14 @@ void M_LoadDefaults (void)
 				newstring;
 			break;
 		    }
+		// DOOM-0403: nothing owns newstring when the key matches no
+		// entry -- the loop runs to numdefaults and falls out, and the
+		// only two frees are inside it. A config carrying an unknown
+		// quoted key leaks one allocation per such line. i is the
+		// loop's own counter, so reaching numdefaults is exactly the
+		// no-match case; both in-loop paths break with i below it.
+		if (isstring && i == numdefaults)
+		    free (newstring);
 	    }
 	}
 
