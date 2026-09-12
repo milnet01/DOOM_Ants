@@ -27,6 +27,7 @@ rcsid[] __attribute__((used)) = "$Id: g_game.c,v 1.8 1997/02/03 22:45:09 b1 Exp 
 #include <string.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <limits.h>
 
 #include "doomdef.h" 
 #include "doomstat.h"
@@ -1873,7 +1874,20 @@ void G_RecordDemo (char* name)
     maxsize = 0x20000;
     i = M_CheckParm ("-maxdemo");
     if (i && i<myargc-1)
-	maxsize = atoi(myargv[i+1])*1024;
+    {
+	// DOOM-0401: the operand is a size in KiB and was used unvalidated.
+	// `-maxdemo 0` gave a zero-byte Z_Malloc that G_BeginRecording then
+	// wrote its 13-byte header into; a negative reached Z_Malloc as a
+	// negative; and a value whose *1024 overflows int wrapped to either.
+	// Bound the operand before multiplying -- dividing the int ceiling
+	// cannot wrap, where a check on the product already has.
+	int kib = atoi (myargv[i+1]);
+
+	if (kib < 1 || kib > INT_MAX/1024)
+	    I_Error ("-maxdemo: %s KiB is out of range (1 to %d)",
+		     myargv[i+1], INT_MAX/1024);
+	maxsize = kib*1024;
+    }
     demobuffer = Z_Malloc (maxsize,PU_STATIC,NULL); 
     demoend = demobuffer + maxsize;
 	
