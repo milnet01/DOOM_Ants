@@ -329,16 +329,23 @@ void D_Display (void)
     oldgamestate = wipegamestate = gamestate;
     
     // draw pause pic.  viewwindowx/y and scaledviewwidth are physical; the
-    // M_PAUSE patch draws through the logical-space V_DrawPatch, so divide the
+    // M_PAUSE patch draws through a logical-space blitter, so divide the
     // geometry by HIRES (68 is the patch's logical width) (DOOM-0027).
+    //
+    // DOOM-0402: through V_DrawPatchAbs, for the reason R_FillBackScreen's
+    // border tiles are. This x is the centre of the VIEW WINDOW in the frame,
+    // so it is already in the buffer's logical space; V_DrawPatch would have
+    // added WIDESCREENDELTA on top and pushed the graphic off centre. Measured
+    // at 854 wide: drawn at physical x 464 against a view centre of 359, at
+    // every screen size. 4:3 is unaffected -- there the delta is zero.
     if (paused)
     {
 	if (automapactive)
 	    y = 4;
 	else
 	    y = viewwindowy/HIRES+4;
-	V_DrawPatchDirect(viewwindowx/HIRES+(scaledviewwidth/HIRES-68)/2,
-			  y,0,W_CacheLumpName ("M_PAUSE", PU_CACHE));
+	V_DrawPatchAbs(viewwindowx/HIRES+(scaledviewwidth/HIRES-68)/2,
+		       y,0,W_CacheLumpName ("M_PAUSE", PU_CACHE));
     }
 
 
