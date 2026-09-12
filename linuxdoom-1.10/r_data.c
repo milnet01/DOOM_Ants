@@ -408,17 +408,30 @@ void R_GenerateLookup (int texnum)
 	}
     }
 	
+    // DOOM-0402: a patchless column used to `return` out of this loop, leaving
+    // collump/colofs for every LATER column at whatever Z_Malloc handed back.
+    // R_GetColumn reads collump[col] and, if it looks positive, passes it to
+    // W_CacheLumpNum as a lump number -- so a broken texture produced an
+    // arbitrary lump index from uninitialised memory. id downgraded this site
+    // from I_Error deliberately, so it is reachable on real broken WADs.
+    //
+    // The loop now runs to the end, and a patchless column is treated exactly
+    // as a multi-patch one: it gets a slot in the composite, which keeps every
+    // column in bounds. A valid texture has at least one patch on every column,
+    // so this branch never fires for one and the table is unchanged.
+    boolean		warned = false;
+
     for (x=0 ; x<texture->width ; x++)
     {
-	if (!patchcount[x])
+	if (!patchcount[x] && !warned)
 	{
 	    printf ("R_GenerateLookup: column without a patch (%s)\n",
 		    texture->name);
-	    return;
+	    warned = true;
 	}
 	// I_Error ("R_GenerateLookup: column without a patch");
 	
-	if (patchcount[x] > 1)
+	if (patchcount[x] != 1)
 	{
 	    // Use the cached block.
 	    collump[x] = -1;	

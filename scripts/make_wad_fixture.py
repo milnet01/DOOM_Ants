@@ -20,6 +20,7 @@ whole-WAD lumps R_InitTextures parses at startup.
     sfxrate       a DSPISTOL declaring 1 Hz            rate falls back to SFXRATE
     texcount      TEXTURE1 declares 100000 textures    refused by name
     texpatches    one texture declares 5000 patches    refused by name
+    texgap        a 64-wide texture with a 1-wide patch  counterfactual
 
 The two texture modes carry lump BYTES rather than a bad directory, because
 that is where the count lives: TEXTURE1 states how many textures follow it, and
@@ -49,6 +50,28 @@ def build(mode):
     # accepts and the malformed modes differ from it in one field only.
     lumps = [("FIXTURE1", b"\x01" * 64), ("MARKER", b""), ("FIXTURE2", b"\x02" * 32)]
 
+    if mode == "texgap":
+        # A texture whose patches leave most of its columns uncovered. Legal to
+        # state and reachable on real broken WADs -- id downgraded the engine's
+        # response from I_Error to a printf deliberately. The patch is carried
+        # here too, as the smallest well-formed one: 1x1, so columns 1..63 of
+        # the texture have no patch at all.
+        patch = (struct.pack("<hhhh", 1, 1, 0, 0)    # width height left top
+                 + struct.pack("<i", 12)             # columnofs[0]
+                 + bytes([0, 1, 0, 0x40, 0, 0xFF]))  # topdelta len pad px pad end
+        tex = (b"FIXGAP\0\0"
+               + struct.pack("<ihhi", 0, 64, 64, 0)
+               + struct.pack("<h", 1)
+               + struct.pack("<hhhhh", 0, 0, 0, 0, 0))
+        texture1 = struct.pack("<ii", 1, 8) + tex
+        pnames = struct.pack("<i", 1) + b"FIXPATCH"
+        # An empty TEXTURE2 as well: this PWAD's PNAMES replaces the IWAD's,
+        # so the IWAD's own TEXTURE2 would name patch indices that no longer
+        # resolve and the run would stop there instead of reaching the texture
+        # under test.
+        lumps = [("FIXPATCH", patch), ("PNAMES", pnames),
+                 ("TEXTURE1", texture1), ("TEXTURE2", struct.pack("<i", 0))]
+
     if mode in ("texcount", "texpatches"):
         # TEXTURE1 is: a 4-byte texture count, then that many 4-byte offsets
         # into the same lump, then the texture records. A record is name[8],
@@ -63,7 +86,8 @@ def build(mode):
         # PNAMES too, so the run reaches the TEXTURE1 walk rather than stopping
         # on a patch name it cannot resolve.
         pnames = struct.pack("<i", 1) + b"FIXTURE\0"
-        lumps = [("PNAMES", pnames), ("TEXTURE1", texture1)]
+        lumps = [("PNAMES", pnames), ("TEXTURE1", texture1),
+                 ("TEXTURE2", struct.pack("<i", 0))]
 
     if mode == "sfxrate":
         # DMX sound: format, rate, sample count, then the 8-bit samples. The
@@ -91,7 +115,7 @@ def build(mode):
     elif mode == "pasteof":
         dirents[2][1] = total - dirents[2][0] + 1   # ends exactly one byte late
     elif mode not in ("valid", "shortheader", "sfxrate",
-                      "texcount", "texpatches"):
+                      "texcount", "texpatches", "texgap"):
         raise SystemExit("unknown mode: %s" % mode)
 
     header = b"PWAD" + struct.pack("<ii", len(dirents), diroff)
@@ -110,7 +134,7 @@ def build(mode):
 def main(argv):
     if len(argv) != 3:
         raise SystemExit("usage: %s {valid|hugesize|negpos|pasteof|shortheader|"
-                         "sfxrate|texcount|texpatches} <out.wad>" % argv[0])
+                         "sfxrate|texcount|texpatches|texgap} <out.wad>" % argv[0])
     data = build(argv[1])
     open(argv[2], "wb").write(data)
     print("%s: %s (%d bytes)" % (argv[2], argv[1], len(data)))
