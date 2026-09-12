@@ -21,6 +21,7 @@ whole-WAD lumps R_InitTextures parses at startup.
     texcount      TEXTURE1 declares 100000 textures    refused by name
     texpatches    one texture declares 5000 patches    refused by name
     texgap        a 64-wide texture with a 1-wide patch  counterfactual
+    noflats       F_END placed directly after F_START   refused by name
 
 The two texture modes carry lump BYTES rather than a bad directory, because
 that is where the count lives: TEXTURE1 states how many textures follow it, and
@@ -49,6 +50,12 @@ def build(mode):
     # Two ordinary lumps and an empty marker, so the control is a WAD the engine
     # accepts and the malformed modes differ from it in one field only.
     lumps = [("FIXTURE1", b"\x01" * 64), ("MARKER", b""), ("FIXTURE2", b"\x02" * 32)]
+
+    if mode == "noflats":
+        # Two adjacent markers and nothing between them, so firstflat ends up
+        # one PAST lastflat and the count goes negative. W_GetNumForName takes
+        # the LAST lump of a name, so a PWAD's markers win over the IWAD's.
+        lumps = [("F_START", b""), ("F_END", b"")]
 
     if mode == "texgap":
         # A texture whose patches leave most of its columns uncovered. Legal to
@@ -115,7 +122,7 @@ def build(mode):
     elif mode == "pasteof":
         dirents[2][1] = total - dirents[2][0] + 1   # ends exactly one byte late
     elif mode not in ("valid", "shortheader", "sfxrate",
-                      "texcount", "texpatches", "texgap"):
+                      "texcount", "texpatches", "texgap", "noflats"):
         raise SystemExit("unknown mode: %s" % mode)
 
     header = b"PWAD" + struct.pack("<ii", len(dirents), diroff)
@@ -134,7 +141,7 @@ def build(mode):
 def main(argv):
     if len(argv) != 3:
         raise SystemExit("usage: %s {valid|hugesize|negpos|pasteof|shortheader|"
-                         "sfxrate|texcount|texpatches|texgap} <out.wad>" % argv[0])
+                         "sfxrate|texcount|texpatches|texgap|noflats} <out.wad>" % argv[0])
     data = build(argv[1])
     open(argv[2], "wb").write(data)
     print("%s: %s (%d bytes)" % (argv[2], argv[1], len(data)))

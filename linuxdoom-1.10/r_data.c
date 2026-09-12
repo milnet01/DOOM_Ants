@@ -578,6 +578,12 @@ void R_InitTextures (void)
 	maxoff2 = 0;
     }
     numtextures = numtextures1 + numtextures2;
+    // DOOM-0402: both halves are now bounded above, but a WAD may still
+    // declare zero of each, and R_PrecacheLevel builds a variable-length array
+    // of numtextures -- undefined at zero. A WAD with no wall textures cannot
+    // draw a level anyway, so refuse here rather than later and less clearly.
+    if (numtextures < 1)
+	I_Error ("R_InitTextures: the WAD declares no wall textures");
 	
     // sizeof(*ptr), not a hardcoded 4: these are pointer arrays, so each entry
     // is 8 bytes on 64-bit. The original *4 under-allocated them by half.
@@ -713,6 +719,15 @@ void R_InitFlats (void)
     firstflat = W_GetNumForName ("F_START") + 1;
     lastflat = W_GetNumForName ("F_END") - 1;
     numflats = lastflat - firstflat + 1;
+
+    // DOOM-0402: the count is a difference between two WAD-supplied lump
+    // positions, so a PWAD placing F_END at or before F_START makes it zero or
+    // negative. R_PrecacheLevel then declares a variable-length array of that
+    // size, which is undefined at zero and worse below it, and memsets it with
+    // the same value widened to size_t. Refuse at the source, so every user of
+    // numflats can trust it.
+    if (numflats < 1)
+	I_Error ("R_InitFlats: F_START and F_END enclose %d flats", numflats);
 	
     // Create translation table for global animation.
     flattranslation = Z_Malloc ((numflats+1)*4, PU_STATIC, 0);
@@ -737,6 +752,11 @@ void R_InitSpriteLumps (void)
     lastspritelump = W_GetNumForName ("S_END") - 1;
     
     numspritelumps = lastspritelump - firstspritelump + 1;
+    // DOOM-0402: same shape as R_InitFlats above -- a difference between two
+    // WAD-supplied positions, feeding three Z_Malloc sizes.
+    if (numspritelumps < 1)
+	I_Error ("R_InitSpriteLumps: S_START and S_END enclose %d lumps",
+		 numspritelumps);
     spritewidth = Z_Malloc (numspritelumps*4, PU_STATIC, 0);
     spriteoffset = Z_Malloc (numspritelumps*4, PU_STATIC, 0);
     spritetopoffset = Z_Malloc (numspritelumps*4, PU_STATIC, 0);
