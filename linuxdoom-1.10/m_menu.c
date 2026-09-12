@@ -36,6 +36,7 @@ rcsid[] __attribute__((used)) = "$Id: m_menu.c,v 1.7 1997/02/03 22:45:10 b1 Exp 
 
 
 #include "doomdef.h"
+#include "doomtype.h"	// O_BINARY (DOOM-0403)
 #include "dstrings.h"
 
 #include "d_main.h"
@@ -881,7 +882,12 @@ void M_ReadSaveStrings(void)
 	else
 	    sprintf(name,SAVEGAMENAME"%d.dsg",i);
 
-	handle = open (name, O_RDONLY | 0, 0666);
+	// DOOM-0403: O_BINARY, not the `| 0` placeholder this has carried since
+	// 1997. A savegame is binary and every other open() in the engine says so.
+	// Under the Windows CRT a text-mode read stops at the first 0x1A byte, and
+	// the DOOM-0254 short-read guard directly below then blanks the slot -- so
+	// a perfectly good save shows as an empty one, with nothing said.
+	handle = open (name, O_RDONLY | O_BINARY, 0666);
 	if (handle == -1)
 	{
 	    strcpy(&savegamestrings[i][0],EMPTYSTRING);

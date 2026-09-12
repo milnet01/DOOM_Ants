@@ -75,6 +75,20 @@ typedef unsigned char byte;
 #endif
 
 
+// DOOM-0403: O_BINARY lives here because three translation units wanted it and
+// each had grown its own copy -- m_misc.c, w_wad.c, and m_menu.c, which is the
+// one that never did and read a savegame in text mode as a result. Same shape
+// and same reason as the predefines above: a no-op on Unix, supplied by mingw
+// on Windows, so the guard only fills in what the platform has not.
+//
+// It is not decoration on Windows. In text mode the CRT ends a read at the
+// first 0x1A byte, and DOOM's files are all binary -- a WAD, a savegame, a
+// demo. A save description is user-entered text, so it can hold one.
+#ifndef O_BINARY
+#define O_BINARY	0
+#endif
+
+
 
 
 #endif

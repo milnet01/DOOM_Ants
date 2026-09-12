@@ -34,9 +34,6 @@ rcsid[] __attribute__((used)) = "$Id: w_wad.c,v 1.5 1997/02/03 16:47:57 b1 Exp $
 #include <malloc.h>
 #include <fcntl.h>
 #include <sys/stat.h>
-#ifndef O_BINARY		// mingw already defines O_BINARY (0x8000); only the
-#define O_BINARY		0	// Unix builds need the no-op fallback (DOOM-0006)
-#endif
 #endif
 
 #ifdef _WIN32

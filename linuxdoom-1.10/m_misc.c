@@ -54,6 +54,7 @@ rcsid[] __attribute__((used)) = "$Id: m_misc.c,v 1.6 1997/02/03 22:45:10 b1 Exp 
 
 
 #include "doomdef.h"
+#include "doomtype.h"	// O_BINARY (DOOM-0403)
 
 #include "config_bounds.h"
 
@@ -127,9 +128,6 @@ M_DrawText
 //
 // M_WriteFile
 //
-#ifndef O_BINARY
-#define O_BINARY 0
-#endif
 
 boolean
 M_WriteFile
