@@ -183,7 +183,18 @@ R_ClipSolidWallSegment
     }
     
 
-    while (next++ != newend)
+    // DOOM-0402: pre-increment, not post. `next++ != newend` tests the OLD
+    // value, so the final iteration entered the body with next == newend and
+    // read one element past the live list -- and the backstop above permits
+    // newend == solidsegs+MAXSEGS, where that element is outside the array
+    // entirely. It also copied that slot into the list, leaving one stale
+    // entry AFTER the end sentinel and newend one higher than it should be.
+    //
+    // Nothing ever read that entry: solidsegs[1] is seeded with first ==
+    // viewwidth, so every search stops at the sentinel before reaching it.
+    // What it cost was a wasted slot in a fixed-size list, which brings the
+    // backstop above closer on a busy frame.
+    while (++next != newend)
     {
 	// Remove a post.
 	*++start = *next;
