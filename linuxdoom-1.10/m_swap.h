@@ -31,12 +31,29 @@
 
 // Endianess handling.
 // WAD files are stored little endian.
+//
+// DOOM-0401: the declarations and the definitions used to be exact
+// complements -- declared only under __BIG_ENDIAN__, defined only when it was
+// absent -- so a big-endian build could not link, while the false-positive
+// ledger cited big-endian as the reason for keeping these macros at all. They
+// are now declared and defined unconditionally, so they link and can be tested
+// on the little-endian machine that actually builds this.
+//
+// The types are fixed-width for the same reason. `unsigned long` is 64 bits on
+// LP64, so the old 32-bit shift pattern would have swapped the wrong width on
+// exactly the platform the code claimed to serve.
+#include <stdint.h>
+
+uint16_t	SwapSHORT(uint16_t);
+uint32_t	SwapLONG(uint32_t);
+
 #ifdef __BIG_ENDIAN__
-short	SwapSHORT(short);
-long	SwapLONG(long);
-#define SHORT(x)	((short)SwapSHORT((unsigned short) (x)))
-#define LONG(x)         ((long)SwapLONG((unsigned long) (x)))
+#define SHORT(x)	((short)SwapSHORT((uint16_t) (x)))
+#define LONG(x)         ((int)SwapLONG((uint32_t) (x)))
 #else
+// Identity on little-endian, which is what this fork builds for. Untouched:
+// the WAD byte order matches the host, so the macro must not change the value
+// or its type.
 #define SHORT(x)	(x)
 #define LONG(x)         (x)
 #endif
