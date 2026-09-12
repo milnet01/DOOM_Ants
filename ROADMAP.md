@@ -4273,6 +4273,47 @@ with friends.
   Source: in-session-2026-09-07, found by reading a core dump while verifying DOOM-0399.
   Lanes: game-loop, savegame.
 
+- 📋 [DOOM-0431] **Repeatable benchmark harness — no way to measure where a frame's time goes and compare it to last week.**
+  The engine already counts a lot: `[cpu_profile]` (fence-wait / build /
+  record / submit / present), `[cpu_build]` (sprites / lights / reheight)
+  and the DOOM-0090 per-pass GPU timings for both the raster and RT paths.
+  What is missing is everything around those numbers.
+
+  They are printf to a scrolling terminal, so nothing can read them back.
+  They describe wherever the player happened to be standing, so two runs
+  are not comparable. Nothing records a baseline, so "is this slower than
+  last week" has no answer. Every perf gate written so far — DOOM-0011,
+  DOOM-0181, DOOM-0183 — invented its own hand-measured route and squinted
+  at a scrolling log.
+
+  There is also a blind spot the profiler's own comment admits: the gap
+  between the FPS counter's frame time and present-total is the game tick
+  plus the software 2D overlay, and nothing times either. Memory use and
+  level-load time are not tracked at all.
+
+  The repeatable-workload half is already solved and unused for this.
+  `-timedemo` free-runs (G_TimeDemo sets `singletics`, bypassing the 35 Hz
+  tic pacing) and renders in any tier; `-warpto X Y ANGLE` with `-freeze`
+  and `-inspect` pins an exact still spot in a world that is not moving.
+  Its one wart is that it reports through `I_Error`, so the answer lands
+  on stderr behind a failing exit code and a script cannot tell a finished
+  run from a crash.
+
+  Scope agreed with the user 2026-09-12: both workload kinds, whole-frame
+  scope including memory and load time, both a human-readable table and a
+  machine-readable file with a baseline comparison, run on demand. Built
+  in two phases — the runner and comparator first over the counters that
+  already exist, then the blind-spot counters.
+
+  Reference design: the Vestige project's `engine/profiler/profile_log.*`
+  (throttled CSV) and `tools/perf_gate.py` (baseline comparison with
+  OK/WARN/FAIL/IMPROVED verdicts and real exit codes), MIT and by the same
+  author.
+  **Layman:** One command that runs the game through the same fixed situations every time and tells you what is costing the most, and whether a change made it slower.
+  Kind: implement.
+  Source: user-request-2026-09-12.
+  Lanes: renderer, tooling.
+
 ## Phase 2 — The Spin
 
 The creative overhaul: evolve the renderer toward true 3D with hardware
