@@ -132,7 +132,13 @@ void F_StartFinale (void)
 	    finaletext = e4text;
 	    break;
 	  default:
-	    // Ouch.
+	    // DOOM-0403: "Ouch." left both at whatever the last finale set them
+	    // to -- NULL on the first one, which F_Ticker then strlen's. An
+	    // episode outside 1-4 is a PWAD's doing, not the engine's, so fall
+	    // back to episode 1 rather than refuse to finish the game. Same
+	    // posture as the gamemode default below, which already does this.
+	    finaleflat = "FLOOR4_8";
+	    finaletext = e1text;
 	    break;
 	}
 	break;
@@ -170,7 +176,10 @@ void F_StartFinale (void)
 	      finaletext = c6text;
 	      break;
 	    default:
-	      // Ouch.
+	      // DOOM-0403: as the episode switch above -- never leave these at a
+	      // previous finale's values, which are NULL before the first one.
+	      finaleflat = "SLIME16";
+	      finaletext = c1text;
 	      break;
 	  }
 	  break;
