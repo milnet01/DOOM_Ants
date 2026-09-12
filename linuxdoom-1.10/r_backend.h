@@ -82,6 +82,10 @@ void RB_SetMode(rendermode_t mode);
 
 // Menu helpers: display name for a mode, and whether it can be selected now.
 const char* RB_ModeName(rendermode_t mode);
+// As RB_ModeName, but for a MENU value column: adds a short reason when this is
+// the only mode the machine can run, so the row that will not change says why
+// (DOOM-0026 INV-4's display half). Returns a pointer to a static buffer.
+const char* RB_ModeMenuName(rendermode_t mode);
 boolean     RB_ModeAvailable(rendermode_t mode);
 // Next selectable mode in the menu's fidelity order (Classic -> Solid -> Ultra),
 // skipping modes unavailable on this machine; returns `cur` if none other fits.

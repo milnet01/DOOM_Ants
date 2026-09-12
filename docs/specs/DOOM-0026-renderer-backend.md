@@ -299,9 +299,17 @@ renderer internals, all UI drawing code.
   the best available one (never errors, never a blank screen). *Test:* set
   `renderer` to an RB_RT3D index in `~/.doomrc` on a build with no 3D back-end →
   engine runs Classic.
-- **INV-4** The 3D menu entries are non-selectable while no 3D back-end reports
-  `Available()`. *Test:* options menu shows "3D (unavailable …)"; activating it
-  is a no-op.
+- **INV-4** The 3D tiers are not selectable while no 3D back-end reports
+  `Available()`, and the menu says why. *Test:* with no Vulkan driver
+  reachable, the Renderer row reads "Classic (no 3D)" and activating it is a
+  no-op.
+
+  *Amended 2026-09-12 (DOOM-0403), recording what was built.* This was written
+  for a menu with one entry per tier. DOOM-0206 replaced that with a single
+  Renderer row that cycles, so there is no separate "3D" entry to mark
+  unavailable and the reason goes in the row's own value. The no-op half
+  shipped with DOOM-0026; the display half is `RB_ModeMenuName`, added under
+  DOOM-0403 when a review found the row refusing to move and saying nothing.
 - **INV-5** The seam adds at most one function-pointer indirection per world
   frame and per present — no measurable Classic-path regression. *Test:* median
   frame time over a fixed `-timedemo demo1` run differs by < 1% versus the
@@ -315,7 +323,8 @@ renderer internals, all UI drawing code.
   fresh `~/.doomrc` gains a `renderer 0` line after exit.
 - Set `renderer 1` (an unavailable 3D index) in `~/.doomrc` → engine still
   starts in Classic (INV-3).
-- Options menu shows "Renderer: Classic" and an unavailable 3D entry (INV-4).
+- Options menu shows "Renderer: Classic"; with no Vulkan driver reachable it
+  reads "Renderer: Classic (no 3D)" and the row will not cycle (INV-4).
 - A feature-conformance test (`tests/`) is desirable for INV-1/INV-3 but gated
   on the project having a WAD available in CI; record as follow-up if not.
 

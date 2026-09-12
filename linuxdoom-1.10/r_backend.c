@@ -300,6 +300,31 @@ const char* RB_ModeName(rendermode_t mode)
     return "?";
 }
 
+// DOOM-0403: the same name, plus a reason when the row cannot be changed.
+//
+// DOOM-0026 INV-4 has two halves: the 3D tiers are not selectable while no 3D
+// back-end reports Available(), and the menu says so. The first half shipped --
+// M_ChangeRenderer lands back on the mode it started from -- and the second did
+// not, so on a machine with no Vulkan device the Renderer row simply refused to
+// move and offered no explanation. RB_NextAvailableMode's own comment says it
+// returns `cur` "so the menu can say not yet available"; nothing asked it.
+//
+// Classic is cycleOrder[0] and always available, so the test is exact: the next
+// available mode being the current one means there is no other mode at all.
+//
+// Kept short deliberately. The narrowest of the four value columns starts at
+// OptionsDef.x + 88, which leaves room for about twenty characters of hu_font.
+const char* RB_ModeMenuName(rendermode_t mode)
+{
+    static char buf[40];
+
+    if (RB_NextAvailableMode(mode) != mode)
+        return RB_ModeName(mode);
+
+    snprintf(buf, sizeof buf, "%s (no 3D)", RB_ModeName(mode));
+    return buf;
+}
+
 // Next selectable mode after `cur`, walking cycleOrder[] (Classic -> Solid ->
 // Ultra -> ...) and skipping any unavailable on this machine. Returns `cur`
 // when nothing else is available, so the menu can say "not yet available".
