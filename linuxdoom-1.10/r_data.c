@@ -36,6 +36,8 @@ rcsid[] __attribute__((used)) = "$Id: r_data.c,v 1.4 1997/02/03 16:47:55 b1 Exp 
 
 #include "doomdef.h"
 #include "r_local.h"
+
+#include "wad_bounds.h"
 #include "p_local.h"
 
 #include "doomstat.h"
@@ -509,10 +511,12 @@ void R_InitTextures (void)
     name_p = names+4;
     // DOOM-0254: PNAMES declares its own entry count, so a crafted lump can
     // claim more 8-byte names than it actually holds. Bound it by the lump.
+    // DOOM-0402 moved the arithmetic into wad_bounds.h, where the TEXTURE
+    // directory below shares it.
     {
 	int	pnameslen = W_LumpLength (W_GetNumForName ("PNAMES"));
 
-	if (nummappatches < 0 || nummappatches > (pnameslen - 4) / 8)
+	if (!WadCountFitsLump (nummappatches, pnameslen, 4, 8))
 	    I_Error ("R_InitTextures: PNAMES declares %d patches but the lump "
 		     "holds %d", nummappatches, (pnameslen - 4) / 8);
     }
@@ -536,6 +540,13 @@ void R_InitTextures (void)
     maptex = maptex1 = W_CacheLumpName ("TEXTURE1", PU_STATIC);
     numtextures1 = LONG(*maptex);
     maxoff = W_LumpLength (W_GetNumForName ("TEXTURE1"));
+    // DOOM-0402: the same self-declared-count shape PNAMES has above, and it
+    // was unbounded. The walk below steps `directory` once per texture and
+    // reads it BEFORE the per-entry offset check can judge anything, so a
+    // crafted count reads past the cached lump whatever those offsets say.
+    if (!WadCountFitsLump (numtextures1, maxoff, 4, 4))
+	I_Error ("R_InitTextures: TEXTURE1 declares %d textures but the lump "
+		 "holds %d", numtextures1, (maxoff - 4) / 4);
     directory = maptex+1;
 	
     if (W_CheckNumForName ("TEXTURE2") != -1)
@@ -543,6 +554,9 @@ void R_InitTextures (void)
 	maptex2 = W_CacheLumpName ("TEXTURE2", PU_STATIC);
 	numtextures2 = LONG(*maptex2);
 	maxoff2 = W_LumpLength (W_GetNumForName ("TEXTURE2"));
+	if (!WadCountFitsLump (numtextures2, maxoff2, 4, 4))
+	    I_Error ("R_InitTextures: TEXTURE2 declares %d textures but the "
+		     "lump holds %d", numtextures2, (maxoff2 - 4) / 4);
     }
     else
     {
@@ -612,6 +626,18 @@ void R_InitTextures (void)
 	    || texture->height <= 0)
 	    I_Error ("R_InitTextures: bad texture header (%dx%d, %d patches)",
 		     texture->width, texture->height, texture->patchcount);
+
+	// DOOM-0402: the offset check above only proved the fixed header fits.
+	// The patch loop below walks patchcount records past it, so the record
+	// array needs its own bound -- patchcount is a signed short from the
+	// WAD and reaches 32767. sizeof(maptexture_t) already covers the first
+	// patch, which is why the remainder is (patchcount-1).
+	if (!WadLumpFits (offset,
+			  (long)sizeof(maptexture_t)
+			  + (long)(texture->patchcount-1)*sizeof(mappatch_t),
+			  maxoff))
+	    I_Error ("R_InitTextures: texture %d claims %d patches, past the "
+		     "end of its lump", i, texture->patchcount);
 
 	memcpy (texture->name, mtexture->name, sizeof(texture->name));
 	mpatch = &mtexture->patches[0];

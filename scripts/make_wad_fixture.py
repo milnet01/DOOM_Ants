@@ -7,16 +7,24 @@ a crafted PWAD could declare a lump of any size or at a negative offset. This
 generator produces the files that exercise the bound, and the valid mode is the
 control that proves the pipeline itself produces a loadable WAD.
 
-Sibling of make_map_fixture.py, which corrupts a map's CONTENT. This one leaves
-every lump's bytes alone and corrupts the table of contents that describes them.
+Sibling of make_map_fixture.py, which corrupts one MAP's content. This one is
+for everything a WAD declares before any map loads: the lump directory, and the
+whole-WAD lumps R_InitTextures parses at startup.
 
-    mode          what it does to the directory        expected
+    mode          what it declares                     expected
     valid         nothing (control)                    loads
     hugesize      one lump declares ~112 MB            refused by name
     negpos        one lump declares a negative offset  refused by name
     pasteof       one lump ends one byte past EOF      refused by name
     shortheader   file truncated inside the header     refused by name
-    sfxrate       a DSPISTOL declaring 1 Hz             rate falls back to SFXRATE
+    sfxrate       a DSPISTOL declaring 1 Hz            rate falls back to SFXRATE
+    texcount      TEXTURE1 declares 100000 textures    refused by name
+    texpatches    one texture declares 5000 patches    refused by name
+
+The two texture modes carry lump BYTES rather than a bad directory, because
+that is where the count lives: TEXTURE1 states how many textures follow it, and
+each texture states how many patches follow it. DOOM-0254 bounded the identical
+shape in PNAMES and DOOM-0402 bounded these two.
 
 The sfxrate mode is about DOOM-0386 rather than the directory: a sound lump's
 declared sample rate is attacker-controlled, and 1 Hz made SDL build a ~44100x
@@ -40,6 +48,22 @@ def build(mode):
     # Two ordinary lumps and an empty marker, so the control is a WAD the engine
     # accepts and the malformed modes differ from it in one field only.
     lumps = [("FIXTURE1", b"\x01" * 64), ("MARKER", b""), ("FIXTURE2", b"\x02" * 32)]
+
+    if mode in ("texcount", "texpatches"):
+        # TEXTURE1 is: a 4-byte texture count, then that many 4-byte offsets
+        # into the same lump, then the texture records. A record is name[8],
+        # masked, width, height, columndirectory, patchcount, then patchcount
+        # 10-byte patch entries -- 22 bytes of header on disk.
+        tex = (b"FIXTURE\0"                      # name[8]
+               + struct.pack("<ihhi", 0, 64, 64, 0)   # masked w h columndirectory
+               + struct.pack("<h", 5000 if mode == "texpatches" else 1)
+               + struct.pack("<hhhhh", 0, 0, 0, 0, 0))  # one real patch entry
+        count = 100000 if mode == "texcount" else 1
+        texture1 = struct.pack("<ii", count, 8) + tex
+        # PNAMES too, so the run reaches the TEXTURE1 walk rather than stopping
+        # on a patch name it cannot resolve.
+        pnames = struct.pack("<i", 1) + b"FIXTURE\0"
+        lumps = [("PNAMES", pnames), ("TEXTURE1", texture1)]
 
     if mode == "sfxrate":
         # DMX sound: format, rate, sample count, then the 8-bit samples. The
@@ -66,7 +90,8 @@ def build(mode):
         dirents[0][0] = -1                 # lseek target the engine cannot reach
     elif mode == "pasteof":
         dirents[2][1] = total - dirents[2][0] + 1   # ends exactly one byte late
-    elif mode not in ("valid", "shortheader", "sfxrate"):
+    elif mode not in ("valid", "shortheader", "sfxrate",
+                      "texcount", "texpatches"):
         raise SystemExit("unknown mode: %s" % mode)
 
     header = b"PWAD" + struct.pack("<ii", len(dirents), diroff)
@@ -85,7 +110,7 @@ def build(mode):
 def main(argv):
     if len(argv) != 3:
         raise SystemExit("usage: %s {valid|hugesize|negpos|pasteof|shortheader|"
-                         "sfxrate} <out.wad>" % argv[0])
+                         "sfxrate|texcount|texpatches} <out.wad>" % argv[0])
     data = build(argv[1])
     open(argv[2], "wb").write(data)
     print("%s: %s (%d bytes)" % (argv[2], argv[1], len(data)))

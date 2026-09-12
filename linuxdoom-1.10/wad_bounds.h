@@ -29,13 +29,36 @@
 // crafted pair near the type's maximum and reports a lump reaching past the end
 // as fitting. Checking `pos` first, then comparing against what is left after
 // it, cannot overflow whatever the file claims.
-static int WadLumpFits (long pos, long size, long filelen)
+static inline int WadLumpFits (long pos, long size, long filelen)
 {
     if (pos < 0 || size < 0 || filelen < 0)
 	return 0;
     if (pos > filelen)
 	return 0;
     return size <= filelen - pos;
+}
+
+// DOOM-0402: does a lump that declares its own entry count actually hold them?
+//
+// The shape recurs: a 4-byte count at the front of a lump, then that many
+// fixed-size records. PNAMES (8-byte names) and TEXTURE1/TEXTURE2 (4-byte
+// directory offsets) are both built this way, and both counts come from the
+// WAD. DOOM-0254 bounded PNAMES inline and the identical pattern a few lines
+// below went unbounded, so the texture directory walk read past the cached
+// lump before the per-entry offset check could fire. One predicate, so the
+// next lump of this shape cannot be the one that is forgotten.
+//
+// Dividing what is left after the header is the point, as above: testing
+// `headerbytes + count*entrybytes <= lumplen` multiplies a WAD-supplied count
+// and can wrap.
+static inline int WadCountFitsLump (int count, int lumplen,
+				    int headerbytes, int entrybytes)
+{
+    if (count < 0 || headerbytes < 0 || entrybytes <= 0)
+	return 0;
+    if (lumplen < headerbytes)
+	return 0;
+    return count <= (lumplen - headerbytes) / entrybytes;
 }
 
 #endif

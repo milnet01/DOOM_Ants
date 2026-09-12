@@ -56,5 +56,51 @@ int main()
     check(WadLumpFits(0, 1, 0) == 0, "no non-empty lump fits an empty file");
     check(WadLumpFits(0, 0, -1) == 0, "a negative file length admits nothing");
 
+    // --- DOOM-0402: a lump's own declared entry count. ---
+    // The two real shapes. PNAMES: a 4-byte count then 8-byte names. TEXTURE1:
+    // a 4-byte count then 4-byte directory offsets. Named here rather than
+    // included, so a change to either is a deliberate edit to this test.
+    const int kPnamesHdr = 4, kPnamesEntry = 8;
+    const int kTexHdr = 4, kTexEntry = 4;
+
+    check(WadCountFitsLump(0, 4, kPnamesHdr, kPnamesEntry) != 0,
+          "a lump holding only its count may declare no entries");
+    check(WadCountFitsLump(1, 12, kPnamesHdr, kPnamesEntry) != 0,
+          "a lump with room for one name may declare one");
+    check(WadCountFitsLump(2, 20, kPnamesHdr, kPnamesEntry) != 0,
+          "a lump may declare exactly what it holds");
+    check(WadCountFitsLump(2, 25, kPnamesHdr, kPnamesEntry) != 0,
+          "trailing bytes past the last entry do not invalidate the lump");
+
+    check(WadCountFitsLump(3, 20, kPnamesHdr, kPnamesEntry) == 0,
+          "a lump claiming one more name than it holds is refused");
+    check(WadCountFitsLump(1, 11, kPnamesHdr, kPnamesEntry) == 0,
+          "an entry one byte short of complete is refused");
+    check(WadCountFitsLump(0, 3, kPnamesHdr, kPnamesEntry) == 0,
+          "a lump too short to hold its own count is refused");
+    check(WadCountFitsLump(-1, 100, kPnamesHdr, kPnamesEntry) == 0,
+          "a negative count is refused");
+
+    // The fixture's case: TEXTURE1 declaring 100000 textures in a lump with
+    // room for nine offsets. The directory walk reads each entry before any
+    // per-entry check can judge it.
+    check(WadCountFitsLump(100000, 40, kTexHdr, kTexEntry) == 0,
+          "a texture count far past the lump is refused");
+    check(WadCountFitsLump(9, 40, kTexHdr, kTexEntry) != 0,
+          "the count the same lump does hold is accepted");
+
+    // The overflow a naive `hdr + count*entry <= lumplen` check gets wrong:
+    // multiplying a WAD-supplied count wraps, and the wrapped product compares
+    // as small. Dividing what is left after the header cannot.
+    check(WadCountFitsLump(INT_MAX, 40, kTexHdr, kTexEntry) == 0,
+          "a count near INT_MAX is refused, not wrapped into acceptance");
+    check(WadCountFitsLump(0x20000001, 40, kTexHdr, kTexEntry) == 0,
+          "a count whose byte total overflows int is refused");
+
+    // --- Degenerate shapes. ---
+    check(WadCountFitsLump(1, 100, kTexHdr, 0) == 0, "a zero entry size is refused");
+    check(WadCountFitsLump(1, 100, -1, kTexEntry) == 0,
+          "a negative header size is refused");
+
     return check_summary("wad_bounds_test");
 }
