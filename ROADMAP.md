@@ -4547,6 +4547,823 @@ with friends.
   Kind: fix.
   Source: in-session-2026-09-20, found while verifying DOOM-0404's PLAYPAL gate.
 
+- 📋 [DOOM-0434] **Decide the engine's optimisation level: it ships at -O0 today, and only the tests get -O2.**
+  Found independently by three lanes, which is the sweep's strongest
+  signal. Verified by reading the flags the compiler actually receives,
+  not from the report.
+
+  CONFIRMED: CFLAGS and CXXFLAGS carry `-g` and no `-O`. Only
+  TEST_CXXFLAGS adds -O2. Every other flag in that Makefile has an
+  explaining comment; this one does not. It looks inherited from id's
+  1997 Makefile rather than decided.
+
+  MEASURED, and the lanes' magnitude claim does NOT hold. Clean rebuild
+  each way, Classic, six timedemo runs of the walkuse fixture, user CPU
+  time: -O0 16.791s vs -O2 15.981s, i.e. 4.8% less CPU. A 12-map load
+  sweep was within noise (that workload is dominated by Vulkan init).
+  Lane 14's "a multiple of one frame" is not supported by anything
+  measured.
+
+  What the measurement does NOT settle: my workload includes per-run
+  startup, so the render-loop share is larger by an unknown factor; and
+  Classic is not where the frame budget is fought. The known CPU pole is
+  the Solid/Ultra per-frame build, which needs the `\` profiler on real
+  hardware.
+
+  SAFETY, measured: at -O2, make test is 24 suites green and the five
+  demo fixtures still read 30/30/30/70/350 -- the check that would catch
+  a playsim divergence. Not yet checked at -O2: the 68-map sweep, the
+  Windows cross-build, and -shotcompare for Classic bit-identity.
+
+  PAIR IT WITH -fno-strict-aliasing. Not optional: this code type-puns
+  routinely (w_wad.c's *(int *)lump_p->name, i_net.c's *(int*)&sw) and
+  -O2 turns strict aliasing on.
+
+  Deliberately NOT changed in the sweep's branch -- changing the
+  optimisation level of every shipped binary is the maintainer's call.
+  **Layman:** The game is currently built with the compiler's optimiser switched off — the setting you would use for debugging, not for shipping. Turning it on makes it use about 5% less processor on the one measurement I could take. This needs your decision because it changes every copy of the game we release.
+  Kind: review-fix.
+  Source: optimise-refactor sweep 2026-09-20, lanes 11/13/14 independently + orchestrator measurement.
+
+- 📋 [DOOM-0435] **Hash the WAD lump directory: every lookup by name is a linear scan, and several sit on per-frame draw paths.**
+  Two lanes found this from opposite ends and it is one root cause.
+
+  W_CheckNumForName walks the entire lump directory backwards; W_GetNumForName
+  and W_CacheLumpName are thin wrappers, so every by-name access pays it.
+  151 call sites across 21 files, and several are per-frame DRAW paths, not
+  load paths: f_finale's tiled background erase and its per-frame END%i
+  lookup, 28 sites in m_menu.c, 30 in wi_stuff.c.
+
+  The sharpest symptom, found separately by the UI lane: M_DrawSaveLoadBorder
+  calls W_CacheLumpName INSIDE its 24-iteration border loop, and M_DrawLoad /
+  M_DrawSave call it six times per draw -- about 156 full directory scans per
+  frame while the Load/Save menu is open. M_DrawThermo has the same shape.
+
+  Two fixes, and the cheap one is worth doing first and separately:
+
+  1. QUICK: hoist the lookup out of the loops. Nothing allocates between the
+     draws, so the PU_CACHE block cannot be purged mid-loop. This alone
+     removes the 156 scans.
+  2. LARGER: a hash chain built once at the end of W_InitMultipleFiles, with
+     `next`/`index` added to lumpinfo_t. Chocolate DOOM's W_InitLumpHash is
+     the reference.
+
+  OVERRIDE ORDER IS WHAT BREAKS, and it breaks silently as wrong art with a
+  PWAD loaded. The backwards scan means a later file overrides an earlier
+  one; preserve it by inserting head-first while iterating forwards. Prove it
+  by asserting the new lookup returns the same index as the old scan for every
+  name in the directory, once at startup under DEV, with a PWAD loaded.
+
+  W_Reload rewrites position and size but not names, so the table should not
+  need rebuilding there -- confirm when implementing.
+  **Layman:** Every time the game needs a picture or sound out of the game file, it searches the whole index from one end — about 2,300 entries — instead of going straight to it. Some menus do that 156 times per frame.
+  Kind: review-fix.
+  Source: optimise-refactor sweep 2026-09-20, lanes 12 and 13 (same root cause, two symptom sets).
+
+- 📋 [DOOM-0436] **An animated flat cycling re-arms the full static point-light cull several times a second.**
+  This is the DOOM-0170 fix one level up: the cull was hoisted out of the
+  frame, and then a ~4.4 Hz trigger was left wired to it.
+
+  RB_UPD_RETEX fires when any wall/flat live texture id changes, which
+  includes an animated flat cycling -- DOOM cycles those every 8 tics.
+  That sets worldEmitDirty, which re-runs BuildStaticEmitterSet, which
+  sets staticLightsDirty, which re-runs the full
+  O(subsectors x staticEmitters) cull whose own header comment calls it
+  "the ~8 ms/frame hotspot the DOOM-0170 CPU profiler pinpointed" -- plus
+  a full O(numtris) mesh rescan.
+
+  But a cycling flat changes a face's texnum and hence its Le. It does NOT
+  move a vertex. So for the common re-arm the nearest-N ranking and the
+  cached centroids are bit-identical, and only the three Le floats per
+  cached slot can differ.
+
+  Reads as a periodic hitch rather than a lower average, which is why it
+  may not have shown up in an average-fps measurement.
+
+  Fix direction: store each cached slot's source emitter index; on rebuild
+  compare the emissive MEMBERSHIP (count plus the per-triangle index
+  sequence) against the previous build. Identical -> a weaker
+  staticLightLeDirty that refreshes only Le per slot. Different -> the
+  existing full rebuild. Membership changes only when a face enters or
+  leaves the emissive set, which is rare.
+
+  INFERRED, not measured -- the lane had no profiler output and could not
+  run the engine. Measure with the `\` CPU profiler on a nukage map during
+  a flat cycle before building the fix. Verify with -rtverify, a
+  -shotcompare golden on a nukage room, and the lights sub-timer losing
+  its periodic spike.
+  **Layman:** Nukage and lava tiles animate about four times a second. Each time one does, the game redoes the entire expensive lighting calculation for the level — even though a changing tile does not move any light. Most levels have nukage or lava, so most levels pay it.
+  Kind: review-fix.
+  Source: optimise-refactor sweep 2026-09-20, lane 4.
+
+- 📋 [DOOM-0437] **Every subsector's light slot is rebuilt and rewritten every raster frame, including ones no dynamic light reaches.**
+  The per-subsector loop unconditionally copies the cached static slot into
+  a scratch record, recomputes 16 frame-invariant distances from it, and
+  copies the result back into g.lightMapped. Those seed distances are a
+  pure function of the subsector centroid and the cache, neither of which
+  changes between frames.
+
+  So for any subsector where no dynamic emitter beats the worst kept
+  distance, the record ends up byte-identical to what the slot already
+  holds. The no-dynamic-emitters path copies the entire cache over a
+  buffer that already contains exactly that.
+
+  The destination is host-coherent write-combined memory -- the memory
+  class this same file is careful about everywhere else.
+
+  Fix direction: have RebuildStaticPointLightCache also store the worst
+  kept distance per subsector. Per frame, test the dynamic emitters
+  against that first and, when the slot is full and nothing beats it, skip
+  the seed copy, the recomputes and the write entirely. Then track per
+  in-flight slot whether it currently holds the pure static cache, so a
+  subsector touched last frame is restored once and then left alone.
+
+  INFERRED, unmeasured. Needs a before/after at ONE FIXED RENDER SCALE per
+  the performance standard's comparison rule. The risk is a dynamic light
+  left stale in a slot that should have reverted to static-only, which the
+  per-slot flag has to get right -- catch it with a moving-fireball
+  capture and the lights sub-timer.
+  **Layman:** For each small piece of the level, every frame, the game rebuilds a list of the nearest lights and writes it to the graphics card — even when nothing near it has moved and the answer is identical. This is on Solid, the tier whose selling point is speed.
+  Kind: review-fix.
+  Source: optimise-refactor sweep 2026-09-20, lane 4.
+
+- 📋 [DOOM-0438] **The denoiser evaluates pow(x, 64.0) ninety-six times per pixel per frame, in a pass measured at ~8.5 ms.**
+  svgf_atrous.comp's 5x5 neighbour loop does `pow(dot, sigN)` with
+  `sigN = 64.0`, 24 taps, and the host runs four iterations -- 96 pow()
+  per render pixel. The host comment on that iteration count measures the
+  pass at "~36 ms at native / ~8.5 ms at 50%".
+
+  The project has ALREADY MEASURED that glslc does not fold a constant
+  exponent: pt_common.glsl's DOOM-0295 note records "33 Pow ops survive in
+  pathtrace.comp" for a 1.5 exponent, which is exactly why fogPhaseHG was
+  rewritten as an inversesqrt cubed. Same trap, unfixed here.
+
+  Fix: repeated squaring -- d2=d*d, d4=d2*d2, d8, d16, d32, then d32*d32.
+  Six multiplies instead of log2+mul+exp2, two of which are quarter-rate
+  transcendentals. sigN stops being a tunable float and becomes the
+  exponent written in the code; say so in the comment, as DOOM-0295's
+  precedent did.
+
+  Largest single frame-time item the sweep found, and QUICK.
+
+  Verify the way DOOM-0295 did: a shaderstats Pow-op count A/B before and
+  after, then -rtverify and -shotcompare. Last-bit rounding may move the
+  denoised image by float epsilon; a real regression would show as a
+  changed blur radius, not as noise.
+  **Layman:** A lighting-smoothing step raises a number to the 64th power using the slow general-purpose maths function, 96 times for every pixel on screen, every frame. Six multiplications would give the same answer.
+  Kind: review-fix.
+  Source: optimise-refactor sweep 2026-09-20, lane 7.
+
+- 📋 [DOOM-0439] **Per-hit values recomputed in the path tracer's hot path, and its two shading modes are ~70 duplicated lines.**
+  Two findings in one item because they sit in the same block.
+
+  RECOMPUTED (QUICK, no output change). The de-tile world key
+  `detileWorldUV(hitP, n) / kDetileWorldCell` is evaluated FOUR times per
+  hit -- for POM, albedo, AO and normal -- in EACH of mode 4 and mode 6.
+  The line above it is already marked "HOISTED". Separately
+  `pc.triSs.s[prim]` is loaded twice per hit in each mode. Mode 6 is the
+  shipped Ultra play path, so this is every grid-sample pixel of every
+  frame. Also hash3() is evaluated twice per de-tile cell (once inside
+  detileCellUV, once again for the mirror test), 2-4 taps per pixel, in
+  both the normal and POM paths; pass the hash instead of the cell.
+
+  DUPLICATED (LARGER). The mode-4 display path and the mode-6 denoise-feed
+  path are ~70 lines of the same shading logic written twice, several
+  comments duplicated verbatim. They are REQUIRED to agree: demodulation
+  only works if mode 6's illum is mode 4's L with albedo factored out. An
+  edit to one silently desynchronises the raw `~` view from the shipped
+  denoised view and nothing in the build catches it. DOOM-0130 already
+  consolidated the muzzle and flashlight halves of this same pair for this
+  same reason; the rest was left behind.
+
+  REAL HAZARD on the consolidation: the mode spec-constant currently lets
+  the driver dead-strip each branch. A shared function must not defeat
+  that. Measure VGPR count and occupancy with shaderstats, not just
+  correctness, and gate on -rtverify plus -shotcompare in BOTH modes.
+  **Layman:** Inside the ray-tracing shader, the same few values are worked out four times for every surface the light hits, on every pixel of every frame. And the two versions of that shading code are near-copies that must agree but nothing checks that they do.
+  Kind: review-fix.
+  Source: optimise-refactor sweep 2026-09-20, lane 7.
+
+- 📋 [DOOM-0440] **Four shader formulas exist in two or three copies each, including one the project has twice been bitten by.**
+  The project already has the right pattern: formulas/scene_recombine.glsl
+  and formulas/tonemap_encode.glsl were both created because "a second
+  copy is how the two drift apart". These four were left behind.
+
+  1. The soft-knee bright-pass weight is written out in BOTH
+     bloom_extract_raster.comp and bloom_extract_rt.comp, plus a duplicated
+     non-finite guard and tap-loop preamble. The RT file's header says the
+     arithmetic is "deliberately not re-derived here in any other form" --
+     which is the intent, and the copy is the mechanism that defeats it.
+     -> formulas/bloom_knee.glsl
+  2. giIrradiance is a VERBATIM copy in mesh.frag of pt_common.glsl's, and
+     mesh.frag's own comment says so. If either is re-derived, Solid and
+     Ultra read the same baked probes and shade them differently -- a tier
+     mismatch no test compares. It must come OUT into its own file:
+     pt_common.glsl has a header contract mesh.frag cannot satisfy.
+     -> formulas/gi_probe.glsl
+  3. toneEncode() in pathtrace.comp is a THIRD copy of the shared tone
+     operator; formulas/tonemap_encode.glsl exists and lists two consumers.
+     The last change to it (DOOM-0345 R1) touched two of the three copies.
+  4. The previous-frame reprojection is written twice (svgf_temporal and
+     svgf_composite) and lum() is defined twice byte-identically.
+     -> formulas/reproject.glsl
+
+  Also: the two-pass bloom blur is written twice on the HOST side (the RT
+  chain and the raster chain), the single delta being the final barrier's
+  reader stage. DOOM-0360 is queued to change that exact chain -- fixing
+  it now means that change lands once instead of twice.
+
+  TRAP: glslc emits no auto-dependency for a GLSL include. Each new header
+  needs its Makefile dep line or an edit to it will not rebuild its
+  dependants -- the failure the renderer standard warns about by name.
+
+  TRAP on (4): a sign flip there shows as violent ghosting IN MOTION, and
+  -shotcompare's golden frames are STATIC, so they would not catch it.
+  Verify by playing, not by capture.
+  **Layman:** Several pieces of shading maths are written out more than once in different shader files. When someone fixes one copy, the others keep the old behaviour — which has already happened here twice.
+  Kind: review-fix.
+  Source: optimise-refactor sweep 2026-09-20, lane 7.
+
+- 📋 [DOOM-0441] **The Vulkan back-end hand-rolls the same create-and-upload sequences up to twelve times each.**
+  Four lanes over r_vulkan.cpp found the same shape at different scales.
+  Grouped because they share one fix direction: the file already HAS the
+  helper pattern (CreateRtBuffer, with ~20 call sites) and it was simply
+  not extended.
+
+  HIGHEST CONSEQUENCE FIRST:
+
+  - UploadAtlas and BuildHdSet EACH write out the same batched bindless
+    image-array upload longhand (~100 lines apiece): a hand-rolled memory
+    sub-allocator with its offset walk, the staging offset table, the
+    barrier pair, the view loop. The code says VMA "does this properly in a
+    later increment" -- so the provisional allocator exists TWICE. A fix in
+    one copy and not the other is a GPU fault or corruption in ONE TIER
+    ONLY, which is the hardest class of bug this project has to chase.
+
+  - Image + memory + view creation is hand-rolled TWELVE times. CreateRtBuffer
+    is exactly this helper for buffers and has no image twin;
+    CreateSceneTarget already gropes toward one by copying structs. Sites
+    have already drifted (only some set sharingMode). ~250-300 lines.
+
+  - Eleven compute pipelines are built by nine near-copies of one six-step
+    sequence (~490 lines), with descriptor pool sizes derived BY HAND at
+    every site -- the one step whose mistakes are silent, and a comment at
+    the bloom site records someone already being bitten by it.
+    CreateSvgfPipelines has ALREADY factored it into a table-driven loop:
+    the shape is written once correctly and retyped seven times around it.
+
+  - The SVGF 10-binding image set is written by hand THREE times, and the
+    third copy has already been hand-patched to keep up. The correct shape
+    is in the same function, with a comment saying why.
+
+  - The triangle-geometry descriptor is written out FIVE times and the TLAS
+    instances block twice, field-identical. A comment ("DOOM-0163:
+    NON-opaque, must match the build") holds an invariant across two
+    functions 400 lines apart, by prose alone. Make it a named constant.
+
+  - Six hand-rolled buffer create/query/allocate/bind sequences where
+    CreateRtBuffer already does exactly that (~90 lines).
+
+  - The liquid-flat name table exists TWICE, and the first copy's own
+    comment says a second must not exist: "a second table would be a second
+    answer waiting to disagree".
+
+  Effort: LARGER overall, but several are individually QUICK and
+  independent. Verify with the validation layers (most failures here are
+  loud, not silent), -rtverify, and -shotcompare in both tiers.
+  **Layman:** The graphics back-end writes out the same setup steps by hand over and over — one of them twelve times, another in two copies of a hand-written memory allocator. A fix made to one copy and not the other shows up as a crash or corruption in only one of the render tiers.
+  Kind: review-fix.
+  Source: optimise-refactor sweep 2026-09-20, lanes 1/2/3/5.
+
+- 📋 [DOOM-0442] **RB_Vulkan_Present is 1,095 lines and RecordRtTrace 725; both run every frame and their phases are already named by the profiler.**
+  The seams already exist and are already named, which is what makes this
+  transcription rather than design: the raster timestamp slots are written
+  at six points -- shadow, scene, SSAO, bloom, composite, HUD -- and those
+  six buckets are six phases.
+
+  RB_Vulkan_Present runs frame-slot rotation, build-ahead scheduling, the
+  fence, GPU-timer readback, the -rtverify gate, the -shotverify arm, image
+  acquire, the whole raster recording path, a DEV screenshot capture,
+  submit, present, two PNG writers, a golden-image gate that calls exit(),
+  and the CPU profiler print. The raster branch is an un-indented `else {`
+  whose close needs a comment to be findable. Three comment blocks inside
+  it exist purely to tell a reader which of two far-apart sites they are
+  looking at.
+
+  RecordRtTrace is 725 lines of which 140 are a push-constant fill
+  containing NO Vulkan call at all. The struct is declared INSIDE the
+  function, which is what prevents the fill living anywhere else. The
+  renderer standard says "there is no free lane" and tells the reader to
+  grep usage sites -- a rule that exists precisely because the allocation
+  is invisible inside a 700-line function.
+
+  Fix direction: extract file-static functions in frame order, with the
+  state already global so no parameter is invented. Hoist RtPushConstants
+  and SvgfPC (with their static_asserts) to file scope.
+
+  TWO THINGS MUST NOT MOVE:
+  - The build-ahead scheduling stays inline in Present. Its whole meaning
+    is its position relative to the fence (DOOM-0074, 70->161 fps).
+  - The profiler dummy-write blocks stay exactly where they sit; their own
+    comments explain that a single shared site mis-attributes an interval.
+
+  The recorded command stream must come out byte-identical. The check that
+  matters is a `\` profiler A/B at the SAME render scale: a phase
+  accidentally moved behind the fence shows up as fenceWait rising and
+  build falling, NOT as a wrong image.
+  **Layman:** The two functions that draw every frame are enormous — over 1,800 lines between them. The work inside them already has names, because the performance profiler measures it in labelled chunks; those chunks just are not separate functions.
+  Kind: review-fix.
+  Source: optimise-refactor sweep 2026-09-20, lane 5.
+
+- 📋 [DOOM-0443] **Two full per-frame scans in the renderer seam recompute answers that can only change on a game tic.**
+  Two findings, same shape, and the second subsumes most of the third's
+  cost -- do them together or not at all.
+
+  1. R_MarkAutomapLines runs a FULL SOFTWARE BSP TRAVERSAL every 3D frame.
+     Its only inputs are what R_SetupFrame reads off player->mo, which
+     change only when the playsim runs a tic. It is handed the RAW player,
+     not the DOOM-0048 interpolated camera, so between tics it provably
+     recomputes an identical answer. Fix: gate on gametic, resetting in
+     RB_SetMode/RB_Init. QUICK. ML_MAPPED is sticky so a skipped frame
+     loses nothing; the risk is a hidden dependency on R_SetupFrame's or
+     R_RenderBSPNode's OTHER side effects.
+
+  2. RB_UpdateMeshHeights rescans EVERY mesh vertex every frame, though
+     every input it reads -- sector floor/ceiling heights, flat and texture
+     translation -- is playsim state that moves per tic.
+     LARGER, and the reason is specific: the destination is double-buffered
+     per in-flight slot (DOOM-0074), so ONE global "last tic" is not
+     enough. Key it per destination (mesh pointer + dst + tic).
+
+  3. The same loop READS BACK the mapped GPU vertex buffer twice per
+     vertex, to compute two booleans. That memory is host-coherent and
+     typically uncached/write-combined, where a read costs orders more than
+     a write -- the exact mistake the project already paid for once on a
+     different mapped buffer. Fix: keep a plain-RAM shadow of the previous
+     frame's z and texnum. If (2) lands first, most of this cost goes with
+     it.
+
+  MUST NOT BREAK: the reheight scan also drives animated-texture cycling
+  (DOOM-0066 live texnum re-derivation), so it cannot be blanket-skipped
+  when geometry is static -- which is exactly why the gate is on the TIC
+  and not on whether anything moved.
+
+  Verify with a door/lift/switch play-test, -rtverify, and the automap
+  check in the 68-map sweep for (1).
+  **Layman:** Twice per frame the game redoes a whole-level calculation whose answer only changes 35 times a second, not 160. One of them also reads back from graphics-card memory, which is very slow and a mistake this project has already paid for once.
+  Kind: review-fix.
+  Source: optimise-refactor sweep 2026-09-20, lane 6.
+
+- 📋 [DOOM-0444] **A workaround repeated four times in r_mesh.c rests on a claim about the engine that is false.**
+  Four sites derive a subsector's sector as segs[ss->firstline].frontsector,
+  each justified by a comment of the form "subsectors[].sector is not
+  populated at load in this DOOM build -- it is filled lazily by
+  R_Subsector at render time".
+
+  That claim is false. p_setup.c's P_GroupLines fills it for every
+  subsector at level load, and THIS SAME FILE already trusts it:
+  emit_subsector_caps reads ss->sector directly. So do p_maputl.c,
+  p_mobj.c and g_game.c.
+
+  The two derivations agree by construction, since p_setup.c also sets
+  li->frontsector = li->sidedef->sector.
+
+  Cost is not frame time -- it is one wrong belief restated four times in
+  the file that defines world-to-mesh conversion, and the fifth site will
+  copy it. It is also why one of those functions carries a "same
+  derivation RB_SectorAtPoint uses" coupling comment at all.
+
+  Fix: replace all four with ss->sector, keeping each site's existing
+  numlines guard, and delete the four comments. Effort QUICK.
+
+  IF THE BELIEF IS ACTUALLY RIGHT for some path I could not find, then the
+  bug is the OTHER site -- emit_subsector_caps -- and one of the two
+  readings has to go either way. Settle that before editing.
+
+  Verify with the 68-map sweep and a -shotcompare golden capture: a
+  subsector whose sector differed between the two derivations would shift
+  a GI probe or a seep cell.
+  **Layman:** Four places in the world-building code avoid using a value, each with a comment saying it is not filled in yet. It is filled in — the level loader sets it, and the same file already relies on that a few hundred lines away.
+  Kind: review-fix.
+  Source: optimise-refactor sweep 2026-09-20, lane 6.
+
+- 📋 [DOOM-0445] **Software-renderer hot loops reload a runtime global per pixel, clear more than the view width, and rebuild a table per pixel.**
+  Classic's output must stay bit-identical, so each of these is admissible
+  ONLY because it is provably output-identical, and the proof is named.
+
+  1. SCREENWIDTH is a RUNTIME global (doomdef.h) read inside every
+     per-pixel loop in five r_draw.c functions. `dest` is a byte*, so the
+     store may alias any object including SCREENWIDTH, and the compiler
+     must reload it every pixel. It is written ONCE, at the end of
+     I_InitWidescreen, which must run before R_Init -- so hoisting to a
+     local is output-identical by construction.
+     (Note: at -O2 this may matter less. See the optimisation-level item.)
+
+  2. Every new visplane clears MAXWIDTH columns whatever the view width
+     is. DOOM-0055 widened these from byte to unsigned int (x4) and
+     DOOM-0147 raised the array to the MAXWIDTH cap (x2 more at 4:3), so
+     half of every clear is wasted at 4:3 and much more when windowed.
+     Only [minx-1 .. maxx+1] is ever read, and the two edge entries are
+     written outright before any read. Clear viewwidth columns instead.
+
+  3. The fuzz column multiplies by SCREENWIDTH per pixel to rebuild a
+     table DOOM-0147 flattened (the comment says why: the table can no
+     longer statically hold +/-SCREENWIDTH). Precompute it in R_InitBuffer,
+     which ALREADY rebuilds ylookup and columnofs when the view geometry
+     changes. Paid per pixel of every spectre -- worst case a room full of
+     them, which is when the renderer is already busiest.
+
+  All three QUICK. Perf claims are INFERRED from the code shape, not from
+  a disassembly or a profile.
+
+  PROOF METHOD, and it is the same for all three: hash the whole software
+  framebuffer after D_Display and compare across a spread of maps AND
+  through the recorded demo fixtures (a -bootsmoke view is static and
+  exercises the clip list far less than a moving demo). For (3) pick a map
+  with spectres -- E1M1 has none.
+
+  LANE'S SEPARATE GAP REPORT, worth its own item: performance.md
+  prescribes the per-pass GPU profiler, which does not reach a CPU software
+  renderer. Classic has NO measurement procedure in the standard.
+  **Layman:** Three small wins in the original 1993 renderer, each provably producing the exact same picture: the innermost pixel loop re-reads a value it could hold in a register, new floor/ceiling surfaces clear about twice as much memory as they use, and the spectre-fuzz effect does a multiplication per pixel to rebuild a table.
+  Kind: review-fix.
+  Source: optimise-refactor sweep 2026-09-20, lane 8.
+
+- 📋 [DOOM-0446] **Level load resolves texture names by linear case-insensitive scan, once per sidedef texture slot.**
+  R_CheckTextureNumForName is a linear strncasecmp scan over numtextures.
+  P_SetupLevel calls R_TextureNumForName (its wrapper) three times per
+  sidedef -- top, bottom, mid -- so the cost is
+  O(numsides x numtextures) case-insensitive 8-byte compares per level
+  load. p_switch.c, p_spec.c and p_doors.c add more at startup.
+
+  Quadratic in two WAD-scaled quantities: a large PWAD with a few thousand
+  sidedefs and a few thousand textures is millions of comparisons. This is
+  load-time only -- it costs a stall between levels, not FPS. Unmeasured.
+
+  Fix: build a name->index table once at the end of R_InitTextures, beside
+  the texturetranslation fill, keyed on the upper-cased 8-char name.
+  R_CheckTextureNumForName probes it and falls through to the existing
+  scan on a miss. The '-' NoTexture early-out stays in front.
+
+  MUST PRESERVE FIRST-MATCH-WINS. The current loop returns the LOWEST
+  index among duplicate names, so the table must keep the first insertion
+  and never overwrite. Getting this wrong changes which texture a
+  duplicate name resolves to, and only on WADs that carry duplicates.
+
+  Verify BEFORE any pixel comparison: compare the resolved
+  toptexture/midtexture/bottomtexture arrays after P_SetupLevel against
+  the old code across the 68-map sweep. Then the framebuffer hash across
+  maps and demos.
+  **Layman:** When a level loads, the game looks up each wall texture by searching the whole texture list from the start, comparing names. It does that three times for every wall side in the level, so a big custom level does millions of name comparisons before it starts.
+  Kind: review-fix.
+  Source: optimise-refactor sweep 2026-09-20, lane 8.
+
+- 📋 [DOOM-0447] **Three near-copy patch blitters in v_video.c, one of which shipped without the bounds guard its siblings carry.**
+  V_DrawPatchGeneral, V_DrawPatchScaled and V_DrawPatchFlipped are the
+  same ~40-line column/post walk three times (~270 lines), differing only
+  in the column index direction, a scale multiplier, and whether the
+  RANGECHECK failure returns or calls I_Error.
+
+  THE DRIFT IS ALREADY ON THE RECORD. V_DrawPatchScaled's own comment says
+  the scaled twin "shipped without one" -- without the bounds guard -- so
+  "a patch whose WAD-supplied leftoffset/topoffset pushed x or y out of
+  the 320x200 logical screen indexed screens[] out of range". The guard
+  had to be added to the third copy by hand, after it shipped.
+
+  Two further copies of the same post walk live outside v_video.c:
+  m_menu.c's M_DecodePatchRGBA (whose comment says it mirrors V_DrawPatch)
+  and f_finale.c's F_DrawPatchCol.
+
+  This is the path that turns WAD-supplied bytes into frame-buffer writes,
+  which is why the duplication matters more here than the line count
+  suggests.
+
+  Fix: V_DrawPatchGeneral already takes two behaviour flags. Add `scale`
+  and `flipped`, make it the single blitter, and reduce the five public
+  entry points to the thin wrappers three of them already are. Keep
+  V_DrawPatchFlipped's I_Error posture behind the flag if it is wanted.
+
+  Effort LARGER -- it is the hot 2D blitter. Any pixel difference is a
+  Classic-tier regression, so prove it with -shotcompare's golden gate
+  plus a capture in all three tiers; every caller in the UI draws
+  something the golden set covers.
+  **Layman:** The code that draws a picture from the game file onto the screen exists in three near-identical copies. One of them shipped missing a safety check the other two had — so a crafted game file could make it write outside the screen. That was found and patched in one copy only.
+  Kind: review-fix.
+  Source: optimise-refactor sweep 2026-09-20, lane 12.
+
+- 📋 [DOOM-0448] **m_menu.c is 4,009 lines: one menu framework plus five payloads that never reference each other.**
+  Five self-contained regions, each reaching the rest only through
+  M_SetupNextMenu / M_ClearMenus / M_WriteText / M_StringWidth /
+  M_DrawThermo: save/load, video/renderer, developer (already FIVE
+  separate #ifdef DOOM_DEV islands), game select, and new game/episode/
+  skill/quit. The genuine framework is about 1,200 lines.
+
+  THE MIXING HAS ALREADY COST SOMETHING CONCRETE: the file hand-copies two
+  prototypes because p_local.h has a `close` enumerator that collides with
+  POSIX close() from <unistd.h> -- and <unistd.h> is there ONLY for the
+  save code. Splitting the dev payload into its own TU lets it include
+  p_local.h properly and deletes that workaround.
+
+  The framework is not clean either: M_Drawer hard-codes two menu
+  identities, so per-menu knowledge lives inside the generic loop.
+
+  Fix: one internal header m_menu_local.h, then m_menu.c (framework),
+  m_menu_save.c (takes <unistd.h> with it), m_menu_video.c, m_menu_dev.c
+  (added to OBJS only under DEV=1), m_menu_game.c. OBJS is an explicit
+  list and header deps are tracked, so it is one added line per TU.
+
+  DO THE REGISTRY WORK FIRST. The Classic renderer/effects menus
+  hand-write sixteen label+value pairs over the same variables the crisp
+  value provider already switches on, with the same range clamps repeated
+  verbatim. Folding those into the existing crispMenus[] registry deletes
+  ~95 lines and makes the split mostly mechanical -- and the file already
+  proves it works, because M_DrawDevMenu calls M_DevCrispValue instead of
+  restating its values.
+
+  RISK: a missed static is a link error, not a silent bug. The real risk
+  is initialisation order in M_Init's DOOM-II reshuffle and the
+  D_BothGamesPresent splice, which index MainMenu/mainLabels in lockstep.
+  Verify by booting both IWADs and walking every menu, plus -devmenu
+  captures.
+  **Layman:** The menu file has grown into five unrelated programs sharing one file — saving games, video settings, the developer menu, the game chooser and the main menus. They do not talk to each other, but changing one recompiles all of them, and the mixing has already forced a workaround.
+  Kind: review-fix.
+  Source: optimise-refactor sweep 2026-09-20, lane 12.
+
+- 📋 [DOOM-0449] **D_DoomMain is 455 lines doing nine jobs, and two load-bearing startup ordering rules exist only as comments inside it.**
+  The two constraints, both documented inline and nowhere else:
+    - settings must load BEFORE I_InitWidescreen, so it can honour the
+      persisted `widescreen` preference;
+    - -nosound must be read BEFORE I_Init, which is what opens the audio
+      device.
+  Nothing but reading order enforces either. Both have been got wrong
+  before -- DOOM-0147 Part C and DOOM-0327 are the records.
+
+  The nine jobs, in order: response-file rewrite and IWAD identification;
+  gameplay flag parses; a five-arm banner sprintf with two arms commented
+  out /*FIXME; -cdrom and -turbo; WAD/demo file appends; skill/episode/
+  timer/warp; subsystem init with the PLAYPAL gate; the modified-game lump
+  sweep and two more banners; more subsystem init; start-mode selection.
+
+  Fix: six functions in the same file, preserving call order EXACTLY, one
+  call each -- D_ParseGameParms (everything that must be read before
+  init; the name states the constraint), D_AddCommandLineWads,
+  D_PrintStartupBanner, D_InitSubsystems (the one place I_Init is called),
+  D_CheckModifiedGame, D_StartGameFromParms. D_DoomMain then reads as nine
+  lines and the ordering is visible in the call sequence rather than
+  buried in it.
+
+  Related and cheap, same file: G_DoCompleted tests gamemap 8 and 9 twice
+  and the second map-8 block is UNREACHABLE (the switch returns); id's own
+  `//#if 0 Hmmm - why?` was turned into a comment so both copies compile.
+
+  RISK: the banner switch and the init sequence both read globals the
+  parse blocks write, so a mis-split changes what the game boots into.
+  Verify with the 68-map sweep, the five demo fixtures, -bootsmoke on both
+  IWADs, and a launch with -iwad / -warp / -loadgame / -record each once.
+  **Layman:** The game's startup function does nine unrelated things in one long stretch. Two rules about what must happen before what are written only as comments in the middle of it — and both have been got wrong before.
+  Kind: review-fix.
+  Source: optimise-refactor sweep 2026-09-20, lane 11.
+
+- 📋 [DOOM-0450] **Roughly sixty dead symbols across the engine, including a header extern naming an object that does not exist.**
+  Four lanes found these independently. Grouped because the fix is one
+  kind of edit and the verification is the same: nothing references any of
+  them, so a mistake is a link error rather than a silent bug.
+
+  WORSE THAN DEAD -- these mislead a reader:
+  - r_plane.h declares `extern planefunction_t ceilingfunc_t;` while the
+    definition is named `ceilingfunc`. That extern names an object that
+    does not exist, and only nothing referencing it keeps the link working.
+  - r_things.h advertises three sprite entry points that were never
+    ported; r_bsp.h three light tables. Eight header declarations with no
+    definition anywhere.
+  - d_main.c's `wadfile[1024]` sits one character from the live
+    `wadfiles[]`.
+  - `-noblit` IS PARSED AND NEVER READ: a documented timedemo switch that
+    silently does nothing, where its sibling nodrawers works.
+  - i_sound.c's SNDINTR block references audio_fd and mixbuffer, which
+    DOOM-0047 removed -- so enabling it is a compile error, not a restored
+    feature, and the "kept in case" justification is already false.
+  - s_sound.c's NORM_VOLUME expands to an identifier that does not exist.
+  - Three r_main/r_plane/r_sky startup functions have EMPTY BODIES and are
+    each followed by a printf naming them, so the startup log claims three
+    init steps that are no-ops.
+  - Four empty-but-called I_ stubs whose "// er?" comments say the
+    opposite of the truth.
+
+  PLUS: ~20 symbols in the software renderer (port vestiges, profiling
+  leftovers, 1600 bytes of unused .bss); nine unreferenced functions across
+  z_zone/w_wad/i_system/i_net; six write-only status-bar variables plus the
+  whole status-bar chat cluster (chat lives in hu_lib); five never-called
+  UI helpers; AM_updateLightLev (so lightlev is a constant zero added at
+  nine draw sites per frame); V_GetBlock (which received a DOOM-0402 bounds
+  fix for a guard nothing can exercise); the unreachable colour-transform
+  wipe; P_CalcSwing/swingx/swingy; and two dead serial-mouse settings that
+  are written into every player's ~/.doomrc on every quit.
+
+  THREE DECISIONS, NOT CLEANUPS -- do not sweep these up:
+  1. W_Profile was deliberately BOUNDED rather than deleted on DOOM-0400
+     because it is id's code. Deleting it now reverses that call.
+  2. The #if 0 blocks in the software renderer are id's own markers
+     recording that tables.c superseded them, and this fork preserves the
+     1997 source. Deleting the CALLS and printfs while keeping the
+     functions is the middle option.
+  3. The dev command-line flags (-cdrom, -shdev/-regdev/-comdev, -wart)
+     are id's original command line. Whether that counts as a historical
+     artefact worth keeping is the maintainer's call.
+
+  CHECK BEFORE TOUCHING THE STARTUP PRINTFS: harnesses grep game stdout.
+  **Layman:** About sixty leftover variables, functions and declarations that nothing uses. Some are merely clutter; a few actively mislead, describing features the game does not have or switches that silently do nothing.
+  Kind: review-fix.
+  Source: optimise-refactor sweep 2026-09-20, lanes 8/11/12/13.
+
+- 📋 [DOOM-0451] **Playsim duplication: the sector-thinker spawn written seven times, the tic-jitter idiom six, and a duplicated intercept formula.**
+  Everything here is demo-critical, so each fix is admissible only if it
+  cannot change simulation results -- including iteration order, the order
+  of P_Random consumption, and fixed-point rounding.
+
+  - The spawn-a-sector-thinker sequence is written out SEVEN times across
+    p_doors/p_floor/p_ceilng/p_plats, and its absence has DEMONSTRABLY
+    already caused divergence between files that should agree.
+  - The state-tic jitter idiom (`tics -= P_Random()&3; if (tics < 1)
+    tics = 1;`) is written SIX times across p_mobj, p_inter and p_enemy --
+    Rule of Three exceeded twice over. Each copy consumes exactly one
+    P_Random, so an edit that changes the mask on five sites and misses the
+    sixth is a DEMO DESYNC, not a visual glitch. The helper must be called
+    WHERE the inline code stood, never hoisted to the top of a function.
+  - P_InterceptVector2 in p_sight.c is a byte-for-byte duplicate of
+    p_maputl.c's P_InterceptVector, down to the same commented-out
+    I_Error. One caller. Two copies of the engine's demo-critical
+    fixed-point intercept formula: a "fix" to one desynchronises sight
+    checks from path traversal, quietly. QUICK, provably identical.
+  - P_TeleportMove and P_CheckPosition share a ~30-line prologue and block
+    sweep, character for character. QUICK -- pure code motion in one file;
+    validcount++ must stay exactly where it is relative to the sweep.
+  - EV_TurnTagLightsOff hand-rolls twelve lines of
+    P_FindMinSurroundingLight, which the SAME FILE already calls four
+    times. One line. The clearest instance of the reuse rule in the sweep.
+  - Plus: five neighbour-scan functions differing only in seed; eight
+    functions over two parallel arrays; six near-identical keycard blocks;
+    P_TouchSpecialThing as three tables written as 290 lines of switch;
+    the two-sector opening calculation written twice and ALREADY DRIFTED
+    (the sight copy has a ceiling comment above the floor branch);
+    allocate-then-zero written five times in p_setup with the memset
+    recomputing by hand the very product P_LevelAlloc exists to protect.
+
+  O1 shapes worth their own look: every "find sectors by tag" is a LINEAR
+  SCAN over all sectors called repeatedly (the one most likely to bite on
+  large modern maps); A_PainShootSkull walks the entire thinker list;
+  EV_Teleport scans every sector then walks its thing list; and
+  P_LoadBlockMap runs a full read-modify-write pass calling SHORT(), which
+  is the IDENTITY macro on this little-endian build.
+
+  DROPPED by the lane deliberately, and worth respecting:
+  P_TraverseIntercepts' O(n^2) selection sort. It is bounded by the
+  128-intercept cap so it does NOT worsen on large PWADs, and any
+  replacement must be STABLE -- equal-frac intercepts are visited in
+  blockmap-walk order today, and reordering ties changes which line a
+  hitscan hits first. The lane's own recommendation is to leave it alone
+  unless a profile names it.
+
+  Verify everything here with the five demo fixtures (30/30/30/70/350) --
+  that IS the P_Random-order check -- plus the 68-map sweep.
+  **Layman:** The code that makes doors, floors, ceilings and platforms move is six files of near-identical logic. Because demo playback depends on this code exactly, a fix that lands in five of six places is not a visual glitch — it silently breaks recorded demos.
+  Kind: review-fix.
+  Source: optimise-refactor sweep 2026-09-20, lanes 9/10.
+
+- 📋 [DOOM-0452] **Build and tooling: the Windows release packaging is duplicated, and the Windows syntax gate checks the tree with the wrong flags.**
+  Grouped: all are build-system or tooling, none touches engine behaviour.
+
+  HIGHEST VALUE FIRST:
+
+  - release.sh duplicates windows-build.sh almost verbatim -- ~28 lines
+    including a USER-FACING README text and a THREE-WAY copy of the
+    runtime DLL list (the third copy is in windows-smoke.sh).
+    windows-build.sh's own header asks a human to keep them in step. The
+    asymmetry gives it away: release.sh's LINUX leg just calls
+    build-appimage.sh. Fix: call the sibling script, as the Linux leg
+    already does. QUICK -- and this is the release path, the one where
+    getting it wrong ships.
+
+  - windows-smoke.sh HARD-CODES a copy of the Makefile's compiler flags
+    AND THE COPY HAS DRIFTED: it passes -std=gnu++20 where the build uses
+    -std=c++23, and drops -Wall for C++. So the gate CI relies on to say
+    "the tree compiles for Windows" does not check it with the flags the
+    real build uses -- in both directions. Fix: derive rather than copy (a
+    `print-%` target), or at minimum correct the flag with a comment
+    naming the Makefile as owner. QUICK.
+
+  - The glslc+xxd recipe is written THREE times, so --target-env=vulkan1.2
+    (load-bearing for pathtrace.comp) lives in three places.
+
+  - ci-local.sh is a hand-written mirror of build.yml and only the apt list
+    is actually shared -- though ci-deps.txt's header proves the pattern
+    works and records what this drift already cost (a red CI on
+    2026-08-12).
+
+  - dependencies.md copies version pins into prose and ONE COPY IS WRONG:
+    it says the AppImage toolchain uses floating `continuous` tags "with no
+    version to bump", while build-appimage.sh pins three tags with three
+    recorded sha256s and its own comment says the rolling tag is what it
+    used BEFORE. A dependency sweep reading the standard is told there is
+    nothing to bump when there are three pins. QUICK, and a direct instance
+    of this drive's own no-stale-values doc rule.
+
+  - scripts/ has the PWAD writer THREE times, the WAD directory reader
+    THREE times, a PNG writer twice and two sibling-import mechanisms.
+    The WAD readers are the real risk: three independent parsers of the
+    same on-disk format, in a tree whose review tail is about malformed-WAD
+    handling. DO NOT fold the two fractal generators -- their outputs are
+    committed, signed-off assets and any RNG change alters the image.
+
+  BUILD SPEED (each QUICK unless noted): `make test` re-runs every test
+  binary SERIALLY on every invocation, and it is the first step of a
+  release and every pre-push gate; the Windows syntax sweep compiles 68 TUs
+  one at a time; the pre-push gate runs two throwaway containers per push,
+  each doing its own apt-get update; and every shader edit recompiles
+  r_vulkan.cpp, the heaviest TU, because it #includes the .spv.h blobs
+  directly (LARGER -- an extern header fixes it).
+
+  ODDITY worth settling with one @echo: the `-j$(nproc)` ci-local.sh passes
+  to make is EITHER DEAD OR IT DEFEATS the Makefile's RAM cap, because the
+  Makefile APPENDS its own -j to MAKEFLAGS after the command line is
+  decoded. Either way one of the two is wrong, and a container's memory
+  limit is not the host's MemAvailable.
+
+  ALSO: make_bringup_hero.py is scaffolding the DOOM-0042 plan scheduled
+  for deletion, and five of its six outputs are reached by nothing -- but
+  its ONE live consumer is tests/rb_image_test.cpp, so whoever runs the
+  plan's `git rm -r` step breaks that test unless they notice.
+  **Layman:** The script that packages a Windows release duplicates another script almost line for line, including the text players read. And the check that tells us "this compiles for Windows" uses a different C++ version than the real build does, so it is not checking what it claims to.
+  Kind: review-fix.
+  Source: optimise-refactor sweep 2026-09-20, lane 14.
+
+- 📋 [DOOM-0453] **Status bar repaints fully every frame in Solid and Ultra, bypassing the diff-draw machinery built to prevent it.**
+  d_main.c passes `redrawsbar || rendermode != RB_CLASSIC || menuactive ||
+  menuactivestate` as ST_Drawer's refresh argument. `rendermode !=
+  RB_CLASSIC` is constant-true in both 3D tiers, so ST_Drawer always takes
+  the full-refresh path: a 320x32 V_CopyRect, the widescreen per-row side
+  fill, 11 number erase+draw pairs and 10 icon redraws, every frame.
+
+  st_number_t.oldnum and st_multicon_t.oldinum exist precisely to avoid
+  this and never get the chance. Related: STlib_drawNum's `refresh`
+  parameter is DEAD and its header comment describes a diff-draw mechanism
+  that is not there -- it assigns oldnum and never reads it, while its two
+  siblings do use theirs.
+
+  The DOOM-0050 comment says the force exists because menu pixels painted
+  over the bar are never erased -- which the menuactive terms already
+  cover. So the candidate fix is to drop the rendermode term and let
+  menuactive/redrawsbar decide, as the Classic path already does.
+
+  HALF THE WIN IS AVAILABLE INDEPENDENTLY AND IS OUTPUT-IDENTICAL:
+  V_CopyRect expands every pixel with a scalar f x f store loop whose trip
+  counts are runtime values, so it cannot vectorise. Building one
+  destination row and memcpy-ing it to the remaining rows writes the same
+  bytes to the same addresses through a vectorised copy. QUICK, and worth
+  doing whether or not the forced refresh stays.
+
+  RISK, AND THE LANE COULD NOT CLOSE IT: if anything other than a menu
+  paints into the bar band of screens[0] it will ghost. The lane checked
+  the automap (stops above the bar), HU messages and the FPS counter (draw
+  at the top) and the classic menu shift -- but did NOT check the Vulkan
+  compositor, which is the one that matters here. Settle that first.
+
+  MEASURE BEFORE ACTING: Solid's rasterised view is the tier whose feature
+  is performance, and the lane labelled its cost inferred.
+  **Layman:** The health/ammo bar at the bottom redraws itself completely every frame in the two 3D modes, even when none of the numbers changed. The code to skip that already exists and never gets the chance to run.
+  Kind: review-fix.
+  Source: optimise-refactor sweep 2026-09-20, lanes 12 and 13.
+
+- ✅ [DOOM-0454] **Delete seven dead symbols from the playsim.**
+  Done 2026-09-20. Each verified unreferenced across the whole tree
+  before removal, rather than taken on the lane's word:
+
+    p_mobj.c    int test;
+    p_tick.c    P_AllocateThinker   (empty body, no prototype, no caller,
+                and a comment describing allocation it does not do)
+    p_maputl.c  int ptflags;
+    p_sight.c   int sightcounts[2]; (incremented twice, read nowhere)
+    p_map.c     secondslidefrac / secondslideline (written together in
+                PTR_SlideTraverse, read nowhere)
+    p_local.h   MAPBMASK
+
+  Two actively mislead: secondslide* reads as the second-best-line half of
+  a slide algorithm, so anyone touching P_SlideMove must first prove it is
+  vestigial; P_AllocateThinker looks like the thinker allocation path.
+
+  Cannot change simulation results -- nothing reads any of them, so no
+  branch or arithmetic depends on them and nothing is reordered.
+
+  Verified: 68-map boot sweep clean; the five demo fixtures still read
+  30/30/30/70/350; make test 24 suites green; windows-smoke.sh
+  --syntax-only PASS.
+
+  The rest of the sweep's dead-code findings are DOOM-0449, which carries
+  the three that are decisions rather than cleanups.
+  **Layman:** Seven leftover variables and one empty function in the game-simulation code that nothing uses. Two of them actively mislead anyone reading the collision and movement code.
+  Kind: review-fix.
+  Source: optimise-refactor sweep 2026-09-20, lane 9.
+
 ## Phase 2 — The Spin
 
 The creative overhaul: evolve the renderer toward true 3D with hardware
