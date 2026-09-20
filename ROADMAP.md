@@ -1,4 +1,5 @@
 <!-- ants-roadmap-format: 1 -->
+<!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
 
 # Roadmap
 
@@ -231,7 +232,7 @@ with friends.
   Source: user-request-2026-06-12.
 
 - ✅ [DOOM-0014] **Make the game window larger, resizable, and fullscreen-capable.**
-  **Layman:** Opens at a bigger size, can be resized by dragging, and runs fullscreen with -fullscreen. (The picture is bigger; the internal detail is still the original 320x200 — true high-resolution rendering is a separate Phase 2 job.)
+  **Layman:** Opens at a bigger size, can be resized by dragging, and runs fullscreen with -fullscreen. (The picture is bigger; the internal detail is still the original 320x200 — true high-resolution rendering is a separate Phase 2 job.).
   Kind: enhancement.
   Source: user-request-2026-06-12.
 
@@ -3602,7 +3603,7 @@ with friends.
   Source: review-code 2026-09-01, lane ui-hud.
   Lanes: ui.
 
-- 📋 [DOOM-0404] **SDL2 platform-layer review tail: six findings, including a comment that describes the forbidden audio design.**
+- ✅ [DOOM-0404] **SDL2 platform-layer review tail: six findings, including a comment that describes the forbidden audio design.**
   Not covered by DOOM-0385 or DOOM-0386.
 
     - MEDIUM i_sound.c:187 -- the block comment heading the music API describes the
@@ -3628,6 +3629,34 @@ with friends.
       tp is an uninitialised local, so a failure feeds garbage into the tic counter.
     - LOW i_net.c:200 -- the errno test is Winsock-aware and the strerror message is
       not; on Windows errno is unrelated to the socket error.
+  Resolved (2026-09-20): all six findings fixed, one commit each.
+
+  Three were wider or different than reported, and the commits say which
+  way each went. The music comment's named second site has moved and
+  carries no such comment now; the live one is the volume scaler, found
+  by searching for the claim rather than the line. The PLAYPAL over-read
+  is not bounded by I_SetPalette's one palette -- ST_doPaletteStuff
+  indexes up to RADIATIONPAL, so the requirement is 14 palettes (10752
+  bytes, what both shipped IWADs carry). The Winsock/errno mismatch sits
+  at four sites, not one.
+
+  New: palette_bounds.h with tests/palette_bounds_test.cpp, and two VLQ
+  cases in tests/mus2mid_test.cpp. The mus2mid case was proved red before
+  the fix (38 bytes where 37 are expected). The PLAYPAL gate was verified
+  end to end against crafted PWADs, refusing a 768-byte lump and booting
+  a 10752-byte one.
+
+  The music spec (DOOM-0016) carried the same forbidden design one level
+  up and now has an amendment at its head. CLAUDE.md rule 14: an
+  amendment recording what was built does not re-arm the gate. No gate.
+
+  Verification: 68-map boot sweep clean; demo fixtures 30/30/30/70/350
+  unchanged; make test 25 suites green; windows-smoke.sh --syntax-only
+  PASS. The i_net text is not runtime-verified on Windows -- it is
+  error-path text on a two-machine path -- and that commit says so.
+
+  Filed while verifying: DOOM-0433 (any PWAD hangs startup on a blocking
+  stdin read).
   **Layman:** The leftovers from reviewing the SDL2 layer that replaced the original X11 code. One is a comment at the top of the music code describing exactly the two-device design the project forbids — the code is right, the comment is not, and it is the first thing anyone editing that file reads.
   Kind: investigate.
   Source: review-code 2026-09-01, lane platform.
@@ -4483,6 +4512,40 @@ with friends.
   Kind: security.
   Source: review-code 2026-09-01, lane sw-renderer; split out of DOOM-0402 on 2026-09-12.
   Lanes: sw-renderer.
+
+- 📋 [DOOM-0433] **Loading any PWAD hangs the game at startup waiting for Enter on stdin.**
+  Found 2026-09-20 while testing DOOM-0404's PLAYPAL gate against a
+  crafted PWAD. Not caused by that change -- it reproduces with a PWAD
+  carrying no PLAYPAL at all.
+
+  `-file` sets `modifiedgame`, and D_DoomMain then prints vanilla's
+  "ATTENTION: This version of DOOM has been modified ... press enter to
+  continue" banner and calls `getchar()`. That blocks on stdin forever
+  when nothing is going to type into it.
+
+  Measured, with only stdin differing between the two arms: the same
+  `-file ... -bootsmoke 20` command exits 0 with stdin redirected from
+  `/dev/null` (getchar sees EOF at once) and never exits with stdin left
+  open (killed at 40s). That isolates the blocking read as the cause.
+  A run without `-file` exits 0 either way.
+
+  So it also blanks the headless gate for PWAD cases whenever stdin
+  happens to stay open -- an automated check can silently measure a hang,
+  and whether it does depends on how the harness was invoked, not on the
+  engine.
+
+  Reachable by a player, not just by the harness: launched from a desktop
+  icon or the Windows Explorer shell there is no terminal to press Enter
+  into, and the process sits invisible. The 1-800-IDGAMES text in the
+  banner is 1990s id Software support and is dead either way.
+
+  Fix direction: keep the notice (it is id's, and the licence spirit is
+  to say the game is modified), but do not block on it -- print it and
+  continue, or gate the wait on stdin being an interactive terminal
+  (`isatty`), which `-bootsmoke` and an icon launch both fail.
+  **Layman:** Load any add-on level pack and the game stops before it starts, waiting for you to press Enter in a terminal window you may not have. On Windows, launched from an icon, there is nothing to press Enter into.
+  Kind: fix.
+  Source: in-session-2026-09-20, found while verifying DOOM-0404's PLAYPAL gate.
 
 ## Phase 2 — The Spin
 
@@ -7571,8 +7634,8 @@ parked ideas (💭 considered) until we commit to and design each one.
   half-cell error lives.
   **Layman:** Stop asking the graphics card to fire a test ray straight up 24 times per pixel, when a small map we already build answers the same question for free.
   Kind: perf.
-  Lanes: renderer, shaders.
   Source: in-session-2026-07-27.
+  Lanes: renderer, shaders.
 
 - 📋 [DOOM-0277] **Pace Ultra's ray-traced view to an even 30 FPS instead of a variable one.**
   User decision 2026-07-27, after the fog measurement: "for Ultra with ray
@@ -7599,8 +7662,8 @@ parked ideas (💭 considered) until we commit to and design each one.
   60, and decide what happens on a 120/144 Hz panel (present every 4th).
   **Layman:** Lock the ray-traced mode to a steady 30 frames a second, evenly spaced, so it feels smooth instead of stuttery even though it is not fast.
   Kind: perf.
-  Lanes: renderer.
   Source: user-request-2026-07-27.
+  Lanes: renderer.
 
 - 📋 [DOOM-0278] **Motion blur for the 3-D views - camera-velocity first, per-object only once monsters are models.**
   User asked (2026-07-27) for "perhaps some per object motion blur" as
@@ -7627,8 +7690,8 @@ parked ideas (💭 considered) until we commit to and design each one.
   a juddering one.
   **Layman:** Blur the picture slightly as you turn, so 30 frames a second looks smoother than it is.
   Kind: feature.
-  Lanes: renderer, shaders.
   Source: user-request-2026-07-27.
+  Lanes: renderer, shaders.
 
 - 📋 [DOOM-0279] **Get Ultra's ray-traced view back to 60 FPS - and give the remaining effects a budget to fit in.**
   User, 2026-07-27: "please log a roadmap entry to try and get this back
@@ -7670,8 +7733,8 @@ parked ideas (💭 considered) until we commit to and design each one.
   feel alright".
   **Layman:** The ray-traced mode runs at about 30 frames a second on this card; this is the long-term push to double that, and to stop each new effect quietly eating the difference.
   Kind: perf.
-  Lanes: renderer, shaders.
   Source: user-request-2026-07-27.
+  Lanes: renderer, shaders.
 
 - 📋 [DOOM-0280] **The DOOM-0060 game chooser can pick a different IWAD across identical runs.**
   Found while A/B-ing DOOM-0276. Two launches with the SAME config file, same
@@ -7697,8 +7760,8 @@ parked ideas (💭 considered) until we commit to and design each one.
   reproducible.
   **Layman:** With both DOOM 1 and DOOM 2 in the wads folder and no key pressed, the game sometimes starts one and sometimes the other - it should always make the same choice.
   Kind: fix.
-  Lanes: startup.
   Source: in-session-2026-07-27 (hit while measuring DOOM-0276).
+  Lanes: startup.
 
 - ✅ [DOOM-0281] **Re-flood the seep field when a wall or door opens, so fog rolls into a newly-opened room.**
   User, 2026-07-27, with a screenshot of a normally-closed E1M1 wall standing
@@ -7921,8 +7984,8 @@ parked ideas (💭 considered) until we commit to and design each one.
   matte surface's colour is.
   **Layman:** A wall in a room with blue liquid on the floor turns blue when you turn on the spot, and back again when you turn away. Standing still and just looking around should never change what colour a wall is.
   Kind: fix.
-  Lanes: renderer, shaders.
   Source: user-play-test-2026-07-27.
+  Lanes: renderer, shaders.
 
 - 📋 [DOOM-0283] **Ultra falls back to paletted art silently when the HD assets are not found.**
   EnsureHdMaterials resolves the HD set relative to the CURRENT WORKING DIRECTORY
@@ -7954,8 +8017,8 @@ parked ideas (💭 considered) until we commit to and design each one.
   var. Keep DOOMASSETDIR as the override.
   **Layman:** If the high-definition texture pack cannot be found, Ultra quietly falls back to the original artwork and looks like Solid. Nothing on screen says so, so it reads as the setting not working.
   Kind: enhancement.
-  Lanes: renderer.
   Source: in-session-2026-07-27.
+  Lanes: renderer.
 
 - 📋 [DOOM-0286] **Upres the HUD / status bar and the first-person hand and gun to at least 1080p.**
   The status bar, its number/face graphics and the first-person weapon
@@ -9456,8 +9519,8 @@ parked ideas (💭 considered) until we commit to and design each one.
   Needs a design pass -- /write-spec, then the rule-14 gate.
   **Layman:** Blowing up a barrel should look like a real explosion -- fire, smoke, light thrown across the room -- instead of the original's few flat frames.
   Kind: feature.
-  Lanes: shaders, assets, sprites.
   Source: user-request-2026-08-01.
+  Lanes: shaders, assets, sprites.
 
 - ✅ [DOOM-0300] **The torch glow sits still while the fog behind it drifts -- give the light path the billows too.**
   User, 2026-08-01, on the DOOM-0011 L3 screenshots: "I love the glow of
@@ -9842,8 +9905,8 @@ parked ideas (💭 considered) until we commit to and design each one.
   the user's call; it is not blocked by any of the fog work.
   **Layman:** A mode where DOOM plays itself -- walks the level, fights, finds the exit -- so hours of video can be recorded for YouTube without anyone having to sit and play it.
   Kind: feature.
-  Lanes: playsim, tooling.
   Source: user-request-2026-08-01.
+  Lanes: playsim, tooling.
 
 - ✅ [DOOM-0302] **A nukage pool glowed only in patches, because the per-texel emissive mask was applied to liquids too.**
   User report 2026-08-02, with four F12 captures: "it looks like there is
@@ -9926,8 +9989,8 @@ parked ideas (💭 considered) until we commit to and design each one.
   variable under test reports a clean, confident, meaningless result.
   **Layman:** A way to screenshot the game automatically for testing, showing your real settings.
   Kind: test.
-  Lanes: rt, test.
   Source: in-session-2026-08-02.
+  Lanes: rt, test.
 
 - ✅ [DOOM-0304] **The spec still describes a torch-selection scheme L3 never shipped.**
   DOOM-0011 §4.4(b) specifies torch selection as: iterate the static
@@ -10514,8 +10577,8 @@ parked ideas (💭 considered) until we commit to and design each one.
   DOOM-0084 (the per-texel mask), DOOM-0193 (dial UP intended glows).
   **Layman:** The high-definition art pipeline decides what glows with the same broken test we just replaced for the normal art.
   Kind: fix.
-  Lanes: shaders, assets.
   Source: in-session-2026-08-03 (found while fixing DOOM-0307).
+  Lanes: shaders, assets.
 
 - ✅ [DOOM-0310] **Split part 1 of 3 — fog density and the fields, extracted from the DOOM-0011 spec.**
   First of the three-way split the user approved on DOOM-0308: density +
@@ -10675,8 +10738,8 @@ parked ideas (💭 considered) until we commit to and design each one.
   DOOM-0300 (which set the wisp speed and freq).
   **Layman:** Some notes written next to the fog code describe old numbers, so the next person to read them gets the wrong idea.
   Kind: doc-fix.
-  Lanes: shaders, docs.
   Source: cold-eyes-2026-08-03 (DOOM-0310's gate, surfaced by all five lanes).
+  Lanes: shaders, docs.
 
 - 📋 [DOOM-0315] **Make `-shotverify` frame-deterministic, or stop writing byte-identity acceptance rows.**
   Found while discharging DOOM-0310 §7's byte-identity row for L4. Captured
@@ -10956,8 +11019,8 @@ parked ideas (💭 considered) until we commit to and design each one.
   Runs the rule-14 gate from loop 1 on its own bytes via /write-spec.
   **Layman:** The last part of the fog design document: how the fog is blended into the finished picture, including the sky behind it.
   Kind: doc.
-  Lanes: docs, fog, shaders.
   Source: in-session-2026-08-04.
+  Lanes: docs, fog, shaders.
 
 - ✅ [DOOM-0318] **Open a menu from argv in the developer build, so menus can be captured headlessly.**
   DOOM-0294 gave the developer build `-inspect` / `-freeze` / `-devshot`, and
@@ -11493,8 +11556,8 @@ parked ideas (💭 considered) until we commit to and design each one.
   whether one threshold change serves both before adding a second mechanism.
   **Layman:** The little armour helmets have green eyes that pulse brighter and dimmer, but they never light up the room around them — the code meant to make them glow can't actually trigger on them.
   Kind: fix.
-  Lanes: renderer, shaders.
   Source: user-request-2026-08-04.
+  Lanes: renderer, shaders.
 
 - 📋 [DOOM-0330] **A distant toxic pool ignores the fog, and never tints the air above it.**
   User feedback taking the DOOM-0011 look call (2026-08-05), given
@@ -12972,8 +13035,8 @@ parked ideas (💭 considered) until we commit to and design each one.
   published. The shot script is `docs/trailer-script.md` § 4.
   **Layman:** With ray tracing switched off, Ultra still shows the new high-definition artwork -- but the menu calls that view "Original", which tells the player the opposite of what they are looking at.
   Kind: ux.
-  Lanes: menu, ux.
   Source: user-request-2026-08-07 (trailer scripting, DOOM-0339).
+  Lanes: menu, ux.
 
 - 📋 [DOOM-0341] **Demons' eyes glow, so you can see them watching you in a dark room.**
   User's framing: "the demon's red eyes let off red light, not much but if
@@ -13053,8 +13116,8 @@ parked ideas (💭 considered) until we commit to and design each one.
   an on-hardware look in a dark room, same as DOOM-0157.
   **Layman:** In a dark room you would see a demon's red eyes before you see the demon. Only the eyes light up, not the whole monster, and only faintly.
   Kind: feature.
-  Lanes: renderer, sprites.
   Source: user-request-2026-08-07 (seen in a YouTube video of another DOOM source port).
+  Lanes: renderer, sprites.
 
 - 🚧 [DOOM-0345] **Bloom on the ray-traced view, which needs the RT tone-map split.**
   Split out of DOOM-0331 on 2026-08-12, which had converged by cap at 3

@@ -23,6 +23,35 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Keypad and Home/End keys no longer trigger unrelated actions** (DOOM-0404)
+  Keys the game has no name for were being folded onto letters that do have
+  one. Tapping the keypad's full stop on the automap wiped your marks;
+  keypad 9 acted as 'a', Caps Lock as '9', Home as 'J'. Those keys now do
+  nothing, which is what they did in the original release.
+
+- **An add-on level pack with a damaged colour table can no longer read past its own data** (DOOM-0404)
+  The game read a fixed amount from the WAD's colour table without checking
+  how much was actually there. A crafted or truncated file made it read
+  past the end. The length is now checked once when the game loads, and a
+  short table is refused with a clear message instead.
+
+- **Very long pauses in a music track no longer mistime everything after them** (DOOM-0404)
+  The MUS-to-MIDI converter could not write a gap longer than about 28 bits
+  and produced a corrupt timestamp instead, throwing out the timing of
+  every note that followed. Over-long gaps are now capped at the longest
+  the format allows.
+
+- **Network errors on Windows now say what actually went wrong** (DOOM-0404)
+  Windows reports network failures separately from ordinary file errors, and
+  the game was printing the wrong one -- a connection problem could appear
+  as "No such file or directory", or as success.
+
+- **A failed clock read can no longer feed garbage into the game's timing** (DOOM-0404)
+  Two places read the system clock without checking whether the read worked,
+  from a variable that starts with whatever was left in memory. The one that
+  paces the game now stops with a clear error; the one behind the FPS counter
+  reports zero and carries on.
+
 - **Saved games with an unusual character in the name no longer show as empty on Windows** (DOOM-0403)
   The file was being opened in text mode, where Windows stops reading at
   certain bytes. A perfectly good save was then listed as an empty slot,
