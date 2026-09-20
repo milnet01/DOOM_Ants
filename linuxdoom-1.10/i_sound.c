@@ -202,12 +202,15 @@ void I_SetSfxVolume(int volume)
 //
 // MUSIC API.
 //
-// Music plays on its OWN audio output via SDL2_mixer at 44100 Hz, fully
-// independent of the 44100 Hz effects mixer above (which is untouched). MUS
+// Music plays through SDL2_mixer at 44100 Hz on the SAME device as the effects
+// above -- I_InitMusic opens that one device for both. A second device for music
+// went near-silent on Windows, which is why CLAUDE.md forbids that shape by name;
+// do not reintroduce it. MUS
 // lumps are converted to MIDI in memory (mus2mid) and rendered by SDL2_mixer
 // through FluidSynth + a General-MIDI soundfont. Music is non-essential: any
 // failure logs a warning, disables music, and lets the game run with effects
-// only. See docs/specs/DOOM-0016-music.md.
+// only. See docs/specs/DOOM-0016-music.md -- its two-device approach is
+// superseded by DOOM-0047, and the amendment at that spec's head says so.
 //
 
 // Default General-MIDI soundfont (openSUSE path); overridable via
@@ -246,13 +249,12 @@ void I_SetMusicVolume(int volume)
 
   if (music_initialised)
   {
-    // Scale 0-15 -> SDL2_mixer's 0-128, but cap well below full: MIDI music on the
-    // separate SDL2_mixer device is perceptibly louder than the software SFX mixer
-    // at equal settings, so it would drown the effects (DOOM-0047). SFX can't be
-    // boosted (a channel volume >127 is a hard I_Error in I_UpdateSoundParams), so
-    // the rebalance lives on the music side. 48/128 (~38%) at max; tunable by ear.
-    // (The SFX mixer now also outputs 44.1 kHz -- see SAMPLERATE -- which fixed the
-    // near-silent Windows effects, but the MIDI-vs-PCM loudness gap remains.)
+    // Scale 0-15 -> SDL2_mixer's 0-128, but cap well below full: rendered MIDI is
+    // perceptibly louder than the sound-effect chunks at equal settings, so it
+    // would drown the effects (DOOM-0047). SFX can't be boosted (a channel volume
+    // >127 is a hard I_Error in I_UpdateSoundParams), so the rebalance lives on
+    // the music side. 48/128 (~38%) at max; tunable by ear. The gap is MIDI-vs-PCM,
+    // not a rate or device difference -- both play on one 44.1 kHz device.
     int v = (volume * 48) / 15;
     if (v < 0)   v = 0;
     if (v > 128) v = 128;

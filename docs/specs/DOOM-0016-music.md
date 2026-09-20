@@ -1,8 +1,27 @@
 # DOOM-0016 — General-MIDI music playback
 
-**Status:** Implemented (2026-06-12) — user-signed-off; shipped in i_sound.c + mus2mid.c
+**Status:** Implemented (2026-06-12) — user-signed-off; shipped in i_sound.c + mus2mid.c.
+**Superseded in part by DOOM-0047** — see the amendment below.
 **Kind:** feature
 **Depends on:** DOOM-0004 (SDL2 audio layer), shipped.
+
+> **Amendment (2026-09-20) — the two-device design was replaced.** This spec's
+> [Approach](#approach) gives music its own second audio device. That shipped,
+> and on Windows the *effects* device then produced almost no sound while music
+> played fine. DOOM-0047 fixed it by taking the option this spec rejected:
+> effects and music now share **one** SDL2_mixer device at 44100 Hz, with
+> effects as `Mix_Chunk`s and the hand-rolled software mixer deleted.
+> `I_InitMusic` opens that single device.
+>
+> So, reading below: wherever this spec says music has its own or a second
+> device, or that the effects mixer is a 11025 Hz `SDL_OpenAudio` device that
+> stays untouched, that is the superseded design. The
+> ["unify everything on SDL2_mixer" alternative](#alternative-considered--unify-everything-on-sdl2_mixer)
+> is what actually ships. `CLAUDE.md` now forbids the two-device shape by name.
+>
+> Everything else in this spec still holds — MUS→MIDI conversion via `mus2mid`,
+> FluidSynth with the FluidR3_GM soundfont, the game-side contract, and
+> music-failure being non-fatal.
 
 ## Goal
 
