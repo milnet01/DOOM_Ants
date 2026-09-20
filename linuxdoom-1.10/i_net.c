@@ -59,6 +59,39 @@ rcsid[] __attribute__((used)) = "$Id: m_bbox.c,v 1.1 1997/02/03 22:45:10 b1 Exp 
 
 #include <stddef.h>		// offsetof, for the packet-length check
 
+// DOOM-0404: describe the error the SOCKET call reported, not errno.
+//
+// The EWOULDBLOCK test in PacketGet was already Winsock-aware (socket_errno),
+// but every message beside it read strerror(errno). Winsock does not set errno,
+// so on Windows those printed whatever unrelated value the CRT happened to hold
+// -- a network failure reporting itself as "No such file or directory", or as
+// success. Pair each message with socket_errno through this.
+#ifdef _WIN32
+static const char* socket_strerror (int err)
+{
+    // Winsock codes are not CRT errnos, so strerror cannot name them.
+    // FormatMessage can; it is the documented route for WSAGetLastError.
+    static char buf[256];
+    DWORD n = FormatMessageA (FORMAT_MESSAGE_FROM_SYSTEM
+			      | FORMAT_MESSAGE_IGNORE_INSERTS,
+			      NULL, (DWORD)err,
+			      MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+			      buf, sizeof(buf), NULL);
+    if (n == 0)
+    {
+	// No text for this code; the number is still the useful fact.
+	snprintf (buf, sizeof(buf), "Winsock error %d", err);
+	return buf;
+    }
+    // FormatMessage leaves a trailing CRLF that would break the I_Error line.
+    while (n > 0 && (buf[n-1] == '\r' || buf[n-1] == '\n'))
+	buf[--n] = '\0';
+    return buf;
+}
+#else
+#define socket_strerror(err)  strerror(err)
+#endif
+
 #include "net_bounds.h"
 #include "i_system.h"
 #include "d_event.h"
@@ -123,7 +156,7 @@ int UDPsocket (void)
     // allocate a socket
     s = socket (PF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (s<0)
-	I_Error ("can't create socket: %s",strerror(errno));
+	I_Error ("can't create socket: %s", socket_strerror(socket_errno));
 		
     return s;
 }
@@ -146,7 +179,7 @@ BindToLocalPort
 			
     v = bind (s, (void *)&address, sizeof(address));
     if (v == -1)
-	I_Error ("BindToPort: bind: %s", strerror(errno));
+	I_Error ("BindToPort: bind: %s", socket_strerror(socket_errno));
 }
 
 
@@ -202,7 +235,7 @@ void PacketGet (void)
     if (c == -1 )
     {
 	if (socket_errno != EWOULDBLOCK)
-	    I_Error ("GetPacket: %s",strerror(errno));
+	    I_Error ("GetPacket: %s", socket_strerror(socket_errno));
 	doomcom->remotenode = -1;		// no packet
 	return;
     }
@@ -282,7 +315,7 @@ int GetLocalAddress (void)
     // get local address
     v = gethostname (hostname, sizeof(hostname));
     if (v == -1)
-	I_Error ("GetLocalAddress : gethostname: errno %d",errno);
+	I_Error ("GetLocalAddress : gethostname: %s", socket_strerror(socket_errno));
 	
     hostentry = gethostbyname (hostname);
     if (!hostentry)
