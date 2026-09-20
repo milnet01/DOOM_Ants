@@ -558,7 +558,6 @@ intercept_t*	intercept_p;
 
 divline_t 	trace;
 boolean 	earlyout;
-int		ptflags;
 
 //
 // PIT_AddLineIntercepts.

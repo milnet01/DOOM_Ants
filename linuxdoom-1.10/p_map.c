@@ -568,10 +568,8 @@ boolean P_ThingHeightClip (mobj_t* thing)
 // Allows the player to slide along any angled walls.
 //
 fixed_t		bestslidefrac;
-fixed_t		secondslidefrac;
 
 line_t*		bestslideline;
-line_t*		secondslideline;
 
 mobj_t*		slidemo;
 
@@ -676,8 +674,6 @@ boolean PTR_SlideTraverse (intercept_t* in)
   isblocking:		
     if (in->frac < bestslidefrac)
     {
-	secondslidefrac = bestslidefrac;
-	secondslideline = bestslideline;
 	bestslidefrac = in->frac;
 	bestslideline = li;
     }

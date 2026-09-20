@@ -44,7 +44,6 @@ divline_t	strace;			// from t1 to t2
 fixed_t		t2x;
 fixed_t		t2y;
 
-int		sightcounts[2];
 
 
 //
@@ -360,7 +359,6 @@ P_CheckSight
     // Check in REJECT table.
     if (rejectmatrix[bytenum]&bitnum)
     {
-	sightcounts[0]++;
 
 	// can't possibly be connected
 	return false;	
@@ -368,7 +366,6 @@ P_CheckSight
 
     // An unobstructed LOS is possible.
     // Now look from eyes of t1 to any part of t2.
-    sightcounts[1]++;
 
     // Look from the eyes of t1 to any part of t2. The eye height and the target band are
     // unchanged from the original; only the trace itself moved out (P_CheckSightTrace).
