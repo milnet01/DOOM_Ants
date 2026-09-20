@@ -26,18 +26,32 @@ for what's shipped.
 ## Status
 
 🎮 **Playable.** The 1997 engine runs on modern 64-bit Linux and Windows via
-SDL2, and you can pick between three ways of drawing the world:
+SDL2, and you pick how the world looks from the in-game menu.
 
-- **Classic** — the original 1997 software renderer, pixel-for-pixel, now
-  with widescreen support.
-- **Solid** — a hardware (Vulkan) rasteriser: the same DOOM world drawn on
-  the GPU, with dynamic lights and contact shadows.
-- **Ultra** — a hardware **path tracer**: ray-traced lighting and shadows,
-  HD PBR materials, a moving flashlight, ambient occlusion, and grimier,
-  de-tiled surfaces. (Needs a ray-tracing-capable GPU; developed and tested
-  on an AMD RX 6600.)
+There are three tiers, and **what separates Solid from Ultra is the artwork,
+not the lighting**:
 
-You switch between them from the in-game menu. Latest release: **0.7.2**.
+- **Classic** — the original 1997 software renderer, pixel-for-pixel, drawn
+  on the CPU exactly as it was released. No added effects. Widescreen is the
+  one concession, and it's optional.
+- **Solid** — DOOM's **own** textures, upscaled, with modern surface detail
+  layered on top. Pick this if you want the game to still *look like DOOM*.
+- **Ultra** — the artwork **replaced** with HD material, and first in line
+  for anything new.
+
+Solid and Ultra get the same effects: dynamic and volumetric lighting, fog,
+shadows, ambient occlusion, a moving flashlight, glowing nukage and lava, and
+grimier, de-tiled surfaces. Solid fakes an effect cheaply wherever a cheap
+fake holds up; Ultra does it properly.
+
+Separately from the tier, Solid and Ultra each offer two ways of drawing that
+world — a fast **rasterised** view, and a **ray-traced** view that computes
+light by following it around the room. The two choices are independent: you
+can have original art ray-traced, or HD art rasterised. Ray tracing needs a
+GPU that supports it (developed and tested on an AMD RX 6600); rasterised
+Solid is currently the smoothest way to play.
+
+Latest release: **0.7.2**.
 Grab a build from the [Releases](https://github.com/milnet01/DOOM_Ants/releases)
 page, or build it yourself below.
 
@@ -47,8 +61,12 @@ You'll need a DOOM `.wad` data file (e.g. the shareware `doom1.wad`, or
 retail `doom.wad` / `doom2.wad`), which is **not** included here for
 licensing reasons.
 
-**Dependencies (Linux):** a C++23 compiler (GCC/Clang), `make`, and the dev
-packages for **SDL2**, **SDL2_mixer**, and the **Vulkan** loader + headers.
+**Dependencies (Linux):** a C++23 compiler (GCC/Clang), `make`, the dev
+packages for **SDL2**, **SDL2_mixer** and the **Vulkan** loader + headers,
+plus **`glslc`** and **`xxd`** — the build compiles the shaders and embeds
+them, so it needs both. `packaging/ci-deps.txt` is the authoritative list and
+names the Debian/Ubuntu package for each.
+
 The [`mold`](https://github.com/rui314/mold) linker is optional — the build
 uses it automatically when it's installed and falls back to the default
 linker when it isn't.
@@ -56,12 +74,19 @@ linker when it isn't.
 ```sh
 cd linuxdoom-1.10
 make                     # builds linux/linuxxdoom
+make test                # builds and runs the unit tests (plain `make` does not)
 ./linux/linuxxdoom -iwad /path/to/doom.wad
 ```
 
-Handy flags: `-iwad <file>` picks the game data explicitly; `-warp <map>`
-jumps straight into a level. The Solid and Ultra views need a working
+Handy flags: `-iwad <file>` picks the game data explicitly. `-warp` jumps
+straight into a level — one number for DOOM 2 (`-warp 7`), two for DOOM 1
+(`-warp 1 7` for episode 1, map 7). The Solid and Ultra views need a working
 Vulkan driver; Classic runs anywhere SDL2 does.
+
+**For music**, you'll also want a General MIDI soundfont installed — the
+game looks for `/usr/share/sounds/sf2/FluidR3_GM.sf2` by default, and
+`$DOOM_SOUNDFONT` overrides that path. Without one the game runs fine with
+sound effects only.
 
 Windows builds are produced with a mingw-w64 cross-compile toolchain and
 published on the Releases page.
