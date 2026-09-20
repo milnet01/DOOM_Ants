@@ -123,10 +123,23 @@ static unsigned short rd_u16le(const unsigned char *p)
 }
 
 // Write a variable-length MIDI timestamp.
+//
+// DOOM-0404: a MIDI variable-length quantity is at most four bytes, so it cannot
+// represent more than MIDI_VLQ_MAX. `buffer` packs one 7-bit group per byte and
+// is 32 bits wide, so a fifth group shifts the terminator out of the top and the
+// bytes written are a malformed VLQ -- memory-safe, but the MIDI is wrong and
+// every later event in the track is mistimed. The delay is attacker-controlled:
+// a MUS lump's time deltas are read straight from the file and accumulated.
+// Clamp to what the format can express rather than emitting nonsense.
 static int write_time(musconv *c, unsigned int time)
 {
-    unsigned int buffer = time & 0x7F;
+    unsigned int buffer;
     unsigned char writeval;
+
+    if (time > MIDI_VLQ_MAX)
+	time = MIDI_VLQ_MAX;
+
+    buffer = time & 0x7F;
 
     while ((time >>= 7) != 0)
     {
@@ -430,11 +443,22 @@ int mus2mid(const unsigned char *mus, size_t muslen_real, unsigned char **mid_ou
             for (;;)
             {
                 READ_BYTE(working);
-                timedelay = timedelay * 128 + (working & 0x7F);
+                // DOOM-0404: the byte count here is bounded only by the lump, so
+                // a run of continuation bytes wraps this accumulator and then the
+                // queued total. Saturate instead: the result is already past what
+                // write_time can encode, so clamping loses nothing a correct MUS
+                // could have meant.
+                if (timedelay > (MIDI_VLQ_MAX - (working & 0x7F)) / 128)
+                    timedelay = MIDI_VLQ_MAX;
+                else
+                    timedelay = timedelay * 128 + (working & 0x7F);
                 if ((working & 0x80) == 0)
                     break;
             }
-            c.queuedtime += timedelay;
+            if (c.queuedtime > MIDI_VLQ_MAX - timedelay)
+                c.queuedtime = MIDI_VLQ_MAX;
+            else
+                c.queuedtime += timedelay;
         }
     }
 

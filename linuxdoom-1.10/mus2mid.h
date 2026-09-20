@@ -25,6 +25,13 @@
 
 #include <stddef.h>   // size_t
 
+// DOOM-0404: the largest delta time a MIDI variable-length quantity can carry.
+// A VLQ holds seven bits per byte and is at most four bytes, so 28 bits. A MUS
+// lump's time deltas are read from the file and accumulated, with nothing in the
+// format bounding the total, so the converter saturates here rather than
+// emitting a fifth group the format cannot express.
+#define MIDI_VLQ_MAX  0x0FFFFFFFu
+
 // Convert the MUS lump at `mus` to a heap-allocated MIDI byte stream.
 //
 // `muslen` is the real byte length of the source lump (from W_LumpLength). Reads

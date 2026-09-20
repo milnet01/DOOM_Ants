@@ -195,5 +195,54 @@ int main()
         }
     }
 
+    // D. DOOM-0404: a time delay too large for a MIDI variable-length quantity.
+    //
+    //    A MUS delay is a chain of 7-bit groups with no bound in the format, and
+    //    the converter accumulated it into an unsigned int, then packed one group
+    //    per byte of a 32-bit register. Four groups fill that register, so a fifth
+    //    shifted the terminator byte off the top: the delta time written was a
+    //    malformed VLQ with no terminating byte, and every event after it in the
+    //    track was mistimed. The lump is a WAD's, so the delay is untrusted.
+    //
+    //    Five 0x7F groups is 35 bits. The conversion must saturate at the largest
+    //    delta the format can express and emit it as a well-formed four-byte VLQ,
+    //    0xFF 0xFF 0xFF 0x7F.
+    {
+        const unsigned char score[] = {
+            0x90, 60, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F,  // presskey + a 35-bit delay
+            0x80, 60, 0x00,                          // releasekey        + delay 0
+            0x60                                     // scoreend
+        };
+        const unsigned char want[] = {
+            MIDI_HEADER(15),
+            0x00, 0x90, 60, 127,                // delta 0, note-on
+            0xFF, 0xFF, 0xFF, 0x7F,             // delta MIDI_VLQ_MAX, four bytes
+            0x80, 60, 0x00,                     //   ...then note-off
+            0x00, 0xFF, 0x2F, 0x00              // delta 0, end of track
+        };
+        convert_case(score, sizeof score, want, sizeof want,
+                     "an over-long MUS delay saturates to a well-formed four-byte VLQ");
+    }
+
+    // E. The boundary itself: a delay of exactly MIDI_VLQ_MAX is representable and
+    //    must pass through unclamped, so the guard cannot be a strict inequality.
+    //    Four 0x7F groups is exactly 28 bits.
+    {
+        const unsigned char score[] = {
+            0x90, 60, 0xFF, 0xFF, 0xFF, 0x7F,   // presskey + delay 0x0FFFFFFF
+            0x80, 60, 0x00,
+            0x60
+        };
+        const unsigned char want[] = {
+            MIDI_HEADER(15),
+            0x00, 0x90, 60, 127,
+            0xFF, 0xFF, 0xFF, 0x7F,
+            0x80, 60, 0x00,
+            0x00, 0xFF, 0x2F, 0x00
+        };
+        convert_case(score, sizeof score, want, sizeof want,
+                     "a delay of exactly MIDI_VLQ_MAX is written unchanged");
+    }
+
     return check_summary("mus2mid");
 }
