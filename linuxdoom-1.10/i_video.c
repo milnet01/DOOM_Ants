@@ -139,7 +139,14 @@ static int xlatekey(SDL_Keysym* sym)
 	// Printable ASCII (incl. lowercase letters) maps to itself.
 	if (rc >= SDLK_SPACE && rc < 0x80)
 	    return rc;
-	return rc & 0xff;
+	// DOOM-0404: anything left has no DOOM key code -- keypad keys, Home/End,
+	// Caps Lock and the rest carry SDLK_SCANCODE_MASK, far above 0xff. Masking
+	// them down aliased each onto an unrelated bound letter: keypad '.' became
+	// 'c' (the automap's clear-marks key), keypad 9 'a', Caps Lock '9', Home
+	// 'J'. The X11 layer this replaced left them as large unbound keysyms, so
+	// the aliasing was new. Return 0 -- no DOOM key -- which every caller
+	// already treats as unbound.
+	return 0;
     }
 }
 
@@ -627,13 +634,18 @@ static void I_GetEvent(SDL_Event* sdlevent)
 	}
 	event.type = ev_keydown;
 	event.data1 = xlatekey(&sdlevent->key.keysym);
-	D_PostEvent(&event);
+	// DOOM-0404: 0 means "no DOOM key code for this key" (see xlatekey). Drop it
+	// rather than posting a key-0 event; key-up is dropped the same way, so the
+	// two stay paired.
+	if (event.data1)
+	    D_PostEvent(&event);
 	break;
 
       case SDL_KEYUP:
 	event.type = ev_keyup;
 	event.data1 = xlatekey(&sdlevent->key.keysym);
-	D_PostEvent(&event);
+	if (event.data1)
+	    D_PostEvent(&event);
 	break;
 
       case SDL_MOUSEBUTTONDOWN:
