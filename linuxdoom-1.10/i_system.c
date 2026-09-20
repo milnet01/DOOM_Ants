@@ -102,7 +102,13 @@ int  I_GetTime (void)
     int			newtics;
     static time_t	basetime=0;
 
-    clock_gettime(CLOCK_MONOTONIC, &tp);
+    // DOOM-0404: tp is an uninitialised local, so an unchecked failure here feeds
+    // whatever was on the stack into the tic counter -- and the tic counter is
+    // what paces the whole game. CLOCK_MONOTONIC is mandatory on every platform
+    // this builds for, so a failure is not a case to recover from; stop instead
+    // of running on a garbage clock.
+    if (clock_gettime(CLOCK_MONOTONIC, &tp) != 0)
+	I_Error ("I_GetTime: CLOCK_MONOTONIC is unavailable");
     if (!basetime)
 	basetime = tp.tv_sec;
     // DOOM-0350: the arithmetic lives in tic_time.h so it can be unit tested,
@@ -126,7 +132,11 @@ int  I_GetTimeMS (void)
     struct timespec	tp;
     static time_t	basetime=0;
 
-    clock_gettime(CLOCK_MONOTONIC, &tp);
+    // DOOM-0404: same unchecked read as I_GetTime. This one only drives the FPS
+    // counter's rolling average, so a failure need not be fatal -- but it must
+    // not return the uninitialised tp either. Report 0; the average absorbs it.
+    if (clock_gettime(CLOCK_MONOTONIC, &tp) != 0)
+	return 0;
     if (!basetime)
 	basetime = tp.tv_sec;
     return (int)((tp.tv_sec-basetime)*1000 + tp.tv_nsec/1000000L);
