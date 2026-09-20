@@ -63,6 +63,7 @@ static const char rcsid[] __attribute__((used)) = "$Id: d_main.c,v 1.8 1997/02/0
 
 #include "z_zone.h"
 #include "w_wad.h"
+#include "palette_bounds.h"	// DOOM-0404: PLAYPAL length gate below
 #include "s_sound.h"
 #include "v_video.h"
 
@@ -1452,6 +1453,20 @@ void D_DoomMain (void)
 
     printf ("W_Init: Init WADfiles.\n");
     W_InitMultipleFiles (wadfiles);
+
+    // DOOM-0404: gate PLAYPAL's length once, here, where the WAD set is complete
+    // and before any consumer has cached it. palette_bounds.h owns the decision
+    // and says why no consumer can make it for itself.
+    {
+	int pallump = W_CheckNumForName ("PLAYPAL");
+
+	if (pallump < 0)
+	    I_Error ("D_DoomMain: WAD has no PLAYPAL lump");
+
+	if (!PlayPalFits (W_LumpLength (pallump)))
+	    I_Error ("D_DoomMain: PLAYPAL is %i bytes, need at least %i",
+		     W_LumpLength (pallump), PLAYPAL_MIN_BYTES);
+    }
 
     // DOOM_Ants: the modern doom.wad is Ultimate Doom (4 episodes). Vanilla
     // only recognised retail via the doomu.wad filename; detect the extra

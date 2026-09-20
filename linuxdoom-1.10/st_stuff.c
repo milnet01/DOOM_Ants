@@ -40,6 +40,7 @@ rcsid[] __attribute__((used)) = "$Id: st_stuff.c,v 1.6 1997/02/03 22:45:13 b1 Ex
 #include "g_game.h"
 
 #include "st_stuff.h"
+#include "palette_bounds.h"	// DOOM-0404: PALETTE_COUNT, asserted against below
 #include "st_lib.h"
 #include "r_local.h"
 
@@ -74,6 +75,12 @@ rcsid[] __attribute__((used)) = "$Id: st_stuff.c,v 1.6 1997/02/03 22:45:13 b1 Ex
 #define NUMBONUSPALS		4
 // Radiation suit, green shift.
 #define RADIATIONPAL		13
+
+// DOOM-0404: D_DoomMain gates PLAYPAL's length on PALETTE_COUNT palettes. If a
+// new index were added above RADIATIONPAL without widening that count, the gate
+// would pass a lump this file then reads past the end of. Tie them together.
+_Static_assert (RADIATIONPAL < PALETTE_COUNT,
+		"PLAYPAL's load-time gate must cover every palette index selected here");
 
 // N/256*100% probability
 //  that the normal face state will change
