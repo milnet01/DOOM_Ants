@@ -8,6 +8,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **`-rtview` and `-rippletime` now say why a value was refused** (DOOM-0405)
+  Both refused a bad value in silence and carried on with the default. Both flags exist for repeatable headless captures, so the run looked like it worked and the picture was filed as evidence for a setting it never used. Neither flag stops the game; the message is the whole change.
+
 - **Saved games now record which build wrote them, and refuse to load into a different one** (DOOM-0426)
   A saved game is a straight copy of the game's memory, so a different
   build can lay it out differently and read it as nonsense. It now says
@@ -22,6 +25,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
   A 1997 hook for an external statistics program that no longer exists. Passing it crashed the game at the end of a level.
 
 ### Fixed
+
+- **An out-of-range `-rtview` value is no longer accepted on Windows** (DOOM-0405)
+  `-rtview 9999999999` was refused on Linux and silently accepted as 2147483647 on Windows. The guard compared against the int limits but the type it compared is half as wide on Windows, so an overflowing value saturated to exactly the limit and passed. Measured on both toolchains before and after.
+
+- **`-rippletime` no longer accepts a value that is not a finite number** (DOOM-0405)
+  `inf`, `nan` and a number too large to represent were read as numbers and reached the renderer. No range check can catch one: `inf` compares as greater than zero, and every comparison against `nan` is false. A value that underflows is still accepted, because zero is its right answer.
 
 - **Keypad and Home/End keys no longer trigger unrelated actions** (DOOM-0404)
   Keys the game has no name for were being folded onto letters that do have

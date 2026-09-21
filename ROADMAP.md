@@ -3662,7 +3662,7 @@ with friends.
   Source: review-code 2026-09-01, lane platform.
   Lanes: platform.
 
-- 📋 [DOOM-0405] **Backend-seam review tail: seven findings, including the missing invulnerability and visor effects.**
+- ✅ [DOOM-0405] **Backend-seam review tail: seven findings, including the missing invulnerability and visor effects.**
   DOOM-0379 covers the palette half and DOOM-0380 the fallback; these are the rest.
 
     - HIGH r_backend.c:161 -- player->fixedcolormap is an unreplicated
@@ -3698,6 +3698,37 @@ with friends.
     - LOW r_main.c:918 -- R_RenderPlayerView calls NetUpdate four times and the 3D
       path calls it zero times; those calls exist to service the net across a slow
       frame, and a netgame can run on Solid/Ultra.
+  Resolved (2026-09-21): all seven verified against current source; four
+  fixed here, three split out because each needs a decision rather than an
+  edit.
+
+  Fixed: the rb_argparse.h overflow guard (errno was never read, so an
+  overflowing -rtview was refused on Linux and accepted on Windows --
+  measured on both toolchains, before and after); strtod accepting inf, nan
+  and an unrepresentable number, now tested on the NARROWED float, which
+  also catches a finite double that is inf by the time the caller has it;
+  the silent refusal at both call sites, now reported; and the duplicated
+  RB_Vulkan_* externs, now declared once in rb_vulkan.h -- proved by
+  widening a definition on purpose and watching the build fail where it
+  used to link.
+
+  Two of the seven were wider than reported. The float guard needed the
+  test moved to the narrowed value, not just a non-finite check, and errno
+  must NOT be read there: strtod also sets ERANGE on underflow, and a value
+  whose float is 0.0 has been parsed correctly. The Solid<->Ultra teardown
+  also frees the HD material set, which is what keeps Solid's traced view
+  on DOOM's own art.
+
+  Split out: the fixedcolormap replication is DOOM-0455 -- four write sites,
+  not the one the review proposed, and the visor's look in a traced view is
+  the user's call. The tier-switch teardown and the missing NetUpdate calls
+  are one subject and are DOOM-0456: NetUpdate reaches RB_SetMode through
+  D_ProcessEvents, so adding those calls before the switch is deferred to a
+  frame boundary would trade a latency bug for a use-after-free.
+
+  Regression: 68-map boot sweep 0 failures; five demo fixtures exactly
+  30/30/30/70/350; make test all suites green; windows-smoke.sh
+  --syntax-only PASS.
   **Layman:** The leftovers from reviewing the switch between the old and new renderers — including the fact that the invulnerability sphere and the light-amplification visor have no visible effect in the 3D views.
   Kind: investigate.
   Source: review-code 2026-09-01, lane backend-seam.
@@ -5363,6 +5394,101 @@ with friends.
   **Layman:** Seven leftover variables and one empty function in the game-simulation code that nothing uses. Two of them actively mislead anyone reading the collision and movement code.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lane 9.
+
+- 📋 [DOOM-0455] **Replicate fixedcolormap in the 3D path, so invulnerability and the light-amp visor work again.**
+  Split out of DOOM-0405. Verified live: `fixedcolormap` appears nowhere in
+  r_vulkan.cpp or the shaders, and rb_view_t carries `extralight` but not it.
+  p_user.c sets INVERSECOLORMAP for invulnerability and 1 for the visor;
+  R_SetupFrame turns that into the render-wide fixedcolormap the software
+  renderer honours. renderer.md makes replication a house rule and cites
+  ML_MAPPED as the precedent, so this is squarely in scope.
+
+  NOT fixed in the DOOM-0405 bundle because the review's proposed remedy --
+  "one field on rb_view_t, honoured as a shade override in the composite" --
+  is one site, and there are FOUR. That was established by reading, not
+  assumed:
+
+    - Raster final colour: composite.frag.
+    - RT final colour with bloom ON: rt_tonemap.comp.
+    - RT final colour with bloom OFF: svgf_composite.comp. The split is gated
+      on rb_bloom, so which shader owns the pixel depends on a menu setting.
+    - The Ultra weapon sprite: RecordRtOverlay draws it AFTER the present
+      path's vkCmdBlitImage, which is fixed-function and has no shader to
+      hook. In vanilla the weapon IS affected by fixedcolormap (r_things.c),
+      so a composite-stage transform alone leaves it wrong.
+
+  overlay.frag is not the single seam it first looks like: it DISCARDS on
+  RB_OVERLAY_KEY, so it never reads or writes the 3D pixel.
+
+  Shape when it is built: one shaders/formulas/ include with three or more
+  consumers, which is this project's own answer to exactly this problem --
+  tonemap_encode.glsl's header explains why the formula lives in one file and
+  why a second copy is how two paths drift. Add the consumer set to
+  .claude/code-pairs.json.
+
+  Do NOT ship it for one view only. There are four view combinations (Solid
+  and Ultra, each rasterised or traced). A powerup that works in one reads as
+  a bug in the other three.
+
+  Needs a spec first (spec-format.md 1): three or more subsystems, a contract
+  other code binds to (three push-constant blocks grow), and a real design
+  choice.
+
+  The design choice, which is the user's: what the light-amp visor should DO
+  in a path-traced view. Vanilla pins the shade near full bright and disables
+  distance falloff, which is meaningful for a renderer that shades by table.
+  Ultra computes real light transport, so "full bright" has no direct
+  equivalent -- the options differ in look, not just in code. Invulnerability
+  has no such question: INVERSECOLORMAP is a greyscale negative of the final
+  palette colour, so it maps onto the display-encoded value directly.
+  **Layman:** The invulnerability sphere and the light-amplification visor currently do nothing in the Solid and Ultra views. This restores them.
+  Kind: implement.
+  Source: review-code 2026-09-01, lane backend-seam (DOOM-0405 F1); split out 2026-09-21.
+  Lanes: backend-seam, renderer.
+
+- 📋 [DOOM-0456] **RB_SetMode tears down more than it needs to, at a moment its caller cannot survive.**
+  Split out of DOOM-0405. Two findings with one root: RB_SetMode does too
+  much, and it runs at a point the code calling it cannot come back from.
+
+  TOO MUCH (F4). A Solid<->Ultra switch runs Shutdown then Init, destroying
+  and rebuilding the window, device, swapchain, every pipeline, the atlas and
+  the level acceleration structures -- although backends[RB_RT3D] and
+  backends[RB_RASTER3D] hold IDENTICAL function pointers and differ only in
+  name and Available. Provably redundant: g.rtEnabled is set from
+  DeviceHasRT, a DEVICE capability and not the tier, and Ultra is only
+  Available where it is true, so both tiers already have the same pipelines.
+
+  WIDER THAN THE REVIEW SAID, and this is the part that makes it a decision
+  rather than an edit. The teardown also frees the HD material set, and that
+  is what keeps Solid's ray-traced view on DOOM's own art. EnsureHdMaterials
+  returns unless the tier is Ultra, and hdTex is sampled only by
+  pathtrace.comp. Skip the rebuild without thinking and Solid starts drawing
+  Ultra's HD textures -- the one tier distinction CLAUDE.md says matters
+  most. FreeHdMaterials already exists, so freeing on the way out of Ultra
+  preserves today's behaviour exactly; that is the call to confirm.
+
+  WRONG MOMENT (F7). R_RenderPlayerView calls NetUpdate four times and the 3D
+  path calls it zero times. Those calls service the network across a slow
+  frame, and a netgame can run on Solid or Ultra -- -net is live, and
+  DOOM-0401 and DOOM-0404 both fixed real defects in it.
+
+  The obvious fix is unsafe and was not applied. NetUpdate calls
+  D_ProcessEvents, which reaches M_Responder, which reaches M_ChangeRenderer,
+  which calls RB_SetMode directly. Adding NetUpdate anywhere inside the 3D
+  render therefore lets the Vulkan device be destroyed and rebuilt from
+  inside the render that is using it, and the function then carries on
+  through a backend row that is no longer active. In Classic the same path is
+  harmless, because the software renderer holds no GPU state -- which is
+  exactly why the original four calls were safe.
+
+  So the order is: make the tier switch land on a frame boundary (a pending
+  mode applied where the mode-switch, recreate and shutdown paths already
+  drain), and only then add the NetUpdate calls. Doing the second without the
+  first trades a latency bug for a use-after-free.
+  **Layman:** Switching between the Solid and Ultra views rebuilds the whole graphics system when it does not have to, and that same switch is why the 3D views cannot service a network game mid-frame.
+  Kind: review-fix.
+  Source: review-code 2026-09-01, lane backend-seam (DOOM-0405 F4 and F7); split out 2026-09-21.
+  Lanes: backend-seam.
 
 ## Phase 2 — The Spin
 
