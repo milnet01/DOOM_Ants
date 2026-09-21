@@ -1,9 +1,10 @@
 // rb_argparse_test.cpp — a malformed -rtview / -rippletime value must leave the
 // setting at its default, not silently parse as 0.
 //
-// Rationale. Found by check-code (finding F12): r_backend.c:358 reads `-rtview`
-// with a bare `atoi(myargv[p + 1])`, and r_vulkan.cpp:9414 reads `-rippletime`
-// with a bare `(float)atof(myargv[p + 1])`. Neither C function has a way to
+// Rationale. Found by check-code (finding F12): RB_ApplyTierRt in r_backend.c read
+// `-rtview` with a bare `atoi(myargv[p + 1])`, and the ripple-clock override in
+// r_vulkan.cpp read `-rippletime` with a bare `(float)atof(myargv[p + 1])`.
+// Neither C function has a way to
 // report failure — `atoi("banana")` and `atof("banana")` both return 0, exactly
 // as if the player had typed "-rtview 0" / "-rippletime 0" on purpose. r_backend.c
 // happens to treat 0 as a legal rtview index, so a typo silently jumps to a
@@ -15,37 +16,40 @@
 // a bad value must resolve to the default, not to whatever byte pattern the
 // parser happened to produce.
 //
-// Scope. `rb_argparse.h` is a fresh, deliberate extraction of the parsing logic
-// at those two call sites into one header with one test — the call sites
-// themselves are not touched by this change (they still call atoi()/atof()
-// directly) and are out of scope here; wiring them to RB_ParseIntArg /
-// RB_ParseFloatArg is separate follow-up work. This file locks the CONTRACT the
-// header must satisfy once that wiring lands, not the current call-site
-// behaviour. Range checking (0..6 for rtview, >= 0.0 for rippletime) is each
-// call site's own business per the task description and is deliberately not
-// exercised here — these two functions only decide well-formed vs malformed.
+// Scope. This file locks the CONTRACT of the two helpers, not the call sites.
+// Both call sites now call them (RB_ApplyTierRt in r_backend.c, the ripple-clock
+// override in r_vulkan.cpp), and each keeps its own RANGE test — 0..6 for rtview,
+// >= 0.0 for rippletime — which is deliberately not exercised here. These two
+// functions decide well-formed vs malformed and nothing else.
 //
-// Regression history. rb_argparse.h was extracted verbatim from the two call
-// sites, so as of this commit it still ENCODES the defect on purpose: both
-// helpers are thin atoi()/atof() wrappers that always return 1 (see the header's
-// own comment). That means every MALFORMED case below is expected to fail until
-// the header is fixed to reject non-numeric input and leave *out untouched.
+// The one place that line moves is a value no range test CAN judge, because the
+// wrong value lands inside the valid range. Overflow and non-finiteness are both
+// that, so both are the header's business and are locked below. The header's
+// preamble carries the reasoning and the measurement (DOOM-0405).
 //
 // Invariants:
 //   INV-1: A string that is wholly a valid integer (optional leading '-', at
 //          least one digit, nothing else) is accepted: the parser returns 1 and
 //          writes the value to *out.
 //   INV-2: A string that is not wholly a valid integer — empty, whitespace-only,
-//          non-numeric, or numeric with trailing garbage (e.g. "3abc", which
-//          atoi() silently reads as 3) — is refused: the parser returns 0 and
-//          *out is left untouched.
+//          non-numeric, numeric with trailing garbage (e.g. "3abc", which atoi()
+//          silently reads as 3), or outside the range of int — is refused: the
+//          parser returns 0 and *out is left untouched. The out-of-range half is
+//          inert on LP64, where the int-bounds test already catches it, and live
+//          on LLP64, where strtol saturates to LONG_MAX and that test passes.
 //   INV-3: A string that is wholly a valid float (optional leading '-', digits,
 //          at most one '.') is accepted: the parser returns 1 and writes the
-//          value to *out.
+//          value to *out. A value that UNDERFLOWS is accepted too — it is wholly
+//          a number and 0.0 is its correct float — even though strtod reports it
+//          in errno exactly as it reports an overflow.
 //   INV-4: A string that is not wholly a valid float — empty, whitespace-only,
-//          non-numeric, a lone sign, multiple decimal points, or numeric with
-//          trailing garbage (e.g. "3.5xyz", which atof() silently reads as 3.5)
-//          — is refused: the parser returns 0 and *out is left untouched.
+//          non-numeric, a lone sign, multiple decimal points, numeric with
+//          trailing garbage (e.g. "3.5xyz", which atof() silently reads as 3.5),
+//          or wholly numeric but not FINITE once narrowed to float — is refused:
+//          the parser returns 0 and *out is left untouched. The last case covers
+//          "inf", "infinity" and "nan", which strtod consumes wholly; "1e999",
+//          which overflows the double; and "1e300", which is a finite double and
+//          is inf by the time the caller receives it.
 //
 // Build/run: `make test` (from linuxdoom-1.10/). No WAD or GPU needed.
 #include "check_util.h"
@@ -94,7 +98,9 @@ void case_int_well_formed_accepted()
 // keeps rb_rtdebug at its default.
 void case_int_malformed_refused()
 {
-    const char* bad[] = { "", "   ", "banana", "3abc", "12.5", "--5", "5-5" };
+    const char* bad[] = { "", "   ", "banana", "3abc", "12.5", "--5", "5-5",
+                          "9999999999", "-9999999999",
+                          "99999999999999999999999999" };
     for (const char* s : bad)
     {
         char msg[128];
@@ -125,13 +131,24 @@ void case_float_well_formed_accepted()
     out = kFloatSentinel;
     check(RB_ParseFloatArg("-2.25", &out) == 1, "INV-3: \"-2.25\" is accepted");
     check_eq_float(out, -2.25f, "INV-3: \"-2.25\" parses to -2.25");
+
+    // Underflow is not malformed. strtod sets ERANGE here, but the value is
+    // wholly a number and its float is 0.0 -- the right answer. Refusing it
+    // would leave the caller on its default instead of the ~0 that was asked
+    // for, which is the same class of silent wrong value this header exists to
+    // stop, pointed the other way.
+    out = kFloatSentinel;
+    check(RB_ParseFloatArg("1e-999", &out) == 1, "INV-3: underflowing \"1e-999\" is accepted");
+    check_eq_float(out, 0.0f, "INV-3: \"1e-999\" parses to 0.0");
 }
 
 // The other headline case: a typo'd -rippletime value must not silently become
 // 0.0, which the r_vulkan.cpp guard (>= 0.0f) would then happily accept.
 void case_float_malformed_refused()
 {
-    const char* bad[] = { "", "   ", "banana", "3.5xyz", "1.2.3", "-", "xyz" };
+    const char* bad[] = { "", "   ", "banana", "3.5xyz", "1.2.3", "-", "xyz",
+                          "inf", "-inf", "infinity", "nan", "-nan",
+                          "1e999", "-1e999", "1e300", "-1e300" };
     for (const char* s : bad)
     {
         char msg[128];
