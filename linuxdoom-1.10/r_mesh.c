@@ -1692,7 +1692,17 @@ static void blit_tile(unsigned char* dst, int dstw, int id, int ox, int oy,
         // so the result is a transparent gap rather than a read past the end.
         const int   sprnum  = firstspritelump + (id - numtextures - numflats);
         const int   sprlen  = W_LumpLength(sprnum);
-        const patch_t* patch = W_CacheLumpNum(sprnum, PU_CACHE);
+        const patch_t* patch;
+        // DOOM-0406: resolve the opaque-black index BEFORE caching the patch.
+        // It lazily caches PLAYPAL on its first call, and Z_Malloc purges
+        // PU_CACHE blocks from the rover forward to make room -- which can
+        // include the very patch this branch is about to walk. Pass 2 runs in id
+        // order and has cached every wall and flat by the time it reaches a
+        // sprite, so PLAYPAL having been evicted is the EXPECTED state here, not
+        // a remote one. Called from inside the post loop, as it was, that purge
+        // freed the patch mid-walk and the walk carried on reading it.
+        (void)sprite_opaque_black();
+        patch = W_CacheLumpNum(sprnum, PU_CACHE);
 
         if (!PatchHeaderFits(sprlen, w))
             return;
