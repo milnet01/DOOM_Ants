@@ -29,6 +29,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **DOOM 1's animated intermission map now draws** (DOOM-0391)
+  The between-levels map was static. A check meant to skip the animation for
+  DOOM 2 tested a constant that is always true, so the drawing step gave up
+  on its first line while the artwork was still being loaded and advanced
+  every frame. DOOM 2 is unaffected -- it never had the animation.
+
 - **The Windows build was missing a compiler safety flag the Linux build had by accident** (DOOM-0434)
   This code deliberately reads the same memory as two different types, which the optimiser is allowed to assume never happens. The flag that disables that assumption was arriving on Linux only as a side effect of an unrelated sound library, and the Windows build was getting none of it. Both are now set deliberately, so switching the optimiser on could not quietly change behaviour on Windows alone.
 

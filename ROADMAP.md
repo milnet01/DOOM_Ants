@@ -14665,7 +14665,7 @@ parked ideas (💭 considered) until we commit to and design each one.
   Source: review-code 2026-09-01, lanes vk-setup, vk-accel, vk-present, vk-rt-frame, vk-materials.
   Lanes: renderer.
 
-- 📋 [DOOM-0391] **DOOM 1's animated intermission map is dead code: `if (commercial)` is always true.**
+- ✅ [DOOM-0391] **DOOM 1's animated intermission map is dead code: `if (commercial)` is always true.**
   VERIFIED. wi_stuff.c:588 is `if (commercial)` where `commercial` is the ENUM
   CONSTANT (doomdef.h:42, value 2), not a comparison. Both sibling functions get it
   right: wi_stuff.c:508 and wi_stuff.c:537 both say `if (gamemode == commercial)`.
@@ -14713,6 +14713,27 @@ parked ideas (💭 considered) until we commit to and design each one.
   flat tiles ten times across instead of five. F_BunnyScroll twenty lines
   below does an explicit 2x blit with a DOOM-0027 comment, so the omission
   looks accidental. Decide whether that ships with this item or splits.
+  Resolved 2026-09-21 (8aa7caa). `if (commercial)` is now `if (gamemode ==
+  commercial)` in WI_drawAnimatedBack, so the animation draws for DOOM 1.
+
+  Verified by capture, not by the diff. Headless E1M1 in Classic, frozen and
+  with no input, exiting the level at a fixed tic to reach the intermission.
+  Two captures of one build are byte-identical, so the floor is zero. The
+  defect's build is completely static once the stats settle; the fixed build
+  differs from it at identical capture points, and its own successive
+  captures differ across the map region. The change is subtle to the eye,
+  because the background art already carries the structures and the frames
+  differ only in the flickering detail on them.
+
+  Regression test: tests/gamemode_predicate_test.cpp pins the CLASS -- any
+  GameMode_t enumerator used as a bare condition -- rather than this line. It
+  ran red before the fix and names the offending file and enumerator.
+
+  The golden-shot refresh this item asked for is not needed. The only golden
+  is a spawn-view capture in the ray-traced tier, which this change cannot
+  reach; it was checked rather than assumed.
+
+  The finale-background half is NOT done and is now DOOM-0457.
   **Layman:** Between levels, DOOM 1 shows an animated map with burning cities. It has never displayed in this build: the check meant to say ‘skip this for DOOM 2’ accidentally tests a constant that is always true, so the drawing function gives up on its first line — while the artwork is still loaded and animated every frame.
   Kind: fix.
   Source: review-code 2026-09-01, lane ui-hud; verified against current source.
@@ -15364,3 +15385,25 @@ parked ideas (💭 considered) until we commit to and design each one.
   **Layman:** The game's movement and its drawing are locked together at 35 frames a second, which is why it can look choppy on a modern monitor. Unlock the drawing so it can run as fast as the screen allows, while the game itself keeps its original timing.
   Kind: feature.
   Source: user-request-2026-09-07.
+
+- 📋 [DOOM-0457] **The finale text background tiles in physical pixels, so the flat repeats twice as often as it should.**
+  F_TextWrite erases to a tiled background by walking SCREENWIDTH/64 and
+  SCREENHEIGHT, which are PHYSICAL dimensions. The flat is 64x64 logical, so
+  at HIRES it tiles across the physical width instead of the logical one --
+  twice as often in each axis. Every other element on that screen scales by
+  HIRES.
+
+  F_BunnyScroll, in the same file, does an explicit HIRES blit and carries a
+  DOOM-0027 comment saying why, so the omission here looks accidental rather
+  than chosen.
+
+  Split from DOOM-0391 on 2026-09-21: different file, different symptom, and
+  its own verification. DOOM-0391 shipped without it.
+
+  Verify by capture, not by the diff. The finale is reached by completing an
+  episode; the check is that the flat repeats the same number of times at
+  HIRES as it does at the logical resolution.
+  **Layman:** On the story screen between episodes, the background pattern is drawn at half the size it should be, so it repeats too many times across the screen. Everything else on that screen scales correctly, so the background looks wrong next to it.
+  Kind: fix.
+  Source: split from DOOM-0391, in-session-2026-09-21.
+  Lanes: ui.
