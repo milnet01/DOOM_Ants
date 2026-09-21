@@ -495,6 +495,7 @@ EV_BuildStairs
 	floor->thinker.function.acp1 = (actionf_p1) T_MoveFloor;
 	floor->direction = 1;
 	floor->sector = sec;
+	speed = 0; stairsize = 0;	// shut up compiler warning
 	switch(type)
 	{
 	  case build8:

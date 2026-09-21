@@ -113,7 +113,9 @@ P_BoxOnLineSide
 {
     int		p1;
     int		p2;
-	
+
+    p1 = p2 = 0;		// shut up compiler warning
+
     switch (ld->slopetype)
     {
       case ST_HORIZONTAL:
