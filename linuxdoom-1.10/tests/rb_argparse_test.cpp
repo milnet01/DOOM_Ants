@@ -100,7 +100,15 @@ void case_int_malformed_refused()
 {
     const char* bad[] = { "", "   ", "banana", "3abc", "12.5", "--5", "5-5",
                           "9999999999", "-9999999999",
-                          "99999999999999999999999999" };
+                          "99999999999999999999999999",
+                          // Between INT_MAX and LONG_MAX. This is the input that
+                          // proves BOTH halves of the int guard are load-bearing:
+                          // on LP64 it fits a long, so errno stays clear and only
+                          // the bounds comparison refuses it; on LLP64 it
+                          // saturates, so the comparison cannot see it and only
+                          // errno does. Drop either check and this case goes red
+                          // on exactly one of the two targets.
+                          "3000000000", "-3000000000" };
     for (const char* s : bad)
     {
         char msg[128];

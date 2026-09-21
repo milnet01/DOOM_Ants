@@ -20,8 +20,15 @@
  * same reason as the atoi() trap above: the wrong value lands inside the valid
  * range, so the guard passes.
  *
- * Overflow (DOOM-0405). strtol SATURATES and reports the fact in errno, which
- * nothing here used to read. `long` is 64-bit on Linux (LP64) and 32-bit on
+ * Overflow (DOOM-0405). BOTH the errno test and the int-bounds comparison below
+ * are load-bearing, and neither may replace the other -- each is blind exactly
+ * where the other sees. On LP64 a value between INT_MAX and LONG_MAX fits a long
+ * fine, so nothing sets errno and only the comparison catches it. On LLP64 that
+ * same value saturates, so the comparison cannot see it and only errno does.
+ * "3000000000" is the input that separates them and the test carries it.
+ *
+ * strtol SATURATES and reports the fact in errno, which nothing here used to
+ * read. `long` is 64-bit on Linux (LP64) and 32-bit on
  * Windows (LLP64), so a guard written against the int bounds alone is correct on
  * one platform and inert on the other: measured under mingw + wine,
  * `-rtview 9999999999` saturated to LONG_MAX, compared equal to the upper bound
@@ -43,6 +50,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <math.h>
+#include <float.h>
 
 /* Parse a whole string as an int. Returns 1 and writes *out on success; returns
  * 0 and leaves *out untouched for an empty, blank, non-numeric, trailing-garbage
@@ -79,7 +87,6 @@ static inline int RB_ParseFloatArg(const char* s, float* out)
 {
     char*  end;
     double v;
-    float  f;
 
     if (!s || !*s)
         return 0;
@@ -92,19 +99,35 @@ static inline int RB_ParseFloatArg(const char* s, float* out)
     if (*end)
         return 0;
 
-    /* Test the value the caller actually receives, not the double behind it.
-     * That is one check for three cases: "inf"/"nan" consumed wholly, "1e999"
-     * overflowing the double, and "1e300", which is a perfectly finite double
-     * and still inf once narrowed to float. errno is deliberately NOT read
-     * here: strtod also sets ERANGE on UNDERFLOW, and "1e-999" is wholly a
-     * number whose float value -- 0.0 -- is the right answer, so refusing it
-     * would break this header's own contract. The int twin does read errno,
-     * because saturation there loses the value outright. */
-    f = (float)v;
-    if (!isfinite(f))
+    /* Test the MAGNITUDE, and test it BEFORE converting. One check for three
+     * cases: "inf"/"nan" consumed wholly, "1e999" overflowing the double, and
+     * "1e300", a perfectly finite double that no float can hold.
+     *
+     * Not `isfinite((float)v)`, which is what this first shipped as. Converting
+     * a double whose value is outside float's range is UNDEFINED BEHAVIOUR --
+     * inf is what IEEE-754 hardware happens to produce, not something the
+     * language promises -- so that spelling tests a value it was not entitled to
+     * compute. It is also removable: under -ffast-math the compiler is free to
+     * assume no non-finite values exist and fold the check away, leaving a guard
+     * that decides nothing. This build does not pass -ffast-math today, which is
+     * the reason it was a latent defect rather than a live one.
+     *
+     * Written negated so NaN is refused: every comparison against a NaN is
+     * false, so `!(fabs(v) <= FLT_MAX)` is true for one. It refuses a hair more
+     * than it must -- a double just above FLT_MAX would round to FLT_MAX rather
+     * than overflow -- which costs a caller nothing and keeps one comparison.
+     *
+     * errno is deliberately NOT read here. strtod is permitted to report
+     * UNDERFLOW in errno, and "1e-999" is wholly a number whose float value --
+     * 0.0 -- is the right answer, so refusing it would break this header's own
+     * contract. Measured under glibc, where the underflow does set ERANGE; the
+     * C standard leaves that implementation-defined, which makes reading errno
+     * here unportable as well as wrong. The int twin DOES read errno, because
+     * saturation there loses the value outright. */
+    if (!(fabs(v) <= (double)FLT_MAX))
         return 0;
 
-    *out = f;
+    *out = (float)v;
     return 1;
 }
 
