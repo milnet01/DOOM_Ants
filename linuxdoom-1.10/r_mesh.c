@@ -291,7 +291,14 @@ static void emit_wall(builder_t* bld, seg_t* seg, fixed_t bottomz, fixed_t topz,
         }
     }
     vbot = vtop + (zt - zb);
+    // DOOM-0406: lightlevel is a raw short straight out of SECTORS, which
+    // security.md names a trust boundary, so a crafted WAD can put any 16-bit
+    // value there. Every sprite, blob and psprite site already clamps; walls and
+    // flats did not, and the ray-traced path reads this attribute as "0..1" with
+    // no clamp of its own (mesh.vert clamps, so only the raster view was covered).
     light = seg->frontsector->lightlevel / 255.0f;
+    if (light < 0.0f) light = 0.0f;
+    if (light > 1.0f) light = 1.0f;
 
     bl = mkv(x1, y1, zb, nx, ny, 0.0f, u0, vbot, texnum, flags, light);
     br = mkv(x2, y2, zb, nx, ny, 0.0f, u1, vbot, texnum, flags, light);
@@ -461,7 +468,9 @@ static void emit_subsector_caps(builder_t* bld, int ssnum, const poly_t* cell)
         if (clipped.n < 3) return;                          // trimmed to nothing
     }
 
-    light  = sec->lightlevel / 255.0f;
+    light  = sec->lightlevel / 255.0f;   // DOOM-0406: untrusted short, clamp as above
+    if (light < 0.0f) light = 0.0f;
+    if (light > 1.0f) light = 1.0f;
     secidx = (int)(sec - sectors);   // for the per-frame dynamic-height update
     // DOOM-0141: a sky-flat cap becomes RT-only sky backdrop geometry (occludes the
     // view like classic's sky) instead of being omitted; a normal flat caps as before.
@@ -954,7 +963,14 @@ static void RB_SunClearance(const rb_cellgeom_t* geom, int gw, int gh,
 
         if (g->sky)
         {
-            float zEsc = g->cz - m * sOut;
+            // DOOM-0406: the ring escapes UNCONDITIONALLY, which is the whole reason
+            // DOOM-0289 wrote it as open sky. Its cz is 1e30, so the general formula
+            // gives zEsc ~1e30 and the `wLo <= hi` window below is empty for every
+            // finite hi -- the escape never registered and a march that reached the
+            // ring kept a truncated air interval and read unlit. Past the map's
+            // bounding box there is no geometry, so there is no ceiling bound to
+            // apply: hand the full remaining window through.
+            float zEsc = (g->sec < 0) ? -RB_SUN_NEVER : g->cz - m * sOut;
             float wLo  = (zEsc > lo) ? zEsc : lo;
             if (wLo <= hi)                // a non-empty escape window
             {
@@ -1197,6 +1213,14 @@ rb_seep_t* RB_BuildSeepField(void)
     if (!heap)
         I_Error("RB_BuildSeepField: out of memory for the search heap");
     {
+        // DOOM-0406: the heap GROWS rather than capping. np*4+1 was not a bound on
+        // anything: with lazy deletion the push count tracks successful RELAXATIONS,
+        // which scale with the edge count -- a sector with d portals contributes d^2
+        // edges -- not with np. Past the old cap the relaxation still ran while the
+        // push was dropped, so a node's distance fell and it was never re-expanded,
+        // leaving its neighbours holding distances derived from the larger value.
+        // The field then under-reported connectivity and fog failed to reach rooms
+        // it should, with nothing reporting the overflow.
         int cap = np * 4 + 1;
         for (i = 0; i < np; i++)
             if (portals[i].d == 0.0f)
@@ -1221,8 +1245,16 @@ rb_seep_t* RB_BuildSeepField(void)
                     if (nd >= portals[v].d || nd >= RB_SEEP_DMAX)
                         continue;
                     portals[v].d = nd;
-                    if (heapN < cap)
-                        RB_HeapPush(heap, &heapN, nd, v);
+                    if (heapN >= cap)
+                    {
+                        rb_heapent_t* grown;
+                        cap  *= 2;
+                        grown = (rb_heapent_t*)realloc(heap, (size_t)cap * sizeof(rb_heapent_t));
+                        if (!grown)
+                            I_Error("RB_BuildSeepField: out of memory growing the search heap");
+                        heap = grown;
+                    }
+                    RB_HeapPush(heap, &heapN, nd, v);
                 }
             }
         }
@@ -1447,8 +1479,13 @@ int RB_SeepCellAir(const rb_seep_t* f, int ix, int iy, float* fz, float* cz)
     if (!f || !f->geom || ix < 0 || iy < 0 || ix >= f->w || iy >= f->h)
         return 0;
     c = &((const rb_cellgeom_t*)f->geom)[iy * f->w + ix];
-    if (c->solid)
-        return 0;                       // wall, void, or a shut door: no air to light
+    // DOOM-0406: `solid` alone is not the test. DOOM-0289 deliberately writes the
+    // void ring as solid = 0 with cz = 1e30 so the sun-clearance march can escape
+    // THROUGH it -- the two halves of this field use the ring for opposite things.
+    // For an AIR query it is not air: sec < 0 is the ring, and nothing else, so the
+    // ring answers the contract's "no air at all" case as documented.
+    if (c->solid || c->sec < 0)
+        return 0;                       // wall, void ring, or a shut door: no air to light
     if (fz) *fz = c->fz;
     if (cz) *cz = c->cz;
     return 1;
