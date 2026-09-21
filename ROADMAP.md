@@ -4628,7 +4628,7 @@ with friends.
   Kind: fix.
   Source: in-session-2026-09-20, found while verifying DOOM-0404's PLAYPAL gate.
 
-- 📋 [DOOM-0434] **Decide the engine's optimisation level: it ships at -O0 today, and only the tests get -O2.**
+- ✅ [DOOM-0434] **Decide the engine's optimisation level: it ships at -O0 today, and only the tests get -O2.**
   Found independently by three lanes, which is the sweep's strongest
   signal. Verified by reading the flags the compiler actually receives,
   not from the report.
@@ -4662,6 +4662,53 @@ with friends.
 
   Deliberately NOT changed in the sweep's branch -- changing the
   optimisation level of every shipped binary is the maintainer's call.
+  Resolved (2026-09-21): user decided yes, after the three gates this bullet
+  listed as unrun. OPTFLAGS=-O2 -fno-strict-aliasing -fno-strict-overflow, on
+  CFLAGS and CXXFLAGS so both targets inherit it.
+
+  THE PART THIS BULLET DID NOT KNOW. Both no-strict flags were ALREADY
+  arriving on Linux, by accident -- they fall out of `pkg-config --cflags sdl2
+  SDL2_mixer` via the pipewire/spa chain, which is nobody's decision. And the
+  `windows` target overrides SDL_CFLAGS with a bare include path, so the
+  cross-build had neither. Adding -O2 while trusting the Linux compile line
+  would have turned strict aliasing on for WINDOWS ALONE -- hardest to test,
+  and already the platform that lost launches to a signed-overflow wrap
+  (tic_time.h). Stated explicitly now rather than inherited.
+
+  THE THREE GATES, all at -O2. 68-map boot sweep: 0 failures. Windows
+  cross-build: compiles and boots under Wine, 35 tics; the non-exit after that
+  is the known Wine SDL_mixer teardown deadlock (DOOM-0325), which the smoke
+  script documents as Wine's fault. Classic bit-identity: 32 framebuffer hashes
+  over two demo fixtures and four maps, sampled from tic 25 so the
+  wall-clock-paced wipe is excluded -- IDENTICAL at -O0 and -O2. A first
+  comparison was thrown away because the captures were not symmetric, 16
+  samples against 32, and identity cannot be claimed from that.
+
+  -O2 ALSO SURFACED TWELVE WARNINGS that -O0's analysis never ran: zero before,
+  twelve after. All fixed, so the build is back to zero.
+
+  Six were ours. Four were ntohl/ntohs/htonl/htons redefined in i_net.c, where
+  id hand-rolled them; glibc defines them as macros only under __OPTIMIZE__, so
+  the collision is invisible at -O0. Deleted off-Windows in favour of the
+  system's, already declared there -- and they were the platform-width trap
+  again, the hand-rolled ntohl yielding `unsigned long` where the system's
+  yields uint32_t. Two were strncpy into bestName in RB_VulkanProbe, now
+  snprintf.
+
+  Six were -Wmaybe-uninitialized in id's 1997 playsim and renderer, and none is
+  a real bug: a switch covering every enumerator with no default, or a loop gcc
+  cannot prove non-empty. Silenced on the user's instruction, and id already
+  knew -- grepping for "shut up" finds p_maputl.c carrying
+  `in = 0; // shut up compiler warning` LIVE while r_segs.c and r_things.c
+  carry the identical line COMMENTED OUT. Two of the four edits restore id's
+  own initialiser verbatim; the other two apply the same idiom where id left no
+  line. Proved inert: 32 framebuffer hashes identical with and without them,
+  and the demo fixtures unchanged.
+
+  WHAT IS STILL NOT SETTLED, unchanged from this bullet's original text: the
+  4.8% is Classic only, measured on a workload that includes per-run startup.
+  The known CPU pole is the Solid/Ultra per-frame build, which needs the `\`
+  profiler on real hardware. Treat 4.8% as the floor of what is known.
   **Layman:** The game is currently built with the compiler's optimiser switched off — the setting you would use for debugging, not for shipping. Turning it on makes it use about 5% less processor on the one measurement I could take. This needs your decision because it changes every copy of the game we release.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lanes 11/13/14 independently + orchestrator measurement.

@@ -8,6 +8,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **The game is now built with the compiler's optimiser switched on** (DOOM-0434)
+  It was shipping with the optimiser off — the setting used for debugging — which looks inherited from the 1997 source rather than chosen. Measured at about 5% less processor time on the original renderer. The classic renderer draws pixel-for-pixel the same frames as before, and the recorded demo fixtures are unchanged, so nothing about how the game plays or looks has moved.
+
 - **`-rtview` and `-rippletime` now say why a value was refused** (DOOM-0405)
   Both refused a bad value in silence and carried on with the default. Both flags exist for repeatable headless captures, so the run looked like it worked and the picture was filed as evidence for a setting it never used. Neither flag stops the game; the message is the whole change.
 
@@ -25,6 +28,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
   A 1997 hook for an external statistics program that no longer exists. Passing it crashed the game at the end of a level.
 
 ### Fixed
+
+- **The Windows build was missing a compiler safety flag the Linux build had by accident** (DOOM-0434)
+  This code deliberately reads the same memory as two different types, which the optimiser is allowed to assume never happens. The flag that disables that assumption was arriving on Linux only as a side effect of an unrelated sound library, and the Windows build was getting none of it. Both are now set deliberately, so switching the optimiser on could not quietly change behaviour on Windows alone.
 
 - **Fog now reaches rooms it was failing to light** (DOOM-0406)
   The search that works out how far outdoor air seeps through a level ran on a fixed-size worklist. Once that filled, it recorded a shorter route to a room but never went back to tell that room's neighbours, so parts of a map were treated as further from the open air than they are. The worklist now grows instead.
