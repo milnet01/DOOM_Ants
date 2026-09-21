@@ -91,6 +91,18 @@ void case_int_well_formed_accepted()
     out = kIntSentinel;
     check(RB_ParseIntArg("-17", &out) == 1, "INV-1: \"-17\" is accepted");
     check_eq_int(out, -17, "INV-1: \"-17\" parses to -17");
+
+    // The extremes are LEGAL ints and must be accepted. A guard spelled
+    // -2147483647 rejects INT_MIN and drops the caller to its default -- the
+    // same silent wrong value this header exists to stop, pointed the other
+    // way. This case is what makes that spelling go red.
+    out = kIntSentinel;
+    check(RB_ParseIntArg("-2147483648", &out) == 1, "INV-1: INT_MIN is accepted");
+    check_eq_int(out, -2147483648LL, "INV-1: \"-2147483648\" parses to INT_MIN");
+
+    out = kIntSentinel;
+    check(RB_ParseIntArg("2147483647", &out) == 1, "INV-1: INT_MAX is accepted");
+    check_eq_int(out, 2147483647, "INV-1: \"2147483647\" parses to INT_MAX");
 }
 
 // The headline case: exactly the failure mode the bug report names. A typo'd

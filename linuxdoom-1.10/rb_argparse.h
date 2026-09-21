@@ -27,6 +27,14 @@
  * same value saturates, so the comparison cannot see it and only errno does.
  * "3000000000" is the input that separates them and the test carries it.
  *
+ * The bound is INT_MIN/INT_MAX and must not be "tightened" to -2147483647.
+ * INT_MIN is a legal int on both targets, and the strict spelling REJECTS it --
+ * dropping the caller to its default, which is the same silent wrong value this
+ * header exists to prevent. The strict form looks safer because its negative
+ * half really does catch a saturated input, so a reviewer who probes that case
+ * sees it work; errno is what actually covers the saturation, on either
+ * spelling. The test carries "-2147483648" as an ACCEPTED value.
+ *
  * strtol SATURATES and reports the fact in errno, which nothing here used to
  * read. `long` is 64-bit on Linux (LP64) and 32-bit on
  * Windows (LLP64), so a guard written against the int bounds alone is correct on
@@ -51,6 +59,7 @@
 #include <errno.h>
 #include <math.h>
 #include <float.h>
+#include <limits.h>
 
 /* Parse a whole string as an int. Returns 1 and writes *out on success; returns
  * 0 and leaves *out untouched for an empty, blank, non-numeric, trailing-garbage
@@ -74,7 +83,7 @@ static inline int RB_ParseIntArg(const char* s, int* out)
         return 0;
     if (errno == ERANGE)                 /* saturated -- the value is not `v` */
         return 0;
-    if (v < -2147483647L || v > 2147483647L)   /* would not survive the cast */
+    if (v < INT_MIN || v > INT_MAX)      /* would not survive the cast */
         return 0;
 
     *out = (int)v;
