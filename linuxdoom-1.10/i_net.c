@@ -109,23 +109,17 @@ static const char* socket_strerror (int err)
 
 
 
-// For some odd reason...
-// (Winsock provides its own ntohl/ntohs/htonl/htons functions, so only define
-//  these hand-rolled versions off-Windows — DOOM-0006.)
-#ifndef _WIN32
-#define ntohl(x) \
-        ((unsigned long int)((((unsigned long int)(x) & 0x000000ffU) << 24) | \
-                             (((unsigned long int)(x) & 0x0000ff00U) <<  8) | \
-                             (((unsigned long int)(x) & 0x00ff0000U) >>  8) | \
-                             (((unsigned long int)(x) & 0xff000000U) >> 24)))
-
-#define ntohs(x) \
-        ((unsigned short int)((((unsigned short int)(x) & 0x00ff) << 8) | \
-                              (((unsigned short int)(x) & 0xff00) >> 8))) \
-
-#define htonl(x) ntohl(x)
-#define htons(x) ntohs(x)
-#endif
+// DOOM-0434: id hand-rolled ntohl/ntohs/htonl/htons here -- its own comment was
+// "For some odd reason..." -- and off-Windows they are now deleted in favour of
+// the system's, which <netinet/in.h> and <arpa/inet.h> above already declare.
+// Winsock supplies its own on Windows (DOOM-0006), so that half never had them.
+//
+// Removed because they COLLIDE at -O2: glibc defines these as macros only under
+// __OPTIMIZE__, so the redefinition is invisible at -O0 and four warnings at -O2.
+// They were also the platform-width trap this codebase keeps hitting -- the
+// hand-rolled ntohl yielded `unsigned long`, which is 64-bit here and 32-bit on
+// Windows, where the system's yields a uint32_t on both. The swap's value is the
+// same either way; the type was not. glibc's compile to a single bswap.
 
 void	NetSend (void);
 boolean NetListen (void);

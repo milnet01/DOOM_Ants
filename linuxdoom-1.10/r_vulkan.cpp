@@ -230,14 +230,14 @@ extern "C" int RB_VulkanProbe(void)
         if (accel && rayq)
         {
             best = TIER_RT3D;
-            strncpy(bestName, props.deviceName, sizeof(bestName) - 1);
+            snprintf(bestName, sizeof bestName, "%s", props.deviceName);   // DOOM-0434: always NUL-terminates
             break;  // RT-capable is the top tier; no need to look further.
         }
         // Bindless-capable but no RT: at least the raster-3D tier. (An RT device
         // always breaks above, so best is only ever CLASSIC or RASTER3D here.)
         best = TIER_RASTER3D;
         if (bestName[0] == '\0')
-            strncpy(bestName, props.deviceName, sizeof(bestName) - 1);
+            snprintf(bestName, sizeof bestName, "%s", props.deviceName);   // DOOM-0434: always NUL-terminates
     }
 
     if (best == TIER_RT3D)

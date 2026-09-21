@@ -24,12 +24,34 @@ VULKAN_LIBS:=$(shell pkg-config --libs vulkan 2>/dev/null || echo -lvulkan)
 # that include it — no more full `make clean` after a header edit, and no silently
 # stale object with a mismatched struct layout. The .d files are -include'd below.
 DEPFLAGS=-MMD -MP
-CFLAGS=-g -Wall -std=gnu11 -DNORMALUNIX -DLINUX $(DEPFLAGS) $(SDL_CFLAGS) # -DUSEASM
+# Optimisation (DOOM-0434). The engine shipped at -O0 -- no -O flag at all --
+# which looks inherited from id's 1997 Makefile rather than decided; every other
+# flag here carries an explaining comment and that one did not. Measured before
+# switching it on: -O2 costs 4.8% less user CPU on Classic over six timedemo runs
+# of the walkuse fixture (16.791s -> 15.981s). That is the honest figure; the
+# "multiple of a frame" the review lanes claimed is not supported by anything
+# measured, and the real CPU pole is the Solid/Ultra per-frame build, which this
+# measurement does not reach.
+#
+# -fno-strict-aliasing IS NOT OPTIONAL and is written here rather than inherited.
+# This code type-puns routinely -- w_wad.c's *(int *)lump_p->name, i_net.c's
+# *(int*)&sw -- and -O2 turns strict aliasing on. Both this and
+# -fno-strict-overflow were ALREADY arriving on Linux, but by accident: they fall
+# out of `pkg-config --cflags sdl2 SDL2_mixer` via the pipewire/spa dependency
+# chain, which is nobody's decision and can change under us. Worse, the `windows`
+# target below OVERRIDES SDL_CFLAGS with a bare include path, so the cross-build
+# was getting neither. Adding -O2 while relying on the inherited flags would have
+# enabled strict aliasing for the Windows build ALONE, on the platform that is
+# hardest to test and that already lost launches to a signed-overflow wrap
+# (tic_time.h). Stated explicitly, both targets get both.
+OPTFLAGS=-O2 -fno-strict-aliasing -fno-strict-overflow
+
+CFLAGS=-g $(OPTFLAGS) -Wall -std=gnu11 -DNORMALUNIX -DLINUX $(DEPFLAGS) $(SDL_CFLAGS) # -DUSEASM
 # C++23 for the Vulkan back-end (ADR 0001; bumped from C++17 2026-07-03 per the
 # latest-version dependency rule -- no caller changes needed). Same defines + SDL
 # include path. NB the Windows cross-build (target `windows`) inherits this flag;
 # its mingw g++ 13 accepts -std=c++23 and the back-end uses no C++23-only features.
-CXXFLAGS=-g -Wall -std=c++23 -DNORMALUNIX -DLINUX $(DEPFLAGS) $(SDL_CFLAGS)
+CXXFLAGS=-g $(OPTFLAGS) -Wall -std=c++23 -DNORMALUNIX -DLINUX $(DEPFLAGS) $(SDL_CFLAGS)
 # Link with mold when present (a faster drop-in linker) — native build only; the
 # Windows cross-target overrides LDFLAGS, so the mingw link is untouched. Detected
 # once; empty (= the default ld) when mold isn't installed.
