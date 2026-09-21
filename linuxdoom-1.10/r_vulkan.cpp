@@ -9436,7 +9436,28 @@ void RecordRtTrace(uint32_t idx)
             // A value that is not wholly a number is refused, not read as 0.0:
             // atof("fast") was 0.0, which passes the >= 0 test below and pinned
             // the ripple clock at zero.
-            return (p && p + 1 < myargc && RB_ParseFloatArg(myargv[p + 1], &v)) ? v : -1.0f;
+            //
+            // DOOM-0405: and the refusal is PRINTED. This flag exists to capture the
+            // same view at chosen instants and diff them; a refused value silently
+            // leaves the clock free-running, so the captures differ for a reason the
+            // person diffing them cannot see. The lambda runs once, so does the line.
+            if (!p)
+                return -1.0f;
+            if (p + 1 >= myargc) {
+                printf("-rippletime: no value given; the ripple clock runs free.\n");
+                return -1.0f;
+            }
+            if (!RB_ParseFloatArg(myargv[p + 1], &v)) {
+                printf("-rippletime: \"%s\" is not a finite number; "
+                       "the ripple clock runs free.\n", myargv[p + 1]);
+                return -1.0f;
+            }
+            if (v < 0.0f) {
+                printf("-rippletime: %g is negative; the ripple clock runs free.\n",
+                       (double)v);
+                return -1.0f;
+            }
+            return v;
         }();
         if (overrideSec >= 0.0f) rippleSec = overrideSec;
     }

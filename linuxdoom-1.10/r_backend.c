@@ -23,6 +23,7 @@
 //-----------------------------------------------------------------------------
 
 #include <math.h>
+#include <stdio.h>      // printf -- say why a -rtview value was refused (DOOM-0405)
 #include <stdlib.h>     // strtol via rb_argparse.h (DOOM-0351: -rtview)
 #include <string.h>     // memset (wipe screens[0] on a mode switch)
 
@@ -412,12 +413,29 @@ static void RB_ApplyTierRt(void)
     // verify-only path (-rtverify) and is not a view; an out-of-range value is ignored
     // rather than clamped, so a typo leaves the tier default rather than silently
     // selecting a view nobody asked for.
+    //
+    // DOOM-0405: a refused value SAYS SO. rb_argparse.h's own preamble names the
+    // original defect as garbage accepted with nothing printed; wiring the parser
+    // in changed which wrong thing happens and kept the silence. That silence is
+    // worst on exactly this flag, whose whole purpose is a reproducible headless
+    // capture: a typo'd -rtview leaves the run on the tier default, the capture
+    // succeeds, and the resulting image is filed as evidence for a view it never
+    // rendered. It still does not exit -- DOOM-0026 INV-3 -- so the message is the
+    // entire difference between a wrong capture and a wrong capture you can see.
     {
         int p = M_CheckParm("-rtview");
-        if (p && p + 1 < myargc)
+        if (p)
         {
             int v;
-            if (RB_ParseIntArg(myargv[p + 1], &v) && v >= 0 && v <= 6 && v != 5)
+            if (p + 1 >= myargc)
+                printf("-rtview: no value given; view stays %d.\n", rb_rtdebug);
+            else if (!RB_ParseIntArg(myargv[p + 1], &v))
+                printf("-rtview: \"%s\" is not a whole number; view stays %d.\n",
+                       myargv[p + 1], rb_rtdebug);
+            else if (v < 0 || v > 6 || v == 5)
+                printf("-rtview: %d is not a view (want 0-4 or 6; 5 is -rtverify); "
+                       "view stays %d.\n", v, rb_rtdebug);
+            else
                 rb_rtdebug = v;
         }
     }
