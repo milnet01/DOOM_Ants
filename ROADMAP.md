@@ -14686,6 +14686,33 @@ parked ideas (💭 considered) until we commit to and design each one.
   by HIRES, so the 64x64 flat tiles ten times across a 640-wide buffer instead of
   five. F_BunnyScroll twenty lines below does an explicit 2x blit with a DOOM-0027
   comment, so the omission looks accidental.
+  APPROVED BY THE USER 2026-09-21, not yet implemented. Do it; this is not
+  an open question any more.
+
+  The decision was taken on the argument in this bullet: CLAUDE.md defines
+  Classic as "the 1993/97 game exactly as released", so shipping with the
+  animation dead is a standing breach of the project's own tier definition,
+  and the artwork is loaded and ticked every frame regardless, so today's
+  behaviour costs the work and shows nothing.
+
+  The user was told, and accepted, that fixing it CHANGES WHAT THE
+  BETWEEN-LEVELS SCREEN LOOKS LIKE for every DOOM 1 player, and that the
+  reference screenshots therefore need refreshing. Treat the golden-shot
+  refresh as part of this item, not a follow-up.
+
+  The fix itself is one line -- `if (gamemode == commercial) return;` --
+  but verify it the way this project verifies a renderer change rather than
+  trusting the diff. The animation only draws on the DOOM 1 intermission,
+  so the boot sweep will not reach it: warp between two DOOM 1 levels and
+  capture the intermission, or force a level exit at a fixed tic under
+  -bootsmoke, which is the established probe for reaching G_DoCompleted.
+
+  Also in this lane and NOT covered by the one-line fix, from the original
+  finding: f_finale.c tiles the finale text background at 1:1 physical
+  pixels while every other element on that screen scales by HIRES, so the
+  flat tiles ten times across instead of five. F_BunnyScroll twenty lines
+  below does an explicit 2x blit with a DOOM-0027 comment, so the omission
+  looks accidental. Decide whether that ships with this item or splits.
   **Layman:** Between levels, DOOM 1 shows an animated map with burning cities. It has never displayed in this build: the check meant to say ‘skip this for DOOM 2’ accidentally tests a constant that is always true, so the drawing function gives up on its first line — while the artwork is still loaded and animated every frame.
   Kind: fix.
   Source: review-code 2026-09-01, lane ui-hud; verified against current source.
