@@ -89,11 +89,17 @@ typedef struct
 #define RB_MESH_SKY     0x10  // full-screen sky backdrop: NDC like a psprite, but
                               // the fragment shader samples the sky texture by
                               // view yaw + screen position (cylindrical), fullbright.
-#define RB_MESH_EMISSIVE 0x20 // DOOM-0084: this sprite Thing is a light source (its
-                              // current frame is FF_FULLBRIGHT — lamps/torches/barrels,
-                              // not ammo pickups). Only these self-glow + cast NEE light
-                              // in the path tracer; the per-texel value mask then
-                              // localises the glow to the sprite's bright pixels.
+#define RB_MESH_EMISSIVE 0x20 // DOOM-0084: this sprite Thing is a light source. Set for
+                              // a frame marked FF_FULLBRIGHT — lamps, torches, barrels,
+                              // projectiles — and ALSO, per DOOM-0112, for the glowing
+                              // collectibles that are not FF_FULLBRIGHT but should still
+                              // emit their colour (bonus potions, spheres, keys, health).
+                              // Ordinary ammo pickups are neither and stay dark. Only
+                              // these self-glow + cast NEE light in the path tracer; the
+                              // per-texel value mask then localises the glow to the
+                              // sprite's bright pixels. (The second half was missing
+                              // until DOOM-0406, though the setting site's own comment
+                              // had it right.)
 #define RB_MESH_BLOB    0x80  // DOOM-0170 L2d: blob-shadow decal — a horizontal quad on
                               // the floor under a Thing, drawn by blob.frag as a soft
                               // dark radial oval (u,v carry [-1,1] radial coords). Uses

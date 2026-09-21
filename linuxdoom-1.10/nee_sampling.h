@@ -48,6 +48,14 @@ static inline void nee_build_cdf(const float* w, int count, float* cdf, float* p
 
 // Pick an item by binary-searching the cdf for the first index whose upper edge
 // is >= u (u uniform in [0,1)). Identical control flow to pathtrace.comp's loop.
+//
+// PRECONDITION: count >= 1. With count == 0 this returns 0, an index into an empty
+// table, and the caller reads a slot that does not exist. It is NOT guarded here on
+// purpose: this function exists to mirror the shader's loop byte for byte, which is
+// what lets the unit test speak for the shader, and a guard on one side only would
+// end that. The shader's protection is upstream -- it does not run next-event
+// estimation with no emitters -- and a C++ caller owes the same check. Recorded
+// rather than fixed (DOOM-0406).
 static inline int nee_pick(const float* cdf, int count, float u)
 {
     int lo = 0, hi = count - 1;
@@ -68,9 +76,18 @@ static inline int nee_pick(const float* cdf, int count, float u)
 // occupy [staticN, n). That boundary IS the shader's `omniStart` (pathtrace.comp treats
 // index >= omniStart as an omnidirectional sprite light, index < omniStart as an
 // oriented wall/flat light), so this split and the host's misc4.y MUST agree — if they
-// drift, sprites get mislabelled and lamps stop casting. n = min(staticN + dynN, cap);
-// dynamic overflow past the cap is dropped (never a static light). `out` must hold
-// cap*NEE_EMIT_STRIDE floats. Returns n (the emitter count the shader iterates).
+// drift, sprites get mislabelled and lamps stop casting. n = min(staticN + dynN, cap).
+//
+// Overflow past the cap is dropped DYNAMIC-FIRST, because the static records are
+// copied first and the copy stops at n. That is the intended policy and holds
+// whenever staticN <= cap. It does NOT hold when staticN alone exceeds cap: n is
+// then cap, the static copy itself stops short, and STATIC lights are dropped too
+// -- lamps, which is the worst thing to lose. The comment here claimed static
+// records were never dropped, which is why this says otherwise (DOOM-0406).
+// Nothing reports either drop.
+//
+// `out` must hold cap*NEE_EMIT_STRIDE floats. Returns n (the emitter count the
+// shader iterates).
 //
 // Pure (no GPU state) precisely so r_vulkan.cpp's FinalizeEmitters and the unit test
 // in tests/nee_sampling_test.cpp share this one implementation — the ordering can't
