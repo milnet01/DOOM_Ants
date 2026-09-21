@@ -5441,6 +5441,71 @@ with friends.
   equivalent -- the options differ in look, not just in code. Invulnerability
   has no such question: INVERSECOLORMAP is a greyscale negative of the final
   palette colour, so it maps onto the display-encoded value directly.
+  Design resolved (2026-09-21) with the Vestige session, which owns the
+  path-tracer's shading formulas. The look question is answered and the site
+  count came DOWN from four to two. Capture before spec.
+
+  THE VISOR CANNOT BE A POST-PROCESS, for a sharper reason than "black stays
+  black": a pixel with no light carries no SHAPE information, so any operator
+  on the final colour alone -- gain, shadow-lift, black-floor, contrast -- can
+  at best turn black into flat grey. In the traced view a gain also lifts the
+  variance of the few paths that carried the dark pixel, amplifying noise
+  exactly where the powerup should reveal something. The visor must ADD LIGHT.
+
+  It need not add it in the trace. Compute a camera-attached headlamp
+  analytically from albedo and the normal: wrapped Lambert (the wrap widens
+  toward vanilla's no-normal-term look while keeping gradient enough to read
+  shape), times a flatness dial that removes distance attenuation from the
+  VISOR'S OWN term only, leaving the scene's real falloff underneath. ADDED,
+  not multiplied -- the shape comes from albedo and N, not from light that was
+  never there. No extra rays, and no variance for the denoiser to chase.
+
+  Add it in scene-referred linear BEFORE the tone operator, so PBR-Neutral does
+  the rolloff and the exposure EV keeps its meaning. That constraint fixes the
+  sites:
+    raster -> mesh.frag, which already carries vNormal, vDist and the atlas
+      albedo. Add into DIRECT, never AMBIENT: the composite is
+      DIRECT + AO x AMBIENT, and a camera-attached lamp must not be darkened by
+      the occlusion of the surface it lights. The flashlight already lives there.
+    traced -> svgf_composite.comp, where albedo is present by demodulation and
+      which is upstream of BOTH tone-map variants, so one insertion covers bloom
+      on and bloom off. rt_tonemap.comp never learns the visor exists, removing
+      the menu-gated drift hazard.
+
+  Corrects an assumption worth recording: the raster COMPOSITE has no albedo and
+  no normal. It binds ambient, direct, AO, bloom; those first two are already-lit
+  colour; there is no depth buffer, and SSAO reconstructs normals from the
+  forward distance packed in DIRECT's alpha. The raster arm works because
+  mesh.frag is UPSTREAM, not because the composite has a G-buffer.
+
+  INVULNERABILITY is a different shape -- display-referred, three sites. Invert
+  in the ENCODED domain, after tonemap_encode: vanilla inverts a gamma-encoded
+  palette entry, and inverting linear crushes midtones toward white and loses
+  the poster-like look. Order it AFTER bloom, or bright halos invert into dark
+  smudges that read as a bug. Exposure therefore cannot touch it, which is
+  right: vanilla's is absolute. Sites: composite.frag, rt_tonemap.comp (bloom
+  on), svgf_composite.comp (bloom off).
+
+  TINT defaults to neutral white -- fixedcolormap=1 is an untinted row, and
+  green goggles are a later-id convention that would be a deliberate departure.
+  FLATNESS ships as a dial; the value is a look call. Do NOT cancel distance
+  dimming on the final frame, vanilla's literal behaviour: in the traced view
+  light arrives from scene lights at their own distances, so there is no
+  camera-distance term to cancel and undoing one globally reads as a renderer
+  bug rather than a powerup.
+
+  No shader parity test needed: shaders/formulas/ is a real #include resolved by
+  glslc ahead of time and embedded as SPIR-V, so no second copy exists to drift.
+  Noticed in passing: composite.frag includes two formulas files without the
+  GL_GOOGLE_include_directive line its two siblings declare; glslc accepts it.
+
+  FIRST CAPTURES, in this order. A sealed sector receiving zero light, visor on,
+  Solid and Ultra -- if shape reads in both, the approach is sound and the rest
+  is tuning. Then a bright room in Ultra, watching whether the added term pushes
+  PBR-Neutral somewhere ugly; if so, scale the gain by how lit the pixel already
+  is, which keeps it a formula. The zero-light room needs a fixture map with the
+  flashlight forced off: sector light has a floor in practice and the flashlight
+  is camera-attached.
   **Layman:** The invulnerability sphere and the light-amplification visor currently do nothing in the Solid and Ultra views. This restores them.
   Kind: implement.
   Source: review-code 2026-09-01, lane backend-seam (DOOM-0405 F1); split out 2026-09-21.
