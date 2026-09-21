@@ -3734,7 +3734,7 @@ with friends.
   Source: review-code 2026-09-01, lane backend-seam.
   Lanes: backend-seam.
 
-- 📋 [DOOM-0406] **Mesh-builder review tail: nine findings, including an unbounded WAD patch walk in new code.**
+- ✅ [DOOM-0406] **Mesh-builder review tail: nine findings, including an unbounded WAD patch walk in new code.**
     - HIGH r_mesh.c:1449 -- RB_SeepCellAir gates only on `solid`, so the void ring
       reports breathable air, contradicting its own header contract at r_mesh.h:241
       ("Returns 0 ... when the cell holds no air at all -- a wall, the void ring, or
@@ -3771,6 +3771,56 @@ with friends.
       static light", which is false when staticN > cap.
     - LOW nee_sampling.h:51 -- nee_pick returns 0 for count == 0, handing the caller
       an index into an empty table.
+  Resolved (2026-09-21): all nine verified against current source; eight
+  fixed, one dismissed as stale.
+
+  DISMISSED. The unbounded WAD patch walk was fixed by DOOM-0228 on
+  2026-09-07, six days AFTER this review ran on 2026-09-01. blit_tile now
+  bounds every offset through patch_bounds.h -- FlatFits, PatchHeaderFits,
+  PatchColumnFits, PatchPostFits -- with its own test suite, and the guards
+  read correct against the access patterns they cover.
+
+  FIXED, with the measured ones first. The void ring reported breathable air,
+  because RB_SeepCellAir gated on `solid` alone and DOOM-0289 deliberately
+  writes the ring non-solid so the sun march can escape through it. On E1M1
+  that put every ring cell into the fog bake: air cells 1085 -> 845, a drop of
+  exactly the ring's 240 on a 75x47 grid, and 704 fewer sight traces, with lit
+  cells unchanged at 452. Work that could not contribute, paid on every
+  settled door.
+
+  The Dijkstra kept a relaxation whose heap push it had dropped, so a node's
+  distance fell and it was never re-expanded and its neighbours kept stale
+  values -- the field under-reported connectivity and fog failed to reach
+  rooms. np*4+1 bounded nothing: pushes track successful relaxations, which
+  scale with EDGES (a sector with d portals contributes d^2), not with np. The
+  heap grows now.
+
+  blit_tile resolved the palette from inside the post loop while holding a
+  cached patch; that lookup can evict the patch it is walking. Sector
+  lightlevel was unclamped on walls and flats -- and the ray-traced path reads
+  that attribute raw, so only the raster view was covered by mesh.vert's clamp.
+
+  The ring's escape window was empty for every finite ceiling, because the
+  ring's cz is 1e30. Fixed, and VERIFIED UNREACHABLE so nobody re-derives it:
+  a probe on that branch fired zero times across seven maps on the tier that
+  builds the field (E1M1, E1M5, E3M1, MAP01, MAP07, MAP12, MAP29), each
+  confirmed to have built one. The march breaks on the void between map and
+  ring, or saturates having escaped through real sky. Defensive: it makes the
+  code do what DOOM-0289's comment says, and changes nothing observable. A
+  first probe run under Classic proved nothing, that tier never building the
+  field at all.
+
+  Three comments corrected: RB_MESH_EMISSIVE omitted DOOM-0112's glowing
+  collectibles, nee_merge_emitters claimed a static light is never dropped
+  (false when staticN alone exceeds cap), and nee_pick's count == 0 behaviour
+  is now a stated precondition rather than a silent 0. It is deliberately not
+  guarded -- the file exists to mirror the shader byte for byte, and a guard on
+  one side would end that.
+
+  Regression: 68-map boot sweep 0 failures; five demo fixtures exactly
+  30/30/30/70/350; make test all suites green; windows-smoke.sh --syntax-only
+  PASS; -rtverify VERDICT PASS on Ultra. Engine runs on a DEV=1 build with
+  -noinput.
   **Layman:** The leftovers from reviewing the code that turns DOOM's 2-D map into 3-D geometry. One reads a downloaded map's texture data without checking its length — and unlike most of the engine, this is code this project wrote in 2026, so the ‘preserve id’s style’ exemption does not apply.
   Kind: investigate.
   Source: review-code 2026-09-01, lane r-mesh.

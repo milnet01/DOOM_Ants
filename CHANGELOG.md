@@ -26,6 +26,18 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Fog now reaches rooms it was failing to light** (DOOM-0406)
+  The search that works out how far outdoor air seeps through a level ran on a fixed-size worklist. Once that filled, it recorded a shorter route to a room but never went back to tell that room's neighbours, so parts of a map were treated as further from the open air than they are. The worklist now grows instead.
+
+- **The lighting bake no longer scores cells outside the map** (DOOM-0406)
+  Every cell in the border ring around a level reported itself as breathable air, so the fog-lighting pass tested lights against points beyond the map's edge. Those tests could never light anything. Removing them cuts the work done each time a door finishes moving, and not one lit cell changed.
+
+- **A sprite could be freed while the texture atlas was still reading it** (DOOM-0406)
+  Building the atlas looked up the palette partway through copying a sprite. That lookup can evict cached data to make room — including the sprite being copied — and the copy carried on reading it. The palette is now looked up before the sprite is held.
+
+- **A crafted WAD can no longer push a sector's light level out of range** (DOOM-0406)
+  Wall and floor brightness was taken straight from the map file with no bounds check, while every other surface type already clamped it. The ray-traced view used the raw value, so an out-of-range level reached the lighting maths. Clamped at the source, which covers both views.
+
 - **An out-of-range `-rtview` value is no longer accepted on Windows** (DOOM-0405)
   `-rtview 9999999999` was refused on Linux and silently accepted as 2147483647 on Windows. The guard compared against the int limits but the type it compared is half as wide on Windows, so an overflowing value saturated to exactly the limit and passed. Measured on both toolchains before and after.
 
