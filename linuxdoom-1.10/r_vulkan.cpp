@@ -65,6 +65,10 @@
 #include "rb_materials.h"
 #include "rb_image.h"
 #include "rb_argparse.h"   // RB_ParseFloatArg -- refuse a non-numeric -rippletime value
+// DOOM-0405: the back-end's own entry points. Including it here is the point --
+// it makes every definition below get checked against the declaration the C side
+// calls through, which nothing did while both sides hand-wrote their own.
+#include "rb_vulkan.h"
 // DOOM-0206 (L1b): the pure-logic stb_truetype glyph-atlas baker (compiled in rb_text.c;
 // self-guards extern "C"). The GPU side (atlas image + text pipeline + batch API) is here.
 #include "rb_text.h"

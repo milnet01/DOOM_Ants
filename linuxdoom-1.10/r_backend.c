@@ -36,6 +36,7 @@
 #include "doomstat.h"   // gamemode/gameepisode/gamemap (DOOM-0011 L4 hell haze)
 #include "rb_argparse.h" // RB_ParseIntArg -- refuse a non-numeric -rtview value
 #include "r_mesh.h"     // rb_view_t (POD camera across the seam), RB_OVERLAY_KEY
+#include "rb_vulkan.h"  // the back-end's entry points, declared once (DOOM-0405)
 #include "v_video.h"    // screens[] (the paletted 2D overlay buffer)
 #include "st_stuff.h"   // ST_Start (force a full status-bar redraw on switch)
 #include "m_argv.h"     // M_CheckParm / myargc / myargv (DOOM-0351: -rtview)
@@ -63,22 +64,15 @@ static void    Classic_Present(void)                { I_FinishUpdate(); }
 static void    Classic_Shutdown(void)               { }
 
 //
-// Vulkan 3D back-end (DOOM-0008), implemented in r_vulkan.cpp. Its entry points
-// are declared here rather than in a header so r_vulkan.cpp stays free of the
-// DOOM C headers (which are not C++-clean); the seam struct is assembled from
-// them below. RT3D and Raster3D share one implementation — they differ only in
+// Vulkan 3D back-end (DOOM-0008), implemented in r_vulkan.cpp and declared in
+// rb_vulkan.h, which both sides include — DOOM-0405 replaced the hand-written
+// copies that used to sit here, and that header says why it is not r_backend.h.
+// The seam struct is assembled from those entry points below. RT3D and Raster3D
+// share one implementation — they differ only in
 // the capability they require (hardware ray tracing vs. plain Vulkan) and, in
 // later increments, the integrator path; this Stage-1 increment presents a
 // cleared frame for both, proving the device + swapchain + present loop.
 //
-extern int  RB_Vulkan_Available(int want_rt);   // want_rt: require RT extensions
-extern void RB_Vulkan_Init(void);
-extern void RB_Vulkan_SetResolution(int w, int h);
-extern void RB_Vulkan_RenderView(const rb_view_t* view);
-extern void RB_Vulkan_SetOverlay(const unsigned char* pixels, int w, int h);
-extern void RB_Vulkan_Present(void);
-extern void RB_Vulkan_Shutdown(void);
-extern void RB_Vulkan_BuildLevel(void);
 
 // Software-renderer automap "seen" marking (r_main.c). The 3D back-ends bypass
 // the seg pipeline that sets ML_MAPPED, so the automap needs this run per play
