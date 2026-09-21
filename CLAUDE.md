@@ -15,7 +15,7 @@ in progress, and shipped. Finished items graduate into `CHANGELOG.md`.
 
 ## Render tiers
 
-Three tiers, chosen in the menu. **What separates them is the ART, not the
+The tiers are chosen in the menu. **What separates them is the ART, not the
 lighting** — every tier below Classic gets the full effect set; only the source
 of the textures changes. Each of Solid and Ultra has both a rasterised and a
 ray-traced view (the `~` key / the menu's Ray Tracing row), so "which tier" and
@@ -27,10 +27,9 @@ ray-traced view (the `~` key / the menu's Ray Tracing row), so "which tier" and
 | **Solid** | The **original** textures, upscaled, with PBR / POM added on top | The full set — fog, lighting, shadows — faked cheaply wherever a cheap fake holds up |
 | **Ultra** | **Replaced** with HD art | The full set, done properly, and first in line for anything new |
 
-Set by the user on 2026-07-27, revising an earlier position (Solid was previously
-"same renderer as Ultra, minus the HD art"). The distinction to hold on to:
-**Solid enhances DOOM's own art; Ultra substitutes for it.** A player who wants
-the game to still *look like DOOM* picks Solid.
+The distinction to hold on to: **Solid enhances DOOM's own art; Ultra
+substitutes for it.** A player who wants the game to still *look like DOOM*
+picks Solid.
 
 Two consequences worth stating, because they are easy to get backwards:
 
@@ -44,18 +43,18 @@ Two consequences worth stating, because they are easy to get backwards:
 ## Repository layout
 
 - `linuxdoom-1.10/` — the DOOM engine (the main game code; most work lands here)
-- `sndserv/` — standalone sound server *(historical, see below)*
-- `sersrc/` — serial/modem multiplayer driver *(historical, see below)*
-- `ipx/` — IPX LAN multiplayer driver *(historical, see below)*
-
-Those three are kept as reference per DOOM-0085 and are built by nothing.
-DOOM-0312 removed them from `.ants/project.json`'s `source_roots`, so the
-static-analysis sweeps no longer parse them; that file's `_comment` says why.
-The findings already reported in them are recorded on DOOM-0414 and are
-**not** fixed — none can reach a player, because nothing builds them.
+- `sndserv/` — standalone sound server *(reference only)*
+- `sersrc/` — serial/modem multiplayer driver *(reference only)*
+- `ipx/` — IPX LAN multiplayer driver *(reference only)*
 - `docs/standards/` — the house rules (read before contributing)
 - `docs/specs/` — one design doc per large feature
 - `LICENSE.TXT` / `README.TXT` — id Software's GPL licence and original release notes (keep verbatim)
+
+`sndserv/`, `sersrc/` and `ipx/` are built by nothing. They are outside
+`source_roots` in `.ants/project.json`, so the static-analysis sweeps do not
+parse them. The findings already reported in them are recorded on DOOM-0414
+and are **not** fixed. Do not fix one: nothing builds these directories, so
+no finding in them can reach a player.
 
 ## House rules
 
@@ -92,10 +91,10 @@ Quick summary of the load-bearing ones:
   can see it. DOOM-0331 INV-4 shipped a wall-blooming raster view that way; the
   spec's INV-4 and INV-9 amendments carry the story.
 - Keep `CHANGELOG.md` and any version line in lockstep when releasing.
-- A release could once ship a **stale binary**, because `release.sh` reused any
-  artifact with the right filename. It now stamps each build with the commit it
-  came from and re-checks the published assets; the releases standard's "Cutting
-  a release" section owns the story and what to do when an asset is wrong.
+- `release.sh` stamps each build with the commit it came from and re-checks the
+  published assets, so a release cannot ship a binary built from an earlier
+  commit. The releases standard's "Cutting a release" section owns the
+  procedure and what to do when an asset is wrong.
 - Dependencies stay on the **latest stable** version (features *and* security).
   An older pin is a last resort — only when the newer version explicitly breaks
   a feature — and must be logged in the dependencies standard's Version
@@ -112,3 +111,10 @@ history and `README.TXT`.
 The source is the engine only. Running it needs a DOOM `.wad` data file
 (e.g. the shareware `doom1.wad`), which is **not** in this repo for
 licensing reasons.
+
+## History
+
+Why some of the rules above read the way they do — the dated decisions, the
+wordings they replaced, and the arguments that settled them — is in
+[`docs/history/claude-md.md`](docs/history/claude-md.md). Nothing there is a
+rule.
