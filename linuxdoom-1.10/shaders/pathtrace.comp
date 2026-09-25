@@ -768,6 +768,13 @@ float grungeFbm(uint gid, vec2 wUV)
          + kGrimeOctaveWeight.z * texture(hdTex[nonuniformEXT(gid)], wUV * (s*kGrimeOctaveScale.z) + vec2(0.87, 0.43)).r;
 }
 
+// The coarse goo/tone selector. DOOM-0407: fetched ONCE per stained texel and passed
+// down -- it was sampled up to three times with byte-identical arguments.
+float gooSelector(uint gid, vec2 wUV)
+{
+    return texture(hdTex[nonuniformEXT(gid)], wUV * (kGrimeWorldScale * 0.12) + vec2(3.1, 1.7)).r;
+}
+
 // Smooth, mottled, MULTI-HUE dirt colour — no cell grid, so no straight seams. `hue` (a coarse
 // smooth overlay sample) picks the earthy tone; `bright` (the per-texel grunge) mottles it. Green
 // goo pools on up-facing floors, but never on an already-green (goo/slime) surface.
@@ -776,12 +783,13 @@ float grungeFbm(uint gid, vec2 wUV)
 // sample for close-up grain — so filth reads as a photographed dirt texture, not a flat tint.
 // Falls back to a procedural earthy ramp (three grunge scales) when no dirt texture is present.
 // Green goo pools on up-facing floors (coarse grunge selector) but never on already-green surfaces.
-vec3 stainColour(uint gid, vec2 wUV, vec3 n, vec3 albedo)
+// `sel` is the coarse selector sample (gooSelector), already fetched by the caller on an
+// up-facing floor and negative otherwise; the procedural `tone` is the same sample.
+vec3 stainColour(uint gid, vec2 wUV, vec3 n, vec3 albedo, float sel)
 {
     bool green = albedo.g > albedo.r * 1.15 && albedo.g > albedo.b * 1.15;   // already goo/slime
     if (n.z > 0.6 && !green) {
-        float goo = texture(hdTex[nonuniformEXT(gid)], wUV * (kGrimeWorldScale * 0.12) + vec2(3.1, 1.7)).r;
-        if (goo < kGooChance)
+        if (sel < kGooChance)
             return kGooColour * (0.70 + 0.6 * texture(hdTex[nonuniformEXT(gid)], wUV * (kGrimeWorldScale * 3.3)).r);
     }
     uint did = pc.misc5.z;
@@ -791,7 +799,7 @@ vec3 stainColour(uint gid, vec2 wUV, vec3 n, vec3 albedo)
         return macro * (0.72 + 0.55 * fine);                                 // macro colour x fine grain
     }
     float s     = kGrimeWorldScale;                                          // procedural fallback
-    float tone  = texture(hdTex[nonuniformEXT(gid)], wUV * (s * 0.12) + vec2(3.1, 1.7)).r;
+    float tone  = sel >= 0.0 ? sel : gooSelector(gid, wUV);
     float blot  = texture(hdTex[nonuniformEXT(gid)], wUV * (s * 0.90) + vec2(0.6, 4.2)).r;
     float grain = texture(hdTex[nonuniformEXT(gid)], wUV * (s * 3.30) + vec2(2.8, 0.4)).r;
     vec3  dirt  = mix(kDirtDark, kDirtBrown, smoothstep(0.20, 0.55, tone));
@@ -819,14 +827,12 @@ vec3 applyGrime(vec3 albedo, vec3 hitP, vec3 n, float ao, out float gooWet)
     m -= (1.0 - ao) * kGrimeCrevice;                     // dirt darkens genuine crevices (INV-7)
     vec3 c = albedo * clamp(m, 0.35, 1.65);              // INV-6 clamp preserved
     if (stain > 0.0 && gid != 0xFFFFFFFFu) {             // distinct mottled dirt on top
-        c = mix(c, stainColour(gid, wUV, n, albedo), stain * kStainOpacity);
+        float sel = (n.z > 0.6) ? gooSelector(gid, wUV) : -1.0;
+        c = mix(c, stainColour(gid, wUV, n, albedo, sel), stain * kStainOpacity);
         // DOOM-0183 L5: report the GREEN-GOO puddle coverage using the SAME floor + goo-selector
         // test stainColour uses, so the mode block can wet those puddles (§4.6). Up-facing floor
         // goo only — brown dirt on a wall is not wet. (albedo is already non-green: early return.)
-        if (n.z > 0.6) {
-            float goo = texture(hdTex[nonuniformEXT(gid)], wUV * (kGrimeWorldScale * 0.12) + vec2(3.1, 1.7)).r;
-            if (goo < kGooChance) gooWet = stain;
-        }
+        if (n.z > 0.6 && sel < kGooChance) gooWet = stain;
     }
     return c;
 }
@@ -1593,7 +1599,10 @@ void main()
             // out of range -> gi=0 and the sector-light ambient stands in for them.
             float secLight = vb.v[i0 + 10u];                       // sector lightlevel 0..1
             vec3  ambient  = vec3(max(secLight * AMBIENT_SECTOR_SCALE, AMBIENT_FLOOR));
-            uint  subId    = isSprite ? 0xFFFFFFFFu : pc.triSs.s[uint(prim)];
+            // DOOM-0407: probeCount (misc2.y) gates the READ, not just its result --
+            // with no bake, triSs is address 0 (mesh.frag carries the same guard).
+            uint  subId    = (isSprite || pc.misc2.y == 0u) ? 0xFFFFFFFFu
+                                                            : pc.triSs.s[uint(prim)];
             vec3  gi       = (subId < pc.misc2.y) ? giIrradiance(pc.probes, subId, shadeN)
                                                   : vec3(0.0);
             L += albedo * max(gi, ambient) * ao;   // AO dims fill light only (ao fetched above)
@@ -1675,6 +1684,9 @@ void main()
                     sum += pdf > 0.0 ? (1.0 / PI) * cosT / pdf : 0.0;
                 }
             }
+            // DOOM-0407: NO finite guard here, unlike modes 4 and 6. This is the
+            // verifier: a non-finite sample must reach the host, which counts it and
+            // fails the run (RB_RtVerify). Zeroing it would hide the defect.
             vec4 prev = imageLoad(accumImg, ivec2(px));
             imageStore(accumImg, ivec2(px), prev + vec4(sum, float(spp)));
             return;                                 // verify writes accum only
@@ -1811,7 +1823,10 @@ void main()
             // marked but unlit room reads, while dark sectors stay dark.
             float secLight = vb.v[i0 + 10u];                       // sector lightlevel 0..1
             vec3  ambient  = vec3(max(secLight * AMBIENT_SECTOR_SCALE, AMBIENT_FLOOR));
-            uint  subId    = isSprite ? 0xFFFFFFFFu : pc.triSs.s[uint(prim)];  // sprites: no GI probe
+            // sprites: no GI probe. DOOM-0407: no bake -> triSs is address 0, so
+            // probeCount (misc2.y) must gate the read itself, as in mode 4 above.
+            uint  subId    = (isSprite || pc.misc2.y == 0u) ? 0xFFFFFFFFu
+                                                            : pc.triSs.s[uint(prim)];
             vec3  gi       = (subId < pc.misc2.y) ? giIrradiance(pc.probes, subId, shadeN)
                                                   : vec3(0.0);
             illum += max(gi, ambient) * ao;   // AO dims fill light only (ao fetched above)

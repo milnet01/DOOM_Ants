@@ -639,6 +639,10 @@ stay in their phase sections; this heading holds only work still to come.
   Decided by the user 2026-09-25: switch decodeAlbedo to the exact IEC
   sRGB curve, retune EMIS_MASK_LO/HI with it, and show before/after
   captures of the darkest rooms for a look call.
+  Progress 2026-09-25: the decodeAlbedo finding is FIXED (463f374). It
+  uses the exact sRGB curve, and the glow mask is defined in palette
+  space. The first finding (sky fog omits mediumTint) waits on
+  DOOM-0321, by the user's decision. Six findings remain.
   **Layman:** The leftovers from reviewing the ray-tracing shader code. Nothing automated checks any of it, so these were all found by reading.
   Kind: investigate.
   Source: review-code 2026-09-01, lane shaders-pathtrace.

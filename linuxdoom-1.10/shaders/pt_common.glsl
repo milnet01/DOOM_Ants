@@ -618,7 +618,7 @@ vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
                 float pdf = emit.e[lo * 14u + 13u];
                 vec3  c   = sampleEmitter(lo, hitP, n, pdf, omniStart, emit, 0.0, seed);
                 vec3  rad = albedo * (1.0 / PI) * c; // reflected radiance (Lambert)
-                direct += min(rad, vec3(FIREFLY_MAX)); // firefly clamp (luminance)
+                direct += min(rad, vec3(FIREFLY_MAX)); // firefly clamp, PER CHANNEL: a saturated light desaturates rather than dims
             }
             L += direct / float(nSamples);
         }

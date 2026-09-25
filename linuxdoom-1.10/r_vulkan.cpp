@@ -7793,19 +7793,22 @@ void BuildDynamicEmitters()
         if (le[0] + le[1] + le[2] <= 0.0f)
             continue;                            // emissive Thing whose sprite texture isn't a light
         const float lr = le[0] * kSpriteEmitBoost, lg = le[1] * kSpriteEmitBoost, lb = le[2] * kSpriteEmitBoost;
-        for (int k = 0; k < 3; k++)
-        {
-            emit.push_back(tri[k].x); emit.push_back(tri[k].y); emit.push_back(tri[k].z);
-        }
-        emit.push_back(lr); emit.push_back(lg); emit.push_back(lb);
-        emit.push_back(0.0f); emit.push_back(0.0f);   // cdf, pdf — filled in finalise
         const float ex1 = tri[1].x - tri[0].x, ey1 = tri[1].y - tri[0].y, ez1 = tri[1].z - tri[0].z;
         const float ex2 = tri[2].x - tri[0].x, ey2 = tri[2].y - tri[0].y, ez2 = tri[2].z - tri[0].z;
         const float cxv = ey1 * ez2 - ez1 * ey2;
         const float cyv = ez1 * ex2 - ex1 * ez2;
         const float czv = ex1 * ey2 - ey1 * ex2;
         const float area = 0.5f * std::sqrt(cxv * cxv + cyv * cyv + czv * czv);
-        wgt.push_back(emis::luminance(lr, lg, lb) * area);
+        const float w    = emis::luminance(lr, lg, lb) * area;
+        if (!(w > 0.0f))
+            continue;                            // DOOM-0407: pdf 0 -> Inf in the shader
+        for (int k = 0; k < 3; k++)
+        {
+            emit.push_back(tri[k].x); emit.push_back(tri[k].y); emit.push_back(tri[k].z);
+        }
+        emit.push_back(lr); emit.push_back(lg); emit.push_back(lb);
+        emit.push_back(0.0f); emit.push_back(0.0f);   // cdf, pdf — filled in finalise
+        wgt.push_back(w);
 
         // DOOM-0119: tag this sprite emitter with its room for the REJECT cull. The
         // quad is a billboard centred on the Thing, so the triangle centroid's sector
@@ -8076,20 +8079,27 @@ static void BuildStaticEmitterSet(const rb_vertex_t* v)
         if (le[0] + le[1] + le[2] <= 0.0f)
             continue;   // material isn't a light source
 
-        for (int k = 0; k < 3; k++)
-        {
-            g.staticEmit.push_back(tri[k].x); g.staticEmit.push_back(tri[k].y); g.staticEmit.push_back(tri[k].z);
-        }
-        g.staticEmit.push_back(le[0]); g.staticEmit.push_back(le[1]); g.staticEmit.push_back(le[2]);
-        g.staticEmit.push_back(0.0f); g.staticEmit.push_back(0.0f);   // cdf, pdf — finalised later
-
         const float ex1 = tri[1].x - tri[0].x, ey1 = tri[1].y - tri[0].y, ez1 = tri[1].z - tri[0].z;
         const float ex2 = tri[2].x - tri[0].x, ey2 = tri[2].y - tri[0].y, ez2 = tri[2].z - tri[0].z;
         const float cx = ey1 * ez2 - ez1 * ey2;
         const float cy = ez1 * ex2 - ex1 * ez2;
         const float cz = ex1 * ey2 - ey1 * ex2;
         const float area = 0.5f * std::sqrt(cx * cx + cy * cy + cz * cz);
-        g.staticWgt.push_back(emis::luminance(le[0], le[1], le[2]) * area);
+        const float wgt  = emis::luminance(le[0], le[1], le[2]) * area;
+        // DOOM-0407: a zero-weight record gets pdf 0, and the shader divides by it.
+        // nee_build_cdf's uniform fallback fires only when EVERY weight is zero. A
+        // zero-area triangle emits nothing, so dropping it is exact (as
+        // ClusterStaticFogLights already does).
+        if (!(wgt > 0.0f))
+            continue;
+
+        for (int k = 0; k < 3; k++)
+        {
+            g.staticEmit.push_back(tri[k].x); g.staticEmit.push_back(tri[k].y); g.staticEmit.push_back(tri[k].z);
+        }
+        g.staticEmit.push_back(le[0]); g.staticEmit.push_back(le[1]); g.staticEmit.push_back(le[2]);
+        g.staticEmit.push_back(0.0f); g.staticEmit.push_back(0.0f);   // cdf, pdf — finalised later
+        g.staticWgt.push_back(wgt);
         // DOOM-0330: tag the pools. Same order as staticWgt, so the fog-light bake can ask
         // "is emitter e a pool?" by index without carrying the material id in the record.
         g.staticEmitLiquid.push_back(std::find(g.liquidMatIds.begin(), g.liquidMatIds.end(), id)
@@ -8816,12 +8826,23 @@ bool RB_RtVerify()
 
     // rel-MSE between the two converged direct-light images over pixels both hit:
     // sum (nee-brute)^2 / sum brute^2, summed over RGB.
+    // DOOM-0407: the accumulator has no finite guard ON PURPOSE -- dropping a bad
+    // sample there would hide the very defect this check exists to catch. Instead a
+    // non-finite texel is counted here and fails the run. Left in the sums, a NaN in
+    // `brute` made den NaN, which read as "nothing measured"; in the furnace loop a
+    // NaN deviation never compared greater, so it passed silently.
+    auto finite4 = [](const float* v) {
+        return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]) &&
+               std::isfinite(v[3]);
+    };
+    int    nonFinitePx = 0;
     double num = 0.0, den = 0.0;
     int    litPx = 0;
     for (uint32_t i = 0; i < pxCount; i++)
     {
         const float* a = &nee[(size_t)i * 4];
         const float* b = &brute[(size_t)i * 4];
+        if (!finite4(a) || !finite4(b)) { nonFinitePx++; continue; }
         if (a[3] <= 0.0f || b[3] <= 0.0f) continue;     // background (a primary miss)
         litPx++;
         for (int ch = 0; ch < 3; ch++)
@@ -8839,6 +8860,7 @@ bool RB_RtVerify()
     for (uint32_t i = 0; i < pxCount; i++)
     {
         const float* f = &furnace[(size_t)i * 4];
+        if (!finite4(f)) { nonFinitePx++; continue; }
         if (f[3] <= 0.0f) continue;
         furnPx++;
         double dev = std::fabs((double)f[0] / f[3] - 1.0);
@@ -8879,10 +8901,14 @@ bool RB_RtVerify()
            furnMaxDev, furnPx, pxCount,
            !haveFurnace ? "INCONCLUSIVE - nothing measured"
                         : (furnacePass ? "PASS" : "FAIL"));
-    printf("[rtverify] VERDICT: %s\n", (directPass && furnacePass) ? "PASS" : "FAIL");
+    const bool finitePass = (nonFinitePx == 0);
+    printf("[rtverify] non-finite accumulated texels = %d: %s\n",
+           nonFinitePx, finitePass ? "PASS" : "FAIL");
+    const bool pass = directPass && furnacePass && finitePass;
+    printf("[rtverify] VERDICT: %s\n", pass ? "PASS" : "FAIL");
     fflush(stdout);
 
-    return directPass && furnacePass;
+    return pass;
 }
 
 // Place this level's GI-bake probes (DOOM-0009 build step 4b-i): one per subsector
