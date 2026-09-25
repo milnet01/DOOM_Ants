@@ -73,7 +73,8 @@ vec2 worldToSeepUV(vec2 worldXY)
 
 // DOOM-0011 L3: the per-cell torch list, on the SAME grid as the seep field (same origin,
 // same cell size, same dims) so it needs no transform of its own. kFogLightsPerCell
-// entries per cell, packed brightest-first and zero-padded:
+// entries per cell, ordered by the bake's windowed score (not raw brightness: DOOM-0011
+// 4.4) and zero-padded:
 //   posR = (world centroid xyz, reach in world units)
 //   leW  = (Le rgb, visibility weight 0..1)
 // A cell with fewer lights than the cap stores reach = 0 in the first unused slot, which
@@ -1048,7 +1049,7 @@ vec3 torchInscatter(vec3 p, vec3 rd)
     {
         vec4 posR = fogLights.e[base + j * 2];
         if (posR.w <= 0.0)
-            break;                       // packed brightest-first: no reach, no more lights
+            break;                       // zero padding: an empty slot ends the list
         vec4 leW  = fogLights.e[base + j * 2 + 1];
 
         vec3  toL = posR.xyz - p;

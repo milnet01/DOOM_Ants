@@ -32,6 +32,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **The ray-traced view now says when a crowded map has more monsters than it can draw** (DOOM-0411)
+  Past about 4,000 things it used to leave some out without a word.
+  Also: a fog calculation at the far edge of a huge map no longer
+  starts from a garbage position, and a debug message no longer
+  floods the log during firefights.
+
 - **Ultra finds its HD textures wherever the game is started from** (DOOM-0410)
   It used to look relative to the folder you launched from, and quietly
   fell back to the original artwork otherwise. It now looks beside the

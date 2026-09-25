@@ -21,6 +21,7 @@
 //
 //-----------------------------------------------------------------------------
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -1999,7 +2000,8 @@ int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts)
     float   a    = view->angle;
     float   rx   =  sinf(a), ry = -cosf(a);    // screen-right in world
     float   nx   = -cosf(a), ny = -sinf(a);    // billboard normal (toward eye)
-    int     s, n = 0;
+    int     s, n = 0, dropped = 0;
+    static int capWarned = 0;                   // rising-edge latch for the cap message
 
     if (numspritelumps <= 0)
         return 0;
@@ -2087,7 +2089,10 @@ int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts)
             if (flip) { float t = u0; u0 = u1; u1 = t; }
 
             if (n + 6 > maxverts)
-                return n;                       // buffer full; drop the rest
+            {
+                dropped++;                      // buffer full: this thing is not drawn
+                continue;
+            }
 
             // Corners: left-top, right-top, right-bottom, left-bottom.
             out[n++] = mkv(cx + rx*ld, cy + ry*ld, topz, nx, ny, 0.0f, u0, v0, lump, sflags, light);
@@ -2098,6 +2103,13 @@ int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts)
             out[n++] = mkv(cx + rx*ld, cy + ry*ld, botz, nx, ny, 0.0f, u0, v1, lump, sflags, light);
         }
     }
+    // DOOM-0411: things past the cap used to vanish with no word, in sector order, so a
+    // monster in front of the player could be the one dropped. Say so once, when the
+    // cap is first hit, rather than every frame. Which things to keep is DOOM-0459.
+    if (dropped && !capWarned)
+        printf("RB_BuildSprites: %d thing(s) over the %d-sprite cap not drawn this frame.\n",
+               dropped, maxverts / 6);
+    capWarned = dropped != 0;
     return n;
 }
 

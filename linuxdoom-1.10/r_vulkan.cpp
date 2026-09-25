@@ -2026,6 +2026,7 @@ void DestroyAccelerationStructures()
     if (g.sprWorldMem)       { vkFreeMemory(g.device, g.sprWorldMem, nullptr); g.sprWorldMem = VK_NULL_HANDLE; }
     g.sprWorldMapped = nullptr; g.tlasInstMapped = nullptr;
     g.spriteBlasAddr = 0; g.sprWorldVertCount = 0;
+    g.sprWorldVertCap = 0; g.sprBlasMaxTris = 0;   // their buffers are gone (DOOM-0411)
 }
 
 // Build the static BLAS (every level-mesh triangle) and a one-instance identity
@@ -2243,6 +2244,7 @@ void BuildAccelerationStructures()
     // while shadow rays + the GI bake (mask 0x01) never hit it. Sky planes don't move,
     // so it's built once here — no per-frame rebuild, no refit. Skipped if the level
     // has no sky surfaces (fully enclosed map). ----
+    VkDeviceSize skyAsBytes = 0;   // for the AS total below (DOOM-0411: it used to omit this)
     if (g.skyMeshVerts >= 3 && g.skyMeshBuf != VK_NULL_HANDLE)
     {
         const uint32_t skyTris = g.skyMeshVerts / 3u;
@@ -2274,6 +2276,7 @@ void BuildAccelerationStructures()
                        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
                        | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &g.skyBlasBuf, &g.skyBlasMem);
+        skyAsBytes = ksizes.accelerationStructureSize;
         VkAccelerationStructureCreateInfoKHR kci = {};
         kci.sType  = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
         kci.buffer = g.skyBlasBuf;
@@ -2402,7 +2405,7 @@ void BuildAccelerationStructures()
            g.skyMeshVerts / 3u,
            skyPresent ? "+sky" : "",
            (double)(blasSize + tsizes.accelerationStructureSize
-                    + ssizes.accelerationStructureSize) / 1024.0);
+                    + ssizes.accelerationStructureSize + skyAsBytes) / 1024.0);
     fflush(stdout);
 
     // The path-tracer compute descriptor binds this TLAS; re-point it now that
@@ -2481,8 +2484,9 @@ void RecordRefitAS(VkCommandBuffer cb)
 // (re)build the throwaway sprite BLAS over them and add it to the TLAS as instance
 // 1 (mask 0x02); otherwise the TLAS is rebuilt with the world instance only. A
 // barrier orders each AS write before its reader (TLAS reads the BLAS extents; the
-// compute trace reads the TLAS). Returns the instance count built.
-uint32_t BuildSpriteTlas()
+// compute trace reads the TLAS). Returns nothing: no caller needed the instance
+// count it used to return (DOOM-0411).
+void BuildSpriteTlas()
 {
     const uint32_t sprTris = g.sprWorldVertCount / 3u;
     const bool haveSpr = sprTris > 0u && g.spriteBlas != VK_NULL_HANDLE
@@ -2584,7 +2588,6 @@ uint32_t BuildSpriteTlas()
     vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
                          VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
                          1, &toTrace, 0, nullptr, 0, nullptr);
-    return instCount;
 }
 
 // ---------------------------------------------------------------------------
@@ -4126,13 +4129,14 @@ void UploadSeepField(rb_seep_t* f)
     g.fogLightStill = g.fogLightWait = 0.0f;
 
     // Ownership transfer: the previous level's field (and its geometry cache) goes here.
-    if (g.seepField != f)
-    {
-        RB_FreeSeepField(g.seepField);
-        g.seepField = haveField ? f : nullptr;
-        if (!haveField)
-            RB_FreeSeepField(f);       // a malformed field still has to be released
-    }
+    // g.seepField never keeps a field this function has just called unusable -- not
+    // even when that field is the one already retained (DOOM-0411).
+    rb_seep_t* old = g.seepField;
+    g.seepField = haveField ? f : nullptr;
+    if (old != f)
+        RB_FreeSeepField(old);
+    if (!haveField)
+        RB_FreeSeepField(f);           // a malformed field still has to be released
 
     // R16G16B16A16_SFLOAT (DOOM-0289 widened it from R16G16), and the 16 is load-bearing
     // in a way R8-vs-R16 is not the whole of. Vulkan MANDATES SAMPLED_IMAGE_FILTER_LINEAR
@@ -4141,7 +4145,9 @@ void UploadSeepField(rb_seep_t* f)
     // sampling a 32-bit field with a linear sampler is undefined on any device that does
     // not advertise the bit, even though it works on the AMD card this was written
     // against. Half gives ~2-unit resolution at the 3072-unit sentinel, far finer than a
-    // 64-unit cell, and ~1 unit at the |z| = 1024 the clearance channels reach.
+    // 64-unit cell, and 1 unit for |z| in 1024..2048. Nothing bounds the clearance channels
+    // to that, though: a WAD height can reach +-32767, where a half's step is 32 units --
+    // coarser, still under one 64-unit cell (DOOM-0411 corrected the claim).
     // 256x256 worst case x 4 channels x 2 B = 512 KB; E1M1's 75x47 grid is 28 KB.
     std::vector<uint16_t> texels((size_t)w * h * 4, 0);
     PackSeepTexels(texels.data());
@@ -7937,11 +7943,17 @@ void BuildDynamicEmitters()
     FinalizeEmitters(&emit, &wgt, &dynSec);
 
     // Diagnostic (DOOM-0084 bring-up): confirm sprite lights reach the NEE set.
-    // Rate-limited so it doesn't spam at 35 Hz; prints on change of the lit count.
+    // Prints when the lit count changes, and at most once a second: every fireball that
+    // spawns or dies changes the count, and this runs inside the per-frame build, so
+    // change detection alone printed and flushed many times a second in a firefight.
+    // A change inside the window is reported when the window ends (DOOM-0411).
     static uint32_t lastLit = 0xFFFFFFFFu;
-    if (litSprites != lastLit)
+    static uint32_t lastMs  = 0;
+    const  uint32_t nowMs   = SDL_GetTicks();
+    if (litSprites != lastLit && (lastLit == 0xFFFFFFFFu || nowMs - lastMs >= 1000u))
     {
         lastLit = litSprites;
+        lastMs  = nowMs;
         double sumStatic = 0.0, sumSprite = 0.0;
         for (float w : g.staticWgt) sumStatic += w;
         for (float w : wgt)         sumSprite += w;
@@ -8596,6 +8608,12 @@ void BuildFogLightGrid()
         // of this cell can actually see. Ranking before testing is what bounds the bake:
         // a map with hundreds of emitters pays the same handful of BSP walks per cell as
         // one with a dozen.
+        // World units to 16.16 fixed. Clamped first: a sub-sample offset past the map's
+        // +X/+Y edge can exceed 32767, and the unclamped cast overflows int -- undefined,
+        // and in practice INT_MIN, a garbage trace origin (DOOM-0411).
+        auto toFixed = [](float v) {
+            return (int)(std::min(std::max(v, -32767.0f), 32767.0f) * 65536.0f);
+        };
         const int probes = (int)std::min((size_t)RB_FOG_LIGHT_PROBES, cand.size());
         uint32_t  kept   = 0;
         float*    slot   = &grid[((size_t)iy * f->w + ix) * RB_FOG_LIGHTS_PER_CELL * 8u];
@@ -8611,11 +8629,9 @@ void BuildFogLightGrid()
                 const float ox = ((sx + 0.5f) / RB_FOG_LIGHT_SUBS - 0.5f) * f->cell;
                 const float oy = ((sy + 0.5f) / RB_FOG_LIGHT_SUBS - 0.5f) * f->cell;
                 sightTests++;
-                if (P_CheckSightTrace((int)((cx + ox) * 65536.0f), (int)((cy + oy) * 65536.0f),
-                                      (int)(tz * 65536.0f),
-                                      (int)(L.x * 65536.0f), (int)(L.y * 65536.0f),
-                                      (int)((L.z - 8.0f) * 65536.0f),
-                                      (int)((L.z + 8.0f) * 65536.0f)))
+                if (P_CheckSightTrace(toFixed(cx + ox), toFixed(cy + oy), toFixed(tz),
+                                      toFixed(L.x), toFixed(L.y),
+                                      toFixed(L.z - 8.0f), toFixed(L.z + 8.0f)))
                     seen++;
             }
             if (!seen)

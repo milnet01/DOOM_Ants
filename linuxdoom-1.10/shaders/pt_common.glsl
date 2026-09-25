@@ -191,7 +191,7 @@ const float kTorchShaftStrength = 0.047;
 // on top of a large sky term, indoors the sky term is at its floor and the same torch
 // dominates. Scaling the torch by the inverse of DOOM-0292's curve would count the same
 // contrast twice.
-const int   kFogLightsPerCell = 2;     // torches kept per grid cell, brightest-first. MUST
+const int   kFogLightsPerCell = 2;     // torches kept per grid cell, best bake score first. MUST
                                  // match RB_FOG_LIGHTS_PER_CELL (r_vulkan.cpp) -- the
                                  // buffer's stride is a function of it on both sides.
 // The softening radius, SQUARED. Brightness/distance^2 blows up when a fog sample sits

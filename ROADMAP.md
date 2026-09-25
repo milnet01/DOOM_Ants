@@ -868,7 +868,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: review-code 2026-09-01, lane vk-materials.
   Lanes: renderer, assets.
 
-- 📋 [DOOM-0411] **Acceleration-structure and lighting review tail: fourteen findings across two Vulkan lanes.**
+- ✅ [DOOM-0411] **Acceleration-structure and lighting review tail: fourteen findings across two Vulkan lanes.**
   Not covered by DOOM-0390. The sprite-architecture doc divergence is DOOM-0395's.
 
   vk-accel:
@@ -921,6 +921,23 @@ stay in their phase sections; this heading holds only work still to come.
     - LOW r_vulkan.cpp:8094 -- staticLightsDirty is set unconditionally, so any
       RB_UPD_RETEX re-runs the whole cull the DOOM-0170 split removed. ALREADY FILED
       as DOOM-0258.
+  Closed 2026-09-25. Nine fixed, one dismissed, four owned elsewhere.
+  Fixed: RB_BuildSprites counts things past the cap and says so once on
+  the first overflowing frame (which ones to keep is DOOM-0459). The AS
+  total counts the sky BLAS. The half-float precision comment states
+  the real range. A malformed seep field is never left in g.seepField,
+  even when it is the one already retained. BuildSpriteTlas returns
+  void. DestroyAccelerationStructures zeroes the sprite caps. The fog
+  bake clamps before the 16.16 cast. The sprite-emitter diagnostic is
+  now really rate-limited (1 s). The per-cell list comments say score
+  order, and the break comment names the padding it stops on.
+  Dismissed, WRONG: the UploadFogLightGrid early return fires only
+  when g.rtDs does not exist. It is allocated once, by
+  CreateRtComputePipeline, right before the first upload.
+  Owned elsewhere: the AMBIENT bound (fixed under DOOM-0408 today), the
+  sprite design docs (DOOM-0395), the es[e] read (DOOM-0223) and the
+  unconditional staticLightsDirty (DOOM-0258).
+  Verified: make test, 26 suites; -rtverify PASS, unchanged numbers.
   **Layman:** The leftovers from reviewing the ray-tracing scene structures and the lighting build. One means that on a busy map, monsters past a hidden limit simply do not appear in the ray-traced view, with no message.
   Kind: investigate.
   Source: review-code 2026-09-01, lanes vk-accel and vk-lighting.
@@ -1337,6 +1354,22 @@ stay in their phase sections; this heading holds only work still to come.
   Kind: implement.
   Source: DOOM-0410 split, review-code 2026-09-01 lane vk-materials.
   Lanes: renderer, shaders, assets.
+
+- 📋 [DOOM-0459] **Past the sprite cap, the traced view drops things in map order, not the farthest ones.**
+  Split from DOOM-0411. RB_BuildSprites fills a fixed buffer
+  (g.sprWorldVertCap, about 4096 things) walking sectors in index order,
+  and skips whatever does not fit. DOOM-0411 made that loud: the first
+  overflowing frame prints how many were dropped. It did not change
+  which ones. Routine on modern slaughtermaps.
+  Fix: when the cap would be exceeded, keep the nearest things, e.g.
+  collect (distance, mobj) for every candidate and keep the closest
+  cap-many before emitting. The overflow path only, so ordinary maps pay
+  nothing. Alternatively size the buffer from the map's thing count at
+  level load, since the BLAS is rebuilt per frame anyway.
+  **Layman:** On a map crowded with monsters, the ray-traced view can leave out a monster right in front of you while still drawing one far behind.
+  Kind: fix.
+  Source: DOOM-0411 split, review-code 2026-09-01 lane vk-accel.
+  Lanes: renderer.
 
 ## 0.9.0 — The codebase can be trusted
 
