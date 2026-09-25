@@ -8,7 +8,7 @@ offline) and writes assets/ultra/derived/<doom_name>_<suffix>.png for each deriv
 derived/ output is gitignored (a derivative work of the WAD art), exactly like the WAD.
 
 Usage:
-  python3 scripts/pbr_derive.py --dump STARTAN3 --wad wads/doom.wad
+  python3 scripts/pbr_derive.py --dump STARTAN3 --wad wads/doom.wad   # -> assets/ultra/derived/
   python3 scripts/pbr_derive.py --wad wads/doom.wad --csv assets/ultra/materials.csv \\
                                 --out assets/ultra/derived
 
@@ -349,10 +349,23 @@ def parse_derive_rows(csv_path):
 
 
 def emit_maps(wad, name, out_dir):
+    """All seven maps or none (DOOM-0413). Every map is derived before any is written,
+    then each is written under a temporary name and renamed into place, so an exception
+    part-way can never leave a partial set the engine would load as a material."""
     rgb, (w, h) = wad.image_rgb(name)
-    for suffix, fn in _DERIVERS.items():
-        pixels, ch = fn(rgb, w, h, name)
-        write_png(os.path.join(out_dir, "%s_%s.png" % (name, suffix)), w, h, pixels, ch)
+    maps = [(suffix, fn(rgb, w, h, name)) for suffix, fn in _DERIVERS.items()]
+    parts = []
+    try:
+        for suffix, (pixels, ch) in maps:
+            final = os.path.join(out_dir, "%s_%s.png" % (name, suffix))
+            write_png(final + ".part", w, h, pixels, ch)
+            parts.append(final)
+        for final in parts:
+            os.replace(final + ".part", final)
+    finally:
+        for final in parts:
+            if os.path.exists(final + ".part"):
+                os.remove(final + ".part")
     return w, h
 
 
@@ -367,9 +380,14 @@ def main():
     wad = Wad(args.wad)
 
     if args.dump:
+        # Into --out (gitignored), not the working directory -- usually the repo
+        # root -- where a WAD-derived image would sit one `git add .` from being
+        # committed (DOOM-0042 keeps WAD content out of the repo; DOOM-0413).
         rgb, (w, h) = wad.image_rgb(args.dump)
-        write_png("%s_dump.png" % args.dump, w, h, rgb, 3)
-        print("wrote %s_dump.png (%dx%d)" % (args.dump, w, h))
+        os.makedirs(args.out, exist_ok=True)
+        dump = os.path.join(args.out, "%s_dump.png" % args.dump)
+        write_png(dump, w, h, rgb, 3)
+        print("wrote %s (%dx%d)" % (dump, w, h))
         return
 
     if not args.csv:

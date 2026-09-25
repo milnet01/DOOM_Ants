@@ -196,6 +196,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Security
 
+- **The Windows build checks a fingerprint of every library it downloads** (DOOM-0413)
+  A swapped or tampered SDL or Vulkan download is now refused instead
+  of built into the game. Also: the release script explains why it
+  stopped instead of exiting silently, and the Windows packaging
+  steps exist once instead of in two drifting copies.
+
 - **Refuse a WAD whose texture lumps claim more than they hold** (DOOM-0402)
   A crafted WAD could make the engine read past the end of its texture list. It now says which lump is wrong and stops.
 

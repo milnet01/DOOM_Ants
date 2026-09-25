@@ -2790,7 +2790,7 @@ defect visible before a player finds it.
   Source: review-code 2026-09-01, tool-gap findings across lanes.
   Lanes: tooling.
 
-- 📋 [DOOM-0413] **Packaging and asset-tooling review tail: seventeen findings across the release, CI and generator scripts.**
+- ✅ [DOOM-0413] **Packaging and asset-tooling review tail: seventeen findings across the release, CI and generator scripts.**
   Not covered by DOOM-0392, DOOM-0393 or DOOM-0394.
 
   build-scripts:
@@ -2845,6 +2845,31 @@ defect visible before a player finds it.
       or a magick failure leaks an extracted 4K EXR set into /tmp.
     - LOW wad_seg_probe.py:76 -- LINEDEFS unpacked as all-unsigned, so a one-sided
       linedef's sidenum -1 reads as 65535.
+  Closed 2026-09-25. All seventeen addressed.
+  release.sh: the compare-link grep no longer kills the script before
+  its diagnostic; $LATEST_FLAG is quoted; the closing line names the
+  build commit and, when different, the tagged commit; the copied
+  Windows packaging is gone and release.sh calls windows-build.sh.
+  mingw-deps.sh: the vulkan-1.def download goes through fetch(), and
+  all four downloads are SHA-256 pinned (user decision 2026-09-25; the
+  AppImage tools stay on floating tags, as dependencies.md accepts).
+  windows-smoke.sh: a non-zero teardown exit is code 4, not the Wine
+  hang's 3; Xvfb picks its display with -displayfd; HUP/INT/TERM run
+  the cleanup; both cp calls are checked.
+  stage_hero.py: the OpenGL normal map wins and a DirectX-only one is
+  green-flipped; the docstring drops the unimplemented arm.R rule and
+  the script says when only a packed ARM map exists; extraction goes
+  to the gitignored derived/ dir and is removed on every exit path.
+  ab_capture.sh: fog-off holds when ~/.doomrc has no rt_fog line.
+  pbr_derive.py: --dump writes into --out; a derive set is all-or-none.
+  wad_seg_probe.py: sidenums are signed, and a missing side is None.
+  Verified: release.sh --publish in a sandbox (stub gh, local origin)
+  passes and prints both commits; with the compare link removed it
+  stops with its message and no tag. mingw-deps.sh passes as pinned and
+  refuses a tampered fingerprint before unpacking. The full Wine smoke
+  boots on its own display (exit 3, the known hang). pbr_derive writes
+  seven maps and no partial files. The probe reads 306 of E1M1's 486
+  linedefs as one-sided.
   **Layman:** The leftovers from reviewing the build, release and asset scripts — including a diagnostic that can never print because the line above it exits first, immediately before a release is tagged.
   Kind: investigate.
   Source: review-code 2026-09-01, lanes build-scripts and asset-tooling.

@@ -73,7 +73,9 @@ class Map:
         L = read_map(path, mapname)
         self.name = mapname
         self.verts = unpack_all(L["VERTEXES"], "<hh")
-        self.lines = unpack_all(L["LINEDEFS"], "<HHHHHHH")
+        # The two sidenums are SIGNED, as vanilla reads them: -1 = no side. Unsigned,
+        # a one-sided line's back side read as 65535 (DOOM-0413).
+        self.lines = unpack_all(L["LINEDEFS"], "<HHHHHhh")
         self.segs = unpack_all(L["SEGS"], "<HHhHhh")
         self.sides = unpack_all(L["SIDEDEFS"], "<hh8s8s8sh")
         self.sectors = unpack_all(L["SECTORS"], "<hh8s8shhh")
@@ -98,7 +100,10 @@ class Map:
         return t, perp
 
     def sector_of(self, ld, side):
+        """The sector on that side, or None for a one-sided line's missing side."""
         sidenum = self.lines[ld][5 + side]
+        if sidenum < 0:
+            return None
         return self.sectors[self.sides[sidenum][5]]
 
 

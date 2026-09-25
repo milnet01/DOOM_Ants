@@ -11,7 +11,10 @@ line so provenance is recorded (every committed hero PNG traces to a CC0 source)
 v1 uploads albedo/normal/AO/height (roughness/metallic are baked by DOOM-0103, not
 here). Map name matching (Poly Haven convention):
   diff|albedo|col -> alb (sRGB)   nor_gl|normal -> nrm (linear, no gamma)
-  ao|arm.R        -> ao  (linear) disp|height|displacement -> hgt (linear)
+  ao              -> ao  (linear) disp|height|displacement -> hgt (linear)
+A DirectX normal map (nor_dx) is used only when no OpenGL one exists, and then
+with its green channel flipped. A packed ARM map is NOT unpacked: a source that
+ships AO only inside one gets no AO map, and the script says so.
 
 Usage:
   python3 scripts/stage_hero.py --zip "<lib>/Metal/metal_plate_02_4k.blend.zip" \\
@@ -74,12 +77,15 @@ def tint_to_doom(alb_path, wad_path, doom_name, chroma_keep=0.12):
     print("  tint <- DOOM %s palette (luma x mean-colour)" % doom_name)
 
 
-def convert_map(src, dst, srgb, gray):
+def convert_map(src, dst, srgb, gray, flip_green=False):
     """Downscale to <=MAXPX and write 8-bit PNG. Non-sRGB maps (normal/ao/height) are
-    passed through with NO colorspace transform so their raw values survive quantization."""
+    passed through with NO colorspace transform so their raw values survive quantization.
+    flip_green converts a DirectX normal map to the OpenGL convention the engine reads."""
     a = [src]
     if not srgb:
         a += ["-set", "colorspace", "RGB", "-colorspace", "RGB"]   # treat values as data, not colour
+    if flip_green:
+        a += ["-channel", "G", "-negate", "+channel"]
     a += ["-resize", "%dx%d>" % (MAXPX, MAXPX)]                    # '>' = only shrink, never enlarge
     if gray:
         a += ["-colorspace", "Gray"]
@@ -87,10 +93,31 @@ def convert_map(src, dst, srgb, gray):
     magick(a)
 
 
+def pick_normal(srcs):
+    """(path, flip_green) for the normal map. The old single regex also matched
+    nor_dx, and took whichever the glob listed first -- a DirectX map silently
+    inverted all relief on that hero (DOOM-0413). OpenGL wins; DX is converted."""
+    names = [(s, os.path.basename(s).lower()) for s in srcs]
+    for s, n in names:
+        if re.search(r"(nor_gl|normal_gl)", n):
+            return s, False
+    for s, n in names:
+        if re.search(r"(_nor|normal)", n) and not re.search(r"(nor_dx|normal_dx|_dx\b)", n):
+            return s, False
+    for s, n in names:
+        if re.search(r"(nor_dx|normal_dx)", n):
+            return s, True
+    return None, False
+
+
 def collect_sources(zip_path, dir_path):
     tmp = None
     if zip_path:
-        tmp = tempfile.mkdtemp(prefix="hero_")
+        # On disk, in the gitignored derived/ dir, not the system temp dir: an
+        # extracted 4K EXR set is hundreds of MB and /tmp is RAM on this machine.
+        scratch = os.path.join(ROOT, "assets", "ultra", "derived")
+        os.makedirs(scratch, exist_ok=True)
+        tmp = tempfile.mkdtemp(prefix="hero_", dir=scratch)
         with zipfile.ZipFile(zip_path) as z:
             for n in z.namelist():
                 if n.lower().endswith((".png", ".jpg", ".jpeg", ".exr")) and not n.endswith("/"):
@@ -116,17 +143,32 @@ def main():
         ap.error("need --zip or --dir")
 
     srcs, tmp = collect_sources(args.zip, args.dir)
+    try:
+        stage(args, srcs)
+    finally:                                          # every exit path (DOOM-0413)
+        if tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+def stage(args, srcs):
     outdir = os.path.join(HEROES, args.family)
     os.makedirs(outdir, exist_ok=True)
     rel = {}                                          # suffix -> repo-relative hero path
     for suffix, rx, srgb, gray in MAP_RULES:
-        match = next((s for s in srcs if rx.search(os.path.basename(s))), None)
+        flip = False
+        if suffix == "nrm":
+            match, flip = pick_normal(srcs)
+        else:
+            match = next((s for s in srcs if rx.search(os.path.basename(s))), None)
         if not match:
+            if suffix == "ao" and any(re.search(r"_arm", os.path.basename(s), re.I) for s in srcs):
+                print("  ao   -- only a packed ARM map found; not unpacked, so no AO map")
             continue
         dst = os.path.join(outdir, "%s_%s.png" % (args.name, suffix))
-        convert_map(match, dst, srgb, gray)
+        convert_map(match, dst, srgb, gray, flip)
         rel[suffix] = os.path.relpath(dst, os.path.join(ROOT, "assets", "ultra"))
-        print("  %-4s <- %s" % (suffix, os.path.basename(match)))
+        print("  %-4s <- %s%s" % (suffix, os.path.basename(match),
+                                  "  (DirectX: green flipped)" if flip else ""))
 
     if "alb" not in rel:
         print("ERROR: no albedo/diffuse map found in the source", file=sys.stderr)
@@ -143,8 +185,6 @@ def main():
     for suffix in ("alb", "nrm", "ao", "hgt"):
         if suffix in rel:
             print("%s  %s  CC0" % (rel[suffix], args.url or "<source-url>"))
-    if tmp:
-        shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":

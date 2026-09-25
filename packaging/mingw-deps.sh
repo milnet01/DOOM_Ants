@@ -28,6 +28,16 @@ SDL2_VER=2.32.10
 SDL2_MIXER_VER=2.8.2
 VULKAN_VER=1.4.350.0
 
+# SHA-256 of each download at the versions above (DOOM-0413, user decision
+# 2026-09-25). A version tag can be moved; a fingerprint cannot. Bumping a version
+# means updating its fingerprint too: a mismatch stops the script and prints the
+# fingerprint it actually got, which is the value to paste here once the new file
+# has been checked.
+SDL2_SHA256=83a5d74012311edc3c0d40ea6faecbe57ad692aa033fa5dc273cc937e3938ff2
+SDL2_MIXER_SHA256=6872029bcca09b12985750d38de8865c66fbef5567715f0e4d89533ccaf3a0f2
+VULKAN_HEADERS_SHA256=70270d10bf2c1e074a06ee37a50b75d332993d1b80a1d9526eeed2da6d82ed22
+VULKAN_DEF_SHA256=9ba339b7f5ee2df28487698a6840ecf095fac58b415c2c89ad9f161e9d316378
+
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 PREFIX="$REPO/mingw-deps/prefix"
 
@@ -63,18 +73,32 @@ trap 'rm -rf "$WORK"' EXIT
 # whole Windows CI job red (run 31622988836) with nothing wrong in the tree.
 # --retry-all-errors covers the connection-reset case too, which a bare --retry
 # (HTTP status codes only) does not.
+# The third argument is the expected SHA-256; a download that does not match is
+# refused, never unpacked.
 fetch() {
   curl -fsSL --connect-timeout 20 --retry 5 --retry-delay 3 --retry-all-errors \
     -o "$1" "$2"
+  local got
+  got="$(sha256sum < "$1" | cut -d' ' -f1)"
+  if [ "$got" != "$3" ]; then
+    echo "mingw-deps.sh: $2" >&2
+    echo "  SHA-256 $got" >&2
+    echo "  expected $3 -- refusing it. After a version bump, check the new file" >&2
+    echo "  and record this fingerprint beside the version at the top of the script." >&2
+    exit 1
+  fi
 }
 
 echo "==> Downloading SDL2 $SDL2_VER, SDL2_mixer $SDL2_MIXER_VER, Vulkan-Headers $VULKAN_VER..."
 fetch "$WORK/sdl2.tar.gz" \
-  "https://github.com/libsdl-org/SDL/releases/download/release-$SDL2_VER/SDL2-devel-$SDL2_VER-mingw.tar.gz"
+  "https://github.com/libsdl-org/SDL/releases/download/release-$SDL2_VER/SDL2-devel-$SDL2_VER-mingw.tar.gz" \
+  "$SDL2_SHA256"
 fetch "$WORK/sdl2_mixer.tar.gz" \
-  "https://github.com/libsdl-org/SDL_mixer/releases/download/release-$SDL2_MIXER_VER/SDL2_mixer-devel-$SDL2_MIXER_VER-mingw.tar.gz"
+  "https://github.com/libsdl-org/SDL_mixer/releases/download/release-$SDL2_MIXER_VER/SDL2_mixer-devel-$SDL2_MIXER_VER-mingw.tar.gz" \
+  "$SDL2_MIXER_SHA256"
 fetch "$WORK/vulkan-headers.tar.gz" \
-  "https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/vulkan-sdk-$VULKAN_VER.tar.gz"
+  "https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/vulkan-sdk-$VULKAN_VER.tar.gz" \
+  "$VULKAN_HEADERS_SHA256"
 
 tar xzf "$WORK/sdl2.tar.gz"          -C "$WORK"
 tar xzf "$WORK/sdl2_mixer.tar.gz"    -C "$WORK"
@@ -107,8 +131,9 @@ cp "$MIXER_SRC"/bin/*.dll "$PREFIX/bin/"
 command -v x86_64-w64-mingw32-dlltool >/dev/null || {
   echo "mingw-deps.sh: x86_64-w64-mingw32-dlltool not found (install the mingw-w64 binutils)" >&2
   exit 1; }
-curl -fsSL -o "$WORK/vulkan-1.def" \
-  "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Loader/vulkan-sdk-$VULKAN_VER/loader/vulkan-1.def"
+fetch "$WORK/vulkan-1.def" \
+  "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Loader/vulkan-sdk-$VULKAN_VER/loader/vulkan-1.def" \
+  "$VULKAN_DEF_SHA256"
 x86_64-w64-mingw32-dlltool -d "$WORK/vulkan-1.def" -l "$PREFIX/lib/libvulkan-1.a" -D vulkan-1.dll
 
 echo "    staged: headers, import libraries and runtime DLLs."

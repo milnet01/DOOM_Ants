@@ -67,8 +67,6 @@ TAG="v$VERSION"
 DIST="$REPO/packaging/build"
 APPIMAGE="$DIST/doom_ants-$VERSION-x86_64.AppImage"
 WINZIP="$DIST/doom_ants-$VERSION-windows-x86_64.zip"
-WIN_PREFIX="$REPO/mingw-deps/prefix"
-WINPTHREAD="/usr/x86_64-w64-mingw32/sys-root/mingw/bin/libwinpthread-1.dll"
 case "$VERSION" in *-*) PRERELEASE=1 ;; *) PRERELEASE=0 ;; esac
 
 # ---- artifact freshness (DOOM-0356) ----
@@ -110,32 +108,11 @@ fi
 if artifact_is_fresh "$WINZIP"; then
   echo "==> Reusing existing Windows zip, built from $HEAD_SHA: $WINZIP"
 else
-  echo "==> Building Windows binary (make windows)..."
-  make -C "$REPO/linuxdoom-1.10" windows
-  EXE="$REPO/linuxdoom-1.10/mingw/doom_ants.exe"
-  [ -f "$EXE" ] || { echo "release.sh: doom_ants.exe was not produced" >&2; exit 1; }
-
-  echo "==> Packaging Windows zip..."
-  for f in "$WIN_PREFIX/bin/SDL2.dll" "$WIN_PREFIX/bin/SDL2_mixer.dll" "$WINPTHREAD"; do
-    [ -f "$f" ] || { echo "release.sh: missing runtime DLL '$f'" >&2; exit 1; }
-  done
-  STAGE="$(mktemp -d)"
-  trap 'rm -rf "$STAGE"' EXIT
-  NAME="doom_ants-$VERSION-windows-x86_64"
-  mkdir -p "$STAGE/$NAME"
-  cp "$EXE" "$WIN_PREFIX/bin/SDL2.dll" "$WIN_PREFIX/bin/SDL2_mixer.dll" "$WINPTHREAD" "$STAGE/$NAME/"
-  cat > "$STAGE/$NAME/README.txt" <<EOF
-DOOM_Ants $VERSION — Windows (x86_64)
-
-Run doom_ants.exe. You must supply a DOOM .wad data file (for example the
-shareware doom1.wad) in the same folder — WADs are not included for licensing
-reasons. The bundled DLLs are required; vulkan-1.dll is provided by your GPU
-driver.
-EOF
-  rm -f "$WINZIP"
-  ( cd "$STAGE" && zip -r -q "$WINZIP" "$NAME" )
-  rm -rf "$STAGE"
-  trap - EXIT
+  # One Windows packaging recipe, not two (DOOM-0413): this block used to be a
+  # near-verbatim copy of windows-build.sh that had already drifted (no mkdir for
+  # the output directory). Same output path, so the freshness stamp below applies.
+  echo "==> Building Windows zip..."
+  "$REPO/packaging/windows-build.sh" "$VERSION"
   [ -f "$WINZIP" ] || { echo "release.sh: Windows zip was not produced" >&2; exit 1; }
   stamp_artifact "$WINZIP"
 fi
@@ -194,7 +171,9 @@ if grep -q "^\[$VERSION\]: " CHANGELOG.md; then
   echo "==> CHANGELOG already has a [$VERSION] compare link"
 else
   echo "==> Adding CHANGELOG compare links for $VERSION..."
-  PREV="$(grep -m1 '^\[Unreleased\]:' CHANGELOG.md | sed -E 's#.*/compare/(.+)\.\.\.HEAD.*#\1#')"
+  # `|| true`: under set -euo pipefail a grep that finds nothing would end the
+  # script right here, with no message, before the diagnostic below (DOOM-0413).
+  PREV="$(grep -m1 '^\[Unreleased\]:' CHANGELOG.md | sed -E 's#.*/compare/(.+)\.\.\.HEAD.*#\1#' || true)"
   if [ -z "$PREV" ]; then echo "release.sh: could not find [Unreleased] compare link" >&2; exit 1; fi
   UL_NEW="[Unreleased]: $BASE_URL/compare/$TAG...HEAD"
   VER_LINK="[$VERSION]: $BASE_URL/compare/$PREV...$TAG"
@@ -261,7 +240,7 @@ LATEST_FLAG="--latest"
 [ "$PRERELEASE" = 1 ] && LATEST_FLAG="--prerelease"
 gh release create "$TAG" -R "$SLUG" \
   --title "$TITLE" \
-  $LATEST_FLAG \
+  "$LATEST_FLAG" \
   --notes "$NOTES" \
   "$APPIMAGE" "$WINZIP"
 
@@ -281,7 +260,17 @@ for f in "$APPIMAGE" "$WINZIP"; do
 done
 rm -rf "$VERIFY_DIR"
 trap - EXIT
-echo "    both assets match the local build of $HEAD_SHA"
+# HEAD_SHA is what the binaries were built from. If a release commit was made
+# above, the tag sits on its child, which touches only CHANGELOG.md and
+# README.md; say both rather than name the parent as if it were the tag
+# (DOOM-0413).
+TAG_SHA="$(git rev-parse "$TAG^{commit}")"
+if [ "$TAG_SHA" = "$HEAD_SHA" ]; then
+  echo "    both assets match the local build of $HEAD_SHA (the tagged commit)"
+else
+  echo "    both assets match the local build of $HEAD_SHA, the parent of tagged"
+  echo "    commit $TAG_SHA (which changes only CHANGELOG.md and README.md)"
+fi
 
 echo
 echo "Released $TAG:"

@@ -38,7 +38,11 @@ mkdir -p "$OUT"; cd "$OUT"
 CFG="${DOOMCFG:-}"
 if [ -z "$CFG" ]; then
     CFG="$OUT/doomrc-ab"
-    sed -e 's/^rt_fog\t\t.*/rt_fog\t\t0/' ~/.doomrc > "$CFG"
+    # Drop any rt_fog line and append one, rather than rewrite it in place: a
+    # ~/.doomrc with no rt_fog line left the substitution matching nothing, and
+    # the capture ran at the engine default while this said fog was off (DOOM-0413).
+    grep -v '^rt_fog[[:space:]]' ~/.doomrc > "$CFG" || true
+    printf 'rt_fog\t\t0\n' >> "$CFG"
 fi
 
 rm -rf dev-shots
@@ -46,8 +50,9 @@ rm -rf dev-shots
 export DOOMASSETDIR="$REPO/assets/ultra/"
 WRAP=()
 if [ -z "${ONSCREEN:-}" ]; then
-    command -v xwfb-run >/dev/null && command -v cage >/dev/null \
-        || { echo "FAIL $NAME — private display needs xwfb-run and cage (or set ONSCREEN=1)"; exit 1; }
+    if ! command -v xwfb-run >/dev/null || ! command -v cage >/dev/null; then
+        echo "FAIL $NAME — private display needs xwfb-run and cage (or set ONSCREEN=1)"; exit 1
+    fi
     # The engine's own timeout sits INSIDE the wrap. Killing xwfb-run from outside
     # leaves cage, Xwayland and the engine running; letting the engine exit first
     # makes xwfb-run tear its display down. The outer timeout is only a backstop.

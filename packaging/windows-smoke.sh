@@ -32,6 +32,9 @@
 #      completing. Which SDL_mixer call Wine deadlocks in is NOT established;
 #      the earlier "native-MIDI stop" attribution was wrong (native MIDI is
 #      opt-in via the SDL_NATIVE_MUSIC hint, which this engine never sets)
+#   4  the engine booted fine, then exited with a non-zero code -- a real
+#      failure in teardown, NOT the accepted Wine hang, so never read as 3
+#      (DOOM-0413; it used to share 3)
 #
 # SAFETY: everything runs on a private Xvfb display and in a throwaway
 # WINEPREFIX under the sandbox dir, so the game can never appear on the user's
@@ -140,31 +143,40 @@ cleanup() {
   if [ "$KEEP" = 1 ]; then echo "    sandbox kept: $SANDBOX"; else rm -rf "$SANDBOX"; fi
 }
 trap cleanup EXIT
+# A closed terminal or Ctrl-C must still tear the sandbox, the prefix and Xvfb
+# down: exiting from the signal handler runs the EXIT trap above (DOOM-0413).
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 STAGE="$SANDBOX/game"
 mkdir -p "$STAGE"
 cp "$EXE" "$STAGE/" || exit 1
 for dll in "$WIN_PREFIX/bin/SDL2.dll" "$WIN_PREFIX/bin/SDL2_mixer.dll" "$WINPTHREAD"; do
   [ -f "$dll" ] || { echo "FAIL: missing runtime DLL '$dll'" >&2; exit 1; }
-  cp "$dll" "$STAGE/"
+  cp "$dll" "$STAGE/" || exit 1
 done
-cp "$IWAD" "$STAGE/game.wad"
+cp "$IWAD" "$STAGE/game.wad" || exit 1
 
 # Classic (software) renderer: the boot smoke is about the game loop, and this
 # keeps the check meaningful on a machine with no GPU (a CI runner) as well as
 # on this one. `renderer 0` is RB_CLASSIC.
 printf '%s\t%s\n' renderer 0 screenblocks 10 use_mouse 0 > "$STAGE/smoke.cfg"
 
-# A private display. Pick a free number so a concurrent run cannot collide.
-DISP=""
-for n in $(seq 90 120); do
-  [ -e "/tmp/.X11-unix/X$n" ] || { DISP=":$n"; break; }
-done
-[ -n "$DISP" ] || { echo "FAIL: no free X display number" >&2; exit 1; }
-Xvfb "$DISP" -screen 0 1280x800x24 >/dev/null 2>&1 &
+# A private display. Xvfb picks the number itself (-displayfd) and reports it
+# once it owns it, so there is no window between checking a number is free and
+# taking it -- the old probe of /tmp/.X11-unix raced a concurrent run and
+# ignored lock files (DOOM-0413).
+DISPFILE="$SANDBOX/display"
+Xvfb -displayfd 3 -screen 0 1280x800x24 3>"$DISPFILE" >/dev/null 2>&1 &
 XVFB_PID=$!
-sleep 2
-kill -0 "$XVFB_PID" 2>/dev/null || { echo "FAIL: Xvfb did not start on $DISP" >&2; exit 1; }
+for _ in $(seq 1 50); do
+  [ -s "$DISPFILE" ] && break
+  kill -0 "$XVFB_PID" 2>/dev/null || break
+  sleep 0.1
+done
+[ -s "$DISPFILE" ] || { echo "FAIL: Xvfb did not start" >&2; exit 1; }
+DISP=":$(tr -d '[:space:]' < "$DISPFILE")"
 
 export WINEPREFIX="$SANDBOX/wineprefix"
 export DISPLAY="$DISP"
@@ -199,7 +211,7 @@ if [ "$RUN_RC" -eq 124 ]; then
 fi
 if [ "$RUN_RC" -ne 0 ]; then
   echo "FAIL: booted and simulated $TICS tics, then exited with code $RUN_RC."
-  exit 3
+  exit 4
 fi
 
 echo "PASS: the Windows build boots, simulates $TICS tics and exits cleanly (${ELAPSED}s)."

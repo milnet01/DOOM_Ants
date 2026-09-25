@@ -5,11 +5,10 @@
 # SDL2_mixer / winpthread runtime DLLs and a short README. vulkan-1.dll comes
 # from the player's GPU driver, so it is deliberately not bundled.
 #
-# Standalone Windows build — use it to build (or rebuild) just the Windows
-# artifact without a full release.sh run, e.g. to ship a Windows-only update.
-# It mirrors the Windows-packaging steps inside packaging/release.sh; if you
-# change the DLL set or staging layout, update both. The output path matches
-# what release.sh expects, so release.sh --publish reuses an artifact built here.
+# The one Windows packaging recipe: packaging/release.sh calls this script for
+# its Windows artifact, and it also runs standalone to build (or rebuild) just
+# the Windows zip, e.g. for a Windows-only update. The output path is the one
+# release.sh expects, so release.sh --publish reuses an artifact built here.
 #
 # Usage:  packaging/windows-build.sh [VERSION]
 #   VERSION    version label for the output filename (default: dev)
