@@ -1186,9 +1186,9 @@ extern "C" { int rb_wet = 1; }
 
 // DOOM-0011: volumetric-fog strength dial (the `;` key; persisted as rt_fog). 0 = off,
 // 1 = Low, 2 = Med, 3 = High. Drives pc.misc6.z on the RT path (modes 4/6, either tier);
-// 0 skips the whole air-march (byte-identical to fog-off, INV-8). Default 1 (subtle "Low"
-// on, matching rb_wet/rb_filth/rb_detile); Q10 (on/off default) is the user's call at L6.
-extern "C" { int rb_fog = 1; }
+// 0 skips the whole air-march (byte-identical to fog-off, INV-8). Default 2 ("Med"), the
+// user's pick 2026-09-25 (spec Q10); m_misc.c's rt_fog row and the golden pin match it.
+extern "C" { int rb_fog = 2; }
 
 // DOOM-0331 L1: bloom strength dial (persisted as rt_bloom; menu row only, no debug
 // key -- see the spec's §9). 0 = Off, 1 = Low, 2 = Medium, 3 = High. Default 2, so the
@@ -10517,12 +10517,12 @@ extern "C" void RB_Vulkan_Present(void)
             // leak the rt_fog note above records. Pin it to the m_misc.c default.
             rb_bloom = 2;
             rb_flashlight = 0;
-            // DOOM-0011 shipped rt_fog (m_misc.c default 1) AFTER this pin was
+            // DOOM-0011 shipped rt_fog (m_misc.c default 2) AFTER this pin was
             // written; fog drives the volumetric march, so leaving it unpinned
             // let the user's ~/.doomrc fog level back into the golden -- the
             // exact leak this block exists to close. NOTE: the current golden
             // predates fog, so re-blessing is still owed (tracked on DOOM-0202).
-            rb_fog = 1;
+            rb_fog = 2;
         }
     }
     g.shotCapture = false;

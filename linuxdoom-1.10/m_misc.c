@@ -378,7 +378,7 @@ default_t	defaults[] =
     {"rt_detile",&rb_detile, 2},		// DOOM-0181: de-tile quality, default 4-tap
     {"rt_filth",&rb_filth, 1},		// DOOM-0187: dirt-stain filth, default on
     {"rt_wet",&rb_wet, 1},		// DOOM-0183: wet-liquid layers, default on
-    {"rt_fog",&rb_fog, 1},		// DOOM-0011: volumetric fog strength 0..3, default Low
+    {"rt_fog",&rb_fog, 2},		// DOOM-0011: volumetric fog strength 0..3, default Med
     {"rt_bloom",&rb_bloom, 2},		// DOOM-0331: bloom strength 0..3, default Medium
 
 

@@ -170,7 +170,7 @@ void main()
             // DOOM-0345 R1 / INV-4: this encode does NOT move out with the surface one.
             // The fogged sky is folded in linear and re-encoded HERE, on both variants;
             // deleting it because "the tone-map moved out" ships a linear, un-encoded sky
-            // on the default path (rt_fog defaults to 1).
+            // on the default path (rt_fog defaults to on).
             sky = toneExposeEncode(skyLin * fog.a + fog.rgb, uintBitsToFloat(pc.misc3.x));
         }
         // DOOM-0345 R1 / INV-5: on the split variant the alpha is the SKY FLAG that

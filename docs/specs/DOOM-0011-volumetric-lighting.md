@@ -2368,6 +2368,8 @@ reasoning stays there.
   on-by-default effect siblings — the spec's current pick) vs `rb_fog=0` (off, user
   opts in). On-by-default means the DOOM-0208 golden is re-blessed *with* fog
   (§8 INV-8) — a review decision (§5).
+  **Decided by the user 2026-09-25: on, at `rb_fog=2` ("Med").** Both defaults and the
+  DOOM-0208 golden pin carry 2.
 - **Q11 (coloured absorption):** v1 uses **scalar** transmittance (§4.1) so the fog
   target stays one `RGBA16F`; per-channel transmittance (green goo darkening the
   red/blue *behind* it, not just adding green inscatter) needs a wider target —

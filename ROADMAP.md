@@ -636,6 +636,9 @@ stay in their phase sections; this heading holds only work still to come.
     - LOW pathtrace.comp:827 -- re-fetches the goo selector already sampled with
       byte-identical arguments at pt_common.glsl:783; one wasted dependent texture
       fetch per stained floor texel.
+  Decided by the user 2026-09-25: switch decodeAlbedo to the exact IEC
+  sRGB curve, retune EMIS_MASK_LO/HI with it, and show before/after
+  captures of the darkest rooms for a look call.
   **Layman:** The leftovers from reviewing the ray-tracing shader code. Nothing automated checks any of it, so these were all found by reading.
   Kind: investigate.
   Source: review-code 2026-09-01, lane shaders-pathtrace.
@@ -1206,6 +1209,9 @@ stay in their phase sections; this heading holds only work still to come.
   mode applied where the mode-switch, recreate and shutdown paths already
   drain), and only then add the NetUpdate calls. Doing the second without the
   first trades a latency bug for a use-after-free.
+  Decided by the user 2026-09-25: skip the Solid<->Ultra rebuild, and
+  free the HD material set on leaving Ultra so Solid keeps DOOM's own
+  art.
   **Layman:** Switching between the Solid and Ultra views rebuilds the whole graphics system when it does not have to, and that same switch is why the 3D views cannot service a network game mid-frame.
   Kind: review-fix.
   Source: review-code 2026-09-01, lane backend-seam (DOOM-0405 F4 and F7); split out 2026-09-21.
@@ -4782,6 +4788,9 @@ in CLAUDE.md describes.
   fog PROPERTIES per sector, read from the WAD, rather than from one global
   model. That is precedent for making our area profile a per-cell property
   of the map instead of a property of what the ray happens to hit.
+  Decided by the user 2026-09-25: the fog dial defaults to Medium (2),
+  not Low. Q32: fix DOOM-0321's wash-out first, then give the sky's fog
+  the hell tint so the sky-wall seam goes away.
 
 - 🚧 [DOOM-0042] **Add a second, high-fidelity art set (DOOM 3 / sci-fi-horror look) selectable alongside the classic art.**
   Two art options for the 3D renderer: (1) DOOM's original art converted to 3D (the DOOM-0008 path, already in progress); (2) a replacement HD art set inspired by DOOM 3 and sci-fi horror generally. LEVEL LAYOUT IS UNCHANGED — same map geometry/segs/sectors and UVs; only the textures, flats, sprites and their materials are swapped. Implies a material-source abstraction (a 'theme' the renderer selects) layered on the bindless material pipeline, plus real PBR maps (albedo/normal/roughness/metallic/emissive) for the HD set rather than flat paletted albedo. LICENSING CONSTRAINT: id Software's DOOM 3 assets are proprietary and CANNOT be shipped in this GPL-v2 repo. Sourcing options to decide with the user: freely/CC0-licensed HD texture+sprite packs, community packs with compatible licences, AI-generated art, or an optional separately-distributed asset pack the user supplies locally. Open decision: which sourcing route. Depends on the bindless material seam and the path tracer (DOOM-0009).
@@ -5845,6 +5854,9 @@ in CLAUDE.md describes.
   level too. Not chosen here; recorded so the choice is made with this
   case in view.
   Evidence: dev-shots/DOOM-0011-look/ (goosky-fog0, goosky-fog2).
+  User decision 2026-09-25: once this is fixed, tint the sky's
+  closed-form fog with mediumTint (DOOM-0011 Q32; DOOM-0407's first
+  finding is the same seam).
 
 - 📋 [DOOM-0323] **The armour bonus's pulsing green eyes derive Le=0, so DOOM-0157's faint path never fires for the one sprite it was written for.**
   User 2026-08-04, having identified the pickup as SPR_BON2 from a
