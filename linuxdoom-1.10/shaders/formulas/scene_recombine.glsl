@@ -8,9 +8,11 @@
 // AO is sampled at plain frame UV while the scene targets are sampled at uv*uvScale (the
 // world fills only the [0,uvScale] corner of a full-size target).
 //
-// The sample coordinate is a PARAMETER because the two consumers do not share one:
-// composite.frag has a vUV varying, bloom_extract_raster.comp is compute and derives its
-// own from gl_GlobalInvocationID.
+// The scene samples are PARAMETERS to sceneRecombineParts because the two consumers do
+// not read them the same way (DOOM-0408/0409): composite.frag upscales, so it filters
+// (sceneRecombine does that fetch); bloom_extract_raster.comp thresholds each source
+// texel before averaging (DOOM-0331 4.2), so it texelFetches them itself. Everything
+// after the fetch is shared.
 //
 // textureLod(..., 0.0), never texture(): one body has to compile in both a fragment and a
 // COMPUTE stage, and compute has no derivatives, so implicit-LOD sampling is invalid
@@ -41,12 +43,11 @@ struct SceneParts
     float viewZ;     // DIRECT's alpha - the sky/far backdrop writes 100000.0 (mesh.frag)
 };
 
-SceneParts sceneRecombineParts(sampler2D amb, sampler2D dir, sampler2D ao,
-                               vec2 uv, vec2 uvScale, float aoEnable)
+// ambient / directS are the AMBIENT and DIRECT samples for this pixel; uv is its
+// full-frame coordinate, which is where the AO is read.
+SceneParts sceneRecombineParts(vec3 ambient, vec4 directS, sampler2D ao,
+                               vec2 uv, float aoEnable)
 {
-    vec2  suv     = uv * uvScale;
-    vec3  ambient = textureLod(amb, suv, 0.0).rgb;
-    vec4  directS = textureLod(dir, suv, 0.0);
     vec3  direct  = directS.rgb;
 
     // A 4-tap bilinear box blur of the half-res AO removes the SSAO dither cheaply (no
@@ -82,7 +83,9 @@ SceneParts sceneRecombineParts(sampler2D amb, sampler2D dir, sampler2D ao,
 vec3 sceneRecombine(sampler2D amb, sampler2D dir, sampler2D ao,
                     vec2 uv, vec2 uvScale, float aoEnable)
 {
-    SceneParts p = sceneRecombineParts(amb, dir, ao, uv, uvScale, aoEnable);
+    vec2 suv = uv * uvScale;
+    SceneParts p = sceneRecombineParts(textureLod(amb, suv, 0.0).rgb, textureLod(dir, suv, 0.0),
+                                       ao, uv, aoEnable);
     return p.direct + p.ambient;
 }
 #endif

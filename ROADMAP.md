@@ -727,7 +727,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: review-code 2026-09-01, lane shaders-raster.
   Lanes: renderer, shaders.
 
-- 📋 [DOOM-0409] **Post-processing shader review tail: six findings, including a half-float overflow that permanently disables anti-ghosting.**
+- ✅ [DOOM-0409] **Post-processing shader review tail: six findings, including a half-float overflow that permanently disables anti-ghosting.**
   Not covered by DOOM-0387 or DOOM-0388.
 
     - MEDIUM svgf_temporal.comp:169 -- the second luminance moment is stored in an
@@ -764,6 +764,22 @@ stay in their phase sections; this heading holds only work still to come.
       demodulated illumination and the composite multiplies it by albedo.
     - LOW label.comp:76 -- FONT[g*7+row] with g unbounded from a push constant;
       every shipped caller is in range, so this is defence-in-depth on a debug path.
+  Closed 2026-09-25. All six fixed; each checked against the code
+  first, and all six held as reported.
+  The SVGF moments image is fp32, and the stored variance is clamped
+  below the half ceiling, since atrous[] is still rgba16f and an
+  infinite variance times a zero weight is NaN there. The raster bloom
+  extract reads exact texels, like the RT extract, through
+  sceneRecombineParts, which now takes fetched samples;
+  sceneRecombine keeps its signature. bake.comp guards Li before the
+  SH projection. rt_tonemap.comp uses textureLod. With no surface grid
+  sample, svgf_temporal carries history where it exists, otherwise
+  zero with a high variance, and no longer reads a sky texel as light.
+  label.comp bounds both the glyph count and the glyph index.
+  Measured, private GPU display, three runs per arm: -rtverify PASS,
+  same numbers as before. Ultra differs by at most 0.71% of pixels,
+  max 14/255, against 0.02% same-build noise. Solid bloom at 50, 75
+  and 100% scale: at most 0.06%, max 4/255.
   **Layman:** The leftovers from reviewing the denoiser and bloom compute shaders. One stores a squared brightness in a format that cannot hold it, and once it overflows the anti-ghosting for that pixel can never switch back on.
   Kind: investigate.
   Source: review-code 2026-09-01, lane shaders-post.

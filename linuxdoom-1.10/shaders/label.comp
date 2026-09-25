@@ -67,13 +67,16 @@ void main()
     int  rx = p.x - x0, ry = p.y - y0;
     if (rx >= 0 && ry >= 0 && ry < gh) {
         uint ci = uint(rx) / cw;
-        if (ci < pc.count) {
+        // Both bounds from the arrays, not the caller (DOOM-0409): count past chars[]'s
+        // 12 or a glyph past FONT's 18 would read out of range. Shipped callers are in
+        // range; this is a debug path, so an unknown glyph just draws nothing.
+        if (ci < min(pc.count, 12u)) {
             uint inX = uint(rx) % cw;
             if (inX < 5u * sc) {
                 uint col = inX / sc;           // 0..4 (left->right)
                 uint row = uint(ry) / sc;      // 0..6
                 uint g   = pc.chars[ci];
-                uint msk = FONT[g * 7u + row];
+                uint msk = g < 18u ? FONT[g * 7u + row] : 0u;
                 ink = ((msk >> (4u - col)) & 1u) != 0u;
             }
         }

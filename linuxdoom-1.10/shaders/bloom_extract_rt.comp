@@ -56,7 +56,8 @@ void main()
         // sky texel contributes exactly zero — generation, not reception (rt_tonemap's own
         // sky arm handles the receiving half).
         vec3 c = s.rgb * step(0.5, s.a);
-        // The same non-finite guard the raster extract carries, and for the same reason:
+        // The same non-finite guard the raster chain carries (in sceneRecombineParts), and
+        // for the same reason:
         // one NaN texel that gets past it is thresholded and then blurred into a
         // +-16-pixel hole in the frame. svgf_composite guards its own radiance, which is
         // the evidence that such values occur in this engine.

@@ -3517,9 +3517,12 @@ void CreateSvgfTargets()
 {
     const uint32_t W = g.extent.width, H = g.extent.height;
     for (uint32_t i = 0; i < SV_COUNT; i++) {
-        VkFormat fmt = (i == SV_GPOS0 || i == SV_GPOS1) ? VK_FORMAT_R32G32B32A32_SFLOAT
-                     : (i == SV_MOTION)                 ? VK_FORMAT_R16G16_SFLOAT
-                                                        : VK_FORMAT_R16G16B16A16_SFLOAT;
+        // The moments are fp32 too (DOOM-0409): m2 = l*l overflows a half at l ~ 256, and
+        // m2 - m1*m1 cancels to quantisation noise between near-equal halves long before.
+        VkFormat fmt = (i == SV_GPOS0 || i == SV_GPOS1
+                        || i == SV_HMOM0 || i == SV_HMOM1) ? VK_FORMAT_R32G32B32A32_SFLOAT
+                     : (i == SV_MOTION)                    ? VK_FORMAT_R16G16_SFLOAT
+                                                           : VK_FORMAT_R16G16B16A16_SFLOAT;
         // DOOM-0011 L1: the fog target is HALF the render extent (rounded up) — it is
         // low-frequency (§4.6), so a quarter of the pixels' worth of storage/bandwidth
         // is enough; the composite upsamples it back (fetchFogBilinear).

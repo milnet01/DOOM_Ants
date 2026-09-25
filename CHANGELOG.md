@@ -32,6 +32,13 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Ray-traced ghosting protection no longer switches off for good on very bright pixels** (DOOM-0409)
+  The denoiser stored a squared brightness in a format too small to
+  hold it. Once it overflowed, that pixel could never reset its
+  history again. Also: the bloom glow no longer smears thin lights at
+  67% and 75% render scale, and a single bad lighting sample can no
+  longer spoil a room's baked light for the whole level.
+
 - **Solid's contact shadows no longer read the edge of a monster as a nearby wall** (DOOM-0408)
   The shadow pass blended depth values across object edges, and a
   blend of a monster's marker value with a wall's depth looked like

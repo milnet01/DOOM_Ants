@@ -181,7 +181,7 @@ int main()
           "the non-finite guard zeroes both recombination terms, not just the bad one");
     check(has(rcq, "return SceneParts(dOut, aOut,"),
           "sceneRecombineParts returns the guarded terms");
-    check(has(exq, "SceneParts sp = sceneRecombineParts("),
+    check(has(exq, "SceneParts sp = sceneRecombineParts(texelFetch(ambientTex, t, 0).rgb, texelFetch(directTex, t, 0),"),
           "the raster extract reads its terms through the guarded function");
 
     // ---- 3. The sky never GENERATES bloom on this chain (INV-9). ----

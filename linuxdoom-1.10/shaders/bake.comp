@@ -149,6 +149,11 @@ void main()
             Li = SKY_COLOR;     // ray escaped through the sky: bounded sky-light fill
         }
 
+        // The same non-finite guard pathtrace.comp applies to shadeSurface's result
+        // (DOOM-0409). Here it matters more: one NaN sample poisons this probe's SH for
+        // the whole level, and every pixel in the subsector reads it every frame.
+        if (any(isnan(Li)) || any(isinf(Li))) Li = vec3(0.0);
+
         // Project incoming radiance onto the real SH-L1 basis for direction wi:
         //   Y00 = 0.282095, Y1m = 0.488603 * {y, z, x}
         vec4 Y = vec4(0.282095, 0.488603 * wi.y, 0.488603 * wi.z, 0.488603 * wi.x);

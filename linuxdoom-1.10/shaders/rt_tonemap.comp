@@ -61,7 +61,9 @@ void main()
         // p is render-res; normalising by the RENDER extent already gives the full-frame
         // UV the bloom targets are mapped in (4.3) — no second factor.
         vec2 uv = (vec2(p) + 0.5) / vec2(pc.renderExtent);
-        L += texture(bloomTex, uv).rgb * pc.bloomIntensity;
+        // textureLod, never texture(): compute has no derivatives (bloom_blur.comp says
+        // why). The bloom target is single-mip, so level 0 is what it read anyway.
+        L += textureLod(bloomTex, uv, 0.0).rgb * pc.bloomIntensity;
     }
 
     imageStore(rtImage, p, vec4(toneExposeEncode(L, pc.ev), 1.0));

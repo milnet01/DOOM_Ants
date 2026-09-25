@@ -30,7 +30,7 @@ layout(set = 0, binding = 0, rgba32f) uniform image2D gpos[2];   // worldPos.xyz
 layout(set = 0, binding = 1, rgba16f) uniform image2D gnorm[2];  // world normal.xyz
 layout(set = 0, binding = 3, rgba16f) uniform image2D gillum;    // demodulated noisy illum (current)
 layout(set = 0, binding = 4, rgba16f) uniform image2D hcol[2];   // integrated colour history
-layout(set = 0, binding = 5, rgba16f) uniform image2D hmom[2];   // .r m1, .g m2, .b histLen
+layout(set = 0, binding = 5, rgba32f) uniform image2D hmom[2];   // .r m1, .g m2, .b histLen (fp32: DOOM-0409)
 layout(set = 0, binding = 6, rgba16f) uniform image2D atrous[2]; // [0] = integrated colour + .a variance
 
 layout(push_constant) uniform PC {
@@ -76,6 +76,7 @@ void main()
     // samples, weighted by full-res G-buffer similarity (normal + world distance) so
     // the upsample stops at silhouettes. This is the spec's "reconstruct in the
     // denoiser" step; the a-trous pass then refines it spatially.
+    bool noSample = false;
     if (gi0.a < 0.5) {
         ivec2 b      = ivec2(p.x & ~1, p.y & ~1);          // top-left grid sample
         float camDst = length(wpos - pc.prevPos.xyz);      // ~camera->surface distance
@@ -95,8 +96,14 @@ void main()
             sum  += imageLoad(gillum, sp).rgb * wt;
             wsum += wt;
         }
-        illum = wsum > 0.0 ? sum / wsum : imageLoad(gillum, b).rgb;
-        l     = lum(illum);
+        // wsum is 0 only when every grid sample was sky. The old fallback read the
+        // top-left one anyway -- a display-encoded sky texel taken as demodulated light,
+        // which the composite then multiplies by albedo (DOOM-0409). With no surface
+        // sample there is no estimate: say so, and let the variance hand the pixel to
+        // the a-trous pass's surface neighbours.
+        noSample = !(wsum > 0.0);
+        illum    = noSample ? vec3(0.0) : sum / wsum;
+        l        = lum(illum);
     }
 
     // --- reproject this world point into the previous camera --------------------
@@ -132,6 +139,10 @@ void main()
             }
         }
     }
+
+    // No sample this frame: where history exists, carry it unchanged. A zero taken as a
+    // real reading would trip the anti-ghosting below and reset the pixel to black.
+    if (noSample && valid) { illum = histC; l = m1; }
 
     float newHist = valid ? min(hist + 1.0, 64.0) : 1.0;
 
@@ -173,6 +184,11 @@ void main()
     // a-trous pass then leans on its spatial neighbourhood (still edge-stopped).
     float var = valid ? max(0.0, nm2 - nm1 * nm1) : 1.0e3;
     if (newHist < 4.0) var = max(var, 4.0 - newHist);
+    if (noSample) var = max(var, 1.0e3);        // no estimate: lean on the neighbours
+    // atrous[] is rgba16f, so a variance past the half ceiling stores as +Inf, and the
+    // a-trous pass then weights it by a neighbour's zero to NaN (DOOM-0409). A stddev of
+    // ~255 is already far wider than any luminance edge-stop can use.
+    var = min(var, 65000.0);
 
     imageStore(hmom[cur], p, vec4(nm1, nm2, newHist, 0.0));
     imageStore(atrous[0], p, vec4(outC, var));
