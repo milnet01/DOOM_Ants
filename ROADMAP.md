@@ -643,6 +643,14 @@ stay in their phase sections; this heading holds only work still to come.
   uses the exact sRGB curve, and the glow mask is defined in palette
   space. The first finding (sky fog omits mediumTint) waits on
   DOOM-0321, by the user's decision. Six findings remain.
+  Progress 2026-09-25 (4f2a969): four more closed -- the triSs read
+  guard, the zero-weight emitters, the goo selector re-fetch and the
+  per-channel clamp comment. The accumulator finding was fixed on the
+  HOST instead: -rtverify now counts non-finite texels and fails, and
+  the shader stays unguarded on purpose. Left open: the sky-fog tint
+  (waits on DOOM-0321) and spotConeFalloff vs the flashlight cone
+  (belongs to DOOM-0388, a look change). Close this item when both have
+  moved to their owners.
   **Layman:** The leftovers from reviewing the ray-tracing shader code. Nothing automated checks any of it, so these were all found by reading.
   Kind: investigate.
   Source: review-code 2026-09-01, lane shaders-pathtrace.

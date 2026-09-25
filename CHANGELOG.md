@@ -8,6 +8,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Volumetric fog now defaults to Medium instead of Low** (DOOM-0011)
+  The user's pick. A saved rt_fog setting in ~/.doomrc still wins.
+
 - **The game is now built with the compiler's optimiser switched on** (DOOM-0434)
   It was shipping with the optimiser off — the setting used for debugging — which looks inherited from the 1997 source rather than chosen. Measured at about 5% less processor time on the original renderer. The classic renderer draws pixel-for-pixel the same frames as before, and the recorded demo fixtures are unchanged, so nothing about how the game plays or looks has moved.
 
@@ -28,6 +31,17 @@ All notable changes to DOOM_Ants are documented here. The format follows
   A 1997 hook for an external statistics program that no longer exists. Passing it crashed the game at the end of a level.
 
 ### Fixed
+
+- **The ray-traced view converts DOOM's colours with the exact sRGB curve** (DOOM-0407)
+  It used a rough approximation that was up to 59% off in the darkest
+  colours. The sky, the HD art and the glow maths already used the exact
+  curve. On screen, dark rooms brighten by about 1/255.
+
+- **Ray-tracer robustness fixes from the shader review** (DOOM-0407)
+  Zero-area lights no longer enter the light list, where they could
+  produce infinite values. A missing GI table is no longer read. The
+  -rtverify self-test now fails on any non-finite pixel instead of
+  passing or reporting nothing.
 
 - **DOOM 1's animated intermission map now draws** (DOOM-0391)
   The between-levels map was static. A check meant to skip the animation for
