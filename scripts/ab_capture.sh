@@ -18,6 +18,14 @@
 #   usage: ab_capture.sh <outdir> <name> <x> <y> <deg> [extra doom args...]
 #   env:   any experiment gate you have compiled in, e.g. RB_NOLIQUIDLE=1
 #          DOOMCFG=<path>  override the temp config (default: ~/.doomrc, fog off)
+#          ONSCREEN=1      run on the user's real display instead of a private one
+#
+# By default the engine runs on a PRIVATE GPU-backed display (xwfb-run + cage, the
+# same recipe as demoreel --gpu), so no window opens on the user's desktop and the
+# Vulkan tiers still get the real graphics card. WAYLAND_DISPLAY is pointed at a name
+# that cannot resolve rather than unset: unset, SDL falls back to wayland-0 and the
+# window lands on the real desktop. The window there is the engine's own size, not
+# the display's, so compare private captures only with private captures.
 #
 set -e
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -36,7 +44,18 @@ fi
 rm -rf dev-shots
 # Ultra silently renders PALETTED art without this; the log line below is the check.
 export DOOMASSETDIR="$REPO/assets/ultra/"
-timeout -s TERM 40 "$REPO/linuxdoom-1.10/linux/linuxxdoom" \
+WRAP=()
+if [ -z "${ONSCREEN:-}" ]; then
+    command -v xwfb-run >/dev/null && command -v cage >/dev/null \
+        || { echo "FAIL $NAME — private display needs xwfb-run and cage (or set ONSCREEN=1)"; exit 1; }
+    # The engine's own timeout sits INSIDE the wrap. Killing xwfb-run from outside
+    # leaves cage, Xwayland and the engine running; letting the engine exit first
+    # makes xwfb-run tear its display down. The outer timeout is only a backstop.
+    WRAP=(timeout -k 5 -s TERM 60
+          xwfb-run -c cage -s '\-geometry' -s 1920x1080 --
+          env WAYLAND_DISPLAY=doom-ab-no-wayland SDL_VIDEODRIVER=x11)
+fi
+"${WRAP[@]}" timeout -s TERM 40 "$REPO/linuxdoom-1.10/linux/linuxxdoom" \
     -iwad "$REPO/wads/doom.wad" -config "$CFG" \
     -warp 1 1 -warpto "$X" "$Y" "$DEG" \
     -inspect -freeze -noinput -devshot 150 "$@" > "$OUT/$NAME.log" 2>&1 || true
