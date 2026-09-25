@@ -25,12 +25,35 @@
 #define RB_ATLAS_START 512
 #define RB_ATLAS_MAX   4096
 
+/* Big-endian reads for the sfnt table directory. */
+static unsigned rb_be16(const unsigned char* p) { return (unsigned)p[0] << 8 | p[1]; }
+static unsigned long rb_be32(const unsigned char* p) {
+    return (unsigned long)p[0] << 24 | (unsigned long)p[1] << 16 | (unsigned long)p[2] << 8 | p[3];
+}
+
+/* stbtt takes no length and trusts the font's own offsets, so a truncated font is
+   read past its end (DOOM-0410). Check that the table directory and every table it
+   lists lie inside ttf_len. It bounds the tables, not every offset inside them;
+   stbtt is not built for hostile fonts, and the one it bakes is compiled in. */
+static int rb_ttf_tables_fit(const unsigned char* ttf, int ttf_len, int offset) {
+    if (ttf_len < 12 || offset < 0 || offset > ttf_len - 12) return 0;
+    unsigned n = rb_be16(ttf + offset + 4);
+    unsigned long dir = (unsigned long)offset + 12, end = dir + 16ul * n;
+    if (end > (unsigned long)ttf_len) return 0;
+    for (unsigned i = 0; i < n; i++) {
+        const unsigned char* rec = ttf + dir + 16ul * i;
+        unsigned long toff = rb_be32(rec + 8), tlen = rb_be32(rec + 12);
+        if (toff > (unsigned long)ttf_len || tlen > (unsigned long)ttf_len - toff) return 0;
+    }
+    return 1;
+}
+
 int rb_text_bake(const unsigned char* ttf, int ttf_len, int px_height, rb_atlas_font_t* out) {
-    (void)ttf_len;   /* stbtt takes a raw pointer; GetFontOffsetForIndex below rejects non-fonts */
-    if (!ttf || px_height <= 0 || !out) return 0;
+    if (!ttf || ttf_len < 12 || px_height <= 0 || !out) return 0;   /* < an sfnt header */
 
     int offset = stbtt_GetFontOffsetForIndex(ttf, 0);
     if (offset < 0) return 0;
+    if (!rb_ttf_tables_fit(ttf, ttf_len, offset)) return 0;
 
     stbtt_fontinfo info;
     if (!stbtt_InitFont(&info, ttf, offset)) return 0;

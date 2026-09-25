@@ -65,11 +65,18 @@ static void test_malformed_wrong_column_count() {
 
 /* --- Task 3 additions --- */
 static std::map<std::string,int>* g_names;      // test fixture: name -> id
-static int test_resolver(const char* name, int* out_id) {
+static std::multimap<std::string,int>* g_multi;   // optional: names with 2 ids
+static int test_resolver(const char* name, int* out_ids, int max_ids) {
+    if (g_multi) {
+        int n = 0;
+        auto r = g_multi->equal_range(name);
+        for (auto it = r.first; it != r.second && n < max_ids; ++it) out_ids[n++] = it->second;
+        return n;
+    }
     if (!g_names) return 0;                     // fixture not installed: resolve nothing
     auto it = g_names->find(name);
     if (it == g_names->end()) return 0;
-    *out_id = it->second; return 1;
+    out_ids[0] = it->second; return 1;
 }
 static void test_ctrl_table_build() {
     static_assert(sizeof(rb_matctrl_t) == 40, "std430 control struct must be 40 bytes");
@@ -113,6 +120,41 @@ static void test_ctrl_table_dup_last_wins() {
               "duplicate name: the last row wins");
     }
     g_names = nullptr;
+}
+
+/* DOOM-0410: a name that is both a wall texture and a flat gets HD on both. */
+static void test_ctrl_table_every_match() {
+    std::multimap<std::string,int> multi = { {"BOTHNAME", 4}, {"BOTHNAME", 9} };
+    g_multi = &multi;
+    rb_matrow_t row;
+    check(rb_parse_material_line("BOTHNAME,hero,a.png,,,,,,,2.0,pom", &row) == 1,
+          "every-match: the row parses");
+    rb_matctrl_t table[12]; int dups = 0;
+    rb_build_ctrl_table(&row, 1, 12, test_resolver, table, &dups);
+    check(table[4].usePBR == 1 && table[9].usePBR == 1,
+          "a row applies to EVERY id its name resolves to, not just the first");
+    check(table[9].uvScale == 2.0f && table[9].flags == RB_FLAG_POM,
+          "the second match carries the row's scale and flags too");
+    check(dups == 0, "two ids from one row are not counted as duplicates");
+    g_multi = nullptr;
+}
+
+/* DOOM-0410: values that would truncate or that fail every comparison. */
+static void test_parser_rejects_what_it_used_to_truncate() {
+    rb_matrow_t r;
+    check(rb_parse_material_line("NAME,hero,a.png,,,,,,,nan,pom", &r) == 1 && r.uv_scale == 1.0f,
+          "a NaN uv_scale falls back to 1.0 instead of reaching the shader");
+    check(rb_parse_material_line("NAME,hero,a.png,,,,,,,inf,pom", &r) == 1 && r.uv_scale == 1.0f,
+          "an infinite uv_scale falls back to 1.0");
+    check(rb_parse_material_line("TOOLONGNAME,hero,a.png,,,,,,,1.0,pom", &r) == -1,
+          "a name over 8 characters is malformed, not truncated to a different name");
+    std::string longPath(200, 'p');
+    std::string line = "NAME,hero," + longPath + ",,,,,,,1.0,pom";
+    check(rb_parse_material_line(line.c_str(), &r) == -1,
+          "a map path longer than its buffer is malformed, not truncated");
+    std::string longFlags = "NAME,hero,a.png,,,,,,,1.0," + std::string(130, 'x');
+    check(rb_parse_material_line(longFlags.c_str(), &r) == -1,
+          "a flags field longer than its buffer is malformed");
 }
 
 /* --- Task 2 coverage gap: three missing parser branches --- */
@@ -182,7 +224,25 @@ static void test_asset_path() {
     check(strcmp(rb_asset_root(), "assets/ultra/") == 0,
           "asset root: an empty variable falls back to the default");
 
+    char tiny[8];
     unsetenv("DOOMASSETDIR");
+    check(rb_asset_path(tiny, sizeof tiny, "materials.csv") == 0 && tiny[0] == '\0',
+          "asset path: a result that would truncate is refused, not cut short");
+
+    // DOOM-0410: the default follows the EXECUTABLE, not the launch directory. The
+    // tests build into linuxdoom-1.10/linux/, the same place as the engine, so the
+    // repo's own assets/ultra/ must be found from there.
+    check(rb_asset_set_exe_dir(DOOM_TESTS_ROOT "/linux/") == 1,
+          "asset root: the source tree's assets/ultra/ is found beside the executable");
+    check(strstr(rb_asset_root(), "/linux/../../assets/ultra/") != nullptr,
+          "asset root: with no DOOMASSETDIR, the executable-relative root is used");
+    setenv("DOOMASSETDIR", "/opt/hd/", 1);
+    check(strcmp(rb_asset_root(), "/opt/hd/") == 0,
+          "asset root: DOOMASSETDIR still wins over the executable-relative root");
+    unsetenv("DOOMASSETDIR");
+    check(rb_asset_set_exe_dir("/nonexistent/dir/") == 0
+          && strcmp(rb_asset_root(), "assets/ultra/") == 0,
+          "asset root: a directory with no materials.csv is not adopted");
 }
 
 int main() {
@@ -194,6 +254,8 @@ int main() {
     test_parser_coverage_gaps();
     test_ctrl_table_build();
     test_ctrl_table_dup_last_wins();
+    test_ctrl_table_every_match();
+    test_parser_rejects_what_it_used_to_truncate();
     test_budget_drops_lowest_traffic();
     test_budget_pins_hero_over_bigger_derived();
     test_asset_path();

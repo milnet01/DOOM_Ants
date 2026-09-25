@@ -27,6 +27,15 @@ int main()
     int badrc = rb_text_bake(NULL, 0, 48, &bad);
     check(badrc == 0, "bake with a NULL font buffer fails cleanly");
 
+    // DOOM-0410: the length is honoured. A font cut short keeps a valid header and
+    // table directory, so only the length can tell the bake that its tables run off
+    // the end -- stbtt itself would read past it.
+    rb_atlas_font_t cut;
+    check(rb_text_bake(oxanium_ttf, 1000, 48, &cut) == 0,
+          "a truncated font is refused, not read past its end");
+    check(rb_text_bake(oxanium_ttf, 8, 48, &cut) == 0,
+          "a buffer shorter than an sfnt header is refused");
+
     // --- the real bake, at the menu's working size ---------------------------------
     rb_atlas_font_t font;
     int rc = rb_text_bake(oxanium_ttf, (int)oxanium_ttf_len, 48, &font);

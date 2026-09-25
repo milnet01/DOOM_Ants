@@ -40,8 +40,18 @@ int main()
     check(img.pixels[0] >= 176 && img.pixels[0] <= 184, "first texel is the authored ~180 grey");
     check(img.pixels[3] == 255, "an RGB source decodes to opaque alpha");
 
-    rb_image_downscale_max(&img, 32);   // longest edge 128 -> 32 (=> 16x32)
+    int iw = 0, ih = 0;
+    check(rb_image_info(SOLID, &iw, &ih) == 1 && iw == 64 && ih == 128,
+          "rb_image_info reads the 64x128 size from the header without decoding");
+    int fw = 0, fh = 0;
+    rb_image_fit_max(64, 128, 32, &fw, &fh);
+    check(fw == 16 && fh == 32, "rb_image_fit_max predicts the downscaled 16x32");
+
+    check(rb_image_downscale_max(&img, 32) == RB_DS_DONE,   // longest edge 128 -> 32
+          "a downscale that happens reports RB_DS_DONE, so the caller can log it");
     check(img.w == 16 && img.h == 32, "downscale to a 32px longest edge preserves aspect (16x32)");
+    check(rb_image_downscale_max(&img, 32) == RB_DS_NONE,
+          "an image that already fits reports RB_DS_NONE");
 
     bool greyOk = true, alphaOk = true;
     for (int i = 0; i < img.w * img.h; i++)

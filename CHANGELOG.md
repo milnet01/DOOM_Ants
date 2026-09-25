@@ -32,6 +32,13 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Ultra finds its HD textures wherever the game is started from** (DOOM-0410)
+  It used to look relative to the folder you launched from, and quietly
+  fell back to the original artwork otherwise. It now looks beside the
+  game itself and says which folder it used. The texture loader also
+  reports every texture it shrinks or leaves out, and it no longer
+  loads every texture into memory before deciding which ones fit.
+
 - **Ray-traced ghosting protection no longer switches off for good on very bright pixels** (DOOM-0409)
   The denoiser stored a squared brightness in a format too small to
   hold it. Once it overflowed, that pixel could never reset its

@@ -606,6 +606,7 @@ struct VulkanState
     int                      hdGrungeIdx = -1;      // DOOM-0179: world-grime overlay slot in
                                                     // the hdTex[] array (-1 = none loaded)
     int                      hdDirtIdx = -1;        // DOOM-0181: world-space dirt colour texture
+    int                      hdMaxImages = 1;       // DOOM-0410: kHdMaxImages clamped to the device
                                                     // slot in hdTex[] (-1 = none loaded)
 
     VkDescriptorSetLayout dsLayout = VK_NULL_HANDLE;
@@ -7053,18 +7054,21 @@ struct HdSrc { const unsigned char* px; int w, h; bool srgb; };
 
 // Resolve a DOOM material name to its unified bindless id (walls direct, flats after
 // numWall). Sprites are excluded from v1 HD. Mirrors r_vulkan.cpp's id math (:5098).
-static int ResolveDoomName(const char* name, int* out_id)
+// Every match, not the first (DOOM-0410): a name that is both a wall texture and a flat
+// gets HD on both, as the spec says. Returns the count; 0 = not in this WAD.
+static int ResolveDoomName(const char* name, int* out_ids, int max_ids)
 {
     char n[9];
     std::strncpy(n, name, 8); n[8] = '\0';
+    int cnt = 0;
     int t = R_CheckTextureNumForName(n);
-    if (t >= 0) { *out_id = t; return 1; }                       // wall
+    if (t >= 0 && cnt < max_ids) out_ids[cnt++] = t;             // wall
     int lump = W_CheckNumForName(n);
-    if (lump >= 0) {
+    if (lump >= 0 && cnt < max_ids) {
         int flatIdx = lump - firstflat;
-        if (flatIdx >= 0 && flatIdx < numflats) { *out_id = g.matNumWall + flatIdx; return 1; }  // flat
+        if (flatIdx >= 0 && flatIdx < numflats) out_ids[cnt++] = g.matNumWall + flatIdx;  // flat
     }
-    return 0;                                                    // not in this WAD (sprite: v1 skips)
+    return cnt;                                                  // 0: not in this WAD (sprite: v1 skips)
 }
 
 // Free the per-level HD GPU resources (pool/set, images, control buffer). Keeps
@@ -7089,6 +7093,25 @@ static void FreeHdMaterials()
 // material array in CreateDescriptors. Compute stage only (RT megakernel).
 static void CreateHdSetLayout()
 {
+    // DOOM-0410: kHdMaxImages is a design cap, not a device fact. A layout declaring more
+    // sampled images than the device allows fails to create, and Check() then ends the
+    // process -- where a smaller array would merely mean fewer HD materials. The RT
+    // pipeline's compute stage also sees the paletted material array (set 1), so leave
+    // room for it and a little headroom for the fixed bindings.
+    VkPhysicalDeviceProperties pdp = {};
+    vkGetPhysicalDeviceProperties(g.phys, &pdp);
+    const VkPhysicalDeviceLimits& lim = pdp.limits;
+    uint64_t room = lim.maxPerStageDescriptorSampledImages;
+    room = std::min<uint64_t>(room, lim.maxPerStageDescriptorSamplers);
+    room = std::min<uint64_t>(room, lim.maxDescriptorSetSampledImages);
+    room = std::min<uint64_t>(room, lim.maxDescriptorSetSamplers);
+    const uint64_t others = (uint64_t)RB_MaterialCount() + 64;
+    room = room > others ? room - others : 1;
+    g.hdMaxImages = (int)std::min<uint64_t>(room, (uint64_t)kHdMaxImages);
+    if (g.hdMaxImages < kHdMaxImages)
+        printf("DOOM-0042: device allows %d HD images (design cap %d).\n",
+               g.hdMaxImages, kHdMaxImages);
+
     VkDescriptorSetLayoutBinding binds[2] = {};
     binds[0].binding = 0;
     binds[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -7096,7 +7119,7 @@ static void CreateHdSetLayout()
     binds[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     binds[1].binding = 1;
     binds[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    binds[1].descriptorCount = kHdMaxImages;   // upper bound; the set alloc picks the actual count
+    binds[1].descriptorCount = (uint32_t)g.hdMaxImages;   // upper bound; the set alloc picks the actual count
     binds[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
     VkDescriptorBindingFlags flags[2] = {
@@ -7389,6 +7412,22 @@ static void EnsureHdMaterials()
     if (rendermode != TIER_RT3D || g.hdBuilt) return;
     const int N = RB_MaterialCount();
 
+    // 0. Where the assets are (DOOM-0410). The default used to be the launch directory,
+    //    so starting the game from anywhere else rendered Ultra paletted with one easily
+    //    missed line of warning. Now the executable's location decides, and the log says
+    //    which root was used and why.
+    static bool exeDirSet = false;
+    if (!exeDirSet) {
+        exeDirSet = true;
+        if (char* base = SDL_GetBasePath()) { rb_asset_set_exe_dir(base); SDL_free(base); }
+    }
+    {
+        const char* env = getenv("DOOMASSETDIR");
+        printf("DOOM-0042: HD asset root %s (%s).\n", rb_asset_root(),
+               (env && *env) ? "DOOMASSETDIR"
+               : rb_asset_exe_root[0] ? "beside the executable" : "launch directory");
+    }
+
     // 1. Load the sidecar (absent => all paletted; not an error).
     char csvPath[512];
     rb_asset_path(csvPath, sizeof(csvPath), "materials.csv");
@@ -7421,10 +7460,20 @@ static void EnsureHdMaterials()
     FlagLiquidFlats(table.data(), N);   // DOOM-0183 L1: name-derived liquid bit (nukage/lava)
 
     // last-wins row per id (matches rb_build_ctrl_table's overwrite policy).
+    // A row naming nothing in this WAD is the likeliest mistake in a hand-edited CSV and
+    // used to vanish (DOOM-0410). Counted with a sample rather than one line each: the
+    // sidecar is shared across IWADs, so the other game's names are expected here.
     std::vector<int> rowForId(N, -1);
+    int unresolved = 0; std::string sample;
     for (int ri = 0; ri < (int)rows.size(); ri++) {
-        int id; if (ResolveDoomName(rows[ri].name, &id) && id >= 0 && id < N) rowForId[id] = ri;
+        int ids[RB_MAX_NAME_IDS];
+        int nid = ResolveDoomName(rows[ri].name, ids, RB_MAX_NAME_IDS);
+        if (nid == 0 && unresolved++ < 5) { sample += ' '; sample += rows[ri].name; }
+        for (int k = 0; k < nid; k++) if (ids[k] >= 0 && ids[k] < N) rowForId[ids[k]] = ri;
     }
+    if (unresolved)
+        printf("DOOM-0042: %d sidecar row(s) name no wall texture or flat in this WAD -"
+               " ignored:%s%s\n", unresolved, sample.c_str(), unresolved > 5 ? " ..." : "");
 
     // 3. Traffic (world surface area per unified id) from the level mesh.
     std::vector<float> traffic(N, 0.0f);
@@ -7442,19 +7491,26 @@ static void EnsureHdMaterials()
         }
     }
 
-    // 4. Decode each HD material's v1 maps. Missing/undecodable ALBEDO -> that material
-    //    falls back to paletted; a missing non-albedo map -> that slot stays default.
-    struct Decoded { int id; int k; rb_image_t img; bool srgb; };
-    std::vector<Decoded> decoded;
+    // 4. Probe each HD material's v1 maps from their FILE HEADERS -- existence and the
+    //    post-clamp size, no decode. The budget runs on these, so only what it keeps is
+    //    ever decoded and peak host RAM is bounded by the budget (DOOM-0410; before, every
+    //    sidecar row was decoded first). Missing ALBEDO -> that material is paletted; a
+    //    missing non-albedo map -> that slot stays default.
+    struct Planned { int id; int k; bool srgb; std::string path; };
+    std::vector<Planned> planned;
     std::vector<float> estMB(N, 0.0f);
     std::vector<int>   isHero(N, 0);
+    auto mbOf = [](int w, int h) {
+        int fw, fh; rb_image_fit_max(w, h, kHdMaxEdge, &fw, &fh);
+        return (float)fw * fh * 4.0f / (1024.0f*1024.0f);
+    };
 
     for (int id = 0; id < N; id++) {
         if (!table[id].usePBR || rowForId[id] < 0) continue;
         const rb_matrow_t& r = rows[rowForId[id]];
         isHero[id] = r.is_hero;
 
-        std::vector<Decoded> mine;
+        std::vector<Planned> mine;
         bool albedoOk = false;
         for (const HdMapSpec& ms : kHdV1Maps) {
             char rel[192]; const char* relPath = nullptr;
@@ -7466,110 +7522,157 @@ static void EnsureHdMaterials()
                 relPath = rel;
             }
             char full[720];
-            rb_asset_path(full, sizeof(full), relPath);
-            rb_image_t img;
-            if (!rb_image_load(full, &img)) {
+            int w = 0, h = 0;
+            if (!rb_asset_path(full, sizeof(full), relPath)) {
+                printf("DOOM-0042: %s: %s map path too long - skipped.\n", r.name, ms.suffix);
+                continue;
+            }
+            if (!rb_image_info(full, &w, &h)) {
                 if (ms.k != RB_ALB)
                     printf("DOOM-0042: %s: no %s map (%s) - default.\n", r.name, ms.suffix, full);
                 continue;
             }
-            rb_image_downscale_max(&img, kHdMaxEdge);
             if (ms.k == RB_ALB) albedoOk = true;
-            estMB[id] += (float)img.w * img.h * 4.0f / (1024.0f*1024.0f);
-            mine.push_back({ id, ms.k, img, ms.srgb });
+            estMB[id] += mbOf(w, h);
+            mine.push_back({ id, ms.k, ms.srgb, full });
         }
         if (!albedoOk) {
-            for (Decoded& d : mine) rb_image_free(&d.img);
             table[id].usePBR = 0;
+            estMB[id] = 0.0f;
             printf("DOOM-0042: %s: no usable albedo - paletted.\n", r.name);
             continue;
         }
-        for (Decoded& d : mine) decoded.push_back(d);
+        for (Planned& pm : mine) planned.push_back(pm);
+    }
+
+    // The two global overlays (grime, dirt) are loaded after the materials and used to sit
+    // outside the budget and the reported total (DOOM-0410). Probe them now and reserve
+    // their share, so the ceiling covers everything uploaded.
+    struct Overlay { const char* rel; const char* tag; bool srgb; bool present; float mb; };
+    Overlay overlays[2] = {
+        { "overlays/grunge.png", "DOOM-0179: grime overlay", false, false, 0.0f },
+        { "overlays/dirt.png",   "DOOM-0181: dirt overlay",  true,  false, 0.0f },
+    };
+    float overlayMB = 0.0f;
+    for (Overlay& o : overlays) {
+        char op[720]; int w = 0, h = 0;
+        if (rb_asset_path(op, sizeof(op), o.rel) && rb_image_info(op, &w, &h)) {
+            o.present = true; o.mb = mbOf(w, h); overlayMB += o.mb;
+        }
     }
 
     // 5. Budget: drop lowest-traffic over the ceiling; returns kept ids in upload order.
+    int wanted = 0;
+    for (int id = 0; id < N; id++) if (table[id].usePBR) wanted++;
     std::vector<int> order(N, -1); int nLoaded = 0;
     rb_apply_budget(table.data(), N, traffic.data(), estMB.data(), isHero.data(),
-                    kHdBudgetMB, order.data(), &nLoaded);
+                    kHdBudgetMB - overlayMB, order.data(), &nLoaded);
+    if (nLoaded < wanted)   // rb_apply_budget flips these to paletted silently (DOOM-0410)
+        printf("DOOM-0042: %d material(s) dropped to paletted (over the %.0f MB budget).\n",
+               wanted - nLoaded, kHdBudgetMB);
 
-    // 6. Assemble the upload list in descending-traffic order; assign map slots. Cap the
-    //    total image count at kHdMaxImages (the bindless-array upper bound): if a material's
-    //    maps won't fit, drop the whole material to paletted (never a partial upload). Not
-    //    reachable by v1 (full DOOM1 ~2000 maps < 4096) but keeps the never-crash contract
-    //    and honours "no silent truncation" for a future full-WAD sidecar.
+    // 6. Decode ONLY what the budget kept, in descending-traffic order, and assign map
+    //    slots. Cap the total image count at the bindless-array bound: if a material's
+    //    maps won't fit, drop the whole material to paletted (never a partial upload).
+    //    Every downscale is logged with both sizes -- "no silent truncation" -- and one
+    //    that could not allocate drops the map rather than uploading it oversized.
+    const int maxImages = g.hdMaxImages;
+    std::vector<rb_image_t> decoded;            // freed after BuildHdSet copies them
     std::vector<HdSrc> srcs;
     float usedMB = 0.0f;
     int   capDropped = 0;
+    auto decode = [&](const char* path, const char* what, rb_image_t* img) -> bool {
+        if (!rb_image_load(path, img)) {
+            printf("DOOM-0042: %s: %s would not decode - skipped.\n", what, path);
+            return false;
+        }
+        const int w0 = img->w, h0 = img->h;
+        const int ds = rb_image_downscale_max(img, kHdMaxEdge);
+        if (ds == RB_DS_OOM) {
+            printf("DOOM-0042: %s: %dx%d over the %d px clamp and no memory to shrink it - skipped.\n",
+                   what, w0, h0, kHdMaxEdge);
+            rb_image_free(img);
+            return false;
+        }
+        if (ds == RB_DS_DONE)
+            printf("DOOM-0042: %s: downscaled %dx%d -> %dx%d.\n", what, w0, h0, img->w, img->h);
+        return true;
+    };
     for (int oi = 0; oi < nLoaded; oi++) {
         int id = order[oi];
+        const char* nm = rows[rowForId[id]].name;
         int cnt = 0;
-        for (Decoded& d : decoded) if (d.id == id) cnt++;
-        if ((int)srcs.size() + cnt > kHdMaxImages) {
+        for (Planned& pm : planned) if (pm.id == id) cnt++;
+        if ((int)srcs.size() + cnt > maxImages) {
             table[id].usePBR = 0;               // no room in the array -> paletted
             capDropped++;
             continue;
         }
-        for (Decoded& d : decoded) {
-            if (d.id != id) continue;
-            table[id].maps[d.k] = (int)srcs.size();
-            srcs.push_back({ d.img.pixels, d.img.w, d.img.h, d.srgb });
-            usedMB += (float)d.img.w * d.img.h * 4.0f / (1024.0f*1024.0f);
-            printf("DOOM-0042: id %d map[%d] %dx%d  (%.1f MB)\n", id, d.k, d.img.w, d.img.h, usedMB);
+        const size_t firstSrc = srcs.size(), firstDec = decoded.size();
+        bool albedoOk = true;
+        for (Planned& pm : planned) {
+            if (pm.id != id) continue;
+            char what[64]; snprintf(what, sizeof(what), "%s map[%d]", nm, pm.k);
+            rb_image_t img;
+            if (!decode(pm.path.c_str(), what, &img)) {
+                if (pm.k == RB_ALB) albedoOk = false;
+                continue;
+            }
+            table[id].maps[pm.k] = (int)srcs.size();
+            decoded.push_back(img);
+            srcs.push_back({ img.pixels, img.w, img.h, pm.srgb });
+        }
+        if (!albedoOk) {                        // header lied or OOM: undo this material
+            for (size_t i = firstDec; i < decoded.size(); i++) rb_image_free(&decoded[i]);
+            decoded.resize(firstDec); srcs.resize(firstSrc);
+            for (int m = 0; m < RB_MAP_COUNT; m++) table[id].maps[m] = -1;
+            table[id].usePBR = 0;
+            printf("DOOM-0042: %s: no usable albedo - paletted.\n", nm);
+            continue;
+        }
+        for (size_t i = firstSrc; i < srcs.size(); i++) {
+            usedMB += (float)srcs[i].w * srcs[i].h * 4.0f / (1024.0f*1024.0f);
+            printf("DOOM-0042: id %d %dx%d  (%.1f MB)\n", id, srcs[i].w, srcs[i].h, usedMB);
         }
     }
     if (capDropped)
         printf("DOOM-0042: %d material(s) dropped to paletted (> %d-image bindless cap).\n",
-               capDropped, kHdMaxImages);
+               capDropped, maxImages);
 
-    // DOOM-0179: append the world-space grime overlay as one extra bindless image — a single
-    // GLOBAL map (not per-material) the shader multiplies over every usePBR surface, sampled by
-    // WORLD position to break the base tiling. Loaded only when at least one HD material exists
-    // (nothing else samples it); its bindless slot rides to the trace in pc.misc5.x. A missing
-    // or undecodable overlay just leaves grime off (index -1) — never fatal.
+    // DOOM-0179 / DOOM-0181: the two global overlays, one extra bindless image each -- a
+    // single map (not per-material) the shader samples by WORLD position, grime to break
+    // the base tiling and dirt for the filth-stain colour. Loaded only when at least one
+    // HD material exists (nothing else samples them); their slots ride to the trace in
+    // pc.misc5.x / .z. A missing or undecodable file just leaves that overlay off (-1).
     g.hdGrungeIdx = -1;
-    rb_image_t grunge; bool grungeOk = false;
-    if (!srcs.empty() && (int)srcs.size() < kHdMaxImages) {   // room in the bindless array
-        char gpath[720];
-        rb_asset_path(gpath, sizeof(gpath), "overlays/grunge.png");
-        if (rb_image_load(gpath, &grunge)) {
-            rb_image_downscale_max(&grunge, kHdMaxEdge);
-            g.hdGrungeIdx = (int)srcs.size();
-            srcs.push_back({ grunge.pixels, grunge.w, grunge.h, false });   // UNORM (raw values)
-            grungeOk = true;
-            printf("DOOM-0179: grime overlay id %d  %dx%d.\n", g.hdGrungeIdx, grunge.w, grunge.h);
-        } else {
-            printf("DOOM-0179: no %s - grime overlay off.\n", gpath);
+    g.hdDirtIdx   = -1;
+    for (int oi = 0; oi < 2; oi++) {
+        Overlay& o = overlays[oi];
+        char op[720];
+        if (srcs.empty() || (int)srcs.size() >= maxImages) break;   // no HD, or no room
+        if (!o.present || !rb_asset_path(op, sizeof(op), o.rel)) {
+            printf("%s: no %s - off.\n", o.tag, o.rel);
+            continue;
         }
-    }
-
-    // DOOM-0181: a second global overlay — a real dirt COLOUR texture the shader samples in
-    // world space for the filth-stain colour, so dirt reads as a photographed texture (organic
-    // tonal + hue variation) instead of a flat tint. sRGB (a colour map, hardware de-gammas).
-    // Rides to the trace in pc.misc5.z; a missing/undecodable file just leaves it off (-1).
-    rb_image_t dirt; bool dirtOk = false;
-    if (!srcs.empty() && (int)srcs.size() < kHdMaxImages) {
-        char dpath[720];
-        rb_asset_path(dpath, sizeof(dpath), "overlays/dirt.png");
-        if (rb_image_load(dpath, &dirt)) {
-            rb_image_downscale_max(&dirt, kHdMaxEdge);
-            g.hdDirtIdx = (int)srcs.size();
-            srcs.push_back({ dirt.pixels, dirt.w, dirt.h, true });   // sRGB colour texture
-            dirtOk = true;
-            printf("DOOM-0181: dirt overlay id %d  %dx%d.\n", g.hdDirtIdx, dirt.w, dirt.h);
-        } else {
-            printf("DOOM-0181: no %s - dirt overlay off.\n", dpath);
-        }
+        rb_image_t img;
+        if (!decode(op, o.tag, &img)) continue;
+        const int slot = (int)srcs.size();
+        (oi == 0 ? g.hdGrungeIdx : g.hdDirtIdx) = slot;
+        decoded.push_back(img);
+        srcs.push_back({ img.pixels, img.w, img.h, o.srgb });   // grime UNORM, dirt sRGB
+        usedMB += (float)img.w * img.h * 4.0f / (1024.0f*1024.0f);
+        printf("%s id %d  %dx%d.\n", o.tag, slot, img.w, img.h);
     }
 
     // 7. Build the set (uploads images + SSBO), then free every decoded image (kept
     //    ones were copied to staging; dropped ones were never uploaded).
     BuildHdSet(srcs, table.data(), N);
-    for (Decoded& d : decoded) rb_image_free(&d.img);
-    if (grungeOk) rb_image_free(&grunge);
-    if (dirtOk) rb_image_free(&dirt);
+    for (rb_image_t& img : decoded) rb_image_free(&img);
 
+    int nHd = 0;                                // after cap and decode drops, not the budget's count
+    for (int id = 0; id < N; id++) if (table[id].usePBR) nHd++;
     printf("DOOM-0042: HD load done - %d material(s), %d image(s), %.1f MB.\n",
-           nLoaded, (int)srcs.size(), usedMB);
+           nHd, (int)srcs.size(), usedMB);
     g.hdBuilt = true;
 }
 
@@ -11328,7 +11431,13 @@ extern "C" void RB_Vulkan_Present(void)
             if (cap.pixels) memcpy(cap.pixels, mapped, nbytes);
             vkUnmapMemory(g.device, g.shotBufMem);
             if (!cap.pixels) { fprintf(stderr, "[shotverify] OOM copying %zu-byte capture\n", nbytes); exit(1); }
-            rb_image_downscale_max(&cap, kGoldenEdge);
+            // DOOM-0410: an unshrunk capture must not reach the compare, or worse the
+            // bootstrap branch, which would write a full-size golden.
+            if (rb_image_downscale_max(&cap, kGoldenEdge) == RB_DS_OOM)
+            {
+                fprintf(stderr, "[shotverify] OOM downscaling the %dx%d capture\n", cap.w, cap.h);
+                exit(1);
+            }
 
             rb_image_t golden;
             if (!rb_image_load(ref, &golden))

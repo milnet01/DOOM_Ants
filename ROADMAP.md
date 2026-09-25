@@ -560,6 +560,10 @@ stay in their phase sections; this heading holds only work still to come.
       g.hdDirtIdx is NOT, so a stale previous-map index rides to the GPU at
       r_vulkan.cpp:9390 and pathtrace.comp:787 uses it as an unguarded bindless
       index.
+  Progress 2026-09-25: the hdDirtIdx finding is fixed by the DOOM-0410
+  loader rewrite. EnsureHdMaterials now resets g.hdGrungeIdx and
+  g.hdDirtIdx together before the overlay loads, so no previous map's
+  index reaches the GPU. Five findings remain.
   **Layman:** Six separate problems in the Vulkan renderer, found by four different reviewers. The most serious are: the weapon is drawn each ray-traced frame using memory that was never written; loading a map with no geometry leaves the renderer pointing at freed memory it then reads every frame; and minimising the window exits the game with an error.
   Kind: fix.
   Source: review-code 2026-09-01, lanes vk-setup, vk-accel, vk-present, vk-rt-frame, vk-materials.
@@ -785,7 +789,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: review-code 2026-09-01, lane shaders-post.
   Lanes: renderer, shaders.
 
-- 📋 [DOOM-0410] **HD material review tail: twelve findings, three of which make Ultra silently render the old art.**
+- ✅ [DOOM-0410] **HD material review tail: twelve findings, three of which make Ultra silently render the old art.**
   Only the hdDirtIdx finding reached DOOM-0390; these are the rest.
 
     - HIGH rb_image.c:67 -- every downscale is silent. DOOM-0042:89 requires the
@@ -837,6 +841,28 @@ stay in their phase sections; this heading holds only work still to come.
     - LOW r_vulkan.cpp:7085 -- kHdMaxImages (4096) is never checked against
       maxDescriptorSetUpdateAfterBindSampledImages, so a below-limit device aborts
       the process rather than degrading to paletted.
+  Closed 2026-09-25. Eleven fixed, one split out as DOOM-0458.
+  Fixed: downscales are logged with both sizes, and an out-of-memory
+  downscale drops the map instead of uploading it oversized (and fails
+  -shotverify rather than bootstrapping a full-size golden). The asset
+  root follows the executable: DOOMASSETDIR, then assets/ultra/ beside
+  the binary if materials.csv is there, then the launch directory; the
+  log names the root and why. Budget drops are counted. uv_scale
+  rejects NaN and inf; the false-positive ledger's atof clause is
+  corrected. Unresolvable rows are counted with a sample, and a name
+  that is a wall and a flat gets HD on both. Sizes come from file
+  headers and the budget runs BEFORE decoding, so peak host RAM is
+  bounded by the budget. The overlays are inside the budget and the
+  total. Over-long names, paths, flags and lines are malformed, not
+  truncated. rb_text_bake checks the font's tables against ttf_len.
+  The HD image cap is clamped to the device's sampled-image limits.
+  That finding named the wrong limit: this layout does not use
+  update-after-bind.
+  Split out: the mip chain, DOOM-0458 (user decision: build it).
+  Verified: make test, 26 suites; the truncated-font test proven red.
+  An Ultra run from a foreign directory with DOOMASSETDIR unset found
+  the assets beside the executable: 18 materials, 75 images, 221.9 MB
+  (213.9 before, the difference being the overlays now counted).
   **Layman:** The leftovers from reviewing the high-definition texture loader. Three of them cause Ultra to fall back to the original artwork without saying so — the exact trap that has already cost this project a whole set of measurements once.
   Kind: investigate.
   Source: review-code 2026-09-01, lane vk-materials.
@@ -1287,6 +1313,30 @@ stay in their phase sections; this heading holds only work still to come.
   Kind: fix.
   Source: split from DOOM-0391, in-session-2026-09-21.
   Lanes: ui.
+
+- 📋 [DOOM-0458] **Ultra's HD textures have no mip chain, so distant surfaces shimmer.**
+  Split from DOOM-0410. BuildHdSet creates every HD image with
+  mipLevels = 1 and no TRANSFER_SRC usage. The DOOM-0042 spec promises a
+  vkCmdBlitImage down-chain and derives its 1.33x VRAM figure from one.
+  The HD sampler's comment in CreateDescriptors claims a full chain.
+  Decided by the user 2026-09-25: build the mip chain (not: amend the
+  spec to single-mip).
+  Why it is not a loader-only change: pathtrace.comp is a compute
+  shader. It samples hdTex[] at many sites with texture(), whose
+  implicit LOD is undefined outside a fragment stage and happens to
+  read level 0 on this driver. Mips only help once every site picks a
+  level itself, e.g. by ray cones. That touches the loader, the
+  megakernel, de-tile, grime, POM and the denoiser's demodulation, so
+  it gets a spec first (write-spec, as a DOOM-0042 amendment).
+  The same amendment should settle the spec's asset-root wording:
+  DOOM-0410 made the code look beside the executable, but the spec
+  also cites DOOMWADDIR's "." default.
+  Budget: estMB must count the chain (x1.33), and kHdBudgetMB is
+  checked against it.
+  **Layman:** Far-away walls in Ultra sparkle and crawl as you move, because the game has no smaller copies of its HD textures to use at a distance.
+  Kind: implement.
+  Source: DOOM-0410 split, review-code 2026-09-01 lane vk-materials.
+  Lanes: renderer, shaders, assets.
 
 ## 0.9.0 — The codebase can be trusted
 

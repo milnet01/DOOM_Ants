@@ -61,17 +61,29 @@ int rb_image_load(const char* path, rb_image_t* out) {
     return 1;
 }
 
+int rb_image_info(const char* path, int* w, int* h) {
+    int comp = 0;
+    return stbi_info(path, w, h, &comp) ? 1 : 0;
+}
+
+void rb_image_fit_max(int w, int h, int max_edge, int* nw, int* nh) {
+    int longest = w > h ? w : h;
+    *nw = w; *nh = h;
+    if (longest <= max_edge || longest == 0) return;
+    double s = (double)max_edge / (double)longest;
+    *nw = (int)(w * s); if (*nw < 1) *nw = 1;
+    *nh = (int)(h * s); if (*nh < 1) *nh = 1;
+}
+
 /* Box-filter downscale so the longest edge is <= max_edge. Averages the source
    texels covered by each destination texel (fractional box, area-weighted-ish via
    nearest integer coverage — good enough for material maps at <=1024). */
-void rb_image_downscale_max(rb_image_t* img, int max_edge) {
-    int longest = img->w > img->h ? img->w : img->h;
-    if (longest <= max_edge || longest == 0) return;
-    double s = (double)max_edge / (double)longest;
-    int nw = (int)(img->w * s); if (nw < 1) nw = 1;
-    int nh = (int)(img->h * s); if (nh < 1) nh = 1;
+int rb_image_downscale_max(rb_image_t* img, int max_edge) {
+    int nw, nh;
+    rb_image_fit_max(img->w, img->h, max_edge, &nw, &nh);
+    if (nw == img->w && nh == img->h) return RB_DS_NONE;
     unsigned char* dst = (unsigned char*)malloc((size_t)nw * nh * 4);
-    if (!dst) return;                       /* OOM: leave img unchanged (never crash) */
+    if (!dst) return RB_DS_OOM;             /* never crash; the caller must not upload it */
     for (int y = 0; y < nh; y++) {
         int sy0 = (int)((double)y     * img->h / nh);
         int sy1 = (int)((double)(y+1) * img->h / nh); if (sy1 <= sy0) sy1 = sy0 + 1;
@@ -95,6 +107,7 @@ void rb_image_downscale_max(rb_image_t* img, int max_edge) {
        under the hood, so freeing either buffer through either path is safe. */
     free(img->pixels);
     img->pixels = dst; img->w = nw; img->h = nh;
+    return RB_DS_DONE;
 }
 
 void rb_image_free(rb_image_t* img) {

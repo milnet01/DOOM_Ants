@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <stdio.h>
+#include <math.h>
 
 #define RB_MAP_COUNT 7
 enum { RB_ALB = 0, RB_NRM, RB_RGH, RB_MET, RB_AO, RB_EMIS, RB_HGT };
@@ -37,6 +38,7 @@ static inline char* rb_trim(char* s) {
 static inline unsigned int rb_parse_flags(const char* field) {
     unsigned int f = 0;
     char buf[128];
+    if (strlen(field) >= sizeof(buf)) return RB_FLAG_BAD;   /* would truncate (DOOM-0410) */
     strncpy(buf, field, sizeof(buf) - 1); buf[sizeof(buf) - 1] = '\0';
     char* start = buf;
     for (char* c = buf; ; c++) {
@@ -57,9 +59,13 @@ static inline unsigned int rb_parse_flags(const char* field) {
     return f;
 }
 
-/* 1 = data row parsed, 0 = comment/blank (skip), -1 = malformed (log + skip). */
+/* 1 = data row parsed, 0 = comment/blank (skip), -1 = malformed (log + skip).
+   A field too long for its buffer is malformed, never truncated (DOOM-0410): a
+   truncated path is a different, valid-looking path, and the row would then fail
+   later as "no usable albedo", naming the wrong cause. */
 static inline int rb_parse_material_line(const char* line, rb_matrow_t* out) {
     char buf[1024];
+    if (strlen(line) >= sizeof(buf) - 1) return -1;   /* over-long (or split) line */
     strncpy(buf, line, sizeof(buf) - 1); buf[sizeof(buf) - 1] = '\0';
     char* s = rb_trim(buf);
     if (!*s || *s == '#') return 0;             /* comment / blank */
@@ -74,18 +80,26 @@ static inline int rb_parse_material_line(const char* line, rb_matrow_t* out) {
     if (n != 11) return -1;                     /* wrong column count */
 
     memset(out, 0, sizeof(*out));
-    strncpy(out->name, rb_trim(col[0]), 8); out->name[8] = '\0';
+    char* nm = rb_trim(col[0]);
+    if (strlen(nm) > 8) return -1;              /* DOOM names are at most 8 chars */
+    strncpy(out->name, nm, 8); out->name[8] = '\0';
 
     char* src = rb_trim(col[1]);
     if      (!strcmp(src, "hero"))   out->is_hero = 1;
     else if (!strcmp(src, "derive")) out->is_hero = 0;
     else return -1;                             /* unknown source */
 
-    for (int i = 0; i < RB_MAP_COUNT; i++)
-        strncpy(out->maps[i], rb_trim(col[2 + i]), sizeof(out->maps[i]) - 1);
+    for (int i = 0; i < RB_MAP_COUNT; i++) {
+        char* mp = rb_trim(col[2 + i]);
+        if (strlen(mp) >= sizeof(out->maps[i])) return -1;   /* path would truncate */
+        strncpy(out->maps[i], mp, sizeof(out->maps[i]) - 1);
+    }
 
+    /* Blank -> 1.0. Zero, negative, NaN and inf -> 1.0 too: NaN fails every
+       comparison, so `<= 0` alone let it through to the shader's UV multiply
+       (DOOM-0410). */
     out->uv_scale = (float)atof(rb_trim(col[9]));
-    if (out->uv_scale <= 0.0f) out->uv_scale = 1.0f;   /* blank/invalid -> 1.0 */
+    if (!isfinite(out->uv_scale) || out->uv_scale <= 0.0f) out->uv_scale = 1.0f;
 
     out->flags = rb_parse_flags(rb_trim(col[10]));
     if (out->flags & RB_FLAG_BAD) return -1;    /* unknown flags token -> malformed */
@@ -101,7 +115,11 @@ typedef struct {
     unsigned int  usePBR;
 } rb_matctrl_t;
 
-typedef int (*rb_name_resolver_t)(const char* name, int* out_id);
+/* Writes up to max_ids unified ids for `name` and returns how many. More than one
+   when the name is both a wall texture and a flat: the sidecar row applies to every
+   match (DOOM-0410). 0 = not in this WAD. */
+#define RB_MAX_NAME_IDS 2
+typedef int (*rb_name_resolver_t)(const char* name, int* out_ids, int max_ids);
 
 static inline void rb_build_ctrl_table(const rb_matrow_t* rows, int nrows, int nmaterials,
                          rb_name_resolver_t resolve, rb_matctrl_t* table, int* dup_count) {
@@ -113,14 +131,17 @@ static inline void rb_build_ctrl_table(const rb_matrow_t* rows, int nrows, int n
     }
     int dups = 0;
     for (int r = 0; r < nrows; r++) {
-        int id = -1;
-        if (!resolve(rows[r].name, &id)) continue;   /* name not in this WAD */
-        if (id < 0 || id >= nmaterials)  continue;
-        if (table[id].usePBR) dups++;                /* already set -> last-wins */
-        for (int m = 0; m < RB_MAP_COUNT; m++) table[id].maps[m] = -1;  /* image load fills these */
-        table[id].uvScale = rows[r].uv_scale;
-        table[id].flags   = rows[r].flags;
-        table[id].usePBR  = 1u;
+        int ids[RB_MAX_NAME_IDS];
+        int nid = resolve(rows[r].name, ids, RB_MAX_NAME_IDS);   /* 0 = not in this WAD */
+        for (int k = 0; k < nid; k++) {
+            int id = ids[k];
+            if (id < 0 || id >= nmaterials) continue;
+            if (table[id].usePBR) dups++;            /* already set -> last-wins */
+            for (int m = 0; m < RB_MAP_COUNT; m++) table[id].maps[m] = -1;  /* image load fills these */
+            table[id].uvScale = rows[r].uv_scale;
+            table[id].flags   = rows[r].flags;
+            table[id].usePBR  = 1u;
+        }
     }
     if (dup_count) *dup_count = dups;
 }
@@ -161,19 +182,47 @@ static inline void rb_apply_budget(rb_matctrl_t* table, int nmaterials,
     free(ent);
 }
 
-/* Asset root for HD material files: $DOOMASSETDIR, else "assets/ultra/" relative to
+/* The executable's directory, set once by the engine (rb_asset_set_exe_dir) so the
+   default root does not depend on where the game was launched from (DOOM-0410).
+   Empty until set, which is the state the unit tests run in. */
+static char rb_asset_exe_root[512];
+
+/* Given the executable's directory (with a trailing separator, as SDL_GetBasePath
+   returns it), adopt <exe>/../../assets/ultra/ -- the source tree, where the binary
+   is linuxdoom-1.10/linux/ -- but only if materials.csv is really there. Returns 1
+   if adopted. Packaged builds ship no HD assets, so there is no second candidate. */
+static inline int rb_asset_set_exe_dir(const char* exe_dir) {
+    char cand[512], csv[600];
+    rb_asset_exe_root[0] = '\0';
+    if (!exe_dir || !*exe_dir) return 0;
+    if (snprintf(cand, sizeof cand, "%s../../assets/ultra/", exe_dir) >= (int)sizeof cand) return 0;
+    snprintf(csv, sizeof csv, "%smaterials.csv", cand);
+    FILE* f = fopen(csv, "r");
+    if (!f) return 0;
+    fclose(f);
+    strcpy(rb_asset_exe_root, cand);
+    return 1;
+}
+
+/* Asset root for HD material files, first match wins: $DOOMASSETDIR; the source
+   tree beside the executable (rb_asset_set_exe_dir); "assets/ultra/" relative to
    the CWD (mirrors how the WAD is found via DOOMWADDIR). */
 static inline const char* rb_asset_root(void) {
     const char* e = getenv("DOOMASSETDIR");
-    return (e && *e) ? e : "assets/ultra/";
+    if (e && *e) return e;
+    if (rb_asset_exe_root[0]) return rb_asset_exe_root;
+    return "assets/ultra/";
 }
 
-/* Join the asset root and a relative path into dst (e.g. root + "materials.csv"). */
-static inline void rb_asset_path(char* dst, int dstsz, const char* rel) {
+/* Join the asset root and a relative path into dst (e.g. root + "materials.csv").
+   Returns 1, or 0 if the result would not fit (dst then holds nothing usable). */
+static inline int rb_asset_path(char* dst, int dstsz, const char* rel) {
     const char* root = rb_asset_root();
     size_t n = strlen(root);
     int need_slash = (n > 0 && root[n-1] != '/');
-    snprintf(dst, dstsz, "%s%s%s", root, need_slash ? "/" : "", rel);
+    int w = snprintf(dst, dstsz, "%s%s%s", root, need_slash ? "/" : "", rel);
+    if (w < 0 || w >= dstsz) { if (dstsz > 0) dst[0] = '\0'; return 0; }
+    return 1;
 }
 
 #endif
