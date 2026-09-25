@@ -56,7 +56,8 @@ void main()
     // and the RT chain already guards against non-finite radiance, which says such values do
     // occur here. With the branch, bloom Off cannot reach the add at all -- that is what makes
     // INV-2 structural rather than a floating-point argument. (The dial being ON is guarded
-    // separately, by the extract's own NaN clamp, since one bad texel becomes a 16-pixel halo.)
+    // separately: sceneRecombineParts zeroes non-finite terms before the extract reads them,
+    // since one bad texel becomes a 16-pixel halo. The same guard covers `hdr` above.)
     if (pc.bloomIntensity > 0.0)
         hdr += texture(bloomTex, vUV).rgb * pc.bloomIntensity;
 

@@ -58,23 +58,10 @@ void main()
 
         SceneParts sp = sceneRecombineParts(ambientTex, directTex, aoTex, uv, pc.uvScale, pc.aoEnable);
         vec3  c    = sp.direct + sp.ambient;
-        // DOOM-0331 L3 (4.4) — the non-finite guard, and it goes HERE rather than at the
-        // combine: this is the only pass reading unguarded values, and one NaN texel that
-        // gets past it is thresholded and then blurred into a +-16-pixel hole in the frame.
-        // The RT chain guards its own radiance the same way (svgf_composite.comp), which is
-        // the evidence that such values do occur in this engine. Landed with L3 because
-        // until the combine existed nothing sampled the result.
-        // Zero BOTH terms, not just the sum: the threshold below is built from
-        // sp.direct and sp.ambient rather than from c, so a non-finite AMBIENT with a
-        // finite DIRECT would leave peak -- and therefore w -- NaN, and `c * w` is NaN
-        // even with c already zeroed. Zeroing the parts reproduces exactly what the
-        // pre-DOOM-0331-Q2 guard achieved by zeroing c alone: peak 0, w 0, no halo.
-        if (any(isnan(c)) || any(isinf(c)))
-        {
-            c          = vec3(0.0);
-            sp.direct  = vec3(0.0);
-            sp.ambient = vec3(0.0);
-        }
+        // The non-finite guard lives in sceneRecombineParts (DOOM-0408), so sp.direct and
+        // sp.ambient arrive here already finite -- zeroed together when either was not.
+        // It used to sit in this pass alone, on the claim that nothing else read the
+        // unguarded values; composite.frag reads the same three targets.
         // Soft knee so a surface crossing the threshold ramps in rather than pops.
         // peak, NOT Rec.709 luminance: luminance weights green at 0.7152 and red at
         // 0.2126, so a red fireball at four times white scores 0.85 and would not bloom

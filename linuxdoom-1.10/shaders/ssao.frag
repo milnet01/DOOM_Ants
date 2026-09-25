@@ -42,7 +42,16 @@ const vec3 KERN[16] = vec3[16](
 
 // Forward-distance linear depth at a frame uv (uv in [0,1] over the whole frame; the world
 // only filled the [0,uvScale] corner of the target, so scale into it).
-float sampleZ(vec2 uv) { return texture(directTex, uv * pc.uvScale).a; }
+// An exact texel read, never a filtered one (DOOM-0408): the channel carries sentinels
+// -- sky +100000, sprites negative -- and a bilinear blend of a sentinel with a real
+// depth is neither. A sprite edge blended with the wall behind it reads as a small
+// positive depth, i.e. a near occluder: the very black halo the negative tag prevents.
+float sampleZ(vec2 uv)
+{
+    ivec2 sz = textureSize(directTex, 0);
+    ivec2 p  = clamp(ivec2(uv * pc.uvScale * vec2(sz)), ivec2(0), sz - 1);
+    return texelFetch(directTex, p, 0).a;
+}
 
 // Reconstruct a view-space position (x right, y up, z = forward distance) from a frame uv + z.
 // Inverse of the fixed-FOV projection: ndc.x = vx/(z*tanH), ndc.y = -aspect*vy/(z*tanH).
@@ -90,6 +99,10 @@ void main()
         float s  = mix(0.1, 1.0, float(i) / float(KERNEL - 1));
         s = s * s;
         vec3  sp  = P + TBN * normalize(KERN[i]) * (s * pc.radius);
+        // P.z is floored at 1 and the offset reaches pc.radius, so a tap can land at or
+        // behind the eye; projUV would divide by it, and a NaN uv passes the bounds test.
+        if (sp.z <= 1.0)
+            continue;
         vec2  suv = projUV(sp);
         if (any(lessThan(suv, vec2(0.0))) || any(greaterThan(suv, vec2(1.0))))
             continue;

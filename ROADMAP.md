@@ -600,7 +600,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: review-code 2026-09-01, lane build-scripts.
   Lanes: packaging.
 
-- 📋 [DOOM-0407] **Path-tracer shader review tail: eight findings not covered by DOOM-0377 or DOOM-0389.**
+- ✅ [DOOM-0407] **Path-tracer shader review tail: eight findings not covered by DOOM-0377 or DOOM-0389.**
     - MEDIUM pathtrace.comp:1880 and pathtrace.comp:1904 -- the sky closed form
       omits mediumTint and the hell-haze density that the world march applies at
       pathtrace.comp:1301 and :1157. pt_common.glsl:151 states the governing rule
@@ -651,12 +651,15 @@ stay in their phase sections; this heading holds only work still to come.
   (waits on DOOM-0321) and spotConeFalloff vs the flashlight cone
   (belongs to DOOM-0388, a look change). Close this item when both have
   moved to their owners.
+  Closed 2026-09-25. Six findings fixed (463f374, 4f2a969). The
+  sky-fog tint moved to DOOM-0321, which records the user's decision.
+  spotConeFalloff vs the flashlight cone moved to DOOM-0388.
   **Layman:** The leftovers from reviewing the ray-tracing shader code. Nothing automated checks any of it, so these were all found by reading.
   Kind: investigate.
   Source: review-code 2026-09-01, lane shaders-pathtrace.
   Lanes: renderer, shaders.
 
-- 📋 [DOOM-0408] **Raster shader review tail: nine findings, including a sentinel depth channel read through a blurring filter.**
+- ✅ [DOOM-0408] **Raster shader review tail: nine findings, including a sentinel depth channel read through a blurring filter.**
   Not covered by DOOM-0378.
 
     - MEDIUM ssao.frag:45 -- the sentinel-encoded depth channel is sampled through a
@@ -701,6 +704,24 @@ stay in their phase sections; this heading holds only work still to come.
       points away from the eye, and a discarded wall shows the scene-pass clear
       {0.05,0.06,0.09} -- a near-black band exactly where Classic draws the texture.
       Cheap test: force the discard off and see whether the band fills.
+  Closed 2026-09-25. Six fixed, one handed on, two dismissed.
+  Fixed: ssao.frag reads depth with texelFetch. The finding was WIDER
+  than reported: kernel taps land between texels at every render
+  scale, and a blended sprite edge read as a near occluder. ssao.frag
+  skips taps at or behind the eye. The non-finite guard moved into
+  sceneRecombineParts, so composite.frag inherits it.
+  kGiBounceStrength mirrors GI_BOUNCE_STRENGTH and scales the printed
+  AMBIENT bound. The flashlight PCF runs only where the beam lands.
+  shader_mirror_test pins the three comment-bound constant pairs.
+  Handed on: the overlay filter vs DOOM-0008 INV-4, to DOOM-0395.
+  Dismissed, WRONG: the materialTex index is range-checked on the host
+  at every derivation (level load, sprite frame, live animation).
+  Dismissed, SUPERSEDED: DOOM-0322's HITS capture shows a ray-tracer
+  miss, which a raster discard cannot cause; 0322 names emit_sky_wall.
+  Measured, Solid raster at E1M1 1056 -3616 90, three runs per arm:
+  2.9% of pixels moved at 100% scale and 2.0% at 50%, against a 0.03%
+  same-build control. Changes sit on silhouette edges and are not
+  visible side by side.
   **Layman:** The leftovers from reviewing the rasterised shading shaders. One reads a channel carrying special marker values through a filter that blends neighbouring pixels — and a blend of a marker and a real value is neither.
   Kind: investigate.
   Source: review-code 2026-09-01, lane shaders-raster.
@@ -2480,6 +2501,13 @@ defect visible before a player finds it.
   one-place decision. If the denoiser is meant to be OUT of INV-7's scope, the spec
   is the side to change -- but section 5 names these curves, so on the evidence the
   code is.
+  Added 2026-09-25 from DOOM-0407: a fifth curve with zero callers.
+  formulas.glsl ships spotConeFalloff, a linear ramp between cos 0.906
+  and 0.966. pathtrace.comp's flashlightDelta hand-rolls the flashlight
+  cone instead: a smoothstep between FLASHLIGHT_COS_OUT 0.82 and
+  FLASHLIGHT_COS_IN 0.92. Different shape and a wider beam. Calling
+  the generated curve changes what the torch looks like, so it needs a
+  look call or a Workbench re-fit to the shipped constants.
   **Layman:** The project's rule is that every tuning curve in the ray-tracing shaders must come from a generated file, so it can be re-fitted in one place. Four of those generated curves are never actually called — the shaders re-derive them inline instead, and two have already drifted to different numbers.
   Kind: fix.
   Source: review-code 2026-09-01, lane shaders-post.
@@ -2599,6 +2627,12 @@ defect visible before a player finds it.
       r_vulkan.cpp:9466.
     - security.md:17's trust-boundary table has no row for map-lump parsing in
       p_setup.c, though that file carries the DOOM-0254 boundary comment itself.
+  Added 2026-09-25 from DOOM-0408, which pointed here but was never
+  listed. DOOM-0008 INV-4 says UI-region pixels match Classic. They
+  cannot at a non-integer scale: overlay.frag upscales with
+  sharp-bilinear, which smooths texel seams, while Classic presents
+  through SDL with nearest filtering. The sharp-bilinear is deliberate
+  and documented in overlay.frag, so the spec is the side to change.
   **Layman:** The review found places where a design document and the code disagree and the DOCUMENT is the wrong one — including a roadmap item whose main piece of evidence turns out not to exist. These need correcting so the next reader is not misled, but none of them is a code change.
   Kind: doc-fix.
   Source: review-code 2026-09-01, multiple lanes.

@@ -62,7 +62,21 @@ SceneParts sceneRecombineParts(sampler2D amb, sampler2D dir, sampler2D ao,
                   + textureLod(ao, uv + vec2( 0.5,  0.5) * t, 0.0).r);
     }
     float aoDirect = mix(1.0, a, AO_DIRECT_WEIGHT);
-    return SceneParts(direct * aoDirect, ambient * a, directS.a);
+    vec3  dOut     = direct * aoDirect;
+    vec3  aOut     = ambient * a;
+
+    // The non-finite guard, HERE so both consumers inherit it (DOOM-0408). The bloom
+    // extract turns one bad texel into a +-16-pixel hole, and composite.frag hands the
+    // sum to pbrNeutralToneMapping, which propagates NaN to the swapchain. Zero BOTH
+    // terms, not just the bad one: the extract builds its threshold from the two parts
+    // separately, so a finite DIRECT beside a NaN AMBIENT would still reach its weight.
+    // The RT chain guards its own radiance the same way (svgf_composite.comp).
+    if (any(isnan(dOut)) || any(isinf(dOut)) || any(isnan(aOut)) || any(isinf(aOut)))
+    {
+        dOut = vec3(0.0);
+        aOut = vec3(0.0);
+    }
+    return SceneParts(dOut, aOut, directS.a);
 }
 
 vec3 sceneRecombine(sampler2D amb, sampler2D dir, sampler2D ao,

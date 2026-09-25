@@ -1289,6 +1289,13 @@ static const float kBloomRasterGain  = 50.0f;
 // bloom_threshold_test.cpp scrapes both and reddens if they differ.
 static const float kAmbientSectorMax = 0.75f;
 
+// DOOM-0408 — the other half: mesh.frag scales the bounce by GI_BOUNCE_STRENGTH, and its
+// comment offers that constant as the tuning dial. The printed bound must carry the same
+// factor, or raising the dial lifts the true ceiling above a ramp start while the print
+// and the preset table stay put. Mirrored for the same reason as above, and scraped by
+// the same test.
+static const float kGiBounceStrength = 1.0f;
+
 static const BloomPreset& CurrentBloomPreset()
 {
     const int i = rb_bloom < 0 ? 0 : (rb_bloom > 3 ? 3 : rb_bloom);
@@ -8623,9 +8630,10 @@ void RunGiBake()
     int   nonFinite = 0, nonZero = 0;
     double dcSum[3] = { 0, 0, 0 };
     // DOOM-0331 §10 Q5 — the map's AMBIENT ceiling, which INV-4's ramp start has to clear.
-    // mesh.frag writes AMBIENT = albedo * sect + albedo * giIrradiance(probe, n), so with
-    // albedo <= 1 (paletted art) and sect <= BASE_SECTOR_DIM (0.75), map-wide
-    //     AMBIENT <= 0.75 + max over probes and normals of giIrradiance()
+    // mesh.frag writes AMBIENT = albedo * sect + GI_BOUNCE_STRENGTH * albedo *
+    // giIrradiance(probe, n), so with albedo <= 1 (paletted art) and sect <=
+    // BASE_SECTOR_DIM (0.75), map-wide
+    //     AMBIENT <= 0.75 + GI_BOUNCE_STRENGTH * max over probes and normals of giIrradiance()
     // and that second term is a closed form of the SH-L1 payload already mapped here, so
     // the bound costs one pass over data the finiteness scan is walking anyway. It is a
     // BOUND, not a sample: taken per channel independently and over every normal DOOM can
@@ -8679,7 +8687,7 @@ void RunGiBake()
     printf("RB_Vulkan: GI bounce ceiling — max giIrradiance %.3f at probe %u (%.0f %.0f %.0f); "
            "AMBIENT bound %.3f = %.2f sector + bounce (DOOM-0331 INV-4 floor is 1.00)\n",
            giMax, giMaxProbe, giProbePos[0], giProbePos[1], giProbePos[2],
-           kAmbientSectorMax + giMax, kAmbientSectorMax);
+           kAmbientSectorMax + kGiBounceStrength * giMax, kAmbientSectorMax);
     fflush(stdout);
 }
 

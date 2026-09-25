@@ -171,8 +171,18 @@ int main()
     // sufficient while the threshold was built from that colour. It no longer is:
     // peak now comes from sp.direct and sp.ambient, and `c * w` is NaN even with c
     // zeroed if either term is left non-finite.
-    check(has(exq, "c = vec3(0.0); sp.direct = vec3(0.0); sp.ambient = vec3(0.0);"),
-          "the non-finite guard zeroes both recombination terms, not just their sum");
+    // DOOM-0408 moved the guard into sceneRecombineParts, so composite.frag's tone
+    // map inherits it too. The extract is covered only while it still takes its
+    // terms from that function, so both halves are checked.
+    const std::string rcq = squeeze(slurp(DOOM_TESTS_ROOT "/shaders/formulas/scene_recombine.glsl"));
+    check(has(rcq, "any(isnan(dOut)) || any(isinf(dOut)) || any(isnan(aOut)) || any(isinf(aOut))"),
+          "the non-finite guard tests both recombination terms");
+    check(has(rcq, "dOut = vec3(0.0); aOut = vec3(0.0);"),
+          "the non-finite guard zeroes both recombination terms, not just the bad one");
+    check(has(rcq, "return SceneParts(dOut, aOut,"),
+          "sceneRecombineParts returns the guarded terms");
+    check(has(exq, "SceneParts sp = sceneRecombineParts("),
+          "the raster extract reads its terms through the guarded function");
 
     // ---- 3. The sky never GENERATES bloom on this chain (INV-9). ----
     // mesh.frag writes the sky as outDirect = vec4(skyOut, 100000.0); ssao.frag reads
@@ -207,6 +217,26 @@ int main()
                       "BASE_SECTOR_DIM (%.3f vs %.3f)", (double)sectorMax, (double)baseDim);
         check(sectorMax == baseDim, what);
     }
+
+    // ---- 4b. ...and its bounce half carries mesh.frag's dial (DOOM-0408). ----
+    // mesh.frag scales the bounce by GI_BOUNCE_STRENGTH and calls it the tuning dial.
+    // Raised to 2.0 with the print unscaled, the true ceiling passes Low's ramp start
+    // while the printed bound does not move: the kBloomRasterScale shape again.
+    float bounceMirror = 0.0f, bounceDial = 0.0f;
+    const bool haveBMirror = scalar(vk, "kGiBounceStrength", &bounceMirror);
+    const bool haveBDial   = !ms.empty() && scalar(ms, "GI_BOUNCE_STRENGTH", &bounceDial);
+    check(haveBMirror, "kGiBounceStrength is still a named constant in r_vulkan.cpp");
+    check(haveBDial,   "GI_BOUNCE_STRENGTH is still a named constant in mesh.frag");
+    if (haveBMirror && haveBDial)
+    {
+        char what[160];
+        std::snprintf(what, sizeof what,
+                      "the AMBIENT ceiling's bounce factor still equals mesh.frag's "
+                      "GI_BOUNCE_STRENGTH (%.3f vs %.3f)", (double)bounceMirror, (double)bounceDial);
+        check(bounceMirror == bounceDial, what);
+    }
+    check(has(squeeze(vk), "kAmbientSectorMax + kGiBounceStrength * giMax"),
+          "the printed AMBIENT bound scales the bounce by the mirrored dial");
 
     return check_summary("bloom_threshold_test");
 }

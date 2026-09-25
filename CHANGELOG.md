@@ -32,6 +32,13 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Solid's contact shadows no longer read the edge of a monster as a nearby wall** (DOOM-0408)
+  The shadow pass blended depth values across object edges, and a
+  blend of a monster's marker value with a wall's depth looked like
+  a close occluder. It now reads exact values. Also: a bad pixel can
+  no longer reach the screen through the tone mapper, and the torch's
+  shadow is only computed where the beam actually lands.
+
 - **The ray-traced view converts DOOM's colours with the exact sRGB curve** (DOOM-0407)
   It used a rough approximation that was up to 59% off in the darkest
   colours. The sky, the HD art and the glow maths already used the exact

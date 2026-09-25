@@ -120,10 +120,12 @@ const float PI = 3.14159265358979;
 // indirect irradiance is low (mean DC ~0.013 on E1M1), so this fill is faint on top
 // of DOOM's bright flat sector light — the visible lift comes from L1b's direct
 // point lights + a later sector-light rebalance; kept here as the tunable dial.
+// MIRRORED by kGiBounceStrength in r_vulkan.cpp, which scales the AMBIENT bound
+// DOOM-0331 INV-4 is read against; bloom_threshold_test.cpp fails if they differ.
 const float GI_BOUNCE_STRENGTH = 1.0;
 
 // DOOM-0170 L1b point-light dials (§6 seeds; §9 Q1/Q4 tuning). RASTER_MAX_LIGHTS must
-// match RASTER_MAX_LIGHTS_PER_SUBSECTOR in r_vulkan.cpp. RADIUS is the half-bright
+// match RASTER_MAX_LIGHTS_PER_SUBSECTOR in r_vulkan.cpp (shader_mirror_test checks). RADIUS is the half-bright
 // distance (world units). Each emitter's Le is used as COLOUR ONLY (normalized by its
 // max channel), because the raw Le is a radiometric NEE value (sprite lamps carry a ×12
 // build boost, big surfaces enter as many triangles) that summed as raw intensity blows
@@ -177,11 +179,13 @@ float flashlightShadow(vec3 worldPos)
     if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))))
         return 1.0;
     float cur = ndc.z - 0.0015;              // small depth bias vs. surface acne
-    const float texel = 1.0 / 2048.0;        // matches kShadowDim
+    const float texel = 1.0 / 2048.0;        // matches kShadowDim (shader_mirror_test)
     float sum = 0.0;
     for (int y = -1; y <= 1; ++y)
     for (int x = -1; x <= 1; ++x)
-        sum += (cur <= texture(shadowMap, uv + vec2(x, y) * texel).r) ? 1.0 : 0.0;
+        // textureLod: the caller branches per pixel, where implicit LOD is undefined.
+        // The map has one mip, so level 0 is what texture() picked anyway.
+        sum += (cur <= textureLod(shadowMap, uv + vec2(x, y) * texel, 0.0).r) ? 1.0 : 0.0;
     return sum / 9.0;
 }
 
@@ -323,7 +327,7 @@ void main()
         // DOOM-0170 L2c: hold the torch UP and to the SIDE of the eye (Doom 3-style) so its cast
         // shadows are visible — a light exactly at the eye casts none you can see (the shadow
         // hides behind its caster). These offsets MUST match the shadow pass (kFlashOffRight/Up
-        // in r_vulkan.cpp) so the shadow lines up with the lit beam. View space: right + world up.
+        // in r_vulkan.cpp; shader_mirror_test checks) so the shadow lines up with the lit beam. View space: right + world up.
         const float FLASH_OFF_RIGHT = 28.0;
         const float FLASH_OFF_UP    = 22.0;
         vec3  fwd    = vec3(cos(pc.yaw), sin(pc.yaw), 0.0);
@@ -336,8 +340,11 @@ void main()
         float spot   = smoothstep(0.82, 0.92, dot(fdir, fwd));    // cone ~35->23 deg
         float fall   = clamp(1.0 - fdist / 1200.0, 0.0, 1.0);     // near-bright beam
         float facing = max(dot(normalize(vNormal), -fdir), 0.0);  // surface faces lamp
-        float sh     = flashlightShadow(vWorldPos);               // L2c cast-shadow PCF
-        float flash  = min(spot * fall * facing * sh, max(0.0, 1.0 - sect));
+        float lit    = spot * fall * facing;
+        // L2c cast-shadow PCF: nine taps, so only where the beam lands (DOOM-0408). It
+        // only multiplies, so skipping it where lit is 0 changes no pixel.
+        float sh     = lit > 0.0 ? flashlightShadow(vWorldPos) : 1.0;
+        float flash  = min(lit * sh, max(0.0, 1.0 - sect));
         direct += albedo * flash;
     }
 
