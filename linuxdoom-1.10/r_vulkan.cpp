@@ -154,6 +154,21 @@ enum { TIER_CLASSIC = 0, TIER_RT3D = 1, TIER_RASTER3D = 2 };
 // Headless: no SDL window or VkSurface is created, so this is safe to call at
 // startup before any window rework (per the spec's Window & device ownership).
 //
+// A device's extensions, or none if the query itself fails (DOOM-0412). Both callers
+// only ask "is extension X there?", so "none" is the safe answer: the device is
+// treated as lacking ray tracing rather than trusted on a failed enumeration.
+static std::vector<VkExtensionProperties> DeviceExtensions(VkPhysicalDevice d)
+{
+    uint32_t n = 0;
+    if (vkEnumerateDeviceExtensionProperties(d, nullptr, &n, nullptr) < 0)
+        return {};
+    std::vector<VkExtensionProperties> exts(n);
+    if (n && vkEnumerateDeviceExtensionProperties(d, nullptr, &n, exts.data()) < 0)
+        return {};
+    exts.resize(n);                 // VK_INCOMPLETE: keep only what was written
+    return exts;
+}
+
 extern "C" int RB_VulkanProbe(void)
 {
     // Probe once and cache: RB_Init logs it, and the back-end Available()
@@ -212,11 +227,7 @@ extern "C" int RB_VulkanProbe(void)
               f12.descriptorBindingPartiallyBound))
             continue;  // cannot run the bindless 3D path — leave it on Classic.
 
-        uint32_t next = 0;
-        vkEnumerateDeviceExtensionProperties(d, nullptr, &next, nullptr);
-        std::vector<VkExtensionProperties> exts(next);
-        if (next)
-            vkEnumerateDeviceExtensionProperties(d, nullptr, &next, exts.data());
+        const std::vector<VkExtensionProperties> exts = DeviceExtensions(d);
 
         bool accel = false, rayq = false;
         for (const VkExtensionProperties& e : exts)
@@ -1356,10 +1367,12 @@ inline void Check(VkResult r, const char* what)
 bool HasInstanceLayer(const char* name)
 {
     uint32_t n = 0;
-    vkEnumerateInstanceLayerProperties(&n, nullptr);
+    if (vkEnumerateInstanceLayerProperties(&n, nullptr) < 0)   // DOOM-0412: failed = absent
+        return false;
     std::vector<VkLayerProperties> layers(n);
-    if (n)
-        vkEnumerateInstanceLayerProperties(&n, layers.data());
+    if (n && vkEnumerateInstanceLayerProperties(&n, layers.data()) < 0)
+        return false;
+    layers.resize(n);
     for (const VkLayerProperties& l : layers)
         if (!strcmp(l.layerName, name))
             return true;
@@ -1445,11 +1458,7 @@ void CreateInstance()
 // an RT-capable GPU when more than one device can present.)
 bool DeviceHasRT(VkPhysicalDevice d)
 {
-    uint32_t n = 0;
-    vkEnumerateDeviceExtensionProperties(d, nullptr, &n, nullptr);
-    std::vector<VkExtensionProperties> exts(n);
-    if (n)
-        vkEnumerateDeviceExtensionProperties(d, nullptr, &n, exts.data());
+    const std::vector<VkExtensionProperties> exts = DeviceExtensions(d);
     bool accel = false, rayq = false;
     for (const VkExtensionProperties& e : exts)
     {
@@ -1670,14 +1679,33 @@ void CreateSwapchain()
     std::vector<VkSurfaceFormatKHR> formats(fn);
     Check(vkGetPhysicalDeviceSurfaceFormatsKHR(g.phys, g.surface, &fn, formats.data()),
           "vkGetPhysicalDeviceSurfaceFormatsKHR");
+    // Any 8-bit UNORM layout will do, in this order. The old fallback was formats[0]
+    // with no word, and formats[0] can be _SRGB -- the double-gamma case above, which the
+    // RT blit also assumes away -- or a 10-bit format the dev screenshot cannot encode.
+    // Falling back is still allowed (better an image than none), but it now says what it
+    // got (DOOM-0412).
+    static const VkFormat kWant[] = { VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_R8G8B8A8_UNORM };
     VkSurfaceFormatKHR fmt = formats[0];
-    for (const VkSurfaceFormatKHR& f : formats)
-        if (f.format == VK_FORMAT_B8G8R8A8_UNORM &&
-            f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
-        {
-            fmt = f;
-            break;
-        }
+    bool preferred = false;
+    for (VkFormat want : kWant)
+    {
+        for (const VkSurfaceFormatKHR& f : formats)
+            if (f.format == want && f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+            {
+                fmt = f;
+                preferred = true;
+                break;
+            }
+        if (preferred) break;
+    }
+    if (!preferred)
+    {
+        const bool srgb = fmt.format == VK_FORMAT_B8G8R8A8_SRGB
+                       || fmt.format == VK_FORMAT_R8G8B8A8_SRGB
+                       || fmt.format == VK_FORMAT_A8B8G8R8_SRGB_PACK32;
+        printf("R_Vulkan: no 8-bit UNORM surface format; using VkFormat %d%s.\n",
+               (int)fmt.format, srgb ? " (sRGB: colours will look washed out)" : "");
+    }
     g.format = fmt.format;
 
     // Extent: honour the surface's fixed size, else the window's drawable size.
@@ -1822,7 +1850,7 @@ void CreateCommandsAndSync()
     // DOOM-0090: timestamp query pool for the opt-in per-pass GPU profiler. Needs a
     // non-zero timestampPeriod (the device can convert ticks to ns) and a queue that
     // can write timestamps (timestampValidBits != 0); otherwise leave it null and the
-    // profiler stays a no-op. 8 slots (5 used) to keep the reset/read simple.
+    // profiler stays a no-op. 10 slots (queryCount below) to keep the reset/read simple.
     VkPhysicalDeviceProperties pdp = {};
     vkGetPhysicalDeviceProperties(g.phys, &pdp);
     g.timestampPeriod = pdp.limits.timestampPeriod;
@@ -3228,9 +3256,10 @@ void CreateTaauPipeline()
 
 // DOOM-0331 L2 (§5) — the raster bright pass: its own 4-binding descriptor set + compute
 // pipeline. b0/b1/b2 are the three targets composite.frag samples (AMBIENT, DIRECT, the
-// half-res AO), through the same linear+clamp composite sampler so the extract's fetches
-// match the composite's; b3 is the half-res bloomImage[0] as a storage image. The push
-// range is 20 bytes (uvScale, aoEnable, threshold, knee), matching the shader's block.
+// half-res AO), bound with the composite sampler; since DOOM-0409 the extract texelFetches
+// the two scene targets (the sampler still serves its AO read). b3 is the half-res
+// bloomImage[0] as a storage image. The push range is 24 bytes (uvScale, aoEnable,
+// threshold, knee, chainScale), matching the shader's block.
 // Size-INDEPENDENT: the image views change on resize, but they are re-pointed by
 // UpdateCompositeDescriptor, so this is built once with the other pipelines.
 void CreateBloomPipeline()
@@ -5844,7 +5873,7 @@ void DestroyFramebufferResources()
 
 void RecreateSwapchain()
 {
-    vkDeviceWaitIdle(g.device);
+    Check(vkDeviceWaitIdle(g.device), "vkDeviceWaitIdle(recreate swapchain)");
     DestroyFramebufferResources();
     if (g.rtEnabled) DestroyRtTargets();   // swapchain-sized; rebuilt below
     CreateSwapchain();   // reuses g.swapchain as oldSwapchain, then replaces it
@@ -7082,6 +7111,8 @@ static int ResolveDoomName(const char* name, int* out_ids, int max_ids)
 static void FreeHdMaterials()
 {
     if (g.device == VK_NULL_HANDLE) return;
+    // Unchecked on purpose (DOOM-0412): I_Error runs I_ShutdownGraphics, which reaches
+    // here, so a Check() failing on a lost device would re-enter I_Error forever.
     vkDeviceWaitIdle(g.device);
     for (VkImageView v : g.hdViews) if (v) vkDestroyImageView(g.device, v, nullptr);
     for (VkImage im : g.hdImages)   if (im) vkDestroyImage(g.device, im, nullptr);
@@ -9215,7 +9246,7 @@ extern "C" void RB_Vulkan_BuildLevel(void)
     // and shutdown paths all drain first; the level-load path must too, or the
     // in-flight frame can use-after-free g.vbuf. Level load is not perf-critical.
     if (g.device)
-        vkDeviceWaitIdle(g.device);
+        Check(vkDeviceWaitIdle(g.device), "vkDeviceWaitIdle(build level)");
 
     if (g.levelMesh)
     {
@@ -10496,7 +10527,7 @@ extern "C" void RB_Vulkan_Present(void)
     // next same-mode frame.
     const bool modeChanged = (rtActive != g.lastRtActive);
     if (modeChanged)
-        vkDeviceWaitIdle(g.device);
+        Check(vkDeviceWaitIdle(g.device), "vkDeviceWaitIdle(present)");
     g.lastRtActive = rtActive;
 
     // Build-ahead: run the CPU build now, overlapping the previous frame's GPU. Raster
@@ -10524,7 +10555,7 @@ extern "C" void RB_Vulkan_Present(void)
         BuildFrameReheight(cprof, true);
 
     const double tFence0 = cprof ? CpuNowMs() : 0.0;
-    vkWaitForFences(g.device, 1, &g.inFlight, VK_TRUE, UINT64_MAX);
+    Check(vkWaitForFences(g.device, 1, &g.inFlight, VK_TRUE, UINT64_MAX), "vkWaitForFences(inFlight)");
     // The CPU blocks here until the PREVIOUS frame's GPU work signals the fence. With
     // DOOM-0074 build-ahead the steady-state raster build already ran above (overlapping
     // that GPU work), so this residual wait shrinks toward max(0, GPU - build): a large
@@ -10684,16 +10715,23 @@ extern "C" void RB_Vulkan_Present(void)
     g.shotCapture = false;
     if (rb_shotverify == 1)
     {
-        static int armedPresents = 0;
+        // Presents since the last RT frame, not since arming (DOOM-0412): the old test
+        // (`shotFrame == 0`) fired only if the RT view was NEVER ready, so a view that
+        // became ready and then stopped -- level exit, RT-target rebuild, mode toggle --
+        // left the capture unarmed and the process spinning with no message (the
+        // DOOM-0347 shape).
+        static int stalledPresents = 0;
         if (rtActive)
         {
+            stalledPresents = 0;
             if (g.shotFrame >= kShotWarmup) g.shotCapture = true;
             g.shotFrame++;
         }
-        if (++armedPresents > kShotGiveUp && g.shotFrame == 0)
+        else if (++stalledPresents > kShotGiveUp)
         {
-            fprintf(stderr, "[shotverify] Ultra RT view never became ready after %d presents "
-                            "(need renderer 1 + a level warped in); giving up.\n", kShotGiveUp);
+            fprintf(stderr, "[shotverify] no Ultra RT frame for %d presents (%s; need renderer 1 "
+                            "+ a level warped in); giving up.\n", kShotGiveUp,
+                    g.shotFrame ? "it was ready, then stopped" : "it never became ready");
             exit(2);
         }
     }
@@ -10709,8 +10747,8 @@ extern "C" void RB_Vulkan_Present(void)
     if (acq != VK_SUCCESS && acq != VK_SUBOPTIMAL_KHR)
         Fail("vkAcquireNextImageKHR", acq);
 
-    vkResetFences(g.device, 1, &g.inFlight);
-    vkResetCommandBuffer(g.cmd, 0);
+    Check(vkResetFences(g.device, 1, &g.inFlight), "vkResetFences(inFlight)");
+    Check(vkResetCommandBuffer(g.cmd, 0), "vkResetCommandBuffer");
 
     // DOOM-0074: on a traced or just-toggled frame the build was NOT run ahead (its
     // single-copy RT resources must not be in flight); run it now — after the fence, so
@@ -10781,7 +10819,7 @@ extern "C" void RB_Vulkan_Present(void)
     // pool + stamp the raster frame start here (outside any render pass), then a timestamp at
     // each pass boundary below (shadow / scene / SSAO / composite / HUD). Read back at the top
     // of the next present; profRasterFrame routes that readback to the raster interpretation.
-    // RT frames drive the same 8-slot pool from RecordRtTrace, and the two are mutually
+    // RT frames drive the same 10-slot pool from RecordRtTrace, and the two are mutually
     // exclusive per frame, so they never collide.
     const bool rprof = rb_profile && g.gpuTimerPool;
     if (rprof) {
@@ -11375,7 +11413,7 @@ extern "C" void RB_Vulkan_Present(void)
     // mid-play, not a headless one-shot gate.
     if (devShotThisFrame && g.devShotBuf)
     {
-        vkDeviceWaitIdle(g.device);
+        Check(vkDeviceWaitIdle(g.device), "vkDeviceWaitIdle(present)");
         void* mapped = nullptr;
         Check(vkMapMemory(g.device, g.devShotBufMem, 0, VK_WHOLE_SIZE, 0, &mapped),
               "vkMapMemory(devshot)");
@@ -11404,10 +11442,23 @@ extern "C" void RB_Vulkan_Present(void)
                 }
             for (size_t p = 0; p < n; p++) px[p * 4 + 3] = 255;
 
+            // Only the 8-bit RGBA/BGRA layouts are encoded above. Anything else (a 10-bit
+            // A2B10G10R10 surface, say) is still 4 bytes a pixel, so nothing overflows, but
+            // the PNG would be wrong under a "wrote" line (DOOM-0412). Refuse it instead.
+            const bool eightBit = g.format == VK_FORMAT_B8G8R8A8_UNORM
+                               || g.format == VK_FORMAT_B8G8R8A8_SRGB
+                               || g.format == VK_FORMAT_R8G8B8A8_UNORM
+                               || g.format == VK_FORMAT_R8G8B8A8_SRGB
+                               || g.format == VK_FORMAT_A8B8G8R8_UNORM_PACK32
+                               || g.format == VK_FORMAT_A8B8G8R8_SRGB_PACK32;
+
             // First free name, so a shot never silently replaces an earlier one.
             // Shared with the Classic tier's capture (rb_image.c) so all three
             // tiers write one naming scheme into one directory.
-            if (!rb_devshot_path(path, (int)sizeof path))
+            if (!eightBit)
+                fprintf(stderr, "dev: surface format %d is not 8-bit RGBA/BGRA; "
+                                "screenshot not written\n", (int)g.format);
+            else if (!rb_devshot_path(path, (int)sizeof path))
                 fprintf(stderr, "dev: dev-shots/ already holds 9999 screenshots\n");
             else if (stbi_write_png(path, (int)g.devShotW, (int)g.devShotH, 4, px,
                                     (int)g.devShotW * 4))
@@ -11426,7 +11477,7 @@ extern "C" void RB_Vulkan_Present(void)
     // host-visible buffer. One-shot: the process exits after writing / comparing.
     if (g.shotCapture && g.shotBuf)
     {
-        vkDeviceWaitIdle(g.device);
+        Check(vkDeviceWaitIdle(g.device), "vkDeviceWaitIdle(present)");
         void* mapped = nullptr;
         Check(vkMapMemory(g.device, g.shotBufMem, 0, VK_WHOLE_SIZE, 0, &mapped), "vkMapMemory(shot)");
 
@@ -11557,6 +11608,8 @@ extern "C" void RB_Vulkan_Shutdown(void)
     if (!g.instance)
         return;
     if (g.device)
+        // Unchecked on purpose (DOOM-0412): I_Error runs I_ShutdownGraphics, which reaches
+        // here, so a Check() failing on a lost device would re-enter I_Error forever.
         vkDeviceWaitIdle(g.device);
 
     if (g.rtEnabled)        DestroyAccelerationStructures();

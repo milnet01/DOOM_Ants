@@ -32,6 +32,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **A lost graphics device now stops the game with a message instead of freezing it** (DOOM-0412)
+  If the graphics driver reset under the game, several checks threw the
+  error away and the game carried on against a dead device. It now
+  stops and says why. Also: on a screen that offers no ordinary 8-bit
+  colour format the game says which one it fell back to.
+
 - **The ray-traced view now says when a crowded map has more monsters than it can draw** (DOOM-0411)
   Past about 4,000 things it used to leave some out without a word.
   Also: a fog calculation at the far edge of a huge map no longer

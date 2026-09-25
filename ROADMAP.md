@@ -943,7 +943,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: review-code 2026-09-01, lanes vk-accel and vk-lighting.
   Lanes: renderer.
 
-- 📋 [DOOM-0412] **Vulkan present and setup review tail: eight findings, mostly discarded VkResults.**
+- ✅ [DOOM-0412] **Vulkan present and setup review tail: eight findings, mostly discarded VkResults.**
   Not covered by DOOM-0390.
 
     - MEDIUM DOOM-0331-bloom.md:1344 -- INV-6's third clause is
@@ -980,6 +980,22 @@ stay in their phase sections; this heading holds only work still to come.
       says must be avoided, and which the RT blit at :2886 also assumes away.
     - LOW r_vulkan.cpp:3218 -- the comment says the push range is 20 bytes; the code
       six lines down is 24 and lists a sixth field.
+  Closed 2026-09-25. Seven fixed; the DOOM-0331 INV-6 grep clause is
+  already listed on DOOM-0395, which owns the document side.
+  Fixed: the frame's fence wait and resets and the device waits in
+  Present, RecreateSwapchain and BuildLevel go through Check(), so a
+  lost device ends with a message rather than spinning. The waits in
+  FreeHdMaterials and RB_Vulkan_Shutdown stay unchecked on purpose and
+  say why: I_Error runs I_ShutdownGraphics, which reaches them. Layer
+  and device-extension enumeration treat a failed query as "none"
+  (DeviceExtensions helper). The -shotverify watchdog counts presents
+  since the last RT frame, so a view that was ready and then stopped
+  also gives up with a message. The swapchain prefers any 8-bit UNORM
+  layout and reports a fallback, flagging an sRGB one. The dev
+  screenshot refuses surface formats it cannot encode. The profiler
+  pool and push-range comments state 10 slots and 24 bytes.
+  Verified: make test, 26 suites; Solid and Ultra captures on a private
+  display wrote their shots with no check firing.
   **Layman:** The leftovers from reviewing the per-frame present path and Vulkan initialisation. Several calls that can report a lost graphics device throw the answer away and carry on regardless.
   Kind: investigate.
   Source: review-code 2026-09-01, lanes vk-present and vk-setup.
