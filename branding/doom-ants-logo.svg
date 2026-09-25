@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2840 960" width="2840" height="960">
+  <!-- DOOM Ants wordmark. "DOOM" lettering: Wikimedia Commons, File:Doom – Game's logo.svg,
+       PD-textlogo (public domain); DOOM is a trademark of id Software / Bethesda. "ANTS" and
+       the ant are original to this project. See branding/README.md. -->
+  <defs>
+    <!-- one colour ramp over the whole logo, canvas y 60..930. The DOOM path sits in its
+         own coordinates (canvas y + 520), so it gets the same ramp shifted into them. -->
+    <linearGradient id="fire" gradientUnits="userSpaceOnUse" x1="0" y1="60" x2="0" y2="930">
+      <stop offset="0" stop-color="#ffe066"/>
+      <stop offset="0.5" stop-color="#f5761f"/>
+      <stop offset="1" stop-color="#b3200a"/>
+    </linearGradient>
+    <linearGradient id="fireDoom" gradientUnits="userSpaceOnUse" x1="0" y1="580" x2="0" y2="1450">
+      <stop offset="0" stop-color="#ffe066"/>
+      <stop offset="0.5" stop-color="#f5761f"/>
+      <stop offset="1" stop-color="#b3200a"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(20,45)">
+    <path transform="translate(-7.1328025,-565.73124)" d="m 1476.3012,1327.8121 -0.2917,-292.4969 -46.7662,163.4072 -46.7058,-162.6616 -0.2827,222.0343 -152.4945,-114.3724 11.559,-8.6664 -0.5292,-569.30683 144.9467,0.3774 43.4492,152.19623 43.5126,-152.40042 214.4342,0.69673 -70.3645,52.57665 -0.1246,814.42954 z M 78.328958,619.06163 7.1328025,565.73124 l 401.3006875,0.54398 45.93055,35.08717 0.0378,533.50351 12.16772,8.8133 -388.148567,291.252 z m 235.518822,416.21877 -0.15295,-307.89242 -10.75764,-8.78449 -83.44785,0.40375 -0.18291,387.17176 z m 152.39799,82.7814 -0.0717,-516.75483 47.07325,-35.27648 281.69722,-0.0156 46.98005,35.42167 0.17344,597.96244 -133.22444,100.1999 z m 223.12917,-399.76328 -71.04792,0.49268 -11.09868,8.52709 0.15885,308.10291 93.32018,69.9936 0.24947,-377.92826 z m 164.80854,481.66028 -0.34116,-598.79687 46.91876,-35.23879 282.06992,0.26967 47.2183,35.27898 -0.3246,515.55821 -241.33557,182.4526 z m 234.65122,-164.742 -0.03,-308.02638 -11.8726,-9.07298 -70.9365,0.23276 -11.40484,8.78228 0.70414,377.32652 z" fill="url(#fireDoom)" stroke="#1a0402" stroke-width="10" stroke-linejoin="round"/>
+  </g>
+  <path d="M 1760.0,820.0 L 1840.8,440.0 L 1907.2,440.0 L 1988.0,820.0 L 1919.6,820.0 L 1902.5,734.5 L 1845.5,734.5 L 1828.4,820.0 Z M 1856.9,677.5 L 1891.1,677.5 L 1874.0,582.5 Z M 2027.9,820.0 L 2027.9,440.0 L 2096.3,440.0 L 2187.5,677.5 L 2187.5,440.0 L 2255.9,440.0 L 2255.9,820.0 L 2187.5,820.0 L 2096.3,582.5 L 2096.3,820.0 Z M 2295.8,440.0 L 2523.8,440.0 L 2523.8,514.1 L 2444.0,514.1 L 2444.0,820.0 L 2375.6,820.0 L 2375.6,514.1 L 2295.8,514.1 Z M 2563.7,440.0 L 2791.7,440.0 L 2791.7,514.1 L 2632.1,514.1 L 2632.1,593.9 L 2791.7,593.9 L 2791.7,820.0 L 2563.7,820.0 L 2563.7,745.9 L 2723.3,745.9 L 2723.3,666.1 L 2563.7,666.1 Z" fill="url(#fire)" fill-rule="evenodd" stroke="#1a0402" stroke-width="10" stroke-linejoin="round"/>
+  <g id="ant" stroke="#1a0402" stroke-width="10" stroke-linejoin="round" stroke-linecap="round">
+  <g fill="none" stroke="#ffcf4a" stroke-width="14">
+    <path d="M 2265.85,265 l -40,-70 l -70,-25"/><path d="M 2265.85,265 l -40,70 l -70,25"/>
+    <path d="M 2285.85,265 l 0,-85 l -30,-35"/><path d="M 2285.85,265 l 0,85 l -30,35"/>
+    <path d="M 2305.85,265 l 55,-70 l 60,-10"/><path d="M 2305.85,265 l 55,70 l 60,10"/>
+    <path d="M 2125.85,253 q -40,-40 -95,-45"/><path d="M 2125.85,277 q -40,40 -95,45"/>
+  </g>
+  <ellipse cx="2445.85" cy="265" rx="115" ry="72" fill="url(#fire)"/>
+  <ellipse cx="2285.85" cy="265" rx="62" ry="36" fill="url(#fire)"/>
+  <circle cx="2155.85" cy="265" r="48" fill="url(#fire)"/>
+  <circle cx="2137.85" cy="245" r="9" fill="#1a0402" stroke="none"/>
+  <circle cx="2137.85" cy="285" r="9" fill="#1a0402" stroke="none"/>
+</g>
+</svg>
