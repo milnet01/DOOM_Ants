@@ -16,6 +16,11 @@
 // The mesh/emitter/Le buffers are passed in by device-address handle (below) so
 // each shader keeps its own push-constant layout.
 
+// The Vestige formula library (srgbToLinear for decodeAlbedo, and everything the
+// megakernel uses). Included HERE, once: the generated file has no include guard, so
+// an includer of this file must not include it again.
+#include "formulas/formulas.glsl"
+
 const float PI            = 3.14159265358979323846;
 const int   FLAG_FLAT     = 0x1;     // matches RB_MESH_FLAT in r_mesh.h (flats vs walls)
 const int   FLAG_MASKED   = 0x2;     // matches RB_MESH_MASKED — two-sided grate/fence mid-wall
@@ -396,16 +401,19 @@ float fogStrengthScale(uint level) {
 // from its lit top, a computer from its screen, not the whole sprite/face evenly.
 // The per-material Le (a tile-averaged value) is scaled by how bright THIS hit texel
 // is, so dark texels (a lamp's metal stand) stop glowing while bright ones keep the
-// tuned Le. Mirrors the same scale in svgf_composite.comp so the raw + denoised views
-// agree. INV-7 backfill thresholds (linear luminance), pending a Workbench export.
-const float EMIS_MASK_LO = 0.30;   // texel below this VALUE (max channel): no self-glow
-const float EMIS_MASK_HI = 0.60;   // at/above this: the full material Le
+// tuned Le. The weight rides galbedo.a, so the raw and denoised views agree.
+// DOOM-0407: the thresholds are ENCODED (palette-space) values, so the mask does not
+// move when the decode curve does. They are the encoded points the old pow(2.2)
+// thresholds 0.30/0.60 sat at. Hand-picked, pending a labelled set to fit against.
+const float EMIS_MASK_LO = 0.5785; // encoded VALUE below this: no self-glow
+const float EMIS_MASK_HI = 0.7928; // at/above this: the full material Le
 // Brightness as VALUE (max channel), not luminance — so a saturated red/blue light
 // glows by its intensity instead of being suppressed by luma weighting (matches
-// ComputeMaterialEmissive's emis::value on the C++ side).
+// ComputeMaterialEmissive's emis::value on the C++ side). Max commutes with the
+// monotone per-channel encode, so encoding the max equals the max of the encoded.
 float emissiveMask(vec3 albedoLinear) {
-    return smoothstep(EMIS_MASK_LO, EMIS_MASK_HI,
-                      max(albedoLinear.r, max(albedoLinear.g, albedoLinear.b)));
+    float v = max(albedoLinear.r, max(albedoLinear.g, albedoLinear.b));
+    return smoothstep(EMIS_MASK_LO, EMIS_MASK_HI, linearToSrgb(v));
 }
 
 // The level mesh vertex buffer (rb_vertex_t: 18 floats/vertex — pos[0..2]
@@ -444,12 +452,15 @@ float rnd(inout uint s) { s = pcgHash(s); return float(s) * (1.0 / 4294967296.0)
 // mesh.frag does (R8 index -> PLAYPAL RGB), then de-gamma to linear. `id` is the
 // unified bindless material id (walls direct, flats offset by numWall); `uv` is
 // the raw texel coordinate (divided here by the material size).
+// DOOM-0407: the de-gamma is the exact IEC sRGB curve, the one the sky, the HD
+// materials (hardware sRGB) and the C++ emissive derivation (emis::srgb2lin) use.
+// pow(2.2) was 59% dark at palette value 0.1, in the palette's darkest ramps.
 vec3 decodeAlbedo(uint id, vec2 uv)
 {
     vec2  sz  = vec2(textureSize(materialTex[nonuniformEXT(id)], 0));
     float idx = texture(materialTex[nonuniformEXT(id)], uv / sz).r * 255.0;
     vec3  a   = texture(paletteTex, vec2((idx + 0.5) / 256.0, 0.5)).rgb;
-    return pow(a, vec3(2.2));                 // palette is gamma-encoded -> linear
+    return vec3(srgbToLinear(a.r), srgbToLinear(a.g), srgbToLinear(a.b));
 }
 
 // One area-sampled direct-lighting estimate from emitter triangle k, WITHOUT the

@@ -146,7 +146,7 @@ layout(set = 3, binding = 1) uniform sampler2D hdTex[];   // bindless RGBA8 PBR 
 // Formula Workbench export (exposureEv, linearToSrgb in formulas.glsl); the
 // PBR-Neutral operator is the hand-written non-scalar routine. This retires the
 // inline EXPOSURE=4.0 + Reinhard + pow(1/2.2) hack (INV-7 backfill paid down).
-#include "formulas/formulas.glsl"
+// formulas.glsl itself arrives through pt_common.glsl above (it has no include guard).
 #include "formulas/pbr_neutral_tonemap.glsl"
 
 // DOOM-0042: self-radiance scale for an HD emissive map (Task 13). Reused from
