@@ -43,7 +43,7 @@ layout(push_constant) uniform PC {
     uvec4 misc3;
 } pc;
 
-float lum(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+#include "formulas/svgf_shared.glsl"   // lum, svgfReprojectPrev (DOOM-0440)
 
 void main()
 {
@@ -111,16 +111,11 @@ void main()
     vec3  histC = vec3(0.0);
     float m1 = 0.0, m2 = 0.0, hist = 0.0;
 
-    vec3  rel = wpos - pc.prevPos.xyz;
-    float vz  = dot(rel, pc.prevDir.xyz);                 // depth along prev view axis
-    if (vz > 1e-3) {
-        // Invert the primary-ray construction (pathtrace.comp): screen-y is down,
-        // so world up maps to -ndcY.
-        float ndcX =  (dot(rel, pc.prevRight.xyz) / vz) / pc.prevRight.w;
-        float ndcY = -(dot(rel, pc.prevUp.xyz)    / vz) / pc.prevUp.w;
-        float fx = (ndcX + 1.0) * 0.5 * float(w) - 0.5;
-        float fy = (ndcY + 1.0) * 0.5 * float(h) - 0.5;
-        ivec2 pp = ivec2(int(floor(fx + 0.5)), int(floor(fy + 0.5)));
+    vec2  prevScreen;
+    float vz;                                              // depth along prev view axis
+    if (svgfReprojectPrev(wpos, pc.prevPos, pc.prevDir, pc.prevRight, pc.prevUp,
+                          w, h, prevScreen, vz)) {
+        ivec2 pp = ivec2(int(floor(prevScreen.x)), int(floor(prevScreen.y)));   // nearest pixel
         if (pp.x >= 0 && pp.y >= 0 && pp.x < w && pp.y < h) {
             vec4 gpPrev = imageLoad(gpos[prev], pp);
             if (gpPrev.w >= 0.0) {                        // prev pixel was a surface

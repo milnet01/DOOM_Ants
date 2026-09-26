@@ -387,6 +387,11 @@ $(SHADER_DIR)/pathtrace.comp.spv.h $(SHADER_DIR)/bake.comp.spv.h \
 $(SHADER_DIR)/mesh.frag.spv.h $(SHADER_DIR)/mesh_overlay.frag.spv.h: \
 		$(SHADER_DIR)/formulas/gi_probe.glsl
 
+# DOOM-0440 — lum and the previous-frame reprojection are shared by the SVGF passes.
+$(SHADER_DIR)/svgf_temporal.comp.spv.h $(SHADER_DIR)/svgf_atrous.comp.spv.h \
+$(SHADER_DIR)/svgf_composite.comp.spv.h $(SHADER_DIR)/svgf_composite_split.comp.spv.h: \
+		$(SHADER_DIR)/formulas/svgf_shared.glsl
+
 # DOOM-0440 — the bloom soft-knee weight is shared by both bright passes. Same
 # missing-auto-dep hazard as the rules above.
 $(SHADER_DIR)/bloom_extract_raster.comp.spv.h $(SHADER_DIR)/bloom_extract_rt.comp.spv.h: \

@@ -16,6 +16,7 @@
 // DOOM-0345 R1: the tone operator moved into this shared include (it pulls formulas.glsl
 // and pbr_neutral_tonemap.glsl in itself, so they are NOT included separately here).
 #include "formulas/tonemap_encode.glsl"
+#include "formulas/svgf_shared.glsl"   // svgfReprojectPrev (DOOM-0440)
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -226,21 +227,16 @@ void main()
     // Motion vector (build step 6-d): where this pixel's world point sat in the
     // PREVIOUS frame, as a displacement in render pixels (current -> previous). The
     // temporal upscaler (TAAU now; FSR later, same contract) reprojects its history
-    // by this. Reuses the prev-camera basis already in this pass's push constants —
-    // the exact inverse of pathtrace.comp's pixel-centre ray construction, matching
-    // the svgf_temporal reprojection. Sky / behind-camera writes zero (no motion ->
-    // the upscaler keeps the current sample).
+    // by this. Reuses the prev-camera basis already in this pass's push constants,
+    // through the same svgfReprojectPrev svgf_temporal uses (DOOM-0440). Sky /
+    // behind-camera writes zero (no motion -> the upscaler keeps the current sample).
     vec2 mv = vec2(0.0);
     if (gp.w >= 0.0) {
-        vec3  rel = gp.xyz - pc.prevPos.xyz;
-        float vz  = dot(rel, pc.prevDir.xyz);
-        if (vz > 1e-3) {
-            float ndcX =  (dot(rel, pc.prevRight.xyz) / vz) / pc.prevRight.w;
-            float ndcY = -(dot(rel, pc.prevUp.xyz)    / vz) / pc.prevUp.w;
-            float fx = (ndcX + 1.0) * 0.5 * float(w) - 0.5;
-            float fy = (ndcY + 1.0) * 0.5 * float(h) - 0.5;
-            mv = vec2(fx, fy) - vec2(p);
-        }
+        vec2  prevScreen;
+        float vz;
+        if (svgfReprojectPrev(gp.xyz, pc.prevPos, pc.prevDir, pc.prevRight, pc.prevUp,
+                              w, h, prevScreen, vz))
+            mv = (prevScreen - 0.5) - vec2(p);   // centres at integers, as p is
     }
     imageStore(motion, p, vec4(mv, 0.0, 0.0));
 }
