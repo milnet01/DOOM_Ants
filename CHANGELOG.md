@@ -8,6 +8,14 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Solid and Ultra spend far less time each frame updating moving floors, doors and animated textures** (DOOM-0443)
+  Every frame the game checks each corner of the level for doors, lifts
+  and animated textures that changed. It was reading the level back from
+  graphics memory to do so, which is slow. It now keeps a copy in ordinary
+  memory and sends only what changed. Measured standing still at the start
+  of E1M1 on the development machine in Solid, the frame rate roughly
+  tripled. The picture is unchanged.
+
 - **Solid's full nearest-lights recalculation is faster** (DOOM-0461)
   When a level loads, or a lit surface moves, Solid recalculates which
   fixed lights are nearest each part of the level. It now reads the

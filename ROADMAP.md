@@ -4251,7 +4251,7 @@ against.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lane 7.
 
-- 📋 [DOOM-0443] **Two full per-frame scans in the renderer seam recompute answers that can only change on a game tic.**
+- ✅ [DOOM-0443] **Two full per-frame scans in the renderer seam recompute answers that can only change on a game tic.**
   Two findings, same shape, and the second subsumes most of the third's
   cost -- do them together or not at all.
 
@@ -4286,6 +4286,17 @@ against.
 
   Verify with a door/lift/switch play-test, -rtverify, and the automap
   check in the 68-map sweep for (1).
+  Resolved (2026-09-26). Part 3 shipped (9deaec5): each frame slot's
+  vertex buffer has a RAM twin. RB_UpdateMeshHeights reads the twin and
+  writes only changed fields; BuildStaticEmitterSet reads the twin too. An
+  in-process reference probe matched the old function byte for byte over
+  12,000 calls, with forced movement. Solid raster, 50%, held still:
+  E1M1 ~330 to ~1027 fps, E1M3 ~160 to 490-590 fps; reheight fell to
+  under 0.1 ms. Parts 1 and 2 were measured and not built. Reheight now
+  costs under 0.1 ms, so gating it on the tic buys nothing. The
+  R_MarkAutomapLines walk measured 0.002-0.005 ms a frame at the E1M1 and
+  E1M3 starts, because mark-only mode draws nothing. A tic gate would add
+  a dependency on R_SetupFrame's side effects for no measurable gain.
   **Layman:** Twice per frame the game redoes a whole-level calculation whose answer only changes 35 times a second, not 160. One of them also reads back from graphics-card memory, which is very slow and a mistake this project has already paid for once.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lane 6.
