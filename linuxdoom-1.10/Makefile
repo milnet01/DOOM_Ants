@@ -381,6 +381,12 @@ $(SHADER_DIR)/rt_tonemap.comp.spv.h $(SHADER_DIR)/pathtrace.comp.spv.h: \
 		$(SHADER_DIR)/formulas/formulas.glsl \
 		$(SHADER_DIR)/formulas/pbr_neutral_tonemap.glsl
 
+# DOOM-0440 — the GI probe read side (ProbesRO, giIrradiance) is shared by the path
+# tracer, through pt_common.glsl, and by both variants of the raster mesh.frag.
+$(SHADER_DIR)/pathtrace.comp.spv.h $(SHADER_DIR)/bake.comp.spv.h \
+$(SHADER_DIR)/mesh.frag.spv.h $(SHADER_DIR)/mesh_overlay.frag.spv.h: \
+		$(SHADER_DIR)/formulas/gi_probe.glsl
+
 # DOOM-0440 — the bloom soft-knee weight is shared by both bright passes. Same
 # missing-auto-dep hazard as the rules above.
 $(SHADER_DIR)/bloom_extract_raster.comp.spv.h $(SHADER_DIR)/bloom_extract_rt.comp.spv.h: \

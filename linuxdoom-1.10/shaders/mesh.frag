@@ -55,11 +55,9 @@ layout(location = 1) out vec4 outDirect;
 #endif
 
 // DOOM-0170 L1a — baked GI probes, read in the RASTER (RT-off) path so rooms get
-// the same soft coloured indirect bounce the path tracer bakes. Layout matches
-// pt_common.glsl exactly (ProbesRO: 16 floats/probe = pos[3] pad + SH-L1 R[4] G[4]
-// B[4]; TriSs: per-triangle primitive id -> subsector/probe index).
-layout(buffer_reference, scalar) readonly buffer ProbesRO { float p[]; };
-layout(buffer_reference, scalar) readonly buffer TriSs    { uint  s[]; };
+// the same soft coloured indirect bounce the path tracer bakes. The buffer layout and
+// giIrradiance are the path tracer's own, from the shared header (DOOM-0440).
+#include "formulas/gi_probe.glsl"
 
 // DOOM-0170 L1b — per-subsector dynamic point lights derived from the same NEE
 // emitter list (torches/lamps/emissive walls). Flat float array: RASTER_MAX_LIGHTS
@@ -144,27 +142,6 @@ const float POINT_LIGHT_STRENGTH = 0.7;
 // base a touch; the lights/bounce/flashlight lift lit areas back up while unlit areas sit
 // a little darker (the "performance-mode" look). 1.0 = classic brightness; tune w/ user.
 const float BASE_SECTOR_DIM      = 0.75;
-
-// Evaluate the baked SH-L1 GI cache for subsector `subId` along world normal `n`,
-// returning the diffuse reflected-radiance factor (multiply by albedo). Copied
-// verbatim from pt_common.glsl giIrradiance() so the raster bounce is identical to
-// the path tracer's: the clamped-cosine convolution (A0=PI, A1=2PI/3) folds with the
-// Lambert 1/PI to weight 1 on the DC term and 2/3 on the linear terms; basis order
-// 1<-n.y, 2<-n.z, 3<-n.x. SH-L1 can ring slightly negative, so clamp to >= 0.
-vec3 giIrradiance(ProbesRO pr, uint subId, vec3 n)
-{
-    uint  b  = subId * 16u + 4u;             // SH coeffs start at float 4
-    float y0 = 0.282095;
-    float y1 = 0.488603 * n.y;
-    float y2 = 0.488603 * n.z;
-    float y3 = 0.488603 * n.x;
-    const float k = 2.0 / 3.0;
-    vec3 gi;
-    gi.r = pr.p[b+0u]*y0 + k*(pr.p[b+1u]*y1 + pr.p[b+2u]*y2 + pr.p[b+3u]*y3);
-    gi.g = pr.p[b+4u]*y0 + k*(pr.p[b+5u]*y1 + pr.p[b+6u]*y2 + pr.p[b+7u]*y3);
-    gi.b = pr.p[b+8u]*y0 + k*(pr.p[b+9u]*y1 + pr.p[b+10u]*y2 + pr.p[b+11u]*y3);
-    return max(gi, vec3(0.0));
-}
 
 // DOOM-0170 L2c — 3x3 PCF against the flashlight shadow map. 1.0 = lit, 0.0 = fully
 // shadowed. Fragments outside/behind the light frustum return 1.0 (the cone + facing terms
