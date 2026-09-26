@@ -4386,6 +4386,23 @@ against.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lanes 12 and 13.
 
+- 📋 [DOOM-0461] **The static point-light cull reads its emitters back from write-combined GPU memory.**
+  RebuildStaticPointLightCache reads every static emitter record from
+  g.emitMapped, a host-coherent mapped buffer. Reads from that memory are
+  slow; DOOM-0170 already paid for this once. Measured on DOOM-0436: the
+  Le-only refresh read the same records from g.emitMapped in 1.4 ms and
+  from g.staticEmit, the plain-RAM copy nee_merge_emitters writes from, in
+  0.004 ms, with identical results.
+
+  The full rebuild still does the slow read. On E1M1 it costs about 1.8 ms
+  and runs at level load and whenever a lit surface moves, such as a lift.
+
+  Fix: read the static records from g.staticEmit. Verify the cache is
+  byte-identical before and after, and time the rebuild.
+  **Layman:** When the game recalculates which lights are nearest each part of a level, it reads the light list back from the graphics card's memory, which is slow; a copy already sits in ordinary memory.
+  Kind: perf.
+  Source: in-session-2026-09-26 (DOOM-0436 measurement).
+
 ## 0.11.0 — Light and materials
 
 The Spin's feature set: path tracing, volumetrics, HD art, and everything that
