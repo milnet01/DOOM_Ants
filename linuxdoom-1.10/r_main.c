@@ -73,8 +73,6 @@ fixed_t			centerxfrac_nonwide;
 int			framecount;	
 
 int			sscount;
-int			linecount;
-int			loopcount;
 
 fixed_t			viewx;
 fixed_t			viewy;
@@ -132,28 +130,6 @@ void (*fuzzcolfunc) (void);
 void (*transcolfunc) (void);
 void (*spanfunc) (void);
 
-
-
-//
-// R_AddPointToBox
-// Expand a given bbox
-// so that it encloses a given point.
-//
-void
-R_AddPointToBox
-( int		x,
-  int		y,
-  fixed_t*	box )
-{
-    if (x< box[BOXLEFT])
-	box[BOXLEFT] = x;
-    if (x> box[BOXRIGHT])
-	box[BOXRIGHT] = x;
-    if (y< box[BOXBOTTOM])
-	box[BOXBOTTOM] = y;
-    if (y> box[BOXTOP])
-	box[BOXTOP] = y;
-}
 
 
 //

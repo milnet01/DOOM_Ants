@@ -73,7 +73,6 @@ int		resendcount[MAXNETNODES];
 int		nodeforplayer[MAXPLAYERS];
 
 int             maketic;
-int		lastnettic;
 int		skiptics;
 int		ticdup;		
 int		maxsend;	// BACKUPTICS/(2*ticdup)-1
@@ -652,7 +651,6 @@ void D_QuitNetGame (void)
 //
 // TryRunTics
 //
-int	frametics[4];
 int	frameon;
 int	frameskip[4];
 int	oldnettics;

@@ -74,6 +74,11 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Removed
 
+- **The config file no longer carries two serial-mouse settings nothing read.** (DOOM-0450)
+  mousedev and mousetype were 1997 settings for a serial mouse; SDL
+  handles the mouse now. Old config files still load, and the two lines
+  drop out the next time the game saves.
+
 - **Removed `-statcopy`, which wrote game data to an address given on the command line** (DOOM-0401)
   A 1997 hook for an external statistics program that no longer exists. Passing it crashed the game at the end of a level.
 

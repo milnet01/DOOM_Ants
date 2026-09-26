@@ -230,18 +230,6 @@ int		bodyqueslot;
  
  
  
-int G_CmdChecksum (ticcmd_t* cmd) 
-{ 
-    int		i;
-    int		sum = 0; 
-	 
-    for (i=0 ; i< sizeof(*cmd)/4 - 1 ; i++) 
-	sum += ((int *)cmd)[i]; 
-		 
-    return sum; 
-} 
- 
-
 //
 // DOOM-0153: weapon-cycling helpers (mouse wheel + gamepad D-pad).
 // A weapon maps to its number-key slot (0-6); the chainsaw shares the fist slot
@@ -963,22 +951,6 @@ void G_Ticker (void)
 // PLAYER STRUCTURE FUNCTIONS
 // also see P_SpawnPlayer in P_Things
 //
-
-//
-// G_InitPlayer 
-// Called at the start.
-// Called by the game initialization functions.
-//
-void G_InitPlayer (int player) 
-{ 
- 
-	 
-    // clear everything else to defaults 
-    G_PlayerReborn (player); 
-	 
-} 
- 
- 
 
 //
 // G_PlayerFinishLevel

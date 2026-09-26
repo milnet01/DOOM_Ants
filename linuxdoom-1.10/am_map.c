@@ -145,11 +145,6 @@ typedef struct
     mpoint_t a, b;
 } mline_t;
 
-typedef struct
-{
-    fixed_t slp, islp;
-} islope_t;
-
 
 
 //
@@ -193,15 +188,6 @@ mline_t cheat_player_arrow[] = {
 #define NUMCHEATPLYRLINES (sizeof(cheat_player_arrow)/sizeof(mline_t))
 
 #define R (FRACUNIT)
-mline_t triangle_guy[] = {
-    { { -.867*R, -.5*R }, { .867*R, -.5*R } },
-    { { .867*R, -.5*R } , { 0, R } },
-    { { 0, R }, { -.867*R, -.5*R } }
-};
-#undef R
-#define NUMTRIANGLEGUYLINES (sizeof(triangle_guy)/sizeof(mline_t))
-
-#define R (FRACUNIT)
 mline_t thintriangle_guy[] = {
     { { -.5*R, -.7*R }, { R, 0 } },
     { { R, 0 }, { -.5*R, .7*R } },
@@ -232,9 +218,7 @@ static int	f_y;
 static int 	f_w;
 static int	f_h;
 
-static int 	lightlev; 		// used for funky strobing effect
 static byte*	fb; 			// pseudo-frame buffer
-static int 	amclock;
 
 static mpoint_t m_paninc; // how far the window pans each tic (map coords)
 static fixed_t 	mtof_zoommul; // how far the window zooms in each tic (map coords)
@@ -302,26 +286,6 @@ V_MarkRect
   int	y,
   int	width,
   int	height );
-
-// Calculates the slope and slope according to the x-axis of a line
-// segment in map coordinates (with the upright y-axis n' all) so
-// that it can be used with the brain-dead drawing stuff.
-
-void
-AM_getIslope
-( mline_t*	ml,
-  islope_t*	is )
-{
-    int dx, dy;
-
-    dy = ml->a.y - ml->b.y;
-    dx = ml->b.x - ml->a.x;
-    if (!dy) is->islp = (dx<0?-MAXINT:MAXINT);
-    else is->islp = FixedDiv(dx, dy);
-    if (!dx) is->slp = (dy<0?-MAXINT:MAXINT);
-    else is->slp = FixedDiv(dy, dx);
-
-}
 
 //
 //
@@ -484,8 +448,6 @@ void AM_initVariables(void)
     fb = screens[0];
 
     f_oldloc.x = MAXINT;
-    amclock = 0;
-    lightlev = 0;
 
     m_paninc.x = m_paninc.y = 0;
     ftom_zoommul = FRACUNIT;
@@ -798,27 +760,6 @@ void AM_doFollowPlayer(void)
 }
 
 //
-//
-//
-void AM_updateLightLev(void)
-{
-    static int nexttic = 0;
-    //static int litelevels[] = { 0, 3, 5, 6, 6, 7, 7, 7 };
-    static int litelevels[] = { 0, 4, 7, 10, 12, 14, 15, 15 };
-    static int litelevelscnt = 0;
-   
-    // Change light level
-    if (amclock>nexttic)
-    {
-	lightlev = litelevels[litelevelscnt++];
-	if (litelevelscnt == sizeof(litelevels)/sizeof(int)) litelevelscnt = 0;
-	nexttic = amclock + 6 - (amclock % 6);
-    }
-
-}
-
-
-//
 // Updates on Game Tick
 //
 void AM_Ticker (void)
@@ -826,8 +767,6 @@ void AM_Ticker (void)
 
     if (!automapactive)
 	return;
-
-    amclock++;
 
     if (followplayer)
 	AM_doFollowPlayer();
@@ -839,9 +778,6 @@ void AM_Ticker (void)
     // Change x,y location
     if (m_paninc.x || m_paninc.y)
 	AM_changeWindowLoc();
-
-    // Update light level
-    // AM_updateLightLev();
 
 }
 
@@ -1150,7 +1086,7 @@ void AM_drawWalls(void)
 		continue;
 	    if (!lines[i].backsector)
 	    {
-		AM_drawMline(&l, WALLCOLORS+lightlev);
+		AM_drawMline(&l, WALLCOLORS);
 	    }
 	    else
 	    {
@@ -1160,19 +1096,19 @@ void AM_drawWalls(void)
 		}
 		else if (lines[i].flags & ML_SECRET) // secret door
 		{
-		    if (cheating) AM_drawMline(&l, SECRETWALLCOLORS + lightlev);
-		    else AM_drawMline(&l, WALLCOLORS+lightlev);
+		    if (cheating) AM_drawMline(&l, SECRETWALLCOLORS);
+		    else AM_drawMline(&l, WALLCOLORS);
 		}
 		else if (lines[i].backsector->floorheight
 			   != lines[i].frontsector->floorheight) {
-		    AM_drawMline(&l, FDWALLCOLORS + lightlev); // floor level change
+		    AM_drawMline(&l, FDWALLCOLORS); // floor level change
 		}
 		else if (lines[i].backsector->ceilingheight
 			   != lines[i].frontsector->ceilingheight) {
-		    AM_drawMline(&l, CDWALLCOLORS+lightlev); // ceiling level change
+		    AM_drawMline(&l, CDWALLCOLORS); // ceiling level change
 		}
 		else if (cheating) {
-		    AM_drawMline(&l, TSWALLCOLORS+lightlev);
+		    AM_drawMline(&l, TSWALLCOLORS);
 		}
 	    }
 	}
@@ -1315,7 +1251,7 @@ AM_drawThings
 	{
 	    AM_drawLineCharacter
 		(thintriangle_guy, NUMTHINTRIANGLEGUYLINES,
-		 16<<FRACBITS, t->angle, colors+lightlev, t->x, t->y);
+		 16<<FRACBITS, t->angle, colors, t->x, t->y);
 	    t = t->snext;
 	}
     }

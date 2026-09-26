@@ -138,9 +138,6 @@ int		firstflat;
 int		lastflat;
 int		numflats;
 
-int		firstpatch;
-int		lastpatch;
-int		numpatches;
 
 int		firstspritelump;
 int		lastspritelump;

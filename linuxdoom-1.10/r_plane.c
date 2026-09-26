@@ -82,7 +82,6 @@ short			ceilingclip[MAXWIDTH];
 // initialized to 0 at start
 //
 int			spanstart[SCREENHEIGHT];
-int			spanstop[SCREENHEIGHT];
 
 //
 // texture mapping

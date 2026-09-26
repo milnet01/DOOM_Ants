@@ -300,25 +300,6 @@ void PacketGet (void)
 
 
 
-int GetLocalAddress (void)
-{
-    char		hostname[1024];
-    struct hostent*	hostentry;	// host information entry
-    int			v;
-
-    // get local address
-    v = gethostname (hostname, sizeof(hostname));
-    if (v == -1)
-	I_Error ("GetLocalAddress : gethostname: %s", socket_strerror(socket_errno));
-	
-    hostentry = gethostbyname (hostname);
-    if (!hostentry)
-	I_Error ("GetLocalAddress : gethostbyname: couldn't get local host");
-		
-    return *(int *)hostentry->h_addr_list[0];
-}
-
-
 //
 // I_InitNetwork
 //

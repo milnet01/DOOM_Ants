@@ -114,8 +114,6 @@ boolean         fastparm;	// checkparm of -fast
 boolean         nosound;	// checkparm of -nosound
 boolean         nomusic;	// checkparm of -nomusic
 
-boolean         drone;
-
 boolean		singletics = false; // debug flag to cancel adaptiveness
 
 
@@ -138,7 +136,6 @@ boolean		advancedemo;
 
 
 
-char		mapdir[1024];           // directory of development maps
 char		basedefault[1024];      // default file
 
 

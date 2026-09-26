@@ -189,16 +189,6 @@ void I_SetChannels()
 }
 
  
-void I_SetSfxVolume(int volume)
-{
-  // Identical to DOS.
-  // Basically, this should propagate
-  //  the menu/config file setting
-  //  to the state variable used in
-  //  the mixing.
-  snd_SfxVolume = volume;
-}
-
 //
 // MUSIC API.
 //

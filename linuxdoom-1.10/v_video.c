@@ -52,7 +52,7 @@ byte*				screens[5];
 int				screenwidth[5];
 // DOOM-0402: each buffer's own height in pixels, the companion to
 // screenwidth[]. screens[4] is ST_HEIGHT tall, not SCREENHEIGHT, and the
-// RANGECHECK guards in V_DrawBlock / V_GetBlock had no way to say so.
+// RANGECHECK guards in V_DrawBlock had no way to say so.
 int				screenheight[5];
 
 int				dirtybox[4];
@@ -576,50 +576,6 @@ V_DrawBlock
     }
 }
  
-
-
-//
-// V_GetBlock
-// Gets a linear block of pixels from the view buffer.
-//
-void
-V_GetBlock
-( int		x,
-  int		y,
-  int		scrn,
-  int		width,
-  int		height,
-  byte*		dest ) 
-{ 
-    byte*	src; 
-	 
-    // DOOM-0402: as V_DrawBlock above -- pixel coordinates in the SOURCE
-    // buffer, so bound against that buffer. The message keeps its original
-    // wording, wrong function name and all, because it is what a player report
-    // would quote.
-#ifdef RANGECHECK 
-    if ((unsigned)scrn>4)
-	I_Error ("Bad V_DrawBlock (screen index)");
-    if (x<0
-	||x+width > screenwidth[scrn]
-	|| y<0
-	|| y+height > screenheight[scrn])
-    {
-	I_Error ("Bad V_DrawBlock");
-    }
-#endif 
- 
-    src = screens[scrn] + y*screenwidth[scrn]+x;
-
-    while (height--)
-    {
-	memcpy (dest, src, width);
-	src += screenwidth[scrn];
-	dest += width;
-    }
-}
-
-
 
 
 //

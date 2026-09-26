@@ -3425,7 +3425,7 @@ defect visible before a player finds it.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lane 11.
 
-- 📋 [DOOM-0450] **Roughly sixty dead symbols across the engine, including a header extern naming an object that does not exist.**
+- ✅ [DOOM-0450] **Roughly sixty dead symbols across the engine, including a header extern naming an object that does not exist.**
   Four lanes found these independently. Grouped because the fix is one
   kind of edit and the verification is the same: nothing references any of
   them, so a mistake is a link error rather than a silent bug.
@@ -3489,6 +3489,24 @@ defect visible before a player finds it.
   docs/reviews/optimise-refactor-sweep-2026-09-20.md, lanes 8/11/12/13.
   Several review counts were wrong when checked, so verify each name
   before deleting. Honour the three recorded decisions above.
+  Resolved (2026-09-26): the plain dead symbols, found mechanically
+  rather than from the review's lists. A scratch build at -O0 with
+  -ffunction-sections -fdata-sections, linked with --gc-sections
+  --print-gc-sections, names every function and global nothing reaches.
+  Run for the plain and the DEV build (identical lists), then every name
+  grepped across the engine, tests, scripts and packaging before deletion.
+  Removed: AM_updateLightLev and its strobe state, AM_getIslope,
+  triangle_guy; the status-bar chat cluster and st_clock, veryfirsttime;
+  P_CalcSwing; the colour-transform wipe; V_GetBlock; nine z_zone, w_wad,
+  i_system and i_net functions; the menu, HUD and intermission helpers;
+  the renderer profiling and port leftovers; four prototypes with no
+  definition anywhere; the two serial-mouse settings.
+  Kept, deliberately: W_Profile, the empty inits and id's dev flags (the
+  recorded decisions); the sliding-door prototypes (id's disabled code);
+  Z_FreeMemory, which DOOM-0431's spec reads for zone_mb.
+  Not dead after all, and filed: mapnamesp/mapnamest and the P/T finale
+  texts are the missing Final DOOM feature (DOOM-0463); english_shiftxform
+  was unreachable because of DOOM-0464, now fixed.
   **Layman:** About sixty leftover variables, functions and declarations that nothing uses. Some are merely clutter; a few actively mislead, describing features the game does not have or switches that silently do nothing.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lanes 8/11/12/13.

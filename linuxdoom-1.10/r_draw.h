@@ -48,13 +48,11 @@ void 	R_DrawColumnLow (void);
 
 // The Spectre/Invisibility effect.
 void 	R_DrawFuzzColumn (void);
-void 	R_DrawFuzzColumnLow (void);
 
 // Draw with color translation tables,
 //  for player sprite rendering,
 //  Green/Red/Blue/Indigo shirts.
 void	R_DrawTranslatedColumn (void);
-void	R_DrawTranslatedColumnLow (void);
 
 void
 R_VideoErase

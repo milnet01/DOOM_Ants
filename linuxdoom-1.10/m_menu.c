@@ -116,8 +116,6 @@ int			messageToPrint;
 char*			messageString;		
 
 // message x & y
-int			messx;			
-int			messy;
 int			messageLastMenuActive;
 
 // timed message = no input from user
@@ -266,15 +264,12 @@ void M_DrawSave(void);
 void M_DrawSaveLoadBorder(int x,int y);
 void M_SetupNextMenu(menu_t *menudef);
 void M_DrawThermo(int x,int y,int thermWidth,int thermDot);
-void M_DrawEmptyCell(menu_t *menu,int item);
-void M_DrawSelCell(menu_t *menu,int item);
 void M_WriteText(int x, int y, char *string);
 void M_WriteTextScaled(int x, int y, char *string, int scale);
 int  M_StringWidth(char *string);
 int  M_StringHeight(char *string);
 void M_StartControlPanel(void);
 void M_StartMessage(char *string,void *routine,boolean input);
-void M_StopMessage(void);
 void M_ClearMenus (void);
 
 // DOOM-0060 game-select chooser.
@@ -3020,25 +3015,6 @@ M_DrawThermo
 
 
 void
-M_DrawEmptyCell
-( menu_t*	menu,
-  int		item )
-{
-    V_DrawPatchDirect (menu->x - 10,        menu->y+item*LINEHEIGHT - 1, 0,
-		       W_CacheLumpName("M_CELL1",PU_CACHE));
-}
-
-void
-M_DrawSelCell
-( menu_t*	menu,
-  int		item )
-{
-    V_DrawPatchDirect (menu->x - 10,        menu->y+item*LINEHEIGHT - 1, 0,
-		       W_CacheLumpName("M_CELL2",PU_CACHE));
-}
-
-
-void
 M_StartMessage
 ( char*		string,
   void*		routine,
@@ -3051,14 +3027,6 @@ M_StartMessage
     messageNeedsInput = input;
     menuactive = true;
     return;
-}
-
-
-
-void M_StopMessage(void)
-{
-    menuactive = messageLastMenuActive;
-    messageToPrint = 0;
 }
 
 

@@ -69,72 +69,6 @@ wipe_shittyColMajorXform
 
 }
 
-int
-wipe_initColorXForm
-( int	width,
-  int	height,
-  int	ticks )
-{
-    memcpy(wipe_scr, wipe_scr_start, width*height);
-    return 0;
-}
-
-int
-wipe_doColorXForm
-( int	width,
-  int	height,
-  int	ticks )
-{
-    boolean	changed;
-    byte*	w;
-    byte*	e;
-    int		newval;
-
-    changed = false;
-    w = wipe_scr;
-    e = wipe_scr_end;
-    
-    while (w!=wipe_scr+width*height)
-    {
-	if (*w != *e)
-	{
-	    if (*w > *e)
-	    {
-		newval = *w - ticks;
-		if (newval < *e)
-		    *w = *e;
-		else
-		    *w = newval;
-		changed = true;
-	    }
-	    else if (*w < *e)
-	    {
-		newval = *w + ticks;
-		if (newval > *e)
-		    *w = *e;
-		else
-		    *w = newval;
-		changed = true;
-	    }
-	}
-	w++;
-	e++;
-    }
-
-    return !changed;
-
-}
-
-int
-wipe_exitColorXForm
-( int	width,
-  int	height,
-  int	ticks )
-{
-    return 0;
-}
-
-
 static int*	y;
 
 int
@@ -277,7 +211,6 @@ wipe_ScreenWipe
     int rc;
     static int (*wipes[])(int, int, int) =
     {
-	wipe_initColorXForm, wipe_doColorXForm, wipe_exitColorXForm,
 	wipe_initMelt, wipe_doMelt, wipe_exitMelt
     };
 

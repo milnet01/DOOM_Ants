@@ -63,7 +63,6 @@ rcsid[] __attribute__((used)) = "$Id: r_draw.c,v 1.4 1997/02/03 16:47:55 b1 Exp 
 //
 
 
-byte*		viewimage; 
 int		viewwidth;
 int		scaledviewwidth;
 int		viewheight;
@@ -72,12 +71,6 @@ int		viewwindowy;
 byte*		ylookup[MAXHEIGHT]; 
 int		columnofs[MAXWIDTH]; 
 
-// Color tables for different players,
-//  translate a limited part to another
-//  (color ramps used for  suit colors).
-//
-byte		translations[3][256];	
- 
  
 
 
@@ -95,8 +88,6 @@ fixed_t			dc_texturemid;
 // first pixel in a column (possibly virtual) 
 byte*			dc_source;		
 
-// just for profiling 
-int			dccount;
 
 //
 // A column is a vertical slice/span from a wall texture that,
@@ -237,7 +228,6 @@ void R_DrawColumnLow (void)
 	
 	I_Error ("R_DrawColumn: %i to %i at %i", dc_yl, dc_yh, dc_x);
     }
-    //	dccount++; 
 #endif 
     // Blocky mode, need to multiply by 2.
     dc_x <<= 1;
@@ -524,8 +514,6 @@ fixed_t			ds_ystep;
 // start of a 64*64 tile image 
 byte*			ds_source;	
 
-// just for profiling
-int			dscount;
 
 
 //
@@ -547,7 +535,6 @@ void R_DrawSpan (void)
 	I_Error( "R_DrawSpan: %i to %i at %i",
 		 ds_x1,ds_x2,ds_y);
     }
-//	dscount++; 
 #endif 
 
     
@@ -670,7 +657,6 @@ void R_DrawSpanLow (void)
 	I_Error( "R_DrawSpan: %i to %i at %i",
 		 ds_x1,ds_x2,ds_y);
     }
-//	dscount++; 
 #endif 
 	 
     xfrac = ds_xfrac; 

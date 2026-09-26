@@ -66,7 +66,6 @@ void G_RecordDemo (char* name);
 
 void G_BeginRecording (void);
 
-void G_PlayDemo (char* name);
 void G_TimeDemo (char* name);
 boolean G_CheckDemoStatus (void);
 

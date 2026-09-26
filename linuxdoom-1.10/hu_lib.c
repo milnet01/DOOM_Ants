@@ -40,10 +40,6 @@ rcsid[] __attribute__((used)) = "$Id: hu_lib.c,v 1.3 1997/01/26 07:44:58 b1 Exp 
 
 extern boolean	automapactive;	// in AM_map.c
 
-void HUlib_init(void)
-{
-}
-
 void HUlib_clearTextLine(hu_textline_t* t)
 {
     t->len = 0;
@@ -290,27 +286,11 @@ void HUlib_delCharFromIText(hu_itext_t* it)
 	HUlib_delCharFromTextLine(&it->l);
 }
 
-void HUlib_eraseLineFromIText(hu_itext_t* it)
-{
-    while (it->lm != it->l.len)
-	HUlib_delCharFromTextLine(&it->l);
-}
-
 // Resets left margin as well
 void HUlib_resetIText(hu_itext_t* it)
 {
     it->lm = 0;
     HUlib_clearTextLine(&it->l);
-}
-
-void
-HUlib_addPrefixToIText
-( hu_itext_t*	it,
-  char*		str )
-{
-    while (*str)
-	HUlib_addCharToTextLine(&it->l, *(str++));
-    it->lm = it->l.len;
 }
 
 // wrapper function for handling general keyed input.

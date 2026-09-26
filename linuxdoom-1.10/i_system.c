@@ -70,11 +70,6 @@ ticcmd_t*	I_BaseTiccmd(void)
 }
 
 
-int  I_GetHeapSize (void)
-{
-    return mb_used*1024*1024;
-}
-
 byte* I_ZoneBase (int*	size)
 {
     byte*	base;
@@ -187,14 +182,6 @@ void I_WaitVBL(int count)
     usleep (count * (1000000/70) );                                
 #endif
 #endif
-}
-
-void I_BeginRead(void)
-{
-}
-
-void I_EndRead(void)
-{
 }
 
 byte*	I_AllocLow(int length)

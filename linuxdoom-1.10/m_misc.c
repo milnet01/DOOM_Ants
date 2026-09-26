@@ -83,49 +83,6 @@ rcsid[] __attribute__((used)) = "$Id: m_misc.c,v 1.6 1997/02/03 22:45:10 b1 Exp 
 #include "r_backend.h"
 
 //
-// M_DrawText
-// Returns the final X coordinate
-// HU_Init must have been called to init the font
-//
-extern patch_t*		hu_font[HU_FONTSIZE];
-
-int
-M_DrawText
-( int		x,
-  int		y,
-  boolean	direct,
-  char*		string )
-{
-    int 	c;
-    int		w;
-
-    while (*string)
-    {
-	c = D_ToUpper(*string) - HU_FONTSTART;
-	string++;
-	if (c < 0 || c >= HU_FONTSIZE)
-	{
-	    x += 4;
-	    continue;
-	}
-		
-	w = SHORT (hu_font[c]->width);
-	if (x+w > SCREENWIDTH)
-	    break;
-	if (direct)
-	    V_DrawPatchDirect(x, y, 0, hu_font[c]);
-	else
-	    V_DrawPatch(x, y, 0, hu_font[c]);
-	x+=w;
-    }
-
-    return x;
-}
-
-
-
-
-//
 // M_WriteFile
 //
 
@@ -325,11 +282,6 @@ extern char*	sndserver_filename;
 extern int	mb_used;
 #endif
 
-#ifdef LINUX
-char*		mousetype;
-char*		mousedev;
-#endif
-
 extern char*	chat_macros[];
 
 
@@ -403,10 +355,6 @@ default_t	defaults[] =
     
 #endif
 
-#ifdef LINUX
-    {"mousedev", (int*)&mousedev, (intptr_t)"/dev/ttyS0"},
-    {"mousetype", (int*)&mousetype, (intptr_t)"microsoft"},
-#endif
 
     {"use_mouse",&usemouse, 1},
     {"mouseb_fire",&mousebfire,0},

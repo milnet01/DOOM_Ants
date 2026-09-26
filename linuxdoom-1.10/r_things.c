@@ -51,16 +51,6 @@ rcsid[] __attribute__((used)) = "$Id: r_things.c,v 1.5 1997/02/03 16:47:56 b1 Ex
 
 
 
-typedef struct
-{
-    int		x1;
-    int		x2;
-	
-    int		column;
-    int		topclip;
-    int		bottomclip;
-
-} maskdraw_t;
 
 
 
@@ -288,7 +278,6 @@ void R_InitSpriteDefs (char** namelist)
 //
 vissprite_t	vissprites[MAXVISSPRITES];
 vissprite_t*	vissprite_p;
-int		newvissprite;
 
 
 

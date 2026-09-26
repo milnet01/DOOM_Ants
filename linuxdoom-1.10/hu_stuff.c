@@ -89,7 +89,6 @@ char*	player_names[] =
 };
 
 
-char			chat_char; // remove later.
 static player_t*	plr;
 patch_t*		hu_font[HU_FONTSIZE];
 static hu_textline_t	w_title;

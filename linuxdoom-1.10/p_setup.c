@@ -756,14 +756,6 @@ P_SetupLevel
     S_Start ();			
 
     
-#if 0 // UNUSED
-    if (debugfile)
-    {
-	Z_FreeTags (PU_LEVEL, MAXINT);
-	Z_FileDumpHeap (debugfile);
-    }
-    else
-#endif
 	Z_FreeTags (PU_LEVEL, PU_PURGELEVEL-1);
 
 

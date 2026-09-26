@@ -531,31 +531,6 @@ void W_InitMultipleFiles (char** filenames)
 
 
 //
-// W_InitFile
-// Just initialize from a single file.
-//
-void W_InitFile (char* filename)
-{
-    char*	names[2];
-
-    names[0] = filename;
-    names[1] = NULL;
-    W_InitMultipleFiles (names);
-}
-
-
-
-//
-// W_NumLumps
-//
-int W_NumLumps (void)
-{
-    return numlumps;
-}
-
-
-
-//
 // W_CheckNumForName
 // Returns -1 if name not found.
 //
@@ -677,8 +652,6 @@ W_ReadLump
 	I_Error ("W_ReadLump: lump %i declares a negative size %i",
 		 lump, l->size);
 	
-    // ??? I_BeginRead ();
-	
     if (l->handle == -1)
     {
 	// reloadable file, so use open / read / close
@@ -699,8 +672,6 @@ W_ReadLump
 
     if (l->handle == -1)
 	close (handle);
-		
-    // ??? I_EndRead ();
 }
 
 
