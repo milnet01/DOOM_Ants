@@ -47,6 +47,13 @@ DEPS_FILE="packaging/ci-deps.txt"           # shared apt package list (build.yml
 # The build + test commands are the two `make` lines in the gate below.
 # ----------------------------------------------------------------------------------
 
+# Local-only speed-up, NOT part of the job (DOOM-0452): both containers reuse the
+# .deb files earlier runs downloaded. apt-get update and install still run fresh
+# every time, and apt checks each cached file's hash against today's index, so what
+# gets installed is what GitHub installs. Kept on the system disk because /mnt/Games
+# is often busy; autoclean drops packages the index no longer offers.
+APT_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/doom-ants-ci-apt"
+
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
 
@@ -148,9 +155,15 @@ else
   # then the two make commands. Runs as the image's root (as GitHub's steps do); the
   # mounted HEAD export is throwaway. ':Z' relabels the bind mount for SELinux and is
   # a no-op where SELinux is off.
-  "$ENGINE" run --rm -v "$WORK":/src:Z -w /src "$CI_IMAGE" bash -euc '
+  mkdir -p "$APT_CACHE"
+  "$ENGINE" run --rm -v "$WORK":/src:Z -v "$APT_CACHE":/var/cache/apt/archives:Z \
+      -w /src "$CI_IMAGE" bash -euc '
     set -o pipefail
     export DEBIAN_FRONTEND=noninteractive
+    rm -f /etc/apt/apt.conf.d/docker-clean   # keep downloads in the mounted cache
+    # Download as root, not _apt: under rootless podman an _apt-owned partial/
+    # maps to a host uid the user cannot read or delete.
+    echo "APT::Sandbox::User \"root\";" > /etc/apt/apt.conf.d/99doom-cache
     apt-get update
     apt-get install -y --no-install-recommends \
       $(awk "NF && \$1 !~ /^#/ {print \$1}" '"$DEPS_FILE"')
@@ -161,6 +174,7 @@ else
     # to as well or "exactly what GitHub Actions runs" is false and a boot
     # regression passes here while CI goes red.
     apt-get install -y --no-install-recommends freedoom
+    apt-get autoclean -y >/dev/null
     export SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
     timeout 120 ./linuxdoom-1.10/linux/linuxxdoom \
       -iwad /usr/share/games/doom/freedoom1.wad \
@@ -190,8 +204,14 @@ if [ "$MODE" = "native" ]; then
   fi
 else
   echo "==> Windows cross-compile check (container, $CI_IMAGE)"
-  "$ENGINE" run --rm -v "$WORK":/src:Z -w /src "$CI_IMAGE" bash -euc '
+  mkdir -p "$APT_CACHE"
+  "$ENGINE" run --rm -v "$WORK":/src:Z -v "$APT_CACHE":/var/cache/apt/archives:Z \
+      -w /src "$CI_IMAGE" bash -euc '
     export DEBIAN_FRONTEND=noninteractive
+    rm -f /etc/apt/apt.conf.d/docker-clean   # keep downloads in the mounted cache
+    # Download as root, not _apt: under rootless podman an _apt-owned partial/
+    # maps to a host uid the user cannot read or delete.
+    echo "APT::Sandbox::User \"root\";" > /etc/apt/apt.conf.d/99doom-cache
     apt-get update
     # The last four are what the GitHub runner image already has and a bare
     # ubuntu:24.04 does not -- make drives the header generation, curl fetches the
@@ -202,6 +222,7 @@ else
     apt-get install -y --no-install-recommends \
       gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 glslc xxd \
       make curl ca-certificates pkg-config
+    apt-get autoclean -y >/dev/null
     packaging/windows-smoke.sh --syntax-only
   '
 fi
