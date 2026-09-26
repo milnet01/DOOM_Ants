@@ -659,13 +659,14 @@ bool filthOn() { return pc.misc5.w == 1u; }
 
 // Per-cell transform of the sampling coordinate sUV: signed sub-tile offset + optional horizontal
 // mirror (flip U within the cell; INV-1). Returns the transformed UV for cell `c`.
-vec2 detileCellUV(vec2 sUV, ivec2 c) {
-    vec3 h = hash3(c);
+// DOOM-0439: the hashed form, for a caller that also needs h.z for its own mirror test.
+vec2 detileCellUVh(vec2 sUV, vec3 h) {
     vec2 off = (h.xy - 0.5) * 2.0 * kDetileOffsetMag;
     vec2 uv = sUV + off;
     if (h.z < kDetileMirrorProb) uv.x = -uv.x;   // horizontal mirror only
     return uv;
 }
+vec2 detileCellUV(vec2 sUV, ivec2 c) { return detileCellUVh(sUV, hash3(c)); }
 
 // De-tiled sample of HD map `mapIdx` at surface UV `sUV`, world-cell coord `g = w/kDetileWorldCell`.
 // Inigo-Quilez 4-corner blend: sample the neighbouring cells' transformed UVs and blend by the
@@ -707,8 +708,9 @@ vec3 detileNormalTS(uint mapIdx, vec2 sUV, vec2 g) {
     for (int i = 0; i < (taps < 4 ? 2 : 4); i++) {
         ivec2 corner = (taps < 4) ? ivec2(i, 0) : ivec2(i & 1, i >> 1);
         ivec2 c = cell + corner;
-        vec3  tn = texture(hdTex[nonuniformEXT(mapIdx)], detileCellUV(sUV, c)).xyz * 2.0 - 1.0;
-        if (hash3(c).z < kDetileMirrorProb) tn.x = -tn.x;   // mirror flips tangent handedness
+        vec3  h  = hash3(c);                                  // once per cell (DOOM-0439)
+        vec3  tn = texture(hdTex[nonuniformEXT(mapIdx)], detileCellUVh(sUV, h)).xyz * 2.0 - 1.0;
+        if (h.z < kDetileMirrorProb) tn.x = -tn.x;            // mirror flips tangent handedness
         float wx = (corner.x == 0) ? (1.0 - b.x) : b.x;
         float wy = (taps < 4) ? 1.0 : ((corner.y == 0) ? (1.0 - b.y) : b.y);
         acc += tn * (wx * wy); wsum += wx * wy;
@@ -734,8 +736,9 @@ vec2 detilePOM(MatCtrl mc, vec2 baseUV, vec3 T, vec3 B, vec3 n, vec3 dir, vec2 g
     // cells and the single-cell march would seam. Skip the march there and let the wrappers de-tile
     // the plain baseUV (§4.4 fallback; the 0.1 band width is the §10 Q1 tuning knob).
     if (min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y)) < 0.1) return baseUV;
-    bool mir  = hash3(cell).z < kDetileMirrorProb;
-    vec2 duv  = detileCellUV(baseUV, cell);            // this cell's offset+mirror, applied once
+    vec3 hc   = hash3(cell);                           // once per cell (DOOM-0439)
+    bool mir  = hc.z < kDetileMirrorProb;
+    vec2 duv  = detileCellUVh(baseUV, hc);             // this cell's offset+mirror, applied once
     vec3 mdir = dir;
     if (mir) mdir -= 2.0 * dot(mdir, T) * T;           // mirror the march dir's tangent-X (INV-2)
     vec2 d = hdParallaxUV(mc, duv, T, B, n, mdir) - duv;   // parallax displacement in the cell frame
@@ -1514,21 +1517,24 @@ void main()
             vec3    T = n, B = n;
             float   tHit = rayQueryGetIntersectionTEXT(rq, true);   // HOISTED (DOOM-0181: hitP feeds the detile world-key)
             vec3    hitP = origin + dir * tHit;                     // HOISTED
+            // DOOM-0439: the de-tile world key, once per hit. Every consumer below is gated on
+            // usePBR && detileOn(), so the same gate here keeps paletted hits free of it.
+            vec2    dG   = (mc.usePBR != 0u && detileOn()) ? detileWorldUV(hitP, n) / kDetileWorldCell
+                                                           : vec2(0.0);
             if (mc.usePBR != 0u) {
                 vec2 baseUV = hdBaseUV(id, hitUV, mc.uvScale);
                 hdTangentFrame(n, p0, p1, p2, uv0, uv1, uv2, T, B);
                 // DOOM-0181 L3: march POM in the de-tiled coordinate so relief registers with the
                 // de-tiled albedo/normal/AO (§4.4); else the plain-space POM march.
                 sUV = detileOn()
-                    ? detilePOM(mc, baseUV, T, B, n, dir, detileWorldUV(hitP, n) / kDetileWorldCell)
+                    ? detilePOM(mc, baseUV, T, B, n, dir, dG)
                     : hdParallaxUV(mc, baseUV, T, B, n, dir);
             }
             // DOOM-0181 L1: de-tile the albedo when the dial is on and this is an HD albedo map;
             // else the unchanged hdAlbedo path (paletted / no-albedo hits stay byte-identical).
             vec3 albedo;
             if (mc.usePBR != 0u && mc.maps[0] >= 0 && detileOn()) {
-                vec2 g = detileWorldUV(hitP, n) / kDetileWorldCell;
-                albedo = detile(uint(mc.maps[0]), sUV, g);
+                albedo = detile(uint(mc.maps[0]), sUV, dG);
             } else {
                 albedo = hdAlbedo(mc, id, hitUV, sUV);   // HD if usePBR, else paletted
             }
@@ -1536,7 +1542,7 @@ void main()
             // both the crevice-pooled filth in applyGrime and the ambient term below. Paletted /
             // no-AO hits fall back to hdAO (== 1.0 there, so no crevice darkening).
             float ao = (mc.usePBR != 0u && mc.maps[4] >= 0 && detileOn())
-                     ? detileR(uint(mc.maps[4]), sUV, detileWorldUV(hitP, n) / kDetileWorldCell)
+                     ? detileR(uint(mc.maps[4]), sUV, dG)
                      : hdAO(mc, id, sUV);
             float gooWet = 0.0;   // DOOM-0183 L5: goo-puddle wet coverage (0 unless a green-goo puddle)
             if (!isSprite && filthOn()) albedo = applyGrime(albedo, hitP, n, ao, gooWet);   // DOOM-0179/0181 filth (all world surfaces; misc5.w toggle)
@@ -1551,19 +1557,20 @@ void main()
             // -> subsector (triSs) -> sector (subSec); sprite hits + the no-REJECT case
             // pass 0xFFFFFFFF (unknown) so shadeSurface leaves every light in play.
             // probeCount (misc2.y) == subsector count, so it bounds the triSs lookup.
+            // DOOM-0439: the hit's subsector, read ONCE for both this and the GI lookup
+            // below. probeCount (misc2.y) gates the read itself (DOOM-0407): with no bake,
+            // triSs is address 0, and this site used to read it before checking.
+            uint subId  = (isSprite || pc.misc2.y == 0u) ? 0xFFFFFFFFu
+                                                         : pc.triSs.s[uint(prim)];
             uint hitSec = 0xFFFFFFFFu;
-            if (pc.misc4.z > 0u && !isSprite)
-            {
-                uint ss = pc.triSs.s[uint(prim)];
-                if (ss < pc.misc2.y) hitSec = pc.subSec.s[ss];
-            }
+            if (pc.misc4.z > 0u && subId < pc.misc2.y)
+                hitSec = pc.subSec.s[subId];
             // DOOM-0181 L2: de-tile the normal in lockstep with the albedo (same world cell), so a
             // mirrored/offset tile's relief matches its colour. INV-2: detileNormalTS negates the
             // per-cell tangent-X on a mirror. Paletted / no-normal-map hits keep hdShadingNormal.
             vec3 shadeN;
             if (mc.usePBR != 0u && mc.maps[1] >= 0 && detileOn()) {
-                vec2 gN = detileWorldUV(hitP, n) / kDetileWorldCell;
-                vec3 tn = detileNormalTS(uint(mc.maps[1]), sUV, gN);
+                vec3 tn = detileNormalTS(uint(mc.maps[1]), sUV, dG);
                 shadeN  = normalize(tn.x * T + tn.y * B + tn.z * n);
             } else {
                 shadeN = hdShadingNormal(mc, id, sUV, n, T, B);
@@ -1594,8 +1601,6 @@ void main()
             vec3  ambient  = vec3(max(secLight * AMBIENT_SECTOR_SCALE, AMBIENT_FLOOR));
             // DOOM-0407: probeCount (misc2.y) gates the READ, not just its result --
             // with no bake, triSs is address 0 (mesh.frag carries the same guard).
-            uint  subId    = (isSprite || pc.misc2.y == 0u) ? 0xFFFFFFFFu
-                                                            : pc.triSs.s[uint(prim)];
             vec3  gi       = (subId < pc.misc2.y) ? giIrradiance(pc.probes, subId, shadeN)
                                                   : vec3(0.0);
             L += albedo * max(gi, ambient) * ao;   // AO dims fill light only (ao fetched above)
@@ -1704,20 +1709,23 @@ void main()
             vec3    T = n, B = n;
             float   tHit = rayQueryGetIntersectionTEXT(rq, true);   // HOISTED (DOOM-0181: hitP feeds the detile world-key)
             vec3    hitP = origin + dir * tHit;                     // HOISTED
+            // DOOM-0439: the de-tile world key, once per hit. Every consumer below is gated on
+            // usePBR && detileOn(), so the same gate here keeps paletted hits free of it.
+            vec2    dG   = (mc.usePBR != 0u && detileOn()) ? detileWorldUV(hitP, n) / kDetileWorldCell
+                                                           : vec2(0.0);
             if (mc.usePBR != 0u) {
                 vec2 baseUV = hdBaseUV(id, hitUV, mc.uvScale);
                 hdTangentFrame(n, p0, p1, p2, uv0, uv1, uv2, T, B);
                 // DOOM-0181 L3: march POM in the de-tiled coordinate so relief registers with the
                 // de-tiled albedo/normal/AO (§4.4); else the plain-space POM march.
                 sUV = detileOn()
-                    ? detilePOM(mc, baseUV, T, B, n, dir, detileWorldUV(hitP, n) / kDetileWorldCell)
+                    ? detilePOM(mc, baseUV, T, B, n, dir, dG)
                     : hdParallaxUV(mc, baseUV, T, B, n, dir);
             }
             // DOOM-0181 L1: de-tile the albedo (same branch as mode 4) before galbedo is stored.
             vec3 albedo;
             if (mc.usePBR != 0u && mc.maps[0] >= 0 && detileOn()) {
-                vec2 g = detileWorldUV(hitP, n) / kDetileWorldCell;
-                albedo = detile(uint(mc.maps[0]), sUV, g);
+                albedo = detile(uint(mc.maps[0]), sUV, dG);
             } else {
                 albedo = hdAlbedo(mc, id, hitUV, sUV);   // HD if usePBR, else paletted
             }
@@ -1726,7 +1734,7 @@ void main()
             // galbedo carries the filth (the 3/4 reconstructed pixels need it too); the one extra
             // AO fetch on those pixels is the cost of baking filth into the demodulated albedo.
             float ao = (mc.usePBR != 0u && mc.maps[4] >= 0 && detileOn())
-                     ? detileR(uint(mc.maps[4]), sUV, detileWorldUV(hitP, n) / kDetileWorldCell)
+                     ? detileR(uint(mc.maps[4]), sUV, dG)
                      : hdAO(mc, id, sUV);
             // DOOM-0179/0181 grime + filth, applied BEFORE galbedo is stored so the composite's
             // re-modulation (L = albedo*illum) carries the mottle. n is geometric here.
@@ -1779,12 +1787,14 @@ void main()
             // variance estimate is non-zero (a frozen seed defeats the denoiser).
             uint seed  = pcgHash(px.x + px.y * w + 1u + pc.misc3.x * 2654435761u);
             // DOOM-0119: hit sector for the REJECT light cull (see the mode-4 path).
+            // DOOM-0439: the hit's subsector, read ONCE for both this and the GI lookup
+            // below. probeCount (misc2.y) gates the read itself (DOOM-0407): with no bake,
+            // triSs is address 0, and this site used to read it before checking.
+            uint subId  = (isSprite || pc.misc2.y == 0u) ? 0xFFFFFFFFu
+                                                         : pc.triSs.s[uint(prim)];
             uint hitSec = 0xFFFFFFFFu;
-            if (pc.misc4.z > 0u && !isSprite)
-            {
-                uint ss = pc.triSs.s[uint(prim)];
-                if (ss < pc.misc2.y) hitSec = pc.subSec.s[ss];
-            }
+            if (pc.misc4.z > 0u && subId < pc.misc2.y)
+                hitSec = pc.subSec.s[subId];
             // Lighting uses the normal-mapped shading normal; the G-buffer normal above
             // stays GEOMETRIC (the SVGF edge-stopping wants low-frequency normals, not the
             // high-frequency map detail, or it treats bumps as edges and under-denoises).
@@ -1793,8 +1803,7 @@ void main()
             // per-cell tangent-X on a mirror. Paletted / no-normal-map hits keep hdShadingNormal.
             vec3 shadeN;
             if (mc.usePBR != 0u && mc.maps[1] >= 0 && detileOn()) {
-                vec2 gN = detileWorldUV(hitP, n) / kDetileWorldCell;
-                vec3 tn = detileNormalTS(uint(mc.maps[1]), sUV, gN);
+                vec3 tn = detileNormalTS(uint(mc.maps[1]), sUV, dG);
                 shadeN  = normalize(tn.x * T + tn.y * B + tn.z * n);
             } else {
                 shadeN = hdShadingNormal(mc, id, sUV, n, T, B);
@@ -1818,8 +1827,6 @@ void main()
             vec3  ambient  = vec3(max(secLight * AMBIENT_SECTOR_SCALE, AMBIENT_FLOOR));
             // sprites: no GI probe. DOOM-0407: no bake -> triSs is address 0, so
             // probeCount (misc2.y) must gate the read itself, as in mode 4 above.
-            uint  subId    = (isSprite || pc.misc2.y == 0u) ? 0xFFFFFFFFu
-                                                            : pc.triSs.s[uint(prim)];
             vec3  gi       = (subId < pc.misc2.y) ? giIrradiance(pc.probes, subId, shadeN)
                                                   : vec3(0.0);
             illum += max(gi, ambient) * ao;   // AO dims fill light only (ao fetched above)
