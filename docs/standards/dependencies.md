@@ -137,10 +137,13 @@ sub-Makefile is not built by CI or the default `make`, so it's out of scope):
   posture below for the lockstep rule between them and `ubuntu-latest`.
 - **Release packaging (AppImage):** `packaging/build-appimage.sh` (driven by
   `packaging/release.sh`) bundles the runtime libs (SDL2, SDL2_mixer, FluidSynth
-  + a GM soundfont) and fetches three tools — `linuxdeploy`, `appimagetool`,
-  `type2-runtime` — from their `continuous` release tags (build-appimage.sh:34-36).
-  Those `continuous` tags float like `ubuntu-latest` (no version to bump); the
-  bundled libs ride whatever the build host provides.
+  + a GM soundfont) and fetches `linuxdeploy`, `appimagetool` and
+  `type2-runtime`, each pinned to a release tag with a recorded sha256 (the
+  `LINUXDEPLOY_TAG`, `APPIMAGETOOL_TAG` and `RUNTIME_TAG` assignments in
+  build-appimage.sh; DOOM-0259). They are downloaded and then executed, so these
+  ARE pins a sweep must check and bump: change the tag, run the script, and
+  verify the sha256 it prints against the upstream release page before
+  committing it. The bundled libs ride whatever the build host provides.
 - `linuxdoom-1.10/stb_image.h` — vendored public-domain PNG decoder (stb_image v2.30),
   added for DOOM-0042 HD material loading. No link dependency. Re-check upstream on a
   sweep cadence; update the version noted here when bumped.
