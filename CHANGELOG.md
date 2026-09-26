@@ -8,6 +8,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Animated nukage and lava no longer trigger a full lighting recalculation each time they change frame** (DOOM-0436)
+  In Solid, an animated floor changing frame used to redo the whole
+  nearest-lights calculation, a regular spike in frame time.
+  A changing floor moves no light, so now only the light colours are
+  refreshed. The lighting result is identical.
+
 - **Levels resolve their wall textures by direct lookup instead of searching the texture list for every wall side** (DOOM-0446)
   Loading a level used to compare each wall side's texture names against
   the whole texture list. It now goes straight to the entry. Every wall

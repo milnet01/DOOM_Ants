@@ -4105,7 +4105,7 @@ against.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lanes 12 and 13 (same root cause, two symptom sets).
 
-- 📋 [DOOM-0436] **An animated flat cycling re-arms the full static point-light cull several times a second.**
+- ✅ [DOOM-0436] **An animated flat cycling re-arms the full static point-light cull several times a second.**
   This is the DOOM-0170 fix one level up: the cull was hoisted out of the
   frame, and then a ~4.4 Hz trigger was left wired to it.
 
@@ -4137,6 +4137,17 @@ against.
   a flat cycle before building the fix. Verify with -rtverify, a
   -shotcompare golden on a nukage room, and the lights sub-timer losing
   its periodic spike.
+  Resolved (2026-09-26): measured first, and the inference held. On E1M1
+  in Solid the full static rebuild re-armed eight to ten times a second
+  and took the lights step from about 2.1 ms to 4.8 ms on those frames.
+  Fix: BuildStaticEmitterSet compares each record's vertices with the
+  previous build. Unchanged vertices raise staticLightLeDirty, and the
+  cache re-reads Le through a stored per-slot emitter index; anything
+  else raises the full rebuild as before. Dirty frames now take about
+  2.9 ms; the rest is the emitter-set rescan. A temporary probe ran the
+  full rebuild after every Le refresh: 240 of 240 caches byte-identical.
+  The refresh reads plain RAM; reading the mapped buffer cost 1.4 ms,
+  which is filed as DOOM-0461 for the full rebuild.
   **Layman:** Nukage and lava tiles animate about four times a second. Each time one does, the game redoes the entire expensive lighting calculation for the level — even though a changing tile does not move any light. Most levels have nukage or lava, so most levels pay it.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lane 4.

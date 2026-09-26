@@ -1104,6 +1104,13 @@ struct VulkanState
     std::vector<float>      staticLightCache;    // sub × N × 6 floats (centroid[3] Le[3])
     std::vector<int32_t>    staticLightCount;    // per-subsector count of cached static lights
     bool                    staticLightsDirty = true;  // static emitter set changed -> recache
+    // DOOM-0436: an animated flat or a switch swap changes an emitter's Le but moves no
+    // vertex, so the nearest-N ranking cannot change. BuildStaticEmitterSet then raises
+    // only this flag, and the cache refreshes the Le of each slot from the emitter it
+    // came from (staticLightSrc) instead of re-running the cull.
+    std::vector<int32_t>    staticLightSrc;      // sub × N: static emitter index per slot
+    bool                    staticLightLeDirty = false;
+    std::vector<float>      prevStaticEmit;      // the previous build, for that comparison
 
     bool ready        = false;
     bool needRecreate = false;
@@ -8014,7 +8021,9 @@ static void RebuildStaticPointLightCache(int staticN)
     const int      numSub = (int)g.probeCount;
     g.staticLightCache.assign((size_t)numSub * N * RASTER_LIGHT_FLOATS, 0.0f);
     g.staticLightCount.assign((size_t)numSub, 0);
+    g.staticLightSrc.assign((size_t)numSub * N, -1);
     g.staticLightsDirty = false;
+    g.staticLightLeDirty = false;   // the full rebuild reads the current Le too
     if (staticN <= 0 || numSub <= 0 || !g.emitMapped)
         return;                                   // no static lights -> cache stays zeroed
     const float* em = (const float*)g.emitMapped;
@@ -8068,8 +8077,34 @@ static void RebuildStaticPointLightCache(int staticN)
             slot[k * 6 + 3] = r[9];               // Le.r
             slot[k * 6 + 4] = r[10];              // Le.g
             slot[k * 6 + 5] = r[11];              // Le.b
+            g.staticLightSrc[(size_t)si * N + k] = bestI[k];
         }
         g.staticLightCount[si] = cnt;
+    }
+}
+
+// DOOM-0436: the static set kept every vertex and only an Le changed, so each cached
+// slot still names the right emitter. Re-read its Le; the result is what a full
+// RebuildStaticPointLightCache would produce, without re-running the cull.
+static void RefreshStaticPointLightLe()
+{
+    const uint32_t N = RASTER_MAX_LIGHTS_PER_SUBSECTOR;
+    g.staticLightLeDirty = false;
+    // g.staticEmit, not g.emitMapped: nee_merge_emitters copies the static records into
+    // the mapped buffer verbatim, and that buffer is write-combined memory where these
+    // scattered reads cost over a millisecond (measured) -- the DOOM-0170 trap.
+    const float* em     = g.staticEmit.data();
+    const int    numSub = (int)g.staticLightCount.size();
+    for (int si = 0; si < numSub; si++)
+    {
+        float* slot = &g.staticLightCache[(size_t)si * N * RASTER_LIGHT_FLOATS];
+        for (int k = 0; k < g.staticLightCount[si]; k++)
+        {
+            const float* r = &em[(size_t)g.staticLightSrc[(size_t)si * N + k] * 14];
+            slot[k * 6 + 3] = r[9];               // Le.r
+            slot[k * 6 + 4] = r[10];              // Le.g
+            slot[k * 6 + 5] = r[11];              // Le.b
+        }
     }
 }
 
@@ -8104,6 +8139,8 @@ void BuildRasterPointLights()
     // subsector count did (a new level reassigns subCentroid without touching the flag).
     if (g.staticLightsDirty || (int)g.staticLightCount.size() != numSub)
         RebuildStaticPointLightCache(staticN);
+    else if (g.staticLightLeDirty)
+        RefreshStaticPointLightLe();
 
     const bool haveCache = ((int)g.staticLightCount.size() == numSub &&
                             (g.staticLightCache.size() >= (size_t)numSub * subF));
@@ -8214,6 +8251,7 @@ void BuildRasterPointLights()
 // is WAD-global (g.matEmissive); the vertex count is the mesh's (both buffers share it).
 static void BuildStaticEmitterSet(const rb_vertex_t* v)
 {
+    g.prevStaticEmit.swap(g.staticEmit);
     g.staticEmit.clear();
     g.staticWgt.clear();
     g.staticEmitLiquid.clear();
@@ -8261,7 +8299,18 @@ static void BuildStaticEmitterSet(const rb_vertex_t* v)
         g.staticEmitLiquid.push_back(std::find(g.liquidMatIds.begin(), g.liquidMatIds.end(), id)
                                      != g.liquidMatIds.end() ? 1u : 0u);
     }
-    g.staticLightsDirty = true;   // DOOM-0170 perf: static set changed -> recache point lights
+
+    // DOOM-0170 perf: static set changed -> recache point lights. DOOM-0436: unless every
+    // record kept its vertices (v0 v1 v2, floats 0..8 of 14), in which case only Le moved.
+    // staticLightsDirty is sticky until a full rebuild, so comparing with the previous
+    // build is enough even when several builds land between two raster frames.
+    bool sameVerts = g.staticEmit.size() == g.prevStaticEmit.size();
+    for (size_t r = 0; sameVerts && r < g.staticEmit.size(); r += 14)
+        sameVerts = std::memcmp(&g.staticEmit[r], &g.prevStaticEmit[r], 9 * sizeof(float)) == 0;
+    if (sameVerts)
+        g.staticLightLeDirty = true;
+    else
+        g.staticLightsDirty = true;
 }
 
 // Build this level's NEE emitter list (DOOM-0009 build step 3b): the subset of
