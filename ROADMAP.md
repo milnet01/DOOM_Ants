@@ -4314,7 +4314,7 @@ against.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lane 7.
 
-- 📋 [DOOM-0439] **Per-hit values recomputed in the path tracer's hot path, and its two shading modes are ~70 duplicated lines.**
+- ✅ [DOOM-0439] **Per-hit values recomputed in the path tracer's hot path, and its two shading modes are ~70 duplicated lines.**
   Two findings in one item because they sit in the same block.
 
   RECOMPUTED (QUICK, no output change). The de-tile world key
@@ -4340,6 +4340,18 @@ against.
   the driver dead-strip each branch. A shared function must not defeat
   that. Measure VGPR count and occupancy with shaderstats, not just
   correctness, and gate on -rtverify plus -shotcompare in BOTH modes.
+  Resolved (2026-09-26). Part (a) (4abdb80): the de-tile world key is
+  computed once per hit, triSs is read once (dropping an unguarded read
+  of address 0 when no bake exists), and cell hashes are passed rather
+  than recomputed. Mode 6 megakernel: 5250 to 5232 instructions, VMEM 158
+  to 157. Mode 4: 5372 to 5346, VMEM 151 to 150. Part (b) (8301320):
+  primaryHitSurface, primaryHitLighting and primaryHitAddTerms hold the
+  shading both modes share. Both specialised pipelines' RADV shaderstats
+  are identical to part (a) in every column, so the dead-strip hazard did
+  not materialise. Mode 6 A/B equal to its control; -rtverify PASS. Mode 4
+  cannot be settled by capture: two runs of one build differ by up to
+  0.64/255, so its evidence is the SPIR-V and shaderstats identity. That
+  is recorded, with a correction to 4abdb80's mode-4 claim, in 8301320.
   **Layman:** Inside the ray-tracing shader, the same few values are worked out four times for every surface the light hits, on every pixel of every frame. And the two versions of that shading code are near-copies that must agree but nothing checks that they do.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lane 7.
