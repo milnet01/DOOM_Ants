@@ -67,6 +67,21 @@ int			numlumps;
 
 void**			lumpcache;
 
+// DOOM-0435: a hash chain over the lump directory, so a lookup by name probes
+// one short chain instead of scanning every lump. Built once, after the last
+// file is added. Each lump links to the next LOWER index with the same hash, so
+// the first match on a chain is the highest index -- the lump the original
+// backwards scan returned, which is what lets a later file override an earlier
+// one. W_Reload rewrites positions and sizes but never names, so the table
+// outlives it.
+static int*		lumphash;	// head of each chain; -1 when empty
+static int*		lumpnext;	// next lower lump on the same chain; -1 ends it
+static unsigned		lumphashmask;
+
+static void W_NameKey (char* name, char key[9]);
+static int W_ScanForKey (const char* key);
+static int W_HashForKey (const char* key);
+
 
 #define strcmpi	strcasecmp
 
@@ -402,6 +417,68 @@ void W_Reload (void)
 
 
 
+// Hashes all eight bytes, exactly the bytes a lookup compares.
+static unsigned W_HashName (const char* name)
+{
+    unsigned	h = 2166136261u;	// FNV-1a
+    int		i;
+
+    for (i=0 ; i<8 ; i++)
+	h = (h ^ (unsigned char)name[i]) * 16777619u;
+    return h;
+}
+
+static void W_InitLumpHash (void)
+{
+    unsigned	size = 1;
+    int		i;
+
+    while (size < (unsigned)numlumps)
+	size <<= 1;
+
+    free (lumphash);
+    free (lumpnext);
+    lumphash = malloc (size * sizeof(*lumphash));
+    lumpnext = malloc (numlumps * sizeof(*lumpnext));
+    if (!lumphash || !lumpnext)
+	I_Error ("W_InitLumpHash: couldn't allocate the lump hash");
+    lumphashmask = size - 1;
+
+    for (i=0 ; i<(int)size ; i++)
+	lumphash[i] = -1;
+
+    // Forwards, pushing each lump on the front of its chain, so every chain
+    // runs from the highest index down.
+    for (i=0 ; i<numlumps ; i++)
+    {
+	unsigned h = W_HashName (lumpinfo[i].name) & lumphashmask;
+
+	lumpnext[i] = lumphash[h];
+	lumphash[h] = i;
+    }
+
+#ifdef DOOM_DEV
+    // The override order is what a wrong table breaks, and it breaks silently
+    // as wrong art with a PWAD loaded. Every name in the directory must
+    // resolve to the lump the original scan chose.
+    for (i=0 ; i<numlumps ; i++)
+    {
+	char	key[9];
+	char	name[9];
+
+	memcpy (name, lumpinfo[i].name, 8);
+	name[8] = 0;
+	W_NameKey (name, key);
+	if (W_HashForKey (key) != W_ScanForKey (key))
+	    I_Error ("W_InitLumpHash: hash and scan disagree on lump %i (%s)",
+		     i, name);
+    }
+    printf ("W_InitLumpHash: hash agrees with scan on all %i lumps\n",
+	    numlumps);
+#endif
+}
+
+
 //
 // W_InitMultipleFiles
 // Pass a null terminated list of files to use.
@@ -446,6 +523,8 @@ void W_InitMultipleFiles (char** filenames)
 	I_Error ("Couldn't allocate lumpcache");
 
     memset (lumpcache,0, size);
+
+    W_InitLumpHash ();
 }
 
 
@@ -481,45 +560,59 @@ int W_NumLumps (void)
 // Returns -1 if name not found.
 //
 
-int W_CheckNumForName (char* name)
+// Makes a lump name into the form the directory is compared in: the first
+// eight characters, upper-cased, zero-padded.
+static void W_NameKey (char* name, char key[9])
 {
-    union {
-	char	s[9];
-	int	x[2];
-	
-    } name8;
-    
-    int		v1;
-    int		v2;
-    lumpinfo_t*	lump_p;
+    int	i;
 
-    // make the name into two integers for easy compares
-    strncpy (name8.s,name,8);
-
-    // in case the name was a fill 8 chars
-    name8.s[8] = 0;
+    // strncpy's meaning -- up to eight characters, zero-padded -- plus the
+    // ninth byte for a name that fills all eight.
+    for (i=0 ; i<8 && name[i] ; i++)
+	key[i] = name[i];
+    for ( ; i<9 ; i++)
+	key[i] = 0;
 
     // case insensitive
-    strupr (name8.s);		
+    strupr (key);
+}
 
-    v1 = name8.x[0];
-    v2 = name8.x[1];
-
-
-    // scan backwards so patch lump files take precedence
-    lump_p = lumpinfo + numlumps;
+// The original lookup: scan backwards so patch lump files take precedence.
+static int W_ScanForKey (const char* key)
+{
+    lumpinfo_t*	lump_p = lumpinfo + numlumps;
 
     while (lump_p-- != lumpinfo)
     {
-	if ( *(int *)lump_p->name == v1
-	     && *(int *)&lump_p->name[4] == v2)
-	{
+	if (!memcmp (lump_p->name, key, 8))
 	    return lump_p - lumpinfo;
-	}
     }
 
     // TFB. Not found.
     return -1;
+}
+
+static int W_HashForKey (const char* key)
+{
+    int	i;
+
+    for (i = lumphash[W_HashName (key) & lumphashmask] ; i != -1 ; i = lumpnext[i])
+    {
+	if (!memcmp (lumpinfo[i].name, key, 8))
+	    return i;
+    }
+    return -1;
+}
+
+int W_CheckNumForName (char* name)
+{
+    char	key[9];
+
+    W_NameKey (name, key);
+
+    // Only W_AddFile can run before the table exists, and it looks nothing up;
+    // the scan stays as the fallback so the lookup never depends on that.
+    return lumphash ? W_HashForKey (key) : W_ScanForKey (key);
 }
 
 

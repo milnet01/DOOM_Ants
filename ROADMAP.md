@@ -4061,7 +4061,7 @@ against.
   Source: user-request-2026-09-12.
   Lanes: renderer, tooling.
 
-- 📋 [DOOM-0435] **Hash the WAD lump directory: every lookup by name is a linear scan, and several sit on per-frame draw paths.**
+- ✅ [DOOM-0435] **Hash the WAD lump directory: every lookup by name is a linear scan, and several sit on per-frame draw paths.**
   Two lanes found this from opposite ends and it is one root cause.
 
   W_CheckNumForName walks the entire lump directory backwards; W_GetNumForName
@@ -4092,6 +4092,15 @@ against.
 
   W_Reload rewrites position and size but not names, so the table should not
   need rebuilding there -- confirm when implementing.
+  Resolved (2026-09-26): both fixes shipped. W_CheckNumForName probes a
+  hash chain built at the end of W_InitMultipleFiles; chains run from the
+  highest index down, so a later file still overrides an earlier one. The
+  table is private to w_wad.c, so lumpinfo_t is unchanged. The border and
+  thermometer loops look their centre patch up once. Confirmed: W_Reload
+  never rewrites names. Proof: a DEV build checks hash against scan for
+  every lump name at startup; with a PWAD overriding PLAYPAL, STBAR,
+  TITLEPIC and DSPISTOL it agreed, and with the chain order reversed it
+  stopped on PLAYPAL. Map sweep and demo fixtures unchanged.
   **Layman:** Every time the game needs a picture or sound out of the game file, it searches the whole index from one end — about 2,300 entries — instead of going straight to it. Some menus do that 156 times per frame.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lanes 12 and 13 (same root cause, two symptom sets).

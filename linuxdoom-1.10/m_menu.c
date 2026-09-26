@@ -934,12 +934,15 @@ void M_DrawLoad(void)
 void M_DrawSaveLoadBorder(int x,int y)
 {
     int             i;
+    // DOOM-0435: looked up once, not per segment. Drawing a patch allocates
+    // nothing, so the PU_CACHE block cannot be purged inside the loop.
+    patch_t*        centre = W_CacheLumpName("M_LSCNTR",PU_CACHE);
 	
     V_DrawPatchDirect (x-8,y+7,0,W_CacheLumpName("M_LSLEFT",PU_CACHE));
 	
     for (i = 0;i < 24;i++)
     {
-	V_DrawPatchDirect (x,y+7,0,W_CacheLumpName("M_LSCNTR",PU_CACHE));
+	V_DrawPatchDirect (x,y+7,0,centre);
 	x += 8;
     }
 
@@ -2995,13 +2998,15 @@ M_DrawThermo
 {
     int		xx;
     int		i;
+    // DOOM-0435: looked up once, not per segment (see M_DrawSaveLoadBorder).
+    patch_t*	middle = W_CacheLumpName("M_THERMM",PU_CACHE);
 
     xx = x;
     V_DrawPatchDirect (xx,y,0,W_CacheLumpName("M_THERML",PU_CACHE));
     xx += 8;
     for (i=0;i<thermWidth;i++)
     {
-	V_DrawPatchDirect (xx,y,0,W_CacheLumpName("M_THERMM",PU_CACHE));
+	V_DrawPatchDirect (xx,y,0,middle);
 	xx += 8;
     }
     V_DrawPatchDirect (xx,y,0,W_CacheLumpName("M_THERMR",PU_CACHE));

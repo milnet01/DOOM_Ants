@@ -8,6 +8,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Finding a picture or sound in the game data is now a direct lookup instead of a search through the whole index** (DOOM-0435)
+  The game used to search its whole data index from one end every time it
+  needed a picture or sound, and the Load, Save and volume menus did that
+  inside their drawing loops. It now goes straight to the entry, and a mod
+  file still overrides the original data exactly as before.
+
 - **Volumetric fog now defaults to Medium instead of Low** (DOOM-0011)
   The user's pick. A saved rt_fog setting in ~/.doomrc still wins.
 
