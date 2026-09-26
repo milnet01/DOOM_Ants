@@ -46,7 +46,8 @@ set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 ENG="$REPO/linuxdoom-1.10"
 WIN_PREFIX="$REPO/mingw-deps/prefix"
-WINPTHREAD="/usr/x86_64-w64-mingw32/sys-root/mingw/bin/libwinpthread-1.dll"
+# shellcheck source=packaging/windows-dlls.sh
+source "$REPO/packaging/windows-dlls.sh"   # WIN_RUNTIME_DLLS
 
 BUILD=1
 SYNTAX_ONLY=0
@@ -159,7 +160,7 @@ trap 'exit 143' TERM
 STAGE="$SANDBOX/game"
 mkdir -p "$STAGE"
 cp "$EXE" "$STAGE/" || exit 1
-for dll in "$WIN_PREFIX/bin/SDL2.dll" "$WIN_PREFIX/bin/SDL2_mixer.dll" "$WINPTHREAD"; do
+for dll in "${WIN_RUNTIME_DLLS[@]}"; do
   [ -f "$dll" ] || { echo "FAIL: missing runtime DLL '$dll'" >&2; exit 1; }
   cp "$dll" "$STAGE/" || exit 1
 done

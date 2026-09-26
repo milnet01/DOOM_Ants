@@ -24,7 +24,8 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$REPO/packaging/build"
 WINZIP="$BUILD/doom_ants-$VERSION-windows-x86_64.zip"
 WIN_PREFIX="$REPO/mingw-deps/prefix"
-WINPTHREAD="/usr/x86_64-w64-mingw32/sys-root/mingw/bin/libwinpthread-1.dll"
+# shellcheck source=packaging/windows-dlls.sh
+source "$REPO/packaging/windows-dlls.sh"   # WIN_RUNTIME_DLLS
 
 mkdir -p "$BUILD"
 
@@ -36,14 +37,14 @@ EXE="$REPO/linuxdoom-1.10/mingw/doom_ants.exe"
 
 # 2. Stage the .exe + required runtime DLLs, then zip.
 echo "==> Packaging Windows zip..."
-for f in "$WIN_PREFIX/bin/SDL2.dll" "$WIN_PREFIX/bin/SDL2_mixer.dll" "$WINPTHREAD"; do
+for f in "${WIN_RUNTIME_DLLS[@]}"; do
   [ -f "$f" ] || { echo "windows-build.sh: missing runtime DLL '$f'" >&2; exit 1; }
 done
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 NAME="doom_ants-$VERSION-windows-x86_64"
 mkdir -p "$STAGE/$NAME"
-cp "$EXE" "$WIN_PREFIX/bin/SDL2.dll" "$WIN_PREFIX/bin/SDL2_mixer.dll" "$WINPTHREAD" "$STAGE/$NAME/"
+cp "$EXE" "${WIN_RUNTIME_DLLS[@]}" "$STAGE/$NAME/"
 cat > "$STAGE/$NAME/README.txt" <<EOF
 DOOM_Ants $VERSION — Windows (x86_64)
 
