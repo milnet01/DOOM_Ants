@@ -3253,7 +3253,7 @@ defect visible before a player finds it.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lane 5.
 
-- 📋 [DOOM-0444] **A workaround repeated four times in r_mesh.c rests on a claim about the engine that is false.**
+- ✅ [DOOM-0444] **A workaround repeated four times in r_mesh.c rests on a claim about the engine that is false.**
   Four sites derive a subsector's sector as segs[ss->firstline].frontsector,
   each justified by a comment of the form "subsectors[].sector is not
   populated at load in this DOOM build -- it is filled lazily by
@@ -3282,6 +3282,15 @@ defect visible before a player finds it.
   Verify with the 68-map sweep and a -shotcompare golden capture: a
   subsector whose sector differed between the two derivations would shift
   a GI probe or a seep cell.
+  Resolved (2026-09-26): the belief was false, settled before editing.
+  P_GroupLines sets ss->sector = seg->sidedef->sector for every subsector
+  at level load, before RB_BuildLevel. P_LoadSegs sets
+  li->frontsector = li->sidedef->sector, so the two readings agree by
+  construction. A temporary probe after P_GroupLines compared them on all
+  68 maps: 28,815 subsectors, 0 mismatches. All four sites
+  (RB_BuildProbes, RB_SectorAtPoint, the seep cell read,
+  RB_BuildSubsectorSectors) now read ss->sector with their numlines guards
+  kept, and the false comments are gone. -rtverify PASS, sweep clean.
   **Layman:** Four places in the world-building code avoid using a value, each with a comment saying it is not filled in yet. It is filled in — the level loader sets it, and the same file already relies on that a few hundred lines away.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lane 6.

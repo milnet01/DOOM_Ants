@@ -686,10 +686,8 @@ void RB_FreeMesh(rb_mesh_t* mesh)
 
 // DOOM-0009 build step 4: place one GI-bake irradiance probe per subsector. The
 // position is the mean of the subsector's seg endpoints (a point inside the
-// convex BSP leaf) at the owning sector's mid-height. The sector is taken from
-// the first seg's frontsector (subsectors[].sector is not populated at load in
-// this DOOM build -- it is filled lazily by R_Subsector at render time), so this
-// stays correct even before the first frame is drawn.
+// convex BSP leaf) at the owning sector's mid-height. subsectors[].sector is
+// filled for every subsector by P_GroupLines at level load (DOOM-0444).
 int RB_BuildProbes(rb_probe_t* out, int maxprobes)
 {
     int n = (numsubsectors < maxprobes) ? numsubsectors : maxprobes;
@@ -716,7 +714,7 @@ int RB_BuildProbes(rb_probe_t* out, int maxprobes)
         cy /= (double)(ss->numlines * 2);
 
         {
-            sector_t* sec = segs[ss->firstline].frontsector;
+            sector_t* sec = ss->sector;
             out[i].x = (float)cx;
             out[i].y = (float)cy;
             out[i].z = 0.5f * (sec->floorheight + sec->ceilingheight) / (float)FRACUNIT;
@@ -751,10 +749,7 @@ int RB_SectorAtPoint(float x, float y)
     subsector_t* ss = R_PointInSubsector((fixed_t)(x * FRACUNIT), (fixed_t)(y * FRACUNIT));
     if (!ss || ss->numlines <= 0)
         return -1;
-    // subsectors[].sector is filled lazily at render time; derive the sector the same
-    // way RB_BuildProbes does (the first seg's frontsector) so this is valid even
-    // before the first frame is drawn.
-    return (int)(segs[ss->firstline].frontsector - sectors);
+    return (int)(ss->sector - sectors);
 }
 
 // ---------------------------------------------------------------------------
@@ -846,7 +841,7 @@ static int RB_CellGeomAtPoint(float x, float y, fixed_t nudgeX, fixed_t nudgeY,
     if (!ss || ss->numlines <= 0)
         return -1;                          // same answer RB_SectorAtPoint gives
 
-    sc = segs[ss->firstline].frontsector;    // same derivation RB_SectorAtPoint uses
+    sc = ss->sector;
     out->sec    = (int)(sc - sectors);
     out->fz     = sc->floorheight   / (float)FRACUNIT;
     out->cz     = sc->ceilingheight / (float)FRACUNIT;
@@ -1512,7 +1507,7 @@ int RB_BuildSubsectorSectors(int* out, int n)
     {
         subsector_t* ss = &subsectors[i];
         out[i] = (ss->numlines > 0)
-               ? (int)(segs[ss->firstline].frontsector - sectors)
+               ? (int)(ss->sector - sectors)
                : -1;
     }
     return count;
