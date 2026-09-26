@@ -9505,6 +9505,64 @@ static float RadicalInverse(uint32_t i, uint32_t base)
     return r;
 }
 
+// DOOM-0331 L3 (4.3) / DOOM-0440 — the separable bloom blur, recorded once for both chains.
+// One pipeline dispatched twice: pass 0 reads the half-res bloomImage[0] and writes the
+// quarter-res [1] (the half -> quarter downsample rides the bilinear fetch, so it is free);
+// pass 1 reads [1] and writes [2]. The two chains differ only in who reads pass 1's
+// output: the raster composite.frag (FRAGMENT) or rt_tonemap (COMPUTE), so that stage is
+// the parameter. `ib` is the caller's barrier template, taken by value (sType, queue
+// families and subresource range already set). Returns false if the blur is not ready.
+static bool RecordBloomBlur(VkImageMemoryBarrier ib, VkPipelineStageFlags pass1Reader)
+{
+    if (!(g.bloomBlurPipeline && g.bloomBlurDs[0] && g.bloomBlurDs[1]))
+        return false;
+    vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g.bloomBlurPipeline);
+    for (uint32_t p = 0; p < 2; p++)
+    {
+        // Same closed cycle the extract uses: the target being written comes back to
+        // GENERAL for the imageStore, and returns to SHADER_READ_ONLY afterwards. Both
+        // directions, every frame -- the write->read half alone leaves every store in
+        // an invalid layout, including the very first one (these are parked
+        // SHADER_READ_ONLY at creation, so it is not a second-frame-only concern).
+        ib.image         = g.bloomImage[1 + p];
+        ib.oldLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        ib.newLayout     = VK_IMAGE_LAYOUT_GENERAL;
+        ib.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        ib.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+                             0, nullptr, 0, nullptr, 1, &ib);
+
+        // dir carries the axis AND the per-pass step factor (4.3): pass 0 reads
+        // half-res and writes quarter, so its offsets are doubled; pass 1 reads and
+        // writes quarter, so they are not. srcTexelSize is exactly 1/size of the image
+        // being READ, with no factor folded in -- putting the factor here instead
+        // builds pass 0 at half its reach and the halo comes out silently oval.
+        const VkExtent2D& src = g.bloomExtent[p];
+        const VkExtent2D& dst = g.bloomExtent[1 + p];
+        float blpush[4] = { p == 0 ? 2.0f : 0.0f,
+                            p == 0 ? 0.0f : 1.0f,
+                            1.0f / (float)src.width,
+                            1.0f / (float)src.height };
+        vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                g.bloomBlurPipeLayout, 0, 1, &g.bloomBlurDs[p], 0, nullptr);
+        vkCmdPushConstants(g.cmd, g.bloomBlurPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+                           0, sizeof(blpush), blpush);
+        vkCmdDispatch(g.cmd, (dst.width + 7) / 8, (dst.height + 7) / 8, 1);
+
+        // Pass 0's output feeds the next dispatch (compute); pass 1's feeds the chain's
+        // own reader.
+        ib.oldLayout     = VK_IMAGE_LAYOUT_GENERAL;
+        ib.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        ib.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        ib.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             p == 0 ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : pass1Reader, 0,
+                             0, nullptr, 0, nullptr, 1, &ib);
+    }
+    return true;
+}
+
 void RecordRtTrace(uint32_t idx)
 {
     const uint32_t dispW = g.extent.width, dispH = g.extent.height;
@@ -9964,51 +10022,9 @@ void RecordRtTrace(uint32_t idx)
                                      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
                                      0, nullptr, 0, nullptr, 1, &ib);
 
-                if (g.bloomBlurPipeline && g.bloomBlurDs[0] && g.bloomBlurDs[1])
-                {
-                    vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g.bloomBlurPipeline);
-                    for (uint32_t bp2 = 0; bp2 < 2; bp2++)
-                    {
-                        ib.image         = g.bloomImage[1 + bp2];
-                        ib.oldLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                        ib.newLayout     = VK_IMAGE_LAYOUT_GENERAL;
-                        ib.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-                        ib.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-                        vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
-                                             0, nullptr, 0, nullptr, 1, &ib);
-
-                        // dir carries the axis AND the per-pass step factor: pass 0 reads
-                        // half-res and writes quarter, so its offsets are doubled; pass 1
-                        // reads and writes quarter, so they are not. srcTexelSize is exactly
-                        // 1/size of the image being READ. Identical to the raster chain's —
-                        // this is DOOM-0331's shader, unmodified, driven the same way.
-                        const VkExtent2D& src = g.bloomExtent[bp2];
-                        const VkExtent2D& dst = g.bloomExtent[1 + bp2];
-                        float blpush[4] = { bp2 == 0 ? 2.0f : 0.0f,
-                                            bp2 == 0 ? 0.0f : 1.0f,
-                                            1.0f / (float)src.width,
-                                            1.0f / (float)src.height };
-                        vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-                                                g.bloomBlurPipeLayout, 0, 1,
-                                                &g.bloomBlurDs[bp2], 0, nullptr);
-                        vkCmdPushConstants(g.cmd, g.bloomBlurPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT,
-                                           0, sizeof(blpush), blpush);
-                        vkCmdDispatch(g.cmd, (dst.width + 7) / 8, (dst.height + 7) / 8, 1);
-
-                        // Both readers are COMPUTE on this chain — pass 1's output feeds
-                        // rt_tonemap, not composite.frag, which is the one place the
-                        // raster chain's otherwise identical cycle differs.
-                        ib.oldLayout     = VK_IMAGE_LAYOUT_GENERAL;
-                        ib.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                        ib.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-                        ib.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-                        vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
-                                             0, nullptr, 0, nullptr, 1, &ib);
-                    }
+                // The shared blur (DOOM-0440); pass 1's output feeds rt_tonemap, a compute pass.
+                if (RecordBloomBlur(ib, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT))
                     bloomRt = true;
-                }
             }
             // DOOM-0345 R3 — slot 8 closes the bloom bucket, and it is UNCONDITIONAL within
             // this branch rather than paired with the inner guard: a frame where the dial is
@@ -11231,59 +11247,10 @@ extern "C" void RB_Vulkan_Present(void)
                              VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
                              0, nullptr, 0, nullptr, 1, &ib);
 
-        // DOOM-0331 L3 (§4.3) — the separable blur, one pipeline dispatched twice: pass 0
-        // reads the half-res bloomImage[0] and writes the quarter-res [1] (the ½ -> ¼
-        // downsample rides the bilinear fetch, so it is free), pass 1 reads [1] and writes
-        // [2], which the composite samples.
-        if (g.bloomBlurPipeline && g.bloomBlurDs[0] && g.bloomBlurDs[1])
-        {
-            vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g.bloomBlurPipeline);
-            for (uint32_t p = 0; p < 2; p++)
-            {
-                // Same closed cycle the extract uses: the target being written comes back to
-                // GENERAL for the imageStore, and returns to SHADER_READ_ONLY afterwards. Both
-                // directions, every frame -- the write->read half alone leaves every store in
-                // an invalid layout, including the very first one (these are parked
-                // SHADER_READ_ONLY at creation, so it is not a second-frame-only concern).
-                ib.image         = g.bloomImage[1 + p];
-                ib.oldLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                ib.newLayout     = VK_IMAGE_LAYOUT_GENERAL;
-                ib.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-                ib.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-                vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                                     VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
-                                     0, nullptr, 0, nullptr, 1, &ib);
-
-                // dir carries the axis AND the per-pass step factor (§4.3): pass 0 reads
-                // half-res and writes quarter, so its offsets are doubled; pass 1 reads and
-                // writes quarter, so they are not. srcTexelSize is exactly 1/size of the image
-                // being READ, with no factor folded in -- putting the factor here instead
-                // builds pass 0 at half its reach and the halo comes out silently oval.
-                const VkExtent2D& src = g.bloomExtent[p];
-                const VkExtent2D& dst = g.bloomExtent[1 + p];
-                float blpush[4] = { p == 0 ? 2.0f : 0.0f,
-                                    p == 0 ? 0.0f : 1.0f,
-                                    1.0f / (float)src.width,
-                                    1.0f / (float)src.height };
-                vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-                                        g.bloomBlurPipeLayout, 0, 1, &g.bloomBlurDs[p], 0, nullptr);
-                vkCmdPushConstants(g.cmd, g.bloomBlurPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT,
-                                   0, sizeof(blpush), blpush);
-                vkCmdDispatch(g.cmd, (dst.width + 7) / 8, (dst.height + 7) / 8, 1);
-
-                // The reader this makes visible to differs by pass: pass 0's output feeds the
-                // next dispatch (compute), pass 1's feeds composite.frag (fragment).
-                ib.oldLayout     = VK_IMAGE_LAYOUT_GENERAL;
-                ib.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                ib.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-                ib.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-                vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                                     p == 0 ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
-                                            : VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
-                                     0, nullptr, 0, nullptr, 1, &ib);
-            }
+        // DOOM-0331 L3 (§4.3) — the separable blur (RecordBloomBlur, DOOM-0440); pass 1's
+        // output feeds composite.frag, a fragment shader.
+        if (RecordBloomBlur(ib, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT))
             bloomRecorded = true;
-        }
     }
 
     // DOOM-0331 L4 (§5) — the bloom bucket's closing timestamp, slot 4, inserted in FRAME
