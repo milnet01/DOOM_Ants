@@ -3945,6 +3945,11 @@ against.
 
   Scope note: this is a Solid/Ultra RASTER-view feature. Per the tier
   rules, do not gate it on Ultra.
+  Prior art (2026-09-26, from the UT_Ants session): for shadow-map bias,
+  UT_Ants uses slope-scaled depth bias plus a receiver bias, and NO
+  normal offset. A normal offset tried twice: once it changed no pixel,
+  once it was large enough to leak light through floors. Reasoning in
+  /mnt/Games/Scripts/Linux/UT_Ants/src/urender/shaders/shadows.glsl.
   **Layman:** Let every lamp and fireball in the rasterised (non-ray-traced) view cast a real shadow, cheaply, by taking advantage of the fact that DOOM's world is really a 2-D floor plan.
   Kind: feature.
   Source: upstream-review-2026-08-05 (gzdoom src/common/rendering/hwrenderer/data/hw_shadowmap.cpp).
@@ -7630,6 +7635,12 @@ in CLAUDE.md describes.
   engine/renderer/bloom_downsample_karis.h). 9-tap tent upsample
   (bloom_upsample.frag.glsl). Both port to compute directly. Paths under
   /mnt/Games/Scripts/Linux/Vestige.
+  Second prior art (2026-09-26, from the UT_Ants session): UT_Ants ships
+  the same Jimenez 2014 chain in a raster Vulkan renderer: 13-tap
+  downsample, Karis average on the first step (stops single-texel
+  sparkle), 3x3 tent upsample added by blend. File:
+  /mnt/Games/Scripts/Linux/UT_Ants/src/urender/shaders/bloom.frag, whose
+  header names its source and traps. Vestige's version is noted above.
   **Layman:** Makes lights actually glow into the room instead of just having a slightly soft edge.
   Kind: enhancement.
   Source: in-session-2026-08-25 (user look call: "I don't see the bloom").
