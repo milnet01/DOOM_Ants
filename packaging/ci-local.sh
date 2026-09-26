@@ -117,8 +117,8 @@ git archive HEAD | tar -x -C "$WORK"
 if [ "$MODE" = "native" ]; then
   echo "==> MODE: native -- $(gcc --version | head -1)"
   echo "    (APPROXIMATES CI; use the default container mode for an exact match)"
-  echo "==> Build (Linux): make -j$(nproc)"
-  make -C "$WORK/linuxdoom-1.10" -j"$(nproc)"
+  echo "==> Build (Linux): make"
+  make -C "$WORK/linuxdoom-1.10"
   echo "==> Unit tests: make test"
   make -C "$WORK/linuxdoom-1.10" test
   # DOOM-0203: headless boot smoke (native only — needs a local IWAD + SDL
@@ -155,7 +155,7 @@ else
     apt-get install -y --no-install-recommends \
       $(awk "NF && \$1 !~ /^#/ {print \$1}" '"$DEPS_FILE"')
     echo "container: $(gcc --version | head -1)"
-    make -C linuxdoom-1.10 -j"$(nproc)"
+    make -C linuxdoom-1.10
     make -C linuxdoom-1.10 test
     # DOOM-0203 boot smoke -- build.yml runs this too, so the container mirror has
     # to as well or "exactly what GitHub Actions runs" is false and a boot

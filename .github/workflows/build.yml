@@ -72,7 +72,7 @@ jobs:
             $(awk 'NF && $1 !~ /^#/ {print $1}' packaging/ci-deps.txt)
 
       - name: Build (Linux)
-        run: make -C linuxdoom-1.10 -j"$(nproc)"
+        run: make -C linuxdoom-1.10
 
       - name: Unit tests
         run: make -C linuxdoom-1.10 test
