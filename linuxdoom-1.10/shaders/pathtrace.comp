@@ -147,8 +147,10 @@ layout(set = 3, binding = 1) uniform sampler2D hdTex[];   // bindless RGBA8 PBR 
 // Formula Workbench export (exposureEv, linearToSrgb in formulas.glsl); the
 // PBR-Neutral operator is the hand-written non-scalar routine. This retires the
 // inline EXPOSURE=4.0 + Reinhard + pow(1/2.2) hack (INV-7 backfill paid down).
-// formulas.glsl itself arrives through pt_common.glsl above (it has no include guard).
-#include "formulas/pbr_neutral_tonemap.glsl"
+// DOOM-0440: the operator itself is tonemap_encode.glsl's toneExposeEncode, the one copy
+// the SVGF composite and rt_tonemap also call; both its includes are guarded, so
+// formulas.glsl arriving through pt_common.glsl as well is harmless.
+#include "formulas/tonemap_encode.glsl"
 
 // DOOM-0042: self-radiance scale for an HD emissive map (Task 13). Reused from
 // emissive_derive.h:52; re-tune (lower) expected once a real emissive hero lands.
@@ -406,16 +408,6 @@ const float FLASHLIGHT_RADIUS2   = 2.5e4;  // (~158 u)^2 near-field softening: t
                                            // can't blow up to a white blob when the player is
                                            // right against a wall. Caps the near-field peak
                                            // while leaving the mid/far gradient intact.
-
-// Display tone map: lift by exposure, compress HDR->[0,1] with the hue-preserving
-// Khronos PBR-Neutral operator (keeps DOOM's saturated palette where Reinhard/ACES
-// would wash it out), then sRGB-encode per channel for the UNORM swapchain.
-vec3 toneEncode(vec3 L)
-{
-    L = max(L, vec3(0.0)) * exposureEv(EXPOSURE_EV);
-    L = pbrNeutralToneMapping(L);
-    return vec3(linearToSrgb(L.r), linearToSrgb(L.g), linearToSrgb(L.b));
-}
 
 // DOOM-0100: a sprite billboard candidate is "opaque" (a real hit) only where its
 // paletted texel is not index 0 (the transparent cut-out key). The sprite BLAS is
@@ -1638,7 +1630,7 @@ void main()
                 vec4 fog = marchFog(origin, dir, tHit, fh);
                 L = L * fog.a + fog.rgb;             // linear radiance, before tonemap (§4.6)
             }
-            colour = toneEncode(L);
+            colour = toneExposeEncode(L, EXPOSURE_EV);
         }
         else if (mode == 5u)
         {
@@ -1916,8 +1908,8 @@ void main()
                 // the world does, then tone-encode -- so the seam matches by construction.
                 vec3 skyLin = vec3(srgbToLinear(colour.r), srgbToLinear(colour.g),
                                    srgbToLinear(colour.b));
-                colour = toneEncode(skyLin * trans
-                                    + kFogColor * kSkyShaftStrength * (1.0 - trans));   // L1c tone
+                colour = toneExposeEncode(skyLin * trans
+                                    + kFogColor * kSkyShaftStrength * (1.0 - trans), EXPOSURE_EV);   // L1c tone
             }
         }
         else                 colour = vec3(0.02, 0.02, 0.05);

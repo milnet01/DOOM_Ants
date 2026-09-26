@@ -371,11 +371,12 @@ $(SHADER_DIR)/composite.frag.spv.h $(SHADER_DIR)/bloom_extract_raster.comp.spv.h
 		$(SHADER_DIR)/formulas/scene_recombine.glsl
 
 # DOOM-0345 R1 — the RT tone operator is shared by the composite (both variants) and the
-# new rt_tonemap pass. Same missing-auto-dep hazard; the include pulls formulas.glsl and
+# new rt_tonemap pass; DOOM-0440 added pathtrace.comp, which carried a third copy.
+# Same missing-auto-dep hazard; the include pulls formulas.glsl and
 # pbr_neutral_tonemap.glsl in itself, so an edit to either still reaches these through the
 # rule above (svgf_composite) and through this one's own prerequisites (rt_tonemap).
 $(SHADER_DIR)/svgf_composite.comp.spv.h $(SHADER_DIR)/svgf_composite_split.comp.spv.h \
-$(SHADER_DIR)/rt_tonemap.comp.spv.h: \
+$(SHADER_DIR)/rt_tonemap.comp.spv.h $(SHADER_DIR)/pathtrace.comp.spv.h: \
 		$(SHADER_DIR)/formulas/tonemap_encode.glsl \
 		$(SHADER_DIR)/formulas/formulas.glsl \
 		$(SHADER_DIR)/formulas/pbr_neutral_tonemap.glsl
