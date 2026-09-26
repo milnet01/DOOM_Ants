@@ -4152,7 +4152,7 @@ against.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lane 4.
 
-- 📋 [DOOM-0437] **Every subsector's light slot is rebuilt and rewritten every raster frame, including ones no dynamic light reaches.**
+- ✅ [DOOM-0437] **Every subsector's light slot is rebuilt and rewritten every raster frame, including ones no dynamic light reaches.**
   The per-subsector loop unconditionally copies the cached static slot into
   a scratch record, recomputes 16 frame-invariant distances from it, and
   copies the result back into g.lightMapped. Those seed distances are a
@@ -4179,6 +4179,17 @@ against.
   left stale in a slot that should have reverted to static-only, which the
   per-slot flag has to get right -- catch it with a moving-fireball
   capture and the lights sub-timer.
+  Resolved (2026-09-26), by a different fix than proposed. Measured
+  first: the merge's cost was not the redundant seed copy. It was reading
+  the dynamic emitter records and their sectors from the mapped GPU
+  buffers, once per subsector per emitter. FinalizeEmitters now keeps
+  this frame's dynamic records and sectors in RAM, and the merge reads
+  those. Solid raster, 50%, player held still: E1M1 went from 205 to 346
+  fps (lights 2.16 to 0.26 ms), and E1M3 from 56 to 163 fps (lights 12.82
+  to 1.00 ms). The light buffer hashed identically old versus new on
+  every tic both sampled across four maps. The proposed skip of unchanged
+  slots was not built: the rewrite it removes now costs a fraction of a
+  millisecond, and it needs per-frame-slot bookkeeping to stay correct.
   **Layman:** For each small piece of the level, every frame, the game rebuilds a list of the nearest lights and writes it to the graphics card — even when nothing near it has moved and the answer is identical. This is on Solid, the tier whose selling point is speed.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lane 4.

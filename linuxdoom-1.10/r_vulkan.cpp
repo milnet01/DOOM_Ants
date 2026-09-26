@@ -1111,6 +1111,11 @@ struct VulkanState
     std::vector<int32_t>    staticLightSrc;      // sub × N: static emitter index per slot
     bool                    staticLightLeDirty = false;
     std::vector<float>      prevStaticEmit;      // the previous build, for that comparison
+    // DOOM-0437: this frame's dynamic emitter records and sectors, kept in RAM beside the
+    // mapped copies FinalizeEmitters writes. BuildRasterPointLights reads them once per
+    // subsector per emitter; reading the mapped buffers there cost ~1.4 ms a frame.
+    std::vector<float>      frameDynEmit;        // 14 floats per dynamic record
+    std::vector<uint32_t>   frameDynSec;         // sector per dynamic record
 
     bool ready        = false;
     bool needRecreate = false;
@@ -7879,6 +7884,8 @@ void FinalizeEmitters(const std::vector<float>* dynEmit, const std::vector<float
     // the omniStart split (misc4.y) the shader keys on. The merge + cdf build is the
     // shared nee_merge_emitters() (nee_sampling.h), unit-tested in nee_sampling_test.
     const int dynN = (dynEmit && dynWgt) ? (int)dynWgt->size() : 0;
+    if (dynN) g.frameDynEmit = *dynEmit; else g.frameDynEmit.clear();
+    if (dynN && dynSec) g.frameDynSec = *dynSec; else g.frameDynSec.clear();
     g.emitCount = (uint32_t)nee_merge_emitters(
         g.staticEmit.data(), g.staticWgt.data(), (int)g.staticWgt.size(),
         dynN ? dynEmit->data() : nullptr, dynN ? dynWgt->data() : nullptr, dynN,
@@ -8133,7 +8140,9 @@ void BuildRasterPointLights()
     const int emitN   = (int)g.emitCount;
     int       staticN = (int)g.staticWgt.size();
     if (staticN > emitN) staticN = emitN;          // clamp (over-cap merge)
-    const int dynN    = emitN - staticN;           // this frame's moving sprite emitters
+    // This frame's moving sprite emitters. frameDynEmit holds every one FinalizeEmitters
+    // merged, so the min never bites; it keeps a mismatch from reading past the copy.
+    const int dynN    = std::min(emitN - staticN, (int)(g.frameDynEmit.size() / 14));
 
     // Recache the (frame-invariant) static cull only when the static set changed or the
     // subsector count did (a new level reassigns subCentroid without touching the flag).
@@ -8155,22 +8164,26 @@ void BuildRasterPointLights()
         return;
     }
 
-    const float*    em = (const float*)g.emitMapped;
-    const uint32_t* es = (const uint32_t*)g.emitSecMapped;   // dynamic per-emitter sector
+    // DOOM-0437: the dynamic records and sectors are read from FinalizeEmitters' RAM
+    // copies, not g.emitMapped / g.emitSecMapped. nee_merge_emitters copies them into
+    // [staticN, emitN) verbatim, and the mapped buffers are write-combined memory.
+    const float*    em = g.frameDynEmit.data();          // dynamic record d at em[d * 14]
+    const uint32_t* es = g.frameDynSec.data();           // dynamic record d's sector
+    const int       esN = (int)g.frameDynSec.size();
 
     // Dynamic-emitter centroids (records [staticN, emitN)); reused across every subsector.
     g.emitCentroidScratch.resize((size_t)dynN * 3);
     float* ec = g.emitCentroidScratch.data();
     for (int d = 0; d < dynN; d++)
     {
-        const float* r = &em[(size_t)(staticN + d) * 14];
+        const float* r = &em[(size_t)d * 14];
         ec[d * 3 + 0] = (r[0] + r[3] + r[6]) * (1.0f / 3.0f);
         ec[d * 3 + 1] = (r[1] + r[4] + r[7]) * (1.0f / 3.0f);
         ec[d * 3 + 2] = (r[2] + r[5] + r[8]) * (1.0f / 3.0f);
     }
 
     const bool cull = (g.numSectors > 0 && g.rejectCPU &&
-                       (int)g.subSecSector.size() >= numSub && es);
+                       (int)g.subSecSector.size() >= numSub && g.emitSecMapped);
 
     // The whole merge runs in local cached RAM (rec[]/bestD[]); the mapped output buffer
     // (out) is host-coherent write-combined memory, where reads and scattered read-modify-
@@ -8201,10 +8214,9 @@ void BuildRasterPointLights()
 
         for (int d = 0; d < dynN; d++)
         {
-            const int e = staticN + d;
             if (cull && secA >= 0)
             {
-                const uint32_t secE = es[e];
+                const uint32_t secE = d < esN ? es[d] : 0xFFFFFFFFu;
                 if (secE != 0xFFFFFFFFu && (int)secE < (int)g.numSectors)
                 {
                     const int pnum = secA * (int)g.numSectors + (int)secE;
@@ -8229,9 +8241,9 @@ void BuildRasterPointLights()
             rec[pos * 6 + 0] = ec[d * 3 + 0];
             rec[pos * 6 + 1] = ec[d * 3 + 1];
             rec[pos * 6 + 2] = ec[d * 3 + 2];
-            rec[pos * 6 + 3] = em[(size_t)e * 14 + 9];    // Le.r
-            rec[pos * 6 + 4] = em[(size_t)e * 14 + 10];   // Le.g
-            rec[pos * 6 + 5] = em[(size_t)e * 14 + 11];   // Le.b
+            rec[pos * 6 + 3] = em[(size_t)d * 14 + 9];    // Le.r
+            rec[pos * 6 + 4] = em[(size_t)d * 14 + 10];   // Le.g
+            rec[pos * 6 + 5] = em[(size_t)d * 14 + 11];   // Le.b
             if (cnt < (int)N)
                 cnt++;
         }

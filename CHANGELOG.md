@@ -8,6 +8,14 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Solid runs much faster in levels with many glowing objects** (DOOM-0437)
+  Each frame, Solid works out which lights are nearest each part of the
+  level. It was reading the glowing objects' details back from graphics
+  memory over and over, which is slow. It now keeps a copy in ordinary
+  memory. Measured standing still at the start of E1M3 on the development
+  machine, the frame rate nearly tripled.
+  The lighting is unchanged.
+
 - **Animated nukage and lava no longer trigger a full lighting recalculation each time they change frame** (DOOM-0436)
   In Solid, an animated floor changing frame used to redo the whole
   nearest-lights calculation, a regular spike in frame time.
