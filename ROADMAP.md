@@ -1498,6 +1498,16 @@ defect visible before a player finds it.
   LEFT OPEN per the session instruction not to close it; flip to shipped
   whenever you are happy. Duplicates DOOM-0126 (family 1), DOOM-0134 and
   DOOM-0198 (family 2) flipped shipped in the same pass.
+  Prior art (2026-09-26, from UT_Ants UTA-0138): count validation-layer
+  errors so a test can fail on them. Files: UT_Ants src/urender/Device.cpp
+  (onValidationMessage), Device.h (ValidationLog), tests/device/
+  DeviceFixture.cpp. Four details: count ERROR severity in an atomic and
+  keep the first message, always return VK_FALSE; keep the log on the
+  heap so pUserData stays valid; chain the messenger info into
+  VkInstanceCreateInfo.pNext too, or instance create/destroy errors go
+  uncounted; fail at the submit that raised the error, and FAIL (never
+  skip) when the layer is not loaded. Headless on lavapipe:
+  VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json.
 
 - 📋 [DOOM-0125] **Sweep dangling sub-section citations into DOOM-0009-performance.md (flat-list doc).**
   Per the DOOM-0092 cold-eyes loops. docs/research/DOOM-0009-performance.md uses flat numbered lists under ## 2 / ## 3 (no Sec.2.x/3.x sub-anchors). The DOOM-0009 spec (and the original DOOM-0092 draft) cite broken anchors like 'perf Sec.2.5'/'Sec.2.7'. Sweep all docs citing the perf doc and rewrite to 'Sec.2 item N' / 'Sec.3 idea N'.
@@ -3636,6 +3646,14 @@ defect visible before a player finds it.
   (DOOM-0413, f08f8db). LEFT: ci-local.sh as a hand mirror of build.yml;
   the three WAD directory readers in scripts/; the build-speed items;
   the -j/MAKEFLAGS oddity; the make_bringup_hero.py note.
+  Progress (2026-09-26, later), item still open. DONE: the -j oddity
+  was settled by measurement: the command-line -j wins, so it defeated
+  the RAM cap. Dropped from build.yml and ci-local.sh (18fe990). One WAD
+  directory reader and PWAD writer in scripts/wad.py; outputs
+  byte-identical (67a10cb). LEFT: ci-local.sh as a hand mirror of
+  build.yml; the build-speed items (serial `make test`, serial Windows
+  syntax sweep, two containers each running apt-get update, r_vulkan.cpp
+  recompiling on every shader edit); the make_bringup_hero.py note.
   **Layman:** The script that packages a Windows release duplicates another script almost line for line, including the text players read. And the check that tells us "this compiles for Windows" uses a different C++ version than the real build does, so it is not checking what it claims to.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lane 14.
