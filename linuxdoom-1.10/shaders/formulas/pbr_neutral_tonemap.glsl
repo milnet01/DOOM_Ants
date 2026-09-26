@@ -19,6 +19,11 @@
 // (Apache-2.0). Input is linear HDR radiance; output is linear [0,1] (feed the
 // sRGB encode after). Verbatim constants from the reference implementation.
 
+// DOOM-0440: guarded, like the Workbench export beside it, so a shader may include this
+// directly and through tonemap_encode.glsl without redefining it.
+#ifndef PBR_NEUTRAL_TONEMAP_GLSL
+#define PBR_NEUTRAL_TONEMAP_GLSL
+
 vec3 pbrNeutralToneMapping(vec3 color)
 {
     const float startCompression = 0.8 - 0.04;
@@ -38,3 +43,5 @@ vec3 pbrNeutralToneMapping(vec3 color)
     float g = 1.0 - 1.0 / (desaturation * (peak - newPeak) + 1.0);
     return mix(color, newPeak * vec3(1.0), g);
 }
+
+#endif // PBR_NEUTRAL_TONEMAP_GLSL

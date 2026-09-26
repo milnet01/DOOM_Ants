@@ -19,8 +19,8 @@
 #ifndef TONEMAP_ENCODE_GLSL
 #define TONEMAP_ENCODE_GLSL
 
-// Neither prerequisite carries an include guard of its own, so a consumer must include
-// THIS file alone and not also the two below it.
+// Both prerequisites carry include guards (DOOM-0440; formulas.glsl since the Workbench
+// export that added them), so a consumer may also include either of them directly.
 #include "formulas.glsl"
 #include "pbr_neutral_tonemap.glsl"
 
