@@ -99,34 +99,6 @@ P_DivlineSide
 
 
 //
-// P_InterceptVector2
-// Returns the fractional intercept point
-// along the first divline.
-// This is only called by the addthings and addlines traversers.
-//
-fixed_t
-P_InterceptVector2
-( divline_t*	v2,
-  divline_t*	v1 )
-{
-    fixed_t	frac;
-    fixed_t	num;
-    fixed_t	den;
-	
-    den = FixedMul (v1->dy>>8,v2->dx) - FixedMul(v1->dx>>8,v2->dy);
-
-    if (den == 0)
-	return 0;
-    //	I_Error ("P_InterceptVector: parallel");
-    
-    num = FixedMul ( (v1->x - v2->x)>>8 ,v1->dy) + 
-	FixedMul ( (v2->y - v1->y)>>8 , v1->dx);
-    frac = FixedDiv (num , den);
-
-    return frac;
-}
-
-//
 // P_CrossSubsector
 // Returns true
 //  if strace crosses the given subsector successfully.
@@ -223,7 +195,7 @@ boolean P_CrossSubsector (int num)
 	if (openbottom >= opentop)	
 	    return false;		// stop
 	
-	frac = P_InterceptVector2 (&strace, &divl);
+	frac = P_InterceptVector (&strace, &divl);
 		
 	if (front->floorheight != back->floorheight)
 	{

@@ -82,6 +82,21 @@ P_SetMobjState
 }
 
 
+
+//
+// P_JitterTics
+// Shortens a new state's first tic count by a random amount, so things
+// spawned together do not animate in lockstep. Consumes exactly one
+// P_Random, so every caller must keep it where the inline form stood:
+// moving it changes the random order and desyncs demos (DOOM-0451).
+//
+void P_JitterTics (mobj_t* mo, int mask)
+{
+    mo->tics -= P_Random()&mask;
+    if (mo->tics < 1)
+	mo->tics = 1;
+}
+
 //
 // P_ExplodeMissile  
 //
@@ -91,10 +106,7 @@ void P_ExplodeMissile (mobj_t* mo)
 
     P_SetMobjState (mo, mobjinfo[mo->type].deathstate);
 
-    mo->tics -= P_Random()&3;
-
-    if (mo->tics < 1)
-	mo->tics = 1;
+    P_JitterTics (mo, 3);
 
     mo->flags &= ~MF_MISSILE;
 
@@ -834,10 +846,7 @@ P_SpawnPuff
 
     th = P_SpawnMobj (x,y,z, MT_PUFF);
     th->momz = FRACUNIT;
-    th->tics -= P_Random()&3;
-
-    if (th->tics < 1)
-	th->tics = 1;
+    P_JitterTics (th, 3);
 	
     // don't make punches spark on the wall
     if (attackrange == MELEERANGE)
@@ -861,10 +870,7 @@ P_SpawnBlood
     z += ((P_Random()-P_Random())<<10);
     th = P_SpawnMobj (x,y,z, MT_BLOOD);
     th->momz = FRACUNIT*2;
-    th->tics -= P_Random()&3;
-
-    if (th->tics < 1)
-	th->tics = 1;
+    P_JitterTics (th, 3);
 		
     if (damage <= 12 && damage >= 9)
 	P_SetMobjState (th,S_BLOOD2);
@@ -881,9 +887,7 @@ P_SpawnBlood
 //
 void P_CheckMissileSpawn (mobj_t* th)
 {
-    th->tics -= P_Random()&3;
-    if (th->tics < 1)
-	th->tics = 1;
+    P_JitterTics (th, 3);
     
     // move a little forward so an angle can
     // be computed if it immediately explodes

@@ -723,10 +723,7 @@ P_KillMobj
     }
     else
 	P_SetMobjState (target, target->info->deathstate);
-    target->tics -= P_Random()&3;
-
-    if (target->tics < 1)
-	target->tics = 1;
+    P_JitterTics (target, 3);
 		
     //	I_StartSound (&actor->r, actor->info->deathsound);
 

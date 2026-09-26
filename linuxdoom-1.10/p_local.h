@@ -121,6 +121,7 @@ P_SpawnMobj
   mobjtype_t	type );
 
 void 	P_RemoveMobj (mobj_t* th);
+void	P_JitterTics (mobj_t* mo, int mask);
 boolean	P_SetMobjState (mobj_t* mobj, statenum_t state);
 void 	P_MobjThinker (mobj_t* mobj);
 

@@ -235,31 +235,16 @@ void EV_StartLightStrobing(line_t*	line)
 //
 void EV_TurnTagLightsOff(line_t* line)
 {
-    int			i;
     int			j;
-    int			min;
     sector_t*		sector;
-    sector_t*		tsec;
-    line_t*		templine;
 	
     sector = sectors;
     
     for (j = 0;j < numsectors; j++, sector++)
     {
 	if (sector->tag == line->tag)
-	{
-	    min = sector->lightlevel;
-	    for (i = 0;i < sector->linecount; i++)
-	    {
-		templine = sector->lines[i];
-		tsec = getNextSector(templine,sector);
-		if (!tsec)
-		    continue;
-		if (tsec->lightlevel < min)
-		    min = tsec->lightlevel;
-	    }
-	    sector->lightlevel = min;
-	}
+	    sector->lightlevel =
+		P_FindMinSurroundingLight (sector, sector->lightlevel);
     }
 }
 
