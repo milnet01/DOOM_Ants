@@ -3490,6 +3490,19 @@ defect visible before a player finds it.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lane 14.
 
+- 📋 [DOOM-0460] **The DEV build warns in M_DevLevelName: a sprintf GCC cannot prove fits its buffer.**
+  `make DEV=1` reports -Wformat-overflow on the "E%dM%d" sprintf in
+  M_DevLevelName (m_menu.c), inlined into M_DevCrispValue. GCC bounds the
+  episode it gets from M_DevLevelSplit as [-7, 9] and cannot prove the
+  buffer suffices. Every real level name fits, so this is a warning, not a
+  live overflow. A plain `make` does not compile this code, which is why
+  DOOM-0434's zero-warning result did not see it.
+
+  Fix: snprintf with sizeof(buf), and keep the DEV build warning-free.
+  **Layman:** A developer-only build of the game prints one compiler warning about a text buffer; it is harmless but should be silenced so real warnings stand out.
+  Kind: fix.
+  Source: in-session-2026-09-26 (DOOM-0435 build).
+
 ## 0.10.0 — The frame budget
 
 Performance and pacing, and the benchmark harness that makes a regression
