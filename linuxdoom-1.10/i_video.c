@@ -710,7 +710,7 @@ static void I_GetEvent(SDL_Event* sdlevent)
 //
 void I_StartFrame (void)
 {
-    // er?
+    // Nothing to do per frame on the SDL backend; D_DoomLoop still calls it.
 }
 
 

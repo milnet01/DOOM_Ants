@@ -825,15 +825,12 @@ void R_Init (void)
 {
     R_InitData ();
     printf ("\nR_InitData");
-    R_InitPointToAngle ();
-    printf ("\nR_InitPointToAngle");
-    R_InitTables ();
+    // DOOM-0450: R_InitPointToAngle, R_InitTables and R_InitPlanes are empty --
+    // id's own #if 0 markers record that tables.c superseded the first two -- so
+    // they are no longer called, and the startup log no longer claims them. The
+    // functions stay, as the 1997 record.
     // viewwidth / viewheight / detailLevel are set by the defaults
-    printf ("\nR_InitTables");
-
     R_SetViewSize (screenblocks, detailLevel);
-    R_InitPlanes ();
-    printf ("\nR_InitPlanes");
     R_InitLightTables ();
     printf ("\nR_InitLightTables");
     R_InitSkyMap ();

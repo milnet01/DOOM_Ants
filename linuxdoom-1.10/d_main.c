@@ -138,7 +138,6 @@ boolean		advancedemo;
 
 
 
-char		wadfile[1024];		// primary wad file
 char		mapdir[1024];           // directory of development maps
 char		basedefault[1024];      // default file
 

@@ -884,7 +884,9 @@ void I_UnRegisterSong(int handle)
 //  SUN remains...
 //
 // Only used when SNDINTR drives output via /dev/dsp; the SDL backend pulls
-// audio on its own thread, so this is left guarded as dead, original code.
+// audio on its own thread. Kept as id's original code, for the record only:
+// it no longer COMPILES if SNDINTR is defined, because it writes audio_fd and
+// mixbuffer, which DOOM-0047 removed with the /dev/dsp path (DOOM-0450).
 #ifdef SNDINTR
 #ifdef sun
     typedef     sigset_t        tSigSet;

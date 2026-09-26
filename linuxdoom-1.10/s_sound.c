@@ -64,7 +64,6 @@ const char snd_prefixen[]
 #define S_ATTENUATOR		((S_CLIPPING_DIST-S_CLOSE_DIST)>>FRACBITS)
 
 // Adjustable by menu.
-#define NORM_VOLUME    		snd_MaxVolume
 
 #define NORM_PITCH     		128
 #define NORM_PRIORITY		64

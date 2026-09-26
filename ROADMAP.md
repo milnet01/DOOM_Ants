@@ -3429,6 +3429,13 @@ defect visible before a player finds it.
      artefact worth keeping is the maintainer's call.
 
   CHECK BEFORE TOUCHING THE STARTUP PRINTFS: harnesses grep game stdout.
+  Decided by the user 2026-09-26, the three calls this item reserved:
+  1. W_Profile: KEEP, as DOOM-0400 decided (bounded, unused, id's code).
+  2. The empty startup inits: the MIDDLE option. Keep id's #if 0 blocks
+     as history; remove the calls and their misleading startup printfs,
+     after checking that no harness greps those lines.
+  3. id's developer command-line flags (-cdrom, -shdev/-regdev/-comdev,
+     -wart): KEEP, as id's original command line.
   **Layman:** About sixty leftover variables, functions and declarations that nothing uses. Some are merely clutter; a few actively mislead, describing features the game does not have or switches that silently do nothing.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lanes 8/11/12/13.
