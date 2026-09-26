@@ -3436,6 +3436,15 @@ defect visible before a player finds it.
      after checking that no harness greps those lines.
   3. id's developer command-line flags (-cdrom, -shdev/-regdev/-comdev,
      -wart): KEEP, as id's original command line.
+  Progress (2026-09-26), item still open. DONE (2c70c1f): every leftover
+  in the "worse than dead" group. LEFT: the plain dead symbols
+  (software-renderer vestiges, z_zone/w_wad/i_system/i_net functions,
+  status-bar write-only state and chat cluster, UI helpers,
+  AM_updateLightLev, V_GetBlock, the colour-transform wipe, P_CalcSwing,
+  the serial-mouse settings). Names are in
+  docs/reviews/optimise-refactor-sweep-2026-09-20.md, lanes 8/11/12/13.
+  Several review counts were wrong when checked, so verify each name
+  before deleting. Honour the three recorded decisions above.
   **Layman:** About sixty leftover variables, functions and declarations that nothing uses. Some are merely clutter; a few actively mislead, describing features the game does not have or switches that silently do nothing.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lanes 8/11/12/13.
@@ -3557,6 +3566,14 @@ defect visible before a player finds it.
   for deletion, and five of its six outputs are reached by nothing -- but
   its ONE live consumer is tests/rb_image_test.cpp, so whoever runs the
   plan's `git rm -r` step breaks that test unless they notice.
+  Progress (2026-09-26), item still open. DONE: windows-smoke.sh reads
+  CSTD/CXXSTD/DEFS from the Makefile through a print-% target (ce7edc6);
+  dependencies.md states the AppImage tools are pinned (35e682b); one
+  Windows DLL list in packaging/windows-dlls.sh (677f491); one spv_embed
+  shader recipe (e5f6ca3). The release.sh duplicate was already gone
+  (DOOM-0413, f08f8db). LEFT: ci-local.sh as a hand mirror of build.yml;
+  the three WAD directory readers in scripts/; the build-speed items;
+  the -j/MAKEFLAGS oddity; the make_bringup_hero.py note.
   **Layman:** The script that packages a Windows release duplicates another script almost line for line, including the text players read. And the check that tells us "this compiles for Windows" uses a different C++ version than the real build does, so it is not checking what it claims to.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lane 14.
