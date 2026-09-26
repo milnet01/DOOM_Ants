@@ -1743,6 +1743,17 @@ defect visible before a player finds it.
 
   Needs a design pass -- /write-spec, then the rule-14 gate. Sequence is
   the user's call; it is not blocked by any of the fog work.
+  Prior art (2026-09-26, Vestige commit 9d745b3):
+  engine/testing/demo_flythrough.{h,cpp}, graphics-free, tested in
+  tests/test_demo_flythrough.cpp. Two Catmull-Rom splines (eye, look-at)
+  sampled by arc length at the same fraction; smootherstep ease;
+  ground-clearance clamp; per-frame time step capped at 1/20 s so a
+  hitch slows the camera rather than jumping it. TRAP: centripetal
+  Catmull-Rom with clamped endpoints threw end segments far off course
+  (a straight 60 m path measured 281 m); fix is a mirrored phantom
+  endpoint 2*p1 - p2, see engine/environment/spline_path.cpp
+  catmullRom(). A fixed route doubles as a benchmark route. Paths under
+  /mnt/Games/Scripts/Linux/Vestige.
   **Layman:** A mode where DOOM plays itself -- walks the level, fights, finds the exit -- so hours of video can be recorded for YouTube without anyone having to sit and play it.
   Kind: feature.
   Source: user-request-2026-08-01.
@@ -2074,6 +2085,10 @@ defect visible before a player finds it.
   written as an ALGEBRAIC one (the shipped association is preserved; `x + 0.0
   == x`) with a measured noise-floor bound as its evidence, which is what
   DOOM-0011's L4 note does.
+  Prior art (2026-09-26, Vestige): Vestige fixed the same shape;
+  timing-dependent denoiser history was the variable. It endorses
+  capturing on a fixed frame INDEX so history depth is constant. Warm-up
+  rules are on DOOM-0431.
   **Layman:** Two screenshots of the exact same scene from the exact same build don't come out identical, which makes a whole class of "nothing changed" test impossible to run.
   Kind: test.
   Source: in-session-2026-08-03 (DOOM-0011 L4 verification).
@@ -2542,6 +2557,10 @@ defect visible before a player finds it.
   every shader would give the tier its first mechanical check. Filed rather than
   done in that pass because adding a tool the skill's own table does not select is
   a change to the tool set, not a finding.
+  Prior art (2026-09-26, Vestige): Vestige's tools/shader_lint.py is
+  only a regex version check, so it is not worth porting.
+  glslangValidator/glslc over every shader, as this item proposes, is
+  the better tool.
   **Layman:** The automated code checkers we run have no rule for shader files, so the 5,300 lines that actually draw the ray-traced picture are checked by nothing at all.
   Kind: test.
   Source: check-code --tree 2026-09-01 (language-signal gap).
@@ -2562,6 +2581,11 @@ defect visible before a player finds it.
   Related, same pass: `linuxdoom-1.10/compile_commands.json` was 11 days stale
   (2026-08-03 against a 2026-08-14 Makefile change) and is gitignored, so both
   clang-tidy and clazy analysed a stale compilation database.
+  Prior art (2026-09-26, Vestige 3D_E-0654, same symptom): Vestige's
+  .clang-tidy at its repo root, with a header comment on every line.
+  TRAP: a command-line --checks= REPLACES .clang-tidy wholesale, so if
+  the audit script passes its own list the file does nothing. For id's
+  1997 C use a much narrower set than Vestige's modern-C++ one.
   **Layman:** One of our code checkers has no settings file, so it runs, checks literally nothing, and reports success. A clean result from it currently means nothing at all.
   Kind: chore.
   Source: check-code --tree 2026-09-01.
@@ -2585,6 +2609,10 @@ defect visible before a player finds it.
   recording alongside it: `MIS` in this project is Multiple Importance Sampling and
   `Parm`/`STSTR`/`Lod`/`vertexes`/`iy` are id's own 1993 identifiers, which
   together account for most of the surviving typos count.
+  Prior art (2026-09-26, Vestige): calibration in
+  tools/audit/audit_config.yaml and tools/audit/audit-config.json, with
+  vendored and asset paths excluded. Same noise shape: most of Vestige's
+  typos findings were bytes inside binary assets.
   **Layman:** Our code checkers keep flagging third-party code we did not write and picking words out of image files. A small settings file would silence all of it permanently.
   Kind: chore.
   Source: check-code --tree 2026-09-01.
@@ -3918,6 +3946,11 @@ against.
 
   Related: DOOM-0170 (Solid perf), DOOM-0197 (RT build-ahead), DOOM-0074
   (raster build-ahead, shipped).
+  Prior art (2026-09-26, Vestige): keep two questions apart. A 1%-low
+  histogram measures STUTTER, what the player feels. The per-pass
+  MINIMUM measures whether a change made a pass slower. On an RX 6600
+  over five runs the spread was 1.9% on the min, 4.7% on the median and
+  67.7% on p90. Warm-up and gating rules are on DOOM-0431.
   **Layman:** The game's speed wobbles instead of holding steady. Even at a good average frame rate, uneven frames read as stutter -- this is about making each frame take the same time as the last.
   Kind: perf.
   Source: user-request-2026-08-20 (play-test of the DOOM-0345 bloom look call).
@@ -4056,6 +4089,18 @@ against.
   `nq = g.profRasterFrame ? 7u : 10u;` in `r_vulkan.cpp`, and build step B2
   rewrites that line to use named constants. The grep is updated in the same
   change, or a shipped feature's invariant test reads as broken.
+  Prior art (2026-09-26, from the Vestige session): Vestige solved this
+  measurement problem. Warm up by TIME, not frames: at least 600 ms AND
+  16 frames, then report min/median/max. Vestige measured an RX 6600
+  settling only around frame 15, and 3 warm-up frames gave a 76% swing
+  between identical runs. Gate on the MINIMUM, not a high percentile.
+  Abort if an engine instance is already running. Comparator: Vestige
+  tools/perf_gate.py (design in
+  docs/phases/phase_10_perf_regression_gate_design.md; exit codes 0
+  pass, 1 regression, 2 inconclusive, 3 config error), fed by a CSV the
+  engine writes (engine/profiler/profile_log.cpp). Warm-up code:
+  tests/test_fog_benchmark.cpp near kBenchWarmupMillis. Paths under
+  /mnt/Games/Scripts/Linux/Vestige, MIT, same author.
   **Layman:** One command that runs the game through the same fixed situations every time and tells you what is costing the most, and whether a change made it slower.
   Kind: implement.
   Source: user-request-2026-09-12.
@@ -7228,6 +7273,13 @@ in CLAUDE.md describes.
   Sequencing: this reads the same HDR frame bloom does and lands in the
   same part of the pipeline, so it wants to come AFTER DOOM-0331 and reuse
   its downsample chain rather than building a second one.
+  Prior art (2026-09-26, Vestige): engine/renderer/renderer.cpp step
+  '5b. Auto-exposure'. HDR blitted to a 256x256 RGB16F texture, mipped
+  to 1x1, read back through two ping-pong persistent PBOs with a frame
+  of latency so the GPU never stalls. Guards non-finite luminance,
+  clamps to 0.2-8.0. Do BETTER than Vestige in two ways: average LOG
+  luminance (it averages linear, which lets one lamp dominate), and use
+  separate attack and decay rates (it has one).
   **Layman:** Step out of a dark corridor into daylight and the view is dazzling for a second before settling — and stepping back in, you are briefly blind. It makes dark places feel more dangerous.
   Kind: feature.
   Source: user-decision-2026-08-05 (upstream review follow-up).
@@ -7528,6 +7580,13 @@ in CLAUDE.md describes.
   Also settled 2026-08-27: the halo's SIZE is accepted as it stands at
   DOOM-0331 §10 Q1, so this item widens it later rather than blocking
   that spec's ROADMAP flip.
+  Prior art (2026-09-26, Vestige): Vestige runs this chain. 6 mips
+  (BLOOM_MIP_COUNT, engine/renderer/renderer.h). 13-tap Jimenez/CoD:AW
+  downsample with a Karis average on the first mip
+  (assets/shaders/bloom_downsample.frag.glsl; tested pure-maths twin
+  engine/renderer/bloom_downsample_karis.h). 9-tap tent upsample
+  (bloom_upsample.frag.glsl). Both port to compute directly. Paths under
+  /mnt/Games/Scripts/Linux/Vestige.
   **Layman:** Makes lights actually glow into the room instead of just having a slightly soft edge.
   Kind: enhancement.
   Source: in-session-2026-08-25 (user look call: "I don't see the bloom").
@@ -7985,6 +8044,10 @@ minor may break.
   What is left before a take is worth shooting is now purely a LOOK matter,
   not tooling: the fog/exposure tuning, and whether bloom (DOOM-0331) lands
   first. Both are on the shot script's open-questions list.
+  Prior art (2026-09-26, Vestige): scripted camera on DOOM-0301. For the
+  trailer, demoreel needs --gpu for Vulkan/GL, and records the -s size
+  only if the app does not resize its own window (demoreel defect
+  DEMO-0099).
 
 ## Phase 0 — Foundations
 
