@@ -4239,7 +4239,7 @@ against.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lane 4.
 
-- 📋 [DOOM-0438] **The denoiser evaluates pow(x, 64.0) ninety-six times per pixel per frame, in a pass measured at ~8.5 ms.**
+- 🚫 [DOOM-0438] **The denoiser evaluates pow(x, 64.0) ninety-six times per pixel per frame, in a pass measured at ~8.5 ms.**
   svgf_atrous.comp's 5x5 neighbour loop does `pow(dot, sigN)` with
   `sigN = 64.0`, 24 taps, and the host runs four iterations -- 96 pow()
   per render pixel. The host comment on that iteration count measures the
@@ -4262,6 +4262,17 @@ against.
   after, then -rtverify and -shotcompare. Last-bit rounding may move the
   denoised image by float epsilon; a real regression would show as a
   changed blur radius, not as noise.
+  Dropped (2026-09-26): built, measured, no gain, reverted. The rewrite
+  removed the Pow op from the SPIR-V, and Vestige confirmed the maths is
+  exact given the max(..., 0) clamp. Timed with the per-pass GPU profiler
+  in Ultra, render scale 50, private display, E1M1 held still, three
+  interleaved old/new pairs, first 5 s of each run dropped: atrous median
+  0.80-0.88 ms old and 0.88-0.89 ms new; minimums equal. The driver
+  likely expands the constant exponent itself, and the pass is bound by
+  its image loads. The inferred win is not there, and pow(x, 64) states
+  the intent more plainly. The review quoted a host comment's ~8.5 ms. On
+  this harness, a 1708x800 window at render scale 50, atrous reads under 1
+  ms. Why the two differ was not investigated.
   **Layman:** A lighting-smoothing step raises a number to the 64th power using the slow general-purpose maths function, 96 times for every pixel on screen, every frame. Six multiplications would give the same answer.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lane 7.
