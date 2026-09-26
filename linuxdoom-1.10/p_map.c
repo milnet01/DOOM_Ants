@@ -111,22 +111,21 @@ boolean PIT_StompThing (mobj_t* thing)
 //
 // P_TeleportMove
 //
-boolean
-P_TeleportMove
+//
+// P_SetupPositionCheck
+// The tm* state P_CheckPosition and P_TeleportMove both start from: the
+// thing's bounding box at (x,y), and the floor and ceiling of the
+// subsector containing that point, which contacted lines may then narrow.
+// Bumps validcount, so it must run exactly once per check (DOOM-0451).
+//
+static void
+P_SetupPositionCheck
 ( mobj_t*	thing,
   fixed_t	x,
   fixed_t	y )
 {
-    int			xl;
-    int			xh;
-    int			yl;
-    int			yh;
-    int			bx;
-    int			by;
-    
     subsector_t*	newsubsec;
-    
-    // kill anything occupying the position
+
     tmthing = thing;
     tmflags = thing->flags;
 	
@@ -141,7 +140,7 @@ P_TeleportMove
     newsubsec = R_PointInSubsector (x,y);
     ceilingline = NULL;
     
-    // The base floor/ceiling is from the subsector
+    // The base floor / ceiling is from the subsector
     // that contains the point.
     // Any contacted lines the step closer together
     // will adjust them.
@@ -150,8 +149,24 @@ P_TeleportMove
 			
     validcount++;
     numspechit = 0;
-    
-    // stomp on any things contacted
+}
+
+//
+// P_SweepThingBlocks
+// Runs func over every thing in the blockmap blocks the tm bounding box
+// touches, widened by MAXRADIUS because a thing is filed in the block
+// holding its origin and can overlap its neighbours by up to MAXRADIUS.
+// Stops and returns false at the first thing func refuses.
+//
+static boolean P_SweepThingBlocks (boolean (*func)(mobj_t*))
+{
+    int			xl;
+    int			xh;
+    int			yl;
+    int			yh;
+    int			bx;
+    int			by;
+
     xl = (tmbbox[BOXLEFT] - bmaporgx - MAXRADIUS)>>MAPBLOCKSHIFT;
     xh = (tmbbox[BOXRIGHT] - bmaporgx + MAXRADIUS)>>MAPBLOCKSHIFT;
     yl = (tmbbox[BOXBOTTOM] - bmaporgy - MAXRADIUS)>>MAPBLOCKSHIFT;
@@ -159,8 +174,24 @@ P_TeleportMove
 
     for (bx=xl ; bx<=xh ; bx++)
 	for (by=yl ; by<=yh ; by++)
-	    if (!P_BlockThingsIterator(bx,by,PIT_StompThing))
+	    if (!P_BlockThingsIterator(bx,by,func))
 		return false;
+    return true;
+}
+
+
+boolean
+P_TeleportMove
+( mobj_t*	thing,
+  fixed_t	x,
+  fixed_t	y )
+{
+    // kill anything occupying the position
+    P_SetupPositionCheck (thing, x, y);
+
+    // stomp on any things contacted
+    if (!P_SweepThingBlocks (PIT_StompThing))
+	return false;
     
     // the move is ok,
     // so link the thing into its new position
@@ -387,49 +418,15 @@ P_CheckPosition
     int			yh;
     int			bx;
     int			by;
-    subsector_t*	newsubsec;
 
-    tmthing = thing;
-    tmflags = thing->flags;
-	
-    tmx = x;
-    tmy = y;
-	
-    tmbbox[BOXTOP] = y + tmthing->radius;
-    tmbbox[BOXBOTTOM] = y - tmthing->radius;
-    tmbbox[BOXRIGHT] = x + tmthing->radius;
-    tmbbox[BOXLEFT] = x - tmthing->radius;
-
-    newsubsec = R_PointInSubsector (x,y);
-    ceilingline = NULL;
-    
-    // The base floor / ceiling is from the subsector
-    // that contains the point.
-    // Any contacted lines the step closer together
-    // will adjust them.
-    tmfloorz = tmdropoffz = newsubsec->sector->floorheight;
-    tmceilingz = newsubsec->sector->ceilingheight;
-			
-    validcount++;
-    numspechit = 0;
+    P_SetupPositionCheck (thing, x, y);
 
     if ( tmflags & MF_NOCLIP )
 	return true;
     
     // Check things first, possibly picking things up.
-    // The bounding box is extended by MAXRADIUS
-    // because mobj_ts are grouped into mapblocks
-    // based on their origin point, and can overlap
-    // into adjacent blocks by up to MAXRADIUS units.
-    xl = (tmbbox[BOXLEFT] - bmaporgx - MAXRADIUS)>>MAPBLOCKSHIFT;
-    xh = (tmbbox[BOXRIGHT] - bmaporgx + MAXRADIUS)>>MAPBLOCKSHIFT;
-    yl = (tmbbox[BOXBOTTOM] - bmaporgy - MAXRADIUS)>>MAPBLOCKSHIFT;
-    yh = (tmbbox[BOXTOP] - bmaporgy + MAXRADIUS)>>MAPBLOCKSHIFT;
-
-    for (bx=xl ; bx<=xh ; bx++)
-	for (by=yl ; by<=yh ; by++)
-	    if (!P_BlockThingsIterator(bx,by,PIT_CheckThing))
-		return false;
+    if (!P_SweepThingBlocks (PIT_CheckThing))
+	return false;
     
     // check lines
     xl = (tmbbox[BOXLEFT] - bmaporgx)>>MAPBLOCKSHIFT;
