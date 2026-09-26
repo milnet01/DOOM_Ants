@@ -138,13 +138,17 @@ void R_DrawColumn (void)
     // Inner loop that does the actual texture mapping,
     //  e.g. a DDA-lile scaling.
     // This is as fast as it gets.
+    // DOOM-0445: SCREENWIDTH is a runtime global and dest a byte*, so each store
+    // may alias it and the compiler must reload it per pixel; a local cannot be
+    // aliased. It is set once in I_InitWidescreen, before R_Init.
+    const int sw = SCREENWIDTH;
     do 
     {
 	// Re-map color indices from wall texture column
 	//  using a lighting/special effects LUT.
 	*dest = dc_colormap[dc_source[(frac>>FRACBITS)&127]];
 	
-	dest += SCREENWIDTH; 
+	dest += sw; 
 	frac += fracstep;
 	
     } while (count--); 
@@ -244,12 +248,13 @@ void R_DrawColumnLow (void)
     fracstep = dc_iscale; 
     frac = dc_texturemid + (dc_yl-centery)*fracstep;
     
+    const int sw = SCREENWIDTH;   // DOOM-0445: see R_DrawColumn
     do 
     {
 	// Hack. Does not work corretly.
 	*dest2 = *dest = dc_colormap[dc_source[(frac>>FRACBITS)&127]];
-	dest += SCREENWIDTH;
-	dest2 += SCREENWIDTH;
+	dest += sw;
+	dest2 += sw;
 	frac += fracstep; 
 
     } while (count--);
@@ -277,6 +282,10 @@ int	fuzzoffset[FUZZTABLE] =
 }; 
 
 int	fuzzpos = 0; 
+
+// DOOM-0445: fuzzoffset scaled by SCREENWIDTH, rebuilt by R_InitBuffer with the
+// other screen-geometry tables, so the fuzz column stops multiplying per pixel.
+static int	fuzzrowstep[FUZZTABLE];
 
 
 //
@@ -353,19 +362,20 @@ void R_DrawFuzzColumn (void)
     // Looks like an attempt at dithering,
     //  using the colormap #6 (of 0-31, a bit
     //  brighter than average).
+    const int sw = SCREENWIDTH;   // DOOM-0445: see R_DrawColumn
     do 
     {
 	// Lookup framebuffer, and retrieve
 	//  a pixel that is either one column
 	//  left or right of the current one.
 	// Add index from colormap to index.
-	*dest = colormaps[6*256+dest[fuzzoffset[fuzzpos]*SCREENWIDTH]];
+	*dest = colormaps[6*256+dest[fuzzrowstep[fuzzpos]]];
 
 	// Clamp table lookup index.
 	if (++fuzzpos == FUZZTABLE) 
 	    fuzzpos = 0;
 	
-	dest += SCREENWIDTH;
+	dest += sw;
     } while (count--); 
 } 
  
@@ -434,6 +444,7 @@ void R_DrawTranslatedColumn (void)
     frac = dc_texturemid + (dc_yl-centery)*fracstep; 
 
     // Here we do an additional index re-mapping.
+    const int sw = SCREENWIDTH;   // DOOM-0445: see R_DrawColumn
     do 
     {
 	// Translation tables are used
@@ -442,7 +453,7 @@ void R_DrawTranslatedColumn (void)
 	// Thus the "green" ramp of the player 0 sprite
 	//  is mapped to gray, red, black/indigo. 
 	*dest = dc_colormap[dc_translation[dc_source[frac>>FRACBITS]]];
-	dest += SCREENWIDTH;
+	dest += sw;
 	
 	frac += fracstep; 
     } while (count--); 
@@ -719,6 +730,10 @@ R_InitBuffer
     // Preclaculate all row offsets.
     for (i=0 ; i<height ; i++) 
 	ylookup[i] = screens[0] + (i+viewwindowy)*SCREENWIDTH; 
+
+    // DOOM-0445: the fuzz column's row steps, scaled here with the other tables.
+    for (i=0 ; i<FUZZTABLE ; i++)
+	fuzzrowstep[i] = fuzzoffset[i]*SCREENWIDTH;
 } 
  
  

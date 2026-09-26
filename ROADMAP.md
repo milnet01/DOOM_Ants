@@ -4394,7 +4394,7 @@ against.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lane 6.
 
-- 📋 [DOOM-0445] **Software-renderer hot loops reload a runtime global per pixel, clear more than the view width, and rebuild a table per pixel.**
+- ✅ [DOOM-0445] **Software-renderer hot loops reload a runtime global per pixel, clear more than the view width, and rebuild a table per pixel.**
   Classic's output must stay bit-identical, so each of these is admissible
   ONLY because it is provably output-identical, and the proof is named.
 
@@ -4432,6 +4432,16 @@ against.
   LANE'S SEPARATE GAP REPORT, worth its own item: performance.md
   prescribes the per-pass GPU profiler, which does not reach a CPU software
   renderer. Classic has NO measurement procedure in the standard.
+  Resolved (2026-09-26): all three changes shipped, proven output-identical.
+  (1) R_DrawColumn, R_DrawColumnLow, R_DrawFuzzColumn and
+  R_DrawTranslatedColumn copy SCREENWIDTH into a local before the pixel
+  loop. (3) R_InitBuffer precomputes fuzzrowstep[] = fuzzoffset x
+  SCREENWIDTH. (2) R_FindPlane and R_CheckPlane clear viewwidth entries of
+  top[], not MAXWIDTH. Proof: a framebuffer FNV hash every 25 tics, old
+  versus new, over eight maps, the walkuse demo and low detail: 100 of 100
+  samples identical. With player invisibility forced so the weapon draws
+  fuzz, 68 of 68 identical, every one with fuzz columns drawn. Not timed:
+  Classic has no CPU profiler.
   **Layman:** Three small wins in the original 1993 renderer, each provably producing the exact same picture: the innermost pixel loop re-reads a value it could hold in a register, new floor/ceiling surfaces clear about twice as much memory as they use, and the spectre-fuzz effect does a multiplication per pixel to rebuild a table.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lane 8.

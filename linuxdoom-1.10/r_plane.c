@@ -273,7 +273,10 @@ R_FindPlane
     check->minx = SCREENWIDTH;
     check->maxx = -1;
     
-    memset (check->top,0xff,sizeof(check->top));
+    // DOOM-0445: only [0, viewwidth) is ever read as a column; the edge
+    // sentinels at minx-1 and maxx+1 are written by R_DrawPlanes before it
+    // reads them. top[] is MAXWIDTH wide, so clearing all of it was wasted.
+    memset (check->top,0xff,viewwidth*sizeof(check->top[0]));
 		
     return check;
 }
@@ -346,7 +349,7 @@ R_CheckPlane
     pl->minx = start;
     pl->maxx = stop;
 
-    memset (pl->top,0xff,sizeof(pl->top));
+    memset (pl->top,0xff,viewwidth*sizeof(pl->top[0]));   // DOOM-0445: see R_FindPlane
 		
     return pl;
 }

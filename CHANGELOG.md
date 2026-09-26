@@ -8,6 +8,13 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Classic's software renderer does less redundant work per pixel, with an identical picture** (DOOM-0445)
+  The original 1993 renderer's inner loops looked up the screen width in
+  a way that stops the compiler keeping it in a register, cleared more
+  memory than it uses for each new floor or ceiling, and did a
+  multiplication per pixel of the spectre effect. Each is now done once.
+  The picture is checked byte for byte against the old renderer.
+
 - **Solid and Ultra spend far less time each frame updating moving floors, doors and animated textures** (DOOM-0443)
   Every frame the game checks each corner of the level for doors, lifts
   and animated textures that changed. It was reading the level back from
