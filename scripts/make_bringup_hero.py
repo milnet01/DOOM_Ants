@@ -81,11 +81,6 @@ write_png(os.path.join(D, "startan3_alb.png"), 64, 128,
           lambda x, y, w, h: (70, 90, 110) if (x // 8 + y // 8) % 2 else (60, 78, 96))
 write_png(os.path.join(D, "startan3_nrm.png"), 64, 128, bump_normal)
 write_png(os.path.join(D, "startan3_ao.png"), 64, 128, ao_bump)
-# Dedicated stable fixture for tests/rb_image_test.cpp: a solid 180-grey field so a box
-# downscale must stay ~180 everywhere. Kept separate from the visual maps above (which change
-# per task) so tweaking the look never breaks the decode/downscale unit test. Not referenced
-# by materials.csv, so the loader never touches it.
-write_png(os.path.join(D, "_unittest_solid.png"), 64, 128, lambda x, y, w, h: (180, 180, 180))
 write_png(os.path.join(D, "startan3_hgt.png"), 64, 128, bump_height)
 write_png(os.path.join(D, "startan3_emis.png"), 64, 128, emissive_dots)
 print("wrote bring-up hero set to", D)
