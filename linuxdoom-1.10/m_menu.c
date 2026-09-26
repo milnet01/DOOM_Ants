@@ -1758,14 +1758,16 @@ static void M_DevLevelSplit(int idx, int* episode, int* map)
 
 static const char* M_DevLevelName(void)
 {
-    static char buf[12];
+    static char buf[32];   // fits "E%dM%d" for any two ints (DOOM-0460)
     int episode, map;
 
     M_DevLevelSplit(devLevel, &episode, &map);
+    // DOOM-0460: GCC cannot bound episode/map from M_DevLevelSplit, so the
+    // buffer is sized for any int and the write is bounded anyway.
     if (gamemode == commercial)
-	sprintf(buf, "MAP%02d", map);
+	snprintf(buf, sizeof buf, "MAP%02d", map);
     else
-	sprintf(buf, "E%dM%d", episode, map);
+	snprintf(buf, sizeof buf, "E%dM%d", episode, map);
     return buf;
 }
 
