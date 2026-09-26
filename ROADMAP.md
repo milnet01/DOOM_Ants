@@ -3108,7 +3108,7 @@ defect visible before a player finds it.
   Source: user-request-2026-09-07.
   Lanes: testing, game-loop, backend-seam.
 
-- 📋 [DOOM-0440] **Four shader formulas exist in two or three copies each, including one the project has twice been bitten by.**
+- ✅ [DOOM-0440] **Four shader formulas exist in two or three copies each, including one the project has twice been bitten by.**
   The project already has the right pattern: formulas/scene_recombine.glsl
   and formulas/tonemap_encode.glsl were both created because "a second
   copy is how the two drift apart". These four were left behind.
@@ -3144,6 +3144,20 @@ defect visible before a player finds it.
   TRAP on (4): a sign flip there shows as violent ghosting IN MOTION, and
   -shotcompare's golden frames are STATIC, so they would not catch it.
   Verify by playing, not by capture.
+  Resolved (2026-09-26), in six commits. Step 0 (36a9fcd):
+  formulas.glsl re-exported with the Vestige include guards;
+  pbr_neutral_tonemap.glsl guarded. (3) (ff59352): pathtrace.comp calls
+  tonemap_encode.glsl's toneExposeEncode. (1) (a1940f2):
+  formulas/bloom_knee.glsl. (2) (6717c86): formulas/gi_probe.glsl holds
+  ProbesRO, TriSs and giIrradiance for pt_common and mesh.frag. (4)
+  (027ee8b): formulas/svgf_shared.glsl holds lum and svgfReprojectPrev.
+  Host blur (8d93f1c): RecordBloomBlur. Each shader step was checked by
+  comparing the optimised SPIR-V before and after, with IDs and debug info
+  normalised. Most modules were identical. Every difference is explained
+  in its commit. One trap was found and avoided: across a function
+  boundary, floor((s - 0.5) + 0.5) is no longer folded to floor(s). The
+  tap-loop preambles were not merged; they read different sources. Filed
+  the Workbench-export switch as a follow-up.
   **Layman:** Several pieces of shading maths are written out more than once in different shader files. When someone fixes one copy, the others keep the old behaviour — which has already happened here twice.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lane 7.
@@ -3530,6 +3544,24 @@ defect visible before a player finds it.
   **Layman:** A developer-only build of the game prints one compiler warning about a text buffer; it is harmless but should be silenced so real warnings stand out.
   Kind: fix.
   Source: in-session-2026-09-26 (DOOM-0435 build).
+
+- 📋 [DOOM-0462] **Switch formulas/bloom_knee.glsl to the Workbench's bloomKneeQuadratic export.**
+  At Vestige's offer, the Vestige Formula Workbench now models DOOM's
+  quadratic bloom knee as bloomKneeQuadratic(peak, threshold, knee)
+  (Vestige f541ece). threshold and knee are parameters, since DOOM reads
+  them from kBloomPresets at runtime. DOOM-0440 shipped a hand-written
+  formulas/bloom_knee.glsl because that could be proven SPIR-V
+  equivalent. The export wraps each division in safeDiv, which adds a
+  compare-and-select and so cannot match byte for byte.
+
+  For DOOM's inputs the result is identical: 4k + 1e-4 is never 0 for a
+  non-negative knee, and max(peak, 1e-4) never is. Re-export from
+  Vestige's pushed library hash, switch both bloom extracts to
+  bloomKneeQuadratic, delete bloom_knee.glsl, and record that argument.
+  Verify with -rtverify and a bloom A/B capture on both chains.
+  **Layman:** The maths that decides what glows is now kept in one place in DOOM; this moves it to the shared formula tool the two projects use, so both read the same authored copy.
+  Kind: refactor.
+  Source: in-session-2026-09-26 (DOOM-0440, with the Vestige session).
 
 ## 0.10.0 — The frame budget
 
