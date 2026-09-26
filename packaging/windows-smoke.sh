@@ -91,13 +91,20 @@ make -C "$ENG" generated >/dev/null || { echo "FAIL: could not generate the embe
 # at the first one make happens to schedule.
 echo "==> Syntax-checking every source file against the Windows compiler..."
 INC=(-I"$WIN_PREFIX/include" -I"$WIN_PREFIX/include/SDL2" -I"$ENG")
+# DOOM-0452: the standards and defines come from the Makefile, which owns them;
+# a hard-coded copy here drifted to -std=gnu++20 without -Wall, so this gate was
+# not checking the tree with the flags the real build uses.
+mkvar() { make -s --no-print-directory -C "$ENG" "print-$1"; }
+CSTD=$(mkvar CSTD); CXXSTD=$(mkvar CXXSTD); DEFS=$(mkvar DEFS)
+[ -n "$CSTD" ] && [ -n "$CXXSTD" ] && [ -n "$DEFS" ] \
+  || { echo "FAIL: could not read CSTD/CXXSTD/DEFS from the Makefile"; exit 1; }
 SWEEP_FAIL=0
 for f in "$ENG"/*.c; do
-  out=$(x86_64-w64-mingw32-gcc -fsyntax-only -Wall -std=gnu11 -DNORMALUNIX -DLINUX \
+  out=$(x86_64-w64-mingw32-gcc -fsyntax-only -Wall $CSTD $DEFS \
           "${INC[@]}" "$f" 2>&1) || { echo "--- $(basename "$f")"; echo "$out" | grep error | head -5; SWEEP_FAIL=1; }
 done
 for f in "$ENG"/*.cpp; do
-  out=$(x86_64-w64-mingw32-g++ -fsyntax-only -std=gnu++20 -DNORMALUNIX -DLINUX \
+  out=$(x86_64-w64-mingw32-g++ -fsyntax-only -Wall $CXXSTD $DEFS \
           "${INC[@]}" "$f" 2>&1) || { echo "--- $(basename "$f")"; echo "$out" | grep error | head -5; SWEEP_FAIL=1; }
 done
 [ "$SWEEP_FAIL" = 0 ] || { echo "FAIL: the Windows compiler rejects the tree (see above)"; exit 1; }

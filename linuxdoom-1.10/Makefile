@@ -46,12 +46,18 @@ DEPFLAGS=-MMD -MP
 # (tic_time.h). Stated explicitly, both targets get both.
 OPTFLAGS=-O2 -fno-strict-aliasing -fno-strict-overflow
 
-CFLAGS=-g $(OPTFLAGS) -Wall -std=gnu11 -DNORMALUNIX -DLINUX $(DEPFLAGS) $(SDL_CFLAGS) # -DUSEASM
+# DOOM-0452: the language standards and defines are named so that
+# packaging/windows-smoke.sh reads them (`make print-CSTD`) instead of keeping a
+# copy -- its copy had drifted to -std=gnu++20 without -Wall.
+CSTD=-std=gnu11
+CXXSTD=-std=c++23
+DEFS=-DNORMALUNIX -DLINUX
+CFLAGS=-g $(OPTFLAGS) -Wall $(CSTD) $(DEFS) $(DEPFLAGS) $(SDL_CFLAGS) # -DUSEASM
 # C++23 for the Vulkan back-end (ADR 0001; bumped from C++17 2026-07-03 per the
 # latest-version dependency rule -- no caller changes needed). Same defines + SDL
 # include path. NB the Windows cross-build (target `windows`) inherits this flag;
 # its mingw g++ 13 accepts -std=c++23 and the back-end uses no C++23-only features.
-CXXFLAGS=-g $(OPTFLAGS) -Wall -std=c++23 -DNORMALUNIX -DLINUX $(DEPFLAGS) $(SDL_CFLAGS)
+CXXFLAGS=-g $(OPTFLAGS) -Wall $(CXXSTD) $(DEFS) $(DEPFLAGS) $(SDL_CFLAGS)
 # Link with mold when present (a faster drop-in linker) — native build only; the
 # Windows cross-target overrides LDFLAGS, so the mingw link is untouched. Detected
 # once; empty (= the default ld) when mold isn't installed.
@@ -217,6 +223,11 @@ DEVSTAMP=$(O)/.dev-$(if $(filter 1,$(DEV)),on,off)
 .PHONY:	all clean windows generated test nee-test compile_commands.json
 
 all:	 $(O)/$(BIN)
+
+# DOOM-0452: `make -s --no-print-directory print-VAR` prints one variable, so a
+# script can read a flag from its owner rather than copy it.
+print-%:
+	@echo '$($*)'
 
 clean:
 	rm -f *.o *~ *.flc
