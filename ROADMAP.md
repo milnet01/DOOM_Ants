@@ -3580,6 +3580,12 @@ defect visible before a player finds it.
   LEFT: the seven sector-thinker spawns, the P_TeleportMove /
   P_CheckPosition shared prologue, the neighbour-scan functions and the
   other items in the body.
+  Progress (2026-09-26, later), item still open. Also DONE (b95ee8d):
+  P_TeleportMove and P_CheckPosition share P_SetupPositionCheck and
+  P_SweepThingBlocks; per-tic A/B identical on all six demo pairs. LEFT:
+  the seven sector-thinker spawns, the neighbour-scan functions, and the
+  rest of the body. Every playsim change here must pass the per-tic
+  state-hash A/B, not just the fixture gametic counts.
   **Layman:** The code that makes doors, floors, ceilings and platforms move is six files of near-identical logic. Because demo playback depends on this code exactly, a fix that lands in five of six places is not a visual glitch — it silently breaks recorded demos.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lanes 9/10.
@@ -3663,6 +3669,16 @@ defect visible before a player finds it.
   build.yml; the build-speed items (serial `make test`, serial Windows
   syntax sweep, two containers each running apt-get update, r_vulkan.cpp
   recompiling on every shader edit); the make_bringup_hero.py note.
+  Progress (2026-09-26, latest), item still open. Also DONE:
+  rb_image_test's fixture moved to linuxdoom-1.10/tests/fixtures/ so the
+  DOOM-0042 plan's git rm of the bring-up set is safe (b8311c5); the
+  Windows syntax sweep runs in parallel under the Makefile's RAM-capped
+  JOBS, loop 5.4-6.1 s -> 2.5-2.8 s (62ab7fb); the local CI gate reuses
+  downloaded apt packages from ~/.cache/doom-ants-ci-apt, 360 MB -> 0 B
+  per push (06d1a9f). Measured and left alone: make test's serial run
+  loop (all 26 binaries take 1.06 s). LEFT: ci-local.sh as a hand mirror
+  of build.yml; r_vulkan.cpp recompiling on every shader edit (needs an
+  extern header for the .spv blobs).
   **Layman:** The script that packages a Windows release duplicates another script almost line for line, including the text players read. And the check that tells us "this compiles for Windows" uses a different C++ version than the real build does, so it is not checking what it claims to.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lane 14.
