@@ -44,6 +44,8 @@ is named E1M1 and this script does not look for it.
 import struct
 import sys
 
+from wad import read_directory, write_pwad
+
 # p_spec.c. Exceeding it is what DOOM-0369's guard refuses.
 MAXLINEANIMS = 64
 # Linedef special 48: "EFFECT FIRSTCOL SCROLL+", the one P_SpawnSpecials collects.
@@ -75,20 +77,6 @@ THING_SIZE = 10         # x y angle type options
 # bit 16 is multiplayer-only and would make the thing skip in a single-player
 # boot, which is the boot this fixture is checked with.
 ALL_SKILLS = 7
-
-
-def read_wad(path):
-    """Return the raw bytes and the directory as [(name, offset, size)]."""
-    data = open(path, "rb").read()
-    magic = data[:4]
-    if magic not in (b"IWAD", b"PWAD"):
-        raise SystemExit("%s is not a WAD (magic %r)" % (path, magic))
-    count, diroff = struct.unpack_from("<ii", data, 4)
-    directory = []
-    for i in range(count):
-        off, size, name = struct.unpack_from("<ii8s", data, diroff + 16 * i)
-        directory.append((name.rstrip(b"\0").decode("latin1"), off, size))
-    return data, directory
 
 
 def map_group(data, directory, marker):
@@ -421,27 +409,15 @@ MODES = {
 }
 
 
-def write_pwad(path, lumps):
-    """Write a PWAD: 12-byte header, lump payloads, then the directory."""
-    payloads = b""
-    dirents = []
-    off = 12
-    for name, payload in lumps:
-        dirents.append((off, len(payload), name))
-        payloads += payload
-        off += len(payload)
-    header = b"PWAD" + struct.pack("<ii", len(lumps), 12 + len(payloads))
-    directory = b"".join(struct.pack("<ii8s", o, n, nm.encode().ljust(8, b"\0"))
-                         for o, n, nm in dirents)
-    open(path, "wb").write(header + payloads + directory)
-
-
 def main(argv):
     if len(argv) != 4 or argv[1] not in MODES:
         raise SystemExit("usage: %s {%s} <iwad> <out.wad>"
                          % (argv[0], "|".join(MODES)))
     mode, iwad, out = argv[1], argv[2], argv[3]
-    data, directory = read_wad(iwad)
+    try:
+        data, directory = read_directory(iwad)
+    except ValueError as err:
+        raise SystemExit(str(err))
     group = MODES[mode](map_group(data, directory, "MAP01"))
     write_pwad(out, group)
     print("%s: %s (%d lumps)" % (out, mode, len(group)))

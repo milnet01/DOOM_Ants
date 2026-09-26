@@ -43,23 +43,22 @@ import struct
 import sys
 from collections import defaultdict
 
+from wad import read_directory
+
 # The ten lumps that follow a map marker, in order (we only need four of them).
 MAP_LUMPS = 10
 
 
 def read_map(path, mapname):
-    data = open(path, "rb").read()
-    _, nlumps, dirofs = struct.unpack_from("<4sii", data, 0)
-    entries = [struct.unpack_from("<ii8s", data, dirofs + 16 * i)
-               for i in range(nlumps)]
-    names = [nm.rstrip(b"\0").decode() for _, _, nm in entries]
+    data, directory = read_directory(path)
+    names = [name for name, _, _ in directory]
     try:
         start = names.index(mapname)
     except ValueError:
         sys.exit(f"{path}: no map named {mapname}")
     out = {}
-    for fp, sz, nm in entries[start + 1:start + 1 + MAP_LUMPS]:
-        out[nm.rstrip(b"\0").decode()] = data[fp:fp + sz]
+    for name, fp, sz in directory[start + 1:start + 1 + MAP_LUMPS]:
+        out[name] = data[fp:fp + sz]
     return out
 
 

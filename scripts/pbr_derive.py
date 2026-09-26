@@ -2,9 +2,10 @@
 """DOOM-0042 offline PBR-map generator — fills E1M1's long tail (the `derive` rows in
 assets/ultra/materials.csv) with per-texture PBR maps synthesized from the WAD art.
 
-This is a STANDALONE offline tool, NOT built into the engine: it reads the IWAD with its
-own pure-stdlib lump/PLAYPAL/texture parser (the engine's C W_CacheLumpName isn't reusable
-offline) and writes assets/ultra/derived/<doom_name>_<suffix>.png for each derive row. The
+This is a STANDALONE offline tool, NOT built into the engine: it reads the IWAD with a
+pure-stdlib lump/PLAYPAL/texture parser (the lump directory via scripts/wad.py; the
+engine's C W_CacheLumpName isn't reusable offline) and writes
+assets/ultra/derived/<doom_name>_<suffix>.png for each derive row. The
 derived/ output is gitignored (a derivative work of the WAD art), exactly like the WAD.
 
 Usage:
@@ -21,6 +22,8 @@ import os
 import sys
 import math
 import argparse
+
+from wad import read_directory
 
 
 # ---------------------------------------------------------------------------
@@ -55,19 +58,12 @@ def write_png(path, w, h, pixels, channels):
 # ---------------------------------------------------------------------------
 class Wad:
     def __init__(self, path):
-        with open(path, "rb") as f:
-            self.data = f.read()
-        magic, numlumps, dirofs = struct.unpack_from("<4sii", self.data, 0)
-        if magic not in (b"IWAD", b"PWAD"):
-            raise ValueError("not a WAD (magic %r)" % magic)
+        self.data, directory = read_directory(path)
         self.lumps = {}                                # NAME -> (filepos, size); last wins (PWAD override)
         self.flats = set()                             # names inside F_START..F_END (the flat namespace)
         in_flats = False
-        off = dirofs
-        for _ in range(numlumps):
-            filepos, size = struct.unpack_from("<ii", self.data, off)
-            name = self.data[off + 8:off + 16].split(b"\0")[0].decode("ascii", "replace").upper()
-            off += 16
+        for name, filepos, size in directory:
+            name = name.upper()
             # Flat namespace tracking: only lumps between the F_START/F_END (or PWAD FF_*)
             # markers are flats. The nested F1_/F2_/F3_ sub-markers sit inside that span and
             # are size 0, so the `size == 4096` guard skips them without extra bookkeeping.

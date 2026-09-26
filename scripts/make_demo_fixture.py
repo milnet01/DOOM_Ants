@@ -22,31 +22,14 @@ Not a map fixture. Proving the DOOM-0369/0370/0372/0381 guards fire needs a
 crafted MAP, which is a bigger job and is filed separately -- see the roadmap.
 """
 
-import struct
 import sys
+
+from wad import write_pwad
 
 DEMO_VERSION = 110      # doomdef.h: enum { VERSION = 110 }
 DEMOMARKER = 0x80       # g_game.c
 BT_ATTACK = 1           # d_event.h
 BT_USE = 2              # d_event.h
-
-
-def pwad(path, lumps):
-    """Write a PWAD: 12-byte header, lump payloads, then the directory."""
-    data = b""
-    dirents = []
-    off = 12
-    for name, payload in lumps:
-        dirents.append((off, len(payload), name))
-        data += payload
-        off += len(payload)
-    header = b"PWAD" + struct.pack("<ii", len(lumps), 12 + len(data))
-    directory = b"".join(
-        struct.pack("<ii8s", o, n, nm.encode().ljust(8, b"\0"))
-        for o, n, nm in dirents
-    )
-    with open(path, "wb") as f:
-        f.write(header + data + directory)
 
 
 def demo(consoleplayer, tics, terminator, forwardmove=0, use=False,
@@ -114,7 +97,7 @@ def main(argv):
             "usage: %s {%s} <out.wad>\n" % (argv[0], "|".join(CASES))
         )
         return 2
-    pwad(argv[2], [("DEMO1", CASES[argv[1]]())])
+    write_pwad(argv[2], [("DEMO1", CASES[argv[1]]())])
     return 0
 
 
