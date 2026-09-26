@@ -99,15 +99,21 @@ mkvar() { make -s --no-print-directory -C "$ENG" "print-$1"; }
 CSTD=$(mkvar CSTD); CXXSTD=$(mkvar CXXSTD); DEFS=$(mkvar DEFS)
 [ -n "$CSTD" ] && [ -n "$CXXSTD" ] && [ -n "$DEFS" ] \
   || { echo "FAIL: could not read CSTD/CXXSTD/DEFS from the Makefile"; exit 1; }
+# DOOM-0452: one TU per job, as many jobs as the Makefile's RAM cap allows
+# (JOBS), since the heaviest TU needs a few hundred MB even syntax-only.
+check_tu() {
+  case "$1" in
+    *.c) cc=x86_64-w64-mingw32-gcc; std=$CSTD ;;
+    *)   cc=x86_64-w64-mingw32-g++; std=$CXXSTD ;;
+  esac
+  out=$($cc -fsyntax-only -Wall $std $DEFS $SW_INC "$1" 2>&1) \
+    || { printf -- '--- %s\n%s\n' "${1##*/}" "$(echo "$out" | grep error | head -5)"; return 1; }
+}
+export -f check_tu
+export CSTD CXXSTD DEFS SW_INC="${INC[*]}"   # the include paths hold no spaces
 SWEEP_FAIL=0
-for f in "$ENG"/*.c; do
-  out=$(x86_64-w64-mingw32-gcc -fsyntax-only -Wall $CSTD $DEFS \
-          "${INC[@]}" "$f" 2>&1) || { echo "--- $(basename "$f")"; echo "$out" | grep error | head -5; SWEEP_FAIL=1; }
-done
-for f in "$ENG"/*.cpp; do
-  out=$(x86_64-w64-mingw32-g++ -fsyntax-only -Wall $CXXSTD $DEFS \
-          "${INC[@]}" "$f" 2>&1) || { echo "--- $(basename "$f")"; echo "$out" | grep error | head -5; SWEEP_FAIL=1; }
-done
+printf '%s\0' "$ENG"/*.c "$ENG"/*.cpp \
+  | xargs -0 -n1 -P "$(mkvar JOBS)" bash -c 'check_tu "$1"' _ || SWEEP_FAIL=1
 [ "$SWEEP_FAIL" = 0 ] || { echo "FAIL: the Windows compiler rejects the tree (see above)"; exit 1; }
 echo "    all translation units compile for Windows."
 [ "$SYNTAX_ONLY" = 1 ] && { echo "PASS (syntax only)."; exit 0; }
