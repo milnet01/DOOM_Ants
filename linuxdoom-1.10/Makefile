@@ -356,9 +356,16 @@ $(O)/%.o:	%.cpp | $(O)
 # .comp extension by glslc; xxd -n pins a stable array name (mesh_vert_spv, ...).
 # --target-env=vulkan1.2 is required by pathtrace.comp (VK_KHR_ray_query +
 # buffer_reference need SPIR-V 1.5); harmless for the 1.0-era raster shaders.
+# DOOM-0452: the one GLSL -> embedded-header recipe, called by this rule and the two
+# variant rules below, so --target-env lives in one place.
+#   $(call spv_embed,<source>,<output base name>,<extra glslc flags>)
+define spv_embed
+	glslc --target-env=vulkan1.2 -O $(3) $(1) -o $(SHADER_DIR)/$(2).spv
+	xxd -i -n $(subst .,_,$(2))_spv $(SHADER_DIR)/$(2).spv > $@
+endef
+
 $(SHADER_DIR)/%.spv.h:	$(SHADER_DIR)/%
-	glslc --target-env=vulkan1.2 -O $< -o $(SHADER_DIR)/$*.spv
-	xxd -i -n $(subst .,_,$*)_spv $(SHADER_DIR)/$*.spv > $@
+	$(call spv_embed,$<,$*,)
 
 # The path-tracer compute shaders #include the shared shading header
 # (pt_common.glsl); glslc emits no auto-dep here, so name it explicitly or an edit
@@ -412,15 +419,13 @@ $(SHADER_DIR)/bloom_extract_raster.comp.spv.h $(SHADER_DIR)/bloom_extract_rt.com
 # rule above can't produce it — there is no svgf_composite_split.comp source); depends on
 # svgf_composite.comp so editing the shader rebuilds both variants.
 $(SHADER_DIR)/svgf_composite_split.comp.spv.h:	$(SHADER_DIR)/svgf_composite.comp
-	glslc --target-env=vulkan1.2 -O -DBLOOM_SPLIT $< -o $(SHADER_DIR)/svgf_composite_split.comp.spv
-	xxd -i -n svgf_composite_split_comp_spv $(SHADER_DIR)/svgf_composite_split.comp.spv > $@
+	$(call spv_embed,$<,svgf_composite_split.comp,-DBLOOM_SPLIT)
 
 # DOOM-0170 L2b — the SINGLE_TARGET variant of mesh.frag (RT weapon overlay). Explicit rule
 # (the pattern rule above can't produce it — there is no mesh_overlay.frag source); depends on
 # mesh.frag so editing the shader rebuilds both variants.
 $(SHADER_DIR)/mesh_overlay.frag.spv.h:	$(SHADER_DIR)/mesh.frag
-	glslc --target-env=vulkan1.2 -O -DSINGLE_TARGET $< -o $(SHADER_DIR)/mesh_overlay.frag.spv
-	xxd -i -n mesh_overlay_frag_spv $(SHADER_DIR)/mesh_overlay.frag.spv > $@
+	$(call spv_embed,$<,mesh_overlay.frag,-DSINGLE_TARGET)
 
 # DOOM-0206 L4 — bundled font (.ttf) -> embedded C byte array. Same vendored pattern as the
 # shader .spv.h step: xxd -i emits the bytes, -n pins the stable array name (oxanium_ttf +
