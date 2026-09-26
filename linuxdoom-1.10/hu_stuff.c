@@ -410,7 +410,7 @@ void HU_Init(void)
     int		j;
     char	buffer[9];
 
-    if (french)
+    if (language == french)
 	shiftxform = french_shiftxform;
     else
 	shiftxform = english_shiftxform;
@@ -941,7 +941,7 @@ boolean HU_Responder(event_t *ev)
 	}
 	else
 	{
-	    if (french)
+	    if (language == french)
 		c = ForeignTranslation(c);
 	    // DOOM-0254: shiftxform[] covers the 128 ASCII codes only, but c can
 	    // be any key code (arrows and function keys are >= 0x80).

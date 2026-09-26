@@ -1400,6 +1400,50 @@ stay in their phase sections; this heading holds only work still to come.
   Source: DOOM-0411 split, review-code 2026-09-01 lane vk-accel.
   Lanes: renderer.
 
+- 📋 [DOOM-0463] **Plutonia and TNT play as DOOM 2: gamemission is never set, so both show DOOM 2's level names and story text.**
+  Found by DOOM-0450's linker scan: mapnamesp/mapnamest (hu_stuff.c) and
+  p1text..p6text / t1text..t6text (f_finale.c) are reachable from
+  nothing. They are not dead weight -- they are the data the missing
+  feature needs, so DOOM-0450 keeps them.
+
+  Cause: nothing assigns gamemission after its doomstat.c default, though
+  iwad_detect.h and d_main.c both recognise plutonia.wad and tnt.wad. id's
+  own code marks the gap: hu_stuff.c's map-title switch and d_main.c's
+  window-title switch carry the pack_plut/pack_tnt arms inside FIXME
+  comments, and f_finale.c never selects the P/T texts.
+
+  Fix: set gamemission from the loaded IWAD, then restore the three
+  switches on gamemission (not gamemode -- DOOM-0139's lesson). Check
+  g_game.c's sky block, which already tests gamemission and so has never
+  fired for these IWADs. Needs a Final DOOM IWAD to verify.
+  **Layman:** If you load Final DOOM (Plutonia or TNT), the automap shows DOOM 2's level names and the story screens show DOOM 2's text instead of that game's own.
+  Kind: fix.
+  Source: in-session-2026-09-26 (DOOM-0450 dead-symbol scan).
+
+- ✅ [DOOM-0464] **`if (french)` tests the enum constant, not the language: co-op quits at the first level exit, and chat types through the French keymap.**
+  Found by DOOM-0450's linker scan: english_shiftxform (hu_stuff.c) is
+  reachable from nothing, because HU_Init's `if (french)` is always true.
+  `french` is a Language_t enumerator (doomdef.h), the constant 1. HU_Init
+  therefore always picks french_shiftxform, and HU_Responder's `if (french)`
+  always runs ForeignTranslation, the AZERTY remap. Inherited from id's 1997
+  source; m_menu.c already compares `language != english` correctly.
+
+  Same class as DOOM-0391. Fix: `language == french` at both sites, and
+  extend tests/gamemode_predicate_test.cpp to the Language_t enumerators.
+  Resolved (2026-09-26): wider than filed. A third site, wi_stuff.c
+  WI_loadData, loaded WIOBJ in co-op for every language, and no English
+  IWAD has that lump (checked doom.wad and doom2.wad). Every co-op game
+  quit with "W_GetNumForName: WIOBJ not found!" at the first level exit.
+  Reproduced with a throwaway G_Ticker hook forcing a co-op exit; the
+  same probe loads the intermission after the fix. All three sites now
+  test `language == french`. The scrape test covers Language_t
+  enumerators too. Mutation probe: a bare `if (french)` and `if
+  (!french)` are caught; `french && netgame` and a comparison against the
+  wrong global are not, as for GameMode_t.
+  **Layman:** A check meant to ask "is the game in French?" always answered yes, so co-op games quit at the end of the first level and multiplayer chat typed the wrong letters.
+  Kind: fix.
+  Source: in-session-2026-09-26 (DOOM-0450 dead-symbol scan).
+
 ## 0.9.0 — The codebase can be trusted
 
 Work only a maintainer sees: duplication, dead code, static analysis that covers

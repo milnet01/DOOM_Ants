@@ -79,6 +79,11 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Co-op games no longer quit at the first level exit, and multiplayer chat types what you press.** (DOOM-0464)
+  Three checks meant "is the game in French?" and always answered yes.
+  Co-op asked for a French-only intermission graphic and quit when it was
+  missing. Chat ran every key through the French keyboard layout.
+
 - **A lost graphics device now stops the game with a message instead of freezing it** (DOOM-0412)
   If the graphics driver reset under the game, several checks threw the
   error away and the game carried on against a dead device. It now
