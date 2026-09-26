@@ -1362,6 +1362,173 @@ vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)
     return vec4(inscatter, trans);
 }
 
+// DOOM-0439 — the primary-hit shading that mode 4 (the raw `~` display view) and mode 6 (the
+// shipped denoise feed) share, written ONCE. The two are REQUIRED to agree: SVGF demodulation
+// only works if mode 6's illum is mode 4's L with the albedo factored out, so an edit to one
+// copy would desynchronise the raw view from the shipped view with nothing in the build to
+// notice. DOOM-0130 already shared the muzzle and flashlight halves for that reason; this is
+// the rest. The modes now differ only in what they do with these results. `mode` is a
+// specialization constant and these helpers are inlined, so each pipeline still dead-strips
+// the branch it cannot reach.
+
+// The surface a primary ray hit: material, sampling UV and tangent frame, de-tiled albedo and
+// AO, grime, and whether it may self-emit.
+struct PrimaryHit {
+    int     flags;
+    uint    id;
+    MatCtrl mc;
+    vec2    sUV;
+    vec3    T, B;
+    float   tHit;
+    vec3    hitP;
+    vec2    dG;         // de-tile world key
+    vec3    albedo;
+    float   ao;
+    float   gooWet;     // DOOM-0183 L5: goo-puddle wet coverage (0 unless a green-goo puddle)
+    bool    addEmis;
+};
+
+PrimaryHit primaryHitSurface(Verts vb, uint i0, bool isSprite, vec2 hitUV, vec3 n,
+                             vec3 p0, vec3 p1, vec3 p2, vec2 uv0, vec2 uv1, vec2 uv2,
+                             vec3 origin, vec3 dir, float tHit)
+{
+    PrimaryHit h;
+    int texnum = floatBitsToInt(vb.v[i0 + 8u]);
+    h.flags    = floatBitsToInt(vb.v[i0 + 9u]);
+    h.id       = isSprite ? (pc.misc4.x + uint(texnum))
+               : (((h.flags & FLAG_FLAT) != 0) ? (pc.misc.w + uint(texnum))
+                                               : uint(texnum));
+    // DOOM-0042 shared HD prologue (Tasks 11/14): the base UV, tangent frame, and POM
+    // march are computed ONCE per hit, then every map (albedo/normal/AO/emissive)
+    // samples at the resulting `sUV` so relief self-occludes consistently. The whole
+    // block is gated on usePBR, so a paletted hit does NO extra work (sUV unused —
+    // hdAlbedo samples raw hitUV) and is byte-identical to the pre-HD path.
+    h.mc   = ctrl[h.id];                    // one SSBO, runtime array -> no nonuniformEXT
+    h.sUV  = hitUV;                         // paletted default (unused by the paletted branch)
+    h.T    = n; h.B = n;
+    h.tHit = tHit;                          // DOOM-0181: hitP feeds the detile world-key
+    h.hitP = origin + dir * tHit;
+    // DOOM-0439: the de-tile world key, once per hit. Every consumer below is gated on
+    // usePBR && detileOn(), so the same gate here keeps paletted hits free of it.
+    h.dG   = (h.mc.usePBR != 0u && detileOn()) ? detileWorldUV(h.hitP, n) / kDetileWorldCell
+                                               : vec2(0.0);
+    if (h.mc.usePBR != 0u) {
+        vec2 baseUV = hdBaseUV(h.id, hitUV, h.mc.uvScale);
+        hdTangentFrame(n, p0, p1, p2, uv0, uv1, uv2, h.T, h.B);
+        // DOOM-0181 L3: march POM in the de-tiled coordinate so relief registers with the
+        // de-tiled albedo/normal/AO (§4.4); else the plain-space POM march.
+        h.sUV = detileOn()
+              ? detilePOM(h.mc, baseUV, h.T, h.B, n, dir, h.dG)
+              : hdParallaxUV(h.mc, baseUV, h.T, h.B, n, dir);
+    }
+    // DOOM-0181 L1: de-tile the albedo when the dial is on and this is an HD albedo map;
+    // else the unchanged hdAlbedo path (paletted / no-albedo hits stay byte-identical).
+    if (h.mc.usePBR != 0u && h.mc.maps[0] >= 0 && detileOn()) {
+        h.albedo = detile(uint(h.mc.maps[0]), h.sUV, h.dG);
+    } else {
+        h.albedo = hdAlbedo(h.mc, h.id, hitUV, h.sUV);   // HD if usePBR, else paletted
+    }
+    // DOOM-0181 L4: fetch AO ONCE here (de-tiled to match albedo/normal; §4.3) — it feeds
+    // both the crevice-pooled filth in applyGrime and the ambient term. Paletted / no-AO
+    // hits fall back to hdAO (== 1.0 there, so no crevice darkening). Mode 6 needs it
+    // before its half-res early-return, so every stored galbedo carries the filth.
+    h.ao = (h.mc.usePBR != 0u && h.mc.maps[4] >= 0 && detileOn())
+         ? detileR(uint(h.mc.maps[4]), h.sUV, h.dG)
+         : hdAO(h.mc, h.id, h.sUV);
+    // DOOM-0179/0181 grime + filth (all world surfaces; misc5.w toggle), applied to the
+    // albedo itself, so mode 6's stored galbedo carries the mottle. n is geometric here.
+    h.gooWet = 0.0;
+    if (!isSprite && filthOn()) h.albedo = applyGrime(h.albedo, h.hitP, n, h.ao, h.gooWet);
+    // DOOM-0084: world surfaces self-emit as before; a sprite self-emits only
+    // if it's a fullbright light Thing (lamp/torch/barrel), so ammo pickups and
+    // monsters don't glow. The per-texel value mask then keeps the glow on the
+    // bright pixels (lamp top, not the dark stand).
+    h.addEmis = isSprite ? ((h.flags & FLAG_EMISSIVE) != 0) : true;
+    return h;
+}
+
+// The inputs to lighting a primary hit: the probe subsector, the REJECT sector, the shading
+// normal and the shadow-ray origin.
+struct PrimaryLight {
+    uint subId;
+    uint hitSec;
+    vec3 shadeN;
+    vec3 shadeP;
+    bool nukage;
+};
+
+PrimaryLight primaryHitLighting(PrimaryHit h, bool isSprite, int prim, vec3 n)
+{
+    PrimaryLight s;
+    // DOOM-0119: this hit's owning sector for the REJECT light cull. World hit
+    // -> subsector (triSs) -> sector (subSec); sprite hits + the no-REJECT case
+    // pass 0xFFFFFFFF (unknown) so shadeSurface leaves every light in play.
+    // DOOM-0439: the subsector is read ONCE, for this and for the GI lookup, and
+    // probeCount (misc2.y) gates the read itself (DOOM-0407): with no bake, triSs is
+    // address 0. Sprites have no GI probe, so they get the out-of-range id too.
+    s.subId  = (isSprite || pc.misc2.y == 0u) ? 0xFFFFFFFFu : pc.triSs.s[uint(prim)];
+    s.hitSec = 0xFFFFFFFFu;
+    if (pc.misc4.z > 0u && s.subId < pc.misc2.y)
+        s.hitSec = pc.subSec.s[s.subId];
+    // DOOM-0181 L2: de-tile the normal in lockstep with the albedo (same world cell), so a
+    // mirrored/offset tile's relief matches its colour. INV-2: detileNormalTS negates the
+    // per-cell tangent-X on a mirror. Paletted / no-normal-map hits keep hdShadingNormal.
+    if (h.mc.usePBR != 0u && h.mc.maps[1] >= 0 && detileOn()) {
+        vec3 tn  = detileNormalTS(uint(h.mc.maps[1]), h.sUV, h.dG);
+        s.shadeN = normalize(tn.x * h.T + tn.y * h.B + tn.z * n);
+    } else {
+        s.shadeN = hdShadingNormal(h.mc, h.id, h.sUV, n, h.T, h.B);
+    }
+    // shadeSurface/*Delta offset their shadow-ray origin along the normal they're
+    // handed; a tilted bump normal shrinks the clearance off the true triangle
+    // plane, so for a normal-mapped surface lift the shading point along the
+    // GEOMETRIC normal first (paletted is byte-identical: guard is false there).
+    s.shadeP = (h.mc.usePBR != 0u && h.mc.maps[1] >= 0) ? h.hitP + n * 2e-3 : h.hitP;
+    // DOOM-0183 L4: nukage ripples the LIGHTING normal so the diffuse shade AND the
+    // sheen shimmer coherently (INV-4: nukage only — lava + non-liquid keep n unperturbed).
+    s.nukage = isNukage(h.mc);
+    if (s.nukage && wetOn()) s.shadeN = rippleNormal(s.shadeN, h.hitP.xy, rippleTime());
+    return s;
+}
+
+// Everything added after shadeSurface, in the order both modes add it (float addition is
+// not associative, so the order is part of the contract). modAlbedo is the surface albedo
+// on the display path and vec3(1.0) on the demodulated feed; 1.0 * x == x exactly.
+vec3 primaryHitAddTerms(vec3 L, PrimaryHit h, PrimaryLight s, vec3 n, float secLight,
+                        vec3 modAlbedo)
+{
+    // Indirect GI (build step 4c) + DOOM-0043 sector-light ambient floor. The probe holds
+    // the bounced solution; the floor is a deliberate, designer-driven ambient seeded by the
+    // sector lightlevel (§4.2). max() keeps GI wherever it already exceeds the floor, so lit
+    // rooms are untouched (no double-count) and only dim/unprobed surfaces get lifted.
+    vec3 ambient = vec3(max(secLight * AMBIENT_SECTOR_SCALE, AMBIENT_FLOOR));
+    vec3 gi      = (s.subId < pc.misc2.y) ? giIrradiance(pc.probes, s.subId, s.shadeN)
+                                          : vec3(0.0);
+    L += modAlbedo * max(gi, ambient) * h.ao;   // AO dims fill light only
+
+    // DOOM-0183 L3/L5: wet sheen (direct-light specular, INV-3 — no reflection ray) on
+    // nukage + goo puddles, plus a faint additive glow on goo puddles. Added AFTER
+    // shadeSurface so it does not perturb diffuse GI. Puddles use the UN-rippled normal
+    // `n` (a thin film, not a deep pool — no ripples, §4.6). NOT multiplied by modAlbedo:
+    // on the demodulated feed svgf_composite re-applies albedo, so there the sheen is tinted
+    // by the surface (a bright GREEN glint on nukage — on-theme); a neutral wet surface
+    // would need a separate full-res specular channel (a DOOM-0103 follow-up).
+    if (wetOn()) {
+        if (s.nukage) L += wetSheen(h.hitP, s.shadeN);
+        if (h.gooWet > 0.0) {
+            L += wetSheen(h.hitP, n) * (h.gooWet * kPuddleSheenScale);
+            L += kPuddleGlow * kGooColour * h.gooWet;
+        }
+    }
+
+    // Dynamic point-light deltas (build step 5): the muzzle flash + the DOOM-0044 player
+    // flashlight, each a hard ray-traced shadow composited additively over the baked static
+    // (DOOM-0130 shared helpers).
+    L += muzzleFlashDelta(s.shadeP, s.shadeN, modAlbedo);
+    L += flashlightDelta(s.shadeP, s.shadeN, modAlbedo);
+    return L;
+}
+
 void main()
 {
     const uvec2 px = gl_GlobalInvocationID.xy;
@@ -1497,142 +1664,31 @@ void main()
         }
         else if (mode == 4u)
         {
-            // NEE direct lighting (build step 3c). Decode the surface albedo into
-            // linear space, then shade it (self-emission + power-importance NEE
-            // direct, hard shadows) via the shared shadeSurface() — the SAME math
-            // the GI bake runs at each probe-ray hit. A flat sky/sector ambient
-            // stands in for the step-4 GI bake so lamp-less rooms aren't pure black.
-            int   texnum = floatBitsToInt(vb.v[i0 + 8u]);
-            int   flags  = floatBitsToInt(vb.v[i0 + 9u]);
-            uint  id     = isSprite ? (pc.misc4.x + uint(texnum))
-                         : (((flags & FLAG_FLAT) != 0) ? (pc.misc.w + uint(texnum))
-                                                       : uint(texnum));
-            // DOOM-0042 shared HD prologue (Tasks 11/14): the base UV, tangent frame, and POM
-            // march are computed ONCE per hit, then every map (albedo/normal/AO/emissive)
-            // samples at the resulting `sUV` so relief self-occludes consistently. The whole
-            // block is gated on usePBR, so a paletted hit does NO extra work (sUV unused —
-            // hdAlbedo samples raw hitUV) and is byte-identical to the pre-HD path.
-            MatCtrl mc  = ctrl[id];                // one SSBO, runtime array -> no nonuniformEXT
-            vec2    sUV = hitUV;                    // paletted default (unused by the paletted branch)
-            vec3    T = n, B = n;
-            float   tHit = rayQueryGetIntersectionTEXT(rq, true);   // HOISTED (DOOM-0181: hitP feeds the detile world-key)
-            vec3    hitP = origin + dir * tHit;                     // HOISTED
-            // DOOM-0439: the de-tile world key, once per hit. Every consumer below is gated on
-            // usePBR && detileOn(), so the same gate here keeps paletted hits free of it.
-            vec2    dG   = (mc.usePBR != 0u && detileOn()) ? detileWorldUV(hitP, n) / kDetileWorldCell
-                                                           : vec2(0.0);
-            if (mc.usePBR != 0u) {
-                vec2 baseUV = hdBaseUV(id, hitUV, mc.uvScale);
-                hdTangentFrame(n, p0, p1, p2, uv0, uv1, uv2, T, B);
-                // DOOM-0181 L3: march POM in the de-tiled coordinate so relief registers with the
-                // de-tiled albedo/normal/AO (§4.4); else the plain-space POM march.
-                sUV = detileOn()
-                    ? detilePOM(mc, baseUV, T, B, n, dir, dG)
-                    : hdParallaxUV(mc, baseUV, T, B, n, dir);
-            }
-            // DOOM-0181 L1: de-tile the albedo when the dial is on and this is an HD albedo map;
-            // else the unchanged hdAlbedo path (paletted / no-albedo hits stay byte-identical).
-            vec3 albedo;
-            if (mc.usePBR != 0u && mc.maps[0] >= 0 && detileOn()) {
-                albedo = detile(uint(mc.maps[0]), sUV, dG);
-            } else {
-                albedo = hdAlbedo(mc, id, hitUV, sUV);   // HD if usePBR, else paletted
-            }
-            // DOOM-0181 L4: fetch AO ONCE here (de-tiled to match albedo/normal; §4.3) — it feeds
-            // both the crevice-pooled filth in applyGrime and the ambient term below. Paletted /
-            // no-AO hits fall back to hdAO (== 1.0 there, so no crevice darkening).
-            float ao = (mc.usePBR != 0u && mc.maps[4] >= 0 && detileOn())
-                     ? detileR(uint(mc.maps[4]), sUV, dG)
-                     : hdAO(mc, id, sUV);
-            float gooWet = 0.0;   // DOOM-0183 L5: goo-puddle wet coverage (0 unless a green-goo puddle)
-            if (!isSprite && filthOn()) albedo = applyGrime(albedo, hitP, n, ao, gooWet);   // DOOM-0179/0181 filth (all world surfaces; misc5.w toggle)
-
-            // DOOM-0084: world surfaces self-emit as before; a sprite self-emits only
-            // if it's a fullbright light Thing (lamp/torch/barrel), so ammo pickups and
-            // monsters don't glow. The per-texel value mask in shadeSurface then keeps
-            // the glow on the bright pixels (lamp top, not the dark stand).
-            bool addEmis = isSprite ? ((flags & FLAG_EMISSIVE) != 0) : true;
+            // NEE direct lighting (build step 3c): the display path. Decode the surface
+            // albedo into linear space, then shade it (self-emission + power-importance NEE
+            // direct, hard shadows) via the shared shadeSurface() — the SAME math the GI
+            // bake runs at each probe-ray hit. The surface and lighting inputs are shared
+            // with mode 6 (DOOM-0439, above main).
+            PrimaryHit h = primaryHitSurface(vb, i0, isSprite, hitUV, n, p0, p1, p2,
+                                             uv0, uv1, uv2, origin, dir,
+                                             rayQueryGetIntersectionTEXT(rq, true));
             uint seed = px.x + px.y * w + 1u;
-            // DOOM-0119: this hit's owning sector for the REJECT light cull. World hit
-            // -> subsector (triSs) -> sector (subSec); sprite hits + the no-REJECT case
-            // pass 0xFFFFFFFF (unknown) so shadeSurface leaves every light in play.
-            // probeCount (misc2.y) == subsector count, so it bounds the triSs lookup.
-            // DOOM-0439: the hit's subsector, read ONCE for both this and the GI lookup
-            // below. probeCount (misc2.y) gates the read itself (DOOM-0407): with no bake,
-            // triSs is address 0, and this site used to read it before checking.
-            uint subId  = (isSprite || pc.misc2.y == 0u) ? 0xFFFFFFFFu
-                                                         : pc.triSs.s[uint(prim)];
-            uint hitSec = 0xFFFFFFFFu;
-            if (pc.misc4.z > 0u && subId < pc.misc2.y)
-                hitSec = pc.subSec.s[subId];
-            // DOOM-0181 L2: de-tile the normal in lockstep with the albedo (same world cell), so a
-            // mirrored/offset tile's relief matches its colour. INV-2: detileNormalTS negates the
-            // per-cell tangent-X on a mirror. Paletted / no-normal-map hits keep hdShadingNormal.
-            vec3 shadeN;
-            if (mc.usePBR != 0u && mc.maps[1] >= 0 && detileOn()) {
-                vec3 tn = detileNormalTS(uint(mc.maps[1]), sUV, dG);
-                shadeN  = normalize(tn.x * T + tn.y * B + tn.z * n);
-            } else {
-                shadeN = hdShadingNormal(mc, id, sUV, n, T, B);
-            }
-            // shadeSurface/*Delta offset their shadow-ray origin along the normal they're
-            // handed; a tilted bump normal shrinks the clearance off the true triangle
-            // plane, so for a normal-mapped surface lift the shading point along the
-            // GEOMETRIC normal first (paletted is byte-identical: guard is false there).
-            vec3 shadeP = (mc.usePBR != 0u && mc.maps[1] >= 0) ? hitP + n * 2e-3 : hitP;
-            // DOOM-0183 L4: nukage ripples the LIGHTING normal so the diffuse shade AND the
-            // sheen shimmer coherently (INV-4: nukage only — lava + non-liquid keep n unperturbed).
-            bool nukage = isNukage(mc);
-            if (nukage && wetOn()) shadeN = rippleNormal(shadeN, hitP.xy, rippleTime());
-            vec3 L = shadeSurface(shadeP, shadeN, albedo, id, pc.misc2.x, pc.misc4.y,
-                                  pc.emit, pc.matEmis, NEE_SAMPLES, addEmis,
-                                  emisWeight(mc, albedo),
-                                  hitSec, pc.misc4.z, pc.emitSec, pc.reject, seed);
-
-            // Indirect GI (build step 4c) + DOOM-0043 sector-light ambient floor.
-            // The probe holds the bounced solution; the floor is a deliberate,
-            // designer-driven ambient seeded by the sector lightlevel (§4.2). max()
-            // keeps GI wherever it already exceeds the floor, so lit rooms are
-            // untouched (no double-count) and only dim/unprobed surfaces get lifted.
-            // Sprites carry their own sector lightlevel but have no GI probe (the
-            // per-triangle subsector map covers world tris only), so subId is forced
-            // out of range -> gi=0 and the sector-light ambient stands in for them.
-            float secLight = vb.v[i0 + 10u];                       // sector lightlevel 0..1
-            vec3  ambient  = vec3(max(secLight * AMBIENT_SECTOR_SCALE, AMBIENT_FLOOR));
-            // DOOM-0407: probeCount (misc2.y) gates the READ, not just its result --
-            // with no bake, triSs is address 0 (mesh.frag carries the same guard).
-            vec3  gi       = (subId < pc.misc2.y) ? giIrradiance(pc.probes, subId, shadeN)
-                                                  : vec3(0.0);
-            L += albedo * max(gi, ambient) * ao;   // AO dims fill light only (ao fetched above)
-
-            // DOOM-0183 L3/L5: wet sheen (direct-light specular, INV-3 — no reflection ray) on
-            // nukage + goo puddles, plus a faint additive glow on goo puddles. Added AFTER
-            // shadeSurface so it does not perturb diffuse GI. Puddles use the UN-rippled normal
-            // `n` (a thin film, not a deep pool — no ripples, §4.6). Gated on the wet toggle.
-            if (wetOn()) {
-                if (nukage) L += wetSheen(hitP, shadeN);
-                if (gooWet > 0.0) {
-                    L += wetSheen(hitP, n) * (gooWet * kPuddleSheenScale);
-                    L += kPuddleGlow * kGooColour * gooWet;
-                }
-            }
-
-            // Dynamic point-light deltas (build step 5): the muzzle flash + the
-            // DOOM-0044 player flashlight, each a hard ray-traced shadow composited
-            // additively over the baked static (DOOM-0130 shared helpers; mode 6
-            // adds the same, demodulated). Display path keeps the albedo factor.
-            L += muzzleFlashDelta(shadeP, shadeN, albedo);
-            L += flashlightDelta(shadeP, shadeN, albedo);
+            PrimaryLight s = primaryHitLighting(h, isSprite, prim, n);
+            vec3 L = shadeSurface(s.shadeP, s.shadeN, h.albedo, h.id, pc.misc2.x, pc.misc4.y,
+                                  pc.emit, pc.matEmis, NEE_SAMPLES, h.addEmis,
+                                  emisWeight(h.mc, h.albedo),
+                                  s.hitSec, pc.misc4.z, pc.emitSec, pc.reject, seed);
+            L = primaryHitAddTerms(L, h, s, n, vb.v[i0 + 10u], h.albedo);   // display: keeps albedo
 
             // DOOM-0042 (Task 13): HD self-radiance on the primary hit. Added after the lit
             // terms so an emissive panel glows regardless of scene light. vec3(0) for materials
             // with no emissive map, so ordinary walls are unchanged.
-            L += hdEmissive(mc, id, sUV) * kEmissiveScale;
+            L += hdEmissive(h.mc, h.id, h.sUV) * kEmissiveScale;
 
             if (any(isnan(L)) || any(isinf(L))) L = vec3(0.0);
             if (pc.misc6.z != 0u) {                  // rb_fog strength; 0 = skip entirely (INV-8)
-                FogHit fh = FogHit(hitP, n, uint(flags), mc.flags);
-                vec4 fog = marchFog(origin, dir, tHit, fh);
+                FogHit fh = FogHit(h.hitP, n, uint(h.flags), h.mc.flags);
+                vec4 fog = marchFog(origin, dir, h.tHit, fh);
                 L = L * fog.a + fog.rgb;             // linear radiance, before tonemap (§4.6)
             }
             colour = toneExposeEncode(L, EXPOSURE_EV);
@@ -1695,51 +1751,11 @@ void main()
             // albedo is factored out (stored separately so the spatial filter never
             // blurs texture detail) and self-emission is excluded (re-added crisp in
             // the composite). Writes the SVGF G-buffer instead of a display pixel.
-            int   texnum = floatBitsToInt(vb.v[i0 + 8u]);
-            int   flags  = floatBitsToInt(vb.v[i0 + 9u]);
-            uint  id     = isSprite ? (pc.misc4.x + uint(texnum))
-                         : (((flags & FLAG_FLAT) != 0) ? (pc.misc.w + uint(texnum))
-                                                       : uint(texnum));
-            // DOOM-0042 shared HD prologue (Tasks 11/14) — same as mode 4: base UV + tangent
-            // frame + POM march once (usePBR-gated), every map samples the resulting `sUV`. HD
-            // emissive is NOT added here; the composite keeps DOOM's per-material fullbright
-            // emission (see hdEmissive). Paletted hits do no extra work (byte-identical).
-            MatCtrl mc  = ctrl[id];
-            vec2    sUV = hitUV;                    // paletted default (unused by the paletted branch)
-            vec3    T = n, B = n;
-            float   tHit = rayQueryGetIntersectionTEXT(rq, true);   // HOISTED (DOOM-0181: hitP feeds the detile world-key)
-            vec3    hitP = origin + dir * tHit;                     // HOISTED
-            // DOOM-0439: the de-tile world key, once per hit. Every consumer below is gated on
-            // usePBR && detileOn(), so the same gate here keeps paletted hits free of it.
-            vec2    dG   = (mc.usePBR != 0u && detileOn()) ? detileWorldUV(hitP, n) / kDetileWorldCell
-                                                           : vec2(0.0);
-            if (mc.usePBR != 0u) {
-                vec2 baseUV = hdBaseUV(id, hitUV, mc.uvScale);
-                hdTangentFrame(n, p0, p1, p2, uv0, uv1, uv2, T, B);
-                // DOOM-0181 L3: march POM in the de-tiled coordinate so relief registers with the
-                // de-tiled albedo/normal/AO (§4.4); else the plain-space POM march.
-                sUV = detileOn()
-                    ? detilePOM(mc, baseUV, T, B, n, dir, dG)
-                    : hdParallaxUV(mc, baseUV, T, B, n, dir);
-            }
-            // DOOM-0181 L1: de-tile the albedo (same branch as mode 4) before galbedo is stored.
-            vec3 albedo;
-            if (mc.usePBR != 0u && mc.maps[0] >= 0 && detileOn()) {
-                albedo = detile(uint(mc.maps[0]), sUV, dG);
-            } else {
-                albedo = hdAlbedo(mc, id, hitUV, sUV);   // HD if usePBR, else paletted
-            }
-            // DOOM-0181 L4: AO fetched ONCE here (de-tiled; §4.3) for the crevice-pooled filth and
-            // the ambient term below. Computed before the half-res early-return so every stored
-            // galbedo carries the filth (the 3/4 reconstructed pixels need it too); the one extra
-            // AO fetch on those pixels is the cost of baking filth into the demodulated albedo.
-            float ao = (mc.usePBR != 0u && mc.maps[4] >= 0 && detileOn())
-                     ? detileR(uint(mc.maps[4]), sUV, dG)
-                     : hdAO(mc, id, sUV);
-            // DOOM-0179/0181 grime + filth, applied BEFORE galbedo is stored so the composite's
-            // re-modulation (L = albedo*illum) carries the mottle. n is geometric here.
-            float gooWet = 0.0;   // DOOM-0183 L5: goo-puddle wet coverage (0 unless a green-goo puddle)
-            if (!isSprite && filthOn()) albedo = applyGrime(albedo, hitP, n, ao, gooWet);   // DOOM-0179/0181 filth (all world surfaces; misc5.w toggle)
+            // HD emissive is NOT added here; the composite keeps DOOM's per-material
+            // fullbright emission (see hdEmissive).
+            PrimaryHit h = primaryHitSurface(vb, i0, isSprite, hitUV, n, p0, p1, p2,
+                                             uv0, uv1, uv2, origin, dir,
+                                             rayQueryGetIntersectionTEXT(rq, true));
 
             // build step 6c (half-resolution lighting): the G-buffer (position /
             // normal / albedo) is written at FULL resolution for EVERY pixel — it
@@ -1749,20 +1765,16 @@ void main()
             // block casts it. The other three pixels are reconstructed in the temporal
             // pass from these grid samples, guided by this full-res G-buffer. gillum.a
             // flags a real sample (1) vs a pixel to reconstruct (0).
-            // DOOM-0084: galbedo.a carries the self-emission ENABLE (1 = world surface
-            // or a fullbright light sprite; 0 = a non-light sprite — pickup/monster),
-            // so the composite re-adds emission only where it belongs.
-            bool addEmis = isSprite ? ((flags & FLAG_EMISSIVE) != 0) : true;
             uint par = pc.misc3.w;
-            imageStore(gpos[par],  ivec2(px), vec4(hitP, float(id)));
+            imageStore(gpos[par],  ivec2(px), vec4(h.hitP, float(h.id)));
             imageStore(gnorm[par], ivec2(px), vec4(n, 0.0));
-            // DOOM-0302: galbedo.a now carries the full emission WEIGHT, not a 0/1 enable
+            // DOOM-0302: galbedo.a carries the full emission WEIGHT, not a 0/1 enable
             // -- the enable times the per-texel mask. The mask used to be recomputed in
             // svgf_composite.comp from this same albedo, which meant two shaders had to
             // keep one smoothstep in step; it also put the decision where the material
             // flags are NOT visible, so a liquid could not be excepted. Deciding it here
             // makes that impossible to get wrong, and the composite just multiplies.
-            imageStore(galbedo,    ivec2(px), vec4(albedo, addEmis ? emisWeight(mc, albedo) : 0.0));
+            imageStore(galbedo,    ivec2(px), vec4(h.albedo, h.addEmis ? emisWeight(h.mc, h.albedo) : 0.0));
             if (((px.x | px.y) & 1u) != 0u) {       // not an even/even grid sample
                 imageStore(gillum, ivec2(px), vec4(0.0));
                 return;
@@ -1772,8 +1784,8 @@ void main()
             // the shadow-ray half-res gate above). rb_fog-gated (INV-8); when off, store
             // the neutral no-fog value so the composite fetch is a byte-identical no-op.
             if (pc.misc6.z != 0u) {
-                FogHit fh = FogHit(hitP, n, uint(flags), mc.flags);
-                vec4 fog = marchFog(origin, dir, tHit, fh);
+                FogHit fh = FogHit(h.hitP, n, uint(h.flags), h.mc.flags);
+                vec4 fog = marchFog(origin, dir, h.tHit, fh);
                 imageStore(fogImg, ivec2(px) / 2, fog);
             } else {
                 imageStore(fogImg, ivec2(px) / 2, vec4(0.0, 0.0, 0.0, 1.0));
@@ -1786,70 +1798,18 @@ void main()
             // INDEPENDENT sample -> temporal accumulation converges and the SVGF
             // variance estimate is non-zero (a frozen seed defeats the denoiser).
             uint seed  = pcgHash(px.x + px.y * w + 1u + pc.misc3.x * 2654435761u);
-            // DOOM-0119: hit sector for the REJECT light cull (see the mode-4 path).
-            // DOOM-0439: the hit's subsector, read ONCE for both this and the GI lookup
-            // below. probeCount (misc2.y) gates the read itself (DOOM-0407): with no bake,
-            // triSs is address 0, and this site used to read it before checking.
-            uint subId  = (isSprite || pc.misc2.y == 0u) ? 0xFFFFFFFFu
-                                                         : pc.triSs.s[uint(prim)];
-            uint hitSec = 0xFFFFFFFFu;
-            if (pc.misc4.z > 0u && subId < pc.misc2.y)
-                hitSec = pc.subSec.s[subId];
-            // Lighting uses the normal-mapped shading normal; the G-buffer normal above
-            // stays GEOMETRIC (the SVGF edge-stopping wants low-frequency normals, not the
-            // high-frequency map detail, or it treats bumps as edges and under-denoises).
-            // DOOM-0181 L2: de-tile the normal in lockstep with the albedo (same world cell), so a
-            // mirrored/offset tile's relief matches its colour. INV-2: detileNormalTS negates the
-            // per-cell tangent-X on a mirror. Paletted / no-normal-map hits keep hdShadingNormal.
-            vec3 shadeN;
-            if (mc.usePBR != 0u && mc.maps[1] >= 0 && detileOn()) {
-                vec3 tn = detileNormalTS(uint(mc.maps[1]), sUV, dG);
-                shadeN  = normalize(tn.x * T + tn.y * B + tn.z * n);
-            } else {
-                shadeN = hdShadingNormal(mc, id, sUV, n, T, B);
-            }
-            // Geometric shadow-origin lift for normal-mapped surfaces (see mode 4); gpos
-            // above stored the TRUE hitP, so only the shadow rays use the lifted point.
-            vec3 shadeP = (mc.usePBR != 0u && mc.maps[1] >= 0) ? hitP + n * 2e-3 : hitP;
-            // DOOM-0183 L4: nukage ripples the LIGHTING normal (INV-4). The G-buffer normal
-            // (gnorm, stored above) stays GEOMETRIC — only this shading normal wobbles.
-            bool nukage = isNukage(mc);
-            if (nukage && wetOn()) shadeN = rippleNormal(shadeN, hitP.xy, rippleTime());
-            vec3 illum = shadeSurface(shadeP, shadeN, vec3(1.0), id, pc.misc2.x, pc.misc4.y,
+            // Lighting uses the normal-mapped, rippled shading normal; the G-buffer normal
+            // above stays GEOMETRIC (the SVGF edge-stopping wants low-frequency normals, not
+            // the high-frequency map detail, or it treats bumps as edges and under-denoises),
+            // and gpos stored the TRUE hitP, so only the shadow rays use the lifted point.
+            PrimaryLight s = primaryHitLighting(h, isSprite, prim, n);
+            vec3 illum = shadeSurface(s.shadeP, s.shadeN, vec3(1.0), h.id, pc.misc2.x, pc.misc4.y,
                                       pc.emit, pc.matEmis, NEE_SAMPLES, false,
                                       1.0,   // addEmission is false here: the composite
                                              // re-adds emission from galbedo.a instead
-                                      hitSec, pc.misc4.z, pc.emitSec, pc.reject, seed);
-            // GI bounce + DOOM-0043 sector-light ambient floor (demodulated: the
-            // composite re-applies albedo). Same max() floor as mode 4 so a bright-
-            // marked but unlit room reads, while dark sectors stay dark.
-            float secLight = vb.v[i0 + 10u];                       // sector lightlevel 0..1
-            vec3  ambient  = vec3(max(secLight * AMBIENT_SECTOR_SCALE, AMBIENT_FLOOR));
-            // sprites: no GI probe. DOOM-0407: no bake -> triSs is address 0, so
-            // probeCount (misc2.y) must gate the read itself, as in mode 4 above.
-            vec3  gi       = (subId < pc.misc2.y) ? giIrradiance(pc.probes, subId, shadeN)
-                                                  : vec3(0.0);
-            illum += max(gi, ambient) * ao;   // AO dims fill light only (ao fetched above)
-
-            // DOOM-0183 L3/L5: wet sheen + goo-puddle glow, mirroring the mode-4 block. NOTE: this
-            // path is DEMODULATED (svgf_composite re-applies albedo), so the sheen/glow are tinted
-            // by the surface albedo downstream. For the green liquid this reads as a bright GREEN
-            // wet glint — on-theme; a neutral wet surface (water, deferred) would need a separate
-            // full-res specular channel (a DOOM-0103 follow-up). Half-res: computed on the grid
-            // sample pixels only (the early-return above skips the other 3/4), reconstructed by SVGF.
-            if (wetOn()) {
-                if (nukage) illum += wetSheen(hitP, shadeN);
-                if (gooWet > 0.0) {
-                    illum += wetSheen(hitP, n) * (gooWet * kPuddleSheenScale);
-                    illum += kPuddleGlow * kGooColour * gooWet;
-                }
-            }
-
-            // Muzzle flash + DOOM-0044 flashlight, demodulated (the composite re-
-            // applies albedo). DOOM-0130 shared helpers — passing vec3(1.0) strips
-            // the albedo bit-exactly (1.0*x == x), matching the pre-refactor feed.
-            illum += muzzleFlashDelta(shadeP, shadeN, vec3(1.0));
-            illum += flashlightDelta(shadeP, shadeN, vec3(1.0));
+                                      s.hitSec, pc.misc4.z, pc.emitSec, pc.reject, seed);
+            // Demodulated: the composite re-applies albedo, so modAlbedo is vec3(1.0).
+            illum = primaryHitAddTerms(illum, h, s, n, vb.v[i0 + 10u], vec3(1.0));
 
             if (any(isnan(illum)) || any(isinf(illum))) illum = vec3(0.0);
             imageStore(gillum, ivec2(px), vec4(illum, 1.0));
