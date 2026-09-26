@@ -28,6 +28,7 @@ layout(push_constant) uniform Push {
 } pc;
 
 #include "formulas/scene_recombine.glsl"
+#include "formulas/bloom_knee.glsl"
 
 void main()
 {
@@ -69,12 +70,8 @@ void main()
         // sp.ambient arrive here already finite -- zeroed together when either was not.
         // It used to sit in this pass alone, on the claim that nothing else read the
         // unguarded values; composite.frag reads the same three targets.
-        // Soft knee so a surface crossing the threshold ramps in rather than pops.
-        // peak, NOT Rec.709 luminance: luminance weights green at 0.7152 and red at
-        // 0.2126, so a red fireball at four times white scores 0.85 and would not bloom
-        // while a white wall sits on the threshold (4.2's table). peak is also what
-        // pbrNeutralToneMapping keys its own compression on, so the threshold and the
-        // operator's knee end up measured in the same units.
+        // Soft knee over peak, not luminance -- formulas/bloom_knee.glsl says why, and
+        // holds the one copy of the weight both extracts call (DOOM-0440).
         // DOOM-0331 10 Q3 / DOOM-0345 INV-8 -- chainScale carries this chain's radiance
         // into the ray-traced chain's units so ONE threshold/knee pair means the same
         // thing on both. It is one of the TWO named per-chain constants the measurement
@@ -97,9 +94,7 @@ void main()
         // conversion belongs on the term whose units actually differ between the chains.
         vec3  pk   = sp.direct * pc.chainScale + sp.ambient;
         float peak = max(pk.r, max(pk.g, pk.b));
-        float soft = clamp(peak - pc.threshold + pc.knee, 0.0, 2.0 * pc.knee);
-        soft       = soft * soft / (4.0 * pc.knee + 1e-4);
-        float w    = max(soft, peak - pc.threshold) / max(peak, 1e-4);
+        float w    = bloomKneeWeight(peak, pc.threshold, pc.knee);
         // DOOM-0331 INV-9 -- the sky never GENERATES bloom, and this states it rather
         // than leaving it to arithmetic. INV-9 held because a sky texel's DIRECT is a
         // palette colour that cannot exceed 1.0 and so could not reach a ramp start of

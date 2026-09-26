@@ -381,6 +381,11 @@ $(SHADER_DIR)/rt_tonemap.comp.spv.h $(SHADER_DIR)/pathtrace.comp.spv.h: \
 		$(SHADER_DIR)/formulas/formulas.glsl \
 		$(SHADER_DIR)/formulas/pbr_neutral_tonemap.glsl
 
+# DOOM-0440 — the bloom soft-knee weight is shared by both bright passes. Same
+# missing-auto-dep hazard as the rules above.
+$(SHADER_DIR)/bloom_extract_raster.comp.spv.h $(SHADER_DIR)/bloom_extract_rt.comp.spv.h: \
+		$(SHADER_DIR)/formulas/bloom_knee.glsl
+
 # DOOM-0345 R1 — the BLOOM_SPLIT variant of svgf_composite.comp. Explicit rule (the pattern
 # rule above can't produce it — there is no svgf_composite_split.comp source); depends on
 # svgf_composite.comp so editing the shader rebuilds both variants.
