@@ -87,6 +87,10 @@ STlib_initNum
 //  based on differences from the old number.
 // Note: worth the trouble?
 //
+// DOOM-0453: it does not do that. It always erases and redraws; oldnum is
+// recorded and never compared, and `refresh` is unused. STlib_updateNum
+// calls it whenever the number is on.
+//
 void
 STlib_drawNum
 ( st_number_t*	n,

@@ -4382,7 +4382,7 @@ against.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lane 8.
 
-- 📋 [DOOM-0453] **Status bar repaints fully every frame in Solid and Ultra, bypassing the diff-draw machinery built to prevent it.**
+- ✅ [DOOM-0453] **Status bar repaints fully every frame in Solid and Ultra, bypassing the diff-draw machinery built to prevent it.**
   d_main.c passes `redrawsbar || rendermode != RB_CLASSIC || menuactive ||
   menuactivestate` as ST_Drawer's refresh argument. `rendermode !=
   RB_CLASSIC` is constant-true in both 3D tiers, so ST_Drawer always takes
@@ -4415,6 +4415,14 @@ against.
 
   MEASURE BEFORE ACTING: Solid's rasterised view is the tier whose feature
   is performance, and the lane labelled its cost inferred.
+  Resolved (2026-09-26): measured first, as the item asked. A temporary
+  timer put ST_Drawer at 0.034 ms a frame in Solid raster on E1M1, forced
+  refresh included, against a frame of about 1.3 ms. The forced refresh
+  stays. Removing it saves almost nothing and carries the ghosting risk
+  the lane could not close. The V_CopyRect row copy was not built for the
+  same reason. The false header comment on STlib_drawNum now carries a
+  correction: the function always redraws, oldnum is never compared, and
+  `refresh` is unused. id's original text is kept.
   **Layman:** The health/ammo bar at the bottom redraws itself completely every frame in the two 3D modes, even when none of the numbers changed. The code to skip that already exists and never gets the chance to run.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lanes 12 and 13.
