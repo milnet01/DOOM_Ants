@@ -4408,7 +4408,7 @@ against.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lanes 12 and 13.
 
-- 📋 [DOOM-0461] **The static point-light cull reads its emitters back from write-combined GPU memory.**
+- ✅ [DOOM-0461] **The static point-light cull reads its emitters back from write-combined GPU memory.**
   RebuildStaticPointLightCache reads every static emitter record from
   g.emitMapped, a host-coherent mapped buffer. Reads from that memory are
   slow; DOOM-0170 already paid for this once. Measured on DOOM-0436: the
@@ -4421,6 +4421,10 @@ against.
 
   Fix: read the static records from g.staticEmit. Verify the cache is
   byte-identical before and after, and time the rebuild.
+  Resolved (2026-09-26): RebuildStaticPointLightCache reads g.staticEmit.
+  The cache hashed identically before and after on E1M1, E1M3, MAP01 and
+  MAP07. The full rebuild went from 2.1 to 0.23 ms on E1M1, 3.8 to 0.81
+  ms on E1M3 and 1.3 to 0.10 ms on MAP01.
   **Layman:** When the game recalculates which lights are nearest each part of a level, it reads the light list back from the graphics card's memory, which is slow; a copy already sits in ordinary memory.
   Kind: perf.
   Source: in-session-2026-09-26 (DOOM-0436 measurement).

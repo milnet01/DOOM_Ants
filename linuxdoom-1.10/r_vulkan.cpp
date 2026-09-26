@@ -8019,9 +8019,9 @@ void BuildDynamicEmitters()
 // set changes (level load / switch press / animated flat, via g.staticLightsDirty) instead
 // of every frame. The result is packed nearest-first into g.staticLightCache (same 6-float
 // centroid[3] Le[3] layout as g.lightBuf); BuildRasterPointLights copies it and merges the
-// per-frame dynamic sprite emitters on top. Reads the static records straight from the
-// merged emitter buffer (g.emitMapped[0, staticN)), which FinalizeEmitters lays out
-// static-first, so the cache stays in lock-step with what the shader would sample.
+// per-frame dynamic sprite emitters on top. Reads the static records from g.staticEmit,
+// which FinalizeEmitters copies static-first into the merged emitter buffer, so the cache
+// stays in lock-step with what the shader would sample.
 static void RebuildStaticPointLightCache(int staticN)
 {
     const uint32_t N      = RASTER_MAX_LIGHTS_PER_SUBSECTOR;
@@ -8033,7 +8033,10 @@ static void RebuildStaticPointLightCache(int staticN)
     g.staticLightLeDirty = false;   // the full rebuild reads the current Le too
     if (staticN <= 0 || numSub <= 0 || !g.emitMapped)
         return;                                   // no static lights -> cache stays zeroed
-    const float* em = (const float*)g.emitMapped;
+    // DOOM-0461: the static records come from g.staticEmit, the RAM array
+    // nee_merge_emitters copies verbatim into g.emitMapped[0, staticN). Reading the
+    // mapped copy here is a read from write-combined memory, the DOOM-0170 trap.
+    const float* em = g.staticEmit.data();
 
     // Precompute each static emitter's 3D centroid once (reused across every subsector).
     std::vector<float> sc((size_t)staticN * 3);

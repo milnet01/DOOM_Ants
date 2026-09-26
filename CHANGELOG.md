@@ -8,6 +8,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Solid's full nearest-lights recalculation is faster** (DOOM-0461)
+  When a level loads, or a lit surface moves, Solid recalculates which
+  fixed lights are nearest each part of the level. It now reads the
+  lights from ordinary memory instead of graphics memory. The result is
+  unchanged.
+
 - **Solid runs much faster in levels with many glowing objects** (DOOM-0437)
   Each frame, Solid works out which lights are nearest each part of the
   level. It was reading the glowing objects' details back from graphics
