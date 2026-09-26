@@ -45,6 +45,8 @@ rcsid[] __attribute__((used)) = "$Id: r_data.c,v 1.4 1997/02/03 16:47:55 b1 Exp 
 
 #ifdef LINUX
 #include  <stdlib.h>
+#include  <ctype.h>
+#include  <string.h>
 #include  <stdint.h>
 #endif
 
@@ -146,6 +148,19 @@ int		numspritelumps;
 
 int		numtextures;
 texture_t**	textures;
+
+// DOOM-0446: a hash chain over the texture names, so level load probes one
+// short chain per sidedef slot instead of scanning every texture. Chains run
+// from the LOWEST index up, because the original scan returned the first
+// match and a WAD may carry duplicate names.
+static int*		texturehash;	// head of each chain; -1 when empty
+static int*		texturenext;	// next higher texture on the chain; -1 ends it
+static unsigned		texturehashmask;
+
+static void R_TextureKey (const char* name, char key[8]);
+static int R_ScanForTextureKey (const char* key);
+static int R_HashForTextureKey (const char* key);
+static void R_InitTextureHash (void);
 
 
 int*			texturewidthmask;
@@ -705,6 +720,8 @@ void R_InitTextures (void)
     
     for (i=0 ; i<numtextures ; i++)
 	texturetranslation[i] = i;
+
+    R_InitTextureHash ();
 }
 
 
@@ -851,6 +868,108 @@ int R_FlatNumForName (char* name)
 
 
 
+// Makes a texture name into the form strncasecmp(a, b, 8) compares: the
+// characters up to the first NUL or the eighth, upper-cased, zero-padded.
+// Two names compare equal exactly when their keys do.
+static void R_TextureKey (const char* name, char key[8])
+{
+    int	i;
+
+    for (i=0 ; i<8 && name[i] ; i++)
+	key[i] = toupper ((unsigned char)name[i]);
+    for ( ; i<8 ; i++)
+	key[i] = 0;
+}
+
+static unsigned R_HashTextureKey (const char* key)
+{
+    unsigned	h = 2166136261u;	// FNV-1a
+    int		i;
+
+    for (i=0 ; i<8 ; i++)
+	h = (h ^ (unsigned char)key[i]) * 16777619u;
+    return h;
+}
+
+// The original lookup: the first texture whose name matches.
+static int R_ScanForTextureKey (const char* key)
+{
+    int		i;
+    char	k[8];
+
+    for (i=0 ; i<numtextures ; i++)
+    {
+	R_TextureKey (textures[i]->name, k);
+	if (!memcmp (k, key, 8))
+	    return i;
+    }
+    return -1;
+}
+
+static int R_HashForTextureKey (const char* key)
+{
+    int		i;
+    char	k[8];
+
+    for (i = texturehash[R_HashTextureKey (key) & texturehashmask] ;
+	 i != -1 ; i = texturenext[i])
+    {
+	R_TextureKey (textures[i]->name, k);
+	if (!memcmp (k, key, 8))
+	    return i;
+    }
+    return -1;
+}
+
+static void R_InitTextureHash (void)
+{
+    unsigned	size = 1;
+    int		i;
+
+    while (size < (unsigned)numtextures)
+	size <<= 1;
+
+    free (texturehash);
+    free (texturenext);
+    texturehash = malloc (size * sizeof(*texturehash));
+    texturenext = malloc ((numtextures ? numtextures : 1) * sizeof(*texturenext));
+    if (!texturehash || !texturenext)
+	I_Error ("R_InitTextureHash: couldn't allocate the texture hash");
+    texturehashmask = size - 1;
+
+    for (i=0 ; i<(int)size ; i++)
+	texturehash[i] = -1;
+
+    // Backwards, pushing each texture on the front of its chain, so every
+    // chain runs from the lowest index up.
+    for (i=numtextures-1 ; i>=0 ; i--)
+    {
+	char		key[8];
+	unsigned	h;
+
+	R_TextureKey (textures[i]->name, key);
+	h = R_HashTextureKey (key) & texturehashmask;
+	texturenext[i] = texturehash[h];
+	texturehash[h] = i;
+    }
+
+#ifdef DOOM_DEV
+    // First-match-wins is what a wrong table breaks, and only on a WAD that
+    // carries duplicate names. Every name must resolve where the scan did.
+    for (i=0 ; i<numtextures ; i++)
+    {
+	char	key[8];
+
+	R_TextureKey (textures[i]->name, key);
+	if (R_HashForTextureKey (key) != R_ScanForTextureKey (key))
+	    I_Error ("R_InitTextureHash: hash and scan disagree on texture %i "
+		     "(%.8s)", i, textures[i]->name);
+    }
+    printf ("R_InitTextureHash: hash agrees with scan on all %i textures\n",
+	    numtextures);
+#endif
+}
+
 //
 // R_CheckTextureNumForName
 // Check whether texture is available.
@@ -858,17 +977,16 @@ int R_FlatNumForName (char* name)
 //
 int	R_CheckTextureNumForName (char *name)
 {
-    int		i;
+    char	key[8];
 
     // "NoTexture" marker.
     if (name[0] == '-')		
 	return 0;
-		
-    for (i=0 ; i<numtextures ; i++)
-	if (!strncasecmp (textures[i]->name, name, 8) )
-	    return i;
-		
-    return -1;
+
+    R_TextureKey (name, key);
+
+    // The scan stays as the fallback for a lookup made before R_InitTextures.
+    return texturehash ? R_HashForTextureKey (key) : R_ScanForTextureKey (key);
 }
 
 

@@ -8,6 +8,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Levels resolve their wall textures by direct lookup instead of searching the texture list for every wall side** (DOOM-0446)
+  Loading a level used to compare each wall side's texture names against
+  the whole texture list. It now goes straight to the entry. Every wall
+  resolves to the same texture as before, including when a mod repeats a
+  texture name.
+
 - **Finding a picture or sound in the game data is now a direct lookup instead of a search through the whole index** (DOOM-0435)
   The game used to search its whole data index from one end every time it
   needed a picture or sound, and the Load, Save and volume menus did that

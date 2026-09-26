@@ -4310,7 +4310,7 @@ against.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lane 8.
 
-- 📋 [DOOM-0446] **Level load resolves texture names by linear case-insensitive scan, once per sidedef texture slot.**
+- ✅ [DOOM-0446] **Level load resolves texture names by linear case-insensitive scan, once per sidedef texture slot.**
   R_CheckTextureNumForName is a linear strncasecmp scan over numtextures.
   P_SetupLevel calls R_TextureNumForName (its wrapper) three times per
   sidedef -- top, bottom, mid -- so the cost is
@@ -4335,6 +4335,16 @@ against.
   toptexture/midtexture/bottomtexture arrays after P_SetupLevel against
   the old code across the 68-map sweep. Then the framebuffer hash across
   maps and demos.
+  Resolved (2026-09-26): R_CheckTextureNumForName probes a hash chain
+  built at the end of R_InitTextures. Keys reproduce strncasecmp(a, b, 8):
+  up to the first NUL, upper-cased, zero-padded. Chains run lowest index
+  first, so first-match-wins holds. The '-' early-out stays in front; the
+  scan remains the fallback before init. Proof: a DEV build checks hash
+  against scan for every texture name. It agreed on both IWADs and on a
+  fixture carrying duplicate names, one lower-cased, and stopped when the
+  chain order was reversed. The resolved sidedef textures of every map in
+  both IWADs, plus the fixture, hashed identically under old and new
+  lookup.
   **Layman:** When a level loads, the game looks up each wall texture by searching the whole texture list from the start, comparing names. It does that three times for every wall side in the level, so a big custom level does millions of name comparisons before it starts.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lane 8.
