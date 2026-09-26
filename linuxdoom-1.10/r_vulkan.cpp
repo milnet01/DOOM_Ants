@@ -517,6 +517,9 @@ struct VulkanState
     VkBuffer       vbufSlot[kFramesInFlight]       = {};
     VkDeviceMemory vbufMemSlot[kFramesInFlight]    = {};
     void*          vbufMappedSlot[kFramesInFlight] = {};
+    // DOOM-0443: a RAM twin of each slot's vertex buffer, kept identical to it. Every CPU
+    // read of the level vertices goes here, not to the mapped (write-combined) copy.
+    std::vector<rb_vertex_t> vbufShadowSlot[kFramesInFlight];
     VkBuffer       spriteVbufSlot[kFramesInFlight]    = {};
     VkDeviceMemory spriteVbufMemSlot[kFramesInFlight] = {};
     void*          spriteMappedSlot[kFramesInFlight]  = {};
@@ -566,6 +569,7 @@ struct VulkanState
     VkDeviceMemory vbufMemory = VK_NULL_HANDLE;
     void*          vbufMapped = nullptr;   // host-visible, kept mapped so moving
                                            // sectors re-height per frame (DOOM-0049)
+    rb_vertex_t*   vbufShadow = nullptr;   // this slot's RAM twin (DOOM-0443)
     uint32_t       vertexCount = 0;
 
     // Per-frame billboard sprites (DOOM-0008): things move, so this host-visible
@@ -8260,7 +8264,7 @@ void BuildRasterPointLights()
 // vertex array: every triangle whose material Le > 0, with a 14-float record
 // (v0[3] v1[3] v2[3] Le[3] cdf pdf) and a power weight (luminance(Le) * area).
 // `v` is the STATIC baked mesh at level load, or the LIVE per-frame vertex buffer
-// (g.vbufMapped) on a refresh after a switch press/revert or an animated-texture
+// (read through its RAM twin g.vbufShadow, DOOM-0443) on a refresh after a switch press/revert or an animated-texture
 // swap changed a face's live texnum (DOOM-0082) — reading the live buffer means a
 // now-lit switch enters the light set and a reverted one drops out. The Le table
 // is WAD-global (g.matEmissive); the vertex count is the mesh's (both buffers share it).
@@ -9380,8 +9384,10 @@ extern "C" void RB_Vulkan_BuildLevel(void)
         if (g.vbufMappedSlot[s]) { vkUnmapMemory(g.device, g.vbufMemSlot[s]); g.vbufMappedSlot[s] = nullptr; }
         if (g.vbufSlot[s])       { vkDestroyBuffer(g.device, g.vbufSlot[s], nullptr); g.vbufSlot[s] = VK_NULL_HANDLE; }
         if (g.vbufMemSlot[s])    { vkFreeMemory(g.device, g.vbufMemSlot[s], nullptr); g.vbufMemSlot[s] = VK_NULL_HANDLE; }
+        g.vbufShadowSlot[s].clear();
     }
     g.vbuf = VK_NULL_HANDLE; g.vbufMemory = VK_NULL_HANDLE; g.vbufMapped = nullptr;
+    g.vbufShadow = nullptr;
     g.vertexCount = 0;
 
     // DOOM-0141: (re)create the RT-only sky backdrop vertex buffer for this level (the
@@ -9430,12 +9436,14 @@ extern "C" void RB_Vulkan_BuildLevel(void)
         // (above) and shutdown.
         Check(vkMapMemory(g.device, g.vbufMemSlot[s], 0, size, 0, &g.vbufMappedSlot[s]), "vkMapMemory(vbuf)");
         std::memcpy(g.vbufMappedSlot[s], g.levelMesh->verts, (size_t)size);
+        g.vbufShadowSlot[s].assign(g.levelMesh->verts, g.levelMesh->verts + g.levelMesh->numverts);
     }
     // Both slots hold identical geometry now, so the BLAS built below (from g.vbuf)
     // matches whichever slot is active on the first traced frame.
     g.vbuf       = g.vbufSlot[g.frameSlot];
     g.vbufMemory = g.vbufMemSlot[g.frameSlot];
     g.vbufMapped = g.vbufMappedSlot[g.frameSlot];
+    g.vbufShadow = g.vbufShadowSlot[g.frameSlot].data();
 
     g.vertexCount = (uint32_t)g.levelMesh->numverts;
 
@@ -10396,7 +10404,7 @@ static void BuildFrameReheight(bool cprof, bool ownTotal)
     if (!g.levelMesh || !g.vbufMapped)
         return;
     const double tH0 = cprof ? CpuNowMs() : 0.0;
-    int upd = RB_UpdateMeshHeights(g.levelMesh, (rb_vertex_t*)g.vbufMapped);
+    int upd = RB_UpdateMeshHeights(g.levelMesh, (rb_vertex_t*)g.vbufMapped, g.vbufShadow);
     if (upd & RB_UPD_MOVED) g.blasDirty = true;      // geometry shifted -> BLAS refit
     if (upd & RB_UPD_RETEX) g.worldEmitDirty = true; // a face's texture swapped -> emitter rebuild
     // DOOM-0281: a plane moved, so an opening MAY have appeared or vanished -- check
@@ -10492,9 +10500,9 @@ static void BuildFrameInputs(bool rtActive, bool cprof, bool doReheight)
                 (rb_vertex_t*)g.sprWorldMapped, (int)g.sprWorldVertCap);
             const double tL0 = cprof ? CpuNowMs() : 0.0;
             if (cprof) g.cpuBuildMs[0] += tL0 - tW0;   // 2nd (world) sprite build -> sprites
-            if (g.worldEmitDirty && g.vbufMapped)
+            if (g.worldEmitDirty && g.vbufShadow)
             {
-                BuildStaticEmitterSet((const rb_vertex_t*)g.vbufMapped);
+                BuildStaticEmitterSet(g.vbufShadow);   // RAM twin of g.vbufMapped (DOOM-0443)
                 g.worldEmitDirty = false;
             }
             BuildDynamicEmitters();     // refill g.emitBuf (static + emissive sprites)
@@ -10523,9 +10531,9 @@ static void BuildFrameInputs(bool rtActive, bool cprof, bool doReheight)
         // animated flat) change a face's live texture; rebuild the static emitter set
         // from the live vertex buffer so a now-lit switch pools light — and stops when
         // it reverts. Cheap and rare (only on an actual texture change).
-        if (g.worldEmitDirty && g.vbufMapped)
+        if (g.worldEmitDirty && g.vbufShadow)
         {
-            BuildStaticEmitterSet((const rb_vertex_t*)g.vbufMapped);
+            BuildStaticEmitterSet(g.vbufShadow);   // RAM twin of g.vbufMapped (DOOM-0443)
             g.worldEmitDirty = false;
         }
 
@@ -10571,6 +10579,7 @@ extern "C" void RB_Vulkan_Present(void)
     g.vbuf       = g.vbufSlot[g.frameSlot];
     g.vbufMemory = g.vbufMemSlot[g.frameSlot];
     g.vbufMapped = g.vbufMappedSlot[g.frameSlot];
+    g.vbufShadow = g.vbufShadowSlot[g.frameSlot].data();
     g.spriteVbuf       = g.spriteVbufSlot[g.frameSlot];
     g.spriteVbufMemory = g.spriteVbufMemSlot[g.frameSlot];
     g.spriteMapped     = g.spriteMappedSlot[g.frameSlot];

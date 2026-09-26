@@ -1518,17 +1518,25 @@ int RB_BuildSubsectorSectors(int* out, int n)
     return count;
 }
 
-int RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst)
+// A float changed if its bits did, so the write-when-changed below leaves dst bit-for-bit
+// what the old unconditional write produced.
+static int float_bits_differ(float a, float b)
+{
+    return memcmp(&a, &b, sizeof a) != 0;
+}
+
+int RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst, rb_vertex_t* shadow)
 {
     int i;
     int moved = 0;          // any z actually changed this frame -> RT refit (step 5)
     int retex = 0;          // any live texture id changed -> NEE emitter rebuild (DOOM-0082)
-    if (!mesh || !dst)
+    if (!mesh || !dst || !shadow)
         return 0;
     // Doors/lifts move sector floor/ceiling heights every tic; rewrite only the
     // z of vertices tagged to a moving plane, straight to the GPU buffer (the
     // mesh stays otherwise static). mesh->verts holds the build-time tags +
-    // base geometry; dst[i] is the live GPU vertex (z gets the current height).
+    // base geometry; dst[i] is the live GPU vertex (z gets the current height),
+    // and shadow[i] its RAM twin, which is what gets read (DOOM-0443).
     for (i = 0; i < mesh->numverts; i++)
     {
         const rb_vertex_t* v = &mesh->verts[i];
@@ -1538,7 +1546,7 @@ int RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst)
         // the baked texnum reflects neither. Re-derive exactly what the software
         // renderer samples: texturetranslation[sidedef tex] for walls,
         // flattranslation[sector pic] for flats. Cheap: one array read per vertex.
-        int newtex = dst[i].texnum;
+        int newtex = shadow[i].texnum;
         if (v->flags & RB_MESH_FLAT)
         {
             int pic = (v->vplane == RB_PLANE_CEIL)
@@ -1563,9 +1571,9 @@ int RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst)
         }
         // A pressed/reverted switch or an animated texture changes the live id;
         // flag it so the RT back-end refreshes the NEE emitter set (DOOM-0082).
-        if (newtex != dst[i].texnum)
+        if (newtex != shadow[i].texnum)
         {
-            dst[i].texnum = newtex;
+            shadow[i].texnum = dst[i].texnum = newtex;
             retex = 1;
         }
         if (v->vplane == RB_PLANE_FLOOR)
@@ -1574,9 +1582,10 @@ int RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst)
             newz = sectors[v->vsector].ceilingheight / (float)FRACUNIT;
         else
             continue;
-        if (dst[i].z != newz)
+        if (shadow[i].z != newz)
             moved = 1;          // geometry shifted -> the BLAS is now stale
-        dst[i].z = newz;
+        if (float_bits_differ(shadow[i].z, newz))
+            shadow[i].z = dst[i].z = newz;
         // Walls: re-peg the texture to its (possibly moving) anchor plane so it
         // slides WITH a door/lift at 1 texel per world unit instead of stretching
         // or staying fixed in space. Texture row 0 sits at anchor_height +
@@ -1587,7 +1596,9 @@ int RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst)
             float az = (v->vtexplane == RB_PLANE_CEIL
                         ? sectors[v->vtexsec].ceilingheight
                         : sectors[v->vtexsec].floorheight) / (float)FRACUNIT;
-            dst[i].v = (az + v->vtexoff) - newz;
+            float newv = (az + v->vtexoff) - newz;
+            if (float_bits_differ(shadow[i].v, newv))
+                shadow[i].v = dst[i].v = newv;
         }
     }
     return (moved ? RB_UPD_MOVED : 0) | (retex ? RB_UPD_RETEX : 0);

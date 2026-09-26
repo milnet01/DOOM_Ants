@@ -282,7 +282,10 @@ void RB_FreeMesh(rb_mesh_t* mesh);
 // now-lit switch face pools light and a reverted one stops (DOOM-0082).
 #define RB_UPD_MOVED    0x1
 #define RB_UPD_RETEX    0x2
-int RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst);
+// DOOM-0443: `shadow` is a RAM copy of `dst` that the caller keeps identical to it.
+// Every read comes from the shadow and a field is written to both only when it
+// changes, because `dst` is mapped GPU memory where reads are slow.
+int RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst, rb_vertex_t* shadow);
 
 // DOOM-0009 build step 4 (static GI bake): one irradiance probe per subsector.
 // The position is the subsector's convex BSP-leaf centroid (mean of its seg
