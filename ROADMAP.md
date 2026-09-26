@@ -3571,6 +3571,15 @@ defect visible before a player finds it.
 
   Verify everything here with the five demo fixtures (30/30/30/70/350) --
   that IS the P_Random-order check -- plus the 68-map sweep.
+  Progress (2026-09-26), item still open. DONE (aed1077): the duplicate
+  P_InterceptVector2; EV_TurnTagLightsOff now calls
+  P_FindMinSurroundingLight; the tic-jitter idiom (eight copies, not six)
+  is P_JitterTics. Proven with a per-tic state hash over crafted firing
+  demos on both IWADs, sensitivity shown by a mutant. The fixture gametic
+  counts alone cannot prove sync; the recipe is in that commit's body.
+  LEFT: the seven sector-thinker spawns, the P_TeleportMove /
+  P_CheckPosition shared prologue, the neighbour-scan functions and the
+  other items in the body.
   **Layman:** The code that makes doors, floors, ceilings and platforms move is six files of near-identical logic. Because demo playback depends on this code exactly, a fix that lands in five of six places is not a visual glitch — it silently breaks recorded demos.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lanes 9/10.
