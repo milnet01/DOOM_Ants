@@ -1129,7 +1129,7 @@ stay in their phase sections; this heading holds only work still to come.
   Kind: fix.
   Source: in-session-2026-09-20, found while verifying DOOM-0404's PLAYPAL gate.
 
-- 📋 [DOOM-0447] **Three near-copy patch blitters in v_video.c, one of which shipped without the bounds guard its siblings carry.**
+- ✅ [DOOM-0447] **Three near-copy patch blitters in v_video.c, one of which shipped without the bounds guard its siblings carry.**
   V_DrawPatchGeneral, V_DrawPatchScaled and V_DrawPatchFlipped are the
   same ~40-line column/post walk three times (~270 lines), differing only
   in the column index direction, a scale multiplier, and whether the
@@ -1158,6 +1158,19 @@ stay in their phase sections; this heading holds only work still to come.
   Classic-tier regression, so prove it with -shotcompare's golden gate
   plus a capture in all three tiers; every caller in the UI draws
   something the golden set covers.
+  Resolved (2026-09-26): V_BlitPatch is the single patch blitter, with
+  trans, bufspace, scale and flipped parameters. V_DrawPatch, Translated,
+  Abs, Scaled and Flipped are one-line wrappers; flipped keeps its fatal
+  posture on a bad patch. Proof: a temporary
+  harness drew every patch-shaped lump in the WAD through the old three
+  functions and the new wrappers. It covered plain, translated,
+  buffer-space, scale 2 and 3, flipped, six positions including off-screen
+  ones, and screens 0 and 4. Each full buffer was compared: 0 mismatches
+  in 112,324 comparisons (DOOM) and 160,480 (DOOM II), at 640 wide under
+  the dummy driver and again at 854 wide on Xvfb. Not merged:
+  M_DecodePatchRGBA decodes to an RGBA texture and bounds each row;
+  F_DrawPatchCol draws one column and already has V_PostInBounds. Log
+  change: a bad scaled patch now uses the shared rate-limited message.
   **Layman:** The code that draws a picture from the game file onto the screen exists in three near-identical copies. One of them shipped missing a safety check the other two had — so a crafted game file could make it write outside the screen. That was found and patched in one copy only.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lane 12.

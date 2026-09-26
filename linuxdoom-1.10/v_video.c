@@ -290,139 +290,40 @@ boolean V_PostInBounds (const column_t* column, int height)
 
 
 //
-// V_DrawPatchGeneral
-// Masks a column based masked pic to the screen. When trans is non-NULL every
-// source pixel is remapped through it (a 256-entry palette-translation table),
-// e.g. to recolour the monochrome HUD font (DOOM-0158 centred secret message).
-// trans == NULL is the plain path, pixel-identical to the original V_DrawPatch.
+// V_BlitPatch
+// DOOM-0447: the one patch blitter. Masks a column-based masked pic onto a screen
+// buffer. It was three near-copies (V_DrawPatchGeneral, V_DrawPatchScaled and
+// V_DrawPatchFlipped), and the drift was real: the scaled copy shipped without the
+// destination bounds guard the other two carried, so a patch whose WAD-supplied
+// offsets pushed it off the logical screen indexed screens[] out of range. This is
+// the path that turns WAD bytes into frame-buffer writes, so it exists once.
 //
-// DOOM-0402: `bufspace` chooses which logical space x is in. false is the 320-wide
-// UI canvas every HUD/menu caller uses -- widescreen re-centres it by
-// WIDESCREENDELTA and the bounds check is ORIGWIDTH. true means x is already a
-// coordinate in the destination buffer's own logical space, which on widescreen is
-// wider than 320: no re-centring, and the bound is that buffer's own width.
+//   trans     non-NULL remaps every source pixel through a 256-entry palette
+//             translation (DOOM-0158, e.g. the gold HUD font); NULL is the plain
+//             path, pixel-identical to the original V_DrawPatch.
+//   bufspace  DOOM-0402: which logical space x is in. false is the 320-wide UI
+//             canvas every HUD/menu caller uses -- widescreen re-centres it by
+//             WIDESCREENDELTA and the bound is ORIGWIDTH. true means x is already
+//             in the destination buffer's own logical space, which on widescreen
+//             is wider than 320: no re-centring, and the bound is that width.
+//   scale     DOOM-0206: every source pixel expands to (HIRES*scale) square, so the
+//             patch draws at an integer multiple of its size. Offsets and bounds
+//             scale with it; the multiply makes an off-screen patch easier to
+//             reach, not harder.
+//   flipped   mirror horizontally (the finale cast's facing). It keeps its
+//             original posture on a bad patch -- a fatal error, where every other
+//             caller ignores the patch.
 //
 static void
-V_DrawPatchGeneral
+V_BlitPatch
 ( int		x,
   int		y,
   int		scrn,
   patch_t*	patch,
   const byte*	trans,
-  boolean	bufspace )
-{
-
-    int		count;
-    int		col; 
-    column_t*	column; 
-    byte*	desttop;
-    byte*	dest;
-    byte*	source; 
-    int		w; 
-	 
-    int		dsw = screenwidth[scrn];	// dest stride
-    // DOOM-0147: HIRES for full-screen buffers, 1 for the ORIGWIDTH-wide scratch.
-    int		f = (dsw == ORIGWIDTH) ? 1 : HIRES;
-    // Re-centre 320-wide UI art in a widescreen frame (0 on the scratch and at 4:3).
-    int		wsdelta = (dsw == ORIGWIDTH || bufspace) ? 0 : WIDESCREENDELTA;
-    // The logical width x is bounded by: the UI canvas, or the buffer's own.
-    // Only the WIDTH differs -- widescreen is Hor+, so every buffer is still
-    // ORIGHEIGHT logical rows tall and y keeps its original bound.
-    int		maxw = bufspace ? dsw/f : ORIGWIDTH;
-    int		rx, ry;
-
-    y -= SHORT(patch->topoffset);
-    x -= SHORT(patch->leftoffset);
-#ifdef RANGECHECK
-    if (x<0
-	||x+SHORT(patch->width) >maxw
-	|| y<0
-	|| y+SHORT(patch->height)>ORIGHEIGHT
-	|| (unsigned)scrn>4)
-    {
-      // DOOM-0137/0171: RANGECHECK rejects patches drawn outside the logical
-      // screen, and the two fprintfs per patch flood the log. Rate-limit to a
-      // few lines then suppress.
-      //
-      // DOOM-0402: this note used to name the view-border bezel as an example
-      // of a rejection that was cosmetic, the frame rendering fine regardless.
-      // That was false for the bezel: it was measured against the wrong canvas,
-      // and the border was MISSING on screen wherever it was rejected. The
-      // bezel now draws through V_DrawPatchAbs. Do not read the remaining
-      // wording as a guarantee that a rejection is harmless -- treat a message
-      // here as a defect at the CALLER until its caller has been checked.
-      static int nbadpatch = 0;
-      if (nbadpatch < 3)
-      {
-        fprintf( stderr, "Patch at %d,%d exceeds LFB\n", x,y );
-        // No I_Error abort - what is up with TNT.WAD?
-        fprintf( stderr, "V_DrawPatch: bad patch (ignored)\n");
-        if (++nbadpatch == 3)
-          fprintf( stderr, "V_DrawPatch: further out-of-bounds patch warnings suppressed\n");
-      }
-      return;
-    }
-#endif
-
-    if (!scrn)
-	V_MarkRect (x, y, SHORT(patch->width), SHORT(patch->height));
-
-    x += wsdelta;				// DOOM-0147 widescreen UI centring
-    col = 0;
-    desttop = screens[scrn] + (y*f)*dsw + (x*f);	// physical top-left
-
-    w = SHORT(patch->width);
-
-    for ( ; col<w ; col++, desttop+=f)
-    {
-	column = (column_t *)((byte *)patch + LONG(patch->columnofs[col]));
-
-	// step through the posts in a column
-	while (column->topdelta != 0xff )
-	{
-	    // Malformed post (overruns the patch's own height): stop this column
-	    // rather than blit past the end of the screen buffer.
-	    if (!V_PostInBounds (column, SHORT(patch->height)))
-		break;
-
-	    source = (byte *)column + 3;
-	    dest = desttop + column->topdelta*f*dsw;
-	    count = column->length;
-
-	    while (count--)
-	    {
-		byte px = *source++;		// one source pixel -> f x f block
-		if (trans)
-		    px = trans[px];		// palette recolour (e.g. gold font)
-		byte* d = dest;
-		for (ry=0 ; ry<f ; ry++, d+=dsw)
-		    for (rx=0 ; rx<f ; rx++)
-			d[rx] = px;
-		dest += f*dsw;
-	    }
-	    column = (column_t *)(  (byte *)column + column->length
-				    + 4 );
-	}
-    }
-}
-
-//
-// V_DrawPatchScaled
-// As V_DrawPatchGeneral's plain path, but every SOURCE pixel expands to a
-// (HIRES*scale) square instead of HIRES -- i.e. the patch is blitted at an
-// integer `scale` multiple of its normal size. DOOM-0206: the Classic main
-// menu draws all its items in the red HUD font at scale 2 ("medium"), so the
-// oversized big-red graphic lumps and the tiny "Game Select" text meet at one
-// uniform size. Coordinates stay in 320x200 virtual space; widescreen centring
-// and the HIRES buffer factor are honoured exactly like V_DrawPatch.
-//
-void
-V_DrawPatchScaled
-( int		x,
-  int		y,
-  int		scrn,
-  patch_t*	patch,
-  int		scale )
+  boolean	bufspace,
+  int		scale,
+  boolean	flipped )
 {
     int		count;
     int		col;
@@ -432,9 +333,15 @@ V_DrawPatchScaled
     byte*	source;
     int		w;
 
-    int		dsw = screenwidth[scrn];
+    int		dsw = screenwidth[scrn];	// dest stride
+    // DOOM-0147: HIRES for full-screen buffers, 1 for the ORIGWIDTH-wide scratch.
     int		f = (dsw == ORIGWIDTH) ? 1 : HIRES;
-    int		wsdelta = (dsw == ORIGWIDTH) ? 0 : WIDESCREENDELTA;
+    // Re-centre 320-wide UI art in a widescreen frame (0 on the scratch and at 4:3).
+    int		wsdelta = (dsw == ORIGWIDTH || bufspace) ? 0 : WIDESCREENDELTA;
+    // The logical width x is bounded by: the UI canvas, or the buffer's own.
+    // Only the WIDTH differs -- widescreen is Hor+, so every buffer is still
+    // ORIGHEIGHT logical rows tall and y keeps its original bound.
+    int		maxw = bufspace ? dsw/f : ORIGWIDTH;
     int		fs, rx, ry;
 
     if (scale < 1) scale = 1;
@@ -443,25 +350,38 @@ V_DrawPatchScaled
     y -= SHORT(patch->topoffset) * scale;
     x -= SHORT(patch->leftoffset) * scale;
 #ifdef RANGECHECK
-    // Same destination-bounds gate V_DrawPatchGeneral and V_DrawPatchFlipped carry;
-    // this scaled twin (DOOM-0206) shipped without one, so a patch whose WAD-supplied
-    // leftoffset/topoffset pushed x or y out of the 320x200 logical screen indexed
-    // screens[] out of range below -- and the multiply by `scale` makes it easier to
-    // reach here than in the unscaled siblings, not harder. V_PostInBounds further
-    // down guards the patch's own post data; it says nothing about where we WRITE.
-    // Ignore the patch rather than abort, matching the siblings' posture.
-    if (x < 0
-	|| x + SHORT(patch->width)*scale > ORIGWIDTH
-	|| y < 0
-	|| y + SHORT(patch->height)*scale > ORIGHEIGHT
-	|| (unsigned)scrn > 4)
+    // The destination-bounds gate. V_PostInBounds further down guards the patch's
+    // own post data; it says nothing about where we WRITE.
+    if (x<0
+	|| x+SHORT(patch->width)*scale > maxw
+	|| y<0
+	|| y+SHORT(patch->height)*scale > ORIGHEIGHT
+	|| (unsigned)scrn>4)
     {
-	static int nbadscaled = 0;
-	if (nbadscaled < 3)
+	if (flipped)
 	{
-	    fprintf( stderr, "V_DrawPatchScaled: bad patch at %d,%d (ignored)\n", x, y );
-	    if (++nbadscaled == 3)
-		fprintf( stderr, "V_DrawPatchScaled: further reports suppressed\n" );
+	    fprintf( stderr, "Patch origin %d,%d exceeds LFB\n", x,y );
+	    I_Error ("Bad V_DrawPatch in V_DrawPatchFlipped");
+	}
+	// DOOM-0137/0171: RANGECHECK rejects patches drawn outside the logical
+	// screen, and the two fprintfs per patch flood the log. Rate-limit to a
+	// few lines then suppress.
+	//
+	// DOOM-0402: this note used to name the view-border bezel as an example
+	// of a rejection that was cosmetic, the frame rendering fine regardless.
+	// That was false for the bezel: it was measured against the wrong canvas,
+	// and the border was MISSING on screen wherever it was rejected. The
+	// bezel now draws through V_DrawPatchAbs. Do not read the remaining
+	// wording as a guarantee that a rejection is harmless -- treat a message
+	// here as a defect at the CALLER until its caller has been checked.
+	static int nbadpatch = 0;
+	if (nbadpatch < 3)
+	{
+	    fprintf( stderr, "Patch at %d,%d exceeds LFB\n", x,y );
+	    // No I_Error abort - what is up with TNT.WAD?
+	    fprintf( stderr, "V_DrawPatch: bad patch (ignored)\n");
+	    if (++nbadpatch == 3)
+		fprintf( stderr, "V_DrawPatch: further out-of-bounds patch warnings suppressed\n");
 	}
 	return;
     }
@@ -470,15 +390,16 @@ V_DrawPatchScaled
     if (!scrn)
 	V_MarkRect (x, y, SHORT(patch->width)*scale, SHORT(patch->height)*scale);
 
-    x += wsdelta;
+    x += wsdelta;				// DOOM-0147 widescreen UI centring
     col = 0;
-    desttop = screens[scrn] + (y*f)*dsw + (x*f);
+    desttop = screens[scrn] + (y*f)*dsw + (x*f);	// physical top-left
 
     w = SHORT(patch->width);
 
-    for ( ; col<w ; col++, desttop += fs)
+    for ( ; col<w ; col++, desttop+=fs)
     {
-	column = (column_t *)((byte *)patch + LONG(patch->columnofs[col]));
+	column = (column_t *)((byte *)patch
+			      + LONG(patch->columnofs[flipped ? w-1-col : col]));
 
 	// step through the posts in a column
 	while (column->topdelta != 0xff )
@@ -495,6 +416,8 @@ V_DrawPatchScaled
 	    while (count--)
 	    {
 		byte px = *source++;		// one source pixel -> fs x fs block
+		if (trans)
+		    px = trans[px];		// palette recolour (e.g. gold font)
 		byte* d = dest;
 		for (ry=0 ; ry<fs ; ry++, d+=dsw)
 		    for (rx=0 ; rx<fs ; rx++)
@@ -508,104 +431,34 @@ V_DrawPatchScaled
 }
 
 //
-// V_DrawPatch / V_DrawPatchTranslated / V_DrawPatchAbs
-// Thin wrappers over V_DrawPatchGeneral: plain draw, palette-remapped draw, and
-// (DOOM-0402) a draw whose x is already in the destination buffer's logical space.
+// V_DrawPatch / V_DrawPatchTranslated / V_DrawPatchAbs / V_DrawPatchScaled /
+// V_DrawPatchFlipped -- thin wrappers over V_BlitPatch (DOOM-0447): plain,
+// palette-remapped, buffer-space x (DOOM-0402), an integer scale multiple
+// (DOOM-0206, the Classic main menu font), and horizontally mirrored.
 //
 void V_DrawPatch (int x, int y, int scrn, patch_t* patch)
 {
-    V_DrawPatchGeneral (x, y, scrn, patch, NULL, false);
+    V_BlitPatch (x, y, scrn, patch, NULL, false, 1, false);
 }
 
 void V_DrawPatchTranslated (int x, int y, int scrn, patch_t* patch, const byte* trans)
 {
-    V_DrawPatchGeneral (x, y, scrn, patch, trans, false);
+    V_BlitPatch (x, y, scrn, patch, trans, false, 1, false);
 }
 
 void V_DrawPatchAbs (int x, int y, int scrn, patch_t* patch)
 {
-    V_DrawPatchGeneral (x, y, scrn, patch, NULL, true);
+    V_BlitPatch (x, y, scrn, patch, NULL, true, 1, false);
 }
 
-//
-// V_DrawPatchFlipped
-// Masks a column based masked pic to the screen.
-// Flips horizontally, e.g. to mirror face.
-//
-void
-V_DrawPatchFlipped
-( int		x,
-  int		y,
-  int		scrn,
-  patch_t*	patch ) 
-{ 
+void V_DrawPatchScaled (int x, int y, int scrn, patch_t* patch, int scale)
+{
+    V_BlitPatch (x, y, scrn, patch, NULL, false, scale, false);
+}
 
-    int		count;
-    int		col; 
-    column_t*	column; 
-    byte*	desttop;
-    byte*	dest;
-    byte*	source; 
-    int		w; 
-	 
-    int		dsw = screenwidth[scrn];	// dest stride
-    // DOOM-0147: HIRES for full-screen buffers, 1 for the ORIGWIDTH-wide scratch.
-    int		f = (dsw == ORIGWIDTH) ? 1 : HIRES;
-    int		wsdelta = (dsw == ORIGWIDTH) ? 0 : WIDESCREENDELTA;	// UI centring
-    int		rx, ry;
-
-    y -= SHORT(patch->topoffset);
-    x -= SHORT(patch->leftoffset);
-#ifdef RANGECHECK
-    if (x<0
-	||x+SHORT(patch->width) >ORIGWIDTH
-	|| y<0
-	|| y+SHORT(patch->height)>ORIGHEIGHT
-	|| (unsigned)scrn>4)
-    {
-      fprintf( stderr, "Patch origin %d,%d exceeds LFB\n", x,y );
-      I_Error ("Bad V_DrawPatch in V_DrawPatchFlipped");
-    }
-#endif
-
-    if (!scrn)
-	V_MarkRect (x, y, SHORT(patch->width), SHORT(patch->height));
-
-    x += wsdelta;				// DOOM-0147 widescreen UI centring
-    col = 0;
-    desttop = screens[scrn] + (y*f)*dsw + (x*f);
-
-    w = SHORT(patch->width);
-
-    for ( ; col<w ; col++, desttop+=f)
-    {
-	column = (column_t *)((byte *)patch + LONG(patch->columnofs[w-1-col]));
-
-	// step through the posts in a column
-	while (column->topdelta != 0xff )
-	{
-	    // Malformed post (overruns the patch's own height): stop this column
-	    // rather than blit past the end of the screen buffer.
-	    if (!V_PostInBounds (column, SHORT(patch->height)))
-		break;
-
-	    source = (byte *)column + 3;
-	    dest = desttop + column->topdelta*f*dsw;
-	    count = column->length;
-
-	    while (count--)
-	    {
-		byte px = *source++;
-		byte* d = dest;
-		for (ry=0 ; ry<f ; ry++, d+=dsw)
-		    for (rx=0 ; rx<f ; rx++)
-			d[rx] = px;
-		dest += f*dsw;
-	    }
-	    column = (column_t *)(  (byte *)column + column->length
-				    + 4 );
-	}
-    }
+void V_DrawPatchFlipped (int x, int y, int scrn, patch_t* patch)
+{
+    V_BlitPatch (x, y, scrn, patch, NULL, false, 1, true);
 }
  
 
