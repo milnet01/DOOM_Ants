@@ -3719,6 +3719,48 @@ defect visible before a player finds it.
   Kind: refactor.
   Source: in-session-2026-09-26 (DOOM-0440, with the Vestige session).
 
+- 📋 [DOOM-0465] **The stair builder's "shut up compiler warning" initialiser names no constraint.**
+  p_floor.c EV_BuildStairs: `speed = 0; stairsize = 0;	// shut up compiler warning`.
+  coding.md §1.2 lets a silenced warning stand only with a comment naming the
+  underlying constraint. Say which warning (presumably -Wmaybe-uninitialized
+  failing to see that every stair type sets both) and confirm it by removing
+  the line and rebuilding at -O2. If the warning no longer fires, the line goes.
+  **Layman:** One line of 1997 code quiets a compiler warning without saying why; either explain it or remove it.
+  Kind: review-fix.
+  Source: field-pass-2026-09-27 (coding.md §1.2, for the claude-config session).
+
+- 📋 [DOOM-0466] **Timed doors spell their delays as bare tic counts instead of TICRATE.**
+  p_doors.c P_SpawnDoorCloseIn30 and P_SpawnDoorRaiseIn5Mins write
+  `30 * 35` and `5 * 60 * 35`, while doomdef.h defines TICRATE as 35.
+  coding.md §8 names unexplained numbers an anti-pattern. Spell them with
+  TICRATE. The value is unchanged, so demo sync is unaffected, but prove it
+  with the per-tic A/B anyway.
+  **Layman:** Two door timers use the raw number 35 where the game already has a named constant for it.
+  Kind: review-fix.
+  Source: field-pass-2026-09-27 (coding.md §8, for the claude-config session).
+
+- 📋 [DOOM-0467] **Most test assertions print only a label, not the values that disagreed.**
+  tests/check_util.h check(bool, what) prints `what` alone. The
+  value-printing check_eq_int is used 46 times against 441 bare check() calls
+  (`grep -ho '\bcheck(' tests/*.cpp | wc -l`). cpp.md requires every
+  assertion to print expected and received. Convert the comparisons among the
+  bare calls to a value-printing form, adding a floating-point and a string
+  variant where needed. Leave the genuine predicates as they are.
+  **Layman:** When a test fails it usually says what went wrong but not the numbers it saw, which makes failures slower to diagnose.
+  Kind: review-fix.
+  Source: field-pass-2026-09-27 (cpp.md § Tests, testing.md §6, for the claude-config session).
+
+- 📋 [DOOM-0468] **docs/standards/coding.md carries no marker saying whether it mirrors, overrides or owns the global standard.**
+  The project file restates parts of ~/.claude/standards/coding.md, and adds
+  legacy-C and renderer rules. It carries neither a MIRROR BEGIN nor an
+  OWNED-HERE marker and is not a spec-format-overrides-style delta file, so a
+  reader cannot tell which standard governs where the two differ. Decide per
+  standards/README.md's three cases and mark it. The other twelve files in
+  docs/standards/ likely need the same check.
+  **Layman:** The project's coding rulebook doesn't say how it relates to the machine-wide one, so nobody can tell which wins when they disagree.
+  Kind: doc-fix.
+  Source: field-pass-2026-09-27 (standards/README.md cases, for the claude-config session).
+
 ## 0.10.0 — The frame budget
 
 Performance and pacing, and the benchmark harness that makes a regression
