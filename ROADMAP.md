@@ -3723,7 +3723,7 @@ defect visible before a player finds it.
   Kind: fix.
   Source: in-session-2026-09-26 (DOOM-0435 build).
 
-- 📋 [DOOM-0462] **Switch formulas/bloom_knee.glsl to the Workbench's bloomKneeQuadratic export.**
+- ✅ [DOOM-0462] **Switch formulas/bloom_knee.glsl to the Workbench's bloomKneeQuadratic export.**
   At Vestige's offer, the Vestige Formula Workbench now models DOOM's
   quadratic bloom knee as bloomKneeQuadratic(peak, threshold, knee)
   (Vestige f541ece). threshold and knee are parameters, since DOOM reads
@@ -3737,6 +3737,19 @@ defect visible before a player finds it.
   Vestige's pushed library hash, switch both bloom extracts to
   bloomKneeQuadratic, delete bloom_knee.glsl, and record that argument.
   Verify with -rtverify and a bloom A/B capture on both chains.
+  Resolved (2026-09-27). formulas.glsl re-exported from Vestige
+  (Workbench v1.19.0, library hash d2a26a000760457e); the only change is
+  the added bloomKneeQuadratic. Both extracts call it and
+  bloom_knee.glsl is gone. Measured at a bloom-heavy view (E1M1 spawn
+  facing south), -inspect -freeze, private display, FPS counter masked:
+  - ray-traced chain: before/after within the same-build control's noise,
+    at two views;
+  - raster chain: NOT bit-identical. It moves 1/255 on 2.8% of pixels, all
+    inside the bloom halo, where the control moves none; with bloom off it
+    is pixel-identical. That is float rounding from how the compiler lowers
+    the reshaped expression, not a guard firing, so "identical" above holds
+    mathematically but not bitwise.
+  -rtverify PASS; make test 26/26; plain and DEV builds warning-free.
   **Layman:** The maths that decides what glows is now kept in one place in DOOM; this moves it to the shared formula tool the two projects use, so both read the same authored copy.
   Kind: refactor.
   Source: in-session-2026-09-26 (DOOM-0440, with the Vestige session).
@@ -3782,6 +3795,18 @@ defect visible before a player finds it.
   **Layman:** The project's coding rulebook doesn't say how it relates to the machine-wide one, so nobody can tell which wins when they disagree.
   Kind: doc-fix.
   Source: field-pass-2026-09-27 (standards/README.md cases, for the claude-config session).
+
+- 📋 [DOOM-0469] **The neighbour-scan seeds that recorded demos depend on carry no comment saying so.**
+  p_spec.c: P_FindHighestFloorSurrounding seeds `-500*FRACUNIT` and
+  P_FindHighestCeilingSurrounding seeds `0`. That is the same behaviour on two
+  fields with different seeds. The difference shows only for a sector whose
+  every neighbour sits below the seed, and recorded demos pin it. DOOM-0451
+  declined merging them for that reason. coding.md §1.3 now requires a
+  comment on each copy naming the promise. Add one line to each, naming the
+  input that behaves differently. Comment-only, so no A/B is needed.
+  **Layman:** Two lookup functions start from odd values on purpose, and nothing in the code warns a future editor not to tidy them.
+  Kind: doc-fix.
+  Source: field-pass-2026-09-27 (coding.md §1.3 as amended by claude-config b9bc284).
 
 ## 0.10.0 — The frame budget
 

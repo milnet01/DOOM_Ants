@@ -410,10 +410,10 @@ $(SHADER_DIR)/svgf_temporal.comp.spv.h $(SHADER_DIR)/svgf_atrous.comp.spv.h \
 $(SHADER_DIR)/svgf_composite.comp.spv.h $(SHADER_DIR)/svgf_composite_split.comp.spv.h: \
 		$(SHADER_DIR)/formulas/svgf_shared.glsl
 
-# DOOM-0440 — the bloom soft-knee weight is shared by both bright passes. Same
-# missing-auto-dep hazard as the rules above.
+# DOOM-0440 — the bloom soft-knee weight (formulas.glsl's bloomKneeQuadratic) is
+# shared by both bright passes. Same missing-auto-dep hazard as the rules above.
 $(SHADER_DIR)/bloom_extract_raster.comp.spv.h $(SHADER_DIR)/bloom_extract_rt.comp.spv.h: \
-		$(SHADER_DIR)/formulas/bloom_knee.glsl
+		$(SHADER_DIR)/formulas/formulas.glsl
 
 # DOOM-0345 R1 — the BLOOM_SPLIT variant of svgf_composite.comp. Explicit rule (the pattern
 # rule above can't produce it — there is no svgf_composite_split.comp source); depends on

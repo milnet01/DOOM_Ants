@@ -20,8 +20,13 @@ name-sorted and deterministic, so a regenerate diffs cleanly. The path tracer
 `#include`s the combined `formulas.glsl` and `glslc -O` strips the functions a
 given shader doesn't call.
 
-Currently consumed: `exposureEv` (EV → linear exposure gain) and `linearToSrgb`
-(IEC 61966-2-1 display encode). More of the library (GGX/VNDF, Fresnel-Schlick,
+Currently consumed: `exposureEv` (EV → linear exposure gain), `linearToSrgb`
+(IEC 61966-2-1 display encode) and `bloomKneeQuadratic` (both bloom bright
+passes; threshold and knee are parameters because DOOM picks them from
+`kBloomPresets` at runtime). The export wraps each division in `safeDiv`, which
+the hand-written copy it replaced did not. Neither guard can fire for DOOM's
+inputs: `4*knee + 1e-4` is never 0 for a non-negative knee, and
+`max(peak, 1e-4)` never is. More of the library (GGX/VNDF, Fresnel-Schlick,
 MIS power heuristic, RR survival, …) comes online as later DOOM-0009 steps land.
 
 ## Hand-written — `pbr_neutral_tonemap.glsl`
