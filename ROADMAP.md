@@ -3521,7 +3521,7 @@ defect visible before a player finds it.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lanes 8/11/12/13.
 
-- 📋 [DOOM-0451] **Playsim duplication: the sector-thinker spawn written seven times, the tic-jitter idiom six, and a duplicated intercept formula.**
+- ✅ [DOOM-0451] **Playsim duplication: the sector-thinker spawn written seven times, the tic-jitter idiom six, and a duplicated intercept formula.**
   Everything here is demo-critical, so each fix is admissible only if it
   cannot change simulation results -- including iteration order, the order
   of P_Random consumption, and fixed-point rounding.
@@ -3586,6 +3586,28 @@ defect visible before a player finds it.
   the seven sector-thinker spawns, the neighbour-scan functions, and the
   rest of the body. Every playsim change here must pass the per-tic
   state-hash A/B, not just the fixture gametic counts.
+  Resolved (2026-09-27). DONE (5edc29d): P_SpawnSectorThinker
+  replaces eleven spawn copies (the review counted seven), zeroed on
+  allocation; P_HasKey replaces the six key checks; P_LevelAllocZeroed
+  replaces the five allocate-then-zero pairs. Per-tic A/B identical on 15
+  demo pairs, including crafted maps that run every sector-thinker kind and
+  locked doors; sensitivity shown by mutants. The sight copy's misplaced
+  ceiling comment is corrected. DECLINED, each for a stated reason:
+  - Neighbour scans: the seeds differ on purpose (-500*FRACUNIT is vanilla
+    behaviour demos depend on). A generic version needs a field offset and a
+    direction flag and reads worse than five short loops.
+  - Active ceiling/plat list functions: they differ when the list is full
+    (plats I_Error, ceilings take DOOM-0398's path) and in which field holds
+    stasis, so one helper would change behaviour or need flags.
+  - Two-sector opening: two copies, below Rule of Three. The sight copy sits
+    in P_CrossSubsector's hot loop, and the drift was only the comment.
+  - P_TouchSpecialThing as tables: nearly every case carries its own quirk
+    (megasphere gamemode check, netgame key handling, health-dependent
+    medikit text), so a table needs a flag per quirk.
+  - O1 shapes, not acted on without a profile: each tag-search loop is one
+    linear pass in total, since it resumes from the last match; the skull
+    and teleport walks are rare events; P_LoadBlockMap's SHORT pass runs at
+    load and is needed on big-endian.
   **Layman:** The code that makes doors, floors, ceilings and platforms move is six files of near-identical logic. Because demo playback depends on this code exactly, a fix that lands in five of six places is not a visual glitch — it silently breaks recorded demos.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lanes 9/10.

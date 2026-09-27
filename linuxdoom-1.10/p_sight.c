@@ -185,7 +185,7 @@ boolean P_CrossSubsector (int num)
 	else
 	    opentop = back->ceilingheight;
 
-	// because of ceiling height differences
+	// because of floor height differences
 	if (front->floorheight > back->floorheight)
 	    openbottom = front->floorheight;
 	else
