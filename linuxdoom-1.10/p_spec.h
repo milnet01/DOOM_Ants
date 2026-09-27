@@ -110,6 +110,12 @@ getNextSector
 ( line_t*	line,
   sector_t*	sec );
 
+void*
+P_SpawnSectorThinker
+( size_t	size,
+  sector_t*	sec,
+  actionf_p1	func );
+
 
 //
 // SPECIAL

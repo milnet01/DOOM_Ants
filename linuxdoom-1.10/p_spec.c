@@ -29,6 +29,7 @@ static const char
 rcsid[] __attribute__((used)) = "$Id: p_spec.c,v 1.6 1997/02/03 22:45:12 b1 Exp $";
 
 #include <stdlib.h>
+#include <string.h>
 
 #include "doomdef.h"
 #include "doomstat.h"
@@ -483,6 +484,28 @@ P_FindMinSurroundingLight
 	    min = check->lightlevel;
     }
     return min;
+}
+
+
+//
+// P_SpawnSectorThinker
+// Start a sector special: allocate it, link its thinker, claim the sector.
+// Zeroed because Z_Malloc does not zero, and a field a spawn forgot to set
+// was once read as garbage.
+//
+void*
+P_SpawnSectorThinker
+( size_t	size,
+  sector_t*	sec,
+  actionf_p1	func )
+{
+    thinker_t*	th = Z_Malloc (size, PU_LEVSPEC, 0);
+
+    memset (th, 0, size);
+    P_AddThinker (th);
+    sec->specialdata = th;
+    th->function.acp1 = func;
+    return th;
 }
 
 
@@ -1221,10 +1244,7 @@ int EV_DoDonut(line_t*	line)
 	    s3 = s2->lines[i]->backsector;
 	    
 	    //	Spawn rising slime
-	    floor = Z_Malloc (sizeof(*floor), PU_LEVSPEC, 0);
-	    P_AddThinker (&floor->thinker);
-	    s2->specialdata = floor;
-	    floor->thinker.function.acp1 = (actionf_p1) T_MoveFloor;
+	    floor = P_SpawnSectorThinker (sizeof(*floor), s2, (actionf_p1) T_MoveFloor);
 	    floor->type = donutRaise;
 	    floor->crush = false;
 	    floor->direction = 1;
@@ -1235,10 +1255,7 @@ int EV_DoDonut(line_t*	line)
 	    floor->floordestheight = s3->floorheight;
 	    
 	    //	Spawn lowering donut-hole
-	    floor = Z_Malloc (sizeof(*floor), PU_LEVSPEC, 0);
-	    P_AddThinker (&floor->thinker);
-	    s1->specialdata = floor;
-	    floor->thinker.function.acp1 = (actionf_p1) T_MoveFloor;
+	    floor = P_SpawnSectorThinker (sizeof(*floor), s1, (actionf_p1) T_MoveFloor);
 	    floor->type = lowerFloor;
 	    floor->crush = false;
 	    floor->direction = -1;

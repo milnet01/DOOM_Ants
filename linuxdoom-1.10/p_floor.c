@@ -279,10 +279,7 @@ EV_DoFloor
 	
 	// new floor thinker
 	rtn = 1;
-	floor = Z_Malloc (sizeof(*floor), PU_LEVSPEC, 0);
-	P_AddThinker (&floor->thinker);
-	sec->specialdata = floor;
-	floor->thinker.function.acp1 = (actionf_p1) T_MoveFloor;
+	floor = P_SpawnSectorThinker (sizeof(*floor), sec, (actionf_p1) T_MoveFloor);
 	floor->type = floortype;
 	floor->crush = false;
 
@@ -489,10 +486,7 @@ EV_BuildStairs
 	
 	// new floor thinker
 	rtn = 1;
-	floor = Z_Malloc (sizeof(*floor), PU_LEVSPEC, 0);
-	P_AddThinker (&floor->thinker);
-	sec->specialdata = floor;
-	floor->thinker.function.acp1 = (actionf_p1) T_MoveFloor;
+	floor = P_SpawnSectorThinker (sizeof(*floor), sec, (actionf_p1) T_MoveFloor);
 	floor->direction = 1;
 	floor->sector = sec;
 	speed = 0; stairsize = 0;	// shut up compiler warning
@@ -549,12 +543,7 @@ EV_BuildStairs
 					
 		sec = tsec;
 		secnum = newsecnum;
-		floor = Z_Malloc (sizeof(*floor), PU_LEVSPEC, 0);
-
-		P_AddThinker (&floor->thinker);
-
-		sec->specialdata = floor;
-		floor->thinker.function.acp1 = (actionf_p1) T_MoveFloor;
+		floor = P_SpawnSectorThinker (sizeof(*floor), sec, (actionf_p1) T_MoveFloor);
 		floor->direction = 1;
 		floor->sector = sec;
 		floor->speed = speed;

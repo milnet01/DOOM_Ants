@@ -199,6 +199,27 @@ void T_VerticalDoor (vldoor_t* door)
 
 
 //
+// P_HasKey
+// True if the player holds the card or the skull of one colour. If not,
+// say which key is missing and grunt.
+//
+static boolean
+P_HasKey
+( player_t*	p,
+  card_t	card,
+  card_t	skull,
+  char*		message )
+{
+    if (p->cards[card] || p->cards[skull])
+	return true;
+
+    p->message = message;
+    S_StartSound(NULL,sfx_oof);
+    return false;
+}
+
+
+//
 // EV_DoLockedDoor
 // Move a locked door up/down
 //
@@ -223,33 +244,20 @@ EV_DoLockedDoor
     {
       case 99:	// Blue Lock
       case 133:
-	if (!p->cards[it_bluecard] && !p->cards[it_blueskull])
-	{
-	    p->message = PD_BLUEO;
-	    S_StartSound(NULL,sfx_oof);
+	if (!P_HasKey (p, it_bluecard, it_blueskull, PD_BLUEO))
 	    return 0;
-	}
 	break;
 	
       case 134: // Red Lock
       case 135:
-	if (!p->cards[it_redcard] && !p->cards[it_redskull])
-	{
-	    p->message = PD_REDO;
-	    S_StartSound(NULL,sfx_oof);
+	if (!P_HasKey (p, it_redcard, it_redskull, PD_REDO))
 	    return 0;
-	}
 	break;
 	
       case 136:	// Yellow Lock
       case 137:
-	if (!p->cards[it_yellowcard] &&
-	    !p->cards[it_yellowskull])
-	{
-	    p->message = PD_YELLOWO;
-	    S_StartSound(NULL,sfx_oof);
+	if (!P_HasKey (p, it_yellowcard, it_yellowskull, PD_YELLOWO))
 	    return 0;
-	}
 	break;	
     }
 
@@ -278,11 +286,7 @@ EV_DoDoor
 	
 	// new door thinker
 	rtn = 1;
-	door = Z_Malloc (sizeof(*door), PU_LEVSPEC, 0);
-	P_AddThinker (&door->thinker);
-	sec->specialdata = door;
-
-	door->thinker.function.acp1 = (actionf_p1) T_VerticalDoor;
+	door = P_SpawnSectorThinker (sizeof(*door), sec, (actionf_p1) T_VerticalDoor);
 	door->sector = sec;
 	door->type = type;
 	door->topwait = VDOORWAIT;
@@ -369,12 +373,8 @@ EV_VerticalDoor
 	if ( !player )
 	    return;
 	
-	if (!player->cards[it_bluecard] && !player->cards[it_blueskull])
-	{
-	    player->message = PD_BLUEK;
-	    S_StartSound(NULL,sfx_oof);
+	if (!P_HasKey (player, it_bluecard, it_blueskull, PD_BLUEK))
 	    return;
-	}
 	break;
 	
       case 27: // Yellow Lock
@@ -382,13 +382,8 @@ EV_VerticalDoor
 	if ( !player )
 	    return;
 	
-	if (!player->cards[it_yellowcard] &&
-	    !player->cards[it_yellowskull])
-	{
-	    player->message = PD_YELLOWK;
-	    S_StartSound(NULL,sfx_oof);
+	if (!P_HasKey (player, it_yellowcard, it_yellowskull, PD_YELLOWK))
 	    return;
-	}
 	break;
 	
       case 28: // Red Lock
@@ -396,12 +391,8 @@ EV_VerticalDoor
 	if ( !player )
 	    return;
 	
-	if (!player->cards[it_redcard] && !player->cards[it_redskull])
-	{
-	    player->message = PD_REDK;
-	    S_StartSound(NULL,sfx_oof);
+	if (!P_HasKey (player, it_redcard, it_redskull, PD_REDK))
 	    return;
-	}
 	break;
     }
 	
@@ -457,10 +448,7 @@ EV_VerticalDoor
 	
     
     // new door thinker
-    door = Z_Malloc (sizeof(*door), PU_LEVSPEC, 0);
-    P_AddThinker (&door->thinker);
-    sec->specialdata = door;
-    door->thinker.function.acp1 = (actionf_p1) T_VerticalDoor;
+    door = P_SpawnSectorThinker (sizeof(*door), sec, (actionf_p1) T_VerticalDoor);
     door->sector = sec;
     door->direction = 1;
     door->speed = VDOORSPEED;
@@ -507,14 +495,9 @@ void P_SpawnDoorCloseIn30 (sector_t* sec)
 {
     vldoor_t*	door;
 	
-    door = Z_Malloc ( sizeof(*door), PU_LEVSPEC, 0);
-
-    P_AddThinker (&door->thinker);
-
-    sec->specialdata = door;
+    door = P_SpawnSectorThinker (sizeof(*door), sec, (actionf_p1) T_VerticalDoor);
     sec->special = 0;
 
-    door->thinker.function.acp1 = (actionf_p1)T_VerticalDoor;
     door->sector = sec;
     door->direction = 0;
     door->type = normal;
@@ -532,14 +515,9 @@ P_SpawnDoorRaiseIn5Mins
 {
     vldoor_t*	door;
 	
-    door = Z_Malloc ( sizeof(*door), PU_LEVSPEC, 0);
-    
-    P_AddThinker (&door->thinker);
-
-    sec->specialdata = door;
+    door = P_SpawnSectorThinker (sizeof(*door), sec, (actionf_p1) T_VerticalDoor);
     sec->special = 0;
 
-    door->thinker.function.acp1 = (actionf_p1)T_VerticalDoor;
     door->sector = sec;
     door->direction = 2;
     door->type = raiseIn5Mins;

@@ -174,13 +174,9 @@ EV_DoPlat
 	
 	// Find lowest & highest floors around sector
 	rtn = 1;
-	plat = Z_Malloc( sizeof(*plat), PU_LEVSPEC, 0);
-	P_AddThinker(&plat->thinker);
-		
+	plat = P_SpawnSectorThinker (sizeof(*plat), sec, (actionf_p1) T_PlatRaise);
 	plat->type = type;
 	plat->sector = sec;
-	plat->sector->specialdata = plat;
-	plat->thinker.function.acp1 = (actionf_p1) T_PlatRaise;
 	plat->crush = false;
 	plat->tag = line->tag;
 	

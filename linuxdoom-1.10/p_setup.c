@@ -130,6 +130,15 @@ static void* P_LevelAlloc (int count, size_t elemsize, const char* what)
     return Z_Malloc (count*(int)elemsize, PU_LEVEL, 0);
 }
 
+// P_LevelAlloc, zeroed.
+static void* P_LevelAllocZeroed (int count, size_t elemsize, const char* what)
+{
+    void*	p = P_LevelAlloc (count, elemsize, what);
+
+    memset (p, 0, count*elemsize);
+    return p;
+}
+
 
 
 
@@ -202,8 +211,7 @@ void P_LoadSegs (int lump)
     int			side;
 	
     numsegs = W_LumpLength (lump) / sizeof(mapseg_t);
-    segs = P_LevelAlloc (numsegs, sizeof(seg_t), "segs");	
-    memset (segs, 0, numsegs*sizeof(seg_t));
+    segs = P_LevelAllocZeroed (numsegs, sizeof(seg_t), "segs");
     data = W_CacheLumpNum (lump,PU_STATIC);
 	
     ml = (mapseg_t *)data;
@@ -273,11 +281,10 @@ void P_LoadSubsectors (int lump)
     subsector_t*	ss;
 	
     numsubsectors = W_LumpLength (lump) / sizeof(mapsubsector_t);
-    subsectors = P_LevelAlloc (numsubsectors, sizeof(subsector_t), "subsectors");	
+    subsectors = P_LevelAllocZeroed (numsubsectors, sizeof(subsector_t), "subsectors");
     data = W_CacheLumpNum (lump,PU_STATIC);
 	
     ms = (mapsubsector_t *)data;
-    memset (subsectors,0, numsubsectors*sizeof(subsector_t));
     ss = subsectors;
     
     for (i=0 ; i<numsubsectors ; i++, ss++, ms++)
@@ -302,8 +309,7 @@ void P_LoadSectors (int lump)
     sector_t*		ss;
 	
     numsectors = W_LumpLength (lump) / sizeof(mapsector_t);
-    sectors = P_LevelAlloc (numsectors, sizeof(sector_t), "sectors");	
-    memset (sectors, 0, numsectors*sizeof(sector_t));
+    sectors = P_LevelAllocZeroed (numsectors, sizeof(sector_t), "sectors");
     data = W_CacheLumpNum (lump,PU_STATIC);
 	
     ms = (mapsector_t *)data;
@@ -438,8 +444,7 @@ void P_LoadLineDefs (int lump)
     vertex_t*		v2;
 	
     numlines = W_LumpLength (lump) / sizeof(maplinedef_t);
-    lines = P_LevelAlloc (numlines, sizeof(line_t), "lines");	
-    memset (lines, 0, numlines*sizeof(line_t));
+    lines = P_LevelAllocZeroed (numlines, sizeof(line_t), "lines");
     data = W_CacheLumpNum (lump,PU_STATIC);
 	
     mld = (maplinedef_t *)data;
@@ -534,8 +539,7 @@ void P_LoadSideDefs (int lump)
     side_t*		sd;
 	
     numsides = W_LumpLength (lump) / sizeof(mapsidedef_t);
-    sides = P_LevelAlloc (numsides, sizeof(side_t), "sides");	
-    memset (sides, 0, numsides*sizeof(side_t));
+    sides = P_LevelAllocZeroed (numsides, sizeof(side_t), "sides");
     data = W_CacheLumpNum (lump,PU_STATIC);
 	
     msd = (mapsidedef_t *)data;
