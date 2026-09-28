@@ -1523,6 +1523,11 @@ defect visible before a player finds it.
 
 - 📋 [DOOM-0128] **Vulkan validation: acceleration-structure UPDATE refit undersized / flag-mismatched on a compacted AS.**
   Seen in terminal_output.log: vkCmdBuildAccelerationStructuresKHR reports three related VUIDs — (1) dstAccelerationStructure was created with size 306304 but an UPDATE build requires a minimum size of 353536 (the refit target grew past the originally-allocated/compacted size); (2) mode is VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR but pInfos[0].flags (ALLOW_UPDATE|PREFER_FAST_TRACE) must equal the flags the AS was originally built with (VUID-...-03759); (3) updating a COMPACTED acceleration structure (VUID-...-10126). Pre-existing and NOT from DOOM-0120 (a shader-only change — no AS build/update code touched). Root cause: the dynamic-geometry AS (sprite/thing TLAS or BLAS) is refit in UPDATE mode against a structure that was compacted to a tighter size, so when the primitive count rises the refit no longer fits and the build flags no longer match. Fix options: do not UPDATE a compacted AS (keep an uncompacted, ALLOW_UPDATE-flagged copy for refitting, compact only static geometry), or size the updatable AS to the worst-case prim count and rebuild (not update) when the count exceeds the allocation. Low urgency (RADV tolerates it) but spec-incorrect and it can corrupt the AS on stricter drivers.
+  Reproduced 2026-09-28, headless: the d1m2 demo fixture (doom-scratch
+  d1m2.wad, -timedemo demo1) in Ultra with -rtview 6 moves a sector, so the
+  refit runs; the validation layer then reports 9x "dstAccelerationStructure
+  was created with size (592960), but ... requires a minimum size of
+  (685248)". Identical on builds before and after DOOM-0441's refactor.
   **Layman:** A graphics-checker warning: when the world's ray-tracing structure is quickly refreshed (instead of rebuilt) as moving things come into view, it sometimes no longer fits or its settings don't line up. Harmless on this AMD card today, but worth fixing so the refresh path is correct and the log stays clean.
   Kind: fix.
   Source: in-session-2026-06-29 DOOM-0120 play-test log.
@@ -3276,6 +3281,14 @@ defect visible before a player finds it.
   Effort: LARGER overall, but several are individually QUICK and
   independent. Verify with the validation layers (most failures here are
   loud, not silent), -rtverify, and -shotcompare in both tiers.
+  Progress 2026-09-28: DONE = the two batched uploads (UploadImageBatch),
+  the image+memory+view blocks (CreateImage, thirteen sites), the buffer
+  blocks (CreateRtBuffer, ten sites), the AS geometry/instances with
+  kAlphaTestedGeom, the liquid-flat list. LEFT = the compute pipelines
+  (nine near-copies, hand-derived pool sizes; CreateSvgfPipelines is the
+  table-driven model) and the SVGF 10-binding image set written 3 times.
+  Proof recipe: rt_view 3 captures (pixel-identical run to run), not
+  rt_view 6 (0.5-16% noise between runs of one binary).
   **Layman:** The graphics back-end writes out the same setup steps by hand over and over — one of them twelve times, another in two copies of a hand-written memory allocator. A fix made to one copy and not the other shows up as a crash or corruption in only one of the render tiers.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lanes 1/2/3/5.
