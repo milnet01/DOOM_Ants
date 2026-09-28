@@ -11947,6 +11947,20 @@ defect visible before a player finds it.
   Source: check-code --tree 2026-09-01, deferred by the user.
   Lanes: engine.
 
+- 📋 [DOOM-0473] **versioning-overrides.md does not name a save's or the settings file's location as a breaking surface.**
+  Found by a field pass for the ~/.claude session (versioning.md § 3 now lists
+  "where that file lives on disk"). Saves are written as a bare relative
+  `doomsavN.dsg` (g_game.c, m_menu.c, d_main.c), so they land in whatever
+  folder the game was started from, or `c:\doomdata\` under -cdrom. The
+  settings file is `.doomrc` in $HOME, or %USERPROFILE% on Windows (d_main.c).
+  Moving either makes existing saves or settings silently vanish for a player,
+  which is breaking. Add the location to the saved-games and settings bullets.
+  The edit changes what a conformer checks, so it goes through the gate.
+  **Layman:** The rule about what counts as a breaking change forgets one case: moving where saved games or settings are kept, which would make a player's saves seem to disappear.
+  Kind: doc-fix.
+  Source: field-pass-2026-09-28 (versioning.md § 3, for the claude-config session).
+  Lanes: docs.
+
 ## 0.10.0 — The frame budget
 
 Performance and pacing, and the benchmark harness that makes a regression
