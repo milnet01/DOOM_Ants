@@ -1956,16 +1956,24 @@ VkDeviceAddress BufferAddress(VkBuffer b)
 // Buffer + dedicated allocation for ray-tracing use (AS storage, scratch, the TLAS
 // instance array). When the usage includes SHADER_DEVICE_ADDRESS the allocation
 // gets the device-address flag so BufferAddress works.
+// "call(tag)" for a Check message. The buffer is reused, so hand it straight to Check.
+static const char* VkWhat(const char* call, const char* tag)
+{
+    static char msg[96];
+    snprintf(msg, sizeof msg, "%s(%s)", call, tag);
+    return msg;
+}
+
 void CreateRtBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
                     VkMemoryPropertyFlags props,
-                    VkBuffer* buf, VkDeviceMemory* mem)
+                    VkBuffer* buf, VkDeviceMemory* mem, const char* tag = "rt")
 {
     VkBufferCreateInfo bci = {};
     bci.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bci.size        = size;
     bci.usage       = usage;
     bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    Check(vkCreateBuffer(g.device, &bci, nullptr, buf), "vkCreateBuffer(rt)");
+    Check(vkCreateBuffer(g.device, &bci, nullptr, buf), VkWhat("vkCreateBuffer", tag));
 
     VkMemoryRequirements req = {};
     vkGetBufferMemoryRequirements(g.device, *buf, &req);
@@ -1979,16 +1987,8 @@ void CreateRtBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
     mai.pNext           = (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) ? &flags : nullptr;
     mai.allocationSize  = req.size;
     mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, props);
-    Check(vkAllocateMemory(g.device, &mai, nullptr, mem), "vkAllocateMemory(rt)");
-    Check(vkBindBufferMemory(g.device, *buf, *mem, 0), "vkBindBufferMemory(rt)");
-}
-
-// "call(tag)" for a Check message. The buffer is reused, so hand it straight to Check.
-static const char* VkWhat(const char* call, const char* tag)
-{
-    static char msg[96];
-    snprintf(msg, sizeof msg, "%s(%s)", call, tag);
-    return msg;
+    Check(vkAllocateMemory(g.device, &mai, nullptr, mem), VkWhat("vkAllocateMemory", tag));
+    Check(vkBindBufferMemory(g.device, *buf, *mem, 0), VkWhat("vkBindBufferMemory", tag));
 }
 
 // A device-local, single-mip image with its own allocation and a view over all of it:
@@ -2119,6 +2119,59 @@ void DestroyAccelerationStructures()
     g.sprWorldVertCap = 0; g.sprBlasMaxTris = 0;   // their buffers are gone (DOOM-0411)
 }
 
+// NON-opaque geometry: the trace candidate loop alpha-tests it against palette index 0.
+// The world BLAS takes it for two-sided masked mid-walls (DOOM-0163: grates/fences are
+// see-through in the ray-traced view as in the raster path, mesh.frag FLAG_MASKED), and
+// the sprite BLAS for the billboards. Opaque walls/flats still confirm on the first
+// candidate (one flag read), so they keep vanilla occlusion. Shadow/NEE/muzzle/
+// flashlight/GI-bake rays all force gl_RayFlagsOpaqueEXT, so this reaches only the
+// primary ray: masked walls still cast solid shadows (patterned shadows deferred, cf.
+// DOOM-0108 for sprites). The world build and its refit must pass the same flags.
+static const VkGeometryFlagsKHR kAlphaTestedGeom = 0;
+
+// A non-indexed triangle list over rb_vertex_t, whose world position sits at byte 0.
+static VkAccelerationStructureGeometryKHR TriangleGeometry(VkBuffer vbuf, uint32_t vertexCount,
+                                                           VkGeometryFlagsKHR flags)
+{
+    VkAccelerationStructureGeometryKHR geom = {};
+    geom.sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    geom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+    geom.flags        = flags;
+    geom.geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+    geom.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+    geom.geometry.triangles.vertexData.deviceAddress = BufferAddress(vbuf);
+    geom.geometry.triangles.vertexStride = sizeof(rb_vertex_t);
+    geom.geometry.triangles.maxVertex    = vertexCount - 1;
+    geom.geometry.triangles.indexType    = VK_INDEX_TYPE_NONE_KHR;
+    return geom;
+}
+
+// The TLAS's one geometry: the instance array in g.tlasInstBuf.
+static VkAccelerationStructureGeometryKHR TlasInstancesGeometry()
+{
+    VkAccelerationStructureGeometryKHR tgeom = {};
+    tgeom.sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    tgeom.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+    tgeom.flags        = VK_GEOMETRY_OPAQUE_BIT_KHR;
+    tgeom.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+    tgeom.geometry.instances.arrayOfPointers    = VK_FALSE;
+    tgeom.geometry.instances.data.deviceAddress = BufferAddress(g.tlasInstBuf);
+    return tgeom;
+}
+
+// An identity-transform (3x4 row-major), two-sided TLAS instance.
+static void SetIdentityInstance(VkAccelerationStructureInstanceKHR& inst, uint32_t customIndex,
+                                uint32_t mask, VkDeviceAddress blas)
+{
+    inst.transform.matrix[0][0] = 1.0f;
+    inst.transform.matrix[1][1] = 1.0f;
+    inst.transform.matrix[2][2] = 1.0f;
+    inst.instanceCustomIndex = customIndex;
+    inst.mask  = mask;
+    inst.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+    inst.accelerationStructureReference = blas;
+}
+
 // Build the static BLAS (every level-mesh triangle) and a one-instance identity
 // TLAS over it (DOOM-0009 build step 2b). Runs once per level load after the
 // vertex buffer is uploaded; the mesh is a non-indexed triangle list with the
@@ -2137,23 +2190,7 @@ void BuildAccelerationStructures()
     const uint32_t triCount = g.vertexCount / 3;
 
     // ---- BLAS: the level triangles ----
-    VkAccelerationStructureGeometryKHR geom = {};
-    geom.sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-    geom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-    // DOOM-0163: NON-opaque so the primary ray alpha-tests two-sided masked mid-walls
-    // (grates/fences) against palette index 0 in the trace candidate loop -- see-through
-    // in the ray-traced view like the raster path (mesh.frag FLAG_MASKED). Opaque
-    // walls/flats confirm on first candidate (one flag read), so they keep vanilla
-    // occlusion. Shadow/NEE/muzzle/flashlight/GI-bake rays all force gl_RayFlagsOpaqueEXT,
-    // so this only affects the (single, coherent) primary ray -- masked walls still cast
-    // solid shadows for now (patterned shadows deferred, cf. DOOM-0108 for sprites).
-    geom.flags        = 0;
-    geom.geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
-    geom.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
-    geom.geometry.triangles.vertexData.deviceAddress = BufferAddress(g.vbuf);
-    geom.geometry.triangles.vertexStride = sizeof(rb_vertex_t);
-    geom.geometry.triangles.maxVertex    = g.vertexCount - 1;
-    geom.geometry.triangles.indexType    = VK_INDEX_TYPE_NONE_KHR;
+    VkAccelerationStructureGeometryKHR geom = TriangleGeometry(g.vbuf, g.vertexCount, kAlphaTestedGeom);
 
     VkAccelerationStructureBuildGeometryInfoKHR bgi = {};
     bgi.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
@@ -2285,16 +2322,8 @@ void BuildAccelerationStructures()
     Check(vkMapMemory(g.device, g.sprWorldMem, 0, VK_WHOLE_SIZE, 0, &g.sprWorldMapped),
           "vkMapMemory(sprWorld)");
 
-    VkAccelerationStructureGeometryKHR sgeom = {};
-    sgeom.sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-    sgeom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-    sgeom.flags        = 0;   // NON-opaque: alpha-tested in the trace candidate loop
-    sgeom.geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
-    sgeom.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
-    sgeom.geometry.triangles.vertexData.deviceAddress = BufferAddress(g.sprWorldBuf);
-    sgeom.geometry.triangles.vertexStride = sizeof(rb_vertex_t);
-    sgeom.geometry.triangles.maxVertex    = g.sprWorldVertCap - 1;
-    sgeom.geometry.triangles.indexType    = VK_INDEX_TYPE_NONE_KHR;
+    VkAccelerationStructureGeometryKHR sgeom =
+        TriangleGeometry(g.sprWorldBuf, g.sprWorldVertCap, kAlphaTestedGeom);
 
     VkAccelerationStructureBuildGeometryInfoKHR sbgi = {};
     sbgi.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
@@ -2338,16 +2367,8 @@ void BuildAccelerationStructures()
     if (g.skyMeshVerts >= 3 && g.skyMeshBuf != VK_NULL_HANDLE)
     {
         const uint32_t skyTris = g.skyMeshVerts / 3u;
-        VkAccelerationStructureGeometryKHR kgeom = {};
-        kgeom.sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-        kgeom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-        kgeom.flags        = VK_GEOMETRY_OPAQUE_BIT_KHR;   // solid backdrop: auto-commits
-        kgeom.geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
-        kgeom.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
-        kgeom.geometry.triangles.vertexData.deviceAddress = BufferAddress(g.skyMeshBuf);
-        kgeom.geometry.triangles.vertexStride = sizeof(rb_vertex_t);
-        kgeom.geometry.triangles.maxVertex    = g.skyMeshVerts - 1;
-        kgeom.geometry.triangles.indexType    = VK_INDEX_TYPE_NONE_KHR;
+        VkAccelerationStructureGeometryKHR kgeom =   // solid backdrop: auto-commits
+            TriangleGeometry(g.skyMeshBuf, g.skyMeshVerts, VK_GEOMETRY_OPAQUE_BIT_KHR);
 
         VkAccelerationStructureBuildGeometryInfoKHR kbgi = {};
         kbgi.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
@@ -2415,33 +2436,16 @@ void BuildAccelerationStructures()
     Check(vkMapMemory(g.device, g.tlasInstMem, 0, VK_WHOLE_SIZE, 0, &g.tlasInstMapped), "vkMapMemory(tlasInst)");
     VkAccelerationStructureInstanceKHR* insts = (VkAccelerationStructureInstanceKHR*)g.tlasInstMapped;
     std::memset(insts, 0, sizeof(VkAccelerationStructureInstanceKHR) * kMaxTlasInstances);
-    insts[0].transform.matrix[0][0] = 1.0f;   // world: identity 3x4 row-major
-    insts[0].transform.matrix[1][1] = 1.0f;
-    insts[0].transform.matrix[2][2] = 1.0f;
-    insts[0].mask  = 0x01;                     // world: primary + shadow/NEE rays
-    insts[0].flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
-    insts[0].accelerationStructureReference = blasAddr;
+    SetIdentityInstance(insts[0], 0u, 0x01, blasAddr);   // world: primary + shadow/NEE rays
     // DOOM-0141: instance 1 = the static sky backdrop (mask 0x04 -> primary rays only;
     // custom index 2 -> the megakernel shades it as sky). Set once; never per-frame.
     if (skyPresent)
     {
-        insts[1].transform.matrix[0][0] = 1.0f;
-        insts[1].transform.matrix[1][1] = 1.0f;
-        insts[1].transform.matrix[2][2] = 1.0f;
-        insts[1].instanceCustomIndex = 2u;
-        insts[1].mask  = 0x04;
-        insts[1].flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
-        insts[1].accelerationStructureReference = g.skyBlasAddr;
+        SetIdentityInstance(insts[1], 2u, 0x04, g.skyBlasAddr);
     }
     // The sprite slot (1 when no sky, else 2) is left zeroed until a frame fills it.
 
-    VkAccelerationStructureGeometryKHR tgeom = {};
-    tgeom.sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-    tgeom.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
-    tgeom.flags        = VK_GEOMETRY_OPAQUE_BIT_KHR;
-    tgeom.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
-    tgeom.geometry.instances.arrayOfPointers    = VK_FALSE;
-    tgeom.geometry.instances.data.deviceAddress = BufferAddress(g.tlasInstBuf);
+    VkAccelerationStructureGeometryKHR tgeom = TlasInstancesGeometry();
 
     VkAccelerationStructureBuildGeometryInfoKHR tbgi = {};
     tbgi.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
@@ -2530,16 +2534,7 @@ void RecordRefitAS(VkCommandBuffer cb)
     const uint32_t triCount = g.vertexCount / 3;
 
     // BLAS update: same geometry description as the build, mode UPDATE, src == dst.
-    VkAccelerationStructureGeometryKHR geom = {};
-    geom.sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-    geom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-    geom.flags        = 0;   // DOOM-0163: NON-opaque, must match the build (masked mid-wall alpha test)
-    geom.geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
-    geom.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
-    geom.geometry.triangles.vertexData.deviceAddress = BufferAddress(g.vbuf);
-    geom.geometry.triangles.vertexStride = sizeof(rb_vertex_t);
-    geom.geometry.triangles.maxVertex    = g.vertexCount - 1;
-    geom.geometry.triangles.indexType    = VK_INDEX_TYPE_NONE_KHR;
+    VkAccelerationStructureGeometryKHR geom = TriangleGeometry(g.vbuf, g.vertexCount, kAlphaTestedGeom);
 
     VkAccelerationStructureBuildGeometryInfoKHR bgi = {};
     bgi.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
@@ -2605,16 +2600,8 @@ void BuildSpriteTlas()
     if (haveSpr)
     {
         // Sprite BLAS rebuild over this frame's billboards (non-opaque triangles).
-        VkAccelerationStructureGeometryKHR sgeom = {};
-        sgeom.sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-        sgeom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-        sgeom.flags        = 0;   // NON-opaque: palette-0 alpha-tested in the trace
-        sgeom.geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
-        sgeom.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
-        sgeom.geometry.triangles.vertexData.deviceAddress = BufferAddress(g.sprWorldBuf);
-        sgeom.geometry.triangles.vertexStride = sizeof(rb_vertex_t);
-        sgeom.geometry.triangles.maxVertex    = g.sprWorldVertCount - 1;
-        sgeom.geometry.triangles.indexType    = VK_INDEX_TYPE_NONE_KHR;
+        VkAccelerationStructureGeometryKHR sgeom =
+            TriangleGeometry(g.sprWorldBuf, g.sprWorldVertCount, kAlphaTestedGeom);
 
         VkAccelerationStructureBuildGeometryInfoKHR sbgi = {};
         sbgi.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
@@ -2632,13 +2619,9 @@ void BuildSpriteTlas()
         g.pfnCmdBuildAS(g.cmd, 1, &sbgi, &pSr);
         asBarrier();   // TLAS rebuild below reads the sprite BLAS extents
 
-        insts[base].transform.matrix[0][0] = 1.0f;
-        insts[base].transform.matrix[1][1] = 1.0f;
-        insts[base].transform.matrix[2][2] = 1.0f;
-        insts[base].instanceCustomIndex = 1u;      // megakernel: "this hit is a sprite"
-        insts[base].mask  = 0x02;                   // primary rays only (shadow/NEE cull to 0x01)
-        insts[base].flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
-        insts[base].accelerationStructureReference = g.spriteBlasAddr;
+        // Custom index 1 tells the megakernel "this hit is a sprite"; mask 0x02 is primary
+        // rays only (shadow/NEE cull to 0x01).
+        SetIdentityInstance(insts[base], 1u, 0x02, g.spriteBlasAddr);
     }
     else
     {
@@ -2647,13 +2630,7 @@ void BuildSpriteTlas()
 
     const uint32_t instCount = haveSpr ? (base + 1u) : base;
 
-    VkAccelerationStructureGeometryKHR tgeom = {};
-    tgeom.sType        = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
-    tgeom.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
-    tgeom.flags        = VK_GEOMETRY_OPAQUE_BIT_KHR;
-    tgeom.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
-    tgeom.geometry.instances.arrayOfPointers    = VK_FALSE;
-    tgeom.geometry.instances.data.deviceAddress = BufferAddress(g.tlasInstBuf);
+    VkAccelerationStructureGeometryKHR tgeom = TlasInstancesGeometry();
 
     VkAccelerationStructureBuildGeometryInfoKHR tbgi = {};
     tbgi.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
@@ -3857,24 +3834,11 @@ void CreateSampledImage(uint32_t w, uint32_t h, VkFormat fmt,
                         VkImageView* outView, uint32_t depth = 1)
 {
     // Staging buffer (host visible) holding the source texels.
-    VkBufferCreateInfo bci = {};
-    bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bci.size = bytes;
-    bci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-    bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     VkBuffer staging = VK_NULL_HANDLE;
-    Check(vkCreateBuffer(g.device, &bci, nullptr, &staging), "vkCreateBuffer(staging)");
-
-    VkMemoryRequirements sreq = {};
-    vkGetBufferMemoryRequirements(g.device, staging, &sreq);
-    VkMemoryAllocateInfo smai = {};
-    smai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    smai.allocationSize = sreq.size;
-    smai.memoryTypeIndex = FindMemoryType(sreq.memoryTypeBits,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     VkDeviceMemory stagingMem = VK_NULL_HANDLE;
-    Check(vkAllocateMemory(g.device, &smai, nullptr, &stagingMem), "vkAllocateMemory(staging)");
-    Check(vkBindBufferMemory(g.device, staging, stagingMem, 0), "vkBindBufferMemory(staging)");
+    CreateRtBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                   &staging, &stagingMem, "staging");
 
     void* mapped = nullptr;
     Check(vkMapMemory(g.device, stagingMem, 0, bytes, 0, &mapped), "vkMapMemory(staging)");
@@ -4113,21 +4077,9 @@ void UploadSeepField(rb_seep_t* f)
     if (g.seepStagingMem) { vkFreeMemory(g.device, g.seepStagingMem, nullptr); g.seepStagingMem = VK_NULL_HANDLE; }
     {
         const VkDeviceSize bytes = (VkDeviceSize)w * h * 4 * sizeof(uint16_t);
-        VkBufferCreateInfo sbi = {};
-        sbi.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        sbi.size        = bytes;
-        sbi.usage       = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-        sbi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        Check(vkCreateBuffer(g.device, &sbi, nullptr, &g.seepStaging), "vkCreateBuffer(seep staging)");
-        VkMemoryRequirements sreq = {};
-        vkGetBufferMemoryRequirements(g.device, g.seepStaging, &sreq);
-        VkMemoryAllocateInfo smai = {};
-        smai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        smai.allocationSize  = sreq.size;
-        smai.memoryTypeIndex = FindMemoryType(sreq.memoryTypeBits,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        Check(vkAllocateMemory(g.device, &smai, nullptr, &g.seepStagingMem), "vkAllocateMemory(seep staging)");
-        Check(vkBindBufferMemory(g.device, g.seepStaging, g.seepStagingMem, 0), "vkBindBufferMemory(seep staging)");
+        CreateRtBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                       &g.seepStaging, &g.seepStagingMem, "seep staging");
         Check(vkMapMemory(g.device, g.seepStagingMem, 0, bytes, 0, &g.seepStagingMapped),
               "vkMapMemory(seep staging)");
     }
@@ -4144,22 +4096,10 @@ void UploadSeepField(rb_seep_t* f)
     // const nor a push lane (that block is full -- INV-5). 24 bytes, created once.
     if (!g.seepUbo)
     {
-        VkBufferCreateInfo bci = {};
-        bci.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        bci.size        = 6 * sizeof(float);
-        bci.usage       = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
-        bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        Check(vkCreateBuffer(g.device, &bci, nullptr, &g.seepUbo), "vkCreateBuffer(seep ubo)");
-        VkMemoryRequirements req = {};
-        vkGetBufferMemoryRequirements(g.device, g.seepUbo, &req);
-        VkMemoryAllocateInfo mai = {};
-        mai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        mai.allocationSize  = req.size;
-        mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        Check(vkAllocateMemory(g.device, &mai, nullptr, &g.seepUboMem), "vkAllocateMemory(seep ubo)");
-        Check(vkBindBufferMemory(g.device, g.seepUbo, g.seepUboMem, 0), "vkBindBufferMemory(seep ubo)");
-        Check(vkMapMemory(g.device, g.seepUboMem, 0, req.size, 0, &g.seepUboMapped),
+        CreateRtBuffer(6 * sizeof(float), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                       &g.seepUbo, &g.seepUboMem, "seep ubo");
+        Check(vkMapMemory(g.device, g.seepUboMem, 0, VK_WHOLE_SIZE, 0, &g.seepUboMapped),
               "vkMapMemory(seep ubo)");
     }
 
@@ -5701,22 +5641,9 @@ void CreateSpriteBuffer()
     // fill can't clobber the copy the GPU is still drawing from.
     for (uint32_t s = 0; s < VulkanState::kFramesInFlight; s++)
     {
-        VkBufferCreateInfo bci = {};
-        bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        bci.size = size;
-        bci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-        bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        Check(vkCreateBuffer(g.device, &bci, nullptr, &g.spriteVbufSlot[s]), "vkCreateBuffer(sprites)");
-
-        VkMemoryRequirements req = {};
-        vkGetBufferMemoryRequirements(g.device, g.spriteVbufSlot[s], &req);
-        VkMemoryAllocateInfo mai = {};
-        mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        mai.allocationSize = req.size;
-        mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        Check(vkAllocateMemory(g.device, &mai, nullptr, &g.spriteVbufMemSlot[s]), "vkAllocateMemory(sprites)");
-        Check(vkBindBufferMemory(g.device, g.spriteVbufSlot[s], g.spriteVbufMemSlot[s], 0), "vkBindBufferMemory(sprites)");
+        CreateRtBuffer(size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                       &g.spriteVbufSlot[s], &g.spriteVbufMemSlot[s], "sprites");
         Check(vkMapMemory(g.device, g.spriteVbufMemSlot[s], 0, size, 0, &g.spriteMappedSlot[s]), "vkMapMemory(sprites)");
     }
     // Point the g.<name> aliases at the active slot so a frame drawn before the first
@@ -5810,32 +5737,45 @@ void InitPaletteAndDescriptorSet()
 static const float kNukageLe[3] = { 0.05f, 0.19f, 0.02f };   // green toxic-sludge glow
 static const float kLavaLe[3]   = { 0.55f, 0.19f, 0.03f };   // hot orange lava glow
 
+// The liquid flats, by NAME. INV-2: only NUKAGE1-3 / LAVA1-4 -- water, blood and SLIME*
+// stay out (some SLIME* frames are dry rock). The per-level flag (FlagLiquidFlats) and the
+// forced emission (ForceLiquidEmissive) both read this one list.
+static const struct { const char* name; unsigned int bit; } kLiquidFlats[] = {
+    { "NUKAGE1", RB_FLAG_LIQUID_NUKAGE }, { "NUKAGE2", RB_FLAG_LIQUID_NUKAGE },
+    { "NUKAGE3", RB_FLAG_LIQUID_NUKAGE },
+    { "LAVA1", RB_FLAG_LIQUID_LAVA }, { "LAVA2", RB_FLAG_LIQUID_LAVA },
+    { "LAVA3", RB_FLAG_LIQUID_LAVA }, { "LAVA4", RB_FLAG_LIQUID_LAVA },
+};
+
+// A flat's unified material id -- numWall + (lump - firstflat), the textured-decode id
+// ordering -- or -1 when this WAD lacks the flat.
+static int LiquidFlatId(const char* name, int numWall, int numFlat)
+{
+    char nm[9]; strncpy(nm, name, 8); nm[8] = '\0';
+    int lump = W_CheckNumForName(nm);
+    if (lump < 0) return -1;
+    int fi = lump - firstflat;
+    return (fi < 0 || fi >= numFlat) ? -1 : numWall + fi;
+}
+
 // DOOM-0183 L2: force a guaranteed, tunable emissive Le on the nukage/lava flats by NAME,
 // OVERWRITING whatever the peak-gated derive produced. This is the whole cast-light
 // mechanism (INV-7): a material with Le>0 enters the NEE emitter set (BuildStaticEmitterSet)
-// and self-glows on the primary ray, with no new light type. Delivers DOOM-0083. The flat's
-// unified id is numWall + (lump - firstflat), matching the textured-decode id ordering.
+// and self-glows on the primary ray, with no new light type. Delivers DOOM-0083.
 static void ForceLiquidEmissive(const rb_atlas_t* a, std::vector<float>& out)
 {
-    const struct { const char* name; const float* le; } lut[] = {
-        { "NUKAGE1", kNukageLe }, { "NUKAGE2", kNukageLe }, { "NUKAGE3", kNukageLe },
-        { "LAVA1", kLavaLe }, { "LAVA2", kLavaLe }, { "LAVA3", kLavaLe }, { "LAVA4", kLavaLe },
-    };
     // DOOM-0330: the resolved ids are recorded as well as written. The fog-light bake needs
     // "is this emitter a pool?" and this is the one place that already knows, by the same
     // name lookup — a second table would be a second answer waiting to disagree.
     g.liquidMatIds.clear();
-    for (const auto& e : lut) {
-        char nm[9]; strncpy(nm, e.name, 8); nm[8] = '\0';
-        int lump = W_CheckNumForName(nm);
-        if (lump < 0) continue;
-        int fi = lump - firstflat;
-        if (fi < 0 || fi >= a->numflat) continue;
-        int id = a->numwall + fi;
+    for (const auto& e : kLiquidFlats) {
+        int id = LiquidFlatId(e.name, a->numwall, a->numflat);
+        if (id < 0) continue;
+        const float* le = (e.bit == RB_FLAG_LIQUID_LAVA) ? kLavaLe : kNukageLe;
         if ((size_t)(id * 3 + 2) < out.size()) {
-            out[id * 3 + 0] = e.le[0];
-            out[id * 3 + 1] = e.le[1];
-            out[id * 3 + 2] = e.le[2];
+            out[id * 3 + 0] = le[0];
+            out[id * 3 + 1] = le[1];
+            out[id * 3 + 2] = le[2];
             g.liquidMatIds.push_back(id);
         }
     }
@@ -5949,23 +5889,11 @@ static void UploadImageBatch(const std::vector<BatchImage>& imgs, Fill fill,
         VkDeviceSize sz = (VkDeviceSize)imgs[i].w * imgs[i].h * imgs[i].texelBytes;
         stageBytes += (sz + 3) & ~(VkDeviceSize)3;
     }
-    VkBufferCreateInfo sbci = {};
-    sbci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    sbci.size = stageBytes;
-    sbci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-    sbci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     VkBuffer staging = VK_NULL_HANDLE;
-    Check(vkCreateBuffer(g.device, &sbci, nullptr, &staging), what("vkCreateBuffer staging"));
-    VkMemoryRequirements sreq = {};
-    vkGetBufferMemoryRequirements(g.device, staging, &sreq);
-    VkMemoryAllocateInfo smai = {};
-    smai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    smai.allocationSize = sreq.size;
-    smai.memoryTypeIndex = FindMemoryType(sreq.memoryTypeBits,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     VkDeviceMemory stagingMem = VK_NULL_HANDLE;
-    Check(vkAllocateMemory(g.device, &smai, nullptr, &stagingMem), what("vkAllocateMemory staging"));
-    Check(vkBindBufferMemory(g.device, staging, stagingMem, 0), what("vkBindBufferMemory staging"));
+    CreateRtBuffer(stageBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                   &staging, &stagingMem, "batch staging");
     unsigned char* sp = nullptr;
     Check(vkMapMemory(g.device, stagingMem, 0, stageBytes, 0, (void**)&sp), what("vkMapMemory staging"));
     for (int i = 0; i < n; i++)
@@ -6107,21 +6035,9 @@ void CreateOverlayResources(int w, int h)
     VkDeviceSize bytes = (VkDeviceSize)w * h;
 
     // Persistent host-visible staging buffer, mapped for the whole session.
-    VkBufferCreateInfo bci = {};
-    bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bci.size = bytes;
-    bci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-    bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    Check(vkCreateBuffer(g.device, &bci, nullptr, &g.overlayStaging), "vkCreateBuffer(overlay)");
-    VkMemoryRequirements sreq = {};
-    vkGetBufferMemoryRequirements(g.device, g.overlayStaging, &sreq);
-    VkMemoryAllocateInfo smai = {};
-    smai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    smai.allocationSize = sreq.size;
-    smai.memoryTypeIndex = FindMemoryType(sreq.memoryTypeBits,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    Check(vkAllocateMemory(g.device, &smai, nullptr, &g.overlayStagingMem), "vkAllocateMemory(overlay staging)");
-    Check(vkBindBufferMemory(g.device, g.overlayStaging, g.overlayStagingMem, 0), "vkBindBufferMemory(overlay)");
+    CreateRtBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                   &g.overlayStaging, &g.overlayStagingMem, "overlay staging");
     Check(vkMapMemory(g.device, g.overlayStagingMem, 0, bytes, 0, &g.overlayMapped), "vkMapMemory(overlay)");
 
     // Device-local R8 image (palette indices), sampled by overlay.frag.
@@ -6333,21 +6249,9 @@ void CreateTextResources()
     // FlushMenuText memcpys + draws it after the fence, so no in-flight double-buffering.
     g.textVbufCap = 4096 * 6;   // up to ~4096 glyphs/frame, 6 verts each
     VkDeviceSize vbytes = (VkDeviceSize)g.textVbufCap * sizeof(TextVertex);
-    VkBufferCreateInfo bci = {};
-    bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bci.size = vbytes;
-    bci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-    bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    Check(vkCreateBuffer(g.device, &bci, nullptr, &g.textVbuf), "vkCreateBuffer(text)");
-    VkMemoryRequirements req = {};
-    vkGetBufferMemoryRequirements(g.device, g.textVbuf, &req);
-    VkMemoryAllocateInfo mai = {};
-    mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    mai.allocationSize = req.size;
-    mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    Check(vkAllocateMemory(g.device, &mai, nullptr, &g.textVbufMemory), "vkAllocateMemory(text)");
-    Check(vkBindBufferMemory(g.device, g.textVbuf, g.textVbufMemory, 0), "vkBindBufferMemory(text)");
+    CreateRtBuffer(vbytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                   &g.textVbuf, &g.textVbufMemory, "text");
     Check(vkMapMemory(g.device, g.textVbufMemory, 0, vbytes, 0, &g.textVbufMapped), "vkMapMemory(text)");
 
     g.menuFontReady = true;
@@ -6990,42 +6894,18 @@ static void BuildHdSet(const std::vector<HdSrc>& srcsIn, const rb_matctrl_t* tab
     // 5. Control SSBO (device-local), staged upload.
     VkDeviceSize ctrlBytes = (VkDeviceSize)nmat * sizeof(rb_matctrl_t);
     {
-        VkBufferCreateInfo bci = {};
-        bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        bci.size = ctrlBytes;
-        bci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-        bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         VkBuffer cs = VK_NULL_HANDLE;
-        Check(vkCreateBuffer(g.device, &bci, nullptr, &cs), "vkCreateBuffer(hd ctrl staging)");
-        VkMemoryRequirements creq = {};
-        vkGetBufferMemoryRequirements(g.device, cs, &creq);
-        VkMemoryAllocateInfo cmai = {};
-        cmai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        cmai.allocationSize = creq.size;
-        cmai.memoryTypeIndex = FindMemoryType(creq.memoryTypeBits,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         VkDeviceMemory csMem = VK_NULL_HANDLE;
-        Check(vkAllocateMemory(g.device, &cmai, nullptr, &csMem), "vkAllocateMemory(hd ctrl staging)");
-        Check(vkBindBufferMemory(g.device, cs, csMem, 0), "vkBindBufferMemory(hd ctrl staging)");
+        CreateRtBuffer(ctrlBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                       &cs, &csMem, "hd ctrl staging");
         void* cp = nullptr;
         Check(vkMapMemory(g.device, csMem, 0, ctrlBytes, 0, &cp), "vkMapMemory(hd ctrl staging)");
         std::memcpy(cp, table, (size_t)ctrlBytes);
         vkUnmapMemory(g.device, csMem);
 
-        VkBufferCreateInfo dbci = {};
-        dbci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        dbci.size = ctrlBytes;
-        dbci.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-        dbci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        Check(vkCreateBuffer(g.device, &dbci, nullptr, &g.hdCtrlBuf), "vkCreateBuffer(hd ctrl)");
-        VkMemoryRequirements dreq = {};
-        vkGetBufferMemoryRequirements(g.device, g.hdCtrlBuf, &dreq);
-        VkMemoryAllocateInfo dmai = {};
-        dmai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        dmai.allocationSize = dreq.size;
-        dmai.memoryTypeIndex = FindMemoryType(dreq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        Check(vkAllocateMemory(g.device, &dmai, nullptr, &g.hdCtrlMem), "vkAllocateMemory(hd ctrl)");
-        Check(vkBindBufferMemory(g.device, g.hdCtrlBuf, g.hdCtrlMem, 0), "vkBindBufferMemory(hd ctrl)");
+        CreateRtBuffer(ctrlBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &g.hdCtrlBuf, &g.hdCtrlMem, "hd ctrl");
         VkCommandBuffer ccb = BeginOneTime();
         VkBufferCopy cpy = { 0, 0, ctrlBytes };
         vkCmdCopyBuffer(ccb, cs, g.hdCtrlBuf, 1, &cpy);
@@ -7102,23 +6982,11 @@ static void InitHdDefault()
 // so the shader has a surface-true "is this liquid?" signal (§4.2), replacing DOOM-0181's
 // crude albedo-green guess as the effect trigger. Name-derived, not CSV: the bit rides
 // MatCtrl.flags even on a paletted flat (usePBR=0), so nukage/lava need no HD hero. The
-// flat's unified id is matNumWall + (lump - firstflat). INV-2: only NUKAGE1-3 / LAVA1-4 —
-// water/blood/SLIME* stay unflagged (some SLIME* frames are dry rock).
+// set is kLiquidFlats.
 static void FlagLiquidFlats(rb_matctrl_t* table, int N)
 {
-    const struct { const char* name; unsigned int bit; } lut[] = {
-        { "NUKAGE1", RB_FLAG_LIQUID_NUKAGE }, { "NUKAGE2", RB_FLAG_LIQUID_NUKAGE },
-        { "NUKAGE3", RB_FLAG_LIQUID_NUKAGE },
-        { "LAVA1", RB_FLAG_LIQUID_LAVA }, { "LAVA2", RB_FLAG_LIQUID_LAVA },
-        { "LAVA3", RB_FLAG_LIQUID_LAVA }, { "LAVA4", RB_FLAG_LIQUID_LAVA },
-    };
-    for (const auto& e : lut) {
-        char nm[9]; strncpy(nm, e.name, 8); nm[8] = '\0';
-        int lump = W_CheckNumForName(nm);
-        if (lump < 0) continue;
-        int fi = lump - firstflat;
-        if (fi < 0 || fi >= g.matNumFlat) continue;
-        int id = g.matNumWall + fi;
+    for (const auto& e : kLiquidFlats) {
+        int id = LiquidFlatId(e.name, g.matNumWall, g.matNumFlat);
         if (id >= 0 && id < N) table[id].flags |= e.bit;
     }
 }
@@ -9072,31 +8940,16 @@ extern "C" void RB_Vulkan_BuildLevel(void)
     // build-ahead re-height writes the next frame's slot while the GPU reads the other.
     for (uint32_t s = 0; s < VulkanState::kFramesInFlight; s++)
     {
-        VkBufferCreateInfo bci = {};
-        bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        bci.size = size;
-        bci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
         // With RT on, the same buffer is read as BLAS build input (by GPU address), so
-        // it also needs the AS-input + device-address usage and a device-address alloc.
+        // it also needs the AS-input + device-address usage, and with it the
+        // device-address allocation CreateRtBuffer gives such a buffer.
+        VkBufferUsageFlags usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
         if (g.rtEnabled)
-            bci.usage |= VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
-                       | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-        bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        Check(vkCreateBuffer(g.device, &bci, nullptr, &g.vbufSlot[s]), "vkCreateBuffer(vbuf)");
-
-        VkMemoryRequirements req = {};
-        vkGetBufferMemoryRequirements(g.device, g.vbufSlot[s], &req);
-        VkMemoryAllocateFlagsInfo vbufFlags = {};
-        vbufFlags.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
-        vbufFlags.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
-        VkMemoryAllocateInfo mai = {};
-        mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        mai.pNext = g.rtEnabled ? &vbufFlags : nullptr;
-        mai.allocationSize = req.size;
-        mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        Check(vkAllocateMemory(g.device, &mai, nullptr, &g.vbufMemSlot[s]), "vkAllocateMemory(vbuf)");
-        Check(vkBindBufferMemory(g.device, g.vbufSlot[s], g.vbufMemSlot[s], 0), "vkBindBufferMemory(vbuf)");
+            usage |= VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+                   | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+        CreateRtBuffer(size, usage,
+                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                       &g.vbufSlot[s], &g.vbufMemSlot[s], "vbuf");
 
         // Kept mapped for the whole level: RB_UpdateMeshHeights patches moving-sector
         // z's into it each frame (host-coherent, so no flush). Unmapped on rebuild
