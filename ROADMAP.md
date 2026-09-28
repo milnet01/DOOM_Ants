@@ -3808,6 +3808,16 @@ defect visible before a player finds it.
   Kind: doc-fix.
   Source: field-pass-2026-09-27 (coding.md §1.3 as amended by claude-config b9bc284).
 
+- 📋 [DOOM-0470] **Two build comments name the wrong language standard or the wrong reason.**
+  r_vulkan.cpp's kPi comment says the TU builds as strict -std=c++17;
+  the Makefile's CXXSTD is -std=c++23. The Makefile's gnu11 comment says
+  C23 would reject the empty () action-function table. Measured on GCC
+  16.2 with -fsyntax-only: every file failing under -std=c23 fails first
+  on doomtype.h's `false` enum constant, a keyword in C23.
+  **Layman:** Two notes in the build files describe the compiler settings wrongly; the code is fine.
+  Kind: doc-fix.
+  Source: in-session-2026-09-28 CFG-0627 re-walk.
+
 ## 0.10.0 — The frame budget
 
 Performance and pacing, and the benchmark harness that makes a regression
