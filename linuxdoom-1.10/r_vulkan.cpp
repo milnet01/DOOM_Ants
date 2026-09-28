@@ -1983,6 +1983,52 @@ void CreateRtBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
     Check(vkBindBufferMemory(g.device, *buf, *mem, 0), "vkBindBufferMemory(rt)");
 }
 
+// "call(tag)" for a Check message. The buffer is reused, so hand it straight to Check.
+static const char* VkWhat(const char* call, const char* tag)
+{
+    static char msg[96];
+    snprintf(msg, sizeof msg, "%s(%s)", call, tag);
+    return msg;
+}
+
+// A device-local, single-mip image with its own allocation and a view over all of it:
+// CreateRtBuffer's counterpart for images. A depth above 1 makes it 3-D.
+static void CreateImage(VkExtent3D ext, VkFormat fmt, VkImageUsageFlags usage,
+                        VkImageAspectFlags aspect, const char* tag,
+                        VkImage* img, VkDeviceMemory* mem, VkImageView* view)
+{
+    VkImageCreateInfo ici = {};
+    ici.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ici.imageType     = (ext.depth > 1) ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
+    ici.format        = fmt;
+    ici.extent        = ext;
+    ici.mipLevels     = 1;
+    ici.arrayLayers   = 1;
+    ici.samples       = VK_SAMPLE_COUNT_1_BIT;
+    ici.tiling        = VK_IMAGE_TILING_OPTIMAL;
+    ici.usage         = usage;
+    ici.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+    ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    Check(vkCreateImage(g.device, &ici, nullptr, img), VkWhat("vkCreateImage", tag));
+
+    VkMemoryRequirements req = {};
+    vkGetImageMemoryRequirements(g.device, *img, &req);
+    VkMemoryAllocateInfo mai = {};
+    mai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    mai.allocationSize  = req.size;
+    mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    Check(vkAllocateMemory(g.device, &mai, nullptr, mem), VkWhat("vkAllocateMemory", tag));
+    Check(vkBindImageMemory(g.device, *img, *mem, 0), VkWhat("vkBindImageMemory", tag));
+
+    VkImageViewCreateInfo vci = {};
+    vci.sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vci.image            = *img;
+    vci.viewType         = (ext.depth > 1) ? VK_IMAGE_VIEW_TYPE_3D : VK_IMAGE_VIEW_TYPE_2D;
+    vci.format           = fmt;
+    vci.subresourceRange = { aspect, 0, 1, 0, 1 };
+    Check(vkCreateImageView(g.device, &vci, nullptr, view), VkWhat("vkCreateImageView", tag));
+}
+
 // Create a host-visible device-address STORAGE buffer and fill it with `bytes` of
 // `data`. The path tracer reads these (the per-material Le table, the per-level
 // emitter list) by GPU address via buffer_reference, the same way it reads the
@@ -2802,37 +2848,10 @@ void CreateRtComputePipeline()
     // (RB_RtVerify) sums radiance into it and copies it here for the CPU rel-MSE
     // check. binding 2 is statically referenced by the shader, so it must hold a
     // valid view even for the display dispatches that never touch it — written now.
-    VkImageCreateInfo aci = {};
-    aci.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    aci.imageType     = VK_IMAGE_TYPE_2D;
-    aci.format        = VK_FORMAT_R32G32B32A32_SFLOAT;
-    aci.extent        = { kVerifyW, kVerifyH, 1 };
-    aci.mipLevels     = 1;
-    aci.arrayLayers   = 1;
-    aci.samples       = VK_SAMPLE_COUNT_1_BIT;
-    aci.tiling        = VK_IMAGE_TILING_OPTIMAL;
-    aci.usage         = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
-                      | VK_IMAGE_USAGE_TRANSFER_DST_BIT;   // DST for the clear
-    aci.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
-    aci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    Check(vkCreateImage(g.device, &aci, nullptr, &g.rtAccum), "vkCreateImage(accum)");
-
-    VkMemoryRequirements areq = {};
-    vkGetImageMemoryRequirements(g.device, g.rtAccum, &areq);
-    VkMemoryAllocateInfo amai = {};
-    amai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    amai.allocationSize  = areq.size;
-    amai.memoryTypeIndex = FindMemoryType(areq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    Check(vkAllocateMemory(g.device, &amai, nullptr, &g.rtAccumMem), "vkAllocateMemory(accum)");
-    Check(vkBindImageMemory(g.device, g.rtAccum, g.rtAccumMem, 0), "vkBindImageMemory(accum)");
-
-    VkImageViewCreateInfo avci = {};
-    avci.sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    avci.image            = g.rtAccum;
-    avci.viewType         = VK_IMAGE_VIEW_TYPE_2D;
-    avci.format           = VK_FORMAT_R32G32B32A32_SFLOAT;
-    avci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-    Check(vkCreateImageView(g.device, &avci, nullptr, &g.rtAccumView), "vkCreateImageView(accum)");
+    CreateImage({ kVerifyW, kVerifyH, 1 }, VK_FORMAT_R32G32B32A32_SFLOAT,
+                VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+                | VK_IMAGE_USAGE_TRANSFER_DST_BIT,   // DST for the clear
+                VK_IMAGE_ASPECT_COLOR_BIT, "accum", &g.rtAccum, &g.rtAccumMem, &g.rtAccumView);
 
     // Park it in GENERAL once. The descriptor (binding 2) advertises GENERAL and the
     // shader statically references it, so even the display dispatches that never read
@@ -3577,36 +3596,8 @@ void CreateSvgfTargets()
         // is enough; the composite upsamples it back (fetchFogBilinear).
         VkExtent3D ext = (i == SV_FOG) ? VkExtent3D{ (W + 1u) / 2u, (H + 1u) / 2u, 1u }
                                        : VkExtent3D{ W, H, 1u };
-        VkImageCreateInfo ici = {};
-        ici.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        ici.imageType     = VK_IMAGE_TYPE_2D;
-        ici.format        = fmt;
-        ici.extent        = ext;
-        ici.mipLevels     = 1;
-        ici.arrayLayers   = 1;
-        ici.samples       = VK_SAMPLE_COUNT_1_BIT;
-        ici.tiling        = VK_IMAGE_TILING_OPTIMAL;
-        ici.usage         = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-        ici.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
-        ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        Check(vkCreateImage(g.device, &ici, nullptr, &g.svImg[i]), "vkCreateImage(svgf)");
-
-        VkMemoryRequirements req = {};
-        vkGetImageMemoryRequirements(g.device, g.svImg[i], &req);
-        VkMemoryAllocateInfo mai = {};
-        mai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        mai.allocationSize  = req.size;
-        mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        Check(vkAllocateMemory(g.device, &mai, nullptr, &g.svMem[i]), "vkAllocateMemory(svgf)");
-        Check(vkBindImageMemory(g.device, g.svImg[i], g.svMem[i], 0), "vkBindImageMemory(svgf)");
-
-        VkImageViewCreateInfo vci = {};
-        vci.sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        vci.image            = g.svImg[i];
-        vci.viewType         = VK_IMAGE_VIEW_TYPE_2D;
-        vci.format           = fmt;
-        vci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-        Check(vkCreateImageView(g.device, &vci, nullptr, &g.svView[i]), "vkCreateImageView(svgf)");
+        CreateImage(ext, fmt, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                    VK_IMAGE_ASPECT_COLOR_BIT, "svgf", &g.svImg[i], &g.svMem[i], &g.svView[i]);
     }
 
     {
@@ -3734,40 +3725,12 @@ void CreateTaauTargets()
     const uint32_t W = g.extent.width, H = g.extent.height;
     for (uint32_t i = 0; i < TA_COUNT; i++) {
         VkFormat fmt = (i == TA_OUT) ? VK_FORMAT_R8G8B8A8_UNORM : VK_FORMAT_R16G16B16A16_SFLOAT;
-        VkImageCreateInfo ici = {};
-        ici.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        ici.imageType     = VK_IMAGE_TYPE_2D;
-        ici.format        = fmt;
-        ici.extent        = { W, H, 1 };
-        ici.mipLevels     = 1;
-        ici.arrayLayers   = 1;
-        ici.samples       = VK_SAMPLE_COUNT_1_BIT;
-        ici.tiling        = VK_IMAGE_TILING_OPTIMAL;
         // The output is also a blit source; the histories are cleared at init/
         // resize via vkCmdClearColorImage, which requires TRANSFER_DST (DOOM-0133).
-        ici.usage         = VK_IMAGE_USAGE_STORAGE_BIT
-                          | ((i == TA_OUT) ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT
-                                           : VK_IMAGE_USAGE_TRANSFER_DST_BIT);
-        ici.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
-        ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        Check(vkCreateImage(g.device, &ici, nullptr, &g.taImg[i]), "vkCreateImage(taau)");
-
-        VkMemoryRequirements req = {};
-        vkGetImageMemoryRequirements(g.device, g.taImg[i], &req);
-        VkMemoryAllocateInfo mai = {};
-        mai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        mai.allocationSize  = req.size;
-        mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        Check(vkAllocateMemory(g.device, &mai, nullptr, &g.taMem[i]), "vkAllocateMemory(taau)");
-        Check(vkBindImageMemory(g.device, g.taImg[i], g.taMem[i], 0), "vkBindImageMemory(taau)");
-
-        VkImageViewCreateInfo vci = {};
-        vci.sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        vci.image            = g.taImg[i];
-        vci.viewType         = VK_IMAGE_VIEW_TYPE_2D;
-        vci.format           = fmt;
-        vci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-        Check(vkCreateImageView(g.device, &vci, nullptr, &g.taView[i]), "vkCreateImageView(taau)");
+        CreateImage({ W, H, 1 }, fmt,
+                    VK_IMAGE_USAGE_STORAGE_BIT
+                    | ((i == TA_OUT) ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : VK_IMAGE_USAGE_TRANSFER_DST_BIT),
+                    VK_IMAGE_ASPECT_COLOR_BIT, "taau", &g.taImg[i], &g.taMem[i], &g.taView[i]);
     }
 
     {
@@ -3800,52 +3763,17 @@ void CreateTaauTargets()
 
 void CreateRtTargets()
 {
-    VkImageCreateInfo ici = {};
-    ici.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    ici.imageType     = VK_IMAGE_TYPE_2D;
-    ici.format        = VK_FORMAT_R8G8B8A8_UNORM;
-    ici.extent        = { g.extent.width, g.extent.height, 1 };
-    ici.mipLevels     = 1;
-    ici.arrayLayers   = 1;
-    ici.samples       = VK_SAMPLE_COUNT_1_BIT;
-    ici.tiling        = VK_IMAGE_TILING_OPTIMAL;
-    ici.usage         = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-    ici.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
-    ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    Check(vkCreateImage(g.device, &ici, nullptr, &g.rtImage), "vkCreateImage(rt)");
-
-    VkMemoryRequirements req = {};
-    vkGetImageMemoryRequirements(g.device, g.rtImage, &req);
-    VkMemoryAllocateInfo mai = {};
-    mai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    mai.allocationSize  = req.size;
-    mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    Check(vkAllocateMemory(g.device, &mai, nullptr, &g.rtMemory), "vkAllocateMemory(rt)");
-    Check(vkBindImageMemory(g.device, g.rtImage, g.rtMemory, 0), "vkBindImageMemory(rt)");
-
-    VkImageViewCreateInfo vci = {};
-    vci.sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    vci.image            = g.rtImage;
-    vci.viewType         = VK_IMAGE_VIEW_TYPE_2D;
-    vci.format           = VK_FORMAT_R8G8B8A8_UNORM;
-    vci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-    Check(vkCreateImageView(g.device, &vci, nullptr, &g.rtView), "vkCreateImageView(rt)");
+    CreateImage({ g.extent.width, g.extent.height, 1 }, VK_FORMAT_R8G8B8A8_UNORM,
+                VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_IMAGE_ASPECT_COLOR_BIT,
+                "rt", &g.rtImage, &g.rtMemory, &g.rtView);
 
     // DOOM-0345 R1 (§5) — the HDR intermediate, alongside rtImage and the same size.
     // STORAGE only: both readers use imageLoad, so it never needs SAMPLED and never leaves
     // GENERAL. Created BEFORE CreateSvgfTargets, whose descriptor write points the split
     // set's binding 7 at this view.
-    ici.format = VulkanState::kSceneFormat;
-    ici.usage  = VK_IMAGE_USAGE_STORAGE_BIT;
-    Check(vkCreateImage(g.device, &ici, nullptr, &g.rtHdrImage), "vkCreateImage(rtHdr)");
-    vkGetImageMemoryRequirements(g.device, g.rtHdrImage, &req);
-    mai.allocationSize  = req.size;
-    mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    Check(vkAllocateMemory(g.device, &mai, nullptr, &g.rtHdrMemory), "vkAllocateMemory(rtHdr)");
-    Check(vkBindImageMemory(g.device, g.rtHdrImage, g.rtHdrMemory, 0), "vkBindImageMemory(rtHdr)");
-    vci.image  = g.rtHdrImage;
-    vci.format = VulkanState::kSceneFormat;
-    Check(vkCreateImageView(g.device, &vci, nullptr, &g.rtHdrView), "vkCreateImageView(rtHdr)");
+    CreateImage({ g.extent.width, g.extent.height, 1 }, VulkanState::kSceneFormat,
+                VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT,
+                "rtHdr", &g.rtHdrImage, &g.rtHdrMemory, &g.rtHdrView);
 
     // One-time UNDEFINED -> GENERAL park, the same shape as DOOM-0331's bloom targets. A
     // freshly created image is UNDEFINED and the first split frame's store into it would
@@ -3953,31 +3881,10 @@ void CreateSampledImage(uint32_t w, uint32_t h, VkFormat fmt,
     std::memcpy(mapped, pixels, (size_t)bytes);
     vkUnmapMemory(g.device, stagingMem);
 
-    // Device-local sampled image.
-    VkImageCreateInfo ici = {};
-    ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    // DOOM-0011 L1c: depth > 1 makes this a 3-D image (the fog wisp volume). Every other
-    // caller leaves the default, so the 2-D path is byte-for-byte what it always was.
-    ici.imageType = (depth > 1) ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
-    ici.format = fmt;
-    ici.extent = { w, h, depth };
-    ici.mipLevels = 1;
-    ici.arrayLayers = 1;
-    ici.samples = VK_SAMPLE_COUNT_1_BIT;
-    ici.tiling = VK_IMAGE_TILING_OPTIMAL;
-    ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    Check(vkCreateImage(g.device, &ici, nullptr, outImage), "vkCreateImage(sampled)");
-
-    VkMemoryRequirements req = {};
-    vkGetImageMemoryRequirements(g.device, *outImage, &req);
-    VkMemoryAllocateInfo mai = {};
-    mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    mai.allocationSize = req.size;
-    mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    Check(vkAllocateMemory(g.device, &mai, nullptr, outMem), "vkAllocateMemory(sampled)");
-    Check(vkBindImageMemory(g.device, *outImage, *outMem, 0), "vkBindImageMemory(sampled)");
+    // Device-local sampled image. DOOM-0011 L1c: depth > 1 makes it 3-D (the fog wisp
+    // volume); every other caller leaves the default.
+    CreateImage({ w, h, depth }, fmt, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                VK_IMAGE_ASPECT_COLOR_BIT, "sampled", outImage, outMem, outView);
 
     // UNDEFINED -> TRANSFER_DST, copy, TRANSFER_DST -> SHADER_READ_ONLY.
     VkCommandBuffer cb = BeginOneTime();
@@ -4014,14 +3921,6 @@ void CreateSampledImage(uint32_t w, uint32_t h, VkFormat fmt,
 
     vkDestroyBuffer(g.device, staging, nullptr);
     vkFreeMemory(g.device, stagingMem, nullptr);
-
-    VkImageViewCreateInfo vci = {};
-    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    vci.image = *outImage;
-    vci.viewType = (depth > 1) ? VK_IMAGE_VIEW_TYPE_3D : VK_IMAGE_VIEW_TYPE_2D;
-    vci.format = fmt;
-    vci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-    Check(vkCreateImageView(g.device, &vci, nullptr, outView), "vkCreateImageView(sampled)");
 }
 
 // DOOM-0011 L1c: synthesise the fog's wisp noise volume and point set 0's binding 3 at
@@ -4624,39 +4523,9 @@ void CreateImageViews()
 
 void CreateDepthResources()
 {
-    VkImageCreateInfo ici = {};
-    ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    ici.imageType = VK_IMAGE_TYPE_2D;
-    ici.format = VulkanState::kDepthFormat;
-    ici.extent = { g.extent.width, g.extent.height, 1 };
-    ici.mipLevels = 1;
-    ici.arrayLayers = 1;
-    ici.samples = VK_SAMPLE_COUNT_1_BIT;
-    ici.tiling = VK_IMAGE_TILING_OPTIMAL;
-    ici.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-    ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    Check(vkCreateImage(g.device, &ici, nullptr, &g.depthImage), "vkCreateImage(depth)");
-
-    VkMemoryRequirements req = {};
-    vkGetImageMemoryRequirements(g.device, g.depthImage, &req);
-    VkMemoryAllocateInfo mai = {};
-    mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    mai.allocationSize = req.size;
-    mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits,
-                                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    Check(vkAllocateMemory(g.device, &mai, nullptr, &g.depthMemory), "vkAllocateMemory(depth)");
-    Check(vkBindImageMemory(g.device, g.depthImage, g.depthMemory, 0), "vkBindImageMemory(depth)");
-
-    VkImageViewCreateInfo vci = {};
-    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    vci.image = g.depthImage;
-    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    vci.format = VulkanState::kDepthFormat;
-    vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-    vci.subresourceRange.levelCount = 1;
-    vci.subresourceRange.layerCount = 1;
-    Check(vkCreateImageView(g.device, &vci, nullptr, &g.depthView), "vkCreateImageView(depth)");
+    CreateImage({ g.extent.width, g.extent.height, 1 }, VulkanState::kDepthFormat,
+                VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT,
+                "depth", &g.depthImage, &g.depthMemory, &g.depthView);
 }
 
 // DOOM-0170 L2a: (re)create the off-screen scene colour target the world renders into
@@ -4665,92 +4534,37 @@ void CreateDepthResources()
 // COLOR_ATTACHMENT (rendered into) + SAMPLED (read by the composite).
 void CreateSceneTarget()
 {
-    VkImageCreateInfo ici = {};
-    ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    ici.imageType = VK_IMAGE_TYPE_2D;
-    ici.format = VulkanState::kSceneFormat;
-    ici.extent = { g.extent.width, g.extent.height, 1 };
-    ici.mipLevels = 1;
-    ici.arrayLayers = 1;
-    ici.samples = VK_SAMPLE_COUNT_1_BIT;
-    ici.tiling = VK_IMAGE_TILING_OPTIMAL;
-    ici.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    Check(vkCreateImage(g.device, &ici, nullptr, &g.sceneImage), "vkCreateImage(scene)");
-
-    VkMemoryRequirements req = {};
-    vkGetImageMemoryRequirements(g.device, g.sceneImage, &req);
-    VkMemoryAllocateInfo mai = {};
-    mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    mai.allocationSize = req.size;
-    mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    Check(vkAllocateMemory(g.device, &mai, nullptr, &g.sceneMemory), "vkAllocateMemory(scene)");
-    Check(vkBindImageMemory(g.device, g.sceneImage, g.sceneMemory, 0), "vkBindImageMemory(scene)");
-
-    VkImageViewCreateInfo vci = {};
-    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    vci.image = g.sceneImage;
-    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    vci.format = VulkanState::kSceneFormat;
-    vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    vci.subresourceRange.levelCount = 1;
-    vci.subresourceRange.layerCount = 1;
-    Check(vkCreateImageView(g.device, &vci, nullptr, &g.sceneView), "vkCreateImageView(scene)");
+    const VkExtent3D full = { g.extent.width, g.extent.height, 1 };
+    CreateImage(full, VulkanState::kSceneFormat,
+                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT,
+                "scene", &g.sceneImage, &g.sceneMemory, &g.sceneView);
 
     // DOOM-0170 L2b — the DIRECT target (attachment 1), identical to the AMBIENT one above.
     // Same format/usage/size so the two are interchangeable framebuffer attachments; the
     // composite samples both (ambient binding 0, direct binding 1).
-    Check(vkCreateImage(g.device, &ici, nullptr, &g.sceneDirImage), "vkCreateImage(sceneDir)");
-    vkGetImageMemoryRequirements(g.device, g.sceneDirImage, &req);
-    mai.allocationSize = req.size;
-    mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    Check(vkAllocateMemory(g.device, &mai, nullptr, &g.sceneDirMemory), "vkAllocateMemory(sceneDir)");
-    Check(vkBindImageMemory(g.device, g.sceneDirImage, g.sceneDirMemory, 0), "vkBindImageMemory(sceneDir)");
-    vci.image = g.sceneDirImage;
-    Check(vkCreateImageView(g.device, &vci, nullptr, &g.sceneDirView), "vkCreateImageView(sceneDir)");
+    CreateImage(full, VulkanState::kSceneFormat,
+                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT,
+                "sceneDir", &g.sceneDirImage, &g.sceneDirMemory, &g.sceneDirView);
 
     // DOOM-0170 L2b — the half-res SSAO occlusion image (R8). Rendered by the ssao pass,
     // sampled by the composite. Half of the swapchain extent (the effect is cheap and low-
     // frequency, §4.3/§6). COLOR_ATTACHMENT (written) + SAMPLED (read by composite).
     g.aoExtent = { g.extent.width / 2u  ? g.extent.width / 2u  : 1u,
                    g.extent.height / 2u ? g.extent.height / 2u : 1u };
-    VkImageCreateInfo aci = ici;
-    aci.format = VK_FORMAT_R8_UNORM;
-    aci.extent = { g.aoExtent.width, g.aoExtent.height, 1 };
-    aci.usage  = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    Check(vkCreateImage(g.device, &aci, nullptr, &g.aoImage), "vkCreateImage(ao)");
-    vkGetImageMemoryRequirements(g.device, g.aoImage, &req);
-    mai.allocationSize = req.size;
-    mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    Check(vkAllocateMemory(g.device, &mai, nullptr, &g.aoMemory), "vkAllocateMemory(ao)");
-    Check(vkBindImageMemory(g.device, g.aoImage, g.aoMemory, 0), "vkBindImageMemory(ao)");
-    VkImageViewCreateInfo avci = vci;
-    avci.image  = g.aoImage;
-    avci.format = VK_FORMAT_R8_UNORM;
-    Check(vkCreateImageView(g.device, &avci, nullptr, &g.aoView), "vkCreateImageView(ao)");
+    CreateImage({ g.aoExtent.width, g.aoExtent.height, 1 }, VK_FORMAT_R8_UNORM,
+                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT,
+                "ao", &g.aoImage, &g.aoMemory, &g.aoView);
 
     // DOOM-0331 L2 (§5) — the three bloom targets. [0] is half the display (the same
     // halving rule the AO image uses, so it is exactly aoExtent); [1] and [2] are quarter.
-    VkImageCreateInfo bci = ici;
-    bci.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     g.bloomExtent[0] = g.aoExtent;
     g.bloomExtent[1] = { g.extent.width  / 4u ? g.extent.width  / 4u : 1u,
                          g.extent.height / 4u ? g.extent.height / 4u : 1u };
     g.bloomExtent[2] = g.bloomExtent[1];
     for (int i = 0; i < 3; i++)
-    {
-        bci.extent = { g.bloomExtent[i].width, g.bloomExtent[i].height, 1 };
-        Check(vkCreateImage(g.device, &bci, nullptr, &g.bloomImage[i]), "vkCreateImage(bloom)");
-        vkGetImageMemoryRequirements(g.device, g.bloomImage[i], &req);
-        mai.allocationSize = req.size;
-        mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-        Check(vkAllocateMemory(g.device, &mai, nullptr, &g.bloomMemory[i]), "vkAllocateMemory(bloom)");
-        Check(vkBindImageMemory(g.device, g.bloomImage[i], g.bloomMemory[i], 0), "vkBindImageMemory(bloom)");
-        VkImageViewCreateInfo bvci = vci;
-        bvci.image = g.bloomImage[i];
-        Check(vkCreateImageView(g.device, &bvci, nullptr, &g.bloomView[i]), "vkCreateImageView(bloom)");
-    }
+        CreateImage({ g.bloomExtent[i].width, g.bloomExtent[i].height, 1 }, VulkanState::kSceneFormat,
+                    VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT,
+                    "bloom", &g.bloomImage[i], &g.bloomMemory[i], &g.bloomView[i]);
 
     // Park the AO image in SHADER_READ so the composite may sample it even on a frame where
     // the SSAO pass is skipped (rb_ssao off). When the pass runs it re-clears via UNDEFINED.
@@ -4818,38 +4632,9 @@ void CreateShadowResources()
     const uint32_t dim = VulkanState::kShadowDim;
 
     // Depth image: DEPTH_STENCIL_ATTACHMENT (rendered into) + SAMPLED (mesh.frag PCF).
-    VkImageCreateInfo ici = {};
-    ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    ici.imageType = VK_IMAGE_TYPE_2D;
-    ici.format = VulkanState::kShadowFormat;
-    ici.extent = { dim, dim, 1 };
-    ici.mipLevels = 1;
-    ici.arrayLayers = 1;
-    ici.samples = VK_SAMPLE_COUNT_1_BIT;
-    ici.tiling = VK_IMAGE_TILING_OPTIMAL;
-    ici.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    Check(vkCreateImage(g.device, &ici, nullptr, &g.shadowImage), "vkCreateImage(shadow)");
-
-    VkMemoryRequirements req = {};
-    vkGetImageMemoryRequirements(g.device, g.shadowImage, &req);
-    VkMemoryAllocateInfo mai = {};
-    mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    mai.allocationSize = req.size;
-    mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    Check(vkAllocateMemory(g.device, &mai, nullptr, &g.shadowMemory), "vkAllocateMemory(shadow)");
-    Check(vkBindImageMemory(g.device, g.shadowImage, g.shadowMemory, 0), "vkBindImageMemory(shadow)");
-
-    VkImageViewCreateInfo vci = {};
-    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    vci.image = g.shadowImage;
-    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    vci.format = VulkanState::kShadowFormat;
-    vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-    vci.subresourceRange.levelCount = 1;
-    vci.subresourceRange.layerCount = 1;
-    Check(vkCreateImageView(g.device, &vci, nullptr, &g.shadowView), "vkCreateImageView(shadow)");
+    CreateImage({ dim, dim, 1 }, VulkanState::kShadowFormat,
+                VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                VK_IMAGE_ASPECT_DEPTH_BIT, "shadow", &g.shadowImage, &g.shadowMemory, &g.shadowView);
 
     // Depth sampler: point-sampled (we do our own 3x3 PCF), clamped to a white border so
     // samples outside the light frustum read depth 1.0 (far) = "not shadowed" = lit.
@@ -6115,11 +5900,7 @@ static void UploadImageBatch(const std::vector<BatchImage>& imgs, Fill fill,
                              std::vector<VkImage>& images,
                              std::vector<VkImageView>& views, VkDeviceMemory& memory)
 {
-    char msg[96];
-    auto what = [&](const char* call) {
-        snprintf(msg, sizeof msg, "%s(%s)", call, tag);
-        return msg;
-    };
+    auto what = [&](const char* call) { return VkWhat(call, tag); };
     const int n = (int)imgs.size();
     images.assign(n, VK_NULL_HANDLE);
     views.assign(n, VK_NULL_HANDLE);
@@ -6344,35 +6125,9 @@ void CreateOverlayResources(int w, int h)
     Check(vkMapMemory(g.device, g.overlayStagingMem, 0, bytes, 0, &g.overlayMapped), "vkMapMemory(overlay)");
 
     // Device-local R8 image (palette indices), sampled by overlay.frag.
-    VkImageCreateInfo ici = {};
-    ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    ici.imageType = VK_IMAGE_TYPE_2D;
-    ici.format = VK_FORMAT_R8_UNORM;
-    ici.extent = { (uint32_t)w, (uint32_t)h, 1 };
-    ici.mipLevels = 1;
-    ici.arrayLayers = 1;
-    ici.samples = VK_SAMPLE_COUNT_1_BIT;
-    ici.tiling = VK_IMAGE_TILING_OPTIMAL;
-    ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    Check(vkCreateImage(g.device, &ici, nullptr, &g.overlayImage), "vkCreateImage(overlay)");
-    VkMemoryRequirements ireq = {};
-    vkGetImageMemoryRequirements(g.device, g.overlayImage, &ireq);
-    VkMemoryAllocateInfo imai = {};
-    imai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    imai.allocationSize = ireq.size;
-    imai.memoryTypeIndex = FindMemoryType(ireq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    Check(vkAllocateMemory(g.device, &imai, nullptr, &g.overlayMemory), "vkAllocateMemory(overlay image)");
-    Check(vkBindImageMemory(g.device, g.overlayImage, g.overlayMemory, 0), "vkBindImageMemory(overlay)");
-
-    VkImageViewCreateInfo vci = {};
-    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    vci.image = g.overlayImage;
-    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    vci.format = VK_FORMAT_R8_UNORM;
-    vci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-    Check(vkCreateImageView(g.device, &vci, nullptr, &g.overlayView), "vkCreateImageView(overlay)");
+    CreateImage({ (uint32_t)w, (uint32_t)h, 1 }, VK_FORMAT_R8_UNORM,
+                VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT,
+                "overlay", &g.overlayImage, &g.overlayMemory, &g.overlayView);
 
     // Point descriptor binding 1 at the overlay image (the set already exists).
     VkDescriptorImageInfo ovInfo = { g.texSampler, g.overlayView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
