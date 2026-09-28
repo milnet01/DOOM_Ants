@@ -1,5 +1,7 @@
 # Roadmap Format
 
+<!-- OWNED-HERE roadmap-format.md — DOOM_Ants's own house rule (CLAUDE.md § House rules), read instead of the global roadmap-format.md; decided 2026-09-28 (DOOM-0468) -->
+
 `ROADMAP.md` is the project's plan and the single source of truth for what's
 planned, in progress, shipped, or merely being considered. It is read and
 written by the **Ants MCP** roadmap tools (`roadmap_query`, `roadmap_log`), so

@@ -1,20 +1,18 @@
 # Releases & Versioning Standard
 
+<!-- OWNED-HERE releases.md — DOOM_Ants's own house rule (CLAUDE.md § House rules), read instead of the global releases.md; decided 2026-09-28 (DOOM-0468) -->
+
 A release is a build we hand to players. This standard covers how it is
 numbered, what it ships, and how it is cut — so releases are reproducible and
 the version number always means the same thing.
 
 ## Version numbers
 
-DOOM_Ants uses a `MAJOR.MINOR.PATCH` marketing version (e.g. `0.5.0`).
-Pre-1.0, the convention is:
-
-- **MINOR** (`0.5.0` → `0.6.0`) — a batch of new player-facing features shipped.
-- **PATCH** (`0.5.0` → `0.5.1`) — fixes and polish, no headline feature.
-- **MAJOR** stays `0` until the engine is feature-complete against the roadmap's
-  Phase 2 goals.
-- **Pre-releases** carry a `-` suffix (`0.6.0-pre.1`); `release.sh` publishes any
-  `-`-suffixed version as a GitHub pre-release, everything else as Latest.
+Which number a release gets is not decided here. The machine-wide versioning
+standard owns the levels and the pre-release spelling (`-rc.N`), and
+[versioning-overrides.md](versioning-overrides.md) names DOOM_Ants's breaking
+surfaces and what makes it `1.0`. `release.sh` publishes any `-`-suffixed
+version as a GitHub pre-release, everything else as Latest.
 
 > **Don't confuse it with the engine's internal `VERSION`.** `doomdef.h` defines
 > `VERSION = 110` — that is id Software's original *DOOM 1.10* number, used for

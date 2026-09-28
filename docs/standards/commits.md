@@ -1,5 +1,7 @@
 # Commit Standard
 
+<!-- OWNED-HERE commits.md — DOOM_Ants's own house rule (CLAUDE.md § House rules), read instead of the global commits.md; decided 2026-09-28 (DOOM-0468) -->
+
 ## The format
 
 Every commit subject is:

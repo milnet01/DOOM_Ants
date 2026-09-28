@@ -1,5 +1,7 @@
 # Documentation Standard
 
+<!-- OWNED-HERE documentation.md — DOOM_Ants's own house rule (CLAUDE.md § House rules), read instead of the global documentation.md; decided 2026-09-28 (DOOM-0468) -->
+
 Good docs exist to remove ambiguity. Every document here should let a reader act
 without having to ask the author what was meant.
 

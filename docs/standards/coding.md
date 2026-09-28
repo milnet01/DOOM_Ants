@@ -1,5 +1,7 @@
 # Coding Standard
 
+<!-- OWNED-HERE coding.md — DOOM_Ants's own house rule (CLAUDE.md § House rules), read instead of the global coding.md; decided 2026-09-28 (DOOM-0468) -->
+
 The rules below keep the codebase legible as it modernises. They are
 deliberately short — add to them only when a real decision forces the issue,
 not pre-emptively.

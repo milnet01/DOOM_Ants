@@ -1,5 +1,7 @@
 # Testing Standard
 
+<!-- OWNED-HERE testing.md — DOOM_Ants's own house rule (CLAUDE.md § House rules), read instead of the global testing.md; decided 2026-09-28 (DOOM-0468) -->
+
 Tests exist to stop a change from silently breaking something that already
 worked. That matters doubly here: we are modernising a 1997 engine and evolving
 its renderer, so it is easy to fix one thing and quietly change another. A test

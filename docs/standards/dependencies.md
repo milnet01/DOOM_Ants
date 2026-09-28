@@ -1,5 +1,7 @@
 # Dependencies Standard
 
+<!-- OWNED-HERE dependencies.md — DOOM_Ants's own house rule (CLAUDE.md § House rules), read instead of the global dependencies.md; decided 2026-09-28 (DOOM-0468) -->
+
 Dependencies stay **current**. The default, always, is the latest stable
 version — for new features *and* for security. A stale dependency is a bug
 waiting to happen; an unpatched one is a security hole. Newer by default, and

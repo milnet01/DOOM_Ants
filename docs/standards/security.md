@@ -1,5 +1,7 @@
 # Security & Untrusted Input Standard
 
+<!-- OWNED-HERE security.md — DOOM_Ants's own house rule (CLAUDE.md § House rules), read instead of the global security.md; decided 2026-09-28 (DOOM-0468) -->
+
 DOOM loads data made by other people — WAD files, mods, network peers. The
 original 1997 code assumed that data was local and trusted, so many of its
 parsers read first and ask questions never. On a modern machine, downloading a

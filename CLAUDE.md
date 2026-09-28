@@ -68,7 +68,9 @@ These are the project's standards. Read the relevant one before working:
 - **Dependencies** — `docs/standards/dependencies.md`
 - **Testing** — `docs/standards/testing.md`
 - **Security & untrusted input** — `docs/standards/security.md`
-- **Releases & versioning** — `docs/standards/releases.md`
+- **Releases** — `docs/standards/releases.md`
+- **Versioning** — `docs/standards/versioning-overrides.md`, on top of the
+  machine-wide versioning standard
 - **Renderer & shaders** — `docs/standards/renderer.md`
 - **Assets & licensing** — `docs/standards/assets.md`
 - **Review & QA** — `docs/standards/review.md`

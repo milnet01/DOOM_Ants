@@ -1,5 +1,7 @@
 # Spec Format
 
+<!-- OWNED-HERE spec-format.md — DOOM_Ants's own house rule (CLAUDE.md § House rules), read instead of the global spec-format.md; decided 2026-09-28 (DOOM-0468) -->
+
 The shape of a DOOM_Ants spec, and the file `spec_lint`'s `missing_section`
 check reads. Whether a feature needs a spec at all is settled elsewhere — see
 *Relationship to the global standard* below. This file starts once that answer

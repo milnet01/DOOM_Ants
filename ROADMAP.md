@@ -11848,13 +11848,20 @@ defect visible before a player finds it.
   Kind: review-fix.
   Source: field-pass-2026-09-27 (cpp.md § Tests, testing.md §6, for the claude-config session).
 
-- 📋 [DOOM-0468] **docs/standards/coding.md carries no marker saying whether it mirrors, overrides or owns the global standard.**
+- ✅ [DOOM-0468] **docs/standards/coding.md carries no marker saying whether it mirrors, overrides or owns the global standard.**
   The project file restates parts of ~/.claude/standards/coding.md, and adds
   legacy-C and renderer rules. It carries neither a MIRROR BEGIN nor an
   OWNED-HERE marker and is not a spec-format-overrides-style delta file, so a
   reader cannot tell which standard governs where the two differ. Decide per
   standards/README.md's three cases and mark it. The other twelve files in
   docs/standards/ likely need the same check.
+  Resolved 2026-09-28 (user, via align-project): all nine project standards
+  that share a global file's name are case 3, the project's own. coding,
+  commits, dependencies, documentation, roadmap-format, security and testing
+  share no ## heading with the global file; spec-format and releases share
+  only incidental ones. Each now carries an OWNED-HERE marker naming this
+  item, and align-report shows no standards gap. The versioning half the
+  report raised is the new versioning-overrides.md.
   **Layman:** The project's coding rulebook doesn't say how it relates to the machine-wide one, so nobody can tell which wins when they disagree.
   Kind: doc-fix.
   Source: field-pass-2026-09-27 (standards/README.md cases, for the claude-config session).
