@@ -9,9 +9,11 @@ its format must stay exactly as described here or the tooling stops parsing it.
 
 ## Sections
 
-Phases are `##` headings. Each heading's **slug** is its title lowercased with
-non-alphanumerics turned into hyphens — e.g. `## Phase 1 — Build, Modernise &
-Share` → `phase-1-build-modernise-share`. The Ants tools address sections by
+Each release is a `##` heading, released and planned alike;
+[versioning-overrides.md](versioning-overrides.md) says how planned headings
+are numbered and cut. Each heading's **slug** is its title lowercased with
+non-alphanumerics turned into hyphens — e.g. `## 0.8.0 — What a player meets is
+correct` → `0-8-0-what-a-player-meets-is-correct`. The Ants tools address sections by
 slug; get the canonical slug from `roadmap_query` with `mode:section_index`.
 
 ## Items
@@ -55,7 +57,7 @@ The Ants roadmap tools have a few sharp edges this project standardises around:
 
 2. **Case-sensitive slugs and IDs.** `roadmap_query` / `roadmap_log` reject
    off-case slugs and IDs with `bad_case`. Always use the exact lowercase slug
-   (e.g. `phase-2-the-spin`) and the exact `DOOM-NNNN` casing.
+   (e.g. `0-9-0-the-codebase-can-be-trusted`) and the exact `DOOM-NNNN` casing.
 
 3. **Bulk authoring.** `append_batch` does not take a per-item `stable_id`, so
    adding several `DOOM-` items at once is done by editing this file directly in
