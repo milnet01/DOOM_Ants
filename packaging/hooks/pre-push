@@ -1,78 +1,31 @@
 #!/usr/bin/env bash
 #
-# pre-push -- run the local CI gate before anything leaves this machine.
+# pre-push -- hand the push to the machine-wide gate (~/.claude/githooks/pre-push).
 #
-# packaging/ci-local.sh mirrors both jobs of .github/workflows/build.yml, including
-# its docs-only paths-ignore: a docs-only push exits 0 immediately, because GitHub
-# skips the workflow for one too, so there is no gate to pre-run.
+# That hook scans the pushed commits for secrets, then runs packaging/ci-local.sh
+# against the PUSHED commits (in place when the tree is clean at the pushed tip,
+# otherwise in a fresh checkout). It skips a tree a full run already passed, which
+# is what lets release.sh's separate tag push through without a second run.
+# How this repository answers its questions is committed in .ants/gate.conf:
+# which pushes are documentation-only (build.yml's own paths-ignore list, via
+# ci-local.sh --classify-docs) and what such a push runs (ci-local.sh --docs).
 #
 # INSTALL (once per clone -- git hooks are not themselves version-controlled):
 #     git config core.hooksPath packaging/hooks
 #
-# BYPASS a single push:  git push --no-verify
+# BYPASS a single push:  git push --no-verify   (a bypass is the user's call;
+# ~/.claude/standards/commits.md § 2.3 says when)
 #
-set -euo pipefail
+set -Eeuo pipefail
 
-REPO="$(git rev-parse --show-toplevel)"
+GLOBAL_HOOK="${ANTS_GLOBAL_HOOKS:-$HOME/.claude/githooks}/pre-push"
 
-# Decide whether this particular push has anything the gate can actually answer.
-# Two cases exit early; anything else runs it.
-#
-#   1. A delete-only push (`git push origin :branch`) -- the local-ref sha is
-#      all-zero on every line of stdin, so there is no commit to build.
-#   2. DOOM-0344: a push of nothing but tags that already point at commits on the
-#      upstream branch. ci-local.sh always builds HEAD, never the ref being
-#      pushed, so re-gating such a tag cannot return a different answer than the
-#      branch push that put the commit there. packaging/release.sh pushes the
-#      branch and the tag separately, so without this every release paid for a
-#      second full run of both jobs.
-#
-# BOTH halves of case 2 are required. Skipping merely because a ref is a tag would
-# let a tag carry a never-pushed, never-gated commit to the remote.
-all_deletes=1
-gateable=0
-while read -r local_ref local_sha _remote_ref _remote_sha; do
-  case "$local_sha" in
-    *[!0]*) ;;          # a real sha
-    *)      continue ;; # all-zero: a delete, nothing to build
-  esac
-  all_deletes=0
-
-  case "$local_ref" in
-    refs/tags/*)
-      # Already reachable from the upstream branch => already gated.
-      if git merge-base --is-ancestor "$local_sha^{commit}" '@{u}' 2>/dev/null; then
-        continue
-      fi
-      ;;
-  esac
-  gateable=1
-done
-
-[ "$all_deletes" = 1 ] && exit 0
-if [ "$gateable" = 0 ]; then
-  echo "pre-push: tag(s) already on the upstream branch -- gated when that commit"
-  echo "          was pushed, so there is nothing new to check. Pushing."
-  exit 0
+if [[ -x $GLOBAL_HOOK ]]; then
+    exec "$GLOBAL_HOOK" "$@"
 fi
 
-echo "pre-push: running the local CI gate (packaging/ci-local.sh)..."
-echo "          bypass with 'git push --no-verify'"
-echo
-
-# DOOM-0375: exit 2 means the gate could not run every check, which is not the
-# same as a failure and used to be reported as a pass.
-rc=0
-"$REPO/packaging/ci-local.sh" || rc=$?
-
-if [ "$rc" -eq 2 ]; then
-  echo
-  echo "pre-push: LOCAL CI INCOMPLETE -- a check could not run here, so this push is" >&2
-  echo "          not covered by the gate. Install what it named above, use container" >&2
-  echo "          mode, or bypass with --no-verify and rely on GitHub CI." >&2
-  exit 1
-elif [ "$rc" -ne 0 ]; then
-  echo
-  echo "pre-push: LOCAL CI FAILED -- push aborted. Fix it, or bypass with --no-verify." >&2
-  exit 1
-fi
+# A clone on a machine without the shared hook gets no gate, and says so rather
+# than exiting 0 in silence: a check that did not run must not look like a pass.
+printf 'pre-push: no push gate on this machine (%s is absent).\n' "$GLOBAL_HOOK" >&2
+printf 'pre-push: NOTHING WAS CHECKED. Run packaging/ci-local.sh by hand before pushing.\n' >&2
+exit 0

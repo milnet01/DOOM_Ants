@@ -3831,6 +3831,20 @@ defect visible before a player finds it.
   Kind: doc-fix.
   Source: in-session-2026-09-28 CFG-0627 re-walk.
 
+- 🚧 [DOOM-0471] **The pre-push hook scans for secrets and gates the pushed commits, not the working tree.**
+  local-gate.md § 2.1 (2026-09-28) requires a project's own pre-push to keep
+  every check the shared hook runs. Ours had no secret scan, gated HEAD's
+  working tree rather than the pushed commits, and skipped every docs-only
+  push without checking the last CI run (§ 7 condition 1). Fix:
+  packaging/hooks/pre-push becomes the shim that execs the machine-wide hook;
+  .ants/gate.conf commits the knobs; ci-local.sh gains --classify-docs (reads
+  build.yml's paths-ignore, so one path list) and --docs (skips only when the
+  last push run of build.yml on every pushed branch succeeded, else runs all).
+  **Layman:** Every push is now checked for leaked passwords and keys, and the test run checks exactly what is being pushed.
+  Kind: chore.
+  Source: claude-config session_message 128, 2026-09-28.
+  Lanes: packaging.
+
 ## 0.10.0 — The frame budget
 
 Performance and pacing, and the benchmark harness that makes a regression

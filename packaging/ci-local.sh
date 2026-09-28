@@ -4,7 +4,7 @@
 # (.github/workflows/build.yml) runs, on your machine, so a red CI is caught BEFORE
 # pushing.
 #
-# It mirrors BOTH of the workflow's jobs, and its docs-only skip:
+# It mirrors BOTH of the workflow's jobs:
 #   linux          -- build + unit tests + headless boot smoke
 #   windows-syntax -- -fsyntax-only over every translation unit, cross-compiled
 #
@@ -37,6 +37,12 @@
 #   packaging/ci-local.sh              # container if available, else native
 #   packaging/ci-local.sh --native     # force native (fast, approximate)
 #   packaging/ci-local.sh --container  # force container (errors if none installed)
+#   packaging/ci-local.sh --docs       # documentation-only push: skip if the last CI
+#                                      # run passed (needs ANTS_PUSH_REFS), else run all
+#   packaging/ci-local.sh --classify-docs < paths   # exit 0 if every path is docs
+#
+# The pre-push hook passes --docs and --classify-docs itself (.ants/gate.conf); run
+# by hand, the script always runs the whole gate.
 #
 set -euo pipefail
 
@@ -58,38 +64,89 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
 
 MODE="auto"
-FORCE_RUN=0
+DOCS_MODE=0
 for arg in "$@"; do
   case "$arg" in
     --native)    MODE="native" ;;
     --container) MODE="container" ;;
-    --force)     FORCE_RUN=1 ;;   # run even when the change is docs-only
-    *) echo "usage: $0 [--native|--container] [--force]" >&2; exit 2 ;;
+    --docs)      DOCS_MODE=1 ;;
+    --classify-docs) ;;           # handled below, before anything else runs
+    *) echo "usage: $0 [--native|--container] [--docs] | --classify-docs" >&2; exit 2 ;;
   esac
 done
 
-# --- docs-only skip: mirrors build.yml's paths-ignore ------------------------------
-# GitHub skips the whole workflow when every file changed in the push matches one of
-# the workflow's paths-ignore patterns, so a docs push has no gate to pre-run. The
-# patterns below are that list, and must be changed in both places together.
-docs_only_change() {
-  local upstream files f
-  upstream="$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)" || return 1
-  files="$(git diff --name-only "$upstream..HEAD")" || return 1
-  [ -n "$files" ] || return 1        # nothing to push -> nothing to conclude; run the gate
-  while IFS= read -r f; do
-    case "$f" in
-      *.md|docs/*|.gitignore|LICENSE.TXT|README.TXT) ;;   # == build.yml paths-ignore
-      *) return 1 ;;
-    esac
-  done <<< "$files"
-  return 0
+# --- documentation-only pushes ------------------------------------------------------
+# ONE path list: build.yml's paths-ignore on its push trigger. GitHub skips the
+# whole workflow when every pushed file matches it, so this reads that list rather
+# than keeping a second copy. Nothing the two jobs run reads those paths (the
+# tests only name docs in comments), so for this pipeline the documentation checks
+# are the empty set.
+docs_patterns() {
+  awk '
+    /^  push:/                   { push = 1; next }
+    /^  [a-z_]+:/                { push = 0 }
+    push && /paths-ignore:/      { list = 1; next }
+    list && /^ *- /              { sub(/^ *- */, ""); gsub(/\047|"/, ""); print; next }
+    list                         { list = 0 }
+  ' .github/workflows/build.yml
 }
 
-if [ "$FORCE_RUN" = 0 ] && docs_only_change; then
-  echo "==> Docs-only change -- GitHub skips the workflow (paths-ignore), so there is"
-  echo "    nothing to pre-run. Push away.  (--force runs the gate anyway.)"
-  exit 0
+# --classify-docs: pushed paths on stdin, one per line. Exit 0 only when EVERY
+# path matches a pattern, and there is at least one path and one pattern. The
+# shared pre-push hook calls this (.ants/gate.conf docsCommand); any other exit,
+# a crash included, makes the push a code push.
+if [ "${1:-}" = "--classify-docs" ]; then
+  mapfile -t pats < <(docs_patterns)
+  [ "${#pats[@]}" -gt 0 ] || exit 1
+  seen=0
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    seen=1
+    hit=0
+    for p in "${pats[@]}"; do
+      # shellcheck disable=SC2053  # the right side is a pattern on purpose;
+      # in [[ ]] a * also matches /, which is what GitHub's ** means here.
+      [[ $f == $p ]] && { hit=1; break; }
+    done
+    [ "$hit" = 1 ] || exit 1
+  done
+  [ "$seen" = 1 ]
+  exit
+fi
+
+# --docs: the hook passes this on a documentation-only push. It takes the complete
+# skip only when the last push-triggered run of this workflow on EVERY branch being
+# pushed succeeded (~/.claude/standards/local-gate.md § 7, condition 1). Anything
+# it cannot confirm -- a tag, an unknown push, no gh, a red or unfinished run --
+# runs the full gate instead. It never skips on doubt.
+if [ "$DOCS_MODE" = 1 ]; then
+  docs_skip_ok() {
+    local repo remote_ref branch conclusion
+    [ -n "${ANTS_PUSH_REFS:-}" ] || { echo "    (no pushed refs given)"; return 1; }
+    command -v gh >/dev/null 2>&1 || { echo "    (gh is not installed)"; return 1; }
+    # gh would otherwise ask the fork parent (id-Software/DOOM), not this repo.
+    repo="$(git remote get-url origin 2>/dev/null | sed -E 's#^.*github\.com[:/]##; s#\.git$##')"
+    [ -n "$repo" ] || { echo "    (no GitHub origin)"; return 1; }
+    while read -r _ _ remote_ref _; do
+      [ -n "$remote_ref" ] || continue
+      case "$remote_ref" in
+        refs/heads/*) branch="${remote_ref#refs/heads/}" ;;
+        *) echo "    ($remote_ref is not a branch)"; return 1 ;;
+      esac
+      conclusion="$(gh run list -R "$repo" --workflow build.yml --branch "$branch" \
+        --event push --limit 1 --json conclusion -q '.[0].conclusion' 2>/dev/null)" || conclusion=""
+      [ "$conclusion" = success ] || {
+        echo "    (last push run on $branch: ${conclusion:-none or unfinished})"; return 1; }
+      echo "    last push run of build.yml on $branch: success"
+    done <<< "$ANTS_PUSH_REFS"
+  }
+  echo "==> Documentation-only push: GitHub runs nothing for these paths (paths-ignore)."
+  if docs_skip_ok; then
+    echo "==> SKIPPED the gate: nothing in the pipeline reads these paths, and the"
+    echo "    last CI run passed. This is not a green run; no check was needed."
+    exit 0
+  fi
+  echo "==> Cannot confirm the last CI run passed, so running the full gate."
 fi
 # ----------------------------------------------------------------------------------
 

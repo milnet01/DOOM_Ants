@@ -11,21 +11,25 @@ before the push rather than after.
 packaging/ci-local.sh              # container if podman/docker is present, else native
 packaging/ci-local.sh --native     # force native (fast, approximates CI's toolchain)
 packaging/ci-local.sh --container  # force container (exactly what GitHub runs)
-packaging/ci-local.sh --force      # run even on a docs-only change
 ```
 
-It mirrors the workflow's `paths-ignore` too: a docs-only change exits 0 at once,
-because GitHub skips the workflow for one as well.
+Run by hand, it always runs the whole gate.
 
-**Run it before every push.** Install it as a pre-push hook, once per clone (git
-hooks are not themselves version-controlled):
+**Every push runs it.** Install the pre-push hook once per clone (git hooks are
+not themselves version-controlled):
 
 ```sh
 git config core.hooksPath packaging/hooks
 ```
 
-Then `git push` runs the gate first and aborts on failure; `git push --no-verify`
-bypasses it for a one-off.
+The hook hands the push to the machine-wide gate (`githooks/pre-push` in the
+user's Claude config). That gate scans the pushed commits for secrets, then runs
+`ci-local.sh` against the pushed commits and aborts the push on failure. A push
+touching only paths in `build.yml`'s `paths-ignore` list is documentation-only.
+GitHub runs nothing for one, so the gate skips it too, but only when GitHub's
+last run on that branch passed; otherwise it runs everything. The settings are
+in `.ants/gate.conf`. `git push --no-verify` bypasses all of it, and that is the
+user's call.
 
 ## Linux AppImage (DOOM-0007)
 
