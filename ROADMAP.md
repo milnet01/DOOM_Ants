@@ -1521,13 +1521,23 @@ defect visible before a player finds it.
   Kind: fix.
   Source: in-session-2026-06-29 DOOM-0119 play-test log.
 
-- 📋 [DOOM-0128] **Vulkan validation: acceleration-structure UPDATE refit undersized / flag-mismatched on a compacted AS.**
+- ✅ [DOOM-0128] **Vulkan validation: acceleration-structure UPDATE refit undersized / flag-mismatched on a compacted AS.**
   Seen in terminal_output.log: vkCmdBuildAccelerationStructuresKHR reports three related VUIDs — (1) dstAccelerationStructure was created with size 306304 but an UPDATE build requires a minimum size of 353536 (the refit target grew past the originally-allocated/compacted size); (2) mode is VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR but pInfos[0].flags (ALLOW_UPDATE|PREFER_FAST_TRACE) must equal the flags the AS was originally built with (VUID-...-03759); (3) updating a COMPACTED acceleration structure (VUID-...-10126). Pre-existing and NOT from DOOM-0120 (a shader-only change — no AS build/update code touched). Root cause: the dynamic-geometry AS (sprite/thing TLAS or BLAS) is refit in UPDATE mode against a structure that was compacted to a tighter size, so when the primitive count rises the refit no longer fits and the build flags no longer match. Fix options: do not UPDATE a compacted AS (keep an uncompacted, ALLOW_UPDATE-flagged copy for refitting, compact only static geometry), or size the updatable AS to the worst-case prim count and rebuild (not update) when the count exceeds the allocation. Low urgency (RADV tolerates it) but spec-incorrect and it can corrupt the AS on stricter drivers.
   Reproduced 2026-09-28, headless: the d1m2 demo fixture (doom-scratch
   d1m2.wad, -timedemo demo1) in Ultra with -rtview 6 moves a sector, so the
   refit runs; the validation layer then reports 9x "dstAccelerationStructure
   was created with size (592960), but ... requires a minimum size of
   (685248)". Identical on builds before and after DOOM-0441's refactor.
+  Resolved 2026-09-28: the world BLAS is no longer compacted (DOOM-0091
+  withdrawn for it), and the build and the refit share one flag
+  constant, kWorldBlasFlags. Cause: an UPDATE needs the full build size,
+  and a compacted AS may not be updated at all. d1m2 fixture: val 9 -> 0
+  with the refit still active. Cost: 90 KiB of VRAM on E1M2 (669.2 KiB
+  instead of 579.1). Ultra rt_view 3 at E1M1 spawn differs by 104 px,
+  all on sprite silhouettes against walls; three runs of the old build
+  are identical to each other. My reading is a traversal tie from the
+  new BVH layout; geometry is unchanged. Solid's diff is within its own
+  same-build noise. -rtverify PASS; make test 26/26; zero warnings.
   **Layman:** A graphics-checker warning: when the world's ray-tracing structure is quickly refreshed (instead of rebuilt) as moving things come into view, it sometimes no longer fits or its settings don't line up. Harmless on this AMD card today, but worth fixing so the refresh path is correct and the log stays clean.
   Kind: fix.
   Source: in-session-2026-06-29 DOOM-0120 play-test log.

@@ -8,6 +8,10 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Every push is checked for leaked secrets, and the local test gate checks the commits being pushed.** (DOOM-0471)
+  A push that changes only documentation skips the test run, but only
+  when GitHub's last run on that branch passed.
+
 - **Classic's software renderer does less redundant work per pixel, with an identical picture** (DOOM-0445)
   The original 1993 renderer's inner loops looked up the screen width in
   a way that stops the compiler keeping it in a register, cleared more
@@ -83,6 +87,11 @@ All notable changes to DOOM_Ants are documented here. The format follows
   A 1997 hook for an external statistics program that no longer exists. Passing it crashed the game at the end of a level.
 
 ### Fixed
+
+- **Opening a door or riding a lift in a ray-traced view no longer writes past the end of the world's ray-tracing structure.** (DOOM-0128)
+  The structure was compacted to save about 90 KiB of video memory, and
+  Vulkan cannot refresh a compacted structure in place. It now keeps its
+  full size.
 
 - **Co-op games no longer quit at the first level exit, and multiplayer chat types what you press.** (DOOM-0464)
   Three checks meant "is the game in French?" and always answered yes.

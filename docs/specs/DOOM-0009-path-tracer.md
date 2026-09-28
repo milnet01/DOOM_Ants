@@ -136,7 +136,8 @@ survey: ray-query is mature on RADV and matches the megakernel plan; the RT
 pipeline path is a later option, not Stage 2). One dispatch over screen pixels.
 
 - **Acceleration structure:** the static map = one **BLAS** built once with
-  `PREFER_FAST_TRACE | ALLOW_COMPACTION` (compacted). A **TLAS rebuilt every
+  `PREFER_FAST_TRACE | ALLOW_UPDATE`, not compacted: moving sectors refit it in
+  place, and Vulkan cannot update a compacted AS (DOOM-0128). A **TLAS rebuilt every
   frame** over a few hundred instances; billboards (sprites) update via TLAS
   instance transforms. **Moving sectors (doors/lifts)** animate via DOOM-0049's
   per-vertex plane-height patching (`RB_UpdateMeshHeights`) — and because that
@@ -165,8 +166,8 @@ pipeline path is a later option, not Stage 2). One dispatch over screen pixels.
 - **Memory:** VMA (Vulkan Memory Allocator; the many image/buffer allocations of the
   RT work). RADV AS structures are fat (~137 B/tri vs ~45 on NVIDIA — estimate, confirm
   with RRA, the Radeon Raytracing Analyzer) —
-  trivial for one DOOM map, but budget VRAM for large external WADs and always
-  compact.
+  trivial for one DOOM map, but budget VRAM for large external WADs. Compaction
+  is out for the world BLAS (see above); on E1M2 it saved about 90 KiB.
 - **Colour:** light in **linear** space (sRGB→linear after the PLAYPAL lookup,
   treat palette colour as albedo); do **not** bake COLORMAP light-diminishing into
   albedo (it double-darkens once GI runs). Tonemap with Khronos **PBR Neutral**

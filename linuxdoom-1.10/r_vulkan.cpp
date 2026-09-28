@@ -807,10 +807,7 @@ struct VulkanState
     PFN_vkCmdBuildAccelerationStructuresKHR        pfnCmdBuildAS      = nullptr;
     PFN_vkGetAccelerationStructureDeviceAddressKHR pfnGetASAddress    = nullptr;
     PFN_vkDestroyAccelerationStructureKHR          pfnDestroyAS       = nullptr;
-    // DOOM-0091: BLAS compaction (query compacted size + copy-compact).
-    PFN_vkCmdWriteAccelerationStructuresPropertiesKHR pfnCmdWriteASProps = nullptr;
-    PFN_vkCmdCopyAccelerationStructureKHR             pfnCmdCopyAS       = nullptr;
-    VkDeviceSize                                   scratchAlign       = 256;
+    VkDeviceSize                                  scratchAlign       = 256;
 
     // Path-tracer compute pass (DOOM-0009 build step 2c). A megakernel casts one
     // primary ray per pixel against the TLAS and writes a debug image (rtImage)
@@ -2063,13 +2060,8 @@ void LoadRtEntryPoints()
         vkGetDeviceProcAddr(g.device, "vkGetAccelerationStructureDeviceAddressKHR");
     g.pfnDestroyAS = (PFN_vkDestroyAccelerationStructureKHR)
         vkGetDeviceProcAddr(g.device, "vkDestroyAccelerationStructureKHR");
-    g.pfnCmdWriteASProps = (PFN_vkCmdWriteAccelerationStructuresPropertiesKHR)
-        vkGetDeviceProcAddr(g.device, "vkCmdWriteAccelerationStructuresPropertiesKHR");
-    g.pfnCmdCopyAS = (PFN_vkCmdCopyAccelerationStructureKHR)
-        vkGetDeviceProcAddr(g.device, "vkCmdCopyAccelerationStructureKHR");
     if (!g.pfnGetASBuildSizes || !g.pfnCreateAS || !g.pfnCmdBuildAS
-        || !g.pfnGetASAddress || !g.pfnDestroyAS
-        || !g.pfnCmdWriteASProps || !g.pfnCmdCopyAS)
+        || !g.pfnGetASAddress || !g.pfnDestroyAS)
         I_Error("R_Vulkan: ray-tracing entry points missing despite enabled extensions.");
 
     VkPhysicalDeviceAccelerationStructurePropertiesKHR asProps = {};
@@ -2129,6 +2121,16 @@ void DestroyAccelerationStructures()
 // DOOM-0108 for sprites). The world build and its refit must pass the same flags.
 static const VkGeometryFlagsKHR kAlphaTestedGeom = 0;
 
+// DOOM-0128: the world BLAS's build flags. An UPDATE must pass exactly the flags
+// the AS was built with, so BuildAccelerationStructures and RecordRefitAS share
+// this one constant. ALLOW_UPDATE lets a moving door/lift refit it in place (build
+// step 5). It is deliberately NOT compacted (DOOM-0091 did): an update needs the
+// full build size, and a compacted AS may not be updated at all, so every refit
+// wrote past the end of it. Compaction saved about 90 KiB on E1M2.
+static const VkBuildAccelerationStructureFlagsKHR kWorldBlasFlags =
+    VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR
+    | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+
 // A non-indexed triangle list over rb_vertex_t, whose world position sits at byte 0.
 static VkAccelerationStructureGeometryKHR TriangleGeometry(VkBuffer vbuf, uint32_t vertexCount,
                                                            VkGeometryFlagsKHR flags)
@@ -2175,12 +2177,8 @@ static void SetIdentityInstance(VkAccelerationStructureInstanceKHR& inst, uint32
 // Build the static BLAS (every level-mesh triangle) and a one-instance identity
 // TLAS over it (DOOM-0009 build step 2b). Runs once per level load after the
 // vertex buffer is uploaded; the mesh is a non-indexed triangle list with the
-// world position at byte offset 0 of rb_vertex_t. The world BLAS is built with
-// ALLOW_COMPACTION and then compacted (DOOM-0091): it lives for the whole level, so
-// reclaiming its worst-case storage is a 20-50% VRAM win that scales with large WADs.
-// ALLOW_UPDATE survives compaction, so moving-sector refits still run on the
-// compacted AS. The per-frame sprite BLAS is left non-compacted (a compacted-size
-// query round-trip would stall the frame).
+// world position at byte offset 0 of rb_vertex_t. The world BLAS keeps its full
+// build size, because moving-sector refits update it in place (kWorldBlasFlags).
 void BuildAccelerationStructures()
 {
     DestroyAccelerationStructures();
@@ -2195,12 +2193,7 @@ void BuildAccelerationStructures()
     VkAccelerationStructureBuildGeometryInfoKHR bgi = {};
     bgi.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
     bgi.type          = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-    // ALLOW_UPDATE so a moving door/lift can refit the BLAS in place each frame
-    // (build step 5) instead of leaving traced geometry stale; also makes the size
-    // query fill updateScratchSize.
-    bgi.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR
-                      | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR
-                      | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR;  // DOOM-0091
+    bgi.flags         = kWorldBlasFlags;   // ALLOW_UPDATE also fills updateScratchSize
     bgi.mode          = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
     bgi.geometryCount = 1;
     bgi.pGeometries   = &geom;
@@ -2234,72 +2227,12 @@ void BuildAccelerationStructures()
     range.primitiveCount = triCount;
     const VkAccelerationStructureBuildRangeInfoKHR* pRange = &range;
 
-    // DOOM-0091: build the BLAS and, in the same submit, query the size it would
-    // compact to. A barrier orders the build write before the property read.
-    VkQueryPool compactQp = VK_NULL_HANDLE;
-    VkQueryPoolCreateInfo qpci = {};
-    qpci.sType      = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
-    qpci.queryType  = VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR;
-    qpci.queryCount = 1;
-    Check(vkCreateQueryPool(g.device, &qpci, nullptr, &compactQp), "vkCreateQueryPool(blasCompact)");
-
     VkCommandBuffer cb = BeginOneTime();
-    vkCmdResetQueryPool(cb, compactQp, 0, 1);
     g.pfnCmdBuildAS(cb, 1, &bgi, &pRange);
-    VkMemoryBarrier asWrite = {};
-    asWrite.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-    asWrite.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
-    asWrite.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
-    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-                         VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0,
-                         1, &asWrite, 0, nullptr, 0, nullptr);
-    g.pfnCmdWriteASProps(cb, 1, &g.blas,
-                         VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR, compactQp, 0);
-    EndOneTime(cb);   // submits + waits: build + size query complete on return
+    EndOneTime(cb);   // submits + waits: the build is complete on return
 
     vkDestroyBuffer(g.device, scratchBuf, nullptr);
     vkFreeMemory(g.device, scratchMem, nullptr);
-
-    // Compact into a right-sized AS and swap it in for the worst-case one. The
-    // compacted size is guaranteed <= the build size; a 0 result (driver quirk) or a
-    // non-shrink falls back to keeping the original.
-    VkDeviceSize blasSize = sizes.accelerationStructureSize;   // reported below
-    VkDeviceSize compactSize = 0;
-    Check(vkGetQueryPoolResults(g.device, compactQp, 0, 1, sizeof(compactSize), &compactSize,
-                                sizeof(compactSize), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT),
-          "vkGetQueryPoolResults(blasCompact)");
-    vkDestroyQueryPool(g.device, compactQp, nullptr);
-
-    if (compactSize > 0 && compactSize < sizes.accelerationStructureSize)
-    {
-        VkBuffer cBuf = VK_NULL_HANDLE; VkDeviceMemory cMem = VK_NULL_HANDLE;
-        CreateRtBuffer(compactSize,
-                       VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR
-                       | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &cBuf, &cMem);
-        VkAccelerationStructureCreateInfoKHR cci = {};
-        cci.sType  = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
-        cci.buffer = cBuf;
-        cci.size   = compactSize;
-        cci.type   = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-        VkAccelerationStructureKHR cAS = VK_NULL_HANDLE;
-        Check(g.pfnCreateAS(g.device, &cci, nullptr, &cAS), "vkCreateAccelerationStructureKHR(blasCompact)");
-
-        VkCopyAccelerationStructureInfoKHR copy = {};
-        copy.sType = VK_STRUCTURE_TYPE_COPY_ACCELERATION_STRUCTURE_INFO_KHR;
-        copy.src   = g.blas;
-        copy.dst   = cAS;
-        copy.mode  = VK_COPY_ACCELERATION_STRUCTURE_MODE_COMPACT_KHR;
-        cb = BeginOneTime();
-        g.pfnCmdCopyAS(cb, &copy);
-        EndOneTime(cb);
-
-        g.pfnDestroyAS(g.device, g.blas, nullptr);
-        vkDestroyBuffer(g.device, g.blasBuf, nullptr);
-        vkFreeMemory(g.device, g.blasMem, nullptr);
-        g.blas = cAS; g.blasBuf = cBuf; g.blasMem = cMem;
-        blasSize = compactSize;
-    }
 
     // Persistent scratch for in-place BLAS refits (build step 5); sized by the
     // update query above. Kept for the level's lifetime so a refit allocates nothing.
@@ -2492,13 +2425,12 @@ void BuildAccelerationStructures()
     EndOneTime(cb);
     g.blasDirty = false;        // freshly built from the current heights
 
-    printf("RB_Vulkan: built BLAS (%u tris, %.1f->%.1f KiB compacted) + sky BLAS (%u tris) + TLAS (3-instance cap, world%s live); AS %.1f KiB.\n",
+    printf("RB_Vulkan: built BLAS (%u tris, %.1f KiB) + sky BLAS (%u tris) + TLAS (3-instance cap, world%s live); AS %.1f KiB.\n",
            triCount,
            (double)sizes.accelerationStructureSize / 1024.0,
-           (double)blasSize / 1024.0,
            g.skyMeshVerts / 3u,
            skyPresent ? "+sky" : "",
-           (double)(blasSize + tsizes.accelerationStructureSize
+           (double)(sizes.accelerationStructureSize + tsizes.accelerationStructureSize
                     + ssizes.accelerationStructureSize + skyAsBytes) / 1024.0);
     fflush(stdout);
 
@@ -2539,8 +2471,7 @@ void RecordRefitAS(VkCommandBuffer cb)
     VkAccelerationStructureBuildGeometryInfoKHR bgi = {};
     bgi.sType         = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
     bgi.type          = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-    bgi.flags         = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR
-                      | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+    bgi.flags         = kWorldBlasFlags;   // must equal the build's (VUID-03759)
     bgi.mode          = VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR;
     bgi.srcAccelerationStructure = g.blas;
     bgi.dstAccelerationStructure = g.blas;
