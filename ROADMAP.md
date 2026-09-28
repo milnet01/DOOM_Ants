@@ -3831,7 +3831,7 @@ defect visible before a player finds it.
   Kind: doc-fix.
   Source: in-session-2026-09-28 CFG-0627 re-walk.
 
-- 🚧 [DOOM-0471] **The pre-push hook scans for secrets and gates the pushed commits, not the working tree.**
+- ✅ [DOOM-0471] **The pre-push hook scans for secrets and gates the pushed commits, not the working tree.**
   local-gate.md § 2.1 (2026-09-28) requires a project's own pre-push to keep
   every check the shared hook runs. Ours had no secret scan, gated HEAD's
   working tree rather than the pushed commits, and skipped every docs-only
@@ -3840,6 +3840,8 @@ defect visible before a player finds it.
   .ants/gate.conf commits the knobs; ci-local.sh gains --classify-docs (reads
   build.yml's paths-ignore, so one path list) and --docs (skips only when the
   last push run of build.yml on every pushed branch succeeded, else runs all).
+  Shipped f6eacfd (2026-09-28). Its own push ran through the new hook:
+  secret scan clean, full gate in place, 1m05s wall; ci-gate reports OK.
   **Layman:** Every push is now checked for leaked passwords and keys, and the test run checks exactly what is being pushed.
   Kind: chore.
   Source: claude-config session_message 128, 2026-09-28.
