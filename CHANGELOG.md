@@ -59,8 +59,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
   inside their drawing loops. It now goes straight to the entry, and a mod
   file still overrides the original data exactly as before.
 
-- **Volumetric fog now defaults to Medium instead of Low** (DOOM-0011)
+- **Volumetric fog now defaults to Medium instead of Low**
   The user's pick. A saved rt_fog setting in ~/.doomrc still wins.
+  Part of DOOM-0011, which is still in progress.
 
 - **The game is now built with the compiler's optimiser switched on** (DOOM-0434)
   It was shipping with the optimiser off — the setting used for debugging — which looks inherited from the 1997 source rather than chosen. Measured at about 5% less processor time on the original renderer. The classic renderer draws pixel-for-pixel the same frames as before, and the recorded demo fixtures are unchanged, so nothing about how the game plays or looks has moved.
