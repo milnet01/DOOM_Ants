@@ -6100,6 +6100,150 @@ static void ComputeMaterialEmissive(const rb_atlas_t* a, std::vector<float>& out
     ForceLiquidEmissive(a, out);   // DOOM-0183 L2: forced glow Le on nukage/lava (delivers DOOM-0083)
 }
 
+// A batch of independent sampled 2D images, uploaded in one go. Every image is
+// backed by ONE device allocation -- a minimal sub-allocator, each image bound at
+// its own aligned offset, which keeps the allocation count at 1 instead of N, well
+// clear of the driver's limit on big WADs (ADR 0001 tracks replacing it with VMA).
+// Every copy rides one staging buffer and one submission: a per-image submit+wait
+// would be thousands of GPU stalls at level load. fill(i, dst) writes image i's
+// texels, tightly packed.
+struct BatchImage { uint32_t w, h, texelBytes; VkFormat format; };
+
+template <class Fill>
+static void UploadImageBatch(const std::vector<BatchImage>& imgs, Fill fill,
+                             VkPipelineStageFlags readStage, const char* tag,
+                             std::vector<VkImage>& images,
+                             std::vector<VkImageView>& views, VkDeviceMemory& memory)
+{
+    char msg[96];
+    auto what = [&](const char* call) {
+        snprintf(msg, sizeof msg, "%s(%s)", call, tag);
+        return msg;
+    };
+    const int n = (int)imgs.size();
+    images.assign(n, VK_NULL_HANDLE);
+    views.assign(n, VK_NULL_HANDLE);
+
+    std::vector<VkDeviceSize> imgOffset(n);
+    VkDeviceSize memBytes = 0;
+    uint32_t memTypeBits = 0xffffffffu;
+    for (int i = 0; i < n; i++)
+    {
+        VkImageCreateInfo ici = {};
+        ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        ici.imageType = VK_IMAGE_TYPE_2D;
+        ici.format = imgs[i].format;
+        ici.extent = { imgs[i].w, imgs[i].h, 1 };
+        ici.mipLevels = 1;
+        ici.arrayLayers = 1;
+        ici.samples = VK_SAMPLE_COUNT_1_BIT;
+        ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+        ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        Check(vkCreateImage(g.device, &ici, nullptr, &images[i]), what("vkCreateImage"));
+
+        VkMemoryRequirements req = {};
+        vkGetImageMemoryRequirements(g.device, images[i], &req);
+        memBytes = (memBytes + req.alignment - 1) & ~(req.alignment - 1);
+        imgOffset[i] = memBytes;
+        memBytes += req.size;
+        memTypeBits &= req.memoryTypeBits;
+    }
+    VkMemoryAllocateInfo mai = {};
+    mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    mai.allocationSize = memBytes;
+    mai.memoryTypeIndex = FindMemoryType(memTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    Check(vkAllocateMemory(g.device, &mai, nullptr, &memory), what("vkAllocateMemory"));
+    for (int i = 0; i < n; i++)
+        Check(vkBindImageMemory(g.device, images[i], memory, imgOffset[i]), what("vkBindImageMemory"));
+
+    // Each image's staging offset is 4-byte aligned (vkCmdCopyBufferToImage
+    // requires bufferOffset % 4 == 0).
+    std::vector<VkDeviceSize> texOffset(n);
+    VkDeviceSize stageBytes = 0;
+    for (int i = 0; i < n; i++)
+    {
+        texOffset[i] = stageBytes;
+        VkDeviceSize sz = (VkDeviceSize)imgs[i].w * imgs[i].h * imgs[i].texelBytes;
+        stageBytes += (sz + 3) & ~(VkDeviceSize)3;
+    }
+    VkBufferCreateInfo sbci = {};
+    sbci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    sbci.size = stageBytes;
+    sbci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    sbci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VkBuffer staging = VK_NULL_HANDLE;
+    Check(vkCreateBuffer(g.device, &sbci, nullptr, &staging), what("vkCreateBuffer staging"));
+    VkMemoryRequirements sreq = {};
+    vkGetBufferMemoryRequirements(g.device, staging, &sreq);
+    VkMemoryAllocateInfo smai = {};
+    smai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    smai.allocationSize = sreq.size;
+    smai.memoryTypeIndex = FindMemoryType(sreq.memoryTypeBits,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    VkDeviceMemory stagingMem = VK_NULL_HANDLE;
+    Check(vkAllocateMemory(g.device, &smai, nullptr, &stagingMem), what("vkAllocateMemory staging"));
+    Check(vkBindBufferMemory(g.device, staging, stagingMem, 0), what("vkBindBufferMemory staging"));
+    unsigned char* sp = nullptr;
+    Check(vkMapMemory(g.device, stagingMem, 0, stageBytes, 0, (void**)&sp), what("vkMapMemory staging"));
+    for (int i = 0; i < n; i++)
+        fill(i, sp + texOffset[i]);
+    vkUnmapMemory(g.device, stagingMem);
+
+    // One command buffer: all UNDEFINED->TRANSFER_DST barriers, all copies, then
+    // all TRANSFER_DST->SHADER_READ barriers.
+    std::vector<VkImageMemoryBarrier> toDst(n), toRead(n);
+    for (int i = 0; i < n; i++)
+    {
+        VkImageMemoryBarrier b = {};
+        b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = images[i];
+        b.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        b.srcAccessMask = 0;
+        b.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        toDst[i] = b;
+        b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        toRead[i] = b;
+    }
+    VkCommandBuffer cb = BeginOneTime();
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         0, 0, nullptr, 0, nullptr, (uint32_t)n, toDst.data());
+    for (int i = 0; i < n; i++)
+    {
+        VkBufferImageCopy region = {};
+        region.bufferOffset = texOffset[i];
+        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.imageSubresource.layerCount = 1;
+        region.imageExtent = { imgs[i].w, imgs[i].h, 1 };
+        vkCmdCopyBufferToImage(cb, staging, images[i],
+                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    }
+    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, readStage,
+                         0, 0, nullptr, 0, nullptr, (uint32_t)n, toRead.data());
+    EndOneTime(cb);
+    vkDestroyBuffer(g.device, staging, nullptr);
+    vkFreeMemory(g.device, stagingMem, nullptr);
+
+    for (int i = 0; i < n; i++)
+    {
+        VkImageViewCreateInfo vci = {};
+        vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        vci.image = images[i];
+        vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        vci.format = imgs[i].format;
+        vci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        Check(vkCreateImageView(g.device, &vci, nullptr, &views[i]), what("vkCreateImageView"));
+    }
+}
+
 void UploadAtlas()
 {
     // Reuse the Stage-1 packer purely as a pixel source: it composites each
@@ -6114,152 +6258,23 @@ void UploadAtlas()
 
     g.matNumWall = a->numwall;
     g.matNumFlat = a->numflat;
-    g.matImages.resize(n);
-    g.matViews.resize(n);
-
-    // One staging buffer holds every tile's palette indices back to back, so all
-    // N copies ride a single command submission — a per-image submit+wait would be
-    // thousands of GPU stalls at level load. Each tile's offset is 4-byte aligned
-    // (vkCmdCopyBufferToImage requires bufferOffset % 4 == 0).
-    std::vector<VkDeviceSize> texOffset(n);
-    VkDeviceSize stageBytes = 0;
+    // Re-cut every tile into its own R8 image, row by row out of the packed atlas.
+    std::vector<BatchImage> imgs(n);
     for (int i = 0; i < n; i++)
-    {
-        texOffset[i] = stageBytes;
-        VkDeviceSize sz = (VkDeviceSize)(int)a->rects[i].w * (int)a->rects[i].h;
-        stageBytes += (sz + 3) & ~(VkDeviceSize)3;
-    }
-
-    VkBufferCreateInfo sbci = {};
-    sbci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    sbci.size = stageBytes;
-    sbci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-    sbci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    VkBuffer staging = VK_NULL_HANDLE;
-    Check(vkCreateBuffer(g.device, &sbci, nullptr, &staging), "vkCreateBuffer(mat staging)");
-
-    VkMemoryRequirements sreq = {};
-    vkGetBufferMemoryRequirements(g.device, staging, &sreq);
-    VkMemoryAllocateInfo smai = {};
-    smai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    smai.allocationSize = sreq.size;
-    smai.memoryTypeIndex = FindMemoryType(sreq.memoryTypeBits,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    VkDeviceMemory stagingMem = VK_NULL_HANDLE;
-    Check(vkAllocateMemory(g.device, &smai, nullptr, &stagingMem), "vkAllocateMemory(mat staging)");
-    Check(vkBindBufferMemory(g.device, staging, stagingMem, 0), "vkBindBufferMemory(mat staging)");
-
-    // Cut each tile out of the packed atlas, row by row, into its staging slot.
-    unsigned char* sp = nullptr;
-    Check(vkMapMemory(g.device, stagingMem, 0, stageBytes, 0, (void**)&sp), "vkMapMemory(mat staging)");
-    for (int i = 0; i < n; i++)
-    {
+        imgs[i] = { (uint32_t)(int)a->rects[i].w, (uint32_t)(int)a->rects[i].h, 1, VK_FORMAT_R8_UNORM };
+    UploadImageBatch(imgs, [&](int i, unsigned char* dst) {
         int ox = (int)a->rects[i].ox, oy = (int)a->rects[i].oy;
         int w  = (int)a->rects[i].w,  h  = (int)a->rects[i].h;
-        unsigned char* dst = sp + texOffset[i];
         for (int row = 0; row < h; row++)
             std::memcpy(dst + (size_t)row * w,
                         a->pixels + (size_t)(oy + row) * a->atlasw + ox,
                         (size_t)w);
-    }
-    vkUnmapMemory(g.device, stagingMem);
+    }, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, "material", g.matImages, g.matViews, g.matMemory);
 
-    // Create all N images, then back them with ONE device allocation (a minimal
-    // manual sub-allocator: each image binds at its own aligned offset). This
-    // keeps the per-allocation count at 1 instead of N, well clear of the driver's
-    // limit on big WADs; VMA does this properly in a later increment.
-    VkDeviceSize memBytes = 0;
-    std::vector<VkDeviceSize> imgOffset(n);
-    uint32_t memTypeBits = 0xffffffffu;
-    for (int i = 0; i < n; i++)
-    {
-        VkImageCreateInfo ici = {};
-        ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        ici.imageType = VK_IMAGE_TYPE_2D;
-        ici.format = VK_FORMAT_R8_UNORM;
-        ici.extent = { (uint32_t)(int)a->rects[i].w, (uint32_t)(int)a->rects[i].h, 1 };
-        ici.mipLevels = 1;
-        ici.arrayLayers = 1;
-        ici.samples = VK_SAMPLE_COUNT_1_BIT;
-        ici.tiling = VK_IMAGE_TILING_OPTIMAL;
-        ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-        ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        Check(vkCreateImage(g.device, &ici, nullptr, &g.matImages[i]), "vkCreateImage(material)");
-
-        VkMemoryRequirements req = {};
-        vkGetImageMemoryRequirements(g.device, g.matImages[i], &req);
-        memBytes = (memBytes + req.alignment - 1) & ~(req.alignment - 1);
-        imgOffset[i] = memBytes;
-        memBytes += req.size;
-        memTypeBits &= req.memoryTypeBits;
-    }
-
-    VkMemoryAllocateInfo mai = {};
-    mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    mai.allocationSize = memBytes;
-    mai.memoryTypeIndex = FindMemoryType(memTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    Check(vkAllocateMemory(g.device, &mai, nullptr, &g.matMemory), "vkAllocateMemory(materials)");
-    for (int i = 0; i < n; i++)
-        Check(vkBindImageMemory(g.device, g.matImages[i], g.matMemory, imgOffset[i]),
-              "vkBindImageMemory(material)");
-
-    // One command buffer: all UNDEFINED->TRANSFER_DST barriers, all copies, then
-    // all TRANSFER_DST->SHADER_READ barriers.
-    std::vector<VkImageMemoryBarrier> toDst(n), toRead(n);
-    for (int i = 0; i < n; i++)
-    {
-        VkImageMemoryBarrier b = {};
-        b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b.image = g.matImages[i];
-        b.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-        b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        b.srcAccessMask = 0;
-        b.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        toDst[i] = b;
-        b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        toRead[i] = b;
-    }
-
-    VkCommandBuffer cb = BeginOneTime();
-    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         0, 0, nullptr, 0, nullptr, (uint32_t)n, toDst.data());
-    for (int i = 0; i < n; i++)
-    {
-        VkBufferImageCopy region = {};
-        region.bufferOffset = texOffset[i];
-        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        region.imageSubresource.layerCount = 1;
-        region.imageExtent = { (uint32_t)(int)a->rects[i].w, (uint32_t)(int)a->rects[i].h, 1 };
-        vkCmdCopyBufferToImage(cb, staging, g.matImages[i],
-                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-    }
-    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                         0, 0, nullptr, 0, nullptr, (uint32_t)n, toRead.data());
-    EndOneTime(cb);
-
-    vkDestroyBuffer(g.device, staging, nullptr);
-    vkFreeMemory(g.device, stagingMem, nullptr);
-
-    // Image views + one array write filling the bindless binding (2) slots [0,n).
+    // One array write filling the bindless binding (2) slots [0,n).
     std::vector<VkDescriptorImageInfo> infos(n);
     for (int i = 0; i < n; i++)
-    {
-        VkImageViewCreateInfo vci = {};
-        vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        vci.image = g.matImages[i];
-        vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        vci.format = VK_FORMAT_R8_UNORM;
-        vci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-        Check(vkCreateImageView(g.device, &vci, nullptr, &g.matViews[i]), "vkCreateImageView(material)");
         infos[i] = { g.texSampler, g.matViews[i], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-    }
     VkWriteDescriptorSet warr = {};
     warr.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     warr.dstSet = g.ds;
@@ -7208,117 +7223,14 @@ static void BuildHdSet(const std::vector<HdSrc>& srcsIn, const rb_matctrl_t* tab
     if (srcs.empty()) srcs.push_back({ kDummyPx, 1, 1, false });
     const int nimg = (int)srcs.size();
 
-    // 1. Create the images (single-mip), backed by one device allocation.
-    g.hdImages.assign(nimg, VK_NULL_HANDLE);
-    g.hdViews.assign(nimg, VK_NULL_HANDLE);
-    std::vector<VkDeviceSize> imgOffset(nimg);
-    VkDeviceSize memBytes = 0;
-    uint32_t memTypeBits = 0xffffffffu;
-    for (int i = 0; i < nimg; i++) {
-        VkImageCreateInfo ici = {};
-        ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        ici.imageType = VK_IMAGE_TYPE_2D;
-        ici.format = srcs[i].srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
-        ici.extent = { (uint32_t)srcs[i].w, (uint32_t)srcs[i].h, 1 };
-        ici.mipLevels = 1;
-        ici.arrayLayers = 1;
-        ici.samples = VK_SAMPLE_COUNT_1_BIT;
-        ici.tiling = VK_IMAGE_TILING_OPTIMAL;
-        ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-        ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        Check(vkCreateImage(g.device, &ici, nullptr, &g.hdImages[i]), "vkCreateImage(hd)");
-        VkMemoryRequirements req = {};
-        vkGetImageMemoryRequirements(g.device, g.hdImages[i], &req);
-        memBytes = (memBytes + req.alignment - 1) & ~(req.alignment - 1);
-        imgOffset[i] = memBytes;
-        memBytes += req.size;
-        memTypeBits &= req.memoryTypeBits;
-    }
-    VkMemoryAllocateInfo mai = {};
-    mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    mai.allocationSize = memBytes;
-    mai.memoryTypeIndex = FindMemoryType(memTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    Check(vkAllocateMemory(g.device, &mai, nullptr, &g.hdMemory), "vkAllocateMemory(hd)");
+    // 1-4. The images, uploaded and viewed.
+    std::vector<BatchImage> imgs(nimg);
     for (int i = 0; i < nimg; i++)
-        Check(vkBindImageMemory(g.device, g.hdImages[i], g.hdMemory, imgOffset[i]), "vkBindImageMemory(hd)");
-
-    // 2. Staging buffer: every image's RGBA8 back to back (4-byte-aligned offsets).
-    std::vector<VkDeviceSize> texOffset(nimg);
-    VkDeviceSize stageBytes = 0;
-    for (int i = 0; i < nimg; i++) {
-        texOffset[i] = stageBytes;
-        VkDeviceSize sz = (VkDeviceSize)srcs[i].w * srcs[i].h * 4;
-        stageBytes += (sz + 3) & ~(VkDeviceSize)3;
-    }
-    VkBufferCreateInfo sbci = {};
-    sbci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    sbci.size = stageBytes;
-    sbci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-    sbci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    VkBuffer staging = VK_NULL_HANDLE;
-    Check(vkCreateBuffer(g.device, &sbci, nullptr, &staging), "vkCreateBuffer(hd staging)");
-    VkMemoryRequirements sreq = {};
-    vkGetBufferMemoryRequirements(g.device, staging, &sreq);
-    VkMemoryAllocateInfo smai = {};
-    smai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    smai.allocationSize = sreq.size;
-    smai.memoryTypeIndex = FindMemoryType(sreq.memoryTypeBits,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    VkDeviceMemory stagingMem = VK_NULL_HANDLE;
-    Check(vkAllocateMemory(g.device, &smai, nullptr, &stagingMem), "vkAllocateMemory(hd staging)");
-    Check(vkBindBufferMemory(g.device, staging, stagingMem, 0), "vkBindBufferMemory(hd staging)");
-    unsigned char* sp = nullptr;
-    Check(vkMapMemory(g.device, stagingMem, 0, stageBytes, 0, (void**)&sp), "vkMapMemory(hd staging)");
-    for (int i = 0; i < nimg; i++)
-        std::memcpy(sp + texOffset[i], srcs[i].px, (size_t)srcs[i].w * srcs[i].h * 4);
-    vkUnmapMemory(g.device, stagingMem);
-
-    // 3. Copy staging -> images (UNDEFINED->DST, copy, DST->SHADER_READ).
-    std::vector<VkImageMemoryBarrier> toDst(nimg), toRead(nimg);
-    for (int i = 0; i < nimg; i++) {
-        VkImageMemoryBarrier b = {};
-        b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b.image = g.hdImages[i];
-        b.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-        b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        b.srcAccessMask = 0; b.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        toDst[i] = b;
-        b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        toRead[i] = b;
-    }
-    VkCommandBuffer cb = BeginOneTime();
-    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         0, 0, nullptr, 0, nullptr, (uint32_t)nimg, toDst.data());
-    for (int i = 0; i < nimg; i++) {
-        VkBufferImageCopy region = {};
-        region.bufferOffset = texOffset[i];
-        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        region.imageSubresource.layerCount = 1;
-        region.imageExtent = { (uint32_t)srcs[i].w, (uint32_t)srcs[i].h, 1 };
-        vkCmdCopyBufferToImage(cb, staging, g.hdImages[i], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-    }
-    vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                         0, 0, nullptr, 0, nullptr, (uint32_t)nimg, toRead.data());
-    EndOneTime(cb);
-    vkDestroyBuffer(g.device, staging, nullptr);
-    vkFreeMemory(g.device, stagingMem, nullptr);
-
-    // 4. Image views.
-    for (int i = 0; i < nimg; i++) {
-        VkImageViewCreateInfo vci = {};
-        vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        vci.image = g.hdImages[i];
-        vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        vci.format = srcs[i].srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
-        vci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-        Check(vkCreateImageView(g.device, &vci, nullptr, &g.hdViews[i]), "vkCreateImageView(hd)");
-    }
+        imgs[i] = { (uint32_t)srcs[i].w, (uint32_t)srcs[i].h, 4,
+                    srcs[i].srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM };
+    UploadImageBatch(imgs, [&](int i, unsigned char* dst) {
+        std::memcpy(dst, srcs[i].px, (size_t)srcs[i].w * srcs[i].h * 4);
+    }, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, "hd", g.hdImages, g.hdViews, g.hdMemory);
 
     // 5. Control SSBO (device-local), staged upload.
     VkDeviceSize ctrlBytes = (VkDeviceSize)nmat * sizeof(rb_matctrl_t);
