@@ -23,8 +23,9 @@ stop working. In DOOM_Ants that is, most often, a change to one of these:
   accepts, and the self-tests (`-rtverify`, `-shotverify`, `-shotcompare`,
   `-bootsmoke`).
 - **Recorded demos.** A demo recorded on the previous release plays back
-  differently. Treat any change to the game simulation as this, unless such a
-  demo has been played back unchanged.
+  differently. Treat any change to the game simulation as this, unless one
+  demo recorded on the previous release, exercising the changed code, plays
+  back unchanged.
 - **Game data.** A WAD or add-on that loaded before is refused.
 - **Network play.** A way of starting or joining a network game stops working.
 - **Default controls.** A key or gamepad button does something else by
@@ -43,14 +44,15 @@ its changes would otherwise give. Until then every stable release is `0.x`.
 ## Planned release headings
 
 The roadmap names its planned releases by version, but a release's number is
-read from its changes when it is cut. So a planned `0.x` heading's number is a
-queue label, not a promise:
+read from its changes when it is cut. So a planned heading's number is a queue
+label, not a promise:
 
-- Planned headings are cut in order. A heading is cut when it is the earliest
-  planned heading and holds no planned or in-progress item. It is renamed to
-  the number its release got.
+- Planned headings are cut in order: a release is cut from the earliest planned
+  heading, and only once it holds no planned or in-progress item. That heading
+  is renamed to the number its release got.
 - A release cut between headings — a hotfix — gets a new heading of its own.
 - At every cut, each item shipped since the last release moves under that
   release's heading.
-- If a cut's number equals a later `0.x` heading's label, that heading and
-  every `0.x` heading after it move up one MINOR.
+- If a cut's number equals a later heading's label, that heading and every
+  heading after it move up one MINOR. The `1.0.0` heading never moves: a `0.x`
+  shift stops before it.
