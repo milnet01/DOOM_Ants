@@ -3,8 +3,9 @@
 Which version number a release gets is the machine-wide versioning standard,
 `~/.claude/standards/versioning.md`: its levels, its `0.x` shift and its
 `-rc.N` pre-release spelling. That standard asks each project two questions it
-will not answer itself. This file answers them for DOOM_Ants, and holds nothing
-else. Decided by the user 2026-09-28.
+will not answer itself. This file answers them for DOOM_Ants, and says how the
+roadmap's planned release headings follow the numbers. Decided by the user
+2026-09-28.
 
 ## Breaking surfaces
 
@@ -21,8 +22,9 @@ stop working. In DOOM_Ants that is, most often, a change to one of these:
   changes. Out of scope: options that only a developer build (`make DEV=1`)
   accepts, and the self-tests (`-rtverify`, `-shotverify`, `-shotcompare`,
   `-bootsmoke`).
-- **Recorded demos.** A demo that played back before now desyncs, which any
-  change to the game simulation risks.
+- **Recorded demos.** A demo recorded on the previous release plays back
+  differently. Treat any change to the game simulation as this, unless such a
+  demo has been played back unchanged.
 - **Game data.** A WAD or add-on that loaded before is refused.
 - **Network play.** A way of starting or joining a network game stops working.
 - **Default controls.** A key or gamepad button does something else by
@@ -35,13 +37,17 @@ A surface missing from this list is still a surface (`versioning.md` § 3).
 
 ## What makes it 1.0
 
-DOOM_Ants is `1.0.0` when every item under the roadmap's `1.0.0` heading, and
-under every release heading before it, is shipped or dropped.
+The release that leaves no planned or in-progress item under the roadmap's
+`1.0.0` heading, or under any heading before it, is cut as `1.0.0`, whatever level its changes
+would otherwise give. Until then every release is `0.x`.
 
 ## Planned release headings
 
-The roadmap names its planned releases by version. Under this rule the level
-is read from the changes when the release is cut, so a planned heading's number
-is its place in the queue, not a promise. When a release is cut at a different
-number than its heading says, rename that heading to the number it got; the
-later planned headings keep their themes and take the numbers after it.
+The roadmap names its planned releases by version, but a release's number is
+read from its changes when it is cut. So a planned `0.x` heading's number is a
+queue label, not a promise:
+
+- When a release is cut, its heading is renamed to the number it got.
+- A later `0.x` heading keeps its label unless a cut takes that number. Then it,
+  and every `0.x` heading after it, moves up one MINOR.
+- The `1.0.0` heading is never renamed.
