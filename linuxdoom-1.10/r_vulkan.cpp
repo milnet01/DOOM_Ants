@@ -2589,6 +2589,102 @@ void BuildSpriteTlas()
 }
 
 // ---------------------------------------------------------------------------
+// Compute-pass builders (DOOM-0441): the steps every compute pass below repeats
+// ---------------------------------------------------------------------------
+
+// Check() with a "<call>(<pass>)" label, formatted only on failure.
+static void CheckPass(VkResult r, const char* call, const char* pass)
+{
+    if (r == VK_SUCCESS)
+        return;
+    char what[96];
+    std::snprintf(what, sizeof(what), "%s(%s)", call, pass);
+    Fail(what, r);
+}
+
+// A set layout from `binds`, a pool sized FROM those bindings (each type's
+// descriptors times the number of sets, so no pass derives its pool by hand), and
+// one set per entry of `sets`.
+static void CreateComputeSets(const VkDescriptorSetLayoutBinding* binds, uint32_t n,
+                              const char* pass, VkDescriptorSetLayout* layout,
+                              VkDescriptorPool* pool,
+                              std::initializer_list<VkDescriptorSet*> sets)
+{
+    VkDescriptorSetLayoutCreateInfo dlci = {};
+    dlci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    dlci.bindingCount = n;
+    dlci.pBindings    = binds;
+    CheckPass(vkCreateDescriptorSetLayout(g.device, &dlci, nullptr, layout),
+              "vkCreateDescriptorSetLayout", pass);
+
+    const uint32_t nSets = (uint32_t)sets.size();
+    std::vector<VkDescriptorPoolSize> sizes;
+    for (uint32_t i = 0; i < n; i++) {
+        auto it = std::find_if(sizes.begin(), sizes.end(), [&](const VkDescriptorPoolSize& s)
+                               { return s.type == binds[i].descriptorType; });
+        if (it == sizes.end())
+            it = sizes.insert(sizes.end(), VkDescriptorPoolSize{ binds[i].descriptorType, 0 });
+        it->descriptorCount += binds[i].descriptorCount * nSets;
+    }
+    VkDescriptorPoolCreateInfo pci = {};
+    pci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pci.maxSets       = nSets;
+    pci.poolSizeCount = (uint32_t)sizes.size();
+    pci.pPoolSizes    = sizes.data();
+    CheckPass(vkCreateDescriptorPool(g.device, &pci, nullptr, pool), "vkCreateDescriptorPool", pass);
+
+    VkDescriptorSetAllocateInfo dai = {};
+    dai.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dai.descriptorPool     = *pool;
+    dai.descriptorSetCount = 1;
+    dai.pSetLayouts        = layout;
+    for (VkDescriptorSet* s : sets)
+        CheckPass(vkAllocateDescriptorSets(g.device, &dai, s), "vkAllocateDescriptorSets", pass);
+}
+
+// A compute pipeline layout: `nSets` set layouts plus one push range of `pushBytes`.
+static void CreateComputeLayout(const VkDescriptorSetLayout* setLayouts, uint32_t nSets,
+                                uint32_t pushBytes, const char* pass, VkPipelineLayout* out)
+{
+    VkPushConstantRange pcr = {};
+    pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pcr.offset     = 0;
+    pcr.size       = pushBytes;
+    VkPipelineLayoutCreateInfo plci = {};
+    plci.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plci.setLayoutCount         = nSets;
+    plci.pSetLayouts            = setLayouts;
+    plci.pushConstantRangeCount = 1;
+    plci.pPushConstantRanges    = &pcr;
+    CheckPass(vkCreatePipelineLayout(g.device, &plci, nullptr, out), "vkCreatePipelineLayout", pass);
+}
+
+// A compute pipeline from a module the caller keeps (the megakernel's variants).
+static void CreateComputePipe(VkShaderModule cs, VkPipelineLayout layout,
+                              const VkSpecializationInfo* si, const char* pass, VkPipeline* out)
+{
+    VkComputePipelineCreateInfo cpci = {};
+    cpci.sType                     = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    cpci.stage.sType               = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    cpci.stage.stage               = VK_SHADER_STAGE_COMPUTE_BIT;
+    cpci.stage.module              = cs;
+    cpci.stage.pName               = "main";
+    cpci.stage.pSpecializationInfo = si;
+    cpci.layout                    = layout;
+    CheckPass(vkCreateComputePipelines(g.device, VK_NULL_HANDLE, 1, &cpci, nullptr, out),
+              "vkCreateComputePipelines", pass);
+}
+
+// A compute pipeline from SPIR-V; the module lives only as long as the build.
+static void CreateComputePipe(const unsigned char* code, unsigned len, VkPipelineLayout layout,
+                              const char* pass, VkPipeline* out)
+{
+    VkShaderModule cs = MakeShader(code, len);
+    CreateComputePipe(cs, layout, nullptr, pass, out);
+    vkDestroyShaderModule(g.device, cs, nullptr);
+}
+
+// ---------------------------------------------------------------------------
 // Path-tracer compute pass (DOOM-0009 build step 2c)
 // ---------------------------------------------------------------------------
 
@@ -2612,17 +2708,7 @@ static VkPipeline RtPipelineForMode(uint32_t mode)
     si.dataSize      = sizeof(modeVal);
     si.pData         = &modeVal;
 
-    VkComputePipelineCreateInfo cpci = {};
-    cpci.sType                     = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    cpci.stage.sType               = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    cpci.stage.stage               = VK_SHADER_STAGE_COMPUTE_BIT;
-    cpci.stage.module              = g.rtModule;
-    cpci.stage.pName               = "main";
-    cpci.stage.pSpecializationInfo = &si;
-    cpci.layout                    = g.rtPipeLayout;
-    Check(vkCreateComputePipelines(g.device, VK_NULL_HANDLE, 1, &cpci, nullptr,
-                                   &g.rtPipeline[mode]),
-          "vkCreateComputePipelines(rt)");
+    CreateComputePipe(g.rtModule, g.rtPipeLayout, &si, "rt", &g.rtPipeline[mode]);
     return g.rtPipeline[mode];
 }
 
@@ -2681,33 +2767,7 @@ void CreateRtComputePipeline()
     binds[6].descriptorCount = 1;
     binds[6].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
 
-    VkDescriptorSetLayoutCreateInfo dlci = {};
-    dlci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    dlci.bindingCount = 7;
-    dlci.pBindings    = binds;
-    Check(vkCreateDescriptorSetLayout(g.device, &dlci, nullptr, &g.rtDsLayout),
-          "vkCreateDescriptorSetLayout(rt)");
-
-    VkDescriptorPoolSize pools[5] = {};
-    pools[0].type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR; pools[0].descriptorCount = 1;
-    pools[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;              pools[1].descriptorCount = 2;
-    pools[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;     pools[2].descriptorCount = 2;
-    pools[3].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;             pools[3].descriptorCount = 1;
-    pools[4].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;             pools[4].descriptorCount = 1;  // L3 fog lights
-    VkDescriptorPoolCreateInfo pci = {};
-    pci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pci.maxSets       = 1;
-    pci.poolSizeCount = 5;
-    pci.pPoolSizes    = pools;
-    Check(vkCreateDescriptorPool(g.device, &pci, nullptr, &g.rtDsPool),
-          "vkCreateDescriptorPool(rt)");
-
-    VkDescriptorSetAllocateInfo dai = {};
-    dai.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    dai.descriptorPool     = g.rtDsPool;
-    dai.descriptorSetCount = 1;
-    dai.pSetLayouts        = &g.rtDsLayout;
-    Check(vkAllocateDescriptorSets(g.device, &dai, &g.rtDs), "vkAllocateDescriptorSets(rt)");
+    CreateComputeSets(binds, 7, "rt", &g.rtDsLayout, &g.rtDsPool, { &g.rtDs });
 
     // Push constant: 4x vec4 (camera) + 5x uvec4 (mode/w/h/numWall, emitter+probe
     // counts, verify seed/spp/estimator, DOOM-0100 sprite base + omni-emitter start +
@@ -2718,10 +2778,6 @@ void CreateRtComputePipeline()
     // sizeof(RtPushConstants) in RecordRtTrace — a short range silently drops the trailing
     // fields, so the verify struct's 184-byte push (RB_RtVerify, which mirrors misc4/misc5
     // as padding) is a valid PREFIX of this 240-byte range. Within the 256-byte device limit.
-    VkPushConstantRange pcr = {};
-    pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    pcr.offset     = 0;
-    pcr.size       = 240;
     // Three sets: 0 = RT (TLAS + output image), 1 = the raster materials set
     // (g.dsLayout: PLAYPAL LUT + bindless material array), reused verbatim so the
     // textured trace (step 3a) decodes surfaces with no parallel material path,
@@ -2735,14 +2791,7 @@ void CreateRtComputePipeline()
     // unreferenced by the shader until then), so the existing RT path is unaffected.
     CreateHdSetLayout();
     VkDescriptorSetLayout setLayouts[4] = { g.rtDsLayout, g.dsLayout, g.svgfDsLayout, g.hdSetLayout };
-    VkPipelineLayoutCreateInfo plci = {};
-    plci.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    plci.setLayoutCount         = 4;
-    plci.pSetLayouts            = setLayouts;
-    plci.pushConstantRangeCount = 1;
-    plci.pPushConstantRanges    = &pcr;
-    Check(vkCreatePipelineLayout(g.device, &plci, nullptr, &g.rtPipeLayout),
-          "vkCreatePipelineLayout(rt)");
+    CreateComputeLayout(setLayouts, 4, 240, "rt", &g.rtPipeLayout);
 
     // DOOM-0129: keep the module alive — each view-mode is compiled into its own
     // specialised pipeline (RtPipelineForMode), built lazily from this module. Pre-
@@ -2813,59 +2862,15 @@ void CreateBakePipeline()
     tlasBind.descriptorCount = 1;
     tlasBind.stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
 
-    VkDescriptorSetLayoutCreateInfo dlci = {};
-    dlci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    dlci.bindingCount = 1;
-    dlci.pBindings    = &tlasBind;
-    Check(vkCreateDescriptorSetLayout(g.device, &dlci, nullptr, &g.bakeDsLayout),
-          "vkCreateDescriptorSetLayout(bake)");
-
-    VkDescriptorPoolSize pool = {};
-    pool.type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR; pool.descriptorCount = 1;
-    VkDescriptorPoolCreateInfo pci = {};
-    pci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pci.maxSets       = 1;
-    pci.poolSizeCount = 1;
-    pci.pPoolSizes    = &pool;
-    Check(vkCreateDescriptorPool(g.device, &pci, nullptr, &g.bakeDsPool),
-          "vkCreateDescriptorPool(bake)");
-
-    VkDescriptorSetAllocateInfo dai = {};
-    dai.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    dai.descriptorPool     = g.bakeDsPool;
-    dai.descriptorSetCount = 1;
-    dai.pSetLayouts        = &g.bakeDsLayout;
-    Check(vkAllocateDescriptorSets(g.device, &dai, &g.bakeDs), "vkAllocateDescriptorSets(bake)");
+    CreateComputeSets(&tlasBind, 1, "bake", &g.bakeDsLayout, &g.bakeDsPool, { &g.bakeDs });
 
     // Push constant: uvec4 (probeCount/numWall/emitterCount/giEnabled) + 8 uint64
     // buffer addresses (verts, emit, matEmis, probes, prevProbes, triSs, + DOOM-0119
     // emitSec/reject — always 0 here, but the shared shadeSurface references them so
     // the range must cover them) = 80 bytes. MUST match sizeof(BakePush) below.
-    VkPushConstantRange pcr = {};
-    pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    pcr.offset     = 0;
-    pcr.size       = 80;
     VkDescriptorSetLayout setLayouts[2] = { g.bakeDsLayout, g.dsLayout };
-    VkPipelineLayoutCreateInfo plci = {};
-    plci.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    plci.setLayoutCount         = 2;
-    plci.pSetLayouts            = setLayouts;
-    plci.pushConstantRangeCount = 1;
-    plci.pPushConstantRanges    = &pcr;
-    Check(vkCreatePipelineLayout(g.device, &plci, nullptr, &g.bakePipeLayout),
-          "vkCreatePipelineLayout(bake)");
-
-    VkShaderModule cs = MakeShader(bake_comp_spv, bake_comp_spv_len);
-    VkComputePipelineCreateInfo cpci = {};
-    cpci.sType        = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    cpci.stage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    cpci.stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
-    cpci.stage.module = cs;
-    cpci.stage.pName  = "main";
-    cpci.layout       = g.bakePipeLayout;
-    Check(vkCreateComputePipelines(g.device, VK_NULL_HANDLE, 1, &cpci, nullptr, &g.bakePipeline),
-          "vkCreateComputePipelines(bake)");
-    vkDestroyShaderModule(g.device, cs, nullptr);
+    CreateComputeLayout(setLayouts, 2, 80, "bake", &g.bakePipeLayout);
+    CreateComputePipe(bake_comp_spv, bake_comp_spv_len, g.bakePipeLayout, "bake", &g.bakePipeline);
 }
 
 // (Re)create the swapchain-sized storage image the compute pass writes and the
@@ -2883,44 +2888,18 @@ void CreateSvgfDescriptorLayout()
     // binding 9 = DOOM-0011 L1 half-res fog target, added without disturbing 0-8).
     const uint32_t counts[10] = { 2, 2, 1, 1, 2, 2, 2, 1, 1, 1 };
     VkDescriptorSetLayoutBinding b[10] = {};
-    uint32_t total = 0;
     for (uint32_t i = 0; i < 10; i++) {
         b[i].binding         = i;
         b[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         b[i].descriptorCount = counts[i];
         b[i].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
-        total += counts[i];
     }
-    VkDescriptorSetLayoutCreateInfo dlci = {};
-    dlci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    dlci.bindingCount = 10;
-    dlci.pBindings    = b;
-    Check(vkCreateDescriptorSetLayout(g.device, &dlci, nullptr, &g.svgfDsLayout),
-          "vkCreateDescriptorSetLayout(svgf)");
-
     // Three sets from this layout: svgfDs (the denoiser chain), labelTaauDs (the
     // label-on-upscaled-output variant, binding 7 retargeted in WriteTaauDescriptor) and
     // DOOM-0345 R1's svgfSplitDs (binding 7 retargeted at rtHdrImage for the -DBLOOM_SPLIT
     // composite; written in WriteSvgfDescriptor alongside svgfDs).
-    VkDescriptorPoolSize pool = {};
-    pool.type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    pool.descriptorCount = total * 3;
-    VkDescriptorPoolCreateInfo pci = {};
-    pci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pci.maxSets       = 3;
-    pci.poolSizeCount = 1;
-    pci.pPoolSizes    = &pool;
-    Check(vkCreateDescriptorPool(g.device, &pci, nullptr, &g.svgfDsPool),
-          "vkCreateDescriptorPool(svgf)");
-
-    VkDescriptorSetAllocateInfo dai = {};
-    dai.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    dai.descriptorPool     = g.svgfDsPool;
-    dai.descriptorSetCount = 1;
-    dai.pSetLayouts        = &g.svgfDsLayout;
-    Check(vkAllocateDescriptorSets(g.device, &dai, &g.svgfDs), "vkAllocateDescriptorSets(svgf)");
-    Check(vkAllocateDescriptorSets(g.device, &dai, &g.labelTaauDs), "vkAllocateDescriptorSets(labelTaau)");
-    Check(vkAllocateDescriptorSets(g.device, &dai, &g.svgfSplitDs), "vkAllocateDescriptorSets(svgfSplit)");
+    CreateComputeSets(b, 10, "svgf", &g.svgfDsLayout, &g.svgfDsPool,
+                      { &g.svgfDs, &g.labelTaauDs, &g.svgfSplitDs });
 }
 
 // The three SVGF compute pipelines (temporal accumulation, edge-aware a-trous,
@@ -2928,18 +2907,7 @@ void CreateSvgfDescriptorLayout()
 // range (the SvgfPC struct in RecordRtTrace). Created after the descriptor layout.
 void CreateSvgfPipelines()
 {
-    VkPushConstantRange pcr = {};
-    pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    pcr.offset     = 0;
-    pcr.size       = 120;
-    VkPipelineLayoutCreateInfo plci = {};
-    plci.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    plci.setLayoutCount         = 1;
-    plci.pSetLayouts            = &g.svgfDsLayout;
-    plci.pushConstantRangeCount = 1;
-    plci.pPushConstantRanges    = &pcr;
-    Check(vkCreatePipelineLayout(g.device, &plci, nullptr, &g.svgfPipeLayout),
-          "vkCreatePipelineLayout(svgf)");
+    CreateComputeLayout(&g.svgfDsLayout, 1, 120, "svgf", &g.svgfPipeLayout);
 
     // DOOM-0345 R1: the fourth entry is the SAME composite source built with
     // -DBLOOM_SPLIT. Same pipeline layout and same push block — only the surface store and
@@ -2950,19 +2918,8 @@ void CreateSvgfPipelines()
         { svgf_composite_comp_spv, svgf_composite_comp_spv_len, &g.svgfComposite },
         { svgf_composite_split_comp_spv, svgf_composite_split_comp_spv_len, &g.svgfCompositeSplit },
     };
-    for (auto& p : passes) {
-        VkShaderModule cs = MakeShader(p.code, p.len);
-        VkComputePipelineCreateInfo cpci = {};
-        cpci.sType        = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-        cpci.stage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        cpci.stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
-        cpci.stage.module = cs;
-        cpci.stage.pName  = "main";
-        cpci.layout       = g.svgfPipeLayout;
-        Check(vkCreateComputePipelines(g.device, VK_NULL_HANDLE, 1, &cpci, nullptr, p.out),
-              "vkCreateComputePipelines(svgf)");
-        vkDestroyShaderModule(g.device, cs, nullptr);
-    }
+    for (auto& p : passes)
+        CreateComputePipe(p.code, p.len, g.svgfPipeLayout, "svgf", p.out);
 }
 
 // DOOM-0345 R1 (§4.4/§5) — rt_tonemap.comp's pipeline. Three bindings: b0 = rtHdrImage
@@ -2980,59 +2937,12 @@ void CreateRtTonemapPipeline()
         b[i].descriptorType  = (i < 2) ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
                                        : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     }
-    VkDescriptorSetLayoutCreateInfo dlci = {};
-    dlci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    dlci.bindingCount = 3;
-    dlci.pBindings    = b;
-    Check(vkCreateDescriptorSetLayout(g.device, &dlci, nullptr, &g.rtTonemapDsLayout),
-          "vkCreateDescriptorSetLayout(rtTonemap)");
-
-    VkDescriptorPoolSize ps[2] = {};
-    ps[0].type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    ps[0].descriptorCount = 2;
-    ps[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    ps[1].descriptorCount = 1;
-    VkDescriptorPoolCreateInfo pci = {};
-    pci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pci.maxSets       = 1;
-    pci.poolSizeCount = 2;
-    pci.pPoolSizes    = ps;
-    Check(vkCreateDescriptorPool(g.device, &pci, nullptr, &g.rtTonemapDsPool),
-          "vkCreateDescriptorPool(rtTonemap)");
-
-    VkDescriptorSetAllocateInfo dai = {};
-    dai.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    dai.descriptorPool     = g.rtTonemapDsPool;
-    dai.descriptorSetCount = 1;
-    dai.pSetLayouts        = &g.rtTonemapDsLayout;
-    Check(vkAllocateDescriptorSets(g.device, &dai, &g.rtTonemapDs),
-          "vkAllocateDescriptorSets(rtTonemap)");
-
-    VkPushConstantRange pcr = {};
-    pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    pcr.offset     = 0;
-    pcr.size       = 16;                         // uvec2 renderExtent + float intensity + float ev
-    VkPipelineLayoutCreateInfo plci = {};
-    plci.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    plci.setLayoutCount         = 1;
-    plci.pSetLayouts            = &g.rtTonemapDsLayout;
-    plci.pushConstantRangeCount = 1;
-    plci.pPushConstantRanges    = &pcr;
-    Check(vkCreatePipelineLayout(g.device, &plci, nullptr, &g.rtTonemapPipeLayout),
-          "vkCreatePipelineLayout(rtTonemap)");
-
-    VkShaderModule cs = MakeShader(rt_tonemap_comp_spv, rt_tonemap_comp_spv_len);
-    VkComputePipelineCreateInfo cpci = {};
-    cpci.sType        = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    cpci.stage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    cpci.stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
-    cpci.stage.module = cs;
-    cpci.stage.pName  = "main";
-    cpci.layout       = g.rtTonemapPipeLayout;
-    Check(vkCreateComputePipelines(g.device, VK_NULL_HANDLE, 1, &cpci, nullptr,
-                                   &g.rtTonemapPipeline),
-          "vkCreateComputePipelines(rtTonemap)");
-    vkDestroyShaderModule(g.device, cs, nullptr);
+    CreateComputeSets(b, 3, "rtTonemap", &g.rtTonemapDsLayout, &g.rtTonemapDsPool,
+                      { &g.rtTonemapDs });
+    // Push: uvec2 renderExtent + float intensity + float ev.
+    CreateComputeLayout(&g.rtTonemapDsLayout, 1, 16, "rtTonemap", &g.rtTonemapPipeLayout);
+    CreateComputePipe(rt_tonemap_comp_spv, rt_tonemap_comp_spv_len, g.rtTonemapPipeLayout,
+                      "rtTonemap", &g.rtTonemapPipeline);
 }
 
 // DOOM-0345 R2 (§4.3) — bloom_extract_rt.comp's pipeline. Two storage-image bindings, both
@@ -3047,87 +2957,23 @@ void CreateBloomExtractRtPipeline()
         b[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         b[i].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
     }
-    VkDescriptorSetLayoutCreateInfo dlci = {};
-    dlci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    dlci.bindingCount = 2;
-    dlci.pBindings    = b;
-    Check(vkCreateDescriptorSetLayout(g.device, &dlci, nullptr, &g.bloomExtractRtDsLayout),
-          "vkCreateDescriptorSetLayout(bloomExtractRt)");
-
-    VkDescriptorPoolSize ps = {};
-    ps.type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    ps.descriptorCount = 2;
-    VkDescriptorPoolCreateInfo pci = {};
-    pci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pci.maxSets       = 1;
-    pci.poolSizeCount = 1;
-    pci.pPoolSizes    = &ps;
-    Check(vkCreateDescriptorPool(g.device, &pci, nullptr, &g.bloomExtractRtDsPool),
-          "vkCreateDescriptorPool(bloomExtractRt)");
-
-    VkDescriptorSetAllocateInfo dai = {};
-    dai.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    dai.descriptorPool     = g.bloomExtractRtDsPool;
-    dai.descriptorSetCount = 1;
-    dai.pSetLayouts        = &g.bloomExtractRtDsLayout;
-    Check(vkAllocateDescriptorSets(g.device, &dai, &g.bloomExtractRtDs),
-          "vkAllocateDescriptorSets(bloomExtractRt)");
-
-    VkPushConstantRange pcr = {};
-    pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    pcr.offset     = 0;
-    pcr.size       = 16;                        // uvec2 renderExtent + threshold + knee
-    VkPipelineLayoutCreateInfo plci = {};
-    plci.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    plci.setLayoutCount         = 1;
-    plci.pSetLayouts            = &g.bloomExtractRtDsLayout;
-    plci.pushConstantRangeCount = 1;
-    plci.pPushConstantRanges    = &pcr;
-    Check(vkCreatePipelineLayout(g.device, &plci, nullptr, &g.bloomExtractRtPipeLayout),
-          "vkCreatePipelineLayout(bloomExtractRt)");
-
-    VkShaderModule cs = MakeShader(bloom_extract_rt_comp_spv, bloom_extract_rt_comp_spv_len);
-    VkComputePipelineCreateInfo cpci = {};
-    cpci.sType        = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    cpci.stage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    cpci.stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
-    cpci.stage.module = cs;
-    cpci.stage.pName  = "main";
-    cpci.layout       = g.bloomExtractRtPipeLayout;
-    Check(vkCreateComputePipelines(g.device, VK_NULL_HANDLE, 1, &cpci, nullptr,
-                                   &g.bloomExtractRtPipeline),
-          "vkCreateComputePipelines(bloomExtractRt)");
-    vkDestroyShaderModule(g.device, cs, nullptr);
+    CreateComputeSets(b, 2, "bloomExtractRt", &g.bloomExtractRtDsLayout,
+                      &g.bloomExtractRtDsPool, { &g.bloomExtractRtDs });
+    // Push: uvec2 renderExtent + threshold + knee.
+    CreateComputeLayout(&g.bloomExtractRtDsLayout, 1, 16, "bloomExtractRt",
+                        &g.bloomExtractRtPipeLayout);
+    CreateComputePipe(bloom_extract_rt_comp_spv, bloom_extract_rt_comp_spv_len,
+                      g.bloomExtractRtPipeLayout, "bloomExtractRt", &g.bloomExtractRtPipeline);
 }
 
 // On-screen RT mode label pipeline (debug). Re-uses svgfDsLayout (it already binds
 // rtImage at binding 7); its own pipeline layout carries the 64-byte label push.
 void CreateLabelPipeline()
 {
-    VkPushConstantRange pcr = {};
-    pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    pcr.offset     = 0;
-    pcr.size       = 64;   // matches LabelPC in RecordRtTrace + label.comp
-    VkPipelineLayoutCreateInfo plci = {};
-    plci.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    plci.setLayoutCount         = 1;
-    plci.pSetLayouts            = &g.svgfDsLayout;
-    plci.pushConstantRangeCount = 1;
-    plci.pPushConstantRanges    = &pcr;
-    Check(vkCreatePipelineLayout(g.device, &plci, nullptr, &g.labelPipeLayout),
-          "vkCreatePipelineLayout(label)");
-
-    VkShaderModule cs = MakeShader(label_comp_spv, label_comp_spv_len);
-    VkComputePipelineCreateInfo cpci = {};
-    cpci.sType        = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    cpci.stage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    cpci.stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
-    cpci.stage.module = cs;
-    cpci.stage.pName  = "main";
-    cpci.layout       = g.labelPipeLayout;
-    Check(vkCreateComputePipelines(g.device, VK_NULL_HANDLE, 1, &cpci, nullptr, &g.labelPipeline),
-          "vkCreateComputePipelines(label)");
-    vkDestroyShaderModule(g.device, cs, nullptr);
+    // Push: 64 bytes, matching LabelPC in RecordRtTrace + label.comp.
+    CreateComputeLayout(&g.svgfDsLayout, 1, 64, "label", &g.labelPipeLayout);
+    CreateComputePipe(label_comp_spv, label_comp_spv_len, g.labelPipeLayout, "label",
+                      &g.labelPipeline);
 }
 
 // Temporal upscaler (build step 6-d): its own 4-binding descriptor set + compute
@@ -3139,62 +2985,16 @@ void CreateTaauPipeline()
 {
     const uint32_t counts[4] = { 1, 1, 2, 1 };   // inColor, inMotion, hist[2], out
     VkDescriptorSetLayoutBinding b[4] = {};
-    uint32_t total = 0;
     for (uint32_t i = 0; i < 4; i++) {
         b[i].binding         = i;
         b[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         b[i].descriptorCount = counts[i];
         b[i].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
-        total += counts[i];
     }
-    VkDescriptorSetLayoutCreateInfo dlci = {};
-    dlci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    dlci.bindingCount = 4;
-    dlci.pBindings    = b;
-    Check(vkCreateDescriptorSetLayout(g.device, &dlci, nullptr, &g.taauDsLayout),
-          "vkCreateDescriptorSetLayout(taau)");
-
-    VkDescriptorPoolSize pool = {};
-    pool.type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    pool.descriptorCount = total;
-    VkDescriptorPoolCreateInfo pci = {};
-    pci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pci.maxSets       = 1;
-    pci.poolSizeCount = 1;
-    pci.pPoolSizes    = &pool;
-    Check(vkCreateDescriptorPool(g.device, &pci, nullptr, &g.taauDsPool), "vkCreateDescriptorPool(taau)");
-
-    VkDescriptorSetAllocateInfo dai = {};
-    dai.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    dai.descriptorPool     = g.taauDsPool;
-    dai.descriptorSetCount = 1;
-    dai.pSetLayouts        = &g.taauDsLayout;
-    Check(vkAllocateDescriptorSets(g.device, &dai, &g.taauDs), "vkAllocateDescriptorSets(taau)");
-
-    VkPushConstantRange pcr = {};
-    pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    pcr.offset     = 0;
-    pcr.size       = 48;   // matches TaauPC in RecordRtTrace + taau.comp
-    VkPipelineLayoutCreateInfo plci = {};
-    plci.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    plci.setLayoutCount         = 1;
-    plci.pSetLayouts            = &g.taauDsLayout;
-    plci.pushConstantRangeCount = 1;
-    plci.pPushConstantRanges    = &pcr;
-    Check(vkCreatePipelineLayout(g.device, &plci, nullptr, &g.taauPipeLayout),
-          "vkCreatePipelineLayout(taau)");
-
-    VkShaderModule cs = MakeShader(taau_comp_spv, taau_comp_spv_len);
-    VkComputePipelineCreateInfo cpci = {};
-    cpci.sType        = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    cpci.stage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    cpci.stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
-    cpci.stage.module = cs;
-    cpci.stage.pName  = "main";
-    cpci.layout       = g.taauPipeLayout;
-    Check(vkCreateComputePipelines(g.device, VK_NULL_HANDLE, 1, &cpci, nullptr, &g.taauPipeline),
-          "vkCreateComputePipelines(taau)");
-    vkDestroyShaderModule(g.device, cs, nullptr);
+    CreateComputeSets(b, 4, "taau", &g.taauDsLayout, &g.taauDsPool, { &g.taauDs });
+    // Push: 48 bytes, matching TaauPC in RecordRtTrace + taau.comp.
+    CreateComputeLayout(&g.taauDsLayout, 1, 48, "taau", &g.taauPipeLayout);
+    CreateComputePipe(taau_comp_spv, taau_comp_spv_len, g.taauPipeLayout, "taau", &g.taauPipeline);
 }
 
 // DOOM-0331 L2 (§5) — the raster bright pass: its own 4-binding descriptor set + compute
@@ -3215,59 +3015,13 @@ void CreateBloomPipeline()
         b[i].descriptorCount = 1;
         b[i].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
     }
-    VkDescriptorSetLayoutCreateInfo dlci = {};
-    dlci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    dlci.bindingCount = 4;
-    dlci.pBindings    = b;
-    Check(vkCreateDescriptorSetLayout(g.device, &dlci, nullptr, &g.bloomExtractDsLayout),
-          "vkCreateDescriptorSetLayout(bloomExtract)");
-
-    VkDescriptorPoolSize pool[2] = {};
-    pool[0].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    pool[0].descriptorCount = 3;
-    pool[1].type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    pool[1].descriptorCount = 1;
-    VkDescriptorPoolCreateInfo pci = {};
-    pci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pci.maxSets       = 1;
-    pci.poolSizeCount = 2;
-    pci.pPoolSizes    = pool;
-    Check(vkCreateDescriptorPool(g.device, &pci, nullptr, &g.bloomExtractDsPool),
-          "vkCreateDescriptorPool(bloomExtract)");
-
-    VkDescriptorSetAllocateInfo dai = {};
-    dai.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    dai.descriptorPool     = g.bloomExtractDsPool;
-    dai.descriptorSetCount = 1;
-    dai.pSetLayouts        = &g.bloomExtractDsLayout;
-    Check(vkAllocateDescriptorSets(g.device, &dai, &g.bloomExtractDs),
-          "vkAllocateDescriptorSets(bloomExtract)");
-
-    VkPushConstantRange pcr = {};
-    pcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    pcr.offset     = 0;
-    pcr.size       = 6 * sizeof(float);   // vec2 uvScale + aoEnable + threshold + knee + chainScale
-    VkPipelineLayoutCreateInfo plci = {};
-    plci.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    plci.setLayoutCount         = 1;
-    plci.pSetLayouts            = &g.bloomExtractDsLayout;
-    plci.pushConstantRangeCount = 1;
-    plci.pPushConstantRanges    = &pcr;
-    Check(vkCreatePipelineLayout(g.device, &plci, nullptr, &g.bloomExtractPipeLayout),
-          "vkCreatePipelineLayout(bloomExtract)");
-
-    VkShaderModule cs = MakeShader(bloom_extract_raster_comp_spv, bloom_extract_raster_comp_spv_len);
-    VkComputePipelineCreateInfo cpci = {};
-    cpci.sType        = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    cpci.stage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    cpci.stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
-    cpci.stage.module = cs;
-    cpci.stage.pName  = "main";
-    cpci.layout       = g.bloomExtractPipeLayout;
-    Check(vkCreateComputePipelines(g.device, VK_NULL_HANDLE, 1, &cpci, nullptr,
-                                   &g.bloomExtractRasterPipeline),
-          "vkCreateComputePipelines(bloomExtract)");
-    vkDestroyShaderModule(g.device, cs, nullptr);
+    CreateComputeSets(b, 4, "bloomExtract", &g.bloomExtractDsLayout, &g.bloomExtractDsPool,
+                      { &g.bloomExtractDs });
+    // Push: vec2 uvScale + aoEnable + threshold + knee + chainScale.
+    CreateComputeLayout(&g.bloomExtractDsLayout, 1, 6 * sizeof(float), "bloomExtract",
+                        &g.bloomExtractPipeLayout);
+    CreateComputePipe(bloom_extract_raster_comp_spv, bloom_extract_raster_comp_spv_len,
+                      g.bloomExtractPipeLayout, "bloomExtract", &g.bloomExtractRasterPipeline);
 
     // DOOM-0331 L3 (§4.3) — the blur: a 2-binding set (b0 = the target being read, through the
     // linear+clamp composite sampler so pass 1's half -> quarter downsample rides the bilinear
@@ -3282,62 +3036,13 @@ void CreateBloomPipeline()
         bb[1] = bb[0];
         bb[1].binding        = 1;
         bb[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        VkDescriptorSetLayoutCreateInfo bdlci = {};
-        bdlci.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        bdlci.bindingCount = 2;
-        bdlci.pBindings    = bb;
-        Check(vkCreateDescriptorSetLayout(g.device, &bdlci, nullptr, &g.bloomBlurDsLayout),
-              "vkCreateDescriptorSetLayout(bloomBlur)");
-
-        // Two of each descriptor, because the pool sizes count DESCRIPTORS across all sets,
-        // not bindings in the layout -- one sampler + one storage image per set, two sets.
-        VkDescriptorPoolSize bpool[2] = {};
-        bpool[0].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        bpool[0].descriptorCount = 2;
-        bpool[1].type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        bpool[1].descriptorCount = 2;
-        VkDescriptorPoolCreateInfo bpci = {};
-        bpci.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        bpci.maxSets       = 2;
-        bpci.poolSizeCount = 2;
-        bpci.pPoolSizes    = bpool;
-        Check(vkCreateDescriptorPool(g.device, &bpci, nullptr, &g.bloomBlurDsPool),
-              "vkCreateDescriptorPool(bloomBlur)");
-
-        VkDescriptorSetLayout bl[2] = { g.bloomBlurDsLayout, g.bloomBlurDsLayout };
-        VkDescriptorSetAllocateInfo bdai = {};
-        bdai.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-        bdai.descriptorPool     = g.bloomBlurDsPool;
-        bdai.descriptorSetCount = 2;
-        bdai.pSetLayouts        = bl;
-        Check(vkAllocateDescriptorSets(g.device, &bdai, g.bloomBlurDs),
-              "vkAllocateDescriptorSets(bloomBlur)");
-
-        VkPushConstantRange bpcr = {};
-        bpcr.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-        bpcr.offset     = 0;
-        bpcr.size       = 4 * sizeof(float);   // vec2 dir + vec2 srcTexelSize
-        VkPipelineLayoutCreateInfo bplci = {};
-        bplci.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        bplci.setLayoutCount         = 1;
-        bplci.pSetLayouts            = &g.bloomBlurDsLayout;
-        bplci.pushConstantRangeCount = 1;
-        bplci.pPushConstantRanges    = &bpcr;
-        Check(vkCreatePipelineLayout(g.device, &bplci, nullptr, &g.bloomBlurPipeLayout),
-              "vkCreatePipelineLayout(bloomBlur)");
-
-        VkShaderModule bs = MakeShader(bloom_blur_comp_spv, bloom_blur_comp_spv_len);
-        VkComputePipelineCreateInfo bcpci = {};
-        bcpci.sType        = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-        bcpci.stage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        bcpci.stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
-        bcpci.stage.module = bs;
-        bcpci.stage.pName  = "main";
-        bcpci.layout       = g.bloomBlurPipeLayout;
-        Check(vkCreateComputePipelines(g.device, VK_NULL_HANDLE, 1, &bcpci, nullptr,
-                                       &g.bloomBlurPipeline),
-              "vkCreateComputePipelines(bloomBlur)");
-        vkDestroyShaderModule(g.device, bs, nullptr);
+        CreateComputeSets(bb, 2, "bloomBlur", &g.bloomBlurDsLayout, &g.bloomBlurDsPool,
+                          { &g.bloomBlurDs[0], &g.bloomBlurDs[1] });
+        // Push: vec2 dir + vec2 srcTexelSize.
+        CreateComputeLayout(&g.bloomBlurDsLayout, 1, 4 * sizeof(float), "bloomBlur",
+                            &g.bloomBlurPipeLayout);
+        CreateComputePipe(bloom_blur_comp_spv, bloom_blur_comp_spv_len, g.bloomBlurPipeLayout,
+                          "bloomBlur", &g.bloomBlurPipeline);
     }
 }
 
@@ -3365,10 +3070,11 @@ uint32_t ModeLabel(int mode, uint32_t* out)
     return n;
 }
 
-// Point the SVGF descriptor set at the current image views. Binding 7 (output)
-// re-uses the megakernel's rtImage view — the composite writes the same image the
-// present path already blits. Called from CreateSvgfTargets (init + each resize).
-void WriteSvgfDescriptor()
+// Write all ten bindings of one set on svgfDsLayout, with binding 7 (the output) at
+// `outView`. svgfDs, svgfSplitDs and labelTaauDs differ ONLY in binding 7, so each is
+// written through here and the other nine can never drift apart; every binding is
+// written, because a partially-written set is a validation error at bind time.
+static void WriteSvgfSet(VkDescriptorSet ds, VkImageView outView)
 {
     VkDescriptorImageInfo info[15] = {};
     const VkImageView views[15] = {
@@ -3379,7 +3085,7 @@ void WriteSvgfDescriptor()
         g.svView[SV_HCOL0],  g.svView[SV_HCOL1],            // b4 hcol[2]
         g.svView[SV_HMOM0],  g.svView[SV_HMOM1],            // b5 hmom[2]
         g.svView[SV_ATROUS0],g.svView[SV_ATROUS1],          // b6 atrous[2]
-        g.rtView,                                           // b7 outColor (rtImage)
+        outView,                                            // b7 outColor
         g.svView[SV_MOTION],                                // b8 motion vector (6-d)
         g.svView[SV_FOG],                                   // b9 DOOM-0011 L1 fog target
     };
@@ -3393,33 +3099,28 @@ void WriteSvgfDescriptor()
     VkWriteDescriptorSet wr[10] = {};
     for (int i = 0; i < 10; i++) {
         wr[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        wr[i].dstSet          = g.svgfDs;
+        wr[i].dstSet          = ds;
         wr[i].dstBinding      = map[i].binding;
         wr[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         wr[i].descriptorCount = map[i].count;
         wr[i].pImageInfo      = &info[map[i].first];
     }
     vkUpdateDescriptorSets(g.device, 10, wr, 0, nullptr);
+}
 
-    // DOOM-0345 R1 (§5) — svgfSplitDs: the same ten bindings, with binding 7 pointed at
-    // rtHdrImage instead of rtImage. Written here rather than in its own pass so the two
-    // sets can never disagree about the other nine; every binding is written, because a
-    // partially-written set is a validation error at bind time. rtHdrView is created in
-    // CreateRtTargets ahead of the CreateSvgfTargets call that reaches this, so it is live
-    // by now — the guard is belt-and-braces for a future reorder.
-    if (!g.svgfSplitDs || !g.rtHdrView)
-        return;
-    VkDescriptorImageInfo hdr = {};
-    hdr.imageView   = g.rtHdrView;
-    hdr.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-    VkWriteDescriptorSet swr[10] = {};
-    for (int i = 0; i < 10; i++) {
-        swr[i]        = wr[i];
-        swr[i].dstSet = g.svgfSplitDs;
-        if (map[i].binding == 7)
-            swr[i].pImageInfo = &hdr;
-    }
-    vkUpdateDescriptorSets(g.device, 10, swr, 0, nullptr);
+// Point the SVGF descriptor set at the current image views. Binding 7 (output)
+// re-uses the megakernel's rtImage view — the composite writes the same image the
+// present path already blits. Called from CreateSvgfTargets (init + each resize).
+void WriteSvgfDescriptor()
+{
+    WriteSvgfSet(g.svgfDs, g.rtView);
+
+    // DOOM-0345 R1 (§5) — svgfSplitDs: binding 7 pointed at rtHdrImage instead of
+    // rtImage. rtHdrView is created in CreateRtTargets ahead of the CreateSvgfTargets
+    // call that reaches this, so it is live by now — the guard is belt-and-braces for a
+    // future reorder.
+    if (g.svgfSplitDs && g.rtHdrView)
+        WriteSvgfSet(g.svgfSplitDs, g.rtHdrView);
 }
 
 // DOOM-0345 R1 (§4.4) — point rt_tonemap's set at the current views. Its three images come
@@ -3582,38 +3283,8 @@ void WriteTaauDescriptor()
     }
     vkUpdateDescriptorSets(g.device, 4, wr, 0, nullptr);
 
-    // labelTaauDs: same 10 bindings as svgfDs but binding 7 (output) = TAAU output.
-    // Binding 9 (DOOM-0011 L1 fog) mirrors svgfDs verbatim — unread by the label shader,
-    // written anyway so every binding this layout declares stays valid (matches the rest).
-    VkDescriptorImageInfo lin[15] = {};
-    const VkImageView lviews[15] = {
-        g.svView[SV_GPOS0],  g.svView[SV_GPOS1],
-        g.svView[SV_GNORM0], g.svView[SV_GNORM1],
-        g.svView[SV_ALBEDO], g.svView[SV_ILLUM],
-        g.svView[SV_HCOL0],  g.svView[SV_HCOL1],
-        g.svView[SV_HMOM0],  g.svView[SV_HMOM1],
-        g.svView[SV_ATROUS0],g.svView[SV_ATROUS1],
-        g.taView[TA_OUT],                                   // b7 -> upscaled output
-        g.svView[SV_MOTION],
-        g.svView[SV_FOG],                                   // b9 DOOM-0011 L1 fog target
-    };
-    for (uint32_t i = 0; i < 15; i++) {
-        lin[i].imageView   = lviews[i];
-        lin[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-    }
-    struct { uint32_t binding, first, count; } lmap[10] = {
-        {0,0,2},{1,2,2},{2,4,1},{3,5,1},{4,6,2},{5,8,2},{6,10,2},{7,12,1},{8,13,1},{9,14,1}
-    };
-    VkWriteDescriptorSet lwr[10] = {};
-    for (int i = 0; i < 10; i++) {
-        lwr[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        lwr[i].dstSet          = g.labelTaauDs;
-        lwr[i].dstBinding      = lmap[i].binding;
-        lwr[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        lwr[i].descriptorCount = lmap[i].count;
-        lwr[i].pImageInfo      = &lin[lmap[i].first];
-    }
-    vkUpdateDescriptorSets(g.device, 10, lwr, 0, nullptr);
+    // labelTaauDs: the svgfDs bindings with binding 7 (output) = the upscaled TAAU output.
+    WriteSvgfSet(g.labelTaauDs, g.taView[TA_OUT]);
 }
 
 void DestroyTaauTargets()

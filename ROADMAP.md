@@ -3244,7 +3244,7 @@ defect visible before a player finds it.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lane 7.
 
-- 📋 [DOOM-0441] **The Vulkan back-end hand-rolls the same create-and-upload sequences up to twelve times each.**
+- ✅ [DOOM-0441] **The Vulkan back-end hand-rolls the same create-and-upload sequences up to twelve times each.**
   Four lanes over r_vulkan.cpp found the same shape at different scales.
   Grouped because they share one fix direction: the file already HAS the
   helper pattern (CreateRtBuffer, with ~20 call sites) and it was simply
@@ -3299,6 +3299,17 @@ defect visible before a player finds it.
   table-driven model) and the SVGF 10-binding image set written 3 times.
   Proof recipe: rt_view 3 captures (pixel-identical run to run), not
   rt_view 6 (0.5-16% noise between runs of one binary).
+  Resolved 2026-09-28: the last two parts. Every compute pass (rt, bake,
+  svgf x4, rtTonemap, bloomExtractRt, label, taau, bloomExtract, bloomBlur)
+  now builds through CreateComputeSets / CreateComputeLayout /
+  CreateComputePipe; pool sizes are derived from the bindings times the set
+  count, so no site sizes a pool by hand. WriteSvgfSet writes the ten SVGF
+  bindings once for svgfDs, svgfSplitDs and labelTaauDs, which differ only in
+  binding 7. Proof: Ultra -rtview 3 A/B pixel-identical (0 px); Solid raster
+  A/B 28k px inside its own 96k px run-to-run floor; validation layer loaded
+  with 0 messages on all seven captures; -rtverify PASS; make test 26/26; zero
+  warnings; Windows syntax check PASS. Drifted line citations the sweep found
+  are DOOM-0472.
   **Layman:** The graphics back-end writes out the same setup steps by hand over and over — one of them twelve times, another in two copies of a hand-written memory allocator. A fix made to one copy and not the other shows up as a crash or corruption in only one of the render tiers.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lanes 1/2/3/5.
@@ -3856,6 +3867,20 @@ defect visible before a player finds it.
   Kind: chore.
   Source: claude-config session_message 128, 2026-09-28.
   Lanes: packaging.
+
+- 📋 [DOOM-0472] **Specs, plans and the renderer standard cite r_vulkan.cpp by line number, and those lines have drifted.**
+  Found by the close-findings sweep after DOOM-0441's compute-pipeline refactor.
+  Line citations of the form `r_vulkan.cpp:NNNN` sit in the DOOM-0011 spec,
+  plan and fix ledger, the DOOM-0042 spec and its 2026-07-14 plan, the
+  DOOM-0181, DOOM-0183 and DOOM-0206 documents, and docs/standards/renderer.md.
+  Every DOOM-0441 part deleted hundreds of lines from the file, so most of these
+  were already pointing at the wrong code before the last part landed.
+  Fix: replace each with the function or symbol it meant, per the project's
+  no-line-numbers rule; a frozen record (a dated review row) keeps its citation.
+  **Layman:** Several design documents point at code by line number, and the code has moved, so the pointers now land in the wrong place.
+  Kind: doc-fix.
+  Source: close-findings sweep 2026-09-28, DOOM-0441.
+  Lanes: docs.
 
 ## 0.10.0 — The frame budget
 
