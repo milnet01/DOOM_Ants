@@ -8,6 +8,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **On a widescreen display, Classic's floors and ceilings now darken with distance at the same rate as its walls** (DOOM-0227)
+  At 4:3 nothing changes: the picture is identical, pixel for pixel.
+
 - **On a computer with two graphics cards, the 3D views now open the one that can actually run them** (DOOM-0225)
   The game used to take the first card that could draw to the window and
   quit if that card lacked a feature the 3D views need, even when the

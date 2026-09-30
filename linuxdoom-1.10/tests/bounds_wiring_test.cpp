@@ -721,6 +721,21 @@ int main()
             }
         }
 
+        // ---- DOOM-0227: the distance-light table follows the projection's width.
+        // Why: zlight was built from SCREENWIDTH/2 while the world is projected with
+        // the 4:3-equivalent half-width, so floors/ceilings darkened at a different
+        // rate from walls on a wide display.
+        {
+            const std::string rmain = strip(slurp("r_main.c"));
+            if (get_body("r_main.c", rmain, "R_InitLightTables", &b))
+            {
+                check(whole_tok(b, "SCREENWIDTH") == std::string::npos,
+                      "DOOM-0227: R_InitLightTables does not use SCREENWIDTH");
+                check(whole_tok(b, "NONWIDEWIDTH") != std::string::npos,
+                      "DOOM-0227: R_InitLightTables is keyed off NONWIDEWIDTH");
+            }
+        }
+
         // ---- DOOM-0229: the box-filter accumulator is wider than 32 bits.
         {
             const std::string img = strip(slurp("rb_image.c"));

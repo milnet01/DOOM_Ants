@@ -606,7 +606,12 @@ void R_InitLightTables (void)
 	startmap = ((LIGHTLEVELS-1-i)*2)*NUMCOLORMAPS/LIGHTLEVELS;
 	for (j=0 ; j<MAXLIGHTZ ; j++)
 	{
-	    scale = FixedDiv ((SCREENWIDTH/2*FRACUNIT), (j+1)<<LIGHTZSHIFT);
+	    // DOOM-0227: the 4:3 width, not SCREENWIDTH. The world is projected
+	    // with the 4:3-equivalent half-width (centerxfrac_nonwide), so a
+	    // table built from the wide one darkened floors and ceilings with
+	    // distance at a different rate than walls on a wide display. At 4:3
+	    // the two are the same number.
+	    scale = FixedDiv ((NONWIDEWIDTH*HIRES/2*FRACUNIT), (j+1)<<LIGHTZSHIFT);
 	    scale >>= LIGHTSCALESHIFT;
 	    level = startmap - scale/DISTMAP;
 	    

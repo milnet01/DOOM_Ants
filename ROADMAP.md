@@ -9124,8 +9124,14 @@ stay in their phase sections; this heading holds only work still to come.
   Kind: fix.
   Source: indie-review 2026-07-23 (vulkan-rt-core, LOW).
 
-- 📋 [DOOM-0227] **Key R_InitLightTables zlight off centerxfrac_nonwide for consistent widescreen distance-light.**
+- ✅ [DOOM-0227] **Key R_InitLightTables zlight off centerxfrac_nonwide for consistent widescreen distance-light.**
   r_main.c:633 R_InitLightTables keys zlight off wide SCREENWIDTH/2 while DOOM-0147 moved world projection to centerxfrac_nonwide. Cosmetic, widescreen-only, zero-diff at 4:3.
+  Resolved (2026-09-30): R_InitLightTables builds zlight from NONWIDEWIDTH*HIRES.
+  Classic captures at the E1M1 start, before and after: with `widescreen 0` no
+  pixel changed; with widescreen on, the floor and ceiling bands changed and the
+  centre of the wide frame moved much closer to the 4:3 frame (pixels differing
+  from it fell from 275178 to 84564 of 682240; what is left is scattered
+  single texels from the half-pixel offset between the two frames, not bands).
   **Layman:** On a true-widescreen display, floor/ceiling distance-darkening fades at a slightly different rate than walls.
   Kind: fix.
   Source: indie-review 2026-07-23 (sw-renderer, LOW).
