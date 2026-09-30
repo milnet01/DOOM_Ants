@@ -6,7 +6,33 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Minimising the window no longer exits the game in the 3D renderers.** (DOOM-0390)
+  The renderer now waits while the window has no area and picks up
+  again when it returns. Found by code review and not yet exercised on
+  Windows, where a minimised window is the case that has no area.
+
+- **Loading a map with nothing to draw no longer leaves the renderer reading the previous level's freed data.** (DOOM-0390)
+  Also fixed: stale light data carried into a new level with no lit
+  surfaces, and the weapon drawn in the ray-traced view with part of
+  its shader input never written.
+
 ### Security
+
+- **A map whose BSP tree loops back on itself, or that has no subsectors, is refused with a clear message.** (DOOM-0093)
+  A crafted map could make the game hang at full CPU or crash while
+  loading. The loader now checks the tree before anything walks it.
+
+- **A texture or sprite that claims an enormous size can no longer overrun the 3D renderer's texture atlas.** (DOOM-0221)
+  Oversized art from a crafted WAD is cropped to a size every graphics
+  card accepts, a WAD needing an impossibly large atlas is refused by
+  name, and a sprite lump too short to hold a header is treated as empty.
+
+- **The ray tracer no longer reads past its light list when a level's glowing surfaces grow after load.** (DOOM-0093)
+  A map whose lit surfaces multiplied after loading (an animated floor
+  that starts dark) could send the fog bake and the shader's light
+  search past the end of a buffer.
 
 - **A long chat macro in the config file no longer writes past the HUD's message buffer.** (DOOM-0250)
   A chat macro longer than 80 characters, hand-edited into the settings

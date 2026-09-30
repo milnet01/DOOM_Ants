@@ -5,6 +5,7 @@
 // blit_tile has always been correct for stock data and that is why the missing
 // checks went unnoticed. Each boundary is tested on both sides.
 #include <cstdio>
+#include <climits>
 
 #include "../patch_bounds.h"
 #include "check_util.h"
@@ -81,6 +82,26 @@ int main()
     // off-by-one this assertion was written wrong the first time.
     check(PatchPostFits(0, 255, 258) != 0, "the largest post fits a lump sized for it");
     check(PatchPostFits(0, 255, 257) == 0, "the same post is refused one byte short");
+
+    // ---- PatchHasHeader ----
+    //
+    // Why this exists: r_mesh.c tile_size(), r_mesh.c ensure_sprite_heights()
+    // and r_data.c R_InitSpriteLumps() read a sprite patch's four-short header
+    // with no check the lump held 8 bytes (security review, F-B). A truncated or
+    // empty sprite lump was read past its end.
+    check(PatchHasHeader(8) != 0, "exactly the 8 header bytes is enough");
+    check(PatchHasHeader(7) == 0, "one byte short of the header is refused");
+    check(PatchHasHeader(0) == 0, "an empty lump has no header");
+    check(PatchHasHeader(1) == 0, "a one-byte lump has no header");
+    check(PatchHasHeader(-1) == 0, "a negative length has no header");
+    check(PatchHasHeader(INT_MIN) == 0, "INT_MIN has no header");
+    check(PatchHasHeader(INT_MAX) != 0, "a huge lump has a header");
+
+    // Agrees with PatchHeaderFits: whatever fits a column table has a header.
+    for (int len = -2; len <= 40; len++)
+        if (PatchHeaderFits(len, 1) != 0)
+            check(PatchHasHeader(len) != 0,
+                  "PatchHeaderFits implies PatchHasHeader");
 
     return check_summary("patch_bounds");
 }

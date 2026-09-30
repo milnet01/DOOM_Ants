@@ -46,4 +46,61 @@ static int LevelAllocFits (int count, size_t elemsize)
     return (size_t)count <= (size_t)INT_MAX / elemsize;
 }
 
+// DOOM-0093: do the BSP nodes form a tree?
+//
+// P_LoadNodes range-checks every child, but a child in range may still name
+// its own node or an ancestor. Every BSP walk in the engine then never ends:
+// R_RenderBSPNode, P_CrossBSPNode and R_PointInSubsector loop forever, and
+// r_mesh.c's carve_caps recurses until the stack is gone. A map is a file a
+// player was handed, so that is a hang or a crash on load.
+//
+// `kids` holds two entries per node, children[0] and children[1], exactly as
+// the WAD gives them: a child with the high bit set names a subsector and is
+// never followed; otherwise it is a node index. The root is the last node.
+// `seen` is numnodes bytes the caller has zeroed, `stack` numnodes ints of
+// scratch. Returns 1 when no node is reached twice walking down from the root.
+//
+// Two parents sharing one child is refused as well. It would not loop, but no
+// node builder writes it, and accepting it would let a small NODES lump stand
+// for an exponentially large walk.
+//
+// Iterative on purpose: the thing being guarded against is a walk deeper than
+// the stack, so the check may not recurse. Each node is pushed at most once --
+// `seen` is set before the push -- so `stack` cannot overflow its numnodes.
+#define LEVEL_BSP_SUBSECTOR	0x8000	// NF_SUBSECTOR (doomdata.h)
+
+static inline int LevelBspIsTree (int numnodes, const unsigned short* kids,
+			   unsigned char* seen, int* stack)
+{
+    int		sp = 0;
+    int		n;
+    int		j;
+
+    if (numnodes <= 0)
+	return 1;
+
+    seen[numnodes - 1] = 1;
+    stack[sp++] = numnodes - 1;
+
+    while (sp > 0)
+    {
+	n = stack[--sp];
+	for (j = 0 ; j < 2 ; j++)
+	{
+	    int	child = kids[n * 2 + j];
+
+	    if (child & LEVEL_BSP_SUBSECTOR)
+		continue;
+
+	    if (child >= numnodes || seen[child])
+		return 0;
+
+	    seen[child] = 1;
+	    stack[sp++] = child;
+	}
+    }
+
+    return 1;
+}
+
 #endif // LEVEL_BOUNDS_H

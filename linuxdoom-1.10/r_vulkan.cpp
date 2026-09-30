@@ -3713,10 +3713,12 @@ void UploadSeepField(rb_seep_t* f)
         // map's bounding box -- not the map's minimum corner. Feed it the un-padded
         // corner and every lookup is off by one cell, which reads on screen as fog
         // leaking at the map edges rather than as a bad transform.
-        x[0] = f ? f->originX : 0.0f;
-        x[1] = f ? f->originY : 0.0f;
-        x[2] = f ? 1.0f / f->cell : 1.0f;
-        x[3] = f ? 1.0f / f->cell : 1.0f;
+        // haveField, not f (DOOM-0093): an unusable field was freed above, so testing
+        // the pointer read its origin and cell size out of freed memory.
+        x[0] = haveField ? f->originX : 0.0f;
+        x[1] = haveField ? f->originY : 0.0f;
+        x[2] = haveField ? 1.0f / f->cell : 1.0f;
+        x[3] = haveField ? 1.0f / f->cell : 1.0f;
         x[4] = (float)w;
         x[5] = (float)h;
     }
@@ -4554,6 +4556,26 @@ void CreateDescriptors()
     // slot still unwritten (the overlay pass never samples it).
     const uint32_t matCount = (uint32_t)RB_MaterialCount();
 
+    // DOOM-0221: the count is every texture, flat and sprite the WAD declares. A layout
+    // asking for more sampled images than the device allows is invalid usage, not a
+    // failure the driver must report, so compare first and stop with the numbers. The
+    // two fixed bindings count against the same limits. CreateHdSetLayout clamps the HD
+    // array the same way (DOOM-0410); this array cannot be clamped, because every
+    // material id the level mesh carries indexes it.
+    {
+        VkPhysicalDeviceProperties pdp = {};
+        vkGetPhysicalDeviceProperties(g.phys, &pdp);
+        const VkPhysicalDeviceLimits& lim = pdp.limits;
+        uint64_t room = lim.maxPerStageDescriptorSampledImages;
+        room = std::min<uint64_t>(room, lim.maxPerStageDescriptorSamplers);
+        room = std::min<uint64_t>(room, lim.maxDescriptorSetSampledImages);
+        room = std::min<uint64_t>(room, lim.maxDescriptorSetSamplers);
+        if ((uint64_t)matCount + 2 > room)
+            I_Error("R_Vulkan: the WAD declares %u textures, flats and sprites; this "
+                    "graphics device can bind %llu images at once",
+                    matCount, (unsigned long long)room);
+    }
+
     VkDescriptorSetLayoutBinding binds[3] = {};
     // PLAYPAL LUT (0) and the bindless material array (2) are also read by the
     // path-tracer compute megakernel (DOOM-0009 step 3a, pathtrace.comp set 1),
@@ -5214,6 +5236,24 @@ void DestroyFramebufferResources()
     DestroySceneTarget();   // DOOM-0170 L2a off-screen colour + its framebuffer
 }
 
+// DOOM-0390: does the surface have any area to draw into right now? A minimised window
+// reports currentExtent {0,0} on some platforms, and a swapchain (and every target sized
+// from it) may not be created with a zero extent -- vkCreateSwapchainKHR fails, Check()
+// reaches I_Error, and minimising the window ended the game. The same zero reached the
+// aspect and 1/extent push constants DOOM-0311 reported. Mirrors CreateSwapchain's own
+// choice of extent, so the two cannot disagree about which size is meant.
+static bool SurfaceHasArea()
+{
+    VkSurfaceCapabilitiesKHR caps = {};
+    if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(g.phys, g.surface, &caps) != VK_SUCCESS)
+        return false;
+    if (caps.currentExtent.width != UINT32_MAX)
+        return caps.currentExtent.width > 0 && caps.currentExtent.height > 0;
+    int w = 0, h = 0;
+    SDL_Vulkan_GetDrawableSize((SDL_Window*)I_GetWindow(), &w, &h);
+    return w > 0 && h > 0;
+}
+
 void RecreateSwapchain()
 {
     Check(vkDeviceWaitIdle(g.device), "vkDeviceWaitIdle(recreate swapchain)");
@@ -5227,6 +5267,16 @@ void RecreateSwapchain()
     UpdateCompositeDescriptor();        // re-point the composite sampler at the new scene view
     CreateRenderFinishedSemaphores();   // image count may have changed; resize set
     if (g.rtEnabled) CreateRtTargets();    // re-point the compute descriptor too
+}
+
+// The largest width or height this device accepts for a 2D image. An image whose size
+// comes out of a WAD lump's own header (DOOM-0221) is compared with this before it is
+// created: past it vkCreateImage is invalid usage rather than a clean failure.
+static uint32_t DeviceMaxImage2D()
+{
+    VkPhysicalDeviceProperties pdp = {};
+    vkGetPhysicalDeviceProperties(g.phys, &pdp);
+    return pdp.limits.maxImageDimension2D;
 }
 
 // Build the paletted texture atlas (r_mesh.c), upload the atlas + PLAYPAL LUT
@@ -5869,7 +5919,10 @@ void CreateTextResources()
     {
         int sw = 0, sh = 0;
         const unsigned char* pixels = M_CursorSkullRGBA(&sw, &sh);
-        if (!pixels || sw <= 0 || sh <= 0)
+        // DOOM-0221: the size is the patch header's own, and M_SKULL1 is a lump a PWAD
+        // may replace.
+        if (!pixels || sw <= 0 || sh <= 0
+            || (uint32_t)sw > DeviceMaxImage2D() || (uint32_t)sh > DeviceMaxImage2D())
         {
             fprintf(stderr, "RB_Vulkan: menu cursor skull decode failed — using the paletted skull.\n");
         }
@@ -6013,7 +6066,8 @@ void CreateTextResources()
     {
         int lw = 0, lh = 0;
         const unsigned char* pixels = M_MenuLogoRGBA(&lw, &lh);
-        if (!pixels || lw <= 0 || lh <= 0)
+        if (!pixels || lw <= 0 || lh <= 0   // DOOM-0221: as for the skull above
+            || (uint32_t)lw > DeviceMaxImage2D() || (uint32_t)lh > DeviceMaxImage2D())
         {
             fprintf(stderr, "RB_Vulkan: menu logo M_DOOM decode failed — using the crisp text title.\n");
         }
@@ -7491,6 +7545,12 @@ void BuildEmitterList()
     g.emitCap    = 0;
     g.staticEmit.clear();
     g.staticWgt.clear();
+    // DOOM-0093: a new level invalidates the static point-light cache outright. Clearing
+    // g.staticEmit here means BuildStaticEmitterSet compares an emitter-less level
+    // against an empty "previous" set, finds them equal, and asks only for an Le
+    // refresh -- which then indexed the new level's (empty) array with the previous
+    // level's emitter indices whenever the two maps had the same subsector count.
+    g.staticLightsDirty = true;
 
     if (!g.rtEnabled || !g.levelMesh || g.matEmissive.empty())
         return;
@@ -7623,7 +7683,8 @@ struct RbFogLight {
     float reach;            // world units; contribution is exactly zero beyond it
 };
 
-// Build the clustered static-light set from the merged emitter buffer's STATIC slice.
+// Build the clustered static-light set from the static emitter records (g.staticEmit, the
+// RAM array the merged emitter buffer's static slice is copied from).
 // [0, staticN) only — INV-2. Dynamic sprite emitters (flying fireballs, the muzzle flash,
 // the flashlight) must never scatter, and they are also not knowable at bake time.
 static std::vector<RbFogLight> ClusterStaticFogLights(int staticN)
@@ -7631,7 +7692,15 @@ static std::vector<RbFogLight> ClusterStaticFogLights(int staticN)
     std::vector<RbFogLight> out;
     if (staticN <= 0 || !g.emitMapped)
         return out;
-    const float* em = (const float*)g.emitMapped;
+    // DOOM-0390: g.staticEmit, the RAM array nee_merge_emitters copies static-first into
+    // the mapped buffer -- not the mapped buffer itself. That buffer is sized at level
+    // load (static count + SPR_EMIT_MAX) and BuildStaticEmitterSet can grow the static
+    // set past it on a texture change, so walking staticN records of it read past its
+    // end. g.staticEmit always holds exactly staticN records, and reading it also avoids
+    // the write-combined memory the mapped copy lives in (the DOOM-0170 trap).
+    if ((size_t)staticN * 14 > g.staticEmit.size())
+        staticN = (int)(g.staticEmit.size() / 14);
+    const float* em = g.staticEmit.data();
 
     // key -> index into `out`. The key is the lattice cell, so the clustering is a pure
     // function of position: same map, same lights, in any emitter order.
@@ -8090,7 +8159,9 @@ bool RB_RtVerify()
     pc.misc[0] = 5u; pc.misc[1] = W; pc.misc[2] = H; pc.misc[3] = (uint32_t)g.matNumWall;
     pc.misc2[0] = g.emitCount; pc.misc2[1] = g.probeCount;
     pc.misc4[0] = (uint32_t)(g.matNumWall + g.matNumFlat);   // sprite id base (mode 5 sprite decode)
-    pc.misc4[1] = (uint32_t)g.staticWgt.size();              // DOOM-0122: real omniStart (static|omni split) so the verify path exercises the omni NEE loop, matching the display path
+    // DOOM-0122: real omniStart (static|omni split) so the verify path exercises the omni
+    // NEE loop, matching the display path -- clamped the same way (DOOM-0093).
+    pc.misc4[1] = (uint32_t)nee_omni_start((int)g.staticWgt.size(), (int)g.emitCount);
     pc.vertsAddr   = BufferAddress(g.vbuf);
     pc.emitAddr    = g.emitBuf    ? BufferAddress(g.emitBuf)    : 0;
     pc.matEmisAddr = g.matEmisBuf ? BufferAddress(g.matEmisBuf) : 0;
@@ -8536,7 +8607,22 @@ extern "C" void RB_Vulkan_BuildLevel(void)
 
     VkDeviceSize size = (VkDeviceSize)g.levelMesh->numverts * sizeof(rb_vertex_t);
     if (size == 0)
-        return;   // empty map (no drawable geometry); nothing to upload
+    {
+        // Empty map (no drawable geometry): nothing to upload. DOOM-0390: but the
+        // previous level's per-level state must still go. This return used to sit
+        // above every rebuild call below, and BuildProbes is the only place that
+        // clears g.rejectCPU -- a pointer into PU_LEVEL memory the loader has already
+        // freed -- which BuildRasterPointLights then read every raster frame. With no
+        // mesh each of these calls tears its state down and builds nothing.
+        RB_FreeMesh(g.levelMesh);
+        g.levelMesh = nullptr;
+        if (g.rtEnabled)
+            DestroyAccelerationStructures();
+        BuildEmitterList();
+        BuildFogLightGrid();
+        BuildProbes();
+        return;
+    }
 
     // DOOM-0074: allocate + fill both in-flight slots with identical geometry. The
     // build-ahead re-height writes the next frame's slot while the GPU reads the other.
@@ -8835,7 +8921,10 @@ void RecordRtTrace(uint32_t idx)
     // DOOM-0084: emitters [staticCount, emitCount) are the per-frame sprite lights —
     // the shader treats them as omnidirectional (a lamp emits all ways, not as a
     // camera-facing card). Static wall/flat emitters before this index stay oriented.
-    pc.misc4[1]    = (uint32_t)g.staticWgt.size();
+    // DOOM-0093: never past the records FinalizeEmitters wrote. The static set can
+    // grow beyond the buffer's cap on a texture change, and the shader binary-searches
+    // [0, omniStart) with no bound of its own.
+    pc.misc4[1]    = (uint32_t)nee_omni_start((int)g.staticWgt.size(), (int)g.emitCount);
     // DOOM-0119: REJECT cull dimension (sector count). 0 when the level has no
     // REJECT lump (rejectBuf absent), which disables the shader cull entirely.
     pc.misc4[2]    = g.rejectBuf ? g.numSectors : 0u;
@@ -9475,7 +9564,12 @@ void RecordRtOverlay(uint32_t idx, bool drawOverlay)
     // weapon draw so the gun renders identically in Solid and Ultra.
     if (drawWeapon)
     {
-        float pcData[24];
+        // DOOM-0390: all 31 floats of the layout's range, not the first 24. mesh.frag
+        // statically uses the probe/triSs/light addresses and probeCount in floats
+        // 24..30; the raster arm writes them, this arm did not, and the command buffer
+        // is reset every frame, so they were undefined here. Zero addresses and a zero
+        // probeCount are the "no bake" state the shader already handles.
+        float pcData[31] = {};
         std::memcpy(pcData, g.viewProj, 16 * sizeof(float));
         pcData[16] = g.lastView.extralight;
         pcData[17] = g.lastView.angle;
@@ -9487,7 +9581,7 @@ void RecordRtOverlay(uint32_t idx, bool drawOverlay)
         pcData[23] = rb_flashlight ? 1.0f : 0.0f;   // inert here (psprite skips the cone)
         vkCmdPushConstants(g.cmd, g.pipelineLayout,
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, 24 * sizeof(float), pcData);
+                           0, 31 * sizeof(float), pcData);
 
         VkDeviceSize off = 0;
         // DOOM-0170 L2a step 3: the 8-bit twin (g.pipeline itself now targets the float
@@ -9702,6 +9796,15 @@ extern "C" void RB_Vulkan_Present(void)
 
     if (g.needRecreate)
     {
+        // DOOM-0390: nothing to draw into while the window has no area (minimised).
+        // Skip the frame and leave needRecreate set, so the swapchain is rebuilt on
+        // the first frame after the window comes back. The short sleep keeps the
+        // skipped frames from spinning a core.
+        if (!SurfaceHasArea())
+        {
+            SDL_Delay(10);
+            return;
+        }
         RecreateSwapchain();
         g.needRecreate = false;
     }
@@ -10774,6 +10877,14 @@ extern "C" void RB_Vulkan_Shutdown(void)
         // here, so a Check() failing on a lost device would re-enter I_Error forever.
         vkDeviceWaitIdle(g.device);
 
+#ifdef DOOM_DEV
+    // DOOM-0294 dev screenshot readback. Outside the rtEnabled block below (DOOM-0390):
+    // it is created in Present whatever the GPU, so a DEV build on a non-RT GPU leaked
+    // it past vkDestroyDevice.
+    if (g.devShotBuf)    vkDestroyBuffer(g.device, g.devShotBuf, nullptr);
+    if (g.devShotBufMem) vkFreeMemory(g.device, g.devShotBufMem, nullptr);
+#endif
+
     if (g.rtEnabled)        DestroyAccelerationStructures();
     // Path-tracer compute resources (DOOM-0009 build step 2c).
     if (g.rtEnabled)
@@ -10813,10 +10924,6 @@ extern "C" void RB_Vulkan_Shutdown(void)
         if (g.rtAccumMem)   vkFreeMemory(g.device, g.rtAccumMem, nullptr);
         if (g.rtReadback)   vkDestroyBuffer(g.device, g.rtReadback, nullptr);
         if (g.rtReadbackMem) vkFreeMemory(g.device, g.rtReadbackMem, nullptr);
-#ifdef DOOM_DEV
-        if (g.devShotBuf)    vkDestroyBuffer(g.device, g.devShotBuf, nullptr);   // DOOM-0294
-        if (g.devShotBufMem) vkFreeMemory(g.device, g.devShotBufMem, nullptr);
-#endif
         if (g.shotBuf)      vkDestroyBuffer(g.device, g.shotBuf, nullptr);   // DOOM-0202
         if (g.shotBufMem)   vkFreeMemory(g.device, g.shotBufMem, nullptr);
         // GI bake pipeline (step 4b-ii).

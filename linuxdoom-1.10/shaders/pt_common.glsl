@@ -529,7 +529,10 @@ bool occluded(vec3 hitP, vec3 n, vec3 wi, float dist)
     rayQueryEXT sq;
     rayQueryInitializeEXT(sq, topAS,
         gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0x01u,
-        hitP + n * 1e-3, 1e-3, wi, dist - 2e-3);
+        // tMax never below tMin (DOOM-0093): a sample point within 3e-3 of the surface
+        // gave tMax < tMin, which a ray query may not be initialised with. A zero-length
+        // ray hits nothing, which is the right answer for a light that close.
+        hitP + n * 1e-3, 1e-3, wi, max(dist - 2e-3, 1e-3));
     while (rayQueryProceedEXT(sq)) {}
     return rayQueryGetIntersectionTypeEXT(sq, true)
            != gl_RayQueryCommittedIntersectionNoneEXT;

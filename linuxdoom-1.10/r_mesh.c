@@ -46,6 +46,7 @@
 #include "seg_project.h" // DOOM-0180 RB_ProjectOnLine (seg -> its linedef's line)
 #include "r_mesh.h"
 #include "patch_bounds.h"
+#include "atlas_bounds.h"
 
 // Texture geometry tables from r_data.c (no public header declares them).
 // texturewidthmask+1 is the wall's tiling width (matches how R_GetColumn masks
@@ -1606,7 +1607,7 @@ int RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst, rb_vertex_t* s
 // neighbour because the shader wraps UVs strictly within [origin, origin+size)
 // and samples nearest, so no inter-tile padding is needed.
 //
-#define ATLAS_WIDTH 2048
+#define ATLAS_WIDTH RB_ATLAS_WIDTH   // atlas_bounds.h owns the number and its limits
 
 static void tile_size(int id, int* w, int* h)
 {
@@ -1622,18 +1623,27 @@ static void tile_size(int id, int* w, int* h)
     else
     {
         // sprite lump: full patch bounding box (the gaps become transparent)
-        const patch_t* p = W_CacheLumpNum(
-            firstspritelump + (id - numtextures - numflats), PU_CACHE);
-        *w = SHORT(p->width);
-        *h = SHORT(p->height);
+        const int      lump = firstspritelump + (id - numtextures - numflats);
+        const patch_t* p    = W_CacheLumpNum(lump, PU_CACHE);
+
+        // DOOM-0221: a lump too short to hold a patch header (a zero-length
+        // marker inside S_START..S_END, say) has no size to read.
+        if (PatchHasHeader(W_LumpLength(lump)))
+        {
+            *w = SHORT(p->width);
+            *h = SHORT(p->height);
+        }
+        else
+        {
+            *w = *h = 1;
+        }
     }
-    if (*w < 1) *w = 1;
-    if (*h < 1) *h = 1;
     // A tile wider than the atlas would overrun the shelf row in blit_tile
-    // (the packer resets x to 0 but keeps the width). Stock DOOM textures are
-    // <=256 wide so this never fires, but a crafted WAD could define a wider
-    // texture -- clamp to crop it rather than corrupt the heap.
-    if (*w > ATLAS_WIDTH) *w = ATLAS_WIDTH;
+    // (the packer resets x to 0 but keeps the width), and one taller than a
+    // device's image limit is an invalid image. Stock DOOM art is far inside
+    // both, but a crafted WAD can declare either -- crop rather than corrupt
+    // the heap or hand the driver a size it need not accept (DOOM-0221).
+    AtlasClampTile(w, h);
 }
 
 // Palette index of the darkest non-black colour. Index 0 doubles as the
@@ -1787,6 +1797,14 @@ rb_atlas_t* RB_BuildAtlas(void)
             y += shelf;
             shelf = 0;
         }
+        // DOOM-0221: the blitters index the atlas as row * width in int, and
+        // the rects below hold the row as a float. Both are exact only while
+        // the atlas stays under the ceiling, so stop before this tile's rows
+        // are counted rather than after the total has already wrapped.
+        if (!AtlasRowsFit((long long)y + (h > shelf ? h : shelf)))
+            I_Error("RB_BuildAtlas: the WAD's textures and sprites need more "
+                    "than %d atlas rows (tile %d of %d)",
+                    RB_ATLAS_MAX_ROWS, id, total);
         atlas->rects[id].ox = (float)x;
         atlas->rects[id].oy = (float)y;
         atlas->rects[id].w  = (float)w;
@@ -1855,7 +1873,9 @@ static void ensure_sprite_heights(void)
     for (i = 0; i < numspritelumps; i++)
     {
         const patch_t* p = W_CacheLumpNum(firstspritelump + i, PU_CACHE);
-        sprite_h[i] = SHORT(p->height);
+        // DOOM-0221: a lump shorter than a patch header has no height to read.
+        sprite_h[i] = PatchHasHeader(W_LumpLength(firstspritelump + i))
+                    ? SHORT(p->height) : 0;
     }
 }
 

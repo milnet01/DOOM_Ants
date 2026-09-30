@@ -8988,7 +8988,7 @@ Defects a player can actually hit: crashes, hangs, lost saves, wrong pixels,
 wrong sound, and anything a malformed WAD can do to the engine. Shipped items
 stay in their phase sections; this heading holds only work still to come.
 
-- 📋 [DOOM-0093] **Harden the path tracer against untrusted WAD data and GPU memory-safety / device-loss risks.**
+- ✅ [DOOM-0093] **Harden the path tracer against untrusted WAD data and GPU memory-safety / device-loss risks.**
   Coverage GAP from the 2026-06-28 research (§5): no claims survived verification within budget, but the axis matters because WADs are UNTRUSTED input that drives emitter-list extraction and acceleration-structure builds. Needs a dedicated pass: (1) GPU memory-safety / out-of-bounds with buffer_reference + bindless descriptor indexing (bounds checks, robustBufferAccess, descriptor-indexing partial-bound hazards); (2) a systematic NaN/inf hardening pass across the tracer (we clamp in places; make it principled -- and mine the Vulkan robustness guide + NVIDIA driver-level RT validation); (3) defensive AS-build limits against degenerate / huge geometry from a crafted WAD causing DoS / device-loss (TDR). Tie to the validation-clean invariant (INV-8).
   **Layman:** Make sure a malformed or malicious level file can't crash the graphics driver or read out-of-bounds GPU memory.
   Kind: security.
@@ -9002,6 +9002,21 @@ stay in their phase sections; this heading holds only work still to come.
   still 📋: it is the GPU-side axis — buffer_reference/bindless bounds,
   NaN/inf hardening, AS-build limits against a crafted WAD. A reader who
   follows a comment here should look to DOOM-0212..0220 for the CPU fix.
+  Resolved (2026-09-30): the dedicated pass ran as three cold review lanes
+  (shaders, r_vulkan.cpp, r_mesh.c), every finding checked against source.
+  Fixed: a BSP that is not a tree and a map with no subsectors are refused at
+  load (level_bounds.h LevelBspIsTree); the shader's static/omni split is
+  clamped to the emitter records written (nee_omni_start); the static
+  point-light cache is rebuilt on every level; UploadSeepField no longer
+  reads a freed field; the shadow ray's tMax cannot fall below tMin.
+  Dismissed with reasons, or queued: see rows L1 to L23 of
+  docs/reviews/close-findings-2026-09-30.md. Queued as their own items:
+  DOOM-0479 (no cap on candidates per primary ray) and the unbounded
+  patch walks now recorded on DOOM-0432.
+  Axis by axis: (1) shader indices rely on host bounds that the loader
+  enforces, bar the split above; (2) no non-finite source reaches stored
+  state; (3) the AS build has no limit of its own and DOOM-0479 is what
+  is left of that.
 
 - 📋 [DOOM-0142] **Mid-ground occluder wall missing in the 3D mesh (geometry visible over a wall Classic blocks).**
   Confirmed a SHARED-mesh bug (identical in Solid raster + Ultra RT), pre-existing, NOT sky-related and NOT fixed by DOOM-0141. A/B at the same spot: Classic (image #5) shows a tall solid brown wall occluding the mid-ground (sky above it only); Solid/Ultra (images #6/#7) show that wall too short/absent, revealing distant techbase buildings + a rocky/nukage band behind it (the apparent 'floating geometry'). The missing chunk is the UPPER ~half of the wall (screen ~52-78%). Leading suspects in r_mesh.c wall emission: (a) emit_wall drops any upper/lower step whose texture is '-' (texnum<=0, r_mesh.c:208) -> a height-step wall the map leaves untextured but classic still occludes; (b) a sector floor/ceiling height baked wrong; (c) classic's per-column sky/visplane occlusion hiding geometry that true-3D reveals. Needs the exact WAD/level + the in-engine normals debug view (or a walk-into-it collision test) to pin which. Likely also affects other open-vista maps.
@@ -9023,8 +9038,16 @@ stay in their phase sections; this heading holds only work still to come.
   GTX 1050 / Win10 test (2026-06-30, screenshots (1)&(2)): in SOLID renderer the view is FULL-SCREEN and clean at 35-59 FPS — no small box, no garbled borders. This isolates the bug: it is NOT Solid mode and NOT a generic Windows present bug. It is specific to a 3D path running at render_scale<100% where the upscale-to-display is not filling the swapchain (i.e. the Ultra/TAAU path: taauActive at r_vulkan.cpp:4454 traces into a 50% sub-rect; if its output is not blitted scaled-to-g.extent, you get the friend's small-box+garbage). Confirms the fix: (a) always scale the rendered sub-region to the full display extent on present; (b) clear the swapchain to black each frame. Practical guidance for the friend NOW: use Solid (works); Ultra needs RT hardware the GTX 1050 lacks anyway (ties to DOOM-0059/DOOM-0026 capability gating). Still want: one Ultra-mode screenshot on the GTX 1050 to confirm whether Ultra runs/garbles/gates-off there.
   Friend's machine identified (2026-06-30): GTX 2060 (RT-capable, has RT cores) on a 4K laptop. So the small-box repro = Ultra at render_scale 50% on a 4K display = a 1920x1080 render box shown un-upscaled in the centre of a 3840x2160 screen, surrounded by uncleared garbage. Matches the present/upscale theory exactly. This is the one machine that reproduces DOOM-0145 (RX 6600 upscales fine; GTX 1050 has no Ultra). Verification of the fix will need the GTX 2060 box. NOTE: separate from the GTX 1050 "not full screen / border" report, which is the in-game Screen Size (screenblocks) ornamental border + Classic's 4:3 letterbox on a 16:9 display — tracked separately.
 
-- 📋 [DOOM-0221] **Bound UploadAtlas WAD-derived material count / tile dimensions before GPU allocation.**
+- ✅ [DOOM-0221] **Bound UploadAtlas WAD-derived material count / tile dimensions before GPU allocation.**
   r_vulkan.cpp:4604 UploadAtlas feeds WAD material count n and per-tile w/h into vector resizes, staging sizes, descriptor counts and VkImage extents with no bounds check -> bad_alloc / I_Error abort (DoS, not corruption; all arithmetic is 64-bit). DOOM-0093-adjacent.
+  Resolved (2026-09-30): tile height is cropped to 4096 and the atlas
+  refuses more than 262144 rows (atlas_bounds.h); the material count is
+  compared with the device's sampled-image limits before the layout is
+  created; the menu skull and logo are refused past the device's image
+  limit; a sprite lump too short for a header is an empty sprite. The
+  width half of this item was already fixed. On the pre-fix build the
+  `textall` fixture drew a validation error for a 32767-tall image; none
+  after.
   **Layman:** A corrupt WAD can make the Ultra renderer try a huge allocation and abort; validate sizes for a clean error instead.
   Kind: security.
   Source: indie-review 2026-07-23 (vulkan-rt-core, MEDIUM).
@@ -9036,8 +9059,10 @@ stay in their phase sections; this heading holds only work still to come.
   Source: indie-review 2026-07-23 (wad-data-misc, MEDIUM).
   Progress (2026-07-26): DOOM-0254 added a 13-byte demo-lump length check before G_DoPlayDemo parses the header. The per-tic G_ReadDemoTiccmd bound this item names is still open.
 
-- 📋 [DOOM-0224] **Push all 31 push-constant floats in RecordRtOverlay (probe/tri/light lane undefined).**
+- ✅ [DOOM-0224] **Push all 31 push-constant floats in RecordRtOverlay (probe/tri/light lane undefined).**
   r_vulkan.cpp:7836 pushes only 24 of the layout's 31 floats for the RT weapon draw; the raster draw pushes all 31. Safe only if the psprite shader never reads the probe lane -- push the full 31 zeroed.
+  Resolved (2026-09-30): the same finding as DOOM-0390's first; fixed
+  there. RecordRtOverlay pushes all 31 floats.
   **Layman:** A defensive fix in the RT weapon overlay; some GPU constants are left undefined but happen to be unread today.
   Kind: fix.
   Source: indie-review 2026-07-23 (vulkan-rt-render, LOW).
@@ -9507,7 +9532,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: review-code 2026-09-01, lane shaders-pathtrace.
   Lanes: renderer, shaders.
 
-- 📋 [DOOM-0390] **Six Vulkan defects: undefined push constants every RT frame, a use-after-free across level change, and a crash on minimise.**
+- ✅ [DOOM-0390] **Six Vulkan defects: undefined push constants every RT frame, a use-after-free across level change, and a crash on minimise.**
     - r_vulkan.cpp:10045 (HIGH) -- RecordRtOverlay pushes 96 of the layout's 124
       bytes (r_vulkan.cpp:5558, pcr.size = 31 floats). Bytes 96-123
       (probeAddr/triSsAddr/lightAddr/probeCount) are written only by the raster arm
@@ -9546,6 +9571,13 @@ stay in their phase sections; this heading holds only work still to come.
   loader rewrite. EnsureHdMaterials now resets g.hdGrungeIdx and
   g.hdDirtIdx together before the overlay loads, so no previous map's
   index reaches the GPU. Five findings remain.
+  Resolved (2026-09-30): the five remaining findings are fixed. The
+  weapon overlay pushes all 31 floats; the empty-map return tears down the
+  previous level's state first; a zero-area surface skips the frame instead
+  of recreating the swapchain; devShotBuf is destroyed whatever the GPU;
+  the fog bake reads the static records from RAM, never past the mapped
+  buffer. The zero-area fix is NOT yet exercised on Windows, the platform
+  it is for.
   **Layman:** Six separate problems in the Vulkan renderer, found by four different reviewers. The most serious are: the weapon is drawn each ray-traced frame using memory that was never written; loading a map with no geometry leaves the renderer pointing at freed memory it then reads every frame; and minimising the window exits the game with an error.
   Kind: fix.
   Source: review-code 2026-09-01, lanes vk-setup, vk-accel, vk-present, vk-rt-frame, vk-materials.
@@ -9675,6 +9707,19 @@ stay in their phase sections; this heading holds only work still to come.
 
   Not reachable from the shipped IWADs -- every stock patch is well formed.
   A PWAD is untrusted input and this is a read primitive, not a write.
+  Scope widened (2026-09-30, DOOM-0093 pass): the same root cause has more
+  readers than the three blitters named above. Each follows `columnofs[]` and
+  the post chain on the lump's own say-so, with no lump length:
+  `R_GenerateComposite`, `R_GenerateLookup` and `R_DrawColumnInCache`
+  (r_data.c, wall textures in Classic), `R_RenderTextureToAtlas` (r_data.c,
+  wall textures into the Vulkan atlas; DOOM-0228 bounded only the flat and
+  sprite paths of that atlas) and `M_DecodePatchRGBA` (m_menu.c, the menu
+  skull and logo). Most of these DO have the lump number in hand, which
+  favours the first option: one validator over header, every column offset
+  and every post chain, run once per lump, with `patch_bounds.h` supplying
+  the decisions. Wall-texture patches and sprites can be validated when
+  `R_InitTextures` and `R_InitSpriteLumps` first meet them; the by-name
+  HUD and menu patches are what still need a checked cache call.
   **Layman:** The software renderer draws pictures out of the WAD file while trusting the file's own description of where each piece of the picture lives. A crafted WAD can point that anywhere, and whatever is at that address gets drawn on screen.
   Kind: security.
   Source: review-code 2026-09-01, lane sw-renderer; split out of DOOM-0402 on 2026-09-12.
@@ -9980,6 +10025,36 @@ stay in their phase sections; this heading holds only work still to come.
   Closed 2026-07-01 as working-as-intended (user-confirmed). The sky already
   matches Classic — see the 2026-07-01 investigation note above; the proposed
   ang/(2*PI) change would be a regression. No further action.
+
+- 📋 [DOOM-0479] **A map of stacked see-through walls can stall a ray-traced frame until the driver resets the device.**
+  `pathtrace.comp`'s primary ray runs `while (rayQueryProceedEXT(rq))` over every
+  non-opaque triangle it crosses, out to 1e9 units, and each candidate costs
+  buffer reads and, for a masked wall or a sprite, a texture fetch. Nothing caps
+  the candidates per ray, so the cost per pixel is whatever the map stacks along
+  a sight line. A long enough frame is a device timeout, and `Check()` turns
+  that into `I_Error`. Not memory-unsafe: a denial of service by a map the
+  player chose to load.
+  Work: measure the candidate count per ray on the shipped maps first (the cap
+  must sit well above their worst case), then cap it and commit the nearest
+  candidate found so far. The megakernel is register-pressure sensitive
+  (DOOM-0090), so time the frame before and after.
+  **Layman:** A deliberately built map could make the ray-traced view so slow that the graphics driver gives up and the game exits.
+  Kind: security.
+  Source: review 2026-09-30 (DOOM-0093 pass, shaders lane, L22 in docs/reviews/close-findings-2026-09-30.md).
+  Lanes: renderer.
+
+- 📋 [DOOM-0480] **Exercise the minimise fix on Windows, in Solid and in Ultra.**
+  DOOM-0390 added `SurfaceHasArea` so a frame is skipped, not drawn, while the
+  surface reports no area. Linux desktops do not report a zero extent on
+  minimise, so the fix has never run on the case it is for. On the Windows
+  test box or a tester's machine: start a level in Solid, minimise, wait a few
+  seconds, restore; repeat in Ultra with ray tracing on. Pass: the game is
+  still running and draws normally after the restore. Also worth a look: CPU
+  use while minimised (the skipped frames sleep 10 ms each).
+  **Layman:** Minimising the game window on Windows should pause drawing and come back cleanly; that has been fixed by reading the code and not yet tried on a Windows machine.
+  Kind: test.
+  Source: in-session-2026-09-30 (DOOM-0390 closed without a Windows run).
+  Lanes: renderer, windows.
 
 ## 0.9.0 — The codebase can be trusted
 
@@ -10588,7 +10663,7 @@ defect visible before a player finds it.
 
   New code-side item filed: the shipped shader comments carry three figures this document corrects (pt_common.glsl's "+/-60 % swing" and "16% at 512 units"; pathtrace.comp's "would drift 512x too fast", now 192x) plus a sigma comment calling the floor layer "a THIRD addend" where the expression has two. Not fixed under a docs review.
 
-- 📋 [DOOM-0311] **Validate the render push-constants on the CPU instead of catching their NaNs in the shaders.**
+- ✅ [DOOM-0311] **Validate the render push-constants on the CPU instead of catching their NaNs in the shaders.**
   Three shader inputs are divided by without being checked at the boundary:
   ssao.frag divides by pc.aspect, taau.comp divides by the display
   dimensions, and svgf_composite.comp bit-casts pc.misc3.x to an exposure
@@ -10599,6 +10674,10 @@ defect visible before a player finds it.
   aspect, extent and exposure once where the push-constant block is filled.
   No known reachable trigger -- the host always supplies real values today --
   so this is hardening, not a live defect.
+  Resolved (2026-09-30): the aspect and extent parts had one source, a
+  zero swapchain extent, fixed at that source under DOOM-0390: no frame
+  is recorded while the surface has no area. The exposure part was not
+  live: rb_exposure is clamped to 0..15 where the value is filled.
   **Layman:** The graphics code currently cleans up bad numbers after they have already reached the graphics card; better to reject them before sending.
   Kind: security.
   Source: code-quality-review-2026-08-03 (shaders-raster lane, MEDIUM).

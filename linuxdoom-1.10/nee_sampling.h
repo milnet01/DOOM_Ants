@@ -116,4 +116,20 @@ static inline int nee_merge_emitters(const float* staticRec, const float* static
     return n;
 }
 
+// The static|omni split the shader is told (its `omniStart`): emitter records
+// [0, omniStart) are the oriented static set it binary-searches, and
+// [omniStart, mergedN) the omnidirectional sprite lights.
+//
+// It is the static count -- but never more than the records nee_merge_emitters
+// actually wrote. The static set is rebuilt on a texture change and can grow past
+// the buffer's cap; the merge then writes `cap` records, and a split pushed as the
+// raw static count sent the shader's search past the end of the buffer (DOOM-0093).
+// `mergedN` is nee_merge_emitters' return value.
+static inline int nee_omni_start(int staticN, int mergedN)
+{
+    if (mergedN < 0) mergedN = 0;
+    if (staticN < 0) staticN = 0;
+    return staticN < mergedN ? staticN : mergedN;
+}
+
 #endif // NEE_SAMPLING_H

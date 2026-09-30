@@ -21,6 +21,7 @@
 #include "check_util.h"
 
 #include <cstdio>
+#include <climits>
 #include <cstdint>
 #include <cmath>
 #include <vector>
@@ -186,6 +187,53 @@ static void check_merge_ordering()
     std::printf("  [merge] n=%d (3 static + 2 sprite), capped n=%d (sprites dropped)\n", n, n2);
 }
 
+// nee_omni_start (security review F-D). r_vulkan.cpp pushed g.staticWgt.size() as
+// omniStart, which the shader binary-searches as the record count [0, omniStart).
+// nee_merge_emitters clamps the MERGED count to the buffer cap, so once the static
+// set outgrew the cap omniStart exceeded the records written and the shader read
+// past the buffer.
+static void check_omni_start()
+{
+    // INV-1: within range, the static count passes through unchanged.
+    check_eq_int(nee_omni_start(5, 10), 5, "INV-1: static 5 of 10 merged");
+    check_eq_int(nee_omni_start(10, 10), 10, "INV-1: static == merged (no sprites)");
+    check_eq_int(nee_omni_start(0, 10), 0, "INV-1: no static emitters");
+    check_eq_int(nee_omni_start(0, 0), 0, "INV-1: nothing at all");
+
+    // INV-2: never above the merged count (the F-D case).
+    check_eq_int(nee_omni_start(11, 10), 10, "INV-2: one static past the merged count");
+    check_eq_int(nee_omni_start(100, 3), 3, "INV-2: static set far past the cap");
+    check_eq_int(nee_omni_start(INT_MAX, 7), 7, "INV-2: INT_MAX static");
+    check_eq_int(nee_omni_start(INT_MAX, INT_MAX), INT_MAX, "INV-2: both INT_MAX");
+
+    // INV-3: never negative; a negative merged count counts as zero.
+    check_eq_int(nee_omni_start(-1, 10), 0, "INV-3: negative static");
+    check_eq_int(nee_omni_start(INT_MIN, 10), 0, "INV-3: INT_MIN static");
+    check_eq_int(nee_omni_start(5, -3), 0, "INV-3: negative merged");
+    check_eq_int(nee_omni_start(-4, -4), 0, "INV-3: both negative");
+    check_eq_int(nee_omni_start(5, INT_MIN), 0, "INV-3: INT_MIN merged");
+
+    // INV-4: fed the count nee_merge_emitters really returns, omniStart never
+    // exceeds the records written -- the property the shader depends on. Swept
+    // across static counts below, at and above the cap.
+    const int S = NEE_EMIT_STRIDE;
+    const int dynN = 3, cap = 8;
+    for (int staticN = 0; staticN <= 12; staticN++)
+    {
+        std::vector<float> sRec((size_t)staticN * S + 1, 0.0f), sWgt(staticN + 1, 1.0f);
+        std::vector<float> dRec(dynN * S, 0.0f), dWgt(dynN, 0.5f);
+        std::vector<float> out((size_t)cap * S, 0.0f);
+        int n = nee_merge_emitters(sRec.data(), sWgt.data(), staticN,
+                                   dRec.data(), dWgt.data(), dynN, cap, out.data());
+        int o = nee_omni_start(staticN, n);
+        char msg[128];
+        std::snprintf(msg, sizeof msg,
+                      "INV-4: static %d, cap %d: omniStart %d must not exceed merged %d",
+                      staticN, cap, o, n);
+        check(o >= 0 && o <= n, msg);
+    }
+}
+
 int main()
 {
     std::printf("nee_sampling_test (DOOM-0009 step 3c-3): power-importance NEE is unbiased\n");
@@ -209,6 +257,9 @@ int main()
 
     std::printf("- static|sprite emitter split (DOOM-0084)\n");
     check_merge_ordering();
+
+    std::printf("- omniStart clamp (security review F-D)\n");
+    check_omni_start();
 
     return check_summary("nee_sampling");
 }

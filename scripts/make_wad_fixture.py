@@ -22,6 +22,7 @@ whole-WAD lumps R_InitTextures parses at startup.
     texpatches    one texture declares 5000 patches    refused by name
     texgap        a 64-wide texture with a 1-wide patch  counterfactual
     noflats       F_END placed directly after F_START   refused by name
+    textall       the IWAD's TEXTURE1 plus one 32767-tall texture  loads, tile cropped
 
 The two texture modes carry lump BYTES rather than a bad directory, because
 that is where the count lives: TEXTURE1 states how many textures follow it, and
@@ -32,10 +33,16 @@ The sfxrate mode is about DOOM-0386 rather than the directory: a sound lump's
 declared sample rate is attacker-controlled, and 1 Hz made SDL build a ~44100x
 upsample whose conversion buffer came to about 11 GB for a 64 KB sound.
 
-Usage:  make_wad_fixture.py <mode> <out.wad>
+The textall mode is about DOOM-0221: a texture's declared height sizes an atlas
+tile and then a GPU image, and 32767 is what the format lets it say. It is the
+one mode that needs an IWAD, because a map will not load against a TEXTURE1 that
+lacks the textures its sidedefs name -- so the fixture is the IWAD's own lump
+with one texture appended, built from the IWAD's first patch.
 
-Needs no IWAD: the lumps are synthetic, because the directory is the subject and
-the payload never has to mean anything.
+Usage:  make_wad_fixture.py <mode> <out.wad> [<iwad>]
+
+Every mode but textall needs no IWAD: the lumps are synthetic, because the
+directory is the subject and the payload never has to mean anything.
 """
 
 import struct
@@ -45,7 +52,7 @@ HEADER_SIZE = 12
 DIRENT_SIZE = 16
 
 
-def build(mode):
+def build(mode, iwad=None):
     """Return the PWAD bytes for `mode`."""
     # Two ordinary lumps and an empty marker, so the control is a WAD the engine
     # accepts and the malformed modes differ from it in one field only.
@@ -96,6 +103,41 @@ def build(mode):
         lumps = [("PNAMES", pnames), ("TEXTURE1", texture1),
                  ("TEXTURE2", struct.pack("<i", 0))]
 
+    if mode == "textall":
+        if not iwad:
+            raise SystemExit("textall needs the IWAD whose TEXTURE1 it extends")
+        from wad import read_directory
+        data, directory = read_directory(iwad)
+        found = [(o, n) for name, o, n in directory if name == "TEXTURE1"]
+        if not found:
+            raise SystemExit("no TEXTURE1 lump in that WAD")
+        off, size = found[-1]
+        tex1 = data[off:off + size]
+        count = struct.unpack_from("<i", tex1, 0)[0]
+        offsets = struct.unpack_from("<%di" % count, tex1, 4)
+        records = tex1[4 + 4 * count:]
+        # The texture is exactly as wide as the patch it is built from, so every
+        # column has one patch and needs no composite. A column with none or
+        # several is composited, and R_GenerateLookup refuses a composite past
+        # 64 KB by name -- which would stop the run before the atlas is built.
+        names = [(o, n) for name, o, n in directory if name == "PNAMES"]
+        if not names:
+            raise SystemExit("no PNAMES lump in that WAD")
+        first = data[names[-1][0] + 4:names[-1][0] + 12].split(b"\0")[0].decode("latin-1")
+        patch = [(o, n) for name, o, n in directory if name.upper() == first.upper()]
+        if not patch:
+            raise SystemExit("PNAMES names %s, which that WAD does not hold" % first)
+        width = struct.unpack_from("<h", data, patch[-1][0])[0]
+        # One more offset in the table moves every record 4 bytes down the lump.
+        tall = (b"FIXTALL\0"
+                + struct.pack("<ihhi", 0, width, 32767, 0)  # masked w h columndirectory
+                + struct.pack("<h", 1)
+                + struct.pack("<hhhhh", 0, 0, 0, 0, 0))   # the IWAD's patch 0
+        count += 1
+        offsets = [o + 4 for o in offsets] + [4 + 4 * count + len(records)]
+        lumps = [("TEXTURE1", struct.pack("<i", count)
+                  + struct.pack("<%di" % count, *offsets) + records + tall)]
+
     if mode == "sfxrate":
         # DMX sound: format, rate, sample count, then the 8-bit samples. The
         # engine reads the rate from bytes 2-3 and the count from 4-7, and
@@ -121,8 +163,8 @@ def build(mode):
         dirents[0][0] = -1                 # lseek target the engine cannot reach
     elif mode == "pasteof":
         dirents[2][1] = total - dirents[2][0] + 1   # ends exactly one byte late
-    elif mode not in ("valid", "shortheader", "sfxrate",
-                      "texcount", "texpatches", "texgap", "noflats"):
+    elif mode not in ("valid", "shortheader", "sfxrate", "texcount",
+                      "texpatches", "texgap", "noflats", "textall"):
         raise SystemExit("unknown mode: %s" % mode)
 
     header = b"PWAD" + struct.pack("<ii", len(dirents), diroff)
@@ -139,10 +181,11 @@ def build(mode):
 
 
 def main(argv):
-    if len(argv) != 3:
+    if len(argv) not in (3, 4):
         raise SystemExit("usage: %s {valid|hugesize|negpos|pasteof|shortheader|"
-                         "sfxrate|texcount|texpatches|texgap|noflats} <out.wad>" % argv[0])
-    data = build(argv[1])
+                         "sfxrate|texcount|texpatches|texgap|noflats|textall} "
+                         "<out.wad> [<iwad>]" % argv[0])
+    data = build(argv[1], argv[3] if len(argv) == 4 else None)
     open(argv[2], "wb").write(data)
     print("%s: %s (%d bytes)" % (argv[2], argv[1], len(data)))
 

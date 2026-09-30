@@ -34,6 +34,8 @@ rather than deleting, and orphanline is the mode that gets past it.
     nostart       player-1 start retyped to an Imp DOOM-0397   I_Error, by name
     lowerchange   every walkover lower-and-changes DOOM-0398    counterfactual
     segnoback     a two-sided line loses its back side DOOM-0399  I_Error, by name
+    bspcycle      the root node names itself a child DOOM-0093   I_Error, by name
+    nosubsectors  SSECTORS and NODES both emptied  DOOM-0093    I_Error, by name
 
 Usage:  make_map_fixture.py <mode> <iwad> <out.wad>
 
@@ -72,6 +74,8 @@ MANUAL_DOOR = 1
 # walkovers that reach EV_DoFloor(lowerAndChange). Special 84 is the other.
 LOWER_AND_CHANGE = 37
 SECTOR_SPECIAL_OFF = 22 # sector record: ... lightlevel special tag
+NODE_SIZE = 28          # x y dx dy bbox[2][4] children[2]
+NODE_CHILDREN_OFF = 24  # the two child indices end the node record
 THING_SIZE = 10         # x y angle type options
 # THINGS options bits 1/2/4 are the three skill classes P_SpawnMapThing tests;
 # bit 16 is multiplayer-only and would make the thing skip in a single-player
@@ -393,6 +397,31 @@ def mutate_nostart(group):
     return replace(group, "THINGS", bytes(things))
 
 
+def mutate_bspcycle(group):
+    """Make the root node name itself as its first child.
+
+    The child is in range, so the per-child index check passes; what it breaks is
+    the tree. Before DOOM-0093 every BSP walk then ran without end -- the first
+    one reached is R_PointInSubsector, spawning the player.
+    """
+    nodes = bytearray(dict(group)["NODES"])
+    count = len(nodes) // NODE_SIZE
+    if count < 1:
+        raise SystemExit("that map has no nodes to tie in a knot")
+    root = count - 1
+    struct.pack_into("<H", nodes, root * NODE_SIZE + NODE_CHILDREN_OFF, root)
+    return replace(group, "NODES", bytes(nodes))
+
+
+def mutate_nosubsectors(group):
+    """Empty SSECTORS, and NODES with it so no child names a missing subsector.
+
+    A node-less map uses subsector 0 as its whole BSP, so with none at all the
+    engine read an element that does not exist.
+    """
+    return replace(replace(group, "SSECTORS", b""), "NODES", b"")
+
+
 MODES = {
     "valid": lambda g: g,
     "orphanline": mutate_orphanline,
@@ -406,6 +435,8 @@ MODES = {
     "nostart": mutate_nostart,
     "lowerchange": mutate_lowerchange,
     "segnoback": mutate_segnoback,
+    "bspcycle": mutate_bspcycle,
+    "nosubsectors": mutate_nosubsectors,
 }
 
 

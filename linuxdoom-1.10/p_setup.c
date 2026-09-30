@@ -27,6 +27,7 @@ rcsid[] __attribute__((used)) = "$Id: p_setup.c,v 1.5 1997/02/03 22:45:12 b1 Exp
 
 
 #include <math.h>
+#include <stdlib.h>	// malloc/calloc/free (the BSP tree check's scratch)
 
 #include "z_zone.h"
 
@@ -281,6 +282,12 @@ void P_LoadSubsectors (int lump)
     subsector_t*	ss;
 	
     numsubsectors = W_LumpLength (lump) / sizeof(mapsubsector_t);
+    // DOOM-0093: a map with no nodes uses subsector 0 as its whole BSP, and
+    // R_PointInSubsector hands back subsectors[0] for it, so an empty SSECTORS
+    // lump was a read of an element that does not exist. No playable map has
+    // none; refuse here, the posture P_WadIndex takes for a bad index.
+    if (numsubsectors < 1)
+	I_Error ("P_SetupLevel: the map has no subsectors");
     subsectors = P_LevelAllocZeroed (numsubsectors, sizeof(subsector_t), "subsectors");
     data = W_CacheLumpNum (lump,PU_STATIC);
 	
@@ -372,6 +379,35 @@ void P_LoadNodes (int lump)
     }
 	
     Z_Free (data);
+
+    // DOOM-0093: every child is in range now, but a child in range can still
+    // name its own node or an ancestor, and then no BSP walk ever finishes --
+    // the renderer and the sight check loop, the mesh builder recurses until
+    // the stack is gone. level_bounds.h owns the walk and its own test.
+    if (numnodes > 0)
+    {
+	unsigned short*	kids = malloc (numnodes * 2 * sizeof(*kids));
+	unsigned char*	seen = calloc (numnodes, 1);
+	int*		stack = malloc (numnodes * sizeof(*stack));
+	int		tree;
+
+	if (!kids || !seen || !stack)
+	    I_Error ("P_LoadNodes: out of memory checking %d nodes", numnodes);
+
+	for (i=0 ; i<numnodes ; i++)
+	{
+	    kids[i*2] = nodes[i].children[0];
+	    kids[i*2+1] = nodes[i].children[1];
+	}
+
+	tree = LevelBspIsTree (numnodes, kids, seen, stack);
+	free (kids);
+	free (seen);
+	free (stack);
+
+	if (!tree)
+	    I_Error ("P_SetupLevel: the map's BSP nodes do not form a tree");
+    }
 }
 
 

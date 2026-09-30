@@ -38,6 +38,7 @@ rcsid[] __attribute__((used)) = "$Id: r_data.c,v 1.4 1997/02/03 16:47:55 b1 Exp 
 #include "r_local.h"
 
 #include "wad_bounds.h"
+#include "patch_bounds.h"
 #include "p_local.h"
 
 #include "doomstat.h"
@@ -779,6 +780,15 @@ void R_InitSpriteLumps (void)
     {
 	if (!(i&63))
 	    printf (".");
+
+	// DOOM-0221: a lump between the markers need not be a patch -- PWADs
+	// carry zero-length sub-markers there -- and vanilla read a header out
+	// of it regardless. A short lump is an empty sprite, not a refusal.
+	if (!PatchHasHeader (W_LumpLength (firstspritelump+i)))
+	{
+	    spritewidth[i] = spriteoffset[i] = spritetopoffset[i] = 0;
+	    continue;
+	}
 
 	patch = W_CacheLumpNum (firstspritelump+i, PU_CACHE);
 	spritewidth[i] = SHORT(patch->width)<<FRACBITS;

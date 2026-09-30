@@ -20,7 +20,7 @@
 
 // A flat is read as `h` rows of 64 palette indices, taking `w` from each.
 // The furthest byte touched is therefore (h-1)*64 + (w-1).
-static int FlatFits (int lumplen, int w, int h)
+static inline int FlatFits (int lumplen, int w, int h)
 {
     if (lumplen <= 0 || w <= 0 || h <= 0)
 	return 0;
@@ -32,9 +32,20 @@ static int FlatFits (int lumplen, int w, int h)
     return lumplen >= (h - 1) * 64 + w;
 }
 
+// Does the lump hold a patch header at all -- width, height, leftoffset,
+// topoffset, four shorts? Three readers take only those fields (the atlas tile
+// size, the sprite-height cache and R_InitSpriteLumps) and none checked, so a
+// lump shorter than 8 bytes between the sprite markers was read past its end.
+// Zero-length marker lumps inside S_START..S_END are ordinary in PWADs, so the
+// callers treat a short lump as an empty sprite rather than refusing the WAD.
+static inline int PatchHasHeader (int lumplen)
+{
+    return lumplen >= 8;
+}
+
 // A patch begins with width, height, leftoffset, topoffset (four shorts), then
 // one 32-bit column offset per column. Reading column `w-1` needs all of it.
-static int PatchHeaderFits (int lumplen, int width)
+static inline int PatchHeaderFits (int lumplen, int width)
 {
     if (lumplen < 8 || width <= 0)
 	return 0;
@@ -48,14 +59,14 @@ static int PatchHeaderFits (int lumplen, int width)
 
 // A column offset must land inside the lump with room for a post header.
 // A post is topdelta, length, one pad byte, `length` texels, one pad byte.
-static int PatchColumnFits (int columnofs, int lumplen)
+static inline int PatchColumnFits (int columnofs, int lumplen)
 {
     return columnofs >= 0 && columnofs <= lumplen - 2;
 }
 
 // `pos` is the post header's offset. The texels start at pos+3, so the last
 // byte read is pos+2+length. Written as a subtraction so nothing overflows.
-static int PatchPostFits (int pos, int length, int lumplen)
+static inline int PatchPostFits (int pos, int length, int lumplen)
 {
     if (pos < 0 || length < 0 || lumplen < 3)
 	return 0;
