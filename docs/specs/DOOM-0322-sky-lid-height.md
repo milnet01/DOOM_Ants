@@ -1,6 +1,6 @@
 # DOOM-0322 — Raise the 3D sky lid so a taller sky area shows over a lower one
 
-**Status:** spec draft (2026-10-01).
+**Status:** Reviewed — `review-contract` loops 1–2 (see §13), stopped at the cap, 2026-10-01. Ready to implement.
 **Kind:** fix.
 **Source:** ROADMAP DOOM-0322 (user play-test 2026-08-04, E3M1's opening
 courtyard).
@@ -14,8 +14,12 @@ the building. After this, the 3D views show it the way Classic does.
 - **DOOM-0141** — the sky surfaces in the 3D mesh (`emit_sky_cap`,
   `emit_sky_wall`, the sky list `rb_mesh_t::sky`). This spec moves the caps and
   replaces one of the wall calls.
-- **DOOM-0162** — the raster view draws the same sky list as an occluder, so
-  every change here reaches Solid as well as Ultra.
+- **DOOM-0162** — the raster view draws the same sky list as an occluder, on a
+  device with hardware ray tracing only: `g.skyMeshBuf` is built only when
+  `g.rtEnabled`, a device capability. There every change here reaches Solid as
+  well as Ultra. Without it Solid draws no sky list before or after, and this
+  change does nothing there. Every Solid capture in this spec runs on such a
+  device; this machine's RX 6600 is one.
 - **DOOM-0142** — fills an untextured wall step, with sky where the neighbouring
   ceiling is sky. Its branches are kept unchanged (§4.3).
 - **DOOM-0267** — both views skip the back of a wall face. §4.4 leans on it.
@@ -107,8 +111,10 @@ DOOM-0142 fills them with sky.
 
 **What the sky's shading reads.** Neither view shades sky from where the sky
 surface is. Ultra's sky hit takes the same branch as a miss and shades the
-panorama from the ray's direction; its fog is `skyFogOpticalDepth(origin, dir,
-strength)`, which reads the eye and the direction only. Solid's sky branch in
+panorama from the pixel's position (`skyPanorama(px, w, h)`); its fog is
+`skyFogOpticalDepth(origin, dir, strength)`, which reads the eye, the direction
+and `pc.fogFloorZ`, a height taken from floors, which this spec does not
+change. Solid's sky branch in
 `mesh.frag` samples the panorama by screen position. So moving a sky surface
 changes which pixels are sky, never what colour a sky pixel is.
 
@@ -138,7 +144,9 @@ ceiling is sky, before the seg loop. A level with no sky ceiling has no lid and
 emits no sky ceiling cap and no seal.
 
 Every sky ceiling cap is emitted at `lid`, not at its sector's ceiling height.
-Sky floor caps are unchanged.
+`lid` reaches `emit_subsector_caps` as a new `builder_t` field, `skyLid`, set
+before `carve_caps` runs, so the ceiling call reads
+`emit_sky_cap(bld, &clipped, bld->skyLid, 0)`. Sky floor caps are unchanged.
 
 Why one level-wide height: every sky area is a vertical column closed at the
 top by the lid and on each side by a real wall or a seal (§4.2). Two sky areas
@@ -265,11 +273,13 @@ and nothing measures it.
 - **B1 — `sky_seal.h` and its test.** Write `tests/sky_seal_test.cpp` first,
   against a stub header whose functions return the pre-fix outcomes; see it
   fail; then write the header. *Verify:* `make test` fails on the stub and
-  passes on the header (INV-1 to INV-4).
+  passes on the header (INV-1's `RB_SkyLidHeight` checks, INV-2 to INV-4).
 - **B2 — wire `r_mesh.c`.** Lid before the seg loop; seal in the seg loop,
   before the one-sided `continue`; upper step through `RB_UpperStepKind`; sky
-  ceiling caps at `lid`; `emit_sky_wall`'s offset. *Verify:* `make DEV=1` and
-  `make test` build with no warning; the E3M1 fixture shows the facade (INV-5).
+  ceiling caps at `bld->skyLid` (§4.1); `emit_sky_wall`'s offset. Add INV-1's
+  scrape to the test. *Verify:* the scrape fails before this step's `r_mesh.c`
+  edit and passes after; `make DEV=1` and `make test` build with no warning;
+  the E3M1 fixture shows the facade (INV-5).
 - **B3 — regression captures.** The nine outdoor starts (player 1's start and
   angle on E1M1, E1M2, E3M6, E4M3, E4M6, MAP01, MAP13, MAP19, MAP25), Solid,
   before and after. *Verify:* INV-6's bound; the E3M9 line 154 capture in
@@ -286,8 +296,9 @@ and nothing measures it.
   lid ignores a sky sector. *Test:* `tests/sky_seal_test.cpp` checks
   `RB_SkyLidHeight` on E3M1's four courtyard sectors (56, 192, 128, 128 → 192),
   on a set with no sky (returns 0), and with a non-sky sector taller than every
-  sky one (ignored); the same file scrapes `r_mesh.c` for the ceiling
-  `emit_sky_cap` call taking the lid rather than `ceilingheight`.
+  sky one (ignored); from B2 the same file scrapes `r_mesh.c` for
+  `emit_sky_cap(bld, &clipped, bld->skyLid, 0)` and for no ceiling
+  `emit_sky_cap` call passing `ceilingheight`.
 - **INV-2** — a seg whose front ceiling is sky gets a seal from that ceiling to
   the lid exactly when it has no back sector or its back ceiling is not sky.
   *Breaks when:* a sky-to-sky line is sealed (the reported bug returns), or an
