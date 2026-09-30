@@ -12062,6 +12062,17 @@ defect visible before a player finds it.
   UT_Ants wants our numbers as a second implementation, so send it the file path
   and the first bake-versus-reference figures when this runs. The user asked for
   the two projects to help each other (2026-09-30).
+  Measured 2026-09-30 (UT_Ants asked): DOOM's art decodes to a mean linear
+  albedo of about 0.07 (flats) to 0.09 (wall patches) in both IWADs,
+  luminance-weighted and not weighted by area; the raw display mean is
+  about 0.25. So the series 1/(1-rho) is about 1.09, and the bake's
+  bounces 2 and 3 add roughly 9% over one bounce. Expect the reference to
+  agree with a ONE-bounce bake to within that.
+  UT_Ants's reference exists and passed three hand-worked checks (closed
+  box furnace, one lit face against the form factor, open top to a unit
+  sky): ~/.cache/uta-scratch/second-bounce/rt.cpp, scratch, not in its
+  repo. Its model and those three checks are the ones to copy; its
+  finding there was probes within 3% of one traced bounce.
   **Layman:** Nothing proves the soft bounced light is the right brightness; only the direct light is tested.
   Kind: test.
   Source: in-session-2026-09-30 (found answering UT_Ants).
