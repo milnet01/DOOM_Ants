@@ -9417,6 +9417,14 @@ stay in their phase sections; this heading holds only work still to come.
   filling untextured steps with the neighbouring flat; it adds emit_sky_wall only
   for an untextured step whose neighbouring floor or ceiling is sky, and leaves
   the sky-hack call this item is about unchanged.
+  Progress (2026-10-01): the ROOT CAUSE above is WRONG. Removing the gap
+  sky wall changes nothing at the fixture; the occluder is the courtyard's
+  own sky ceiling cap at height 56 (DOOM-0141). Measured on scratch probe
+  builds. Contract: docs/specs/DOOM-0322-sky-lid-height.md (reviewed,
+  review-contract loops 1-2, capped): every sky lid moves to one level
+  height, non-sky edges of sky areas get sky seals, the gap wall goes.
+  Prototype fixed the fixture in Solid and Ultra and left nine outdoor
+  starts unchanged in Solid. Next: build steps B1-B4.
 
 - ✅ [DOOM-0338] **Clamp rb_fog on use; a hand-edited rt_fog reads past its range.**
   `rb_fog` is persisted as `rt_fog` in `~/.doomrc` and pushed to the
