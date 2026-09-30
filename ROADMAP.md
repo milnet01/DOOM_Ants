@@ -11977,6 +11977,12 @@ defect visible before a player finds it.
   it cannot serve as a reference for them. A multi-bounce brute-force estimator
   at a few probe positions, compared with the baked SH, would close this. UT_Ants
   is building an offline ray-traced reference; ask what can be reused.
+  Prior art (UT_Ants, 2026-09-30): its planned reference is a fixed-depth,
+  unclamped path tracer, checked first by a furnace (closed box, direct term 1,
+  albedo rho, expect rho/(1-rho)). Not built there yet; it will send the path.
+  UT_Ants wants our numbers as a second implementation, so send it the file path
+  and the first bake-versus-reference figures when this runs. The user asked for
+  the two projects to help each other (2026-09-30).
   **Layman:** Nothing proves the soft bounced light is the right brightness; only the direct light is tested.
   Kind: test.
   Source: in-session-2026-09-30 (found answering UT_Ants).
@@ -15696,6 +15702,11 @@ in CLAUDE.md describes.
   tiers read the same probes on different scales. Decide: linearise the raster
   scene, or convert the bounce term. Either changes Solid's look, so it needs a
   play-test. UT_Ants fixed the same class of fault on 2026-09-30.
+  Prior art (UT_Ants, 2026-09-30, its UTA-0253): the same fault there was bounce
+  added INSIDE the display power, so albedo was raised to the power too. Its fix:
+  the baker stores the bounce already in display terms and the shader adds it
+  AFTER the power. Files in the UT_Ants repo: src/urender/shaders/scene.frag,
+  src/ubake/LightProbes.cpp (radianceAlong).
   **Layman:** In the non-ray-traced view, the soft bounced light is mixed in using the wrong brightness scale, so it may be fainter or a different tint than intended.
   Kind: investigate.
   Source: in-session-2026-09-30 (found answering UT_Ants).
@@ -15717,9 +15728,30 @@ in CLAUDE.md describes.
   probes. It is what keeps light from leaking through walls, so any blending must
   stay inside what the cell can see. First capture a case where the step is
   visible; if none is found, drop this.
+  Prior art (UT_Ants, 2026-09-30): it blends trilinearly over the 8 lattice
+  corners, renormalising over the corners that exist, with the sample point
+  pushed half a spacing along the surface normal. It has NO per-probe visibility,
+  so thin walls can still leak there; our per-subsector keying is what avoids
+  that. Files: src/urender/shaders/probes.glsl (indirectAt),
+  src/ubake/LightProbes.cpp.
   **Layman:** The soft bounced light can change in a visible step where two floor cells meet, instead of fading smoothly.
   Kind: investigate.
   Source: in-session-2026-09-30 (found answering UT_Ants).
+  Lanes: renderer.
+
+- 📋 [DOOM-0478] **The fog-light bake merges emitters by lattice cell without checking they can see each other.**
+  `ClusterStaticFogLights` keys each emitting triangle by the 64-unit lattice cell
+  its centre falls in and sums the cell into one light at the area-weighted
+  centre. `BuildFogLightGrid` then sight-tests fog cells against that centre. No
+  step checks the members are mutually visible or that the centre is in air.
+  Measure first: per map, count clusters whose members span more than one sector
+  with no sight line between them, and clusters whose centre fails
+  `RB_SeepCellAir`. If the count is zero on the shipped maps, record that and
+  drop this. UT_Ants had the large form of it (three collinear lamps on three
+  decks joined into one strip); the 64-unit cell rules that form out here.
+  **Layman:** Two glowing panels on opposite sides of a thin wall can be treated as one light sitting in the wall, so fog may glow in the wrong room or not at all.
+  Kind: investigate.
+  Source: in-session-2026-09-30 (UT_Ants reported this class of bug in its own baker).
   Lanes: renderer.
 
 ## 0.12.0 — The player's experience
