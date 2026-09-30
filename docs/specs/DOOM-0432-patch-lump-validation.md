@@ -1,6 +1,6 @@
 # DOOM-0432 — Validate a patch lump once; every reader asks
 
-**Status:** draft.
+**Status:** accepted.
 **Kind:** security.
 **Source:** ROADMAP DOOM-0432 (`review-code 2026-09-01`, lane sw-renderer; split
 out of DOOM-0402 on 2026-09-12; scope widened 2026-09-30 by the DOOM-0093 pass,
@@ -25,11 +25,11 @@ simply not drawn.
 
 **Defers (explicitly NOT in this build):**
 
-- The masked-midtexture walk over a composite column (§10 Q1). The same walk
-  over a single-patch column is in this build (§4.5).
+- A reader that takes only a patch's header: a caller that reads `width` to
+  centre a picture, the atlas tile size, the sprite-height cache. A header read
+  reaches at most eight bytes, and the last two already test the lump's length
+  (DOOM-0228). `R_InitSpriteLumps` is the one header reader in this build.
 - `R_DrawColumn`'s read past a short column (§10 Q2).
-- `blit_tile` in `r_mesh.c`. It already bounds every read it makes (DOOM-0228)
-  and keeps doing so.
 
 ## Contents
 
@@ -81,8 +81,13 @@ says nothing about where they **read**.
 One more reader takes no lump at all. `R_RenderMaskedSegRange` (`r_segs.c`)
 walks the posts of a see-through wall texture from the pointer `R_GetColumn`
 returns. For a column one patch covers, that pointer is the lump plus an offset
-`R_GenerateLookup` stored earlier, in a table of 16-bit entries. §4.5 deals
-with it.
+`R_GenerateLookup` stored earlier, in a table of 16-bit entries. For any other
+column the pointer is into the texture's composite, which holds raw texels and
+no posts. §4.5 deals with both.
+
+`blit_tile` in `r_mesh.c` copies a sprite into the Vulkan tiers' atlas. It
+bounds every read it makes (DOOM-0228) and skips a column that does not fit,
+so today it draws the rest of a picture the other readers would refuse.
 
 `W_CacheLumpNum` loads a lump into a zone block whose `user` field is the
 address of that lump's slot in `lumpcache[]` (`Z_Malloc` stores the `user` it is
@@ -98,6 +103,10 @@ Taken in this spec; none was put to the user.
 - **Validate once per lump, not once per read.** §9 has the alternatives.
 - **A bad patch is refused whole.** No reader draws part of it.
 - **Refusal is never fatal.** A PWAD with one broken picture still runs.
+- **A see-through wall draws only the columns one patch covers.** §4.5. No
+  two-sided line in either IWAD uses a middle texture with any other kind of
+  column (measured 2026-09-30 over every map in both files), so stock maps
+  draw as before.
 - **The rule accepts every patch in both IWADs.** Measured 2026-09-30 with a
   Python transcription of §4.1's rule over `wads/doom.wad` and `wads/doom2.wad`
   (every lump between `S_START` and `S_END`, every lump `PNAMES` names, and the
@@ -163,8 +172,9 @@ allocated beside `lumpcache` and starts as not yet asked.
   `W_PatchOk` allocates nothing.** `W_CacheLumpNum` on a cached lump calls
   `Z_ChangeTag`, so asking through it would turn a picture its holder cached as
   `PU_STATIC` or `PU_LEVEL` into a purgeable one on its first draw.
-- The first refusal of a lump prints one line naming the lump. Later asks are
-  silent, because the verdict is stored.
+- The first refusal of a lump prints one line that begins
+  `W_Patch: refusing lump ` and then names the lump. Later asks are silent,
+  because the verdict is stored.
 - A lump too short to hold a patch header is refused without a line, and so is
   an out-of-range lump number. PWADs carry empty marker lumps among their
   sprites, and those are not malformed pictures.
@@ -198,6 +208,7 @@ clears the block's id and its cache slot.
 | `V_BlitPatch` | `W_PatchOk(patch)`, before it reads `topoffset` | returns without drawing, for every wrapper including the flipped one |
 | `F_DrawPatchCol` | `W_PatchOk(patch)`, and `0 <= col < width` | returns without drawing |
 | `M_DecodePatchRGBA` | `W_PatchLumpOk` on the lump it names | returns `NULL`; its callers already fall back |
+| `blit_tile` (sprite branch) | `W_PatchLumpOk` on the sprite lump | returns; the tile stays transparent. Its per-read bounds stay |
 | `R_GenerateLookup`, `R_GenerateComposite`, `R_RenderTextureToAtlas` | one shared helper over `W_PatchLumpOk(patch->patch)` | skip that patch, as if the texture did not list it |
 | `R_DrawVisSprite` | `W_PatchLumpOk(vis->patch + firstspritelump)` | returns without drawing |
 | `R_InitSpriteLumps` | `W_PatchLumpOk` on each sprite lump, in place of its own header-length test | records zero width and offsets |
@@ -212,6 +223,10 @@ A texture column whose only patch is refused becomes a column no patch covers.
 `R_GenerateLookup` already gives such a column a slot in the composite
 (DOOM-0402), so nothing new is needed there.
 
+`M_DecodePatchRGBA` caches the patch and then `PLAYPAL`, both purgeable, so the
+second load can free the first and the walk then reads a freed block. It
+caches `PLAYPAL` first instead, as `blit_tile` does (DOOM-0406).
+
 `F_DrawPatchCol` needs the column check as well as the verdict: its caller
 passes a screen column, and a replacement picture narrower than the screen
 would otherwise index `columnofs[]` past the columns the rule validated.
@@ -219,7 +234,7 @@ would otherwise index `columnofs[]` past the columns the rule validated.
 `R_InitSpriteLumps` asking at startup is what makes a refused sprite visible in
 the boot log on every run, not only when that sprite is first drawn.
 
-### 4.5 The stored column offset
+### 4.5 The see-through wall walk
 
 `R_GenerateLookup` stores, for a column one patch covers, that column's offset
 into the lump plus three. `texturecolumnofs` holds it in an `unsigned short`.
@@ -232,6 +247,19 @@ as a post chain the rule never looked at.
 `unsigned int`, and its allocation in `R_InitTextures` is sized to match. The
 stored offset is then exact, so the walk starts at a post the rule validated.
 The composite's own size limit is unchanged.
+
+A column that is not covered by exactly one patch has no posts to walk. That
+includes a column whose only patch was refused, so without this a refused
+patch in a see-through wall would trade one crash for another. `r_data.c`
+gains:
+
+```c
+byte* R_GetPostColumn (int tex, int col);
+```
+
+It returns the start of the column's post chain when one patch covers the
+column, and `NULL` otherwise. `R_RenderMaskedSegRange` calls it in place of
+`R_GetColumn` and draws nothing for `NULL`.
 
 No stock wall patch is near the limit: the largest is `WALL24_1` in `doom.wad`
 and `RSKY2` in `doom2.wad`, each under 40 000 bytes. A refusal by size was the
@@ -272,11 +300,11 @@ Each step ends with `make` and `make test` green.
   `M_DecodePatchRGBA`. *Verify:* the `badpatch-ui` fixture (INV-5) on the
   pre-change and post-change builds.
 - **B4 — texture readers.** The shared helper and its three callers, and the
-  wider offset table of §4.5.
+  wider offset table and `R_GetPostColumn` of §4.5.
   *Verify:* the `badpatch-wall` fixture in Solid; the five demo fixtures at
   their recorded lengths.
-- **B5 — sprites.** `R_DrawVisSprite` and `R_InitSpriteLumps`. *Verify:* the
-  `badpatch-sprite` fixture.
+- **B5 — sprites.** `R_DrawVisSprite`, `R_InitSpriteLumps` and `blit_tile`.
+  *Verify:* the `badpatch-sprite` fixture, in Classic and in Solid.
 - **B6 — the wiring test and the sweep.** INV-3's scrape in
   `tests/bounds_wiring_test.cpp`; the boot sweep with its output searched for a
   refusal line (INV-2); the cross-doc edits in §12.
@@ -304,18 +332,20 @@ Each step ends with `make` and `make test` green.
   Interface pictures are asked when first drawn and the sweep draws few of
   them; §11 names that gap.
 
-- **INV-3** — every function that reads a patch lump's header, its `columnofs`
-  or its posts from the lump asks for the verdict before its first such read. *Breaks when:* a new reader is
+- **INV-3** — every function that reads a patch lump's `columnofs` or walks
+  its posts from the lump asks for the verdict before its first such read, and
+  so does `R_InitSpriteLumps` before it reads the header. *Breaks when:* a new reader is
   added, or one of the readers in §2 is changed to cache a lump by name and
   walk it directly.
   *Test:* `tests/bounds_wiring_test.cpp` takes each function named in §4.4 and
   requires a call to `W_PatchOk` or `W_PatchLumpOk` (for the three texture
-  readers, their shared helper) ahead of the first `columnofs` in its body.
+  readers, their shared helper) ahead of the first `->columnofs[` in its body.
   `R_InitSpriteLumps` reads only the header, so there the call must come ahead
   of its first read of `->width`. It
   also requires that every use of `->columnofs[` in the engine sources sits in
-  one of those functions or in `blit_tile`, so a reader added elsewhere fails
-  the test by existing.
+  one of those functions, so a reader added elsewhere fails the test by
+  existing. The engine sources are every `.c`, `.cpp` and `.h` file directly
+  in `linuxdoom-1.10/`, found by listing the directory, not from a fixed list.
 
 - **INV-4** — `W_PatchOk` is true only for the start of a cached lump whose
   verdict is good. *Breaks when:* the index function accepts a `user` outside
@@ -347,7 +377,9 @@ Each step ends with `make` and `make test` green.
   of §4.1: the header and the table are intact, so nothing earlier refuses it.
   `badpatch-wall` is run in Solid, where the atlas builder reads every texture
   at level load; in Classic a wall patch is read only when its texture is
-  drawn.
+  drawn. `badpatch-sprite` is run in Solid as well as Classic, for `blit_tile`.
+  No fixture puts a refused patch in a see-through wall; INV-10 covers that
+  path by reading.
 
 - **INV-6** — `R_GenerateLookup`, `R_GenerateComposite` and
   `R_RenderTextureToAtlas` use or skip exactly the same patches of a texture.
@@ -376,6 +408,14 @@ Each step ends with `make` and `make test` green.
   table's allocation in `R_InitTextures` multiplies by a `sizeof`. There is
   nothing to run without a wall patch over 64 KB in a masked texture; no
   fixture builds one.
+
+- **INV-10** — `R_RenderMaskedSegRange` walks posts only in a column one patch
+  covers. *Breaks when:* it takes `R_GetColumn`'s pointer for a composite
+  column and walks raw texels, or heap bytes no patch wrote, as posts.
+  *Test:* the wiring scrape requires `R_RenderMaskedSegRange`'s body to name
+  `R_GetPostColumn` and not `R_GetColumn`, and `R_GetPostColumn`'s body to
+  return `NULL` under a test of `texturecolumnlump`. Nothing runs it: no stock
+  map has such a wall, and no fixture builds one.
 
 ## 9. Alternatives considered (and rejected)
 
@@ -406,13 +446,8 @@ Each step ends with `make` and `make test` green.
 
 ## 10. Open questions
 
-- **Q1 — a composite column walked as posts.** `R_RenderMaskedSegRange` takes
-  `R_GetColumn`'s result, steps back three bytes and walks it as a post chain.
-  For a texture built from more than one patch that pointer is into the
-  composite, which holds raw texels and no posts, so the walk follows whatever
-  bytes are there. A map chooses the texture, so a map reaches this. It is a
-  different defect from this spec's: the bytes are the engine's own composite,
-  not a lump. Filed separately when this spec is accepted.
+- **Q1 — closed.** The composite column walked as posts is now §4.5 and
+  INV-10.
 - **Q2 — `R_DrawColumn` reads past a short column.** It samples its source
   through a mask wider than many columns are tall, so it can read a little
   past the texels of a valid patch. Stock data does this. Out of scope; it
@@ -436,6 +471,8 @@ Each step ends with `make` and `make test` green.
 | INV-8 column bound | `tests/bounds_wiring_test.cpp`, by reading only |
 | INV-9 exact stored offset | `tests/bounds_wiring_test.cpp`, by reading only |
 | A short lump is refused without a line (§4.2) | **nothing.** Read at B2 |
+| INV-10 see-through walls | `tests/bounds_wiring_test.cpp`, by reading only |
+| `M_DecodePatchRGBA` caches `PLAYPAL` first (§4.4) | **nothing.** Read at B3 |
 | Every patch pointer is a zone block start (§4.3) | **nothing.** It is true of the callers today |
 | §6's budget | INV-3's scrape and the demo fixtures' lengths; no timing |
 
