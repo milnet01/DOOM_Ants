@@ -24,6 +24,11 @@
 //
 // Heights are fixed_t passed as int, so the numbers below are map units << 16.
 #include <cstdio>
+#include <string>
+
+#ifndef DOOM_TESTS_ROOT
+#define DOOM_TESTS_ROOT "."
+#endif
 
 #include "../sky_seal.h"
 #include "check_util.h"
@@ -34,6 +39,19 @@ int fx(int mapUnits) { return mapUnits << 16; }
 
 // Seal result for one seg, so each case reads as one line.
 struct Seal { int r, zb, zt, off; };
+
+// Whole file as text, for the r_mesh.c scrape. A missing file is a failure.
+std::string slurp(const char* path)
+{
+    std::FILE* f = std::fopen(path, "rb");
+    if (!f) { std::printf("  FAIL: cannot open %s\n", path); g_failures++; return std::string(); }
+    std::string s;
+    char buf[65536];
+    size_t n;
+    while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) s.append(buf, n);
+    std::fclose(f);
+    return s;
+}
 
 Seal seal(int fSky, int fCeil, int hasBack, int bSky, int bCeil, int lid)
 {
@@ -77,6 +95,15 @@ int main()
         check_eq_int(r3, 1, "INV-1: sky sectors present alongside a taller non-sky one -> lid found");
         check_eq_int(lid3, fx(192),
                      "INV-1: a non-sky sector (512) taller than all sky ones is ignored; lid is 192");
+    }
+
+    // ---- INV-1: the cap call in r_mesh.c (source scrape) ---------------------
+    {
+        const std::string src = slurp(DOOM_TESTS_ROOT "/r_mesh.c");
+        check(src.find("emit_sky_cap(bld, &clipped, bld->skyLid, 0)") != std::string::npos,
+              "INV-1: r_mesh.c emits the sky ceiling cap at bld->skyLid");
+        check(src.find("emit_sky_cap(bld, &clipped, sec->ceilingheight, 0)") == std::string::npos,
+              "INV-1: r_mesh.c still emits a sky ceiling cap at its own sector's ceilingheight");
     }
 
     // ---- INV-2: the seal ----------------------------------------------------

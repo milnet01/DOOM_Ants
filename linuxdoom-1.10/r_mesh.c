@@ -44,6 +44,7 @@
 #include "w_wad.h"      // W_CacheLumpNum/Name
 #include "z_zone.h"     // PU_CACHE
 #include "seg_project.h" // DOOM-0180 RB_ProjectOnLine (seg -> its linedef's line)
+#include "sky_seal.h"    // DOOM-0322 sky lid height, seals, upper-step kind
 #include "r_mesh.h"
 #include "patch_bounds.h"
 #include "atlas_bounds.h"
@@ -86,6 +87,10 @@ typedef struct
     rb_vertex_t* sky;
     int          skycount;
     int          skycap;
+    // DOOM-0322: the level's sky lid (the highest sky ceiling), where every sky
+    // ceiling cap is emitted; haveSkyLid is 0 on a level with no sky ceiling.
+    fixed_t      skyLid;
+    int          haveSkyLid;
 } builder_t;
 
 static void push_vert(builder_t* b, rb_vertex_t vert)
@@ -181,7 +186,11 @@ static void seg_line_xy(const seg_t* seg, float* x1, float* y1,
 // texture) as sky backdrop geometry. Fills the [zb, zt] span across the seg so the
 // view can't see through to geometry beyond; flagged RB_MESH_SKYDOME (world-space
 // sky, UVs unused) so both the tracer and the raster occluder pass paint it as sky.
-static void emit_sky_wall(builder_t* bld, const seg_t* seg, fixed_t zb, fixed_t zt)
+// DOOM-0322: `offset` moves the quad that many map units into the seg's FRONT
+// sector, along (dy, -dx)/len -- the negation of the normal below, which points
+// into the back sector. sky_seal.h says when a seal needs it.
+static void emit_sky_wall(builder_t* bld, const seg_t* seg, fixed_t zb, fixed_t zt,
+                          float offset)
 {
     float x1, y1, x2, y2;
     float zbf = zb / (float)FRACUNIT, ztf = zt / (float)FRACUNIT;
@@ -193,6 +202,8 @@ static void emit_sky_wall(builder_t* bld, const seg_t* seg, fixed_t zb, fixed_t 
     len = sqrtf(dx * dx + dy * dy);
     nx = len > 0.0f ? -dy / len : 0.0f;
     ny = len > 0.0f ?  dx / len : 0.0f;
+    x1 -= nx * offset; y1 -= ny * offset;
+    x2 -= nx * offset; y2 -= ny * offset;
     a = mkv(x1, y1, zbf, nx, ny, 0.0f, 0.0f, 0.0f, skytexture, RB_MESH_SKYDOME, 1.0f);
     b = mkv(x2, y2, zbf, nx, ny, 0.0f, 0.0f, 0.0f, skytexture, RB_MESH_SKYDOME, 1.0f);
     c = mkv(x2, y2, ztf, nx, ny, 0.0f, 0.0f, 0.0f, skytexture, RB_MESH_SKYDOME, 1.0f);
@@ -529,7 +540,7 @@ static void emit_subsector_caps(builder_t* bld, int ssnum, const poly_t* cell)
         emit_cap_poly(bld, &clipped, sec->ceilingheight, 0, sec->ceilingpic, light,
                       secidx, RB_PLANE_CEIL);
     else
-        emit_sky_cap(bld, &clipped, sec->ceilingheight, 0);
+        emit_sky_cap(bld, &clipped, bld->skyLid, 0);   // DOOM-0322: one lid height
 }
 
 // Walk the BSP, carrying the convex cell clipped by every ancestor partition.
@@ -582,6 +593,25 @@ rb_mesh_t* RB_BuildLevelMesh(void)
         for (k = 0; k < subsectors[s].numlines; k++)
             seg2ss[subsectors[s].firstline + k] = s;
 
+    // DOOM-0322: every sky ceiling cap sits at one height, the level's highest
+    // sky ceiling, so a taller sky area shows over a lower one (sky_seal.h).
+    {
+        int*           ceil  = malloc((numsectors + 1) * sizeof(int));
+        unsigned char* isSky = malloc(numsectors + 1);
+        int            lid   = 0;
+        if (!ceil || !isSky)
+            I_Error("RB_BuildLevelMesh: out of memory for the sky lid");
+        for (i = 0; i < numsectors; i++)
+        {
+            ceil[i]  = sectors[i].ceilingheight;
+            isSky[i] = (unsigned char)(sectors[i].ceilingpic == skyflatnum);
+        }
+        bld.haveSkyLid = RB_SkyLidHeight(ceil, isSky, numsectors, &lid);
+        bld.skyLid     = lid;
+        free(ceil);
+        free(isSky);
+    }
+
     // Walls.
     for (i = 0; i < numsegs; i++)
     {
@@ -598,6 +628,21 @@ rb_mesh_t* RB_BuildLevelMesh(void)
         // Sector indices for the per-frame dynamic-height update (DOOM-0049):
         // each wall edge is tagged with the sector + plane whose height set it.
         int fi = (int)(front - sectors);
+
+        // DOOM-0322: seal a sky front's edge from its ceiling up to the lid,
+        // wherever the other side is not sky, so a view over a raised lid cannot
+        // escape over this edge (sky_seal.h).
+        if (bld.haveSkyLid)
+        {
+            fixed_t zb, zt;
+            int     offset;
+            if (RB_SkySeal(front->ceilingpic == skyflatnum, front->ceilingheight,
+                           back != NULL, back && back->ceilingpic == skyflatnum,
+                           back ? back->ceilingheight : 0, bld.skyLid,
+                           &zb, &zt, &offset))
+                emit_sky_wall(&bld, seg, zb, zt,
+                              offset ? RB_SKY_SEAL_OFFSET : 0.0f);
+        }
 
         if (!back)
         {
@@ -619,25 +664,34 @@ rb_mesh_t* RB_BuildLevelMesh(void)
         // see-through hole there (the missing lintel above E1M1's exit door).
         // Bottom edge = back ceiling (the door face on a door sector), top edge
         // = front ceiling -- so a rising door ceiling shrinks this wall.
+        // DOOM-0322: both ceilings sky -> nothing. Classic draws sky in that
+        // gap and lets the taller side show over the lower ceiling; the raised
+        // lid gives the 3D view the same (RB_UpperStepKind, sky_seal.h).
         if (front->ceilingheight > back->ceilingheight)
         {
-            if (front->ceilingpic == skyflatnum && back->ceilingpic == skyflatnum)
-                // DOOM-0141: both ceilings sky -> classic shows sky in the height
-                // gap (no upper texture). Emit it as RT-only sky backdrop so the
-                // tracer occludes geometry beyond instead of seeing through the gap.
-                emit_sky_wall(&bld, seg, back->ceilingheight, front->ceilingheight);
-            else if (side->toptexture > 0)
+            switch (RB_UpperStepKind(front->ceilingpic == skyflatnum,
+                                     back->ceilingpic == skyflatnum,
+                                     side->toptexture > 0))
+            {
+            case RB_UPPER_WALL:
                 emit_wall(&bld, seg, back->ceilingheight, front->ceilingheight,
                           side->toptexture, 0, PEG_UPPER,
                           bi, RB_PLANE_CEIL, fi, RB_PLANE_CEIL);
+                break;
             // DOOM-0142: untextured upper step -- the back ceiling's flat, or the
             // sky where that ceiling is sky.
-            else if (back->ceilingpic == skyflatnum)
-                emit_sky_wall(&bld, seg, back->ceilingheight, front->ceilingheight);
-            else
+            case RB_UPPER_SKY:
+                emit_sky_wall(&bld, seg, back->ceilingheight, front->ceilingheight,
+                              0.0f);
+                break;
+            case RB_UPPER_FLAT:
                 emit_flat_wall(&bld, seg, back->ceilingheight, front->ceilingheight,
                                bi, RB_TEXSLOT_CEILPIC,
                                bi, RB_PLANE_CEIL, fi, RB_PLANE_CEIL);
+                break;
+            default:   // RB_UPPER_NONE
+                break;
+            }
         }
 
         // Lower step (front floor lower than/equal to back): bottom = front
@@ -658,7 +712,8 @@ rb_mesh_t* RB_BuildLevelMesh(void)
             // line (equal floors) is a zero-height quad that grows if a lift moves,
             // as the textured case is.
             else if (back->floorpic == skyflatnum)
-                emit_sky_wall(&bld, seg, front->floorheight, back->floorheight);
+                emit_sky_wall(&bld, seg, front->floorheight, back->floorheight,
+                              0.0f);
             else
                 emit_flat_wall(&bld, seg, front->floorheight, back->floorheight,
                                bi, RB_TEXSLOT_FLOORPIC,
