@@ -8,6 +8,11 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **The ray-traced view no longer counts one wall light twice when a glowing object is in sight** (DOOM-0377)
+  With a lamp, torch or barrel on screen, one glowing wall or floor patch
+  was given extra brightness by a sum that could grow without limit. At
+  the two spots measured the visible change is small.
+
 - **Ultra keeps running on the original textures when the graphics card has no room for the HD set** (DOOM-0257)
   Before, a card that could not fit the HD textures ended the game at
   level load. Now the level loads with the original art and the log says

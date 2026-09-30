@@ -14,6 +14,9 @@
 // rest of spec INV-6) lands at build step 4, when the integrator is complete and
 // a high-precision off-screen render target exists.
 //
+// It also holds DOOM-0377: the static-light draw must be renormalised over the
+// static prefix of a merged (static + sprite) table (labels begin "DOOM-0377").
+//
 // Build/run: `make test` (from linuxdoom-1.10/) runs this with the rest of the
 // suite; `make nee-test` builds and runs just this one for a fast iteration
 // loop. No WAD or GPU needed.
@@ -234,6 +237,65 @@ static void check_omni_start()
     }
 }
 
+// DOOM-0377. Why this exists: the shader drew u over the whole [0,1), searched only
+// the static prefix and divided by the full-set pdf, so every u above the prefix's
+// last cdf value clamped to the last static emitter and that emitter was counted
+// extra: the estimate was biased high on any frame with a glowing sprite.
+//
+// Integrates g(k)/pdfSel over a fine uniform grid of u01. The mean must equal
+// sum_{k<omniStart} g(k). Also: indices stay in the prefix, and the selection
+// probabilities over the prefix form a normalised distribution.
+static void check_static_prefix(const char* name, const std::vector<float>& w, int omniStart,
+                                const std::vector<double>& g)
+{
+    const int n = (int)w.size();
+    std::vector<float> cdf(n), pdf(n);
+    nee_build_cdf(w.data(), n, cdf.data(), pdf.data());
+
+    double want = 0.0;
+    for (int k = 0; k < omniStart; k++) want += g[k];
+
+    const int N = 200000;
+    double sum = 0.0;
+    int outOfRange = 0;
+    std::vector<float> selPdf(omniStart, -1.0f);
+    for (int i = 0; i < N; i++)
+    {
+        const float u = ((float)i + 0.5f) / (float)N;
+        float ps = 0.0f;
+        const int k = nee_pick_static(cdf.data(), pdf.data(), omniStart, u, &ps);
+        if (k < 0 || k >= omniStart) { outOfRange++; continue; }
+        selPdf[k] = ps;
+        sum += g[k] / (double)ps;
+    }
+    const double mean = sum / N;
+    char msg[256];
+    std::snprintf(msg, sizeof msg,
+                  "DOOM-0377 [%s]: mean of g(k)/pdfSel = %.4f, expected %.4f (sum of g over the static set)",
+                  name, mean, want);
+    check(std::fabs(mean - want) <= 0.005 * want, msg);
+
+    // Indices for u near both ends, including the largest float below 1.
+    const float edges[] = { 0.0f, 1e-9f, 0.5f, 0.99999f, std::nextafter(1.0f, 0.0f) };
+    for (float u : edges)
+    {
+        float ps = 0.0f;
+        const int k = nee_pick_static(cdf.data(), pdf.data(), omniStart, u, &ps);
+        if (k < 0 || k >= omniStart) outOfRange++;
+        if (!(ps > 0.0f)) outOfRange++;                // a zero pdf would divide by zero
+    }
+    std::snprintf(msg, sizeof msg,
+                  "DOOM-0377 [%s]: %d picks fell outside [0, omniStart) or had pdfSel <= 0", name, outOfRange);
+    check(outOfRange == 0, msg);
+
+    double psum = 0.0;
+    for (int k = 0; k < omniStart; k++) psum += selPdf[k] > 0.0f ? selPdf[k] : 0.0f;
+    std::snprintf(msg, sizeof msg,
+                  "DOOM-0377 [%s]: selection probabilities over the static set sum to %.4f, expected 1",
+                  name, psum);
+    check(std::fabs(psum - 1.0) < 1e-4, msg);
+}
+
 int main()
 {
     std::printf("nee_sampling_test (DOOM-0009 step 3c-3): power-importance NEE is unbiased\n");
@@ -260,6 +322,19 @@ int main()
 
     std::printf("- omniStart clamp (security review F-D)\n");
     check_omni_start();
+
+    std::printf("- static prefix renormalised (DOOM-0377)\n");
+    {
+        const std::vector<double> g = { 10.0, 20.0, 30.0 };
+        // static {1,2,3} then one sprite light {4}: P_omni = 0.4. RED under today's draw
+        // (it counts the last static emitter extra: 100 instead of 60).
+        check_static_prefix("static{1,2,3} + omni{4}", { 1.0f, 2.0f, 3.0f, 4.0f }, 3, g);
+        // no sprite light: the prefix is the whole table. A regression guard: green
+        // before and after the fix.
+        check_static_prefix("static{1,2,3}, no omni (regression guard)", { 1.0f, 2.0f, 3.0f }, 3, g);
+        // tiny static share: the over-count factor is huge here.
+        check_static_prefix("static{1,1} + omni{998}", { 1.0f, 1.0f, 998.0f }, 2, { 5.0, 7.0 });
+    }
 
     return check_summary("nee_sampling");
 }

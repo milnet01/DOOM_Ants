@@ -837,6 +837,43 @@ int main()
                 check(has_return_false(b), "DOOM-0257: BuildHdSet can `return false`");
         }
 
+        // ---- DOOM-0377: the static-light draw is renormalised over the static prefix.
+        // Why: u was drawn over [0,1) but only the prefix [0, omniStart) was searched,
+        // and the pick was divided by the full-set pdf, over-counting one emitter.
+        {
+            const std::string ptc = strip(slurp("shaders/pt_common.glsl"));
+            if (get_body("pt_common.glsl", ptc, "shadeSurface", &b))
+            {
+                std::string compact;                       // whitespace removed: spacing-proof
+                for (char ch : b) if (!std::isspace((unsigned char)ch)) compact += ch;
+                bool cdfMaxRead = false, uDraw = false, pdfDiv = false, named = false;
+                for (size_t st = 0; st < compact.size();)
+                {
+                    size_t semi = compact.find(';', st);
+                    if (semi == std::string::npos) semi = compact.size();
+                    const std::string stmt = compact.substr(st, semi - st);
+                    st = semi + 1;
+                    if (stmt.find("cdfMax") != std::string::npos) named = true;
+                    if (stmt.find("cdfMax=") != std::string::npos &&
+                        stmt.find("omniStart-1u") != std::string::npos &&
+                        stmt.find("12u") != std::string::npos)
+                        cdfMaxRead = true;
+                    if (stmt.find("u=rnd(seed)") != std::string::npos &&
+                        stmt.find("cdfMax") != std::string::npos)
+                        uDraw = true;
+                    if (stmt.find("pdf=") != std::string::npos &&
+                        stmt.find("13u") != std::string::npos &&
+                        stmt.find("cdfMax") != std::string::npos)
+                        pdfDiv = true;
+                }
+                check(named, "DOOM-0377: shadeSurface names cdfMax");
+                check(cdfMaxRead,
+                      "DOOM-0377: cdfMax is read from slot 12 of record omniStart - 1u");
+                check(uDraw, "DOOM-0377: the static draw of u (rnd(seed)) is scaled by cdfMax");
+                check(pdfDiv, "DOOM-0377: the pdf read from slot 13u is divided by cdfMax");
+            }
+        }
+
         // ---- DOOM-0229: the box-filter accumulator is wider than 32 bits.
         {
             const std::string img = strip(slurp("rb_image.c"));

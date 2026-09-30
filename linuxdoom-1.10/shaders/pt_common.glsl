@@ -608,7 +608,13 @@ vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
             {
                 // Binary-search the cdf (slot 12) over [0, omniStart) for the first
                 // k with cdf[k] >= u, then weight by its 1/pdf (slot 13).
-                float u  = rnd(seed);
+                // DOOM-0377: the table covers the merged set, so the static
+                // prefix tops out at cdfMax = 1 - P(sprite lights), not 1. Draw u
+                // over the prefix and renormalise the pdf to it; nee_pick_static
+                // (nee_sampling.h) is this draw, and its test holds the maths.
+                float cdfMax = emit.e[(omniStart - 1u) * 14u + 12u];
+                if (cdfMax <= 0.0) break;     // no static emitter has any power
+                float u  = rnd(seed) * cdfMax;
                 uint  lo = 0u, hi = omniStart - 1u;
                 while (lo < hi)
                 {
@@ -616,7 +622,7 @@ vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
                     if (emit.e[mid * 14u + 12u] < u) lo = mid + 1u;
                     else                             hi = mid;
                 }
-                float pdf = emit.e[lo * 14u + 13u];
+                float pdf = emit.e[lo * 14u + 13u] / max(cdfMax, 1e-8);
                 vec3  c   = sampleEmitter(lo, hitP, n, pdf, omniStart, emit, 0.0, seed);
                 vec3  rad = albedo * (1.0 / PI) * c; // reflected radiance (Lambert)
                 direct += min(rad, vec3(FIREFLY_MAX)); // firefly clamp, PER CHANNEL: a saturated light desaturates rather than dims

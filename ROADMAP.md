@@ -9451,7 +9451,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: check-code --tree 2026-09-01 (cppcheck style/redundantAssignment, p_user.c:104).
   Lanes: playsim, renderer.
 
-- 📋 [DOOM-0377] **The path tracer divides by a probability from a different distribution than it sampled.**
+- ✅ [DOOM-0377] **The path tracer divides by a probability from a different distribution than it sampled.**
   pt_common.glsl:600 -- shadeSurface's static-NEE search runs over [0, omniStart)
   and takes its PDF from emit.e[lo*14+13], but nee_sampling.h:91 builds the CDF over
   the WHOLE merged set (nee_build_cdf sets cdf[count-1] = 1.0 on the last omni
@@ -9478,6 +9478,18 @@ stay in their phase sections; this heading holds only work still to come.
   Fix is three shader lines with no host change: renormalise the prefix --
   cdfMax = emit.e[(omniStart-1)*14+12], draw u in [0, cdfMax), and divide the pdf by
   max(cdfMax, 1e-8).
+  Resolved (2026-09-30): shadeSurface renormalises the static prefix as the
+  bullet proposed: `cdfMax` is the prefix's last cdf value, u is drawn over
+  [0, cdfMax), the pdf is divided by cdfMax, and the draw is skipped when cdfMax
+  is zero. `nee_pick_static` in nee_sampling.h is the same draw in C, and
+  nee_sampling_test.cpp integrates the estimator over it: on the old draw,
+  static {1,2,3} with a sprite light of weight 4 averaged 100 where the true sum
+  is 60, and static {1,1} with weight 998 averaged 6998 where it is 12; both are
+  exact now. A wiring clause ties the shader's three statements to `cdfMax`.
+  Ultra captures at E1M2's lamp and E2M1's candles, before and after: mean
+  colour unchanged to two decimals, 3.7% and 0.15% of pixels changed. -rtverify
+  PASS, validation silent. The shader and the C mirror are two copies of one
+  draw; nothing but the wiring clause keeps them together.
   **Layman:** The ray tracer picks which light to sample from a table covering all lights, but then searches only the first part of that table while still dividing by the whole-table probability. The result is that one light's contribution gets counted twice, by an amount that can grow without limit. It happens on any frame with a glowing sprite in view.
   Kind: fix.
   Source: review-code 2026-09-01, lane shaders-pathtrace.

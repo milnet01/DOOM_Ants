@@ -68,6 +68,33 @@ static inline int nee_pick(const float* cdf, int count, float u)
     return lo;
 }
 
+// DOOM-0377: the static-prefix draw, as shadeSurface (pt_common.glsl) makes it.
+//
+// The table is built over the MERGED set -- static emitters, then this frame's
+// sprite lights -- but the shader samples only the static prefix [0, omniStart)
+// through it; the sprite lights have their own loop. The prefix's cdf tops out
+// at 1 - P_omni, not 1. Searching it with a u drawn over [0,1) and dividing by
+// the full-set pdf sent every u above that top to the last static emitter at
+// full weight, so that one emitter was counted a second time, scaled by
+// P_omni / pdf -- unbounded as its pdf shrinks. It showed on any frame with a
+// glowing sprite in view and vanished without one, which is why the bake was
+// clean and the camera path was not.
+//
+// So the prefix is renormalised: u is drawn over [0, cdfMax) and the pdf is
+// divided by cdfMax, where cdfMax is the prefix's last cdf value. With no sprite
+// lights cdfMax is 1 and nothing changes.
+//
+// PRECONDITION: omniStart >= 1, as for nee_pick. `u01` is uniform in [0,1).
+static inline int nee_pick_static(const float* cdf, const float* pdf, int omniStart,
+                                  float u01, float* pdfSel)
+{
+    const float cdfMax = cdf[omniStart - 1];
+    const int   k      = nee_pick(cdf, omniStart, u01 * cdfMax);
+
+    *pdfSel = pdf[k] / (cdfMax > 1e-8f ? cdfMax : 1e-8f);
+    return k;
+}
+
 // Merge the cached STATIC emitter records with this frame's DYNAMIC (sprite) records
 // into the GPU emitter buffer `out`, filling each record's power-sampling (cdf,pdf)
 // table (slots 12,13) from its weight (luminance(Le)*area, precomputed by the caller).
