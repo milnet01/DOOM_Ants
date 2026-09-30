@@ -33,6 +33,7 @@
 #include "i_video.h"    // I_FinishUpdate
 #include "m_fixed.h"    // FRACUNIT
 #include "r_sky.h"      // skytexture (the sky's wall-texture index)
+#include "render_bounds.h" // RenderEyeZ (DOOM-0364)
 #include "doomstat.h"   // gamemode/gameepisode/gamemap (DOOM-0011 L4 hell haze)
 #include "rb_argparse.h" // RB_ParseIntArg -- refuse a non-numeric -rtview value
 #include "r_mesh.h"     // rb_view_t (POD camera across the seam), RB_OVERLAY_KEY
@@ -110,7 +111,7 @@ void RB_InterpReset(player_t* p)
     {
         rb_pX = rb_cX = p->mo->x;
         rb_pY = rb_cY = p->mo->y;
-        rb_pZ = rb_cZ = p->viewz;
+        rb_pZ = rb_cZ = RenderEyeZ(p->viewz, p->mo->ceilingz);
         rb_pAng = rb_cAng = p->mo->angle;
     }
     rb_interpActive = false;
@@ -124,7 +125,7 @@ void RB_InterpSnapshot(player_t* p)
     if (!p || !p->mo)
         return;
     rb_pX = rb_cX; rb_pY = rb_cY; rb_pZ = rb_cZ; rb_pAng = rb_cAng;
-    rb_cX = p->mo->x; rb_cY = p->mo->y; rb_cZ = p->viewz; rb_cAng = p->mo->angle;
+    rb_cX = p->mo->x; rb_cY = p->mo->y; rb_cZ = RenderEyeZ(p->viewz, p->mo->ceilingz); rb_cAng = p->mo->angle;
     if (fabs((double)rb_cX - rb_pX) > RB_TELEPORT_SNAP
         || fabs((double)rb_cY - rb_pY) > RB_TELEPORT_SNAP)
     {
@@ -152,7 +153,9 @@ static const float kHazeDensityDefault = 0.0010f;
 // is the eye height (player->viewz); angle_t is a 32-bit binary angle (full
 // circle = 2^32), so scale it to radians. mo is always set for a live view.
 // When interpolation is active the camera is lerped between the last two tics
-// (DOOM-0048); otherwise the live tic state is used unchanged.
+// (DOOM-0048); otherwise the live tic state is used unchanged. The eye height goes
+// through RenderEyeZ, which restores the ceiling clamp vanilla drops in mid-air
+// (DOOM-0364); Classic keeps the original.
 static void Vulkan_RenderPlayerView(player_t* p)
 {
     rb_view_t view;
@@ -171,7 +174,7 @@ static void Vulkan_RenderPlayerView(player_t* p)
     {
         view.x     = p->mo->x  / (float)FRACUNIT;
         view.y     = p->mo->y  / (float)FRACUNIT;
-        view.z     = p->viewz  / (float)FRACUNIT;
+        view.z     = RenderEyeZ(p->viewz, p->mo->ceilingz) / (float)FRACUNIT;
         view.angle = (float)(p->mo->angle * (2.0 * M_PI / 4294967296.0));
     }
     // Muzzle-flash brighten: A_Light1/2 set extralight to 1/2 light-segments while

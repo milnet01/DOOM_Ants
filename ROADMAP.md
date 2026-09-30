@@ -9446,7 +9446,7 @@ stay in their phase sections; this heading holds only work still to come.
   Kind: fix.
   Source: in-session-2026-08-07 (cold-eyes loop 1 on the DOOM-0331 bloom spec).
 
-- 📋 [DOOM-0364] **The view-height ceiling clamp is dead whenever the player is airborne or has no momentum.**
+- ✅ [DOOM-0364] **The view-height ceiling clamp is dead whenever the player is airborne or has no momentum.**
   P_CalcHeight's `(cheats & CF_NOMOMENTUM) || !onground` branch reads:
 
       player->viewz = player->mo->z + VIEWHEIGHT;
@@ -9468,6 +9468,14 @@ stay in their phase sections; this heading holds only work still to come.
   recorded as deliberate vanilla fidelity.
   Decision (user, 2026-09-30): correct the camera height in Solid and Ultra
   only; Classic stays byte-identical to the original, bug included.
+  Resolved (2026-09-30), to the user's decision: the 3D camera takes its height
+  from `RenderEyeZ(p->viewz, p->mo->ceilingz)` (render_bounds.h), never above 4
+  units under the ceiling, at all three places r_backend.c reads viewz. p_user.c
+  is untouched, so Classic keeps id's behaviour byte for byte; a wiring clause
+  holds the vanilla overwrite in place. render_bounds_test.cpp holds the rule
+  (six cases failed on a pass-through stand-in). The demo fixtures play their
+  recorded tics and Solid runs under validation silently. Not staged: a jump
+  under a low ceiling to watch the camera stop.
   **Layman:** A long-standing bug inherited from the 1993 original: when you are in mid-air, the code that stops the camera poking up through the ceiling is thrown away a line after it runs. Fixing it would change what Classic looks like, which we have promised not to do — so it needs a decision first.
   Kind: fix.
   Source: check-code --tree 2026-09-01 (cppcheck style/redundantAssignment, p_user.c:104).

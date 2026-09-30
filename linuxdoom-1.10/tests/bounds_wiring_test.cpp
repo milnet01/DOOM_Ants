@@ -1061,6 +1061,38 @@ int main()
             }
         }
 
+        // ---- DOOM-0364: the 3D camera takes a ceiling-clamped eye height; Classic's
+        // P_CalcHeight is left byte-identical. Why: P_CalcHeight's airborne branch
+        // clamps viewz and then overwrites it, letting the camera rise through a low
+        // ceiling; id's code stays for Classic and Solid/Ultra clamp in RenderEyeZ.
+        {
+            const std::string beRaw = slurp("r_backend.c");
+            check(has_include(beRaw, "render_bounds.h"), "DOOM-0364: r_backend.c includes render_bounds.h");
+            std::string be;
+            for (char ch : strip(beRaw)) if (!std::isspace((unsigned char)ch)) be += ch;
+            int reads = 0, wrapped = 0;
+            for (size_t at = 0; (at = be.find("p->viewz", at)) != std::string::npos; at += 8)
+            {
+                if (at > 0 && isIdent(be[at - 1])) continue;       // not e.g. sp->viewz
+                reads++;
+            }
+            for (size_t at = 0; (at = be.find("RenderEyeZ(p->viewz", at)) != std::string::npos; at += 19)
+                wrapped++;
+            char msg[200];
+            std::snprintf(msg, sizeof msg,
+                          "DOOM-0364: every p->viewz in r_backend.c is an argument of RenderEyeZ (reads %d, wrapped %d, need equal and >= 3)",
+                          reads, wrapped);
+            check(reads >= 3 && reads == wrapped, msg);
+
+            if (get_body("p_user.c", strip(slurp("p_user.c")), "P_CalcHeight", &b))
+            {
+                std::string c;
+                for (char ch : b) if (!std::isspace((unsigned char)ch)) c += ch;
+                check(c.find("player->viewz=player->mo->z+player->viewheight;return;") != std::string::npos,
+                      "DOOM-0364: P_CalcHeight still has id's overwrite (Classic unchanged)");
+            }
+        }
+
         // ---- DOOM-0229: the box-filter accumulator is wider than 32 bits.
         {
             const std::string img = strip(slurp("rb_image.c"));

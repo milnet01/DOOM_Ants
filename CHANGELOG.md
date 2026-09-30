@@ -8,6 +8,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **In Solid and Ultra, the camera no longer rises through a low ceiling while you are in mid-air** (DOOM-0364)
+  Classic keeps the original 1993 behaviour, as promised.
+
 - **In Solid and Ultra, a wall step the map left blank is now solid instead of a hole you can see through** (DOOM-0142)
   It shows the floor or ceiling material of the area beside it, the way
   other true-3D DOOM ports do. Classic still shows these steps black, as

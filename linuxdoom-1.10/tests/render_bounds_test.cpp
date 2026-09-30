@@ -10,7 +10,10 @@
 // loaded map -- so the decisions it makes live in render_bounds.h and are
 // tested here, exactly as level_bounds.h, wad_bounds.h, save_bounds.h and
 // net_bounds.h are.
+//
+// It also holds DOOM-0364's RenderEyeZ cases (labels begin "DOOM-0364").
 #include <cstdio>
+#include <climits>
 
 #include "../render_bounds.h"
 #include "check_util.h"
@@ -85,6 +88,40 @@ int main()
           "a wider view needs more openings");
     check(RENDER_OPENINGS_NEEDED(512, 1280) > RENDER_OPENINGS_NEEDED(256, 1280),
           "more drawsegs need more openings");
+
+    // ---- DOOM-0364: RenderEyeZ(viewz, ceilingz) ----
+    //
+    // Why this exists: P_CalcHeight's airborne branch clamps viewz below the
+    // ceiling and then overwrites the result (id's 1997 code, left alone so Classic
+    // stays identical), so the camera could pass up through a low ceiling. The
+    // Solid/Ultra camera takes min(viewz, ceilingz - 4 map units) instead.
+    // Heights are fixed point, FRACUNIT = 65536.
+    {
+        const int F = 65536;
+        check_eq_int(RenderEyeZ(41 * F, 128 * F), 41 * F,
+                     "DOOM-0364: an eye well below the ceiling is unchanged");
+        check_eq_int(RenderEyeZ(124 * F, 128 * F), 124 * F,
+                     "DOOM-0364: an eye exactly 4 units below the ceiling is unchanged");
+        check_eq_int(RenderEyeZ(125 * F, 128 * F), 124 * F,
+                     "DOOM-0364: an eye 3 units below the ceiling is clamped to 4 below");
+        check_eq_int(RenderEyeZ(128 * F, 128 * F), 124 * F,
+                     "DOOM-0364: an eye at the ceiling is clamped to 4 below");
+        check_eq_int(RenderEyeZ(130 * F, 128 * F), 124 * F,
+                     "DOOM-0364: an eye above the ceiling is clamped to 4 below");
+        check_eq_int(RenderEyeZ(-40 * F, -48 * F), -52 * F,
+                     "DOOM-0364: negative heights clamp too (ceiling -48, eye -40 gives -52)");
+        check_eq_int(RenderEyeZ(-60 * F, -48 * F), -60 * F,
+                     "DOOM-0364: a negative eye already 12 below a negative ceiling is unchanged");
+
+        // The subtraction must not overflow. A ceiling of exactly INT_MIN + 4 units
+        // is the lowest one the subtraction can take; anything lower is outside
+        // DOOM's map range and is deliberately not tested.
+        const int lowCeil = INT_MIN + 4 * F;
+        check_eq_int(RenderEyeZ(0, lowCeil), INT_MIN,
+                     "DOOM-0364: a ceiling at INT_MIN + 4 units clamps to INT_MIN without overflow");
+        check_eq_int(RenderEyeZ(INT_MAX, lowCeil), INT_MIN,
+                     "DOOM-0364: INT_MAX eye under that ceiling clamps to INT_MIN without overflow");
+    }
 
     return check_summary("render_bounds");
 }

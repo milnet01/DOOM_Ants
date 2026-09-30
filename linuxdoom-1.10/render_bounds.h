@@ -46,7 +46,7 @@
 // row test is >=, not >. The guard exists because the visplane span open/close
 // logic above it is a known open bug (DOOM-0055), which is exactly why it must
 // not assume any of these values is unreachable by construction.
-static int RenderSpanValid (int x1, int x2, int y, int viewwidth, int viewheight)
+static inline int RenderSpanValid (int x1, int x2, int y, int viewwidth, int viewheight)
 {
     if (x1 > x2)
 	return 0;
@@ -58,6 +58,20 @@ static int RenderSpanValid (int x1, int x2, int y, int viewwidth, int viewheight
 	return 0;
 
     return 1;
+}
+
+// DOOM-0364: the eye height the 3D views use -- never above 4 map units under
+// the ceiling. P_CalcHeight clamps viewz there and then, on its airborne /
+// no-momentum branch, overwrites the clamp (id's 1997 code), so the camera can
+// rise through a low ceiling in mid-air. Classic keeps that, byte for byte; the
+// 3D views take the eye through here instead (user decision, 2026-09-30).
+// Fixed point. The subtraction cannot overflow for any ceiling in DOOM's map
+// range (a 16-bit height shifted by FRACBITS).
+static inline int RenderEyeZ (int viewz, int ceilingz)
+{
+    const int top = ceilingz - 4 * 65536;
+
+    return viewz > top ? top : viewz;
 }
 
 #endif // RENDER_BOUNDS_H
