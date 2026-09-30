@@ -78,9 +78,11 @@ occluder.
 | gap sky wall removed | cut off; frame unchanged |
 | gap sky wall and every sky ceiling cap removed | drawn |
 
-The gap wall is still wrong, for the opposite view. From the taller side,
-looking across the lower area, it hides what Classic's sky hack shows over the
-lower ceiling. §4.3 removes it.
+The gap wall still has to go. Once the lids are raised (§4.1), a view ray from
+the lower area crosses line 16 above height 56 and meets the gap wall instead.
+Measured on the same fixture in Solid: raised lids with the gap wall kept
+changed 1151 pixels (difference over 24, rows 0–439) against the unchanged
+build, and the facade stayed cut off; with it removed, 33170. §4.3 removes it.
 
 **What the cap protects.** DOOM-0141's report was geometry floating against the
 sky on E1M2. An outdoor area's outer wall stops at that area's ceiling height.
@@ -115,7 +117,10 @@ changes which pixels are sky, never what colour a sky pixel is.
 - **Match Classic's sky hack for the case the user reported; do not reproduce
   its clipping exactly.** Classic clips at the nearest sky-to-sky line, so in a
   chain of three sky areas of rising height it can hide the third area's walls
-  where a true 3D view shows them. The design below shows them. Decided by the
+  where a true 3D view shows them. And from the taller side it clips at the
+  lower ceiling only where the two sectors' light levels differ, because
+  `R_StoreWallRange` sets `markceiling` on a light change. The design below
+  shows what lies beyond in every one of these cases. Decided by the
   author, not the user: the bullet's goal is "where Classic draws it", and this
   shows at least what Classic shows. Recorded so the divergence is not
   re-reported as a defect.
@@ -170,15 +175,17 @@ It no longer calls `emit_sky_wall`. The other branches keep their outcome:
 
 Where the back sector's ceiling is higher than the sky front's, the back side
 of the line can carry a wall between the two ceilings: a textured upper, or
-DOOM-0142's fill. The seal occupies the same span of the same plane, facing
-the other way.
+DOOM-0142's fill. The seal occupies the same span of the same plane.
 
 From the sky side there is no conflict: DOOM-0267 skips the back of a wall
 face, so the seal shows. From the roofed side the wall faces the viewer, and
-the seal's back is at the same distance. Sky surfaces are not subject to
+the seal is at the same distance. Sky surfaces are not subject to
 DOOM-0267's rule, and Ultra's tracer keeps either of two hits at one distance.
 So such a seal is moved `RB_SKY_SEAL_OFFSET` map units (1/8) off the line,
-into its front sector. The wall then wins from the roofed side and the seal
+into its front sector: along the seg's right-hand perpendicular
+`(dy, -dx) / len`. That is the negation of the normal `emit_sky_wall` builds,
+`(-dy, dx) / len`, which points into the back sector; moving along that normal
+would put the seal in front of the wall. The wall then wins from the roofed side and the seal
 from the sky side, in both views, by distance rather than by tie order.
 
 Measured on E3M9 line 154, from inside the roofed sector
@@ -247,9 +254,11 @@ against unchanged, at the nine outdoor starts of §7 B3:
 | MAP25 | 352 | 404 |
 
 E4M6's acceleration-structure total went from 2456.8 to 2528.1 KiB on the same
-line. The sky list is built once per level; no per-frame work is added. Budget:
-no frame-time change at those starts, and no more than twice the sky triangles
-of the unchanged build on any stock map.
+line. The sky list is built once per level. Per frame, Solid draws it and Ultra
+traces it, so each frame meets the extra triangles above and nothing else.
+Budget: at the nine starts, no more than twice the unchanged build's sky
+triangles, read from the `built BLAS` line at B3. Frame time is not budgeted
+and nothing measures it.
 
 ## 7. Build order
 
@@ -263,7 +272,8 @@ of the unchanged build on any stock map.
   `make test` build with no warning; the E3M1 fixture shows the facade (INV-5).
 - **B3 — regression captures.** The nine outdoor starts (player 1's start and
   angle on E1M1, E1M2, E3M6, E4M3, E4M6, MAP01, MAP13, MAP19, MAP25), Solid,
-  before and after. *Verify:* INV-6's bound; the E3M9 line 154 capture (INV-4);
+  before and after. *Verify:* INV-6's bound; the E3M9 line 154 capture in
+  Ultra (INV-4);
   §6's triangle counts re-read from the log.
 - **B4 — gates.** `-rtverify` PASS; Vulkan validation silent in Solid and
   Ultra; the 68-map boot sweep; the five demo fixtures. *Verify:* each reports
@@ -290,11 +300,13 @@ of the unchanged build on any stock map.
   back, or a DOOM-0142 fill changes kind. *Test:* `tests/sky_seal_test.cpp`,
   one check per row of §4.3.
 - **INV-4** — a seal is offset into its front sector exactly when a back sector
-  exists with a higher ceiling. *Breaks when:* the offset is dropped (the lintel
-  tie of §4.4 returns) or applied to every seal. *Test:*
-  `tests/sky_seal_test.cpp` for the rule; the E3M9 line 154 capture of §4.4 by
-  hand at B3, expecting 0 changed pixels above row 440 against the unchanged
-  build.
+  exists with a higher ceiling, along the direction §4.4 names. *Breaks when:*
+  the offset is dropped or pushed into the back sector (the lintel tie of §4.4
+  returns, or the seal covers the lintel), or applied to every seal. *Test:*
+  `tests/sky_seal_test.cpp` for the rule; the direction only by the E3M9 line
+  154 capture of §4.4, by hand at B3 in Ultra (`renderer 1 -rtview 3`; Solid
+  reads 0 either way), expecting 0 changed pixels above row 440 against the
+  unchanged build.
 - **INV-5** — at the E3M1 fixture the building's face shows above the courtyard
   wall in Solid and in Ultra. *Breaks when:* any sky surface still stands
   between the courtyard and line 8 above height 56. *Test:* by hand at B2:
@@ -340,7 +352,7 @@ of the unchanged build on any stock map.
 | INV-1 lid height | `tests/sky_seal_test.cpp`; the cap call by scrape |
 | INV-2 seal rule | `tests/sky_seal_test.cpp` |
 | INV-3 upper step | `tests/sky_seal_test.cpp` |
-| INV-4 offset | `tests/sky_seal_test.cpp`; the E3M9 capture by hand at B3 |
+| INV-4 offset | `tests/sky_seal_test.cpp`; the direction by the E3M9 capture in Ultra, by hand at B3 |
 | INV-5 the fixture | the capture by hand at B2. Nothing in `make test` renders |
 | INV-6 no floating geometry | the nine captures by hand at B3. Nothing re-runs them |
 | §6's budget | the `built BLAS` log line, read by hand at B3 |
