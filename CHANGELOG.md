@@ -8,6 +8,11 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **The game you last played is reopened wherever DOOM_Ants is started from** (DOOM-0280)
+  The remembered game was saved as a location relative to the folder the
+  game happened to be started in, so starting it from somewhere else
+  could not find it and opened the other game instead.
+
 - **A sound that has finished can no longer steer or cut off a different sound** (DOOM-0233)
   The game kept a number for each sound that the audio system reused the
   moment the sound ended, so a moving monster could re-aim, or a stopped

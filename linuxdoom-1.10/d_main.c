@@ -738,18 +738,40 @@ static int D_ReadLastGame (char* out, size_t n)
     return out[0] != '\0';
 }
 
+// DOOM-0280: `path` made absolute, in `out`. The remembered game is read back
+// by a later launch, which may start in a different directory; a relative
+// path from this one would not resolve there, and that launch would quietly
+// open a different game. Returns 0 when the path cannot be resolved.
+static int D_AbsolutePath (const char* path, char* out, size_t n)
+{
+#ifdef _WIN32
+    return _fullpath (out, path, n) != NULL;
+#else
+    char	resolved[PATH_MAX];
+
+    if (!realpath (path, resolved) || strlen (resolved) >= n)
+	return 0;
+    strcpy (out, resolved);
+    return 1;
+#endif
+}
+
 static void D_WriteLastGame (const char* iwadpath)
 {
     char	file[PATH_MAX];
+    char	abspath[PATH_MAX];
     FILE*	f;
 
     if (!iwadpath || !iwadpath[0])
+	return;
+    // Unresolvable is not remembered at all: a relative path is the defect.
+    if (!D_AbsolutePath (iwadpath, abspath, sizeof(abspath)))
 	return;
     D_LastGameFile(file, sizeof(file));
     f = fopen(file, "w");
     if (!f)
 	return;                 // read-only HOME etc. -> remembering is simply off
-    fprintf(f, "%s\n", iwadpath);
+    fprintf(f, "%s\n", abspath);
     fclose(f);
 }
 

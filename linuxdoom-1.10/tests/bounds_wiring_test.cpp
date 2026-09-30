@@ -755,6 +755,24 @@ int main()
                                     "DOOM-0233: I_UpdateSoundParams resolves the handle first");
         }
 
+        // ---- DOOM-0280: the remembered IWAD path is absolute.
+        // Why: D_WriteLastGame wrote the path as named, so a relative one did not
+        // resolve from another working directory and the launch fell back to a
+        // different game.
+        {
+            const std::string dm = strip(slurp("d_main.c"));
+            if (get_body("d_main.c", dm, "D_WriteLastGame", &b))
+                check(call_pos(b, "D_AbsolutePath") != std::string::npos,
+                      "DOOM-0280: D_WriteLastGame calls D_AbsolutePath");
+            if (get_body("d_main.c", dm, "D_AbsolutePath", &b))
+            {
+                check(whole_tok(b, "realpath") != std::string::npos,
+                      "DOOM-0280: D_AbsolutePath uses realpath (POSIX)");
+                check(whole_tok(b, "_fullpath") != std::string::npos,
+                      "DOOM-0280: D_AbsolutePath uses _fullpath (Windows)");
+            }
+        }
+
         // ---- DOOM-0229: the box-filter accumulator is wider than 32 bits.
         {
             const std::string img = strip(slurp("rb_image.c"));

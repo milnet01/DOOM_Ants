@@ -9195,7 +9195,7 @@ stay in their phase sections; this heading holds only work still to come.
   Kind: fix.
   Source: indie-review-2026-07-26 vk-frame.
 
-- 📋 [DOOM-0280] **The DOOM-0060 game chooser can pick a different IWAD across identical runs.**
+- ✅ [DOOM-0280] **The DOOM-0060 game chooser can pick a different IWAD across identical runs.**
   Found while A/B-ing DOOM-0276. Two launches with the SAME config file, same
   DOOMWADDIR (holding both doom.wad and doom2.wad), same env and no -iwad, and
   no input at all: one started E1M1 (bounds x[-704,3758] y[-4856,-2080], 2227
@@ -9217,6 +9217,18 @@ stay in their phase sections; this heading holds only work still to come.
 
   Workaround meanwhile: pass -iwad explicitly whenever a run has to be
   reproducible.
+  Resolved (2026-09-30): diagnosed and fixed. Not timing and not scan order: the
+  chooser was never involved. D_WriteLastGame stored the IWAD's path as it was
+  named, and a relative one (`../wads/doom.wad`) does not resolve from another
+  working directory, so the next launch failed its `access` test and fell through
+  to the doom2-first auto-detect. That is the "nothing differed but the working
+  directory" of the report. It now stores `realpath` (`_fullpath` on Windows).
+  Reproduced with a scratch HOME: launch from one directory with a relative
+  `-iwad`, then launch from another with none. Before: remembered
+  `../wads/doom.wad`, second launch loaded doom2.wad. After: remembered the
+  absolute path, second launch loaded doom.wad. The Windows branch is
+  compile-checked only. DOOM-0483 files the neighbouring defect: every test
+  launch rewrites the remembered game.
   **Layman:** With both DOOM 1 and DOOM 2 in the wads folder and no key pressed, the game sometimes starts one and sometimes the other - it should always make the same choice.
   Kind: fix.
   Source: in-session-2026-07-27 (hit while measuring DOOM-0276).
@@ -10184,6 +10196,23 @@ stay in their phase sections; this heading holds only work still to come.
   Kind: fix.
   Source: in-session 2026-09-30 (found while checking DOOM-0142).
   Lanes: renderer.
+
+- 📋 [DOOM-0483] **Test and measurement runs overwrite the player's remembered game.**
+  D_DoomMain calls D_WriteLastGame after every launch that identified a game,
+  including headless ones (`-bootsmoke`, `-timedemo`, `-rtverify`, captures).
+  Each of those names its IWAD with `-iwad`, so the last test run decides what
+  `$HOME/.doom_ants_lastgame` holds. Seen 2026-09-30: the file named doom2.wad,
+  written by a demo-fixture run minutes earlier.
+  The chooser's own relaunch also uses `-iwad`, so "only remember when `-iwad`
+  is absent" would break the feature. Options: have the relaunch pass a private
+  flag and remember only then (a hand-typed `-iwad` would stop being remembered),
+  or skip the write for runs that take no input. The first changes what
+  DOOM-0060's spec promises, so read that spec before choosing.
+  Until then, test runs can set HOME to a scratch directory.
+  **Layman:** Every automated test launch quietly changes which game starts the next time the player opens DOOM_Ants without choosing one.
+  Kind: fix.
+  Source: in-session 2026-09-30 (found diagnosing DOOM-0280).
+  Lanes: startup.
 
 ## 0.9.0 — The codebase can be trusted
 
