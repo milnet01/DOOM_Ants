@@ -8,6 +8,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **In Solid, the weapon no longer casts a contact shadow onto the scene behind it, and sprites no longer glow from plain room light** (DOOM-0378)
+  The weapon in your hands was being treated as a wall an inch from your
+  eye, which darkened the pixels around it, and ordinary monsters and the
+  weapon could pick up the glow meant for real light sources in a fully
+  lit room.
+
 - **The ray-traced view no longer counts one wall light twice when a glowing object is in sight** (DOOM-0377)
   With a lamp, torch or barrel on screen, one glowing wall or floor patch
   was given extra brightness by a sum that could grow without limit. At

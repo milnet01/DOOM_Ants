@@ -874,6 +874,117 @@ int main()
             }
         }
 
+        // ---- DOOM-0378: the packed view depth (DIRECT alpha) tells sprites, the weapon
+        // and empty pixels apart. Why: the weapon wrote +1.0 (AO treated it as the
+        // nearest occluder), bloom scaled sprites' sector shade as if it were light,
+        // and the DIRECT clear left an uncovered pixel reading as a surface 1 unit away.
+        {
+            auto compact = [](const std::string& in) {
+                std::string o;
+                for (char ch : in) if (!std::isspace((unsigned char)ch)) o += ch;
+                return o;
+            };
+            auto statements = [](const std::string& c) {
+                std::vector<std::string> v;
+                size_t st = 0;
+                while (st < c.size())
+                {
+                    size_t semi = c.find(';', st);
+                    if (semi == std::string::npos) semi = c.size();
+                    v.push_back(c.substr(st, semi - st));
+                    st = semi + 1;
+                }
+                return v;
+            };
+
+            // 1. mesh.frag: the weapon's viewZ is a negative tag, and +1.0 is gone.
+            {
+                const std::string mf = compact(strip(slurp("shaders/mesh.frag")));
+                bool found = false, negative = false;
+                const std::string key = "FLAG_PSPRITE)!=0)";
+                for (size_t at = 0; (at = mf.find(key, at)) != std::string::npos; at += key.size())
+                {
+                    size_t i = at + key.size();
+                    if (i < mf.size() && mf[i] == '{') i++;
+                    if (mf.compare(i, 6, "viewZ=") != 0) continue;
+                    found = true;
+                    const size_t semi = mf.find(';', i);
+                    negative = mf.substr(i, semi == std::string::npos ? std::string::npos : semi - i) == "viewZ=-0.5";
+                }
+                check(found, "DOOM-0378: mesh.frag assigns viewZ under the FLAG_PSPRITE test");
+                check(found && negative, "DOOM-0378: the weapon overlay writes viewZ=-0.5 (a negative tag), not a positive depth");
+                check(mf.find("viewZ=1.0;") == std::string::npos,
+                      "DOOM-0378: no `viewZ = 1.0;` remains in mesh.frag");
+            }
+
+            // 2 and 3. bloom_extract_raster.comp.
+            {
+                const std::string bc = compact(strip(slurp("shaders/bloom_extract_raster.comp")));
+                const std::vector<std::string> sts = statements(bc);
+                bool pkFound = false, pkOk = false, spriteDecl = false;
+                for (const std::string& st : sts)
+                    if (st.find("sprite=sp.viewZ<0.0") != std::string::npos) spriteDecl = true;
+                for (const std::string& st : sts)
+                {
+                    if (st.find("vec3pk=") == std::string::npos) continue;
+                    pkFound = true;
+                    if (st.find("viewZ") != std::string::npos ||
+                        (st.find("sprite") != std::string::npos && spriteDecl))
+                        pkOk = true;
+                }
+                check(pkFound, "DOOM-0378: bloom_extract_raster.comp declares vec3 pk");
+                check(pkFound && pkOk,
+                      "DOOM-0378: the chain scale in `vec3 pk` is conditioned on the sprite test (sp.viewZ < 0.0)");
+
+                std::string conds;
+                for (size_t at = 0; (at = bc.find(")w=0.0;", at)) != std::string::npos; at += 1)
+                {
+                    int depth = 0;
+                    size_t i = at + 1;
+                    while (i > 0)
+                    {
+                        i--;
+                        if (bc[i] == ')') depth++;
+                        else if (bc[i] == '(' && --depth == 0) break;
+                    }
+                    if (i >= 2 && bc.compare(i - 2, 2, "if") == 0)
+                        conds += bc.substr(i, at - i + 1);
+                }
+                check(conds.find("sp.viewZ>=50000.0") != std::string::npos,
+                      "DOOM-0378: the sky test (sp.viewZ >= 50000.0) still gives w = 0.0");
+                check(conds.find("sp.viewZ>-1.0") != std::string::npos,
+                      "DOOM-0378: the weapon band (sp.viewZ > -1.0) gives w = 0.0");
+            }
+
+            // 4. r_vulkan.cpp: DIRECT clears to the far/sky tag.
+            {
+                const std::string vc = compact(vk);
+                const std::string key = "clears[1].color=";
+                bool ok = false, found = false;
+                for (size_t at = 0; (at = vc.find(key, at)) != std::string::npos; at += key.size())
+                {
+                    const size_t semi = vc.find(';', at);
+                    std::string init = vc.substr(at + key.size(), semi == std::string::npos ? std::string::npos : semi - at - key.size());
+                    if (init.find('{') == std::string::npos) continue;   // not an initialiser
+                    found = true;
+                    std::string flat;
+                    for (char ch : init) if (ch != '{' && ch != '}') flat += ch;
+                    std::vector<std::string> parts;
+                    size_t st = 0;
+                    while (st <= flat.size())
+                    {
+                        size_t c = flat.find(',', st);
+                        if (c == std::string::npos) c = flat.size();
+                        parts.push_back(flat.substr(st, c - st));
+                        st = c + 1;
+                    }
+                    ok = parts.size() == 4 && parts[3] == "100000.0f";
+                }
+                check(found, "DOOM-0378: found the `clears[1].color = { ... }` initialiser in r_vulkan.cpp");
+                check(found && ok, "DOOM-0378: the DIRECT target clears to alpha 100000.0f (far/sky tag), not 1.0f");
+            }
+        }
+
         // ---- DOOM-0229: the box-filter accumulator is wider than 32 bits.
         {
             const std::string img = strip(slurp("rb_image.c"));

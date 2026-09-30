@@ -9495,7 +9495,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: review-code 2026-09-01, lane shaders-pathtrace.
   Lanes: renderer, shaders.
 
-- 📋 [DOOM-0378] **The weapon and every sprite bloom from ordinary sector light, and the weapon poisons the ambient-occlusion depth.**
+- ✅ [DOOM-0378] **The weapon and every sprite bloom from ordinary sector light, and the weapon poisons the ambient-occlusion depth.**
   Both are the same root shape -- sprite-like fragments take a path written for
   world geometry -- and both are on the DEFAULT path in Solid and Ultra with the
   ray-traced view off.
@@ -9521,6 +9521,18 @@ stay in their phase sections; this heading holds only work still to come.
   Related, same lane: r_vulkan.cpp:10668 clears the DIRECT alpha to 1.0, but that
   alpha IS the packed depth, so any pixel no geometry covered reads as a surface one
   unit away and rings real geometry with occlusion from the clear value.
+  Resolved (2026-09-30): all three sites. mesh.frag tags the weapon -0.5 (world
+  sprites are at or below -1.0), so SSAO skips it as receiver and occluder.
+  bloom_extract_raster.comp takes a sprite texel's DIRECT unscaled and gives the
+  weapon band weight 0, as the sky has. The DIRECT target clears its alpha to
+  the far tag, 100000.
+  Solid captures at the E1M1 start, before and after: with SSAO and bloom both
+  off, no pixel differs; with SSAO on, 260 pixels differ, all in a box round the
+  weapon, brighter after; with bloom High, 335. So the weapon was occluding, by
+  less than the bullet's estimate at this spot. The bloom half showed nothing to
+  measure here: the pistol is too dark to reach the ramp even at sector light
+  255, and no capture was made with a bright weapon frame or a white sprite.
+  Wiring clauses hold the three sites; validation silent in Solid.
   **Layman:** Two separate bugs in the rasterised view, both caused by sprites being routed through a channel meant for bright light. The weapon in your hands glows as if it were a lamp, and it also makes the floor around it go dark as though it were a wall an inch from your eye.
   Kind: fix.
   Source: review-code 2026-09-01, lanes vk-present and shaders-raster.

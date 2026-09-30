@@ -10321,7 +10321,10 @@ extern "C" void RB_Vulkan_Present(void)
     // to far. The composite sums AMBIENT+DIRECT, so the visible background stays the slate.
     VkClearValue clears[3] = {};
     clears[0].color = { { 0.05f, 0.06f, 0.09f, 1.0f } };   // AMBIENT background
-    clears[1].color = { { 0.0f, 0.0f, 0.0f, 1.0f } };      // DIRECT (additive) starts at black
+    // DOOM-0378: DIRECT's alpha is the packed view depth (mesh.frag), so the clear
+    // writes the far/sky tag. 1.0 read as a surface one unit from the eye and ringed
+    // real geometry with occlusion wherever nothing had drawn.
+    clears[1].color = { { 0.0f, 0.0f, 0.0f, 100000.0f } }; // DIRECT (additive) starts at black
     clears[2].depthStencil = { 1.0f, 0 };
 
     VkRenderPassBeginInfo rp = {};

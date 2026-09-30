@@ -95,7 +95,12 @@ void main()
         // tops out near paper-white, while DIRECT is unbounded BY DESIGN and INV-4 says
         // outright that a heavily point-lit wall is expected to bloom. So the unit
         // conversion belongs on the term whose units actually differ between the chains.
-        vec3  pk   = sp.direct * pc.chainScale + sp.ambient;
+        // DOOM-0378: that reasoning is about LIGHT. A sprite's DIRECT is not light --
+        // mesh.frag routes a sprite's whole sector shade there so SSAO cannot darken
+        // it -- so scaling it bloomed ordinary monsters and the weapon at full sector
+        // light. A sprite texel (negative depth tag) is taken unscaled.
+        bool  sprite = sp.viewZ < 0.0;
+        vec3  pk   = (sprite ? sp.direct : sp.direct * pc.chainScale) + sp.ambient;
         float peak = max(pk.r, max(pk.g, pk.b));
         float w    = bloomKneeQuadratic(peak, pc.threshold, pc.knee);
         // DOOM-0331 INV-9 -- the sky never GENERATES bloom, and this states it rather
@@ -109,6 +114,10 @@ void main()
         // Generation only -- INV-9 keeps the combine free of any sky test, so a lamp
         // beside a sky edge still bleeds its halo onto the backdrop.
         if (sp.viewZ >= 50000.0)
+            w = 0.0;
+        // DOOM-0331 INV-3 / DOOM-0378: nor does the weapon. mesh.frag tags it -0.5,
+        // apart from world sprites at <= -1.0.
+        if (sp.viewZ > -1.0 && sp.viewZ < 0.0)
             w = 0.0;
         sum += c * w;
     }
