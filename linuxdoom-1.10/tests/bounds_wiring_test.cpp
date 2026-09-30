@@ -985,6 +985,82 @@ int main()
             }
         }
 
+        // ---- DOOM-0142: an untextured wall step is filled with the neighbouring
+        // sector's flat instead of left as a hole. Why: emit_wall returns on texture
+        // "-", so a height step the map left untextured was a hole in Solid and Ultra.
+        {
+            const std::string mh = strip(slurp("r_mesh.h"));
+            // 1. two new texture-slot defines, distinct from the wall slots 0, 1, 2.
+            for (const char* nm : { "RB_TEXSLOT_FLOORPIC", "RB_TEXSLOT_CEILPIC" })
+            {
+                bool found = false, distinct = false;
+                const std::string key = std::string("#define ") + nm;
+                for (size_t at = 0; (at = mh.find("#", at)) != std::string::npos; at += 1)
+                {
+                    size_t i = skipws(mh, at + 1);
+                    if (mh.compare(i, 6, "define") != 0) continue;
+                    i = skipws(mh, i + 6);
+                    if (mh.compare(i, std::string(nm).size(), nm) != 0 ||
+                        isIdent(mh[i + std::string(nm).size()])) continue;
+                    i = skipws(mh, i + std::string(nm).size());
+                    if (i < mh.size() && (std::isdigit((unsigned char)mh[i]) || mh[i] == '-'))
+                    {
+                        found = true;
+                        const long v = std::strtol(mh.c_str() + i, nullptr, 0);
+                        distinct = v != 0 && v != 1 && v != 2;
+                    }
+                    break;
+                }
+                (void)key;
+                check(found, (std::string("DOOM-0142: r_mesh.h defines ") + nm + " as a number").c_str());
+                check(found && distinct,
+                      (std::string("DOOM-0142: ") + nm + " is not one of the wall slots 0, 1, 2").c_str());
+            }
+
+            // 2. emit_flat_wall tags its quad.
+            if (get_body("r_mesh.c", mesh, "emit_flat_wall", &b))
+            {
+                check(whole_tok(b, "vtexslot") != std::string::npos, "DOOM-0142: emit_flat_wall sets vtexslot");
+                check(whole_tok(b, "vtexsec") != std::string::npos, "DOOM-0142: emit_flat_wall sets vtexsec");
+                check(whole_tok(b, "RB_MESH_FLAT") != std::string::npos, "DOOM-0142: emit_flat_wall marks the quad RB_MESH_FLAT");
+            }
+
+            // 3. the wall loop fills both a lower and an upper untextured step.
+            if (get_body("r_mesh.c", mesh, "RB_BuildLevelMesh", &b))
+            {
+                int calls = 0;
+                for (size_t at = 0; (at = b.find("emit_flat_wall", at)) != std::string::npos; at += 14)
+                {
+                    const size_t end = at + 14;
+                    if ((at > 0 && isIdent(b[at - 1])) || isIdent(b[end])) continue;
+                    const size_t p = skipws(b, end);
+                    if (p < b.size() && b[p] == '(') calls++;
+                }
+                check(calls >= 2, "DOOM-0142: RB_BuildLevelMesh calls emit_flat_wall at least twice (lower and upper step)");
+            }
+
+            // 4. the live height update follows the recorded picture sector.
+            if (get_body("r_mesh.c", mesh, "RB_UpdateMeshHeights", &b))
+            {
+                const size_t fl = whole_tok(b, "RB_TEXSLOT_FLOORPIC");
+                const size_t ce = whole_tok(b, "RB_TEXSLOT_CEILPIC");
+                const size_t ft = whole_tok(b, "RB_MESH_FLAT");
+                check(fl != std::string::npos, "DOOM-0142: RB_UpdateMeshHeights names RB_TEXSLOT_FLOORPIC");
+                check(ce != std::string::npos, "DOOM-0142: RB_UpdateMeshHeights names RB_TEXSLOT_CEILPIC");
+                check(fl != std::string::npos && ft != std::string::npos && fl > ft,
+                      "DOOM-0142: RB_TEXSLOT_FLOORPIC is handled after the RB_MESH_FLAT test in RB_UpdateMeshHeights");
+            }
+
+            // 5. emit_wall itself is unchanged: an untextured step is still not drawn as a wall.
+            if (get_body("r_mesh.c", mesh, "emit_wall", &b))
+            {
+                std::string c;
+                for (char ch : b) if (!std::isspace((unsigned char)ch)) c += ch;
+                check(c.find("texnum<=0") != std::string::npos,
+                      "DOOM-0142: emit_wall still returns on texnum <= 0 (the fill is a separate function)");
+            }
+        }
+
         // ---- DOOM-0229: the box-filter accumulator is wider than 32 bits.
         {
             const std::string img = strip(slurp("rb_image.c"));

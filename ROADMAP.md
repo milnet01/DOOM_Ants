@@ -9018,7 +9018,7 @@ stay in their phase sections; this heading holds only work still to come.
   state; (3) the AS build has no limit of its own and DOOM-0479 is what
   is left of that.
 
-- 📋 [DOOM-0142] **Mid-ground occluder wall missing in the 3D mesh (geometry visible over a wall Classic blocks).**
+- ✅ [DOOM-0142] **Mid-ground occluder wall missing in the 3D mesh (geometry visible over a wall Classic blocks).**
   Confirmed a SHARED-mesh bug (identical in Solid raster + Ultra RT), pre-existing, NOT sky-related and NOT fixed by DOOM-0141. A/B at the same spot: Classic (image #5) shows a tall solid brown wall occluding the mid-ground (sky above it only); Solid/Ultra (images #6/#7) show that wall too short/absent, revealing distant techbase buildings + a rocky/nukage band behind it (the apparent 'floating geometry'). The missing chunk is the UPPER ~half of the wall (screen ~52-78%). Leading suspects in r_mesh.c wall emission: (a) emit_wall drops any upper/lower step whose texture is '-' (texnum<=0, r_mesh.c:208) -> a height-step wall the map leaves untextured but classic still occludes; (b) a sector floor/ceiling height baked wrong; (c) classic's per-column sky/visplane occlusion hiding geometry that true-3D reveals. Needs the exact WAD/level + the in-engine normals debug view (or a walk-into-it collision test) to pin which. Likely also affects other open-vista maps.
   **Layman:** On level 2's outdoor vista, the 3D renderers (Solid + Ultra) let you see over/through a wall that the Classic renderer correctly uses to block the view, so distant buildings look like they float.
   Kind: fix.
@@ -9042,6 +9042,20 @@ stay in their phase sections; this heading holds only work still to come.
   flat is what GZDoom does and needs the per-frame mesh updaters taught that a
   wall quad can carry a flat. Self-referencing sectors are already skipped by
   both (no height step), and two-sided middle textures are untouched.
+  Decision (user, 2026-09-30): fill an untextured step with the neighbouring
+  floor flat (lower step) or ceiling flat (upper step) in Solid and Ultra, as
+  GZDoom does. Classic keeps showing it black.
+  Resolved (2026-09-30), to the user's choice: `emit_flat_wall` (r_mesh.c) fills an
+  untextured lower step with the back floor's flat and an untextured upper step
+  with the back ceiling's flat, or a sky wall where that ceiling is sky. The
+  quad is RB_MESH_FLAT and names its picture through vtexsec plus
+  RB_TEXSLOT_FLOORPIC / _CEILPIC, so RB_UpdateMeshHeights animates it from the
+  right sector while its edges follow their own heights. DOOM 2 MAP01
+  (-warpto -625 526 45): the see-through gap in Solid and Ultra is now a wall
+  of FLOOR0_1. Validation silent on MAP01 in Solid and Ultra and on E4M1 (the
+  map with the most such steps) in Ultra; -rtverify PASS. Not tested: a filled
+  step on a moving lift or door. Self-referencing sectors are unaffected (no
+  height step).
 
 - 📋 [DOOM-0145] **Windows 0.2.0 build: 3D view renders as a small centered box with garbled (uninitialized) borders.**
   Reported on the shipped 0.2.0 Windows build. Symptoms: (1) fullscreen window, but the actual game view is a small centered rectangle with garbled imagery (fragments of the DOOM II title art + scattered text) filling the surrounding area; (2) the 2D menu + status-bar overlay render cleanly at full width ON TOP of the garbage (confirmed by screenshot of the in-game ESC menu); (3) audio "struggling" (unspecified — crackle vs missing music vs none).
@@ -9064,6 +9078,8 @@ stay in their phase sections; this heading holds only work still to come.
   show is why the GTX 2060 showed the box in the first place, and the only
   machine that reproduced it is the friend's. Needs one run of the current
   release there in Ultra at Render Scale 50% before this can close.
+  Decision (user, 2026-09-30): ask Charl to run the current release in Ultra at
+  Render Scale 50% on the GTX 2060 laptop; the item stays open until he reports.
 
 - ✅ [DOOM-0221] **Bound UploadAtlas WAD-derived material count / tile dimensions before GPU allocation.**
   r_vulkan.cpp:4604 UploadAtlas feeds WAD material count n and per-tile w/h into vector resizes, staging sizes, descriptor counts and VkImage extents with no bounds check -> bad_alloc / I_Error abort (DoS, not corruption; all arithmetic is 64-bit). DOOM-0093-adjacent.
@@ -9397,6 +9413,10 @@ stay in their phase sections; this heading holds only work still to come.
   the sky-hack gap must occlude nothing while the sky HOLE that DOOM-0141
   closed must keep occluding. Deleting the emit_sky_wall call would
   regress DOOM-0141's floating geometry. Spec it before coding.
+  Progress (2026-09-30): DOOM-0142 shipped the "occlude too little" half by
+  filling untextured steps with the neighbouring flat; it adds emit_sky_wall only
+  for an untextured step whose neighbouring floor or ceiling is sky, and leaves
+  the sky-hack call this item is about unchanged.
 
 - ✅ [DOOM-0338] **Clamp rb_fog on use; a hand-edited rt_fog reads past its range.**
   `rb_fog` is persisted as `rt_fog` in `~/.doomrc` and pushed to the
@@ -9446,6 +9466,8 @@ stay in their phase sections; this heading holds only work still to come.
   about which promise wins, not an edit: either the clamp is restored behind a
   compatibility switch that leaves Classic untouched, or the bug is kept and
   recorded as deliberate vanilla fidelity.
+  Decision (user, 2026-09-30): correct the camera height in Solid and Ultra
+  only; Classic stays byte-identical to the original, bug included.
   **Layman:** A long-standing bug inherited from the 1993 original: when you are in mid-air, the code that stops the camera poking up through the ceiling is thrown away a line after it runs. Fixing it would change what Classic looks like, which we have promised not to do — so it needs a decision first.
   Kind: fix.
   Source: check-code --tree 2026-09-01 (cppcheck style/redundantAssignment, p_user.c:104).

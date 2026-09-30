@@ -65,7 +65,7 @@ typedef struct
     // texturetranslation[sides[vtexside].<slot>] each frame. vtexside < 0 means a
     // flat (refreshed via vsector/vplane + flattranslation) or static. DOOM-0066.
     int   vtexside;     // sidedef index, or -1 (flat / no re-texture)
-    int   vtexslot;     // 0 = top, 1 = mid, 2 = bottom texture
+    int   vtexslot;     // 0 = top, 1 = mid, 2 = bottom texture; on a flat, see below
 } rb_vertex_t;
 
 // Which moving sector plane a mesh vertex's z follows. The mesh is built once
@@ -77,6 +77,16 @@ typedef struct
 #define RB_PLANE_NONE   0   // static: z never changes
 #define RB_PLANE_FLOOR  1   // z follows sectors[vsector].floorheight
 #define RB_PLANE_CEIL   2   // z follows sectors[vsector].ceilingheight
+
+// DOOM-0142: a wall step the map left untextured is filled with the neighbouring
+// sector's flat (the back floor under a lower step, the back ceiling over an upper
+// one). Such a quad is RB_MESH_FLAT, but its vsector/vplane describe its EDGES --
+// the bottom edge follows the front sector, the top edge the back one -- so the
+// picture to follow is named separately: vtexslot is one of these and vtexsec is
+// the sector whose floor or ceiling picture it is. Plain floors and ceilings keep
+// vtexslot 0 and take their picture from vsector/vplane.
+#define RB_TEXSLOT_FLOORPIC  3
+#define RB_TEXSLOT_CEILPIC   4
 
 // rb_vertex_t.flags bits.
 #define RB_MESH_FLAT    0x1   // texnum indexes flats[], not textures[]

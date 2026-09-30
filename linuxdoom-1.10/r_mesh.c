@@ -201,6 +201,50 @@ static void emit_sky_wall(builder_t* bld, const seg_t* seg, fixed_t zb, fixed_t 
     sky_push_tri(bld, a, c, d);
 }
 
+// DOOM-0142: fill a wall step the map left untextured ("-") with the back sector's
+// flat, as GZDoom does. Classic draws nothing there and the frame shows black (or,
+// in the original, whatever was drawn before); the true-3D mesh would otherwise
+// leave a hole to see through. picsec/picslot name the flat to follow as it
+// animates (RB_TEXSLOT_FLOORPIC / _CEILPIC); the edges follow their sectors'
+// heights like any wall's. The flat is tiled in world units along the wall and
+// down from world z = 0, and is never re-pegged: a flat has no pegging rule.
+static void emit_flat_wall(builder_t* bld, seg_t* seg, fixed_t bottomz, fixed_t topz,
+                           int picsec, int picslot,
+                           int botsec, int botplane, int topsec, int topplane)
+{
+    float x1, y1, x2, y2, zb, zt, dx, dy, len, nx, ny, u0, u1, light;
+    const sector_t* ps = &sectors[picsec];
+    int   pic = picslot == RB_TEXSLOT_CEILPIC ? ps->ceilingpic : ps->floorpic;
+    rb_vertex_t bl, br, tr, tl;
+
+    if (topz < bottomz) return;               // inverted: skip, as emit_wall does
+    if (pic < 0 || pic >= numflats) return;   // DOOM-0073-style bound on a WAD short
+
+    seg_line_xy(seg, &x1, &y1, &x2, &y2);
+    zb = bottomz / (float)FRACUNIT; zt = topz / (float)FRACUNIT;
+    dx = x2 - x1; dy = y2 - y1;
+    len = sqrtf(dx * dx + dy * dy);
+    if (len < 1e-4f) return;
+    nx = dy / len; ny = -dx / len;            // front-facing, as emit_wall
+    u0 = (seg->offset + seg->sidedef->textureoffset) / (float)FRACUNIT;
+    u1 = u0 + len;
+
+    light = seg->frontsector->lightlevel / 255.0f;   // DOOM-0406 clamp, as emit_wall
+    if (light < 0.0f) light = 0.0f;
+    if (light > 1.0f) light = 1.0f;
+
+    pic = flattranslation[pic];
+    bl = mkv(x1, y1, zb, nx, ny, 0.0f, u0, -zb, pic, RB_MESH_FLAT, light);
+    br = mkv(x2, y2, zb, nx, ny, 0.0f, u1, -zb, pic, RB_MESH_FLAT, light);
+    tr = mkv(x2, y2, zt, nx, ny, 0.0f, u1, -zt, pic, RB_MESH_FLAT, light);
+    tl = mkv(x1, y1, zt, nx, ny, 0.0f, u0, -zt, pic, RB_MESH_FLAT, light);
+    bl.vsector = br.vsector = botsec; bl.vplane = br.vplane = botplane;
+    tr.vsector = tl.vsector = topsec; tr.vplane = tl.vplane = topplane;
+    bl.vtexsec  = br.vtexsec  = tr.vtexsec  = tl.vtexsec  = picsec;
+    bl.vtexslot = br.vtexslot = tr.vtexslot = tl.vtexslot = picslot;
+    push_quad(bld, bl, br, tr, tl);
+}
+
 // Wall pegging kind: selects which DOOM vertical-alignment rule emit_wall
 // applies (faithful to r_segs.c). One-sided mids and two-sided masked rails
 // share a rule; uppers and lowers each have their own.
@@ -582,10 +626,18 @@ rb_mesh_t* RB_BuildLevelMesh(void)
                 // gap (no upper texture). Emit it as RT-only sky backdrop so the
                 // tracer occludes geometry beyond instead of seeing through the gap.
                 emit_sky_wall(&bld, seg, back->ceilingheight, front->ceilingheight);
-            else
+            else if (side->toptexture > 0)
                 emit_wall(&bld, seg, back->ceilingheight, front->ceilingheight,
                           side->toptexture, 0, PEG_UPPER,
                           bi, RB_PLANE_CEIL, fi, RB_PLANE_CEIL);
+            // DOOM-0142: untextured upper step -- the back ceiling's flat, or the
+            // sky where that ceiling is sky.
+            else if (back->ceilingpic == skyflatnum)
+                emit_sky_wall(&bld, seg, back->ceilingheight, front->ceilingheight);
+            else
+                emit_flat_wall(&bld, seg, back->ceilingheight, front->ceilingheight,
+                               bi, RB_TEXSLOT_CEILPIC,
+                               bi, RB_PLANE_CEIL, fi, RB_PLANE_CEIL);
         }
 
         // Lower step (front floor lower than/equal to back): bottom = front
@@ -597,9 +649,21 @@ rb_mesh_t* RB_BuildLevelMesh(void)
         // frame (DOOM-0068). emit_wall drops the "-"/untextured side, so only the
         // textured shaft face (which grows valid, never inverts) is added.
         if (front->floorheight <= back->floorheight)
-            emit_wall(&bld, seg, front->floorheight, back->floorheight,
-                      side->bottomtexture, 0, PEG_LOWER,
-                      fi, RB_PLANE_FLOOR, bi, RB_PLANE_FLOOR);
+        {
+            if (side->bottomtexture > 0)
+                emit_wall(&bld, seg, front->floorheight, back->floorheight,
+                          side->bottomtexture, 0, PEG_LOWER,
+                          fi, RB_PLANE_FLOOR, bi, RB_PLANE_FLOOR);
+            // DOOM-0142: untextured lower step -- the back floor's flat. A flush
+            // line (equal floors) is a zero-height quad that grows if a lift moves,
+            // as the textured case is.
+            else if (back->floorpic == skyflatnum)
+                emit_sky_wall(&bld, seg, front->floorheight, back->floorheight);
+            else
+                emit_flat_wall(&bld, seg, front->floorheight, back->floorheight,
+                               bi, RB_TEXSLOT_FLOORPIC,
+                               fi, RB_PLANE_FLOOR, bi, RB_PLANE_FLOOR);
+        }
 
         // Middle (rails/grates): alpha-tested, spans the shared opening. The
         // bottom edge follows the higher floor, the top edge the lower ceiling.
@@ -1545,7 +1609,15 @@ int RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst, rb_vertex_t* s
         int newtex = shadow[i].texnum;
         if (v->flags & RB_MESH_FLAT)
         {
-            int pic = (v->vplane == RB_PLANE_CEIL)
+            // A plain floor/ceiling follows its own plane's picture; a filled step
+            // (DOOM-0142) names the sector and plane whose picture it shows.
+            int pic;
+            if (v->vtexslot == RB_TEXSLOT_FLOORPIC)
+                pic = sectors[v->vtexsec].floorpic;
+            else if (v->vtexslot == RB_TEXSLOT_CEILPIC)
+                pic = sectors[v->vtexsec].ceilingpic;
+            else
+                pic = (v->vplane == RB_PLANE_CEIL)
                       ? sectors[v->vsector].ceilingpic
                       : sectors[v->vsector].floorpic;
             // DOOM-0073: pic/base are WAD-loaded shorts re-read every frame; a
