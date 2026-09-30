@@ -11961,6 +11961,17 @@ defect visible before a player finds it.
   Source: field-pass-2026-09-28 (versioning.md § 3, for the claude-config session).
   Lanes: docs.
 
+- 📋 [DOOM-0477] **The baked bounce has no reference to be checked against.**
+  `-rtverify` (DOOM-0009 INV-6) compares two DIRECT-light estimators and runs a
+  white-furnace check. The live tracer reads the same probes the bake writes, so
+  it cannot serve as a reference for them. A multi-bounce brute-force estimator
+  at a few probe positions, compared with the baked SH, would close this. UT_Ants
+  is building an offline ray-traced reference; ask what can be reused.
+  **Layman:** Nothing proves the soft bounced light is the right brightness; only the direct light is tested.
+  Kind: test.
+  Source: in-session-2026-09-30 (found answering UT_Ants).
+  Lanes: renderer, tests.
+
 ## 0.10.0 — The frame budget
 
 Performance and pacing, and the benchmark harness that makes a regression
@@ -15666,6 +15677,40 @@ in CLAUDE.md describes.
   **Layman:** In Ultra the door emblem looks more muted/olive than Classic's bright yellow. That is because Ultra lights the door with the room's actual (dim, slightly green) light, while Classic just shows the art's colours directly. It is technically correct, but it loses DOOM's punchy look — optional to tune back toward vibrant if wanted.
   Kind: enhancement.
   Source: user-request-2026-07-01 (Classic vs Ultra door screenshots).
+
+- 📋 [DOOM-0474] **The raster view adds linear bounce light to palette colour that was never made linear.**
+  `mesh.frag` takes `albedo` straight from the palette with no `srgbToLinear`,
+  multiplies it by sector light, then adds `albedo * giIrradiance(...)`, which is
+  linear radiance from the bake. `composite.frag` tone-maps and does not sRGB-encode.
+  The ray-traced view decodes albedo to linear first (`decodeAlbedo`), so the two
+  tiers read the same probes on different scales. Decide: linearise the raster
+  scene, or convert the bounce term. Either changes Solid's look, so it needs a
+  play-test. UT_Ants fixed the same class of fault on 2026-09-30.
+  **Layman:** In the non-ray-traced view, the soft bounced light is mixed in using the wrong brightness scale, so it may be fainter or a different tint than intended.
+  Kind: investigate.
+  Source: in-session-2026-09-30 (found answering UT_Ants).
+  Lanes: renderer.
+
+- 📋 [DOOM-0475] **Sprite lamps cast direct light but contribute nothing to the baked bounce.**
+  `bake.comp` passes `omniStart == emitCount`, so the omnidirectional sprite-light
+  loop in `shadeSurface` is empty during the bake, and the bake runs at level load
+  before sprite emitters exist. Static lamp Things do not move; they could be in
+  the bake. Measure first how much bounce a lamp-only room is missing.
+  **Layman:** A room lit only by a lamp or torch gets the lamp's direct light but none of the soft light that should bounce off the walls.
+  Kind: investigate.
+  Source: in-session-2026-09-30 (found answering UT_Ants).
+  Lanes: renderer.
+
+- 📋 [DOOM-0476] **A surface reads one probe with no blending, so bounce light steps at subsector borders.**
+  `giIrradiance` is called with the hit triangle's own subsector index, in both
+  `pathtrace.comp` and `mesh.frag`. There is no interpolation between neighbouring
+  probes. It is what keeps light from leaking through walls, so any blending must
+  stay inside what the cell can see. First capture a case where the step is
+  visible; if none is found, drop this.
+  **Layman:** The soft bounced light can change in a visible step where two floor cells meet, instead of fading smoothly.
+  Kind: investigate.
+  Source: in-session-2026-09-30 (found answering UT_Ants).
+  Lanes: renderer.
 
 ## 0.12.0 — The player's experience
 
