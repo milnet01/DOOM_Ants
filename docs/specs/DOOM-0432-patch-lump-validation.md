@@ -25,7 +25,8 @@ simply not drawn.
 
 **Defers (explicitly NOT in this build):**
 
-- The masked-midtexture walk over a composite column (§10 Q1).
+- The masked-midtexture walk over a composite column (§10 Q1). The same walk
+  over a single-patch column is in this build (§4.5).
 - `R_DrawColumn`'s read past a short column (§10 Q2).
 - `blit_tile` in `r_mesh.c`. It already bounds every read it makes (DOOM-0228)
   and keeps doing so.
@@ -76,6 +77,12 @@ with no knowledge of how long the lump is:
 `V_BlitPatch` and `F_DrawPatchCol` check each post against the patch's declared
 height with `V_PostInBounds` (DOOM-0254). That bounds where they **write**. It
 says nothing about where they **read**.
+
+One more reader takes no lump at all. `R_RenderMaskedSegRange` (`r_segs.c`)
+walks the posts of a see-through wall texture from the pointer `R_GetColumn`
+returns. For a column one patch covers, that pointer is the lump plus an offset
+`R_GenerateLookup` stored earlier, in a table of 16-bit entries. §4.5 deals
+with it.
 
 `W_CacheLumpNum` loads a lump into a zone block whose `user` field is the
 address of that lump's slot in `lumpcache[]` (`Z_Malloc` stores the `user` it is
@@ -142,15 +149,25 @@ boolean W_PatchOk (const void* patch);    // by a pointer W_CacheLump* returned
 A byte per lump holds the verdict: not yet asked, good, or refused. It is
 allocated beside `lumpcache` and starts as not yet asked.
 
-- `W_PatchLumpOk` returns the stored verdict if there is one. Otherwise it caches
-  the lump (`PU_CACHE`), runs `PatchLumpValid` over it with `W_LumpLength`,
-  stores the verdict and returns it. An out-of-range lump number is refused.
-- `W_PatchOk` finds the lump behind the pointer and defers to the same verdict.
-  It validates the bytes it was handed and allocates nothing, so it cannot purge
-  the block it is looking at. A pointer that is not the start of a cached lump
-  is refused (§4.3). `NULL` is refused.
+- `W_PatchLumpOk` returns the stored verdict if there is one. Otherwise it runs
+  `PatchLumpValid` with `W_LumpLength`, stores the verdict and returns it. When
+  `lumpcache[lump]` already holds the lump it validates those bytes where they
+  are; only a lump not yet in memory is loaded, as `PU_CACHE`. An out-of-range
+  lump number is refused.
+- `W_PatchOk` finds the lump behind the pointer (§4.3) and returns the stored
+  verdict if there is one. Otherwise it runs `PatchLumpValid` over the bytes it
+  was handed, with that lump's `W_LumpLength`, and stores the verdict. It does
+  not call `W_PatchLumpOk`. A pointer that is not the start of a cached lump is
+  refused. `NULL` is refused.
+- **Neither function changes the tag of a block that is already cached, and
+  `W_PatchOk` allocates nothing.** `W_CacheLumpNum` on a cached lump calls
+  `Z_ChangeTag`, so asking through it would turn a picture its holder cached as
+  `PU_STATIC` or `PU_LEVEL` into a purgeable one on its first draw.
 - The first refusal of a lump prints one line naming the lump. Later asks are
   silent, because the verdict is stored.
+- A lump too short to hold a patch header is refused without a line, and so is
+  an out-of-range lump number. PWADs carry empty marker lumps among their
+  sprites, and those are not malformed pictures.
 - `W_Reload` resets the verdict of every lump it reloads.
 
 ### 4.3 From pointer to lump
@@ -160,10 +177,10 @@ Two small pieces, so neither module reaches into the other's structures:
 - `z_zone.c` gains `void** Z_BlockUser (const void* ptr)`: the `user` field of
   the zone block that starts at `ptr`, or `NULL` when the header in front of
   `ptr` does not carry the zone id.
-- `wad_bounds.h` gains a pure function that turns that `user` into a lump index:
-  it returns the index when `user` lies inside `lumpcache[0 .. numlumps)` on a
-  slot boundary, and -1 otherwise. `W_PatchOk` then also requires that the
-  slot's current value is the pointer it was handed.
+- `wad_bounds.h` gains a pure function that turns that `user` into a lump index.
+  It takes the `user`, the cache array, the lump count and the patch pointer.
+  It returns the index when `user` lies inside `lumpcache[0 .. numlumps)` on a
+  slot boundary and that slot's current value is the pointer, and -1 otherwise.
 
 An unowned zone block carries the sentinel `(void *)2` as its `user`
 (`Z_Malloc`); that is outside `lumpcache[]` and is refused.
@@ -171,7 +188,8 @@ An unowned zone block carries the sentinel `(void *)2` as its `user`
 Every patch the readers in §2 receive today comes from `W_CacheLumpNum` or
 `W_CacheLumpName`. `Z_BlockUser` reads the header in front of the pointer, so a
 patch pointer that is not a zone block start is outside this design; the engine
-creates none.
+creates none. A pointer kept after its block was purged is refused: `Z_Free`
+clears the block's id and its cache slot.
 
 ### 4.4 What each reader does
 
@@ -182,7 +200,7 @@ creates none.
 | `M_DecodePatchRGBA` | `W_PatchLumpOk` on the lump it names | returns `NULL`; its callers already fall back |
 | `R_GenerateLookup`, `R_GenerateComposite`, `R_RenderTextureToAtlas` | one shared helper over `W_PatchLumpOk(patch->patch)` | skip that patch, as if the texture did not list it |
 | `R_DrawVisSprite` | `W_PatchLumpOk(vis->patch + firstspritelump)` | returns without drawing |
-| `R_InitSpriteLumps` | `W_PatchLumpOk` on each sprite lump | records zero width and offsets, as it does for a lump too short for a header |
+| `R_InitSpriteLumps` | `W_PatchLumpOk` on each sprite lump, in place of its own header-length test | records zero width and offsets |
 
 The three texture readers must agree. `R_GenerateLookup` records, per column,
 either the one lump that covers it or that the column is composited. If it
@@ -201,9 +219,28 @@ would otherwise index `columnofs[]` past the columns the rule validated.
 `R_InitSpriteLumps` asking at startup is what makes a refused sprite visible in
 the boot log on every run, not only when that sprite is first drawn.
 
+### 4.5 The stored column offset
+
+`R_GenerateLookup` stores, for a column one patch covers, that column's offset
+into the lump plus three. `texturecolumnofs` holds it in an `unsigned short`.
+A wall patch longer than that range can pass §4.1 with every offset inside the
+lump and still have the stored offset cut to 16 bits. `R_GetColumn` then hands
+out a pointer to the middle of the lump, and `R_RenderMaskedSegRange` walks it
+as a post chain the rule never looked at.
+
+`texturecolumnofs` and the two `colofs` locals that write and read it become
+`unsigned int`, and its allocation in `R_InitTextures` is sized to match. The
+stored offset is then exact, so the walk starts at a post the rule validated.
+The composite's own size limit is unchanged.
+
+No stock wall patch is near the limit: the largest is `WALL24_1` in `doom.wad`
+and `RSKY2` in `doom2.wad`, each under 40 000 bytes. A refusal by size was the
+alternative and is rejected in §9.
+
 ## 5. Data & resources
 
-One byte per lump for the verdict. No file format, config key or command-line
+One byte per lump for the verdict, and two more bytes per texture column for
+the wider offset table. No file format, config key or command-line
 flag changes. No new dependency.
 
 ## 6. Performance budget
@@ -234,7 +271,8 @@ Each step ends with `make` and `make test` green.
 - **B3 — interface readers.** `V_BlitPatch`, `F_DrawPatchCol`,
   `M_DecodePatchRGBA`. *Verify:* the `badpatch-ui` fixture (INV-5) on the
   pre-change and post-change builds.
-- **B4 — texture readers.** The shared helper and its three callers.
+- **B4 — texture readers.** The shared helper and its three callers, and the
+  wider offset table of §4.5.
   *Verify:* the `badpatch-wall` fixture in Solid; the five demo fixtures at
   their recorded lengths.
 - **B5 — sprites.** `R_DrawVisSprite` and `R_InitSpriteLumps`. *Verify:* the
@@ -266,13 +304,15 @@ Each step ends with `make` and `make test` green.
   Interface pictures are asked when first drawn and the sweep draws few of
   them; §11 names that gap.
 
-- **INV-3** — every function that reads `columnofs` or walks a post chain asks
-  for the verdict before its first such read. *Breaks when:* a new reader is
+- **INV-3** — every function that reads a patch lump's header, its `columnofs`
+  or its posts from the lump asks for the verdict before its first such read. *Breaks when:* a new reader is
   added, or one of the readers in §2 is changed to cache a lump by name and
   walk it directly.
   *Test:* `tests/bounds_wiring_test.cpp` takes each function named in §4.4 and
   requires a call to `W_PatchOk` or `W_PatchLumpOk` (for the three texture
-  readers, their shared helper) ahead of the first `columnofs` in its body. It
+  readers, their shared helper) ahead of the first `columnofs` in its body.
+  `R_InitSpriteLumps` reads only the header, so there the call must come ahead
+  of its first read of `->width`. It
   also requires that every use of `->columnofs[` in the engine sources sits in
   one of those functions or in `blit_tile`, so a reader added elsewhere fails
   the test by existing.
@@ -281,10 +321,16 @@ Each step ends with `make` and `make test` green.
   verdict is good. *Breaks when:* the index function accepts a `user` outside
   `lumpcache[]`, such as the unowned-block sentinel, or one that is inside the
   array but not on a slot boundary.
-  *Test:* `tests/wad_bounds_test.cpp` calls the index function with a `user`
-  below the array, at its first slot, at its last slot, one slot past the end,
-  one byte into a slot, and `(void *)2`, and expects an index for the two real
-  slots and -1 for the rest.
+  It also breaks when the slot is not compared with the pointer, which accepts
+  a stale pointer whose lump has since been loaded somewhere else; or when
+  `W_PatchOk` asks through the cache and demotes the block's tag.
+  *Test:* `tests/wad_bounds_test.cpp` builds a small array of pointers and calls
+  the index function with a `user` below the array, at its first slot, at its
+  last slot, one slot past the end, one byte into a slot, and `(void *)2`. It
+  expects an index for the two real slots and -1 for the rest, and -1 for a
+  real slot whose value is a different pointer. The wiring scrape requires that
+  `W_PatchOk`'s body names neither `W_CacheLump` nor `Z_ChangeTag`, and that
+  `W_PatchLumpOk`'s cache call sits under a test of `lumpcache[`.
 
 - **INV-5** — a refused patch is drawn by no reader and does not end the game.
   *Breaks when:* a reader turns a refusal into `I_Error`, or a reader is left
@@ -322,6 +368,15 @@ Each step ends with `make` and `make test` green.
   width ahead of the `columnofs` read in that body. The scene that calls it is
   the end of the third episode and is not reachable from a boot fixture.
 
+- **INV-9** — the offset `R_GenerateLookup` stores for a single-patch column
+  is the offset `R_GetColumn` reads back. *Breaks when:* the table's entries
+  are narrower than a lump offset, which truncates the offset of a large patch.
+  *Test:* the wiring scrape requires that the declaration of
+  `texturecolumnofs` and both `colofs` locals are not `short`, and that the
+  table's allocation in `R_InitTextures` multiplies by a `sizeof`. There is
+  nothing to run without a wall patch over 64 KB in a masked texture; no
+  fixture builds one.
+
 ## 9. Alternatives considered (and rejected)
 
 - **Check every read where it happens.** What `blit_tile` does. It needs the
@@ -341,6 +396,11 @@ Each step ends with `make` and `make test` green.
   verdict store. But a block can be larger than its lump by the allocator's
   rounding and an absorbed fragment, so the bound would let a reader run past
   the lump into stale heap bytes, and the walk would be repeated on every draw.
+- **Refuse a wall patch too long for the 16-bit offset table.** Closes §4.5's
+  hole without touching the table. But the Vulkan tiers read `columnofs`
+  directly and draw such a patch correctly today, and the three texture readers
+  must agree (INV-6), so the refusal would take a working picture away from
+  Solid and Ultra.
 - **Refuse the WAD.** Simplest, and wrong for the player: PWADs carry odd lumps
   between the markers, and one broken picture should not stop a map loading.
 
@@ -369,11 +429,13 @@ Each step ends with `make` and `make test` green.
 | INV-2 stock sprites and wall patches accepted | the boot sweep's output, searched for a refusal line |
 | INV-2 stock interface pictures accepted | **partial:** §3's survey, run once by hand with a transcription of the rule. Nothing re-runs it |
 | INV-3 every reader asks | `tests/bounds_wiring_test.cpp` |
-| INV-4 pointer to lump | `tests/wad_bounds_test.cpp` |
+| INV-4 pointer to lump | `tests/wad_bounds_test.cpp`; the no-tag-change half by `tests/bounds_wiring_test.cpp`, by reading only |
 | INV-5 refused, not fatal | the three fixtures, run by hand at B3 to B5. Nothing in `make test` boots the engine |
 | INV-6 the texture readers agree | `tests/bounds_wiring_test.cpp` |
 | INV-7 reload resets | `tests/bounds_wiring_test.cpp`, by reading only |
 | INV-8 column bound | `tests/bounds_wiring_test.cpp`, by reading only |
+| INV-9 exact stored offset | `tests/bounds_wiring_test.cpp`, by reading only |
+| A short lump is refused without a line (§4.2) | **nothing.** Read at B2 |
 | Every patch pointer is a zone block start (§4.3) | **nothing.** It is true of the callers today |
 | §6's budget | INV-3's scrape and the demo fixtures' lengths; no timing |
 
