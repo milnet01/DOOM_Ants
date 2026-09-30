@@ -23,6 +23,9 @@ whole-WAD lumps R_InitTextures parses at startup.
     texgap        a 64-wide texture with a 1-wide patch  counterfactual
     noflats       F_END placed directly after F_START   refused by name
     textall       the IWAD's TEXTURE1 plus one 32767-tall texture  loads, tile cropped
+    badpatch-ui      STBAR with its first column offset past the lump  refused, not drawn
+    badpatch-sprite  the pistol's first frame, likewise               refused, not drawn
+    badpatch-wall    the first patch PNAMES lists, likewise           refused, skipped
 
 The two texture modes carry lump BYTES rather than a bad directory, because
 that is where the count lives: TEXTURE1 states how many textures follow it, and
@@ -39,10 +42,18 @@ one mode that needs an IWAD, because a map will not load against a TEXTURE1 that
 lacks the textures its sidedefs name -- so the fixture is the IWAD's own lump
 with one texture appended, built from the IWAD's first patch.
 
+The three badpatch modes are about DOOM-0432: a patch's column offsets are the
+lump's own, and every reader followed them. Each copies one real patch out of
+the IWAD and rewrites its first column offset to land far outside the lump;
+the header and the offset table stay intact, so nothing but a bound on that
+offset can refuse it. A sprite is only read from between S_START and S_END, and
+a PWAD's markers replace the IWAD's, so that mode carries every sprite.
+
 Usage:  make_wad_fixture.py <mode> <out.wad> [<iwad>]
 
-Every mode but textall needs no IWAD: the lumps are synthetic, because the
-directory is the subject and the payload never has to mean anything.
+textall and the badpatch modes need the IWAD; for every other mode the lumps are
+synthetic, because the directory is the subject and the payload never has to
+mean anything.
 """
 
 import struct
@@ -138,6 +149,39 @@ def build(mode, iwad=None):
         lumps = [("TEXTURE1", struct.pack("<i", count)
                   + struct.pack("<%di" % count, *offsets) + records + tall)]
 
+    if mode.startswith("badpatch-"):
+        if not iwad:
+            raise SystemExit("%s needs the IWAD it takes the patch from" % mode)
+        from wad import read_directory
+        data, directory = read_directory(iwad)
+        names = [n.upper() for n, _, _ in directory]
+
+        def broken(index):
+            # Column offset 0 rewritten to a value no lump reaches. The field is
+            # a signed 32-bit offset from the start of the patch.
+            name, off, size = directory[index]
+            patch = bytearray(data[off:off + size])
+            struct.pack_into("<i", patch, 8, 0x7FFFFF00)
+            return name, bytes(patch)
+
+        if mode == "badpatch-ui":
+            lumps = [broken(names.index("STBAR"))]
+        elif mode == "badpatch-wall":
+            at = names.index("PNAMES")
+            first = data[directory[at][1] + 4:directory[at][1] + 12]
+            first = first.split(b"\0")[0].decode("latin-1").upper()
+            lumps = [broken(names.index(first))]
+        elif mode == "badpatch-sprite":
+            start, end = names.index("S_START"), names.index("S_END")
+            target = names.index("PISGA0")
+            lumps = [("S_START", b"")]
+            for i in range(start + 1, end):
+                name, off, size = directory[i]
+                lumps.append(broken(i) if i == target else (name, data[off:off + size]))
+            lumps.append(("S_END", b""))
+        else:
+            raise SystemExit("unknown mode: %s" % mode)
+
     if mode == "sfxrate":
         # DMX sound: format, rate, sample count, then the 8-bit samples. The
         # engine reads the rate from bytes 2-3 and the count from 4-7, and
@@ -164,7 +208,8 @@ def build(mode, iwad=None):
     elif mode == "pasteof":
         dirents[2][1] = total - dirents[2][0] + 1   # ends exactly one byte late
     elif mode not in ("valid", "shortheader", "sfxrate", "texcount",
-                      "texpatches", "texgap", "noflats", "textall"):
+                      "texpatches", "texgap", "noflats", "textall",
+                      "badpatch-ui", "badpatch-sprite", "badpatch-wall"):
         raise SystemExit("unknown mode: %s" % mode)
 
     header = b"PWAD" + struct.pack("<ii", len(dirents), diroff)
@@ -183,7 +228,8 @@ def build(mode, iwad=None):
 def main(argv):
     if len(argv) not in (3, 4):
         raise SystemExit("usage: %s {valid|hugesize|negpos|pasteof|shortheader|"
-                         "sfxrate|texcount|texpatches|texgap|noflats|textall} "
+                         "sfxrate|texcount|texpatches|texgap|noflats|textall|"
+                         "badpatch-ui|badpatch-sprite|badpatch-wall} "
                          "<out.wad> [<iwad>]" % argv[0])
     data = build(argv[1], argv[3] if len(argv) == 4 else None)
     open(argv[2], "wb").write(data)
