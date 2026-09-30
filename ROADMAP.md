@@ -9024,6 +9024,24 @@ stay in their phase sections; this heading holds only work still to come.
   Kind: fix.
   Source: user-report-2026-06-29 (level 2; Classic vs Solid vs Ultra A/B screenshots).
   Research (2026-06-30, Doom source-port community): this is the canonical "2.5D BSP world -> real 3D mesh" failure mode. Vanilla occlusion is IMPLICIT (BSP draw-order + solidsegs clip list skip hidden strips); a 3D mesh fed to a GPU loses it, so geometry the original never drew shows through ("floating"). Strongly corroborates suspect (a): in vanilla a wall step with NO texture ("-") still OCCLUDES (solid to the renderer though it draws nothing); our emit_wall dropping texnum<=0 steps (r_mesh.c:208) deletes exactly that occluder. Fix pattern other true-3D ports/converters use: emit an INVISIBLE-BUT-SOLID surface for missing-texture steps (write depth, draw no color) instead of dropping them, and let the depth buffer hide what's behind. Two related cases to handle while here (so we don't trade one artifact for another): (1) self-referencing sectors (both sidedefs reference the same sector -> vanilla treats as "not there": invisible bridges/deep water/fake rooms) must be detected and special-cased, NOT walled off -- GZDoom's softpoly true-3D renderer was partly discontinued over this; (2) 2-sided MIDDLE textures (cages, hanging bars) are INTENTIONALLY mid-air and must stay alpha-tested see-through quads, not become solid. Net fix direction for DOOM-0142: occlude-don't-draw for "-" steps; verify it doesn't resurrect HOM or block self-ref sectors. Sources: DoomWiki Hall_of_mirrors / Making_a_self-referencing_sector; ZDoom forums softpoly self-ref thread.
+  Progress (2026-09-30): the E1M2 vista this was reported on no longer reproduces.
+  Captured on a private display at six courtyard viewpoints (for one, -warpto
+  2100 400 90), Classic against Solid and Ultra: the perimeter wall is whole and
+  only sky shows above it in all three. E1M2 has no untextured step tall enough
+  to have been the cause; the courtyard is the classic sky-border construction
+  (a low sky-ceilinged ring round a tall one), which the sky walls and sky caps
+  of DOOM-0141 and the later raster sky occluder now cover.
+  Suspect (a) is real, on other maps. A survey of both IWADs finds untextured
+  upper or lower steps of 32 units or more on 33 maps. Reproduced on DOOM 2
+  MAP01 (-warpto -625 526 45): Classic shows the step black, Solid shows
+  through it to the floor and rooms beyond. The mesh drops the quad
+  (`emit_wall` returns on texnum 0).
+  Open choice, the user's: what the step should show in Solid and Ultra.
+  Black, as Classic shows it, needs a new unlit-black material in the raster
+  and ray-traced shaders. Filling it with the back sector's floor or ceiling
+  flat is what GZDoom does and needs the per-frame mesh updaters taught that a
+  wall quad can carry a flat. Self-referencing sectors are already skipped by
+  both (no height step), and two-sided middle textures are untouched.
 
 - 📋 [DOOM-0145] **Windows 0.2.0 build: 3D view renders as a small centered box with garbled (uninitialized) borders.**
   Reported on the shipped 0.2.0 Windows build. Symptoms: (1) fullscreen window, but the actual game view is a small centered rectangle with garbled imagery (fragments of the DOOM II title art + scattered text) filling the surrounding area; (2) the 2D menu + status-bar overlay render cleanly at full width ON TOP of the garbage (confirmed by screenshot of the in-game ESC menu); (3) audio "struggling" (unspecified — crackle vs missing music vs none).
@@ -9052,12 +9070,18 @@ stay in their phase sections; this heading holds only work still to come.
   Kind: security.
   Source: indie-review 2026-07-23 (vulkan-rt-core, MEDIUM).
 
-- 📋 [DOOM-0222] **Bound G_ReadDemoTiccmd against the demo lump end (attract-mode demo from a PWAD).**
+- ✅ [DOOM-0222] **Bound G_ReadDemoTiccmd against the demo lump end (attract-mode demo from a PWAD).**
   g_game.c:1577 G_ReadDemoTiccmd never bounds demo_p against the lump end; a marker-less DEMO lump auto-played in attract mode reads past the buffer.
   **Layman:** A malformed demo embedded in a custom WAD (auto-played on the title screen) can run off the end of its buffer.
   Kind: fix.
   Source: indie-review 2026-07-23 (wad-data-misc, MEDIUM).
   Progress (2026-07-26): DOOM-0254 added a 13-byte demo-lump length check before G_DoPlayDemo parses the header. The per-tic G_ReadDemoTiccmd bound this item names is still open.
+  Resolved (2026-09-30): already fixed by DOOM-0371, which this item was never
+  closed against. G_ReadDemoTiccmd ends the demo when `demo_p + 4 > demoend`,
+  and G_DoPlayDemo sets demoend from the lump's real length before playback.
+  Checked by reading g_game.c and by the marker-less demo fixture
+  (`make_demo_fixture.py noterm`), which plays its recorded tics and stops; it
+  ran again today on the current build. No code change.
 
 - ✅ [DOOM-0224] **Push all 31 push-constant floats in RecordRtOverlay (probe/tri/light lane undefined).**
   r_vulkan.cpp:7836 pushes only 24 of the layout's 31 floats for the RT weapon draw; the raster draw pushes all 31. Safe only if the psprite shader never reads the probe lane -- push the full 31 zeroed.
@@ -10095,6 +10119,21 @@ stay in their phase sections; this heading holds only work still to come.
   Kind: fix.
   Source: in-session 2026-09-30 (DOOM-0432 spec, open question Q2).
   Lanes: sw-renderer.
+
+- 📋 [DOOM-0482] **Some tan wall panels render pink or purple in Solid's raster view.**
+  E1M2, `renderer 2 -rtview 0`, `-warpto 2100 400 90`: the building at the left
+  edge (texture BROWN1) is pink on its lit face and purple on the shaded one.
+  Classic is tan there, and so is Ultra in `-rtview 3` and `-rtview 6`. Mean
+  colour of the same patch of wall: Classic 99/78/55, Solid 72/51/61. Indoor
+  panels at `-warpto 1500 300 90` and `1500 300 270` show it too. Present on
+  the build before 2026-09-30's changes (checked at 7d0dfbf^), so not new.
+  Lead, unverified: pink and purple are what a tangent-space normal map looks
+  like when it is drawn as colour, so look first at Solid's derived-material
+  binding for these textures in mesh.frag.
+  **Layman:** In the Solid view a few brown walls come out pink or purple. Classic and Ultra draw the same walls the right colour.
+  Kind: fix.
+  Source: in-session 2026-09-30 (found while checking DOOM-0142).
+  Lanes: renderer.
 
 ## 0.9.0 — The codebase can be trusted
 
