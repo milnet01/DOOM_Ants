@@ -59,6 +59,7 @@ rcsid[] __attribute__((used)) = "$Id: i_unix.c,v 1.5 1997/02/03 22:45:10 b1 Exp 
 
 #include "doomdef.h"
 #include "doomstat.h"		// DOOM-0327: nosound / nomusic
+#include "snd_handle.h"		// DOOM-0233: handles that outlive their channel
 
 // UNIX hack, to be removed.
 #ifdef SNDSERV
@@ -148,6 +149,9 @@ typedef struct
 } sfxsound_t;
 
 static sfxsound_t	sfx_snd[NUMSFX];
+
+// DOOM-0233: which use of each mixer channel the game's handles refer to.
+static snd_handles_t	snd_handles;
 static int		mixer_freq = SAMPLERATE;	// device rate (from Mix_QuerySpec)
 static boolean		sound_ok = false;	// the SDL2_mixer device opened OK
 
@@ -448,9 +452,9 @@ I_StartSound
     return id;
 #else
     // DOOM-0047/0156: play the sound's chunk for this pitch bucket on a free
-    // SDL2_mixer channel and set its volume/pan. The channel index IS the handle
-    // DOOM stores and later passes to I_UpdateSoundParams / I_StopSound /
-    // I_SoundIsPlaying.
+    // SDL2_mixer channel and set its volume/pan. The handle DOOM stores and
+    // later passes to I_UpdateSoundParams / I_StopSound / I_SoundIsPlaying
+    // names that channel and this use of it (snd_handle.h).
     {
       int channel, bucket;
       Mix_Chunk* chunk;
@@ -475,7 +479,15 @@ I_StartSound
 	return -1;				// no free channel
 
       I_SetChanVolPan(channel, vol, sep);
-      return channel;
+
+      // DOOM-0233: not the bare channel. The mixer reuses a channel as soon
+      // as its sound ends, and the game keeps handles past that.
+      {
+	int handle = SndHandleOpen(&snd_handles, channel);
+	if (handle < 0)
+	  Mix_HaltChannel(channel);	// a channel the table cannot name
+	return handle;
+      }
     }
 #endif
 }
@@ -484,16 +496,20 @@ I_StartSound
 
 void I_StopSound (int handle)
 {
-    if (sound_ok && handle >= 0)
-	Mix_HaltChannel(handle);
+    int channel = SndHandleChannel(&snd_handles, handle);
+
+    if (sound_ok && channel >= 0)
+	Mix_HaltChannel(channel);
 }
 
 
 int I_SoundIsPlaying(int handle)
 {
-    if (!sound_ok || handle < 0)
+    int channel = SndHandleChannel(&snd_handles, handle);
+
+    if (!sound_ok || channel < 0)
 	return 0;
-    return Mix_Playing(handle);
+    return Mix_Playing(channel);
 }
 
 
@@ -523,8 +539,12 @@ I_UpdateSoundParams
   // DOOM-0047: re-pan/re-volume the playing chunk on this mixer channel as the
   // sound source moves relative to the player. (pitch is not applied to chunks.)
   (void)pitch;
-  if (sound_ok && handle >= 0)
-    I_SetChanVolPan(handle, vol, sep);
+  {
+    int channel = SndHandleChannel(&snd_handles, handle);
+
+    if (sound_ok && channel >= 0)
+      I_SetChanVolPan(channel, vol, sep);
+  }
 }
 
 

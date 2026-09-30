@@ -736,6 +736,25 @@ int main()
             }
         }
 
+        // ---- DOOM-0233: sound handles carry a generation; each user resolves it first.
+        {
+            const std::string snd_raw = slurp("i_sound.c");
+            const std::string snd = strip(snd_raw);
+            check(has_include(snd_raw, "snd_handle.h"), "DOOM-0233: i_sound.c includes snd_handle.h");
+            if (get_body("i_sound.c", snd, "I_StartSound", &b))
+                check(call_pos(b, "SndHandleOpen") != std::string::npos,
+                      "DOOM-0233: I_StartSound issues its handle with SndHandleOpen");
+            if (get_body("i_sound.c", snd, "I_StopSound", &b))
+                require_call_before(b, "I_StopSound", "SndHandleChannel", "Mix_HaltChannel",
+                                    "DOOM-0233: I_StopSound resolves the handle first");
+            if (get_body("i_sound.c", snd, "I_SoundIsPlaying", &b))
+                require_call_before(b, "I_SoundIsPlaying", "SndHandleChannel", "Mix_Playing",
+                                    "DOOM-0233: I_SoundIsPlaying resolves the handle first");
+            if (get_body("i_sound.c", snd, "I_UpdateSoundParams", &b))
+                require_call_before(b, "I_UpdateSoundParams", "SndHandleChannel", "I_SetChanVolPan",
+                                    "DOOM-0233: I_UpdateSoundParams resolves the handle first");
+        }
+
         // ---- DOOM-0229: the box-filter accumulator is wider than 32 bits.
         {
             const std::string img = strip(slurp("rb_image.c"));

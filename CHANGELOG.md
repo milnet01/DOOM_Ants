@@ -8,6 +8,11 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **A sound that has finished can no longer steer or cut off a different sound** (DOOM-0233)
+  The game kept a number for each sound that the audio system reused the
+  moment the sound ended, so a moving monster could re-aim, or a stopped
+  door could silence, whatever sound had taken that number since.
+
 - **On a widescreen display, Classic's floors and ceilings now darken with distance at the same rate as its walls** (DOOM-0227)
   At 4:3 nothing changes: the picture is identical, pixel for pixel.
 

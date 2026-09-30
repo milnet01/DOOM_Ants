@@ -9158,8 +9158,17 @@ stay in their phase sections; this heading holds only work still to come.
   block` before, nothing after. The -wart bounds and the ftell/fread checks the
   item also names were already done by DOOM-0401.
 
-- 📋 [DOOM-0233] **Give I_StartSound an opaque handle -> channel map (avoid SDL channel aliasing).**
+- ✅ [DOOM-0233] **Give I_StartSound an opaque handle -> channel map (avoid SDL channel aliasing).**
   i_sound.c returns the Mix_PlayChannel number as the DOOM handle; a recycled channel can let a stale handle re-pan/halt the wrong effect. Add a handle->channel indirection (Chocolate DOOM pattern).
+  Resolved (2026-09-30): snd_handle.h. A handle is the mixer channel plus a
+  per-channel generation; I_StartSound issues one with SndHandleOpen, and
+  I_StopSound, I_SoundIsPlaying and I_UpdateSoundParams resolve it with
+  SndHandleChannel and do nothing for a stale one. snd_handle_test.cpp holds the
+  rule (15 of its checks failed on a handle-is-the-channel stand-in); four
+  mutants killed. The long demo fixture plays its 350 tics with the sound path
+  active on the dummy audio driver. Not tested: the generation wrapping after
+  about four million sounds on one channel, and the audible effect on real
+  hardware.
   **Layman:** A rare audio glitch where a finished sound's controls could affect a different sound reusing its channel.
   Kind: fix.
   Source: indie-review 2026-07-23 (platform-io, LOW).
