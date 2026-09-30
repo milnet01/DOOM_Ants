@@ -14,17 +14,29 @@
 // order matters, BEFORE the read it guards. Anchors are function names and the
 // bounds functions' own names, never line numbers.
 //
+// INV-2's R_InitSpriteLumps clause is superseded by DOOM-0432 INV-3: that reader
+// now asks W_PatchLumpOk (whose rule refuses a lump under 8 bytes) ahead of its
+// first ->width, instead of calling PatchHasHeader. tile_size and
+// ensure_sprite_heights still call PatchHasHeader.
+//
 // Not caught: a call that exists in the right place but whose result is
 // discarded (INV-3 checks only that an I_Error follows LevelBspIsTree, and INV-1
 // that AtlasRowsFit precedes the calloc). The unit tests hold the decision;
 // this holds that the decision is consulted.
 //
+// It also holds DOOM-0432's wiring clauses (INV-3, INV-4's wiring half, INV-6
+// to INV-10): every patch reader asks W_PatchOk / W_PatchLumpOk before it
+// follows columnofs. Their labels begin "DOOM-0432 INV-n".
+//
 // Build/run: `make test` (from linuxdoom-1.10/). No WAD, no GPU.
 #include "check_util.h"
 
 #include <cctype>
+#include <algorithm>
 #include <cstdio>
+#include <filesystem>
 #include <string>
+#include <vector>
 
 #ifndef DOOM_TESTS_ROOT
 #define DOOM_TESTS_ROOT "."
@@ -181,6 +193,83 @@ static void require_call_before(const std::string& body, const char* fn, const c
     }
 }
 
+// Bounds of the DEFINITION of `name` (same match rule as body_of): [*lo, *hi) is
+// the text between its braces.
+static bool body_span(const std::string& src, const char* name, size_t* lo, size_t* hi)
+{
+    const std::string key(name);
+    size_t at = 0;
+    while ((at = src.find(key, at)) != std::string::npos)
+    {
+        const size_t end = at + key.size();
+        const bool whole = (at == 0 || !isIdent(src[at - 1])) &&
+                           (end >= src.size() || !isIdent(src[end]));
+        at = end;
+        if (!whole) continue;
+        size_t i = skipws(src, end);
+        if (i >= src.size() || src[i] != '(') continue;
+        int depth = 0;
+        for (; i < src.size(); i++)
+        {
+            if (src[i] == '(') depth++;
+            else if (src[i] == ')' && --depth == 0) { i++; break; }
+        }
+        i = skipws(src, i);
+        if (i >= src.size() || src[i] != '{') continue;
+        const size_t open = i;
+        depth = 0;
+        for (; i < src.size(); i++)
+        {
+            if (src[i] == '{') depth++;
+            else if (src[i] == '}' && --depth == 0) { *lo = open + 1; *hi = i; return true; }
+        }
+    }
+    return false;
+}
+
+// `name` as a whole token anywhere (call or not), or npos.
+static size_t whole_tok(const std::string& s, const char* name)
+{
+    const std::string key(name);
+    size_t at = 0;
+    while ((at = s.find(key, at)) != std::string::npos)
+    {
+        const size_t end = at + key.size();
+        if ((at == 0 || !isIdent(s[at - 1])) && (end >= s.size() || !isIdent(s[end]))) return at;
+        at = end;
+    }
+    return std::string::npos;
+}
+
+// DOOM-0432: `fn` in `src` must call `c1` (or `c2`, when given) before the first
+// `guard` in its body. A missing body, a missing call, a missing guard or a call
+// after the guard each FAIL, so an unwritten function reports rather than passes.
+static void reader_asks(const char* file, const std::string& src, const char* fn,
+                        const char* c1, const char* c2, const char* guard, const char* what)
+{
+    std::string b;
+    if (!get_body(file, src, fn, &b)) return;
+    size_t c = call_pos(b, c1);
+    if (c2) c = std::min(c, call_pos(b, c2));
+    if (c == std::string::npos)
+    {
+        std::printf("  FAIL: %s: %s() never calls %s%s%s\n", what, fn, c1, c2 ? " or " : "", c2 ? c2 : "");
+        g_failures++;
+        return;
+    }
+    const size_t r = tok_pos(b, guard);
+    if (r == std::string::npos)
+    {
+        std::printf("  FAIL: %s: %s() has no \"%s\" to guard (test out of date?)\n", what, fn, guard);
+        g_failures++;
+    }
+    else if (r < c)
+    {
+        std::printf("  FAIL: %s: %s() reads \"%s\" before it asks %s\n", what, fn, guard, c1);
+        g_failures++;
+    }
+}
+
 int main()
 {
     const std::string meshRaw = slurp("r_mesh.c");
@@ -211,9 +300,8 @@ int main()
     if (get_body("r_mesh.c", mesh, "ensure_sprite_heights", &b))
         require_call_before(b, "ensure_sprite_heights", "PatchHasHeader", "->height",
                             "INV-2: the sprite-height cache checks the lump holds a header");
-    if (get_body("r_data.c", data, "R_InitSpriteLumps", &b))
-        require_call_before(b, "R_InitSpriteLumps", "PatchHasHeader", "->width",
-                            "INV-2: R_InitSpriteLumps checks the lump holds a header");
+    // R_InitSpriteLumps's header-length test moved into W_PatchLumpOk (DOOM-0432
+    // spec 4.4); its ordering clause is DOOM-0432 INV-3 (header reader) below.
 
     // ---- INV-3 (F-C): P_LoadNodes verifies the nodes form a tree, and reacts.
     if (get_body("p_setup.c", setup, "P_LoadNodes", &b))
@@ -249,6 +337,223 @@ int main()
             }
         }
         check(sites >= 2, "INV-4: found both omniStart assignments (display path and rtverify path)");
+    }
+
+    // =====================================================================
+    // DOOM-0432: a patch lump is validated once; every reader asks.
+    // Why this exists: readers followed a crafted lump's columnofs[] and post
+    // lengths with no idea of the lump's length. The pure rule is unit-tested
+    // (patch_bounds_test, wad_bounds_test); these clauses hold that each reader
+    // consults it BEFORE its first read. The implementation names are pinned by
+    // the spec: W_PatchLumpOk, W_PatchOk, R_TexPatchOk, R_GetPostColumn,
+    // Z_BlockUser, lumppatchok.
+    // =====================================================================
+    {
+        const std::string wad    = strip(slurp("w_wad.c"));
+        const std::string video  = strip(slurp("v_video.c"));
+        const std::string finale = strip(slurp("f_finale.c"));
+        const std::string things = strip(slurp("r_things.c"));
+        const std::string menu   = strip(slurp("m_menu.c"));
+        const std::string segs   = strip(slurp("r_segs.c"));
+        const char* const kCol = "->columnofs[";
+
+        // ---- INV-3: each reader asks ahead of its first ->columnofs[ .
+        reader_asks("v_video.c", video, "V_BlitPatch", "W_PatchOk", "W_PatchLumpOk", kCol,
+                    "DOOM-0432 INV-3");
+        reader_asks("f_finale.c", finale, "F_DrawPatchCol", "W_PatchOk", "W_PatchLumpOk", kCol,
+                    "DOOM-0432 INV-3");
+        reader_asks("r_things.c", things, "R_DrawVisSprite", "W_PatchOk", "W_PatchLumpOk", kCol,
+                    "DOOM-0432 INV-3");
+        reader_asks("r_mesh.c", mesh, "blit_tile", "W_PatchOk", "W_PatchLumpOk", kCol,
+                    "DOOM-0432 INV-3");
+        reader_asks("m_menu.c", menu, "M_DecodePatchRGBA", "W_PatchLumpOk", nullptr, kCol,
+                    "DOOM-0432 INV-3");
+        reader_asks("r_data.c", data, "R_GenerateLookup", "R_TexPatchOk", nullptr, kCol,
+                    "DOOM-0432 INV-3 / INV-6");
+        reader_asks("r_data.c", data, "R_GenerateComposite", "R_TexPatchOk", nullptr, kCol,
+                    "DOOM-0432 INV-3 / INV-6");
+        reader_asks("r_data.c", data, "R_RenderTextureToAtlas", "R_TexPatchOk", nullptr, kCol,
+                    "DOOM-0432 INV-3 / INV-6");
+        reader_asks("r_data.c", data, "R_InitSpriteLumps", "W_PatchLumpOk", nullptr, "->width",
+                    "DOOM-0432 INV-3 (header reader)");
+        if (get_body("r_data.c", data, "R_TexPatchOk", &b))
+            check(call_pos(b, "W_PatchLumpOk") != std::string::npos,
+                  "DOOM-0432 INV-3: R_TexPatchOk asks W_PatchLumpOk");
+
+        // ---- INV-3, second half: every ->columnofs[ in the engine sources sits in
+        // one of the eight readers. The directory is LISTED, so a new file is seen.
+        {
+            static const char* const kReaders[] = {
+                "V_BlitPatch", "F_DrawPatchCol", "M_DecodePatchRGBA", "R_GenerateLookup",
+                "R_GenerateComposite", "R_RenderTextureToAtlas", "R_DrawVisSprite", "blit_tile" };
+            std::vector<std::string> files;
+            std::error_code ec;
+            for (const auto& e : std::filesystem::directory_iterator(DOOM_TESTS_ROOT, ec))
+            {
+                const std::string ext = e.path().extension().string();
+                if (e.is_regular_file() && (ext == ".c" || ext == ".cpp" || ext == ".h"))
+                    files.push_back(e.path().filename().string());
+            }
+            check(!ec && !files.empty(),
+                  "DOOM-0432 INV-3: the engine directory can be listed for source files");
+            std::sort(files.begin(), files.end());
+            int sites = 0;
+            for (const std::string& f : files)
+            {
+                const std::string src = strip(slurp(f));
+                std::vector<std::pair<size_t, size_t>> spans;
+                for (const char* r : kReaders)
+                {
+                    size_t lo, hi;
+                    if (body_span(src, r, &lo, &hi)) spans.push_back({lo, hi});
+                }
+                size_t at = 0;
+                while ((at = src.find(kCol, at)) != std::string::npos)
+                {
+                    sites++;
+                    bool in = false;
+                    for (const auto& sp : spans) if (at >= sp.first && at < sp.second) in = true;
+                    if (!in)
+                    {
+                        const int line = 1 + (int)std::count(src.begin(), src.begin() + at, '\n');
+                        std::printf("  FAIL: DOOM-0432 INV-3: %s:%d reads %s outside the eight "
+                                    "validated readers\n", f.c_str(), line, kCol);
+                        g_failures++;
+                    }
+                    at += 1;
+                }
+            }
+            check(sites >= 8,
+                  "DOOM-0432 INV-3: the scan found the readers' columnofs reads (else it is blind)");
+        }
+
+        // ---- INV-4 (wiring half).
+        if (get_body("w_wad.c", wad, "W_PatchOk", &b))
+        {
+            check(b.find("W_CacheLump") == std::string::npos,
+                  "DOOM-0432 INV-4: W_PatchOk does not go through W_CacheLump* (it would re-tag a block)");
+            check(whole_tok(b, "Z_ChangeTag") == std::string::npos,
+                  "DOOM-0432 INV-4: W_PatchOk does not call Z_ChangeTag");
+            check(call_pos(b, "WadLumpOfUser") != std::string::npos,
+                  "DOOM-0432 INV-4: W_PatchOk finds the lump with WadLumpOfUser");
+            check(call_pos(b, "Z_BlockUser") != std::string::npos,
+                  "DOOM-0432 INV-4: W_PatchOk reads the block's user with Z_BlockUser");
+        }
+        if (get_body("w_wad.c", wad, "W_PatchLumpOk", &b))
+        {
+            const size_t t = tok_pos(b, "lumpcache[");
+            const size_t c = call_pos(b, "W_CacheLumpNum");
+            check(t != std::string::npos && (c == std::string::npos || t < c),
+                  "DOOM-0432 INV-4: W_PatchLumpOk tests lumpcache[ ahead of any W_CacheLumpNum call");
+        }
+        {
+            std::string zb;
+            check(get_body("z_zone.c", strip(slurp("z_zone.c")), "Z_BlockUser", &zb),
+                  "DOOM-0432 INV-4: z_zone.c defines Z_BlockUser");
+        }
+
+        // ---- INV-6: the three texture readers use one helper and no words of their own.
+        for (const char* fn : { "R_GenerateLookup", "R_GenerateComposite", "R_RenderTextureToAtlas" })
+        {
+            std::string fb;
+            const bool ok = body_of(data, fn, &fb);
+            check(ok && call_pos(fb, "R_TexPatchOk") != std::string::npos,
+                  (std::string("DOOM-0432 INV-6: ") + fn + " asks through R_TexPatchOk").c_str());
+            check(ok && whole_tok(fb, "W_PatchLumpOk") == std::string::npos &&
+                  whole_tok(fb, "W_PatchOk") == std::string::npos,
+                  (std::string("DOOM-0432 INV-6: ") + fn + " does not ask the verdict in its own words").c_str());
+        }
+
+        // ---- INV-7: W_Reload resets the verdict.
+        if (get_body("w_wad.c", wad, "W_Reload", &b))
+            check(b.find("lumppatchok[") != std::string::npos,
+                  "DOOM-0432 INV-7: W_Reload resets lumppatchok[ for a reloaded lump");
+
+        // ---- INV-8: F_DrawPatchCol compares col with the width ahead of the read.
+        if (get_body("f_finale.c", finale, "F_DrawPatchCol", &b))
+        {
+            const size_t rd = tok_pos(b, kCol);
+            const std::string pre = rd == std::string::npos ? b : b.substr(0, rd);
+            check(rd != std::string::npos && pre.find("->width") != std::string::npos,
+                  "DOOM-0432 INV-8: F_DrawPatchCol reads the patch width ahead of ->columnofs[");
+            bool cmp = false;
+            for (size_t at = 0; (at = pre.find("col", at)) != std::string::npos; at += 3)
+            {
+                if ((at > 0 && isIdent(pre[at - 1])) || isIdent(pre[at + 3])) continue;
+                const size_t after = skipws(pre, at + 3);
+                size_t before = at;
+                while (before > 0 && std::isspace((unsigned char)pre[before - 1])) before--;
+                const char a = after < pre.size() ? pre[after] : 0;
+                const char p = before > 0 ? pre[before - 1] : 0;
+                if (a == '<' || a == '>' || p == '<' || p == '>') { cmp = true; break; }
+            }
+            check(cmp, "DOOM-0432 INV-8: F_DrawPatchCol compares col (< or >) ahead of ->columnofs[");
+        }
+
+        // ---- INV-9: the 16-bit offset table is widened, and its allocation sized.
+        {
+            int decls = 0;
+            bool tableDecl = false;
+            size_t at = 0;
+            while ((at = data.find("colofs", at)) != std::string::npos)
+            {
+                const size_t end = at + 6;
+                const bool whole = (at == 0 || !isIdent(data[at - 1])) && !isIdent(data[end]);
+                const size_t nx = skipws(data, end);
+                if (whole && nx < data.size() && data[nx] == ';')
+                {
+                    decls++;
+                    const size_t ls = data.rfind('\n', at) + 1;
+                    check(data.substr(ls, at - ls).find("short") == std::string::npos,
+                          "DOOM-0432 INV-9: a colofs local is not a short");
+                }
+                at = end;
+            }
+            check(decls >= 2, "DOOM-0432 INV-9: found both colofs local declarations");
+            for (at = 0; (at = data.find("texturecolumnofs", at)) != std::string::npos; at += 16)
+            {
+                const size_t end = at + 16;
+                if (isIdent(data[end]) || (at > 0 && isIdent(data[at - 1]))) continue;
+                const size_t nx = skipws(data, end);
+                if (nx < data.size() && data[nx] == ';')
+                {
+                    tableDecl = true;
+                    const size_t ls = data.rfind('\n', at) + 1;
+                    check(data.substr(ls, at - ls).find("short") == std::string::npos,
+                          "DOOM-0432 INV-9: texturecolumnofs is not declared with short entries");
+                }
+            }
+            check(tableDecl, "DOOM-0432 INV-9: found the texturecolumnofs declaration");
+            bool alloc = false;
+            for (at = 0; (at = data.find("texturecolumnofs[i]", at)) != std::string::npos; at += 19)
+            {
+                const size_t nx = skipws(data, at + 19);
+                if (nx + 1 < data.size() && data[nx] == '=' && data[nx + 1] != '=')
+                {
+                    alloc = true;
+                    const size_t semi = data.find(';', nx);
+                    check(data.substr(nx, semi - nx).find("sizeof") != std::string::npos,
+                          "DOOM-0432 INV-9: the texturecolumnofs[i] allocation multiplies by a sizeof");
+                }
+            }
+            check(alloc, "DOOM-0432 INV-9: found the texturecolumnofs[i] allocation");
+        }
+
+        // ---- INV-10: the see-through wall walks posts only through R_GetPostColumn.
+        if (get_body("r_segs.c", segs, "R_RenderMaskedSegRange", &b))
+        {
+            check(whole_tok(b, "R_GetPostColumn") != std::string::npos,
+                  "DOOM-0432 INV-10: R_RenderMaskedSegRange names R_GetPostColumn");
+            check(whole_tok(b, "R_GetColumn") == std::string::npos,
+                  "DOOM-0432 INV-10: R_RenderMaskedSegRange does not name R_GetColumn");
+        }
+        if (get_body("r_data.c", data, "R_GetPostColumn", &b))
+        {
+            const size_t t = whole_tok(b, "texturecolumnlump");
+            const size_t n = whole_tok(b, "NULL");
+            check(t != std::string::npos && n != std::string::npos && t < n,
+                  "DOOM-0432 INV-10: R_GetPostColumn tests texturecolumnlump ahead of returning NULL");
+        }
     }
 
     return check_summary("bounds_wiring");

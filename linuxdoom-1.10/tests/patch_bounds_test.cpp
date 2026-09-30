@@ -1,14 +1,51 @@
 // patch_bounds_test.cpp — DOOM-0228: how much of a graphic lump the atlas
 // builder may read.
 //
+// It also holds DOOM-0432's PatchLumpValid cases (INV-1): the whole-lump rule
+// every patch reader asks before it follows a column offset. Those labels begin
+// "DOOM-0432 INV-1".
+//
 // The cases that matter are the ones a stock WAD never produces, because
 // blit_tile has always been correct for stock data and that is why the missing
 // checks went unnoticed. Each boundary is tested on both sides.
 #include <cstdio>
 #include <climits>
+#include <vector>
 
 #include "../patch_bounds.h"
 #include "check_util.h"
+
+// ---- DOOM-0432 INV-1 fixtures: patches built byte by byte, little-endian. ----
+typedef std::vector<unsigned char> Bytes;
+
+static void put16(Bytes& b, int v) { b.push_back(v & 0xff); b.push_back((v >> 8) & 0xff); }
+static void put32(Bytes& b, unsigned v)
+{
+    for (int i = 0; i < 4; i++) b.push_back((v >> (8 * i)) & 0xff);
+}
+static void set32(Bytes& b, size_t at, unsigned v)
+{
+    for (int i = 0; i < 4; i++) b[at + i] = (v >> (8 * i)) & 0xff;
+}
+// Header plus a zeroed column table of `ncols` entries; width is declared as such.
+static Bytes header(int width, int height, int ncols)
+{
+    Bytes b;
+    put16(b, width); put16(b, height); put16(b, 0); put16(b, 0);
+    for (int i = 0; i < ncols; i++) put32(b, 0);
+    return b;
+}
+// Point column `col` at the current end of the array (where its posts go next).
+static void begin_col(Bytes& b, int col) { set32(b, 8 + 4 * col, (unsigned)b.size()); }
+// topdelta, length, pad, `len` texels, pad.
+static void post(Bytes& b, int len)
+{
+    b.push_back(0); b.push_back(len); b.push_back(0);
+    for (int i = 0; i < len; i++) b.push_back(0x11);
+    b.push_back(0);
+}
+static void endcol(Bytes& b) { b.push_back(0xff); }
+static int valid(const Bytes& b) { return PatchLumpValid(b.data(), (int)b.size()); }
 
 int main()
 {
@@ -102,6 +139,121 @@ int main()
         if (PatchHeaderFits(len, 1) != 0)
             check(PatchHasHeader(len) != 0,
                   "PatchHeaderFits implies PatchHasHeader");
+
+    // ---- DOOM-0432 INV-1: PatchLumpValid ----
+    //
+    // Why this exists: every patch reader followed columnofs[] and each post's
+    // length with no idea how long the lump was, so a crafted lump read anywhere
+    // in memory. This is the one rule they now share.
+
+    // One column, one post of 2 texels: table ends at 12, post 12..17, the
+    // terminator is the FINAL byte (19 bytes). Stock patches end this way.
+    Bytes one = header(1, 1, 1);
+    begin_col(one, 0); post(one, 2); endcol(one);
+    check(valid(one), "DOOM-0432 INV-1: a patch whose terminator is its last byte is accepted");
+    check(PatchLumpValid(one.data(), (int)one.size() - 1) == 0,
+          "DOOM-0432 INV-1: the same patch one byte shorter (terminator missing) is refused");
+
+    // A post whose length field puts the next post's first byte one past the end.
+    {
+        Bytes b = one;
+        b[13] = 3;
+        check(!valid(b),
+              "DOOM-0432 INV-1: a post whose successor byte is one past the end is refused");
+        b[13] = 2;
+        check(valid(b),
+              "DOOM-0432 INV-1: the same post one byte shorter (exactly fitting) is accepted");
+        b[13] = 255;
+        check(!valid(b), "DOOM-0432 INV-1: a 255-texel post in a 19-byte lump is refused");
+    }
+
+    // Column offsets.
+    {
+        Bytes b = one;
+        set32(b, 8, (unsigned)b.size());
+        check(!valid(b), "DOOM-0432 INV-1: a column offset equal to len is refused");
+        set32(b, 8, (unsigned)b.size() - 1);
+        check(valid(b), "DOOM-0432 INV-1: a column offset at the last byte (the terminator) is accepted");
+        set32(b, 8, 0xffffffffu);
+        check(!valid(b), "DOOM-0432 INV-1: a negative column offset (-1) is refused");
+        set32(b, 8, 0x80000000u);
+        check(!valid(b), "DOOM-0432 INV-1: INT_MIN as a column offset is refused");
+        set32(b, 8, 0x7fffffffu);
+        check(!valid(b), "DOOM-0432 INV-1: a wild positive column offset is refused");
+    }
+
+    // A column offset equal to len, with a 0xff guard byte sitting at index len in
+    // a LARGER buffer: the walk must refuse because the byte is outside the lump,
+    // not because of what happens to lie there. (Kills an "offset == len is
+    // accepted" off-by-one that a zero byte past the array would hide.)
+    {
+        Bytes b = one;
+        const int len = (int)b.size();
+        set32(b, 8, (unsigned)len);
+        b.push_back(0xff);                       // guard terminator at index len
+        b.push_back(0xff); b.push_back(0xff);
+        check(PatchLumpValid(b.data(), len) == 0,
+              "DOOM-0432 INV-1: a column offset equal to len is refused even when a 0xff sits at index len");
+    }
+
+    // Width one more than the table holds, where the extra table entry lies wholly
+    // past len yet reads as a VALID offset. len 12 = header + one entry; the offset
+    // 7 points at data[7] = 0xff (topoffset's high byte), a terminator inside the
+    // lump. Bytes 12..15 are guards: a second entry of 7.
+    {
+        unsigned char raw[16] = { 1,0, 1,0, 0,0, 0xff,0xff,  7,0,0,0,  7,0,0,0 };
+        check(PatchLumpValid(raw, 12) != 0,
+              "DOOM-0432 INV-1: width 1 in a 12-byte lump (header + one entry, offset into the header) is accepted");
+        raw[0] = 2;
+        check(PatchLumpValid(raw, 12) == 0,
+              "DOOM-0432 INV-1: width 2 in that 12-byte lump is refused although the second entry beyond len is a valid offset");
+    }
+
+    // Header fields and length.
+    {
+        Bytes b = one;
+        b[0] = 0; b[1] = 0;
+        check(!valid(b), "DOOM-0432 INV-1: width 0 is refused");
+        b = one;
+        b[2] = 0; b[3] = 0;
+        check(!valid(b), "DOOM-0432 INV-1: height 0 is refused");
+        check(PatchLumpValid(one.data(), 7) == 0, "DOOM-0432 INV-1: len 7 is refused");
+        check(PatchLumpValid(one.data(), 0) == 0, "DOOM-0432 INV-1: len 0 is refused");
+        check(PatchLumpValid(one.data(), -1) == 0, "DOOM-0432 INV-1: a negative len is refused");
+    }
+
+    // Width against the column table: two columns sharing one bare terminator at
+    // byte 16. len 17 leaves (17-8)/4 = 2 table entries.
+    {
+        Bytes b = header(2, 1, 2);
+        set32(b, 8, (unsigned)b.size());
+        set32(b, 12, (unsigned)b.size());
+        endcol(b);
+        check(valid(b), "DOOM-0432 INV-1: width equal to the entries the table holds is accepted");
+        b[0] = 3;
+        check(!valid(b), "DOOM-0432 INV-1: width one more than the table holds is refused");
+    }
+
+    // A column of two posts.
+    {
+        Bytes b = header(1, 1, 1);
+        begin_col(b, 0); post(b, 2); post(b, 3); endcol(b);
+        check(valid(b), "DOOM-0432 INV-1: a valid two-post column is accepted");
+        check(PatchLumpValid(b.data(), (int)b.size() - 1) == 0,
+              "DOOM-0432 INV-1: the two-post column one byte short is refused");
+        b[19] = 4;   // second post's length: pushes its successor past the end
+        check(!valid(b), "DOOM-0432 INV-1: a bad SECOND post in a column is refused");
+    }
+
+    // Two columns, only the second bad: the first must not excuse it.
+    {
+        Bytes b = header(2, 1, 2);
+        begin_col(b, 0); post(b, 1); endcol(b);
+        begin_col(b, 1); post(b, 1); endcol(b);
+        check(valid(b), "DOOM-0432 INV-1: a valid two-column patch is accepted");
+        set32(b, 12, (unsigned)b.size());
+        check(!valid(b), "DOOM-0432 INV-1: a patch whose only bad column is the second is refused");
+    }
 
     return check_summary("patch_bounds");
 }

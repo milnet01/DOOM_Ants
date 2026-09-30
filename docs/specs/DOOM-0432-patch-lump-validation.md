@@ -1,6 +1,7 @@
 # DOOM-0432 — Validate a patch lump once; every reader asks
 
-**Status:** accepted.
+**Status:** Shipped (2026-09-30). B1 to B6 built; INV-5's three fixtures and the
+boot sweep of both IWADs were run on the finished build.
 **Kind:** security.
 **Source:** ROADMAP DOOM-0432 (`review-code 2026-09-01`, lane sw-renderer; split
 out of DOOM-0402 on 2026-09-12; scope widened 2026-09-30 by the DOOM-0093 pass,

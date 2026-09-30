@@ -73,6 +73,13 @@ int	W_CheckNumForName (char* name);
 int	W_GetNumForName (char* name);
 
 int	W_LumpLength (int lump);
+
+// DOOM-0432: is this lump a well-formed patch -- every column offset and
+// every post inside the lump? Decided once per lump and remembered. A reader
+// that follows columnofs or a post chain asks one of these first and draws
+// nothing on false. W_PatchOk takes the pointer W_CacheLumpNum/Name returned.
+boolean	W_PatchLumpOk (int lump);
+boolean	W_PatchOk (const void* patch);
 void    W_ReadLump (int lump, void *dest);
 
 void*	W_CacheLumpNum (int lump, int tag);

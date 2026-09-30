@@ -9,8 +9,13 @@
 // w_wad.c cannot be unit tested — W_AddFile wants a file descriptor, the zone and
 // the real lumpinfo table — so the decision it makes per lump lives in
 // wad_bounds.h and is tested here, exactly as save_bounds.h is.
+//
+// It also holds DOOM-0432 INV-4: WadLumpOfUser, which turns a zone block's `user`
+// back into a lump index. Those labels begin "DOOM-0432 INV-4".
 #include <cstdio>
 #include <climits>
+#include <cstdint>
+#include <cstring>
 
 #include "../wad_bounds.h"
 #include "check_util.h"
@@ -101,6 +106,72 @@ int main()
     check(WadCountFitsLump(1, 100, kTexHdr, 0) == 0, "a zero entry size is refused");
     check(WadCountFitsLump(1, 100, -1, kTexEntry) == 0,
           "a negative header size is refused");
+
+    // --- DOOM-0432 INV-4: WadLumpOfUser(user, cache, numlumps, ptr). ---
+    //
+    // Why this exists: W_PatchOk finds a patch's lump through the zone block's
+    // `user` field. A user outside lumpcache[] (the unowned-block sentinel 2, or
+    // a pointer off a slot boundary) or a slot holding a different pointer must
+    // not be mistaken for a lump, or a stale/foreign pointer gets a "good" verdict.
+    //
+    // backing[] is bigger than the cache: the cache is the interior [2..5], so
+    // "below" and "one past the end" are addresses we own.
+    {
+        int   obj[6];
+        void* backing[8];
+        for (int i = 0; i < 6; i++) backing[1 + i] = &obj[i];
+        backing[0] = &obj[5];
+        backing[7] = &obj[5];
+        // cache slots: backing[2..5] -> obj[1..4]; backing[1] -> obj[0]; backing[6] -> obj[5]
+        void* const* cache = &backing[2];
+        const int    n     = 4;
+        void* const* const first = &backing[2];
+        void* const* const last  = &backing[5];
+
+        check_eq_int(WadLumpOfUser(first, cache, n, &obj[1]), 0,
+                     "DOOM-0432 INV-4: the first slot with a matching pointer gives lump 0");
+        check_eq_int(WadLumpOfUser(&backing[3], cache, n, &obj[2]), 1,
+                     "DOOM-0432 INV-4: the second slot with a matching pointer gives lump 1");
+        check_eq_int(WadLumpOfUser(last, cache, n, &obj[4]), 3,
+                     "DOOM-0432 INV-4: the last slot with a matching pointer gives lump 3");
+
+        check_eq_int(WadLumpOfUser(&backing[1], cache, n, &obj[0]), -1,
+                     "DOOM-0432 INV-4: a user just below the array is refused");
+        check_eq_int(WadLumpOfUser(&backing[6], cache, n, &obj[5]), -1,
+                     "DOOM-0432 INV-4: a user one slot past the end is refused");
+        check_eq_int(WadLumpOfUser((void* const*)((const char*)first + 1), cache, n, &obj[1]), -1,
+                     "DOOM-0432 INV-4: a user one byte into a slot is refused");
+        check_eq_int(WadLumpOfUser((void* const*)(uintptr_t)2, cache, n, &obj[1]), -1,
+                     "DOOM-0432 INV-4: the unowned-block sentinel (void*)2 is refused");
+        check_eq_int(WadLumpOfUser((void* const*)(uintptr_t)2, cache, n, (void*)(uintptr_t)2), -1,
+                     "DOOM-0432 INV-4: the sentinel is refused even when ptr is the sentinel too");
+        check_eq_int(WadLumpOfUser(nullptr, cache, n, &obj[1]), -1,
+                     "DOOM-0432 INV-4: a NULL user is refused");
+        check_eq_int(WadLumpOfUser(&backing[3], cache, n, &obj[1]), -1,
+                     "DOOM-0432 INV-4: a real slot holding a different pointer is refused");
+        check_eq_int(WadLumpOfUser(first, cache, n, nullptr), -1,
+                     "DOOM-0432 INV-4: a NULL pointer against a non-NULL slot is refused");
+        check_eq_int(WadLumpOfUser(first, cache, 0, &obj[1]), -1,
+                     "DOOM-0432 INV-4: numlumps 0 refuses every user");
+        check_eq_int(WadLumpOfUser(&backing[3], cache, 1, &obj[2]), -1,
+                     "DOOM-0432 INV-4: a slot beyond a smaller numlumps is refused");
+    }
+
+    // A user one byte into a slot must be refused on ALIGNMENT alone. Both slots
+    // hold a pointer whose bytes are all 0x41, so a misaligned read through the
+    // user (last 7 bytes of slot 0 + first byte of slot 1) yields the same value
+    // as ptr; only an alignment test can refuse it. The fake value is never
+    // dereferenced.
+    {
+        void* v;
+        std::memset(&v, 0x41, sizeof v);
+        void* slots[3] = { v, v, v };
+        void* const* cache = &slots[0];
+        check_eq_int(WadLumpOfUser((void* const*)((const char*)&slots[0] + 1), cache, 2, v), -1,
+                     "DOOM-0432 INV-4: a user one byte into a slot is refused by alignment even when the misaligned bytes equal ptr");
+        check_eq_int(WadLumpOfUser(&slots[1], cache, 2, v), 1,
+                     "DOOM-0432 INV-4: control: the aligned second slot holding the same value gives lump 1");
+    }
 
     return check_summary("wad_bounds_test");
 }

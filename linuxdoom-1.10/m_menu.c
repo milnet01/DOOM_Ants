@@ -1403,12 +1403,17 @@ extern int	rb_rtdebug;			// r_vulkan.cpp: RT view/debug mode (6 = RT on, 0 = off
 // Returns NULL on failure. Column walk mirrors V_DrawPatch (v_video.c).
 static unsigned char* M_DecodePatchRGBA(const char* lump, int brightPct, int* out_w, int* out_h)
 {
-    patch_t* p = (patch_t*)W_CacheLumpName((char*)lump, PU_CACHE);   // legacy API takes char*
+    // DOOM-0432: the patch's offsets are its own; ask before following them.
+    int lumpnum = W_CheckNumForName((char*)lump);   // legacy API takes char*
+    if (lumpnum < 0 || !W_PatchLumpOk(lumpnum)) return NULL;
+    // PLAYPAL first: both are purgeable, and loading the palette second could
+    // free the patch this is about to walk (the DOOM-0406 shape).
+    const byte* pal = (const byte*)W_CacheLumpName("PLAYPAL", PU_CACHE);
+    if (!pal) return NULL;
+    patch_t* p = (patch_t*)W_CacheLumpNum(lumpnum, PU_CACHE);
     if (!p) return NULL;
     int w = SHORT(p->width), h = SHORT(p->height);
     if (w <= 0 || h <= 0) return NULL;
-    const byte* pal = (const byte*)W_CacheLumpName("PLAYPAL", PU_CACHE);
-    if (!pal) return NULL;
     unsigned char* rgba = (unsigned char*)calloc((size_t)w * h, 4);   // transparent
     if (!rgba) return NULL;
     for (int x = 0; x < w; x++)

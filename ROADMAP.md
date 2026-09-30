@@ -9667,7 +9667,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: in-session-2026-09-07, found while fixing DOOM-0400's reload TOCTOU.
   Lanes: wad-io.
 
-- 📋 [DOOM-0432] **V_DrawPatch trusts a patch's own column offsets, because it is never told how long the lump is.**
+- ✅ [DOOM-0432] **V_DrawPatch trusts a patch's own column offsets, because it is never told how long the lump is.**
   Split out of DOOM-0402, whose other seven findings are fixed. This one is
   an API change, not a bounds check, and doing it inside that bundle would
   have been either a quadratic reverse lookup or a hundred-call-site
@@ -9720,6 +9720,19 @@ stay in their phase sections; this heading holds only work still to come.
   the decisions. Wall-texture patches and sprites can be validated when
   `R_InitTextures` and `R_InitSpriteLumps` first meet them; the by-name
   HUD and menu patches are what still need a checked cache call.
+  Resolved (2026-09-30): built to docs/specs/DOOM-0432-patch-lump-validation.md,
+  a fourth design this bullet did not list. The whole lump is checked once
+  (PatchLumpValid) and the verdict kept per lump; a reader holding only a
+  pointer finds its lump through the zone block header, in constant time.
+  There is one blitter now (DOOM-0447), not three; the readers wired are
+  V_BlitPatch, F_DrawPatchCol, M_DecodePatchRGBA, the three texture
+  builders, R_DrawVisSprite, R_InitSpriteLumps and blit_tile. Two things
+  the review added: the stored wall-column offset was 16 bits wide and is
+  now exact, and the see-through wall walk skips a column that has no
+  posts. Three crafted fixtures crashed the old build and boot clean on
+  the new one; no stock lump in doom.wad or doom2.wad is refused.
+  Still open from the spec: R_DrawColumn reading past a short column
+  (its Q2), and nothing runs the see-through wall path.
   **Layman:** The software renderer draws pictures out of the WAD file while trusting the file's own description of where each piece of the picture lives. A crafted WAD can point that anywhere, and whatever is at that address gets drawn on screen.
   Kind: security.
   Source: review-code 2026-09-01, lane sw-renderer; split out of DOOM-0402 on 2026-09-12.
@@ -10055,6 +10068,20 @@ stay in their phase sections; this heading holds only work still to come.
   Kind: test.
   Source: in-session-2026-09-30 (DOOM-0390 closed without a Windows run).
   Lanes: renderer, windows.
+
+- 📋 [DOOM-0481] **R_DrawColumn samples its source through a mask wider than many columns are tall.**
+  `R_DrawColumn` indexes `dc_source[(frac>>FRACBITS)&127]`, so a column shorter
+  than the mask is read past its texels. For a single-patch wall column the
+  source is lump data (now validated as a patch by DOOM-0432, which bounds the
+  posts and not this read); for a composite column it is the composite block.
+  Stock textures shorter than the mask do this on every tall wall.
+  Work: decide how a short texture should tile (the mask assumes a power-of-two
+  height), then bound or wrap the read to the texture's real height. Needs the
+  demo fixtures and a pixel comparison of Classic before and after.
+  **Layman:** The classic wall drawer can read a few bytes past the end of a short picture column. Stock data does it too, so it is a tidy-up with a small safety gain, not a crash anyone has seen.
+  Kind: fix.
+  Source: in-session 2026-09-30 (DOOM-0432 spec, open question Q2).
+  Lanes: sw-renderer.
 
 ## 0.9.0 — The codebase can be trusted
 

@@ -19,6 +19,8 @@
 #ifndef WAD_BOUNDS_H
 #define WAD_BOUNDS_H
 
+#include <stdint.h>
+
 // Does a lump at `pos` of `size` bytes lie inside a file of `filelen` bytes?
 //
 // A zero size is legal and must stay so: marker lumps (MAP01, S_START, F_END)
@@ -59,6 +61,43 @@ static inline int WadCountFitsLump (int count, int lumplen,
     if (lumplen < headerbytes)
 	return 0;
     return count <= (lumplen - headerbytes) / entrybytes;
+}
+
+// DOOM-0432: which lump does a cached pointer belong to?
+//
+// W_CacheLumpNum hands Z_Malloc the address of the lump's own cache slot as the
+// block's owner, so the zone header in front of a cached lump leads straight
+// back to its slot. `user` is that owner field, read by Z_BlockUser. It is the
+// lump's index when it points at a slot of `cache` AND that slot still holds
+// `ptr`; anything else is -1.
+//
+// Both halves matter. An unowned block carries (void*)2 as its owner, and a
+// block owned by something other than the lump cache points elsewhere, so the
+// range and alignment test comes first and nothing is dereferenced until it
+// passes. The slot comparison then refuses a stale pointer whose lump has since
+// been loaded at another address.
+//
+// The comparisons are done on integers: relational operators on pointers into
+// different objects are undefined, and `user` is not ours until proven so.
+static inline int WadLumpOfUser (void* const* user, void* const* cache,
+				 int numlumps, const void* ptr)
+{
+    uintptr_t	u = (uintptr_t)user;
+    uintptr_t	base = (uintptr_t)cache;
+    uintptr_t	off;
+
+    if (!user || !cache || !ptr || numlumps <= 0)
+	return -1;
+    if (u < base)
+	return -1;
+    off = u - base;
+    if (off % sizeof(void*) != 0)
+	return -1;
+    if (off / sizeof(void*) >= (uintptr_t)numlumps)
+	return -1;
+    if (*user != ptr)
+	return -1;
+    return (int)(off / sizeof(void*));
 }
 
 #endif

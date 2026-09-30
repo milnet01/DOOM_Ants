@@ -394,6 +394,11 @@ R_DrawVisSprite
     patch_t*		patch;
 	
 	
+    // DOOM-0432: a sprite whose columns or posts point outside its lump is
+    // not drawn.
+    if (!W_PatchLumpOk (vis->patch+firstspritelump))
+	return;
+
     patch = W_CacheLumpNum (vis->patch+firstspritelump, PU_CACHE);
 
     dc_colormap = vis->colormap;

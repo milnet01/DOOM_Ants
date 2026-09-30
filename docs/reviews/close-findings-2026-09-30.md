@@ -150,4 +150,7 @@ Run-level fields for group B:
 
 ## Group C: DOOM-0432, patch column offsets in the software blitters
 
-Not started. The bullet asks for a choice between three designs first.
+Closed by a spec, not from this ledger: `docs/specs/DOOM-0432-patch-lump-validation.md`.
+The design is a fourth one the bullet did not list: the whole lump is checked
+once and the verdict kept per lump, found from a patch pointer through its zone
+block header. The spec's review record and its invariants carry the detail.

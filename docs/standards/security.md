@@ -19,6 +19,7 @@ validate before it trusts:
 | Input | Where it's parsed | The risk |
 |-------|-------------------|----------|
 | WAD directory & lumps | `w_wad.c` | lump count / offsets / lengths drive reads and allocations |
+| Patch graphics (pictures in a WAD) | `W_PatchLumpOk` / `W_PatchOk` in `w_wad.c`, over `PatchLumpValid` in `patch_bounds.h` | a patch's own column offsets and post lengths say where a reader reads; every reader asks the verdict first (DOOM-0432) |
 | In-WAD music (MUS→MIDI) | `mus2mid.c` | a header can over-declare its own size and read past the lump |
 | Netgame packets | `i_net.c`, `d_net.c` | packet fields (`numtics`, `player`) index fixed arrays |
 | Command line & `@response` files | `d_main.c` | arg counts, `-warp` operands, response-file tokens |

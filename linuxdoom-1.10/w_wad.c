@@ -49,6 +49,7 @@ rcsid[] __attribute__((used)) = "$Id: w_wad.c,v 1.5 1997/02/03 16:47:57 b1 Exp $
 #pragma implementation "w_wad.h"
 #endif
 #include "wad_bounds.h"
+#include "patch_bounds.h"
 #include "level_bounds.h"
 #include "w_wad.h"
 
@@ -66,6 +67,10 @@ lumpinfo_t*		lumpinfo;
 int			numlumps;
 
 void**			lumpcache;
+
+// DOOM-0432: one verdict per lump, beside lumpcache. See W_PatchLumpOk.
+enum { PATCH_UNASKED = 0, PATCH_GOOD, PATCH_REFUSED };
+static byte*		lumppatchok;
 
 // DOOM-0435: a hash chain over the lump directory, so a lookup by name probes
 // one short chain instead of scanning every lump. Built once, after the last
@@ -403,6 +408,9 @@ void W_Reload (void)
     {
 	if (lumpcache[i])
 	    Z_Free (lumpcache[i]);
+	// DOOM-0432: the bytes are about to change, so the verdict on the
+	// old ones says nothing.
+	lumppatchok[i] = PATCH_UNASKED;
 
 	lump_p->position = LONG(fileinfo->filepos);
 	lump_p->size = LONG(fileinfo->size);
@@ -523,6 +531,11 @@ void W_InitMultipleFiles (char** filenames)
 	I_Error ("Couldn't allocate lumpcache");
 
     memset (lumpcache,0, size);
+
+    lumppatchok = malloc (numlumps);
+    if (!lumppatchok)
+	I_Error ("Couldn't allocate lumppatchok");
+    memset (lumppatchok, PATCH_UNASKED, numlumps);
 
     W_InitLumpHash ();
 }
@@ -716,6 +729,79 @@ W_CacheLumpName
   int		tag )
 {
     return W_CacheLumpNum (W_GetNumForName(name), tag);
+}
+
+
+//
+// DOOM-0432: W_PatchLumpOk / W_PatchOk
+//
+// A patch's column offsets and post lengths are the lump's own, and most
+// readers hold only a pointer. So the whole lump is checked once
+// (PatchLumpValid, patch_bounds.h) and the answer kept per lump. A refused
+// patch is simply not drawn: one broken picture in a PWAD must not end the
+// game.
+//
+// Neither function may change the tag of a block that is already cached.
+// W_CacheLumpNum on a cached lump calls Z_ChangeTag, so asking through it
+// would turn a picture its holder cached PU_STATIC or PU_LEVEL into a
+// purgeable one on its first draw.
+//
+static boolean W_PatchVerdict (int lump, const void* data, int len)
+{
+    if (PatchLumpValid ((const unsigned char*)data, len))
+    {
+	lumppatchok[lump] = PATCH_GOOD;
+	return true;
+    }
+
+    lumppatchok[lump] = PATCH_REFUSED;
+
+    // A lump too short for a header is an empty marker, which PWADs carry
+    // among their sprites. It is refused like any other, without the line.
+    if (PatchHasHeader (len))
+	// Leading newline: startup prints progress dots with no line end.
+	printf ("\nW_Patch: refusing lump %.8s -- it is not a well-formed patch\n",
+		lumpinfo[lump].name);
+
+    return false;
+}
+
+boolean W_PatchLumpOk (int lump)
+{
+    int		len;
+
+    if ((unsigned)lump >= (unsigned)numlumps)
+	return false;
+
+    if (lumppatchok[lump] != PATCH_UNASKED)
+	return lumppatchok[lump] == PATCH_GOOD;
+
+    len = W_LumpLength (lump);
+
+    if (lumpcache[lump])
+	return W_PatchVerdict (lump, lumpcache[lump], len);
+
+    if (!PatchHasHeader (len))
+	return W_PatchVerdict (lump, NULL, len);
+
+    return W_PatchVerdict (lump, W_CacheLumpNum (lump, PU_CACHE), len);
+}
+
+// By the pointer itself. Allocates nothing, so it cannot purge the block it
+// is looking at.
+boolean W_PatchOk (const void* patch)
+{
+    int		lump;
+
+    lump = WadLumpOfUser ((void* const*)Z_BlockUser (patch),
+			  (void* const*)lumpcache, numlumps, patch);
+    if (lump < 0)
+	return false;
+
+    if (lumppatchok[lump] != PATCH_UNASKED)
+	return lumppatchok[lump] == PATCH_GOOD;
+
+    return W_PatchVerdict (lump, patch, W_LumpLength (lump));
 }
 
 

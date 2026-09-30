@@ -36,6 +36,7 @@ rcsid[] __attribute__((used)) = "$Id: v_video.c,v 1.5 1997/02/03 22:45:13 b1 Exp
 
 #include "m_bbox.h"
 #include "m_swap.h"
+#include "w_wad.h"	// W_PatchOk
 
 #include "v_video.h"
 
@@ -346,6 +347,11 @@ V_BlitPatch
 
     if (scale < 1) scale = 1;
     fs = f * scale;				// physical pixels per source pixel
+
+    // DOOM-0432: every offset and post length below is the lump's own. Ask
+    // once whether they all stay inside it; a refused patch is not drawn.
+    if (!W_PatchOk (patch))
+	return;
 
     y -= SHORT(patch->topoffset) * scale;
     x -= SHORT(patch->leftoffset) * scale;

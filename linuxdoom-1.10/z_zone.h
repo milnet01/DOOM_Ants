@@ -47,6 +47,10 @@
 void	Z_Init (void);
 void*	Z_Malloc (int size, int tag, void *ptr);
 void    Z_Free (void *ptr);
+// DOOM-0432: the owner of the zone block that starts at ptr, or NULL when the
+// header in front of ptr is not a live zone block's. ptr must be the start of
+// a zone allocation (or a pointer that once was one).
+void**  Z_BlockUser (const void *ptr);
 void    Z_FreeTags (int lowtag, int hightag);
 void    Z_CheckHeap (void);
 void    Z_ChangeTag2 (void *ptr, int tag);

@@ -166,7 +166,9 @@ int*			texturewidthmask;
 fixed_t*		textureheight;		
 int*			texturecompositesize;
 short**			texturecolumnlump;
-unsigned short**	texturecolumnofs;
+// DOOM-0432: a full lump offset. A 16-bit entry truncated the offset of a
+// patch over 64K, and the masked wall walk then started mid-lump.
+unsigned int**		texturecolumnofs;
 byte**			texturecomposite;
 
 // for global animation
@@ -193,6 +195,20 @@ lighttable_t	*colormaps;
 //  will have new column_ts generated.
 //
 
+
+
+//
+// R_TexPatchOk
+// DOOM-0432: may this patch of a texture be read? The three readers below
+// (R_GenerateLookup, R_GenerateComposite, R_RenderTextureToAtlas) must use or
+// skip exactly the same patches: if the lookup counted one the composite then
+// skipped, R_GetColumn would hand out a pointer into the refused lump. So they
+// all ask here, and none asks in its own words.
+//
+static boolean R_TexPatchOk (const texpatch_t* patch)
+{
+    return W_PatchLumpOk (patch->patch);
+}
 
 
 //
@@ -253,7 +269,7 @@ void R_GenerateComposite (int texnum)
     int			i;
     column_t*		patchcol;
     short*		collump;
-    unsigned short*	colofs;
+    unsigned int*	colofs;
 	
     texture = textures[texnum];
 
@@ -269,6 +285,9 @@ void R_GenerateComposite (int texnum)
 	 i<texture->patchcount;
 	 i++, patch++)
     {
+	if (!R_TexPatchOk (patch))
+	    continue;
+
 	realpatch = W_CacheLumpNum (patch->patch, PU_CACHE);
 	x1 = patch->originx;
 	x2 = x1 + SHORT(realpatch->width);
@@ -331,10 +350,16 @@ R_RenderTextureToAtlas
     for (i = 0; i < texture->patchcount; i++)
     {
 	texpatch_t*	patch     = &texture->patches[i];
-	patch_t*	realpatch = W_CacheLumpNum (patch->patch, PU_CACHE);
-	int		x1 = patch->originx;
-	int		x2 = x1 + SHORT(realpatch->width);
-	int		x  = x1 < 0 ? 0 : x1;
+	patch_t*	realpatch;
+	int		x1, x2, x;
+
+	if (!R_TexPatchOk (patch))
+	    continue;
+
+	realpatch = W_CacheLumpNum (patch->patch, PU_CACHE);
+	x1 = patch->originx;
+	x2 = x1 + SHORT(realpatch->width);
+	x  = x1 < 0 ? 0 : x1;
 
 	if (x2 > tilew)
 	    x2 = tilew;
@@ -378,7 +403,7 @@ void R_GenerateLookup (int texnum)
     int			x2;
     int			i;
     short*		collump;
-    unsigned short*	colofs;
+    unsigned int*	colofs;
 	
     texture = textures[texnum];
 
@@ -402,6 +427,9 @@ void R_GenerateLookup (int texnum)
 	 i<texture->patchcount;
 	 i++, patch++)
     {
+	if (!R_TexPatchOk (patch))
+	    continue;
+
 	realpatch = W_CacheLumpNum (patch->patch, PU_CACHE);
 	x1 = patch->originx;
 	x2 = x1 + SHORT(realpatch->width);
@@ -462,6 +490,31 @@ void R_GenerateLookup (int texnum)
 }
 
 
+
+
+//
+// R_GetPostColumn
+// DOOM-0432: the start of a texture column's post chain, for the masked wall
+// walk -- or NULL when the column has none. Only a column exactly one patch
+// covers is lump data with posts; any other lives in the composite as raw
+// texels (and a column whose only patch was refused is in that group too).
+//
+byte*
+R_GetPostColumn
+( int		tex,
+  int		col )
+{
+    int		lump;
+
+    col &= texturewidthmask[tex];
+    lump = texturecolumnlump[tex][col];
+
+    if (lump <= 0)
+	return NULL;
+
+    // The stored offset is past the three-byte post header (R_GenerateLookup).
+    return (byte *)W_CacheLumpNum(lump,PU_CACHE) + texturecolumnofs[tex][col] - 3;
+}
 
 
 //
@@ -693,7 +746,7 @@ void R_InitTextures (void)
 	    }
 	}		
 	texturecolumnlump[i] = Z_Malloc (texture->width*2, PU_STATIC,0);
-	texturecolumnofs[i] = Z_Malloc (texture->width*2, PU_STATIC,0);
+	texturecolumnofs[i] = Z_Malloc (texture->width*sizeof(**texturecolumnofs), PU_STATIC,0);
 
 	j = 1;
 	while (j*2 <= texture->width)
@@ -783,8 +836,11 @@ void R_InitSpriteLumps (void)
 
 	// DOOM-0221: a lump between the markers need not be a patch -- PWADs
 	// carry zero-length sub-markers there -- and vanilla read a header out
-	// of it regardless. A short lump is an empty sprite, not a refusal.
-	if (!PatchHasHeader (W_LumpLength (firstspritelump+i)))
+	// of it regardless. DOOM-0432: nor need a patch be well formed. Either
+	// way it is an empty sprite, not a refused WAD; W_PatchLumpOk says
+	// nothing about a bare marker and names a malformed patch once, here,
+	// so it shows in the boot log whether or not the sprite is ever drawn.
+	if (!W_PatchLumpOk (firstspritelump+i))
 	{
 	    spritewidth[i] = spriteoffset[i] = spritetopoffset[i] = 0;
 	    continue;

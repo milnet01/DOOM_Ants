@@ -37,6 +37,13 @@ R_GetColumn
 ( int		tex,
   int		col );
 
+// DOOM-0432: a column's post chain for the masked wall walk, or NULL when
+// the column is not plain lump data.
+byte*
+R_GetPostColumn
+( int		tex,
+  int		col );
+
 
 // I/O, setting up the stuff.
 void R_InitData (void);

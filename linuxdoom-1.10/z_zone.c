@@ -109,6 +109,23 @@ static int Z_HasUser (memblock_t* block)
 }
 
 
+void** Z_BlockUser (const void* ptr)
+{
+    const memblock_t*	block;
+
+    if (!ptr)
+	return NULL;
+
+    block = (const memblock_t *) ( (const byte *)ptr - sizeof(memblock_t));
+
+    // Z_Free clears the id, so a freed block answers NULL here too.
+    if (block->id != ZONEID)
+	return NULL;
+
+    return block->user;
+}
+
+
 void Z_Free (void* ptr)
 {
     memblock_t*		block;

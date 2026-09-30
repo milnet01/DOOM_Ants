@@ -178,10 +178,13 @@ R_RenderMaskedSegRange
 	    dc_iscale = 0xffffffffu / (unsigned)spryscale;
 	    
 	    // draw the texture
-	    col = (column_t *)( 
-		(byte *)R_GetColumn(texnum,maskedtexturecol[dc_x]) -3);
-			
-	    R_DrawMaskedColumn (col);
+	    // DOOM-0432: only a column one patch covers has posts to walk.
+	    // A composite column is raw texels, and walking it as posts
+	    // followed whatever bytes were there.
+	    col = (column_t *)R_GetPostColumn(texnum,maskedtexturecol[dc_x]);
+
+	    if (col)
+		R_DrawMaskedColumn (col);
 	    maskedtexturecol[dc_x] = MAXSHORT;
 	}
 	spryscale += rw_scalestep;

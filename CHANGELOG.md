@@ -20,6 +20,14 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Security
 
+- **A malformed picture in a game-data file is no longer followed off the end of its data** (DOOM-0432)
+  Every picture (status bar, menu, sprite, wall patch) is now checked once,
+  whole, before anything draws from it. One that points outside its own
+  data is skipped and named in the log; the game carries on. Before, a
+  crafted file could crash the game from the status bar, a weapon sprite
+  or a wall. See-through walls also stop walking columns that have no
+  picture data behind them, which was a second way to the same crash.
+
 - **A map whose BSP tree loops back on itself, or that has no subsectors, is refused with a clear message.** (DOOM-0093)
   A crafted map could make the game hang at full CPU or crash while
   loading. The loader now checks the tree before anything walks it.

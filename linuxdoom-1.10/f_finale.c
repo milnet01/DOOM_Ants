@@ -633,6 +633,12 @@ F_DrawPatchCol
     byte*	desttop;
     int		count;
 
+    // DOOM-0432: the verdict covers the columns the patch declares. The
+    // caller passes a screen column, so a replacement picture narrower than
+    // the screen must be bounded here as well.
+    if (!W_PatchOk (patch) || col < 0 || col >= SHORT(patch->width))
+	return;
+
     column = (column_t *)((byte *)patch + LONG(patch->columnofs[col]));
     desttop = bunnyscreen+x;
 

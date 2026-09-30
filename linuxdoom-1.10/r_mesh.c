@@ -1719,6 +1719,12 @@ static void blit_tile(unsigned char* dst, int dstw, int id, int ox, int oy,
         // a remote one. Called from inside the post loop, as it was, that purge
         // freed the patch mid-walk and the walk carried on reading it.
         (void)sprite_opaque_black();
+
+        // DOOM-0432: a patch the other readers refuse is refused here too,
+        // whole, so the tiers agree. The per-read bounds below stay.
+        if (!W_PatchLumpOk(sprnum))
+            return;
+
         patch = W_CacheLumpNum(sprnum, PU_CACHE);
 
         if (!PatchHeaderFits(sprlen, w))
