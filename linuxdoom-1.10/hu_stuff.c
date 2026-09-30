@@ -35,6 +35,7 @@ rcsid[] __attribute__((used)) = "$Id: hu_stuff.c,v 1.4 1997/02/03 16:47:52 b1 Ex
 
 #include "hu_stuff.h"
 #include "hu_lib.h"
+#include "hu_bounds.h"	// HU_CopyMessage (DOOM-0250)
 #include "w_wad.h"
 #include "v_video.h"
 #include "i_system.h"
@@ -934,7 +935,9 @@ boolean HU_Responder(event_t *ev)
 	    
 	    // leave chat mode and notify that it was sent
 	    chat_on = false;
-	    strcpy(lastmessage, chat_macros[c]);
+	    // DOOM-0250: a macro comes from ~/.doomrc and can be longer than
+	    // lastmessage; strcpy wrote past the buffer.
+	    HU_CopyMessage(lastmessage, sizeof lastmessage, chat_macros[c]);
 	    plr->message = lastmessage;
 	    eatkey = true;
 	}
@@ -960,7 +963,7 @@ boolean HU_Responder(event_t *ev)
 		chat_on = false;
 		if (w_chat.l.len)
 		{
-		    strcpy(lastmessage, w_chat.l.l);
+		    HU_CopyMessage(lastmessage, sizeof lastmessage, w_chat.l.l);
 		    plr->message = lastmessage;
 		}
 	    }

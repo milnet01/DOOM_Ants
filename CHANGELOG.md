@@ -6,6 +6,13 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+
+- **A long chat macro in the config file no longer writes past the HUD's message buffer.** (DOOM-0250)
+  A chat macro longer than 80 characters, hand-edited into the settings
+  file, overran a fixed buffer when sent in a network game. It is now
+  cut to fit.
+
 ## [0.7.3] - 2026-09-28
 
 ### Changed

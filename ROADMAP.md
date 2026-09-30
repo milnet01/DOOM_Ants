@@ -9079,8 +9079,18 @@ stay in their phase sections; this heading holds only work still to come.
   Kind: fix.
   Source: indie-review 2026-07-23 (platform-io, LOW).
 
-- 📋 [DOOM-0250] **Review the 28 unbounded strcpy/strcat sites semgrep flags.**
+- ✅ [DOOM-0250] **Review the 28 unbounded strcpy/strcat sites semgrep flags.**
   semgrep insecure-use-string-copy-fn/strcat across d_main.c(5), m_menu.c(5), rb_materials.h(4), g_game.c(3), hu_stuff.c(2), m_misc.c(2), w_wad.c(2), wi_stuff.c(2), i_sound.c, d_net.c, r_data.c, sndserv/wadread.c. Most copy fixed-size lump names between fixed-size buffers and are safe by construction, but rb_materials.h is OUR code parsing an on-disk sidecar CSV — that one is attacker-adjacent (DOOM-0042 materials.csv) and should be checked first. Triage each; convert the genuinely unbounded ones to snprintf.
+  Resolved (2026-09-30): every strcpy/strcat site still in the tree was
+  read. One was real: HU_Responder copied a chat macro from the config
+  file into the 81-byte lastmessage with strcpy, and the config accepts
+  a 97-character macro. Both copies into that buffer now go through
+  HU_CopyMessage (hu_bounds.h), locked by tests/hu_bounds_test.cpp.
+  The rest are bounded by construction, literals, unreachable from
+  outside data, or not compiled; per-site reasons are rows B3 to B13 of
+  docs/reviews/close-findings-2026-09-30.md. rb_materials.h, which this
+  item said to check first, is safe. The sprintf sites were not part of
+  this item and were not re-triaged.
   **Layman:** Old-style text-copying calls that don't check length — mostly harmless here, but worth a proper look.
   Kind: security.
   Source: debt-sweep-2026-07-26.
