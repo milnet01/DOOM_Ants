@@ -19,6 +19,9 @@
 // first ->width, instead of calling PatchHasHeader. tile_size and
 // ensure_sprite_heights still call PatchHasHeader.
 //
+// DOOM-0479 (labels begin "DOOM-0479"): pathtrace.comp's primary ray loop caps its
+// candidates with kMaxPrimaryCandidates and ends traversal with rayQueryTerminateEXT.
+//
 // Not caught: a call that exists in the right place but whose result is
 // discarded (INV-3 checks only that an I_Error follows LevelBspIsTree, and INV-1
 // that AtlasRowsFit precedes the calloc). The unit tests hold the decision;
@@ -34,6 +37,7 @@
 #include <cctype>
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -554,6 +558,102 @@ int main()
             check(t != std::string::npos && n != std::string::npos && t < n,
                   "DOOM-0432 INV-10: R_GetPostColumn tests texturecolumnlump ahead of returning NULL");
         }
+    }
+
+    // =====================================================================
+    // DOOM-0479: the ray-traced view's primary ray loop caps its candidates.
+    // Why this exists: `while (rayQueryProceedEXT(rq))` in pathtrace.comp had
+    // nothing bounding the candidates per ray, so thousands of stacked
+    // see-through sprites or walls on one sight line made a frame cost seconds
+    // (4000 trees = 365 ms) and, long enough, a device timeout.
+    // =====================================================================
+    {
+        const std::string pt = strip(slurp("shaders/pathtrace.comp"));
+
+        // ---- Clause 1: `const uint kMaxPrimaryCandidates = N`, 64 <= N <= 4096.
+        {
+            const char* const nm = "kMaxPrimaryCandidates";
+            bool declared = false;
+            unsigned long val = 0;
+            for (size_t at = 0; (at = pt.find(nm, at)) != std::string::npos; at += 1)
+            {
+                const size_t end = at + std::string(nm).size();
+                if ((at > 0 && isIdent(pt[at - 1])) || (end < pt.size() && isIdent(pt[end]))) continue;
+                size_t ls = pt.find_last_of(";{}\n", at);
+                ls = (ls == std::string::npos) ? 0 : ls + 1;
+                const std::string lead = pt.substr(ls, at - ls);
+                const size_t eq = skipws(pt, end);
+                if (whole_tok(lead, "const") == std::string::npos ||
+                    whole_tok(lead, "uint") == std::string::npos ||
+                    eq >= pt.size() || pt[eq] != '=' || (eq + 1 < pt.size() && pt[eq + 1] == '='))
+                    continue;
+                const size_t num = skipws(pt, eq + 1);
+                if (num < pt.size() && std::isdigit((unsigned char)pt[num]))
+                {
+                    declared = true;
+                    val = std::strtoul(pt.c_str() + num, nullptr, 0);
+                    break;
+                }
+            }
+            check(declared,
+                  "DOOM-0479: pathtrace.comp declares `const uint kMaxPrimaryCandidates = <literal>`");
+            check(declared && val >= 64 && val <= 4096,
+                  "DOOM-0479: kMaxPrimaryCandidates is within [64, 4096] (clear of real content, still a cap)");
+            if (declared && (val < 64 || val > 4096))
+                std::printf("    expected 64..4096, actual %lu\n", val);
+        }
+
+        // ---- Clauses 2 and 3: the loop on `rq` (not the empty shadow loops on `sq`).
+        std::string lb;
+        {
+            const std::string key = "rayQueryProceedEXT(rq)";
+            const size_t at = pt.find(key);
+            bool found = false;
+            if (at != std::string::npos)
+            {
+                size_t i = skipws(pt, at + key.size());
+                if (i < pt.size() && pt[i] == ')')      // the `while (` closing paren
+                {
+                    i = skipws(pt, i + 1);
+                    if (i < pt.size() && pt[i] == '{')
+                    {
+                        const size_t open = i;
+                        int depth = 0;
+                        for (; i < pt.size(); i++)
+                        {
+                            if (pt[i] == '{') depth++;
+                            else if (pt[i] == '}' && --depth == 0)
+                            { lb = pt.substr(open + 1, i - open - 1); found = true; break; }
+                        }
+                    }
+                }
+            }
+            if (!found)
+            {
+                std::printf("  FAIL: DOOM-0479: cannot find the body of `while (rayQueryProceedEXT(rq))` in pathtrace.comp\n");
+                g_failures++;
+            }
+        }
+        const size_t cap = whole_tok(lb, "kMaxPrimaryCandidates");
+        check(cap != std::string::npos,
+              "DOOM-0479: the primary candidate loop names kMaxPrimaryCandidates");
+        check(call_pos(lb, "rayQueryTerminateEXT") != std::string::npos &&
+              lb.find("rayQueryTerminateEXT(rq)") != std::string::npos,
+              "DOOM-0479: the primary candidate loop calls rayQueryTerminateEXT(rq)");
+
+        bool cmp = false;
+        if (cap != std::string::npos)
+        {
+            const size_t after = skipws(lb, cap + 21);
+            size_t before = cap;
+            while (before > 0 && std::isspace((unsigned char)lb[before - 1])) before--;
+            const char a = after < lb.size() ? lb[after] : 0;
+            const char p = before > 0 ? lb[before - 1] : 0;
+            cmp = a == '<' || a == '>' || a == '=' || a == '!' || p == '<' || p == '>' || p == '=';
+        }
+        size_t tex = std::min(whole_tok(lb, "spriteCandidateOpaque"), whole_tok(lb, "worldCandidateOpaque"));
+        check(cap != std::string::npos && cmp && tex != std::string::npos && cap < tex,
+              "DOOM-0479: the kMaxPrimaryCandidates comparison comes before the first spriteCandidateOpaque/worldCandidateOpaque call in the loop");
     }
 
     return check_summary("bounds_wiring");

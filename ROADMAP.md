@@ -10039,7 +10039,7 @@ stay in their phase sections; this heading holds only work still to come.
   matches Classic — see the 2026-07-01 investigation note above; the proposed
   ang/(2*PI) change would be a regression. No further action.
 
-- 📋 [DOOM-0479] **A map of stacked see-through walls can stall a ray-traced frame until the driver resets the device.**
+- ✅ [DOOM-0479] **A map of stacked see-through walls can stall a ray-traced frame until the driver resets the device.**
   `pathtrace.comp`'s primary ray runs `while (rayQueryProceedEXT(rq))` over every
   non-opaque triangle it crosses, out to 1e9 units, and each candidate costs
   buffer reads and, for a masked wall or a sprite, a texture fetch. Nothing caps
@@ -10051,6 +10051,19 @@ stay in their phase sections; this heading holds only work still to come.
   must sit well above their worst case), then cap it and commit the nearest
   candidate found so far. The megakernel is register-pressure sensitive
   (DOOM-0090), so time the frame before and after.
+  Resolved (2026-09-30): `kMaxPrimaryCandidates = 256u` in pathtrace.comp; the
+  primary loop counts candidates ahead of the alpha test and ends the traversal
+  with rayQueryTerminateEXT past the cap, keeping the nearest confirmed hit.
+  Measured first, as the bullet asked: a temporary counter view at the start of
+  every map in doom.wad and doom2.wad showed no pixel above 16 candidates and
+  almost none above 8. Map starts only; no mid-map views were sampled.
+  Fixture `make_map_fixture.py stackedtrees` (4000 trees on one spot, MAP01):
+  megakernel 120 ms uncapped, 32 ms capped, on the RX 6600. Stock MAP01
+  megakernel 1.30 ms before and 1.28 to 1.31 ms after; `-rtview 3` captures of
+  MAP01 and E1M7 are pixel-identical before and after; -rtverify PASS; no
+  validation messages. Past the cap a ray that confirmed nothing draws as sky,
+  which is what the fixture's gaps show. The cap bounds candidates per ray, so
+  the worst frame still scales with screen area: about 256 tests on every pixel.
   **Layman:** A deliberately built map could make the ray-traced view so slow that the graphics driver gives up and the game exits.
   Kind: security.
   Source: review 2026-09-30 (DOOM-0093 pass, shaders lane, L22 in docs/reviews/close-findings-2026-09-30.md).

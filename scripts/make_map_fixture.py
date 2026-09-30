@@ -36,6 +36,7 @@ rather than deleting, and orphanline is the mode that gets past it.
     segnoback     a two-sided line loses its back side DOOM-0399  I_Error, by name
     bspcycle      the root node names itself a child DOOM-0093   I_Error, by name
     nosubsectors  SSECTORS and NODES both emptied  DOOM-0093    I_Error, by name
+    stackedtrees  thousands of trees on one spot   DOOM-0479    ray-traced frame stalls
 
 Usage:  make_map_fixture.py <mode> <iwad> <out.wad>
 
@@ -397,6 +398,33 @@ def mutate_nostart(group):
     return replace(group, "THINGS", bytes(things))
 
 
+STACKED_TREES = 4000    # DOOM-0479: far above any stock map's sight line
+BIG_TREE = 54           # doomednum of the large brown tree (TRE2)
+
+
+def mutate_stackedtrees(group):
+    """Stand thousands of trees on one spot in front of the player-1 start.
+
+    A tree sprite is mostly gaps. In the ray-traced view every sprite is a
+    see-through candidate the primary ray must alpha-test, so a ray through
+    the gaps of this stack meets every one of them and commits none. It is
+    the cheapest map content that makes one ray cost thousands of texture
+    reads (DOOM-0479). Nothing is mutated, only appended.
+    """
+    import math
+    things = dict(group)["THINGS"]
+    for i in range(len(things) // THING_SIZE):
+        x, y, angle, ttype, _ = struct.unpack_from("<hhhhh", things, i * THING_SIZE)
+        if ttype == 1:
+            break
+    else:
+        raise SystemExit("that map has no player-1 start to stand trees before")
+    tx = x + int(round(96 * math.cos(math.radians(angle))))
+    ty = y + int(round(96 * math.sin(math.radians(angle))))
+    extra = struct.pack("<hhhhh", tx, ty, 0, BIG_TREE, ALL_SKILLS) * STACKED_TREES
+    return replace(group, "THINGS", things + extra)
+
+
 def mutate_bspcycle(group):
     """Make the root node name itself as its first child.
 
@@ -437,6 +465,7 @@ MODES = {
     "segnoback": mutate_segnoback,
     "bspcycle": mutate_bspcycle,
     "nosubsectors": mutate_nosubsectors,
+    "stackedtrees": mutate_stackedtrees,
 }
 
 

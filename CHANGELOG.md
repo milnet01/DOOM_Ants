@@ -20,6 +20,15 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Security
 
+- **A map that stacks see-through things along one line of sight can no longer stall the ray-traced view** (DOOM-0479)
+  Each ray now tests at most 256 see-through surfaces (sprites, grates)
+  before it gives up and keeps the nearest solid thing it found. The stock
+  maps never come near that: none met more than 16 at any map's start. A
+  test map with 4000 trees on one spot went from 8 frames a second to 27,
+  and the stock game draws the same picture at the same speed (measured
+  on two maps). Without the limit a larger stack could hold one frame long
+  enough for the graphics driver to reset, which ends the game.
+
 - **A malformed picture in a game-data file is no longer followed off the end of its data** (DOOM-0432)
   Every picture (status bar, menu, sprite, wall patch) is now checked once,
   whole, before anything draws from it. One that points outside its own

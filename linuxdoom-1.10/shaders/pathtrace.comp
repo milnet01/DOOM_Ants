@@ -408,6 +408,13 @@ const float FLASHLIGHT_RADIUS2   = 2.5e4;  // (~158 u)^2 near-field softening: t
                                            // can't blow up to a white blob when the player is
                                            // right against a wall. Caps the near-field peak
                                            // while leaving the mid/far gradient intact.
+// DOOM-0479: the most see-through candidates one primary ray may test.
+// Measured 2026-09-30 at the start of every map in doom.wad and doom2.wad: no
+// pixel met more than 16. A fixture of 4000 trees on one spot
+// (make_map_fixture.py stackedtrees) took the megakernel from 1.3 ms to 120 ms
+// uncapped; a map is free to stack ten times that, and a frame that long is a
+// device timeout. 256 leaves stock content sixteen-fold headroom.
+const uint kMaxPrimaryCandidates = 256u;
 
 // DOOM-0100: a sprite billboard candidate is "opaque" (a real hit) only where its
 // paletted texel is not index 0 (the transparent cut-out key). The sprite BLAS is
@@ -1565,10 +1572,21 @@ void main()
     // candidates commit unless they are a masked mid-wall's index-0 gap (DOOM-0163).
     rayQueryInitializeEXT(rq, topAS, gl_RayFlagsNoneEXT, 0xFFu,
                           origin, 0.01, dir, 1.0e9);
+    // DOOM-0479: ration the candidates. Each one costs buffer reads and, for a
+    // sprite or a masked wall, a texture fetch, and nothing else bounds how many
+    // a map can stack along one sight line. Past the cap the traversal ends and
+    // the nearest hit confirmed so far stands; a ray that confirmed nothing is a
+    // miss. See kMaxPrimaryCandidates for the figures.
+    uint candidates = 0u;
     while (rayQueryProceedEXT(rq)) {
         if (rayQueryGetIntersectionTypeEXT(rq, false)
             == gl_RayQueryCandidateIntersectionTriangleEXT)
         {
+            if (++candidates > kMaxPrimaryCandidates)
+            {
+                rayQueryTerminateEXT(rq);
+                break;
+            }
             bool keep = (rayQueryGetIntersectionInstanceCustomIndexEXT(rq, false) == 1)
                       ? spriteCandidateOpaque(rq)      // billboard sprite
                       : worldCandidateOpaque(rq);      // world wall/flat, masked mid-wall alpha-tested
