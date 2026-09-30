@@ -9189,8 +9189,19 @@ stay in their phase sections; this heading holds only work still to come.
   Kind: security.
   Source: debt-sweep-2026-07-26.
 
-- 📋 [DOOM-0257] **BuildHdSet aborts on GPU allocation failure instead of falling back to the paletted set.**
+- ✅ [DOOM-0257] **BuildHdSet aborts on GPU allocation failure instead of falling back to the paletted set.**
   r_vulkan.cpp:5956-5959 uses fatal Check()/I_Error, contradicting the documented contract that g.hdSet always ends valid with InitHdDefault's paletted fallback.
+  Resolved (2026-09-30): UploadImageBatch has a may-fail mode in which a refused
+  allocation (the images' device memory or the staging buffer) destroys what it
+  made and returns false; BuildHdSet passes that on; EnsureHdMaterials then
+  drops every material to paletted, keeps the liquid flags, and builds the
+  one-texel set. The atlas upload and InitHdDefault keep the fatal mode.
+  Proved with a fault-injection argument in developer builds, `-hdallocfail`:
+  the log reads "not enough video memory for the HD set (221.9 MB) - Ultra uses
+  paletted art", the level runs, and the validation layer is silent. The same
+  build without the argument loads its 18 materials as before. A real
+  out-of-memory refusal from a driver was not produced; image-view creation and
+  the small control buffer stay fatal.
   **Layman:** If the HD texture upload runs out of video memory the game quits instead of dropping to the classic textures.
   Kind: fix.
   Source: indie-review-2026-07-26 vk-frame.

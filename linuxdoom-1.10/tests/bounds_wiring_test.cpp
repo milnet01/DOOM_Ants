@@ -773,6 +773,70 @@ int main()
             }
         }
 
+        // ---- DOOM-0257: running out of video memory while uploading the Ultra HD set
+        // must fall back to paletted art, not quit. Why: UploadImageBatch's big
+        // allocations were fatal although EnsureHdMaterials promises a valid hdSet.
+        {
+            auto has_return_false = [](const std::string& body) {
+                for (size_t at = 0; (at = body.find("return", at)) != std::string::npos; at += 6)
+                {
+                    if ((at > 0 && isIdent(body[at - 1])) || isIdent(body[at + 6])) continue;
+                    const size_t f = skipws(body, at + 6);
+                    if (body.compare(f, 5, "false") == 0 && !(f + 5 < body.size() && isIdent(body[f + 5])))
+                        return true;
+                }
+                return false;
+            };
+
+            // 1. the DEFINITION of BuildHdSet is declared `static bool`.
+            {
+                bool found = false, isBool = false;
+                const std::string key = "BuildHdSet";
+                for (size_t at = 0; (at = vk.find(key, at)) != std::string::npos; at += key.size())
+                {
+                    const size_t end = at + key.size();
+                    if ((at > 0 && isIdent(vk[at - 1])) || isIdent(vk[end])) continue;
+                    size_t i = skipws(vk, end);
+                    if (i >= vk.size() || vk[i] != '(') continue;
+                    int depth = 0;
+                    for (; i < vk.size(); i++)
+                    {
+                        if (vk[i] == '(') depth++;
+                        else if (vk[i] == ')' && --depth == 0) { i++; break; }
+                    }
+                    i = skipws(vk, i);
+                    if (i >= vk.size() || vk[i] != '{') continue;   // a call or a prototype
+                    found = true;
+                    size_t ls = vk.find_last_of(";{}", at);
+                    ls = ls == std::string::npos ? 0 : ls + 1;
+                    const std::string lead = vk.substr(ls, at - ls);
+                    isBool = whole_tok(lead, "static") != std::string::npos &&
+                             whole_tok(lead, "bool") != std::string::npos;
+                    break;
+                }
+                check(found, "DOOM-0257: found the definition of BuildHdSet in r_vulkan.cpp");
+                check(found && isBool, "DOOM-0257: BuildHdSet is defined `static bool` (it can fail)");
+            }
+            // 2. EnsureHdMaterials tests BuildHdSet's result.
+            if (get_body("r_vulkan.cpp", vk, "EnsureHdMaterials", &b))
+            {
+                bool negated = false;
+                for (size_t at = 0; (at = b.find("BuildHdSet", at)) != std::string::npos; at += 10)
+                {
+                    if (at > 0 && isIdent(b[at - 1])) continue;
+                    size_t before = at;
+                    while (before > 0 && std::isspace((unsigned char)b[before - 1])) before--;
+                    if (before > 0 && b[before - 1] == '!') negated = true;
+                }
+                check(negated, "DOOM-0257: EnsureHdMaterials tests `!BuildHdSet(` to fall back to paletted art");
+            }
+            // 3 and 4. the two upload functions can fail.
+            if (get_body("r_vulkan.cpp", vk, "UploadImageBatch", &b))
+                check(has_return_false(b), "DOOM-0257: UploadImageBatch can `return false` on a failed allocation");
+            if (get_body("r_vulkan.cpp", vk, "BuildHdSet", &b))
+                check(has_return_false(b), "DOOM-0257: BuildHdSet can `return false`");
+        }
+
         // ---- DOOM-0229: the box-filter accumulator is wider than 32 bits.
         {
             const std::string img = strip(slurp("rb_image.c"));

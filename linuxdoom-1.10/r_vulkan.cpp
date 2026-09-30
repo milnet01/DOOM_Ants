@@ -5495,16 +5495,61 @@ static void ComputeMaterialEmissive(const rb_atlas_t* a, std::vector<float>& out
 // texels, tightly packed.
 struct BatchImage { uint32_t w, h, texelBytes; VkFormat format; };
 
+// DOOM-0257: a host-visible transfer-source buffer that reports failure instead
+// of ending the game. CreateRtBuffer is the fatal twin every other caller uses.
+static bool TryCreateStagingBuffer(VkDeviceSize size, VkBuffer* buf, VkDeviceMemory* mem)
+{
+    VkBufferCreateInfo bci = {};
+    bci.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bci.size        = size;
+    bci.usage       = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (vkCreateBuffer(g.device, &bci, nullptr, buf) != VK_SUCCESS)
+        return false;
+
+    VkMemoryRequirements req = {};
+    vkGetBufferMemoryRequirements(g.device, *buf, &req);
+    VkMemoryAllocateInfo mai = {};
+    mai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    mai.allocationSize  = req.size;
+    mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    if (vkAllocateMemory(g.device, &mai, nullptr, mem) != VK_SUCCESS
+        || vkBindBufferMemory(g.device, *buf, *mem, 0) != VK_SUCCESS)
+    {
+        if (*mem) { vkFreeMemory(g.device, *mem, nullptr); *mem = VK_NULL_HANDLE; }
+        vkDestroyBuffer(g.device, *buf, nullptr);
+        *buf = VK_NULL_HANDLE;
+        return false;
+    }
+    return true;
+}
+
+// DOOM-0257: returns false only in mayFail mode, when one of the two large
+// allocations (the images' device memory, the staging buffer) is refused. It
+// has then destroyed everything it made, and `images`, `views` and `memory`
+// are empty. In the default mode a refused allocation is fatal, as before.
+// injectFail makes the first allocation report failure without asking the
+// driver, so the fallback can be exercised on a machine with memory to spare.
 template <class Fill>
-static void UploadImageBatch(const std::vector<BatchImage>& imgs, Fill fill,
+static bool UploadImageBatch(const std::vector<BatchImage>& imgs, Fill fill,
                              VkPipelineStageFlags readStage, const char* tag,
                              std::vector<VkImage>& images,
-                             std::vector<VkImageView>& views, VkDeviceMemory& memory)
+                             std::vector<VkImageView>& views, VkDeviceMemory& memory,
+                             bool mayFail = false, bool injectFail = false)
 {
     auto what = [&](const char* call) { return VkWhat(call, tag); };
     const int n = (int)imgs.size();
     images.assign(n, VK_NULL_HANDLE);
     views.assign(n, VK_NULL_HANDLE);
+    memory = VK_NULL_HANDLE;
+    auto giveUp = [&]() {
+        for (VkImage im : images) if (im) vkDestroyImage(g.device, im, nullptr);
+        images.clear();
+        views.clear();
+        if (memory) { vkFreeMemory(g.device, memory, nullptr); memory = VK_NULL_HANDLE; }
+        return false;
+    };
 
     std::vector<VkDeviceSize> imgOffset(n);
     VkDeviceSize memBytes = 0;
@@ -5536,7 +5581,16 @@ static void UploadImageBatch(const std::vector<BatchImage>& imgs, Fill fill,
     mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     mai.allocationSize = memBytes;
     mai.memoryTypeIndex = FindMemoryType(memTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    Check(vkAllocateMemory(g.device, &mai, nullptr, &memory), what("vkAllocateMemory"));
+    {
+        const VkResult ar = injectFail ? VK_ERROR_OUT_OF_DEVICE_MEMORY
+                                       : vkAllocateMemory(g.device, &mai, nullptr, &memory);
+        if (ar != VK_SUCCESS)
+        {
+            memory = VK_NULL_HANDLE;
+            if (mayFail) return giveUp();
+            Check(ar, what("vkAllocateMemory"));
+        }
+    }
     for (int i = 0; i < n; i++)
         Check(vkBindImageMemory(g.device, images[i], memory, imgOffset[i]), what("vkBindImageMemory"));
 
@@ -5552,9 +5606,15 @@ static void UploadImageBatch(const std::vector<BatchImage>& imgs, Fill fill,
     }
     VkBuffer staging = VK_NULL_HANDLE;
     VkDeviceMemory stagingMem = VK_NULL_HANDLE;
-    CreateRtBuffer(stageBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                   &staging, &stagingMem, "batch staging");
+    if (mayFail)
+    {
+        if (!TryCreateStagingBuffer(stageBytes, &staging, &stagingMem))
+            return giveUp();
+    }
+    else
+        CreateRtBuffer(stageBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                       &staging, &stagingMem, "batch staging");
     unsigned char* sp = nullptr;
     Check(vkMapMemory(g.device, stagingMem, 0, stageBytes, 0, (void**)&sp), what("vkMapMemory staging"));
     for (int i = 0; i < n; i++)
@@ -5612,6 +5672,7 @@ static void UploadImageBatch(const std::vector<BatchImage>& imgs, Fill fill,
         vci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
         Check(vkCreateImageView(g.device, &vci, nullptr, &views[i]), what("vkCreateImageView"));
     }
+    return true;
 }
 
 void UploadAtlas()
@@ -6538,7 +6599,11 @@ static void CreateHdSetLayout()
 // SSBO, then write both bindings. An empty srcs list still creates one 1x1 dummy so
 // binding 1 is never a zero-length array. Frees any prior HD resources first. The
 // caller still owns srcs[].px and may free it once this returns (copied to staging).
-static void BuildHdSet(const std::vector<HdSrc>& srcsIn, const rb_matctrl_t* table, int nmat)
+// DOOM-0257: returns false only with mayFail, when the image upload could not
+// get its memory. Nothing of the set then exists; the caller builds a smaller
+// one. Without mayFail a refused allocation is fatal.
+static bool BuildHdSet(const std::vector<HdSrc>& srcsIn, const rb_matctrl_t* table, int nmat,
+                       bool mayFail = false, bool injectFail = false)
 {
     FreeHdMaterials();
 
@@ -6552,9 +6617,11 @@ static void BuildHdSet(const std::vector<HdSrc>& srcsIn, const rb_matctrl_t* tab
     for (int i = 0; i < nimg; i++)
         imgs[i] = { (uint32_t)srcs[i].w, (uint32_t)srcs[i].h, 4,
                     srcs[i].srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM };
-    UploadImageBatch(imgs, [&](int i, unsigned char* dst) {
-        std::memcpy(dst, srcs[i].px, (size_t)srcs[i].w * srcs[i].h * 4);
-    }, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, "hd", g.hdImages, g.hdViews, g.hdMemory);
+    if (!UploadImageBatch(imgs, [&](int i, unsigned char* dst) {
+            std::memcpy(dst, srcs[i].px, (size_t)srcs[i].w * srcs[i].h * 4);
+        }, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, "hd", g.hdImages, g.hdViews, g.hdMemory,
+        mayFail, injectFail))
+        return false;
 
     // 5. Control SSBO (device-local), staged upload.
     VkDeviceSize ctrlBytes = (VkDeviceSize)nmat * sizeof(rb_matctrl_t);
@@ -6619,6 +6686,7 @@ static void BuildHdSet(const std::vector<HdSrc>& srcsIn, const rb_matctrl_t* tab
     writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     writes[1].pImageInfo = imgInfos.data();
     vkUpdateDescriptorSets(g.device, 2, writes, 0, nullptr);
+    return true;
 }
 
 // DOOM-0042: seed set 3 with an all-paletted control table (usePBR=0 everywhere) and a
@@ -6919,7 +6987,30 @@ static void EnsureHdMaterials()
 
     // 7. Build the set (uploads images + SSBO), then free every decoded image (kept
     //    ones were copied to staging; dropped ones were never uploaded).
-    BuildHdSet(srcs, table.data(), N);
+    //    DOOM-0257: if the video memory for it is refused, drop every material to
+    //    paletted and build the set that always fits, which is what "always ends
+    //    with a valid g.hdSet" above promises. The liquid flags stay: they ride the
+    //    table whether or not a material has HD art.
+    {
+        bool injectFail = false;
+#ifdef DOOM_DEV
+        injectFail = M_CheckParm("-hdallocfail") != 0;   // exercise the fallback on demand
+#endif
+        if (!BuildHdSet(srcs, table.data(), N, true, injectFail))
+        {
+            printf("DOOM-0042: not enough video memory for the HD set (%.1f MB) - "
+                   "Ultra uses paletted art.\n", usedMB);
+            for (int id = 0; id < N; id++) {
+                for (int m = 0; m < RB_MAP_COUNT; m++) table[id].maps[m] = -1;
+                table[id].usePBR = 0u;
+            }
+            g.hdGrungeIdx = -1;
+            g.hdDirtIdx   = -1;
+            srcs.clear();
+            usedMB = 0.0f;
+            BuildHdSet(srcs, table.data(), N);
+        }
+    }
     for (rb_image_t& img : decoded) rb_image_free(&img);
 
     int nHd = 0;                                // after cap and decode drops, not the budget's count

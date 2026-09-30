@@ -8,6 +8,11 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Ultra keeps running on the original textures when the graphics card has no room for the HD set** (DOOM-0257)
+  Before, a card that could not fit the HD textures ended the game at
+  level load. Now the level loads with the original art and the log says
+  why.
+
 - **The game you last played is reopened wherever DOOM_Ants is started from** (DOOM-0280)
   The remembered game was saved as a location relative to the folder the
   game happened to be started in, so starting it from somewhere else
