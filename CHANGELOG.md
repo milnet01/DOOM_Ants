@@ -8,6 +8,22 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **On a computer with two graphics cards, the 3D views now open the one that can actually run them** (DOOM-0225)
+  The game used to take the first card that could draw to the window and
+  quit if that card lacked a feature the 3D views need, even when the
+  other card had it.
+
+- **A startup options file with no final line break no longer writes one byte past its memory** (DOOM-0232)
+  Shown with a memory checker before and after. This is the `@file`
+  way of passing options, which few players use.
+
+- **A fog setting typed into the config file by hand is kept inside its 0 to 3 range** (DOOM-0338)
+  The menu could never produce a bad value; a hand-edited file could,
+  and the ray-traced view used it without checking.
+
+- **Shrinking an extremely large texture image can no longer overflow its colour sums** (DOOM-0229)
+  Only an image far larger than any real texture could reach it.
+
 - **Minimising the window no longer exits the game in the 3D renderers.** (DOOM-0390)
   The renderer now waits while the window has no area and picks up
   again when it returns. Found by code review and not yet exercised on

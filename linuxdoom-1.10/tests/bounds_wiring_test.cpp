@@ -656,5 +656,88 @@ int main()
               "DOOM-0479: the kMaxPrimaryCandidates comparison comes before the first spriteCandidateOpaque/worldCandidateOpaque call in the loop");
     }
 
+    // =====================================================================
+    // Small wiring clauses (source scrape; each fix is unit-untestable).
+    // =====================================================================
+    {
+        // The statement (up to ';') that starts at the first `lhs` token followed by
+        // a single '='. Returns false if there is none.
+        auto assign_stmt = [](const std::string& src, const char* lhs, std::string* out) {
+            const std::string key(lhs);
+            for (size_t at = 0; (at = src.find(key, at)) != std::string::npos; at += 1)
+            {
+                if (at > 0 && (isIdent(src[at - 1]) || src[at - 1] == '.')) continue;
+                const size_t eq = skipws(src, at + key.size());
+                if (eq >= src.size() || src[eq] != '=' || (eq + 1 < src.size() && src[eq + 1] == '='))
+                    continue;
+                const size_t semi = src.find(';', eq);
+                *out = src.substr(eq + 1, semi == std::string::npos ? std::string::npos : semi - eq - 1);
+                return true;
+            }
+            return false;
+        };
+        std::string st;
+
+        // ---- DOOM-0225: the device pick goes through the shared rule.
+        check(has_include(vkRaw, "device_pick.h"), "DOOM-0225: r_vulkan.cpp includes device_pick.h");
+        if (get_body("r_vulkan.cpp", vk, "PickPhysicalAndDevice", &b))
+            check(call_pos(b, "RB_PickDevice") != std::string::npos,
+                  "DOOM-0225: PickPhysicalAndDevice calls RB_PickDevice");
+
+        // ---- DOOM-0338: the fog strength pushed to the shader is clamped.
+        if (!assign_stmt(vk, "pc.misc6[2]", &st))
+        {
+            std::printf("  FAIL: DOOM-0338: no assignment to pc.misc6[2] found in r_vulkan.cpp\n");
+            g_failures++;
+        }
+        else
+            check(call_pos(st, "FogStrength") != std::string::npos &&
+                  whole_tok(st, "rb_fog") == std::string::npos,
+                  "DOOM-0338: pc.misc6[2] is assigned from FogStrength(), not a bare rb_fog");
+        if (get_body("r_vulkan.cpp", vk, "FogStrength", &b))
+            check(whole_tok(b, "rb_fog") != std::string::npos && b.find('3') != std::string::npos,
+                  "DOOM-0338: FogStrength clamps rb_fog (names rb_fog and the limit 3)");
+
+        // ---- DOOM-0232: FindResponseFile's file buffer has room for a terminator.
+        {
+            const std::string dmain = strip(slurp("d_main.c"));
+            if (get_body("d_main.c", dmain, "FindResponseFile", &b))
+            {
+                bool seen = false, ok = false;
+                for (size_t at = 0; (at = b.find("malloc", at)) != std::string::npos; at += 6)
+                {
+                    size_t ls = b.find_last_of(";{}", at);
+                    ls = ls == std::string::npos ? 0 : ls + 1;
+                    const std::string lead = b.substr(ls, at - ls);
+                    if (whole_tok(lead, "file") == std::string::npos) continue;
+                    seen = true;
+                    const size_t semi = b.find(';', at);
+                    const std::string args = b.substr(at, semi == std::string::npos ? std::string::npos : semi - at);
+                    if (args.find("size + 1") != std::string::npos || args.find("size+1") != std::string::npos)
+                        ok = true;
+                }
+                check(seen, "DOOM-0232: found the malloc that assigns FindResponseFile's `file`");
+                check(ok, "DOOM-0232: that malloc allocates size + 1 (room for the terminator)");
+            }
+        }
+
+        // ---- DOOM-0229: the box-filter accumulator is wider than 32 bits.
+        {
+            const std::string img = strip(slurp("rb_image.c"));
+            const size_t at = img.find("acc[4]");
+            check(at != std::string::npos, "DOOM-0229: rb_image.c declares acc[4]");
+            if (at != std::string::npos)
+            {
+                size_t ls = img.find_last_of(";{}", at);
+                ls = ls == std::string::npos ? 0 : ls + 1;
+                const size_t semi = img.find(';', at);
+                const std::string decl = img.substr(ls, semi == std::string::npos ? std::string::npos : semi - ls);
+                check(decl.find("uint64_t") != std::string::npos ||
+                      decl.find("unsigned long long") != std::string::npos,
+                      "DOOM-0229: the acc[4] accumulator is 64-bit (uint64_t or unsigned long long)");
+            }
+        }
+    }
+
     return check_summary("bounds_wiring");
 }

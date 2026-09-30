@@ -1106,7 +1106,10 @@ void FindResponseFile (void)
 			 &myargv[i][1]);
 	    if (fseek (handle,0,SEEK_SET) != 0)
 		I_Error ("FindResponseFile: cannot rewind %s", &myargv[i][1]);
-	    file = malloc (size);
+	    // DOOM-0232: one byte more than the file. The token loop below
+	    // writes a terminator at infile+k, and k reaches `size` when the
+	    // last token runs to the end of a file with no trailing newline.
+	    file = malloc (size + 1);
 	    if (!file)
 		I_Error ("FindResponseFile: out of memory reading response file");
 	    // One item of `size` bytes, so a short read returns 0 rather than a

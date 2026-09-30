@@ -53,6 +53,7 @@
 // Power-importance emitter-sampling math (build step 3c-2), shared with the
 // unbiasedness test (tests/nee_sampling_test.cpp) so both use one implementation.
 #include "nee_sampling.h"
+#include "device_pick.h"    // RB_PickDevice (DOOM-0225)
 
 // Per-material emitter derivation (build step 3b, §4.2), shared with
 // tests/emissive_derive_test.cpp. Defines the `emis` namespace used below.
@@ -137,6 +138,22 @@ static_assert(sizeof(rb_matctrl_t) == 40, "rb_matctrl_t must be 40 bytes (std430
 #include "shaders/bloom_extract_rt.comp.spv.h"       // DOOM-0345 R2: RT bright pass
 #include "assets/Oxanium-SemiBold.ttf.h"    // DOOM-0206 L4: bundled OFL menu font (oxanium_ttf[])
 
+// DOOM-0225: the four Vulkan 1.2 descriptor-indexing features the bindless
+// material array needs. RB_VulkanProbe and PickPhysicalAndDevice both ask this.
+static bool DeviceHasBindless(VkPhysicalDevice d)
+{
+    VkPhysicalDeviceVulkan12Features f12 = {};
+    f12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    VkPhysicalDeviceFeatures2 f2 = {};
+    f2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    f2.pNext = &f12;
+    vkGetPhysicalDeviceFeatures2(d, &f2);
+    return f12.runtimeDescriptorArray
+        && f12.shaderSampledImageArrayNonUniformIndexing
+        && f12.descriptorBindingVariableDescriptorCount
+        && f12.descriptorBindingPartiallyBound;
+}
+
 // Tier values returned by RB_VulkanProbe — kept numerically in lockstep with
 // rendermode_t in r_backend.h (RB_CLASSIC=0, RB_RT3D=1, RB_RASTER3D=2). The
 // probe deliberately does not include the DOOM C headers (which are not C++
@@ -215,16 +232,7 @@ extern "C" int RB_VulkanProbe(void)
         // I_Errors without). Gate the tier here on the SAME four so a GPU lacking
         // them is reported Classic-only and never offered Solid/Ultra, instead of
         // aborting at device creation after the user has picked a 3D mode.
-        VkPhysicalDeviceVulkan12Features f12 = {};
-        f12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
-        VkPhysicalDeviceFeatures2 f2 = {};
-        f2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-        f2.pNext = &f12;
-        vkGetPhysicalDeviceFeatures2(d, &f2);
-        if (!(f12.runtimeDescriptorArray &&
-              f12.shaderSampledImageArrayNonUniformIndexing &&
-              f12.descriptorBindingVariableDescriptorCount &&
-              f12.descriptorBindingPartiallyBound))
+        if (!DeviceHasBindless(d))
             continue;  // cannot run the bindless 3D path — leave it on Classic.
 
         const std::vector<VkExtensionProperties> exts = DeviceExtensions(d);
@@ -1214,6 +1222,13 @@ extern "C" { int rb_wet = 1; }
 // 0 skips the whole air-march (byte-identical to fog-off, INV-8). Default 2 ("Med"), the
 // user's pick 2026-09-25 (spec Q10); m_misc.c's rt_fog row and the golden pin match it.
 extern "C" { int rb_fog = 2; }
+// DOOM-0338: rb_fog comes straight from ~/.doomrc (rt_fog), and the shaders
+// index their fog tables with it. The menu can only produce 0..3; a hand-edited
+// config can produce anything, so it is clamped where it is handed over.
+static uint32_t FogStrength()
+{
+    return (uint32_t)(rb_fog < 0 ? 0 : rb_fog > 3 ? 3 : rb_fog);
+}
 
 // DOOM-0331 L1: bloom strength dial (persisted as rt_bloom; menu row only, no debug
 // key -- see the spec's §9). 0 = Off, 1 = Low, 2 = Medium, 3 = High. Default 2, so the
@@ -1511,30 +1526,24 @@ void PickPhysicalAndDevice()
     if (n)
         Check(vkEnumeratePhysicalDevices(g.instance, &n, devs.data()), "vkEnumeratePhysicalDevices(fill)");
 
-    // Prefer an RT-capable device that can present; otherwise the first device
-    // that can present. (The integrator chooses RT vs. raster later; a cleared
-    // frame works on any.)
-    VkPhysicalDevice chosen = VK_NULL_HANDLE;
-    int chosenFamily = -1;
-    for (VkPhysicalDevice d : devs)
+    // DOOM-0225: judge every device on the three things that matter and let
+    // RB_PickDevice (device_pick.h) choose: present + bindless + RT first, then
+    // present + bindless, then anything that can present so the I_Error below
+    // can name the missing feature.
+    std::vector<rb_devcaps_t> caps(devs.size());
+    std::vector<int> families(devs.size(), -1);
+    for (size_t i = 0; i < devs.size(); i++)
     {
-        int fam = FindGraphicsPresentFamily(d);
-        if (fam < 0)
-            continue;
-        if (chosen == VK_NULL_HANDLE)
-        {
-            chosen = d;
-            chosenFamily = fam;
-        }
-        if (DeviceHasRT(d))
-        {
-            chosen = d;
-            chosenFamily = fam;
-            break;
-        }
+        families[i]      = FindGraphicsPresentFamily(devs[i]);
+        caps[i].present  = families[i] >= 0;
+        caps[i].bindless = DeviceHasBindless(devs[i]);
+        caps[i].rt       = DeviceHasRT(devs[i]);
     }
-    if (chosen == VK_NULL_HANDLE)
+    const int pick = RB_PickDevice(caps.data(), (int)caps.size());
+    if (pick < 0)
         I_Error("R_Vulkan: no Vulkan device can present to the window.");
+    VkPhysicalDevice chosen = devs[(size_t)pick];
+    int chosenFamily = families[(size_t)pick];
 
     g.phys = chosen;
     g.queueFamily = (uint32_t)chosenFamily;
@@ -8995,7 +9004,7 @@ void RecordRtTrace(uint32_t idx)
     }
     std::memcpy(&pc.misc6[0], &rippleSec, sizeof(float));
     pc.misc6[1]    = rb_wet ? 1u : 0u;
-    pc.misc6[2]    = (uint32_t)rb_fog;  // DOOM-0011: fog strength 0..3 (`;` key); 0 skips the march (INV-8)
+    pc.misc6[2]    = FogStrength();     // DOOM-0011: fog strength 0..3 (`;` key); 0 skips the march (INV-8)
     {   // DOOM-0011: the outdoor fog layer's altitude, per level (0 if no open-sky sector)
         float fz = g.levelMesh ? g.levelMesh->fogFloorZ : 0.0f;
         std::memcpy(&pc.fogFloorZ, &fz, sizeof(float));

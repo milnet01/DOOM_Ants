@@ -1,5 +1,6 @@
 #include "rb_image.h"
 #include <stdlib.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <sys/stat.h>
 
@@ -90,7 +91,9 @@ int rb_image_downscale_max(rb_image_t* img, int max_edge) {
         for (int x = 0; x < nw; x++) {
             int sx0 = (int)((double)x     * img->w / nw);
             int sx1 = (int)((double)(x+1) * img->w / nw); if (sx1 <= sx0) sx1 = sx0 + 1;
-            unsigned acc[4] = {0,0,0,0}, cnt = 0;
+            // DOOM-0229: 64-bit sums. One output texel can cover more than
+            // 2^24 source texels, and 255 of those overflow 32 bits.
+            uint64_t acc[4] = {0,0,0,0}, cnt = 0;
             for (int sy = sy0; sy < sy1 && sy < img->h; sy++)
                 for (int sx = sx0; sx < sx1 && sx < img->w; sx++) {
                     const unsigned char* sp = img->pixels + ((size_t)sy * img->w + sx) * 4;

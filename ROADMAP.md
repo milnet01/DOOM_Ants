@@ -9055,6 +9055,15 @@ stay in their phase sections; this heading holds only work still to come.
   Confirmed by friend's in-game photo (2026-06-30): the 3D scene renders CORRECTLY but only into a ~50%-size centered sub-rectangle (= render_scale=50%); the status bar draws full-width and correct; the uncovered border region shows stale/uninitialized framebuffer content (leftover menu/skill-select text: NEW GAME, NIGHTMARE!, etc.). So this is NOT a crash or RT-capability failure — the engine works; it's a present/upscale bug. Code: r_vulkan.cpp:4454 gates the render sub-rectangle on taauActive = (rb_rtdebug==6 && rb_upscaler==1 && taauPipeline!=NULL); at render_scale<100 the rendered region is not being scaled to fill g.extent on this GPU, and the borders are never cleared. Immediate user workaround (any one): Options->Renderer-> Render Scale=100%, OR Upscaler=Off, OR Renderer=Classic. Real fix: (a) always blit/scale the rendered region to the full display extent (never present the sub-rect 1:1); (b) clear the swapchain image to black each frame so uncovered areas aren't garbage. Still need: friend's GPU model + audio specifics.
   GTX 1050 / Win10 test (2026-06-30, screenshots (1)&(2)): in SOLID renderer the view is FULL-SCREEN and clean at 35-59 FPS — no small box, no garbled borders. This isolates the bug: it is NOT Solid mode and NOT a generic Windows present bug. It is specific to a 3D path running at render_scale<100% where the upscale-to-display is not filling the swapchain (i.e. the Ultra/TAAU path: taauActive at r_vulkan.cpp:4454 traces into a 50% sub-rect; if its output is not blitted scaled-to-g.extent, you get the friend's small-box+garbage). Confirms the fix: (a) always scale the rendered sub-region to the full display extent on present; (b) clear the swapchain to black each frame. Practical guidance for the friend NOW: use Solid (works); Ultra needs RT hardware the GTX 1050 lacks anyway (ties to DOOM-0059/DOOM-0026 capability gating). Still want: one Ultra-mode screenshot on the GTX 1050 to confirm whether Ultra runs/garbles/gates-off there.
   Friend's machine identified (2026-06-30): GTX 2060 (RT-capable, has RT cores) on a 4K laptop. So the small-box repro = Ultra at render_scale 50% on a 4K display = a 1920x1080 render box shown un-upscaled in the centre of a 3840x2160 screen, surrounded by uncleared garbage. Matches the present/upscale theory exactly. This is the one machine that reproduces DOOM-0145 (RX 6600 upscales fine; GTX 1050 has no Ultra). Verification of the fix will need the GTX 2060 box. NOTE: separate from the GTX 1050 "not full screen / border" report, which is the in-game Screen Size (screenblocks) ornamental border + Classic's 4:3 letterbox on a 16:9 display — tracked separately.
+  Progress (2026-09-30): read against today's code, not re-tested. The present
+  path has been rewritten since 0.2.0. With the upscaler inactive the tracer now
+  renders at the display's own size, so there is no sub-rectangle to show. With
+  it active, the upscale pass is dispatched over the whole display image and the
+  blit to the swapchain takes that image, full size. So the two fixes this item
+  asks for are, by reading, already what the code does. What reading cannot
+  show is why the GTX 2060 showed the box in the first place, and the only
+  machine that reproduced it is the friend's. Needs one run of the current
+  release there in Ultra at Render Scale 50% before this can close.
 
 - ✅ [DOOM-0221] **Bound UploadAtlas WAD-derived material count / tile dimensions before GPU allocation.**
   r_vulkan.cpp:4604 UploadAtlas feeds WAD material count n and per-tile w/h into vector resizes, staging sizes, descriptor counts and VkImage extents with no bounds check -> bad_alloc / I_Error abort (DoS, not corruption; all arithmetic is 64-bit). DOOM-0093-adjacent.
@@ -9091,14 +9100,26 @@ stay in their phase sections; this heading holds only work still to come.
   Kind: fix.
   Source: indie-review 2026-07-23 (vulkan-rt-render, LOW).
 
-- 📋 [DOOM-0225] **Prefer a present-capable device that also has bindless in PickPhysicalAndDevice.**
+- ✅ [DOOM-0225] **Prefer a present-capable device that also has bindless in PickPhysicalAndDevice.**
   r_vulkan.cpp:1181 picks the first present-capable device then aborts if it lacks bindless, even when another present device (which RB_VulkanProbe accepts) has it.
+  Resolved (2026-09-30): the choice is now `RB_PickDevice` in device_pick.h:
+  present + bindless + RT first, then present + bindless, then any device that
+  can present so the existing error can name the missing feature. The probe and
+  the picker share one `DeviceHasBindless`. Unit test device_pick_test.cpp holds
+  the multi-GPU cases (the two defect cases failed on the old rule); four
+  mutants killed. Ultra still opens the RX 6600 here. No two-GPU machine was
+  available, so the wiring is checked by reading and by the single-GPU run.
   **Layman:** On rare multi-GPU systems the renderer may pick a device that lacks a needed feature and abort.
   Kind: fix.
   Source: indie-review 2026-07-23 (vulkan-rt-core, LOW).
 
-- 📋 [DOOM-0226] **Avoid swapchain format fallback to formats[0] that may double-encode sRGB.**
+- ✅ [DOOM-0226] **Avoid swapchain format fallback to formats[0] that may double-encode sRGB.**
   r_vulkan.cpp:1357 swapchain format fallback to formats[0] could accept an _SRGB target the palette path double-encodes.
+  Resolved (2026-09-30): already done by DOOM-0412, which this item was never
+  closed against. CreateSwapchain now looks for an 8-bit UNORM format first and
+  only then falls back to the first format offered, printing what it got and
+  whether it is sRGB. The fallback is kept on purpose: a washed-out picture
+  beats none. No code change.
   **Layman:** A cosmetic colour-accuracy edge on unusual GPUs; unreachable on the target hardware.
   Kind: fix.
   Source: indie-review 2026-07-23 (vulkan-rt-core, LOW).
@@ -9109,18 +9130,27 @@ stay in their phase sections; this heading holds only work still to come.
   Kind: fix.
   Source: indie-review 2026-07-23 (sw-renderer, LOW).
 
-- 📋 [DOOM-0229] **Widen rb_image box-filter accumulator to avoid overflow on pathological image sizes.**
+- ✅ [DOOM-0229] **Widen rb_image box-filter accumulator to avoid overflow on pathological image sizes.**
   rb_image.c:58 box-filter downscale uses unsigned acc[4], overflowing for >16M source texels per output texel.
+  Resolved (2026-09-30): the box-filter sums in rb_image.c are uint64_t. Checked
+  by a wiring clause only; no test builds an image large enough to overflow the
+  old sums.
   **Layman:** A cosmetic overflow only on absurdly large source images (never real material art).
   Kind: fix.
   Source: indie-review 2026-07-23 (vulkan-mesh-assets, LOW).
 
-- 📋 [DOOM-0232] **Harden d_main -wart bounds and FindResponseFile (ftell/fread/one-past-end).**
+- ✅ [DOOM-0232] **Harden d_main -wart bounds and FindResponseFile (ftell/fread/one-past-end).**
   d_main.c: -wart reads myargv[p+1]/[p+2] under only `if(p)`; FindResponseFile has unchecked ftell/fread, a one-past-end write, and fixed moreargs[20]/MAXARGVS[100]. Dev-only, hence LOW.
   **Layman:** Developer-only command-line paths that can misbehave with too few args or an odd response file.
   Kind: fix.
   Source: indie-review 2026-07-23 (platform-io, LOW).
   Progress (2026-07-26): DOOM-0254 bounded FindResponseFile's moreargs[20] and MAXARGVS argv rebuild, and snprintf'd the -playdemo name. The ftell/fread one-past-end handling and the -wart bounds named in this item are still open.
+  Resolved (2026-09-30): the last open part. FindResponseFile allocates one byte
+  more than the file, because its token loop writes a terminator at the end of
+  the buffer when the file has no trailing whitespace. Valgrind on a response
+  file with no final newline: `Invalid write of size 1 ... 0 bytes after a
+  block` before, nothing after. The -wart bounds and the ftell/fread checks the
+  item also names were already done by DOOM-0401.
 
 - 📋 [DOOM-0233] **Give I_StartSound an opaque handle -> channel map (avoid SDL channel aliasing).**
   i_sound.c returns the Mix_PlayChannel number as the DOOM handle; a recycled channel can let a stale handle re-pan/halt the wrong effect. Add a handle->channel indirection (Chocolate DOOM pattern).
@@ -9330,7 +9360,7 @@ stay in their phase sections; this heading holds only work still to come.
   closed must keep occluding. Deleting the emit_sky_wall call would
   regress DOOM-0141's floating geometry. Spec it before coding.
 
-- 📋 [DOOM-0338] **Clamp rb_fog on use; a hand-edited rt_fog reads past its range.**
+- ✅ [DOOM-0338] **Clamp rb_fog on use; a hand-edited rt_fog reads past its range.**
   `rb_fog` is persisted as `rt_fog` in `~/.doomrc` and pushed to the
   megakernel as `pc.misc6.z` with **no range clamp anywhere**. Verified:
   grepping `rb_fog` in `r_vulkan.cpp` finds no clamp, no `% 4`, no
@@ -9349,6 +9379,11 @@ stay in their phase sections; this heading holds only work still to come.
 
   Found while specifying DOOM-0331's own `bloom` dial, which needed a
   clamp precedent to cite and could not use this one.
+  Resolved (2026-09-30): `FogStrength()` in r_vulkan.cpp clamps rb_fog to 0..3
+  where it is pushed to the megakernel; the composite's copy reads the clamped
+  value. Ran Ultra with `rt_fog 99` in the config under the validation layer:
+  no messages, no crash. What an out-of-range value did before was not
+  measured.
   **Layman:** The fog setting in the config file isn't checked for a sensible value. Typing a silly number by hand could make the game read memory it shouldn't. Nobody would hit it by accident — the menu can only produce 0 to 3 — but it costs one line to close.
   Kind: fix.
   Source: in-session-2026-08-07 (cold-eyes loop 1 on the DOOM-0331 bloom spec).
