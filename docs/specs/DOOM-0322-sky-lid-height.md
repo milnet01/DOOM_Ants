@@ -1,6 +1,6 @@
 # DOOM-0322 — Raise the 3D sky lid so a taller sky area shows over a lower one
 
-**Status:** Reviewed — `review-contract` loops 1–2 (see §13), stopped at the cap, 2026-10-01. Ready to implement.
+**Status:** Shipped (2026-10-01). B1 to B4 built and checked; reviewed by `review-contract` loops 1–2 (see §13), stopped at the cap.
 **Kind:** fix.
 **Source:** ROADMAP DOOM-0322 (user play-test 2026-08-04, E3M1's opening
 courtyard).

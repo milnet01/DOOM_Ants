@@ -8,6 +8,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Solid and Ultra no longer cut off a building standing past a low outdoor wall** (DOOM-0322)
+  Where a lower outdoor area meets a taller one, the 3D views now show
+  the taller area's walls above the lower ceiling, as Classic does (E3M1's
+  opening courtyard). Every sky lid sits at the level's highest sky
+  ceiling, and outdoor edges are sealed with sky so nothing floats.
+
 - **In Solid and Ultra, the camera no longer rises through a low ceiling while you are in mid-air** (DOOM-0364)
   Classic keeps the original 1993 behaviour, as promised.
 

@@ -9294,7 +9294,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: in-session-2026-07-27.
   Lanes: renderer.
 
-- 📋 [DOOM-0322] **A tall wall renders black in Solid and Ultra where Classic draws its texture.**
+- ✅ [DOOM-0322] **A tall wall renders black in Solid and Ultra where Classic draws its texture.**
   User play-test 2026-08-04, same open hell landscape, reported as "the
   geometry is being cut off at a certain height" and captured in all three
   tiers -- which is what makes it diagnosable, because the tier that differs
@@ -9425,6 +9425,14 @@ stay in their phase sections; this heading holds only work still to come.
   height, non-sky edges of sky areas get sky seals, the gap wall goes.
   Prototype fixed the fixture in Solid and Ultra and left nine outdoor
   starts unchanged in Solid. Next: build steps B1-B4.
+  Resolved (2026-10-01): built to docs/specs/DOOM-0322-sky-lid-height.md
+  (39b231a, dd6d205). sky_seal.h decides the lid, seals and upper step;
+  tests/sky_seal_test.cpp red on a stub (25 checks), green on the header,
+  12 of 12 mutants killed. E3M1 fixture: facade shown in Solid (33170 px)
+  and Ultra (20770 px). Nine outdoor starts in Solid within 0.016%; E3M9
+  line 154 lintel 0 px in Ultra. make test 32 files; -rtverify PASS
+  (0.2058%); validation 0 in Solid and Ultra; Classic 68-map sweep and
+  demos 30/30/30/70/350; Solid 68-map sweep (a capture per map) clean.
 
 - ✅ [DOOM-0338] **Clamp rb_fog on use; a hand-edited rt_fog reads past its range.**
   `rb_fog` is persisted as `rt_fog` in `~/.doomrc` and pushed to the
