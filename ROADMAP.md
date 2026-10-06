@@ -16684,3 +16684,26 @@ placing one here commits to nothing.
   **Layman:** Fog that curls and thins around the player as they walk, the way it does around James in Silent Hill 2.
   Kind: feature.
   Source: in-session-2026-07-25.
+
+- 💭 [DOOM-0484] **If the flashlight shadow's edges ever look stair-stepped, swap its 3x3 PCF for a 5x5 tent of filtered compares.**
+  Not a known defect: nobody has measured our edges, and the user
+  signed the torch shadow off by eye on 2026-07-14 (DOOM-0170 L2c).
+  Pick this up only if a play-test shows stairs.
+
+  Today mesh.frag's flashlightShadow() takes 3x3 point-sampled taps
+  (NEAREST sampler, manual compare), so an edge has hard 10-level steps.
+
+  Prior art from UT_Ants (UTA-0307, commit 163e2d6, its
+  src/urender/shaders/shadows.glsl softShadowOf): Castano's optimised
+  PCF (ludicon.com/castano/blog/?p=901) uses 9 LINEAR compare fetches
+  weighted into a 5x5 tent, each compared at the receiver plane's
+  depth, with that depth clamped to at most 1.0. Without the clamp, a
+  grazed wall shadowed itself past the far plane. Their slanted-edge
+  wobble: one fetch 7.3 px, 3x3 box 2.4 px, tent 1.8 px.
+
+  The swap needs a compare sampler (compareEnable, LINEAR) and a
+  sampler2DShadow binding in place of the current NEAREST one.
+  **Layman:** A known recipe for smoothing jagged shadow edges, kept on file in case the torch shadow ever shows them.
+  Kind: enhancement.
+  Source: cross-session-ut-ants-2026-10-06.
+  Lanes: renderer.
