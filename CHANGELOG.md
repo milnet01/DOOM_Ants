@@ -8,6 +8,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Switching render tier no longer leaks the sky backdrop's graphics memory** (DOOM-0177)
+  Leaving Solid or Ultra freed every graphics buffer except the
+  level's sky backdrop mesh, so each switch left one buffer and its
+  memory behind. The Vulkan validation layer now reports nothing on a
+  tier switch.
+
 - **Solid and Ultra no longer cut off a building standing past a low outdoor wall** (DOOM-0322)
   Where a lower outdoor area meets a taller one, the 3D views now show
   the taller area's walls above the lower ceiling, as Classic does (E3M1's

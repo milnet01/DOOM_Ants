@@ -10301,7 +10301,7 @@ Work only a maintainer sees: duplication, dead code, static analysis that covers
 nothing, documents that contradict the code, and the harnesses that make a
 defect visible before a player finds it.
 
-- 📋 [DOOM-0115] **Fix pre-existing Vulkan validation errors (clear-color usage, renderpass dependency mismatch).**
+- ✅ [DOOM-0115] **Fix pre-existing Vulkan validation errors (clear-color usage, renderpass dependency mismatch).**
   INV-8 (validation-clean). Two distinct families in the terminal log: (1) vkCmdClearColorImage on an image created with only VK_IMAGE_USAGE_STORAGE_BIT, missing VK_IMAGE_USAGE_TRANSFER_DST_BIT (add the usage flag at image creation, or clear via a compute/shader path); (2) vkCmdBeginRenderPass/vkCmdDraw pDependencies srcStageMask/srcAccessMask/dstAccessMask incompatible between the render pass used to create the framebuffer/pipeline and the one begun (the two render passes' subpass dependencies must match for compatibility). Pre-existing, not from the sprite work. Reconcile the renderpass dependency definitions and add the transfer-dst usage.
   **Layman:** The graphics debug layer is logging a few rule violations every frame. They aren't causing visible problems today, but they're real correctness bugs that can break on other drivers — clean them up.
   Kind: fix.
@@ -10359,6 +10359,12 @@ defect visible before a player finds it.
   uncounted; fail at the submit that raised the error, and FAIL (never
   skip) when the layer is not loaded. Headless on lavapipe:
   VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json.
+  Resolved (2026-10-07): re-verified with the fix already in the tree. A
+  45 s Ultra run (-rtview 1) and a 45 s Solid run on E1M1 under the
+  validation layer each gave 0 validation messages, and each ran an
+  Ultra or Solid -> Classic tier switch, which runs the full teardown.
+  DOOM-0127 and DOOM-0176 were duplicates of family 2 and close with
+  this.
 
 - 📋 [DOOM-0125] **Sweep dangling sub-section citations into DOOM-0009-performance.md (flat-list doc).**
   Per the DOOM-0092 cold-eyes loops. docs/research/DOOM-0009-performance.md uses flat numbered lists under ## 2 / ## 3 (no Sec.2.x/3.x sub-anchors). The DOOM-0009 spec (and the original DOOM-0092 draft) cite broken anchors like 'perf Sec.2.5'/'Sec.2.7'. Sweep all docs citing the perf doc and rewrite to 'Sec.2 item N' / 'Sec.3 idea N'.
@@ -10366,8 +10372,11 @@ defect visible before a player finds it.
   Kind: doc-fix.
   Source: research-2026-06-29 DOOM-0092 cold-eyes.
 
-- 📋 [DOOM-0127] **Vulkan validation: renderpass dependency stage/access-mask incompatibility on overlay/blit framebuffers.**
+- ✅ [DOOM-0127] **Vulkan validation: renderpass dependency stage/access-mask incompatibility on overlay/blit framebuffers.**
   Seen in terminal_output.log lines ~226-291 (capped at the 10x duplicate limit): vkCmdBeginRenderPass reports pDependencies[0] srcStageMask/srcAccessMask/dstAccessMask incompatible between VkRenderPass 0xd and the one baked into the VkFramebuffer (0xc) -- VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT vs EARLY/LATE_FRAGMENT_TESTS, TRANSFER_WRITE vs 0, etc. Pre-existing (NOT from DOOM-0119 -- no renderpass changes in that diff). The framebuffer was created against a renderpass whose subpass dependencies don't match the renderpass used at begin time; they must be render-pass-compatible (same dependency stage/access masks). Fix: align the subpass dependency masks between the renderpass used to create the framebuffer and the one used in vkCmdBeginRenderPass (or reuse the same VkRenderPass object). Likely in the 2D overlay/blit path.
+  Resolved (2026-10-07): a duplicate of DOOM-0115's family 2 (the
+  rtOverlayPass dependency mismatch), fixed there. 0 validation messages
+  in Ultra and Solid on 2026-10-07.
   **Layman:** Another graphics-checker warning: two render steps describe their hand-off slightly differently. Cosmetic for now; cleaning it keeps the log trustworthy so real bugs stand out.
   Kind: fix.
   Source: in-session-2026-06-29 DOOM-0119 play-test log.
@@ -10390,14 +10399,28 @@ defect visible before a player finds it.
   Kind: doc-fix.
   Source: cold-eyes-2026-07-04 (DOOM-0009 review, deferred structural nits incl. DOOM-0081 item 5).
 
-- 📋 [DOOM-0176] **Fix render-pass/framebuffer subpass-dependency incompatibility validation errors in the raster path.**
+- ✅ [DOOM-0176] **Fix render-pass/framebuffer subpass-dependency incompatibility validation errors in the raster path.**
   Validation (RADV, VUID-VkRenderPassBeginInfo-renderPass-00904 + VUID-vkCmdDraw-renderPass-02684): a VkRenderPass used to BEGIN a pass (0xf..) is incompatible with the VkRenderPass the framebuffer/pipeline was created against (0xc..) on the subpass dependency srcStageMask/srcAccessMask/dstAccessMask (VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT + TRANSFER_WRITE vs EARLY_FRAGMENT_TESTS|COLOR_ATTACHMENT_OUTPUT). ~20 messages/frame. NOT from DOOM-0042 (that change is compute-only, touches no render pass) — pre-existing raster, likely the DOOM-0170 L2b MRT/SSAO composite passes whose subpass dependency carries an ALL_TRANSFER src. Fix: align the offending render pass's subpass-dependency stage/access masks between the framebuffer-creation pass and the begun/pipeline pass. Benign on RADV (renders correctly) but spec-noncompliant.
+  Resolved (2026-10-07): a duplicate of DOOM-0115's family 2
+  (VUID-VkRenderPassBeginInfo-renderPass-00904 / vkCmdDraw-02684 on the
+  rtOverlayPass), fixed there. 0 validation messages in Ultra and Solid
+  on 2026-10-07.
   **Layman:** The graphics card's debug checker complains that two rendering steps disagree about timing; harmless on this GPU but should be cleaned up.
   Kind: fix.
   Source: observed-2026-07-14 (DOOM-0042 E1M1 Ultra play-test log).
 
-- 📋 [DOOM-0177] **Fix a 2-object (1 VkBuffer + 1 VkDeviceMemory) leak at vkDestroyDevice shutdown.**
+- ✅ [DOOM-0177] **Fix a 2-object (1 VkBuffer + 1 VkDeviceMemory) leak at vkDestroyDevice shutdown.**
   Validation at vkDestroyDevice: 'VkDevice has 2 leaked objects' — one VkDeviceMemory + one VkBuffer (adjacent handles = a buffer+its memory allocated together). NOT the DOOM-0042 HD resources: FreeHdMaterials() frees every HD buffer/memory (hdCtrlBuf/hdCtrlMem/hdMemory + images/views/pool) and is called at shutdown (r_vulkan.cpp:7540) before device destroy — audited create/destroy-balanced. Candidate: g.overlayStaging + g.overlayStagingMem (r_vulkan.cpp:7553-7554, only freed if non-null) or another subsystem's staging buffer. Confirm pre-existing with a Solid-only run (never enter Ultra, so no HD built) — if it still leaks 2, it is not HD-related. Shutdown-only; no gameplay impact.
+  Resolved (2026-10-07): the leak was g.skyMeshBuf + g.skyMeshMem, the
+  DOOM-0141 sky backdrop mesh. RB_Vulkan_BuildLevel freed it on a level
+  rebuild, but RB_Vulkan_Shutdown never did. The teardown runs only on a
+  tier switch (quitting the game never calls it), so the leak showed on
+  a switch. Red: an Ultra -> Classic switch at tic 700 under the
+  validation layer reported 'VkDevice has 2 leaked objects'; the handles
+  matched the buffer created in RB_Vulkan_BuildLevel. Fix: free both in
+  RB_Vulkan_Shutdown. Green: the same switch reports 0 validation
+  messages, from Ultra and from Solid. No unit test: GPU object
+  lifetimes are outside what testing.md calls unit-testable.
   **Layman:** When the game exits, it forgets to hand back one small chunk of graphics memory. No effect while playing; tidy-up on quit.
   Kind: fix.
   Source: observed-2026-07-14 (DOOM-0042 E1M1 Ultra play-test log).

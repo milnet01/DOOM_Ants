@@ -796,7 +796,7 @@ struct VulkanState
     // borders (rb_mesh_t.sky), on a 3rd TLAS instance (custom index 2, mask 0x04)
     // that ONLY primary rays see — so it occludes the view like classic DOOM's sky
     // without casting shadows or perturbing the GI bake (both cull to mask 0x01).
-    // The vert buffer is created in BuildProbes (with g.vbuf); the BLAS in
+    // The vert buffer is created in RB_Vulkan_BuildLevel (with g.vbuf); the BLAS in
     // BuildAccelerationStructures. skyTexnum is the sky wall-texture bindless id
     // (passed to the trace in misc4.w for the panorama sample).
     VkBuffer                   skyMeshBuf   = VK_NULL_HANDLE;
@@ -2106,7 +2106,8 @@ void DestroyAccelerationStructures()
     if (g.spriteBlasScratch)    { vkDestroyBuffer(g.device, g.spriteBlasScratch, nullptr); g.spriteBlasScratch = VK_NULL_HANDLE; }
     if (g.spriteBlasScratchMem) { vkFreeMemory(g.device, g.spriteBlasScratchMem, nullptr); g.spriteBlasScratchMem = VK_NULL_HANDLE; }
 
-    // DOOM-0141: sky backdrop BLAS (the vert buffer is freed in BuildProbes, with vbuf).
+    // DOOM-0141: sky backdrop BLAS (the vert buffer is freed in RB_Vulkan_BuildLevel
+    // and RB_Vulkan_Shutdown).
     if (g.skyBlas)    { g.pfnDestroyAS(g.device, g.skyBlas, nullptr); g.skyBlas = VK_NULL_HANDLE; }
     if (g.skyBlasBuf) { vkDestroyBuffer(g.device, g.skyBlasBuf, nullptr); g.skyBlasBuf = VK_NULL_HANDLE; }
     if (g.skyBlasMem) { vkFreeMemory(g.device, g.skyBlasMem, nullptr); g.skyBlasMem = VK_NULL_HANDLE; }
@@ -2300,7 +2301,7 @@ void BuildAccelerationStructures()
     g.spriteBlasAddr = g.pfnGetASAddress(g.device, &sadi);
 
     // ---- Sky BLAS (DOOM-0141): a STATIC, opaque backdrop BLAS over this level's sky
-    // ceilings/borders (g.skyMeshBuf, built in BuildProbes). It rides TLAS instance 1 on
+    // ceilings/borders (g.skyMeshBuf, built in RB_Vulkan_BuildLevel). It rides TLAS instance 1 on
     // mask 0x04 (primary rays only) so it occludes the view like classic DOOM's sky
     // while shadow rays + the GI bake (mask 0x01) never hit it. Sky planes don't move,
     // so it's built once here — no per-frame rebuild, no refit. Skipped if the level
@@ -11096,6 +11097,10 @@ extern "C" void RB_Vulkan_Shutdown(void)
         if (g.spriteVbufSlot[s])    vkDestroyBuffer(g.device, g.spriteVbufSlot[s], nullptr);
         if (g.spriteVbufMemSlot[s]) vkFreeMemory(g.device, g.spriteVbufMemSlot[s], nullptr);
     }
+    // DOOM-0177: the level's sky backdrop mesh (DOOM-0141). BuildLevel frees it on a
+    // rebuild, but nothing else did, so a tier switch leaked it past vkDestroyDevice.
+    if (g.skyMeshBuf)   vkDestroyBuffer(g.device, g.skyMeshBuf, nullptr);
+    if (g.skyMeshMem)   vkFreeMemory(g.device, g.skyMeshMem, nullptr);
 
     // Material + palette resources.
     if (g.dsPool)      vkDestroyDescriptorPool(g.device, g.dsPool, nullptr);
