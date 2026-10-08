@@ -1,6 +1,6 @@
 # DOOM-0211 — Give Classic the Solid/Ultra menu look, drawn through SDL
 
-**Status:** draft (2026-10-08).
+**Status:** Reviewed — `review-contract` loops 1–2 (see §13), stopped at the cap (2026-10-08). Not built.
 **Kind:** feature.
 **Source:** ROADMAP DOOM-0211 (user request 2026-07-21; scope widened
 2026-07-26; restated 2026-10-08).
@@ -86,7 +86,7 @@ draws the same textured, coloured triangles the queue already holds.
 
 **What Classic's menus show today.** Captured 2026-10-08 from a DEV build of
 `0025375` (`scripts/ab_capture.sh`, `-warp 1 1`, `-devmenu options`, a
-1280×800 private display): Classic draws the red bitmap Options menu, and
+1280×800 window): Classic draws the red bitmap Options menu, and
 its banner overlaps the first row (filed as DOOM-0488). Solid draws the crisp
 skin. Both captures are in `/home/ants/doom-scratch/p0211` (`menu-a.png`,
 `solid-menu.png`).
@@ -163,7 +163,8 @@ destroyed with it (`I_ShutdownGraphicsForVulkan` and shutdown):
   change: window creation, `I_SetAspect`, and a window size event. The
   module's display size is this rectangle's size, so `rb_display_width`,
   `rb_display_height` and `rb_menu_safe_bottom` describe the picture, not
-  the window with its bars.
+  the window with its bars. When it bakes, the presenter prints one line:
+  `I_ClassicMenuText: rect <x>,<y> <w>x<h>, glyph px=<n>`.
 - **The font** is baked at `rect height / 45`, floored at 24 — the 3D tiers'
   rule. The atlas becomes an RGBA texture: white colour, alpha = coverage,
   texel (0,0) fully covered for the dim quad. Blend mode
@@ -263,13 +264,13 @@ Each step builds (`make`, `make DEV=1`) and passes `make test` before the next.
 
 The captures below use `scripts/ab_capture.sh` from a `make DEV=1` build of
 each commit named, with a config holding `renderer 0` (`renderer 2` where a
-clause says Solid) and `fps_corner 0`, at `1056 -3616 90`. "base" is commit
+clause says Solid), `fps_corner 0` and `fillstretch 1` (INV-4 says
+`fillstretch 0`), at `1056 -3616 90`. "base" is commit
 `0025375`. The FPS counter must be off: with it on, two identical runs
 differed by 37 pixels.
 
 - **INV-1** — With no menu open, Classic's presented frame is byte-identical
-  to base. Breaks if the flush draws with an empty queue, or leaves the
-  logical size, viewport or scale changed.
+  to base. Breaks if the flush draws with an empty queue.
   *Test:* capture with no menu from base and from the built commit;
   `compare -metric AE base.png new.png null:` → `0`. Recipe proven on base
   2026-10-08: two runs gave AE `0`, and the same run with `-devmenu options`
@@ -278,27 +279,33 @@ differed by 37 pixels.
   the crisp skin under Classic, at output resolution. Breaks if the gate still excludes Classic, or if
   the flush draws at logical resolution, which shows as blocky glyphs.
   *Test:* capture `-devmenu options` under Classic. The rows are Oxanium text
-  laid out as in Solid's capture of the same menu, and the log names the
-  Classic font bake with its glyph height. Compared by eye against
-  `solid-menu.png`.
+  laid out as in Solid's capture of the same menu, compared by eye against
+  `solid-menu.png`. The log's `I_ClassicMenuText` line reads `rect 0,0
+  1280x800`; a second capture with `fillstretch 0` reads `rect 106,0
+  1066x800` or `107,0`. A rectangle taken from the window gives `0,0
+  1280x800` both times.
 - **INV-3** — The Classic crisp menu needs no Vulkan. Breaks if any part of
   §4.2 or the gate reads Vulkan state.
   *Test:* capture `-devmenu sound` under Classic twice, once normally and
   once with `VK_ICD_FILENAMES=/nonexistent`. The second log contains
   `RB_VulkanProbe: no Vulkan instance`. `compare -metric AE` between the two
   → `0`, and each differs from base's `-devmenu sound` capture, whose menu is
-  bitmap; both logs name the Classic font bake. Without that second half a
+  bitmap; both logs carry the `I_ClassicMenuText` line. Without that second half a
   gate reading Vulkan state passes, since Classic never initialises Vulkan
   and both runs would draw the bitmap menu. Not the Options menu: its Video row reads `(no 3D)` without Vulkan
   (`RB_ModeMenuName`), and on base the two Options captures differed by 662
   pixels while the two Sound captures gave `0`.
 - **INV-4** — No part of the crisp menu, dim included, is drawn in the status
   bar under Classic in a level (DOOM-0206 INV-2). Breaks if the dim or a row
-  reaches below the safe bottom. This capture's picture fills the window's
-  height, so it cannot tell the window's height from the picture's.
-  *Test:* capture `-devmenu options` from base and from the built commit.
-  Crop both to the status bar band (`magick <png> -crop 1280x128+0+672`, the
-  bottom 32/200 of the 1280×800 frame) and compare → AE `0`. Menu-open
+  reaches below the safe bottom, or if the flush leaves the logical size,
+  viewport or scale changed, which moves the next frame's picture. This
+  capture's picture fills the window's height, so it cannot tell the
+  window's height from the picture's; INV-2's logged rectangle covers that.
+  *Test:* with `fillstretch 0`, so the picture is pillarboxed, capture
+  `-devmenu options` from base and from the built commit.
+  Crop both to the status bar band (`magick <png> -crop 1066x128+0+672`, the
+  bottom 32/200 of the picture; `I_DevShotClassic` saves the picture alone,
+  1066×800 here) and compare → AE `0`. Menu-open
   against menu-closed is not a valid control here: the menu pauses the game,
   and the face and arms digits differed by 1272 pixels on base.
 - **INV-5** — Where the font is not ready, Classic draws the bitmap menu, never
@@ -312,7 +319,9 @@ differed by 37 pixels.
   *Test:* `tests/classic_menu_test.cpp` reads m_menu.c and checks the
   `renderer_e` members in order (`rm_renderer, rm_widescreen,
   rm_fillstretch, rm_fps, rm_back, rm_end`) and that `EffectsDef` does not
-  appear.
+  appear outside comments. It strips comments first, as
+  `bounds_wiring_test.cpp`'s `strip` does: a comment above `crispMenus[]`
+  names `EffectsDef` today.
 - **INV-7** — The ready flags describe the live presenter. After Classic →
   Solid → Classic through the Video menu, Classic's crisp menu still draws,
   and the 3D tier's crisp menu draws while it is live. Breaks if a presenter
@@ -320,7 +329,10 @@ differed by 37 pixels.
   textures behind them.
   *Test:* manual. Play the switch in a DEV build with the Vulkan validation
   layer on. Each menu is crisp after its switch, and the layer reports no
-  messages.
+  messages. Then the same switch with `-nocrispmenu`: back in Classic the
+  menu is the bitmap one, not blank. On the normal path each presenter sets
+  every flag again when it starts, so only this second run can show a
+  missing `mt_reset`, which leaves Vulkan's font flag set with no SDL atlas.
 - **INV-8** — Solid's and Ultra's menus are unchanged by B1. Breaks if the
   move alters a vertex, a draw order or the flush's gate.
   *Test:* capture `-devmenu options` under Solid from base and from B1;
