@@ -16345,6 +16345,14 @@ controls they expect to rebind.
   User restated 2026-10-08: "Please also update the menu for Classic
   to the same style menu used in Solid and Ultra." Taken next, after
   DOOM-0271. Spec first (write-spec), on the recommended shape above.
+  Progress (2026-10-08): spec written and reviewed,
+  docs/specs/DOOM-0211-classic-crisp-menu.md (review-contract loops 1-2,
+  stopped at the cap, 10 findings fixed). The user chose the SDL route,
+  not Vulkan: the crisp menu is drawn with SDL_RenderGeometry over
+  Classic's unchanged frame, so it needs no Vulkan. Classic's Video menu
+  keeps only Renderer, Widescreen, Fill Screen, FPS Counter and Back; the
+  menu dims the game. Not built; next is build step B1 (move the menu
+  text queue into menu_text.c).
   **Layman:** In the original Classic mode, the menu items all share one size now, but the font looks chunky/blocky. Make it look nicer while staying consistent.
   Kind: enhancement.
   Source: user-request-2026-07-21.
