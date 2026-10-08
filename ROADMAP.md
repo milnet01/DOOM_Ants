@@ -16368,6 +16368,14 @@ controls they expect to rebind.
   keeps only Renderer, Widescreen, Fill Screen, FPS Counter and Back; the
   menu dims the game. Not built; next is build step B1 (move the menu
   text queue into menu_text.c).
+  Progress (2026-10-08): spec build steps B1 (8afa625, queue moved to
+  menu_text.c, INV-8 passed) and B2 (e39470f, SDL presenter + gate +
+  -nocrispmenu; INV-1..5 and INV-7 passed, results in the loop log's
+  B2 impl row) shipped. Next: B3 (Classic Video menu = Renderer,
+  Widescreen, Fill Screen, FPS Counter, Back; delete EffectsDef; add
+  tests/classic_menu_test.cpp, INV-6), then B4 (records incl. CHANGELOG).
+  User decision 2026-10-08: after B4, cut the release as 0.8.0 (new
+  feature = MINOR; the planned 0.8.0+ headings each move up one minor).
   **Layman:** In the original Classic mode, the menu items all share one size now, but the font looks chunky/blocky. Make it look nicer while staying consistent.
   Kind: enhancement.
   Source: user-request-2026-07-21.
