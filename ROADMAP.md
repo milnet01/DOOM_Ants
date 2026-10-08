@@ -16334,7 +16334,7 @@ controls they expect to rebind.
   Source: in-session-2026-07-18 (CC suggestion, for user review).
   Approved by user 2026-07-18 for implementation.
 
-- 📋 [DOOM-0211] **Classic-tier menu font looks blocky — give Classic a nicer uniform menu font.**
+- ✅ [DOOM-0211] **Classic-tier menu font looks blocky — give Classic a nicer uniform menu font.**
   **SCOPE WIDENED by user 2026-07-26:** *"I think we need to make the Classic renderer rather use
   the new menu we have. The Classic menu just doesn't look right the way it is. Let's just make
   them all use the same menu."* So the goal is no longer "a nicer font for Classic" — it is **one
@@ -16376,6 +16376,12 @@ controls they expect to rebind.
   tests/classic_menu_test.cpp, INV-6), then B4 (records incl. CHANGELOG).
   User decision 2026-10-08: after B4, cut the release as 0.8.0 (new
   feature = MINOR; the planned 0.8.0+ headings each move up one minor).
+  Resolved (2026-10-08): B3 (9454ec9) cut Classic's Video menu to
+  Renderer, Widescreen, Fill Screen, FPS Counter and Back, drew it crisp
+  under Classic, deleted EffectsDef, and added
+  tests/classic_menu_test.cpp (INV-6, red on B2, green on B3). B4
+  (6799460) recorded it in CLAUDE.md, DOOM-0206 and CHANGELOG. Next:
+  cut release 0.8.0.
   **Layman:** In the original Classic mode, the menu items all share one size now, but the font looks chunky/blocky. Make it look nicer while staying consistent.
   Kind: enhancement.
   Source: user-request-2026-07-21.
