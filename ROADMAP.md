@@ -10112,6 +10112,13 @@ stay in their phase sections; this heading holds only work still to come.
   image on the GPU (in r_vulkan.cpp), full colour, matching Classic's
   melt; not a 256-colour copy and not an instant cut. fixedcolormap is
   DOOM-0455's.
+  Progress (2026-10-08): palette flashes shipped in 6153828 (blend after
+  the overlay, fitted from PLAYPAL; measured equal to Classic's palettes).
+  Gamma (usegamma) split out to its own item. Melt still open.
+  Decision (user, 2026-10-08): the melt rebuilds the last picture on
+  demand when a wipe starts (no per-frame copy), so normal play costs
+  nothing; where the old picture cannot be rebuilt (e.g. right after a
+  window resize), that one transition cuts straight to the new screen.
   **Layman:** Three things the original game does are simply absent in the two 3D views. The screen does not flash red when you are hurt, the invulnerability and light-amplifier powerups have no visible effect, and the melt transition between levels wipes only the status bar over a frozen picture.
   Kind: fix.
   Source: review-code 2026-09-01, lanes backend-seam and ui-hud.
@@ -10640,6 +10647,18 @@ stay in their phase sections; this heading holds only work still to come.
   Kind: fix.
   Source: in-session-2026-10-08 (DOOM-0480 Windows run).
   Lanes: renderer, windows.
+
+- 📋 [DOOM-0491] **The gamma setting does nothing in Solid and Ultra.**
+  I_SetPalette applies gammatable[usegamma] to the palette Classic presents.
+  The 3D tiers decode the overlay and the world through the raw PLAYPAL
+  (RB_PlayPal), so the gamma levels change nothing there. Listed in
+  DOOM-0379's review finding; split out because the user's decision for
+  that item covered the flashes and the melt only. Needs a decision on
+  how gamma should apply to a full-colour, tone-mapped image.
+  **Layman:** The brightness (gamma) option in the menu changes the picture in Classic only; in the two 3D views it has no effect.
+  Kind: fix.
+  Source: in-session-2026-10-08, split from DOOM-0379.
+  Lanes: renderer, backend-seam.
 
 ## 0.9.0 — The codebase can be trusted
 
