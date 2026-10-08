@@ -146,7 +146,9 @@ logic unchanged, so m_menu.c's calls do not change.
   when it shuts down (`mt_reset`), so the ready flags always describe the
   presenter that is live.
 - r_vulkan.cpp keeps its GPU objects. `CreateTextResources` bakes through
-  the module, and `FlushMenuText` reads the module's lists.
+  the module, and `FlushMenuText` reads the module's lists. The display size
+  it gives the module is `g.extent`, set at init and again in
+  `RecreateSwapchain`, since today's `rb_display_*` read `g.extent` live.
   `RB_Vulkan_Shutdown` calls `mt_reset`.
 
 ### 4.2 The SDL presenter
@@ -186,7 +188,10 @@ destroyed with it (`I_ShutdownGraphicsForVulkan` and shutdown):
 - **Failure.** If the bake, a texture, or `SDL_RenderGeometry` fails, the
   matching ready flag is cleared and stays cleared until the window is
   rebuilt. A failed skull or logo uses the existing fallbacks: the paletted
-  skull and the crisp-text title. A failed font means no crisp menu.
+  skull and the crisp-text title. The skull and logo are made only after the
+  font bake succeeds, as `CreateTextResources` returns before them on a
+  failed bake, so a failed font leaves all three not ready and means no
+  crisp menu.
 
 ### 4.3 The gate
 
@@ -270,8 +275,7 @@ differed by 37 pixels.
   2026-10-08: two runs gave AE `0`, and the same run with `-devmenu options`
   against it gave `21512`.
 - **INV-2** — With the font ready, every menu in `crispMenus[]` is drawn by
-  the crisp skin under Classic, at output resolution, and nothing of it is
-  written into `screens[0]`. Breaks if the gate still excludes Classic, or if
+  the crisp skin under Classic, at output resolution. Breaks if the gate still excludes Classic, or if
   the flush draws at logical resolution, which shows as blocky glyphs.
   *Test:* capture `-devmenu options` under Classic. The rows are Oxanium text
   laid out as in Solid's capture of the same menu, and the log names the
@@ -282,12 +286,16 @@ differed by 37 pixels.
   *Test:* capture `-devmenu sound` under Classic twice, once normally and
   once with `VK_ICD_FILENAMES=/nonexistent`. The second log contains
   `RB_VulkanProbe: no Vulkan instance`. `compare -metric AE` between the two
-  → `0`. Not the Options menu: its Video row reads `(no 3D)` without Vulkan
+  → `0`, and each differs from base's `-devmenu sound` capture, whose menu is
+  bitmap; both logs name the Classic font bake. Without that second half a
+  gate reading Vulkan state passes, since Classic never initialises Vulkan
+  and both runs would draw the bitmap menu. Not the Options menu: its Video row reads `(no 3D)` without Vulkan
   (`RB_ModeMenuName`), and on base the two Options captures differed by 662
   pixels while the two Sound captures gave `0`.
 - **INV-4** — No part of the crisp menu, dim included, is drawn in the status
   bar under Classic in a level (DOOM-0206 INV-2). Breaks if the dim or a row
-  uses the window height rather than the image rectangle's safe bottom.
+  reaches below the safe bottom. This capture's picture fills the window's
+  height, so it cannot tell the window's height from the picture's.
   *Test:* capture `-devmenu options` from base and from the built commit.
   Crop both to the status bar band (`magick <png> -crop 1280x128+0+672`, the
   bottom 32/200 of the 1280×800 frame) and compare → AE `0`. Menu-open
@@ -362,7 +370,9 @@ differed by 37 pixels.
 - **DOOM-0206-menu-redesign.md** — INV-1 and the §1 / §4.6 / header lines
   saying Classic keeps the bitmap skin, never gets the dim, and never sees
   the crisp renderer: annotate each as superseded by DOOM-0211 for a Classic
-  run whose font is ready. INV-1's bitmap path remains true for the fallback.
+  run whose font is ready. INV-1's bitmap rendering stays true for the
+  fallback; its menu-structure clause (`RendererDef` / `EffectsDef`) is
+  superseded by §4.4 on every path.
   The `M_MenuIsCrisp` comment carrying INV-1 changes with the code.
 - **DOOM-0206-implementation-plan.md** — its INV-1 line, the same
   annotation.
