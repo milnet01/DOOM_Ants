@@ -1613,6 +1613,10 @@ void PickPhysicalAndDevice()
     enable12.shaderSampledImageArrayNonUniformIndexing  = VK_TRUE;
     enable12.descriptorBindingVariableDescriptorCount   = VK_TRUE;
     enable12.descriptorBindingPartiallyBound            = VK_TRUE;
+    // DOOM-0486: mesh.vert / mesh.frag declare GL_EXT_buffer_reference on every tier, so
+    // their modules need this feature even where ray tracing is off (where they never
+    // dereference an address). Enabled whenever the device has it, not only with RT.
+    enable12.bufferDeviceAddress = have12.bufferDeviceAddress;
 
     VkPhysicalDeviceAccelerationStructureFeaturesKHR enableAccel = {};
     enableAccel.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
@@ -1623,9 +1627,8 @@ void PickPhysicalAndDevice()
 
     if (g.rtEnabled)
     {
-        // bufferDeviceAddress lets the AS build read the mesh vertex buffer by GPU
-        // address; the two RT feature structs chain after the 1.2 features.
-        enable12.bufferDeviceAddress = VK_TRUE;
+        // The two RT feature structs chain after the 1.2 features (bufferDeviceAddress,
+        // which the AS build needs to read the mesh by GPU address, is set above).
         enable12.pNext     = &enableAccel;
         enableAccel.pNext  = &enableRayQuery;
         devExts.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);

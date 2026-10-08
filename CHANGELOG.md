@@ -8,6 +8,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **The 3D views switch on a graphics-card feature their shaders need on cards without ray tracing** (DOOM-0486)
+  On cards without ray tracing, the Solid view's shaders relied on a
+  feature the game never enabled. It happened to work, but broke the
+  Vulkan rules and could fail on another driver. The Vulkan validation
+  layer now reports nothing on such a card.
+
 - **Ultra's noise filter no longer blurs across real edges** (DOOM-0387)
   The ray-traced view's denoiser overestimated how noisy each pixel
   was, so its edge detection stayed switched off and it smoothed

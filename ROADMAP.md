@@ -10278,6 +10278,18 @@ stay in their phase sections; this heading holds only work still to come.
   seconds, restore; repeat in Ultra with ray tracing on. Pass: the game is
   still running and draws normally after the restore. Also worth a look: CPU
   use while minimised (the skipped frames sleep 10 ms each).
+  Solid half run 2026-10-08 on the Windows test box (GTX 1050, Win10
+  22H2), current master, -windowed, via a one-off interactive scheduled
+  task (C:\doom-ants-test\p0480): minimise 15 s, restore: the game
+  stayed alive and drew after restore (325-557 fps lines), clean quit.
+  PASS for the pass condition. But the DOOM-0390 skip never engaged
+  (0.71 core while minimised, profile lines kept coming) -- filed
+  separately. Ultra half NOT run: that box has no hardware ray tracing;
+  it needs Charl's RTX laptop. Two traps: over SSH the session is hidden
+  (no MainWindowHandle), so the run must go through an Interactive-logon
+  scheduled task; and the task's UserId must be the Explorer owner
+  (SPAREPC\ant), not $env:USERDOMAIN (HOME.EARTH), or registration fails
+  with 'No mapping between account names and security IDs'.
   **Layman:** Minimising the game window on Windows should pause drawing and come back cleanly; that has been fixed by reading the code and not yet tried on a Windows machine.
   Kind: test.
   Source: in-session-2026-09-30 (DOOM-0390 closed without a Windows run).
@@ -10328,6 +10340,26 @@ stay in their phase sections; this heading holds only work still to come.
   Kind: fix.
   Source: in-session 2026-09-30 (found diagnosing DOOM-0280).
   Lanes: startup.
+
+- 📋 [DOOM-0485] **On Windows the 3D views keep drawing at full speed while the game window is minimised.**
+  Measured 2026-10-08 on the Windows test box (GTX 1050, Win10 22H2), Solid, E1M1, -windowed: ShowWindow(SW_MINIMIZE) made the window iconic, yet CPU stayed at 0.71 core for 15 s (0.75 while visible) and the per-second [cpu_profile] line kept printing (40 lines over ~42 s). DOOM-0390's skip in RB_Vulkan_Present runs only when needRecreate is set AND the surface reports no area; on this driver a minimised window neither fails present nor reports a zero extent, so the skip never engages. Candidate fix: also skip while SDL reports SDL_WINDOW_MINIMIZED. Verify with the same harness (C:\doom-ants-test\p0480, launch.ps1 + minimise.ps1): CPU while minimised near zero, profile lines about 26 not 42, game draws after restore.
+  Attempt 1 FAILED (2026-10-08, not committed): an early return in
+  RB_Vulkan_Present when SDL_GetWindowFlags(window) &
+  SDL_WINDOW_MINIMIZED, before the needRecreate check. On the Windows
+  box it changed nothing: 0.74 core while minimised, 42 profile lines,
+  IsIconic true. Unknown why. -noinput is NOT the cause on reading
+  (i_video.c's DOOM-0287 comment says SDL_QUIT and window events still
+  pass). Next: print SDL_GetWindowFlags and log
+  SDL_WINDOWEVENT_MINIMIZED/RESTORED in the event loop on the Windows
+  run, to learn whether SDL ever sees the minimise sent by ShowWindow
+  from another process; also try a minimise by keyboard or click to rule
+  out the harness. Harness: C:\doom-ants-test\p0480 (launch.ps1 runs
+  minimise.ps1 in the desktop session); scratch copies in
+  /home/ants/doom-scratch/p0480.
+  **Layman:** Minimising the game on Windows does not pause its drawing, so it keeps using most of a CPU core in the background.
+  Kind: fix.
+  Source: in-session-2026-10-08 (DOOM-0480 Windows run).
+  Lanes: renderer, windows.
 
 ## 0.9.0 — The codebase can be trusted
 
@@ -12373,6 +12405,18 @@ defect visible before a player finds it.
   Kind: test.
   Source: in-session-2026-09-30 (found answering UT_Ants).
   Lanes: renderer, tests.
+
+- ✅ [DOOM-0486] **On GPUs without ray tracing, the raster shaders use buffer device addresses the device never enabled.**
+  The Windows test box (GTX 1050, no RT, validation layer installed) logs 3 validation messages at startup: vkCreateShaderModule: SPIR-V Capability PhysicalStorageBufferAddresses declared, but VkPhysicalDeviceVulkan12Features::bufferDeviceAddress is not enabled. mesh.vert and mesh.frag declare GL_EXT_buffer_reference (probes, triangle subsectors, lights); r_vulkan.cpp enables enable12.bufferDeviceAddress only inside if (g.rtEnabled). This machine's RX 6600 has RT, so local validation runs never see it. Candidate fix: enable bufferDeviceAddress whenever the device reports it (core in Vulkan 1.2), independent of RT. Verify: 0 validation messages on the Windows box in Solid.
+  Resolved (2026-10-08): enable12.bufferDeviceAddress =
+  have12.bufferDeviceAddress, set outside the RT branch (RT already
+  required it, so RT devices are unchanged). Windows box, Solid: 3
+  validation messages before, 0 after. Linux RX 6600: Ultra and Solid 0
+  messages, make test 32/32.
+  **Layman:** On graphics cards without ray tracing, some 3D-view shaders rely on a card feature the game never switches on; it happens to work but breaks the rules and could fail on another driver.
+  Kind: fix.
+  Source: in-session-2026-10-08 (DOOM-0480 Windows run).
+  Lanes: renderer.
 
 ## 0.10.0 — The frame budget
 
