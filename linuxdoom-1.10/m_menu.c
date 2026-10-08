@@ -1369,7 +1369,7 @@ extern int	rb_fog;			// DOOM-0011 volumetric fog strength (`;` key; rt config: r
 char	fogNames[4][6]		= {"Off","Low","Med","High"};
 extern int	rb_bloom;		// DOOM-0331 bloom strength (no hotkey; rt config: rt_bloom)
 char	bloomNames[4][6]	= {"Off","Low","Med","High"};
-// DOOM-0206 (L1b/L2): menu-text batch API + HUD-safe bound, in r_vulkan.cpp.
+// DOOM-0206 (L1b/L2): menu-text batch API + HUD-safe bound, in menu_text.c (DOOM-0211).
 extern int	rb_menu_text_active;		// gates the text/dim flush in the present path
 extern void	rb_menu_dim(void);		// queues the play-view dim quad (0..rb_menu_safe_bottom())
 extern int	rb_menu_safe_bottom(void);	// display-pixel Y below which nothing may draw (INV-2)

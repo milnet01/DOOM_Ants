@@ -73,6 +73,7 @@
 // DOOM-0206 (L1b): the pure-logic stb_truetype glyph-atlas baker (compiled in rb_text.c;
 // self-guards extern "C"). The GPU side (atlas image + text pipeline + batch API) is here.
 #include "rb_text.h"
+#include "menu_text.h"     // DOOM-0211: the crisp menu queue (rb_text_* / rb_menu_*)
 
 // C engine symbols the HD material loader resolves DOOM names against (defined in
 // r_data.c / w_wad.c). Declared here since r_vulkan.cpp doesn't pull r_state.h.
@@ -82,26 +83,20 @@ extern "C" {
     extern int firstflat;                       // lump index of the first flat
     extern int numflats;                        // flat count
     extern int rendermode;                      // r_backend.h: selected tier (TIER_* mirror below)
-    // DOOM-0206 (L2): gamestate/screenblocks drive the HUD-safe bound (rb_menu_safe_bottom).
-    // gamestate's real C type is gamestate_t (doomdef.h enum typedef, GS_LEVEL==0; the extern
-    // lives in doomstat.h); mirrored here as plain int rather than pulling those headers in (not
-    // C++-clean, see the probe
-    // comment below). Unlike rendermode (a genuine plain `int`, r_backend.c), this relies on
-    // the enum's int-width representation under this toolchain (no -fshort-enums; enums default
-    // to int width here), so declaring it `int` across the C/C++ boundary is safe but not a
-    // like-for-like mirror of the rendermode dodge.
-    // screenblocks is genuinely `int` in m_menu.c already, so no mismatch there.
-    extern int gamestate;                       // doomdef.h: gamestate_t, GS_LEVEL == 0
     // DOOM-0297: -rtverify picks its sample count from the game, because DOOM 2's emitter
     // set converges slower and one count cannot serve both (INV-6's per-gamemode table).
-    // Mirrored as int for exactly the reason gamestate is, and with the same caveat.
+    // gamemode's real C type is GameMode_t (doomdef.h enum typedef; the extern lives in
+    // doomstat.h); mirrored here as plain int rather than pulling those headers in (not
+    // C++-clean, see the probe comment below). Unlike rendermode (a genuine plain `int`,
+    // r_backend.c), this relies on the enum's int-width representation under this toolchain
+    // (no -fshort-enums; enums default to int width here), so declaring it `int` across the
+    // C/C++ boundary is safe but not a like-for-like mirror of the rendermode dodge.
     extern int gamemode;                        // doomdef.h: GameMode_t
-    extern int screenblocks;                    // m_menu.c: HUD size 0-10 (DOOM-0148 clamp)
     // DOOM-0011 L3: the map's own line-of-sight test, for the fog-light bake (p_sight.c).
     // Mirrored here for the same reason as the externs above -- p_local.h pulls the whole
     // playsim header chain, and this file needs exactly one function out of it. `fixed_t`
     // is `int` (m_fixed.h) so the parameters are like-for-like; the return is DOOM's
-    // `boolean`, an int-width enum, mirrored as int by the same reasoning as gamestate.
+    // `boolean`, an int-width enum, mirrored as int by the same reasoning as gamemode.
     int P_CheckSightTrace(int x1, int y1, int z1, int x2, int y2, int zBot, int zTop);
 }
 
@@ -332,10 +327,12 @@ enum {
 // ping-pong by frame parity, plus the upscaled output the present path blits.
 enum { TA_HIST0, TA_HIST1, TA_OUT, TA_COUNT };
 
-// DOOM-0206 (L1b): one textured glyph-quad vertex. Position is in DISPLAY PIXELS with a
-// top-left origin (text.vert converts to NDC via the invDisplay push constant), UV indexes
-// the R8 atlas, and the colour is R8G8B8A8_UNORM (decoded to a normalized vec4 tint).
-struct TextVertex { float x, y, u, v; unsigned char r, g, b, a; };
+// DOOM-0206 (L1b): one textured glyph-quad vertex, queued by menu_text.c (DOOM-0211).
+// Position is in DISPLAY PIXELS with a top-left origin (text.vert converts to NDC via the
+// invDisplay push constant), UV indexes the R8 atlas, and the colour is R8G8B8A8_UNORM
+// (decoded to a normalized vec4 tint).
+typedef mt_vertex_t TextVertex;
+static_assert(sizeof(TextVertex) == 20, "TextVertex must stay float x,y,u,v + RGBA8 (text.vert input)");
 
 struct VulkanState
 {
@@ -654,14 +651,12 @@ struct VulkanState
     // DOOM-0206 (L1b): display-resolution crisp menu text. A stb_truetype glyph atlas
     // (rb_text.c) baked ONCE at init into an R8 image, drawn as alpha-blended textured quads
     // by a dedicated 2D pipeline AFTER the paletted overlay, in the same present render pass.
-    // Additive + 2D-only: no RT resource / push constant is touched (INV-5). menuFont keeps
+    // Additive + 2D-only: no RT resource / push constant is touched (INV-5). The font keeps
     // the CPU-side glyph metrics for the whole session; its pixel buffer is freed right after
-    // the one-time upload. menuFontReady=false (no system font) disables every text entry —
-    // the game still runs, text is a menu-only overlay. rb_menu_text_active (a free-standing
-    // extern) gates the per-frame flush so the paletted HUD/menu is untouched until m_menu
-    // opts in (Tasks 3-6).
-    rb_atlas_font_t menuFont       = {};
-    bool            menuFontReady  = false;
+    // the one-time upload. The font, its ready flag and the queued quads live in menu_text.c
+    // (DOOM-0211); a failed bake leaves mt_font_ready() false and disables every text entry —
+    // the game still runs, text is a menu-only overlay. rb_menu_text_active gates the
+    // per-frame flush so the paletted HUD/menu is untouched until m_menu opts in.
     VkImage         textAtlas       = VK_NULL_HANDLE;
     VkDeviceMemory  textAtlasMemory = VK_NULL_HANDLE;
     VkImageView     textAtlasView   = VK_NULL_HANDLE;
@@ -672,19 +667,18 @@ struct VulkanState
     VkDescriptorPool      textDsPool         = VK_NULL_HANDLE;
     VkDescriptorSet       textDs             = VK_NULL_HANDLE;
     // Per-frame glyph-quad vertex buffer (host-visible, persistently mapped). rb_text_draw
-    // appends to the host-side textVerts vector during the frame; FlushMenuText memcpys it in
+    // appends to menu_text.c's text list during the frame; FlushMenuText memcpys it in
     // and draws it during command recording — after the top-of-frame fence, so the single copy
     // the GPU read last frame is finished (no double-buffering needed, unlike spriteVbuf).
     VkBuffer        textVbuf       = VK_NULL_HANDLE;
     VkDeviceMemory  textVbufMemory = VK_NULL_HANDLE;
     void*           textVbufMapped = nullptr;
     uint32_t        textVbufCap    = 0;   // capacity in vertices
-    std::vector<TextVertex> textVerts;    // this frame's queued glyph quads
 
     // DOOM-0206 v2: the crisp menu skull cursor — the real WAD M_SKULL1 lump decoded to RGBA
     // and drawn through its own RGBA-sampling pipeline (cursor.frag), sized to a text row and
     // brightened. Reuses the text pipeline layout/DS-layout/sampler/vbuf; the verts are queued
-    // into cursorVerts and appended after the glyph draw in FlushMenuText. cursorReady=false
+    // into menu_text.c's cursor list and appended after the glyph draw in FlushMenuText. A not-ready cursor
     // (decode/upload failed) makes m_menu fall back to the paletted skull.
     VkImage          cursorImage  = VK_NULL_HANDLE;
     VkDeviceMemory   cursorMemory = VK_NULL_HANDLE;
@@ -692,22 +686,16 @@ struct VulkanState
     VkDescriptorPool cursorDsPool = VK_NULL_HANDLE;
     VkDescriptorSet  cursorDs     = VK_NULL_HANDLE;
     VkPipeline       cursorPipeline = VK_NULL_HANDLE;
-    bool             cursorReady  = false;
-    int              cursorW = 0, cursorH = 0;
-    std::vector<TextVertex> cursorVerts;   // this frame's queued cursor quad
 
     // DOOM-0206: the real M_DOOM logo lump, a SECOND RGBA menu sprite drawn on the main
     // menu only (bright, undimmed). Reuses g.cursorPipeline + textPipelineLayout/sampler —
-    // only its own texture + descriptor + per-frame verts are new. logoReady=false falls
+    // only its own texture + descriptor + per-frame verts are new. A not-ready logo falls
     // back to the crisp "DOOM" text title.
     VkImage          logoImage  = VK_NULL_HANDLE;
     VkDeviceMemory   logoMemory = VK_NULL_HANDLE;
     VkImageView      logoView   = VK_NULL_HANDLE;
     VkDescriptorPool logoDsPool = VK_NULL_HANDLE;
     VkDescriptorSet  logoDs     = VK_NULL_HANDLE;
-    bool             logoReady  = false;
-    int              logoW = 0, logoH = 0;
-    std::vector<TextVertex> logoVerts;   // this frame's queued logo quad
 
     // column-major MVP from RB_Vulkan_RenderView; identity until the first
     // camera update so a frame drawn before then is well-defined (DOOM-0037).
@@ -1749,6 +1737,7 @@ void CreateSwapchain()
         if (g.extent.width  > caps.maxImageExtent.width)  g.extent.width  = caps.maxImageExtent.width;
         if (g.extent.height > caps.maxImageExtent.height) g.extent.height = caps.maxImageExtent.height;
     }
+    mt_set_display((int)g.extent.width, (int)g.extent.height);   // DOOM-0211: rb_display_* read this
 
     uint32_t imageCount = caps.minImageCount + 1;
     if (caps.maxImageCount && imageCount > caps.maxImageCount)
@@ -5787,7 +5776,7 @@ void CreateOverlayResources(int w, int h)
 // Called once from RB_Vulkan_Init after InitPaletteAndDescriptorSet (so the command pool +
 // g.renderPass exist). The font is the bundled Oxanium SemiBold (OFL), embedded as the
 // oxanium_ttf[] byte array (assets/Oxanium-SemiBold.ttf.h) so the game ships self-contained —
-// no system font dependency. If the bake fails the whole path is left disabled (menuFontReady
+// no system font dependency. If the bake fails the whole path is left disabled (mt_font_ready()
 // stays false) and the game runs without crisp text — it is a menu-only overlay.
 void CreateTextResources()
 {
@@ -5795,7 +5784,8 @@ void CreateTextResources()
     // 1080p, ~48 at 2160p), floored at 24 so low-res stays legible.
     int px = (int)g.extent.height / 45;
     if (px < 24) px = 24;
-    int baked = rb_text_bake(oxanium_ttf, (int)oxanium_ttf_len, px, &g.menuFont);
+    rb_atlas_font_t& menuFont = *mt_font();
+    int baked = rb_text_bake(oxanium_ttf, (int)oxanium_ttf_len, px, &menuFont);
     printf("RB_Vulkan: menu font = Oxanium SemiBold (bundled OFL), %u bytes, glyph px=%d\n",
            oxanium_ttf_len, px);
     fflush(stdout);
@@ -5807,14 +5797,14 @@ void CreateTextResources()
 
     // Reserve atlas texel (0,0) = full coverage: rb_menu_dim draws its solid dark quad by
     // sampling it. stbtt leaves row 0 / column 0 empty, so this clobbers no glyph.
-    g.menuFont.pixels[0] = 255;
+    menuFont.pixels[0] = 255;
 
     // Upload the R8 atlas once (static for the whole session), then free the CPU pixels —
     // rb_text_free_font keeps the glyph metrics rb_text_draw / rb_text_measure still need.
-    CreateSampledImage((uint32_t)g.menuFont.w, (uint32_t)g.menuFont.h, VK_FORMAT_R8_UNORM,
-                       g.menuFont.pixels, (VkDeviceSize)g.menuFont.w * g.menuFont.h,
+    CreateSampledImage((uint32_t)menuFont.w, (uint32_t)menuFont.h, VK_FORMAT_R8_UNORM,
+                       menuFont.pixels, (VkDeviceSize)menuFont.w * menuFont.h,
                        &g.textAtlas, &g.textAtlasMemory, &g.textAtlasView);
-    rb_text_free_font(&g.menuFont);
+    rb_text_free_font(&menuFont);
 
     // Linear + clamp sampler: the atlas is baked at ~display glyph size (scale ~1), so linear
     // gives smooth edges without the paletted art's nearest blockiness.
@@ -5973,22 +5963,22 @@ void CreateTextResources()
 
     // Per-frame glyph-quad vertex buffer (host-visible, persistently mapped). Single copy:
     // FlushMenuText memcpys + draws it after the fence, so no in-flight double-buffering.
-    g.textVbufCap = 4096 * 6;   // up to ~4096 glyphs/frame, 6 verts each
+    g.textVbufCap = MT_TEXT_CAP;   // up to ~4096 glyphs/frame, 6 verts each
     VkDeviceSize vbytes = (VkDeviceSize)g.textVbufCap * sizeof(TextVertex);
     CreateRtBuffer(vbytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                    &g.textVbuf, &g.textVbufMemory, "text");
     Check(vkMapMemory(g.device, g.textVbufMemory, 0, vbytes, 0, &g.textVbufMapped), "vkMapMemory(text)");
 
-    g.menuFontReady = true;
+    mt_set_font_ready(1);
     printf("RB_Vulkan: menu text ready (%dpx glyphs, %dx%d atlas).\n",
-           g.menuFont.px_height, g.menuFont.w, g.menuFont.h);
+           menuFont.px_height, menuFont.w, menuFont.h);
     fflush(stdout);
 
     // DOOM-0206 v2: the crisp menu skull cursor. Decode the real WAD M_SKULL1 lump to a
     // brightened RGBA buffer (M_CursorSkullRGBA, m_menu.c), upload it as an RGBA texture, and
     // build a second pipeline that reuses the text vertex format + layout but samples RGBA
-    // (cursor.frag) instead of the R8 glyph atlas. On any failure cursorReady stays false and
+    // (cursor.frag) instead of the R8 glyph atlas. On any failure the cursor stays not ready and
     // m_menu falls back to the paletted skull.
     {
         int sw = 0, sh = 0;
@@ -6124,9 +6114,7 @@ void CreateTextResources()
             vkDestroyShaderModule(g.device, cvert, nullptr);
             vkDestroyShaderModule(g.device, cfrag, nullptr);
 
-            g.cursorReady = true;
-            g.cursorW = sw;
-            g.cursorH = sh;
+            mt_set_cursor(1, sw, sh);
             printf("RB_Vulkan: menu cursor = real WAD skull M_SKULL1 (%dx%d RGBA, crisp).\n", sw, sh);
             fflush(stdout);
         }
@@ -6134,9 +6122,9 @@ void CreateTextResources()
 
     // DOOM-0206: the real M_DOOM logo lump, a SECOND RGBA menu sprite (main-menu crisp title).
     // Only a texture + descriptor are new — it reuses g.cursorPipeline (identical RGBA sampling)
-    // and the text layout/sampler. On any failure logoReady stays false and the main menu falls
+    // and the text layout/sampler. On any failure the logo stays not ready and the main menu falls
     // back to the crisp "DOOM" text title.
-    if (g.cursorReady)   // cursorPipeline exists only if the cursor block succeeded
+    if (rb_menu_cursor_ready())   // cursorPipeline exists only if the cursor block succeeded
     {
         int lw = 0, lh = 0;
         const unsigned char* pixels = M_MenuLogoRGBA(&lw, &lh);
@@ -6177,217 +6165,16 @@ void CreateTextResources()
             lw2.pImageInfo = &lInfo;
             vkUpdateDescriptorSets(g.device, 1, &lw2, 0, nullptr);
 
-            g.logoReady = true;
-            g.logoW = lw;
-            g.logoH = lh;
+            mt_set_logo(1, lw, lh);
             printf("RB_Vulkan: menu logo = real WAD M_DOOM (%dx%d RGBA, crisp).\n", lw, lh);
             fflush(stdout);
         }
     }
 }
 
-// DOOM-0206 (L1b): the extern-"C" menu-text batch API m_menu.c drives (Tasks 3-6). Every entry
-// is a no-op until CreateTextResources baked a font (menuFontReady). rb_menu_text_active is set
-// by m_menu each frame the crisp skin drew; FlushMenuText draws the queued quads only when it
-// is set, so nothing changes for the paletted HUD/menu until the menu opts in.
-extern "C" { int rb_menu_text_active = 0; }
-
-extern "C" void rb_text_begin(void)
-{
-    g.textVerts.clear();
-    g.cursorVerts.clear();
-    g.logoVerts.clear();
-}
-
-extern "C" int rb_text_width(const char* s, float scale)
-{
-    if (!g.menuFontReady) return 0;
-    return (int)(rb_text_measure(&g.menuFont, s) * scale + 0.5f);
-}
-
-extern "C" int rb_text_line_height(float scale)
-{
-    if (!g.menuFontReady) return 0;
-    return (int)((float)g.menuFont.px_height * scale + 0.5f);
-}
-
-// Emit one string's glyph quads at (x,y) top-left with an explicit RGBA. Shared by the shadow
-// pass and the main pass of rb_text_draw.
-static void EmitTextQuads(const char* s, float x, float y, float scale,
-                          unsigned char cr, unsigned char cg, unsigned char cb, unsigned char ca)
-{
-    const float aw = (float)g.menuFont.w, ah = (float)g.menuFont.h;
-    float penX = x;
-    // The API's y is the text's top-left; glyph xoff/yoff are baseline-relative, so drop the
-    // pen to the baseline (top + ascent). ascent was baked in pixels at px_height.
-    const float baseY = y + (float)g.menuFont.ascent * scale;
-    for (const unsigned char* p = (const unsigned char*)s; *p; p++)
-    {
-        int idx = (int)*p - 32;
-        if (idx < 0 || idx >= 96) continue;   // non-printable / out of the baked ASCII range
-        const rb_glyph_t* gl = &g.menuFont.glyphs[idx];
-        const float x0 = penX + gl->xoff * scale;
-        const float y0 = baseY + gl->yoff * scale;
-        const float x1 = x0 + (float)(gl->x1 - gl->x0) * scale;
-        const float y1 = y0 + (float)(gl->y1 - gl->y0) * scale;
-        const float u0 = (float)gl->x0 / aw, v0 = (float)gl->y0 / ah;
-        const float u1 = (float)gl->x1 / aw, v1 = (float)gl->y1 / ah;
-        const TextVertex a0 = { x0, y0, u0, v0, cr, cg, cb, ca };
-        const TextVertex a1 = { x1, y0, u1, v0, cr, cg, cb, ca };
-        const TextVertex a2 = { x1, y1, u1, v1, cr, cg, cb, ca };
-        const TextVertex a3 = { x0, y1, u0, v1, cr, cg, cb, ca };
-        g.textVerts.push_back(a0); g.textVerts.push_back(a1); g.textVerts.push_back(a2);
-        g.textVerts.push_back(a0); g.textVerts.push_back(a2); g.textVerts.push_back(a3);
-        penX += gl->xadvance * scale;
-    }
-}
-
-extern "C" void rb_text_draw(const char* s, int x, int y, float scale, unsigned rgba)
-{
-    if (!g.menuFontReady || !s) return;
-    const unsigned char cr = (unsigned char)((rgba >> 24) & 0xFF);
-    const unsigned char cg = (unsigned char)((rgba >> 16) & 0xFF);
-    const unsigned char cb = (unsigned char)((rgba >>  8) & 0xFF);
-    const unsigned char ca = (unsigned char)( rgba        & 0xFF);
-    // DOOM-0206 (L5): a soft drop-shadow for legibility over the dimmed 3D view. Draw the same
-    // string in near-black one glyph-fraction down-right first, then the real colour on top.
-    // Offset scales with the font so it reads the same at any resolution (clamped 1..3px).
-    float shOff = (float)g.menuFont.ascent * scale / 18.0f;
-    if (shOff < 1.0f) shOff = 1.0f;
-    if (shOff > 3.0f) shOff = 3.0f;
-    EmitTextQuads(s, (float)x + shOff, (float)y + shOff, scale, 0, 0, 0, (unsigned char)(ca * 3 / 4));
-    EmitTextQuads(s, (float)x, (float)y, scale, cr, cg, cb, ca);
-}
-
-// DOOM-0206 (L2): INV-2, the HUD-safe bound. Returns the display-pixel Y below which nothing
-// may draw -- the status bar's top edge while it's on screen, else the full display height
-// (nothing to avoid). Used by rb_menu_dim here, and will be used by the crisp skin (Task 4)
-// and the Classic clip (Task 6).
-//
-// screenblocks < 11 is DOOM-0148's always-true-in-game invariant (M_Init clamps screenblocks
-// to <= 10, so 11's fullscreen-no-HUD view is currently unreachable) -- checked anyway so this
-// stays correct if that clamp is ever lifted. 200/32 are ORIGHEIGHT/ST_HEIGHT (doomdef.h /
-// st_stuff.h); named literally here since this file avoids pulling those C headers in (see the
-// probe comment above RB_VulkanProbe).
-extern "C" int rb_menu_safe_bottom(void)
-{
-    const int dispH = (int)g.extent.height;
-    static bool logged = false;
-    int safeBottom = dispH;
-    if (gamestate == 0 /* GS_LEVEL */ && screenblocks < 11)
-        safeBottom = dispH * (200 - 32) / 200;   // 200=ORIGHEIGHT, 32=ST_HEIGHT
-    if (!logged)
-    {
-        printf("RB_Vulkan: rb_menu_safe_bottom = %d (dispH=%d, gamestate=%d, screenblocks=%d)\n",
-               safeBottom, dispH, gamestate, screenblocks);
-        fflush(stdout);
-        logged = true;
-    }
-    return safeBottom;
-}
-
-// DOOM-0206 (L3): the display extent, in display pixels. The crisp Video menu (m_menu.c)
-// centres its title, right-aligns values and maps the skull's virtual-Y from these.
-extern "C" int rb_display_width(void)  { return (int)g.extent.width; }
-extern "C" int rb_display_height(void) { return (int)g.extent.height; }
-
-// DOOM-0206 (L3): a solid-colour quad in display pixels — the one quad path shared by the menu
-// dim and the crisp Brightness slider. Colour via the reserved full-coverage atlas texel (0,0),
-// so it needs no extra GPU pipeline. rgba is 0xRRGGBBAA. Queued into the same per-frame text
-// vector as rb_text_draw, drawn by FlushMenuText.
-extern "C" void rb_menu_fill(int x, int y, int w, int h, unsigned rgba)
-{
-    if (!g.menuFontReady) return;
-    const float u = 0.5f / (float)g.menuFont.w;           // texel (0,0) centre (full coverage)
-    const float v = 0.5f / (float)g.menuFont.h;
-    const unsigned char cr = (unsigned char)((rgba >> 24) & 0xFF);
-    const unsigned char cg = (unsigned char)((rgba >> 16) & 0xFF);
-    const unsigned char cb = (unsigned char)((rgba >>  8) & 0xFF);
-    const unsigned char ca = (unsigned char)( rgba        & 0xFF);
-    const float x0 = (float)x,     y0 = (float)y;
-    const float x1 = (float)(x+w), y1 = (float)(y+h);
-    const TextVertex q0 = { x0, y0, u, v, cr, cg, cb, ca };
-    const TextVertex q1 = { x1, y0, u, v, cr, cg, cb, ca };
-    const TextVertex q2 = { x1, y1, u, v, cr, cg, cb, ca };
-    const TextVertex q3 = { x0, y1, u, v, cr, cg, cb, ca };
-    g.textVerts.push_back(q0); g.textVerts.push_back(q1); g.textVerts.push_back(q2);
-    g.textVerts.push_back(q0); g.textVerts.push_back(q2); g.textVerts.push_back(q3);
-}
-
-// DOOM-0206 v2: the crisp menu cursor — the real WAD skull M_SKULL1 decoded to RGBA and drawn
-// through its own RGBA-sampling pipeline (cursor.frag), sized to a text row and brightened. It
-// is queued into a SEPARATE per-frame vector (cursorVerts) because it needs the cursor pipeline
-// + descriptor, not the R8 text pipeline; FlushMenuText appends the draw after the glyphs.
-// Present only if the skull decoded + uploaded; m_menu falls back to the paletted skull otherwise.
-extern "C" int rb_menu_cursor_ready(void)
-{
-    return g.cursorReady;
-}
-
-// Drawn width (px) of the cursor at target height h, keeping the sprite's aspect — m_menu uses
-// it to place the cursor fully left of the label column.
-extern "C" int rb_menu_cursor_width(int h)
-{
-    if (!g.cursorReady || h <= 0 || g.cursorH <= 0) return 0;
-    return (int)((float)h * (float)g.cursorW / (float)g.cursorH + 0.5f);
-}
-
-// Draw the skull cursor with its top-left at (x,y), target height h (px). One RGBA quad; the
-// brightness is baked into the texture (M_CursorSkullRGBA), so the tint is plain white.
-extern "C" void rb_menu_draw_cursor(int x, int y, int h)
-{
-    if (!g.cursorReady || h <= 0 || g.cursorH <= 0) return;
-    const float dw = (float)h * (float)g.cursorW / (float)g.cursorH, dh = (float)h;
-    const float x0 = (float)x, y0 = (float)y, x1 = x0 + dw, y1 = y0 + dh;
-    // uv 0..1 over the whole cursor texture; white tint (brightness baked into the RGBA).
-    const TextVertex t0 = { x0, y0, 0.f, 0.f, 255,255,255,255 };
-    const TextVertex t1 = { x1, y0, 1.f, 0.f, 255,255,255,255 };
-    const TextVertex t2 = { x1, y1, 1.f, 1.f, 255,255,255,255 };
-    const TextVertex t3 = { x0, y1, 0.f, 1.f, 255,255,255,255 };
-    g.cursorVerts.push_back(t0); g.cursorVerts.push_back(t1); g.cursorVerts.push_back(t2);
-    g.cursorVerts.push_back(t0); g.cursorVerts.push_back(t2); g.cursorVerts.push_back(t3);
-}
-
-// DOOM-0206: the M_DOOM logo sprite (main-menu crisp title). Mirrors the cursor API — its own
-// per-frame vert vector, drawn through g.cursorPipeline + g.logoDs in FlushMenuText.
-extern "C" int rb_menu_logo_ready(void)
-{
-    return g.logoReady;
-}
-
-// Drawn width (px) of the logo at target height h, keeping the lump's aspect.
-extern "C" int rb_menu_logo_width(int h)
-{
-    if (!g.logoReady || h <= 0 || g.logoH <= 0) return 0;
-    return (int)((float)h * (float)g.logoW / (float)g.logoH + 0.5f);
-}
-
-// Draw the M_DOOM logo with its top-left at (x,y), target height h (px). One RGBA quad; the
-// logo carries its own colours (no brighten), so the tint is plain white and it draws bright
-// over the dim backdrop.
-extern "C" void rb_menu_draw_logo(int x, int y, int h)
-{
-    if (!g.logoReady || h <= 0 || g.logoH <= 0) return;
-    const float dw = (float)h * (float)g.logoW / (float)g.logoH, dh = (float)h;
-    const float x0 = (float)x, y0 = (float)y, x1 = x0 + dw, y1 = y0 + dh;
-    const TextVertex t0 = { x0, y0, 0.f, 0.f, 255,255,255,255 };
-    const TextVertex t1 = { x1, y0, 1.f, 0.f, 255,255,255,255 };
-    const TextVertex t2 = { x1, y1, 1.f, 1.f, 255,255,255,255 };
-    const TextVertex t3 = { x0, y1, 0.f, 1.f, 255,255,255,255 };
-    g.logoVerts.push_back(t0); g.logoVerts.push_back(t1); g.logoVerts.push_back(t2);
-    g.logoVerts.push_back(t0); g.logoVerts.push_back(t2); g.logoVerts.push_back(t3);
-}
-
-// DOOM-0206 (L1b/L2): the play-view dim quad (menu backdrop). Darkens the world behind the
-// menu but leaves the status bar undimmed (rb_menu_safe_bottom, INV-2) so the HUD stays
-// readable. One quad path via rb_menu_fill (L3). Always queued; the Classic-tier gate lives in
-// the caller (m_menu), per the plan. The dim strength is tunable in later menu tasks.
-extern "C" void rb_menu_dim(void)
-{
-    if (!g.menuFontReady) return;
-    // 0x000000A0 == ~63% black over the play view, from y=0 to the status-bar top (INV-2).
-    rb_menu_fill(0, 0, (int)g.extent.width, rb_menu_safe_bottom(), 0x000000A0u);
-}
+// DOOM-0211: the extern-"C" menu-text batch API m_menu.c drives (rb_text_* / rb_menu_* /
+// rb_display_*) lives in menu_text.c. CreateTextResources feeds it the font, the skull and the
+// logo; FlushMenuText below draws what it queued.
 
 // DOOM-0206 (L1b): draw this frame's queued glyph quads (rb_text_draw / rb_menu_dim) over the
 // paletted 2D overlay, in the same present render pass. Self-contained: sets its own full-
@@ -6400,13 +6187,16 @@ static void FlushMenuText()
     // Draw if the menu opted in AND queued anything this frame. The cursor/logo ride separate
     // vectors (their own pipeline/descriptor), so a frame that queued ONLY a cursor -- e.g. the
     // Game Select screen's brightened skull with no crisp text -- must not early-return here.
-    if (!g.menuFontReady || !rb_menu_text_active ||
-        (g.textVerts.empty() && g.cursorVerts.empty() && g.logoVerts.empty()))
+    int nText = 0, nCursor = 0, nLogo = 0;
+    const TextVertex* textVerts   = mt_text_verts(&nText);
+    const TextVertex* cursorVerts = mt_cursor_verts(&nCursor);
+    const TextVertex* logoVerts   = mt_logo_verts(&nLogo);
+    if (!mt_font_ready() || !rb_menu_text_active || (nText == 0 && nCursor == 0 && nLogo == 0))
         return;
-    uint32_t verts = (uint32_t)g.textVerts.size();
+    uint32_t verts = (uint32_t)nText;
     if (verts > g.textVbufCap) verts = g.textVbufCap;   // over-cap frame just clips the tail
     if (verts)   // a cursor-only frame (Game Select skull) has no glyph verts to copy
-        std::memcpy(g.textVbufMapped, g.textVerts.data(), (size_t)verts * sizeof(TextVertex));
+        std::memcpy(g.textVbufMapped, textVerts, (size_t)verts * sizeof(TextVertex));
 
     VkViewport vpRect = {};
     vpRect.width = (float)g.extent.width;
@@ -6432,14 +6222,14 @@ static void FlushMenuText()
     // constant + viewport/scissor already set above apply (same layout). The dim/glyph verts drew
     // first, so the bright skull composites on top.
     uint32_t used = verts;   // running vertex offset into the shared buffer
-    if (g.cursorReady && !g.cursorVerts.empty())
+    if (rb_menu_cursor_ready() && nCursor > 0)
     {
-        uint32_t cverts = (uint32_t)g.cursorVerts.size();
+        uint32_t cverts = (uint32_t)nCursor;
         if (used + cverts > g.textVbufCap) cverts = g.textVbufCap - used;   // clip if no room
         if (cverts > 0)
         {
             std::memcpy((unsigned char*)g.textVbufMapped + (size_t)used * sizeof(TextVertex),
-                        g.cursorVerts.data(), (size_t)cverts * sizeof(TextVertex));
+                        cursorVerts, (size_t)cverts * sizeof(TextVertex));
             vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.cursorPipeline);
             vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     g.textPipelineLayout, 0, 1, &g.cursorDs, 0, nullptr);
@@ -6451,14 +6241,14 @@ static void FlushMenuText()
     // DOOM-0206: the M_DOOM logo (main-menu crisp title). Same shared vertex buffer, its own
     // RGBA descriptor (g.logoDs) but the same g.cursorPipeline. Pack after whatever the cursor
     // wrote (firstVertex = used), guarding the tail against capacity.
-    if (g.logoReady && !g.logoVerts.empty())
+    if (rb_menu_logo_ready() && nLogo > 0)
     {
-        uint32_t lverts = (uint32_t)g.logoVerts.size();
+        uint32_t lverts = (uint32_t)nLogo;
         if (used + lverts > g.textVbufCap) lverts = g.textVbufCap - used;   // clip if no room
         if (lverts > 0)
         {
             std::memcpy((unsigned char*)g.textVbufMapped + (size_t)used * sizeof(TextVertex),
-                        g.logoVerts.data(), (size_t)lverts * sizeof(TextVertex));
+                        logoVerts, (size_t)lverts * sizeof(TextVertex));
             vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.cursorPipeline);
             vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     g.textPipelineLayout, 0, 1, &g.logoDs, 0, nullptr);
@@ -11151,7 +10941,7 @@ extern "C" void RB_Vulkan_Shutdown(void)
     if (g.logoView)           vkDestroyImageView(g.device, g.logoView, nullptr);
     if (g.logoImage)          vkDestroyImage(g.device, g.logoImage, nullptr);
     if (g.logoMemory)         vkFreeMemory(g.device, g.logoMemory, nullptr);
-    rb_text_free_font(&g.menuFont);   // no-op if the pixels were already freed after upload
+    mt_reset();   // DOOM-0211: the menu queue's font, flags and display size describe a live presenter
 
     DestroyFramebufferResources();   // framebuffers, depth, swapchain image views
     if (g.pipeline)       vkDestroyPipeline(g.device, g.pipeline, nullptr);
