@@ -6,6 +6,23 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Classic's menus now look like Solid's and Ultra's** (DOOM-0211)
+  Under Classic, the menus that Solid and Ultra draw with sharp text
+  now use the same sharp text over a dimmed scene. The game picture
+  itself is unchanged. If that font cannot load, Classic falls back to
+  the original 1993 red menu.
+
+### Removed
+
+- **Classic's Video menu keeps only the settings Classic uses** (DOOM-0211)
+  Under Classic, Video now lists Renderer, Widescreen, Fill Screen,
+  FPS Counter and Back. Upscaler, Render Scale, Debug Views,
+  Brightness and the Render Effects submenu are gone from it, because
+  Classic ignores them. They are still in the Video menu under Solid
+  and Ultra, and saved settings are kept.
+
 ### Fixed
 
 - **Outdoor floors in Ultra no longer show a regular repeating grid.** (DOOM-0271)

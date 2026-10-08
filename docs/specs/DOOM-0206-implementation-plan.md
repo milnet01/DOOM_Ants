@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- **INV-1:** Classic keeps its bitmap/red rendering + menu structure; gets ONLY the two shared fixes (HUD-safe, uniform font). No glyph font / dim / VideoDef in Classic.
+- **INV-1:** Classic keeps its bitmap/red rendering + menu structure; gets ONLY the two shared fixes (HUD-safe, uniform font). No glyph font / dim / VideoDef in Classic. *(Superseded by DOOM-0211: Classic draws the crisp skin and dim through SDL where the menu font is ready, with the bitmap menu as fallback; `RendererDef` is cut to five rows and `EffectsDef` is gone.)*
 - **INV-2 (all tiers):** no menu element ever drawn inside the status-bar band; scroll instead. Hard user requirement.
 - **INV-3:** every DOOM-0205 render toggle appears in VideoDef, bound to the same var its hotkey flips.
 - **INV-4:** additions only (VideoDef menu_t + `M_ChangeRayTracing` + entry branch in `M_RendererMenu` + `currentMenu` re-route in `M_ChangeRenderer` + crisp skin + scroll). No edits to `M_Responder`, `itemOn` movement semantics, or persistence.

@@ -9,6 +9,8 @@ inline.
 Kind: feature. Tier: the crisp glyph skin + dim backdrop + Video consolidation
 are Solid/Ultra only; Classic gets ONLY the two shared fixes — HUD-safe bound +
 uniform per-menu font size — and otherwise keeps its authentic bitmap/red menu.
+*(Classic half superseded by DOOM-0211 where the menu font is ready: Classic then draws the crisp skin and the dim
+through SDL, and the bitmap menu is the fallback.)*
 Depends on / reuses: DOOM-0205 (Render Effects toggles + handlers), the Vulkan
 2D overlay composite (r_vulkan.cpp), the classic menu engine (m_menu.c).
 
@@ -46,7 +48,8 @@ modern instead of the chunky, cluttered classic overlay:
   cross-tier user fixes applied: it must not overlap the HUD (scroll if needed),
   and each menu is a single font size (its mixed big-red item lumps rendered at
   the uniform row size, reducing size if needed). No crisp glyph font, dim, or
-  Video consolidation in Classic.
+  Video consolidation in Classic. *(Superseded by DOOM-0211 where the menu font is ready; see the
+  header note.)*
 
 Non-goals (YAGNI): no new navigation paradigm (tabs/side-panels); no menu
 restructuring beyond grouping the render settings; in Classic, no glyph font / no
@@ -394,7 +397,8 @@ crisp). The Classic *tier* is unaffected (see below).
   draws the 1997 bitmap path with the two shared fixes (HUD-safe shift + the
   Options row-label conversion, §L6). The v2 generic crisp renderer is gated on
   `rendermode != RB_CLASSIC`, so Classic never sees it. The title *banners* (DOOM
-  logo, OPTIONS) are kept in Classic exactly as before.
+  logo, OPTIONS) are kept in Classic exactly as before. *(Superseded by DOOM-0211 where the menu font is ready; see the
+  header note.)*
 - **Two content fixes requested in the same play-test — these restructure the
   shared Options/Renderer item arrays for *all* tiers (a deliberate v2 relaxation
   of v1's INV-4 "no item-list change"; cursor-movement / `M_Responder` /
@@ -553,7 +557,11 @@ path (it happens only on resize, never during play).
 
 ## 8. Invariants
 
-- **INV-1** — Classic tier (`RB_CLASSIC`) keeps its bitmap-font rendering
+- **INV-1** — *(Annotated for DOOM-0211. The bitmap rendering below now holds
+  only for the fallback, where the menu font is not ready. The menu-structure
+  clause is superseded on every path: `RendererDef` lists Renderer, Widescreen,
+  Fill Screen, FPS Counter and Back, and `EffectsDef` no longer exists.)*
+  Classic tier (`RB_CLASSIC`) keeps its bitmap-font rendering
   (`M_WriteText` / `V_DrawPatch`), red styling, and existing menu structure
   (`RendererDef` / `EffectsDef`, reached via the tier-conditional entry row,
   §4.5). Classic does **not** get the crisp glyph font, the dimmed backdrop, or

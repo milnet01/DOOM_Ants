@@ -23,7 +23,7 @@ ray-traced view (the `~` key / the menu's Ray Tracing row), so "which tier" and
 
 | Tier | Art | Effects |
 |---|---|---|
-| **Classic** | The 1993/97 game exactly as released | None — this is the original renderer. Widescreen is the one concession, and it is optional |
+| **Classic** | The 1993/97 game exactly as released | None — this is the original renderer. Two concessions: widescreen, which is optional, and the Solid/Ultra menu look, drawn through SDL (DOOM-0211) |
 | **Solid** | The **original** textures, upscaled, with PBR / POM added on top | The full set — fog, lighting, shadows — faked cheaply wherever a cheap fake holds up |
 | **Ultra** | **Replaced** with HD art | The full set, done properly, and first in line for anything new |
 
