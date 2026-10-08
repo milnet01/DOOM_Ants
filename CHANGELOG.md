@@ -8,6 +8,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Ultra's noise filter no longer blurs across real edges** (DOOM-0387)
+  The ray-traced view's denoiser overestimated how noisy each pixel
+  was, so its edge detection stayed switched off and it smoothed
+  across real detail. It now follows the published method. The change
+  is small in a still view and shows most while moving.
+
 - **A sound-channel setting above 8 is honoured instead of silently dropping sounds** (DOOM-0385)
   The audio mixer always had 8 channels, so with snd_channels set
   higher the ninth sound at once was dropped, ignoring the game's own

@@ -64,7 +64,6 @@ void main()
     vec3  sum  = c.rgb * wCen;
     float sumV = c.a   * (wCen * wCen);
     float wsum  = wCen;
-    float wsum2 = wCen * wCen;
 
     for (int dy = -2; dy <= 2; dy++)
     for (int dx = -2; dx <= 2; dx++) {
@@ -88,11 +87,13 @@ void main()
         sum   += cq.rgb * wgt;
         sumV  += cq.a   * wgt * wgt;
         wsum  += wgt;
-        wsum2 += wgt * wgt;
     }
 
+    // DOOM-0387: Var(sum w*x / sum w) = sum w^2*var / (sum w)^2. Dividing by sum w^2
+    // instead made this a weighted AVERAGE of the neighbours' variance, so it never
+    // fell as the filter averaged, and the luminance edge-stop above stayed wide open.
     vec3  outC = sum  / max(wsum,  1e-6);
-    float outV = sumV / max(wsum2, 1e-6);
+    float outV = sumV / max(wsum * wsum, 1e-6);
     imageStore(atrous[pong], p, vec4(outC, outV));
     if (pc.misc2.y == 0u) imageStore(hcol[cur], p, vec4(outC, 0.0));
 }

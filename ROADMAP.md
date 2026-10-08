@@ -9664,7 +9664,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: review-code 2026-09-01, lane platform.
   Lanes: audio.
 
-- 📋 [DOOM-0387] **The denoiser's variance filter uses the wrong divisor, disabling its own edge detection.**
+- ✅ [DOOM-0387] **The denoiser's variance filter uses the wrong divisor, disabling its own edge detection.**
   svgf_atrous.comp:95 -- `float outV = sumV / max(wsum2, 1e-6);` normalises the
   filtered variance by sum(w^2) instead of (sum w)^2. That makes the result a
   weighted AVERAGE of neighbour variance, so variance never falls as the filter
@@ -9688,6 +9688,17 @@ stay in their phase sections; this heading holds only work still to come.
   (wsum*wsum)), take before/after Ultra captures, measure, and ship; the
   user judges the look on the next play and a retune follows if it reads
   too grainy.
+  Resolved (2026-10-08): outV = sumV / (wsum*wsum); wsum2 removed (no
+  other reader). Verified the claim first: sumV accumulates w^2*var and
+  was divided by sum w^2. The 'blurry' note at the bloom preset table is
+  about bloom intensity, so nothing compensated for this. Measured,
+  Ultra rt_view 6, E1M1 1056 -3616 90, -inspect -freeze, three captures
+  per side: same-build spread 0.02-0.10/255 mean, 0.0% px moved; before
+  vs after 0.19-0.24/255 mean, 0.3% px moved; mean edge strength
+  unchanged (2.202 all six). A still, converged view leaves little
+  variance for the edge-stop to act on, so the visible difference is
+  expected in motion and on disocclusion: the user judges it on the next
+  play. -rtverify PASS (0.2058%), validation 0, make test 32/32.
   **Layman:** The noise-removal pass is supposed to notice edges and avoid blurring across them. It divides by the wrong quantity, which makes it think there is far more noise than there is, so it stops noticing edges and blurs real detail instead. The error compounds over five passes.
   Kind: fix.
   Source: review-code 2026-09-01, lane shaders-post.
