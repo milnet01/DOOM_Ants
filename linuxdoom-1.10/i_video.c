@@ -1114,6 +1114,8 @@ void I_SetPalette (byte* pal)
     int		g;
     int		b;
 
+    RB_SetPalette(pal);     // the 3D tiers' version of this flash (DOOM-0379)
+
     for (i=0 ; i<256 ; i++)
     {
 	r = gammatable[usegamma][*pal++];

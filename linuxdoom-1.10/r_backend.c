@@ -41,6 +41,7 @@
 #include "v_video.h"    // screens[] (the paletted 2D overlay buffer)
 #include "st_stuff.h"   // ST_Start (force a full status-bar redraw on switch)
 #include "m_argv.h"     // M_CheckParm / myargc / myargv (DOOM-0351: -rtview)
+#include "palette_tint.h" // RB_FitPaletteTint: the palette flash as a blend (DOOM-0379)
 
 // A level is loaded once the BSP segs exist (r_state.h). Used by RB_Init to
 // catch up the scene build when a map was loaded before the back-end came up
@@ -235,11 +236,15 @@ static void Vulkan_RenderPlayerView(player_t* p)
         }
     }
 }
+// The current palette flash as a blend (DOOM-0379); RB_SetPalette fits it.
+static rb_tint_t rb_tint;
+
 static void    Vulkan_Present(void)
 {
     // Hand the freshly-drawn 2D overlay (status bar / menu / messages) to the
     // back-end, then present; it composites screens[0] over the 3D frame.
     RB_Vulkan_SetOverlay(screens[0], SCREENWIDTH, SCREENHEIGHT);
+    RB_Vulkan_SetTint(rb_tint.active ? rb_tint.scale : NULL, rb_tint.bias);
     RB_Vulkan_Present();
 }
 static void    Vulkan_Shutdown(void)               { RB_Vulkan_Shutdown(); }
@@ -478,6 +483,13 @@ void RB_Init(void)
     // which by then sees the initialised 3D back-end.
     if (numsegs > 0 && active->BuildLevel)
         active->BuildLevel();
+}
+
+void RB_SetPalette(const byte* pal)
+{
+    // Fitted on every call, under Classic too, so a tier switch mid-flash keeps
+    // the flash. Called only when the palette changes, so the cost is nothing.
+    RB_FitPaletteTint(RB_PlayPal(), pal, &rb_tint);
 }
 
 void RB_RenderPlayerView(player_t* player)

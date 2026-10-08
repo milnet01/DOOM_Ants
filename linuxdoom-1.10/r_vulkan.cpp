@@ -113,6 +113,7 @@ static_assert(sizeof(rb_matctrl_t) == 40, "rb_matctrl_t must be 40 bytes (std430
 #include "shaders/blob.frag.spv.h"
 #include "shaders/overlay.vert.spv.h"
 #include "shaders/overlay.frag.spv.h"
+#include "shaders/tint.frag.spv.h"          // DOOM-0379: palette flash blend
 #include "shaders/composite.vert.spv.h"
 #include "shaders/composite.frag.spv.h"
 #include "shaders/text.vert.spv.h"          // DOOM-0206 L1b: display-res menu glyph text
@@ -469,6 +470,14 @@ struct VulkanState
     // draws the paletted screens[0] overlay over the rendered 3D scene, keying
     // out the transparent index. Shares pipelineLayout + descriptor set 0.
     VkPipeline       overlayPipeline = VK_NULL_HANDLE;
+    // DOOM-0379: Classic's palette flash as one blend over the finished frame,
+    // drawn after the overlay. Own layout: a vec4 push constant, no sets. The
+    // flash itself arrives each frame through RB_Vulkan_SetTint.
+    VkPipeline       tintPipeline    = VK_NULL_HANDLE;
+    VkPipelineLayout tintPipeLayout  = VK_NULL_HANDLE;
+    bool             tintOn          = false;
+    float            tintScale[3]    = { 1.0f, 1.0f, 1.0f };
+    float            tintBias[3]     = { 0.0f, 0.0f, 0.0f };
     // DOOM-0094: LOAD-variant of renderPass (colour loadOp=LOAD to keep the path-
     // traced blit, depth cleared). Used after RecordRtTrace to draw the weapon
     // viewmodel + the 2D HUD/menu/FPS overlay over the traced view. Format-compatible
@@ -5173,6 +5182,51 @@ void CreatePipeline()
     pci.pDepthStencilState = &skyDs;       // depth test + write off
     Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &pci, nullptr,
                                     &g.overlayPipeline), "vkCreateGraphicsPipelines(overlay)");
+
+    // DOOM-0379 palette flash: the overlay's full-screen triangle, blended as
+    // out = bias + scale * dst. The shader writes bias (factor ONE); the blend
+    // constants carry scale (factor CONSTANT_COLOR), set per frame. Alpha is kept.
+    {
+        VkPushConstantRange tpcr = {};
+        tpcr.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        tpcr.size       = 4 * sizeof(float);
+        VkPipelineLayoutCreateInfo tplci = {};
+        tplci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        tplci.pushConstantRangeCount = 1;
+        tplci.pPushConstantRanges    = &tpcr;
+        Check(vkCreatePipelineLayout(g.device, &tplci, nullptr, &g.tintPipeLayout),
+              "vkCreatePipelineLayout(tint)");
+
+        VkShaderModule tFrag = MakeShader(tint_frag_spv, tint_frag_spv_len);
+        VkPipelineShaderStageCreateInfo tStages[2] = { ovStages[0], ovStages[1] };
+        tStages[1].module = tFrag;
+
+        VkPipelineColorBlendAttachmentState tcba = cba;
+        tcba.blendEnable         = VK_TRUE;
+        tcba.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+        tcba.dstColorBlendFactor = VK_BLEND_FACTOR_CONSTANT_COLOR;
+        tcba.colorBlendOp        = VK_BLEND_OP_ADD;
+        tcba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+        tcba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        tcba.alphaBlendOp        = VK_BLEND_OP_ADD;
+        VkPipelineColorBlendStateCreateInfo tcb = cb;
+        tcb.pAttachments = &tcba;
+
+        VkDynamicState tdyn[3] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
+                                   VK_DYNAMIC_STATE_BLEND_CONSTANTS };
+        VkPipelineDynamicStateCreateInfo tdynState = dynState;
+        tdynState.dynamicStateCount = 3;
+        tdynState.pDynamicStates    = tdyn;
+
+        VkGraphicsPipelineCreateInfo tpci = pci;
+        tpci.pStages          = tStages;
+        tpci.pColorBlendState = &tcb;
+        tpci.pDynamicState    = &tdynState;
+        tpci.layout           = g.tintPipeLayout;
+        Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &tpci, nullptr,
+                                        &g.tintPipeline), "vkCreateGraphicsPipelines(tint)");
+        vkDestroyShaderModule(g.device, tFrag, nullptr);
+    }
     vkDestroyShaderModule(g.device, ovVert, nullptr);
     vkDestroyShaderModule(g.device, ovFrag, nullptr);
 
@@ -6954,6 +7008,16 @@ extern "C" void RB_Vulkan_SetOverlay(const unsigned char* pixels, int w, int h)
     g.overlaySrc = pixels;
     g.overlayW   = w;
     g.overlayH   = h;
+}
+
+extern "C" void RB_Vulkan_SetTint(const float* scale, const float* bias)
+{
+    // DOOM-0379: this frame's palette flash; RecordPaletteTint draws it.
+    g.tintOn = scale != nullptr;
+    if (!g.tintOn)
+        return;
+    std::memcpy(g.tintScale, scale, sizeof g.tintScale);
+    std::memcpy(g.tintBias,  bias,  sizeof g.tintBias);
 }
 
 // DOOM-0084: per-frame budget of emissive-sprite emitter triangles appended to the
@@ -9407,6 +9471,24 @@ void UploadOverlayImage()
                          VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toRead);
 }
 
+// DOOM-0379: Classic's palette flash over everything drawn so far in the swapchain
+// pass -- world, weapon and 2D overlay, which Classic's palette swap also tints. The
+// crisp menu text is drawn after it, as Classic draws that over the paletted frame.
+// Draws nothing without a flash, so normal play pays nothing. The caller has set the
+// full-frame viewport and scissor.
+static void RecordPaletteTint()
+{
+    if (!g.tintOn || !g.tintPipeline)
+        return;
+    const float consts[4] = { g.tintScale[0], g.tintScale[1], g.tintScale[2], 1.0f };
+    const float bias[4]   = { g.tintBias[0], g.tintBias[1], g.tintBias[2], 0.0f };
+    vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.tintPipeline);
+    vkCmdSetBlendConstants(g.cmd, consts);
+    vkCmdPushConstants(g.cmd, g.tintPipeLayout, VK_SHADER_STAGE_FRAGMENT_BIT,
+                       0, sizeof bias, bias);
+    vkCmdDraw(g.cmd, 3, 1, 0, 0);
+}
+
 // DOOM-0094: draw the 2D presentation layer over the path-traced view. RecordRtTrace
 // blits the traced WORLD to the swapchain (and leaves it in PRESENT_SRC) but skips the
 // HUD/menu/messages/FPS overlay (all composited from screens[0]) and the player weapon
@@ -9418,7 +9500,7 @@ void UploadOverlayImage()
 void RecordRtOverlay(uint32_t idx, bool drawOverlay)
 {
     const bool drawWeapon = g.spriteVbuf && g.spriteVertCount;
-    if (!drawOverlay && !drawWeapon)
+    if (!drawOverlay && !drawWeapon && !g.tintOn)
         return;   // nothing to composite; the trace already presents.
 
     // The overlay image upload is a transfer; it must precede the render pass.
@@ -9493,6 +9575,7 @@ void RecordRtOverlay(uint32_t idx, bool drawOverlay)
         vkCmdDraw(g.cmd, 3, 1, 0, 0);
     }
 
+    RecordPaletteTint();
     FlushMenuText();   // DOOM-0206 L1b: crisp menu glyphs over the paletted overlay
 
     vkCmdEndRenderPass(g.cmd);
@@ -10437,6 +10520,7 @@ extern "C" void RB_Vulkan_Present(void)
         vkCmdDraw(g.cmd, 3, 1, 0, 0);
     }
 
+    RecordPaletteTint();
     FlushMenuText();   // DOOM-0206 L1b: crisp menu glyphs over the paletted overlay
 
     vkCmdEndRenderPass(g.cmd);
@@ -10950,6 +11034,8 @@ extern "C" void RB_Vulkan_Shutdown(void)
     if (g.blobPipeline)   vkDestroyPipeline(g.device, g.blobPipeline, nullptr);
     if (g.skyPipeline)    vkDestroyPipeline(g.device, g.skyPipeline, nullptr);
     if (g.overlayPipeline) vkDestroyPipeline(g.device, g.overlayPipeline, nullptr);
+    if (g.tintPipeline)   vkDestroyPipeline(g.device, g.tintPipeline, nullptr);
+    if (g.tintPipeLayout) vkDestroyPipelineLayout(g.device, g.tintPipeLayout, nullptr);
     if (g.pipelineLayout) vkDestroyPipelineLayout(g.device, g.pipelineLayout, nullptr);
     // DOOM-0170 L2a composite objects (size-independent; the scene image/fb are freed by
     // DestroyFramebufferResources above).

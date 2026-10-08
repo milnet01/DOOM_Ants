@@ -79,6 +79,11 @@ void RB_BuildLevel(void);
 // Switch back-end at runtime (the menu). Re-inits; clamps to available.
 void RB_SetMode(rendermode_t mode);
 
+// The palette the engine just set (I_SetPalette's argument). The 3D tiers show
+// a flash palette as a blend over the frame (DOOM-0379); kept here, not in the
+// back-end, so a flash survives a switch between tiers.
+void RB_SetPalette(const byte* pal);
+
 // Menu helpers: display name for a mode, and whether it can be selected now.
 const char* RB_ModeName(rendermode_t mode);
 // As RB_ModeName, but for a MENU value column: adds a short reason when this is

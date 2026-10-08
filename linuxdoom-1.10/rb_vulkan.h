@@ -64,6 +64,9 @@ void RB_Vulkan_Init(void);
 void RB_Vulkan_SetResolution(int w, int h);
 void RB_Vulkan_RenderView(const rb_view_t* view);
 void RB_Vulkan_SetOverlay(const unsigned char* pixels, int w, int h);
+// DOOM-0379: this frame's palette flash, out = scale * frame + bias per channel
+// (bias in [0,1]). scale NULL means no flash.
+void RB_Vulkan_SetTint(const float* scale, const float* bias);
 void RB_Vulkan_Present(void);
 void RB_Vulkan_Shutdown(void);
 void RB_Vulkan_BuildLevel(void);
