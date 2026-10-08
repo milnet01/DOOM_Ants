@@ -8982,11 +8982,7 @@ into `CHANGELOG.md`.
   Kind: review-fix.
   Source: optimise-refactor sweep 2026-09-20, lane 7.
 
-## 0.8.0 — What a player meets is correct
-
-Defects a player can actually hit: crashes, hangs, lost saves, wrong pixels,
-wrong sound, and anything a malformed WAD can do to the engine. Shipped items
-stay in their phase sections; this heading holds only work still to come.
+## 0.7.4 — A sharper Classic menu, and a round of fixes
 
 - ✅ [DOOM-0093] **Harden the path tracer against untrusted WAD data and GPU memory-safety / device-loss risks.**
   Coverage GAP from the 2026-06-28 research (§5): no claims survived verification within budget, but the axis matters because WADs are UNTRUSTED input that drives emitter-list extraction and acceleration-structure builds. Needs a dedicated pass: (1) GPU memory-safety / out-of-bounds with buffer_reference + bindless descriptor indexing (bounds checks, robustBufferAccess, descriptor-indexing partial-bound hazards); (2) a systematic NaN/inf hardening pass across the tracer (we clamp in places; make it principled -- and mine the Vulkan robustness guide + NVIDIA driver-level RT validation); (3) defensive AS-build limits against degenerate / huge geometry from a crafted WAD causing DoS / device-loss (TDR). Tie to the validation-clean invariant (INV-8).
@@ -9056,30 +9052,6 @@ stay in their phase sections; this heading holds only work still to come.
   map with the most such steps) in Ultra; -rtverify PASS. Not tested: a filled
   step on a moving lift or door. Self-referencing sectors are unaffected (no
   height step).
-
-- 📋 [DOOM-0145] **Windows 0.2.0 build: 3D view renders as a small centered box with garbled (uninitialized) borders.**
-  Reported on the shipped 0.2.0 Windows build. Symptoms: (1) fullscreen window, but the actual game view is a small centered rectangle with garbled imagery (fragments of the DOOM II title art + scattered text) filling the surrounding area; (2) the 2D menu + status-bar overlay render cleanly at full width ON TOP of the garbage (confirmed by screenshot of the in-game ESC menu); (3) audio "struggling" (unspecified — crackle vs missing music vs none).
-
-  Leading hypothesis (display): in a 3D mode (Solid/Ultra) the scene is traced into a render-scale sub-rectangle (default render_scale=50%, m_misc.c:255) that TAAU upscales to the display. If TAAU is not upscaling to fill the swapchain on this GPU, the present (which uses full g.extent, r_vulkan.cpp:4947) shows the 50% box + never-cleared swapchain borders = the garbage. Default renderer is RB_CLASSIC (m_misc.c:253), so this only bites if the friend selected Solid/Ultra, OR a config persisted a 3D mode. Alt hypotheses to rule out: a Classic-path SDL present/pitch bug specific to Windows; the DOOM-0050 2D-overlay-over-3D family.
-
-  Disambiguating facts needed (cannot reproduce without the friend's box): render mode selected; GPU + Windows version; whether switching to Classic and/or setting Render Scale 100% clears it; whether -windowed changes it. Likely real fixes once pinned: (a) clear the full swapchain image each frame so uncovered borders are black not garbage; (b) ensure TAAU upscales to full display extent (or blit the render sub-rect scaled to g.extent when TAAU off). Audio is a separate sub-investigation (SDL_OpenAudio 11025 Hz legacy device, i_sound.c:825).
-  **Layman:** On Windows, the game view shows up as a small box in the middle of the screen with garbled junk around it; sound also struggles.
-  Kind: fix.
-  Source: user-report-2026-06-30 (Windows friend; original verbal report + in-game menu screenshot).
-  Confirmed by friend's in-game photo (2026-06-30): the 3D scene renders CORRECTLY but only into a ~50%-size centered sub-rectangle (= render_scale=50%); the status bar draws full-width and correct; the uncovered border region shows stale/uninitialized framebuffer content (leftover menu/skill-select text: NEW GAME, NIGHTMARE!, etc.). So this is NOT a crash or RT-capability failure — the engine works; it's a present/upscale bug. Code: r_vulkan.cpp:4454 gates the render sub-rectangle on taauActive = (rb_rtdebug==6 && rb_upscaler==1 && taauPipeline!=NULL); at render_scale<100 the rendered region is not being scaled to fill g.extent on this GPU, and the borders are never cleared. Immediate user workaround (any one): Options->Renderer-> Render Scale=100%, OR Upscaler=Off, OR Renderer=Classic. Real fix: (a) always blit/scale the rendered region to the full display extent (never present the sub-rect 1:1); (b) clear the swapchain image to black each frame so uncovered areas aren't garbage. Still need: friend's GPU model + audio specifics.
-  GTX 1050 / Win10 test (2026-06-30, screenshots (1)&(2)): in SOLID renderer the view is FULL-SCREEN and clean at 35-59 FPS — no small box, no garbled borders. This isolates the bug: it is NOT Solid mode and NOT a generic Windows present bug. It is specific to a 3D path running at render_scale<100% where the upscale-to-display is not filling the swapchain (i.e. the Ultra/TAAU path: taauActive at r_vulkan.cpp:4454 traces into a 50% sub-rect; if its output is not blitted scaled-to-g.extent, you get the friend's small-box+garbage). Confirms the fix: (a) always scale the rendered sub-region to the full display extent on present; (b) clear the swapchain to black each frame. Practical guidance for the friend NOW: use Solid (works); Ultra needs RT hardware the GTX 1050 lacks anyway (ties to DOOM-0059/DOOM-0026 capability gating). Still want: one Ultra-mode screenshot on the GTX 1050 to confirm whether Ultra runs/garbles/gates-off there.
-  Friend's machine identified (2026-06-30): GTX 2060 (RT-capable, has RT cores) on a 4K laptop. So the small-box repro = Ultra at render_scale 50% on a 4K display = a 1920x1080 render box shown un-upscaled in the centre of a 3840x2160 screen, surrounded by uncleared garbage. Matches the present/upscale theory exactly. This is the one machine that reproduces DOOM-0145 (RX 6600 upscales fine; GTX 1050 has no Ultra). Verification of the fix will need the GTX 2060 box. NOTE: separate from the GTX 1050 "not full screen / border" report, which is the in-game Screen Size (screenblocks) ornamental border + Classic's 4:3 letterbox on a 16:9 display — tracked separately.
-  Progress (2026-09-30): read against today's code, not re-tested. The present
-  path has been rewritten since 0.2.0. With the upscaler inactive the tracer now
-  renders at the display's own size, so there is no sub-rectangle to show. With
-  it active, the upscale pass is dispatched over the whole display image and the
-  blit to the swapchain takes that image, full size. So the two fixes this item
-  asks for are, by reading, already what the code does. What reading cannot
-  show is why the GTX 2060 showed the box in the first place, and the only
-  machine that reproduced it is the friend's. Needs one run of the current
-  release there in Ultra at Render Scale 50% before this can close.
-  Decision (user, 2026-09-30): ask Charl to run the current release in Ultra at
-  Render Scale 50% on the GTX 2060 laptop; the item stays open until he reports.
 
 - ✅ [DOOM-0221] **Bound UploadAtlas WAD-derived material count / tile dimensions before GPU allocation.**
   r_vulkan.cpp:4604 UploadAtlas feeds WAD material count n and per-tile w/h into vector resizes, staging sizes, descriptor counts and VkImage extents with no bounds check -> bad_alloc / I_Error abort (DoS, not corruption; all arithmetic is 64-bit). DOOM-0093-adjacent.
@@ -9260,39 +9232,6 @@ stay in their phase sections; this heading holds only work still to come.
   Kind: fix.
   Source: in-session-2026-07-27 (hit while measuring DOOM-0276).
   Lanes: startup.
-
-- 📋 [DOOM-0283] **Ultra falls back to paletted art silently when the HD assets are not found.**
-  EnsureHdMaterials resolves the HD set relative to the CURRENT WORKING DIRECTORY
-  ("assets/ultra/") unless DOOMASSETDIR overrides it. cwd is linuxdoom-1.10/ (the
-  launcher keeps it there so savegames land where they always have), and
-  assets/ultra/ lives one level up at the repo root -- so any run that does not
-  export DOOMASSETDIR gets paletted art in Ultra. run-doom-ants.sh sets it and
-  carries a comment warning about exactly this; nothing else does.
-
-  The only signal is a stdout line -- "DOOM-0042: no assets/ultra/materials.csv -
-  Ultra uses paletted art." -- which is invisible while the game owns the display.
-  That is the same failure shape as the debug hotkeys in DOOM-0275: an affordance
-  whose only output channel is one the user cannot see during the activity it
-  describes.
-
-  Cost of it being silent, measured rather than imagined: an entire session of
-  DOOM-0197 perf measurements and -shotcompare golden captures were taken paletted
-  while believing they were Ultra HD, and the numbers had to be thrown away and
-  retaken (41->48 fps HD, vs 43->53 paletted -- different enough to matter). The
-  user spotted it from a screenshot; nothing in the harness did.
-
-  Two things worth doing, the first much more important:
-  - Say so ON SCREEN. The Ultra row in the render-mode menu could read "Ultra (HD
-  art not found - using original art)", or a one-line startup notice via
-  I_DebugKeyMessage's channel. A player who picked Ultra and got Solid's art has
-  no way to tell today.
-  - Consider resolving the default path relative to the EXECUTABLE or searching
-  "../assets/ultra/" as a fallback, so the common layout works without an env
-  var. Keep DOOMASSETDIR as the override.
-  **Layman:** If the high-definition texture pack cannot be found, Ultra quietly falls back to the original artwork and looks like Solid. Nothing on screen says so, so it reads as the setting not working.
-  Kind: enhancement.
-  Source: in-session-2026-07-27.
-  Lanes: renderer.
 
 - ✅ [DOOM-0322] **A tall wall renders black in Solid and Ultra where Classic draws its texture.**
   User play-test 2026-08-04, same open hell landscape, reported as "the
@@ -9584,45 +9523,6 @@ stay in their phase sections; this heading holds only work still to come.
   Source: review-code 2026-09-01, lanes vk-present and shaders-raster.
   Lanes: renderer, shaders.
 
-- 📋 [DOOM-0379] **Damage flash, powerup tints and the screen wipe are all missing in Solid and Ultra.**
-  All three are the same class: a side effect of the software renderer that the 3D
-  back-ends bypass and nobody replicated. docs/standards/renderer.md:29 makes
-  replication a house rule and cites ML_MAPPED as the precedent.
-
-    - PALETTE EFFECTS. r_vulkan.cpp:5893 uploads RB_PlayPal() once at init and
-      nothing ever re-writes it; I_SetPalette (i_video.c:908) rebuilds only the
-      software palette used by the Classic present path. Grep for I_SetPalette,
-      palIndex or damagecount in r_vulkan.cpp returns zero hits. So there is no
-      damage-red flash, no pickup flash, no radsuit tint, and no usegamma correction
-      on either 3D tier. Losing the damage flash removes the game's primary "you are
-      being hurt" feedback. DOOM-0008:232 promises this as a single LUT-row swap.
-    - FIXEDCOLORMAP. player->fixedcolormap is set to INVERSECOLORMAP for
-      invulnerability and 1 for the light-amp visor (p_user.c:367), consumed by the
-      software renderer via R_SetupFrame. rb_view_t carries extralight but not this,
-      and grep finds it nowhere in the 3D path. So the invulnerability sphere
-      produces no inverted screen and the visor no full-bright view.
-    - SCREEN WIPE. The whole f_wipe package reads and writes screens[0] only, but
-      under a 3D back-end r_backend.c:236 fills the view footprint with the
-      transparency key 251 and the overlay shader keys it out. The melt copies bytes
-      verbatim, so melted pixels are still 251 and still keyed out. grep for
-      RB_OVERLAY_KEY or wipe in r_vulkan.cpp returns zero hits. DOOM-0008 INV-4
-      names wipes explicitly.
-
-  The first two are one field on rb_view_t each. The wipe needs a decision: either
-  composite the 3D frame into screens[0] before wipe_StartScreen, or run the melt on
-  the presented image in r_vulkan.cpp.
-  User decisions 2026-10-08. Palette effects: a full-screen see-through
-  colour blend over the finished 3D image (damage red, pickup gold,
-  radsuit green), same colours and timing as Classic's palette flashes,
-  in both Solid and Ultra. Screen wipe: run the melt on the finished 3D
-  image on the GPU (in r_vulkan.cpp), full colour, matching Classic's
-  melt; not a 256-colour copy and not an instant cut. fixedcolormap is
-  DOOM-0455's.
-  **Layman:** Three things the original game does are simply absent in the two 3D views. The screen does not flash red when you are hurt, the invulnerability and light-amplifier powerups have no visible effect, and the melt transition between levels wipes only the status bar over a frozen picture.
-  Kind: fix.
-  Source: review-code 2026-09-01, lanes backend-seam and ui-hud.
-  Lanes: renderer, backend-seam.
-
 - ✅ [DOOM-0385] **Sound handles are recycled mixer channel indices, so one sound can stop or re-pan another.**
   s_sound.c:411 stores the return of I_StartSound, and i_sound.c:441 is
   `Mix_PlayChannel(-1, chunk, 0)` -- a raw SDL_mixer channel index. Vanilla's handle
@@ -9704,35 +9604,6 @@ stay in their phase sections; this heading holds only work still to come.
   Source: review-code 2026-09-01, lane shaders-post.
   Lanes: renderer, shaders.
 
-- 📋 [DOOM-0389] **Dirt is applied to a texture before the emission threshold reads it, so grime switches lamps off.**
-  pathtrace.comp:1543 -- `if (!isSprite && filthOn()) albedo = applyGrime(...)` runs
-  BEFORE pathtrace.comp:1583 passes that albedo to emisWeight.
-
-  emissiveMask (pt_common.glsl:406) is `smoothstep(0.30, 0.60, max-channel(albedo))`.
-  applyGrime returns `albedo * clamp(m, 0.35, 1.65)` (pt_common.glsl:820) and may
-  then mix up to kStainOpacity 0.82 toward kDirtBrown. Multiplying the input by 0.35
-  is arithmetically a DIVISION of the threshold: effective EMIS_MASK_LO becomes
-  0.30/0.35 = 0.857 and EMIS_MASK_HI becomes 1.71, which is unreachable. A lamp
-  texel at linear 0.7 goes from full Le to ZERO emission wherever the grunge map is
-  dark or AO is low.
-
-  This is the CLAUDE.md-documented shape: a constant applied to a value before a
-  threshold comparison is a division of that threshold, and no check reading the
-  threshold's own table can see it. DOOM-0331 INV-4 shipped a real bug this way.
-
-  Three consequences: the glow becomes patchy across one lamp face -- the exact
-  symptom DOOM-0302 was filed to remove for liquids, reintroduced for every
-  non-liquid emitter; the `[` filth toggle (documented as a perf/quality A/B)
-  silently changes emission; and it reaches both shipped paths, mode 4 via
-  shadeSurface and mode 6 via galbedo.a at pathtrace.comp:1752, which
-  svgf_composite.comp:205 multiplies into emis.
-
-  Fix: keep the undirtied albedo for the emission decision -- one extra register.
-  **Layman:** Grime is multiplied onto a surface's colour before the code decides whether that surface glows. Multiplying a colour down before a brightness test is the same as raising the test, so a lamp under dirt stops emitting light entirely — and the grime on/off key silently changes how much lamps glow.
-  Kind: fix.
-  Source: review-code 2026-09-01, lane shaders-pathtrace.
-  Lanes: renderer, shaders.
-
 - ✅ [DOOM-0390] **Six Vulkan defects: undefined push constants every RT frame, a use-after-free across level change, and a crash on minimise.**
     - r_vulkan.cpp:10045 (HIGH) -- RecordRtOverlay pushes 96 of the layout's 124
       bytes (r_vulkan.cpp:5558, pcr.size = 31 floats). Bytes 96-123
@@ -9783,6 +9654,497 @@ stay in their phase sections; this heading holds only work still to come.
   Kind: fix.
   Source: review-code 2026-09-01, lanes vk-setup, vk-accel, vk-present, vk-rt-frame, vk-materials.
   Lanes: renderer.
+
+- ✅ [DOOM-0432] **V_DrawPatch trusts a patch's own column offsets, because it is never told how long the lump is.**
+  Split out of DOOM-0402, whose other seven findings are fixed. This one is
+  an API change, not a bounds check, and doing it inside that bundle would
+  have been either a quadratic reverse lookup or a hundred-call-site
+  refactor performed under a LOW heading.
+
+  V_PostInBounds already refuses a post that overruns the patch's declared
+  HEIGHT, which is what stops the blit walking off the destination buffer.
+  What is still unchecked is the patch's own extent: LONG(patch->columnofs
+  [col]) is followed wherever it points, and the post chain is walked on the
+  lump's own say-so. Both are reads past the cached lump, and the bytes land
+  in the framebuffer. Three call sites: V_DrawPatchGeneral, V_DrawPatchScaled
+  and the third blitter beside them.
+
+  DOOM-0228 solved exactly this for the Vulkan atlas builder, and
+  patch_bounds.h already carries the decisions -- PatchHeaderFits,
+  PatchColumnFits, PatchPostFits. They all take a lump length. r_mesh.c had
+  one because it had the lump number; V_DrawPatch is handed a patch_t* and
+  nothing else.
+
+  So the work is to give the patch blitters an extent. Options, and this
+  item is to choose between them rather than assume one:
+
+    - Validate once at cache time -- a W_CacheLumpNumAsPatch that checks the
+      header, every column offset and every post chain against
+      W_LumpLength, and I_Errors or substitutes a safe stub. One check per
+      lump rather than per draw, and callers keep their signature. The
+      question is which of the 100-plus V_DrawPatch call sites route through
+      it, since a caller that keeps using W_CacheLumpName is unprotected and
+      looks identical.
+    - Carry the extent in the call -- a bounded entry point taking the lump
+      length, with V_DrawPatch as a wrapper. Honest but it moves the problem
+      to every caller.
+    - Reverse-lookup the length from the pointer via lumpinfo[].cache. Cheap
+      to write and O(numlumps) per draw; DOOM-0427 already files one
+      quadratic lump scan as a defect, so adding a second is the wrong
+      direction.
+
+  Not reachable from the shipped IWADs -- every stock patch is well formed.
+  A PWAD is untrusted input and this is a read primitive, not a write.
+  Scope widened (2026-09-30, DOOM-0093 pass): the same root cause has more
+  readers than the three blitters named above. Each follows `columnofs[]` and
+  the post chain on the lump's own say-so, with no lump length:
+  `R_GenerateComposite`, `R_GenerateLookup` and `R_DrawColumnInCache`
+  (r_data.c, wall textures in Classic), `R_RenderTextureToAtlas` (r_data.c,
+  wall textures into the Vulkan atlas; DOOM-0228 bounded only the flat and
+  sprite paths of that atlas) and `M_DecodePatchRGBA` (m_menu.c, the menu
+  skull and logo). Most of these DO have the lump number in hand, which
+  favours the first option: one validator over header, every column offset
+  and every post chain, run once per lump, with `patch_bounds.h` supplying
+  the decisions. Wall-texture patches and sprites can be validated when
+  `R_InitTextures` and `R_InitSpriteLumps` first meet them; the by-name
+  HUD and menu patches are what still need a checked cache call.
+  Resolved (2026-09-30): built to docs/specs/DOOM-0432-patch-lump-validation.md,
+  a fourth design this bullet did not list. The whole lump is checked once
+  (PatchLumpValid) and the verdict kept per lump; a reader holding only a
+  pointer finds its lump through the zone block header, in constant time.
+  There is one blitter now (DOOM-0447), not three; the readers wired are
+  V_BlitPatch, F_DrawPatchCol, M_DecodePatchRGBA, the three texture
+  builders, R_DrawVisSprite, R_InitSpriteLumps and blit_tile. Two things
+  the review added: the stored wall-column offset was 16 bits wide and is
+  now exact, and the see-through wall walk skips a column that has no
+  posts. Three crafted fixtures crashed the old build and boot clean on
+  the new one; no stock lump in doom.wad or doom2.wad is refused.
+  Still open from the spec: R_DrawColumn reading past a short column
+  (its Q2), and nothing runs the see-through wall path.
+  **Layman:** The software renderer draws pictures out of the WAD file while trusting the file's own description of where each piece of the picture lives. A crafted WAD can point that anywhere, and whatever is at that address gets drawn on screen.
+  Kind: security.
+  Source: review-code 2026-09-01, lane sw-renderer; split out of DOOM-0402 on 2026-09-12.
+  Lanes: sw-renderer.
+
+- ✅ [DOOM-0479] **A map of stacked see-through walls can stall a ray-traced frame until the driver resets the device.**
+  `pathtrace.comp`'s primary ray runs `while (rayQueryProceedEXT(rq))` over every
+  non-opaque triangle it crosses, out to 1e9 units, and each candidate costs
+  buffer reads and, for a masked wall or a sprite, a texture fetch. Nothing caps
+  the candidates per ray, so the cost per pixel is whatever the map stacks along
+  a sight line. A long enough frame is a device timeout, and `Check()` turns
+  that into `I_Error`. Not memory-unsafe: a denial of service by a map the
+  player chose to load.
+  Work: measure the candidate count per ray on the shipped maps first (the cap
+  must sit well above their worst case), then cap it and commit the nearest
+  candidate found so far. The megakernel is register-pressure sensitive
+  (DOOM-0090), so time the frame before and after.
+  Resolved (2026-09-30): `kMaxPrimaryCandidates = 256u` in pathtrace.comp; the
+  primary loop counts candidates ahead of the alpha test and ends the traversal
+  with rayQueryTerminateEXT past the cap, keeping the nearest confirmed hit.
+  Measured first, as the bullet asked: a temporary counter view at the start of
+  every map in doom.wad and doom2.wad showed no pixel above 16 candidates and
+  almost none above 8. Map starts only; no mid-map views were sampled.
+  Fixture `make_map_fixture.py stackedtrees` (4000 trees on one spot, MAP01):
+  megakernel 120 ms uncapped, 32 ms capped, on the RX 6600. Stock MAP01
+  megakernel 1.30 ms before and 1.28 to 1.31 ms after; `-rtview 3` captures of
+  MAP01 and E1M7 are pixel-identical before and after; -rtverify PASS; no
+  validation messages. Past the cap a ray that confirmed nothing draws as sky,
+  which is what the fixture's gaps show. The cap bounds candidates per ray, so
+  the worst frame still scales with screen area: about 256 tests on every pixel.
+  **Layman:** A deliberately built map could make the ray-traced view so slow that the graphics driver gives up and the game exits.
+  Kind: security.
+  Source: review 2026-09-30 (DOOM-0093 pass, shaders lane, L22 in docs/reviews/close-findings-2026-09-30.md).
+  Lanes: renderer.
+
+- ✅ [DOOM-0115] **Fix pre-existing Vulkan validation errors (clear-color usage, renderpass dependency mismatch).**
+  INV-8 (validation-clean). Two distinct families in the terminal log: (1) vkCmdClearColorImage on an image created with only VK_IMAGE_USAGE_STORAGE_BIT, missing VK_IMAGE_USAGE_TRANSFER_DST_BIT (add the usage flag at image creation, or clear via a compute/shader path); (2) vkCmdBeginRenderPass/vkCmdDraw pDependencies srcStageMask/srcAccessMask/dstAccessMask incompatible between the render pass used to create the framebuffer/pipeline and the one begun (the two render passes' subpass dependencies must match for compatibility). Pre-existing, not from the sprite work. Reconcile the renderpass dependency definitions and add the transfer-dst usage.
+  **Layman:** The graphics debug layer is logging a few rule violations every frame. They aren't causing visible problems today, but they're real correctness bugs that can break on other drivers — clean them up.
+  Kind: fix.
+  Source: in-session-2026-06-29.
+  Verified both families (2026-08-13, RX 6600, VK_LAYER_KHRONOS_validation
+  confirmed loaded via VK_LOADER_DEBUG=layer).
+
+  FAMILY 1 (clear-colour usage) — STRUCK, already fixed by DOOM-0133.
+  Every image reaching vkCmdClearColorImage now declares TRANSFER_DST:
+  g.rtAccum (r_vulkan.cpp:2644 STORAGE|TRANSFER_SRC|TRANSFER_DST),
+  g.svImg[] (:3201), g.taImg[] non-TA_OUT (:3360, comment cites DOOM-0133).
+  The three call sites (:3254-3256 svImg, :3405-3406 taImg HIST0/HIST1,
+  :8330 rtAccum) target only those. Zero vkCmdClearColorImage validation
+  lines over full Solid and Ultra runs. Nothing left to do here.
+
+  FAMILY 2 (renderpass dependency mismatch) — LOCATED AND FIXED this session.
+  Root cause: CreateRenderPass built ONE shared VkSubpassDependency `dep`,
+  then MUTATED it in place (old :4703-4707: srcStage TRANSFER, srcAccess
+  TRANSFER_WRITE, dstAccess +COLOR_ATTACHMENT_READ) before creating
+  g.rtOverlayPass. But RecordRtOverlay (:9399-9400) begins that pass against
+  g.framebuffers[idx] — created from g.renderPass (:4720) — and draws with
+  pipelines built for g.renderPass (:5244/:6103/:6265). Render-pass
+  compatibility (Vulkan §8.2) covers subpass dependencies; only load/store
+  ops and image layouts are exempt. So the mutation is exactly what made the
+  pass incompatible, while the code comment at :4698 asserted the opposite.
+  Every other pass is self-consistent (shadowPass/shadowFb/shadowPipeline,
+  scenePass/sceneFb/scenePipeline, aoPass/aoFb/aoPipeline) — rtOverlayPass
+  was the sole offender, which is why only the Ultra RT path tripped it.
+
+  Fix: fold the TRANSFER src + COLOR_ATTACHMENT_READ dst into the SHARED base
+  dep so renderPass, scenePass and rtOverlayPass carry identical dependencies,
+  and stop mutating it for rtOverlayPass (only loadOp/initialLayout differ now,
+  both exempt). Widening an EXTERNAL dependency is strictly more
+  synchronisation, never less, so renderPass/scenePass cannot regress.
+
+  A/B evidence (Ultra, E1M1, -warp 1 1 -noinput):
+  pre-fix : 10x VUID-VkRenderPassBeginInfo-renderPass-00904
+  + 10x VUID-vkCmdDraw-renderPass-02684
+  ("VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT !=
+  EARLY_FRAGMENT_TESTS|COLOR_ATTACHMENT_OUTPUT", 0xf vs 0xc)
+  post-fix: 0 validation lines, BLAS/TLAS + GI bake + HD load (18 materials)
+  all still correct. Solid re-run also 0. `make test` all green.
+
+  Both families are now closed on the measurement side. Bullet deliberately
+  LEFT OPEN per the session instruction not to close it; flip to shipped
+  whenever you are happy. Duplicates DOOM-0126 (family 1), DOOM-0134 and
+  DOOM-0198 (family 2) flipped shipped in the same pass.
+  Prior art (2026-09-26, from UT_Ants UTA-0138): count validation-layer
+  errors so a test can fail on them. Files: UT_Ants src/urender/Device.cpp
+  (onValidationMessage), Device.h (ValidationLog), tests/device/
+  DeviceFixture.cpp. Four details: count ERROR severity in an atomic and
+  keep the first message, always return VK_FALSE; keep the log on the
+  heap so pUserData stays valid; chain the messenger info into
+  VkInstanceCreateInfo.pNext too, or instance create/destroy errors go
+  uncounted; fail at the submit that raised the error, and FAIL (never
+  skip) when the layer is not loaded. Headless on lavapipe:
+  VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json.
+  Resolved (2026-10-07): re-verified with the fix already in the tree. A
+  45 s Ultra run (-rtview 1) and a 45 s Solid run on E1M1 under the
+  validation layer each gave 0 validation messages, and each ran an
+  Ultra or Solid -> Classic tier switch, which runs the full teardown.
+  DOOM-0127 and DOOM-0176 were duplicates of family 2 and close with
+  this.
+
+- ✅ [DOOM-0127] **Vulkan validation: renderpass dependency stage/access-mask incompatibility on overlay/blit framebuffers.**
+  Seen in terminal_output.log lines ~226-291 (capped at the 10x duplicate limit): vkCmdBeginRenderPass reports pDependencies[0] srcStageMask/srcAccessMask/dstAccessMask incompatible between VkRenderPass 0xd and the one baked into the VkFramebuffer (0xc) -- VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT vs EARLY/LATE_FRAGMENT_TESTS, TRANSFER_WRITE vs 0, etc. Pre-existing (NOT from DOOM-0119 -- no renderpass changes in that diff). The framebuffer was created against a renderpass whose subpass dependencies don't match the renderpass used at begin time; they must be render-pass-compatible (same dependency stage/access masks). Fix: align the subpass dependency masks between the renderpass used to create the framebuffer and the one used in vkCmdBeginRenderPass (or reuse the same VkRenderPass object). Likely in the 2D overlay/blit path.
+  Resolved (2026-10-07): a duplicate of DOOM-0115's family 2 (the
+  rtOverlayPass dependency mismatch), fixed there. 0 validation messages
+  in Ultra and Solid on 2026-10-07.
+  **Layman:** Another graphics-checker warning: two render steps describe their hand-off slightly differently. Cosmetic for now; cleaning it keeps the log trustworthy so real bugs stand out.
+  Kind: fix.
+  Source: in-session-2026-06-29 DOOM-0119 play-test log.
+
+- ✅ [DOOM-0176] **Fix render-pass/framebuffer subpass-dependency incompatibility validation errors in the raster path.**
+  Validation (RADV, VUID-VkRenderPassBeginInfo-renderPass-00904 + VUID-vkCmdDraw-renderPass-02684): a VkRenderPass used to BEGIN a pass (0xf..) is incompatible with the VkRenderPass the framebuffer/pipeline was created against (0xc..) on the subpass dependency srcStageMask/srcAccessMask/dstAccessMask (VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT + TRANSFER_WRITE vs EARLY_FRAGMENT_TESTS|COLOR_ATTACHMENT_OUTPUT). ~20 messages/frame. NOT from DOOM-0042 (that change is compute-only, touches no render pass) — pre-existing raster, likely the DOOM-0170 L2b MRT/SSAO composite passes whose subpass dependency carries an ALL_TRANSFER src. Fix: align the offending render pass's subpass-dependency stage/access masks between the framebuffer-creation pass and the begun/pipeline pass. Benign on RADV (renders correctly) but spec-noncompliant.
+  Resolved (2026-10-07): a duplicate of DOOM-0115's family 2
+  (VUID-VkRenderPassBeginInfo-renderPass-00904 / vkCmdDraw-02684 on the
+  rtOverlayPass), fixed there. 0 validation messages in Ultra and Solid
+  on 2026-10-07.
+  **Layman:** The graphics card's debug checker complains that two rendering steps disagree about timing; harmless on this GPU but should be cleaned up.
+  Kind: fix.
+  Source: observed-2026-07-14 (DOOM-0042 E1M1 Ultra play-test log).
+
+- ✅ [DOOM-0177] **Fix a 2-object (1 VkBuffer + 1 VkDeviceMemory) leak at vkDestroyDevice shutdown.**
+  Validation at vkDestroyDevice: 'VkDevice has 2 leaked objects' — one VkDeviceMemory + one VkBuffer (adjacent handles = a buffer+its memory allocated together). NOT the DOOM-0042 HD resources: FreeHdMaterials() frees every HD buffer/memory (hdCtrlBuf/hdCtrlMem/hdMemory + images/views/pool) and is called at shutdown (r_vulkan.cpp:7540) before device destroy — audited create/destroy-balanced. Candidate: g.overlayStaging + g.overlayStagingMem (r_vulkan.cpp:7553-7554, only freed if non-null) or another subsystem's staging buffer. Confirm pre-existing with a Solid-only run (never enter Ultra, so no HD built) — if it still leaks 2, it is not HD-related. Shutdown-only; no gameplay impact.
+  Resolved (2026-10-07): the leak was g.skyMeshBuf + g.skyMeshMem, the
+  DOOM-0141 sky backdrop mesh. RB_Vulkan_BuildLevel freed it on a level
+  rebuild, but RB_Vulkan_Shutdown never did. The teardown runs only on a
+  tier switch (quitting the game never calls it), so the leak showed on
+  a switch. Red: an Ultra -> Classic switch at tic 700 under the
+  validation layer reported 'VkDevice has 2 leaked objects'; the handles
+  matched the buffer created in RB_Vulkan_BuildLevel. Fix: free both in
+  RB_Vulkan_Shutdown. Green: the same switch reports 0 validation
+  messages, from Ultra and from Solid. No unit test: GPU object
+  lifetimes are outside what testing.md calls unit-testable.
+  **Layman:** When the game exits, it forgets to hand back one small chunk of graphics memory. No effect while playing; tidy-up on quit.
+  Kind: fix.
+  Source: observed-2026-07-14 (DOOM-0042 E1M1 Ultra play-test log).
+
+- ✅ [DOOM-0311] **Validate the render push-constants on the CPU instead of catching their NaNs in the shaders.**
+  Three shader inputs are divided by without being checked at the boundary:
+  ssao.frag divides by pc.aspect, taau.comp divides by the display
+  dimensions, and svgf_composite.comp bit-casts pc.misc3.x to an exposure
+  value. Each is recoverable today only because a downstream NaN guard
+  happens to catch it (svgf_composite.comp:195 and taau.comp:109), which is
+  recovery-by-clamping rather than prevention, and a new consumer of the
+  same push-constant would not inherit the guard. Cheap fix: assert/clamp
+  aspect, extent and exposure once where the push-constant block is filled.
+  No known reachable trigger -- the host always supplies real values today --
+  so this is hardening, not a live defect.
+  Resolved (2026-09-30): the aspect and extent parts had one source, a
+  zero swapchain extent, fixed at that source under DOOM-0390: no frame
+  is recorded while the surface has no area. The exposure part was not
+  live: rb_exposure is clamped to 0..15 where the value is filled.
+  **Layman:** The graphics code currently cleans up bad numbers after they have already reached the graphics card; better to reject them before sending.
+  Kind: security.
+  Source: code-quality-review-2026-08-03 (shaders-raster lane, MEDIUM).
+
+- ✅ [DOOM-0468] **docs/standards/coding.md carries no marker saying whether it mirrors, overrides or owns the global standard.**
+  The project file restates parts of ~/.claude/standards/coding.md, and adds
+  legacy-C and renderer rules. It carries neither a MIRROR BEGIN nor an
+  OWNED-HERE marker and is not a spec-format-overrides-style delta file, so a
+  reader cannot tell which standard governs where the two differ. Decide per
+  standards/README.md's three cases and mark it. The other twelve files in
+  docs/standards/ likely need the same check.
+  Resolved 2026-09-28 (user, via align-project): all nine project standards
+  that share a global file's name are case 3, the project's own. coding,
+  commits, dependencies, documentation, roadmap-format, security and testing
+  share no ## heading with the global file; spec-format and releases share
+  only incidental ones. Each now carries an OWNED-HERE marker naming this
+  item, and align-report shows no standards gap. The versioning half the
+  report raised is the new versioning-overrides.md.
+  **Layman:** The project's coding rulebook doesn't say how it relates to the machine-wide one, so nobody can tell which wins when they disagree.
+  Kind: doc-fix.
+  Source: field-pass-2026-09-27 (standards/README.md cases, for the claude-config session).
+
+- ✅ [DOOM-0486] **On GPUs without ray tracing, the raster shaders use buffer device addresses the device never enabled.**
+  The Windows test box (GTX 1050, no RT, validation layer installed) logs 3 validation messages at startup: vkCreateShaderModule: SPIR-V Capability PhysicalStorageBufferAddresses declared, but VkPhysicalDeviceVulkan12Features::bufferDeviceAddress is not enabled. mesh.vert and mesh.frag declare GL_EXT_buffer_reference (probes, triangle subsectors, lights); r_vulkan.cpp enables enable12.bufferDeviceAddress only inside if (g.rtEnabled). This machine's RX 6600 has RT, so local validation runs never see it. Candidate fix: enable bufferDeviceAddress whenever the device reports it (core in Vulkan 1.2), independent of RT. Verify: 0 validation messages on the Windows box in Solid.
+  Resolved (2026-10-08): enable12.bufferDeviceAddress =
+  have12.bufferDeviceAddress, set outside the RT branch (RT already
+  required it, so RT devices are unchanged). Windows box, Solid: 3
+  validation messages before, 0 after. Linux RX 6600: Ultra and Solid 0
+  messages, make test 32/32.
+  **Layman:** On graphics cards without ray tracing, some 3D-view shaders rely on a card feature the game never switches on; it happens to work but breaks the rules and could fail on another driver.
+  Kind: fix.
+  Source: in-session-2026-10-08 (DOOM-0480 Windows run).
+  Lanes: renderer.
+
+- ✅ [DOOM-0271] **Outdoor floor flats still read as an obvious repeating grid despite de-tiling.**
+  **Layman:** The ground outside shows the same square tile over and over in a visible grid — the anti-repetition trick that fixed the walls is not doing its job on the floor.
+  Kind: fix.
+  Lanes: renderer, shaders.
+  Source: user-play-test-2026-07-27.
+  Reported alongside the DOOM-0011 ground-cloud work: with the walls
+  now hazed, the eye lands on the floor and its repetition is obvious.
+  Evidence: user screenshot, E1M1 outdoor courtyard, Ultra.
+  Leading hypothesis, UNVERIFIED — kDetileWorldCell is 64.0
+  (pathtrace.comp, "96->64" in its own comment), and a DOOM flat is
+  exactly 64x64 world units. The de-tile variation grid is therefore
+  EXACTLY commensurate with the flat's tiling period on every floor and
+  ceiling, so each cell's stochastic offset lands on the same phase of
+  the texture and the repetition survives. Walls escape this because
+  wall textures are 64-256 wide and 128 tall, so the cell rarely lines
+  up. Cheapest test: make the cell non-commensurate (80, 96 or 112) and
+  look. That changes walls too, which the user has already approved, so
+  measure the wall look before and after.
+  Second hypothesis, also unverified and cheaper to rule out: de-tiling
+  may simply be OFF in the user's config. rb_detile is the `]` key
+  (off / 2-tap / 4-tap) and ~/.doomrc has silently held a toggle at 0
+  before (see the menu/shotcompare config gotcha). Confirm the toggle
+  state before touching any constant.
+  Depends on nothing; DOOM-0181 shipped the de-tiler this refines.
+  Update 2026-07-27: the user's VIDEO menu screenshot RULES OUT the
+  config hypothesis — De-tile reads "4-tap", so de-tiling is on at full
+  quality and the grid survives it. That leaves the commensurate-cell
+  hypothesis as the only one standing: kDetileWorldCell = 64.0 is exactly
+  a DOOM flat's 64x64 world period, so on every floor and ceiling each
+  variation cell lands on the same phase of the texture. Cheapest test is
+  still one constant (try 80, 96 or 112, none of which divides 64) plus a
+  before/after look at the WALLS, which the user has already approved and
+  which this would also change.
+  User decision 2026-10-08: try two or three non-commensurate
+  kDetileWorldCell values (80, 96, 112), measure which breaks the floor
+  grid best, ship it; the wall change that comes with it was already
+  approved.
+  Measured 2026-10-08 (offline model of the 4-tap detile() on the HD
+  floors FLOOR7_1, FLOOR5_1, FLOOR7_2, FLOOR4_8, FLAT20; normalised
+  luminance autocorrelation). The hypothesis was half right. At 64 the
+  blend seams sit on the texture's own 64-unit period, so repeat 0.04
+  and seam grid 0.07-0.08 add up on one lattice. But LARGER cells are
+  worse: 80 / 96 / 112 leave 0.11-0.12 / 0.19-0.21 / 0.24-0.27, because
+  every tile copy inside one cell shares that cell's offset. Smaller
+  cells win: 56 about 0.01, 48 about 0.00, seam grid gone.
+  User decision 2026-10-08: 48, after before/after shots of the E1M1
+  courtyard floor and a wall.
+  Resolved 2026-10-08: kDetileWorldCell 64 -> 48 (pathtrace.comp), user
+  approved from before/after captures of the E1M1 courtyard and a
+  BROWN144 wall. make test 32/32, -rtverify PASS. The grout lines of
+  tile-pattern floors still jump at blend seams; that is a different
+  cause, filed separately.
+
+- ✅ [DOOM-0211] **Classic-tier menu font looks blocky — give Classic a nicer uniform menu font.**
+  **SCOPE WIDENED by user 2026-07-26:** *"I think we need to make the Classic renderer rather use
+  the new menu we have. The Classic menu just doesn't look right the way it is. Let's just make
+  them all use the same menu."* So the goal is no longer "a nicer font for Classic" — it is **one
+  menu shared by all three tiers**, which means option (a) below, not (b) or (c). The layout is
+  already shared (DOOM-0206 gave every tier the same rows, sizes and HUD-safe placement); the only
+  thing that still differs is the glyph rendering.
+  **The load-bearing constraint, verified 2026-07-26:** `Classic_Present()` is literally
+  `{ I_FinishUpdate(); }` (`r_backend.c`) — the software renderer hands its 8-bit framebuffer
+  straight to SDL and never enters the Vulkan backend, where the crisp text lives (`FlushMenuText`,
+  `g.textVerts`). Sharing one menu therefore means routing Classic's finished frame through the
+  Vulkan present path: upload the paletted buffer as a texture, blit it, then draw the menu with
+  the same code the other tiers use. The game view's pixels are unchanged by that (it is the same
+  buffer, same palette) — only the overlay changes.
+  **The risk to weigh before building: Classic is the no-Vulkan fallback tier.** It currently runs
+  on a machine with no working Vulkan, and the headless test path depends on that. Routing it
+  through Vulkan would give the fallback a dependency on the thing it falls back FROM. Recommended
+  shape: share the menu whenever Vulkan is up, and keep the bitmap menu strictly as the
+  no-Vulkan path — accepting that the two skins then still both exist, but only one is ever seen
+  on a working install. Also re-bless `-shotcompare` if any golden captures a menu.
+  **Needs a short spec before implementation** (house rule: any design doc goes through
+  `/cold-eyes` first). Kind changes from enhancement to feature at that point.
+  Follow-up to DOOM-0206. The Classic main menu draws all items in the paletted HUD font at 2x (V_DrawPatchScaled / M_WriteTextScaled); nearest-neighbour doubling of the small STCFN bitmap font reads as blocky. User accepted it for now (2026-07-21) but wants a nicer look later. Root constraint: Classic = Classic_Present -> I_FinishUpdate (the 1997 software renderer), which never enters the Vulkan backend, so the crisp Oxanium font used by Solid/Ultra (FlushMenuText) is unavailable there. Options to scope: (a) route the Classic menu overlay through the Vulkan crisp-text path; (b) bundle/bake a higher-res paletted bitmap menu font for the software path; (c) tune the scale/spacing (1x for crispness vs 2x for size) as a cheap partial. Needs a small brainstorm before implementing.
+  User restated 2026-10-08: "Please also update the menu for Classic
+  to the same style menu used in Solid and Ultra." Taken next, after
+  DOOM-0271. Spec first (write-spec), on the recommended shape above.
+  Progress (2026-10-08): spec written and reviewed,
+  docs/specs/DOOM-0211-classic-crisp-menu.md (review-contract loops 1-2,
+  stopped at the cap, 10 findings fixed). The user chose the SDL route,
+  not Vulkan: the crisp menu is drawn with SDL_RenderGeometry over
+  Classic's unchanged frame, so it needs no Vulkan. Classic's Video menu
+  keeps only Renderer, Widescreen, Fill Screen, FPS Counter and Back; the
+  menu dims the game. Not built; next is build step B1 (move the menu
+  text queue into menu_text.c).
+  Progress (2026-10-08): spec build steps B1 (8afa625, queue moved to
+  menu_text.c, INV-8 passed) and B2 (e39470f, SDL presenter + gate +
+  -nocrispmenu; INV-1..5 and INV-7 passed, results in the loop log's
+  B2 impl row) shipped. Next: B3 (Classic Video menu = Renderer,
+  Widescreen, Fill Screen, FPS Counter, Back; delete EffectsDef; add
+  tests/classic_menu_test.cpp, INV-6), then B4 (records incl. CHANGELOG).
+  User decision 2026-10-08: after B4, cut the release as 0.8.0 (new
+  feature = MINOR; the planned 0.8.0+ headings each move up one minor).
+  Resolved (2026-10-08): B3 (9454ec9) cut Classic's Video menu to
+  Renderer, Widescreen, Fill Screen, FPS Counter and Back, drew it crisp
+  under Classic, deleted EffectsDef, and added
+  tests/classic_menu_test.cpp (INV-6, red on B2, green on B3). B4
+  (6799460) recorded it in CLAUDE.md, DOOM-0206 and CHANGELOG. Next:
+  cut release 0.8.0.
+  User decision 2026-10-08 (replaces the 0.8.0 one above): release
+  as 0.7.4, "A sharper Classic menu, and a round of fixes". Below 1.0 a
+  new feature bumps the PATCH (versioning.md section 4), and the 0.8.0
+  heading still holds open items, so 0.7.4 is a heading of its own and
+  no planned heading moves.
+  **Layman:** In the original Classic mode, the menu items all share one size now, but the font looks chunky/blocky. Make it look nicer while staying consistent.
+  Kind: enhancement.
+  Source: user-request-2026-07-21.
+
+## 0.8.0 — What a player meets is correct
+
+Defects a player can actually hit: crashes, hangs, lost saves, wrong pixels,
+wrong sound, and anything a malformed WAD can do to the engine. Shipped items
+stay in their phase sections; this heading holds only work still to come.
+
+- 📋 [DOOM-0145] **Windows 0.2.0 build: 3D view renders as a small centered box with garbled (uninitialized) borders.**
+  Reported on the shipped 0.2.0 Windows build. Symptoms: (1) fullscreen window, but the actual game view is a small centered rectangle with garbled imagery (fragments of the DOOM II title art + scattered text) filling the surrounding area; (2) the 2D menu + status-bar overlay render cleanly at full width ON TOP of the garbage (confirmed by screenshot of the in-game ESC menu); (3) audio "struggling" (unspecified — crackle vs missing music vs none).
+
+  Leading hypothesis (display): in a 3D mode (Solid/Ultra) the scene is traced into a render-scale sub-rectangle (default render_scale=50%, m_misc.c:255) that TAAU upscales to the display. If TAAU is not upscaling to fill the swapchain on this GPU, the present (which uses full g.extent, r_vulkan.cpp:4947) shows the 50% box + never-cleared swapchain borders = the garbage. Default renderer is RB_CLASSIC (m_misc.c:253), so this only bites if the friend selected Solid/Ultra, OR a config persisted a 3D mode. Alt hypotheses to rule out: a Classic-path SDL present/pitch bug specific to Windows; the DOOM-0050 2D-overlay-over-3D family.
+
+  Disambiguating facts needed (cannot reproduce without the friend's box): render mode selected; GPU + Windows version; whether switching to Classic and/or setting Render Scale 100% clears it; whether -windowed changes it. Likely real fixes once pinned: (a) clear the full swapchain image each frame so uncovered borders are black not garbage; (b) ensure TAAU upscales to full display extent (or blit the render sub-rect scaled to g.extent when TAAU off). Audio is a separate sub-investigation (SDL_OpenAudio 11025 Hz legacy device, i_sound.c:825).
+  **Layman:** On Windows, the game view shows up as a small box in the middle of the screen with garbled junk around it; sound also struggles.
+  Kind: fix.
+  Source: user-report-2026-06-30 (Windows friend; original verbal report + in-game menu screenshot).
+  Confirmed by friend's in-game photo (2026-06-30): the 3D scene renders CORRECTLY but only into a ~50%-size centered sub-rectangle (= render_scale=50%); the status bar draws full-width and correct; the uncovered border region shows stale/uninitialized framebuffer content (leftover menu/skill-select text: NEW GAME, NIGHTMARE!, etc.). So this is NOT a crash or RT-capability failure — the engine works; it's a present/upscale bug. Code: r_vulkan.cpp:4454 gates the render sub-rectangle on taauActive = (rb_rtdebug==6 && rb_upscaler==1 && taauPipeline!=NULL); at render_scale<100 the rendered region is not being scaled to fill g.extent on this GPU, and the borders are never cleared. Immediate user workaround (any one): Options->Renderer-> Render Scale=100%, OR Upscaler=Off, OR Renderer=Classic. Real fix: (a) always blit/scale the rendered region to the full display extent (never present the sub-rect 1:1); (b) clear the swapchain image to black each frame so uncovered areas aren't garbage. Still need: friend's GPU model + audio specifics.
+  GTX 1050 / Win10 test (2026-06-30, screenshots (1)&(2)): in SOLID renderer the view is FULL-SCREEN and clean at 35-59 FPS — no small box, no garbled borders. This isolates the bug: it is NOT Solid mode and NOT a generic Windows present bug. It is specific to a 3D path running at render_scale<100% where the upscale-to-display is not filling the swapchain (i.e. the Ultra/TAAU path: taauActive at r_vulkan.cpp:4454 traces into a 50% sub-rect; if its output is not blitted scaled-to-g.extent, you get the friend's small-box+garbage). Confirms the fix: (a) always scale the rendered sub-region to the full display extent on present; (b) clear the swapchain to black each frame. Practical guidance for the friend NOW: use Solid (works); Ultra needs RT hardware the GTX 1050 lacks anyway (ties to DOOM-0059/DOOM-0026 capability gating). Still want: one Ultra-mode screenshot on the GTX 1050 to confirm whether Ultra runs/garbles/gates-off there.
+  Friend's machine identified (2026-06-30): GTX 2060 (RT-capable, has RT cores) on a 4K laptop. So the small-box repro = Ultra at render_scale 50% on a 4K display = a 1920x1080 render box shown un-upscaled in the centre of a 3840x2160 screen, surrounded by uncleared garbage. Matches the present/upscale theory exactly. This is the one machine that reproduces DOOM-0145 (RX 6600 upscales fine; GTX 1050 has no Ultra). Verification of the fix will need the GTX 2060 box. NOTE: separate from the GTX 1050 "not full screen / border" report, which is the in-game Screen Size (screenblocks) ornamental border + Classic's 4:3 letterbox on a 16:9 display — tracked separately.
+  Progress (2026-09-30): read against today's code, not re-tested. The present
+  path has been rewritten since 0.2.0. With the upscaler inactive the tracer now
+  renders at the display's own size, so there is no sub-rectangle to show. With
+  it active, the upscale pass is dispatched over the whole display image and the
+  blit to the swapchain takes that image, full size. So the two fixes this item
+  asks for are, by reading, already what the code does. What reading cannot
+  show is why the GTX 2060 showed the box in the first place, and the only
+  machine that reproduced it is the friend's. Needs one run of the current
+  release there in Ultra at Render Scale 50% before this can close.
+  Decision (user, 2026-09-30): ask Charl to run the current release in Ultra at
+  Render Scale 50% on the GTX 2060 laptop; the item stays open until he reports.
+
+- 📋 [DOOM-0283] **Ultra falls back to paletted art silently when the HD assets are not found.**
+  EnsureHdMaterials resolves the HD set relative to the CURRENT WORKING DIRECTORY
+  ("assets/ultra/") unless DOOMASSETDIR overrides it. cwd is linuxdoom-1.10/ (the
+  launcher keeps it there so savegames land where they always have), and
+  assets/ultra/ lives one level up at the repo root -- so any run that does not
+  export DOOMASSETDIR gets paletted art in Ultra. run-doom-ants.sh sets it and
+  carries a comment warning about exactly this; nothing else does.
+
+  The only signal is a stdout line -- "DOOM-0042: no assets/ultra/materials.csv -
+  Ultra uses paletted art." -- which is invisible while the game owns the display.
+  That is the same failure shape as the debug hotkeys in DOOM-0275: an affordance
+  whose only output channel is one the user cannot see during the activity it
+  describes.
+
+  Cost of it being silent, measured rather than imagined: an entire session of
+  DOOM-0197 perf measurements and -shotcompare golden captures were taken paletted
+  while believing they were Ultra HD, and the numbers had to be thrown away and
+  retaken (41->48 fps HD, vs 43->53 paletted -- different enough to matter). The
+  user spotted it from a screenshot; nothing in the harness did.
+
+  Two things worth doing, the first much more important:
+  - Say so ON SCREEN. The Ultra row in the render-mode menu could read "Ultra (HD
+  art not found - using original art)", or a one-line startup notice via
+  I_DebugKeyMessage's channel. A player who picked Ultra and got Solid's art has
+  no way to tell today.
+  - Consider resolving the default path relative to the EXECUTABLE or searching
+  "../assets/ultra/" as a fallback, so the common layout works without an env
+  var. Keep DOOMASSETDIR as the override.
+  **Layman:** If the high-definition texture pack cannot be found, Ultra quietly falls back to the original artwork and looks like Solid. Nothing on screen says so, so it reads as the setting not working.
+  Kind: enhancement.
+  Source: in-session-2026-07-27.
+  Lanes: renderer.
+
+- 📋 [DOOM-0379] **Damage flash, powerup tints and the screen wipe are all missing in Solid and Ultra.**
+  All three are the same class: a side effect of the software renderer that the 3D
+  back-ends bypass and nobody replicated. docs/standards/renderer.md:29 makes
+  replication a house rule and cites ML_MAPPED as the precedent.
+
+    - PALETTE EFFECTS. r_vulkan.cpp:5893 uploads RB_PlayPal() once at init and
+      nothing ever re-writes it; I_SetPalette (i_video.c:908) rebuilds only the
+      software palette used by the Classic present path. Grep for I_SetPalette,
+      palIndex or damagecount in r_vulkan.cpp returns zero hits. So there is no
+      damage-red flash, no pickup flash, no radsuit tint, and no usegamma correction
+      on either 3D tier. Losing the damage flash removes the game's primary "you are
+      being hurt" feedback. DOOM-0008:232 promises this as a single LUT-row swap.
+    - FIXEDCOLORMAP. player->fixedcolormap is set to INVERSECOLORMAP for
+      invulnerability and 1 for the light-amp visor (p_user.c:367), consumed by the
+      software renderer via R_SetupFrame. rb_view_t carries extralight but not this,
+      and grep finds it nowhere in the 3D path. So the invulnerability sphere
+      produces no inverted screen and the visor no full-bright view.
+    - SCREEN WIPE. The whole f_wipe package reads and writes screens[0] only, but
+      under a 3D back-end r_backend.c:236 fills the view footprint with the
+      transparency key 251 and the overlay shader keys it out. The melt copies bytes
+      verbatim, so melted pixels are still 251 and still keyed out. grep for
+      RB_OVERLAY_KEY or wipe in r_vulkan.cpp returns zero hits. DOOM-0008 INV-4
+      names wipes explicitly.
+
+  The first two are one field on rb_view_t each. The wipe needs a decision: either
+  composite the 3D frame into screens[0] before wipe_StartScreen, or run the melt on
+  the presented image in r_vulkan.cpp.
+  User decisions 2026-10-08. Palette effects: a full-screen see-through
+  colour blend over the finished 3D image (damage red, pickup gold,
+  radsuit green), same colours and timing as Classic's palette flashes,
+  in both Solid and Ultra. Screen wipe: run the melt on the finished 3D
+  image on the GPU (in r_vulkan.cpp), full colour, matching Classic's
+  melt; not a 256-colour copy and not an instant cut. fixedcolormap is
+  DOOM-0455's.
+  **Layman:** Three things the original game does are simply absent in the two 3D views. The screen does not flash red when you are hurt, the invulnerability and light-amplifier powerups have no visible effect, and the melt transition between levels wipes only the status bar over a frozen picture.
+  Kind: fix.
+  Source: review-code 2026-09-01, lanes backend-seam and ui-hud.
+  Lanes: renderer, backend-seam.
+
+- 📋 [DOOM-0389] **Dirt is applied to a texture before the emission threshold reads it, so grime switches lamps off.**
+  pathtrace.comp:1543 -- `if (!isSprite && filthOn()) albedo = applyGrime(...)` runs
+  BEFORE pathtrace.comp:1583 passes that albedo to emisWeight.
+
+  emissiveMask (pt_common.glsl:406) is `smoothstep(0.30, 0.60, max-channel(albedo))`.
+  applyGrime returns `albedo * clamp(m, 0.35, 1.65)` (pt_common.glsl:820) and may
+  then mix up to kStainOpacity 0.82 toward kDirtBrown. Multiplying the input by 0.35
+  is arithmetically a DIVISION of the threshold: effective EMIS_MASK_LO becomes
+  0.30/0.35 = 0.857 and EMIS_MASK_HI becomes 1.71, which is unreachable. A lamp
+  texel at linear 0.7 goes from full Le to ZERO emission wherever the grunge map is
+  dark or AO is low.
+
+  This is the CLAUDE.md-documented shape: a constant applied to a value before a
+  threshold comparison is a division of that threshold, and no check reading the
+  threshold's own table can see it. DOOM-0331 INV-4 shipped a real bug this way.
+
+  Three consequences: the glow becomes patchy across one lamp face -- the exact
+  symptom DOOM-0302 was filed to remove for liquids, reintroduced for every
+  non-liquid emitter; the `[` filth toggle (documented as a perf/quality A/B)
+  silently changes emission; and it reaches both shipped paths, mode 4 via
+  shadeSurface and mode 6 via galbedo.a at pathtrace.comp:1752, which
+  svgf_composite.comp:205 multiplies into emis.
+
+  Fix: keep the undirtied albedo for the emission decision -- one extra register.
+  **Layman:** Grime is multiplied onto a surface's colour before the code decides whether that surface glows. Multiplying a colour down before a brightness test is the same as raising the test, so a lamp under dirt stops emitting light entirely — and the grime on/off key silently changes how much lamps glow.
+  Kind: fix.
+  Source: review-code 2026-09-01, lane shaders-pathtrace.
+  Lanes: renderer, shaders.
 
 - 📋 [DOOM-0392] **The release and packaging scripts can publish a binary that is not the tagged source.**
     - packaging/release.sh:86 -- `--rebuild` builds whatever HEAD currently is, not
@@ -9867,77 +10229,6 @@ stay in their phase sections; this heading holds only work still to come.
   Kind: fix.
   Source: in-session-2026-09-07, found while fixing DOOM-0400's reload TOCTOU.
   Lanes: wad-io.
-
-- ✅ [DOOM-0432] **V_DrawPatch trusts a patch's own column offsets, because it is never told how long the lump is.**
-  Split out of DOOM-0402, whose other seven findings are fixed. This one is
-  an API change, not a bounds check, and doing it inside that bundle would
-  have been either a quadratic reverse lookup or a hundred-call-site
-  refactor performed under a LOW heading.
-
-  V_PostInBounds already refuses a post that overruns the patch's declared
-  HEIGHT, which is what stops the blit walking off the destination buffer.
-  What is still unchecked is the patch's own extent: LONG(patch->columnofs
-  [col]) is followed wherever it points, and the post chain is walked on the
-  lump's own say-so. Both are reads past the cached lump, and the bytes land
-  in the framebuffer. Three call sites: V_DrawPatchGeneral, V_DrawPatchScaled
-  and the third blitter beside them.
-
-  DOOM-0228 solved exactly this for the Vulkan atlas builder, and
-  patch_bounds.h already carries the decisions -- PatchHeaderFits,
-  PatchColumnFits, PatchPostFits. They all take a lump length. r_mesh.c had
-  one because it had the lump number; V_DrawPatch is handed a patch_t* and
-  nothing else.
-
-  So the work is to give the patch blitters an extent. Options, and this
-  item is to choose between them rather than assume one:
-
-    - Validate once at cache time -- a W_CacheLumpNumAsPatch that checks the
-      header, every column offset and every post chain against
-      W_LumpLength, and I_Errors or substitutes a safe stub. One check per
-      lump rather than per draw, and callers keep their signature. The
-      question is which of the 100-plus V_DrawPatch call sites route through
-      it, since a caller that keeps using W_CacheLumpName is unprotected and
-      looks identical.
-    - Carry the extent in the call -- a bounded entry point taking the lump
-      length, with V_DrawPatch as a wrapper. Honest but it moves the problem
-      to every caller.
-    - Reverse-lookup the length from the pointer via lumpinfo[].cache. Cheap
-      to write and O(numlumps) per draw; DOOM-0427 already files one
-      quadratic lump scan as a defect, so adding a second is the wrong
-      direction.
-
-  Not reachable from the shipped IWADs -- every stock patch is well formed.
-  A PWAD is untrusted input and this is a read primitive, not a write.
-  Scope widened (2026-09-30, DOOM-0093 pass): the same root cause has more
-  readers than the three blitters named above. Each follows `columnofs[]` and
-  the post chain on the lump's own say-so, with no lump length:
-  `R_GenerateComposite`, `R_GenerateLookup` and `R_DrawColumnInCache`
-  (r_data.c, wall textures in Classic), `R_RenderTextureToAtlas` (r_data.c,
-  wall textures into the Vulkan atlas; DOOM-0228 bounded only the flat and
-  sprite paths of that atlas) and `M_DecodePatchRGBA` (m_menu.c, the menu
-  skull and logo). Most of these DO have the lump number in hand, which
-  favours the first option: one validator over header, every column offset
-  and every post chain, run once per lump, with `patch_bounds.h` supplying
-  the decisions. Wall-texture patches and sprites can be validated when
-  `R_InitTextures` and `R_InitSpriteLumps` first meet them; the by-name
-  HUD and menu patches are what still need a checked cache call.
-  Resolved (2026-09-30): built to docs/specs/DOOM-0432-patch-lump-validation.md,
-  a fourth design this bullet did not list. The whole lump is checked once
-  (PatchLumpValid) and the verdict kept per lump; a reader holding only a
-  pointer finds its lump through the zone block header, in constant time.
-  There is one blitter now (DOOM-0447), not three; the readers wired are
-  V_BlitPatch, F_DrawPatchCol, M_DecodePatchRGBA, the three texture
-  builders, R_DrawVisSprite, R_InitSpriteLumps and blit_tile. Two things
-  the review added: the stored wall-column offset was 16 bits wide and is
-  now exact, and the see-through wall walk skips a column that has no
-  posts. Three crafted fixtures crashed the old build and boot clean on
-  the new one; no stock lump in doom.wad or doom2.wad is refused.
-  Still open from the spec: R_DrawColumn reading past a short column
-  (its Q2), and nothing runs the see-through wall path.
-  **Layman:** The software renderer draws pictures out of the WAD file while trusting the file's own description of where each piece of the picture lives. A crafted WAD can point that anywhere, and whatever is at that address gets drawn on screen.
-  Kind: security.
-  Source: review-code 2026-09-01, lane sw-renderer; split out of DOOM-0402 on 2026-09-12.
-  Lanes: sw-renderer.
 
 - 📋 [DOOM-0433] **Loading any PWAD hangs the game at startup waiting for Enter on stdin.**
   Found 2026-09-20 while testing DOOM-0404's PLAYPAL gate against a
@@ -10240,36 +10531,6 @@ stay in their phase sections; this heading holds only work still to come.
   matches Classic — see the 2026-07-01 investigation note above; the proposed
   ang/(2*PI) change would be a regression. No further action.
 
-- ✅ [DOOM-0479] **A map of stacked see-through walls can stall a ray-traced frame until the driver resets the device.**
-  `pathtrace.comp`'s primary ray runs `while (rayQueryProceedEXT(rq))` over every
-  non-opaque triangle it crosses, out to 1e9 units, and each candidate costs
-  buffer reads and, for a masked wall or a sprite, a texture fetch. Nothing caps
-  the candidates per ray, so the cost per pixel is whatever the map stacks along
-  a sight line. A long enough frame is a device timeout, and `Check()` turns
-  that into `I_Error`. Not memory-unsafe: a denial of service by a map the
-  player chose to load.
-  Work: measure the candidate count per ray on the shipped maps first (the cap
-  must sit well above their worst case), then cap it and commit the nearest
-  candidate found so far. The megakernel is register-pressure sensitive
-  (DOOM-0090), so time the frame before and after.
-  Resolved (2026-09-30): `kMaxPrimaryCandidates = 256u` in pathtrace.comp; the
-  primary loop counts candidates ahead of the alpha test and ends the traversal
-  with rayQueryTerminateEXT past the cap, keeping the nearest confirmed hit.
-  Measured first, as the bullet asked: a temporary counter view at the start of
-  every map in doom.wad and doom2.wad showed no pixel above 16 candidates and
-  almost none above 8. Map starts only; no mid-map views were sampled.
-  Fixture `make_map_fixture.py stackedtrees` (4000 trees on one spot, MAP01):
-  megakernel 120 ms uncapped, 32 ms capped, on the RX 6600. Stock MAP01
-  megakernel 1.30 ms before and 1.28 to 1.31 ms after; `-rtview 3` captures of
-  MAP01 and E1M7 are pixel-identical before and after; -rtverify PASS; no
-  validation messages. Past the cap a ray that confirmed nothing draws as sky,
-  which is what the fixture's gaps show. The cap bounds candidates per ray, so
-  the worst frame still scales with screen area: about 256 tests on every pixel.
-  **Layman:** A deliberately built map could make the ray-traced view so slow that the graphics driver gives up and the game exits.
-  Kind: security.
-  Source: review 2026-09-30 (DOOM-0093 pass, shaders lane, L22 in docs/reviews/close-findings-2026-09-30.md).
-  Lanes: renderer.
-
 - 📋 [DOOM-0480] **Exercise the minimise fix on Windows, in Solid and in Ultra.**
   DOOM-0390 added `SurfaceHasArea` so a frame is skipped, not drawn, while the
   surface reports no area. Linux desktops do not report a zero extent on
@@ -10386,85 +10647,11 @@ Work only a maintainer sees: duplication, dead code, static analysis that covers
 nothing, documents that contradict the code, and the harnesses that make a
 defect visible before a player finds it.
 
-- ✅ [DOOM-0115] **Fix pre-existing Vulkan validation errors (clear-color usage, renderpass dependency mismatch).**
-  INV-8 (validation-clean). Two distinct families in the terminal log: (1) vkCmdClearColorImage on an image created with only VK_IMAGE_USAGE_STORAGE_BIT, missing VK_IMAGE_USAGE_TRANSFER_DST_BIT (add the usage flag at image creation, or clear via a compute/shader path); (2) vkCmdBeginRenderPass/vkCmdDraw pDependencies srcStageMask/srcAccessMask/dstAccessMask incompatible between the render pass used to create the framebuffer/pipeline and the one begun (the two render passes' subpass dependencies must match for compatibility). Pre-existing, not from the sprite work. Reconcile the renderpass dependency definitions and add the transfer-dst usage.
-  **Layman:** The graphics debug layer is logging a few rule violations every frame. They aren't causing visible problems today, but they're real correctness bugs that can break on other drivers — clean them up.
-  Kind: fix.
-  Source: in-session-2026-06-29.
-  Verified both families (2026-08-13, RX 6600, VK_LAYER_KHRONOS_validation
-  confirmed loaded via VK_LOADER_DEBUG=layer).
-
-  FAMILY 1 (clear-colour usage) — STRUCK, already fixed by DOOM-0133.
-  Every image reaching vkCmdClearColorImage now declares TRANSFER_DST:
-  g.rtAccum (r_vulkan.cpp:2644 STORAGE|TRANSFER_SRC|TRANSFER_DST),
-  g.svImg[] (:3201), g.taImg[] non-TA_OUT (:3360, comment cites DOOM-0133).
-  The three call sites (:3254-3256 svImg, :3405-3406 taImg HIST0/HIST1,
-  :8330 rtAccum) target only those. Zero vkCmdClearColorImage validation
-  lines over full Solid and Ultra runs. Nothing left to do here.
-
-  FAMILY 2 (renderpass dependency mismatch) — LOCATED AND FIXED this session.
-  Root cause: CreateRenderPass built ONE shared VkSubpassDependency `dep`,
-  then MUTATED it in place (old :4703-4707: srcStage TRANSFER, srcAccess
-  TRANSFER_WRITE, dstAccess +COLOR_ATTACHMENT_READ) before creating
-  g.rtOverlayPass. But RecordRtOverlay (:9399-9400) begins that pass against
-  g.framebuffers[idx] — created from g.renderPass (:4720) — and draws with
-  pipelines built for g.renderPass (:5244/:6103/:6265). Render-pass
-  compatibility (Vulkan §8.2) covers subpass dependencies; only load/store
-  ops and image layouts are exempt. So the mutation is exactly what made the
-  pass incompatible, while the code comment at :4698 asserted the opposite.
-  Every other pass is self-consistent (shadowPass/shadowFb/shadowPipeline,
-  scenePass/sceneFb/scenePipeline, aoPass/aoFb/aoPipeline) — rtOverlayPass
-  was the sole offender, which is why only the Ultra RT path tripped it.
-
-  Fix: fold the TRANSFER src + COLOR_ATTACHMENT_READ dst into the SHARED base
-  dep so renderPass, scenePass and rtOverlayPass carry identical dependencies,
-  and stop mutating it for rtOverlayPass (only loadOp/initialLayout differ now,
-  both exempt). Widening an EXTERNAL dependency is strictly more
-  synchronisation, never less, so renderPass/scenePass cannot regress.
-
-  A/B evidence (Ultra, E1M1, -warp 1 1 -noinput):
-  pre-fix : 10x VUID-VkRenderPassBeginInfo-renderPass-00904
-  + 10x VUID-vkCmdDraw-renderPass-02684
-  ("VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT !=
-  EARLY_FRAGMENT_TESTS|COLOR_ATTACHMENT_OUTPUT", 0xf vs 0xc)
-  post-fix: 0 validation lines, BLAS/TLAS + GI bake + HD load (18 materials)
-  all still correct. Solid re-run also 0. `make test` all green.
-
-  Both families are now closed on the measurement side. Bullet deliberately
-  LEFT OPEN per the session instruction not to close it; flip to shipped
-  whenever you are happy. Duplicates DOOM-0126 (family 1), DOOM-0134 and
-  DOOM-0198 (family 2) flipped shipped in the same pass.
-  Prior art (2026-09-26, from UT_Ants UTA-0138): count validation-layer
-  errors so a test can fail on them. Files: UT_Ants src/urender/Device.cpp
-  (onValidationMessage), Device.h (ValidationLog), tests/device/
-  DeviceFixture.cpp. Four details: count ERROR severity in an atomic and
-  keep the first message, always return VK_FALSE; keep the log on the
-  heap so pUserData stays valid; chain the messenger info into
-  VkInstanceCreateInfo.pNext too, or instance create/destroy errors go
-  uncounted; fail at the submit that raised the error, and FAIL (never
-  skip) when the layer is not loaded. Headless on lavapipe:
-  VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json.
-  Resolved (2026-10-07): re-verified with the fix already in the tree. A
-  45 s Ultra run (-rtview 1) and a 45 s Solid run on E1M1 under the
-  validation layer each gave 0 validation messages, and each ran an
-  Ultra or Solid -> Classic tier switch, which runs the full teardown.
-  DOOM-0127 and DOOM-0176 were duplicates of family 2 and close with
-  this.
-
 - 📋 [DOOM-0125] **Sweep dangling sub-section citations into DOOM-0009-performance.md (flat-list doc).**
   Per the DOOM-0092 cold-eyes loops. docs/research/DOOM-0009-performance.md uses flat numbered lists under ## 2 / ## 3 (no Sec.2.x/3.x sub-anchors). The DOOM-0009 spec (and the original DOOM-0092 draft) cite broken anchors like 'perf Sec.2.5'/'Sec.2.7'. Sweep all docs citing the perf doc and rewrite to 'Sec.2 item N' / 'Sec.3 idea N'.
   **Layman:** Several docs point at section numbers that don't exist in the performance research file -- fix the broken internal references.
   Kind: doc-fix.
   Source: research-2026-06-29 DOOM-0092 cold-eyes.
-
-- ✅ [DOOM-0127] **Vulkan validation: renderpass dependency stage/access-mask incompatibility on overlay/blit framebuffers.**
-  Seen in terminal_output.log lines ~226-291 (capped at the 10x duplicate limit): vkCmdBeginRenderPass reports pDependencies[0] srcStageMask/srcAccessMask/dstAccessMask incompatible between VkRenderPass 0xd and the one baked into the VkFramebuffer (0xc) -- VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT vs EARLY/LATE_FRAGMENT_TESTS, TRANSFER_WRITE vs 0, etc. Pre-existing (NOT from DOOM-0119 -- no renderpass changes in that diff). The framebuffer was created against a renderpass whose subpass dependencies don't match the renderpass used at begin time; they must be render-pass-compatible (same dependency stage/access masks). Fix: align the subpass dependency masks between the renderpass used to create the framebuffer and the one used in vkCmdBeginRenderPass (or reuse the same VkRenderPass object). Likely in the 2D overlay/blit path.
-  Resolved (2026-10-07): a duplicate of DOOM-0115's family 2 (the
-  rtOverlayPass dependency mismatch), fixed there. 0 validation messages
-  in Ultra and Solid on 2026-10-07.
-  **Layman:** Another graphics-checker warning: two render steps describe their hand-off slightly differently. Cosmetic for now; cleaning it keeps the log trustworthy so real bugs stand out.
-  Kind: fix.
-  Source: in-session-2026-06-29 DOOM-0119 play-test log.
 
 - 📋 [DOOM-0150] **Refresh DOOM-0027 hi-res spec's drifted v_video.c line citations (its own implementation shifted them).**
   Surfaced during DOOM-0147 cold-eyes. docs/specs/DOOM-0027-hires.md cites v_video.c symbols at pre-implementation lines that drifted when DOOM-0027 itself landed: primary table cites already corrected 2026-06-30 (V_DrawPatch :204->:223, V_DrawPatchFlipped :271->:298, V_CopyRect def :158->:162; INV_ASPECT_RATIO :107->:110). REMAINING to verify+fix: the inline refs elsewhere in that doc (V_CopyRect blit :187-188; the :158/:158-166/:173-178/:464 prose refs; V_DrawBlock def :405/blit :428; the :489-492-style alloc cites) — not re-verified yet, so left for a dedicated pass rather than guessed. Low priority (the spec is shipped/frozen; this is doc hygiene). Cross-ref: DOOM-0147-widescreen.md cites the same functions at current lines.
@@ -10483,32 +10670,6 @@ defect visible before a player finds it.
   **Layman:** Tidy the path-tracer design doc so it is quicker to read: remove a few paragraphs that repeat the same point, add a table of contents, and break up a couple of very long sentences. No change to what it specifies.
   Kind: doc-fix.
   Source: cold-eyes-2026-07-04 (DOOM-0009 review, deferred structural nits incl. DOOM-0081 item 5).
-
-- ✅ [DOOM-0176] **Fix render-pass/framebuffer subpass-dependency incompatibility validation errors in the raster path.**
-  Validation (RADV, VUID-VkRenderPassBeginInfo-renderPass-00904 + VUID-vkCmdDraw-renderPass-02684): a VkRenderPass used to BEGIN a pass (0xf..) is incompatible with the VkRenderPass the framebuffer/pipeline was created against (0xc..) on the subpass dependency srcStageMask/srcAccessMask/dstAccessMask (VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT + TRANSFER_WRITE vs EARLY_FRAGMENT_TESTS|COLOR_ATTACHMENT_OUTPUT). ~20 messages/frame. NOT from DOOM-0042 (that change is compute-only, touches no render pass) — pre-existing raster, likely the DOOM-0170 L2b MRT/SSAO composite passes whose subpass dependency carries an ALL_TRANSFER src. Fix: align the offending render pass's subpass-dependency stage/access masks between the framebuffer-creation pass and the begun/pipeline pass. Benign on RADV (renders correctly) but spec-noncompliant.
-  Resolved (2026-10-07): a duplicate of DOOM-0115's family 2
-  (VUID-VkRenderPassBeginInfo-renderPass-00904 / vkCmdDraw-02684 on the
-  rtOverlayPass), fixed there. 0 validation messages in Ultra and Solid
-  on 2026-10-07.
-  **Layman:** The graphics card's debug checker complains that two rendering steps disagree about timing; harmless on this GPU but should be cleaned up.
-  Kind: fix.
-  Source: observed-2026-07-14 (DOOM-0042 E1M1 Ultra play-test log).
-
-- ✅ [DOOM-0177] **Fix a 2-object (1 VkBuffer + 1 VkDeviceMemory) leak at vkDestroyDevice shutdown.**
-  Validation at vkDestroyDevice: 'VkDevice has 2 leaked objects' — one VkDeviceMemory + one VkBuffer (adjacent handles = a buffer+its memory allocated together). NOT the DOOM-0042 HD resources: FreeHdMaterials() frees every HD buffer/memory (hdCtrlBuf/hdCtrlMem/hdMemory + images/views/pool) and is called at shutdown (r_vulkan.cpp:7540) before device destroy — audited create/destroy-balanced. Candidate: g.overlayStaging + g.overlayStagingMem (r_vulkan.cpp:7553-7554, only freed if non-null) or another subsystem's staging buffer. Confirm pre-existing with a Solid-only run (never enter Ultra, so no HD built) — if it still leaks 2, it is not HD-related. Shutdown-only; no gameplay impact.
-  Resolved (2026-10-07): the leak was g.skyMeshBuf + g.skyMeshMem, the
-  DOOM-0141 sky backdrop mesh. RB_Vulkan_BuildLevel freed it on a level
-  rebuild, but RB_Vulkan_Shutdown never did. The teardown runs only on a
-  tier switch (quitting the game never calls it), so the leak showed on
-  a switch. Red: an Ultra -> Classic switch at tic 700 under the
-  validation layer reported 'VkDevice has 2 leaked objects'; the handles
-  matched the buffer created in RB_Vulkan_BuildLevel. Fix: free both in
-  RB_Vulkan_Shutdown. Green: the same switch reports 0 validation
-  messages, from Ultra and from Solid. No unit test: GPU object
-  lifetimes are outside what testing.md calls unit-testable.
-  **Layman:** When the game exits, it forgets to hand back one small chunk of graphics memory. No effect while playing; tidy-up on quit.
-  Kind: fix.
-  Source: observed-2026-07-14 (DOOM-0042 E1M1 Ultra play-test log).
 
 - 📋 [DOOM-0195] **-rtverify self-test never exercises the omni NEE loop (fires before dynamic sprite emitters exist).**
   DOOM-0122 wired the -rtverify verify path to pass the real omniStart (misc4.y = g.staticWgt.size()), so the omni sprite-light branch WOULD be covered. But on hardware every -rtverify run reports 0 omni emitters, at every scene tried (E1M1/E3M1/E3M4/E4M1). Root cause: RB_RtVerify triggers in the present path ABOVE vkAcquireNextImageKHR / RecordRtTrace (r_vulkan.cpp:7069), on the FIRST present -- but dynamic sprite emitters are populated per-frame inside RecordRtTrace (FinalizeEmitters(&emit,&wgt,&dynSec), r_vulkan.cpp:5499), which has not run yet. So g.emitCount holds only the level-load STATIC set (BuildProbes -> FinalizeEmitters(nullptr,nullptr)), giving omniStart == emitCount always. To actually exercise the omni loop the verify must run after >=1 full frame (so dynamic emitters populate) OR synthesize a dynamic emitter for the verify camera. NOTE: running post-frame conflicts with RB_RtVerify's assumption that the display image is still UNDEFINED (it parks it UNDEFINED->GENERAL); that barrier needs rework if the trigger moves. Blocks DOOM-0122 graduating to shipped.
@@ -11009,25 +11170,6 @@ defect visible before a player finds it.
   Also found while doing this, and not on the original list: four shipped things the parent never documented (kWispSquashZ, the wisp S-curve and its load-bearing clamp, DOOM-0300's heading rotation, kIndoorSkyLight); the seep field's worst-case size stated as 256 KB when RGBA16F makes it 512 KiB; and Q21 claimed as cited from pt_common.glsl when it appears in no source file at all.
 
   New code-side item filed: the shipped shader comments carry three figures this document corrects (pt_common.glsl's "+/-60 % swing" and "16% at 512 units"; pathtrace.comp's "would drift 512x too fast", now 192x) plus a sigma comment calling the floor layer "a THIRD addend" where the expression has two. Not fixed under a docs review.
-
-- ✅ [DOOM-0311] **Validate the render push-constants on the CPU instead of catching their NaNs in the shaders.**
-  Three shader inputs are divided by without being checked at the boundary:
-  ssao.frag divides by pc.aspect, taau.comp divides by the display
-  dimensions, and svgf_composite.comp bit-casts pc.misc3.x to an exposure
-  value. Each is recoverable today only because a downstream NaN guard
-  happens to catch it (svgf_composite.comp:195 and taau.comp:109), which is
-  recovery-by-clamping rather than prevention, and a new consumer of the
-  same push-constant would not inherit the guard. Cheap fix: assert/clamp
-  aspect, extent and exposure once where the push-constant block is filled.
-  No known reachable trigger -- the host always supplies real values today --
-  so this is hardening, not a live defect.
-  Resolved (2026-09-30): the aspect and extent parts had one source, a
-  zero swapchain extent, fixed at that source under DOOM-0390: no frame
-  is recorded while the surface has no area. The exposure part was not
-  live: rb_exposure is clamped to 0..15 where the value is filled.
-  **Layman:** The graphics code currently cleans up bad numbers after they have already reached the graphics card; better to reject them before sending.
-  Kind: security.
-  Source: code-quality-review-2026-08-03 (shaders-raster lane, MEDIUM).
 
 - 📋 [DOOM-0313] **Give -devshot a camera, so the visual features can be verified where they actually happen.**
   -devshot (DOOM-0303) removed the keypress problem, but not the position
@@ -12284,24 +12426,6 @@ defect visible before a player finds it.
   Kind: review-fix.
   Source: field-pass-2026-09-27 (cpp.md § Tests, testing.md §6, for the claude-config session).
 
-- ✅ [DOOM-0468] **docs/standards/coding.md carries no marker saying whether it mirrors, overrides or owns the global standard.**
-  The project file restates parts of ~/.claude/standards/coding.md, and adds
-  legacy-C and renderer rules. It carries neither a MIRROR BEGIN nor an
-  OWNED-HERE marker and is not a spec-format-overrides-style delta file, so a
-  reader cannot tell which standard governs where the two differ. Decide per
-  standards/README.md's three cases and mark it. The other twelve files in
-  docs/standards/ likely need the same check.
-  Resolved 2026-09-28 (user, via align-project): all nine project standards
-  that share a global file's name are case 3, the project's own. coding,
-  commits, dependencies, documentation, roadmap-format, security and testing
-  share no ## heading with the global file; spec-format and releases share
-  only incidental ones. Each now carries an OWNED-HERE marker naming this
-  item, and align-report shows no standards gap. The versioning half the
-  report raised is the new versioning-overrides.md.
-  **Layman:** The project's coding rulebook doesn't say how it relates to the machine-wide one, so nobody can tell which wins when they disagree.
-  Kind: doc-fix.
-  Source: field-pass-2026-09-27 (standards/README.md cases, for the claude-config session).
-
 - 📋 [DOOM-0469] **The neighbour-scan seeds that recorded demos depend on carry no comment saying so.**
   p_spec.c: P_FindHighestFloorSurrounding seeds `-500*FRACUNIT` and
   P_FindHighestCeilingSurrounding seeds `0`. That is the same behaviour on two
@@ -12424,18 +12548,6 @@ defect visible before a player finds it.
   Kind: test.
   Source: in-session-2026-09-30 (found answering UT_Ants).
   Lanes: renderer, tests.
-
-- ✅ [DOOM-0486] **On GPUs without ray tracing, the raster shaders use buffer device addresses the device never enabled.**
-  The Windows test box (GTX 1050, no RT, validation layer installed) logs 3 validation messages at startup: vkCreateShaderModule: SPIR-V Capability PhysicalStorageBufferAddresses declared, but VkPhysicalDeviceVulkan12Features::bufferDeviceAddress is not enabled. mesh.vert and mesh.frag declare GL_EXT_buffer_reference (probes, triangle subsectors, lights); r_vulkan.cpp enables enable12.bufferDeviceAddress only inside if (g.rtEnabled). This machine's RX 6600 has RT, so local validation runs never see it. Candidate fix: enable bufferDeviceAddress whenever the device reports it (core in Vulkan 1.2), independent of RT. Verify: 0 validation messages on the Windows box in Solid.
-  Resolved (2026-10-08): enable12.bufferDeviceAddress =
-  have12.bufferDeviceAddress, set outside the RT branch (RT already
-  required it, so RT devices are unchanged). Windows box, Solid: 3
-  validation messages before, 0 after. Linux RX 6600: Ultra and Solid 0
-  messages, make test 32/32.
-  **Layman:** On graphics cards without ray tracing, some 3D-view shaders rely on a card feature the game never switches on; it happens to work but breaks the rules and could fail on another driver.
-  Kind: fix.
-  Source: in-session-2026-10-08 (DOOM-0480 Windows run).
-  Lanes: renderer.
 
 ## 0.10.0 — The frame budget
 
@@ -14030,59 +14142,6 @@ in CLAUDE.md describes.
   **Layman:** Some shader code was written early for a feature that isn't built yet, so it currently does nothing.
   Kind: chore.
   Source: debt-sweep-2026-07-26.
-
-- ✅ [DOOM-0271] **Outdoor floor flats still read as an obvious repeating grid despite de-tiling.**
-  **Layman:** The ground outside shows the same square tile over and over in a visible grid — the anti-repetition trick that fixed the walls is not doing its job on the floor.
-  Kind: fix.
-  Lanes: renderer, shaders.
-  Source: user-play-test-2026-07-27.
-  Reported alongside the DOOM-0011 ground-cloud work: with the walls
-  now hazed, the eye lands on the floor and its repetition is obvious.
-  Evidence: user screenshot, E1M1 outdoor courtyard, Ultra.
-  Leading hypothesis, UNVERIFIED — kDetileWorldCell is 64.0
-  (pathtrace.comp, "96->64" in its own comment), and a DOOM flat is
-  exactly 64x64 world units. The de-tile variation grid is therefore
-  EXACTLY commensurate with the flat's tiling period on every floor and
-  ceiling, so each cell's stochastic offset lands on the same phase of
-  the texture and the repetition survives. Walls escape this because
-  wall textures are 64-256 wide and 128 tall, so the cell rarely lines
-  up. Cheapest test: make the cell non-commensurate (80, 96 or 112) and
-  look. That changes walls too, which the user has already approved, so
-  measure the wall look before and after.
-  Second hypothesis, also unverified and cheaper to rule out: de-tiling
-  may simply be OFF in the user's config. rb_detile is the `]` key
-  (off / 2-tap / 4-tap) and ~/.doomrc has silently held a toggle at 0
-  before (see the menu/shotcompare config gotcha). Confirm the toggle
-  state before touching any constant.
-  Depends on nothing; DOOM-0181 shipped the de-tiler this refines.
-  Update 2026-07-27: the user's VIDEO menu screenshot RULES OUT the
-  config hypothesis — De-tile reads "4-tap", so de-tiling is on at full
-  quality and the grid survives it. That leaves the commensurate-cell
-  hypothesis as the only one standing: kDetileWorldCell = 64.0 is exactly
-  a DOOM flat's 64x64 world period, so on every floor and ceiling each
-  variation cell lands on the same phase of the texture. Cheapest test is
-  still one constant (try 80, 96 or 112, none of which divides 64) plus a
-  before/after look at the WALLS, which the user has already approved and
-  which this would also change.
-  User decision 2026-10-08: try two or three non-commensurate
-  kDetileWorldCell values (80, 96, 112), measure which breaks the floor
-  grid best, ship it; the wall change that comes with it was already
-  approved.
-  Measured 2026-10-08 (offline model of the 4-tap detile() on the HD
-  floors FLOOR7_1, FLOOR5_1, FLOOR7_2, FLOOR4_8, FLAT20; normalised
-  luminance autocorrelation). The hypothesis was half right. At 64 the
-  blend seams sit on the texture's own 64-unit period, so repeat 0.04
-  and seam grid 0.07-0.08 add up on one lattice. But LARGER cells are
-  worse: 80 / 96 / 112 leave 0.11-0.12 / 0.19-0.21 / 0.24-0.27, because
-  every tile copy inside one cell shares that cell's offset. Smaller
-  cells win: 56 about 0.01, 48 about 0.00, seam grid gone.
-  User decision 2026-10-08: 48, after before/after shots of the E1M1
-  courtyard floor and a wall.
-  Resolved 2026-10-08: kDetileWorldCell 64 -> 48 (pathtrace.comp), user
-  approved from before/after captures of the E1M1 courtyard and a
-  BROWN144 wall. make test 32/32, -rtverify PASS. The grout lines of
-  tile-pattern floors still jump at blend seams; that is a different
-  cause, filed separately.
 
 - 📋 [DOOM-0273] **Solid tier: upscale the ORIGINAL textures and give them PBR/POM, keeping the 1993 art.**
   **Layman:** Same DOOM pictures you know, just sharper, with real bumpiness and depth — as opposed to Ultra, which swaps the art out entirely.
@@ -16333,58 +16392,6 @@ controls they expect to rebind.
   Kind: feature.
   Source: in-session-2026-07-18 (CC suggestion, for user review).
   Approved by user 2026-07-18 for implementation.
-
-- ✅ [DOOM-0211] **Classic-tier menu font looks blocky — give Classic a nicer uniform menu font.**
-  **SCOPE WIDENED by user 2026-07-26:** *"I think we need to make the Classic renderer rather use
-  the new menu we have. The Classic menu just doesn't look right the way it is. Let's just make
-  them all use the same menu."* So the goal is no longer "a nicer font for Classic" — it is **one
-  menu shared by all three tiers**, which means option (a) below, not (b) or (c). The layout is
-  already shared (DOOM-0206 gave every tier the same rows, sizes and HUD-safe placement); the only
-  thing that still differs is the glyph rendering.
-  **The load-bearing constraint, verified 2026-07-26:** `Classic_Present()` is literally
-  `{ I_FinishUpdate(); }` (`r_backend.c`) — the software renderer hands its 8-bit framebuffer
-  straight to SDL and never enters the Vulkan backend, where the crisp text lives (`FlushMenuText`,
-  `g.textVerts`). Sharing one menu therefore means routing Classic's finished frame through the
-  Vulkan present path: upload the paletted buffer as a texture, blit it, then draw the menu with
-  the same code the other tiers use. The game view's pixels are unchanged by that (it is the same
-  buffer, same palette) — only the overlay changes.
-  **The risk to weigh before building: Classic is the no-Vulkan fallback tier.** It currently runs
-  on a machine with no working Vulkan, and the headless test path depends on that. Routing it
-  through Vulkan would give the fallback a dependency on the thing it falls back FROM. Recommended
-  shape: share the menu whenever Vulkan is up, and keep the bitmap menu strictly as the
-  no-Vulkan path — accepting that the two skins then still both exist, but only one is ever seen
-  on a working install. Also re-bless `-shotcompare` if any golden captures a menu.
-  **Needs a short spec before implementation** (house rule: any design doc goes through
-  `/cold-eyes` first). Kind changes from enhancement to feature at that point.
-  Follow-up to DOOM-0206. The Classic main menu draws all items in the paletted HUD font at 2x (V_DrawPatchScaled / M_WriteTextScaled); nearest-neighbour doubling of the small STCFN bitmap font reads as blocky. User accepted it for now (2026-07-21) but wants a nicer look later. Root constraint: Classic = Classic_Present -> I_FinishUpdate (the 1997 software renderer), which never enters the Vulkan backend, so the crisp Oxanium font used by Solid/Ultra (FlushMenuText) is unavailable there. Options to scope: (a) route the Classic menu overlay through the Vulkan crisp-text path; (b) bundle/bake a higher-res paletted bitmap menu font for the software path; (c) tune the scale/spacing (1x for crispness vs 2x for size) as a cheap partial. Needs a small brainstorm before implementing.
-  User restated 2026-10-08: "Please also update the menu for Classic
-  to the same style menu used in Solid and Ultra." Taken next, after
-  DOOM-0271. Spec first (write-spec), on the recommended shape above.
-  Progress (2026-10-08): spec written and reviewed,
-  docs/specs/DOOM-0211-classic-crisp-menu.md (review-contract loops 1-2,
-  stopped at the cap, 10 findings fixed). The user chose the SDL route,
-  not Vulkan: the crisp menu is drawn with SDL_RenderGeometry over
-  Classic's unchanged frame, so it needs no Vulkan. Classic's Video menu
-  keeps only Renderer, Widescreen, Fill Screen, FPS Counter and Back; the
-  menu dims the game. Not built; next is build step B1 (move the menu
-  text queue into menu_text.c).
-  Progress (2026-10-08): spec build steps B1 (8afa625, queue moved to
-  menu_text.c, INV-8 passed) and B2 (e39470f, SDL presenter + gate +
-  -nocrispmenu; INV-1..5 and INV-7 passed, results in the loop log's
-  B2 impl row) shipped. Next: B3 (Classic Video menu = Renderer,
-  Widescreen, Fill Screen, FPS Counter, Back; delete EffectsDef; add
-  tests/classic_menu_test.cpp, INV-6), then B4 (records incl. CHANGELOG).
-  User decision 2026-10-08: after B4, cut the release as 0.8.0 (new
-  feature = MINOR; the planned 0.8.0+ headings each move up one minor).
-  Resolved (2026-10-08): B3 (9454ec9) cut Classic's Video menu to
-  Renderer, Widescreen, Fill Screen, FPS Counter and Back, drew it crisp
-  under Classic, deleted EffectsDef, and added
-  tests/classic_menu_test.cpp (INV-6, red on B2, green on B3). B4
-  (6799460) recorded it in CLAUDE.md, DOOM-0206 and CHANGELOG. Next:
-  cut release 0.8.0.
-  **Layman:** In the original Classic mode, the menu items all share one size now, but the font looks chunky/blocky. Make it look nicer while staying consistent.
-  Kind: enhancement.
-  Source: user-request-2026-07-21.
 
 - 📋 [DOOM-0231] **Keep Classic main-menu scale-2 labels within ORIGWIDTH (no mid-word truncation).**
   Classic main-menu labels drawn at scale 2 from x=97 can overrun ORIGWIDTH and truncate mid-word (Game Select / Load Game).
