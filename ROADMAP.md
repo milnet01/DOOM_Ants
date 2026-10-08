@@ -16502,6 +16502,21 @@ controls they expect to rebind.
   Kind: enhancement.
   Source: user-request-2026-06-28.
 
+- 📋 [DOOM-0488] **Classic bitmap Options menu: the OPTIONS banner overlaps the End Game row.**
+  Seen 2026-10-08 in a Classic capture of the Options menu in a level
+  (DEV build of 0025375, -warp 1 1 -devmenu options -devshot 150,
+  1280x800 window). The banner patch and the End Game row share the
+  same rows. Probable cause, unverified: DOOM-0206's HUD-safe shift
+  (M_ClassicMenuShift) moves the option rows up and leaves the banner
+  where it was. DOOM-0211 replaces this screen with the crisp menu
+  wherever its font loads, so the bug survives only on the bitmap
+  fallback path. Fix there, or confirm the fallback is the only reach.
+  **Layman:** In Classic's old-style menu, the big red OPTIONS title is drawn on top of the first menu line.
+  Kind: fix.
+  Source: in-session-2026-10-08.
+  Lanes: menu.
+  Evidence: /home/ants/doom-scratch/p0211/menu-a.png
+
 ## 1.0.0 — Other people can run it
 
 Distribution: a signed Windows installer, in-game updates, and a trailer. At
