@@ -13017,6 +13017,21 @@ against.
   Source: user-request-2026-09-12.
   Lanes: renderer, tooling.
 
+- 📋 [DOOM-0490] **Performance standard says Classic sits above 60 FPS; Classic presents at 35.**
+  Measured 2026-10-08 with the FPS counter (fps_corner 2), Classic,
+  menu closed: 35/34 on the real 3840x2160 desktop, 35/34 on base
+  0025375 in a private 1920x1200 window. Classic draws once per game tic
+  (35 Hz), so docs/standards/performance.md's "Solid and Classic sit
+  comfortably above it" and "the floor is absolute for Classic" cannot
+  both be true. Decide with the user which is meant: a 35 Hz floor for
+  Classic (authentic), or uncapped Classic frames. The DOOM-0211 spec's
+  section 6 inherited the same premise; its measurement showed the menu
+  costs no frames.
+  **Layman:** The performance rules promise Classic runs above 60 frames a second, but Classic shows a new frame only 35 times a second, as the 1993 game did.
+  Kind: doc-fix.
+  Source: in-session-2026-10-08 DOOM-0211 B2 measurement.
+  Evidence: /home/ants/doom-scratch/p0211/real-top.png, /home/ants/doom-scratch/p0211/base-perf-top.png
+
 ## 0.11.0 — Light and materials
 
 The Spin's feature set: path tracing, volumetrics, HD art, and everything that
@@ -16524,6 +16539,21 @@ controls they expect to rebind.
   Source: in-session-2026-10-08.
   Lanes: menu.
   Evidence: /home/ants/doom-scratch/p0211/menu-a.png
+
+- 📋 [DOOM-0489] **Crisp menu: a long label runs into its slider when the picture is narrow.**
+  Seen 2026-10-08 in a Classic Options capture with fillstretch 0 at
+  1066x800 (the picture alone): "Mouse Sensitivity" overlaps the slider.
+  M_DrawCrispMenu puts the label column at dispW/4 and the value column's
+  right edge at dispW*3/4, but the glyph size floors at 24 px (rb_text
+  size rule) and the 1.7 scale is fixed, so the label's pixel width does
+  not shrink with the picture. Not caused by DOOM-0211: Solid draws the
+  same layout and would overlap at the same picture size. Not seen at
+  1280x800 or wider. Fix: size the value column from the widest label, or
+  scale the font with the picture's width as well as its height.
+  **Layman:** On a small or narrow game picture, menu labels like Mouse Sensitivity overlap their slider bar.
+  Kind: fix.
+  Source: in-session-2026-10-08 DOOM-0211 B2 capture.
+  Evidence: /home/ants/doom-scratch/p0211/b2-fs0-menu.png
 
 ## 1.0.0 — Other people can run it
 
