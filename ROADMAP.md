@@ -10119,6 +10119,37 @@ stay in their phase sections; this heading holds only work still to come.
   demand when a wipe starts (no per-frame copy), so normal play costs
   nothing; where the old picture cannot be rebuilt (e.g. right after a
   window resize), that one transition cuts straight to the new screen.
+  Melt design (2026-10-08, not built). The CPU melt already does the
+  2D half: under 3D, the melted screens[0] carries start-frame key
+  pixels shifted down per column, end-frame key pixels in place. Only
+  the old WORLD is missing. Plan:
+  1. D_Display calls a new RB_WipeStart() where it calls
+  wipe_StartScreen; f_wipe.c exposes y[] (SCREENWIDTH/2 two-pixel
+  columns, rows of SCREENHEIGHT; y<0 = not moving yet, treat as 0)
+  while `go` is set. Vulkan_Present passes it on each frame.
+  2. First present after RB_WipeStart, BEFORE the new world records:
+  rebuild the previous world into a display-size wipe image (format
+  g.format; COLOR_ATTACHMENT|SAMPLED|TRANSFER_DST). Previous frame RT:
+  blit its finalImage (taImg[TA_OUT] if TAAU else rtImage; check its
+  layout after the frame). Previous frame raster: re-run the composite
+  draw with the previous frame's coPush into a new render pass made
+  from renderPass's att/dep with colour finalLayout SHADER_READ (must
+  keep the dep identical for pipeline compatibility; PRESENT_SRC is
+  not legal on a non-swapchain image), framebuffer {wipeView,
+  depthView}. Then one barrier: FRAGMENT_SHADER|COLOR_ATTACHMENT_OUTPUT|
+  LATE_FRAGMENT_TESTS -> COLOR_ATTACHMENT_OUTPUT|EARLY_FRAGMENT_TESTS|
+  FRAGMENT_SHADER, so the scene pass's clear cannot race the reads (the
+  scene pass's external dep does not include FRAGMENT_SHADER).
+  No previous world, or a swapchain recreate since: no capture, cut.
+  3. Each wipe frame, in the swapchain pass after the world and BEFORE
+  the overlay (both raster and RecordRtOverlay): a full-screen draw
+  sampling the wipe image at (u, v - off) where v >= off, else discard;
+  off = max(y[col],0)/SCREENHEIGHT, col = floor(u*SCREENWIDTH/2). The
+  overlay then covers non-key pixels. Column offsets reach the GPU by
+  vkCmdUpdateBuffer into a device-local buffer (2 frames in flight, so
+  no host-mapped write), barrier to SHADER_READ.
+  Proof: scratch g_game.c probe + scripts/ab_capture.sh A/B, as for the
+  flash (commit 6153828 body).
   **Layman:** Three things the original game does are simply absent in the two 3D views. The screen does not flash red when you are hurt, the invulnerability and light-amplifier powerups have no visible effect, and the melt transition between levels wipes only the status bar over a frozen picture.
   Kind: fix.
   Source: review-code 2026-09-01, lanes backend-seam and ui-hud.
