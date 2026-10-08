@@ -10290,6 +10290,14 @@ stay in their phase sections; this heading holds only work still to come.
   scheduled task; and the task's UserId must be the Explorer owner
   (SPAREPC\ant), not $env:USERDOMAIN (HOME.EARTH), or registration fails
   with 'No mapping between account names and security IDs'.
+  Correction 2026-10-08: the first Solid run above never minimised the
+  game -- the harness held the destroyed startup window's handle (see
+  DOOM-0485). Re-run with the handle re-read after the level load:
+  Solid PASS for real. Minimised 15 s at 0.01 core (0.73 drawing), no
+  frames presented while minimised, drew at full fps after restore,
+  clean quit, 0 errors. Third trap for this harness: re-read
+  MainWindowHandle after the 3D window opens. Ultra half still needs
+  an RT machine (Charl's).
   **Layman:** Minimising the game window on Windows should pause drawing and come back cleanly; that has been fixed by reading the code and not yet tried on a Windows machine.
   Kind: test.
   Source: in-session-2026-09-30 (DOOM-0390 closed without a Windows run).
@@ -10341,7 +10349,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: in-session 2026-09-30 (found diagnosing DOOM-0280).
   Lanes: startup.
 
-- 📋 [DOOM-0485] **On Windows the 3D views keep drawing at full speed while the game window is minimised.**
+- 🚫 [DOOM-0485] **On Windows the 3D views keep drawing at full speed while the game window is minimised.**
   Measured 2026-10-08 on the Windows test box (GTX 1050, Win10 22H2), Solid, E1M1, -windowed: ShowWindow(SW_MINIMIZE) made the window iconic, yet CPU stayed at 0.71 core for 15 s (0.75 while visible) and the per-second [cpu_profile] line kept printing (40 lines over ~42 s). DOOM-0390's skip in RB_Vulkan_Present runs only when needRecreate is set AND the surface reports no area; on this driver a minimised window neither fails present nor reports a zero extent, so the skip never engages. Candidate fix: also skip while SDL reports SDL_WINDOW_MINIMIZED. Verify with the same harness (C:\doom-ants-test\p0480, launch.ps1 + minimise.ps1): CPU while minimised near zero, profile lines about 26 not 42, game draws after restore.
   Attempt 1 FAILED (2026-10-08, not committed): an early return in
   RB_Vulkan_Present when SDL_GetWindowFlags(window) &
@@ -10356,6 +10364,17 @@ stay in their phase sections; this heading holds only work still to come.
   out the harness. Harness: C:\doom-ants-test\p0480 (launch.ps1 runs
   minimise.ps1 in the desktop session); scratch copies in
   /home/ants/doom-scratch/p0480.
+  Resolved 2026-10-08: NOT A DEFECT. The harness minimised the wrong
+  window. It took Process.MainWindowHandle in the first second, which
+  is the startup (Classic) window; I_ShutdownGraphicsForVulkan
+  destroys that window and opens a new Vulkan one, so ShowWindow hit
+  a stale handle and SDL never saw a minimise (diagnostic build: no
+  SDL_WINDOWEVENT_MINIMIZED in the log). With the handle re-read after
+  the level load, the UNCHANGED master code passes: 0.01 core while
+  minimised (0.73 drawing), no frames presented while minimised,
+  SDL flags carry SDL_WINDOW_MINIMIZED, full fps after restore.
+  DOOM-0390's SurfaceHasArea skip already works on Windows. Attempt 1
+  was never really tested and is not needed.
   **Layman:** Minimising the game on Windows does not pause its drawing, so it keeps using most of a CPU core in the background.
   Kind: fix.
   Source: in-session-2026-10-08 (DOOM-0480 Windows run).
