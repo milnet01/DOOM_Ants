@@ -225,9 +225,7 @@ void M_ChangeDebugViews(int choice);
 void M_ChangeBrightness(int choice);
 void M_ChangeWidescreen(int choice);
 void M_ChangeFillScreen(int choice);
-// DOOM-0205: Render Effects submenu (visible on/off state for the render toggles).
-void M_UltraEffects(int choice);
-void M_DrawEffectsMenu(void);
+// DOOM-0205: the render toggles' menu handlers (VideoDef rows).
 void M_ChangeFlashlight(int choice);
 void M_ChangeSSAO(int choice);
 void M_ChangeDetile(int choice);
@@ -487,35 +485,28 @@ menu_t  GameSelectDef =
 };
 
 //
-// RENDERER SUB-MENU (DOOM-0008/0009): the 3D back-end + path-tracer settings,
-// grouped off the Options "Renderer" row so the upscaler controls have room (the
-// main Options menu is full at 320x200). Back returns to Options.
+// CLASSIC VIDEO MENU (RendererDef): what the Options "Video" row opens under
+// Classic. DOOM-0211: only the rows Classic reads -- the 3D tiers' settings live
+// on VideoDef, and their config keys keep loading and saving. Back returns to
+// Options.
 //
 enum
 {
     rm_renderer,
-    rm_upscaler,
-    rm_renderscale,
-    rm_debugviews,
     rm_widescreen,
     rm_fillstretch,
-    rm_effects,
     rm_fps,		// DOOM-0206 (v2): FPS counter moved here from Options (Classic only)
-    rm_brightness,
+    rm_back,
     rm_end
 } renderer_e;
 
 menuitem_t RendererMenu[]=
 {
     {1,"",	M_ChangeRenderer,'r'},
-    {1,"",	M_ChangeUpscaler,'u'},
-    {1,"",	M_ChangeRenderScale,'c'},
-    {1,"",	M_ChangeDebugViews,'d'},
     {1,"",	M_ChangeWidescreen,'w'},
     {1,"",	M_ChangeFillScreen,'f'},
-    {1,"",	M_UltraEffects,'e'},
     {1,"",	M_ChangeFPS,'p'},
-    {2,"",	M_ChangeBrightness,'b'}
+    {1,"",	M_VideoBack,'k'}
 };
 
 menu_t  RendererDef =
@@ -525,47 +516,6 @@ menu_t  RendererDef =
     RendererMenu,
     M_DrawRendererMenu,
     60,60,
-    0
-};
-
-//
-// DOOM-0205: RENDER EFFECTS SUB-MENU. One place that shows the live on/off (or
-// value) of every render toggle that was otherwise only reachable by an unlabelled
-// hotkey (F flashlight, [ filth, ] de-tile, ' wet, ...), so the state is visible
-// and screenshot-able. Reached from the Renderer menu's "Ultra Effects" row; back
-// returns there. Each row's variable is the same one bound in m_misc.c defaults[],
-// so a change persists to ~/.doomrc on exit like every other menu setting.
-//
-enum
-{
-    ef_flashlight,
-    ef_ssao,
-    ef_detile,
-    ef_filth,
-    ef_wet,
-    ef_fog,
-    ef_profiler,
-    ef_end
-} effects_e;
-
-menuitem_t EffectsMenu[]=
-{
-    {1,"",	M_ChangeFlashlight,'f'},
-    {1,"",	M_ChangeSSAO,'s'},
-    {1,"",	M_ChangeDetile,'d'},
-    {1,"",	M_ChangeFilth,'g'},
-    {1,"",	M_ChangeWet,'w'},
-    {1,"",	M_ChangeFog,'v'},
-    {1,"",	M_ChangeProfiler,'p'}
-};
-
-menu_t  EffectsDef =
-{
-    ef_end,
-    &RendererDef,
-    EffectsMenu,
-    M_DrawEffectsMenu,
-    60,50,
     0
 };
 
@@ -1356,7 +1306,7 @@ extern int	rb_rtdebug_menu;	// DOOM-0135 Debug Views toggle
 char	upscalerNames[2][8]	= {"Off","TAAU"};
 int	renderScalePresets[4]	= {100,75,67,50};
 char	renderScaleNames[4][6]	= {"100%","75%","67%","50%"};
-// DOOM-0205: render-effect toggles surfaced in the Render Effects submenu. Each is the
+// DOOM-0205: render-effect toggles surfaced in the Video menu (VideoDef). Each is the
 // same var bound in m_misc.c defaults[] (so a menu change persists to ~/.doomrc).
 extern int	rb_flashlight;		// F key      (rt config: flashlight)
 extern int	rb_ssao;		// SSAO       (rt config: ssao)
@@ -1553,34 +1503,16 @@ void M_RendererMenu(int choice)
 
 void M_DrawRendererMenu(void)
 {
-    int rsi, k;
-
-    // DOOM-0206 (v2): no standalone "RENDERER" header. With the added FPS row this
-    // Classic menu is 9 rows tall (Brightness's thermo occupies a 10th), and a header
-    // drawn 20px ABOVE RendererDef.y would push the total above the in-level HUD-safe
-    // band (M_ClassicMenuShift shifts the rows up to clear ST_Y=168, which would then
-    // clip the header off the top). The menu is reached via the labelled "Video" row,
-    // so the header is redundant -- dropping it keeps every row HUD-safe (INV-2).
+    // DOOM-0206 (v2): no standalone "RENDERER" header. A header drawn 20px ABOVE
+    // RendererDef.y is outside M_ClassicMenuShift's row budget, so it would clip
+    // off the top once the rows shift up to clear the status bar. The menu is
+    // reached via the labelled "Video" row, so the header is redundant.
+    // DOOM-0211: this is the bitmap fallback; with the font ready Classic draws
+    // the same five rows crisp (crispMenus[], M_RendererCrispValue).
 
     M_WriteText(RendererDef.x,RendererDef.y+LINEHEIGHT*rm_renderer,"Renderer:");
     M_WriteText(RendererDef.x + 120,RendererDef.y+LINEHEIGHT*rm_renderer,
 		(char *)RB_ModeMenuName(rendermode));
-
-    M_WriteText(RendererDef.x,RendererDef.y+LINEHEIGHT*rm_upscaler,"Upscaler:");
-    M_WriteText(RendererDef.x + 120,RendererDef.y+LINEHEIGHT*rm_upscaler,
-		upscalerNames[(rb_upscaler==1)?1:0]);
-
-    rsi = 0;
-    for (k=0 ; k<4 ; k++) if (renderScalePresets[k]==rb_renderscale) rsi=k;
-    M_WriteText(RendererDef.x,RendererDef.y+LINEHEIGHT*rm_renderscale,"Render Scale:");
-    M_WriteText(RendererDef.x + 120,RendererDef.y+LINEHEIGHT*rm_renderscale,
-		renderScaleNames[rsi]);
-
-    // DOOM-0135: Debug Views toggle. Off = ~ is a plain RT on/off switch; On = ~
-    // cycles the path-tracer diagnostic views (HITS/normals, white furnace, ...).
-    M_WriteText(RendererDef.x,RendererDef.y+LINEHEIGHT*rm_debugviews,"Debug Views:");
-    M_WriteText(RendererDef.x + 120,RendererDef.y+LINEHEIGHT*rm_debugviews,
-		rb_rtdebug_menu ? "On" : "Off");
 
     // DOOM-0147 Part C: Widescreen on/off (sizes SCREENWIDTH at startup, so the
     // value carries a "(restart)" tag) + Fill Screen on/off (live present stretch).
@@ -1592,10 +1524,6 @@ void M_DrawRendererMenu(void)
     M_WriteText(RendererDef.x + 120,RendererDef.y+LINEHEIGHT*rm_fillstretch,
 		fillstretch ? "On" : "Off");
 
-    // DOOM-0205: entry to the Render Effects submenu (flashlight, SSAO, de-tile,
-    // filth, wet, profiler — each with a visible on/off).
-    M_WriteText(RendererDef.x,RendererDef.y+LINEHEIGHT*rm_effects,"Render Effects...");
-
     // DOOM-0206 (v2 §4.6): FPS counter -- de-duplicated out of the Options menu.
     // The 3D tiers reach it via the Video menu; Classic reaches it here (the only
     // FPS access point once it left Options). Same fpsCorner var / M_ChangeFPS.
@@ -1603,50 +1531,7 @@ void M_DrawRendererMenu(void)
     M_WriteText(RendererDef.x + 120,RendererDef.y+LINEHEIGHT*rm_fps,
 		fpsPosNames[(fpsCorner >= 0 && fpsCorner <= 3) ? fpsCorner : 0]);
 
-    // DOOM-0096: Ultra/denoiser brightness. Label on its own line with a thermometer
-    // slider below it (rb_exposure 0..15), the standard DOOM slider layout.
-    M_WriteText(RendererDef.x,RendererDef.y+LINEHEIGHT*rm_brightness,"Brightness:");
-    M_DrawThermo(RendererDef.x,RendererDef.y+LINEHEIGHT*(rm_brightness+1),
-		16,rb_exposure);
-}
-
-//
-// DOOM-0205: draw the Render Effects submenu — one row per toggle, label on the
-// left and its live state (On/Off, or the de-tile quality name) on the right, so a
-// glance (or a screenshot) shows exactly what is enabled. Values mirror the same
-// vars the hotkeys ([ ] ' F ...) flip.
-//
-void M_DrawEffectsMenu(void)
-{
-    M_WriteText(EffectsDef.x + 30,EffectsDef.y - 20,"RENDER EFFECTS");
-
-    M_WriteText(EffectsDef.x,EffectsDef.y+LINEHEIGHT*ef_flashlight,"Flashlight:");
-    M_WriteText(EffectsDef.x + 130,EffectsDef.y+LINEHEIGHT*ef_flashlight,
-		rb_flashlight ? "On" : "Off");
-
-    M_WriteText(EffectsDef.x,EffectsDef.y+LINEHEIGHT*ef_ssao,"SSAO:");
-    M_WriteText(EffectsDef.x + 130,EffectsDef.y+LINEHEIGHT*ef_ssao,
-		rb_ssao ? "On" : "Off");
-
-    M_WriteText(EffectsDef.x,EffectsDef.y+LINEHEIGHT*ef_detile,"De-tile:");
-    M_WriteText(EffectsDef.x + 130,EffectsDef.y+LINEHEIGHT*ef_detile,
-		detileNames[(rb_detile>=0 && rb_detile<=2) ? rb_detile : 0]);
-
-    M_WriteText(EffectsDef.x,EffectsDef.y+LINEHEIGHT*ef_filth,"Filth/grime:");
-    M_WriteText(EffectsDef.x + 130,EffectsDef.y+LINEHEIGHT*ef_filth,
-		rb_filth ? "On" : "Off");
-
-    M_WriteText(EffectsDef.x,EffectsDef.y+LINEHEIGHT*ef_wet,"Wet liquid:");
-    M_WriteText(EffectsDef.x + 130,EffectsDef.y+LINEHEIGHT*ef_wet,
-		rb_wet ? "On" : "Off");
-
-    M_WriteText(EffectsDef.x,EffectsDef.y+LINEHEIGHT*ef_fog,"Volumetric fog:");
-    M_WriteText(EffectsDef.x + 130,EffectsDef.y+LINEHEIGHT*ef_fog,
-		fogNames[(rb_fog>=0 && rb_fog<=3) ? rb_fog : 0]);
-
-    M_WriteText(EffectsDef.x,EffectsDef.y+LINEHEIGHT*ef_profiler,"Profiler:");
-    M_WriteText(EffectsDef.x + 130,EffectsDef.y+LINEHEIGHT*ef_profiler,
-		rb_profile ? "On" : "Off");
+    M_WriteText(RendererDef.x,RendererDef.y+LINEHEIGHT*rm_back,"Back");
 }
 
 //
@@ -1669,6 +1554,12 @@ static const char* videoLabels[vid_end] =
     "-  DEVELOPER  -",
     "Debug Views", "Profiler",
     "Back"
+};
+
+// DOOM-0211: Classic's Video menu (RendererDef), drawn crisp under Classic.
+static const char* rendererLabels[rm_end] =
+{
+    "Renderer", "Widescreen", "Fill Screen", "FPS Counter", "Back"
 };
 
 // DOOM-0206 (v2 §4.6): crisp display-string labels for the row-list menus that
@@ -1844,6 +1735,17 @@ static void M_VideoCrispValue(int i, crispval_t* cv)
     }
 }
 
+// DOOM-0211: RendererDef's rows are a subset of VideoDef's, so each takes the
+// value its VideoDef twin shows.
+static void M_RendererCrispValue(int i, crispval_t* cv)
+{
+    static const int twin[rm_end] =
+	{ vid_renderer, vid_widescreen, vid_fillscreen, vid_fps, vid_back };
+
+    if (i >= 0 && i < rm_end)
+	M_VideoCrispValue(twin[i], cv);
+}
+
 static void M_OptionsCrispValue(int i, crispval_t* cv)
 {
     switch (i)
@@ -1904,8 +1806,9 @@ typedef struct
 // 3D tier (M_MenuIsCrisp == membership). Everything else — the bespoke fullscreen
 // help screens (ReadDef1/2), the DOOM 1-vs-2 chooser (GameSelectDef), and (for now)
 // Load/Save with their editable slots — falls through to the classic bitmap path,
-// exactly as under Classic. RendererDef/EffectsDef are never current in 3D
-// (M_RendererMenu routes 3D -> VideoDef), so they need no entry.
+// exactly as under Classic. RendererDef is only ever current under Classic
+// (M_RendererMenu routes 3D -> VideoDef); DOOM-0211 lists it so Classic draws it
+// crisp once the SDL presenter has its font.
 static const crispmenu_t crispMenus[] =
 {
     { &MainDef,    "DOOM",           mainLabels,    NULL },
@@ -1913,7 +1816,8 @@ static const crispmenu_t crispMenus[] =
     { &NewDef,     "CHOOSE SKILL",   skillLabels,   NULL },
     { &OptionsDef, "OPTIONS",        optionsLabels, M_OptionsCrispValue },
     { &SoundDef,   "SOUND VOLUME",   soundLabels,   M_SoundCrispValue },
-    { &VideoDef,   "VIDEO",          videoLabels,   M_VideoCrispValue }
+    { &VideoDef,   "VIDEO",          videoLabels,   M_VideoCrispValue },
+    { &RendererDef, "VIDEO",         rendererLabels, M_RendererCrispValue }
 #ifdef DOOM_DEV
     , { &DeveloperDef, "DEVELOPER",  developerLabels, M_DevCrispValue }
 #endif
@@ -2818,15 +2722,10 @@ void M_ChangeUpscaler(int choice)
 }
 
 //
-// DOOM-0205: Render Effects submenu. The entry point (opens the submenu) plus one
-// toggle handler per effect. Each flips the same var its hotkey does, so the menu,
-// the hotkey and the persisted ~/.doomrc all stay in lockstep.
+// DOOM-0205: one toggle handler per render effect. Each flips the same var its
+// hotkey does, so the menu, the hotkey and the persisted ~/.doomrc all stay in
+// lockstep.
 //
-void M_UltraEffects(int choice)
-{
-    choice = 0;
-    M_SetupNextMenu(&EffectsDef);
-}
 
 void M_ChangeFlashlight(int choice)
 {
@@ -3601,8 +3500,8 @@ void M_StartControlPanel (void)
 // will not let input be injected into the client.
 //
 // That gap blocks two items rather than one: DOOM-0050 needs the menu-over-status-bar
-// region seen in Solid/Ultra, and DOOM-0205's Render Effects submenu has never been
-// confirmed on screen. Both need exactly one frame of a named menu.
+// region seen in Solid/Ultra, and DOOM-0205's Render Effects submenu (removed by
+// DOOM-0211) had never been confirmed on screen. Both need exactly one frame of a named menu.
 //
 // Sets the same three globals M_StartControlPanel does, and nothing else -- this
 // makes a menu visible to a capture, it does not change how any menu draws or
@@ -3616,7 +3515,6 @@ void M_DevMenuFromArgv (void)
 	{ "main",      &MainDef      },
 	{ "options",   &OptionsDef   },
 	{ "renderer",  &RendererDef  },
-	{ "effects",   &EffectsDef   },
 	{ "video",     &VideoDef     },
 	{ "sound",     &SoundDef     },
 	{ "developer", &DeveloperDef },
@@ -3685,15 +3583,13 @@ static int M_MenuIsCrisp(void)
 //
 // The overrun the spec cites lives in the routine-drawn menus: a status==2 item
 // draws its slider on the row BELOW its label (M_DrawThermo at LINEHEIGHT*(idx+1)),
-// so it occupies TWO rows -- e.g. after the v2 FPS row RendererDef's Brightness
-// thermo (rm_brightness=8) lands at y+16*9=204 and Options' Sound Volume row
-// (soundvol=7) at y+16*7=172, both below the 168 status-bar top in-game. Budget
+// so it occupies TWO rows -- e.g. Options' Sound Volume row (soundvol=7) lands at
+// y+16*7=172, below the 168 status-bar top in-game. Budget
 // the extra row per thermo or a slider can still land in the HUD band.
 //
 // The bound is ST_Y (=ORIGHEIGHT-ST_HEIGHT=168) whenever the status bar is drawn
 // (in a level: DOOM-0148 always draws it), else the full ORIGHEIGHT (200). Every
-// classic menu's ROWS fit above the bound once shifted (RendererDef, the tallest at
-// 9 rows + a thermo = 160px, clears a ~166px in-level band), so plain shift-to-fit
+// classic menu's ROWS fit above the bound once shifted, so plain shift-to-fit
 // suffices -- no per-menu scroll window is needed (spec 7 L6's fallback path is
 // unreachable for the current menus). NOTE: this budgets the menuitem ROWS only; a
 // routine that draws a header ABOVE currentMenu->y (as M_DrawRendererMenu once did)
