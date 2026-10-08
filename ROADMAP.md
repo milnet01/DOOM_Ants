@@ -14016,7 +14016,7 @@ in CLAUDE.md describes.
   Kind: chore.
   Source: debt-sweep-2026-07-26.
 
-- 📋 [DOOM-0271] **Outdoor floor flats still read as an obvious repeating grid despite de-tiling.**
+- ✅ [DOOM-0271] **Outdoor floor flats still read as an obvious repeating grid despite de-tiling.**
   **Layman:** The ground outside shows the same square tile over and over in a visible grid — the anti-repetition trick that fixed the walls is not doing its job on the floor.
   Kind: fix.
   Lanes: renderer, shaders.
@@ -14053,6 +14053,21 @@ in CLAUDE.md describes.
   kDetileWorldCell values (80, 96, 112), measure which breaks the floor
   grid best, ship it; the wall change that comes with it was already
   approved.
+  Measured 2026-10-08 (offline model of the 4-tap detile() on the HD
+  floors FLOOR7_1, FLOOR5_1, FLOOR7_2, FLOOR4_8, FLAT20; normalised
+  luminance autocorrelation). The hypothesis was half right. At 64 the
+  blend seams sit on the texture's own 64-unit period, so repeat 0.04
+  and seam grid 0.07-0.08 add up on one lattice. But LARGER cells are
+  worse: 80 / 96 / 112 leave 0.11-0.12 / 0.19-0.21 / 0.24-0.27, because
+  every tile copy inside one cell shares that cell's offset. Smaller
+  cells win: 56 about 0.01, 48 about 0.00, seam grid gone.
+  User decision 2026-10-08: 48, after before/after shots of the E1M1
+  courtyard floor and a wall.
+  Resolved 2026-10-08: kDetileWorldCell 64 -> 48 (pathtrace.comp), user
+  approved from before/after captures of the E1M1 courtyard and a
+  BROWN144 wall. make test 32/32, -rtverify PASS. The grout lines of
+  tile-pattern floors still jump at blend seams; that is a different
+  cause, filed separately.
 
 - 📋 [DOOM-0273] **Solid tier: upscale the ORIGINAL textures and give them PBR/POM, keeping the 1993 art.**
   **Layman:** Same DOOM pictures you know, just sharper, with real bumpiness and depth — as opposed to Ultra, which swaps the art out entirely.
@@ -16222,6 +16237,23 @@ in CLAUDE.md describes.
   Source: in-session-2026-09-30 (UT_Ants reported this class of bug in its own baker).
   Lanes: renderer.
 
+- 📋 [DOOM-0487] **De-tiling breaks the grout lines of regular tile floors, so the tiles look misaligned.**
+  User, looking at DOOM-0271's 64-vs-48 shots of the E1M1 courtyard
+  (FLOOR7_1): "The texture is still misaligned though." Cause, on
+  reading detileCellUVh in pathtrace.comp: each cell's UV offset is a
+  continuous random value of up to +/-0.65 tile, so on a texture with a
+  regular grout grid the lines jump at every blend seam. Neither cell
+  size fixes it. Candidate fixes: (a) snap the offset to whole multiples
+  of the texture's own sub-tile step for grid-pattern flats (a per-
+  material step in materials.csv); (b) mirror-only, no offset, on those
+  materials; (c) turn de-tiling off for them. Needs the user's eyes:
+  measure which reads best on FLOOR7_1 / FLOOR5_1 / FLOOR7_2.
+  **Layman:** On floors made of neat square tiles, the trick that hides repetition shifts patches of floor by random amounts, so the tile lines no longer meet up.
+  Kind: fix.
+  Source: user-play-test-2026-10-08 (DOOM-0271 before/after shots).
+  Lanes: renderer, shaders.
+  Evidence: /home/ants/doom-scratch/p0271/compare_floorA.png, /home/ants/doom-scratch/p0271/compare_floorB.png
+
 ## 0.12.0 — The player's experience
 
 Input, menus, audio and the HUD — the settings a player expects to find and the
@@ -16310,6 +16342,9 @@ controls they expect to rebind.
   **Needs a short spec before implementation** (house rule: any design doc goes through
   `/cold-eyes` first). Kind changes from enhancement to feature at that point.
   Follow-up to DOOM-0206. The Classic main menu draws all items in the paletted HUD font at 2x (V_DrawPatchScaled / M_WriteTextScaled); nearest-neighbour doubling of the small STCFN bitmap font reads as blocky. User accepted it for now (2026-07-21) but wants a nicer look later. Root constraint: Classic = Classic_Present -> I_FinishUpdate (the 1997 software renderer), which never enters the Vulkan backend, so the crisp Oxanium font used by Solid/Ultra (FlushMenuText) is unavailable there. Options to scope: (a) route the Classic menu overlay through the Vulkan crisp-text path; (b) bundle/bake a higher-res paletted bitmap menu font for the software path; (c) tune the scale/spacing (1x for crispness vs 2x for size) as a cheap partial. Needs a small brainstorm before implementing.
+  User restated 2026-10-08: "Please also update the menu for Classic
+  to the same style menu used in Solid and Ultra." Taken next, after
+  DOOM-0271. Spec first (write-spec), on the recommended shape above.
   **Layman:** In the original Classic mode, the menu items all share one size now, but the font looks chunky/blocky. Make it look nicer while staying consistent.
   Kind: enhancement.
   Source: user-request-2026-07-21.

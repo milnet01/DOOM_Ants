@@ -10,7 +10,8 @@ implementation — see the *As-built divergences* box below and §4.3 / §5 / §
 loops 1–6, locked 2026-07-16 pre-implementation (loop 6, the confirming pass,
 caught a `kDetileMirrorProb` probability inversion — fixed); the de-tiling design
 (§4.2) shipped with its structure intact, though two constants were play-test-tuned
-(`kDetileWorldCell` 96→64, `kDetileOffsetMag` 0.5→0.65; see §4.2 / §10 Q2). The
+(`kDetileWorldCell` 96→64, later 64→48 by DOOM-0271, `kDetileOffsetMag` 0.5→0.65;
+see §4.2 / §10 Q2). The
 **filth layer (§4.3) evolved substantially during play-test** and is documented
 here as built. Design contract for stochastic de-tiling **on HD (`usePBR`) surfaces** +
 filth **on all non-sprite world surfaces** in the Ultra ray-traced view.
@@ -200,9 +201,13 @@ case (the one exception — a POM march crossing a boundary — is handled in §
   needed. Cells need **not** align to the texture's own repeat; the border blend
   below hides the boundary wherever it falls, exactly as the Inigo-Quilez
   stochastic-tiling method does on arbitrary content (the Heitz–Neyret variant is
-  the rejected §9 alternative, not this one).
+  the rejected §9 alternative, not this one). **One exception, measured by
+  DOOM-0271:** a cell EQUAL to a flat's 64-unit period puts every seam on the
+  same phase of the texture, so the seam grid and the texture repeat stack into
+  a visible floor grid. Larger cells are worse, since every tile copy in a cell
+  shares its offset.
   *Shipped values* (play-test-tuned from the 96/0.5 starting point, §10 Q2):
-  `kDetileWorldCell` = 64 units, `kDetileMirrorProb` = 0.5, `kDetileOffsetMag` =
+  `kDetileWorldCell` = 48 units (64 until DOOM-0271), `kDetileMirrorProb` = 0.5, `kDetileOffsetMag` =
   0.65 (→ ±0.65 tile).
 - **Per-cell transform.** Applied to the sampling coordinate (the `baseUV` /
   POM-marched `sUV` fed to the map fetches): a sub-tile UV **offset**, **centred**
@@ -514,7 +519,7 @@ per-tile-hash 4-corner blend. The rejected full method is Heitz & Neyret,
   border-band skip shipped in `detilePOM` (`pathtrace.comp:563`): within `0.1` of a
   cell edge the march is skipped and the de-tiled `baseUV` sampled directly. `0.1`
   is the tuning knob; no boundary artefacts reported at that width.
-- **Q2 (aggressiveness):** *Resolved.* Shipped `kDetileWorldCell = 64`,
+- **Q2 (aggressiveness):** *Resolved.* Shipped `kDetileWorldCell = 48` (64 until DOOM-0271),
   `kDetileMirrorProb = 0.5`, `kDetileOffsetMag = 0.65` — play-test-tuned from the
   96/0.5 starting point (a smaller cell + larger offset break the repeat harder),
   user-accepted, reads natural on oriented textures.

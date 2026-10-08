@@ -8,6 +8,10 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Outdoor floors in Ultra no longer show a regular repeating grid.** (DOOM-0271)
+  The anti-repetition patches were exactly one floor tile wide, so their
+  seams lined up with the tile's own repeat. They are now 48 units wide.
+
 - **The 3D views switch on a graphics-card feature their shaders need on cards without ray tracing** (DOOM-0486)
   On cards without ray tracing, the Solid view's shaders relied on a
   feature the game never enabled. It happened to work, but broke the

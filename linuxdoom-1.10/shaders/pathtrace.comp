@@ -631,9 +631,11 @@ vec3 wetSheen(vec3 hitP, vec3 n) {
 // shows. World-keyed (INV-4): two same-texture walls at different world positions get different
 // variation. Transform set is {offset, mirror} ONLY (INV-1) — DOOM walls are vertical, so no
 // rotation / vertical-flip. Ultra RT view only, gated on detileOn() + usePBR.
-const float kDetileWorldCell  = 64.0;   // world units per variation cell (§10 Q2 tunable; 96->64
-                                        // 2026-07-16: smaller cell = shuffle changes more often
-                                        // across a wall, breaks the repeat harder per user play-test)
+const float kDetileWorldCell  = 48.0;   // world units per variation cell (§10 Q2 tunable). Not 64, a
+                                        // flat's period: there the blend seams sat on the texture's
+                                        // own repeat and the two stacked into a visible floor grid
+                                        // (DOOM-0271). Larger cells are worse (every tile copy in a
+                                        // cell shares its offset), so 48: measured ~0 repeat left.
 const float kDetileOffsetMag  = 0.65;   // sub-tile offset magnitude, in tiles (± ; 0.5->0.65 = more
                                         // decorrelation between neighbouring cells)
 const float kDetileMirrorProb = 0.5;    // P(a cell is horizontally mirrored)
