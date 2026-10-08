@@ -13129,7 +13129,7 @@ against.
   Source: user-request-2026-09-12.
   Lanes: renderer, tooling.
 
-- 📋 [DOOM-0490] **Performance standard says Classic sits above 60 FPS; Classic presents at 35.**
+- ✅ [DOOM-0490] **Performance standard says Classic sits above 60 FPS; Classic presents at 35.**
   Measured 2026-10-08 with the FPS counter (fps_corner 2), Classic,
   menu closed: 35/34 on the real 3840x2160 desktop, 35/34 on base
   0025375 in a private 1920x1200 window. Classic draws once per game tic
@@ -13139,6 +13139,9 @@ against.
   Classic (authentic), or uncapped Classic frames. The DOOM-0211 spec's
   section 6 inherited the same premise; its measurement showed the menu
   costs no frames.
+  Resolved (2026-10-08): the user chose to keep Classic at the original
+  35 FPS and change the standard. docs/standards/performance.md now says
+  Classic's floor is 35 FPS and that dropping below it is a regression.
   **Layman:** The performance rules promise Classic runs above 60 frames a second, but Classic shows a new frame only 35 times a second, as the 1993 game did.
   Kind: doc-fix.
   Source: in-session-2026-10-08 DOOM-0211 B2 measurement.
