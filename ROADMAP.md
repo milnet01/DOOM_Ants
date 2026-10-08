@@ -9611,6 +9611,13 @@ stay in their phase sections; this heading holds only work still to come.
   The first two are one field on rb_view_t each. The wipe needs a decision: either
   composite the 3D frame into screens[0] before wipe_StartScreen, or run the melt on
   the presented image in r_vulkan.cpp.
+  User decisions 2026-10-08. Palette effects: a full-screen see-through
+  colour blend over the finished 3D image (damage red, pickup gold,
+  radsuit green), same colours and timing as Classic's palette flashes,
+  in both Solid and Ultra. Screen wipe: run the melt on the finished 3D
+  image on the GPU (in r_vulkan.cpp), full colour, matching Classic's
+  melt; not a 256-colour copy and not an instant cut. fixedcolormap is
+  DOOM-0455's.
   **Layman:** Three things the original game does are simply absent in the two 3D views. The screen does not flash red when you are hurt, the invulnerability and light-amplifier powerups have no visible effect, and the melt transition between levels wipes only the status bar over a frozen picture.
   Kind: fix.
   Source: review-code 2026-09-01, lanes backend-seam and ui-hud.
@@ -9677,6 +9684,10 @@ stay in their phase sections; this heading holds only work still to come.
   Worth noting the preset table at r_vulkan.cpp:1210 carries a "blurry" note, which
   is the symptom this would produce -- so someone may have compensated elsewhere,
   and that compensation should be re-checked after the fix.
+  User decision 2026-10-08: apply the correct divisor (sumV /
+  (wsum*wsum)), take before/after Ultra captures, measure, and ship; the
+  user judges the look on the next play and a retune follows if it reads
+  too grainy.
   **Layman:** The noise-removal pass is supposed to notice edges and avoid blurring across them. It divides by the wrong quantity, which makes it think there is far more noise than there is, so it stops noticing edges and blurs real detail instead. The error compounds over five passes.
   Kind: fix.
   Source: review-code 2026-09-01, lane shaders-post.
@@ -13713,7 +13724,7 @@ in CLAUDE.md describes.
   Kind: enhancement.
   Source: user-request-2026-06-29.
 
-- 📋 [DOOM-0114] **Some allowlisted glowing pickups (key skulls, armor bonus) don't visibly cast light.**
+- 💭 [DOOM-0114] **Some allowlisted glowing pickups (key skulls, armor bonus) don't visibly cast light.**
   DOOM-0084/0112: sprite_glows() allowlists the key skulls (BSKU/RSKU/YSKU) and armor/health bonuses (BON1/BON2), and bottles now light correctly — but skulls and the armor bonus show no surrounding light. Likely causes to check: (a) their sprite texture's computed Le (ComputeMaterialEmissive area-weighted bright-texel mean) falls below the emitter-min gate, so they never enter the emitter list; (b) the billboard is so small its area term makes the contribution negligible even when direct-sampled; (c) armor genuinely lit but drowned by adjacent sky/skylight. Instrument per-sprite Le + emitter inclusion to disambiguate, then raise the gate/boost or floor the area for tiny pickups.
   **Layman:** The blue bottles glow and light the room now, but the floating key-skulls and the green armor bonus still don't throw any light (the armor may also just be washed out by bright skylight near it). Find out why those particular pickups stay dark and fix them.
   Kind: fix.
@@ -13721,6 +13732,9 @@ in CLAUDE.md describes.
   User re-confirmed 2026-07-04: the ARMOUR pickup (armor bonus BON2 / green) and key skulls still cast no surrounding glow, while the health/bonus bottle now DOES cast light (resolved -> matches "bottles now light correctly"). Strong likelihood this is cause (a): the old AREA-AVERAGED emitter-min gate (kEmitterMinLum) drowned these small-bright-region sprites so they never entered the NEE emitter set. The DOOM-0082 fix (commit fc93658, peak-region gate in emissive_derive.h, NOT yet in the user's build) replaces exactly that area-average qualification with a near-fullbright peak-region gate -> a small bright armor/skull region should now qualify. NEXT: rebuild with fc93658 and re-test the armor bonus + key skulls in Ultra RT; if they now cast, DOOM-0114 cause (a) is resolved by DOOM-0082 and only tuning remains; if still dark, fall to cause (b) tiny-billboard area term (floor the area for small pickups) or (c) drowned by skylight. Green armor -> green glow expected (peak gate + VALUE/max-channel derivation is hue-correct).
   Update 2026-07-04: DOOM-0157 (shipped, commit 01f0e6a) gave these same pickups (skull keys, armour bonus) a guaranteed faint self-emission Le via the allowFaint fallback in emissive_derive.h, and the user signed off that they now read fine in-game. That resolves the VISIBILITY half — the eyes now self-illuminate in a dark room. This item's original framing was specifically "don't visibly CAST light onto surroundings"; the faint Le is deliberately dim (self-glow, not room-pooling), so a pickup POOLING light on nearby walls is still not delivered and would need a stronger Le / dedicated NEE emitter weight for these lumps. Kept open (planned) for that room-cast half only; the user has not asked for it and may never — de-prioritised. See [[DOOM-0157]].
   Aesthetic detail (user 2026-07-17, from RT DOOM 1+2 videos): once the bonus armour (BON2, green) casts light, its 'eyes' need a LOT more green glow than a subtle emit — the exaggerated RT-DOOM look. Track the intensity dial-up under DOOM-0193 (glow dial-up pass); this item still owns the root fix (why it casts no light at all today).
+  Parked 2026-10-08 (user's choice): the self-glow half is delivered by
+  DOOM-0157; the room-lighting half waits until the user asks for
+  pickups that light their surroundings.
 
 - 📋 [DOOM-0132] **Anisotropic texture filtering (with mipmaps) for grazing-angle surfaces, gated on a true-colour material path.**
   Goal: sharpen textures viewed at oblique/grazing angles (DOOM's long floors and corridor walls receding into the distance), where point-sampling without mipmaps currently shimmers/moires.
@@ -13961,6 +13975,10 @@ in CLAUDE.md describes.
   still one constant (try 80, 96 or 112, none of which divides 64) plus a
   before/after look at the WALLS, which the user has already approved and
   which this would also change.
+  User decision 2026-10-08: try two or three non-commensurate
+  kDetileWorldCell values (80, 96, 112), measure which breaks the floor
+  grid best, ship it; the wall change that comes with it was already
+  approved.
 
 - 📋 [DOOM-0273] **Solid tier: upscale the ORIGINAL textures and give them PBR/POM, keeping the 1993 art.**
   **Layman:** Same DOOM pictures you know, just sharper, with real bumpiness and depth — as opposed to Ultra, which swaps the art out entirely.
@@ -14632,7 +14650,7 @@ in CLAUDE.md describes.
   closed-form fog with mediumTint (DOOM-0011 Q32; DOOM-0407's first
   finding is the same seam).
 
-- 📋 [DOOM-0323] **The armour bonus's pulsing green eyes derive Le=0, so DOOM-0157's faint path never fires for the one sprite it was written for.**
+- 💭 [DOOM-0323] **The armour bonus's pulsing green eyes derive Le=0, so DOOM-0157's faint path never fires for the one sprite it was written for.**
   User 2026-08-04, having identified the pickup as SPR_BON2 from a
   photograph: "it's green eyes keep fading in and out, so I am hoping that
   when it fades in, that it lights up the surrounding area."
@@ -14691,6 +14709,8 @@ in CLAUDE.md describes.
   Ordering note: this shares DOOM-0319's shape (a green prop that is green
   without being bright), so whoever builds the barrel forced-Le should check
   whether one threshold change serves both before adding a second mechanism.
+  Parked 2026-10-08 with DOOM-0114 (user's choice): reopen together when
+  room-lighting pickups are wanted.
   **Layman:** The little armour helmets have green eyes that pulse brighter and dimmer, but they never light up the room around them — the code meant to make them glow can't actually trigger on them.
   Kind: fix.
   Source: user-request-2026-08-04.
