@@ -36,6 +36,7 @@
 #include "r_backend.h"   // rendermode / RB_CLASSIC (DOOM-0294's F12 screenshot)
 #include "g_game.h"      // G_ScreenShot: the Classic tier's half of that key
 #include "rb_image.h"    // rb_devshot_path: shared -devshot naming (DOOM-0294)
+#include "menu_text.h"   // DOOM-0211: the crisp menu queue this file draws under Classic
 
 // Implemented in rb_image.c (vendored stb), same declaration r_vulkan.cpp uses.
 extern int stbi_write_png(const char* filename, int w, int h, int comp,
@@ -53,6 +54,8 @@ static Uint32		palette[256];
 // Integer scale of the 640x400 image (window is SCREENWIDTH*scale wide).
 // Default 2 keeps the same physical window size as the old 320x200-at-scale-4.
 static int		scale = 2;
+
+static void I_ClassicMenuRect(void);   // DOOM-0211: defined above I_FinishUpdate
 
 
 // --- Gamepad (DOOM-0038) ----------------------------------------------------
@@ -687,6 +690,12 @@ static void I_GetEvent(SDL_Event* sdlevent)
 	I_Quit();
 	break;
 
+      case SDL_WINDOWEVENT:
+	// DOOM-0211: a resize moves the picture, so the crisp menu's rectangle moves with it.
+	if (sdlevent->window.event == SDL_WINDOWEVENT_SIZE_CHANGED)
+	    I_ClassicMenuRect();
+	break;
+
       case SDL_CONTROLLERDEVICEADDED:
 	I_OpenGamepad(sdlevent->cdevice.which);
 	break;
@@ -846,6 +855,186 @@ static void I_DevShotClassic (void)
     fflush (stdout);
 }
 #endif
+//
+// The crisp menu under Classic  (DOOM-0211)
+//
+// Draws menu_text.c's queue -- the same glyphs, dim, skull and logo the 3D tiers
+// draw through Vulkan -- over Classic's frame with SDL, at output resolution.
+// Built with the window (CreateSoftwareWindow), destroyed with it. Positions
+// arrive in pixels of the image rectangle, the part of the output the game frame
+// covers; dividing by the render scale puts them in SDL's logical units, and SDL
+// rasterises at output resolution, so the glyphs stay crisp.
+//
+extern unsigned char	oxanium_ttf[];		// r_vulkan.cpp, from assets/Oxanium-SemiBold.ttf.h
+extern unsigned int	oxanium_ttf_len;
+extern const unsigned char* M_CursorSkullRGBA(int* out_w, int* out_h);	// m_menu.c
+extern const unsigned char* M_MenuLogoRGBA(int* out_w, int* out_h);	// m_menu.c
+
+static SDL_Texture*	menuFontTex;
+static SDL_Texture*	menuCursorTex;
+static SDL_Texture*	menuLogoTex;
+static SDL_Rect		menuRect;		// the image rectangle, in output pixels
+static float		menuScaleX = 1.0f, menuScaleY = 1.0f;
+static SDL_Vertex	menuGeom[MT_TEXT_CAP];
+
+// Re-read the image rectangle from SDL's own state: viewport (logical units) x
+// scale, as I_DevShotClassic sizes its capture. Called when the window is made,
+// when I_SetAspect changes the logical size, and on a window resize.
+static void I_ClassicMenuRect(void)
+{
+    SDL_Rect	vp;
+    float	sx = 1.0f, sy = 1.0f;
+
+    if (!renderer)
+	return;
+    SDL_RenderGetViewport(renderer, &vp);
+    SDL_RenderGetScale(renderer, &sx, &sy);
+    if (sx <= 0.0f || sy <= 0.0f)
+	return;
+    menuScaleX = sx;
+    menuScaleY = sy;
+    menuRect.x = (int)(vp.x * sx + 0.5f);
+    menuRect.y = (int)(vp.y * sy + 0.5f);
+    menuRect.w = (int)(vp.w * sx + 0.5f);
+    menuRect.h = (int)(vp.h * sy + 0.5f);
+    mt_set_display(menuRect.w, menuRect.h);
+}
+
+// A static RGBA texture, straight alpha, blended and linearly filtered. The
+// global scale hint stays "nearest" for the game frame; this is per texture.
+static SDL_Texture* I_MenuTexture(const unsigned char* rgba, int w, int h)
+{
+    SDL_Texture* t = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32,
+				       SDL_TEXTUREACCESS_STATIC, w, h);
+    if (!t)
+	return NULL;
+    if (SDL_UpdateTexture(t, NULL, rgba, w * 4) != 0
+	|| SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND) != 0
+	|| SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear) != 0)
+    {
+	SDL_DestroyTexture(t);
+	return NULL;
+    }
+    return t;
+}
+
+// Bake the font at the 3D tiers' size rule, then the skull and logo. A failure
+// leaves its ready flag clear, so the menu falls back to the bitmap skin (no
+// font) or to the paletted skull and the text title (no skull, no logo).
+static void I_CreateClassicMenuText(void)
+{
+    rb_atlas_font_t*	f = mt_font();
+    const unsigned char* src;
+    unsigned char*	rgba;
+    int			px, i, n, w, h;
+
+#ifdef DOOM_DEV
+    if (M_CheckParm("-nocrispmenu"))	// force the bitmap fallback for a capture
+	return;
+#endif
+    I_ClassicMenuRect();
+    px = menuRect.h / 45;
+    if (px < 24)
+	px = 24;
+    printf("I_ClassicMenuText: rect %d,%d %dx%d, glyph px=%d\n",
+	   menuRect.x, menuRect.y, menuRect.w, menuRect.h, px);
+    fflush(stdout);
+    if (!rb_text_bake(oxanium_ttf, (int)oxanium_ttf_len, px, f))
+    {
+	fprintf(stderr, "I_ClassicMenuText: font bake failed -- bitmap menu.\n");
+	return;
+    }
+
+    // White glyphs, alpha = coverage; texel (0,0) is full coverage for the dim
+    // quad, as the Vulkan atlas reserves it.
+    f->pixels[0] = 255;
+    n = f->w * f->h;
+    rgba = (unsigned char*)malloc((size_t)n * 4);
+    if (rgba)
+    {
+	for (i = 0; i < n; i++)
+	{
+	    rgba[i*4+0] = rgba[i*4+1] = rgba[i*4+2] = 255;
+	    rgba[i*4+3] = f->pixels[i];
+	}
+	menuFontTex = I_MenuTexture(rgba, f->w, f->h);
+	free(rgba);
+    }
+    rb_text_free_font(f);   // the glyph metrics stay; only the pixels go
+    if (!menuFontTex)
+    {
+	fprintf(stderr, "I_ClassicMenuText: font texture failed (%s) -- bitmap menu.\n",
+		SDL_GetError());
+	return;
+    }
+    mt_set_font_ready(1);
+
+    src = M_CursorSkullRGBA(&w, &h);
+    if (src && w > 0 && h > 0 && (menuCursorTex = I_MenuTexture(src, w, h)))
+	mt_set_cursor(1, w, h);
+    src = M_MenuLogoRGBA(&w, &h);
+    if (src && w > 0 && h > 0 && (menuLogoTex = I_MenuTexture(src, w, h)))
+	mt_set_logo(1, w, h);
+}
+
+// Destroy the textures and clear the queue's state, so its ready flags never
+// describe a presenter that has gone. Only while this presenter is live.
+static void I_DestroyClassicMenuText(void)
+{
+    if (!renderer)
+	return;
+    if (menuFontTex)	SDL_DestroyTexture(menuFontTex);
+    if (menuCursorTex)	SDL_DestroyTexture(menuCursorTex);
+    if (menuLogoTex)	SDL_DestroyTexture(menuLogoTex);
+    menuFontTex = menuCursorTex = menuLogoTex = NULL;
+    mt_reset();
+}
+
+// Draw one queued list with one texture. 0 if SDL refused it.
+static int I_MenuGeometry(SDL_Texture* t, const mt_vertex_t* v, int n)
+{
+    int i;
+
+    if (n <= 0)
+	return 1;
+    for (i = 0; i < n; i++)
+    {
+	menuGeom[i].position.x  = v[i].x / menuScaleX;
+	menuGeom[i].position.y  = v[i].y / menuScaleY;
+	menuGeom[i].color.r     = v[i].r;
+	menuGeom[i].color.g     = v[i].g;
+	menuGeom[i].color.b     = v[i].b;
+	menuGeom[i].color.a     = v[i].a;
+	menuGeom[i].tex_coord.x = v[i].u;
+	menuGeom[i].tex_coord.y = v[i].v;
+    }
+    return SDL_RenderGeometry(renderer, t, menuGeom, n, NULL, 0) == 0;
+}
+
+// Draw this frame's queue over the game frame: text and dim, then skull, then
+// logo. Only on a frame the menu queued something, as FlushMenuText; a list SDL
+// refuses clears its ready flag until the window is rebuilt.
+static void I_FlushClassicMenuText(void)
+{
+    int			nText = 0, nCursor = 0, nLogo = 0;
+    const mt_vertex_t*	text   = mt_text_verts(&nText);
+    const mt_vertex_t*	cursor = mt_cursor_verts(&nCursor);
+    const mt_vertex_t*	logo   = mt_logo_verts(&nLogo);
+
+    if (!mt_font_ready() || !rb_menu_text_active || (nText == 0 && nCursor == 0 && nLogo == 0))
+	return;
+    if (!I_MenuGeometry(menuFontTex, text, nText))
+    {
+	fprintf(stderr, "I_ClassicMenuText: text draw failed (%s) -- bitmap menu.\n", SDL_GetError());
+	mt_set_font_ready(0);
+    }
+    if (rb_menu_cursor_ready() && !I_MenuGeometry(menuCursorTex, cursor, nCursor))
+	mt_set_cursor(0, 0, 0);
+    if (rb_menu_logo_ready() && !I_MenuGeometry(menuLogoTex, logo, nLogo))
+	mt_set_logo(0, 0, 0);
+    rb_menu_text_active = 0;
+}
+
 
 //
 // I_FinishUpdate
@@ -893,6 +1082,7 @@ void I_FinishUpdate (void)
 
     SDL_RenderClear(renderer);
     SDL_RenderCopy(renderer, texture, NULL, NULL);
+    I_FlushClassicMenuText();   // DOOM-0211: the crisp menu, before -devshot reads the frame
 
 #ifdef DOOM_DEV
     I_DevShotClassic();         // DOOM-0294: -devshot N, read before the present
@@ -936,6 +1126,7 @@ void I_SetPalette (byte* pal)
 
 void I_ShutdownGraphics(void)
 {
+    I_DestroyClassicMenuText();
     if (texture)	SDL_DestroyTexture(texture);
     if (renderer)	SDL_DestroyRenderer(renderer);
     if (window)		SDL_DestroyWindow(window);
@@ -983,6 +1174,7 @@ void I_ShutdownGraphicsForVulkan(void)
 {
     Uint32 flags;
 
+    I_DestroyClassicMenuText();
     if (texture)	SDL_DestroyTexture(texture);
     if (renderer)	SDL_DestroyRenderer(renderer);
     if (window)		SDL_DestroyWindow(window);
@@ -1030,6 +1222,7 @@ void I_SetAspect(void)
 	SDL_RenderSetLogicalSize(renderer, 0, 0);
     else
 	SDL_RenderSetLogicalSize(renderer, SCREENWIDTH, SCREENHEIGHT * 6 / 5);
+    I_ClassicMenuRect();	// DOOM-0211: the picture moved, so the crisp menu's rectangle did
 }
 
 
@@ -1077,6 +1270,8 @@ static void CreateSoftwareWindow(void)
 	SCREENWIDTH, SCREENHEIGHT);
     if (!texture)
 	I_Error("I_InitGraphics: could not create texture: %s", SDL_GetError());
+
+    I_CreateClassicMenuText();	// DOOM-0211: the crisp menu's font, skull and logo
 
     // Trap and hide the cursor so relative motion drives turn/look,
     //  the way the original -grabmouse did. Not on a -noinput / capture run: that has no

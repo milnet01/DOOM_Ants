@@ -1389,6 +1389,7 @@ extern int	rb_menu_logo_width(int h);		// drawn width for a target height (aspec
 extern void	rb_menu_draw_logo(int x, int y, int h);     // draws the M_DOOM logo bright
 extern int	rb_display_width(void);
 extern int	rb_display_height(void);
+extern int	mt_font_ready(void);		// DOOM-0211: the live presenter baked the font
 extern int	rb_rtdebug;			// r_vulkan.cpp: RT view/debug mode (6 = RT on, 0 = off)
 
 // DOOM-0206 v2: decode the real menu skull (M_SKULL1) to a brightened RGBA buffer for
@@ -3661,17 +3662,18 @@ void M_DevMenuFromArgv (void)
 //
 //
 // DOOM-0206 (L3): true when the active menu draws with the crisp display-pixel skin (which
-// owns its own dim + rows + skull). Only VideoDef does, and it is only ever reached in the 3D
-// tiers (M_RendererMenu routes Classic -> RendererDef), so this is inherently 3D-only.
+// owns its own dim + rows + skull).
 //
 static int M_MenuIsCrisp(void)
 {
-    // DOOM-0206 (v2 §4.6): crisp under the 3D tiers for any REGISTERED row-list menu.
-    // The registry (crispMenus[]) is the whitelist — bespoke fullscreen menus (the
-    // help screens ReadDef1/2, the DOOM 1-vs-2 chooser GameSelectDef) and Load/Save
-    // with their editable slots aren't in it, so they fall through to the classic
-    // bitmap path exactly as under Classic. INV-1: never crisp under RB_CLASSIC.
-    return rendermode != RB_CLASSIC && M_FindCrispMenu(currentMenu) != NULL;
+    // DOOM-0206 (v2 §4.6): crisp for any REGISTERED row-list menu. The registry
+    // (crispMenus[]) is the whitelist — bespoke fullscreen menus (the help screens
+    // ReadDef1/2, the DOOM 1-vs-2 chooser GameSelectDef) and Load/Save with their
+    // editable slots aren't in it, so they fall through to the classic bitmap path.
+    // DOOM-0211: under Classic only once the SDL presenter baked the font (i_video.c);
+    // without it Classic keeps the bitmap skin (DOOM-0206 INV-1, now the fallback).
+    return M_FindCrispMenu(currentMenu) != NULL
+	&& (rendermode != RB_CLASSIC || mt_font_ready());
 }
 
 //
@@ -3844,10 +3846,11 @@ void M_Drawer (void)
     // DRAW SKULL
     // DOOM-0206 (v2): the Game Select screen is a carved-out classic-path menu, so its skull is
     // the paletted M_SKULL at plain palette brightness -- dull beside the crisp menus' brightened
-    // skull. In the 3D tiers, draw the brightened crisp skull (the same M_SKULL1 lump, same size)
-    // in its place. Map the classic skull's 320x200 virtual placement to display pixels; height
-    // comes from the patch so the size matches the classic skull (user: brighten, keep the size).
-    if (currentMenu == &GameSelectDef && rendermode != RB_CLASSIC && rb_menu_cursor_ready())
+    // skull. Wherever the crisp skull is ready (every tier since DOOM-0211), draw the brightened
+    // crisp skull (the same M_SKULL1 lump, same size) in its place. Map the classic skull's
+    // 320x200 virtual placement to display pixels; height comes from the patch so the size
+    // matches the classic skull (user: brighten, keep the size).
+    if (currentMenu == &GameSelectDef && rb_menu_cursor_ready())
     {
 	patch_t* sk = (patch_t*)W_CacheLumpName(skullName[whichSkull],PU_CACHE);
 	int dW = rb_display_width(), dH = rb_display_height();
