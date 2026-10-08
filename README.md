@@ -51,7 +51,7 @@ can have original art ray-traced, or HD art rasterised. Ray tracing needs a
 GPU that supports it (developed and tested on an AMD RX 6600); rasterised
 Solid is currently the smoothest way to play.
 
-Latest release: **0.7.3**.
+Latest release: **0.7.4**.
 Grab a build from the [Releases](https://github.com/milnet01/DOOM_Ants/releases)
 page, or build it yourself below.
 
