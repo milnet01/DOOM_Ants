@@ -14334,7 +14334,7 @@ in CLAUDE.md describes.
   Kind: enhancement.
   Source: in-session-2026-08-02.
 
-- 📋 [DOOM-0309] **The HD material generator still uses the emitter gate DOOM-0307 just proved cannot classify a wall.**
+- 💭 [DOOM-0309] **The HD material generator still uses the emitter gate DOOM-0307 just proved cannot classify a wall.**
   Found 2026-08-03 while fixing DOOM-0307. That bullet's measurement shows
   the near-fullbright peak gate cannot tell a light from pale art, in
   either direction. DOOM-0307 replaced it for the PALETTED wall path
@@ -14362,6 +14362,16 @@ in CLAUDE.md describes.
 
   Depends on DOOM-0307. Related: DOOM-0042 (the HD pipeline),
   DOOM-0084 (the per-texel mask), DOOM-0193 (dial UP intended glows).
+  Parked (2026-10-08, user's choice): verified latent, not live.
+  assets/ultra/materials.csv has one derive row, TEKWALL1, which IS on
+  r_mesh.c's wall_light_tex list; its emissive map lights 34 of 16384
+  px. The defect is real in shape: pathtrace.comp hdEmissive() adds any
+  material's emissive map with no check against the engine's light list,
+  so a non-light wall given a derive row would glow on the mode-4
+  display path. TRIGGER to reopen: before adding any derive row for a
+  texture not in wall_light_tex. The fix then needs a DOOM-0042 spec
+  amendment (its section A prescribes the kEmitterPeakLum gate) and that
+  spec's review gate.
   **Layman:** The high-definition art pipeline decides what glows with the same broken test we just replaced for the normal art.
   Kind: fix.
   Source: in-session-2026-08-03 (found while fixing DOOM-0307).
