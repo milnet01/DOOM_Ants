@@ -188,8 +188,12 @@ void I_SetChannels()
   // sure the mixer has at least DOOM's mixing-slot count of channels; the device
   // was already opened in I_InitSound. (The old software-mixer lookup tables that
   // lived here are gone.)
+  // DOOM-0385: and at least snd_channels (1..32, clamped by M_LoadDefaults, which
+  // runs before this), or past eight sounds the mixer drops one silently and DOOM's
+  // own priority eviction in S_getChannel never gets to choose which.
+  extern int numChannels;	// s_sound.c
   if (sound_ok)
-    Mix_AllocateChannels(NUM_CHANNELS);
+    Mix_AllocateChannels(numChannels > NUM_CHANNELS ? numChannels : NUM_CHANNELS);
 }
 
  

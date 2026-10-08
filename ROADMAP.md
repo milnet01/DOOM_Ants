@@ -9616,7 +9616,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: review-code 2026-09-01, lanes backend-seam and ui-hud.
   Lanes: renderer, backend-seam.
 
-- 📋 [DOOM-0385] **Sound handles are recycled mixer channel indices, so one sound can stop or re-pan another.**
+- ✅ [DOOM-0385] **Sound handles are recycled mixer channel indices, so one sound can stop or re-pan another.**
   s_sound.c:411 stores the return of I_StartSound, and i_sound.c:441 is
   `Mix_PlayChannel(-1, chunk, 0)` -- a raw SDL_mixer channel index. Vanilla's handle
   was a monotonically increasing id for exactly this reason; the DOOM-0047 rewrite
@@ -9640,6 +9640,18 @@ stay in their phase sections; this heading holds only work still to come.
   numChannels rather than the fixed NUM_CHANNELS (i_sound.c:170). Note the open
   question: i_sound.c:170 allocates 8 while m_misc.c:522 clamps snd_channels to 32,
   so one of those numbers is wrong regardless.
+  Resolved (2026-10-08). The recycled-handle defect was fixed by
+  DOOM-0233 (d8aecda): handles carry a per-channel generation
+  (snd_handle.h), and I_SoundIsPlaying / I_UpdateSoundParams /
+  I_StopSound all resolve through SndHandleChannel;
+  tests/snd_handle_test.cpp locks it. The open question was real and is
+  fixed here: the mixer got a fixed NUM_CHANNELS 8 while snd_channels
+  clamps to 1..32, so above 8 the mixer dropped sounds silently before
+  S_getChannel's priority eviction could choose. I_SetChannels (run
+  after M_LoadDefaults) now allocates max(snd_channels, 8). Red/green
+  with a probe printing Mix_AllocateChannels(-1), headless Classic boot,
+  SDL_AUDIODRIVER=dummy: snd_channels 16 gave 8 before, 16 after; 3
+  gives 8; 32 gives 32.
   **Layman:** When the game starts a sound it remembers a number to refer to it by. That number is a slot the audio library reuses as soon as the sound finishes, so a new sound can inherit it — and then stopping the old one stops the new one instead. It happens in ordinary play, with no crafted input at all.
   Kind: fix.
   Source: review-code 2026-09-01, lane platform.

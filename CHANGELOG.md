@@ -8,6 +8,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **A sound-channel setting above 8 is honoured instead of silently dropping sounds** (DOOM-0385)
+  The audio mixer always had 8 channels, so with snd_channels set
+  higher the ninth sound at once was dropped, ignoring the game's own
+  rule for which sound to cut. The mixer now has as many channels as
+  the setting asks for. The default of 3 is unaffected.
+
 - **Switching render tier no longer leaks the sky backdrop's graphics memory** (DOOM-0177)
   Leaving Solid or Ultra freed every graphics buffer except the
   level's sky backdrop mesh, so each switch left one buffer and its
