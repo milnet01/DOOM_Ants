@@ -10163,7 +10163,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: review-code 2026-09-01, lanes backend-seam and ui-hud.
   Lanes: renderer, backend-seam.
 
-- 📋 [DOOM-0389] **Dirt is applied to a texture before the emission threshold reads it, so grime switches lamps off.**
+- ✅ [DOOM-0389] **Dirt is applied to a texture before the emission threshold reads it, so grime switches lamps off.**
   pathtrace.comp:1543 -- `if (!isSprite && filthOn()) albedo = applyGrime(...)` runs
   BEFORE pathtrace.comp:1583 passes that albedo to emisWeight.
 
@@ -10187,6 +10187,14 @@ stay in their phase sections; this heading holds only work still to come.
   svgf_composite.comp:205 multiplies into emis.
 
   Fix: keep the undirtied albedo for the emission decision -- one extra register.
+  Shipped 2026-10-15 in 7294972: primaryHitSurface takes emisWeight on
+  the clean albedo before applyGrime; both paths read it. Correction to
+  the note above: the mask thresholds the sRGB value, so a white texel
+  dimmed to 0.35 still glows; mid-bright and stained texels are what
+  went dark. Capture at E1M1 1728,-2080 facing 180 (Ultra, grime on):
+  the LITE3 panel went from blotched to fully lit, 1.03% of pixels moved
+  against a same-binary control of ~0. Locked by bounds_wiring_test's
+  DOOM-0389 clauses.
   **Layman:** Grime is multiplied onto a surface's colour before the code decides whether that surface glows. Multiplying a colour down before a brightness test is the same as raising the test, so a lamp under dirt stops emitting light entirely — and the grime on/off key silently changes how much lamps glow.
   Kind: fix.
   Source: review-code 2026-09-01, lane shaders-pathtrace.

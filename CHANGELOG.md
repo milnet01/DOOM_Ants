@@ -14,6 +14,10 @@ All notable changes to DOOM_Ants are documented here. The format follows
   Classic. Between levels the whole picture now melts away as in
   Classic; before, the 3D view stayed still while only the status bar
   melted over it.
+- **Dirty lamps in the ray-traced view glow evenly again** (DOOM-0389)
+  With dirt on, a wall lamp under a dark patch or a dirt stain lost its
+  glow in grey blotches. The dirt still darkens the surface, but no
+  longer switches off its light.
 
 ## [0.7.4] - 2026-10-08
 
