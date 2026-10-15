@@ -10266,7 +10266,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: in-session-2026-09-02, split out of DOOM-0374.
   Lanes: savegame.
 
-- 📋 [DOOM-0428] **A -file added after a reloadable one has its lumps read from the wrong file.**
+- ✅ [DOOM-0428] **A -file added after a reloadable one has its lumps read from the wrong file.**
   Not one of the review's findings; noticed while fixing DOOM-0400's reload
   TOCTOU and filed rather than fixed, because it is a separate defect and the
   commit it would have ridden along in was about something else.
@@ -10285,6 +10285,10 @@ stay in their phase sections; this heading holds only work still to come.
 
   The fix is the same shape as DOOM-0400's reloadcount: test whether this
   file is the one that just registered itself, not whether any file ever did.
+  Shipped 2026-10-15: W_AddFile's two reload tests now read `reloadname
+  == filename`. Reproduced first with `-file ~a.wad b.wad` (b holding a
+  PLAYPAL copy): the unfixed engine died reading b's palette from a.wad;
+  fixed, it boots. Locked by bounds_wiring_test's DOOM-0428 clause.
   **Layman:** A rarely-used developer option makes the game reload one WAD as you play. Any WAD listed after it on the command line gets read from the wrong file, so its graphics and sounds come out as nonsense.
   Kind: fix.
   Source: in-session-2026-09-07, found while fixing DOOM-0400's reload TOCTOU.

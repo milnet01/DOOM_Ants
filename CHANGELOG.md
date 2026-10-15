@@ -24,6 +24,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
   script no longer leaves a stamp naming the wrong commit beside a new
   download, and the Windows test no longer reports a pass when the game
   was never started.
+- **A WAD listed after a reloadable one is read from its own file** (DOOM-0428)
+  With the developer reload option (`-file ~a.wad b.wad`), the game read
+  b.wad's graphics and sounds out of a.wad, and could stop at startup.
 
 ## [0.7.4] - 2026-10-08
 
