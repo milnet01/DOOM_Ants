@@ -281,21 +281,17 @@ void F_TextWrite (void)
     int		cy;
     
     // erase the entire screen to a tiled background
+    // DOOM-0457: the flat is 64x64 LOGICAL, like the text drawn over it, so each
+    // physical pixel samples texel (x/HIRES, y/HIRES); tiling physical pixels
+    // repeated it HIRES times as often in each axis.
     src = W_CacheLumpName ( finaleflat , PU_CACHE);
     dest = screens[0];
-	
+
     for (y=0 ; y<SCREENHEIGHT ; y++)
     {
-	for (x=0 ; x<SCREENWIDTH/64 ; x++)
-	{
-	    memcpy (dest, src+((y&63)<<6), 64);
-	    dest += 64;
-	}
-	if (SCREENWIDTH&63)
-	{
-	    memcpy (dest, src+((y&63)<<6), SCREENWIDTH&63);
-	    dest += (SCREENWIDTH&63);
-	}
+	const byte* row = src + (((y/HIRES)&63)<<6);
+	for (x=0 ; x<SCREENWIDTH ; x++)
+	    *dest++ = row[(x/HIRES)&63];
     }
 
     V_MarkRect (0, 0, SCREENWIDTH, SCREENHEIGHT);
