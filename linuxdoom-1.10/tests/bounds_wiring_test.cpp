@@ -22,6 +22,8 @@
 // DOOM-0479 (labels begin "DOOM-0479"): pathtrace.comp's primary ray loop caps its
 // candidates with kMaxPrimaryCandidates and ends traversal with rayQueryTerminateEXT.
 //
+// DOOM-0433: D_DoomMain prints the modified-game banner without a getchar().
+//
 // DOOM-0428: W_AddFile tests reloadname only against this file's own name.
 //
 // DOOM-0389: pathtrace.comp's primaryHitSurface takes the emission weight before
@@ -659,6 +661,19 @@ int main()
         size_t tex = std::min(whole_tok(lb, "spriteCandidateOpaque"), whole_tok(lb, "worldCandidateOpaque"));
         check(cap != std::string::npos && cmp && tex != std::string::npos && cap < tex,
               "DOOM-0479: the kMaxPrimaryCandidates comparison comes before the first spriteCandidateOpaque/worldCandidateOpaque call in the loop");
+    }
+
+    // =====================================================================
+    // DOOM-0433: the modified-game banner does not wait for Enter.
+    // Why this exists: vanilla's getchar() after the banner blocked every -file
+    // boot forever when stdin was open with nothing to type into it.
+    // =====================================================================
+    {
+        const std::string dm = strip(slurp("d_main.c"));
+        std::string mb;
+        if (get_body("d_main.c", dm, "D_DoomMain", &mb))
+            check(call_pos(mb, "getchar") == std::string::npos,
+                  "DOOM-0433: D_DoomMain does not call getchar()");
     }
 
     // =====================================================================

@@ -1522,7 +1522,10 @@ void D_DoomMain (void)
 		    I_Error("\nThis is not the registered version.");
     }
     
-    // Iff additonal PWAD files are used, print modified banner
+    // Iff additonal PWAD files are used, print modified banner.
+    // DOOM-0433: printed, not waited on. Vanilla then called getchar(), which
+    // blocks forever when nothing will type into stdin -- a desktop-icon or
+    // Explorer launch, or a headless -bootsmoke run -- so any -file hung at boot.
     if (modifiedgame)
     {
 	/*m*/printf (
@@ -1530,10 +1533,8 @@ void D_DoomMain (void)
 	    "ATTENTION:  This version of DOOM has been modified.  If you would like to\n"
 	    "get a copy of the original game, call 1-800-IDGAMES or see the readme file.\n"
 	    "        You will not receive technical support for modified games.\n"
-	    "                      press enter to continue\n"
 	    "===========================================================================\n"
 	    );
-	getchar ();
     }
 	
 
