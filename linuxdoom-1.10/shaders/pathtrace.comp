@@ -1394,6 +1394,7 @@ struct PrimaryHit {
     vec3    albedo;
     float   ao;
     float   gooWet;     // DOOM-0183 L5: goo-puddle wet coverage (0 unless a green-goo puddle)
+    float   emisW;      // DOOM-0389: emisWeight of the albedo BEFORE grime
     bool    addEmis;
 };
 
@@ -1444,6 +1445,10 @@ PrimaryHit primaryHitSurface(Verts vb, uint i0, bool isSprite, vec2 hitUV, vec3 
     h.ao = (h.mc.usePBR != 0u && h.mc.maps[4] >= 0 && detileOn())
          ? detileR(uint(h.mc.maps[4]), h.sUV, h.dG)
          : hdAO(h.mc, h.id, h.sUV);
+    // DOOM-0389: decide the glow BEFORE grime. applyGrime scales the albedo by as little
+    // as 0.35 and can paint a brown stain over it, and emissiveMask thresholds that albedo,
+    // so grime applied first switches off the dimmer texels of a dirty lamp.
+    h.emisW = emisWeight(h.mc, h.albedo);
     // DOOM-0179/0181 grime + filth (all world surfaces; misc5.w toggle), applied to the
     // albedo itself, so mode 6's stored galbedo carries the mottle. n is geometric here.
     h.gooWet = 0.0;
@@ -1696,7 +1701,7 @@ void main()
             PrimaryLight s = primaryHitLighting(h, isSprite, prim, n);
             vec3 L = shadeSurface(s.shadeP, s.shadeN, h.albedo, h.id, pc.misc2.x, pc.misc4.y,
                                   pc.emit, pc.matEmis, NEE_SAMPLES, h.addEmis,
-                                  emisWeight(h.mc, h.albedo),
+                                  h.emisW,
                                   s.hitSec, pc.misc4.z, pc.emitSec, pc.reject, seed);
             L = primaryHitAddTerms(L, h, s, n, vb.v[i0 + 10u], h.albedo);   // display: keeps albedo
 
@@ -1794,7 +1799,7 @@ void main()
             // keep one smoothstep in step; it also put the decision where the material
             // flags are NOT visible, so a liquid could not be excepted. Deciding it here
             // makes that impossible to get wrong, and the composite just multiplies.
-            imageStore(galbedo,    ivec2(px), vec4(h.albedo, h.addEmis ? emisWeight(h.mc, h.albedo) : 0.0));
+            imageStore(galbedo,    ivec2(px), vec4(h.albedo, h.addEmis ? h.emisW : 0.0));
             if (((px.x | px.y) & 1u) != 0u) {       // not an even/even grid sample
                 imageStore(gillum, ivec2(px), vec4(0.0));
                 return;

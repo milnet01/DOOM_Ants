@@ -22,6 +22,9 @@
 // DOOM-0479 (labels begin "DOOM-0479"): pathtrace.comp's primary ray loop caps its
 // candidates with kMaxPrimaryCandidates and ends traversal with rayQueryTerminateEXT.
 //
+// DOOM-0389: pathtrace.comp's primaryHitSurface takes the emission weight before
+// applyGrime darkens the albedo, and nowhere else.
+//
 // Not caught: a call that exists in the right place but whose result is
 // discarded (INV-3 checks only that an I_Error follows LevelBspIsTree, and INV-1
 // that AtlasRowsFit precedes the calloc). The unit tests hold the decision;
@@ -654,6 +657,31 @@ int main()
         size_t tex = std::min(whole_tok(lb, "spriteCandidateOpaque"), whole_tok(lb, "worldCandidateOpaque"));
         check(cap != std::string::npos && cmp && tex != std::string::npos && cap < tex,
               "DOOM-0479: the kMaxPrimaryCandidates comparison comes before the first spriteCandidateOpaque/worldCandidateOpaque call in the loop");
+    }
+
+    // =====================================================================
+    // DOOM-0389: the emission weight reads the albedo BEFORE grime darkens it.
+    // Why this exists: applyGrime scales the albedo by as little as 0.35, and
+    // emissiveMask is a smoothstep on that albedo, so grime applied first raised
+    // the threshold out of reach and switched dirty lamps off.
+    // =====================================================================
+    {
+        const std::string pt = strip(slurp("shaders/pathtrace.comp"));
+        std::string hb;
+        if (get_body("shaders/pathtrace.comp", pt, "primaryHitSurface", &hb))
+        {
+            const size_t w = call_pos(hb, "emisWeight");
+            const size_t g = call_pos(hb, "applyGrime");
+            check(w != std::string::npos && g != std::string::npos && w < g,
+                  "DOOM-0389: primaryHitSurface calls emisWeight before applyGrime");
+        }
+        // The definition plus the one call above: nothing else recomputes the
+        // weight from an albedo that may already carry the grime.
+        int calls = 0;
+        for (size_t base = 0, r; (r = call_pos(pt.substr(base), "emisWeight")) != std::string::npos; base += r + 1)
+            calls++;
+        check(calls == 2, "DOOM-0389: emisWeight( appears exactly twice in pathtrace.comp (definition + primaryHitSurface)");
+        if (calls != 2) std::printf("    expected 2, actual %d\n", calls);
     }
 
     // =====================================================================
