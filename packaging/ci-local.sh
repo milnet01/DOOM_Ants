@@ -56,11 +56,11 @@ DEPS_FILE="packaging/ci-deps.txt"           # shared apt package list (build.yml
 # Local-only speed-up, NOT part of the job (DOOM-0452): both containers reuse the
 # .deb files earlier runs downloaded. apt-get update and install still run fresh
 # every time, and apt checks each cached file's hash against today's index, so what
-# gets installed is what GitHub installs. Kept on the system disk because /mnt/Games
-# is often busy; autoclean drops packages the index no longer offers.
-APT_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/doom-ants-ci-apt"
-
+# gets installed is what GitHub installs. Kept in the repo's gitignored scratch/,
+# off the system disk, which is short of space; autoclean drops packages the
+# index no longer offers.
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
+APT_CACHE="$REPO/scratch/cache/ci-apt"
 cd "$REPO"
 
 MODE="auto"

@@ -76,3 +76,6 @@ dev-shots/
 # and title-card wording, of no use to anyone cloning the engine. Kept on disk
 # and edited freely; deliberately not versioned (user, 2026-08-07).
 docs/trailer-script.md
+
+# Local scratch: worktrees, captures, logs, caches. Never tracked (2026-10-15).
+/scratch/
