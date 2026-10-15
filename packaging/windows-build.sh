@@ -28,6 +28,10 @@ WIN_PREFIX="$REPO/mingw-deps/prefix"
 source "$REPO/packaging/windows-dlls.sh"   # WIN_RUNTIME_DLLS
 
 mkdir -p "$BUILD"
+# The stamp release.sh writes beside the zip names the commit it was built from.
+# This run replaces the zip, so the old stamp would describe another build; only
+# release.sh, which knows the commit, writes a new one (DOOM-0392).
+rm -f "$WINZIP.commit"
 
 # 1. Cross-compile the Windows binary.
 echo "==> Building Windows binary (make windows)..."

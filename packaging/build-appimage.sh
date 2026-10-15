@@ -25,6 +25,11 @@ TOOLS="$PKG/tools"
 APPDIR="$BUILD/AppDir"
 OUT="$BUILD/doom_ants-$VERSION-x86_64.AppImage"
 
+# The stamp release.sh writes beside the AppImage names the commit it was built
+# from. This run replaces the AppImage, so the old stamp would describe another
+# build; only release.sh, which knows the commit, writes a new one (DOOM-0392).
+rm -f "$OUT.commit"
+
 # 1. Build the native Linux binary.
 make -C "$REPO/linuxdoom-1.10"
 

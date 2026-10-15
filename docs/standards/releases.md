@@ -66,8 +66,10 @@ packaging/release.sh <ver>                                # build both artifacts
 packaging/release.sh <ver> --publish --theme="<one line>" # + promote changelog, tag, push, GitHub release
 ```
 
-`--rebuild` forces a clean rebuild. It is not needed for correctness: an
-artifact is reused only when it was built from the commit being released. See
+`--rebuild` runs `make clean`, then builds. `release.sh` refuses to build a
+version whose tag points at a commit other than HEAD. `--rebuild` is not
+needed for correctness: an artifact is reused only when it was built from the
+commit being released. See
 the stale-artifact note below for what that buys and how it was learned.
 
 `--theme` sets the release commit subject (`<ver>: <theme>`). It does **not**
@@ -131,7 +133,8 @@ AppImage toolchain (auto-fetched), `zip`, and an authenticated `gh`.
 >
 > **When an asset turns out wrong, replace it — do not re-tag.** `release.sh`
 > refuses a second `--publish` of an existing tag, and the tag is not the thing
-> that is wrong. Rebuild with `--rebuild`, then
+> that is wrong. Check the tag out (`git checkout <tag>`), rebuild with
+> `--rebuild`, then
 > `gh release upload <tag> --repo <owner>/<repo> --clobber <assets>`, leaving the
 > tag where it is. This is the one sanctioned exception to "don't tag or upload
 > by hand" above, and it is what 0.7.1 used.

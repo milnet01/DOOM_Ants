@@ -21,7 +21,8 @@
 # are no-ops on a tree that has been built before.
 #
 # Exit codes — deliberately distinct, so a partial pass can't read as a pass:
-#   0  the engine booted, simulated its tics and exited cleanly
+#   0  the engine booted, simulated its tics and exited cleanly -- or, with
+#      --syntax-only, the compile sweep passed (the engine is not run then)
 #   1  the build (or syntax sweep) failed
 #   2  the engine never reached the boot-smoke line — it died or hung early
 #   3  the engine booted fine but never exited (shutdown hang; DOOM-0325 --
@@ -35,6 +36,8 @@
 #   4  the engine booted fine, then exited with a non-zero code -- a real
 #      failure in teardown, NOT the accepted Wine hang, so never read as 3
 #      (DOOM-0413; it used to share 3)
+#   5  SKIP: the build passed, but the engine was not run -- wine or Xvfb is
+#      missing, or no IWAD was found (DOOM-0392; it used to exit 0)
 #
 # SAFETY: everything runs on a private Xvfb display and in a throwaway
 # WINEPREFIX under the sandbox dir, so the game can never appear on the user's
@@ -131,7 +134,7 @@ for t in wine Xvfb; do
   command -v "$t" >/dev/null || {
     echo "SKIP: '$t' not installed — compile check passed, but the engine was not run."
     echo "      (openSUSE: zypper install wine xorg-x11-server-Xvfb)"
-    exit 0; }
+    exit 5; }
 done
 
 # Resolve the data file. The engine needs one; it is not in the repo.
@@ -144,7 +147,7 @@ fi
 [ -n "$IWAD" ] && [ -f "$IWAD" ] || {
   echo "SKIP: no IWAD found — compile + link passed, but the engine was not run."
   echo "      Pass one with --iwad=/path/to/doom.wad"
-  exit 0; }
+  exit 5; }
 
 # ---- 4. sandbox --------------------------------------------------------------
 SANDBOX="$(mktemp -d -t doom-ants-winsmoke-XXXXXX)"

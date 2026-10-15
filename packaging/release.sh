@@ -90,6 +90,25 @@ stamp_artifact() {
   else printf '%s\n' "$HEAD_SHA" > "$1.commit"; fi
 }
 
+# An existing tag means this version was released from a particular commit, and
+# a build of it from any other commit would carry the version's name with
+# another commit's code -- which is exactly what the asset-replacement route in
+# releases.md would then upload over the good one (DOOM-0392). Check the tag
+# out first.
+if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null &&
+   [ "$(git rev-parse "$TAG^{commit}")" != "$HEAD_SHA" ]; then
+  echo "release.sh: tag $TAG points at $(git rev-parse --short "$TAG^{commit}"), not HEAD;" >&2
+  echo "            run 'git checkout $TAG' first to rebuild that release" >&2
+  exit 1
+fi
+
+# --rebuild promises a clean build, so it removes every object and generated
+# header first; without this a stale object survives the rebuild (DOOM-0392).
+if [ "$REBUILD" = 1 ]; then
+  echo "==> --rebuild: make clean..."
+  make -C "$REPO/linuxdoom-1.10" clean
+fi
+
 # ---- 1. test gate ----
 echo "==> Running unit tests (make test)..."
 make -C "$REPO/linuxdoom-1.10" test
