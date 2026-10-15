@@ -1,5 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
+<!-- ants-roadmap-id-high-water: DOOM=491 -->
 
 # Roadmap
 
@@ -10078,7 +10079,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: in-session-2026-07-27.
   Lanes: renderer.
 
-- 📋 [DOOM-0379] **Damage flash, powerup tints and the screen wipe are all missing in Solid and Ultra.**
+- ✅ [DOOM-0379] **Damage flash, powerup tints and the screen wipe are all missing in Solid and Ultra.**
   All three are the same class: a side effect of the software renderer that the 3D
   back-ends bypass and nobody replicated. docs/standards/renderer.md:29 makes
   replication a house rule and cites ML_MAPPED as the precedent.
@@ -10150,6 +10151,13 @@ stay in their phase sections; this heading holds only work still to come.
   no host-mapped write), barrier to SHADER_READ.
   Proof: scratch g_game.c probe + scripts/ab_capture.sh A/B, as for the
   flash (commit 6153828 body).
+  Melt shipped 2026-10-15 in 0d66397 as designed: rebuilt on demand at
+  the melt's first frame (raster composite re-run; traced final image
+  plus weapon), drawn per column under the overlay. A/B on E1M1 exit:
+  old build world frozen, new slides along Classic's boundary; normal
+  play unchanged (5 px vs 4 px same-build noise); validation silent.
+  Flashes shipped 6153828. fixedcolormap is DOOM-0455's, gamma
+  DOOM-0491's.
   **Layman:** Three things the original game does are simply absent in the two 3D views. The screen does not flash red when you are hurt, the invulnerability and light-amplifier powerups have no visible effect, and the melt transition between levels wipes only the status bar over a frozen picture.
   Kind: fix.
   Source: review-code 2026-09-01, lanes backend-seam and ui-hud.

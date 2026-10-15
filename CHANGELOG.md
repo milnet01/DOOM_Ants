@@ -6,6 +6,15 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Solid and Ultra now show the damage flash, pickup flash, radiation-suit tint and the screen melt** (DOOM-0379)
+  The screen turns red when you are hurt, flashes gold on a pickup and
+  goes green in a radiation suit, in the same colours and timing as
+  Classic. Between levels the whole picture now melts away as in
+  Classic; before, the 3D view stayed still while only the status bar
+  melted over it.
+
 ## [0.7.4] - 2026-10-08
 
 ### Changed
