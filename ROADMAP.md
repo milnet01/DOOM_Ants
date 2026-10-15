@@ -10200,7 +10200,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: review-code 2026-09-01, lane shaders-pathtrace.
   Lanes: renderer, shaders.
 
-- 📋 [DOOM-0392] **The release and packaging scripts can publish a binary that is not the tagged source.**
+- ✅ [DOOM-0392] **The release and packaging scripts can publish a binary that is not the tagged source.**
     - packaging/release.sh:86 -- `--rebuild` builds whatever HEAD currently is, not
       the tag being repaired, and nothing checks. releases.md prescribes it as the
       incident-response path ("Rebuild with --rebuild, then gh release upload <tag>
@@ -10230,6 +10230,12 @@ stay in their phase sections; this heading holds only work still to come.
     - packaging/build-appimage.sh:33 -- an interrupted curl leaves a partial file
       that the bare `[ -f ]` guard caches forever, then chmod +x and executes it to
       produce the published Linux artifact.
+  Shipped 2026-10-15. Four findings fixed: release.sh refuses a version
+  whose tag is not HEAD; --rebuild runs make clean; both builders delete
+  a stale .commit stamp; windows-smoke.sh skips exit 5. Two were already
+  fixed: the Windows sweep reads the Makefile's flags (ce7edc6), and the
+  AppImage tools are hash-checked every run (DOOM-0259). Each fix was
+  run in a scratch clone; evidence in the commit body.
   **Layman:** The documented way to replace a bad release file rebuilds from wherever you happen to be standing, not from the version being fixed — and the stamp that is supposed to catch exactly that is skipped on this path. Separately, the only automated Windows check compiles with a different language setting from the build that actually ships.
   Kind: fix.
   Source: review-code 2026-09-01, lane build-scripts.
