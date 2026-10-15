@@ -114,6 +114,7 @@ static_assert(sizeof(rb_matctrl_t) == 40, "rb_matctrl_t must be 40 bytes (std430
 #include "shaders/overlay.vert.spv.h"
 #include "shaders/overlay.frag.spv.h"
 #include "shaders/tint.frag.spv.h"          // DOOM-0379: palette flash blend
+#include "shaders/wipe.frag.spv.h"          // DOOM-0379: screen melt
 #include "shaders/composite.vert.spv.h"
 #include "shaders/composite.frag.spv.h"
 #include "shaders/text.vert.spv.h"          // DOOM-0206 L1b: display-res menu glyph text
@@ -478,6 +479,40 @@ struct VulkanState
     bool             tintOn          = false;
     float            tintScale[3]    = { 1.0f, 1.0f, 1.0f };
     float            tintBias[3]     = { 0.0f, 0.0f, 0.0f };
+    // DOOM-0379 screen melt. A melt starting (RB_Vulkan_WipeStart) makes the next present
+    // rebuild the previous frame's WORLD into wipeImage before the new world records
+    // (RecordWipeCapture); each melt frame then draws it moved down column by column
+    // (RecordWipeDraw, wipe.frag). Normal play records none of it. wipeImage is
+    // display-sized, so it goes with the swapchain targets and is made again at the
+    // next melt.
+    static const int kWipeMaxCols = 640;            // MAXWIDTH / 2 (doomdef.h)
+    VkRenderPass     wipePass       = VK_NULL_HANDLE;   // renderPass's twin for wipeImage
+    VkImage          wipeImage      = VK_NULL_HANDLE;
+    VkDeviceMemory   wipeMemory     = VK_NULL_HANDLE;
+    VkImageView      wipeView       = VK_NULL_HANDLE;
+    VkFramebuffer    wipeFb         = VK_NULL_HANDLE;
+    VkBuffer         wipeColBuf     = VK_NULL_HANDLE;   // the column offsets, device-local
+    VkDeviceMemory   wipeColMem     = VK_NULL_HANDLE;
+    VkDescriptorSetLayout wipeDsLayout = VK_NULL_HANDLE;
+    VkDescriptorPool wipeDsPool     = VK_NULL_HANDLE;
+    VkDescriptorSet  wipeDs         = VK_NULL_HANDLE;
+    VkPipelineLayout wipePipeLayout = VK_NULL_HANDLE;
+    VkPipeline       wipePipeline   = VK_NULL_HANDLE;
+    bool             wipeWanted     = false;   // a melt began: capture at the next present
+    bool             wipeHave       = false;   // wipeImage holds the melt's old world
+    int              wipeCols       = 0;       // this frame's melt (RB_Vulkan_SetWipe)
+    int              wipeRows       = 0;
+    int32_t          wipeY[kWipeMaxCols] = {};
+    // How the last presented frame drew its world, so a capture can draw it again:
+    // 0 = nothing that can be (no frame yet, or the swapchain was rebuilt since);
+    // 1 = raster, the composite with lastCoPush; 2 = traced, lastRtFinal plus the
+    // weapon in lastWeaponBuf drawn with lastWeaponPc.
+    int              lastWorld       = 0;
+    float            lastCoPush[4]   = {};
+    VkImage          lastRtFinal     = VK_NULL_HANDLE;
+    VkBuffer         lastWeaponBuf   = VK_NULL_HANDLE;
+    uint32_t         lastWeaponVerts = 0;
+    float            lastWeaponPc[31] = {};
     // DOOM-0094: LOAD-variant of renderPass (colour loadOp=LOAD to keep the path-
     // traced blit, depth cleared). Used after RecordRtTrace to draw the weapon
     // viewmodel + the 2D HUD/menu/FPS overlay over the traced view. Format-compatible
@@ -4490,6 +4525,22 @@ void CreateRenderPass()
     // (it already carries the TRANSFER src that orders the incoming blit); mutating
     // it here is what made this pass incompatible with the framebuffers/pipelines
     // it is used with.
+    // DOOM-0379: the melt's capture pass, renderPass's twin drawn into g.wipeImage, so the
+    // composite and weapon pipelines built for renderPass draw in it. Colour stays in
+    // COLOR_ATTACHMENT on both sides and RecordWipeCapture moves it, explicitly, before
+    // and after: PRESENT_SRC is not a legal layout for an image that is not the
+    // swapchain's. LOAD keeps a traced world blitted in first. `dep` is untouched, as below.
+    {
+        VkAttachmentDescription watt[2] = { att[0], att[1] };
+        watt[0].loadOp        = VK_ATTACHMENT_LOAD_OP_LOAD;
+        watt[0].initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        watt[0].finalLayout   = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        VkRenderPassCreateInfo wrpci = rpci;
+        wrpci.pAttachments = watt;
+        Check(vkCreateRenderPass(g.device, &wrpci, nullptr, &g.wipePass),
+              "vkCreateRenderPass(wipe)");
+    }
+
     att[0].loadOp        = VK_ATTACHMENT_LOAD_OP_LOAD;
     att[0].initialLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;   // keep the blitted trace
     Check(vkCreateRenderPass(g.device, &rpci, nullptr, &g.rtOverlayPass),
@@ -5227,6 +5278,60 @@ void CreatePipeline()
                                         &g.tintPipeline), "vkCreateGraphicsPipelines(tint)");
         vkDestroyShaderModule(g.device, tFrag, nullptr);
     }
+
+    // DOOM-0379 screen melt: the overlay's full-screen triangle, opaque, drawing the old
+    // world (binding 0) moved down by the column offsets (binding 1). Push: cols, rows.
+    // The offsets buffer is written by vkCmdUpdateBuffer in the frame that uses it, so no
+    // host write can land while an earlier frame still reads it.
+    {
+        VkDescriptorSetLayoutBinding wb[2] = {};
+        wb[0].binding         = 0;
+        wb[0].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        wb[0].descriptorCount = 1;
+        wb[0].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+        wb[1] = wb[0];
+        wb[1].binding         = 1;
+        wb[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        CreateComputeSets(wb, 2, "wipe", &g.wipeDsLayout, &g.wipeDsPool, { &g.wipeDs });
+
+        CreateRtBuffer(sizeof g.wipeY,
+                       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &g.wipeColBuf, &g.wipeColMem, "wipe");
+        VkDescriptorBufferInfo bi = { g.wipeColBuf, 0, VK_WHOLE_SIZE };
+        VkWriteDescriptorSet w = {};
+        w.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        w.dstSet          = g.wipeDs;
+        w.dstBinding      = 1;
+        w.descriptorCount = 1;
+        w.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        w.pBufferInfo     = &bi;
+        vkUpdateDescriptorSets(g.device, 1, &w, 0, nullptr);
+
+        VkPushConstantRange wpcr = {};
+        wpcr.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        wpcr.size       = 2 * sizeof(int32_t);
+        VkPipelineLayoutCreateInfo wplci = {};
+        wplci.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        wplci.setLayoutCount         = 1;
+        wplci.pSetLayouts            = &g.wipeDsLayout;
+        wplci.pushConstantRangeCount = 1;
+        wplci.pPushConstantRanges    = &wpcr;
+        Check(vkCreatePipelineLayout(g.device, &wplci, nullptr, &g.wipePipeLayout),
+              "vkCreatePipelineLayout(wipe)");
+
+        VkShaderModule wFrag = MakeShader(wipe_frag_spv, wipe_frag_spv_len);
+        VkPipelineShaderStageCreateInfo wStages[2] = { ovStages[0], ovStages[1] };
+        wStages[1].module = wFrag;
+        VkGraphicsPipelineCreateInfo wpci = pci;
+        wpci.pStages          = wStages;
+        wpci.pColorBlendState = &cb;
+        wpci.pDynamicState    = &dynState;
+        wpci.layout           = g.wipePipeLayout;
+        wpci.renderPass       = g.renderPass;
+        Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &wpci, nullptr,
+                                        &g.wipePipeline), "vkCreateGraphicsPipelines(wipe)");
+        vkDestroyShaderModule(g.device, wFrag, nullptr);
+    }
     vkDestroyShaderModule(g.device, ovVert, nullptr);
     vkDestroyShaderModule(g.device, ovFrag, nullptr);
 
@@ -5290,6 +5395,15 @@ void DestroyFramebufferResources()
     g.imageViews.clear();
 
     DestroySceneTarget();   // DOOM-0170 L2a off-screen colour + its framebuffer
+
+    // DOOM-0379: the melt's image is display-sized, and the world it would be rebuilt
+    // from goes with these targets, so a melt right after this cuts instead.
+    if (g.wipeFb)     { vkDestroyFramebuffer(g.device, g.wipeFb, nullptr); g.wipeFb = VK_NULL_HANDLE; }
+    if (g.wipeView)   { vkDestroyImageView(g.device, g.wipeView, nullptr); g.wipeView = VK_NULL_HANDLE; }
+    if (g.wipeImage)  { vkDestroyImage(g.device, g.wipeImage, nullptr);    g.wipeImage = VK_NULL_HANDLE; }
+    if (g.wipeMemory) { vkFreeMemory(g.device, g.wipeMemory, nullptr);     g.wipeMemory = VK_NULL_HANDLE; }
+    g.wipeHave  = false;
+    g.lastWorld = 0;
 }
 
 // DOOM-0390: does the surface have any area to draw into right now? A minimised window
@@ -7018,6 +7132,29 @@ extern "C" void RB_Vulkan_SetTint(const float* scale, const float* bias)
         return;
     std::memcpy(g.tintScale, scale, sizeof g.tintScale);
     std::memcpy(g.tintBias,  bias,  sizeof g.tintBias);
+}
+
+extern "C" void RB_Vulkan_WipeStart(void)
+{
+    // DOOM-0379: the world on screen now is the melt's old picture. The next present
+    // rebuilds it into wipeImage before it records the new one.
+    g.wipeWanted = true;
+    g.wipeHave   = false;
+}
+
+extern "C" void RB_Vulkan_SetWipe(const int* cols, int ncols, int rows)
+{
+    if (!cols || ncols <= 0 || rows <= 0)
+    {
+        g.wipeCols = 0;
+        g.wipeHave = false;   // the melt is over; nothing draws until the next one
+        return;
+    }
+    if (ncols > VulkanState::kWipeMaxCols)   // cannot happen: SCREENWIDTH <= MAXWIDTH
+        ncols = VulkanState::kWipeMaxCols;
+    std::memcpy(g.wipeY, cols, (size_t)ncols * sizeof(int32_t));
+    g.wipeCols = ncols;
+    g.wipeRows = rows;
 }
 
 // DOOM-0084: per-frame budget of emissive-sprite emitter triangles appended to the
@@ -9291,6 +9428,8 @@ void RecordRtTrace(uint32_t idx)
     // TAAU ran, else rtImage (the megakernel / composite output, display-res on every
     // non-TAAU path). The label + blit below operate at display resolution on it.
     const VkImage finalImage = taauActive ? g.taImg[TA_OUT] : g.rtImage;
+    g.lastRtFinal = finalImage;   // DOOM-0379: a melt starting next frame copies it
+    g.lastWorld   = 2;
 
     // On-screen mode label (debug ONLY): stamp the active `~` mode's title top-centre into
     // the final image before the blit. Gated on rb_rtdebug_menu ("Debug Views" on) so it is
@@ -9489,6 +9628,200 @@ static void RecordPaletteTint()
     vkCmdDraw(g.cmd, 3, 1, 0, 0);
 }
 
+// DOOM-0379: the first present of a melt, before the new world records -- draw the
+// PREVIOUS frame's world again into g.wipeImage. Nothing has written its sources since:
+// the raster world is the composite of the scene, AO and bloom targets, re-run with that
+// frame's push constants; the traced world is that frame's final image (left in
+// TRANSFER_SRC by its blit) plus the weapon RecordRtOverlay drew over it. Returns false,
+// and the melt then cuts straight to the new screen, where that frame cannot be redrawn.
+static bool RecordWipeCapture()
+{
+    if (!g.wipePipeline || !g.depthView || g.lastWorld == 0
+        || (g.lastWorld == 2 && !g.lastRtFinal))
+        return false;
+
+    if (!g.wipeImage)
+    {
+        CreateImage({ g.extent.width, g.extent.height, 1 }, g.format,
+                    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
+                    | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                    VK_IMAGE_ASPECT_COLOR_BIT, "wipe", &g.wipeImage, &g.wipeMemory, &g.wipeView);
+        VkImageView attach[2] = { g.wipeView, g.depthView };
+        VkFramebufferCreateInfo fci = {};
+        fci.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        fci.renderPass      = g.wipePass;
+        fci.attachmentCount = 2;
+        fci.pAttachments    = attach;
+        fci.width           = g.extent.width;
+        fci.height          = g.extent.height;
+        fci.layers          = 1;
+        Check(vkCreateFramebuffer(g.device, &fci, nullptr, &g.wipeFb), "vkCreateFramebuffer(wipe)");
+
+        // Safe to rewrite here: the fence wait at the top of Present means no frame that
+        // read the set is still running.
+        VkDescriptorImageInfo ii = { g.compositeSampler, g.wipeView,
+                                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+        VkWriteDescriptorSet w = {};
+        w.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        w.dstSet          = g.wipeDs;
+        w.dstBinding      = 0;
+        w.descriptorCount = 1;
+        w.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        w.pImageInfo      = &ii;
+        vkUpdateDescriptorSets(g.device, 1, &w, 0, nullptr);
+    }
+
+    const bool traced = g.lastWorld == 2;
+    VkImageMemoryBarrier ib = {};
+    ib.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    ib.srcQueueFamilyIndex = ib.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    ib.image               = g.wipeImage;
+    ib.subresourceRange    = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    ib.oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED;   // every texel is rewritten below
+    if (traced)
+    {
+        ib.newLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        ib.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             0, 0, nullptr, 0, nullptr, 1, &ib);
+        // The same 1:1 copy RecordRtTrace blits to the swapchain.
+        VkImageBlit blit = {};
+        blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        blit.srcOffsets[1]  = { (int32_t)g.extent.width, (int32_t)g.extent.height, 1 };
+        blit.dstSubresource = blit.srcSubresource;
+        blit.dstOffsets[1]  = blit.srcOffsets[1];
+        vkCmdBlitImage(g.cmd, g.lastRtFinal, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                       g.wipeImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_NEAREST);
+        // Hand the final image on in GENERAL once the blit has read it. This frame's trace
+        // moves it from UNDEFINED behind a TOP_OF_PIPE barrier, which does not wait for the
+        // read; layout transitions do run in submission order, so this one, which does,
+        // keeps the blit ahead of it.
+        VkImageMemoryBarrier fb = ib;
+        fb.image         = g.lastRtFinal;
+        fb.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        fb.newLayout     = VK_IMAGE_LAYOUT_GENERAL;
+        fb.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        fb.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        ib.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        ib.newLayout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        ib.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        ib.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        VkImageMemoryBarrier both[2] = { fb, ib };
+        vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
+                             | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             0, 0, nullptr, 0, nullptr, 2, both);
+    }
+    else
+    {
+        ib.newLayout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        ib.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             0, 0, nullptr, 0, nullptr, 1, &ib);
+    }
+
+    VkClearValue clears[2] = {};
+    clears[1].depthStencil = { 1.0f, 0 };
+    VkRenderPassBeginInfo rp = {};
+    rp.sType             = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rp.renderPass        = g.wipePass;
+    rp.framebuffer       = g.wipeFb;
+    rp.renderArea.extent = g.extent;
+    rp.clearValueCount   = 2;
+    rp.pClearValues      = clears;
+    vkCmdBeginRenderPass(g.cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
+    VkViewport vp = {};
+    vp.width    = (float)g.extent.width;
+    vp.height   = (float)g.extent.height;
+    vp.maxDepth = 1.0f;
+    vkCmdSetViewport(g.cmd, 0, 1, &vp);
+    VkRect2D scissor = { { 0, 0 }, g.extent };
+    vkCmdSetScissor(g.cmd, 0, 1, &scissor);
+    if (!traced)
+    {
+        vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                g.compositePipeLayout, 0, 1, &g.compositeDs, 0, nullptr);
+        vkCmdPushConstants(g.cmd, g.compositePipeLayout, VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0, sizeof g.lastCoPush, g.lastCoPush);
+        vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.compositePipeline);
+        vkCmdDraw(g.cmd, 3, 1, 0, 0);
+    }
+    else if (g.lastWeaponBuf && g.lastWeaponVerts)
+    {
+        // That frame's sprite buffer is the other in-flight slot, which this frame's
+        // build does not write.
+        VkDescriptorSet worldDs[2] = { g.ds, g.shadowDs };
+        vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                g.pipelineLayout, 0, 2, worldDs, 0, nullptr);
+        vkCmdPushConstants(g.cmd, g.pipelineLayout,
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0, sizeof g.lastWeaponPc, g.lastWeaponPc);
+        VkDeviceSize off = 0;
+        vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.rtWeaponPipeline);
+        vkCmdBindVertexBuffers(g.cmd, 0, 1, &g.lastWeaponBuf, &off);
+        vkCmdDraw(g.cmd, g.lastWeaponVerts, 1, 0, 0);
+    }
+    vkCmdEndRenderPass(g.cmd);
+
+    // wipe.frag samples the image later this frame; and this frame's scene pass clears
+    // the targets the composite just read and the depth just written, which the scene
+    // pass's own external dependency does not wait for (it has no FRAGMENT_SHADER source).
+    ib.oldLayout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    ib.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    ib.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    ib.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    VkMemoryBarrier mb = {};
+    mb.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    mb.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    mb.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
+                     | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    vkCmdPipelineBarrier(g.cmd,
+                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+                         | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT
+                         | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+                         | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+                         | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
+                         | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                         0, 1, &mb, 0, nullptr, 1, &ib);
+    return true;
+}
+
+// DOOM-0379: this melt frame's column offsets into g.wipeColBuf. Outside any render pass,
+// before both present paths open theirs.
+static void RecordWipeColumns()
+{
+    vkCmdUpdateBuffer(g.cmd, g.wipeColBuf, 0, (VkDeviceSize)g.wipeCols * sizeof(int32_t), g.wipeY);
+    VkBufferMemoryBarrier bb = {};
+    bb.sType               = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    bb.srcAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
+    bb.dstAccessMask       = VK_ACCESS_SHADER_READ_BIT;
+    bb.srcQueueFamilyIndex = bb.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    bb.buffer              = g.wipeColBuf;
+    bb.size                = VK_WHOLE_SIZE;
+    vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         0, 0, nullptr, 1, &bb, 0, nullptr);
+}
+
+// DOOM-0379: the melt's old world over the new one, in the swapchain pass after the world
+// (and the traced view's weapon) and before the 2D overlay, which covers every pixel that
+// is not its transparent key. Binds its own set 0, so a later draw that needs g.ds binds
+// it again. The caller has set the full-frame viewport and scissor.
+static bool WipeDrawing() { return g.wipeHave && g.wipeCols > 0; }
+
+static void RecordWipeDraw()
+{
+    if (!WipeDrawing())
+        return;
+    const int32_t pc[2] = { g.wipeCols, g.wipeRows };
+    vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.wipePipeline);
+    vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            g.wipePipeLayout, 0, 1, &g.wipeDs, 0, nullptr);
+    vkCmdPushConstants(g.cmd, g.wipePipeLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pc, pc);
+    vkCmdDraw(g.cmd, 3, 1, 0, 0);
+}
+
 // DOOM-0094: draw the 2D presentation layer over the path-traced view. RecordRtTrace
 // blits the traced WORLD to the swapchain (and leaves it in PRESENT_SRC) but skips the
 // HUD/menu/messages/FPS overlay (all composited from screens[0]) and the player weapon
@@ -9500,7 +9833,10 @@ static void RecordPaletteTint()
 void RecordRtOverlay(uint32_t idx, bool drawOverlay)
 {
     const bool drawWeapon = g.spriteVbuf && g.spriteVertCount;
-    if (!drawOverlay && !drawWeapon && !g.tintOn)
+    // DOOM-0379: what a melt starting after this frame draws again over the trace.
+    g.lastWeaponBuf   = drawWeapon ? g.spriteVbuf : VK_NULL_HANDLE;
+    g.lastWeaponVerts = drawWeapon ? g.spriteVertCount : 0;
+    if (!drawOverlay && !drawWeapon && !g.tintOn && !WipeDrawing())
         return;   // nothing to composite; the trace already presents.
 
     // The overlay image upload is a transfer; it must precede the render pass.
@@ -9558,6 +9894,7 @@ void RecordRtOverlay(uint32_t idx, bool drawOverlay)
         vkCmdPushConstants(g.cmd, g.pipelineLayout,
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                            0, 31 * sizeof(float), pcData);
+        std::memcpy(g.lastWeaponPc, pcData, sizeof g.lastWeaponPc);
 
         VkDeviceSize off = 0;
         // DOOM-0170 L2a step 3: the 8-bit twin (g.pipeline itself now targets the float
@@ -9567,10 +9904,14 @@ void RecordRtOverlay(uint32_t idx, bool drawOverlay)
         vkCmdDraw(g.cmd, g.spriteVertCount, 1, 0, 0);
     }
 
+    RecordWipeDraw();   // DOOM-0379: over the new weapon, as Classic's melt is
+
     // 2D HUD/menu/messages/FPS compositor, last and over everything: samples screens[0]
     // and keys out the transparent index so the traced view (and the weapon) shows through.
     if (drawOverlay)
     {
+        vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                g.pipelineLayout, 0, 1, &g.ds, 0, nullptr);   // the melt rebinds set 0
         vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.overlayPipeline);
         vkCmdDraw(g.cmd, 3, 1, 0, 0);
     }
@@ -10072,6 +10413,15 @@ extern "C" void RB_Vulkan_Present(void)
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     Check(vkBeginCommandBuffer(g.cmd, &bi), "vkBeginCommandBuffer");
 
+    // DOOM-0379: a melt's first frame keeps the old world before the new one records.
+    if (g.wipeWanted)
+    {
+        g.wipeWanted = false;
+        g.wipeHave   = RecordWipeCapture();
+    }
+    if (WipeDrawing())
+        RecordWipeColumns();
+
     // RT debug frame: trace + blit, then skip the raster render pass entirely
     // (RecordRtTrace owns the swapchain layout transition to PRESENT_SRC). The
     // `else` brace closes just before vkEndCommandBuffer.
@@ -10495,6 +10845,10 @@ extern "C" void RB_Vulkan_Present(void)
                            0, sizeof(coPush), coPush);
         vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.compositePipeline);
         vkCmdDraw(g.cmd, 3, 1, 0, 0);
+        // DOOM-0379: what a melt starting after this frame draws again.
+        std::memcpy(g.lastCoPush, coPush, sizeof g.lastCoPush);
+        g.lastWorld = 1;
+        RecordWipeDraw();
         if (rprof) vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 5);  // after composite
     }
 
@@ -11036,6 +11390,12 @@ extern "C" void RB_Vulkan_Shutdown(void)
     if (g.overlayPipeline) vkDestroyPipeline(g.device, g.overlayPipeline, nullptr);
     if (g.tintPipeline)   vkDestroyPipeline(g.device, g.tintPipeline, nullptr);
     if (g.tintPipeLayout) vkDestroyPipelineLayout(g.device, g.tintPipeLayout, nullptr);
+    if (g.wipePipeline)   vkDestroyPipeline(g.device, g.wipePipeline, nullptr);
+    if (g.wipePipeLayout) vkDestroyPipelineLayout(g.device, g.wipePipeLayout, nullptr);
+    if (g.wipeDsPool)     vkDestroyDescriptorPool(g.device, g.wipeDsPool, nullptr);
+    if (g.wipeDsLayout)   vkDestroyDescriptorSetLayout(g.device, g.wipeDsLayout, nullptr);
+    if (g.wipeColBuf)     vkDestroyBuffer(g.device, g.wipeColBuf, nullptr);
+    if (g.wipeColMem)     vkFreeMemory(g.device, g.wipeColMem, nullptr);
     if (g.pipelineLayout) vkDestroyPipelineLayout(g.device, g.pipelineLayout, nullptr);
     // DOOM-0170 L2a composite objects (size-independent; the scene image/fb are freed by
     // DestroyFramebufferResources above).
@@ -11074,6 +11434,7 @@ extern "C" void RB_Vulkan_Shutdown(void)
     if (g.shadowUboMemory)  vkFreeMemory(g.device, g.shadowUboMemory, nullptr);
     if (g.scenePass)      vkDestroyRenderPass(g.device, g.scenePass, nullptr);
     if (g.rtOverlayPass)  vkDestroyRenderPass(g.device, g.rtOverlayPass, nullptr);
+    if (g.wipePass)       vkDestroyRenderPass(g.device, g.wipePass, nullptr);
     if (g.renderPass)     vkDestroyRenderPass(g.device, g.renderPass, nullptr);
     if (g.inFlight)       vkDestroyFence(g.device, g.inFlight, nullptr);
     if (g.gpuTimerPool)   vkDestroyQueryPool(g.device, g.gpuTimerPool, nullptr);   // DOOM-0090

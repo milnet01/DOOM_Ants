@@ -67,6 +67,11 @@ void RB_Vulkan_SetOverlay(const unsigned char* pixels, int w, int h);
 // DOOM-0379: this frame's palette flash, out = scale * frame + bias per channel
 // (bias in [0,1]). scale NULL means no flash.
 void RB_Vulkan_SetTint(const float* scale, const float* bias);
+// DOOM-0379 screen melt. WipeStart: a melt begins, so keep the world now on
+// screen. SetWipe: this frame's melt -- ncols two-pixel columns, each moved
+// cols[i] of `rows` rows down (below zero counts as zero). ncols 0: no melt.
+void RB_Vulkan_WipeStart(void);
+void RB_Vulkan_SetWipe(const int* cols, int ncols, int rows);
 void RB_Vulkan_Present(void);
 void RB_Vulkan_Shutdown(void);
 void RB_Vulkan_BuildLevel(void);

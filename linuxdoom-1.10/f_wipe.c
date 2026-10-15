@@ -70,6 +70,7 @@ wipe_shittyColMajorXform
 }
 
 static int*	y;
+static int	meltcols;	// DOOM-0379: two-pixel columns the melt moves
 
 int
 wipe_initMelt
@@ -90,6 +91,7 @@ wipe_initMelt
     // setup initial column positions
     // (y<0 => not ready to scroll yet)
     y = (int *) Z_Malloc(width*sizeof(int), PU_STATIC, 0);
+    meltcols = width/2;
     y[0] = -(M_Random()%16);
     for (i=1;i<width;i++)
     {
@@ -172,6 +174,18 @@ wipe_exitMelt
 {
     Z_Free(y);
     return 0;
+}
+
+// DOOM-0379: the 3D tiers draw their old world under the same melt. Returns
+// the number of two-pixel columns and points *cols at how far each has moved
+// down, in rows of the full screen (below zero: not moving yet). Zero when no
+// melt is running.
+int wipe_MeltColumns(const int** cols)
+{
+    if (!go)
+	return 0;
+    *cols = y;
+    return meltcols;
 }
 
 int

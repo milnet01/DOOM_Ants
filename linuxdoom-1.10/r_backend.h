@@ -84,6 +84,11 @@ void RB_SetMode(rendermode_t mode);
 // back-end, so a flash survives a switch between tiers.
 void RB_SetPalette(const byte* pal);
 
+// A screen melt is starting (D_Display, beside wipe_StartScreen). The 3D tiers
+// keep the picture on screen now so their world melts away with the 2D screen
+// (DOOM-0379); Classic needs nothing, as its world is in screens[0].
+void RB_WipeStart(void);
+
 // Menu helpers: display name for a mode, and whether it can be selected now.
 const char* RB_ModeName(rendermode_t mode);
 // As RB_ModeName, but for a MENU value column: adds a short reason when this is

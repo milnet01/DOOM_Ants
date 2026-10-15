@@ -237,6 +237,7 @@ void D_Display (void)
     {
 	wipe = true;
 	wipe_StartScreen(0, 0, SCREENWIDTH, SCREENHEIGHT);
+	RB_WipeStart ();	// the 3D tiers keep their old world too (DOOM-0379)
     }
     else
 	wipe = false;

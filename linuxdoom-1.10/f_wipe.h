@@ -51,6 +51,9 @@ wipe_EndScreen
   int		height );
 
 
+// DOOM-0379: the running melt's column offsets, for the 3D tiers.
+int wipe_MeltColumns(const int** cols);
+
 int
 wipe_ScreenWipe
 ( int		wipeno,

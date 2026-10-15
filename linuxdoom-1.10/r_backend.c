@@ -41,6 +41,7 @@
 #include "v_video.h"    // screens[] (the paletted 2D overlay buffer)
 #include "st_stuff.h"   // ST_Start (force a full status-bar redraw on switch)
 #include "m_argv.h"     // M_CheckParm / myargc / myargv (DOOM-0351: -rtview)
+#include "f_wipe.h"       // wipe_MeltColumns: the melt the 3D tiers follow (DOOM-0379)
 #include "palette_tint.h" // RB_FitPaletteTint: the palette flash as a blend (DOOM-0379)
 
 // A level is loaded once the BSP segs exist (r_state.h). Used by RB_Init to
@@ -245,6 +246,11 @@ static void    Vulkan_Present(void)
     // back-end, then present; it composites screens[0] over the 3D frame.
     RB_Vulkan_SetOverlay(screens[0], SCREENWIDTH, SCREENHEIGHT);
     RB_Vulkan_SetTint(rb_tint.active ? rb_tint.scale : NULL, rb_tint.bias);
+    {
+        const int* cols = NULL;
+        int ncols = wipe_MeltColumns(&cols);
+        RB_Vulkan_SetWipe(cols, ncols, SCREENHEIGHT);
+    }
     RB_Vulkan_Present();
 }
 static void    Vulkan_Shutdown(void)               { RB_Vulkan_Shutdown(); }
@@ -490,6 +496,12 @@ void RB_SetPalette(const byte* pal)
     // Fitted on every call, under Classic too, so a tier switch mid-flash keeps
     // the flash. Called only when the palette changes, so the cost is nothing.
     RB_FitPaletteTint(RB_PlayPal(), pal, &rb_tint);
+}
+
+void RB_WipeStart(void)
+{
+    if (rendermode != RB_CLASSIC)
+        RB_Vulkan_WipeStart();
 }
 
 void RB_RenderPlayerView(player_t* player)
