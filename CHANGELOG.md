@@ -32,6 +32,10 @@ All notable changes to DOOM_Ants are documented here. The format follows
   notice and then waited for Enter in a terminal. Launched from an icon
   there was no terminal, so the game never started. It now shows the
   notice and carries on.
+- **The story screen's background pattern is the right size** (DOOM-0457)
+  The text screen between episodes drew its background pattern at half
+  size, so it repeated twice as often as it should. It now matches the
+  lettering drawn over it.
 
 ## [0.7.4] - 2026-10-08
 

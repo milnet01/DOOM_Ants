@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=491 -->
+<!-- ants-roadmap-id-high-water: DOOM=492 -->
 
 # Roadmap
 
@@ -10497,7 +10497,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: review-code 2026-09-01, lane backend-seam (DOOM-0405 F4 and F7); split out 2026-09-21.
   Lanes: backend-seam.
 
-- 📋 [DOOM-0457] **The finale text background tiles in physical pixels, so the flat repeats twice as often as it should.**
+- ✅ [DOOM-0457] **The finale text background tiles in physical pixels, so the flat repeats twice as often as it should.**
   F_TextWrite erases to a tiled background by walking SCREENWIDTH/64 and
   SCREENHEIGHT, which are PHYSICAL dimensions. The flat is 64x64 logical, so
   at HIRES it tiles across the physical width instead of the logical one --
@@ -10514,6 +10514,11 @@ stay in their phase sections; this heading holds only work still to come.
   Verify by capture, not by the diff. The finale is reached by completing an
   episode; the check is that the flat repeats the same number of times at
   HIRES as it does at the logical resolution.
+  Shipped 2026-10-15: F_TextWrite samples texel (x/HIRES, y/HIRES).
+  Verified by capture of the E1 text screen in Classic (scratch probe,
+  not committed): the background's vertical repeat went from 128 px to
+  256 px (64 logical rows), horizontal 107 to 213 px. The same defect in
+  R_FillBackScreen is DOOM-0492.
   **Layman:** On the story screen between episodes, the background pattern is drawn at half the size it should be, so it repeats too many times across the screen. Everything else on that screen scales correctly, so the background looks wrong next to it.
   Kind: fix.
   Source: split from DOOM-0391, in-session-2026-09-21.
@@ -10722,6 +10727,20 @@ stay in their phase sections; this heading holds only work still to come.
   Kind: fix.
   Source: in-session-2026-10-08, split from DOOM-0379.
   Lanes: renderer, backend-seam.
+
+- 📋 [DOOM-0492] **The border around a shrunk view tiles its flat at half size, as the finale background did.**
+  R_FillBackScreen (r_draw.c) fills screens[1] by walking SCREENWIDTH/64
+  and SCREENHEIGHT-SBARHEIGHT, which are PHYSICAL, with a 64x64 LOGICAL flat
+  (FLOOR7_2 / GRNROCK). So the flat repeats HIRES times as often in each axis,
+  while the bevel patches drawn over it, through V_DrawPatchAbs, are scaled.
+  Same defect and same fix as DOOM-0457 in f_finale.c: sample texel
+  (x/HIRES, y/HIRES). Seen in Classic with the screen size reduced.
+  Verify by capture, as DOOM-0457 was: the flat's vertical repeat should be
+  64 logical rows.
+  **Layman:** When you shrink the game view, the patterned frame around it is drawn at half size, so its pattern looks too small next to everything else.
+  Kind: fix.
+  Source: in-session-2026-10-15, found while fixing DOOM-0457.
+  Lanes: ui.
 
 ## 0.9.0 — The codebase can be trusted
 
