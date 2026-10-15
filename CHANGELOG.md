@@ -27,6 +27,11 @@ All notable changes to DOOM_Ants are documented here. The format follows
 - **A WAD listed after a reloadable one is read from its own file** (DOOM-0428)
   With the developer reload option (`-file ~a.wad b.wad`), the game read
   b.wad's graphics and sounds out of a.wad, and could stop at startup.
+- **Add-on WADs no longer freeze the game at startup** (DOOM-0433)
+  Loading a mod with `-file` showed id's "this game has been modified"
+  notice and then waited for Enter in a terminal. Launched from an icon
+  there was no terminal, so the game never started. It now shows the
+  notice and carries on.
 
 ## [0.7.4] - 2026-10-08
 

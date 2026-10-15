@@ -10294,7 +10294,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: in-session-2026-09-07, found while fixing DOOM-0400's reload TOCTOU.
   Lanes: wad-io.
 
-- 📋 [DOOM-0433] **Loading any PWAD hangs the game at startup waiting for Enter on stdin.**
+- ✅ [DOOM-0433] **Loading any PWAD hangs the game at startup waiting for Enter on stdin.**
   Found 2026-09-20 while testing DOOM-0404's PLAYPAL gate against a
   crafted PWAD. Not caused by that change -- it reproduces with a PWAD
   carrying no PLAYPAL at all.
@@ -10324,6 +10324,12 @@ stay in their phase sections; this heading holds only work still to come.
   to say the game is modified), but do not block on it -- print it and
   continue, or gate the wait on stdin being an interactive terminal
   (`isatty`), which `-bootsmoke` and an icon launch both fail.
+  Shipped 2026-10-15: the banner is printed without its "press enter"
+  line and getchar() is gone (chose print-and-continue over an isatty
+  gate: simpler, and a terminal player gains nothing from the wait).
+  Reproduced first: -file with stdin an open silent pipe hung until
+  killed; fixed, it boots. Locked by bounds_wiring_test's DOOM-0433
+  clause.
   **Layman:** Load any add-on level pack and the game stops before it starts, waiting for you to press Enter in a terminal window you may not have. On Windows, launched from an icon, there is nothing to press Enter into.
   Kind: fix.
   Source: in-session-2026-09-20, found while verifying DOOM-0404's PLAYPAL gate.
