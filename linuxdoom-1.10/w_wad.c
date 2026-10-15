@@ -313,7 +313,10 @@ void W_AddFile (char *filename)
 
     lump_p = &lumpinfo[startlump];
 	
-    storehandle = reloadname ? -1 : handle;
+    // DOOM-0428: -1 (re-open the reload file on every read) only for the file
+    // that just registered itself as reloadable. Testing reloadname alone gave
+    // every later -file the -1 too, and its lumps were read out of the reload file.
+    storehandle = (reloadname == filename) ? -1 : handle;
 	
     for (i=startlump ; i<numlumps ; i++,lump_p++, fileinfo++)
     {
@@ -334,7 +337,7 @@ void W_AddFile (char *filename)
     if (reloadname == filename)
 	reloadcount = numlumps - reloadlump;
 
-    if (reloadname)
+    if (reloadname == filename)
 	close (handle);
 }
 

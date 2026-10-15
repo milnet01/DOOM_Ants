@@ -22,6 +22,8 @@
 // DOOM-0479 (labels begin "DOOM-0479"): pathtrace.comp's primary ray loop caps its
 // candidates with kMaxPrimaryCandidates and ends traversal with rayQueryTerminateEXT.
 //
+// DOOM-0428: W_AddFile tests reloadname only against this file's own name.
+//
 // DOOM-0389: pathtrace.comp's primaryHitSurface takes the emission weight before
 // applyGrime darkens the albedo, and nowhere else.
 //
@@ -657,6 +659,34 @@ int main()
         size_t tex = std::min(whole_tok(lb, "spriteCandidateOpaque"), whole_tok(lb, "worldCandidateOpaque"));
         check(cap != std::string::npos && cmp && tex != std::string::npos && cap < tex,
               "DOOM-0479: the kMaxPrimaryCandidates comparison comes before the first spriteCandidateOpaque/worldCandidateOpaque call in the loop");
+    }
+
+    // =====================================================================
+    // DOOM-0428: only the reload file itself is read through reloadname.
+    // Why this exists: W_AddFile tested the GLOBAL reloadname, so every -file
+    // after a `~` one stored handle -1 too, and W_ReadLump then read its lumps
+    // out of the reload file. Inside W_AddFile, each use of reloadname must be
+    // the registering assignment or a comparison with this file's name.
+    // =====================================================================
+    {
+        const std::string wad = strip(slurp("w_wad.c"));
+        std::string ab;
+        if (get_body("w_wad.c", wad, "W_AddFile", &ab))
+        {
+            int uses = 0, bare = 0;
+            for (size_t base = 0, r; (r = whole_tok(ab.substr(base), "reloadname")) != std::string::npos; base += r + 1)
+            {
+                const size_t i = skipws(ab, base + r + 10);
+                const bool assign = i + 1 < ab.size() && ab[i] == '=' && ab[i + 1] != '=';
+                const bool cmp = ab.compare(i, 2, "==") == 0 &&
+                                 ab.compare(skipws(ab, i + 2), 8, "filename") == 0;
+                uses++;
+                if (!assign && !cmp) bare++;
+            }
+            check(uses > 0, "DOOM-0428: W_AddFile names reloadname");
+            check(bare == 0, "DOOM-0428: every reloadname test in W_AddFile compares it with this file (reloadname == filename)");
+            if (bare != 0) std::printf("    expected 0 bare uses, actual %d\n", bare);
+        }
     }
 
     // =====================================================================
