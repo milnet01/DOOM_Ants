@@ -10745,7 +10745,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: in-session-2026-10-15, found while fixing DOOM-0457.
   Lanes: ui.
 
-- 📋 [DOOM-0493] **Show a no-piracy and trademark disclaimer in the game and the README.**
+- ✅ [DOOM-0493] **Show a no-piracy and trademark disclaimer in the game and the README.**
   House wording from the website session (check every fact before use):
   "We do not condone piracy. DOOM Ants includes no DOOM game data. Use
   Freedoom, or the doom.wad or doom2.wad from a copy you own. DOOM is a
@@ -10754,6 +10754,13 @@ stay in their phase sections; this heading holds only work still to come.
   Placement in the app is our call. When it ships, message the
   ants-projects-hub-website mailbox with the release version and any
   wording changed.
+  Shipped 2026-10-22. A new "About" row on the main menu, above Quit,
+  opens the notice in DOOM's own message box (captured in Classic and
+  Solid; DOOM II menu checked). README.md has a Disclaimer section; the
+  Windows zip's README.txt carries it too. Wording kept verbatim: every
+  fact checked true. No release ships a WAD; repo HD art is CC0 and art
+  made from WAD textures stays out of git. "Use Freedoom" needed
+  DOOM-0494 first.
   **Layman:** The game and its README say plainly that DOOM Ants ships no DOOM data, that you need Freedoom or your own copy, and that it is not made or endorsed by id Software.
   Kind: feature.
   Source: user-request-2026-10-16 (relayed by ants-projects-hub-website, msg 710).

@@ -209,6 +209,7 @@ void M_EndGame(int choice);
 void M_ReadThis(int choice);
 void M_ReadThis2(int choice);
 void M_QuitDOOM(int choice);
+void M_About(int choice);
 
 void M_ChangeMessages(int choice);
 void M_ChangeSensitivity(int choice);
@@ -308,6 +309,7 @@ enum
     loadgame,
     savegame,
     readthis,
+    about,		// DOOM-0493: the no-piracy and trademark notice
     quitdoom,
     main_end
 } main_e;
@@ -320,6 +322,7 @@ menuitem_t MainMenu[]=
     {1,"M_SAVEG",M_SaveGame,'s'},
     // Another hickup with Special edition.
     {1,"M_RDTHIS",M_ReadThis,'r'},
+    {1,"",M_About,'a'},		// no menu-art lump; drawn as text, like Game Select
     {1,"M_QUITG",M_QuitDOOM,'q'},
     // DOOM-0060: "Game Select" — no menu-art lump, so it draws as text
     // (M_DrawMainMenu) and is spliced in by M_Init only when both games are
@@ -1183,8 +1186,8 @@ void M_MusicVol(int choice)
 // MainDef.numitems. M_Init keeps this in item order across the DOOM-II reshuffle.
 static const char* mainLabels[main_end + 1] =
 {
-    "New Game", "Options", "Load Game", "Save Game", "Read This!", "Quit Game",
-    "Game Select"
+    "New Game", "Options", "Load Game", "Save Game", "Read This!", "About",
+    "Quit Game", "Game Select"
 };
 
 void M_DrawMainMenu(void)
@@ -2260,6 +2263,28 @@ void M_QuitResponse(int ch)
 
 
 
+
+// DOOM-0493: the no-piracy and trademark notice, in DOOM's own message box.
+// Wording is the Ants Projects Hub house text; README.md carries the same.
+// M_Drawer copies each line into a 40-byte buffer, so keep lines under 40.
+static char aboutMsg[] =
+    "We do not condone piracy.\n"
+    "DOOM Ants includes no DOOM game data.\n"
+    "Use Freedoom, or the doom.wad or\n"
+    "doom2.wad from a copy you own.\n"
+    "\n"
+    "DOOM is a trademark of id Software LLC,\n"
+    "a ZeniMax Media company. DOOM Ants is\n"
+    "not affiliated with or endorsed by\n"
+    "id Software, ZeniMax or Bethesda.\n"
+    "\n"
+    "(press a key)";
+
+void M_About(int choice)
+{
+    choice = 0;
+    M_StartMessage(aboutMsg, NULL, false);
+}
 
 void M_QuitDOOM(int choice)
 {
@@ -3808,6 +3833,8 @@ void M_Ticker (void)
 //
 void M_Init (void)
 {
+    int		i;
+
     currentMenu = &MainDef;
     menuactive = 0;
     itemOn = currentMenu->lastOn;
@@ -3834,8 +3861,13 @@ void M_Init (void)
 	// This is used because DOOM 2 had only one HELP
         //  page. I use CREDIT as second page now, but
 	//  kept this hack for educational purposes.
-	MainMenu[readthis] = MainMenu[quitdoom];
-	mainLabels[readthis] = mainLabels[quitdoom];  // DOOM-0206: keep the crisp label in step with the item
+	// DOOM-0493: shift every row after Read This up one, so About and Quit
+	// both survive. mainLabels moves with the items (DOOM-0206).
+	for (i = readthis; i < quitdoom; i++)
+	{
+	    MainMenu[i]   = MainMenu[i + 1];
+	    mainLabels[i] = mainLabels[i + 1];
+	}
 	MainDef.numitems--;
 	MainDef.y += 8;
 	NewDef.prevMenu = &MainDef;

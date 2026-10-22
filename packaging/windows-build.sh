@@ -52,10 +52,15 @@ cp "$EXE" "${WIN_RUNTIME_DLLS[@]}" "$STAGE/$NAME/"
 cat > "$STAGE/$NAME/README.txt" <<EOF
 DOOM_Ants $VERSION — Windows (x86_64)
 
-Run doom_ants.exe. You must supply a DOOM .wad data file (for example the
-shareware doom1.wad) in the same folder — WADs are not included for licensing
-reasons. The bundled DLLs are required; vulkan-1.dll is provided by your GPU
-driver.
+Run doom_ants.exe. You must supply a DOOM .wad data file in the same folder:
+Freedoom's freedoom1.wad or freedoom2.wad (free, from freedoom.github.io), the
+shareware doom1.wad, or doom.wad / doom2.wad. No WAD is included. The bundled
+DLLs are required; vulkan-1.dll is provided by your GPU driver.
+
+We do not condone piracy. DOOM Ants includes no DOOM game data. Use Freedoom,
+or the doom.wad or doom2.wad from a copy you own. DOOM is a trademark of
+id Software LLC, a ZeniMax Media company. DOOM Ants is not affiliated with or
+endorsed by id Software, ZeniMax or Bethesda.
 EOF
 rm -f "$WINZIP"
 ( cd "$STAGE" && zip -r -q "$WINZIP" "$NAME" )

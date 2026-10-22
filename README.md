@@ -57,9 +57,10 @@ page, or build it yourself below.
 
 ## Building & running
 
-You'll need a DOOM `.wad` data file (e.g. the shareware `doom1.wad`, or
-retail `doom.wad` / `doom2.wad`), which is **not** included here for
-licensing reasons.
+You'll need a DOOM `.wad` data file. [Freedoom](https://freedoom.github.io/)
+(`freedoom1.wad` or `freedoom2.wad`) is free and works, as do the shareware
+`doom1.wad` and retail `doom.wad` / `doom2.wad`. DOOM Ants includes none of
+them.
 
 **Dependencies (Linux):** a C++23 compiler (GCC/Clang), `make`, the dev
 packages for **SDL2**, **SDL2_mixer** and the **Vulkan** loader + headers,
@@ -90,6 +91,15 @@ sound effects only.
 
 Windows builds are produced with a mingw-w64 cross-compile toolchain and
 published on the Releases page.
+
+## Disclaimer
+
+We do not condone piracy. DOOM Ants includes no DOOM game data. Use
+Freedoom, or the doom.wad or doom2.wad from a copy you own. DOOM is a
+trademark of id Software LLC, a ZeniMax Media company. DOOM Ants is not
+affiliated with or endorsed by id Software, ZeniMax or Bethesda.
+
+The game shows the same notice under **About** on its main menu.
 
 ## Licence
 

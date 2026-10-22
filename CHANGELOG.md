@@ -6,6 +6,11 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **An About notice: no piracy, no DOOM data included, and the trademark credit** (DOOM-0493)
+  The main menu has a new **About** row, just above Quit. It says DOOM Ants ships no DOOM game data, that you need Freedoom or your own copy of DOOM, and that DOOM Ants is not made or endorsed by id Software, ZeniMax or Bethesda. The README and the Windows download's README.txt say the same.
+
 ### Fixed
 
 - **Freedoom plays in full and is found next to the program** (DOOM-0494)
