@@ -98,6 +98,9 @@ preference order wins (the order is part of the [unit-test acceptance](#verifica
   `tnt.wad` (English retail commercial first; `doom2f` is the French `doom2` — note
   this deliberately diverges from `IdentifyVersion`'s raw order, which checks
   `doom2f` first).
+- **Amended 2026-10-22 (DOOM-0494):** each family ends with Freedoom —
+  `freedoom1.wad` last in DOOM 1, `freedoom2.wad` last in DOOM 2 — so id's own
+  data wins when both are present.
 
 The per-candidate classification is a **pure helper** `D_IwadFamily(const char*
 filename)` → {DOOM 1, DOOM 2, none} that `D_DetectIwads()` applies to each candidate;
@@ -433,3 +436,4 @@ a list of prior findings; entries are count-summaries so a re-read stays indepen
   reconciled. **Converged** — reached the `--max-loops` cap of 5 with severity having
   strictly decreased each pass (HIGH+MED → MED → MED → ROADMAP-only → LOW-only) and
   every code citation independently re-verified line-for-line across passes.
+- **impl (2026-10-22, DOOM-0494)** — not a review; no reviewer dispatched. Recorded the Freedoom names added to each family's preference order, built and verified in the same commit (game_select_test, boots of both Freedoom WADs). No gate: the amendment only records existing code.

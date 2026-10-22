@@ -54,6 +54,8 @@ int main()
     check(D_IwadFamily("doomu.wad")    == IWAD_DOOM1, "doomu.wad (retail) -> DOOM 1");
     check(D_IwadFamily("doom.wad")     == IWAD_DOOM1, "doom.wad (registered) -> DOOM 1");
     check(D_IwadFamily("doom1.wad")    == IWAD_DOOM1, "doom1.wad (shareware) -> DOOM 1");
+    check(D_IwadFamily("freedoom1.wad") == IWAD_DOOM1, "freedoom1.wad (DOOM-0494) -> DOOM 1");
+    check(D_IwadFamily("freedoom2.wad") == IWAD_DOOM2, "freedoom2.wad (DOOM-0494) -> DOOM 2");
 
     // basename extraction (paths, both separators) + case-insensitivity
     check(D_IwadFamily("/usr/share/games/doom/doom2.wad") == IWAD_DOOM2, "unix path -> basename");
@@ -98,6 +100,18 @@ int main()
         check(d1 && iwad_streqi(d1, "doom1.wad"), "DOOM 1 rep = doom1.wad (only one present)");
         check(d2 && iwad_streqi(d2, "tnt.wad"), "DOOM 2 rep = tnt.wad (only one present)");
         check(d1 && d2, "both present -> true");
+    }
+    {   // DOOM-0494: Freedoom is found, but id's own data beats it in each family
+        const char* present[] = { "freedoom1.wad", "freedoom2.wad", 0 };
+        select_reps(present, &d1, &d2);
+        check(d1 && iwad_streqi(d1, "freedoom1.wad"), "DOOM 1 rep = freedoom1.wad (only one present)");
+        check(d2 && iwad_streqi(d2, "freedoom2.wad"), "DOOM 2 rep = freedoom2.wad (only one present)");
+    }
+    {
+        const char* present[] = { "freedoom1.wad", "doom1.wad", "freedoom2.wad", "tnt.wad", 0 };
+        select_reps(present, &d1, &d2);
+        check(d1 && iwad_streqi(d1, "doom1.wad"), "DOOM 1 rep = doom1.wad (beats freedoom1.wad)");
+        check(d2 && iwad_streqi(d2, "tnt.wad"), "DOOM 2 rep = tnt.wad (beats freedoom2.wad)");
     }
     {   // nothing present
         const char* present[] = { 0 };

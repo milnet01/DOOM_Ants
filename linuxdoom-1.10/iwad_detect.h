@@ -23,8 +23,9 @@ static inline int iwad_streqi(const char* a, const char* b)
 
 // Classify an IWAD path or bare filename into DOOM 1 / DOOM 2 / none by exact
 // (case-insensitive) basename match against the names IdentifyVersion recognises.
-// DOOM 2 family: doom2, doom2f (French), plutonia, tnt. DOOM 1 family: doomu
-// (retail/Ultimate), doom (registered), doom1 (shareware). Anything else -> none.
+// DOOM 2 family: doom2, doom2f (French), plutonia, tnt, freedoom2. DOOM 1 family:
+// doomu (retail/Ultimate), doom (registered), doom1 (shareware), freedoom1.
+// Anything else -> none. Freedoom is the free stand-in data (DOOM-0494).
 // The DOOM 2 names are tested first so a "doom2.wad" (which also contains "doom")
 // is never mis-bucketed — the tests are exact-match, so ordering is not actually
 // load-bearing, but it keeps the two families visually grouped.
@@ -41,25 +42,27 @@ static inline int D_IwadFamily(const char* path)
             base = p + 1;
 
     if (iwad_streqi(base, "doom2.wad") || iwad_streqi(base, "doom2f.wad")
-        || iwad_streqi(base, "plutonia.wad") || iwad_streqi(base, "tnt.wad"))
+        || iwad_streqi(base, "plutonia.wad") || iwad_streqi(base, "tnt.wad")
+        || iwad_streqi(base, "freedoom2.wad"))
         return IWAD_DOOM2;
     if (iwad_streqi(base, "doomu.wad") || iwad_streqi(base, "doom.wad")
-        || iwad_streqi(base, "doom1.wad"))
+        || iwad_streqi(base, "doom1.wad") || iwad_streqi(base, "freedoom1.wad"))
         return IWAD_DOOM1;
     return IWAD_NONE;
 }
 
-// Preference-ordered IWAD candidate basenames — best/most-complete first within
-// each family: DOOM 1 retail (doomu, episode 4) -> registered (doom) -> shareware
-// (doom1); DOOM 2 English retail -> French -> Plutonia -> TNT. D_DetectIwads scans
-// these in order and takes the first present per family, so this list IS the
+// Preference-ordered IWAD candidate basenames — within each family id's own data
+// first, best/most-complete first, then Freedoom: DOOM 1 retail (doomu, episode
+// 4) -> registered (doom) -> shareware (doom1) -> Freedoom; DOOM 2 English retail
+// -> French -> Plutonia -> TNT -> Freedoom. D_DetectIwads scans these in order
+// and takes the first present per family, so this list IS the
 // preference order; tests/game_select_test.cpp reuses it so the order is verified
 // against the real data. NULL-terminated. (static const in a header -> one private
 // copy per translation unit; the array is tiny.)
 static const char* const IWAD_CANDIDATES[] =
 {
-    "doomu.wad", "doom.wad", "doom1.wad",
-    "doom2.wad", "doom2f.wad", "plutonia.wad", "tnt.wad",
+    "doomu.wad", "doom.wad", "doom1.wad", "freedoom1.wad",
+    "doom2.wad", "doom2f.wad", "plutonia.wad", "tnt.wad", "freedoom2.wad",
     (const char*)0
 };
 

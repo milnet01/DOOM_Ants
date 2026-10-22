@@ -8,6 +8,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Freedoom plays in full and is found next to the program** (DOOM-0494)
+  Freedoom Phase 1 (`freedoom1.wad`) used to start as the one-episode shareware demo and refuse add-on WADs. It now plays all four episodes. A `freedoom1.wad` or `freedoom2.wad` next to the program is now found without `-iwad`, and the game-select menu offers it. When id's own WADs are also there, they win.
+
 - **Solid and Ultra now show the damage flash, pickup flash, radiation-suit tint and the screen melt** (DOOM-0379)
   The screen turns red when you are hurt, flashes gold on a pickup and
   goes green in a radiation suit, in the same colours and timing as

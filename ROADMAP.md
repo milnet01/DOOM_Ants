@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=493 -->
+<!-- ants-roadmap-id-high-water: DOOM=494 -->
 
 # Roadmap
 
@@ -10757,6 +10757,22 @@ stay in their phase sections; this heading holds only work still to come.
   **Layman:** The game and its README say plainly that DOOM Ants ships no DOOM data, that you need Freedoom or your own copy, and that it is not made or endorsed by id Software.
   Kind: feature.
   Source: user-request-2026-10-16 (relayed by ants-projects-hub-website, msg 710).
+
+- ✅ [DOOM-0494] **Freedoom plays as the shareware demo, or is not found at all.**
+  Seen 2026-10-22 on Freedoom 0.13.0. `-iwad freedoom1.wad` boots as
+  "DOOM Shareware Startup": one episode, and `-file` refused. The game
+  type comes from the filename, and "freedoom1" contains "doom1". A
+  freedoom1.wad or freedoom2.wad next to the program is not found ("No
+  DOOM game data (IWAD) found"); the game-select chooser does not list
+  them either. DOOM-0493's disclaimer tells players to use Freedoom.
+  Shipped 2026-10-22. freedoom1.wad now boots as the full game (gdb:
+  gamemode retail, -warp 4 1 reaches episode 4; -file accepted). Both
+  Freedoom WADs are found next to the program after id's own, and the
+  game-select chooser lists them (iwad_detect.h; game_select_test covers
+  both). The no-data message names Freedoom.
+  **Layman:** Freedoom, the free replacement for DOOM's game data, should play in full and be found when it sits next to the program.
+  Kind: fix.
+  Source: found-while-building-DOOM-0493-2026-10-22.
 
 ## 0.9.0 — The codebase can be trusted
 

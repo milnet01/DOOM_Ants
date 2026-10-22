@@ -700,6 +700,11 @@ static GameMode_t D_InferGamemode (const char* iwadpath)
     base = base ? base + 1 : iwadpath;
     if (strstr(base,"doom2") || strstr(base,"tnt") || strstr(base,"plutonia"))
 	return commercial;
+    // DOOM-0494: freedoom1.wad is the full four-episode game, not shareware,
+    // though its name contains "doom1". Registered here; the lump check after
+    // load promotes it to retail.
+    if (strstr(base,"freedoom1"))
+	return registered;
     if (strstr(base,"doom1"))
 	return shareware;
     if (strstr(base,"doomu"))
@@ -798,6 +803,10 @@ void IdentifyVersion (void)
     char	plutoniawad[PATH_MAX];
     char	tntwad[PATH_MAX];
 
+    // DOOM-0494: Freedoom, the free stand-in data, tried after id's own.
+    char	freedoom1wad[PATH_MAX];
+    char	freedoom2wad[PATH_MAX];
+
 #ifdef NORMALUNIX
     char *home;
     char *doomwaddir;
@@ -824,6 +833,9 @@ void IdentifyVersion (void)
 
     // French stuff.
     snprintf(doom2fwad, sizeof(doom2fwad), "%s/doom2f.wad", doomwaddir);
+
+    snprintf(freedoom2wad, sizeof(freedoom2wad), "%s/freedoom2.wad", doomwaddir);
+    snprintf(freedoom1wad, sizeof(freedoom1wad), "%s/freedoom1.wad", doomwaddir);
 
     home = getenv("HOME");
 #ifdef _WIN32
@@ -957,6 +969,20 @@ void IdentifyVersion (void)
       return;
     }
 
+    if ( !access (freedoom2wad,R_OK) )
+    {
+      gamemode = commercial;
+      D_AddFile (freedoom2wad);
+      return;
+    }
+
+    if ( !access (freedoom1wad,R_OK) )
+    {
+      gamemode = registered;	// promoted to retail after load
+      D_AddFile (freedoom1wad);
+      return;
+    }
+
     // No IWAD found. Tell the user exactly what to do — the packaged builds
     // (Windows zip / Linux AppImage) have no room for a long readme, and the
     // game data is not redistributable, so this message is where most players
@@ -964,7 +990,8 @@ void IdentifyVersion (void)
     printf("No DOOM game data (IWAD) found in: %s\n", doomwaddir);
     printf("Put a .wad file (doom1.wad, doom.wad or doom2.wad) in that folder\n");
     printf("- next to the program - or run with: -iwad <path-to-your.wad>\n");
-    printf("The free shareware doom1.wad works.\n");
+    printf("The free shareware doom1.wad works, and so does Freedoom\n");
+    printf("(freedoom1.wad or freedoom2.wad, from freedoom.github.io).\n");
     printf("Game mode indeterminate.\n");
     gamemode = indetermined;
 
