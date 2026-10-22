@@ -61,8 +61,8 @@ layout(location = 1) out vec4 outDirect;
 
 // DOOM-0170 L1b — per-subsector dynamic point lights derived from the same NEE
 // emitter list (torches/lamps/emissive walls). Flat float array: RASTER_MAX_LIGHTS
-// slots per subsector, 6 floats/light = centroid[3] Le[3]. Empty slots are zero and
-// packed nearest-first, so the shader stops at the first zero-Le slot.
+// slots per subsector, 7 floats/light = centroid[3] Le[3] reach. Empty slots are zero
+// and packed nearest-first, so the shader stops at the first zero-Le slot.
 layout(buffer_reference, scalar) readonly buffer LightsRO { float d[]; };
 
 // Must match mesh.vert's block byte-for-byte (shared push-constant range). The
@@ -129,6 +129,7 @@ const float GI_BOUNCE_STRENGTH = 1.0;
 // build boost, big surfaces enter as many triangles) that summed as raw intensity blows
 // straight to white. STRENGTH sets the max additive level after the sum is rolled off.
 const uint  RASTER_MAX_LIGHTS    = 16u;
+const uint  RASTER_LIGHT_FLOATS  = 7u;    // floats per light record (r_vulkan.cpp)
 const float RASTER_LIGHT_RADIUS  = 512.0;
 const float RASTER_INV_RADIUS2   = 1.0 / (RASTER_LIGHT_RADIUS * RASTER_LIGHT_RADIUS);
 // Two decoupled dials so "how obvious a single lamp is" and "the ceiling that stops a
@@ -345,11 +346,11 @@ void main()
             // NEE scale drops out), a smooth inverse-square falloff (half-bright at RADIUS)
             // and a Lambert facing term. No cast shadows (that is the RT-on / key-light
             // job, §4.4). Slots are nearest-packed; the first zero-Le slot ends the list.
-            uint base = sub * (RASTER_MAX_LIGHTS * 6u);
+            uint base = sub * (RASTER_MAX_LIGHTS * RASTER_LIGHT_FLOATS);
             vec3 plight = vec3(0.0);
             for (uint k = 0u; k < RASTER_MAX_LIGHTS; k++)
             {
-                uint o  = base + k * 6u;
+                uint o  = base + k * RASTER_LIGHT_FLOATS;
                 vec3 Le = vec3(pc.lights.d[o + 3u], pc.lights.d[o + 4u], pc.lights.d[o + 5u]);
                 float m = max(Le.r, max(Le.g, Le.b));
                 if (m <= 0.0)
@@ -359,6 +360,14 @@ void main()
                 vec3  dd  = c - vWorldPos;
                 float d2  = dot(dd, dd);
                 float att = 1.0 / (1.0 + d2 * RASTER_INV_RADIUS2);
+                // DOOM-0482: a pickup carries a reach and fades to nothing there, so it
+                // lights the floor around it, not the walls nearby. 0 = no cut-off.
+                float reach = pc.lights.d[o + 6u];
+                if (reach > 0.0)
+                {
+                    float w = clamp(1.0 - sqrt(d2) / reach, 0.0, 1.0);
+                    att *= w * w;
+                }
                 float ndl = max(dot(nrm, dd * inversesqrt(max(d2, 1e-8))), 0.0);
                 plight += col * att * ndl;
             }

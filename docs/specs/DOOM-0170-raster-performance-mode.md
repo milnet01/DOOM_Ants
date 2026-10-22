@@ -169,8 +169,9 @@ loop-and-sort over the whole `emitBuf` is not affordable on the hot path. Instea
 right after `FinalizeEmitters`, a CPU pass buckets the finalized emitters into a
 **per-subsector candidate list**: for each subsector, apply the DOOM-0119
 `subSec`→sector + REJECT-matrix cull, then keep the **nearest N** emitters by
-centroid distance, storing each as a derived point light `{centroid, Le}` (6 floats:
-`centroid = mean(v0,v1,v2)`, and the record's own `Le` as both colour and intensity).
+centroid distance, storing each as a derived point light `{centroid, Le, reach}` (7 floats:
+`centroid = mean(v0,v1,v2)`, the record's own `Le` as both colour and intensity, and the
+pickup reach below).
 **Implementation note (as shipped):** the raw `luminance(Le)·area` power the NEE build
 computes is *not recoverable* from a finalized record — `nee_merge_emitters` keeps only
 the map-global-**normalized** `pdf` (a light in a dark room would read as tiny), so the
@@ -196,11 +197,18 @@ for k in this fragment's subsector list (≤ N, nearest-packed):
     d       = light[k].centroid - worldPos
     dist2   = dot(d, d)
     atten   = 1 / (1 + dist2/RADIUS^2)             // smooth inverse-square-ish; RADIUS a tuned constant (§6)
+    if (reach > 0) atten *= (1 - min(dist/reach, 1))^2   // pickups only (DOOM-0482)
     diffuse += col * atten * max(dot(normal, normalize(d)), 0)
 diffuse = diffuse * GAIN                            // GAIN: a single light climbs to visible fast (the pop)
 diffuse = diffuse / (1 + diffuse)                  // Reinhard: a cluster saturates to colour, not white
 lit += STRENGTH * albedo * diffuse                 // STRENGTH = the ceiling after roll-off (§6/§9 Q1)
 ```
+
+**Pickups glow close up (DOOM-0482, user decision 2026-10-22).** A pickup (a Thing
+with `MF_SPECIAL`) carries `reach = PICKUP_LIGHT_REACH` (§6); every other light carries
+0, meaning no cut-off. Equal-strength lights let E1M2's Soulsphere turn a brown wall
+about 115 units away purple. With the reach, a pickup lights the floor around it and
+leaves the walls nearby their own colour.
 
 **Base sector-light rebalance (§9 Q1, shipped).** DOOM's flat sector light is bright, so
 the additive point lights + bounce have no headroom in already-lit areas (a white surface
@@ -369,6 +377,7 @@ shine flag (§4.6). **New CPU per-frame pass:** the per-subsector light-list bui
 | Point lights per subsector, `N` | **16** (`RASTER_MAX_LIGHTS_PER_SUBSECTOR`) | §4.1, §9 Q4 |
 | Point-light falloff radius, `RADIUS` | seed 512 world-units (tune 256–768) | §4.1, §9 Q4 |
 | Point-light pop, `POINT_LIGHT_GAIN` | seed 3.0 (how fast a single light climbs to visible before the roll-off) | §4.1, §9 Q1 |
+| Pickup light reach, `PICKUP_LIGHT_REACH` | 96 world-units (`RASTER_PICKUP_LIGHT_REACH`, `r_vulkan.cpp`) | §4.1, DOOM-0482 |
 | Point-light ceiling, `POINT_LIGHT_STRENGTH` | seed 0.7 (max additive after the Reinhard roll-off; `Le` is colour-only) | §4.1, §9 Q1 |
 | Base sector-light dim, `BASE_SECTOR_DIM` | seed 0.75 (1.0 = classic; gives the additive lights headroom) | §4.1, §9 Q1 |
 | Point-light CPU cull budget | ≤ **1 ms** / frame | §4.1 |
@@ -511,3 +520,4 @@ handed to the user for an on-RX-6600 play-test before the next begins.
     (`BuildStaticEmitterSet`/`BuildDynamicEmitters`), muzzle flash rides
     `extralight`/`pcData[16]`, `RunGiBake` synchronous, `RB_ApplyTierRt` 0/6,
     `render_scale` (`m_misc.c`), and every cited roadmap status.
+- **impl 2026-10-22 (DOOM-0482, no reviewer dispatched)** — Amendment, not a review loop. §4.1: each raster light record gains a reach (7 floats); pickups (MF_SPECIAL) carry PICKUP_LIGHT_REACH and fade to nothing there, every other light carries 0. §6 gains the dial. Records the user's decision of 2026-10-22, built and verified in the same commit (E1M2 Solid captures).

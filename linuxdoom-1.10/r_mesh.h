@@ -120,6 +120,8 @@ typedef struct
                               // vertex shader runs the view-projection on them (unlike
                               // the NDC backdrop quad) and the depth test lets them
                               // occlude distant geometry in the raster view.
+#define RB_MESH_PICKUP  0x100 // DOOM-0482: this sprite Thing is a pickup (MF_SPECIAL). Solid's
+                              // raster point light from it fades out within a short reach.
 
 // Transparent-key palette index for the 2D HUD/menu compositor (DOOM-0008). In
 // the 3D back-ends the engine still draws every 2D element (status bar, menu,

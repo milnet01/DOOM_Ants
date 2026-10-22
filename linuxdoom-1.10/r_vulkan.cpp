@@ -1123,8 +1123,8 @@ struct VulkanState
     uint32_t       numSectors    = 0;            // REJECT matrix dimension (0 = cull off)
 
     // DOOM-0170 L1b: per-subsector dynamic point lights (RT-off raster). lightBuf is a
-    // host-visible device-address SSBO — RASTER_MAX_LIGHTS_PER_SUBSECTOR records of 6
-    // floats (centroid[3] Le[3]) per subsector — refilled each raster frame by
+    // host-visible device-address SSBO — RASTER_MAX_LIGHTS_PER_SUBSECTOR records of 7
+    // floats (centroid[3] Le[3] reach) per subsector — refilled each raster frame by
     // BuildRasterPointLights from the NEE emitter list. The CPU cull reuses the probe
     // centroids (subCentroid), the per-subsector sector map + REJECT matrix (numSectors
     // above / rejectCPU), and a reused emitter-centroid scratch. Allocated whenever
@@ -1142,7 +1142,7 @@ struct VulkanState
     // It is camera- and frame-invariant, so RebuildStaticPointLightCache computes it once
     // (on staticLightsDirty) and the per-frame BuildRasterPointLights copies it and merges
     // only the handful of moving sprite emitters on top.
-    std::vector<float>      staticLightCache;    // sub × N × 6 floats (centroid[3] Le[3])
+    std::vector<float>      staticLightCache;    // sub × N records of RASTER_LIGHT_FLOATS
     std::vector<int32_t>    staticLightCount;    // per-subsector count of cached static lights
     bool                    staticLightsDirty = true;  // static emitter set changed -> recache
     // DOOM-0436: an animated flat or a switch swap changes an emitter's Le but moves no
@@ -1157,6 +1157,7 @@ struct VulkanState
     // subsector per emitter; reading the mapped buffers there cost ~1.4 ms a frame.
     std::vector<float>      frameDynEmit;        // 14 floats per dynamic record
     std::vector<uint32_t>   frameDynSec;         // sector per dynamic record
+    std::vector<float>      frameDynReach;       // DOOM-0482: raster reach per dynamic record
 
     bool ready        = false;
     bool needRecreate = false;
@@ -7200,9 +7201,15 @@ void FinalizeEmitters(const std::vector<float>* dynEmit, const std::vector<float
 }
 
 // DOOM-0170 L1b: per-subsector nearest-N dynamic point-light cap. Must match
-// RASTER_MAX_LIGHTS in mesh.frag. Each record is 6 floats: centroid[3] Le[3].
+// RASTER_MAX_LIGHTS in mesh.frag. Each record is 7 floats: centroid[3] Le[3] reach.
+// reach is 0 for a light with no cut-off; mesh.frag fades a light with one to nothing
+// at that distance (DOOM-0482).
 static const uint32_t RASTER_MAX_LIGHTS_PER_SUBSECTOR = 16;
-static const uint32_t RASTER_LIGHT_FLOATS             = 6;
+static const uint32_t RASTER_LIGHT_FLOATS             = 7;
+// DOOM-0482: a pickup's raster light reaches this far (world units), so it lights the
+// floor around it and not a wall a few steps away. E1M2's Soulsphere stands about 115
+// units from a brown wall it used to turn purple.
+static const float    RASTER_PICKUP_LIGHT_REACH       = 96.0f;
 
 // DOOM-0084: each traced frame, scan this frame's world-sprite billboards (already
 // built into g.sprWorldBuf for the trace, DOOM-0100) for emissive ones — a sprite
@@ -7216,6 +7223,7 @@ void BuildDynamicEmitters()
     if (!g.emitMapped || g.matEmissive.empty() || !g.sprWorldMapped)
     {
         FinalizeEmitters(nullptr, nullptr);      // keep the static set live
+        g.frameDynReach.clear();
         return;
     }
     const int      matCount = (int)(g.matEmissive.size() / 3);
@@ -7233,6 +7241,7 @@ void BuildDynamicEmitters()
 
     std::vector<float> emit, wgt;
     std::vector<uint32_t> dynSec;            // DOOM-0119: per-emitter sector (REJECT cull)
+    std::vector<float>    dynReach;          // DOOM-0482: per-emitter raster reach
     uint32_t litSprites = 0;
     float maxLe = 0.0f;
     for (uint32_t t = 0; t < tris; t++)
@@ -7272,10 +7281,12 @@ void BuildDynamicEmitters()
         const float cyw = (tri[0].y + tri[1].y + tri[2].y) * (1.0f / 3.0f);
         const int   sec = (g.numSectors > 0u) ? RB_SectorAtPoint(cxw, cyw) : -1;
         dynSec.push_back(sec >= 0 ? (uint32_t)sec : 0xFFFFFFFFu);
+        dynReach.push_back((tri->flags & RB_MESH_PICKUP) ? RASTER_PICKUP_LIGHT_REACH : 0.0f);
         litSprites++;
         maxLe = std::max(maxLe, emis::value(lr, lg, lb));
     }
     FinalizeEmitters(&emit, &wgt, &dynSec);
+    g.frameDynReach.swap(dynReach);
 
     // Diagnostic (DOOM-0084 bring-up): confirm sprite lights reach the NEE set.
     // Prints when the lit count changes, and at most once a second: every fireball that
@@ -7307,8 +7318,8 @@ void BuildDynamicEmitters()
 // O(subsectors × staticEmitters) cull was the ~8 ms/frame hotspot the DOOM-0170 CPU
 // profiler pinpointed; it is camera- and frame-invariant, so it runs only when the static
 // set changes (level load / switch press / animated flat, via g.staticLightsDirty) instead
-// of every frame. The result is packed nearest-first into g.staticLightCache (same 6-float
-// centroid[3] Le[3] layout as g.lightBuf); BuildRasterPointLights copies it and merges the
+// of every frame. The result is packed nearest-first into g.staticLightCache (same
+// record layout as g.lightBuf); BuildRasterPointLights copies it and merges the
 // per-frame dynamic sprite emitters on top. Reads the static records from g.staticEmit,
 // which FinalizeEmitters copies static-first into the merged emitter buffer, so the cache
 // stays in lock-step with what the shader would sample.
@@ -7371,12 +7382,12 @@ static void RebuildStaticPointLightCache(int staticN)
         for (int k = 0; k < cnt; k++)
         {
             const float* r = &em[(size_t)bestI[k] * 14];
-            slot[k * 6 + 0] = sc[bestI[k] * 3 + 0];
-            slot[k * 6 + 1] = sc[bestI[k] * 3 + 1];
-            slot[k * 6 + 2] = sc[bestI[k] * 3 + 2];
-            slot[k * 6 + 3] = r[9];               // Le.r
-            slot[k * 6 + 4] = r[10];              // Le.g
-            slot[k * 6 + 5] = r[11];              // Le.b
+            slot[k * RASTER_LIGHT_FLOATS + 0] = sc[bestI[k] * 3 + 0];
+            slot[k * RASTER_LIGHT_FLOATS + 1] = sc[bestI[k] * 3 + 1];
+            slot[k * RASTER_LIGHT_FLOATS + 2] = sc[bestI[k] * 3 + 2];
+            slot[k * RASTER_LIGHT_FLOATS + 3] = r[9];               // Le.r
+            slot[k * RASTER_LIGHT_FLOATS + 4] = r[10];              // Le.g
+            slot[k * RASTER_LIGHT_FLOATS + 5] = r[11];              // Le.b
             g.staticLightSrc[(size_t)si * N + k] = bestI[k];
         }
         g.staticLightCount[si] = cnt;
@@ -7401,9 +7412,9 @@ static void RefreshStaticPointLightLe()
         for (int k = 0; k < g.staticLightCount[si]; k++)
         {
             const float* r = &em[(size_t)g.staticLightSrc[(size_t)si * N + k] * 14];
-            slot[k * 6 + 3] = r[9];               // Le.r
-            slot[k * 6 + 4] = r[10];              // Le.g
-            slot[k * 6 + 5] = r[11];              // Le.b
+            slot[k * RASTER_LIGHT_FLOATS + 3] = r[9];               // Le.r
+            slot[k * RASTER_LIGHT_FLOATS + 4] = r[10];              // Le.g
+            slot[k * RASTER_LIGHT_FLOATS + 5] = r[11];              // Le.b
         }
     }
 }
@@ -7463,6 +7474,8 @@ void BuildRasterPointLights()
     const float*    em = g.frameDynEmit.data();          // dynamic record d at em[d * 14]
     const uint32_t* es = g.frameDynSec.data();           // dynamic record d's sector
     const int       esN = (int)g.frameDynSec.size();
+    const float*    er  = g.frameDynReach.data();        // dynamic record d's reach
+    const int       erN = (int)g.frameDynReach.size();
 
     // Dynamic-emitter centroids (records [staticN, emitN)); reused across every subsector.
     g.emitCentroidScratch.resize((size_t)dynN * 3);
@@ -7499,8 +7512,8 @@ void BuildRasterPointLights()
             std::memcpy(rec, cache, (size_t)cnt * RASTER_LIGHT_FLOATS * sizeof(float));
             for (int k = 0; k < cnt; k++)
             {
-                const float dx = rec[k * 6 + 0] - c.x;
-                const float dy = rec[k * 6 + 1] - c.y;
+                const float dx = rec[k * RASTER_LIGHT_FLOATS + 0] - c.x;
+                const float dy = rec[k * RASTER_LIGHT_FLOATS + 1] - c.y;
                 bestD[k] = dx * dx + dy * dy;
             }
         }
@@ -7527,16 +7540,19 @@ void BuildRasterPointLights()
             while (pos > 0 && bestD[pos - 1] > d2)
             {
                 bestD[pos] = bestD[pos - 1];
-                std::memcpy(&rec[pos * 6], &rec[(pos - 1) * 6], 6 * sizeof(float));
+                std::memcpy(&rec[pos * RASTER_LIGHT_FLOATS], &rec[(pos - 1) * RASTER_LIGHT_FLOATS],
+                            RASTER_LIGHT_FLOATS * sizeof(float));
                 pos--;
             }
             bestD[pos]       = d2;
-            rec[pos * 6 + 0] = ec[d * 3 + 0];
-            rec[pos * 6 + 1] = ec[d * 3 + 1];
-            rec[pos * 6 + 2] = ec[d * 3 + 2];
-            rec[pos * 6 + 3] = em[(size_t)d * 14 + 9];    // Le.r
-            rec[pos * 6 + 4] = em[(size_t)d * 14 + 10];   // Le.g
-            rec[pos * 6 + 5] = em[(size_t)d * 14 + 11];   // Le.b
+            float* r = &rec[pos * RASTER_LIGHT_FLOATS];
+            r[0] = ec[d * 3 + 0];
+            r[1] = ec[d * 3 + 1];
+            r[2] = ec[d * 3 + 2];
+            r[3] = em[(size_t)d * 14 + 9];    // Le.r
+            r[4] = em[(size_t)d * 14 + 10];   // Le.g
+            r[5] = em[(size_t)d * 14 + 11];   // Le.b
+            r[6] = d < erN ? er[d] : 0.0f;    // reach (DOOM-0482)
             if (cnt < (int)N)
                 cnt++;
         }

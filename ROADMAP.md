@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=496 -->
+<!-- ants-roadmap-id-high-water: DOOM=497 -->
 
 # Roadmap
 
@@ -10676,7 +10676,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: in-session 2026-09-30 (DOOM-0432 spec, open question Q2).
   Lanes: sw-renderer.
 
-- 📋 [DOOM-0482] **Some tan wall panels render pink or purple in Solid's raster view.**
+- ✅ [DOOM-0482] **Some tan wall panels render pink or purple in Solid's raster view.**
   E1M2, `renderer 2 -rtview 0`, `-warpto 2100 400 90`: the building at the left
   edge (texture BROWN1) is pink on its lit face and purple on the shaded one.
   Classic is tan there, and so is Ultra in `-rtview 3` and `-rtview 6`. Mean
@@ -10686,6 +10686,19 @@ stay in their phase sections; this heading holds only work still to come.
   Lead, unverified: pink and purple are what a tangent-space normal map looks
   like when it is drawn as colour, so look first at Solid's derived-material
   binding for these textures in mesh.frag.
+  Shipped 2026-10-22. Cause: not a normal map. Solid's raster point
+  lights (DOOM-0170 L1b) use each emitter's Le as colour only, so every
+  light has the same strength. E1M2's Soulsphere (thing type 2013, blue
+  Le) stands about 115 units from the BROWN1 box and tinted it purple;
+  the indoor panels had pickups beside them too. Ultra's raster view
+  showed it as well. User decision 2026-10-22: pickups glow close up.
+  A pickup sprite (MF_SPECIAL) now carries RB_MESH_PICKUP; its raster
+  light record carries a reach (RASTER_PICKUP_LIGHT_REACH, 96) and
+  mesh.frag fades it to nothing there. Records grew to 7 floats;
+  shader_mirror_test pins RASTER_LIGHT_FLOATS on both sides. Measured
+  mean of the wall patch: before 76/56/64, after 64/54/46, Classic
+  76/64/51. Spec DOOM-0170 §4.1 and §6 amended. Found on the way:
+  DOOM-0497 (static lights skip the REJECT cull).
   **Layman:** In the Solid view a few brown walls come out pink or purple. Classic and Ultra draw the same walls the right colour.
   Kind: fix.
   Source: in-session 2026-09-30 (found while checking DOOM-0142).
@@ -10833,6 +10846,23 @@ stay in their phase sections; this heading holds only work still to come.
   Kind: fix.
   Source: found-while-fixing-DOOM-0481-2026-10-22.
   Lanes: sw-renderer.
+
+- 📋 [DOOM-0497] **Solid's wall and floor lights shine into rooms that cannot see them.**
+  The DOOM-0170 spec says the raster point-light list applies the DOOM-0119
+  REJECT cull to every emitter. BuildRasterPointLights applies it to the
+  moving sprite emitters only; RebuildStaticPointLightCache (r_vulkan.cpp)
+  gives every subsector its nearest static wall and flat lights by
+  distance alone, because DOOM-0119 left static emitters' sectors unknown.
+  The mesh already knows them: tri_ss tags a wall with the subsector its
+  face looks into. A working patch, built and run on E1M2 2026-10-22, is
+  scratch/p0482/static-reject-cull.patch (records each static emitter's
+  tri_ss; skips any the subsector's sector REJECTs). Not shipped: it does
+  not change DOOM-0482's view, and its effect on other rooms is unmeasured.
+  Work: apply, A/B Solid captures on several lit rooms, play-test.
+  **Layman:** In the Solid view, light from a lamp can show up in a room that has no line of sight to it; DOOM's own visibility table can stop that.
+  Kind: fix.
+  Source: found-while-fixing-DOOM-0482-2026-10-22.
+  Lanes: renderer.
 
 ## 0.9.0 — The codebase can be trusted
 

@@ -2234,6 +2234,8 @@ static boolean sprite_quad(const rb_view_t* view, mobj_t* thing, rb_vertex_t q[6
     sflags = RB_MESH_SPRITE;
     if ((thing->frame & FF_FULLBRIGHT) || sprite_glows(thing->sprite))
         sflags |= RB_MESH_EMISSIVE;
+    if (thing->flags & MF_SPECIAL)
+        sflags |= RB_MESH_PICKUP;     // DOOM-0482
 
     // UVs inset half a texel so nearest sampling stays inside the rect.
     u0 = 0.5f;  u1 = wpx - 0.5f;

@@ -13,6 +13,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Pickups no longer tint the walls around them in Solid** (DOOM-0482)
+  A glowing pickup such as the Soulsphere lit nearby walls as strongly as a ceiling lamp, so E1M2's brown buildings turned pink and purple. A pickup now lights only what is close around it. Lamps, torches and light panels are unchanged. Ultra's raster view had the same fault and is fixed too.
+
 - **Classic no longer reads past the end of short wall textures** (DOOM-0481)
   A wall texture shorter than 128 rows now repeats at its own height, as it already did in Solid and Ultra. Before, the classic drawer filled the missing rows from whatever lay next in memory. On the stock maps' start views this changes a few stray pixels at most.
 

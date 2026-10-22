@@ -13,6 +13,8 @@
 //   - the per-subsector light slot count: RASTER_MAX_LIGHTS against
 //     RASTER_MAX_LIGHTS_PER_SUBSECTOR, the stride of the buffer the shader indexes.
 //     A mismatch reads the next subsector's lights, or past the buffer.
+//   - the floats per light record: RASTER_LIGHT_FLOATS on both sides (DOOM-0482).
+//     A mismatch reads every light after the first from the wrong offset.
 //
 // Source-scraping, like bloom_threshold_test.cpp: each value is found by its
 // constant's name, never by line position.
@@ -105,6 +107,7 @@ int main()
     same(ms, "FLASH_OFF_RIGHT", vk, "kFlashOffRight");
     same(ms, "FLASH_OFF_UP",    vk, "kFlashOffUp");
     same(ms, "RASTER_MAX_LIGHTS", vk, "RASTER_MAX_LIGHTS_PER_SUBSECTOR");
+    same(ms, "RASTER_LIGHT_FLOATS", vk, "RASTER_LIGHT_FLOATS");
 
     return check_summary("shader_mirror_test");
 }
