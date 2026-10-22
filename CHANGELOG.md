@@ -36,6 +36,11 @@ All notable changes to DOOM_Ants are documented here. The format follows
   The text screen between episodes drew its background pattern at half
   size, so it repeated twice as often as it should. It now matches the
   lettering drawn over it.
+- **On a very crowded map, the nearest monsters are the ones drawn**
+  (DOOM-0459) The 3D views have room for a fixed number of things. Past
+  that, they left things out in map order, so a monster right in front of
+  you could vanish while one far away was drawn. Now the farthest are the
+  ones left out.
 
 ## [0.7.4] - 2026-10-08
 

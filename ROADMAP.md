@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=492 -->
+<!-- ants-roadmap-id-high-water: DOOM=493 -->
 
 # Roadmap
 
@@ -10548,7 +10548,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: DOOM-0410 split, review-code 2026-09-01 lane vk-materials.
   Lanes: renderer, shaders, assets.
 
-- 📋 [DOOM-0459] **Past the sprite cap, the traced view drops things in map order, not the farthest ones.**
+- ✅ [DOOM-0459] **Past the sprite cap, the traced view drops things in map order, not the farthest ones.**
   Split from DOOM-0411. RB_BuildSprites fills a fixed buffer
   (g.sprWorldVertCap, about 4096 things) walking sectors in index order,
   and skips whatever does not fit. DOOM-0411 made that loud: the first
@@ -10559,6 +10559,9 @@ stay in their phase sections; this heading holds only work still to come.
   cap-many before emitting. The overflow path only, so ordinary maps pay
   nothing. Alternatively size the buffer from the map's thing count at
   level load, since the BLAS is rebuilt per frame anyway.
+  Shipped c9be0a6 (2026-10-22): past the cap, candidates are sorted
+  nearest first (sprite_cap.h, tests/sprite_cap_test.cpp); ordinary
+  frames unchanged (buffer hash identical on four maps).
   **Layman:** On a map crowded with monsters, the ray-traced view can leave out a monster right in front of you while still drawing one far behind.
   Kind: fix.
   Source: DOOM-0411 split, review-code 2026-09-01 lane vk-accel.
@@ -10741,6 +10744,19 @@ stay in their phase sections; this heading holds only work still to come.
   Kind: fix.
   Source: in-session-2026-10-15, found while fixing DOOM-0457.
   Lanes: ui.
+
+- 📋 [DOOM-0493] **Show a no-piracy and trademark disclaimer in the game and the README.**
+  House wording from the website session (check every fact before use):
+  "We do not condone piracy. DOOM Ants includes no DOOM game data. Use
+  Freedoom, or the doom.wad or doom2.wad from a copy you own. DOOM is a
+  trademark of id Software LLC, a ZeniMax Media company. DOOM Ants is not
+  affiliated with or endorsed by id Software, ZeniMax or Bethesda."
+  Placement in the app is our call. When it ships, message the
+  ants-projects-hub-website mailbox with the release version and any
+  wording changed.
+  **Layman:** The game and its README say plainly that DOOM Ants ships no DOOM data, that you need Freedoom or your own copy, and that it is not made or endorsed by id Software.
+  Kind: feature.
+  Source: user-request-2026-10-16 (relayed by ants-projects-hub-website, msg 710).
 
 ## 0.9.0 — The codebase can be trusted
 
