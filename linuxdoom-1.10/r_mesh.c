@@ -45,6 +45,7 @@
 #include "z_zone.h"     // PU_CACHE
 #include "seg_project.h" // DOOM-0180 RB_ProjectOnLine (seg -> its linedef's line)
 #include "sky_seal.h"    // DOOM-0322 sky lid height, seals, upper-step kind
+#include "sprite_cap.h"  // DOOM-0459 nearest-first order past the sprite cap
 #include "r_mesh.h"
 #include "patch_bounds.h"
 #include "atlas_bounds.h"
@@ -2151,7 +2152,10 @@ int RB_WallTexEmits(int texnum)
     return wall_tex_light[texnum] ? 1 : 0;
 }
 
-int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts)
+// One thing's billboard: the six vertices (two triangles) facing the eye, written
+// to q. False when the thing gets none: the player's own body, a bad sprite or frame
+// number, an unassigned rotation.
+static boolean sprite_quad(const rb_view_t* view, mobj_t* thing, rb_vertex_t q[6])
 {
     // Camera right vector in world space, matching Mat4LookAt with up = +z:
     // right = normalize(fwd x up) = (sin a, -cos a, 0). Billboard up is +z, and
@@ -2159,112 +2163,178 @@ int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts)
     float   a    = view->angle;
     float   rx   =  sinf(a), ry = -cosf(a);    // screen-right in world
     float   nx   = -cosf(a), ny = -sinf(a);    // billboard normal (toward eye)
-    int     s, n = 0, dropped = 0;
-    static int capWarned = 0;                   // rising-edge latch for the cap message
+    spritedef_t*   sprdef;
+    spriteframe_t* sprframe;
+    int            lump;
+    int            sflags;
+    int            i = 0;
+    boolean        flip;
+    float          wpx, hpx, loff, toff, cx, cy, topz, botz, ld, rd, light;
+    float          u0, u1, v0, v1;
+
+    if (thing == players[consoleplayer].mo)
+        return false;                   // our own body, first person
+    if ((unsigned)thing->sprite >= (unsigned)numsprites)
+        return false;
+    sprdef = &sprites[thing->sprite];
+    if ((thing->frame & FF_FRAMEMASK) >= sprdef->numframes)
+        return false;
+    sprframe = &sprdef->spriteframes[thing->frame & FF_FRAMEMASK];
+
+    if (sprframe->rotate)
+    {
+        // DOOM-0073: derive the view->thing angle from float deltas. The old
+        // (fixed_t)(view->x*FRACUNIT) overflowed int32 at the +/-32768 map
+        // edge, giving a wrong sprite rotation for that frame. angle_t is a
+        // 32-bit BAM (2^32 == 360deg); map atan2's [-pi,pi] onto it via an
+        // int64 cast (negative wraps to the correct unsigned angle).
+        float    dx  = thing->x / (float)FRACUNIT - view->x;
+        float    dy  = thing->y / (float)FRACUNIT - view->y;
+        angle_t  ang = (angle_t)(long long)
+            (atan2f(dy, dx) * (4294967296.0 / (2.0 * 3.14159265358979)));
+        unsigned rot = (ang - thing->angle + (unsigned)(ANG45/2)*9) >> 29;
+        lump = sprframe->lump[rot];
+        flip = (boolean)sprframe->flip[rot];
+    }
+    else
+    {
+        lump = sprframe->lump[0];
+        flip = (boolean)sprframe->flip[0];
+    }
+    // DOOM-0073: an unassigned rotation is lump == -1 (R_InstallSpriteLump
+    // validates at load, so this is unreachable with stock WADs); guard it
+    // rather than index spritewidth[]/the atlas with a negative lump.
+    if (lump < 0)
+        return false;
+
+    wpx  = spritewidth[lump]     / (float)FRACUNIT;
+    hpx  = (float)sprite_h[lump];
+    loff = spriteoffset[lump]    / (float)FRACUNIT;
+    toff = spritetopoffset[lump] / (float)FRACUNIT;
+
+    cx   = thing->x / (float)FRACUNIT;
+    cy   = thing->y / (float)FRACUNIT;
+    topz = thing->z / (float)FRACUNIT + toff;
+    botz = topz - hpx;
+    ld   = -loff;                       // left edge along right vector
+    rd   = -loff + wpx;                 // right edge
+
+    light = thing->subsector->sector->lightlevel / 255.0f;
+    if (thing->frame & FF_FULLBRIGHT)
+        light = 1.0f;
+    if (light < 0.0f) light = 0.0f;
+    if (light > 1.0f) light = 1.0f;
+
+    // DOOM-0084: a fullbright frame marks an actual light object (lamp,
+    // torch, candle, burning barrel, projectile) — NOT ammo/pickups. Only
+    // these self-glow + cast NEE light in the path tracer; everything else
+    // is just a depth-occluding billboard (DOOM-0100). DOOM-0112 also lights
+    // the glowing collectibles (bonus potions, spheres, keys, health) which
+    // aren't FF_FULLBRIGHT but should still emit their colour.
+    sflags = RB_MESH_SPRITE;
+    if ((thing->frame & FF_FULLBRIGHT) || sprite_glows(thing->sprite))
+        sflags |= RB_MESH_EMISSIVE;
+
+    // UVs inset half a texel so nearest sampling stays inside the rect.
+    u0 = 0.5f;  u1 = wpx - 0.5f;
+    v0 = 0.5f;  v1 = hpx - 0.5f;
+    if (flip) { float t = u0; u0 = u1; u1 = t; }
+
+    // Corners: left-top, right-top, right-bottom, left-bottom.
+    q[i++] = mkv(cx + rx*ld, cy + ry*ld, topz, nx, ny, 0.0f, u0, v0, lump, sflags, light);
+    q[i++] = mkv(cx + rx*rd, cy + ry*rd, topz, nx, ny, 0.0f, u1, v0, lump, sflags, light);
+    q[i++] = mkv(cx + rx*rd, cy + ry*rd, botz, nx, ny, 0.0f, u1, v1, lump, sflags, light);
+    q[i++] = mkv(cx + rx*ld, cy + ry*ld, topz, nx, ny, 0.0f, u0, v0, lump, sflags, light);
+    q[i++] = mkv(cx + rx*rd, cy + ry*rd, botz, nx, ny, 0.0f, u1, v1, lump, sflags, light);
+    q[i++] = mkv(cx + rx*ld, cy + ry*ld, botz, nx, ny, 0.0f, u0, v1, lump, sflags, light);
+    return true;
+}
+
+// DOOM-0459: the overflow path. More things want a billboard than `out` holds, so
+// take them nearest first and keep as many as fit; the walk order used to decide,
+// which could drop a monster beside the player and draw one across the map. Only a
+// frame that overflowed pays for the sort. *dropped counts the things left out.
+static int build_nearest_sprites(const rb_view_t* view, rb_vertex_t* out, int maxverts,
+                                 int* dropped)
+{
+    static rb_sprite_cand_t* cand;              // grows to the busiest frame, kept
+    static int               candCap;
+    rb_vertex_t              q[6];
+    mobj_t*                  thing;
+    int                      s, i, count = 0, n = 0;
+
+    for (s = 0; s < numsectors; s++)
+    {
+        for (thing = sectors[s].thinglist; thing; thing = thing->snext)
+        {
+            float dx = thing->x / (float)FRACUNIT - view->x;
+            float dy = thing->y / (float)FRACUNIT - view->y;
+            if (count == candCap)
+            {
+                int               grow = candCap ? candCap * 2 : 1024;
+                rb_sprite_cand_t* p    = realloc(cand, (size_t)grow * sizeof *cand);
+                if (!p)
+                    I_Error("RB_BuildSprites: out of memory for %d sprite candidates",
+                            grow);
+                cand    = p;
+                candCap = grow;
+            }
+            cand[count].d2    = dx*dx + dy*dy;
+            cand[count].order = count;
+            cand[count].thing = thing;
+            count++;
+        }
+    }
+    RB_SortSpritesNearest(cand, count);
+
+    for (i = 0; i < count; i++)
+    {
+        if (!sprite_quad(view, (mobj_t*)cand[i].thing, q))
+            continue;
+        if (n + 6 > maxverts)
+        {
+            (*dropped)++;                       // buffer full: this thing is not drawn
+            continue;
+        }
+        memcpy(out + n, q, sizeof q);
+        n += 6;
+    }
+    return n;
+}
+
+int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts)
+{
+    rb_vertex_t q[6];
+    mobj_t*     thing;
+    int         s, n = 0, dropped = 0;
+    boolean     full = false;
+    static int  capWarned = 0;                  // rising-edge latch for the cap message
 
     if (numspritelumps <= 0)
         return 0;
     ensure_sprite_heights();
 
-    for (s = 0; s < numsectors; s++)
+    // The ordinary frame: every thing fits, in walk order, and nothing is sorted.
+    for (s = 0; s < numsectors && !full; s++)
     {
-        mobj_t* thing;
-        for (thing = sectors[s].thinglist; thing; thing = thing->snext)
+        for (thing = sectors[s].thinglist; thing && !full; thing = thing->snext)
         {
-            spritedef_t*   sprdef;
-            spriteframe_t* sprframe;
-            int            lump;
-            int            sflags;
-            boolean        flip;
-            float          wpx, hpx, loff, toff, cx, cy, topz, botz, ld, rd, light;
-            float          u0, u1, v0, v1;
-
-            if (thing == players[consoleplayer].mo)
-                continue;                       // our own body, first person
-            if ((unsigned)thing->sprite >= (unsigned)numsprites)
+            if (!sprite_quad(view, thing, q))
                 continue;
-            sprdef = &sprites[thing->sprite];
-            if ((thing->frame & FF_FRAMEMASK) >= sprdef->numframes)
-                continue;
-            sprframe = &sprdef->spriteframes[thing->frame & FF_FRAMEMASK];
-
-            if (sprframe->rotate)
-            {
-                // DOOM-0073: derive the view->thing angle from float deltas. The old
-                // (fixed_t)(view->x*FRACUNIT) overflowed int32 at the +/-32768 map
-                // edge, giving a wrong sprite rotation for that frame. angle_t is a
-                // 32-bit BAM (2^32 == 360deg); map atan2's [-pi,pi] onto it via an
-                // int64 cast (negative wraps to the correct unsigned angle).
-                float    dx  = thing->x / (float)FRACUNIT - view->x;
-                float    dy  = thing->y / (float)FRACUNIT - view->y;
-                angle_t  ang = (angle_t)(long long)
-                    (atan2f(dy, dx) * (4294967296.0 / (2.0 * 3.14159265358979)));
-                unsigned rot = (ang - thing->angle + (unsigned)(ANG45/2)*9) >> 29;
-                lump = sprframe->lump[rot];
-                flip = (boolean)sprframe->flip[rot];
-            }
+            if (n + 6 > maxverts)
+                full = true;
             else
             {
-                lump = sprframe->lump[0];
-                flip = (boolean)sprframe->flip[0];
+                memcpy(out + n, q, sizeof q);
+                n += 6;
             }
-            // DOOM-0073: an unassigned rotation is lump == -1 (R_InstallSpriteLump
-            // validates at load, so this is unreachable with stock WADs); guard it
-            // rather than index spritewidth[]/the atlas with a negative lump.
-            if (lump < 0)
-                continue;
-
-            wpx  = spritewidth[lump]     / (float)FRACUNIT;
-            hpx  = (float)sprite_h[lump];
-            loff = spriteoffset[lump]    / (float)FRACUNIT;
-            toff = spritetopoffset[lump] / (float)FRACUNIT;
-
-            cx   = thing->x / (float)FRACUNIT;
-            cy   = thing->y / (float)FRACUNIT;
-            topz = thing->z / (float)FRACUNIT + toff;
-            botz = topz - hpx;
-            ld   = -loff;                       // left edge along right vector
-            rd   = -loff + wpx;                 // right edge
-
-            light = thing->subsector->sector->lightlevel / 255.0f;
-            if (thing->frame & FF_FULLBRIGHT)
-                light = 1.0f;
-            if (light < 0.0f) light = 0.0f;
-            if (light > 1.0f) light = 1.0f;
-
-            // DOOM-0084: a fullbright frame marks an actual light object (lamp,
-            // torch, candle, burning barrel, projectile) — NOT ammo/pickups. Only
-            // these self-glow + cast NEE light in the path tracer; everything else
-            // is just a depth-occluding billboard (DOOM-0100). DOOM-0112 also lights
-            // the glowing collectibles (bonus potions, spheres, keys, health) which
-            // aren't FF_FULLBRIGHT but should still emit their colour.
-            sflags = RB_MESH_SPRITE;
-            if ((thing->frame & FF_FULLBRIGHT) || sprite_glows(thing->sprite))
-                sflags |= RB_MESH_EMISSIVE;
-
-            // UVs inset half a texel so nearest sampling stays inside the rect.
-            u0 = 0.5f;  u1 = wpx - 0.5f;
-            v0 = 0.5f;  v1 = hpx - 0.5f;
-            if (flip) { float t = u0; u0 = u1; u1 = t; }
-
-            if (n + 6 > maxverts)
-            {
-                dropped++;                      // buffer full: this thing is not drawn
-                continue;
-            }
-
-            // Corners: left-top, right-top, right-bottom, left-bottom.
-            out[n++] = mkv(cx + rx*ld, cy + ry*ld, topz, nx, ny, 0.0f, u0, v0, lump, sflags, light);
-            out[n++] = mkv(cx + rx*rd, cy + ry*rd, topz, nx, ny, 0.0f, u1, v0, lump, sflags, light);
-            out[n++] = mkv(cx + rx*rd, cy + ry*rd, botz, nx, ny, 0.0f, u1, v1, lump, sflags, light);
-            out[n++] = mkv(cx + rx*ld, cy + ry*ld, topz, nx, ny, 0.0f, u0, v0, lump, sflags, light);
-            out[n++] = mkv(cx + rx*rd, cy + ry*rd, botz, nx, ny, 0.0f, u1, v1, lump, sflags, light);
-            out[n++] = mkv(cx + rx*ld, cy + ry*ld, botz, nx, ny, 0.0f, u0, v1, lump, sflags, light);
         }
     }
-    // DOOM-0411: things past the cap used to vanish with no word, in sector order, so a
-    // monster in front of the player could be the one dropped. Say so once, when the
-    // cap is first hit, rather than every frame. Which things to keep is DOOM-0459.
+    if (full)
+        n = build_nearest_sprites(view, out, maxverts, &dropped);
+
+    // DOOM-0411: things past the cap used to vanish with no word. Say so once, when the
+    // cap is first hit, rather than every frame.
     if (dropped && !capWarned)
         printf("RB_BuildSprites: %d thing(s) over the %d-sprite cap not drawn this frame.\n",
                dropped, maxverts / 6);
