@@ -712,6 +712,20 @@ static GameMode_t D_InferGamemode (const char* iwadpath)
     return registered;
 }
 
+// DOOM-0463: Plutonia and TNT are DOOM 2 to the engine; only gamemission tells
+// them apart, for their level names, story text and window title. Like the
+// gamemode, it comes from the IWAD's filename. Only called for a commercial IWAD.
+static GameMission_t D_InferGamemission (const char* iwadpath)
+{
+    const char* base = strrchr(iwadpath, '/');
+    base = base ? base + 1 : iwadpath;
+    if (strstr(base,"plutonia"))
+	return pack_plut;
+    if (strstr(base,"tnt"))
+	return pack_tnt;
+    return doom2;
+}
+
 // DOOM-0060 "remember last game": the app records which IWAD it last loaded in
 // $HOME/.doom_ants_lastgame and defaults to it on the next launch, instead of the
 // doom2.wad-first auto-detect. Best-effort — a missing/unreadable file, a
@@ -1232,6 +1246,8 @@ void D_DoomMain (void)
     FindResponseFile ();
 
     IdentifyVersion ();
+    if (gamemode == commercial)
+	gamemission = D_InferGamemission (wadfiles[0]);	// DOOM-0463
     D_DetectIwads ();       // DOOM-0060: note which games are installed (for the chooser)
     // DOOM-0060: remember the game that just loaded, so the next launch defaults to
     // it instead of the doom2-first auto-detect. wadfiles[0] is the IWAD.
@@ -1278,28 +1294,27 @@ void D_DoomMain (void)
 		 VERSION/100,VERSION%100);
 	break;
       case commercial:
-	sprintf (title,
-		 "                         "
-		 "DOOM 2: Hell on Earth v%i.%i"
-		 "                           ",
-		 VERSION/100,VERSION%100);
+	// DOOM-0463: id left the Final DOOM titles here commented out, as
+	// cases of gamemode; they belong to gamemission.
+	if (gamemission == pack_plut)
+	    sprintf (title,
+		     "                   "
+		     "DOOM 2: Plutonia Experiment v%i.%i"
+		     "                           ",
+		     VERSION/100,VERSION%100);
+	else if (gamemission == pack_tnt)
+	    sprintf (title,
+		     "                     "
+		     "DOOM 2: TNT - Evilution v%i.%i"
+		     "                           ",
+		     VERSION/100,VERSION%100);
+	else
+	    sprintf (title,
+		     "                         "
+		     "DOOM 2: Hell on Earth v%i.%i"
+		     "                           ",
+		     VERSION/100,VERSION%100);
 	break;
-/*FIXME
-       case pack_plut:
-	sprintf (title,
-		 "                   "
-		 "DOOM 2: Plutonia Experiment v%i.%i"
-		 "                           ",
-		 VERSION/100,VERSION%100);
-	break;
-      case pack_tnt:
-	sprintf (title,
-		 "                     "
-		 "DOOM 2: TNT - Evilution v%i.%i"
-		 "                           ",
-		 VERSION/100,VERSION%100);
-	break;
-*/
       default:
 	sprintf (title,
 		 "                     "

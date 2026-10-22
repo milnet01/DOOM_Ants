@@ -91,6 +91,16 @@ void	F_CastTicker (void);
 boolean F_CastResponder (event_t *ev);
 void	F_CastDrawer (void);
 
+// DOOM-0463: the story text for this mission -- DOOM 2's, Plutonia's or TNT's.
+static char* F_MissionText (char* c, char* p, char* t)
+{
+    if (gamemission == pack_plut)
+	return p;
+    if (gamemission == pack_tnt)
+	return t;
+    return c;
+}
+
 //
 // F_StartFinale
 //
@@ -154,33 +164,33 @@ void F_StartFinale (void)
 	  {
 	    case 6:
 	      finaleflat = "SLIME16";
-	      finaletext = c1text;
+	      finaletext = F_MissionText (c1text, p1text, t1text);
 	      break;
 	    case 11:
 	      finaleflat = "RROCK14";
-	      finaletext = c2text;
+	      finaletext = F_MissionText (c2text, p2text, t2text);
 	      break;
 	    case 20:
 	      finaleflat = "RROCK07";
-	      finaletext = c3text;
+	      finaletext = F_MissionText (c3text, p3text, t3text);
 	      break;
 	    case 30:
 	      finaleflat = "RROCK17";
-	      finaletext = c4text;
+	      finaletext = F_MissionText (c4text, p4text, t4text);
 	      break;
 	    case 15:
 	      finaleflat = "RROCK13";
-	      finaletext = c5text;
+	      finaletext = F_MissionText (c5text, p5text, t5text);
 	      break;
 	    case 31:
 	      finaleflat = "RROCK19";
-	      finaletext = c6text;
+	      finaletext = F_MissionText (c6text, p6text, t6text);
 	      break;
 	    default:
 	      // DOOM-0403: as the episode switch above -- never leave these at a
 	      // previous finale's values, which are NULL before the first one.
 	      finaleflat = "SLIME16";
-	      finaletext = c1text;
+	      finaletext = F_MissionText (c1text, p1text, t1text);
 	      break;
 	  }
 	  break;

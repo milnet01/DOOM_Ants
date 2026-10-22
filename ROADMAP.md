@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=494 -->
+<!-- ants-roadmap-id-high-water: DOOM=495 -->
 
 # Roadmap
 
@@ -10567,7 +10567,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: DOOM-0411 split, review-code 2026-09-01 lane vk-accel.
   Lanes: renderer.
 
-- 📋 [DOOM-0463] **Plutonia and TNT play as DOOM 2: gamemission is never set, so both show DOOM 2's level names and story text.**
+- ✅ [DOOM-0463] **Plutonia and TNT play as DOOM 2: gamemission is never set, so both show DOOM 2's level names and story text.**
   Found by DOOM-0450's linker scan: mapnamesp/mapnamest (hu_stuff.c) and
   p1text..p6text / t1text..t6text (f_finale.c) are reachable from
   nothing. They are not dead weight -- they are the data the missing
@@ -10583,6 +10583,15 @@ stay in their phase sections; this heading holds only work still to come.
   switches on gamemission (not gamemode -- DOOM-0139's lesson). Check
   g_game.c's sky block, which already tests gamemission and so has never
   fired for these IWADs. Needs a Final DOOM IWAD to verify.
+  Shipped 2026-10-22. gamemission is set from the IWAD filename after
+  IdentifyVersion; d_main.c's title, hu_stuff.c's map names and
+  f_finale.c's story text now switch on it. Verified without a Final
+  DOOM IWAD: doom2.wad under the names plutonia.wad and tnt.wad (both
+  are told apart by filename only). gdb, old build vs new: mission doom
+  -> pack_plut / pack_tnt; MAP01 "entryway" -> "congo" / "system
+  control"; MAP06 text C1 -> P1 / T1. DOOM 2 unchanged. The g_game.c sky
+  block needed no change: these IWADs are commercial, which it already
+  caught.
   **Layman:** If you load Final DOOM (Plutonia or TNT), the automap shows DOOM 2's level names and the story screens show DOOM 2's text instead of that game's own.
   Kind: fix.
   Source: in-session-2026-09-26 (DOOM-0450 dead-symbol scan).
@@ -10780,6 +10789,16 @@ stay in their phase sections; this heading holds only work still to come.
   **Layman:** Freedoom, the free replacement for DOOM's game data, should play in full and be found when it sits next to the program.
   Kind: fix.
   Source: found-while-building-DOOM-0493-2026-10-22.
+
+- 📋 [DOOM-0495] **A WAD named in capitals, such as DOOM2.WAD, loads as the wrong game.**
+  Seen 2026-10-22: `-iwad DOOM2.WAD` boots as "DOOM Registered
+  Startup". D_InferGamemode and D_InferGamemission (d_main.c) match the
+  filename with case-sensitive strstr; iwad_detect.h already compares
+  case-insensitively. On Linux the auto-detect also looks only for
+  lower-case names, so a DOOM2.WAD next to the program is not found.
+  **Layman:** Steam's copies of DOOM name their files in capital letters; the game should still recognise them.
+  Kind: fix.
+  Source: found-while-fixing-DOOM-0463-2026-10-22.
 
 ## 0.9.0 — The codebase can be trusted
 

@@ -466,18 +466,16 @@ void HU_Start(void)
 	s = HU_TITLE;
 	break;
 
-/* FIXME
-      case pack_plut:
-	s = HU_TITLEP;
-	break;
-      case pack_tnt:
-	s = HU_TITLET;
-	break;
-*/
-	
+      // DOOM-0463: Plutonia and TNT are commercial; gamemission picks their
+      // map names (id's FIXME had them as gamemode cases).
       case commercial:
       default:
-	 s = HU_TITLE2;
+	 if (gamemission == pack_plut)
+	     s = HU_TITLEP;
+	 else if (gamemission == pack_tnt)
+	     s = HU_TITLET;
+	 else
+	     s = HU_TITLE2;
 	 break;
     }
     

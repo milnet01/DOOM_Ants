@@ -13,6 +13,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Final DOOM shows its own level names and story** (DOOM-0463)
+  Plutonia (`plutonia.wad`) and TNT (`tnt.wad`) showed DOOM 2's level names on the automap and DOOM 2's story between chapters. Each now shows its own, and the start-up title names the right game.
+
 - **Freedoom plays in full and is found next to the program** (DOOM-0494)
   Freedoom Phase 1 (`freedoom1.wad`) used to start as the one-episode shareware demo and refuse add-on WADs. It now plays all four episodes. A `freedoom1.wad` or `freedoom2.wad` next to the program is now found without `-iwad`, and the game-select menu offers it. When id's own WADs are also there, they win.
 
