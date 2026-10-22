@@ -38,6 +38,8 @@ extern fixed_t		dc_texturemid;
 
 // first pixel in a column
 extern byte*		dc_source;		
+// rows in dc_source before it repeats (DOOM-0481)
+extern int		dc_texheight;
 
 
 // The span blitting interface.

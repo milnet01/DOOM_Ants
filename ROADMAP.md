@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=495 -->
+<!-- ants-roadmap-id-high-water: DOOM=496 -->
 
 # Roadmap
 
@@ -10651,7 +10651,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: in-session-2026-09-30 (DOOM-0390 closed without a Windows run).
   Lanes: renderer, windows.
 
-- 📋 [DOOM-0481] **R_DrawColumn samples its source through a mask wider than many columns are tall.**
+- ✅ [DOOM-0481] **R_DrawColumn samples its source through a mask wider than many columns are tall.**
   `R_DrawColumn` indexes `dc_source[(frac>>FRACBITS)&127]`, so a column shorter
   than the mask is read past its texels. For a single-patch wall column the
   source is lump data (now validated as a patch by DOOM-0432, which bounds the
@@ -10660,6 +10660,17 @@ stay in their phase sections; this heading holds only work still to come.
   Work: decide how a short texture should tile (the mask assumes a power-of-two
   height), then bound or wrap the read to the texture's real height. Needs the
   demo fixtures and a pixel comparison of Classic before and after.
+  Shipped 2026-10-22. Decision: a wall or sky column repeats at its
+  texture's real height, as Solid and Ultra already tile it. New
+  col_wrap.h (R_WrapFrac, R_StepFrac) does the arithmetic; r_segs.c and
+  r_plane.c set dc_texheight per column, R_DrawMaskedColumn sets 128 so
+  sprites and see-through walls keep id's mask. For a power-of-two
+  height the rows read are exactly id's &127 (tests/col_wrap_test.cpp).
+  Measured, Classic, start view of all 68 stock maps, old build against
+  new (same-build control 0 pixels): 65 identical; E1M2, E2M4 and MAP21
+  change by a few stray pixels each. So "every tall wall" above was too
+  strong. A single-patch column whose patch is shorter than the texture
+  can still read past its post; that is DOOM-0496.
   **Layman:** The classic wall drawer can read a few bytes past the end of a short picture column. Stock data does it too, so it is a tidy-up with a small safety gain, not a crash anyone has seen.
   Kind: fix.
   Source: in-session 2026-09-30 (DOOM-0432 spec, open question Q2).
@@ -10807,6 +10818,21 @@ stay in their phase sections; this heading holds only work still to come.
   **Layman:** A game file named in capital letters, such as DOOM2.WAD, should still be recognised as the right game.
   Kind: fix.
   Source: found-while-fixing-DOOM-0463-2026-10-22.
+
+- 📋 [DOOM-0496] **A wall column drawn straight from a short patch can still read past the patch's data.**
+  R_GenerateLookup (r_data.c) points a column one patch covers straight
+  at that patch's post in the lump, whatever the patch's height and
+  originy. DOOM-0481 wraps the read at the TEXTURE's height, so where the
+  patch is shorter than the texture, or has gaps, the drawer still reads
+  past the post: into the next column's data, or past the lump's end for
+  the last column. Unverified whether any stock texture does this.
+  Work: find out first (scan TEXTURE1/2 for single-patch columns whose
+  post does not run from row 0 to the texture height); if any, decide
+  whether those columns go to the composite, which changes how they look.
+  **Layman:** A rare kind of wall picture can still make the classic drawer read a little past the picture's data; this checks whether the game's own art ever does it.
+  Kind: fix.
+  Source: found-while-fixing-DOOM-0481-2026-10-22.
+  Lanes: sw-renderer.
 
 ## 0.9.0 — The codebase can be trusted
 

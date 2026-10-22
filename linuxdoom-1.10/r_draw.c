@@ -36,6 +36,7 @@ rcsid[] __attribute__((used)) = "$Id: r_draw.c,v 1.4 1997/02/03 16:47:55 b1 Exp 
 #include "w_wad.h"
 
 #include "r_local.h"
+#include "col_wrap.h"
 
 // Needs access to LFB (guess what).
 #include "v_video.h"
@@ -88,6 +89,11 @@ fixed_t			dc_texturemid;
 // first pixel in a column (possibly virtual) 
 byte*			dc_source;		
 
+// DOOM-0481: rows in dc_source before the column repeats (col_wrap.h). Walls
+// and the sky set their texture's height; masked posts (sprites, see-through
+// walls) set 128, id's mask.
+int			dc_texheight = 128;
+
 
 //
 // A column is a vertical slice/span from a wall texture that,
@@ -100,8 +106,8 @@ void R_DrawColumn (void)
 { 
     int			count; 
     byte*		dest; 
-    fixed_t		frac;
-    fixed_t		fracstep;	 
+    unsigned		frac;
+    unsigned		fracstep;	 
  
     count = dc_yh - dc_yl; 
 
@@ -123,8 +129,11 @@ void R_DrawColumn (void)
 
     // Determine scaling,
     //  which is the only mapping to be done.
-    fracstep = dc_iscale; 
-    frac = dc_texturemid + (dc_yl-centery)*fracstep; 
+    // DOOM-0481: both are kept inside one texture height (col_wrap.h). The
+    // step is unsigned: r_segs.c divides 0xffffffffu by the scale.
+    const unsigned hf = (unsigned)dc_texheight<<FRACBITS;
+    fracstep = R_WrapFrac ((uint32_t)dc_iscale, hf);
+    frac = R_WrapFrac (dc_texturemid + (int64_t)(dc_yl-centery)*(uint32_t)dc_iscale, hf);
 
     // Inner loop that does the actual texture mapping,
     //  e.g. a DDA-lile scaling.
@@ -137,10 +146,10 @@ void R_DrawColumn (void)
     {
 	// Re-map color indices from wall texture column
 	//  using a lighting/special effects LUT.
-	*dest = dc_colormap[dc_source[(frac>>FRACBITS)&127]];
+	*dest = dc_colormap[dc_source[frac>>FRACBITS]];
 	
 	dest += sw; 
-	frac += fracstep;
+	frac = R_StepFrac (frac, fracstep, hf);
 	
     } while (count--); 
 } 
@@ -211,8 +220,8 @@ void R_DrawColumnLow (void)
     int			count; 
     byte*		dest; 
     byte*		dest2;
-    fixed_t		frac;
-    fixed_t		fracstep;	 
+    unsigned		frac;
+    unsigned		fracstep;	 
  
     count = dc_yh - dc_yl; 
 
@@ -235,17 +244,18 @@ void R_DrawColumnLow (void)
     dest = ylookup[dc_yl] + columnofs[dc_x];
     dest2 = ylookup[dc_yl] + columnofs[dc_x+1];
     
-    fracstep = dc_iscale; 
-    frac = dc_texturemid + (dc_yl-centery)*fracstep;
+    const unsigned hf = (unsigned)dc_texheight<<FRACBITS;   // DOOM-0481
+    fracstep = R_WrapFrac ((uint32_t)dc_iscale, hf);
+    frac = R_WrapFrac (dc_texturemid + (int64_t)(dc_yl-centery)*(uint32_t)dc_iscale, hf);
     
     const int sw = SCREENWIDTH;   // DOOM-0445: see R_DrawColumn
     do 
     {
 	// Hack. Does not work corretly.
-	*dest2 = *dest = dc_colormap[dc_source[(frac>>FRACBITS)&127]];
+	*dest2 = *dest = dc_colormap[dc_source[frac>>FRACBITS]];
 	dest += sw;
 	dest2 += sw;
-	frac += fracstep; 
+	frac = R_StepFrac (frac, fracstep, hf);
 
     } while (count--);
 }

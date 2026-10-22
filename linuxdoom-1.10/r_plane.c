@@ -440,6 +440,7 @@ void R_DrawPlanes (void)
 	    //  by INVUL inverse mapping.
 	    dc_colormap = colormaps;
 	    dc_texturemid = skytexturemid;
+	    dc_texheight = textureheight[skytexture]>>FRACBITS;   // DOOM-0481
 	    for (x=pl->minx ; x <= pl->maxx ; x++)
 	    {
 		if (pl->top[x] == 0xffffffffu)

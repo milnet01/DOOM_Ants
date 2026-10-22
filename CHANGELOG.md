@@ -13,6 +13,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Classic no longer reads past the end of short wall textures** (DOOM-0481)
+  A wall texture shorter than 128 rows now repeats at its own height, as it already did in Solid and Ultra. Before, the classic drawer filled the missing rows from whatever lay next in memory. On the stock maps' start views this changes a few stray pixels at most.
+
 - **WADs named in capitals load as the right game** (DOOM-0495)
   `DOOM2.WAD` given with `-iwad` loaded as DOOM 1, and on Linux a `DOOM2.WAD` next to the program was not found at all. Both now work, for every supported WAD name in lower or upper case.
 
