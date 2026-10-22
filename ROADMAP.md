@@ -10790,13 +10790,21 @@ stay in their phase sections; this heading holds only work still to come.
   Kind: fix.
   Source: found-while-building-DOOM-0493-2026-10-22.
 
-- 📋 [DOOM-0495] **A WAD named in capitals, such as DOOM2.WAD, loads as the wrong game.**
+- ✅ [DOOM-0495] **A WAD named in capitals, such as DOOM2.WAD, loads as the wrong game.**
   Seen 2026-10-22: `-iwad DOOM2.WAD` boots as "DOOM Registered
   Startup". D_InferGamemode and D_InferGamemission (d_main.c) match the
   filename with case-sensitive strstr; iwad_detect.h already compares
   case-insensitively. On Linux the auto-detect also looks only for
   lower-case names, so a DOOM2.WAD next to the program is not found.
-  **Layman:** Steam's copies of DOOM name their files in capital letters; the game should still recognise them.
+  Shipped 2026-10-22. D_InferGamemode and D_InferGamemission lower-case
+  the basename first (either path separator). New D_IwadPath tries the
+  upper-case name when the lower-case one is missing; IdentifyVersion,
+  D_IwadPresent and D_DetectIwads build candidate paths through it. Red
+  then green: -iwad DOOM2.WAD and PLUTONIA.WAD, and a folder holding
+  only DOOM2.WAD (or PLUTONIA.WAD + DOOM.WAD), now boot the right game;
+  gdb shows the chooser holding both capitalised paths. Mixed case such
+  as Doom2.wad is still not auto-detected on Linux; -iwad handles it.
+  **Layman:** A game file named in capital letters, such as DOOM2.WAD, should still be recognised as the right game.
   Kind: fix.
   Source: found-while-fixing-DOOM-0463-2026-10-22.
 

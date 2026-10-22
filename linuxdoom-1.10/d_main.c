@@ -692,12 +692,29 @@ void D_AddFile (char *file)
     wadfiles[numwadfiles] = newfile;
 }
 
+// DOOM-0495: the IWAD's basename, lower-cased, so the filename tests below see
+// Steam's DOOM2.WAD as doom2.wad. Either separator ends the directory part.
+static void D_IwadBaseLower (const char* iwadpath, char* out, size_t n)
+{
+    const char* base = iwadpath;
+    const char* p;
+    size_t	i;
+
+    for (p = iwadpath; *p; p++)
+	if (*p == '/' || *p == '\\')
+	    base = p + 1;
+    for (i = 0; base[i] && i + 1 < n; i++)
+	out[i] = tolower ((unsigned char) base[i]);
+    out[i] = '\0';
+}
+
 // DOOM-0060: infer gamemode from an IWAD filename. Shared by the -iwad path and
 // the remembered-last-game path.
 static GameMode_t D_InferGamemode (const char* iwadpath)
 {
-    const char* base = strrchr(iwadpath, '/');
-    base = base ? base + 1 : iwadpath;
+    char	base[PATH_MAX];
+
+    D_IwadBaseLower (iwadpath, base, sizeof(base));
     if (strstr(base,"doom2") || strstr(base,"tnt") || strstr(base,"plutonia"))
 	return commercial;
     // DOOM-0494: freedoom1.wad is the full four-episode game, not shareware,
@@ -717,13 +734,33 @@ static GameMode_t D_InferGamemode (const char* iwadpath)
 // gamemode, it comes from the IWAD's filename. Only called for a commercial IWAD.
 static GameMission_t D_InferGamemission (const char* iwadpath)
 {
-    const char* base = strrchr(iwadpath, '/');
-    base = base ? base + 1 : iwadpath;
+    char	base[PATH_MAX];
+
+    D_IwadBaseLower (iwadpath, base, sizeof(base));
     if (strstr(base,"plutonia"))
 	return pack_plut;
     if (strstr(base,"tnt"))
 	return pack_tnt;
     return doom2;
+}
+
+// DOOM-0495: build <dir>/<name> for an IWAD candidate (name in lower case). On a
+// case-sensitive file system a lower-case name misses Steam's DOOM2.WAD, so when
+// it is not there but the upper-case name is, use that. Mixed case is not tried.
+static void D_IwadPath (char* out, size_t n, const char* dir, const char* name)
+{
+    char	upper[64];
+    size_t	i;
+
+    snprintf(out, n, "%s/%s", dir, name);
+    if (!access(out, R_OK))
+	return;
+    for (i = 0; name[i] && i + 1 < sizeof(upper); i++)
+	upper[i] = D_ToUpper (name[i]);
+    upper[i] = '\0';
+    snprintf(out, n, "%s/%s", dir, upper);
+    if (access(out, R_OK))
+	snprintf(out, n, "%s/%s", dir, name);	// neither: keep the documented name
 }
 
 // DOOM-0060 "remember last game": the app records which IWAD it last loaded in
@@ -829,27 +866,27 @@ void IdentifyVersion (void)
 	doomwaddir = ".";
 
     // Commercial.
-    snprintf(doom2wad, sizeof(doom2wad), "%s/doom2.wad", doomwaddir);
+    D_IwadPath(doom2wad, sizeof(doom2wad), doomwaddir, "doom2.wad");
 
     // Retail.
-    snprintf(doomuwad, sizeof(doomuwad), "%s/doomu.wad", doomwaddir);
+    D_IwadPath(doomuwad, sizeof(doomuwad), doomwaddir, "doomu.wad");
 
     // Registered.
-    snprintf(doomwad, sizeof(doomwad), "%s/doom.wad", doomwaddir);
+    D_IwadPath(doomwad, sizeof(doomwad), doomwaddir, "doom.wad");
 
     // Shareware.
-    snprintf(doom1wad, sizeof(doom1wad), "%s/doom1.wad", doomwaddir);
+    D_IwadPath(doom1wad, sizeof(doom1wad), doomwaddir, "doom1.wad");
 
-    snprintf(plutoniawad, sizeof(plutoniawad), "%s/plutonia.wad", doomwaddir);
+    D_IwadPath(plutoniawad, sizeof(plutoniawad), doomwaddir, "plutonia.wad");
 
-    snprintf(tntwad, sizeof(tntwad), "%s/tnt.wad", doomwaddir);
+    D_IwadPath(tntwad, sizeof(tntwad), doomwaddir, "tnt.wad");
 
 
     // French stuff.
-    snprintf(doom2fwad, sizeof(doom2fwad), "%s/doom2f.wad", doomwaddir);
+    D_IwadPath(doom2fwad, sizeof(doom2fwad), doomwaddir, "doom2f.wad");
 
-    snprintf(freedoom2wad, sizeof(freedoom2wad), "%s/freedoom2.wad", doomwaddir);
-    snprintf(freedoom1wad, sizeof(freedoom1wad), "%s/freedoom1.wad", doomwaddir);
+    D_IwadPath(freedoom2wad, sizeof(freedoom2wad), doomwaddir, "freedoom2.wad");
+    D_IwadPath(freedoom1wad, sizeof(freedoom1wad), doomwaddir, "freedoom1.wad");
 
     home = getenv("HOME");
 #ifdef _WIN32
@@ -1033,7 +1070,7 @@ static int D_IwadPresent (const char* name, void* ctx)
 {
     char path[PATH_MAX];
 
-    snprintf(path, sizeof(path), "%s/%s", (const char*)ctx, name);
+    D_IwadPath(path, sizeof(path), (const char*)ctx, name);	// DOOM-0495
     return !access(path, R_OK);
 }
 
@@ -1053,9 +1090,9 @@ void D_DetectIwads (void)
 
     iwad_select_reps(D_IwadPresent, (void*)dir, &d1, &d2);
     if (d1 >= 0)
-	snprintf(iwadDoom1Path, PATH_MAX, "%s/%s", dir, IWAD_CANDIDATES[d1]);
+	D_IwadPath(iwadDoom1Path, PATH_MAX, dir, IWAD_CANDIDATES[d1]);
     if (d2 >= 0)
-	snprintf(iwadDoom2Path, PATH_MAX, "%s/%s", dir, IWAD_CANDIDATES[d2]);
+	D_IwadPath(iwadDoom2Path, PATH_MAX, dir, IWAD_CANDIDATES[d2]);
 
     iwadBothPresent = (iwadDoom1Path[0] != '\0' && iwadDoom2Path[0] != '\0');
 }

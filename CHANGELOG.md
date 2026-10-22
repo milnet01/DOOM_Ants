@@ -13,6 +13,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **WADs named in capitals load as the right game** (DOOM-0495)
+  `DOOM2.WAD` given with `-iwad` loaded as DOOM 1, and on Linux a `DOOM2.WAD` next to the program was not found at all. Both now work, for every supported WAD name in lower or upper case.
+
 - **Final DOOM shows its own level names and story** (DOOM-0463)
   Plutonia (`plutonia.wad`) and TNT (`tnt.wad`) showed DOOM 2's level names on the automap and DOOM 2's story between chapters. Each now shows its own, and the start-up title names the right game.
 
