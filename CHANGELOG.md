@@ -13,6 +13,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **The frame around a shrunk view is drawn at the right size** (DOOM-0492)
+  When you shrink the game view, the stone or rock pattern around it repeated twice as often as it should, so it looked too small next to the status bar. It is now drawn at its proper size, as in the original game.
+
 - **Automated test runs no longer change which game opens next** (DOOM-0483)
   DOOM Ants opens the game you last played. A test or benchmark run of the engine used to count as "last played", so after one, the next plain launch could open the wrong game. Test runs now leave that choice alone. Choosing a game with `-iwad` still counts.
 

@@ -769,22 +769,17 @@ void R_FillBackScreen (void)
     else
 	name = name1;
     
+    // DOOM-0492: the flat is 64x64 LOGICAL, like the bevel patches drawn over it,
+    // so each physical pixel samples texel (x/HIRES, y/HIRES); tiling physical
+    // pixels repeated it HIRES times as often in each axis. Same fix as DOOM-0457.
     src = W_CacheLumpName (name, PU_CACHE); 
     dest = screens[1]; 
 	 
     for (y=0 ; y<SCREENHEIGHT-SBARHEIGHT ; y++) 
     { 
-	for (x=0 ; x<SCREENWIDTH/64 ; x++) 
-	{ 
-	    memcpy (dest, src+((y&63)<<6), 64); 
-	    dest += 64; 
-	} 
-
-	if (SCREENWIDTH&63) 
-	{ 
-	    memcpy (dest, src+((y&63)<<6), SCREENWIDTH&63); 
-	    dest += (SCREENWIDTH&63); 
-	} 
+	const byte* row = src + (((y/HIRES)&63)<<6);
+	for (x=0 ; x<SCREENWIDTH ; x++)
+	    *dest++ = row[(x/HIRES)&63];
     } 
 	
     // The view geometry is physical; the brdr_* tiles are 320x200-logical art

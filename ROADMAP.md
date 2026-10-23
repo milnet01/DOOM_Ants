@@ -10770,7 +10770,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: in-session-2026-10-08, split from DOOM-0379.
   Lanes: renderer, backend-seam.
 
-- 📋 [DOOM-0492] **The border around a shrunk view tiles its flat at half size, as the finale background did.**
+- ✅ [DOOM-0492] **The border around a shrunk view tiles its flat at half size, as the finale background did.**
   R_FillBackScreen (r_draw.c) fills screens[1] by walking SCREENWIDTH/64
   and SCREENHEIGHT-SBARHEIGHT, which are PHYSICAL, with a 64x64 LOGICAL flat
   (FLOOR7_2 / GRNROCK). So the flat repeats HIRES times as often in each axis,
@@ -10779,6 +10779,10 @@ stay in their phase sections; this heading holds only work still to come.
   (x/HIRES, y/HIRES). Seen in Classic with the screen size reduced.
   Verify by capture, as DOOM-0457 was: the flat's vertical repeat should be
   64 logical rows.
+  Shipped 2026-10-23. R_FillBackScreen samples texel (x/HIRES, y/HIRES),
+  as DOOM-0457 did. Classic, screenblocks 7, E1M1 and MAP01 captures at
+  1024x768: vertical repeat 123 px before (32 logical rows), 246 px
+  after (64).
   **Layman:** When you shrink the game view, the patterned frame around it is drawn at half size, so its pattern looks too small next to everything else.
   Kind: fix.
   Source: in-session-2026-10-15, found while fixing DOOM-0457.
