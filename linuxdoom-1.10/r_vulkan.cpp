@@ -6989,6 +6989,17 @@ static void EnsureHdMaterials()
 
 } // namespace
 
+extern "C" void RB_Vulkan_TierChanged(void)
+{
+    // Ultra builds its HD set lazily at the next Present (EnsureHdMaterials), so
+    // entering it needs nothing. Leaving it must not keep the set: pathtrace.comp
+    // samples it in Solid's traced view too. InitHdDefault rebuilds the default
+    // set, and BuildHdSet frees Ultra's first (after a device wait-idle).
+    if (g.device == VK_NULL_HANDLE || rendermode == TIER_RT3D || !g.hdBuilt) return;
+    InitHdDefault();
+    g.hdBuilt = false;
+}
+
 // DOOM-0283: whether Ultra will find its HD art, so the menu and the level-start
 // message can say when it will not. Released builds ship no HD art, so for most
 // players this is the normal case. Checked once: the root cannot change mid-run.

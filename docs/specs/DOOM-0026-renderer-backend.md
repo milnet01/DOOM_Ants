@@ -157,7 +157,8 @@ typedef struct
   only records the request. `RB_ApplyPendingMode` makes the switch between
   frames, called from `D_DoomLoop`. The menu is reachable from inside a frame
   through `NetUpdate`, and a 3D back-end must not be torn down under the frame
-  using it.
+  using it. A switch between Solid and Ultra tears nothing down: both tiers are
+  one Vulkan back-end, and only the HD art changes (`RB_Vulkan_TierChanged`).
 
 `Present()` subsumes today's `I_FinishUpdate` so each back-end controls
 compositing (Classic just calls the existing path; 3D composites the UI plane

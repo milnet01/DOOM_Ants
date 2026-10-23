@@ -552,12 +552,18 @@ rendermode_t RB_RequestedMode(void)
 boolean RB_ApplyPendingMode(void)
 {
     rendermode_t mode = rb_pendingMode;
+    boolean rebuild;
 
     rb_pendingMode = RB_NUMMODES;
     if (mode == RB_NUMMODES || mode == rendermode)
         return false;
 
-    if (active->Shutdown)
+    // DOOM-0456: Solid and Ultra are one Vulkan back-end, so a switch between
+    // them keeps the window, device, pipelines and level. Only the HD art
+    // belongs to a tier, and RB_Vulkan_TierChanged sees to that.
+    rebuild = backends[mode].Init != active->Init;
+
+    if (rebuild && active->Shutdown)
         active->Shutdown();
 
     rendermode = mode;
@@ -565,15 +571,20 @@ boolean RB_ApplyPendingMode(void)
     // so the view matches the menu choice; `~` still overrides within a tier.
     RB_ApplyTierRt();
     active = &backends[rendermode];
-    if (active->Init)
-        active->Init();
+    if (!rebuild)
+        RB_Vulkan_TierChanged();
+    else
+    {
+        if (active->Init)
+            active->Init();
 
-    // Switching mid-game: the new back-end starts with no scene. Rebuild the
-    // current level so the 3D back-ends draw the world immediately instead of a
-    // blank view (RB_Init does the same on the -warp autostart path). Classic's
-    // BuildLevel is NULL, so this is a no-op when switching to it.
-    if (numsegs > 0 && active->BuildLevel)
-        active->BuildLevel();
+        // Switching mid-game: the new back-end starts with no scene. Rebuild the
+        // current level so the 3D back-ends draw the world immediately instead of a
+        // blank view (RB_Init does the same on the -warp autostart path). Classic's
+        // BuildLevel is NULL, so this is a no-op when switching to it.
+        if (numsegs > 0 && active->BuildLevel)
+            active->BuildLevel();
+    }
 
     // screens[0] (the paletted 2D buffer) is shared across back-ends and carries
     // stale pixels across the hand-off -- the 3D compositor's magenta key colour
