@@ -76,8 +76,17 @@ void RB_InterpDisable(void);               // render the live tic state, no lerp
 // Classic; the 3D back-end converts the map to meshes + acceleration structures.
 void RB_BuildLevel(void);
 
-// Switch back-end at runtime (the menu). Re-inits; clamps to available.
+// Ask to switch back-end at runtime (the menu); an unavailable mode is ignored.
+// Only records the request: RB_ApplyPendingMode makes the switch between frames
+// (DOOM-0456), because the menu can be reached from inside a frame.
 void RB_SetMode(rendermode_t mode);
+
+// The mode the next frame will use: a pending request, else rendermode.
+rendermode_t RB_RequestedMode(void);
+
+// Make a pending switch, if any. Call only between frames. Returns true when
+// rendermode changed.
+boolean RB_ApplyPendingMode(void);
 
 // The palette the engine just set (I_SetPalette's argument). The 3D tiers show
 // a flash palette as a blend over the frame (DOOM-0379); kept here, not in the

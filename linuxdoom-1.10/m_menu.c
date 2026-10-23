@@ -2354,13 +2354,15 @@ void M_ChangeDetail(int choice)
 //
 void M_ChangeRenderer(int choice)
 {
-    rendermode_t next;
-    int prevClassic, nextClassic;
+    rendermode_t from, next;
 
     choice = 0;
-    next = RB_NextAvailableMode(rendermode);
+    // DOOM-0456: cycle from the REQUESTED mode, since the switch itself waits for
+    // the frame boundary; two presses inside one frame then advance twice.
+    from = RB_RequestedMode();
+    next = RB_NextAvailableMode(from);
 
-    if (next == rendermode)
+    if (next == from)
     {
 	// No other back-end available — nothing to switch to yet.
 	S_StartSound(NULL, sfx_oof);
@@ -2369,16 +2371,25 @@ void M_ChangeRenderer(int choice)
 	return;
     }
 
-    prevClassic = (rendermode == RB_CLASSIC);
     RB_SetMode(next);
+}
 
-    // DOOM-0206 (L3): the menu skin is tied to the tier. A tier change that crosses
-    // the Classic<->3D boundary re-routes currentMenu so the classic bitmap skin
-    // (RendererDef) and the crisp skin (VideoDef) each only ever show under their own
-    // tiers. A Solid<->Ultra change keeps VideoDef (no needless cursor jump). itemOn
-    // is pinned to the destination's tier row so the cursor stays put across the swap
-    // (M_SetupNextMenu would restore lastOn, not necessarily that row).
-    nextClassic = (next == RB_CLASSIC);
+//
+// The tier just changed from `was` (DOOM-0456: called where the switch lands,
+// between frames, so no frame is drawn with one tier's skin under the other).
+//
+// DOOM-0206 (L3): the menu skin is tied to the tier. A tier change that crosses
+// the Classic<->3D boundary re-routes currentMenu so the classic bitmap skin
+// (RendererDef) and the crisp skin (VideoDef) each only ever show under their own
+// tiers. A Solid<->Ultra change keeps VideoDef (no needless cursor jump). itemOn
+// is pinned to the destination's tier row so the cursor stays put across the swap
+// (M_SetupNextMenu would restore lastOn, not necessarily that row).
+//
+void M_RendererChanged(int was)
+{
+    int prevClassic = (was == RB_CLASSIC);
+    int nextClassic = (rendermode == RB_CLASSIC);
+
     if (prevClassic != nextClassic &&
 	(currentMenu == &VideoDef || currentMenu == &RendererDef))
     {

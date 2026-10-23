@@ -58,6 +58,10 @@ void M_StartControlPanel (void);
 // at boot (when both games are installed) and by the main-menu "Game Select" item.
 void M_OpenGameSelect (void);
 
+// DOOM-0456: the render tier just changed from `was` (a rendermode_t). Called by
+// D_DoomLoop where RB_ApplyPendingMode lands the switch, so the menu skin follows.
+void M_RendererChanged (int was);
+
 #ifdef DOOM_DEV
 // DOOM-0318: `-devmenu <name>` opens a named menu as the level loads, so an
 // automated capture can photograph one. Called from G_DoLoadLevel beside

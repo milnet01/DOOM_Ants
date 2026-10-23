@@ -532,10 +532,30 @@ void RB_BuildLevel(void)
         players[consoleplayer].message = "Ultra: HD art not found";
 }
 
+// DOOM-0456: a switch waits for the frame boundary. NetUpdate reaches the menu
+// (D_ProcessEvents -> M_Responder -> M_ChangeRenderer), and D_Display calls
+// NetUpdate mid-frame, so an immediate switch could destroy the Vulkan device
+// inside the frame still using it. RB_NUMMODES means "nothing pending".
+static rendermode_t rb_pendingMode = RB_NUMMODES;
+
 void RB_SetMode(rendermode_t mode)
 {
-    if (!RB_ModeAvailable(mode) || mode == rendermode)
-        return;
+    if (RB_ModeAvailable(mode))
+        rb_pendingMode = mode;
+}
+
+rendermode_t RB_RequestedMode(void)
+{
+    return rb_pendingMode != RB_NUMMODES ? rb_pendingMode : rendermode;
+}
+
+boolean RB_ApplyPendingMode(void)
+{
+    rendermode_t mode = rb_pendingMode;
+
+    rb_pendingMode = RB_NUMMODES;
+    if (mode == RB_NUMMODES || mode == rendermode)
+        return false;
 
     if (active->Shutdown)
         active->Shutdown();
@@ -564,4 +584,5 @@ void RB_SetMode(rendermode_t mode)
     // The view tables stay valid from startup, so Classic renders without it.
     memset(screens[0], 0, SCREENWIDTH * SCREENHEIGHT);
     ST_Start();             // full status-bar repaint (sets st_firsttime)
+    return true;
 }

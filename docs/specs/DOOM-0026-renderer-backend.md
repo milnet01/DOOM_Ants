@@ -153,6 +153,12 @@ typedef struct
   inits the new one. Out of scope to make seamless mid-game this session (only
   Classic exists), but the entry point is defined.
 
+  *Amended 2026-10-23 (DOOM-0456), recording what was built.* `RB_SetMode` now
+  only records the request. `RB_ApplyPendingMode` makes the switch between
+  frames, called from `D_DoomLoop`. The menu is reachable from inside a frame
+  through `NetUpdate`, and a 3D back-end must not be torn down under the frame
+  using it.
+
 `Present()` subsumes today's `I_FinishUpdate` so each back-end controls
 compositing (Classic just calls the existing path; 3D composites the UI plane
 over its own image — see [UI compositing](#ui-compositing)).
@@ -428,3 +434,4 @@ cite → the `LINUX`-active row 265). Lane B polish:
 - *Status:* the spec header still read "Draft — pending /cold-eyes" despite the
   completed loops — updated to "Reviewed … ready to implement".
 - *Unverified / dismissed:* none.
+- **impl (2026-10-23, DOOM-0456)** — not a review; no reviewer was dispatched. Amended the `RB_SetMode` entry to record what DOOM-0456 built: the switch is a request applied between frames by `RB_ApplyPendingMode`.

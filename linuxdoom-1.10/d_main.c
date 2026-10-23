@@ -502,6 +502,14 @@ void D_DoomLoop (void)
 
 	S_UpdateSounds (players[consoleplayer].mo);// move positional sounds
 
+	// DOOM-0456: a renderer change asked for since the last frame lands here,
+	// between frames, never inside one.
+	{
+	    int was = rendermode;
+	    if (RB_ApplyPendingMode ())
+		M_RendererChanged (was);
+	}
+
 	// Update display, next frame, with current state.
 	D_Display ();
 
