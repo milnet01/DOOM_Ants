@@ -1088,6 +1088,9 @@ struct VulkanState
     // DOOM-0330: one byte per static emitter record — "this triangle is nukage/lava".
     // Parallel to staticWgt (same order, same length), read by ClusterStaticFogLights.
     std::vector<uint8_t> staticEmitLiquid;
+    // DOOM-0497: each static emitter's subsector (the mesh's tri_ss), parallel to
+    // staticWgt, so the raster point-light cache can apply the REJECT cull to it.
+    std::vector<int32_t> staticEmitSs;
     std::vector<int>     liquidMatIds;              // unified ids of the liquid flats
 
     // GI bake probes (DOOM-0009 build step 4). One irradiance probe per subsector
@@ -1136,9 +1139,9 @@ struct VulkanState
     std::vector<int32_t>    subSecSector;        // per-subsector sector (REJECT cull; empty = off)
     const unsigned char*    rejectCPU = nullptr; // REJECT bitmatrix (PU_LEVEL, level lifetime)
     std::vector<float>      emitCentroidScratch; // reused per-frame emitter centroids
-    // DOOM-0170 perf: per-subsector nearest-N cache over the STATIC emitters only. Those
-    // records carry the no-reject sentinel, so each is tested against EVERY subsector —
-    // an unpruned O(subsectors × staticEmitters) cull that dominated the frame (~8 ms).
+    // DOOM-0170 perf: per-subsector nearest-N cache over the STATIC emitters only. Each
+    // is tested against EVERY subsector (DOOM-0497 skips only REJECT-hidden pairs) — an
+    // O(subsectors × staticEmitters) cull that dominated the frame (~8 ms).
     // It is camera- and frame-invariant, so RebuildStaticPointLightCache computes it once
     // (on staticLightsDirty) and the per-frame BuildRasterPointLights copies it and merges
     // only the handful of moving sprite emitters on top.
@@ -7345,8 +7348,8 @@ void BuildDynamicEmitters()
 }
 
 // DOOM-0170 perf: recompute the per-subsector nearest-N cache over the STATIC emitters
-// only (records [0, staticN) — wall/flat lights that never move and carry the DOOM-0119
-// no-reject sentinel, so each is tested against EVERY subsector). This unpruned
+// only (records [0, staticN) — wall/flat lights that never move, so each is tested against
+// EVERY subsector, skipping only the pairs REJECT hides, DOOM-0497). This
 // O(subsectors × staticEmitters) cull was the ~8 ms/frame hotspot the DOOM-0170 CPU
 // profiler pinpointed; it is camera- and frame-invariant, so it runs only when the static
 // set changes (level load / switch press / animated flat, via g.staticLightsDirty) instead
@@ -7381,17 +7384,42 @@ static void RebuildStaticPointLightCache(int staticN)
         sc[e * 3 + 2] = (r[2] + r[5] + r[8]) * (1.0f / 3.0f);
     }
 
+    // DOOM-0497: the REJECT cull, as BuildRasterPointLights applies it to the sprite
+    // emitters. A wall or flat light's sector is the one its triangle was emitted into
+    // (a wall's tri_ss is the subsector its face looks into). Without it every subsector
+    // took its nearest lights through solid walls: E1M2's blue FLAT22 ceiling panels
+    // turned the brown building outside their room pink.
+    const bool cull = (g.numSectors > 0 && g.rejectCPU &&
+                       (int)g.subSecSector.size() >= numSub &&
+                       (int)g.staticEmitSs.size() >= staticN);
+    std::vector<int32_t> es;
+    if (cull)
+    {
+        es.resize((size_t)staticN);
+        for (int e = 0; e < staticN; e++)
+        {
+            const int32_t ss = g.staticEmitSs[(size_t)e];
+            es[(size_t)e] = (ss >= 0 && ss < numSub) ? g.subSecSector[(size_t)ss] : -1;
+        }
+    }
+
     for (int si = 0; si < numSub; si++)
     {
         const rb_probe_t& c = g.subCentroid[si];
+        const int         secA = cull ? g.subSecSector[si] : -1;
 
         // Nearest-N by 2D distance to the subsector centroid, kept sorted ascending.
-        // Static emitters carry the no-reject sentinel, so no REJECT cull here.
         float bestD[RASTER_MAX_LIGHTS_PER_SUBSECTOR];
         int   bestI[RASTER_MAX_LIGHTS_PER_SUBSECTOR];
         int   cnt = 0;
         for (int e = 0; e < staticN; e++)
         {
+            if (secA >= 0 && es[(size_t)e] >= 0 && es[(size_t)e] < (int)g.numSectors)
+            {
+                const int pnum = secA * (int)g.numSectors + es[(size_t)e];
+                if (g.rejectCPU[pnum >> 3] & (1 << (pnum & 7)))
+                    continue;                     // this sector provably can't see the emitter
+            }
             const float dx = sc[e * 3 + 0] - c.x;
             const float dy = sc[e * 3 + 1] - c.y;
             const float d2 = dx * dx + dy * dy;
@@ -7608,6 +7636,7 @@ static void BuildStaticEmitterSet(const rb_vertex_t* v)
     g.staticEmit.clear();
     g.staticWgt.clear();
     g.staticEmitLiquid.clear();
+    g.staticEmitSs.clear();
     if (!g.levelMesh || g.matEmissive.empty() || !v)
         return;
 
@@ -7651,6 +7680,7 @@ static void BuildStaticEmitterSet(const rb_vertex_t* v)
         // "is emitter e a pool?" by index without carrying the material id in the record.
         g.staticEmitLiquid.push_back(std::find(g.liquidMatIds.begin(), g.liquidMatIds.end(), id)
                                      != g.liquidMatIds.end() ? 1u : 0u);
+        g.staticEmitSs.push_back(g.levelMesh->tri_ss[t]);
     }
 
     // DOOM-0170 perf: static set changed -> recache point lights. DOOM-0436: unless every
