@@ -10938,6 +10938,10 @@ stay in their phase sections; this heading holds only work still to come.
   Unknown whether DOOM-0497 or an earlier change caused it. Work: get the
   spot from the user, A/B scratch/p0497/old against new there, then
   locate.
+  2026-10-23: shot-0008 predates DOOM-0501 and carries no note, so the
+  spot is unknown. Waiting on the user to re-take the band in Solid with
+  F12; that shot's .txt `repeat:` line gives the spot. Then A/B the
+  pre- and post-DOOM-0497 builds there.
   **Layman:** Partway into E1M9 in the Solid view, a wide red band of liquid texture smears across the room's walls with white patches above it.
   Kind: investigate.
   Source: user-playtest-2026-10-23.
