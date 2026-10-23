@@ -43,6 +43,8 @@ void G_WarpToSpot (void);
 // DOOM-0294 developer view (make DEV=1 only): honour `-inspect` and `-freeze`
 // after a level loads, so a headless capture is taken of a world that holds still.
 void G_DevInspectFromArgv (void);
+// DOOM-0501: shot-NNNN.txt beside a just-written dev-shots PNG of w x h pixels.
+void G_DevShotInfo (const char* pngpath, int w, int h);
 #endif
 
 // Can be called by the startup code or M_Responder.

@@ -847,7 +847,10 @@ static void I_DevShotClassic (void)
     if (!rb_devshot_path (path, sizeof path))
 	fprintf (stderr, "dev: dev-shots/ already holds 9999 screenshots\n");
     else if (stbi_write_png (path, w, h, 4, px, w * 4))
+    {
 	printf ("dev: wrote %s (%dx%d, Classic)\n", path, w, h);
+	G_DevShotInfo (path, w, h);
+    }
     else
 	fprintf (stderr, "dev: failed to write %s\n", path);
 

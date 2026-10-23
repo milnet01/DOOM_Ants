@@ -291,6 +291,9 @@ extern "C" void* I_GetWindow(void);
 extern "C" void  I_ShutdownGraphicsForVulkan(void);
 extern "C" [[noreturn]] void I_Error(const char* error, ...);
 extern "C" int M_CheckParm(const char* check);   // m_argv.c — for -rtverify (step 4d)
+#ifdef DOOM_DEV
+extern "C" void G_DevShotInfo(const char* pngpath, int w, int h);   // g_game.c — DOOM-0501
+#endif
 // DOOM-0206 v2: decode the real WAD menu skull (M_SKULL1) to a brightened RGBA buffer,
 // cached in m_menu.c. Uploaded once as the crisp cursor texture (CreateTextResources).
 extern "C" const unsigned char* M_CursorSkullRGBA(int* out_w, int* out_h);
@@ -11141,7 +11144,10 @@ extern "C" void RB_Vulkan_Present(void)
                 fprintf(stderr, "dev: dev-shots/ already holds 9999 screenshots\n");
             else if (stbi_write_png(path, (int)g.devShotW, (int)g.devShotH, 4, px,
                                     (int)g.devShotW * 4))
+            {
                 printf("dev: wrote %s (%ux%u)\n", path, g.devShotW, g.devShotH);
+                G_DevShotInfo(path, (int)g.devShotW, (int)g.devShotH);
+            }
             else
                 fprintf(stderr, "dev: failed to write %s\n", path);
             free(px);

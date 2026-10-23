@@ -24,6 +24,8 @@
 #define __M_MISC__
 
 
+#include <stdio.h>
+
 #include "doomtype.h"
 //
 // MISC
@@ -56,6 +58,10 @@ void M_ScreenShot (void);
 void M_LoadDefaults (void);
 
 void M_SaveDefaults (void);
+
+// Every setting as `name<TAB><TAB>value` lines, the config file's own format.
+// M_SaveDefaults writes the config with it; F12's shot note (DOOM-0501) too.
+void M_WriteDefaults (FILE* f);
 
 
 

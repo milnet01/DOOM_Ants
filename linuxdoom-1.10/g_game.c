@@ -28,6 +28,7 @@ rcsid[] __attribute__((used)) = "$Id: g_game.c,v 1.8 1997/02/03 22:45:09 b1 Exp 
 #include <stdlib.h>
 #include <stdint.h>
 #include <limits.h>
+#include <time.h>
 
 #include "doomdef.h" 
 #include "doomstat.h"
@@ -67,6 +68,7 @@ rcsid[] __attribute__((used)) = "$Id: g_game.c,v 1.8 1997/02/03 22:45:09 b1 Exp 
 // SKY handling - still the wrong place.
 #include "r_data.h"
 #include "r_sky.h"
+#include "r_backend.h"		// DOOM-0501: rendermode, RB_ModeName for the shot note
 
 
 
@@ -642,6 +644,73 @@ void G_WarpToSpot (void)
 }
 
 #ifdef DOOM_DEV
+//
+// G_DevShotInfo  (DOOM-0501)
+// Writes shot-NNNN.txt beside the dev-shots/shot-NNNN.png just saved: where the
+// player stood, how the frame was drawn, and a -warp/-warpto line that stands
+// them there again. A screenshot of a bug is only useful if the spot can be
+// found again, and the picture alone does not say where it was taken.
+//
+// The whole config goes in, not only the renderer: a hidden toggle in ~/.doomrc
+// has faked a regression before, and a note naming only the tier would hide it.
+//
+void G_DevShotInfo (const char* pngpath, int w, int h)
+{
+    extern int	rb_rtdebug;		// r_vulkan.cpp: 6 = ray tracing on
+    char	path[256];
+    size_t	n = strlen (pngpath);
+    FILE*	f;
+    mobj_t*	mo = players[consoleplayer].mo;
+    time_t	now = time (NULL);
+    char	when[32];
+    unsigned	deg;
+
+    if (n < 4 || n - 4 + sizeof ".txt" > sizeof path || !mo)
+	return;
+    memcpy (path, pngpath, n - 4);
+    strcpy (path + n - 4, ".txt");
+    f = fopen (path, "w");
+    if (!f)
+    {
+	fprintf (stderr, "dev: could not write %s\n", path);
+	return;
+    }
+
+    // -warpto takes whole degrees; round the BAM angle to the nearest one.
+    deg = (unsigned)((((uint64_t)mo->angle * 360) + (1u << 31)) >> 32) % 360;
+    strftime (when, sizeof when, "%Y-%m-%d %H:%M:%S", localtime (&now));
+
+    fprintf (f, "# DOOM_Ants F12 capture: where it was taken and how it was drawn.\n");
+    fprintf (f, "shot:\t\t%s\n", pngpath);
+    fprintf (f, "taken:\t\t%s\n", when);
+    fprintf (f, "iwad:\t\t%s\n", wadfiles[0] ? wadfiles[0] : "?");
+    if (gamemode == commercial)
+	fprintf (f, "map:\t\tMAP%02d\n", gamemap);
+    else
+	fprintf (f, "map:\t\tE%dM%d\n", gameepisode, gamemap);
+    fprintf (f, "skill:\t\t%d\n", gameskill + 1);
+    fprintf (f, "position:\t%d %d %d\t(x y z, map units)\n",
+	     mo->x >> FRACBITS, mo->y >> FRACBITS, mo->z >> FRACBITS);
+    fprintf (f, "angle:\t\t%u\t(degrees, 0 = east, counter-clockwise)\n", deg);
+    fprintf (f, "sector:\t\t%d\n", (int)(mo->subsector->sector - sectors));
+    fprintf (f, "renderer:\t%s, ray tracing %s\n", RB_ModeName (rendermode),
+	     rendermode != RB_CLASSIC && rb_rtdebug == 6 ? "on" : "off");
+    fprintf (f, "image:\t\t%dx%d\n", w, h);
+    if (gamemode == commercial)
+	fprintf (f, "repeat:\t\t-warp %d", gamemap);
+    else
+	fprintf (f, "repeat:\t\t-warp %d %d", gameepisode, gamemap);
+    fprintf (f, " -skill %d -warpto %d %d %u\n", gameskill + 1,
+	     mo->x >> FRACBITS, mo->y >> FRACBITS, deg);
+    fprintf (f, "\n# settings this frame was drawn with (config file format)\n");
+    M_WriteDefaults (f);
+
+    if (fclose (f) != 0)
+	fprintf (stderr, "dev: could not write %s\n", path);
+    else
+	printf ("dev: wrote %s\n", path);
+}
+
 //
 // G_DevInspectFromArgv  (DOOM-0294)
 // `-inspect` applies the developer menu's Inspect preset as the level loads, and

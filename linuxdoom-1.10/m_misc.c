@@ -405,12 +405,31 @@ char*	defaultfile;
 
 
 //
+// M_WriteDefaults
+//
+void M_WriteDefaults (FILE* f)
+{
+    int		i;
+
+    for (i=0 ; i<numdefaults ; i++)
+    {
+	if (defaults[i].defaultvalue > -0xfff
+	    && defaults[i].defaultvalue < 0xfff)
+	{
+	    fprintf (f,"%s\t\t%i\n",defaults[i].name,*defaults[i].location);
+	} else {
+	    fprintf (f,"%s\t\t\"%s\"\n",defaults[i].name,
+		     * (char **) (defaults[i].location));
+	}
+    }
+}
+
+
+//
 // M_SaveDefaults
 //
 void M_SaveDefaults (void)
 {
-    int		i;
-    int		v;
     FILE*	f;
     char	tmpfile[PATH_MAX];
 
@@ -456,18 +475,7 @@ void M_SaveDefaults (void)
 	}
     }
 
-    for (i=0 ; i<numdefaults ; i++)
-    {
-	if (defaults[i].defaultvalue > -0xfff
-	    && defaults[i].defaultvalue < 0xfff)
-	{
-	    v = *defaults[i].location;
-	    fprintf (f,"%s\t\t%i\n",defaults[i].name,v);
-	} else {
-	    fprintf (f,"%s\t\t\"%s\"\n",defaults[i].name,
-		     * (char **) (defaults[i].location));
-	}
-    }
+    M_WriteDefaults (f);
 
     // DOOM-0400: the replace below is atomic with respect to what is ON DISK, so
     // the bytes have to reach it first. Without this a power loss can commit the
