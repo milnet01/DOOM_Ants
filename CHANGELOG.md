@@ -13,6 +13,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Walls with a pinhole in their art draw correctly in Classic** (DOOM-0496)
+  A few wall pictures have a one-pixel see-through hole. Classic used to read straight through it, so that strip of the picture showed a few junk pixels and the rest of the strip slid down. It now draws the strip in place, with the hole black. In the stock games this touches one strip each of four pictures, one of them the Doom II city sky. A broken custom WAD can no longer make Classic read past the end of a picture's data this way.
+
 - **Switching from Solid to Ultra is quicker, and safer in a network game** (DOOM-0456)
   Picking Ultra while in Solid used to shut the whole graphics system down and start it again. It now keeps it running and only loads the HD art. A renderer change now waits for the current frame to finish, so it can no longer pull the graphics system out from under a frame. Solid and Ultra now check for network messages during each frame, as Classic always has.
 
