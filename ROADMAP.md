@@ -10474,7 +10474,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: review-code 2026-09-01, lane backend-seam (DOOM-0405 F1); split out 2026-09-21.
   Lanes: backend-seam, renderer.
 
-- 📋 [DOOM-0456] **RB_SetMode tears down more than it needs to, at a moment its caller cannot survive.**
+- ✅ [DOOM-0456] **RB_SetMode tears down more than it needs to, at a moment its caller cannot survive.**
   Split out of DOOM-0405. Two findings with one root: RB_SetMode does too
   much, and it runs at a point the code calling it cannot come back from.
 
@@ -10516,6 +10516,13 @@ stay in their phase sections; this heading holds only work still to come.
   Decided by the user 2026-09-25: skip the Solid<->Ultra rebuild, and
   free the HD material set on leaving Ultra so Solid keeps DOOM's own
   art.
+  Shipped 2026-10-23 in ff7558f (switch lands between frames; menu
+  re-route moved to M_RendererChanged), 3e87cfe (Solid<->Ultra keeps the
+  device; leaving Ultra rebuilds the all-paletted HD set) and ec0d555
+  (Vulkan_RenderPlayerView calls NetUpdate twice). Verified under gdb on
+  a private GPU display; kit in scratch/p0456. The menu cycles forward
+  only, so a player's direct 3D switch is Solid -> Ultra; Ultra -> Solid
+  was checked through RB_SetMode(2).
   **Layman:** Switching between the Solid and Ultra views rebuilds the whole graphics system when it does not have to, and that same switch is why the 3D views cannot service a network game mid-frame.
   Kind: review-fix.
   Source: review-code 2026-09-01, lane backend-seam (DOOM-0405 F4 and F7); split out 2026-09-21.

@@ -13,6 +13,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Switching from Solid to Ultra is quicker, and safer in a network game** (DOOM-0456)
+  Picking Ultra while in Solid used to shut the whole graphics system down and start it again. It now keeps it running and only loads the HD art. A renderer change now waits for the current frame to finish, so it can no longer pull the graphics system out from under a frame. Solid and Ultra now check for network messages during each frame, as Classic always has.
+
 - **Very large custom levels can be saved** (DOOM-0421)
   A save used to have a fixed amount of room. On a huge custom level with thousands of monsters, saving stopped with a "savegame buffer is short" message. The room now grows as needed, so any level saves and loads. Saves from earlier builds still load.
 
