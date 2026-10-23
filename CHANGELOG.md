@@ -11,6 +11,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 - **An About notice: no piracy, no DOOM data included, and the trademark credit** (DOOM-0493)
   The main menu has a new **About** row, just above Quit. It says DOOM Ants ships no DOOM game data, that you need Freedoom or your own copy of DOOM, and that DOOM Ants is not made or endorsed by id Software, ZeniMax or Bethesda. The README and the Windows download's README.txt say the same.
 
+- **Developer screenshots say where they were taken** (DOOM-0501)
+  In a developer build, each `dev-shots/shot-NNNN.png` now gets a `shot-NNNN.txt` beside it. It names the map, skill, position, facing, renderer and every setting. Its `repeat:` line holds the `-warp` and `-warpto` arguments that stand the player there again. Classic's F12 still saves DOOM's own `.pcx`, with no note.
+
 ### Fixed
 
 - **Solid's flashlight no longer casts shadows from nowhere** (DOOM-0499)

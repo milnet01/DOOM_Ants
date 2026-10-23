@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=500 -->
+<!-- ants-roadmap-id-high-water: DOOM=501 -->
 
 # Roadmap
 
@@ -12851,6 +12851,24 @@ defect visible before a player finds it.
   Kind: test.
   Source: in-session-2026-09-30 (found answering UT_Ants).
   Lanes: renderer, tests.
+
+- ✅ [DOOM-0501] **F12 writes a note beside each screenshot saying where it was taken and how it was drawn.**
+  DOOM-0500's report (dev-shots/shot-0008.png) could not be
+  reproduced: the PNG says nothing about where it was taken.
+  Each dev-shots/shot-NNNN.png gets a shot-NNNN.txt with the
+  IWAD, map, skill, position, angle, sector, renderer and
+  ray-tracing state, image size, every config setting, and a
+  -warp/-warpto line that stands the player there again.
+  Modelled on UT_Ants' UTA-0191 capture details file, kept
+  to one text file. Classic's F12 still writes DOOM's own
+  .pcx and gets no note.
+  Verified 2026-10-23: a Solid E1M9 capture at angle 37, retaken from its
+  own note's repeat line, differed by 2 pixels against a same-settings
+  control's 1,725.
+  **Layman:** Press F12 and, next to the picture, the game saves a small text file with the map, your exact spot and facing, the renderer and every setting, so a problem in a screenshot can be found again without describing where you were.
+  Kind: feature.
+  Source: user-request-2026-10-23.
+  Lanes: dev-tools.
 
 ## 0.10.0 — The frame budget
 
