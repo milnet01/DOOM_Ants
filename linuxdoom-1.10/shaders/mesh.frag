@@ -302,12 +302,13 @@ void main()
     // at albedo (matching the pre-L2b combined clamp(sect+flash,0,1)); the split is a no-op.
     if (pc.flashlight > 0.5 && (vFlags & FLAG_PSPRITE) == 0)
     {
-        // DOOM-0170 L2c: hold the torch UP and to the SIDE of the eye (Doom 3-style) so its cast
-        // shadows are visible — a light exactly at the eye casts none you can see (the shadow
-        // hides behind its caster). These offsets MUST match the shadow pass (kFlashOffRight/Up
+        // DOOM-0170 L2c / DOOM-0499: the torch sits in a right chest pocket so its cast shadows
+        // are visible — a light exactly at the eye casts none you can see (the shadow hides
+        // behind its caster) — but inside the player's body, so a wall beside the player cannot
+        // come between torch and scene. These offsets MUST match the shadow pass (kFlashOffRight/Up
         // in r_vulkan.cpp; shader_mirror_test checks) so the shadow lines up with the lit beam. View space: right + world up.
-        const float FLASH_OFF_RIGHT = 28.0;
-        const float FLASH_OFF_UP    = 22.0;
+        const float FLASH_OFF_RIGHT = 8.0;
+        const float FLASH_OFF_UP    = -10.0;
         vec3  fwd    = vec3(cos(pc.yaw), sin(pc.yaw), 0.0);
         vec3  right  = vec3(sin(pc.yaw), -cos(pc.yaw), 0.0);   // fwd × worldUp
         vec3  eye    = vec3(pc.eyeX, pc.eyeY, pc.eyeZ)

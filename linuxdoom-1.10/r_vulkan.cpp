@@ -10553,15 +10553,16 @@ extern "C" void RB_Vulkan_Present(void)
     // when the torch is off; g.shadowDs then still points at the last-parked depth image.
     if (rb_flashlight && g.haveCamera && g.atlasReady && g.vbuf && g.vertexCount)
     {
-        // Light view-projection: the torch is held UP and to the SIDE of the eye (Doom 3-style),
-        // NOT exactly at it. A light co-located with the camera casts no VISIBLE shadow — every
-        // shadow falls directly behind its caster, hidden by that caster from the same viewpoint.
-        // Offsetting the light gives camera/light parallax so shadows swing into view. The offset
-        // is in view space (right vector + world up) and MUST match mesh.frag's flashlight cone
-        // (FLASH_OFF_RIGHT / FLASH_OFF_UP) so the shadow lines up with the lit beam. Aimed along
-        // the view yaw; a square 90-degree frustum comfortably covers the ~70-degree beam.
-        static const float kFlashOffRight = 28.0f;   // view-right offset, world units (tunable)
-        static const float kFlashOffUp    = 22.0f;   // world-up offset, world units (tunable)
+        // Light view-projection: the torch sits in a right chest pocket, NOT at the eye. A light
+        // co-located with the camera casts no VISIBLE shadow — every shadow falls directly behind
+        // its caster, hidden by that caster from the same viewpoint — so a small offset gives some
+        // parallax. It stays inside the player's 16-unit radius (DOOM-0499): further out, a wall
+        // the player stands beside sits between torch and scene, and casts a shadow the eye sees
+        // no cause for. The offset is in view space (right vector + world up) and MUST match
+        // mesh.frag's flashlight cone (FLASH_OFF_RIGHT / FLASH_OFF_UP) so the shadow lines up with
+        // the lit beam. Aimed along the view yaw; a square 90-degree frustum covers the beam.
+        static const float kFlashOffRight = 8.0f;    // view-right offset, world units
+        static const float kFlashOffUp    = -10.0f;  // world-up offset: chest height, below the eye
         float lcos = std::cos(g.lastView.angle), lsin = std::sin(g.lastView.angle);
         float lright[3] = { lsin, -lcos, 0.0f };     // view-right = fwd × worldUp
         float leye[3] = { g.lastView.x + lright[0] * kFlashOffRight,
