@@ -13,6 +13,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Solid's flashlight no longer casts shadows from nowhere** (DOOM-0499)
+  The flashlight used to shine from a point well out to the player's right, past the edge of the body. A wall beside you could then block part of the beam, so a far wall went dark in a hard straight line with nothing visible in the way. The light now comes from a right chest pocket, inside the body, and still casts shadows you can see.
+
 - **Lamps in Solid no longer light rooms that cannot see them** (DOOM-0497)
   A light panel or glowing floor lit every nearby room by distance alone, even through a solid wall. At the start of E1M9, the green nukage glow showed through the corridor walls. Solid now asks DOOM's own visibility table whether a room can see a lamp before lighting it, as it already did for torches, standing lamps and pickups.
 

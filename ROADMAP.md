@@ -10915,7 +10915,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: found-while-fixing-DOOM-0482-2026-10-22.
   Lanes: renderer.
 
-- 📋 [DOOM-0499] **Solid's flashlight casts shadows its holder cannot explain.**
+- ✅ [DOOM-0499] **Solid's flashlight casts shadows its holder cannot explain.**
   The shadow pass and mesh.frag place the torch 28 units right and
   22 up from the eye (kFlashOffRight/Up in r_vulkan.cpp,
   FLASH_OFF_RIGHT/UP in mesh.frag; DOOM-0170 L2c, dfdb0d7). The player's
@@ -10924,6 +10924,9 @@ stay in their phase sections; this heading holds only work still to come.
   sees no caster. Seen on E1M2: a hard vertical cut on a back wall seen
   through a doorway. User decision 2026-10-23: move the lamp to a right
   chest pocket, inside the player's body.
+  Shipped dceb55d (torch now 8 right, 10 below the
+  eye). Play-tested by the user 2026-10-23 at the E1M2 spot: the line is
+  gone.
   **Layman:** In the Solid view the flashlight's beam on a far wall can stop in a straight dark line, because the game pretends the lamp is held well out to the right of the player.
   Kind: fix.
   Source: user-playtest-2026-10-23.
