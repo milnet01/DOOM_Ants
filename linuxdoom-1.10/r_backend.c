@@ -43,6 +43,7 @@
 #include "m_argv.h"     // M_CheckParm / myargc / myargv (DOOM-0351: -rtview)
 #include "f_wipe.h"       // wipe_MeltColumns: the melt the 3D tiers follow (DOOM-0379)
 #include "palette_tint.h" // RB_FitPaletteTint: the palette flash as a blend (DOOM-0379)
+#include "d_net.h"        // NetUpdate: service the network mid-frame (DOOM-0456)
 
 // A level is loaded once the BSP segs exist (r_state.h). Used by RB_Init to
 // catch up the scene build when a map was loaded before the back-end came up
@@ -210,6 +211,11 @@ static void Vulkan_RenderPlayerView(player_t* p)
                      ? kHazeDensityDefault : 0.0f;
     RB_Vulkan_RenderView(&view);
 
+    // DOOM-0456: check for new console commands, as R_RenderPlayerView does
+    // around its BSP walk, so a slow 3D frame still services a netgame. Safe now
+    // the menu's renderer switch waits for the frame boundary (RB_SetMode).
+    NetUpdate();
+
     // Reveal the automap the same way Classic does: the software seg renderer
     // sets ML_MAPPED on every visible linedef (R_StoreWallRange), but the Vulkan
     // path never runs it, so the map stayed blank in Solid/Ultra. Run a cheap
@@ -219,6 +225,7 @@ static void Vulkan_RenderPlayerView(player_t* p)
     // (D_Display gates it on !automapactive), matching Classic, which likewise
     // marks nothing new while you stare at the map.
     R_MarkAutomapLines(p);
+    NetUpdate();
 
     // The 3D world goes to Vulkan, so the engine never draws it into screens[0].
     // Clear the view's footprint there to the transparent key (RB_OVERLAY_KEY) so
