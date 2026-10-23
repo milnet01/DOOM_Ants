@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=498 -->
+<!-- ants-roadmap-id-high-water: DOOM=500 -->
 
 # Roadmap
 
@@ -10896,7 +10896,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: found-while-fixing-DOOM-0481-2026-10-22.
   Lanes: sw-renderer.
 
-- 📋 [DOOM-0497] **Solid's wall and floor lights shine into rooms that cannot see them.**
+- ✅ [DOOM-0497] **Solid's wall and floor lights shine into rooms that cannot see them.**
   The DOOM-0170 spec says the raster point-light list applies the DOOM-0119
   REJECT cull to every emitter. BuildRasterPointLights applies it to the
   moving sprite emitters only; RebuildStaticPointLightCache (r_vulkan.cpp)
@@ -10908,10 +10908,38 @@ stay in their phase sections; this heading holds only work still to come.
   tri_ss; skips any the subsector's sector REJECTs). Not shipped: it does
   not change DOOM-0482's view, and its effect on other rooms is unmeasured.
   Work: apply, A/B Solid captures on several lit rooms, play-test.
+  Shipped 9dc4a66, play-tested by the user 2026-10-23: no leak at the
+  E1M9 start, E1M2 lighting fine.
   **Layman:** In the Solid view, light from a lamp can show up in a room that has no line of sight to it; DOOM's own visibility table can stop that.
   Kind: fix.
   Source: found-while-fixing-DOOM-0482-2026-10-22.
   Lanes: renderer.
+
+- 📋 [DOOM-0499] **Solid's flashlight casts shadows its holder cannot explain.**
+  The shadow pass and mesh.frag place the torch 28 units right and
+  22 up from the eye (kFlashOffRight/Up in r_vulkan.cpp,
+  FLASH_OFF_RIGHT/UP in mesh.frag; DOOM-0170 L2c, dfdb0d7). The player's
+  radius is 16, so the lamp can sit past the player's body, even inside a
+  wall on the right. A near jamb then shadows a far wall where the eye
+  sees no caster. Seen on E1M2: a hard vertical cut on a back wall seen
+  through a doorway. User decision 2026-10-23: move the lamp to a right
+  chest pocket, inside the player's body.
+  **Layman:** In the Solid view the flashlight's beam on a far wall can stop in a straight dark line, because the game pretends the lamp is held well out to the right of the player.
+  Kind: fix.
+  Source: user-playtest-2026-10-23.
+  Lanes: renderer.
+  Evidence: linuxdoom-1.10/dev-shots/shot-0012.png, linuxdoom-1.10/dev-shots/shot-0015.png, linuxdoom-1.10/dev-shots/shot-0016.png
+
+- 📋 [DOOM-0500] **A red floor or ceiling surface is drawn across E1M9's walls in Solid.**
+  Seen in a play-test of the DOOM-0497 build, past the E1M9 start.
+  Unknown whether DOOM-0497 or an earlier change caused it. Work: get the
+  spot from the user, A/B scratch/p0497/old against new there, then
+  locate.
+  **Layman:** Partway into E1M9 in the Solid view, a wide red band of liquid texture smears across the room's walls with white patches above it.
+  Kind: investigate.
+  Source: user-playtest-2026-10-23.
+  Lanes: renderer.
+  Evidence: linuxdoom-1.10/dev-shots/shot-0008.png
 
 ## 0.9.0 — The codebase can be trusted
 

@@ -13,6 +13,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Lamps in Solid no longer light rooms that cannot see them** (DOOM-0497)
+  A light panel or glowing floor lit every nearby room by distance alone, even through a solid wall. At the start of E1M9, the green nukage glow showed through the corridor walls. Solid now asks DOOM's own visibility table whether a room can see a lamp before lighting it, as it already did for torches, standing lamps and pickups.
+
 - **Walls with a pinhole in their art draw correctly in Classic** (DOOM-0496)
   A few wall pictures have a one-pixel see-through hole. Classic used to read straight through it, so that strip of the picture showed a few junk pixels and the rest of the strip slid down. It now draws the strip in place, with the hole black. In the stock games this touches one strip each of four pictures, one of them the Doom II city sky. A broken custom WAD can no longer make Classic read past the end of a picture's data this way.
 
