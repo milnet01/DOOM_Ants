@@ -10253,7 +10253,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: review-code 2026-09-01, lane build-scripts.
   Lanes: packaging.
 
-- 📋 [DOOM-0421] **A very large PWAD cannot be saved at all, because the savegame buffer is a fixed size.**
+- ✅ [DOOM-0421] **A very large PWAD cannot be saved at all, because the savegame buffer is a fixed size.**
   DOOM-0374 made the write path refuse rather than overrun, which is strictly
   better than the old post-hoc check, but it does not let a big map save. The
   limit is real: SAVEGAMESIZE is 512 KiB and the whole zone heap is a few
@@ -10273,6 +10273,18 @@ stay in their phase sections; this heading holds only work still to come.
   instead of buffering it whole, which removes the limit rather than raising
   it but changes error handling on a short write. Either way the load path
   needs the matching treatment.
+  Closed 2026-10-23. User chose "grow the buffer" over streaming.
+  P_SaveRoom now reallocs the buffer (SaveGrowCapacity in save_bounds.h,
+  doubling) instead of refusing. Both savegame buffers are malloc'd, not
+  zone-allocated, so the zone did not need raising. The P_ArchiveWorld
+  cursor problem named above was already gone: it reserves its whole
+  block before taking the cursor.
+  Verified under gdb on doom2 MAP05 with 4000 extra monsters: the old
+  build refused ("buffer is 188 byte(s) short of its thinker"); the new
+  build wrote a 970 KB save that reloads from -warp 1 with gamemap 5 and
+  only the 0x1d marker unread. A save made by the old build still loads.
+  make test: 37 suites pass; save_bounds_test fails 3 checks with the
+  growth loop broken.
   **Layman:** On a really big custom level, saving now stops with a clear message instead of corrupting memory -- but it still does not save. Making it always work needs a bigger, growable buffer.
   Kind: enhancement.
   Source: in-session-2026-09-02, split out of DOOM-0374.

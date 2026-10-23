@@ -75,18 +75,14 @@ rcsid[] __attribute__((used)) = "$Id: g_game.c,v 1.8 1997/02/03 22:45:09 b1 Exp 
 #include "save_signature.h"
 
 
-// 512 KiB. The original 0x2c000 (180 KiB) was sized for 1997 32-bit structs;
-// on 64-bit every saved pointer field doubles, so a busy stock level's save
-// (mobjs are the bulk, ~700 * ~256 B on DOOM II's biggest maps ≈ 220 KiB)
-// can exceed it. 512 KiB leaves >2x headroom.
+// 512 KiB: the save buffer's STARTING size. The original 0x2c000 (180 KiB)
+// was sized for 1997 32-bit structs; on 64-bit every saved pointer field
+// doubles, so a busy stock level's save (mobjs are the bulk, ~700 * ~256 B on
+// DOOM II's biggest maps ≈ 220 KiB) can exceed it. 512 KiB leaves >2x headroom.
 //
-// It is a HARD limit, not an estimate with a backstop behind it: DOOM-0374
-// made every write in G_DoSaveGame ask P_SaveRoom first, and a save that does
-// not fit is refused before any byte of it is written. This comment used to
-// name a post-write length comparison as the backstop; that check ran after
-// the whole archive had already been written into the block, could not be a
-// backstop for anything, and DOOM-0374 deleted it. Letting large PWADs save
-// is DOOM-0421.
+// It is not a limit. DOOM-0374 made every write in G_DoSaveGame ask P_SaveRoom
+// first, and DOOM-0421 made P_SaveRoom grow the buffer when a write does not
+// fit, so a large PWAD's save regrows past this rather than being refused.
 #define SAVEGAMESIZE	0x80000
 #define SAVESTRINGSIZE	24
 
@@ -1443,9 +1439,9 @@ void G_DoLoadGame (void)
     sprintf (vcheck,"version %i",VERSION);
     if (strncmp ((char *)save_p, vcheck, VERSIONSIZE))
     {
-	Z_Free (savebuffer);		// bad version: free the buffer M_ReadFile
+	free (savebuffer);		// bad version: free the buffer M_ReadFile
 	savebuffer = NULL;		// allocated, matching the normal path's
-					// Z_Free below (DOOM-0031)
+					// free below (DOOM-0031)
 
 	// DOOM-0399: this returned in silence, so from the menu a save written
 	// by another build simply did nothing -- no message, no diagnostic, and
@@ -1500,7 +1496,7 @@ void G_DoLoadGame (void)
 
 	if (memcmp (save_p, scheck, SAVE_SIGNATURE_SIZE))
 	{
-	    Z_Free (savebuffer);
+	    free (savebuffer);
 	    savebuffer = NULL;
 
 	    players[consoleplayer].message = GGLOADFAIL;
@@ -1552,7 +1548,8 @@ void G_DoLoadGame (void)
 	I_Error ("Bad savegame");
     
     // done 
-    Z_Free (savebuffer); 
+    free (savebuffer); 
+    savebuffer = NULL;
  
     if (setsizeneeded)
 	R_ExecuteSetViewSize ();
@@ -1596,13 +1593,16 @@ void G_DoSaveGame (void)
     // single 256000-byte block, leaving only ~175 KiB there - smaller than
     // SAVEGAMESIZE - so a save overran the screen buffers into the heap and
     // crashed (worse on 64-bit, where the archived structs are larger). The
-    // load path already uses a heap buffer via M_ReadFile/Z_Free; mirror it.
-    save_p = savebuffer = Z_Malloc (SAVEGAMESIZE, PU_STATIC, NULL);
+    // load path already uses a heap buffer via M_ReadFile; mirror it.
+    // DOOM-0421: malloc'd, because P_SaveRoom grows it with realloc.
+    save_p = savebuffer = malloc (SAVEGAMESIZE);
+    if (!savebuffer)
+	I_Error ("G_DoSaveGame: could not allocate the savegame buffer");
     save_max = savebuffer + SAVEGAMESIZE;
 
-    // DOOM-0374: every write below is asked for first, so the buffer is checked
-    // before it is overrun rather than after. The header is fixed-size, so it is
-    // bounded in one go, mirroring the load path above.
+    // DOOM-0374: every write below is asked for first, so the buffer is grown
+    // before it is overrun rather than overrun first. The header is fixed-size,
+    // so it is bounded in one go, mirroring the load path above.
     P_SaveRoom (SAVESTRINGSIZE + VERSIONSIZE + SAVE_SIGNATURE_SIZE
 		+ 3 + MAXPLAYERS + 3, "header");
 
@@ -1645,7 +1645,7 @@ void G_DoSaveGame (void)
     // one is replacing -- which is the save the player would want back.
     if (!M_WriteFileAtomic (name, savebuffer, length))
 	fprintf (stderr, "G_DoSaveGame: could not write %s\n", name);
-    Z_Free (savebuffer);
+    free (savebuffer);
     savebuffer = NULL;
     gameaction = ga_nothing;
     savedescription[0] = 0;		 

@@ -191,6 +191,10 @@ M_WriteFileAtomic
 //
 // M_ReadFile
 //
+// DOOM-0421: the buffer is malloc'd, not zone-allocated -- free() it. Its one
+// caller is G_DoLoadGame, and a large PWAD's save can be megabytes, which the
+// zone heap (a few megabytes, with the level in it) cannot spare.
+//
 int
 M_ReadFile
 ( char const*	name,
@@ -206,7 +210,10 @@ M_ReadFile
     if (fstat (handle,&fileinfo) == -1)
 	I_Error ("Couldn't read file %s", name);
     length = fileinfo.st_size;
-    buf = Z_Malloc (length, PU_STATIC, NULL);
+    buf = malloc (length ? length : 1);	// malloc(0) may be NULL; an empty
+						// file must reach the header check
+    if (!buf)
+	I_Error ("Couldn't allocate %d bytes to read %s", length, name);
     count = read (handle, buf, length);
     close (handle);
 	

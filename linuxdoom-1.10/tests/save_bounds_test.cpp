@@ -10,6 +10,11 @@
 // been written into the Z_Malloc block. The Writer walk below composes the same
 // two decisions the way P_SaveRoom / P_SaveRoomAligned do.
 //
+// DOOM-0421 turned the write side's refusal into growth: where SaveFits says a
+// write does not fit, P_SaveRoom reallocs to SaveGrowCapacity. The Writer walk
+// still pins where SaveFits draws that line; the GrowingWriter walk composes the
+// growth itself, the way P_SaveRoomPadded does.
+//
 // p_saveg.c itself cannot be unit tested (P_UnArchiveThinkers wants Z_Malloc, a
 // loaded level and the thinker list), so the two decisions the cursor makes live
 // in save_bounds.h and are tested here. The cursor walk below is not a
@@ -19,6 +24,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 
 #include "../save_bounds.h"
 #include "check_util.h"
@@ -94,6 +101,74 @@ struct Writer {
 
     void emit(size_t count) { p += count; }
 };
+
+// DOOM-0421: the save-path cursor as P_SaveRoomPadded composes it now — a write
+// that does not fit reallocs the buffer to SaveGrowCapacity and moves the cursor
+// with it. `ok` going false is the engine's out-of-memory I_Error.
+struct GrowingWriter {
+    unsigned char* base = nullptr;
+    unsigned char* p = nullptr;
+    unsigned char* max = nullptr;
+    int regrows = 0;
+    bool ok = true;
+
+    explicit GrowingWriter(size_t capacity)
+    {
+        base = p = (unsigned char*)malloc(capacity);
+        max = base + capacity;
+    }
+    ~GrowingWriter() { free(base); }
+
+    void room_padded(size_t pad, size_t count)
+    {
+        if (!ok || SaveFits((size_t)(max - p), pad, count)) return;
+        size_t used = (size_t)(p - base);
+        size_t capacity = SaveGrowCapacity((size_t)(max - base), used, pad, count);
+        unsigned char* grown = capacity ? (unsigned char*)realloc(base, capacity) : nullptr;
+        if (!grown) { ok = false; return; }
+        base = grown;
+        p = grown + used;
+        max = grown + capacity;
+        regrows++;
+    }
+
+    void room(size_t count) { room_padded(0, count); }
+
+    void room_aligned(size_t count)
+    {
+        size_t pad = SavePadBytes(p);
+        room_padded(pad, count);
+        p += pad;
+    }
+};
+
+// Write `records` tag-plus-aligned-record pairs into a buffer that starts at
+// `capacity` bytes, filling each record with its index, then read them all back
+// from the final buffer. True only if every record survived every regrow intact
+// and the cursor never passed the end of the buffer.
+bool grow_and_verify(size_t capacity, int records, int* regrows)
+{
+    GrowingWriter w(capacity);
+    size_t offsets[64];
+
+    for (int i = 0; i < records; i++)
+    {
+        w.room(1);                          // the tag byte
+        if (!w.ok) return false;
+        *w.p++ = (unsigned char)0x1d;
+        w.room_aligned(kRecord);
+        if (!w.ok) return false;
+        offsets[i] = (size_t)(w.p - w.base);
+        memset(w.p, i + 1, kRecord);
+        w.p += kRecord;
+        if (w.p > w.max) return false;
+    }
+    *regrows = w.regrows;
+    for (int i = 0; i < records; i++)
+        for (size_t b = 0; b < kRecord; b++)
+            if (w.base[offsets[i] + b] != (unsigned char)(i + 1)) return false;
+    return true;
+}
 
 // Walk a buffer of `len` bytes the way P_UnArchiveThinkers does — a tag byte,
 // then an aligned record, repeated — and report whether the cursor stayed inside
@@ -187,7 +262,8 @@ int main()
     check_eq_int(walk_records(0, 2, &in_bounds), 0, "an empty file yields no records");
     check(in_bounds, "an empty file does not move the cursor past the end");
 
-    // --- DOOM-0374: the same walk on the write side. ---
+    // --- DOOM-0374: the same walk on the write side, which is where SaveFits
+    // decides that the buffer must grow (DOOM-0421). ---
     bool wrote_in_bounds = false;
 
     check_eq_int(write_records(48, 2, &wrote_in_bounds), 2, "two whole records fit a 48-byte buffer");
@@ -206,6 +282,24 @@ int main()
     // A buffer with no room for even the first tag byte.
     check_eq_int(write_records(0, 2, &wrote_in_bounds), 0, "an empty buffer takes no records");
     check(wrote_in_bounds, "an empty buffer is not written to at all");
+
+    // --- DOOM-0421: SaveGrowCapacity. ---
+    check_eq_int((long)SaveGrowCapacity(16, 16, 0, 1), 32, "a full buffer doubles");
+    check_eq_int((long)SaveGrowCapacity(16, 10, 3, 100), 128, "it doubles until the write fits");
+    check_eq_int((long)SaveGrowCapacity(0, 0, 0, 5), 8, "an empty buffer grows from one byte");
+    check(SaveGrowCapacity(16, 10, 1, SIZE_MAX) == 0, "a write that cannot be sized is refused, not wrapped");
+    check(SaveGrowCapacity(16, 10, SIZE_MAX, 0) == 0, "padding that cannot be sized is refused too");
+    check(SaveGrowCapacity(SIZE_MAX / 2 + 1, 10, 0, SIZE_MAX / 2 + 1) == SIZE_MAX / 2 + 11,
+          "near SIZE_MAX it returns exactly what the write needs");
+
+    // --- DOOM-0421: the growing walk. 1 tag + 3 pad + 20 payload = 24 bytes per
+    // record, so 40 records need 960 bytes from a buffer that starts far smaller.
+    int regrows = 0;
+    check(grow_and_verify(48, 2, &regrows), "two records in a buffer they fit are written intact");
+    check_eq_int(regrows, 0, "a save that fits never regrows");
+    check(grow_and_verify(25, 40, &regrows), "forty records written through every regrow survive intact");
+    check(regrows > 0, "a save past the starting size regrows instead of being refused");
+    check(grow_and_verify(1, 40, &regrows), "a one-byte starting buffer still takes the whole save");
 
     return check_summary("save_bounds_test");
 }

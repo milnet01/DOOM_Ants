@@ -74,7 +74,7 @@ invocation, so a slow test costs its full runtime every time.
   - **Play-test sign-off** — a human confirms feel, lighting, and performance on
     real hardware (the RX 6600 reference GPU). Noted in the roadmap item.
 
-## Savegames: the round-trip is the gate, and ASAN cannot see it
+## Savegames: the round-trip is the gate
 
 A unit test can pin the bounds arithmetic (`tests/save_bounds_test.cpp`), but it
 cannot prove the on-disk layout is unchanged. The gate binds on any edit to the
@@ -119,6 +119,8 @@ shipping DOOM-0255:
   `-fsanitize-recover=address` with `ASAN_OPTIONS=halt_on_error=0` is needed to
   get past it; and the same reasoning should hold for WAD lumps, which are
   zone-allocated too, but that was not tested.
+  Since DOOM-0421 both savegame buffers come from `malloc`, not the zone, so ASAN
+  instruments them; that it catches an overrun there is not yet measured.
 
 ## Tests are a gate
 

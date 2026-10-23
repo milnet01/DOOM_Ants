@@ -58,6 +58,10 @@ void P_SaveNeedAligned (size_t count, const char* what);
 // trailing marker it writes around the P_Archive* functions above.
 extern byte*		save_max;
 
+// DOOM-0421: the start of the buffer, which P_SaveRoom moves when it grows it.
+// g_game.c owns it; it is malloc'd on both the save and the load path.
+extern byte*		savebuffer;
+
 void P_SaveRoom (size_t count, const char* what);
 void P_SaveRoomAligned (size_t count, const char* what);
 

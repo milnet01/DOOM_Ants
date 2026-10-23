@@ -26,8 +26,10 @@ rcsid[] __attribute__((used)) = "$Id: p_tick.c,v 1.4 1997/02/03 16:47:55 b1 Exp 
 
 #include "i_system.h"
 #include <stdint.h>
+#include <stdlib.h>	// realloc: DOOM-0421 grows the save buffer
 #include "z_zone.h"
 #include "p_local.h"
+#include "p_saveg.h"	// savebuffer (DOOM-0421) and the prototypes below
 #include "save_bounds.h"
 
 // State.
@@ -103,23 +105,36 @@ void P_SaveNeedAligned (size_t count, const char* what)
 // happened — and the damage stays inside mainzone, where testing.md's savegame
 // section says ASAN cannot see it.
 //
-// This is reachable in ordinary play rather than only under attack: the shipped
-// IWADs archive well inside SAVEGAMESIZE, but a large modern PWAD's thinkers
-// alone run past it. Refusing is the answer rather than growing the buffer,
-// because the whole zone heap is a few megabytes and holds the level too.
+// DOOM-0421: a write that does not fit grows the buffer instead of refusing, so
+// a large modern PWAD, whose thinkers alone run past SAVEGAMESIZE, still saves.
+// The buffer is malloc'd rather than zone-allocated because the whole zone heap
+// is a few megabytes and holds the level too. Growing moves the buffer, so no
+// caller may hold a pointer into it across one of these calls: each takes its
+// pointer from save_p afterwards, and P_ArchiveWorld asks for its whole block
+// before taking its short* cursor. The padding survives the move because
+// malloc's alignment is a multiple of the 4 bytes SavePadBytes aligns to.
 //
 // DOOM-0399: pad passed through rather than folded, as on the read side above.
 static void P_SaveRoomPadded (size_t pad, size_t count, const char* what)
 {
     size_t	left = (size_t)(save_max - save_p);
+    size_t	used = (size_t)(save_p - savebuffer);
+    size_t	capacity;
+    byte*	grown;
 
-    if (!SaveFits (left, pad, count))
-    {
-	size_t	avail = pad > left ? 0 : left - pad;
+    if (SaveFits (left, pad, count))
+	return;
 
-	I_Error ("P_Archive: savegame buffer is %d byte(s) short of its %s",
-		 (int)(count - avail), what);
-    }
+    capacity = SaveGrowCapacity ((size_t)(save_max - savebuffer),
+				 used, pad, count);
+    grown = capacity ? realloc (savebuffer, capacity) : NULL;
+    if (!grown)
+	I_Error ("P_Archive: out of memory growing the savegame buffer for its %s",
+		 what);
+
+    savebuffer = grown;
+    save_p = grown + used;
+    save_max = grown + capacity;
 }
 
 void P_SaveRoom (size_t count, const char* what)

@@ -46,4 +46,29 @@ static int SaveFits (size_t remaining, size_t pad, size_t count)
     return count <= remaining - pad;
 }
 
+// DOOM-0421: the capacity the save buffer grows to when the next write does not
+// fit — `used` bytes already written into a buffer of `capacity`, then `pad` and
+// `count` still to come. Doubles, so a save of N bytes regrows O(log N) times,
+// and never returns less than the write needs. 0 means the size cannot be
+// represented, which the caller treats like a failed allocation.
+static size_t SaveGrowCapacity (size_t capacity, size_t used,
+				size_t pad, size_t count)
+{
+    size_t	need;
+
+    if (pad > SIZE_MAX - used || count > SIZE_MAX - used - pad)
+	return 0;
+    need = used + pad + count;
+
+    if (capacity == 0)
+	capacity = 1;
+    while (capacity < need)
+    {
+	if (capacity > SIZE_MAX / 2)
+	    return need;
+	capacity *= 2;
+    }
+    return capacity;
+}
+
 #endif

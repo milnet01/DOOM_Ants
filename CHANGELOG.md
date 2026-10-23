@@ -13,6 +13,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Very large custom levels can be saved** (DOOM-0421)
+  A save used to have a fixed amount of room. On a huge custom level with thousands of monsters, saving stopped with a "savegame buffer is short" message. The room now grows as needed, so any level saves and loads. Saves from earlier builds still load.
+
 - **Ultra says when its HD art is missing** (DOOM-0283)
   Without the HD art, Ultra draws the original art, so it looks like Solid. Nothing used to say so. The Renderer row now reads **Ultra (no HD art)**. Each level started in Ultra also shows "Ultra: HD art not found" at the top of the screen. The downloads do not include the HD art yet, so a downloaded copy shows both.
 
