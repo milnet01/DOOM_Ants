@@ -75,6 +75,9 @@ void RB_Vulkan_SetWipe(const int* cols, int ncols, int rows);
 void RB_Vulkan_Present(void);
 void RB_Vulkan_Shutdown(void);
 void RB_Vulkan_BuildLevel(void);
+// DOOM-0283: nonzero if the HD asset root holds materials.csv, i.e. Ultra will
+// load HD art rather than fall back to the original art. Needs no device.
+int  RB_Vulkan_HdArtFound(void);
 
 #ifdef __cplusplus
 }

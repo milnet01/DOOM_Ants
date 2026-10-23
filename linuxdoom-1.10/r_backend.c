@@ -323,9 +323,15 @@ const char* RB_ModeName(rendermode_t mode)
 //
 // Kept short deliberately. The narrowest of the four value columns starts at
 // OptionsDef.x + 88, which leaves room for about twenty characters of hu_font.
+//
+// DOOM-0283: Ultra without its HD art draws the original art, which looks like
+// Solid. The row says so, so a player can tell before picking it.
 const char* RB_ModeMenuName(rendermode_t mode)
 {
     static char buf[40];
+
+    if (mode == RB_RT3D && !RB_Vulkan_HdArtFound())
+        return "Ultra (no HD art)";
 
     if (RB_NextAvailableMode(mode) != mode)
         return RB_ModeName(mode);
@@ -518,6 +524,12 @@ void RB_BuildLevel(void)
 {
     if (active->BuildLevel)
         active->BuildLevel();
+
+    // DOOM-0283: say on screen, at each level start, that Ultra is showing the
+    // original art. The log line alone is invisible while the game has the display.
+    // P_SetupLevel calls this after the players spawn, so mo is set in a level.
+    if (rendermode == RB_RT3D && !RB_Vulkan_HdArtFound() && players[consoleplayer].mo)
+        players[consoleplayer].message = "Ultra: HD art not found";
 }
 
 void RB_SetMode(rendermode_t mode)

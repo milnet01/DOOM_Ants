@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=497 -->
+<!-- ants-roadmap-id-high-water: DOOM=498 -->
 
 # Roadmap
 
@@ -10046,7 +10046,7 @@ stay in their phase sections; this heading holds only work still to come.
   Decision (user, 2026-09-30): ask Charl to run the current release in Ultra at
   Render Scale 50% on the GTX 2060 laptop; the item stays open until he reports.
 
-- 📋 [DOOM-0283] **Ultra falls back to paletted art silently when the HD assets are not found.**
+- ✅ [DOOM-0283] **Ultra falls back to paletted art silently when the HD assets are not found.**
   EnsureHdMaterials resolves the HD set relative to the CURRENT WORKING DIRECTORY
   ("assets/ultra/") unless DOOMASSETDIR overrides it. cwd is linuxdoom-1.10/ (the
   launcher keeps it there so savegames land where they always have), and
@@ -10074,6 +10074,18 @@ stay in their phase sections; this heading holds only work still to come.
   - Consider resolving the default path relative to the EXECUTABLE or searching
   "../assets/ultra/" as a fallback, so the common layout works without an env
   var. Keep DOOMASSETDIR as the override.
+  Closed 2026-10-23. The path half was already done by DOOM-0410 (the
+  root follows the executable). This closes the on-screen half. User
+  chose both notices: the Renderer row reads "Ultra (no HD art)"
+  (RB_ModeMenuName), and each level started in Ultra shows "Ultra: HD
+  art not found" (RB_BuildLevel). Both key on RB_Vulkan_HdArtFound,
+  which checks materials.csv under the asset root once per run.
+  Found on the way: no release ships the HD art, so every downloaded
+  copy hits this. Bundling it was split out as DOOM-0498.
+  Verified: Ultra E1M1 captures, old build vs new, with DOOMASSETDIR
+  pointing at a missing folder. The message and the label appear only
+  on the new build. With the real assets, neither appears and HD loads.
+  make test: 37 suites pass.
   **Layman:** If the high-definition texture pack cannot be found, Ultra quietly falls back to the original artwork and looks like Solid. Nothing on screen says so, so it reads as the setting not working.
   Kind: enhancement.
   Source: in-session-2026-07-27.
@@ -17031,6 +17043,24 @@ minor may break.
   trailer, demoreel needs --gpu for Vulkan/GL, and records the -s size
   only if the app does not resize its own window (demoreel defect
   DEMO-0099).
+
+- 📋 [DOOM-0498] **Ship the HD art in the downloads, so Ultra has its art outside the source tree.**
+  Neither the Windows zip nor the AppImage carries assets/ultra/ (checked
+  on the 0.7.4 release assets, 2026-10-23), so Ultra in a release always
+  falls back to the original art. DOOM-0283 made that visible: the
+  Renderer row reads "Ultra (no HD art)" and each level start says so.
+
+  The art is CC0 (assets/ultra/LICENSES), so bundling it is allowed. It
+  makes each download several times larger. The work: copy assets/ultra/
+  into both packages, teach rb_asset_set_exe_dir a packaged-layout
+  candidate (it only tries the source tree today), ship the LICENSES file
+  beside the art, and have release.sh check the art is in each asset.
+  User chose on 2026-10-23 to land the notice first and schedule this
+  separately.
+  **Layman:** The downloadable game does not include the high-definition textures, so Ultra in a downloaded copy shows the original art. This item adds them to the downloads.
+  Kind: package.
+  Source: user-decision-2026-10-23, split out of DOOM-0283.
+  Lanes: packaging, assets.
 
 ## 1.1.0 — Later
 

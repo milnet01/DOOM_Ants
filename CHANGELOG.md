@@ -13,6 +13,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Ultra says when its HD art is missing** (DOOM-0283)
+  Without the HD art, Ultra draws the original art, so it looks like Solid. Nothing used to say so. The Renderer row now reads **Ultra (no HD art)**. Each level started in Ultra also shows "Ultra: HD art not found" at the top of the screen. The downloads do not include the HD art yet, so a downloaded copy shows both.
+
 - **The frame around a shrunk view is drawn at the right size** (DOOM-0492)
   When you shrink the game view, the stone or rock pattern around it repeated twice as often as it should, so it looked too small next to the status bar. It is now drawn at its proper size, as in the original game.
 

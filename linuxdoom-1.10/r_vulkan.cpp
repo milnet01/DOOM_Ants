@@ -6687,6 +6687,17 @@ static void FlagLiquidFlats(rb_matctrl_t* table, int N)
     }
 }
 
+// Where the HD assets are (DOOM-0410). The default used to be the launch directory, so
+// starting the game from anywhere else rendered Ultra paletted with one easily missed
+// line of warning. Now the executable's location decides. Runs once.
+static void SetHdAssetExeDir()
+{
+    static bool done = false;
+    if (done) return;
+    done = true;
+    if (char* base = SDL_GetBasePath()) { rb_asset_set_exe_dir(base); SDL_free(base); }
+}
+
 // Per-level (Ultra only): load the current map's HD material sets and rebuild the HD
 // descriptor set. Idempotent (guarded by g.hdBuilt). Any per-material failure leaves
 // that material paletted; a missing materials.csv leaves everything paletted. Always
@@ -6696,15 +6707,8 @@ static void EnsureHdMaterials()
     if (rendermode != TIER_RT3D || g.hdBuilt) return;
     const int N = RB_MaterialCount();
 
-    // 0. Where the assets are (DOOM-0410). The default used to be the launch directory,
-    //    so starting the game from anywhere else rendered Ultra paletted with one easily
-    //    missed line of warning. Now the executable's location decides, and the log says
-    //    which root was used and why.
-    static bool exeDirSet = false;
-    if (!exeDirSet) {
-        exeDirSet = true;
-        if (char* base = SDL_GetBasePath()) { rb_asset_set_exe_dir(base); SDL_free(base); }
-    }
+    // 0. Where the assets are, and the log says which root was used and why.
+    SetHdAssetExeDir();
     {
         const char* env = getenv("DOOMASSETDIR");
         printf("DOOM-0042: HD asset root %s (%s).\n", rb_asset_root(),
@@ -6984,6 +6988,23 @@ static void EnsureHdMaterials()
 }
 
 } // namespace
+
+// DOOM-0283: whether Ultra will find its HD art, so the menu and the level-start
+// message can say when it will not. Released builds ship no HD art, so for most
+// players this is the normal case. Checked once: the root cannot change mid-run.
+extern "C" int RB_Vulkan_HdArtFound(void)
+{
+    static int found = -1;
+    if (found < 0) {
+        SetHdAssetExeDir();
+        char csvPath[512];
+        FILE* f = rb_asset_path(csvPath, sizeof(csvPath), "materials.csv")
+                ? fopen(csvPath, "r") : nullptr;
+        found = f != nullptr;
+        if (f) fclose(f);
+    }
+    return found;
+}
 
 extern "C" int RB_Vulkan_Available(int want_rt)
 {
