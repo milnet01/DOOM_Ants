@@ -169,6 +169,13 @@ short**			texturecolumnlump;
 // DOOM-0432: a full lump offset. A 16-bit entry truncated the offset of a
 // patch over 64K, and the masked wall walk then started mid-lump.
 unsigned int**		texturecolumnofs;
+// DOOM-0496: a column one patch covers, but whose first post stops short of
+// the texture's height, has a copy in the composite at this offset. Solid
+// walls and the sky read rows 0..height-1 straight on, so the lump would hand them the
+// post's header bytes and the next post, shifted. NOCOPY: no copy, read the
+// lump. The masked walk keeps the posts (texturecolumnofs).
+#define NOCOPY			0xffffffffu
+unsigned int**		texturecolumncopy;
 byte**			texturecomposite;
 
 // for global animation
@@ -270,7 +277,8 @@ void R_GenerateComposite (int texnum)
     column_t*		patchcol;
     short*		collump;
     unsigned int*	colofs;
-	
+    unsigned int*	copyofs;
+
     texture = textures[texnum];
 
     block = Z_Malloc (texturecompositesize[texnum],
@@ -279,7 +287,11 @@ void R_GenerateComposite (int texnum)
 
     collump = texturecolumnlump[texnum];
     colofs = texturecolumnofs[texnum];
-    
+    copyofs = texturecolumncopy[texnum];
+
+    // DOOM-0496: rows no post covers read 0, not whatever the zone held.
+    memset (block, 0, texturecompositesize[texnum]);
+
     // Composite the columns together.
     for (i=0 , patch = texture->patches;
 	 i<texture->patchcount;
@@ -302,14 +314,14 @@ void R_GenerateComposite (int texnum)
 
 	for ( ; x<x2 ; x++)
 	{
-	    // Column does not have multiple patches?
-	    if (collump[x] >= 0)
+	    // Column does not have multiple patches, nor a copy (DOOM-0496)?
+	    if (collump[x] >= 0 && copyofs[x] == NOCOPY)
 		continue;
-	    
+
 	    patchcol = (column_t *)((byte *)realpatch
 				    + LONG(realpatch->columnofs[x-x1]));
 	    R_DrawColumnInCache (patchcol,
-				 block + colofs[x],
+				 block + (collump[x] >= 0 ? copyofs[x] : colofs[x]),
 				 patch->originy,
 				 texture->height);
 	}
@@ -486,7 +498,26 @@ void R_GenerateLookup (int texnum)
 	    
 	    texturecompositesize[texnum] += texture->height;
 	}
-    }	
+    }
+
+    // DOOM-0496: copies go after the columns above, so id's 64k test still
+    // sees exactly id's composite. The offsets are unsigned int, so the
+    // copies need no limit of their own. Read topdelta before length: an
+    // empty column's 0xff may be the lump's last byte.
+    for (x=0 ; x<texture->width ; x++)
+    {
+	const column_t*	post;
+
+	texturecolumncopy[texnum][x] = NOCOPY;
+	if (patchcount[x] != 1)
+	    continue;
+	post = (const column_t *)((byte *)W_CacheLumpNum (collump[x], PU_CACHE)
+				  + colofs[x] - 3);
+	if (post->topdelta != 0xff && post->length >= texture->height)
+	    continue;
+	texturecolumncopy[texnum][x] = texturecompositesize[texnum];
+	texturecompositesize[texnum] += texture->height;
+    }
 }
 
 
@@ -531,7 +562,14 @@ R_GetColumn
     col &= texturewidthmask[tex];
     lump = texturecolumnlump[tex][col];
     ofs = texturecolumnofs[tex][col];
-    
+
+    // DOOM-0496: a short single-patch column reads its composite copy.
+    if (texturecolumncopy[tex][col] != NOCOPY)
+    {
+	lump = -1;
+	ofs = texturecolumncopy[tex][col];
+    }
+
     if (lump > 0)
 	return (byte *)W_CacheLumpNum(lump,PU_CACHE)+ofs;
 
@@ -656,6 +694,7 @@ void R_InitTextures (void)
     textures = Z_Malloc (numtextures*sizeof(*textures), PU_STATIC, 0);
     texturecolumnlump = Z_Malloc (numtextures*sizeof(*texturecolumnlump), PU_STATIC, 0);
     texturecolumnofs = Z_Malloc (numtextures*sizeof(*texturecolumnofs), PU_STATIC, 0);
+    texturecolumncopy = Z_Malloc (numtextures*sizeof(*texturecolumncopy), PU_STATIC, 0);
     texturecomposite = Z_Malloc (numtextures*sizeof(*texturecomposite), PU_STATIC, 0);
     texturecompositesize = Z_Malloc (numtextures*sizeof(*texturecompositesize), PU_STATIC, 0);
     texturewidthmask = Z_Malloc (numtextures*sizeof(*texturewidthmask), PU_STATIC, 0);
@@ -747,6 +786,7 @@ void R_InitTextures (void)
 	}		
 	texturecolumnlump[i] = Z_Malloc (texture->width*2, PU_STATIC,0);
 	texturecolumnofs[i] = Z_Malloc (texture->width*sizeof(**texturecolumnofs), PU_STATIC,0);
+	texturecolumncopy[i] = Z_Malloc (texture->width*sizeof(**texturecolumncopy), PU_STATIC,0);
 
 	j = 1;
 	while (j*2 <= texture->width)
