@@ -388,8 +388,9 @@ added under `tests/`):
   (they *are* commercial DOOM 2 mapsets). A four-way picker is a later nicety.
 - ~~Remembering the last game across a full quit/relaunch~~ — **implemented
   2026-07-04** (user request): the engine records the loaded IWAD path in
-  `$HOME/.doom_ants_lastgame` (`D_WriteLastGame` in `D_DoomMain`) and, on a
-  no-`-iwad` boot, defaults to it (`D_ReadLastGame` in `IdentifyVersion`, checked
+  `$HOME/.doom_ants_lastgame` (`D_WriteLastGame` in `D_DoomMain`; a test or
+  measurement run, `D_IsTestRun` in `lastgame_policy.h`, writes nothing — DOOM-0483)
+  and, on a no-`-iwad` boot, defaults to it (`D_ReadLastGame` in `IdentifyVersion`, checked
   after the dev flags and before the doom2-first auto-detect; a stored path that no
   longer exists self-heals to auto-detect). The boot chooser still shows (Option A),
   now pre-selecting the loaded=last game so a single select press continues it

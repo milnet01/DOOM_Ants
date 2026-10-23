@@ -56,6 +56,7 @@ static const char rcsid[] __attribute__((used)) = "$Id: d_main.c,v 1.8 1997/02/0
 #include "doomdef.h"
 #include "doomstat.h"
 #include "iwad_detect.h"	// DOOM-0060 game-select: pure IWAD-family classifier
+#include "lastgame_policy.h"	// DOOM-0483: test runs do not change the remembered game
 
 #include "dstrings.h"
 #include "sounds.h"
@@ -1288,7 +1289,8 @@ void D_DoomMain (void)
     D_DetectIwads ();       // DOOM-0060: note which games are installed (for the chooser)
     // DOOM-0060: remember the game that just loaded, so the next launch defaults to
     // it instead of the doom2-first auto-detect. wadfiles[0] is the IWAD.
-    if (gamemode != indetermined)
+    // DOOM-0483: a test or measurement run leaves the player's choice alone.
+    if (gamemode != indetermined && !D_IsTestRun (myargc, myargv))
 	D_WriteLastGame (wadfiles[0]);
 
     setbuf (stdout, NULL);

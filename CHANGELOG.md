@@ -13,6 +13,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Automated test runs no longer change which game opens next** (DOOM-0483)
+  DOOM Ants opens the game you last played. A test or benchmark run of the engine used to count as "last played", so after one, the next plain launch could open the wrong game. Test runs now leave that choice alone. Choosing a game with `-iwad` still counts.
+
 - **Pickups no longer tint the walls around them in Solid** (DOOM-0482)
   A glowing pickup such as the Soulsphere lit nearby walls as strongly as a ceiling lamp, so E1M2's brown buildings turned pink and purple. A pickup now lights only what is close around it. Lamps, torches and light panels are unchanged. Ultra's raster view had the same fault and is fixed too.
 

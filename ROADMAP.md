@@ -10704,7 +10704,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: in-session 2026-09-30 (found while checking DOOM-0142).
   Lanes: renderer.
 
-- 📋 [DOOM-0483] **Test and measurement runs overwrite the player's remembered game.**
+- ✅ [DOOM-0483] **Test and measurement runs overwrite the player's remembered game.**
   D_DoomMain calls D_WriteLastGame after every launch that identified a game,
   including headless ones (`-bootsmoke`, `-timedemo`, `-rtverify`, captures).
   Each of those names its IWAD with `-iwad`, so the last test run decides what
@@ -10716,6 +10716,12 @@ stay in their phase sections; this heading holds only work still to come.
   or skip the write for runs that take no input. The first changes what
   DOOM-0060's spec promises, so read that spec before choosing.
   Until then, test runs can set HOME to a scratch directory.
+  Shipped 2026-10-23. User decision 2026-10-23: test runs don't save.
+  D_IsTestRun (lastgame_policy.h) skips D_WriteLastGame when argv
+  carries a test flag (-bootsmoke, -timedemo, -playdemo, -devshot,
+  -shotverify, -shotcompare, -noinput, -nodraw, -inspect, -freeze); a
+  hand-typed -iwad is still remembered. -rtverify, named above, is not a
+  flag the engine reads. tests/lastgame_policy_test.cpp.
   **Layman:** Every automated test launch quietly changes which game starts the next time the player opens DOOM_Ants without choosing one.
   Kind: fix.
   Source: in-session 2026-09-30 (found diagnosing DOOM-0280).
