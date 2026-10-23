@@ -10873,7 +10873,7 @@ stay in their phase sections; this heading holds only work still to come.
   Kind: fix.
   Source: found-while-fixing-DOOM-0463-2026-10-22.
 
-- 📋 [DOOM-0496] **A wall column drawn straight from a short patch can still read past the patch's data.**
+- ✅ [DOOM-0496] **A wall column drawn straight from a short patch can still read past the patch's data.**
   R_GenerateLookup (r_data.c) points a column one patch covers straight
   at that patch's post in the lump, whatever the patch's height and
   originy. DOOM-0481 wraps the read at the TEXTURE's height, so where the
@@ -10883,6 +10883,14 @@ stay in their phase sections; this heading holds only work still to come.
   Work: find out first (scan TEXTURE1/2 for single-patch columns whose
   post does not run from row 0 to the texture height); if any, decide
   whether those columns go to the composite, which changes how they look.
+  Shipped 2026-10-23 in d5749ab. Scan of both IWADs: no stock column
+  reads past its lump; four textures had one short column each
+  (SKINEDGE, SKINTEK1, ZZZFACE3 on walls, SKY2 in the Doom II sky),
+  each from a one-pixel hole. Decided by the user 2026-10-23: give
+  every short single-patch column a composite copy, not only the
+  columns that would pass the lump's end. R_GetColumn reads the copy;
+  R_GetPostColumn keeps the posts for see-through walls. Kit in
+  scratch/p0496 (scan.py, scan2.py, probe.sh).
   **Layman:** A rare kind of wall picture can still make the classic drawer read a little past the picture's data; this checks whether the game's own art ever does it.
   Kind: fix.
   Source: found-while-fixing-DOOM-0481-2026-10-22.
