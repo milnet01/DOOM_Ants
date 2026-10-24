@@ -74,8 +74,8 @@ neither powerup, every 3D frame is unchanged.
 `shaders/formulas/README.md`, `shaders/mesh.vert`, `shaders/mesh.frag`,
 `shaders/composite.frag`, `shaders/svgf_composite.comp`,
 `shaders/rt_tonemap.comp`, `tests/fixed_colormap_test.cpp` (new),
-`tests/shader_mirror_test.cpp`, `scripts/make_map_fixture.py`. All under
-`linuxdoom-1.10/` except the script.
+`tests/shader_mirror_test.cpp`, `Makefile`, `scripts/make_map_fixture.py`.
+All under `linuxdoom-1.10/` except the script.
 
 ## 3. Scope decisions
 
@@ -109,13 +109,14 @@ mapping, so a test can include it with no engine:
 ```c
 // DOOM-0455: what the player's fixedcolormap asks the 3D views to do.
 enum { RB_FIXED_NONE = 0, RB_FIXED_VISOR = 1, RB_FIXED_INVERT = 2 };
+enum { RB_INVERSECOLORMAP = 32 };   // p_user.c's INVERSECOLORMAP (INV-2)
 
 // player->fixedcolormap -> mode. Classic sets only 0, 1 (visor) and
-// INVERSECOLORMAP (32); any other non-zero row is shaded as the visor.
+// INVERSECOLORMAP; any other non-zero row is shaded as the visor.
 static inline int RB_FixedMode(int fixedcolormap)
 {
-    if (fixedcolormap == 0)  return RB_FIXED_NONE;
-    if (fixedcolormap == 32) return RB_FIXED_INVERT;
+    if (fixedcolormap == 0)                  return RB_FIXED_NONE;
+    if (fixedcolormap == RB_INVERSECOLORMAP) return RB_FIXED_INVERT;
     return RB_FIXED_VISOR;
 }
 ```
@@ -125,8 +126,8 @@ static inline int RB_FixedMode(int fixedcolormap)
 writes nothing back, so game state, demos and netgames are untouched. The blink
 needs no code: `player->fixedcolormap` already toggles per tic.
 
-`p_user.c`'s `INVERSECOLORMAP` stays where it is. INV-2 binds the header's 32
-to it.
+`p_user.c`'s `INVERSECOLORMAP` stays where it is. INV-2 binds
+`RB_INVERSECOLORMAP` to it.
 
 ### 4.2 The formulas: one include
 
@@ -164,6 +165,10 @@ float visorShade(vec3 N, vec3 toEye, float dist)
 The constant values are starting points. The first captures tune them (§10),
 in this file only.
 
+`glslc` emits no dependency for an `#include`, so the `Makefile` names this
+file as a prerequisite of every shader that includes it, as it already does
+for `scene_recombine.glsl` (`docs/standards/renderer.md`, Shaders).
+
 ### 4.3 Where each formula runs
 
 **Visor: two sites, both before any tone operator.**
@@ -172,8 +177,9 @@ in this file only.
   `direct` and never `ambient`. The composite multiplies only AMBIENT by AO, so
   a camera-attached lamp is not darkened by the occlusion of the surface it
   lights. The visor fills only the headroom left by sector light and the
-  flashlight, so a fully lit surface still tops out at its albedo, as Classic's
-  row 1 does:
+  flashlight, so a surface at full sector light gains nothing, as in Classic's
+  row 1. Point lights are outside that headroom, so a point-lit surface can
+  exceed its albedo, as it already can without the visor:
 
   ```glsl
   if (pc.fixedMode == RB_FIXED_VISOR) {
@@ -199,9 +205,7 @@ in this file only.
   `svgf_temporal.comp` reads, so the composite only declares it. `toEye` and
   `dist` run from the hit point in `gpos[cur]` to `pc.prevPos.xyz`, the camera
   position this pass already receives. That is the previous frame's camera.
-  The lag moves the facing term by the angle the camera turns in one frame,
-  and the falloff by one frame's travel, which is nothing at the default
-  `VISOR_FLATNESS` of 1. It saves three floats in a block with no spare lane
+  The lag moves the facing term and the falloff by one frame's travel. It saves three floats in a block with no spare lane
   for them. The term is added before exposure, so the Brightness setting
   scales it like any other light. One insertion covers bloom on and off,
   because both tone-map paths read this `L`.
@@ -228,9 +232,9 @@ matches Classic, whose inversion is absolute.
 
 | Block | Today | Change |
 |---|---|---|
-| `mesh.vert` / `mesh.frag` `Push` | 124 bytes: 31 floats | `uint fixedMode` at offset 124, making 128 bytes, the guaranteed `maxPushConstantsSize` floor. Host: `pcr.size`, both `float pcData[31]` arrays (the raster draw and `RecordRtOverlay`) and `lastWeaponPc` grow to 32 entries. The wipe's weapon redraw copies `lastWeaponPc` whole, so it follows. |
-| `composite.frag` `Push` | 16 bytes | `uint fixedMode` appended: 20 bytes. Host `cpc.size` grows to match. |
-| `rt_tonemap.comp` `Push` | 16 bytes, `RtTonemapPC` | `uint fixedMode` appended: 20 bytes. Its `static_assert` moves to 20. |
+| `mesh.vert` / `mesh.frag` `Push` | 124 bytes: 31 floats | `uint fixedMode` at offset 124, making 128 bytes, the guaranteed `maxPushConstantsSize` floor. Host: `pcr.size`, both `float pcData[31]` arrays (the raster draw and `RecordRtOverlay`), the `31 * sizeof(float)` size both of their `vkCmdPushConstants` calls pass, and `lastWeaponPc` grow to 32 entries. The wipe's weapon redraw copies `lastWeaponPc` whole, so it follows. |
+| `composite.frag` `Push` | 16 bytes | `uint fixedMode` appended: 20 bytes. Host: `cpc.size`, the `float coPush[4]` write and `lastCoPush` grow to 5 entries. The wipe's composite redraw pushes `lastCoPush` whole, so it follows. |
+| `rt_tonemap.comp` `Push` | 16 bytes, `RtTonemapPC` | `uint fixedMode` appended: 20 bytes. Host: its `static_assert` and the `16` its `CreateComputeLayout` call passes move to 20. |
 | `SvgfPC` | 120 bytes | No growth: `misc3[2]` carries the mode. Only the composite reads `misc3`. |
 
 The mesh block is then full. The next field needs another channel: a uniform
@@ -241,9 +245,7 @@ validation error.
 
 - **The blink and the temporal upscaler.** In the last 128 tics the mode
   flips every 8 tics. TAAU's history then holds frames of the other mode. Its
-  3x3 neighbourhood clamp should limit each blink's ghost to a frame or two. If
-  a capture shows more, invert TAAU's output as well. That is a further site,
-  built only if the capture shows the ghost.
+  3x3 neighbourhood clamp should limit each blink's ghost to a frame or two.
 - **The visor in a bright room in the traced view.** An added term can push
   PBR-Neutral into its roll-off and generate bloom. If the bright-room capture
   shows that, scale the visor by how lit the pixel already is. That stays a
@@ -253,7 +255,8 @@ validation error.
   their own way, and §4.3 inverts whatever is on screen. A fuzzy weapon under
   invulnerability can differ from Classic. Accepted, not fixed here.
 - **The ray-traced debug views (`rb_rtdebug` 1 to 4)** get neither powerup.
-  They are diagnostic views, not a play mode.
+  They are diagnostic views, not a play mode. `RecordRtOverlay` still draws
+  the weapon there, so it pushes `RB_FIXED_NONE` unless `rb_rtdebug` is 6.
 
 ### 4.6 Measurement: the invert weights
 
@@ -297,9 +300,12 @@ the same for every pixel. With the visor, `svgf_composite.comp` reads one more
 storage texel per pixel (the normal), and both visor sites add a few
 arithmetic operations. Invert adds a dot product.
 
-No frame-time figure is set. The check is the profiler's composite bucket
-(`profMs[6]`) and Solid's scene pass, measured with no powerup, before and
-after, at the same render scale: unchanged within run-to-run noise.
+No frame-time figure is set. The check is the profiler's buckets for the
+changed passes: in the traced view the composite (`profMs[6]`) and
+`rt_tonemap` (`profMs[9]`), in the rasterised view the scene MRT
+(`profMs[1]`) and the composite (`profMs[4]`). Each is measured with no
+powerup, before and after, at the same render scale: unchanged within
+run-to-run noise.
 
 ## 7. Build order
 
@@ -329,9 +335,12 @@ Each step ends with `make` and `make test` green.
   *Test:* `tests/fixed_colormap_test.cpp` checks all three classes.
   *Breaks when:* 32 is mapped to the visor, or row 1 to none.
 
-- **INV-2** — The mode codes agree in C and GLSL, and the header's 32 equals
-  `p_user.c`'s `INVERSECOLORMAP`.
-  *Test:* `tests/shader_mirror_test.cpp` gains the pairs, scraped by name.
+- **INV-2** — The mode codes agree in C and GLSL, and `RB_INVERSECOLORMAP`
+  equals `p_user.c`'s `INVERSECOLORMAP`.
+  *Test:* `tests/shader_mirror_test.cpp` gains the mode-code pairs, scraped by
+  name. `INVERSECOLORMAP` is a `#define` with no `=`, which the test's
+  `assigned()` cannot read, so its value is parsed from the token after the
+  name.
   *Breaks when:* one side renumbers, or `INVERSECOLORMAP` changes alone.
 
 - **INV-3** — With `RB_FIXED_NONE`, every 3D frame matches the build before
@@ -353,23 +362,27 @@ Each step ends with `make` and `make test` green.
 
 - **INV-5** — `fixedInvert` is applied after the bloom add and after the tone
   operator.
-  *Test:* `tests/fixed_colormap_test.cpp` scrapes the three world sites. In
-  each, the `fixedInvert(` call comes after the bloom add and after the
-  `pbrNeutralToneMapping` or `toneExposeEncode` call, in the same function.
+  *Test:* `tests/fixed_colormap_test.cpp` scrapes the three world sites. Each
+  site assigns the tone operator's result to a variable, then applies
+  `fixedInvert(` to that variable in a later statement. In `main`, that
+  statement follows the last `pbrNeutralToneMapping(` or `toneExposeEncode(`
+  call, and in `composite.frag` and `rt_tonemap.comp` it also follows the
+  bloom add. `svgf_composite.comp`'s un-split build has no bloom add.
   *Breaks when:* the inversion moves ahead of the bloom add, so halos invert
   into dark smudges.
 
 - **INV-6** — The visor adds light: a surface with no light at all shows its
   albedo and shape under the visor, in all four views.
-  *Test:* manual recipe. A fixture copy of E1M1 with every sector's light set
-  to 0 (a new `scripts/make_map_fixture.py` mutation), flashlight off,
+  *Test:* manual recipe. A fixture copy of `doom2.wad`'s MAP01, the only map
+  `scripts/make_map_fixture.py` reads, with every sector's light set to 0 (a
+  new mutation in that script), flashlight off,
   `idbeholdl`. Walls, floor and the weapon are visible in every view, and wall
   corners read as separate faces.
   *Breaks when:* the visor is a gain or a curve on the final colour, which
   leaves the black room black.
 
-- **INV-7** — In the rasterised views the visor goes into DIRECT and never
-  lifts a surface above its albedo.
+- **INV-7** — In the rasterised views the visor goes into DIRECT and is
+  bounded by the headroom sector light and the flashlight leave.
   *Test:* `tests/fixed_colormap_test.cpp` scrapes `mesh.frag`. Inside the visor
   block the term is added to `direct`, `ambient` is never assigned, and the
   term is bounded by `1.0 - sect - flash`.
@@ -382,12 +395,15 @@ Each step ends with `make` and `make test` green.
   → `linuxdoom-1.10/shaders/formulas/fixed_colormap.glsl`, alone.
   *Breaks when:* a site pastes its own copy of either formula.
 
-- **INV-9** — Every push block this spec grows matches its host write, and the
+- **INV-9** — On the host, each push block this spec grows has one size: its
+  array or struct, its pipeline-layout range and its push calls agree. The
   mesh block stays within 128 bytes.
   *Test:* `static_assert`s in `r_vulkan.cpp` on the mesh push array (128
-  bytes) and on `RtTonemapPC` (20 bytes); `make` → exit 0.
-  *Breaks when:* a field is added on one side only, or the mesh block passes
-  128 bytes.
+  bytes), `coPush` (20 bytes) and `RtTonemapPC` (20 bytes), with the layout
+  ranges and push calls written as `sizeof` of those; `make` → exit 0. Nothing
+  checks the GLSL side against the host.
+  *Breaks when:* a host size changes in one place only, or the mesh block
+  passes 128 bytes.
 
 - **INV-10** — Classic is unchanged: no file the software renderer runs is
   edited.
@@ -432,7 +448,7 @@ Each step ends with `make` and `make test` green.
 | INV-6 | **manual** — the §8 dark-fixture recipe, run at B4 |
 | INV-7 | `tests/fixed_colormap_test.cpp` |
 | INV-8 | the §8 grep, run at B5; **nothing** stops a later copy |
-| INV-9 | `static_assert`s in `r_vulkan.cpp`, at every build |
+| INV-9 | `static_assert`s in `r_vulkan.cpp`, at every build; **nothing** checks the GLSL side |
 | INV-10 | the §8 diff, run at B5 |
 
 Each new scrape (INV-5, INV-7) is run once against a mutated shader to see it
