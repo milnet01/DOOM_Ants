@@ -50,7 +50,12 @@ layout(push_constant) uniform Push { vec2 uvScale; float aoEnable; float bloomIn
 
 void main()
 {
-    vec3 hdr = sceneRecombine(ambientTex, directTex, aoTex, vUV, pc.uvScale, pc.aoEnable);
+    // DOOM-0455: the parts rather than the sum, for the sky's far depth (viewZ) that
+    // invulnerability's invert below must skip. sceneRecombine is this same call, summed.
+    vec2       suv = vUV * pc.uvScale;
+    SceneParts sp  = sceneRecombineParts(textureLod(ambientTex, suv, 0.0).rgb,
+                                         textureLod(directTex, suv, 0.0), aoTex, vUV, pc.aoEnable);
+    vec3 hdr = sp.direct + sp.ambient;
 
     // DOOM-0331 L3 (§4.4) — one additive term, BEFORE the tone-map so the halo rolls off with
     // the highlight it came from. A branch and not a multiply by zero: `hdr + bloom * 0.0` is
@@ -63,5 +68,11 @@ void main()
     if (pc.bloomIntensity > 0.0)
         hdr += texture(bloomTex, vUV).rgb * pc.bloomIntensity;
 
-    outColor = vec4(pbrNeutralToneMapping(hdr), 1.0);
+    vec3 toned = pbrNeutralToneMapping(hdr);
+    // DOOM-0455: invulnerability's grey negative, on the display-referred value after
+    // the bloom add (an inverted halo is a dark smudge). Never the sky: mesh.frag tags it
+    // with a far depth, the same >= 50000.0 test ssao.frag and the bloom extract use.
+    if (pc.fixedMode == RB_FIXED_INVERT && sp.viewZ < 50000.0)
+        toned = fixedInvert(toned);
+    outColor = vec4(toned, 1.0);
 }

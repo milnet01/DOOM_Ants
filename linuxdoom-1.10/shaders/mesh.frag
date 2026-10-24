@@ -388,7 +388,12 @@ void main()
     }
 
 #ifdef SINGLE_TARGET
-    outColor   = vec4(ambient + direct, 1.0);   // RT weapon overlay: combined into one target
+    vec3 lit = ambient + direct;                // RT weapon overlay: combined into one target
+    // DOOM-0455: the traced weapon is drawn after the blit, so the traced image's invert
+    // cannot reach it. This target is display-referred already, so invert it here.
+    if (pc.fixedMode == RB_FIXED_INVERT)
+        lit = fixedInvert(lit);
+    outColor   = vec4(lit, 1.0);
 #else
     // DOOM-0170 L2b — pack forward-distance linear depth into DIRECT.a for the SSAO pass. The
     // raster camera is yaw-only, so d = (worldPos - eye)·forward is exactly the projection's

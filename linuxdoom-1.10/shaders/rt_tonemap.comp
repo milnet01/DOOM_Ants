@@ -68,5 +68,10 @@ void main()
         L += textureLod(bloomTex, uv, 0.0).rgb * pc.bloomIntensity;
     }
 
-    imageStore(rtImage, p, vec4(toneExposeEncode(L, pc.ev), 1.0));
+    vec3 encoded = toneExposeEncode(L, pc.ev);
+    // DOOM-0455: invulnerability inverts the encoded value, after the bloom add (an
+    // inverted halo is a dark smudge). The sky returned above, un-inverted as in Classic.
+    if (pc.fixedMode == RB_FIXED_INVERT)
+        encoded = fixedInvert(encoded);
+    imageStore(rtImage, p, vec4(encoded, 1.0));
 }

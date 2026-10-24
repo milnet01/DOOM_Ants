@@ -223,7 +223,12 @@ void main()
 #ifdef BLOOM_SPLIT
     imageStore(outColor, p, vec4(max(L, vec3(0.0)), 1.0));
 #else
-    imageStore(outColor, p, vec4(toneExposeEncode(L, uintBitsToFloat(pc.misc3.x)), 1.0));
+    vec3 encoded = toneExposeEncode(L, uintBitsToFloat(pc.misc3.x));
+    // DOOM-0455: invulnerability inverts the encoded value. The sky returned above; the
+    // split variant stores linear radiance, so rt_tonemap.comp inverts it instead.
+    if (pc.misc3.z == RB_FIXED_INVERT)
+        encoded = fixedInvert(encoded);
+    imageStore(outColor, p, vec4(encoded, 1.0));
 #endif
 
     // Motion vector (build step 6-d): where this pixel's world point sat in the

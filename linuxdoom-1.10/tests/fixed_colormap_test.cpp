@@ -8,8 +8,104 @@
 // Contract:
 //   INV-1  RB_FixedMode maps 0 to none, INVERSECOLORMAP (32) to invert, and
 //          every other row in 1..NUMCOLORMAPS to the visor.
+//   INV-5  At the three world sites, fixedInvert is applied to the tone
+//          operator's result in a later statement: after the last tone call in
+//          main, and after the bloom add where the site has one. Inverting
+//          before the bloom add turns every halo into a dark smudge.
+//          (Source scrape: the order is the contract, and it needs a GPU to see.)
+#include <cctype>
+#include <cstdio>
+#include <string>
+
+#ifndef DOOM_TESTS_ROOT
+#define DOOM_TESTS_ROOT "."
+#endif
+
 #include "../fixed_colormap.h"
 #include "check_util.h"
+
+namespace {
+
+// Whole file as text. A missing file is a failure.
+std::string slurp(const char* path)
+{
+    std::FILE* f = std::fopen(path, "rb");
+    if (!f) { std::printf("  FAIL: cannot open %s\n", path); g_failures++; return std::string(); }
+    std::string s;
+    char buf[65536];
+    size_t n;
+    while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) s.append(buf, n);
+    std::fclose(f);
+    return s;
+}
+
+// The text of main() onward, with // comments blanked, so a name in prose is
+// never read as a call.
+std::string mainCode(const std::string& src)
+{
+    const size_t m = src.find("void main()");
+    if (m == std::string::npos) return std::string();
+    std::string s = src.substr(m);
+    for (size_t p = s.find("//"); p != std::string::npos; p = s.find("//", p))
+    {
+        const size_t e = s.find('\n', p);
+        s.replace(p, (e == std::string::npos ? s.size() : e) - p, "");
+    }
+    return s;
+}
+
+bool isIdent(char c) { return std::isalnum((unsigned char)c) || c == '_'; }
+
+// INV-5 at one site. `tone` is the tone operator's name; `bloomAdd` is the text
+// of the bloom add, or null where the site has none.
+void inv5(const char* file, const char* tone, const char* bloomAdd)
+{
+    char what[200];
+    const std::string body = mainCode(slurp((std::string(DOOM_TESTS_ROOT "/shaders/") + file).c_str()));
+    std::snprintf(what, sizeof what, "INV-5: %s has a main()", file);
+    check(!body.empty(), what);
+    if (body.empty()) return;
+
+    // The last tone call, and the variable its result is assigned to.
+    const size_t call = body.rfind(std::string(tone) + "(");
+    std::snprintf(what, sizeof what, "INV-5: %s calls %s in main", file, tone);
+    check(call != std::string::npos, what);
+    if (call == std::string::npos) return;
+    size_t q = call;
+    while (q > 0 && (body[q - 1] == ' ' || body[q - 1] == '\t')) --q;
+    std::string var;
+    if (q > 0 && body[q - 1] == '=')
+    {
+        size_t e = q - 1;
+        while (e > 0 && (body[e - 1] == ' ' || body[e - 1] == '\t')) --e;
+        size_t b = e;
+        while (b > 0 && isIdent(body[b - 1])) --b;
+        var = body.substr(b, e - b);
+    }
+    std::snprintf(what, sizeof what, "INV-5: %s assigns the last %s result to a variable", file, tone);
+    check(!var.empty(), what);
+    if (var.empty()) return;
+
+    // The invert of that variable, in a later statement.
+    const size_t inv = body.find(var + " = fixedInvert(" + var + ")", call);
+    std::snprintf(what, sizeof what, "INV-5: %s applies fixedInvert to %s after the last %s",
+                  file, var.c_str(), tone);
+    check(inv != std::string::npos, what);
+    std::snprintf(what, sizeof what, "INV-5: %s calls fixedInvert nowhere before its tone operator", file);
+    check(body.find("fixedInvert(") > call, what);
+
+    if (bloomAdd)
+    {
+        const size_t add = body.rfind(bloomAdd);
+        std::snprintf(what, sizeof what, "INV-5: %s still adds bloom as `%s`", file, bloomAdd);
+        check(add != std::string::npos, what);
+        std::snprintf(what, sizeof what, "INV-5: %s inverts after the bloom add", file);
+        check(add != std::string::npos && inv != std::string::npos && inv > add
+                  && body.find("fixedInvert(") > add, what);
+    }
+}
+
+} // namespace
 
 int main()
 {
@@ -25,6 +121,12 @@ int main()
     for (int row = 1; row < 32; row++)
         check(RB_FixedMode(row) == RB_FIXED_VISOR,
               "INV-1: a non-zero row other than 32 -> visor");
+
+    // ---- INV-5: invert after the tone operator and the bloom add ---------
+    inv5("composite.frag",      "pbrNeutralToneMapping", "* pc.bloomIntensity");
+    inv5("rt_tonemap.comp",     "toneExposeEncode",      "* pc.bloomIntensity");
+    // The un-split build has no bloom add; its store is the file's last tone call.
+    inv5("svgf_composite.comp", "toneExposeEncode",      nullptr);
 
     return check_summary("fixed_colormap_test");
 }
