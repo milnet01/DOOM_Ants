@@ -44,6 +44,7 @@
 #include "f_wipe.h"       // wipe_MeltColumns: the melt the 3D tiers follow (DOOM-0379)
 #include "palette_tint.h" // RB_FitPaletteTint: the palette flash as a blend (DOOM-0379)
 #include "d_net.h"        // NetUpdate: service the network mid-frame (DOOM-0456)
+#include "fixed_colormap.h" // RB_FixedMode: invulnerability / visor (DOOM-0455)
 
 // A level is loaded once the BSP segs exist (r_state.h). Used by RB_Init to
 // catch up the scene build when a map was loaded before the back-end came up
@@ -186,6 +187,9 @@ static void Vulkan_RenderPlayerView(player_t* p)
     // 1<<LIGHTSEGSHIFT = 16 of the 0..255 lightlevel units. Fold the same step
     // into the [0,1] shade so the whole 3D view flickers brighter, as it always did.
     view.extralight = p->extralight * (16.0f / 255.0f);
+    // DOOM-0455: invulnerability and the light-amp visor. Read only; the
+    // end-of-powerup blink comes free, as p_user.c toggles fixedcolormap per tic.
+    view.fixedMode = RB_FixedMode(p->fixedcolormap);
     // Sky backdrop: hand the sky's wall-texture index across the seam so the
     // 3D back-end can sample it (RB_BuildSky). skytexture is set per level by
     // R_SetupLevel; the C++ side never touches DOOM globals.

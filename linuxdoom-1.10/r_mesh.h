@@ -434,6 +434,8 @@ typedef struct
                          // levels. Per LEVEL, not per frame, but it rides the view
                          // because that is the only POD already crossing the seam
                          // (r_backend.c computes it; misc6.w carries it to the shader)
+    int   fixedMode;     // DOOM-0455: RB_FIXED_* (fixed_colormap.h) from the
+                         // player's fixedcolormap -- invulnerability or the visor
 } rb_view_t;
 
 // Build this frame's billboard sprites (things + items) as camera-facing quads,
