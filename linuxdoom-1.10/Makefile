@@ -418,6 +418,13 @@ $(SHADER_DIR)/svgf_composite.comp.spv.h $(SHADER_DIR)/svgf_composite_split.comp.
 $(SHADER_DIR)/bloom_extract_raster.comp.spv.h $(SHADER_DIR)/bloom_extract_rt.comp.spv.h: \
 		$(SHADER_DIR)/formulas/formulas.glsl
 
+# DOOM-0455 — invulnerability's invert and the visor's lamp are shared by every site
+# that applies them. Same missing-auto-dep hazard as the rules above.
+$(SHADER_DIR)/mesh.frag.spv.h $(SHADER_DIR)/mesh_overlay.frag.spv.h \
+$(SHADER_DIR)/composite.frag.spv.h $(SHADER_DIR)/rt_tonemap.comp.spv.h \
+$(SHADER_DIR)/svgf_composite.comp.spv.h $(SHADER_DIR)/svgf_composite_split.comp.spv.h: \
+		$(SHADER_DIR)/formulas/fixed_colormap.glsl
+
 # DOOM-0345 R1 — the BLOOM_SPLIT variant of svgf_composite.comp. Explicit rule (the pattern
 # rule above can't produce it — there is no svgf_composite_split.comp source); depends on
 # svgf_composite.comp so editing the shader rebuilds both variants.

@@ -17,6 +17,7 @@
 // and pbr_neutral_tonemap.glsl in itself, so they are NOT included separately here).
 #include "formulas/tonemap_encode.glsl"
 #include "formulas/svgf_shared.glsl"   // svgfReprojectPrev (DOOM-0440)
+#include "formulas/fixed_colormap.glsl"   // DOOM-0455: invulnerability + visor
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -48,9 +49,10 @@ layout(buffer_reference, scalar) readonly buffer MatEmis { float m[]; };
 layout(push_constant) uniform PC {
     vec4  prevPos; vec4 prevDir; vec4 prevRight; vec4 prevUp;
     uvec4 misc;   // x = cur parity, y = width, z = height, w = final a-trous source index
-    uvec4 misc2;
+    uvec4 misc2;  // z, w = this frame's camera x, y (bit-cast floats; DOOM-0455 visor)
     uvec4 misc3;  // x = exposure EV (bit-cast float); y = rb_fog gate (DOOM-0011,
-                  // mirrors the megakernel's pc.misc6.z — 0 = fog off, INV-8)
+                  // mirrors the megakernel's pc.misc6.z — 0 = fog off, INV-8);
+                  // z = DOOM-0455's RB_FIXED_* mode; w = camera z (bit-cast float)
     MatEmis matEmis;
 } pc;
 

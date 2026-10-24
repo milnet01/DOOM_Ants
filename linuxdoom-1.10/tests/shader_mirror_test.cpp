@@ -15,6 +15,10 @@
 //     A mismatch reads the next subsector's lights, or past the buffer.
 //   - the floats per light record: RASTER_LIGHT_FLOATS on both sides (DOOM-0482).
 //     A mismatch reads every light after the first from the wrong offset.
+//   - the powerup mode codes, RB_FIXED_* in fixed_colormap.h and
+//     formulas/fixed_colormap.glsl, and RB_INVERSECOLORMAP against p_user.c's
+//     INVERSECOLORMAP (DOOM-0455 INV-2). A mismatch shows the wrong powerup, or
+//     none, in the 3D views.
 //
 // Source-scraping, like bloom_threshold_test.cpp: each value is found by its
 // constant's name, never by line position.
@@ -65,6 +69,25 @@ static bool assigned(const std::string& src, const char* name, double* out)
     return false;
 }
 
+// The value of `#define <name> <value>`, which assigned() cannot read: a define
+// has no `=`, so its value is the token after the name.
+static bool defined(const std::string& src, const char* name, double* out)
+{
+    const std::string key(name);
+    for (size_t p = src.find("#define"); p != std::string::npos; p = src.find("#define", p + 1))
+    {
+        size_t q = p + 7;
+        while (q < src.size() && (src[q] == ' ' || src[q] == '\t')) ++q;
+        if (src.compare(q, key.size(), key) != 0) continue;
+        q += key.size();
+        if (q < src.size() && isIdent(src[q])) continue;
+        char* end = nullptr;
+        *out = std::strtod(src.c_str() + q, &end);
+        return end != src.c_str() + q;
+    }
+    return false;
+}
+
 static void same(const std::string& a, const char* aName,
                  const std::string& b, const char* bName)
 {
@@ -108,6 +131,22 @@ int main()
     same(ms, "FLASH_OFF_UP",    vk, "kFlashOffUp");
     same(ms, "RASTER_MAX_LIGHTS", vk, "RASTER_MAX_LIGHTS_PER_SUBSECTOR");
     same(ms, "RASTER_LIGHT_FLOATS", vk, "RASTER_LIGHT_FLOATS");
+
+    // DOOM-0455 INV-2: the powerup mode codes, C header against GLSL include.
+    const std::string fh = slurp(DOOM_TESTS_ROOT "/fixed_colormap.h");
+    const std::string fg = slurp(DOOM_TESTS_ROOT "/shaders/formulas/fixed_colormap.glsl");
+    const std::string pu = slurp(DOOM_TESTS_ROOT "/p_user.c");
+    check(!fh.empty() && !fg.empty() && !pu.empty(), "the fixed-colormap sources are readable");
+    same(fh, "RB_FIXED_NONE",   fg, "RB_FIXED_NONE");
+    same(fh, "RB_FIXED_VISOR",  fg, "RB_FIXED_VISOR");
+    same(fh, "RB_FIXED_INVERT", fg, "RB_FIXED_INVERT");
+    double inv = 0.0, rbInv = 0.0;
+    check(defined(pu, "INVERSECOLORMAP", &inv), "p_user.c still #defines INVERSECOLORMAP");
+    check(assigned(fh, "RB_INVERSECOLORMAP", &rbInv), "RB_INVERSECOLORMAP is still an assigned constant");
+    char what[160];
+    std::snprintf(what, sizeof what, "RB_INVERSECOLORMAP equals p_user.c's INVERSECOLORMAP (%g vs %g)",
+                  rbInv, inv);
+    check(inv == rbInv && inv != 0.0, what);
 
     return check_summary("shader_mirror_test");
 }

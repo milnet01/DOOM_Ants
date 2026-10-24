@@ -74,6 +74,7 @@
 // self-guards extern "C"). The GPU side (atlas image + text pipeline + batch API) is here.
 #include "rb_text.h"
 #include "menu_text.h"     // DOOM-0211: the crisp menu queue (rb_text_* / rb_menu_*)
+#include "fixed_colormap.h" // DOOM-0455: RB_FIXED_* (invulnerability / visor)
 
 // C engine symbols the HD material loader resolves DOOM names against (defined in
 // r_data.c / w_wad.c). Declared here since r_vulkan.cpp doesn't pull r_state.h.
@@ -511,11 +512,11 @@ struct VulkanState
     // 1 = raster, the composite with lastCoPush; 2 = traced, lastRtFinal plus the
     // weapon in lastWeaponBuf drawn with lastWeaponPc.
     int              lastWorld       = 0;
-    float            lastCoPush[4]   = {};
+    float            lastCoPush[5]   = {};   // DOOM-0455: + fixedMode (INV-9)
     VkImage          lastRtFinal     = VK_NULL_HANDLE;
     VkBuffer         lastWeaponBuf   = VK_NULL_HANDLE;
     uint32_t         lastWeaponVerts = 0;
-    float            lastWeaponPc[31] = {};
+    float            lastWeaponPc[32] = {};  // the mesh block, full at 128 B (INV-9)
     // DOOM-0094: LOAD-variant of renderPass (colour loadOp=LOAD to keep the path-
     // traced blit, depth cleared). Used after RecordRtTrace to draw the weapon
     // viewmodel + the 2D HUD/menu/FPS overlay over the traced view. Format-compatible
@@ -1170,6 +1171,21 @@ struct VulkanState
 };
 
 VulkanState g;
+
+// DOOM-0455 INV-9: each push block it grew has one size. These arrays and this struct
+// hold it; the pipeline-layout ranges and the push calls take it as sizeof. Nothing
+// checks the GLSL side against them.
+static_assert(sizeof g.lastWeaponPc == 128,
+              "mesh push block (mesh.vert/mesh.frag Push) is the guaranteed 128 B floor, full");
+static_assert(sizeof g.lastCoPush == 20, "composite push block must match composite.frag's Push");
+struct RtTonemapPC {
+    uint32_t renderExtent[2];
+    float    bloomIntensity;
+    float    ev;
+    uint32_t fixedMode;     // DOOM-0455: RB_FIXED_* (fixed_colormap.h)
+};
+static_assert(sizeof(RtTonemapPC) == 20,
+              "rt_tonemap push-constant layout must match rt_tonemap.comp");
 
 // Defined below (after the AS build that first calls it): (re)point the compute
 // descriptor at the current TLAS + storage image once both exist.
@@ -2992,8 +3008,9 @@ void CreateRtTonemapPipeline()
     }
     CreateComputeSets(b, 3, "rtTonemap", &g.rtTonemapDsLayout, &g.rtTonemapDsPool,
                       { &g.rtTonemapDs });
-    // Push: uvec2 renderExtent + float intensity + float ev.
-    CreateComputeLayout(&g.rtTonemapDsLayout, 1, 16, "rtTonemap", &g.rtTonemapPipeLayout);
+    // Push: uvec2 renderExtent + float intensity + float ev + uint fixedMode.
+    CreateComputeLayout(&g.rtTonemapDsLayout, 1, sizeof(RtTonemapPC), "rtTonemap",
+                        &g.rtTonemapPipeLayout);
     CreateComputePipe(rt_tonemap_comp_spv, rt_tonemap_comp_spv_len, g.rtTonemapPipeLayout,
                       "rtTonemap", &g.rtTonemapPipeline);
 }
@@ -4769,7 +4786,8 @@ void CreateDescriptors()
         VkPushConstantRange cpc = {};
         cpc.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         cpc.offset = 0;
-        cpc.size = 4 * sizeof(float);   // DOOM-0170 L2b: vec2 uvScale + aoEnable + pad
+        cpc.size = sizeof g.lastCoPush;   // vec2 uvScale + aoEnable + bloomIntensity
+                                          // + DOOM-0455 fixedMode
         VkPipelineLayoutCreateInfo cplci = {};
         cplci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         cplci.setLayoutCount = 1;
@@ -5039,11 +5057,12 @@ void CreatePipeline()
     VkPushConstantRange pcr = {};
     pcr.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     pcr.offset = 0;
-    pcr.size = 31 * sizeof(float);   // mat4 MVP + extralight + sky yaw + camera xyz
-                                     // + numWall/numFlat (material-id offsets)
-                                     // + flashlight on/off (DOOM-0044)
-                                     // + DOOM-0170 L1a/L1b: probes/triSs/lights device
-                                     //   addrs (3x u64) + probeCount (u32) = 124 B (<128 floor)
+    pcr.size = sizeof g.lastWeaponPc;   // mat4 MVP + extralight + sky yaw + camera xyz
+                                        // + numWall/numFlat (material-id offsets)
+                                        // + flashlight on/off (DOOM-0044)
+                                        // + DOOM-0170 L1a/L1b: probes/triSs/lights device
+                                        //   addrs (3x u64) + probeCount (u32)
+                                        // + DOOM-0455 fixedMode (u32) = 128 B, full
 
     // DOOM-0170 L2c: set 0 = the shared g.ds (palette/materials/overlay); set 1 = the
     // flashlight shadow map + lightVP (g.shadowDsLayout) that mesh.frag samples for the
@@ -9335,6 +9354,14 @@ void RecordRtTrace(uint32_t idx)
         // SvgfPC block (which has no misc6 of its own) via the free misc3.y lane — the
         // composite's svgf_composite.comp reads it back as pc.misc3.y (INV-8).
         spc.misc3[1] = pc.misc6[2];
+        // DOOM-0455: the powerup mode (misc3.z) and THIS frame's camera for the visor
+        // (misc2.zw, misc3.w as bit-cast floats). prevPos is the previous denoised
+        // frame's camera, so it will not do. Only the composite reads these lanes:
+        // the temporal and a-trous passes read misc2.xy alone, and no misc3.
+        spc.misc3[2] = (uint32_t)g.lastView.fixedMode;
+        std::memcpy(&spc.misc2[2], &g.lastView.x, sizeof(float));
+        std::memcpy(&spc.misc2[3], &g.lastView.y, sizeof(float));
+        std::memcpy(&spc.misc3[3], &g.lastView.z, sizeof(float));
         vkCmdPushConstants(g.cmd, g.svgfPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(spc), &spc);
         vkCmdDispatch(g.cmd, gx, gy, 1);
         if (prof) vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 7);
@@ -9420,13 +9447,7 @@ void RecordRtTrace(uint32_t idx)
             // reads ~0 ms, which is the truth.
             if (prof) vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 8);
 
-            struct RtTonemapPC {
-                uint32_t renderExtent[2];
-                float    bloomIntensity;
-                float    ev;
-            } tmpc = {};
-            static_assert(sizeof(RtTonemapPC) == 16,
-                          "rt_tonemap push-constant layout must match rt_tonemap.comp");
+            RtTonemapPC tmpc = {};
             tmpc.renderExtent[0] = w;
             tmpc.renderExtent[1] = h;
             // DOOM-0345 R2 — the combine, gated on whether the chain actually RAN this
@@ -9438,6 +9459,7 @@ void RecordRtTrace(uint32_t idx)
             // than recomputed so the two can never disagree — INV-6 is "applied exactly
             // once", and on this path that once is here.
             std::memcpy(&tmpc.ev, &spc.misc3[0], sizeof(float));
+            tmpc.fixedMode = spc.misc3[2];   // DOOM-0455: the same mode the composite got
             vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g.rtTonemapPipeline);
             vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
                                     g.rtTonemapPipeLayout, 0, 1, &g.rtTonemapDs, 0, nullptr);
@@ -9957,12 +9979,13 @@ void RecordRtOverlay(uint32_t idx, bool drawOverlay)
     // weapon draw so the gun renders identically in Solid and Ultra.
     if (drawWeapon)
     {
-        // DOOM-0390: all 31 floats of the layout's range, not the first 24. mesh.frag
+        // DOOM-0390: every float of the layout's range, not the first 24. mesh.frag
         // statically uses the probe/triSs/light addresses and probeCount in floats
         // 24..30; the raster arm writes them, this arm did not, and the command buffer
         // is reset every frame, so they were undefined here. Zero addresses and a zero
         // probeCount are the "no bake" state the shader already handles.
-        float pcData[31] = {};
+        float pcData[32] = {};
+        static_assert(sizeof pcData == sizeof g.lastWeaponPc, "the mesh push block (INV-9)");
         std::memcpy(pcData, g.viewProj, 16 * sizeof(float));
         pcData[16] = g.lastView.extralight;
         pcData[17] = g.lastView.angle;
@@ -9972,9 +9995,15 @@ void RecordRtOverlay(uint32_t idx, bool drawOverlay)
         std::memcpy(&pcData[21], &g.matNumWall, sizeof(int));
         std::memcpy(&pcData[22], &g.matNumFlat, sizeof(int));
         pcData[23] = rb_flashlight ? 1.0f : 0.0f;   // inert here (psprite skips the cone)
+        // DOOM-0455: the weapon is drawn after the blit, so nothing run on the traced
+        // image reaches it; it takes the powerup here. The debug views (rb_rtdebug 1..4)
+        // get neither powerup, but still draw the weapon, so they push none.
+        const uint32_t fixedMode = (rb_rtdebug == 6) ? (uint32_t)g.lastView.fixedMode
+                                                     : (uint32_t)RB_FIXED_NONE;
+        std::memcpy(&pcData[31], &fixedMode, sizeof(uint32_t));
         vkCmdPushConstants(g.cmd, g.pipelineLayout,
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, 31 * sizeof(float), pcData);
+                           0, sizeof pcData, pcData);
         std::memcpy(g.lastWeaponPc, pcData, sizeof g.lastWeaponPc);
 
         VkDeviceSize off = 0;
@@ -10668,7 +10697,8 @@ extern "C" void RB_Vulkan_Present(void)
         // shade) and the view yaw (mesh.frag pans the sky by it). Push constants
         // and descriptor sets are layout-scoped, so they outlive the pipeline
         // binds below — set them once for both the sky and world pipelines.
-        float pcData[31] = {};
+        float pcData[32] = {};
+        static_assert(sizeof pcData == sizeof g.lastWeaponPc, "the mesh push block (INV-9)");
         std::memcpy(pcData, g.viewProj, 16 * sizeof(float));
         pcData[16] = g.lastView.extralight;
         pcData[17] = g.lastView.angle;
@@ -10694,9 +10724,12 @@ extern "C" void RB_Vulkan_Present(void)
         std::memcpy(&pcData[26], &triSsAddr, sizeof(uint64_t));
         std::memcpy(&pcData[28], &lightAddr, sizeof(uint64_t));
         std::memcpy(&pcData[30], &probeN,    sizeof(uint32_t));
+        // DOOM-0455: invulnerability / the visor (float 31), for the visor in mesh.frag.
+        const uint32_t fixedMode = (uint32_t)g.lastView.fixedMode;
+        std::memcpy(&pcData[31], &fixedMode, sizeof(uint32_t));
         vkCmdPushConstants(g.cmd, g.pipelineLayout,
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, 31 * sizeof(float), pcData);
+                           0, sizeof pcData, pcData);
 
         VkDeviceSize off = 0;
         // Sky first, behind everything: depth-off pipeline, the 6 verts at the
@@ -10921,8 +10954,12 @@ extern "C" void RB_Vulkan_Present(void)
         // combine needs no push-layout change. 0 unless the chain actually ran this frame,
         // which is what keeps `bloom 0` byte-identical (INV-2) and stops a stale halo showing
         // over the menu or the intermission screen.
-        float coPush[4] = { uvScale[0], uvScale[1], rb_ssao ? 1.0f : 0.0f,
+        float coPush[5] = { uvScale[0], uvScale[1], rb_ssao ? 1.0f : 0.0f,
                             bloomRecorded ? bloomPreset.intensity * kBloomRasterGain : 0.0f };
+        static_assert(sizeof coPush == sizeof g.lastCoPush, "the composite push block (INV-9)");
+        // DOOM-0455: invulnerability inverts the composited world and weapon (slot 4).
+        const uint32_t fixedMode = (uint32_t)g.lastView.fixedMode;
+        std::memcpy(&coPush[4], &fixedMode, sizeof(uint32_t));
         vkCmdPushConstants(g.cmd, g.compositePipeLayout, VK_SHADER_STAGE_FRAGMENT_BIT,
                            0, sizeof(coPush), coPush);
         vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.compositePipeline);

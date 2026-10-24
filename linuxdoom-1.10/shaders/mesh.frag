@@ -58,6 +58,7 @@ layout(location = 1) out vec4 outDirect;
 // the same soft coloured indirect bounce the path tracer bakes. The buffer layout and
 // giIrradiance are the path tracer's own, from the shared header (DOOM-0440).
 #include "formulas/gi_probe.glsl"
+#include "formulas/fixed_colormap.glsl"   // DOOM-0455: invulnerability + visor
 
 // DOOM-0170 L1b — per-subsector dynamic point lights derived from the same NEE
 // emitter list (torches/lamps/emissive walls). Flat float array: RASTER_MAX_LIGHTS
@@ -81,11 +82,14 @@ layout(push_constant) uniform Push {
     float flashlight;   // DOOM-0044 headlamp on/off (1=on); Solid raster cone
     // DOOM-0170 L1a/L1b: baked SH-L1 GI probes + per-subsector point lights read in
     // raster (RT-off). 64-bit device addresses (8-byte aligned; byte offset 96/104/112,
-    // probeCount at 120) keep the block at 124 B — under the 128 B guaranteed floor.
+    // probeCount at 120) keep the block under the 128 B guaranteed floor.
     ProbesRO probes;    // baked per-subsector SH-L1 radiance (0 if no bake)
     TriSs    triSs;      // per-triangle primitive id -> subsector/probe index
     LightsRO lights;     // DOOM-0170 L1b: per-subsector nearest-N point lights
     uint     probeCount; // subsector/probe count; bounds triSs+lights, 0 disables both
+    // DOOM-0455: RB_FIXED_* (formulas/fixed_colormap.glsl) at offset 124. The block is
+    // now 128 B, the guaranteed floor, so it is full: the next field needs a buffer.
+    uint     fixedMode;
 } pc;
 
 layout(set = 0, binding = 0) uniform sampler2D paletteTex;   // 256x1 PLAYPAL RGB

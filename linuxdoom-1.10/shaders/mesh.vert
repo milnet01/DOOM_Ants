@@ -33,6 +33,7 @@ layout(push_constant) uniform Push {
     TriSs    triSs;
     LightsRO lights;
     uint     probeCount;
+    uint     fixedMode;  // DOOM-0455 (fragment-only; block must match mesh.frag)
 } pc;
 
 layout(location = 0) in vec3  inPos;

@@ -15,6 +15,7 @@
 #extension GL_GOOGLE_include_directive : require
 
 #include "formulas/tonemap_encode.glsl"
+#include "formulas/fixed_colormap.glsl"   // DOOM-0455: invulnerability + visor
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -27,6 +28,7 @@ layout(push_constant) uniform Push {
     uvec2 renderExtent;    // the render-res corner of the display-sized targets
     float bloomIntensity;
     float ev;              // DOOM-0096 Brightness, the same value svgf_composite receives
+    uint  fixedMode;       // DOOM-0455: RB_FIXED_* (formulas/fixed_colormap.glsl)
 } pc;
 
 void main()

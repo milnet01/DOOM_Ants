@@ -30,7 +30,8 @@ layout(set = 0, binding = 3) uniform sampler2D bloomTex;
 // toggle needs no separate pipeline; the SSAO pass is simply skipped and AO reads as 1.
 // DOOM-0331 L3 (§5): the block's layout does not change — the unused `pad` that was already
 // reserved here becomes bloomIntensity, which is 0 whenever no bloom was recorded this frame.
-layout(push_constant) uniform Push { vec2 uvScale; float aoEnable; float bloomIntensity; } pc;
+// fixedMode: DOOM-0455's RB_FIXED_* (formulas/fixed_colormap.glsl).
+layout(push_constant) uniform Push { vec2 uvScale; float aoEnable; float bloomIntensity; uint fixedMode; } pc;
 
 // DOOM-0170 L2a step 3: the SAME Khronos PBR-Neutral tone operator the RT denoiser uses
 // (svgf_composite.comp), so Solid and Ultra stay tone-matched. It is identity below its
@@ -45,6 +46,7 @@ layout(push_constant) uniform Push { vec2 uvScale; float aoEnable; float bloomIn
 // value this shader tone-maps. Nothing of it is computed here any more: a second copy of
 // the AO blur or the AO_DIRECT_WEIGHT mix is how the two drift apart (spec 5).
 #include "formulas/scene_recombine.glsl"
+#include "formulas/fixed_colormap.glsl"   // DOOM-0455: invulnerability + visor
 
 void main()
 {
