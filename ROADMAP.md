@@ -10469,6 +10469,10 @@ stay in their phase sections; this heading holds only work still to come.
   is, which keeps it a formula. The zero-light room needs a fixture map with the
   flashlight forced off: sector light has a floor in practice and the flashlight
   is camera-attached.
+  Spec docs/specs/DOOM-0455-fixed-colormap-3d.md accepted 2026-10-24
+  after review-contract loops 1-2 (16 findings, all fixed; capped at 2,
+  calm). Ready for B1. Loop log:
+  docs/reviews/DOOM-0455-fixed-colormap-3d-loop-log.md.
   **Layman:** The invulnerability sphere and the light-amplification visor currently do nothing in the Solid and Ultra views. This restores them.
   Kind: implement.
   Source: review-code 2026-09-01, lane backend-seam (DOOM-0405 F1); split out 2026-09-21.
