@@ -64,6 +64,8 @@ typedef struct
     // records the sidedef + which slot it drew from; RB_UpdateMeshHeights re-reads
     // texturetranslation[sides[vtexside].<slot>] each frame. vtexside < 0 means a
     // flat (refreshed via vsector/vplane + flattranslation) or static. DOOM-0066.
+    // A DOOM-0142 filled step is a flat that also sets vtexside, for its
+    // RB_PLANE_*_STEP edge; RB_MESH_FLAT still routes its picture by vtexslot.
     int   vtexside;     // sidedef index, or -1 (flat / no re-texture)
     int   vtexslot;     // 0 = top, 1 = mid, 2 = bottom texture; on a flat, see below
 } rb_vertex_t;
@@ -77,6 +79,13 @@ typedef struct
 #define RB_PLANE_NONE   0   // static: z never changes
 #define RB_PLANE_FLOOR  1   // z follows sectors[vsector].floorheight
 #define RB_PLANE_CEIL   2   // z follows sectors[vsector].ceilingheight
+// DOOM-0500: a step wall's far edge. z follows sectors[vsector]'s plane but never
+// crosses the plane of the vertex's own side (sides[vtexside].sector), so a step
+// that is not showing has zero height and grows if a plane moves past its
+// neighbour's (step_wall.h). Only step walls carry these, and they always set
+// vtexside.
+#define RB_PLANE_FLOOR_STEP 3   // max(sectors[vsector].floorheight, own floor)
+#define RB_PLANE_CEIL_STEP  4   // min(sectors[vsector].ceilingheight, own ceiling)
 
 // DOOM-0142: a wall step the map left untextured is filled with the neighbouring
 // sector's flat (the back floor under a lower step, the back ceiling over an upper
@@ -283,8 +292,9 @@ void RB_FreeMesh(rb_mesh_t* mesh);
 
 // Re-height a built mesh from the current sector floor/ceiling heights, writing
 // into dst[] (which must hold mesh->numverts rb_vertex_t -- e.g. the mapped GPU
-// vertex buffer). Only vertices tagged RB_PLANE_FLOOR/CEIL have their z rewritten
-// (to the live sector plane height); static vertices are untouched. Call once
+// vertex buffer). Only vertices tagged with a moving RB_PLANE_* have their z
+// rewritten (to the live sector plane height, clamped for the *_STEP tags);
+// static vertices are untouched. Call once
 // per frame so doors and lifts animate without rebuilding the mesh (DOOM-0049).
 // Returns an OR of the RB_UPD_* bits below: RB_UPD_MOVED when any vertex z changed
 // this frame (a door/lift mid-move) so the RT back-end refits its acceleration

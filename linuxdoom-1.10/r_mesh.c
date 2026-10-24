@@ -45,6 +45,7 @@
 #include "z_zone.h"     // PU_CACHE
 #include "seg_project.h" // DOOM-0180 RB_ProjectOnLine (seg -> its linedef's line)
 #include "sky_seal.h"    // DOOM-0322 sky lid height, seals, upper-step kind
+#include "step_wall.h"   // DOOM-0500 step walls on both sides, clamped
 #include "sprite_cap.h"  // DOOM-0459 nearest-first order past the sprite cap
 #include "r_mesh.h"
 #include "patch_bounds.h"
@@ -254,6 +255,8 @@ static void emit_flat_wall(builder_t* bld, seg_t* seg, fixed_t bottomz, fixed_t 
     tr.vsector = tl.vsector = topsec; tr.vplane = tl.vplane = topplane;
     bl.vtexsec  = br.vtexsec  = tr.vtexsec  = tl.vtexsec  = picsec;
     bl.vtexslot = br.vtexslot = tr.vtexslot = tl.vtexslot = picslot;
+    // DOOM-0500: names the own side for an RB_PLANE_*_STEP edge.
+    bl.vtexside = br.vtexside = tr.vtexside = tl.vtexside = (int)(seg->sidedef - sides);
     push_quad(bld, bl, br, tr, tl);
 }
 
@@ -338,6 +341,10 @@ static void emit_wall(builder_t* bld, seg_t* seg, fixed_t bottomz, fixed_t topz,
             break;
         }
         vtop += seg->sidedef->rowoffset / (float)FRACUNIT;
+        // DOOM-0500: a step's far edge is clamped, but its texture pegs to the
+        // other sector's own plane, as Classic's does.
+        if (anchorplane == RB_PLANE_FLOOR_STEP)     anchorplane = RB_PLANE_FLOOR;
+        else if (anchorplane == RB_PLANE_CEIL_STEP) anchorplane = RB_PLANE_CEIL;
         // Texture row 0 sits at world height (vtop + zt) in texels(==world
         // units); store it relative to the anchor plane's build height so
         // RB_UpdateMeshHeights can re-derive v from the live anchor height.
@@ -668,57 +675,67 @@ rb_mesh_t* RB_BuildLevelMesh(void)
         // DOOM-0322: both ceilings sky -> nothing. Classic draws sky in that
         // gap and lets the taller side show over the lower ceiling; the raised
         // lid gives the 3D view the same (RB_UpperStepKind, sky_seal.h).
-        if (front->ceilingheight > back->ceilingheight)
+        // DOOM-0500: built whichever ceiling is higher now. The bottom edge is
+        // RB_PLANE_CEIL_STEP, never above the front ceiling, so a step that is
+        // not showing has zero height and grows if a ceiling moves past its
+        // neighbour's (step_wall.h). The sky fill is static, so it keeps the
+        // load-time test.
         {
+            fixed_t stepz = RB_UpperStepBottom(front->ceilingheight,
+                                               back->ceilingheight);
             switch (RB_UpperStepKind(front->ceilingpic == skyflatnum,
                                      back->ceilingpic == skyflatnum,
                                      side->toptexture > 0))
             {
             case RB_UPPER_WALL:
-                emit_wall(&bld, seg, back->ceilingheight, front->ceilingheight,
+                emit_wall(&bld, seg, stepz, front->ceilingheight,
                           side->toptexture, 0, PEG_UPPER,
-                          bi, RB_PLANE_CEIL, fi, RB_PLANE_CEIL);
+                          bi, RB_PLANE_CEIL_STEP, fi, RB_PLANE_CEIL);
                 break;
             // DOOM-0142: untextured upper step -- the back ceiling's flat, or the
             // sky where that ceiling is sky.
             case RB_UPPER_SKY:
-                emit_sky_wall(&bld, seg, back->ceilingheight, front->ceilingheight,
-                              0.0f);
+                if (front->ceilingheight > back->ceilingheight)
+                    emit_sky_wall(&bld, seg, back->ceilingheight,
+                                  front->ceilingheight, 0.0f);
                 break;
             case RB_UPPER_FLAT:
-                emit_flat_wall(&bld, seg, back->ceilingheight, front->ceilingheight,
+                emit_flat_wall(&bld, seg, stepz, front->ceilingheight,
                                bi, RB_TEXSLOT_CEILPIC,
-                               bi, RB_PLANE_CEIL, fi, RB_PLANE_CEIL);
+                               bi, RB_PLANE_CEIL_STEP, fi, RB_PLANE_CEIL);
                 break;
             default:   // RB_UPPER_NONE
                 break;
             }
         }
 
-        // Lower step (front floor lower than/equal to back): bottom = front
-        // floor, top = back floor (a lift floor raising/lowering changes the
-        // relevant edge). The <= (not <) emits a flush line's lower wall as a
-        // zero-height quad so a lift built level with its neighbour still has a
-        // shaft wall to GROW into as it travels -- without it that wall was
-        // missing in 3D until the lift moved, where Classic re-derives it each
-        // frame (DOOM-0068). emit_wall drops the "-"/untextured side, so only the
-        // textured shaft face (which grows valid, never inverts) is added.
-        if (front->floorheight <= back->floorheight)
+        // Lower step: bottom = front floor, top = back floor (a lift floor
+        // raising/lowering changes the relevant edge). Built on BOTH sides of
+        // every line, whichever floor is higher at load: the top edge is
+        // RB_PLANE_FLOOR_STEP, never below the front floor, so a step that is not
+        // showing has zero height and grows when a floor moves past its
+        // neighbour's -- a lift built level with its neighbour (DOOM-0068), or
+        // E1M8's star sinking below the floors around it (DOOM-0500, step_wall.h).
+        // Classic re-derives the step each frame.
         {
+            fixed_t stepz = RB_LowerStepTop(front->floorheight, back->floorheight);
             if (side->bottomtexture > 0)
-                emit_wall(&bld, seg, front->floorheight, back->floorheight,
+                emit_wall(&bld, seg, front->floorheight, stepz,
                           side->bottomtexture, 0, PEG_LOWER,
-                          fi, RB_PLANE_FLOOR, bi, RB_PLANE_FLOOR);
-            // DOOM-0142: untextured lower step -- the back floor's flat. A flush
-            // line (equal floors) is a zero-height quad that grows if a lift moves,
-            // as the textured case is.
+                          fi, RB_PLANE_FLOOR, bi, RB_PLANE_FLOOR_STEP);
+            // DOOM-0142: untextured lower step -- the back floor's flat, or the
+            // sky where that floor is sky. The sky fill is static, so it keeps
+            // the load-time test.
             else if (back->floorpic == skyflatnum)
-                emit_sky_wall(&bld, seg, front->floorheight, back->floorheight,
-                              0.0f);
+            {
+                if (front->floorheight <= back->floorheight)
+                    emit_sky_wall(&bld, seg, front->floorheight,
+                                  back->floorheight, 0.0f);
+            }
             else
-                emit_flat_wall(&bld, seg, front->floorheight, back->floorheight,
+                emit_flat_wall(&bld, seg, front->floorheight, stepz,
                                bi, RB_TEXSLOT_FLOORPIC,
-                               fi, RB_PLANE_FLOOR, bi, RB_PLANE_FLOOR);
+                               fi, RB_PLANE_FLOOR, bi, RB_PLANE_FLOOR_STEP);
         }
 
         // Middle (rails/grates): alpha-tested, spans the shared opening. The
@@ -1704,6 +1721,13 @@ int RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst, rb_vertex_t* s
             newz = sectors[v->vsector].floorheight / (float)FRACUNIT;
         else if (v->vplane == RB_PLANE_CEIL)
             newz = sectors[v->vsector].ceilingheight / (float)FRACUNIT;
+        // DOOM-0500: a step's far edge, clamped to its own side's plane.
+        else if (v->vplane == RB_PLANE_FLOOR_STEP)
+            newz = RB_LowerStepTop(sides[v->vtexside].sector->floorheight,
+                                   sectors[v->vsector].floorheight) / (float)FRACUNIT;
+        else if (v->vplane == RB_PLANE_CEIL_STEP)
+            newz = RB_UpperStepBottom(sides[v->vtexside].sector->ceilingheight,
+                                      sectors[v->vsector].ceilingheight) / (float)FRACUNIT;
         else
             continue;
         if (shadow[i].z != newz)
