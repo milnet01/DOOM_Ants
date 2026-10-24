@@ -13522,6 +13522,16 @@ against.
   check (DOOM-0279), frames-in-flight attribution (DOOM-0190), a
   pacing figure (DOOM-0359), render scale, tier and ray tracing as
   compare-blocking header fields.
+  2026-10-24: UNBLOCKED. frameledger's design is agreed by all three
+  engines, and its run-file format spec FLED-0001 was accepted on
+  2026-10-24 with DOOM's five changes: static inline functions inside
+  extern "C" guards, fled_consume compacting the buffer, |value| < 1e9,
+  llround rounding, and no frame/wall row on the last frame. DOOM may
+  build its writer to FLED-0001 now. frameledger builds `check`
+  (FLED-0002) and then the C header (FLED-0006) next, and will message
+  DOOM when `check` exists. On adoption, add python3 to
+  packaging/ci-deps.txt: the local pre-push container is a bare
+  ubuntu:24.04 with no Python.
   **Layman:** Record how long every frame and every part of it takes, in the file format the other two engines use, so one tool can say what stops DOOM reaching 60 FPS.
   Kind: feature.
   Source: user-decision-2026-10-24.
