@@ -16,6 +16,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Invulnerability and the light-amp visor work in Solid and Ultra** (DOOM-0455)
+  Picking up either one used to change nothing on screen outside Classic. Now, in Solid and Ultra, with ray tracing on or off, invulnerability turns the world and your weapon into a grey negative, as in the original game, and the sky stays as it is. The visor works like a lamp at your eyes: a dark room shows its walls and floor, the far end stays dim, and a room that is already lit changes little. Both blink as they run out, as in Classic.
+
 - **No more holes in E1M8's walls after the Barons die** (DOOM-0500)
   When the two Barons die, the walls around them sink into the floor. Solid then showed a red band and open sky where the step down should be. Solid used to build each step wall only where it existed when the level loaded. It now builds it on both sides and sizes it as floors and ceilings move. A floor or ceiling moving past its neighbour's height elsewhere is fixed the same way.
 

@@ -151,8 +151,8 @@ vec3 fixedInvert(vec3 encoded)
 // VISOR_FLATNESS blends away.
 const vec3  VISOR_TINT     = vec3(1.0);
 const float VISOR_WRAP     = 0.5;     // 0 = plain Lambert, 1 = no normal term
-const float VISOR_FLATNESS = 1.0;     // 1 = no distance falloff, 0 = full falloff
-const float VISOR_REACH    = 1200.0;  // world units; the falloff's zero point
+const float VISOR_FLATNESS = 0.15;    // 1 = no distance falloff, 0 = full falloff
+const float VISOR_REACH    = 1000.0;  // world units; the falloff's zero point
 const float VISOR_GAIN_RT  = 1.0;     // traced view only: radiance scale (§10)
 float visorShade(vec3 N, vec3 toEye, float dist)
 {
@@ -160,10 +160,17 @@ float visorShade(vec3 N, vec3 toEye, float dist)
     float fall   = mix(clamp(1.0 - dist / VISOR_REACH, 0.0, 1.0), 1.0, VISOR_FLATNESS);
     return facing * fall;
 }
+
+// Visor: how much of the lamp a surface takes given the light it already
+// has, 1 in the dark down to 0 at `full` (§4.5).
+const float VISOR_LIT_FULL_RT = 1.0;  // traced view: demodulated illum luminance
+float visorLitFade(float lit, float full)
+{
+    return 1.0 - smoothstep(0.0, full, lit);
+}
 ```
 
-The constant values are starting points. The first captures tune them (§10),
-in this file only.
+The values were settled from the first captures (§10), in this file only.
 
 `glslc` emits no dependency for an `#include`, so the `Makefile` names this
 file as a prerequisite of every shader that includes it, as it already does
@@ -188,7 +195,8 @@ for `scene_recombine.glsl` (`docs/standards/renderer.md`, Shaders).
           direct = albedo;                       // the weapon: full bright
       else {
           vec3  toEye = vec3(pc.eyeX, pc.eyeY, pc.eyeZ) - vWorldPos;
-          float v     = visorShade(normalize(vNormal), normalize(toEye), vDist);
+          float v     = visorShade(normalize(vNormal), normalize(toEye), vDist)
+                      * visorLitFade(sect + flash, BASE_SECTOR_DIM);
           float room  = max(0.0, 1.0 - sect - flash);
           direct += VISOR_TINT * albedo * min(v, room);
       }
@@ -200,7 +208,9 @@ for `scene_recombine.glsl` (`docs/standards/renderer.md`, Shaders).
   never lit.
 - `svgf_composite.comp`, both builds. After `L = albedo * illum + emis * ga.a`
   and before the fog fold, so mist still reads in front of a lit wall:
-  `L += VISOR_TINT * albedo * visorShade(N, toEye, dist) * VISOR_GAIN_RT`.
+  `L += VISOR_TINT * albedo * visorShade(N, toEye, dist) * visorLitFade(lit,
+  VISOR_LIT_FULL_RT) * VISOR_GAIN_RT`, where `lit` is the Rec.709 luminance
+  of the denoised illumination `illum`.
   `N` comes from `gnorm[cur]` at binding 1. The SVGF set layout
   (`CreateSvgfDescriptorLayout`) already carries that binding, which
   `svgf_temporal.comp` reads, so the composite only declares it. `toEye` and
@@ -248,10 +258,12 @@ validation error.
 - **The blink and the temporal upscaler.** In the last 128 tics the mode
   flips every 8 tics. TAAU's history then holds frames of the other mode. Its
   3x3 neighbourhood clamp should limit each blink's ghost to a frame or two.
-- **The visor in a bright room in the traced view.** An added term can push
-  PBR-Neutral into its roll-off and generate bloom. If the bright-room capture
-  shows that, scale the visor by how lit the pixel already is. That stays a
-  formula in §4.2's file.
+- **The visor in a bright room.** An added term can push PBR-Neutral into its
+  roll-off and generate bloom. The bright-room capture showed no bloom, but the
+  user wanted a lit room to keep its own shading. So `visorLitFade` scales the
+  lamp by how lit the surface already is, in all four views: the raster views
+  by `sect + flash` against `BASE_SECTOR_DIM`, the traced view by the
+  illumination's luminance against `VISOR_LIT_FULL_RT`.
 - **Partial invisibility.** Classic draws a shadow-drawn thing or weapon with
   its fuzz effect, ignoring `fixedcolormap`. The 3D views draw such things
   their own way, and §4.3 inverts whatever is on screen. A fuzzy weapon under
@@ -434,10 +446,12 @@ Each step ends with `make` and `make test` green.
 
 ## 10. Open questions
 
-- **The visor constants.** `VISOR_WRAP`, `VISOR_FLATNESS`, `VISOR_REACH` and
-  `VISOR_GAIN_RT` are look calls. The first captures settle them, in this
-  order: the zero-light fixture in Solid and Ultra (if shapes read in both,
-  the approach holds), then a bright room in Ultra's traced view (§4.5).
+None. **The visor constants** were settled on 2026-10-24 from the zero-light
+fixture and E1M1's courtyard in Ultra's traced view. Shapes read in all four
+views, so the approach holds. The user chose a lamp that fades with distance
+(`VISOR_FLATNESS` 0.15, `VISOR_REACH` 1000) and is weaker in bright rooms
+(`visorLitFade`, §4.5). `VISOR_WRAP` and `VISOR_GAIN_RT` kept their starting
+values.
 
 ## 11. What checks this
 

@@ -35,3 +35,10 @@ Khronos **PBR Neutral** tone mapper. It is a piecewise, cross-channel `vec3`
 operator, which is outside the Workbench's *scalar* curve-fit scope — the
 Workbench README's "copy as hand-written GLSL" category (like the VNDF basis
 transform). Provenance + the ACES/Reinhard rationale are in the file header.
+
+## Hand-written — `fixed_colormap.glsl`
+
+DOOM-0455's invulnerability and light-amp visor in the 3D views: the
+`RB_FIXED_*` mode codes, `fixedInvert`, `visorShade`, `visorLitFade` and the
+visor's look constants. Hand-written look calls, not Workbench curves. The
+spec is `docs/specs/DOOM-0455-fixed-colormap-3d.md`.

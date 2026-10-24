@@ -10358,7 +10358,7 @@ stay in their phase sections; this heading holds only work still to come.
   Kind: fix.
   Source: in-session-2026-09-20, found while verifying DOOM-0404's PLAYPAL gate.
 
-- 📋 [DOOM-0455] **Replicate fixedcolormap in the 3D path, so invulnerability and the light-amp visor work again.**
+- ✅ [DOOM-0455] **Replicate fixedcolormap in the 3D path, so invulnerability and the light-amp visor work again.**
   Split out of DOOM-0405. Verified live: `fixedcolormap` appears nowhere in
   r_vulkan.cpp or the shaders, and rb_view_t carries `extralight` but not it.
   p_user.c sets INVERSECOLORMAP for invulnerability and 1 for the visor;
@@ -10473,6 +10473,13 @@ stay in their phase sections; this heading holds only work still to come.
   after review-contract loops 1-2 (16 findings, all fixed; capped at 2,
   calm). Ready for B1. Loop log:
   docs/reviews/DOOM-0455-fixed-colormap-3d-loop-log.md.
+  Shipped 2026-10-24 (B1-B5, a8179c2..e37335a plus the closing docs
+  commit). Invulnerability inverts the world and weapon in all four 3D
+  views, never the sky; the visor is a lamp at the camera that fades
+  with distance and with existing light (user's choice from the first
+  captures). Evidence and measurements:
+  docs/reviews/DOOM-0455-fixed-colormap-3d-loop-log.md, row "B1-B5
+  impl". CHANGELOG Unreleased, Fixed.
   **Layman:** The invulnerability sphere and the light-amplification visor currently do nothing in the Solid and Ultra views. This restores them.
   Kind: implement.
   Source: review-code 2026-09-01, lane backend-seam (DOOM-0405 F1); split out 2026-09-21.
