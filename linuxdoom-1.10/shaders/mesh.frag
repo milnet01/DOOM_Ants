@@ -393,7 +393,8 @@ void main()
     // colour, so a room with no light still shows its shapes. It goes into DIRECT, which
     // the composite darkens by only half the AO, and it fills only the headroom sector
     // light and the flashlight leave, so a lit surface tops out at its albedo as in
-    // Classic's row 1. The weapon is full bright. The sky returned above.
+    // Classic's row 1, and it fades out as that light rises to full, so a lit room
+    // keeps its own shading. The weapon is full bright. The sky returned above.
     if (pc.fixedMode == RB_FIXED_VISOR)
     {
         if ((vFlags & FLAG_PSPRITE) != 0)
@@ -401,7 +402,8 @@ void main()
         else
         {
             vec3  toEye = vec3(pc.eyeX, pc.eyeY, pc.eyeZ) - vWorldPos;
-            float v     = visorShade(normalize(vNormal), normalize(toEye), vDist);
+            float v     = visorShade(normalize(vNormal), normalize(toEye), vDist)
+                        * visorLitFade(sect + flash, BASE_SECTOR_DIM);
             float room  = max(0.0, 1.0 - sect - flash);
             direct += VISOR_TINT * albedo * min(v, room);
         }

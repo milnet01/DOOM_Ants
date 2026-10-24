@@ -21,17 +21,30 @@ vec3 fixedInvert(vec3 encoded)
 // Visor: how strongly the camera-attached lamp lights a surface, 0..1.
 // Wrapped Lambert on |N.V| (a surface the camera sees faces it, so the
 // stored normal's sign carries nothing), times a falloff that
-// VISOR_FLATNESS blends away. The values are look calls (spec §10).
+// VISOR_FLATNESS blends away. The values are look calls (spec §10); the
+// user chose a lamp that fades with distance (2026-10-24), so the far end
+// of a dark room stays dim rather than lit flat.
 const vec3  VISOR_TINT     = vec3(1.0);
 const float VISOR_WRAP     = 0.5;     // 0 = plain Lambert, 1 = no normal term
-const float VISOR_FLATNESS = 1.0;     // 1 = no distance falloff, 0 = full falloff
-const float VISOR_REACH    = 1200.0;  // world units; the falloff's zero point
+const float VISOR_FLATNESS = 0.15;    // 1 = no distance falloff, 0 = full falloff
+const float VISOR_REACH    = 1000.0;  // world units; the falloff's zero point
 const float VISOR_GAIN_RT  = 1.0;     // traced view only: radiance scale
 float visorShade(vec3 N, vec3 toEye, float dist)
 {
     float facing = (abs(dot(N, toEye)) + VISOR_WRAP) / (1.0 + VISOR_WRAP);
     float fall   = mix(clamp(1.0 - dist / VISOR_REACH, 0.0, 1.0), 1.0, VISOR_FLATNESS);
     return facing * fall;
+}
+
+// Visor: how much of the lamp a surface takes given the light it already has,
+// 1 in the dark down to 0 at `full`. The user chose a visor that is weaker in
+// bright rooms (2026-10-24), so a lit room keeps its own shading (spec §4.5).
+// Each site passes its own measure of "fully lit": the raster views their
+// sector-light ceiling, the traced view VISOR_LIT_FULL_RT of illumination.
+const float VISOR_LIT_FULL_RT = 1.0;  // traced view: demodulated illum luminance
+float visorLitFade(float lit, float full)
+{
+    return 1.0 - smoothstep(0.0, full, lit);
 }
 
 #endif

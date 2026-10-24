@@ -219,8 +219,10 @@ void main()
             vec3  toEye = eye - gp.xyz;
             float dist  = length(toEye);
             vec3  N     = imageLoad(gnorm[cur], p).xyz;
+            float lit   = dot(illum, vec3(0.2126, 0.7152, 0.0722));   // linear luminance
             L += VISOR_TINT * albedo
-               * visorShade(normalize(N), toEye / max(dist, 1e-4), dist) * VISOR_GAIN_RT;
+               * visorShade(normalize(N), toEye / max(dist, 1e-4), dist)
+               * visorLitFade(lit, VISOR_LIT_FULL_RT) * VISOR_GAIN_RT;
         }
     }
     // DOOM-0011 L1: fog is a SEPARATE channel, folded AFTER the albedo re-multiply
