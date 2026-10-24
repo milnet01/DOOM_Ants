@@ -10933,7 +10933,7 @@ stay in their phase sections; this heading holds only work still to come.
   Lanes: renderer.
   Evidence: linuxdoom-1.10/dev-shots/shot-0012.png, linuxdoom-1.10/dev-shots/shot-0015.png, linuxdoom-1.10/dev-shots/shot-0016.png
 
-- 📋 [DOOM-0500] **A red floor or ceiling surface is drawn across E1M9's walls in Solid.**
+- 📋 [DOOM-0500] **When a floor sinks past its neighbour's height, Solid leaves a hole where the step wall should be (E1M8's red band).**
   Seen in a play-test of the DOOM-0497 build, past the E1M9 start.
   Unknown whether DOOM-0497 or an earlier change caused it. Work: get the
   spot from the user, A/B scratch/p0497/old against new there, then
@@ -10942,11 +10942,30 @@ stay in their phase sections; this heading holds only work still to come.
   spot is unknown. Waiting on the user to re-take the band in Solid with
   F12; that shot's .txt `repeat:` line gives the spot. Then A/B the
   pre- and post-DOOM-0497 builds there.
-  **Layman:** Partway into E1M9 in the Solid view, a wide red band of liquid texture smears across the room's walls with white patches above it.
-  Kind: investigate.
+  2026-10-24: CAUSE FOUND. The map is E1M8, not E1M9 (user
+  corrected). Shots dev-shots/shot-0019 and shot-0020. Not DOOM-0497:
+  old vs new builds differ by 5 px, against a 4 px control.
+  Trigger: the barons' death drops tag-666 sector 30 (floor=ceil 208)
+  to -136, past neighbours 26 (-96), 31 (0) and 28 (8). r_mesh.c builds
+  a lower-step wall only on the side whose floor is lower AT LOAD
+  (`front->floorheight <= back->floorheight`). Sector 30's own lower
+  steps were never built, so once it sinks the view passes under
+  sector 31's floor (FLOOR6_1, pure red) and out to the sky. Classic
+  draws it right.
+  Proof (scratch/p0500): a DEV hack fires the real EV_DoFloor at 8x
+  speed. Current code reproduces both shots. Also building the
+  reverse-side lower step removes the band; it then differs from
+  the known-good frame by 0.5% of pixels, against a 0.08% control.
+  The experiment is not the fix. The extra quad is upside-down until
+  the floor passes, so it overlaps the real wall on the same plane.
+  The fix needs each step wall's height clamped live: top = max(both
+  floors) for lower steps, bottom = min(both ceilings) for upper
+  steps. Ceilings moving past a neighbour have the same gap.
+  **Layman:** On E1M8, after the two Barons die and the walls sink, Solid shows holes where walls should be: a red band and open sky.
+  Kind: fix.
   Source: user-playtest-2026-10-23.
   Lanes: renderer.
-  Evidence: linuxdoom-1.10/dev-shots/shot-0008.png
+  Evidence: linuxdoom-1.10/dev-shots/shot-0019.png, linuxdoom-1.10/dev-shots/shot-0020.png
 
 ## 0.9.0 — The codebase can be trusted
 
@@ -13073,6 +13092,11 @@ against.
   for the RT view, in the manner of DOOM-0011 spec 6's table, so each new
   effect is measured against a share rather than against "does it still
   feel alright".
+  2026-10-24, user play-test: Solid shows the same gap. Rasterised over
+  200 FPS; ray tracing on drops to 40-50 FPS. Settings from the F12
+  notes of shots 0017-0021: 3840x2160, render scale 50, fog 3, bloom 2.
+  Solid and Ultra share one ray-traced renderer, so this item covers
+  Solid's ray-traced view too.
   **Layman:** The ray-traced mode runs at about 30 frames a second on this card; this is the long-term push to double that, and to stop each new effect quietly eating the difference.
   Kind: perf.
   Source: user-request-2026-07-27.
