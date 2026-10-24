@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=501 -->
+<!-- ants-roadmap-id-high-water: DOOM=507 -->
 
 # Roadmap
 
@@ -13479,6 +13479,10 @@ against.
   engine writes (engine/profiler/profile_log.cpp). Warm-up code:
   tests/test_fog_benchmark.cpp near kBenchWarmupMillis. Paths under
   /mnt/Games/Scripts/Linux/Vestige, MIT, same author.
+  2026-10-24, user decision: stays parked. DOOM Ants adopts the shared
+  frameledger analyser instead (DOOM-0502). Its one-second CSV cannot
+  give a 1% low, and its demo1 scene fails the IWAD version check
+  (DOOM-0503).
   **Layman:** One command that runs the game through the same fixed situations every time and tells you what is costing the most, and whether a change made it slower.
   Kind: implement.
   Source: user-request-2026-09-12.
@@ -13501,6 +13505,80 @@ against.
   Kind: doc-fix.
   Source: in-session-2026-10-08 DOOM-0211 B2 measurement.
   Evidence: /home/ants/doom-scratch/p0211/real-top.png, /home/ants/doom-scratch/p0211/base-perf-top.png
+
+- 📋 [DOOM-0502] **Write per-frame timings in the shared frameledger format, so the ray-traced view's road to 60 FPS can be measured.**
+  User decision 2026-10-24: DOOM Ants adopts frameledger, the shared
+  analyser for Vestige, UT Ants and DOOM Ants
+  (/mnt/Games/Scripts/Linux/frameledger, its own session). DOOM-0431
+  stays parked; this replaces its one-second CSV. Nothing in the tree
+  writes a per-frame trace or a 1% low today, so DOOM-0170 INV-3 and
+  DOOM-0359 cannot be checked. Blocked on frameledger's format spec
+  passing review. What DOOM asked frameledger for: a per-pass budget
+  check (DOOM-0279), frames-in-flight attribution (DOOM-0190), a
+  pacing figure (DOOM-0359), render scale, tier and ray tracing as
+  compare-blocking header fields.
+  **Layman:** Record how long every frame and every part of it takes, in the file format the other two engines use, so one tool can say what stops DOOM reaching 60 FPS.
+  Kind: feature.
+  Source: user-decision-2026-10-24.
+  Lanes: renderer.
+  Supersedes: DOOM-0431.
+
+- 📋 [DOOM-0503] **-timedemo cannot time the shipped IWAD demos, and reports through I_Error.**
+  doom.wad's demos are version 109 and the engine is 110, so g_game.c's
+  version check prints "Demo is truncated or from a different game
+  version!" and quits with no timing line
+  (scripts/make_demo_fixture.py says the same). A finished timedemo
+  reports "timed %i gametics in %i realtics" through I_Error, so a
+  script cannot tell success from a crash, and the figure is in 35 Hz
+  tics, not frames per second. DOOM-0431's spec relies on demo1;
+  anything that benchmarks needs a crafted or v110 demo.
+  **Layman:** The built-in benchmark refuses the demos that come with the game, and when it does finish it exits as if it had crashed.
+  Kind: fix.
+  Source: ut-ants-review-2026-10-24.
+  Lanes: renderer.
+
+- 📋 [DOOM-0504] **Close the profiler's coverage gaps and print the untimed remainder by name.**
+  GPU: on the raster path UploadOverlayImage runs before timestamp 0
+  (checked); per UT Ants the wipe capture/columns sit there too, and on
+  the ray-traced path RecordRtOverlay (HUD, menu, FPS overlay, weapon)
+  is recorded after the last stamp (not re-checked). CPU: the code says
+  present-total minus the timed parts is the rest of the engine (game
+  tick, sound, D_Display's 2D, wipes), untimed; Classic has no
+  breakdown at all. Nothing prints frame minus the timed passes, so
+  the gaps stay hidden.
+  **Layman:** The built-in profiler misses some work each frame and does not say how much it missed.
+  Kind: enhancement.
+  Source: ut-ants-review-2026-10-24.
+  Lanes: renderer.
+
+- 📋 [DOOM-0505] **The profiler's sums survive a toggle or a raster/ray-traced switch, so its next print mixes the two.**
+  g.profMs and g.profFrames are zeroed only after a print (r_vulkan.cpp,
+  the raster/rt profile print). Re-enabling `\\` or flipping `~`
+  mid-interval prints stale sums, under the last frame's labels. A
+  reading of the code by UT Ants, not observed.
+  **Layman:** Turning the profiler off and on, or switching ray tracing, can make its next reading wrong.
+  Kind: fix.
+  Source: ut-ants-review-2026-10-24.
+  Lanes: renderer.
+
+- 📋 [DOOM-0506] **Fix the stale profiler comments now that the raster path is timed too.**
+  "RT-only (the raster path never reads it)" in r_vulkan.cpp beside
+  rb_profile; "RT-only; no-op under Classic/Solid" in i_video.c's `\\`
+  handler; "profMs accumulates the four segment costs" in r_vulkan.cpp
+  (there are now ten slots). All three checked present 2026-10-24.
+  **Layman:** Some code comments still say the profiler only works with ray tracing on; it now works in both.
+  Kind: doc-fix.
+  Source: ut-ants-review-2026-10-24.
+  Lanes: renderer.
+
+- 📋 [DOOM-0507] **Test the FPS counter's arithmetic and the profiler, and give the counter better than whole-ms resolution.**
+  No test covers the profilers, the FPS counter or -timedemo. At
+  hundreds of FPS a frame is about 1 ms, so whole-ms resolution makes
+  the counter coarse exactly where Solid runs.
+  **Layman:** Nothing checks that the frame-rate numbers on screen are right, and the counter rounds frame times to whole milliseconds.
+  Kind: test.
+  Source: ut-ants-review-2026-10-24.
+  Lanes: renderer.
 
 ## 0.11.0 — Light and materials
 
