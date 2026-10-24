@@ -1,7 +1,7 @@
 <!-- ants-spec-format: 1 -->
 # DOOM-0455 — Make invulnerability and the light-amp visor work in the 3D views
 
-**Status:** spec draft (2026-10-24).
+**Status:** accepted (2026-10-24).
 **Kind:** implement.
 **Source:** ROADMAP DOOM-0455 (`review-code` 2026-09-01, lane backend-seam,
 DOOM-0405 F1; split out 2026-09-21; visor design settled 2026-09-21 with the
@@ -174,12 +174,13 @@ for `scene_recombine.glsl` (`docs/standards/renderer.md`, Shaders).
 **Visor: two sites, both before any tone operator.**
 
 - `mesh.frag`, both builds. After the flashlight and point lights, into
-  `direct` and never `ambient`. The composite multiplies only AMBIENT by AO, so
-  a camera-attached lamp is not darkened by the occlusion of the surface it
-  lights. The visor fills only the headroom left by sector light and the
-  flashlight, so a surface at full sector light gains nothing, as in Classic's
-  row 1. Point lights are outside that headroom, so a point-lit surface can
-  exceed its albedo, as it already can without the visor:
+  `direct` and never `ambient`. The composite darkens AMBIENT by the full AO
+  and DIRECT by half of it (`AO_DIRECT_WEIGHT`), so a camera-attached lamp is
+  darkened less by the occlusion of the surface it lights. The visor fills
+  only the headroom left by sector light and the flashlight, so a surface lit
+  by those tops out at its albedo, full bright as in Classic's row 1. Point
+  lights are outside that headroom, so a point-lit surface can exceed its
+  albedo, as it already can without the visor:
 
   ```glsl
   if (pc.fixedMode == RB_FIXED_VISOR) {
@@ -203,10 +204,11 @@ for `scene_recombine.glsl` (`docs/standards/renderer.md`, Shaders).
   `N` comes from `gnorm[cur]` at binding 1. The SVGF set layout
   (`CreateSvgfDescriptorLayout`) already carries that binding, which
   `svgf_temporal.comp` reads, so the composite only declares it. `toEye` and
-  `dist` run from the hit point in `gpos[cur]` to `pc.prevPos.xyz`, the camera
-  position this pass already receives. That is the previous frame's camera.
-  The lag moves the facing term and the falloff by one frame's travel. It saves three floats in a block with no spare lane
-  for them. The term is added before exposure, so the Brightness setting
+  `dist` run from the hit point in `gpos[cur]` to this frame's camera
+  (`g.lastView`), which the host passes as bit-cast floats in `misc2[2]`,
+  `misc2[3]` and `misc3[3]` (§4.4). `pc.prevPos` is not used: it is the
+  previous denoised frame's camera, and 0 when the SVGF targets are created.
+  The term is added before exposure, so the Brightness setting
   scales it like any other light. One insertion covers bloom on and off,
   because both tone-map paths read this `L`.
 
@@ -235,7 +237,7 @@ matches Classic, whose inversion is absolute.
 | `mesh.vert` / `mesh.frag` `Push` | 124 bytes: 31 floats | `uint fixedMode` at offset 124, making 128 bytes, the guaranteed `maxPushConstantsSize` floor. Host: `pcr.size`, both `float pcData[31]` arrays (the raster draw and `RecordRtOverlay`), the `31 * sizeof(float)` size both of their `vkCmdPushConstants` calls pass, and `lastWeaponPc` grow to 32 entries. The wipe's weapon redraw copies `lastWeaponPc` whole, so it follows. |
 | `composite.frag` `Push` | 16 bytes | `uint fixedMode` appended: 20 bytes. Host: `cpc.size`, the `float coPush[4]` write and `lastCoPush` grow to 5 entries. The wipe's composite redraw pushes `lastCoPush` whole, so it follows. |
 | `rt_tonemap.comp` `Push` | 16 bytes, `RtTonemapPC` | `uint fixedMode` appended: 20 bytes. Host: its `static_assert` and the `16` its `CreateComputeLayout` call passes move to 20. |
-| `SvgfPC` | 120 bytes | No growth: `misc3[2]` carries the mode. Only the composite reads `misc3`. |
+| `SvgfPC` | 120 bytes | No growth: `misc3[2]` carries the mode, and `misc2[2]`, `misc2[3]` and `misc3[3]` the camera position, set before the composite's push. The temporal and a-trous passes read only `misc2[0]` and `misc2[1]` of these, and no SVGF pass reads `misc3` but the composite. |
 
 The mesh block is then full. The next field needs another channel: a uniform
 buffer, or a lane freed elsewhere. Recorded here so it is not found by a
@@ -387,7 +389,7 @@ Each step ends with `make` and `make test` green.
   block the term is added to `direct`, `ambient` is never assigned, and the
   term is bounded by `1.0 - sect - flash`.
   *Breaks when:* the term is added to `ambient`, so SSAO darkens a lamp at the
-  camera, or the headroom cap is dropped, so lit walls bloom under the visor.
+  camera at full strength, or the headroom cap is dropped, so lit walls bloom under the visor.
 
 - **INV-8** — Each formula has one copy. `fixedInvert` and `visorShade` are
   defined only in `shaders/formulas/fixed_colormap.glsl`.
@@ -399,7 +401,8 @@ Each step ends with `make` and `make test` green.
   array or struct, its pipeline-layout range and its push calls agree. The
   mesh block stays within 128 bytes.
   *Test:* `static_assert`s in `r_vulkan.cpp` on the mesh push array (128
-  bytes), `coPush` (20 bytes) and `RtTonemapPC` (20 bytes), with the layout
+  bytes), `lastWeaponPc` (128), `coPush` (20), `lastCoPush` (20) and
+  `RtTonemapPC` (20), with the layout
   ranges and push calls written as `sizeof` of those; `make` → exit 0. Nothing
   checks the GLSL side against the host.
   *Breaks when:* a host size changes in one place only, or the mesh block
