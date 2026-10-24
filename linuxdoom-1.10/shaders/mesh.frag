@@ -304,6 +304,8 @@ void main()
     // the path tracer's so both tiers feel like the same lamp. It is a DIRECT term.
     // The additive amount is capped at (1 - sect) so a fully-lit surface still tops out
     // at albedo (matching the pre-L2b combined clamp(sect+flash,0,1)); the split is a no-op.
+    // `flash` is hoisted for the visor's headroom below (DOOM-0455): 0 where the lamp is off.
+    float flash = 0.0;
     if (pc.flashlight > 0.5 && (vFlags & FLAG_PSPRITE) == 0)
     {
         // DOOM-0170 L2c / DOOM-0499: the torch sits in a right chest pocket so its cast shadows
@@ -327,7 +329,7 @@ void main()
         // L2c cast-shadow PCF: nine taps, so only where the beam lands (DOOM-0408). It
         // only multiplies, so skipping it where lit is 0 changes no pixel.
         float sh     = lit > 0.0 ? flashlightShadow(vWorldPos) : 1.0;
-        float flash  = min(lit * sh, max(0.0, 1.0 - sect));
+        flash  = min(lit * sh, max(0.0, 1.0 - sect));
         direct += albedo * flash;
     }
 
@@ -384,6 +386,24 @@ void main()
             plight *= POINT_LIGHT_GAIN;
             plight = plight / (1.0 + plight);
             direct += POINT_LIGHT_STRENGTH * albedo * plight;   // point lights are DIRECT
+        }
+    }
+
+    // DOOM-0455: the light-amp visor is a lamp at the camera, not a filter on the final
+    // colour, so a room with no light still shows its shapes. It goes into DIRECT, which
+    // the composite darkens by only half the AO, and it fills only the headroom sector
+    // light and the flashlight leave, so a lit surface tops out at its albedo as in
+    // Classic's row 1. The weapon is full bright. The sky returned above.
+    if (pc.fixedMode == RB_FIXED_VISOR)
+    {
+        if ((vFlags & FLAG_PSPRITE) != 0)
+            direct = albedo;
+        else
+        {
+            vec3  toEye = vec3(pc.eyeX, pc.eyeY, pc.eyeZ) - vWorldPos;
+            float v     = visorShade(normalize(vNormal), normalize(toEye), vDist);
+            float room  = max(0.0, 1.0 - sect - flash);
+            direct += VISOR_TINT * albedo * min(v, room);
         }
     }
 

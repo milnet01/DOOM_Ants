@@ -37,6 +37,7 @@ rather than deleting, and orphanline is the mode that gets past it.
     bspcycle      the root node names itself a child DOOM-0093   I_Error, by name
     nosubsectors  SSECTORS and NODES both emptied  DOOM-0093    I_Error, by name
     stackedtrees  thousands of trees on one spot   DOOM-0479    ray-traced frame stalls
+    darkness      every sector's light set to 0     DOOM-0455    the visor shows shapes
 
 Usage:  make_map_fixture.py <mode> <iwad> <out.wad>
 
@@ -75,6 +76,7 @@ MANUAL_DOOR = 1
 # walkovers that reach EV_DoFloor(lowerAndChange). Special 84 is the other.
 LOWER_AND_CHANGE = 37
 SECTOR_SPECIAL_OFF = 22 # sector record: ... lightlevel special tag
+SECTOR_LIGHT_OFF = 20
 NODE_SIZE = 28          # x y dx dy bbox[2][4] children[2]
 NODE_CHILDREN_OFF = 24  # the two child indices end the node record
 THING_SIZE = 10         # x y angle type options
@@ -450,6 +452,21 @@ def mutate_nosubsectors(group):
     return replace(replace(group, "SSECTORS", b""), "NODES", b"")
 
 
+def mutate_darkness(group):
+    """Set every sector's light level to 0.
+
+    The fixture for DOOM-0455's visor (INV-6). A room with no light shows
+    nothing at all unless the visor ADDS light; a gain or curve on the final
+    colour leaves black black. Sector light specials stay: a flicker or glow
+    swings between the levels of the sector and its neighbours, all 0 here.
+    Emissive textures and sprites still glow, as they would in a real dark room.
+    """
+    sectors = bytearray(dict(group)["SECTORS"])
+    for i in range(len(sectors) // SECTOR_SIZE):
+        struct.pack_into("<h", sectors, i * SECTOR_SIZE + SECTOR_LIGHT_OFF, 0)
+    return replace(group, "SECTORS", bytes(sectors))
+
+
 MODES = {
     "valid": lambda g: g,
     "orphanline": mutate_orphanline,
@@ -466,6 +483,7 @@ MODES = {
     "bspcycle": mutate_bspcycle,
     "nosubsectors": mutate_nosubsectors,
     "stackedtrees": mutate_stackedtrees,
+    "darkness": mutate_darkness,
 }
 
 

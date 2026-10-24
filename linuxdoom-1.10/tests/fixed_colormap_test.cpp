@@ -13,6 +13,10 @@
 //          main, and after the bloom add where the site has one. Inverting
 //          before the bloom add turns every halo into a dark smudge.
 //          (Source scrape: the order is the contract, and it needs a GPU to see.)
+//   INV-7  In mesh.frag the visor goes into DIRECT, never AMBIENT, bounded by
+//          the headroom sector light and the flashlight leave (1.0 - sect -
+//          flash). In AMBIENT, SSAO would darken a lamp at the camera at full
+//          strength; without the cap, lit walls bloom under the visor.
 #include <cctype>
 #include <cstdio>
 #include <string>
@@ -105,6 +109,34 @@ void inv5(const char* file, const char* tone, const char* bloomAdd)
     }
 }
 
+// The body of the first `if (<cond>)` block in `code`, braces matched; empty
+// when the block is missing.
+std::string ifBlock(const std::string& code, const std::string& cond)
+{
+    const size_t at = code.find("if (" + cond + ")");
+    if (at == std::string::npos) return std::string();
+    const size_t open = code.find('{', at);
+    if (open == std::string::npos) return std::string();
+    int depth = 0;
+    for (size_t i = open; i < code.size(); i++)
+    {
+        if (code[i] == '{') depth++;
+        else if (code[i] == '}' && --depth == 0)
+        {
+            // Runs of whitespace become one space, so alignment never breaks a match.
+            std::string out;
+            for (size_t k = open; k <= i; k++)
+            {
+                const bool ws = std::isspace((unsigned char)code[k]);
+                if (!ws) out += code[k];
+                else if (out.empty() || out.back() != ' ') out += ' ';
+            }
+            return out;
+        }
+    }
+    return std::string();
+}
+
 } // namespace
 
 int main()
@@ -127,6 +159,19 @@ int main()
     inv5("rt_tonemap.comp",     "toneExposeEncode",      "* pc.bloomIntensity");
     // The un-split build has no bloom add; its store is the file's last tone call.
     inv5("svgf_composite.comp", "toneExposeEncode",      nullptr);
+
+    // ---- INV-7: the raster visor is DIRECT, capped by the headroom ------
+    {
+        const std::string block = ifBlock(mainCode(slurp(DOOM_TESTS_ROOT "/shaders/mesh.frag")),
+                                          "pc.fixedMode == RB_FIXED_VISOR");
+        check(!block.empty(), "INV-7: mesh.frag has a visor block in main");
+        check(block.find("direct += VISOR_TINT * albedo * min(v, room)") != std::string::npos,
+              "INV-7: the visor term is added to direct, scaled by min(shade, headroom)");
+        check(block.find("room = max(0.0, 1.0 - sect - flash)") != std::string::npos,
+              "INV-7: the headroom is 1.0 - sect - flash");
+        check(block.find("ambient") == std::string::npos,
+              "INV-7: the visor block never touches ambient");
+    }
 
     return check_summary("fixed_colormap_test");
 }
