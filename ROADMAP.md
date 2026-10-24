@@ -10933,7 +10933,7 @@ stay in their phase sections; this heading holds only work still to come.
   Lanes: renderer.
   Evidence: linuxdoom-1.10/dev-shots/shot-0012.png, linuxdoom-1.10/dev-shots/shot-0015.png, linuxdoom-1.10/dev-shots/shot-0016.png
 
-- 📋 [DOOM-0500] **When a floor sinks past its neighbour's height, Solid leaves a hole where the step wall should be (E1M8's red band).**
+- 🚧 [DOOM-0500] **When a floor sinks past its neighbour's height, Solid leaves a hole where the step wall should be (E1M8's red band).**
   Seen in a play-test of the DOOM-0497 build, past the E1M9 start.
   Unknown whether DOOM-0497 or an earlier change caused it. Work: get the
   spot from the user, A/B scratch/p0497/old against new there, then
@@ -10961,6 +10961,12 @@ stay in their phase sections; this heading holds only work still to come.
   The fix needs each step wall's height clamped live: top = max(both
   floors) for lower steps, bottom = min(both ceilings) for upper
   steps. Ceilings moving past a neighbour have the same gap.
+  2026-10-24: FIX PUSHED, 8e12e73. Both steps built on every
+  two-sided seg; the far edge is clamped live (step_wall.h,
+  RB_PLANE_FLOOR_STEP / RB_PLANE_CEIL_STEP). Regression test
+  tests/step_wall_test.cpp. Proof and checks are in the commit body.
+  Waiting on the user's play-test of E1M8 past the barons, in Solid
+  with ray tracing off and on. Then CHANGELOG, then close.
   **Layman:** On E1M8, after the two Barons die and the walls sink, Solid shows holes where walls should be: a red band and open sky.
   Kind: fix.
   Source: user-playtest-2026-10-23.
