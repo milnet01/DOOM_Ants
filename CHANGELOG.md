@@ -16,6 +16,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **No more holes in E1M8's walls after the Barons die** (DOOM-0500)
+  When the two Barons die, the walls around them sink into the floor. Solid then showed a red band and open sky where the step down should be. Solid used to build each step wall only where it existed when the level loaded. It now builds it on both sides and sizes it as floors and ceilings move. A floor or ceiling moving past its neighbour's height elsewhere is fixed the same way.
+
 - **Solid's flashlight no longer casts shadows from nowhere** (DOOM-0499)
   The flashlight used to shine from a point well out to the player's right, past the edge of the body. A wall beside you could then block part of the beam, so a far wall went dark in a hard straight line with nothing visible in the way. The light now comes from a right chest pocket, inside the body, and still casts shadows you can see.
 
