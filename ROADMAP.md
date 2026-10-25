@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=510 -->
+<!-- ants-roadmap-id-high-water: DOOM=511 -->
 
 # Roadmap
 
@@ -16811,6 +16811,11 @@ in CLAUDE.md describes.
   part of the same symptom.
   Reference: the user's ray-traced mod screenshots of yellow, red and
   orange skies tinting the scene (2026-10-26).
+  2026-10-26: the user's red-sky reference (a ray-traced mod, open hell
+  courtyard) shows the target: under a red sky the air, the ground and
+  the weapon all take the sky's red. Sent as a pasted image. Its file is
+  probably ~/Pictures/Screenshots/Screenshot_20261026_004633.png, not
+  confirmed.
   **Layman:** Fog should take its colour from the sky above it; under a red hell sky it currently shows white.
   Kind: fix.
   Source: user-request-2026-10-26.
@@ -16827,6 +16832,23 @@ in CLAUDE.md describes.
   Kind: feature.
   Source: user-request-2026-10-26.
   Evidence: /home/ants/Pictures/ClaudePaste/paste_20261026_000939_226_291e3eb4.png, /home/ants/Pictures/Screenshots/Screenshot_20261026_001752.png, /home/ants/Pictures/Screenshots/Screenshot_20261026_003321.png, /home/ants/Pictures/Screenshots/Screenshot_20261026_003421.png
+
+- 📋 [DOOM-0511] **Bright red light walls blow out to white in Ultra's ray-traced view, losing their colour.**
+  Measured 2026-10-26: E2M1, `-warp 2 1 -warpto 1000 304 0`, Ultra
+  (renderer 1, rt_view 6, rt_fog 1), DEV build, -inspect -freeze,
+  -devshot 400. The REDWALL1 panels round the cross render pale pink
+  to white; only their edges and the surrounding room stay red. The
+  reference (a ray-traced mod) keeps the panels saturated red while
+  they still light the room red.
+  Not yet located. Candidates: the emitter's Le is high enough that
+  the tone map clips every channel, a tone operator that desaturates
+  toward white as brightness rises, or the bloom adding white.
+  Compare DOOM-0509 and DOOM-0321, where fog also turns white; one
+  cause may explain all three.
+  **Layman:** A glowing red wall should look deep red, like the reference; ours turns almost white with only a red rim.
+  Kind: fix.
+  Source: user-request-2026-10-26.
+  Evidence: /home/ants/Pictures/Screenshots/Screenshot_20261026_004500.png, scratch/e2m1/ours-e2m1-cross-ultra.png
 
 ## 0.12.0 — The player's experience
 
