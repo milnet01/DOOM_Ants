@@ -14657,6 +14657,23 @@ in CLAUDE.md describes.
   DOOM-0238 (faked god-rays/fog in the rasterised view - the "bells and
   whistles, cheaply" half). This item is the material half. Consider
   whether the three should become one bundle.
+  2026-10-26, evaluated and NOT adopted: the LR/HQ texture pack v0.5
+  by B00m3r Doomer (moddb "doom-low-res-hi-quality-texture-pack"; the
+  user's copy is wads/LRHQ_Doom_Texture_0.5.zip, untracked). Why:
+  - Licence: the pack states none. Its credits name six source packs,
+    including a "Doom 3 textures for Doom" pack. The bundled DHTP
+    terms are use-with-credit per author. Fails assets.md's "known
+    licence" rule, so it cannot be committed or shipped.
+  - Not an upscale: walls are at the original sizes (64x128, 128x128
+    and so on), flats 64x64. This item wants the originals upscaled.
+  - Not the original art: it is darker and desaturated, and some
+    textures are redrawn (COMPTALL's panels, TEKWALL4 bronze to grey).
+    REDWALL1 becomes a dull dark red. Solid keeps DOOM's own look.
+  - Partial PBR: of the 287 DOOM walls it covers 280, but only 96 have
+    a normal map; heightmaps exist for 50 files. Material maps are
+    wired by GZDoom's gldefs.txt, which this engine does not read.
+  Comparison sheet (original left, pack right, x3):
+  scratch/lrhq-tools/sheet1.png.
 
 - 📋 [DOOM-0278] **Motion blur for the 3-D views - camera-velocity first, per-object only once monsters are models.**
   User asked (2026-07-27) for "perhaps some per object motion blur" as
