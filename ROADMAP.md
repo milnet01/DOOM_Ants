@@ -14674,6 +14674,21 @@ in CLAUDE.md describes.
     wired by GZDoom's gldefs.txt, which this engine does not read.
   Comparison sheet (original left, pack right, x3):
   scratch/lrhq-tools/sheet1.png.
+  2026-10-26, evaluated and NOT adopted: "FD Texture Pack v5" (the
+  user's copy is wads/FD Texture Pack v5.zip, untracked). It is the
+  Freedoom project's textures as PNGs, files dated 2013-2014, under
+  Freedoom's BSD licence (COPYING.txt), so the licence would pass
+  assets.md. It still does not fit Solid:
+  - It is not DOOM's art. Freedoom's own README tells its artists to
+    make each texture "as different as possible" from the original
+    while keeping its theme, and the comparison bears that out:
+    STARTAN3, BROWN1, COMPTALL and TEKWALL4 are all different art.
+  - Not an upscale: every texture is the original's size.
+  - No material maps beyond glow masks ("bloom" maps) for its own
+    textures, which do not line up with DOOM's.
+  It covers every wall and flat of both games. For anything Freedoom
+  art is wanted for, the current freedoom.wad is the newer source, and
+  CI already installs it. Comparison sheet: scratch/lrhq-tools/sheet-fd.png.
 
 - 📋 [DOOM-0278] **Motion blur for the 3-D views - camera-velocity first, per-object only once monsters are models.**
   User asked (2026-07-27) for "perhaps some per object motion blur" as
