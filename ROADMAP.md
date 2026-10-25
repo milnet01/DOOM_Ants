@@ -14551,6 +14551,19 @@ in CLAUDE.md describes.
 
 - 📋 [DOOM-0186] **Extend HD up-res + POM/PBR to ALL wall/floor/ceiling textures, not just the hero set.**
   User observed the Ultimate Doom RTX mod up-ressed the ORIGINAL textures and added POM/PBR across the board (so the whole level looks HD, not just curated spots). Extends DOOM-0042 (v1 = walls+flats hero set only) to the full texture set — likely via the pbr_derive.py auto-derive path (WAD -> upscaled + normal/rough/AO/height) applied to every texture, with the VRAM budget (DOOM-0042 T5) managing the count. This also fixes DOOM-0181's "grime only shows on HD surfaces" reach. Big but high-impact.
+  2026-10-26, user: Freedoom's textures "can possibly help with Ultra".
+  A candidate THIRD source beside hero rows (CC0, palette-tinted) and
+  derive rows (from the player's WAD, never shippable). Freedoom art is
+  BSD-licensed, so an offline upscale plus derived PBR maps could be
+  committed and shipped with credit (its COPYING and CREDITS in
+  assets/ultra/LICENSES). It covers every wall and flat of DOOM and
+  DOOM II, and it substitutes for DOOM's art, which is Ultra's job.
+  Limits: its art is the originals' size (64 to 256 px wide), so the
+  upscaler decides the quality; try a handful of textures before
+  adopting it. Take the art from the current Freedoom release, not the
+  user's 2013-2014 "FD Texture Pack v5" (wads/, untracked), which is
+  older. Not decided; the DOOM-0042 direction (DOOM 3 / sci-fi-horror
+  look) may still prefer hero rows where one exists.
   **Layman:** Give every wall, floor and ceiling the high-detail 3D-looking treatment, not only the handful we've done so far.
   Kind: feature.
   Source: user-request-2026-07-16.
