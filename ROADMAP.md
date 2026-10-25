@@ -14397,6 +14397,11 @@ in CLAUDE.md describes.
 
 - 📋 [DOOM-0112] **Glowing collectibles (health/armor potions, spheres) emit a coloured glow + light.**
   DOOM-0084 gates sprite emission on FF_FULLBRIGHT, which correctly excludes ammo but also excludes glowing collectibles that aren't fullbright-framed (the blue health-bonus potion BON1, armor bonus BON2, soul/mega sphere, invuln/blur sphere). Add a small allowlist of 'glowing collectible' mobjtypes that emit even without FF_FULLBRIGHT, coloured by their sprite (blue potion -> blue light). Confirm the exact set with the user.
+  2026-10-26, a reference from the user (a pasted image, no file path):
+  a ray-traced DOOM 64 frame of a sphere pickup in a dark room. The
+  sphere glows a deep, saturated blue with its face texture visible,
+  with no white core. It lights the floor below it blue, and the rest
+  of the room stays dark. That is the target for this item.
   **Layman:** Pickups that are meant to glow — the blue health bottle, soul/mega spheres — should give off coloured light, while plain ammo stays dark.
   Kind: feature.
   Source: user-request-2026-06-29.
@@ -15356,6 +15361,11 @@ in CLAUDE.md describes.
   whether one threshold change serves both before adding a second mechanism.
   Parked 2026-10-08 with DOOM-0114 (user's choice): reopen together when
   room-lighting pickups are wanted.
+  2026-10-26, a reference from the user (a pasted image, no file path):
+  a ray-traced DOOM 64 video frame of three armour bonuses, which the
+  user calls "skulls". The helmets themselves stay dark. Their eyes
+  and visor glow a saturated green, and each casts a small green pool
+  of light on the floor around it. That is the target for this item.
   **Layman:** The little armour helmets have green eyes that pulse brighter and dimmer, but they never light up the room around them — the code meant to make them glow can't actually trigger on them.
   Kind: fix.
   Source: user-request-2026-08-04.
@@ -16851,7 +16861,7 @@ in CLAUDE.md describes.
   Source: user-request-2026-10-26.
   Evidence: /home/ants/Pictures/ClaudePaste/paste_20261026_000939_226_291e3eb4.png, /home/ants/Pictures/Screenshots/Screenshot_20261026_001752.png, /home/ants/Pictures/Screenshots/Screenshot_20261026_003321.png, /home/ants/Pictures/Screenshots/Screenshot_20261026_003421.png
 
-- 📋 [DOOM-0511] **Bright red light walls blow out to white in the ray-traced view (Solid and Ultra), losing their colour.**
+- 🚧 [DOOM-0511] **Bright red light walls blow out to white in the ray-traced view (Solid and Ultra), losing their colour.**
   Measured 2026-10-26: E2M1, `-warp 2 1 -warpto 1000 304 0`, Ultra
   (renderer 1, rt_view 6, rt_fog 1), DEV build, -inspect -freeze,
   -devshot 400. The REDWALL1 panels round the cross render pale pink
@@ -16933,6 +16943,19 @@ in CLAUDE.md describes.
   references keep the texture visible. So keeping the hue is not
   enough on its own; the panel's brightness on screen must also stay
   below the point where every texel clips.
+  2026-10-26, FIXED in 4629409; awaiting the user's play-test before it
+  is marked shipped. The visible glow now goes through shownEmission
+  (shaders/formulas/shown_emission.glsl): above kShownGlowMax (0.25)
+  an emitter shows its own albedo at that brightness, so its hue and
+  texture survive the tone map. The Le cast on the room is unchanged.
+  Liquids still show their forced Le flat. Captured on the GPU: the
+  E2M1 cross went from white panels to saturated red with texture,
+  the room still lit red (scratch/doom0511/fixed.png); the E1M1 floor
+  lamps (-warpto 760 -3232 180) went from white tops to yellow, light
+  on the room unchanged (lamp-base.png, lamp-fixed.png).
+  Not addressed here: the references keep the room DARK so the red
+  light dominates. That is the room's own light level, not the
+  emitter's colour.
   **Layman:** A glowing red wall should look deep red, like the reference; ours turns almost white with only a red rim.
   Kind: fix.
   Source: user-request-2026-10-26.
