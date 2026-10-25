@@ -206,7 +206,7 @@ for `scene_recombine.glsl` (`docs/standards/renderer.md`, Shaders).
   `flash` is the flashlight's added amount, hoisted out of its branch and 0
   where that branch did not run. The sky returns before this point, so it is
   never lit.
-- `svgf_composite.comp`, both builds. After `L = albedo * illum + emis * ga.a`
+- `svgf_composite.comp`, both builds. After `L = albedo * illum + shownEmission(emis, albedo, ga.a)`
   and before the fog fold, so mist still reads in front of a lit wall:
   `L += VISOR_TINT * albedo * visorShade(N, toEye, dist) * visorLitFade(lit,
   VISOR_LIT_FULL_RT) * VISOR_GAIN_RT`, where `lit` is the Rec.709 luminance

@@ -425,6 +425,12 @@ $(SHADER_DIR)/composite.frag.spv.h $(SHADER_DIR)/rt_tonemap.comp.spv.h \
 $(SHADER_DIR)/svgf_composite.comp.spv.h $(SHADER_DIR)/svgf_composite_split.comp.spv.h: \
 		$(SHADER_DIR)/formulas/fixed_colormap.glsl
 
+# DOOM-0511 — an emitter's visible glow is shared by the raw display path (through
+# pt_common.glsl) and both composite variants. Same missing-auto-dep hazard as above.
+$(SHADER_DIR)/pathtrace.comp.spv.h $(SHADER_DIR)/bake.comp.spv.h \
+$(SHADER_DIR)/svgf_composite.comp.spv.h $(SHADER_DIR)/svgf_composite_split.comp.spv.h: \
+		$(SHADER_DIR)/formulas/shown_emission.glsl
+
 # DOOM-0345 R1 — the BLOOM_SPLIT variant of svgf_composite.comp. Explicit rule (the pattern
 # rule above can't produce it — there is no svgf_composite_split.comp source); depends on
 # svgf_composite.comp so editing the shader rebuilds both variants.

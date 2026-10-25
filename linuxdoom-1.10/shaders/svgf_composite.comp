@@ -18,6 +18,7 @@
 #include "formulas/tonemap_encode.glsl"
 #include "formulas/svgf_shared.glsl"   // svgfReprojectPrev (DOOM-0440)
 #include "formulas/fixed_colormap.glsl"   // DOOM-0455: invulnerability + visor
+#include "formulas/shown_emission.glsl"   // DOOM-0511: the emitter's visible glow
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -208,7 +209,8 @@ void main()
         // it sat where the material flags are invisible — which is why liquids could not
         // be excepted from it and a nukage pool glowed only in the bright patches of its
         // own mottled texture. The decision moved to the one place that can see MatCtrl.
-        L = albedo * illum + emis * ga.a;
+        // DOOM-0511: its sign marks a liquid, which shownEmission reads.
+        L = albedo * illum + shownEmission(emis, albedo, ga.a);
         // DOOM-0455: the light-amp visor, a lamp at THIS frame's camera (misc2.zw,
         // misc3.w), added before the fog fold so mist still reads in front of a lit
         // wall, and before exposure so Brightness scales it like any other light. Both

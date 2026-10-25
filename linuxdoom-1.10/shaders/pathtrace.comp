@@ -583,8 +583,11 @@ bool  isLiquid(MatCtrl mc) { return (mc.flags & (LIQUID_NUKAGE | LIQUID_LAVA)) !
 // patchiness is the TEXTURE, so any texel-dependent weight keeps it and only a constant
 // removes it. Recorded because it is the more conservative fix and it looks correct
 // right up until you capture it.
+// DOOM-0511: a liquid's weight is NEGATIVE (-1). The sign carries "show this glow flat"
+// to shownEmission (formulas/shown_emission.glsl) through galbedo.a, where the
+// composite cannot see MatCtrl.
 float emisWeight(MatCtrl mc, vec3 albedo) {
-    return isLiquid(mc) ? 1.0 : emissiveMask(albedo);
+    return isLiquid(mc) ? -1.0 : emissiveMask(albedo);
 }
 bool  wetOn()              { return pc.misc6.y == 1u; }
 float rippleTime()         { return uintBitsToFloat(pc.misc6.x); }
@@ -1798,7 +1801,8 @@ void main()
             // svgf_composite.comp from this same albedo, which meant two shaders had to
             // keep one smoothstep in step; it also put the decision where the material
             // flags are NOT visible, so a liquid could not be excepted. Deciding it here
-            // makes that impossible to get wrong, and the composite just multiplies.
+            // makes that impossible to get wrong, and the composite hands it to
+            // shownEmission, sign and all (DOOM-0511).
             imageStore(galbedo,    ivec2(px), vec4(h.albedo, h.addEmis ? h.emisW : 0.0));
             if (((px.x | px.y) & 1u) != 0u) {       // not an even/even grid sample
                 imageStore(gillum, ivec2(px), vec4(0.0));

@@ -20,6 +20,7 @@
 // megakernel uses). Included HERE, once: the generated file has no include guard, so
 // an includer of this file must not include it again.
 #include "formulas/formulas.glsl"
+#include "formulas/shown_emission.glsl"   // DOOM-0511: shadeSurface's visible glow
 
 const float PI            = 3.14159265358979323846;
 const int   FLAG_FLAT     = 0x1;     // matches RB_MESH_FLAT in r_mesh.h (flats vs walls)
@@ -585,9 +586,11 @@ vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
     // DOOM-0084) and this function cannot see the material control table. Callers use
     // emisWeight() in pathtrace.comp. The GI bake passes addEmission=false (the emitter
     // term is the frame's NEE job), so this only shapes the directly-visible glow.
-    vec3 L = addEmission ? vec3(matEmis.m[id * 3u + 0u],
-                                matEmis.m[id * 3u + 1u],
-                                matEmis.m[id * 3u + 2u]) * emisMask
+    // DOOM-0511: emisMask is emisWeight's SIGNED weight, and shownEmission decides how
+    // bright the emitter looks; the Le it casts below is unchanged.
+    vec3 L = addEmission ? shownEmission(vec3(matEmis.m[id * 3u + 0u],
+                                              matEmis.m[id * 3u + 1u],
+                                              matEmis.m[id * 3u + 2u]), albedo, emisMask)
                          : vec3(0.0);
 
     // Direct lighting splits by emitter kind (DOOM-0084). The MANY static wall/flat

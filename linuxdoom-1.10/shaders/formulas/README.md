@@ -42,3 +42,10 @@ DOOM-0455's invulnerability and light-amp visor in the 3D views: the
 `RB_FIXED_*` mode codes, `fixedInvert`, `visorShade`, `visorLitFade` and the
 visor's look constants. Hand-written look calls, not Workbench curves. The
 spec is `docs/specs/DOOM-0455-fixed-colormap-3d.md`.
+
+## Hand-written — `shown_emission.glsl`
+
+DOOM-0511's `shownEmission`: how bright an emitter looks on screen, apart
+from the light it casts. Above `kShownGlowMax` a surface shows its own
+texture at that brightness, so a bright red light stays red. A hand-tuned
+look cap, not a Workbench curve.
