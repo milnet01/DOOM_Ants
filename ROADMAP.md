@@ -16903,6 +16903,16 @@ in CLAUDE.md describes.
   neutral. That is the target: the panel is a red emitter at a
   brightness the tone map keeps red, and its light still reaches
   the room.
+  2026-10-26, a third reference from the user: a Classic / ray-traced
+  pair from the same video's hell section ("Hell Areas" chapter).
+  Level not known. Sent as pasted images; no file paths. A
+  green-marble corridor with red light inlays. Classic shows flat red
+  inlays on lit green walls. Ray-traced, the inlays stay saturated red
+  with no white core, the room's own light drops away, and the red
+  light floods walls, floor and ceiling. Same target as the cross:
+  the emitter keeps its hue, and its light dominates a dark room.
+  That second half bears on this item's closing note, which says our
+  raster view lights the room evenly.
   **Layman:** A glowing red wall should look deep red, like the reference; ours turns almost white with only a red rim.
   Kind: fix.
   Source: user-request-2026-10-26.
