@@ -10993,6 +10993,17 @@ stay in their phase sections; this heading holds only work still to come.
   or dithered see-through draw, and no full solid shadow.
   Reference: the user's reference screenshot of a ray-traced mod's
   Spectre (2026-10-26).
+  2026-10-26, located. sprite_quad() in r_mesh.c builds every sprite
+  Thing's flags (RB_MESH_SPRITE, plus EMISSIVE and PICKUP) and never
+  reads MF_SHADOW, so a Spectre's vertices are identical to a Pinky's.
+  No RB_MESH_ bit exists for "partially invisible", so neither the
+  raster mesh shader nor pathtrace.comp can tell. A second site:
+  RB_BuildBlobs() draws a blob shadow under every MF_SOLID thing,
+  Spectre included. Shape of the fix: a new RB_MESH_ flag set in
+  sprite_quad() from MF_SHADOW; the raster sprite shader and the RT
+  primary hit draw it see-through; RB_BuildBlobs() skips it; and the
+  RT shadow rays decide whether it casts. Confirm by: a test that
+  sprite_quad() on an MF_SHADOW mobj sets the new bit (it cannot today).
   **Layman:** The invisible demon is fully visible in the 3D views, which makes it a different, easier enemy than the one the game intends.
   Kind: fix.
   Source: user-request-2026-10-26.
@@ -16880,6 +16891,10 @@ in CLAUDE.md describes.
   DOOM-0321's long-path brightness is the trigger and this operator
   is the whitening. DOOM-0509 is separate: its fog colour is
   near-white at the source.
+  User decision 2026-10-26: "The red blocks should be emissive, not be
+  point lights or something similar." So the fix keeps the panels as
+  glowing surfaces. It must keep their red through the tone map rather
+  than turn them into, or replace them with, point lights.
   **Layman:** A glowing red wall should look deep red, like the reference; ours turns almost white with only a red rim.
   Kind: fix.
   Source: user-request-2026-10-26.
