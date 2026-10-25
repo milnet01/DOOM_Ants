@@ -16827,6 +16827,13 @@ in CLAUDE.md describes.
   the weapon all take the sky's red. Sent as a pasted image. Its file is
   probably ~/Pictures/Screenshots/Screenshot_20261026_004633.png, not
   confirmed.
+  2026-10-26, another reference from the user: a Classic / ray-traced
+  pair from the same video's hell section, an open hell courtyard
+  under the red mountain sky. Sent as a pasted image; no file path.
+  Classic shows green marble ground and walls. Ray-traced, the whole
+  scene (ground, walls, the skull door, the weapon) takes the sky's
+  red, and the scene stays dark, not bright. Same target as the
+  earlier red-sky reference: the sky's colour lights the level.
   **Layman:** Fog should take its colour from the sky above it; under a red hell sky it currently shows white.
   Kind: fix.
   Source: user-request-2026-10-26.
@@ -16913,6 +16920,19 @@ in CLAUDE.md describes.
   the emitter keeps its hue, and its light dominates a dark room.
   That second half bears on this item's closing note, which says our
   raster view lights the room evenly.
+  2026-10-26, CONFIRMED on the GPU. Private-display capture of the repro
+  (Solid, -rtview 6, rt_fog 3, rt_bloom 2, -inspect -freeze): the
+  panels render white with a red rim, as in the user's shot. Rebuilt
+  with the mix in pbrNeutralToneMapping disabled (g * 0.0) and
+  recaptured: the panels render saturated red. Reverted; the tree is
+  clean. Captures: scratch/doom0511/base.png, nodesat.png; script
+  scratch/doom0511/cap.sh. Note that -rtview 6 is needed: the
+  config's rt_view alone left Solid in its raster view.
+  A second finding from the same capture: with the mix off, the
+  panels are a flat, clipped red with the REDWALL1 texture gone. The
+  references keep the texture visible. So keeping the hue is not
+  enough on its own; the panel's brightness on screen must also stay
+  below the point where every texel clips.
   **Layman:** A glowing red wall should look deep red, like the reference; ours turns almost white with only a red rim.
   Kind: fix.
   Source: user-request-2026-10-26.
