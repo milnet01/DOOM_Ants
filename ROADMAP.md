@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=507 -->
+<!-- ants-roadmap-id-high-water: DOOM=510 -->
 
 # Roadmap
 
@@ -10985,6 +10985,19 @@ stay in their phase sections; this heading holds only work still to come.
   Lanes: renderer.
   Evidence: linuxdoom-1.10/dev-shots/shot-0019.png, linuxdoom-1.10/dev-shots/shot-0020.png
 
+- 📋 [DOOM-0508] **The Spectre is drawn as a solid Pinky in Solid and Ultra, not as the see-through shimmer.**
+  The 3D sprite gather in r_mesh.c reads MF_SPECIAL and MF_MISSILE but
+  never MF_SHADOW, so a Spectre (and any partially invisible thing) is
+  emitted as an ordinary opaque quad. Classic draws MF_SHADOW things
+  with the fuzz column. The 3D views need an equivalent: a refracting
+  or dithered see-through draw, and no full solid shadow.
+  Reference: the user's reference screenshot of a ray-traced mod's
+  Spectre (2026-10-26).
+  **Layman:** The invisible demon is fully visible in the 3D views, which makes it a different, easier enemy than the one the game intends.
+  Kind: fix.
+  Source: user-request-2026-10-26.
+  Evidence: /home/ants/Pictures/Screenshots/Screenshot_20261026_003606.png
+
 ## 0.9.0 — The codebase can be trusted
 
 Work only a maintainer sees: duplication, dead code, static analysis that covers
@@ -16785,6 +16798,35 @@ in CLAUDE.md describes.
   Source: user-play-test-2026-10-08 (DOOM-0271 before/after shots).
   Lanes: renderer, shaders.
   Evidence: /home/ants/doom-scratch/p0271/compare_floorA.png, /home/ants/doom-scratch/p0271/compare_floorB.png
+
+- 📋 [DOOM-0509] **Fog and sky light are a fixed near-white, so fog under a red or orange sky reads white.**
+  The fog's in-scatter colour is the constant kFogColor (near-white),
+  the sky's own distance haze is a constant grey SKY_FOG_COL, and the
+  light a surface gets from the sky is the constant SKY_COLOR (pale
+  blue). The only tint is kHellTint, chosen by episode and map number
+  in r_backend.c, applied to the sky share of the fog only.
+  Fix direction: derive one sky colour per level from the sky texture
+  and use it for the fog, the sky haze and the sky light. See also
+  DOOM-0321 (fog blows out to white on long sight lines), which may be
+  part of the same symptom.
+  Reference: the user's ray-traced mod screenshots of yellow, red and
+  orange skies tinting the scene (2026-10-26).
+  **Layman:** Fog should take its colour from the sky above it; under a red hell sky it currently shows white.
+  Kind: fix.
+  Source: user-request-2026-10-26.
+  Evidence: /home/ants/Pictures/Screenshots/Screenshot_20261026_002228.png, /home/ants/Pictures/Screenshots/Screenshot_20261026_002334.png, /home/ants/Pictures/Screenshots/Screenshot_20261026_002441.png
+
+- 📋 [DOOM-0510] **Treat water and blood floors as liquids, with a rippled, reflective surface.**
+  The renderer classifies only two liquid kinds, LIQUID_NUKAGE and
+  LIQUID_LAVA. Water and blood flats are drawn as plain floors and
+  ceilings. They need a liquid classification, animated ripple
+  normals, and the reflections DOOM-0104 adds.
+  Reference: the user's ray-traced mod screenshots of water pools,
+  a blood pool and a water ceiling (2026-10-26).
+  **Layman:** Water and blood pools should ripple and reflect the room, the way the nukage and lava are already treated as liquids.
+  Kind: feature.
+  Source: user-request-2026-10-26.
+  Evidence: /home/ants/Pictures/ClaudePaste/paste_20261026_000939_226_291e3eb4.png, /home/ants/Pictures/Screenshots/Screenshot_20261026_001752.png, /home/ants/Pictures/Screenshots/Screenshot_20261026_003321.png, /home/ants/Pictures/Screenshots/Screenshot_20261026_003421.png
 
 ## 0.12.0 — The player's experience
 
