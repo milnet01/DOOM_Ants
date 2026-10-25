@@ -16833,7 +16833,7 @@ in CLAUDE.md describes.
   Source: user-request-2026-10-26.
   Evidence: /home/ants/Pictures/ClaudePaste/paste_20261026_000939_226_291e3eb4.png, /home/ants/Pictures/Screenshots/Screenshot_20261026_001752.png, /home/ants/Pictures/Screenshots/Screenshot_20261026_003321.png, /home/ants/Pictures/Screenshots/Screenshot_20261026_003421.png
 
-- 📋 [DOOM-0511] **Bright red light walls blow out to white in Ultra's ray-traced view, losing their colour.**
+- 📋 [DOOM-0511] **Bright red light walls blow out to white in the ray-traced view (Solid and Ultra), losing their colour.**
   Measured 2026-10-26: E2M1, `-warp 2 1 -warpto 1000 304 0`, Ultra
   (renderer 1, rt_view 6, rt_fog 1), DEV build, -inspect -freeze,
   -devshot 400. The REDWALL1 panels round the cross render pale pink
@@ -16845,6 +16845,16 @@ in CLAUDE.md describes.
   toward white as brightness rises, or the bloom adding white.
   Compare DOOM-0509 and DOOM-0321, where fog also turns white; one
   cause may explain all three.
+  2026-10-26, the user's F12 pair at E2M1 `-warp 2 1 -skill 3 -warpto
+  511 357 359`, Solid, same settings (rt_fog 3, rt_bloom 2) apart from
+  ray tracing: dev-shots/shot-0023.png (raster) keeps the REDWALL1
+  panels saturated red, close to the reference; dev-shots/shot-0024.png
+  (ray-traced, rt_view 6) blows them out to white with a red rim. So
+  the fault is in the ray-traced path only, and it is not Ultra's HD
+  art. Look at the RT emitter Le, the RT tone map and the RT bloom
+  extract; the raster path is the working comparison.
+  Separately, the reference keeps the room dark so the cross's red
+  light dominates; the raster view lights the room evenly instead.
   **Layman:** A glowing red wall should look deep red, like the reference; ours turns almost white with only a red rim.
   Kind: fix.
   Source: user-request-2026-10-26.
