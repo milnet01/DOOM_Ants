@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=511 -->
+<!-- ants-roadmap-id-high-water: DOOM=512 -->
 
 # Roadmap
 
@@ -16855,6 +16855,31 @@ in CLAUDE.md describes.
   extract; the raster path is the working comparison.
   Separately, the reference keeps the room dark so the cross's red
   light dominates; the raster view lights the room evenly instead.
+  2026-10-26, located (not yet fixed or GPU-confirmed). The emitter's
+  Le is NOT white: re-running emis::derive_material_le on doom.wad's
+  REDWALL1 gives Le = (19.9, 0.02, 0.02), a pure red. The white comes
+  from the tone map. toneExposeEncode multiplies by exposureEv(-2.25)
+  = x3.96, so the panel's peak reaches ~79, and pbrNeutralToneMapping
+  (shaders/formulas/pbr_neutral_tonemap.glsl) then blends toward white
+  by g = 1 - 1/(0.15*(peak - newPeak) + 1), about 0.92 here. Run on the
+  CPU, that chain displays (255,246,246). Even Le x0.05 still displays
+  (253,149,149), pink. The raster view uses the same operator but feeds
+  it palette-range values (peak ~1), so g stays near 0 and red survives.
+  The dark texels stay red because emissiveMask() gives them no Le,
+  which is the red rim. The RT bloom extract (bloom_extract_rt.comp)
+  scales the colour by a weight, so it adds red, not white; it only
+  raises the peak further. Script: scratch/doom0511/le.py.
+  Confirm by: capture the repro with wall Le scaled down, or with the
+  desaturation mix disabled, and see the panels turn red.
+  Fix direction, not chosen: keep the hue of an emitter through the
+  tone map (desaturate on luminance, or skip the highlight mix for
+  saturated light), or lower wall Le, which also dims the light cast.
+  Bearing on DOOM-0321: the "channels clip in order" theory there is
+  not what happens; the chain is float until the tone map. The same
+  highlight desaturation is what turns bright red fog white, so
+  DOOM-0321's long-path brightness is the trigger and this operator
+  is the whitening. DOOM-0509 is separate: its fog colour is
+  near-white at the source.
   **Layman:** A glowing red wall should look deep red, like the reference; ours turns almost white with only a red rim.
   Kind: fix.
   Source: user-request-2026-10-26.
@@ -17107,6 +17132,20 @@ controls they expect to rebind.
   Kind: fix.
   Source: in-session-2026-10-08 DOOM-0211 B2 capture.
   Evidence: /home/ants/doom-scratch/p0211/b2-fs0-menu.png
+
+- 📋 [DOOM-0512] **Every screen that shows a menu or text uses the new menu style, including the game-select screen and the quit prompt.**
+  User request 2026-10-26: "all screens that offer menus or text
+  (game select screen and exit game screen) must be converted to the
+  new menu style." The new style is the crisp menu of DOOM-0206 and
+  DOOM-0211. Named by the user: the game-select boot menu (DOOM-0060,
+  d_main.c / m_menu.c) and the quit confirmation (M_QuitDOOM, drawn
+  through M_StartMessage). The same message box serves every other
+  yes/no and notice prompt (quick save, quick load, net-game notices),
+  so converting it covers those too. Survey the remaining menu and text
+  screens as part of the work and list any left on the old style.
+  **Layman:** Some screens, such as choosing DOOM 1 or DOOM 2 and the "are you sure you want to quit" box, still look like the old menus; they should match the new ones.
+  Kind: ux.
+  Source: user-request-2026-10-26.
 
 ## 1.0.0 — Other people can run it
 
