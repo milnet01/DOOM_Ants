@@ -16895,6 +16895,14 @@ in CLAUDE.md describes.
   point lights or something similar." So the fix keeps the panels as
   glowing surfaces. It must keep their red through the tone map rather
   than turn them into, or replace them with, point lights.
+  2026-10-26, a second reference from the user: a side-by-side frame
+  of a ray-traced Ultimate DOOM video at this same cross. Sent as a
+  pasted image; no file path. In it the REDWALL1 panels stay fully
+  saturated red with no white core, and they cast red light on the
+  floor in front of them, while the grey walls and ceiling stay
+  neutral. That is the target: the panel is a red emitter at a
+  brightness the tone map keeps red, and its light still reaches
+  the room.
   **Layman:** A glowing red wall should look deep red, like the reference; ours turns almost white with only a red rim.
   Kind: fix.
   Source: user-request-2026-10-26.
