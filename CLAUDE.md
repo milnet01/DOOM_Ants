@@ -25,7 +25,7 @@ ray-traced view (the `~` key / the menu's Ray Tracing row), so "which tier" and
 |---|---|---|
 | **Classic** | The 1993/97 game exactly as released | None — this is the original renderer. Two concessions: widescreen, which is optional, and the Solid/Ultra menu look, drawn through SDL (DOOM-0211) |
 | **Solid** | The **original** textures, upscaled, with PBR / POM added on top | The full set — fog, lighting, shadows. Rasterised view: faked cheaply. Ray-traced view: ray traced, with cheaper methods allowed to keep the frame rate up; ray tracing is preferred |
-| **Ultra** | **Replaced** with HD art | Every effect we can think of, and first in line for anything new. Rasterised view: all of them, faked cheaply. Ray-traced view: ray traced, unless a cheap fake cannot be told apart from it |
+| **Ultra** | **Replaced** with HD art | Every effect we can think of. That is the same set Solid gets: Ultra is where a new effect lands first, never the only place it lands. Rasterised view: all of them, faked cheaply. Ray-traced view: ray traced, unless a cheap fake cannot be told apart from it |
 
 The distinction to hold on to: **Solid enhances DOOM's own art; Ultra
 substitutes for it.** A player who wants the game to still *look like DOOM*
@@ -34,8 +34,9 @@ picks Solid.
 Two consequences worth stating, because they are easy to get backwards:
 
 - **Effects are not a tier ladder.** Do not gate a feature on Ultra because it is
-  expensive; gate it on the ray-traced view, or ship a cheap approximation for
-  Solid. "Ultra-only" is correct only for things that need the HD art itself.
+  expensive. Build it for each view as the table says: faked cheaply in the
+  rasterised view, ray traced in the ray-traced view. "Ultra-only" is correct
+  only for things that need the HD art itself.
 - **Performance is Solid's feature.** Solid in its rasterised view is currently
   the smoothest way to play, and that is a property worth protecting when adding
   to it.

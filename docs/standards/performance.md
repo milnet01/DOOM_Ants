@@ -7,18 +7,20 @@ modern machine; don't spend effort micro-optimising it.
 
 ## The 60 FPS floor
 
-The Ultra path tracer targets a **60 FPS floor** on the reference GPU (an AMD RX
-6600). Solid sits comfortably above it. A change that drops Ultra
-below the floor on the reference hardware is a regression to fix or a trade to
+The path tracer targets a **60 FPS floor** on the reference GPU (an AMD RX
+6600), in Ultra and in Solid's ray-traced view alike (user decision
+2026-10-26). Solid's rasterised view sits comfortably above it. A change that
+drops either ray-traced view below the floor on the reference hardware is a regression to fix or a trade to
 justify, not something to ship quietly.
 
 **Classic's floor is 35 FPS, the original game's.** Classic presents once per
 35 Hz game tic, as the 1997 game did, so it never reaches 60. A change that
 drops Classic below 35 is a regression (DOOM-0490).
 
-**The floor is absolute for Classic and the raster path; for RT-engaged Ultra it is
-currently a target, not a guarantee.** Ultra with RT engaged already sits below it
-(~45 FPS on the reference GPU), and an accepted look-trade may relax it further — but
+**The floor is absolute for Classic and the raster path; for the ray-traced views
+of Ultra and Solid it is currently a target, not a guarantee.** Ultra with RT
+engaged already sits below it (~45 FPS on the reference GPU), and an accepted
+look-trade may relax it further, in either ray-traced view — but
 only via the "trade to justify" branch above: state the before/after numbers, get the
 user's decision on the record, and ship a quality dial that lets them opt out. The
 worked example is **DOOM-0011 §6** (volumetric fog raised its own budget from ≤ 5 % to
