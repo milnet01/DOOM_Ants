@@ -13563,6 +13563,12 @@ against.
   DOOM when `check` exists. On adoption, add python3 to
   packaging/ci-deps.txt: the local pre-push container is a bare
   ubuntu:24.04 with no Python.
+  2026-10-26, from the frameledger session: v0.1.0 is released.
+  Pin https://github.com/milnet01/frameledger/releases/download/v0.1.0/frameledger-v0.1.0.zip,
+  SHA256 84a9254101421b223ca1429f889310ef92d1d4e4da433f19ce0d4225c89b9f5a.
+  It holds frameledger.pyz, include/frameledger.h and LICENSE. Same
+  bytes as v0.1.0-rc.1; both Windows runs (Vestige, UT Ants) passed on
+  it. Not yet downloaded or checked here.
   **Layman:** Record how long every frame and every part of it takes, in the file format the other two engines use, so one tool can say what stops DOOM reaching 60 FPS.
   Kind: feature.
   Source: user-decision-2026-10-24.
