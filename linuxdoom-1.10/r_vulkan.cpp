@@ -58,6 +58,7 @@
 // Per-material emitter derivation (build step 3b, §4.2), shared with
 // tests/emissive_derive_test.cpp. Defines the `emis` namespace used below.
 #include "emissive_derive.h"
+#include "surface_derive.h"     // DOOM-0273: surf::kLiquidFlats, the surface-map derive
 
 // DOOM-0042 Ultra HD PBR materials. rb_materials.h is header-only (inline pure
 // logic: sidecar parse, name->id resolution, control table, VRAM budget), shared
@@ -5585,15 +5586,10 @@ void InitPaletteAndDescriptorSet()
 static const float kNukageLe[3] = { 0.05f, 0.19f, 0.02f };   // green toxic-sludge glow
 static const float kLavaLe[3]   = { 0.55f, 0.19f, 0.03f };   // hot orange lava glow
 
-// The liquid flats, by NAME. INV-2: only NUKAGE1-3 / LAVA1-4 -- water, blood and SLIME*
-// stay out (some SLIME* frames are dry rock). The per-level flag (FlagLiquidFlats) and the
-// forced emission (ForceLiquidEmissive) both read this one list.
-static const struct { const char* name; unsigned int bit; } kLiquidFlats[] = {
-    { "NUKAGE1", RB_FLAG_LIQUID_NUKAGE }, { "NUKAGE2", RB_FLAG_LIQUID_NUKAGE },
-    { "NUKAGE3", RB_FLAG_LIQUID_NUKAGE },
-    { "LAVA1", RB_FLAG_LIQUID_LAVA }, { "LAVA2", RB_FLAG_LIQUID_LAVA },
-    { "LAVA3", RB_FLAG_LIQUID_LAVA }, { "LAVA4", RB_FLAG_LIQUID_LAVA },
-};
+// The liquid flats, by NAME: surf::kLiquidFlats (surface_derive.h), which also gives
+// them a flat surface map (DOOM-0273). The per-level flag (FlagLiquidFlats) and the
+// forced emission (ForceLiquidEmissive) both read that one list.
+using surf::kLiquidFlats;
 
 // A flat's unified material id -- numWall + (lump - firstflat), the textured-decode id
 // ordering -- or -1 when this WAD lacks the flat.
