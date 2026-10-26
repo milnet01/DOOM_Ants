@@ -11004,6 +11004,12 @@ stay in their phase sections; this heading holds only work still to come.
   primary hit draw it see-through; RB_BuildBlobs() skips it; and the
   RT shadow rays decide whether it casts. Confirm by: a test that
   sprite_quad() on an MF_SHADOW mobj sets the new bit (it cannot today).
+  User decision 2026-10-26 (asked with the reference screenshot):
+  ray-traced view = a dark see-through shimmer that bends (refracts)
+  what is behind it, like the reference's right half; rasterised view =
+  a cheap flickering fuzz like Classic's. Blob shadow skipped
+  (RB_BuildBlobs). Not yet built; no spec written (judge with
+  spec-format.md §1).
   **Layman:** The invisible demon is fully visible in the 3D views, which makes it a different, easier enemy than the one the game intends.
   Kind: fix.
   Source: user-request-2026-10-26.
@@ -14767,6 +14773,10 @@ in CLAUDE.md describes.
   Left: the user's look at the test scene to tune kSurfHeightScale
   (0.06) and the normal strength (2.0) (spec §10). The effect is faint
   at those starting values. Then CHANGELOG and ship.
+  2026-10-26: the user picked depth 0.12 / normal strength 4.0 from a
+  four-variant side-by-side at the test scene (commit 'set the relief to
+  the user's pick'). Left: the user plays it in-game; on their OK add
+  the CHANGELOG Added entry and flip shipped.
 
 - 📋 [DOOM-0278] **Motion blur for the 3-D views - camera-velocity first, per-object only once monsters are models.**
   User asked (2026-07-27) for "perhaps some per object motion blur" as
