@@ -20,7 +20,7 @@ This spec scopes a **first vertical slice**: the whole pipeline proven on **one 
 
 | Decision | Choice | Source |
 |----------|--------|--------|
-| Which tier | **Ultra only** (`rendermode == RB_RT3D`). Solid/Classic keep paletted art. | roadmap 2026-06-27; user 2026-07-14 |
+| Which tier | **Ultra only** (`rendermode == RB_RT3D`). Solid/Classic keep paletted art. *Amended 2026-10-26 for DOOM-0273:* the HD art set stays Ultra-only, and Solid keeps paletted colour. But every wall and flat without HD maps, in Solid and in Ultra, now gets a surface map derived in the engine (`docs/specs/DOOM-0273-solid-surface-detail.md`). | roadmap 2026-06-27; user 2026-07-14; user 2026-07-27 (`CLAUDE.md` § Render tiers) |
 | Which Ultra view first | **Ray-traced view first** (`rb_rtdebug==6`, Ultra's default). Ultra's raster sub-view (`~`) gets HD as a fast-follow. | user 2026-07-14 |
 | Art direction | **Hybrid** — hand-picked CC0 "hero" materials for high-traffic surfaces + auto-derived PBR maps for the long tail. | user 2026-07-14 |
 | Sourcing / licence | **CC0 / free only** (ambientCG, Poly Haven, user library). No id DOOM-3 assets. GPL-v2-distributable. | roadmap 2026-06-24; user 2026-07-14 |
@@ -76,7 +76,7 @@ Four layers: **(A) asset authoring** (offline), **(B) load & upload** (engine st
   | *(no prefix match — default)*                | 0.70      | 0.0      |
 
   For `sprite`-flagged rows the generator carries the WAD's index-0 transparency into the albedo **alpha channel**, so derived sprites cut out like hero sprites. The generator emits **all seven maps as PNGs** into `derived/` — roughness/metallic as **flat fills** of the family-table value, and **emissive black except fullbright / known-emissive texels** (reuse `emissive_derive.h`'s peak-luminance detector `kEmitterPeakLum`, so lit computer panels glow but ordinary walls stay dark) — so every derive material reaches the shader through the same texture path as a hero (no scalar material channel needed). Keeps the classic look but adds relief.
-- **Derive outputs are NOT committed.** Generated PNGs are derivative works of id's WAD art, so — exactly like the WAD itself (see project `CLAUDE.md`) — they stay **out of the repo**, git-ignored under `assets/ultra/derived/`; a fresh clone regenerates them by running `pbr_derive.py` once. The committed CSV holds **no** derived paths (the loader resolves them by the naming convention above), so the tracked file carries no WAD-derived filenames. Runtime loads the pre-generated PNGs; it never runs the generator in-engine.
+- **Derive outputs are NOT committed.** Generated PNGs are derivative works of id's WAD art, so — exactly like the WAD itself (see project `CLAUDE.md`) — they stay **out of the repo**, git-ignored under `assets/ultra/derived/`; a fresh clone regenerates them by running `pbr_derive.py` once. The committed CSV holds **no** derived paths (the loader resolves them by the naming convention above), so the tracked file carries no WAD-derived filenames. Runtime loads the pre-generated PNGs; it never runs the generator in-engine. (DOOM-0273's in-engine derive is a separate one. It feeds no HD row and writes nothing to disk.)
 - **Licence hygiene:** every hero material's CC0/free provenance is recorded (a `LICENSES` note in `assets/ultra/`). No proprietary art — original **or WAD-derived** — is committed to the repo; only the tiny CC0-hero PNGs + the sidecar + `LICENSES` are tracked.
 
 ### B. Load & upload layer (engine — new code)
@@ -121,14 +121,14 @@ On a surface hit, branch on the material's `usePBR` (read from the control SSBO,
 ## Verification
 
 - **Look, Ultra RT view, E1M1** (qualitative goal): hero surfaces read as modern PBR (wet metal shines, concrete is matte-deep, brick/tech relief recesses and self-shades under the flashlight as you strafe); derived surfaces keep the DOOM look but gain bump/roughness depth. Observable proxies for the subjective look:
-  - **Specular response (gated on DOOM-0103's GGX lobe):** a flashlight sweep across a hero metal wall produces a specular highlight that tracks the light — before/after screenshot pair shows the highlight move; the same wall in Solid shows none. *Deferred until DOOM-0103 lands; before then, roughness/metallic have no visible effect and this check is N/A.*
+  - **Specular response (gated on DOOM-0103's GGX lobe):** a flashlight sweep across a hero metal wall produces a specular highlight that tracks the light — before/after screenshot pair shows the highlight move; the same wall in Solid shows a broader one, from its derived roughness (DOOM-0273, DOOM-0103). *Deferred until DOOM-0103 lands; before then, roughness/metallic have no visible effect and this check is N/A.*
   - **Normal/relief:** a normal-mapped wall shows shading change between two camera angles with the geometry fixed (screenshot pair) — proving the normal map, not geometry, drives it.
-  - **Hard gate:** switch to **Solid**/**Classic** → original art, **pixel-identical** to today (frame-diff = 0).
+  - **Hard gate:** switch to **Solid**/**Classic** → original art, **pixel-identical** to today (frame-diff = 0). Since DOOM-0273 and DOOM-0103, Solid is pixel-identical only with `surface_detail` 0 and `specular` 0. Classic always is.
 - **Parallax:** on a `flags:pom` wall, a screenshot pair at two view angles shows grooves shift/deepen (the UV offset) without swimming; at grazing angles the clamp holds (no gaping holes / no garbage tiling) — a visible hole is the trigger to reconsider option (c), not to ship.
 - **Coexistence:** a map mixing hero + derive + still-paletted materials renders all three correctly in one frame (the `usePBR` branch).
 - **Memory/load:** loading E1M1's HD set stays within the §B bounds — no texture exceeds the resolution clamp (default 1024 px longest edge) and total material VRAM stays under the ceiling (default 768 MB); the load log prints per-material resolution + running MB and lists everything skipped/downscaled/dropped. No silent truncation.
 - **Licence:** every shipped hero material traces to a CC0/free source in `assets/ultra/LICENSES`; no proprietary art — original or WAD-derived — committed to the repo (derive outputs resolve only to the gitignored `assets/ultra/derived/`).
-- **No regression off-Ultra:** Solid and Classic are byte-for-byte unchanged (HD path is `RB_RT3D`-gated).
+- **No regression off-Ultra:** Solid and Classic are byte-for-byte unchanged (HD path is `RB_RT3D`-gated). For Solid this holds with `surface_detail` 0 and `specular` 0 (DOOM-0273, DOOM-0103).
 - **Build:** `make` + `make test` clean, no new warnings; shaders compile (glslc) with 0 warnings.
 
 ## Out of scope (YAGNI / deferred)
@@ -158,5 +158,6 @@ On a surface hit, branch on the material's `usePBR` (read from the control SSBO,
 | 10 | 0 | 0 | 1 | 3 | scope **HD sprite albedo out of v1** (walls+flats only); bitangent from `∂P/∂V` (mirror sign) |
 | 11 | 0 | 0 | 1 | 4 | specify **derived emissive** (black-except-fullbright via `emissive_derive.h`); dedup stb rationale to ADR |
 | 12 | 0 | 0 | 0 | 4 | **converged** — polish only (citation ranges, ADR anchor, namespace-unique note, tool input) |
+| 13-amend | – | – | – | – | 2026-10-26, amended in place for DOOM-0273 and DOOM-0103: the tier scope row, the Solid hard gate, "No regression off-Ultra", the Solid specular proxy and the in-engine derive note. A document edit; no reviewer was dispatched. |
 
 **Converged at loop 12** (polish convergence: no substantive finding — all three lanes returned "build-ready", citation accuracy 100%). Signed off by Claude per the user's standing delegation ("specs live in your domain — considered signed off once cold-eyes converges and I'm confident"). Ready for implementation (writing-plans).
