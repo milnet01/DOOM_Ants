@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=512 -->
+<!-- ants-roadmap-id-high-water: DOOM=513 -->
 
 # Roadmap
 
@@ -17005,6 +17005,32 @@ in CLAUDE.md describes.
   Kind: fix.
   Source: user-request-2026-10-26.
   Evidence: /home/ants/Pictures/Screenshots/Screenshot_20261026_004500.png, scratch/e2m1/ours-e2m1-cross-ultra.png
+
+- 📋 [DOOM-0513] **Dirt on floors, walls and ceilings looks like smeared paint, not grime that belongs to the surface.**
+  User, 2026-10-26: "Currently it just looks like paint was messed
+  instead of actual dirt." The current layer is DOOM-0181's filth
+  overlay (rt_filth), with DOOM-0179's world-position grime.
+  Reference from the user: an AI-rendered (ChatGPT) version of E1M1,
+  sent as a pasted image, no file path. Its HUD is dirtied too, which
+  the user does not want. What it shows:
+  - rust-brown water stains and drip marks spreading on the ceiling;
+  - grime and moss gathered on the pillars, darker toward the base;
+  - blood splatter low on walls and pillars, and dried blood on the
+    floor;
+  - wet, darker patches on the floor with a faint sheen;
+  - detail at a fine scale, varying across a surface, never a uniform
+    wash of colour.
+  The dirt there follows the structure: it gathers at wall bases, at
+  corners and under ceilings, rather than lying evenly over a surface.
+  Not yet located. Before designing, capture the current layer at the
+  same E1M1 view in Solid and Ultra, ray-traced, for comparison.
+  User, 2026-10-26, on the reference: "this rendering is a pretty good
+  way of doing it." So the reference is the target look for the world,
+  the HUD excepted.
+  **Layman:** The dirt layer should look like real grime, rust and stains that gather where dirt would, not blotches of paint over the walls.
+  Kind: enhancement.
+  Source: user-request-2026-10-26.
+  Lanes: shaders.
 
 ## 0.12.0 — The player's experience
 
