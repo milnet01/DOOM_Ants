@@ -425,6 +425,12 @@ $(SHADER_DIR)/composite.frag.spv.h $(SHADER_DIR)/rt_tonemap.comp.spv.h \
 $(SHADER_DIR)/svgf_composite.comp.spv.h $(SHADER_DIR)/svgf_composite_split.comp.spv.h: \
 		$(SHADER_DIR)/formulas/fixed_colormap.glsl
 
+# DOOM-0273 — the derived surface map's read and parallax are shared by the path tracer and
+# both variants of the raster mesh.frag. Same missing-auto-dep hazard as the rules above.
+$(SHADER_DIR)/pathtrace.comp.spv.h \
+$(SHADER_DIR)/mesh.frag.spv.h $(SHADER_DIR)/mesh_overlay.frag.spv.h: \
+		$(SHADER_DIR)/formulas/surface_detail.glsl
+
 # DOOM-0511 — an emitter's visible glow is shared by the raw display path (through
 # pt_common.glsl) and both composite variants. Same missing-auto-dep hazard as above.
 $(SHADER_DIR)/pathtrace.comp.spv.h $(SHADER_DIR)/bake.comp.spv.h \

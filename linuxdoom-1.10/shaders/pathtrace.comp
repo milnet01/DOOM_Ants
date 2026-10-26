@@ -350,6 +350,13 @@ layout(push_constant) uniform PC {
                        // push range is now 256 bytes, the device limit: no lane is left.
 } pc;
 
+// DOOM-0273: derived surface detail (normal + height parallax) for walls and flats with no
+// HD maps. The lanes it reads are named here; formulas/surface_detail.glsl says why.
+#define SURF_LANE        pc.misc7.x
+#define SURF_BASE        pc.misc7.z
+#define SURF_SPRITE_BASE pc.misc4.x
+#include "formulas/surface_detail.glsl"
+
 // --- Camera-only shading constants (build step 3c/4b-iii) --------------------
 const uint  NEE_SAMPLES = 6u;          // shadow rays/pixel. Emitters are picked by
                                        // POWER (3c-2, cdf binary search), so a few
@@ -1393,6 +1400,7 @@ struct PrimaryHit {
     int     flags;
     uint    id;
     MatCtrl mc;
+    bool    surf;       // DOOM-0273: shaded with the derived surface map (never when usePBR)
     vec2    sUV;
     vec3    T, B;
     float   tHit;
@@ -1422,6 +1430,7 @@ PrimaryHit primaryHitSurface(Verts vb, uint i0, bool isSprite, vec2 hitUV, vec3 
     // hdAlbedo samples raw hitUV) and is byte-identical to the pre-HD path.
     h.mc   = ctrl[h.id];                    // one SSBO, runtime array -> no nonuniformEXT
     h.sUV  = hitUV;                         // paletted default (unused by the paletted branch)
+    h.surf = false;
     h.T    = n; h.B = n;
     h.tHit = tHit;                          // DOOM-0181: hitP feeds the detile world-key
     h.hitP = origin + dir * tHit;
@@ -1437,11 +1446,21 @@ PrimaryHit primaryHitSurface(Verts vb, uint i0, bool isSprite, vec2 hitUV, vec3 
         h.sUV = detileOn()
               ? detilePOM(h.mc, baseUV, h.T, h.B, n, dir, h.dG)
               : hdParallaxUV(h.mc, baseUV, h.T, h.B, n, dir);
+    } else if (h.mc.usePBR == 0u && surfHas(h.id)) {
+        // DOOM-0273: no HD maps, so the derived map. sUV is in 0..1 tile space here, and
+        // the paletted colour below is read at the same marched UV, so colour and relief
+        // stay aligned (INV-4). An HD material never comes here (INV-6).
+        h.surf = true;
+        hdTangentFrame(n, p0, p1, p2, uv0, uv1, uv2, h.T, h.B);
+        vec3 vT = normalize(vec3(dot(-dir, h.T), dot(-dir, h.B), dot(-dir, n)));
+        h.sUV = surfParallaxUV(h.id, hitUV / surfTexSize(h.id), vT);
     }
     // DOOM-0181 L1: de-tile the albedo when the dial is on and this is an HD albedo map;
     // else the unchanged hdAlbedo path (paletted / no-albedo hits stay byte-identical).
     if (h.mc.usePBR != 0u && h.mc.maps[0] >= 0 && detileOn()) {
         h.albedo = detile(uint(h.mc.maps[0]), h.sUV, h.dG);
+    } else if (h.mc.usePBR == 0u && h.surf) {
+        h.albedo = decodeAlbedo(h.id, h.sUV * surfTexSize(h.id));   // texels at the marched UV
     } else {
         h.albedo = hdAlbedo(h.mc, h.id, hitUV, h.sUV);   // HD if usePBR, else paletted
     }
@@ -1497,6 +1516,10 @@ PrimaryLight primaryHitLighting(PrimaryHit h, bool isSprite, int prim, vec3 n)
     if (h.mc.usePBR != 0u && h.mc.maps[1] >= 0 && detileOn()) {
         vec3 tn  = detileNormalTS(uint(h.mc.maps[1]), h.sUV, h.dG);
         s.shadeN = normalize(tn.x * h.T + tn.y * h.B + tn.z * n);
+    } else if (h.mc.usePBR == 0u && h.surf) {
+        // DOOM-0273: the derived normal lights the hit; gnorm keeps the geometric n.
+        vec3 tn  = surfSample(h.id, h.sUV).xyz;
+        s.shadeN = normalize(tn.x * h.T + tn.y * h.B + tn.z * n);
     } else {
         s.shadeN = hdShadingNormal(h.mc, h.id, h.sUV, n, h.T, h.B);
     }
@@ -1504,7 +1527,7 @@ PrimaryLight primaryHitLighting(PrimaryHit h, bool isSprite, int prim, vec3 n)
     // handed; a tilted bump normal shrinks the clearance off the true triangle
     // plane, so for a normal-mapped surface lift the shading point along the
     // GEOMETRIC normal first (paletted is byte-identical: guard is false there).
-    s.shadeP = (h.mc.usePBR != 0u && h.mc.maps[1] >= 0) ? h.hitP + n * 2e-3 : h.hitP;
+    s.shadeP = ((h.mc.usePBR != 0u && h.mc.maps[1] >= 0) || h.surf) ? h.hitP + n * 2e-3 : h.hitP;
     // DOOM-0183 L4: nukage ripples the LIGHTING normal so the diffuse shade AND the
     // sheen shimmer coherently (INV-4: nukage only — lava + non-liquid keep n unperturbed).
     s.nukage = isNukage(h.mc);

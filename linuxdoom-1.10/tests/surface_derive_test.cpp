@@ -9,17 +9,28 @@
 //          0.70 when nothing matches, and a prefix matches only at the start.
 //   INV-3  Liquids, the sky flat and a texture with a transparent texel get a flat
 //          map: every texel normal (0, 0, 1) and height 255.
+//   INV-4  (traced half) In pathtrace.comp's surface-map branch the paletted colour
+//          is read at the UV surfParallaxUV returned, not at the raw hit UV.
+//   INV-6  Every surf helper call in pathtrace.comp sits where usePBR is 0, so an HD
+//          material never gets the derived map on top of its own.
+// INV-4 and INV-6 scrape the shader source by name, never by line position.
 //
 // Build/run: `make test` (from linuxdoom-1.10/).
 #include "../surface_derive.h"
 #include "check_util.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
+#include <string>
 #include <vector>
+
+#ifndef DOOM_TESTS_ROOT
+#error "DOOM_TESTS_ROOT must be defined (the Makefile passes it)"
+#endif
 
 static const int W = 8, H = 8;
 
@@ -59,6 +70,57 @@ static const int kRefNy[64] = {
     102, 83, 97, 208, 215, 142, 125, 139, 100, 60, 37, 34, 66, 107, 116, 104,
     27, 34, 182, 214, 217, 106, 178, 167, 185, 121, 177, 197, 88, 12, 127, 231,
     109, 51, 37, 30, 120, 237, 152, 85, 226, 235, 243, 159, 150, 203, 55, 111 };
+
+static std::string slurp(const char* path)
+{
+    FILE* f = std::fopen(path, "rb");
+    if (!f) { std::printf("  FAIL: cannot open %s\n", path); return std::string(); }
+    std::string s;
+    char buf[65536];
+    size_t n;
+    while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) s.append(buf, n);
+    std::fclose(f);
+    return s;
+}
+
+// The source with every // comment blanked out (same length, so offsets hold).
+static std::string strip_comments(std::string s)
+{
+    for (size_t p = s.find("//"); p != std::string::npos; p = s.find("//", p))
+        while (p < s.size() && s[p] != '\n') s[p++] = ' ';
+    return s;
+}
+
+// The text of the block that opens at the first '{' at or after `from`, braces included.
+static std::string block_at(const std::string& s, size_t from)
+{
+    const size_t open = s.find('{', from);
+    if (open == std::string::npos) return std::string();
+    int depth = 0;
+    for (size_t p = open; p < s.size(); ++p) {
+        if (s[p] == '{') depth++;
+        else if (s[p] == '}' && --depth == 0) return s.substr(open, p - open + 1);
+    }
+    return std::string();
+}
+
+// The condition guarding offset `at`: the text from the statement start before the
+// '{' that encloses `at`, up to that '{'. Also the call's own line, for a call that
+// IS the condition (`else if (... && surfHas(id)) {`).
+static std::string guard_of(const std::string& s, size_t at)
+{
+    int depth = 0;
+    size_t p = at;
+    while (p > 0) {
+        --p;
+        if (s[p] == '}') depth++;
+        else if (s[p] == '{' && depth-- == 0) break;
+    }
+    size_t start = s.find_last_of(";}", p - 1);
+    start = (start == std::string::npos) ? 0 : start + 1;
+    const size_t ls = s.rfind('\n', at), le = s.find('\n', at);
+    return s.substr(start, p - start) + " | " + s.substr(ls + 1, le - ls - 1);
+}
 
 static bool is_flat_map(const std::vector<uint8_t>& out)
 {
@@ -122,6 +184,44 @@ int main()
         mask[W * 3 + 5] = true;
         check(is_flat_map(derive("STARTAN3", mask)),
               "INV-3: a texture with one transparent texel gets a flat map");
+    }
+
+    // --- INV-4 / INV-6: pathtrace.comp, scraped ----------------------------------
+    {
+        const std::string pt = strip_comments(slurp(DOOM_TESTS_ROOT "/shaders/pathtrace.comp"));
+        check(!pt.empty(), "pathtrace.comp is readable");
+
+        // INV-4: the albedo in the surf branch of primaryHitSurface is read at h.sUV,
+        // and h.sUV there comes from surfParallaxUV.
+        const size_t fn = pt.find("PrimaryHit primaryHitSurface(");
+        const std::string body = block_at(pt, fn);
+        check(fn != std::string::npos && !body.empty(), "INV-4: primaryHitSurface is found");
+        check(body.find("h.sUV = surfParallaxUV(") != std::string::npos,
+              "INV-4: primaryHitSurface sets h.sUV from surfParallaxUV");
+        const size_t br = body.find("else if (h.mc.usePBR == 0u && h.surf)");
+        const std::string albedo = br == std::string::npos ? std::string() : block_at(body, br);
+        check(albedo.find("decodeAlbedo(h.id, h.sUV") != std::string::npos,
+              "INV-4: the surf branch reads the paletted colour at the marched h.sUV");
+        check(albedo.find("hitUV") == std::string::npos,
+              "INV-4: the surf branch's colour read does not use the raw hitUV");
+
+        // INV-6: every surf helper call is guarded by usePBR == 0u.
+        int calls = 0, unguarded = 0;
+        for (size_t p = pt.find("surf"); p != std::string::npos; p = pt.find("surf", p + 1)) {
+            if (p > 0 && (std::isalnum((unsigned char)pt[p - 1]) || pt[p - 1] == '_')) continue;
+            size_t q = p + 4;
+            if (q >= pt.size() || !std::isupper((unsigned char)pt[q])) continue;
+            while (q < pt.size() && (std::isalnum((unsigned char)pt[q]) || pt[q] == '_')) ++q;
+            if (q >= pt.size() || pt[q] != '(') continue;
+            calls++;
+            if (guard_of(pt, p).find("usePBR == 0u") == std::string::npos) {
+                unguarded++;
+                std::printf("  [INV-6] unguarded: %s\n", pt.substr(p, q - p).c_str());
+            }
+        }
+        std::printf("  [INV-6] %d surf helper call(s), %d unguarded\n", calls, unguarded);
+        check(calls > 0, "INV-6: pathtrace.comp calls the surf helpers at all");
+        check(unguarded == 0, "INV-6: every surf helper call sits where usePBR is 0");
     }
 
     return check_summary("surface_derive_test");

@@ -21,7 +21,8 @@
 //     none, in the 3D views.
 //   - DOOM-0273 INV-10: the members of the RT push block (pathtrace.comp's PC
 //     against r_vulkan.cpp's RtPushConstants) end misc6, misc7 on both sides, and
-//     ShadowUbo (mesh.frag) and ShadowUboData (r_vulkan.cpp) are lightVP, flags.
+//     ShadowUbo (mesh.frag) and ShadowUboData (r_vulkan.cpp) are lightVP, flags,
+//     and the setting's on value, SURF_DETAIL_ON against kSurfaceDetailOn.
 //     A field moved on one side alone shifts every lane after it.
 //
 // Source-scraping, like bloom_threshold_test.cpp: each value is found by its
@@ -199,6 +200,9 @@ int main()
     const auto cUbo    = members(vk, "struct ShadowUboData");
     check(tail(glslUbo, 9) == "lightVP flags ", "mesh.frag's ShadowUbo is lightVP, flags");
     check(tail(cUbo, 9) == "lightVP flags ", "r_vulkan.cpp's ShadowUboData is lightVP, flags");
+    const std::string sd = slurp(DOOM_TESTS_ROOT "/shaders/formulas/surface_detail.glsl");
+    check(!sd.empty(), "surface_detail.glsl is readable");
+    same(sd, "SURF_DETAIL_ON", vk, "kSurfaceDetailOn");
 
     return check_summary("shader_mirror_test");
 }

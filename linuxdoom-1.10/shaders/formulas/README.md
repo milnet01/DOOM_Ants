@@ -49,3 +49,12 @@ DOOM-0511's `shownEmission`: how bright an emitter looks on screen, apart
 from the light it casts. Above `kShownGlowMax` a surface shows its own
 texture at that brightness, so a bright red light stays red. A hand-tuned
 look cap, not a Workbench curve.
+
+## Hand-written — `surface_detail.glsl`
+
+DOOM-0273's read of a wall's or flat's derived surface map: `surfHas`,
+`surfSample`, `surfRoughness`, and the height parallax (`surfParallaxUV`
+stepped for the traced view, `surfOffsetUV` one sample for the rasterised
+one). The maps come from `surface_derive.h`. `kSurfHeightScale` is a
+look call, not a Workbench curve. The spec is
+`docs/specs/DOOM-0273-solid-surface-detail.md`.
