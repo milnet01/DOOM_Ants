@@ -16,6 +16,15 @@ ray-traced view is a separate axis. The two consequences stated in
 Solid's feature — follow from that revision and were easy to get backwards
 while both wordings were in circulation.
 
+On 2026-10-26 the user restated the Effects column view by view, while
+DOOM-0273 and DOOM-0103 were being designed. The replaced cells read:
+Solid, "The full set — fog, lighting, shadows — faked cheaply wherever a
+cheap fake holds up"; Ultra, "The full set, done properly, and first in line
+for anything new". The user's words: Solid's ray-traced view "must be rt but
+can use some cheaper methods to help keep performance up. But rt is
+preferred"; Ultra's may use a fake "without a person being able to tell the
+difference between rt and the cheap / fake way".
+
 ## The unbuilt subdirectories
 
 `sndserv/`, `sersrc/` and `ipx/` are kept as reference per DOOM-0085.

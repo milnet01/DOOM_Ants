@@ -24,8 +24,8 @@ ray-traced view (the `~` key / the menu's Ray Tracing row), so "which tier" and
 | Tier | Art | Effects |
 |---|---|---|
 | **Classic** | The 1993/97 game exactly as released | None — this is the original renderer. Two concessions: widescreen, which is optional, and the Solid/Ultra menu look, drawn through SDL (DOOM-0211) |
-| **Solid** | The **original** textures, upscaled, with PBR / POM added on top | The full set — fog, lighting, shadows — faked cheaply wherever a cheap fake holds up |
-| **Ultra** | **Replaced** with HD art | The full set, done properly, and first in line for anything new |
+| **Solid** | The **original** textures, upscaled, with PBR / POM added on top | The full set — fog, lighting, shadows. Rasterised view: faked cheaply. Ray-traced view: ray traced, with cheaper methods allowed to keep the frame rate up; ray tracing is preferred |
+| **Ultra** | **Replaced** with HD art | Every effect we can think of, and first in line for anything new. Rasterised view: all of them, faked cheaply. Ray-traced view: ray traced, unless a cheap fake cannot be told apart from it |
 
 The distinction to hold on to: **Solid enhances DOOM's own art; Ultra
 substitutes for it.** A player who wants the game to still *look like DOOM*
