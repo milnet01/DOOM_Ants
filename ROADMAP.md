@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=513 -->
+<!-- ants-roadmap-id-high-water: DOOM=514 -->
 
 # Roadmap
 
@@ -17001,6 +17001,14 @@ in CLAUDE.md describes.
   Not addressed here: the references keep the room DARK so the red
   light dominates. That is the room's own light level, not the
   emitter's colour.
+  User play-test 2026-10-26 (their F12 shot-0025, same view): "The red
+  wall looks closer but still doesn't match that image I sent and that
+  image I sent had much moodier lighting." The mood half moved to
+  DOOM-0514 (per-level lighting profiles), with the measurements. A
+  global moodier mix was tried and undone: it darkened every level.
+  Left here: the panels show at (155,0,0) where the reference shows
+  (211,1,1). Raising kShownGlowMax to 0.5 did not brighten them in
+  that test, so what limits them is not yet known.
   **Layman:** A glowing red wall should look deep red, like the reference; ours turns almost white with only a red rim.
   Kind: fix.
   Source: user-request-2026-10-26.
@@ -17031,6 +17039,37 @@ in CLAUDE.md describes.
   Kind: enhancement.
   Source: user-request-2026-10-26.
   Lanes: shaders.
+
+- 📋 [DOOM-0514] **Lighting mood can be tuned per level, and per scene within a level, instead of one global setting.**
+  User decision 2026-10-26, after a global "moodier" test darkened
+  every level: "As much as I want a one size fits all solution, we
+  might have to move from level to level and possibly even scene to
+  scene."
+  The dials a profile would set, all global constants today:
+  - AMBIENT_SECTOR_SCALE (pathtrace.comp, 0.25): white fill scaled by
+    the sector's light level, added to every surface;
+  - kEmissiveScale (emissive_derive.h, 40): how much light emitters
+    cast;
+  - kShownGlowMax (formulas/shown_emission.glsl, 0.25): how bright an
+    emitter looks.
+  First case, measured 2026-10-26 at E2M1 -warpto 511 357 359 (Solid,
+  -rtview 6, rt_brightness 13), mean sRGB of panel / side wall / floor.
+  The user's reference: (211,1,1) / (14,0,0) / (32,0,0). Current:
+  (155,0,0) / (44,5,5) / (71,29,10). With the ambient scale 0, the
+  emitter scale 10 and the shown cap 0.5: (155,0,0) / (18,1,1) /
+  (43,22,9). That is close to the reference's room, but the panels are
+  still dimmer than it. Fog had little effect here. Captures:
+  scratch/doom0511/fixed.png, moody-fog.png, lamp-compare.png (E1M1,
+  the same mix darkens the lamp corridor).
+  Open questions for the design: where profiles live (a sidecar keyed
+  by map, and by sector for a scene, like Ultra's materials.csv);
+  whether a sector-level override is enough for "scene"; whether a
+  profile blends as the player crosses between sectors. Needs a
+  write-spec decision first.
+  **Layman:** Each level, and each important room, can have its own lighting mood, dark and moody where the reference shows it, without darkening every other level.
+  Kind: feature.
+  Source: user-decision-2026-10-26.
+  Lanes: shaders, renderer.
 
 ## 0.12.0 — The player's experience
 
