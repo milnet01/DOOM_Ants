@@ -13,6 +13,10 @@
 //          is read at the UV surfParallaxUV returned, not at the raw hit UV.
 //   INV-6  Every surf helper call in pathtrace.comp sits where usePBR is 0, so an HD
 //          material never gets the derived map on top of its own.
+//   INV-4  (raster half) mesh.frag reads the paletted colour at surfOffsetUV's UV.
+//   INV-7  In mesh.frag the derived normal (shadeN) is read only by the flashlight's
+//          facing term and the point lights' ndl term, and every surf call sits inside
+//          #ifndef SINGLE_TARGET, so the weapon overlay build has none.
 // INV-4 and INV-6 scrape the shader source by name, never by line position.
 //
 // Build/run: `make test` (from linuxdoom-1.10/).
@@ -222,6 +226,66 @@ int main()
         std::printf("  [INV-6] %d surf helper call(s), %d unguarded\n", calls, unguarded);
         check(calls > 0, "INV-6: pathtrace.comp calls the surf helpers at all");
         check(unguarded == 0, "INV-6: every surf helper call sits where usePBR is 0");
+    }
+
+    // --- INV-4 (raster) / INV-7: mesh.frag, scraped ---------------------------------
+    {
+        const std::string mf = strip_comments(slurp(DOOM_TESTS_ROOT "/shaders/mesh.frag"));
+        check(!mf.empty(), "mesh.frag is readable");
+
+        check(mf.find("uv01 = surfOffsetUV(") != std::string::npos,
+              "INV-4: mesh.frag sets uv01 from surfOffsetUV");
+        check(mf.find("float index   = texture(materialTex[nonuniformEXT(id)], uv01)")
+                  != std::string::npos,
+              "INV-4: mesh.frag's paletted colour read uses uv01");
+
+        // Walk the lines, tracking whether SINGLE_TARGET is known to be undefined.
+        std::vector<char> stack;               // 'N' #ifndef ST, 'D' #ifdef ST, 'O' other
+        int surfCalls = 0, outside = 0, shadeUses = 0, strayUses = 0;
+        size_t ls = 0;
+        while (ls < mf.size()) {
+            size_t le = mf.find('\n', ls);
+            if (le == std::string::npos) le = mf.size();
+            const std::string line = mf.substr(ls, le - ls);
+            ls = le + 1;
+            const size_t h = line.find_first_not_of(" \t");
+            if (h != std::string::npos && line[h] == '#') {
+                if (line.find("#ifndef SINGLE_TARGET") != std::string::npos) stack.push_back('N');
+                else if (line.find("#ifdef SINGLE_TARGET") != std::string::npos) stack.push_back('D');
+                else if (line.compare(h, 3, "#if") == 0) stack.push_back('O');
+                else if (line.compare(h, 5, "#else") == 0 && !stack.empty())
+                    stack.back() = stack.back() == 'N' ? 'D' : stack.back() == 'D' ? 'N' : 'O';
+                else if (line.compare(h, 6, "#endif") == 0 && !stack.empty()) stack.pop_back();
+                if (line.find("surface_detail.glsl") == std::string::npos) continue;
+            }
+            bool inN = false;
+            for (char c : stack) inN = inN || c == 'N';
+            for (size_t p = line.find("surf"); p != std::string::npos; p = line.find("surf", p + 1)) {
+                const size_t q = p + 4;
+                const bool call = q < line.size() && std::isupper((unsigned char)line[q])
+                               && line.find('(', q) != std::string::npos;
+                const bool inc = line.find("surface_detail.glsl") != std::string::npos;
+                if (!call && !inc) continue;
+                surfCalls++;
+                if (!inN) { outside++; std::printf("  [INV-7] outside #ifndef SINGLE_TARGET: %s\n", line.c_str()); }
+                break;
+            }
+            if (line.find("shadeN") != std::string::npos) {
+                const bool def = line.find("shadeN  =") != std::string::npos
+                              || line.find("vec3  shadeN") != std::string::npos;
+                if (def) continue;
+                shadeUses++;
+                if (line.find("facing") == std::string::npos && line.find("ndl") == std::string::npos) {
+                    strayUses++;
+                    std::printf("  [INV-7] shadeN read outside facing/ndl: %s\n", line.c_str());
+                }
+            }
+        }
+        std::printf("  [INV-7] %d surf line(s), %d outside; shadeN read %d time(s), %d stray\n",
+                    surfCalls, outside, shadeUses, strayUses);
+        check(surfCalls > 0 && outside == 0, "INV-7: every surf call sits inside #ifndef SINGLE_TARGET");
+        check(shadeUses == 2 && strayUses == 0,
+              "INV-7: the derived normal is read only by the facing and ndl terms");
     }
 
     return check_summary("surface_derive_test");

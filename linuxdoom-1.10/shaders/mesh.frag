@@ -111,6 +111,16 @@ layout(set = 1, binding = 0) uniform sampler2D shadowMap;
 // every frame; lightVP only while the torch is on. r_vulkan.cpp's ShadowUboData mirrors it.
 layout(set = 1, binding = 1) uniform ShadowUbo { mat4 lightVP; uvec4 flags; } shadow;
 
+// DOOM-0273: derived surface detail on walls and flats (one-sample parallax + the derived
+// normal for the flashlight and point lights). Not in the weapon overlay build, which
+// draws only the psprite.
+#ifndef SINGLE_TARGET
+#define SURF_LANE        shadow.flags.x
+#define SURF_BASE        shadow.flags.z
+#define SURF_SPRITE_BASE uint(pc.numWall + pc.numFlat)
+#include "formulas/surface_detail.glsl"
+#endif
+
 const int FLAG_FLAT    = 0x1;   // matches RB_MESH_FLAT in r_mesh.h
 const int FLAG_MASKED  = 0x2;   // matches RB_MESH_MASKED in r_mesh.h
 const int FLAG_SPRITE  = 0x4;   // matches RB_MESH_SPRITE in r_mesh.h
@@ -261,7 +271,36 @@ void main()
     // and let the sampler wrap. (Sprite UVs are pre-inset half a texel and stay
     // in range, so REPEAT is a no-op for them — no bleed across a tile border.)
     vec2  sz      = vec2(textureSize(materialTex[nonuniformEXT(id)], 0));
-    float index   = texture(materialTex[nonuniformEXT(id)], vUV / sz).r * 255.0;
+    vec2  uv01    = vUV / sz;
+    // The normal the flashlight and point lights see (DOOM-0273). Sector light and GI keep
+    // the geometric normal, so flat light never darkens a whole bumped wall (INV-7).
+    vec3  shadeN  = normalize(vNormal);
+#ifndef SINGLE_TARGET
+    {
+        // Tangent frame per pixel from screen derivatives (no vertex attribute carries one).
+        // Taken outside the branch: derivatives are undefined in non-uniform control flow.
+        vec3 dpx = dFdx(vWorldPos), dpy = dFdy(vWorldPos);
+        vec2 dux = dFdx(uv01),      duy = dFdy(uv01);
+        if ((vFlags & FLAG_PSPRITE) == 0 && surfHas(uint(id)))
+        {
+            vec3 n  = normalize(vNormal);   // geometric
+            vec3 py = cross(dpy, n), px = cross(n, dpx);
+            vec3 T  = py * dux.x + px * duy.x;
+            vec3 B  = py * dux.y + px * duy.y;
+            if (dot(T, T) > 1e-20 && dot(B, B) > 1e-20)
+            {
+                T = normalize(T);
+                B = normalize(B);
+                vec3 V  = normalize(vec3(pc.eyeX, pc.eyeY, pc.eyeZ) - vWorldPos);
+                vec3 vT = vec3(dot(V, T), dot(V, B), dot(V, n));
+                uv01 = surfOffsetUV(uint(id), uv01, vT);   // colour and relief read here (INV-4)
+                vec3 tn = surfSample(uint(id), uv01).xyz;
+                shadeN  = normalize(tn.x * T + tn.y * B + tn.z * n);
+            }
+        }
+    }
+#endif
+    float index   = texture(materialTex[nonuniformEXT(id)], uv01).r * 255.0;
 
     // Sprites and two-sided masked mid-walls (grates/fences) store transparency
     // as palette index 0 (the gaps between posts); drop those texels so they
@@ -327,7 +366,7 @@ void main()
         vec3  fdir   = toFrag / max(fdist, 1e-4);             // eye -> fragment
         float spot   = smoothstep(0.82, 0.92, dot(fdir, fwd));    // cone ~35->23 deg
         float fall   = clamp(1.0 - fdist / 1200.0, 0.0, 1.0);     // near-bright beam
-        float facing = max(dot(normalize(vNormal), -fdir), 0.0);  // surface faces lamp
+        float facing = max(dot(shadeN, -fdir), 0.0);              // surface faces lamp
         float lit    = spot * fall * facing;
         // L2c cast-shadow PCF: nine taps, so only where the beam lands (DOOM-0408). It
         // only multiplies, so skipping it where lit is 0 changes no pixel.
@@ -378,7 +417,7 @@ void main()
                     float w = clamp(1.0 - sqrt(d2) / reach, 0.0, 1.0);
                     att *= w * w;
                 }
-                float ndl = max(dot(nrm, dd * inversesqrt(max(d2, 1e-8))), 0.0);
+                float ndl = max(dot(shadeN, dd * inversesqrt(max(d2, 1e-8))), 0.0);
                 plight += col * att * ndl;
             }
             // A big emissive surface enters as many emitter triangles, so summing the
