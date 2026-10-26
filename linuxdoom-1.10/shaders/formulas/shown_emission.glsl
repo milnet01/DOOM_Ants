@@ -12,9 +12,10 @@
 #define SHOWN_EMISSION_GLSL
 
 // Above this peak, a surface shows its own albedo at this brightness instead of its Le,
-// which keeps both the hue and the texture. At the default exposure (x3.96) it puts a
-// fullbright texel at about its own palette colour, as the raster view shows it.
-const float kShownGlowMax = 0.25;
+// which keeps both the hue and the texture. Tuned at E2M1's cross against the user's
+// reference, rt_brightness 13 (x1.40): 0.6 shows the panels at a mean of (188,8,8)
+// against the reference's (211,1,1). Higher washes toward pink: 1.0 gave (205,32,32).
+const float kShownGlowMax = 0.6;
 
 // emisWeight is the signed weight from emisWeight() in pathtrace.comp: its magnitude
 // scales the glow, and a negative sign marks a liquid. A liquid always shows its forced

@@ -5668,6 +5668,11 @@ static void ComputeMaterialEmissive(const rb_atlas_t* a, std::vector<float>& out
                             RB_SpriteLumpGlows(id - spriteBase) != 0);
         emis::derive_material_le(a->pixels, (int)a->atlasw, ox, oy, w, h,
                                  palLin, &out[(size_t)id * 3], faint);
+        if (id < a->numwall) {              // DOOM-0511: per-texture cast strength
+            const float k = RB_WallTexCastScale(id);
+            for (int c = 0; c < 3; c++)
+                out[(size_t)id * 3 + c] *= k;
+        }
     }
 
     ForceLiquidEmissive(a, out);   // DOOM-0183 L2: forced glow Le on nukage/lava (delivers DOOM-0083)

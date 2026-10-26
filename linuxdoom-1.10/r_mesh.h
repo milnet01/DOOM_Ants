@@ -412,6 +412,10 @@ int RB_SpriteLumpGlows(int lump);
 // texnums return 0.
 int RB_WallTexEmits(int texnum);
 
+// DOOM-0511: the multiple of its derived Le that light-source wall `texnum` casts
+// (r_mesh.c wall_light_cast). 1 for every texture the table does not name.
+float RB_WallTexCastScale(int texnum);
+
 // WAD-global PLAYPAL (palette 0): 256 straight-RGB triples, pointing at the
 // cached lump. The back-end builds its colour LUT from this at init so the 2D
 // HUD/menu overlay can composite from the very first frame -- the title/demo

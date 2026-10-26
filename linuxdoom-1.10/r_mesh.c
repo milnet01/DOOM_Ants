@@ -2165,6 +2165,24 @@ static void ensure_wall_light_map(void)
     }
 }
 
+// DOOM-0511: how much light a listed wall CASTS, as a multiple of what its texels
+// derive. Only the cast light moves: the visible glow of a bright light is its own
+// texture at shownEmission's cap, whatever its Le. A name not here casts 1x.
+// REDWALL1: the user's references keep the room dark round a bright red cross; at 1x
+// its E2M1 corridor walls measured three times the reference's brightness.
+static struct { char name[9]; float cast; } wall_light_cast[] = {
+    { "REDWALL1", 0.15f },
+};
+
+float RB_WallTexCastScale(int texnum)
+{
+    int i;
+    for (i = 0; i < (int)(sizeof(wall_light_cast) / sizeof(wall_light_cast[0])); i++)
+        if (R_CheckTextureNumForName(wall_light_cast[i].name) == texnum)
+            return wall_light_cast[i].cast;
+    return 1.0f;
+}
+
 // True when wall texture `texnum` (a unified atlas id below numwall) is a light
 // source. The C++ Vulkan back-end calls this across the seam, so it returns int
 // (r_mesh.h stays DOOM-type-free), mirroring RB_SpriteLumpGlows.
