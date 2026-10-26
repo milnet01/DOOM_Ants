@@ -14686,7 +14686,7 @@ in CLAUDE.md describes.
   Kind: chore.
   Source: debt-sweep-2026-07-26.
 
-- 📋 [DOOM-0273] **Solid tier: upscale the ORIGINAL textures and give them PBR/POM, keeping the 1993 art.**
+- 🚧 [DOOM-0273] **Solid tier: upscale the ORIGINAL textures and give them PBR/POM, keeping the 1993 art.**
   **Layman:** Same DOOM pictures you know, just sharper, with real bumpiness and depth — as opposed to Ultra, which swaps the art out entirely.
   Kind: feature.
   Lanes: renderer, assets.
@@ -14757,6 +14757,16 @@ in CLAUDE.md describes.
   2026-10-26: spec accepted, docs/specs/DOOM-0273-solid-surface-detail.md
   (review-contract capped at one loop by the user). It amends
   DOOM-0042. Next: build B1.
+  2026-10-26: B1-B4 built and pushed (0321245, 9c06529, B3, B4).
+  Setting surface_detail (default on), Video-menu row "Surface Detail".
+  B5 checks done: INV-5 (setting off matches 0321245 in all 8 views,
+  outside the DOOM-0519 noise patch), INV-8 grep clean, INV-9 diff
+  clean, -rtverify PASS. Load 62-74 ms doom.wad, 85-97 ms doom2.wad
+  (budget 150). Raster scene +0.03 ms (budget 0.3); megakernel no
+  measurable rise (budget 1.0); both at headless 1708x800.
+  Left: the user's look at the test scene to tune kSurfHeightScale
+  (0.06) and the normal strength (2.0) (spec §10). The effect is faint
+  at those starting values. Then CHANGELOG and ship.
 
 - 📋 [DOOM-0278] **Motion blur for the 3-D views - camera-velocity first, per-object only once monsters are models.**
   User asked (2026-07-27) for "perhaps some per object motion blur" as
