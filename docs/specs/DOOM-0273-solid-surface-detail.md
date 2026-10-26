@@ -132,7 +132,7 @@ float family_roughness(const char* name);   // _FAMILY's table and default
 ```
 
 - **Height and normal** port `_height_field` and `derive_normal` exactly:
-  BT.601 luma, 3x3 Sobel with wrap-around, `strength` 2.0, Y+.
+  BT.601 luma, 3x3 Sobel with wrap-around, `strength` 4.0 (§10), Y+.
 - **Roughness** is `family_roughness(name)` for every texel: `_FAMILY`'s
   prefixes and values, longest prefix wins, default 0.70. One value per
   texture today. It is stored per texel so a later item can vary it without
@@ -199,8 +199,7 @@ vec2  surfOffsetUV(uint id, vec2 uv01, vec3 viewTS);    // rasterised view: one 
 - `surfParallaxUV` reuses the method of `hdParallaxUV`: steps plus one
   bisection, primary hit only, no self-shadowing. It uses its own height
   scale, `kSurfHeightScale`, because derived heights come from luma and are
-  rougher than authored ones. Its starting value is `kPomHeightScale`, and the
-  user tunes it (§10).
+  rougher than authored ones. It is 0.12, twice `kPomHeightScale` (§10).
 - The tangent frame:
   - In the traced view it is the triangle's dP/dU and dP/dV, from
     `hdTangentFrame`. `primaryHitSurface` calls it only when `usePBR` is
@@ -436,9 +435,9 @@ of STONE2 walls and FLOOR5_2 floor leading to the REDWALL1 cross
 
 ## 10. Open questions
 
-- **The height scale and normal strength** are look calls. They start at
-  `kPomHeightScale` and 2.0 and are tuned with the user on the test scene at
-  B5.
+- **The height scale and normal strength** are look calls. The user chose
+  0.12 and 4.0 on 2026-10-26, from a side-by-side of four pairs at the test
+  scene; the start values were 0.06 and 2.0.
 - **Ambient occlusion.** `derive_ao` exists, but the four channels are full
   and it costs about 32 taps per texel at load. Whether crevice darkening is
   worth a second image is decided after the user has seen B5. It is not

@@ -31,8 +31,9 @@ namespace surf {
         { "LAVA3", RB_FLAG_LIQUID_LAVA }, { "LAVA4", RB_FLAG_LIQUID_LAVA },
     };
 
-    // pbr_derive.py's derive_normal default.
-    constexpr float kNormalStrength = 2.0f;
+    // derive_normal's `strength`. pbr_derive.py defaults to 2.0; Solid uses 4.0, the
+    // user's pick 2026-10-26 from a side-by-side at the E2M1 test scene (spec §10).
+    constexpr float kNormalStrength = 4.0f;
 
     // pbr_derive.py's _FAMILY: a name starting with any prefix in a row gets that
     // row's roughness; the longest matching prefix wins; 0.70 when none matches.

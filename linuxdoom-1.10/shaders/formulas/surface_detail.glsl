@@ -20,10 +20,10 @@
 // (tests/shader_mirror_test.cpp holds them equal).
 const uint SURF_DETAIL_ON = 1u;
 
-// How deep the relief reads, as a fraction of one tile. Starts at the HD path's
-// kPomHeightScale; derived heights come from luma and are rougher than authored ones,
-// so it is tuned on its own (spec §10).
-const float kSurfHeightScale = 0.06;
+// How deep the relief reads, as a fraction of one tile. Twice the HD path's
+// kPomHeightScale: the user's pick 2026-10-26 from a side-by-side at the E2M1 test
+// scene (spec §10). Derived heights come from luma, so it is tuned on its own.
+const float kSurfHeightScale = 0.12;
 
 // Below this tangent-space view z, both parallax helpers treat the view as this grazing,
 // so the offset cannot run away along the surface.
