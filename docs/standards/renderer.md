@@ -49,7 +49,7 @@ selects the tier. Don't assume they are separate code paths.
 ## Push-constant lanes — a scarce shared resource
 
 The compute path tracer packs all its per-frame scalars into a handful of
-`uvec4` push-constant lanes (`misc`, `misc2` … `misc6` in `pathtrace.comp`)
+`uvec4` push-constant lanes (`misc`, `misc2` … `misc7` in `pathtrace.comp`)
 rather than churning descriptors. **There is no free lane.** Two rules:
 
 1. **Before reusing a lane, check its actual usage sites — not the struct
@@ -70,11 +70,12 @@ Current allocation (verify against `pathtrace.comp` before relying on it):
 | `misc4` | sprite material base (numWall+numFlat) | omniStart | numSectors (DOOM-0119 REJECT cull, 0 = off) | sky wall-tex bindless id (0xFFFFFFFF = procedural sky) |
 | `misc5` | world-grime overlay bindless id | de-tile quality (0 off / 1 2-tap / 2 4-tap) | dirt-colour texture bindless id | filth master toggle |
 | `misc6` | ripple/wisp time (float bits, seconds) — **shared**: DOOM-0183 liquid ripples *and* DOOM-0011 fog-wisp drift, so it must stay written unconditionally | wet toggle | fog strength `rb_fog` 0..3 (DOOM-0011) | hell-haze density (float bits; DOOM-0011, reserved 0 until L4) |
+| `misc7` | surface detail (DOOM-0273; 1 on, 0 off or no maps made) | reserved for DOOM-0103's specular setting | surface-map base in `materialTex[]` (`RB_MaterialCount()`) | free |
 
 Beside the `uvec4` lanes sit two bare `uint` scalars, `fogFloorZ` and `wispAngle` — both
 bit-cast floats, both per-level rather than per-frame. They are not a sixth lane: they are
 the two pad words `misc6`'s 16-byte alignment forced anyway, spent instead of wasted, which
-is why the push range is still 240 bytes.
+is why `misc7` starts at byte 240.
 
 | Scalar | Contents |
 |--------|----------|
@@ -82,9 +83,9 @@ is why the push range is still 240 bytes.
 | `wispAngle` | fog-wisp drift heading, radians, seeded per map (DOOM-0300; `rb_mesh_t::wispAngle`) |
 
 `misc5`/`misc6` are the DOOM-0179/0181/0183/0011 lanes; the earlier lanes are
-DOOM-0009/0100 foundations. **`misc6` is full and so are both pad words** — DOOM-0300 spent
-the second one, so there is no longer any slack to borrow. The next RT push value must
-append a `misc7 uvec4` (240 → 256 B, the documented device limit).
+DOOM-0009/0100 foundations; `misc7` is DOOM-0273's. **`misc6` is full and so are both pad
+words** — DOOM-0300 spent the second one. `misc7` brought the range to 256 B, the
+documented device limit, so no lane can be appended; `misc7.w` is the one free slot.
 
 ## RT correctness gate
 

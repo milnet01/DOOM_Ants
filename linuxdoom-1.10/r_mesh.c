@@ -1820,17 +1820,20 @@ static int sprite_opaque_black(void)
     return idx;
 }
 
-// Copy one tile's palette indices into the atlas at (ox,oy).
-static void blit_tile(unsigned char* dst, int dstw, int id, int ox, int oy,
-                      int w, int h)
+// Copy one tile's palette indices into the atlas at (ox,oy). DOOM-0273: also
+// marks a wall's covered texels and records a wall's or flat's name.
+static void blit_tile(rb_atlas_t* atlas, int id, int ox, int oy, int w, int h)
 {
+    unsigned char* dst  = atlas->pixels;
+    const int      dstw = atlas->atlasw;
     int col, row;
     if (id < numtextures)
     {
         // Composite the wall texture's patches with their real posts: opaque
         // textures fill the slot, masked ones (grates/fences) leave gaps at the
         // pre-zeroed index 0 so the shader's alpha test reads them transparent.
-        R_RenderTextureToAtlas(id, dst, dstw, ox, oy, w, h);
+        R_RenderTextureToAtlas(id, dst, atlas->covered, dstw, ox, oy, w, h,
+                               atlas->names[id]);
     }
     else if (id < numtextures + numflats)
     {
@@ -1840,6 +1843,9 @@ static void blit_tile(unsigned char* dst, int dstw, int id, int ox, int oy,
         // the shader shows as transparent, rather than reading past the lump.
         const int   flatnum = firstflat + (id - numtextures);
         const byte* flat    = W_CacheLumpNum(flatnum, PU_CACHE);
+
+        memcpy(atlas->names[id], lumpinfo[flatnum].name, 8);
+        atlas->names[id][8] = 0;
 
         if (!FlatFits(W_LumpLength(flatnum), w, h))
             return;
@@ -1973,14 +1979,16 @@ rb_atlas_t* RB_BuildAtlas(void)
 
     atlas->atlasw = ATLAS_WIDTH;
     atlas->atlash = y + shelf;
-    atlas->pixels = calloc((size_t)atlas->atlasw * atlas->atlash, 1);
-    if (!atlas->pixels)
+    atlas->pixels  = calloc((size_t)atlas->atlasw * atlas->atlash, 1);
+    atlas->covered = calloc((size_t)atlas->atlasw * atlas->atlash, 1);
+    atlas->names   = calloc((size_t)(numtextures + numflats), sizeof(*atlas->names));
+    if (!atlas->pixels || !atlas->covered || !atlas->names)
         I_Error("RB_BuildAtlas: out of memory for a %dx%d atlas",
                 atlas->atlasw, atlas->atlash);
 
     // Pass 2: blit every tile's palette indices into the packed slot.
     for (id = 0; id < total; id++)
-        blit_tile(atlas->pixels, atlas->atlasw, id,
+        blit_tile(atlas, id,
                   (int)atlas->rects[id].ox, (int)atlas->rects[id].oy,
                   (int)atlas->rects[id].w, (int)atlas->rects[id].h);
 
@@ -1994,11 +2002,18 @@ int RB_MaterialCount(void)
     return numtextures + numflats + numspritelumps;
 }
 
+int RB_SurfaceMapCount(void)
+{
+    return numtextures + numflats;
+}
+
 void RB_FreeAtlas(rb_atlas_t* atlas)
 {
     if (!atlas)
         return;
     free(atlas->pixels);
+    free(atlas->covered);
+    free(atlas->names);
     free(atlas->rects);
     free(atlas);
 }

@@ -106,7 +106,10 @@ layout(set = 0, binding = 2) uniform sampler2D materialTex[];
 // additive term is shadowed (the base sector light is untouched), and only when the torch
 // is on — when it is off the shadow pass is skipped and this is never sampled.
 layout(set = 1, binding = 0) uniform sampler2D shadowMap;
-layout(set = 1, binding = 1) uniform ShadowUbo { mat4 lightVP; } shadow;
+// DOOM-0273: flags.x = surface detail (1 on; 0 off or no maps made), flags.y = reserved
+// for DOOM-0103, flags.z = the surface-map base in materialTex[], flags.w = free. Written
+// every frame; lightVP only while the torch is on. r_vulkan.cpp's ShadowUboData mirrors it.
+layout(set = 1, binding = 1) uniform ShadowUbo { mat4 lightVP; uvec4 flags; } shadow;
 
 const int FLAG_FLAT    = 0x1;   // matches RB_MESH_FLAT in r_mesh.h
 const int FLAG_MASKED  = 0x2;   // matches RB_MESH_MASKED in r_mesh.h

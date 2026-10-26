@@ -344,6 +344,10 @@ layout(push_constant) uniform PC {
                        // w = hell-haze density, BIT-CAST float (L4; 0 on non-hell levels,
                        // from rb_view_t::hazeDensity via r_backend.c's per-level rule).
                        // std430-aligned to offset 224 (C++ pads the 216-byte tail; INV-6).
+    uvec4    misc7;    // DOOM-0273: x = surface detail (1 on; 0 off or no maps made);
+                       // y = reserved for DOOM-0103's specular setting; z = surface-map base
+                       // in materialTex[] (RB_MaterialCount()); w = free. Offset 240; the
+                       // push range is now 256 bytes, the device limit: no lane is left.
 } pc;
 
 // --- Camera-only shading constants (build step 3c/4b-iii) --------------------

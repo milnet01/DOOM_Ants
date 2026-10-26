@@ -19,6 +19,10 @@
 //     formulas/fixed_colormap.glsl, and RB_INVERSECOLORMAP against p_user.c's
 //     INVERSECOLORMAP (DOOM-0455 INV-2). A mismatch shows the wrong powerup, or
 //     none, in the 3D views.
+//   - DOOM-0273 INV-10: the members of the RT push block (pathtrace.comp's PC
+//     against r_vulkan.cpp's RtPushConstants) end misc6, misc7 on both sides, and
+//     ShadowUbo (mesh.frag) and ShadowUboData (r_vulkan.cpp) are lightVP, flags.
+//     A field moved on one side alone shifts every lane after it.
 //
 // Source-scraping, like bloom_threshold_test.cpp: each value is found by its
 // constant's name, never by line position.
@@ -30,6 +34,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <vector>
 
 #ifndef DOOM_TESTS_ROOT
 #error "DOOM_TESTS_ROOT must be defined (the Makefile passes it)"
@@ -106,6 +111,39 @@ static void same(const std::string& a, const char* aName,
     }
 }
 
+// The member names of the first block opened after `opener`, in order: each
+// statement's last identifier, with an array's [N] dropped. Comments are skipped.
+static std::vector<std::string> members(const std::string& src, const char* opener)
+{
+    std::vector<std::string> out;
+    const size_t at = src.find(opener);
+    if (at == std::string::npos) return out;
+    size_t p = src.find('{', at);
+    if (p == std::string::npos) return out;
+    std::string stmt;
+    for (++p; p < src.size() && src[p] != '}'; ++p)
+    {
+        if (src.compare(p, 2, "//") == 0) { p = src.find('\n', p); if (p == std::string::npos) break; continue; }
+        if (src[p] != ';') { stmt += src[p]; continue; }
+        const size_t br = stmt.find('[');
+        if (br != std::string::npos) stmt.resize(br);
+        size_t e = stmt.size();
+        while (e > 0 && !isIdent(stmt[e - 1])) --e;
+        size_t b = e;
+        while (b > 0 && isIdent(stmt[b - 1])) --b;
+        out.push_back(stmt.substr(b, e - b));
+        stmt.clear();
+    }
+    return out;
+}
+
+static std::string tail(const std::vector<std::string>& m, size_t n)
+{
+    std::string s;
+    for (size_t i = m.size() > n ? m.size() - n : 0; i < m.size(); ++i) s += m[i] + " ";
+    return s;
+}
+
 int main()
 {
     const std::string vk = slurp(DOOM_TESTS_ROOT "/r_vulkan.cpp");
@@ -147,6 +185,20 @@ int main()
     std::snprintf(what, sizeof what, "RB_INVERSECOLORMAP equals p_user.c's INVERSECOLORMAP (%g vs %g)",
                   rbInv, inv);
     check(inv == rbInv && inv != 0.0, what);
+
+    // DOOM-0273 INV-10: the misc7 lane and the ShadowUbo flags, by member order.
+    const std::string pt = slurp(DOOM_TESTS_ROOT "/shaders/pathtrace.comp");
+    check(!pt.empty(), "pathtrace.comp is readable");
+    const auto glslPc = members(pt, "layout(push_constant) uniform PC");
+    const auto cPc    = members(vk, "struct RtPushConstants");
+    std::printf("  [INV-10] PC tail: glsl \"%s\" c \"%s\"\n",
+                tail(glslPc, 2).c_str(), tail(cPc, 2).c_str());
+    check(tail(glslPc, 2) == "misc6 misc7 ", "pathtrace.comp's PC block ends misc6, misc7");
+    check(tail(cPc, 2) == "misc6 misc7 ", "RtPushConstants ends misc6, misc7");
+    const auto glslUbo = members(ms, "uniform ShadowUbo");
+    const auto cUbo    = members(vk, "struct ShadowUboData");
+    check(tail(glslUbo, 9) == "lightVP flags ", "mesh.frag's ShadowUbo is lightVP, flags");
+    check(tail(cUbo, 9) == "lightVP flags ", "r_vulkan.cpp's ShadowUboData is lightVP, flags");
 
     return check_summary("shader_mirror_test");
 }

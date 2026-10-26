@@ -346,18 +346,32 @@ void R_GenerateComposite (int texnum)
 // the raster path, while fully-covered textures come out opaque as before.
 // Writes are clamped to the tilew x tileh slot.
 //
+// DOOM-0273: the surface-map derive needs to know which texels a patch covers,
+// and the atlas cannot say (an uncovered texel and a real black one are both
+// index 0). So `covered`, when given, is set to 1 wherever a post is written,
+// at the same offsets as dst. `name`, when given, receives the texture's name
+// (9 bytes, NUL-terminated): textures[] is private to this file.
+//
 void
 R_RenderTextureToAtlas
 ( int		texnum,
   byte*		dst,
+  byte*		covered,
   int		dstw,
   int		ox,
   int		oy,
   int		tilew,
-  int		tileh )
+  int		tileh,
+  char*		name )
 {
     texture_t*	texture = textures[texnum];
     int		i;
+
+    if (name)
+    {
+	memcpy (name, texture->name, 8);
+	name[8] = 0;
+    }
 
     for (i = 0; i < texture->patchcount; i++)
     {
@@ -392,7 +406,11 @@ R_RenderTextureToAtlas
 		{
 		    int ty = top + r;
 		    if (ty >= 0 && ty < tileh)
+		    {
 			dst[(oy + ty) * dstw + (ox + x)] = src[r];
+			if (covered)
+			    covered[(oy + ty) * dstw + (ox + x)] = 1;
+		    }
 		}
 		col = (column_t *)((byte *)col + col->length + 4);
 	    }

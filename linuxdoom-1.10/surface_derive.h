@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <vector>
 
 #include "rb_materials.h"   // RB_FLAG_LIQUID_*
 
@@ -128,29 +129,30 @@ namespace surf {
             return;
         }
 
-        // _height_field: BT.601 luma, brighter = raised.
-        auto luma = [&](int x, int y) {
-            const uint8_t* c = rgb + ((size_t)y * w + x) * 3;
-            return 0.299f * (c[0] / 255.0f) + 0.587f * (c[1] / 255.0f)
-                 + 0.114f * (c[2] / 255.0f);
-        };
-        // DOOM textures tile, so the Sobel taps wrap.
-        auto hs = [&](int x, int y, int dx, int dy) {
-            return luma((x + dx + w) % w, (y + dy + h) % h);
-        };
+        // _height_field: BT.601 luma, brighter = raised. Once per texel: each is
+        // read by nine Sobel taps.
+        std::vector<float> hf((size_t)count);
+        for (int i = 0; i < count; i++) {
+            const uint8_t* c = rgb + (size_t)i * 3;
+            hf[i] = 0.299f * (c[0] / 255.0f) + 0.587f * (c[1] / 255.0f)
+                  + 0.114f * (c[2] / 255.0f);
+        }
 
         for (int y = 0; y < h; y++) {
+            // DOOM textures tile, so the Sobel taps wrap.
+            const float* up = &hf[(size_t)((y + h - 1) % h) * w];
+            const float* mid = &hf[(size_t)y * w];
+            const float* dn = &hf[(size_t)((y + 1) % h) * w];
             for (int x = 0; x < w; x++) {
-                const float gx = (hs(x, y, 1, -1) + 2 * hs(x, y, 1, 0) + hs(x, y, 1, 1))
-                               - (hs(x, y, -1, -1) + 2 * hs(x, y, -1, 0) + hs(x, y, -1, 1));
-                const float gy = (hs(x, y, -1, 1) + 2 * hs(x, y, 0, 1) + hs(x, y, 1, 1))
-                               - (hs(x, y, -1, -1) + 2 * hs(x, y, 0, -1) + hs(x, y, 1, -1));
+                const int l = (x + w - 1) % w, r = (x + 1) % w;
+                const float gx = (up[r] + 2 * mid[r] + dn[r]) - (up[l] + 2 * mid[l] + dn[l]);
+                const float gy = (dn[l] + 2 * dn[x] + dn[r]) - (up[l] + 2 * up[x] + up[r]);
                 const float nx = -gx * kNormalStrength, ny = -gy * kNormalStrength;
                 const float inv = 1.0f / std::sqrt(nx * nx + ny * ny + 1.0f);
                 uint8_t* o = out + ((size_t)y * w + x) * 4;
                 o[0] = unorm8(nx * inv * 0.5f + 0.5f);
                 o[1] = unorm8(ny * inv * 0.5f + 0.5f);
-                o[2] = unorm8(luma(x, y));
+                o[2] = unorm8(mid[x]);
                 o[3] = rough;
             }
         }

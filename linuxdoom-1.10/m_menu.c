@@ -230,6 +230,7 @@ void M_ChangeFillScreen(int choice);
 void M_ChangeFlashlight(int choice);
 void M_ChangeSSAO(int choice);
 void M_ChangeDetile(int choice);
+void M_ChangeSurfaceDetail(int choice);
 void M_ChangeFog(int choice);
 void M_ChangeBloom(int choice);
 void M_ChangeFilth(int choice);
@@ -544,6 +545,7 @@ enum
     vid_flashlight,
     vid_ssao,
     vid_detile,
+    vid_surface,        // "Surface Detail" (DOOM-0273; menu-only, no hotkey twin)
     vid_filth,          // "Dirt & Grime"
     vid_wet,            // "Wet Liquid"
     vid_fog,            // "Volumetric Fog" (DOOM-0266; `;` key's twin)
@@ -570,6 +572,7 @@ menuitem_t VideoMenu[]=
     {1,"",	M_ChangeFlashlight,'f'},
     {1,"",	M_ChangeSSAO,'s'},
     {1,"",	M_ChangeDetile,'d'},
+    {1,"",	M_ChangeSurfaceDetail,'e'},
     {1,"",	M_ChangeFilth,'g'},
     {1,"",	M_ChangeWet,'w'},
     {1,"",	M_ChangeFog,'v'},
@@ -1314,6 +1317,7 @@ char	renderScaleNames[4][6]	= {"100%","75%","67%","50%"};
 extern int	rb_flashlight;		// F key      (rt config: flashlight)
 extern int	rb_ssao;		// SSAO       (rt config: ssao)
 extern int	rb_detile;		// ] key 0/1/2 (rt config: rt_detile)
+extern int	rb_surface_detail;	// DOOM-0273 menu row (config: surface_detail)
 extern int	rb_filth;		// [ key      (rt config: rt_filth)
 extern int	rb_wet;			// ' key      (rt config: rt_wet)
 extern int	rb_profile;		// profiler   (rt config: rt_profile)
@@ -1550,7 +1554,7 @@ static const char* videoLabels[vid_end] =
 {
     "Renderer", "Ray Tracing", "Upscaler", "Render Scale", "Brightness",
     "-  EFFECTS  -",
-    "Flashlight", "SSAO", "De-tile", "Dirt & Grime", "Wet Liquid", "Volumetric Fog",
+    "Flashlight", "SSAO", "De-tile", "Surface Detail", "Dirt & Grime", "Wet Liquid", "Volumetric Fog",
     "Bloom",
     "-  DISPLAY  -",
     "Widescreen", "Fill Screen", "FPS Counter",
@@ -1722,6 +1726,7 @@ static void M_VideoCrispValue(int i, crispval_t* cv)
       case vid_ssao:       cv->str = rb_ssao ? "On" : "Off"; break;
       case vid_detile:
 	cv->str = detileNames[(rb_detile >= 0 && rb_detile <= 2) ? rb_detile : 0]; break;
+      case vid_surface:    cv->str = rb_surface_detail ? "On" : "Off"; break;
       case vid_filth:      cv->str = rb_filth ? "On" : "Off"; break;
       case vid_wet:        cv->str = rb_wet ? "On" : "Off"; break;
       case vid_fog:
@@ -2779,6 +2784,13 @@ void M_ChangeDetile(int choice)
 {
     choice = 0;
     rb_detile = (rb_detile + 1) % 3;   // Off -> 2-tap -> 4-tap
+}
+
+// DOOM-0273: surface detail (derived normal/height/roughness) on or off.
+void M_ChangeSurfaceDetail(int choice)
+{
+    choice = 0;
+    rb_surface_detail = rb_surface_detail ? 0 : 1;
 }
 
 // DOOM-0011 L6 / DOOM-0266: the menu twin of the `;` hotkey. Same variable, same

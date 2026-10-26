@@ -154,7 +154,7 @@ float family_roughness(const char* name);   // _FAMILY's table and default
   transparent texels.
 - **The atlas carries neither the mask nor the name** (`rb_atlas_t`), so
   `r_mesh.c` and `r_mesh.h` supply both. `texture_t` and `R_TexPatchOk` are
-  private to `r_data.c`, so the mask comes from `R_RenderTextureToAtlas`,
+  private to `r_data.c`, so a wall's mask and name come from `R_RenderTextureToAtlas`,
   which only the atlas build calls. It is the one software-renderer file this
   change edits (INV-9).
 
@@ -167,8 +167,8 @@ numFlat`) is then `materialTex[RB_MaterialCount() + id]`. No index table is
 needed. Sprites get none. The shaders learn that base, `RB_MaterialCount()`,
 from the setting lanes (§4.5).
 
-- These images use a new linear, REPEAT sampler. The paletted images keep
-  `texSampler` (nearest).
+- These images use `hdSampler`, which is linear and REPEAT. The paletted
+  images keep `texSampler` (nearest).
 - The array's size, set in `CreateDescriptors` and
   `InitPaletteAndDescriptorSet` (§2), includes the surface maps, and so does
   `CreateHdSetLayout`'s reserve. Where the device can bind the paletted

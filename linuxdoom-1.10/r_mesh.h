@@ -379,6 +379,11 @@ typedef struct
     int            numflat;       // flat rects (== numflats)
     int            numsprite;     // sprite-lump rects (== numspritelumps)
     unsigned char  playpal[256 * 3];  // palette 0, straight RGB
+    // DOOM-0273: what the surface-map derive needs and the pixels cannot say.
+    unsigned char* covered;       // atlasw*atlash; 1 where a wall texture's patch
+                                  // wrote a texel. Walls only: an uncovered wall
+                                  // texel and a real black one are both index 0
+    char         (*names)[9];     // numwall+numflat names, NUL-terminated
 } rb_atlas_t;
 
 // Pack every wall texture, flat, and sprite lump into one paletted atlas.
@@ -395,6 +400,10 @@ void RB_FreeAtlas(rb_atlas_t* atlas);
 // seam to the DOOM texture globals. Matches the id ordering RB_BuildAtlas packs:
 // walls [0,numwall), flats next, sprites last.
 int RB_MaterialCount(void);
+
+// DOOM-0273: walls + flats, the number of surface maps appended to the bindless
+// array after RB_MaterialCount()'s paletted images. Known at the same time.
+int RB_SurfaceMapCount(void);
 
 // DOOM-0157: does sprite-atlas lump `lump` (0-based; the sprite id is numwall +
 // numflat + lump) belong to a glowing collectible (a key skull, armour/health bonus,

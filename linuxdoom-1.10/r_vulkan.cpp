@@ -43,6 +43,7 @@
 #ifdef DOOM_DEV
 #include <sys/stat.h>  // mkdir() for the DOOM-0294 developer screenshot folder
 #endif
+#include <memory>      // std::unique_ptr (DOOM-0273's per-tile mask)
 #include <unordered_map> // DOOM-0011 L3: emitter -> lattice-cell clustering for the fog lights
 #include <vector>
 
@@ -650,6 +651,12 @@ struct VulkanState
     std::vector<VkImage>     matImages;
     std::vector<VkImageView> matViews;
     VkDeviceMemory           matMemory  = VK_NULL_HANDLE;  // one alloc, N images
+    // DOOM-0273: one RGBA8 surface map per wall and flat, bound in the same bindless
+    // array straight after the paletted images (slot RB_MaterialCount() + id).
+    std::vector<VkImage>     surfImages;
+    std::vector<VkImageView> surfViews;
+    VkDeviceMemory           surfMemory = VK_NULL_HANDLE;
+    bool                     surfMapsOn = false;   // uploaded and bound this session
     int                      matNumWall = 0;   // id offsets pushed to the shader
     int                      matNumFlat = 0;   // (flats at numWall, sprites after)
     VkImage        palImage    = VK_NULL_HANDLE;   // 256x1 PLAYPAL LUT
@@ -1259,6 +1266,17 @@ extern "C" int I_GetTimeMS(void);   // i_system.c; for the rt_profile once-a-sec
 // 2 = 4-tap. Drives pc.misc5.y on the Ultra RT path; the shader ignores it unless HD materials
 // are loaded (it is gated on g.hdBuilt at the populate site). Default 4-tap; RT-only.
 extern "C" { int rb_detile = 2; }
+
+// DOOM-0273: derived surface detail (normal, height, roughness from each texture's own
+// pixels) in Solid and Ultra, both views (persisted as surface_detail). 1 = on, 0 = off,
+// and off renders every frame as before the feature. Rides pc.misc7.x and
+// ShadowUbo.flags.x, both 0 also when the maps were not made (SurfaceDetailLane).
+extern "C" { int rb_surface_detail = 1; }
+constexpr uint32_t kSurfaceDetailOn = 1u;   // the lane value the shaders test for
+static uint32_t SurfaceDetailLane()
+{
+    return (rb_surface_detail && g.surfMapsOn) ? kSurfaceDetailOn : 0u;
+}
 
 // DOOM-0187: filth (dirt-stain) master toggle (the `[` key; persisted as rt_filth). 1 = on
 // (shipped look), 0 = off. Drives pc.misc5.w on the Ultra RT path; gates applyGrime on ALL
@@ -2844,10 +2862,11 @@ void CreateRtComputePipeline()
     // DOOM-0119 REJECT sector count + DOOM-0141 sky id, DOOM-0179 grime-overlay id) +
     // 9x uint64 (vertex / emitter / Le / probe-cache / tri-subsector / sprite-vert +
     // DOOM-0119 subsector-sector / emitter-sector / reject-matrix addresses) = 216 bytes,
-    // + DOOM-0183 misc6 (8-byte std430 pad + uvec4) = 240 bytes. MUST match
+    // + DOOM-0183 misc6 (8-byte std430 pad + uvec4) = 240 bytes, + DOOM-0273 misc7 (uvec4)
+    // = 256 bytes. MUST match
     // sizeof(RtPushConstants) in RecordRtTrace — a short range silently drops the trailing
     // fields, so the verify struct's 184-byte push (RB_RtVerify, which mirrors misc4/misc5
-    // as padding) is a valid PREFIX of this 240-byte range. Within the 256-byte device limit.
+    // as padding) is a valid PREFIX of this 256-byte range. AT the 256-byte device limit.
     // Three sets: 0 = RT (TLAS + output image), 1 = the raster materials set
     // (g.dsLayout: PLAYPAL LUT + bindless material array), reused verbatim so the
     // textured trace (step 3a) decodes surfaces with no parallel material path,
@@ -2861,7 +2880,7 @@ void CreateRtComputePipeline()
     // unreferenced by the shader until then), so the existing RT path is unaffected.
     CreateHdSetLayout();
     VkDescriptorSetLayout setLayouts[4] = { g.rtDsLayout, g.dsLayout, g.svgfDsLayout, g.hdSetLayout };
-    CreateComputeLayout(setLayouts, 4, 240, "rt", &g.rtPipeLayout);
+    CreateComputeLayout(setLayouts, 4, 256, "rt", &g.rtPipeLayout);
 
     // DOOM-0129: keep the module alive — each view-mode is compiled into its own
     // specialised pipeline (RtPipelineForMode), built lazily from this module. Pre-
@@ -4242,6 +4261,16 @@ void DestroySceneTarget()
 // this only needs g.shadowPass + g.shadowPipeLayout ready before then. Requires the
 // command pool (the one-time layout park) + g.dsLayout (the shadow pipeline layout binds
 // set 0 for the material array), so RB_Vulkan_Init calls it after CreateDescriptors.
+// mesh.frag's ShadowUbo (set 1, binding 1), byte for byte. lightVP is written on
+// torch-on frames; DOOM-0273's flags every raster frame: x = surface detail
+// (SurfaceDetailLane), y = reserved for DOOM-0103, z = surface-map base, w = free.
+struct ShadowUboData
+{
+    float    lightVP[16];
+    uint32_t flags[4];
+};
+static_assert(offsetof(ShadowUboData, flags) == 64, "flags follows lightVP, as in mesh.frag");
+
 void CreateShadowResources()
 {
     const uint32_t dim = VulkanState::kShadowDim;
@@ -4313,12 +4342,12 @@ void CreateShadowResources()
     fci.layers = 1;
     Check(vkCreateFramebuffer(g.device, &fci, nullptr, &g.shadowFb), "vkCreateFramebuffer(shadow)");
 
-    // lightVP uniform buffer (single mat4). Single-frame-in-flight (one g.inFlight fence),
-    // so one persistently-mapped buffer is safe to overwrite each frame.
-    CreateRtBuffer(16 * sizeof(float), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+    // ShadowUbo uniform buffer (lightVP + DOOM-0273's flags). Single-frame-in-flight (one
+    // g.inFlight fence), so one persistently-mapped buffer is safe to overwrite each frame.
+    CreateRtBuffer(sizeof(ShadowUboData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                    &g.shadowUbo, &g.shadowUboMemory);
-    Check(vkMapMemory(g.device, g.shadowUboMemory, 0, 16 * sizeof(float), 0, &g.shadowUboMapped),
+    Check(vkMapMemory(g.device, g.shadowUboMemory, 0, sizeof(ShadowUboData), 0, &g.shadowUboMapped),
           "vkMapMemory(shadowUbo)");
 
     // Shadow-pass pipeline layout: set 0 = the shared g.ds (material array for the cut-out
@@ -4358,7 +4387,7 @@ void CreateShadowResources()
     Check(vkAllocateDescriptorSets(g.device, &sdsai, &g.shadowDs), "vkAllocateDescriptorSets(shadow)");
 
     VkDescriptorImageInfo sii = { g.shadowSampler, g.shadowView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-    VkDescriptorBufferInfo sbi = { g.shadowUbo, 0, 16 * sizeof(float) };
+    VkDescriptorBufferInfo sbi = { g.shadowUbo, 0, sizeof(ShadowUboData) };
     VkWriteDescriptorSet sw[2] = {};
     sw[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     sw[0].dstSet = g.shadowDs; sw[0].dstBinding = 0; sw[0].descriptorCount = 1;
@@ -4630,6 +4659,31 @@ VkShaderModule MakeShader(const unsigned char* code, unsigned len)
     return m;
 }
 
+// The most sampled images one stage, and one set, may bind on this device.
+static uint64_t SampledImageRoom()
+{
+    VkPhysicalDeviceProperties pdp = {};
+    vkGetPhysicalDeviceProperties(g.phys, &pdp);
+    const VkPhysicalDeviceLimits& lim = pdp.limits;
+    uint64_t room = lim.maxPerStageDescriptorSampledImages;
+    room = std::min<uint64_t>(room, lim.maxPerStageDescriptorSamplers);
+    room = std::min<uint64_t>(room, lim.maxDescriptorSetSampledImages);
+    room = std::min<uint64_t>(room, lim.maxDescriptorSetSamplers);
+    return room;
+}
+
+// DOOM-0273 §4.2: the bindless material array's size. The paletted images always; the
+// walls' and flats' surface maps after them only where the device can bind those too
+// (with the two fixed bindings). Where it cannot, the array keeps its old size and the
+// feature is off for the session -- the game never stops for it. CreateDescriptors,
+// InitPaletteAndDescriptorSet and CreateHdSetLayout all size from this one answer.
+static uint32_t BindlessMaterialCount()
+{
+    const uint64_t pal  = (uint64_t)RB_MaterialCount();
+    const uint64_t surf = (uint64_t)RB_SurfaceMapCount();
+    return (uint32_t)(pal + surf + 2 <= SampledImageRoom() ? pal + surf : pal);
+}
+
 // Descriptor set 0 for the materials pass: the paletted atlas, the PLAYPAL LUT,
 // and the per-id atlas-rect storage buffer. Plus the nearest/clamped sampler
 // shared by both images (the shader wraps UVs itself, so addressing is clamp).
@@ -4650,13 +4704,7 @@ void CreateDescriptors()
     // array the same way (DOOM-0410); this array cannot be clamped, because every
     // material id the level mesh carries indexes it.
     {
-        VkPhysicalDeviceProperties pdp = {};
-        vkGetPhysicalDeviceProperties(g.phys, &pdp);
-        const VkPhysicalDeviceLimits& lim = pdp.limits;
-        uint64_t room = lim.maxPerStageDescriptorSampledImages;
-        room = std::min<uint64_t>(room, lim.maxPerStageDescriptorSamplers);
-        room = std::min<uint64_t>(room, lim.maxDescriptorSetSampledImages);
-        room = std::min<uint64_t>(room, lim.maxDescriptorSetSamplers);
+        const uint64_t room = SampledImageRoom();
         if ((uint64_t)matCount + 2 > room)
             I_Error("R_Vulkan: the WAD declares %u textures, flats and sprites; this "
                     "graphics device can bind %llu images at once",
@@ -4677,9 +4725,10 @@ void CreateDescriptors()
     binds[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     binds[1].descriptorCount = 1;
     binds[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-    binds[2].binding = 2;   // bindless material array (R8 palette-index images)
+    binds[2].binding = 2;   // bindless material array (R8 palette-index images, then
+                            // DOOM-0273's RGBA8 surface maps where they fit)
     binds[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    binds[2].descriptorCount = matCount;
+    binds[2].descriptorCount = BindlessMaterialCount();
     binds[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
 
     VkDescriptorBindingFlags flags[3] = {
@@ -5534,8 +5583,9 @@ void InitPaletteAndDescriptorSet()
     // are reserved now (variable-count = the WAD's material total) but written
     // when the atlas is built (UploadAtlas); the overlay (binding 1) arrives via
     // CreateOverlayResources. PLAYPAL (binding 0) is written here so the title
-    // screen composites from the first frame.
-    const uint32_t matCount = (uint32_t)RB_MaterialCount();
+    // screen composites from the first frame. DOOM-0273: N includes the surface maps
+    // where they fit (BindlessMaterialCount).
+    const uint32_t matCount = BindlessMaterialCount();
 
     VkDescriptorPoolSize sizes[1] = {};
     sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -5863,6 +5913,85 @@ static bool UploadImageBatch(const std::vector<BatchImage>& imgs, Fill fill,
     return true;
 }
 
+// DOOM-0273 §4.2: derive every wall's and flat's surface map from its atlas tile and
+// bind each, as an RGBA8 image, at bindless slot RB_MaterialCount() + id. Runs once per
+// WAD, with the atlas; a device without the room or the memory turns the feature off
+// for the session with one log line and the game carries on.
+static void UploadSurfaceMaps(const rb_atlas_t* a)
+{
+    const uint32_t base = (uint32_t)RB_MaterialCount();
+    const int n = a->numwall + a->numflat;
+    if (BindlessMaterialCount() == base)
+    {
+        printf("DOOM-0273: this device cannot bind %d surface maps beside %u materials - "
+               "surface detail is off.\n", n, base);
+        return;
+    }
+
+    const auto t0 = std::chrono::steady_clock::now();
+    std::vector<BatchImage> imgs(n);
+    size_t bytes = 0, maxTexels = 0;
+    for (int i = 0; i < n; i++)
+    {
+        const uint32_t w = (uint32_t)(int)a->rects[i].w, h = (uint32_t)(int)a->rects[i].h;
+        imgs[i] = { w, h, 4, VK_FORMAT_R8G8B8A8_UNORM };
+        bytes += (size_t)w * h * 4;
+        maxTexels = std::max<size_t>(maxTexels, (size_t)w * h);
+    }
+
+    // One tile's RGB and see-through mask at a time, derived straight into staging.
+    std::vector<uint8_t> rgb(maxTexels * 3);
+    std::unique_ptr<bool[]> transparent(new bool[maxTexels]);
+    int seeThrough = 0;   // walls with an uncovered texel: kept flat (§4.1)
+    const bool ok = UploadImageBatch(imgs, [&](int i, unsigned char* dst) {
+        const int ox = (int)a->rects[i].ox, oy = (int)a->rects[i].oy;
+        const int w  = (int)a->rects[i].w,  h  = (int)a->rects[i].h;
+        for (int row = 0; row < h; row++)
+            for (int col = 0; col < w; col++)
+            {
+                const size_t at = (size_t)(oy + row) * a->atlasw + ox + col;
+                const size_t t  = (size_t)row * w + col;
+                std::memcpy(&rgb[t * 3], &a->playpal[a->pixels[at] * 3], 3);
+                transparent[t] = !a->covered[at];
+            }
+        // Only a wall can have holes: a flat is a solid 64x64 block (§4.1).
+        if (i < a->numwall && std::find(transparent.get(), transparent.get() + w * h, true)
+                              != transparent.get() + w * h)
+            seeThrough++;
+        surf::derive(rgb.data(), i < a->numwall ? transparent.get() : nullptr,
+                     w, h, a->names[i], dst);
+    }, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+       "surface map", g.surfImages, g.surfViews, g.surfMemory, /*mayFail=*/true);
+    if (!ok)
+    {
+        printf("DOOM-0273: no memory for %d surface maps - surface detail is off.\n", n);
+        return;
+    }
+
+    // Linear, REPEAT: the relief is smooth between texels while the colour stays
+    // point-sampled (§4.6). hdSampler is exactly that.
+    std::vector<VkDescriptorImageInfo> infos(n);
+    for (int i = 0; i < n; i++)
+        infos[i] = { g.hdSampler, g.surfViews[i], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+    VkWriteDescriptorSet w = {};
+    w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    w.dstSet = g.ds;
+    w.dstBinding = 2;
+    w.dstArrayElement = base;
+    w.descriptorCount = (uint32_t)n;
+    w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    w.pImageInfo = infos.data();
+    vkUpdateDescriptorSets(g.device, 1, &w, 0, nullptr);
+    g.surfMapsOn = true;
+
+    const double ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - t0).count();
+    printf("DOOM-0273: %d surface maps (%d walls + %d flats; %d see-through walls kept "
+           "flat), %.1f MB, derived and uploaded in %.0f ms.\n",
+           n, a->numwall, a->numflat, seeThrough, bytes / 1048576.0, ms);
+    fflush(stdout);
+}
+
 void UploadAtlas()
 {
     // Reuse the Stage-1 packer purely as a pixel source: it composites each
@@ -5903,6 +6032,8 @@ void UploadAtlas()
     warr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     warr.pImageInfo = infos.data();
     vkUpdateDescriptorSets(g.device, 1, &warr, 0, nullptr);
+
+    UploadSurfaceMaps(a);   // DOOM-0273: needs a->pixels/covered/names, freed below
 
     // Per-material emission table (DOOM-0009 build step 3b). Computed from the
     // packed atlas (needs a->pixels/playpal, freed just below) into a CPU mirror the
@@ -6540,14 +6671,8 @@ static void CreateHdSetLayout()
     // process -- where a smaller array would merely mean fewer HD materials. The RT
     // pipeline's compute stage also sees the paletted material array (set 1), so leave
     // room for it and a little headroom for the fixed bindings.
-    VkPhysicalDeviceProperties pdp = {};
-    vkGetPhysicalDeviceProperties(g.phys, &pdp);
-    const VkPhysicalDeviceLimits& lim = pdp.limits;
-    uint64_t room = lim.maxPerStageDescriptorSampledImages;
-    room = std::min<uint64_t>(room, lim.maxPerStageDescriptorSamplers);
-    room = std::min<uint64_t>(room, lim.maxDescriptorSetSampledImages);
-    room = std::min<uint64_t>(room, lim.maxDescriptorSetSamplers);
-    const uint64_t others = (uint64_t)RB_MaterialCount() + 64;
+    uint64_t room = SampledImageRoom();
+    const uint64_t others = (uint64_t)BindlessMaterialCount() + 64;   // + DOOM-0273's maps
     room = room > others ? room - others : 1;
     g.hdMaxImages = (int)std::min<uint64_t>(room, (uint64_t)kHdMaxImages);
     if (g.hdMaxImages < kHdMaxImages)
@@ -9090,8 +9215,12 @@ void RecordRtTrace(uint32_t idx)
         uint32_t wispAngle;       // (with fogFloorZ, pads rejectAddr's 216 tail to 224)
         uint32_t misc6[4];        // x = ripple time (float bits, seconds); y = wet toggle;
                                   // z = fog strength (rb_fog 0..3, DOOM-0011); w = hell-haze (L4)
+        uint32_t misc7[4];        // DOOM-0273: x = surface detail (SurfaceDetailLane); y = reserved
+                                  // for DOOM-0103's specular setting; z = surface-map base
+                                  // (RB_MaterialCount()); w = free. 256 bytes, the device limit.
     } pc = {};
-    static_assert(sizeof(RtPushConstants) == 240, "RT push-constant layout must match the shader");
+    static_assert(sizeof(RtPushConstants) == 256, "RT push-constant layout must match the shader");
+    static_assert(offsetof(RtPushConstants, misc7) == 240, "misc7 follows misc6, as in pathtrace.comp");
     pc.camPos[0] = g.lastView.x; pc.camPos[1] = g.lastView.y; pc.camPos[2] = g.lastView.z;
     pc.camDir[0] = c;            pc.camDir[1] = s;            pc.camDir[2] = 0.0f;
     pc.camRight[0] = s;          pc.camRight[1] = -c;         pc.camRight[2] = 0.0f;
@@ -9191,6 +9320,8 @@ void RecordRtTrace(uint32_t idx)
     }
     std::memcpy(&pc.misc6[0], &rippleSec, sizeof(float));
     pc.misc6[1]    = rb_wet ? 1u : 0u;
+    pc.misc7[0]    = SurfaceDetailLane();
+    pc.misc7[2]    = (uint32_t)RB_MaterialCount();
     pc.misc6[2]    = FogStrength();     // DOOM-0011: fog strength 0..3 (`;` key); 0 skips the march (INV-8)
     {   // DOOM-0011: the outdoor fog layer's altitude, per level (0 if no open-sky sector)
         float fz = g.levelMesh ? g.levelMesh->fogFloorZ : 0.0f;
@@ -10579,6 +10710,17 @@ extern "C" void RB_Vulkan_Present(void)
         vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, g.gpuTimerPool, 0);
     }
 
+    // DOOM-0273: the surface-detail flags ride ShadowUbo (the mesh push block is full), and
+    // are written every frame, whatever the torch does.
+    if (g.shadowUboMapped)
+    {
+        uint32_t* flags = static_cast<ShadowUboData*>(g.shadowUboMapped)->flags;
+        flags[0] = SurfaceDetailLane();
+        flags[1] = 0u;
+        flags[2] = (uint32_t)RB_MaterialCount();
+        flags[3] = 0u;
+    }
+
     // DOOM-0170 L2c: flashlight cast-shadow map (Pass A). When the torch is on, render the
     // world (walls/flats + monster/item billboards; the psprite/sky are clipped away in
     // shadow.vert) depth-only from the flashlight's viewpoint, so mesh.frag can PCF-test the
@@ -10607,7 +10749,7 @@ extern "C" void RB_Vulkan_Present(void)
         Mat4LookAt(leye, lfwd, lup, lview);
         Mat4PerspectiveH(kPi * 0.5f, 1.0f, 10.0f, 2000.0f, lproj);
         Mat4Mul(lproj, lview, lightVP);
-        std::memcpy(g.shadowUboMapped, lightVP, 16 * sizeof(float));
+        std::memcpy(static_cast<ShadowUboData*>(g.shadowUboMapped)->lightVP, lightVP, sizeof(lightVP));
 
         VkClearValue sclear = {};
         sclear.depthStencil = { 1.0f, 0 };
@@ -11464,6 +11606,9 @@ extern "C" void RB_Vulkan_Shutdown(void)
     if (g.hdSampler)   vkDestroySampler(g.device, g.hdSampler, nullptr);   // DOOM-0042
     FreeHdMaterials();                                                     // DOOM-0042: pool/images/SSBO
     if (g.hdSetLayout) vkDestroyDescriptorSetLayout(g.device, g.hdSetLayout, nullptr);
+    for (VkImageView v : g.surfViews)  if (v) vkDestroyImageView(g.device, v, nullptr);
+    for (VkImage    im : g.surfImages) if (im) vkDestroyImage(g.device, im, nullptr);
+    if (g.surfMemory) vkFreeMemory(g.device, g.surfMemory, nullptr);
     for (VkImageView v : g.matViews)  if (v) vkDestroyImageView(g.device, v, nullptr);
     for (VkImage    im : g.matImages) if (im) vkDestroyImage(g.device, im, nullptr);
     if (g.matMemory)   vkFreeMemory(g.device, g.matMemory, nullptr);
