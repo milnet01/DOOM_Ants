@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=518 -->
+<!-- ants-roadmap-id-high-water: DOOM=519 -->
 
 # Roadmap
 
@@ -12934,6 +12934,17 @@ defect visible before a player finds it.
   Kind: feature.
   Source: user-request-2026-10-23.
   Lanes: dev-tools.
+
+- 📋 [DOOM-0519] **Make two -inspect -freeze captures of the same build match pixel for pixel.**
+  Found 2026-10-26 while running DOOM-0273 INV-5. scripts/ab_capture.sh,
+  same binary run twice, -inspect -freeze -devshot 150: up to about
+  1,300 pixels differ, all in the weapon sprite and the monsters ahead
+  (the zombiemen at E2M1 -warpto 424 382 352 stand in different poses
+  and places). Everything else is identical. Seen in Solid and Ultra,
+  raster and -rtview 3. Pixel compares must mask that region today.
+  **Layman:** Two identical test screenshots still differ where the gun and the monsters are, which hides small changes.
+  Kind: investigate.
+  Source: found-2026-10-26-DOOM-0273-B2.
 
 ## 0.10.0 — The frame budget
 
