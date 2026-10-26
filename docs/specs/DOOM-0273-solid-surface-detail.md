@@ -1,14 +1,14 @@
 <!-- ants-spec-format: 1 -->
 # DOOM-0273 — Give the original textures surface detail, made from the player's own WAD
 
-**Status:** spec draft (2026-10-26).
+**Status:** accepted (2026-10-26).
 **Kind:** feature.
 **Source:** ROADMAP DOOM-0273 (user request 2026-07-27, the Solid tier's
 definition in `CLAUDE.md` § Render tiers; joint design with DOOM-0103 chosen
 by the user 2026-10-26, after the DOOM-0511 play-test).
 **Pairs with:** DOOM-0103 (`docs/specs/DOOM-0103-specular-lobe.md`), which
 reads the roughness this spec supplies. **Blocker for:** DOOM-0103.
-**Amends:** DOOM-0042 (§12).
+**Amends:** DOOM-0042 (what changes there is listed in §12 of this spec).
 
 **Layman:** DOOM's walls and floors are flat pictures. After this, the game
 works out from each picture where its bricks, cracks and tiles stand out, so
@@ -65,8 +65,11 @@ setting turns the feature off, and then every frame is as it was.
 4. **Both views can already reach one more image per material.**
    `materialTex[]` is a variable-count bindless array bound in `mesh.frag`
    (set 0, binding 2), `pathtrace.comp` (set 1, binding 2) and `bake.comp`.
-   `UploadAtlas` sizes it from `RB_MaterialCount()` and stops with
-   `I_Error` when the device cannot bind that many images.
+   It is sized before the atlas exists. `CreateDescriptors` declares it at
+   `RB_MaterialCount()` and stops with `I_Error` when the device cannot bind
+   that many images. `InitPaletteAndDescriptorSet` sizes the pool and the
+   variable count to the same number. `CreateHdSetLayout` reserves room for
+   it when it clamps set 3. `UploadAtlas` only fills the slots.
 5. **Material ids put walls first, then flats, then sprites.** `misc.w` is
    the flat offset (numWall) and `misc4.x` the sprite base (numWall +
    numFlat), per `docs/standards/renderer.md`'s lane table.
@@ -77,8 +80,8 @@ setting turns the feature off, and then every frame is as it was.
    buffer, `ShadowUbo`.
 
 **Files this touches:** `surface_derive.h` (new), `r_vulkan.cpp`,
-`r_mesh.c` and `r_mesh.h` (only if the derive needs a texture's name or mask
-the atlas does not already expose), `m_misc.c`, `m_menu.c`,
+`r_mesh.c`, `r_mesh.h` and `r_data.c` (a texture's name and mask, §4.1),
+`m_misc.c`, `m_menu.c`,
 `shaders/formulas/surface_detail.glsl` (new), `shaders/pathtrace.comp`,
 `shaders/pt_common.glsl`, `shaders/mesh.frag`, `shaders/formulas/README.md`,
 `tests/surface_derive_test.cpp` (new), `tests/shader_mirror_test.cpp`,
@@ -134,13 +137,26 @@ float family_roughness(const char* name);   // _FAMILY's table and default
   prefixes and values, longest prefix wins, default 0.70. One value per
   texture today. It is stored per texel so a later item can vary it without
   changing the format.
-- **Flat cases.** These get a flat map: normal (0, 0, 1), height 128,
-  roughness from the table.
-  - Every flat in `kLiquidFlats` (`r_vulkan.cpp`). Liquids have their own
-    ripple and sheen (DOOM-0183).
+- **Flat cases.** These get a flat map: normal (0, 0, 1), height 255,
+  roughness from the table. Height 255 is the surface itself, so neither
+  parallax helper moves the UV there (§4.3).
+  - Every flat in `kLiquidFlats`. Liquids have their own ripple and sheen
+    (DOOM-0183). The list moves from `r_vulkan.cpp` into `surface_derive.h`,
+    and `r_vulkan.cpp` reads it from there, so there is still one list.
   - The sky flat `F_SKY1`.
   - Any texture with a transparent texel. Parallax on a see-through middle
     texture would slide its holes.
+- **The mask is patch coverage, not palette index 0.** A wall texel is
+  transparent when no patch post covers it in `R_RenderTextureToAtlas`. The
+  atlas cannot tell this: it stores both an uncovered texel and a real black
+  texel as index 0. Many opaque walls hold real index-0 black (COMP2,
+  BIGBRIK1). Keying on index 0 would give them a flat map. Flats have no
+  transparent texels.
+- **The atlas carries neither the mask nor the name** (`rb_atlas_t`), so
+  `r_mesh.c` and `r_mesh.h` supply both. `texture_t` and `R_TexPatchOk` are
+  private to `r_data.c`, so the mask comes from `R_RenderTextureToAtlas`,
+  which only the atlas build calls. It is the one software-renderer file this
+  change edits (INV-9).
 
 ### 4.2 Upload: one more image per wall and flat
 
@@ -153,8 +169,10 @@ from the setting lanes (§4.5).
 
 - These images use a new linear, REPEAT sampler. The paletted images keep
   `texSampler` (nearest).
-- The device-limit check in `UploadAtlas` counts the extra images. Where the
-  device can bind the paletted images but not the surface maps too, the
+- The array's size, set in `CreateDescriptors` and
+  `InitPaletteAndDescriptorSet` (§2), includes the surface maps, and so does
+  `CreateHdSetLayout`'s reserve. Where the device can bind the paletted
+  images but not the surface maps too, the array keeps its old size, the
   surface maps are skipped and the feature is off for the session, with one
   log line. The game never stops for this.
 - The derive runs once per WAD, with the atlas. It does not rerun on a tier
@@ -169,13 +187,14 @@ One include, used by `pathtrace.comp` and `mesh.frag`:
 bool  surfHas(uint id);                 // id < numWall + numFlat and the feature is on
 vec4  surfSample(uint id, vec2 uv01);   // uv01 = hit UV / paletted texture size
 float surfRoughness(uint id, vec2 uv01);
-vec2  surfParallaxUV(uint id, vec2 uv01, vec3 viewTS);  // traced view: stepped
-vec2  surfOffsetUV(uint id, vec2 uv01, vec3 viewTS);    // rasterised view: one sample
+vec2  surfParallaxUV(uint id, vec2 uv01, vec3 viewTS);  // traced view: stepped; returns uv01
+vec2  surfOffsetUV(uint id, vec2 uv01, vec3 viewTS);    // rasterised view: one sample; returns uv01
 ```
 
 - `surfOffsetUV` is plain parallax offset mapping: one height read, and the
-  UV moved by `kSurfHeightScale * (h - 0.5) * viewTS.xy / viewTS.z`, with
-  `viewTS.z` floored so grazing angles cannot run away.
+  UV moved by `kSurfHeightScale * (h - 1.0) * viewTS.xy / viewTS.z`, with
+  `viewTS.z` floored so grazing angles cannot run away. Height 1.0 is the
+  surface, as in `hdParallaxUV`, whose march stops at once there.
 
 - `surfParallaxUV` reuses the method of `hdParallaxUV`: steps plus one
   bisection, primary hit only, no self-shadowing. It uses its own height
@@ -183,8 +202,9 @@ vec2  surfOffsetUV(uint id, vec2 uv01, vec3 viewTS);    // rasterised view: one 
   rougher than authored ones. Its starting value is `kPomHeightScale`, and the
   user tunes it (§10).
 - The tangent frame:
-  - In the traced view it is the triangle's dP/dU and dP/dV, as
-    `hdShadingNormal` builds it.
+  - In the traced view it is the triangle's dP/dU and dP/dV, from
+    `hdTangentFrame`. `primaryHitSurface` calls it only when `usePBR` is
+    set, so the surface-map branch calls it too.
   - In `mesh.frag` it is built per pixel from screen derivatives of the world
     position and UV. No vertex attribute changes.
 
@@ -194,8 +214,9 @@ vec2  surfOffsetUV(uint id, vec2 uv01, vec3 viewTS);    // rasterised view: one 
 `primaryHitLighting`.** For a material with `usePBR == 1`, the HD path runs
 as today. Otherwise, where `surfHas(id)`:
 
-1. The UV is offset by `surfParallaxUV`. `decodeAlbedo` then reads the
-   paletted colour at the offset UV, so colour and relief stay aligned.
+1. The UV is offset by `surfParallaxUV`. `decodeAlbedo` takes texel units,
+   so it reads the paletted colour at that result times the paletted texture
+   size. Colour and relief stay aligned.
 2. The shading normal is the surface normal in the tangent frame. It feeds
    the static NEE, the sprite lights, the flashlight and the muzzle flash,
    which all take the shading normal today.
@@ -213,7 +234,7 @@ subsector, where texel detail does not show.
    `ndl` term is the surface normal. Sector light and GI are unchanged.
 
 **The weapon overlay** (`mesh.frag` built `-DSINGLE_TARGET`) is unchanged:
-the weapon is a sprite, and sprites get no surface map.
+the `surf` code sits inside `#ifndef SINGLE_TARGET`, so that build has none.
 
 ### 4.5 The setting
 
@@ -225,10 +246,13 @@ the weapon is a sprite, and sprites get no surface map.
   `RB_MaterialCount()`. `.w` stays free. Both places `renderer.md` names are
   updated: the `PC` struct comment and the lane table.
 - **Rasterised view:** `ShadowUbo` gains a `uvec4 flags` after `lightVP`.
-  `flags.x` is the setting, `flags.y` is reserved for DOOM-0103, `flags.z`
-  is the surface-map base, and `flags.w` is the sprite base (numWall +
-  numFlat), which `surfHas` compares against. The traced view reads the
-  sprite base from `misc4.x`, which it already carries.
+  Today the buffer is written only while the flashlight is on. `flags` is
+  written every frame, whatever the flashlight does.
+  `flags.x` is the setting, 0 also when §4.2 skipped the maps. `flags.y` is
+  reserved for DOOM-0103, `flags.z`
+  is the surface-map base, and `flags.w` stays free. `surfHas` compares
+  against the sprite base, which each view already carries: `misc4.x` when
+  traced, `pc.numWall + pc.numFlat` in `mesh.frag`.
 - **Classic** ignores the setting.
 
 ### 4.6 Failure modes
@@ -297,7 +321,7 @@ Each step ends with `make DEV=1` and `make test` green.
 
 - **B1 — the derive.** `surface_derive.h` and `tests/surface_derive_test.cpp`.
   *Verify:* INV-1 to INV-3 pass, and each fails against a mutated derive
-  (Sobel sign flipped, prefix match made first-wins, mask ignored).
+  (Sobel sign flipped, prefix match made a substring match, mask ignored).
 - **B2 — the upload and the setting.** §4.2 and §4.5, with no shader reading
   the maps yet. *Verify:* the log line reports numWall + numFlat images and
   is within §6's load budget; INV-5's captures match.
@@ -327,12 +351,14 @@ of STONE2 walls and FLOOR5_2 floor leading to the REDWALL1 cross
 - **INV-2** — `surf::family_roughness` matches `_FAMILY`: longest prefix
   wins, 0.70 when nothing matches.
   *Test:* `tests/surface_derive_test.cpp`: STONE2 0.85, FLOOR5_2 0.80,
-  METAL1 0.35, STARTAN3 0.70, and BROWN1 0.55 against BRONZE's shorter
-  prefix.
-  *Breaks when:* the first matching prefix wins, or the default changes.
+  METAL1 0.35, STARTAN3 0.70, and XMETAL 0.70, because a prefix matches only
+  at the start of the name.
+  *Breaks when:* a prefix matches anywhere in the name, or the default
+  changes. No prefix in `_FAMILY` begins another, so no input can tell
+  longest-wins from first-wins and the test does not try.
 
 - **INV-3** — Liquids, the sky flat and textures with a transparent texel get
-  a flat map: every texel normal (0, 0, 1) and height 128.
+  a flat map: every texel normal (0, 0, 1) and height 255.
   *Test:* `tests/surface_derive_test.cpp`, with NUKAGE1, F_SKY1 and an 8x8
   texture with one transparent texel.
   *Breaks when:* the mask is ignored, so a see-through texture gets relief,
@@ -342,7 +368,7 @@ of STONE2 walls and FLOOR5_2 floor leading to the REDWALL1 cross
   so colour and relief stay aligned.
   *Test:* `tests/surface_derive_test.cpp` scrapes both shaders. In the
   surface-map branch of `primaryHitSurface` (`pathtrace.comp`), the UV passed
-  to `decodeAlbedo` is the result of `surfParallaxUV`. In `mesh.frag`, the UV
+  to `decodeAlbedo` is computed from the result of `surfParallaxUV`. In `mesh.frag`, the UV
   of the `materialTex` read is the result of `surfOffsetUV`.
   *Breaks when:* the colour is read at the raw hit UV, which is what
   `hdAlbedo`'s fallback does today.
@@ -365,8 +391,8 @@ of STONE2 walls and FLOOR5_2 floor leading to the REDWALL1 cross
   flashlight and point-light terms. Sector light and GI are not touched, and
   the weapon overlay is unchanged.
   *Test:* `tests/surface_derive_test.cpp` scrapes `mesh.frag`: the surface
-  normal is read only by the `facing` and `ndl` expressions, and the
-  `SINGLE_TARGET` build contains no `surf` call.
+  normal is read only by the `facing` and `ndl` expressions, and every
+  `surf` call sits inside `#ifndef SINGLE_TARGET`.
   *Breaks when:* the sector or GI term uses the bumped normal, which darkens
   whole walls under flat light.
 
@@ -376,9 +402,12 @@ of STONE2 walls and FLOOR5_2 floor leading to the REDWALL1 cross
   *Breaks when:* a debug dump of the maps is left in.
 
 - **INV-9** — Classic is unchanged: no file the software renderer runs is
-  edited.
-  *Test:* `git diff --name-only <base>.. -- linuxdoom-1.10/r_main.c linuxdoom-1.10/r_segs.c linuxdoom-1.10/r_plane.c linuxdoom-1.10/r_things.c linuxdoom-1.10/r_draw.c linuxdoom-1.10/r_bsp.c`
-  → no output.
+  edited, except `R_RenderTextureToAtlas` in `r_data.c`, which only the atlas
+  build calls.
+  *Test:* `git diff --name-only <base>.. -- linuxdoom-1.10/r_main.c linuxdoom-1.10/r_segs.c linuxdoom-1.10/r_plane.c linuxdoom-1.10/r_things.c linuxdoom-1.10/r_draw.c linuxdoom-1.10/r_bsp.c linuxdoom-1.10/r_sky.c`
+  → no output. Then `git diff <base>.. -- linuxdoom-1.10/r_data.c`, read by
+  hand: every hunk lies inside `R_RenderTextureToAtlas` or a declaration it
+  needs.
   *Breaks when:* the change reaches the software renderer.
 
 - **INV-10** — The push-lane and setting values agree in C and GLSL: the

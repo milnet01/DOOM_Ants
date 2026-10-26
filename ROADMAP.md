@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=516 -->
+<!-- ants-roadmap-id-high-water: DOOM=518 -->
 
 # Roadmap
 
@@ -14273,6 +14273,9 @@ in CLAUDE.md describes.
   ceilings with real reflections of the lights; nukage spilling green
   light onto the ceiling; a floor lamp casting warm gold; ceiling light
   panels as bright white squares lighting pillars below them.
+  2026-10-26: amended in place for DOOM-0273 and DOOM-0103 (Solid is
+  pixel-identical only with surface_detail 0 and specular 0; the HD
+  roughness map is uploaded by DOOM-0103). Wet metal waits on DOOM-0517.
 
 - 📋 [DOOM-0083] **Green slime/nukage emits a faint green glow onto its surroundings.**
   Same DOOM-0009 path-tracer emitter mechanism as [DOOM-0082]: the per-material emissive precompute (build step 3b) auto-derives a green Le from the slime/nukage flats' bright green texels, so those surfaces become NEE area emitters and cast a faint green tint on neighbours. Two data-dependent checks when 3c lands: (1) the nukage/slime flats (NUKAGE1-3, and bright-green floor flats) actually cross the emissive luminance threshold (may need a per-flat allow-list or lowered threshold for the "faint" case, since slime is darker than a lamp); (2) animated slime flats cycle via flattranslation each tic (DOOM-0066) — the emitter set should track the live flat so the glow animates. Intensity is the same "faint" tunable as DOOM-0082. Distinct from DOOM-0082 (switches/buttons) in surface class (environmental animated floor flats) but shares the implementation.
@@ -14373,6 +14376,10 @@ in CLAUDE.md describes.
   shine. The ray-traced view is Lambert only today (pt_common.glsl),
   so no emitter makes a highlight anywhere. Test scene and goal are in
   DOOM-0273's notes.
+  2026-10-26: spec accepted, docs/specs/DOOM-0103-specular-lobe.md
+  (review-contract capped at one loop by the user). Blocked by
+  DOOM-0273's B1-B4 and by the Vestige Workbench's parameterised GGX
+  exports. Metal is DOOM-0517.
   **Layman:** Shiny surfaces — metal, wet floors, slime — get realistic highlights like modern DOOM, without losing the classic look.
   Kind: feature.
   Source: user-request-2026-06-29.
@@ -14736,6 +14743,9 @@ in CLAUDE.md describes.
   2026-10-26: Solid has none of this today. EnsureHdMaterials
   (r_vulkan.cpp) returns unless the tier is Ultra, and roughness and
   metallic maps are never uploaded.
+  2026-10-26: spec accepted, docs/specs/DOOM-0273-solid-surface-detail.md
+  (review-contract capped at one loop by the user). It amends
+  DOOM-0042. Next: build B1.
 
 - 📋 [DOOM-0278] **Motion blur for the 3-D views - camera-velocity first, per-object only once monsters are models.**
   User asked (2026-07-27) for "perhaps some per object motion blur" as
@@ -17137,6 +17147,26 @@ in CLAUDE.md describes.
   Kind: feature.
   Source: user-request-2026-10-26.
   Lanes: renderer, playsim.
+
+- 📋 [DOOM-0517] **Metal surfaces reflect light in their own colour (metallic specular).**
+  DOOM-0103's specular lobe is dielectric only: F0 0.04 everywhere
+  (docs/specs/DOOM-0103-specular-lobe.md §3). DOOM-0042's "wet metal
+  shines" look needs a metallic input: F0 from albedo, no diffuse.
+  kHdV1Maps (r_vulkan.cpp) still skips RB_MET, and Solid has no metallic
+  source (pbr_derive.py's _FAMILY table carries one). Found by the
+  DOOM-0042 amendment review, 2026-10-26.
+  Blocked by DOOM-0103.
+  **Layman:** Metal walls and pipes get a coloured, mirror-like shine, as DOOM-0042's HD art intends; today every surface shines like painted plaster.
+  Kind: feature.
+  Source: review-contract-2026-10-26.
+
+- 📋 [DOOM-0518] **renderer.md calls Solid a rasteriser only, though each tier has both views.**
+  docs/standards/renderer.md describes Solid as a "Vulkan rasteriser".
+  CLAUDE.md § Render tiers gives Solid and Ultra each a rasterised and a
+  ray-traced view. Found by the CLAUDE.md tier review, 2026-10-26.
+  **Layman:** One of the project's rule files still describes Solid the old way; it needs bringing up to date.
+  Kind: doc-fix.
+  Source: review-contract-2026-10-26.
 
 ## 0.12.0 — The player's experience
 

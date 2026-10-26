@@ -1,7 +1,7 @@
 <!-- ants-spec-format: 1 -->
 # DOOM-0103 — Let light gleam off surfaces: a specular lobe in both of Solid's views
 
-**Status:** spec draft (2026-10-26).
+**Status:** accepted (2026-10-26).
 **Kind:** feature.
 **Source:** ROADMAP DOOM-0103 (user request 2026-06-29; joint design with
 DOOM-0273 chosen by the user 2026-10-26, after the DOOM-0511 play-test).
@@ -37,7 +37,7 @@ In the ray-traced view, the static light surfaces, the sprite lights, the
 flashlight and the muzzle flash each leave a GGX highlight, shadowed by the
 rays the view already casts. In the rasterised view, the point lights and the
 flashlight leave a cheap highlight. Roughness comes from DOOM-0273's surface
-map. A highlight keeps its light's colour. One setting turns it off, and then
+map, or from an HD material's own map. A highlight keeps its light's colour. One setting turns it off, and then
 every frame is as it was.
 
 ## 2. Where this sits
@@ -131,9 +131,9 @@ combines them:
 // radiance and NdotL. Returns 0 when v is zero (the bake).
 // roughness is DOOM-0273's perceptual roughness.
 vec3 specBrdf(vec3 n, vec3 v, vec3 l, float roughness);
-// False when the setting is off or the material is flagged a liquid.
+// False when setting is 0 or matFlags marks a liquid.
 // Every caller of specBrdf checks it first.
-bool specOn(uint matFlags);
+bool specOn(uint setting, uint matFlags);
 const float kSpecF0       = 0.04;
 const float kSpecRoughMin = 0.35;   // floor: no tight, sparkly lobes on derived normals
 ```
@@ -142,18 +142,47 @@ const float kSpecRoughMin = 0.35;   // floor: no tight, sparkly lobes on derived
 enough that six samples and a short history resolve it, and stops normals
 made from luma from sparkling.
 
+**What each caller passes `specOn`.** A shared include cannot read a push
+block, so the setting is an argument.
+
+- Modes 4 and 6 (`pathtrace.comp`): `pc.misc7.y` and `h.mc.flags`. Where a
+  goo stain takes the sheen (`wetOn()` and `h.gooWet > 0`), the setting
+  passed is 0, so a puddle is not doubled either.
+- Mode 5: the constant 1 and `ctrl[id].flags`. Its push block, `RtPC`, is
+  184 bytes and does not reach `misc7`.
+- `bake.comp`: 0 for both.
+
+`shadeSurface`, `directNEEVerify` and `directAllLights` take the two values
+as parameters, because they cannot see `ctrl[]`.
+
+**Roughness and normal, by surface.**
+
+- Where `surfHas(id)`: DOOM-0273's `surfRoughness` and surface normal.
+- An HD material (`usePBR == 1`) with a roughness map, `maps[2]`: that map,
+  and the normal it is lit with today. DOOM-0273 INV-6 keeps `surf` calls off it.
+  `kHdV1Maps` (`r_vulkan.cpp`) skips `RB_RGH` today, so this spec adds it to
+  the upload, as a linear map. Its images count against `kHdBudgetMB` like
+  the other maps.
+- Anything else, such as a sprite or `surface_detail` 0: roughness 1.0 and
+  the normal it is lit with today.
+
+So the lobe runs in Solid and Ultra alike; only the source of roughness
+differs.
+
 ### 4.2 The traced view
 
 **Where it is evaluated.**
 
-- **Static NEE (`shadeSurface`).** It gains the view direction and the
-  roughness. Each sample adds `specBrdf(n, v, wi, r) * c` to a separate
+- **Static NEE (`shadeSurface`).** It gains the view direction, the
+  roughness and `specOn`'s two inputs (§4.1). Each sample adds `specBrdf(n, v, wi, r) * c` to a separate
   specular sum, alongside today's matte sum. It uses the same `wi` and the
   same shadow ray. Each sum is clamped per channel by `FIREFLY_MAX`
   separately.
 - **Sprite lights (RIS).** The target stays the matte one, so which light is
   chosen does not change. The survivor adds its specular term with the same
-  weight.
+  weight. In mode 4 the target carries the albedo, so a black texel picks no
+  sprite light and gets no sprite-light highlight; in mode 6 it gets one.
+  Accepted, because mode 6 is the default view (`rt_view` 6).
 - **Flashlight and muzzle flash.** `flashlightDelta` and `muzzleFlashDelta`
   each return a specular part beside today's matte part, using the same
   shadow ray.
@@ -163,6 +192,8 @@ made from luma from sparkling.
 - **The verify path (mode 5).** `directNEEVerify` and `directAllLights` add
   the same `specBrdf` term, so `-rtverify` (DOOM-0009 INV-6) covers the lobe.
   An estimator that disagreed with its brute-force reference would fail it.
+  Mode 5 has no maps, so it uses roughness `kSpecRoughMin` and the view
+  direction `-dir`.
 
 **The specular channel.**
 
@@ -171,14 +202,17 @@ made from luma from sparkling.
   albedo: a dielectric highlight is the light's colour, not the surface's.
 - `svgf_temporal.comp` fills the other three pixels of each 2x2 block with
   the same joint-bilateral upsample it uses for `gillum`.
-- It then blends `gspec` with its own history, at a faster rate than
+- It then blends `gspec` with its own history, `hspec[2]`, ping-ponged by the
+  same parity as `hcol[2]`, at a faster rate than
   `gillum` (`kSpecHistoryAlpha`, starting at 0.2, set from the Workbench's
   `temporalAlpha` family). Disocclusion and the anti-ghost gradient test
   reject history exactly as they do for `gillum`.
-- `gspec` does not go through the à-trous passes.
-- `svgf_composite.comp` adds it: `L = albedo * illum + spec + shownEmission(…)`.
+- Neither `gspec` nor `hspec` goes through the à-trous passes.
+- `svgf_composite.comp` adds this frame's `hspec` as `spec`:
+  `L = albedo * illum + spec + shownEmission(…)`.
 - Mode 4 (no denoiser) adds the specular sum straight to the pixel, in the
-  same order. Modes 4 and 6 keep the agreement DOOM-0439 set.
+  same order. Modes 4 and 6 keep the agreement DOOM-0439 set, apart from the
+  black-texel case above.
 
 ### 4.3 The rasterised view (`mesh.frag`)
 
@@ -186,8 +220,14 @@ Inside the existing point-light loop and the flashlight block:
 
 ```glsl
 float sp = pow(max(dot(N, normalize(L + V)), 0.0), specExponent(r));
-direct += sp * kRasterSpecStrength * lightColour * att;   // same att and reach as ndl
+pspec += sp * col * att;   // beside plight; same col, att and reach as ndl
 ```
+
+- After the loop, `pspec` takes `plight`'s `POINT_LIGHT_GAIN` and roll-off,
+  so one panel's many emitter slots cannot stack to white. Then
+  `direct += kRasterSpecStrength * pspec`.
+- In the flashlight block, `sp` is scaled by `lit * sh`, so the highlight
+  takes the beam's cone and its existing shadow.
 
 - `N` is DOOM-0273's surface normal, and `r` its roughness.
 - `specExponent` maps roughness to a Blinn-Phong exponent, so a rough
@@ -198,9 +238,11 @@ direct += sp * kRasterSpecStrength * lightColour * att;   // same att and reach 
 - The term is gated on the setting alone. The rasterised view has no liquid
   sheen (DOOM-0183 INV-5) and no `MatCtrl`, so liquids get the highlight
   there too.
-- There is no shadow on the raster highlight, as the point lights have none.
-  The flashlight's highlight takes its existing shadow factor.
-- The `SINGLE_TARGET` weapon overlay is unchanged.
+- There is no shadow on the point lights' highlight, as the point lights
+  have none.
+- The `SINGLE_TARGET` weapon overlay is unchanged: the weapon is a psprite,
+  and both blocks skip `FLAG_PSPRITE`. The specular code also sits inside
+  `#ifndef SINGLE_TARGET`, as DOOM-0273's `surf` code does (its INV-7).
 
 ### 4.4 The setting
 
@@ -232,7 +274,7 @@ direct += sp * kRasterSpecStrength * lightColour * att;   // same att and reach 
 ## 5. Data & resources
 
 - **One G-buffer image,** `gspec`, rgba16f at the traced render size. Its
-  history is a second image of the same size, for the temporal blend.
+  history is a ping-ponged pair of the same size, `hspec[2]`.
 - **Config:** one new key, `specular` (§4.4).
 - **Push constants and `ShadowUbo`:** no growth. The lanes DOOM-0273 adds
   are used.
@@ -303,9 +345,9 @@ of STONE2 walls and FLOOR5_2 floor leading to the REDWALL1 cross
 - **INV-3** — The specular channel is never divided by albedo, and it skips
   the à-trous passes.
   *Test:* `tests/specular_test.cpp` scrapes the shaders: `gspec` is written
-  in `pathtrace.comp` with no division by `albedo`, is read in
-  `svgf_composite.comp` without multiplying by `albedo`, and appears in no
-  `svgf_atrous.comp` binding.
+  in `pathtrace.comp` with no division by `albedo`. `hspec` is read in
+  `svgf_composite.comp` without multiplying by `albedo`. Neither appears in
+  any `svgf_atrous.comp` binding.
   *Breaks when:* the highlight takes the surface's colour, so a red light on
   a brown floor gleams brown, or the à-trous passes blur it away.
 
@@ -315,22 +357,25 @@ of STONE2 walls and FLOOR5_2 floor leading to the REDWALL1 cross
   the test scene, in each view, both `surface_detail` values. Each pair
   differs by no more than a same-build control pair.
   *Breaks when:* a site adds the specular term without checking the setting,
-  or the composite adds an uninitialised `gspec`.
+  or the composite adds an uninitialised `hspec`.
 
 - **INV-5** — A red light's highlight stays red. On the test scene, in
-  Solid's traced view, the mean colour of the floor region in front of the
-  cross has a red channel at least four times its green and blue, with
-  `specular` on.
-  *Test:* manual. Capture with `scratch/doom0511/cap.sh` (Solid,
-  `-rtview 6`) and measure the region's mean, as DOOM-0511's notes do.
+  Solid's traced view, take a capture with `specular` 1 minus one with
+  `specular` 0. Over the floor in front of the cross, that difference's mean
+  has a red channel at least four times its green and blue.
+  *Test:* manual. Capture each with
+  `AT="424 382 352" scratch/doom0511/cap.sh <name>` (Solid, `-rtview 6`; a
+  local script, untracked). The floor's pixel box is picked on the first
+  pair at B4 and written into this invariant.
   *Breaks when:* the highlight bypasses the per-channel clamp and the tone map
   turns it white.
 
 - **INV-6** — In the rasterised view the highlight goes into `direct`, uses
-  the surface roughness, and is absent from the `SINGLE_TARGET` build.
+  the surface roughness, and skips the weapon.
   *Test:* `tests/specular_test.cpp` scrapes `mesh.frag`: the Blinn-Phong term
   is added to `direct`, `ambient` is not assigned in that block, its exponent
-  comes from `specExponent(`, and the `SINGLE_TARGET` build has no such term.
+  comes from `specExponent(`, and both blocks holding it keep their
+  `FLAG_PSPRITE` skip.
   *Breaks when:* the term goes into `ambient`, or the weapon overlay gleams.
 
 - **INV-7** — Each formula has one copy: `specBrdf` and `specExponent` are
@@ -385,11 +430,17 @@ Each scrape is run once against a mutated shader to see it fail. Rebuild with
 
 - `docs/specs/DOOM-0273-solid-surface-detail.md` — supplies the roughness,
   normal and lanes. No clause changes.
-- `docs/specs/DOOM-0183-glowing-wet-liquid.md` — no clause changes: liquids
-  skip the lobe, so INV-3 holds. Its INV-8 holds through INV-2 here.
+- `docs/specs/DOOM-0183-glowing-wet-liquid.md` — INV-3's "Every non-liquid
+  surface takes **no** specular term" and INV-5's byte-identical clauses now
+  hold with `specular` 0 only, and each gains that qualifier. Liquids still
+  skip the lobe. Its INV-8 holds through INV-2 here.
 - `docs/specs/DOOM-0009-path-tracer.md` — no clause changes. §4.4's "GGX/VNDF
   specular gated to measured need" is met by direct-light evaluation without
   lobe sampling, so "NEE — no MIS" still holds.
+- `docs/specs/DOOM-0042-ultra-hd-pbr-materials.md` — its HD roughness map
+  is now uploaded and read here (§4.1). Its "wet metal" look still waits on
+  metal, which §3 defers.
+- `docs/standards/renderer.md` — no change: the lanes are DOOM-0273's.
 - `shaders/formulas/README.md` — the new include and the new exports.
 - `CHANGELOG.md` — an Added entry when this ships.
 
