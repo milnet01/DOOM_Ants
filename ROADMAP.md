@@ -14362,6 +14362,11 @@ in CLAUDE.md describes.
 
 - 📋 [DOOM-0103] **Specular / glossy highlights (GGX) on metal, wet floors and nukage in the path tracer.**
   Add a GGX/VNDF specular lobe gated to surfaces that warrant it (metal/computer textures, liquid flats), per DOOM-0009 spec 4.4 ('specular gated to measured need'). Roughness from a per-material heuristic (liquids/metal = glossy, matte wall/floor art = diffuse). Aesthetic north star: Quake RTX — a full RT overhaul that still reads as the original — informed by DOOM 3 / 2016 / Eternal / Dark Ages. DOOM-0042 (HD PBR material set) DEPENDS ON this lobe: it supplies the roughness/metallic maps, this item owns the BRDF (F0 / VNDF / MIS) — 0042's "wet metal" specular look is gated on DOOM-0103 landing. Tune strength with the user to keep the DOOM feel.
+  User decision 2026-10-26: design this together with DOOM-0273 as one
+  spec, so Solid's original textures get both surface detail and
+  shine. The ray-traced view is Lambert only today (pt_common.glsl),
+  so no emitter makes a highlight anywhere. Test scene and goal are in
+  DOOM-0273's notes.
   **Layman:** Shiny surfaces — metal, wet floors, slime — get realistic highlights like modern DOOM, without losing the classic look.
   Kind: feature.
   Source: user-request-2026-06-29.
@@ -14716,6 +14721,15 @@ in CLAUDE.md describes.
   It covers every wall and flat of both games. For anything Freedoom
   art is wanted for, the current freedoom.wad is the newer source, and
   CI already installs it. Comparison sheet: scratch/lrhq-tools/sheet-fd.png.
+  User decision 2026-10-26: design this together with DOOM-0103 (the
+  shine) as one spec, for Solid's original textures, before DOOM-0172
+  (upscaling). Test scene: E2M1, the REDWALL1 cross room and the
+  corridor leading to it (-warp 2 1 -skill 3 -warpto 424 382 352;
+  STONE2 walls, FLOOR5_2 floor). Goal: the cross's red light gleams on
+  the floor and the stone, as in the DOOM-0511 references. Checked
+  2026-10-26: Solid has none of this today. EnsureHdMaterials
+  (r_vulkan.cpp) returns unless the tier is Ultra, and roughness and
+  metallic maps are never uploaded.
 
 - 📋 [DOOM-0278] **Motion blur for the 3-D views - camera-velocity first, per-object only once monsters are models.**
   User asked (2026-07-27) for "perhaps some per object motion blur" as
@@ -16920,7 +16934,7 @@ in CLAUDE.md describes.
   Source: user-request-2026-10-26.
   Evidence: /home/ants/Pictures/ClaudePaste/paste_20261026_000939_226_291e3eb4.png, /home/ants/Pictures/Screenshots/Screenshot_20261026_001752.png, /home/ants/Pictures/Screenshots/Screenshot_20261026_003321.png, /home/ants/Pictures/Screenshots/Screenshot_20261026_003421.png
 
-- 🚧 [DOOM-0511] **Bright red light walls blow out to white in the ray-traced view (Solid and Ultra), losing their colour.**
+- ✅ [DOOM-0511] **Bright red light walls blow out to white in the ray-traced view (Solid and Ultra), losing their colour.**
   Measured 2026-10-26: E2M1, `-warp 2 1 -warpto 1000 304 0`, Ultra
   (renderer 1, rt_view 6, rt_fog 1), DEV build, -inspect -freeze,
   -devshot 400. The REDWALL1 panels round the cross render pale pink
@@ -17031,6 +17045,15 @@ in CLAUDE.md describes.
   the room's only direct light. Left: sky and bounced light (the
   balcony passage) tint the walls and floor grey-brown where the
   reference is all red. Comparison: scratch/doom0511/new-vs-ref.png.
+  User decision 2026-10-26, after their F12 shot-0026 of the same
+  corridor (renderer Solid, ray tracing on): the panels now stay red,
+  so this item is done. The remaining look gap is not the emitter: in
+  Solid no texture has surface detail or upscaling yet (DOOM-0273,
+  DOOM-0172), and the ray-traced view shades every surface matte
+  (Lambert only, pt_common.glsl), so the red light cannot gleam on the
+  floor or stone (DOOM-0103). The user chose one design covering
+  Solid surface detail and shine together, with this room (STONE2
+  walls, FLOOR5_2 floor) as the test scene.
   **Layman:** A glowing red wall should look deep red, like the reference; ours turns almost white with only a red rim.
   Kind: fix.
   Source: user-request-2026-10-26.

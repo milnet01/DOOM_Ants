@@ -16,6 +16,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Glowing walls keep their colour with ray tracing on** (DOOM-0511)
+  With ray tracing on, in Solid and Ultra, a bright light wall used to wash out to near white with only a coloured rim. E2M1's red cross was the worst case. Light walls now show their own picture, in their own colour, however bright they are. The red cross also lights the room around it more softly than it glows, so the room stays dark and red rather than evenly lit.
+
 - **Invulnerability and the light-amp visor work in Solid and Ultra** (DOOM-0455)
   Picking up either one used to change nothing on screen outside Classic. Now, in Solid and Ultra, with ray tracing on or off, invulnerability turns the world and your weapon into a grey negative, as in the original game, and the sky stays as it is. The visor works like a lamp at your eyes: a dark room shows its walls and floor, the far end stays dim, and a room that is already lit changes little. Both blink as they run out, as in Classic.
 
