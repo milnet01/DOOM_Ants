@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=514 -->
+<!-- ants-roadmap-id-high-water: DOOM=516 -->
 
 # Roadmap
 
@@ -14260,6 +14260,13 @@ in CLAUDE.md describes.
   Requirement (2026-06-28, user): the HD PBR map set must include HEIGHT / DISPLACEMENT maps, and the Ultra material/shading pipeline must support PARALLAX OCCLUSION MAPPING (POM) for surfaces with real relief — brick, rough stone, metal grates/panels, tech detailing. Clarification: a height map IS POM's required input (a grayscale displacement field the shader ray-marches against the view direction for recessed depth + self-occlusion), so "add POM" and "add height maps" are the same asset requirement, not two. Sourcing is already covered — the CC0 libraries this item curates (ambientCG, Poly Haven) ship height/displacement alongside albedo/normal/roughness/AO, so the full map set per material becomes: albedo, normal, roughness, metallic, emissive, AO, height/displacement. Map only the surfaces that benefit (skip flat panels/decals) to bound cost. Open decision (which sourcing route) RESOLVED — see the 2026-06-24 Decision line below (CC0 curation + hybrid pipeline). PATH-TRACER DESIGN NOTE (decide at implementation, do not over-spec now): classic POM is a primary-ray raster trick evaluated in the hit shader; in the Ultra path tracer (DOOM-0009) that gives parallax in the directly-shaded view but the displaced relief is INVISIBLE to ray-traced shadows + the GI/probe bake unless we go further — options are (a) cheap primary-hit POM only (relief shades but casts no self-shadow), (b) height-field self-occlusion sampled during NEE shadow rays, or (c) true geometric displacement / displacement-mapped BLAS (most accurate, most BVH cost). Lives in the material seam shared with DOOM-0010/0011 (modern lighting). Tessellation/real displacement is the heavier alternative if POM artefacts at grazing angles prove unacceptable.
   Spec drafted 2026-07-14: docs/specs/DOOM-0042-ultra-hd-pbr-materials.md. Design approved by user via brainstorming. Confirms/consolidates prior decisions (CC0 sourcing ambientCG/Poly Haven; Ultra-tier binding; height maps + POM) and adds two refinements: (1) HYBRID asset pipeline — hand-picked CC0 "hero" materials for high-traffic surfaces + an offline derive-generator (scripts/pbr_derive.py) producing PBR maps from the original WAD art for the long tail; (2) sequencing — Ultra RAY-TRACED view first (Ultra's default rb_rtdebug=6), Ultra raster sub-view (~) HD is a fast-follow. POM = option (a) primary-hit only (relief shades, no RT self-shadow yet). Tier hook = rendermode==RB_RT3D. First slice = E1M1. Enemies stay billboards (3D monster models remain the separate far-out item). Sourced assets go in /mnt/Games/3D Engine Assets/ (CC0/free only). Dependency edge (cold-eyes 2026-07-14): DOOM-0042 DEPENDS ON DOOM-0103 for the GGX specular lobe — 0042 supplies the roughness/metallic maps + material plumbing, 0103 owns the BRDF (F0 / VNDF sampling / MIS). The "wet metal" specular look and its verification are gated on DOOM-0103; until it lands, roughness/metallic ride the diffuse term only (albedo/normal/AO/POM still upgrade).
   Cold-eyes converged 2026-07-14: /cold-eyes run to convergence over 12 loops (3 lanes/loop — citation accuracy, cross-doc integrity, spec-as-contract), every actionable finding fixed, log in the spec. Spec + ADR 0002 (materials.csv sidecar + stb_image loader) APPROVED and signed off by Claude per the user's standing delegation. Notable outcomes: GGX specular lobe is DOOM-0103's (0042 supplies roughness/metallic maps + plumbing, depends on 0103 for the wet-metal look); v1 HD = walls + flats only (HD sprite albedo is a fast-follow, sprites paletted in v1); POM = kPomHeightScale 0.06, offset-bounded (not [0,1]-clamped, preserves REPEAT tiling). NEXT: implement the E1M1 slice (writing-plans).
+  2026-10-26, Ultra target references from the user (pasted images
+  from a ray-traced DOOM mod at E1M1, no file paths). User: "If we can
+  get Ultra to look like this or similar to this, that will be
+  fantastic." What they show: very dark rooms; wet, glossy floors and
+  ceilings with real reflections of the lights; nukage spilling green
+  light onto the ceiling; a floor lamp casting warm gold; ceiling light
+  panels as bright white squares lighting pillars below them.
 
 - 📋 [DOOM-0083] **Green slime/nukage emits a faint green glow onto its surroundings.**
   Same DOOM-0009 path-tracer emitter mechanism as [DOOM-0082]: the per-material emissive precompute (build step 3b) auto-derives a green Le from the slime/nukage flats' bright green texels, so those surfaces become NEE area emitters and cast a faint green tint on neighbours. Two data-dependent checks when 3c lands: (1) the nukage/slime flats (NUKAGE1-3, and bright-green floor flats) actually cross the emissive luminance threshold (may need a per-flat allow-list or lowered threshold for the "faint" case, since slime is darker than a lamp); (2) animated slime flats cycle via flattranslation each tic (DOOM-0066) — the emitter set should track the live flat so the glow animates. Intensity is the same "faint" tunable as DOOM-0082. Distinct from DOOM-0082 (switches/buttons) in surface class (environmental animated floor flats) but shares the implementation.
@@ -14536,6 +14543,13 @@ in CLAUDE.md describes.
   peak-gated derive rather than from any name list -- a DOOM barrel is not
   bright enough to pass that gate, so it emits nothing today. The fix shape is
   the sprite analogue of ForceLiquidEmissive: a name-keyed forced Le on BAR1.
+  2026-10-26, references from the user (pasted images from a
+  ray-traced DOOM mod, no file paths). The nukage is a 3-D surface:
+  bright saturated green with dark, lumpy ridges standing out of it,
+  like a heightfield, and it lights the walls round the pool green. Its
+  flaw, per the user: it does not move. User: "If we can do a mix
+  between this and what we have I think we will have what I am looking
+  for" -- that is, that relief and contrast, with our moving surface.
 
 - 📋 [DOOM-0184] **Glowing fireball / projectile that casts light (Ultra RT).**
   User: "I really like this fireball, can we replicate it?" (ref: Ultimate Doom RTX mod). A self-lit projectile sprite with a warm emissive core + a point light travelling with it so nearby walls/floor light up as it passes. Relates to the dynamic-light trio DOOM-0010/0101/0102 and the emissive sprite path (DOOM-0084). See [[rt-aesthetic-north-star]].
@@ -17009,6 +17023,14 @@ in CLAUDE.md describes.
   Left here: the panels show at (155,0,0) where the reference shows
   (211,1,1). Raising kShownGlowMax to 0.5 did not brighten them in
   that test, so what limits them is not yet known.
+  2026-10-26, 5543856: a per-texture cast multiple (r_mesh.c
+  wall_light_cast; REDWALL1 0.15x) and kShownGlowMax 0.25 -> 0.6. Panel /
+  side wall / floor went from (155,0,0) / (44,5,5) / (71,29,10) to
+  (188,8,8) / (16,5,5) / (49,29,10); the reference is (211,1,1) /
+  (14,0,0) / (32,0,0). Test B (direct light off) showed the cross is
+  the room's only direct light. Left: sky and bounced light (the
+  balcony passage) tint the walls and floor grey-brown where the
+  reference is all red. Comparison: scratch/doom0511/new-vs-ref.png.
   **Layman:** A glowing red wall should look deep red, like the reference; ours turns almost white with only a red rim.
   Kind: fix.
   Source: user-request-2026-10-26.
@@ -17070,6 +17092,22 @@ in CLAUDE.md describes.
   Kind: feature.
   Source: user-decision-2026-10-26.
   Lanes: shaders, renderer.
+
+- 📋 [DOOM-0515] **Blood splatters stick to walls and floors where a monster is hit, and stay.**
+  User reference 2026-10-26 (a pasted image from a ray-traced DOOM
+  mod, no file path): fine red spatter sprayed across a wall and the
+  floor behind a killed monster, denser near the hit and thinning
+  outward, with drips running down the wall and a pool under the
+  corpse. The stains sit ON the surface, follow its lighting, and stay.
+  A second frame shows dark dried blood on a wall in a dim room.
+  Related: DOOM-0513 (dirt as real grime). Needs a decal system:
+  where a hit's blood lands (a trace from the hit along the shot), how
+  many decals are kept, and how they draw in raster and ray-traced
+  views.
+  **Layman:** Shooting a monster sprays blood onto the walls and floor behind it, and the stains stay there like in modern DOOM mods.
+  Kind: feature.
+  Source: user-request-2026-10-26.
+  Lanes: renderer, playsim.
 
 ## 0.12.0 — The player's experience
 
@@ -17332,6 +17370,20 @@ controls they expect to rebind.
   **Layman:** Some screens, such as choosing DOOM 1 or DOOM 2 and the "are you sure you want to quit" box, still look like the old menus; they should match the new ones.
   Kind: ux.
   Source: user-request-2026-10-26.
+
+- 📋 [DOOM-0516] **A weapon wheel: hold a key or button to pick a weapon from a ring.**
+  User idea 2026-10-26, from a reference frame of a DOOM mod (a
+  pasted image, no file path): a circular selector at the right of the
+  screen, the weapons arranged round a ring with the hovered one named
+  below it ("Shotgun") with its ammo ("6/9", "27/50"). The game
+  dims behind it. Questions for the design: gamepad stick and mouse
+  control, whether time slows while it is open, its look in Classic
+  versus Solid and Ultra (DOOM-0211's menu style), and that it never
+  replaces the number keys or the scroll wheel (DOOM-0153).
+  **Layman:** Hold a button and a ring of your weapons appears; point at one to switch to it, instead of cycling through them.
+  Kind: feature.
+  Source: user-request-2026-10-26.
+  Lanes: hud, input.
 
 ## 1.0.0 — Other people can run it
 
