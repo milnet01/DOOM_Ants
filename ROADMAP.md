@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=519 -->
+<!-- ants-roadmap-id-high-water: DOOM=521 -->
 
 # Roadmap
 
@@ -14585,6 +14585,11 @@ in CLAUDE.md describes.
   flaw, per the user: it does not move. User: "If we can do a mix
   between this and what we have I think we will have what I am looking
   for" -- that is, that relief and contrast, with our moving surface.
+  User's list, 2026-10-26, restated: nukage is a bright green emitter
+  that lights the walls, floors and things around it; lava is molten
+  orange-red rock with a pulsing glow that throws strong orange-red
+  light on the level. The emission half is built (L1-L6); the pulse is
+  new.
 
 - 📋 [DOOM-0184] **Glowing fireball / projectile that casts light (Ultra RT).**
   User: "I really like this fireball, can we replicate it?" (ref: Ultimate Doom RTX mod). A self-lit projectile sprite with a warm emissive core + a point light travelling with it so nearby walls/floor light up as it passes. Relates to the dynamic-light trio DOOM-0010/0101/0102 and the emissive sprite path (DOOM-0084). See [[rt-aesthetic-north-star]].
@@ -14981,6 +14986,10 @@ in CLAUDE.md describes.
   IWADs and degrades sanely on a custom WAD that uses its own flat
   names, which no hand-list can. That combination is what makes "apply
   it once and it is right everywhere" achievable rather than aspirational.
+  User's list, 2026-10-26: a gentle, continuous steam or fog rising from
+  the surface of nukage sectors (and smoke over lava, DOOM-0298). The
+  liquid video shows low mist on water and at the foot of falls
+  (scratch/ref-frames/liquid/notes-part3.md).
 
 - 📋 [DOOM-0298] **New liquid surfaces: bubbles in nukage, splashes on lava, and animation that does not visibly repeat.**
   User, 2026-08-01, on the DOOM-0011 L3 nukage glow: "when we create new
@@ -15065,6 +15074,10 @@ in CLAUDE.md describes.
   DOOM's own art" is precisely Solid's brief. Worth asking whether the
   anti-repetition half should follow into Solid once the Ultra version
   has proven itself. Not assumed either way here.
+  User's list, 2026-10-26. Nukage: procedural bubbles that form, swell
+  and pop, each pop throwing a micro-splatter of particles. Lava: the
+  same, slower and thicker, with rising dark smoke and heat steam.
+  Lava's glow should pulse.
 
 - 📋 [DOOM-0299] **Replace the barrel explosion with a modern one (Ultra only).**
   User, 2026-08-01: "please replace the barrel explosions with better /
@@ -16976,6 +16989,13 @@ in CLAUDE.md describes.
   normals, and the reflections DOOM-0104 adds.
   Reference: the user's ray-traced mod screenshots of water pools,
   a blood pool and a water ceiling (2026-10-26).
+  User's list, 2026-10-26: a real-time water surface with reflection and
+  refraction, screen-space in the rasterised view and traced in the
+  ray-traced view. Interaction (ripples, splashes) is DOOM-0520. Prior
+  art: RTGL's water (MIT, copyable with notice): three scrolling samples
+  of one normal map, Fresnel choosing refract or reflect, IOR 1.33,
+  Beer-Lambert depth tint; notes in
+  scratch/ref-frames/repos/rt-repos.md.
   **Layman:** Water and blood pools should ripple and reflect the room, the way the nukage and lava are already treated as liquids.
   Kind: feature.
   Source: user-request-2026-10-26.
@@ -17198,6 +17218,34 @@ in CLAUDE.md describes.
   **Layman:** One of the project's rule files still describes Solid the old way; it needs bringing up to date.
   Kind: doc-fix.
   Source: review-contract-2026-10-26.
+
+- 📋 [DOOM-0520] **Liquids react to things in them: ripples where touched, and splashes on entering, wading and leaving.**
+  User's list, 2026-10-26: a ripple deformation on the liquid surface
+  where it is touched, and a splash particle effect when the player,
+  a monster or a projectile enters, moves through or leaves a water
+  sector. Not decided: real vertex deformation needs the flat
+  subdivided; a ripple drawn in the surface normals is the cheap
+  form. Both views, per CLAUDE.md's tier table: the rasterised view
+  fakes it, the traced view refracts and reflects through the
+  rippled normals. Reference: the liquid video, 32:02-32:19 (splash
+  columns, contact foam round legs), notes in
+  scratch/ref-frames/liquid/notes-part4.md. Related: DOOM-0510
+  (rippled reflective water), DOOM-0298 (bubbles and lava splashes).
+  **Layman:** Water should ripple and splash when you, a monster or a rocket goes into it, instead of lying still like a painted floor.
+  Kind: feature.
+  Source: user-request-2026-10-26.
+
+- 📋 [DOOM-0521] **Heat haze over lava: the view wobbles when the player stands in or next to a lava sector.**
+  User's list, 2026-10-26: when the player stands inside or directly
+  next to a lava sector, a subtle heat-wave distortion wobbles the
+  view over the lava. A screen-space post effect, so the same in both
+  views and both tiers. Needs a way to tell lava from other liquids:
+  the liquid flat list in surface_derive.h (kLiquidFlats) is the
+  likely home. Keep it subtle and add a menu toggle, since screen
+  wobble can cause motion sickness.
+  **Layman:** Standing near lava should make the air shimmer, like the heat over a hot road.
+  Kind: feature.
+  Source: user-request-2026-10-26.
 
 ## 0.12.0 — The player's experience
 
