@@ -47,6 +47,9 @@ int I_GetTime (void);
 // Wall-clock milliseconds (finer than I_GetTime); used by the FPS counter.
 int I_GetTimeMS (void);
 
+// Give the CPU back for about ms milliseconds (TryRunTics' wait for a tic).
+void I_Sleep (int ms);
+
 
 //
 // Called by D_DoomLoop,

@@ -760,6 +760,13 @@ void TryRunTics (void)
 	    M_Ticker ();
 	    return;
 	} 
+
+	// Yield rather than spin while the next tic is not due: Classic, net
+	// and demo play present once per tic, so this loop otherwise held one
+	// core at 100% for most of every 28.6 ms tic. 1 ms is well inside a
+	// tic, so the tic still runs on time.
+	if (lowtic < gametic/ticdup + counts)
+	    I_Sleep (1);
     }
     
     // run the count * ticdup dics
