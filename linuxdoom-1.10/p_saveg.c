@@ -521,6 +521,16 @@ void P_UnArchiveThinkers (void)
 	    P_SetThingPosition (mobj);
 	    mobj->info = &mobjinfo[P_SaveIndex (mobj->type, NUMMOBJTYPES,
 						"mobj type")];
+	    // Two more raw ints from the file that index tables before anything
+	    // checks them. movedir indexes p_enemy.c's opposite[] in
+	    // P_NewChaseDir and xspeed[]/yspeed[] in A_VileChase; it is a
+	    // dirtype_t, DI_EAST (0) through DI_NODIR (8). lastlook indexes
+	    // playeringame[] and then players[] on P_LookForPlayers' first pass,
+	    // before its own &3 wraps it; P_SpawnMobj draws it from 0..3. Every
+	    // save this engine writes is inside both ranges.
+	    mobj->movedir = P_SaveIndex (mobj->movedir, 9, "mobj movedir");
+	    mobj->lastlook = P_SaveIndex (mobj->lastlook, MAXPLAYERS,
+					  "mobj lastlook");
 	    mobj->floorz = mobj->subsector->sector->floorheight;
 	    mobj->ceilingz = mobj->subsector->sector->ceilingheight;
 	    mobj->thinker.function.acp1 = (actionf_p1)P_MobjThinker;
