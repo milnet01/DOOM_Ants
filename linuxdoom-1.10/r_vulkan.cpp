@@ -6114,6 +6114,134 @@ void CreateOverlayResources(int w, int h)
     g.overlayReady = true;
 }
 
+// DOOM-0206: one combined-image-sampler set in a pool of its own, on the text layout
+// (binding 0, fragment stage) with the text sampler. The glyph atlas, the cursor skull
+// and the M_DOOM logo each get one.
+static void CreateMenuImageSet(VkImageView view, const char* tag,
+                               VkDescriptorPool* pool, VkDescriptorSet* set)
+{
+    VkDescriptorPoolSize ps = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 };
+    VkDescriptorPoolCreateInfo dpci = {};
+    dpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    dpci.maxSets = 1;
+    dpci.poolSizeCount = 1;
+    dpci.pPoolSizes = &ps;
+    Check(vkCreateDescriptorPool(g.device, &dpci, nullptr, pool), VkWhat("vkCreateDescriptorPool", tag));
+
+    VkDescriptorSetAllocateInfo dsai = {};
+    dsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsai.descriptorPool = *pool;
+    dsai.descriptorSetCount = 1;
+    dsai.pSetLayouts = &g.textDsLayout;
+    Check(vkAllocateDescriptorSets(g.device, &dsai, set), VkWhat("vkAllocateDescriptorSets", tag));
+
+    VkDescriptorImageInfo info = { g.textSampler, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+    VkWriteDescriptorSet w = {};
+    w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    w.dstSet = *set; w.dstBinding = 0; w.descriptorCount = 1;
+    w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    w.pImageInfo = &info;
+    vkUpdateDescriptorSets(g.device, 1, &w, 0, nullptr);
+}
+
+// DOOM-0206: the menu's textured-quad pipeline. TextVertex input, alpha blend ON, depth off,
+// viewport + scissor dynamic, into g.renderPass (the 8-bit swapchain pass; format-compatible
+// with g.rtOverlayPass, so one pipeline draws in BOTH the raster and the RT-overlay present
+// paths), on g.textPipelineLayout. The glyph text and the RGBA cursor/logo differ only in
+// the fragment shader: text.frag samples the R8 atlas, cursor.frag an RGBA image.
+static VkPipeline CreateMenuQuadPipeline(const unsigned char* fragSpv, unsigned fragLen,
+                                         const char* tag)
+{
+    VkShaderModule vert = MakeShader(text_vert_spv, text_vert_spv_len);
+    VkShaderModule frag = MakeShader(fragSpv, fragLen);
+    VkPipelineShaderStageCreateInfo stages[2] = {};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;   stages[0].module = vert; stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT; stages[1].module = frag; stages[1].pName = "main";
+
+    VkVertexInputBindingDescription bind = {};
+    bind.binding = 0;
+    bind.stride = sizeof(TextVertex);
+    bind.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    VkVertexInputAttributeDescription attrs[3] = {};
+    attrs[0] = { 0, 0, VK_FORMAT_R32G32_SFLOAT,  (uint32_t)offsetof(TextVertex, x) };
+    attrs[1] = { 1, 0, VK_FORMAT_R32G32_SFLOAT,  (uint32_t)offsetof(TextVertex, u) };
+    attrs[2] = { 2, 0, VK_FORMAT_R8G8B8A8_UNORM, (uint32_t)offsetof(TextVertex, r) };
+    VkPipelineVertexInputStateCreateInfo vin = {};
+    vin.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vin.vertexBindingDescriptionCount = 1;
+    vin.pVertexBindingDescriptions = &bind;
+    vin.vertexAttributeDescriptionCount = 3;
+    vin.pVertexAttributeDescriptions = attrs;
+
+    VkPipelineInputAssemblyStateCreateInfo ia = {};
+    ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkPipelineViewportStateCreateInfo vp = {};
+    vp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    vp.viewportCount = 1; vp.scissorCount = 1;   // viewport + scissor dynamic
+
+    VkPipelineRasterizationStateCreateInfo rs = {};
+    rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rs.polygonMode = VK_POLYGON_MODE_FILL;
+    rs.cullMode = VK_CULL_MODE_NONE;
+    rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rs.lineWidth = 1.0f;
+
+    VkPipelineMultisampleStateCreateInfo ms = {};
+    ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineDepthStencilStateCreateInfo dsst = {};   // depth test + write off (2D over all)
+    dsst.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+
+    // Premultiplied-alpha blend: both fragment shaders output (rgb*a, a), so src factor is ONE.
+    VkPipelineColorBlendAttachmentState cba = {};
+    cba.blendEnable = VK_TRUE;
+    cba.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    cba.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    cba.colorBlendOp = VK_BLEND_OP_ADD;
+    cba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    cba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    cba.alphaBlendOp = VK_BLEND_OP_ADD;
+    cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
+                       | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    VkPipelineColorBlendStateCreateInfo cb = {};
+    cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    cb.attachmentCount = 1;
+    cb.pAttachments = &cba;
+
+    VkDynamicState dyn[2] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+    VkPipelineDynamicStateCreateInfo dynState = {};
+    dynState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynState.dynamicStateCount = 2;
+    dynState.pDynamicStates = dyn;
+
+    VkGraphicsPipelineCreateInfo pci = {};
+    pci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pci.stageCount = 2;
+    pci.pStages = stages;
+    pci.pVertexInputState = &vin;
+    pci.pInputAssemblyState = &ia;
+    pci.pViewportState = &vp;
+    pci.pRasterizationState = &rs;
+    pci.pMultisampleState = &ms;
+    pci.pDepthStencilState = &dsst;
+    pci.pColorBlendState = &cb;
+    pci.pDynamicState = &dynState;
+    pci.layout = g.textPipelineLayout;
+    pci.renderPass = g.renderPass;
+    pci.subpass = 0;
+    VkPipeline pipe = VK_NULL_HANDLE;
+    Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &pci, nullptr, &pipe),
+          VkWhat("vkCreateGraphicsPipelines", tag));
+    vkDestroyShaderModule(g.device, vert, nullptr);
+    vkDestroyShaderModule(g.device, frag, nullptr);
+    return pipe;
+}
+
 // DOOM-0206 (L4): bake the menu glyph atlas and build the display-resolution text pipeline.
 // Called once from RB_Vulkan_Init after InitPaletteAndDescriptorSet (so the command pool +
 // g.renderPass exist). The font is the bundled Oxanium SemiBold (OFL), embedded as the
@@ -6173,31 +6301,7 @@ void CreateTextResources()
     Check(vkCreateDescriptorSetLayout(g.device, &dlci, nullptr, &g.textDsLayout),
           "vkCreateDescriptorSetLayout(text)");
 
-    VkDescriptorPoolSize ps = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 };
-    VkDescriptorPoolCreateInfo dpci = {};
-    dpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    dpci.maxSets = 1;
-    dpci.poolSizeCount = 1;
-    dpci.pPoolSizes = &ps;
-    Check(vkCreateDescriptorPool(g.device, &dpci, nullptr, &g.textDsPool),
-          "vkCreateDescriptorPool(text)");
-
-    VkDescriptorSetAllocateInfo dsai = {};
-    dsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    dsai.descriptorPool = g.textDsPool;
-    dsai.descriptorSetCount = 1;
-    dsai.pSetLayouts = &g.textDsLayout;
-    Check(vkAllocateDescriptorSets(g.device, &dsai, &g.textDs),
-          "vkAllocateDescriptorSets(text)");
-
-    VkDescriptorImageInfo aInfo = { g.textSampler, g.textAtlasView,
-                                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-    VkWriteDescriptorSet w = {};
-    w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    w.dstSet = g.textDs; w.dstBinding = 0; w.descriptorCount = 1;
-    w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    w.pImageInfo = &aInfo;
-    vkUpdateDescriptorSets(g.device, 1, &w, 0, nullptr);
+    CreateMenuImageSet(g.textAtlasView, "text", &g.textDsPool, &g.textDs);
 
     // Pipeline layout: the atlas set + a vec2 invDisplay push constant (vertex stage).
     VkPushConstantRange pcr = {};
@@ -6213,95 +6317,7 @@ void CreateTextResources()
     Check(vkCreatePipelineLayout(g.device, &plci, nullptr, &g.textPipelineLayout),
           "vkCreatePipelineLayout(text)");
 
-    // Graphics pipeline: textured quad, alpha blend ON, depth off, into g.renderPass (the
-    // 8-bit swapchain pass; format-compatible with g.rtOverlayPass, so this one pipeline draws
-    // in BOTH the raster and the RT-overlay present paths).
-    VkShaderModule vert = MakeShader(text_vert_spv, text_vert_spv_len);
-    VkShaderModule frag = MakeShader(text_frag_spv, text_frag_spv_len);
-    VkPipelineShaderStageCreateInfo stages[2] = {};
-    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;   stages[0].module = vert; stages[0].pName = "main";
-    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT; stages[1].module = frag; stages[1].pName = "main";
-
-    VkVertexInputBindingDescription bind = {};
-    bind.binding = 0;
-    bind.stride = sizeof(TextVertex);
-    bind.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-    VkVertexInputAttributeDescription attrs[3] = {};
-    attrs[0] = { 0, 0, VK_FORMAT_R32G32_SFLOAT,  (uint32_t)offsetof(TextVertex, x) };
-    attrs[1] = { 1, 0, VK_FORMAT_R32G32_SFLOAT,  (uint32_t)offsetof(TextVertex, u) };
-    attrs[2] = { 2, 0, VK_FORMAT_R8G8B8A8_UNORM, (uint32_t)offsetof(TextVertex, r) };
-    VkPipelineVertexInputStateCreateInfo vin = {};
-    vin.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vin.vertexBindingDescriptionCount = 1;
-    vin.pVertexBindingDescriptions = &bind;
-    vin.vertexAttributeDescriptionCount = 3;
-    vin.pVertexAttributeDescriptions = attrs;
-
-    VkPipelineInputAssemblyStateCreateInfo ia = {};
-    ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-
-    VkPipelineViewportStateCreateInfo vp = {};
-    vp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-    vp.viewportCount = 1; vp.scissorCount = 1;   // viewport + scissor dynamic
-
-    VkPipelineRasterizationStateCreateInfo rs = {};
-    rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    rs.polygonMode = VK_POLYGON_MODE_FILL;
-    rs.cullMode = VK_CULL_MODE_NONE;
-    rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-    rs.lineWidth = 1.0f;
-
-    VkPipelineMultisampleStateCreateInfo ms = {};
-    ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-    VkPipelineDepthStencilStateCreateInfo dsst = {};   // depth test + write off (2D over all)
-    dsst.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-
-    // Premultiplied-alpha blend: text.frag outputs (rgb*a, a), so src factor is ONE.
-    VkPipelineColorBlendAttachmentState cba = {};
-    cba.blendEnable = VK_TRUE;
-    cba.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
-    cba.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-    cba.colorBlendOp = VK_BLEND_OP_ADD;
-    cba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-    cba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-    cba.alphaBlendOp = VK_BLEND_OP_ADD;
-    cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
-                       | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-    VkPipelineColorBlendStateCreateInfo cb = {};
-    cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    cb.attachmentCount = 1;
-    cb.pAttachments = &cba;
-
-    VkDynamicState dyn[2] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
-    VkPipelineDynamicStateCreateInfo dynState = {};
-    dynState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    dynState.dynamicStateCount = 2;
-    dynState.pDynamicStates = dyn;
-
-    VkGraphicsPipelineCreateInfo pci = {};
-    pci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pci.stageCount = 2;
-    pci.pStages = stages;
-    pci.pVertexInputState = &vin;
-    pci.pInputAssemblyState = &ia;
-    pci.pViewportState = &vp;
-    pci.pRasterizationState = &rs;
-    pci.pMultisampleState = &ms;
-    pci.pDepthStencilState = &dsst;
-    pci.pColorBlendState = &cb;
-    pci.pDynamicState = &dynState;
-    pci.layout = g.textPipelineLayout;
-    pci.renderPass = g.renderPass;
-    pci.subpass = 0;
-    Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &pci, nullptr,
-                                    &g.textPipeline), "vkCreateGraphicsPipelines(text)");
-    vkDestroyShaderModule(g.device, vert, nullptr);
-    vkDestroyShaderModule(g.device, frag, nullptr);
+    g.textPipeline = CreateMenuQuadPipeline(text_frag_spv, text_frag_spv_len, "text");
 
     // Per-frame glyph-quad vertex buffer (host-visible, persistently mapped). Single copy:
     // FlushMenuText memcpys + draws it after the fence, so no in-flight double-buffering.
@@ -6339,122 +6355,10 @@ void CreateTextResources()
                                pixels, (VkDeviceSize)sw * sh * 4,
                                &g.cursorImage, &g.cursorMemory, &g.cursorView);
 
-            // Descriptor set: one combined-image-sampler (the skull), its own pool; reuses the
-            // text DS layout (identical binding 0 = sampler2D at fragment stage) and sampler.
-            VkDescriptorPoolSize cps = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 };
-            VkDescriptorPoolCreateInfo cdpci = {};
-            cdpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-            cdpci.maxSets = 1;
-            cdpci.poolSizeCount = 1;
-            cdpci.pPoolSizes = &cps;
-            Check(vkCreateDescriptorPool(g.device, &cdpci, nullptr, &g.cursorDsPool),
-                  "vkCreateDescriptorPool(cursor)");
-
-            VkDescriptorSetAllocateInfo cdsai = {};
-            cdsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-            cdsai.descriptorPool = g.cursorDsPool;
-            cdsai.descriptorSetCount = 1;
-            cdsai.pSetLayouts = &g.textDsLayout;
-            Check(vkAllocateDescriptorSets(g.device, &cdsai, &g.cursorDs),
-                  "vkAllocateDescriptorSets(cursor)");
-
-            VkDescriptorImageInfo cInfo = { g.textSampler, g.cursorView,
-                                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-            VkWriteDescriptorSet cw = {};
-            cw.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            cw.dstSet = g.cursorDs; cw.dstBinding = 0; cw.descriptorCount = 1;
-            cw.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            cw.pImageInfo = &cInfo;
-            vkUpdateDescriptorSets(g.device, 1, &cw, 0, nullptr);
-
-            // Pipeline: identical to the text pipeline except the fragment shader samples RGBA.
-            // Same TextVertex input, same premultiplied-alpha blend, same layout + render pass.
-            VkShaderModule cvert = MakeShader(text_vert_spv, text_vert_spv_len);
-            VkShaderModule cfrag = MakeShader(cursor_frag_spv, cursor_frag_spv_len);
-            VkPipelineShaderStageCreateInfo cstages[2] = {};
-            cstages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-            cstages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;   cstages[0].module = cvert; cstages[0].pName = "main";
-            cstages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-            cstages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT; cstages[1].module = cfrag; cstages[1].pName = "main";
-
-            VkVertexInputBindingDescription cbind = {};
-            cbind.binding = 0;
-            cbind.stride = sizeof(TextVertex);
-            cbind.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-            VkVertexInputAttributeDescription cattrs[3] = {};
-            cattrs[0] = { 0, 0, VK_FORMAT_R32G32_SFLOAT,  (uint32_t)offsetof(TextVertex, x) };
-            cattrs[1] = { 1, 0, VK_FORMAT_R32G32_SFLOAT,  (uint32_t)offsetof(TextVertex, u) };
-            cattrs[2] = { 2, 0, VK_FORMAT_R8G8B8A8_UNORM, (uint32_t)offsetof(TextVertex, r) };
-            VkPipelineVertexInputStateCreateInfo cvin = {};
-            cvin.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-            cvin.vertexBindingDescriptionCount = 1;
-            cvin.pVertexBindingDescriptions = &cbind;
-            cvin.vertexAttributeDescriptionCount = 3;
-            cvin.pVertexAttributeDescriptions = cattrs;
-
-            VkPipelineInputAssemblyStateCreateInfo cia = {};
-            cia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-            cia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-
-            VkPipelineViewportStateCreateInfo cvp = {};
-            cvp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-            cvp.viewportCount = 1; cvp.scissorCount = 1;   // viewport + scissor dynamic
-
-            VkPipelineRasterizationStateCreateInfo crs = {};
-            crs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-            crs.polygonMode = VK_POLYGON_MODE_FILL;
-            crs.cullMode = VK_CULL_MODE_NONE;
-            crs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-            crs.lineWidth = 1.0f;
-
-            VkPipelineMultisampleStateCreateInfo cms = {};
-            cms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-            cms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-            VkPipelineDepthStencilStateCreateInfo cdsst = {};   // depth test + write off
-            cdsst.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-
-            // Premultiplied-alpha blend: cursor.frag outputs (rgb*a, a), so src factor is ONE.
-            VkPipelineColorBlendAttachmentState ccba = {};
-            ccba.blendEnable = VK_TRUE;
-            ccba.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
-            ccba.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-            ccba.colorBlendOp = VK_BLEND_OP_ADD;
-            ccba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-            ccba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-            ccba.alphaBlendOp = VK_BLEND_OP_ADD;
-            ccba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
-                                | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-            VkPipelineColorBlendStateCreateInfo ccb = {};
-            ccb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-            ccb.attachmentCount = 1;
-            ccb.pAttachments = &ccba;
-
-            VkDynamicState cdyn[2] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
-            VkPipelineDynamicStateCreateInfo cdynState = {};
-            cdynState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-            cdynState.dynamicStateCount = 2;
-            cdynState.pDynamicStates = cdyn;
-
-            VkGraphicsPipelineCreateInfo cpci = {};
-            cpci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-            cpci.stageCount = 2;
-            cpci.pStages = cstages;
-            cpci.pVertexInputState = &cvin;
-            cpci.pInputAssemblyState = &cia;
-            cpci.pViewportState = &cvp;
-            cpci.pRasterizationState = &crs;
-            cpci.pMultisampleState = &cms;
-            cpci.pDepthStencilState = &cdsst;
-            cpci.pColorBlendState = &ccb;
-            cpci.pDynamicState = &cdynState;
-            cpci.layout = g.textPipelineLayout;
-            cpci.renderPass = g.renderPass;
-            cpci.subpass = 0;
-            Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &cpci, nullptr,
-                                            &g.cursorPipeline), "vkCreateGraphicsPipelines(cursor)");
-            vkDestroyShaderModule(g.device, cvert, nullptr);
-            vkDestroyShaderModule(g.device, cfrag, nullptr);
+            // Its own set on the text layout + sampler, and the text pipeline's twin with
+            // cursor.frag, which samples RGBA instead of the R8 glyph atlas.
+            CreateMenuImageSet(g.cursorView, "cursor", &g.cursorDsPool, &g.cursorDs);
+            g.cursorPipeline = CreateMenuQuadPipeline(cursor_frag_spv, cursor_frag_spv_len, "cursor");
 
             mt_set_cursor(1, sw, sh);
             printf("RB_Vulkan: menu cursor = real WAD skull M_SKULL1 (%dx%d RGBA, crisp).\n", sw, sh);
@@ -6481,31 +6385,7 @@ void CreateTextResources()
                                pixels, (VkDeviceSize)lw * lh * 4,
                                &g.logoImage, &g.logoMemory, &g.logoView);
 
-            VkDescriptorPoolSize lps = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 };
-            VkDescriptorPoolCreateInfo ldpci = {};
-            ldpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-            ldpci.maxSets = 1;
-            ldpci.poolSizeCount = 1;
-            ldpci.pPoolSizes = &lps;
-            Check(vkCreateDescriptorPool(g.device, &ldpci, nullptr, &g.logoDsPool),
-                  "vkCreateDescriptorPool(logo)");
-
-            VkDescriptorSetAllocateInfo ldsai = {};
-            ldsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-            ldsai.descriptorPool = g.logoDsPool;
-            ldsai.descriptorSetCount = 1;
-            ldsai.pSetLayouts = &g.textDsLayout;
-            Check(vkAllocateDescriptorSets(g.device, &ldsai, &g.logoDs),
-                  "vkAllocateDescriptorSets(logo)");
-
-            VkDescriptorImageInfo lInfo = { g.textSampler, g.logoView,
-                                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-            VkWriteDescriptorSet lw2 = {};
-            lw2.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            lw2.dstSet = g.logoDs; lw2.dstBinding = 0; lw2.descriptorCount = 1;
-            lw2.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            lw2.pImageInfo = &lInfo;
-            vkUpdateDescriptorSets(g.device, 1, &lw2, 0, nullptr);
+            CreateMenuImageSet(g.logoView, "logo", &g.logoDsPool, &g.logoDs);
 
             mt_set_logo(1, lw, lh);
             printf("RB_Vulkan: menu logo = real WAD M_DOOM (%dx%d RGBA, crisp).\n", lw, lh);
