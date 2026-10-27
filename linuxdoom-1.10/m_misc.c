@@ -630,8 +630,16 @@ void M_LoadDefaults (void)
 			if (!isstring)
 			    *defaults[i].location = parm;
 			else
-			    *(char **)defaults[i].location =
-				newstring;
+			{
+			    // A key given twice replaces the string an earlier
+			    // line malloc'd; the built-in default is a literal
+			    // and is never freed.
+			    char **slot = (char **)defaults[i].location;
+
+			    if (*slot != (char *)defaults[i].defaultvalue)
+				free (*slot);
+			    *slot = newstring;
+			}
 			break;
 		    }
 		// DOOM-0403: nothing owns newstring when the key matches no
