@@ -724,6 +724,20 @@ ST_Responder (event_t* ev)
 	&& (( epsd > 1) || (map > 34)))
 	return false;
 
+      // A WAD may stop short of the range checked above (DOOM II has no
+      // MAP33, a PWAD may replace only a few maps), and G_DoLoadLevel
+      // I_Errors on a missing map lump, so ask the WAD first.
+      {
+	char	lumpname[9];
+
+	if (gamemode == commercial)
+	  snprintf (lumpname, sizeof lumpname, "MAP%02d", map);
+	else
+	  snprintf (lumpname, sizeof lumpname, "E%dM%d", epsd, map);
+	if (W_CheckNumForName (lumpname) < 0)
+	  return false;
+      }
+
       // So be it.
       plyr->message = STSTR_CLEV;
       G_DeferedInitNew(gameskill, epsd, map);
