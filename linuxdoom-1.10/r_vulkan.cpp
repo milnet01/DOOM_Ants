@@ -6504,6 +6504,11 @@ static void FlushMenuText()
 
 static const int   kHdMaxImages = 4096;    // bindless image-array upper bound
 static const int   kHdMaxEdge   = 1024;    // per-map longest-edge clamp (px)
+// Largest HD source image decoded at all. The clamp above runs AFTER the decode, which
+// allocates the full image first: a 2^24-px PNG (stb's own limit) would ask for ~2 GB
+// for a moment. 4096 bounds that at 64 MB and still admits 4K source art (user decision
+// 2026-10-27).
+static const int   kHdSourceMaxEdge = 4096;
 static const float kHdBudgetMB  = 768.0f;  // per-map VRAM ceiling
 
 // v1 uploads 5 of the 7 maps; roughness (RB_RGH) and metallic (RB_MET) are skipped.
@@ -6917,6 +6922,12 @@ static void EnsureHdMaterials()
     float usedMB = 0.0f;
     int   capDropped = 0;
     auto decode = [&](const char* path, const char* what, rb_image_t* img) -> bool {
+        int iw = 0, ih = 0;
+        if (rb_image_info(path, &iw, &ih) && (iw > kHdSourceMaxEdge || ih > kHdSourceMaxEdge)) {
+            printf("DOOM-0042: %s: %s is %dx%d, over the %d px source limit - skipped.\n",
+                   what, path, iw, ih, kHdSourceMaxEdge);
+            return false;
+        }
         if (!rb_image_load(path, img)) {
             printf("DOOM-0042: %s: %s would not decode - skipped.\n", what, path);
             return false;
