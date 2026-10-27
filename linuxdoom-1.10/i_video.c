@@ -186,6 +186,17 @@ static void I_CloseGamepad(void)
     }
 }
 
+// Open the first connected game controller, if none is open yet. Used at
+// start-up and when the tracked pad is unplugged, so a second pad that is
+// still connected takes over.
+static void I_OpenFirstGamepad(void)
+{
+    int i;
+
+    for (i = 0 ; i < SDL_NumJoysticks() && !gamepad ; i++)
+	I_OpenGamepad(i);
+}
+
 
 //
 // Posts a synthetic key event only when the held state changes, so a held
@@ -699,6 +710,7 @@ static void I_GetEvent(SDL_Event* sdlevent)
 	break;
 
       case SDL_CONTROLLERDEVICEADDED:
+	// cdevice.which is a device index here; a no-op while a pad is tracked.
 	I_OpenGamepad(sdlevent->cdevice.which);
 	break;
 
@@ -707,7 +719,10 @@ static void I_GetEvent(SDL_Event* sdlevent)
 	if (gamepad
 	    && sdlevent->cdevice.which
 	       == SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(gamepad)))
+	{
 	    I_CloseGamepad();
+	    I_OpenFirstGamepad();	// hand over to another pad still plugged in
+	}
 	break;
 
       default:
@@ -1405,15 +1420,7 @@ void I_InitGraphics(void)
     // CONTROLLERDEVICEADDED for each already-connected pad, but open any here
     // too so the first frame already has input.
     if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) == 0)
-    {
-	int i;
-	for (i = 0 ; i < SDL_NumJoysticks() ; i++)
-	{
-	    I_OpenGamepad(i);
-	    if (gamepad)
-		break;
-	}
-    }
+	I_OpenFirstGamepad();
 
     // screens[0] is allocated by V_Init; we only read it here.
 }
