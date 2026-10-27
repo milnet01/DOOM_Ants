@@ -632,8 +632,10 @@ int W_GetNumForName (char* name)
 //
 int W_LumpLength (int lump)
 {
-    if (lump >= numlumps)
-	I_Error ("W_LumpLength: %i >= numlumps",lump);
+    // Unsigned, as W_CacheLumpNum does: a negative lump -- W_CheckNumForName's
+    // -1 -- read lumpinfo[-1].
+    if ((unsigned)lump >= (unsigned)numlumps)
+	I_Error ("W_LumpLength: lump %i is outside 0..%i",lump,numlumps-1);
 
     return lumpinfo[lump].size;
 }
