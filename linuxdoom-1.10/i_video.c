@@ -662,8 +662,10 @@ static void I_GetEvent(SDL_Event* sdlevent)
       case SDL_MOUSEMOTION:
 	event.type = ev_mouse;
 	event.data1 = mousebuttons(sdlevent->motion.state);
-	event.data2 = sdlevent->motion.xrel << 2;
-	event.data3 = -sdlevent->motion.yrel << 2;
+	// x4 as the X11 layer scaled it; a multiply, because << on the negative
+	// half of every motion is undefined in C.
+	event.data2 = sdlevent->motion.xrel * 4;
+	event.data3 = -sdlevent->motion.yrel * 4;
 	if (event.data2 || event.data3)
 	    D_PostEvent(&event);
 	break;
