@@ -491,6 +491,15 @@ void P_UnArchiveThinkers (void)
 	    mobj->state = &states[P_SaveIndex ((int)(intptr_t)mobj->state,
 					       NUMSTATES, "mobj state")];
 	    mobj->target = NULL;
+	    // tracer is the other mobj pointer in the image, and vanilla left it
+	    // as the raw address it held in the session that SAVED -- every mobj
+	    // of which P_RemoveMobj has just freed. A_Tracer and A_Fire read
+	    // through it, and A_VileAttack writes the x/y of the mobj it names,
+	    // so a stale or crafted value is a use-after-free write. (A_Fire
+	    // also hands the target cleared above to P_CheckSight, which
+	    // dereferences it.) Cleared like target: a revenant missile in
+	    // flight stops homing, and an arch-vile's flame stops following.
+	    mobj->tracer = NULL;
 	    if (mobj->player)
 	    {
 		// Stored 1-based so that 0 can mean "not a player" in the field
