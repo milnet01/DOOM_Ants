@@ -8311,13 +8311,31 @@ void BuildFogLightGrid()
 // major R[4] G[4] B[4]). Must match the bake shader and the megakernel's read.
 static const uint32_t PROBE_FLOATS = 16;
 
+// Make this command buffer's earlier device writes visible to the host, for a buffer
+// the CPU maps and reads once the submit has been waited on. The wait is not enough on
+// its own: a fence's (or vkQueueWaitIdle's) memory dependency covers device access
+// only, so the spec ("Fences", and "Host Access Types") requires a barrier into
+// HOST_READ before the host may read what the GPU wrote. Every GPU-to-host readback
+// here -- the GI bake check, -rtverify, -shotverify and the dev screenshot -- ends
+// its recording with one.
+static void RecordHostReadBarrier(VkCommandBuffer cb, VkPipelineStageFlags srcStage,
+                                  VkAccessFlags srcAccess)
+{
+    VkMemoryBarrier mb = {};
+    mb.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    mb.srcAccessMask = srcAccess;
+    mb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+    vkCmdPipelineBarrier(cb, srcStage, VK_PIPELINE_STAGE_HOST_BIT, 0,
+                         1, &mb, 0, nullptr, 0, nullptr);
+}
+
 // Run the GI bake (DOOM-0009 build step 4b-ii): dispatch bake.comp once over the
 // just-placed probe buffer, filling each probe's SH-L1 radiance, then read it back
 // to verify the bake produced finite, non-zero values. Called at the tail of
 // BuildProbes (positions uploaded, SH zeroed). Needs the per-level TLAS + the
 // materials/emitter/Le buffers, so it runs after BuildAccelerationStructures and
-// BuildEmitterList. The probe buffer is host-visible + coherent, so after the
-// one-shot dispatch waits idle, the host map sees the GPU's writes directly.
+// BuildEmitterList. The probe buffer is host-visible + coherent; the last bounce's
+// host-read barrier makes its writes visible to the map once that dispatch is waited on.
 void RunGiBake()
 {
     if (!g.rtEnabled || g.probeBuf == VK_NULL_HANDLE || g.probeCount == 0 ||
@@ -8381,6 +8399,8 @@ void RunGiBake()
                                 g.bakePipeLayout, 0, 2, sets, 0, nullptr);
         vkCmdPushConstants(cb, g.bakePipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(bp), &bp);
         vkCmdDispatch(cb, (g.probeCount + 63) / 64, 1, 1);
+        if (b == BOUNCES - 1)   // the CPU reads the final bounce back below
+            RecordHostReadBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT);
         EndOneTime(cb);   // waits idle: this bounce is done before the next reads it
         std::swap(wbuf, rbuf);
     }
@@ -8569,6 +8589,7 @@ bool RB_RtVerify()
             region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
             region.imageExtent      = { W, H, 1 };
             vkCmdCopyImageToBuffer(cb, g.rtAccum, VK_IMAGE_LAYOUT_GENERAL, g.rtReadback, 1, &region);
+            RecordHostReadBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
             EndOneTime(cb);
         }
 
@@ -9792,6 +9813,7 @@ void RecordRtTrace(uint32_t idx)
         region.imageExtent      = { dispW, dispH, 1 };
         vkCmdCopyImageToBuffer(g.cmd, finalImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                g.shotBuf, 1, &region);
+        RecordHostReadBarrier(g.cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
         g.shotW = dispW; g.shotH = dispH;
     }
 
@@ -11232,6 +11254,7 @@ extern "C" void RB_Vulkan_Present(void)
             region.imageExtent      = { g.extent.width, g.extent.height, 1 };
             vkCmdCopyImageToBuffer(g.cmd, g.images[idx], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                    g.devShotBuf, 1, &region);
+            RecordHostReadBarrier(g.cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
 
             VkImageMemoryBarrier back = toSrc;
             back.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
