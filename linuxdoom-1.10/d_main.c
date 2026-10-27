@@ -382,6 +382,8 @@ void D_Display (void)
 	{
 	    nowtime = I_GetTime ();
 	    tics = nowtime - wipestart;
+	    if (!tics)
+		I_Sleep (1);	// yield until the next tic, as TryRunTics does
 	} while (!tics);
 	wipestart = nowtime;
 	done = wipe_ScreenWipe(wipe_Melt
