@@ -7511,6 +7511,17 @@ void BuildDynamicEmitters()
     }
 }
 
+// DOOM-0119: does the REJECT matrix say sector secA cannot see sector secE? Both are
+// in [0, g.numSectors), which BuildProbes has checked the matrix is big enough for. The
+// bit index is taken in 64 bits: secA * numSectors passes INT_MAX from 46341 sectors,
+// and a WAD that size (with the REJECT lump it then needs) is untrusted input like any
+// other, so the int product the two culls used to form was undefined behaviour.
+static bool RejectHides(int secA, int secE)
+{
+    const uint64_t bit = (uint64_t)secA * g.numSectors + (uint64_t)secE;
+    return (g.rejectCPU[bit >> 3] >> (bit & 7)) & 1u;
+}
+
 // DOOM-0170 perf: recompute the per-subsector nearest-N cache over the STATIC emitters
 // only (records [0, staticN) — wall/flat lights that never move, so each is tested against
 // EVERY subsector, skipping only the pairs REJECT hides, DOOM-0497). This
@@ -7578,12 +7589,9 @@ static void RebuildStaticPointLightCache(int staticN)
         int   cnt = 0;
         for (int e = 0; e < staticN; e++)
         {
-            if (secA >= 0 && es[(size_t)e] >= 0 && es[(size_t)e] < (int)g.numSectors)
-            {
-                const int pnum = secA * (int)g.numSectors + es[(size_t)e];
-                if (g.rejectCPU[pnum >> 3] & (1 << (pnum & 7)))
-                    continue;                     // this sector provably can't see the emitter
-            }
+            if (secA >= 0 && es[(size_t)e] >= 0 && es[(size_t)e] < (int)g.numSectors
+                && RejectHides(secA, es[(size_t)e]))
+                continue;                         // this sector provably can't see the emitter
             const float dx = sc[e * 3 + 0] - c.x;
             const float dy = sc[e * 3 + 1] - c.y;
             const float d2 = dx * dx + dy * dy;
@@ -7747,12 +7755,9 @@ void BuildRasterPointLights()
             if (cull && secA >= 0)
             {
                 const uint32_t secE = d < esN ? es[d] : 0xFFFFFFFFu;
-                if (secE != 0xFFFFFFFFu && (int)secE < (int)g.numSectors)
-                {
-                    const int pnum = secA * (int)g.numSectors + (int)secE;
-                    if (g.rejectCPU[pnum >> 3] & (1 << (pnum & 7)))
-                        continue;                  // this sector provably can't see the emitter
-                }
+                if (secE != 0xFFFFFFFFu && (int)secE < (int)g.numSectors
+                    && RejectHides(secA, (int)secE))
+                    continue;                      // this sector provably can't see the emitter
             }
             const float dx = ec[d * 3 + 0] - c.x;
             const float dy = ec[d * 3 + 1] - c.y;
