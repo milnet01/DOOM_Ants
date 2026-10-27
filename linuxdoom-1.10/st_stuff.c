@@ -676,8 +676,10 @@ ST_Responder (event_t* ev)
       }
     }
     
-    // 'clev' change-level cheat
-    if (cht_CheckCheat(&cheat_clev, ev->data1))
+    // 'clev' change-level cheat. Vanilla left it outside the !netgame block
+    // above, so one player could warp alone and desync the game; it is
+    // single-player only now, like the other cheats.
+    if (!netgame && cht_CheckCheat(&cheat_clev, ev->data1))
     {
       char		buf[3];
       int		epsd;
@@ -687,7 +689,9 @@ ST_Responder (event_t* ev)
       
       if (gamemode == commercial)
       {
-	epsd = 0;
+	// DOOM II plays every map as episode 1. Vanilla set 0 here, which the
+	// epsd < 1 check below rejected, so idclev never worked in DOOM II.
+	epsd = 1;
 	map = (buf[0] - '0')*10 + buf[1] - '0';
       }
       else
