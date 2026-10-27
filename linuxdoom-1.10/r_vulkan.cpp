@@ -5805,6 +5805,10 @@ static bool UploadImageBatch(const std::vector<BatchImage>& imgs, Fill fill,
     images.assign(n, VK_NULL_HANDLE);
     views.assign(n, VK_NULL_HANDLE);
     memory = VK_NULL_HANDLE;
+    // Nothing to upload is not a failure, but a zero-size allocation and staging
+    // buffer are both invalid Vulkan, so stop before asking for them.
+    if (n == 0)
+        return true;
     auto giveUp = [&]() {
         for (VkImage im : images) if (im) vkDestroyImage(g.device, im, nullptr);
         images.clear();
@@ -6055,7 +6059,8 @@ void UploadAtlas()
     warr.descriptorCount = (uint32_t)n;
     warr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     warr.pImageInfo = infos.data();
-    vkUpdateDescriptorSets(g.device, 1, &warr, 0, nullptr);
+    if (n > 0)   // descriptorCount must be non-zero
+        vkUpdateDescriptorSets(g.device, 1, &warr, 0, nullptr);
 
     UploadSurfaceMaps(a);   // DOOM-0273: needs a->pixels/covered/names, freed below
 
