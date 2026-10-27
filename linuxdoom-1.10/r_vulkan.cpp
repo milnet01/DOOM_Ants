@@ -160,17 +160,6 @@ static bool DeviceHasBindless(VkPhysicalDevice d)
 // clean), so the values are mirrored here with this contract instead.
 enum { TIER_CLASSIC = 0, TIER_RT3D = 1, TIER_RASTER3D = 2 };
 
-//
-// RB_VulkanProbe — pick the best 3D tier this machine supports.
-//
-// RT3D     : a device exposing VK_KHR_acceleration_structure + VK_KHR_ray_query
-//            (hardware ray tracing — the full path-traced tier).
-// Raster3D : a Vulkan device, but without those ray-tracing extensions.
-// Classic  : no usable Vulkan at all (caller stays on the software renderer).
-//
-// Headless: no SDL window or VkSurface is created, so this is safe to call at
-// startup before any window rework (per the spec's Window & device ownership).
-//
 // A device's extensions, or none if the query itself fails (DOOM-0412). Both callers
 // only ask "is extension X there?", so "none" is the safe answer: the device is
 // treated as lacking ray tracing rather than trusted on a failed enumeration.
@@ -186,6 +175,17 @@ static std::vector<VkExtensionProperties> DeviceExtensions(VkPhysicalDevice d)
     return exts;
 }
 
+//
+// RB_VulkanProbe — pick the best 3D tier this machine supports.
+//
+// RT3D     : a device exposing VK_KHR_acceleration_structure + VK_KHR_ray_query
+//            (hardware ray tracing — the full path-traced tier).
+// Raster3D : a Vulkan device, but without those ray-tracing extensions.
+// Classic  : no usable Vulkan at all (caller stays on the software renderer).
+//
+// Headless: no SDL window or VkSurface is created, so this is safe to call at
+// startup before any window rework (per the spec's Window & device ownership).
+//
 extern "C" int RB_VulkanProbe(void)
 {
     // Probe once and cache: RB_Init logs it, and the back-end Available()
@@ -687,8 +687,8 @@ struct VulkanState
     int                      hdGrungeIdx = -1;      // DOOM-0179: world-grime overlay slot in
                                                     // the hdTex[] array (-1 = none loaded)
     int                      hdDirtIdx = -1;        // DOOM-0181: world-space dirt colour texture
-    int                      hdMaxImages = 1;       // DOOM-0410: kHdMaxImages clamped to the device
                                                     // slot in hdTex[] (-1 = none loaded)
+    int                      hdMaxImages = 1;       // DOOM-0410: kHdMaxImages clamped to the device
 
     VkDescriptorSetLayout dsLayout = VK_NULL_HANDLE;
     VkDescriptorPool      dsPool   = VK_NULL_HANDLE;
@@ -850,7 +850,7 @@ struct VulkanState
     // (passed to the trace in misc4.w for the panorama sample).
     VkBuffer                   skyMeshBuf   = VK_NULL_HANDLE;
     VkDeviceMemory             skyMeshMem   = VK_NULL_HANDLE;
-    uint32_t                   skyMeshVerts = 0;   // distinct from raster skyVertCount (line ~286)
+    uint32_t                   skyMeshVerts = 0;   // distinct from the raster skyVertCount above
     int                        skyMeshTexnum = 0;
     VkAccelerationStructureKHR skyBlas      = VK_NULL_HANDLE;
     VkBuffer                   skyBlasBuf   = VK_NULL_HANDLE;
@@ -2042,9 +2042,6 @@ VkDeviceAddress BufferAddress(VkBuffer b)
     return vkGetBufferDeviceAddress(g.device, &i);
 }
 
-// Buffer + dedicated allocation for ray-tracing use (AS storage, scratch, the TLAS
-// instance array). When the usage includes SHADER_DEVICE_ADDRESS the allocation
-// gets the device-address flag so BufferAddress works.
 // "call(tag)" for a Check message. The buffer is reused, so hand it straight to Check.
 static const char* VkWhat(const char* call, const char* tag)
 {
@@ -2053,6 +2050,9 @@ static const char* VkWhat(const char* call, const char* tag)
     return msg;
 }
 
+// Buffer + dedicated allocation for ray-tracing use (AS storage, scratch, the TLAS
+// instance array). When the usage includes SHADER_DEVICE_ADDRESS the allocation
+// gets the device-address flag so BufferAddress works.
 void CreateRtBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
                     VkMemoryPropertyFlags props,
                     VkBuffer* buf, VkDeviceMemory* mem, const char* tag = "rt")
@@ -2967,10 +2967,6 @@ void CreateBakePipeline()
     CreateComputePipe(bake_comp_spv, bake_comp_spv_len, g.bakePipeLayout, "bake", &g.bakePipeline);
 }
 
-// (Re)create the swapchain-sized storage image the compute pass writes and the
-// blit reads. R8G8B8A8_UNORM so vkCmdBlitImage matches components by name into
-// the B8G8R8A8 swapchain with no red/blue swap. STORAGE (compute) + TRANSFER_SRC
-// (blit). RT-only.
 // SVGF descriptor-set layout (DOOM-0009 build step 6). Created BEFORE the
 // path-trace pipeline (whose layout references it as set 2). One set shared by the
 // megakernel's mode-6 feed and all three denoiser passes: nine storage-image
@@ -3435,6 +3431,10 @@ void CreateTaauTargets()
     WriteTaauDescriptor();
 }
 
+// (Re)create the swapchain-sized storage image the compute pass writes and the
+// blit reads. R8G8B8A8_UNORM so vkCmdBlitImage matches components by name into
+// the B8G8R8A8 swapchain with no red/blue swap. STORAGE (compute) + TRANSFER_SRC
+// (blit). RT-only.
 void CreateRtTargets()
 {
     CreateImage({ g.extent.width, g.extent.height, 1 }, VK_FORMAT_R8G8B8A8_UNORM,
@@ -3634,17 +3634,9 @@ void BuildFogNoiseVolume()
     vkUpdateDescriptorSets(g.device, 1, &wr, 0, nullptr);
 }
 
-// DOOM-0011 L1d: (re)upload the outdoor-proximity seep field and re-point set 0's
-// bindings 4 and 5 at it. Called once at pipeline creation with a 1x1 placeholder
-// -- the descriptors have to be valid before the first dispatch, and the first level
-// is not built until later -- then again from RB_Vulkan_BuildLevel with the real
-// field. `f` may be null, which means "use the placeholder": every cell reads
-// RB_SEEP_DMAX and "roofed", so the seep contributes nothing and every fog sample
-// takes the indoor branch. DOOM-0276 made that second half load-bearing -- the mask
-// now decides `openSky`, which the up-ray used to decide on its own -- so the
-// placeholder would flatten the outdoor fog too. It cannot be observed: it is live
-// only between pipeline creation and the first RB_Vulkan_BuildLevel, and there is no
-// level to render in that window.
+// float -> IEEE half: the mantissa is truncated, what would be a half denormal flushes
+// to zero, and anything too large (inf and NaN included) saturates to the largest finite
+// half rather than becoming an inf.
 static uint16_t FloatToHalf(float f)
 {
     uint32_t x;
@@ -3682,6 +3674,18 @@ static void PackSeepTexels(uint16_t* dst)
     }
 }
 
+// DOOM-0011 L1d: (re)upload the outdoor-proximity seep field and re-point set 0's
+// bindings 4 and 5 at it. Called once at pipeline creation with a 1x1 placeholder
+// -- the descriptors have to be valid before the first dispatch, and the first level
+// is not built until later -- then again from RB_Vulkan_BuildLevel with the real
+// field. `f` may be null, which means "use the placeholder": every cell reads
+// RB_SEEP_DMAX and "roofed", so the seep contributes nothing and every fog sample
+// takes the indoor branch. DOOM-0276 made that second half load-bearing -- the mask
+// now decides `openSky`, which the up-ray used to decide on its own -- so the
+// placeholder would flatten the outdoor fog too. It cannot be observed: it is live
+// only between pipeline creation and the first RB_Vulkan_BuildLevel, and there is no
+// level to render in that window.
+//
 // DOOM-0289: takes OWNERSHIP of `f`. It is retained as g.seepField because it carries
 // the per-cell geometry cache the clearance-only rebuild marches over; the caller must
 // NOT free it afterwards. Passing nullptr (the placeholder path) clears the retained
@@ -4258,14 +4262,6 @@ void DestroySceneTarget()
     }
 }
 
-// DOOM-0170 L2c — build the flashlight cast-shadow map (§4.4): a fixed 2048^2 depth image
-// the world renders into from the torch's viewpoint, plus its render pass, framebuffer,
-// sampler, the lightVP uniform buffer mesh.frag reads, and the set-1 descriptor. All
-// size-independent (never rebuilt on resize), so this runs once at init. The shadow
-// PIPELINE is built in CreatePipeline (it reuses that function's vertex-input state);
-// this only needs g.shadowPass + g.shadowPipeLayout ready before then. Requires the
-// command pool (the one-time layout park) + g.dsLayout (the shadow pipeline layout binds
-// set 0 for the material array), so RB_Vulkan_Init calls it after CreateDescriptors.
 // mesh.frag's ShadowUbo (set 1, binding 1), byte for byte. lightVP is written on
 // torch-on frames; DOOM-0273's flags every raster frame: x = surface detail
 // (SurfaceDetailLane), y = reserved for DOOM-0103, z = surface-map base, w = free.
@@ -4276,6 +4272,14 @@ struct ShadowUboData
 };
 static_assert(offsetof(ShadowUboData, flags) == 64, "flags follows lightVP, as in mesh.frag");
 
+// DOOM-0170 L2c — build the flashlight cast-shadow map (§4.4): a fixed 2048^2 depth image
+// the world renders into from the torch's viewpoint, plus its render pass, framebuffer,
+// sampler, the lightVP uniform buffer mesh.frag reads, and the set-1 descriptor. All
+// size-independent (never rebuilt on resize), so this runs once at init. The shadow
+// PIPELINE is built in CreatePipeline (it reuses that function's vertex-input state);
+// this only needs g.shadowPass + g.shadowPipeLayout ready before then. Requires the
+// command pool (the one-time layout park) + g.dsLayout (the shadow pipeline layout binds
+// set 0 for the material array), so RB_Vulkan_Init calls it after CreateDescriptors.
 void CreateShadowResources()
 {
     const uint32_t dim = VulkanState::kShadowDim;
@@ -5540,9 +5544,6 @@ static uint32_t DeviceMaxImage2D()
     return pdp.limits.maxImageDimension2D;
 }
 
-// Build the paletted texture atlas (r_mesh.c), upload the atlas + PLAYPAL LUT
-// images and the per-id rect table, and write descriptor set 0. WAD-global, so
-// this runs once on the first level build and is reused thereafter.
 // Persistently-mapped, host-visible vertex buffer for the per-frame billboard
 // sprites. Sized once for a generous cap; RB_BuildSprites refills it each frame.
 void CreateSpriteBuffer()
