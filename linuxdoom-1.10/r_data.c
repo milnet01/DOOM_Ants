@@ -643,7 +643,6 @@ void R_InitTextures (void)
     // Load the patch names from pnames.lmp.
     name[8] = 0;	
     names = W_CacheLumpName ("PNAMES", PU_STATIC);
-    nummappatches = LONG ( *((int *)names) );
     name_p = names+4;
     // DOOM-0254: PNAMES declares its own entry count, so a crafted lump can
     // claim more 8-byte names than it actually holds. Bound it by the lump.
@@ -652,6 +651,9 @@ void R_InitTextures (void)
     {
 	int	pnameslen = W_LumpLength (W_GetNumForName ("PNAMES"));
 
+	// The count is the lump's first four bytes, so a lump shorter than
+	// that has no count to read; -1 is one WadCountFitsLump refuses.
+	nummappatches = pnameslen < 4 ? -1 : LONG ( *((int *)names) );
 	if (!WadCountFitsLump (nummappatches, pnameslen, 4, 8))
 	    I_Error ("R_InitTextures: PNAMES declares %d patches but the lump "
 		     "holds %d", nummappatches, (pnameslen - 4) / 8);
@@ -674,8 +676,9 @@ void R_InitTextures (void)
     // The data is contained in one or two lumps,
     //  TEXTURE1 for shareware, plus TEXTURE2 for commercial.
     maptex = maptex1 = W_CacheLumpName ("TEXTURE1", PU_STATIC);
-    numtextures1 = LONG(*maptex);
     maxoff = W_LumpLength (W_GetNumForName ("TEXTURE1"));
+    // As PNAMES above: no count to read in a lump shorter than one.
+    numtextures1 = maxoff < 4 ? -1 : LONG(*maptex);
     // DOOM-0402: the same self-declared-count shape PNAMES has above, and it
     // was unbounded. The walk below steps `directory` once per texture and
     // reads it BEFORE the per-entry offset check can judge anything, so a
@@ -688,8 +691,8 @@ void R_InitTextures (void)
     if (W_CheckNumForName ("TEXTURE2") != -1)
     {
 	maptex2 = W_CacheLumpName ("TEXTURE2", PU_STATIC);
-	numtextures2 = LONG(*maptex2);
 	maxoff2 = W_LumpLength (W_GetNumForName ("TEXTURE2"));
+	numtextures2 = maxoff2 < 4 ? -1 : LONG(*maptex2);
 	if (!WadCountFitsLump (numtextures2, maxoff2, 4, 4))
 	    I_Error ("R_InitTextures: TEXTURE2 declares %d textures but the "
 		     "lump holds %d", numtextures2, (maxoff2 - 4) / 4);
