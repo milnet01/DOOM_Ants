@@ -76,14 +76,17 @@ float ign(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00
 void main()
 {
     float z = sampleZ(vUV);
+    vec3  P = viewPos(vUV, z);
+    // View normal from screen-space derivatives of the reconstructed position. Cheap, and it
+    // avoids a dedicated normal target; slightly noisy at silhouettes, which the range check
+    // and the composite blur absorb. Taken BEFORE the early-outs below: z is per pixel, so a
+    // 2x2 quad can straddle a sky or sprite edge, and a derivative read across lanes that
+    // have already returned is undefined (GLSL: derivatives need uniform control flow).
+    vec3  dPx = dFdx(P), dPy = dFdy(P);
     if (z >= 50000.0) { outAO = 1.0; return; }   // sky / far backdrop: never occluded
     if (z <= 0.0)     { outAO = 1.0; return; }   // sprite billboard (negative-tagged): no AO on monsters/items
 
-    vec3 P = viewPos(vUV, z);
-    // View normal from screen-space derivatives of the reconstructed position. Cheap, and it
-    // avoids a dedicated normal target; slightly noisy at silhouettes, which the range check
-    // and the composite blur absorb.
-    vec3 N = normalize(cross(dFdx(P), dFdy(P)));
+    vec3 N = normalize(cross(dPx, dPy));
 
     // Random rotation basis (TBN) around the normal.
     float ang  = ign(gl_FragCoord.xy) * 6.2831853;
