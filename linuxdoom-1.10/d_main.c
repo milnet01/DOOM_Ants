@@ -693,6 +693,14 @@ void D_AddFile (char *file)
     for (numwadfiles = 0 ; wadfiles[numwadfiles] ; numwadfiles++)
 	;
 
+    // wadfiles[] is NULL-terminated for W_InitMultipleFiles and the scan
+    // above, so it holds MAXWADFILES-1 names. Vanilla wrote past the end on a
+    // long -file list, over whatever global follows, and the next scan then
+    // read on into it looking for the NULL.
+    if (numwadfiles >= MAXWADFILES-1)
+	I_Error ("D_AddFile: too many files (at most %d), cannot add %s",
+		 MAXWADFILES-1, file);
+
     newfile = malloc (strlen(file)+1);
     if (!newfile)
 	I_Error ("D_AddFile: out of memory adding %s", file);
