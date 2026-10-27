@@ -497,7 +497,7 @@ void R_GenerateLookup (int texnum)
     {
 	if (!patchcount[x] && !warned)
 	{
-	    printf ("R_GenerateLookup: column without a patch (%s)\n",
+	    printf ("R_GenerateLookup: column without a patch (%.8s)\n",
 		    texture->name);
 	    warned = true;
 	}
@@ -797,12 +797,12 @@ void R_InitTextures (void)
 	    // unchecked value reads either side of the table.
 	    if (SHORT(mpatch->patch) < 0
 		|| SHORT(mpatch->patch) >= nummappatches)
-		I_Error ("R_InitTextures: texture %s names patch %d of %d",
+		I_Error ("R_InitTextures: texture %.8s names patch %d of %d",
 			 texture->name, SHORT(mpatch->patch), nummappatches);
 	    patch->patch = patchlookup[SHORT(mpatch->patch)];
 	    if (patch->patch == -1)
 	    {
-		I_Error ("R_InitTextures: Missing patch in texture %s",
+		I_Error ("R_InitTextures: Missing patch in texture %.8s",
 			 texture->name);
 	    }
 	}		
@@ -1140,7 +1140,9 @@ int	R_TextureNumForName (char* name)
 
     if (i==-1)
     {
-	I_Error ("R_TextureNumForName: %s not found",
+	// %.8s: a sidedef's texture names fill all eight bytes with no
+	// terminator, so %s ran on into the next field of the WAD record.
+	I_Error ("R_TextureNumForName: %.8s not found",
 		 name);
     }
     return i;
