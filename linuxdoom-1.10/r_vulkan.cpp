@@ -4468,15 +4468,25 @@ void CreateRenderPass()
     // renderPass/scenePass, whose colour is CLEARed and never transfer-written
     // beforehand — a wider EXTERNAL dependency is strictly more synchronisation,
     // never less, so widening cannot break them.
+    //
+    // The depth half: every one of these passes CLEARs g.depthImage from UNDEFINED, and
+    // the raster frame runs two of them back to back on it (scenePass, then renderPass
+    // for the composite + HUD). The clear and its layout transition are WRITES, and the
+    // previous pass's depth writes and DONT_CARE store land at LATE_FRAGMENT_TESTS. A
+    // write-after-write needs a memory dependency, not just an execution one, so the
+    // source scope names that stage and DEPTH_STENCIL_ATTACHMENT_WRITE; without them
+    // the clear was ordered after the earlier writes but not after their availability.
     VkSubpassDependency dep = {};
     dep.srcSubpass = VK_SUBPASS_EXTERNAL;
     dep.dstSubpass = 0;
     dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
                        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                       VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
                        VK_PIPELINE_STAGE_TRANSFER_BIT;
     dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
                        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-    dep.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    dep.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT |
+                        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
                         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
                         VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
