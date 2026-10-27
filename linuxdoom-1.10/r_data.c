@@ -39,6 +39,7 @@ rcsid[] __attribute__((used)) = "$Id: r_data.c,v 1.4 1997/02/03 16:47:55 b1 Exp 
 
 #include "wad_bounds.h"
 #include "patch_bounds.h"
+#include "palette_bounds.h"
 #include "p_local.h"
 
 #include "doomstat.h"
@@ -916,17 +917,28 @@ void R_InitSpriteLumps (void)
 //
 // R_InitColormaps
 //
+// The readers' reach, in palette_bounds.h's terms: every light level, plus the
+// one fixedcolormap index past them (INVERSECOLORMAP, p_user.c).
+_Static_assert (COLORMAP_MAPS == NUMCOLORMAPS + 1,
+		"COLORMAP_MAPS must cover NUMCOLORMAPS light levels plus the "
+		"inverse map");
+
 void R_InitColormaps (void)
 {
     int	lump, length;
-    
-    // Load in the light tables, 
+
+    // Load in the light tables,
     //  256 byte align tables.
-    lump = W_GetNumForName("COLORMAP"); 
-    length = W_LumpLength (lump) + 255; 
-    colormaps = Z_Malloc (length, PU_STATIC, 0);
+    lump = W_GetNumForName("COLORMAP");
+    // A PWAD's COLORMAP is untrusted (security.md): the block was sized by the
+    // lump's own length while every reader indexes 33 fixed maps, so a short
+    // lump was read past its end on every rendered column. palette_bounds.h
+    // owns the size; the padding past a short lump reads as black.
+    length = ColormapAllocBytes (W_LumpLength (lump));
+    colormaps = Z_Malloc (length + 255, PU_STATIC, 0);
     colormaps = (byte *)( ((uintptr_t)colormaps + 255)&~0xff);
-    W_ReadLump (lump,colormaps); 
+    memset (colormaps, 0, length);
+    W_ReadLump (lump,colormaps);
 }
 
 

@@ -65,5 +65,27 @@ int main()
     check(PaletteIndexFits(1, 1535) == 0,
 	  "a palette one byte short of complete is refused");
 
+    // --- COLORMAP: the light tables every reader indexes as 256-byte maps. ---
+    // Both shipped IWADs carry 34 maps; the readers reach map 32 (INVERSECOLORMAP).
+    const int kRealColormap = 34 * 256;
+
+    check(COLORMAP_MIN_BYTES == 33 * 256,
+	  "a COLORMAP must cover the 32 light levels plus the inverse map");
+    check(ColormapAllocBytes(kRealColormap) == kRealColormap,
+	  "the shipped 34-map COLORMAP gets exactly the block it always did");
+    check(ColormapAllocBytes(kRealColormap * 2) == kRealColormap * 2,
+	  "a longer COLORMAP is allocated at its own length, not truncated");
+    check(ColormapAllocBytes(COLORMAP_MIN_BYTES) == COLORMAP_MIN_BYTES,
+	  "a COLORMAP ending exactly at the inverse map needs no padding");
+
+    // The over-read: a short lump used to get a block of its own size, and the
+    // invulnerability map (and the deeper light levels) read past it.
+    check(ColormapAllocBytes(32 * 256) == COLORMAP_MIN_BYTES,
+	  "a COLORMAP missing the inverse map is padded to cover it");
+    check(ColormapAllocBytes(256) == COLORMAP_MIN_BYTES,
+	  "a single-map COLORMAP is padded to every map a reader indexes");
+    check(ColormapAllocBytes(0) == COLORMAP_MIN_BYTES,
+	  "an empty COLORMAP still gets a block every reader can index");
+
     return check_summary("palette_bounds");
 }

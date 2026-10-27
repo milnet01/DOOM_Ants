@@ -62,4 +62,27 @@ static inline int PaletteIndexFits (int palette, int lumplen)
     return lumplen >= (palette + 1) * PALETTE_BYTES;
 }
 
+// COLORMAP, the light tables, has the same shape of problem: R_InitColormaps
+// read the lump into a block sized by the lump's own length, and every reader
+// indexes it as fixed-size 256-byte maps. R_InitLightTables hands out maps 0
+// through NUMCOLORMAPS-1, and R_SetupFrame's fixedcolormap reaches one further,
+// to INVERSECOLORMAP (32) for invulnerability -- 33 maps, which is what a reader
+// needs. Both shipped IWADs carry 34 (the last one is unused), so nothing
+// legitimate is near the edge. r_data.c static-asserts COLORMAP_MAPS against
+// NUMCOLORMAPS so the two cannot drift apart.
+#define COLORMAP_BYTES		256
+#define COLORMAP_MAPS		33
+#define COLORMAP_MIN_BYTES	(COLORMAP_MAPS * COLORMAP_BYTES)
+
+// How many bytes R_InitColormaps allocates for a COLORMAP lump of `lumplen`
+// bytes: the lump, but never less than every reader indexes. A short lump is
+// zero-padded by the caller rather than refused -- REJECT's posture in
+// P_SetupLevel -- so a PWAD whose COLORMAP stops at the 32 light levels still
+// plays, with a black invulnerability map instead of an out-of-bounds one. A
+// full-length lump gets exactly the block it always did.
+static inline int ColormapAllocBytes (int lumplen)
+{
+    return lumplen > COLORMAP_MIN_BYTES ? lumplen : COLORMAP_MIN_BYTES;
+}
+
 #endif
