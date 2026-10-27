@@ -3693,30 +3693,19 @@ void M_Drawer (void)
 	y = 100 - M_StringHeight(messageString)/2;
 	while(*(messageString+start))
 	{
-	    boolean	split = false;		// DOOM-0161: did this line end at a '\n'?
-	    for (i = 0;i < strlen(messageString+start);i++)
-		if (*(messageString+start+i) == '\n')
-		{
-		    memset(string,0,40);
-		    strncpy(string,messageString+start,i);
-		    start += i+1;
-		    split = true;
-		    break;
-		}
+	    // One line: up to the next '\n' or the end. string[] is 40 bytes and
+	    // nothing bounded the copy, so a line of 40 or more characters ran off
+	    // the stack -- and two of today's lines are already 39. A longer one
+	    // is cut to fit rather than overflow.
+	    size_t	len = strcspn(messageString+start, "\n");
+	    size_t	n = len < sizeof(string)-1 ? len : sizeof(string)-1;
 
-	    // Final line (no trailing '\n'). The original test here was
-	    //   i == strlen(messageString+start)
-	    // but `start` is advanced inside the loop above, so that stale compare
-	    // could spuriously fire on a real line whose remainder-after-advance
-	    // happened to equal i -- silently dropping a line. It bit two equal-
-	    // length prompt lines (e.g. "(press y to quit)" / "(or the X button)").
-	    // Track whether we split on a '\n' instead.
-	    if (!split)
-	    {
-		strcpy(string,messageString+start);
-		start += i;
-	    }
-				
+	    memcpy(string, messageString+start, n);
+	    string[n] = 0;
+	    start += len;
+	    if (messageString[start] == '\n')
+		start++;
+
 	    x = 160 - M_StringWidth(string)/2;
 	    M_WriteText(x,y,string);
 	    y += SHORT(hu_font[0]->height);
