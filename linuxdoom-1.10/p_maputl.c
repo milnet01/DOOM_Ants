@@ -613,10 +613,14 @@ PIT_AddLineIntercepts (line_t* ld)
     }
     
 	
-    // DOOM-0369: intercepts[] is fixed size. Stop the trace rather than
-    // writing past its end.
+    // DOOM-0369: intercepts[] is fixed size, so never write past its end.
+    // Returning true (keep iterating, add nothing more) rather than false:
+    // false made P_PathTraverse abandon the whole trace, so a shot or use
+    // through a very dense area did nothing at all. Now the first
+    // MAXINTERCEPTS found -- the blockmap walk goes outward from the
+    // source, so roughly the nearest -- are still traversed.
     if (intercept_p == &intercepts[MAXINTERCEPTS])
-	return false;	// list full, stop checking
+	return true;	// list full: add nothing more
 
     intercept_p->frac = frac;
     intercept_p->isaline = true;
@@ -683,10 +687,14 @@ boolean PIT_AddThingIntercepts (mobj_t* thing)
     if (frac < 0)
 	return true;		// behind source
 
-    // DOOM-0369: intercepts[] is fixed size. Stop the trace rather than
-    // writing past its end.
+    // DOOM-0369: intercepts[] is fixed size, so never write past its end.
+    // Returning true (keep iterating, add nothing more) rather than false:
+    // false made P_PathTraverse abandon the whole trace, so a shot or use
+    // through a very dense area did nothing at all. Now the first
+    // MAXINTERCEPTS found -- the blockmap walk goes outward from the
+    // source, so roughly the nearest -- are still traversed.
     if (intercept_p == &intercepts[MAXINTERCEPTS])
-	return false;		// list full, stop checking
+	return true;		// list full: add nothing more
 
     intercept_p->frac = frac;
     intercept_p->isaline = false;
