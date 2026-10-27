@@ -1858,7 +1858,15 @@ void CreateSwapchain()
 #endif
     sci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;   // single graphics+present queue
     sci.preTransform = caps.currentTransform;
+    // OPAQUE is what we want and what desktop drivers offer, but the spec only
+    // guarantees that SOME mode is supported. Every pixel we present has alpha 1,
+    // so any other mode shows the same picture; take the first one offered.
     sci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    if (!(caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR))
+        for (VkCompositeAlphaFlagBitsKHR m : { VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
+                                               VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
+                                               VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR })
+            if (caps.supportedCompositeAlpha & m) { sci.compositeAlpha = m; break; }
     // Present mode: prefer MAILBOX so the render loop runs flat-out and shows its
     // true frame rate with the lowest input lag and no tearing -- on a high-refresh
     // monitor this delivers the full rate, and on a 60 Hz panel the engine still
