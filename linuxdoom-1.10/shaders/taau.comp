@@ -90,11 +90,17 @@ void main()
         cmax = max(cmax, c);
     }
 
-    // Motion: where this render pixel sat last frame (current -> previous, render px),
-    // then map render-space -> display-space history coordinate.
+    // Motion: where the surface under this DISPLAY pixel sat last frame, in display px.
+    // The nearest render pixel's vector is applied at d itself, not at that render
+    // pixel's centre: (ri + mv) mapped to display space snapped every display pixel
+    // inside one render pixel onto the same history point -- at 50 % scale, pixel
+    // pairs read one averaged history value every frame, blurring the reconstruction
+    // back to render resolution. And the composite measures mv from the JITTERED ray
+    // (prev projection - p, where the ray went through p + jitter), while the history
+    // is stored un-jittered, so the jitter comes off: a static camera reads history at
+    // exactly d instead of resampling it at a fresh sub-pixel offset each frame.
     vec2 mv    = imageLoad(inMotion, ri).xy;
-    vec2 prevR = vec2(ri) + mv;
-    vec2 prevD = (prevR + 0.5) / scale - 0.5;
+    vec2 prevD = vec2(d) + (mv - pc.jitter.xy) / scale;
 
     vec3 outC;
     if (prevD.x >= 0.0 && prevD.y >= 0.0 &&
