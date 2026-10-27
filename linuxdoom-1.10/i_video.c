@@ -884,7 +884,10 @@ static SDL_Vertex	menuGeom[MT_TEXT_CAP];
 
 // Re-read the image rectangle from SDL's own state: viewport (logical units) x
 // scale, as I_DevShotClassic sizes its capture. Called when the window is made,
-// when I_SetAspect changes the logical size, and on a window resize.
+// when I_SetAspect changes the logical size, and on a window resize (which a
+// fullscreen toggle also raises). Once the font is baked, a new height re-bakes
+// it so the glyphs stay sized and crisp for the new rectangle.
+static void I_BakeClassicMenuFont(void);
 static void I_ClassicMenuRect(void)
 {
     SDL_Rect	vp;
@@ -903,6 +906,8 @@ static void I_ClassicMenuRect(void)
     menuRect.w = (int)(vp.w * sx + 0.5f);
     menuRect.h = (int)(vp.h * sy + 0.5f);
     mt_set_display(menuRect.w, menuRect.h);
+    if (menuFontTex)
+	I_BakeClassicMenuFont();
 }
 
 // A static RGBA texture, straight alpha, blended and linearly filtered. The
@@ -923,56 +928,80 @@ static SDL_Texture* I_MenuTexture(const unsigned char* rgba, int w, int h)
     return t;
 }
 
-// Bake the font at the 3D tiers' size rule, then the skull and logo. A failure
-// leaves its ready flag clear, so the menu falls back to the bitmap skin (no
-// font) or to the paletted skull and the text title (no skull, no logo).
-static void I_CreateClassicMenuText(void)
+// Bake the font at the 3D tiers' size rule for the current image rectangle and
+// upload it, replacing any earlier bake. Skipped when the glyph size has not
+// changed, so a resize that keeps the height costs nothing. A failed re-bake
+// keeps the previous font; a failed first bake leaves the ready flag clear, so
+// the menu falls back to the bitmap skin.
+static void I_BakeClassicMenuFont(void)
 {
     rb_atlas_font_t*	f = mt_font();
-    const unsigned char* src;
+    rb_atlas_font_t	nf;
+    SDL_Texture*	tex = NULL;
     unsigned char*	rgba;
-    int			px, i, n, w, h;
+    int			px, i, n;
 
-#ifdef DOOM_DEV
-    if (M_CheckParm("-nocrispmenu"))	// force the bitmap fallback for a capture
-	return;
-#endif
-    I_ClassicMenuRect();
     px = menuRect.h / 45;
     if (px < 24)
 	px = 24;
+    if (menuFontTex && f->px_height == px)
+	return;
     printf("I_ClassicMenuText: rect %d,%d %dx%d, glyph px=%d\n",
 	   menuRect.x, menuRect.y, menuRect.w, menuRect.h, px);
     fflush(stdout);
-    if (!rb_text_bake(oxanium_ttf, (int)oxanium_ttf_len, px, f))
+    memset(&nf, 0, sizeof(nf));
+    if (!rb_text_bake(oxanium_ttf, (int)oxanium_ttf_len, px, &nf))
     {
-	fprintf(stderr, "I_ClassicMenuText: font bake failed -- bitmap menu.\n");
+	fprintf(stderr, "I_ClassicMenuText: font bake failed -- %s.\n",
+		menuFontTex ? "keeping the old size" : "bitmap menu");
 	return;
     }
 
     // White glyphs, alpha = coverage; texel (0,0) is full coverage for the dim
     // quad, as the Vulkan atlas reserves it.
-    f->pixels[0] = 255;
-    n = f->w * f->h;
+    nf.pixels[0] = 255;
+    n = nf.w * nf.h;
     rgba = (unsigned char*)malloc((size_t)n * 4);
     if (rgba)
     {
 	for (i = 0; i < n; i++)
 	{
 	    rgba[i*4+0] = rgba[i*4+1] = rgba[i*4+2] = 255;
-	    rgba[i*4+3] = f->pixels[i];
+	    rgba[i*4+3] = nf.pixels[i];
 	}
-	menuFontTex = I_MenuTexture(rgba, f->w, f->h);
+	tex = I_MenuTexture(rgba, nf.w, nf.h);
 	free(rgba);
     }
-    rb_text_free_font(f);   // the glyph metrics stay; only the pixels go
-    if (!menuFontTex)
+    rb_text_free_font(&nf);   // the glyph metrics stay; only the pixels go
+    if (!tex)
     {
-	fprintf(stderr, "I_ClassicMenuText: font texture failed (%s) -- bitmap menu.\n",
-		SDL_GetError());
+	fprintf(stderr, "I_ClassicMenuText: font texture failed (%s) -- %s.\n",
+		SDL_GetError(), menuFontTex ? "keeping the old size" : "bitmap menu");
 	return;
     }
+    if (menuFontTex)
+	SDL_DestroyTexture(menuFontTex);
+    menuFontTex = tex;
+    *f = nf;
     mt_set_font_ready(1);
+}
+
+// Bake the font, then the skull and logo. A failure leaves its ready flag
+// clear, so the menu falls back to the bitmap skin (no font) or to the
+// paletted skull and the text title (no skull, no logo).
+static void I_CreateClassicMenuText(void)
+{
+    const unsigned char* src;
+    int			w, h;
+
+#ifdef DOOM_DEV
+    if (M_CheckParm("-nocrispmenu"))	// force the bitmap fallback for a capture
+	return;
+#endif
+    I_ClassicMenuRect();
+    I_BakeClassicMenuFont();
+    if (!menuFontTex)
+	return;
 
     src = M_CursorSkullRGBA(&w, &h);
     if (src && w > 0 && h > 0 && (menuCursorTex = I_MenuTexture(src, w, h)))
