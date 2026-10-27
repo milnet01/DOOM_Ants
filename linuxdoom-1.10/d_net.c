@@ -595,6 +595,15 @@ void D_CheckNetGame (void)
 		 doomcom->numnodes, doomcom->numplayers,
 		 MAXPLAYERS, MAXNETNODES);
 
+    // `-net <n>` picks this slot and I_InitNetwork took it unbounded, so
+    // `-net 9` indexed players[8] and netcmds[8] every tic. Command-line input
+    // is a trust boundary (security.md); net_bounds.h carries the reasoning.
+    if (!NetConsolePlayerFits (doomcom->consoleplayer, doomcom->numplayers))
+	I_Error ("D_CheckNetGame: player %d is not one of the %d player(s) in "
+		 "this game -- `-net` takes 1 to %d here",
+		 doomcom->consoleplayer + 1, doomcom->numplayers,
+		 doomcom->numplayers);
+
     consoleplayer = displayplayer = doomcom->consoleplayer;
     if (netgame)
 	D_ArbitrateNetStart ();

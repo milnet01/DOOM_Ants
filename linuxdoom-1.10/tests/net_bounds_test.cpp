@@ -98,5 +98,20 @@ int main()
     check(NetPopulationFits(INT_MAX, INT_MAX, kNodes, kPlayers) == 0,
           "counts near INT_MAX are refused");
 
+    // --- The console player's slot: `-net <n>` names it, unbounded. ---
+    check(NetConsolePlayerFits(0, 1) != 0, "single player is slot 0 of 1");
+    check(NetConsolePlayerFits(0, 4) != 0, "`-net 1` in a four-player game fits");
+    check(NetConsolePlayerFits(3, 4) != 0, "`-net 4` in a four-player game fits");
+    check(NetConsolePlayerFits(4, 4) == 0,
+          "`-net 5` is refused -- players[] has four slots");
+    check(NetConsolePlayerFits(8, 4) == 0,
+          "`-net 9` is refused rather than indexing players[8]");
+    check(NetConsolePlayerFits(-1, 4) == 0,
+          "`-net 0` is refused rather than indexing players[-1]");
+    check(NetConsolePlayerFits(2, 2) == 0,
+          "`-net 3` with one host is refused: slot 2 is never in game");
+    check(NetConsolePlayerFits('a' - '1', 4) == 0,
+          "a non-digit player number is refused");
+
     return check_summary("net_bounds_test");
 }
