@@ -1970,7 +1970,14 @@ void A_BrainSpit (mobj_t*	mo)
     easy ^= 1;
     if (gameskill <= sk_easy && (!easy))
 	return;
-		
+
+    // A map with a boss shooter but no MT_BOSSTARGET spots leaves the list
+    // empty: braintargets[0] is then NULL or a stale pointer from the
+    // previous level, and the % below divides by zero. There is nothing to
+    // aim at, so do not spit.
+    if (!numbraintargets)
+	return;
+
     // shoot a cube at current target
     targ = braintargets[braintargeton];
     braintargeton = (braintargeton+1)%numbraintargets;
