@@ -1598,6 +1598,13 @@ void G_DoLoadGame (void)
     for (i=0 ; i<MAXPLAYERS ; i++)
 	playeringame[i] = *save_p++;
 
+    // The in-game flags come from the file, and nothing else marks the console
+    // player present: with its flag clear, no body is spawned or archived for
+    // it, and the first rendered frame dereferences players[consoleplayer].mo.
+    if (!playeringame[consoleplayer])
+	I_Error ("G_DoLoadGame: %s has no player %d in it", savename,
+		 consoleplayer + 1);
+
     // load a base level 
     G_InitNew (gameskill, gameepisode, gamemap); 
  

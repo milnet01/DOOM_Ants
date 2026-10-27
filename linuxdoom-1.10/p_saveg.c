@@ -481,6 +481,19 @@ void P_UnArchiveThinkers (void)
 	switch (tclass)
 	{
 	  case tc_end:
+	    // P_UnArchivePlayers cleared every player's mo, and only a mobj
+	    // the save names as that player's body sets it again. A save that
+	    // marks a player in the game but gives them no body left mo NULL,
+	    // which P_PlayerThink dereferences on the first tic -- DOOM-0397's
+	    // P_SetupLevel check, for the bodies that come from a save.
+	    {
+		int	i;
+
+		for (i=0 ; i<MAXPLAYERS ; i++)
+		    if (playeringame[i] && !players[i].mo)
+			I_Error ("P_UnArchiveThinkers: save has no body for "
+				 "player %d, who is in this game", i + 1);
+	    }
 	    return; 	// end of list
 
 	  case tc_mobj:
