@@ -211,11 +211,16 @@ extern "C" int RB_VulkanProbe(void)
         return cached = TIER_CLASSIC;
     }
 
+    // A failed enumeration is "no device" (DOOM-0412's rule, as in DeviceExtensions):
+    // on an error the array's contents are undefined, and the loop below would hand
+    // those handles straight to vkGetPhysicalDeviceProperties.
     uint32_t ndev = 0;
-    vkEnumeratePhysicalDevices(inst, &ndev, nullptr);
+    if (vkEnumeratePhysicalDevices(inst, &ndev, nullptr) < 0)
+        ndev = 0;
     std::vector<VkPhysicalDevice> devs(ndev);
-    if (ndev)
-        vkEnumeratePhysicalDevices(inst, &ndev, devs.data());
+    if (ndev && vkEnumeratePhysicalDevices(inst, &ndev, devs.data()) < 0)
+        ndev = 0;
+    devs.resize(ndev);                  // VK_INCOMPLETE: keep only what was written
 
     // Start pessimistic and upgrade only for a device that can actually run the
     // 3D path (DOOM-0059): a device merely existing is no longer enough.
