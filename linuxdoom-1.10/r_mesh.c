@@ -882,9 +882,20 @@ const unsigned char* RB_RejectMatrix(int* sizeBytes)
     return (const unsigned char*)rejectmatrix;
 }
 
+// Map units -> fixed_t, clamped: a float at or past +-32768 does not fit, and
+// the cast of an out-of-range float is undefined, not a wrap. A lit sprite
+// within a few units of the map's coordinate limit can put its centroid there.
+static fixed_t RB_FloatToFixedClamped(float v)
+{
+    const float lim = 32767.0f;
+    if (v > lim)  v = lim;
+    if (v < -lim) v = -lim;
+    return (fixed_t)(v * FRACUNIT);
+}
+
 int RB_SectorAtPoint(float x, float y)
 {
-    subsector_t* ss = R_PointInSubsector((fixed_t)(x * FRACUNIT), (fixed_t)(y * FRACUNIT));
+    subsector_t* ss = R_PointInSubsector(RB_FloatToFixedClamped(x), RB_FloatToFixedClamped(y));
     if (!ss || ss->numlines <= 0)
         return -1;
     return (int)(ss->sector - sectors);
