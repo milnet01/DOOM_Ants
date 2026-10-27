@@ -1242,6 +1242,10 @@ int EV_DoDonut(line_t*	line)
 		(s2->lines[i]->backsector == s1))
 		continue;
 	    s3 = s2->lines[i]->backsector;
+	    // The flag does not guarantee a back sidedef; DOOM-0399 loads
+	    // such a line with a null backsector, read below as s3->floorpic.
+	    if (!s3)
+		continue;
 	    
 	    //	Spawn rising slime
 	    floor = P_SpawnSectorThinker (sizeof(*floor), s2, (actionf_p1) T_MoveFloor);
