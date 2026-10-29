@@ -17,7 +17,7 @@ All notable changes to DOOM_Ants are documented here. The format follows
 ### Fixed
 
 - **A whole-codebase review: crashes from bad files fixed, Classic stops using a full CPU core**
-  A review of the engine, the Vulkan renderer and the shaders fixed about thirty problems. Most were crashes a broken or hostile WAD, savegame, demo, config file or command line could cause:
+  A review of the engine, the Vulkan renderer and the shaders fixed many problems. Most were crashes a broken or hostile WAD, savegame, demo, config file or command line could cause:
   - a short COLORMAP lump, a bad `-net` player number, a demo or savegame missing its own player, a homing missile caught in a save, and a two-sided line with no back side;
   - a boss shooter with no targets, `idmus00`, a long `-file` list, and negative ray-tracing settings in `~/.doomrc`.
   `idclev` now works in DOOM II and is ignored in network games, where it used to desync players. A shot or use through a very dense area no longer does nothing at all. On 64-bit, the memory allocator now returns properly aligned blocks. Classic, network games and demos no longer hold one CPU core at 100% while waiting for the next tic. In the renderer, missing GPU memory barriers were added. The upscaler's history is now read from the right place, which should make Ultra and Solid's ray-traced view sharper below 100% render scale. That last change still needs a check on real hardware.

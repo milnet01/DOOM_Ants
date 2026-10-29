@@ -11,11 +11,12 @@ item in the PR description as it is done.
 
 ## 1. Validation-layer run (open question: `rg16f` storage images)
 
-**The question.** `shaders/svgf_composite.comp:42` writes and
-`shaders/taau.comp:25` reads an `rg16f` storage image (the TAAU motion vector).
+**The question.** `shaders/svgf_composite.comp` writes (its `motion` image) and
+`shaders/taau.comp` reads (its `inMotion` image) an `rg16f` storage image, the
+TAAU motion vector.
 glslc emits the SPIR-V `StorageImageExtendedFormats` capability for that format.
 `PickPhysicalAndDevice` in `r_vulkan.cpp` (the `VkPhysicalDeviceFeatures
-enableBase` block, around line 1729) never enables
+enableBase` block) never enables
 `shaderStorageImageExtendedFormats`. Whether Vulkan 1.2 requires that feature for
 this capability is unclear from reading the spec.
 
@@ -47,7 +48,7 @@ this capability is unclear from reading the spec.
 
 ## 2. REJECT index wrap in the traced cull (`pt_common.glsl`)
 
-**The issue.** `shaders/pt_common.glsl` around line 659 computes the REJECT bit
+**The issue.** `shaders/pt_common.glsl`, in its REJECT cull, computes the REJECT bit
 index as `uint pnum = hitSec * numSectors + es;`. When `numSectors` exceeds
 65535, the product passes 2^32 and wraps. A wrap in GLSL `uint` is defined and the
 read stays inside the buffer, so the result is a wrong visibility bit, not a
@@ -56,8 +57,8 @@ CPU copies of the same cull were moved to 64 bits in this PR (`RejectHides` in
 `r_vulkan.cpp`).
 
 **How to check / fix.** The simplest safe fix is host-side: where `numSectors`
-is filled into the push constants / UBO (the `numSectors` member near
-`r_vulkan.cpp:1143`), pass 0 when `g.numSectors > 65535`. That turns the shader
+is filled into the push constants / UBO (from `VulkanState`'s `numSectors`
+member in `r_vulkan.cpp`), pass 0 when `g.numSectors > 65535`. That turns the shader
 cull off for such a map, which is exactly what it does today for a map without a
 REJECT lump. Confirm on hardware that an ordinary map (E1M1) still culls: the
 lit-sprite count and the look are unchanged. Then decide with the user whether
@@ -97,3 +98,4 @@ These have unit tests where the logic allows. The rest needs a WAD.
 - **Window and gamepad.** Resize the window and toggle fullscreen in Classic
   with the menu open: the crisp menu text should stay sharp at the new size.
   With two pads connected, unplug the active one: the other should take over.
+  With one pad, hold fire and turn, then unplug it: firing and turning stop.
