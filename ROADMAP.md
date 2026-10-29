@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=521 -->
+<!-- ants-roadmap-id-high-water: DOOM=526 -->
 
 # Roadmap
 
@@ -12951,6 +12951,67 @@ defect visible before a player finds it.
   **Layman:** Two identical test screenshots still differ where the gun and the monsters are, which hides small changes.
   Kind: investigate.
   Source: found-2026-10-26-DOOM-0273-B2.
+
+- 📋 [DOOM-0522] **A shot through a crowded area can pass through a monster once the intercept list is full.**
+  From the 2026-10-29 /code-review of PR #1. PR #1 made
+  PIT_AddLineIntercepts (p_maputl.c) return true when intercepts[] is
+  full, so the first MAXINTERCEPTS are still traversed instead of none.
+  But P_PathTraverse adds a block's lines before its things, so when the
+  list fills partway through a block, a monster in that block is dropped
+  even when it is nearer than lines already collected. The walk also keeps
+  visiting the remaining blocks for nothing. Not fixed in PR #1: a fix
+  changes which thing a shot hits, so it needs the demo A/B harness and a
+  crafted dense map. Options: stop the walk once full, or grow the list.
+  **Layman:** In a very busy spot a bullet can sometimes miss a monster it should hit.
+  Kind: review-fix.
+  Source: code-review-pr1-2026-10-29.
+
+- 📋 [DOOM-0523] **Normalise ML_TWOSIDED with no back side once at map load, instead of guarding each reader.**
+  From the 2026-10-29 /code-review of PR #1. A line flagged two-sided
+  with no back sidedef is guarded one reader at a time (DOOM-0372,
+  DOOM-0399, and PR #1's PTR_AimTraverse, PTR_ShootTraverse,
+  P_CrossSubsector and EV_DoDonut). Any reader not yet audited still
+  dereferences a NULL backsector. Clearing ML_TWOSIDED in P_LoadLineDefs
+  when sidenum[1] == -1 would fix every reader at once. Not done in PR #1:
+  the flag also feeds sound propagation and the automap, so the change
+  needs the demo A/B harness before it lands.
+  **Layman:** A broken map line is made safe in one place instead of many.
+  Kind: review-fix.
+  Source: code-review-pr1-2026-10-29.
+
+- 📋 [DOOM-0524] **A materials.csv whose last line is exactly 1023 characters, with no final newline, is rejected.**
+  From the 2026-10-29 /code-review of PR #1. rb_parse_material_line
+  (rb_materials.h) treats any exactly-full buffer without a trailing
+  newline as a split line. At end of file that line is complete. Also,
+  unchanged by PR #1: the caller never drains the rest of a genuinely
+  split line, so its tail is parsed as its own row on the next fgets.
+  **Layman:** One rare hand-edited HD material file shape is wrongly refused.
+  Kind: review-fix.
+  Source: code-review-pr1-2026-10-29.
+
+- 📋 [DOOM-0525] **Swapchain images are re-laid-out after acquire with no ordering: a WRITE_AFTER_READ hazard.**
+  Found 2026-10-29 verifying PR #1. With synchronisation validation
+  (VK_LAYER_ENABLES=VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT)
+  Ultra and Solid ray traced at 50% report, every frame, a
+  vkCmdPipelineBarrier image layout transition on a swapchain image
+  previously accessed by vkAcquireNextImageKHR: WRITE_AFTER_READ. The
+  pre-PR build reports the same, so it is not PR #1's. Likely cause: the
+  acquire semaphore's wait stage does not cover the barrier's source
+  stage. Plain validation is clean.
+  **Layman:** A Vulkan timing rule is broken at each frame start; it works today but may glitch on other drivers.
+  Kind: fix.
+  Source: code-review-pr1-2026-10-29.
+
+- 📋 [DOOM-0526] **The ray-traced REJECT cull's bit index wraps on maps above 65535 sectors.**
+  From PR #1's hardware checklist, item 2. pt_common.glsl's REJECT cull
+  computes uint pnum = hitSec * numSectors + es, which wraps above 65535
+  sectors: a wrong visibility bit, never an out-of-bounds read. Such a
+  REJECT lump is about 512 MB. PR #1 moved the CPU copies to 64 bits.
+  Suggested fix: pass numSectors 0 (cull off) from the host when
+  g.numSectors > 65535. Low priority.
+  **Layman:** On an impossibly huge map, the ray tracer could hide or show the wrong things; no real map is that big.
+  Kind: review-fix.
+  Source: code-review-pr1-2026-10-29.
 
 ## 0.10.0 — The frame budget
 
