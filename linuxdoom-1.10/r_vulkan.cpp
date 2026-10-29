@@ -6885,6 +6885,13 @@ static void EnsureHdMaterials()
                     printf("DOOM-0042: %s: no %s map (%s) - default.\n", r.name, ms.suffix, full);
                 continue;
             }
+            // Refused here, before the budget counts it: a map the decode would skip
+            // must not crowd valid materials out of kHdBudgetMB.
+            if (w > kHdSourceMaxEdge || h > kHdSourceMaxEdge) {
+                printf("DOOM-0042: %s: %s is %dx%d, over the %d px source limit - skipped.\n",
+                       r.name, full, w, h, kHdSourceMaxEdge);
+                continue;
+            }
             if (ms.k == RB_ALB) albedoOk = true;
             estMB[id] += mbOf(w, h);
             mine.push_back({ id, ms.k, ms.srgb, full });
@@ -6909,7 +6916,8 @@ static void EnsureHdMaterials()
     float overlayMB = 0.0f;
     for (Overlay& o : overlays) {
         char op[720]; int w = 0, h = 0;
-        if (rb_asset_path(op, sizeof(op), o.rel) && rb_image_info(op, &w, &h)) {
+        if (rb_asset_path(op, sizeof(op), o.rel) && rb_image_info(op, &w, &h)
+            && w <= kHdSourceMaxEdge && h <= kHdSourceMaxEdge) {
             o.present = true; o.mb = mbOf(w, h); overlayMB += o.mb;
         }
     }
@@ -6935,6 +6943,8 @@ static void EnsureHdMaterials()
     float usedMB = 0.0f;
     int   capDropped = 0;
     auto decode = [&](const char* path, const char* what, rb_image_t* img) -> bool {
+        // The planning pass already refused oversized maps; this re-check guards a file
+        // replaced since then, because the limit exists to bound the decode itself.
         int iw = 0, ih = 0;
         if (rb_image_info(path, &iw, &ih) && (iw > kHdSourceMaxEdge || ih > kHdSourceMaxEdge)) {
             printf("DOOM-0042: %s: %s is %dx%d, over the %d px source limit - skipped.\n",
