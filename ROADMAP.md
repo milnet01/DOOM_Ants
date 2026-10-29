@@ -17328,6 +17328,13 @@ in CLAUDE.md describes.
   pushes the lights toward the far edge, new matches surface_detail
   0. The Solid RT strip did not reproduce at 1811 -2693 240; left for
   the user's re-test. Gamepad unplug: user confirmed fire stops.
+  2026-10-29 third pass: the user saw the lights still moving, less.
+  Cause: the designed relief - luma makes lights sit about 8 units above
+  their surround. User chose flat lights; spec INV-3 amended and gated
+  (one loop, 2 findings fixed, 6f72d9b). kLightTextures in
+  surface_derive.h, exact names the user picked by eye from WAD renders
+  (CRATELIT keeps relief). Ultra A/B at 1688 -2247 4: underside PSNR vs
+  surface_detail 0 rose 17.8 -> 37.6 dB. Awaiting the user's play-test.
   **Layman:** With surface detail on, some textures appeared to move under your feet and big wall pictures tore apart; the fake depth is now the same small size everywhere.
   Kind: fix.
   Source: user-report-2026-10-29.

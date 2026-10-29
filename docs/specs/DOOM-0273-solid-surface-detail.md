@@ -149,13 +149,15 @@ float family_roughness(const char* name);   // _FAMILY's table and default
   - Every light texture in `kLightTextures`, a list of exact names. The
     ceiling lights: TLITE6_1, TLITE6_4, TLITE6_5, TLITE6_6 and GRNLITE1. The
     wall panels: LITE2, LITE3, LITE4, LITE5, LITE96, LITEBLU1, LITEBLU2,
-    LITEBLU3, LITEBLU4 and LITERED.
+    LITEBLU3, LITEBLU4 and LITERED. The light flats without LITE in their
+    name: CEIL1_2, CEIL1_3, CEIL3_4, CEIL3_6, FLAT2, FLAT17 and FLOOR1_7.
+    The walls with lamps: BRICKLIT, TEKLITE and TEKLITE2.
     LITEMET and LITESTON are not lights, so a name prefix would not do.
-    CRATELIT, BRICKLIT, TEKLITE and TEKLITE2 are not on the list, so they
-    keep their relief.
+    CRATELIT is plain crates, so it keeps its relief too.
     DOOM paints its lights flat. Derived from luma, a light sits raised
     above its dark surround and shifts against it as the player walks
-    (DOOM-0527). The user chose flat lights on 2026-10-29.
+    (DOOM-0527). The user chose flat lights, and picked this list by eye, on
+    2026-10-29.
 - **The mask is patch coverage, not palette index 0.** A wall texel is
   transparent when no patch post covers it in `R_RenderTextureToAtlas`. The
   atlas cannot tell this: it stores both an uncovered texel and a real black

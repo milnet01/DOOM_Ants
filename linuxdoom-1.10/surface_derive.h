@@ -84,12 +84,28 @@ namespace surf {
         return true;
     }
 
-    // Flat cases (§4.1): liquids, the sky flat, and anything with a see-through texel,
-    // where parallax would slide the holes.
+    // The light textures, by exact NAME (DOOM-0527; the user's list 2026-10-29). DOOM
+    // paints its lights flat; derived from luma, a light sat raised above its dark
+    // surround and slid against it as the player walked. Not a LITE prefix: LITEMET and
+    // LITESTON are light-coloured metal and stone, and CRATELIT is plain crates; all
+    // three keep their relief. The user picked the unclear ones by eye.
+    constexpr const char* kLightTextures[] = {
+        "TLITE6_1", "TLITE6_4", "TLITE6_5", "TLITE6_6", "GRNLITE1",
+        "LITE2", "LITE3", "LITE4", "LITE5", "LITE96",
+        "LITEBLU1", "LITEBLU2", "LITEBLU3", "LITEBLU4", "LITERED",
+        "CEIL1_2", "CEIL1_3", "CEIL3_4", "CEIL3_6", "FLAT2", "FLAT17", "FLOOR1_7",
+        "BRICKLIT", "TEKLITE", "TEKLITE2",
+    };
+
+    // Flat cases (§4.1): liquids, the sky flat, light textures, and anything with a
+    // see-through texel, where parallax would slide the holes.
     inline bool wants_flat_map(const bool* transparent, int count, const char* name)
     {
         for (const LiquidFlat& l : kLiquidFlats)
             if (same_name(name, l.name))
+                return true;
+        for (const char* light : kLightTextures)
+            if (same_name(name, light))
                 return true;
         if (same_name(name, "F_SKY1"))
             return true;

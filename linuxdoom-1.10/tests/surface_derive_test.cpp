@@ -7,8 +7,9 @@
 //          within one step of 8-bit rounding.
 //   INV-2  family_roughness matches pbr_derive.py's _FAMILY: longest prefix wins,
 //          0.70 when nothing matches, and a prefix matches only at the start.
-//   INV-3  Liquids, the sky flat and a texture with a transparent texel get a flat
-//          map: every texel normal (0, 0, 1) and height 255.
+//   INV-3  Liquids, the sky flat, light textures (by exact name) and a texture with
+//          a transparent texel get a flat map: every texel normal (0, 0, 1) and
+//          height 255.
 //   INV-4  (traced half) In pathtrace.comp's surface-map branch the paletted colour
 //          is read at the UV surfParallaxUV returned, not at the raw hit UV.
 //   INV-6  Every surf helper call in pathtrace.comp sits where usePBR is 0, so an HD
@@ -181,6 +182,17 @@ int main()
               "INV-3 control: an opaque wall with relief does NOT get a flat map");
         check(is_flat_map(derive("NUKAGE1", nullptr)), "INV-3: NUKAGE1 (a liquid) gets a flat map");
         check(is_flat_map(derive("F_SKY1", nullptr)), "INV-3: the sky flat F_SKY1 gets a flat map");
+        // DOOM-0527: light textures are flat, by exact name; a LITE prefix is not enough.
+        for (const char* n : { "TLITE6_5", "LITE3", "FLAT2", "FLOOR1_7", "CEIL3_6", "TEKLITE" }) {
+            char what[80];
+            std::snprintf(what, sizeof what, "INV-3: the light %s gets a flat map", n);
+            check(is_flat_map(derive(n, nullptr)), what);
+        }
+        for (const char* n : { "LITEMET", "LITESTON", "CRATELIT" }) {
+            char what[80];
+            std::snprintf(what, sizeof what, "INV-3 control: %s (not a light) keeps relief", n);
+            check(!is_flat_map(derive(n, nullptr)), what);
+        }
 
         bool mask[W * H] = {};
         check(!is_flat_map(derive("STARTAN3", mask)),
