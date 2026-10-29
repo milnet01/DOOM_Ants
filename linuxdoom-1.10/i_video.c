@@ -290,16 +290,36 @@ static void I_PollGamepad(void)
     static boolean strafe_r_held, strafe_l_held, esc_held, back_held, map_held;
     static boolean share_held, touchpad_held;
     static boolean dpad_up_held, dpad_l_held, dpad_r_held;	// DOOM-0153 gamepad remap
+    static boolean polled;	// a pad was read last tic, so its state may be held
 
     if (!gamepad)
+    {
+	// Unplugged with no pad to hand over to: release everything the last
+	// read left held, or G_Responder keeps firing and turning on it.
+	if (polled)
+	{
+	    event.type = ev_joystick;
+	    event.data1 = event.data2 = event.data3 = 0;
+	    D_PostEvent(&event);
+	    I_PostKeyEdge(false, &strafe_r_held, key_straferight);
+	    I_PostKeyEdge(false, &strafe_l_held, key_strafeleft);
+	    I_PostKeyEdge(false, &esc_held, KEY_ESCAPE);
+	    I_PostKeyEdge(false, &map_held, KEY_TAB);
+	    I_PostKeyEdge(false, &back_held, KEY_BACKSPACE);
+	    share_held = touchpad_held = false;
+	    dpad_up_held = dpad_l_held = dpad_r_held = false;
+	    polled = false;
+	}
 	return;
+    }
     // DOOM-0287: the pad is read by STATE, not by events, so the event filter in
     // I_GetEvent cannot reach it -- a stick resting off-centre would still steer a
     // -noinput run's camera. Gate it at the source.
     if (I_InputDisabled())
 	return;
+    polled = true;
 
-    lx = SDL_GameControllerGetAxis(gamepad, SDL_CONTROLLER_AXIS_LEFTX);
+    lx =SDL_GameControllerGetAxis(gamepad, SDL_CONTROLLER_AXIS_LEFTX);
     ly = SDL_GameControllerGetAxis(gamepad, SDL_CONTROLLER_AXIS_LEFTY);
     rx = SDL_GameControllerGetAxis(gamepad, SDL_CONTROLLER_AXIS_RIGHTX);
     lt = SDL_GameControllerGetAxis(gamepad, SDL_CONTROLLER_AXIS_TRIGGERLEFT);
