@@ -20,12 +20,12 @@
 // (tests/shader_mirror_test.cpp holds them equal).
 const uint SURF_DETAIL_ON = 1u;
 
-// How deep the relief reads, as a fraction of one tile. Twice the HD path's
-// kPomHeightScale: the user's pick 2026-10-26 from a side-by-side at the E2M1 test
+// How deep the relief reads, as a fraction of a kSurfDepthRefTexels tile. Twice the HD
+// path's kPomHeightScale: the user's pick 2026-10-26 from a side-by-side at the E2M1 test
 // scene (spec §10). Derived heights come from luma, so it is tuned on its own.
 const float kSurfHeightScale = 0.12;
 
-// Below this tangent-space view z, both parallax helpers treat the view as this grazing,
+// Below this tangent-space view z, the traced march treats the view as this grazing,
 // so the offset cannot run away along the surface.
 const float kSurfMinViewZ = 0.05;
 
@@ -33,6 +33,18 @@ const float kSurfMinViewZ = 0.05;
 vec2 surfTexSize(uint id)
 {
     return vec2(textureSize(materialTex[nonuniformEXT(id)], 0));
+}
+
+// The relief is equally deep in map units on every texture: kSurfHeightScale of a tile
+// this many texels across. As a fraction of each texture's own size, a 256-texel wall
+// got four times a 64-texel flat's depth and its dark parts slid as the player walked
+// (DOOM-0527).
+const float kSurfDepthRefTexels = 64.0;
+
+// The relief's full depth in uv01 units, per axis, for material `id`.
+vec2 surfDepthUV(uint id)
+{
+    return kSurfHeightScale * kSurfDepthRefTexels / surfTexSize(id);
 }
 
 bool surfHas(uint id)
@@ -66,7 +78,7 @@ vec2 surfParallaxUV(uint id, vec2 uv01, vec3 viewTS)
 {
     float nv     = clamp(viewTS.z, kSurfMinViewZ, 1.0);
     int   steps  = int(mix(32.0, 16.0, nv));       // more steps at grazing angles
-    vec2  maxOff = (viewTS.xy / nv) * kSurfHeightScale;
+    vec2  maxOff = (viewTS.xy / nv) * surfDepthUV(id);
     float layer  = 1.0 / float(steps);
     float curH = surfHeight(id, uv01), prevH = curH;
     vec2  curUV = uv01, prevUV = uv01;
@@ -84,12 +96,14 @@ vec2 surfParallaxUV(uint id, vec2 uv01, vec3 viewTS)
     return mix(prevUV, curUV, clamp(t, 0.0, 1.0));
 }
 
-// Rasterised view: plain parallax offset mapping, one height read. Height 1.0 is the
-// surface, so it does not move there.
+// Rasterised view: parallax offset mapping with offset limiting, one height read. Height
+// 1.0 is the surface, so it does not move there. No divide by viewTS.z: at grazing views
+// that grew the shift to whole tiles and the texture slid as the player walked
+// (DOOM-0527); without it the shift never exceeds surfDepthUV.
 vec2 surfOffsetUV(uint id, vec2 uv01, vec3 viewTS)
 {
     float h = surfHeight(id, uv01);
-    return uv01 + kSurfHeightScale * (h - 1.0) * viewTS.xy / max(viewTS.z, kSurfMinViewZ);
+    return uv01 + surfDepthUV(id) * (h - 1.0) * viewTS.xy;
 }
 
 #endif // SURFACE_DETAIL_GLSL

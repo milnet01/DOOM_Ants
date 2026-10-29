@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=526 -->
+<!-- ants-roadmap-id-high-water: DOOM=527 -->
 
 # Roadmap
 
@@ -17307,6 +17307,23 @@ in CLAUDE.md describes.
   **Layman:** Standing near lava should make the air shimmer, like the heat over a hot road.
   Kind: feature.
   Source: user-request-2026-10-26.
+
+- 🚧 [DOOM-0527] **Surface detail makes floors, walls and ceilings slide and tear as the player walks.**
+  User's F12 shots, E1M1, Solid raster, surface_detail 1. Two causes in
+  formulas/surface_detail.glsl (DOOM-0273): surfOffsetUV divided the
+  shift by viewTS.z (floor 0.05), so grazing views moved it by whole
+  tiles; and kSurfHeightScale was a fraction of each texture's own size,
+  so a 256-texel wall got four times a 64-texel flat's depth and its
+  dark parts slid. Fix: offset limiting (no divide) and depth as a
+  fraction of a 64-texel tile on every texture (surfDepthUV), in both
+  views. Headless A/B at E1M1 1956 -2463 120 and 1990 -2443 120: the
+  hanging screens tear with the old shader and match surface_detail 0
+  with the new one. Left: the user's play-test, and a look at the
+  ray-traced view (not confirmed headlessly).
+  **Layman:** With surface detail on, some textures appeared to move under your feet and big wall pictures tore apart; the fake depth is now the same small size everywhere.
+  Kind: fix.
+  Source: user-report-2026-10-29.
+  Evidence: linuxdoom-1.10/dev-shots/shot-0033.png, linuxdoom-1.10/dev-shots/shot-0035.png
 
 ## 0.12.0 — The player's experience
 

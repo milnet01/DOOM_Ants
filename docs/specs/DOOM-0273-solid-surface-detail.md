@@ -191,15 +191,21 @@ vec2  surfParallaxUV(uint id, vec2 uv01, vec3 viewTS);  // traced view: stepped;
 vec2  surfOffsetUV(uint id, vec2 uv01, vec3 viewTS);    // rasterised view: one sample; returns uv01
 ```
 
-- `surfOffsetUV` is plain parallax offset mapping: one height read, and the
-  UV moved by `kSurfHeightScale * (h - 1.0) * viewTS.xy / viewTS.z`, with
-  `viewTS.z` floored so grazing angles cannot run away. Height 1.0 is the
+- `surfOffsetUV` is parallax offset mapping with offset limiting: one height
+  read, and the UV moved by `surfDepthUV(id) * (h - 1.0) * viewTS.xy`. It
+  does not divide by `viewTS.z`. With that divide, grazing views moved the
+  texture by whole tiles as the player walked (DOOM-0527). Height 1.0 is the
   surface, as in `hdParallaxUV`, whose march stops at once there.
 
 - `surfParallaxUV` reuses the method of `hdParallaxUV`: steps plus one
   bisection, primary hit only, no self-shadowing. It uses its own height
   scale, `kSurfHeightScale`, because derived heights come from luma and are
   rougher than authored ones. It is 0.12, twice `kPomHeightScale` (§10).
+- Both helpers take the depth from `surfDepthUV(id)`: `kSurfHeightScale` of
+  a 64-texel tile, divided by the texture's own size. So the relief is
+  equally deep in map units on every wall and flat. Measured against each
+  texture's own size, a large wall picture's dark parts slid and tore
+  (DOOM-0527).
 - The tangent frame:
   - In the traced view it is the triangle's dP/dU and dP/dV, from
     `hdTangentFrame`. `primaryHitSurface` calls it only when `usePBR` is

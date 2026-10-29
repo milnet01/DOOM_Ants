@@ -239,6 +239,17 @@ int main()
                   != std::string::npos,
               "INV-4: mesh.frag's paletted colour read uses uv01");
 
+        // The raster offset must not divide by viewTS.z: at grazing views that grew the
+        // shift to tiles and the texture slid as the player walked (DOOM-0527).
+        const std::string sd =
+            strip_comments(slurp(DOOM_TESTS_ROOT "/shaders/formulas/surface_detail.glsl"));
+        const size_t fo = sd.find("vec2 surfOffsetUV(");
+        const size_t fe = fo == std::string::npos ? fo : sd.find("\n}", fo);
+        check(fe != std::string::npos, "surface_detail.glsl defines surfOffsetUV");
+        if (fe != std::string::npos)
+            check(sd.substr(fo, fe - fo).find("viewTS.z") == std::string::npos,
+                  "DOOM-0527: surfOffsetUV's shift is bounded (no divide by viewTS.z)");
+
         // Walk the lines, tracking whether SINGLE_TARGET is known to be undefined.
         std::vector<char> stack;               // 'N' #ifndef ST, 'D' #ifdef ST, 'O' other
         int surfCalls = 0, outside = 0, shadeUses = 0, strayUses = 0;
