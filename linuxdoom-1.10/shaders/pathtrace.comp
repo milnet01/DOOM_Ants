@@ -922,14 +922,22 @@ vec3 wispDrift(vec3 v, vec2 cs)
     return vec3(v.x * cs.x - v.y * cs.y, v.x * cs.y + v.y * cs.x, v.z);
 }
 
-float wisp(vec3 p, float t)
+// Each octave's drift this frame, wispDrift(kWispVelN, heading) * t. It depends on push
+// constants alone, so marchFog takes it once before its loop and hands it to every
+// wisp() call. glslc -O does not hoist it by itself -- the cos/sin sat inside the march
+// loop in the SPIR-V, two transcendentals at every step unless the driver moved them.
+void wispOffsets(float t, out vec3 o1, out vec3 o2)
 {
-    // cos/sin of a push constant is loop-invariant, so this hoists out of the fog march
-    // rather than costing two transcendentals at every step.
     float a  = uintBitsToFloat(pc.wispAngle);
     vec2  cs = vec2(cos(a), sin(a));
-    vec3 q1 = p + wispDrift(kWispVel1, cs) * t;  q1.z *= kWispSquashZ;
-    vec3 q2 = p + wispDrift(kWispVel2, cs) * t;  q2.z *= kWispSquashZ;
+    o1 = wispDrift(kWispVel1, cs) * t;
+    o2 = wispDrift(kWispVel2, cs) * t;
+}
+
+float wisp(vec3 p, vec3 o1, vec3 o2)
+{
+    vec3 q1 = p + o1;  q1.z *= kWispSquashZ;
+    vec3 q2 = p + o2;  q2.z *= kWispSquashZ;
     float A = 2.0 * texture(uNoiseVol, kWispFreq1 * q1 / kWispTexels).r - 1.0;
     float B = 2.0 * texture(uNoiseVol, (kWispFreq2 * q2 + kWispOffset2) / kWispTexels).r - 1.0;
     float n = clamp((A + kWispWeight2 * B) / (1.0 + kWispWeight2), -1.0, 1.0);
@@ -1216,6 +1224,8 @@ vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)
     // It is computed once per PAIR of samples and spent on both -- see the `i & 1` block
     // below -- so this carries it across the odd sample.
     vec3 torchPair = vec3(0.0);
+    vec3 wispO1, wispO2;
+    wispOffsets(rippleTime(), wispO1, wispO2);
     for (int i = 0; i < kFogSteps; ++i) {
         float s     = (float(i) + jitter) * invN;
         float t     = tMax * s * s;
@@ -1282,7 +1292,7 @@ vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)
         float sigma = ( (fogDensity(p, baseZ, poolH) + floorFogDensity(p, baseZ, t))
                           * strength * skyExposure
                         + areaSigma * strength )
-                      * wisp(p, rippleTime());
+                      * wisp(p, wispO1, wispO2);
         // DOOM-0011 L2: the sky term gains a DIRECTION. Whether the sun reaches this
         // sample decides whether it gets the directional share on top of the ambient; the
         // two shares sum to 1, so this REPLACES L1's flat ambient (spec §4.4(a) -- adding

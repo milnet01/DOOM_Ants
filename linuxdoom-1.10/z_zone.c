@@ -78,7 +78,7 @@ void Z_Init (void)
 	mainzone->blocklist.prev =
 	block = (memblock_t *)( (byte *)mainzone + sizeof(memzone_t) );
 
-    mainzone->blocklist.user = (void *)mainzone;
+    mainzone->blocklist.user = (void **)mainzone;
     mainzone->blocklist.tag = PU_STATIC;
     mainzone->rover = block;
 	
@@ -183,6 +183,21 @@ void Z_Free (void* ptr)
 //
 #define MINFRAGMENT		64
 
+// Every block, and so every pointer Z_Malloc returns, sits on this boundary.
+// Vanilla rounded sizes to 4, which was the pointer size it was written for.
+// On 64-bit the block header holds 8-byte pointers, so a 4-aligned size left
+// the NEXT header -- and the struct handed back after it, mobj_t, line_t and
+// every other pointer-carrying one -- misaligned: undefined behaviour, and a
+// fault on targets that do not forgive it. Rounding to 8 holds the invariant
+// as long as both headers are themselves a multiple of 8, which the asserts
+// keep true.
+#define ZONE_ALIGN		8
+
+_Static_assert (sizeof(memblock_t) % ZONE_ALIGN == 0,
+		"memblock_t must keep the blocks after it aligned");
+_Static_assert (sizeof(memzone_t) % ZONE_ALIGN == 0,
+		"memzone_t must keep the first block aligned");
+
 
 void*
 Z_Malloc
@@ -199,10 +214,10 @@ Z_Malloc
     // DOOM-0254: sizes reach here from WAD-derived counts. A negative or
     // near-INT_MAX size would wrap in the rounding + header arithmetic below
     // and hand back a block that overlaps the rest of the zone.
-    if (size < 0 || size > MAXINT - (int)sizeof(memblock_t) - 3)
+    if (size < 0 || size > MAXINT - (int)sizeof(memblock_t) - (ZONE_ALIGN-1))
 	I_Error ("Z_Malloc: bad allocation size %d", size);
 
-    size = (size + 3) & ~3;
+    size = (size + ZONE_ALIGN-1) & ~(ZONE_ALIGN-1);
 
     // scan through the block list,
     // looking for the first free block
@@ -277,7 +292,7 @@ Z_Malloc
     if (user)
     {
 	// mark as an in use block
-	base->user = user;			
+	base->user = (void **)user;			
 	*(void **)user = (void *) ((byte *)base + sizeof(memblock_t));
     }
     else
@@ -286,7 +301,7 @@ Z_Malloc
 	    I_Error ("Z_Malloc: an owner is required for purgable blocks");
 
 	// mark as in use, but unowned	
-	base->user = (void *)2;		
+	base->user = (void **)2;		
     }
     base->tag = tag;
 

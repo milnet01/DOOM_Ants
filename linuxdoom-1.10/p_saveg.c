@@ -481,6 +481,19 @@ void P_UnArchiveThinkers (void)
 	switch (tclass)
 	{
 	  case tc_end:
+	    // P_UnArchivePlayers cleared every player's mo, and only a mobj
+	    // the save names as that player's body sets it again. A save that
+	    // marks a player in the game but gives them no body left mo NULL,
+	    // which P_PlayerThink dereferences on the first tic -- DOOM-0397's
+	    // P_SetupLevel check, for the bodies that come from a save.
+	    {
+		int	i;
+
+		for (i=0 ; i<MAXPLAYERS ; i++)
+		    if (playeringame[i] && !players[i].mo)
+			I_Error ("P_UnArchiveThinkers: save has no body for "
+				 "player %d, who is in this game", i + 1);
+	    }
 	    return; 	// end of list
 
 	  case tc_mobj:
@@ -491,6 +504,15 @@ void P_UnArchiveThinkers (void)
 	    mobj->state = &states[P_SaveIndex ((int)(intptr_t)mobj->state,
 					       NUMSTATES, "mobj state")];
 	    mobj->target = NULL;
+	    // tracer is the other mobj pointer in the image, and vanilla left it
+	    // as the raw address it held in the session that SAVED -- every mobj
+	    // of which P_RemoveMobj has just freed. A_Tracer and A_Fire read
+	    // through it, and A_VileAttack writes the x/y of the mobj it names,
+	    // so a stale or crafted value is a use-after-free write. (A_Fire
+	    // also hands the target cleared above to P_CheckSight, which
+	    // dereferences it.) Cleared like target: a revenant missile in
+	    // flight stops homing, and an arch-vile's flame stops following.
+	    mobj->tracer = NULL;
 	    if (mobj->player)
 	    {
 		// Stored 1-based so that 0 can mean "not a player" in the field
@@ -512,6 +534,16 @@ void P_UnArchiveThinkers (void)
 	    P_SetThingPosition (mobj);
 	    mobj->info = &mobjinfo[P_SaveIndex (mobj->type, NUMMOBJTYPES,
 						"mobj type")];
+	    // Two more raw ints from the file that index tables before anything
+	    // checks them. movedir indexes p_enemy.c's opposite[] in
+	    // P_NewChaseDir and xspeed[]/yspeed[] in A_VileChase; it is a
+	    // dirtype_t, DI_EAST (0) through DI_NODIR (8). lastlook indexes
+	    // playeringame[] and then players[] on P_LookForPlayers' first pass,
+	    // before its own &3 wraps it; P_SpawnMobj draws it from 0..3. Every
+	    // save this engine writes is inside both ranges.
+	    mobj->movedir = P_SaveIndex (mobj->movedir, 9, "mobj movedir");
+	    mobj->lastlook = P_SaveIndex (mobj->lastlook, MAXPLAYERS,
+					  "mobj lastlook");
 	    mobj->floorz = mobj->subsector->sector->floorheight;
 	    mobj->ceilingz = mobj->subsector->sector->ceilingheight;
 	    mobj->thinker.function.acp1 = (actionf_p1)P_MobjThinker;

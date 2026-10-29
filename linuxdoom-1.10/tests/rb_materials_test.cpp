@@ -155,6 +155,17 @@ static void test_parser_rejects_what_it_used_to_truncate() {
     std::string longFlags = "NAME,hero,a.png,,,,,,,1.0," + std::string(130, 'x');
     check(rb_parse_material_line(longFlags.c_str(), &r) == -1,
           "a flags field longer than its buffer is malformed");
+
+    // A line that exactly fills the 1024-byte fgets buffer: 1022 characters plus
+    // its newline is complete and parses; the same length without the newline is
+    // what fgets hands back for a split line, and is rejected.
+    std::string body = "NAME,hero,a.png,,,,,,,1.0,pom";
+    std::string full = body + std::string(1022 - body.size(), ' ') + "\n";
+    check(full.size() == 1023 && rb_parse_material_line(full.c_str(), &r) == 1,
+          "a 1022-character line with its newline fills the buffer and still parses");
+    std::string split = body + std::string(1023 - body.size(), ' ');
+    check(rb_parse_material_line(split.c_str(), &r) == -1,
+          "a buffer-full line with no newline was split by fgets and is rejected");
 }
 
 /* --- Task 2 coverage gap: three missing parser branches --- */

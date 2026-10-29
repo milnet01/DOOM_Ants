@@ -131,9 +131,11 @@ void P_InitSwitchList(void)
     // index rather than on i because switchlist is what overflows: i indexes
     // alphSwitchList, and two entries are written per accepted switch, so
     // i < MAXSWITCHES let index reach the array's length and the terminator
-    // land one past it.
+    // land one past it. A pair is taken only while index + 2 still leaves
+    // a slot for the terminator; `index < MAXSWITCHES*2 - 1` let the last
+    // pair end at the array's length and put the -1 one past it.
     for (index = 0,i = 0;
-	 i < numalphswitches && index < MAXSWITCHES*2 - 1;
+	 i < numalphswitches && index + 2 < MAXSWITCHES*2;
 	 i++)
     {
 	if (!alphSwitchList[i].episode)

@@ -382,6 +382,8 @@ void D_Display (void)
 	{
 	    nowtime = I_GetTime ();
 	    tics = nowtime - wipestart;
+	    if (!tics)
+		I_Sleep (1);	// yield until the next tic, as TryRunTics does
 	} while (!tics);
 	wipestart = nowtime;
 	done = wipe_ScreenWipe(wipe_Melt
@@ -692,6 +694,14 @@ void D_AddFile (char *file)
 	
     for (numwadfiles = 0 ; wadfiles[numwadfiles] ; numwadfiles++)
 	;
+
+    // wadfiles[] is NULL-terminated for W_InitMultipleFiles and the scan
+    // above, so it holds MAXWADFILES-1 names. Vanilla wrote past the end on a
+    // long -file list, over whatever global follows, and the next scan then
+    // read on into it looking for the NULL.
+    if (numwadfiles >= MAXWADFILES-1)
+	I_Error ("D_AddFile: too many files (at most %d), cannot add %s",
+		 MAXWADFILES-1, file);
 
     newfile = malloc (strlen(file)+1);
     if (!newfile)

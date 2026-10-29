@@ -65,7 +65,12 @@ static inline unsigned int rb_parse_flags(const char* field) {
    later as "no usable albedo", naming the wrong cause. */
 static inline int rb_parse_material_line(const char* line, rb_matrow_t* out) {
     char buf[1024];
-    if (strlen(line) >= sizeof(buf) - 1) return -1;   /* over-long (or split) line */
+    /* The caller reads with fgets into a buffer of the same size, so a line it had
+       to split arrives exactly full (1023 chars) with no newline. A full buffer that
+       DOES end in '\n' is a complete line and fits. */
+    const size_t len = strlen(line);
+    if (len >= sizeof(buf)) return -1;                /* over-long line */
+    if (len == sizeof(buf) - 1 && line[len - 1] != '\n') return -1;   /* split line */
     strncpy(buf, line, sizeof(buf) - 1); buf[sizeof(buf) - 1] = '\0';
     char* s = rb_trim(buf);
     if (!*s || *s == '#') return 0;             /* comment / blank */

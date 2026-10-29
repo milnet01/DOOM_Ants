@@ -160,17 +160,6 @@ static bool DeviceHasBindless(VkPhysicalDevice d)
 // clean), so the values are mirrored here with this contract instead.
 enum { TIER_CLASSIC = 0, TIER_RT3D = 1, TIER_RASTER3D = 2 };
 
-//
-// RB_VulkanProbe — pick the best 3D tier this machine supports.
-//
-// RT3D     : a device exposing VK_KHR_acceleration_structure + VK_KHR_ray_query
-//            (hardware ray tracing — the full path-traced tier).
-// Raster3D : a Vulkan device, but without those ray-tracing extensions.
-// Classic  : no usable Vulkan at all (caller stays on the software renderer).
-//
-// Headless: no SDL window or VkSurface is created, so this is safe to call at
-// startup before any window rework (per the spec's Window & device ownership).
-//
 // A device's extensions, or none if the query itself fails (DOOM-0412). Both callers
 // only ask "is extension X there?", so "none" is the safe answer: the device is
 // treated as lacking ray tracing rather than trusted on a failed enumeration.
@@ -186,6 +175,17 @@ static std::vector<VkExtensionProperties> DeviceExtensions(VkPhysicalDevice d)
     return exts;
 }
 
+//
+// RB_VulkanProbe — pick the best 3D tier this machine supports.
+//
+// RT3D     : a device exposing VK_KHR_acceleration_structure + VK_KHR_ray_query
+//            (hardware ray tracing — the full path-traced tier).
+// Raster3D : a Vulkan device, but without those ray-tracing extensions.
+// Classic  : no usable Vulkan at all (caller stays on the software renderer).
+//
+// Headless: no SDL window or VkSurface is created, so this is safe to call at
+// startup before any window rework (per the spec's Window & device ownership).
+//
 extern "C" int RB_VulkanProbe(void)
 {
     // Probe once and cache: RB_Init logs it, and the back-end Available()
@@ -211,11 +211,16 @@ extern "C" int RB_VulkanProbe(void)
         return cached = TIER_CLASSIC;
     }
 
+    // A failed enumeration is "no device" (DOOM-0412's rule, as in DeviceExtensions):
+    // on an error the array's contents are undefined, and the loop below would hand
+    // those handles straight to vkGetPhysicalDeviceProperties.
     uint32_t ndev = 0;
-    vkEnumeratePhysicalDevices(inst, &ndev, nullptr);
+    if (vkEnumeratePhysicalDevices(inst, &ndev, nullptr) < 0)
+        ndev = 0;
     std::vector<VkPhysicalDevice> devs(ndev);
-    if (ndev)
-        vkEnumeratePhysicalDevices(inst, &ndev, devs.data());
+    if (ndev && vkEnumeratePhysicalDevices(inst, &ndev, devs.data()) < 0)
+        ndev = 0;
+    devs.resize(ndev);                  // VK_INCOMPLETE: keep only what was written
 
     // Start pessimistic and upgrade only for a device that can actually run the
     // 3D path (DOOM-0059): a device merely existing is no longer enough.
@@ -682,8 +687,8 @@ struct VulkanState
     int                      hdGrungeIdx = -1;      // DOOM-0179: world-grime overlay slot in
                                                     // the hdTex[] array (-1 = none loaded)
     int                      hdDirtIdx = -1;        // DOOM-0181: world-space dirt colour texture
-    int                      hdMaxImages = 1;       // DOOM-0410: kHdMaxImages clamped to the device
                                                     // slot in hdTex[] (-1 = none loaded)
+    int                      hdMaxImages = 1;       // DOOM-0410: kHdMaxImages clamped to the device
 
     VkDescriptorSetLayout dsLayout = VK_NULL_HANDLE;
     VkDescriptorPool      dsPool   = VK_NULL_HANDLE;
@@ -845,7 +850,7 @@ struct VulkanState
     // (passed to the trace in misc4.w for the panorama sample).
     VkBuffer                   skyMeshBuf   = VK_NULL_HANDLE;
     VkDeviceMemory             skyMeshMem   = VK_NULL_HANDLE;
-    uint32_t                   skyMeshVerts = 0;   // distinct from raster skyVertCount (line ~286)
+    uint32_t                   skyMeshVerts = 0;   // distinct from the raster skyVertCount above
     int                        skyMeshTexnum = 0;
     VkAccelerationStructureKHR skyBlas      = VK_NULL_HANDLE;
     VkBuffer                   skyBlasBuf   = VK_NULL_HANDLE;
@@ -1853,7 +1858,15 @@ void CreateSwapchain()
 #endif
     sci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;   // single graphics+present queue
     sci.preTransform = caps.currentTransform;
+    // OPAQUE is what we want and what desktop drivers offer, but the spec only
+    // guarantees that SOME mode is supported. Every pixel we present has alpha 1,
+    // so any other mode shows the same picture; take the first one offered.
     sci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    if (!(caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR))
+        for (VkCompositeAlphaFlagBitsKHR m : { VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
+                                               VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
+                                               VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR })
+            if (caps.supportedCompositeAlpha & m) { sci.compositeAlpha = m; break; }
     // Present mode: prefer MAILBOX so the render loop runs flat-out and shows its
     // true frame rate with the lowest input lag and no tearing -- on a high-refresh
     // monitor this delivers the full rate, and on a 60 Hz panel the engine still
@@ -2037,9 +2050,6 @@ VkDeviceAddress BufferAddress(VkBuffer b)
     return vkGetBufferDeviceAddress(g.device, &i);
 }
 
-// Buffer + dedicated allocation for ray-tracing use (AS storage, scratch, the TLAS
-// instance array). When the usage includes SHADER_DEVICE_ADDRESS the allocation
-// gets the device-address flag so BufferAddress works.
 // "call(tag)" for a Check message. The buffer is reused, so hand it straight to Check.
 static const char* VkWhat(const char* call, const char* tag)
 {
@@ -2048,6 +2058,9 @@ static const char* VkWhat(const char* call, const char* tag)
     return msg;
 }
 
+// Buffer + dedicated allocation for ray-tracing use (AS storage, scratch, the TLAS
+// instance array). When the usage includes SHADER_DEVICE_ADDRESS the allocation
+// gets the device-address flag so BufferAddress works.
 void CreateRtBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
                     VkMemoryPropertyFlags props,
                     VkBuffer* buf, VkDeviceMemory* mem, const char* tag = "rt")
@@ -2962,10 +2975,6 @@ void CreateBakePipeline()
     CreateComputePipe(bake_comp_spv, bake_comp_spv_len, g.bakePipeLayout, "bake", &g.bakePipeline);
 }
 
-// (Re)create the swapchain-sized storage image the compute pass writes and the
-// blit reads. R8G8B8A8_UNORM so vkCmdBlitImage matches components by name into
-// the B8G8R8A8 swapchain with no red/blue swap. STORAGE (compute) + TRANSFER_SRC
-// (blit). RT-only.
 // SVGF descriptor-set layout (DOOM-0009 build step 6). Created BEFORE the
 // path-trace pipeline (whose layout references it as set 2). One set shared by the
 // megakernel's mode-6 feed and all three denoiser passes: nine storage-image
@@ -3430,6 +3439,10 @@ void CreateTaauTargets()
     WriteTaauDescriptor();
 }
 
+// (Re)create the swapchain-sized storage image the compute pass writes and the
+// blit reads. R8G8B8A8_UNORM so vkCmdBlitImage matches components by name into
+// the B8G8R8A8 swapchain with no red/blue swap. STORAGE (compute) + TRANSFER_SRC
+// (blit). RT-only.
 void CreateRtTargets()
 {
     CreateImage({ g.extent.width, g.extent.height, 1 }, VK_FORMAT_R8G8B8A8_UNORM,
@@ -3629,17 +3642,9 @@ void BuildFogNoiseVolume()
     vkUpdateDescriptorSets(g.device, 1, &wr, 0, nullptr);
 }
 
-// DOOM-0011 L1d: (re)upload the outdoor-proximity seep field and re-point set 0's
-// bindings 4 and 5 at it. Called once at pipeline creation with a 1x1 placeholder
-// -- the descriptors have to be valid before the first dispatch, and the first level
-// is not built until later -- then again from RB_Vulkan_BuildLevel with the real
-// field. `f` may be null, which means "use the placeholder": every cell reads
-// RB_SEEP_DMAX and "roofed", so the seep contributes nothing and every fog sample
-// takes the indoor branch. DOOM-0276 made that second half load-bearing -- the mask
-// now decides `openSky`, which the up-ray used to decide on its own -- so the
-// placeholder would flatten the outdoor fog too. It cannot be observed: it is live
-// only between pipeline creation and the first RB_Vulkan_BuildLevel, and there is no
-// level to render in that window.
+// float -> IEEE half: the mantissa is truncated, what would be a half denormal flushes
+// to zero, and anything too large (inf and NaN included) saturates to the largest finite
+// half rather than becoming an inf.
 static uint16_t FloatToHalf(float f)
 {
     uint32_t x;
@@ -3677,6 +3682,18 @@ static void PackSeepTexels(uint16_t* dst)
     }
 }
 
+// DOOM-0011 L1d: (re)upload the outdoor-proximity seep field and re-point set 0's
+// bindings 4 and 5 at it. Called once at pipeline creation with a 1x1 placeholder
+// -- the descriptors have to be valid before the first dispatch, and the first level
+// is not built until later -- then again from RB_Vulkan_BuildLevel with the real
+// field. `f` may be null, which means "use the placeholder": every cell reads
+// RB_SEEP_DMAX and "roofed", so the seep contributes nothing and every fog sample
+// takes the indoor branch. DOOM-0276 made that second half load-bearing -- the mask
+// now decides `openSky`, which the up-ray used to decide on its own -- so the
+// placeholder would flatten the outdoor fog too. It cannot be observed: it is live
+// only between pipeline creation and the first RB_Vulkan_BuildLevel, and there is no
+// level to render in that window.
+//
 // DOOM-0289: takes OWNERSHIP of `f`. It is retained as g.seepField because it carries
 // the per-cell geometry cache the clearance-only rebuild marches over; the caller must
 // NOT free it afterwards. Passing nullptr (the placeholder path) clears the retained
@@ -4253,14 +4270,6 @@ void DestroySceneTarget()
     }
 }
 
-// DOOM-0170 L2c — build the flashlight cast-shadow map (§4.4): a fixed 2048^2 depth image
-// the world renders into from the torch's viewpoint, plus its render pass, framebuffer,
-// sampler, the lightVP uniform buffer mesh.frag reads, and the set-1 descriptor. All
-// size-independent (never rebuilt on resize), so this runs once at init. The shadow
-// PIPELINE is built in CreatePipeline (it reuses that function's vertex-input state);
-// this only needs g.shadowPass + g.shadowPipeLayout ready before then. Requires the
-// command pool (the one-time layout park) + g.dsLayout (the shadow pipeline layout binds
-// set 0 for the material array), so RB_Vulkan_Init calls it after CreateDescriptors.
 // mesh.frag's ShadowUbo (set 1, binding 1), byte for byte. lightVP is written on
 // torch-on frames; DOOM-0273's flags every raster frame: x = surface detail
 // (SurfaceDetailLane), y = reserved for DOOM-0103, z = surface-map base, w = free.
@@ -4271,6 +4280,14 @@ struct ShadowUboData
 };
 static_assert(offsetof(ShadowUboData, flags) == 64, "flags follows lightVP, as in mesh.frag");
 
+// DOOM-0170 L2c — build the flashlight cast-shadow map (§4.4): a fixed 2048^2 depth image
+// the world renders into from the torch's viewpoint, plus its render pass, framebuffer,
+// sampler, the lightVP uniform buffer mesh.frag reads, and the set-1 descriptor. All
+// size-independent (never rebuilt on resize), so this runs once at init. The shadow
+// PIPELINE is built in CreatePipeline (it reuses that function's vertex-input state);
+// this only needs g.shadowPass + g.shadowPipeLayout ready before then. Requires the
+// command pool (the one-time layout park) + g.dsLayout (the shadow pipeline layout binds
+// set 0 for the material array), so RB_Vulkan_Init calls it after CreateDescriptors.
 void CreateShadowResources()
 {
     const uint32_t dim = VulkanState::kShadowDim;
@@ -4463,15 +4480,25 @@ void CreateRenderPass()
     // renderPass/scenePass, whose colour is CLEARed and never transfer-written
     // beforehand — a wider EXTERNAL dependency is strictly more synchronisation,
     // never less, so widening cannot break them.
+    //
+    // The depth half: every one of these passes CLEARs g.depthImage from UNDEFINED, and
+    // the raster frame runs two of them back to back on it (scenePass, then renderPass
+    // for the composite + HUD). The clear and its layout transition are WRITES, and the
+    // previous pass's depth writes and DONT_CARE store land at LATE_FRAGMENT_TESTS. A
+    // write-after-write needs a memory dependency, not just an execution one, so the
+    // source scope names that stage and DEPTH_STENCIL_ATTACHMENT_WRITE; without them
+    // the clear was ordered after the earlier writes but not after their availability.
     VkSubpassDependency dep = {};
     dep.srcSubpass = VK_SUBPASS_EXTERNAL;
     dep.dstSubpass = 0;
     dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
                        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                       VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
                        VK_PIPELINE_STAGE_TRANSFER_BIT;
     dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
                        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-    dep.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    dep.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT |
+                        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
                         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
                         VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
@@ -5525,9 +5552,6 @@ static uint32_t DeviceMaxImage2D()
     return pdp.limits.maxImageDimension2D;
 }
 
-// Build the paletted texture atlas (r_mesh.c), upload the atlas + PLAYPAL LUT
-// images and the per-id rect table, and write descriptor set 0. WAD-global, so
-// this runs once on the first level build and is reused thereafter.
 // Persistently-mapped, host-visible vertex buffer for the per-frame billboard
 // sprites. Sized once for a generous cap; RB_BuildSprites refills it each frame.
 void CreateSpriteBuffer()
@@ -5781,6 +5805,10 @@ static bool UploadImageBatch(const std::vector<BatchImage>& imgs, Fill fill,
     images.assign(n, VK_NULL_HANDLE);
     views.assign(n, VK_NULL_HANDLE);
     memory = VK_NULL_HANDLE;
+    // Nothing to upload is not a failure, but a zero-size allocation and staging
+    // buffer are both invalid Vulkan, so stop before asking for them.
+    if (n == 0)
+        return true;
     auto giveUp = [&]() {
         for (VkImage im : images) if (im) vkDestroyImage(g.device, im, nullptr);
         images.clear();
@@ -6031,7 +6059,8 @@ void UploadAtlas()
     warr.descriptorCount = (uint32_t)n;
     warr.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     warr.pImageInfo = infos.data();
-    vkUpdateDescriptorSets(g.device, 1, &warr, 0, nullptr);
+    if (n > 0)   // descriptorCount must be non-zero
+        vkUpdateDescriptorSets(g.device, 1, &warr, 0, nullptr);
 
     UploadSurfaceMaps(a);   // DOOM-0273: needs a->pixels/covered/names, freed below
 
@@ -6098,6 +6127,134 @@ void CreateOverlayResources(int w, int h)
     g.overlayReady = true;
 }
 
+// DOOM-0206: one combined-image-sampler set in a pool of its own, on the text layout
+// (binding 0, fragment stage) with the text sampler. The glyph atlas, the cursor skull
+// and the M_DOOM logo each get one.
+static void CreateMenuImageSet(VkImageView view, const char* tag,
+                               VkDescriptorPool* pool, VkDescriptorSet* set)
+{
+    VkDescriptorPoolSize ps = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 };
+    VkDescriptorPoolCreateInfo dpci = {};
+    dpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    dpci.maxSets = 1;
+    dpci.poolSizeCount = 1;
+    dpci.pPoolSizes = &ps;
+    Check(vkCreateDescriptorPool(g.device, &dpci, nullptr, pool), VkWhat("vkCreateDescriptorPool", tag));
+
+    VkDescriptorSetAllocateInfo dsai = {};
+    dsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsai.descriptorPool = *pool;
+    dsai.descriptorSetCount = 1;
+    dsai.pSetLayouts = &g.textDsLayout;
+    Check(vkAllocateDescriptorSets(g.device, &dsai, set), VkWhat("vkAllocateDescriptorSets", tag));
+
+    VkDescriptorImageInfo info = { g.textSampler, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+    VkWriteDescriptorSet w = {};
+    w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    w.dstSet = *set; w.dstBinding = 0; w.descriptorCount = 1;
+    w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    w.pImageInfo = &info;
+    vkUpdateDescriptorSets(g.device, 1, &w, 0, nullptr);
+}
+
+// DOOM-0206: the menu's textured-quad pipeline. TextVertex input, alpha blend ON, depth off,
+// viewport + scissor dynamic, into g.renderPass (the 8-bit swapchain pass; format-compatible
+// with g.rtOverlayPass, so one pipeline draws in BOTH the raster and the RT-overlay present
+// paths), on g.textPipelineLayout. The glyph text and the RGBA cursor/logo differ only in
+// the fragment shader: text.frag samples the R8 atlas, cursor.frag an RGBA image.
+static VkPipeline CreateMenuQuadPipeline(const unsigned char* fragSpv, unsigned fragLen,
+                                         const char* tag)
+{
+    VkShaderModule vert = MakeShader(text_vert_spv, text_vert_spv_len);
+    VkShaderModule frag = MakeShader(fragSpv, fragLen);
+    VkPipelineShaderStageCreateInfo stages[2] = {};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;   stages[0].module = vert; stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT; stages[1].module = frag; stages[1].pName = "main";
+
+    VkVertexInputBindingDescription bind = {};
+    bind.binding = 0;
+    bind.stride = sizeof(TextVertex);
+    bind.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    VkVertexInputAttributeDescription attrs[3] = {};
+    attrs[0] = { 0, 0, VK_FORMAT_R32G32_SFLOAT,  (uint32_t)offsetof(TextVertex, x) };
+    attrs[1] = { 1, 0, VK_FORMAT_R32G32_SFLOAT,  (uint32_t)offsetof(TextVertex, u) };
+    attrs[2] = { 2, 0, VK_FORMAT_R8G8B8A8_UNORM, (uint32_t)offsetof(TextVertex, r) };
+    VkPipelineVertexInputStateCreateInfo vin = {};
+    vin.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vin.vertexBindingDescriptionCount = 1;
+    vin.pVertexBindingDescriptions = &bind;
+    vin.vertexAttributeDescriptionCount = 3;
+    vin.pVertexAttributeDescriptions = attrs;
+
+    VkPipelineInputAssemblyStateCreateInfo ia = {};
+    ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkPipelineViewportStateCreateInfo vp = {};
+    vp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    vp.viewportCount = 1; vp.scissorCount = 1;   // viewport + scissor dynamic
+
+    VkPipelineRasterizationStateCreateInfo rs = {};
+    rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rs.polygonMode = VK_POLYGON_MODE_FILL;
+    rs.cullMode = VK_CULL_MODE_NONE;
+    rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rs.lineWidth = 1.0f;
+
+    VkPipelineMultisampleStateCreateInfo ms = {};
+    ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineDepthStencilStateCreateInfo dsst = {};   // depth test + write off (2D over all)
+    dsst.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+
+    // Premultiplied-alpha blend: both fragment shaders output (rgb*a, a), so src factor is ONE.
+    VkPipelineColorBlendAttachmentState cba = {};
+    cba.blendEnable = VK_TRUE;
+    cba.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    cba.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    cba.colorBlendOp = VK_BLEND_OP_ADD;
+    cba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    cba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    cba.alphaBlendOp = VK_BLEND_OP_ADD;
+    cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
+                       | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    VkPipelineColorBlendStateCreateInfo cb = {};
+    cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    cb.attachmentCount = 1;
+    cb.pAttachments = &cba;
+
+    VkDynamicState dyn[2] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+    VkPipelineDynamicStateCreateInfo dynState = {};
+    dynState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynState.dynamicStateCount = 2;
+    dynState.pDynamicStates = dyn;
+
+    VkGraphicsPipelineCreateInfo pci = {};
+    pci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pci.stageCount = 2;
+    pci.pStages = stages;
+    pci.pVertexInputState = &vin;
+    pci.pInputAssemblyState = &ia;
+    pci.pViewportState = &vp;
+    pci.pRasterizationState = &rs;
+    pci.pMultisampleState = &ms;
+    pci.pDepthStencilState = &dsst;
+    pci.pColorBlendState = &cb;
+    pci.pDynamicState = &dynState;
+    pci.layout = g.textPipelineLayout;
+    pci.renderPass = g.renderPass;
+    pci.subpass = 0;
+    VkPipeline pipe = VK_NULL_HANDLE;
+    Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &pci, nullptr, &pipe),
+          VkWhat("vkCreateGraphicsPipelines", tag));
+    vkDestroyShaderModule(g.device, vert, nullptr);
+    vkDestroyShaderModule(g.device, frag, nullptr);
+    return pipe;
+}
+
 // DOOM-0206 (L4): bake the menu glyph atlas and build the display-resolution text pipeline.
 // Called once from RB_Vulkan_Init after InitPaletteAndDescriptorSet (so the command pool +
 // g.renderPass exist). The font is the bundled Oxanium SemiBold (OFL), embedded as the
@@ -6157,31 +6314,7 @@ void CreateTextResources()
     Check(vkCreateDescriptorSetLayout(g.device, &dlci, nullptr, &g.textDsLayout),
           "vkCreateDescriptorSetLayout(text)");
 
-    VkDescriptorPoolSize ps = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 };
-    VkDescriptorPoolCreateInfo dpci = {};
-    dpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    dpci.maxSets = 1;
-    dpci.poolSizeCount = 1;
-    dpci.pPoolSizes = &ps;
-    Check(vkCreateDescriptorPool(g.device, &dpci, nullptr, &g.textDsPool),
-          "vkCreateDescriptorPool(text)");
-
-    VkDescriptorSetAllocateInfo dsai = {};
-    dsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    dsai.descriptorPool = g.textDsPool;
-    dsai.descriptorSetCount = 1;
-    dsai.pSetLayouts = &g.textDsLayout;
-    Check(vkAllocateDescriptorSets(g.device, &dsai, &g.textDs),
-          "vkAllocateDescriptorSets(text)");
-
-    VkDescriptorImageInfo aInfo = { g.textSampler, g.textAtlasView,
-                                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-    VkWriteDescriptorSet w = {};
-    w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    w.dstSet = g.textDs; w.dstBinding = 0; w.descriptorCount = 1;
-    w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    w.pImageInfo = &aInfo;
-    vkUpdateDescriptorSets(g.device, 1, &w, 0, nullptr);
+    CreateMenuImageSet(g.textAtlasView, "text", &g.textDsPool, &g.textDs);
 
     // Pipeline layout: the atlas set + a vec2 invDisplay push constant (vertex stage).
     VkPushConstantRange pcr = {};
@@ -6197,95 +6330,7 @@ void CreateTextResources()
     Check(vkCreatePipelineLayout(g.device, &plci, nullptr, &g.textPipelineLayout),
           "vkCreatePipelineLayout(text)");
 
-    // Graphics pipeline: textured quad, alpha blend ON, depth off, into g.renderPass (the
-    // 8-bit swapchain pass; format-compatible with g.rtOverlayPass, so this one pipeline draws
-    // in BOTH the raster and the RT-overlay present paths).
-    VkShaderModule vert = MakeShader(text_vert_spv, text_vert_spv_len);
-    VkShaderModule frag = MakeShader(text_frag_spv, text_frag_spv_len);
-    VkPipelineShaderStageCreateInfo stages[2] = {};
-    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;   stages[0].module = vert; stages[0].pName = "main";
-    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT; stages[1].module = frag; stages[1].pName = "main";
-
-    VkVertexInputBindingDescription bind = {};
-    bind.binding = 0;
-    bind.stride = sizeof(TextVertex);
-    bind.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-    VkVertexInputAttributeDescription attrs[3] = {};
-    attrs[0] = { 0, 0, VK_FORMAT_R32G32_SFLOAT,  (uint32_t)offsetof(TextVertex, x) };
-    attrs[1] = { 1, 0, VK_FORMAT_R32G32_SFLOAT,  (uint32_t)offsetof(TextVertex, u) };
-    attrs[2] = { 2, 0, VK_FORMAT_R8G8B8A8_UNORM, (uint32_t)offsetof(TextVertex, r) };
-    VkPipelineVertexInputStateCreateInfo vin = {};
-    vin.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vin.vertexBindingDescriptionCount = 1;
-    vin.pVertexBindingDescriptions = &bind;
-    vin.vertexAttributeDescriptionCount = 3;
-    vin.pVertexAttributeDescriptions = attrs;
-
-    VkPipelineInputAssemblyStateCreateInfo ia = {};
-    ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-
-    VkPipelineViewportStateCreateInfo vp = {};
-    vp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-    vp.viewportCount = 1; vp.scissorCount = 1;   // viewport + scissor dynamic
-
-    VkPipelineRasterizationStateCreateInfo rs = {};
-    rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    rs.polygonMode = VK_POLYGON_MODE_FILL;
-    rs.cullMode = VK_CULL_MODE_NONE;
-    rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-    rs.lineWidth = 1.0f;
-
-    VkPipelineMultisampleStateCreateInfo ms = {};
-    ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-    VkPipelineDepthStencilStateCreateInfo dsst = {};   // depth test + write off (2D over all)
-    dsst.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-
-    // Premultiplied-alpha blend: text.frag outputs (rgb*a, a), so src factor is ONE.
-    VkPipelineColorBlendAttachmentState cba = {};
-    cba.blendEnable = VK_TRUE;
-    cba.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
-    cba.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-    cba.colorBlendOp = VK_BLEND_OP_ADD;
-    cba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-    cba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-    cba.alphaBlendOp = VK_BLEND_OP_ADD;
-    cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
-                       | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-    VkPipelineColorBlendStateCreateInfo cb = {};
-    cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    cb.attachmentCount = 1;
-    cb.pAttachments = &cba;
-
-    VkDynamicState dyn[2] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
-    VkPipelineDynamicStateCreateInfo dynState = {};
-    dynState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    dynState.dynamicStateCount = 2;
-    dynState.pDynamicStates = dyn;
-
-    VkGraphicsPipelineCreateInfo pci = {};
-    pci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pci.stageCount = 2;
-    pci.pStages = stages;
-    pci.pVertexInputState = &vin;
-    pci.pInputAssemblyState = &ia;
-    pci.pViewportState = &vp;
-    pci.pRasterizationState = &rs;
-    pci.pMultisampleState = &ms;
-    pci.pDepthStencilState = &dsst;
-    pci.pColorBlendState = &cb;
-    pci.pDynamicState = &dynState;
-    pci.layout = g.textPipelineLayout;
-    pci.renderPass = g.renderPass;
-    pci.subpass = 0;
-    Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &pci, nullptr,
-                                    &g.textPipeline), "vkCreateGraphicsPipelines(text)");
-    vkDestroyShaderModule(g.device, vert, nullptr);
-    vkDestroyShaderModule(g.device, frag, nullptr);
+    g.textPipeline = CreateMenuQuadPipeline(text_frag_spv, text_frag_spv_len, "text");
 
     // Per-frame glyph-quad vertex buffer (host-visible, persistently mapped). Single copy:
     // FlushMenuText memcpys + draws it after the fence, so no in-flight double-buffering.
@@ -6323,122 +6368,10 @@ void CreateTextResources()
                                pixels, (VkDeviceSize)sw * sh * 4,
                                &g.cursorImage, &g.cursorMemory, &g.cursorView);
 
-            // Descriptor set: one combined-image-sampler (the skull), its own pool; reuses the
-            // text DS layout (identical binding 0 = sampler2D at fragment stage) and sampler.
-            VkDescriptorPoolSize cps = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 };
-            VkDescriptorPoolCreateInfo cdpci = {};
-            cdpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-            cdpci.maxSets = 1;
-            cdpci.poolSizeCount = 1;
-            cdpci.pPoolSizes = &cps;
-            Check(vkCreateDescriptorPool(g.device, &cdpci, nullptr, &g.cursorDsPool),
-                  "vkCreateDescriptorPool(cursor)");
-
-            VkDescriptorSetAllocateInfo cdsai = {};
-            cdsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-            cdsai.descriptorPool = g.cursorDsPool;
-            cdsai.descriptorSetCount = 1;
-            cdsai.pSetLayouts = &g.textDsLayout;
-            Check(vkAllocateDescriptorSets(g.device, &cdsai, &g.cursorDs),
-                  "vkAllocateDescriptorSets(cursor)");
-
-            VkDescriptorImageInfo cInfo = { g.textSampler, g.cursorView,
-                                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-            VkWriteDescriptorSet cw = {};
-            cw.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            cw.dstSet = g.cursorDs; cw.dstBinding = 0; cw.descriptorCount = 1;
-            cw.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            cw.pImageInfo = &cInfo;
-            vkUpdateDescriptorSets(g.device, 1, &cw, 0, nullptr);
-
-            // Pipeline: identical to the text pipeline except the fragment shader samples RGBA.
-            // Same TextVertex input, same premultiplied-alpha blend, same layout + render pass.
-            VkShaderModule cvert = MakeShader(text_vert_spv, text_vert_spv_len);
-            VkShaderModule cfrag = MakeShader(cursor_frag_spv, cursor_frag_spv_len);
-            VkPipelineShaderStageCreateInfo cstages[2] = {};
-            cstages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-            cstages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;   cstages[0].module = cvert; cstages[0].pName = "main";
-            cstages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-            cstages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT; cstages[1].module = cfrag; cstages[1].pName = "main";
-
-            VkVertexInputBindingDescription cbind = {};
-            cbind.binding = 0;
-            cbind.stride = sizeof(TextVertex);
-            cbind.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-            VkVertexInputAttributeDescription cattrs[3] = {};
-            cattrs[0] = { 0, 0, VK_FORMAT_R32G32_SFLOAT,  (uint32_t)offsetof(TextVertex, x) };
-            cattrs[1] = { 1, 0, VK_FORMAT_R32G32_SFLOAT,  (uint32_t)offsetof(TextVertex, u) };
-            cattrs[2] = { 2, 0, VK_FORMAT_R8G8B8A8_UNORM, (uint32_t)offsetof(TextVertex, r) };
-            VkPipelineVertexInputStateCreateInfo cvin = {};
-            cvin.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-            cvin.vertexBindingDescriptionCount = 1;
-            cvin.pVertexBindingDescriptions = &cbind;
-            cvin.vertexAttributeDescriptionCount = 3;
-            cvin.pVertexAttributeDescriptions = cattrs;
-
-            VkPipelineInputAssemblyStateCreateInfo cia = {};
-            cia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-            cia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-
-            VkPipelineViewportStateCreateInfo cvp = {};
-            cvp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-            cvp.viewportCount = 1; cvp.scissorCount = 1;   // viewport + scissor dynamic
-
-            VkPipelineRasterizationStateCreateInfo crs = {};
-            crs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-            crs.polygonMode = VK_POLYGON_MODE_FILL;
-            crs.cullMode = VK_CULL_MODE_NONE;
-            crs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-            crs.lineWidth = 1.0f;
-
-            VkPipelineMultisampleStateCreateInfo cms = {};
-            cms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-            cms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-            VkPipelineDepthStencilStateCreateInfo cdsst = {};   // depth test + write off
-            cdsst.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-
-            // Premultiplied-alpha blend: cursor.frag outputs (rgb*a, a), so src factor is ONE.
-            VkPipelineColorBlendAttachmentState ccba = {};
-            ccba.blendEnable = VK_TRUE;
-            ccba.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
-            ccba.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-            ccba.colorBlendOp = VK_BLEND_OP_ADD;
-            ccba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-            ccba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-            ccba.alphaBlendOp = VK_BLEND_OP_ADD;
-            ccba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
-                                | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-            VkPipelineColorBlendStateCreateInfo ccb = {};
-            ccb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-            ccb.attachmentCount = 1;
-            ccb.pAttachments = &ccba;
-
-            VkDynamicState cdyn[2] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
-            VkPipelineDynamicStateCreateInfo cdynState = {};
-            cdynState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-            cdynState.dynamicStateCount = 2;
-            cdynState.pDynamicStates = cdyn;
-
-            VkGraphicsPipelineCreateInfo cpci = {};
-            cpci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-            cpci.stageCount = 2;
-            cpci.pStages = cstages;
-            cpci.pVertexInputState = &cvin;
-            cpci.pInputAssemblyState = &cia;
-            cpci.pViewportState = &cvp;
-            cpci.pRasterizationState = &crs;
-            cpci.pMultisampleState = &cms;
-            cpci.pDepthStencilState = &cdsst;
-            cpci.pColorBlendState = &ccb;
-            cpci.pDynamicState = &cdynState;
-            cpci.layout = g.textPipelineLayout;
-            cpci.renderPass = g.renderPass;
-            cpci.subpass = 0;
-            Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &cpci, nullptr,
-                                            &g.cursorPipeline), "vkCreateGraphicsPipelines(cursor)");
-            vkDestroyShaderModule(g.device, cvert, nullptr);
-            vkDestroyShaderModule(g.device, cfrag, nullptr);
+            // Its own set on the text layout + sampler, and the text pipeline's twin with
+            // cursor.frag, which samples RGBA instead of the R8 glyph atlas.
+            CreateMenuImageSet(g.cursorView, "cursor", &g.cursorDsPool, &g.cursorDs);
+            g.cursorPipeline = CreateMenuQuadPipeline(cursor_frag_spv, cursor_frag_spv_len, "cursor");
 
             mt_set_cursor(1, sw, sh);
             printf("RB_Vulkan: menu cursor = real WAD skull M_SKULL1 (%dx%d RGBA, crisp).\n", sw, sh);
@@ -6465,31 +6398,7 @@ void CreateTextResources()
                                pixels, (VkDeviceSize)lw * lh * 4,
                                &g.logoImage, &g.logoMemory, &g.logoView);
 
-            VkDescriptorPoolSize lps = { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 };
-            VkDescriptorPoolCreateInfo ldpci = {};
-            ldpci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-            ldpci.maxSets = 1;
-            ldpci.poolSizeCount = 1;
-            ldpci.pPoolSizes = &lps;
-            Check(vkCreateDescriptorPool(g.device, &ldpci, nullptr, &g.logoDsPool),
-                  "vkCreateDescriptorPool(logo)");
-
-            VkDescriptorSetAllocateInfo ldsai = {};
-            ldsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-            ldsai.descriptorPool = g.logoDsPool;
-            ldsai.descriptorSetCount = 1;
-            ldsai.pSetLayouts = &g.textDsLayout;
-            Check(vkAllocateDescriptorSets(g.device, &ldsai, &g.logoDs),
-                  "vkAllocateDescriptorSets(logo)");
-
-            VkDescriptorImageInfo lInfo = { g.textSampler, g.logoView,
-                                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-            VkWriteDescriptorSet lw2 = {};
-            lw2.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            lw2.dstSet = g.logoDs; lw2.dstBinding = 0; lw2.descriptorCount = 1;
-            lw2.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            lw2.pImageInfo = &lInfo;
-            vkUpdateDescriptorSets(g.device, 1, &lw2, 0, nullptr);
+            CreateMenuImageSet(g.logoView, "logo", &g.logoDsPool, &g.logoDs);
 
             mt_set_logo(1, lw, lh);
             printf("RB_Vulkan: menu logo = real WAD M_DOOM (%dx%d RGBA, crisp).\n", lw, lh);
@@ -6608,6 +6517,11 @@ static void FlushMenuText()
 
 static const int   kHdMaxImages = 4096;    // bindless image-array upper bound
 static const int   kHdMaxEdge   = 1024;    // per-map longest-edge clamp (px)
+// Largest HD source image decoded at all. The clamp above runs AFTER the decode, which
+// allocates the full image first: a 2^24-px PNG (stb's own limit) would ask for ~2 GB
+// for a moment. 4096 bounds that at 64 MB and still admits 4K source art (user decision
+// 2026-10-27).
+static const int   kHdSourceMaxEdge = 4096;
 static const float kHdBudgetMB  = 768.0f;  // per-map VRAM ceiling
 
 // v1 uploads 5 of the 7 maps; roughness (RB_RGH) and metallic (RB_MET) are skipped.
@@ -6971,6 +6885,13 @@ static void EnsureHdMaterials()
                     printf("DOOM-0042: %s: no %s map (%s) - default.\n", r.name, ms.suffix, full);
                 continue;
             }
+            // Refused here, before the budget counts it: a map the decode would skip
+            // must not crowd valid materials out of kHdBudgetMB.
+            if (w > kHdSourceMaxEdge || h > kHdSourceMaxEdge) {
+                printf("DOOM-0042: %s: %s is %dx%d, over the %d px source limit - skipped.\n",
+                       r.name, full, w, h, kHdSourceMaxEdge);
+                continue;
+            }
             if (ms.k == RB_ALB) albedoOk = true;
             estMB[id] += mbOf(w, h);
             mine.push_back({ id, ms.k, ms.srgb, full });
@@ -6995,7 +6916,8 @@ static void EnsureHdMaterials()
     float overlayMB = 0.0f;
     for (Overlay& o : overlays) {
         char op[720]; int w = 0, h = 0;
-        if (rb_asset_path(op, sizeof(op), o.rel) && rb_image_info(op, &w, &h)) {
+        if (rb_asset_path(op, sizeof(op), o.rel) && rb_image_info(op, &w, &h)
+            && w <= kHdSourceMaxEdge && h <= kHdSourceMaxEdge) {
             o.present = true; o.mb = mbOf(w, h); overlayMB += o.mb;
         }
     }
@@ -7021,6 +6943,14 @@ static void EnsureHdMaterials()
     float usedMB = 0.0f;
     int   capDropped = 0;
     auto decode = [&](const char* path, const char* what, rb_image_t* img) -> bool {
+        // The planning pass already refused oversized maps; this re-check guards a file
+        // replaced since then, because the limit exists to bound the decode itself.
+        int iw = 0, ih = 0;
+        if (rb_image_info(path, &iw, &ih) && (iw > kHdSourceMaxEdge || ih > kHdSourceMaxEdge)) {
+            printf("DOOM-0042: %s: %s is %dx%d, over the %d px source limit - skipped.\n",
+                   what, path, iw, ih, kHdSourceMaxEdge);
+            return false;
+        }
         if (!rb_image_load(path, img)) {
             printf("DOOM-0042: %s: %s would not decode - skipped.\n", what, path);
             return false;
@@ -7495,6 +7425,17 @@ void BuildDynamicEmitters()
     }
 }
 
+// DOOM-0119: does the REJECT matrix say sector secA cannot see sector secE? Both are
+// in [0, g.numSectors), which BuildProbes has checked the matrix is big enough for. The
+// bit index is taken in 64 bits: secA * numSectors passes INT_MAX from 46341 sectors,
+// and a WAD that size (with the REJECT lump it then needs) is untrusted input like any
+// other, so the int product the two culls used to form was undefined behaviour.
+static bool RejectHides(int secA, int secE)
+{
+    const uint64_t bit = (uint64_t)secA * g.numSectors + (uint64_t)secE;
+    return (g.rejectCPU[bit >> 3] >> (bit & 7)) & 1u;
+}
+
 // DOOM-0170 perf: recompute the per-subsector nearest-N cache over the STATIC emitters
 // only (records [0, staticN) — wall/flat lights that never move, so each is tested against
 // EVERY subsector, skipping only the pairs REJECT hides, DOOM-0497). This
@@ -7562,12 +7503,9 @@ static void RebuildStaticPointLightCache(int staticN)
         int   cnt = 0;
         for (int e = 0; e < staticN; e++)
         {
-            if (secA >= 0 && es[(size_t)e] >= 0 && es[(size_t)e] < (int)g.numSectors)
-            {
-                const int pnum = secA * (int)g.numSectors + es[(size_t)e];
-                if (g.rejectCPU[pnum >> 3] & (1 << (pnum & 7)))
-                    continue;                     // this sector provably can't see the emitter
-            }
+            if (secA >= 0 && es[(size_t)e] >= 0 && es[(size_t)e] < (int)g.numSectors
+                && RejectHides(secA, es[(size_t)e]))
+                continue;                         // this sector provably can't see the emitter
             const float dx = sc[e * 3 + 0] - c.x;
             const float dy = sc[e * 3 + 1] - c.y;
             const float d2 = dx * dx + dy * dy;
@@ -7731,12 +7669,9 @@ void BuildRasterPointLights()
             if (cull && secA >= 0)
             {
                 const uint32_t secE = d < esN ? es[d] : 0xFFFFFFFFu;
-                if (secE != 0xFFFFFFFFu && (int)secE < (int)g.numSectors)
-                {
-                    const int pnum = secA * (int)g.numSectors + (int)secE;
-                    if (g.rejectCPU[pnum >> 3] & (1 << (pnum & 7)))
-                        continue;                  // this sector provably can't see the emitter
-                }
+                if (secE != 0xFFFFFFFFu && (int)secE < (int)g.numSectors
+                    && RejectHides(secA, (int)secE))
+                    continue;                      // this sector provably can't see the emitter
             }
             const float dx = ec[d * 3 + 0] - c.x;
             const float dy = ec[d * 3 + 1] - c.y;
@@ -8295,13 +8230,31 @@ void BuildFogLightGrid()
 // major R[4] G[4] B[4]). Must match the bake shader and the megakernel's read.
 static const uint32_t PROBE_FLOATS = 16;
 
+// Make this command buffer's earlier device writes visible to the host, for a buffer
+// the CPU maps and reads once the submit has been waited on. The wait is not enough on
+// its own: a fence's (or vkQueueWaitIdle's) memory dependency covers device access
+// only, so the spec ("Fences", and "Host Access Types") requires a barrier into
+// HOST_READ before the host may read what the GPU wrote. Every GPU-to-host readback
+// here -- the GI bake check, -rtverify, -shotverify and the dev screenshot -- ends
+// its recording with one.
+static void RecordHostReadBarrier(VkCommandBuffer cb, VkPipelineStageFlags srcStage,
+                                  VkAccessFlags srcAccess)
+{
+    VkMemoryBarrier mb = {};
+    mb.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    mb.srcAccessMask = srcAccess;
+    mb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+    vkCmdPipelineBarrier(cb, srcStage, VK_PIPELINE_STAGE_HOST_BIT, 0,
+                         1, &mb, 0, nullptr, 0, nullptr);
+}
+
 // Run the GI bake (DOOM-0009 build step 4b-ii): dispatch bake.comp once over the
 // just-placed probe buffer, filling each probe's SH-L1 radiance, then read it back
 // to verify the bake produced finite, non-zero values. Called at the tail of
 // BuildProbes (positions uploaded, SH zeroed). Needs the per-level TLAS + the
 // materials/emitter/Le buffers, so it runs after BuildAccelerationStructures and
-// BuildEmitterList. The probe buffer is host-visible + coherent, so after the
-// one-shot dispatch waits idle, the host map sees the GPU's writes directly.
+// BuildEmitterList. The probe buffer is host-visible + coherent; the last bounce's
+// host-read barrier makes its writes visible to the map once that dispatch is waited on.
 void RunGiBake()
 {
     if (!g.rtEnabled || g.probeBuf == VK_NULL_HANDLE || g.probeCount == 0 ||
@@ -8365,6 +8318,8 @@ void RunGiBake()
                                 g.bakePipeLayout, 0, 2, sets, 0, nullptr);
         vkCmdPushConstants(cb, g.bakePipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(bp), &bp);
         vkCmdDispatch(cb, (g.probeCount + 63) / 64, 1, 1);
+        if (b == BOUNCES - 1)   // the CPU reads the final bounce back below
+            RecordHostReadBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT);
         EndOneTime(cb);   // waits idle: this bounce is done before the next reads it
         std::swap(wbuf, rbuf);
     }
@@ -8553,6 +8508,7 @@ bool RB_RtVerify()
             region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
             region.imageExtent      = { W, H, 1 };
             vkCmdCopyImageToBuffer(cb, g.rtAccum, VK_IMAGE_LAYOUT_GENERAL, g.rtReadback, 1, &region);
+            RecordHostReadBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
             EndOneTime(cb);
         }
 
@@ -9776,6 +9732,7 @@ void RecordRtTrace(uint32_t idx)
         region.imageExtent      = { dispW, dispH, 1 };
         vkCmdCopyImageToBuffer(g.cmd, finalImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                g.shotBuf, 1, &region);
+        RecordHostReadBarrier(g.cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
         g.shotW = dispW; g.shotH = dispH;
     }
 
@@ -11216,6 +11173,7 @@ extern "C" void RB_Vulkan_Present(void)
             region.imageExtent      = { g.extent.width, g.extent.height, 1 };
             vkCmdCopyImageToBuffer(g.cmd, g.images[idx], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                    g.devShotBuf, 1, &region);
+            RecordHostReadBarrier(g.cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
 
             VkImageMemoryBarrier back = toSrc;
             back.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;

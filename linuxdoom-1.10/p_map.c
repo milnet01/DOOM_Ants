@@ -823,7 +823,10 @@ PTR_AimTraverse (intercept_t* in)
     {
 	li = in->d.line;
 	
-	if ( !(li->flags & ML_TWOSIDED) )
+	// A two-sided flag without a back sidedef leaves backsector null
+	// (DOOM-0399), and P_LineOpening then leaves opentop/openbottom
+	// stale, so the dereference below is not otherwise kept out.
+	if ( !(li->flags & ML_TWOSIDED) || !li->backsector )
 	    return false;		// stop
 	
 	// Crosses a two sided line.
@@ -916,7 +919,8 @@ boolean PTR_ShootTraverse (intercept_t* in)
 	if (li->special)
 	    P_ShootSpecialLine (shootthing, li);
 
-	if ( !(li->flags & ML_TWOSIDED) )
+	// No back sector (DOOM-0399): a wall, as in PTR_AimTraverse.
+	if ( !(li->flags & ML_TWOSIDED) || !li->backsector )
 	    goto hitline;
 	
 	// crosses a two sided line

@@ -16,6 +16,9 @@
 #include "check_util.h"
 
 #include <cstdio>
+#include <cstring>
+#include <sys/mman.h>
+#include <unistd.h>
 #include "../rb_text.c"                     // single-TU: pulls in the stb impl + wrappers.
                                             // (rb_text.h self-guards its decls with extern "C".)
 #include "../assets/Oxanium-SemiBold.ttf.h" // generated: oxanium_ttf[] / oxanium_ttf_len
@@ -35,6 +38,27 @@ int main()
           "a truncated font is refused, not read past its end");
     check(rb_text_bake(oxanium_ttf, 8, 48, &cut) == 0,
           "a buffer shorter than an sfnt header is refused");
+
+    // A font COLLECTION header ("ttcf") keeps font 0's offset in bytes 12..15, which
+    // stbtt_GetFontOffsetForIndex reads with no length, so a 12-byte one is 4 short.
+    // The 12 bytes end exactly at a PROT_NONE page: reading past them faults, which
+    // is what makes the over-read visible here without a sanitizer.
+    {
+        const long pg = sysconf(_SC_PAGESIZE);
+        unsigned char* m = (unsigned char*)mmap(NULL, (size_t)pg * 2, PROT_READ | PROT_WRITE,
+                                                MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        check(m != MAP_FAILED && mprotect(m + pg, (size_t)pg, PROT_NONE) == 0,
+              "guard page for the collection-header case is set up");
+        if (m != MAP_FAILED)
+        {
+            static const unsigned char ttc[12] = { 't','t','c','f', 0,1,0,0, 0,0,0,1 };
+            unsigned char* p = m + pg - sizeof ttc;
+            memcpy(p, ttc, sizeof ttc);
+            check(rb_text_bake(p, (int)sizeof ttc, 48, &cut) == 0,
+                  "a 12-byte font-collection header is refused, not read past its end");
+            munmap(m, (size_t)pg * 2);
+        }
+    }
 
     // --- the real bake, at the menu's working size ---------------------------------
     rb_atlas_font_t font;

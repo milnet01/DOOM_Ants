@@ -630,8 +630,16 @@ void M_LoadDefaults (void)
 			if (!isstring)
 			    *defaults[i].location = parm;
 			else
-			    *(char **)defaults[i].location =
-				newstring;
+			{
+			    // A key given twice replaces the string an earlier
+			    // line malloc'd; the built-in default is a literal
+			    // and is never freed.
+			    char **slot = (char **)defaults[i].location;
+
+			    if (*slot != (char *)defaults[i].defaultvalue)
+				free (*slot);
+			    *slot = newstring;
+			}
 			break;
 		    }
 		// DOOM-0403: nothing owns newstring when the key matches no
@@ -700,6 +708,15 @@ void M_LoadDefaults (void)
     joybstrafe = ConfigClamp (joybstrafe, -1, 3, 1);
     joybuse    = ConfigClamp (joybuse,    -1, 3, 3);
     joybspeed  = ConfigClamp (joybspeed,  -1, 3, 2);
+
+    // The cycling render settings. Their hotkeys step them with `(v + 1) % n`,
+    // and C's % keeps the sign, so a negative value from the file stays
+    // negative through every press: rt_fog -2 makes `;` index fog_msg[-1] in
+    // I_GetEvent and hand that pointer to strncpy, and rt_detile does the same
+    // to det_name[] on `]`. Bring them into range here, once, as above.
+    rb_detile = ConfigClamp (rb_detile, 0, 2, 2);
+    rb_fog    = ConfigClamp (rb_fog,    0, 3, 2);
+    rb_bloom  = ConfigClamp (rb_bloom,  0, 3, 2);
 }
 
 

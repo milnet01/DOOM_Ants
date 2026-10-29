@@ -17,8 +17,9 @@
 // each shader keeps its own push-constant layout.
 
 // The Vestige formula library (srgbToLinear for decodeAlbedo, and everything the
-// megakernel uses). Included HERE, once: the generated file has no include guard, so
-// an includer of this file must not include it again.
+// megakernel uses). The generated file guards its prelude and every function
+// (VESTIGE_FORMULA_*), so a second include -- pathtrace.comp's, through
+// formulas/tonemap_encode.glsl -- is harmless.
 #include "formulas/formulas.glsl"
 #include "formulas/shown_emission.glsl"   // DOOM-0511: shadeSurface's visible glow
 

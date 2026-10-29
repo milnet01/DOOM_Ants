@@ -27,15 +27,15 @@ static int g_failures = 0;
 
 // Record one condition. `what` is the behaviour being claimed, phrased so the
 // FAIL line reads as a sentence about the bug.
-static void check(bool ok, const char* what)
+[[maybe_unused]] static void check(bool ok, const char* what)
 {
     if (!ok) { std::printf("  FAIL: %s\n", what); g_failures++; }
 }
 
 // Same, but prints the two values that disagreed -- worth it on the handful of
 // comparisons where "which value did it actually see?" is the whole diagnosis.
-// [[maybe_unused]]: not every test needs the value-printing form, and -Wall
-// would otherwise warn in the ones that don't.
+// [[maybe_unused]] on both: a test may use only one of the two forms, and -Wall
+// would otherwise warn about the other.
 [[maybe_unused]] static void check_eq_int(long got, long want, const char* what)
 {
     if (got != want)

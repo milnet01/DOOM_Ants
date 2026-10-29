@@ -595,6 +595,15 @@ void D_CheckNetGame (void)
 		 doomcom->numnodes, doomcom->numplayers,
 		 MAXPLAYERS, MAXNETNODES);
 
+    // `-net <n>` picks this slot and I_InitNetwork took it unbounded, so
+    // `-net 9` indexed players[8] and netcmds[8] every tic. Command-line input
+    // is a trust boundary (security.md); net_bounds.h carries the reasoning.
+    if (!NetConsolePlayerFits (doomcom->consoleplayer, doomcom->numplayers))
+	I_Error ("D_CheckNetGame: player %d is not one of the %d player(s) in "
+		 "this game -- `-net` takes 1 to %d here",
+		 doomcom->consoleplayer + 1, doomcom->numplayers,
+		 doomcom->numplayers);
+
     consoleplayer = displayplayer = doomcom->consoleplayer;
     if (netgame)
 	D_ArbitrateNetStart ();
@@ -751,6 +760,13 @@ void TryRunTics (void)
 	    M_Ticker ();
 	    return;
 	} 
+
+	// Yield rather than spin while the next tic is not due: Classic, net
+	// and demo play present once per tic, so this loop otherwise held one
+	// core at 100% for most of every 28.6 ms tic. 1 ms is well inside a
+	// tic, so the tic still runs on time.
+	if (lowtic < gametic/ticdup + counts)
+	    I_Sleep (1);
     }
     
     // run the count * ticdup dics

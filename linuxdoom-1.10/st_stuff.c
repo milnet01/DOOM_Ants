@@ -599,11 +599,16 @@ ST_Responder (event_t* ev)
 	plyr->message = STSTR_MUS;
 	cht_GetParam(&cheat_mus, buf);
 	
+	// The two characters are whatever keys were typed. Vanilla bounded
+	// the number above only, so "idmus00" (or any key below '0') became a
+	// music number S_ChangeMusic I_Errors on, quitting the game from a
+	// typo. Refuse it the way a number that is too high is refused.
 	if (gamemode == commercial)
 	{
 	  musnum = mus_runnin + (buf[0]-'0')*10 + buf[1]-'0' - 1;
 	  
-	  if (((buf[0]-'0')*10 + buf[1]-'0') > 35)
+	  if (((buf[0]-'0')*10 + buf[1]-'0') > 35
+	      || musnum < mus_runnin)
 	    plyr->message = STSTR_NOMUS;
 	  else
 	    S_ChangeMusic(musnum, 1);
@@ -612,7 +617,8 @@ ST_Responder (event_t* ev)
 	{
 	  musnum = mus_e1m1 + (buf[0]-'1')*9 + (buf[1]-'1');
 	  
-	  if (((buf[0]-'1')*9 + buf[1]-'1') > 31)
+	  if (((buf[0]-'1')*9 + buf[1]-'1') > 31
+	      || musnum < mus_e1m1)
 	    plyr->message = STSTR_NOMUS;
 	  else
 	    S_ChangeMusic(musnum, 1);
@@ -670,8 +676,10 @@ ST_Responder (event_t* ev)
       }
     }
     
-    // 'clev' change-level cheat
-    if (cht_CheckCheat(&cheat_clev, ev->data1))
+    // 'clev' change-level cheat. Vanilla left it outside the !netgame block
+    // above, so one player could warp alone and desync the game; it is
+    // single-player only now, like the other cheats.
+    if (!netgame && cht_CheckCheat(&cheat_clev, ev->data1))
     {
       char		buf[3];
       int		epsd;
@@ -681,7 +689,9 @@ ST_Responder (event_t* ev)
       
       if (gamemode == commercial)
       {
-	epsd = 0;
+	// DOOM II plays every map as episode 1. Vanilla set 0 here, which the
+	// epsd < 1 check below rejected, so idclev never worked in DOOM II.
+	epsd = 1;
 	map = (buf[0] - '0')*10 + buf[1] - '0';
       }
       else
@@ -713,6 +723,20 @@ ST_Responder (event_t* ev)
       if ((gamemode == commercial)
 	&& (( epsd > 1) || (map > 34)))
 	return false;
+
+      // A WAD may stop short of the range checked above (DOOM II has no
+      // MAP33, a PWAD may replace only a few maps), and G_DoLoadLevel
+      // I_Errors on a missing map lump, so ask the WAD first.
+      {
+	char	lumpname[9];
+
+	if (gamemode == commercial)
+	  snprintf (lumpname, sizeof lumpname, "MAP%02d", map);
+	else
+	  snprintf (lumpname, sizeof lumpname, "E%dM%d", epsd, map);
+	if (W_CheckNumForName (lumpname) < 0)
+	  return false;
+      }
 
       // So be it.
       plyr->message = STSTR_CLEV;

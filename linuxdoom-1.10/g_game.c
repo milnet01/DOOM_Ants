@@ -75,6 +75,7 @@ rcsid[] __attribute__((used)) = "$Id: g_game.c,v 1.8 1997/02/03 22:45:09 b1 Exp 
 #include "g_game.h"
 
 #include "save_signature.h"
+#include "demo_bounds.h"
 
 
 // 512 KiB: the save buffer's STARTING size. The original 0x2c000 (180 KiB)
@@ -1591,6 +1592,29 @@ void G_DoLoadGame (void)
     // bytes of leveltime read after G_InitNew.
     P_SaveNeed (3 + MAXPLAYERS + 3, "header");
 
+    // The in-game flags come from the file, and nothing else marks the console
+    // player present: with its flag clear, no body is spawned or archived for
+    // it, and the first rendered frame dereferences players[consoleplayer].mo.
+    // Checked before any game state is overwritten, so the refusal can take the
+    // same recovery as the signature refusal above instead of quitting.
+    if (!save_p[3 + consoleplayer])
+    {
+	free (savebuffer);
+	savebuffer = NULL;
+
+	players[consoleplayer].message = GGLOADFAIL;
+	printf ("G_DoLoadGame: %s has no player %d in it -- refusing it\n",
+		savename, consoleplayer + 1);
+
+	if (!players[consoleplayer].mo)
+	{
+	    gamestate = GS_DEMOSCREEN;
+	    D_StartTitle ();
+	}
+
+	return;
+    }
+
     gameskill = *save_p++;
     gameepisode = *save_p++;
     gamemap = *save_p++;
@@ -2016,11 +2040,14 @@ void G_DoPlayDemo (void)
     demoend = demobuffer + demolength;
     // DOOM-0254: the demo lump is PWAD data, and the 13-byte header below is
     // read before any bounds are known. A truncated lump takes the same
-    // graceful path as a version mismatch.
-    if (demolength < 13
-	|| *demo_p++ != VERSION)
+    // graceful path as a version mismatch -- and so does a header whose
+    // console player is not in the game, which no recorder writes and which
+    // left that player with no body for the first frame to dereference.
+    // demo_bounds.h owns the decision and its test.
+    if (!DemoHeaderPlayable (demobuffer, demolength, VERSION, MAXPLAYERS))
     {
-      fprintf( stderr, "Demo is truncated or from a different game version!\n");
+      fprintf( stderr, "Demo is truncated, from a different game version, "
+	       "or names a player who is not in it!\n");
       // A version-mismatched demo never loads a level, so the tick loop must
       // not run P_Ticker on a player with no mobj. Release the lump and either
       // quit (an explicit -playdemo / -timedemo) or fall back to the attract-
@@ -2033,6 +2060,7 @@ void G_DoPlayDemo (void)
       D_AdvanceDemo ();
       return;
     }
+    demo_p++;		// the version byte DemoHeaderPlayable checked
     
     skill = *demo_p++; 
     episode = *demo_p++; 
@@ -2041,12 +2069,12 @@ void G_DoPlayDemo (void)
     respawnparm = *demo_p++;
     fastparm = *demo_p++;
     nomonsters = *demo_p++;
-    consoleplayer = *demo_p++;
     // DOOM-0371: this byte picks the player slot that players[], netcmds[] and
     // S_UpdateSounds all index, and D_DoAdvanceDemo plays demo lumps from any
-    // loaded WAD with no user action. MAXPLAYERS is 4; the byte is 0..255.
-    if (consoleplayer >= MAXPLAYERS)
-	consoleplayer = 0;
+    // loaded WAD with no user action. MAXPLAYERS is 4; the byte is 0..255, so
+    // demo_bounds.h clamps it -- the same slot DemoHeaderPlayable checked.
+    consoleplayer = DemoConsolePlayer (demobuffer, MAXPLAYERS);
+    demo_p++;
 	
     for (i=0 ; i<MAXPLAYERS ; i++) 
 	playeringame[i] = *demo_p++; 

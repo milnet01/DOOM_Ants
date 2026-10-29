@@ -389,6 +389,13 @@ R_PointToDist
 	dy = temp;
     }
 	
+    // A view standing exactly on the point (seg v1) gives dx == dy == 0, and
+    // FixedDiv(0,0) saturates to MAXINT: >>DBITS that is an index ~32000x
+    // past tantoangle[SLOPERANGE+1]. The distance is zero whatever the
+    // angle, so return it rather than read outside the table.
+    if (!dx)
+	return 0;
+
     angle = (tantoangle[ FixedDiv(dy,dx)>>DBITS ]+ANG90) >> ANGLETOFINESHIFT;
 
     // use as cosine

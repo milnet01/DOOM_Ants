@@ -63,4 +63,18 @@ static inline int NetPopulationFits (int numnodes, int numplayers,
     return numplayers <= maxplayers;
 }
 
+// Is `consoleplayer` one of the `numplayers` slots D_CheckNetGame marks in game?
+//
+// I_InitNetwork takes it from `-net <n>` as myargv[i+1][0]-'1' and nothing
+// bounded it: `-net 9 host` gave 8 and `-net 0 host` gave -1, and from there it
+// indexes players[], netcmds[] and playeringame[] (all MAXPLAYERS) on every
+// tic -- G_BuildTiccmd writes a whole ticcmd_t through netcmds[consoleplayer].
+// A number inside MAXPLAYERS but past the host list is refused too: that slot is
+// never marked in game, so P_SetupLevel spawns no body for it and the renderer
+// dereferences a NULL player mobj on the first frame.
+static inline int NetConsolePlayerFits (int consoleplayer, int numplayers)
+{
+    return consoleplayer >= 0 && consoleplayer < numplayers;
+}
+
 #endif

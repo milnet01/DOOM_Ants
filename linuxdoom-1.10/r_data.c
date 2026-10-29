@@ -39,6 +39,7 @@ rcsid[] __attribute__((used)) = "$Id: r_data.c,v 1.4 1997/02/03 16:47:55 b1 Exp 
 
 #include "wad_bounds.h"
 #include "patch_bounds.h"
+#include "palette_bounds.h"
 #include "p_local.h"
 
 #include "doomstat.h"
@@ -496,7 +497,7 @@ void R_GenerateLookup (int texnum)
     {
 	if (!patchcount[x] && !warned)
 	{
-	    printf ("R_GenerateLookup: column without a patch (%s)\n",
+	    printf ("R_GenerateLookup: column without a patch (%.8s)\n",
 		    texture->name);
 	    warned = true;
 	}
@@ -642,7 +643,6 @@ void R_InitTextures (void)
     // Load the patch names from pnames.lmp.
     name[8] = 0;	
     names = W_CacheLumpName ("PNAMES", PU_STATIC);
-    nummappatches = LONG ( *((int *)names) );
     name_p = names+4;
     // DOOM-0254: PNAMES declares its own entry count, so a crafted lump can
     // claim more 8-byte names than it actually holds. Bound it by the lump.
@@ -651,6 +651,9 @@ void R_InitTextures (void)
     {
 	int	pnameslen = W_LumpLength (W_GetNumForName ("PNAMES"));
 
+	// The count is the lump's first four bytes, so a lump shorter than
+	// that has no count to read; -1 is one WadCountFitsLump refuses.
+	nummappatches = pnameslen < 4 ? -1 : LONG ( *((int *)names) );
 	if (!WadCountFitsLump (nummappatches, pnameslen, 4, 8))
 	    I_Error ("R_InitTextures: PNAMES declares %d patches but the lump "
 		     "holds %d", nummappatches, (pnameslen - 4) / 8);
@@ -673,8 +676,9 @@ void R_InitTextures (void)
     // The data is contained in one or two lumps,
     //  TEXTURE1 for shareware, plus TEXTURE2 for commercial.
     maptex = maptex1 = W_CacheLumpName ("TEXTURE1", PU_STATIC);
-    numtextures1 = LONG(*maptex);
     maxoff = W_LumpLength (W_GetNumForName ("TEXTURE1"));
+    // As PNAMES above: no count to read in a lump shorter than one.
+    numtextures1 = maxoff < 4 ? -1 : LONG(*maptex);
     // DOOM-0402: the same self-declared-count shape PNAMES has above, and it
     // was unbounded. The walk below steps `directory` once per texture and
     // reads it BEFORE the per-entry offset check can judge anything, so a
@@ -687,8 +691,8 @@ void R_InitTextures (void)
     if (W_CheckNumForName ("TEXTURE2") != -1)
     {
 	maptex2 = W_CacheLumpName ("TEXTURE2", PU_STATIC);
-	numtextures2 = LONG(*maptex2);
 	maxoff2 = W_LumpLength (W_GetNumForName ("TEXTURE2"));
+	numtextures2 = maxoff2 < 4 ? -1 : LONG(*maptex2);
 	if (!WadCountFitsLump (numtextures2, maxoff2, 4, 4))
 	    I_Error ("R_InitTextures: TEXTURE2 declares %d textures but the "
 		     "lump holds %d", numtextures2, (maxoff2 - 4) / 4);
@@ -793,12 +797,12 @@ void R_InitTextures (void)
 	    // unchecked value reads either side of the table.
 	    if (SHORT(mpatch->patch) < 0
 		|| SHORT(mpatch->patch) >= nummappatches)
-		I_Error ("R_InitTextures: texture %s names patch %d of %d",
+		I_Error ("R_InitTextures: texture %.8s names patch %d of %d",
 			 texture->name, SHORT(mpatch->patch), nummappatches);
 	    patch->patch = patchlookup[SHORT(mpatch->patch)];
 	    if (patch->patch == -1)
 	    {
-		I_Error ("R_InitTextures: Missing patch in texture %s",
+		I_Error ("R_InitTextures: Missing patch in texture %.8s",
 			 texture->name);
 	    }
 	}		
@@ -916,17 +920,28 @@ void R_InitSpriteLumps (void)
 //
 // R_InitColormaps
 //
+// The readers' reach, in palette_bounds.h's terms: every light level, plus the
+// one fixedcolormap index past them (INVERSECOLORMAP, p_user.c).
+_Static_assert (COLORMAP_MAPS == NUMCOLORMAPS + 1,
+		"COLORMAP_MAPS must cover NUMCOLORMAPS light levels plus the "
+		"inverse map");
+
 void R_InitColormaps (void)
 {
     int	lump, length;
-    
-    // Load in the light tables, 
+
+    // Load in the light tables,
     //  256 byte align tables.
-    lump = W_GetNumForName("COLORMAP"); 
-    length = W_LumpLength (lump) + 255; 
-    colormaps = Z_Malloc (length, PU_STATIC, 0);
+    lump = W_GetNumForName("COLORMAP");
+    // A PWAD's COLORMAP is untrusted (security.md): the block was sized by the
+    // lump's own length while every reader indexes 33 fixed maps, so a short
+    // lump was read past its end on every rendered column. palette_bounds.h
+    // owns the size; the padding past a short lump reads as black.
+    length = ColormapAllocBytes (W_LumpLength (lump));
+    colormaps = Z_Malloc (length + 255, PU_STATIC, 0);
     colormaps = (byte *)( ((uintptr_t)colormaps + 255)&~0xff);
-    W_ReadLump (lump,colormaps); 
+    memset (colormaps, 0, length);
+    W_ReadLump (lump,colormaps);
 }
 
 
@@ -1125,7 +1140,9 @@ int	R_TextureNumForName (char* name)
 
     if (i==-1)
     {
-	I_Error ("R_TextureNumForName: %s not found",
+	// %.8s: a sidedef's texture names fill all eight bytes with no
+	// terminator, so %s ran on into the next field of the WAD record.
+	I_Error ("R_TextureNumForName: %.8s not found",
 		 name);
     }
     return i;

@@ -652,7 +652,11 @@ void S_SetMusicVolume(int volume)
 		volume);
     }    
 
-    I_SetMusicVolume(127);
+    // Vanilla set 127 first and then the real value. Under SDL2_mixer each
+    // call is a real Mix_VolumeMusic, and the mixer thread can run between
+    // the two, so that could render one buffer of music at full volume --
+    // well over the 48/128 ceiling I_SetMusicVolume keeps it under -- on a
+    // slider press. One call sets the same final volume.
     I_SetMusicVolume(volume);
     snd_MusicVolume = volume;
 }

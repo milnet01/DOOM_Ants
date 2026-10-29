@@ -173,6 +173,12 @@ boolean P_CrossSubsector (int num)
 	front = seg->frontsector;
 	back = seg->backsector;
 
+	// ML_TWOSIDED is a map flag, not proof of a back sidedef: DOOM-0399
+	// loads such a line with a null backsector. Block sight, as the
+	// renderer's R_AddLine already treats it as a solid wall.
+	if (!back)
+	    return false;
+
 	// no wall to block sight with?
 	if (front->floorheight == back->floorheight
 	    && front->ceilingheight == back->ceilingheight)

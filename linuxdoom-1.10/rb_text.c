@@ -50,6 +50,10 @@ static int rb_ttf_tables_fit(const unsigned char* ttf, int ttf_len, int offset) 
 
 int rb_text_bake(const unsigned char* ttf, int ttf_len, int px_height, rb_atlas_font_t* out) {
     if (!ttf || ttf_len < 12 || px_height <= 0 || !out) return 0;   /* < an sfnt header */
+    /* A collection ("ttcf") header keeps font 0's offset in bytes 12..15, and
+       stbtt_GetFontOffsetForIndex reads it with no length to check against. */
+    if (ttf_len < 16 && ttf[0] == 't' && ttf[1] == 't' && ttf[2] == 'c' && ttf[3] == 'f')
+        return 0;
 
     int offset = stbtt_GetFontOffsetForIndex(ttf, 0);
     if (offset < 0) return 0;
