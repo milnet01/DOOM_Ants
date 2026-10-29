@@ -25,8 +25,7 @@ const uint SURF_DETAIL_ON = 1u;
 // scene (spec §10). Derived heights come from luma, so it is tuned on its own.
 const float kSurfHeightScale = 0.12;
 
-// Below this tangent-space view z, the traced march treats the view as this grazing,
-// so the offset cannot run away along the surface.
+// Below this tangent-space view z, the traced march takes its most steps.
 const float kSurfMinViewZ = 0.05;
 
 // The paletted texture's size in texels: uv01 = hit UV / this.
@@ -78,7 +77,9 @@ vec2 surfParallaxUV(uint id, vec2 uv01, vec3 viewTS)
 {
     float nv     = clamp(viewTS.z, kSurfMinViewZ, 1.0);
     int   steps  = int(mix(32.0, 16.0, nv));       // more steps at grazing angles
-    vec2  maxOff = (viewTS.xy / nv) * surfDepthUV(id);
+    // Offset limiting, as in surfOffsetUV: dividing by nv slid the march by whole
+    // tiles at grazing views, wrapping onto another part of the texture (DOOM-0527).
+    vec2  maxOff = viewTS.xy * surfDepthUV(id);
     float layer  = 1.0 / float(steps);
     float curH = surfHeight(id, uv01), prevH = curH;
     vec2  curUV = uv01, prevUV = uv01;

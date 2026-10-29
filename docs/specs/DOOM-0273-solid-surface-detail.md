@@ -201,6 +201,10 @@ vec2  surfOffsetUV(uint id, vec2 uv01, vec3 viewTS);    // rasterised view: one 
   bisection, primary hit only, no self-shadowing. It uses its own height
   scale, `kSurfHeightScale`, because derived heights come from luma and are
   rougher than authored ones. It is 0.12, twice `kPomHeightScale` (§10).
+  Its march is offset-limited too: the full march spans
+  `viewTS.xy * surfDepthUV(id)`, with no divide by the view's z. With that
+  divide, grazing views wrapped the march onto another part of the texture
+  (DOOM-0527).
 - Both helpers take the depth from `surfDepthUV(id)`: `kSurfHeightScale` of
   a 64-texel tile, divided by the texture's own size. So the relief is
   equally deep in map units on every wall and flat. Measured against each

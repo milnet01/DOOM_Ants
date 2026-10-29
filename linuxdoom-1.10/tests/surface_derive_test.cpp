@@ -249,6 +249,13 @@ int main()
         if (fe != std::string::npos)
             check(sd.substr(fo, fe - fo).find("viewTS.z") == std::string::npos,
                   "DOOM-0527: surfOffsetUV's shift is bounded (no divide by viewTS.z)");
+        // The traced march had the same runaway: maxOff divided by the clamped view z.
+        const size_t po = sd.find("vec2 surfParallaxUV(");
+        const size_t pe = po == std::string::npos ? po : sd.find("\n}", po);
+        check(pe != std::string::npos, "surface_detail.glsl defines surfParallaxUV");
+        if (pe != std::string::npos)
+            check(sd.substr(po, pe - po).find("viewTS.xy / nv") == std::string::npos,
+                  "DOOM-0527: surfParallaxUV's march is bounded (no divide by nv)");
 
         // Walk the lines, tracking whether SINGLE_TARGET is known to be undefined.
         std::vector<char> stack;               // 'N' #ifndef ST, 'D' #ifdef ST, 'O' other

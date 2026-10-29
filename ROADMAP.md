@@ -17320,6 +17320,14 @@ in CLAUDE.md describes.
   hanging screens tear with the old shader and match surface_detail 0
   with the new one. Left: the user's play-test, and a look at the
   ray-traced view (not confirmed headlessly).
+  2026-10-29 second pass: user's shots 37-41 showed the traced views
+  still sliding - Solid RT wrapped a wall's lower strip onto its
+  computer art, Ultra's derived red-light ceiling (no HD art) moved.
+  surfParallaxUV's march divided by nv; now offset-limited like the
+  raster helper. Headless A/B at 2051 -2349 129 (Ultra): old shader
+  pushes the lights toward the far edge, new matches surface_detail
+  0. The Solid RT strip did not reproduce at 1811 -2693 240; left for
+  the user's re-test. Gamepad unplug: user confirmed fire stops.
   **Layman:** With surface detail on, some textures appeared to move under your feet and big wall pictures tore apart; the fake depth is now the same small size everywhere.
   Kind: fix.
   Source: user-report-2026-10-29.
