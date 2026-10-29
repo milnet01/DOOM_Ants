@@ -146,10 +146,13 @@ float family_roughness(const char* name);   // _FAMILY's table and default
   - The sky flat `F_SKY1`.
   - Any texture with a transparent texel. Parallax on a see-through middle
     texture would slide its holes.
-  - Every light texture in `kLightTextures`, a list of exact names: the
-    TLITE6 ceiling lights, GRNLITE1, and the LITE, LITEBLU and LITERED wall
-    panels.
+  - Every light texture in `kLightTextures`, a list of exact names. The
+    ceiling lights: TLITE6_1, TLITE6_4, TLITE6_5, TLITE6_6 and GRNLITE1. The
+    wall panels: LITE2, LITE3, LITE4, LITE5, LITE96, LITEBLU1, LITEBLU2,
+    LITEBLU3, LITEBLU4 and LITERED.
     LITEMET and LITESTON are not lights, so a name prefix would not do.
+    CRATELIT, BRICKLIT, TEKLITE and TEKLITE2 are not on the list, so they
+    keep their relief.
     DOOM paints its lights flat. Derived from luma, a light sits raised
     above its dark surround and shifts against it as the player walks
     (DOOM-0527). The user chose flat lights on 2026-10-29.
@@ -337,7 +340,8 @@ Each step ends with `make DEV=1` and `make test` green.
 
 - **B1 — the derive.** `surface_derive.h` and `tests/surface_derive_test.cpp`.
   *Verify:* INV-1 to INV-3 pass, and each fails against a mutated derive
-  (Sobel sign flipped, prefix match made a substring match, mask ignored).
+  (Sobel sign flipped, prefix match made a substring match, mask ignored,
+  light list skipped, light match made a `LITE` prefix match).
 - **B2 — the upload and the setting.** §4.2 and §4.5, with no shader reading
   the maps yet. *Verify:* the log line reports numWall + numFlat images and
   is within §6's load budget; INV-5's captures match.
