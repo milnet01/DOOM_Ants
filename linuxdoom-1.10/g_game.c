@@ -1592,18 +1592,34 @@ void G_DoLoadGame (void)
     // bytes of leveltime read after G_InitNew.
     P_SaveNeed (3 + MAXPLAYERS + 3, "header");
 
+    // The in-game flags come from the file, and nothing else marks the console
+    // player present: with its flag clear, no body is spawned or archived for
+    // it, and the first rendered frame dereferences players[consoleplayer].mo.
+    // Checked before any game state is overwritten, so the refusal can take the
+    // same recovery as the signature refusal above instead of quitting.
+    if (!save_p[3 + consoleplayer])
+    {
+	free (savebuffer);
+	savebuffer = NULL;
+
+	players[consoleplayer].message = GGLOADFAIL;
+	printf ("G_DoLoadGame: %s has no player %d in it -- refusing it\n",
+		savename, consoleplayer + 1);
+
+	if (!players[consoleplayer].mo)
+	{
+	    gamestate = GS_DEMOSCREEN;
+	    D_StartTitle ();
+	}
+
+	return;
+    }
+
     gameskill = *save_p++;
     gameepisode = *save_p++;
     gamemap = *save_p++;
     for (i=0 ; i<MAXPLAYERS ; i++)
 	playeringame[i] = *save_p++;
-
-    // The in-game flags come from the file, and nothing else marks the console
-    // player present: with its flag clear, no body is spawned or archived for
-    // it, and the first rendered frame dereferences players[consoleplayer].mo.
-    if (!playeringame[consoleplayer])
-	I_Error ("G_DoLoadGame: %s has no player %d in it", savename,
-		 consoleplayer + 1);
 
     // load a base level 
     G_InitNew (gameskill, gameepisode, gamemap); 
