@@ -146,6 +146,13 @@ float family_roughness(const char* name);   // _FAMILY's table and default
   - The sky flat `F_SKY1`.
   - Any texture with a transparent texel. Parallax on a see-through middle
     texture would slide its holes.
+  - Every light texture in `kLightTextures`, a list of exact names: the
+    TLITE6 ceiling lights, GRNLITE1, and the LITE, LITEBLU and LITERED wall
+    panels.
+    LITEMET and LITESTON are not lights, so a name prefix would not do.
+    DOOM paints its lights flat. Derived from luma, a light sits raised
+    above its dark surround and shifts against it as the player walks
+    (DOOM-0527). The user chose flat lights on 2026-10-29.
 - **The mask is patch coverage, not palette index 0.** A wall texel is
   transparent when no patch post covers it in `R_RenderTextureToAtlas`. The
   atlas cannot tell this: it stores both an uncovered texel and a real black
@@ -366,12 +373,15 @@ of STONE2 walls and FLOOR5_2 floor leading to the REDWALL1 cross
   changes. No prefix in `_FAMILY` begins another, so no input can tell
   longest-wins from first-wins and the test does not try.
 
-- **INV-3** — Liquids, the sky flat and textures with a transparent texel get
-  a flat map: every texel normal (0, 0, 1) and height 255.
-  *Test:* `tests/surface_derive_test.cpp`, with NUKAGE1, F_SKY1 and an 8x8
-  texture with one transparent texel.
+- **INV-3** — Liquids, the sky flat, light textures and textures with a
+  transparent texel get a flat map: every texel normal (0, 0, 1) and height
+  255.
+  *Test:* `tests/surface_derive_test.cpp`, with NUKAGE1, F_SKY1, TLITE6_5,
+  LITE3 and an 8x8 texture with one transparent texel; and LITEMET, which
+  must not get a flat map.
   *Breaks when:* the mask is ignored, so a see-through texture gets relief,
-  or the liquid list is not consulted.
+  the liquid or light list is not consulted, or the light match catches a
+  non-light name.
 
 - **INV-4** — In both views the paletted colour is read at the parallax UV,
   so colour and relief stay aligned.
