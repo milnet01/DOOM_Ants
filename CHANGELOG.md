@@ -8,6 +8,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Solid tier surface detail: DOOM's own textures get bumps and depth derived from their pixels** (DOOM-0273)
+  Video menu row "Surface Detail" (on by default). Lights, liquids, the sky and see-through textures stay flat.
+
 - **An About notice: no piracy, no DOOM data included, and the trademark credit** (DOOM-0493)
   The main menu has a new **About** row, just above Quit. It says DOOM Ants ships no DOOM game data, that you need Freedoom or your own copy of DOOM, and that DOOM Ants is not made or endorsed by id Software, ZeniMax or Bethesda. The README and the Windows download's README.txt say the same.
 
@@ -15,6 +18,8 @@ All notable changes to DOOM_Ants are documented here. The format follows
   In a developer build, each `dev-shots/shot-NNNN.png` now gets a `shot-NNNN.txt` beside it. It names the map, skill, position, facing, renderer and every setting. Its `repeat:` line holds the `-warp` and `-warpto` arguments that stand the player there again. Classic's F12 still saves DOOM's own `.pcx`, with no note.
 
 ### Fixed
+
+- **Surface detail no longer makes floors, walls and ceiling lights slide or tear as you walk** (DOOM-0527)
 
 - **A whole-codebase review: crashes from bad files fixed, Classic stops using a full CPU core**
   A review of the engine, the Vulkan renderer and the shaders fixed many problems. Most were crashes a broken or hostile WAD, savegame, demo, config file or command line could cause:

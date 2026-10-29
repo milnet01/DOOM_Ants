@@ -14758,7 +14758,7 @@ in CLAUDE.md describes.
   Kind: chore.
   Source: debt-sweep-2026-07-26.
 
-- 🚧 [DOOM-0273] **Solid tier: upscale the ORIGINAL textures and give them PBR/POM, keeping the 1993 art.**
+- ✅ [DOOM-0273] **Solid tier: upscale the ORIGINAL textures and give them PBR/POM, keeping the 1993 art.**
   **Layman:** Same DOOM pictures you know, just sharper, with real bumpiness and depth — as opposed to Ultra, which swaps the art out entirely.
   Kind: feature.
   Lanes: renderer, assets.
@@ -14843,6 +14843,8 @@ in CLAUDE.md describes.
   four-variant side-by-side at the test scene (commit 'set the relief to
   the user's pick'). Left: the user plays it in-game; on their OK add
   the CHANGELOG Added entry and flip shipped.
+  2026-10-29: user's in-game OK on Solid, raster and ray-traced, after
+  DOOM-0527 (they had already said they like the sharper look). Shipped.
 
 - 📋 [DOOM-0278] **Motion blur for the 3-D views - camera-velocity first, per-object only once monsters are models.**
   User asked (2026-07-27) for "perhaps some per object motion blur" as
@@ -17308,7 +17310,7 @@ in CLAUDE.md describes.
   Kind: feature.
   Source: user-request-2026-10-26.
 
-- 🚧 [DOOM-0527] **Surface detail makes floors, walls and ceilings slide and tear as the player walks.**
+- ✅ [DOOM-0527] **Surface detail makes floors, walls and ceilings slide and tear as the player walks.**
   User's F12 shots, E1M1, Solid raster, surface_detail 1. Two causes in
   formulas/surface_detail.glsl (DOOM-0273): surfOffsetUV divided the
   shift by viewTS.z (floor 0.05), so grazing views moved it by whole
@@ -17335,6 +17337,8 @@ in CLAUDE.md describes.
   surface_derive.h, exact names the user picked by eye from WAD renders
   (CRATELIT keeps relief). Ultra A/B at 1688 -2247 4: underside PSNR vs
   surface_detail 0 rose 17.8 -> 37.6 dB. Awaiting the user's play-test.
+  2026-10-29: user play-tested on master (a123d9d): Ultra lights fixed,
+  Solid fine with ray tracing on and off. Shipped.
   **Layman:** With surface detail on, some textures appeared to move under your feet and big wall pictures tore apart; the fake depth is now the same small size everywhere.
   Kind: fix.
   Source: user-report-2026-10-29.
