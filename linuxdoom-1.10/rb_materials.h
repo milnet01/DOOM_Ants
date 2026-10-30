@@ -193,24 +193,28 @@ static inline void rb_apply_budget(rb_matctrl_t* table, int nmaterials,
 static char rb_asset_exe_root[512];
 
 /* Given the executable's directory (with a trailing separator, as SDL_GetBasePath
-   returns it), adopt <exe>/../../assets/ultra/ -- the source tree, where the binary
-   is linuxdoom-1.10/linux/ -- but only if materials.csv is really there. Returns 1
-   if adopted. Packaged builds ship no HD assets, so there is no second candidate. */
+   returns it), adopt the first of these that really holds materials.csv: <exe>/assets/ultra/,
+   a download's layout (DOOM-0498), then <exe>/../../assets/ultra/, the source tree, where
+   the binary is linuxdoom-1.10/linux/. Returns 1 if one was adopted. */
 static inline int rb_asset_set_exe_dir(const char* exe_dir) {
+    static const char* const kCandidates[] = { "%sassets/ultra/", "%s../../assets/ultra/" };
     char cand[512], csv[600];
     rb_asset_exe_root[0] = '\0';
     if (!exe_dir || !*exe_dir) return 0;
-    if (snprintf(cand, sizeof cand, "%s../../assets/ultra/", exe_dir) >= (int)sizeof cand) return 0;
-    snprintf(csv, sizeof csv, "%smaterials.csv", cand);
-    FILE* f = fopen(csv, "r");
-    if (!f) return 0;
-    fclose(f);
-    strcpy(rb_asset_exe_root, cand);
-    return 1;
+    for (const char* const fmt : kCandidates) {
+        if (snprintf(cand, sizeof cand, fmt, exe_dir) >= (int)sizeof cand) continue;
+        snprintf(csv, sizeof csv, "%smaterials.csv", cand);
+        FILE* f = fopen(csv, "r");
+        if (!f) continue;
+        fclose(f);
+        strcpy(rb_asset_exe_root, cand);
+        return 1;
+    }
+    return 0;
 }
 
-/* Asset root for HD material files, first match wins: $DOOMASSETDIR; the source
-   tree beside the executable (rb_asset_set_exe_dir); "assets/ultra/" relative to
+/* Asset root for HD material files, first match wins: $DOOMASSETDIR; the art found
+   from the executable (rb_asset_set_exe_dir); "assets/ultra/" relative to
    the CWD (mirrors how the WAD is found via DOOMWADDIR). */
 static inline const char* rb_asset_root(void) {
     const char* e = getenv("DOOMASSETDIR");

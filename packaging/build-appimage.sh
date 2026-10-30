@@ -2,9 +2,9 @@
 #
 # build-appimage.sh — package the Linux build as a single self-contained
 # AppImage (DOOM-0007 follow-up). The result runs on a fresh distro with no
-# dependency install: SDL2, SDL2_mixer, FluidSynth and a compact General-MIDI
-# soundfont are bundled, so the game (and its music) work out of the box. Only
-# a DOOM .wad is needed, which is not redistributable.
+# dependency install: SDL2, SDL2_mixer, FluidSynth, a compact General-MIDI
+# soundfont and Ultra's HD art are bundled, so the game (and its music) work out
+# of the box. Only a DOOM .wad is needed, which is not redistributable.
 #
 # Note: the AppImage inherits the build host's glibc floor, so build on the
 # oldest distro you want to support for the widest reach.
@@ -22,6 +22,8 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 PKG="$REPO/packaging"
 BUILD="$PKG/build"
 TOOLS="$PKG/tools"
+# shellcheck source=packaging/ultra-art.sh
+source "$PKG/ultra-art.sh"
 APPDIR="$BUILD/AppDir"
 OUT="$BUILD/doom_ants-$VERSION-x86_64.AppImage"
 
@@ -99,6 +101,7 @@ cp "$REPO/linuxdoom-1.10/linux/linuxxdoom" "$APPDIR/usr/bin/doom_ants"
 cp "$SOUNDFONT"                            "$APPDIR/usr/share/soundfonts/"
 cp "$PKG/doom_ants.desktop"                "$APPDIR/usr/share/applications/"
 cp "$PKG/doom_ants.png"                    "$APPDIR/usr/share/icons/hicolor/256x256/apps/"
+stage_ultra_art "$APPDIR/usr/bin/assets/ultra"   # beside the binary: rb_asset_set_exe_dir
 
 # Runtime hook: use the bundled soundfont for music, and look for the WAD next
 # to the .AppImage file (so dropping a WAD beside it and double-clicking works,

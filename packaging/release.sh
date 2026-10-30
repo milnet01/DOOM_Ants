@@ -13,7 +13,8 @@
 # gets tagged or published):
 #   1. Runs the unit tests (make test) as a gate.
 #   2. Builds the Linux AppImage  -> packaging/build/doom_ants-<ver>-x86_64.AppImage
-#   3. Builds + zips the Windows build -> packaging/build/doom_ants-<ver>-windows-x86_64.zip
+#   3. Builds + zips the Windows build -> packaging/build/doom_ants-<ver>-windows-x86_64.zip,
+#      then checks that each artifact holds exactly Ultra's HD art.
 #   With --publish, additionally:
 #   4. Brings the CHANGELOG heading, its compare links and README's "Latest
 #      release" line up to <ver> -- whichever of them are not there already --
@@ -31,7 +32,7 @@
 #
 # Requirements: the mingw-w64 cross toolchain + staged libs (see
 # mingw-deps/README.md), the AppImage toolchain (auto-fetched by
-# build-appimage.sh), `zip`, and `gh` (authenticated) for --publish.
+# build-appimage.sh), `zip`, `unzip`, and `gh` (authenticated) for --publish.
 #
 set -euo pipefail
 
@@ -135,6 +136,20 @@ else
   [ -f "$WINZIP" ] || { echo "release.sh: Windows zip was not produced" >&2; exit 1; }
   stamp_artifact "$WINZIP"
 fi
+
+# ---- each artifact carries the HD art (DOOM-0498) ----
+# Looks inside the finished files, so a reused artifact is checked as well.
+# shellcheck source=packaging/ultra-art.sh
+source "$REPO/packaging/ultra-art.sh"
+echo "==> Checking the HD art in both artifacts..."
+ART_DIR="$(mktemp -d -p "$DIST")"
+trap 'rm -rf "$ART_DIR"' EXIT
+( cd "$ART_DIR" && "$APPIMAGE" --appimage-extract >/dev/null )
+check_ultra_art "$ART_DIR/squashfs-root/usr/bin/assets/ultra"
+unzip -q "$WINZIP" -d "$ART_DIR/zip"
+check_ultra_art "$ART_DIR/zip/doom_ants-$VERSION-windows-x86_64/assets/ultra"
+rm -rf "$ART_DIR"
+trap - EXIT
 
 echo
 echo "Artifacts:"

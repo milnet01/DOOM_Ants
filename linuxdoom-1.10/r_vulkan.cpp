@@ -7156,8 +7156,8 @@ extern "C" void RB_Vulkan_TierChanged(void)
 }
 
 // DOOM-0283: whether Ultra will find its HD art, so the menu and the level-start
-// message can say when it will not. Released builds ship no HD art, so for most
-// players this is the normal case. Checked once: the root cannot change mid-run.
+// message can say when it will not. Downloads carry the art since DOOM-0498, so this
+// is a moved or incomplete install. Checked once: the root cannot change mid-run.
 extern "C" int RB_Vulkan_HdArtFound(void)
 {
     static int found = -1;

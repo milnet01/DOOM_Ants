@@ -17924,7 +17924,7 @@ minor may break.
   then DOOM-0182, DOOM-0498, a release, then the final footage from that
   release.
 
-- 📋 [DOOM-0498] **Ship the HD art in the downloads, so Ultra has its art outside the source tree.**
+- ✅ [DOOM-0498] **Ship the HD art in the downloads, so Ultra has its art outside the source tree.**
   Neither the Windows zip nor the AppImage carries assets/ultra/ (checked
   on the 0.7.4 release assets, 2026-10-23), so Ultra in a release always
   falls back to the original art. DOOM-0283 made that visible: the
@@ -17941,6 +17941,18 @@ minor may break.
   art in the downloads in the next release; the user was told they get
   several times larger. When that release is out, tell the website
   session so it removes its About-page note.
+  2026-10-30: built. packaging/ultra-art.sh picks the committed art (no
+  derived/, no heroes/bringup/) and refuses a map LICENSES does not
+  list; release.sh checks each finished download holds exactly it.
+  rb_asset_set_exe_dir tries assets/ultra/ beside the executable first.
+  Sizes: zip 3.9 to 51.5 MB, AppImage 11.1 to 58.4 MB. A test AppImage
+  run from another folder with no DOOMASSETDIR loads 17 materials, 70
+  images. The zip's own exe under Wine does the same on this machine's
+  GPU. On real Windows (GTX 1050, no RT) Solid runs from the zip, 120
+  frames recorded; that box cannot test Ultra, so Ultra on real Windows
+  is unverified. TEKWALL1 stays paletted in a download: its maps are
+  derived from the WAD, so they may not ship. A source-tree run still
+  reports 18.
   **Layman:** The downloadable game does not include the high-definition textures, so Ultra in a downloaded copy shows the original art. This item adds them to the downloads.
   Kind: package.
   Source: user-decision-2026-10-23, split out of DOOM-0283.

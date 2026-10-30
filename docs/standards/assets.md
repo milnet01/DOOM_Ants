@@ -39,8 +39,9 @@ What's in the tree today, and how each is recorded:
   domain. Tracked with their versions in the dependencies standard.
 
 Every one of these has its version, upstream URL, and licence recorded in
-`docs/standards/dependencies.md`. Bundled binary assets (fonts) additionally
-ship their licence file next to them. That is the provenance trail — keep it
+`docs/standards/dependencies.md`. Bundled binary assets (fonts, and Ultra's HD
+art through `packaging/ultra-art.sh`) additionally ship their licence file next
+to them. That is the provenance trail — keep it
 current when you add or bump an asset.
 
 ## The sidecar / derived pattern (ADR 0002)

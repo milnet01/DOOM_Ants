@@ -10,6 +10,8 @@
 #include "check_util.h"
 
 #include <cstdlib>   // setenv/unsetenv for the asset-root test
+#include <filesystem>
+#include <fstream>
 #include <cstring>
 #include <map>
 #include <string>
@@ -254,6 +256,28 @@ static void test_asset_path() {
     check(rb_asset_set_exe_dir("/nonexistent/dir/") == 0
           && strcmp(rb_asset_root(), "assets/ultra/") == 0,
           "asset root: a directory with no materials.csv is not adopted");
+
+    // DOOM-0498: a download's layout, the art in assets/ultra/ beside the executable. It
+    // wins over a source tree two levels up, whose art is not the art this build shipped.
+    {
+        namespace fs = std::filesystem;
+        const fs::path top = fs::temp_directory_path() / "doom_rb_materials_test";
+        const fs::path exe = top / "a" / "b";
+        fs::remove_all(top);
+        fs::create_directories(exe / "assets" / "ultra");
+        fs::create_directories(top / "assets" / "ultra");
+        std::ofstream(top / "assets" / "ultra" / "materials.csv") << "#\n";
+        const std::string dir = exe.string() + "/";
+        check(rb_asset_set_exe_dir(dir.c_str()) == 1
+              && strstr(rb_asset_root(), "/a/b/../../assets/ultra/") != nullptr,
+              "asset root: an empty assets/ultra/ beside the executable is passed over");
+        std::ofstream(exe / "assets" / "ultra" / "materials.csv") << "#\n";
+        check(rb_asset_set_exe_dir(dir.c_str()) == 1
+              && strcmp(rb_asset_root(), (dir + "assets/ultra/").c_str()) == 0,
+              "asset root: the art beside the executable wins over the source tree");
+        fs::remove_all(top);
+        rb_asset_set_exe_dir("/nonexistent/dir/");
+    }
 }
 
 int main() {

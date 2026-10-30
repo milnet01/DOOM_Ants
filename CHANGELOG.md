@@ -8,6 +8,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **The downloads now include Ultra's HD art** (DOOM-0498)
+  Ultra used to fall back to the original art in a downloaded copy. Both the Windows zip and the Linux AppImage now carry the art and its licence list, which makes each about 50 MB larger. One material, TEKWALL1, is generated from the player's own WAD, so it may not be shipped and shows the original art in a download.
+
 - **Ultra's HD art now shows in its rasterised view too** (DOOM-0182)
   Switching ray tracing off in Ultra used to drop the walls and floors back to the original art. It now keeps the HD art, with its de-tiling, its filth and a cheap version of its depth. Classic and Solid draw exactly what they drew before.
 

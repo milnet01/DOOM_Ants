@@ -34,9 +34,10 @@ user's call.
 ## Linux AppImage (DOOM-0007)
 
 A single self-contained file that runs on a fresh Linux install with no
-dependency setup — SDL2, SDL2_mixer, FluidSynth and a compact General-MIDI
-soundfont are bundled, so the game and its music work out of the box. Only a
-DOOM `.wad` is needed (not redistributable).
+dependency setup — SDL2, SDL2_mixer, FluidSynth, a compact General-MIDI
+soundfont and Ultra's HD art are bundled, so the game and its music work out of
+the box. Only a DOOM `.wad` is needed (not redistributable). `ultra-art.sh` says
+which art files ship, and `release.sh` checks both downloads hold exactly those.
 
 ```sh
 packaging/build-appimage.sh <version>   # -> packaging/build/doom_ants-<version>-x86_64.AppImage

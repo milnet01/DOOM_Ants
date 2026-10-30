@@ -2,7 +2,7 @@
 #
 # windows-build.sh — cross-build the Windows (x86_64) binary with the mingw-w64
 # toolchain and package it as a ready-to-run zip: doom_ants.exe plus the SDL2 /
-# SDL2_mixer / winpthread runtime DLLs and a short README. vulkan-1.dll comes
+# SDL2_mixer / winpthread runtime DLLs, Ultra's HD art and a short README. vulkan-1.dll comes
 # from the player's GPU driver, so it is deliberately not bundled.
 #
 # The one Windows packaging recipe: packaging/release.sh calls this script for
@@ -26,6 +26,8 @@ WINZIP="$BUILD/doom_ants-$VERSION-windows-x86_64.zip"
 WIN_PREFIX="$REPO/mingw-deps/prefix"
 # shellcheck source=packaging/windows-dlls.sh
 source "$REPO/packaging/windows-dlls.sh"   # WIN_RUNTIME_DLLS
+# shellcheck source=packaging/ultra-art.sh
+source "$REPO/packaging/ultra-art.sh"
 
 mkdir -p "$BUILD"
 # The stamp release.sh writes beside the zip names the commit it was built from.
@@ -49,13 +51,16 @@ trap 'rm -rf "$STAGE"' EXIT
 NAME="doom_ants-$VERSION-windows-x86_64"
 mkdir -p "$STAGE/$NAME"
 cp "$EXE" "${WIN_RUNTIME_DLLS[@]}" "$STAGE/$NAME/"
+stage_ultra_art "$STAGE/$NAME/assets/ultra"
 cat > "$STAGE/$NAME/README.txt" <<EOF
 DOOM_Ants $VERSION — Windows (x86_64)
 
 Run doom_ants.exe. You must supply a DOOM .wad data file in the same folder:
 Freedoom's freedoom1.wad or freedoom2.wad (free, from freedoom.github.io), the
 shareware doom1.wad, or doom.wad / doom2.wad. No WAD is included. The bundled
-DLLs are required; vulkan-1.dll is provided by your GPU driver.
+DLLs are required; vulkan-1.dll is provided by your GPU driver. The assets folder
+holds the Ultra tier's HD art; keep it beside doom_ants.exe. Its sources and CC0
+licences are listed in assets/ultra/LICENSES.
 
 We do not condone piracy. DOOM Ants includes no DOOM game data. Use Freedoom,
 or the doom.wad or doom2.wad from a copy you own. DOOM is a trademark of
