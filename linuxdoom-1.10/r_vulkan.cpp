@@ -10720,7 +10720,7 @@ extern "C" void RB_Vulkan_Present(void)
         flags[0] = SurfaceDetailLane();
         flags[1] = 0u;
         flags[2] = (uint32_t)RB_MaterialCount();
-        flags[3] = 0u;
+        flags[3] = (uint32_t)(I_GetTimeMS() / 28);   // DOOM-0508: 35 Hz, the fuzz's flicker
     }
 
     // DOOM-0170 L2c: flashlight cast-shadow map (Pass A). When the torch is on, render the

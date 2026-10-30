@@ -433,11 +433,15 @@ const uint kMaxPrimaryCandidates = 256u;
 // sprite: sample its texel at the candidate's barycentric UV and report whether the
 // ray should commit here. Mirrors the raster sprite alpha-test (mesh.frag) and the
 // world decode (same 18-float rb_vertex_t layout; UV at [6,7], material id at [8]).
-bool spriteCandidateOpaque(rayQueryEXT rq)
+// DOOM-0508: seeThrough is the ray already bent by a Spectre, which goes on through any
+// partly invisible Thing rather than meeting it again.
+bool spriteCandidateOpaque(rayQueryEXT rq, bool seeThrough)
 {
     int  prim = rayQueryGetIntersectionPrimitiveIndexEXT(rq, false);
     vec2 bc   = rayQueryGetIntersectionBarycentricsEXT(rq, false);
     uint i0   = uint(prim) * 3u * 18u;
+    if (seeThrough && (floatBitsToInt(pc.spriteVerts.v[i0 + 9u]) & FLAG_SHADOW) != 0)
+        return false;
     int  texnum = floatBitsToInt(pc.spriteVerts.v[i0 + 8u]);
     vec2 uv = (1.0 - bc.x - bc.y) * vec2(pc.spriteVerts.v[i0 +  6u], pc.spriteVerts.v[i0 +  7u])
             +          bc.x        * vec2(pc.spriteVerts.v[i0 + 24u], pc.spriteVerts.v[i0 + 25u])
@@ -487,6 +491,37 @@ bool worldCandidateOpaque(rayQueryEXT rq)
     vec2  sz  = vec2(textureSize(materialTex[nonuniformEXT(id)], 0));
     float idx = texture(materialTex[nonuniformEXT(id)], uv / sz).r * 255.0;
     return idx >= 0.5;            // palette index 0 == transparent
+}
+
+// The primary trace: DOOM-0100/0163: drop gl_RayFlagsOpaqueEXT. Both the world BLAS
+// (instance 0, custom index 0) and the sprite BLAS (custom index 1) are non-opaque and yield
+// triangle candidates; the sky backdrop (custom index 2) stays opaque and auto-commits.
+// Sprite candidates alpha-test against the billboard cut-out; world candidates commit
+// unless they are a masked mid-wall's index-0 gap (DOOM-0163).
+// DOOM-0479: ration the candidates. Each one costs buffer reads and, for a sprite or a
+// masked wall, a texture fetch, and nothing else bounds how many a map can stack along one
+// sight line. Past the cap the traversal ends and the nearest hit confirmed so far stands;
+// a ray that confirmed nothing is a miss. See kMaxPrimaryCandidates for the figures.
+void tracePrimary(rayQueryEXT rq, vec3 o, vec3 d, bool seeThrough)
+{
+    rayQueryInitializeEXT(rq, topAS, gl_RayFlagsNoneEXT, 0xFFu, o, 0.01, d, 1.0e9);
+    uint candidates = 0u;
+    while (rayQueryProceedEXT(rq)) {
+        if (rayQueryGetIntersectionTypeEXT(rq, false)
+            == gl_RayQueryCandidateIntersectionTriangleEXT)
+        {
+            if (++candidates > kMaxPrimaryCandidates)
+            {
+                rayQueryTerminateEXT(rq);
+                break;
+            }
+            bool keep = (rayQueryGetIntersectionInstanceCustomIndexEXT(rq, false) == 1)
+                      ? spriteCandidateOpaque(rq, seeThrough)   // billboard sprite
+                      : worldCandidateOpaque(rq);      // world wall/flat, masked mid-wall alpha-tested
+            if (keep)
+                rayQueryConfirmIntersectionEXT(rq);
+        }
+    }
 }
 
 // DOOM-0130: dynamic point-light deltas shared by the display (mode 4) and the
@@ -602,6 +637,13 @@ float emisWeight(MatCtrl mc, vec3 albedo) {
 }
 bool  wetOn()              { return pc.misc6.y == 1u; }
 float rippleTime()         { return uintBitsToFloat(pc.misc6.x); }
+
+// DOOM-0508: the Spectre's look in the traced view. Scale shrinks the ripple's waves to a
+// body's size; bend is how far they turn the ray; tint is how dark what shows through it is.
+const float kSpectreWaveScale = 4.0;
+const float kSpectreWaveSpeed = 2.5;
+const float kSpectreBend      = 2.0;
+const float kSpectreTint      = 0.45;
 
 // Perturb a floor normal with a shallow scrolling wave gradient (§4.5). Two layers at
 // different world scales + directions; the analytic gradient of sin() tilts n in world XY
@@ -1598,8 +1640,8 @@ void main()
     // the exact pixel centre as before.
     const float ndcX = (2.0 * (float(px.x) + 0.5 + pc.camPos.w) / float(w)) - 1.0;
     const float ndcY = (2.0 * (float(px.y) + 0.5 + pc.camDir.w) / float(h)) - 1.0;
-    const vec3  origin = pc.camPos.xyz;
-    const vec3  dir = normalize(pc.camDir.xyz
+    vec3  origin = pc.camPos.xyz;
+    vec3  dir = normalize(pc.camDir.xyz
                               + pc.camRight.xyz * (ndcX * pc.camRight.w)
                               + pc.camUp.xyz    * (-ndcY * pc.camUp.w));
 
@@ -1612,33 +1654,31 @@ void main()
     layout(constant_id = 0) const uint mode = 6u;
 
     rayQueryEXT rq;
-    // DOOM-0100/0163: drop gl_RayFlagsOpaqueEXT. Both the world BLAS (instance 0,
-    // custom index 0) and the sprite BLAS (custom index 1) are non-opaque and yield
-    // triangle candidates; the sky backdrop (custom index 2) stays opaque and auto-
-    // commits. Sprite candidates alpha-test against the billboard cut-out; world
-    // candidates commit unless they are a masked mid-wall's index-0 gap (DOOM-0163).
-    rayQueryInitializeEXT(rq, topAS, gl_RayFlagsNoneEXT, 0xFFu,
-                          origin, 0.01, dir, 1.0e9);
-    // DOOM-0479: ration the candidates. Each one costs buffer reads and, for a
-    // sprite or a masked wall, a texture fetch, and nothing else bounds how many
-    // a map can stack along one sight line. Past the cap the traversal ends and
-    // the nearest hit confirmed so far stands; a ray that confirmed nothing is a
-    // miss. See kMaxPrimaryCandidates for the figures.
-    uint candidates = 0u;
-    while (rayQueryProceedEXT(rq)) {
-        if (rayQueryGetIntersectionTypeEXT(rq, false)
-            == gl_RayQueryCandidateIntersectionTriangleEXT)
+    tracePrimary(rq, origin, dir, false);
+
+    // DOOM-0508: a ray that meets a Spectre is bent and carries on, darkened, so what is
+    // behind it shows through and shimmers. This is the one see-through surface: shadow
+    // and light rays cull sprites (instance mask 0x02), so it casts no shadow and blocks
+    // no light. The waves are the nukage ripple's, keyed to the billboard's own plane.
+    // spectreTint and spectreT stay 1 and 0 for any other ray, so its pixels are unchanged.
+    float spectreTint = 1.0;
+    float spectreT    = 0.0;
+    if ((mode == 4u || mode == 6u)
+        && rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionTriangleEXT
+        && rayQueryGetIntersectionInstanceCustomIndexEXT(rq, true) == 1)
+    {
+        const uint si0 = uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, true)) * 3u * 18u;
+        if ((floatBitsToInt(pc.spriteVerts.v[si0 + 9u]) & FLAG_SHADOW) != 0)
         {
-            if (++candidates > kMaxPrimaryCandidates)
-            {
-                rayQueryTerminateEXT(rq);
-                break;
-            }
-            bool keep = (rayQueryGetIntersectionInstanceCustomIndexEXT(rq, false) == 1)
-                      ? spriteCandidateOpaque(rq)      // billboard sprite
-                      : worldCandidateOpaque(rq);      // world wall/flat, masked mid-wall alpha-tested
-            if (keep)
-                rayQueryConfirmIntersectionEXT(rq);
+            spectreT = rayQueryGetIntersectionTEXT(rq, true);
+            const vec3 sp = origin + dir * spectreT;
+            const vec3 sn = normalize(vec3(pc.spriteVerts.v[si0 + 3u], pc.spriteVerts.v[si0 + 4u],
+                                           pc.spriteVerts.v[si0 + 5u]));
+            const vec2 wave = vec2(dot(sp.xy, vec2(-sn.y, sn.x)), sp.z) * kSpectreWaveScale;
+            origin = sp;
+            dir = normalize(dir + kSpectreBend * (rippleNormal(sn, wave, rippleTime() * kSpectreWaveSpeed) - sn));
+            spectreTint = kSpectreTint;
+            tracePrimary(rq, origin, dir, true);
         }
     }
 
@@ -1737,6 +1777,7 @@ void main()
             PrimaryHit h = primaryHitSurface(vb, i0, isSprite, hitUV, n, p0, p1, p2,
                                              uv0, uv1, uv2, origin, dir,
                                              rayQueryGetIntersectionTEXT(rq, true));
+            h.albedo *= spectreTint;   // DOOM-0508
             uint seed = px.x + px.y * w + 1u;
             PrimaryLight s = primaryHitLighting(h, isSprite, prim, n);
             vec3 L = shadeSurface(s.shadeP, s.shadeN, h.albedo, h.id, pc.misc2.x, pc.misc4.y,
@@ -1753,7 +1794,7 @@ void main()
             if (any(isnan(L)) || any(isinf(L))) L = vec3(0.0);
             if (pc.misc6.z != 0u) {                  // rb_fog strength; 0 = skip entirely (INV-8)
                 FogHit fh = FogHit(h.hitP, n, uint(h.flags), h.mc.flags);
-                vec4 fog = marchFog(origin, dir, h.tHit, fh);
+                vec4 fog = marchFog(origin - dir * spectreT, dir, h.tHit + spectreT, fh);
                 L = L * fog.a + fog.rgb;             // linear radiance, before tonemap (§4.6)
             }
             colour = toneExposeEncode(L, EXPOSURE_EV);
@@ -1821,6 +1862,7 @@ void main()
             PrimaryHit h = primaryHitSurface(vb, i0, isSprite, hitUV, n, p0, p1, p2,
                                              uv0, uv1, uv2, origin, dir,
                                              rayQueryGetIntersectionTEXT(rq, true));
+            h.albedo *= spectreTint;   // DOOM-0508
 
             // build step 6c (half-resolution lighting): the G-buffer (position /
             // normal / albedo) is written at FULL resolution for EVERY pixel — it
@@ -1851,7 +1893,7 @@ void main()
             // the neutral no-fog value so the composite fetch is a byte-identical no-op.
             if (pc.misc6.z != 0u) {
                 FogHit fh = FogHit(h.hitP, n, uint(h.flags), h.mc.flags);
-                vec4 fog = marchFog(origin, dir, h.tHit, fh);
+                vec4 fog = marchFog(origin - dir * spectreT, dir, h.tHit + spectreT, fh);
                 imageStore(fogImg, ivec2(px) / 2, fog);
             } else {
                 imageStore(fogImg, ivec2(px) / 2, vec4(0.0, 0.0, 0.0, 1.0));
@@ -1903,7 +1945,7 @@ void main()
             imageStore(gpos[par],  ivec2(px), vec4(0.0, 0.0, 0.0, -1.0));
             imageStore(gnorm[par], ivec2(px), vec4(0.0, 0.0, 1.0, 0.0));
             imageStore(galbedo,    ivec2(px), vec4(0.0));
-            imageStore(gillum,     ivec2(px), vec4(skyPanorama(px, w, h), 0.0));
+            imageStore(gillum,     ivec2(px), vec4(skyPanorama(px, w, h) * spectreTint, 0.0));
             // DOOM-0011 L1b §4.6a: the sky backdrop is open-sky by definition (constant
             // outdoor density over the whole view distance), so a CLOSED FORM is exact --
             // no second march loop. Half-res, one write per 2x2 grid block (mirrors the
@@ -1926,7 +1968,7 @@ void main()
         else if (mode == 2u) colour = vec3(1.0);
         else if (mode == 4u)
         {
-            colour = skyPanorama(px, w, h);
+            colour = skyPanorama(px, w, h) * spectreTint;
             // DOOM-0011 L1b §4.6a: same closed-form aerial fog as the mode-6 sky branch
             // above (open sky = constant outdoor density over the whole view distance).
             // Full-res here (mode 4 has no half-res grid to gate on).

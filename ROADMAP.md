@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=527 -->
+<!-- ants-roadmap-id-high-water: DOOM=528 -->
 
 # Roadmap
 
@@ -10985,7 +10985,7 @@ stay in their phase sections; this heading holds only work still to come.
   Lanes: renderer.
   Evidence: linuxdoom-1.10/dev-shots/shot-0019.png, linuxdoom-1.10/dev-shots/shot-0020.png
 
-- 📋 [DOOM-0508] **The Spectre is drawn as a solid Pinky in Solid and Ultra, not as the see-through shimmer.**
+- 🚧 [DOOM-0508] **The Spectre is drawn as a solid Pinky in Solid and Ultra, not as the see-through shimmer.**
   The 3D sprite gather in r_mesh.c reads MF_SPECIAL and MF_MISSILE but
   never MF_SHADOW, so a Spectre (and any partially invisible thing) is
   emitted as an ordinary opaque quad. Classic draws MF_SHADOW things
@@ -11010,6 +11010,9 @@ stay in their phase sections; this heading holds only work still to come.
   a cheap flickering fuzz like Classic's. Blob shadow skipped
   (RB_BuildBlobs). Not yet built; no spec written (judge with
   spec-format.md §1).
+  2026-10-30: built; ship = the user's in-game OK, then changelog + flip. New RB_MESH_SHADOW (0x200) from sprite_quad via sprite_flags.h. Raster: half the texels dropped per tic, the rest near black. Traced: a ray meeting the Spectre is bent and re-traced from there, darkened (kSpectreBend 2.0, kSpectreTint 0.45). No blob, no torch shadow. Traced shadow and light rays already cull sprites (mask 0x02), so nothing was needed there.
+  Nothing was copied: rt_sprite.c only sets a flag from MF_SHADOW, and RTGL's water normals need a normal-map texture DOOM does not have. The waves are the existing rippleNormal(), so no third-party notice is owed.
+  A/B at E1M5 -warpto -1360 104 90, skill 3, Solid traced, against 0f4b9c5: the difference picture shows the Spectre's outline. -rtverify PASS. Not measured: FPS with a Spectre on screen; motion (captures use -freeze).
   **Layman:** The invisible demon is fully visible in the 3D views, which makes it a different, easier enemy than the one the game intends.
   Kind: fix.
   Source: user-request-2026-10-26.
@@ -17347,6 +17350,12 @@ in CLAUDE.md describes.
   Kind: fix.
   Source: user-report-2026-10-29.
   Evidence: linuxdoom-1.10/dev-shots/shot-0033.png, linuxdoom-1.10/dev-shots/shot-0035.png
+
+- 📋 [DOOM-0528] **Ultra's traced view shows an orange patch across a dark wall at E1M5.**
+  Seen 2026-10-30 at E1M5 -warpto -1360 104 90, skill 3, Ultra -rtview 6, with -inspect -freeze, DEV build, 150+ frames settled. The back wall's upper right reads flat orange-brown with a soft edge, where Solid's traced view at the same spot shows the dark wall. Present at 0f4b9c5, before the DOOM-0508 change, so it is not that change. Cause unknown. Captures: scratch/fled/o_u.png and a_u.png.
+  **Layman:** In one room of Ultra's ray-traced view, part of a dark wall turns a flat orange.
+  Kind: fix.
+  Source: found-2026-10-30-doom-0508-capture.
 
 ## 0.12.0 — The player's experience
 

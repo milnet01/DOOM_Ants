@@ -107,7 +107,8 @@ layout(set = 0, binding = 2) uniform sampler2D materialTex[];
 // is on — when it is off the shadow pass is skipped and this is never sampled.
 layout(set = 1, binding = 0) uniform sampler2D shadowMap;
 // DOOM-0273: flags.x = surface detail (1 on; 0 off or no maps made), flags.y = reserved
-// for DOOM-0103, flags.z = the surface-map base in materialTex[], flags.w = free. Written
+// for DOOM-0103, flags.z = the surface-map base in materialTex[], flags.w = a 35 Hz count
+// for the Spectre's fuzz (DOOM-0508). Written
 // every frame; lightVP only while the torch is on. r_vulkan.cpp's ShadowUboData mirrors it.
 layout(set = 1, binding = 1) uniform ShadowUbo { mat4 lightVP; uvec4 flags; } shadow;
 
@@ -124,6 +125,7 @@ layout(set = 1, binding = 1) uniform ShadowUbo { mat4 lightVP; uvec4 flags; } sh
 const int FLAG_FLAT    = 0x1;   // matches RB_MESH_FLAT in r_mesh.h
 const int FLAG_MASKED  = 0x2;   // matches RB_MESH_MASKED in r_mesh.h
 const int FLAG_SPRITE  = 0x4;   // matches RB_MESH_SPRITE in r_mesh.h
+const int FLAG_SHADOW  = 0x200; // matches RB_MESH_SHADOW in r_mesh.h
 const int FLAG_PSPRITE = 0x8;   // matches RB_MESH_PSPRITE in r_mesh.h
 const int FLAG_SKY     = 0x10;  // matches RB_MESH_SKY in r_mesh.h (NDC backdrop quad)
 const int FLAG_SKYDOME = 0x40;  // matches RB_MESH_SKYDOME (world-space sky occluder)
@@ -310,6 +312,19 @@ void main()
         discard;
 
     vec3  albedo  = texture(paletteTex, vec2((index + 0.5) / 256.0, 0.5)).rgb;
+
+#ifndef SINGLE_TARGET
+    // DOOM-0508: the Spectre's fuzz. Classic shifts each pixel and darkens the wall behind
+    // it; this pass cannot read what is behind, so half the sprite's texels, chosen afresh
+    // each tic, are dropped to let it show, and the rest go near black.
+    if ((vFlags & FLAG_SHADOW) != 0)
+    {
+        vec2 cell = floor(vUV) + float(shadow.flags.w % 1024u) * vec2(7.0, 13.0);
+        if (fract(sin(dot(cell, vec2(12.9898, 78.233))) * 43758.5453) < 0.5)
+            discard;
+        albedo *= 0.15;
+    }
+#endif
 
     // Classic DOOM shades every surface by sector light + distance ONLY -- there
     // is no normal/directional term -- so a floor and a ceiling at the same

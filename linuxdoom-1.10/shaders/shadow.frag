@@ -24,9 +24,14 @@ layout(set = 0, binding = 2) uniform sampler2D materialTex[];
 const int FLAG_FLAT   = 0x1;   // matches RB_MESH_FLAT
 const int FLAG_MASKED = 0x2;   // matches RB_MESH_MASKED
 const int FLAG_SPRITE = 0x4;   // matches RB_MESH_SPRITE
+const int FLAG_SHADOW = 0x200; // matches RB_MESH_SHADOW
 
 void main()
 {
+    // DOOM-0508: the torch casts no shadow from a Spectre.
+    if ((vFlags & FLAG_SHADOW) != 0)
+        discard;
+
     // Only cut-out surfaces need the test; opaque walls/flats cast solid.
     if ((vFlags & (FLAG_SPRITE | FLAG_MASKED)) == 0)
         return;

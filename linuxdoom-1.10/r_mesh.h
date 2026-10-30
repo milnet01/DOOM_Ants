@@ -131,6 +131,9 @@ typedef struct
                               // occlude distant geometry in the raster view.
 #define RB_MESH_PICKUP  0x100 // DOOM-0482: this sprite Thing is a pickup (MF_SPECIAL). Solid's
                               // raster point light from it fades out within a short reach.
+#define RB_MESH_SHADOW  0x200 // DOOM-0508: this sprite Thing is partly invisible (MF_SHADOW, the
+                              // Spectre). Raster draws a flickering fuzz, the traced view a dark
+                              // shimmer that bends what is behind it. No blob, no torch shadow.
 
 // Transparent-key palette index for the 2D HUD/menu compositor (DOOM-0008). In
 // the 3D back-ends the engine still draws every 2D element (status bar, menu,

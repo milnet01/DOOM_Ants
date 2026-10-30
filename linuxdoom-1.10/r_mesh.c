@@ -48,6 +48,7 @@
 #include "step_wall.h"   // DOOM-0500 step walls on both sides, clamped
 #include "sprite_cap.h"  // DOOM-0459 nearest-first order past the sprite cap
 #include "r_mesh.h"
+#include "sprite_flags.h"
 #include "patch_bounds.h"
 #include "atlas_bounds.h"
 
@@ -2301,11 +2302,9 @@ static boolean sprite_quad(const rb_view_t* view, mobj_t* thing, rb_vertex_t q[6
     // is just a depth-occluding billboard (DOOM-0100). DOOM-0112 also lights
     // the glowing collectibles (bonus potions, spheres, keys, health) which
     // aren't FF_FULLBRIGHT but should still emit their colour.
-    sflags = RB_MESH_SPRITE;
-    if ((thing->frame & FF_FULLBRIGHT) || sprite_glows(thing->sprite))
-        sflags |= RB_MESH_EMISSIVE;
-    if (thing->flags & MF_SPECIAL)
-        sflags |= RB_MESH_PICKUP;     // DOOM-0482
+    sflags = RB_SpriteFlags(thing->flags,
+                            (thing->frame & FF_FULLBRIGHT) || sprite_glows(thing->sprite),
+                            MF_SPECIAL, MF_SHADOW);
 
     // UVs inset half a texel so nearest sampling stays inside the rect.
     u0 = 0.5f;  u1 = wpx - 0.5f;
@@ -2437,6 +2436,8 @@ int RB_BuildBlobs(const rb_view_t* view, rb_vertex_t* out, int maxverts)
                 continue;                       // corpses/blood/decals: nothing to ground
             if (thing->flags & MF_MISSILE)
                 continue;                       // projectiles/puffs don't sit on the floor
+            if (thing->flags & MF_SHADOW)
+                continue;                       // DOOM-0508: the Spectre must not give itself away
 
             cx    = thing->x / (float)FRACUNIT;
             cy    = thing->y / (float)FRACUNIT;
