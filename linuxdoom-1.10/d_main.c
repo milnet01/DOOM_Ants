@@ -93,6 +93,7 @@ static const char rcsid[] __attribute__((used)) = "$Id: d_main.c,v 1.8 1997/02/0
 
 #include "d_main.h"
 #include "d_ledger.h"
+#include "bot_play.h"
 
 //
 // D-DoomLoop()
@@ -509,6 +510,31 @@ void D_DoomLoop (void)
 	    RB_InterpDisable ();
 	}
 	wasUncapped = uncapped;
+
+#ifdef DOOM_DEV
+	// DOOM-0530: -framedump, under -timedemo, keeps one picture per tic, so the same
+	// frame number is the same moment in every view (dev-shots/shot-NNNN.png). The 3D
+	// views add an in-between picture first, for 70 fps. The first tic is left out: the
+	// melt is paced by the wall clock, so it is the one thing no two takes share.
+	{
+	    extern int rb_devshot;	// r_vulkan.cpp, read by both presenters
+	    static int framedump = -1;
+	    if (framedump < 0)
+		framedump = M_CheckParm ("-framedump") != 0;
+	    if (framedump && gametic >= 1)
+	    {
+		if (rendermode != RB_CLASSIC)
+		{
+		    RB_InterpSnapshot (&players[consoleplayer]);
+		    RB_InterpSetFrac (0.5);
+		    rb_devshot = 1;
+		    D_Display ();
+		    RB_InterpSetFrac (1.0);
+		}
+		rb_devshot = 1;
+	    }
+	}
+#endif
 
 	S_UpdateSounds (players[consoleplayer].mo);// move positional sounds
 
@@ -1714,6 +1740,9 @@ void D_DoomMain (void)
 	G_RecordDemo (myargv[p+1]);
 	autostart = true;
     }
+#ifdef DOOM_DEV
+    BOT_Init ();		// DOOM-0529
+#endif
 	
     p = M_CheckParm ("-playdemo");
     if (p && p < myargc-1)

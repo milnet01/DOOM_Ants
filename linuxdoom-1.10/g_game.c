@@ -73,6 +73,7 @@ rcsid[] __attribute__((used)) = "$Id: g_game.c,v 1.8 1997/02/03 22:45:09 b1 Exp 
 
 
 #include "g_game.h"
+#include "bot_play.h"
 
 #include "save_signature.h"
 #include "demo_bounds.h"
@@ -482,6 +483,11 @@ void G_BuildTiccmd (ticcmd_t* cmd)
  
     cmd->forwardmove += forward; 
     cmd->sidemove += side;
+
+#ifdef DOOM_DEV
+    if (bot_active)
+	BOT_BuildTiccmd (cmd);	// DOOM-0529
+#endif
     
     // special buttons
     if (sendpause) 
@@ -2123,6 +2129,9 @@ boolean G_CheckDemoStatus (void)
 	 
     if (timingdemo) 
     { 
+#ifdef DOOM_DEV
+	BOT_Report ("replay");	// DOOM-0529: must match the recording's state
+#endif
 	endtime = I_GetTime (); 
 	I_Error ("timed %i gametics in %i realtics",gametic 
 		 , endtime-starttime); 

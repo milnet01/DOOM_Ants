@@ -75,7 +75,7 @@ int main()
 
     // 4. No dead names.
     std::string engine;
-    for (const char* f : {"/d_main.c", "/d_ledger.c", "/g_game.c", "/i_video.c"})
+    for (const char* f : {"/d_main.c", "/d_ledger.c", "/bot_play.c", "/g_game.c", "/i_video.c"})
         engine += slurp((std::string(DOOM_TESTS_ROOT) + f).c_str());
     check(!engine.empty(), "the engine sources were read");
     for (const char* flag : D_TEST_RUN_FLAGS)

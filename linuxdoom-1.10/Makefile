@@ -144,6 +144,7 @@ OBJS=				\
 		$(O)/f_wipe.o 		\
 		$(O)/d_main.o			\
 		$(O)/d_ledger.o		\
+		$(O)/bot_play.o		\
 		$(O)/run_ledger.o		\
 		$(O)/d_net.o			\
 		$(O)/d_items.o		\
