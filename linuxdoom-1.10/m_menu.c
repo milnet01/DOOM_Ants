@@ -2859,8 +2859,8 @@ void M_ChangeDebugViews(int choice)
 
 //
 // Brightness slider for the Ultra/denoiser view (DOOM-0096): left/right nudge the
-// exposure EV fed to the path-tracer composite tonemap. rb_exposure 0..15 maps in
-// r_vulkan.cpp to EV [-4.0, -0.25] (pos 7 == the old fixed -2.25 default).
+// exposure EV fed to the path-tracer composite tonemap, through RB_ExposureEV. Right is
+// brighter.
 //
 void M_ChangeBrightness(int choice)
 {

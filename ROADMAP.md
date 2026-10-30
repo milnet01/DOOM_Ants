@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=531 -->
+<!-- ants-roadmap-id-high-water: DOOM=533 -->
 
 # Roadmap
 
@@ -17356,9 +17356,28 @@ in CLAUDE.md describes.
 
 - 📋 [DOOM-0528] **Ultra's traced view shows an orange patch across a dark wall at E1M5.**
   Seen 2026-10-30 at E1M5 -warpto -1360 104 90, skill 3, Ultra -rtview 6, with -inspect -freeze, DEV build, 150+ frames settled. The back wall's upper right reads flat orange-brown with a soft edge, where Solid's traced view at the same spot shows the dark wall. Present at 0f4b9c5, before the DOOM-0508 change, so it is not that change. Cause unknown. Captures: scratch/fled/o_u.png and a_u.png.
+  Cause found 2026-10-30: the filth stains (applyGrime, DOOM-0181)
+  replace the art at kStainOpacity 0.82. The patch goes with rt_filth 0.
+  The same stains made the bright green floor patches the website
+  session reported on E1M2. Calmer constants on trial, kStainOpacity
+  0.50, kGooChance 0.15, kGooColour halved; the user's answer on keeping
+  them is awaited, because the user liked the goo puddles on 2026-07-16
+  (scratch/fled/look/filth.png).
   **Layman:** In one room of Ultra's ray-traced view, part of a dark wall turns a flat orange.
   Kind: fix.
   Source: found-2026-10-30-doom-0508-capture.
+
+- ✅ [DOOM-0532] **The Brightness slider ran backwards: moving it right darkened the ray-traced view.**
+  DOOM-0096 mapped a larger slider value to a larger EV, and the tonemap's gain is 1 / (2^EV * 1.2). A sweep on 2026-10-30 at values 10, 13 and 15 showed the picture getting darker. RB_ExposureEV in rb_exposure.h now runs the other way and keeps value 10's EV, so a default picture is unchanged. A saved value other than 10 changes brightness.
+  **Layman:** The Brightness slider did the opposite of what it said. Now right is brighter.
+  Kind: fix.
+  Source: found-2026-10-30-trailer-brightness-test.
+
+- ✅ [DOOM-0533] **Ultra's SUPPORT2 art was reddish where the original metal is neutral grey.**
+  The original averages 98,98,98; the HD albedo averaged 71,57,54, and the ray-traced view showed door frames as dark red. Re-tinted with scripts/stage_hero.py's tint_to_doom. The other hero albedos were compared the same way and stay near their originals' hue.
+  **Layman:** Metal door frames in Ultra's ray-traced view looked dark red. They are grey again.
+  Kind: fix.
+  Source: website-session-relay-2026-10-30.
 
 ## 0.12.0 — The player's experience
 
@@ -17903,6 +17922,14 @@ minor may break.
   tics. Seed 27 at 600 tics replays to the same state on all five views.
   Open: the user's verdict on whether it looks played, not scripted. Not
   tried: maps beyond E1M1, E1M2, E1M3 and E1M5.
+  User 2026-10-30, relayed by the website session: sample approved,
+  wanted better runs: keep off walls, open rooms, fights in view. Built:
+  walls push the move away, the look turns from a near wall, and each
+  second prints what the camera had ([botw]). Frame dump gained
+  -dumpfrom and -dumpto, so a stretch of a long run can be filmed.
+  Measured on 156 runs on 13 maps, skill 3: the best stretches have a
+  wall filling the view for 0 to 1% of tics and a monster in the centre
+  third for about 80%.
   **Layman:** Claude plays the game itself and records the run, so nobody has to sit at the controls for the trailer.
   Kind: feature.
   Source: user-request-2026-10-30-via-website-session.

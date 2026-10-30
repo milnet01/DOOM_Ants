@@ -22,6 +22,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **The Brightness slider now brightens when moved right** (DOOM-0532)
+  It ran backwards in the ray-traced view. The default picture is unchanged, but a saved value other than the default now looks different.
+
+- **Metal door frames in Ultra's ray-traced view are grey, not dark red** (DOOM-0533)
+  The HD art for that metal had the wrong colour.
+
 - **Surface detail no longer makes floors, walls and ceiling lights slide or tear as you walk** (DOOM-0527)
 
 - **A whole-codebase review: crashes from bad files fixed, Classic stops using a full CPU core**

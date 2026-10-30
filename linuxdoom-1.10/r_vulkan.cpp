@@ -119,6 +119,7 @@ static_assert(sizeof(rb_matctrl_t) == 40, "rb_matctrl_t must be 40 bytes (std430
 #include "shaders/tint.frag.spv.h"          // DOOM-0379: palette flash blend
 #include "shaders/wipe.frag.spv.h"          // DOOM-0379: screen melt
 #include "shaders/composite.vert.spv.h"
+#include "rb_exposure.h"
 #include "shaders/composite.frag.spv.h"
 #include "shaders/text.vert.spv.h"          // DOOM-0206 L1b: display-res menu glyph text
 #include "shaders/text.frag.spv.h"
@@ -9386,12 +9387,11 @@ void RecordRtTrace(uint32_t idx)
         spc.prevUp[3]    = g.prevCamUp[3];
         spc.misc[0] = svgfParity;
         spc.misc[1] = w; spc.misc[2] = h;
-        // DOOM-0096 brightness: map the rb_exposure slider (0..15) to a photographic
-        // EV [-4.0, -0.25] (pos 7 == the old fixed -2.25) and hand it to the composite
-        // tonemap via misc3.x (bit-cast float). Only svgf_composite reads misc3 here.
+        // DOOM-0096 brightness: map the rb_exposure slider to a photographic EV and hand it
+        // to the composite tonemap via misc3.x (bit-cast float). Only svgf_composite reads
+        // misc3 here.
         {
-            int e = rb_exposure < 0 ? 0 : (rb_exposure > 15 ? 15 : rb_exposure);
-            float ev = -4.0f + 0.25f * (float)e;
+            float ev = RB_ExposureEV(rb_exposure);
             std::memcpy(&spc.misc3[0], &ev, sizeof(float));
         }
 
