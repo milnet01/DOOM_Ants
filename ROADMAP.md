@@ -17563,6 +17563,11 @@ controls they expect to rebind.
   tracing off, so the trailer draws attention to exactly this label. Not a
   blocker for shooting, but it should land before the trailer is
   published. The shot script is `docs/trailer-script.md` § 4.
+  2026-10-30: this item's premise is wrong today. Ultra's raster view
+  draws the original paletted art: shaders/mesh.frag has no HD sampling
+  (DOOM-0182 is open), so "Original (raster)" is currently true in
+  Ultra. The label only becomes wrong when DOOM-0182 lands, so do it
+  with that item.
   **Layman:** With ray tracing switched off, Ultra still shows the new high-definition artwork -- but the menu calls that view "Original", which tells the player the opposite of what they are looking at.
   Kind: ux.
   Source: user-request-2026-08-07 (trailer scripting, DOOM-0339).

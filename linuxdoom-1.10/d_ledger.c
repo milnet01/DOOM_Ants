@@ -26,7 +26,13 @@
 #include "rb_vulkan.h"
 #include "run_ledger.h"
 
+// The Makefile writes this. A syntax-only check, which runs no Makefile rule, has none.
+#if __has_include("build_stamp.h")
 #include "build_stamp.h"
+#else
+#define BUILD_COMMIT "unknown"
+#define BUILD_DIRTY 1
+#endif
 
 extern char* wadfiles[];
 
