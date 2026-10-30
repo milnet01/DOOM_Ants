@@ -18027,6 +18027,21 @@ minor may break.
   website session. The sample's scale from 1708x800 to 1920x1080
   stretches the picture about 20% vertically; final footage must be
   drawn at its final shape.
+  2026-10-30, sound and delivery. Real-time take:
+  scratch/fled/bot/sndtake2.sh (demoreel --audio, a private sink; never
+  SDL's disk audio driver, which runs about 1% fast). Measured with
+  sync.py against a Classic dump's ammo changes: about 3 ms a minute of
+  drift in a clean take; two takes in step for 24 s, then one jump of
+  about 41 ms under heavy load, cause not proven. Offset differs per
+  take. Website session's terms: a separate .wav per scene, 48 kHz
+  stereo, sample 0 = the video's first frame, same length;
+  scene1-sfx.wav and scene1-music.wav from two takes; sfx 15, music 8;
+  notes.md per scene with level, measured sync error and any jump;
+  re-take a scene with a jump in a fight. Sync is measured on the SFX
+  file. The outdoor clips' look is not yet approved by the user. Footage
+  must be drawn at its final shape: 1708x800 scaled to 1920x1080
+  stretches about 20% vertically. Release 0.8.0 loads 17 materials,
+  TEKWALL1 stays paletted.
   **Layman:** Saves each frame of a replayed run as a picture, so all five views of the trailer show exactly the same moment.
   Kind: feature.
   Source: user-request-2026-10-30-via-website-session.
