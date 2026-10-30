@@ -516,12 +516,24 @@ void D_DoomLoop (void)
 	// frame number is the same moment in every view (dev-shots/shot-NNNN.png). The 3D
 	// views add an in-between picture first, for 70 fps. The first tic is left out: the
 	// melt is paced by the wall clock, so it is the one thing no two takes share.
+	// -dumpfrom N and -dumpto N keep only that stretch of the demo, and -dumpto ends it.
 	{
 	    extern int rb_devshot;	// r_vulkan.cpp, read by both presenters
-	    static int framedump = -1;
+	    static int framedump = -1, dumpfrom = 1, dumpto = 0;
 	    if (framedump < 0)
+	    {
+		int p;
 		framedump = M_CheckParm ("-framedump") != 0;
-	    if (framedump && gametic >= 1)
+		p = M_CheckParm ("-dumpfrom");
+		if (p && p < myargc - 1)
+		    dumpfrom = atoi (myargv[p + 1]);
+		p = M_CheckParm ("-dumpto");
+		if (p && p < myargc - 1)
+		    dumpto = atoi (myargv[p + 1]);
+	    }
+	    if (framedump && dumpto && gametic > dumpto)
+		G_CheckDemoStatus ();
+	    if (framedump && gametic >= dumpfrom)
 	    {
 		if (rendermode != RB_CLASSIC)
 		{

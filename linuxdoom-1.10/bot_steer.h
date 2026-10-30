@@ -39,4 +39,61 @@ static inline void BOT_MoveFor (double world_rad, double facing_rad, double spee
     *side = (int)lround (-sin (rel) * speed * max_side);
 }
 
+// How far along a ray, from (ox,oy) with unit direction (dx,dy), it crosses the segment
+// from a to b, or negative if it does not.
+static inline double BOT_RayToSegment (double ox, double oy, double dx, double dy,
+				       double ax, double ay, double bx, double by)
+{
+    const double ex = bx - ax, ey = by - ay;
+    const double den = dx * ey - dy * ex;
+    double t, u;
+    if (den > -1e-9 && den < 1e-9)
+	return -1.0;
+    t = ((ax - ox) * ey - (ay - oy) * ex) / den;
+    u = ((ax - ox) * dy - (ay - oy) * dx) / den;
+    return (t >= 0.0 && u >= 0.0 && u <= 1.0) ? t : -1.0;
+}
+
+// A move toward goal_rad, bent away from walls nearer than margin. dist holds the clear
+// distance in n directions evenly round the circle, the first along angle 0. A wall at
+// the margin pushes not at all, and one touching pushes twice as hard as the goal pulls.
+static inline double BOT_RepelFrom (double goal_rad, const double* dist, int n, double margin)
+{
+    const double step = 2.0 * 3.14159265358979 / n;
+    double x = cos (goal_rad), y = sin (goal_rad);
+    int i;
+    for (i = 0; i < n; i++)
+    {
+	if (dist[i] < margin)
+	{
+	    const double push = 2.0 * (margin - dist[i]) / margin;
+	    x -= cos (i * step) * push;
+	    y -= sin (i * step) * push;
+	}
+    }
+    return atan2 (y, x);
+}
+
+// Which of n directions to look along, where the first is the goal and the rest go evenly
+// round the circle. Open space scores up to a room's length, and turning from the goal
+// costs up to most of the score, so the look leaves the goal only to get off a wall.
+#define BOT_LOOK_ROOM	600.0
+static inline int BOT_BestLook (const double* dist, int n)
+{
+    double best_score = -1.0;
+    int best = 0, i;
+    for (i = 0; i < n; i++)
+    {
+	const int off = i <= n / 2 ? i : n - i;
+	const double room = dist[i] < BOT_LOOK_ROOM ? dist[i] : BOT_LOOK_ROOM;
+	const double score = room * (1.0 - 0.7 * (2.0 * off / n));
+	if (score > best_score)
+	{
+	    best_score = score;
+	    best = i;
+	}
+    }
+    return best;
+}
+
 #endif

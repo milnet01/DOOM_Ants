@@ -3,6 +3,9 @@
 //   -botplay SEED    fill each ticcmd from the game's state; use with -record NAME
 //   -bottics N       end the run after N tics (default 700, 20 seconds)
 //
+// Every BOT_WINDOW tics it prints a [botw] line of what the camera had in those tics, so a
+// harness can pick the stretch of a long run worth filming.
+//
 // What it writes is an ordinary demo, so -timedemo replays it on any renderer. It runs
 // one tic per frame and draws nothing, so a run takes moments, and a harness can try many
 // seeds and keep the best. It reads the world and never calls P_Random, so a run's
@@ -45,6 +48,12 @@ extern fixed_t	sidemove[2];
 #define BOT_BLOCK_TICS		350		// how long a way that stuck it stays closed
 #define BOT_MAX_SECTORS		4096
 #define BOT_MAX_LINES		16384
+#define BOT_WALL_MARGIN		72.0		// walks no nearer a wall than this if it can
+#define BOT_WALL_FILLS		110.0		// a wall this near fills the screen
+#define BOT_FIGHT_ANGLE		(BOT_ANG1 * 15)	// the centre third of the picture, either way
+#define BOT_LOOK_HOLD		14		// tics a look lasts, so it does not twitch
+#define BOT_WINDOW		35
+#define BOT_RAY_MAX		2048.0
 
 boolean		bot_active;
 
@@ -60,6 +69,9 @@ static int	shots;
 static int	sway_tics, sway_dir = 1;
 static int	unstick_tics, unstick_dir;
 static int	aim_phase;
+static int	look_tics;
+static angle_t	look_off;
+static int	win_wall, win_fight, win_sky, win_liquid, win_lit;
 
 static byte	visited[BOT_MAX_SECTORS];
 static int	sectors_seen;
@@ -257,6 +269,92 @@ static void BOT_Look (const player_t* pl, mobj_t** enemy, mobj_t** item)
     }
 }
 
+// A line the camera and the player cannot pass: a solid wall, a closed door it cannot open,
+// or a step too tall. A door it can open is not a wall, or it would never walk up to one.
+static boolean BOT_LineWalls (const line_t* ln, const player_t* pl)
+{
+    const sector_t* f = ln->frontsector;
+    const sector_t* b = ln->backsector;
+    if (!f || !b)
+	return true;
+    if (BOT_MIN (f->ceilingheight, b->ceilingheight)
+	- BOT_MAX (f->floorheight, b->floorheight) < 56*FRACUNIT)
+	return !BOT_DoorOpens (ln, pl);
+    return (ln->flags & ML_BLOCKING) != 0;
+}
+
+// How far it is to the nearest wall along an angle, up to BOT_RAY_MAX.
+static double BOT_Clearance (const player_t* pl, double rad)
+{
+    const double ox = pl->mo->x / (double)FRACUNIT, oy = pl->mo->y / (double)FRACUNIT;
+    const double dx = cos (rad), dy = sin (rad);
+    double best = BOT_RAY_MAX;
+    int i;
+    for (i = 0; i < numlines; i++)
+    {
+	const line_t* ln = &lines[i];
+	double t;
+	if (!BOT_LineWalls (ln, pl))
+	    continue;
+	t = BOT_RayToSegment (ox, oy, dx, dy,
+			      ln->v1->x / (double)FRACUNIT, ln->v1->y / (double)FRACUNIT,
+			      ln->v2->x / (double)FRACUNIT, ln->v2->y / (double)FRACUNIT);
+	if (t >= 0.0 && t < best)
+	    best = t;
+    }
+    return best;
+}
+
+// Where to look on the way to a goal: at it, unless a wall is in the way of it.
+static angle_t BOT_LookFor (const player_t* pl, angle_t goal)
+{
+    if (--look_tics <= 0)
+    {
+	const angle_t step = BOT_ANG1 * 30;
+	double dist[12];
+	int i;
+	for (i = 0; i < 12; i++)
+	    dist[i] = BOT_Clearance (pl, BOT_Rad (goal + (angle_t)i * step));
+	look_off = (angle_t)BOT_BestLook (dist, 12) * step;
+	look_tics = BOT_LOOK_HOLD;
+    }
+    return goal + look_off;
+}
+
+// Tally what the camera has this tic, and print each window.
+static void BOT_Tally (const player_t* pl, const mobj_t* enemy)
+{
+    const mobj_t* mo = pl->mo;
+    const sector_t* sec = mo->subsector->sector;
+    const fixed_t ahead = 200 * FRACUNIT;
+    const unsigned fine = mo->angle >> ANGLETOFINESHIFT;
+    const sector_t* front = R_PointInSubsector (mo->x + FixedMul (ahead, finecosine[fine]),
+						mo->y + FixedMul (ahead, finesine[fine]))->sector;
+
+    if (BOT_Clearance (pl, BOT_Rad (mo->angle)) < BOT_WALL_FILLS)
+	win_wall++;
+    if (enemy)
+    {
+	const angle_t off = R_PointToAngle2 (mo->x, mo->y, enemy->x, enemy->y) - mo->angle;
+	if (off < BOT_FIGHT_ANGLE || off > (angle_t)0 - BOT_FIGHT_ANGLE)
+	    win_fight++;
+    }
+    if (sec->ceilingpic == skyflatnum || front->ceilingpic == skyflatnum)
+	win_sky++;
+    if (BOT_FloorHurts (sec) || BOT_FloorHurts (front))
+	win_liquid++;
+    if (sec->lightlevel >= 190 && sec->ceilingpic != skyflatnum)
+	win_lit++;
+
+    if (tics_run % BOT_WINDOW == 0)
+    {
+	printf ("[botw] tic=%d wall=%d fight=%d sky=%d liquid=%d lit=%d health=%d kills=%d"
+		" pos=%d,%d\n", tics_run, win_wall, win_fight, win_sky, win_liquid, win_lit,
+		pl->health, pl->killcount, mo->x >> FRACBITS, mo->y >> FRACBITS);
+	win_wall = win_fight = win_sky = win_liquid = win_lit = 0;
+    }
+}
+
 // Hold the best gun it has for the job, as a player reaching for a number key would.
 static void BOT_ChooseWeapon (const player_t* pl, fixed_t dist, ticcmd_t* cmd)
 {
@@ -324,6 +422,7 @@ void BOT_BuildTiccmd (ticcmd_t* cmd)
     }
 
     BOT_Look (pl, &enemy, &item);
+    BOT_Tally (pl, enemy);
     forward = side = 0;
     face = mo->angle;
 
@@ -374,7 +473,7 @@ void BOT_BuildTiccmd (ticcmd_t* cmd)
 	if (P_AproxDistance (item->x - mo->x, item->y - mo->y) < 24*FRACUNIT
 	    || chase_tics > 105 || stuck_tics >= BOT_STUCK_TICS)
 	    BOT_GiveUp (item);
-	face = to;
+	face = BOT_LookFor (pl, to);
 	move_rad = BOT_Rad (to);
 	speed = 1.0;
 	have_move = true;
@@ -391,7 +490,7 @@ void BOT_BuildTiccmd (ticcmd_t* cmd)
 	    const angle_t to = R_PointToAngle2 (mo->x, mo->y, mx, my);
 	    const fixed_t dist = P_AproxDistance (mx - mo->x, my - mo->y);
 
-	    face = to;
+	    face = BOT_LookFor (pl, to);
 	    move_rad = BOT_Rad (to);
 	    speed = 1.0;
 	    have_move = true;
@@ -413,6 +512,16 @@ void BOT_BuildTiccmd (ticcmd_t* cmd)
 	}
 	else
 	    face = mo->angle + BOT_ANG1 * 3;	// nowhere new: look around
+    }
+
+    // Keep off walls: a run hugging one shows nothing else.
+    if (have_move)
+    {
+	double dist[8];
+	int i;
+	for (i = 0; i < 8; i++)
+	    dist[i] = BOT_Clearance (pl, i * 2.0 * 3.14159265358979 / 8);
+	move_rad = BOT_RepelFrom (move_rad, dist, 8, BOT_WALL_MARGIN);
     }
 
     // Backing off a wall takes priority over the plan: a hand does this without thinking.
