@@ -8,6 +8,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Ultra's HD art now shows in its rasterised view too** (DOOM-0182)
+  Switching ray tracing off in Ultra used to drop the walls and floors back to the original art. It now keeps the HD art, with its de-tiling, its filth and a cheap version of its depth. Classic and Solid draw exactly what they drew before.
+
 - **`-frameledger FILE` records every frame's timings in the shared frameledger format** (DOOM-0502)
   Each frame's wall time, CPU work, waits and GPU passes go into a run file that frameledger's `check`, `report` and `floor` read, so the road to 60 FPS can be measured frame by frame in every tier.
 
@@ -21,6 +24,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
   In a developer build, each `dev-shots/shot-NNNN.png` now gets a `shot-NNNN.txt` beside it. It names the map, skill, position, facing, renderer and every setting. Its `repeat:` line holds the `-warp` and `-warpto` arguments that stand the player there again. Classic's F12 still saves DOOM's own `.pcx`, with no note.
 
 ### Fixed
+
+- **Ultra's filth stains no longer hide the art they land on** (DOOM-0528)
+  Stains used to replace most of a wall's colour, which made flat orange patches on walls and bright green patches on floors. They are now half as opaque and green goo is rarer, so the art shows through. A faint tint remains where a stain lands. The user chose this look over the earlier goo puddles on 2026-10-30.
 
 - **The Brightness slider now brightens when moved right** (DOOM-0532)
   It ran backwards in the ray-traced view. The default picture is unchanged, but a saved value other than the default now looks different.

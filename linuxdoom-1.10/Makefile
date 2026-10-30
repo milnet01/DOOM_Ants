@@ -446,6 +446,16 @@ $(SHADER_DIR)/pathtrace.comp.spv.h \
 $(SHADER_DIR)/mesh.frag.spv.h $(SHADER_DIR)/mesh_overlay.frag.spv.h: \
 		$(SHADER_DIR)/formulas/surface_detail.glsl
 
+# DOOM-0182 — the HD set, de-tiling and filth are shared by the path tracer and the raster
+# mesh.frag. Same missing-auto-dep hazard as the rules above.
+$(SHADER_DIR)/pathtrace.comp.spv.h \
+$(SHADER_DIR)/mesh.frag.spv.h $(SHADER_DIR)/mesh_overlay.frag.spv.h: \
+		$(SHADER_DIR)/formulas/hd_set.glsl \
+		$(SHADER_DIR)/formulas/hd_surface.glsl \
+		$(SHADER_DIR)/formulas/pcg_hash.glsl \
+		$(SHADER_DIR)/formulas/formulas.glsl
+$(SHADER_DIR)/bake.comp.spv.h: $(SHADER_DIR)/formulas/pcg_hash.glsl
+
 # DOOM-0511 — an emitter's visible glow is shared by the raw display path (through
 # pt_common.glsl) and both composite variants. Same missing-auto-dep hazard as above.
 $(SHADER_DIR)/pathtrace.comp.spv.h $(SHADER_DIR)/bake.comp.spv.h \

@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=533 -->
+<!-- ants-roadmap-id-high-water: DOOM=535 -->
 
 # Roadmap
 
@@ -14583,7 +14583,7 @@ in CLAUDE.md describes.
   Kind: enhancement.
   Source: in-session-2026-07-14 (DOOM-0042 T13).
 
-- 📋 [DOOM-0182] **Extend DOOM-0042 HD materials to the Ultra raster sub-view (HD in all Ultra views, not just ray-traced).**
+- ✅ [DOOM-0182] **Extend DOOM-0042 HD materials to the Ultra raster sub-view (HD in all Ultra views, not just ray-traced).**
   Today HD (usePBR) materials are sampled ONLY in the RT path (pathtrace.comp);
   the raster fragment shader (mesh.frag) samples the paletted materialTex[], so
   Ultra with RT off (rb_rtdebug 0) shows base textures. This was the DOOM-0042
@@ -14596,6 +14596,18 @@ in CLAUDE.md describes.
   User decision 2026-10-30, relayed by the website session: do this
   before the trailer's final footage, so comparison 2 shows HD art in
   Ultra's rasterised slice. Due in the next release.
+  2026-10-30: built. mesh.frag reads the HD set (set 2 there) through
+  g.hdPipeline, a twin of the world pipeline, so Solid compiles the path
+  away. De-tile and filth moved to formulas/hd_surface.glsl, one copy
+  for both views. HD maps gained mips; the trace reads level 0
+  explicitly. Measured against the build before it, E1M4 tics 200 to
+  215: Classic, Solid raster and Solid traced 0 pixels changed; Ultra
+  traced differs by a mean of 1.6, as much as the old build differs from
+  itself (1.5). Scene pass at render_scale 50, median: Ultra raster 2.48
+  to 3.37 ms; Solid 2.45 to 2.48 ms. -rtverify PASS. No validation
+  errors in Ultra raster, Ultra traced, Solid or with -hdallocfail.
+  Height is one sample, not the trace's march. Not yet seen in play by
+  the user.
   **Layman:** Make the fancy high-res wall textures show up in Ultra's fast (non-ray-traced) view too, so switching ray-tracing off doesn't drop you back to the blocky originals.
   Kind: feature.
   Source: user-request-2026-07-16.
@@ -15505,6 +15517,11 @@ in CLAUDE.md describes.
   User decision 2026-09-25: once this is fixed, tint the sky's
   closed-form fog with mediumTint (DOOM-0011 Q32; DOOM-0407's first
   finding is the same seam).
+  Measured 2026-10-30 at E1M4, demo e1m4sk3s2: with rt_fog 1 a white
+  bank covers the far half at rt_brightness 11, 12 and 13, in both Solid
+  and Ultra traced. Mean pixel about 120 against 46 with rt_fog 0, so it
+  is the fog and not the brightness. The trailer films outdoor scenes
+  with rt_fog 0.
 
 - 💭 [DOOM-0323] **The armour bonus's pulsing green eyes derive Le=0, so DOOM-0157's faint path never fires for the one sprite it was written for.**
   User 2026-08-04, having identified the pickup as SPR_BON2 from a
@@ -17354,7 +17371,7 @@ in CLAUDE.md describes.
   Source: user-report-2026-10-29.
   Evidence: linuxdoom-1.10/dev-shots/shot-0033.png, linuxdoom-1.10/dev-shots/shot-0035.png
 
-- 📋 [DOOM-0528] **Ultra's traced view shows an orange patch across a dark wall at E1M5.**
+- ✅ [DOOM-0528] **Ultra's traced view shows an orange patch across a dark wall at E1M5.**
   Seen 2026-10-30 at E1M5 -warpto -1360 104 90, skill 3, Ultra -rtview 6, with -inspect -freeze, DEV build, 150+ frames settled. The back wall's upper right reads flat orange-brown with a soft edge, where Solid's traced view at the same spot shows the dark wall. Present at 0f4b9c5, before the DOOM-0508 change, so it is not that change. Cause unknown. Captures: scratch/fled/o_u.png and a_u.png.
   Cause found 2026-10-30: the filth stains (applyGrime, DOOM-0181)
   replace the art at kStainOpacity 0.82. The patch goes with rt_filth 0.
@@ -17363,6 +17380,10 @@ in CLAUDE.md describes.
   0.50, kGooChance 0.15, kGooColour halved; the user's answer on keeping
   them is awaited, because the user liked the goo puddles on 2026-07-16
   (scratch/fled/look/filth.png).
+  2026-10-30: the user chose the calmed filth, relayed by the website
+  session. Checked at the E1M5 spot with rt_filth 1 and 0: the patch is
+  now a faint brown tint with the art showing through, reduced and not
+  gone. The user accepted this. -rtverify PASS on this build.
   **Layman:** In one room of Ultra's ray-traced view, part of a dark wall turns a flat orange.
   Kind: fix.
   Source: found-2026-10-30-doom-0508-capture.
@@ -17378,6 +17399,18 @@ in CLAUDE.md describes.
   **Layman:** Metal door frames in Ultra's ray-traced view looked dark red. They are grey again.
   Kind: fix.
   Source: website-session-relay-2026-10-30.
+
+- 📋 [DOOM-0534] **Ultra's HD walls show straight seams where the art steps sideways at E1M4.**
+  Seen 2026-10-30 on the near wall in demo e1m4sk3s2, tic 205: straight horizontal and vertical lines where the pattern jumps. Both of Ultra's views show the same lines in the same places, so DOOM-0182's rasterised path did not bring them. Cause unknown. Capture: scratch/fled/bot/seam.png.
+  **Layman:** On some HD walls in Ultra you can see straight lines where the pattern does not join up.
+  Kind: fix.
+  Source: found-2026-10-30-doom-0182-capture.
+
+- 📋 [DOOM-0535] **Surface relief makes busy original art look wavy in the rasterised views at E2M2.**
+  Seen 2026-10-30 in demo e2m2sk3s7, tic 395: a wall of the original art looks wavy and blotchy in Solid's and Ultra's rasterised views, and clean in Ultra's traced view. That wall has no HD art, so it takes DOOM-0273's one-sample parallax. Cause suspected, not proven; to test, capture the spot with surface_detail 0. Capture: scratch/fled/bot/e2m2.png.
+  **Layman:** Without ray tracing, the fake depth on some detailed walls makes them look wavy.
+  Kind: fix.
+  Source: found-2026-10-30-doom-0182-capture.
 
 ## 0.12.0 — The player's experience
 
@@ -17953,6 +17986,12 @@ minor may break.
   the run ends with no frames. Sound sync of a real-time take against
   the dump is not yet measured; the website session wants the offset,
   and to hear before filming if it cannot hold.
+  2026-10-30, outdoor retest done: rt_fog 0, flashlight 1; Solid
+  rt_brightness 13, Ultra 12 (Ultra at 13 clips 0.58% of pixels, at 12
+  0.32%). Clips outdoor-test-*.mp4 delivered, settings sent to the
+  website session. The sample's scale from 1708x800 to 1920x1080
+  stretches the picture about 20% vertically; final footage must be
+  drawn at its final shape.
   **Layman:** Saves each frame of a replayed run as a picture, so all five views of the trailer show exactly the same moment.
   Kind: feature.
   Source: user-request-2026-10-30-via-website-session.

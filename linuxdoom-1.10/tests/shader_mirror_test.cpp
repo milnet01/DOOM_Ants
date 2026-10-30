@@ -21,7 +21,7 @@
 //     none, in the 3D views.
 //   - DOOM-0273 INV-10: the members of the RT push block (pathtrace.comp's PC
 //     against r_vulkan.cpp's RtPushConstants) end misc6, misc7 on both sides, and
-//     ShadowUbo (mesh.frag) and ShadowUboData (r_vulkan.cpp) are lightVP, flags,
+//     ShadowUbo (mesh.frag) and ShadowUboData (r_vulkan.cpp) are lightVP, flags, hd,
 //     and the setting's on value, SURF_DETAIL_ON against kSurfaceDetailOn.
 //     A field moved on one side alone shifts every lane after it.
 //
@@ -198,8 +198,8 @@ int main()
     check(tail(cPc, 2) == "misc6 misc7 ", "RtPushConstants ends misc6, misc7");
     const auto glslUbo = members(ms, "uniform ShadowUbo");
     const auto cUbo    = members(vk, "struct ShadowUboData");
-    check(tail(glslUbo, 9) == "lightVP flags ", "mesh.frag's ShadowUbo is lightVP, flags");
-    check(tail(cUbo, 9) == "lightVP flags ", "r_vulkan.cpp's ShadowUboData is lightVP, flags");
+    check(tail(glslUbo, 9) == "lightVP flags hd ", "mesh.frag's ShadowUbo is lightVP, flags, hd");
+    check(tail(cUbo, 9) == "lightVP flags hd ", "r_vulkan.cpp's ShadowUboData is lightVP, flags, hd");
     const std::string sd = slurp(DOOM_TESTS_ROOT "/shaders/formulas/surface_detail.glsl");
     check(!sd.empty(), "surface_detail.glsl is readable");
     same(sd, "SURF_DETAIL_ON", vk, "kSurfaceDetailOn");

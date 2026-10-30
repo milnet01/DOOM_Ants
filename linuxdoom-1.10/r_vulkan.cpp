@@ -465,6 +465,7 @@ struct VulkanState
     // NOT format-compatible with the 8-bit swapchain passes — the RT weapon overlay uses
     // rtWeaponPipeline (below) instead.
     VkPipeline       pipeline       = VK_NULL_HANDLE;
+    VkPipeline       hdPipeline     = VK_NULL_HANDLE;   // DOOM-0182: the world, with Ultra's HD art
     // DOOM-0170 L2a step 3: 8-bit twin of `pipeline` (same shaders/state) built against
     // renderPass, for the RT/Ultra weapon overlay which draws onto the 8-bit swapchain
     // after the traced blit — the one place the world pipeline still meets an 8-bit target.
@@ -1272,7 +1273,7 @@ extern "C" { int rb_profile = 0; }
 extern "C" int I_GetTimeMS(void);   // i_system.c; for the rt_profile once-a-second report
 
 // DOOM-0181: de-tile quality dial (the `]` key; persisted as rt_detile). 0 = off, 1 = 2-tap,
-// 2 = 4-tap. Drives pc.misc5.y on the Ultra RT path; the shader ignores it unless HD materials
+// 2 = 4-tap. Drives pc.misc5.y on the Ultra RT path and mesh.frag's hd.y; the shader ignores it unless HD materials
 // are loaded (it is gated on g.hdBuilt at the populate site). Default 4-tap; RT-only.
 extern "C" { int rb_detile = 2; }
 
@@ -2818,7 +2819,7 @@ static VkPipeline RtPipelineForMode(uint32_t mode)
     return g.rtPipeline[mode];
 }
 
-static void CreateHdSetLayout();   // DOOM-0042: set-3 layout, needed by the RT pipeline layout
+static void CreateHdSetLayout();   // DOOM-0042: the HD set's layout, in the raster and RT pipeline layouts
 static void InitHdDefault();       // DOOM-0042: seed an all-paletted set 3 at atlas time
 // DOOM-0170 perf: monotonic wall clock in milliseconds for the CPU-side frame
 // profiler. steady_clock is immune to NTP/settimeofday jumps, unlike wall-time.
@@ -2893,10 +2894,6 @@ void CreateRtComputePipeline()
     // pipeline must bind all three sets — RecordRtTrace + RB_RtVerify both do.
     // g.dsLayout + g.svgfDsLayout are created before this (Init order).
     // DOOM-0042: set 3 = the HD PBR material set (control SSBO + bindless RGBA8 array).
-    // Added to the layout here; the per-frame bind of set 3 + the shader that samples
-    // it land together in Task 10. A 4-set layout with only 3 bound is valid (set 3 is
-    // unreferenced by the shader until then), so the existing RT path is unaffected.
-    CreateHdSetLayout();
     VkDescriptorSetLayout setLayouts[4] = { g.rtDsLayout, g.dsLayout, g.svgfDsLayout, g.hdSetLayout };
     CreateComputeLayout(setLayouts, 4, 256, "rt", &g.rtPipeLayout);
 
@@ -4282,6 +4279,7 @@ struct ShadowUboData
 {
     float    lightVP[16];
     uint32_t flags[4];
+    uint32_t hd[4];      // DOOM-0182: mesh.frag's HD lane; see ShadowUbo there
 };
 static_assert(offsetof(ShadowUboData, flags) == 64, "flags follows lightVP, as in mesh.frag");
 
@@ -5150,10 +5148,13 @@ void CreatePipeline()
     // flashlight shadow map + lightVP (g.shadowDsLayout) that mesh.frag samples for the
     // cast-shadow PCF. sky/wire/overlay/rtWeapon share this layout; only mesh.frag reads
     // set 1, so the raster scene draw and RecordRtOverlay bind g.shadowDs at set 1.
-    VkDescriptorSetLayout worldSets[2] = { g.dsLayout, g.shadowDsLayout };
+    // DOOM-0182: set 2 = the HD set. Only the two-target mesh.frag reads it, so only the
+    // raster scene draw binds it.
+    CreateHdSetLayout();
+    VkDescriptorSetLayout worldSets[3] = { g.dsLayout, g.shadowDsLayout, g.hdSetLayout };
     VkPipelineLayoutCreateInfo plci = {};
     plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    plci.setLayoutCount = 2;
+    plci.setLayoutCount = 3;
     plci.pSetLayouts = worldSets;
     plci.pushConstantRangeCount = 1;
     plci.pPushConstantRanges = &pcr;
@@ -5181,6 +5182,20 @@ void CreatePipeline()
     pci.subpass = 0;
     Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &pci, nullptr,
                                     &g.pipeline), "vkCreateGraphicsPipelines");
+
+    // DOOM-0182: the same, with mesh.frag's kHdPipeline on. Sky, weapon and sprites never
+    // read an HD map, so only the world gets a twin.
+    {
+        const VkBool32 hdOn = VK_TRUE;
+        const VkSpecializationMapEntry entry = { 0, 0, sizeof hdOn };
+        const VkSpecializationInfo si = { 1, &entry, sizeof hdOn, &hdOn };
+        VkPipelineShaderStageCreateInfo hdStages[2] = { stages[0], stages[1] };
+        hdStages[1].pSpecializationInfo = &si;
+        pci.pStages = hdStages;
+        Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &pci, nullptr,
+                                        &g.hdPipeline), "vkCreateGraphicsPipelines(hd)");
+        pci.pStages = stages;
+    }
 
     // Sky variant: identical, but with depth test + write off so the full-screen
     // backdrop always paints and never occludes the world drawn over it.
@@ -5760,7 +5775,9 @@ static void ComputeMaterialEmissive(const rb_atlas_t* a, std::vector<float>& out
 // Every copy rides one staging buffer and one submission: a per-image submit+wait
 // would be thousands of GPU stalls at level load. fill(i, dst) writes image i's
 // texels, tightly packed.
-struct BatchImage { uint32_t w, h, texelBytes; VkFormat format; };
+// mips: blit a full chain from the top level (DOOM-0182). The format must allow blits and
+// linear filtering; RGBA8 always does.
+struct BatchImage { uint32_t w, h, texelBytes; VkFormat format; bool mips = false; };
 
 // DOOM-0257: a host-visible transfer-source buffer that reports failure instead
 // of ending the game. CreateRtBuffer is the fatal twin every other caller uses.
@@ -5807,6 +5824,13 @@ static bool UploadImageBatch(const std::vector<BatchImage>& imgs, Fill fill,
 {
     auto what = [&](const char* call) { return VkWhat(call, tag); };
     const int n = (int)imgs.size();
+    auto levelsOf = [&](int i) {
+        uint32_t levels = 1;
+        if (imgs[i].mips)
+            for (uint32_t edge = std::max(imgs[i].w, imgs[i].h); edge > 1; edge >>= 1)
+                levels++;
+        return levels;
+    };
     images.assign(n, VK_NULL_HANDLE);
     views.assign(n, VK_NULL_HANDLE);
     memory = VK_NULL_HANDLE;
@@ -5832,11 +5856,12 @@ static bool UploadImageBatch(const std::vector<BatchImage>& imgs, Fill fill,
         ici.imageType = VK_IMAGE_TYPE_2D;
         ici.format = imgs[i].format;
         ici.extent = { imgs[i].w, imgs[i].h, 1 };
-        ici.mipLevels = 1;
+        ici.mipLevels = levelsOf(i);
         ici.arrayLayers = 1;
         ici.samples = VK_SAMPLE_COUNT_1_BIT;
         ici.tiling = VK_IMAGE_TILING_OPTIMAL;
-        ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
+                  | (imgs[i].mips ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0u);
         ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         Check(vkCreateImage(g.device, &ici, nullptr, &images[i]), what("vkCreateImage"));
@@ -5902,7 +5927,7 @@ static bool UploadImageBatch(const std::vector<BatchImage>& imgs, Fill fill,
         b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         b.image = images[i];
-        b.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        b.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, levelsOf(i), 0, 1 };
         b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         b.srcAccessMask = 0;
@@ -5927,6 +5952,47 @@ static bool UploadImageBatch(const std::vector<BatchImage>& imgs, Fill fill,
         vkCmdCopyBufferToImage(cb, staging, images[i],
                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
     }
+    // DOOM-0182: each level from the one above. Every level but the last ends as a blit
+    // source and goes to reading here; the last is still a blit target, which toRead handles.
+    for (int i = 0; i < n; i++)
+    {
+        const uint32_t levels = levelsOf(i);
+        if (levels == 1)
+            continue;
+        VkImageMemoryBarrier b = toRead[i];
+        b.subresourceRange.levelCount = 1;
+        int32_t w = (int32_t)imgs[i].w, h = (int32_t)imgs[i].h;
+        for (uint32_t l = 1; l < levels; l++)
+        {
+            b.subresourceRange.baseMipLevel = l - 1;
+            b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            b.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 0, 0, nullptr, 0, nullptr, 1, &b);
+            const int32_t nw = std::max(w / 2, 1), nh = std::max(h / 2, 1);
+            VkImageBlit blit = {};
+            blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, l - 1, 0, 1 };
+            blit.srcOffsets[1]  = { w, h, 1 };
+            blit.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, l, 0, 1 };
+            blit.dstOffsets[1]  = { nw, nh, 1 };
+            vkCmdBlitImage(cb, images[i], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           images[i], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+            w = nw;
+            h = nh;
+        }
+        b.subresourceRange.baseMipLevel = 0;
+        b.subresourceRange.levelCount = levels - 1;
+        b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        b.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, readStage,
+                             0, 0, nullptr, 0, nullptr, 1, &b);
+        toRead[i].subresourceRange.baseMipLevel = levels - 1;
+        toRead[i].subresourceRange.levelCount = 1;
+    }
     vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, readStage,
                          0, 0, nullptr, 0, nullptr, (uint32_t)n, toRead.data());
     EndOneTime(cb);
@@ -5940,7 +6006,7 @@ static bool UploadImageBatch(const std::vector<BatchImage>& imgs, Fill fill,
         vci.image = images[i];
         vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
         vci.format = imgs[i].format;
-        vci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        vci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, levelsOf(i), 0, 1 };
         Check(vkCreateImageView(g.device, &vci, nullptr, &views[i]), what("vkCreateImageView"));
     }
     return true;
@@ -6528,6 +6594,7 @@ static const int   kHdMaxEdge   = 1024;    // per-map longest-edge clamp (px)
 // 2026-10-27).
 static const int   kHdSourceMaxEdge = 4096;
 static const float kHdBudgetMB  = 768.0f;  // per-map VRAM ceiling
+static const float kHdMipFactor = 4.0f / 3.0f;   // a full mip chain's share of an image (DOOM-0182)
 
 // v1 uploads 5 of the 7 maps; roughness (RB_RGH) and metallic (RB_MET) are skipped.
 struct HdMapSpec { int k; const char* suffix; bool srgb; };
@@ -6582,7 +6649,8 @@ static void FreeHdMaterials()
 // Create the HD descriptor SET LAYOUT once (before the RT pipeline layout). Binding
 // 0 = control SSBO; binding 1 = the variable-count bindless PBR image array (the
 // highest binding), VARIABLE_DESCRIPTOR_COUNT + PARTIALLY_BOUND — mirrors the R8
-// material array in CreateDescriptors. Compute stage only (RT megakernel).
+// material array in CreateDescriptors. Read by the RT megakernel and, in Ultra's
+// rasterised view, by mesh.frag (DOOM-0182), so it exists with or without RT.
 static void CreateHdSetLayout()
 {
     // DOOM-0410: kHdMaxImages is a design cap, not a device fact. A layout declaring more
@@ -6602,11 +6670,11 @@ static void CreateHdSetLayout()
     binds[0].binding = 0;
     binds[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     binds[0].descriptorCount = 1;
-    binds[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    binds[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     binds[1].binding = 1;
     binds[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     binds[1].descriptorCount = (uint32_t)g.hdMaxImages;   // upper bound; the set alloc picks the actual count
-    binds[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    binds[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkDescriptorBindingFlags flags[2] = {
         0,
@@ -6628,7 +6696,7 @@ static void CreateHdSetLayout()
 }
 
 // (Re)build the HD descriptor pool + set: upload the given RGBA8 maps into a fresh
-// bindless image array (single-mip in v1) and the control table into a device-local
+// bindless image array (with mips, for the rasterised view, DOOM-0182) and the control table into a device-local
 // SSBO, then write both bindings. An empty srcs list still creates one 1x1 dummy so
 // binding 1 is never a zero-length array. Frees any prior HD resources first. The
 // caller still owns srcs[].px and may free it once this returns (copied to staging).
@@ -6649,10 +6717,11 @@ static bool BuildHdSet(const std::vector<HdSrc>& srcsIn, const rb_matctrl_t* tab
     std::vector<BatchImage> imgs(nimg);
     for (int i = 0; i < nimg; i++)
         imgs[i] = { (uint32_t)srcs[i].w, (uint32_t)srcs[i].h, 4,
-                    srcs[i].srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM };
+                    srcs[i].srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM, true };
     if (!UploadImageBatch(imgs, [&](int i, unsigned char* dst) {
             std::memcpy(dst, srcs[i].px, (size_t)srcs[i].w * srcs[i].h * 4);
-        }, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, "hd", g.hdImages, g.hdViews, g.hdMemory,
+        }, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        "hd", g.hdImages, g.hdViews, g.hdMemory,
         mayFail, injectFail))
         return false;
 
@@ -6860,7 +6929,7 @@ static void EnsureHdMaterials()
     std::vector<int>   isHero(N, 0);
     auto mbOf = [](int w, int h) {
         int fw, fh; rb_image_fit_max(w, h, kHdMaxEdge, &fw, &fh);
-        return (float)fw * fh * 4.0f / (1024.0f*1024.0f);
+        return kHdMipFactor * fw * fh * 4.0f / (1024.0f*1024.0f);
     };
 
     for (int id = 0; id < N; id++) {
@@ -7005,7 +7074,7 @@ static void EnsureHdMaterials()
             continue;
         }
         for (size_t i = firstSrc; i < srcs.size(); i++) {
-            usedMB += (float)srcs[i].w * srcs[i].h * 4.0f / (1024.0f*1024.0f);
+            usedMB += kHdMipFactor * srcs[i].w * srcs[i].h * 4.0f / (1024.0f*1024.0f);
             printf("DOOM-0042: id %d %dx%d  (%.1f MB)\n", id, srcs[i].w, srcs[i].h, usedMB);
         }
     }
@@ -7034,7 +7103,7 @@ static void EnsureHdMaterials()
         (oi == 0 ? g.hdGrungeIdx : g.hdDirtIdx) = slot;
         decoded.push_back(img);
         srcs.push_back({ img.pixels, img.w, img.h, o.srgb });   // grime UNORM, dirt sRGB
-        usedMB += (float)img.w * img.h * 4.0f / (1024.0f*1024.0f);
+        usedMB += kHdMipFactor * img.w * img.h * 4.0f / (1024.0f*1024.0f);
         printf("%s id %d  %dx%d.\n", o.tag, slot, img.w, img.h);
     }
 
@@ -10721,6 +10790,11 @@ extern "C" void RB_Vulkan_Present(void)
         flags[1] = 0u;
         flags[2] = (uint32_t)RB_MaterialCount();
         flags[3] = (uint32_t)(I_GetTimeMS() / 28);   // DOOM-0508: 35 Hz, the fuzz's flicker
+        uint32_t* hd = static_cast<ShadowUboData*>(g.shadowUboMapped)->hd;
+        hd[0] = (g.hdGrungeIdx >= 0) ? (uint32_t)g.hdGrungeIdx : 0xFFFFFFFFu;
+        hd[1] = (uint32_t)rb_detile;
+        hd[2] = (g.hdDirtIdx >= 0) ? (uint32_t)g.hdDirtIdx : 0xFFFFFFFFu;
+        hd[3] = rb_filth ? 1u : 0u;
     }
 
     // DOOM-0170 L2c: flashlight cast-shadow map (Pass A). When the torch is on, render the
@@ -10834,10 +10908,11 @@ extern "C" void RB_Vulkan_Present(void)
         vkCmdSetScissor(g.cmd, 0, 1, &scissor);
 
         // DOOM-0170 L2c: set 0 = g.ds (materials); set 1 = g.shadowDs (flashlight shadow
-        // map + lightVP), which mesh.frag samples. Both bound once for the sky+world draws.
-        VkDescriptorSet worldDs[2] = { g.ds, g.shadowDs };
+        // map + lightVP), which mesh.frag samples. DOOM-0182: set 2 = the HD set. All bound
+        // once for the sky+world draws.
+        VkDescriptorSet worldDs[3] = { g.ds, g.shadowDs, g.hdSet };
         vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                g.pipelineLayout, 0, 2, worldDs, 0, nullptr);
+                                g.pipelineLayout, 0, 3, worldDs, 0, nullptr);
         // mat4 MVP, then the muzzle-flash brighten (mesh.vert adds it to every
         // shade) and the view yaw (mesh.frag pans the sky by it). Push constants
         // and descriptor sets are layout-scoped, so they outlive the pipeline
@@ -10891,7 +10966,7 @@ extern "C" void RB_Vulkan_Present(void)
         // sprites as lines over the filled sky so what the mesh actually emits is
         // visible. Falls back to the fill pipeline if the wire one was not built.
         VkPipeline worldPipe = (rb_wireframe && g.wirePipeline)
-                             ? g.wirePipeline : g.pipeline;
+                             ? g.wirePipeline : g.hdBuilt ? g.hdPipeline : g.pipeline;
         vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, worldPipe);
         if (g.vbuf && g.vertexCount)
         {
@@ -11687,6 +11762,7 @@ extern "C" void RB_Vulkan_Shutdown(void)
 
     DestroyFramebufferResources();   // framebuffers, depth, swapchain image views
     if (g.pipeline)       vkDestroyPipeline(g.device, g.pipeline, nullptr);
+    if (g.hdPipeline)     vkDestroyPipeline(g.device, g.hdPipeline, nullptr);
     if (g.rtWeaponPipeline) vkDestroyPipeline(g.device, g.rtWeaponPipeline, nullptr);
     if (g.wirePipeline)   vkDestroyPipeline(g.device, g.wirePipeline, nullptr);
     if (g.blobPipeline)   vkDestroyPipeline(g.device, g.blobPipeline, nullptr);

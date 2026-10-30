@@ -110,7 +110,9 @@ layout(set = 1, binding = 0) uniform sampler2D shadowMap;
 // for DOOM-0103, flags.z = the surface-map base in materialTex[], flags.w = a 35 Hz count
 // for the Spectre's fuzz (DOOM-0508). Written
 // every frame; lightVP only while the torch is on. r_vulkan.cpp's ShadowUboData mirrors it.
-layout(set = 1, binding = 1) uniform ShadowUbo { mat4 lightVP; uvec4 flags; } shadow;
+// DOOM-0182: hd.x = the grime overlay's slot in hdTex[], hd.y = the de-tile dial, hd.z = the
+// dirt overlay's slot, hd.w = filth on.
+layout(set = 1, binding = 1) uniform ShadowUbo { mat4 lightVP; uvec4 flags; uvec4 hd; } shadow;
 
 // DOOM-0273: derived surface detail on walls and flats (one-sample parallax + the derived
 // normal for the flashlight and point lights). Not in the weapon overlay build, which
@@ -120,6 +122,42 @@ layout(set = 1, binding = 1) uniform ShadowUbo { mat4 lightVP; uvec4 flags; } sh
 #define SURF_BASE        shadow.flags.z
 #define SURF_SPRITE_BASE uint(pc.numWall + pc.numFlat)
 #include "formulas/surface_detail.glsl"
+
+// DOOM-0182: Ultra's HD art, de-tiling and filth, the traced view's own code. Colours there
+// are linear, as the trace's are; main() encodes the result to the palette's display space.
+// Only g.hdPipeline turns it on. Every other pipeline compiles it away, because merely
+// carrying this code cost Solid's scene pass 3% (measured 2026-10-30).
+layout(constant_id = 0) const bool kHdPipeline = false;
+#include "formulas/formulas.glsl"         // srgbToLinear, linearToSrgb
+#include "formulas/pcg_hash.glsl"
+#define HD_SET 2
+#include "formulas/hd_set.glsl"
+
+// Explicit gradients. De-tiling jumps the UV at a cell edge, and implicit ones would see that
+// jump as an extreme minification and read a tiny mip along every edge. They are also the
+// only ones defined in main()'s per-pixel branches.
+vec2 hdDx, hdDy;     // the surface UV's screen derivatives
+vec2 hdWDx, hdWDy;   // the world coordinate's
+
+#define HD_TEX(i, uv)           textureGrad(hdTex[nonuniformEXT(i)], (uv), hdDx, hdDy)
+#define HD_TEX_W(i, w, k, off)  textureGrad(hdTex[nonuniformEXT(i)], (w) * (k) + (off), \
+                                            hdWDx * (k), hdWDy * (k))
+#define HD_DETILE_DIAL shadow.hd.y
+#define HD_GRIME_ID    shadow.hd.x
+#define HD_DIRT_ID     shadow.hd.z
+#define HD_FILTH_ON    (shadow.hd.w != 0u)
+
+// One height sample in place of the trace's march. nv's floor is higher than the march's,
+// because one sample swims at a grazing angle where a march would not.
+vec2 hdParallaxUV(MatCtrl mc, vec2 baseUV, vec3 T, vec3 B, vec3 n, vec3 dir)
+{
+    if ((mc.flags & 1u) == 0u || mc.maps[6] < 0) return baseUV;  // bit0 = pom
+    vec3  vT = normalize(vec3(dot(-dir, T), dot(-dir, B), dot(-dir, n)));
+    float nv = clamp(vT.z, 0.25, 1.0);
+    return baseUV - (vT.xy / nv) * kPomHeightScale * (1.0 - HD_TEX(mc.maps[6], baseUV).r);
+}
+
+#include "formulas/hd_surface.glsl"
 #endif
 
 const int FLAG_FLAT    = 0x1;   // matches RB_MESH_FLAT in r_mesh.h
@@ -278,12 +316,61 @@ void main()
     // the geometric normal, so flat light never darkens a whole bumped wall (INV-7).
     vec3  shadeN  = normalize(vNormal);
 #ifndef SINGLE_TARGET
+    // DOOM-0182: an HD material, read as the trace reads it (primaryHitSurface). hdOcc is its
+    // AO, which only the ambient term takes.
+    const bool worldSurf = (vFlags & (FLAG_SPRITE | FLAG_PSPRITE)) == 0;
+    bool  hd     = false;
+    vec3  hdCol  = vec3(0.0);
+    float hdOcc  = 1.0;
     {
         // Tangent frame per pixel from screen derivatives (no vertex attribute carries one).
         // Taken outside the branch: derivatives are undefined in non-uniform control flow.
         vec3 dpx = dFdx(vWorldPos), dpy = dFdy(vWorldPos);
         vec2 dux = dFdx(uv01),      duy = dFdy(uv01);
-        if ((vFlags & FLAG_PSPRITE) == 0 && surfHas(uint(id)))
+        vec2 wUV = vec2(0.0);
+        if (kHdPipeline)
+        {
+            wUV   = detileWorldUV(vWorldPos, normalize(vNormal));
+            hdWDx = dFdx(wUV);
+            hdWDy = dFdy(wUV);
+        }
+        MatCtrl mc;
+        if (kHdPipeline && worldSurf)
+        {
+            mc = ctrl[id];
+            hd = mc.usePBR != 0u && mc.maps[0] >= 0;
+        }
+        if (hd)
+        {
+            hdDx = dux * mc.uvScale;
+            hdDy = duy * mc.uvScale;
+            const vec2 baseUV = uv01 * mc.uvScale;
+            const vec2 dG     = wUV / kDetileWorldCell;
+            const vec3 n  = normalize(vNormal);
+            const vec3 py = cross(dpy, n), px = cross(n, dpx);
+            vec3 T = py * dux.x + px * duy.x;
+            vec3 B = py * dux.y + px * duy.y;
+            const bool frame = dot(T, T) > 1e-20 && dot(B, B) > 1e-20;
+            vec2 sUV = baseUV;
+            if (frame)
+            {
+                T = normalize(T);
+                B = normalize(B);
+                const vec3 dir = normalize(vWorldPos - vec3(pc.eyeX, pc.eyeY, pc.eyeZ));
+                sUV = detileOn() ? detilePOM(mc, baseUV, T, B, n, dir, dG)
+                                 : hdParallaxUV(mc, baseUV, T, B, n, dir);
+            }
+            hdCol = detileOn() ? detile(uint(mc.maps[0]), sUV, dG) : HD_TEX(mc.maps[0], sUV).rgb;
+            if (mc.maps[4] >= 0)
+                hdOcc = detileOn() ? detileR(uint(mc.maps[4]), sUV, dG) : HD_TEX(mc.maps[4], sUV).r;
+            if (frame && mc.maps[1] >= 0)
+            {
+                const vec3 tn = detileOn() ? detileNormalTS(uint(mc.maps[1]), sUV, dG)
+                                           : HD_TEX(mc.maps[1], sUV).xyz * 2.0 - 1.0;
+                shadeN  = normalize(tn.x * T + tn.y * B + tn.z * n);
+            }
+        }
+        else if ((vFlags & FLAG_PSPRITE) == 0 && surfHas(uint(id)))
         {
             vec3 n  = normalize(vNormal);   // geometric
             vec3 py = cross(dpy, n), px = cross(n, dpx);
@@ -323,6 +410,19 @@ void main()
         if (fract(sin(dot(cell, vec2(12.9898, 78.233))) * 43758.5453) < 0.5)
             discard;
         albedo *= 0.15;
+    }
+
+    // DOOM-0182: in Ultra the filth lands on every world surface, HD or paletted, as in the
+    // trace. It works in linear; this pass, like the palette, is display-encoded.
+    if (kHdPipeline && worldSurf)
+    {
+        vec3 lin = hd ? hdCol : vec3(srgbToLinear(albedo.r), srgbToLinear(albedo.g), srgbToLinear(albedo.b));
+        if (filthOn())
+        {
+            float gooWet;
+            lin = applyGrime(lin, vWorldPos, normalize(vNormal), hdOcc, gooWet);
+        }
+        albedo = vec3(linearToSrgb(lin.r), linearToSrgb(lin.g), linearToSrgb(lin.b));
     }
 #endif
 
@@ -445,6 +545,10 @@ void main()
             direct += POINT_LIGHT_STRENGTH * albedo * plight;   // point lights are DIRECT
         }
     }
+
+#ifndef SINGLE_TARGET
+    ambient *= hdOcc;   // DOOM-0182: the HD AO map; 1.0 on everything else
+#endif
 
     // DOOM-0455: the light-amp visor is a lamp at the camera, not a filter on the final
     // colour, so a room with no light still shows its shapes. It goes into DIRECT, which
