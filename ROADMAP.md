@@ -10018,36 +10018,6 @@ into `CHANGELOG.md`.
 
 ## 0.8.0 — HD art in the downloads and in Ultra's rasterised view
 
-## 0.9.0 — What a player meets is correct
-
-Defects a player can actually hit: crashes, hangs, lost saves, wrong pixels,
-wrong sound, and anything a malformed WAD can do to the engine. Shipped items
-stay in their phase sections; this heading holds only work still to come.
-
-- 📋 [DOOM-0145] **Windows 0.2.0 build: 3D view renders as a small centered box with garbled (uninitialized) borders.**
-  Reported on the shipped 0.2.0 Windows build. Symptoms: (1) fullscreen window, but the actual game view is a small centered rectangle with garbled imagery (fragments of the DOOM II title art + scattered text) filling the surrounding area; (2) the 2D menu + status-bar overlay render cleanly at full width ON TOP of the garbage (confirmed by screenshot of the in-game ESC menu); (3) audio "struggling" (unspecified — crackle vs missing music vs none).
-
-  Leading hypothesis (display): in a 3D mode (Solid/Ultra) the scene is traced into a render-scale sub-rectangle (default render_scale=50%, m_misc.c:255) that TAAU upscales to the display. If TAAU is not upscaling to fill the swapchain on this GPU, the present (which uses full g.extent, r_vulkan.cpp:4947) shows the 50% box + never-cleared swapchain borders = the garbage. Default renderer is RB_CLASSIC (m_misc.c:253), so this only bites if the friend selected Solid/Ultra, OR a config persisted a 3D mode. Alt hypotheses to rule out: a Classic-path SDL present/pitch bug specific to Windows; the DOOM-0050 2D-overlay-over-3D family.
-
-  Disambiguating facts needed (cannot reproduce without the friend's box): render mode selected; GPU + Windows version; whether switching to Classic and/or setting Render Scale 100% clears it; whether -windowed changes it. Likely real fixes once pinned: (a) clear the full swapchain image each frame so uncovered borders are black not garbage; (b) ensure TAAU upscales to full display extent (or blit the render sub-rect scaled to g.extent when TAAU off). Audio is a separate sub-investigation (SDL_OpenAudio 11025 Hz legacy device, i_sound.c:825).
-  **Layman:** On Windows, the game view shows up as a small box in the middle of the screen with garbled junk around it; sound also struggles.
-  Kind: fix.
-  Source: user-report-2026-06-30 (Windows friend; original verbal report + in-game menu screenshot).
-  Confirmed by friend's in-game photo (2026-06-30): the 3D scene renders CORRECTLY but only into a ~50%-size centered sub-rectangle (= render_scale=50%); the status bar draws full-width and correct; the uncovered border region shows stale/uninitialized framebuffer content (leftover menu/skill-select text: NEW GAME, NIGHTMARE!, etc.). So this is NOT a crash or RT-capability failure — the engine works; it's a present/upscale bug. Code: r_vulkan.cpp:4454 gates the render sub-rectangle on taauActive = (rb_rtdebug==6 && rb_upscaler==1 && taauPipeline!=NULL); at render_scale<100 the rendered region is not being scaled to fill g.extent on this GPU, and the borders are never cleared. Immediate user workaround (any one): Options->Renderer-> Render Scale=100%, OR Upscaler=Off, OR Renderer=Classic. Real fix: (a) always blit/scale the rendered region to the full display extent (never present the sub-rect 1:1); (b) clear the swapchain image to black each frame so uncovered areas aren't garbage. Still need: friend's GPU model + audio specifics.
-  GTX 1050 / Win10 test (2026-06-30, screenshots (1)&(2)): in SOLID renderer the view is FULL-SCREEN and clean at 35-59 FPS — no small box, no garbled borders. This isolates the bug: it is NOT Solid mode and NOT a generic Windows present bug. It is specific to a 3D path running at render_scale<100% where the upscale-to-display is not filling the swapchain (i.e. the Ultra/TAAU path: taauActive at r_vulkan.cpp:4454 traces into a 50% sub-rect; if its output is not blitted scaled-to-g.extent, you get the friend's small-box+garbage). Confirms the fix: (a) always scale the rendered sub-region to the full display extent on present; (b) clear the swapchain to black each frame. Practical guidance for the friend NOW: use Solid (works); Ultra needs RT hardware the GTX 1050 lacks anyway (ties to DOOM-0059/DOOM-0026 capability gating). Still want: one Ultra-mode screenshot on the GTX 1050 to confirm whether Ultra runs/garbles/gates-off there.
-  Friend's machine identified (2026-06-30): GTX 2060 (RT-capable, has RT cores) on a 4K laptop. So the small-box repro = Ultra at render_scale 50% on a 4K display = a 1920x1080 render box shown un-upscaled in the centre of a 3840x2160 screen, surrounded by uncleared garbage. Matches the present/upscale theory exactly. This is the one machine that reproduces DOOM-0145 (RX 6600 upscales fine; GTX 1050 has no Ultra). Verification of the fix will need the GTX 2060 box. NOTE: separate from the GTX 1050 "not full screen / border" report, which is the in-game Screen Size (screenblocks) ornamental border + Classic's 4:3 letterbox on a 16:9 display — tracked separately.
-  Progress (2026-09-30): read against today's code, not re-tested. The present
-  path has been rewritten since 0.2.0. With the upscaler inactive the tracer now
-  renders at the display's own size, so there is no sub-rectangle to show. With
-  it active, the upscale pass is dispatched over the whole display image and the
-  blit to the swapchain takes that image, full size. So the two fixes this item
-  asks for are, by reading, already what the code does. What reading cannot
-  show is why the GTX 2060 showed the box in the first place, and the only
-  machine that reproduced it is the friend's. Needs one run of the current
-  release there in Ultra at Render Scale 50% before this can close.
-  Decision (user, 2026-09-30): ask Charl to run the current release in Ultra at
-  Render Scale 50% on the GTX 2060 laptop; the item stays open until he reports.
-
 - ✅ [DOOM-0283] **Ultra falls back to paletted art silently when the HD assets are not found.**
   EnsureHdMaterials resolves the HD set relative to the CURRENT WORKING DIRECTORY
   ("assets/ultra/") unless DOOMASSETDIR overrides it. cwd is linuxdoom-1.10/ (the
@@ -10568,34 +10538,6 @@ stay in their phase sections; this heading holds only work still to come.
   Source: split from DOOM-0391, in-session-2026-09-21.
   Lanes: ui.
 
-- 📋 [DOOM-0458] **Ultra's HD textures have no mip chain, so distant surfaces shimmer.**
-  Split from DOOM-0410. BuildHdSet creates every HD image with
-  mipLevels = 1 and no TRANSFER_SRC usage. The DOOM-0042 spec promises a
-  vkCmdBlitImage down-chain and derives its 1.33x VRAM figure from one.
-  The HD sampler's comment in CreateDescriptors claims a full chain.
-  Decided by the user 2026-09-25: build the mip chain (not: amend the
-  spec to single-mip).
-  Why it is not a loader-only change: pathtrace.comp is a compute
-  shader. It samples hdTex[] at many sites with texture(), whose
-  implicit LOD is undefined outside a fragment stage and happens to
-  read level 0 on this driver. Mips only help once every site picks a
-  level itself, e.g. by ray cones. That touches the loader, the
-  megakernel, de-tile, grime, POM and the denoiser's demodulation, so
-  it gets a spec first (write-spec, as a DOOM-0042 amendment).
-  The same amendment should settle the spec's asset-root wording:
-  DOOM-0410 made the code look beside the executable, but the spec
-  also cites DOOMWADDIR's "." default.
-  Budget: estMB must count the chain (x1.33), and kHdBudgetMB is
-  checked against it.
-  2026-10-30: DOOM-0182 gave the HD maps a mip chain, and Ultra's
-  rasterised view uses it. The traced view still reads the top level,
-  because a trace has no screen derivatives, so this item stays open for
-  that view.
-  **Layman:** Far-away walls in Ultra sparkle and crawl as you move, because the game has no smaller copies of its HD textures to use at a distance.
-  Kind: implement.
-  Source: DOOM-0410 split, review-code 2026-09-01 lane vk-materials.
-  Lanes: renderer, shaders, assets.
-
 - ✅ [DOOM-0459] **Past the sprite cap, the traced view drops things in map order, not the farthest ones.**
   Split from DOOM-0411. RB_BuildSprites fills a fixed buffer
   (g.sprWorldVertCap, about 4096 things) walking sectors in index order,
@@ -10643,61 +10585,6 @@ stay in their phase sections; this heading holds only work still to come.
   **Layman:** If you load Final DOOM (Plutonia or TNT), the automap shows DOOM 2's level names and the story screens show DOOM 2's text instead of that game's own.
   Kind: fix.
   Source: in-session-2026-09-26 (DOOM-0450 dead-symbol scan).
-
-- 💭 [DOOM-0075] **3D sky pans ~4x too fast and tiles 4x too often vs Classic.**
-  Found 2026-06-26 (indie-review, mesh.frag). The sky fragment path maps the ~90deg horizontal FOV (atan(ndcX) over -1..1) to ONE full sky-texture width: col = ang/(PI*0.5)*sz.x. Classic DOOM maps a full 360deg of yaw to one texture repeat (ANGLETOSKYSHIFT: 90deg -> 1/4 texture). So our sky pans 4x faster and tiles 4x as often as the original. Falls under mesh.frag's explicit bring-up-shader constant exemption, hence deferred not silently changed. Fix: col = ang/(2.0*PI)*sz.x (360deg -> one texture width), matching DOOM's viewangletox sky shift. Verify against Classic by turning on the spot in E1M1.
-  **Layman:** In the 3D renderers the sky/mountains scroll about four times too fast as you turn, compared to Classic DOOM.
-  Kind: fix.
-  Source: indie-review-2026-06-26.
-  Investigated 2026-07-01 — the diagnosis is inverted; recommend closing as
-  working-as-intended. Verified against this repo's own Classic renderer:
-  r_sky.h:35 ANGLETOSKYSHIFT=22, sky texture 256 wide (r_sky.h:34),
-  r_plane.c:427 angle=(viewangle+xtoviewangle[x])>>22 then R_GetColumn masks
-  to width. A full circle 2^32 >>22 = 1024 column-steps per 360deg, masked to
-  256 => Classic repeats the sky 4x per 360deg, i.e. 90deg of yaw -> exactly
-  one texture width. That is the well-known DOOM sky (it tiles 4x per turn),
-  NOT one panorama per 360deg. The current shader col=ang/(PI*0.5)*sz.x already
-  reproduces this: 90deg -> one width, 4 repeats per 360deg, and the 90deg FOV
-  (atan over ndcX -1..1 = PI/2) shows exactly one width across the screen — so
-  pan rate AND tiling already match Classic. The proposed col=ang/(2*PI)*sz.x
-  would pan 4x too SLOW and show a single 360deg panorama — a regression, not a
-  fix. No code change made. If confirmed, flip to a closed/considered state.
-  Closed 2026-07-01 as working-as-intended (user-confirmed). The sky already
-  matches Classic — see the 2026-07-01 investigation note above; the proposed
-  ang/(2*PI) change would be a regression. No further action.
-
-- 📋 [DOOM-0480] **Exercise the minimise fix on Windows, in Solid and in Ultra.**
-  DOOM-0390 added `SurfaceHasArea` so a frame is skipped, not drawn, while the
-  surface reports no area. Linux desktops do not report a zero extent on
-  minimise, so the fix has never run on the case it is for. On the Windows
-  test box or a tester's machine: start a level in Solid, minimise, wait a few
-  seconds, restore; repeat in Ultra with ray tracing on. Pass: the game is
-  still running and draws normally after the restore. Also worth a look: CPU
-  use while minimised (the skipped frames sleep 10 ms each).
-  Solid half run 2026-10-08 on the Windows test box (GTX 1050, Win10
-  22H2), current master, -windowed, via a one-off interactive scheduled
-  task (C:\doom-ants-test\p0480): minimise 15 s, restore: the game
-  stayed alive and drew after restore (325-557 fps lines), clean quit.
-  PASS for the pass condition. But the DOOM-0390 skip never engaged
-  (0.71 core while minimised, profile lines kept coming) -- filed
-  separately. Ultra half NOT run: that box has no hardware ray tracing;
-  it needs Charl's RTX laptop. Two traps: over SSH the session is hidden
-  (no MainWindowHandle), so the run must go through an Interactive-logon
-  scheduled task; and the task's UserId must be the Explorer owner
-  (SPAREPC\ant), not $env:USERDOMAIN (HOME.EARTH), or registration fails
-  with 'No mapping between account names and security IDs'.
-  Correction 2026-10-08: the first Solid run above never minimised the
-  game -- the harness held the destroyed startup window's handle (see
-  DOOM-0485). Re-run with the handle re-read after the level load:
-  Solid PASS for real. Minimised 15 s at 0.01 core (0.73 drawing), no
-  frames presented while minimised, drew at full fps after restore,
-  clean quit, 0 errors. Third trap for this harness: re-read
-  MainWindowHandle after the 3D window opens. Ultra half still needs
-  an RT machine (Charl's).
-  **Layman:** Minimising the game window on Windows should pause drawing and come back cleanly; that has been fixed by reading the code and not yet tried on a Windows machine.
-  Kind: test.
-  Source: in-session-2026-09-30 (DOOM-0390 closed without a Windows run).
-  Lanes: renderer, windows.
 
 - ✅ [DOOM-0481] **R_DrawColumn samples its source through a mask wider than many columns are tall.**
   `R_DrawColumn` indexes `dc_source[(frac>>FRACBITS)&127]`, so a column shorter
@@ -10774,49 +10661,6 @@ stay in their phase sections; this heading holds only work still to come.
   Kind: fix.
   Source: in-session 2026-09-30 (found diagnosing DOOM-0280).
   Lanes: startup.
-
-- 🚫 [DOOM-0485] **On Windows the 3D views keep drawing at full speed while the game window is minimised.**
-  Measured 2026-10-08 on the Windows test box (GTX 1050, Win10 22H2), Solid, E1M1, -windowed: ShowWindow(SW_MINIMIZE) made the window iconic, yet CPU stayed at 0.71 core for 15 s (0.75 while visible) and the per-second [cpu_profile] line kept printing (40 lines over ~42 s). DOOM-0390's skip in RB_Vulkan_Present runs only when needRecreate is set AND the surface reports no area; on this driver a minimised window neither fails present nor reports a zero extent, so the skip never engages. Candidate fix: also skip while SDL reports SDL_WINDOW_MINIMIZED. Verify with the same harness (C:\doom-ants-test\p0480, launch.ps1 + minimise.ps1): CPU while minimised near zero, profile lines about 26 not 42, game draws after restore.
-  Attempt 1 FAILED (2026-10-08, not committed): an early return in
-  RB_Vulkan_Present when SDL_GetWindowFlags(window) &
-  SDL_WINDOW_MINIMIZED, before the needRecreate check. On the Windows
-  box it changed nothing: 0.74 core while minimised, 42 profile lines,
-  IsIconic true. Unknown why. -noinput is NOT the cause on reading
-  (i_video.c's DOOM-0287 comment says SDL_QUIT and window events still
-  pass). Next: print SDL_GetWindowFlags and log
-  SDL_WINDOWEVENT_MINIMIZED/RESTORED in the event loop on the Windows
-  run, to learn whether SDL ever sees the minimise sent by ShowWindow
-  from another process; also try a minimise by keyboard or click to rule
-  out the harness. Harness: C:\doom-ants-test\p0480 (launch.ps1 runs
-  minimise.ps1 in the desktop session); scratch copies in
-  /home/ants/doom-scratch/p0480.
-  Resolved 2026-10-08: NOT A DEFECT. The harness minimised the wrong
-  window. It took Process.MainWindowHandle in the first second, which
-  is the startup (Classic) window; I_ShutdownGraphicsForVulkan
-  destroys that window and opens a new Vulkan one, so ShowWindow hit
-  a stale handle and SDL never saw a minimise (diagnostic build: no
-  SDL_WINDOWEVENT_MINIMIZED in the log). With the handle re-read after
-  the level load, the UNCHANGED master code passes: 0.01 core while
-  minimised (0.73 drawing), no frames presented while minimised,
-  SDL flags carry SDL_WINDOW_MINIMIZED, full fps after restore.
-  DOOM-0390's SurfaceHasArea skip already works on Windows. Attempt 1
-  was never really tested and is not needed.
-  **Layman:** Minimising the game on Windows does not pause its drawing, so it keeps using most of a CPU core in the background.
-  Kind: fix.
-  Source: in-session-2026-10-08 (DOOM-0480 Windows run).
-  Lanes: renderer, windows.
-
-- 📋 [DOOM-0491] **The gamma setting does nothing in Solid and Ultra.**
-  I_SetPalette applies gammatable[usegamma] to the palette Classic presents.
-  The 3D tiers decode the overlay and the world through the raw PLAYPAL
-  (RB_PlayPal), so the gamma levels change nothing there. Listed in
-  DOOM-0379's review finding; split out because the user's decision for
-  that item covered the flashes and the melt only. Needs a decision on
-  how gamma should apply to a full-colour, tone-mapped image.
-  **Layman:** The brightness (gamma) option in the menu changes the picture in Classic only; in the two 3D views it has no effect.
-  Kind: fix.
-  Source: in-session-2026-10-08, split from DOOM-0379.
-  Lanes: renderer, backend-seam.
 
 - ✅ [DOOM-0492] **The border around a shrunk view tiles its flat at half size, as the finale background did.**
   R_FillBackScreen (r_draw.c) fills screens[1] by walking SCREENWIDTH/64
@@ -10990,6 +10834,580 @@ stay in their phase sections; this heading holds only work still to come.
   Source: user-playtest-2026-10-23.
   Lanes: renderer.
   Evidence: linuxdoom-1.10/dev-shots/shot-0019.png, linuxdoom-1.10/dev-shots/shot-0020.png
+
+- ✅ [DOOM-0501] **F12 writes a note beside each screenshot saying where it was taken and how it was drawn.**
+  DOOM-0500's report (dev-shots/shot-0008.png) could not be
+  reproduced: the PNG says nothing about where it was taken.
+  Each dev-shots/shot-NNNN.png gets a shot-NNNN.txt with the
+  IWAD, map, skill, position, angle, sector, renderer and
+  ray-tracing state, image size, every config setting, and a
+  -warp/-warpto line that stands the player there again.
+  Modelled on UT_Ants' UTA-0191 capture details file, kept
+  to one text file. Classic's F12 still writes DOOM's own
+  .pcx and gets no note.
+  Verified 2026-10-23: a Solid E1M9 capture at angle 37, retaken from its
+  own note's repeat line, differed by 2 pixels against a same-settings
+  control's 1,725.
+  **Layman:** Press F12 and, next to the picture, the game saves a small text file with the map, your exact spot and facing, the renderer and every setting, so a problem in a screenshot can be found again without describing where you were.
+  Kind: feature.
+  Source: user-request-2026-10-23.
+  Lanes: dev-tools.
+
+- ✅ [DOOM-0490] **Performance standard says Classic sits above 60 FPS; Classic presents at 35.**
+  Measured 2026-10-08 with the FPS counter (fps_corner 2), Classic,
+  menu closed: 35/34 on the real 3840x2160 desktop, 35/34 on base
+  0025375 in a private 1920x1200 window. Classic draws once per game tic
+  (35 Hz), so docs/standards/performance.md's "Solid and Classic sit
+  comfortably above it" and "the floor is absolute for Classic" cannot
+  both be true. Decide with the user which is meant: a 35 Hz floor for
+  Classic (authentic), or uncapped Classic frames. The DOOM-0211 spec's
+  section 6 inherited the same premise; its measurement showed the menu
+  costs no frames.
+  Resolved (2026-10-08): the user chose to keep Classic at the original
+  35 FPS and change the standard. docs/standards/performance.md now says
+  Classic's floor is 35 FPS and that dropping below it is a regression.
+  **Layman:** The performance rules promise Classic runs above 60 frames a second, but Classic shows a new frame only 35 times a second, as the 1993 game did.
+  Kind: doc-fix.
+  Source: in-session-2026-10-08 DOOM-0211 B2 measurement.
+  Evidence: /home/ants/doom-scratch/p0211/real-top.png, /home/ants/doom-scratch/p0211/base-perf-top.png
+
+- ✅ [DOOM-0502] **Write per-frame timings in the shared frameledger format, so the ray-traced view's road to 60 FPS can be measured.**
+  User decision 2026-10-24: DOOM Ants adopts frameledger, the shared
+  analyser for Vestige, UT Ants and DOOM Ants
+  (/mnt/Games/Scripts/Linux/frameledger, its own session). DOOM-0431
+  stays parked; this replaces its one-second CSV. Nothing in the tree
+  writes a per-frame trace or a 1% low today, so DOOM-0170 INV-3 and
+  DOOM-0359 cannot be checked. Blocked on frameledger's format spec
+  passing review. What DOOM asked frameledger for: a per-pass budget
+  check (DOOM-0279), frames-in-flight attribution (DOOM-0190), a
+  pacing figure (DOOM-0359), render scale, tier and ray tracing as
+  compare-blocking header fields.
+  2026-10-24: UNBLOCKED. frameledger's design is agreed by all three
+  engines, and its run-file format spec FLED-0001 was accepted on
+  2026-10-24 with DOOM's five changes: static inline functions inside
+  extern "C" guards, fled_consume compacting the buffer, |value| < 1e9,
+  llround rounding, and no frame/wall row on the last frame. DOOM may
+  build its writer to FLED-0001 now. frameledger builds `check`
+  (FLED-0002) and then the C header (FLED-0006) next, and will message
+  DOOM when `check` exists. On adoption, add python3 to
+  packaging/ci-deps.txt: the local pre-push container is a bare
+  ubuntu:24.04 with no Python.
+  2026-10-26, from the frameledger session: v0.1.0 is released.
+  Pin https://github.com/milnet01/frameledger/releases/download/v0.1.0/frameledger-v0.1.0.zip,
+  SHA256 84a9254101421b223ca1429f889310ef92d1d4e4da433f19ce0d4225c89b9f5a.
+  It holds frameledger.pyz, include/frameledger.h and LICENSE. Same
+  bytes as v0.1.0-rc.1; both Windows runs (Vestige, UT Ants) passed on
+  it. Not yet downloaded or checked here.
+  2026-10-30: built. frameledger.h vendored from v0.1.0 (archive hash verified), run_ledger.c + d_ledger.c, flags -frameledger, -frameledger-frames, -frameledger-scene, -frameledger-display. Python not added to ci-deps: nothing in CI runs the analyser.
+  First real run 2026-10-30: Solid, ray traced, E1M1 spawn, -scale 6 (3840x2400) at render_scale 50 (1920x1200 traced), user's fog 3, 3000 frames, DEV build, private display. check passes. floor --fps 60 FAILS: 0 of 82 windows held 60. Median wall 25.1 ms, about 40 FPS; 100% GPU-bound; gpu/trace 13.4 ms (59%), atrous 4.9 ms. Machine busy: load.start 1.465, other sessions running, so this is a pessimistic figure. Refute by rerunning on a quiet machine.
+  A smaller window flatters it: at the default 1280x800 the same view reads about 290 FPS.
+  GPU timers come from the DOOM-0090 pool, no separate timer. Windows cross-build compiles; not run on Windows.
+  **Layman:** Record how long every frame and every part of it takes, in the file format the other two engines use, so one tool can say what stops DOOM reaching 60 FPS.
+  Kind: feature.
+  Source: user-decision-2026-10-24.
+  Lanes: renderer.
+  Supersedes: DOOM-0431.
+
+- ✅ [DOOM-0182] **Extend DOOM-0042 HD materials to the Ultra raster sub-view (HD in all Ultra views, not just ray-traced).**
+  Today HD (usePBR) materials are sampled ONLY in the RT path (pathtrace.comp);
+  the raster fragment shader (mesh.frag) samples the paletted materialTex[], so
+  Ultra with RT off (rb_rtdebug 0) shows base textures. This was the DOOM-0042
+  "RT-view-first" sequencing; the raster HD pass was always a planned fast-follow.
+  Scope: bind the HD descriptor set (set 3) into the raster pipeline, add a
+  usePBR albedo/normal/AO sampling branch in mesh.frag mirroring the RT path, and
+  (for parity) port the DOOM-0181 de-tiling + filth wrappers so the raster view
+  matches the RT look. Keep Classic + paletted byte-identical. Depends on the
+  DOOMASSETDIR launcher fix (2026-07-16) so HD actually loads.
+  User decision 2026-10-30, relayed by the website session: do this
+  before the trailer's final footage, so comparison 2 shows HD art in
+  Ultra's rasterised slice. Due in the next release.
+  2026-10-30: built. mesh.frag reads the HD set (set 2 there) through
+  g.hdPipeline, a twin of the world pipeline, so Solid compiles the path
+  away. De-tile and filth moved to formulas/hd_surface.glsl, one copy
+  for both views. HD maps gained mips; the trace reads level 0
+  explicitly. Measured against the build before it, E1M4 tics 200 to
+  215: Classic, Solid raster and Solid traced 0 pixels changed; Ultra
+  traced differs by a mean of 1.6, as much as the old build differs from
+  itself (1.5). Scene pass at render_scale 50, median: Ultra raster 2.48
+  to 3.37 ms; Solid 2.45 to 2.48 ms. -rtverify PASS. No validation
+  errors in Ultra raster, Ultra traced, Solid or with -hdallocfail.
+  Height is one sample, not the trace's march. Not yet seen in play by
+  the user.
+  Same day, after cold review: tangent frame sign fixed (see DOOM-0535
+  for the proof), filth clamped to 1.0 before encoding. Solid raster
+  still 0 pixels changed. Reviewer's open points left as they are: no
+  anisotropic filtering on HD maps, so grazing surfaces soften; no
+  emissive, ripple or wet sheen in this view, which paletted raster
+  lacks too.
+  **Layman:** Make the fancy high-res wall textures show up in Ultra's fast (non-ray-traced) view too, so switching ray-tracing off doesn't drop you back to the blocky originals.
+  Kind: feature.
+  Source: user-request-2026-07-16.
+
+- ✅ [DOOM-0273] **Solid tier: upscale the ORIGINAL textures and give them PBR/POM, keeping the 1993 art.**
+  **Layman:** Same DOOM pictures you know, just sharper, with real bumpiness and depth — as opposed to Ultra, which swaps the art out entirely.
+  Kind: feature.
+  Lanes: renderer, assets.
+  Source: user-request-2026-07-27.
+  User redefinition of the three tiers, 2026-07-27 (see CLAUDE.md's
+  "Render tiers" section, which this item implements the middle row of).
+  Solid keeps the ORIGINAL 1993/97 art but upscaled, with PBR/POM and the
+  rest added on top; Ultra swaps the art out for HD replacements. The
+  user acknowledged this reverses an earlier position: "probably a
+  contradiction to what I said earlier but we grow as we go along."
+
+  Most of the machinery already exists and only needs re-pointing.
+  DOOM-0042's materials.csv sidecar already has TWO row kinds: `hero`
+  (curated CC0 replacement art) and `derive` (maps generated FROM the WAD
+  texture by scripts/pbr_derive.py). That derive path IS this request -
+  original art, upscaled, with normal/roughness/AO/height derived from
+  it. So the tier split falls out as: derive rows -> Solid, hero rows ->
+  Ultra. Check that assumption against the shipped loader before
+  planning; it is inferred from the sidecar's shape, not yet verified in
+  code.
+
+  Related, do not duplicate: DOOM-0172 (Solid-tier art UPSCALING, the
+  PS1/2-emulator-style smoothing - the resolution half of this item) and
+  DOOM-0238 (faked god-rays/fog in the rasterised view - the "bells and
+  whistles, cheaply" half). This item is the material half. Consider
+  whether the three should become one bundle.
+  2026-10-26, evaluated and NOT adopted: the LR/HQ texture pack v0.5
+  by B00m3r Doomer (moddb "doom-low-res-hi-quality-texture-pack"; the
+  user's copy is wads/LRHQ_Doom_Texture_0.5.zip, untracked). Why:
+  - Licence: the pack states none. Its credits name six source packs,
+    including a "Doom 3 textures for Doom" pack. The bundled DHTP
+    terms are use-with-credit per author. Fails assets.md's "known
+    licence" rule, so it cannot be committed or shipped.
+  - Not an upscale: walls are at the original sizes (64x128, 128x128
+    and so on), flats 64x64. This item wants the originals upscaled.
+  - Not the original art: it is darker and desaturated, and some
+    textures are redrawn (COMPTALL's panels, TEKWALL4 bronze to grey).
+    REDWALL1 becomes a dull dark red. Solid keeps DOOM's own look.
+  - Partial PBR: of the 287 DOOM walls it covers 280, but only 96 have
+    a normal map; heightmaps exist for 50 files. Material maps are
+    wired by GZDoom's gldefs.txt, which this engine does not read.
+  Comparison sheet (original left, pack right, x3):
+  scratch/lrhq-tools/sheet1.png.
+  2026-10-26, evaluated and NOT adopted: "FD Texture Pack v5" (the
+  user's copy is wads/FD Texture Pack v5.zip, untracked). It is the
+  Freedoom project's textures as PNGs, files dated 2013-2014, under
+  Freedoom's BSD licence (COPYING.txt), so the licence would pass
+  assets.md. It still does not fit Solid:
+  - It is not DOOM's art. Freedoom's own README tells its artists to
+    make each texture "as different as possible" from the original
+    while keeping its theme, and the comparison bears that out:
+    STARTAN3, BROWN1, COMPTALL and TEKWALL4 are all different art.
+  - Not an upscale: every texture is the original's size.
+  - No material maps beyond glow masks ("bloom" maps) for its own
+    textures, which do not line up with DOOM's.
+  It covers every wall and flat of both games. For anything Freedoom
+  art is wanted for, the current freedoom.wad is the newer source, and
+  CI already installs it. Comparison sheet: scratch/lrhq-tools/sheet-fd.png.
+  User decision 2026-10-26: design this together with DOOM-0103 (the
+  shine) as one spec, for Solid's original textures, before DOOM-0172
+  (upscaling). Test scene: E2M1, the REDWALL1 cross room and the
+  corridor leading to it (-warp 2 1 -skill 3 -warpto 424 382 352;
+  STONE2 walls, FLOOR5_2 floor). Goal: the cross's red light gleams on
+  the floor and the stone, as in the DOOM-0511 references. Checked
+  2026-10-26: Solid has none of this today. EnsureHdMaterials
+  (r_vulkan.cpp) returns unless the tier is Ultra, and roughness and
+  metallic maps are never uploaded.
+  2026-10-26: spec accepted, docs/specs/DOOM-0273-solid-surface-detail.md
+  (review-contract capped at one loop by the user). It amends
+  DOOM-0042. Next: build B1.
+  2026-10-26: B1-B4 built and pushed (0321245, 9c06529, B3, B4).
+  Setting surface_detail (default on), Video-menu row "Surface Detail".
+  B5 checks done: INV-5 (setting off matches 0321245 in all 8 views,
+  outside the DOOM-0519 noise patch), INV-8 grep clean, INV-9 diff
+  clean, -rtverify PASS. Load 62-74 ms doom.wad, 85-97 ms doom2.wad
+  (budget 150). Raster scene +0.03 ms (budget 0.3); megakernel no
+  measurable rise (budget 1.0); both at headless 1708x800.
+  Left: the user's look at the test scene to tune kSurfHeightScale
+  (0.06) and the normal strength (2.0) (spec §10). The effect is faint
+  at those starting values. Then CHANGELOG and ship.
+  2026-10-26: the user picked depth 0.12 / normal strength 4.0 from a
+  four-variant side-by-side at the test scene (commit 'set the relief to
+  the user's pick'). Left: the user plays it in-game; on their OK add
+  the CHANGELOG Added entry and flip shipped.
+  2026-10-29: user's in-game OK on Solid, raster and ray-traced, after
+  DOOM-0527 (they had already said they like the sharper look). Shipped.
+
+- ✅ [DOOM-0511] **Bright red light walls blow out to white in the ray-traced view (Solid and Ultra), losing their colour.**
+  Measured 2026-10-26: E2M1, `-warp 2 1 -warpto 1000 304 0`, Ultra
+  (renderer 1, rt_view 6, rt_fog 1), DEV build, -inspect -freeze,
+  -devshot 400. The REDWALL1 panels round the cross render pale pink
+  to white; only their edges and the surrounding room stay red. The
+  reference (a ray-traced mod) keeps the panels saturated red while
+  they still light the room red.
+  Not yet located. Candidates: the emitter's Le is high enough that
+  the tone map clips every channel, a tone operator that desaturates
+  toward white as brightness rises, or the bloom adding white.
+  Compare DOOM-0509 and DOOM-0321, where fog also turns white; one
+  cause may explain all three.
+  2026-10-26, the user's F12 pair at E2M1 `-warp 2 1 -skill 3 -warpto
+  511 357 359`, Solid, same settings (rt_fog 3, rt_bloom 2) apart from
+  ray tracing: dev-shots/shot-0023.png (raster) keeps the REDWALL1
+  panels saturated red, close to the reference; dev-shots/shot-0024.png
+  (ray-traced, rt_view 6) blows them out to white with a red rim. So
+  the fault is in the ray-traced path only, and it is not Ultra's HD
+  art. Look at the RT emitter Le, the RT tone map and the RT bloom
+  extract; the raster path is the working comparison.
+  Separately, the reference keeps the room dark so the cross's red
+  light dominates; the raster view lights the room evenly instead.
+  2026-10-26, located (not yet fixed or GPU-confirmed). The emitter's
+  Le is NOT white: re-running emis::derive_material_le on doom.wad's
+  REDWALL1 gives Le = (19.9, 0.02, 0.02), a pure red. The white comes
+  from the tone map. toneExposeEncode multiplies by exposureEv(-2.25)
+  = x3.96, so the panel's peak reaches ~79, and pbrNeutralToneMapping
+  (shaders/formulas/pbr_neutral_tonemap.glsl) then blends toward white
+  by g = 1 - 1/(0.15*(peak - newPeak) + 1), about 0.92 here. Run on the
+  CPU, that chain displays (255,246,246). Even Le x0.05 still displays
+  (253,149,149), pink. The raster view uses the same operator but feeds
+  it palette-range values (peak ~1), so g stays near 0 and red survives.
+  The dark texels stay red because emissiveMask() gives them no Le,
+  which is the red rim. The RT bloom extract (bloom_extract_rt.comp)
+  scales the colour by a weight, so it adds red, not white; it only
+  raises the peak further. Script: scratch/doom0511/le.py.
+  Confirm by: capture the repro with wall Le scaled down, or with the
+  desaturation mix disabled, and see the panels turn red.
+  Fix direction, not chosen: keep the hue of an emitter through the
+  tone map (desaturate on luminance, or skip the highlight mix for
+  saturated light), or lower wall Le, which also dims the light cast.
+  Bearing on DOOM-0321: the "channels clip in order" theory there is
+  not what happens; the chain is float until the tone map. The same
+  highlight desaturation is what turns bright red fog white, so
+  DOOM-0321's long-path brightness is the trigger and this operator
+  is the whitening. DOOM-0509 is separate: its fog colour is
+  near-white at the source.
+  User decision 2026-10-26: "The red blocks should be emissive, not be
+  point lights or something similar." So the fix keeps the panels as
+  glowing surfaces. It must keep their red through the tone map rather
+  than turn them into, or replace them with, point lights.
+  2026-10-26, a second reference from the user: a side-by-side frame
+  of a ray-traced Ultimate DOOM video at this same cross. Sent as a
+  pasted image; no file path. In it the REDWALL1 panels stay fully
+  saturated red with no white core, and they cast red light on the
+  floor in front of them, while the grey walls and ceiling stay
+  neutral. That is the target: the panel is a red emitter at a
+  brightness the tone map keeps red, and its light still reaches
+  the room.
+  2026-10-26, a third reference from the user: a Classic / ray-traced
+  pair from the same video's hell section ("Hell Areas" chapter).
+  Level not known. Sent as pasted images; no file paths. A
+  green-marble corridor with red light inlays. Classic shows flat red
+  inlays on lit green walls. Ray-traced, the inlays stay saturated red
+  with no white core, the room's own light drops away, and the red
+  light floods walls, floor and ceiling. Same target as the cross:
+  the emitter keeps its hue, and its light dominates a dark room.
+  That second half bears on this item's closing note, which says our
+  raster view lights the room evenly.
+  2026-10-26, CONFIRMED on the GPU. Private-display capture of the repro
+  (Solid, -rtview 6, rt_fog 3, rt_bloom 2, -inspect -freeze): the
+  panels render white with a red rim, as in the user's shot. Rebuilt
+  with the mix in pbrNeutralToneMapping disabled (g * 0.0) and
+  recaptured: the panels render saturated red. Reverted; the tree is
+  clean. Captures: scratch/doom0511/base.png, nodesat.png; script
+  scratch/doom0511/cap.sh. Note that -rtview 6 is needed: the
+  config's rt_view alone left Solid in its raster view.
+  A second finding from the same capture: with the mix off, the
+  panels are a flat, clipped red with the REDWALL1 texture gone. The
+  references keep the texture visible. So keeping the hue is not
+  enough on its own; the panel's brightness on screen must also stay
+  below the point where every texel clips.
+  2026-10-26, FIXED in 4629409; awaiting the user's play-test before it
+  is marked shipped. The visible glow now goes through shownEmission
+  (shaders/formulas/shown_emission.glsl): above kShownGlowMax (0.25)
+  an emitter shows its own albedo at that brightness, so its hue and
+  texture survive the tone map. The Le cast on the room is unchanged.
+  Liquids still show their forced Le flat. Captured on the GPU: the
+  E2M1 cross went from white panels to saturated red with texture,
+  the room still lit red (scratch/doom0511/fixed.png); the E1M1 floor
+  lamps (-warpto 760 -3232 180) went from white tops to yellow, light
+  on the room unchanged (lamp-base.png, lamp-fixed.png).
+  Not addressed here: the references keep the room DARK so the red
+  light dominates. That is the room's own light level, not the
+  emitter's colour.
+  User play-test 2026-10-26 (their F12 shot-0025, same view): "The red
+  wall looks closer but still doesn't match that image I sent and that
+  image I sent had much moodier lighting." The mood half moved to
+  DOOM-0514 (per-level lighting profiles), with the measurements. A
+  global moodier mix was tried and undone: it darkened every level.
+  Left here: the panels show at (155,0,0) where the reference shows
+  (211,1,1). Raising kShownGlowMax to 0.5 did not brighten them in
+  that test, so what limits them is not yet known.
+  2026-10-26, 5543856: a per-texture cast multiple (r_mesh.c
+  wall_light_cast; REDWALL1 0.15x) and kShownGlowMax 0.25 -> 0.6. Panel /
+  side wall / floor went from (155,0,0) / (44,5,5) / (71,29,10) to
+  (188,8,8) / (16,5,5) / (49,29,10); the reference is (211,1,1) /
+  (14,0,0) / (32,0,0). Test B (direct light off) showed the cross is
+  the room's only direct light. Left: sky and bounced light (the
+  balcony passage) tint the walls and floor grey-brown where the
+  reference is all red. Comparison: scratch/doom0511/new-vs-ref.png.
+  User decision 2026-10-26, after their F12 shot-0026 of the same
+  corridor (renderer Solid, ray tracing on): the panels now stay red,
+  so this item is done. The remaining look gap is not the emitter: in
+  Solid no texture has surface detail or upscaling yet (DOOM-0273,
+  DOOM-0172), and the ray-traced view shades every surface matte
+  (Lambert only, pt_common.glsl), so the red light cannot gleam on the
+  floor or stone (DOOM-0103). The user chose one design covering
+  Solid surface detail and shine together, with this room (STONE2
+  walls, FLOOR5_2 floor) as the test scene.
+  **Layman:** A glowing red wall should look deep red, like the reference; ours turns almost white with only a red rim.
+  Kind: fix.
+  Source: user-request-2026-10-26.
+  Evidence: /home/ants/Pictures/Screenshots/Screenshot_20261026_004500.png, scratch/e2m1/ours-e2m1-cross-ultra.png
+
+- ✅ [DOOM-0527] **Surface detail makes floors, walls and ceilings slide and tear as the player walks.**
+  User's F12 shots, E1M1, Solid raster, surface_detail 1. Two causes in
+  formulas/surface_detail.glsl (DOOM-0273): surfOffsetUV divided the
+  shift by viewTS.z (floor 0.05), so grazing views moved it by whole
+  tiles; and kSurfHeightScale was a fraction of each texture's own size,
+  so a 256-texel wall got four times a 64-texel flat's depth and its
+  dark parts slid. Fix: offset limiting (no divide) and depth as a
+  fraction of a 64-texel tile on every texture (surfDepthUV), in both
+  views. Headless A/B at E1M1 1956 -2463 120 and 1990 -2443 120: the
+  hanging screens tear with the old shader and match surface_detail 0
+  with the new one. Left: the user's play-test, and a look at the
+  ray-traced view (not confirmed headlessly).
+  2026-10-29 second pass: user's shots 37-41 showed the traced views
+  still sliding - Solid RT wrapped a wall's lower strip onto its
+  computer art, Ultra's derived red-light ceiling (no HD art) moved.
+  surfParallaxUV's march divided by nv; now offset-limited like the
+  raster helper. Headless A/B at 2051 -2349 129 (Ultra): old shader
+  pushes the lights toward the far edge, new matches surface_detail
+  0. The Solid RT strip did not reproduce at 1811 -2693 240; left for
+  the user's re-test. Gamepad unplug: user confirmed fire stops.
+  2026-10-29 third pass: the user saw the lights still moving, less.
+  Cause: the designed relief - luma makes lights sit about 8 units above
+  their surround. User chose flat lights; spec INV-3 amended and gated
+  (one loop, 2 findings fixed, 6f72d9b). kLightTextures in
+  surface_derive.h, exact names the user picked by eye from WAD renders
+  (CRATELIT keeps relief). Ultra A/B at 1688 -2247 4: underside PSNR vs
+  surface_detail 0 rose 17.8 -> 37.6 dB. Awaiting the user's play-test.
+  2026-10-29: user play-tested on master (a123d9d): Ultra lights fixed,
+  Solid fine with ray tracing on and off. Shipped.
+  **Layman:** With surface detail on, some textures appeared to move under your feet and big wall pictures tore apart; the fake depth is now the same small size everywhere.
+  Kind: fix.
+  Source: user-report-2026-10-29.
+  Evidence: linuxdoom-1.10/dev-shots/shot-0033.png, linuxdoom-1.10/dev-shots/shot-0035.png
+
+- ✅ [DOOM-0528] **Ultra's traced view shows an orange patch across a dark wall at E1M5.**
+  Seen 2026-10-30 at E1M5 -warpto -1360 104 90, skill 3, Ultra -rtview 6, with -inspect -freeze, DEV build, 150+ frames settled. The back wall's upper right reads flat orange-brown with a soft edge, where Solid's traced view at the same spot shows the dark wall. Present at 0f4b9c5, before the DOOM-0508 change, so it is not that change. Cause unknown. Captures: scratch/fled/o_u.png and a_u.png.
+  Cause found 2026-10-30: the filth stains (applyGrime, DOOM-0181)
+  replace the art at kStainOpacity 0.82. The patch goes with rt_filth 0.
+  The same stains made the bright green floor patches the website
+  session reported on E1M2. Calmer constants on trial, kStainOpacity
+  0.50, kGooChance 0.15, kGooColour halved; the user's answer on keeping
+  them is awaited, because the user liked the goo puddles on 2026-07-16
+  (scratch/fled/look/filth.png).
+  2026-10-30: the user chose the calmed filth, relayed by the website
+  session. Checked at the E1M5 spot with rt_filth 1 and 0: the patch is
+  now a faint brown tint with the art showing through, reduced and not
+  gone. The user accepted this. -rtverify PASS on this build.
+  **Layman:** In one room of Ultra's ray-traced view, part of a dark wall turns a flat orange.
+  Kind: fix.
+  Source: found-2026-10-30-doom-0508-capture.
+
+- ✅ [DOOM-0532] **The Brightness slider ran backwards: moving it right darkened the ray-traced view.**
+  DOOM-0096 mapped a larger slider value to a larger EV, and the tonemap's gain is 1 / (2^EV * 1.2). A sweep on 2026-10-30 at values 10, 13 and 15 showed the picture getting darker. RB_ExposureEV in rb_exposure.h now runs the other way and keeps value 10's EV, so a default picture is unchanged. A saved value other than 10 changes brightness.
+  **Layman:** The Brightness slider did the opposite of what it said. Now right is brighter.
+  Kind: fix.
+  Source: found-2026-10-30-trailer-brightness-test.
+
+- ✅ [DOOM-0533] **Ultra's SUPPORT2 art was reddish where the original metal is neutral grey.**
+  The original averages 98,98,98; the HD albedo averaged 71,57,54, and the ray-traced view showed door frames as dark red. Re-tinted with scripts/stage_hero.py's tint_to_doom. The other hero albedos were compared the same way and stay near their originals' hue.
+  **Layman:** Metal door frames in Ultra's ray-traced view looked dark red. They are grey again.
+  Kind: fix.
+  Source: website-session-relay-2026-10-30.
+
+- ✅ [DOOM-0498] **Ship the HD art in the downloads, so Ultra has its art outside the source tree.**
+  Neither the Windows zip nor the AppImage carries assets/ultra/ (checked
+  on the 0.7.4 release assets, 2026-10-23), so Ultra in a release always
+  falls back to the original art. DOOM-0283 made that visible: the
+  Renderer row reads "Ultra (no HD art)" and each level start says so.
+
+  The art is CC0 (assets/ultra/LICENSES), so bundling it is allowed. It
+  makes each download several times larger. The work: copy assets/ultra/
+  into both packages, teach rb_asset_set_exe_dir a packaged-layout
+  candidate (it only tries the source tree today), ship the LICENSES file
+  beside the art, and have release.sh check the art is in each asset.
+  User chose on 2026-10-23 to land the notice first and schedule this
+  separately.
+  User decision 2026-10-30, relayed by the website session: ship the HD
+  art in the downloads in the next release; the user was told they get
+  several times larger. When that release is out, tell the website
+  session so it removes its About-page note.
+  2026-10-30: built. packaging/ultra-art.sh picks the committed art (no
+  derived/, no heroes/bringup/) and refuses a map LICENSES does not
+  list; release.sh checks each finished download holds exactly it.
+  rb_asset_set_exe_dir tries assets/ultra/ beside the executable first.
+  Sizes: zip 3.9 to 51.5 MB, AppImage 11.1 to 58.4 MB. A test AppImage
+  run from another folder with no DOOMASSETDIR loads 17 materials, 70
+  images. The zip's own exe under Wine does the same on this machine's
+  GPU. On real Windows (GTX 1050, no RT) Solid runs from the zip, 120
+  frames recorded; that box cannot test Ultra, so Ultra on real Windows
+  is unverified. TEKWALL1 stays paletted in a download: its maps are
+  derived from the WAD, so they may not ship. A source-tree run still
+  reports 18.
+  **Layman:** The downloadable game does not include the high-definition textures, so Ultra in a downloaded copy shows the original art. This item adds them to the downloads.
+  Kind: package.
+  Source: user-decision-2026-10-23, split out of DOOM-0283.
+  Lanes: packaging, assets.
+
+## 0.9.0 — What a player meets is correct
+
+Defects a player can actually hit: crashes, hangs, lost saves, wrong pixels,
+wrong sound, and anything a malformed WAD can do to the engine. Shipped items
+stay in their phase sections; this heading holds only work still to come.
+
+- 📋 [DOOM-0145] **Windows 0.2.0 build: 3D view renders as a small centered box with garbled (uninitialized) borders.**
+  Reported on the shipped 0.2.0 Windows build. Symptoms: (1) fullscreen window, but the actual game view is a small centered rectangle with garbled imagery (fragments of the DOOM II title art + scattered text) filling the surrounding area; (2) the 2D menu + status-bar overlay render cleanly at full width ON TOP of the garbage (confirmed by screenshot of the in-game ESC menu); (3) audio "struggling" (unspecified — crackle vs missing music vs none).
+
+  Leading hypothesis (display): in a 3D mode (Solid/Ultra) the scene is traced into a render-scale sub-rectangle (default render_scale=50%, m_misc.c:255) that TAAU upscales to the display. If TAAU is not upscaling to fill the swapchain on this GPU, the present (which uses full g.extent, r_vulkan.cpp:4947) shows the 50% box + never-cleared swapchain borders = the garbage. Default renderer is RB_CLASSIC (m_misc.c:253), so this only bites if the friend selected Solid/Ultra, OR a config persisted a 3D mode. Alt hypotheses to rule out: a Classic-path SDL present/pitch bug specific to Windows; the DOOM-0050 2D-overlay-over-3D family.
+
+  Disambiguating facts needed (cannot reproduce without the friend's box): render mode selected; GPU + Windows version; whether switching to Classic and/or setting Render Scale 100% clears it; whether -windowed changes it. Likely real fixes once pinned: (a) clear the full swapchain image each frame so uncovered borders are black not garbage; (b) ensure TAAU upscales to full display extent (or blit the render sub-rect scaled to g.extent when TAAU off). Audio is a separate sub-investigation (SDL_OpenAudio 11025 Hz legacy device, i_sound.c:825).
+  **Layman:** On Windows, the game view shows up as a small box in the middle of the screen with garbled junk around it; sound also struggles.
+  Kind: fix.
+  Source: user-report-2026-06-30 (Windows friend; original verbal report + in-game menu screenshot).
+  Confirmed by friend's in-game photo (2026-06-30): the 3D scene renders CORRECTLY but only into a ~50%-size centered sub-rectangle (= render_scale=50%); the status bar draws full-width and correct; the uncovered border region shows stale/uninitialized framebuffer content (leftover menu/skill-select text: NEW GAME, NIGHTMARE!, etc.). So this is NOT a crash or RT-capability failure — the engine works; it's a present/upscale bug. Code: r_vulkan.cpp:4454 gates the render sub-rectangle on taauActive = (rb_rtdebug==6 && rb_upscaler==1 && taauPipeline!=NULL); at render_scale<100 the rendered region is not being scaled to fill g.extent on this GPU, and the borders are never cleared. Immediate user workaround (any one): Options->Renderer-> Render Scale=100%, OR Upscaler=Off, OR Renderer=Classic. Real fix: (a) always blit/scale the rendered region to the full display extent (never present the sub-rect 1:1); (b) clear the swapchain image to black each frame so uncovered areas aren't garbage. Still need: friend's GPU model + audio specifics.
+  GTX 1050 / Win10 test (2026-06-30, screenshots (1)&(2)): in SOLID renderer the view is FULL-SCREEN and clean at 35-59 FPS — no small box, no garbled borders. This isolates the bug: it is NOT Solid mode and NOT a generic Windows present bug. It is specific to a 3D path running at render_scale<100% where the upscale-to-display is not filling the swapchain (i.e. the Ultra/TAAU path: taauActive at r_vulkan.cpp:4454 traces into a 50% sub-rect; if its output is not blitted scaled-to-g.extent, you get the friend's small-box+garbage). Confirms the fix: (a) always scale the rendered sub-region to the full display extent on present; (b) clear the swapchain to black each frame. Practical guidance for the friend NOW: use Solid (works); Ultra needs RT hardware the GTX 1050 lacks anyway (ties to DOOM-0059/DOOM-0026 capability gating). Still want: one Ultra-mode screenshot on the GTX 1050 to confirm whether Ultra runs/garbles/gates-off there.
+  Friend's machine identified (2026-06-30): GTX 2060 (RT-capable, has RT cores) on a 4K laptop. So the small-box repro = Ultra at render_scale 50% on a 4K display = a 1920x1080 render box shown un-upscaled in the centre of a 3840x2160 screen, surrounded by uncleared garbage. Matches the present/upscale theory exactly. This is the one machine that reproduces DOOM-0145 (RX 6600 upscales fine; GTX 1050 has no Ultra). Verification of the fix will need the GTX 2060 box. NOTE: separate from the GTX 1050 "not full screen / border" report, which is the in-game Screen Size (screenblocks) ornamental border + Classic's 4:3 letterbox on a 16:9 display — tracked separately.
+  Progress (2026-09-30): read against today's code, not re-tested. The present
+  path has been rewritten since 0.2.0. With the upscaler inactive the tracer now
+  renders at the display's own size, so there is no sub-rectangle to show. With
+  it active, the upscale pass is dispatched over the whole display image and the
+  blit to the swapchain takes that image, full size. So the two fixes this item
+  asks for are, by reading, already what the code does. What reading cannot
+  show is why the GTX 2060 showed the box in the first place, and the only
+  machine that reproduced it is the friend's. Needs one run of the current
+  release there in Ultra at Render Scale 50% before this can close.
+  Decision (user, 2026-09-30): ask Charl to run the current release in Ultra at
+  Render Scale 50% on the GTX 2060 laptop; the item stays open until he reports.
+
+- 📋 [DOOM-0458] **Ultra's HD textures have no mip chain, so distant surfaces shimmer.**
+  Split from DOOM-0410. BuildHdSet creates every HD image with
+  mipLevels = 1 and no TRANSFER_SRC usage. The DOOM-0042 spec promises a
+  vkCmdBlitImage down-chain and derives its 1.33x VRAM figure from one.
+  The HD sampler's comment in CreateDescriptors claims a full chain.
+  Decided by the user 2026-09-25: build the mip chain (not: amend the
+  spec to single-mip).
+  Why it is not a loader-only change: pathtrace.comp is a compute
+  shader. It samples hdTex[] at many sites with texture(), whose
+  implicit LOD is undefined outside a fragment stage and happens to
+  read level 0 on this driver. Mips only help once every site picks a
+  level itself, e.g. by ray cones. That touches the loader, the
+  megakernel, de-tile, grime, POM and the denoiser's demodulation, so
+  it gets a spec first (write-spec, as a DOOM-0042 amendment).
+  The same amendment should settle the spec's asset-root wording:
+  DOOM-0410 made the code look beside the executable, but the spec
+  also cites DOOMWADDIR's "." default.
+  Budget: estMB must count the chain (x1.33), and kHdBudgetMB is
+  checked against it.
+  2026-10-30: DOOM-0182 gave the HD maps a mip chain, and Ultra's
+  rasterised view uses it. The traced view still reads the top level,
+  because a trace has no screen derivatives, so this item stays open for
+  that view.
+  **Layman:** Far-away walls in Ultra sparkle and crawl as you move, because the game has no smaller copies of its HD textures to use at a distance.
+  Kind: implement.
+  Source: DOOM-0410 split, review-code 2026-09-01 lane vk-materials.
+  Lanes: renderer, shaders, assets.
+
+- 💭 [DOOM-0075] **3D sky pans ~4x too fast and tiles 4x too often vs Classic.**
+  Found 2026-06-26 (indie-review, mesh.frag). The sky fragment path maps the ~90deg horizontal FOV (atan(ndcX) over -1..1) to ONE full sky-texture width: col = ang/(PI*0.5)*sz.x. Classic DOOM maps a full 360deg of yaw to one texture repeat (ANGLETOSKYSHIFT: 90deg -> 1/4 texture). So our sky pans 4x faster and tiles 4x as often as the original. Falls under mesh.frag's explicit bring-up-shader constant exemption, hence deferred not silently changed. Fix: col = ang/(2.0*PI)*sz.x (360deg -> one texture width), matching DOOM's viewangletox sky shift. Verify against Classic by turning on the spot in E1M1.
+  **Layman:** In the 3D renderers the sky/mountains scroll about four times too fast as you turn, compared to Classic DOOM.
+  Kind: fix.
+  Source: indie-review-2026-06-26.
+  Investigated 2026-07-01 — the diagnosis is inverted; recommend closing as
+  working-as-intended. Verified against this repo's own Classic renderer:
+  r_sky.h:35 ANGLETOSKYSHIFT=22, sky texture 256 wide (r_sky.h:34),
+  r_plane.c:427 angle=(viewangle+xtoviewangle[x])>>22 then R_GetColumn masks
+  to width. A full circle 2^32 >>22 = 1024 column-steps per 360deg, masked to
+  256 => Classic repeats the sky 4x per 360deg, i.e. 90deg of yaw -> exactly
+  one texture width. That is the well-known DOOM sky (it tiles 4x per turn),
+  NOT one panorama per 360deg. The current shader col=ang/(PI*0.5)*sz.x already
+  reproduces this: 90deg -> one width, 4 repeats per 360deg, and the 90deg FOV
+  (atan over ndcX -1..1 = PI/2) shows exactly one width across the screen — so
+  pan rate AND tiling already match Classic. The proposed col=ang/(2*PI)*sz.x
+  would pan 4x too SLOW and show a single 360deg panorama — a regression, not a
+  fix. No code change made. If confirmed, flip to a closed/considered state.
+  Closed 2026-07-01 as working-as-intended (user-confirmed). The sky already
+  matches Classic — see the 2026-07-01 investigation note above; the proposed
+  ang/(2*PI) change would be a regression. No further action.
+
+- 📋 [DOOM-0480] **Exercise the minimise fix on Windows, in Solid and in Ultra.**
+  DOOM-0390 added `SurfaceHasArea` so a frame is skipped, not drawn, while the
+  surface reports no area. Linux desktops do not report a zero extent on
+  minimise, so the fix has never run on the case it is for. On the Windows
+  test box or a tester's machine: start a level in Solid, minimise, wait a few
+  seconds, restore; repeat in Ultra with ray tracing on. Pass: the game is
+  still running and draws normally after the restore. Also worth a look: CPU
+  use while minimised (the skipped frames sleep 10 ms each).
+  Solid half run 2026-10-08 on the Windows test box (GTX 1050, Win10
+  22H2), current master, -windowed, via a one-off interactive scheduled
+  task (C:\doom-ants-test\p0480): minimise 15 s, restore: the game
+  stayed alive and drew after restore (325-557 fps lines), clean quit.
+  PASS for the pass condition. But the DOOM-0390 skip never engaged
+  (0.71 core while minimised, profile lines kept coming) -- filed
+  separately. Ultra half NOT run: that box has no hardware ray tracing;
+  it needs Charl's RTX laptop. Two traps: over SSH the session is hidden
+  (no MainWindowHandle), so the run must go through an Interactive-logon
+  scheduled task; and the task's UserId must be the Explorer owner
+  (SPAREPC\ant), not $env:USERDOMAIN (HOME.EARTH), or registration fails
+  with 'No mapping between account names and security IDs'.
+  Correction 2026-10-08: the first Solid run above never minimised the
+  game -- the harness held the destroyed startup window's handle (see
+  DOOM-0485). Re-run with the handle re-read after the level load:
+  Solid PASS for real. Minimised 15 s at 0.01 core (0.73 drawing), no
+  frames presented while minimised, drew at full fps after restore,
+  clean quit, 0 errors. Third trap for this harness: re-read
+  MainWindowHandle after the 3D window opens. Ultra half still needs
+  an RT machine (Charl's).
+  **Layman:** Minimising the game window on Windows should pause drawing and come back cleanly; that has been fixed by reading the code and not yet tried on a Windows machine.
+  Kind: test.
+  Source: in-session-2026-09-30 (DOOM-0390 closed without a Windows run).
+  Lanes: renderer, windows.
+
+- 🚫 [DOOM-0485] **On Windows the 3D views keep drawing at full speed while the game window is minimised.**
+  Measured 2026-10-08 on the Windows test box (GTX 1050, Win10 22H2), Solid, E1M1, -windowed: ShowWindow(SW_MINIMIZE) made the window iconic, yet CPU stayed at 0.71 core for 15 s (0.75 while visible) and the per-second [cpu_profile] line kept printing (40 lines over ~42 s). DOOM-0390's skip in RB_Vulkan_Present runs only when needRecreate is set AND the surface reports no area; on this driver a minimised window neither fails present nor reports a zero extent, so the skip never engages. Candidate fix: also skip while SDL reports SDL_WINDOW_MINIMIZED. Verify with the same harness (C:\doom-ants-test\p0480, launch.ps1 + minimise.ps1): CPU while minimised near zero, profile lines about 26 not 42, game draws after restore.
+  Attempt 1 FAILED (2026-10-08, not committed): an early return in
+  RB_Vulkan_Present when SDL_GetWindowFlags(window) &
+  SDL_WINDOW_MINIMIZED, before the needRecreate check. On the Windows
+  box it changed nothing: 0.74 core while minimised, 42 profile lines,
+  IsIconic true. Unknown why. -noinput is NOT the cause on reading
+  (i_video.c's DOOM-0287 comment says SDL_QUIT and window events still
+  pass). Next: print SDL_GetWindowFlags and log
+  SDL_WINDOWEVENT_MINIMIZED/RESTORED in the event loop on the Windows
+  run, to learn whether SDL ever sees the minimise sent by ShowWindow
+  from another process; also try a minimise by keyboard or click to rule
+  out the harness. Harness: C:\doom-ants-test\p0480 (launch.ps1 runs
+  minimise.ps1 in the desktop session); scratch copies in
+  /home/ants/doom-scratch/p0480.
+  Resolved 2026-10-08: NOT A DEFECT. The harness minimised the wrong
+  window. It took Process.MainWindowHandle in the first second, which
+  is the startup (Classic) window; I_ShutdownGraphicsForVulkan
+  destroys that window and opens a new Vulkan one, so ShowWindow hit
+  a stale handle and SDL never saw a minimise (diagnostic build: no
+  SDL_WINDOWEVENT_MINIMIZED in the log). With the handle re-read after
+  the level load, the UNCHANGED master code passes: 0.01 core while
+  minimised (0.73 drawing), no frames presented while minimised,
+  SDL flags carry SDL_WINDOW_MINIMIZED, full fps after restore.
+  DOOM-0390's SurfaceHasArea skip already works on Windows. Attempt 1
+  was never really tested and is not needed.
+  **Layman:** Minimising the game on Windows does not pause its drawing, so it keeps using most of a CPU core in the background.
+  Kind: fix.
+  Source: in-session-2026-10-08 (DOOM-0480 Windows run).
+  Lanes: renderer, windows.
+
+- 📋 [DOOM-0491] **The gamma setting does nothing in Solid and Ultra.**
+  I_SetPalette applies gammatable[usegamma] to the palette Classic presents.
+  The 3D tiers decode the overlay and the world through the raw PLAYPAL
+  (RB_PlayPal), so the gamma levels change nothing there. Listed in
+  DOOM-0379's review finding; split out because the user's decision for
+  that item covered the flashes and the melt only. Needs a decision on
+  how gamma should apply to a full-colour, tone-mapped image.
+  **Layman:** The brightness (gamma) option in the menu changes the picture in Classic only; in the two 3D views it has no effect.
+  Kind: fix.
+  Source: in-session-2026-10-08, split from DOOM-0379.
+  Lanes: renderer, backend-seam.
 
 - 🚧 [DOOM-0508] **The Spectre is drawn as a solid Pinky in Solid and Ultra, not as the see-through shimmer.**
   The 3D sprite gather in r_mesh.c reads MF_SPECIAL and MF_MISSILE but
@@ -12932,24 +13350,6 @@ defect visible before a player finds it.
   Source: in-session-2026-09-30 (found answering UT_Ants).
   Lanes: renderer, tests.
 
-- ✅ [DOOM-0501] **F12 writes a note beside each screenshot saying where it was taken and how it was drawn.**
-  DOOM-0500's report (dev-shots/shot-0008.png) could not be
-  reproduced: the PNG says nothing about where it was taken.
-  Each dev-shots/shot-NNNN.png gets a shot-NNNN.txt with the
-  IWAD, map, skill, position, angle, sector, renderer and
-  ray-tracing state, image size, every config setting, and a
-  -warp/-warpto line that stands the player there again.
-  Modelled on UT_Ants' UTA-0191 capture details file, kept
-  to one text file. Classic's F12 still writes DOOM's own
-  .pcx and gets no note.
-  Verified 2026-10-23: a Solid E1M9 capture at angle 37, retaken from its
-  own note's repeat line, differed by 2 pixels against a same-settings
-  control's 1,725.
-  **Layman:** Press F12 and, next to the picture, the game saves a small text file with the map, your exact spot and facing, the renderer and every setting, so a problem in a screenshot can be found again without describing where you were.
-  Kind: feature.
-  Source: user-request-2026-10-23.
-  Lanes: dev-tools.
-
 - 📋 [DOOM-0519] **Make two -inspect -freeze captures of the same build match pixel for pixel.**
   Found 2026-10-26 while running DOOM-0273 INV-5. scripts/ab_capture.sh,
   same binary run twice, -inspect -freeze -devshot 150: up to about
@@ -13610,61 +14010,6 @@ against.
   Kind: implement.
   Source: user-request-2026-09-12.
   Lanes: renderer, tooling.
-
-- ✅ [DOOM-0490] **Performance standard says Classic sits above 60 FPS; Classic presents at 35.**
-  Measured 2026-10-08 with the FPS counter (fps_corner 2), Classic,
-  menu closed: 35/34 on the real 3840x2160 desktop, 35/34 on base
-  0025375 in a private 1920x1200 window. Classic draws once per game tic
-  (35 Hz), so docs/standards/performance.md's "Solid and Classic sit
-  comfortably above it" and "the floor is absolute for Classic" cannot
-  both be true. Decide with the user which is meant: a 35 Hz floor for
-  Classic (authentic), or uncapped Classic frames. The DOOM-0211 spec's
-  section 6 inherited the same premise; its measurement showed the menu
-  costs no frames.
-  Resolved (2026-10-08): the user chose to keep Classic at the original
-  35 FPS and change the standard. docs/standards/performance.md now says
-  Classic's floor is 35 FPS and that dropping below it is a regression.
-  **Layman:** The performance rules promise Classic runs above 60 frames a second, but Classic shows a new frame only 35 times a second, as the 1993 game did.
-  Kind: doc-fix.
-  Source: in-session-2026-10-08 DOOM-0211 B2 measurement.
-  Evidence: /home/ants/doom-scratch/p0211/real-top.png, /home/ants/doom-scratch/p0211/base-perf-top.png
-
-- ✅ [DOOM-0502] **Write per-frame timings in the shared frameledger format, so the ray-traced view's road to 60 FPS can be measured.**
-  User decision 2026-10-24: DOOM Ants adopts frameledger, the shared
-  analyser for Vestige, UT Ants and DOOM Ants
-  (/mnt/Games/Scripts/Linux/frameledger, its own session). DOOM-0431
-  stays parked; this replaces its one-second CSV. Nothing in the tree
-  writes a per-frame trace or a 1% low today, so DOOM-0170 INV-3 and
-  DOOM-0359 cannot be checked. Blocked on frameledger's format spec
-  passing review. What DOOM asked frameledger for: a per-pass budget
-  check (DOOM-0279), frames-in-flight attribution (DOOM-0190), a
-  pacing figure (DOOM-0359), render scale, tier and ray tracing as
-  compare-blocking header fields.
-  2026-10-24: UNBLOCKED. frameledger's design is agreed by all three
-  engines, and its run-file format spec FLED-0001 was accepted on
-  2026-10-24 with DOOM's five changes: static inline functions inside
-  extern "C" guards, fled_consume compacting the buffer, |value| < 1e9,
-  llround rounding, and no frame/wall row on the last frame. DOOM may
-  build its writer to FLED-0001 now. frameledger builds `check`
-  (FLED-0002) and then the C header (FLED-0006) next, and will message
-  DOOM when `check` exists. On adoption, add python3 to
-  packaging/ci-deps.txt: the local pre-push container is a bare
-  ubuntu:24.04 with no Python.
-  2026-10-26, from the frameledger session: v0.1.0 is released.
-  Pin https://github.com/milnet01/frameledger/releases/download/v0.1.0/frameledger-v0.1.0.zip,
-  SHA256 84a9254101421b223ca1429f889310ef92d1d4e4da433f19ce0d4225c89b9f5a.
-  It holds frameledger.pyz, include/frameledger.h and LICENSE. Same
-  bytes as v0.1.0-rc.1; both Windows runs (Vestige, UT Ants) passed on
-  it. Not yet downloaded or checked here.
-  2026-10-30: built. frameledger.h vendored from v0.1.0 (archive hash verified), run_ledger.c + d_ledger.c, flags -frameledger, -frameledger-frames, -frameledger-scene, -frameledger-display. Python not added to ci-deps: nothing in CI runs the analyser.
-  First real run 2026-10-30: Solid, ray traced, E1M1 spawn, -scale 6 (3840x2400) at render_scale 50 (1920x1200 traced), user's fog 3, 3000 frames, DEV build, private display. check passes. floor --fps 60 FAILS: 0 of 82 windows held 60. Median wall 25.1 ms, about 40 FPS; 100% GPU-bound; gpu/trace 13.4 ms (59%), atrous 4.9 ms. Machine busy: load.start 1.465, other sessions running, so this is a pessimistic figure. Refute by rerunning on a quiet machine.
-  A smaller window flatters it: at the default 1280x800 the same view reads about 290 FPS.
-  GPU timers come from the DOOM-0090 pool, no separate timer. Windows cross-build compiles; not run on Windows.
-  **Layman:** Record how long every frame and every part of it takes, in the file format the other two engines use, so one tool can say what stops DOOM reaching 60 FPS.
-  Kind: feature.
-  Source: user-decision-2026-10-24.
-  Lanes: renderer.
-  Supersedes: DOOM-0431.
 
 - 📋 [DOOM-0503] **-timedemo cannot time the shipped IWAD demos, and reports through I_Error.**
   doom.wad's demos are version 109 and the engine is 110, so g_game.c's
@@ -14589,41 +14934,6 @@ in CLAUDE.md describes.
   Kind: enhancement.
   Source: in-session-2026-07-14 (DOOM-0042 T13).
 
-- ✅ [DOOM-0182] **Extend DOOM-0042 HD materials to the Ultra raster sub-view (HD in all Ultra views, not just ray-traced).**
-  Today HD (usePBR) materials are sampled ONLY in the RT path (pathtrace.comp);
-  the raster fragment shader (mesh.frag) samples the paletted materialTex[], so
-  Ultra with RT off (rb_rtdebug 0) shows base textures. This was the DOOM-0042
-  "RT-view-first" sequencing; the raster HD pass was always a planned fast-follow.
-  Scope: bind the HD descriptor set (set 3) into the raster pipeline, add a
-  usePBR albedo/normal/AO sampling branch in mesh.frag mirroring the RT path, and
-  (for parity) port the DOOM-0181 de-tiling + filth wrappers so the raster view
-  matches the RT look. Keep Classic + paletted byte-identical. Depends on the
-  DOOMASSETDIR launcher fix (2026-07-16) so HD actually loads.
-  User decision 2026-10-30, relayed by the website session: do this
-  before the trailer's final footage, so comparison 2 shows HD art in
-  Ultra's rasterised slice. Due in the next release.
-  2026-10-30: built. mesh.frag reads the HD set (set 2 there) through
-  g.hdPipeline, a twin of the world pipeline, so Solid compiles the path
-  away. De-tile and filth moved to formulas/hd_surface.glsl, one copy
-  for both views. HD maps gained mips; the trace reads level 0
-  explicitly. Measured against the build before it, E1M4 tics 200 to
-  215: Classic, Solid raster and Solid traced 0 pixels changed; Ultra
-  traced differs by a mean of 1.6, as much as the old build differs from
-  itself (1.5). Scene pass at render_scale 50, median: Ultra raster 2.48
-  to 3.37 ms; Solid 2.45 to 2.48 ms. -rtverify PASS. No validation
-  errors in Ultra raster, Ultra traced, Solid or with -hdallocfail.
-  Height is one sample, not the trace's march. Not yet seen in play by
-  the user.
-  Same day, after cold review: tangent frame sign fixed (see DOOM-0535
-  for the proof), filth clamped to 1.0 before encoding. Solid raster
-  still 0 pixels changed. Reviewer's open points left as they are: no
-  anisotropic filtering on HD maps, so grazing surfaces soften; no
-  emissive, ripple or wet sheen in this view, which paletted raster
-  lacks too.
-  **Layman:** Make the fancy high-res wall textures show up in Ultra's fast (non-ray-traced) view too, so switching ray-tracing off doesn't drop you back to the blocky originals.
-  Kind: feature.
-  Source: user-request-2026-07-16.
-
 - 🚧 [DOOM-0183] **Reflective, glowing, liquid goo (nukage) in the Ultra RT view.**
   Grew out of the DOOM-0181 grime/stain iteration (see [[doom-0181-detile-grime]]). The stain system now paints green-goo puddles on floors; the user wants the goo (puddles AND the source nukage flat) to read as a wet liquid. Needs a design pass first (user chose "design properly"). Scope to settle in design:
   - Light-green EMISSIVE glow on goo — the RT emissive channel already exists (pathtrace.comp self-radiance), so this part is cheap.
@@ -14791,94 +15101,6 @@ in CLAUDE.md describes.
   **Layman:** Some shader code was written early for a feature that isn't built yet, so it currently does nothing.
   Kind: chore.
   Source: debt-sweep-2026-07-26.
-
-- ✅ [DOOM-0273] **Solid tier: upscale the ORIGINAL textures and give them PBR/POM, keeping the 1993 art.**
-  **Layman:** Same DOOM pictures you know, just sharper, with real bumpiness and depth — as opposed to Ultra, which swaps the art out entirely.
-  Kind: feature.
-  Lanes: renderer, assets.
-  Source: user-request-2026-07-27.
-  User redefinition of the three tiers, 2026-07-27 (see CLAUDE.md's
-  "Render tiers" section, which this item implements the middle row of).
-  Solid keeps the ORIGINAL 1993/97 art but upscaled, with PBR/POM and the
-  rest added on top; Ultra swaps the art out for HD replacements. The
-  user acknowledged this reverses an earlier position: "probably a
-  contradiction to what I said earlier but we grow as we go along."
-
-  Most of the machinery already exists and only needs re-pointing.
-  DOOM-0042's materials.csv sidecar already has TWO row kinds: `hero`
-  (curated CC0 replacement art) and `derive` (maps generated FROM the WAD
-  texture by scripts/pbr_derive.py). That derive path IS this request -
-  original art, upscaled, with normal/roughness/AO/height derived from
-  it. So the tier split falls out as: derive rows -> Solid, hero rows ->
-  Ultra. Check that assumption against the shipped loader before
-  planning; it is inferred from the sidecar's shape, not yet verified in
-  code.
-
-  Related, do not duplicate: DOOM-0172 (Solid-tier art UPSCALING, the
-  PS1/2-emulator-style smoothing - the resolution half of this item) and
-  DOOM-0238 (faked god-rays/fog in the rasterised view - the "bells and
-  whistles, cheaply" half). This item is the material half. Consider
-  whether the three should become one bundle.
-  2026-10-26, evaluated and NOT adopted: the LR/HQ texture pack v0.5
-  by B00m3r Doomer (moddb "doom-low-res-hi-quality-texture-pack"; the
-  user's copy is wads/LRHQ_Doom_Texture_0.5.zip, untracked). Why:
-  - Licence: the pack states none. Its credits name six source packs,
-    including a "Doom 3 textures for Doom" pack. The bundled DHTP
-    terms are use-with-credit per author. Fails assets.md's "known
-    licence" rule, so it cannot be committed or shipped.
-  - Not an upscale: walls are at the original sizes (64x128, 128x128
-    and so on), flats 64x64. This item wants the originals upscaled.
-  - Not the original art: it is darker and desaturated, and some
-    textures are redrawn (COMPTALL's panels, TEKWALL4 bronze to grey).
-    REDWALL1 becomes a dull dark red. Solid keeps DOOM's own look.
-  - Partial PBR: of the 287 DOOM walls it covers 280, but only 96 have
-    a normal map; heightmaps exist for 50 files. Material maps are
-    wired by GZDoom's gldefs.txt, which this engine does not read.
-  Comparison sheet (original left, pack right, x3):
-  scratch/lrhq-tools/sheet1.png.
-  2026-10-26, evaluated and NOT adopted: "FD Texture Pack v5" (the
-  user's copy is wads/FD Texture Pack v5.zip, untracked). It is the
-  Freedoom project's textures as PNGs, files dated 2013-2014, under
-  Freedoom's BSD licence (COPYING.txt), so the licence would pass
-  assets.md. It still does not fit Solid:
-  - It is not DOOM's art. Freedoom's own README tells its artists to
-    make each texture "as different as possible" from the original
-    while keeping its theme, and the comparison bears that out:
-    STARTAN3, BROWN1, COMPTALL and TEKWALL4 are all different art.
-  - Not an upscale: every texture is the original's size.
-  - No material maps beyond glow masks ("bloom" maps) for its own
-    textures, which do not line up with DOOM's.
-  It covers every wall and flat of both games. For anything Freedoom
-  art is wanted for, the current freedoom.wad is the newer source, and
-  CI already installs it. Comparison sheet: scratch/lrhq-tools/sheet-fd.png.
-  User decision 2026-10-26: design this together with DOOM-0103 (the
-  shine) as one spec, for Solid's original textures, before DOOM-0172
-  (upscaling). Test scene: E2M1, the REDWALL1 cross room and the
-  corridor leading to it (-warp 2 1 -skill 3 -warpto 424 382 352;
-  STONE2 walls, FLOOR5_2 floor). Goal: the cross's red light gleams on
-  the floor and the stone, as in the DOOM-0511 references. Checked
-  2026-10-26: Solid has none of this today. EnsureHdMaterials
-  (r_vulkan.cpp) returns unless the tier is Ultra, and roughness and
-  metallic maps are never uploaded.
-  2026-10-26: spec accepted, docs/specs/DOOM-0273-solid-surface-detail.md
-  (review-contract capped at one loop by the user). It amends
-  DOOM-0042. Next: build B1.
-  2026-10-26: B1-B4 built and pushed (0321245, 9c06529, B3, B4).
-  Setting surface_detail (default on), Video-menu row "Surface Detail".
-  B5 checks done: INV-5 (setting off matches 0321245 in all 8 views,
-  outside the DOOM-0519 noise patch), INV-8 grep clean, INV-9 diff
-  clean, -rtverify PASS. Load 62-74 ms doom.wad, 85-97 ms doom2.wad
-  (budget 150). Raster scene +0.03 ms (budget 0.3); megakernel no
-  measurable rise (budget 1.0); both at headless 1708x800.
-  Left: the user's look at the test scene to tune kSurfHeightScale
-  (0.06) and the normal strength (2.0) (spec §10). The effect is faint
-  at those starting values. Then CHANGELOG and ship.
-  2026-10-26: the user picked depth 0.12 / normal strength 4.0 from a
-  four-variant side-by-side at the test scene (commit 'set the relief to
-  the user's pick'). Left: the user plays it in-game; on their OK add
-  the CHANGELOG Added entry and flip shipped.
-  2026-10-29: user's in-game OK on Solid, raster and ray-traced, after
-  DOOM-0527 (they had already said they like the sharper look). Shipped.
 
 - 📋 [DOOM-0278] **Motion blur for the 3-D views - camera-velocity first, per-object only once monsters are models.**
   User asked (2026-07-27) for "perhaps some per object motion blur" as
@@ -17103,131 +17325,6 @@ in CLAUDE.md describes.
   Source: user-request-2026-10-26.
   Evidence: /home/ants/Pictures/ClaudePaste/paste_20261026_000939_226_291e3eb4.png, /home/ants/Pictures/Screenshots/Screenshot_20261026_001752.png, /home/ants/Pictures/Screenshots/Screenshot_20261026_003321.png, /home/ants/Pictures/Screenshots/Screenshot_20261026_003421.png
 
-- ✅ [DOOM-0511] **Bright red light walls blow out to white in the ray-traced view (Solid and Ultra), losing their colour.**
-  Measured 2026-10-26: E2M1, `-warp 2 1 -warpto 1000 304 0`, Ultra
-  (renderer 1, rt_view 6, rt_fog 1), DEV build, -inspect -freeze,
-  -devshot 400. The REDWALL1 panels round the cross render pale pink
-  to white; only their edges and the surrounding room stay red. The
-  reference (a ray-traced mod) keeps the panels saturated red while
-  they still light the room red.
-  Not yet located. Candidates: the emitter's Le is high enough that
-  the tone map clips every channel, a tone operator that desaturates
-  toward white as brightness rises, or the bloom adding white.
-  Compare DOOM-0509 and DOOM-0321, where fog also turns white; one
-  cause may explain all three.
-  2026-10-26, the user's F12 pair at E2M1 `-warp 2 1 -skill 3 -warpto
-  511 357 359`, Solid, same settings (rt_fog 3, rt_bloom 2) apart from
-  ray tracing: dev-shots/shot-0023.png (raster) keeps the REDWALL1
-  panels saturated red, close to the reference; dev-shots/shot-0024.png
-  (ray-traced, rt_view 6) blows them out to white with a red rim. So
-  the fault is in the ray-traced path only, and it is not Ultra's HD
-  art. Look at the RT emitter Le, the RT tone map and the RT bloom
-  extract; the raster path is the working comparison.
-  Separately, the reference keeps the room dark so the cross's red
-  light dominates; the raster view lights the room evenly instead.
-  2026-10-26, located (not yet fixed or GPU-confirmed). The emitter's
-  Le is NOT white: re-running emis::derive_material_le on doom.wad's
-  REDWALL1 gives Le = (19.9, 0.02, 0.02), a pure red. The white comes
-  from the tone map. toneExposeEncode multiplies by exposureEv(-2.25)
-  = x3.96, so the panel's peak reaches ~79, and pbrNeutralToneMapping
-  (shaders/formulas/pbr_neutral_tonemap.glsl) then blends toward white
-  by g = 1 - 1/(0.15*(peak - newPeak) + 1), about 0.92 here. Run on the
-  CPU, that chain displays (255,246,246). Even Le x0.05 still displays
-  (253,149,149), pink. The raster view uses the same operator but feeds
-  it palette-range values (peak ~1), so g stays near 0 and red survives.
-  The dark texels stay red because emissiveMask() gives them no Le,
-  which is the red rim. The RT bloom extract (bloom_extract_rt.comp)
-  scales the colour by a weight, so it adds red, not white; it only
-  raises the peak further. Script: scratch/doom0511/le.py.
-  Confirm by: capture the repro with wall Le scaled down, or with the
-  desaturation mix disabled, and see the panels turn red.
-  Fix direction, not chosen: keep the hue of an emitter through the
-  tone map (desaturate on luminance, or skip the highlight mix for
-  saturated light), or lower wall Le, which also dims the light cast.
-  Bearing on DOOM-0321: the "channels clip in order" theory there is
-  not what happens; the chain is float until the tone map. The same
-  highlight desaturation is what turns bright red fog white, so
-  DOOM-0321's long-path brightness is the trigger and this operator
-  is the whitening. DOOM-0509 is separate: its fog colour is
-  near-white at the source.
-  User decision 2026-10-26: "The red blocks should be emissive, not be
-  point lights or something similar." So the fix keeps the panels as
-  glowing surfaces. It must keep their red through the tone map rather
-  than turn them into, or replace them with, point lights.
-  2026-10-26, a second reference from the user: a side-by-side frame
-  of a ray-traced Ultimate DOOM video at this same cross. Sent as a
-  pasted image; no file path. In it the REDWALL1 panels stay fully
-  saturated red with no white core, and they cast red light on the
-  floor in front of them, while the grey walls and ceiling stay
-  neutral. That is the target: the panel is a red emitter at a
-  brightness the tone map keeps red, and its light still reaches
-  the room.
-  2026-10-26, a third reference from the user: a Classic / ray-traced
-  pair from the same video's hell section ("Hell Areas" chapter).
-  Level not known. Sent as pasted images; no file paths. A
-  green-marble corridor with red light inlays. Classic shows flat red
-  inlays on lit green walls. Ray-traced, the inlays stay saturated red
-  with no white core, the room's own light drops away, and the red
-  light floods walls, floor and ceiling. Same target as the cross:
-  the emitter keeps its hue, and its light dominates a dark room.
-  That second half bears on this item's closing note, which says our
-  raster view lights the room evenly.
-  2026-10-26, CONFIRMED on the GPU. Private-display capture of the repro
-  (Solid, -rtview 6, rt_fog 3, rt_bloom 2, -inspect -freeze): the
-  panels render white with a red rim, as in the user's shot. Rebuilt
-  with the mix in pbrNeutralToneMapping disabled (g * 0.0) and
-  recaptured: the panels render saturated red. Reverted; the tree is
-  clean. Captures: scratch/doom0511/base.png, nodesat.png; script
-  scratch/doom0511/cap.sh. Note that -rtview 6 is needed: the
-  config's rt_view alone left Solid in its raster view.
-  A second finding from the same capture: with the mix off, the
-  panels are a flat, clipped red with the REDWALL1 texture gone. The
-  references keep the texture visible. So keeping the hue is not
-  enough on its own; the panel's brightness on screen must also stay
-  below the point where every texel clips.
-  2026-10-26, FIXED in 4629409; awaiting the user's play-test before it
-  is marked shipped. The visible glow now goes through shownEmission
-  (shaders/formulas/shown_emission.glsl): above kShownGlowMax (0.25)
-  an emitter shows its own albedo at that brightness, so its hue and
-  texture survive the tone map. The Le cast on the room is unchanged.
-  Liquids still show their forced Le flat. Captured on the GPU: the
-  E2M1 cross went from white panels to saturated red with texture,
-  the room still lit red (scratch/doom0511/fixed.png); the E1M1 floor
-  lamps (-warpto 760 -3232 180) went from white tops to yellow, light
-  on the room unchanged (lamp-base.png, lamp-fixed.png).
-  Not addressed here: the references keep the room DARK so the red
-  light dominates. That is the room's own light level, not the
-  emitter's colour.
-  User play-test 2026-10-26 (their F12 shot-0025, same view): "The red
-  wall looks closer but still doesn't match that image I sent and that
-  image I sent had much moodier lighting." The mood half moved to
-  DOOM-0514 (per-level lighting profiles), with the measurements. A
-  global moodier mix was tried and undone: it darkened every level.
-  Left here: the panels show at (155,0,0) where the reference shows
-  (211,1,1). Raising kShownGlowMax to 0.5 did not brighten them in
-  that test, so what limits them is not yet known.
-  2026-10-26, 5543856: a per-texture cast multiple (r_mesh.c
-  wall_light_cast; REDWALL1 0.15x) and kShownGlowMax 0.25 -> 0.6. Panel /
-  side wall / floor went from (155,0,0) / (44,5,5) / (71,29,10) to
-  (188,8,8) / (16,5,5) / (49,29,10); the reference is (211,1,1) /
-  (14,0,0) / (32,0,0). Test B (direct light off) showed the cross is
-  the room's only direct light. Left: sky and bounced light (the
-  balcony passage) tint the walls and floor grey-brown where the
-  reference is all red. Comparison: scratch/doom0511/new-vs-ref.png.
-  User decision 2026-10-26, after their F12 shot-0026 of the same
-  corridor (renderer Solid, ray tracing on): the panels now stay red,
-  so this item is done. The remaining look gap is not the emitter: in
-  Solid no texture has surface detail or upscaling yet (DOOM-0273,
-  DOOM-0172), and the ray-traced view shades every surface matte
-  (Lambert only, pt_common.glsl), so the red light cannot gleam on the
-  floor or stone (DOOM-0103). The user chose one design covering
-  Solid surface detail and shine together, with this room (STONE2
-  walls, FLOOR5_2 floor) as the test scene.
-  **Layman:** A glowing red wall should look deep red, like the reference; ours turns almost white with only a red rim.
-  Kind: fix.
-  Source: user-request-2026-10-26.
-  Evidence: /home/ants/Pictures/Screenshots/Screenshot_20261026_004500.png, scratch/e2m1/ours-e2m1-cross-ultra.png
-
 - 📋 [DOOM-0513] **Dirt on floors, walls and ceilings looks like smeared paint, not grime that belongs to the surface.**
   User, 2026-10-26: "Currently it just looks like paint was messed
   instead of actual dirt." The current layer is DOOM-0181's filth
@@ -17348,69 +17445,6 @@ in CLAUDE.md describes.
   **Layman:** Standing near lava should make the air shimmer, like the heat over a hot road.
   Kind: feature.
   Source: user-request-2026-10-26.
-
-- ✅ [DOOM-0527] **Surface detail makes floors, walls and ceilings slide and tear as the player walks.**
-  User's F12 shots, E1M1, Solid raster, surface_detail 1. Two causes in
-  formulas/surface_detail.glsl (DOOM-0273): surfOffsetUV divided the
-  shift by viewTS.z (floor 0.05), so grazing views moved it by whole
-  tiles; and kSurfHeightScale was a fraction of each texture's own size,
-  so a 256-texel wall got four times a 64-texel flat's depth and its
-  dark parts slid. Fix: offset limiting (no divide) and depth as a
-  fraction of a 64-texel tile on every texture (surfDepthUV), in both
-  views. Headless A/B at E1M1 1956 -2463 120 and 1990 -2443 120: the
-  hanging screens tear with the old shader and match surface_detail 0
-  with the new one. Left: the user's play-test, and a look at the
-  ray-traced view (not confirmed headlessly).
-  2026-10-29 second pass: user's shots 37-41 showed the traced views
-  still sliding - Solid RT wrapped a wall's lower strip onto its
-  computer art, Ultra's derived red-light ceiling (no HD art) moved.
-  surfParallaxUV's march divided by nv; now offset-limited like the
-  raster helper. Headless A/B at 2051 -2349 129 (Ultra): old shader
-  pushes the lights toward the far edge, new matches surface_detail
-  0. The Solid RT strip did not reproduce at 1811 -2693 240; left for
-  the user's re-test. Gamepad unplug: user confirmed fire stops.
-  2026-10-29 third pass: the user saw the lights still moving, less.
-  Cause: the designed relief - luma makes lights sit about 8 units above
-  their surround. User chose flat lights; spec INV-3 amended and gated
-  (one loop, 2 findings fixed, 6f72d9b). kLightTextures in
-  surface_derive.h, exact names the user picked by eye from WAD renders
-  (CRATELIT keeps relief). Ultra A/B at 1688 -2247 4: underside PSNR vs
-  surface_detail 0 rose 17.8 -> 37.6 dB. Awaiting the user's play-test.
-  2026-10-29: user play-tested on master (a123d9d): Ultra lights fixed,
-  Solid fine with ray tracing on and off. Shipped.
-  **Layman:** With surface detail on, some textures appeared to move under your feet and big wall pictures tore apart; the fake depth is now the same small size everywhere.
-  Kind: fix.
-  Source: user-report-2026-10-29.
-  Evidence: linuxdoom-1.10/dev-shots/shot-0033.png, linuxdoom-1.10/dev-shots/shot-0035.png
-
-- ✅ [DOOM-0528] **Ultra's traced view shows an orange patch across a dark wall at E1M5.**
-  Seen 2026-10-30 at E1M5 -warpto -1360 104 90, skill 3, Ultra -rtview 6, with -inspect -freeze, DEV build, 150+ frames settled. The back wall's upper right reads flat orange-brown with a soft edge, where Solid's traced view at the same spot shows the dark wall. Present at 0f4b9c5, before the DOOM-0508 change, so it is not that change. Cause unknown. Captures: scratch/fled/o_u.png and a_u.png.
-  Cause found 2026-10-30: the filth stains (applyGrime, DOOM-0181)
-  replace the art at kStainOpacity 0.82. The patch goes with rt_filth 0.
-  The same stains made the bright green floor patches the website
-  session reported on E1M2. Calmer constants on trial, kStainOpacity
-  0.50, kGooChance 0.15, kGooColour halved; the user's answer on keeping
-  them is awaited, because the user liked the goo puddles on 2026-07-16
-  (scratch/fled/look/filth.png).
-  2026-10-30: the user chose the calmed filth, relayed by the website
-  session. Checked at the E1M5 spot with rt_filth 1 and 0: the patch is
-  now a faint brown tint with the art showing through, reduced and not
-  gone. The user accepted this. -rtverify PASS on this build.
-  **Layman:** In one room of Ultra's ray-traced view, part of a dark wall turns a flat orange.
-  Kind: fix.
-  Source: found-2026-10-30-doom-0508-capture.
-
-- ✅ [DOOM-0532] **The Brightness slider ran backwards: moving it right darkened the ray-traced view.**
-  DOOM-0096 mapped a larger slider value to a larger EV, and the tonemap's gain is 1 / (2^EV * 1.2). A sweep on 2026-10-30 at values 10, 13 and 15 showed the picture getting darker. RB_ExposureEV in rb_exposure.h now runs the other way and keeps value 10's EV, so a default picture is unchanged. A saved value other than 10 changes brightness.
-  **Layman:** The Brightness slider did the opposite of what it said. Now right is brighter.
-  Kind: fix.
-  Source: found-2026-10-30-trailer-brightness-test.
-
-- ✅ [DOOM-0533] **Ultra's SUPPORT2 art was reddish where the original metal is neutral grey.**
-  The original averages 98,98,98; the HD albedo averaged 71,57,54, and the ray-traced view showed door frames as dark red. Re-tinted with scripts/stage_hero.py's tint_to_doom. The other hero albedos were compared the same way and stay near their originals' hue.
-  **Layman:** Metal door frames in Ultra's ray-traced view looked dark red. They are grey again.
-  Kind: fix.
-  Source: website-session-relay-2026-10-30.
 
 - 📋 [DOOM-0534] **Ultra's HD walls show straight seams where the art steps sideways at E1M4.**
   Seen 2026-10-30 on the near wall in demo e1m4sk3s2, tic 205: straight horizontal and vertical lines where the pattern jumps. Both of Ultra's views show the same lines in the same places, so DOOM-0182's rasterised path did not bring them. Cause unknown. Capture: scratch/fled/bot/seam.png.
@@ -17946,40 +17980,6 @@ minor may break.
   docs/trailer-script.md. Order: bot, frame dump, sample for approval,
   then DOOM-0182, DOOM-0498, a release, then the final footage from that
   release.
-
-- ✅ [DOOM-0498] **Ship the HD art in the downloads, so Ultra has its art outside the source tree.**
-  Neither the Windows zip nor the AppImage carries assets/ultra/ (checked
-  on the 0.7.4 release assets, 2026-10-23), so Ultra in a release always
-  falls back to the original art. DOOM-0283 made that visible: the
-  Renderer row reads "Ultra (no HD art)" and each level start says so.
-
-  The art is CC0 (assets/ultra/LICENSES), so bundling it is allowed. It
-  makes each download several times larger. The work: copy assets/ultra/
-  into both packages, teach rb_asset_set_exe_dir a packaged-layout
-  candidate (it only tries the source tree today), ship the LICENSES file
-  beside the art, and have release.sh check the art is in each asset.
-  User chose on 2026-10-23 to land the notice first and schedule this
-  separately.
-  User decision 2026-10-30, relayed by the website session: ship the HD
-  art in the downloads in the next release; the user was told they get
-  several times larger. When that release is out, tell the website
-  session so it removes its About-page note.
-  2026-10-30: built. packaging/ultra-art.sh picks the committed art (no
-  derived/, no heroes/bringup/) and refuses a map LICENSES does not
-  list; release.sh checks each finished download holds exactly it.
-  rb_asset_set_exe_dir tries assets/ultra/ beside the executable first.
-  Sizes: zip 3.9 to 51.5 MB, AppImage 11.1 to 58.4 MB. A test AppImage
-  run from another folder with no DOOMASSETDIR loads 17 materials, 70
-  images. The zip's own exe under Wine does the same on this machine's
-  GPU. On real Windows (GTX 1050, no RT) Solid runs from the zip, 120
-  frames recorded; that box cannot test Ultra, so Ultra on real Windows
-  is unverified. TEKWALL1 stays paletted in a download: its maps are
-  derived from the WAD, so they may not ship. A source-tree run still
-  reports 18.
-  **Layman:** The downloadable game does not include the high-definition textures, so Ultra in a downloaded copy shows the original art. This item adds them to the downloads.
-  Kind: package.
-  Source: user-decision-2026-10-23, split out of DOOM-0283.
-  Lanes: packaging, assets.
 
 - 📋 [DOOM-0529] **Let Claude play DOOM: a developer-only bot that records demo runs that look like real play.**
   User, 2026-10-30, relayed by the website session: "I need Claude to learn how to play the game so that it can do the recordings." Runs must look like real play: moving with purpose, aiming, shooting, surviving about 20 seconds. Stiff scripted movement will not do.
