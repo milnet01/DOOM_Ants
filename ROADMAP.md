@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=530 -->
+<!-- ants-roadmap-id-high-water: DOOM=531 -->
 
 # Roadmap
 
@@ -17641,6 +17641,12 @@ controls they expect to rebind.
   Source: user-request-2026-10-26.
   Lanes: hud, input.
 
+- 💭 [DOOM-0531] **The 3D views centre the picture on the whole screen, Classic above the status bar, so the horizon differs.**
+  Seen 2026-10-30 in the trailer sample, E1M2: with the same position and angle recorded, the 3D views sit the horizon lower than Classic, and a corpse on the floor near the player is in Classic's view and below the 3D view's bottom edge, behind the status bar. Not a sync fault. Whether to change it is the user's call: the 3D views would match Classic's framing, and would change for everyone who plays them.
+  **Layman:** With the status bar showing, the 3D views show a little less floor than Classic does.
+  Kind: ux.
+  Source: found-2026-10-30-doom-0339-sample.
+
 ## 1.0.0 — Other people can run it
 
 Distribution: a signed Windows installer, in-game updates, and a trailer. At
@@ -17893,6 +17899,10 @@ minor may break.
   Design: an in-engine bot behind DOOM_DEV, so releases do not contain it. `-botplay SEED` with `-record NAME` fills each ticcmd from the game's real state, so what it writes is an ordinary demo. It routes across the map's sectors, opens doors, faces and leads visible monsters with a limited, slightly noisy turn rate, strafes while fighting, and picks up items when hurt. It runs one tic per frame on the Classic renderer, so a run costs seconds. A harness tries many seeds, scores each (alive at the end, kills, distance, time stuck, facing something worth seeing) and keeps the best.
   Done when: a chosen run replays identically under -timedemo (per-tic state hash), lasts at least 20 s alive, and a person watching it does not call it stiff. Nothing mechanical decides that last part; the user judges it.
   No spec: one subsystem, nothing binds to it, cheap to redo, absent from releases.
+  2026-10-30: built (b3c1500). E1M2 skill 2: 40 of 40 seeds alive at 700
+  tics. Seed 27 at 600 tics replays to the same state on all five views.
+  Open: the user's verdict on whether it looks played, not scripted. Not
+  tried: maps beyond E1M1, E1M2, E1M3 and E1M5.
   **Layman:** Claude plays the game itself and records the run, so nobody has to sit at the controls for the trailer.
   Kind: feature.
   Source: user-request-2026-10-30-via-website-session.
@@ -17900,6 +17910,11 @@ minor may break.
 - 📋 [DOOM-0530] **A developer-only frame dump: one image per tic from a demo, with an in-between frame, in every view.**
   For DOOM-0339. Real-time capture drifts when a view runs slower than real time. Under -timedemo the engine steps one tic per drawn frame, so frame numbers line up across views. The flag dumps each frame, and in Solid and Ultra also one interpolated frame between tics, for 70 fps; Classic stays 35 and is doubled in the edit (website session agreed 2026-10-30).
   Done when: a state hash and the HUD match per frame number across all five views. Behind DOOM_DEV.
+  2026-10-30: built (b3c1500). 600 tics in five views: 1200 pictures per
+  3D view, 600 in Classic. Position and angle identical in all 2400
+  full-tic comparisons, final state identical. Silent: a dump runs at
+  its own pace, so a take with the game's sound still needs a real-time
+  capture. Trim the opening seconds; the denoiser starts empty.
   **Layman:** Saves each frame of a replayed run as a picture, so all five views of the trailer show exactly the same moment.
   Kind: feature.
   Source: user-request-2026-10-30-via-website-session.
