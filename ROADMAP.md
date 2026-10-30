@@ -18042,6 +18042,23 @@ minor may break.
   must be drawn at its final shape: 1708x800 scaled to 1920x1080
   stretches about 20% vertically. Release 0.8.0 loads 17 materials,
   TEKWALL1 stays paletted.
+  2026-10-30, final footage in progress. Frame shape solved: the window
+  is SCREENWIDTH x SCREENHEIGHT x scale (854x400 x 2), and the private
+  display had no window manager to grant SDL's fullscreen request.
+  shoot2.sh now starts openbox and takes GEOM (default 2560x1440);
+  Classic and 3D both then draw 2560x1440, checked by eye. A Classic
+  dump needs fractions for the HUD crop, as sync2.py has. Scenes: scene1
+  e1m6sk3s5 tic 945, scene2 e3m2sk3s11 tic 280 (outdoor), scene3
+  e2m1sk3s7 tic 840, scene4 e2m4sk3s4 tic 245; 525 tics each, 1052
+  pictures per 3D view, 526 in Classic. Sound sync: the mixer starts
+  sounds on 2048-sample buffers, so each shot lands up to 46 ms late and
+  per-shot spread is 10 to 19 ms; no 5 s stretch moved more than about
+  20 ms. A scene's shots alone can give a false offset by hundreds of
+  ms: use the whole demo's ammo changes (fullam.sh on a software X
+  server, sync2.py) and cross-check with xc.py between takes (agreed
+  within 2 and 22 ms). Music first sound came 1.484 s before tic 1 in
+  one take with both (E2M4); music is aligned by that, not measured per
+  scene.
   **Layman:** Saves each frame of a replayed run as a picture, so all five views of the trailer show exactly the same moment.
   Kind: feature.
   Source: user-request-2026-10-30-via-website-session.
