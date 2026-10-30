@@ -17942,6 +17942,17 @@ minor may break.
   full-tic comparisons, final state identical. Silent: a dump runs at
   its own pace, so a take with the game's sound still needs a real-time
   capture. Trim the opening seconds; the denoiser starts empty.
+  Final-footage settings, 2026-10-30, user via the website session:
+  brighter ray-traced views with the flashlight on, by real engine
+  settings only; DOOM-0531 left as it is, no time on it for the trailer.
+  Trial: rt_brightness 13, flashlight 1, rt_fog 1, looks right indoors
+  at E1M2; at E1M4 outdoors (demo e1m4sk3s2, tics 140 to 315) a white
+  fog bank covers the far half and a near Ultra wall blows out, so
+  outdoor scenes need a retest with less fog and lower brightness. A
+  demo name passed to -timedemo must fit a lump name, 8 characters, or
+  the run ends with no frames. Sound sync of a real-time take against
+  the dump is not yet measured; the website session wants the offset,
+  and to hear before filming if it cannot hold.
   **Layman:** Saves each frame of a replayed run as a picture, so all five views of the trailer show exactly the same moment.
   Kind: feature.
   Source: user-request-2026-10-30-via-website-session.
