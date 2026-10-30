@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=528 -->
+<!-- ants-roadmap-id-high-water: DOOM=530 -->
 
 # Roadmap
 
@@ -14593,6 +14593,9 @@ in CLAUDE.md describes.
   (for parity) port the DOOM-0181 de-tiling + filth wrappers so the raster view
   matches the RT look. Keep Classic + paletted byte-identical. Depends on the
   DOOMASSETDIR launcher fix (2026-07-16) so HD actually loads.
+  User decision 2026-10-30, relayed by the website session: do this
+  before the trailer's final footage, so comparison 2 shows HD art in
+  Ultra's rasterised slice. Due in the next release.
   **Layman:** Make the fancy high-res wall textures show up in Ultra's fast (non-ray-traced) view too, so switching ray-tracing off doesn't drop you back to the blocky originals.
   Kind: feature.
   Source: user-request-2026-07-16.
@@ -17857,6 +17860,11 @@ minor may break.
   trailer, demoreel needs --gpu for Vulkan/GL, and records the -s size
   only if the app does not resize its own window (demoreel defect
   DEMO-0099).
+  2026-10-30: the brief is now a 3-way split-screen in five views
+  (website session edits, DOOM shoots), not the ladder cut in
+  docs/trailer-script.md. Order: bot, frame dump, sample for approval,
+  then DOOM-0182, DOOM-0498, a release, then the final footage from that
+  release.
 
 - 📋 [DOOM-0498] **Ship the HD art in the downloads, so Ultra has its art outside the source tree.**
   Neither the Windows zip nor the AppImage carries assets/ultra/ (checked
@@ -17871,10 +17879,30 @@ minor may break.
   beside the art, and have release.sh check the art is in each asset.
   User chose on 2026-10-23 to land the notice first and schedule this
   separately.
+  User decision 2026-10-30, relayed by the website session: ship the HD
+  art in the downloads in the next release; the user was told they get
+  several times larger. When that release is out, tell the website
+  session so it removes its About-page note.
   **Layman:** The downloadable game does not include the high-definition textures, so Ultra in a downloaded copy shows the original art. This item adds them to the downloads.
   Kind: package.
   Source: user-decision-2026-10-23, split out of DOOM-0283.
   Lanes: packaging, assets.
+
+- 📋 [DOOM-0529] **Let Claude play DOOM: a developer-only bot that records demo runs that look like real play.**
+  User, 2026-10-30, relayed by the website session: "I need Claude to learn how to play the game so that it can do the recordings." Runs must look like real play: moving with purpose, aiming, shooting, surviving about 20 seconds. Stiff scripted movement will not do.
+  Design: an in-engine bot behind DOOM_DEV, so releases do not contain it. `-botplay SEED` with `-record NAME` fills each ticcmd from the game's real state, so what it writes is an ordinary demo. It routes across the map's sectors, opens doors, faces and leads visible monsters with a limited, slightly noisy turn rate, strafes while fighting, and picks up items when hurt. It runs one tic per frame on the Classic renderer, so a run costs seconds. A harness tries many seeds, scores each (alive at the end, kills, distance, time stuck, facing something worth seeing) and keeps the best.
+  Done when: a chosen run replays identically under -timedemo (per-tic state hash), lasts at least 20 s alive, and a person watching it does not call it stiff. Nothing mechanical decides that last part; the user judges it.
+  No spec: one subsystem, nothing binds to it, cheap to redo, absent from releases.
+  **Layman:** Claude plays the game itself and records the run, so nobody has to sit at the controls for the trailer.
+  Kind: feature.
+  Source: user-request-2026-10-30-via-website-session.
+
+- 📋 [DOOM-0530] **A developer-only frame dump: one image per tic from a demo, with an in-between frame, in every view.**
+  For DOOM-0339. Real-time capture drifts when a view runs slower than real time. Under -timedemo the engine steps one tic per drawn frame, so frame numbers line up across views. The flag dumps each frame, and in Solid and Ultra also one interpolated frame between tics, for 70 fps; Classic stays 35 and is doubled in the edit (website session agreed 2026-10-30).
+  Done when: a state hash and the HUD match per frame number across all five views. Behind DOOM_DEV.
+  **Layman:** Saves each frame of a replayed run as a picture, so all five views of the trailer show exactly the same moment.
+  Kind: feature.
+  Source: user-request-2026-10-30-via-website-session.
 
 ## 1.1.0 — Later
 
