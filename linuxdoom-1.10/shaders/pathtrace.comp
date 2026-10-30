@@ -176,7 +176,7 @@ const float kGrimeStrength    = 0.25;   // subtle large-scale brightness variati
 const float kGrimeCrevice  = 0.75;      // extra darkening in AO-occluded crevices (grounding)
 const float kStainThresh   = 0.44;      // grunge value below which a stain forms
 const float kStainEdge     = 0.07;      // smoothstep band (small = hard, defined edge)
-const float kStainOpacity  = 0.82;      // how opaque a stain sits over the albedo
+const float kStainOpacity  = 0.50;      // how opaque a stain sits over the albedo
 // Dirt is NOT one flat colour: a stain blends across earthy tones (brown -> ochre -> soot) by a
 // SMOOTH hue selector (a coarse overlay sample, not a cell grid — cells made straight seams), plus
 // per-texel brightness mottle, so colour varies within and between marks. Green goo pools on
@@ -185,8 +185,8 @@ const vec3  kDirtBrown     = vec3(0.22, 0.14, 0.08);  // core dirt
 const vec3  kDirtOchre     = vec3(0.30, 0.20, 0.09);  // lighter earthy streaks
 const vec3  kDirtDark      = vec3(0.11, 0.07, 0.04);  // deep dark-brown patches
 const vec3  kSootColour    = vec3(0.06, 0.05, 0.045); // dark grime
-const vec3  kGooColour     = vec3(0.12, 0.42, 0.06);  // green goo (floors only)
-const float kGooChance     = 0.40;      // goo share of floor stains
+const vec3  kGooColour     = vec3(0.07, 0.20, 0.04);  // green goo (floors only)
+const float kGooChance     = 0.15;      // goo share of floor stains
 // Marks come in a RANGE of sizes by summing the overlay at three world scales (big stains ->
 // medium -> fine speckle); one scale alone reads as a repeating stamp. Weights sum to 1 so the
 // combined value stays ~[0,1]. Per-octave UV offsets stop the scales aligning into a grid.
