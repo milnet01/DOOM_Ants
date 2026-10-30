@@ -6,6 +6,8 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-30
+
 ### Added
 
 - **The downloads now include Ultra's HD art** (DOOM-0498)
@@ -1681,7 +1683,8 @@ attached; the Windows build and a fully self-contained package come later.
 - **Get linuxdoom-1.10 compiling on modern 64-bit Linux.** (DOOM-0003)
   Fix the 1997 code so today's compiler can build it.
 
-[Unreleased]: https://github.com/milnet01/DOOM_Ants/compare/v0.7.4...HEAD
+[Unreleased]: https://github.com/milnet01/DOOM_Ants/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/milnet01/DOOM_Ants/compare/v0.7.4...v0.8.0
 [0.7.4]: https://github.com/milnet01/DOOM_Ants/compare/v0.7.3...v0.7.4
 [0.7.3]: https://github.com/milnet01/DOOM_Ants/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/milnet01/DOOM_Ants/compare/v0.7.1...v0.7.2
