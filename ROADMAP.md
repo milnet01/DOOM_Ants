@@ -10016,7 +10016,9 @@ into `CHANGELOG.md`.
   Kind: enhancement.
   Source: user-request-2026-07-21.
 
-## 0.8.0 — What a player meets is correct
+## 0.8.0 — HD art in the downloads and in Ultra's rasterised view
+
+## 0.9.0 — What a player meets is correct
 
 Defects a player can actually hit: crashes, hangs, lost saves, wrong pixels,
 wrong sound, and anything a malformed WAD can do to the engine. Shipped items
@@ -10585,6 +10587,10 @@ stay in their phase sections; this heading holds only work still to come.
   also cites DOOMWADDIR's "." default.
   Budget: estMB must count the chain (x1.33), and kHdBudgetMB is
   checked against it.
+  2026-10-30: DOOM-0182 gave the HD maps a mip chain, and Ultra's
+  rasterised view uses it. The traced view still reads the top level,
+  because a trace has no screen derivatives, so this item stays open for
+  that view.
   **Layman:** Far-away walls in Ultra sparkle and crawl as you move, because the game has no smaller copies of its HD textures to use at a distance.
   Kind: implement.
   Source: DOOM-0410 split, review-code 2026-09-01 lane vk-materials.
@@ -11018,7 +11024,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: user-request-2026-10-26.
   Evidence: /home/ants/Pictures/Screenshots/Screenshot_20261026_003606.png
 
-## 0.9.0 — The codebase can be trusted
+## 0.10.0 — The codebase can be trusted
 
 Work only a maintainer sees: duplication, dead code, static analysis that covers
 nothing, documents that contradict the code, and the harnesses that make a
@@ -13016,7 +13022,7 @@ defect visible before a player finds it.
   Kind: review-fix.
   Source: code-review-pr1-2026-10-29.
 
-## 0.10.0 — The frame budget
+## 0.11.0 — The frame budget
 
 Performance and pacing, and the benchmark harness that makes a regression
 visible. The 60 FPS floor named in CLAUDE.md is the sign this release is judged
@@ -13717,7 +13723,7 @@ against.
   Source: ut-ants-review-2026-10-24.
   Lanes: renderer.
 
-## 0.11.0 — Light and materials
+## 0.12.0 — Light and materials
 
 The Spin's feature set: path tracing, volumetrics, HD art, and everything that
 hangs off them. This is where Solid and Ultra become what the render-tier table
@@ -17429,7 +17435,7 @@ in CLAUDE.md describes.
   Kind: fix.
   Source: found-2026-10-30-doom-0182-capture.
 
-## 0.12.0 — The player's experience
+## 0.13.0 — The player's experience
 
 Input, menus, audio and the HUD — the settings a player expects to find and the
 controls they expect to rebind.
