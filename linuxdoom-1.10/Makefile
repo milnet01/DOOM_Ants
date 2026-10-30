@@ -143,6 +143,8 @@ OBJS=				\
 		$(O)/f_finale.o		\
 		$(O)/f_wipe.o 		\
 		$(O)/d_main.o			\
+		$(O)/d_ledger.o		\
+		$(O)/run_ledger.o		\
 		$(O)/d_net.o			\
 		$(O)/d_items.o		\
 		$(O)/g_game.o			\
@@ -334,6 +336,18 @@ windows:	generated
 	  LDFLAGS="-static-libgcc -static-libstdc++" \
 	  EXTRALIBS="-lws2_32" \
 	  mingw/doom_ants.exe
+
+# DOOM-0502: a frameledger run file names the commit it was built from. The stamp
+# is compared before it is replaced, so a build with no new commit recompiles nothing.
+# Dirty looks at this directory alone: a docs edit does not change the engine.
+.PHONY:	FORCE
+$(O)/build_stamp.h:	FORCE | $(O)
+	@c=$$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown); \
+	if git diff --quiet HEAD -- . 2>/dev/null; then d=0; else d=1; fi; \
+	printf '#define BUILD_COMMIT "%s"\n#define BUILD_DIRTY %s\n' "$$c" "$$d" > $@.new; \
+	cmp -s $@.new $@ || cp $@.new $@; rm -f $@.new
+$(O)/d_ledger.o:	$(O)/build_stamp.h
+$(O)/d_ledger.o:	CFLAGS += -I$(O)
 
 # Create the object output dir on demand. Order-only prerequisite (| $(O)) so its
 # mtime never forces a rebuild; needed on a fresh clone where linux/ doesn't exist

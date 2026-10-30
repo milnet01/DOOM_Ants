@@ -92,6 +92,7 @@ static const char rcsid[] __attribute__((used)) = "$Id: d_main.c,v 1.8 1997/02/0
 
 
 #include "d_main.h"
+#include "d_ledger.h"
 
 //
 // D-DoomLoop()
@@ -434,6 +435,11 @@ void D_DoomLoop (void)
 
     while (1)
     {
+	double ledgerTicMs;
+
+	D_LedgerFrameBegin ();	// DOOM-0502
+	ledgerTicMs = D_LedgerClockMs ();
+
 	// frame syncronous IO operations
 	I_StartFrame ();
 
@@ -481,6 +487,8 @@ void D_DoomLoop (void)
 	{
 	    TryRunTics (); // will run at least one tic
 	}
+
+	D_LedgerAfterTics (gametic - ticBefore, D_LedgerClockMs () - ledgerTicMs);
 
 	// Drive the render interpolation (DOOM-0048). Reset on entry so a stale frame
 	// can't smear; snapshot when a tic ran; set the sub-tic fraction every frame.
@@ -1300,6 +1308,8 @@ void D_DoomMain (void)
     char                    file[256];
 
     FindResponseFile ();
+
+    D_LedgerInit ();		// DOOM-0502: before anything loads
 
     IdentifyVersion ();
     if (gamemode == commercial)

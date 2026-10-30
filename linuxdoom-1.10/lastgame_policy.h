@@ -19,7 +19,7 @@
 
 static const char* const D_TEST_RUN_FLAGS[] = {
     "-bootsmoke", "-timedemo", "-playdemo", "-devshot", "-shotverify",
-    "-shotcompare", "-noinput", "-nodraw", "-inspect", "-freeze",
+    "-shotcompare", "-noinput", "-nodraw", "-inspect", "-freeze", "-frameledger",
 };
 
 // 1 when argv marks this launch as a test or measurement run. argv[0] is the

@@ -46,6 +46,7 @@ rcsid[] __attribute__((used)) = "$Id: m_bbox.c,v 1.1 1997/02/03 22:45:10 b1 Exp 
 #pragma implementation "i_system.h"
 #endif
 #include "i_system.h"
+#include "d_ledger.h"
 
 
 
@@ -158,6 +159,7 @@ void I_Init (void)
 // grabs them).
 void I_QuitTeardown (void)
 {
+    D_LedgerFinish ();		// DOOM-0502: a quit ends the run with its close line
     D_QuitNetGame ();
     I_ShutdownSound();
     I_ShutdownMusic();

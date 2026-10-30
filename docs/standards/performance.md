@@ -41,6 +41,11 @@ Use the **per-pass GPU profiler** — the `` \ `` (backslash) key, `rb_profile`,
 DOOM-0090 — which prints each render pass's GPU time (Solid *and* Ultra). Measure
 before and after any performance-affecting change; don't guess.
 
+For a per-frame record, run with `-frameledger FILE` (`linuxdoom-1.10/d_ledger.c`
+lists its flags). It writes frameledger's run file, which `frameledger check`,
+`report` and `floor --fps 60` read. A private display gives a small window by
+default, so pass `-scale`: `-scale 6` with `render_scale` 50 traces 1920x1200.
+
 ## The comparison rule (this one bites)
 
 **Always quote an FPS number together with the render scale it was measured at,

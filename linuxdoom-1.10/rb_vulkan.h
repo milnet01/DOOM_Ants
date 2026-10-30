@@ -45,6 +45,7 @@
 #define __RB_VULKAN__
 
 #include "r_mesh.h"     // rb_view_t -- the POD camera handed across the seam
+#include "run_ledger.h" // rl_facts_t -- no DOOM headers either
 
 #ifdef __cplusplus
 extern "C" {
@@ -81,6 +82,8 @@ void RB_Vulkan_TierChanged(void);
 // DOOM-0283: nonzero if the HD asset root holds materials.csv, i.e. Ultra will
 // load HD art rather than fall back to the original art. Needs no device.
 int  RB_Vulkan_HdArtFound(void);
+// DOOM-0502: fills the GPU and swapchain facts of a frameledger run's header.
+void RB_Vulkan_LedgerFacts(rl_facts_t* f);
 
 #ifdef __cplusplus
 }

@@ -137,6 +137,7 @@ static_assert(sizeof(rb_matctrl_t) == 40, "rb_matctrl_t must be 40 bytes (std430
 #include "shaders/rt_tonemap.comp.spv.h"             // DOOM-0345 R1: RT expose + tone-map + combine
 #include "shaders/bloom_extract_rt.comp.spv.h"       // DOOM-0345 R2: RT bright pass
 #include "assets/Oxanium-SemiBold.ttf.h"    // DOOM-0206 L4: bundled OFL menu font (oxanium_ttf[])
+#include "run_ledger.h"                     // DOOM-0502: per-frame rows for a benchmark run
 
 // DOOM-0225: the four Vulkan 1.2 descriptor-indexing features the bindless
 // material array needs. RB_VulkanProbe and PickPhysicalAndDevice both ask this.
@@ -359,6 +360,7 @@ struct VulkanState
     VkSwapchainKHR           swapchain = VK_NULL_HANDLE;
     VkFormat                 format    = VK_FORMAT_UNDEFINED;
     VkExtent2D               extent    = { 0, 0 };
+    bool                     presentVsync = true;   // DOOM-0502: FIFO waits for the display; MAILBOX does not
     std::vector<VkImage>     images;
     std::vector<VkImageView> imageViews;
 
@@ -597,6 +599,7 @@ struct VulkanState
     float       timestampPeriod = 0.0f;   // ns per tick (0 = timestamps unusable)
     bool        gpuTimersInUse  = false;  // last frame wrote timestamps
     bool        profRasterFrame = false;  // last timed frame was raster (routes the readback: raster passes vs RT passes)
+    long long   gpuTimedFrame   = -1;     // DOOM-0502: the ledger frame that wrote those timestamps
     // [0]=sprite-AS [1]=megakernel [2]=denoise+TAAU [3]=blit, then the DOOM-0144
     // sub-breakdown of [2]: [4]=temporal [5]=a-trous [6]=composite [7]=TAAU.
     // DOOM-0345 R3: ten slots, not eight — the RT chain APPENDS bloom (8) and rt_tonemap
@@ -1886,6 +1889,7 @@ void CreateSwapchain()
             if (m == VK_PRESENT_MODE_MAILBOX_KHR) { presentMode = m; break; }
     }
     sci.presentMode = presentMode;
+    g.presentVsync = presentMode == VK_PRESENT_MODE_FIFO_KHR;
     // MAILBOX needs a third image to hold the queued-but-not-presented frame; bump
     // the count if the surface minimum left us at two (clamped to the max below).
     if (presentMode == VK_PRESENT_MODE_MAILBOX_KHR && sci.minImageCount < 3)
@@ -9082,7 +9086,7 @@ void RecordRtTrace(uint32_t idx)
     // DOOM-0090: per-pass GPU timer. Reset the pool + stamp the frame's GPU start,
     // then stamp each pass boundary below. Read back next frame (single-frame-in-
     // flight, so it's complete). Segments: sprite-AS / megakernel / denoise+TAAU / blit.
-    const bool prof = rb_profile && g.gpuTimerPool;
+    const bool prof = (rb_profile || RL_Active()) && g.gpuTimerPool;
     if (prof) {
         vkCmdResetQueryPool(g.cmd, g.gpuTimerPool, 0, 10);
         vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, g.gpuTimerPool, 0);
@@ -9749,6 +9753,7 @@ void RecordRtTrace(uint32_t idx)
         vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 4);
         g.gpuTimersInUse = true;   // results ready to read at the top of next frame
         g.profRasterFrame = false; // this timed frame was the RT path -> RT readback interpretation
+        g.gpuTimedFrame = RL_CurrentFrame();
     }
 
     // Snapshot this frame's camera basis as "previous" for next frame's temporal
@@ -10308,8 +10313,10 @@ extern "C" void RB_Vulkan_Present(void)
 
     // DOOM-0170 perf: CPU-side timing, same `\` toggle as the GPU pass timers. Captured
     // once here so all segments share the flag even if rb_profile flips mid-frame.
-    const bool cprof = rb_profile;
+    // DOOM-0502: a benchmark run reads the same timers; only the prints stay on the toggle.
+    const bool cprof = rb_profile || RL_Active();
     const double tPresent0 = cprof ? CpuNowMs() : 0.0;
+    const double buildMs0 = g.cpuMs[1];
 
     if (g.needRecreate)
     {
@@ -10391,7 +10398,12 @@ extern "C" void RB_Vulkan_Present(void)
     // DOOM-0074 build-ahead the steady-state raster build already ran above (overlapping
     // that GPU work), so this residual wait shrinks toward max(0, GPU - build): a large
     // value still means the GPU is the long pole, ~0 means the CPU build outran it.
-    if (cprof) g.cpuMs[0] += CpuNowMs() - tFence0;
+    if (cprof)
+    {
+        const double fenceMs = CpuNowMs() - tFence0;
+        g.cpuMs[0] += fenceMs;
+        RL_FenceWait(fenceMs);
+    }
 
     // DOOM-0090: read back the previous frame's per-pass GPU timestamps (the fence
     // wait above guarantees that frame is complete, so this never stalls), convert
@@ -10413,6 +10425,37 @@ extern "C" void RB_Vulkan_Present(void)
                 sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS)
         {
             const double k = (double)g.timestampPeriod / 1.0e6;   // ticks -> ms
+            // DOOM-0502: the same intervals as the buckets below, one frame at a time.
+            // These count against the frame that submitted them, not the one reading now.
+            if (RL_Active())
+            {
+                const auto ms = [&](int to, int from) { return (double)(ts[to] - ts[from]) * k; };
+                const long long fr = g.gpuTimedFrame;
+                if (g.profRasterFrame)
+                {
+                    RL_GpuPass(fr, "shadow", 0, ms(1, 0));
+                    RL_GpuPass(fr, "scene", 0, ms(2, 1));
+                    RL_GpuPass(fr, "ssao", 0, ms(3, 2));
+                    RL_GpuPass(fr, "bloom", 0, ms(4, 3));
+                    RL_GpuPass(fr, "composite", 0, ms(5, 4));
+                    RL_GpuPass(fr, "hud", 0, ms(6, 5));
+                    RL_GpuSpan(fr, ms(6, 0));
+                }
+                else
+                {
+                    RL_GpuPass(fr, "sprites", 0, ms(1, 0));
+                    RL_GpuPass(fr, "trace", 0, ms(2, 1));
+                    RL_GpuPass(fr, "denoise_post", 0, ms(3, 2));
+                    RL_GpuPass(fr, "temporal", 1, ms(5, 2));
+                    RL_GpuPass(fr, "atrous", 1, ms(6, 5));
+                    RL_GpuPass(fr, "composite", 1, ms(7, 6));
+                    RL_GpuPass(fr, "bloom", 1, ms(8, 7));
+                    RL_GpuPass(fr, "tonemap", 1, ms(9, 8));
+                    RL_GpuPass(fr, "taau", 1, ms(3, 9));
+                    RL_GpuPass(fr, "blit", 0, ms(4, 3));
+                    RL_GpuSpan(fr, ms(4, 0));
+                }
+            }
             if (g.profRasterFrame)
             {
                 // Solid raster passes (DOOM-0170): ts 0..6 = start / shadow / scene / SSAO /
@@ -10450,7 +10493,7 @@ extern "C" void RB_Vulkan_Present(void)
             g.profFrames++;
             int now = I_GetTimeMS();
             if (g.profLastReport == 0) g.profLastReport = now;
-            if (now - g.profLastReport >= 1000 && g.profFrames > 0)
+            if (rb_profile && now - g.profLastReport >= 1000 && g.profFrames > 0)
             {
                 const double f = 1.0 / (double)g.profFrames;
                 if (g.profRasterFrame)
@@ -10568,8 +10611,10 @@ extern "C" void RB_Vulkan_Present(void)
     }
 
     uint32_t idx = 0;
+    const double tAcquire0 = cprof ? CpuNowMs() : 0.0;
     VkResult acq = vkAcquireNextImageKHR(g.device, g.swapchain, UINT64_MAX,
                                          g.imageAvailable, VK_NULL_HANDLE, &idx);
+    if (cprof) RL_PresentWait(CpuNowMs() - tAcquire0);
     if (acq == VK_ERROR_OUT_OF_DATE_KHR)
     {
         g.needRecreate = true;
@@ -10661,7 +10706,7 @@ extern "C" void RB_Vulkan_Present(void)
     // of the next present; profRasterFrame routes that readback to the raster interpretation.
     // RT frames drive the same 10-slot pool from RecordRtTrace, and the two are mutually
     // exclusive per frame, so they never collide.
-    const bool rprof = rb_profile && g.gpuTimerPool;
+    const bool rprof = (rb_profile || RL_Active()) && g.gpuTimerPool;
     if (rprof) {
         vkCmdResetQueryPool(g.cmd, g.gpuTimerPool, 0, 10);
         vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, g.gpuTimerPool, 0);
@@ -11101,6 +11146,7 @@ extern "C" void RB_Vulkan_Present(void)
         vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 6);  // after HUD/present
         g.gpuTimersInUse  = true;   // results ready to read at the top of next frame
         g.profRasterFrame = true;   // this timed frame was the raster path -> raster readback
+        g.gpuTimedFrame = RL_CurrentFrame();
     }
     }   // end of the non-RT (raster) recording branch
 
@@ -11221,7 +11267,10 @@ extern "C" void RB_Vulkan_Present(void)
     pi.swapchainCount = 1;
     pi.pSwapchains = &g.swapchain;
     pi.pImageIndices = &idx;
+    const double tQueue0 = cprof ? CpuNowMs() : 0.0;
     VkResult pr = vkQueuePresentKHR(g.queue, &pi);
+    const double queueMs = cprof ? CpuNowMs() - tQueue0 : 0.0;
+    if (cprof) RL_PresentWait(queueMs);
     if (pr == VK_ERROR_OUT_OF_DATE_KHR || pr == VK_SUBOPTIMAL_KHR)
         g.needRecreate = true;
     else if (pr != VK_SUCCESS)
@@ -11399,9 +11448,13 @@ extern "C" void RB_Vulkan_Present(void)
         g.cpuMs[3] += tEnd - tSubmit0;        // submit + present call
         g.cpuMs[4] += tEnd - tPresent0;       // whole present (incl. fence wait idle)
         g.cpuFrames++;
+        // DOOM-0502: the present call's own wait is frame/present_wait, not submit work.
+        RL_CpuPass("build", g.cpuMs[1] - buildMs0);
+        RL_CpuPass("record", tSubmit0 - tRecord0);
+        RL_CpuPass("submit", tEnd - tSubmit0 - queueMs);
         int nowc = I_GetTimeMS();
         if (g.cpuLastReport == 0) g.cpuLastReport = nowc;
-        if (nowc - g.cpuLastReport >= 1000 && g.cpuFrames > 0)
+        if (rb_profile && nowc - g.cpuLastReport >= 1000 && g.cpuFrames > 0)
         {
             const double f = 1.0 / (double)g.cpuFrames;
             printf("[cpu_profile] %3d fps | fenceWait %.2f | build %.2f | record %.2f | "
@@ -11418,6 +11471,31 @@ extern "C" void RB_Vulkan_Present(void)
             g.cpuLastReport = nowc;
         }
     }
+}
+
+extern "C" void RB_Vulkan_LedgerFacts(rl_facts_t* f)
+{
+    static char device[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE];
+    static char driver[VK_MAX_DRIVER_NAME_SIZE + VK_MAX_DRIVER_INFO_SIZE + 2];
+    VkPhysicalDeviceDriverProperties dp = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES };
+    VkPhysicalDeviceProperties2 p2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
+    p2.pNext = &dp;
+    vkGetPhysicalDeviceProperties2(g.phys, &p2);
+    snprintf(device, sizeof device, "%s", p2.properties.deviceName);
+    snprintf(driver, sizeof driver, "%s %s", dp.driverName, dp.driverInfo);
+
+    f->device = device;
+    f->renderer = device;
+    f->driver = driver;
+    f->api = "vulkan-1.2";
+    f->width = (int)g.extent.width;
+    f->height = (int)g.extent.height;
+    f->render_scale_pct = rb_renderscale < 25 ? 25 : (rb_renderscale > 100 ? 100 : rb_renderscale);
+    f->vsync = g.presentVsync;
+    f->pipelined = 1;       // the CPU build overlaps the previous frame's GPU work (DOOM-0074)
+    f->frames_in_flight = (int)VulkanState::kFramesInFlight;
+    f->ray_tracing = g.lastRtActive;
+    f->gpu_tick_ns = g.timestampPeriod;
 }
 
 extern "C" void RB_Vulkan_Shutdown(void)

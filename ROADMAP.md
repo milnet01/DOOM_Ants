@@ -13620,7 +13620,7 @@ against.
   Source: in-session-2026-10-08 DOOM-0211 B2 measurement.
   Evidence: /home/ants/doom-scratch/p0211/real-top.png, /home/ants/doom-scratch/p0211/base-perf-top.png
 
-- 📋 [DOOM-0502] **Write per-frame timings in the shared frameledger format, so the ray-traced view's road to 60 FPS can be measured.**
+- ✅ [DOOM-0502] **Write per-frame timings in the shared frameledger format, so the ray-traced view's road to 60 FPS can be measured.**
   User decision 2026-10-24: DOOM Ants adopts frameledger, the shared
   analyser for Vestige, UT Ants and DOOM Ants
   (/mnt/Games/Scripts/Linux/frameledger, its own session). DOOM-0431
@@ -13647,6 +13647,10 @@ against.
   It holds frameledger.pyz, include/frameledger.h and LICENSE. Same
   bytes as v0.1.0-rc.1; both Windows runs (Vestige, UT Ants) passed on
   it. Not yet downloaded or checked here.
+  2026-10-30: built. frameledger.h vendored from v0.1.0 (archive hash verified), run_ledger.c + d_ledger.c, flags -frameledger, -frameledger-frames, -frameledger-scene, -frameledger-display. Python not added to ci-deps: nothing in CI runs the analyser.
+  First real run 2026-10-30: Solid, ray traced, E1M1 spawn, -scale 6 (3840x2400) at render_scale 50 (1920x1200 traced), user's fog 3, 3000 frames, DEV build, private display. check passes. floor --fps 60 FAILS: 0 of 82 windows held 60. Median wall 25.1 ms, about 40 FPS; 100% GPU-bound; gpu/trace 13.4 ms (59%), atrous 4.9 ms. Machine busy: load.start 1.465, other sessions running, so this is a pessimistic figure. Refute by rerunning on a quiet machine.
+  A smaller window flatters it: at the default 1280x800 the same view reads about 290 FPS.
+  GPU timers come from the DOOM-0090 pool, no separate timer. Windows cross-build compiles; not run on Windows.
   **Layman:** Record how long every frame and every part of it takes, in the file format the other two engines use, so one tool can say what stops DOOM reaching 60 FPS.
   Kind: feature.
   Source: user-decision-2026-10-24.

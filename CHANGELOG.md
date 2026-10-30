@@ -8,6 +8,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **`-frameledger FILE` records every frame's timings in the shared frameledger format** (DOOM-0502)
+  Each frame's wall time, CPU work, waits and GPU passes go into a run file that frameledger's `check`, `report` and `floor` read, so the road to 60 FPS can be measured frame by frame in every tier.
+
 - **Solid tier surface detail: DOOM's own textures get bumps and depth derived from their pixels** (DOOM-0273)
   Video menu row "Surface Detail" (on by default). Lights, liquids, the sky and see-through textures stay flat.
 
