@@ -348,8 +348,12 @@ void main()
             const vec2 dG     = wUV / kDetileWorldCell;
             const vec3 n  = normalize(vNormal);
             const vec3 py = cross(dpy, n), px = cross(n, dpx);
-            vec3 T = py * dux.x + px * duy.x;
-            vec3 B = py * dux.y + px * duy.y;
+            // Window y runs down the screen here, so py and px give minus the true gradients
+            // on a surface facing the viewer; this sign makes them dP/du and dP/dv, as the
+            // trace's frame is.
+            const float hand = sign(dot(n, cross(dpx, dpy)));
+            vec3 T = (py * dux.x + px * duy.x) * hand;
+            vec3 B = (py * dux.y + px * duy.y) * hand;
             const bool frame = dot(T, T) > 1e-20 && dot(B, B) > 1e-20;
             vec2 sUV = baseUV;
             if (frame)
@@ -422,6 +426,9 @@ void main()
             float gooWet;
             lin = applyGrime(lin, vWorldPos, normalize(vNormal), hdOcc, gooWet);
         }
+        // Filth can lift a texel past 1.0, harmless in the trace's HDR but not to this pass,
+        // whose sector term and bloom threshold assume albedo tops out at 1.0.
+        lin = min(lin, vec3(1.0));
         albedo = vec3(linearToSrgb(lin.r), linearToSrgb(lin.g), linearToSrgb(lin.b));
     }
 #endif

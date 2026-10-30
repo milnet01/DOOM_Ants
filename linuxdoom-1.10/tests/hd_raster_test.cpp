@@ -9,6 +9,8 @@
 //   - mesh.frag's HD path is off unless g.hdPipeline set it, so Solid stays free of it,
 //     and only the world's twin turns it on.
 //   - An HD material takes no derived surface map (DOOM-0273 INV-6's raster half).
+//   - The HD tangent frame carries the sign that makes it dP/du, dP/dv. Without it every
+//     surface had both axes reversed, seen 2026-10-30 by painting them by direction.
 //
 #include <fstream>
 #include <sstream>
@@ -57,6 +59,10 @@ int main()
           "exactly one pipeline, g.hdPipeline, is built with it on");
     check(vk.find("g.hdBuilt ? g.hdPipeline : g.pipeline") != std::string::npos,
           "the world draws with g.hdPipeline only when the HD set is built");
+
+    check(mf.find("vec3 T = (py * dux.x + px * duy.x) * hand;") != std::string::npos
+              && mf.find("const float hand = sign(dot(n, cross(dpx, dpy)));") != std::string::npos,
+          "the HD tangent frame is corrected for window y running down");
 
     check(mf.find("else if ((vFlags & FLAG_PSPRITE) == 0 && surfHas(uint(id)))") != std::string::npos,
           "an HD material takes no derived surface map");

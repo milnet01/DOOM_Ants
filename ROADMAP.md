@@ -14608,6 +14608,12 @@ in CLAUDE.md describes.
   errors in Ultra raster, Ultra traced, Solid or with -hdallocfail.
   Height is one sample, not the trace's march. Not yet seen in play by
   the user.
+  Same day, after cold review: tangent frame sign fixed (see DOOM-0535
+  for the proof), filth clamped to 1.0 before encoding. Solid raster
+  still 0 pixels changed. Reviewer's open points left as they are: no
+  anisotropic filtering on HD maps, so grazing surfaces soften; no
+  emissive, ripple or wet sheen in this view, which paletted raster
+  lacks too.
   **Layman:** Make the fancy high-res wall textures show up in Ultra's fast (non-ray-traced) view too, so switching ray-tracing off doesn't drop you back to the blocky originals.
   Kind: feature.
   Source: user-request-2026-07-16.
@@ -17408,6 +17414,17 @@ in CLAUDE.md describes.
 
 - 📋 [DOOM-0535] **Surface relief makes busy original art look wavy in the rasterised views at E2M2.**
   Seen 2026-10-30 in demo e2m2sk3s7, tic 395: a wall of the original art looks wavy and blotchy in Solid's and Ultra's rasterised views, and clean in Ultra's traced view. That wall has no HD art, so it takes DOOM-0273's one-sample parallax. Cause suspected, not proven; to test, capture the spot with surface_detail 0. Capture: scratch/fled/bot/e2m2.png.
+  Likely cause found 2026-10-30 by cold review of DOOM-0182: mesh.frag's
+  DOOM-0273 block builds T and B from screen derivatives without the
+  sign for window y running down, so both axes are reversed on a surface
+  facing the viewer. Painting HD surfaces by direction proved the same
+  formula wrong there: 0% right before DOOM-0182's fix, 71% of the
+  picture after (the rest is sprites, weapon and HUD-free art). The
+  derived path still has it, so relief lights inverted and parallax
+  slides the wrong way in Solid and Ultra raster. Left unfixed on
+  purpose: a fix changes Solid's pixels, and the user chose depth 0.12
+  and strength 4.0 by eye on the present look, so the user should see it
+  first.
   **Layman:** Without ray tracing, the fake depth on some detailed walls makes them look wavy.
   Kind: fix.
   Source: found-2026-10-30-doom-0182-capture.
