@@ -17980,6 +17980,11 @@ minor may break.
   docs/trailer-script.md. Order: bot, frame dump, sample for approval,
   then DOOM-0182, DOOM-0498, a release, then the final footage from that
   release.
+  2026-10-31: final footage from the v0.8.0 source delivered to the
+  website session: 4 scenes in 5 views, 3 Ultra clips, a Classic widescreen
+  clip, a menu clip, separate sfx and music wavs. Each clip was checked as
+  12 still frames; nobody has listened to the sound. Details on DOOM-0530
+  and in the delivery's notes.md. Next is the website session's edit.
 
 - 📋 [DOOM-0529] **Let Claude play DOOM: a developer-only bot that records demo runs that look like real play.**
   User, 2026-10-30, relayed by the website session: "I need Claude to learn how to play the game so that it can do the recordings." Runs must look like real play: moving with purpose, aiming, shooting, surviving about 20 seconds. Stiff scripted movement will not do.
@@ -18059,6 +18064,19 @@ minor may break.
   within 2 and 22 ms). Music first sound came 1.484 s before tic 1 in
   one take with both (E2M4); music is aligned by that, not measured per
   scene.
+  2026-10-31, final footage encoded and delivered: /mnt/Games/Trailers/incoming/doom-ants/, notes.md there.
+  Corrections to the last note. Music was not aligned reliably by its
+  first sound: that sound is the title music, so the fixed 1.484 s rule
+  was up to about 8 s out on E2M2 and E1M5 and 0.66 s on scene 1. Music is
+  now aligned from the takes' video (scratch/fled/bot/musoff.py, MUSSHIFT
+  in mkwav.py and mkwav2.py); checked against the audio method within 17 ms
+  on three pairs of takes, 40 ms on a fourth. One sfx take alone can still
+  mislead: E1M5's second take was about 80 ms off. sync3.py fits two takes
+  together. Scene 4's Ultra traced dump was 1708x800 despite the earlier
+  check and was re-filmed at 2560x1440, end state equal to Classic.
+  Real-time capture at 16:9: openbox under demoreel --gpu records black;
+  -windowed with xdotool windowsize repeated in a loop works, because the
+  engine creates its window twice (scratch/fled/bot/menuclip.sh).
   **Layman:** Saves each frame of a replayed run as a picture, so all five views of the trailer show exactly the same moment.
   Kind: feature.
   Source: user-request-2026-10-30-via-website-session.
