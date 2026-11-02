@@ -374,15 +374,15 @@ void main()
                 T = normalize(T);
                 B = normalize(B);
                 const vec3 dir = normalize(vWorldPos - vec3(pc.eyeX, pc.eyeY, pc.eyeZ));
-                sUV = detileOn() ? detilePOM(mc, baseUV, T, B, n, dir, dG)
+                sUV = detileFor(mc) ? detilePOM(mc, baseUV, T, B, n, dir, dG)
                                  : hdParallaxUV(mc, baseUV, T, B, n, dir);
             }
-            hdCol = detileOn() ? detile(uint(mc.maps[0]), sUV, dG) : HD_TEX(mc.maps[0], sUV).rgb;
+            hdCol = detileFor(mc) ? detile(uint(mc.maps[0]), sUV, dG) : HD_TEX(mc.maps[0], sUV).rgb;
             if (mc.maps[4] >= 0)
-                hdOcc = detileOn() ? detileR(uint(mc.maps[4]), sUV, dG) : HD_TEX(mc.maps[4], sUV).r;
+                hdOcc = detileFor(mc) ? detileR(uint(mc.maps[4]), sUV, dG) : HD_TEX(mc.maps[4], sUV).r;
             if (frame && mc.maps[1] >= 0)
             {
-                const vec3 tn = detileOn() ? detileNormalTS(uint(mc.maps[1]), sUV, dG)
+                const vec3 tn = detileFor(mc) ? detileNormalTS(uint(mc.maps[1]), sUV, dG)
                                            : HD_TEX(mc.maps[1], sUV).xyz * 2.0 - 1.0;
                 shadeN  = normalize(tn.x * T + tn.y * B + tn.z * n);
             }

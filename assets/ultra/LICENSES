@@ -82,3 +82,19 @@ assets/ultra/heroes/floor/FLAT20_alb.png  https://polyhaven.com/a/brown_floor_ti
 assets/ultra/heroes/floor/FLAT20_nrm.png  https://polyhaven.com/a/brown_floor_tiles  CC0
 assets/ultra/heroes/floor/FLAT20_ao.png  https://polyhaven.com/a/brown_floor_tiles  CC0  (ao baked from _hgt by scripts/hero_ao.py)
 assets/ultra/heroes/floor/FLAT20_hgt.png  https://polyhaven.com/a/brown_floor_tiles  CC0
+
+# DOOM-0537 computer wall: first-party, modelled and baked headlessly in Blender by
+# "/mnt/Games/3D Engine Assets/Blender Scripts/walls/doom_comptall.py".
+assets/ultra/heroes/tech/COMPTALL_alb.png  Blender-Scripts/walls/doom_comptall.py  CC0-first-party
+assets/ultra/heroes/tech/COMPTALL_nrm.png  Blender-Scripts/walls/doom_comptall.py  CC0-first-party
+assets/ultra/heroes/tech/COMPTALL_ao.png  Blender-Scripts/walls/doom_comptall.py  CC0-first-party
+assets/ultra/heroes/tech/COMPTALL_hgt.png  Blender-Scripts/walls/doom_comptall.py  CC0-first-party
+assets/ultra/heroes/tech/COMPTALL_emis.png  Blender-Scripts/walls/doom_comptall.py  CC0-first-party
+
+# DOOM-0537 cable wall: first-party, modelled and baked headlessly in Blender by
+# "/mnt/Games/3D Engine Assets/Blender Scripts/walls/doom_tekwall1.py".
+assets/ultra/heroes/tech/TEKWALL1_alb.png  Blender-Scripts/walls/doom_tekwall1.py  CC0-first-party
+assets/ultra/heroes/tech/TEKWALL1_nrm.png  Blender-Scripts/walls/doom_tekwall1.py  CC0-first-party
+assets/ultra/heroes/tech/TEKWALL1_ao.png  Blender-Scripts/walls/doom_tekwall1.py  CC0-first-party
+assets/ultra/heroes/tech/TEKWALL1_hgt.png  Blender-Scripts/walls/doom_tekwall1.py  CC0-first-party
+assets/ultra/heroes/tech/TEKWALL1_emis.png  Blender-Scripts/walls/doom_tekwall1.py  CC0-first-party

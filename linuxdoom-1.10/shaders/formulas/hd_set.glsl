@@ -8,7 +8,7 @@
 struct MatCtrl {
     int   maps[7];    // [0]alb [1]nrm [2]rgh [3]met [4]ao [5]emis [6]hgt; -1 = none
     float uvScale;
-    uint  flags;      // bit0 pom, bit1 noPom, bit2 sprite, bit3 nukage, bit4 lava (DOOM-0183)
+    uint  flags;      // bit0 pom, bit1 noPom, bit2 sprite, bit3 nukage, bit4 lava (DOOM-0183), bit5 noDetile
     uint  usePBR;     // 0 = paletted fallback
 };
 layout(set = HD_SET, binding = 0, std430) readonly buffer MatCtrlBuf { MatCtrl ctrl[]; };

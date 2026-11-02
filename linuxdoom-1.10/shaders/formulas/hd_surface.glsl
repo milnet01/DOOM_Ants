@@ -79,6 +79,7 @@ vec2 detileWorldUV(vec3 hitP, vec3 n) {
 
 // misc5.y quality dial: 0 = off, 1 = 2-tap, 2 = 4-tap; any other value = off.
 bool detileOn()   { return HD_DETILE_DIAL == 1u || HD_DETILE_DIAL == 2u; }
+bool detileFor(MatCtrl mc) { return detileOn() && (mc.flags & 32u) == 0u; }   // RB_FLAG_NO_DETILE
 int  detileTaps() { return HD_DETILE_DIAL == 2u ? 4 : (HD_DETILE_DIAL == 1u ? 2 : 0); }
 
 // misc5.w: filth (dirt-stain) master toggle — 1 = on (shipped look), 0 = off (`[` key).

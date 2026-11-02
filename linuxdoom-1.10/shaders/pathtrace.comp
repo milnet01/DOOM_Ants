@@ -1248,14 +1248,14 @@ PrimaryHit primaryHitSurface(Verts vb, uint i0, bool isSprite, vec2 hitUV, vec3 
     h.hitP = origin + dir * tHit;
     // DOOM-0439: the de-tile world key, once per hit. Every consumer below is gated on
     // usePBR && detileOn(), so the same gate here keeps paletted hits free of it.
-    h.dG   = (h.mc.usePBR != 0u && detileOn()) ? detileWorldUV(h.hitP, n) / kDetileWorldCell
+    h.dG   = (h.mc.usePBR != 0u && detileFor(h.mc)) ? detileWorldUV(h.hitP, n) / kDetileWorldCell
                                                : vec2(0.0);
     if (h.mc.usePBR != 0u) {
         vec2 baseUV = hdBaseUV(h.id, hitUV, h.mc.uvScale);
         hdTangentFrame(n, p0, p1, p2, uv0, uv1, uv2, h.T, h.B);
         // DOOM-0181 L3: march POM in the de-tiled coordinate so relief registers with the
         // de-tiled albedo/normal/AO (§4.4); else the plain-space POM march.
-        h.sUV = detileOn()
+        h.sUV = detileFor(h.mc)
               ? detilePOM(h.mc, baseUV, h.T, h.B, n, dir, h.dG)
               : hdParallaxUV(h.mc, baseUV, h.T, h.B, n, dir);
     } else if (h.mc.usePBR == 0u && surfHas(h.id)) {
@@ -1269,7 +1269,7 @@ PrimaryHit primaryHitSurface(Verts vb, uint i0, bool isSprite, vec2 hitUV, vec3 
     }
     // DOOM-0181 L1: de-tile the albedo when the dial is on and this is an HD albedo map;
     // else the unchanged hdAlbedo path (paletted / no-albedo hits stay byte-identical).
-    if (h.mc.usePBR != 0u && h.mc.maps[0] >= 0 && detileOn()) {
+    if (h.mc.usePBR != 0u && h.mc.maps[0] >= 0 && detileFor(h.mc)) {
         h.albedo = detile(uint(h.mc.maps[0]), h.sUV, h.dG);
     } else if (h.mc.usePBR == 0u && h.surf) {
         h.albedo = decodeAlbedo(h.id, h.sUV * surfTexSize(h.id));   // texels at the marched UV
@@ -1280,7 +1280,7 @@ PrimaryHit primaryHitSurface(Verts vb, uint i0, bool isSprite, vec2 hitUV, vec3 
     // both the crevice-pooled filth in applyGrime and the ambient term. Paletted / no-AO
     // hits fall back to hdAO (== 1.0 there, so no crevice darkening). Mode 6 needs it
     // before its half-res early-return, so every stored galbedo carries the filth.
-    h.ao = (h.mc.usePBR != 0u && h.mc.maps[4] >= 0 && detileOn())
+    h.ao = (h.mc.usePBR != 0u && h.mc.maps[4] >= 0 && detileFor(h.mc))
          ? detileR(uint(h.mc.maps[4]), h.sUV, h.dG)
          : hdAO(h.mc, h.id, h.sUV);
     // DOOM-0389: decide the glow BEFORE grime. applyGrime scales the albedo by as little
@@ -1325,7 +1325,7 @@ PrimaryLight primaryHitLighting(PrimaryHit h, bool isSprite, int prim, vec3 n)
     // DOOM-0181 L2: de-tile the normal in lockstep with the albedo (same world cell), so a
     // mirrored/offset tile's relief matches its colour. INV-2: detileNormalTS negates the
     // per-cell tangent-X on a mirror. Paletted / no-normal-map hits keep hdShadingNormal.
-    if (h.mc.usePBR != 0u && h.mc.maps[1] >= 0 && detileOn()) {
+    if (h.mc.usePBR != 0u && h.mc.maps[1] >= 0 && detileFor(h.mc)) {
         vec3 tn  = detileNormalTS(uint(h.mc.maps[1]), h.sUV, h.dG);
         s.shadeN = normalize(tn.x * h.T + tn.y * h.B + tn.z * n);
     } else if (h.mc.usePBR == 0u && h.surf) {

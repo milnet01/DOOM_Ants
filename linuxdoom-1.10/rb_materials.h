@@ -17,6 +17,8 @@ enum { RB_ALB = 0, RB_NRM, RB_RGH, RB_MET, RB_AO, RB_EMIS, RB_HGT };
  * MatCtrl.flags bit3/bit4: nukage gets the full wet treatment, lava glow only. */
 #define RB_FLAG_LIQUID_NUKAGE 8u
 #define RB_FLAG_LIQUID_LAVA   16u
+/* Designed art, such as a computer panel: shuffling its cells to hide repeats would scramble it. */
+#define RB_FLAG_NO_DETILE 32u
 #define RB_FLAG_BAD    0x80000000u   /* unknown flags token — caller treats row malformed */
 
 typedef struct {
@@ -49,6 +51,7 @@ static inline unsigned int rb_parse_flags(const char* field) {
                 if      (!strcmp(tok, "pom"))    f |= RB_FLAG_POM;
                 else if (!strcmp(tok, "noPom"))  f |= RB_FLAG_NOPOM;
                 else if (!strcmp(tok, "sprite")) f |= RB_FLAG_SPRITE;
+                else if (!strcmp(tok, "noDetile")) f |= RB_FLAG_NO_DETILE;
                 else                             f |= RB_FLAG_BAD;
             }
             if (end == '\0') break;

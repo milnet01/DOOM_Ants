@@ -32,6 +32,11 @@ static void test_hero_row() {
     check(strcmp(r.maps[RB_HGT], "heroes/m/h.png") == 0, "hero row: height map");
     check(r.uv_scale == 2.0f, "hero row: uv_scale column");
     check(r.flags == RB_FLAG_POM, "hero row: pom flag");
+    {
+        rb_matrow_t d;
+        check(rb_parse_material_line("COMPTALL,hero,a.png,,,,,,,1.0,pom|noDetile", &d) == 1
+              && d.flags == (RB_FLAG_POM | RB_FLAG_NO_DETILE), "hero row: noDetile flag");
+    }
 }
 
 static void test_derive_row_blank_maps() {

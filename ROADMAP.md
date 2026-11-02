@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=536 -->
+<!-- ants-roadmap-id-high-water: DOOM=538 -->
 
 # Roadmap
 
@@ -17513,6 +17513,44 @@ in CLAUDE.md describes.
   Kind: fix.
   Source: user-play-test-2026-11-02.
   Evidence: linuxdoom-1.10/dev-shots/shot-0046.png
+
+- 🚧 [DOOM-0537] **Replace Ultra's walls with models built in Blender and baked to materials, computer and wire walls first.**
+  User's decisions 2026-11-02: bake first, real geometry may follow; each texture keeps
+  DOOM's layout and colours, redrawn in HD; scripts go in the asset library.
+  Tool: /mnt/Games/3D Engine Assets/Blender Scripts (lib/wallbake.py, walls/).
+  Pilot done: COMPTALL and TEKWALL1. New materials.csv flag noDetile, because the
+  shuffle scrambles designed art. Measured 2026-11-02: 17 of 375 textures in use
+  across doom.wad had hero art, 20% of weighted uses.
+  A full set at this density is about 5 MB a texture in PNG, so the download size
+  needs deciding before a full batch. Not checked: the licences of the two texture
+  packs in wads/, so neither is used.
+  Next after the user's look: the rest of the COMP and TEKWALL families, then by
+  use across the IWADs.
+  Pilot seen in captures, E1M7 -1504 42 90 and E2M2 790 1472 180.
+  Faults: Ultra raster's one-sample parallax tears thin cables and
+  doubles box edges on TEKWALL1, and makes COMPTALL's vents wobble; the
+  traced view is clean. In the trace the status lights wash out to near
+  white, and boxes beside a lamp blow out. The emissive map is not read
+  by either view's shipped path, so the screens cast no light yet
+  (DOOM-0538, DOOM-0178). Blend files:
+  Models/Props/Electronics/doom_comptall_computer_wall.blend,
+  Models/Urban/Industrial/doom_tekwall1_cable_wall.blend. Maps:
+  Textures/Metal/doom_*_wall/.
+  **Layman:** Ultra's computer and wire walls become detailed 3D models, turned into HD surfaces, with the same layout as DOOM's originals.
+  Kind: feature.
+  Source: user-request-2026-11-02.
+
+- 📋 [DOOM-0538] **Ultra's rasterised view lacks the traced view's light effects.**
+  User 2026-11-02: Ultra raster seems to miss a lot of the lighting effects.
+  Known from reading mesh.frag: it does not read the HD emissive, roughness or
+  metallic maps, and has no wet sheen or ripple. The traced denoised view does not
+  use the emissive map either (DOOM-0178). A capture at E1M7 -1504 42 90 also shows
+  the raster view tinting that wall pink where the trace does not. Needs a full gap
+  list against the traced view, then one fake per effect under DOOM-0170.
+  Evidence: scratch/ultra-pass/comptall-ingame.png.
+  **Layman:** With ray tracing off, Ultra should still have the same lighting effects, done the cheap way, as the project's tier rules promise.
+  Kind: fix.
+  Source: user-play-test-2026-11-02.
 
 ## 0.13.0 — The player's experience
 
