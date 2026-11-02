@@ -168,11 +168,13 @@ BLAS per model plus TLAS instances.
 - **INV-2** — Every pickup sprite has a model once B6 is done, and the list stays complete. *Test:*
   `tests/pickup_models_test.cpp` compares `models.csv` against `MF_SPECIAL` in `info.c`. *Breaks
   when:* a sprite in §5 has no row, or a new `MF_SPECIAL` entry lands without one.
-- **INV-3** — A model stays inside the sprite's space: its footprint within the Thing's `radius`,
-  its top within 1.25 times the sprite's top offset (`spritetopoffset`, at its highest frame). The
-  player can never see a part stand in their way that the sprite did not fill. *Test:*
-  `tests/pickup_models_test.cpp` reads each `.dmdl`'s bounds against a table of those offsets held
-  in the test, copied from the IWADs, because a test takes no WAD (`docs/standards/testing.md`).
+- **INV-3** — A model stays inside the sprite's space: its footprint within the larger of the Thing's
+  `radius` and half the sprite's width, its top within 1.25 times the sprite's top offset
+  (`spritetopoffset`, at its highest frame). User, 2026-11-02: a weapon may be as wide as its picture,
+  so it stays the size players know. The player can never see a part stand in their way that the sprite
+  did not fill. *Test:*
+  `tests/pickup_models_test.cpp` reads each `.dmdl`'s bounds against a table of those widths and offsets
+  held in the test, copied from the IWADs, because a test takes no WAD (`docs/standards/testing.md`).
   *Breaks when:* a builder scales a model past those bounds.
 - **INV-4** — A malformed `.dmdl` is refused and that sprite draws as its sprite; it never crashes or
   reads out of bounds. Assets are read from a user-settable folder (`DOOMASSETDIR`), so this crosses
