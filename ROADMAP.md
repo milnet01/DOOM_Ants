@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=535 -->
+<!-- ants-roadmap-id-high-water: DOOM=536 -->
 
 # Roadmap
 
@@ -14906,6 +14906,17 @@ in CLAUDE.md describes.
 
 - 📋 [DOOM-0164] **World-lock the sky so distant mountains stop drifting when the player turns (low priority, later).**
   Found 2026-07-03 (user testing, DOOM 1 E1M1 outdoor, Solid/Ultra). The sky panorama drifts relative to the world as the player yaws -- distant "mountains" slide instead of holding a fixed world bearing. Root cause: the sky is a SCREEN-space lookup keyed on view yaw (mesh.frag / pathtrace.comp skyPanorama map screen-x -> ray-yaw offset via atan, panned by pc.yaw), so it is pinned to the camera, not to world directions. Classic DOOM has the same 1:1 yaw-locked sky (it never truly world-locks either), but with the DOOM-0141/0162 world-space sky dome now carrying the panorama the mismatch is more noticeable: the dome geometry is world-locked while the texture painted on it pans with yaw, so the sky appears to slide across the fixed dome. Fix direction (bigger change, deferred by user 2026-07-03): map the sky by WORLD azimuth/elevation of the view ray (or the dome surface direction) instead of screen x/yaw, so a given sky texel always sits over the same world compass bearing -- mountains then hold still as you turn. Decide raster (mesh.frag) + RT (pathtrace.comp) together so both tiers match. LOW PRIORITY: user is fine with the current behaviour; investigate later.
+  2026-11-02, user: the mountains move as if the FOV were exceptionally
+  high. The older diagnosis above is wrong: yaw - atan(ndcX) IS the
+  world bearing, so the sky never drifted sideways. The fault was
+  vertical. Rows were fixed to screen y while perspective stretches the
+  sky sideways towards the frame's edges, so mountains widened and
+  squashed as they crossed the screen. Fixed in mesh.frag and
+  pathtrace.comp with row = 100 + (uv.y - 0.5) * 200 / sqrt(1 + ndcX^2),
+  a true cylinder; screen centre unchanged, Classic untouched. E3M1 192
+  -1400 65, Ultra traced, rt_fog 0: mean change 4.51, mountains rise
+  towards the edges, centre holds. Ship = the user's look in play; a
+  still cannot show motion.
   **Layman:** When you turn left or right outdoors, the far mountains slide a little instead of sitting still like real scenery; pin the sky to fixed compass directions so it stays put. Minor -- parked for later.
   Kind: fix.
   Source: user-testing-2026-07-03.
@@ -17468,6 +17479,21 @@ in CLAUDE.md describes.
   **Layman:** Without ray tracing, the fake depth on some detailed walls makes them look wavy.
   Kind: fix.
   Source: found-2026-10-30-doom-0182-capture.
+
+- 🚧 [DOOM-0536] **Fog stops in a straight wall under the edge of a roof opening instead of filling the space.**
+  Seen at E1M4 1718 882 276, Ultra traced, rt_fog 3. pathtrace.comp switched the
+  bank's height (kFogPoolHeight 112) to the indoor one (kFogIndoorPool 18) on the
+  open-sky mask, so density at eye height stepped about sevenfold at the roof
+  edge. Now graded by seepT squared. Largest jump over 8 pixels across the
+  roofline: 18.9 before, 5.8 after. Cost: roofed air near an opening is foggier;
+  the left wall's mean went 104.7 to 148.8 at that spot. If that is too much, the
+  power on seepT is the dial. Ship = the user's look in play.
+  Spec amended: docs/specs/DOOM-0310-fog-density-fields.md, the
+  seep-field section and its loop log.
+  **Layman:** Fog should spread out under a roof the way real fog does, not stop in a straight line beneath the hole in the ceiling.
+  Kind: fix.
+  Source: user-play-test-2026-11-02.
+  Evidence: linuxdoom-1.10/dev-shots/shot-0046.png
 
 ## 0.13.0 — The player's experience
 

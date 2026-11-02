@@ -1065,8 +1065,16 @@ vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)
         // Outdoor air is a tall bank on the level's fog altitude; roofed air keeps the
         // shallow knee-height cloud. Both references are per-frame constants, so `sigma`
         // is a function of `p` alone -- see fogDensity()'s contract.
-        float baseZ = openSky ? outdoorBase    : indoorBase;
-        float poolH = openSky ? kFogPoolHeight : kFogIndoorPool;
+        // The bank's height follows the seep grade too. A step here cut the fog off in a
+        // straight wall under every roof edge, because density at eye height differs about
+        // sevenfold between the two heights. Graded, the bank spreads under the roof and
+        // settles to the shallow cloud deep inside; a sealed room reads dMax, so seepT is
+        // about 0 and it keeps that cloud (INV-12). Squared so the height falls twice as
+        // fast as the density's own grade: with plain seepT a whole roofed room next to
+        // an opening washed out.
+        float bankT = seepT * seepT;
+        float baseZ = mix(indoorBase,     outdoorBase,    bankT);
+        float poolH = mix(kFogIndoorPool, kFogPoolHeight, bankT);
         // DOOM-0011 L1e (§4.3c): the floor layer is a THIRD addend, and it sits on the
         // skyExposure-gated side with the aerial term (INV-9). That is what makes "thicker
         // outside" free -- no second up-ray, no fourth constant -- and it is what keeps the
