@@ -11404,12 +11404,14 @@ stay in their phase sections; this heading holds only work still to come.
   DOOM-0379's review finding; split out because the user's decision for
   that item covered the flashes and the melt only. Needs a decision on
   how gamma should apply to a full-colour, tone-mapped image.
+  User 2026-11-02: make gamma work in Solid and Ultra too, as the last
+  step of drawing.
   **Layman:** The brightness (gamma) option in the menu changes the picture in Classic only; in the two 3D views it has no effect.
   Kind: fix.
   Source: in-session-2026-10-08, split from DOOM-0379.
   Lanes: renderer, backend-seam.
 
-- 🚧 [DOOM-0508] **The Spectre is drawn as a solid Pinky in Solid and Ultra, not as the see-through shimmer.**
+- ✅ [DOOM-0508] **The Spectre is drawn as a solid Pinky in Solid and Ultra, not as the see-through shimmer.**
   The 3D sprite gather in r_mesh.c reads MF_SPECIAL and MF_MISSILE but
   never MF_SHADOW, so a Spectre (and any partially invisible thing) is
   emitted as an ordinary opaque quad. Classic draws MF_SHADOW things
@@ -11449,6 +11451,7 @@ stay in their phase sections; this heading holds only work still to come.
   raster with no Spectre in view moved 0.02% of pixels against the old
   build. Not measured: the cost of the second sprite draw, and motion,
   since captures are stills. Ship = the user's look in play.
+  User 2026-11-02: looked in play, the Spectre is right.
   **Layman:** The invisible demon is fully visible in the 3D views, which makes it a different, easier enemy than the one the game intends.
   Kind: fix.
   Source: user-request-2026-10-26.
@@ -14703,6 +14706,9 @@ in CLAUDE.md describes.
   Decided by the user 2026-09-25: the fog dial defaults to Medium (2),
   not Low. Q32: fix DOOM-0321's wash-out first, then give the sky's fog
   the hell tint so the sky-wall seam goes away.
+  User 2026-11-02: the red-sky comments (too bright, fog should be
+  thicker) still stand; after the DOOM-0536 fog-wall fix and another
+  look.
 
 - 🚧 [DOOM-0042] **Add a second, high-fidelity art set (DOOM 3 / sci-fi-horror look) selectable alongside the classic art.**
   Two art options for the 3D renderer: (1) DOOM's original art converted to 3D (the DOOM-0008 path, already in progress); (2) a replacement HD art set inspired by DOOM 3 and sci-fi horror generally. LEVEL LAYOUT IS UNCHANGED — same map geometry/segs/sectors and UVs; only the textures, flats, sprites and their materials are swapped. Implies a material-source abstraction (a 'theme' the renderer selects) layered on the bindless material pipeline, plus real PBR maps (albedo/normal/roughness/metallic/emissive) for the HD set rather than flat paletted albedo. LICENSING CONSTRAINT: id Software's DOOM 3 assets are proprietary and CANNOT be shipped in this GPL-v2 repo. Sourcing options to decide with the user: freely/CC0-licensed HD texture+sprite packs, community packs with compatible licences, AI-generated art, or an optional separately-distributed asset pack the user supplies locally. Open decision: which sourcing route. Depends on the bindless material seam and the path tracer (DOOM-0009).
@@ -14916,7 +14922,7 @@ in CLAUDE.md describes.
   Kind: enhancement.
   Source: user-request-2026-06-29.
 
-- 📋 [DOOM-0164] **World-lock the sky so distant mountains stop drifting when the player turns (low priority, later).**
+- ✅ [DOOM-0164] **World-lock the sky so distant mountains stop drifting when the player turns (low priority, later).**
   Found 2026-07-03 (user testing, DOOM 1 E1M1 outdoor, Solid/Ultra). The sky panorama drifts relative to the world as the player yaws -- distant "mountains" slide instead of holding a fixed world bearing. Root cause: the sky is a SCREEN-space lookup keyed on view yaw (mesh.frag / pathtrace.comp skyPanorama map screen-x -> ray-yaw offset via atan, panned by pc.yaw), so it is pinned to the camera, not to world directions. Classic DOOM has the same 1:1 yaw-locked sky (it never truly world-locks either), but with the DOOM-0141/0162 world-space sky dome now carrying the panorama the mismatch is more noticeable: the dome geometry is world-locked while the texture painted on it pans with yaw, so the sky appears to slide across the fixed dome. Fix direction (bigger change, deferred by user 2026-07-03): map the sky by WORLD azimuth/elevation of the view ray (or the dome surface direction) instead of screen x/yaw, so a given sky texel always sits over the same world compass bearing -- mountains then hold still as you turn. Decide raster (mesh.frag) + RT (pathtrace.comp) together so both tiers match. LOW PRIORITY: user is fine with the current behaviour; investigate later.
   2026-11-02, user: the mountains move as if the FOV were exceptionally
   high. The older diagnosis above is wrong: yaw - atan(ndcX) IS the
@@ -14929,6 +14935,7 @@ in CLAUDE.md describes.
   -1400 65, Ultra traced, rt_fog 0: mean change 4.51, mountains rise
   towards the edges, centre holds. Ship = the user's look in play; a
   still cannot show motion.
+  User 2026-11-02: looked in play, the sky is right.
   **Layman:** When you turn left or right outdoors, the far mountains slide a little instead of sitting still like real scenery; pin the sky to fixed compass directions so it stays put. Minor -- parked for later.
   Kind: fix.
   Source: user-testing-2026-07-03.
@@ -16233,7 +16240,7 @@ in CLAUDE.md describes.
   Le through NEE and the GI bake, exactly as this bullet's conclusion says.
   So the remaining work really is only the AIR term, per half 2.
 
-- 🚧 [DOOM-0331] **Bloom on the HDR views, so emissive things read as bright rather than merely light-coloured.**
+- ✅ [DOOM-0331] **Bloom on the HDR views, so emissive things read as bright rather than merely light-coloured.**
   Found reviewing GZDoom at the user's request. GZDoom ships
   bloomextract.fp / bloomcombine.fp / blur.fp as post-process passes;
   DOOM_Ants ships NONE of that -- grepped, and there is no bloom, no
@@ -16842,6 +16849,8 @@ in CLAUDE.md describes.
   confirm 21 rows stay HUD-safe) and DOOM-0345 §10 Q1 (fire a weapon and
   see whether TAAU smears the muzzle flash's halo). Both need a keyboard —
   the harness cannot inject input under Wayland.
+  User 2026-11-02: the bloom checks pass (Video options rows clear of
+  the HUD; firing does not smear the flash's glow).
 
 - 📋 [DOOM-0334] **Eye adaptation: the view adjusts when moving between dark and bright, for the tension it buys.**
   User approved 2026-08-05 on the upstream review: "eyes adjusting from
@@ -16969,7 +16978,7 @@ in CLAUDE.md describes.
   Source: user-request-2026-08-07 (seen in a YouTube video of another DOOM source port).
   Lanes: renderer, sprites.
 
-- 🚧 [DOOM-0345] **Bloom on the ray-traced view, which needs the RT tone-map split.**
+- ✅ [DOOM-0345] **Bloom on the ray-traced view, which needs the RT tone-map split.**
   Split out of DOOM-0331 on 2026-08-12, which had converged by cap at 3
   cold-eyes loops and was 1496 lines — larger than the review's design
   point, with 5 of loop 2's 10 CRIT+HIGH findings being collateral from
@@ -17141,6 +17150,11 @@ in CLAUDE.md describes.
   the user at a keyboard: it takes a fired weapon, which the capture
   harness cannot produce. It and DOOM-0331 §10 Q4's visual half are the
   two remaining checks before either item flips.
+  User 2026-11-02: firing does not smear the flash's halo, which closes
+  the last check both this item and DOOM-0331 named. The older asks on
+  this item (a second look at strength, flashlight on a white wall, the
+  DOOM-0202 golden re-bless) were not asked again; the golden re-bless
+  stays with DOOM-0202.
 
 - 📋 [DOOM-0360] **Widen the bloom halo — replace the single Gaussian with a mip pyramid.**
   bloom_blur.comp is ONE 9-tap separable Gaussian, sigma 2 texels at
@@ -17499,6 +17513,7 @@ in CLAUDE.md describes.
   Ultra traced: the derived fake depth on TEKWALL4 does not look right.
   That wall now has baked art (DOOM-0537), so derived relief no longer
   draws there; every wall without baked art still has it.
+  User 2026-11-02: halve the depth; strength stays.
   **Layman:** Without ray tracing, the fake depth on some detailed walls makes them look wavy.
   Kind: fix.
   Source: found-2026-10-30-doom-0182-capture.
@@ -17513,6 +17528,8 @@ in CLAUDE.md describes.
   power on seepT is the dial. Ship = the user's look in play.
   Spec amended: docs/specs/DOOM-0310-fog-density-fields.md, the
   seep-field section and its loop log.
+  User 2026-11-02: better, but still a bit of a fog wall; it should fill
+  the space more.
   **Layman:** Fog should spread out under a roof the way real fog does, not stop in a straight line beneath the hole in the ceiling.
   Kind: fix.
   Source: user-play-test-2026-11-02.
@@ -17545,6 +17562,9 @@ in CLAUDE.md describes.
   2026-11-02, second pass, waiting on the user's look. TEKWALL4 added; COMPTALL and TEKWALL1 rebuilt with real recesses (plate() cuts holes, so parts sink instead of being painted on). Art now spans tiles: COMPTALL 768x128, TEKWALL1 384x128, TEKWALL4 512x256, at 4 map pixels per unit. materials.csv takes uv_scale as 0.25x0.5 and a flags token depth=N, relief's full height in map units, so it is true depth and equal on both axes. wall_span_tiles in r_mesh.c slides each wall plane's U by whole tiles, so short walls stop starting on the same stretch; paletted art cannot show it: Solid raster E1M1 moved 0.0011 against a same-build control of 0.0027, E1M2 0.0038. kHdMaxEdge went 1024 to 4096: 1024 had been halving COMPTALL silently. The trace now picks a mip by distance (hdLod), which stopped the sparkle. Nothing juts past the wall plane: relief goes inward from it, so no part can touch the player, and a silhouette stays flat. Real jutting geometry would come with DOOM-0539's model path.
   Cost, Ultra raster, 1843x1152 (render_scale 36 of a 5120x3200 swapchain, about the user's pixel count), other sessions keeping load between 14 and 24, so these are upper figures: facing COMPTALL frame 17.8 to 18.1 ms, facing TEKWALL4 18.0 to 23.2 ms, TEKWALL1 8.8 to 11.0 ms. The 60 FPS floor is 16.7 ms: not met in those two views on that busy machine, and not measured quiet. Traced at TEKWALL4: 29.3 ms. Remaining cost is map resolution first: COMPTALL at 2560x1600 went 15.5 ms to 8.1 ms when its maps were halved; the march is about 3 ms. If a quiet run misses, reduce map resolution further.
   Open: in the trace, brass lips and studs read pale and status lights do not glow (DOOM-0178); raster boxes still show faint slices at steep angles.
+  User 2026-11-02: second pass is good, make more: the rest of the COMP
+  and TEKWALL families, then other walls by use. Download size does not
+  matter, so all art stays in the one download at full detail.
   **Layman:** Ultra's computer and wire walls become detailed 3D models, turned into HD surfaces, with the same layout as DOOM's originals.
   Kind: feature.
   Source: user-request-2026-11-02.
@@ -17579,6 +17599,8 @@ in CLAUDE.md describes.
   with the user: INV-3's footprint against the eight sprites wider than
   radius (BFUG BROK CSAW LAUN MGUN PLAS SGN2 SHOT). Not built. Next: B1,
   the file format and one model, BON1.
+  User 2026-11-02, INV-3: a weapon model may be as wide as its picture,
+  so it stays the size players know.
   **Layman:** Health, armour, ammo, keys and power-ups become real 3D objects, so their glow can come from exactly the right spot inside them.
   Kind: feature.
   Source: user-request-2026-11-02.
@@ -18100,7 +18122,7 @@ minor may break.
   12 still frames; nobody has listened to the sound. Details on DOOM-0530
   and in the delivery's notes.md. Next is the website session's edit.
 
-- 📋 [DOOM-0529] **Let Claude play DOOM: a developer-only bot that records demo runs that look like real play.**
+- ✅ [DOOM-0529] **Let Claude play DOOM: a developer-only bot that records demo runs that look like real play.**
   User, 2026-10-30, relayed by the website session: "I need Claude to learn how to play the game so that it can do the recordings." Runs must look like real play: moving with purpose, aiming, shooting, surviving about 20 seconds. Stiff scripted movement will not do.
   Design: an in-engine bot behind DOOM_DEV, so releases do not contain it. `-botplay SEED` with `-record NAME` fills each ticcmd from the game's real state, so what it writes is an ordinary demo. It routes across the map's sectors, opens doors, faces and leads visible monsters with a limited, slightly noisy turn rate, strafes while fighting, and picks up items when hurt. It runs one tic per frame on the Classic renderer, so a run costs seconds. A harness tries many seeds, scores each (alive at the end, kills, distance, time stuck, facing something worth seeing) and keeps the best.
   Done when: a chosen run replays identically under -timedemo (per-tic state hash), lasts at least 20 s alive, and a person watching it does not call it stiff. Nothing mechanical decides that last part; the user judges it.
@@ -18117,6 +18139,7 @@ minor may break.
   Measured on 156 runs on 13 maps, skill 3: the best stretches have a
   wall filling the view for 0 to 1% of tics and a monster in the centre
   third for about 80%.
+  User 2026-11-02: the improved runs look played, not scripted.
   **Layman:** Claude plays the game itself and records the run, so nobody has to sit at the controls for the trailer.
   Kind: feature.
   Source: user-request-2026-10-30-via-website-session.

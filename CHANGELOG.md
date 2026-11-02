@@ -6,6 +6,20 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Bloom in the ray-traced views, so bright lights and glowing things read as bright.** (DOOM-0345)
+
+- **Bloom in the rasterised views too, with a menu setting.** (DOOM-0331)
+
+- **Developer builds only: a bot that plays the game and records demo runs that look like real play.** (DOOM-0529)
+
+### Fixed
+
+- **The sky's far mountains no longer widen and squash as they cross the screen when you turn.** (DOOM-0164)
+
+- **The Spectre is a see-through shimmer that bends what is behind it in Solid and Ultra, not a solid Pinky.** (DOOM-0508)
+
 ## [0.8.0] - 2026-10-30
 
 ### Added
