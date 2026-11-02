@@ -513,6 +513,14 @@ cut the fog off in a straight wall under every roof edge. Both still depend only
 INV-9's hit-dependence falsifier is untouched. A sealed room reads `dMax` and keeps the
 indoor pair to within rounding (INV-12).
 
+**Amended again 2026-11-02 (DOOM-0536).** Two causes of the same wall remained. A cell's
+distance now runs to the nearest point on an opening (`RB_SeepPointSegDist`), not its
+midpoint, which read air beside a long roof edge as deep indoors. Roofed air also takes
+`kSunSpill * seepT * seepT` of the sun's share, because sunlit air lights the air beside it
+and a single-scatter march has no such path. A sealed room reads `dMax`, so its spill is about
+zero (INV-12). Open sky takes no spill. `kSkyShaftStrength` went 0.85 to 0.55 at the user's
+request, at every in-scatter site.
+
 - **The open-sky branch is exactly `1.0`**, on both sides of every amendment. That is why
   the outdoor look the user signed off is preserved by construction rather than by tuning.
 - **The indoor branch is a graded seep, not a flat floor.** The user's ask was *"have a

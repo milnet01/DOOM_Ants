@@ -1088,6 +1088,12 @@ vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)
         // sky-plane height, in exactly the shafts this task must leave unchanged.
         bool  sunSeen = (p.z >= fld.b) && (p.z <= fld.a || openSky);
         float sunLit  = (skyExists && kSkyAmbientFrac < 1.0 && sunSeen) ? sunGain : 0.0;
+        // DOOM-0536: sunlit air lights the air beside it, and a single-scatter march has no
+        // such path. Without this the fog stops at a bright straight edge under a roof
+        // line, however thick the roofed air is. Open sky is untouched, and a sealed room
+        // reads dMax, so its spill is about zero (INV-12).
+        if (skyExists && kSkyAmbientFrac < 1.0 && !openSky)
+            sunLit = max(sunLit, sunGain * kSunSpill * seepT * seepT);
         // DOOM-0292: the AMBIENT share is gated on sky exposure as well. Both shares are
         // the sky's light, so both must ask whether this air can see any -- the difference
         // is only in what "see" means. The directional share asks a geometric question and

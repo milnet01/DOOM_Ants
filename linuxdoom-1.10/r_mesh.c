@@ -49,6 +49,7 @@
 #include "sprite_cap.h"  // DOOM-0459 nearest-first order past the sprite cap
 #include "r_mesh.h"
 #include "sprite_flags.h"
+#include "seep_dist.h"   // DOOM-0536 a cell's distance to an opening
 #include "patch_bounds.h"
 #include "atlas_bounds.h"
 
@@ -943,6 +944,7 @@ int RB_SectorAtPoint(float x, float y)
 typedef struct
 {
     float x, y;       // world midpoint of the opening
+    float x1, y1, x2, y2; // its ends, for a cell's distance to it (seep_dist.h)
     int   secA, secB; // the two sectors it joins
     float d;          // distance to outdoor air, filled by the search
 } rb_portal_t;
@@ -1327,8 +1329,12 @@ rb_seep_t* RB_BuildSeepField(void)
         if (openrange <= 0)
             continue;
 
-        portals[np].x    = 0.5f * (sg->v1->x / (float)FRACUNIT + sg->v2->x / (float)FRACUNIT);
-        portals[np].y    = 0.5f * (sg->v1->y / (float)FRACUNIT + sg->v2->y / (float)FRACUNIT);
+        portals[np].x1   = sg->v1->x / (float)FRACUNIT;
+        portals[np].y1   = sg->v1->y / (float)FRACUNIT;
+        portals[np].x2   = sg->v2->x / (float)FRACUNIT;
+        portals[np].y2   = sg->v2->y / (float)FRACUNIT;
+        portals[np].x    = 0.5f * (portals[np].x1 + portals[np].x2);
+        portals[np].y    = 0.5f * (portals[np].y1 + portals[np].y2);
         portals[np].secA = (int)(sg->frontsector - sectors);
         portals[np].secB = (int)(sg->backsector  - sectors);
         // Seeded at zero if EITHER side is open to the sky: standing in that opening
@@ -1538,8 +1544,8 @@ rb_seep_t* RB_BuildSeepField(void)
                     for (k = secFirst[sec]; k < secFirst[sec + 1]; k++)
                     {
                         rb_portal_t* pt = &portals[secList[k]];
-                        float dx = pt->x - cx, dy = pt->y - cy;
-                        float nd = pt->d + sqrtf(dx * dx + dy * dy);
+                        float nd = pt->d + RB_SeepPointSegDist(cx, cy, pt->x1, pt->y1,
+                                                               pt->x2, pt->y2);
                         if (nd < best)
                             best = nd;
                     }

@@ -152,10 +152,11 @@ const float kAreaDensity     = 0.0020;           // L4: the GOO profile's extinc
                                  // courtyard nukage blows out, this is the lever -- not a clamp
                                  // on sigma, which would silently cap hell-on-goo rooms too.
                                  // Hell's equivalent is per-LEVEL and so runtime, on misc6.w.
-const float kSkyShaftStrength   = 0.85;          // sky in-scatter gain (L1/L2). Brightness of the
+const float kSkyShaftStrength   = 0.55;          // sky in-scatter gain (L1/L2). Brightness of the
                                  // fog ONLY -- extinction is kFogBaseDensity's job -- so this is
                                  // the "the fog is a bit bright outside" dial (user, 2026-07-26)
-                                 // and it does not change how much the fog hides. 1.0 -> 0.85.
+                                 // and it does not change how much the fog hides. 1.0 -> 0.85,
+                                 // then 0.55 (user 2026-11-02, "insanely bright"; DOOM-0536).
                                  // It must be applied by every in-scatter site, the closed-form
                                  // sky branches included, or the seam where sky meets wall shows
                                  // two different fog brightnesses.
@@ -291,6 +292,8 @@ const float kWispTexels  = 64.0;               // the noise volume's edge, in te
 // whatever this number becomes.
 const float kSeepMax     = 0.9;               // density multiplier right at an opening
 const float kSeepFalloff = 384.0;             // world units; e-fold inward from it
+const float kSunSpill    = 0.8;               // DOOM-0536: share of the sun's light that
+                                              // roofed air gets right at an opening
 const float dMax         = 8.0 * kSeepFalloff;// the field's finite unreachable/void
                                  // sentinel, mirrored by RB_SEEP_DMAX in r_mesh.h.
                                  // FINITE deliberately: an infinity meeting a zero
