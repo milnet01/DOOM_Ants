@@ -32,6 +32,9 @@ What's in the tree today, and how each is recorded:
 
 - **HD material "hero" textures (DOOM-0042)** — CC0. Palette-locked to DOOM's
   colours on derivation so the HD detail keeps the original look.
+- **Pickup models, `assets/ultra/models/` (DOOM-0539)** — CC0, first-party. Built by scripts
+  in the shared asset library, using no pixel of the game's art. `assets/ultra/LICENSES` lists
+  each file.
 - **Menu font `Oxanium-SemiBold.ttf` (DOOM-0206)** — OFL. Ships **with its
   licence** alongside it (`linuxdoom-1.10/assets/OFL.txt`) and is embedded into
   the binary at build time.

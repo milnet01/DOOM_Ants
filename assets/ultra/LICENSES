@@ -106,3 +106,10 @@ assets/ultra/heroes/tech/TEKWALL4_nrm.png  Blender-Scripts/walls/doom_tekwall4.p
 assets/ultra/heroes/tech/TEKWALL4_ao.png  Blender-Scripts/walls/doom_tekwall4.py  CC0-first-party
 assets/ultra/heroes/tech/TEKWALL4_hgt.png  Blender-Scripts/walls/doom_tekwall4.py  CC0-first-party
 assets/ultra/heroes/tech/TEKWALL4_emis.png  Blender-Scripts/walls/doom_tekwall4.py  CC0-first-party
+
+# DOOM-0539 pickup models: first-party, built and baked by scripts in the shared asset library
+# (/mnt/Games/3D Engine Assets/Blender Scripts/pickups). No pixel of the game's art is used.
+assets/ultra/models/BON1.dmdl  pickups/doom_bon1.py  CC0-first-party
+assets/ultra/models/BON1_alb.png  pickups/doom_bon1.py  CC0-first-party
+assets/ultra/models/BON1_nrm.png  pickups/doom_bon1.py  CC0-first-party
+assets/ultra/models/BON1_emis.png  pickups/doom_bon1.py  CC0-first-party
