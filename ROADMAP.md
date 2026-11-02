@@ -11406,6 +11406,12 @@ stay in their phase sections; this heading holds only work still to come.
   how gamma should apply to a full-colour, tone-mapped image.
   User 2026-11-02: make gamma work in Solid and Ultra too, as the last
   step of drawing.
+  2026-11-02, built, ship = the user's look: a last pass (RecordGamma,
+  gamma.frag) over the finished frame, curve fitted to gammatable,
+  largest error 16 of 255 at level 4. Level 0 records no pass. The
+  user's config holds usegamma 1, so their Solid and Ultra get brighter
+  with this build; F11 cycles it. Not run: Windows, levels 1 to 3 on
+  screen.
   **Layman:** The brightness (gamma) option in the menu changes the picture in Classic only; in the two 3D views it has no effect.
   Kind: fix.
   Source: in-session-2026-10-08, split from DOOM-0379.
@@ -17514,6 +17520,11 @@ in CLAUDE.md describes.
   That wall now has baked art (DOOM-0537), so derived relief no longer
   draws there; every wall without baked art still has it.
   User 2026-11-02: halve the depth; strength stays.
+  2026-11-02: kSurfHeightScale 0.12 to 0.06, strength unchanged. Solid
+  raster E1M1 1432 -3456 180 flashlight on, before and after:
+  scratch/fog0536/relief.png. The before binary is older than this one
+  change, so its 12.1 mean change is not this change alone. Ship = the
+  user's look.
   **Layman:** Without ray tracing, the fake depth on some detailed walls makes them look wavy.
   Kind: fix.
   Source: found-2026-10-30-doom-0182-capture.
@@ -17530,6 +17541,20 @@ in CLAUDE.md describes.
   seep-field section and its loop log.
   User 2026-11-02: better, but still a bit of a fog wall; it should fill
   the space more.
+  2026-11-02, built, ship = the user's look in play. Two causes
+  remained. The seep field measured to each opening's midpoint, so a
+  cell one column from open sky read 205 units at E1M4; it now uses the
+  nearest point (seep_dist.h). Roofed air also takes kSunSpill 0.8 of
+  the sun's share, graded by seepT squared. Rise across the edge at E1M4
+  1718 882 276, Ultra traced, rt_fog 3, 100 pixels across the upper
+  frame: 33.0 before, 11.1 distance fix alone, 1.9 both; 3.1 with fog
+  forced even. User then: insanely bright; kSkyShaftStrength 0.85 to
+  0.55, picked over 0.70 by eye; the rise reads 5.3 there. Other spots,
+  before and after at 0.85: E1M1 1056 -3616 270 mean 131.8 to 130.7,
+  E1M1 1432 -3456 180 125.5 to 123.1, E1M4 1718 300 90 122.7 to 130.2.
+  Stills only; sealed rooms hold by construction, not measured.
+  Captures: scratch/fled/look/fog0536-*.png; sheet
+  scratch/fog0536/grid2.png.
   **Layman:** Fog should spread out under a roof the way real fog does, not stop in a straight line beneath the hole in the ceiling.
   Kind: fix.
   Source: user-play-test-2026-11-02.
@@ -17565,6 +17590,9 @@ in CLAUDE.md describes.
   User 2026-11-02: second pass is good, make more: the rest of the COMP
   and TEKWALL families, then other walls by use. Download size does not
   matter, so all art stays in the one download at full detail.
+  Ultra raster's quiet measure still owed. 2026-11-02 12:47 sample: load
+  5.6, GPU busy 30 to 99% from other programs, so not taken. Wall batch
+  not started.
   **Layman:** Ultra's computer and wire walls become detailed 3D models, turned into HD surfaces, with the same layout as DOOM's originals.
   Kind: feature.
   Source: user-request-2026-11-02.
@@ -17601,6 +17629,11 @@ in CLAUDE.md describes.
   the file format and one model, BON1.
   User 2026-11-02, INV-3: a weapon model may be as wide as its picture,
   so it stays the size players know.
+  B1 done 2026-11-02: rb_model.h, rb_model_test (INV-4),
+  pickup_models_test (INV-3 and the sprite list against info.c),
+  lib/pickupbake.py, pickups/doom_bon1.py, assets/ultra/models/BON1.*,
+  252 triangles, one light. The baked normal map is nearly flat: the
+  cork's bump barely shows. Nothing draws a model yet. Next: B2.
   **Layman:** Health, armour, ammo, keys and power-ups become real 3D objects, so their glow can come from exactly the right spot inside them.
   Kind: feature.
   Source: user-request-2026-11-02.
