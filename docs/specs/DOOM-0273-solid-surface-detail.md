@@ -463,7 +463,9 @@ of STONE2 walls and FLOOR5_2 floor leading to the REDWALL1 cross
 
 - **The height scale and normal strength** are look calls. The user chose
   0.12 and 4.0 on 2026-10-26, from a side-by-side of four pairs at the test
-  scene; the start values were 0.06 and 2.0.
+  scene; the start values were 0.06 and 2.0. The user halved the height scale
+  to 0.06 on 2026-11-02 (DOOM-0535), because that pick was made while the relief
+  ran backwards.
 - **Ambient occlusion.** `derive_ao` exists, but the four channels are full
   and it costs about 32 taps per texel at load. Whether crevice darkening is
   worth a second image is decided after the user has seen B5. It is not

@@ -20,10 +20,11 @@
 // (tests/shader_mirror_test.cpp holds them equal).
 const uint SURF_DETAIL_ON = 1u;
 
-// How deep the relief reads, as a fraction of a kSurfDepthRefTexels tile. Twice the HD
-// path's kPomHeightScale: the user's pick 2026-10-26 from a side-by-side at the E2M1 test
-// scene (spec §10). Derived heights come from luma, so it is tuned on its own.
-const float kSurfHeightScale = 0.12;
+// How deep the relief reads, as a fraction of a kSurfDepthRefTexels tile. The user halved
+// it 2026-11-02 (DOOM-0535): the 2026-10-26 pick of 0.12 was made while the relief ran
+// backwards, and read as wavy once it ran the right way. Derived heights come from luma,
+// so it is tuned on its own.
+const float kSurfHeightScale = 0.06;
 
 // Below this tangent-space view z, the traced march takes its most steps.
 const float kSurfMinViewZ = 0.05;
