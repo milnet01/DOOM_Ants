@@ -25,6 +25,7 @@ const int FLAG_FLAT   = 0x1;   // matches RB_MESH_FLAT
 const int FLAG_MASKED = 0x2;   // matches RB_MESH_MASKED
 const int FLAG_SPRITE = 0x4;   // matches RB_MESH_SPRITE
 const int FLAG_SHADOW = 0x200; // matches RB_MESH_SHADOW
+const int FLAG_MODEL  = 0x400; // matches RB_MESH_MODEL
 
 void main()
 {
@@ -33,7 +34,7 @@ void main()
         discard;
 
     // Only cut-out surfaces need the test; opaque walls/flats cast solid.
-    if ((vFlags & (FLAG_SPRITE | FLAG_MASKED)) == 0)
+    if ((vFlags & (FLAG_SPRITE | FLAG_MASKED)) == 0 || (vFlags & FLAG_MODEL) != 0)
         return;
 
     // Unified bindless id, same mapping as mesh.frag (sprites last; a masked mid-wall

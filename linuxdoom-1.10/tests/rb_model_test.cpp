@@ -9,7 +9,10 @@
 //      a truncated or overlong body, and NaN or infinite values are each refused.
 //   3. A refused file leaves the model empty.
 //   4. A body at an odd offset in memory still loads.
+//   5. A file on disk loads, and one past the largest valid size is refused.
+//   6. A models.csv line gives a row, nothing, or malformed, and never cuts a path short.
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <vector>
@@ -131,6 +134,46 @@ int main()
         check(RB_ModelParse(shifted.data() + 1, f.size(), &m) == 1,
               "a file at an odd address loads");
         RB_ModelFree(&m);
+    }
+
+    // 5.
+    {
+        const auto f = good();
+        std::FILE* t = std::tmpfile();
+        std::fwrite(f.data(), 1, f.size(), t);
+        std::rewind(t);
+        rb_model_t m;
+        check(RB_ModelRead(t, &m) == 1 && m.numVerts == 3, "a file on disk loads");
+        RB_ModelFree(&m);
+        std::fclose(t);
+    }
+    {
+        // Valid header and body, one byte past the largest valid size: reading only as many
+        // bytes as the buffer holds must not turn it back into a file that fits.
+        auto f = good(900, 4);
+        f.resize(RB_MODEL_MAX_FILE + 4096, 0);
+        std::FILE* t = std::tmpfile();
+        std::fwrite(f.data(), 1, f.size(), t);
+        std::rewind(t);
+        rb_model_t m;
+        check(RB_ModelRead(t, &m) == 0 && m.floats == nullptr, "an oversized file is refused");
+        std::fclose(t);
+    }
+
+    // 6.
+    {
+        char spr[5], file[16];
+        check(RB_ModelCsvLine("BON1,models/B.dmdl\n", spr, file, sizeof file) == 1
+                  && !std::strcmp(spr, "BON1") && !std::strcmp(file, "models/B.dmdl"),
+              "a row gives its sprite and file");
+        check(RB_ModelCsvLine("  # note\n", spr, file, sizeof file) == 0, "a comment is no row");
+        check(RB_ModelCsvLine("\r\n", spr, file, sizeof file) == 0, "a blank line is no row");
+        check(RB_ModelCsvLine("BON,x.dmdl\n", spr, file, sizeof file) == -1, "a short sprite name is malformed");
+        check(RB_ModelCsvLine("BON1\n", spr, file, sizeof file) == -1, "no file column is malformed");
+        check(RB_ModelCsvLine("BON1,\n", spr, file, sizeof file) == -1, "an empty file is malformed");
+        check(RB_ModelCsvLine("BON1,a b\n", spr, file, sizeof file) == -1, "a second word is malformed");
+        check(RB_ModelCsvLine("BON1,models/too-long-path.dmdl\n", spr, file, sizeof file) == -1,
+              "a path too long is malformed, never cut short");
     }
 
     return check_summary("rb_model_test");

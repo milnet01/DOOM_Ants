@@ -9,6 +9,7 @@
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -18,6 +19,8 @@
 #define RB_MODEL_VERT_FLOATS 8u    // x y z, nx ny nz, u v
 #define RB_MODEL_LIGHT_FLOATS 7u   // x y z, r g b, reach
 #define RB_MODEL_HEADER_SIZE 16u
+#define RB_MODEL_MAX_FILE    (RB_MODEL_HEADER_SIZE + (RB_MODEL_MAX_VERTS * RB_MODEL_VERT_FLOATS \
+                              + RB_MODEL_MAX_LIGHTS * RB_MODEL_LIGHT_FLOATS) * 4u)
 
 typedef struct
 {
@@ -86,6 +89,37 @@ static inline void RB_ModelFree(rb_model_t* m)
     free(m->floats);
     m->floats = NULL;
     m->numVerts = m->numLights = 0;
+}
+
+// Reads a whole .dmdl from an open file. One byte past the largest valid file is read, so
+// an oversized one fails the parser's exact size check without being held in memory.
+static inline int RB_ModelRead(FILE* f, rb_model_t* out)
+{
+    unsigned char buf[RB_MODEL_MAX_FILE + 1];
+    return RB_ModelParse(buf, fread(buf, 1, sizeof buf, f), out);
+}
+
+// One line of models.csv, `sprite,file`. Returns 1 for a row, 0 for a comment or blank line,
+// -1 for anything else. A file path too long for its buffer is malformed, never truncated.
+static inline int RB_ModelCsvLine(const char* line, char sprite[5], char* file, size_t filesz)
+{
+    const char* comma;
+    size_t      len;
+
+    line += strspn(line, " \t\r\n");
+    if (!*line || *line == '#')
+        return 0;
+    comma = strchr(line, ',');
+    if (!comma || comma - line != 4)
+        return -1;
+    memcpy(sprite, line, 4);
+    sprite[4] = '\0';
+    len = strcspn(comma + 1, " \t\r\n");
+    if (len == 0 || len >= filesz || (comma + 1)[len + strspn(comma + 1 + len, " \t\r\n")])
+        return -1;
+    memcpy(file, comma + 1, len);
+    file[len] = '\0';
+    return 1;
 }
 
 #endif

@@ -47,6 +47,7 @@
 #include "sky_seal.h"    // DOOM-0322 sky lid height, seals, upper-step kind
 #include "step_wall.h"   // DOOM-0500 step walls on both sides, clamped
 #include "sprite_cap.h"  // DOOM-0459 nearest-first order past the sprite cap
+#include "r_backend.h"  // rendermode: pickup models are Ultra art (DOOM-0539)
 #include "r_mesh.h"
 #include "sprite_flags.h"
 #include "seep_dist.h"   // DOOM-0536 a cell's distance to an opening
@@ -2245,6 +2246,17 @@ int RB_WallTexEmits(int texnum)
     return wall_tex_light[texnum] ? 1 : 0;
 }
 
+// A thing's shade: its sector's light, or full on a fullbright frame.
+static float thing_light(const mobj_t* thing)
+{
+    float light = thing->subsector->sector->lightlevel / 255.0f;
+    if (thing->frame & FF_FULLBRIGHT)
+        light = 1.0f;
+    if (light < 0.0f) light = 0.0f;
+    if (light > 1.0f) light = 1.0f;
+    return light;
+}
+
 // One thing's billboard: the six vertices (two triangles) facing the eye, written
 // to q. False when the thing gets none: the player's own body, a bad sprite or frame
 // number, an unassigned rotation.
@@ -2312,11 +2324,7 @@ static boolean sprite_quad(const rb_view_t* view, mobj_t* thing, rb_vertex_t q[6
     ld   = -loff;                       // left edge along right vector
     rd   = -loff + wpx;                 // right edge
 
-    light = thing->subsector->sector->lightlevel / 255.0f;
-    if (thing->frame & FF_FULLBRIGHT)
-        light = 1.0f;
-    if (light < 0.0f) light = 0.0f;
-    if (light > 1.0f) light = 1.0f;
+    light = thing_light(thing);
 
     // DOOM-0084: a fullbright frame marks an actual light object (lamp,
     // torch, candle, burning barrel, projectile) — NOT ammo/pickups. Only
@@ -2343,16 +2351,112 @@ static boolean sprite_quad(const rb_view_t* view, mobj_t* thing, rb_vertex_t q[6
     return true;
 }
 
+// DOOM-0539: the Blender models standing in for pickup sprites, by sprite number. An empty
+// entry (numVerts 0) means that sprite stays a billboard.
+static rb_model_t sprite_model[NUMSPRITES];
+
+void RB_SetSpriteModel(int sprite, rb_model_t* model)
+{
+    if (sprite < 0 || sprite >= NUMSPRITES)
+    {
+        RB_ModelFree(model);
+        return;
+    }
+    RB_ModelFree(&sprite_model[sprite]);
+    sprite_model[sprite] = *model;
+    model->floats = NULL;
+    model->numVerts = model->numLights = 0;
+}
+
+void RB_ClearSpriteModels(void)
+{
+    int i;
+    for (i = 0; i < NUMSPRITES; i++)
+        RB_ModelFree(&sprite_model[i]);
+}
+
+int RB_SpriteFirstLump(const char* name, int* sprite)
+{
+    int i;
+    for (i = 0; i < NUMSPRITES; i++)
+    {
+        if (!strcmp(sprnames[i], name))
+        {
+            if (i >= numsprites || sprites[i].numframes <= 0)
+                return -1;
+            *sprite = i;
+            return sprites[i].spriteframes[0].lump[0];
+        }
+    }
+    return -1;
+}
+
+static const rb_model_t* thing_model(const mobj_t* thing)
+{
+    if (rendermode != RB_RT3D || !(thing->flags & MF_SPECIAL)
+        || (unsigned)thing->sprite >= NUMSPRITES || !sprite_model[thing->sprite].numVerts)
+        return NULL;
+    return &sprite_model[thing->sprite];
+}
+
+// A model's triangles, standing at the thing and turned by an angle its map position fixes,
+// so a row of pickups does not face one way and none turns as it is passed. Each UV is scaled
+// by the first lump's size because the shaders divide by that material's size.
+static void model_verts(const mobj_t* thing, const rb_model_t* m, rb_vertex_t* out)
+{
+    const int      lump  = sprites[thing->sprite].spriteframes[0].lump[0];
+    const float    w     = spritewidth[lump] / (float)FRACUNIT;
+    const float    h     = (float)sprite_h[lump];
+    const float    light = thing_light(thing);
+    const unsigned hash  = (unsigned)thing->x * 2654435761u ^ (unsigned)thing->y * 40503u;
+    const float    a     = (hash >> 16) / 65536.0f * 2.0f * 3.14159265f;
+    const float    c     = cosf(a), s = sinf(a);
+    const float    tx    = thing->x / (float)FRACUNIT;
+    const float    ty    = thing->y / (float)FRACUNIT;
+    const float    tz    = thing->z / (float)FRACUNIT;
+    uint32_t       i;
+
+    for (i = 0; i < m->numVerts; i++)
+    {
+        const float* v = RB_ModelVert(m, i);
+        out[i] = mkv(tx + c*v[0] - s*v[1], ty + s*v[0] + c*v[1], tz + v[2],
+                     c*v[3] - s*v[4], s*v[3] + c*v[4], v[5],
+                     v[6] * w, v[7] * h, lump, RB_MESH_SPRITE | RB_MESH_MODEL, light);
+    }
+}
+
+// Writes a thing's vertices to out and returns how many: 0 when it gets none, -1 when its
+// billboard does not fit in room. A model that does not fit falls back to its billboard.
+static int thing_verts(const rb_view_t* view, mobj_t* thing, int models,
+                       rb_vertex_t* out, int room)
+{
+    rb_vertex_t q[6];
+    if (models)
+    {
+        const rb_model_t* m = thing_model(thing);
+        if (m && (int)m->numVerts <= room)
+        {
+            model_verts(thing, m, out);
+            return (int)m->numVerts;
+        }
+    }
+    if (!sprite_quad(view, thing, q))
+        return 0;
+    if (room < 6)
+        return -1;
+    memcpy(out, q, sizeof q);
+    return 6;
+}
+
 // DOOM-0459: the overflow path. More things want a billboard than `out` holds, so
 // take them nearest first and keep as many as fit; the walk order used to decide,
 // which could drop a monster beside the player and draw one across the map. Only a
 // frame that overflowed pays for the sort. *dropped counts the things left out.
 static int build_nearest_sprites(const rb_view_t* view, rb_vertex_t* out, int maxverts,
-                                 int* dropped)
+                                 int models, int* dropped)
 {
     static rb_sprite_cand_t* cand;              // grows to the busiest frame, kept
     static int               candCap;
-    rb_vertex_t              q[6];
     mobj_t*                  thing;
     int                      s, i, count = 0, n = 0;
 
@@ -2382,22 +2486,17 @@ static int build_nearest_sprites(const rb_view_t* view, rb_vertex_t* out, int ma
 
     for (i = 0; i < count; i++)
     {
-        if (!sprite_quad(view, (mobj_t*)cand[i].thing, q))
-            continue;
-        if (n + 6 > maxverts)
-        {
+        int w = thing_verts(view, (mobj_t*)cand[i].thing, models, out + n, maxverts - n);
+        if (w < 0)
             (*dropped)++;                       // buffer full: this thing is not drawn
-            continue;
-        }
-        memcpy(out + n, q, sizeof q);
-        n += 6;
+        else
+            n += w;
     }
     return n;
 }
 
-int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts)
+int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts, int models)
 {
-    rb_vertex_t q[6];
     mobj_t*     thing;
     int         s, n = 0, dropped = 0;
     boolean     full = false;
@@ -2412,19 +2511,15 @@ int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts)
     {
         for (thing = sectors[s].thinglist; thing && !full; thing = thing->snext)
         {
-            if (!sprite_quad(view, thing, q))
-                continue;
-            if (n + 6 > maxverts)
+            int w = thing_verts(view, thing, models, out + n, maxverts - n);
+            if (w < 0)
                 full = true;
             else
-            {
-                memcpy(out + n, q, sizeof q);
-                n += 6;
-            }
+                n += w;
         }
     }
     if (full)
-        n = build_nearest_sprites(view, out, maxverts, &dropped);
+        n = build_nearest_sprites(view, out, maxverts, models, &dropped);
 
     // DOOM-0411: things past the cap used to vanish with no word. Say so once, when the
     // cap is first hit, rather than every frame.

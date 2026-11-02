@@ -31,6 +31,8 @@
 
 // POD-only and DOOM-header-free, so the C++ Vulkan back-end can include this
 // directly across the seam (the functions keep C linkage).
+#include "rb_model.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -134,6 +136,9 @@ typedef struct
 #define RB_MESH_SHADOW  0x200 // DOOM-0508: this sprite Thing is partly invisible (MF_SHADOW, the
                               // Spectre). Raster draws a flickering fuzz, the traced view a dark
                               // shimmer that bends what is behind it. No blob, no torch shadow.
+#define RB_MESH_MODEL   0x400 // DOOM-0539: a triangle of a pickup's Blender model. Carries
+                              // RB_MESH_SPRITE too, so it lights and shades as a sprite, but
+                              // reads HD maps through its UVs and has no palette cut-outs.
 
 // Transparent-key palette index for the 2D HUD/menu compositor (DOOM-0008). In
 // the 3D back-ends the engine still draws every 2D element (status bar, menu,
@@ -461,7 +466,15 @@ typedef struct
 // software renderer does. texnum carries the sprite-lump index (atlas id =
 // numwall + numflat + texnum); flags carry RB_MESH_SPRITE. Rebuilt every frame
 // because things move; must be called after a level is loaded.
-int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts);
+// `models`: 1 draws a pickup with a loaded model as that model (Ultra only). 0 keeps every
+// thing a billboard, as the traced view and the emitter list need until DOOM-0539 B3 and B4.
+int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts, int models);
+
+// DOOM-0539: the model drawn for a sprite. Takes ownership of *model and empties it.
+void RB_SetSpriteModel(int sprite, rb_model_t* model);
+void RB_ClearSpriteModels(void);
+// A sprite name's first lump, and its number in *sprite. -1 when this WAD does not have it.
+int RB_SpriteFirstLump(const char* name, int* sprite);
 
 // Build the player's weapon/flash psprites as a screen-space overlay, writing
 // rb_vertex_t triangles into out[] (up to maxverts). Positions are emitted in

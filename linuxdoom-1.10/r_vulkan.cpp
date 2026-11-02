@@ -5654,7 +5654,8 @@ static uint32_t DeviceMaxImage2D()
 // sprites. Sized once for a generous cap; RB_BuildSprites refills it each frame.
 void CreateSpriteBuffer()
 {
-    g.spriteVertCap = 4096 * 6;   // up to ~4096 things per frame, 6 verts each
+    g.spriteVertCap = 4096 * 6 + 36000;   // ~4096 billboards, 6 verts each, and DOOM-0539's
+                                          // 12000 model triangles a frame
     VkDeviceSize size = (VkDeviceSize)g.spriteVertCap * sizeof(rb_vertex_t);
 
     // DOOM-0074: one copy per in-flight slot so the next frame's build-ahead billboard
@@ -6985,6 +6986,43 @@ static void EnsureHdMaterials()
         printf("DOOM-0042: %d sidecar row(s) name no wall texture or flat in this WAD -"
                " ignored:%s%s\n", unresolved, sample.c_str(), unresolved > 5 ? " ..." : "");
 
+    // DOOM-0539: pickup models. Each models.csv row loads its .dmdl and takes the control row
+    // of its sprite's first lump, which is the id its triangles carry. Sprites the WAD lacks
+    // are the other game's and are skipped; a bad .dmdl leaves its sprite a billboard (INV-4).
+    RB_ClearSpriteModels();
+    struct LoadedModel { int sprite; int id; rb_model_t model; };
+    std::vector<LoadedModel> models;
+    std::vector<char> isModel(N, 0);
+    char modelCsv[720];
+    FILE* mf = rb_asset_path(modelCsv, sizeof(modelCsv), "models.csv") ? fopen(modelCsv, "r") : nullptr;
+    if (mf) {
+        char line[256];
+        while (fgets(line, sizeof(line), mf)) {
+            char spr[5], file[192], full[720];
+            const int rc = RB_ModelCsvLine(line, spr, file, sizeof(file));
+            if (rc < 0) printf("DOOM-0539: %s: malformed row - skipped.\n", modelCsv);
+            if (rc != 1) continue;
+            int sprite;
+            const int lump = RB_SpriteFirstLump(spr, &sprite);
+            const int id   = g.matNumWall + g.matNumFlat + lump;
+            if (lump < 0 || id >= N) continue;
+            rb_model_t model = {};
+            FILE* df = rb_asset_path(full, sizeof(full), file) ? fopen(full, "rb") : nullptr;
+            const bool ok = df && RB_ModelRead(df, &model);
+            if (df) fclose(df);
+            if (!ok) { printf("DOOM-0539: %s: refused - %s stays a sprite.\n", file, spr); continue; }
+            rb_matrow_t row = {};
+            std::strcpy(row.name, spr);
+            rows.push_back(row);
+            rowForId[id]        = (int)rows.size() - 1;
+            isModel[id]         = 1;
+            table[id].usePBR    = 1u;
+            table[id].flags     = RB_FLAG_NO_DETILE;   // de-tiling would scramble an atlas
+            models.push_back({ sprite, id, model });
+        }
+        fclose(mf);
+    }
+
     // 3. Traffic (world surface area per unified id) from the level mesh.
     std::vector<float> traffic(N, 0.0f);
     if (g.levelMesh && g.levelMesh->verts) {
@@ -7028,7 +7066,8 @@ static void EnsureHdMaterials()
                 if (r.maps[ms.k][0] == '\0') continue;      // empty hero cell = no map (default)
                 relPath = r.maps[ms.k];
             } else {
-                snprintf(rel, sizeof(rel), "derived/%s_%s.png", r.name, ms.suffix);
+                snprintf(rel, sizeof(rel), isModel[id] ? "models/%s_%s.png" : "derived/%s_%s.png",
+                         r.name, ms.suffix);
                 relPath = rel;
             }
             char full[720];
@@ -7038,7 +7077,7 @@ static void EnsureHdMaterials()
                 continue;
             }
             if (!rb_image_info(full, &w, &h)) {
-                if (ms.k != RB_ALB)
+                if (ms.k != RB_ALB && !isModel[id])   // a model bakes only the maps it needs
                     printf("DOOM-0042: %s: no %s map (%s) - default.\n", r.name, ms.suffix, full);
                 continue;
             }
@@ -7217,6 +7256,13 @@ static void EnsureHdMaterials()
         }
     }
     for (rb_image_t& img : decoded) rb_image_free(&img);
+
+    // DOOM-0539: only now is it known which models kept their albedo through the budget, the
+    // image cap and the video memory. The rest draw as their sprites.
+    for (LoadedModel& lm : models) {
+        if (table[lm.id].usePBR && table[lm.id].maps[RB_ALB] >= 0) RB_SetSpriteModel(lm.sprite, &lm.model);
+        else RB_ModelFree(&lm.model);
+    }
 
     int nHd = 0;                                // after cap and decode drops, not the budget's count
     for (int id = 0; id < N; id++) if (table[id].usePBR) nHd++;
@@ -10376,7 +10422,7 @@ static void BuildFrameInputs(bool rtActive, bool cprof, bool doReheight)
         // Sky backdrop first (verts [0,sky)); it draws behind the world with the
         // depth-off pipeline. Sprites + weapon follow and share the main draw.
         int sky = RB_BuildSky(&g.lastView, buf, (int)g.spriteVertCap);
-        int n   = RB_BuildSprites(&g.lastView, buf + sky, (int)g.spriteVertCap - sky);
+        int n   = RB_BuildSprites(&g.lastView, buf + sky, (int)g.spriteVertCap - sky, 1);
         g.thingVertCount = (uint32_t)n;
         // Weapon overlay shares the buffer/draw; appended last so it sits on top.
         // Pass the swapchain aspect so the gun keeps DOOM's 4:3 proportions.
@@ -10404,7 +10450,7 @@ static void BuildFrameInputs(bool rtActive, bool cprof, bool doReheight)
         {
             const double tW0 = cprof ? CpuNowMs() : 0.0;
             g.sprWorldVertCount = (uint32_t)RB_BuildSprites(&g.lastView,
-                (rb_vertex_t*)g.sprWorldMapped, (int)g.sprWorldVertCap);
+                (rb_vertex_t*)g.sprWorldMapped, (int)g.sprWorldVertCap, 0);
             const double tL0 = cprof ? CpuNowMs() : 0.0;
             if (cprof) g.cpuBuildMs[0] += tL0 - tW0;   // 2nd (world) sprite build -> sprites
             if (g.worldEmitDirty && g.vbufShadow)
@@ -10432,7 +10478,7 @@ static void BuildFrameInputs(bool rtActive, bool cprof, bool doReheight)
         g.sprWorldVertCount = 0;
         if (g.sprWorldMapped)
             g.sprWorldVertCount = (uint32_t)RB_BuildSprites(&g.lastView,
-                (rb_vertex_t*)g.sprWorldMapped, (int)g.sprWorldVertCap);
+                (rb_vertex_t*)g.sprWorldMapped, (int)g.sprWorldVertCap, 0);
 
         // DOOM-0082: last frame RB_UpdateMeshHeights saw a switch press/revert (or an
         // animated flat) change a face's live texture; rebuild the static emitter set

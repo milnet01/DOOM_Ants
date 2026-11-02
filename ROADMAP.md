@@ -17596,6 +17596,17 @@ in CLAUDE.md describes.
   Ultra raster's quiet measure still owed. 2026-11-02 12:47 sample: load
   5.6, GPU busy 30 to 99% from other programs, so not taken. Wall batch
   not started.
+  Ultra raster measured 2026-11-02 with Brave closed, 600 frames, frozen
+  view, two runs per wall, 5120x3200 swapchain (-scale 16), render_scale
+  36. Median frame: COMPTALL 7.9 and 7.8 ms, TEKWALL1 7.9 and 7.7 ms,
+  TEKWALL4 8.2 and 8.1 ms. First-run means 15.5, 15.7 and 16.9 ms, against
+  the 16.7 ms floor. About a third of frames take 20 to 45 ms in bursts,
+  all in fence wait. The view is frozen, so the frame's own work does not
+  vary; the card also read 45 to 64% busy with no game running. That
+  outside load is not identified: fdinfo shows plasma-systemmonitor at 6.7%
+  and kwin cannot be read. So the machine was not truly quiet. The map
+  sizes stay: an undisturbed frame has about 8 ms to spare. Kit:
+  scratch/ultra-pass/meas.sh.
   **Layman:** Ultra's computer and wire walls become detailed 3D models, turned into HD surfaces, with the same layout as DOOM's originals.
   Kind: feature.
   Source: user-request-2026-11-02.
@@ -17637,6 +17648,20 @@ in CLAUDE.md describes.
   lib/pickupbake.py, pickups/doom_bon1.py, assets/ultra/models/BON1.*,
   252 triangles, one light. The baked normal map is nearly flat: the
   cork's bump barely shows. Nothing draws a model yet. Next: B2.
+  B2 done 2026-11-02: Ultra's rasterised view draws BON1 as its model
+  (models.csv, thing_verts and model_verts in r_mesh.c, the model branch in
+  EnsureHdMaterials). E1M1 590 -3480 334: scratch/fled/look/b2-near.png,
+  sprite, model, model with torch. The liquid reads flat because its emissive
+  map sets a floor under the shading. The traced view and the emitter list
+  still get sprites through RB_BuildSprites' models argument, 0 at both
+  sprWorldBuf calls; B3 and B4 turn that on and grow g.sprWorldVertCap, so
+  for now a model casts the sprite's light. The 12000-triangle budget and the
+  1024-unit limit are B5: until then a model that does not fit the buffer
+  draws as its sprite, in walk order.
+  Checks at that spot against the commit before: Solid raster repeat pair 0.000
+  mean, an earlier pair within same-build noise (INV-6); Classic 0.000; Ultra
+  traced view 3 0.000; Ultra with no models.csv 0.0062, no pixel over 60 summed
+  across channels (INV-7). Next: B3.
   **Layman:** Health, armour, ammo, keys and power-ups become real 3D objects, so their glow can come from exactly the right spot inside them.
   Kind: feature.
   Source: user-request-2026-11-02.
