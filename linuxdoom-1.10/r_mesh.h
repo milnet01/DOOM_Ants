@@ -475,6 +475,10 @@ int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts, int m
 // DOOM-0539: the model drawn for a sprite. Takes ownership of *model and empties it.
 void RB_SetSpriteModel(int sprite, rb_model_t* model);
 void RB_ClearSpriteModels(void);
+
+// DOOM-0541: reads relief.csv's sunk rectangles for walls with real depth in Ultra. NULL clears them.
+void RB_LoadWallRelief(const char* path);
+int  RB_WallReliefLoaded(void);
 // A sprite name's first lump, and its number in *sprite. -1 when this WAD does not have it.
 int RB_SpriteFirstLump(const char* name, int* sprite);
 

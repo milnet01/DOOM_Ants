@@ -53,6 +53,7 @@
 #include "seep_dist.h"   // DOOM-0536 a cell's distance to an opening
 #include "patch_bounds.h"
 #include "atlas_bounds.h"
+#include "wall_relief.h"   // DOOM-0541 real depth in a wall
 
 // Texture geometry tables from r_data.c (no public header declares them).
 // texturewidthmask+1 is the wall's tiling width (matches how R_GetColumn masks
@@ -283,6 +284,165 @@ static int wall_span_tiles(const seg_t* seg, float nx, float ny)
 // share a rule; uppers and lowers each have their own.
 enum { PEG_ONESIDED, PEG_UPPER, PEG_LOWER, PEG_MID };
 
+// DOOM-0541: the sunk rectangles of Ultra's walls that have real depth, from relief.csv, in file
+// order. A later row covers an earlier one on the same texture.
+#define RELIEF_MAX_ROWS 1024
+typedef struct { int texnum; rb_relief_rect_t rect; } relief_row_t;
+static relief_row_t   relief_rows[RELIEF_MAX_ROWS];
+static int            relief_count;
+static unsigned char* relief_moves;   // per sector, only while a mesh is being built
+
+void RB_LoadWallRelief(const char* path)
+{
+    FILE* f = path ? fopen(path, "r") : NULL;
+    char  line[128];
+    relief_count = 0;
+    if (!f)
+        return;
+    while (fgets(line, sizeof line, f) && relief_count < RELIEF_MAX_ROWS)
+    {
+        char             name[9];
+        rb_relief_rect_t r;
+        int              tex;
+        if (!RB_ReliefParseLine(line, name, &r))
+            continue;
+        tex = R_CheckTextureNumForName(name);
+        if (tex <= 0)
+            continue;             // this game's WAD has no such wall
+        relief_rows[relief_count].texnum = tex;
+        relief_rows[relief_count].rect   = r;
+        relief_count++;
+    }
+    fclose(f);
+}
+
+int RB_WallReliefLoaded(void)
+{
+    return relief_count > 0;
+}
+
+// Which sectors can move. Relief vertices stand still, so a wall on such a sector stays a plain
+// quad that follows it. Better a flat wall than one that a door leaves hanging in the air.
+static void relief_mark_moving(void)
+{
+    int i, s, again;
+    free(relief_moves);
+    relief_moves = calloc((size_t)numsectors, 1);
+    if (!relief_moves)
+        return;
+    for (s = 0; s < numsectors; s++)
+        if (sectors[s].tag == 666 || sectors[s].tag == 667)   // boss deaths move these
+            relief_moves[s] = 1;
+    for (i = 0; i < numlines; i++)
+    {
+        const line_t* ld = &lines[i];
+        if (!RB_ReliefSpecialMoves(ld->special))
+            continue;
+        if (!ld->tag)
+        {
+            if (ld->backsector)   // a door opened by hand
+                relief_moves[ld->backsector - sectors] = 1;
+            continue;
+        }
+        for (s = 0; s < numsectors; s++)
+            if (sectors[s].tag == ld->tag)
+                relief_moves[s] = 1;
+    }
+    // Stairs and donuts also move sectors with no tag of their own. A stair spreads across two-sided
+    // lines to neighbours with the same floor picture; a donut moves the tagged sector's neighbours.
+    for (i = 0; i < numlines; i++)
+    {
+        const int sp = lines[i].special;
+        if (!lines[i].tag || !(sp == 7 || sp == 8 || sp == 9 || sp == 100 || sp == 127))
+            continue;
+        for (s = 0; s < numsectors; s++)
+            if (sectors[s].tag == lines[i].tag)
+                relief_moves[s] |= 2;       // 2 marks this walk's frontier
+        do
+        {
+            int k;
+            again = 0;
+            for (k = 0; k < numlines; k++)
+            {
+                const line_t* ld = &lines[k];
+                int f, b;
+                if (!ld->frontsector || !ld->backsector)
+                    continue;
+                f = (int)(ld->frontsector - sectors);
+                b = (int)(ld->backsector - sectors);
+                if ((relief_moves[f] & 2) == (relief_moves[b] & 2))
+                    continue;
+                if (sp == 9 || sectors[f].floorpic == sectors[b].floorpic)
+                {
+                    const int to = (relief_moves[f] & 2) ? b : f;
+                    relief_moves[to] |= sp == 9 ? 1 : 2;
+                    again = sp != 9;
+                }
+            }
+        } while (again);
+        for (s = 0; s < numsectors; s++)
+            if (relief_moves[s] & 2)
+                relief_moves[s] = 1;
+    }
+}
+
+typedef struct
+{
+    builder_t* bld;
+    float      x1, y1, ux, uy, nx, ny, u0, zt, vtop, light;
+    int        texnum, flags, side, slot;
+} relief_ctx_t;
+
+static void relief_emit(const rb_relief_vert_t q[4], void* user)
+{
+    const relief_ctx_t* c = (const relief_ctx_t*)user;
+    rb_vertex_t         o[4];
+    int                 k;
+    for (k = 0; k < 4; k++)
+    {
+        const rb_relief_vert_t* v = &q[k];
+        const float             t = v->u - c->u0;
+        o[k] = mkv(c->x1 + c->ux * t + c->nx * v->d, c->y1 + c->uy * t + c->ny * v->d,
+                   c->zt - (v->v - c->vtop),
+                   c->ux * v->nu + c->nx * v->nd, c->uy * v->nu + c->ny * v->nd, -v->nv,
+                   v->tu, v->tv, c->texnum, c->flags, c->light);
+        o[k].vtexside = c->side;
+        o[k].vtexslot = c->slot;
+    }
+    push_quad(c->bld, o[0], o[1], o[2], o[3]);
+}
+
+// Draws this wall with real depth and returns 1, or returns 0 and the caller draws it flat. Ultra
+// only, as the depth belongs to its art; RB_Vulkan_TierChanged rebuilds the mesh on a switch.
+static int emit_relief_wall(builder_t* bld, const seg_t* seg, int texnum, int flags, int pegkind,
+                            const relief_ctx_t* base, float u1, float vbot)
+{
+    rb_relief_rect_t rects[RB_RELIEF_MAX_RECTS];
+    relief_ctx_t     c = *base;
+    int              i, n = 0;
+
+    if (rendermode != RB_RT3D || !relief_count || !relief_moves || pegkind == PEG_MID || vbot <= c.vtop)
+        return 0;
+    if (relief_moves[seg->frontsector - sectors]
+        || (seg->backsector && relief_moves[seg->backsector - sectors]))
+        return 0;
+    for (i = 0; i < relief_count && n < RB_RELIEF_MAX_RECTS; i++)
+        if (relief_rows[i].texnum == texnum)
+            rects[n++] = relief_rows[i].rect;
+    if (!n)
+        return 0;
+
+    c.bld = bld;
+    c.texnum = texnum;
+    c.flags = flags;
+    // A seg that stops mid-linedef carries on along the same line, so its end stays open.
+    return RB_ReliefBuild(rects, n, (float)(texturewidthmask[texnum] + 1),
+                          textureheight[texnum] / (float)FRACUNIT, c.u0, u1, c.vtop, vbot,
+                          seg->offset == 0,
+                          seg->v2 == seg->linedef->v1 || seg->v2 == seg->linedef->v2,
+                          relief_emit, &c);
+}
+
 //
 // One vertical wall quad between bottomz and topz along the seg.
 //
@@ -383,6 +543,16 @@ static void emit_wall(builder_t* bld, seg_t* seg, fixed_t bottomz, fixed_t topz,
     light = seg->frontsector->lightlevel / 255.0f;
     if (light < 0.0f) light = 0.0f;
     if (light > 1.0f) light = 1.0f;
+
+    {
+        relief_ctx_t c = { 0 };
+        c.x1 = x1; c.y1 = y1; c.ux = dx / len; c.uy = dy / len; c.nx = nx; c.ny = ny;
+        c.u0 = u0; c.zt = zt; c.vtop = vtop; c.light = light;
+        c.side = (int)(seg->sidedef - sides);
+        c.slot = pegkind == PEG_UPPER ? 0 : pegkind == PEG_LOWER ? 2 : 1;
+        if (emit_relief_wall(bld, seg, texnum, flags, pegkind, &c, u1, vbot))
+            return;
+    }
 
     bl = mkv(x1, y1, zb, nx, ny, 0.0f, u0, vbot, texnum, flags, light);
     br = mkv(x2, y2, zb, nx, ny, 0.0f, u1, vbot, texnum, flags, light);
@@ -608,6 +778,8 @@ rb_mesh_t* RB_BuildLevelMesh(void)
     int i, s, k;
 
     bld.cur_ss = -1;   // untagged until a wall/cap sets it (step 4c)
+    if (rendermode == RB_RT3D && relief_count)
+        relief_mark_moving();
 
     // Reverse map seg -> subsector for the per-triangle GI tag: subsectors own
     // contiguous seg ranges (firstline..firstline+numlines), so invert that once.

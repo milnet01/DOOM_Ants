@@ -35,6 +35,8 @@ What's in the tree today, and how each is recorded:
 - **Pickup models, `assets/ultra/models/` (DOOM-0539)** — CC0, first-party. Built by scripts
   in the shared asset library, using no pixel of the game's art. `assets/ultra/LICENSES` lists
   each file.
+- **Wall relief, `assets/ultra/relief.csv` (DOOM-0541)** — CC0, first-party. Numbers written by the
+  wall's builder script in the shared asset library, naming rectangles in the wall's own art.
 - **Menu font `Oxanium-SemiBold.ttf` (DOOM-0206)** — OFL. Ships **with its
   licence** alongside it (`linuxdoom-1.10/assets/OFL.txt`) and is embedded into
   the binary at build time.

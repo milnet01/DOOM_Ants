@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=540 -->
+<!-- ants-roadmap-id-high-water: DOOM=543 -->
 
 # Roadmap
 
@@ -17623,6 +17623,15 @@ in CLAUDE.md describes.
   5120x3200 at scale 36, 300 frames: E3M8 TEKWALL2 median 12.3 ms, mean 18.0; E2M6
   COMP2 median 14.4 ms, mean 27.4. Upper figures, not a quiet measure. Not run:
   Windows. Next: other walls by use, after the user's look.
+  User's look 2026-11-02, third pass, shots dev-shots/shot-0049 to
+  shot-0056 (COMPTILE, blue processor wall): "we are making
+  improvements", but the fake depth sells from some angles and not
+  others. At a steep angle the parallax shears the pins and grid into
+  streaks and the blue grid slides over the panels. User wants real
+  geometry in this wall, in the same layout the fake tried to show;
+  fakes stay acceptable elsewhere. The grey between the blue is metal
+  with a very rough reflection, which it does not show today. Follow-on
+  work is filed as its own items.
   **Layman:** Ultra's computer and wire walls become detailed 3D models, turned into HD surfaces, with the same layout as DOOM's originals.
   Kind: feature.
   Source: user-request-2026-11-02.
@@ -17696,6 +17705,17 @@ in CLAUDE.md describes.
   so it will meet this when DOOM-0178 lands.
   g.sprWorldVertCap has no room for light triangles yet: B4 adds it.
   Frame cost not measured: B5. Windows not run. Next: B4.
+  B4 done 2026-11-02: BON1's light reaches both views as one small
+  triangle, traced gain 200. E1M1 590 -3480 334, with sectors at light
+  40 (b3-dim.wad), against a copy of the model with numLights 0 (INV-5):
+  raster 99772 pixels moved more than 12 summed across channels, mean
+  +5.2 +7.9 +14.5 RGB; traced 140916 pixels, mean -1.4 +2.5 +17.4. Sheet
+  scratch/fled/look/b4-sheet.png. Raster needed its own roll-off for
+  lights with a reach, under kHdPipeline: the room's other lights fill
+  the shared one. The sprite light before B4 moved that floor under 1
+  level in 255. Solid against the commit before: mean 0.483, same-build
+  control 0.483; Classic 0.000. -rtverify PASS. Spec section 4.4
+  amended. Not done: frame cost and INV-8 (B5), Windows. Next: B5.
   **Layman:** Health, armour, ammo, keys and power-ups become real 3D objects, so their glow can come from exactly the right spot inside them.
   Kind: feature.
   Source: user-request-2026-11-02.
@@ -17708,6 +17728,45 @@ in CLAUDE.md describes.
   **Layman:** The torch did not show up in a test screenshot of the ray-traced view, and we do not yet know if the game or the test setup is at fault.
   Kind: investigate.
   Source: found-2026-11-02-doom-0539-b3.
+
+- 📋 [DOOM-0541] **Build COMPTILE's recesses, pins and bars as real geometry in Ultra instead of faking them with parallax.**
+  User 2026-11-02, shots dev-shots/shot-0049 to shot-0056: the parallax fake sells from some angles and fails badly from others; build this wall as actual geometry, in the same layout. Fakes remain fine elsewhere. Parent: DOOM-0537.
+  Built 2026-11-02, waiting on the user's look. wall_relief.h turns
+  relief.csv's sunk rectangles into real faces on the wall, in Ultra
+  only; COMPTILE is the one wall using it, with parallax turned off.
+  Depth 12 map units for the blue middle, niches and plate gaps, 4 for
+  the bars. Everything sits behind the wall's plane, so nothing can
+  touch the player. The blue grid is still flat art on the recess's
+  floor, not raised lines. The grey plates' screws and trim are flat art
+  too. Walls on sectors that can move stay flat: relief vertices stand
+  still, and RB_ReliefSpecialMoves counts any unknown special as moving.
+  Art spanning several tiles is not handled, as COMPTILE spans one. A
+  side wall stands where two collinear linedefs meet across a recess;
+  not seen in captures, not excluded. Switching tier rebuilds the
+  level's mesh; tried Ultra to Solid and back with a throwaway build.
+  E1M1 went 3159 to 10387 triangles; static emitters stayed 170. Solid
+  raster at E1M1 2426 -2432 180 against the commit before: 0.000. Solid
+  traced 0.0060, same-build control 0.0058. -rtverify PASS. GPU pass
+  medians, 1843x1152, facing the wall, two runs each, machine busy:
+  raster scene 12.9 and 11.8 ms against the fake's 24.9 and 16.3; trace
+  19.7 and 19.8 ms against 18.7 and 18.7. Full-frame figures were too
+  noisy to quote, and the rebuild's effect on a moving door's refit is
+  not measured. Windows not run. Sheet: scratch/fled/look/r1-sheet.png.
+  **Layman:** The blue processor wall gets real depth, so it holds up from every angle instead of smearing when seen from the side.
+  Kind: feature.
+  Source: user-play-test-2026-11-02.
+
+- 📋 [DOOM-0542] **Give Ultra's HD walls metal: COMPTILE's grey panels show a very rough reflection.**
+  User 2026-11-02: the grey parts between the blue are metal with a very rough reflection. Today the HD path loads no roughness or metallic map (kHdV1Maps skips RB_RGH and RB_MET) and the trace is Lambert except wet sheen. Related: DOOM-0103, DOOM-0517, DOOM-0104.
+  **Layman:** The grey plates on the blue processor wall look like rough metal that picks up a smeared hint of the room's light.
+  Kind: feature.
+  Source: user-play-test-2026-11-02.
+
+- 📋 [DOOM-0543] **Make Ultra's floors like the VkDOOM video's hex tiles: real bevels, each tile catching light differently, grime in the gaps.**
+  User 2026-11-02: "We still need to do the floor like it was done in that video you analysed." Reading taken from the study: scratch/ref-frames/vkdoom/sheet-012.png, 1:39 to 1:41, notes-part1.md (roughness varies tile by tile, dirt between tiles) and the dark glossy floors at 0:17 and 3:09. Not confirmed with the user which floor they meant.
+  **Layman:** Floor tiles look like separate worn slabs that catch the light one by one, as in the reference video.
+  Kind: feature.
+  Source: user-play-test-2026-11-02.
 
 ## 0.13.0 — The player's experience
 

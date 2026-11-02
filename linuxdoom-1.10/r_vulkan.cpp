@@ -7286,9 +7286,15 @@ extern "C" void RB_Vulkan_TierChanged(void)
     // entering it needs nothing. Leaving it must not keep the set: pathtrace.comp
     // samples it in Solid's traced view too. InitHdDefault rebuilds the default
     // set, and BuildHdSet frees Ultra's first (after a device wait-idle).
-    if (g.device == VK_NULL_HANDLE || rendermode == TIER_RT3D || !g.hdBuilt) return;
-    InitHdDefault();
-    g.hdBuilt = false;
+    if (g.device == VK_NULL_HANDLE) return;
+    if (rendermode != TIER_RT3D && g.hdBuilt)
+    {
+        InitHdDefault();
+        g.hdBuilt = false;
+    }
+    // DOOM-0541: only Ultra's walls have real depth, so the level's mesh differs by tier.
+    if (g.levelMesh && RB_WallReliefLoaded())
+        RB_Vulkan_BuildLevel();
 }
 
 // DOOM-0283: whether Ultra will find its HD art, so the menu and the level-start
@@ -9028,6 +9034,12 @@ extern "C" void RB_Vulkan_BuildLevel(void)
     // The texture atlas is WAD-global; build + upload it on the first level only.
     if (!g.atlasReady)
         UploadAtlas();
+
+    // DOOM-0541: the walls with real depth; RB_BuildLevelMesh reads this table.
+    {
+        char reliefCsv[1024];
+        RB_LoadWallRelief(rb_asset_path(reliefCsv, sizeof(reliefCsv), "relief.csv") ? reliefCsv : nullptr);
+    }
 
     g.levelMesh = RB_BuildLevelMesh();
 
