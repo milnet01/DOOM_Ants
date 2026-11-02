@@ -11397,7 +11397,7 @@ stay in their phase sections; this heading holds only work still to come.
   Source: in-session-2026-10-08 (DOOM-0480 Windows run).
   Lanes: renderer, windows.
 
-- 📋 [DOOM-0491] **The gamma setting does nothing in Solid and Ultra.**
+- ✅ [DOOM-0491] **The gamma setting does nothing in Solid and Ultra.**
   I_SetPalette applies gammatable[usegamma] to the palette Classic presents.
   The 3D tiers decode the overlay and the world through the raw PLAYPAL
   (RB_PlayPal), so the gamma levels change nothing there. Listed in
@@ -11412,6 +11412,7 @@ stay in their phase sections; this heading holds only work still to come.
   user's config holds usegamma 1, so their Solid and Ultra get brighter
   with this build; F11 cycles it. Not run: Windows, levels 1 to 3 on
   screen.
+  User's look 2026-11-02: good, ship it.
   **Layman:** The brightness (gamma) option in the menu changes the picture in Classic only; in the two 3D views it has no effect.
   Kind: fix.
   Source: in-session-2026-10-08, split from DOOM-0379.
@@ -17495,7 +17496,7 @@ in CLAUDE.md describes.
   Kind: fix.
   Source: found-2026-10-30-doom-0182-capture.
 
-- 📋 [DOOM-0535] **Surface relief makes busy original art look wavy in the rasterised views at E2M2.**
+- ✅ [DOOM-0535] **Surface relief makes busy original art look wavy in the rasterised views at E2M2.**
   Seen 2026-10-30 in demo e2m2sk3s7, tic 395: a wall of the original art looks wavy and blotchy in Solid's and Ultra's rasterised views, and clean in Ultra's traced view. That wall has no HD art, so it takes DOOM-0273's one-sample parallax. Cause suspected, not proven; to test, capture the spot with surface_detail 0. Capture: scratch/fled/bot/e2m2.png.
   Likely cause found 2026-10-30 by cold review of DOOM-0182: mesh.frag's
   DOOM-0273 block builds T and B from screen derivatives without the
@@ -17525,11 +17526,12 @@ in CLAUDE.md describes.
   scratch/fog0536/relief.png. The before binary is older than this one
   change, so its 12.1 mean change is not this change alone. Ship = the
   user's look.
+  User's look 2026-11-02: good, ship it.
   **Layman:** Without ray tracing, the fake depth on some detailed walls makes them look wavy.
   Kind: fix.
   Source: found-2026-10-30-doom-0182-capture.
 
-- 🚧 [DOOM-0536] **Fog stops in a straight wall under the edge of a roof opening instead of filling the space.**
+- ✅ [DOOM-0536] **Fog stops in a straight wall under the edge of a roof opening instead of filling the space.**
   Seen at E1M4 1718 882 276, Ultra traced, rt_fog 3. pathtrace.comp switched the
   bank's height (kFogPoolHeight 112) to the indoor one (kFogIndoorPool 18) on the
   open-sky mask, so density at eye height stepped about sevenfold at the roof
@@ -17555,6 +17557,7 @@ in CLAUDE.md describes.
   Stills only; sealed rooms hold by construction, not measured.
   Captures: scratch/fled/look/fog0536-*.png; sheet
   scratch/fog0536/grid2.png.
+  User's look 2026-11-02: good, ship it.
   **Layman:** Fog should spread out under a roof the way real fog does, not stop in a straight line beneath the hole in the ceiling.
   Kind: fix.
   Source: user-play-test-2026-11-02.

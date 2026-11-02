@@ -16,6 +16,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Fog now fills the air under a roof opening instead of stopping in a straight wall at its edge.** (DOOM-0536)
+
+- **Fake relief on walls without HD art now shades the right way round and is half as deep, so busy art swims less in the rasterised views.** (DOOM-0535)
+
+- **The gamma setting now works in Solid and Ultra as well as Classic.** (DOOM-0491)
+
 - **The sky's far mountains no longer widen and squash as they cross the screen when you turn.** (DOOM-0164)
 
 - **The Spectre is a see-through shimmer that bends what is behind it in Solid and Ultra, not a solid Pinky.** (DOOM-0508)
