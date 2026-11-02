@@ -482,6 +482,9 @@ struct VulkanState
     // but blob.frag + alpha blend + depth-test-on/write-off, so each floor quad darkens
     // the floor without occluding. Drawn from g.spriteVbuf after the world, before sprites.
     VkPipeline       blobPipeline   = VK_NULL_HANDLE;
+    // DOOM-0508: writes only the Spectres' shape into the scene targets' alpha, leaving the
+    // picture behind them for composite.frag to bend.
+    VkPipeline       spectrePipeline = VK_NULL_HANDLE;
     // 2D HUD/menu compositor (DOOM-0008): a vertexless full-screen pass that
     // draws the paletted screens[0] overlay over the rendered 3D scene, keying
     // out the transparent index. Shares pipelineLayout + descriptor set 0.
@@ -646,6 +649,7 @@ struct VulkanState
     void*          spriteMapped     = nullptr;
     uint32_t       spriteVertCap    = 0;
     uint32_t       spriteVertCount  = 0;
+    uint32_t       thingVertCount   = 0;   // the world sprites at the front of spriteVertCount
     uint32_t       skyVertCount     = 0;   // sky verts at the front of spriteVbuf
     uint32_t       blobVertCount    = 0;   // DOOM-0170 L2d: blob-shadow verts...
     uint32_t       blobVertOffset   = 0;   // ...at this offset in spriteVbuf (after sprites)
@@ -5195,6 +5199,31 @@ void CreatePipeline()
         Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &pci, nullptr,
                                         &g.hdPipeline), "vkCreateGraphicsPipelines(hd)");
         pci.pStages = stages;
+    }
+
+    // DOOM-0508: mesh.frag's kSpectreMask on, writing alpha and nothing else. Both targets
+    // take the same mask because differing ones need the independentBlend feature. No depth
+    // write, so what stands behind a Spectre was drawn and stays bendable.
+    {
+        const VkBool32 maskOn = VK_TRUE;
+        const VkSpecializationMapEntry entry = { 1, 0, sizeof maskOn };
+        const VkSpecializationInfo si = { 1, &entry, sizeof maskOn, &maskOn };
+        VkPipelineShaderStageCreateInfo maskStages[2] = { stages[0], stages[1] };
+        maskStages[1].pSpecializationInfo = &si;
+        VkPipelineColorBlendAttachmentState cbaMask[2] = { cba, cba };
+        cbaMask[0].colorWriteMask = cbaMask[1].colorWriteMask = VK_COLOR_COMPONENT_A_BIT;
+        VkPipelineColorBlendStateCreateInfo cbMask = cbScene;
+        cbMask.pAttachments = cbaMask;
+        VkPipelineDepthStencilStateCreateInfo dsMask = ds;
+        dsMask.depthWriteEnable = VK_FALSE;
+        pci.pStages = maskStages;
+        pci.pColorBlendState = &cbMask;
+        pci.pDepthStencilState = &dsMask;
+        Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &pci, nullptr,
+                                        &g.spectrePipeline), "vkCreateGraphicsPipelines(spectre)");
+        pci.pStages = stages;
+        pci.pColorBlendState = &cbScene;
+        pci.pDepthStencilState = &ds;
     }
 
     // Sky variant: identical, but with depth test + write off so the full-screen
@@ -10294,6 +10323,7 @@ static void BuildFrameInputs(bool rtActive, bool cprof, bool doReheight)
         // depth-off pipeline. Sprites + weapon follow and share the main draw.
         int sky = RB_BuildSky(&g.lastView, buf, (int)g.spriteVertCap);
         int n   = RB_BuildSprites(&g.lastView, buf + sky, (int)g.spriteVertCap - sky);
+        g.thingVertCount = (uint32_t)n;
         // Weapon overlay shares the buffer/draw; appended last so it sits on top.
         // Pass the swapchain aspect so the gun keeps DOOM's 4:3 proportions.
         float aspect = g.extent.height ? (float)g.extent.width / (float)g.extent.height
@@ -11001,7 +11031,17 @@ extern "C" void RB_Vulkan_Present(void)
         if (g.spriteVbuf && g.spriteVertCount)
         {
             vkCmdBindVertexBuffers(g.cmd, 0, 1, &g.spriteVbuf, &off);
-            vkCmdDraw(g.cmd, g.spriteVertCount, 1, g.skyVertCount, 0);
+            vkCmdDraw(g.cmd, g.thingVertCount, 1, g.skyVertCount, 0);
+            // DOOM-0508: the world pipeline dropped the Spectres; this marks their shape.
+            // Before the weapon, whose own alpha then clears the mark so it never bends.
+            if (!rb_wireframe)
+            {
+                vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.spectrePipeline);
+                vkCmdDraw(g.cmd, g.thingVertCount, 1, g.skyVertCount, 0);
+                vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, worldPipe);
+            }
+            vkCmdDraw(g.cmd, g.spriteVertCount - g.thingVertCount, 1,
+                      g.skyVertCount + g.thingVertCount, 0);
         }
     }
 
@@ -11763,6 +11803,7 @@ extern "C" void RB_Vulkan_Shutdown(void)
     DestroyFramebufferResources();   // framebuffers, depth, swapchain image views
     if (g.pipeline)       vkDestroyPipeline(g.device, g.pipeline, nullptr);
     if (g.hdPipeline)     vkDestroyPipeline(g.device, g.hdPipeline, nullptr);
+    if (g.spectrePipeline) vkDestroyPipeline(g.device, g.spectrePipeline, nullptr);
     if (g.rtWeaponPipeline) vkDestroyPipeline(g.device, g.rtWeaponPipeline, nullptr);
     if (g.wirePipeline)   vkDestroyPipeline(g.device, g.wirePipeline, nullptr);
     if (g.blobPipeline)   vkDestroyPipeline(g.device, g.blobPipeline, nullptr);

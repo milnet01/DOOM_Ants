@@ -11437,6 +11437,18 @@ stay in their phase sections; this heading holds only work still to come.
   2026-10-30: built; ship = the user's in-game OK, then changelog + flip. New RB_MESH_SHADOW (0x200) from sprite_quad via sprite_flags.h. Raster: half the texels dropped per tic, the rest near black. Traced: a ray meeting the Spectre is bent and re-traced from there, darkened (kSpectreBend 2.0, kSpectreTint 0.45). No blob, no torch shadow. Traced shadow and light rays already cull sprites (mask 0x02), so nothing was needed there.
   Nothing was copied: rt_sprite.c only sets a flag from MF_SHADOW, and RTGL's water normals need a normal-map texture DOOM does not have. The waves are the existing rippleNormal(), so no third-party notice is owed.
   A/B at E1M5 -warpto -1360 104 90, skill 3, Solid traced, against 0f4b9c5: the difference picture shows the Spectre's outline. -rtverify PASS. Not measured: FPS with a Spectre on screen; motion (captures use -freeze).
+  2026-11-02, user's look: traced view good; the rasterised fuzz's
+  shifting black pixels make the Spectre very visible, and it must
+  emulate the traced distortion instead. This replaces the 2026-10-26
+  decision for that view. Built: the world pipeline drops the Spectre,
+  g.spectrePipeline marks its shape in the scene targets' alpha with a
+  wave phase, and composite.frag bends where it reads the scene there
+  (kSpectreBendUV 0.0035, kSpectreTint 0.7), darkened less than the
+  trace's. The weapon draws after the mark, so it never bends. E1M5
+  -1360 104 90, Solid and Ultra raster: no validation messages; Solid
+  raster with no Spectre in view moved 0.02% of pixels against the old
+  build. Not measured: the cost of the second sprite draw, and motion,
+  since captures are stills. Ship = the user's look in play.
   **Layman:** The invisible demon is fully visible in the 3D views, which makes it a different, easier enemy than the one the game intends.
   Kind: fix.
   Source: user-request-2026-10-26.

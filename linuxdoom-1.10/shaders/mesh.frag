@@ -128,6 +128,8 @@ layout(set = 1, binding = 1) uniform ShadowUbo { mat4 lightVP; uvec4 flags; uvec
 // Only g.hdPipeline turns it on. Every other pipeline compiles it away, because merely
 // carrying this code cost Solid's scene pass 3% (measured 2026-10-30).
 layout(constant_id = 0) const bool kHdPipeline = false;
+// DOOM-0508: on only in g.spectrePipeline, which draws just the Spectres' shape. See main().
+layout(constant_id = 1) const bool kSpectreMask = false;
 #include "formulas/formulas.glsl"         // srgbToLinear, linearToSrgb
 #include "formulas/pcg_hash.glsl"
 #define HD_SET 2
@@ -226,6 +228,12 @@ float flashlightShadow(vec3 worldPos)
 
 void main()
 {
+#ifndef SINGLE_TARGET
+    // Every other sprite has already been drawn; the Spectre mask pass wants only Spectres.
+    if (kSpectreMask && (vFlags & FLAG_SHADOW) == 0)
+        discard;
+#endif
+
     // Sky backdrop: a cylindrical panorama keyed on the view yaw, exactly like
     // classic DOOM. The sky is a wall texture (atlas id == texnum). 90 deg of
     // view spans one texture width; screen x maps to a ray-yaw offset via atan
@@ -410,15 +418,16 @@ void main()
     vec3  albedo  = texture(paletteTex, vec2((index + 0.5) / 256.0, 0.5)).rgb;
 
 #ifndef SINGLE_TARGET
-    // DOOM-0508: the Spectre's fuzz. Classic shifts each pixel and darkens the wall behind
-    // it; this pass cannot read what is behind, so half the sprite's texels, chosen afresh
-    // each tic, are dropped to let it show, and the rest go near black.
+    // DOOM-0508: a Spectre draws no colour. The world pipeline drops it so what stands behind
+    // survives; the mask pass, on the same cut-out shape, leaves its mark and the wave phase
+    // in AMBIENT's alpha for composite.frag, the only stage that can read what is behind.
     if ((vFlags & FLAG_SHADOW) != 0)
     {
-        vec2 cell = floor(vUV) + float(shadow.flags.w % 1024u) * vec2(7.0, 13.0);
-        if (fract(sin(dot(cell, vec2(12.9898, 78.233))) * 43758.5453) < 0.5)
+        if (!kSpectreMask)
             discard;
-        albedo *= 0.15;
+        outAmbient = vec4(0.0, 0.0, 0.0, 2.0 + float(shadow.flags.w % 64u) / 64.0);
+        outDirect  = vec4(0.0, 0.0, 0.0, -1.0);   // a world sprite's tag: SSAO ignores it
+        return;
     }
 
     // DOOM-0182: in Ultra the filth lands on every world surface, HD or paletted, as in the

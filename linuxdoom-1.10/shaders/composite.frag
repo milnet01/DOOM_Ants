@@ -48,14 +48,35 @@ layout(push_constant) uniform Push { vec2 uvScale; float aoEnable; float bloomIn
 #include "formulas/scene_recombine.glsl"
 #include "formulas/fixed_colormap.glsl"   // DOOM-0455: invulnerability + visor
 
+// DOOM-0508: the rasterised Spectre, the trace's refraction faked. Waves in screen space
+// bend where this pixel reads the scene, and the air inside darkens a little. Mesh.frag's
+// mask pass marks the shape: ambient alpha is 2 plus the wave phase in [0,1), above any
+// other alpha this target holds (sky 0, everything else 1).
+const float kSpectreBendUV = 0.0035;   // screen fractions; the waves' largest single offset
+const float kSpectreTint   = 0.7;
+
+vec2 spectreBend(float phase)
+{
+    float t = phase * 6.2831853;
+    return kSpectreBendUV * vec2(sin(vUV.y * 90.0 + t)  + 0.5 * sin(vUV.y * 197.0 + vUV.x * 60.0 - 2.0 * t),
+                                 sin(vUV.x * 70.0 - t)  + 0.5 * sin(vUV.x * 153.0 + vUV.y * 40.0 + 2.0 * t));
+}
+
 void main()
 {
+    vec2  suv = vUV * pc.uvScale;
+    float spectreTint = 1.0;
+    float spectreMask = textureLod(ambientTex, suv, 0.0).a;
+    if (spectreMask > 1.5)
+    {
+        suv += spectreBend(spectreMask - 2.0) * pc.uvScale;
+        spectreTint = kSpectreTint;
+    }
     // DOOM-0455: the parts rather than the sum, for the sky's far depth (viewZ) that
     // invulnerability's invert below must skip. sceneRecombine is this same call, summed.
-    vec2       suv = vUV * pc.uvScale;
     SceneParts sp  = sceneRecombineParts(textureLod(ambientTex, suv, 0.0).rgb,
                                          textureLod(directTex, suv, 0.0), aoTex, vUV, pc.aoEnable);
-    vec3 hdr = sp.direct + sp.ambient;
+    vec3 hdr = (sp.direct + sp.ambient) * spectreTint;
 
     // DOOM-0331 L3 (§4.4) — one additive term, BEFORE the tone-map so the halo rolls off with
     // the highlight it came from. A branch and not a multiply by zero: `hdr + bloom * 0.0` is
