@@ -667,7 +667,8 @@ vec3 skyPanorama(uvec2 px, uint w, uint h)
     float ndcX = suv.x * 2.0 - 1.0;
     float ang  = yaw - atan(ndcX);                     // matches mesh.frag's screen term
     float col  = ang / (PI * 0.5) * sz.x;              // 90 deg view = one texture width
-    float row  = 100.0 + (suv.y - 0.5) * 200.0;        // classic fixed sky scale
+    // Same formula and reason as mesh.frag's sky row: a true cylinder, not screen rows.
+    float row  = 100.0 + (suv.y - 0.5) * 200.0 / sqrt(1.0 + ndcX * ndcX);
     // DOOM-0143: below the horizon the fixed scale runs `row` past the 128px sky
     // texture; the sampler's vertical REPEAT then wraps it to the bright top-of-
     // sky rows -- a bright band wherever the RT sky backdrop fills BELOW eye

@@ -249,7 +249,12 @@ void main()
         // texel, with the texture's skytexturemid (row 100) pinned to the horizon
         // at screen centre. Mirrors classic r_sky (dc_texturemid = skytexturemid =
         // 100<<FRACBITS, dc_iscale = FRACUNIT).
-        float row   = 100.0 + (vScreenUV.y - 0.5) * 200.0;
+        // The sqrt makes it a true cylinder around the viewer. A perspective view
+        // stretches the sky sideways towards the frame's edges; without the same
+        // stretch upwards, mountains widen and squash as they cross the screen, which
+        // reads as an absurdly wide field of view. It is 1 at screen centre, so the
+        // scale there is still classic's.
+        float row   = 100.0 + (vScreenUV.y - 0.5) * 200.0 / sqrt(1.0 + ndcX * ndcX);
         // DOOM-0143/0162: below the horizon the fixed scale runs row past the 128px
         // sky texture. The old "* 2.0 then clamp to the base row" squashed the
         // panorama and showed a black band across distant outdoor views where the
