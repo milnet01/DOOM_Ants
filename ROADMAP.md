@@ -17488,6 +17488,13 @@ in CLAUDE.md describes.
   purpose: a fix changes Solid's pixels, and the user chose depth 0.12
   and strength 4.0 by eye on the present look, so the user should see it
   first.
+  2026-11-02: sign fixed in mesh.frag's derived path, as the HD branch
+  has it. Solid raster, E1M1 1432 -3456 180, flashlight on, 21.01 mean
+  change against a 0.0 same-build control. Sideways slide of the art
+  remains and still reads as wavy up close, so the sign was not the
+  whole cause; depth 0.12 and strength 4.0 were picked on the reversed
+  look and may need re-picking. Comparison:
+  scratch/ultra-pass/relief-compare.png. Waits on the user's choice.
   **Layman:** Without ray tracing, the fake depth on some detailed walls makes them look wavy.
   Kind: fix.
   Source: found-2026-10-30-doom-0182-capture.

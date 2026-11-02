@@ -391,8 +391,9 @@ void main()
         {
             vec3 n  = normalize(vNormal);   // geometric
             vec3 py = cross(dpy, n), px = cross(n, dpx);
-            vec3 T  = py * dux.x + px * duy.x;
-            vec3 B  = py * dux.y + px * duy.y;
+            const float hand = sign(dot(n, cross(dpx, dpy)));   // as the HD branch above
+            vec3 T  = (py * dux.x + px * duy.x) * hand;
+            vec3 B  = (py * dux.y + px * duy.y) * hand;
             if (dot(T, T) > 1e-20 && dot(B, B) > 1e-20)
             {
                 T = normalize(T);
