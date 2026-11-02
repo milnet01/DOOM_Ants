@@ -350,9 +350,10 @@ void main()
         }
         if (hd)
         {
-            hdDx = dux * mc.uvScale;
-            hdDy = duy * mc.uvScale;
-            const vec2 baseUV = uv01 * mc.uvScale;
+            const vec2 hdScale = vec2(mc.uvScale, mc.uvScaleV);
+            hdDx = dux * hdScale;
+            hdDy = duy * hdScale;
+            const vec2 baseUV = uv01 * hdScale;
             const vec2 dG     = wUV / kDetileWorldCell;
             const vec3 n  = normalize(vNormal);
             const vec3 py = cross(dpy, n), px = cross(n, dpx);
@@ -369,8 +370,8 @@ void main()
                 T = normalize(T);
                 B = normalize(B);
                 const vec3 dir = normalize(vWorldPos - vec3(pc.eyeX, pc.eyeY, pc.eyeZ));
-                sUV = detileFor(mc) ? detilePOM(mc, baseUV, T, B, n, dir, dG)
-                                 : hdParallaxUV(mc, baseUV, T, B, n, dir);
+                sUV = detileFor(mc) ? detilePOM(mc, baseUV, T, B, n, dir, dG, sz)
+                                 : hdParallaxUV(mc, baseUV, T, B, n, dir, sz);
             }
             hdCol = detileFor(mc) ? detile(uint(mc.maps[0]), sUV, dG) : HD_TEX(mc.maps[0], sUV).rgb;
             if (mc.maps[4] >= 0)
@@ -569,7 +570,10 @@ void main()
     ambient *= hdOcc;   // DOOM-0182: the HD AO map; 1.0 on everything else
     // DOOM-0538: a lit screen or lamp shows whatever the room's light. DIRECT, so AO never dims
     // it and bloom may catch it, as DOOM-0331 INV-4 expects of an emitter.
-    direct += vec3(linearToSrgb(hdGlow.r), linearToSrgb(hdGlow.g), linearToSrgb(hdGlow.b));
+    // A floor, not a sum: added on top of a bright albedo it passed the bloom ramp and every
+    // status light smeared into a blob.
+    direct += max(vec3(linearToSrgb(hdGlow.r), linearToSrgb(hdGlow.g), linearToSrgb(hdGlow.b))
+                  - ambient - direct, vec3(0.0));
 #endif
 
     // DOOM-0455: the light-amp visor is a lamp at the camera, not a filter on the final

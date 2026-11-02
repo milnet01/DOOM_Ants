@@ -17495,6 +17495,10 @@ in CLAUDE.md describes.
   whole cause; depth 0.12 and strength 4.0 were picked on the reversed
   look and may need re-picking. Comparison:
   scratch/ultra-pass/relief-compare.png. Waits on the user's choice.
+  User 2026-11-02, F12 shot dev-shots/shot-0047.png, E1M2 1438 301 139,
+  Ultra traced: the derived fake depth on TEKWALL4 does not look right.
+  That wall now has baked art (DOOM-0537), so derived relief no longer
+  draws there; every wall without baked art still has it.
   **Layman:** Without ray tracing, the fake depth on some detailed walls makes them look wavy.
   Kind: fix.
   Source: found-2026-10-30-doom-0182-capture.
@@ -17538,6 +17542,9 @@ in CLAUDE.md describes.
   Textures/Metal/doom_*_wall/.
   User's look 2026-11-02: likes the new computer walls. Wants more variety; parts that should recess recess, parts that should stand out stand out; nothing may get in the player's way that the original did not have. Next wall they named: TEKWALL4 (their shot-0047, E1M2 1438 301 139), a mix of circuitry and wires; the derived fake depth there does not look right; avoid repeating patterns, a slight repeat on a computer wall is acceptable.
   Raster tearing fixed: mesh.frag used one height sample; it now runs the trace's march, moved to hd_surface.glsl, 12 to 24 steps against the trace's 16 to 32. E2M2 790 1472 180 and E1M7 -1504 42 90: cables and box edges clean. Traced view unmoved: 0.33 mean against a same-build control of 0.41. Cost in Ultra raster facing COMPTALL, 5120x3200 at 50% scale, machine busy: scene pass 4.04 and 4.32 ms before, 4.49 and 4.73 ms after.
+  2026-11-02, second pass, waiting on the user's look. TEKWALL4 added; COMPTALL and TEKWALL1 rebuilt with real recesses (plate() cuts holes, so parts sink instead of being painted on). Art now spans tiles: COMPTALL 768x128, TEKWALL1 384x128, TEKWALL4 512x256, at 4 map pixels per unit. materials.csv takes uv_scale as 0.25x0.5 and a flags token depth=N, relief's full height in map units, so it is true depth and equal on both axes. wall_span_tiles in r_mesh.c slides each wall plane's U by whole tiles, so short walls stop starting on the same stretch; paletted art cannot show it: Solid raster E1M1 moved 0.0011 against a same-build control of 0.0027, E1M2 0.0038. kHdMaxEdge went 1024 to 4096: 1024 had been halving COMPTALL silently. The trace now picks a mip by distance (hdLod), which stopped the sparkle. Nothing juts past the wall plane: relief goes inward from it, so no part can touch the player, and a silhouette stays flat. Real jutting geometry would come with DOOM-0539's model path.
+  Cost, Ultra raster, 1843x1152 (render_scale 36 of a 5120x3200 swapchain, about the user's pixel count), other sessions keeping load between 14 and 24, so these are upper figures: facing COMPTALL frame 17.8 to 18.1 ms, facing TEKWALL4 18.0 to 23.2 ms, TEKWALL1 8.8 to 11.0 ms. The 60 FPS floor is 16.7 ms: not met in those two views on that busy machine, and not measured quiet. Traced at TEKWALL4: 29.3 ms. Remaining cost is map resolution first: COMPTALL at 2560x1600 went 15.5 ms to 8.1 ms when its maps were halved; the march is about 3 ms. If a quiet run misses, reduce map resolution further.
+  Open: in the trace, brass lips and studs read pale and status lights do not glow (DOOM-0178); raster boxes still show faint slices at steep angles.
   **Layman:** Ultra's computer and wire walls become detailed 3D models, turned into HD surfaces, with the same layout as DOOM's originals.
   Kind: feature.
   Source: user-request-2026-11-02.
@@ -17557,12 +17564,21 @@ in CLAUDE.md describes.
   carry the map. It does not cast light on the room yet: the light list
   comes from the paletted art. Still missing against the trace:
   roughness, metallic, wet sheen, ripple, the pink tint at E1M7.
+  2026-11-02: emissive is now a floor, not a sum. Added on top of a
+  bright albedo it passed the bloom ramp and status lights smeared into
+  blobs.
   **Layman:** With ray tracing off, Ultra should still have the same lighting effects, done the cheap way, as the project's tier rules promise.
   Kind: fix.
   Source: user-play-test-2026-11-02.
 
 - 📋 [DOOM-0539] **Replace every pickup's sprite with a real Blender model in the 3D views, with lights placed inside it.**
   User 2026-11-02: new models for all the pickups, so that light sources can be set accurately within them. The engine has no model loader, so this needs one: a spec first (spec-format.md section 1). Monsters stay out of scope (DOOM-0080). Related: DOOM-0112 glowing collectibles, DOOM-0482 pickup light reach.
+  Spec docs/specs/DOOM-0539-pickup-models.md accepted 2026-11-02:
+  review-contract one loop (user cap of 2026-10-26), 21 verified, 21
+  fixed, log in docs/reviews/DOOM-0539-pickup-models-loop-log.md. Open
+  with the user: INV-3's footprint against the eight sprites wider than
+  radius (BFUG BROK CSAW LAUN MGUN PLAS SGN2 SHOT). Not built. Next: B1,
+  the file format and one model, BON1.
   **Layman:** Health, armour, ammo, keys and power-ups become real 3D objects, so their glow can come from exactly the right spot inside them.
   Kind: feature.
   Source: user-request-2026-11-02.

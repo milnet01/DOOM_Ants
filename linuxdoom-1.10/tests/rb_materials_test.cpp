@@ -85,8 +85,40 @@ static int test_resolver(const char* name, int* out_ids, int max_ids) {
     if (it == g_names->end()) return 0;
     out_ids[0] = it->second; return 1;
 }
+/* DOOM-0537: art spanning several tiles, and relief at its real depth. */
+static void test_span_and_depth() {
+    std::map<std::string,int> names = { {"TEKWALL4", 2}, {"PLAIN", 3} };
+    g_names = &names;
+    rb_matrow_t rows[2];
+    check(rb_parse_material_line("TEKWALL4,hero,a.png,,,,,,,0.25x0.5,pom|noDetile|depth=18", &rows[0]) == 1,
+          "a two-axis scale and a depth parse");
+    check(rb_parse_material_line("PLAIN,hero,a.png,,,,,,,2.0,pom", &rows[1]) == 1,
+          "a row with neither still parses");
+    rb_matctrl_t table[4];
+    rb_build_ctrl_table(rows, 2, 4, test_resolver, table, nullptr);
+    check(table[2].uvScale == 0.25f && table[2].uvScaleV == 0.5f, "each axis keeps its own scale");
+    check(table[2].pomDepth == 18.0f, "depth reaches the control table");
+    check(table[2].flags == (RB_FLAG_POM | RB_FLAG_NO_DETILE), "depth is not a flag bit");
+    check(table[3].uvScale == 2.0f && table[3].uvScaleV == 2.0f, "one scale means both axes");
+    check(table[3].pomDepth == 0.0f, "no depth means the default relief");
+    check(table[0].uvScaleV == 1.0f && table[0].pomDepth == 0.0f, "an unmentioned material is untouched");
+    g_names = nullptr;
+
+    rb_matrow_t r;
+    check(rb_parse_material_line("N,hero,a.png,,,,,,,0.5x0,pom", &r) == 1 && r.uv_scale_v == 1.0f,
+          "a zero second scale falls back to 1.0");
+    check(rb_parse_material_line("N,hero,a.png,,,,,,,0.5xnan,pom", &r) == 1 && r.uv_scale_v == 1.0f,
+          "a NaN second scale falls back to 1.0");
+    check(rb_parse_material_line("N,hero,a.png,,,,,,,1.0,pom|depth=-3", &r) == -1,
+          "a negative depth is malformed");
+    check(rb_parse_material_line("N,hero,a.png,,,,,,,1.0,pom|depth=nan", &r) == -1,
+          "a NaN depth is malformed");
+    check(rb_parse_material_line("N,hero,a.png,,,,,,,1.0,pom|depth=", &r) == -1,
+          "an empty depth is malformed");
+}
+
 static void test_ctrl_table_build() {
-    static_assert(sizeof(rb_matctrl_t) == 40, "std430 control struct must be 40 bytes");
+    static_assert(sizeof(rb_matctrl_t) == 48, "std430 control struct must be 48 bytes");
     std::map<std::string,int> names = { {"STARTAN3", 5}, {"FLOOR4_8", 12} };
     g_names = &names;
     rb_matrow_t rows[2];
@@ -292,6 +324,7 @@ int main() {
     test_flags_pom_and_nopom_clears_pom();
     test_malformed_wrong_column_count();
     test_parser_coverage_gaps();
+    test_span_and_depth();
     test_ctrl_table_build();
     test_ctrl_table_dup_last_wins();
     test_ctrl_table_every_match();

@@ -104,7 +104,7 @@ extern "C" {
 }
 
 // The GPU control struct mirrors this byte-for-byte in pathtrace.comp (std430).
-static_assert(sizeof(rb_matctrl_t) == 40, "rb_matctrl_t must be 40 bytes (std430 MatCtrl)");
+static_assert(sizeof(rb_matctrl_t) == 48, "rb_matctrl_t must be 48 bytes (std430 MatCtrl)");
 
 // Compiled shaders, embedded as byte arrays (Makefile: GLSL -> SPIR-V -> xxd).
 #include "shaders/mesh.vert.spv.h"
@@ -6616,7 +6616,10 @@ static void FlushMenuText()
 // ===========================================================================
 
 static const int   kHdMaxImages = 4096;    // bindless image-array upper bound
-static const int   kHdMaxEdge   = 1024;    // per-map longest-edge clamp (px)
+// Per-map longest-edge clamp (px). As large as the source limit since DOOM-0537: art that spans
+// several tiles so a long wall stops repeating needs the width, and 1024 halved it silently.
+// kHdBudgetMB still bounds the total.
+static const int   kHdMaxEdge   = 4096;
 // Largest HD source image decoded at all. The clamp above runs AFTER the decode, which
 // allocates the full image first: a 2^24-px PNG (stb's own limit) would ask for ~2 GB
 // for a moment. 4096 bounds that at 64 MB and still admits 4K source art (user decision
@@ -6833,9 +6836,11 @@ static void InitHdDefault()
     std::vector<rb_matctrl_t> table(N);
     for (int i = 0; i < N; i++) {
         for (int m = 0; m < RB_MAP_COUNT; m++) table[i].maps[m] = -1;
-        table[i].uvScale = 1.0f;
-        table[i].flags   = 0u;
-        table[i].usePBR  = 0u;
+        table[i].uvScale  = 1.0f;
+        table[i].uvScaleV = 1.0f;
+        table[i].pomDepth = 0.0f;
+        table[i].flags    = 0u;
+        table[i].usePBR   = 0u;
     }
     g.hdGrungeIdx = -1;                 // DOOM-0179: no grime on the default all-paletted set
     g.hdDirtIdx = -1;                   // DOOM-0181: no dirt-colour texture on the paletted set

@@ -132,7 +132,11 @@ layout(set = 1, binding = 2) uniform sampler2D materialTex[];
 // The HD maps have mips for the rasterised view (DOOM-0182). The trace has no derivatives,
 // so it always reads the top level, and says so: an implicit LOD outside a fragment shader
 // is not defined.
-#define HD_TEX(i, uv)           textureLod(hdTex[nonuniformEXT(i)], (uv), 0.0)
+// The mip a surface map reads at this hit (DOOM-0537). Always level 0 made fine baked detail
+// sparkle wherever one map texel is smaller than a pixel. 0 where hdPixelAngle is unset.
+float hdLod = 0.0;
+float hdPixelAngle = 0.0;     // one pixel's view angle, near enough, in radians
+#define HD_TEX(i, uv)           textureLod(hdTex[nonuniformEXT(i)], (uv), hdLod)
 #define HD_TEX_W(i, w, k, off)  textureLod(hdTex[nonuniformEXT(i)], (w) * (k) + (off), 0.0)
 
 // The level mesh, the step-3b emitter list, and the per-material Le table are read
@@ -160,10 +164,10 @@ const float kEmissiveScale = 40.0;
 // across the surface exactly like the paletted one; uvScale is the artist repeat multiplier.
 // Every HD map (albedo/normal/AO/emissive/height) samples at this UV — or at the POM-marched
 // offset of it (hdParallaxUV) — so they all line up.
-vec2 hdBaseUV(uint id, vec2 hitUV, float uvScale)
+vec2 hdBaseUV(uint id, vec2 hitUV, MatCtrl mc)
 {
     vec2 sz = vec2(textureSize(materialTex[nonuniformEXT(id)], 0));
-    return (hitUV / sz) * uvScale;
+    return (hitUV / sz) * vec2(mc.uvScale, mc.uvScaleV);
 }
 
 // DOOM-0042 (Task 11): the hit triangle's tangent frame — T from dP/dU, B = n x T carrying
@@ -1219,13 +1223,17 @@ PrimaryHit primaryHitSurface(Verts vb, uint i0, bool isSprite, vec2 hitUV, vec3 
     h.dG   = (h.mc.usePBR != 0u && detileFor(h.mc)) ? detileWorldUV(h.hitP, n) / kDetileWorldCell
                                                : vec2(0.0);
     if (h.mc.usePBR != 0u) {
-        vec2 baseUV = hdBaseUV(h.id, hitUV, h.mc.uvScale);
+        vec2 baseUV = hdBaseUV(h.id, hitUV, h.mc);
         hdTangentFrame(n, p0, p1, p2, uv0, uv1, uv2, h.T, h.B);
+        const vec2 texSz = vec2(textureSize(materialTex[nonuniformEXT(h.id)], 0));
+        if (h.mc.maps[0] >= 0)
+            hdLod = log2(max(tHit * hdPixelAngle * h.mc.uvScale / texSz.x
+                             * float(textureSize(hdTex[nonuniformEXT(h.mc.maps[0])], 0).x), 1.0));
         // DOOM-0181 L3: march POM in the de-tiled coordinate so relief registers with the
         // de-tiled albedo/normal/AO (§4.4); else the plain-space POM march.
         h.sUV = detileFor(h.mc)
-              ? detilePOM(h.mc, baseUV, h.T, h.B, n, dir, h.dG)
-              : hdParallaxUV(h.mc, baseUV, h.T, h.B, n, dir);
+              ? detilePOM(h.mc, baseUV, h.T, h.B, n, dir, h.dG, texSz)
+              : hdParallaxUV(h.mc, baseUV, h.T, h.B, n, dir, texSz);
     } else if (h.mc.usePBR == 0u && surfHas(h.id)) {
         // DOOM-0273: no HD maps, so the derived map. sUV is in 0..1 tile space here, and
         // the paletted colour below is read at the same marched UV, so colour and relief
@@ -1366,6 +1374,7 @@ void main()
     // pixels) shifts the sample point each frame so the temporal upscaler (TAAU/FSR)
     // reconstructs sub-pixel detail. Zero on the non-upscaled path, so the ray is
     // the exact pixel centre as before.
+    hdPixelAngle = 2.0 * pc.camUp.w / float(h);
     const float ndcX = (2.0 * (float(px.x) + 0.5 + pc.camPos.w) / float(w)) - 1.0;
     const float ndcY = (2.0 * (float(px.y) + 0.5 + pc.camDir.w) / float(h)) - 1.0;
     vec3  origin = pc.camPos.xyz;
@@ -1544,7 +1553,7 @@ void main()
             // self-test, not the HD look): base-UV albedo, no POM / normal / AO. Base UV is
             // computed only for an HD hit; a paletted hit samples raw hitUV (no extra work).
             MatCtrl mc  = ctrl[id];
-            vec2    sUV = (mc.usePBR != 0u) ? hdBaseUV(id, hitUV, mc.uvScale) : hitUV;
+            vec2    sUV = (mc.usePBR != 0u) ? hdBaseUV(id, hitUV, mc) : hitUV;
             vec3    albedo = hdAlbedo(mc, id, hitUV, sUV);   // HD if usePBR, else paletted
             float tHit   = rayQueryGetIntersectionTEXT(rq, true);
             vec3  hitP   = origin + dir * tHit;

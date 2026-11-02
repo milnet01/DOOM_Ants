@@ -261,6 +261,21 @@ static void emit_flat_wall(builder_t* bld, seg_t* seg, fixed_t bottomz, fixed_t 
     push_quad(bld, bl, br, tr, tl);
 }
 
+// How many whole tiles to slide a wall's U, the same for every wall on one plane. REPEAT makes
+// that invisible to art of one tile. HD art spanning several (DOOM-0537) shows another stretch
+// on each wall, instead of every short wall starting on the same one. 24 is a multiple of the
+// spans in use. It is taken from the linedef, so all its segs agree and a mapper's alignment
+// along a run of walls holds.
+static int wall_span_tiles(const seg_t* seg, float nx, float ny)
+{
+    const int d = (int)lroundf(nx * (seg->linedef->v1->x / (float)FRACUNIT)
+                             + ny * (seg->linedef->v1->y / (float)FRACUNIT));
+    unsigned h = (unsigned)d * 2654435761u
+               ^ (unsigned)lroundf(nx * 64.0f) * 40503u ^ (unsigned)lroundf(ny * 64.0f) * 9973u;
+    h ^= h >> 15;
+    return (int)(h % 24u);
+}
+
 // Wall pegging kind: selects which DOOM vertical-alignment rule emit_wall
 // applies (faithful to r_segs.c). One-sided mids and two-sided masked rails
 // share a rule; uppers and lowers each have their own.
@@ -304,7 +319,8 @@ static void emit_wall(builder_t* bld, seg_t* seg, fixed_t bottomz, fixed_t topz,
 
     // U (horizontal) in DOOM texels: along the wall from the seg + sidedef
     // offset. The shader divides by texture size; REPEAT wraps.
-    u0 = (seg->offset + seg->sidedef->textureoffset) / (float)FRACUNIT;
+    u0 = (seg->offset + seg->sidedef->textureoffset) / (float)FRACUNIT
+       + wall_span_tiles(seg, nx, ny) * (float)(texturewidthmask[texnum] + 1);
     u1 = u0 + len;
 
     // V (vertical) origin: faithfully port DOOM's wall pegging (r_segs.c). The

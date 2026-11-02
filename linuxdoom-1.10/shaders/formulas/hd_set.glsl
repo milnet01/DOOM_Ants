@@ -7,7 +7,9 @@
 // The includer defines HD_SET, the set number, before the #include.
 struct MatCtrl {
     int   maps[7];    // [0]alb [1]nrm [2]rgh [3]met [4]ao [5]emis [6]hgt; -1 = none
-    float uvScale;
+    float uvScale;    // across the tile
+    float uvScaleV;   // up the tile
+    float pomDepth;   // relief's full height in map units; 0 = kPomHeightScale of a tile
     uint  flags;      // bit0 pom, bit1 noPom, bit2 sprite, bit3 nukage, bit4 lava (DOOM-0183), bit5 noDetile
     uint  usePBR;     // 0 = paletted fallback
 };

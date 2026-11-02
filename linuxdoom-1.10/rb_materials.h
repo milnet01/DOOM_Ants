@@ -25,7 +25,9 @@ typedef struct {
     char          name[9];                     /* DOOM name, NUL-terminated (<=8 chars) */
     int           is_hero;                     /* 1 = hero, 0 = derive */
     char          maps[RB_MAP_COUNT][128];     /* per-map path; "" = no map */
-    float         uv_scale;
+    float         uv_scale;                    /* across the tile */
+    float         uv_scale_v;                  /* up the tile */
+    float         pom_depth;                   /* relief's full height in map units; 0 = default */
     unsigned int  flags;
 } rb_matrow_t;
 
@@ -37,7 +39,7 @@ static inline char* rb_trim(char* s) {
     return s;
 }
 
-static inline unsigned int rb_parse_flags(const char* field) {
+static inline unsigned int rb_parse_flags(const char* field, float* depth = nullptr) {
     unsigned int f = 0;
     char buf[128];
     if (strlen(field) >= sizeof(buf)) return RB_FLAG_BAD;   /* would truncate (DOOM-0410) */
@@ -52,6 +54,13 @@ static inline unsigned int rb_parse_flags(const char* field) {
                 else if (!strcmp(tok, "noPom"))  f |= RB_FLAG_NOPOM;
                 else if (!strcmp(tok, "sprite")) f |= RB_FLAG_SPRITE;
                 else if (!strcmp(tok, "noDetile")) f |= RB_FLAG_NO_DETILE;
+                else if (!strncmp(tok, "depth=", 6)) {
+                    /* A value, not a bit. Malformed unless a positive finite number. */
+                    char* after;
+                    const float d = strtof(tok + 6, &after);
+                    if (after == tok + 6 || *after || !isfinite(d) || d <= 0.0f) f |= RB_FLAG_BAD;
+                    else if (depth) *depth = d;
+                }
                 else                             f |= RB_FLAG_BAD;
             }
             if (end == '\0') break;
@@ -106,19 +115,29 @@ static inline int rb_parse_material_line(const char* line, rb_matrow_t* out) {
     /* Blank -> 1.0. Zero, negative, NaN and inf -> 1.0 too: NaN fails every
        comparison, so `<= 0` alone let it through to the shader's UV multiply
        (DOOM-0410). */
-    out->uv_scale = (float)atof(rb_trim(col[9]));
+    char* after;
+    out->uv_scale = strtof(rb_trim(col[9]), &after);
     if (!isfinite(out->uv_scale) || out->uv_scale <= 0.0f) out->uv_scale = 1.0f;
+    /* "0.25x0.5" scales each axis on its own: art spanning four tiles wide and two tall. */
+    if (*after == 'x') {
+        out->uv_scale_v = strtof(after + 1, nullptr);
+        if (!isfinite(out->uv_scale_v) || out->uv_scale_v <= 0.0f) out->uv_scale_v = 1.0f;
+    } else {
+        out->uv_scale_v = out->uv_scale;
+    }
 
-    out->flags = rb_parse_flags(rb_trim(col[10]));
+    out->flags = rb_parse_flags(rb_trim(col[10]), &out->pom_depth);
     if (out->flags & RB_FLAG_BAD) return -1;    /* unknown flags token -> malformed */
     return 1;
 }
 
 /* GPU control struct — MUST match the std430 MatCtrl struct in pathtrace.comp.
-   int maps[7]=28, float uvScale=32, uint flags=36, uint usePBR=40 (no padding). */
+   int maps[7]=28, then four 4-byte fields to 44, uint usePBR=48 (no padding). */
 typedef struct {
     int           maps[RB_MAP_COUNT];
     float         uvScale;
+    float         uvScaleV;
+    float         pomDepth;
     unsigned int  flags;
     unsigned int  usePBR;
 } rb_matctrl_t;
@@ -133,9 +152,11 @@ static inline void rb_build_ctrl_table(const rb_matrow_t* rows, int nrows, int n
                          rb_name_resolver_t resolve, rb_matctrl_t* table, int* dup_count) {
     for (int i = 0; i < nmaterials; i++) {
         for (int m = 0; m < RB_MAP_COUNT; m++) table[i].maps[m] = -1;
-        table[i].uvScale = 1.0f;
-        table[i].flags   = 0u;
-        table[i].usePBR  = 0u;                  /* default: paletted */
+        table[i].uvScale  = 1.0f;
+        table[i].uvScaleV = 1.0f;
+        table[i].pomDepth = 0.0f;
+        table[i].flags    = 0u;
+        table[i].usePBR   = 0u;                 /* default: paletted */
     }
     int dups = 0;
     for (int r = 0; r < nrows; r++) {
@@ -146,9 +167,11 @@ static inline void rb_build_ctrl_table(const rb_matrow_t* rows, int nrows, int n
             if (id < 0 || id >= nmaterials) continue;
             if (table[id].usePBR) dups++;            /* already set -> last-wins */
             for (int m = 0; m < RB_MAP_COUNT; m++) table[id].maps[m] = -1;  /* image load fills these */
-            table[id].uvScale = rows[r].uv_scale;
-            table[id].flags   = rows[r].flags;
-            table[id].usePBR  = 1u;
+            table[id].uvScale  = rows[r].uv_scale;
+            table[id].uvScaleV = rows[r].uv_scale_v;
+            table[id].pomDepth = rows[r].pom_depth;
+            table[id].flags    = rows[r].flags;
+            table[id].usePBR   = 1u;
         }
     }
     if (dup_count) *dup_count = dups;

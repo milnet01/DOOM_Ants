@@ -156,13 +156,20 @@ vec3 detileNormalTS(uint mapIdx, vec2 sUV, vec2 g) {
 // a grazing angle); it's NOT UV-clamped, so the REPEAT sampler wraps the small overshoot rather
 // than smearing an edge texel, which avoids grazing-angle holes. `noPom` and non-pom / non-HD
 // materials return baseUV unchanged (no march).
-vec2 hdParallaxUV(MatCtrl mc, vec2 baseUV, vec3 T, vec3 B, vec3 n, vec3 dir)
+// texSz is the paletted texture's size, one texel being one map unit, so a material's pomDepth
+// is the same depth in the world on both axes, however its art is scaled.
+vec2 hdParallaxUV(MatCtrl mc, vec2 baseUV, vec3 T, vec3 B, vec3 n, vec3 dir, vec2 texSz)
 {
     if (mc.usePBR == 0u || (mc.flags & 1u) == 0u || mc.maps[6] < 0) return baseUV;  // bit0 = pom
     vec3  vT = normalize(vec3(dot(-dir, T), dot(-dir, B), dot(-dir, n)));  // view dir, tangent space
-    float nv = clamp(vT.z, 0.05, 1.0);
-    int   steps = int(mix(float(HD_POM_STEPS_GRAZING), float(HD_POM_STEPS_FACING), nv));
-    vec2  maxOff = (vT.xy / nv) * kPomHeightScale;
+    // Real depth needs more steps or a box's side shows as slices, and a higher nv floor or
+    // a grazing ray spans more wall than any step count can resolve.
+    bool  deep = mc.pomDepth > 0.0;
+    float nv = clamp(vT.z, deep ? 0.25 : 0.05, 1.0);
+    int   steps = int(mix(float(HD_POM_STEPS_GRAZING), float(HD_POM_STEPS_FACING), nv)
+                      * (deep ? clamp(mc.pomDepth / 8.0, 1.0, 3.0) : 1.0));
+    vec2  maxOff = (vT.xy / nv) * (mc.pomDepth > 0.0
+                 ? mc.pomDepth * vec2(mc.uvScale, mc.uvScaleV) / texSz : vec2(kPomHeightScale));
     float layer = 1.0 / float(steps);
     // Seed prev/cur from the TRUE height at the march origin (curD=0), so a first-step break
     // (a sharp peak) bisects against the real surface, not a placeholder gap of 1.0.
@@ -193,7 +200,7 @@ vec2 hdParallaxUV(MatCtrl mc, vec2 baseUV, vec3 T, vec3 B, vec3 n, vec3 dir)
 // relief registers with colour, while neighbour cells in the blend cross-fade and hide the seam.
 // INV-2: the march dir's tangent-X is negated on a mirrored cell (so relief doesn't invert), and
 // the transferred displacement's U is negated too so it survives the wrapper's re-mirror.
-vec2 detilePOM(MatCtrl mc, vec2 baseUV, vec3 T, vec3 B, vec3 n, vec3 dir, vec2 g) {
+vec2 detilePOM(MatCtrl mc, vec2 baseUV, vec3 T, vec3 B, vec3 n, vec3 dir, vec2 g, vec2 texSz) {
     if (mc.maps[6] < 0) return baseUV;                 // no height map -> hdParallaxUV is a no-op anyway
     ivec2 cell = ivec2(floor(g));
     vec2  f    = fract(g);
@@ -206,7 +213,7 @@ vec2 detilePOM(MatCtrl mc, vec2 baseUV, vec3 T, vec3 B, vec3 n, vec3 dir, vec2 g
     vec2 duv  = detileCellUVh(baseUV, hc);             // this cell's offset+mirror, applied once
     vec3 mdir = dir;
     if (mir) mdir -= 2.0 * dot(mdir, T) * T;           // mirror the march dir's tangent-X (INV-2)
-    vec2 d = hdParallaxUV(mc, duv, T, B, n, mdir) - duv;   // parallax displacement in the cell frame
+    vec2 d = hdParallaxUV(mc, duv, T, B, n, mdir, texSz) - duv;   // parallax displacement in the cell frame
     return baseUV + vec2(mir ? -d.x : d.x, d.y);       // transfer to clean UV (cancels wrapper re-mirror)
 }
 

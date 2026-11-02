@@ -98,3 +98,11 @@ assets/ultra/heroes/tech/TEKWALL1_nrm.png  Blender-Scripts/walls/doom_tekwall1.p
 assets/ultra/heroes/tech/TEKWALL1_ao.png  Blender-Scripts/walls/doom_tekwall1.py  CC0-first-party
 assets/ultra/heroes/tech/TEKWALL1_hgt.png  Blender-Scripts/walls/doom_tekwall1.py  CC0-first-party
 assets/ultra/heroes/tech/TEKWALL1_emis.png  Blender-Scripts/walls/doom_tekwall1.py  CC0-first-party
+
+# DOOM-0537 circuit wall: first-party, modelled and baked headlessly in Blender by
+# the named script. No pixel of the game's art is used.
+assets/ultra/heroes/tech/TEKWALL4_alb.png  Blender-Scripts/walls/doom_tekwall4.py  CC0-first-party
+assets/ultra/heroes/tech/TEKWALL4_nrm.png  Blender-Scripts/walls/doom_tekwall4.py  CC0-first-party
+assets/ultra/heroes/tech/TEKWALL4_ao.png  Blender-Scripts/walls/doom_tekwall4.py  CC0-first-party
+assets/ultra/heroes/tech/TEKWALL4_hgt.png  Blender-Scripts/walls/doom_tekwall4.py  CC0-first-party
+assets/ultra/heroes/tech/TEKWALL4_emis.png  Blender-Scripts/walls/doom_tekwall4.py  CC0-first-party
