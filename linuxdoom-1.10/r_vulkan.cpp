@@ -50,6 +50,7 @@
 // POD-only, DOOM-header-free seam: the C geometry builder (r_mesh.c) and the
 // per-frame camera (rb_view_t).
 #include "r_mesh.h"
+#include "gamma_curve.h"
 
 // Power-importance emitter-sampling math (build step 3c-2), shared with the
 // unbiasedness test (tests/nee_sampling_test.cpp) so both use one implementation.
@@ -85,6 +86,7 @@ extern "C" {
     int W_CheckNumForName(char* name);          // lump number, or -1
     extern int firstflat;                       // lump index of the first flat
     extern int numflats;                        // flat count
+    extern int usegamma;                        // v_video.c: the gamma level (DOOM-0491)
     extern int rendermode;                      // r_backend.h: selected tier (TIER_* mirror below)
     // DOOM-0297: -rtverify picks its sample count from the game, because DOOM 2's emitter
     // set converges slower and one count cannot serve both (INV-6's per-gamemode table).
@@ -118,6 +120,7 @@ static_assert(sizeof(rb_matctrl_t) == 48, "rb_matctrl_t must be 48 bytes (std430
 #include "shaders/overlay.frag.spv.h"
 #include "shaders/tint.frag.spv.h"          // DOOM-0379: palette flash blend
 #include "shaders/wipe.frag.spv.h"          // DOOM-0379: screen melt
+#include "shaders/gamma.frag.spv.h"         // DOOM-0491: the gamma setting
 #include "shaders/composite.vert.spv.h"
 #include "rb_exposure.h"
 #include "shaders/composite.frag.spv.h"
@@ -516,6 +519,16 @@ struct VulkanState
     VkDescriptorSet  wipeDs         = VK_NULL_HANDLE;
     VkPipelineLayout wipePipeLayout = VK_NULL_HANDLE;
     VkPipeline       wipePipeline   = VK_NULL_HANDLE;
+    // DOOM-0491: the gamma setting, the frame's last step (RecordGamma). gammaImage holds
+    // a copy of the finished frame, made on the first frame that wants it.
+    VkImage          gammaImage     = VK_NULL_HANDLE;
+    VkDeviceMemory   gammaMemory    = VK_NULL_HANDLE;
+    VkImageView      gammaView      = VK_NULL_HANDLE;
+    VkDescriptorSetLayout gammaDsLayout = VK_NULL_HANDLE;
+    VkDescriptorPool gammaDsPool    = VK_NULL_HANDLE;
+    VkDescriptorSet  gammaDs        = VK_NULL_HANDLE;
+    VkPipelineLayout gammaPipeLayout = VK_NULL_HANDLE;
+    VkPipeline       gammaPipeline  = VK_NULL_HANDLE;
     bool             wipeWanted     = false;   // a melt began: capture at the next present
     bool             wipeHave       = false;   // wipeImage holds the melt's old world
     int              wipeCols       = 0;       // this frame's melt (RB_Vulkan_SetWipe)
@@ -1005,8 +1018,8 @@ struct VulkanState
     VkDeviceMemory devShotBufMem  = VK_NULL_HANDLE;
     VkDeviceSize   devShotBufSize = 0;
     uint32_t       devShotW = 0, devShotH = 0;
-    bool           swapTransferSrc = false;        // surface allows reading the swapchain back
 #endif
+    bool           swapTransferSrc = false;        // surface allows reading the swapchain back
 
     // SVGF denoiser (DOOM-0009 build step 6). Swapchain-sized G-buffer + history
     // images (recreated with the swapchain), one shared descriptor set, and three
@@ -1854,17 +1867,14 @@ void CreateSwapchain()
     // TRANSFER_DST so the clear path can vkCmdClearColorImage directly; later
     // increments add COLOR_ATTACHMENT for the G-buffer/composite passes.
     sci.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-#ifdef DOOM_DEV
-    // DOOM-0294: the developer screenshot reads the finished swapchain image back,
-    // which needs TRANSFER_SRC. The spec does not guarantee a surface offers it, so
-    // ask only when it does -- requesting an unsupported usage fails swapchain
-    // creation outright, i.e. it would cost the whole renderer to gain a screenshot.
-    // Without it the capture refuses with a message and everything else is unaffected.
-    // Developer builds only: a release swapchain is created exactly as before.
+    // DOOM-0491's gamma pass and DOOM-0294's developer screenshot read the finished
+    // swapchain image back, which needs TRANSFER_SRC. The spec does not guarantee a surface
+    // offers it, so ask only when it does -- requesting an unsupported usage fails swapchain
+    // creation outright, i.e. it would cost the whole renderer. Without it the gamma setting
+    // does nothing here and the capture refuses with a message.
     g.swapTransferSrc = (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
     if (g.swapTransferSrc)
         sci.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-#endif
     sci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;   // single graphics+present queue
     sci.preTransform = caps.currentTransform;
     // OPAQUE is what we want and what desktop drivers offer, but the spec only
@@ -5484,6 +5494,42 @@ void CreatePipeline()
                                         &g.wipePipeline), "vkCreateGraphicsPipelines(wipe)");
         vkDestroyShaderModule(g.device, wFrag, nullptr);
     }
+
+    // DOOM-0491 gamma: the overlay's full-screen triangle, opaque, drawing the finished
+    // frame's copy (binding 0) through the curve. Push: the exponent.
+    {
+        VkDescriptorSetLayoutBinding gb = {};
+        gb.binding         = 0;
+        gb.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        gb.descriptorCount = 1;
+        gb.stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+        CreateComputeSets(&gb, 1, "gamma", &g.gammaDsLayout, &g.gammaDsPool, { &g.gammaDs });
+
+        VkPushConstantRange gpcr = {};
+        gpcr.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        gpcr.size       = sizeof(float);
+        VkPipelineLayoutCreateInfo gplci = {};
+        gplci.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        gplci.setLayoutCount         = 1;
+        gplci.pSetLayouts            = &g.gammaDsLayout;
+        gplci.pushConstantRangeCount = 1;
+        gplci.pPushConstantRanges    = &gpcr;
+        Check(vkCreatePipelineLayout(g.device, &gplci, nullptr, &g.gammaPipeLayout),
+              "vkCreatePipelineLayout(gamma)");
+
+        VkShaderModule gFrag = MakeShader(gamma_frag_spv, gamma_frag_spv_len);
+        VkPipelineShaderStageCreateInfo gStages[2] = { ovStages[0], ovStages[1] };
+        gStages[1].module = gFrag;
+        VkGraphicsPipelineCreateInfo gpci = pci;
+        gpci.pStages          = gStages;
+        gpci.pColorBlendState = &cb;
+        gpci.pDynamicState    = &dynState;
+        gpci.layout           = g.gammaPipeLayout;
+        gpci.renderPass       = g.renderPass;
+        Check(vkCreateGraphicsPipelines(g.device, VK_NULL_HANDLE, 1, &gpci, nullptr,
+                                        &g.gammaPipeline), "vkCreateGraphicsPipelines(gamma)");
+        vkDestroyShaderModule(g.device, gFrag, nullptr);
+    }
     vkDestroyShaderModule(g.device, ovVert, nullptr);
     vkDestroyShaderModule(g.device, ovFrag, nullptr);
 
@@ -5554,6 +5600,9 @@ void DestroyFramebufferResources()
     if (g.wipeView)   { vkDestroyImageView(g.device, g.wipeView, nullptr); g.wipeView = VK_NULL_HANDLE; }
     if (g.wipeImage)  { vkDestroyImage(g.device, g.wipeImage, nullptr);    g.wipeImage = VK_NULL_HANDLE; }
     if (g.wipeMemory) { vkFreeMemory(g.device, g.wipeMemory, nullptr);     g.wipeMemory = VK_NULL_HANDLE; }
+    if (g.gammaView)  { vkDestroyImageView(g.device, g.gammaView, nullptr); g.gammaView = VK_NULL_HANDLE; }
+    if (g.gammaImage) { vkDestroyImage(g.device, g.gammaImage, nullptr);   g.gammaImage = VK_NULL_HANDLE; }
+    if (g.gammaMemory) { vkFreeMemory(g.device, g.gammaMemory, nullptr);   g.gammaMemory = VK_NULL_HANDLE; }
     g.wipeHave  = false;
     g.lastWorld = 0;
 }
@@ -10405,6 +10454,100 @@ static void BuildFrameInputs(bool rtActive, bool cprof, bool doReheight)
     if (cprof) g.cpuMs[1] += CpuNowMs() - tBuild0;
 }
 
+// DOOM-0491: the gamma setting, over the finished frame with its HUD and menu. Both recording
+// branches leave the swapchain image in PRESENT_SRC by the time this runs. Level 0 records
+// nothing. A surface that will not let the frame be read back keeps the plain picture.
+static void RecordGamma(uint32_t idx)
+{
+    const float exponent = RB_GammaExponent(usegamma);
+    if (exponent == 0.0f || !g.gammaPipeline || !g.swapTransferSrc)
+        return;
+
+    if (!g.gammaImage)
+    {
+        CreateImage({ g.extent.width, g.extent.height, 1 }, g.format,
+                    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                    VK_IMAGE_ASPECT_COLOR_BIT, "gamma", &g.gammaImage, &g.gammaMemory, &g.gammaView);
+        // Safe to rewrite here: the fence wait at the top of Present means no frame that
+        // read the set is still running.
+        VkDescriptorImageInfo ii = { g.compositeSampler, g.gammaView,
+                                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+        VkWriteDescriptorSet w = {};
+        w.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        w.dstSet          = g.gammaDs;
+        w.dstBinding      = 0;
+        w.descriptorCount = 1;
+        w.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        w.pImageInfo      = &ii;
+        vkUpdateDescriptorSets(g.device, 1, &w, 0, nullptr);
+    }
+
+    VkImageMemoryBarrier swap = {};
+    swap.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    swap.srcQueueFamilyIndex = swap.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    swap.image               = g.images[idx];
+    swap.subresourceRange    = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    swap.oldLayout           = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    swap.newLayout           = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    swap.dstAccessMask       = VK_ACCESS_TRANSFER_READ_BIT;
+    VkImageMemoryBarrier copy = swap;
+    copy.image         = g.gammaImage;
+    copy.oldLayout     = VK_IMAGE_LAYOUT_UNDEFINED;     // every texel is rewritten below
+    copy.newLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    copy.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    VkImageMemoryBarrier before[2] = { swap, copy };
+    vkCmdPipelineBarrier(g.cmd,
+                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         0, 0, nullptr, 0, nullptr, 2, before);
+
+    VkImageCopy region = {};
+    region.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+    region.dstSubresource = region.srcSubresource;
+    region.extent         = { g.extent.width, g.extent.height, 1 };
+    vkCmdCopyImage(g.cmd, g.images[idx], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                   g.gammaImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+    swap.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    swap.newLayout     = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;   // what g.rtOverlayPass starts from
+    swap.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    swap.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    copy.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    copy.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    copy.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    copy.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    VkImageMemoryBarrier after[2] = { swap, copy };
+    vkCmdPipelineBarrier(g.cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+                         | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         0, 0, nullptr, 0, nullptr, 2, after);
+
+    VkClearValue clears[2] = {};
+    clears[1].depthStencil = { 1.0f, 0 };
+    VkRenderPassBeginInfo rp = {};
+    rp.sType             = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rp.renderPass        = g.rtOverlayPass;
+    rp.framebuffer       = g.framebuffers[idx];
+    rp.renderArea.extent = g.extent;
+    rp.clearValueCount   = 2;
+    rp.pClearValues      = clears;
+    vkCmdBeginRenderPass(g.cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
+    VkViewport vp = {};
+    vp.width    = (float)g.extent.width;
+    vp.height   = (float)g.extent.height;
+    vp.maxDepth = 1.0f;
+    vkCmdSetViewport(g.cmd, 0, 1, &vp);
+    VkRect2D scissor = { { 0, 0 }, g.extent };
+    vkCmdSetScissor(g.cmd, 0, 1, &scissor);
+    vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            g.gammaPipeLayout, 0, 1, &g.gammaDs, 0, nullptr);
+    vkCmdPushConstants(g.cmd, g.gammaPipeLayout, VK_SHADER_STAGE_FRAGMENT_BIT,
+                       0, sizeof exponent, &exponent);
+    vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g.gammaPipeline);
+    vkCmdDraw(g.cmd, 3, 1, 0, 0);
+    vkCmdEndRenderPass(g.cmd);
+}
+
 extern "C" void RB_Vulkan_Present(void)
 {
     if (!g.ready)
@@ -10688,6 +10831,7 @@ extern "C" void RB_Vulkan_Present(void)
             // exact leak this block exists to close. NOTE: the current golden
             // predates fog, so re-blessing is still owed (tracked on DOOM-0202).
             rb_fog = 2;
+            usegamma = 0;   // DOOM-0491: the gamma pass runs on this image too
         }
     }
     g.shotCapture = false;
@@ -11270,6 +11414,8 @@ extern "C" void RB_Vulkan_Present(void)
     }
     }   // end of the non-RT (raster) recording branch
 
+    RecordGamma(idx);
+
 #ifdef DOOM_DEV
     // DOOM-0294 developer screenshot: copy the finished swapchain image -- exactly
     // what is about to be shown, HUD and all -- into a host-visible buffer. Both
@@ -11816,6 +11962,10 @@ extern "C" void RB_Vulkan_Shutdown(void)
     if (g.overlayPipeline) vkDestroyPipeline(g.device, g.overlayPipeline, nullptr);
     if (g.tintPipeline)   vkDestroyPipeline(g.device, g.tintPipeline, nullptr);
     if (g.tintPipeLayout) vkDestroyPipelineLayout(g.device, g.tintPipeLayout, nullptr);
+    if (g.gammaPipeline)  vkDestroyPipeline(g.device, g.gammaPipeline, nullptr);
+    if (g.gammaPipeLayout) vkDestroyPipelineLayout(g.device, g.gammaPipeLayout, nullptr);
+    if (g.gammaDsPool)    vkDestroyDescriptorPool(g.device, g.gammaDsPool, nullptr);
+    if (g.gammaDsLayout)  vkDestroyDescriptorSetLayout(g.device, g.gammaDsLayout, nullptr);
     if (g.wipePipeline)   vkDestroyPipeline(g.device, g.wipePipeline, nullptr);
     if (g.wipePipeLayout) vkDestroyPipelineLayout(g.device, g.wipePipeLayout, nullptr);
     if (g.wipeDsPool)     vkDestroyDescriptorPool(g.device, g.wipeDsPool, nullptr);
