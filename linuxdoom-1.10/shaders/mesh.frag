@@ -223,6 +223,10 @@ float flashlightShadow(vec3 worldPos)
 
 void main()
 {
+    // DOOM-0539: a light inside a pickup's model feeds the emitter list and is never seen.
+    if ((vFlags & (FLAG_MODEL | FLAG_SPRITE)) == FLAG_MODEL)
+        discard;
+
 #ifndef SINGLE_TARGET
     // Every other sprite has already been drawn; the Spectre mask pass wants only Spectres.
     if (kSpectreMask && (vFlags & FLAG_SHADOW) == 0)
@@ -535,6 +539,7 @@ void main()
             // job, §4.4). Slots are nearest-packed; the first zero-Le slot ends the list.
             uint base = sub * (RASTER_MAX_LIGHTS * RASTER_LIGHT_FLOATS);
             vec3 plight = vec3(0.0);
+            vec3 ppool  = vec3(0.0);   // DOOM-0539: Ultra's pickup lights, see below
             for (uint k = 0u; k < RASTER_MAX_LIGHTS; k++)
             {
                 uint o  = base + k * RASTER_LIGHT_FLOATS;
@@ -556,7 +561,12 @@ void main()
                     att *= w * w;
                 }
                 float ndl = max(dot(shadeN, dd * inversesqrt(max(d2, 1e-8))), 0.0);
-                plight += col * att * ndl;
+#ifndef SINGLE_TARGET
+                if (kHdPipeline && reach > 0.0)
+                    ppool  += col * att * ndl;
+                else
+#endif
+                    plight += col * att * ndl;
             }
             // A big emissive surface enters as many emitter triangles, so summing the
             // nearest N over-counts one physical light. GAIN drives a single light up to
@@ -565,7 +575,12 @@ void main()
             // stacking to white; STRENGTH is the max additive level after that.
             plight *= POINT_LIGHT_GAIN;
             plight = plight / (1.0 + plight);
-            direct += POINT_LIGHT_STRENGTH * albedo * plight;   // point lights are DIRECT
+            // The room's lights usually fill that roll-off, which left a pickup's pool too faint to
+            // see: a potion moved its floor by under 1 level in 255. So a short-reach light rolls off
+            // on its own. Ultra only, because only Ultra's pickups are models with lights placed in them.
+            ppool *= POINT_LIGHT_GAIN;
+            ppool = ppool / (1.0 + ppool);
+            direct += POINT_LIGHT_STRENGTH * albedo * (plight + ppool);   // point lights are DIRECT
         }
     }
 

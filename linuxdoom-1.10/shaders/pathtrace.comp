@@ -374,9 +374,10 @@ bool spriteCandidateOpaque(rayQueryEXT rq, bool seeThrough)
     uint i0   = uint(prim) * 3u * 18u;
     if (seeThrough && (floatBitsToInt(pc.spriteVerts.v[i0 + 9u]) & FLAG_SHADOW) != 0)
         return false;
-    // DOOM-0539: a model is solid, and its UVs run across its HD atlas, not this art.
+    // DOOM-0539: a model is solid, and its UVs run across its HD atlas, not this art. A
+    // triangle of it without the sprite flag is one of its lights, which no ray sees.
     if ((floatBitsToInt(pc.spriteVerts.v[i0 + 9u]) & FLAG_MODEL) != 0)
-        return true;
+        return (floatBitsToInt(pc.spriteVerts.v[i0 + 9u]) & FLAG_SPRITE) != 0;
     int  texnum = floatBitsToInt(pc.spriteVerts.v[i0 + 8u]);
     vec2 uv = (1.0 - bc.x - bc.y) * vec2(pc.spriteVerts.v[i0 +  6u], pc.spriteVerts.v[i0 +  7u])
             +          bc.x        * vec2(pc.spriteVerts.v[i0 + 24u], pc.spriteVerts.v[i0 + 25u])

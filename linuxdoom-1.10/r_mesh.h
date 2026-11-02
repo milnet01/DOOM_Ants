@@ -139,6 +139,8 @@ typedef struct
 #define RB_MESH_MODEL   0x400 // DOOM-0539: a triangle of a pickup's Blender model. Carries
                               // RB_MESH_SPRITE too, so it lights and shades as a sprite, but
                               // reads HD maps through its UVs and has no palette cut-outs.
+                              // With RB_MESH_EMISSIVE and without RB_MESH_SPRITE it is a light
+                              // inside the model, never drawn: normal = colour, vtexoff = reach.
 
 // Transparent-key palette index for the 2D HUD/menu compositor (DOOM-0008). In
 // the 3D back-ends the engine still draws every 2D element (status bar, menu,

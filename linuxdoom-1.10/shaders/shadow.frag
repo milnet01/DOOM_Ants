@@ -33,6 +33,10 @@ void main()
     if ((vFlags & FLAG_SHADOW) != 0)
         discard;
 
+    // DOOM-0539: a light inside a pickup's model is not a surface.
+    if ((vFlags & (FLAG_MODEL | FLAG_SPRITE)) == FLAG_MODEL)
+        discard;
+
     // Only cut-out surfaces need the test; opaque walls/flats cast solid.
     if ((vFlags & (FLAG_SPRITE | FLAG_MASKED)) == 0 || (vFlags & FLAG_MODEL) != 0)
         return;

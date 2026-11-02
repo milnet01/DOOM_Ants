@@ -2242,9 +2242,13 @@ void DestroyAccelerationStructures()
 // DOOM-0108 for sprites). The world build and its refit must pass the same flags.
 static const VkGeometryFlagsKHR kAlphaTestedGeom = 0;
 
-// The vertex buffers RB_BuildSprites fills: ~4096 billboards, 6 verts each, and DOOM-0539's
-// 12000 model triangles a frame.
-static const uint32_t kThingVertCap = 4096u * 6u + 36000u;
+// DOOM-0084: per-frame budget of emissive-sprite emitter triangles appended to the
+// static set (2 per emissive sprite quad, 1 per model light). Excess (rare) is clamped and logged.
+static const uint32_t SPR_EMIT_MAX = 2048;
+
+// The vertex buffers RB_BuildSprites fills: ~4096 billboards, 6 verts each, DOOM-0539's
+// 12000 model triangles a frame, and the triangles of its lights.
+static const uint32_t kThingVertCap = 4096u * 6u + 36000u + SPR_EMIT_MAX * 3u;
 
 // DOOM-0128: the world BLAS's build flags. An UPDATE must pass exactly the flags
 // the AS was built with, so BuildAccelerationStructures and RecordRefitAS share
@@ -7477,10 +7481,6 @@ extern "C" void RB_Vulkan_SetWipe(const int* cols, int ncols, int rows)
     g.wipeRows = rows;
 }
 
-// DOOM-0084: per-frame budget of emissive-sprite emitter triangles appended to the
-// static set (2 per emissive sprite quad). Excess (rare) is clamped and logged.
-static const uint32_t SPR_EMIT_MAX = 1024;
-
 // Merge the cached static emitters (g.staticEmit/g.staticWgt) with this frame's
 // dynamic emissive-sprite emitters, rebuild the power-importance CDF over the whole
 // set, and write the 14-float records into the persistently-mapped emitter buffer.
@@ -7557,6 +7557,9 @@ void BuildDynamicEmitters()
     // which reads matEmis directly) so sprite lights both weigh more in the CDF and
     // cast more. INV-7 tunable, pending a Workbench pass.
     const float kSpriteEmitBoost = 12.0f;
+    // DOOM-0539: a model light's traced power, because a traced emitter's power scales with its
+    // area and a model light is one tiny triangle. The raster view reads its colour alone.
+    const float kModelLightTraceGain = 200.0f;
 
     std::vector<float> emit, wgt;
     std::vector<uint32_t> dynSec;            // DOOM-0119: per-emitter sector (REJECT cull)
@@ -7568,13 +7571,16 @@ void BuildDynamicEmitters()
         const rb_vertex_t* tri = &v[t * 3];
         if (!(tri->flags & RB_MESH_EMISSIVE))
             continue;                            // not a light object (pickup/monster/decoration)
-        const int id = (int)base + tri->texnum;
-        if (id < 0 || id >= matCount)
+        const bool  modelLight = (tri->flags & RB_MESH_MODEL) != 0;
+        const float modelLe[3] = { tri->nx, tri->ny, tri->nz };
+        const int   id         = (int)base + tri->texnum;
+        if (!modelLight && (id < 0 || id >= matCount))
             continue;
-        const float* le = &g.matEmissive[(size_t)id * 3];
+        const float* le   = modelLight ? modelLe : &g.matEmissive[(size_t)id * 3];
+        const float  gain = modelLight ? kModelLightTraceGain : kSpriteEmitBoost;
         if (le[0] + le[1] + le[2] <= 0.0f)
             continue;                            // emissive Thing whose sprite texture isn't a light
-        const float lr = le[0] * kSpriteEmitBoost, lg = le[1] * kSpriteEmitBoost, lb = le[2] * kSpriteEmitBoost;
+        const float lr = le[0] * gain, lg = le[1] * gain, lb = le[2] * gain;
         const float ex1 = tri[1].x - tri[0].x, ey1 = tri[1].y - tri[0].y, ez1 = tri[1].z - tri[0].z;
         const float ex2 = tri[2].x - tri[0].x, ey2 = tri[2].y - tri[0].y, ez2 = tri[2].z - tri[0].z;
         const float cxv = ey1 * ez2 - ez1 * ey2;
@@ -7600,7 +7606,8 @@ void BuildDynamicEmitters()
         const float cyw = (tri[0].y + tri[1].y + tri[2].y) * (1.0f / 3.0f);
         const int   sec = (g.numSectors > 0u) ? RB_SectorAtPoint(cxw, cyw) : -1;
         dynSec.push_back(sec >= 0 ? (uint32_t)sec : 0xFFFFFFFFu);
-        dynReach.push_back((tri->flags & RB_MESH_PICKUP) ? RASTER_PICKUP_LIGHT_REACH : 0.0f);
+        dynReach.push_back(modelLight ? tri->vtexoff
+                           : (tri->flags & RB_MESH_PICKUP) ? RASTER_PICKUP_LIGHT_REACH : 0.0f);
         litSprites++;
         maxLe = std::max(maxLe, emis::value(lr, lg, lb));
     }
@@ -10453,7 +10460,7 @@ static void BuildFrameInputs(bool rtActive, bool cprof, bool doReheight)
         {
             const double tW0 = cprof ? CpuNowMs() : 0.0;
             g.sprWorldVertCount = (uint32_t)RB_BuildSprites(&g.lastView,
-                (rb_vertex_t*)g.sprWorldMapped, (int)g.sprWorldVertCap, 0);
+                (rb_vertex_t*)g.sprWorldMapped, (int)g.sprWorldVertCap, 1);
             const double tL0 = cprof ? CpuNowMs() : 0.0;
             if (cprof) g.cpuBuildMs[0] += tL0 - tW0;   // 2nd (world) sprite build -> sprites
             if (g.worldEmitDirty && g.vbufShadow)

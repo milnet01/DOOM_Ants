@@ -113,11 +113,11 @@ flagged `RB_MESH_EMISSIVE | RB_MESH_MODEL`, carrying its colour in `nx ny nz` an
 drawn or traced as a surface. `BuildDynamicEmitters` reads colour and reach from these instead of
 `g.matEmissive`, so the traced view's emitters and the rasterised view's point lights both come from
 them. Reach limits the point lights alone (`g.frameDynReach`); the traced view's emitters have none.
-`rgb` is the linear colour a rasterised point light reads. The traced record multiplies it by
-`kModelLightTraceGain`, one constant B4 sets so `BON1` reads alike in both views, because a traced
-emitter's power scales with its area and a point light's does not. `kSpriteEmitBoost` does not
-apply. `BuildRasterPointLights` takes the ungained colour from a list parallel to the records, as it
-takes reach.
+`rgb` is the light's linear colour. The traced record multiplies it by `kModelLightTraceGain`, because
+a traced emitter's power scales with its area. `kSpriteEmitBoost` does not apply. `mesh.frag` uses a
+record's colour alone, normalised by its largest channel, so the gain does not reach the rasterised
+view. There, under `kHdPipeline`, a light with a reach rolls off on its own instead of in the room's
+shared sum, which the room's other lights already fill.
 Shadow rays skip the sprite BLAS (§2), so a model's shell does not shadow its own light (INV-5) and
 casts no traced shadow. Glow shown on the model itself comes from `_emis.png`.
 

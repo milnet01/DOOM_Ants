@@ -2423,6 +2423,22 @@ static void model_verts(const mobj_t* thing, const rb_model_t* m, rb_vertex_t* o
                      c*v[3] - s*v[4], s*v[3] + c*v[4], v[5],
                      v[6] * w, v[7] * h, lump, RB_MESH_SPRITE | RB_MESH_MODEL, light);
     }
+    out += m->numVerts;
+
+    // One small triangle per light. Only its position and area count: sprite emitters are omni.
+    for (i = 0; i < m->numLights; i++)
+    {
+        static const float corner[3][2] = { { -1.0f, -0.58f }, { 1.0f, -0.58f }, { 0.0f, 1.15f } };
+        const float* l = RB_ModelLight(m, i);
+        int          k;
+        for (k = 0; k < 3; k++)
+        {
+            rb_vertex_t* o = &out[i * 3 + k];
+            *o = mkv(tx + c*l[0] - s*l[1] + corner[k][0], ty + s*l[0] + c*l[1] + corner[k][1], tz + l[2],
+                     l[3], l[4], l[5], 0.0f, 0.0f, lump, RB_MESH_EMISSIVE | RB_MESH_MODEL, light);
+            o->vtexoff = l[6];
+        }
+    }
 }
 
 // Writes a thing's vertices to out and returns how many: 0 when it gets none, -1 when its
@@ -2434,10 +2450,11 @@ static int thing_verts(const rb_view_t* view, mobj_t* thing, int models,
     if (models)
     {
         const rb_model_t* m = thing_model(thing);
-        if (m && (int)m->numVerts <= room)
+        const int         n = m ? (int)(m->numVerts + m->numLights * 3u) : 0;
+        if (m && n <= room)
         {
             model_verts(thing, m, out);
-            return (int)m->numVerts;
+            return n;
         }
     }
     if (!sprite_quad(view, thing, q))
