@@ -1,7 +1,7 @@
 <!-- ants-spec-format: 1 -->
 # DOOM-0539 — Draw Ultra's pickups as real Blender models, with lights placed inside them
 
-**Status:** spec draft (2026-11-02).
+**Status:** accepted (2026-11-02).
 **Kind:** feature.
 **Source:** ROADMAP DOOM-0539 (user request 2026-11-02).
 **Pairs with:** DOOM-0112 (glowing collectibles), DOOM-0482 (pickup light reach).
@@ -69,7 +69,7 @@ it without the engine.
 ```
 char     magic[4]   "DMDL"
 uint32   version    1
-uint32   numVerts   1..RB_MODEL_MAX_VERTS
+uint32   numVerts   3..RB_MODEL_MAX_VERTS, a multiple of 3
 uint32   numLights  0..RB_MODEL_MAX_LIGHTS
 float    verts[numVerts][8]    x y z, nx ny nz, u v; three per triangle, no index list
 float    lights[numLights][7]  x y z, r g b, reach
@@ -85,26 +85,39 @@ the atlas, with v 0 at the PNG's top row.
 placed at the Thing and turned by a fixed angle from its map position, in place of `sprite_quad`.
 Each `u v` is multiplied by the first lump's width and height, because the shaders divide a vertex's
 UV by its material's texture size (`mesh.frag`, `hdBaseUV`). All of a sprite's animation frames
-share one model. Sector light and `FF_FULLBRIGHT` are worked out
-as `sprite_quad` works them.
+share one model. Sector light and `FF_FULLBRIGHT` set `light` as they do in `sprite_quad`.
 
-These vertices carry `RB_MESH_SPRITE | RB_MESH_MODEL`, a new flag at `0x400`, with `texnum` the
-sprite's first lump, so the existing id arithmetic holds. `mesh.frag` and `pathtrace.comp` treat
-`RB_MESH_MODEL` as a world surface: HD maps apply, palette index 0 does not discard, and the
-sprite-only alpha test does not run. `shadow.frag` skips its palette test for the flag too.
+These vertices carry `RB_MESH_SPRITE | RB_MESH_MODEL`, a new flag at `0x400`, without
+`RB_MESH_EMISSIVE`, and `texnum` the sprite's first lump, so the existing id arithmetic holds.
+`mesh.frag` and `pathtrace.comp` treat `RB_MESH_MODEL` as a world surface in three ways: HD maps
+apply, palette index 0 does not discard, and the sprite-only alpha test does not run. `shadow.frag`
+skips its palette test for the flag too. In all else the model stays a sprite in both views: no
+filth, no paletted self-glow (`addEmis`), and SSAO ignores it. So the rasterised view lights it with
+sector light and the torch, without point lights or baked bounce, which find their subsector through
+`triSs` by primitive.
+
 `ctrl[]` already has a row for every sprite id, and `EnsureHdMaterials` fills the model's row from
-`models.csv`. `pathtrace.comp` reads `ctrl[]` on every hit, so a sprite hit without the flag ignores
-its row: a far Thing's quad (§4.5) can carry the lump holding the model's row. A model whose albedo
-is missing or over budget (§5) counts as not loaded, and its Thing draws as its sprite.
+`models.csv`, with `RB_FLAG_NO_DETILE`, because de-tiling would scramble an atlas. The row is not a
+hero. Its paths are `models/<SPR>_<suffix>.png`, a new branch beside the hero and derived ones.
+`primaryHitSurface` reads `ctrl[]` on every hit today and must change: a sprite hit without the flag
+ignores its row, because a far Thing's quad (§4.5) can carry the lump holding the model's row. A
+model whose albedo is missing or over budget (§5) counts as not loaded, and its Thing draws as its
+sprite.
 
 ### 4.4 Lights
 
 For each light, the Thing emits one small triangle (2 map units across) at the light's position,
 flagged `RB_MESH_EMISSIVE | RB_MESH_MODEL`, carrying its colour in `nx ny nz` and its reach in
-`vtexoff`, so `rb_vertex_t` keeps the 18-float layout the shaders read. The triangle is never drawn
-or traced as a surface. `BuildDynamicEmitters` reads colour and reach from these instead of
+`vtexoff`, so `rb_vertex_t` keeps the 18-float layout the shaders read. The triangle has no
+`RB_MESH_SPRITE`, and `mesh.frag`, `shadow.frag` and `spriteCandidateOpaque` reject it, so it is never
+drawn or traced as a surface. `BuildDynamicEmitters` reads colour and reach from these instead of
 `g.matEmissive`, so the traced view's emitters and the rasterised view's point lights both come from
 them. Reach limits the point lights alone (`g.frameDynReach`); the traced view's emitters have none.
+`rgb` is the linear colour a rasterised point light reads. The traced record multiplies it by
+`kModelLightTraceGain`, one constant B4 sets so `BON1` reads alike in both views, because a traced
+emitter's power scales with its area and a point light's does not. `kSpriteEmitBoost` does not
+apply. `BuildRasterPointLights` takes the ungained colour from a list parallel to the records, as it
+takes reach.
 Shadow rays skip the sprite BLAS (§2), so a model's shell does not shadow its own light (INV-5) and
 casts no traced shadow. Glow shown on the model itself comes from `_emis.png`.
 
@@ -125,15 +138,18 @@ PLAS PMAP PSTR PVIS RKEY ROCK RSKU SBOX SGN2 SHEL SHOT SOUL STIM SUIT YKEY YSKU`
 Each of a model's three maps is at most 512x512: 1.33 MB of video memory with mips (`mbOf` in
 `EnsureHdMaterials`), so 4 MB per model, inside `kHdBudgetMB`'s accounting. A model's row has no
 level-mesh traffic, so `rb_apply_budget` considers it last. `g.spriteVertCap` and `g.sprWorldVertCap`
-both grow by the 12000-triangle budget's 36000 vertices plus room for the light triangles. No new
-dependency.
+both grow by the 12000-triangle budget's 36000 vertices plus room for the light triangles.
+`SPR_EMIT_MAX` grows from 1024 to 2048: `nee_merge_emitters` drops what passes it, and MAP18's 290
+pickups at 4 lights pass 1024. No new dependency.
 
 ## 6. Performance budget
 
 Ultra keeps its floors in `docs/standards/performance.md`. Against the same build with `models.csv`
 absent, same map, same render scale: at most 1.0 ms added to the frame in the traced view and 0.5 ms
-in the rasterised view, at E1M1's start and at E2M2 `790 1472 180`. If the traced view
-misses it, build step B5 moves models to one BLAS per model plus TLAS instances.
+in the rasterised view, at E1M1's start, at E2M2 `790 1472 180` and at MAP18's start, the map with
+the most pickups. Each sprite light costs the traced view a shadow ray per hit (`pt_common.glsl`), so
+if lights cause a miss, models carry fewer. If triangles cause it, build step B5 moves models to one
+BLAS per model plus TLAS instances.
 
 ## 7. Build order
 
@@ -148,7 +164,7 @@ misses it, build step B5 moves models to one BLAS per model plus TLAS instances.
 ## 8. Invariants
 
 - **INV-1** — Play is untouched: no game-logic file reads a model. *Test:*
-  `grep -l rb_model linuxdoom-1.10/p_*.c` → no output. *Breaks when:* a model's size reaches a blocking or pickup check.
+  `grep -il rb_model linuxdoom-1.10/p_*.c` → no output. *Breaks when:* a model's size reaches a blocking or pickup check.
 - **INV-2** — Every pickup sprite has a model once B6 is done, and the list stays complete. *Test:*
   `tests/pickup_models_test.cpp` compares `models.csv` against `MF_SPECIAL` in `info.c`. *Breaks
   when:* a sprite in §5 has no row, or a new `MF_SPECIAL` entry lands without one.
@@ -161,7 +177,7 @@ misses it, build step B5 moves models to one BLAS per model plus TLAS instances.
 - **INV-4** — A malformed `.dmdl` is refused and that sprite draws as its sprite; it never crashes or
   reads out of bounds. Assets are read from a user-settable folder (`DOOMASSETDIR`), so this crosses
   a trust boundary. *Test:* `tests/rb_model_test.cpp`: bad magic, wrong version, counts over the
-  caps, a truncated body, NaN or infinite coordinates. *Breaks when:* a count is trusted before the
+  caps, a vertex count not a multiple of 3, a truncated body, NaN or infinite coordinates. *Breaks when:* a count is trusted before the
   size is checked.
 - **INV-5** — A light inside a model lights the room: its own shell does not block it. *Test:* a B4
   capture of `BON1` in a dark sector, Ultra traced and rasterised, with its `.dmdl` and with a copy holding
@@ -213,7 +229,7 @@ misses it, build step B5 moves models to one BLAS per model plus TLAS instances.
 ## 12. Cross-doc impact
 
 `docs/standards/assets.md` gains the models folder and its licence. `assets/ultra/LICENSES` gains each
-model. `CHANGELOG.md` on shipping. DOOM-0080's body points here for the file format.
+model's PNGs, path by path. `CHANGELOG.md` on shipping. DOOM-0080's body points here for the file format.
 
 ## 13. Cold-eyes loop log
 
