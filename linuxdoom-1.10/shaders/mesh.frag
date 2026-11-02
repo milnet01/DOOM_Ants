@@ -329,6 +329,7 @@ void main()
     bool  hd     = false;
     vec3  hdCol  = vec3(0.0);
     float hdOcc  = 1.0;
+    vec3  hdGlow = vec3(0.0);   // DOOM-0538: the HD emissive map, linear
     {
         // Tangent frame per pixel from screen derivatives (no vertex attribute carries one).
         // Taken outside the branch: derivatives are undefined in non-uniform control flow.
@@ -374,6 +375,8 @@ void main()
             hdCol = detileFor(mc) ? detile(uint(mc.maps[0]), sUV, dG) : HD_TEX(mc.maps[0], sUV).rgb;
             if (mc.maps[4] >= 0)
                 hdOcc = detileFor(mc) ? detileR(uint(mc.maps[4]), sUV, dG) : HD_TEX(mc.maps[4], sUV).r;
+            if (mc.maps[5] >= 0)
+                hdGlow = detileFor(mc) ? detile(uint(mc.maps[5]), sUV, dG) : HD_TEX(mc.maps[5], sUV).rgb;
             if (frame && mc.maps[1] >= 0)
             {
                 const vec3 tn = detileFor(mc) ? detileNormalTS(uint(mc.maps[1]), sUV, dG)
@@ -564,6 +567,9 @@ void main()
 
 #ifndef SINGLE_TARGET
     ambient *= hdOcc;   // DOOM-0182: the HD AO map; 1.0 on everything else
+    // DOOM-0538: a lit screen or lamp shows whatever the room's light. DIRECT, so AO never dims
+    // it and bloom may catch it, as DOOM-0331 INV-4 expects of an emitter.
+    direct += vec3(linearToSrgb(hdGlow.r), linearToSrgb(hdGlow.g), linearToSrgb(hdGlow.b));
 #endif
 
     // DOOM-0455: the light-amp visor is a lamp at the camera, not a filter on the final
