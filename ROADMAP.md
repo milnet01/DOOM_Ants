@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=538 -->
+<!-- ants-roadmap-id-high-water: DOOM=539 -->
 
 # Roadmap
 
@@ -17536,6 +17536,8 @@ in CLAUDE.md describes.
   Models/Props/Electronics/doom_comptall_computer_wall.blend,
   Models/Urban/Industrial/doom_tekwall1_cable_wall.blend. Maps:
   Textures/Metal/doom_*_wall/.
+  User's look 2026-11-02: likes the new computer walls. Wants more variety; parts that should recess recess, parts that should stand out stand out; nothing may get in the player's way that the original did not have. Next wall they named: TEKWALL4 (their shot-0047, E1M2 1438 301 139), a mix of circuitry and wires; the derived fake depth there does not look right; avoid repeating patterns, a slight repeat on a computer wall is acceptable.
+  Raster tearing fixed: mesh.frag used one height sample; it now runs the trace's march, moved to hd_surface.glsl, 12 to 24 steps against the trace's 16 to 32. E2M2 790 1472 180 and E1M7 -1504 42 90: cables and box edges clean. Traced view unmoved: 0.33 mean against a same-build control of 0.41. Cost in Ultra raster facing COMPTALL, 5120x3200 at 50% scale, machine busy: scene pass 4.04 and 4.32 ms before, 4.49 and 4.73 ms after.
   **Layman:** Ultra's computer and wire walls become detailed 3D models, turned into HD surfaces, with the same layout as DOOM's originals.
   Kind: feature.
   Source: user-request-2026-11-02.
@@ -17548,9 +17550,22 @@ in CLAUDE.md describes.
   the raster view tinting that wall pink where the trace does not. Needs a full gap
   list against the traced view, then one fake per effect under DOOM-0170.
   Evidence: scratch/ultra-pass/comptall-ingame.png.
+  2026-11-02: first gap closed. mesh.frag now reads the HD emissive map
+  into DIRECT, so screens and status lights show lit whatever the room's
+  light, and bloom may catch them. E1M7 -1504 42 90, Ultra raster: 10.7%
+  of pixels moved; E2M2 790 1472 180: 2.3%. Only COMPTALL and TEKWALL1
+  carry the map. It does not cast light on the room yet: the light list
+  comes from the paletted art. Still missing against the trace:
+  roughness, metallic, wet sheen, ripple, the pink tint at E1M7.
   **Layman:** With ray tracing off, Ultra should still have the same lighting effects, done the cheap way, as the project's tier rules promise.
   Kind: fix.
   Source: user-play-test-2026-11-02.
+
+- 📋 [DOOM-0539] **Replace every pickup's sprite with a real Blender model in the 3D views, with lights placed inside it.**
+  User 2026-11-02: new models for all the pickups, so that light sources can be set accurately within them. The engine has no model loader, so this needs one: a spec first (spec-format.md section 1). Monsters stay out of scope (DOOM-0080). Related: DOOM-0112 glowing collectibles, DOOM-0482 pickup light reach.
+  **Layman:** Health, armour, ammo, keys and power-ups become real 3D objects, so their glow can come from exactly the right spot inside them.
+  Kind: feature.
+  Source: user-request-2026-11-02.
 
 ## 0.13.0 — The player's experience
 

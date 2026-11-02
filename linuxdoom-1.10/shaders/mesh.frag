@@ -149,16 +149,10 @@ vec2 hdWDx, hdWDy;   // the world coordinate's
 #define HD_DIRT_ID     shadow.hd.z
 #define HD_FILTH_ON    (shadow.hd.w != 0u)
 
-// One height sample in place of the trace's march. nv's floor is higher than the march's,
-// because one sample swims at a grazing angle where a march would not.
-vec2 hdParallaxUV(MatCtrl mc, vec2 baseUV, vec3 T, vec3 B, vec3 n, vec3 dir)
-{
-    if ((mc.flags & 1u) == 0u || mc.maps[6] < 0) return baseUV;  // bit0 = pom
-    vec3  vT = normalize(vec3(dot(-dir, T), dot(-dir, B), dot(-dir, n)));
-    float nv = clamp(vT.z, 0.25, 1.0);
-    return baseUV - (vT.xy / nv) * kPomHeightScale * (1.0 - HD_TEX(mc.maps[6], baseUV).r);
-}
-
+// The trace's march with fewer steps. One height sample tore thin raised detail and doubled
+// box edges (DOOM-0537), so baked walls need the march here too.
+#define HD_POM_STEPS_FACING  12
+#define HD_POM_STEPS_GRAZING 24
 #include "formulas/hd_surface.glsl"
 #endif
 

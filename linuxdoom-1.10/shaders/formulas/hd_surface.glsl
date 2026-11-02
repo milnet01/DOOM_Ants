@@ -1,7 +1,8 @@
 // hd_surface.glsl — DOOM-0181 de-tiling and DOOM-0179/0181 filth, one copy for the traced
 // view (pathtrace.comp) and the rasterised one (mesh.frag, DOOM-0182).
 //
-// The includer has hd_set.glsl, pcgHash and hdParallaxUV, and defines before the #include:
+// The includer has hd_set.glsl and pcgHash, and defines before the #include:
+//   HD_POM_STEPS_FACING, HD_POM_STEPS_GRAZING  the parallax march's steps at each extreme
 //   HD_TEX(i, uv)          sample hdTex[i] at a surface UV
 //   HD_TEX_W(i, w, k, off) sample hdTex[i] at world coord w * k + off
 //   HD_DETILE_DIAL         0 off, 1 2-tap, 2 4-tap
@@ -146,6 +147,40 @@ vec3 detileNormalTS(uint mapIdx, vec2 sUV, vec2 g) {
         acc += tn * (wx * wy); wsum += wx * wy;
     }
     return acc / max(wsum, 1e-4);
+}
+
+// DOOM-0042 (Task 14): parallax-occlusion-mapped sample UV. For a `pom`-flagged material with
+// a height map, march the view ray (in the tangent frame) INTO the surface — white = raised,
+// so the ray steps deeper until it dips below the height field, then one bisection refine.
+// The step ramp + the nv floor bound the offset (worst case ~kPomHeightScale/0.05 of a tile at
+// a grazing angle); it's NOT UV-clamped, so the REPEAT sampler wraps the small overshoot rather
+// than smearing an edge texel, which avoids grazing-angle holes. `noPom` and non-pom / non-HD
+// materials return baseUV unchanged (no march).
+vec2 hdParallaxUV(MatCtrl mc, vec2 baseUV, vec3 T, vec3 B, vec3 n, vec3 dir)
+{
+    if (mc.usePBR == 0u || (mc.flags & 1u) == 0u || mc.maps[6] < 0) return baseUV;  // bit0 = pom
+    vec3  vT = normalize(vec3(dot(-dir, T), dot(-dir, B), dot(-dir, n)));  // view dir, tangent space
+    float nv = clamp(vT.z, 0.05, 1.0);
+    int   steps = int(mix(float(HD_POM_STEPS_GRAZING), float(HD_POM_STEPS_FACING), nv));
+    vec2  maxOff = (vT.xy / nv) * kPomHeightScale;
+    float layer = 1.0 / float(steps);
+    // Seed prev/cur from the TRUE height at the march origin (curD=0), so a first-step break
+    // (a sharp peak) bisects against the real surface, not a placeholder gap of 1.0.
+    float curH = HD_TEX(mc.maps[6], baseUV).r;   // white = raised
+    float prevH = curH;
+    vec2  curUV = baseUV, prevUV = baseUV;
+    float curD = 0.0, prevD = 0.0;
+    for (int i = 0; i < steps; i++) {
+        prevUV = curUV; prevH = curH; prevD = curD;
+        curD += layer;                           // marched depth 0..1
+        curUV = baseUV - maxOff * curD;
+        curH = HD_TEX(mc.maps[6], curUV).r;
+        if (curD >= (1.0 - curH)) break;         // ray dipped below the height field
+    }
+    float h0 = (1.0 - prevH) - prevD;            // signed gap above the surface (prev step)
+    float h1 = (1.0 - curH)  - curD;             // signed gap below the surface (cur step)
+    float t  = h0 / max(h0 - h1, 1e-5);
+    return mix(prevUV, curUV, clamp(t, 0.0, 1.0));
 }
 
 // DOOM-0181 L3: parallax-occlusion march in de-tiled space (§4.4). Compute the dominant cell's

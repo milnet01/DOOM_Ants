@@ -186,40 +186,6 @@ void hdTangentFrame(vec3 n, vec3 p0, vec3 p1, vec3 p2, vec2 uv0, vec2 uv1, vec2 
     }
 }
 
-// DOOM-0042 (Task 14): parallax-occlusion-mapped sample UV. For a `pom`-flagged material with
-// a height map, march the view ray (in the tangent frame) INTO the surface — white = raised,
-// so the ray steps deeper until it dips below the height field, then one bisection refine.
-// The step ramp + the nv floor bound the offset (worst case ~kPomHeightScale/0.05 of a tile at
-// a grazing angle); it's NOT UV-clamped, so the REPEAT sampler wraps the small overshoot rather
-// than smearing an edge texel, which avoids grazing-angle holes. `noPom` and non-pom / non-HD
-// materials return baseUV unchanged (no march).
-vec2 hdParallaxUV(MatCtrl mc, vec2 baseUV, vec3 T, vec3 B, vec3 n, vec3 dir)
-{
-    if (mc.usePBR == 0u || (mc.flags & 1u) == 0u || mc.maps[6] < 0) return baseUV;  // bit0 = pom
-    vec3  vT = normalize(vec3(dot(-dir, T), dot(-dir, B), dot(-dir, n)));  // view dir, tangent space
-    float nv = clamp(vT.z, 0.05, 1.0);
-    int   steps = int(mix(32.0, 16.0, nv));      // 16 at normal incidence -> 32 grazing
-    vec2  maxOff = (vT.xy / nv) * kPomHeightScale;
-    float layer = 1.0 / float(steps);
-    // Seed prev/cur from the TRUE height at the march origin (curD=0), so a first-step break
-    // (a sharp peak) bisects against the real surface, not a placeholder gap of 1.0.
-    float curH = HD_TEX(mc.maps[6], baseUV).r;   // white = raised
-    float prevH = curH;
-    vec2  curUV = baseUV, prevUV = baseUV;
-    float curD = 0.0, prevD = 0.0;
-    for (int i = 0; i < steps; i++) {
-        prevUV = curUV; prevH = curH; prevD = curD;
-        curD += layer;                           // marched depth 0..1
-        curUV = baseUV - maxOff * curD;
-        curH = HD_TEX(mc.maps[6], curUV).r;
-        if (curD >= (1.0 - curH)) break;         // ray dipped below the height field
-    }
-    float h0 = (1.0 - prevH) - prevD;            // signed gap above the surface (prev step)
-    float h1 = (1.0 - curH)  - curD;             // signed gap below the surface (cur step)
-    float t  = h0 / max(h0 - h1, 1e-5);
-    return mix(prevUV, curUV, clamp(t, 0.0, 1.0));
-}
-
 // DOOM-0042 (Task 10): linear albedo. An HD material (usePBR + an albedo map) samples its
 // RGBA8 map at the shared `sUV` (base or POM-marched); the sRGB image VIEW does the
 // gamma->linear decode in hardware, so no pow() here. Everything else (sprites, unmapped
@@ -647,6 +613,8 @@ vec3 wetSheen(vec3 hitP, vec3 n) {
 #define HD_GRIME_ID    pc.misc5.x
 #define HD_DIRT_ID     pc.misc5.z
 #define HD_FILTH_ON    (pc.misc5.w == 1u)
+#define HD_POM_STEPS_FACING  16
+#define HD_POM_STEPS_GRAZING 32
 #include "formulas/hd_surface.glsl"
 
 // DOOM-0141: sample the classic DOOM sky panorama for a primary ray. Mirrors the
