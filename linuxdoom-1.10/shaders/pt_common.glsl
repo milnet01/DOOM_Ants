@@ -28,6 +28,7 @@ const int   FLAG_FLAT     = 0x1;     // matches RB_MESH_FLAT in r_mesh.h (flats 
 const int   FLAG_MASKED   = 0x2;     // matches RB_MESH_MASKED — two-sided grate/fence mid-wall
 const int   FLAG_SHADOW   = 0x200;   // matches RB_MESH_SHADOW — a partly invisible Thing (DOOM-0508)
 const int   FLAG_EMISSIVE = 0x20;    // matches RB_MESH_EMISSIVE — a fullbright light Thing
+const int   FLAG_MODEL    = 0x400;   // matches RB_MESH_MODEL — a triangle of a pickup's model (DOOM-0539)
 
 // INV-7 backfill: provisional inline scene-light constants (user-approved
 // 2026-06-27) pending the Vestige Formula Workbench export.

@@ -374,6 +374,9 @@ bool spriteCandidateOpaque(rayQueryEXT rq, bool seeThrough)
     uint i0   = uint(prim) * 3u * 18u;
     if (seeThrough && (floatBitsToInt(pc.spriteVerts.v[i0 + 9u]) & FLAG_SHADOW) != 0)
         return false;
+    // DOOM-0539: a model is solid, and its UVs run across its HD atlas, not this art.
+    if ((floatBitsToInt(pc.spriteVerts.v[i0 + 9u]) & FLAG_MODEL) != 0)
+        return true;
     int  texnum = floatBitsToInt(pc.spriteVerts.v[i0 + 8u]);
     vec2 uv = (1.0 - bc.x - bc.y) * vec2(pc.spriteVerts.v[i0 +  6u], pc.spriteVerts.v[i0 +  7u])
             +          bc.x        * vec2(pc.spriteVerts.v[i0 + 24u], pc.spriteVerts.v[i0 + 25u])
@@ -1203,6 +1206,16 @@ struct PrimaryHit {
     bool    addEmis;
 };
 
+// DOOM-0539: a hit's material row. A sprite lump's HD row belongs to its model, so a billboard
+// of that lump, which a far Thing can be, reads as paletted.
+MatCtrl hitCtrl(uint id, bool isSprite, int flags)
+{
+    MatCtrl mc = ctrl[id];                  // one SSBO, runtime array -> no nonuniformEXT
+    if (isSprite && (flags & FLAG_MODEL) == 0)
+        mc.usePBR = 0u;
+    return mc;
+}
+
 PrimaryHit primaryHitSurface(Verts vb, uint i0, bool isSprite, vec2 hitUV, vec3 n,
                              vec3 p0, vec3 p1, vec3 p2, vec2 uv0, vec2 uv1, vec2 uv2,
                              vec3 origin, vec3 dir, float tHit)
@@ -1218,7 +1231,7 @@ PrimaryHit primaryHitSurface(Verts vb, uint i0, bool isSprite, vec2 hitUV, vec3 
     // samples at the resulting `sUV` so relief self-occludes consistently. The whole
     // block is gated on usePBR, so a paletted hit does NO extra work (sUV unused —
     // hdAlbedo samples raw hitUV) and is byte-identical to the pre-HD path.
-    h.mc   = ctrl[h.id];                    // one SSBO, runtime array -> no nonuniformEXT
+    h.mc   = hitCtrl(h.id, isSprite, h.flags);
     h.sUV  = hitUV;                         // paletted default (unused by the paletted branch)
     h.surf = false;
     h.T    = n; h.B = n;
@@ -1464,6 +1477,13 @@ void main()
         vec2 uv2 = vec2(vb.v[i0 + 42u], vb.v[i0 + 43u]);
         vec2 hitUV = (1.0 - bc.x - bc.y) * uv0 + bc.x * uv1 + bc.y * uv2;
 
+        // DOOM-0539: a model is smooth, so its normal varies across the triangle as the
+        // rasterised view's does. Not turned to face the viewer: a shell's edge would flip.
+        if (isSprite && (floatBitsToInt(vb.v[i0 + 9u]) & FLAG_MODEL) != 0)
+            n = normalize((1.0 - bc.x - bc.y) * vec3(vb.v[i0 +  3u], vb.v[i0 +  4u], vb.v[i0 +  5u])
+                        +          bc.x        * vec3(vb.v[i0 + 21u], vb.v[i0 + 22u], vb.v[i0 + 23u])
+                        +          bc.y        * vec3(vb.v[i0 + 39u], vb.v[i0 + 40u], vb.v[i0 + 41u]));
+
         // DOOM-0042 (Task 11): the hit triangle's three world-space vertex positions, for
         // the normal-map tangent frame (dP/dU, dP/dV) built in hdShadingNormal. Positions
         // are floats [0,1,2] of each 18-float vertex. Unused in the mode variants that never
@@ -1558,7 +1578,7 @@ void main()
             // Verify integrates DIRECT radiance with the geometric normal (an INV-6 math
             // self-test, not the HD look): base-UV albedo, no POM / normal / AO. Base UV is
             // computed only for an HD hit; a paletted hit samples raw hitUV (no extra work).
-            MatCtrl mc  = ctrl[id];
+            MatCtrl mc  = hitCtrl(id, isSprite, flags);
             vec2    sUV = (mc.usePBR != 0u) ? hdBaseUV(id, hitUV, mc) : hitUV;
             vec3    albedo = hdAlbedo(mc, id, hitUV, sUV);   // HD if usePBR, else paletted
             float tHit   = rayQueryGetIntersectionTEXT(rq, true);

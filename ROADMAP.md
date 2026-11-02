@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=539 -->
+<!-- ants-roadmap-id-high-water: DOOM=540 -->
 
 # Roadmap
 
@@ -17678,9 +17678,36 @@ in CLAUDE.md describes.
   mean, an earlier pair within same-build noise (INV-6); Classic 0.000; Ultra
   traced view 3 0.000; Ultra with no models.csv 0.0062, no pixel over 60 summed
   across channels (INV-7). Next: B3.
+  B3 done 2026-11-02: Ultra's traced view hits BON1 as its model, with smooth
+  normals. Near it, E1M1 590 -3480 334: scratch/fled/look/b3-sheet.png.
+  Lit: with E1M1's sectors dimmed to light 40 in a test WAD, the flask's blue
+  fell from 172 to 103 and the floor from 64 to 15 (b3-dim).
+  -rtverify PASS. Against the commit before: Classic 0.000; Ultra raster 0.0001;
+  Solid traced and raster differ only around the potion and its pool, the size
+  of the difference between two animation frames of one build.
+  Until B4, BON1 casts no light in the traced view: the blue pool and purple
+  wall are gone there. Ultra raster keeps the sprite's light.
+  Not proven: hitCtrl's guard, that a billboard ignores its model's row. No
+  capture showed the fault on the old build, across six captures at different
+  animation times.
+  B5 makes far billboards: check there.
+  Fault: rt_view 4 blows the flask to white, because kEmissiveScale 40 meets
+  BON1's emissive map. The play view (6) does not read that map (DOOM-0178),
+  so it will meet this when DOOM-0178 lands.
+  g.sprWorldVertCap has no room for light triangles yet: B4 adds it.
+  Frame cost not measured: B5. Windows not run. Next: B4.
   **Layman:** Health, armour, ammo, keys and power-ups become real 3D objects, so their glow can come from exactly the right spot inside them.
   Kind: feature.
   Source: user-request-2026-11-02.
+
+- 📋 [DOOM-0540] **Find out why flashlight 1 shows no beam in a frozen traced capture.**
+  E1M1 590 -3480 334, Ultra, rt_view 6, cap.sh with -inspect -freeze -noinput:
+  the config kept flashlight 1, yet no beam shows on the wall ahead, on the
+  commit before DOOM-0539 B3 and after it (scratch/fled/look/b3-sheet4.png).
+  Not tried in play. It may be only the capture setup.
+  **Layman:** The torch did not show up in a test screenshot of the ray-traced view, and we do not yet know if the game or the test setup is at fault.
+  Kind: investigate.
+  Source: found-2026-11-02-doom-0539-b3.
 
 ## 0.13.0 — The player's experience
 

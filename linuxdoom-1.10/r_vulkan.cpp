@@ -852,7 +852,7 @@ struct VulkanState
     VkDeviceMemory sprWorldMem       = VK_NULL_HANDLE;
     void*          sprWorldMapped    = nullptr;
     uint32_t       sprWorldVertCap   = 0;
-    uint32_t       sprWorldVertCount = 0;               // this frame's verts (6 per sprite)
+    uint32_t       sprWorldVertCount = 0;               // this frame's verts (6 per billboard)
     VkAccelerationStructureKHR spriteBlas        = VK_NULL_HANDLE;
     VkBuffer                   spriteBlasBuf     = VK_NULL_HANDLE;
     VkDeviceMemory             spriteBlasMem     = VK_NULL_HANDLE;
@@ -2242,6 +2242,10 @@ void DestroyAccelerationStructures()
 // DOOM-0108 for sprites). The world build and its refit must pass the same flags.
 static const VkGeometryFlagsKHR kAlphaTestedGeom = 0;
 
+// The vertex buffers RB_BuildSprites fills: ~4096 billboards, 6 verts each, and DOOM-0539's
+// 12000 model triangles a frame.
+static const uint32_t kThingVertCap = 4096u * 6u + 36000u;
+
 // DOOM-0128: the world BLAS's build flags. An UPDATE must pass exactly the flags
 // the AS was built with, so BuildAccelerationStructures and RecordRefitAS share
 // this one constant. ALLOW_UPDATE lets a moving door/lift refit it in place (build
@@ -2366,7 +2370,7 @@ void BuildAccelerationStructures()
     // (and a persistent build scratch + the host-visible vert buffer) once here,
     // sized to the sprite cap; the per-frame rebuild reuses the storage. NON-opaque
     // geometry so palette-0 alpha-tests in the trace candidate loop. ----
-    g.sprWorldVertCap = 4096u * 6u;        // up to ~4096 things/frame, 6 verts each
+    g.sprWorldVertCap = kThingVertCap;
     g.sprBlasMaxTris  = g.sprWorldVertCap / 3u;
     CreateRtBuffer((VkDeviceSize)g.sprWorldVertCap * sizeof(rb_vertex_t),
                    VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
@@ -5654,8 +5658,7 @@ static uint32_t DeviceMaxImage2D()
 // sprites. Sized once for a generous cap; RB_BuildSprites refills it each frame.
 void CreateSpriteBuffer()
 {
-    g.spriteVertCap = 4096 * 6 + 36000;   // ~4096 billboards, 6 verts each, and DOOM-0539's
-                                          // 12000 model triangles a frame
+    g.spriteVertCap = kThingVertCap;
     VkDeviceSize size = (VkDeviceSize)g.spriteVertCap * sizeof(rb_vertex_t);
 
     // DOOM-0074: one copy per in-flight slot so the next frame's build-ahead billboard
@@ -10478,7 +10481,7 @@ static void BuildFrameInputs(bool rtActive, bool cprof, bool doReheight)
         g.sprWorldVertCount = 0;
         if (g.sprWorldMapped)
             g.sprWorldVertCount = (uint32_t)RB_BuildSprites(&g.lastView,
-                (rb_vertex_t*)g.sprWorldMapped, (int)g.sprWorldVertCap, 0);
+                (rb_vertex_t*)g.sprWorldMapped, (int)g.sprWorldVertCap, 1);
 
         // DOOM-0082: last frame RB_UpdateMeshHeights saw a switch press/revert (or an
         // animated flat) change a face's live texture; rebuild the static emitter set
