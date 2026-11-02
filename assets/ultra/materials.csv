@@ -26,3 +26,19 @@ FLAT20,hero,heroes/floor/FLAT20_alb.png,heroes/floor/FLAT20_nrm.png,,,heroes/flo
 COMPTALL,hero,heroes/tech/COMPTALL_alb.png,heroes/tech/COMPTALL_nrm.png,,,heroes/tech/COMPTALL_ao.png,heroes/tech/COMPTALL_emis.png,heroes/tech/COMPTALL_hgt.png,0.3333333x1,pom|noDetile|depth=16
 TEKWALL1,hero,heroes/tech/TEKWALL1_alb.png,heroes/tech/TEKWALL1_nrm.png,,,heroes/tech/TEKWALL1_ao.png,heroes/tech/TEKWALL1_emis.png,heroes/tech/TEKWALL1_hgt.png,0.3333333x1,pom|noDetile|depth=18
 TEKWALL4,hero,heroes/tech/TEKWALL4_alb.png,heroes/tech/TEKWALL4_nrm.png,,,heroes/tech/TEKWALL4_ao.png,heroes/tech/TEKWALL4_emis.png,heroes/tech/TEKWALL4_hgt.png,0.25x0.5,pom|noDetile|depth=20
+# --- DOOM-0537 second batch: the COMP family, same tools ---
+COMPSPAN,hero,heroes/tech/COMPSPAN_alb.png,heroes/tech/COMPSPAN_nrm.png,,,heroes/tech/COMPSPAN_ao.png,heroes/tech/COMPSPAN_emis.png,heroes/tech/COMPSPAN_hgt.png,0.3333333x1,pom|noDetile|depth=12
+COMPBLUE,hero,heroes/tech/COMPBLUE_alb.png,heroes/tech/COMPBLUE_nrm.png,,,heroes/tech/COMPBLUE_ao.png,heroes/tech/COMPBLUE_emis.png,heroes/tech/COMPBLUE_hgt.png,0.5x1,pom|noDetile|depth=12
+COMPOHSO,hero,heroes/tech/COMPOHSO_alb.png,heroes/tech/COMPOHSO_nrm.png,,,heroes/tech/COMPOHSO_ao.png,heroes/tech/COMPOHSO_emis.png,heroes/tech/COMPOHSO_hgt.png,0.5x0.5,pom|noDetile|depth=16
+COMPTILE,hero,heroes/tech/COMPTILE_alb.png,heroes/tech/COMPTILE_nrm.png,,,heroes/tech/COMPTILE_ao.png,heroes/tech/COMPTILE_emis.png,heroes/tech/COMPTILE_hgt.png,1,pom|noDetile|depth=14
+COMPWERD,hero,heroes/tech/COMPWERD_alb.png,heroes/tech/COMPWERD_nrm.png,,,heroes/tech/COMPWERD_ao.png,heroes/tech/COMPWERD_emis.png,heroes/tech/COMPWERD_hgt.png,0.5x1,pom|noDetile|depth=16
+COMP2,hero,heroes/tech/COMP2_alb.png,heroes/tech/COMP2_nrm.png,,,heroes/tech/COMP2_ao.png,heroes/tech/COMP2_emis.png,heroes/tech/COMP2_hgt.png,0.5x1,pom|noDetile|depth=16
+COMPUTE2,hero,heroes/tech/COMPUTE2_alb.png,heroes/tech/COMPUTE2_nrm.png,,,heroes/tech/COMPUTE2_ao.png,heroes/tech/COMPUTE2_emis.png,heroes/tech/COMPUTE2_hgt.png,0.5x1,pom|noDetile|depth=12
+COMPUTE3,hero,heroes/tech/COMPUTE3_alb.png,heroes/tech/COMPUTE3_nrm.png,,,heroes/tech/COMPUTE3_ao.png,heroes/tech/COMPUTE3_emis.png,heroes/tech/COMPUTE3_hgt.png,1,pom|noDetile|depth=16
+COMPUTE1,hero,heroes/tech/COMPUTE1_alb.png,heroes/tech/COMPUTE1_nrm.png,,,heroes/tech/COMPUTE1_ao.png,heroes/tech/COMPUTE1_emis.png,heroes/tech/COMPUTE1_hgt.png,0.5x1,pom|noDetile|depth=14
+COMPSTA1,hero,heroes/tech/COMPSTA1_alb.png,heroes/tech/COMPSTA1_nrm.png,,,heroes/tech/COMPSTA1_ao.png,heroes/tech/COMPSTA1_emis.png,heroes/tech/COMPSTA1_hgt.png,1,pom|noDetile|depth=14
+COMPSTA2,hero,heroes/tech/COMPSTA2_alb.png,heroes/tech/COMPSTA2_nrm.png,,,heroes/tech/COMPSTA2_ao.png,heroes/tech/COMPSTA2_emis.png,heroes/tech/COMPSTA2_hgt.png,1,pom|noDetile|depth=14
+TEKWALL2,hero,heroes/tech/TEKWALL2_alb.png,heroes/tech/TEKWALL2_nrm.png,,,heroes/tech/TEKWALL2_ao.png,heroes/tech/TEKWALL2_emis.png,heroes/tech/TEKWALL2_hgt.png,0.5x1,pom|noDetile|depth=18
+TEKWALL3,hero,heroes/tech/TEKWALL3_alb.png,heroes/tech/TEKWALL3_nrm.png,,,heroes/tech/TEKWALL3_ao.png,heroes/tech/TEKWALL3_emis.png,heroes/tech/TEKWALL3_hgt.png,1,pom|noDetile|depth=18
+TEKWALL5,hero,heroes/tech/TEKWALL5_alb.png,heroes/tech/TEKWALL5_nrm.png,,,heroes/tech/TEKWALL5_ao.png,heroes/tech/TEKWALL5_emis.png,heroes/tech/TEKWALL5_hgt.png,0.5x1,pom|noDetile|depth=18
+TEKWALL6,hero,heroes/tech/TEKWALL6_alb.png,heroes/tech/TEKWALL6_nrm.png,,,heroes/tech/TEKWALL6_ao.png,heroes/tech/TEKWALL6_emis.png,heroes/tech/TEKWALL6_hgt.png,0.5x1,pom|noDetile|depth=18

@@ -14716,6 +14716,8 @@ in CLAUDE.md describes.
   User 2026-11-02: the red-sky comments (too bright, fog should be
   thicker) still stand; after the DOOM-0536 fog-wall fix and another
   look.
+  2026-11-02: DOOM-0536 shipped on the user's look, so the red-sky comments
+  (too bright, fog should be thicker) can now be taken up; not started.
 
 - 🚧 [DOOM-0042] **Add a second, high-fidelity art set (DOOM 3 / sci-fi-horror look) selectable alongside the classic art.**
   Two art options for the 3D renderer: (1) DOOM's original art converted to 3D (the DOOM-0008 path, already in progress); (2) a replacement HD art set inspired by DOOM 3 and sci-fi horror generally. LEVEL LAYOUT IS UNCHANGED — same map geometry/segs/sectors and UVs; only the textures, flats, sprites and their materials are swapped. Implies a material-source abstraction (a 'theme' the renderer selects) layered on the bindless material pipeline, plus real PBR maps (albedo/normal/roughness/metallic/emissive) for the HD set rather than flat paletted albedo. LICENSING CONSTRAINT: id Software's DOOM 3 assets are proprietary and CANNOT be shipped in this GPL-v2 repo. Sourcing options to decide with the user: freely/CC0-licensed HD texture+sprite packs, community packs with compatible licences, AI-generated art, or an optional separately-distributed asset pack the user supplies locally. Open decision: which sourcing route. Depends on the bindless material seam and the path tracer (DOOM-0009).
@@ -17607,6 +17609,20 @@ in CLAUDE.md describes.
   and kwin cannot be read. So the machine was not truly quiet. The map
   sizes stay: an undisturbed frame has about 8 ms to spare. Kit:
   scratch/ultra-pass/meas.sh.
+  2026-11-02, third pass, waiting on the user's look: the rest of the COMP and
+  TEKWALL families are built and live, so all 18 now have baked art: COMP2,
+  COMPBLUE, COMPOHSO, COMPSPAN, COMPSTA1, COMPSTA2, COMPTILE, COMPUTE1, COMPUTE2,
+  COMPUTE3, COMPWERD, TEKWALL2, TEKWALL3, TEKWALL5, TEKWALL6. Tool: lib/techparts.py
+  and one builder each in walls/. Seen in Ultra raster at a wall of each except
+  COMPUTE3, whose capture spot missed; its 6 uses are unseen. Sheets:
+  scratch/fled/look/wb-sheet.png, wt-sheet.png, wv-sheet.png. TEKWALL2's traced view
+  checked once (wt-sheet.png, wr-TEKWALL2). Faults to judge: filth tints the TEK walls
+  orange in E3M8; TEK walls are machinery in DOOM's colours, not its exact layout.
+  Ultra's HD set is now 35 materials, 585.2 MB against the 768 MB ceiling, loaded at
+  level start in 3.0 s at load about 25. Frame on that busy machine, Brave open,
+  5120x3200 at scale 36, 300 frames: E3M8 TEKWALL2 median 12.3 ms, mean 18.0; E2M6
+  COMP2 median 14.4 ms, mean 27.4. Upper figures, not a quiet measure. Not run:
+  Windows. Next: other walls by use, after the user's look.
   **Layman:** Ultra's computer and wire walls become detailed 3D models, turned into HD surfaces, with the same layout as DOOM's originals.
   Kind: feature.
   Source: user-request-2026-11-02.
