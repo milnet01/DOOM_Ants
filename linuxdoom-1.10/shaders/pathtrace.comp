@@ -113,6 +113,10 @@ layout(set = 2, binding = 3, rgba16f) uniform writeonly image2D gillum;    // de
 // rgb = inscatter (linear radiance), a = transmittance. Megakernel WRITE side; the
 // composite reads the same binding (svgf_composite.comp, set 0) as its READ side.
 layout(set = 2, binding = 9, rgba16f) uniform writeonly image2D fogImg;
+// DOOM-0103 §4.2: the noisy specular light, at the pixels that trace NEE only (the
+// temporal pass upsamples the rest, as for gillum). NOT divided by albedo: a dielectric
+// highlight takes the light's colour, not the surface's.
+layout(set = 2, binding = 10, rgba16f) uniform writeonly image2D gspec;
 
 // Materials (set 1) — shared verbatim with the raster pass (r_vulkan.cpp
 // CreateDescriptors / mesh.frag): the 256x1 PLAYPAL LUT and the bindless array of
@@ -1685,6 +1689,9 @@ void main()
 
             if (any(isnan(illum)) || any(isinf(illum))) illum = vec3(0.0);
             imageStore(gillum, ivec2(px), vec4(illum, 1.0));
+            // DOOM-0103: the specular sum. Zero until B3 adds the lobe at the NEE sites.
+            vec3 spec = vec3(0.0);
+            imageStore(gspec, ivec2(px), vec4(spec, 0.0));
             return;                                 // feed writes the G-buffer only
         }
         else

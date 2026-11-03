@@ -269,6 +269,7 @@ extern int	rb_rtdebug_menu;// DOOM-0135 Debug Views toggle (0 = ~ is RT on/off; 
 extern int	rb_profile;	// DOOM-0090 per-pass GPU profiler toggle (0 Off; `\` key)
 extern int	rb_detile;	// DOOM-0181 Ultra RT de-tile quality (0 off/1 2-tap/2 4-tap; `]` key)
 extern int	rb_surface_detail;	// DOOM-0273 derived surface maps, Solid and Ultra (1 on/0 off)
+extern int	rb_specular;	// DOOM-0103 specular highlights, Solid and Ultra (1 on/0 off)
 extern int	rb_filth;	// DOOM-0187 Ultra RT dirt-stain filth master (1 on/0 off; `[` key)
 extern int	rb_wet;		// DOOM-0183 Ultra RT wet-liquid layers (sheen/ripple/puddle; 1 on/0 off; `'` key)
 extern int	rb_fog;		// DOOM-0011 RT volumetric fog strength (0 off / 1 Low / 2 Med / 3 High; `;` key)
@@ -337,6 +338,7 @@ default_t	defaults[] =
     {"rt_profile",&rb_profile, 0},
     {"rt_detile",&rb_detile, 2},		// DOOM-0181: de-tile quality, default 4-tap
     {"surface_detail",&rb_surface_detail, 1},	// DOOM-0273: derived surface maps, default on
+    {"specular",&rb_specular, 1},		// DOOM-0103: specular highlights, default on
     {"rt_filth",&rb_filth, 1},		// DOOM-0187: dirt-stain filth, default on
     {"rt_wet",&rb_wet, 1},		// DOOM-0183: wet-liquid layers, default on
     {"rt_fog",&rb_fog, 2},		// DOOM-0011: volumetric fog strength 0..3, default Med

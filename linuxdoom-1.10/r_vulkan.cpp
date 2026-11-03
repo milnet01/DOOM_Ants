@@ -338,6 +338,8 @@ enum {
     SV_MOTION,   // build step 6-d: render-res motion vector (rg16f), composite writes it
     SV_FOG,      // DOOM-0011 L1: HALF-res fog target (rgba16f) — binding 9 in both
                  // pathtrace.comp (write, set 2) and svgf_composite.comp (read, set 0)
+    SV_SPEC,     // DOOM-0103: noisy specular light, NOT divided by albedo (binding 10)
+    SV_HSPEC0, SV_HSPEC1,   // DOOM-0103: its temporal history, ping-ponged (binding 11)
     SV_COUNT
 };
 
@@ -1304,6 +1306,12 @@ static uint32_t SurfaceDetailLane()
 {
     return (rb_surface_detail && g.surfMapsOn) ? kSurfaceDetailOn : 0u;
 }
+
+// DOOM-0103: specular highlights in Solid and Ultra, both views (persisted as specular).
+// 1 = on, 0 = off, and off renders every frame as before the feature. Rides pc.misc7.y
+// and ShadowUbo.flags.y, the lanes DOOM-0273 reserved for it.
+extern "C" { int rb_specular = 1; }
+static uint32_t SpecularLane() { return rb_specular ? 1u : 0u; }
 
 // DOOM-0187: filth (dirt-stain) master toggle (the `[` key; persisted as rt_filth). 1 = on
 // (shipped look), 0 = off. Drives pc.misc5.w on the Ultra RT path; gates applyGrime on ALL
@@ -3001,16 +3009,16 @@ void CreateBakePipeline()
 
 // SVGF descriptor-set layout (DOOM-0009 build step 6). Created BEFORE the
 // path-trace pipeline (whose layout references it as set 2). One set shared by the
-// megakernel's mode-6 feed and all three denoiser passes: nine storage-image
-// bindings (plus binding 9, DOOM-0011 L1's half-res fog target), the ping-pong
-// targets as 2-element arrays the shaders index by parity.
+// megakernel's mode-6 feed and all three denoiser passes: storage-image bindings
+// only, the ping-pong targets as 2-element arrays the shaders index by parity.
 void CreateSvgfDescriptorLayout()
 {
-    // gpos,gnorm,albedo,illum,hcol,hmom,atrous,out,motion,fog (binding 8 = 6-d MV;
-    // binding 9 = DOOM-0011 L1 half-res fog target, added without disturbing 0-8).
-    const uint32_t counts[10] = { 2, 2, 1, 1, 2, 2, 2, 1, 1, 1 };
-    VkDescriptorSetLayoutBinding b[10] = {};
-    for (uint32_t i = 0; i < 10; i++) {
+    // gpos,gnorm,albedo,illum,hcol,hmom,atrous,out,motion,fog,spec,hspec (binding 8 =
+    // 6-d MV; 9 = DOOM-0011 L1 half-res fog target; 10 and 11 = DOOM-0103's specular
+    // channel and its history, each added without disturbing the bindings before it).
+    const uint32_t counts[12] = { 2, 2, 1, 1, 2, 2, 2, 1, 1, 1, 1, 2 };
+    VkDescriptorSetLayoutBinding b[12] = {};
+    for (uint32_t i = 0; i < 12; i++) {
         b[i].binding         = i;
         b[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         b[i].descriptorCount = counts[i];
@@ -3020,7 +3028,7 @@ void CreateSvgfDescriptorLayout()
     // label-on-upscaled-output variant, binding 7 retargeted in WriteTaauDescriptor) and
     // DOOM-0345 R1's svgfSplitDs (binding 7 retargeted at rtHdrImage for the -DBLOOM_SPLIT
     // composite; written in WriteSvgfDescriptor alongside svgfDs).
-    CreateComputeSets(b, 10, "svgf", &g.svgfDsLayout, &g.svgfDsPool,
+    CreateComputeSets(b, 12, "svgf", &g.svgfDsLayout, &g.svgfDsPool,
                       { &g.svgfDs, &g.labelTaauDs, &g.svgfSplitDs });
 }
 
@@ -3193,14 +3201,14 @@ uint32_t ModeLabel(int mode, uint32_t* out)
     return n;
 }
 
-// Write all ten bindings of one set on svgfDsLayout, with binding 7 (the output) at
+// Write every binding of one set on svgfDsLayout, with binding 7 (the output) at
 // `outView`. svgfDs, svgfSplitDs and labelTaauDs differ ONLY in binding 7, so each is
-// written through here and the other nine can never drift apart; every binding is
+// written through here and the others can never drift apart; every binding is
 // written, because a partially-written set is a validation error at bind time.
 static void WriteSvgfSet(VkDescriptorSet ds, VkImageView outView)
 {
-    VkDescriptorImageInfo info[15] = {};
-    const VkImageView views[15] = {
+    VkDescriptorImageInfo info[18] = {};
+    const VkImageView views[18] = {
         g.svView[SV_GPOS0],  g.svView[SV_GPOS1],            // b0 gpos[2]
         g.svView[SV_GNORM0], g.svView[SV_GNORM1],           // b1 gnorm[2]
         g.svView[SV_ALBEDO],                                // b2 albedo
@@ -3211,16 +3219,19 @@ static void WriteSvgfSet(VkDescriptorSet ds, VkImageView outView)
         outView,                                            // b7 outColor
         g.svView[SV_MOTION],                                // b8 motion vector (6-d)
         g.svView[SV_FOG],                                   // b9 DOOM-0011 L1 fog target
+        g.svView[SV_SPEC],                                  // b10 DOOM-0103 specular
+        g.svView[SV_HSPEC0], g.svView[SV_HSPEC1],           // b11 DOOM-0103 hspec[2]
     };
-    for (uint32_t i = 0; i < 15; i++) {
+    for (uint32_t i = 0; i < 18; i++) {
         info[i].imageView   = views[i];
         info[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
     }
-    struct { uint32_t binding, first, count; } map[10] = {
-        {0,0,2},{1,2,2},{2,4,1},{3,5,1},{4,6,2},{5,8,2},{6,10,2},{7,12,1},{8,13,1},{9,14,1}
+    struct { uint32_t binding, first, count; } map[12] = {
+        {0,0,2},{1,2,2},{2,4,1},{3,5,1},{4,6,2},{5,8,2},{6,10,2},{7,12,1},{8,13,1},{9,14,1},
+        {10,15,1},{11,16,2}
     };
-    VkWriteDescriptorSet wr[10] = {};
-    for (int i = 0; i < 10; i++) {
+    VkWriteDescriptorSet wr[12] = {};
+    for (int i = 0; i < 12; i++) {
         wr[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         wr[i].dstSet          = ds;
         wr[i].dstBinding      = map[i].binding;
@@ -3228,7 +3239,7 @@ static void WriteSvgfSet(VkDescriptorSet ds, VkImageView outView)
         wr[i].descriptorCount = map[i].count;
         wr[i].pImageInfo      = &info[map[i].first];
     }
-    vkUpdateDescriptorSets(g.device, 10, wr, 0, nullptr);
+    vkUpdateDescriptorSets(g.device, 12, wr, 0, nullptr);
 }
 
 // Point the SVGF descriptor set at the current image views. Binding 7 (output)
@@ -3360,7 +3371,8 @@ void CreateSvgfTargets()
         // see fetchFogBilinear) reads as a no-op fold.
         VkClearColorValue fogNeutral = {}; fogNeutral.float32[3] = 1.0f;
         const int clearSky[2]  = { SV_GPOS0, SV_GPOS1 };
-        const int clearZero[4] = { SV_HCOL0, SV_HCOL1, SV_HMOM0, SV_HMOM1 };
+        const int clearZero[7] = { SV_HCOL0, SV_HCOL1, SV_HMOM0, SV_HMOM1,
+                                   SV_SPEC, SV_HSPEC0, SV_HSPEC1 };
         const int clearFog[1]  = { SV_FOG };
         for (int i : clearSky)  vkCmdClearColorImage(cb, g.svImg[i], VK_IMAGE_LAYOUT_GENERAL, &sky,  1, &range);
         for (int i : clearZero) vkCmdClearColorImage(cb, g.svImg[i], VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &range);
@@ -9396,8 +9408,8 @@ void RecordRtTrace(uint32_t idx)
         uint32_t wispAngle;       // (with fogFloorZ, pads rejectAddr's 216 tail to 224)
         uint32_t misc6[4];        // x = ripple time (float bits, seconds); y = wet toggle;
                                   // z = fog strength (rb_fog 0..3, DOOM-0011); w = hell-haze (L4)
-        uint32_t misc7[4];        // DOOM-0273: x = surface detail (SurfaceDetailLane); y = reserved
-                                  // for DOOM-0103's specular setting; z = surface-map base
+        uint32_t misc7[4];        // DOOM-0273: x = surface detail (SurfaceDetailLane); y = the
+                                  // DOOM-0103 specular setting (SpecularLane); z = surface-map base
                                   // (RB_MaterialCount()); w = free. 256 bytes, the device limit.
     } pc = {};
     static_assert(sizeof(RtPushConstants) == 256, "RT push-constant layout must match the shader");
@@ -9502,6 +9514,7 @@ void RecordRtTrace(uint32_t idx)
     std::memcpy(&pc.misc6[0], &rippleSec, sizeof(float));
     pc.misc6[1]    = rb_wet ? 1u : 0u;
     pc.misc7[0]    = SurfaceDetailLane();
+    pc.misc7[1]    = SpecularLane();
     pc.misc7[2]    = (uint32_t)RB_MaterialCount();
     pc.misc6[2]    = FogStrength();     // DOOM-0011: fog strength 0..3 (`;` key); 0 skips the march (INV-8)
     {   // DOOM-0011: the outdoor fog layer's altitude, per level (0 if no open-sky sector)
@@ -11034,7 +11047,7 @@ extern "C" void RB_Vulkan_Present(void)
     {
         uint32_t* flags = static_cast<ShadowUboData*>(g.shadowUboMapped)->flags;
         flags[0] = SurfaceDetailLane();
-        flags[1] = 0u;
+        flags[1] = SpecularLane();   // DOOM-0103; mesh.frag reads it from B5
         flags[2] = (uint32_t)RB_MaterialCount();
         flags[3] = (uint32_t)(I_GetTimeMS() / 28);   // DOOM-0508: 35 Hz, the fuzz's flicker
         uint32_t* hd = static_cast<ShadowUboData*>(g.shadowUboMapped)->hd;

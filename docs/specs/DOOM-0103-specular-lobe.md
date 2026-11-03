@@ -204,8 +204,8 @@ differs.
   the same joint-bilateral upsample it uses for `gillum`.
 - It then blends `gspec` with its own history, `hspec[2]`, ping-ponged by the
   same parity as `hcol[2]`, at a faster rate than
-  `gillum` (`kSpecHistoryAlpha`, starting at 0.2, set from the Workbench's
-  `temporalAlpha` family). Disocclusion and the anti-ghost gradient test
+  `gillum`: the Workbench's `temporalAlpha(newHist - 1)`, whose floor is 0.2
+  (B2, 2026-11-03). Disocclusion and the anti-ghost gradient test
   reject history exactly as they do for `gillum`.
 - Neither `gspec` nor `hspec` goes through the à-trous passes.
 - `svgf_composite.comp` adds this frame's `hspec` as `spec`:
