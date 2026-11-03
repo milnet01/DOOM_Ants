@@ -17716,6 +17716,7 @@ in CLAUDE.md describes.
   level in 255. Solid against the commit before: mean 0.483, same-build
   control 0.483; Classic 0.000. -rtverify PASS. Spec section 4.4
   amended. Not done: frame cost and INV-8 (B5), Windows. Next: B5.
+  User 2026-11-03: the potion's light and model (B4) are good.
   **Layman:** Health, armour, ammo, keys and power-ups become real 3D objects, so their glow can come from exactly the right spot inside them.
   Kind: feature.
   Source: user-request-2026-11-02.
@@ -17729,7 +17730,7 @@ in CLAUDE.md describes.
   Kind: investigate.
   Source: found-2026-11-02-doom-0539-b3.
 
-- 📋 [DOOM-0541] **Build COMPTILE's recesses, pins and bars as real geometry in Ultra instead of faking them with parallax.**
+- ✅ [DOOM-0541] **Build COMPTILE's recesses, pins and bars as real geometry in Ultra instead of faking them with parallax.**
   User 2026-11-02, shots dev-shots/shot-0049 to shot-0056: the parallax fake sells from some angles and fails badly from others; build this wall as actual geometry, in the same layout. Fakes remain fine elsewhere. Parent: DOOM-0537.
   Built 2026-11-02, waiting on the user's look. wall_relief.h turns
   relief.csv's sunk rectangles into real faces on the wall, in Ultra
@@ -17752,18 +17753,26 @@ in CLAUDE.md describes.
   19.7 and 19.8 ms against 18.7 and 18.7. Full-frame figures were too
   noisy to quote, and the rebuild's effect on a moving door's refit is
   not measured. Windows not run. Sheet: scratch/fled/look/r1-sheet.png.
+  User 2026-11-03: COMPTILE's real geometry is good.
   **Layman:** The blue processor wall gets real depth, so it holds up from every angle instead of smearing when seen from the side.
   Kind: feature.
   Source: user-play-test-2026-11-02.
 
 - 📋 [DOOM-0542] **Give Ultra's HD walls metal: COMPTILE's grey panels show a very rough reflection.**
   User 2026-11-02: the grey parts between the blue are metal with a very rough reflection. Today the HD path loads no roughness or metallic map (kHdV1Maps skips RB_RGH and RB_MET) and the trace is Lambert except wet sheen. Related: DOOM-0103, DOOM-0517, DOOM-0104.
+  2026-11-03: blocked behind DOOM-0103 (no specular lobe yet) and
+  DOOM-0517 (metal). DOOM-0103 B1 waits on Vestige 3D_E-0813. User
+  chose: ask Vestige now and build DOOM-0103's steps that need no
+  formulas meanwhile (setting, gspec channel, HD roughness and metallic
+  map upload).
   **Layman:** The grey plates on the blue processor wall look like rough metal that picks up a smeared hint of the room's light.
   Kind: feature.
   Source: user-play-test-2026-11-02.
 
 - 📋 [DOOM-0543] **Make Ultra's floors like the VkDOOM video's hex tiles: real bevels, each tile catching light differently, grime in the gaps.**
   User 2026-11-02: "We still need to do the floor like it was done in that video you analysed." Reading taken from the study: scratch/ref-frames/vkdoom/sheet-012.png, 1:39 to 1:41, notes-part1.md (roughness varies tile by tile, dirt between tiles) and the dark glossy floors at 0:17 and 3:09. Not confirmed with the user which floor they meant.
+  User 2026-11-03 confirmed: the floor meant is the VkDOOM video's hex
+  tiles at 1:39.
   **Layman:** Floor tiles look like separate worn slabs that catch the light one by one, as in the reference video.
   Kind: feature.
   Source: user-play-test-2026-11-02.

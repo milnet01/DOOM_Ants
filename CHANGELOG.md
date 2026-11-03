@@ -14,6 +14,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 - **Developer builds only: a bot that plays the game and records demo runs that look like real play.** (DOOM-0529)
 
+- **In Ultra, the blue processor wall (COMPTILE) has real depth, so it holds up from every angle.** (DOOM-0541)
+  Its recesses, niches and bars used to be painted-on depth that smeared when seen from the side. They are now built as real geometry, set into the wall. Walls on moving sectors stay flat.
+
 ### Fixed
 
 - **Fog now fills the air under a roof opening instead of stopping in a straight wall at its edge.** (DOOM-0536)
