@@ -14843,6 +14843,12 @@ in CLAUDE.md describes.
   (review-contract capped at one loop by the user). Blocked by
   DOOM-0273's B1-B4 and by the Vestige Workbench's parameterised GGX
   exports. Metal is DOOM-0517.
+  2026-11-03: B2 built (d0c6411): `specular` key and Shine menu row on
+  misc7.y and ShadowUbo.flags.y; gspec (binding 10) and hspec[2]
+  (binding 11) through the temporal pass and composite, sum still zero.
+  INV-4 captures inside same-build noise; -rtverify PASS; validation 0.
+  B1 still waits on Vestige 3D_E-0813 (asked again 2026-11-03, message
+  1180).
   **Layman:** Shiny surfaces — metal, wet floors, slime — get realistic highlights like modern DOOM, without losing the classic look.
   Kind: feature.
   Source: user-request-2026-06-29.
@@ -17765,6 +17771,10 @@ in CLAUDE.md describes.
   chose: ask Vestige now and build DOOM-0103's steps that need no
   formulas meanwhile (setting, gspec channel, HD roughness and metallic
   map upload).
+  2026-11-03: the HD path now uploads roughness and metallic maps
+  (MatCtrl.maps[2], [3]). Still needed: COMPTILE's bake writes them
+  (grey plates metal and very rough, blue parts not), DOOM-0103 B1 and
+  B3, then DOOM-0517's metal Fresnel.
   **Layman:** The grey plates on the blue processor wall look like rough metal that picks up a smeared hint of the room's light.
   Kind: feature.
   Source: user-play-test-2026-11-02.
