@@ -160,9 +160,8 @@ as parameters, because they cannot see `ctrl[]`.
 - Where `surfHas(id)`: DOOM-0273's `surfRoughness` and surface normal.
 - An HD material (`usePBR == 1`) with a roughness map, `maps[2]`: that map,
   and the normal it is lit with today. DOOM-0273 INV-6 keeps `surf` calls off it.
-  `kHdV1Maps` (`r_vulkan.cpp`) skips `RB_RGH` today, so this spec adds it to
-  the upload, as a linear map. Its images count against `kHdBudgetMB` like
-  the other maps.
+  `kHdV1Maps` (`r_vulkan.cpp`) uploads it as a linear map, with `RB_MET`
+  (2026-11-03). Its images count against `kHdBudgetMB` like the other maps.
 - Anything else, such as a sprite or `surface_detail` 0: roughness 1.0 and
   the normal it is lit with today.
 

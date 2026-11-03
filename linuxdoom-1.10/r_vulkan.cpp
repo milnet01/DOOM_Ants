@@ -6679,9 +6679,8 @@ static void FlushMenuText()
 // paletted-vs-HD per material. This file builds/uploads those resources; the
 // per-frame BIND of set 3 + the shader that samples it land together in Task 10.
 //
-// v1 scope: single-mip images (mip-gen is a fast-follow); roughness/metallic are
-// baked offline but NOT uploaded (they wait for DOOM-0103's GGX lobe); walls+flats
-// only (sprites stay paletted).
+// v1 scope: single-mip images (mip-gen is a fast-follow); walls+flats only (sprites
+// stay paletted).
 // ===========================================================================
 
 static const int   kHdMaxImages = 4096;    // bindless image-array upper bound
@@ -6697,11 +6696,14 @@ static const int   kHdSourceMaxEdge = 4096;
 static const float kHdBudgetMB  = 768.0f;  // per-map VRAM ceiling
 static const float kHdMipFactor = 4.0f / 3.0f;   // a full mip chain's share of an image (DOOM-0182)
 
-// v1 uploads 5 of the 7 maps; roughness (RB_RGH) and metallic (RB_MET) are skipped.
+// Every map is uploaded. Roughness and metallic land in MatCtrl.maps[2] and [3] for
+// DOOM-0103's lobe and DOOM-0517's metal; no shader reads them before those.
 struct HdMapSpec { int k; const char* suffix; bool srgb; };
 static const HdMapSpec kHdV1Maps[] = {
     { RB_ALB,  "alb",  true  },   // sRGB (hardware de-gammas)
     { RB_NRM,  "nrm",  false },   // linear
+    { RB_RGH,  "rgh",  false },
+    { RB_MET,  "met",  false },
     { RB_AO,   "ao",   false },
     { RB_EMIS, "emis", true  },
     { RB_HGT,  "hgt",  false },
