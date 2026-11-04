@@ -17864,6 +17864,18 @@ in CLAUDE.md describes.
   views). Next: FLOOR5_2 and FLOOR5_1 on the same builder.
   Waiting-on: user (does FLOOR4_8 now read like the video's hex tiles?
   Recommendation: yes; then batch FLOOR5_2 and FLOOR5_1, 2026-11-04).
+  2026-11-04: FLOOR5_1 and FLOOR5_2 rebuilt the same way. The hex code
+  moved to Blender Scripts/lib/hexfloor.py; floors/doom_floor4_8.py,
+  doom_floor5_1.py and doom_floor5_2.py each pass the flat's colours
+  (measured from the WAD; FLOOR5_1 grey with rust blotches). The shared
+  builder reproduces the shipped FLOOR4_8 (rgh, nrm, ao, hgt bit-identical;
+  albedo within one level). Both replace CC0 photos that did not keep the
+  hex layout. E2M1 test scene, Ultra traced: FLOOR5_2's tiles catch the
+  red cross one by one (scratch/fled/look/f5x-sheet.png). FLOOR5_1 is
+  not yet seen in play: two E1M1 spots faced walls.
+  Waiting-on: user (is FLOOR5_2's gloss under the red cross too strong?
+  Recommendation: keep; raise the roughness range's floor from 0.22 if
+  it reads wet, 2026-11-04).
   **Layman:** Floor tiles look like separate worn slabs that catch the light one by one, as in the reference video.
   Kind: feature.
   Source: user-play-test-2026-11-02.

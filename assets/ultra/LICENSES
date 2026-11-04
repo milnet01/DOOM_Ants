@@ -45,14 +45,16 @@ assets/ultra/heroes/floor/FLOOR4_8_nrm.png  Blender-Scripts/floors/doom_floor4_8
 assets/ultra/heroes/floor/FLOOR4_8_rgh.png  Blender-Scripts/floors/doom_floor4_8.py  CC0-first-party
 assets/ultra/heroes/floor/FLOOR4_8_hgt.png  Blender-Scripts/floors/doom_floor4_8.py  CC0-first-party
 assets/ultra/heroes/floor/FLOOR4_8_ao.png  Blender-Scripts/floors/doom_floor4_8.py  CC0-first-party
-assets/ultra/heroes/floor/FLOOR5_1_alb.png  https://polyhaven.com/a/concrete_floor_worn_001  CC0
-assets/ultra/heroes/floor/FLOOR5_1_nrm.png  https://polyhaven.com/a/concrete_floor_worn_001  CC0
-assets/ultra/heroes/floor/FLOOR5_1_hgt.png  https://polyhaven.com/a/concrete_floor_worn_001  CC0
-assets/ultra/heroes/floor/FLOOR5_1_ao.png  https://polyhaven.com/a/concrete_floor_worn_001  CC0
-assets/ultra/heroes/floor/FLOOR5_2_alb.png  https://polyhaven.com/a/concrete_floor_worn_001  CC0
-assets/ultra/heroes/floor/FLOOR5_2_nrm.png  https://polyhaven.com/a/concrete_floor_worn_001  CC0
-assets/ultra/heroes/floor/FLOOR5_2_hgt.png  https://polyhaven.com/a/concrete_floor_worn_001  CC0
-assets/ultra/heroes/floor/FLOOR5_2_ao.png  https://polyhaven.com/a/concrete_floor_worn_001  CC0
+assets/ultra/heroes/floor/FLOOR5_1_alb.png  Blender-Scripts/floors/doom_floor5_1.py  CC0-first-party
+assets/ultra/heroes/floor/FLOOR5_1_nrm.png  Blender-Scripts/floors/doom_floor5_1.py  CC0-first-party
+assets/ultra/heroes/floor/FLOOR5_1_rgh.png  Blender-Scripts/floors/doom_floor5_1.py  CC0-first-party
+assets/ultra/heroes/floor/FLOOR5_1_hgt.png  Blender-Scripts/floors/doom_floor5_1.py  CC0-first-party
+assets/ultra/heroes/floor/FLOOR5_1_ao.png  Blender-Scripts/floors/doom_floor5_1.py  CC0-first-party
+assets/ultra/heroes/floor/FLOOR5_2_alb.png  Blender-Scripts/floors/doom_floor5_2.py  CC0-first-party
+assets/ultra/heroes/floor/FLOOR5_2_nrm.png  Blender-Scripts/floors/doom_floor5_2.py  CC0-first-party
+assets/ultra/heroes/floor/FLOOR5_2_rgh.png  Blender-Scripts/floors/doom_floor5_2.py  CC0-first-party
+assets/ultra/heroes/floor/FLOOR5_2_hgt.png  Blender-Scripts/floors/doom_floor5_2.py  CC0-first-party
+assets/ultra/heroes/floor/FLOOR5_2_ao.png  Blender-Scripts/floors/doom_floor5_2.py  CC0-first-party
 
 # DOOM-0042 T17 coverage batch 2 (E1M1 paletted-surface heroes)
 assets/ultra/heroes/tech/STARTAN1_alb.png  https://polyhaven.com/a/metal_plate_02  CC0

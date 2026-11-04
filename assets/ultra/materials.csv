@@ -12,8 +12,8 @@ BROWN1,hero,heroes/brownmetal/BROWN1_alb.png,heroes/brownmetal/BROWN1_nrm.png,,,
 BROWNGRN,hero,heroes/brownmetal/BROWNGRN_alb.png,heroes/brownmetal/BROWNGRN_nrm.png,,,heroes/brownmetal/BROWNGRN_ao.png,,heroes/brownmetal/BROWNGRN_hgt.png,1.0,pom
 BROWN144,hero,heroes/brownmetal/BROWN144_alb.png,heroes/brownmetal/BROWN144_nrm.png,,,heroes/brownmetal/BROWN144_ao.png,,heroes/brownmetal/BROWN144_hgt.png,1.0,pom
 FLOOR4_8,hero,heroes/floor/FLOOR4_8_alb.png,heroes/floor/FLOOR4_8_nrm.png,heroes/floor/FLOOR4_8_rgh.png,,heroes/floor/FLOOR4_8_ao.png,,heroes/floor/FLOOR4_8_hgt.png,1.0,noPom
-FLOOR5_1,hero,heroes/floor/FLOOR5_1_alb.png,heroes/floor/FLOOR5_1_nrm.png,,,heroes/floor/FLOOR5_1_ao.png,,heroes/floor/FLOOR5_1_hgt.png,1.0,noPom
-FLOOR5_2,hero,heroes/floor/FLOOR5_2_alb.png,heroes/floor/FLOOR5_2_nrm.png,,,heroes/floor/FLOOR5_2_ao.png,,heroes/floor/FLOOR5_2_hgt.png,1.0,noPom
+FLOOR5_1,hero,heroes/floor/FLOOR5_1_alb.png,heroes/floor/FLOOR5_1_nrm.png,heroes/floor/FLOOR5_1_rgh.png,,heroes/floor/FLOOR5_1_ao.png,,heroes/floor/FLOOR5_1_hgt.png,1.0,noPom
+FLOOR5_2,hero,heroes/floor/FLOOR5_2_alb.png,heroes/floor/FLOOR5_2_nrm.png,heroes/floor/FLOOR5_2_rgh.png,,heroes/floor/FLOOR5_2_ao.png,,heroes/floor/FLOOR5_2_hgt.png,1.0,noPom
 # --- DOOM-0042 T17 coverage batch 2 (E1M1 paletted-surface heroes) ---
 STARTAN1,hero,heroes/tech/STARTAN1_alb.png,heroes/tech/STARTAN1_nrm.png,,,heroes/tech/STARTAN1_ao.png,,heroes/tech/STARTAN1_hgt.png,1.0,pom
 BROWN96,hero,heroes/brownmetal/BROWN96_alb.png,heroes/brownmetal/BROWN96_nrm.png,,,heroes/brownmetal/BROWN96_ao.png,,heroes/brownmetal/BROWN96_hgt.png,1.0,pom
