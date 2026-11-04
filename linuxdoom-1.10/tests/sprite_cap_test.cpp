@@ -14,6 +14,10 @@
 //      is the same on every libc's qsort.
 //   3. r_mesh.c calls RB_SortSpritesNearest (source scrape), so the order
 //      tested here is the order the engine uses.
+//   4. DOOM-0539 §4.5: RB_ModelCutoff takes models nearest first while their
+//      triangles fit the budget, none at or past the distance cap, and things at
+//      the distance of the first that does not fit draw as sprites too, so the
+//      budget is never passed. r_mesh.c gates a model on it (source scrape).
 #include <cstdio>
 #include <fstream>
 #include <sstream>
@@ -78,6 +82,28 @@ int main()
         const std::string src = slurp(DOOM_TESTS_ROOT "/r_mesh.c");
         check(src.find("RB_SortSpritesNearest(") != std::string::npos,
               "3: r_mesh.c orders the sprite candidates nearest first");
+    }
+
+    // ---- 4: the model budget and distance cap (DOOM-0539 §4.5) --------------
+    {
+        const float maxD2 = 1024.0f * 1024.0f;
+        // Walk order is not distance order: the cutoff must sort.
+        rb_model_cand_t c[] = { {900.0f * 900.0f, 0, 5000}, {100.0f * 100.0f, 1, 5000},
+                                {500.0f * 500.0f, 2, 5000}, {2000.0f * 2000.0f, 3, 10} };
+        float cut = RB_ModelCutoff(c, 4, 12000, maxD2);
+        check(cut == 900.0f * 900.0f,
+              "4: the two nearest 5000-triangle models fit 12000; the third (900 units) does not");
+        rb_model_cand_t few[] = { {300.0f * 300.0f, 0, 252}, {1500.0f * 1500.0f, 1, 252} };
+        check(RB_ModelCutoff(few, 2, 12000, maxD2) == maxD2,
+              "4: when every model nearer than the cap fits, the cut is the distance cap");
+        rb_model_cand_t tie[] = { {400.0f * 400.0f, 0, 7000}, {400.0f * 400.0f, 1, 7000} };
+        float tcut = RB_ModelCutoff(tie, 2, 12000, maxD2);
+        check(!(400.0f * 400.0f < tcut),
+              "4: two models at one distance that do not both fit both draw as sprites");
+        check(RB_ModelCutoff(nullptr, 0, 12000, maxD2) == maxD2, "4: no models leaves the cap");
+        const std::string src = slurp(DOOM_TESTS_ROOT "/r_mesh.c");
+        check(src.find("thing_d2(view, thing) < model_cut_d2") != std::string::npos,
+              "4: r_mesh.c draws a model only nearer than the cutoff");
     }
 
     return check_summary("sprite_cap_test");

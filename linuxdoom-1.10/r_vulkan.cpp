@@ -7591,6 +7591,8 @@ void BuildDynamicEmitters()
         const rb_vertex_t* tri = &v[t * 3];
         if (!(tri->flags & RB_MESH_EMISSIVE))
             continue;                            // not a light object (pickup/monster/decoration)
+        if (tri->flags & RB_MESH_HASMODEL)
+            continue;                            // DOOM-0539: its model's light triangles cast instead
         const bool  modelLight = (tri->flags & RB_MESH_MODEL) != 0;
         const float modelLe[3] = { tri->nx, tri->ny, tri->nz };
         const int   id         = (int)base + tri->texnum;

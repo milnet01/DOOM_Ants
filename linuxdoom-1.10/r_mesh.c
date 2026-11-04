@@ -2571,33 +2571,52 @@ static const rb_model_t* thing_model(const mobj_t* thing)
     return &sprite_model[thing->sprite];
 }
 
-// A model's triangles, standing at the thing and turned by an angle its map position fixes,
-// so a row of pickups does not face one way and none turns as it is passed. Each UV is scaled
-// by the first lump's size because the shaders divide by that material's size.
+// Where a model stands: at the thing, turned by an angle its map position fixes, so a row of
+// pickups does not face one way and none turns as it is passed.
+typedef struct { float tx, ty, tz, c, s, light; int lump; } model_place_t;
+
+static model_place_t model_place(const mobj_t* thing)
+{
+    model_place_t  p;
+    const unsigned hash = (unsigned)thing->x * 2654435761u ^ (unsigned)thing->y * 40503u;
+    const float    a    = (hash >> 16) / 65536.0f * 2.0f * 3.14159265f;
+    p.lump  = sprites[thing->sprite].spriteframes[0].lump[0];
+    p.light = thing_light(thing);
+    p.c     = cosf(a);
+    p.s     = sinf(a);
+    p.tx    = thing->x / (float)FRACUNIT;
+    p.ty    = thing->y / (float)FRACUNIT;
+    p.tz    = thing->z / (float)FRACUNIT;
+    return p;
+}
+
+// A model's triangles. Each UV is scaled by the first lump's size because the shaders divide
+// by that material's size.
 static void model_verts(const mobj_t* thing, const rb_model_t* m, rb_vertex_t* out)
 {
-    const int      lump  = sprites[thing->sprite].spriteframes[0].lump[0];
-    const float    w     = spritewidth[lump] / (float)FRACUNIT;
-    const float    h     = (float)sprite_h[lump];
-    const float    light = thing_light(thing);
-    const unsigned hash  = (unsigned)thing->x * 2654435761u ^ (unsigned)thing->y * 40503u;
-    const float    a     = (hash >> 16) / 65536.0f * 2.0f * 3.14159265f;
-    const float    c     = cosf(a), s = sinf(a);
-    const float    tx    = thing->x / (float)FRACUNIT;
-    const float    ty    = thing->y / (float)FRACUNIT;
-    const float    tz    = thing->z / (float)FRACUNIT;
-    uint32_t       i;
+    const model_place_t p = model_place(thing);
+    const float         w = spritewidth[p.lump] / (float)FRACUNIT;
+    const float         h = (float)sprite_h[p.lump];
+    const float         c = p.c, s = p.s;
+    uint32_t            i;
 
     for (i = 0; i < m->numVerts; i++)
     {
         const float* v = RB_ModelVert(m, i);
-        out[i] = mkv(tx + c*v[0] - s*v[1], ty + s*v[0] + c*v[1], tz + v[2],
+        out[i] = mkv(p.tx + c*v[0] - s*v[1], p.ty + s*v[0] + c*v[1], p.tz + v[2],
                      c*v[3] - s*v[4], s*v[3] + c*v[4], v[5],
-                     v[6] * w, v[7] * h, lump, RB_MESH_SPRITE | RB_MESH_MODEL, light);
+                     v[6] * w, v[7] * h, p.lump, RB_MESH_SPRITE | RB_MESH_MODEL, p.light);
     }
-    out += m->numVerts;
+}
 
-    // One small triangle per light. Only its position and area count: sprite emitters are omni.
+// One small triangle per light, 3 vertices each. Only its position and area count: sprite
+// emitters are omni. Written whether the model or its billboard draws (§4.5, INV-8).
+static void model_lights(const mobj_t* thing, const rb_model_t* m, rb_vertex_t* out)
+{
+    const model_place_t p = model_place(thing);
+    const float         c = p.c, s = p.s;
+    uint32_t            i;
+
     for (i = 0; i < m->numLights; i++)
     {
         static const float corner[3][2] = { { -1.0f, -0.58f }, { 1.0f, -0.58f }, { 0.0f, 1.15f } };
@@ -2606,35 +2625,92 @@ static void model_verts(const mobj_t* thing, const rb_model_t* m, rb_vertex_t* o
         for (k = 0; k < 3; k++)
         {
             rb_vertex_t* o = &out[i * 3 + k];
-            *o = mkv(tx + c*l[0] - s*l[1] + corner[k][0], ty + s*l[0] + c*l[1] + corner[k][1], tz + l[2],
-                     l[3], l[4], l[5], 0.0f, 0.0f, lump, RB_MESH_EMISSIVE | RB_MESH_MODEL, light);
+            *o = mkv(p.tx + c*l[0] - s*l[1] + corner[k][0], p.ty + s*l[0] + c*l[1] + corner[k][1],
+                     p.tz + l[2], l[3], l[4], l[5], 0.0f, 0.0f, p.lump,
+                     RB_MESH_EMISSIVE | RB_MESH_MODEL, p.light);
             o->vtexoff = l[6];
         }
     }
 }
 
-// Writes a thing's vertices to out and returns how many: 0 when it gets none, -1 when its
-// billboard does not fit in room. A model that does not fit falls back to its billboard.
+// DOOM-0539 §4.5: a model draws only nearer than this, in squared map units. Set by
+// RB_BuildSprites each call from the triangle budget and the distance cap.
+#define RB_MODEL_TRI_BUDGET 12000
+#define RB_MODEL_MAX_DIST   1024.0f
+static float model_cut_d2;
+
+static float thing_d2(const rb_view_t* view, const mobj_t* thing)
+{
+    const float dx = thing->x / (float)FRACUNIT - view->x;
+    const float dy = thing->y / (float)FRACUNIT - view->y;
+    return dx*dx + dy*dy;
+}
+
+// Sets model_cut_d2: the models nearest the eye that fit RB_MODEL_TRI_BUDGET, none past
+// RB_MODEL_MAX_DIST.
+static void set_model_cutoff(const rb_view_t* view)
+{
+    static rb_model_cand_t* cand;               // grows to the busiest frame, kept
+    static int              candCap;
+    const float             maxD2 = RB_MODEL_MAX_DIST * RB_MODEL_MAX_DIST;
+    mobj_t*                 thing;
+    int                     s, count = 0;
+
+    for (s = 0; s < numsectors; s++)
+    {
+        for (thing = sectors[s].thinglist; thing; thing = thing->snext)
+        {
+            const rb_model_t* m  = thing_model(thing);
+            const float       d2 = m ? thing_d2(view, thing) : maxD2;
+            if (d2 >= maxD2)
+                continue;
+            if (count == candCap)
+            {
+                int              grow = candCap ? candCap * 2 : 256;
+                rb_model_cand_t* p    = realloc(cand, (size_t)grow * sizeof *cand);
+                if (!p)
+                    I_Error("RB_BuildSprites: out of memory for %d model candidates", grow);
+                cand    = p;
+                candCap = grow;
+            }
+            cand[count].d2    = d2;
+            cand[count].order = count;
+            cand[count].tris  = (int)(m->numVerts / 3u);
+            count++;
+        }
+    }
+    model_cut_d2 = RB_ModelCutoff(cand, count, RB_MODEL_TRI_BUDGET, maxD2);
+}
+
+// Writes a thing's vertices to out and returns how many: 0 when it gets none, -1 when they
+// do not fit in room. A Thing with a model draws it when nearer than model_cut_d2 and it
+// fits; otherwise its billboard, flagged RB_MESH_HASMODEL. Its lights come either way.
 static int thing_verts(const rb_view_t* view, mobj_t* thing, int models,
                        rb_vertex_t* out, int room)
 {
-    rb_vertex_t q[6];
-    if (models)
+    rb_vertex_t       q[6];
+    const rb_model_t* m      = models ? thing_model(thing) : NULL;
+    const int         lights = m ? (int)(m->numLights * 3u) : 0;
+    int               quad, k;
+
+    if (m && thing_d2(view, thing) < model_cut_d2 && (int)m->numVerts + lights <= room)
     {
-        const rb_model_t* m = thing_model(thing);
-        const int         n = m ? (int)(m->numVerts + m->numLights * 3u) : 0;
-        if (m && n <= room)
-        {
-            model_verts(thing, m, out);
-            return n;
-        }
+        model_verts(thing, m, out);
+        model_lights(thing, m, out + m->numVerts);
+        return (int)m->numVerts + lights;
     }
-    if (!sprite_quad(view, thing, q))
+    quad = sprite_quad(view, thing, q) ? 6 : 0;
+    if (quad + lights == 0)
         return 0;
-    if (room < 6)
+    if (room < quad + lights)
         return -1;
-    memcpy(out, q, sizeof q);
-    return 6;
+    if (m)
+        for (k = 0; k < quad; k++)
+            q[k].flags |= RB_MESH_HASMODEL;
+    memcpy(out, q, (size_t)quad * sizeof q[0]);
+    if (m)
+        model_lights(thing, m, out + quad);
+    return quad + lights;
 }
 
 // DOOM-0459: the overflow path. More things want a billboard than `out` holds, so
@@ -2694,6 +2770,8 @@ int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts, int m
     if (numspritelumps <= 0)
         return 0;
     ensure_sprite_heights();
+    if (models)
+        set_model_cutoff(view);
 
     // The ordinary frame: every thing fits, in walk order, and nothing is sorted.
     for (s = 0; s < numsectors && !full; s++)

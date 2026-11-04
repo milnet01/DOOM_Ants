@@ -38,4 +38,40 @@ static void RB_SortSpritesNearest(rb_sprite_cand_t* c, int n)
     qsort(c, (size_t)n, sizeof *c, RB_SpriteCandCmp);
 }
 
+// DOOM-0539 §4.5: a pickup Thing whose model could draw this frame. `order` is its place
+// in the sector walk, as above.
+typedef struct
+{
+    float d2;       // squared distance from the eye in the map plane
+    int   order;
+    int   tris;     // the model's triangles, its lights not counted
+} rb_model_cand_t;
+
+static int RB_ModelCandCmp(const void* pa, const void* pb)
+{
+    const rb_model_cand_t* a = (const rb_model_cand_t*)pa;
+    const rb_model_cand_t* b = (const rb_model_cand_t*)pb;
+    if (a->d2 != b->d2)
+        return a->d2 < b->d2 ? -1 : 1;
+    return (a->order > b->order) - (a->order < b->order);
+}
+
+// The squared distance a Thing must be nearer than for its model to draw: models are
+// taken nearest first while their triangles fit `budget`, and none at or past maxD2.
+// Returns maxD2 when every candidate nearer than it fits. Things at the same distance as
+// the first that does not fit all draw as sprites, so the budget is never passed.
+// Sorts c in place.
+static float RB_ModelCutoff(rb_model_cand_t* c, int n, int budget, float maxD2)
+{
+    int i, sum = 0;
+    qsort(c, (size_t)n, sizeof *c, RB_ModelCandCmp);
+    for (i = 0; i < n && c[i].d2 < maxD2; i++)
+    {
+        if (sum + c[i].tris > budget)
+            return c[i].d2;
+        sum += c[i].tris;
+    }
+    return maxD2;
+}
+
 #endif
