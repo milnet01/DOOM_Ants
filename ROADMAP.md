@@ -17777,6 +17777,19 @@ in CLAUDE.md describes.
   control 0.483; Classic 0.000. -rtverify PASS. Spec section 4.4
   amended. Not done: frame cost and INV-8 (B5), Windows. Next: B5.
   User 2026-11-03: the potion's light and model (B4) are good.
+  2026-11-04: B5 code built (67ad2fd): 12000-triangle budget nearest
+  first, 1024-unit cap, RB_MESH_HASMODEL billboard keeps the model's
+  lights. Not yet run: INV-8 by hand and the §6 frame measurement.
+  B6 batch 1 built while the user was out: STIM (96 tris), MEDI (96),
+  BON2 (220), one light each (red for health, green for the armour
+  bonus), from Blender Scripts/pickups/doom_stim.py, doom_medi.py,
+  doom_bon2.py; pickupbake.py gained a block() box. pickup_models_test
+  (INV-3 bounds) passes. E1M1 3008 -4930 90, Ultra: helmets and the
+  stimpack draw as models in both views, the helmets' green glow pools
+  on the floor in the traced view (scratch/fled/look/p6-sheet.png). The
+  medikit capture was blocked by a pillar.
+  Waiting-on: user (batch 1 look: STIM, MEDI, BON2. Recommendation:
+  keep; next batch the keys and the ammo, 2026-11-04).
   **Layman:** Health, armour, ammo, keys and power-ups become real 3D objects, so their glow can come from exactly the right spot inside them.
   Kind: feature.
   Source: user-request-2026-11-02.

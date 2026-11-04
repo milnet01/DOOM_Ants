@@ -116,6 +116,18 @@ assets/ultra/models/BON1.dmdl  pickups/doom_bon1.py  CC0-first-party
 assets/ultra/models/BON1_alb.png  pickups/doom_bon1.py  CC0-first-party
 assets/ultra/models/BON1_nrm.png  pickups/doom_bon1.py  CC0-first-party
 assets/ultra/models/BON1_emis.png  pickups/doom_bon1.py  CC0-first-party
+assets/ultra/models/BON2.dmdl  pickups/doom_bon2.py  CC0-first-party
+assets/ultra/models/BON2_alb.png  pickups/doom_bon2.py  CC0-first-party
+assets/ultra/models/BON2_nrm.png  pickups/doom_bon2.py  CC0-first-party
+assets/ultra/models/BON2_emis.png  pickups/doom_bon2.py  CC0-first-party
+assets/ultra/models/MEDI.dmdl  pickups/doom_medi.py  CC0-first-party
+assets/ultra/models/MEDI_alb.png  pickups/doom_medi.py  CC0-first-party
+assets/ultra/models/MEDI_nrm.png  pickups/doom_medi.py  CC0-first-party
+assets/ultra/models/MEDI_emis.png  pickups/doom_medi.py  CC0-first-party
+assets/ultra/models/STIM.dmdl  pickups/doom_stim.py  CC0-first-party
+assets/ultra/models/STIM_alb.png  pickups/doom_stim.py  CC0-first-party
+assets/ultra/models/STIM_nrm.png  pickups/doom_stim.py  CC0-first-party
+assets/ultra/models/STIM_emis.png  pickups/doom_stim.py  CC0-first-party
 # DOOM-0537 COMP family walls: first-party, modelled and baked headlessly in Blender by scripts in the shared asset library
 assets/ultra/heroes/tech/COMPSPAN_alb.png  Blender-Scripts/walls/doom_compspan.py  CC0-first-party
 assets/ultra/heroes/tech/COMPSPAN_nrm.png  Blender-Scripts/walls/doom_compspan.py  CC0-first-party

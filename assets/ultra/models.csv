@@ -1,3 +1,6 @@
 # sprite,file. DOOM-0539: a pickup sprite and its model, relative to this folder. The maps
 # are found beside it as models/<sprite>_alb.png, _nrm.png and _emis.png.
 BON1,models/BON1.dmdl
+BON2,models/BON2.dmdl
+MEDI,models/MEDI.dmdl
+STIM,models/STIM.dmdl
