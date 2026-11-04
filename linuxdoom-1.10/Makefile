@@ -468,6 +468,10 @@ $(SHADER_DIR)/svgf_composite.comp.spv.h $(SHADER_DIR)/svgf_composite_split.comp.
 $(SHADER_DIR)/pathtrace.comp.spv.h $(SHADER_DIR)/bake.comp.spv.h \
 $(SHADER_DIR)/mesh.frag.spv.h $(SHADER_DIR)/mesh_overlay.frag.spv.h: \
 		$(SHADER_DIR)/formulas/specular.glsl
+# DOOM-0549 — specular.glsl includes formulas.glsl, and make does not follow that, so bake
+# names it itself. svgf_temporal includes formulas.glsl directly (temporalAlpha).
+$(SHADER_DIR)/bake.comp.spv.h $(SHADER_DIR)/svgf_temporal.comp.spv.h: \
+		$(SHADER_DIR)/formulas/formulas.glsl
 
 # DOOM-0345 R1 — the BLOOM_SPLIT variant of svgf_composite.comp. Explicit rule (the pattern
 # rule above can't produce it — there is no svgf_composite_split.comp source); depends on

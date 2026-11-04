@@ -13559,7 +13559,7 @@ defect visible before a player finds it.
   Source: review-code 2026-11-04, lane 2 (MEDIUM).
   Lanes: renderer.
 
-- 📋 [DOOM-0549] **Two shaders' build rules miss formulas.glsl, so a Workbench re-export can leave stale SPIR-V in the binary.**
+- ✅ [DOOM-0549] **Two shaders' build rules miss formulas.glsl, so a Workbench re-export can leave stale SPIR-V in the binary.**
   Makefile:428-430: svgf_temporal.comp includes formulas/formulas.glsl
   (svgf_temporal.comp:52, DOOM-0103), but svgf_temporal.comp.spv.h does
   not list it. Makefile:468-470: bake.comp.spv.h depends on
@@ -13569,6 +13569,10 @@ defect visible before a player finds it.
   Remedy (unverified): add formulas/formulas.glsl as a prerequisite of
   both headers.
   queued: user chose fix later 2026-11-04.
+  2026-11-05: fixed (39e8cd8). Both gaps were real; a glslc -M sweep
+  over all 30 shader headers found no other. Red run: make -n -W
+  shaders/formulas/formulas.glsl rebuilt neither shader before, both
+  after.
   **Layman:** After the shared maths file is regenerated, two shaders may not be rebuilt, so the game keeps running the old maths with no warning.
   Kind: review-fix.
   Source: review-code 2026-11-04, lane 2 (MEDIUM).
@@ -18059,9 +18063,8 @@ in CLAUDE.md describes.
   picks no sprite light in mode 6, as the RIS target is matte; mode 4's
   shown glow above the cap dims by 1 - metal. Still to do: the rasterised
   view (with DOOM-0103 B5); a metallic source for Solid.
-  Waiting-on: user (does COMPTILE's grey metal now read as very rough
-  metal? Recommendation: yes, keep; raise only if it looks like plain
-  plaster, 2026-11-04).
+  User 2026-11-05: "The depth in the metal and blue walls, excellent."
+  COMPTILE's metal look approved.
   2026-11-04: rasterised view built with DOOM-0103 B5: the highlight
   takes specF0(albedo, metal) and a metal's flashlight and point light
   have no matte part. COMPTILE's plates in Ultra raster keep their grey
@@ -18388,6 +18391,12 @@ in CLAUDE.md describes.
   cheaper). MAP18 start: raster -0.1; traced with models 11.0-16.1 ms
   (median 11.7), without 12.8-14.2 (median 13.7), so models are cheaper
   there too. Kit scratch/perf (batch2.sh, led.py).
+  User 2026-11-05: "Blue vial pickups need work. They look too
+  different, make them look more medievil and make them full." BON1's
+  model (lib/pickupbake.py) to be redone: a medieval vial, filled to the
+  top. Batch 1 (STIM, MEDI, BON2) got no verdict yet; batch 2 still
+  waits on it. Same message reported heavy noise ("bubbling"); being
+  located separately.
   **Layman:** Health, armour, ammo, keys and power-ups become real 3D objects, so their glow can come from exactly the right spot inside them.
   Kind: feature.
   Source: user-request-2026-11-02.
@@ -18450,8 +18459,7 @@ in CLAUDE.md describes.
   2026-11-04: DOOM-0103 B1/B3 and DOOM-0517's traced half are in
   (fac2770). In Ultra's traced view COMPTILE's grey plates now take a
   soft metal sheen and highlights on the bar edges. The raster view
-  follows with DOOM-0103 B5. Waiting-on: user (does it read as very
-  rough metal? see DOOM-0517, 2026-11-04).
+  follows with DOOM-0103 B5. User 2026-11-05: approved (see DOOM-0517).
   2026-11-04: the opening line's 'kHdV1Maps skips RB_RGH and RB_MET' is
   no longer true. r_vulkan.cpp:6702-6710 lists all seven maps, RB_RGH
   and RB_MET included (the 2026-11-03 upload note above). Found by
