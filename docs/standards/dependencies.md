@@ -152,9 +152,10 @@ sub-Makefile is not built by CI or the default `make`, so it's out of scope):
 - `linuxdoom-1.10/stb_truetype.h` v1.26 — vendored single-header glyph rasterizer
   (menu text, DOOM-0206). Bump on the dependency sweep.
 - `linuxdoom-1.10/frameledger.h` — vendored run-file writer (DOOM-0502), copied
-  unchanged from frameledger v0.1.0. Its release archive holds the analyser too:
-  `https://github.com/milnet01/frameledger/releases/download/v0.1.0/frameledger-v0.1.0.zip`,
-  SHA-256 `84a9254101421b223ca1429f889310ef92d1d4e4da433f19ce0d4225c89b9f5a`. Nothing
+  unchanged from frameledger v0.2.0 (its header is byte-identical to v0.1.0's).
+  Its release archive holds the analyser too:
+  `https://github.com/milnet01/frameledger/releases/download/v0.2.0/frameledger-v0.2.0.zip`,
+  SHA-256 `cfb692516c48e45534657b1ce5dc903f1e91156716b7265063b579d6b930b01c`. Nothing
   in CI runs the analyser, so `packaging/ci-deps.txt` needs no Python for it. Bump on
   the dependency sweep.
 - `linuxdoom-1.10/assets/Oxanium-SemiBold.ttf` v2.000 (SemiBold weight) — bundled OFL
