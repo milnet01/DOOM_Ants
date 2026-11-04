@@ -13599,7 +13599,7 @@ defect visible before a player finds it.
   Source: review-code 2026-11-04, lane 3 (MEDIUM and three LOWs).
   Lanes: renderer, shaders.
 
-- 📋 [DOOM-0551] **Solid's pickup lights lose their floor pool, because mesh.frag gates the pool roll-off on Ultra.**
+- ✅ [DOOM-0551] **Solid's pickup lights lose their floor pool, because mesh.frag gates the pool roll-off on Ultra.**
   mesh.frag:608-609: `if (kHdPipeline && reach > 0.0) ppool += ...;
   else plight += ...`. The separate roll-off that makes a pickup's floor
   pool visible runs in Ultra only. Reach>0 pickup lights (DOOM-0482)
@@ -13614,6 +13614,15 @@ defect visible before a player finds it.
   compiler complaint. Pick plight or ppool with a bool instead, and
   check both builds.
   queued: user chose fix later 2026-11-04.
+  2026-11-05: FIXED. mesh.frag sends a light with a reach to ppool in
+  every tier, by a plain if/else after the #endif, so the SINGLE_TARGET
+  build and the main build agree. Proof: E1M1 -warpto 144 -2986 270,
+  Solid raster: the potion's blue pool now lights the floor and the near
+  wall (frame mean 89.14 -> 89.92; diff 0.85 vs 0.00 run to run;
+  scratch/perf/pool-sheet.png). Cost: scene pass +0.17 ms at 1920x1200
+  (2.58 -> 2.75), because Solid now runs the pool's own roll-off. Spec
+  DOOM-0539 §4.4 amended. The user may want the wall tint weaker; it is
+  the same formula as Ultra's.
   **Layman:** In Solid, the soft pool of light a potion or armour casts on the floor is too faint to see; Ultra shows it. Solid should get it too.
   Kind: review-fix.
   Source: review-code 2026-11-04, lane 3 (MEDIUM); review-readability 2026-11-04, lane 3 (MEDIUM); user ruling 2026-11-04.

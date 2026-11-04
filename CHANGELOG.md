@@ -19,6 +19,8 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Solid's pickups cast a visible pool of light on the floor, as Ultra's do** (DOOM-0551)
+
 - **Fog now fills the air under a roof opening instead of stopping in a straight wall at its edge.** (DOOM-0536)
 
 - **Fake relief on walls without HD art now shades the right way round and is half as deep, so busy art swims less in the rasterised views.** (DOOM-0535)

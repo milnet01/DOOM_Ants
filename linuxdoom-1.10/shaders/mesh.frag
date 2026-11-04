@@ -574,7 +574,7 @@ void main()
             // job, §4.4). Slots are nearest-packed; the first zero-Le slot ends the list.
             uint base = sub * (RASTER_MAX_LIGHTS * RASTER_LIGHT_FLOATS);
             vec3 plight = vec3(0.0);
-            vec3 ppool  = vec3(0.0);   // DOOM-0539: Ultra's pickup lights, see below
+            vec3 ppool  = vec3(0.0);   // DOOM-0539/0551: pickup lights, see below
 #ifndef SINGLE_TARGET
             vec3 pspec  = vec3(0.0);   // DOOM-0103: every slot's highlight, beside plight
 #endif
@@ -605,11 +605,11 @@ void main()
                     float ndh = max(dot(shadeN, normalize(dd * inversesqrt(max(d2, 1e-8)) + specV)), 0.0);
                     pspec += pow(ndh, specN) * specNorm * ndl * col * att;
                 }
-                if (kHdPipeline && reach > 0.0)
-                    ppool  += col * att * ndl;
-                else
 #endif
-                    plight += col * att * ndl;
+                // DOOM-0551: a light with a reach (a pickup's) rolls off in ppool, in every tier.
+                vec3 lit = col * att * ndl;
+                if (reach > 0.0) ppool  += lit;
+                else             plight += lit;
             }
             // A big emissive surface enters as many emitter triangles, so summing the
             // nearest N over-counts one physical light. GAIN drives a single light up to
@@ -620,7 +620,7 @@ void main()
             plight = plight / (1.0 + plight);
             // The room's lights usually fill that roll-off, which left a pickup's pool too faint to
             // see: a potion moved its floor by under 1 level in 255. So a short-reach light rolls off
-            // on its own. Ultra only, because only Ultra's pickups are models with lights placed in them.
+            // on its own, in Solid and Ultra alike.
             ppool *= POINT_LIGHT_GAIN;
             ppool = ppool / (1.0 + ppool);
             direct += POINT_LIGHT_STRENGTH * albedo * ((plight + ppool) * diffW);   // point lights are DIRECT

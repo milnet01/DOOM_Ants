@@ -116,8 +116,9 @@ them. Reach limits the point lights alone (`g.frameDynReach`); the traced view's
 `rgb` is the light's linear colour. The traced record multiplies it by `kModelLightTraceGain`, because
 a traced emitter's power scales with its area. `kSpriteEmitBoost` does not apply. `mesh.frag` uses a
 record's colour alone, normalised by its largest channel, so the gain does not reach the rasterised
-view. There, under `kHdPipeline`, a light with a reach rolls off on its own instead of in the room's
-shared sum, which the room's other lights already fill.
+view. There, a light with a reach rolls off on its own instead of in the room's shared sum, which the
+room's other lights already fill. That holds in Solid too, where a pickup sprite's light has a reach
+(user, 2026-11-04: Solid gets the pickup light pools).
 Shadow rays skip the sprite BLAS (§2), so a model's shell does not shadow its own light (INV-5) and
 casts no traced shadow. Glow shown on the model itself comes from `_emis.png`.
 
