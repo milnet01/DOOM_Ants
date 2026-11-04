@@ -14883,6 +14883,18 @@ in CLAUDE.md describes.
   Waiting-on: user (raster gleam strength: E2M1's is faint next to the
   traced view; 2 bloomed COMPTILE white. Recommendation: keep 1.0,
   2026-11-04). NEXT: B6 (INV-4 captures old vs new, §6 timings).
+  2026-11-04: B6 INV-4 captures (specular 0, old build 5dd31bc vs new
+  f4a0a08 DEV, plus a same-build control; scratch/b6cap/run2.sh,
+  scratch/fled/look/b6-*.png). Rasterised view: identical (0.0000 at
+  E2M1 and COMPTILE; E1M1 0.0004 vs control 0.0027). Traced view within
+  same-build noise: E2M1 sd1 0.67 vs control 1.13, sd0 1.69 vs 1.05;
+  E1M1 has run-to-run drift (whole-frame brightness 75-79 in either
+  build), so 4 old and 5 new captures were taken: within-build pairs
+  median 4.68 (0.69-6.33), across-build median 5.05 (0.60-6.39), ranges
+  overlap. COMPTILE traced: old vs new 0.24, its control capture timed
+  out under load 17. INV-4 holds as far as measured. Still open in B6:
+  §6 timings with the profiler (need a quiet machine; load was 16-20
+  all day), the §12 cross-doc edits (DOOM-0183 INV-3/INV-5 qualifiers).
   **Layman:** Shiny surfaces — metal, wet floors, slime — get realistic highlights like modern DOOM, without losing the classic look.
   Kind: feature.
   Source: user-request-2026-06-29.
