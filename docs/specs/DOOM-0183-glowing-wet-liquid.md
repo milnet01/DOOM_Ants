@@ -409,15 +409,16 @@ L4. Between L3 and L4 the glint is static — expected, mirroring DOOM-0181's
   (`FWATER*`/`SWATER*`), blood (`BLOOD*`), and DOOM II `SLIME*` flats are **not**
   flagged (some `SLIME*` frames are dry rock — flagging them would wet a floor).
 - **INV-3:** The wet sheen is a **direct-light specular** only — no reflection ray,
-  no GGX/VNDF/MIS lobe (that is DOOM-0103). Every non-liquid surface takes **no**
-  specular term and is byte-identical to today, **except** a floor carrying a
+  no GGX/VNDF/MIS lobe (that is DOOM-0103). With `specular` 0 (DOOM-0103 INV-4),
+  every non-liquid surface takes **no** specular term and is byte-identical to
+  today, **except** a floor carrying a
   DOOM-0181 goo-stain, which takes the sheen via the goo mask (§4.6).
 - **INV-4:** Ripples perturb the normal on **flagged nukage only**. Lava, goo
   puddles, and every non-liquid surface keep an **unperturbed** normal (identical
   normal path).
-- **INV-5:** Ultra RT only; modes 4 and 6 get identical treatment. Classic and the
-  raster stack (Solid, **and Ultra with RT off**) stay **byte-identical**.
-  Non-liquid RT surfaces are byte-identical too, **except** floors carrying a
+- **INV-5:** Ultra RT only; modes 4 and 6 get identical treatment. Classic stays
+  **byte-identical**. With `specular` 0 (DOOM-0103 INV-4), so do the raster stack
+  (Solid, **and Ultra with RT off**) and non-liquid RT surfaces, **except** floors carrying a
   DOOM-0181 goo-stain (§4.6), which take sheen + a faint glow via the goo mask
   (not the liquid bit).
 - **INV-6:** The ripple `time` + wet toggle ride a **new `misc6` uvec4 lane** —
