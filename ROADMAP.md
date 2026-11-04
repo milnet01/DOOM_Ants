@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=543 -->
+<!-- ants-roadmap-id-high-water: DOOM=564 -->
 
 # Roadmap
 
@@ -12041,6 +12041,23 @@ defect visible before a player finds it.
 
   Related: DOOM-0310 (the spec that found them), DOOM-0308 (the filed tail),
   DOOM-0300 (which set the wisp speed and freq).
+  2026-11-04 review-readability (lane 3) found more fog-shader comments
+  of the same kind; fix them in the same pass. Remedies unverified.
+  - pt_common.glsl:62-64 [MEDIUM]: says L2 fires a sun ray per sample;
+    DOOM-0289 removed it (pathtrace.comp:1098). Delete.
+  - pt_common.glsl:92 [MEDIUM]: kFogBaseDensity * exp(-kEyeAboveFloor /
+    kFogPoolHeight) 'HELD FIXED' at 0.000338; kFogPoolHeight is now 112,
+    about 7x higher (lane arithmetic, unchecked).
+  - pt_common.glsl:108 and pathtrace.comp:1073-1075 [LOW]: describe L1d
+    as not done; pathtrace.comp:1044-1057 has it. The 'THIRD addend' at
+    1071/1079 is this item's fourth entry.
+  - pt_common.glsl:177-188 [MEDIUM; review-code lane 4 LOW too]:
+    kTorchShaftStrength 0.047 is derived as 4x a sky floor of 0.137,
+    which assumes kSkyShaftStrength 0.85; at 0.55 (DOOM-0536) the floor
+    is about 0.089 and the torch about 6x it. The reach table at 183-185
+    used the old floor. Needs a decision first: was the rise to ~6x
+    meant, or should 0.047 be re-derived? queued: user chose fix later
+    2026-11-04.
   **Layman:** Some notes written next to the fog code describe old numbers, so the next person to read them gets the wrong idea.
   Kind: doc-fix.
   Source: cold-eyes-2026-08-03 (DOOM-0310's gate, surfaced by all five lanes).
@@ -13443,6 +13460,491 @@ defect visible before a player finds it.
   **Layman:** On an impossibly huge map, the ray tracer could hide or show the wrong things; no real map is that big.
   Kind: review-fix.
   Source: code-review-pr1-2026-10-29.
+
+- 📋 [DOOM-0544] **Ultra's deep relief walls stay put when some doors open, because the moving-sector scan misses them.**
+  r_mesh.c:341-349, relief_mark_moving. Two kinds of moving sector go
+  unmarked, so a relief wall on the door's upper face is built static:
+  - a manual door whose line has a non-zero tag. EV_VerticalDoor
+    (p_doors.c:406) always opens the back sector; here a tagged line
+    marks only the tagged sectors (review-code).
+  - sector-special doors, types 10 and 14 (p_spec.c:1358, 1373), which
+    move a ceiling with no linedef (review-code).
+  Related lead (review-readability, unverified): a walk or switch
+  floor line with tag 0 moves every tag-0 sector, because this fork's
+  P_FindSectorFromLineTag (p_spec.c:445-456) has no tag-0 guard; the
+  scan treats tag 0 as a hand-opened door and marks only the back
+  sector.
+  Remedy (unverified): always mark the back sector for the manual-door
+  specials (1, 26-28, 31-34, 117, 118) whatever the tag; mark sectors
+  whose special is 10 or 14; decide the tag-0 case.
+  queued: user chose fix later 2026-11-04.
+  **Layman:** In Ultra, a wall with real depth above some doors is built as if the door never moves, so it is left hanging in the air when the door opens.
+  Kind: review-fix.
+  Source: review-code 2026-11-04, lane 1 (MEDIUM); review-readability 2026-11-04, lane 1 lead.
+  Lanes: renderer.
+
+- 📋 [DOOM-0545] **A relief recess can be deeper than its wall is thick, so its faces poke into the next room.**
+  wall_relief.h:20 (RB_RELIEF_MAX_DEPTH 32) and r_mesh.c:417-444
+  (emit_relief_wall). Nothing checks how much room is behind a
+  one-sided wall. DOOM walls are often 8-16 units thick, so a 32-deep
+  recess can put faces inside the next room: stray faces in the traced
+  view, and in the raster view where faces are not culled. The reviewer
+  did not confirm it on real map data.
+  Remedy (unverified): clamp each wall's depth to its clearance, e.g. a
+  probe along -normal with RB_SectorAtPoint, or leave the wall flat when
+  the clearance is under the deepest rectangle.
+  queued: user chose fix later 2026-11-04.
+  **Layman:** In Ultra, a wall carved with real depth can be carved deeper than the wall is thick, so bits of it show up on the far side.
+  Kind: review-fix.
+  Source: review-code 2026-11-04, lane 1 (MEDIUM).
+  Lanes: renderer.
+
+- 📋 [DOOM-0546] **relief.csv's limits cap one wall's grid, not what it emits, and rows past 256 are dropped without a word.**
+  - wall_relief.h:21: RB_RELIEF_MAX_CELLS 4000000 caps one wall's grid,
+    not its output. One wall can emit ~4M face and ~8M side quads, and
+    every wall using the texture repeats it. push_vert (r_mesh.c:104-110)
+    doubles b->cap as a signed int, which can overflow before I_Error.
+  - r_mesh.c:429: past 256 rows for one texture the LATER rows are
+    dropped, and later rows are the ones that win, so the layout
+    changes with no message.
+  Severity: the review graded the first MEDIUM on the premise that
+  security.md treats DOOMASSETDIR as untrusted. Its trust-boundary
+  table does not list the asset files, which ship with the project, so
+  it is filed LOW.
+  Remedy (unverified): cap total relief quads across the mesh as well as
+  per wall, drop the per-wall cap to thousands, widen push_vert's
+  growth arithmetic, and warn or refuse at load past 256 rows.
+  queued: user chose fix later 2026-11-04.
+  **Layman:** A badly made depth table for a wall could make a level very slow to load or stop it loading; today only our own art uses it.
+  Kind: review-fix.
+  Source: review-code 2026-11-04, lane 1 (MEDIUM, recalibrated LOW; and a LOW).
+  Lanes: renderer, assets.
+
+- 📋 [DOOM-0547] **Pickup-model files are checked only for finite numbers, so huge or negative values reach the vertex buffer and the light table.**
+  - rb_model.h:72-79: the .dmdl parser checks only isfinite, so values
+    near FLT_MAX pass. model_verts (r_mesh.c:2606) can overflow to inf
+    in the vertex buffer and the sprite BLAS. Light rgb can be negative
+    per channel; reach (vtexoff) can be negative or huge; spec §4.2's
+    'u v run 0..1' is not checked. DOOM-0539 INV-4 says a malformed
+    .dmdl never crashes.
+  - r_vulkan.cpp:7597-7613: a finite colour near FLT_MAX times
+    kModelLightTraceGain (200) overflows to inf, which passes the w > 0
+    test into the emitter CDF; negative channels with a positive sum
+    pass :7603.
+  Severity: the lanes cite security.md, but its trust-boundary table
+  does not list the asset files, which ship with the project. Filed LOW.
+  Remedy (unverified): at parse, bound positions to a few hundred units,
+  normals to about unit length, UVs to [0,1], rgb >= 0, reach > 0 under
+  a cap; on the host, clamp each light channel or require isfinite(w).
+  queued: user chose fix later 2026-11-04.
+  **Layman:** A broken 3D pickup model file could put nonsense numbers into the picture; the model files ship with the game, so this is a tidy-up, not a security hole.
+  Kind: review-fix.
+  Source: review-code 2026-11-04, lane 1 (MEDIUM) and lane 2 (LOW); recalibrated LOW.
+  Lanes: renderer, assets.
+
+- 📋 [DOOM-0548] **The -shotverify config pin leaves the Shine and Surface Detail settings to the player's config.**
+  r_vulkan.cpp:10905-10919 forces the shipped defaults so a flipped
+  toggle in ~/.doomrc cannot poison the golden image. It does not pin
+  rb_specular (new; feeds pc.misc7[1] at :9521) or rb_surface_detail
+  (misc7[0]). A config with specular 0 blesses or compares a different
+  image.
+  Open question from the same lane: :10919 says 'the gamma pass runs on
+  this image too', but :1015-1016 says -shotverify captures the traced
+  finalImage, which RecordGamma never touches. One of the two is wrong.
+  Remedy (unverified): add rb_specular = 1; rb_surface_detail = 1; to the
+  block, and correct whichever gamma comment is wrong.
+  queued: user chose fix later 2026-11-04.
+  **Layman:** The automatic picture check can compare against a different setup if the tester has turned Shine or Surface Detail off.
+  Kind: review-fix.
+  Source: review-code 2026-11-04, lane 2 (MEDIUM).
+  Lanes: renderer.
+
+- 📋 [DOOM-0549] **Two shaders' build rules miss formulas.glsl, so a Workbench re-export can leave stale SPIR-V in the binary.**
+  Makefile:428-430: svgf_temporal.comp includes formulas/formulas.glsl
+  (svgf_temporal.comp:52, DOOM-0103), but svgf_temporal.comp.spv.h does
+  not list it. Makefile:468-470: bake.comp.spv.h depends on
+  specular.glsl, which includes formulas.glsl (specular.glsl:11); make
+  prerequisites are not transitive, so bake misses it too. The lane
+  could not confirm the svgf_temporal include landed after v0.8.0.
+  Remedy (unverified): add formulas/formulas.glsl as a prerequisite of
+  both headers.
+  queued: user chose fix later 2026-11-04.
+  **Layman:** After the shared maths file is regenerated, two shaders may not be rebuilt, so the game keeps running the old maths with no warning.
+  Kind: review-fix.
+  Source: review-code 2026-11-04, lane 2 (MEDIUM).
+  Lanes: shaders.
+
+- 📋 [DOOM-0550] **In the rasterised view, bloom ignores the Spectre's bend and darkening, so a halo glows where the screen shows none.**
+  MEDIUM, composite.frag:67-79 against bloom_extract_raster.comp:66:
+  the extract promises the value thresholded is the value shown (its
+  header; composite.frag:44-47). The Spectre's screen bend and 0.7
+  darkening happen in the composite only. Also the mask pass writes
+  outDirect.a = -1.0 (mesh.frag:446) over the background, so the
+  extract treats it as a sprite (line 102) and skips chainScale.
+  Remedy (unverified): share the tint and bent coordinate through the
+  common include, or have the extract read the mask and apply the same
+  factor.
+  LOWs on the same mask (remedies unverified):
+  - composite.frag:69 reads the mask through the linear sampler; below
+    100% scale outline pixels blend to a wrong phase and shimmer. Use
+    texelFetch.
+  - composite.frag:72: nothing clamps the bent coordinate to the
+    rendered [0, uvScale] area at the right or bottom edge.
+  - mesh.frag:446 with composite.frag:96: the mask overwrites the sky's
+    100000 depth tag, so sky behind a Spectre gets the invulnerability
+    invert. Write the tag only where the old one is below 50000.
+  queued: user chose fix later 2026-11-04.
+  **Layman:** When a Spectre stands in front of a lamp in Solid or Ultra's faster view, the lamp's glow is drawn in the wrong place and too bright.
+  Kind: review-fix.
+  Source: review-code 2026-11-04, lane 3 (MEDIUM and three LOWs).
+  Lanes: renderer, shaders.
+
+- 📋 [DOOM-0551] **Solid's pickup lights lose their floor pool, because mesh.frag gates the pool roll-off on Ultra.**
+  mesh.frag:608-609: `if (kHdPipeline && reach > 0.0) ppool += ...;
+  else plight += ...`. The separate roll-off that makes a pickup's floor
+  pool visible runs in Ultra only. Reach>0 pickup lights (DOOM-0482)
+  exist in Solid too. User ruling 2026-11-04: "Solid gets the pickup
+  light pools too". It is a bug: CLAUDE.md says effects are not a tier
+  ladder.
+  Remedy (unverified): drop kHdPipeline from the test.
+  Hazard (review-readability, mesh.frag:608-612): the else sits before
+  an #endif and the statement it governs after it, inside a 473-line
+  main with ten SINGLE_TARGET regions. Moving the #endif or adding a
+  line after the else changes which build adds the light, with no
+  compiler complaint. Pick plight or ppool with a bool instead, and
+  check both builds.
+  queued: user chose fix later 2026-11-04.
+  **Layman:** In Solid, the soft pool of light a potion or armour casts on the floor is too faint to see; Ultra shows it. Solid should get it too.
+  Kind: review-fix.
+  Source: review-code 2026-11-04, lane 3 (MEDIUM); review-readability 2026-11-04, lane 3 (MEDIUM); user ruling 2026-11-04.
+  Lanes: shaders.
+
+- 📋 [DOOM-0552] **Check the gamma pass's synchronisation and render-pass pairing with a validation-layer run.**
+  - RecordGamma's first barrier uses srcAccessMask = 0 on the swapchain
+    image just written as a colour attachment. It relies on the render
+    pass's implicit external dependency; the screenshot code argues the
+    same choice (r_vulkan.cpp:11556-11560). Lanes 2 and 3 could not
+    settle it.
+  - r_vulkan.cpp:5548: the gamma pipeline is built against g.renderPass
+    but recorded inside g.rtOverlayPass (:10614). That needs the two
+    passes to be compatible, which nothing states (readability lead,
+    unverified).
+  Remedy (unverified): run Solid and Ultra with synchronisation
+  validation on and the gamma setting non-zero; fix what it reports.
+  Needs a quiet machine.
+  queued: user chose fix later 2026-11-04.
+  **Layman:** Two details of how the brightness step is wired to the graphics card look risky on paper; a debug run would settle whether they are wrong.
+  Kind: investigate.
+  Source: review-code 2026-11-04, lanes 2 and 3 (open question); review-readability 2026-11-04, lane 2 lead.
+  Lanes: renderer.
+
+- 📋 [DOOM-0553] **Review-code 2026-11-04 low tail: a silent gamma no-op, a lax table parser, a seg-normal seam and a guessed model mip level.**
+  Remedies unverified.
+  - r_vulkan.cpp:10548: without TRANSFER_SRC on the surface the gamma
+    setting does nothing and says nothing (the DOOM-0491 symptom). Print
+    one line in CreateSwapchain when !g.swapTransferSrc.
+  - rb_materials.h:119-127: uv_scale accepts trailing junk ('2.0abc',
+    '0.25x' gives v = 1.0) and hex floats, against DOOM-0410's
+    'malformed, never truncated'. Require a fully consumed strtof.
+  - r_mesh.c:274-277: nx/ny come from each seg's projected endpoints, so
+    two segs of one linedef can round to a different slide and seam
+    multi-tile HD art. Use linedef->dx/dy.
+  - pathtrace.comp:1269-1270: hdLod assumes 1 world unit = 1 hitUV unit,
+    false for DOOM-0539 models (sparkle); ignores uvScaleV; uses the
+    albedo map's width for every map (also a readability lead). Skip
+    hdLod for FLAG_MODEL or give models a texels-per-unit value; use
+    max(uvScale, uvScaleV).
+  queued: user chose fix later 2026-11-04.
+  **Layman:** Four small faults: the brightness setting can silently do nothing, a settings table accepts junk, a rare seam on HD walls, and 3D pickups can sparkle.
+  Kind: review-fix.
+  Source: review-code 2026-11-04, lanes 1, 2 and 4 (LOW); review-readability 2026-11-04, lane 3 lead.
+  Lanes: renderer, shaders.
+
+- 📋 [DOOM-0554] **Review-code 2026-11-04: code comments, a README and two specs describe the code before this release's changes.**
+  The code is right in each; the text is wrong. Remedies unverified.
+  - r_mesh.h:474-475: says 0 keeps every thing a billboard until
+    DOOM-0539 B3/B4; all callers pass 1 and BuildDynamicEmitters
+    handles models.
+  - r_mesh.h:469-470 and r_mesh.c:2794-2795: 'a multiple of 6' and the
+    cap message's maxverts / 6; models emit multiples of 3 and callers
+    divide by 3 (r_vulkan.cpp:2644, 7571). Readability MEDIUM and lead.
+  - r_vulkan.cpp:4310-4311: misc7 y is SpecularLane(), w the DOOM-0508
+    flicker clock, not 'reserved' and 'free'.
+  - formulas/README.md:30 and DOOM-0103 spec §4.1: name
+    fresnelSchlickF0 and a 3-argument specBrdf; the code uses
+    fresnelSchlickMetallic with a fifth f0 argument (DOOM-0517).
+  - DOOM-0273 spec §4.3: kSurfHeightScale is 0.06
+    (surface_detail.glsl:27, halved by DOOM-0535), not 0.12.
+  - r_mesh.h:137: RB_MESH_SHADOW 'Raster draws a flickering fuzz'; the
+    raster now bends and darkens (composite.frag:51-74).
+  - pathtrace.comp:675-676: 'the raster twin (mesh.frag) is untouched';
+    mesh.frag:269-281 carries the same clamp and fade. Readability
+    MEDIUM too.
+  queued: user chose fix later 2026-11-04.
+  **Layman:** Some notes in the code and two design documents still describe how things worked before the last round of changes.
+  Kind: doc-fix.
+  Source: review-code 2026-11-04, lanes 1-3 (LOW); review-readability 2026-11-04, lanes 1 and 3.
+  Lanes: renderer, shaders, docs.
+
+- 📋 [DOOM-0555] **Five open questions from review-code 2026-11-04 that need a decision or a look, not an edit.**
+  - Seep field: the Dijkstra weighs routes midpoint-to-midpoint
+    (r_mesh.c:1585-1587 against :1720); only the last hop uses the
+    nearest point, so deep rooms can under-read by up to half a portal.
+    DOOM-0310's amendment covers 'a cell's distance' only. Intended?
+  - On entering Ultra or a new map, sprite_model[] holds the previous
+    set until EnsureHdMaterials runs (RB_ClearSpriteModels,
+    r_vulkan.cpp:7013). Can any frame build sprites first?
+  - models.csv paths are joined to the asset root with no '..' check.
+    Does RB_ModelCsvLine reject them?
+  - Does Solid's pipeline draw pickup models? If so mesh.frag:425-435
+    reads a palette index at HD atlas UVs on sprite art; the same in
+    Ultra when ctrl[id] has no albedo map.
+  - Normal-map Y: B now points along grad v and DOOM's v runs down. Do
+    the derived maps (surface_detail.glsl:6, 'OpenGL Y+') and HD normal
+    maps store +y toward increasing v? If not, vertical relief is lit
+    upside down. Answer is in surface_derive.h.
+  queued: user chose fix later 2026-11-04.
+  **Layman:** Five places where the reviewers could not tell from the code whether it does what was meant.
+  Kind: investigate.
+  Source: review-code 2026-11-04, lanes 1-3 (open questions).
+  Lanes: renderer, shaders, assets.
+
+- 📋 [DOOM-0556] **Behind a Spectre the traced fog march starts from the wrong point, because main overwrites the camera ray.**
+  pathtrace.comp:1483-1484: main overwrites origin and dir with the
+  bent ray after a Spectre. Every later reader (primaryHitSurface,
+  marchFog, skyPanorama, skyFogOpticalDepth) sees the bent values. At
+  1613 and 1716, marchFog(origin - dir * spectreT, ...) tries to recover
+  the eye, which is not the eye once dir is bent: the march starts off
+  by spectreT * |bent - original|. Pre-existing before v0.8.0 per
+  review-code; orchestrator confirmed the lines, not the visible effect.
+  Remedy (unverified): keep the camera ray in const locals and give the
+  post-Spectre ray its own names.
+  queued: user chose fix later 2026-11-04.
+  **Layman:** In Ultra's traced view, fog seen through a Spectre is worked out from a spot slightly off the player's eye.
+  Kind: review-fix.
+  Source: review-readability 2026-11-04, lane 3 (MEDIUM and lead); review-code 2026-11-04, lane 4 (open question).
+  Lanes: shaders.
+
+- 📋 [DOOM-0557] **Blob shadows are dropped in sector order when the buffer fills, the problem DOOM-0459 fixed for sprites.**
+  r_mesh.c:2805 says the blob walk 'Mirrors RB_BuildSprites' thing
+  walk'. It no longer does: sprites got a nearest-first fallback
+  (build_nearest_sprites, :2720, DOOM-0459). Blobs walk sectors in index
+  order and drop the rest (:2830-2836), and get only the room sprites
+  and the gun left (r_vulkan.cpp:10477). Orchestrator confirmed the
+  divergence; the visible effect is unverified.
+  Remedy (unverified): give blobs the same nearest-first overflow path,
+  or at least correct 'Mirrors'. Pin: tests/sprite_flags_test.cpp:72
+  regex-matches RB_BuildBlobs' body (MF_SHADOW test before
+  RB_MESH_BLOB).
+  queued: user chose fix later 2026-11-04.
+  **Layman:** On a crowded map, the soft shadow under a nearby monster can be the one left out, while distant ones are kept.
+  Kind: review-fix.
+  Source: review-readability 2026-11-04, lane 1 (MEDIUM and lead).
+  Lanes: renderer.
+
+- 📋 [DOOM-0558] **Five unverified correctness leads from review-readability 2026-11-04.**
+  None checked by the orchestrator unless said.
+  - r_vulkan.cpp:7149: the over-budget message prints kHdBudgetMB; the
+    ceiling actually passed is kHdBudgetMB - overlayMB.
+  - r_vulkan.cpp:7048-7060: traffic is counted from the level mesh only,
+    so model sprite ids have traffic 0 and the budget drops them first.
+  - m_menu.c:581 and 588: vid_fog and vid_debugviews both take hotkey
+    'v' (confirmed 2026-11-04). Harmless only if M_Responder cycles
+    through matches; not read.
+  - formulas/hd_surface.glsl:171: HD POM still divides by nv, the cause
+    DOOM-0527 removed from the derived-map march (whole-tile slides at
+    grazing views). deep materials floor nv at 0.25, plain pom at 0.05.
+  - r_mesh.c:1163 and 1177: the comment says the function returns
+    EXACTLY RB_SectorAtPoint's sector, but it casts (fixed_t)(x *
+    FRACUNIT) without RB_FloatToFixedClamped (orchestrator confirmed);
+    cell centres near +/-32767 overflow (undefined behaviour).
+  queued: user chose fix later 2026-11-04.
+  **Layman:** Five possible faults a readability review noticed in passing; each needs checking before anyone fixes it.
+  Kind: investigate.
+  Source: review-readability 2026-11-04, lanes 1-3 (leads).
+  Lanes: renderer, shaders.
+
+- 📋 [DOOM-0559] **Host-side copies a fix must reach in every place: the light-level clamp, the wall frame, HD megabytes, SVGF binding counts, AS builds and the viewport.**
+  Each site is one rule written more than once by hand. Remedies
+  unverified; grade in brackets.
+  - r_mesh.c:543 [MEDIUM]: lightlevel / 255 with a clamp at six sites
+    (249, 543, 725, 2424, 2830, 2885); DOOM-0406 already had to add the
+    clamp where it was missing. One helper.
+  - r_mesh.c:245 [LOW]: emit_flat_wall's 240-245 copy emit_wall's
+    472-480 seg frame (dup:8f204743868b). One helper.
+  - r_vulkan.cpp:7220 [MEDIUM]: the MB-per-image formula is in mbOf
+    (7072-7075), 7220 and 7249; the reported total can disagree with
+    the budget. Route both through mbOf.
+  - r_vulkan.cpp:3019 [MEDIUM]: SVGF per-binding counts kept by hand in
+    counts[12] and WriteSvgfSet's map[12]/views[18]; adding a binding
+    means bumping every literal. One constexpr table.
+  - r_vulkan.cpp:2436 [MEDIUM]: BuildAccelerationStructures repeats
+    build-info, size query, buffer, AS, scratch and build several times;
+    DOOM-0411 already missed a copy. One helper (orchestrator confirmed
+    two of the repeats).
+  - r_vulkan.cpp:10526 [LOW]: BuildFrameInputs' raster and traced
+    branches each refresh emitters, and have diverged (profiling,
+    BuildRasterPointLights). One helper.
+  - r_vulkan.cpp:6610 [LOW]: the full-extent viewport/scissor block is
+    copied six times. One SetFullViewport(cb).
+  queued: user chose fix later 2026-11-04.
+  **Layman:** The same small calculation is written out several times in the renderer's setup code, so a future fix can easily miss one copy.
+  Kind: refactor.
+  Source: review-readability 2026-11-04, lanes 1 and 2 (duplication).
+  Lanes: renderer.
+
+- 📋 [DOOM-0560] **Shader copies a fix must reach in every place: shadow rays, the POM march, the vertex stride, material ids, sky fog, the sky panorama and the de-tile blend.**
+  Remedies unverified; grade in brackets.
+  - pathtrace.comp:496-501 and 526-531 [MEDIUM]: muzzleFlashDelta and
+    flashlightDelta write their shadow ray by hand and skip occluded()'s
+    max(dist - 2e-3, 1e-3) floor (DOOM-0093); safe only because of the
+    dist2 <= 1.0 early return. Call occluded(). Not DOOM-0130's fold.
+  - hd_surface.glsl:171 [MEDIUM]: surfParallaxUV copies hdParallaxUV's
+    march; DOOM-0527 removed the / nv from the copy only, with no
+    pointer back. One march body. Pin: surface_derive_test.cpp:266-271.
+    The behaviour question is on DOOM-0558.
+  - pathtrace.comp:1512 [MEDIUM]: vertex stride 18 and UV offsets by hand
+    at pathtrace.comp 378, 412, 1475, 1512 and bake.comp 104; the
+    barycentric UV blend four times. A named stride and hitTexUV().
+  - pathtrace.comp:1628-1630 [MEDIUM, unchecked]: the material-id rule
+    three times (1246-1248, 1574-1575, 1628-1630) plus bake.comp:109;
+    mode 5 is -rtverify's path. One materialId().
+  - pathtrace.comp:1805 [MEDIUM, unchecked]: closed-form sky fog in mode
+    6 (1784-1793) and mode 4 (1803-1816). One helper.
+  - pathtrace.comp:664 [MEDIUM]: skyPanorama and mesh.frag 251-287 share
+    the panorama maths; past fixes patched both. A formulas include.
+  - hd_surface.glsl:122 [LOW, unchecked]: the four-corner blend in
+    detile, detileR and detileNormalTS; DOOM-0439's hash-once reached
+    one. The comment at 119 says 'for the AO map' but roughness and
+    metal use it too.
+  queued: user chose fix later 2026-11-04.
+  **Layman:** The graphics-card programs repeat the same maths in several places, and some copies have already drifted apart.
+  Kind: refactor.
+  Source: review-readability 2026-11-04, lane 3 (duplication).
+  Lanes: shaders.
+
+- 📋 [DOOM-0561] **RB_BuildSeepField and EnsureHdMaterials lose their own step structure partway through.**
+  Remedies unverified. (mesh.frag main is on DOOM-0551 and pathtrace.comp
+  main on DOOM-0556. RB_Vulkan_Present and RecordRtTrace are DOOM-0442.)
+  - r_mesh.c:1661 [MEDIUM]: after RB_BuildSeepField's step 4 (from
+    1641), field allocation, the sun-clearance nudge (1657-1663) and a
+    void ring serving both fields (1681-1704) sit under the seep banner.
+    Move them into their own function as RB_SunClearanceMarchAll is.
+    Pinned by four DOOM-0011/0310 docs naming the function and
+    tests/seep_dist_test.cpp:59's scrape.
+  - r_vulkan.cpp:7038 [MEDIUM, unchecked]: EnsureHdMaterials' steps 0-7
+    leave the DOOM-0539 model block (7010-7045) and the overlays (7125,
+    7228) unnumbered; the model block rewrites rows, rowForId and table
+    and sets isModel, which silently changes step 4's path and logging.
+    Split into named stage helpers. Pin: bounds_wiring_test needs
+    '!BuildHdSet(' in the body.
+  queued: user chose fix later 2026-11-04.
+  **Layman:** Two long setup functions are laid out as numbered steps, but part of each sits outside the steps, where a reader would not look.
+  Kind: refactor.
+  Source: review-readability 2026-11-04, lanes 1 and 2 (long functions).
+  Lanes: renderer.
+
+- 📋 [DOOM-0562] **Renderer host comments that describe an older design: the HD loader banner, TLAS instances, push-constant size and more.**
+  Comment-only fixes; remedies unverified; grade in brackets.
+  - r_vulkan.cpp:6682 [MEDIUM]: HD loader banner says single-mip and no
+    sprites; kHdMipFactor (6697) budgets mips and DOOM-0539 gives model
+    sprites HD rows. Also 6679-6680 'Task 10' history and 6716
+    'Sprites are excluded from v1 HD'.
+  - r_vulkan.cpp:6716 [LOW]: points at ':5098', now CreatePipeline's
+    shader stages. Name the function.
+  - r_vulkan.cpp:2523 [LOW]: 'cheap for 2' instances; there are up to 3.
+    2636-2637 says the sprite is instance 1; the code uses base.
+  - r_vulkan.cpp:9406 and 9411 [LOW]: say the push range stays 240
+    bytes; it is 256 (static_assert at 9419).
+  - r_vulkan.cpp:9027 [LOW]: RB_Vulkan_BuildLevel says the AS 'lands in
+    a later increment' and VMA 'arrives'; the AS is built here and VMA
+    never came.
+  - r_vulkan.cpp:1875 [LOW]: future-tense COLOR_ATTACHMENT note; also
+    1806-1807's tonemap 'arrives with the path tracer'.
+  - r_vulkan.cpp:7311 [LOW]: the TierChanged rebuild comment omits its
+    cost (wait-idle and a full level rebuild when relief art is loaded).
+  - r_mesh.c:19 [LOW]: header says sky surfaces are left out; they go
+    into a sky list (emit_sky_wall, emit_sky_cap) since DOOM-0141.
+  - r_mesh.c:857 [LOW]: upper-step comment opens with a rule DOOM-0500
+    overturned; lead with RB_UpperStepKind's current rule.
+  - r_mesh.c:541 and r_mesh.h:121-123 [LOW]: keep the trust reason,
+    drop the pre-DOOM-0406 state.
+  - r_mesh.c:1966 [LOW]: atlas banner names walls and flats; sprite
+    lumps are a third id range (numtextures + numflats + lump).
+  queued: user chose fix later 2026-11-04.
+  **Layman:** Notes in the renderer's setup code describe how it used to work, so the next person to change it is misled.
+  Kind: doc-fix.
+  Source: review-readability 2026-11-04, lanes 1 and 2 (stale comments).
+  Lanes: renderer.
+
+- 📋 [DOOM-0563] **Shader comments that contradict the code beside them: sUV's spaces, grime on all surfaces, the bring-up header, multi-bounce bake and more.**
+  Remedies unverified; grade in brackets. Fog-comment findings went to
+  DOOM-0314; pathtrace.comp:675 is on DOOM-0554.
+  - pathtrace.comp:1215 [MEDIUM, unchecked]: PrimaryHit.sUV holds three
+    coordinate spaces by branch (1273, 1255, 1283); 1252-1255 says the
+    paletted branch does not use it. Document the field.
+  - hd_surface.glsl:226 [MEDIUM]: says grime is HD-only and Classic art
+    stays byte-identical; applyGrime runs on every world surface
+    (pathtrace.comp:1324, mesh.frag:459).
+  - mesh.frag:17 [MEDIUM]: header calls it a bring-up shader with a
+    Lambert term and sRGB output; both gone. DOOM-0075 cites the
+    'bring-up exemption', so its record is touched too.
+  - bake.comp:14 [MEDIUM]: says single-bounce; 141-149 do multi-bounce
+    (giEnabled, prevProbes).
+  - pt_common.glsl:557 [MEDIUM]: minContribValue cull: every caller
+    (641, 759, 779) passes 0.0 and the omni path no longer calls it.
+    Remove the parameter and branch.
+  - mesh.frag:71 [LOW]: eyeX/Y/Z called vertex-only; the fragment stage
+    reads them.
+  - pathtrace.comp:137 [LOW]: says HD reads the top level; HD_TEX now
+    uses hdLod (DOOM-0537).
+  - pathtrace.comp:1537 [LOW]: names hdShadingNormal; the frame is built
+    in hdTangentFrame.
+  - pathtrace.comp:1782 [LOW]: names fetchFogBilinear and line numbers
+    in svgf_composite.comp; it calls fetchFog.
+  - pathtrace.comp:1405 [LOW]: calls a full-res specular channel a
+    follow-up; gspec exists (binding 10).
+  - svgf_composite.comp:108 [LOW]: include list in the parenthesis is
+    incomplete.
+  queued: user chose fix later 2026-11-04.
+  **Layman:** Notes in the graphics-card programs say things the code no longer does, so someone could 'fix' working code to match them.
+  Kind: doc-fix.
+  Source: review-readability 2026-11-04, lane 3 (stale comments).
+  Lanes: shaders.
+
+- 📋 [DOOM-0564] **Names that mislead and special cases nobody wrote down, across the renderer and its shaders.**
+  Remedies unverified; grade in brackets.
+  Names:
+  - r_vulkan.cpp:6702 [LOW]: kHdV1Maps holds all seven maps; 'V1' made
+    DOOM-0542 and DOOM-0517 say it skips RGH and MET. Rename (e.g.
+    kHdMaps); DOOM-0103's spec names it.
+  - r_vulkan.cpp:5526 [LOW]: CreateComputeSets also builds the fragment
+    wipe and gamma sets. Rename to what it makes.
+  - pathtrace.comp:690 [MEDIUM]: the fog lane is misc6[2] at 690, 1784,
+    1803 and misc6.z elsewhere; a grep for one misses the other.
+    Pinned by the DOOM-0011 plan's quote.
+  - r_mesh.c:572 [LOW]: wall slots 0/1/2 are bare numbers in two copies
+    and decoded at 1916-1918; 3 and 4 have names. Grade unsure:
+    bounds_wiring_test.cpp:1090 not read.
+  Unstated special cases:
+  - r_mesh.c:424 [LOW]: PEG_MID walls never get relief; no reason given.
+  - r_mesh.c:356 [LOW]: bare specials 7, 8, 9, 100, 127; 9 (donut) is
+    handled differently.
+  - r_vulkan.cpp:7246 [LOW]: the grime/dirt slot depends on overlays[]
+    order. Put the destination in the struct.
+  - r_vulkan.cpp:3193 [LOW]: label lengths typed by hand. Derive them.
+  - r_vulkan.cpp:2401 [LOW]: sprite BLAS and TLAS build flags are
+    literals at 2401/2678 and 2525/2703 and must match; the world BLAS
+    has kWorldBlasFlags. Shared constants.
+  - pathtrace.comp:379 [LOW]: seeThrough means 'skip every Spectre', so a
+    second Spectre behind the first is invisible; unsaid.
+  - shadow.frag:41 [LOW]: models skip the alpha test; the reason is only
+    in mesh.frag:431.
+  queued: user chose fix later 2026-11-04.
+  **Layman:** Some names say less or more than the code does, and some odd rules have no note saying why, so the next change could break them.
+  Kind: refactor.
+  Source: review-readability 2026-11-04, lanes 1-3 (names, unstated special cases).
+  Lanes: renderer, shaders.
 
 ## 0.11.0 — The frame budget
 
@@ -14895,6 +15397,21 @@ in CLAUDE.md describes.
   out under load 17. INV-4 holds as far as measured. Still open in B6:
   §6 timings with the profiler (need a quiet machine; load was 16-20
   all day), the §12 cross-doc edits (DOOM-0183 INV-3/INV-5 qualifiers).
+  2026-11-04 review-code (lane 4): the HIGH that a fully metal surface
+  gets no sprite-light highlight in mode 4 or 6 (RIS target is matte,
+  pt_common.glsl:688-693) is filed on DOOM-0517. Two LOWs on this item's
+  lobe, remedies unverified: (1) Spectre: h.albedo *= spectreTint
+  (pathtrace.comp:1592/1603) darkens the scene behind a Spectre but L +=
+  spec and the composite's + spec (svgf_composite.comp:217) are never
+  tinted, so highlights stay at full brightness; scale spec by
+  spectreTint in mode 4 and before imageStore(gspec) in mode 6. (2)
+  svgf_temporal.comp:174-175,190: the anti-ghost grad reads matte
+  brightness only; on metal-1 pixels a flashlight toggle-off never resets
+  the specular history, which fades over ~10 frames (follows the spec's 'exactly
+  as for gillum' letter; related DOOM-0099). Take grad as the max of the
+  matte and specular gradients for the spec copy. Spec drift in §4.1
+  (specBrdf signature) is on DOOM-0554. queued: user chose fix later
+  2026-11-04.
   **Layman:** Shiny surfaces — metal, wet floors, slime — get realistic highlights like modern DOOM, without losing the classic look.
   Kind: feature.
   Source: user-request-2026-06-29.
@@ -17524,6 +18041,22 @@ in CLAUDE.md describes.
   takes specF0(albedo, metal) and a metal's flashlight and point light
   have no matte part. COMPTILE's plates in Ultra raster keep their grey
   with a soft sheen. Left: a metallic source for Solid (none today).
+  2026-11-04 review-code (lane 4, HIGH): the known gap above is a defect,
+  not an accepted loss. pt_common.glsl:688-693 builds the RIS target from
+  the matte term only; with pathtrace.comp:1597 (h.albedo * sp.diffW) and
+  :1738 (vec3(sp.diffW)) a metal-1 texel gets tgt = 0 for every sprite
+  light, and :704's selTgt > 0 gate drops the specular term too. A fully
+  metal surface shows no highlight from any lamp, torch or pickup in mode
+  6 (the default) as well as mode 4. DOOM-0103 §4.2 accepts this only on
+  a mode-4 black texel. Static NEE still works. Remedy (unverified):
+  build the target from matte plus specular, e.g. max channel of
+  min((albedo/PI)*c + specBrdf(n,v,wi,rough,f0)*c, FIREFLY_MAX) when
+  specOn, keeping the per-term clamps. Same review, LOW: mode 4's shown
+  glow dims by (1 - metal) because shownEmission gets h.albedo *
+  sp.diffW (pt_common.glsl:602-604) while the composite gets ga.rgb
+  (svgf_composite.comp:217); pass h.albedo separately. Correction to
+  the 2026-10-26 text above: kHdV1Maps (r_vulkan.cpp:6702-6710) now
+  lists RB_RGH and RB_MET. queued: user chose fix later 2026-11-04.
   **Layman:** Metal walls and pipes get a coloured, mirror-like shine, as DOOM-0042's HD art intends; today every surface shines like painted plaster.
   Kind: feature.
   Source: review-contract-2026-10-26.
@@ -17872,6 +18405,10 @@ in CLAUDE.md describes.
   soft metal sheen and highlights on the bar edges. The raster view
   follows with DOOM-0103 B5. Waiting-on: user (does it read as very
   rough metal? see DOOM-0517, 2026-11-04).
+  2026-11-04: the opening line's 'kHdV1Maps skips RB_RGH and RB_MET' is
+  no longer true. r_vulkan.cpp:6702-6710 lists all seven maps, RB_RGH
+  and RB_MET included (the 2026-11-03 upload note above). Found by
+  review-readability 2026-11-04; the misleading name is on DOOM-0564.
   **Layman:** The grey plates on the blue processor wall look like rough metal that picks up a smeared hint of the room's light.
   Kind: feature.
   Source: user-play-test-2026-11-02.
