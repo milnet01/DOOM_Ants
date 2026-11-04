@@ -257,6 +257,20 @@ int main()
     std::printf("  [0517] metal lobe worst relative error per channel: %.2e\n", mworst);
     check(mworst < 1e-4, "a metal's lobe matches Schlick with its albedo as f0, channel by channel");
 
+    // DOOM-0517 / §4.2: a sprite light's RIS target counts the specular part, so a fully
+    // metal surface (no matte part) still picks the light; with the lobe off the target is
+    // the matte one.
+    const glsl::vec3 none(0.0f), matte(0.3f, 0.5f, 0.1f), shine(0.2f, 0.25f, 0.3f);
+    check(glsl::risTarget(none, shine) > 0.0f, "risTarget picks a light for a surface with no matte part");
+    check(glsl::risTarget(matte, none) == 0.5f, "risTarget is the matte max channel with the lobe off");
+    check(std::fabs(glsl::risTarget(matte, shine) - 0.75f) < 1e-6f,
+          "risTarget is the max channel of matte plus specular");
+    {
+        const std::string ptc = code(slurp(std::string(DOOM_TESTS_ROOT) + "/shaders/pt_common.glsl"));
+        check(ptc.find("risTarget(refl, sguess)") != std::string::npos,
+              "pt_common.glsl's RIS loop weighs each light by risTarget(refl, sguess)");
+    }
+
     // §4.3: specExponent is 2/alpha^2 - 2 with specBrdf's alpha, floored at 1, so it narrows
     // as the surface gets smoother.
     const double a35 = 0.35 * 0.35;

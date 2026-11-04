@@ -18057,6 +18057,20 @@ in CLAUDE.md describes.
   (svgf_composite.comp:217); pass h.albedo separately. Correction to
   the 2026-10-26 text above: kHdV1Maps (r_vulkan.cpp:6702-6710) now
   lists RB_RGH and RB_MET. queued: user chose fix later 2026-11-04.
+  2026-11-05: review-code HIGH FIXED. pt_common.glsl's RIS target is
+  now risTarget(refl, sguess) (specular.glsl): the matte part plus a
+  cheap stand-in for the highlight (f0 * c / PI); the survivor alone
+  evaluates specBrdf. A fully metal texel now picks sprite lights and
+  shows their highlight. Proof: E1M1 2256 -2432 90, Ultra traced, COMPTILE
+  forced to metal 1 (scratch/perf/metal1): green helmet highlights on the
+  plates after, none before (before/after diff 0.80 vs run-to-run 0.07;
+  scratch/perf/met-sheet.png). specular_test red on the matte-only helper,
+  green after; -rtverify PASS (it covers no sprite lights). Cost, E1M1
+  start: megakernel +0.20 ms Solid 1920x1200 traced, +0.06 at 960x600,
+  none in Ultra. A full GGX per candidate cost +1.06 ms and was dropped.
+  Spec DOOM-0103 §4.2 amended. Still open here: the LOW on mode 4's shown
+  glow (pass h.albedo separately; needs a shadeSurface signature change),
+  and a metallic source for Solid.
   **Layman:** Metal walls and pipes get a coloured, mirror-like shine, as DOOM-0042's HD art intends; today every surface shines like painted plaster.
   Kind: feature.
   Source: review-contract-2026-10-26.

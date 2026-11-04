@@ -179,11 +179,13 @@ differs.
   specular sum, alongside today's matte sum. It uses the same `wi` and the
   same shadow ray. Each sum is clamped per channel by `FIREFLY_MAX`
   separately.
-- **Sprite lights (RIS).** The target stays the matte one, so which light is
-  chosen does not change. The survivor adds its specular term with the same
-  weight. In mode 4 the target carries the albedo, so a black texel picks no
-  sprite light and gets no sprite-light highlight; in mode 6 it gets one.
-  Accepted, because mode 6 is the default view (`rt_view` 6).
+- **Sprite lights (RIS).** A candidate's target is `risTarget`: the
+  brightest channel of its clamped matte part plus a stand-in for its
+  highlight, the light reflected as if matte with colour `f0`. The survivor
+  adds its matte part and its real `specBrdf` term with the same weight.
+  With the lobe off, the stand-in is 0 and the pick is the matte one
+  (INV-4). A surface with no matte part, such as full metal, still picks a
+  light and shows its highlight.
 - **Flashlight and muzzle flash.** `flashlightDelta` and `muzzleFlashDelta`
   each return a specular part beside today's matte part, using the same
   shadow ray.

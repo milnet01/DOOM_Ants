@@ -35,6 +35,15 @@ vec3 specF0(vec3 albedo, float metal)
     return mix(vec3(kSpecF0), albedo, metal);
 }
 
+// DOOM-0103 §4.2: one sprite light's resampling target in pt_common.glsl's RIS loop, from
+// its clamped matte part refl and the stand-in for its highlight sguess (zero when specOn
+// is false, so the pick is the matte one).
+float risTarget(vec3 refl, vec3 sguess)
+{
+    vec3 s = refl + sguess;
+    return max(s.x, max(s.y, s.z));
+}
+
 // DOOM-0103 §4.3: the rasterised view's Blinn-Phong exponent for a roughness, the usual
 // match to GGX's width (2 / alpha^2 - 2, alpha as specBrdf's). Floored at 1, as 0 would
 // light every angle equally and pow(0, 0) is undefined.

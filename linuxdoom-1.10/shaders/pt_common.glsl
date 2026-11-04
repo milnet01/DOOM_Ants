@@ -685,11 +685,16 @@ vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
             // min(rad, FIREFLY_MAX). The RIS sum of pre-clamped lights then needs no
             // second clamp, so a torch-lit room stays as bright as the old loop while a
             // degenerate near-light can't blow up the reservoir weight.
-            vec3  refl = min(albedo * (1.0 / PI) * c, vec3(FIREFLY_MAX));
-            float tgt  = max(refl.r, max(refl.g, refl.b)); // VALUE target (max channel,
-                                                           // matching the brightness
-                                                           // convention) — a saturated
-                                                           // light can't over-weight.
+            vec3  refl   = min(albedo * (1.0 / PI) * c, vec3(FIREFLY_MAX));
+            // DOOM-0103 §4.2: a cheap stand-in for the highlight, lit like a matte surface
+            // of colour f0. Without it a fully metal surface (no matte part) picks no light
+            // at all. The real lobe is evaluated for the survivor only: one GGX per pixel
+            // per light costs too much (+1 ms megakernel, 1920x1200 traced, 2026-11-05).
+            vec3  sguess = specOn(specSet, ctrlFlags)
+                         ? min(f0 * (1.0 / PI) * c, vec3(FIREFLY_MAX)) : vec3(0.0);
+            // VALUE target (max channel, matching the brightness convention), so a
+            // saturated light can't over-weight.
+            float tgt    = risTarget(refl, sguess);
             if (tgt <= 0.0) continue;
             wsum += tgt;
             if (rnd(seed) * wsum < tgt)           // weighted reservoir: keep w.p. tgt/wsum
@@ -698,9 +703,9 @@ vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
             }
         }
         // One shadow ray to the survivor; reweight by wsum/selTgt so E[estimate] equals
-        // the old per-light-clamped sum  Σ_k min(rad_k, FIREFLY_MAX)·V_k  exactly.
-        // DOOM-0103: the target stays the matte one, so the pick does not change; the
-        // survivor's highlight takes the same weight (§4.2).
+        // the per-light-clamped sum  Σ_k (refl_k + spec_k)·V_k  exactly. That holds for
+        // any target that is above 0 wherever a light adds matte or highlight; f0 is never
+        // 0, so sguess is above 0 wherever the lobe is on and the light reaches the surface.
         if (selTgt > 0.0 && !occluded(hitP, n, selWi, selDist)) {
             L += selRefl * (wsum / selTgt);
             if (specOn(specSet, ctrlFlags))
