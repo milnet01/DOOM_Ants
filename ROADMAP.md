@@ -17802,6 +17802,12 @@ in CLAUDE.md describes.
   medikit capture was blocked by a pillar.
   Waiting-on: user (batch 1 look: STIM, MEDI, BON2. Recommendation:
   keep; next batch the keys and the ammo, 2026-11-04).
+  2026-11-04 INV-8 run by hand, HOLDS. DEV build at 24968f2, E1M1 skill
+  3, renderer 1 (Ultra), traced (rtview 6), scratch/fled/look/b3cap.sh.
+  Near: -warpto 144 -2986 270 (150 units from BON1 at 144 -3136). Far:
+  1056 -3616 (player start, 1030 units from it; just past the 1024 cap).
+  Both logs: "RB_Vulkan NEE: 170 static + 57 sprite emitters". §6 frame
+  cost (INV-9) still NOT run: machine load 12-15.
   **Layman:** Health, armour, ammo, keys and power-ups become real 3D objects, so their glow can come from exactly the right spot inside them.
   Kind: feature.
   Source: user-request-2026-11-02.
