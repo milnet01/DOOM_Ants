@@ -17845,10 +17845,25 @@ in CLAUDE.md describes.
   Kind: feature.
   Source: user-play-test-2026-11-02.
 
-- 📋 [DOOM-0543] **Make Ultra's floors like the VkDOOM video's hex tiles: real bevels, each tile catching light differently, grime in the gaps.**
+- 🚧 [DOOM-0543] **Make Ultra's floors like the VkDOOM video's hex tiles: real bevels, each tile catching light differently, grime in the gaps.**
   User 2026-11-02: "We still need to do the floor like it was done in that video you analysed." Reading taken from the study: scratch/ref-frames/vkdoom/sheet-012.png, 1:39 to 1:41, notes-part1.md (roughness varies tile by tile, dirt between tiles) and the dark glossy floors at 0:17 and 3:09. Not confirmed with the user which floor they meant.
   User 2026-11-03 confirmed: the floor meant is the VkDOOM video's hex
   tiles at 1:39.
+  2026-11-04: the reference's 1:39 floor is FLOOR4_8 (dark grey hex);
+  1:43's brown hex is FLOOR5_2, and FLOOR5_1 is the third hex flat
+  (scratch/hex0543/flats.png). Ultra's FLOOR4_8 was a CC0 photo of square
+  tiles, not DOOM's layout. Now built in Blender: Blender
+  Scripts/floors/doom_floor4_8.py (new floors/ category) keeps the flat's
+  lattice, measured from its mortar: flat-topped hexes 48 x 32 texels,
+  centres (40,16) and (8,32), four per 64x64, repeating without a seam.
+  Bevelled slate tiles, moss blotches, dirt in the gaps, and per-tile
+  roughness 0.22 to 0.70, which DOOM-0103's lobe now shows. Maps at
+  512x512 with a new rgh map; model in Models/Architecture, maps in
+  Textures/Ground/doom_floor4_8_floor. E1M1 590 -3480 334, Ultra: sheet
+  scratch/fled/look/f48-sheet.png (old photo squares vs new hexes, both
+  views). Next: FLOOR5_2 and FLOOR5_1 on the same builder.
+  Waiting-on: user (does FLOOR4_8 now read like the video's hex tiles?
+  Recommendation: yes; then batch FLOOR5_2 and FLOOR5_1, 2026-11-04).
   **Layman:** Floor tiles look like separate worn slabs that catch the light one by one, as in the reference video.
   Kind: feature.
   Source: user-play-test-2026-11-02.
