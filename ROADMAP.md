@@ -13542,7 +13542,7 @@ defect visible before a player finds it.
   Source: review-code 2026-11-04, lane 1 (MEDIUM) and lane 2 (LOW); recalibrated LOW.
   Lanes: renderer, assets.
 
-- 📋 [DOOM-0548] **The -shotverify config pin leaves the Shine and Surface Detail settings to the player's config.**
+- ✅ [DOOM-0548] **The -shotverify config pin leaves the Shine and Surface Detail settings to the player's config.**
   r_vulkan.cpp:10905-10919 forces the shipped defaults so a flipped
   toggle in ~/.doomrc cannot poison the golden image. It does not pin
   rb_specular (new; feeds pc.misc7[1] at :9521) or rb_surface_detail
@@ -13554,6 +13554,13 @@ defect visible before a player finds it.
   Remedy (unverified): add rb_specular = 1; rb_surface_detail = 1; to the
   block, and correct whichever gamma comment is wrong.
   queued: user chose fix later 2026-11-04.
+  2026-11-05: fixed. The pin block now sets rb_specular = 1 and
+  rb_surface_detail = 1. Of the two gamma comments, :10919's was wrong:
+  RecordGamma works on the swapchain image after finalImage is copied,
+  so usegamma cannot reach the capture; the comment now says so.
+  Red/green: -shotverify E1M1, config specular 0 vs 1, mean luma old
+  36.41 vs 37.99, new 37.99 vs 37.99 (two runs each, identical). The
+  golden re-bless already owed on DOOM-0202 stands.
   **Layman:** The automatic picture check can compare against a different setup if the tester has turned Shine or Surface Detail off.
   Kind: review-fix.
   Source: review-code 2026-11-04, lane 2 (MEDIUM).

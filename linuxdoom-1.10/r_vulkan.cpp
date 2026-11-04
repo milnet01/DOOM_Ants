@@ -10916,7 +10916,11 @@ extern "C" void RB_Vulkan_Present(void)
             // exact leak this block exists to close. NOTE: the current golden
             // predates fog, so re-blessing is still owed (tracked on DOOM-0202).
             rb_fog = 2;
-            usegamma = 0;   // DOOM-0491: the gamma pass runs on this image too
+            // DOOM-0548: the Shine and Surface Detail rows feed misc7, so pin them too.
+            rb_specular = 1; rb_surface_detail = 1;
+            // DOOM-0491: gamma runs on the swapchain image, after finalImage is copied, so
+            // this pin does not change the capture, only what the window shows.
+            usegamma = 0;
         }
     }
     g.shotCapture = false;
