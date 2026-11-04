@@ -30,7 +30,7 @@ TEKWALL4,hero,heroes/tech/TEKWALL4_alb.png,heroes/tech/TEKWALL4_nrm.png,,,heroes
 COMPSPAN,hero,heroes/tech/COMPSPAN_alb.png,heroes/tech/COMPSPAN_nrm.png,,,heroes/tech/COMPSPAN_ao.png,heroes/tech/COMPSPAN_emis.png,heroes/tech/COMPSPAN_hgt.png,0.3333333x1,pom|noDetile|depth=12
 COMPBLUE,hero,heroes/tech/COMPBLUE_alb.png,heroes/tech/COMPBLUE_nrm.png,,,heroes/tech/COMPBLUE_ao.png,heroes/tech/COMPBLUE_emis.png,heroes/tech/COMPBLUE_hgt.png,0.5x1,pom|noDetile|depth=12
 COMPOHSO,hero,heroes/tech/COMPOHSO_alb.png,heroes/tech/COMPOHSO_nrm.png,,,heroes/tech/COMPOHSO_ao.png,heroes/tech/COMPOHSO_emis.png,heroes/tech/COMPOHSO_hgt.png,0.5x0.5,pom|noDetile|depth=16
-COMPTILE,hero,heroes/tech/COMPTILE_alb.png,heroes/tech/COMPTILE_nrm.png,,,heroes/tech/COMPTILE_ao.png,heroes/tech/COMPTILE_emis.png,heroes/tech/COMPTILE_hgt.png,1,noPom|noDetile
+COMPTILE,hero,heroes/tech/COMPTILE_alb.png,heroes/tech/COMPTILE_nrm.png,heroes/tech/COMPTILE_rgh.png,heroes/tech/COMPTILE_met.png,heroes/tech/COMPTILE_ao.png,heroes/tech/COMPTILE_emis.png,heroes/tech/COMPTILE_hgt.png,1,noPom|noDetile
 COMPWERD,hero,heroes/tech/COMPWERD_alb.png,heroes/tech/COMPWERD_nrm.png,,,heroes/tech/COMPWERD_ao.png,heroes/tech/COMPWERD_emis.png,heroes/tech/COMPWERD_hgt.png,0.5x1,pom|noDetile|depth=16
 COMP2,hero,heroes/tech/COMP2_alb.png,heroes/tech/COMP2_nrm.png,,,heroes/tech/COMP2_ao.png,heroes/tech/COMP2_emis.png,heroes/tech/COMP2_hgt.png,0.5x1,pom|noDetile|depth=16
 COMPUTE2,hero,heroes/tech/COMPUTE2_alb.png,heroes/tech/COMPUTE2_nrm.png,,,heroes/tech/COMPUTE2_ao.png,heroes/tech/COMPUTE2_emis.png,heroes/tech/COMPUTE2_hgt.png,0.5x1,pom|noDetile|depth=12

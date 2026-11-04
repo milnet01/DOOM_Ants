@@ -14849,6 +14849,12 @@ in CLAUDE.md describes.
   INV-4 captures inside same-build noise; -rtverify PASS; validation 0.
   B1 still waits on Vestige 3D_E-0813 (asked again 2026-11-03, message
   1180).
+  2026-11-04: Vestige shipped 3D_E-0813 (eca1091): ggxDistributionParam,
+  smithGgxVisibility (height-correlated, includes 1/(4 NdotV NdotL), so
+  specular = D*V*F), fresnelSchlickF0, fresnelSchlickMetallic (vec3, for
+  DOOM-0517). All take alpha = roughness squared; divides return 0, not
+  NaN. Export: formula_workbench --export-glsl --out DIR --tier full.
+  B1 is unblocked.
   **Layman:** Shiny surfaces — metal, wet floors, slime — get realistic highlights like modern DOOM, without losing the classic look.
   Kind: feature.
   Source: user-request-2026-06-29.
@@ -17775,6 +17781,13 @@ in CLAUDE.md describes.
   (MatCtrl.maps[2], [3]). Still needed: COMPTILE's bake writes them
   (grey plates metal and very rough, blue parts not), DOOM-0103 B1 and
   B3, then DOOM-0517's metal Fresnel.
+  2026-11-04: COMPTILE ships roughness and metal maps. doom_comptile.py
+  roughens the kit's plate and trim (0.85 and 0.8; grime still adds on
+  top); colour and metal are the kit's. Rebake at scale 4: only the
+  roughness map's pixels changed. Plates now read roughness 0.90, metal
+  0.90; the blue middle reads metal 0.02. The engine loads both maps
+  (158 to 160 HD images in E1M1 Ultra). No shader reads them yet, so
+  nothing looks different until DOOM-0103 B1 and B3 and DOOM-0517.
   **Layman:** The grey plates on the blue processor wall look like rough metal that picks up a smeared hint of the room's light.
   Kind: feature.
   Source: user-play-test-2026-11-02.
