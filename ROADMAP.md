@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=564 -->
+<!-- ants-roadmap-id-high-water: DOOM=565 -->
 
 # Roadmap
 
@@ -18397,6 +18397,11 @@ in CLAUDE.md describes.
   top. Batch 1 (STIM, MEDI, BON2) got no verdict yet; batch 2 still
   waits on it. Same message reported heavy noise ("bubbling"); being
   located separately.
+  User 2026-11-05, batch 1: BON2 (armour bonus) approved. MEDI: "a bit
+  too big, please make it smaller and the plus bigger." BON1: keep
+  DOOM's potion shape and blue, as an old hand-blown glass flask filled
+  to the neck. STIM: no verdict yet. Batch 2 not authorised yet. Looked
+  at in Ultra traced only.
   **Layman:** Health, armour, ammo, keys and power-ups become real 3D objects, so their glow can come from exactly the right spot inside them.
   Kind: feature.
   Source: user-request-2026-11-02.
@@ -18499,6 +18504,27 @@ in CLAUDE.md describes.
   **Layman:** Floor tiles look like separate worn slabs that catch the light one by one, as in the reference video.
   Kind: feature.
   Source: user-play-test-2026-11-02.
+
+- 🚧 [DOOM-0565] **Floors and walls near pickup lights bubble with noise in the traced view, because one shadow ray serves all the pickup lights.**
+  User 2026-11-05, Ultra traced: "There is an insane amount of noise though
+  (bubbling)."
+  Measured 2026-11-05 (scratch/noise: dem.sh, dscore.py). Demo e1m1sk3s2
+  tics 40-45, Ultra traced, 1920x1080 private display, 3 runs per build;
+  score = per-pixel luma spread across runs, mean (p99):
+  cb18dfe (B3, no pickup glow) 0.77 (4.4); 9316f71 (B4, model lights)
+  1.28 (7.8); 5dd31bc 1.35 (7.3); HEAD cd7a7b9 1.30 (7.0); HEAD with no
+  models.csv (pickups glow as sprites) 1.22 (7.6). specular 0 vs 1 on a
+  frozen frame: 1.33 vs 1.15, so Shine is not the cause.
+  Noise maps put it on floors and walls near BON1s. Cause:
+  pt_common.glsl's DOOM-0120 RIS picks one of the omni sprite and model
+  lights per pixel and spends one shadow ray on it; with many bonuses
+  around, the survivor's visibility flips frame to frame. E1M1 has 57
+  such emitters (maxLe 200) against 16 before B4.
+  Refute: the same score after a fix at or below 0.77, and the frame cost.
+  **Layman:** The ray-traced view shimmers and boils on floors near health bonuses and other glowing pickups; this makes it settle.
+  Kind: fix.
+  Source: user-play-test-2026-11-05.
+  Lanes: shaders, renderer.
 
 ## 0.13.0 — The player's experience
 
