@@ -129,10 +129,14 @@ void main()
             // emitters (no sprite lights yet), so every emitter stays oriented.
             // DOOM-0119: hitSec 0xFFFFFFFF + numSectors 0 -> REJECT cull off (the bake
             // never culls; its omni loop is empty anyway).
+            // DOOM-0103 INV-2: a zero view direction and setting 0, so the probes hold
+            // no highlight; noSpec stays zero.
+            vec3 noSpec;
             Li = shadeSurface(hitP, n, albedo, id, pc.misc.z, pc.misc.z,
                               pc.emit, pc.matEmis, BAKE_NEE, false,
                               1.0,   // unused: addEmission is false for the bake
-                              0xFFFFFFFFu, 0u, pc.emitSec, pc.reject, seed);
+                              0xFFFFFFFFu, 0u, pc.emitSec, pc.reject,
+                              vec3(0.0), 1.0, 0u, 0u, noSpec, seed);
 
             // Multi-bounce: on passes 2+ (giEnabled), add the light this surface
             // received from the PREVIOUS bounce's probes. Pass 1 builds 1-bounce

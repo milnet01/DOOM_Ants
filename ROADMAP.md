@@ -14860,6 +14860,15 @@ in CLAUDE.md describes.
   pt_common.glsl and called nowhere yet. tests/specular_test.cpp compiles
   the shader itself as C++ and matches published GGX x Smith x Schlick
   to 6e-7; red against four mutated shaders. NEXT B3.
+  2026-11-04: B3 built. The lobe runs at static NEE, the RIS survivor,
+  muzzle flash and flashlight (each clamped per channel), and in both
+  -rtverify estimators; the bake passes v = 0. Roughness: HD map, else
+  surface map, else 1.0. -rtverify PASS 0.2029% (bar 0.50%); a x3 lobe in
+  one estimator FAILS at 4.27%. INV-1/2/3 scrapes red on five mutations.
+  E2M1 test scene, Solid traced, on minus off over the floor: red 14.9,
+  green 0.5, blue 1.8 (box not yet fixed in INV-5). Walls gleam red at
+  grazing angles. Sheet: scratch/fled/look/b3-e2-pair.png. NEXT: B4 is
+  the user's look; DOOM-0517 metal meanwhile.
   **Layman:** Shiny surfaces — metal, wet floors, slime — get realistic highlights like modern DOOM, without losing the classic look.
   Kind: feature.
   Source: user-request-2026-06-29.

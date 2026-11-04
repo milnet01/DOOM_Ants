@@ -4,6 +4,9 @@
 //          is 0 when the view direction is zero or a direction is below the surface.
 //          specOn is false when the setting is off or the material is a liquid, and
 //          every specBrdf call in pt_common.glsl and pathtrace.comp sits behind specOn.
+//   INV-2  The bake passes a zero view direction to shadeSurface and calls no specBrdf.
+//   INV-3  gspec is stored with no albedo or division; the composite adds hspec without
+//          albedo; svgf_atrous.comp touches neither.
 //   INV-7  specBrdf is defined only in shaders/formulas/specular.glsl.
 //
 // INV-1 does not keep a C++ copy of specBrdf. It compiles the shader's own
@@ -121,6 +124,39 @@ static std::string slurp(const std::string& path)
     return s.str();
 }
 
+// GLSL source with // and /* */ comments blanked, so a ; or brace in a comment cannot
+// move a statement boundary and a name in a comment is not a use.
+static std::string code(const std::string& src)
+{
+    std::string out = src;
+    for (size_t i = 0; i + 1 < out.size(); ++i) {
+        if (out[i] == '/' && out[i + 1] == '/') {
+            while (i < out.size() && out[i] != '\n') out[i++] = ' ';
+        } else if (out[i] == '/' && out[i + 1] == '*') {
+            size_t e = out.find("*/", i + 2);
+            e = (e == std::string::npos) ? out.size() : e + 2;
+            for (; i < e; ++i) if (out[i] != '\n') out[i] = ' ';
+        }
+    }
+    return out;
+}
+
+// The top-level, whitespace-trimmed arguments of the call whose '(' is at open.
+static std::vector<std::string> callArgs(const std::string& src, size_t open)
+{
+    std::vector<std::string> args;
+    std::string cur;
+    int depth = 0;
+    for (size_t i = open + 1; i < src.size(); ++i) {
+        char c = src[i];
+        if (c == '(') ++depth;
+        if (c == ')' && depth-- == 0) { args.push_back(cur); break; }
+        if (c == ',' && depth == 0) { args.push_back(cur); cur.clear(); continue; }
+        if (!std::isspace((unsigned char)c)) cur += c;
+    }
+    return args;
+}
+
 // INV-1's guard rule. A specBrdf( call is guarded when the statement holding it, or the
 // header of a block enclosing it, contains specOn(. Returns the number of unguarded calls;
 // *calls counts every call (definitions excluded).
@@ -208,13 +244,69 @@ int main()
           "the guard scrape flags a call after a closed specOn block");
 
     for (const char* rel : {"/shaders/pt_common.glsl", "/shaders/pathtrace.comp"}) {
-        std::string src = slurp(std::string(DOOM_TESTS_ROOT) + rel);
+        std::string src = code(slurp(std::string(DOOM_TESTS_ROOT) + rel));
         std::snprintf(what, sizeof what, "%s is readable", rel);
         check(!src.empty(), what);
         int bad = unguardedCalls(src, &calls);
         std::printf("  [INV-1] %s: %d specBrdf call(s), %d unguarded\n", rel, calls, bad);
+        // B3 put calls in both files; none found means the scrape is looking at nothing.
+        std::snprintf(what, sizeof what, "%s calls specBrdf, so the guard scrape has work", rel);
+        check(calls > 0, what);
         std::snprintf(what, sizeof what, "every specBrdf call in %s sits behind specOn", rel);
         check(bad == 0, what);
+    }
+
+    // INV-2: the bake passes a zero view direction to every shadeSurface call and never
+    // calls specBrdf itself. Where v sits is read from shadeSurface's own definition.
+    {
+        const std::string ptc = code(slurp(std::string(DOOM_TESTS_ROOT) + "/shaders/pt_common.glsl"));
+        const std::string sig = "vec3 shadeSurface(";
+        size_t d = ptc.find(sig);
+        check(d != std::string::npos, "pt_common.glsl defines shadeSurface");
+        std::vector<std::string> params;
+        if (d != std::string::npos) params = callArgs(ptc, d + sig.size() - 1);
+        size_t vAt = params.size();
+        for (size_t i = 0; i < params.size(); ++i) if (params[i] == "vec3v") vAt = i;
+        check(vAt < params.size(), "shadeSurface takes a view direction `vec3 v`");
+
+        const std::string bake = code(slurp(std::string(DOOM_TESTS_ROOT) + "/shaders/bake.comp"));
+        check(!bake.empty(), "bake.comp is readable");
+        int n = 0, bad = 0;
+        for (size_t at = bake.find("shadeSurface("); at != std::string::npos;
+             at = bake.find("shadeSurface(", at + 1)) {
+            auto a = callArgs(bake, at + std::string("shadeSurface").size());
+            ++n;
+            if (a.size() != params.size() || vAt >= a.size() || a[vAt] != "vec3(0.0)") ++bad;
+        }
+        std::printf("  [INV-2] bake.comp: %d shadeSurface call(s), %d without a zero view\n", n, bad);
+        check(n > 0, "bake.comp calls shadeSurface");
+        check(bad == 0, "every bake shadeSurface call passes vec3(0.0) as the view direction");
+        check(bake.find("specBrdf(") == std::string::npos, "bake.comp never calls specBrdf");
+    }
+
+    // INV-3: gspec is stored undivided, the composite adds hspec without albedo, and the
+    // a-trous passes never touch either.
+    {
+        const std::string pt = code(slurp(std::string(DOOM_TESTS_ROOT) + "/shaders/pathtrace.comp"));
+        size_t at = pt.find("imageStore(gspec");
+        check(at != std::string::npos, "pathtrace.comp stores gspec");
+        std::string store = (at == std::string::npos) ? "" : pt.substr(at, pt.find(';', at) - at);
+        check(store.find("albedo") == std::string::npos && store.find('/') == std::string::npos,
+              "the gspec store holds no albedo and no division");
+
+        const std::string cs = code(slurp(std::string(DOOM_TESTS_ROOT) + "/shaders/svgf_composite.comp"));
+        size_t ld = cs.find("imageLoad(hspec");
+        check(ld != std::string::npos, "svgf_composite.comp reads hspec");
+        size_t s0 = (ld == std::string::npos) ? 0 : cs.find_last_of(";{}", ld) + 1;
+        std::string load = (ld == std::string::npos) ? "" : cs.substr(s0, cs.find(';', ld) - s0);
+        check(load.find("albedo") == std::string::npos, "the hspec read is not multiplied by albedo");
+        const std::regex mul("albedo\\s*\\*\\s*spec\\b|\\bspec\\s*\\*\\s*albedo");
+        check(!std::regex_search(cs, mul), "the composite never multiplies spec by albedo");
+
+        const std::string atrous = code(slurp(std::string(DOOM_TESTS_ROOT) + "/shaders/svgf_atrous.comp"));
+        check(!atrous.empty(), "svgf_atrous.comp is readable");
+        check(atrous.find("gspec") == std::string::npos && atrous.find("hspec") == std::string::npos,
+              "the a-trous passes bind neither gspec nor hspec");
     }
 
     // INV-7: one definition, in specular.glsl.

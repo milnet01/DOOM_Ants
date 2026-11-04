@@ -281,7 +281,7 @@ layout(push_constant) uniform PC {
                        // from rb_view_t::hazeDensity via r_backend.c's per-level rule).
                        // std430-aligned to offset 224 (C++ pads the 216-byte tail; INV-6).
     uvec4    misc7;    // DOOM-0273: x = surface detail (1 on; 0 off or no maps made);
-                       // y = reserved for DOOM-0103's specular setting; z = surface-map base
+                       // y = DOOM-0103's specular setting (1 on); z = surface-map base
                        // in materialTex[] (RB_MaterialCount()); w = free. Offset 240; the
                        // push range is now 256 bytes, the device limit: no lane is left.
 } pc;
@@ -475,7 +475,11 @@ void tracePrimary(rayQueryEXT rq, vec3 o, vec3 d, bool seeThrough)
 // Muzzle flash: a point light at the gun barrel (eye + forward/drop offset) while
 // firing. The offset swings the muzzle as the player turns, so the cast shadow
 // tracks it. Gated by the host firing strobe in misc2.z (0.0 = not firing).
-vec3 muzzleFlashDelta(vec3 hitP, vec3 n, vec3 albedo)
+// DOOM-0103: muzzleFlashDelta and flashlightDelta add their highlight to `spec`, through
+// the same shadow ray, clamped per channel like the NEE sum. sp carries the inputs.
+struct SpecIn { vec3 v; float rough; uint setting; uint ctrlFlags; };
+
+vec3 muzzleFlashDelta(vec3 hitP, vec3 n, vec3 albedo, SpecIn sp, inout vec3 spec)
 {
     float flash = uintBitsToFloat(pc.misc2.z);
     if (flash <= 0.0) return vec3(0.0);
@@ -494,6 +498,10 @@ vec3 muzzleFlashDelta(vec3 hitP, vec3 n, vec3 albedo)
     while (rayQueryProceedEXT(sq)) {}
     if (rayQueryGetIntersectionTypeEXT(sq, true)
         != gl_RayQueryCommittedIntersectionNoneEXT) return vec3(0.0);
+    if (specOn(sp.setting, sp.ctrlFlags))
+        spec += min(specBrdf(n, sp.v, mwi, sp.rough) * FLASH_COLOR
+                    * (flash * FLASH_INTENSITY) * mcos / (mdist2 + FLASH_RADIUS2),
+                    vec3(FIREFLY_MAX));
     return albedo * (1.0 / PI) * FLASH_COLOR
          * (flash * FLASH_INTENSITY) * mcos
          / (mdist2 + FLASH_RADIUS2);
@@ -502,7 +510,7 @@ vec3 muzzleFlashDelta(vec3 hitP, vec3 n, vec3 albedo)
 // DOOM-0044 player flashlight (headlamp): an eye-mounted spotlight aimed along the
 // view, gated by the rb_flashlight toggle (misc2.w). Same hard shadow + 1/dist^2 as
 // the muzzle flash, plus a cone attenuation (how closely surface->eye hugs camDir).
-vec3 flashlightDelta(vec3 hitP, vec3 n, vec3 albedo)
+vec3 flashlightDelta(vec3 hitP, vec3 n, vec3 albedo, SpecIn sp, inout vec3 spec)
 {
     if (pc.misc2.w == 0u) return vec3(0.0);
     vec3  fl    = pc.camPos.xyz - hitP;     // surface -> eye (the lamp)
@@ -520,6 +528,10 @@ vec3 flashlightDelta(vec3 hitP, vec3 n, vec3 albedo)
     while (rayQueryProceedEXT(sq)) {}
     if (rayQueryGetIntersectionTypeEXT(sq, true)
         != gl_RayQueryCommittedIntersectionNoneEXT) return vec3(0.0);
+    if (specOn(sp.setting, sp.ctrlFlags))
+        spec += min(specBrdf(n, sp.v, fwi, sp.rough) * FLASHLIGHT_COLOR
+                    * (FLASHLIGHT_INTENSITY * spot) * fcos / (fl2 + FLASHLIGHT_RADIUS2),
+                    vec3(FIREFLY_MAX));
     return albedo * (1.0 / PI) * FLASHLIGHT_COLOR
          * (FLASHLIGHT_INTENSITY * spot) * fcos
          / (fl2 + FLASHLIGHT_RADIUS2);
@@ -1209,6 +1221,7 @@ struct PrimaryHit {
     float   gooWet;     // DOOM-0183 L5: goo-puddle wet coverage (0 unless a green-goo puddle)
     float   emisW;      // DOOM-0389: emisWeight of the albedo BEFORE grime
     bool    addEmis;
+    float   rough;      // DOOM-0103: the specular lobe's perceptual roughness (§4.1)
 };
 
 // DOOM-0539: a hit's material row. A sprite lump's HD row belongs to its model, so a billboard
@@ -1283,6 +1296,16 @@ PrimaryHit primaryHitSurface(Verts vb, uint i0, bool isSprite, vec2 hitUV, vec3 
     h.ao = (h.mc.usePBR != 0u && h.mc.maps[4] >= 0 && detileFor(h.mc))
          ? detileR(uint(h.mc.maps[4]), h.sUV, h.dG)
          : hdAO(h.mc, h.id, h.sUV);
+    // DOOM-0103 §4.1: roughness from the HD roughness map (de-tiled like AO), else the
+    // derived surface map, else fully rough (sprites, surface_detail 0).
+    if (h.mc.usePBR != 0u && h.mc.maps[2] >= 0) {
+        h.rough = detileFor(h.mc) ? detileR(uint(h.mc.maps[2]), h.sUV, h.dG)
+                                  : HD_TEX(h.mc.maps[2], h.sUV).r;
+    } else if (h.mc.usePBR == 0u && h.surf) {
+        h.rough = surfRoughness(h.id, h.sUV);
+    } else {
+        h.rough = 1.0;
+    }
     // DOOM-0389: decide the glow BEFORE grime. applyGrime scales the albedo by as little
     // as 0.35 and can paint a brown stain over it, and emissiveMask thresholds that albedo,
     // so grime applied first switches off the dimmer texels of a dirty lamp.
@@ -1350,8 +1373,9 @@ PrimaryLight primaryHitLighting(PrimaryHit h, bool isSprite, int prim, vec3 n)
 // Everything added after shadeSurface, in the order both modes add it (float addition is
 // not associative, so the order is part of the contract). modAlbedo is the surface albedo
 // on the display path and vec3(1.0) on the demodulated feed; 1.0 * x == x exactly.
+// DOOM-0103: the deltas' highlights go to `spec`.
 vec3 primaryHitAddTerms(vec3 L, PrimaryHit h, PrimaryLight s, vec3 n, float secLight,
-                        vec3 modAlbedo)
+                        vec3 modAlbedo, SpecIn sp, inout vec3 spec)
 {
     // Indirect GI (build step 4c) + DOOM-0043 sector-light ambient floor. The probe holds
     // the bounced solution; the floor is a deliberate, designer-driven ambient seeded by the
@@ -1380,9 +1404,17 @@ vec3 primaryHitAddTerms(vec3 L, PrimaryHit h, PrimaryLight s, vec3 n, float secL
     // Dynamic point-light deltas (build step 5): the muzzle flash + the DOOM-0044 player
     // flashlight, each a hard ray-traced shadow composited additively over the baked static
     // (DOOM-0130 shared helpers).
-    L += muzzleFlashDelta(s.shadeP, s.shadeN, modAlbedo);
-    L += flashlightDelta(s.shadeP, s.shadeN, modAlbedo);
+    L += muzzleFlashDelta(s.shadeP, s.shadeN, modAlbedo, sp, spec);
+    L += flashlightDelta(s.shadeP, s.shadeN, modAlbedo, sp, spec);
     return L;
+}
+
+// DOOM-0103 §4.1: the lobe's inputs for a primary hit seen along dir. A goo stain that
+// takes the wet sheen passes setting 0, so a puddle does not get both.
+SpecIn primarySpecIn(PrimaryHit h, vec3 dir)
+{
+    uint setting = (wetOn() && h.gooWet > 0.0) ? 0u : pc.misc7.y;
+    return SpecIn(-dir, h.rough, setting, h.mc.flags);
 }
 
 void main()
@@ -1548,11 +1580,15 @@ void main()
             h.albedo *= spectreTint;   // DOOM-0508
             uint seed = px.x + px.y * w + 1u;
             PrimaryLight s = primaryHitLighting(h, isSprite, prim, n);
+            SpecIn sp = primarySpecIn(h, dir);
+            vec3 spec;
             vec3 L = shadeSurface(s.shadeP, s.shadeN, h.albedo, h.id, pc.misc2.x, pc.misc4.y,
                                   pc.emit, pc.matEmis, NEE_SAMPLES, h.addEmis,
                                   h.emisW,
-                                  s.hitSec, pc.misc4.z, pc.emitSec, pc.reject, seed);
-            L = primaryHitAddTerms(L, h, s, n, vb.v[i0 + 10u], h.albedo);   // display: keeps albedo
+                                  s.hitSec, pc.misc4.z, pc.emitSec, pc.reject,
+                                  sp.v, sp.rough, sp.setting, sp.ctrlFlags, spec, seed);
+            L = primaryHitAddTerms(L, h, s, n, vb.v[i0 + 10u], h.albedo, sp, spec);   // display: keeps albedo
+            L += spec;   // DOOM-0103: not multiplied by albedo, as the composite adds hspec
 
             // DOOM-0042 (Task 13): HD self-radiance on the primary hit. Added after the lit
             // terms so an emissive panel glows regardless of scene light. vec3(0) for materials
@@ -1595,10 +1631,14 @@ void main()
             {
                 uint seed = pcgHash((px.x + px.y * w) * 2654435761u
                                     + pc.misc3.x + si);
+                // DOOM-0103: mode 5 has no maps and RtPC does not reach misc7, so the
+                // lobe is on, at the roughness floor, seen along -dir (§4.2).
                 if (pc.misc3.z == 0u)
-                    sum += directNEEVerify(hitP, n, albedo, pc.misc2.x, pc.misc4.y, pc.emit, seed);
+                    sum += directNEEVerify(hitP, n, albedo, pc.misc2.x, pc.misc4.y, pc.emit,
+                                           -dir, kSpecRoughMin, 1u, mc.flags, seed);
                 else if (pc.misc3.z == 1u)
-                    sum += directAllLights(hitP, n, albedo, pc.misc2.x, pc.misc4.y, pc.emit, seed);
+                    sum += directAllLights(hitP, n, albedo, pc.misc2.x, pc.misc4.y, pc.emit,
+                                           -dir, kSpecRoughMin, 1u, mc.flags, seed);
                 else
                 {
                     // White-furnace math check: one cosine bounce into a constant
@@ -1679,18 +1719,21 @@ void main()
             // the high-frequency map detail, or it treats bumps as edges and under-denoises),
             // and gpos stored the TRUE hitP, so only the shadow rays use the lifted point.
             PrimaryLight s = primaryHitLighting(h, isSprite, prim, n);
+            SpecIn sp = primarySpecIn(h, dir);
+            vec3 spec;
             vec3 illum = shadeSurface(s.shadeP, s.shadeN, vec3(1.0), h.id, pc.misc2.x, pc.misc4.y,
                                       pc.emit, pc.matEmis, NEE_SAMPLES, false,
                                       1.0,   // addEmission is false here: the composite
                                              // re-adds emission from galbedo.a instead
-                                      s.hitSec, pc.misc4.z, pc.emitSec, pc.reject, seed);
+                                      s.hitSec, pc.misc4.z, pc.emitSec, pc.reject,
+                                      sp.v, sp.rough, sp.setting, sp.ctrlFlags, spec, seed);
             // Demodulated: the composite re-applies albedo, so modAlbedo is vec3(1.0).
-            illum = primaryHitAddTerms(illum, h, s, n, vb.v[i0 + 10u], vec3(1.0));
+            illum = primaryHitAddTerms(illum, h, s, n, vb.v[i0 + 10u], vec3(1.0), sp, spec);
 
             if (any(isnan(illum)) || any(isinf(illum))) illum = vec3(0.0);
             imageStore(gillum, ivec2(px), vec4(illum, 1.0));
-            // DOOM-0103: the specular sum. Zero until B3 adds the lobe at the NEE sites.
-            vec3 spec = vec3(0.0);
+            // DOOM-0103: the specular sum, never divided by albedo (INV-3).
+            if (any(isnan(spec)) || any(isinf(spec))) spec = vec3(0.0);
             imageStore(gspec, ivec2(px), vec4(spec, 0.0));
             return;                                 // feed writes the G-buffer only
         }

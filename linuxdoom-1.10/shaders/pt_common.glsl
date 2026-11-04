@@ -544,12 +544,14 @@ bool occluded(vec3 hitP, vec3 n, vec3 wi, float dist)
 // Full single-emitter direct estimate: unshadowed contribution gated by one shadow
 // ray (the static-NEE and INV-6 verify paths' workhorse). Behaviour and seed usage
 // are identical to the pre-DOOM-0120 monolithic version — it now just composes the
-// two helpers above.
+// two helpers above. DOOM-0103: wiOut is the sampled light direction, for the specular
+// lobe; vec3(0) where the emitter is degenerate or back-facing.
 vec3 sampleEmitter(uint k, vec3 hitP, vec3 n, float pdfSel, uint omniStart, Emitters emit,
-                   float minContribValue, inout uint seed)
+                   float minContribValue, out vec3 wiOut, inout uint seed)
 {
     vec3  wi; float dist;
     vec3  contrib = emitterContribUnshadowed(k, hitP, n, pdfSel, omniStart, emit, wi, dist, seed);
+    wiOut = wi;
     if (contrib == vec3(0.0)) return vec3(0.0); // degenerate / back-facing
 
     // DOOM-0090 contribution cull (opt-in: minContribValue > 0, omni path only).
@@ -576,11 +578,17 @@ vec3 sampleEmitter(uint k, vec3 hitP, vec3 n, float pdfSel, uint omniStart, Emit
 // -> no cull); numSectors is the REJECT matrix dimension (0 = cull off). emitSec +
 // reject are the cull buffers. They gate ONLY the omnidirectional sprite loop below;
 // the GI bake passes numSectors 0 (its omni loop is empty, omniStart == emitCount).
+// DOOM-0103: `spec` receives the specular sum, kept apart from the returned matte light
+// and never multiplied by albedo. v is the unit direction to the eye, rough the
+// surface's roughness; specSet and ctrlFlags go to specOn. The bake passes v = 0 and
+// specSet 0, so it adds none (INV-2).
 vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
                   uint omniStart, Emitters emit, MatEmis matEmis, uint nSamples,
                   bool addEmission, float emisMask, uint hitSec, uint numSectors,
-                  EmitSec emitSec, Reject reject, inout uint seed)
+                  EmitSec emitSec, Reject reject, vec3 v, float rough, uint specSet,
+                  uint ctrlFlags, out vec3 spec, inout uint seed)
 {
+    spec = vec3(0.0);
     // Self-emission (linear) from the per-material Le table, scaled by `emisMask`.
     // DOOM-0302: the mask is now decided BY THE CALLER rather than computed here from
     // the albedo, because the right answer depends on the material's flags (a liquid
@@ -608,7 +616,7 @@ vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
     {
         if (omniStart > 0u)              // power-importance-sample the static set
         {
-            vec3 direct = vec3(0.0);
+            vec3 direct = vec3(0.0), sdirect = vec3(0.0);
             for (uint si = 0u; si < nSamples; si++)
             {
                 // Binary-search the cdf (slot 12) over [0, omniStart) for the first
@@ -628,11 +636,16 @@ vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
                     else                             hi = mid;
                 }
                 float pdf = emit.e[lo * 14u + 13u] / max(cdfMax, 1e-8);
-                vec3  c   = sampleEmitter(lo, hitP, n, pdf, omniStart, emit, 0.0, seed);
+                vec3  wi;
+                vec3  c   = sampleEmitter(lo, hitP, n, pdf, omniStart, emit, 0.0, wi, seed);
                 vec3  rad = albedo * (1.0 / PI) * c; // reflected radiance (Lambert)
                 direct += min(rad, vec3(FIREFLY_MAX)); // firefly clamp, PER CHANNEL: a saturated light desaturates rather than dims
+                // DOOM-0103: the same sample and shadow ray, clamped on its own.
+                if (specOn(specSet, ctrlFlags))
+                    sdirect += min(specBrdf(n, v, wi, rough) * c, vec3(FIREFLY_MAX));
             }
-            L += direct / float(nSamples);
+            L    += direct  / float(nSamples);
+            spec += sdirect / float(nSamples);
         }
 
         // DOOM-0120 RIS: resample the omnidirectional sprite lights down to ONE shadow
@@ -644,6 +657,7 @@ vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
         // across frames or neighbours (the part that hurts RDNA2 registers); TAAU +
         // SVGF absorb the single ray's per-pixel visibility noise over time.
         vec3  selRefl = vec3(0.0);     // survivor's clamped UNSHADOWED reflected radiance
+        vec3  selC    = vec3(0.0);     // survivor's unshadowed incident estimate (DOOM-0103)
         vec3  selWi   = vec3(0.0);
         float selDist = 0.0, selTgt = 0.0, wsum = 0.0;
         for (uint k = omniStart; k < emitCount; k++)
@@ -679,13 +693,18 @@ vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
             wsum += tgt;
             if (rnd(seed) * wsum < tgt)           // weighted reservoir: keep w.p. tgt/wsum
             {
-                selRefl = refl; selWi = wi; selDist = dist; selTgt = tgt;
+                selRefl = refl; selC = c; selWi = wi; selDist = dist; selTgt = tgt;
             }
         }
         // One shadow ray to the survivor; reweight by wsum/selTgt so E[estimate] equals
         // the old per-light-clamped sum  Σ_k min(rad_k, FIREFLY_MAX)·V_k  exactly.
-        if (selTgt > 0.0 && !occluded(hitP, n, selWi, selDist))
+        // DOOM-0103: the target stays the matte one, so the pick does not change; the
+        // survivor's highlight takes the same weight (§4.2).
+        if (selTgt > 0.0 && !occluded(hitP, n, selWi, selDist)) {
             L += selRefl * (wsum / selTgt);
+            if (specOn(specSet, ctrlFlags))
+                spec += min(specBrdf(n, v, selWi, rough) * selC, vec3(FIREFLY_MAX)) * (wsum / selTgt);
+        }
     }
     return L;
 }
@@ -719,8 +738,11 @@ vec3 cosineHemisphere(vec3 n, inout uint seed)
 // sampleEmitter interprets a picked emitter (oriented < omniStart, omni >=); the real
 // omniStart (pc.misc4.y) is now passed so the omni emitters are covered, and
 // directAllLights passes the same omniStart, so the importance identity holds (INV-6).
+// DOOM-0103: both estimators add the same specular term, so -rtverify covers the lobe;
+// v, rough, specSet and ctrlFlags are shadeSurface's.
 vec3 directNEEVerify(vec3 hitP, vec3 n, vec3 albedo, uint emitCount,
-                     uint omniStart, Emitters emit, inout uint seed)
+                     uint omniStart, Emitters emit, vec3 v, float rough, uint specSet,
+                     uint ctrlFlags, inout uint seed)
 {
     if (emitCount == 0u) return vec3(0.0);
     float u  = rnd(seed);
@@ -732,7 +754,11 @@ vec3 directNEEVerify(vec3 hitP, vec3 n, vec3 albedo, uint emitCount,
         else                             hi = mid;
     }
     float pdf = emit.e[lo * 14u + 13u];
-    return albedo * (1.0 / PI) * sampleEmitter(lo, hitP, n, pdf, omniStart, emit, 0.0, seed);
+    vec3  wi;
+    vec3  c = sampleEmitter(lo, hitP, n, pdf, omniStart, emit, 0.0, wi, seed);
+    vec3  r = albedo * (1.0 / PI) * c;
+    if (specOn(specSet, ctrlFlags)) r += specBrdf(n, v, wi, rough) * c;
+    return r;
 }
 
 // Brute-force reference: evaluate EVERY emitter each sample (no importance
@@ -743,11 +769,16 @@ vec3 directNEEVerify(vec3 hitP, vec3 n, vec3 albedo, uint emitCount,
 // area sample remains), so it converges in far fewer samples than a unidirectional
 // estimator would on DOOM's sparse emitters.
 vec3 directAllLights(vec3 hitP, vec3 n, vec3 albedo, uint emitCount,
-                     uint omniStart, Emitters emit, inout uint seed)
+                     uint omniStart, Emitters emit, vec3 v, float rough, uint specSet,
+                     uint ctrlFlags, inout uint seed)
 {
-    vec3 sum = vec3(0.0);
-    for (uint k = 0u; k < emitCount; k++)
-        sum += sampleEmitter(k, hitP, n, 1.0, omniStart, emit, 0.0, seed);   // pdfSel = 1 -> full light
-    return albedo * (1.0 / PI) * sum;
+    vec3 sum = vec3(0.0), ssum = vec3(0.0);
+    for (uint k = 0u; k < emitCount; k++) {
+        vec3 wi;
+        vec3 c = sampleEmitter(k, hitP, n, 1.0, omniStart, emit, 0.0, wi, seed);   // pdfSel = 1 -> full light
+        sum += c;
+        if (specOn(specSet, ctrlFlags)) ssum += specBrdf(n, v, wi, rough) * c;
+    }
+    return albedo * (1.0 / PI) * sum + ssum;
 }
 
