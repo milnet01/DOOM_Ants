@@ -299,8 +299,9 @@ before and after, with `specular` 1 and `surface_detail` 1:
   0.8 ms and the temporal pass by at most 0.3 ms. That is this feature's
   share under DOOM-0279.
 - **Rasterised view, DOOM-0170 reference (1920x1080, 100%, E1M1 start):**
-  the scene pass (`profMs[1]`) grows by at most 0.3 ms, and the frame rate
-  stays at or above 60 (DOOM-0170 INV-2).
+  the scene pass (`profMs[1]`) grows by at most 0.4 ms, and the frame rate
+  stays at or above 60 (DOOM-0170 INV-2). The user raised this from 0.3 ms
+  on 2026-11-05, after B6 measured +0.39 ms at 1920x1200.
 
 ## 7. Build order
 

@@ -15436,9 +15436,7 @@ in CLAUDE.md describes.
   specular 0 -> 1: 2.12 -> 2.51, so the lobe costs +0.39 ms (about
   +0.35 at 1080p). OVER the 0.3 ms budget. Frame rate stays far above
   60 (frame about 3.8 ms).
-  Waiting-on: user (raster lobe +0.35 ms vs budget 0.3: accept and
-  raise the budget to 0.4, or trim the lobe? Recommendation: accept;
-  Solid raster still runs about 260 FPS, 2026-11-05).
+  User 2026-11-05: accept; spec §6 raster budget raised to 0.4 ms. B6's timings now pass. Still open: the B4 look above.
   **Layman:** Shiny surfaces — metal, wet floors, slime — get realistic highlights like modern DOOM, without losing the classic look.
   Kind: feature.
   Source: user-request-2026-06-29.
@@ -18462,7 +18460,7 @@ in CLAUDE.md describes.
   Kind: feature.
   Source: user-play-test-2026-11-02.
 
-- 🚧 [DOOM-0543] **Make Ultra's floors like the VkDOOM video's hex tiles: real bevels, each tile catching light differently, grime in the gaps.**
+- ✅ [DOOM-0543] **Make Ultra's floors like the VkDOOM video's hex tiles: real bevels, each tile catching light differently, grime in the gaps.**
   User 2026-11-02: "We still need to do the floor like it was done in that video you analysed." Reading taken from the study: scratch/ref-frames/vkdoom/sheet-012.png, 1:39 to 1:41, notes-part1.md (roughness varies tile by tile, dirt between tiles) and the dark glossy floors at 0:17 and 3:09. Not confirmed with the user which floor they meant.
   User 2026-11-03 confirmed: the floor meant is the VkDOOM video's hex
   tiles at 1:39.
@@ -18479,8 +18477,7 @@ in CLAUDE.md describes.
   Textures/Ground/doom_floor4_8_floor. E1M1 590 -3480 334, Ultra: sheet
   scratch/fled/look/f48-sheet.png (old photo squares vs new hexes, both
   views). Next: FLOOR5_2 and FLOOR5_1 on the same builder.
-  Waiting-on: user (does FLOOR4_8 now read like the video's hex tiles?
-  Recommendation: yes; then batch FLOOR5_2 and FLOOR5_1, 2026-11-04).
+  User 2026-11-05: FLOOR4_8 approved.
   2026-11-04: FLOOR5_1 and FLOOR5_2 rebuilt the same way. The hex code
   moved to Blender Scripts/lib/hexfloor.py; floors/doom_floor4_8.py,
   doom_floor5_1.py and doom_floor5_2.py each pass the flat's colours
@@ -18490,9 +18487,7 @@ in CLAUDE.md describes.
   hex layout. E2M1 test scene, Ultra traced: FLOOR5_2's tiles catch the
   red cross one by one (scratch/fled/look/f5x-sheet.png). FLOOR5_1 is
   not yet seen in play: two E1M1 spots faced walls.
-  Waiting-on: user (is FLOOR5_2's gloss under the red cross too strong?
-  Recommendation: keep; raise the roughness range's floor from 0.22 if
-  it reads wet, 2026-11-04).
+  User 2026-11-05: FLOOR5_2's gloss approved as it is. Shipped.
   **Layman:** Floor tiles look like separate worn slabs that catch the light one by one, as in the reference video.
   Kind: feature.
   Source: user-play-test-2026-11-02.

@@ -8,6 +8,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Ultra's hex floors (FLOOR4_8, FLOOR5_1, FLOOR5_2) are real bevelled tiles that each catch the light differently, with grime in the gaps.** (DOOM-0543)
+  Floor tiles look like separate worn slabs that catch the light one by one, as in the reference video.
+
 - **Bloom in the ray-traced views, so bright lights and glowing things read as bright.** (DOOM-0345)
 
 - **Bloom in the rasterised views too, with a menu setting.** (DOOM-0331)
