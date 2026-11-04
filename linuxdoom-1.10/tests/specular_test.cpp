@@ -48,6 +48,11 @@ struct vec3 {
 static vec3 operator+(vec3 a, vec3 b) { return vec3(a.x + b.x, a.y + b.y, a.z + b.z); }
 static vec3 operator-(float s, vec3 a) { return vec3(s - a.x, s - a.y, s - a.z); }
 static vec3 operator*(vec3 a, float s) { return vec3(a.x * s, a.y * s, a.z * s); }
+static vec3 operator*(float s, vec3 a) { return a * s; }
+static vec3 mix(vec3 a, vec3 b, float t)
+{
+    return vec3(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t);
+}
 static float dot(vec3 a, vec3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
 static vec3 normalize(vec3 a) { return a * (1.0f / std::sqrt(dot(a, a))); }
 static float max(float a, float b) { return a > b ? a : b; }
@@ -98,22 +103,26 @@ static double refV(double NdotV, double NdotL, double a)
 // Schlick 1994.
 static double refF(double VdotH, double f0) { return f0 + (1.0 - f0) * std::pow(1.0 - VdotH, 5.0); }
 
-static double refSpec(D3 n, D3 v, D3 l, double rough)
+static double refSpec(D3 n, D3 v, D3 l, double rough, double f0 = 0.04)
 {
     double NdotV = dot3(n, v), NdotL = dot3(n, l);
     if (NdotV <= 0.0 || NdotL <= 0.0) return 0.0;
     D3 h = unit({v.x + l.x, v.y + l.y, v.z + l.z});
     double r = rough > 0.35 ? rough : 0.35;   // the spec's floor, written out on purpose
     double a = r * r;
-    return refD(dot3(n, h), a) * refV(NdotV, NdotL, a) * refF(dot3(v, h), 0.04);
+    return refD(dot3(n, h), a) * refV(NdotV, NdotL, a) * refF(dot3(v, h), f0);
 }
 
+// The shader's lobe; f0 defaults to the dielectric 0.04 written out, not kSpecF0.
+static glsl::vec3 shader3(D3 n, D3 v, D3 l, float rough, glsl::vec3 f0)
+{
+    return glsl::specBrdf(glsl::vec3(float(n.x), float(n.y), float(n.z)),
+                          glsl::vec3(float(v.x), float(v.y), float(v.z)),
+                          glsl::vec3(float(l.x), float(l.y), float(l.z)), rough, f0);
+}
 static float shader(D3 n, D3 v, D3 l, float rough)
 {
-    glsl::vec3 r = glsl::specBrdf(glsl::vec3(float(n.x), float(n.y), float(n.z)),
-                                  glsl::vec3(float(v.x), float(v.y), float(v.z)),
-                                  glsl::vec3(float(l.x), float(l.y), float(l.z)), rough);
-    return r.x;
+    return shader3(n, v, l, rough, glsl::vec3(0.04f)).x;
 }
 
 static std::string slurp(const std::string& path)
@@ -223,6 +232,22 @@ int main()
     check(shader(n, {0, 0, 0}, l, 0.5f) == 0.0f, "a zero view direction (the bake) returns 0");
     check(shader(n, unit({0.6, 0, -0.8}), l, 0.5f) == 0.0f, "a view below the surface returns 0");
     check(shader(n, v, unit({0.3, 0, -0.95}), 0.5f) == 0.0f, "a light below the surface returns 0");
+
+    // DOOM-0517: specF0 is 0.04 for a dielectric and the albedo for a metal, and the lobe
+    // reflects each channel with its own f0.
+    const glsl::vec3 grey(0.55f, 0.6f, 0.65f);
+    glsl::vec3 d0 = glsl::specF0(grey, 0.0f), m1 = glsl::specF0(grey, 1.0f), mh = glsl::specF0(grey, 0.5f);
+    check(d0.x == 0.04f && d0.y == 0.04f && d0.z == 0.04f, "specF0 at metal 0 is 0.04 in every channel");
+    check(m1.x == grey.x && m1.y == grey.y && m1.z == grey.z, "specF0 at metal 1 is the albedo");
+    check(std::fabs(mh.y - 0.32f) < 1e-6f, "specF0 at metal 0.5 is halfway (0.04 to 0.6 gives 0.32)");
+    glsl::vec3 lobe = shader3(n, v, l, 0.9f, m1);
+    double we[3] = {grey.x, grey.y, grey.z}, gotc[3] = {lobe.x, lobe.y, lobe.z}, mworst = 0.0;
+    for (int c = 0; c < 3; ++c) {
+        double want = refSpec(n, v, l, 0.9, we[c]);
+        mworst = std::fmax(mworst, std::fabs(gotc[c] - want) / want);
+    }
+    std::printf("  [0517] metal lobe worst relative error per channel: %.2e\n", mworst);
+    check(mworst < 1e-4, "a metal's lobe matches Schlick with its albedo as f0, channel by channel");
 
     check(!glsl::specOn(0u, 0u), "specOn is false with the setting off");
     check(glsl::specOn(1u, 0u), "specOn is true with the setting on and no flags");

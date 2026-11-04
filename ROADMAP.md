@@ -17470,7 +17470,7 @@ in CLAUDE.md describes.
   Source: user-request-2026-10-26.
   Lanes: renderer, playsim.
 
-- 📋 [DOOM-0517] **Metal surfaces reflect light in their own colour (metallic specular).**
+- 🚧 [DOOM-0517] **Metal surfaces reflect light in their own colour (metallic specular).**
   DOOM-0103's specular lobe is dielectric only: F0 0.04 everywhere
   (docs/specs/DOOM-0103-specular-lobe.md §3). DOOM-0042's "wet metal
   shines" look needs a metallic input: F0 from albedo, no diffuse.
@@ -17478,6 +17478,22 @@ in CLAUDE.md describes.
   source (pbr_derive.py's _FAMILY table carries one). Found by the
   DOOM-0042 amendment review, 2026-10-26.
   Blocked by DOOM-0103.
+  2026-11-04: traced view built. specF0(albedo, metal) = mix(0.04,
+  albedo, metal) feeds specBrdf's Fresnel (Workbench
+  fresnelSchlickMetallic). Metal comes from the HD metallic map
+  (maps[3]); everything else is 0. A metal's direct light (NEE, sprite
+  lights, muzzle flash, flashlight) is matte x (1 - metal); its GI keeps
+  full albedo, which stands in for a rough metal mirroring the room until
+  DOOM-0104. specular_test: metal lobe matches Schlick per channel to
+  3e-7; red on two mutations. COMPTILE, E1M1 2426 -2432 180, Ultra traced:
+  plates a touch brighter with highlights on the bar edges (sheet
+  scratch/fled/look/m-ct-pair.png). Known: a fully metal surface (1.0)
+  picks no sprite light in mode 6, as the RIS target is matte; mode 4's
+  shown glow above the cap dims by 1 - metal. Still to do: the rasterised
+  view (with DOOM-0103 B5); a metallic source for Solid.
+  Waiting-on: user (does COMPTILE's grey metal now read as very rough
+  metal? Recommendation: yes, keep; raise only if it looks like plain
+  plaster, 2026-11-04).
   **Layman:** Metal walls and pipes get a coloured, mirror-like shine, as DOOM-0042's HD art intends; today every surface shines like painted plaster.
   Kind: feature.
   Source: review-contract-2026-10-26.

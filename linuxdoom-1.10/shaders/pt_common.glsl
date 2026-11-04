@@ -580,12 +580,13 @@ vec3 sampleEmitter(uint k, vec3 hitP, vec3 n, float pdfSel, uint omniStart, Emit
 // the GI bake passes numSectors 0 (its omni loop is empty, omniStart == emitCount).
 // DOOM-0103: `spec` receives the specular sum, kept apart from the returned matte light
 // and never multiplied by albedo. v is the unit direction to the eye, rough the
-// surface's roughness; specSet and ctrlFlags go to specOn. The bake passes v = 0 and
-// specSet 0, so it adds none (INV-2).
+// surface's roughness, f0 its specF0 (DOOM-0517); specSet and ctrlFlags go to specOn.
+// The bake passes v = 0 and specSet 0, so it adds none (INV-2). A metal's caller passes
+// albedo times (1 - metal), so a metal casts no matte light.
 vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
                   uint omniStart, Emitters emit, MatEmis matEmis, uint nSamples,
                   bool addEmission, float emisMask, uint hitSec, uint numSectors,
-                  EmitSec emitSec, Reject reject, vec3 v, float rough, uint specSet,
+                  EmitSec emitSec, Reject reject, vec3 v, float rough, vec3 f0, uint specSet,
                   uint ctrlFlags, out vec3 spec, inout uint seed)
 {
     spec = vec3(0.0);
@@ -642,7 +643,7 @@ vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
                 direct += min(rad, vec3(FIREFLY_MAX)); // firefly clamp, PER CHANNEL: a saturated light desaturates rather than dims
                 // DOOM-0103: the same sample and shadow ray, clamped on its own.
                 if (specOn(specSet, ctrlFlags))
-                    sdirect += min(specBrdf(n, v, wi, rough) * c, vec3(FIREFLY_MAX));
+                    sdirect += min(specBrdf(n, v, wi, rough, f0) * c, vec3(FIREFLY_MAX));
             }
             L    += direct  / float(nSamples);
             spec += sdirect / float(nSamples);
@@ -703,7 +704,7 @@ vec3 shadeSurface(vec3 hitP, vec3 n, vec3 albedo, uint id, uint emitCount,
         if (selTgt > 0.0 && !occluded(hitP, n, selWi, selDist)) {
             L += selRefl * (wsum / selTgt);
             if (specOn(specSet, ctrlFlags))
-                spec += min(specBrdf(n, v, selWi, rough) * selC, vec3(FIREFLY_MAX)) * (wsum / selTgt);
+                spec += min(specBrdf(n, v, selWi, rough, f0) * selC, vec3(FIREFLY_MAX)) * (wsum / selTgt);
         }
     }
     return L;
@@ -739,9 +740,9 @@ vec3 cosineHemisphere(vec3 n, inout uint seed)
 // omniStart (pc.misc4.y) is now passed so the omni emitters are covered, and
 // directAllLights passes the same omniStart, so the importance identity holds (INV-6).
 // DOOM-0103: both estimators add the same specular term, so -rtverify covers the lobe;
-// v, rough, specSet and ctrlFlags are shadeSurface's.
+// v, rough, f0, specSet and ctrlFlags are shadeSurface's.
 vec3 directNEEVerify(vec3 hitP, vec3 n, vec3 albedo, uint emitCount,
-                     uint omniStart, Emitters emit, vec3 v, float rough, uint specSet,
+                     uint omniStart, Emitters emit, vec3 v, float rough, vec3 f0, uint specSet,
                      uint ctrlFlags, inout uint seed)
 {
     if (emitCount == 0u) return vec3(0.0);
@@ -757,7 +758,7 @@ vec3 directNEEVerify(vec3 hitP, vec3 n, vec3 albedo, uint emitCount,
     vec3  wi;
     vec3  c = sampleEmitter(lo, hitP, n, pdf, omniStart, emit, 0.0, wi, seed);
     vec3  r = albedo * (1.0 / PI) * c;
-    if (specOn(specSet, ctrlFlags)) r += specBrdf(n, v, wi, rough) * c;
+    if (specOn(specSet, ctrlFlags)) r += specBrdf(n, v, wi, rough, f0) * c;
     return r;
 }
 
@@ -769,7 +770,7 @@ vec3 directNEEVerify(vec3 hitP, vec3 n, vec3 albedo, uint emitCount,
 // area sample remains), so it converges in far fewer samples than a unidirectional
 // estimator would on DOOM's sparse emitters.
 vec3 directAllLights(vec3 hitP, vec3 n, vec3 albedo, uint emitCount,
-                     uint omniStart, Emitters emit, vec3 v, float rough, uint specSet,
+                     uint omniStart, Emitters emit, vec3 v, float rough, vec3 f0, uint specSet,
                      uint ctrlFlags, inout uint seed)
 {
     vec3 sum = vec3(0.0), ssum = vec3(0.0);
@@ -777,7 +778,7 @@ vec3 directAllLights(vec3 hitP, vec3 n, vec3 albedo, uint emitCount,
         vec3 wi;
         vec3 c = sampleEmitter(k, hitP, n, 1.0, omniStart, emit, 0.0, wi, seed);   // pdfSel = 1 -> full light
         sum += c;
-        if (specOn(specSet, ctrlFlags)) ssum += specBrdf(n, v, wi, rough) * c;
+        if (specOn(specSet, ctrlFlags)) ssum += specBrdf(n, v, wi, rough, f0) * c;
     }
     return albedo * (1.0 / PI) * sum + ssum;
 }

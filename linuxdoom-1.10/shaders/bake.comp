@@ -136,7 +136,7 @@ void main()
                               pc.emit, pc.matEmis, BAKE_NEE, false,
                               1.0,   // unused: addEmission is false for the bake
                               0xFFFFFFFFu, 0u, pc.emitSec, pc.reject,
-                              vec3(0.0), 1.0, 0u, 0u, noSpec, seed);
+                              vec3(0.0), 1.0, vec3(kSpecF0), 0u, 0u, noSpec, seed);
 
             // Multi-bounce: on passes 2+ (giEnabled), add the light this surface
             // received from the PREVIOUS bounce's probes. Pass 1 builds 1-bounce

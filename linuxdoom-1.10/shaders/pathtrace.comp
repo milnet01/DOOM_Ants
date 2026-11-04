@@ -477,7 +477,8 @@ void tracePrimary(rayQueryEXT rq, vec3 o, vec3 d, bool seeThrough)
 // tracks it. Gated by the host firing strobe in misc2.z (0.0 = not firing).
 // DOOM-0103: muzzleFlashDelta and flashlightDelta add their highlight to `spec`, through
 // the same shadow ray, clamped per channel like the NEE sum. sp carries the inputs.
-struct SpecIn { vec3 v; float rough; uint setting; uint ctrlFlags; };
+// f0 is specF0's reflectance; diffW = 1 - metal scales the matte light (DOOM-0517).
+struct SpecIn { vec3 v; float rough; uint setting; uint ctrlFlags; vec3 f0; float diffW; };
 
 vec3 muzzleFlashDelta(vec3 hitP, vec3 n, vec3 albedo, SpecIn sp, inout vec3 spec)
 {
@@ -499,7 +500,7 @@ vec3 muzzleFlashDelta(vec3 hitP, vec3 n, vec3 albedo, SpecIn sp, inout vec3 spec
     if (rayQueryGetIntersectionTypeEXT(sq, true)
         != gl_RayQueryCommittedIntersectionNoneEXT) return vec3(0.0);
     if (specOn(sp.setting, sp.ctrlFlags))
-        spec += min(specBrdf(n, sp.v, mwi, sp.rough) * FLASH_COLOR
+        spec += min(specBrdf(n, sp.v, mwi, sp.rough, sp.f0) * FLASH_COLOR
                     * (flash * FLASH_INTENSITY) * mcos / (mdist2 + FLASH_RADIUS2),
                     vec3(FIREFLY_MAX));
     return albedo * (1.0 / PI) * FLASH_COLOR
@@ -529,7 +530,7 @@ vec3 flashlightDelta(vec3 hitP, vec3 n, vec3 albedo, SpecIn sp, inout vec3 spec)
     if (rayQueryGetIntersectionTypeEXT(sq, true)
         != gl_RayQueryCommittedIntersectionNoneEXT) return vec3(0.0);
     if (specOn(sp.setting, sp.ctrlFlags))
-        spec += min(specBrdf(n, sp.v, fwi, sp.rough) * FLASHLIGHT_COLOR
+        spec += min(specBrdf(n, sp.v, fwi, sp.rough, sp.f0) * FLASHLIGHT_COLOR
                     * (FLASHLIGHT_INTENSITY * spot) * fcos / (fl2 + FLASHLIGHT_RADIUS2),
                     vec3(FIREFLY_MAX));
     return albedo * (1.0 / PI) * FLASHLIGHT_COLOR
@@ -1222,6 +1223,7 @@ struct PrimaryHit {
     float   emisW;      // DOOM-0389: emisWeight of the albedo BEFORE grime
     bool    addEmis;
     float   rough;      // DOOM-0103: the specular lobe's perceptual roughness (§4.1)
+    float   metal;      // DOOM-0517: 0 dielectric, 1 metal
 };
 
 // DOOM-0539: a hit's material row. A sprite lump's HD row belongs to its model, so a billboard
@@ -1306,6 +1308,12 @@ PrimaryHit primaryHitSurface(Verts vb, uint i0, bool isSprite, vec2 hitUV, vec3 
     } else {
         h.rough = 1.0;
     }
+    // DOOM-0517: metal from the HD metallic map, de-tiled like AO; nothing else has one.
+    if (h.mc.usePBR != 0u && h.mc.maps[3] >= 0)
+        h.metal = detileFor(h.mc) ? detileR(uint(h.mc.maps[3]), h.sUV, h.dG)
+                                  : HD_TEX(h.mc.maps[3], h.sUV).r;
+    else
+        h.metal = 0.0;
     // DOOM-0389: decide the glow BEFORE grime. applyGrime scales the albedo by as little
     // as 0.35 and can paint a brown stain over it, and emissiveMask thresholds that albedo,
     // so grime applied first switches off the dimmer texels of a dirty lamp.
@@ -1373,7 +1381,9 @@ PrimaryLight primaryHitLighting(PrimaryHit h, bool isSprite, int prim, vec3 n)
 // Everything added after shadeSurface, in the order both modes add it (float addition is
 // not associative, so the order is part of the contract). modAlbedo is the surface albedo
 // on the display path and vec3(1.0) on the demodulated feed; 1.0 * x == x exactly.
-// DOOM-0103: the deltas' highlights go to `spec`.
+// DOOM-0103: the deltas' highlights go to `spec`. DOOM-0517: a metal's deltas cast no
+// matte light, but its GI term keeps the albedo: with no reflections yet (DOOM-0104), that
+// stands in for a rough metal mirroring the room.
 vec3 primaryHitAddTerms(vec3 L, PrimaryHit h, PrimaryLight s, vec3 n, float secLight,
                         vec3 modAlbedo, SpecIn sp, inout vec3 spec)
 {
@@ -1404,8 +1414,8 @@ vec3 primaryHitAddTerms(vec3 L, PrimaryHit h, PrimaryLight s, vec3 n, float secL
     // Dynamic point-light deltas (build step 5): the muzzle flash + the DOOM-0044 player
     // flashlight, each a hard ray-traced shadow composited additively over the baked static
     // (DOOM-0130 shared helpers).
-    L += muzzleFlashDelta(s.shadeP, s.shadeN, modAlbedo, sp, spec);
-    L += flashlightDelta(s.shadeP, s.shadeN, modAlbedo, sp, spec);
+    L += muzzleFlashDelta(s.shadeP, s.shadeN, modAlbedo * sp.diffW, sp, spec);
+    L += flashlightDelta(s.shadeP, s.shadeN, modAlbedo * sp.diffW, sp, spec);
     return L;
 }
 
@@ -1414,7 +1424,7 @@ vec3 primaryHitAddTerms(vec3 L, PrimaryHit h, PrimaryLight s, vec3 n, float secL
 SpecIn primarySpecIn(PrimaryHit h, vec3 dir)
 {
     uint setting = (wetOn() && h.gooWet > 0.0) ? 0u : pc.misc7.y;
-    return SpecIn(-dir, h.rough, setting, h.mc.flags);
+    return SpecIn(-dir, h.rough, setting, h.mc.flags, specF0(h.albedo, h.metal), 1.0 - h.metal);
 }
 
 void main()
@@ -1582,11 +1592,11 @@ void main()
             PrimaryLight s = primaryHitLighting(h, isSprite, prim, n);
             SpecIn sp = primarySpecIn(h, dir);
             vec3 spec;
-            vec3 L = shadeSurface(s.shadeP, s.shadeN, h.albedo, h.id, pc.misc2.x, pc.misc4.y,
+            vec3 L = shadeSurface(s.shadeP, s.shadeN, h.albedo * sp.diffW, h.id, pc.misc2.x, pc.misc4.y,
                                   pc.emit, pc.matEmis, NEE_SAMPLES, h.addEmis,
                                   h.emisW,
                                   s.hitSec, pc.misc4.z, pc.emitSec, pc.reject,
-                                  sp.v, sp.rough, sp.setting, sp.ctrlFlags, spec, seed);
+                                  sp.v, sp.rough, sp.f0, sp.setting, sp.ctrlFlags, spec, seed);
             L = primaryHitAddTerms(L, h, s, n, vb.v[i0 + 10u], h.albedo, sp, spec);   // display: keeps albedo
             L += spec;   // DOOM-0103: not multiplied by albedo, as the composite adds hspec
 
@@ -1635,10 +1645,10 @@ void main()
                 // lobe is on, at the roughness floor, seen along -dir (§4.2).
                 if (pc.misc3.z == 0u)
                     sum += directNEEVerify(hitP, n, albedo, pc.misc2.x, pc.misc4.y, pc.emit,
-                                           -dir, kSpecRoughMin, 1u, mc.flags, seed);
+                                           -dir, kSpecRoughMin, vec3(kSpecF0), 1u, mc.flags, seed);
                 else if (pc.misc3.z == 1u)
                     sum += directAllLights(hitP, n, albedo, pc.misc2.x, pc.misc4.y, pc.emit,
-                                           -dir, kSpecRoughMin, 1u, mc.flags, seed);
+                                           -dir, kSpecRoughMin, vec3(kSpecF0), 1u, mc.flags, seed);
                 else
                 {
                     // White-furnace math check: one cosine bounce into a constant
@@ -1710,6 +1720,8 @@ void main()
             // Direct NEE with albedo 1 + no emission -> the pure incident/PI direct
             // irradiance; baked GI irradiance is already albedo-free; the muzzle
             // flash term likewise without albedo. albedo/emission ride separately.
+            // DOOM-0517: the direct terms take 1 - metal in place of 1, so a metal's
+            // direct light is all specular; its GI keeps full weight.
             // Seed folds in the frame counter (misc3.x) so each frame is an
             // INDEPENDENT sample -> temporal accumulation converges and the SVGF
             // variance estimate is non-zero (a frozen seed defeats the denoiser).
@@ -1721,12 +1733,12 @@ void main()
             PrimaryLight s = primaryHitLighting(h, isSprite, prim, n);
             SpecIn sp = primarySpecIn(h, dir);
             vec3 spec;
-            vec3 illum = shadeSurface(s.shadeP, s.shadeN, vec3(1.0), h.id, pc.misc2.x, pc.misc4.y,
+            vec3 illum = shadeSurface(s.shadeP, s.shadeN, vec3(sp.diffW), h.id, pc.misc2.x, pc.misc4.y,
                                       pc.emit, pc.matEmis, NEE_SAMPLES, false,
                                       1.0,   // addEmission is false here: the composite
                                              // re-adds emission from galbedo.a instead
                                       s.hitSec, pc.misc4.z, pc.emitSec, pc.reject,
-                                      sp.v, sp.rough, sp.setting, sp.ctrlFlags, spec, seed);
+                                      sp.v, sp.rough, sp.f0, sp.setting, sp.ctrlFlags, spec, seed);
             // Demodulated: the composite re-applies albedo, so modAlbedo is vec3(1.0).
             illum = primaryHitAddTerms(illum, h, s, n, vb.v[i0 + 10u], vec3(1.0), sp, spec);
 

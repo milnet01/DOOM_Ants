@@ -6696,8 +6696,8 @@ static const int   kHdSourceMaxEdge = 4096;
 static const float kHdBudgetMB  = 768.0f;  // per-map VRAM ceiling
 static const float kHdMipFactor = 4.0f / 3.0f;   // a full mip chain's share of an image (DOOM-0182)
 
-// Every map is uploaded. Roughness and metallic land in MatCtrl.maps[2] and [3] for
-// DOOM-0103's lobe and DOOM-0517's metal; no shader reads them before those.
+// Every map is uploaded. Roughness and metallic land in MatCtrl.maps[2] and [3], read by
+// DOOM-0103's lobe and DOOM-0517's metal in the traced view.
 struct HdMapSpec { int k; const char* suffix; bool srgb; };
 static const HdMapSpec kHdV1Maps[] = {
     { RB_ALB,  "alb",  true  },   // sRGB (hardware de-gammas)
