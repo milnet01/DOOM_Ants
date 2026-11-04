@@ -14869,6 +14869,20 @@ in CLAUDE.md describes.
   green 0.5, blue 1.8 (box not yet fixed in INV-5). Walls gleam red at
   grazing angles. Sheet: scratch/fled/look/b3-e2-pair.png. NEXT: B4 is
   the user's look; DOOM-0517 metal meanwhile.
+  Waiting-on: user (B4: play E2M1's test scene and E1M1 in Solid traced
+  with Shine on and off; is the walls' red gleam toward the cross too
+  strong, noisy or trailing? Recommendation: keep it; if too strong,
+  raise kSpecRoughMin first, 2026-11-04). B5 (raster) proceeds
+  meanwhile.
+  2026-11-04: B5 built (rasterised view). Blinn-Phong in mesh.frag's
+  flashlight and point-light blocks, weighted by specF0 and (n + 8) / 8,
+  into direct; specExponent in specular.glsl. Fix on the way: metal was
+  losing matte light with Shine off (traced too), now matte as before.
+  kRasterSpecStrength 1.0. Raster on minus off: E2M1 test scene red 3.25
+  (traced 13.6), COMPTILE +8. Sheet: scratch/fled/look/r-b5-sheet.png.
+  Waiting-on: user (raster gleam strength: E2M1's is faint next to the
+  traced view; 2 bloomed COMPTILE white. Recommendation: keep 1.0,
+  2026-11-04). NEXT: B6 (INV-4 captures old vs new, §6 timings).
   **Layman:** Shiny surfaces — metal, wet floors, slime — get realistic highlights like modern DOOM, without losing the classic look.
   Kind: feature.
   Source: user-request-2026-06-29.
@@ -17494,6 +17508,10 @@ in CLAUDE.md describes.
   Waiting-on: user (does COMPTILE's grey metal now read as very rough
   metal? Recommendation: yes, keep; raise only if it looks like plain
   plaster, 2026-11-04).
+  2026-11-04: rasterised view built with DOOM-0103 B5: the highlight
+  takes specF0(albedo, metal) and a metal's flashlight and point light
+  have no matte part. COMPTILE's plates in Ultra raster keep their grey
+  with a soft sheen. Left: a metallic source for Solid (none today).
   **Layman:** Metal walls and pipes get a coloured, mirror-like shine, as DOOM-0042's HD art intends; today every surface shines like painted plaster.
   Kind: feature.
   Source: review-contract-2026-10-26.
@@ -17818,6 +17836,11 @@ in CLAUDE.md describes.
   0.90; the blue middle reads metal 0.02. The engine loads both maps
   (158 to 160 HD images in E1M1 Ultra). No shader reads them yet, so
   nothing looks different until DOOM-0103 B1 and B3 and DOOM-0517.
+  2026-11-04: DOOM-0103 B1/B3 and DOOM-0517's traced half are in
+  (fac2770). In Ultra's traced view COMPTILE's grey plates now take a
+  soft metal sheen and highlights on the bar edges. The raster view
+  follows with DOOM-0103 B5. Waiting-on: user (does it read as very
+  rough metal? see DOOM-0517, 2026-11-04).
   **Layman:** The grey plates on the blue processor wall look like rough metal that picks up a smeared hint of the room's light.
   Kind: feature.
   Source: user-play-test-2026-11-02.

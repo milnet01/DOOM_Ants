@@ -16,8 +16,9 @@
 //          material never gets the derived map on top of its own.
 //   INV-4  (raster half) mesh.frag reads the paletted colour at surfOffsetUV's UV.
 //   INV-7  In mesh.frag the derived normal (shadeN) is read only by the flashlight's
-//          facing term and the point lights' ndl term, and every surf call sits inside
-//          #ifndef SINGLE_TARGET, so the weapon overlay build has none.
+//          facing term, the point lights' ndl term and DOOM-0103's highlight (ndh, one
+//          in each block), and every surf call sits inside #ifndef SINGLE_TARGET, so the
+//          weapon overlay build has none.
 // INV-4 and INV-6 scrape the shader source by name, never by line position.
 //
 // Build/run: `make test` (from linuxdoom-1.10/).
@@ -305,17 +306,18 @@ int main()
                               || line.find("vec3  shadeN") != std::string::npos;
                 if (def) continue;
                 shadeUses++;
-                if (line.find("facing") == std::string::npos && line.find("ndl") == std::string::npos) {
+                if (line.find("facing") == std::string::npos && line.find("ndl") == std::string::npos
+                    && line.find("ndh") == std::string::npos) {
                     strayUses++;
-                    std::printf("  [INV-7] shadeN read outside facing/ndl: %s\n", line.c_str());
+                    std::printf("  [INV-7] shadeN read outside facing/ndl/ndh: %s\n", line.c_str());
                 }
             }
         }
         std::printf("  [INV-7] %d surf line(s), %d outside; shadeN read %d time(s), %d stray\n",
                     surfCalls, outside, shadeUses, strayUses);
         check(surfCalls > 0 && outside == 0, "INV-7: every surf call sits inside #ifndef SINGLE_TARGET");
-        check(shadeUses == 2 && strayUses == 0,
-              "INV-7: the derived normal is read only by the facing and ndl terms");
+        check(shadeUses == 4 && strayUses == 0,
+              "INV-7: the derived normal is read only by the facing, ndl and ndh terms");
     }
 
     return check_summary("surface_derive_test");

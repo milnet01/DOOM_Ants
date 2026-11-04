@@ -416,8 +416,9 @@ of STONE2 walls and FLOOR5_2 floor leading to the REDWALL1 cross
   flashlight and point-light terms. Sector light and GI are not touched, and
   the weapon overlay is unchanged.
   *Test:* `tests/surface_derive_test.cpp` scrapes `mesh.frag`: the surface
-  normal is read only by the `facing` and `ndl` expressions, and every
-  `surf` call sits inside `#ifndef SINGLE_TARGET`.
+  normal is read only by the `facing` and `ndl` expressions and DOOM-0103's
+  highlight `ndh` (one in each of those two blocks), and every `surf` call
+  sits inside `#ifndef SINGLE_TARGET`.
   *Breaks when:* the sector or GI term uses the bumped normal, which darkens
   whole walls under flat light.
 

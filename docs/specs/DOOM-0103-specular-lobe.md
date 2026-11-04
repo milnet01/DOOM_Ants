@@ -99,8 +99,10 @@ All under `linuxdoom-1.10/`.
   with no shadow.
 - **Direct light only.** Reflections of the room are DOOM-0104. The GI
   probes stay matte.
-- **Dielectric only.** Every surface takes F0 0.04. Metal needs a metallic
-  map, and no texture has one in Solid. Deferred, not queued.
+- **Dielectric here.** This spec gives every surface F0 0.04. DOOM-0517
+  adds metal on top (2026-11-04): `specF0(albedo, metal)` from the HD
+  metallic map, and a metal's direct light has no matte part. With
+  `specular` 0, metal is matte, so INV-4 still holds.
 - **Liquids keep their sheen.** Where `MatCtrl.flags` marks a liquid, the
   lobe is skipped, so DOOM-0183's sheen is not doubled and its INV-3 holds.
 - **The highlight keeps the light's colour.** It must not repeat
@@ -218,17 +220,23 @@ differs.
 Inside the existing point-light loop and the flashlight block:
 
 ```glsl
-float sp = pow(max(dot(N, normalize(L + V)), 0.0), specExponent(r));
-pspec += sp * col * att;   // beside plight; same col, att and reach as ndl
+float ndh = max(dot(N, normalize(L + V)), 0.0);
+pspec += pow(ndh, specN) * specNorm * ndl * col * att;   // only where ndl > 0
 ```
 
+- `specN` is `specExponent(r)`. `specNorm` is the normalised Blinn-Phong
+  factor `(specN + 8) / 8`, so a broad highlight is faint and a tight one
+  bright.
 - After the loop, `pspec` takes `plight`'s `POINT_LIGHT_GAIN` and roll-off,
   so one panel's many emitter slots cannot stack to white. Then
-  `direct += kRasterSpecStrength * pspec`.
-- In the flashlight block, `sp` is scaled by `lit * sh`, so the highlight
+  `direct += kRasterSpecStrength * pspec * specCol`, where `specCol` is
+  `specF0(albedo, metal)`: 0.04 on plaster, as the traced lobe. B5 found an
+  unweighted highlight washed dark texels grey (2026-11-04).
+- In the flashlight block, the highlight is scaled by `lit * sh`, so it
   takes the beam's cone and its existing shadow.
+- World surfaces only: sprites get no raster highlight.
 
-- `N` is DOOM-0273's surface normal, and `r` its roughness.
+- `N` is DOOM-0273's surface normal, and `r` the roughness §4.1 names.
 - `specExponent` maps roughness to a Blinn-Phong exponent, so a rough
   floor's highlight is broad, the same way GGX makes it broad. It lives in
   `formulas/specular.glsl`.
@@ -429,7 +437,8 @@ Each scrape is run once against a mutated shader to see it fail. Rebuild with
 ## 12. Cross-doc impact
 
 - `docs/specs/DOOM-0273-solid-surface-detail.md` — supplies the roughness,
-  normal and lanes. No clause changes.
+  normal and lanes. Its INV-7 test also admits the highlight's `ndh`, a
+  point-light and flashlight term (B5, 2026-11-04).
 - `docs/specs/DOOM-0183-glowing-wet-liquid.md` — INV-3's "Every non-liquid
   surface takes **no** specular term" and INV-5's byte-identical clauses now
   hold with `specular` 0 only, and each gains that qualifier. Liquids still

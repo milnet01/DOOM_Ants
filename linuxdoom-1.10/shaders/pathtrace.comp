@@ -1424,7 +1424,9 @@ vec3 primaryHitAddTerms(vec3 L, PrimaryHit h, PrimaryLight s, vec3 n, float secL
 SpecIn primarySpecIn(PrimaryHit h, vec3 dir)
 {
     uint setting = (wetOn() && h.gooWet > 0.0) ? 0u : pc.misc7.y;
-    return SpecIn(-dir, h.rough, setting, h.mc.flags, specF0(h.albedo, h.metal), 1.0 - h.metal);
+    // DOOM-0517: with the lobe off, metal is matte as before (DOOM-0103 INV-4).
+    float metal  = specOn(setting, h.mc.flags) ? h.metal : 0.0;
+    return SpecIn(-dir, h.rough, setting, h.mc.flags, specF0(h.albedo, metal), 1.0 - metal);
 }
 
 void main()

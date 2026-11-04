@@ -7,7 +7,9 @@
 //   INV-2  The bake passes a zero view direction to shadeSurface and calls no specBrdf.
 //   INV-3  gspec is stored with no albedo or division; the composite adds hspec without
 //          albedo; svgf_atrous.comp touches neither.
-//   INV-7  specBrdf is defined only in shaders/formulas/specular.glsl.
+//   INV-6  In mesh.frag the highlight goes into direct, never ambient, its exponent comes
+//          from specExponent, and both blocks holding it skip the weapon.
+//   INV-7  specBrdf and specExponent are defined only in shaders/formulas/specular.glsl.
 //
 // INV-1 does not keep a C++ copy of specBrdf. It compiles the shader's own
 // specular.glsl, and the Workbench's formulas.glsl it includes, as C++ through the
@@ -166,9 +168,29 @@ static std::vector<std::string> callArgs(const std::string& src, size_t open)
     return args;
 }
 
-// INV-1's guard rule. A specBrdf( call is guarded when the statement holding it, or the
-// header of a block enclosing it, contains specOn(. Returns the number of unguarded calls;
-// *calls counts every call (definitions excluded).
+// Whether the code at `at` sits behind `guard`: the statement holding it, or the header
+// of a block enclosing it, contains that text.
+static bool guardedBy(const std::string& src, size_t at, const std::string& guard)
+{
+    // The statement: back to the previous ; { or }.
+    size_t s = src.find_last_of(";{}", at - 1);
+    if (src.substr(s + 1, at - s - 1).find(guard) != std::string::npos) return true;
+    // Each enclosing block's header: walk back over balanced braces.
+    int depth = 0;
+    for (size_t i = at; i-- > 0;) {
+        if (src[i] == '}') ++depth;
+        else if (src[i] == '{') {
+            if (depth > 0) { --depth; continue; }
+            size_t h = src.find_last_of(";{}", i - 1);
+            h = (h == std::string::npos) ? 0 : h + 1;
+            if (src.substr(h, i - h).find(guard) != std::string::npos) return true;
+        }
+    }
+    return false;
+}
+
+// INV-1's guard rule: every specBrdf( call sits behind specOn(. Returns the number of
+// unguarded calls; *calls counts every call (definitions excluded).
 static int unguardedCalls(const std::string& src, int* calls)
 {
     int bad = 0;
@@ -178,21 +200,7 @@ static int unguardedCalls(const std::string& src, int* calls)
         if (at > 0 && (std::isalnum((unsigned char)src[at - 1]) || src[at - 1] == '_')) continue;
         if (at >= 5 && src.compare(at - 5, 5, "vec3 ") == 0) continue;   // the definition
         ++*calls;
-        // The statement: back to the previous ; { or }.
-        size_t s = src.find_last_of(";{}", at - 1);
-        bool ok = src.substr(s + 1, at - s - 1).find("specOn(") != std::string::npos;
-        // Each enclosing block's header: walk back over balanced braces.
-        int depth = 0;
-        for (size_t i = at; !ok && i-- > 0;) {
-            if (src[i] == '}') ++depth;
-            else if (src[i] == '{') {
-                if (depth > 0) { --depth; continue; }
-                size_t h = src.find_last_of(";{}", i - 1);
-                h = (h == std::string::npos) ? 0 : h + 1;
-                ok = src.substr(h, i - h).find("specOn(") != std::string::npos;
-            }
-        }
-        if (!ok) ++bad;
+        if (!guardedBy(src, at, "specOn(")) ++bad;
     }
     return bad;
 }
@@ -248,6 +256,16 @@ int main()
     }
     std::printf("  [0517] metal lobe worst relative error per channel: %.2e\n", mworst);
     check(mworst < 1e-4, "a metal's lobe matches Schlick with its albedo as f0, channel by channel");
+
+    // §4.3: specExponent is 2/alpha^2 - 2 with specBrdf's alpha, floored at 1, so it narrows
+    // as the surface gets smoother.
+    const double a35 = 0.35 * 0.35;
+    check(std::fabs(glsl::specExponent(0.35f) - (2.0 / (a35 * a35) - 2.0)) < 1e-2,
+          "specExponent at the roughness floor is 2/alpha^2 - 2");
+    check(glsl::specExponent(0.1f) == glsl::specExponent(glsl::kSpecRoughMin),
+          "specExponent floors roughness like specBrdf");
+    check(glsl::specExponent(1.0f) == 1.0f, "specExponent is floored at 1 for the roughest surface");
+    check(glsl::specExponent(0.5f) > glsl::specExponent(0.8f), "a smoother surface gets a tighter highlight");
 
     check(!glsl::specOn(0u, 0u), "specOn is false with the setting off");
     check(glsl::specOn(1u, 0u), "specOn is true with the setting on and no flags");
@@ -332,6 +350,39 @@ int main()
         check(!atrous.empty(), "svgf_atrous.comp is readable");
         check(atrous.find("gspec") == std::string::npos && atrous.find("hspec") == std::string::npos,
               "the a-trous passes bind neither gspec nor hspec");
+    }
+
+    // INV-6: in mesh.frag the highlight goes into direct, never ambient, takes its exponent
+    // from specExponent, and each block holding it skips the weapon (FLAG_PSPRITE).
+    {
+        const std::string mf = code(slurp(std::string(DOOM_TESTS_ROOT) + "/shaders/mesh.frag"));
+        check(!mf.empty(), "mesh.frag is readable");
+        int adds = 0, badAdds = 0, terms = 0, unskipped = 0, ambientMix = 0;
+        std::istringstream lines(mf);
+        for (std::string line; std::getline(lines, line);) {
+            size_t f = line.find_first_not_of(" \t");
+            std::string t = (f == std::string::npos) ? "" : line.substr(f);
+            if (t.find("kRasterSpecStrength *") != std::string::npos) {
+                ++adds;
+                if (t.rfind("direct +=", 0) != 0) ++badAdds;
+            }
+            if (t.find("ambient") != std::string::npos &&
+                (t.find("spec") != std::string::npos || t.find("ndh") != std::string::npos))
+                ++ambientMix;
+        }
+        for (size_t at = mf.find("pow(ndh, specN)"); at != std::string::npos;
+             at = mf.find("pow(ndh, specN)", at + 1)) {
+            ++terms;
+            if (!guardedBy(mf, at, "FLAG_PSPRITE")) ++unskipped;
+        }
+        std::printf("  [INV-6] mesh.frag: %d highlight term(s), %d add(s) to direct, %d elsewhere\n",
+                    terms, adds, badAdds);
+        check(terms == 2 && adds == 2 && badAdds == 0,
+              "the flashlight's and the point lights' highlights are each added to direct");
+        check(ambientMix == 0, "no ambient line touches the highlight");
+        check(mf.find("specN    = specExponent(specR)") != std::string::npos,
+              "the highlight's exponent comes from specExponent on the surface roughness");
+        check(unskipped == 0, "both blocks holding the highlight skip the weapon (FLAG_PSPRITE)");
     }
 
     // INV-7: one definition, in specular.glsl.

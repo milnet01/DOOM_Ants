@@ -106,8 +106,8 @@ layout(set = 0, binding = 2) uniform sampler2D materialTex[];
 // additive term is shadowed (the base sector light is untouched), and only when the torch
 // is on — when it is off the shadow pass is skipped and this is never sampled.
 layout(set = 1, binding = 0) uniform sampler2D shadowMap;
-// DOOM-0273: flags.x = surface detail (1 on; 0 off or no maps made), flags.y = reserved
-// for DOOM-0103, flags.z = the surface-map base in materialTex[], flags.w = a 35 Hz count
+// DOOM-0273: flags.x = surface detail (1 on; 0 off or no maps made), flags.y = DOOM-0103's
+// specular setting (1 on), flags.z = the surface-map base in materialTex[], flags.w = a 35 Hz count
 // for the Spectre's fuzz (DOOM-0508). Written
 // every frame; lightVP only while the torch is on. r_vulkan.cpp's ShadowUboData mirrors it.
 // DOOM-0182: hd.x = the grime overlay's slot in hdTex[], hd.y = the de-tile dial, hd.z = the
@@ -131,6 +131,7 @@ layout(constant_id = 0) const bool kHdPipeline = false;
 // DOOM-0508: on only in g.spectrePipeline, which draws just the Spectres' shape. See main().
 layout(constant_id = 1) const bool kSpectreMask = false;
 #include "formulas/formulas.glsl"         // srgbToLinear, linearToSrgb
+#include "formulas/specular.glsl"         // DOOM-0103: specExponent
 #include "formulas/pcg_hash.glsl"
 #define HD_SET 2
 #include "formulas/hd_set.glsl"
@@ -190,6 +191,10 @@ const float RASTER_INV_RADIUS2   = 1.0 / (RASTER_LIGHT_RADIUS * RASTER_LIGHT_RAD
 // cluster blowing to white" tune independently: GAIN sets how fast a light climbs to
 // full before the roll-off (the pop), STRENGTH is the max additive level after it.
 const float POINT_LIGHT_GAIN     = 3.0;
+// DOOM-0103 §4.3: the rasterised highlight's top level, added to DIRECT after the roll-off.
+// A look call (2026-11-04): at 2, COMPTILE's metal plates washed near white and bloomed; at 1
+// they keep their grey and E2M1's red gleam is faint (traced view's is stronger).
+const float kRasterSpecStrength  = 1.0;
 const float POINT_LIGHT_STRENGTH = 0.7;
 
 // DOOM-0170 §9 Q1 — sector-light rebalance. DOOM's flat sector light is bright, so the
@@ -335,6 +340,8 @@ void main()
     vec3  hdCol  = vec3(0.0);
     float hdOcc  = 1.0;
     vec3  hdGlow = vec3(0.0);   // DOOM-0538: the HD emissive map, linear
+    float specR  = 1.0;         // DOOM-0103: the highlight's roughness; 1.0 where no map gives one
+    float metal  = 0.0;         // DOOM-0517: the HD metallic map; 0 everywhere else
     {
         // Tangent frame per pixel from screen derivatives (no vertex attribute carries one).
         // Taken outside the branch: derivatives are undefined in non-uniform control flow.
@@ -383,6 +390,10 @@ void main()
                 hdOcc = detileFor(mc) ? detileR(uint(mc.maps[4]), sUV, dG) : HD_TEX(mc.maps[4], sUV).r;
             if (mc.maps[5] >= 0)
                 hdGlow = detileFor(mc) ? detile(uint(mc.maps[5]), sUV, dG) : HD_TEX(mc.maps[5], sUV).rgb;
+            if (mc.maps[2] >= 0)
+                specR = detileFor(mc) ? detileR(uint(mc.maps[2]), sUV, dG) : HD_TEX(mc.maps[2], sUV).r;
+            if (mc.maps[3] >= 0)
+                metal = detileFor(mc) ? detileR(uint(mc.maps[3]), sUV, dG) : HD_TEX(mc.maps[3], sUV).r;
             if (frame && mc.maps[1] >= 0)
             {
                 const vec3 tn = detileFor(mc) ? detileNormalTS(uint(mc.maps[1]), sUV, dG)
@@ -406,6 +417,7 @@ void main()
                 uv01 = surfOffsetUV(uint(id), uv01, vT);   // colour and relief read here (INV-4)
                 vec3 tn = surfSample(uint(id), uv01).xyz;
                 shadeN  = normalize(tn.x * T + tn.y * B + tn.z * n);
+                specR   = surfRoughness(uint(id), uv01);
             }
         }
     }
@@ -481,6 +493,22 @@ void main()
     vec3 ambient = spriteLike ? vec3(0.0)        : albedo * sect;
     vec3 direct  = spriteLike ? albedo * sect    : vec3(0.0);
 
+    // DOOM-0103 §4.3: the highlight, Blinn-Phong with the surface roughness and no shadow on
+    // the point lights. World surfaces only, never the weapon. It is weighted like the traced
+    // lobe: by specF0 (0.04 on plaster; DOOM-0517: the albedo on a metal, whose direct light
+    // then has no matte part) and by the normalised lobe's (n + 8) / 8, so a broad highlight
+    // is faint and a tight one bright. With the setting off, metal is matte as before.
+#ifndef SINGLE_TARGET
+    const bool  specLit  = shadow.flags.y != 0u && worldSurf;
+    const float diffW    = specLit ? 1.0 - metal : 1.0;
+    const vec3  specCol  = specLit ? specF0(albedo, metal) : vec3(0.0);
+    const float specN    = specExponent(specR);
+    const float specNorm = (specN + 8.0) / 8.0;
+    const vec3  specV    = normalize(vec3(pc.eyeX, pc.eyeY, pc.eyeZ) - vWorldPos);
+#else
+    const float diffW    = 1.0;
+#endif
+
     // DOOM-0044 player flashlight (Solid tier / ray tracing OFF): an additive
     // raster spotlight at the eye, aimed along the view yaw. Cast shadows come from
     // the L2c shadow map (flashlightShadow). Skips the sky (returned above) and the
@@ -514,7 +542,14 @@ void main()
         // only multiplies, so skipping it where lit is 0 changes no pixel.
         float sh     = lit > 0.0 ? flashlightShadow(vWorldPos) : 1.0;
         flash  = min(lit * sh, max(0.0, 1.0 - sect));
-        direct += albedo * flash;
+        direct += albedo * (flash * diffW);
+#ifndef SINGLE_TARGET
+        if (specLit && lit > 0.0)
+        {
+            float ndh = max(dot(shadeN, normalize(specV - fdir)), 0.0);
+            direct += kRasterSpecStrength * min(pow(ndh, specN) * specNorm * lit * sh, 1.0) * specCol;
+        }
+#endif
     }
 
     // DOOM-0170 L1a/L1b: baked indirect bounce (AMBIENT) + this subsector's nearest point
@@ -540,6 +575,9 @@ void main()
             uint base = sub * (RASTER_MAX_LIGHTS * RASTER_LIGHT_FLOATS);
             vec3 plight = vec3(0.0);
             vec3 ppool  = vec3(0.0);   // DOOM-0539: Ultra's pickup lights, see below
+#ifndef SINGLE_TARGET
+            vec3 pspec  = vec3(0.0);   // DOOM-0103: every slot's highlight, beside plight
+#endif
             for (uint k = 0u; k < RASTER_MAX_LIGHTS; k++)
             {
                 uint o  = base + k * RASTER_LIGHT_FLOATS;
@@ -562,6 +600,11 @@ void main()
                 }
                 float ndl = max(dot(shadeN, dd * inversesqrt(max(d2, 1e-8))), 0.0);
 #ifndef SINGLE_TARGET
+                if (specLit && ndl > 0.0)
+                {
+                    float ndh = max(dot(shadeN, normalize(dd * inversesqrt(max(d2, 1e-8)) + specV)), 0.0);
+                    pspec += pow(ndh, specN) * specNorm * ndl * col * att;
+                }
                 if (kHdPipeline && reach > 0.0)
                     ppool  += col * att * ndl;
                 else
@@ -580,7 +623,14 @@ void main()
             // on its own. Ultra only, because only Ultra's pickups are models with lights placed in them.
             ppool *= POINT_LIGHT_GAIN;
             ppool = ppool / (1.0 + ppool);
-            direct += POINT_LIGHT_STRENGTH * albedo * (plight + ppool);   // point lights are DIRECT
+            direct += POINT_LIGHT_STRENGTH * albedo * ((plight + ppool) * diffW);   // point lights are DIRECT
+#ifndef SINGLE_TARGET
+            // The same gain and roll-off as plight, so one panel's many slots cannot stack
+            // the highlight to white.
+            pspec  *= POINT_LIGHT_GAIN;
+            pspec   = pspec / (1.0 + pspec);
+            direct += kRasterSpecStrength * pspec * specCol;
+#endif
         }
     }
 

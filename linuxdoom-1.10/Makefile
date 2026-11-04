@@ -464,8 +464,9 @@ $(SHADER_DIR)/svgf_composite.comp.spv.h $(SHADER_DIR)/svgf_composite_split.comp.
 		$(SHADER_DIR)/formulas/shown_emission.glsl
 
 # DOOM-0103 — the specular lobe is shared by every path-tracer site through pt_common.glsl
-# (and by mesh.frag once B5 lands). Same missing-auto-dep hazard as above.
-$(SHADER_DIR)/pathtrace.comp.spv.h $(SHADER_DIR)/bake.comp.spv.h: \
+# and by both variants of the raster mesh.frag. Same missing-auto-dep hazard as above.
+$(SHADER_DIR)/pathtrace.comp.spv.h $(SHADER_DIR)/bake.comp.spv.h \
+$(SHADER_DIR)/mesh.frag.spv.h $(SHADER_DIR)/mesh_overlay.frag.spv.h: \
 		$(SHADER_DIR)/formulas/specular.glsl
 
 # DOOM-0345 R1 — the BLOOM_SPLIT variant of svgf_composite.comp. Explicit rule (the pattern

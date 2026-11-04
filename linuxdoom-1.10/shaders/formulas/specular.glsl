@@ -35,6 +35,16 @@ vec3 specF0(vec3 albedo, float metal)
     return mix(vec3(kSpecF0), albedo, metal);
 }
 
+// DOOM-0103 §4.3: the rasterised view's Blinn-Phong exponent for a roughness, the usual
+// match to GGX's width (2 / alpha^2 - 2, alpha as specBrdf's). Floored at 1, as 0 would
+// light every angle equally and pow(0, 0) is undefined.
+float specExponent(float roughness)
+{
+    float r = max(roughness, kSpecRoughMin);
+    float a = r * r;
+    return max(2.0 / (a * a) - 2.0, 1.0);
+}
+
 // Specular radiance factor for one light direction: D * V * F. Multiply by the light's
 // radiance and NdotL. n, v and l are unit vectors; v points to the eye, l to the light.
 // roughness is perceptual roughness; alpha = max(roughness, kSpecRoughMin)^2. f0 is
