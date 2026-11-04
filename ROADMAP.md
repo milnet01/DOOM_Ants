@@ -14855,6 +14855,11 @@ in CLAUDE.md describes.
   DOOM-0517). All take alpha = roughness squared; divides return 0, not
   NaN. Export: formula_workbench --export-glsl --out DIR --tier full.
   B1 is unblocked.
+  2026-11-04: B1 built. formulas.glsl re-exported (only additions);
+  shaders/formulas/specular.glsl holds specBrdf and specOn, included by
+  pt_common.glsl and called nowhere yet. tests/specular_test.cpp compiles
+  the shader itself as C++ and matches published GGX x Smith x Schlick
+  to 6e-7; red against four mutated shaders. NEXT B3.
   **Layman:** Shiny surfaces — metal, wet floors, slime — get realistic highlights like modern DOOM, without losing the classic look.
   Kind: feature.
   Source: user-request-2026-06-29.

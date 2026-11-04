@@ -81,7 +81,7 @@ every frame is as it was.
 `shaders/pathtrace.comp`, `shaders/bake.comp`, `shaders/svgf_temporal.comp`,
 `shaders/svgf_composite.comp`, `shaders/mesh.frag`, `r_vulkan.cpp`,
 `m_misc.c`, `m_menu.c`, `shaders/formulas/README.md`,
-`tests/specular_test.cpp` (new), `tests/shader_mirror_test.cpp`, `Makefile`.
+`tests/specular_test.cpp` (new), `Makefile`.
 All under `linuxdoom-1.10/`.
 
 ## 3. Scope decisions
@@ -115,12 +115,12 @@ The Vestige session regenerates `formulas.glsl` with parameterised versions,
 because DOOM-0009 INV-7 forbids hand-written curves:
 
 ```glsl
-float ggxDistributionA(float NdotH, float alpha);
-float smithGgxCorrelated(float NdotV, float NdotL, float alpha);  // visibility V
+float ggxDistributionParam(float NdotH, float alpha);
+float smithGgxVisibility(float NdotV, float NdotL, float alpha);  // includes 1/(4 NdotV NdotL)
 float fresnelSchlickF0(float cosTheta, float f0);
 ```
 
-The names are proposals; the Workbench picks the final ones. The existing
+These are the names Vestige 3D_E-0813 shipped (2026-11-04). The existing
 fixed versions stay, because something may call them.
 
 `formulas/specular.glsl` (new, hand-written, as `shown_emission.glsl` is)
@@ -323,13 +323,14 @@ of STONE2 walls and FLOOR5_2 floor leading to the REDWALL1 cross
   is 0 when the view direction is zero. `specOn` is false when the setting is
   off or the material is flagged a liquid, and every call of `specBrdf` sits
   behind it.
-  *Test:* `tests/specular_test.cpp` evaluates a C++ mirror of `specBrdf` at
-  fixed angles and roughnesses against values computed from the published
-  GGX, Smith and Schlick expressions, and checks the zero-view case and both
-  `specOn` cases. It also scrapes `pt_common.glsl` and `pathtrace.comp`:
-  every `specBrdf(` call is inside a block guarded by `specOn(`.
-  `tests/shader_mirror_test.cpp` checks the mirror's constants and the
-  liquid flag bits against `specular.glsl` and `rb_materials.h`.
+  *Test:* `tests/specular_test.cpp` compiles `specular.glsl` and
+  `formulas.glsl` as C++ through a small GLSL shim, so no mirror copy exists.
+  It evaluates `specBrdf` at fixed angles and roughnesses against GGX and
+  height-correlated Smith in their tangent forms (Walter 2007, Heitz 2014)
+  times Schlick, and checks the floor, the zero-view case and both `specOn`
+  cases. It checks `kSpecLiquidFlags` against `rb_materials.h`'s liquid bits.
+  It also scrapes `pt_common.glsl` and `pathtrace.comp`: every `specBrdf(`
+  call is inside a statement or block guarded by `specOn(`.
   *Breaks when:* roughness is ignored (the old fixed alpha 0.25), the floor
   is dropped, a zero case returns light, or a call site skips `specOn` and a
   liquid gets both lobe and sheen.
@@ -412,7 +413,7 @@ of STONE2 walls and FLOOR5_2 floor leading to the REDWALL1 cross
 
 | Rule | What catches a breach |
 |------|----------------------|
-| INV-1 | `tests/specular_test.cpp`, `tests/shader_mirror_test.cpp` |
+| INV-1 | `tests/specular_test.cpp` |
 | INV-2 | `tests/specular_test.cpp` (scrape) |
 | INV-3 | `tests/specular_test.cpp` (scrape) |
 | INV-4 | **manual** — the §8 capture recipe, run at B2 and B6 |

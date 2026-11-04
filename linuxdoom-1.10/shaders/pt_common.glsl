@@ -22,6 +22,7 @@
 // formulas/tonemap_encode.glsl -- is harmless.
 #include "formulas/formulas.glsl"
 #include "formulas/shown_emission.glsl"   // DOOM-0511: shadeSurface's visible glow
+#include "formulas/specular.glsl"         // DOOM-0103: specBrdf, specOn
 
 const float PI            = 3.14159265358979323846;
 const int   FLAG_FLAT     = 0x1;     // matches RB_MESH_FLAT in r_mesh.h (flats vs walls)

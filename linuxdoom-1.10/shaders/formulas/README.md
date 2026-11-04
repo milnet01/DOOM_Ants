@@ -26,7 +26,9 @@ passes; threshold and knee are parameters because DOOM picks them from
 `kBloomPresets` at runtime). The export wraps each division in `safeDiv`, which
 the hand-written copy it replaced did not. Neither guard can fire for DOOM's
 inputs: `4*knee + 1e-4` is never 0 for a non-negative knee, and
-`max(peak, 1e-4)` never is. More of the library (GGX/VNDF, Fresnel-Schlick,
+`max(peak, 1e-4)` never is. `specular.glsl` combines `ggxDistributionParam`,
+`smithGgxVisibility` and `fresnelSchlickF0` (Vestige 3D_E-0813, which also added
+`fresnelSchlickMetallic` for DOOM-0517). More of the library (GGX/VNDF, Fresnel-Schlick,
 MIS power heuristic, RR survival, …) comes online as later DOOM-0009 steps land.
 
 ## Hand-written — `pbr_neutral_tonemap.glsl`
@@ -58,3 +60,12 @@ stepped for the traced view, `surfOffsetUV` one sample for the rasterised
 one). The maps come from `surface_derive.h`. `kSurfHeightScale` is a
 look call, not a Workbench curve. The spec is
 `docs/specs/DOOM-0273-solid-surface-detail.md`.
+
+## Hand-written — `specular.glsl`
+
+DOOM-0103's specular lobe: `specBrdf` (GGX × height-correlated Smith ×
+Schlick, from the Workbench curves above) and `specOn`, the setting and
+liquid gate every caller checks first. `kSpecF0` and `kSpecRoughMin` are look
+calls, not Workbench curves. `tests/specular_test.cpp` compiles this file as
+C++ and checks it against the published formulas. The spec is
+`docs/specs/DOOM-0103-specular-lobe.md`.
