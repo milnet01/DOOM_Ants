@@ -15421,6 +15421,24 @@ in CLAUDE.md describes.
   matte and specular gradients for the spec copy. Spec drift in §4.1
   (specBrdf signature) is on DOOM-0554. queued: user chose fix later
   2026-11-04.
+  2026-11-05: B6 §6 timings RUN on a quiet machine (load 1-2, GPU
+  otherwise idle). Plain builds 5dd31bc (before) vs 7d22a65, specular 1,
+  surface_detail 1, E1M1 start, -freeze, rt_profile + -frameledger,
+  3 alternating runs per side; kit scratch/perf (m.sh, sum.py, led.py).
+  Traced, Solid, -scale 6 + 50% (traces 1920x1200): megakernel medians
+  14.09/14.45/15.88 -> 14.13/15.30/16.85 ms, paired +0.04/+0.85/+0.97;
+  temporal 1.99 -> 1.91 (no growth). At -scale 3 + 50% (960x600): 3.84
+  -> 3.77 (no growth). Ultra traced: no growth. DOOM-0517's fix
+  (ffec632) adds +0.18 more at 1920x1200. Within the 0.8 ms budget,
+  near its edge at 1920x1200.
+  Raster, Solid, 100%, -scale 3 (1920x1200; 1920x1080 cannot be set
+  headless, 11% more pixels): scene pass 2.04 -> 2.51 ms; same build
+  specular 0 -> 1: 2.12 -> 2.51, so the lobe costs +0.39 ms (about
+  +0.35 at 1080p). OVER the 0.3 ms budget. Frame rate stays far above
+  60 (frame about 3.8 ms).
+  Waiting-on: user (raster lobe +0.35 ms vs budget 0.3: accept and
+  raise the budget to 0.4, or trim the lobe? Recommendation: accept;
+  Solid raster still runs about 260 FPS, 2026-11-05).
   **Layman:** Shiny surfaces — metal, wet floors, slime — get realistic highlights like modern DOOM, without losing the classic look.
   Kind: feature.
   Source: user-request-2026-06-29.
@@ -18364,6 +18382,14 @@ in CLAUDE.md describes.
   1056 -3616 (player start, 1030 units from it; just past the 1024 cap).
   Both logs: "RB_Vulkan NEE: 170 static + 57 sprite emitters". §6 frame
   cost (INV-9) still NOT run: machine load 12-15.
+  2026-11-05: INV-9 (§6) run, HOLDS. Plain build 7d22a65, Ultra,
+  -scale 3 (1920x1200), traced 50%, raster 100%, models.csv present vs
+  absent (scratch/perf/nomodels), frameledger median frame wall time,
+  2-5 runs per arm. E1M1 start: raster +0.18 ms, traced +0.73 (budgets
+  0.5 / 1.0). E2M2 790 1472 180: raster 0.00, traced -0.3 (models
+  cheaper). MAP18 start: raster -0.1; traced with models 11.0-16.1 ms
+  (median 11.7), without 12.8-14.2 (median 13.7), so models are cheaper
+  there too. Kit scratch/perf (batch2.sh, led.py).
   **Layman:** Health, armour, ammo, keys and power-ups become real 3D objects, so their glow can come from exactly the right spot inside them.
   Kind: feature.
   Source: user-request-2026-11-02.
