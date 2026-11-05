@@ -212,7 +212,8 @@ vec2  surfOffsetUV(uint id, vec2 uv01, vec3 viewTS);    // rasterised view: one 
 - `surfParallaxUV` reuses the method of `hdParallaxUV`: steps plus one
   bisection, primary hit only, no self-shadowing. It uses its own height
   scale, `kSurfHeightScale`, because derived heights come from luma and are
-  rougher than authored ones. It is 0.12, twice `kPomHeightScale` (§10).
+  rougher than authored ones. It is 0.06, the same as `kPomHeightScale`;
+  the user halved it from 0.12 on 2026-11-02 (DOOM-0535).
   Its march is offset-limited too: the full march spans
   `viewTS.xy * surfDepthUV(id)`, with no divide by the view's z. With that
   divide, grazing views wrapped the march onto another part of the texture

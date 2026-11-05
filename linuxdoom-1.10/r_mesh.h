@@ -134,8 +134,8 @@ typedef struct
 #define RB_MESH_PICKUP  0x100 // DOOM-0482: this sprite Thing is a pickup (MF_SPECIAL). Solid's
                               // raster point light from it fades out within a short reach.
 #define RB_MESH_SHADOW  0x200 // DOOM-0508: this sprite Thing is partly invisible (MF_SHADOW, the
-                              // Spectre). Raster draws a flickering fuzz, the traced view a dark
-                              // shimmer that bends what is behind it. No blob, no torch shadow.
+                              // Spectre). Both views bend and darken what is behind it; the
+                              // raster's bend is composite.frag's. No blob, no torch shadow.
 #define RB_MESH_MODEL   0x400 // DOOM-0539: a triangle of a pickup's Blender model. Carries
                               // RB_MESH_SPRITE too, so it lights and shades as a sprite, but
                               // reads HD maps through its UVs and has no palette cut-outs.
@@ -466,13 +466,13 @@ typedef struct
 
 // Build this frame's billboard sprites (things + items) as camera-facing quads,
 // writing rb_vertex_t triangles into out[] (up to maxverts). Returns the vertex
-// count written (a multiple of 6). The view supplies the camera so each quad
+// count written (a multiple of 3: 6 per billboard, 3 per model triangle). The view supplies the camera so each quad
 // faces the view plane, and picks the 8-way sprite rotation, exactly as the
 // software renderer does. texnum carries the sprite-lump index (atlas id =
 // numwall + numflat + texnum); flags carry RB_MESH_SPRITE. Rebuilt every frame
 // because things move; must be called after a level is loaded.
-// `models`: 1 draws a pickup with a loaded model as that model (Ultra only). 0 keeps every
-// thing a billboard, as the traced view and the emitter list need until DOOM-0539 B3 and B4.
+// `models`: 1 draws a pickup with a loaded model as that model (Ultra only), and every caller
+// passes 1; 0 keeps every thing a billboard.
 int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts, int models);
 
 // DOOM-0539: the model drawn for a sprite. Takes ownership of *model and empties it.

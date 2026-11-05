@@ -2802,8 +2802,8 @@ int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts, int m
     // DOOM-0411: things past the cap used to vanish with no word. Say so once, when the
     // cap is first hit, rather than every frame.
     if (dropped && !capWarned)
-        printf("RB_BuildSprites: %d thing(s) over the %d-sprite cap not drawn this frame.\n",
-               dropped, maxverts / 6);
+        printf("RB_BuildSprites: %d thing(s) did not fit the %d-vertex sprite buffer this frame.\n",
+               dropped, maxverts);
     capWarned = dropped != 0;
     return n;
 }

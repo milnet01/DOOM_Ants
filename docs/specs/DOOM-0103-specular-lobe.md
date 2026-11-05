@@ -123,7 +123,9 @@ float fresnelSchlickF0(float cosTheta, float f0);
 ```
 
 These are the names Vestige 3D_E-0813 shipped (2026-11-04). The existing
-fixed versions stay, because something may call them.
+fixed versions stay, because something may call them. `specBrdf` uses
+`fresnelSchlickMetallic(float cosTheta, vec3 f0)` in place of `fresnelSchlickF0`,
+so a metal's highlight takes its colour (DOOM-0517).
 
 `formulas/specular.glsl` (new, hand-written, as `shown_emission.glsl` is)
 combines them:
@@ -131,8 +133,9 @@ combines them:
 ```glsl
 // Specular radiance factor for one light direction. Multiply by the light's
 // radiance and NdotL. Returns 0 when v is zero (the bake).
-// roughness is DOOM-0273's perceptual roughness.
-vec3 specBrdf(vec3 n, vec3 v, vec3 l, float roughness);
+// roughness is DOOM-0273's perceptual roughness. f0 is specF0(albedo, metal):
+// kSpecF0 for a dielectric, the albedo for a metal (DOOM-0517).
+vec3 specBrdf(vec3 n, vec3 v, vec3 l, float roughness, vec3 f0);
 // False when setting is 0 or matFlags marks a liquid.
 // Every caller of specBrdf checks it first.
 bool specOn(uint setting, uint matFlags);

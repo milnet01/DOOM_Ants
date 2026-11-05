@@ -27,8 +27,8 @@ passes; threshold and knee are parameters because DOOM picks them from
 the hand-written copy it replaced did not. Neither guard can fire for DOOM's
 inputs: `4*knee + 1e-4` is never 0 for a non-negative knee, and
 `max(peak, 1e-4)` never is. `specular.glsl` combines `ggxDistributionParam`,
-`smithGgxVisibility` and `fresnelSchlickF0` (Vestige 3D_E-0813, which also added
-`fresnelSchlickMetallic` for DOOM-0517). More of the library (GGX/VNDF, Fresnel-Schlick,
+`smithGgxVisibility` and `fresnelSchlickMetallic`, which takes a colour `f0` so a metal
+reflects in its own colour (Vestige 3D_E-0813; DOOM-0517). More of the library (GGX/VNDF, Fresnel-Schlick,
 MIS power heuristic, RR survival, …) comes online as later DOOM-0009 steps land.
 
 ## Hand-written — `pbr_neutral_tonemap.glsl`

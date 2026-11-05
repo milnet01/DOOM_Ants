@@ -13698,7 +13698,7 @@ defect visible before a player finds it.
   Source: review-code 2026-11-04, lanes 1, 2 and 4 (LOW); review-readability 2026-11-04, lane 3 lead.
   Lanes: renderer, shaders.
 
-- 📋 [DOOM-0554] **Review-code 2026-11-04: code comments, a README and two specs describe the code before this release's changes.**
+- ✅ [DOOM-0554] **Review-code 2026-11-04: code comments, a README and two specs describe the code before this release's changes.**
   The code is right in each; the text is wrong. Remedies unverified.
   - r_mesh.h:474-475: says 0 keeps every thing a billboard until
     DOOM-0539 B3/B4; all callers pass 1 and BuildDynamicEmitters
@@ -13719,6 +13719,16 @@ defect visible before a player finds it.
     mesh.frag:269-281 carries the same clamp and fade. Readability
     MEDIUM too.
   queued: user chose fix later 2026-11-04.
+  2026-11-05: all seven fixed, each checked against the code first.
+  r_mesh.h: RB_BuildSprites returns a multiple of 3 (6 per billboard, 3
+  per model triangle) and every caller passes models 1; RB_MESH_SHADOW:
+  both views bend and darken. The cap message now names the vertex
+  buffer instead of maxverts / 6. ShadowUboData: y = SpecularLane, w =
+  DOOM-0508's 35 Hz count; RtPushConstants misc7 w: unused (no shader
+  reads it). pathtrace.comp sky: mesh.frag carries the same clamp and
+  fade. formulas/README.md and DOOM-0103 §4.1: specBrdf takes f0 and
+  uses fresnelSchlickMetallic. DOOM-0273 §4.3: kSurfHeightScale is 0.06,
+  as kPomHeightScale.
   **Layman:** Some notes in the code and two design documents still describe how things worked before the last round of changes.
   Kind: doc-fix.
   Source: review-code 2026-11-04, lanes 1-3 (LOW); review-readability 2026-11-04, lanes 1 and 3.

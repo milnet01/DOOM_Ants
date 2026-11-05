@@ -4317,7 +4317,8 @@ void DestroySceneTarget()
 
 // mesh.frag's ShadowUbo (set 1, binding 1), byte for byte. lightVP is written on
 // torch-on frames; DOOM-0273's flags every raster frame: x = surface detail
-// (SurfaceDetailLane), y = reserved for DOOM-0103, z = surface-map base, w = free.
+// (SurfaceDetailLane), y = DOOM-0103's specular setting (SpecularLane), z = surface-map base,
+// w = DOOM-0508's 35 Hz flicker count.
 struct ShadowUboData
 {
     float    lightVP[16];
@@ -9423,7 +9424,7 @@ void RecordRtTrace(uint32_t idx)
                                   // z = fog strength (rb_fog 0..3, DOOM-0011); w = hell-haze (L4)
         uint32_t misc7[4];        // DOOM-0273: x = surface detail (SurfaceDetailLane); y = the
                                   // DOOM-0103 specular setting (SpecularLane); z = surface-map base
-                                  // (RB_MaterialCount()); w = free. 256 bytes, the device limit.
+                                  // (RB_MaterialCount()); w unused. 256 bytes, the device limit.
     } pc = {};
     static_assert(sizeof(RtPushConstants) == 256, "RT push-constant layout must match the shader");
     static_assert(offsetof(RtPushConstants, misc7) == 240, "misc7 follows misc6, as in pathtrace.comp");
