@@ -185,6 +185,17 @@ static void test_parser_rejects_what_it_used_to_truncate() {
           "a NaN uv_scale falls back to 1.0 instead of reaching the shader");
     check(rb_parse_material_line("NAME,hero,a.png,,,,,,,inf,pom", &r) == 1 && r.uv_scale == 1.0f,
           "an infinite uv_scale falls back to 1.0");
+    // DOOM-0553: a number with anything after it, or written in hex, is malformed too.
+    check(rb_parse_material_line("NAME,hero,a.png,,,,,,,2.0abc,pom", &r) == -1,
+          "a uv_scale with junk after it is malformed, not read as 2.0");
+    check(rb_parse_material_line("NAME,hero,a.png,,,,,,,0.25x,pom", &r) == -1,
+          "a uv_scale with an empty second axis is malformed");
+    check(rb_parse_material_line("NAME,hero,a.png,,,,,,,0.5x0.5y,pom", &r) == -1,
+          "a second axis with junk after it is malformed");
+    check(rb_parse_material_line("NAME,hero,a.png,,,,,,,0x1p-2,pom", &r) == -1,
+          "a hex uv_scale is malformed, not read as 0.25");
+    check(rb_parse_material_line("NAME,hero,a.png,,,,,,,0.5x0x1p1,pom", &r) == -1,
+          "a hex second axis is malformed");
     check(rb_parse_material_line("TOOLONGNAME,hero,a.png,,,,,,,1.0,pom", &r) == -1,
           "a name over 8 characters is malformed, not truncated to a different name");
     std::string longPath(200, 'p');

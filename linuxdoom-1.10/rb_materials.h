@@ -71,6 +71,12 @@ static inline unsigned int rb_parse_flags(const char* field, float* depth = null
     return f;
 }
 
+/* DOOM-0553: did strtof read [start, end) as hex? Only a hex number has an 'x' in it. */
+static inline int rb_has_x(const char* start, const char* end) {
+    return end > start && (memchr(start, 'x', (size_t)(end - start))
+                           || memchr(start, 'X', (size_t)(end - start)));
+}
+
 /* 1 = data row parsed, 0 = comment/blank (skip), -1 = malformed (log + skip).
    A field too long for its buffer is malformed, never truncated (DOOM-0410): a
    truncated path is a different, valid-looking path, and the row would then fail
@@ -115,14 +121,24 @@ static inline int rb_parse_material_line(const char* line, rb_matrow_t* out) {
     /* Blank -> 1.0. Zero, negative, NaN and inf -> 1.0 too: NaN fails every
        comparison, so `<= 0` alone let it through to the shader's UV multiply
        (DOOM-0410). */
-    char* after;
-    out->uv_scale = strtof(rb_trim(col[9]), &after);
+    /* DOOM-0553: each number must be read whole and in decimal. Junk after it ("2.0abc"), an
+       empty second axis ("0.25x") or hex ("0x1p-2", which strtof reads as 0.25) is malformed.
+       A hex number is the one strtof reads through an 'x'. */
+    char* uvs = rb_trim(col[9]);
+    char* after = uvs;
+    out->uv_scale = strtof(uvs, &after);
+    if (rb_has_x(uvs, after)) return -1;
+    if (after == uvs && *uvs) return -1;
     if (!isfinite(out->uv_scale) || out->uv_scale <= 0.0f) out->uv_scale = 1.0f;
     /* "0.25x0.5" scales each axis on its own: art spanning four tiles wide and two tall. */
     if (*after == 'x') {
-        out->uv_scale_v = strtof(after + 1, nullptr);
+        char* v = after + 1;
+        char* vend = v;
+        out->uv_scale_v = strtof(v, &vend);
+        if (vend == v || *vend || rb_has_x(v, vend)) return -1;
         if (!isfinite(out->uv_scale_v) || out->uv_scale_v <= 0.0f) out->uv_scale_v = 1.0f;
     } else {
+        if (*after) return -1;
         out->uv_scale_v = out->uv_scale;
     }
 

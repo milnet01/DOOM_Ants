@@ -1883,6 +1883,15 @@ void CreateSwapchain()
     g.swapTransferSrc = (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
     if (g.swapTransferSrc)
         sci.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    else
+    {
+        // DOOM-0553: say so once, so a gamma setting that does nothing is not a mystery.
+        static bool told = false;
+        if (!told)
+            printf("RB_Vulkan: this display cannot read frames back; the gamma setting has no "
+                   "effect in the 3D views.\n");
+        told = true;
+    }
     sci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;   // single graphics+present queue
     sci.preTransform = caps.currentTransform;
     // OPAQUE is what we want and what desktop drivers offer, but the spec only

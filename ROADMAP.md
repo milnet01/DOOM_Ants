@@ -13667,7 +13667,7 @@ defect visible before a player finds it.
   Source: review-code 2026-11-04, lanes 2 and 3 (open question); review-readability 2026-11-04, lane 2 lead.
   Lanes: renderer.
 
-- 📋 [DOOM-0553] **Review-code 2026-11-04 low tail: a silent gamma no-op, a lax table parser, a seg-normal seam and a guessed model mip level.**
+- 🚧 [DOOM-0553] **Review-code 2026-11-04 low tail: a silent gamma no-op, a lax table parser, a seg-normal seam and a guessed model mip level.**
   Remedies unverified.
   - r_vulkan.cpp:10548: without TRANSFER_SRC on the surface the gamma
     setting does nothing and says nothing (the DOOM-0491 symptom). Print
@@ -13684,6 +13684,15 @@ defect visible before a player finds it.
     hdLod for FLAG_MODEL or give models a texels-per-unit value; use
     max(uvScale, uvScaleV).
   queued: user chose fix later 2026-11-04.
+  2026-11-05: two of four fixed. (1) CreateSwapchain prints one line
+  when the surface has no TRANSFER_SRC, so a gamma setting that does
+  nothing says so; no red run, this machine's display supports it. (2)
+  rb_materials.h refuses a uv_scale with junk after it, an empty second
+  axis or hex; nan, inf, 0 and blank still fall back to 1.0 as
+  DOOM-0410's tests pin. Red: 5 new rb_materials_test cases failed
+  first. Every shipped materials.csv value still parses. Left: the
+  seg-normal seam (r_mesh.c, use linedef dx/dy) and hdLod for models
+  (pathtrace.comp); both need a look in the engine.
   **Layman:** Four small faults: the brightness setting can silently do nothing, a settings table accepts junk, a rare seam on HD walls, and 3D pickups can sparkle.
   Kind: review-fix.
   Source: review-code 2026-11-04, lanes 1, 2 and 4 (LOW); review-readability 2026-11-04, lane 3 lead.
