@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 #include <math.h>
 
 #include "doomtype.h"
@@ -103,8 +104,11 @@ static void push_vert(builder_t* b, rb_vertex_t vert)
 {
     if (b->count == b->cap)
     {
+        // DOOM-0546: doubling a signed int past INT_MAX is undefined; stop with a message first.
+        if (b->cap > INT_MAX / 2)
+            I_Error("RB_BuildLevelMesh: %d vertices, more than the mesh can hold", b->count);
         b->cap = b->cap ? b->cap * 2 : 8192;
-        b->v = realloc(b->v, b->cap * sizeof(rb_vertex_t));
+        b->v = realloc(b->v, (size_t)b->cap * sizeof(rb_vertex_t));
         if (!b->v)
             I_Error("RB_BuildLevelMesh: out of memory at %d vertices", b->count);
     }
@@ -287,7 +291,7 @@ enum { PEG_ONESIDED, PEG_UPPER, PEG_LOWER, PEG_MID };
 // DOOM-0541: the sunk rectangles of Ultra's walls that have real depth, from relief.csv, in file
 // order. A later row covers an earlier one on the same texture.
 #define RELIEF_MAX_ROWS 1024
-typedef struct { int texnum; rb_relief_rect_t rect; } relief_row_t;
+typedef struct { int texnum; char name[9]; rb_relief_rect_t rect; } relief_row_t;
 static relief_row_t   relief_rows[RELIEF_MAX_ROWS];
 static int            relief_count;
 static unsigned char* relief_moves;   // per sector, only while a mesh is being built
@@ -296,10 +300,11 @@ void RB_LoadWallRelief(const char* path)
 {
     FILE* f = path ? fopen(path, "r") : NULL;
     char  line[128];
+    int   i, j, kept;
     relief_count = 0;
     if (!f)
         return;
-    while (fgets(line, sizeof line, f) && relief_count < RELIEF_MAX_ROWS)
+    while (fgets(line, sizeof line, f))
     {
         char             name[9];
         rb_relief_rect_t r;
@@ -309,11 +314,45 @@ void RB_LoadWallRelief(const char* path)
         tex = R_CheckTextureNumForName(name);
         if (tex <= 0)
             continue;             // this game's WAD has no such wall
+        // DOOM-0546: a later row wins, so dropping the rows past the cap would change the
+        // walls without a word. Refuse the file instead, and every wall stays flat.
+        if (relief_count == RELIEF_MAX_ROWS)
+        {
+            printf("RB_LoadWallRelief: %s has more than %d rows; no wall gets depth.\n",
+                   path, RELIEF_MAX_ROWS);
+            relief_count = 0;
+            break;
+        }
         relief_rows[relief_count].texnum = tex;
+        memcpy(relief_rows[relief_count].name, name, sizeof name);
         relief_rows[relief_count].rect   = r;
         relief_count++;
     }
     fclose(f);
+
+    // DOOM-0546: the same for one texture past RB_RELIEF_MAX_RECTS rows: its walls stay flat.
+    // Counted for every row before any is dropped, so dropping cannot change a later count.
+    {
+        static int rows[RELIEF_MAX_ROWS];
+        for (i = 0; i < relief_count; i++)
+        {
+            int first = 1;   // the texture's first row, so it is warned about once
+            rows[i] = 0;
+            for (j = 0; j < relief_count; j++)
+            {
+                rows[i] += relief_rows[j].texnum == relief_rows[i].texnum;
+                first &= j >= i || relief_rows[j].texnum != relief_rows[i].texnum;
+            }
+            if (first && rows[i] > RB_RELIEF_MAX_RECTS)
+                printf("RB_LoadWallRelief: %s has %d rows, over %d; its walls stay flat.\n",
+                       relief_rows[i].name, rows[i], RB_RELIEF_MAX_RECTS);
+        }
+        kept = 0;
+        for (i = 0; i < relief_count; i++)
+            if (rows[i] <= RB_RELIEF_MAX_RECTS)
+                relief_rows[kept++] = relief_rows[i];
+        relief_count = kept;
+    }
 }
 
 int RB_WallReliefLoaded(void)

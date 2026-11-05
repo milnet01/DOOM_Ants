@@ -13499,7 +13499,7 @@ defect visible before a player finds it.
   Source: review-code 2026-11-04, lane 1 (MEDIUM).
   Lanes: renderer.
 
-- 📋 [DOOM-0546] **relief.csv's limits cap one wall's grid, not what it emits, and rows past 256 are dropped without a word.**
+- ✅ [DOOM-0546] **relief.csv's limits cap one wall's grid, not what it emits, and rows past 256 are dropped without a word.**
   - wall_relief.h:21: RB_RELIEF_MAX_CELLS 4000000 caps one wall's grid,
     not its output. One wall can emit ~4M face and ~8M side quads, and
     every wall using the texture repeats it. push_vert (r_mesh.c:104-110)
@@ -13515,6 +13515,19 @@ defect visible before a player finds it.
   per wall, drop the per-wall cap to thousands, widen push_vert's
   growth arithmetic, and warn or refuse at load past 256 rows.
   queued: user chose fix later 2026-11-04.
+  2026-11-05: fixed. RB_LoadWallRelief refuses a relief.csv over 1024
+  rows (every wall flat, one line saying so) and a texture over
+  RB_RELIEF_MAX_RECTS rows (its walls flat, one line), where both used
+  to drop the later, winning rows silently. push_vert stops with I_Error
+  before doubling its int capacity past INT_MAX. Red/green, E1M1 Ultra,
+  triangles from the map: no table 3159 old/new; shipped table 10387
+  old/new; 258 COMPTILE rows old 3257 (layout silently changed) new 3159
+  + message; 1028 rows old 10387 (rows silently dropped) new 3159 +
+  message (scratch/r546). Dismissed, with reason: a mesh-wide relief
+  budget and a lower per-wall cell cap. The growth guard already turns
+  runaway growth into a clean error, the only table ships with the
+  project, and the shipped table's largest wall was never measured
+  against a new cap.
   **Layman:** A badly made depth table for a wall could make a level very slow to load or stop it loading; today only our own art uses it.
   Kind: review-fix.
   Source: review-code 2026-11-04, lane 1 (MEDIUM, recalibrated LOW; and a LOW).
@@ -18548,7 +18561,7 @@ in CLAUDE.md describes.
   Kind: feature.
   Source: user-play-test-2026-11-02.
 
-- 🚧 [DOOM-0565] **Floors and walls near pickup lights bubble with noise in the traced view, because one shadow ray serves all the pickup lights.**
+- 🚧 [DOOM-0565] **The traced view bubbles with noise; most of it is the volumetric fog march, not the pickup lights first blamed.**
   User 2026-11-05, Ultra traced: "There is an insane amount of noise though
   (bubbling)."
   Measured 2026-11-05 (scratch/noise: dem.sh, dscore.py). Demo e1m1sk3s2
@@ -18564,6 +18577,34 @@ in CLAUDE.md describes.
   around, the survivor's visibility flips frame to frame. E1M1 has 57
   such emitters (maxLe 200) against 16 before B4.
   Refute: the same score after a fix at or below 0.77, and the frame cost.
+  2026-11-05 CORRECTION: the figures above are NOT evidence. They are
+  spreads ACROSS separate runs, and separate runs differ for timing
+  reasons (regional brightness shifts; the same build scored 0.56 and
+  1.27 in two sessions). The headline's cause is therefore unproven.
+  Measured instead within ONE run (new DEV flag -devshots K: K
+  consecutive frozen frames; scratch/noise/tcap2.sh, t2score.py): E1M1
+  144 -2986 270, Ultra traced, per-pixel std over 8 frames: fog on
+  (rt_fog 2, default) 2.11, fog off 0.41. At the BON1 spot 590 -3480 334
+  with fog off, 1 vs 4 RIS survivors: 0.284 vs 0.281, no difference. So
+  the bubbling is mostly the volumetric fog march, and the 4-survivor
+  change the user chose on the flawed figures was reverted before commit
+  (kept as scratch/noise/kept/ris4.patch). Next: whether DOOM-0536's fog
+  spread (50f202d..9b2ed3f) made it worse, then a fog-noise fix.
+  2026-11-05, same method (-devshots 8, E1M1 144 -2986 270, Ultra
+  traced, rt_fog 2), per-pixel std over frames / mean luma: 17eabfc
+  (before DOOM-0536) 3.35 / 61.0; 9b2ed3f (after DOOM-0536) 1.36 / 55.9;
+  HEAD 2.12 / 69.7. The fog noise is long-standing, worse before
+  2026-11-02, up again since. Consecutive-frame differences are dense
+  per-pixel speckle plus round blotches, thickest low down where fog is
+  densest (scratch/noise/crop-seq.png): noise, not the wisps' intended
+  drift. The fog march's step jitter is per pixel only, so the per-frame
+  change comes from elsewhere in the march or from how its result meets
+  the denoiser. NEXT: locate which per-frame input the fog takes
+  (marchFog's lamp and sky terms, rippleTime) and whether the fog is
+  added after SVGF; then a fix that smooths it over time. Waiting-on:
+  user (is fog-off in Ultra traced calm enough for you? If yes, the
+  bubbling is the fog and I fix that next; recommendation: yes, fix the
+  fog, 2026-11-05).
   **Layman:** The ray-traced view shimmers and boils on floors near health bonuses and other glowing pickups; this makes it settle.
   Kind: fix.
   Source: user-play-test-2026-11-05.
