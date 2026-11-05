@@ -18467,6 +18467,16 @@ in CLAUDE.md describes.
   DOOM's potion shape and blue, as an old hand-blown glass flask filled
   to the neck. STIM: no verdict yet. Batch 2 not authorised yet. Looked
   at in Ultra traced only.
+  2026-11-05: redone per the user's batch-1 notes. BON1 (Blender
+  Scripts/pickups/doom_bon1.py): the sprite's shape, round body and
+  short neck, blue liquid filled to the neck, a faintly green flared
+  glass lip and a dark red wax-sealed stopper; 280 triangles. MEDI
+  (doom_medi.py): 22 wide by 14.3 high (was 28 by 17), crosses larger, a
+  second cross on the lid's top. Previous builders kept in
+  pickups/previous/. pickup_models_test and rb_model_test pass. Old/new
+  sheet, Ultra traced and raster, E1M1: scratch/pick7/look-sheet.png.
+  Waiting-on: user (do the new vial and medikit look right in play?
+  Recommendation: keep; then STIM's verdict and batch 2, 2026-11-05).
   **Layman:** Health, armour, ammo, keys and power-ups become real 3D objects, so their glow can come from exactly the right spot inside them.
   Kind: feature.
   Source: user-request-2026-11-02.
