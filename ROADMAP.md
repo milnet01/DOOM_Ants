@@ -13661,7 +13661,7 @@ defect visible before a player finds it.
   Source: review-code 2026-11-04, lane 3 (MEDIUM); review-readability 2026-11-04, lane 3 (MEDIUM); user ruling 2026-11-04.
   Lanes: shaders.
 
-- 📋 [DOOM-0552] **Check the gamma pass's synchronisation and render-pass pairing with a validation-layer run.**
+- ✅ [DOOM-0552] **Check the gamma pass's synchronisation and render-pass pairing with a validation-layer run.**
   - RecordGamma's first barrier uses srcAccessMask = 0 on the swapchain
     image just written as a colour attachment. It relies on the render
     pass's implicit external dependency; the screenshot code argues the
@@ -13675,6 +13675,16 @@ defect visible before a player finds it.
   validation on and the gamma setting non-zero; fix what it reports.
   Needs a quiet machine.
   queued: user chose fix later 2026-11-04.
+  2026-11-05: run done. E1M1 Ultra, usegamma 2, private GPU display,
+  VK_LAYER_KHRONOS_validation with synchronisation validation
+  (VK_LOADER_DEBUG=layer proves the layer loaded in each run), 200
+  frames per view. The gamma pass raised nothing in either view. The
+  traced view raised a WRITE_AFTER_READ hazard: the blit's toDst barrier
+  transitioned the swapchain image from TOP_OF_PIPE, while the submit
+  waits the acquire semaphore at TRANSFER, so the transition was not
+  ordered after vkAcquireNextImageKHR. Its first scope is now TRANSFER.
+  Before: traced 10 validation messages, raster 0. After: 0 and 0
+  (scratch/v552).
   **Layman:** Two details of how the brightness step is wired to the graphics card look risky on paper; a debug run would settle whether they are wrong.
   Kind: investigate.
   Source: review-code 2026-11-04, lanes 2 and 3 (open question); review-readability 2026-11-04, lane 2 lead.
