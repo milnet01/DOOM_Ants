@@ -1449,6 +1449,9 @@ void main()
     vec3  dir = normalize(pc.camDir.xyz
                               + pc.camRight.xyz * (ndcX * pc.camRight.w)
                               + pc.camUp.xyz    * (-ndcY * pc.camUp.w));
+    // DOOM-0556: the eye. origin and dir become the bent ray after a Spectre; fog is still
+    // marched from here.
+    const vec3 eye = origin;
 
     // DOOM-0129: the view-mode is a specialization constant, not a push-constant.
     // The host compiles one pipeline variant per shipped mode (RtPipelineForMode),
@@ -1610,7 +1613,7 @@ void main()
             if (any(isnan(L)) || any(isinf(L))) L = vec3(0.0);
             if (pc.misc6.z != 0u) {                  // rb_fog strength; 0 = skip entirely (INV-8)
                 FogHit fh = FogHit(h.hitP, n, uint(h.flags), h.mc.flags);
-                vec4 fog = marchFog(origin - dir * spectreT, dir, h.tHit + spectreT, fh);
+                vec4 fog = marchFog(eye, dir, h.tHit + spectreT, fh);
                 L = L * fog.a + fog.rgb;             // linear radiance, before tonemap (§4.6)
             }
             colour = toneExposeEncode(L, EXPOSURE_EV);
@@ -1713,7 +1716,7 @@ void main()
             // the neutral no-fog value so the composite fetch is a byte-identical no-op.
             if (pc.misc6.z != 0u) {
                 FogHit fh = FogHit(h.hitP, n, uint(h.flags), h.mc.flags);
-                vec4 fog = marchFog(origin - dir * spectreT, dir, h.tHit + spectreT, fh);
+                vec4 fog = marchFog(eye, dir, h.tHit + spectreT, fh);
                 imageStore(fogImg, ivec2(px) / 2, fog);
             } else {
                 imageStore(fogImg, ivec2(px) / 2, vec4(0.0, 0.0, 0.0, 1.0));

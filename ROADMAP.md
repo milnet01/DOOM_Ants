@@ -13770,7 +13770,7 @@ defect visible before a player finds it.
   Source: review-code 2026-11-04, lanes 1-3 (open questions).
   Lanes: renderer, shaders, assets.
 
-- 📋 [DOOM-0556] **Behind a Spectre the traced fog march starts from the wrong point, because main overwrites the camera ray.**
+- ✅ [DOOM-0556] **Behind a Spectre the traced fog march starts from the wrong point, because main overwrites the camera ray.**
   pathtrace.comp:1483-1484: main overwrites origin and dir with the
   bent ray after a Spectre. Every later reader (primaryHitSurface,
   marchFog, skyPanorama, skyFogOpticalDepth) sees the bent values. At
@@ -13781,6 +13781,15 @@ defect visible before a player finds it.
   Remedy (unverified): keep the camera ray in const locals and give the
   post-Spectre ray its own names.
   queued: user chose fix later 2026-11-04.
+  2026-11-05: fixed. main keeps `const vec3 eye` before the Spectre
+  bend, and both marchFog calls start there (they started at origin -
+  dir * spectreT, which is not the eye once dir is bent). With no
+  Spectre, spectreT is 0 and origin is the eye, so nothing else changes.
+  Checked with -shotverify (fog clock pinned): E1M1 start old vs new 213
+  px differ, same build twice 214 px; E1M5 -1360 104 90 old vs new 12931
+  px, same build twice 11879 px. So no regression, and the change at
+  that spot is below run-to-run noise; the visible effect stays
+  unmeasured.
   **Layman:** In Ultra's traced view, fog seen through a Spectre is worked out from a spot slightly off the player's eye.
   Kind: review-fix.
   Source: review-readability 2026-11-04, lane 3 (MEDIUM and lead); review-code 2026-11-04, lane 4 (open question).
