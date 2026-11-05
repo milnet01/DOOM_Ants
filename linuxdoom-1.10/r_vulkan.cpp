@@ -11529,6 +11529,9 @@ extern "C" void RB_Vulkan_Present(void)
     // right for a reproducible gate and exactly wrong for a look investigation -- an A/B
     // over an effect toggle taken through -shotverify silently photographs the same pinned
     // frame twice. Costs nothing unless the flag is passed.
+    // DOOM-0565: `-devshots K` takes K shots on consecutive presents from there, so frame-to-
+    // frame flicker can be measured within one run; separate runs differ by more than noise.
+    static int devShotsLeft = 1;
     {
         static bool devShotArmed = false;
         if (!devShotArmed)
@@ -11536,11 +11539,15 @@ extern "C" void RB_Vulkan_Present(void)
             devShotArmed = true;
             int p = M_CheckParm("-devshot");
             if (p && p + 1 < myargc) rb_devshot = atoi(myargv[p + 1]);
+            p = M_CheckParm("-devshots");
+            if (p && p + 1 < myargc) devShotsLeft = std::max(1, atoi(myargv[p + 1]));
         }
     }
     bool devShotThisFrame = false;
     if (rb_devshot > 0 && --rb_devshot == 0)
     {
+        if (--devShotsLeft > 0)
+            rb_devshot = 1;                      // the next present is shot too
         if (!g.swapTransferSrc)
         {
             printf("dev: screenshot unavailable -- this surface will not allow the "
