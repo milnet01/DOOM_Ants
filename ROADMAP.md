@@ -13520,7 +13520,7 @@ defect visible before a player finds it.
   Source: review-code 2026-11-04, lane 1 (MEDIUM, recalibrated LOW; and a LOW).
   Lanes: renderer, assets.
 
-- 📋 [DOOM-0547] **Pickup-model files are checked only for finite numbers, so huge or negative values reach the vertex buffer and the light table.**
+- ✅ [DOOM-0547] **Pickup-model files are checked only for finite numbers, so huge or negative values reach the vertex buffer and the light table.**
   - rb_model.h:72-79: the .dmdl parser checks only isfinite, so values
     near FLT_MAX pass. model_verts (r_mesh.c:2606) can overflow to inf
     in the vertex buffer and the sprite BLAS. Light rgb can be negative
@@ -13537,6 +13537,15 @@ defect visible before a player finds it.
   normals to about unit length, UVs to [0,1], rgb >= 0, reach > 0 under
   a cap; on the host, clamp each light channel or require isfinite(w).
   queued: user chose fix later 2026-11-04.
+  2026-11-05: fixed. rb_model.h refuses a position past
+  RB_MODEL_MAX_EXTENT (128), a normal outside 0.9..1.1 of unit length, u
+  v outside 0..1, a light channel below 0 or over 16, a reach of 0 or
+  less or over 1024. BuildDynamicEmitters also drops a non-finite
+  weight. Real files sit inside (positions within 17.2, colours 0..1,
+  reach 64..96); pickup_models_test loads them all. Red: 12 new
+  rb_model_test cases failed before the parser change; each part of the
+  check removed alone turns at least one red. Spec DOOM-0539 §4.2 and
+  INV-4 amended.
   **Layman:** A broken 3D pickup model file could put nonsense numbers into the picture; the model files ship with the game, so this is a tidy-up, not a security hole.
   Kind: review-fix.
   Source: review-code 2026-11-04, lane 1 (MEDIUM) and lane 2 (LOW); recalibrated LOW.

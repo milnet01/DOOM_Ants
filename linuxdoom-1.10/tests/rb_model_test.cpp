@@ -6,7 +6,10 @@
 // Contract:
 //   1. A well-formed file loads, and its vertices and lights read back in place.
 //   2. Bad magic, a wrong version, counts over the caps, a vertex count not a multiple of 3,
-//      a truncated or overlong body, and NaN or infinite values are each refused.
+//      a truncated or overlong body, and NaN or infinite values are each refused. So is a
+//      finite value out of its range: a position past RB_MODEL_MAX_EXTENT, a normal not
+//      near unit length, u or v outside 0..1, a light channel below 0 or over its cap, or a
+//      reach of 0 or less or over its cap (DOOM-0547).
 //   3. A refused file leaves the model empty.
 //   4. A body at an odd offset in memory still loads.
 //   5. A file on disk loads, and one past the largest valid size is refused.
@@ -22,8 +25,12 @@
 
 namespace {
 
+// Every value is in range (DOOM-0547): vertex k sits at x = k % 64 with normal +z and
+// v = (k % 8 + 1) / 8; a light sits at x 24 with colour (0.25, 0.5, 1) and reach 30.
 std::vector<unsigned char> make(uint32_t version, uint32_t nv, uint32_t nl, size_t floatCount)
 {
+    static const float vert[8]  = { 0.0f, 0.5f, 1.0f, 0.0f, 0.0f, 1.0f, 0.5f, 0.0f };
+    static const float light[7] = { 24.0f, 0.0f, 4.0f, 0.25f, 0.5f, 1.0f, 30.0f };
     std::vector<unsigned char> f(16 + floatCount * sizeof(float));
     std::memcpy(f.data(), "DMDL", 4);
     std::memcpy(f.data() + 4, &version, 4);
@@ -31,7 +38,14 @@ std::vector<unsigned char> make(uint32_t version, uint32_t nv, uint32_t nl, size
     std::memcpy(f.data() + 12, &nl, 4);
     for (size_t i = 0; i < floatCount; i++)
     {
-        const float v = (float)i;
+        float v;
+        if (i < (size_t)nv * 8)
+        {
+            const size_t k = i / 8, c = i % 8;
+            v = c == 0 ? (float)(k % 64) : c == 7 ? (float)(k % 8 + 1) / 8.0f : vert[c];
+        }
+        else
+            v = light[(i - (size_t)nv * 8) % 7];
         std::memcpy(f.data() + 16 + i * sizeof(float), &v, sizeof v);
     }
     return f;
@@ -69,7 +83,8 @@ int main()
         rb_model_t m;
         check(RB_ModelParse(f.data(), f.size(), &m) == 1, "a well-formed file loads");
         check(m.numVerts == 3 && m.numLights == 1, "its counts read back");
-        check(RB_ModelVert(&m, 2)[7] == 23.0f, "the last vertex's v is the 24th float");
+        check(RB_ModelVert(&m, 2)[0] == 2.0f && RB_ModelVert(&m, 2)[7] == 0.375f,
+              "the last vertex reads back in place");
         check(RB_ModelLight(&m, 0)[0] == 24.0f, "the light starts straight after the vertices");
         check(RB_ModelLight(&m, 0)[6] == 30.0f, "the light's reach is its seventh float");
         RB_ModelFree(&m);
@@ -119,6 +134,35 @@ int main()
         auto f = good();
         poison(f, 3 * 8 + 6, std::numeric_limits<float>::infinity());
         check(refused(f), "an infinite value in the last light is refused");
+    }
+    // DOOM-0547: finite is not enough. Each field out of its range is refused on its own.
+    {
+        struct Case { size_t index; float value; const char* what; };
+        const size_t L = 3 * 8;  // the light's first float
+        const Case cases[] = {
+            { 0, 3.0e38f, "a coordinate near FLT_MAX is refused" },
+            { 2, -(RB_MODEL_MAX_EXTENT + 1.0f), "a coordinate past the extent is refused" },
+            { 5, 2.0f, "a normal far from unit length is refused" },
+            { 5, 0.0f, "a zero normal is refused" },
+            { 6, 1.5f, "a u past 1 is refused" },
+            { 15, -0.25f, "a v below 0 is refused" },
+            { L + 1, RB_MODEL_MAX_EXTENT + 1.0f, "a light past the extent is refused" },
+            { L + 4, -0.5f, "a negative light channel is refused" },
+            { L + 5, RB_MODEL_MAX_LIGHT_RGB + 1.0f, "a light channel over the cap is refused" },
+            { L + 6, 0.0f, "a zero reach is refused" },
+            { L + 6, -30.0f, "a negative reach is refused" },
+            { L + 6, RB_MODEL_MAX_REACH + 1.0f, "a reach over the cap is refused" },
+        };
+        for (const Case& c : cases)
+        {
+            auto f = good();
+            poison(f, c.index, c.value);
+            check(refused(f), c.what);
+        }
+        auto f = good();
+        poison(f, 6, 1.0f);
+        poison(f, 7, 0.0f);
+        check(!refused(f), "u 1 and v 0, the ends of the range, load");
     }
     {
         rb_model_t m;

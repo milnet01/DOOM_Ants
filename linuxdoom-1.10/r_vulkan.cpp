@@ -7610,8 +7610,8 @@ void BuildDynamicEmitters()
         const float czv = ex1 * ey2 - ey1 * ex2;
         const float area = 0.5f * std::sqrt(cxv * cxv + cyv * cyv + czv * czv);
         const float w    = emis::luminance(lr, lg, lb) * area;
-        if (!(w > 0.0f))
-            continue;                            // DOOM-0407: pdf 0 -> Inf in the shader
+        if (!(w > 0.0f) || !std::isfinite(w))
+            continue;                            // DOOM-0407: pdf 0 -> Inf in the shader; DOOM-0547: Inf weight
         for (int k = 0; k < 3; k++)
         {
             emit.push_back(tri[k].x); emit.push_back(tri[k].y); emit.push_back(tri[k].z);

@@ -76,7 +76,10 @@ float    lights[numLights][7]  x y z, r g b, reach
 ```
 
 `RB_MODEL_MAX_VERTS` is 900, so 300 triangles. `RB_MODEL_MAX_LIGHTS` is 4. `u v` run 0..1 across
-the atlas, with v 0 at the PNG's top row.
+the atlas, with v 0 at the PNG's top row. The reader also refuses a value out of its range: a
+position past `RB_MODEL_MAX_EXTENT` on any axis, a normal not within 0.9..1.1 of unit length, `u v`
+outside 0..1, a light channel below 0 or over `RB_MODEL_MAX_LIGHT_RGB`, a reach of 0 or less or over
+`RB_MODEL_MAX_REACH` (DOOM-0547).
 
 ### 4.3 Drawing
 
@@ -180,8 +183,9 @@ BLAS per model plus TLAS instances.
 - **INV-4** — A malformed `.dmdl` is refused and that sprite draws as its sprite; it never crashes or
   reads out of bounds. Assets are read from a user-settable folder (`DOOMASSETDIR`), so this crosses
   a trust boundary. *Test:* `tests/rb_model_test.cpp`: bad magic, wrong version, counts over the
-  caps, a vertex count not a multiple of 3, a truncated body, NaN or infinite coordinates. *Breaks when:* a count is trusted before the
-  size is checked.
+  caps, a vertex count not a multiple of 3, a truncated body, NaN or infinite coordinates, and
+  each field out of its §4.2 range. *Breaks when:* a count is trusted before the size is checked, or
+  a finite value near `FLT_MAX` reaches the vertex buffer or the emitter weights.
 - **INV-5** — A light inside a model lights the room: its own shell does not block it. *Test:* a B4
   capture of `BON1` in a dark sector, Ultra traced and rasterised, with its `.dmdl` and with a copy holding
   `numLights` 0, floor mean compared against a same-build control. *Breaks when:* the sprite BLAS

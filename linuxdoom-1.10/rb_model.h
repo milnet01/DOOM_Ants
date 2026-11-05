@@ -2,7 +2,8 @@
 //
 // Header-only so a test reaches it without the engine. Models come from a folder the user
 // can set (DOOMASSETDIR), so a file is untrusted: every count is capped before it is used
-// for a size, the size must then match exactly, and every float must be finite (INV-4).
+// for a size, the size must then match exactly, and every float must be finite and in its
+// range (INV-4).
 #ifndef RB_MODEL_H
 #define RB_MODEL_H
 
@@ -19,6 +20,11 @@
 #define RB_MODEL_VERT_FLOATS 8u    // x y z, nx ny nz, u v
 #define RB_MODEL_LIGHT_FLOATS 7u   // x y z, r g b, reach
 #define RB_MODEL_HEADER_SIZE 16u
+// DOOM-0547: ranges a finite value must also keep. A pickup is tens of units across, a light's
+// colour is near 0..1 and its reach under a few hundred units; the caps leave room above that.
+#define RB_MODEL_MAX_EXTENT    128.0f  // |x|, |y|, |z| of a vertex or a light
+#define RB_MODEL_MAX_LIGHT_RGB 16.0f
+#define RB_MODEL_MAX_REACH     1024.0f
 #define RB_MODEL_MAX_FILE    (RB_MODEL_HEADER_SIZE + (RB_MODEL_MAX_VERTS * RB_MODEL_VERT_FLOATS \
                               + RB_MODEL_MAX_LIGHTS * RB_MODEL_LIGHT_FLOATS) * 4u)
 
@@ -72,6 +78,34 @@ static inline int RB_ModelParse(const void* data, size_t size, rb_model_t* out)
     for (i = 0; i < count; i++)
     {
         if (!isfinite(floats[i]))
+        {
+            free(floats);
+            return 0;
+        }
+    }
+    // DOOM-0547: in range too, or a finite value near FLT_MAX overflows the vertex buffer and a
+    // light's gain overflows the emitter weights.
+    for (i = 0; i < nv; i++)
+    {
+        const float* v = floats + i * RB_MODEL_VERT_FLOATS;
+        const float  n2 = v[3] * v[3] + v[4] * v[4] + v[5] * v[5];
+        if (fabsf(v[0]) > RB_MODEL_MAX_EXTENT || fabsf(v[1]) > RB_MODEL_MAX_EXTENT
+            || fabsf(v[2]) > RB_MODEL_MAX_EXTENT
+            || n2 < 0.81f || n2 > 1.21f  // length within 0.9..1.1
+            || v[6] < 0.0f || v[6] > 1.0f || v[7] < 0.0f || v[7] > 1.0f)
+        {
+            free(floats);
+            return 0;
+        }
+    }
+    for (i = 0; i < nl; i++)
+    {
+        const float* l = floats + (size_t)nv * RB_MODEL_VERT_FLOATS + i * RB_MODEL_LIGHT_FLOATS;
+        if (fabsf(l[0]) > RB_MODEL_MAX_EXTENT || fabsf(l[1]) > RB_MODEL_MAX_EXTENT
+            || fabsf(l[2]) > RB_MODEL_MAX_EXTENT
+            || l[3] < 0.0f || l[4] < 0.0f || l[5] < 0.0f || l[3] > RB_MODEL_MAX_LIGHT_RGB
+            || l[4] > RB_MODEL_MAX_LIGHT_RGB || l[5] > RB_MODEL_MAX_LIGHT_RGB
+            || !(l[6] > 0.0f) || l[6] > RB_MODEL_MAX_REACH)
         {
             free(floats);
             return 0;
