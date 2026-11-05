@@ -13,7 +13,8 @@
 //   2. Equal distances keep the sector-walk order (`order`), so the kept set
 //      is the same on every libc's qsort.
 //   3. r_mesh.c calls RB_SortSpritesNearest (source scrape), so the order
-//      tested here is the order the engine uses.
+//      tested here is the order the engine uses; RB_BuildBlobs uses the same
+//      nearest-first candidates when its blobs overflow (DOOM-0557).
 //   4. DOOM-0539 §4.5: RB_ModelCutoff takes models nearest first while their
 //      triangles fit the budget, none at or past the distance cap, and things at
 //      the distance of the first that does not fit draw as sprites too, so the
@@ -82,6 +83,11 @@ int main()
         const std::string src = slurp(DOOM_TESTS_ROOT "/r_mesh.c");
         check(src.find("RB_SortSpritesNearest(") != std::string::npos,
               "3: r_mesh.c orders the sprite candidates nearest first");
+        // DOOM-0557: blobs take the same nearest-first path when they overflow.
+        const size_t blobs = src.find("int RB_BuildBlobs(");
+        check(blobs != std::string::npos
+                  && src.find("nearest_things(", blobs) < src.find("\n}\n", blobs),
+              "3: RB_BuildBlobs takes its overflow nearest first");
     }
 
     // ---- 4: the model budget and distance cap (DOOM-0539 §4.5) --------------

@@ -13754,7 +13754,7 @@ defect visible before a player finds it.
   Source: review-readability 2026-11-04, lane 3 (MEDIUM and lead); review-code 2026-11-04, lane 4 (open question).
   Lanes: shaders.
 
-- 📋 [DOOM-0557] **Blob shadows are dropped in sector order when the buffer fills, the problem DOOM-0459 fixed for sprites.**
+- ✅ [DOOM-0557] **Blob shadows are dropped in sector order when the buffer fills, the problem DOOM-0459 fixed for sprites.**
   r_mesh.c:2805 says the blob walk 'Mirrors RB_BuildSprites' thing
   walk'. It no longer does: sprites got a nearest-first fallback
   (build_nearest_sprites, :2720, DOOM-0459). Blobs walk sectors in index
@@ -13766,6 +13766,14 @@ defect visible before a player finds it.
   regex-matches RB_BuildBlobs' body (MF_SHADOW test before
   RB_MESH_BLOB).
   queued: user chose fix later 2026-11-04.
+  2026-11-05: fixed. The blob filter and quad moved to blob_verts;
+  RB_BuildBlobs walks in sector order while blobs fit and, on overflow,
+  takes them nearest first from nearest_things, the candidate list
+  build_nearest_sprites now shares. The false 'Mirrors' comment is gone.
+  Red: sprite_cap_test's new scrape and sprite_flags_test's re-anchored
+  one fail on the old r_mesh.c; removing blob_verts' MF_SHADOW skip
+  turns the latter red. Not run: an in-game overflow (needs a crowded
+  map or a lowered cap).
   **Layman:** On a crowded map, the soft shadow under a nearby monster can be the one left out, while distant ones are kept.
   Kind: review-fix.
   Source: review-readability 2026-11-04, lane 1 (MEDIUM and lead).

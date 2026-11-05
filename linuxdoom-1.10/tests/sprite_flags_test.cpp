@@ -68,9 +68,11 @@ int main()
     check(std::regex_search(mesh, std::regex(
               "sflags *= *RB_SpriteFlags *\\(thing->flags,[^;]*MF_SPECIAL, *MF_SHADOW\\)")),
           "sprite_quad takes its flags from RB_SpriteFlags");
+    // DOOM-0557: the blob filter lives in blob_verts, shared by both of RB_BuildBlobs' walks.
+    // [^}]* keeps the match inside the filter, before the function's first closing brace.
     check(std::regex_search(mesh, std::regex(
-              "RB_BuildBlobs[\\s\\S]*?thing->flags *& *MF_SHADOW[\\s\\S]*?RB_MESH_BLOB")),
-          "RB_BuildBlobs skips an MF_SHADOW Thing before it draws a blob");
+              "static int blob_verts\\([^{]*\\{[^}]*thing->flags *& *MF_SHADOW[^}]*\\{[^}]*RB_MESH_BLOB")),
+          "blob_verts skips an MF_SHADOW Thing before it draws a blob");
 
     // 5.
     char want[32];
