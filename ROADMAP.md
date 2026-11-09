@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=567 -->
+<!-- ants-roadmap-id-high-water: DOOM=574 -->
 
 # Roadmap
 
@@ -14055,6 +14055,91 @@ defect visible before a player finds it.
   Kind: perf.
   Source: user-request-2026-11-09.
 
+- 📋 [DOOM-0571] **Rules written twice and kept in step only by comments: RT gate, emitter record, push blocks and more.**
+  From review-code --performance 2026-11-09 (P4). Not filed elsewhere;
+  DOOM-0558, DOOM-0559, DOOM-0560 and DOOM-0564 hold the rest.
+  - r_vulkan.cpp:259: the tier probe and device creation test for ray
+    tracing differently. One DeviceRtUsable(). Not DOOM-0225's gate.
+  - r_vulkan.cpp:7718: the 14-float emitter record stride and offsets
+    are literals in a dozen places. Named constants.
+  - r_vulkan.cpp:8224: three emitter area/weight tests have diverged.
+  - r_vulkan.cpp:10334 and mesh.vert:22: the 32-float mesh push block is
+    built twice on the host and declared twice in shaders. One helper;
+    one formulas/mesh_iface.glsl.
+  - r_vulkan.cpp:11871: render-scale clamp in three copies.
+  - r_vulkan.cpp:10024: the previous-frame camera basis is rebuilt by
+    hand; copy it from pc.
+  - pathtrace.comp:628: the muzzle position copies 487-488 (may overlap
+    DOOM-0560's muzzle bullet).
+  - bloom_extract_raster.comp:49: tap footprint copied from the RT one.
+  - d_main.c:478: the per-tic body is copied in three loops.
+  - m_menu.c:2711: the dev menu's scroll window copies the crisp menu's
+    and has drifted once.
+  - mesh.frag:229: main() is still about 470 lines (DOOM-0551 did not
+    split it). Split by feature.
+  **Layman:** Several rules exist as two hand-kept copies; a fix to one copy can silently miss the other.
+  Kind: refactor.
+  Source: review-code-perf-2026-11-09.
+  Lanes: renderer, shaders, engine.
+
+- 📋 [DOOM-0572] **Comments the 2026-11-09 performance review found false: pipelines, push lanes, sound buffer, timers, menus.**
+  From review-code --performance 2026-11-09 (P5). DOOM-0562 and
+  DOOM-0563 hold the ones filed earlier.
+  - r_vulkan.cpp:4573: names the wrong pipeline for the 8-bit pass.
+  - r_vulkan.cpp:1779: claims a missing geometryShader fails loudly.
+  - r_vulkan.cpp:4766: CreateDescriptors header lists old contents.
+  - r_vulkan.cpp:5572: wrong sampler count and push size.
+  - r_vulkan.cpp:8331, r_mesh.h:207: say once per level; they rerun
+    mid-play (DOOM-0296, DOOM-0281).
+  - r_vulkan.cpp:8064, :8039: reads vbufShadow now (DOOM-0443).
+  - r_vulkan.cpp:10538, :10383: describe the wrong function or order.
+  - r_vulkan.cpp:9401-9403: misc3/misc5 lanes are in use on display
+    frames. Copy renderer.md's lane table.
+  - r_vulkan.cpp:9673 (steps), :2875 (push range and bindings).
+  - pathtrace.comp:252 (misc3.w is parity), :248 (misc.x unused; header
+    omits modes 5 and 6).
+  - svgf_temporal.comp:37: hspec is not what the composite adds; drop
+    the dead binding. (The include list half is DOOM-0563.)
+  - mesh.frag:323: unnamed 0x80; add FLAG_BLOB.
+  - i_system.c:90 (35 Hz, not 70), i_sound.c:98 (dead SAMPLECOUNT; real
+    buffer at :697), i_sound.c:253 (no I_Error now), d_main.c:475 (cap
+    never binds), d_main.c:577 (empty sound calls).
+  - m_menu.c:3755, :2053, :1908 (counts; also :2676).
+  **Layman:** Code comments that say the wrong thing; someone trusting them would change the wrong number.
+  Kind: doc-fix.
+  Source: review-code-perf-2026-11-09.
+  Lanes: renderer, shaders, engine.
+
+- 📋 [DOOM-0573] **When things overflow the sprite buffer, the player's weapon is dropped and the overflow warning can latch wrongly.**
+  From review-code --performance 2026-11-09, lane 5. Unverified by a run.
+  - r_vulkan.cpp:10486: the weapon and blobs are built after the things,
+    so a things overflow leaves no room for them. Build psprites first or
+    reserve 6 x NUMPSPRITES vertices.
+  - r_mesh.c:2846: one static warn latch is shared by two RB_BuildSprites
+    calls with different room. One latch per call site.
+  **Layman:** In a very crowded room the gun could vanish from view, and the warning about it may not print.
+  Kind: fix.
+  Source: review-code-perf-2026-11-09.
+  Lanes: renderer.
+
+- 📋 [DOOM-0574] **Four correctness leads from the 2026-11-09 performance review: a barrier, sky fog, a palette purge, a device gate.**
+  From review-code --performance 2026-11-09. Each is a reading, not a
+  reproduction; confirm before fixing.
+  - r_vulkan.cpp:3635: the seep-field/fog-noise upload barrier names only
+    the fragment stage; the compute megakernel also reads them. Add
+    COMPUTE_SHADER_BIT. A validation-layer run (as DOOM-0552) settles it.
+  - pathtrace.comp:1790: behind a Spectre the sky branches march fog from
+    the Spectre point. DOOM-0556 fixed only the surface path. Pass eye,
+    unless deliberate.
+  - m_menu.c:1373: PLAYPAL and the patch are both PU_CACHE, so either can
+    purge the other. Copy the palette to a local first.
+  - r_vulkan.cpp:1779: the probe does not require geometryShader, so a
+    device lacking it may not fail loudly. Gate on it and I_Error.
+  **Layman:** Four small suspected bugs found while reviewing speed; each needs checking before it is fixed.
+  Kind: fix.
+  Source: review-code-perf-2026-11-09.
+  Lanes: renderer, shaders.
+
 ## 0.11.0 — The frame budget
 
 Performance and pacing, and the benchmark harness that makes a regression
@@ -14259,9 +14344,42 @@ against.
   notes of shots 0017-0021: 3840x2160, render scale 50, fog 3, bloom 2.
   Solid and Ultra share one ray-traced renderer, so this item covers
   Solid's ray-traced view too.
+  2026-11-09, review-code --performance at c048226: GPU candidates for the
+  ray-traced views. None is measured. Measure each with the rb_profile
+  pass named, at render scale 50, before and after.
+  - pathtrace.comp:1709 [HIGH]: mode 6 returns early on 3 of 4 pixels,
+    so the lighting runs on quarter-full waves. Split into a full-res
+    G-buffer pass and a half-res lighting dispatch. LARGER. See DOOM-0188.
+  - svgf_atrous.comp:89 [HIGH]: every a-trous pass reloads position and
+    normal for all 24 taps. Pack a compact guide once. LARGER.
+  - svgf_atrous.comp:92: specular is filtered on every pass even when
+    specular is off. Pass the setting; skip the loads. QUICK.
+  - taau.comp:88: 17 storage-image loads per display pixel, filtering
+    by hand. Bind as sampled images; shared-memory tile. LARGER.
+  - pt_common.glsl:664: RIS does full work for every sprite light at
+    every lit pixel. Target from the centroid; sample the survivor. LARGER.
+  - pt_common.glsl:629: loop-invariant cdfMax load inside the loop. QUICK.
+  - pt_common.glsl:399: one exp per fog step can be shared. Needs a new
+    -shotcompare golden. QUICK.
+  - pathtrace.comp:1303: rough/metal fetched on 3 of 4 pixels then
+    discarded. Move after the half-res gate. QUICK.
+  - pathtrace.comp:447: every world triangle returns to the shader for a
+    software back-face test. Opaque wall geometry + hardware cull. LARGER.
+  - r_vulkan.cpp:2698/:2706: refit, sprite BLAS and TLAS run serially
+    with barriers between; a dead mask write blocks TLAS UPDATE. Batch the
+    builds. QUICK. See DOOM-0091.
+  - r_vulkan.cpp:9268: bloom images change layout six times a frame;
+    park in GENERAL. QUICK.
+  - r_vulkan.cpp:9910 / label.comp:62: the debug label dispatches over
+    the whole display. Debug Views only. QUICK.
+  - r_vulkan.cpp:8952: per-level read-only data stays in host-visible
+    memory the megakernel reads every frame. Stage to DEVICE_LOCAL. LARGER.
+  - r_vulkan.cpp:9553: ten BufferAddress calls per frame; cache them. QUICK.
+  - bake.comp:76: one thread per probe runs 256 rays in sequence, so the
+    level-load bake leaves the GPU idle. One workgroup per probe. LARGER.
+  Source: review-code-perf-2026-11-09 (off-repo record), lanes 2, 4, 6, 7.
   **Layman:** The ray-traced mode runs at about 30 frames a second on this card; this is the long-term push to double that, and to stop each new effect quietly eating the difference.
   Kind: perf.
-  Source: user-request-2026-07-27.
   Lanes: renderer, shaders.
 
 - 📋 [DOOM-0295] **L3's torch in-scatter costs 1.05 ms of megakernel -- find out where.**
@@ -14485,9 +14603,69 @@ against.
   MINIMUM measures whether a change made a pass slower. On an RX 6600
   over five runs the spread was 1.9% on the min, 4.7% on the median and
   67.7% on p90. Warm-up and gating rules are on DOOM-0431.
+  2026-11-09, review-code --performance at c048226: candidate causes of
+  uneven frames. None is measured. Measure each with -frameledger before
+  fixing; drop any that measures small. Fix the ledger first (its own
+  flush and WAD hash spike the run) and DOOM-0507.
+  CAMERA AND SOUND (every frame):
+  - d_main.c:504: the sub-tic blend starts when a tic is noticed, not
+    when it was due, so camera phase jitters by up to a frame. Derive the
+    fraction from I_GetTime's own clock; drop lastTicMs. Log the fraction
+    as an ext. ledger row; play-test a 60 Hz strafe. QUICK.
+  - d_main.c:551: S_UpdateSounds runs every frame though sounds move per
+    tic; Mix_SetPanning may take the audio lock (unconfirmed). Run the
+    channel loop per gametic; skip unchanged vol/pan. QUICK.
+  - i_sound.c:477 (+ :390): pitched chunks are built on first play of
+    each pitch step, mid-play (two mallocs + convert + copy). Pre-build
+    reachable steps at S_Start; realloc instead of copy. QUICK.
+  - s_sound.c:636: cold-start music retry loads music mid-play. Retry
+    outside GS_LEVEL or on a worker. LARGER.
+  - g_game.c:1745: save writes (fsync, m_misc.c:157) inside a tic.
+    Player-initiated. LARGER.
+  DOOR AND LIFT SPIKES (ray-traced views):
+  - r_vulkan.cpp:8399/:4085: BuildFogLightGrid re-bakes every cell vs
+    every light with a full sort, untimed. Time it; partial_sort; re-bake
+    near the moved sector only. See DOOM-0305, DOOM-0478.
+  - r_vulkan.cpp:8310: re-bake writes WC memory twice and printf+fflush.
+  - r_vulkan.cpp:9348: RecordSeepRefresh runs with fog off. Return early
+    at FogStrength()==0, keep the dirty latches. QUICK.
+  - r_vulkan.cpp:4039: clearance march printf+fflush and a full no-sun
+    count every frame a plane moves. Drop or rate-limit. QUICK.
+  - r_vulkan.cpp:4026: clearanceDirty not cleared on a re-flood frame,
+    so the next frame repeats the march. QUICK.
+  - r_mesh.c:1456: sun-clearance snapshot mallocs up to 512 KB per
+    moving tic. March into locals, return a moved flag. QUICK.
+  - r_mesh.c:1746: re-flood recomputes cell geometry that cannot change
+    within a level. Pass the previous field. LARGER.
+  - r_vulkan.cpp:2630: the refit covers the whole world BLAS while
+    anything moves. Separate moving-sector BLAS. LARGER. See DOOM-0091.
+  - r_vulkan.cpp:8027: a real emitter-set change (switch press) rebuilds
+    the whole static point-light cache. Residual of DOOM-0436; see
+    DOOM-0258. LARGER.
+  2026-11-09 review, continued. FIRST-USE WORK THAT LANDS MID-PLAY:
+  - r_vulkan.cpp:6964: a Solid->Ultra switch runs EnsureHdMaterials
+    (file I/O, PNG decode) inside the next Present. Keep images across
+    levels; show a loading cue. LARGER.
+  - r_vulkan.cpp:7323: any tier change rebuilds the level mesh, even one
+    that neither enters nor leaves Ultra. QUICK.
+  - r_vulkan.cpp:10569: gamma and melt images are created on first use
+    and after each resize. Create them with the swapchain. QUICK.
+  - r_vulkan.cpp:2858/:2943: debug-view pipelines compile on the first
+    ~ press. Pre-build when rb_rtdebug_menu turns on. QUICK.
+  - r_vulkan.cpp:5230: no VkPipelineCache anywhere; load/save one. QUICK.
+  - r_mesh.c:468: an Ultra relief rebuild scans every relief row per
+    wall. Bucket by texnum at load. LARGER.
+  - m_menu.c:1003: opening Save/Load reads six files on the main thread.
+    Read at M_Init, refresh the written slot. QUICK.
+  - st_stuff.c:1065: a palette flash can re-read PLAYPAL if purged.
+    Cache it PU_STATIC in ST_loadData. QUICK.
+  RESIZE:
+  - r_vulkan.cpp:2072 and :3531: each one-time submit waits on the whole
+    queue, and a resize runs several back to back. Record into one
+    command buffer. QUICK.
+  Source: review-code-perf-2026-11-09 (off-repo record), lanes 1-5, 8, 9.
   **Layman:** The game's speed wobbles instead of holding steady. Even at a good average frame rate, uneven frames read as stutter -- this is about making each frame take the same time as the last.
   Kind: perf.
-  Source: user-request-2026-08-20 (play-test of the DOOM-0345 bloom look call).
 
 - 📋 [DOOM-0427] **W_CheckNumForName scans every lump for every name, so sprite init is quadratic in a PWAD's lump count.**
   Split out of DOOM-0400, whose other findings shipped 2026-09-07. Held back
@@ -14696,10 +14874,92 @@ against.
   No test covers the profilers, the FPS counter or -timedemo. At
   hundreds of FPS a frame is about 1 ms, so whole-ms resolution makes
   the counter coarse exactly where Solid runs.
+  2026-11-09, review-code --performance (lane 9) confirms the rounding at
+  hu_stuff.c:575: whole-ms timing makes perfectly paced 60 Hz frames
+  read worst=17 ms, so the counter shows 60/58 and contradicts its own
+  comment at hu_stuff.c:517. Change: a microsecond reader beside
+  I_GetTimeMS on the same CLOCK_MONOTONIC; track worst in us. Check it
+  against -frameledger on the same run. This is an instrument fix, so it
+  comes before any DOOM-0359 measurement.
   **Layman:** Nothing checks that the frame-rate numbers on screen are right, and the counter rounds frame times to whole milliseconds.
   Kind: test.
   Source: ut-ants-review-2026-10-24.
   Lanes: renderer.
+
+- 📋 [DOOM-0568] **The frame ledger charges its own buffer flush and WAD hash to the frames it records.**
+  From review-code --performance 2026-11-09, lane 8. Both must be fixed
+  before any DOOM-0359 measurement is trusted.
+  - run_ledger.c:238: the 8 MB half-buffer flush runs after
+    rl.start_ms is set, so the fwrite lands in a recorded frame's
+    frame/wall and cpu_span. frameledger floor then reads it as an engine
+    hitch. Change: flush before taking start_ms.
+  - d_ledger.c:165: the ledger SHA-256 hashes every WAD between two
+    frames of live play, after the 120 settling frames, so frame 0 starts
+    late and runs catch-up tics. Change: hash in D_LedgerInit, before
+    the level loads.
+  **Layman:** The tool that measures frame times makes some frames slow itself, so it reports hitches the game does not have.
+  Kind: fix.
+  Source: review-code-perf-2026-11-09.
+  Lanes: engine.
+
+- 📋 [DOOM-0569] **Solid's rasterised frame builds sprites and light emitters that no raster pass reads.**
+  From review-code --performance 2026-11-09 (lanes 2, 3, 5). Unmeasured.
+  Measure cpuBuildMs[1] and -frameledger p99 in Solid raster, in a
+  sprite-heavy room, before and after.
+  ONE FIX, SEVERAL SYMPTOMS (build once into RAM, copy to the GPU, skip
+  RT-only writes on raster frames):
+  - r_vulkan.cpp:7583 [HIGH]: BuildDynamicEmitters reads every sprite
+    triangle back from write-combined memory each frame.
+  - r_vulkan.cpp:10507: sprites are built a second time, same view.
+  - r_vulkan.cpp:7532: FinalizeEmitters rewrites emitter/CDF buffers.
+  - r_vulkan.cpp:7597, nee_sampling.h:132: per-frame vector allocations
+    and deep copies.
+  SMALLER CPU ITEMS:
+  - r_mesh.c:1921: the re-height scan reruns on frames between tics.
+    User 2026-11-09: allowed to skip repeat frames within one gametic,
+    keeping the full per-tic scan (texture animation untouched). Measure
+    cpuBuildMs[2] before and after. performance.md asks for a comment at
+    r_mesh.c:1929 saying why the per-tic scan stays.
+  - r_vulkan.cpp:7642: BSP walk per emissive triangle; store the sector.
+  - r_vulkan.cpp:7915: dynamic-light merge is O(subsectors x triangles);
+    the per-frame rewrite half is settled by DOOM-0437.
+  - r_mesh.c:2480: sin/cos of the camera angle per thing, twice a frame.
+  - sprite_cap.h:67: sorts model candidates even when all fit the budget.
+  - r_mesh.c:2444: wall-light lookup by name, uncached.
+  - r_vulkan.cpp:2033: device memory properties re-queried per call.
+  **Layman:** In Solid with ray tracing off, each frame still does preparation work only the ray-traced view uses.
+  Kind: perf.
+  Source: review-code-perf-2026-11-09.
+  Lanes: renderer.
+
+- 📋 [DOOM-0570] **Raster shaders and the status-bar blit do avoidable per-pixel work every frame.**
+  From review-code --performance 2026-11-09 (lanes 1, 3, 7, 9).
+  Unmeasured: measure the rb_profile pass named (or -frameledger for
+  CPU work) at the same render scale, before and after.
+  - r_vulkan.cpp:10609: with gamma on, a full-frame copy plus barriers
+    every frame. Render into gammaImage directly. LARGER.
+  - r_vulkan.cpp:11294: every billboard is drawn again through the
+    Spectre mask, Spectre or not. Draw only the fuzz range. LARGER.
+  - r_vulkan.cpp:4504: the display pass clears a full-size depth buffer
+    nothing uses. Only if it measures. LARGER.
+  - formulas/surface_detail.glsl:58/:65: surface maps read at mip 0, and
+    sampled twice for roughness. Needs mips first. LARGER.
+  - formulas/hd_surface.glsl:100: de-tile cell hashes recomputed per map;
+    zero-weight taps not skipped. QUICK.
+  - mesh.frag:588: point-light colour normalised per pixel; host could
+    store it. LARGER.
+  - ssao.frag:53: 17 rgba16f fetches per AO pixel to use one channel.
+    Linear-depth target. LARGER.
+  - mesh.frag:225: 9-tap PCF in ALU; use sampler2DShadow. QUICK.
+  - composite.frag:77: the same texel fetched twice off-Spectre. QUICK.
+  - mesh.frag:435: palette decode uses filtered sampling; texelFetch. QUICK.
+  - v_video.c:235 (d_main.c:274): the status bar repaints byte by byte
+    on every 3D frame. User 2026-11-09: measure first, change only if it
+    is worth it. QUICK (row copy) / LARGER (cache).
+  **Layman:** Some drawing work in Solid's rasterised view is repeated or wasted; trimming it would make that view faster still.
+  Kind: perf.
+  Source: review-code-perf-2026-11-09.
+  Lanes: renderer, shaders.
 
 ## 0.12.0 — Light and materials
 
