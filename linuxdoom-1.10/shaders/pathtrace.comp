@@ -1421,12 +1421,23 @@ vec3 primaryHitAddTerms(vec3 L, PrimaryHit h, PrimaryLight s, vec3 n, float secL
 
 // DOOM-0103 §4.1: the lobe's inputs for a primary hit seen along dir. A goo stain that
 // takes the wet sheen passes setting 0, so a puddle does not get both.
-SpecIn primarySpecIn(PrimaryHit h, vec3 dir)
+SpecIn primarySpecIn(PrimaryHit h, vec3 dir, vec3 n)
 {
     uint setting = (wetOn() && h.gooWet > 0.0) ? 0u : pc.misc7.y;
     // DOOM-0517: with the lobe off, metal is matte as before (DOOM-0103 INV-4).
     float metal  = specOn(setting, h.mc.flags) ? h.metal : 0.0;
-    return SpecIn(-dir, h.rough, setting, h.mc.flags, specF0(h.albedo, metal), 1.0 - metal);
+    // DOOM-0597: specular AA (Kaplanyan 2016). Texels per pixel (HD: hdLod; else 1 texel per
+    // world unit), stretched at grazing angles, widens alpha^2 so a far bumpy surface gets a
+    // stable broad lobe, not a sparkle that jumps pixels. fp <= 1 keeps the authored roughness.
+    float fp = (h.mc.usePBR != 0u ? exp2(hdLod) : h.tHit * hdPixelAngle)
+             / max(abs(dot(dir, n)), 0.2);
+    float rough = h.rough;
+    if (fp > 1.0) {
+        float r  = max(h.rough, kSpecRoughMin);
+        float a2 = r * r * r * r + min(0.25 * (1.0 - 1.0 / (fp * fp)), 0.18);
+        rough = clamp(sqrt(sqrt(a2)), r, 1.0);
+    }
+    return SpecIn(-dir, rough, setting, h.mc.flags, specF0(h.albedo, metal), 1.0 - metal);
 }
 
 void main()
@@ -1595,7 +1606,7 @@ void main()
             h.albedo *= spectreTint;   // DOOM-0508
             uint seed = px.x + px.y * w + 1u;
             PrimaryLight s = primaryHitLighting(h, isSprite, prim, n);
-            SpecIn sp = primarySpecIn(h, dir);
+            SpecIn sp = primarySpecIn(h, dir, n);
             vec3 spec;
             vec3 L = shadeSurface(s.shadeP, s.shadeN, h.albedo * sp.diffW, h.id, pc.misc2.x, pc.misc4.y,
                                   pc.emit, pc.matEmis, NEE_SAMPLES, h.addEmis,
@@ -1736,7 +1747,7 @@ void main()
             // the high-frequency map detail, or it treats bumps as edges and under-denoises),
             // and gpos stored the TRUE hitP, so only the shadow rays use the lifted point.
             PrimaryLight s = primaryHitLighting(h, isSprite, prim, n);
-            SpecIn sp = primarySpecIn(h, dir);
+            SpecIn sp = primarySpecIn(h, dir, n);
             vec3 spec;
             vec3 illum = shadeSurface(s.shadeP, s.shadeN, vec3(sp.diffW), h.id, pc.misc2.x, pc.misc4.y,
                                       pc.emit, pc.matEmis, NEE_SAMPLES, false,

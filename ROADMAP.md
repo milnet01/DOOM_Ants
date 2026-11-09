@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=596 -->
+<!-- ants-roadmap-id-high-water: DOOM=597 -->
 
 # Roadmap
 
@@ -15022,6 +15022,16 @@ against.
   Kind: feature.
   Source: user-request-2026-11-09.
   Lanes: renderer.
+
+- 🚧 [DOOM-0597] **Specular anti-aliasing for far and grazing surfaces in the traced view.**
+  primarySpecIn widens the lobe's roughness by the pixel's texel
+  footprint (Kaplanyan 2016), stretched at grazing angles. Far flicker
+  0.080 -> 0.071, p99 0.87 -> 0.66; close, sharpness, luma unchanged;
+  +0.01 ms. Open: close PSNR -0.11 dB hints the 5x grazing stretch
+  over-widens near the camera; Ultra-only Toksvig term not added.
+  **Layman:** Shiny walls far away stop sparkling from frame to frame.
+  Kind: fix.
+  Source: user-report-2026-11-09 (RT denoise loop it8).
 
 ## 0.12.0 — Light and materials
 
