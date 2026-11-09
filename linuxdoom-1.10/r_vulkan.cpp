@@ -340,6 +340,7 @@ enum {
                  // pathtrace.comp (write, set 2) and svgf_composite.comp (read, set 0)
     SV_SPEC,     // DOOM-0103: noisy specular light, NOT divided by albedo (binding 10)
     SV_HSPEC0, SV_HSPEC1,   // DOOM-0103: its temporal history, ping-ponged (binding 11)
+    SV_SATROUS0, SV_SATROUS1, // DOOM-0565: its own a-trous ping-pong (binding 12)
     SV_COUNT
 };
 
@@ -3024,10 +3025,11 @@ void CreateSvgfDescriptorLayout()
 {
     // gpos,gnorm,albedo,illum,hcol,hmom,atrous,out,motion,fog,spec,hspec (binding 8 =
     // 6-d MV; 9 = DOOM-0011 L1 half-res fog target; 10 and 11 = DOOM-0103's specular
-    // channel and its history, each added without disturbing the bindings before it).
-    const uint32_t counts[12] = { 2, 2, 1, 1, 2, 2, 2, 1, 1, 1, 1, 2 };
-    VkDescriptorSetLayoutBinding b[12] = {};
-    for (uint32_t i = 0; i < 12; i++) {
+    // channel and its history, each added without disturbing the bindings before it;
+    // 12 = DOOM-0565's specular a-trous ping-pong).
+    const uint32_t counts[13] = { 2, 2, 1, 1, 2, 2, 2, 1, 1, 1, 1, 2, 2 };
+    VkDescriptorSetLayoutBinding b[13] = {};
+    for (uint32_t i = 0; i < 13; i++) {
         b[i].binding         = i;
         b[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         b[i].descriptorCount = counts[i];
@@ -3037,7 +3039,7 @@ void CreateSvgfDescriptorLayout()
     // label-on-upscaled-output variant, binding 7 retargeted in WriteTaauDescriptor) and
     // DOOM-0345 R1's svgfSplitDs (binding 7 retargeted at rtHdrImage for the -DBLOOM_SPLIT
     // composite; written in WriteSvgfDescriptor alongside svgfDs).
-    CreateComputeSets(b, 12, "svgf", &g.svgfDsLayout, &g.svgfDsPool,
+    CreateComputeSets(b, 13, "svgf", &g.svgfDsLayout, &g.svgfDsPool,
                       { &g.svgfDs, &g.labelTaauDs, &g.svgfSplitDs });
 }
 
@@ -3216,8 +3218,8 @@ uint32_t ModeLabel(int mode, uint32_t* out)
 // written, because a partially-written set is a validation error at bind time.
 static void WriteSvgfSet(VkDescriptorSet ds, VkImageView outView)
 {
-    VkDescriptorImageInfo info[18] = {};
-    const VkImageView views[18] = {
+    VkDescriptorImageInfo info[20] = {};
+    const VkImageView views[20] = {
         g.svView[SV_GPOS0],  g.svView[SV_GPOS1],            // b0 gpos[2]
         g.svView[SV_GNORM0], g.svView[SV_GNORM1],           // b1 gnorm[2]
         g.svView[SV_ALBEDO],                                // b2 albedo
@@ -3230,17 +3232,18 @@ static void WriteSvgfSet(VkDescriptorSet ds, VkImageView outView)
         g.svView[SV_FOG],                                   // b9 DOOM-0011 L1 fog target
         g.svView[SV_SPEC],                                  // b10 DOOM-0103 specular
         g.svView[SV_HSPEC0], g.svView[SV_HSPEC1],           // b11 DOOM-0103 hspec[2]
+        g.svView[SV_SATROUS0], g.svView[SV_SATROUS1],       // b12 DOOM-0565 satrous[2]
     };
-    for (uint32_t i = 0; i < 18; i++) {
+    for (uint32_t i = 0; i < 20; i++) {
         info[i].imageView   = views[i];
         info[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
     }
-    struct { uint32_t binding, first, count; } map[12] = {
+    struct { uint32_t binding, first, count; } map[13] = {
         {0,0,2},{1,2,2},{2,4,1},{3,5,1},{4,6,2},{5,8,2},{6,10,2},{7,12,1},{8,13,1},{9,14,1},
-        {10,15,1},{11,16,2}
+        {10,15,1},{11,16,2},{12,18,2}
     };
-    VkWriteDescriptorSet wr[12] = {};
-    for (int i = 0; i < 12; i++) {
+    VkWriteDescriptorSet wr[13] = {};
+    for (int i = 0; i < 13; i++) {
         wr[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         wr[i].dstSet          = ds;
         wr[i].dstBinding      = map[i].binding;
@@ -3248,7 +3251,7 @@ static void WriteSvgfSet(VkDescriptorSet ds, VkImageView outView)
         wr[i].descriptorCount = map[i].count;
         wr[i].pImageInfo      = &info[map[i].first];
     }
-    vkUpdateDescriptorSets(g.device, 12, wr, 0, nullptr);
+    vkUpdateDescriptorSets(g.device, 13, wr, 0, nullptr);
 }
 
 // Point the SVGF descriptor set at the current image views. Binding 7 (output)
@@ -3380,8 +3383,8 @@ void CreateSvgfTargets()
         // see fetchFogBilinear) reads as a no-op fold.
         VkClearColorValue fogNeutral = {}; fogNeutral.float32[3] = 1.0f;
         const int clearSky[2]  = { SV_GPOS0, SV_GPOS1 };
-        const int clearZero[7] = { SV_HCOL0, SV_HCOL1, SV_HMOM0, SV_HMOM1,
-                                   SV_SPEC, SV_HSPEC0, SV_HSPEC1 };
+        const int clearZero[9] = { SV_HCOL0, SV_HCOL1, SV_HMOM0, SV_HMOM1,
+                                   SV_SPEC, SV_HSPEC0, SV_HSPEC1, SV_SATROUS0, SV_SATROUS1 };
         const int clearFog[1]  = { SV_FOG };
         for (int i : clearSky)  vkCmdClearColorImage(cb, g.svImg[i], VK_IMAGE_LAYOUT_GENERAL, &sky,  1, &range);
         for (int i : clearZero) vkCmdClearColorImage(cb, g.svImg[i], VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &range);

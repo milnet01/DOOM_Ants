@@ -1749,9 +1749,10 @@ void main()
 
             if (any(isnan(illum)) || any(isinf(illum))) illum = vec3(0.0);
             imageStore(gillum, ivec2(px), vec4(illum, 1.0));
-            // DOOM-0103: the specular sum, never divided by albedo (INV-3).
+            // DOOM-0103: the specular sum, never divided by albedo (INV-3). DOOM-0565: .a
+            // carries the lobe's roughness, which sets how long its history may run.
             if (any(isnan(spec)) || any(isinf(spec))) spec = vec3(0.0);
-            imageStore(gspec, ivec2(px), vec4(spec, 0.0));
+            imageStore(gspec, ivec2(px), vec4(spec, sp.rough));
             return;                                 // feed writes the G-buffer only
         }
         else

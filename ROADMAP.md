@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=565 -->
+<!-- ants-roadmap-id-high-water: DOOM=566 -->
 
 # Roadmap
 
@@ -18634,10 +18634,40 @@ in CLAUDE.md describes.
   user (is fog-off in Ultra traced calm enough for you? If yes, the
   bubbling is the fog and I fix that next; recommendation: yes, fix the
   fog, 2026-11-05).
+  2026-11-09, within-run (-devshots 8, scratch/noise/tcap3.sh,
+  tcap4.sh). TWO sources. (1) Fog: its per-frame input is the wisp clock
+  (rippleTime); march jitter is fixed per pixel, and the fog is folded
+  in the composite after SVGF, so nothing smooths it. E1M1 start, rt_fog
+  2: flicker 1.66, -rippletime 8 pinned 0.35, fog off 0.41; upscaler 0
+  does not help (3.03). NOT fixed yet. (2) The user's "film grain" (F12
+  shots 0058-0061, E1M1 1054 -3548 266, CEIL3_5 ceiling by the light
+  panels) is the DOOM-0103 specular channel, not fog: specular 0 took
+  still-frame ceiling grain 8.5 to 0.6 and flicker 4.3 to 1.2; fog off
+  and surface_detail 0 did not. FIXED (uncommitted at time of note): the
+  specular channel gets its own à-trous ping-pong (satrous[2]) and rough
+  lobes a 0.03 temporal floor; grain 0.71, flicker 1.21, brightness
+  kept. DOOM-0103 spec §4.2, §6, INV-3 amended. Cost about +0.5 ms
+  denoise at an 854x400 render under load; re-time quiet. Waiting-on:
+  user look at the build. User's 2026-11-05 fog-off question is
+  superseded: their 2026-11-09 reply asks for the shine kept with no
+  noise.
   **Layman:** The ray-traced view shimmers and boils on floors near health bonuses and other glowing pickups; this makes it settle.
   Kind: fix.
   Source: user-play-test-2026-11-05.
   Lanes: shaders, renderer.
+
+- 📋 [DOOM-0566] **-rtverify fails its direct-light check when run at a warped spot with a player's config.**
+  Found 2026-11-09. scratch/noise/tcap4.sh with XARGS=-rtverify at E1M1
+  -warpto 1054 -3548 266 and the config from dev-shots/shot-0058.txt:
+  "INV-6 direct-light rel-MSE = 16.9528% ... FAIL (bar 0.50%)", the same
+  figure on b3ee67b and on the DOOM-0565 build. At the default start with
+  scratch/val/val.sh it passes (0.1973%). Unknown whether the test is
+  only valid at the start or the estimator is wrong at that spot (near
+  the light panels). Refute: find which setting or position moves it.
+  **Layman:** The ray tracer's built-in self-test only passes at the level's start; run elsewhere it reports a failure that may be real or may be the test's own limit.
+  Kind: investigate.
+  Source: found-2026-11-09-DOOM-0565.
+  Lanes: renderer, tests.
 
 ## 0.13.0 — The player's experience
 

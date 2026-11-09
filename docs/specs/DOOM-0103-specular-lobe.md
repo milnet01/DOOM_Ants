@@ -206,15 +206,26 @@ differs.
 - `pathtrace.comp` writes the specular sum to a new G-buffer image, `gspec`
   (rgba16f, set 2), at the pixels that trace NEE. It is **not** divided by
   albedo: a dielectric highlight is the light's colour, not the surface's.
+  Its alpha carries the lobe's roughness.
 - `svgf_temporal.comp` fills the other three pixels of each 2x2 block with
   the same joint-bilateral upsample it uses for `gillum`.
 - It then blends `gspec` with its own history, `hspec[2]`, ping-ponged by the
   same parity as `hcol[2]`, at a faster rate than
   `gillum`: the Workbench's `temporalAlpha(newHist - 1)`, whose floor is 0.2
-  (B2, 2026-11-03). Disocclusion and the anti-ghost gradient test
-  reject history exactly as they do for `gillum`.
-- Neither `gspec` nor `hspec` goes through the à-trous passes.
-- `svgf_composite.comp` adds this frame's `hspec` as `spec`:
+  (B2, 2026-11-03). A rough lobe takes the matte light's 0.03 floor
+  instead, blended in by `smoothstep(0.4, 0.8, roughness)`: its highlight
+  barely moves with the eye (DOOM-0565, 2026-11-09). Disocclusion and the
+  anti-ghost gradient test reject history exactly as they do for `gillum`.
+- `hspec.a` holds the highlight's second luminance moment. Its first moment
+  is the luminance of `hspec.rgb`, since the blend and the luminance are
+  both linear. Their variance is the highlight's own.
+- The temporal pass writes the blended highlight and that variance to
+  `satrous[0]`. The à-trous passes filter `satrous[2]` beside `atrous[2]`
+  (DOOM-0565). They use the same kernel and the same normal and plane stops.
+  The luminance stop reads the highlight's own level and variance. The two
+  channels never take each other's samples, and the highlight never meets
+  albedo there.
+- `svgf_composite.comp` adds the last `satrous` as `spec`:
   `L = albedo * illum + spec + shownEmission(…)`.
 - Mode 4 (no denoiser) adds the specular sum straight to the pixel, in the
   same order. Modes 4 and 6 keep the agreement DOOM-0439 set, apart from the
@@ -270,8 +281,11 @@ pspec += pow(ndh, specN) * specNorm * ndl * col * att;   // only where ndl > 0
   test limit the trail. If the user can see it, the next step is a
   reflected-direction reprojection, a later item, not queued.
 - **Noise.** Six samples on a wide lobe are noisy at half resolution. The
-  roughness floor and the temporal blend are the defence, and the user
-  judges the result at B4. Raising the floor is the first remedy.
+  roughness floor, the temporal blend and the highlight's own à-trous pass
+  are the defence. The floor alone fell short: on 2026-11-09 the user
+  reported film grain on E1M1's `CEIL3_5` ceiling beside the light panels,
+  and a floor of 0.6 measured no change there. That ceiling has no
+  roughness map, so it is fully rough, and the lobe doubles its brightness.
 - **White-out.** A bright light's highlight goes through the same tone map
   that turned DOOM-0511's panels white. The specular sum is clamped per
   channel, so a red light's highlight stays red. INV-5 checks it on the test
@@ -286,7 +300,8 @@ pspec += pow(ndh, specN) * specNorm * ndl * col * att;   // only where ndl > 0
 ## 5. Data & resources
 
 - **One G-buffer image,** `gspec`, rgba16f at the traced render size. Its
-  history is a ping-ponged pair of the same size, `hspec[2]`.
+  history is a ping-ponged pair of the same size, `hspec[2]`, and its
+  à-trous ping-pong another, `satrous[2]` (binding 12, DOOM-0565).
 - **Config:** one new key, `specular` (§4.4).
 - **Push constants and `ShadowUbo`:** no growth. The lanes DOOM-0273 adds
   are used.
@@ -305,6 +320,10 @@ before and after, with `specular` 1 and `surface_detail` 1:
   the scene pass (`profMs[1]`) grows by at most 0.4 ms, and the frame rate
   stays at or above 60 (DOOM-0170 INV-2). The user raised this from 0.3 ms
   on 2026-11-05, after B6 measured +0.39 ms at 1920x1200.
+- **The highlight's à-trous pass (DOOM-0565)** has no budget yet. On
+  2026-11-09, at an 854x400 render under load 4 to 10, the a-trous pass
+  measured 1.28 to 1.49 ms against 0.87 to 0.97 before (medians of two
+  interleaved runs each). Re-time it under this section's conditions.
 
 ## 7. Build order
 
@@ -356,14 +375,17 @@ of STONE2 walls and FLOOR5_2 floor leading to the REDWALL1 cross
   *Breaks when:* the bake passes a real view direction, which bakes one
   camera's highlights into the probes.
 
-- **INV-3** — The specular channel is never divided by albedo, and it skips
-  the à-trous passes.
+- **INV-3** — The specular channel is never divided by albedo. The à-trous
+  passes filter it only in its own images, never mixed with the matte
+  light. (Amended 2026-11-09 by DOOM-0565; it read "skips the à-trous
+  passes".)
   *Test:* `tests/specular_test.cpp` scrapes the shaders: `gspec` is written
-  in `pathtrace.comp` with no division by `albedo`. `hspec` is read in
-  `svgf_composite.comp` without multiplying by `albedo`. Neither appears in
-  any `svgf_atrous.comp` binding.
+  in `pathtrace.comp` with no division by `albedo`. `satrous` is read in
+  `svgf_composite.comp` without multiplying by `albedo`.
+  `svgf_atrous.comp` never names `albedo`, its specular sum takes the
+  specular samples, and neither sum takes the other's.
   *Breaks when:* the highlight takes the surface's colour, so a red light on
-  a brown floor gleams brown, or the à-trous passes blur it away.
+  a brown floor gleams brown, or the matte light leaks into it.
 
 - **INV-4** — With `specular` 0, every frame in both views matches the build
   before this change, with `surface_detail` set either way.
@@ -406,7 +428,8 @@ of STONE2 walls and FLOOR5_2 floor leading to the REDWALL1 cross
   and reusing their shadow rays is ray traced and adds none.
 - **Fold specular into `gillum`.** It would have to be divided by albedo,
   which fails on dark texels, and the à-trous passes would blur it into a
-  smear.
+  smear. DOOM-0565 filters it in its own à-trous images instead, edge-stopped
+  by its own luminance.
 - **An analytic area-light highlight with no shadow (representative point or
   LTC).** Free of noise, but a highlight would show through walls. That is
   the kind of difference a player can see.

@@ -5,8 +5,9 @@
 //          specOn is false when the setting is off or the material is a liquid, and
 //          every specBrdf call in pt_common.glsl and pathtrace.comp sits behind specOn.
 //   INV-2  The bake passes a zero view direction to shadeSurface and calls no specBrdf.
-//   INV-3  gspec is stored with no albedo or division; the composite adds hspec without
-//          albedo; svgf_atrous.comp touches neither.
+//   INV-3  gspec is stored with no albedo or division; the composite adds the specular
+//          a-trous result (satrous) without albedo; svgf_atrous.comp filters it in its
+//          own sums, never with the matte light's and never with albedo (DOOM-0565).
 //   INV-6  In mesh.frag the highlight goes into direct, never ambient, its exponent comes
 //          from specExponent, and both blocks holding it skip the weapon.
 //   INV-7  specBrdf and specExponent are defined only in shaders/formulas/specular.glsl.
@@ -352,18 +353,23 @@ int main()
               "the gspec store holds no albedo and no division");
 
         const std::string cs = code(slurp(std::string(DOOM_TESTS_ROOT) + "/shaders/svgf_composite.comp"));
-        size_t ld = cs.find("imageLoad(hspec");
-        check(ld != std::string::npos, "svgf_composite.comp reads hspec");
+        size_t ld = cs.find("imageLoad(satrous");
+        check(ld != std::string::npos, "svgf_composite.comp reads the specular a-trous result");
         size_t s0 = (ld == std::string::npos) ? 0 : cs.find_last_of(";{}", ld) + 1;
         std::string load = (ld == std::string::npos) ? "" : cs.substr(s0, cs.find(';', ld) - s0);
-        check(load.find("albedo") == std::string::npos, "the hspec read is not multiplied by albedo");
+        check(load.find("albedo") == std::string::npos, "the satrous read is not multiplied by albedo");
         const std::regex mul("albedo\\s*\\*\\s*spec\\b|\\bspec\\s*\\*\\s*albedo");
         check(!std::regex_search(cs, mul), "the composite never multiplies spec by albedo");
 
         const std::string atrous = code(slurp(std::string(DOOM_TESTS_ROOT) + "/shaders/svgf_atrous.comp"));
         check(!atrous.empty(), "svgf_atrous.comp is readable");
-        check(atrous.find("gspec") == std::string::npos && atrous.find("hspec") == std::string::npos,
-              "the a-trous passes bind neither gspec nor hspec");
+        // DOOM-0565: the highlight is filtered in its own images. It is never divided by
+        // albedo there, and its sums take only its own samples, never the matte light's.
+        check(atrous.find("albedo") == std::string::npos, "the a-trous passes never touch albedo");
+        check(std::regex_search(atrous, std::regex("sumS\\s*\\+=\\s*cqs\\.rgb")),
+              "the specular sum takes the specular samples");
+        check(!std::regex_search(atrous, std::regex("sumS\\s*\\+=\\s*cq\\.|\\bsum\\s*\\+=\\s*cqs")),
+              "the specular and matte sums never take each other's samples");
     }
 
     // INV-6: in mesh.frag the highlight goes into direct, never ambient, takes its exponent

@@ -20,6 +20,10 @@ layout(set = 0, binding = 0, rgba32f) uniform image2D gpos[2];
 layout(set = 0, binding = 1, rgba16f) uniform image2D gnorm[2];
 layout(set = 0, binding = 4, rgba16f) uniform image2D hcol[2];
 layout(set = 0, binding = 6, rgba16f) uniform image2D atrous[2];
+// DOOM-0565: the specular channel, filtered by the SAME geometry stops but its own
+// luminance stop and variance. It is never divided by albedo and never mixed with
+// atrous[] (DOOM-0103 INV-3): a red light's highlight stays red on a brown floor.
+layout(set = 0, binding = 12, rgba16f) uniform image2D satrous[2];
 
 layout(push_constant) uniform PC {
     vec4  prevPos; vec4 prevDir; vec4 prevRight; vec4 prevUp;
@@ -41,10 +45,12 @@ void main()
 
     vec4 gp = imageLoad(gpos[cur], p);
     vec4 c  = imageLoad(atrous[ping], p);
+    vec4 cs = imageLoad(satrous[ping], p);   // DOOM-0565: the specular channel
 
     // Sky: passthrough (and seed the colour history on the first iteration).
     if (gp.w < 0.0) {
         imageStore(atrous[pong], p, c);
+        imageStore(satrous[pong], p, cs);
         if (pc.misc2.y == 0u) imageStore(hcol[cur], p, vec4(c.rgb, 0.0));
         return;
     }
@@ -65,6 +71,15 @@ void main()
     float sumV = c.a   * (wCen * wCen);
     float wsum  = wCen;
 
+    // DOOM-0565: the specular sums. Same kernel, normal and plane stops; the luminance
+    // stop reads the highlight's own level and variance, so a highlight's edge stops
+    // its filter and the matte light's edges do not.
+    float lCs   = lum(cs.rgb);
+    float lStdS = sqrt(max(cs.a, 1e-8));
+    vec3  sumS  = cs.rgb * wCen;
+    float sumVS = cs.a   * (wCen * wCen);
+    float wsumS = wCen;
+
     for (int dy = -2; dy <= 2; dy++)
     for (int dx = -2; dx <= 2; dx++) {
         if (dx == 0 && dy == 0) continue;
@@ -74,6 +89,7 @@ void main()
         vec4 gq = imageLoad(gpos[cur], q);
         if (gq.w < 0.0) continue;                  // skip sky neighbours
         vec4 cq = imageLoad(atrous[ping], q);
+        vec4 cqs = imageLoad(satrous[ping], q);
         vec3 nq = imageLoad(gnorm[cur], q).xyz;
 
         float wN = pow(max(dot(nC, nq), 0.0), sigN);
@@ -87,6 +103,12 @@ void main()
         sum   += cq.rgb * wgt;
         sumV  += cq.a   * wgt * wgt;
         wsum  += wgt;
+
+        float wLs  = exp(-abs(lCs - lum(cqs.rgb)) / (sigL * lStdS + 1e-3));
+        float wgtS = hk * wN * wZ * wLs;
+        sumS  += cqs.rgb * wgtS;
+        sumVS += cqs.a   * wgtS * wgtS;
+        wsumS += wgtS;
     }
 
     // DOOM-0387: Var(sum w*x / sum w) = sum w^2*var / (sum w)^2. Dividing by sum w^2
@@ -95,5 +117,7 @@ void main()
     vec3  outC = sum  / max(wsum,  1e-6);
     float outV = sumV / max(wsum * wsum, 1e-6);
     imageStore(atrous[pong], p, vec4(outC, outV));
+    imageStore(satrous[pong], p, vec4(sumS  / max(wsumS, 1e-6),
+                                      sumVS / max(wsumS * wsumS, 1e-6)));
     if (pc.misc2.y == 0u) imageStore(hcol[cur], p, vec4(outC, 0.0));
 }

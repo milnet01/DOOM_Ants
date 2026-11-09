@@ -47,6 +47,8 @@ layout(set = 0, binding = 9, rgba16f) uniform image2D fogImg;
 // DOOM-0103 §4.2: the specular history svgf_temporal.comp wrote this frame. It is the
 // light's own colour, so it is added after the albedo re-multiply, never multiplied by it.
 layout(set = 0, binding = 11, rgba16f) uniform image2D hspec[2];
+// DOOM-0565: the specular channel after its own a-trous passes; [fin] is the last one.
+layout(set = 0, binding = 12, rgba16f) uniform image2D satrous[2];
 
 // Per-material Le table (3 floats/material, linear RGB), same buffer the trace
 // reads for self-emission — passed by device address so the composite needs no
@@ -213,7 +215,7 @@ void main()
         // be excepted from it and a nukage pool glowed only in the bright patches of its
         // own mottled texture. The decision moved to the one place that can see MatCtrl.
         // DOOM-0511: its sign marks a liquid, which shownEmission reads.
-        vec3 spec = imageLoad(hspec[cur], p).rgb;
+        vec3 spec = imageLoad(satrous[fin], p).rgb;   // DOOM-0565: denoised
         L = albedo * illum + spec + shownEmission(emis, albedo, ga.a);
         // DOOM-0455: the light-amp visor, a lamp at THIS frame's camera (misc2.zw,
         // misc3.w), added before the fog fold so mist still reads in front of a lit
