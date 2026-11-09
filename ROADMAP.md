@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=595 -->
+<!-- ants-roadmap-id-high-water: DOOM=596 -->
 
 # Roadmap
 
@@ -15008,6 +15008,18 @@ against.
   Measure flicker and frame cost against the current filter.
   **Layman:** The ray-traced picture is rebuilt from a half-size image; this makes that rebuild crisper and stops edges shimmering.
   Kind: enhancement.
+  Source: user-request-2026-11-09.
+  Lanes: renderer.
+
+- 📋 [DOOM-0596] **Dynamic resolution scaling: move the render scale each frame to hold 60 FPS.**
+  Today render_scale is a fixed preset (100/75/67/50). TAAU already
+  takes any render size, and the traced passes draw into a sub-rectangle
+  of full-size images, so a per-frame scale needs no reallocation.
+  Needs: a GPU-time controller with hysteresis, floor/ceiling settings
+  (e.g. 50-100 %), history handling when the scale changes, and a menu
+  setting. Raster view too once DOOM-0594 lands.
+  **Layman:** The game lowers its internal resolution a little in heavy scenes and raises it again when there is room, so the frame rate stays near 60.
+  Kind: feature.
   Source: user-request-2026-11-09.
   Lanes: renderer.
 
