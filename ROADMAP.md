@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=593 -->
+<!-- ants-roadmap-id-high-water: DOOM=595 -->
 
 # Roadmap
 
@@ -14990,6 +14990,25 @@ against.
   **Layman:** Nothing yet checks that the speed profilers add up their numbers correctly.
   Kind: test.
   Source: split from DOOM-0507, 2026-11-09.
+  Lanes: renderer.
+
+- 📋 [DOOM-0594] **Give the rasterised view a temporal upscaler, as the traced view has.**
+  taau.comp runs only in the traced view (rb_rtdebug 6 with upscaler 1).
+  The raster path needs per-pixel motion vectors and a jittered
+  projection before it can feed the same TAAU contract.
+  **Layman:** Below 100% render scale the rasterised view is only stretched; this gives it the same sharpening the ray-traced view gets.
+  Kind: feature.
+  Source: user-request-2026-11-09.
+  Lanes: renderer.
+
+- 📋 [DOOM-0595] **Make the traced view's upscaler sharper and steadier, and test other reconstruction filters.**
+  taau.comp phase 1: bilinear current sample, min/max colour clamp,
+  fixed 0.1 blend. Candidates: nearest, Catmull-Rom/Lanczos-style
+  reconstruction, variance clipping, confidence-weighted blend.
+  Measure flicker and frame cost against the current filter.
+  **Layman:** The ray-traced picture is rebuilt from a half-size image; this makes that rebuild crisper and stops edges shimmering.
+  Kind: enhancement.
+  Source: user-request-2026-11-09.
   Lanes: renderer.
 
 ## 0.12.0 — Light and materials
