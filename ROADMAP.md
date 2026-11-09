@@ -14664,6 +14664,21 @@ against.
     queue, and a resize runs several back to back. Record into one
     command buffer. QUICK.
   Source: review-code-perf-2026-11-09 (off-repo record), lanes 1-5, 8, 9.
+  2026-11-09, d_main.c sub-tic blend FIXED. The fraction now counts from
+  the clock tic the newest tic fell due (NetUpdate's gametime, read on
+  I_GetTime's own base via the new I_GetTimeTics), and the tic loop
+  snapshots after every tic. New ledger row ext.doom/view_lag = clock
+  minus the camera's game time. Measured on E1M1, private display,
+  1200 frames per run, busy machine, old and new alternated: per-frame
+  lag jump p99 went from 0.58-0.71 tic (ray-traced view, 100-135 fps)
+  and 0.04-0.34 tic (Solid raster, 375-595 fps) to 0.000 in every new
+  run. The new code computes the row from the same clock, so zero is
+  partly by construction; what it proves is that the clamp never fired
+  outside one 300 ms stall, where one dropped tic stepped the lag once.
+  Correction to the finding: presentation is MAILBOX where the driver
+  offers it, so the error is one RENDER frame, not one 60 Hz refresh;
+  it was large only where frames are slow. Still owed: a play-test
+  strafe on a real screen, and a Windows run.
   **Layman:** The game's speed wobbles instead of holding steady. Even at a good average frame rate, uneven frames read as stutter -- this is about making each frame take the same time as the last.
   Kind: perf.
 

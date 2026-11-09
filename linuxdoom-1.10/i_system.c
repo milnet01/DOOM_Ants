@@ -85,9 +85,13 @@ byte* I_ZoneBase (int*	size)
 
 
 
+// I_GetTime and I_GetTimeTics share this base, so a tic number from one and a
+// fraction from the other describe the same clock (DOOM-0359).
+static time_t	ticbasetime = 0;
+
 //
 // I_GetTime
-// returns time in 1/70th second tics
+// returns time in 1/TICRATE (35 Hz) tics
 //
 int  I_GetTime (void)
 {
@@ -96,7 +100,6 @@ int  I_GetTime (void)
     // change used to jump or stall the tic counter.
     struct timespec	tp;
     int			newtics;
-    static time_t	basetime=0;
 
     // DOOM-0404: tp is an uninitialised local, so an unchecked failure here feeds
     // whatever was on the stack into the tic counter -- and the tic counter is
@@ -105,13 +108,31 @@ int  I_GetTime (void)
     // of running on a garbage clock.
     if (clock_gettime(CLOCK_MONOTONIC, &tp) != 0)
 	I_Error ("I_GetTime: CLOCK_MONOTONIC is unavailable");
-    if (!basetime)
-	basetime = tp.tv_sec;
+    if (!ticbasetime)
+	ticbasetime = tp.tv_sec;
     // DOOM-0350: the arithmetic lives in tic_time.h so it can be unit tested,
     // and is 64-bit there because `long` is 32 bits on Windows -- the overflow
     // that made this function step backwards, and hang a launch in the melt.
-    newtics = I_TicsFrom (tp.tv_sec - basetime, tp.tv_nsec, TICRATE);
+    newtics = I_TicsFrom (tp.tv_sec - ticbasetime, tp.tv_nsec, TICRATE);
     return newtics;
+}
+
+
+//
+// I_GetTimeTics
+// I_GetTime's clock without the rounding down: 12.4 is 40% of the way from tic
+// 12 to tic 13. The render blend reads its sub-tic fraction from this (DOOM-0359).
+//
+double I_GetTimeTics (void)
+{
+    struct timespec	tp;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &tp) != 0)
+	I_Error ("I_GetTimeTics: CLOCK_MONOTONIC is unavailable");
+    if (!ticbasetime)
+	ticbasetime = tp.tv_sec;
+    return (double)(tp.tv_sec - ticbasetime) * TICRATE
+	   + (double)tp.tv_nsec * TICRATE / 1e9;
 }
 
 

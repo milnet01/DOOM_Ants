@@ -46,6 +46,9 @@ byte*	I_ZoneBase (int *size);
 // returns current time in tics.
 int I_GetTime (void);
 
+// I_GetTime's clock as a fraction: the tic count plus how far into the next.
+double I_GetTimeTics (void);
+
 // Wall-clock milliseconds (finer than I_GetTime).
 int I_GetTimeMS (void);
 

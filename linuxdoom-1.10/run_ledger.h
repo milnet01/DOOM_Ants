@@ -69,6 +69,8 @@ void RL_CpuPass (const char* name, double ms);
 void RL_FenceWait (double ms);
 void RL_PresentWait (double ms);
 void RL_Event (const char* name, double count);
+// An engine-specific row, category ext.doom.
+void RL_Ext (const char* name, double value);
 
 // A GPU result, read back after its frame ended. It counts against frame, the
 // one that submitted the work. A frame before this run (below 0) is ignored.

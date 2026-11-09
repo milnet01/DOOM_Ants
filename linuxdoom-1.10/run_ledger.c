@@ -276,6 +276,12 @@ void RL_Event (const char* name, double count)
 	fled_row (&rl.writer, rl.segment, rl.frame, "event", name, 0, count);
 }
 
+void RL_Ext (const char* name, double value)
+{
+    if (rl.active && rl.frame >= 0 && !(rl.limit && rl.frame == rl.limit))
+	fled_row (&rl.writer, rl.segment, rl.frame, "ext.doom", name, 0, value);
+}
+
 static const char* RL_SegmentOf (long long frame)
 {
     return frame == rl.frame ? rl.segment : rl.prev_segment;

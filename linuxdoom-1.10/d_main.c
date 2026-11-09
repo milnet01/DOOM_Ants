@@ -93,6 +93,7 @@ static const char rcsid[] __attribute__((used)) = "$Id: d_main.c,v 1.8 1997/02/0
 
 #include "d_main.h"
 #include "d_ledger.h"
+#include "run_ledger.h"	// RL_Ext: the view_lag row (DOOM-0359)
 #include "bot_play.h"
 
 //
@@ -450,7 +451,7 @@ void D_DoomLoop (void)
 	// 35 FPS while the simulation stays locked to 35 Hz. Net/demo/Classic keep the
 	// classic tic-locked path (sync + demo determinism + no wasted software redraws).
 	static boolean wasUncapped = false;
-	static int     lastTicMs   = 0;
+	static int     lastTicClock = 0;
 	boolean uncapped = !singletics && !netgame && !demoplayback
 			 && !demorecording && rendermode != RB_CLASSIC;
 	int ticBefore = gametic;
@@ -482,6 +483,9 @@ void D_DoomLoop (void)
 		M_Ticker ();
 		G_Ticker ();
 		gametic++;
+		// Every tic, so a frame that ran two blends from the second-last
+		// tic's view, not the one before it (DOOM-0359).
+		RB_InterpSnapshot (&players[consoleplayer]);
 	    }
 	}
 	else
@@ -492,18 +496,25 @@ void D_DoomLoop (void)
 	D_LedgerAfterTics (gametic - ticBefore, D_LedgerClockMs () - ledgerTicMs);
 
 	// Drive the render interpolation (DOOM-0048). Reset on entry so a stale frame
-	// can't smear; snapshot when a tic ran; set the sub-tic fraction every frame.
+	// can't smear; the tic loop above snapshots; set the sub-tic fraction every
+	// frame. The fraction counts from the clock tic at which the newest tic fell
+	// due (NetUpdate's gametime), not from when this loop noticed it. Noticing
+	// was up to a whole frame late, so the camera held, then jumped (DOOM-0359).
 	if (uncapped)
 	{
-	    player_t* vp = &players[consoleplayer];
+	    extern int gametime;	// d_net.c: I_GetTime at the last NetUpdate
+	    double now = I_GetTimeTics ();
 	    if (!wasUncapped)
-		RB_InterpReset (vp);
+		RB_InterpReset (&players[consoleplayer]);
 	    if (gametic != ticBefore)
-	    {
-		RB_InterpSnapshot (vp);
-		lastTicMs = I_GetTimeMS ();
-	    }
-	    RB_InterpSetFrac ((double)(I_GetTimeMS () - lastTicMs) / (1000.0 / TICRATE));
+		lastTicClock = gametime;
+	    double frac = now - lastTicClock;
+	    frac = frac < 0.0 ? 0.0 : (frac > 1.0 ? 1.0 : frac);
+	    RB_InterpSetFrac (frac);
+	    // The camera shows game time gametic - 1 + frac. How far that sits
+	    // behind the clock should hold still; it moves when the clamp above
+	    // fires (a stall, or tics dropped) and moved every frame before the fix.
+	    RL_Ext ("view_lag", now - (gametic - 1 + frac));
 	}
 	else
 	{
