@@ -147,7 +147,9 @@ int main()
             { 6, 1.5f, "a u past 1 is refused" },
             { 15, -0.25f, "a v below 0 is refused" },
             { L + 1, RB_MODEL_MAX_EXTENT + 1.0f, "a light past the extent is refused" },
-            { L + 4, -0.5f, "a negative light channel is refused" },
+            { L + 3, -0.5f, "a negative red light channel is refused" },
+            { L + 4, -0.5f, "a negative green light channel is refused" },
+            { L + 5, -0.5f, "a negative blue light channel is refused" },
             { L + 5, RB_MODEL_MAX_LIGHT_RGB + 1.0f, "a light channel over the cap is refused" },
             { L + 6, 0.0f, "a zero reach is refused" },
             { L + 6, -30.0f, "a negative reach is refused" },
@@ -163,6 +165,17 @@ int main()
         poison(f, 6, 1.0f);
         poison(f, 7, 0.0f);
         check(!refused(f), "u 1 and v 0, the ends of the range, load");
+        // Each cap is inclusive: a value exactly on it loads. Catches a `>` turned `>=`.
+        auto g = good();
+        poison(g, 2, -RB_MODEL_MAX_EXTENT);
+        poison(g, L + 0, RB_MODEL_MAX_EXTENT);
+        poison(g, L + 1, -RB_MODEL_MAX_EXTENT);
+        poison(g, L + 2, RB_MODEL_MAX_EXTENT);
+        poison(g, L + 3, RB_MODEL_MAX_LIGHT_RGB);
+        poison(g, L + 4, RB_MODEL_MAX_LIGHT_RGB);
+        poison(g, L + 5, RB_MODEL_MAX_LIGHT_RGB);
+        poison(g, L + 6, RB_MODEL_MAX_REACH);
+        check(!refused(g), "a coordinate, light channel and reach exactly on their caps load");
     }
     {
         rb_model_t m;
