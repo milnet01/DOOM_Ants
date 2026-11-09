@@ -118,8 +118,7 @@ int  I_GetTime (void)
 //
 // I_GetTimeMS
 // Wall-clock time in milliseconds. Finer than I_GetTime's 35Hz tics, which is
-// too coarse to measure a frame rate that can run well above TICRATE; used by
-// the FPS counter's rolling average (DOOM-0046).
+// too coarse to measure a frame rate that can run well above TICRATE.
 //
 int  I_GetTimeMS (void)
 {
@@ -136,6 +135,26 @@ int  I_GetTimeMS (void)
     if (!basetime)
 	basetime = tp.tv_sec;
     return (int)((tp.tv_sec-basetime)*1000 + tp.tv_nsec/1000000L);
+}
+
+//
+// I_GetTimeUS
+// Wall-clock time in microseconds, for the FPS counter (DOOM-0507). Whole
+// milliseconds read a 16.67 ms frame as 16 or 17, so 60 Hz showed a low of 58.
+// 64-bit throughout, for tic_time.h's reason: `long` is 32 bits on Windows.
+//
+int64_t I_GetTimeUS (void)
+{
+    struct timespec	tp;
+    static time_t	basetime=0;
+
+    // A failed read reports 0, as I_GetTimeMS does. The counter then sees one
+    // gap of a whole window and starts a fresh one.
+    if (clock_gettime(CLOCK_MONOTONIC, &tp) != 0)
+	return 0;
+    if (!basetime)
+	basetime = tp.tv_sec;
+    return (int64_t)(tp.tv_sec - basetime) * 1000000 + tp.tv_nsec / 1000;
 }
 
 

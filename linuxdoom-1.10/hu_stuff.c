@@ -39,6 +39,7 @@ rcsid[] __attribute__((used)) = "$Id: hu_stuff.c,v 1.4 1997/02/03 16:47:52 b1 Ex
 #include "w_wad.h"
 #include "v_video.h"
 #include "i_system.h"
+#include "fps_window.h"	// DOOM-0507: the counter's arithmetic
 
 #include "s_sound.h"
 
@@ -522,66 +523,18 @@ void HU_Drawer(void)
 //
 void HU_DrawFPS(void)
 {
-    static int	frames = 0;
-    static int	lastms = 0;
-    static int	prevms = 0;
-    static int	worst  = 0;     // slowest single-frame delta this window (ms)
-    static int	fps = 0;
-    static int	low = 0;        // 1000/worst — the "never dropped below" figure
+    static fps_window_t	win;	// DOOM-0507: the arithmetic, in fps_window.h
     char	buf[16];
-    int		now = I_GetTimeMS();
-    int		elapsed;
     int		x, y, w, i, c;
 
-    // Count every presented frame; refresh the displayed value twice a second.
-    // Track the largest inter-frame gap so a lone hitch surfaces as the low.
-    //
-    // DOOM-0403, two faults, both of which published a nonsense opening figure.
-    //
-    // First: elapsed is computed AFTER this block, not at its declaration. On
-    // the first call lastms is 0, so `now - lastms` was the whole time since
-    // SDL started -- past the window on the spot, so frame one published a rate
-    // measured over several seconds of not rendering.
-    //
-    // Second, and the one that survived fixing the first: a level load blocks
-    // the loop, so the gap it leaves lands INSIDE the next window and drags the
-    // average to nothing. A gap longer than the window itself is not a hitch,
-    // it is a period with no rendering in it, and averaging across it describes
-    // nothing. Start a fresh window instead. `low` still reports every hitch
-    // shorter than that -- which is every hitch a frame rate can be said about.
-    if (!lastms)
-    {
-	lastms = now;               // first call: start the window, don't divide
-	prevms = now;
-    }
-    else
-    {
-	int d = now - prevms;
-	if (d >= 500)
-	{
-	    lastms = now;           // discard the window this stall fell in
-	    frames = 0;
-	    worst = 0;
-	}
-	else if (d > worst)
-	    worst = d;
-    }
-    elapsed = now - lastms;
-    prevms = now;
-    frames++;
-    if (elapsed >= 500)
-    {
-	fps = (frames * 1000) / elapsed;
-	low = (worst > 0) ? (1000 / worst) : fps;
-	frames = 0;
-	worst = 0;
-	lastms = now;
-    }
+    // Count every presented frame; publish twice a second. fps_window.h owns
+    // the window, the low, and why a stall starts a fresh window (DOOM-0403).
+    FPS_Sample(&win, I_GetTimeUS());
 
     if (!fpsCorner)
 	return;
 
-    sprintf(buf, "%d/%d", fps, low);
+    sprintf(buf, "%d/%d", win.fps, win.low);
 
     // Measure the string in the HUD font so centre/right anchors line up.
     w = 0;

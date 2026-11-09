@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=574 -->
+<!-- ants-roadmap-id-high-water: DOOM=575 -->
 
 # Roadmap
 
@@ -14870,7 +14870,7 @@ against.
   Source: ut-ants-review-2026-10-24.
   Lanes: renderer.
 
-- 📋 [DOOM-0507] **Test the FPS counter's arithmetic and the profiler, and give the counter better than whole-ms resolution.**
+- ✅ [DOOM-0507] **Test the FPS counter's arithmetic and the profiler, and give the counter better than whole-ms resolution.**
   No test covers the profilers, the FPS counter or -timedemo. At
   hundreds of FPS a frame is about 1 ms, so whole-ms resolution makes
   the counter coarse exactly where Solid runs.
@@ -14881,6 +14881,10 @@ against.
   I_GetTimeMS on the same CLOCK_MONOTONIC; track worst in us. Check it
   against -frameledger on the same run. This is an instrument fix, so it
   comes before any DOOM-0359 measurement.
+  Shipped 2026-11-09: the counter's arithmetic moved to fps_window.h, timed
+  in microseconds (I_GetTimeUS) and rounded to nearest; fps_window_test
+  locks it. The same fix stops the frame after a stall being counted. The
+  profiler half is split to DOOM-0575.
   **Layman:** Nothing checks that the frame-rate numbers on screen are right, and the counter rounds frame times to whole milliseconds.
   Kind: test.
   Source: ut-ants-review-2026-10-24.
@@ -14962,6 +14966,16 @@ against.
   Kind: perf.
   Source: review-code-perf-2026-11-09.
   Lanes: renderer, shaders.
+
+- 📋 [DOOM-0575] **Test the profilers' arithmetic: the CPU build buckets and the per-pass GPU timings.**
+  DOOM-0507 asked for tests of the FPS counter and the profiler. The
+  counter half shipped with fps_window_test. This is the profiler half:
+  the `\` CPU profiler's buckets and the rb_profile GPU pass timings
+  have no test. DOOM-0359's measurements read both.
+  **Layman:** Nothing yet checks that the speed profilers add up their numbers correctly.
+  Kind: test.
+  Source: split from DOOM-0507, 2026-11-09.
+  Lanes: renderer.
 
 ## 0.12.0 — Light and materials
 

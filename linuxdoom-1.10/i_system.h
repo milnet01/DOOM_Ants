@@ -23,6 +23,8 @@
 #ifndef __I_SYSTEM__
 #define __I_SYSTEM__
 
+#include <stdint.h>	// int64_t (I_GetTimeUS)
+
 #include "d_ticcmd.h"
 #include "d_event.h"
 
@@ -44,8 +46,11 @@ byte*	I_ZoneBase (int *size);
 // returns current time in tics.
 int I_GetTime (void);
 
-// Wall-clock milliseconds (finer than I_GetTime); used by the FPS counter.
+// Wall-clock milliseconds (finer than I_GetTime).
 int I_GetTimeMS (void);
+
+// Wall-clock microseconds; used by the FPS counter.
+int64_t I_GetTimeUS (void);
 
 // Give the CPU back for about ms milliseconds (TryRunTics' wait for a tic).
 void I_Sleep (int ms);

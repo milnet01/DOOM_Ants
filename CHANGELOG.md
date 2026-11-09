@@ -30,6 +30,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **The FPS counter no longer reads 60/58 on a steady 60 frames a second** (DOOM-0507)
+  It timed frames in whole milliseconds and rounded down, so a perfectly
+  steady 60 showed a low of 58. It now times in microseconds and rounds
+  to nearest. After a pause such as a level load, the next average also
+  no longer counts one frame too many.
+
 - **The -frameledger recorder no longer causes the hitches it records** (DOOM-0568)
   It used to save rows up into one multi-megabyte write, which landed
   inside a recorded frame, and it hashed every WAD between two frames of
