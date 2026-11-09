@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=575 -->
+<!-- ants-roadmap-id-high-water: DOOM=593 -->
 
 # Roadmap
 
@@ -18981,6 +18981,26 @@ in CLAUDE.md describes.
   Source: found-2026-11-09-DOOM-0565.
   Lanes: renderer, tests.
 
+- 📋 [DOOM-0576] **Blood behaves as a fluid when a monster is shot, in Solid and Ultra.**
+  User request 2026-11-09. Blood that sprays, falls and
+  flows rather than a fixed sprite puff. Faked cheaply in the
+  rasterised views, simulated in the ray-traced ones (CLAUDE.md
+  render tiers). Where it lands is DOOM-0515's job (splatters that
+  stay); this item is the motion before it lands.
+  **Layman:** When you shoot a monster, the blood splashes and runs like a real liquid instead of a flat puff.
+  Kind: feature.
+  Source: user-request-2026-11-09.
+  Lanes: renderer, fx.
+
+- 📋 [DOOM-0578] **A teleporter's star lights up.**
+  User request 2026-11-09. The star-shaped floor marking on a
+  teleporter pad glows and lights its surroundings. Applies to
+  every view below Classic, per the render tiers table.
+  **Layman:** The star on teleporter pads glows, so teleporters light up the room.
+  Kind: feature.
+  Source: user-request-2026-11-09.
+  Lanes: renderer, materials.
+
 ## 0.13.0 — The player's experience
 
 Input, menus, audio and the HUD — the settings a player expects to find and the
@@ -19257,6 +19277,9 @@ controls they expect to rebind.
   control, whether time slows while it is open, its look in Classic
   versus Solid and Ultra (DOOM-0211's menu style), and that it never
   replaces the number keys or the scroll wheel (DOOM-0153).
+  User 2026-11-09: for ALL renderers, Classic included, and it must
+  land before v1.0.0. Why: on keyboard 1-9 pick a weapon, but on a
+  controller the player can only step left and right through them.
   **Layman:** Hold a button and a ring of your weapons appears; point at one to switch to it, instead of cycling through them.
   Kind: feature.
   Source: user-request-2026-10-26.
@@ -19267,6 +19290,28 @@ controls they expect to rebind.
   **Layman:** With the status bar showing, the 3D views show a little less floor than Classic does.
   Kind: ux.
   Source: found-2026-10-30-doom-0339-sample.
+
+- 📋 [DOOM-0577] **A modern HUD for Solid and Ultra.**
+  User request 2026-11-09. Replace the 1993 status bar with a
+  modern layout in the 3D tiers; Classic keeps the original.
+  DOOM-0286 only sharpens the existing bar; this item redesigns
+  it. Design questions: what it shows, where, and whether the
+  old bar stays selectable.
+  **Layman:** Solid and Ultra get a cleaner, modern on-screen display for health, armour and ammo; Classic keeps the original bar.
+  Kind: feature.
+  Source: user-request-2026-11-09.
+  Lanes: hud.
+
+- 📋 [DOOM-0579] **Ultra shows a helmet visor around the view.**
+  User request 2026-11-09. The player looks out through a
+  helmet: visor edges, glass and reflections framing the view.
+  Ultra only, since it is new HD art, not an effect. Not the
+  light-amp visor powerup (DOOM-0455). Design questions: how much
+  of the screen it takes, and an option to turn it off.
+  **Layman:** In Ultra you see the world through the glass of a helmet visor, like a modern shooter.
+  Kind: feature.
+  Source: user-request-2026-11-09.
+  Lanes: renderer, hud.
 
 ## 1.0.0 — Other people can run it
 
@@ -19606,9 +19651,11 @@ placing one here commits to nothing.
   Kind: feature.
   Source: user-request-2026-06-28.
 
-- 💭 [DOOM-0087] **Provide a map-authoring workflow / level editor for custom multiplayer WADs.**
+- 🚫 [DOOM-0087] **Provide a map-authoring workflow / level editor for custom multiplayer WADs.**
   Motivation: the stock single-player maps aren't built for deathmatch/co-op, so DOOM-0085 (multiplayer) wants purpose-made MP maps — which needs a way to author custom WADs. Recommended approach (simpler path first): DOOM_Ants runs standard DOOM-format WADs, and the vanilla engine already supports multiplayer maps — deathmatch player starts (g_game.c deathmatchstarts) and the multiplayer-only Thing flag (p_mobj.c:743, options & 16 skipped outside a netgame). So DM/co-op maps are authorable today with a mature FOSS editor (Ultimate Doom Builder, SLADE, or Eureka) exporting a normal WAD this engine loads. Realistic scope: (a) verify the engine cleanly loads + plays third-party editor output (DM starts + MP thing flags); (b) document the authoring workflow; only (c) build bespoke in-engine tooling if MP needs map data the standard format/editors can't express. A from-scratch editor duplicates excellent existing tools — last resort (house rule: reuse before rewriting).
   Open: whether the 3D/RT tiers need map-side authoring data existing editors can't carry — e.g. RT light/emissive entities (cf. DOOM-0043/0084) or new linedef specials — which would be the one strong reason to build custom tooling. Pairs with DOOM-0085.
+  2026-11-09: superseded by DOOM-0580. The user's map editor targets this
+  game's own format, which standard DOOM editors cannot write.
   **Layman:** To play multiplayer on maps designed for it (the originals weren't), we need a way to make our own maps. Excellent DOOM map editors already exist, so the likely plan is to use one and make sure our engine loads its maps — building a brand-new editor only if our 3D lighting needs something those tools can't do.
   Kind: feature.
   Source: user-request-2026-06-28.
@@ -19753,3 +19800,124 @@ placing one here commits to nothing.
   Kind: enhancement.
   Source: cross-session-ut-ants-2026-10-06.
   Lanes: renderer.
+
+- 📋 [DOOM-0580] **Build a map editor for DOOM_Ants's own maps.**
+  User request 2026-11-09. Maps built with it are for this game
+  only; they need not load in any other DOOM, open source or
+  commercial. That frees the format to carry what the standard
+  WAD cannot: the features filed as DOOM-0581 to DOOM-0593.
+  Supersedes DOOM-0087, which proposed reusing existing DOOM
+  editors; they cannot express these features.
+  **Layman:** A tool for building new levels for this game, with features the original DOOM never had.
+  Kind: feature.
+  Source: user-request-2026-11-09.
+  Lanes: editor.
+  Supersedes: DOOM-0087.
+
+- 📋 [DOOM-0581] **Map editor: rounded walls and structures.**
+  Curved walls and shapes, not only DOOM's straight lines. Needs
+  engine support in every view, not just the editor. Part of
+  DOOM-0580.
+  **Layman:** Levels can have curved walls and round buildings.
+  Kind: feature.
+  Source: user-request-2026-11-09.
+  Lanes: editor.
+
+- 📋 [DOOM-0582] **Map editor: a map can turn on looking up and down, with aiming to match.**
+  Per-map choice by the map's author. Vertical aim comes with
+  it. Related: DOOM-0200 (optional free look). Part of DOOM-0580.
+  **Layman:** A level's maker can let players look and aim up and down.
+  Kind: feature.
+  Source: user-request-2026-11-09.
+  Lanes: editor.
+
+- 📋 [DOOM-0583] **Map editor: create new monsters.**
+  Define new monster types: look, behaviour, health, attacks.
+  Part of DOOM-0580.
+  **Layman:** Level makers can invent their own monsters.
+  Kind: feature.
+  Source: user-request-2026-11-09.
+  Lanes: editor.
+
+- 📋 [DOOM-0584] **Map editor: create new weapons and their models.**
+  Define new guns and their first-person and world models.
+  Part of DOOM-0580.
+  **Layman:** Level makers can add their own guns.
+  Kind: feature.
+  Source: user-request-2026-11-09.
+  Lanes: editor.
+
+- 📋 [DOOM-0585] **Map editor: per-map gameplay settings.**
+  Settings the author sets for one map, such as jumping or free
+  look (their own items) and other gameplay rules. Part of DOOM-0580.
+  **Layman:** Each level can set its own gameplay rules.
+  Kind: feature.
+  Source: user-request-2026-11-09.
+  Lanes: editor.
+
+- 📋 [DOOM-0586] **Map editor: a library of ready-made structures, props and monsters.**
+  Pre-built pieces to place: structures, props, monsters and
+  pickups, so a level does not start from bare lines. Part of
+  DOOM-0580.
+  **Layman:** The editor comes with ready-made buildings, props and monsters to drop into a level.
+  Kind: feature.
+  Source: user-request-2026-11-09.
+  Lanes: editor.
+
+- 📋 [DOOM-0587] **Map editor: a map can turn on jumping.**
+  Per-map choice by the map's author. Part of DOOM-0580.
+  **Layman:** A level's maker can let the player jump.
+  Kind: feature.
+  Source: user-request-2026-11-09.
+  Lanes: editor.
+
+- 📋 [DOOM-0588] **Map editor: scripting.**
+  Scripted events and logic in a map. The language and its
+  sandboxing are design questions (security.md: a map is
+  untrusted input). Part of DOOM-0580.
+  **Layman:** Level makers can write scripts that make things happen in their level.
+  Kind: feature.
+  Source: user-request-2026-11-09.
+  Lanes: editor.
+
+- 📋 [DOOM-0589] **Map editor: in-engine cutscenes with camera control.**
+  Cutscenes played in the game engine, with the author
+  controlling the camera. Part of DOOM-0580.
+  **Layman:** Level makers can create story scenes that play inside the game, with their own camera moves.
+  Kind: feature.
+  Source: user-request-2026-11-09.
+  Lanes: editor.
+
+- 📋 [DOOM-0590] **The player is a physical body in the world, though the view stays first person.**
+  A full player model that exists in the world: it casts
+  shadows, shows in reflections, and has feet when you look down.
+  Listed with the editor's features; it is engine work. Part of
+  DOOM-0580.
+  **Layman:** You have a real body in the game world: it casts a shadow and you see your feet when you look down.
+  Kind: feature.
+  Source: user-request-2026-11-09.
+  Lanes: editor.
+
+- 📋 [DOOM-0591] **Map editor: a map can bring its own HUD.**
+  An author designs the on-screen display used in their map.
+  Part of DOOM-0580.
+  **Layman:** Level makers can design their own on-screen display.
+  Kind: feature.
+  Source: user-request-2026-11-09.
+  Lanes: editor.
+
+- 📋 [DOOM-0592] **Map editor: monsters and pickups can be sprites or 3D models, the author's choice.**
+  Flat sprites like the original, or full 3D models, per thing.
+  Related: DOOM-0539 (Blender models for pickups). Part of DOOM-0580.
+  **Layman:** Level makers choose whether each monster or item is a classic flat picture or a full 3D model.
+  Kind: feature.
+  Source: user-request-2026-11-09.
+  Lanes: editor.
+
+- 📋 [DOOM-0593] **Headshots when a map uses full free aim.**
+  Hitting a monster's head does extra damage, where the map
+  turns on free look (DOOM-0582). Part of DOOM-0580.
+  **Layman:** In levels where you can aim freely, shots to the head do extra damage.
+  Kind: feature.
+  Source: user-request-2026-11-09.
+  Lanes: editor.
