@@ -10,7 +10,7 @@
 // This is the custom upscaler the spec's §4.4 names first; FSR 2 / FSR 3.1 are later
 // phases that consume the SAME contract (a render-res colour + motion-vector pair, a
 // per-frame jitter, and a display-res history/output), so the plumbing is built once
-// here. Phase 1 is a compact, recognised TAAU: bilinear current sample (un-jittered),
+// here. Phase 1 is a compact, recognised TAAU: Catmull-Rom current sample (un-jittered),
 // motion-reprojected history, a 3x3 neighbourhood colour clamp to suppress ghosting,
 // and a history-weighted blend. Variance clipping / depth-aware disocclusion are a
 // later refinement (tuning rides the step-7 perf pass).
@@ -32,19 +32,29 @@ layout(push_constant) uniform PC {
     vec4  jitter;  // xy = current-frame jitter in render pixels
 } pc;
 
-// Bilinear fetch of the render-res colour at a continuous render-pixel coordinate,
-// clamped to the valid [0,RW)x[0,RH) sub-rectangle.
+// Catmull-Rom (4x4) fetch of the render-res colour at a continuous render-pixel
+// coordinate, clamped to the valid [0,RW)x[0,RH) sub-rectangle. DOOM-0595: bilinear
+// averaged each jittered sample with its neighbours, so the accumulated image settled
+// on a blur of the render grid. Measured at 50 % scale vs a 100 % reference: edge
+// energy 0.71 -> 0.74 of the reference, +0.2-0.3 dB, flicker +0.01, TAAU +0.01 ms at
+// 4270x2000 (nearest was as sharp but flickered more; a Gaussian splat was softer).
+// The caller clamps the overshoot to the 3x3 box, so the negative lobes cannot ring.
 vec3 sampleColor(vec2 rf, ivec2 rdim)
 {
     vec2  f  = clamp(rf, vec2(0.0), vec2(rdim) - 1.0);
     ivec2 i0 = ivec2(floor(f));
-    ivec2 i1 = min(i0 + 1, rdim - 1);
     vec2  t  = f - vec2(i0);
-    vec3 c00 = imageLoad(inColor, ivec2(i0.x, i0.y)).rgb;
-    vec3 c10 = imageLoad(inColor, ivec2(i1.x, i0.y)).rgb;
-    vec3 c01 = imageLoad(inColor, ivec2(i0.x, i1.y)).rgb;
-    vec3 c11 = imageLoad(inColor, ivec2(i1.x, i1.y)).rgb;
-    return mix(mix(c00, c10, t.x), mix(c01, c11, t.x), t.y);
+    vec2  t2 = t * t, t3 = t2 * t;
+    vec2  w[4] = vec2[4](-0.5 * t3 + t2 - 0.5 * t,
+                          1.5 * t3 - 2.5 * t2 + 1.0,
+                         -1.5 * t3 + 2.0 * t2 + 0.5 * t,
+                          0.5 * t3 - 0.5 * t2);
+    vec3 acc = vec3(0.0);
+    for (int y = 0; y < 4; y++)
+    for (int x = 0; x < 4; x++)
+        acc += imageLoad(inColor, clamp(i0 + ivec2(x - 1, y - 1), ivec2(0), rdim - 1)).rgb
+             * (w[x].x * w[y].y);
+    return acc;
 }
 
 // Bilinear fetch of the display-res history at a continuous display-pixel coordinate.
@@ -81,7 +91,7 @@ void main()
     // 3x3 neighbourhood colour AABB around the nearest render pixel — the clamp box
     // that keeps reprojected history from ghosting across edges / disocclusions.
     ivec2 ri = clamp(ivec2(floor(rf + 0.5)), ivec2(0), rdim - 1);
-    vec3  cmin = cur_c, cmax = cur_c;
+    vec3  cmin = vec3(1e30), cmax = vec3(-1e30);   // the 9 taps only, so the clamp below bites
     for (int dy = -1; dy <= 1; dy++)
     for (int dx = -1; dx <= 1; dx++) {
         ivec2 s = clamp(ri + ivec2(dx, dy), ivec2(0), rdim - 1);
@@ -89,6 +99,7 @@ void main()
         cmin = min(cmin, c);
         cmax = max(cmax, c);
     }
+    cur_c = clamp(cur_c, cmin, cmax);       // Catmull-Rom overshoot
 
     // Motion: where the surface under this DISPLAY pixel sat last frame, in display px.
     // The nearest render pixel's vector is applied at d itself, not at that render
