@@ -2752,10 +2752,6 @@ static int thing_verts(const rb_view_t* view, mobj_t* thing, int models,
     return quad + lights;
 }
 
-// DOOM-0459: the overflow path. More things want a billboard than `out` holds, so
-// take them nearest first and keep as many as fit; the walk order used to decide,
-// which could drop a monster beside the player and draw one across the map. Only a
-// frame that overflowed pays for the sort. *dropped counts the things left out.
 // Every thing in the level, nearest the view first, in a buffer that grows to the busiest
 // frame and is kept. Shared by the sprite and blob overflow paths (DOOM-0557).
 static int nearest_things(const rb_view_t* view, rb_sprite_cand_t** out)
@@ -2776,7 +2772,7 @@ static int nearest_things(const rb_view_t* view, rb_sprite_cand_t** out)
                 int               grow = candCap ? candCap * 2 : 1024;
                 rb_sprite_cand_t* p    = realloc(cand, (size_t)grow * sizeof *cand);
                 if (!p)
-                    I_Error("RB_BuildSprites: out of memory for %d sprite candidates",
+                    I_Error("nearest_things: out of memory for %d thing candidates",
                             grow);
                 cand    = p;
                 candCap = grow;
@@ -2792,6 +2788,10 @@ static int nearest_things(const rb_view_t* view, rb_sprite_cand_t** out)
     return count;
 }
 
+// DOOM-0459: the overflow path. More things want a billboard than `out` holds, so
+// take them nearest first and keep as many as fit; the walk order used to decide,
+// which could drop a monster beside the player and draw one across the map. Only a
+// frame that overflowed pays for the sort. *dropped counts the things left out.
 static int build_nearest_sprites(const rb_view_t* view, rb_vertex_t* out, int maxverts,
                                  int models, int* dropped)
 {
@@ -2918,8 +2918,9 @@ int RB_BuildBlobs(const rb_view_t* view, rb_vertex_t* out, int maxverts)
     for (i = 0; i < count; i++)
     {
         int w = blob_verts((const mobj_t*)cand[i].thing, out + n, maxverts - n);
-        if (w > 0)
-            n += w;                             // a blob that no longer fits is left out
+        if (w < 0)
+            break;                              // every blob is 6 vertices: none after this fits
+        n += w;
     }
     return n;
 }

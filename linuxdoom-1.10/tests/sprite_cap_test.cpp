@@ -84,9 +84,14 @@ int main()
         check(src.find("RB_SortSpritesNearest(") != std::string::npos,
               "3: r_mesh.c orders the sprite candidates nearest first");
         // DOOM-0557: blobs take the same nearest-first path when they overflow.
+        // In order inside the body: the overflow test, the sorted walk, and each blob
+        // built from that sorted list. A call whose result went unused fails the third.
         const size_t blobs = src.find("int RB_BuildBlobs(");
-        check(blobs != std::string::npos
-                  && src.find("nearest_things(", blobs) < src.find("\n}\n", blobs),
+        const size_t end   = src.find("\n}\n", blobs);
+        const size_t full  = src.find("if (!full)", blobs);
+        const size_t walk  = src.find("nearest_things(", blobs);
+        const size_t use   = src.find("blob_verts((const mobj_t*)cand[i].thing", blobs);
+        check(blobs != std::string::npos && full < walk && walk < use && use < end,
               "3: RB_BuildBlobs takes its overflow nearest first");
     }
 
