@@ -50,7 +50,7 @@ permissions:
 jobs:
   linux:
     name: Linux build + tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15          # a hung build never sits burning minutes
     steps:
       # Pinned to the commit v7.0.1 resolves to, not the mutable `v7` tag: a tag
@@ -116,7 +116,7 @@ jobs:
   # because the Windows build currently never exits (DOOM-0325).
   windows-syntax:
     name: Windows cross-compile check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
