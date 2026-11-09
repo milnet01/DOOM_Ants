@@ -14886,7 +14886,7 @@ against.
   Source: ut-ants-review-2026-10-24.
   Lanes: renderer.
 
-- 📋 [DOOM-0568] **The frame ledger charges its own buffer flush and WAD hash to the frames it records.**
+- ✅ [DOOM-0568] **The frame ledger charges its own buffer flush and WAD hash to the frames it records.**
   From review-code --performance 2026-11-09, lane 8. Both must be fixed
   before any DOOM-0359 measurement is trusted.
   - run_ledger.c:238: the 8 MB half-buffer flush runs after
@@ -14897,6 +14897,8 @@ against.
     frames of live play, after the 120 settling frames, so frame 0 starts
     late and runs catch-up tics. Change: hash in D_LedgerInit, before
     the level loads.
+  Shipped 2026-11-09 in 00a3d0d: rows are written every frame, and the WAD
+  hash runs at load. Locked by run_ledger_test case 10.
   **Layman:** The tool that measures frame times makes some frames slow itself, so it reports hitches the game does not have.
   Kind: fix.
   Source: review-code-perf-2026-11-09.
