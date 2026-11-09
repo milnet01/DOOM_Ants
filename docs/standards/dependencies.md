@@ -124,8 +124,8 @@ sub-Makefile is not built by CI or the default `make`, so it's out of scope):
   watch on the sweep.
 - **CI (GitHub Actions):** `.github/workflows/build.yml` pins the action
   `actions/checkout` **by commit SHA**, with the release it corresponds to in a
-  trailing comment (today `3d3c42e5…` / `# v7.0.1`), and runs on the
-  `ubuntu-latest` runner image. The SHA pin landed 2026-09-01: a tag can be
+  trailing comment (today `3d3c42e5…` / `# v7.0.1`), and runs on a pinned
+  `ubuntu-NN.NN` runner image. The SHA pin landed 2026-09-01: a tag can be
   repointed at any commit, so pinning by tag trusts whoever can move it. Its Linux
   build-deps are the single-source-of-truth apt list `packaging/ci-deps.txt`
   (`build-essential`, `libsdl2-dev`, `libsdl2-mixer-dev`, `libvulkan-dev`,
@@ -133,10 +133,10 @@ sub-Makefile is not built by CI or the default `make`, so it's out of scope):
   `packaging/ci-local.sh`. Two
   version pins here are ours to keep current: the `actions/checkout` SHA (bump
   the SHA **and** its version comment together — a stale comment beside a live
-  SHA is worse than neither), and the container image `packaging/ci-local.sh`
-  hardcodes to mirror the runner
-  (the `CI_IMAGE` assignment near the top of that script). See the sweep
-  posture below for the lockstep rule between them and `ubuntu-latest`.
+  SHA is worse than neither), and the runner image in `runs-on:`.
+  `packaging/ci-local.sh` reads its container image from `runs-on:`, so the two
+  cannot drift. It refuses to run if the jobs name different runners or a
+  floating one such as `ubuntu-latest`.
 - **Release packaging (AppImage):** `packaging/build-appimage.sh` (driven by
   `packaging/release.sh`) bundles the runtime libs (SDL2, SDL2_mixer, FluidSynth
   + a GM soundfont) and fetches `linuxdeploy`, `appimagetool` and
@@ -181,10 +181,9 @@ Check, don't wait for a break:
 - **Check the CI pins.** Every `uses: <action>@vN` in
   `.github/workflows/build.yml` is a version pin this rule governs — glance at
   them on the release-cycle sweep. GitHub deprecates the action runtime on a
-  cadence, so a lagging `@vN` warns today and hard-fails later. `ubuntu-latest`
-  floats by design, but the mirror image `packaging/ci-local.sh` pins
-  (`ubuntu:24.04`) does **not** — bump it in lockstep when `ubuntu-latest`
-  advances.
+  cadence, so a lagging `@vN` warns today and hard-fails later. The pinned
+  `runs-on:` runner is a version pin too: move it to the newest Ubuntu runner
+  GitHub offers. The local gate follows it with no edit.
 - **Bump and idiom-refresh ship together.** When you move a dependency forward,
   update the code that calls it to the new version's current idioms *in the same
   change* — never bump the library and leave stale-API calls behind. Otherwise

@@ -12,7 +12,8 @@ name: build
 #
 # SPEED / SAFETY: the fast bits here are all deterministic and cannot cause a
 # false green -- (1) skip runs whose changes are docs-only, (2) cancel superseded
-# runs, (3) shallow clone, (4) parallel make, (5) --no-install-recommends. We
+# runs, (3) shallow clone, (4) parallel make, (5) --no-install-recommends,
+# (6) one apt run per job, (7) dpkg without fsync on the throwaway runner. We
 # intentionally do NOT cache apt packages or compiler output (ccache): a stale or
 # poisoned build cache is exactly the "easily corruptable" speed-up to avoid, and
 # the full build is only ~90 s anyway. (ccache is hash-keyed and safe in practice
@@ -65,11 +66,16 @@ jobs:
         # shared with packaging/ci-local.sh so the local mirror can't drift from CI).
         # glslc + xxd build the Vulkan shaders into C headers; the Makefile links
         # -lvulkan even though the runner has no GPU. mold is optional -- the Makefile
-        # falls back to the default linker when it is absent.
+        # falls back to the default linker when it is absent. freedoom is the boot
+        # smoke's IWAD: a test fixture, so it is not in ci-deps.txt, but it installs
+        # in the same apt run to save a second one. force-unsafe-io skips dpkg's
+        # fsync calls, which guard only against a power cut mid-install; the runner
+        # is thrown away after the job either way.
         run: |
+          echo force-unsafe-io | sudo tee /etc/dpkg/dpkg.cfg.d/99unsafe-io >/dev/null
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            $(awk 'NF && $1 !~ /^#/ {print $1}' packaging/ci-deps.txt)
+            $(awk 'NF && $1 !~ /^#/ {print $1}' packaging/ci-deps.txt) freedoom
 
       - name: Build (Linux)
         run: make -C linuxdoom-1.10
@@ -85,9 +91,6 @@ jobs:
       # boot/runtime regressions (WAD load, renderer init, level setup, per-frame draw)
       # that a build-only gate misses. The Vulkan RT/-shotverify gates need a real GPU
       # and stay on the (optional, manual) self-hosted runner — not here.
-      - name: Install a free IWAD for the smoke
-        run: sudo apt-get install -y --no-install-recommends freedoom
-
       - name: Headless boot smoke (software renderer)
         env:
           SDL_VIDEODRIVER: dummy
@@ -128,7 +131,9 @@ jobs:
         # Deliberately NOT packaging/ci-deps.txt: that list is the *Linux* build's
         # dependencies, and nothing here links or runs. Only the cross-compilers
         # plus the two generators for the embedded shader/font headers.
+        # force-unsafe-io: see the linux job's install step.
         run: |
+          echo force-unsafe-io | sudo tee /etc/dpkg/dpkg.cfg.d/99unsafe-io >/dev/null
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 glslc xxd

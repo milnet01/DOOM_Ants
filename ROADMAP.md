@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=566 -->
+<!-- ants-roadmap-id-high-water: DOOM=567 -->
 
 # Roadmap
 
@@ -14033,6 +14033,27 @@ defect visible before a player finds it.
   Kind: refactor.
   Source: review-readability 2026-11-04, lanes 1-3 (names, unstated special cases).
   Lanes: renderer, shaders.
+
+- ✅ [DOOM-0567] **Align the local CI gate with GitHub's and make both faster.**
+  Found 2026-11-09, all GitHub runs green:
+  - ci-local.sh hardcoded ubuntu:24.04 and said it tracked
+    ubuntu-latest, which build.yml stopped using in d833889. It now
+    reads the image from build.yml's runs-on and refuses a floating or
+    mixed runner. dependencies.md said the same; corrected.
+  - The local image was never refreshed (pulled 2026-10-25). The gate
+    now pulls before each run; offline it warns and uses the local copy.
+  - --native's boot smoke ignored the engine's exit status (the pipe
+    ended in `|| true`). It now fails on it, as build.yml does.
+  Speed-ups, none of them a cache of build output:
+  - Local: the two container jobs run at once, each with its own
+    export and apt cache. dpkg skips fsync in the throwaway container.
+    The gate runs at nice 10. Its trees live in scratch/, not /tmp.
+    Measured 2026-11-09 on this box: 154 s before, 84 s after.
+  - Both: freedoom joins the main apt install, one apt run per job;
+    GitHub's dpkg also skips fsync.
+  **Layman:** The check that runs before every push now takes about half as long, and it can no longer drift from GitHub's version of it.
+  Kind: perf.
+  Source: user-request-2026-11-09.
 
 ## 0.11.0 — The frame budget
 

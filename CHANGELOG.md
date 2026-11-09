@@ -20,6 +20,14 @@ All notable changes to DOOM_Ants are documented here. The format follows
 - **In Ultra, the blue processor wall (COMPTILE) has real depth, so it holds up from every angle.** (DOOM-0541)
   Its recesses, niches and bars used to be painted-on depth that smeared when seen from the side. They are now built as real geometry, set into the wall. Walls on moving sectors stay flat.
 
+### Changed
+
+- **The pre-push check takes about half as long, and reads its Ubuntu version from the GitHub workflow so the two cannot drift** (DOOM-0567)
+  `packaging/ci-local.sh` runs its Linux and Windows jobs at the same time, as
+  GitHub does, at background priority. It refreshes its Ubuntu image before
+  each run, and `--native` now fails when the engine crashes at exit.
+  Measured 2026-11-09: 154 s before, 84 s after.
+
 ### Fixed
 
 - **Solid's pickups cast a visible pool of light on the floor, as Ultra's do** (DOOM-0551)
