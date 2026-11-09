@@ -205,7 +205,8 @@ void main()
     // left it about five frames of history and no spatial filter: the film grain the
     // user reported on rough ceilings beside light panels. Rough lobes take the matte
     // light's 0.03 floor; the anti-ghost reset above still clears a real change.
-    float specAlpha = max(temporalAlpha(newHist - 1.0),
+    // 1/n warm-up only: temporalAlpha's own 0.2 floor would win the max and void 0.03.
+    float specAlpha = max(safeDiv(1.0, newHist),
                           mix(0.2, 0.03, smoothstep(0.4, 0.8, rough)));
     vec3  outS = valid ? mix(histS, spec, specAlpha) : spec;
     if (any(isnan(outS)) || any(isinf(outS))) outS = vec3(0.0);
