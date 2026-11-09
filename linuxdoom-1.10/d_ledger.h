@@ -6,6 +6,10 @@
 // loads anything.
 void   D_LedgerInit (void);
 
+// Hashes every WAD for the run's header. Call once the WAD list is complete, during
+// load, so the hash never runs inside the level.
+void   D_LedgerReadInputs (void);
+
 // Top of the main loop. Quits the program when the frame limit is reached.
 void   D_LedgerFrameBegin (void);
 

@@ -233,10 +233,11 @@ int RL_FrameBegin (double now_ms)
     rl.start_ms = now_ms;
     rl.fence_ms = rl.present_ms = 0.0;
 
-    // Half full is the moment to write: a whole frame's rows are far below that, so
-    // no row is dropped, and the write lands between frames, not inside a pass.
-    if (fled_pending (&rl.writer, NULL) > rl.cap / 2)
-	RL_Flush ();
+    // Write the closed frame's rows now, every frame. The time lands in the new
+    // frame, since now_ms is already taken, so it must stay small: a few hundred
+    // bytes into stdio's buffer. Saving them up until the buffer was half full
+    // made one multi-megabyte fwrite, which the run then recorded as a hitch.
+    RL_Flush ();
     return 0;
 }
 

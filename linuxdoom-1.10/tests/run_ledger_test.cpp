@@ -16,6 +16,8 @@
 //   7. RL_Finish rewrites the load readings without moving a byte after them.
 //   8. A full buffer drops rows and counts them; it never loses the close line.
 //   9. RL_HashFile matches the published SHA-256 vectors, at every padding length.
+//  10. Each frame's rows are written when the next frame begins, never saved up
+//      into one large write that lands inside a recorded frame.
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -177,7 +179,7 @@ int main()
     }
     fclose(f);
 
-    // 8. A full buffer. RL_Flush runs only past half full, and only between frames,
+    // 8. A full buffer. RL_Flush runs at every frame boundary, and only there,
     // so one frame's rows can still outrun a small buffer.
     f = tmpfile();
     r = facts();
@@ -215,6 +217,22 @@ int main()
     check(hash_of(std::string(119, 'a')) ==
           "sha256:31eba51c313a5c08226adf18d4a359cfdfd8d2e816b13f4af952f7ea6584dcfb",
           "one block and 55 bytes: the padding just fits");
+
+    // 10. Each frame's rows reach the file when the next frame begins, however
+    // roomy the buffer. A write saved up until the buffer is half full is one
+    // large fwrite inside a recorded frame: a spike the ledger made itself.
+    f = tmpfile();
+    r = facts();
+    check(RL_Open(f, &r, 1 << 20, 0) == 1, "a roomy buffer opens");
+    RL_FrameBegin(0.0);
+    RL_CpuPass("game", 1.0);
+    {
+        const long before = ftell(f);
+        RL_FrameBegin(10.0);
+        check(ftell(f) > before, "frame 0's rows were written as frame 1 began");
+    }
+    RL_Finish(20.0, -1, -1);
+    fclose(f);
 
     return check_summary("run_ledger_test");
 }

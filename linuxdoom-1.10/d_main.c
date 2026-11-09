@@ -1622,6 +1622,7 @@ void D_DoomMain (void)
 
     printf ("W_Init: Init WADfiles.\n");
     W_InitMultipleFiles (wadfiles);
+    D_LedgerReadInputs ();	// DOOM-0568: hash the WADs at load, not mid-level
 
     // DOOM-0404: gate PLAYPAL's length once, here, where the WAD set is complete
     // and before any consumer has cached it. palette_bounds.h owns the decision

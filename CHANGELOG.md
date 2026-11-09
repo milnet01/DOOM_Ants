@@ -30,6 +30,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **The -frameledger recorder no longer causes the hitches it records** (DOOM-0568)
+  It used to save rows up into one multi-megabyte write, which landed
+  inside a recorded frame, and it hashed every WAD between two frames of
+  live play. It now writes each frame's rows as the next frame begins,
+  and hashes the WADs during load.
+
 - **Solid's pickups cast a visible pool of light on the floor, as Ultra's do** (DOOM-0551)
 
 - **Fog now fills the air under a roof opening instead of stopping in a straight wall at its edge.** (DOOM-0536)

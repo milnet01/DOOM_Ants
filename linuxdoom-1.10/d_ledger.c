@@ -36,8 +36,8 @@
 
 extern char* wadfiles[];
 
-// A frame's rows are a few hundred bytes, and the buffer writes itself out at half
-// full, so this outruns any run.
+// A frame's rows are a few hundred bytes, and the buffer writes itself out at
+// every frame boundary, so only a single frame's rows must fit.
 #define LEDGER_BUFFER	(16 * 1024 * 1024)
 
 // Rendered frames each run draws in the level before its first recorded frame: the
@@ -142,6 +142,16 @@ static void D_BuildInputs (char* out, size_t n)
     snprintf (out + used, n - used, "]");
 }
 
+// Hashed at load, not when the run opens: the open comes after the settling frames,
+// inside the level, and a hash there stalls live play and starts frame 0 late.
+static char ledger_inputs[2048] = "[]";
+
+void D_LedgerReadInputs (void)
+{
+    if (ledger_path)
+	D_BuildInputs (ledger_inputs, sizeof ledger_inputs);
+}
+
 static void D_LevelName (char* out, size_t n)
 {
     if (gamemode == commercial)
@@ -152,7 +162,6 @@ static void D_LevelName (char* out, size_t n)
 
 static void D_LedgerOpen (void)
 {
-    static char		inputs[2048];
     static char		run_id[FLED_RUN_ID_MAX], started[32], scene[32];
     rl_facts_t		f;
     time_t		now = time (NULL);
@@ -162,7 +171,6 @@ static void D_LedgerOpen (void)
     snprintf (run_id, sizeof run_id, "doom-%s-%llu", started,
 	      (unsigned long long)(SDL_GetPerformanceCounter () % 1000000));
     D_LevelName (scene, sizeof scene);
-    D_BuildInputs (inputs, sizeof inputs);
 
     f.run_id = run_id;
     f.commit = BUILD_COMMIT;
@@ -178,7 +186,7 @@ static void D_LedgerOpen (void)
     f.settled_frames = settled;
     f.os = SDL_GetPlatform ();
     f.started_utc = started;
-    f.inputs_json = inputs;
+    f.inputs_json = ledger_inputs;
     f.load_start = load_start;
     f.gpu_busy_start = gpu_busy_start;
 
