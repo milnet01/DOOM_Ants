@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=597 -->
+<!-- ants-roadmap-id-high-water: DOOM=600 -->
 
 # Roadmap
 
@@ -15006,6 +15006,14 @@ against.
   fixed 0.1 blend. Candidates: nearest, Catmull-Rom/Lanczos-style
   reconstruction, variance clipping, confidence-weighted blend.
   Measure flicker and frame cost against the current filter.
+  2026-11-10 research, anti-flicker candidates (user chose to file):
+  FSR 2's luma-instability term (ffx_fsr2_accumulate.h). It keeps a
+  short luma history, spots values that flip back and forth with the
+  jitter, and keeps un-rectified history there, gated by velocity.
+  Also: variance clipping in YCoCg with gamma about 1, clipping toward
+  the mean rather than clamping (Salvi GDC 2016, Karis 2014). Karis:
+  clamping a sub-pixel feature gives sawtooth flicker; lower the blend
+  when history is near the clamp. Risk: slight ghosting.
   **Layman:** The ray-traced picture is rebuilt from a half-size image; this makes that rebuild crisper and stops edges shimmering.
   Kind: enhancement.
   Source: user-request-2026-11-09.
@@ -15032,6 +15040,52 @@ against.
   **Layman:** Shiny walls far away stop sparkling from frame to frame.
   Kind: fix.
   Source: user-report-2026-11-09 (RT denoise loop it8).
+
+- 📋 [DOOM-0598] **Give the traced view's HD mip bias a separate strength per map, so it sharpens without far shimmer.**
+  it11/it12 measured a log2(render/display) bias on HD_TEX fetches.
+  Full bias: close sharpness 0.814 -> 0.914, far flicker 0.071 -> 0.082.
+  Half: 0.860 / 0.076. Albedo-only: close unchanged, far 0.074-0.077.
+  The sharpening and the shimmer both come from the normal and
+  specular maps. Dropped by the user 2026-11-10; the albedo-only
+  change is kept in git stash@{0}.
+  Idea: bias albedo and the normal direction, but read roughness and
+  normal variance at the unbiased level, and add the Toksvig term
+  between the two levels to roughness (see DOOM-0597's open Toksvig
+  point). Sources: DLSS guide 3.5 (reduce bias per content, never
+  below log2(r/d)); Tokuyoshi-Kaplanyan JCGT 2021.
+  Accept: close sharpness above 0.860 with far flicker at or below
+  0.071.
+  **Layman:** Close-up textures in the ray-traced view get sharper without making distant walls shimmer.
+  Kind: enhancement.
+  Source: research-2026-11-10 (RT denoise loop it11-it12).
+  Lanes: renderer, shaders.
+
+- 📋 [DOOM-0599] **Add a halo-limited sharpening pass (AMD RCAS) after the traced view's upscaler, with a strength setting.**
+  RCAS (FidelityFX ffx_fsr1.h) sharpens with a 5-tap cross and keeps
+  each output inside its neighbours' min/max, which limits halos. It
+  has an optional noise path that sharpens edges, not grain. Strength
+  is in stops; FSR 2 maps a 0-1 slider as stops = 2 - 2*sharpness.
+  It runs on the accumulated image, so it feeds no new aliasing into
+  the TAAU history, but it amplifies flicker that is left. Tune it
+  after the per-map bias item. Measure close sharpness, far flicker
+  and cost against today's output. MIT-licensed source; check the
+  dependencies standard before copying code.
+  **Layman:** A final sharpening step makes the ray-traced picture crisper without adding sparkle, with a slider to choose how much.
+  Kind: feature.
+  Source: research-2026-11-10 (RT denoise loop it11-it12).
+  Lanes: renderer, shaders.
+
+- 📋 [DOOM-0600] **Use anisotropic ray cones for HD texture level of detail on grazing walls and floors in the traced view.**
+  An isotropic footprint picks one mip level from the widest axis, so
+  surfaces seen edge-on over-blur. Anisotropic ray cones (JCGT 2021,
+  jcgt.org/published/0010/01/01) give textureGrad-style gradients
+  from the cone, recovering sharpness without a negative mip bias and
+  so without its shimmer. Related: DOOM-0458 (traced view mip level),
+  DOOM-0132 step 5 (anisotropic filtering in the tracer).
+  **Layman:** Long floors and walls seen at a shallow angle stay crisp in the ray-traced view, instead of going blurry.
+  Kind: enhancement.
+  Source: research-2026-11-10 (RT denoise loop it11-it12).
+  Lanes: renderer, shaders.
 
 ## 0.12.0 — Light and materials
 
