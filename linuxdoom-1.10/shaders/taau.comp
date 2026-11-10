@@ -124,11 +124,19 @@ void main()
         // DOOM-0595: weight this frame by how near its jittered sample landed to d.
         // A fixed 0.1 averaged every jitter phase equally, which re-blurred the result
         // to render resolution whatever the filter. The nearest sample sits at render
-        // index rn + jitter; ~1 on the pixel, ~0.1 one display pixel off. 0.02 floor
-        // keeps a pixel no sample lands on from going stale.
+        // index rn + jitter. On a still pixel the peak is FSR 2's 1/12 (0.2 let each
+        // frame's noise through: flicker -36 % close, -44 % far at 50 % scale); the
+        // longer memory then needs the narrower kernel (0.01 of the peak one display
+        // pixel off) or it averages off-pixel phases into the edges. The floor keeps a
+        // pixel no sample lands on from going stale. The peak rises back to 0.2 as the
+        // surface moves (full at kMoveFull display px per frame), where a long history
+        // would smear.
+        const float kStill = 1.0 / 12.0, kMove = 0.2, kMoveFull = 2.0;
+        float speed = length(prevD - vec2(d));
+        float peak  = mix(kStill, kMove, clamp(speed / kMoveFull, 0.0, 1.0));
         ivec2 rn = clamp(ivec2(floor(rf - pc.jitter.xy + 0.5)), ivec2(0), rdim - 1);
         vec2  dd = (vec2(rn) + 0.5 + pc.jitter.xy) / scale - 0.5 - vec2(d);
-        float a  = clamp(0.2 * exp(-2.29 * dot(dd, dd)), 0.02, 0.2);
+        float a  = clamp(peak * exp(-4.58 * dot(dd, dd)), 0.02 * peak, peak);
         outC = mix(h, cur_c, a);
     } else {
         outC = cur_c;                      // no valid history -> current sample

@@ -15023,6 +15023,16 @@ against.
   widens the clamp on luma and far depth; Unity HDRP's anti-flicker
   gates the widening on temporal contrast (idea only: Unity Companion
   License).
+  2026-11-10 blend cut DONE (taau.comp): still-pixel peak 1/12,
+  rising to 0.2 by 2 display px/frame of motion; proximity kernel
+  narrowed to exp(-4.58 d^2), floor 0.02 of the peak. Scale 50,
+  E1M1 close/far: flicker 0.176->0.113 / 0.068->0.038; edge agreement
+  with the scale-100 reference 0.894->0.887 / 0.747->0.734; PSNR
+  -0.3/-0.4 dB; frame cost flat; fast turn shows no ghosting. 1/16
+  flickered a little less but lost more edge. Without the narrower
+  kernel the lower peak softened edges 3 %. History fetch (bilinear
+  vs Catmull-Rom, static snap) made no difference. Still open: FSR
+  luma-instability term, YCoCg variance clip.
   **Layman:** The ray-traced picture is rebuilt from a half-size image; this makes that rebuild crisper and stops edges shimmering.
   Kind: enhancement.
   Source: user-request-2026-11-09.
