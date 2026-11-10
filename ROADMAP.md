@@ -15033,6 +15033,17 @@ against.
   kernel the lower peak softened edges 3 %. History fetch (bilinear
   vs Catmull-Rom, static snap) made no difference. Still open: FSR
   luma-instability term, YCoCg variance clip.
+  2026-11-10 YCoCg variance clip TRIED, REJECTED (not shipped). Scale 50,
+  E1M1 close/far vs the shipped RGB min/max clamp (flicker 0.114 /
+  0.038, edge agreement 0.888 / 0.748). Clip toward the box centre at
+  gamma 1: flicker 0.239 / 0.091, edges 0.692 / 0.689, TAAU +0.08 ms.
+  Gamma 2 and 3 barely better (0.202-0.207 close; edges 0.72). A plain
+  per-channel clamp in YCoCg at gamma 3: flicker 0.120 / 0.049, edges
+  0.888 / 0.739, so YCoCg alone gains nothing. Cause: clipping moves
+  all three channels toward the centre, so with noisy traced input it
+  pulls history to the neighbourhood mean every frame, which acts as a
+  high blend. Karis's sawtooth warning holds here. Still open: FSR
+  luma-instability term. Patches in the scratch noise kept/ folder.
   **Layman:** The ray-traced picture is rebuilt from a half-size image; this makes that rebuild crisper and stops edges shimmering.
   Kind: enhancement.
   Source: user-request-2026-11-09.
