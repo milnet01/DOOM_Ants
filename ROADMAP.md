@@ -15103,7 +15103,7 @@ against.
   Source: research-2026-11-10 (RT denoise loop it11-it12).
   Lanes: renderer, shaders.
 
-- 📋 [DOOM-0600] **Use anisotropic ray cones for HD texture level of detail on grazing walls and floors in the traced view.**
+- ✅ [DOOM-0600] **Use anisotropic ray cones for HD texture level of detail on grazing walls and floors in the traced view.**
   An isotropic footprint picks one mip level from the widest axis, so
   surfaces seen edge-on over-blur. Anisotropic ray cones (JCGT 2021,
   jcgt.org/published/0010/01/01) give textureGrad-style gradients
@@ -15114,6 +15114,19 @@ against.
   Widening the texture LOD by 1/sqrt(|cos|) took far flicker 0.071 ->
   0.068 but far sharpness 0.728 -> 0.709. Anisotropic cones (textureGrad
   + anisotropyEnable on hdSampler) should win that sharpness back.
+  2026-11-10: shipped. HD_TEX now reads with textureGrad: the
+  cone's long axis w/|cos| (cap 64) along the view direction on the
+  surface, short axis w across it. The hdTex[] maps get their own
+  sampler with 16x anisotropy (hdAnisoSampler), so the raster view's
+  derivatives drive it too; surfViews and the fog volume keep
+  hdSampler. Render scale 50, E1M1, against DOOM-0595: traced far edge
+  agreement 0.734 -> 0.748, far sharpness 0.671 -> 0.681, far PSNR
+  +0.38 dB, close and far flicker unchanged (0.113/0.114, 0.038).
+  Raster far edge agreement 1.029 of the old image. Frame time flat
+  in both views (traced 25.3-26.7 ms either build; raster 4.53-4.57).
+  A blind judge agent saw no difference a player would notice; the
+  distant computer panels are slightly crisper zoomed in. The win
+  back is partial: DOOM-0598 had cost far sharpness 0.728 -> 0.709.
   **Layman:** Long floors and walls seen at a shallow angle stay crisp in the ray-traced view, instead of going blurry.
   Kind: enhancement.
   Source: research-2026-11-10 (RT denoise loop it11-it12).

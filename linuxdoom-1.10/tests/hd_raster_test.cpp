@@ -45,8 +45,9 @@ int main()
     check(!pt.empty() && !hs.empty() && !mf.empty() && !vk.empty(), "the sources are readable");
 
     check(count(pt, "texture(hdTex") == 0, "pathtrace.comp has no implicit-LOD read of an HD map");
-    check(pt.find("#define HD_TEX(i, uv)           textureLod(") != std::string::npos,
-          "pathtrace.comp's HD_TEX reads at an explicit level");
+    // DOOM-0600: explicit gradients (the anisotropic ray cone) are an explicit level too.
+    check(pt.find("#define HD_TEX(i, uv)           textureGrad(") != std::string::npos,
+          "pathtrace.comp's HD_TEX reads with explicit gradients");
     check(count(hs, "texture(hdTex") == 0 && count(hs, "textureLod(hdTex") == 0,
           "hd_surface.glsl has no direct HD map read");
     check(mf.find("#define HD_TEX(i, uv)           textureGrad(") != std::string::npos,

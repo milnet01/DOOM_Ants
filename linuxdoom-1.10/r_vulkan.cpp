@@ -694,6 +694,8 @@ struct VulkanState
     VkImageView    palView     = VK_NULL_HANDLE;
     VkSampler      texSampler  = VK_NULL_HANDLE;   // nearest, REPEAT (native tiling)
     VkSampler hdSampler = VK_NULL_HANDLE;   // DOOM-0042: linear+mip+REPEAT for HD PBR maps
+    VkSampler hdAnisoSampler = VK_NULL_HANDLE;   // DOOM-0600: hdSampler + 16x anisotropy, the hdTex[] maps
+    bool      anisoSupported = false;            // DOOM-0600: samplerAnisotropy enabled
 
     // DOOM-0042 HD PBR material path (parallel to the R8 matImages). A new descriptor
     // set (set 3 of the RT pipeline): binding 0 = the per-material control SSBO, binding
@@ -1779,6 +1781,10 @@ void PickPhysicalAndDevice()
     // device genuinely lacks it the pipeline create below fails loudly via Check().
     if (have2.features.geometryShader)
         enableBase.geometryShader = VK_TRUE;
+    // DOOM-0600: anisotropic filtering of the HD maps (g.hdAnisoSampler). Optional:
+    // without it that sampler is plain trilinear, as before.
+    g.anisoSupported = have2.features.samplerAnisotropy;
+    enableBase.samplerAnisotropy = g.anisoSupported ? VK_TRUE : VK_FALSE;
 
     VkDeviceCreateInfo dci = {};
     dci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -4848,6 +4854,17 @@ void CreateDescriptors()
     hsci.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     hsci.maxLod = VK_LOD_CLAMP_NONE;
     Check(vkCreateSampler(g.device, &hsci, nullptr, &g.hdSampler), "vkCreateSampler(hd)");
+    // DOOM-0600: the hdTex[] maps get anisotropic filtering, so a grazing floor or wall reads
+    // the mip its narrow footprint axis wants instead of its wide one. The raster view's
+    // derivatives and the traced view's ray-cone gradients (pathtrace.comp HD_TEX) both
+    // drive it. surfViews and the fog volume keep hdSampler.
+    if (g.anisoSupported) {
+        VkPhysicalDeviceProperties pdp = {};
+        vkGetPhysicalDeviceProperties(g.phys, &pdp);
+        hsci.anisotropyEnable = VK_TRUE;
+        hsci.maxAnisotropy    = std::min(16.0f, pdp.limits.maxSamplerAnisotropy);
+    }
+    Check(vkCreateSampler(g.device, &hsci, nullptr, &g.hdAnisoSampler), "vkCreateSampler(hd aniso)");
 
     // DOOM-0170 L2a step 2: the composite samples a render-scaled scene target and
     // upscales it to the swapchain, so it wants linear filtering (smooth, not blocky)
@@ -6892,7 +6909,7 @@ static bool BuildHdSet(const std::vector<HdSrc>& srcsIn, const rb_matctrl_t* tab
     VkDescriptorBufferInfo bufInfo = { g.hdCtrlBuf, 0, ctrlBytes };
     std::vector<VkDescriptorImageInfo> imgInfos(nimg);
     for (int i = 0; i < nimg; i++)
-        imgInfos[i] = { g.hdSampler, g.hdViews[i], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+        imgInfos[i] = { g.hdAnisoSampler, g.hdViews[i], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
     VkWriteDescriptorSet writes[2] = {};
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[0].dstSet = g.hdSet; writes[0].dstBinding = 0; writes[0].descriptorCount = 1;
@@ -12022,6 +12039,7 @@ extern "C" void RB_Vulkan_Shutdown(void)
     if (g.texSampler)  vkDestroySampler(g.device, g.texSampler, nullptr);
     if (g.compositeSampler) vkDestroySampler(g.device, g.compositeSampler, nullptr);
     if (g.hdSampler)   vkDestroySampler(g.device, g.hdSampler, nullptr);   // DOOM-0042
+    if (g.hdAnisoSampler) vkDestroySampler(g.device, g.hdAnisoSampler, nullptr);   // DOOM-0600
     FreeHdMaterials();                                                     // DOOM-0042: pool/images/SSBO
     if (g.hdSetLayout) vkDestroyDescriptorSetLayout(g.device, g.hdSetLayout, nullptr);
     for (VkImageView v : g.surfViews)  if (v) vkDestroyImageView(g.device, v, nullptr);

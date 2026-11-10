@@ -158,7 +158,16 @@ float hdLodBias = 0.0;
 float hdTexBias = 0.0;        // the faded hdLodBias while hdFine(true), else 0
 const float kBiasFadeEnd = 2.0;
 void hdFine(bool on) { hdTexBias = on ? hdLodBias * clamp(kBiasFadeEnd - hdTexLod, 0.0, 1.0) : 0.0; }
-#define HD_TEX(i, uv)           textureLod(hdTex[nonuniformEXT(i)], (uv), max(hdTexLod - hdTexBias, 0.0))
+// DOOM-0600: the maps read through the ray cone's footprint as two UV gradients, an
+// anisotropic ray cone (JCGT 2021, jcgt.org/published/0010/01/01): hdGx spans the long axis
+// (the view direction along the surface, w/|cos|), hdGy the short one (w). With the hdTex[]
+// sampler's anisotropy, the hardware picks the mip of the short axis and filters along the
+// long one, so a grazing floor stays sharp without the shimmer of a finer isotropic level.
+// The bias scales both gradients: exp2(-bias) is that many levels finer. Zero gradients
+// read level 0, as hdTexLod = 0 did. hdTexLod still drives the bias fade.
+vec2 hdGx = vec2(0.0), hdGy = vec2(0.0);
+#define HD_TEX(i, uv)           textureGrad(hdTex[nonuniformEXT(i)], (uv), hdGx * exp2(-hdTexBias), \
+                                            hdGy * exp2(-hdTexBias))
 #define HD_TEX_W(i, w, k, off)  textureLod(hdTex[nonuniformEXT(i)], (w) * (k) + (off), 0.0)
 
 // The level mesh, the step-3b emitter list, and the per-material Le table are read
@@ -1288,7 +1297,7 @@ PrimaryHit primaryHitSurface(Verts vb, uint i0, bool isSprite, vec2 hitUV, vec3 
     // usePBR && detileOn(), so the same gate here keeps paletted hits free of it.
     h.dG   = (h.mc.usePBR != 0u && detileFor(h.mc)) ? detileWorldUV(h.hitP, n) / kDetileWorldCell
                                                : vec2(0.0);
-    hdLod = 0.0; hdTexLod = 0.0;
+    hdLod = 0.0; hdTexLod = 0.0; hdGx = vec2(0.0); hdGy = vec2(0.0);
     if (h.mc.usePBR != 0u) {
         vec2 baseUV = hdBaseUV(h.id, hitUV, h.mc);
         hdTangentFrame(n, p0, p1, p2, uv0, uv1, uv2, h.T, h.B);
@@ -1301,6 +1310,16 @@ PrimaryHit primaryHitSurface(Verts vb, uint i0, bool isSprite, vec2 hitUV, vec3 
                      * float(textureSize(hdTex[nonuniformEXT(lodMap)], 0).x);
             hdLod    = log2(max(fw, 1.0));
             hdTexLod = log2(max(fw / sqrt(max(abs(dot(dir, n)), 0.2)), 1.0));
+            // DOOM-0600: the footprint's axes in base-UV units (hdBaseUV: hitUV is one
+            // texel per world unit, scaled by uvScale / texSz). The long axis's 1/|cos| is
+            // capped at 64; past the sampler's 16x the hardware widens the level itself.
+            const float w  = tHit * hdPixelAngle;
+            const vec2  k  = vec2(h.mc.uvScale / texSz.x, h.mc.uvScaleV / texSz.y);
+            vec3        ax = dir - n * dot(dir, n);
+            ax = dot(ax, ax) > 1e-8 ? normalize(ax) : h.T;   // head-on: any surface axis
+            const vec3  ay = cross(n, ax);
+            hdGx = vec2(dot(ax, h.T), dot(ax, h.B)) * k * (w / max(abs(dot(dir, n)), 1.0 / 64.0));
+            hdGy = vec2(dot(ay, h.T), dot(ay, h.B)) * k * w;
         }
         // DOOM-0181 L3: march POM in the de-tiled coordinate so relief registers with the
         // de-tiled albedo/normal/AO (§4.4); else the plain-space POM march.
