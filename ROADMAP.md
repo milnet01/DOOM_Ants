@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=600 -->
+<!-- ants-roadmap-id-high-water: DOOM=602 -->
 
 # Roadmap
 
@@ -15014,6 +15014,15 @@ against.
   the mean rather than clamping (Salvi GDC 2016, Karis 2014). Karis:
   clamping a sub-pixel feature gives sawtooth flicker; lower the blend
   when history is near the clamp. Risk: slight ghosting.
+  2026-11-10 source read (FSR 2 ffx_fsr2_upsample.h; FSR 3 accumulate):
+  FSR weights each frame by 1/12 (FSR 3: 1/16) of the Lanczos2 weight
+  with history capped at 1, about a 5-6% blend on a static pixel; ours
+  is up to 0.2 (taau.comp, 0.2*exp(-2.29 d^2)). Lowering it, raised
+  again with velocity, is the likeliest cheap flicker cut. tcap4
+  captures are frozen, so judge ghosting with tturn.sh. FSR 3 also
+  widens the clamp on luma and far depth; Unity HDRP's anti-flicker
+  gates the widening on temporal contrast (idea only: Unity Companion
+  License).
   **Layman:** The ray-traced picture is rebuilt from a half-size image; this makes that rebuild crisper and stops edges shimmering.
   Kind: enhancement.
   Source: user-request-2026-11-09.
@@ -15041,7 +15050,7 @@ against.
   Kind: fix.
   Source: user-report-2026-11-09 (RT denoise loop it8).
 
-- 📋 [DOOM-0598] **Give the traced view's HD mip bias a separate strength per map, so it sharpens without far shimmer.**
+- ✅ [DOOM-0598] **Give the traced view's HD mip bias a separate strength per map, so it sharpens without far shimmer.**
   it11/it12 measured a log2(render/display) bias on HD_TEX fetches.
   Full bias: close sharpness 0.814 -> 0.914, far flicker 0.071 -> 0.082.
   Half: 0.860 / 0.076. Albedo-only: close unchanged, far 0.074-0.077.
@@ -15055,6 +15064,15 @@ against.
   below log2(r/d)); Tokuyoshi-Kaplanyan JCGT 2021.
   Accept: close sharpness above 0.860 with far flicker at or below
   0.071.
+  Shipped 2026-11-10, a different shape than planned. Albedo and normal
+  read finer by log2(display/render), faded out between texture LOD 1
+  and 2. The texture LOD now widens by 1/sqrt(|cos|) (hdTexLod;
+  DOOM-0597 keeps the isotropic hdLod), so grazing floors are no longer
+  under-filtered. The Toksvig term was built and measured with no
+  effect: specular-off captures showed the shimmer was diffuse. Result
+  at render scale 50: close sharpness 0.814 -> 0.869, far flicker 0.071
+  -> 0.068, far sharpness 0.728 -> 0.709, trace +0.17 ms. Reviewed by
+  the Vestige and UT_Ants sessions.
   **Layman:** Close-up textures in the ray-traced view get sharper without making distant walls shimmer.
   Kind: enhancement.
   Source: research-2026-11-10 (RT denoise loop it11-it12).
@@ -15082,9 +15100,39 @@ against.
   from the cone, recovering sharpness without a negative mip bias and
   so without its shimmer. Related: DOOM-0458 (traced view mip level),
   DOOM-0132 step 5 (anisotropic filtering in the tracer).
+  2026-11-10: DOOM-0598 confirmed the far shimmer is grazing-angle.
+  Widening the texture LOD by 1/sqrt(|cos|) took far flicker 0.071 ->
+  0.068 but far sharpness 0.728 -> 0.709. Anisotropic cones (textureGrad
+  + anisotropyEnable on hdSampler) should win that sharpness back.
   **Layman:** Long floors and walls seen at a shallow angle stay crisp in the ray-traced view, instead of going blurry.
   Kind: enhancement.
   Source: research-2026-11-10 (RT denoise loop it11-it12).
+  Lanes: renderer, shaders.
+
+- 📋 [DOOM-0601] **Keep HD texture detail out of the traced view's TAAU: rebuild lighting, then multiply by albedo read at display res.**
+  UT_Ants' idea (2026-11-10). Accumulate radiance/albedo in TAAU,
+  then multiply by albedo fetched at display res with a display-res
+  footprint (a primary-visibility + albedo pass, cheap next to the
+  trace). Texture detail never enters the history or the clamp, so it
+  cannot shimmer, and close sharpness comes from the right mip rather
+  than a bias (DOOM-0598). The SVGF / DLSS-RR pattern. Large: a new
+  pass and a display-res G-buffer channel. Measure against
+  DOOM-0598's numbers.
+  **Layman:** Texture detail in the ray-traced view would come out pin-sharp and steady, because the upscaler would only smooth the lighting, never the textures.
+  Kind: enhancement.
+  Source: peer-review-2026-11-10 (DOOM-0598).
+  Lanes: renderer, shaders.
+
+- 📋 [DOOM-0602] **Build sharper HD mips with a windowed (Kaiser or Lanczos) downsample instead of the box blit.**
+  Vestige's idea (2026-11-10). The HD mip chain comes from
+  vkCmdBlitImage LINEAR 2:1, a box filter, so each level is soft. A
+  windowed downsample makes every level sharper at the same LOD, so
+  far surfaces gain sharpness without the shimmer a negative bias
+  brings. Pairs with RCAS (DOOM-0599). Normal maps must stay
+  unnormalised, or keep the box filter for them.
+  **Layman:** Textures at a distance look crisper in every view, at no cost while playing.
+  Kind: enhancement.
+  Source: peer-review-2026-11-10 (DOOM-0598).
   Lanes: renderer, shaders.
 
 ## 0.12.0 — Light and materials

@@ -138,9 +138,27 @@ layout(set = 1, binding = 2) uniform sampler2D materialTex[];
 // is not defined.
 // The mip a surface map reads at this hit (DOOM-0537). Always level 0 made fine baked detail
 // sparkle wherever one map texel is smaller than a pixel. 0 where hdPixelAngle is unset.
+// hdLod is the isotropic cone width (DOOM-0597's lobe widening reads it). hdTexLod is what the
+// maps read: hdLod widened by 1/sqrt(|cos|), the geometric mean of the footprint's two axes,
+// so a grazing floor is not under-filtered (DOOM-0598; Vestige review 2026-11-10).
 float hdLod = 0.0;
+float hdTexLod = 0.0;
 float hdPixelAngle = 0.0;     // one pixel's view angle, near enough, in radians
-#define HD_TEX(i, uv)           textureLod(hdTex[nonuniformEXT(i)], (uv), hdLod)
+// DOOM-0598: TAAU rebuilds at display res, so the albedo and normal fetches read finer by
+// hdLodBias (misc7.w = log2(display/render)). Every HD_TEX between hdFine(true) and
+// hdFine(false) takes it, de-tiled taps included; roughness, metal and AO never do, since
+// biased spec maps shimmered (it11). The bias fades out with minification, between hdTexLod
+// kBiasFadeEnd-1 and kBiasFadeEnd: on a minified surface the finer level is detail TAAU
+// cannot hold still, and it raised far flicker even with the lobe off.
+// kBiasFadeEnd is measured (2026-11-10, render scale 50, E1M1 close and far spots; the DOOM-0598
+// target is close sharpness > 0.860 and far flicker <= 0.071): with hdTexLod, 2.0 gave 0.869 and
+// 0.068. On the isotropic hdLod, 3.0 kept sharpness but far flicker rose to 0.077, and 1.5
+// held flicker at 0.071 but sharpness fell to 0.842.
+float hdLodBias = 0.0;
+float hdTexBias = 0.0;        // the faded hdLodBias while hdFine(true), else 0
+const float kBiasFadeEnd = 2.0;
+void hdFine(bool on) { hdTexBias = on ? hdLodBias * clamp(kBiasFadeEnd - hdTexLod, 0.0, 1.0) : 0.0; }
+#define HD_TEX(i, uv)           textureLod(hdTex[nonuniformEXT(i)], (uv), max(hdTexLod - hdTexBias, 0.0))
 #define HD_TEX_W(i, w, k, off)  textureLod(hdTex[nonuniformEXT(i)], (w) * (k) + (off), 0.0)
 
 // The level mesh, the step-3b emitter list, and the per-material Le table are read
@@ -282,7 +300,8 @@ layout(push_constant) uniform PC {
                        // std430-aligned to offset 224 (C++ pads the 216-byte tail; INV-6).
     uvec4    misc7;    // DOOM-0273: x = surface detail (1 on; 0 off or no maps made);
                        // y = DOOM-0103's specular setting (1 on); z = surface-map base
-                       // in materialTex[] (RB_MaterialCount()); w = free. Offset 240; the
+                       // in materialTex[] (RB_MaterialCount()); w = HD mip bias, BIT-CAST
+                       // float (DOOM-0598). Offset 240; the
                        // push range is now 256 bytes, the device limit: no lane is left.
 } pc;
 
@@ -1226,6 +1245,14 @@ struct PrimaryHit {
     float   metal;      // DOOM-0517: 0 dielectric, 1 metal
 };
 
+// DOOM-0598: an HD hit's tangent-space normal, before normalising. De-tiled in lockstep with
+// the albedo when the dial is on (DOOM-0181 L2).
+vec3 hdNormalTS(PrimaryHit h)
+{
+    if (detileFor(h.mc)) return detileNormalTS(uint(h.mc.maps[1]), h.sUV, h.dG);
+    return HD_TEX(h.mc.maps[1], h.sUV).xyz * 2.0 - 1.0;
+}
+
 // DOOM-0539: a hit's material row. A sprite lump's HD row belongs to its model, so a billboard
 // of that lump, which a far Thing can be, reads as paletted.
 MatCtrl hitCtrl(uint id, bool isSprite, int flags)
@@ -1261,13 +1288,20 @@ PrimaryHit primaryHitSurface(Verts vb, uint i0, bool isSprite, vec2 hitUV, vec3 
     // usePBR && detileOn(), so the same gate here keeps paletted hits free of it.
     h.dG   = (h.mc.usePBR != 0u && detileFor(h.mc)) ? detileWorldUV(h.hitP, n) / kDetileWorldCell
                                                : vec2(0.0);
+    hdLod = 0.0; hdTexLod = 0.0;
     if (h.mc.usePBR != 0u) {
         vec2 baseUV = hdBaseUV(h.id, hitUV, h.mc);
         hdTangentFrame(n, p0, p1, p2, uv0, uv1, uv2, h.T, h.B);
         const vec2 texSz = vec2(textureSize(materialTex[nonuniformEXT(h.id)], 0));
-        if (h.mc.maps[0] >= 0)
-            hdLod = log2(max(tHit * hdPixelAngle * h.mc.uvScale / texSz.x
-                             * float(textureSize(hdTex[nonuniformEXT(h.mc.maps[0])], 0).x), 1.0));
+        // DOOM-0598: sized from the albedo map, else the normal map; the hdLod = 0 above
+        // keeps a hit with neither from reading the previous hit's level.
+        const int lodMap = h.mc.maps[0] >= 0 ? h.mc.maps[0] : h.mc.maps[1];
+        if (lodMap >= 0) {
+            float fw = tHit * hdPixelAngle * h.mc.uvScale / texSz.x
+                     * float(textureSize(hdTex[nonuniformEXT(lodMap)], 0).x);
+            hdLod    = log2(max(fw, 1.0));
+            hdTexLod = log2(max(fw / sqrt(max(abs(dot(dir, n)), 0.2)), 1.0));
+        }
         // DOOM-0181 L3: march POM in the de-tiled coordinate so relief registers with the
         // de-tiled albedo/normal/AO (§4.4); else the plain-space POM march.
         h.sUV = detileFor(h.mc)
@@ -1284,6 +1318,8 @@ PrimaryHit primaryHitSurface(Verts vb, uint i0, bool isSprite, vec2 hitUV, vec3 
     }
     // DOOM-0181 L1: de-tile the albedo when the dial is on and this is an HD albedo map;
     // else the unchanged hdAlbedo path (paletted / no-albedo hits stay byte-identical).
+    // DOOM-0598: both HD branches read at the finer level.
+    hdFine(true);
     if (h.mc.usePBR != 0u && h.mc.maps[0] >= 0 && detileFor(h.mc)) {
         h.albedo = detile(uint(h.mc.maps[0]), h.sUV, h.dG);
     } else if (h.mc.usePBR == 0u && h.surf) {
@@ -1291,6 +1327,7 @@ PrimaryHit primaryHitSurface(Verts vb, uint i0, bool isSprite, vec2 hitUV, vec3 
     } else {
         h.albedo = hdAlbedo(h.mc, h.id, hitUV, h.sUV);   // HD if usePBR, else paletted
     }
+    hdFine(false);
     // DOOM-0181 L4: fetch AO ONCE here (de-tiled to match albedo/normal; §4.3) — it feeds
     // both the crevice-pooled filth in applyGrime and the ambient term. Paletted / no-AO
     // hits fall back to hdAO (== 1.0 there, so no crevice darkening). Mode 6 needs it
@@ -1356,8 +1393,11 @@ PrimaryLight primaryHitLighting(PrimaryHit h, bool isSprite, int prim, vec3 n)
     // DOOM-0181 L2: de-tile the normal in lockstep with the albedo (same world cell), so a
     // mirrored/offset tile's relief matches its colour. INV-2: detileNormalTS negates the
     // per-cell tangent-X on a mirror. Paletted / no-normal-map hits keep hdShadingNormal.
-    if (h.mc.usePBR != 0u && h.mc.maps[1] >= 0 && detileFor(h.mc)) {
-        vec3 tn  = detileNormalTS(uint(h.mc.maps[1]), h.sUV, h.dG);
+    // DOOM-0598: an HD normal map reads at the finer level, like the albedo.
+    if (h.mc.usePBR != 0u && h.mc.maps[1] >= 0) {
+        hdFine(true);
+        vec3 tn  = hdNormalTS(h);
+        hdFine(false);
         s.shadeN = normalize(tn.x * h.T + tn.y * h.B + tn.z * n);
     } else if (h.mc.usePBR == 0u && h.surf) {
         // DOOM-0273: the derived normal lights the hit; gnorm keeps the geometric n.
@@ -1454,6 +1494,7 @@ void main()
     // reconstructs sub-pixel detail. Zero on the non-upscaled path, so the ray is
     // the exact pixel centre as before.
     hdPixelAngle = 2.0 * pc.camUp.w / float(h);
+    hdLodBias    = uintBitsToFloat(pc.misc7.w);
     const float ndcX = (2.0 * (float(px.x) + 0.5 + pc.camPos.w) / float(w)) - 1.0;
     const float ndcY = (2.0 * (float(px.y) + 0.5 + pc.camDir.w) / float(h)) - 1.0;
     vec3  origin = pc.camPos.xyz;

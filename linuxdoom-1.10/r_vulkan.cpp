@@ -9427,7 +9427,8 @@ void RecordRtTrace(uint32_t idx)
                                   // z = fog strength (rb_fog 0..3, DOOM-0011); w = hell-haze (L4)
         uint32_t misc7[4];        // DOOM-0273: x = surface detail (SurfaceDetailLane); y = the
                                   // DOOM-0103 specular setting (SpecularLane); z = surface-map base
-                                  // (RB_MaterialCount()); w unused. 256 bytes, the device limit.
+                                  // (RB_MaterialCount()); w = HD mip bias, BIT-CAST float
+                                  // (DOOM-0598). 256 bytes, the device limit.
     } pc = {};
     static_assert(sizeof(RtPushConstants) == 256, "RT push-constant layout must match the shader");
     static_assert(offsetof(RtPushConstants, misc7) == 240, "misc7 follows misc6, as in pathtrace.comp");
@@ -9533,6 +9534,9 @@ void RecordRtTrace(uint32_t idx)
     pc.misc7[0]    = SurfaceDetailLane();
     pc.misc7[1]    = SpecularLane();
     pc.misc7[2]    = (uint32_t)RB_MaterialCount();
+    // DOOM-0598: HD albedo + normal mip bias for the display TAAU rebuilds to; 0 when not upscaled.
+    const float lodBias = std::log2((float)dispH / (float)h);
+    std::memcpy(&pc.misc7[3], &lodBias, sizeof(float));
     pc.misc6[2]    = FogStrength();     // DOOM-0011: fog strength 0..3 (`;` key); 0 skips the march (INV-8)
     {   // DOOM-0011: the outdoor fog layer's altitude, per level (0 if no open-sky sector)
         float fz = g.levelMesh ? g.levelMesh->fogFloorZ : 0.0f;
