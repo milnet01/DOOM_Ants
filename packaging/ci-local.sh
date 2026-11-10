@@ -73,12 +73,18 @@ DEPS_FILE="packaging/ci-deps.txt"           # shared apt package list (build.yml
 # Local-only speed-up, NOT part of the job (DOOM-0452): the containers reuse the
 # .deb files earlier runs downloaded. apt-get update and install still run fresh
 # every time, and apt checks each cached file's hash against today's index, so what
-# gets installed is what GitHub installs. Kept in the repo's gitignored scratch/,
-# off the system disk, which is short of space; autoclean drops packages the
+# gets installed is what GitHub installs. Kept in SCRATCH, off the system disk,
+# which is short of space; autoclean drops packages the
 # index no longer offers. One cache per job: the two containers run at the same
 # time, and apt locks its cache directory, so a shared one would fail the second.
-APT_CACHE_LINUX="$REPO/scratch/cache/ci-apt-linux"
-APT_CACHE_WINDOWS="$REPO/scratch/cache/ci-apt-windows"
+# SCRATCH: this machine's per-project scratch folder where it exists, else the
+# repo's gitignored scratch/. DOOM_ANTS_SCRATCH overrides both.
+SCRATCH_HOME="/mnt/Emulators/.claude/Scratchpad/DOOM_Ants"
+if [ -n "${DOOM_ANTS_SCRATCH:-}" ]; then SCRATCH="$DOOM_ANTS_SCRATCH"
+elif [ -d "$SCRATCH_HOME" ];       then SCRATCH="$SCRATCH_HOME/scratch"
+else                                    SCRATCH="$REPO/scratch"; fi
+APT_CACHE_LINUX="$SCRATCH/cache/ci-apt-linux"
+APT_CACHE_WINDOWS="$SCRATCH/cache/ci-apt-windows"
 
 MODE="auto"
 DOCS_MODE=0
@@ -190,10 +196,10 @@ if [ -n "$(git status --porcelain)" ]; then
   echo
 fi
 
-# On the repo's disk, not /tmp: /tmp is RAM on this machine, and the two build
+# In SCRATCH, not /tmp: /tmp is RAM on this machine, and the two build
 # trees are a few hundred MB.
-mkdir -p "$REPO/scratch"
-WORK_ROOT="$(mktemp -d "$REPO/scratch/ci-local.XXXXXX")"
+mkdir -p "$SCRATCH"
+WORK_ROOT="$(mktemp -d "$SCRATCH/ci-local.XXXXXX")"
 WIN_PID=""
 trap '[ -n "$WIN_PID" ] && kill "$WIN_PID" 2>/dev/null; wait; rm -rf "$WORK_ROOT"' EXIT
 

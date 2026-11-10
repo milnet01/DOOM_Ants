@@ -400,7 +400,7 @@ of STONE2 walls and FLOOR5_2 floor leading to the REDWALL1 cross
   `specular` 0. Over the floor in front of the cross, that difference's mean
   has a red channel at least four times its green and blue.
   *Test:* manual. Capture each with
-  `AT="424 382 352" scratch/doom0511/cap.sh <name>` (Solid, `-rtview 6`; a
+  `AT="424 382 352" /mnt/Emulators/.claude/Scratchpad/DOOM_Ants/scratch/doom0511/cap.sh <name>` (Solid, `-rtview 6`; a
   local script, untracked). The floor's pixel box is picked on the first
   pair at B4 and written into this invariant.
   *Breaks when:* the highlight bypasses the per-channel clamp and the tone map
