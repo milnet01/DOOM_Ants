@@ -224,6 +224,7 @@ void M_ChangeUpscaler(int choice);
 void M_ChangeRenderScale(int choice);
 void M_ChangeDebugViews(int choice);
 void M_ChangeBrightness(int choice);
+void M_ChangeSharpness(int choice);
 void M_ChangeWidescreen(int choice);
 void M_ChangeFillScreen(int choice);
 // DOOM-0205: the render toggles' menu handlers (VideoDef rows).
@@ -542,6 +543,7 @@ enum
     vid_upscaler,
     vid_renderscale,
     vid_brightness,     // status 2 slider
+    vid_sharpness,      // status 2 slider (DOOM-0599; menu-only, no hotkey twin)
     vid_eff_head,       // "— Effects —" spacer
     vid_flashlight,
     vid_ssao,
@@ -570,6 +572,7 @@ menuitem_t VideoMenu[]=
     {1,"",	M_ChangeUpscaler,'u'},
     {1,"",	M_ChangeRenderScale,'c'},
     {2,"",	M_ChangeBrightness,'b'},
+    {2,"",	M_ChangeSharpness,'a'},
     {-1,"",0},
     {1,"",	M_ChangeFlashlight,'f'},
     {1,"",	M_ChangeSSAO,'s'},
@@ -1311,6 +1314,7 @@ char	fpsPosNames[4][11]	= {"Off","Top-Left","Top-Centre","Top-Right"};
 extern int	rb_upscaler;
 extern int	rb_renderscale;
 extern int	rb_exposure;
+extern int	rb_sharpness;	// DOOM-0599 RCAS slider (0 Off .. 5), in r_vulkan.cpp
 extern int	rb_rtdebug_menu;	// DOOM-0135 Debug Views toggle
 char	upscalerNames[2][8]	= {"Off","TAAU"};
 int	renderScalePresets[4]	= {100,75,67,50};
@@ -1556,7 +1560,7 @@ void M_DrawRendererMenu(void)
 //
 static const char* videoLabels[vid_end] =
 {
-    "Renderer", "Ray Tracing", "Upscaler", "Render Scale", "Brightness",
+    "Renderer", "Ray Tracing", "Upscaler", "Render Scale", "Brightness", "Sharpness",
     "-  EFFECTS  -",
     "Flashlight", "SSAO", "De-tile", "Surface Detail", "Shine", "Dirt & Grime", "Wet Liquid", "Volumetric Fog",
     "Bloom",
@@ -1726,6 +1730,7 @@ static void M_VideoCrispValue(int i, crispval_t* cv)
 	    if (renderScalePresets[k] == rb_renderscale) rsi = k;
 	cv->str = renderScaleNames[rsi]; break;
       case vid_brightness: cv->slider = 1; cv->num = rb_exposure; cv->den = 15; break;
+      case vid_sharpness:  cv->slider = 1; cv->num = rb_sharpness; cv->den = 5; break;
       case vid_flashlight: cv->str = rb_flashlight ? "On" : "Off"; break;
       case vid_ssao:       cv->str = rb_ssao ? "On" : "Off"; break;
       case vid_detile:
@@ -2883,6 +2888,23 @@ void M_ChangeBrightness(int choice)
 	break;
       case 1:
 	if (rb_exposure < 15) rb_exposure++;
+	break;
+    }
+}
+
+//
+// Sharpness slider for the traced view's upscaled picture (DOOM-0599): left/right step
+// RCAS between Off and 5. It adds shimmer as it sharpens, so it starts at Off.
+//
+void M_ChangeSharpness(int choice)
+{
+    switch (choice)
+    {
+      case 0:
+	if (rb_sharpness > 0) rb_sharpness--;
+	break;
+      case 1:
+	if (rb_sharpness < 5) rb_sharpness++;
 	break;
     }
 }

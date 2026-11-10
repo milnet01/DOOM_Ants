@@ -15099,7 +15099,7 @@ against.
   Source: research-2026-11-10 (RT denoise loop it11-it12).
   Lanes: renderer, shaders.
 
-- 📋 [DOOM-0599] **Add a halo-limited sharpening pass (AMD RCAS) after the traced view's upscaler, with a strength setting.**
+- ✅ [DOOM-0599] **Add a halo-limited sharpening pass (AMD RCAS) after the traced view's upscaler, with a strength setting.**
   RCAS (FidelityFX ffx_fsr1.h) sharpens with a 5-tap cross and keeps
   each output inside its neighbours' min/max, which limits halos. It
   has an optional noise path that sharpens edges, not grain. Strength
@@ -15109,6 +15109,18 @@ against.
   after the per-map bias item. Measure close sharpness, far flicker
   and cost against today's output. MIT-licensed source; check the
   dependencies standard before copying code.
+  Shipped 2026-11-11 as a Sharpness slider (menu row under
+  Brightness, config key rt_sharpness, 0 Off .. 5), Off by default.
+  Measured at render scale 50 on E1M1 against dev-0600: sharpening
+  raised shimmer about as much as sharpness at every strength, so it
+  fails the "sharper and no more shimmer" rule and is a player's
+  choice, not a default (user decision 2026-11-11). Step 1 (2 stops):
+  flicker close 0.114 -> 0.119, far 0.038 same; edges 0.888 -> 0.903,
+  0.748 -> 0.760. Step 5 (0.4 stops): flicker 0.150 / 0.055; edges
+  0.953 / 0.806; sharpness 0.794 -> 1.009 close. Cost when on: TAAU
+  slot 1.04 -> 1.42 ms at 4270x2000; Off skips the pass. A
+  shared-memory tile could cut the five history reads if it is ever
+  on by default.
   **Layman:** A final sharpening step makes the ray-traced picture crisper without adding sparkle, with a slider to choose how much.
   Kind: feature.
   Source: research-2026-11-10 (RT denoise loop it11-it12).

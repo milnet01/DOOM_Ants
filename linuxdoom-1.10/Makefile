@@ -102,7 +102,7 @@ SHADER_SRCS=$(SHADER_DIR)/mesh.vert $(SHADER_DIR)/mesh.frag \
 		$(SHADER_DIR)/pathtrace.comp $(SHADER_DIR)/bake.comp \
 		$(SHADER_DIR)/svgf_temporal.comp $(SHADER_DIR)/svgf_atrous.comp \
 		$(SHADER_DIR)/svgf_composite.comp $(SHADER_DIR)/label.comp \
-		$(SHADER_DIR)/taau.comp \
+		$(SHADER_DIR)/taau.comp $(SHADER_DIR)/rcas.comp \
 		$(SHADER_DIR)/bloom_extract_raster.comp \
 		$(SHADER_DIR)/bloom_blur.comp \
 		$(SHADER_DIR)/rt_tonemap.comp \

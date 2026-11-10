@@ -123,6 +123,7 @@ static_assert(sizeof(rb_matctrl_t) == 48, "rb_matctrl_t must be 48 bytes (std430
 #include "shaders/gamma.frag.spv.h"         // DOOM-0491: the gamma setting
 #include "shaders/composite.vert.spv.h"
 #include "rb_exposure.h"
+#include "rb_sharpness.h"
 #include "shaders/composite.frag.spv.h"
 #include "shaders/text.vert.spv.h"          // DOOM-0206 L1b: display-res menu glyph text
 #include "shaders/text.frag.spv.h"
@@ -135,6 +136,7 @@ static_assert(sizeof(rb_matctrl_t) == 48, "rb_matctrl_t must be 48 bytes (std430
 #include "shaders/svgf_composite.comp.spv.h"
 #include "shaders/label.comp.spv.h"
 #include "shaders/taau.comp.spv.h"
+#include "shaders/rcas.comp.spv.h"                   // DOOM-0599: sharpen after TAAU
 #include "shaders/bloom_extract_raster.comp.spv.h"   // DOOM-0331 L2: raster bright pass
 #include "shaders/bloom_blur.comp.spv.h"             // DOOM-0331 L3: separable blur (both chains)
 #include "shaders/svgf_composite_split.comp.spv.h"   // DOOM-0345 R1: composite, -DBLOOM_SPLIT
@@ -1091,6 +1093,7 @@ struct VulkanState
     VkDescriptorSet       taauDs         = VK_NULL_HANDLE;
     VkPipelineLayout      taauPipeLayout = VK_NULL_HANDLE;
     VkPipeline            taauPipeline   = VK_NULL_HANDLE;
+    VkPipeline            rcasPipeline   = VK_NULL_HANDLE;   // DOOM-0599: shares taau set + layout
     uint32_t svgfFrame = 0;                       // parity counter for the history ping-pong
     // Previous denoised frame's camera basis, for the temporal reprojection.
     float prevCamPos[3]   = {};
@@ -1269,7 +1272,7 @@ extern "C" { int rb_flashlight = 0; }
 // later phases on the same contract). rb_renderscale: the path tracer's render
 // resolution as a percent of the display (100/75/67/50); only takes effect with an
 // upscaler active and on the mode-6 denoised path. C linkage for the C menu/config.
-extern "C" { int rb_upscaler = 1; int rb_renderscale = 50; int rb_exposure = 10; }   // DOOM-0090: TAAU @ 50% default
+extern "C" { int rb_upscaler = 1; int rb_renderscale = 50; int rb_exposure = 10; int rb_sharpness = 0; }   // DOOM-0090: TAAU @ 50% default
 
 // DOOM-0170 L2b — SSAO (contact/ambient shadows) on/off, persisted as "ssao". Per §6 each
 // screen-space effect gets its own gate so a misbehaving pass can be switched off in isolation.
@@ -3143,6 +3146,8 @@ void CreateTaauPipeline()
     // Push: 48 bytes, matching TaauPC in RecordRtTrace + taau.comp.
     CreateComputeLayout(&g.taauDsLayout, 1, 48, "taau", &g.taauPipeLayout);
     CreateComputePipe(taau_comp_spv, taau_comp_spv_len, g.taauPipeLayout, "taau", &g.taauPipeline);
+    // DOOM-0599: RCAS reads hist[cur] (b2) and writes the output (b3) through the same set.
+    CreateComputePipe(rcas_comp_spv, rcas_comp_spv_len, g.taauPipeLayout, "rcas", &g.rcasPipeline);
 }
 
 // DOOM-0331 L2 (§5) — the raster bright pass: its own 4-binding descriptor set + compute
@@ -9856,19 +9861,30 @@ void RecordRtTrace(uint32_t idx)
                                  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toGenOut);
 
             struct TaauPC {
-                uint32_t misc[4];    // x = cur parity, y = display W, z = display H, w reserved
+                uint32_t misc[4];    // x = cur parity, y = display W, z = display H, w = 1: RCAS writes the output
                 uint32_t misc2[4];   // x = render W, y = render H, z,w reserved
-                float    jitter[4];  // xy = render-pixel jitter
+                float    jitter[4];  // xy = render-pixel jitter, z = RCAS lobe scale
             } tpc = {};
             static_assert(sizeof(TaauPC) == 48, "TAAU push-constant layout must match taau.comp");
             tpc.misc[0] = svgfParity; tpc.misc[1] = dispW;   tpc.misc[2] = dispH;
             tpc.misc2[0] = renderW;   tpc.misc2[1] = renderH;
             tpc.jitter[0] = jitterX;  tpc.jitter[1] = jitterY;
+            // DOOM-0599: the Sharpness slider; Off skips the RCAS pass entirely.
+            const float rcasScale = RB_SharpnessScale(rb_sharpness);
+            const bool  rcas = rcasScale > 0.0f && g.rcasPipeline != VK_NULL_HANDLE;
+            tpc.misc[3]   = rcas ? 1u : 0u;              // TAAU leaves the output to RCAS
+            tpc.jitter[2] = rcasScale;                   // read by rcas.comp only
             vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g.taauPipeline);
             vkCmdBindDescriptorSets(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
                                     g.taauPipeLayout, 0, 1, &g.taauDs, 0, nullptr);
             vkCmdPushConstants(g.cmd, g.taauPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(tpc), &tpc);
             vkCmdDispatch(g.cmd, (dispW + 7) / 8, (dispH + 7) / 8, 1);
+            if (rcas) {
+                svgfBarrier();                    // TAAU writes hist[cur] -> RCAS reads its cross
+                // Same pipeline layout, so the set and tpc pushed above stay bound for RCAS.
+                vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g.rcasPipeline);
+                vkCmdDispatch(g.cmd, (dispW + 7) / 8, (dispH + 7) / 8, 1);
+            }
         }
     }
 
@@ -10940,7 +10956,7 @@ extern "C" void RB_Vulkan_Present(void)
         if (rb_shotverify == 1)
         {
             rb_rtdebug = 6; rb_rtdebug_menu = 0; rb_profile = 0;
-            rb_upscaler = 1; rb_renderscale = 50; rb_exposure = 10;
+            rb_upscaler = 1; rb_renderscale = 50; rb_exposure = 10; rb_sharpness = 0;
             rb_detile = 2; rb_filth = 1; rb_wet = 1;
             // DOOM-0331 INV-7: bloom ships on by default (§3 decision 4), so an
             // unpinned dial would let ~/.doomrc back into the golden -- the same
@@ -11989,6 +12005,7 @@ extern "C" void RB_Vulkan_Shutdown(void)
         if (g.svgfDsLayout)   vkDestroyDescriptorSetLayout(g.device, g.svgfDsLayout, nullptr);
         // Temporal upscaler (step 6-d); its images are freed by DestroyRtTargets.
         if (g.taauPipeline)   vkDestroyPipeline(g.device, g.taauPipeline, nullptr);
+        if (g.rcasPipeline)   vkDestroyPipeline(g.device, g.rcasPipeline, nullptr);
         if (g.taauPipeLayout) vkDestroyPipelineLayout(g.device, g.taauPipeLayout, nullptr);
         if (g.taauDsPool)     vkDestroyDescriptorPool(g.device, g.taauDsPool, nullptr);
         if (g.taauDsLayout)   vkDestroyDescriptorSetLayout(g.device, g.taauDsLayout, nullptr);

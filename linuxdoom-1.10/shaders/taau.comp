@@ -27,7 +27,7 @@ layout(set = 0, binding = 2, rgba16f) uniform image2D hist[2];           // disp
 layout(set = 0, binding = 3, rgba8) uniform writeonly image2D outColor;  // display-res output
 
 layout(push_constant) uniform PC {
-    uvec4 misc;    // x = cur parity, y = display W, z = display H, w reserved
+    uvec4 misc;    // x = cur parity, y = display W, z = display H, w = 1: RCAS writes the output
     uvec4 misc2;   // x = render W, y = render H, z,w reserved
     vec4  jitter;  // xy = current-frame jitter in render pixels
 } pc;
@@ -144,5 +144,5 @@ void main()
 
     if (any(isnan(outC)) || any(isinf(outC))) outC = cur_c;
     imageStore(hist[cur], d, vec4(outC, 1.0));
-    imageStore(outColor,  d, vec4(outC, 1.0));
+    if (pc.misc.w == 0u) imageStore(outColor, d, vec4(outC, 1.0));   // else DOOM-0599 RCAS does
 }
