@@ -15044,6 +15044,17 @@ against.
   pulls history to the neighbourhood mean every frame, which acts as a
   high blend. Karis's sawtooth warning holds here. Still open: FSR
   luma-instability term. Patches in the scratch noise kept/ folder.
+  2026-11-11 FSR luma-instability term DONE (taau.comp). History
+  alpha stores each frame's 3x3 mean luma (8-bit quantised). Where the
+  clamp moves history and the pixel is still, a luma that swung back
+  toward frame N-2 past N-1 keeps unclamped history. Two frames, not
+  FSR's four: N-1 from hist[prev], N-2 from hist[cur] at d before the
+  overwrite. Scale 50, E1M1 close/far vs the shipped build: flicker
+  0.114->0.105 / 0.038->0.037; edge agreement same (0.888 / 0.748);
+  TAAU +0.12 ms at 4270x2000 (+0.2 ms before the N-2 read was gated on
+  the clamp). Blind judge: preferred, no new artefacts, not visible at
+  normal play. User play-test the same day: far shimmer remains, on
+  specular highlights on floors and ceilings only.
   **Layman:** The ray-traced picture is rebuilt from a half-size image; this makes that rebuild crisper and stops edges shimmering.
   Kind: enhancement.
   Source: user-request-2026-11-09.
@@ -15067,6 +15078,10 @@ against.
   0.080 -> 0.071, p99 0.87 -> 0.66; close, sharpness, luma unchanged;
   +0.01 ms. Open: close PSNR -0.11 dB hints the 5x grazing stretch
   over-widens near the camera; Ultra-only Toksvig term not added.
+  2026-11-11 user play-test (after DOOM-0595's luma-instability
+  term): far-distance shimmer is still visible in the traced view, and
+  only on specular highlights on floors and ceilings; nothing noticed
+  up close. Next lead for this item.
   **Layman:** Shiny walls far away stop sparkling from frame to frame.
   Kind: fix.
   Source: user-report-2026-11-09 (RT denoise loop it8).

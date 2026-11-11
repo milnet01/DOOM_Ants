@@ -39,6 +39,8 @@ layout(push_constant) uniform PC {
 // energy 0.71 -> 0.74 of the reference, +0.2-0.3 dB, flicker +0.01, TAAU +0.01 ms at
 // 4270x2000 (nearest was as sharp but flickered more; a Gaussian splat was softer).
 // The caller clamps the overshoot to the 3x3 box, so the negative lobes cannot ring.
+const float kInstMoveOff = 0.5;   // display px/frame at which the luma-instability term is off
+
 vec3 sampleColor(vec2 rf, ivec2 rdim)
 {
     vec2  f  = clamp(rf, vec2(0.0), vec2(rdim) - 1.0);
@@ -58,16 +60,17 @@ vec3 sampleColor(vec2 rf, ivec2 rdim)
 }
 
 // Bilinear fetch of the display-res history at a continuous display-pixel coordinate.
-vec3 sampleHist(uint slot, vec2 df, ivec2 ddim)
+// .a is the luma of the frame that wrote it (DOOM-0595 luma-instability term).
+vec4 sampleHist(uint slot, vec2 df, ivec2 ddim)
 {
     vec2  f  = clamp(df, vec2(0.0), vec2(ddim) - 1.0);
     ivec2 i0 = ivec2(floor(f));
     ivec2 i1 = min(i0 + 1, ddim - 1);
     vec2  t  = f - vec2(i0);
-    vec3 c00 = imageLoad(hist[slot], ivec2(i0.x, i0.y)).rgb;
-    vec3 c10 = imageLoad(hist[slot], ivec2(i1.x, i0.y)).rgb;
-    vec3 c01 = imageLoad(hist[slot], ivec2(i0.x, i1.y)).rgb;
-    vec3 c11 = imageLoad(hist[slot], ivec2(i1.x, i1.y)).rgb;
+    vec4 c00 = imageLoad(hist[slot], ivec2(i0.x, i0.y));
+    vec4 c10 = imageLoad(hist[slot], ivec2(i1.x, i0.y));
+    vec4 c01 = imageLoad(hist[slot], ivec2(i0.x, i1.y));
+    vec4 c11 = imageLoad(hist[slot], ivec2(i1.x, i1.y));
     return mix(mix(c00, c10, t.x), mix(c01, c11, t.x), t.y);
 }
 
@@ -92,13 +95,21 @@ void main()
     // that keeps reprojected history from ghosting across edges / disocclusions.
     ivec2 ri = clamp(ivec2(floor(rf + 0.5)), ivec2(0), rdim - 1);
     vec3  cmin = vec3(1e30), cmax = vec3(-1e30);   // the 9 taps only, so the clamp below bites
+    const vec3 kY = vec3(0.25, 0.5, 0.25);           // YCoCg luma
+    float lsum = 0.0, lsq = 0.0;
     for (int dy = -1; dy <= 1; dy++)
     for (int dx = -1; dx <= 1; dx++) {
         ivec2 s = clamp(ri + ivec2(dx, dy), ivec2(0), rdim - 1);
         vec3  c = imageLoad(inColor, s).rgb;
         cmin = min(cmin, c);
         cmax = max(cmax, c);
+        float l = dot(c, kY);
+        lsum += l;  lsq += l * l;
     }
+    // This frame's luma, quantised to 8 bits as FSR 2 does, so the rgba8 input's
+    // rounding cannot read as instability.
+    float lumaNow = round(lsum / 9.0 * 255.0) / 255.0;
+    float lumaStd = sqrt(max(lsq / 9.0 - (lsum / 9.0) * (lsum / 9.0), 0.0));
     cur_c = clamp(cur_c, cmin, cmax);       // Catmull-Rom overshoot
 
     // Motion: where the surface under this DISPLAY pixel sat last frame, in display px.
@@ -119,8 +130,29 @@ void main()
     vec3 outC;
     if (prevD.x >= 0.0 && prevD.y >= 0.0 &&
         prevD.x <= float(ddim.x - 1) && prevD.y <= float(ddim.y - 1)) {
-        vec3 h = sampleHist(prev, prevD, ddim);
-        h = clamp(h, cmin, cmax);          // neighbourhood-clamp = anti-ghosting
+        vec4 h4 = sampleHist(prev, prevD, ddim);
+        vec3 h  = h4.rgb;
+        float speed = length(prevD - vec2(d));
+        // DOOM-0595: FSR 2's luma-instability term (ffx_fsr2_accumulate.h). Where this
+        // frame's luma has swung back toward an older frame's, past the last frame's,
+        // the pixel is flipping with the jitter: clamping its history to this frame's
+        // box would hand the flip straight to the output, so keep history unclamped.
+        // FSR keeps four frames; the spare history alpha gives two: N-1 reprojected
+        // from hist[prev], N-2 from hist[cur] at d before this pass overwrites it, so
+        // only where the motion rounds to zero (each invocation reads its own pixel).
+        // Gated off by motion, where unclamped history would ghost. Only pixels the
+        // clamp moves pay for the N-2 read (+0.2 ms at 4270x2000 when every pixel did).
+        vec3  hc = clamp(h, cmin, cmax);
+        float inst = 0.0;
+        vec2  prevD2 = 2.0 * prevD - vec2(d);
+        float l1 = h4.a, d0 = lumaNow - l1;
+        if (hc != h && all(equal(ivec2(floor(prevD2 + 0.5)), d)) && abs(d0) >= 1.0 / 255.0) {
+            float l2 = imageLoad(hist[cur], d).a, d1 = lumaNow - l2;
+            bool  flip = l2 != 0.0 && sign(d1) == sign(d0) && abs(d1) < abs(d0);
+            inst = (flip && clamp(lumaStd / 0.1, 0.0, 1.0) > 1.0 / 255.0) ? 1.0 : 0.0;
+            inst *= 1.0 - clamp(speed / kInstMoveOff, 0.0, 1.0);
+        }
+        h = mix(hc, h, inst);              // neighbourhood-clamp = anti-ghosting
         // DOOM-0595: weight this frame by how near its jittered sample landed to d.
         // A fixed 0.1 averaged every jitter phase equally, which re-blurred the result
         // to render resolution whatever the filter. The nearest sample sits at render
@@ -132,7 +164,6 @@ void main()
         // surface moves (full at kMoveFull display px per frame), where a long history
         // would smear.
         const float kStill = 1.0 / 12.0, kMove = 0.2, kMoveFull = 2.0;
-        float speed = length(prevD - vec2(d));
         float peak  = mix(kStill, kMove, clamp(speed / kMoveFull, 0.0, 1.0));
         ivec2 rn = clamp(ivec2(floor(rf - pc.jitter.xy + 0.5)), ivec2(0), rdim - 1);
         vec2  dd = (vec2(rn) + 0.5 + pc.jitter.xy) / scale - 0.5 - vec2(d);
@@ -143,6 +174,6 @@ void main()
     }
 
     if (any(isnan(outC)) || any(isinf(outC))) outC = cur_c;
-    imageStore(hist[cur], d, vec4(outC, 1.0));
+    imageStore(hist[cur], d, vec4(outC, lumaNow));
     if (pc.misc.w == 0u) imageStore(outColor, d, vec4(outC, 1.0));   // else DOOM-0599 RCAS does
 }
