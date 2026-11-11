@@ -13437,7 +13437,7 @@ defect visible before a player finds it.
   Kind: review-fix.
   Source: code-review-pr1-2026-10-29.
 
-- 📋 [DOOM-0525] **Swapchain images are re-laid-out after acquire with no ordering: a WRITE_AFTER_READ hazard.**
+- ✅ [DOOM-0525] **Swapchain images are re-laid-out after acquire with no ordering: a WRITE_AFTER_READ hazard.**
   Found 2026-10-29 verifying PR #1. With synchronisation validation
   (VK_LAYER_ENABLES=VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT)
   Ultra and Solid ray traced at 50% report, every frame, a
@@ -13446,6 +13446,12 @@ defect visible before a player finds it.
   pre-PR build reports the same, so it is not PR #1's. Likely cause: the
   acquire semaphore's wait stage does not cover the barrier's source
   stage. Plain validation is clean.
+  Fixed by DOOM-0552 (b3ee67b, 2026-11-05): the layout change now
+  starts at TRANSFER, the stage the submit waits the acquire semaphore
+  at. Checked 2026-11-11 at a5090b8 with synchronisation validation on
+  (the pr1val val.sh run that showed the hazard before b3ee67b): Ultra
+  traced, Solid traced and Solid rasterised at render scale 50 on E1M1
+  report no validation messages.
   **Layman:** A Vulkan timing rule is broken at each frame start; it works today but may glitch on other drivers.
   Kind: fix.
   Source: code-review-pr1-2026-10-29.
@@ -15256,6 +15262,8 @@ against.
   flicker excess over spec-off fell p999 4.0 -> 2.2, the floor band
   0.128 -> 0.072; frame flicker mean 0.054 -> 0.047. Fog-off capture
   shows the hexes aligned. Waiting-on: user play-test.
+  Play-test 2026-11-11 (user): the patterned floor tiles line up
+  perfectly now.
   **Layman:** Hex, diamond and square floor tiles in Ultra join up cleanly, as they do in Classic and Solid.
   Kind: fix.
   Source: user-report-2026-11-11.
