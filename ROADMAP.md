@@ -15111,6 +15111,11 @@ against.
   compare, 3 interleaved runs). User chose it over a 2-sample version
   (+1.2 ms, under half the gain). Blind judge: new build steadier far,
   same close, no turn ghosting. Waiting-on: user play-test.
+  Play-test 2026-11-11 of a5090b8 (user): shimmer and pixel crawl still
+  there. Shots 0072-0074 (E1M1 1719 -2343 7, standing still): the worst
+  change between frames is the blocky edge of the bright light pool
+  under the window, which steps and moves; grout lines also wobble
+  slightly across the floor.
   **Layman:** Shiny walls far away stop sparkling from frame to frame.
   Kind: fix.
   Source: user-report-2026-11-09 (RT denoise loop it8).
@@ -15245,6 +15250,15 @@ against.
   back the grout lines fade and a whitish sheen smears the floor
   toward the bright end. Under test there: spec on/off, rt_wet 0,
   render scale 100.
+  User 2026-11-11: the blur shows even up close, where a highlight hits
+  the floor. Cause found: the specular a-trous passes (svgf_atrous.comp)
+  edge-stop on the GEOMETRIC normal, so the normal-map detail a
+  highlight carries is averaged into a haze. At shot-0072's spot, fine
+  floor detail is 0.061 with spec off, 0.036 shipped, 0.065 with no spec
+  filtering (grainy; flicker 0.148 to 0.220). An albedo stop does not
+  help (0.039). A stop on the shading normal's tilt, packed into the
+  unused gnorm.w, gives 0.050 at flicker 0.152 (SIGB 0.12). Under test:
+  other spots, cost.
   **Layman:** Floor tiles far away turn into a smear instead of showing their pattern.
   Kind: fix.
   Source: user-report-2026-11-11.
