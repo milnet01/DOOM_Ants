@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=602 -->
+<!-- ants-roadmap-id-high-water: DOOM=604 -->
 
 # Roadmap
 
@@ -15205,6 +15205,41 @@ against.
   Kind: enhancement.
   Source: peer-review-2026-11-10 (DOOM-0598).
   Lanes: renderer, shaders.
+
+- 🚧 [DOOM-0603] **Far floors lose their texture detail in the traced view.**
+  User 2026-11-11, F12 shots 0062-0066 (E1M1 1031 -3551 152, Ultra,
+  traced, render scale 50): the far hex floor blurs so much its
+  detail cannot be made out. Always so; held back while DOOM-0597's
+  shimmer was the focus. The HD maps already read through an
+  anisotropic ray cone (DOOM-0600) with 16x sampler anisotropy, so
+  the cause is not the sampler. Under test: textured-unlit view
+  (rt_view 3), fog off and render scale 100 at the same spot.
+  Measured 2026-11-11 at the same spot (fine detail on the far floor,
+  relative to brightness, vs fog off): the floor keeps about 20% of
+  its fog-off detail under High fog, and highlights cost about 11%
+  near the lamp. So the blur is mostly the fog (rt_fog 3, High). The
+  texture read is sharp: the unlit view (-rtview 3) shows crisp hexes
+  to the back wall. Waiting-on: user (how strong the fog should be).
+  **Layman:** Floor tiles far away turn into a smear instead of showing their pattern.
+  Kind: fix.
+  Source: user-report-2026-11-11.
+  Evidence: linuxdoom-1.10/dev-shots/shot-0064.png
+
+- 🚧 [DOOM-0604] **Patterned Ultra floors line up from tile to tile.**
+  User 2026-11-11: Ultra floor tiles do not line up, indoors and
+  outside; Classic and Solid do. The hero maps tile seamlessly on
+  their own (2x2 tiling checked). De-tile (DOOM-0181) shifts and
+  mirrors each 64-unit world cell and cross-fades the cells, which
+  cuts a regular pattern at every cell edge. Fix: noDetile on the
+  patterned flats in materials.csv: FLOOR4_8, FLOOR5_1, FLOOR5_2,
+  FLOOR7_1 (E1M1's open-sky floor), FLOOR7_2, FLAT20, STEP6.
+  Measured at shot-0064's spot (render scale 50, High fog): spec
+  flicker excess over spec-off fell p999 4.0 -> 2.2, the floor band
+  0.128 -> 0.072; frame flicker mean 0.054 -> 0.047. Fog-off capture
+  shows the hexes aligned. Waiting-on: user play-test.
+  **Layman:** Hex, diamond and square floor tiles in Ultra join up cleanly, as they do in Classic and Solid.
+  Kind: fix.
+  Source: user-report-2026-11-11.
 
 ## 0.12.0 — Light and materials
 
