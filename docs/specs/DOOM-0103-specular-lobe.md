@@ -64,7 +64,8 @@ every frame is as it was.
 4. **The static NEE samples half the pixels.** Mode 6 traces NEE on one
    pixel of each 2x2 block, `NEE_SAMPLES` per pixel, each with one shadow
    ray from `sampleEmitter`. A specular term evaluated on those samples needs
-   no extra ray.
+   no extra ray. DOOM-0597 later had every pixel trace NEE for its highlight
+   (§4.2).
 5. **The formulas exist with fixed parameters.** `formulas/formulas.glsl`,
    the Vestige Formula Workbench export, has `ggxDistribution`,
    `schlickGeometry`, `fresnelSchlick` and `ggxVndfPdf`. Each has its
@@ -207,8 +208,13 @@ differs.
   (rgba16f, set 2), at the pixels that trace NEE. It is **not** divided by
   albedo: a dielectric highlight is the light's colour, not the surface's.
   Its alpha carries the lobe's roughness.
-- `svgf_temporal.comp` fills the other three pixels of each 2x2 block with
-  the same joint-bilateral upsample it uses for `gillum`.
+- Every pixel traces NEE for its own highlight (DOOM-0597, 2026-11-11). The
+  matte sum still comes from the grid pixel alone: `svgf_temporal.comp`
+  upsamples `gillum` for the other three, and not `gspec`. A highlight shared
+  across the block followed whichever normal-map texel the TAAU jitter put
+  under the grid pixel, so far floors shimmered at render scale 50. Per-pixel
+  matte light was tried too: it doubled close flicker. With the lobe off
+  (`specOn` false), the other three pixels skip NEE.
 - It then blends `gspec` with its own history, `hspec[2]`, ping-ponged by the
   same parity as `hcol[2]`, at a faster rate than
   `gillum`: the Workbench's `temporalAlpha(newHist - 1)`, whose floor is 0.2
@@ -280,7 +286,7 @@ pspec += pow(ndh, specN) * specNorm * ndl * col * att;   // only where ndl > 0
   position, so a moving highlight trails. The faster blend and the anti-ghost
   test limit the trail. If the user can see it, the next step is a
   reflected-direction reprojection, a later item, not queued.
-- **Noise.** Six samples on a wide lobe are noisy at half resolution. The
+- **Noise.** Six samples on a wide lobe are noisy. The
   roughness floor, the temporal blend and the highlight's own à-trous pass
   are the defence. The floor alone fell short: on 2026-11-09 the user
   reported film grain on E1M1's `CEIL3_5` ceiling beside the light panels,
@@ -324,6 +330,11 @@ before and after, with `specular` 1 and `surface_detail` 1:
   2026-11-09, at an 854x400 render under load 4 to 10, the a-trous pass
   measured 1.28 to 1.49 ms against 0.87 to 0.97 before (medians of two
   interleaved runs each). Re-time it under this section's conditions.
+- **Per-pixel highlights (DOOM-0597)** cost the megakernel 2.0 ms on
+  2026-11-11: E1M1 shot-0058's spot, the user's settings, render scale 50,
+  three interleaved runs a side judged by frameledger `compare`. The user
+  chose that over a 2-sample version costing 1.2 ms, which kept under half
+  of the shimmer cut.
 
 ## 7. Build order
 

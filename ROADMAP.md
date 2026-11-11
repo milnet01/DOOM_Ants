@@ -15092,6 +15092,19 @@ against.
   one 8-bit step. It is the wrong test spot. Both patches are kept in
   the scratch folder. Re-test them at the spot in the user's F12 shot.
   Waiting-on: user (F12 dev-shot of the shimmer).
+  2026-11-11 eve: test spot is now the user's shot-0069 (E1M1
+  1703 -2399 18, computer room, FLOOR5_1), where spec doubles the
+  flicker. The parallax floor and the grid normal LOD changed nothing
+  there or at shot-0064: rejected. Cause: one highlight per 2x2 block,
+  so the TAAU jitter moved it between normal-map texels. Fix: every
+  pixel traces NEE for its own highlight; the matte sum stays per
+  block (per-pixel matte doubled close flicker); lobe off skips it.
+  vs dev-0595l: shot-0069 flicker 0.224 -> 0.149, spec excess p999
+  6.9 -> 3.6, sharpness 0.726 -> 0.733; shot-0064 0.047 -> 0.036;
+  close 0.105 -> 0.089. Cost +2.0 ms megakernel (frameledger
+  compare, 3 interleaved runs). User chose it over a 2-sample version
+  (+1.2 ms, under half the gain). Blind judge: new build steadier far,
+  same close, no turn ghosting. Waiting-on: user play-test.
   **Layman:** Shiny walls far away stop sparkling from frame to frame.
   Kind: fix.
   Source: user-report-2026-11-09 (RT denoise loop it8).
@@ -15220,6 +15233,12 @@ against.
   near the lamp. So the blur is mostly the fog (rt_fog 3, High). The
   texture read is sharp: the unlit view (-rtview 3) shows crisp hexes
   to the back wall. Waiting-on: user (how strong the fog should be).
+  Correction 2026-11-11 (user): not the fog. Fog dominated only at
+  shot-0064's spot. New shots 0067-0071 (E1M1 1703 -2399 18, the
+  computer room, FLOOR5_1, no visible fog): near hexes crisp; further
+  back the grout lines fade and a whitish sheen smears the floor
+  toward the bright end. Under test there: spec on/off, rt_wet 0,
+  render scale 100.
   **Layman:** Floor tiles far away turn into a smear instead of showing their pattern.
   Kind: fix.
   Source: user-report-2026-11-11.

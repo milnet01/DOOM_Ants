@@ -1777,15 +1777,20 @@ void main()
             // makes that impossible to get wrong, and the composite hands it to
             // shownEmission, sign and all (DOOM-0511).
             imageStore(galbedo,    ivec2(px), vec4(h.albedo, h.addEmis ? h.emisW : 0.0));
-            if (((px.x | px.y) & 1u) != 0u) {       // not an even/even grid sample
-                imageStore(gillum, ivec2(px), vec4(0.0));
-                return;
-            }
+            // DOOM-0597: every pixel traces NEE, for its own highlight. A highlight
+            // hangs on the normal-map texel under the pixel, so one shared per 2x2 block
+            // jumped as the TAAU jitter moved the grid sample to another texel: far
+            // floors shimmered at render scale 50 (2026-11-11). The matte light still
+            // comes from the grid pixel alone (gillum.a), since per-pixel matte noise
+            // doubled close flicker; the other three pixels' matte sum is discarded.
+            const bool gridPx = ((px.x | px.y) & 1u) == 0u;
 
-            // DOOM-0011 L1: half-res fog march, one sample per 2x2 grid block (mirrors
-            // the shadow-ray half-res gate above). rb_fog-gated (INV-8); when off, store
-            // the neutral no-fog value so the composite fetch is a byte-identical no-op.
-            if (pc.misc6.z != 0u) {
+            // DOOM-0011 L1: half-res fog march, one sample per 2x2 grid block, at the
+            // grid pixel. rb_fog-gated (INV-8); when off, store the neutral no-fog value
+            // so the composite fetch is a byte-identical no-op.
+            if (!gridPx) {
+                // the grid pixel marches this block's fog texel
+            } else if (pc.misc6.z != 0u) {
                 FogHit fh = FogHit(h.hitP, n, uint(h.flags), h.mc.flags);
                 vec4 fog = marchFog(eye, dir, h.tHit + spectreT, fh);
                 imageStore(fogImg, ivec2(px) / 2, fog);
@@ -1808,6 +1813,13 @@ void main()
             // and gpos stored the TRUE hitP, so only the shadow rays use the lifted point.
             PrimaryLight s = primaryHitLighting(h, isSprite, prim, n);
             SpecIn sp = primarySpecIn(h, dir, n);
+            // With the lobe off there is no highlight to trace, so the other three
+            // pixels skip NEE as they did before DOOM-0597.
+            if (!gridPx && !specOn(sp.setting, sp.ctrlFlags)) {
+                imageStore(gillum, ivec2(px), vec4(0.0));
+                imageStore(gspec,  ivec2(px), vec4(vec3(0.0), sp.rough));
+                return;
+            }
             vec3 spec;
             vec3 illum = shadeSurface(s.shadeP, s.shadeN, vec3(sp.diffW), h.id, pc.misc2.x, pc.misc4.y,
                                       pc.emit, pc.matEmis, NEE_SAMPLES, false,
@@ -1819,7 +1831,7 @@ void main()
             illum = primaryHitAddTerms(illum, h, s, n, vb.v[i0 + 10u], vec3(1.0), sp, spec);
 
             if (any(isnan(illum)) || any(isinf(illum))) illum = vec3(0.0);
-            imageStore(gillum, ivec2(px), vec4(illum, 1.0));
+            imageStore(gillum, ivec2(px), vec4(illum, gridPx ? 1.0 : 0.0));
             // DOOM-0103: the specular sum, never divided by albedo (INV-3). DOOM-0565: .a
             // carries the lobe's roughness, which sets how long its history may run.
             if (any(isnan(spec)) || any(isinf(spec))) spec = vec3(0.0);
