@@ -15082,6 +15082,16 @@ against.
   term): far-distance shimmer is still visible in the traced view, and
   only on specular highlights on floors and ceilings; nothing noticed
   up close. Next lead for this item.
+  2026-11-11 user follow-up: seen standing still; render scale 100
+  almost removes it, 50 makes it much worse. The user wants full detail
+  with no shimmer, so a softer far highlight is not acceptable (user
+  2026-11-11). Two tries showed no change at the far A/B spot (E1M1
+  1056 -3616 90): the normal map one level coarser on the 2x2 lighting
+  grid, and the spec history floor scaled by view parallax (NRD
+  ReLAX style). That spot shows no visible spec flicker: its excess is
+  one 8-bit step. It is the wrong test spot. Both patches are kept in
+  the scratch folder. Re-test them at the spot in the user's F12 shot.
+  Waiting-on: user (F12 dev-shot of the shimmer).
   **Layman:** Shiny walls far away stop sparkling from frame to frame.
   Kind: fix.
   Source: user-report-2026-11-09 (RT denoise loop it8).
