@@ -34,6 +34,9 @@ All notable changes to DOOM_Ants are documented here. The format follows
   now reads a copy in ordinary memory. Measured 2026-11-12 on E1M6, Solid's
   rasterised view at render scale 50: lighting preparation 1.16 ms before,
   0.39 ms after.
+  The check for moved doors, lifts and changed textures now runs once per
+  game tic and not once per frame. Measured the same day and place: 0.23 ms
+  before, 0.06 ms after.
 
 ### Fixed
 

@@ -1918,6 +1918,10 @@ int RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst, rb_vertex_t* s
     // mesh stays otherwise static). mesh->verts holds the build-time tags +
     // base geometry; dst[i] is the live GPU vertex (z gets the current height),
     // and shadow[i] its RAM twin, which is what gets read (DOOM-0443).
+    // The scan visits every vertex, not only those on moving sectors, on purpose: it
+    // also carries animated textures and switch swaps, which can touch any face. The
+    // caller runs it once per game tic per vertex-buffer copy (DOOM-0569); do not
+    // narrow it further.
     for (i = 0; i < mesh->numverts; i++)
     {
         const rb_vertex_t* v = &mesh->verts[i];

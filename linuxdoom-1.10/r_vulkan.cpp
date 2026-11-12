@@ -87,6 +87,7 @@ extern "C" {
     extern int firstflat;                       // lump index of the first flat
     extern int numflats;                        // flat count
     extern int usegamma;                        // v_video.c: the gamma level (DOOM-0491)
+    extern int gametic;                         // g_game.c: game tics run (DOOM-0569)
     extern int rendermode;                      // r_backend.h: selected tier (TIER_* mirror below)
     // DOOM-0297: -rtverify picks its sample count from the game, because DOOM 2's emitter
     // set converges slower and one count cannot serve both (INV-6's per-gamemode table).
@@ -605,6 +606,8 @@ struct VulkanState
     // DOOM-0443: a RAM twin of each slot's vertex buffer, kept identical to it. Every CPU
     // read of the level vertices goes here, not to the mapped (write-combined) copy.
     std::vector<rb_vertex_t> vbufShadowSlot[kFramesInFlight];
+    // DOOM-0569: the game tic each slot's vertices were last re-heighted for; -1 = never.
+    int            reheightTic[kFramesInFlight]    = { -1, -1 };
     VkBuffer       spriteVbufSlot[kFramesInFlight]    = {};
     VkDeviceMemory spriteVbufMemSlot[kFramesInFlight] = {};
     void*          spriteMappedSlot[kFramesInFlight]  = {};
@@ -9152,6 +9155,7 @@ extern "C" void RB_Vulkan_BuildLevel(void)
         if (g.vbufSlot[s])       { vkDestroyBuffer(g.device, g.vbufSlot[s], nullptr); g.vbufSlot[s] = VK_NULL_HANDLE; }
         if (g.vbufMemSlot[s])    { vkFreeMemory(g.device, g.vbufMemSlot[s], nullptr); g.vbufMemSlot[s] = VK_NULL_HANDLE; }
         g.vbufShadowSlot[s].clear();
+        g.reheightTic[s] = -1;
     }
     g.vbuf = VK_NULL_HANDLE; g.vbufMemory = VK_NULL_HANDLE; g.vbufMapped = nullptr;
     g.vbufShadow = nullptr;
@@ -10453,6 +10457,14 @@ static void BuildFrameReheight(bool cprof, bool ownTotal)
 {
     if (!g.levelMesh || !g.vbufMapped)
         return;
+    // DOOM-0569: everything the scan reads -- sector heights, sidedef textures, the two
+    // translation tables -- changes only inside a game tic, and frames outnumber tics
+    // several to one. A slot already scanned for this tic has nothing left to find, so
+    // skip it. Per slot, because each slot is its own copy of the vertices and both
+    // must catch up after a tic (user ruling 2026-11-09 on DOOM-0569).
+    if (g.reheightTic[g.frameSlot] == gametic)
+        return;
+    g.reheightTic[g.frameSlot] = gametic;
     const double tH0 = cprof ? CpuNowMs() : 0.0;
     int upd = RB_UpdateMeshHeights(g.levelMesh, (rb_vertex_t*)g.vbufMapped, g.vbufShadow);
     if (upd & RB_UPD_MOVED) g.blasDirty = true;      // geometry shifted -> BLAS refit

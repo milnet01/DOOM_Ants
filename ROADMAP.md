@@ -14967,6 +14967,24 @@ against.
   FinalizeEmitters rewrite are under 2% together, so they stay.
   LEFT: BuildRasterPointLights (now the largest part), the r_mesh.c
   re-height skip, and the smaller CPU items.
+  2026-11-12, e0d0677 shipped the RAM sprite copy. After it, perf on E1M6:
+  BuildRasterPointLights 29.0%, RB_UpdateMeshHeights 10.6%.
+  TRIED AND REJECTED for BuildRasterPointLights: one visible-emitter list
+  per sector, so REJECT is tested per sector and not per subsector. Same
+  pictures, but its share only moved 29.0% -> 24.4% while
+  RB_UpdateMeshHeights moved 10.6% -> 8.7% in the same run, so no gain
+  beyond the run-to-run shift. The cost is the distance loop over
+  subsectors x emitters, not the REJECT test. Not committed.
+  2026-11-12, re-height skip DONE: BuildFrameReheight skips a vertex-buffer
+  slot already scanned for the current gametic (g.reheightTic, reset per
+  level build). [cpu_build] reheight 0.23 -> 0.06 ms on E1M6, three
+  alternated runs a side, machine under load. A temporary self-check ran
+  the scan on every skipped frame in a live E1M1: 1800 skipped, none found
+  anything, 48 real texture changes still caught. NOT exercised by any
+  harness: a moving door or lift (demo playback draws one frame per tic,
+  and the bot draws none). Play-test owed: open a door and ride a lift in
+  Solid and in Ultra; both should move as before.
+  LEFT: BuildRasterPointLights' distance loop, and the smaller CPU items.
   **Layman:** In Solid with ray tracing off, each frame still does preparation work only the ray-traced view uses.
   Kind: perf.
   Source: review-code-perf-2026-11-09.
