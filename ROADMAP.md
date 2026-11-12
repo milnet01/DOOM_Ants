@@ -15078,7 +15078,7 @@ against.
   Source: user-request-2026-11-09.
   Lanes: renderer.
 
-- 🚧 [DOOM-0597] **Specular anti-aliasing for far and grazing surfaces in the traced view.**
+- ✅ [DOOM-0597] **Specular anti-aliasing for far and grazing surfaces in the traced view.**
   primarySpecIn widens the lobe's roughness by the pixel's texel
   footprint (Kaplanyan 2016), stretched at grazing angles. Far flicker
   0.080 -> 0.071, p99 0.87 -> 0.66; close, sharpness, luma unchanged;
@@ -15137,6 +15137,11 @@ against.
   cost not measured). Not the cause: bloom, SSAO, fog, wet, filth,
   de-tile, surface detail. Patches and scripts: scratch/noise/u0597c,
   kept/0597-spec-firefly-stop-exp.patch.
+  Play-test 2026-11-12 of a311ff9 (user): the floor flicker is no
+  longer seen in play; "it looks good to me". Closed on that. The
+  light pool under the window still measures above the lobe-off figure
+  at shot-0072's spot (0.478 against 0.184), which the user does not
+  see; the leads above stand if it is reported again.
   **Layman:** Shiny walls far away stop sparkling from frame to frame.
   Kind: fix.
   Source: user-report-2026-11-09 (RT denoise loop it8).

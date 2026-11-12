@@ -30,6 +30,11 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Shiny floors, walls and ceilings far away no longer sparkle from frame to frame in the ray-traced view.** (DOOM-0597)
+  Each pixel now works out its own shine. One result used to be shared
+  by a block of four, which made distant highlights shimmer while
+  standing still.
+
 - **A wall beside a shiny surface no longer pulses in blocky steps in the ray-traced view.** (DOOM-0597)
   The shine from one material leaked onto its neighbour, by an amount
   that changed from frame to frame. It now stays on its own material.
