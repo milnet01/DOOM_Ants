@@ -15230,7 +15230,7 @@ against.
   Source: peer-review-2026-11-10 (DOOM-0598).
   Lanes: renderer, shaders.
 
-- 🚧 [DOOM-0603] **Far floors lose their texture detail in the traced view.**
+- ✅ [DOOM-0603] **Far floors lose their texture detail in the traced view.**
   User 2026-11-11, F12 shots 0062-0066 (E1M1 1031 -3551 152, Ultra,
   traced, render scale 50): the far hex floor blurs so much its
   detail cannot be made out. Always so; held back while DOOM-0597's
@@ -15259,6 +15259,16 @@ against.
   help (0.039). A stop on the shading normal's tilt, packed into the
   unused gnorm.w, gives 0.050 at flicker 0.152 (SIGB 0.12). Under test:
   other spots, cost.
+  Fixed 2026-11-12: the highlight's a-trous filter gains a bump stop
+  (sigB 0.12 in svgf_atrous.comp) on the shading normal's tilt, which
+  pathtrace.comp packs into gnorm.w. At shot-0072's spot floor detail
+  0.036 -> 0.050 (lobe off 0.061), flicker 0.148 -> 0.152; close
+  sharpness 0.737 -> 0.808, flicker 0.089 -> 0.108. Cost +0.2 ms GPU
+  span, which frameledger compare judged unchanged. The user looked at
+  0.12 and 0.2 at that spot on 2026-11-12 and chose 0.12. Blind judge:
+  the new build is clearly sharper under the highlight, far and close,
+  with no new defect; far grout is slightly harder-edged. DOOM-0103's
+  spec carries the amendment.
   **Layman:** Floor tiles far away turn into a smear instead of showing their pattern.
   Kind: fix.
   Source: user-report-2026-11-11.

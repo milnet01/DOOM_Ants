@@ -1812,6 +1812,15 @@ void main()
             // the high-frequency map detail, or it treats bumps as edges and under-denoises),
             // and gpos stored the TRUE hitP, so only the shadow rays use the lifted point.
             PrimaryLight s = primaryHitLighting(h, isSprite, prim, n);
+            {   // DOOM-0603: gnorm.xyz stays geometric; gnorm.w carries the shading normal's
+                // tilt in n's tangent plane, 5 bits a component (exact in fp16), plus 1 so
+                // 0 means "no tilt stored". Only the specular filter's bump stop reads it.
+                vec3 t0 = normalize(cross(abs(n.z) < 0.999 ? vec3(0, 0, 1) : vec3(1, 0, 0), n));
+                vec3 b0 = cross(n, t0);
+                vec2 d  = clamp(vec2(dot(s.shadeN, t0), dot(s.shadeN, b0)), -0.5, 0.5);
+                vec2 qd = floor((d + 0.5) * 31.0 + 0.5);
+                imageStore(gnorm[par], ivec2(px), vec4(n, qd.x * 32.0 + qd.y + 1.0));
+            }
             SpecIn sp = primarySpecIn(h, dir, n);
             // With the lobe off there is no highlight to trace, so the other three
             // pixels skip NEE as they did before DOOM-0597.

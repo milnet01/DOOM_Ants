@@ -34,6 +34,10 @@ layout(push_constant) uniform PC {
 
 #include "formulas/svgf_shared.glsl"   // lum (DOOM-0440)
 
+// DOOM-0603: the shading normal's tilt, as pathtrace.comp packs it into gnorm.w.
+// Only valid where gnorm.w > 0.5; 0 means none was stored.
+vec2 tiltOf(float t) { t -= 1.0; return vec2(floor(t / 32.0), t - 32.0 * floor(t / 32.0)) / 31.0; }
+
 void main()
 {
     ivec2 p = ivec2(gl_GlobalInvocationID.xy);
@@ -55,7 +59,10 @@ void main()
         return;
     }
 
-    vec3  nC   = imageLoad(gnorm[cur], p).xyz;
+    vec4  gnC  = imageLoad(gnorm[cur], p);
+    vec3  nC   = gnC.xyz;
+    vec2  tC   = tiltOf(gnC.w);
+    bool  hasT = gnC.w > 0.5;
     vec3  posC = gp.xyz;
     float lC   = lum(c.rgb);
 
@@ -63,6 +70,7 @@ void main()
     const float sigN = 64.0;   // normal sharpness
     const float sigZ = 1.0;    // plane-distance falloff (relative, scale-free)
     const float sigL = 4.0;    // luminance falloff (x sqrt variance)
+    const float sigB = 0.12;   // bump falloff, in shading-normal tilt (specular only)
 
     float lStd = sqrt(max(c.a, 1e-8));
 
@@ -90,7 +98,8 @@ void main()
         if (gq.w < 0.0) continue;                  // skip sky neighbours
         vec4 cq = imageLoad(atrous[ping], q);
         vec4 cqs = imageLoad(satrous[ping], q);
-        vec3 nq = imageLoad(gnorm[cur], q).xyz;
+        vec4 gnq = imageLoad(gnorm[cur], q);
+        vec3 nq  = gnq.xyz;
 
         float wN = pow(max(dot(nC, nq), 0.0), sigN);
         float planeD  = abs(dot(posC - gq.xyz, nC));
@@ -105,7 +114,11 @@ void main()
         wsum  += wgt;
 
         float wLs  = exp(-abs(lCs - lum(cqs.rgb)) / (sigL * lStdS + 1e-3));
-        float wgtS = hk * wN * wZ * wLs;
+        // DOOM-0603: stop the highlight at the normal map's bumps, which the geometric
+        // normal cannot see; without it the filter averages them into a haze.
+        vec2  dd   = tC - tiltOf(gnq.w);
+        float wB   = (hasT && gnq.w > 0.5) ? exp(-dot(dd, dd) / (sigB * sigB)) : 1.0;
+        float wgtS = hk * wN * wZ * wLs * wB;
         sumS  += cqs.rgb * wgtS;
         sumVS += cqs.a   * wgtS * wgtS;
         wsumS += wgtS;

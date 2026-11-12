@@ -228,7 +228,12 @@ differs.
 - The temporal pass writes the blended highlight and that variance to
   `satrous[0]`. The à-trous passes filter `satrous[2]` beside `atrous[2]`
   (DOOM-0565). They use the same kernel and the same normal and plane stops.
-  The luminance stop reads the highlight's own level and variance. The two
+  The luminance stop reads the highlight's own level and variance. The
+  highlight has one more stop, the bump stop (DOOM-0603): `pathtrace.comp`
+  packs the shading normal's tilt from the geometric normal into `gnorm.w`,
+  and a tap whose tilt differs is weighted down by `sigB` in
+  `svgf_atrous.comp`. The matte light does not use it. (Amended 2026-11-12
+  by DOOM-0603; the highlight had only the stops above.) The two
   channels never take each other's samples, and the highlight never meets
   albedo there.
 - `svgf_composite.comp` adds the last `satrous` as `spec`:
@@ -292,6 +297,14 @@ pspec += pow(ndh, specN) * specNorm * ndl * col * att;   // only where ndl > 0
   reported film grain on E1M1's `CEIL3_5` ceiling beside the light panels,
   and a floor of 0.6 measured no change there. That ceiling has no
   roughness map, so it is fully rough, and the lobe doubles its brightness.
+- **Haze over normal-map detail.** The normal stop reads the geometric
+  normal, so it cannot see a normal map's bumps, and the highlight's filter
+  averaged them into a haze. The bump stop is the defence. On 2026-11-12, at
+  E1M1 `dev-shots/shot-0072.txt`'s spot with the user's settings, floor
+  detail measured 0.036 before and 0.050 after, against 0.061 with the lobe
+  off. Flicker there went from 0.148 to 0.152. A tighter `sigB` of 0.05
+  measured 0.055 and 0.171. The user chose 0.12 over 0.2 by eye on
+  2026-11-12.
 - **White-out.** A bright light's highlight goes through the same tone map
   that turned DOOM-0511's panels white. The specular sum is clamped per
   channel, so a red light's highlight stays red. INV-5 checks it on the test
@@ -335,6 +348,9 @@ before and after, with `specular` 1 and `surface_detail` 1:
   three interleaved runs a side judged by frameledger `compare`. The user
   chose that over a 2-sample version costing 1.2 ms, which kept under half
   of the shimmer cut.
+- **The bump stop (DOOM-0603)** measured 0.2 ms more on the frame's GPU span
+  on 2026-11-12, at the same spot and settings as the line above. frameledger
+  `compare` judged that unchanged.
 
 ## 7. Build order
 

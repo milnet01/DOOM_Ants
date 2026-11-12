@@ -30,6 +30,10 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Floors keep their tile detail where a light shines on them in the ray-traced view.** (DOOM-0603)
+  The shine used to smear the pattern into a pale haze, far away and up
+  close. The smoothing step now stops at the bumps in the surface.
+
 - **The FPS counter no longer reads 60/58 on a steady 60 frames a second** (DOOM-0507)
   It timed frames in whole milliseconds and rounded down, so a perfectly
   steady 60 showed a low of 58. It now times in microseconds and rounds
