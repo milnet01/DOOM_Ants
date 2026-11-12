@@ -232,8 +232,10 @@ differs.
   highlight has one more stop, the bump stop (DOOM-0603): `pathtrace.comp`
   packs the shading normal's tilt from the geometric normal into `gnorm.w`,
   and a tap whose tilt differs is weighted down by `sigB` in
-  `svgf_atrous.comp`. The matte light does not use it. (Amended 2026-11-12
-  by DOOM-0603; the highlight had only the stops above.) The two
+  `svgf_atrous.comp`. It also takes no tap from another material, read
+  from `gpos.w` (DOOM-0597): two materials on one plane pass every other
+  stop. The matte light uses neither. (Amended 2026-11-12 by DOOM-0603
+  and DOOM-0597; the highlight had only the stops above.) The two
   channels never take each other's samples, and the highlight never meets
   albedo there.
 - `svgf_composite.comp` adds the last `satrous` as `spec`:

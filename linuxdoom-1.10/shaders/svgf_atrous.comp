@@ -118,7 +118,11 @@ void main()
         // normal cannot see; without it the filter averages them into a haze.
         vec2  dd   = tC - tiltOf(gnq.w);
         float wB   = (hasT && gnq.w > 0.5) ? exp(-dot(dd, dd) / (sigB * sigB)) : 1.0;
-        float wgtS = hk * wN * wZ * wLs * wB;
+        // DOOM-0597: and at a change of material (gpos.w). Two materials on one plane pass
+        // every stop above, and the highlight bled from the shinier one into its
+        // neighbour by an amount that changed from frame to frame.
+        float wM   = (gq.w == gp.w) ? 1.0 : 0.0;
+        float wgtS = hk * wN * wZ * wLs * wB * wM;
         sumS  += cqs.rgb * wgtS;
         sumVS += cqs.a   * wgtS * wgtS;
         wsumS += wgtS;

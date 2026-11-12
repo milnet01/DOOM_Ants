@@ -15116,6 +15116,27 @@ against.
   change between frames is the blocky edge of the bright light pool
   under the window, which steps and moves; grout lines also wobble
   slightly across the floor.
+  2026-11-12, the pixel crawl at shot-0072's spot (16 frames, still
+  camera; pool = the floor under the window, wall = the wall patch
+  beside it). It needs both the highlight and the upscaler's jitter:
+  lobe off takes pool flicker 0.522 to 0.184 and the wall patch's
+  brightness swing 7.7 to 0.9. Cause of the wall patch: the highlight's
+  a-trous filter took taps across two materials on one plane, so the
+  shinier one's highlight bled into its neighbour by an amount that
+  changed with the jitter phase. Fix: the highlight's weights take no
+  tap from another material (gpos.w). Wall patch swing 7.7 -> 0.9, pool
+  0.522 -> 0.478; whole-frame flicker, sharpness and floor detail
+  unchanged; no cost measured (one compare on a value already read).
+  Still open: the pool itself. Its pixels jump and then fade over about
+  a second. Tried and rejected there: anti-ghost reset off (0.370 ->
+  0.420 on 8 frames); NEE draws stratified across the CDF (0.522 ->
+  0.517); a temporal firefly cap at history mean + 3 or 1.5 sigma (pool
+  unchanged, close view dimmer: mean luma 93.0 -> 90.5 / 87.5). Helped
+  but not taken: highlight firefly clamp 1.0 in place of 4.0 (0.370 ->
+  0.305, dims highlights); 24 NEE samples in place of 6 (0.370 -> 0.280,
+  cost not measured). Not the cause: bloom, SSAO, fog, wet, filth,
+  de-tile, surface detail. Patches and scripts: scratch/noise/u0597c,
+  kept/0597-spec-firefly-stop-exp.patch.
   **Layman:** Shiny walls far away stop sparkling from frame to frame.
   Kind: fix.
   Source: user-report-2026-11-09 (RT denoise loop it8).

@@ -30,6 +30,10 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **A wall beside a shiny surface no longer pulses in blocky steps in the ray-traced view.** (DOOM-0597)
+  The shine from one material leaked onto its neighbour, by an amount
+  that changed from frame to frame. It now stays on its own material.
+
 - **Floors keep their tile detail where a light shines on them in the ray-traced view.** (DOOM-0603)
   The shine used to smear the pattern into a pale haze, far away and up
   close. The smoothing step now stops at the bumps in the surface.
