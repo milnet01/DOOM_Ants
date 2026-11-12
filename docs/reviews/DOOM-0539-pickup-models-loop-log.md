@@ -8,3 +8,4 @@
 | impl-1 | 2026-11-02 | 0 | - | - | - | - | Not a review; no reviewer dispatched. User's answer on INV-3: footprint within the larger of radius and half the sprite's width. |
 | review-fix | 2026-11-05 | 0 | - | - | - | - | Not a review; no reviewer dispatched. §4.4: the pool roll-off for a light with a reach no longer needs kHdPipeline, per the user's 2026-11-04 ruling that Solid gets pickup light pools (DOOM-0551, review-code 2026-11-04). |
 | review-fix | 2026-11-05 | 0 | - | - | - | - | Not a review; no reviewer dispatched. DOOM-0547: §4.2 now names the range each .dmdl field must keep, and INV-4's test list covers a finite value out of range. |
+| impl | 2026-11-12 | 0 | - | - | - | - | Not a review; no reviewer dispatched. DOOM-0569: the passage on where RB_BuildSprites writes now names g.sprWorldCpu, the RAM copy the emitters read; the traced view copies it to g.sprWorldBuf. |

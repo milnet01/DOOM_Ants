@@ -858,6 +858,11 @@ struct VulkanState
     VkBuffer       sprWorldBuf       = VK_NULL_HANDLE;   // billboard verts (BLAS input + shader attrs)
     VkDeviceMemory sprWorldMem       = VK_NULL_HANDLE;
     void*          sprWorldMapped    = nullptr;
+    // DOOM-0569: the billboards are built here, in ordinary memory, and the traced frame
+    // copies them to sprWorldMapped. BuildDynamicEmitters reads this copy: reading the
+    // mapped one back is a read from write-combined memory, which took 41% of the
+    // process's CPU time in Solid's rasterised view on E1M6 (the DOOM-0170 trap).
+    std::vector<rb_vertex_t> sprWorldCpu;
     uint32_t       sprWorldVertCap   = 0;
     uint32_t       sprWorldVertCount = 0;               // this frame's verts (6 per billboard)
     VkAccelerationStructureKHR spriteBlas        = VK_NULL_HANDLE;
@@ -2410,6 +2415,7 @@ void BuildAccelerationStructures()
                    &g.sprWorldBuf, &g.sprWorldMem);
     Check(vkMapMemory(g.device, g.sprWorldMem, 0, VK_WHOLE_SIZE, 0, &g.sprWorldMapped),
           "vkMapMemory(sprWorld)");
+    g.sprWorldCpu.resize(g.sprWorldVertCap);
 
     VkAccelerationStructureGeometryKHR sgeom =
         TriangleGeometry(g.sprWorldBuf, g.sprWorldVertCap, kAlphaTestedGeom);
@@ -7585,8 +7591,8 @@ static const uint32_t RASTER_LIGHT_FLOATS             = 7;
 // units from a brown wall it used to turn purple.
 static const float    RASTER_PICKUP_LIGHT_REACH       = 96.0f;
 
-// DOOM-0084: each traced frame, scan this frame's world-sprite billboards (already
-// built into g.sprWorldBuf for the trace, DOOM-0100) for emissive ones — a sprite
+// DOOM-0084: each frame, scan this frame's world-sprite billboards (already
+// built into g.sprWorldCpu, DOOM-0100 and DOOM-0569) for emissive ones — a sprite
 // whose material has a non-zero Le (the same area-weighted bright-texel mean that
 // flags emissive lamp/computer textures, so TLMP/TLP2 floor lamps, candelabra and
 // burning barrels qualify automatically, no hand-kept name list). Append each
@@ -7602,7 +7608,7 @@ void BuildDynamicEmitters()
     }
     const int      matCount = (int)(g.matEmissive.size() / 3);
     const uint32_t base     = (uint32_t)(g.matNumWall + g.matNumFlat);
-    const rb_vertex_t* v    = (const rb_vertex_t*)g.sprWorldMapped;
+    const rb_vertex_t* v    = g.sprWorldCpu.data();
     const uint32_t tris     = g.sprWorldVertCount / 3u;
 
     // DOOM-0084: cast-intensity boost for sprite lights. A lamp billboard is a small
@@ -10533,16 +10539,17 @@ static void BuildFrameInputs(bool rtActive, bool cprof, bool doReheight)
 
         // DOOM-0170 L1b: the raster point-light stack needs this frame's emissive
         // sprites (torches/lamps/barrels) in the NEE emitter list. The traced branch
-        // below builds the world sprites into g.sprWorldBuf; the raster branch above
+        // below builds the world sprites into g.sprWorldCpu; the raster branch above
         // only built the drawn billboards (into g.spriteMapped), so build the world-
         // sprite set here too, refresh the emitter list, then rebuild the per-subsector
         // nearest-N point-light lists the fragment shader reads. RT-GPU only (no
         // emitters/probes without a bake); costs one sprite build + the <=1 ms cull.
+        // The set stays in RAM: no raster pass reads g.sprWorldBuf (DOOM-0569).
         if (g.rtEnabled && g.sprWorldMapped)
         {
             const double tW0 = cprof ? CpuNowMs() : 0.0;
             g.sprWorldVertCount = (uint32_t)RB_BuildSprites(&g.lastView,
-                (rb_vertex_t*)g.sprWorldMapped, (int)g.sprWorldVertCap, 1);
+                g.sprWorldCpu.data(), (int)g.sprWorldVertCap, 1);
             const double tL0 = cprof ? CpuNowMs() : 0.0;
             if (cprof) g.cpuBuildMs[0] += tL0 - tW0;   // 2nd (world) sprite build -> sprites
             if (g.worldEmitDirty && g.vbufShadow)
@@ -10569,8 +10576,12 @@ static void BuildFrameInputs(bool rtActive, bool cprof, bool doReheight)
 
         g.sprWorldVertCount = 0;
         if (g.sprWorldMapped)
+        {
             g.sprWorldVertCount = (uint32_t)RB_BuildSprites(&g.lastView,
-                (rb_vertex_t*)g.sprWorldMapped, (int)g.sprWorldVertCap, 1);
+                g.sprWorldCpu.data(), (int)g.sprWorldVertCap, 1);
+            std::memcpy(g.sprWorldMapped, g.sprWorldCpu.data(),
+                        (size_t)g.sprWorldVertCount * sizeof(rb_vertex_t));
+        }
 
         // DOOM-0082: last frame RB_UpdateMeshHeights saw a switch press/revert (or an
         // animated flat) change a face's live texture; rebuild the static emitter set
@@ -10755,13 +10766,15 @@ extern "C" void RB_Vulkan_Present(void)
 
     // Build-ahead: run the CPU build now, overlapping the previous frame's GPU. Raster
     // runs the WHOLE build ahead. NOT because every buffer it writes is slotted -- the
-    // raster branch of BuildFrameInputs also writes g.sprWorldMapped and g.emitBuf,
+    // raster branch of BuildFrameInputs also writes g.emitBuf and g.emitSecBuf,
     // which BuildFrameReheight's comment above correctly calls single-copy. It is safe
     // for the narrower reason that NOTHING GPU-SIDE READS THOSE TWO IN RASTER: they
-    // feed BuildSpriteTlas / RecordRtTrace / RunGiBake, none of which is recorded on a
+    // feed RecordRtTrace / RunGiBake, neither of which is recorded on a
     // raster frame, and the mode toggle below drains before the modes swap. So the
     // safety rests on the render path, not on the allocation -- add a raster GPU read
     // of either buffer and this becomes a live CPU/GPU race with nothing to catch it.
+    // (Raster no longer writes g.sprWorldBuf at all, DOOM-0569; a raster GPU read of
+    // it would see the last traced frame's sprites.)
     // A just-toggled frame runs none of the build, so its single-copy resources are
     // never in flight across the transition either.
     const bool buildAhead = !rtActive && !modeChanged;

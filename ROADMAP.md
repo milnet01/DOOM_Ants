@@ -14929,7 +14929,7 @@ against.
   Source: review-code-perf-2026-11-09.
   Lanes: engine.
 
-- 📋 [DOOM-0569] **Solid's rasterised frame builds sprites and light emitters that no raster pass reads.**
+- 🚧 [DOOM-0569] **Solid's rasterised frame builds sprites and light emitters that no raster pass reads.**
   From review-code --performance 2026-11-09 (lanes 2, 3, 5). Unmeasured.
   Measure cpuBuildMs[1] and -frameledger p99 in Solid raster, in a
   sprite-heavy room, before and after.
@@ -14954,6 +14954,19 @@ against.
   - sprite_cap.h:67: sorts model candidates even when all fit the budget.
   - r_mesh.c:2444: wall-light lookup by name, uncached.
   - r_vulkan.cpp:2033: device memory properties re-queried per call.
+  2026-11-12, measured on E1M6 (463 things), Solid raster, render scale 50,
+  private display, perf record on the unchanged build: BuildDynamicEmitters
+  40.8% of process CPU, BuildRasterPointLights 17.7%, RB_UpdateMeshHeights
+  5.4%, thing_verts + RB_BuildSprites 1.6%, FinalizeEmitters 0.7%.
+  DONE: the world sprites are built into RAM (g.sprWorldCpu) and
+  BuildDynamicEmitters reads that; the traced frame copies it to
+  g.sprWorldBuf, the raster frame does not. [cpu_build] lights 1.16 -> 0.39
+  ms, three alternated runs a side. Captures old vs new sit inside the
+  old-vs-old spread in raster and in -rtview 3.
+  NOT DONE, by measurement: the second sprite build and the
+  FinalizeEmitters rewrite are under 2% together, so they stay.
+  LEFT: BuildRasterPointLights (now the largest part), the r_mesh.c
+  re-height skip, and the smaller CPU items.
   **Layman:** In Solid with ray tracing off, each frame still does preparation work only the ray-traced view uses.
   Kind: perf.
   Source: review-code-perf-2026-11-09.

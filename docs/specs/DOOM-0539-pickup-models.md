@@ -23,10 +23,11 @@ and casting its own light from points set inside the model. Nothing about play c
 `RB_BuildSprites` in `r_mesh.c` fills the vertex buffer its caller passes. `sprite_quad` writes six
 `rb_vertex_t` per Thing. The rasterised view calls it into `g.spriteVbuf`, which it draws through
 `mesh.frag` and its torch shadow pass (`shadow.frag`), and, where the GPU can trace, again into
-`g.sprWorldBuf`, which feeds the emitters. The traced view calls it into `g.sprWorldBuf` and builds
-its sprite BLAS from that. So a triangle added there reaches both views.
+`g.sprWorldCpu`, which feeds the emitters. The traced view calls it into `g.sprWorldCpu`, copies
+that to `g.sprWorldBuf`, and builds its sprite BLAS from the copy (DOOM-0569). So a triangle added
+there reaches both views.
 
-Sprite light has one route. `BuildDynamicEmitters` in `r_vulkan.cpp` walks `g.sprWorldBuf`'s
+Sprite light has one route. `BuildDynamicEmitters` in `r_vulkan.cpp` walks `g.sprWorldCpu`'s
 triangles, and those flagged `RB_MESH_EMISSIVE` become emitters, with colour from `g.matEmissive`
 per material. The rasterised view's point lights derive from the same list. Shadow rays skip the
 sprite BLAS: it is instanced with mask `0x02`, and they cull to `0x01`.

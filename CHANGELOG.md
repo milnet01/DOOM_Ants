@@ -28,6 +28,13 @@ All notable changes to DOOM_Ants are documented here. The format follows
   each run, and `--native` now fails when the engine crashes at exit.
   Measured 2026-11-09: 154 s before, 84 s after.
 
+- **Solid and Ultra spend less processor time per frame in levels with many objects** (DOOM-0569)
+  Each frame, the engine looks through every object for ones that give off
+  light. It was reading them back from graphics memory, which is slow. It
+  now reads a copy in ordinary memory. Measured 2026-11-12 on E1M6, Solid's
+  rasterised view at render scale 50: lighting preparation 1.16 ms before,
+  0.39 ms after.
+
 ### Fixed
 
 - **Shiny floors, walls and ceilings far away no longer sparkle from frame to frame in the ray-traced view.** (DOOM-0597)
