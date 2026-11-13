@@ -139,7 +139,10 @@ static inline rb_relief_vert_t rb_relief__v(float u, float v, float d, float nu,
 
 // Builds the wall [u0,u1] x [v0,v1] and passes each quad to emit. capLeft and capRight close the
 // wall's ends; leave one off where the next seg carries on along the same line, or a side wall
-// stands across the recess. Returns 0 with nothing emitted when the wall is too large or memory ran
+// stands across the recess. An open left end still builds the step between this piece and the one
+// before it, read from the art just short of u0: the map can split a wall exactly where its art
+// steps back, and then no cell of either piece spans the step (DOOM-0607). The open right end
+// leaves that face to the next piece, so it is built once. Returns 0 with nothing emitted when the wall is too large or memory ran
 // out, and the caller draws it flat.
 static inline int RB_ReliefBuild(const rb_relief_rect_t* r, int n, float tw, float th,
                                  float u0, float u1, float v0, float v1,
@@ -213,17 +216,20 @@ static inline int RB_ReliefBuild(const rb_relief_rect_t* r, int n, float tw, flo
     }
 
     // Side walls along each vertical line, joined where a run keeps the same two depths. Beyond a
-    // capped end the wall counts as depth 0, so the recess is closed there.
+    // capped end the wall counts as depth 0, so the recess is closed there. Beyond an open left
+    // end it is the art's own depth there.
+#define RB_RELIEF_LEFT(b) (i > 0 ? RB_RELIEF_D(i - 1, b) : capLeft ? 0.0f : \
+    rb_relief__depth_at(r, n, tw, th, u0 - 0.01f, 0.5f * (ys[b] + ys[(b) + 1])))
     for (i = 0; i <= nx; i++)
     {
-        if ((i == 0 && !capLeft) || (i == nx && !capRight))
+        if (i == nx && !capRight)
             continue;
         for (j = 0; j < ny; )
         {
-            const float dl = i > 0  ? RB_RELIEF_D(i - 1, j) : 0.0f;
+            const float dl = RB_RELIEF_LEFT(j);
             const float dr = i < nx ? RB_RELIEF_D(i, j)     : 0.0f;
             int je = j + 1;
-            while (je < ny && (i > 0  ? RB_RELIEF_D(i - 1, je) : 0.0f) == dl
+            while (je < ny && RB_RELIEF_LEFT(je) == dl
                            && (i < nx ? RB_RELIEF_D(i, je)     : 0.0f) == dr)
                 je++;
             if (dl != dr)
@@ -288,6 +294,7 @@ static inline int RB_ReliefBuild(const rb_relief_rect_t* r, int n, float tw, flo
             i = ie;
         }
     }
+#undef RB_RELIEF_LEFT
 #undef RB_RELIEF_D
     free(xs); free(ys); free(depth); free(done);
     return 1;

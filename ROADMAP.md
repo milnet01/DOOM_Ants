@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=606 -->
+<!-- ants-roadmap-id-high-water: DOOM=608 -->
 
 # Roadmap
 
@@ -11464,6 +11464,27 @@ stay in their phase sections; this heading holds only work still to come.
   Source: user-request-2026-10-26.
   Evidence: /home/ants/Pictures/Screenshots/Screenshot_20261026_003606.png
 
+- ✅ [DOOM-0607] **A carved Ultra wall can be seen through where the map splits it on a step in its art.**
+  User 2026-11-13, dev-shots/shot-0075: E1M1 2092 -2179 316, Ultra, ray
+  tracing on. Seen in the raster view too.
+  Cause: linedef 394 is split into two segs at x 2176, which is tile u 32
+  of COMPTILE, where relief.csv's band steps from depth 0 to 12.
+  RB_ReliefBuild left an open end's side wall to the neighbouring piece,
+  and no cell of either piece spans the step, so nobody built its face.
+  Fix: an open left end builds the step against the art's depth just
+  short of it; the open right end leaves it to the next piece.
+  wall_relief_test builds a wall in two pieces split on a step and checks
+  the pair is closed and has the unsplit wall's face count; seen failing
+  first. Captures at the shot's spot, traced and raster, and at
+  2150 -2225 300: the gap is gone.
+  Not the cause, tried first and removed: keeping a wall flat near a
+  corner so two recesses cannot cross. That case is unproven; nothing in
+  this shot shows it.
+  **Layman:** In Ultra, a gap in the blue circuit wall of E1M1's computer room let you see the room behind it.
+  Kind: fix.
+  Source: user-report-2026-11-13.
+  Lanes: renderer.
+
 ## 0.10.0 — The codebase can be trusted
 
 Work only a maintainer sees: duplication, dead code, static analysis that covers
@@ -14145,6 +14166,17 @@ defect visible before a player finds it.
   Kind: fix.
   Source: review-code-perf-2026-11-09.
   Lanes: renderer, shaders.
+
+- 📋 [DOOM-0608] **The frame ledger passes gmtime's result to strftime unchecked.**
+  d_ledger.c builds started_utc with strftime(..., gmtime(&now)). gmtime
+  returns NULL for a time_t out of range, and strftime is then handed
+  NULL. Found while answering the frameledger session's FLED-0070
+  question; not seen to happen. Fix: check the pointer and skip the run or
+  write a fixed stamp.
+  **Layman:** The performance log's start time is written without checking that the clock gave a usable time.
+  Kind: fix.
+  Source: found-2026-11-13.
+  Lanes: tools.
 
 ## 0.11.0 — The frame budget
 

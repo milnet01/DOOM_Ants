@@ -53,6 +53,11 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **The blue circuit wall in E1M1's computer room can no longer be seen through in Ultra.** (DOOM-0607)
+  Where the map cut that wall in two exactly on a step in its carved
+  surface, the small face at the step was never built, and the room
+  behind showed through the gap.
+
 - **Shiny floors, walls and ceilings far away no longer sparkle from frame to frame in the ray-traced view.** (DOOM-0597)
   Each pixel now works out its own shine. One result used to be shared
   by a block of four, which made distant highlights shimmer while

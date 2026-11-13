@@ -186,6 +186,20 @@ int main()
         check(sides == 4, "a pit has four side walls");
     }
 
+    // DOOM-0607: the map may split a wall exactly where its art steps back. The two pieces are
+    // open at the join, and together they must still be closed: one of them owns the step's face.
+    {
+        const rb_relief_rect_t band = { 32, 0, 64, 128, 12 };   // sunk from 32 to 96
+        Sums s;
+        RB_ReliefBuild(&band, 1, 128, 128, 0, 32, 0, 64, 1, 0, collect, &s);     // up to the step
+        RB_ReliefBuild(&band, 1, 128, 128, 32, 128, 0, 64, 0, 1, collect, &s);   // from the step on
+        Report r = measure(s);
+        check(near(r.sumU, 0) && near(r.sumUp, 0), "a wall split on a step is closed");
+        Sums whole;
+        RB_ReliefBuild(&band, 1, 128, 128, 0, 128, 0, 64, 1, 1, collect, &whole);
+        check(s.v.size() == whole.v.size(), "and has the unsplit wall's faces, no more");
+    }
+
     // A wall too large for the grid, and nonsense bounds, stay flat and emit nothing.
     {
         Sums s;
