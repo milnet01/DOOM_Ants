@@ -45,6 +45,11 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Ultra's tan and steel panel wall (STARTAN3) has real depth instead of faked depth** (DOOM-0610)
+  Its seams, cap panels and channels are now built as geometry, as the
+  blue processor wall is, so they hold their shape seen from the side.
+  It is the first wall of the set; the others still use the fake.
+
 - **Ultra's new walls sit on their own wall plane, so their bands meet at corners; the goo room is darker; grey concrete and rough stone walls are new.** (DOOM-0606)
 
 - **Ultra loads only the HD surfaces the current level shows** (DOOM-0606)

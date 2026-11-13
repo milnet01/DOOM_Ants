@@ -77,7 +77,7 @@ FLAT10,hero,heroes/floor/FLAT10_alb.png,heroes/floor/FLAT10_nrm.png,heroes/floor
 MFLR8_2,hero,heroes/floor/MFLR8_2_alb.png,heroes/floor/MFLR8_2_nrm.png,heroes/floor/MFLR8_2_rgh.png,,heroes/floor/MFLR8_2_ao.png,,heroes/floor/MFLR8_2_hgt.png,1,noPom
 FLAT5_5,hero,heroes/floor/FLAT5_5_alb.png,heroes/floor/FLAT5_5_nrm.png,heroes/floor/FLAT5_5_rgh.png,,heroes/floor/FLAT5_5_ao.png,,heroes/floor/FLAT5_5_hgt.png,1,noPom
 # --- DOOM-0606 third batch: pressed panels and steel sheet walls rebuilt in Blender (they were tinted photographs), red hell blocks, three ground flats ---
-STARTAN3,hero,heroes/tech/STARTAN3_alb.png,heroes/tech/STARTAN3_nrm.png,heroes/tech/STARTAN3_rgh.png,heroes/tech/STARTAN3_met.png,heroes/tech/STARTAN3_ao.png,,heroes/tech/STARTAN3_hgt.png,1,pom|noDetile|depth=6.3
+STARTAN3,hero,heroes/tech/STARTAN3_alb.png,heroes/tech/STARTAN3_nrm.png,heroes/tech/STARTAN3_rgh.png,heroes/tech/STARTAN3_met.png,heroes/tech/STARTAN3_ao.png,,heroes/tech/STARTAN3_hgt.png,1,noPom|noDetile
 STARG3,hero,heroes/tech/STARG3_alb.png,heroes/tech/STARG3_nrm.png,heroes/tech/STARG3_rgh.png,heroes/tech/STARG3_met.png,heroes/tech/STARG3_ao.png,,heroes/tech/STARG3_hgt.png,1,pom|noDetile|depth=6.3
 STARTAN1,hero,heroes/tech/STARTAN1_alb.png,heroes/tech/STARTAN1_nrm.png,heroes/tech/STARTAN1_rgh.png,heroes/tech/STARTAN1_met.png,heroes/tech/STARTAN1_ao.png,,heroes/tech/STARTAN1_hgt.png,1,pom|noDetile|depth=6.3
 STARGR1,hero,heroes/tech/STARGR1_alb.png,heroes/tech/STARGR1_nrm.png,heroes/tech/STARGR1_rgh.png,heroes/tech/STARGR1_met.png,heroes/tech/STARGR1_ao.png,,heroes/tech/STARGR1_hgt.png,1,pom|noDetile|depth=6.1

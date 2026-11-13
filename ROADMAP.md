@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=610 -->
+<!-- ants-roadmap-id-high-water: DOOM=611 -->
 
 # Roadmap
 
@@ -19563,9 +19563,41 @@ in CLAUDE.md describes.
   lifts keep parallax; a recess must be shallower than the wall is
   thick. Triangle count rises: measure the frame time per batch.
   Start with one wall, STARTAN3 or BROWN1, for the user's look.
+  2026-11-13, first wall live, waiting on the user's look: STARTAN3.
+  doom_startan.py writes its rectangles: seams, cap panels, channels,
+  and each panel's rounded rim as two steps. materials.csv: noPom. No
+  engine change.
+  Seen on E1M1 at 2450 -3140 facing 8, raster and traced: the seams
+  hold at a grazing angle where the fake smeared.
+  Cost, E1M1, Ultra, 50 % scale, 1708x800 private display, GPU pass
+  times, lowest of each run, two alternating runs, machine busy:
+  flat with the fake: 10443 triangles, raster scene 0.9 to 1.1 ms,
+  trace megakernel 2.7 to 2.9 ms. Two rim steps (live): 97875
+  triangles, scene 3.5 to 3.6, megakernel 3.5 to 4.1. One rim step:
+  68683, scene 2.7, megakernel 3.2 to 3.3. No rim step: 39533, scene
+  1.8 to 1.9, megakernel 3.0 to 3.2. The raster cost follows the
+  triangle count wherever the wall is on screen: DOOM-0611.
+  Open, the user's: how many rim steps before going wider. Not run:
+  Windows, other levels.
   **Layman:** Ultra's walls get real depth that holds up from every angle, instead of a painted-on trick that slides when seen from the side.
   Kind: feature.
   Source: user-request-2026-11-13.
+  Lanes: renderer.
+
+- 📋 [DOOM-0611] **Real-depth walls cost raster time by triangle count, near or far; find why before many walls use them.**
+  Found 2026-11-13 while measuring DOOM-0610. STARTAN3 as relief
+  geometry took E1M1 from 10443 to 97875 triangles and Ultra's raster
+  scene pass from about 1.0 to 3.6 ms at 50 % scale, 1708x800; the two
+  lighter versions fell on the same line, about 0.03 ms per thousand
+  triangles. The cost was the same facing the wall and along it.
+  Not investigated. Guesses, unverified: the whole level is drawn each
+  frame with no culling, and small far triangles each pay the full
+  surface shader. Ten walls like this one would add tens of
+  milliseconds. Candidates: a depth pre-pass, relief only near the
+  player, or fewer steps per wall.
+  **Layman:** Giving one wall real depth slows the non-traced Ultra view more than it should; this needs solving before many walls get it.
+  Kind: perf.
+  Source: measurement-2026-11-13.
   Lanes: renderer.
 
 ## 0.13.0 — The player's experience
