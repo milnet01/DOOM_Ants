@@ -8,6 +8,14 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Ultra's doors and lifts have new art: worn steel with rust, grime, old blood and lit warning lamps** (DOOM-0606)
+  The big blast doors, the service door, the braced door, the placard
+  door, the exit door, the door tracks, the key-colour lamp strips, the
+  lift side and the dark riveted plate are each built as a model and
+  baked to a surface with real depth. They are metal where the original
+  was metal, so they catch the light as steel does. Each keeps the
+  layout of DOOM's own texture.
+
 - **Ultra's hex floors (FLOOR4_8, FLOOR5_1, FLOOR5_2) are real bevelled tiles that each catch the light differently, with grime in the gaps.** (DOOM-0543)
   Floor tiles look like separate worn slabs that catch the light one by one, as in the reference video.
 
@@ -21,6 +29,11 @@ All notable changes to DOOM_Ants are documented here. The format follows
   Its recesses, niches and bars used to be painted-on depth that smeared when seen from the side. They are now built as real geometry, set into the wall. Walls on moving sectors stay flat.
 
 ### Changed
+
+- **Ultra loads only the HD surfaces the current level shows** (DOOM-0606)
+  Every HD surface used to be loaded on every level, used or not, and
+  the memory limit was reached. Measured 2026-11-13 on E1M1: 766 MB
+  before, 538 MB after, with the same picture.
 
 - **The pre-push check takes about half as long, and reads its Ubuntu version from the GitHub workflow so the two cannot drift** (DOOM-0567)
   `packaging/ci-local.sh` runs its Linux and Windows jobs at the same time, as

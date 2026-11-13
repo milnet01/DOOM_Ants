@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=605 -->
+<!-- ants-roadmap-id-high-water: DOOM=606 -->
 
 # Roadmap
 
@@ -19390,6 +19390,35 @@ in CLAUDE.md describes.
   Kind: feature.
   Source: user-request-2026-11-09.
   Lanes: renderer, materials.
+
+- 🚧 [DOOM-0606] **Replace Ultra's doors and lifts with Blender-built art, then the most-used walls and ceilings.**
+  User 2026-11-13: Ultra still needs replacements for the doors and lifts;
+  walls and ceilings can improve too. Take inspiration from the original
+  and the modern DOOM games; everything gets PBR and POM. Same day: "I
+  want a scary and moody DOOM version in Ultra."
+  Method: DOOM-0537's (Blender builds the model, bakes a material set,
+  materials.csv points at it). No pixel of any game's art is used.
+  Measured 2026-11-13 over doom.wad and doom2.wad: HD art covers 14.7% of
+  wall length. Most-used door faces without it: DOORTRAK, BIGDOOR1 to
+  BIGDOOR7, EXITDOOR. Lift sides: SUPPORT3, PLAT1, METAL2. Ceilings:
+  CEIL5_2, FLAT5_4, DEM1_5, CEIL5_1.
+  2026-11-13, first batch live: BIGDOOR1 to BIGDOOR4, DOOR1, DOOR3,
+  EXITDOOR, DOORTRAK, DOORSTOP, DOORBLU, DOORRED, DOORYEL, PLAT1,
+  SUPPORT3, METAL. Tool: Blender Scripts lib/wornmetal.py, doors/, lifts/.
+  Each has roughness and metal maps and pom with true depth. Baked at 8
+  pixels a map unit. Seen in Ultra raster at a wall of each except
+  DOORSTOP, DOORRED, DOORYEL, SUPPORT3 and METAL; BIGDOOR2 and BIGDOOR4
+  also in the trace. In the trace the doors read paler and the lamps do
+  not glow (DOOM-0178).
+  The loader now drops a material the level mesh never names
+  (rb_drop_unused), as the DOOM-0042 spec's "load only the current map's
+  materials" asks: E1M1 766 MB to 538 MB, same picture.
+  Left: BIGDOOR5 to BIGDOOR7 (wood and iron), then walls and ceilings by
+  use. Not run: Windows.
+  **Layman:** In Ultra, doors, lifts and the commonest walls and ceilings get new detailed surfaces with real depth, in a dark, worn, frightening style that keeps DOOM's layouts.
+  Kind: feature.
+  Source: user-request-2026-11-13.
+  Lanes: renderer.
 
 ## 0.13.0 — The player's experience
 
