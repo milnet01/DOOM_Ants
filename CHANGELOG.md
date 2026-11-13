@@ -45,6 +45,8 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Ultra's new walls sit on their own wall plane, so their bands meet at corners; the goo room is darker; grey concrete and rough stone walls are new.** (DOOM-0606)
+
 - **Ultra loads only the HD surfaces the current level shows** (DOOM-0606)
   Every HD surface used to be loaded on every level, used or not, and
   the memory limit was reached. Measured 2026-11-13 on E1M1: 766 MB

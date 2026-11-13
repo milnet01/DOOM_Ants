@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=608 -->
+<!-- ants-roadmap-id-high-water: DOOM=610 -->
 
 # Roadmap
 
@@ -11485,6 +11485,18 @@ stay in their phase sections; this heading holds only work still to come.
   Source: user-report-2026-11-13.
   Lanes: renderer.
 
+- 📋 [DOOM-0609] **Ultra's ray-traced view leaves speckled trails of wall over the sky at window edges.**
+  User 2026-11-13, dev-shots shot-0076 to shot-0083: E1M1's armour room,
+  Ultra, ray tracing on. Speckles of the wall's art sit over the sky
+  next to each window's edge. The user: only in the ray-traced view;
+  turning ray tracing off clears it.
+  Not investigated. First guess, unverified: the denoiser's history is
+  kept where a moving wall edge uncovers sky.
+  **Layman:** With ray tracing on, bits of wall hang in the sky beside windows after you move; with it off the picture is clean.
+  Kind: fix.
+  Source: user-report-2026-11-13.
+  Lanes: renderer.
+
 ## 0.10.0 — The codebase can be trusted
 
 Work only a maintainer sees: duplication, dead code, static analysis that covers
@@ -19495,7 +19507,47 @@ in CLAUDE.md describes.
   Still not ruled on by the user: BIGDOOR1's sign and BIGDOOR7's boss.
   Left: STONE, GRAY5, GRAY4, GRAYTALL, METAL1, SUPPORT2, the wood and
   cobble flats, and DOOM II's walls. Not run: Windows.
+  2026-11-13, user's look at the third batch: good, but the faked depth
+  does not line up where walls meet at an angle (dev-shots shot-0084,
+  shot-0085). Goo-room green and olive sheet: darker. BIGDOOR1's sign and
+  BIGDOOR7's boss: keep both (user).
+  Cause found: the parallax march takes a white height as the wall's
+  plane, and every baked map put its raised face at grey, so each wall
+  was drawn 2 to 10 map units behind its polygon.
+  scripts/relevel_height.py stretches each depth= row's height map and
+  rewrites depth= to the relief left. Seen in Ultra raster on E1M1, same
+  view before and after: the goo-room window band meets across the
+  corner. A grazing wall's own relief still slides; see DOOM-0610.
+  BROWNGRN and NUKEDGE1 re-baked darker; seen on E1M1.
+  Fourth batch live, shallow relief: STONE, GRAY1, GRAY4, GRAY5, GRAY7,
+  GRAYTALL (walls/doom_gray.py, poured concrete). STONE seen on E1M3;
+  the others not seen at a clear view.
+  Memory: the batch put E2M2 over the ceiling and dropped 3. Metal and
+  glow maps that are black all over are no longer shipped; a missing one
+  reads as 0 in both shaders. E2M2 now loads 56 materials in 742.4 MB,
+  none dropped.
+  Left: METAL1, the wood and cobble flats, DOOM II's walls. Not seen:
+  anything in the traced view. Not run: Windows.
   **Layman:** In Ultra, doors, lifts and the commonest walls and ceilings get new detailed surfaces with real depth, in a dark, worn, frightening style that keeps DOOM's layouts.
+  Kind: feature.
+  Source: user-request-2026-11-13.
+  Lanes: renderer.
+
+- 📋 [DOOM-0610] **Build Ultra's Blender walls as real geometry where possible, instead of parallax.**
+  User 2026-11-13: "Where possible, please use real geometry for walls
+  instead of the faking of 3D as I am finding the faking of 3D isn't
+  working well especially at angles."
+  The means exists: DOOM-0541's relief.csv and wall_relief.h turn sunk
+  rectangles into faces; COMPTILE uses it and the user approved it
+  2026-11-03. Each wall builder would write its seams, bands and sunk
+  panels as rectangles and drop the pom flag.
+  Known limits, from DOOM-0541, DOOM-0544 and DOOM-0545: rectangles only,
+  so a pillowed panel becomes a flat one; art spanning several tiles is
+  not handled; walls on a sector that can move stay flat, so doors and
+  lifts keep parallax; a recess must be shallower than the wall is
+  thick. Triangle count rises: measure the frame time per batch.
+  Start with one wall, STARTAN3 or BROWN1, for the user's look.
+  **Layman:** Ultra's walls get real depth that holds up from every angle, instead of a painted-on trick that slides when seen from the side.
   Kind: feature.
   Source: user-request-2026-11-13.
   Lanes: renderer.
