@@ -19579,12 +19579,18 @@ in CLAUDE.md describes.
   triangle count wherever the wall is on screen: DOOM-0611.
   Open, the user's: how many rim steps before going wider. Not run:
   Windows, other levels.
+  2026-11-13, after DOOM-0611's fix: two rim steps (97875 triangles)
+  now cost about 0.1 ms over the flat wall in the raster scene pass at
+  50 % scale (0.89 against 0.75), so the rim count no longer decides the
+  frame time. The cost figures above are from before that fix. User the
+  same day: STARTAN3 and the sky look resolved while turning and moving.
+  Rim choice still open; two steps stay live.
   **Layman:** Ultra's walls get real depth that holds up from every angle, instead of a painted-on trick that slides when seen from the side.
   Kind: feature.
   Source: user-request-2026-11-13.
   Lanes: renderer.
 
-- 📋 [DOOM-0611] **Real-depth walls cost raster time by triangle count, near or far; find why before many walls use them.**
+- ✅ [DOOM-0611] **Real-depth walls cost raster time by triangle count, near or far; find why before many walls use them.**
   Found 2026-11-13 while measuring DOOM-0610. STARTAN3 as relief
   geometry took E1M1 from 10443 to 97875 triangles and Ultra's raster
   scene pass from about 1.0 to 3.6 ms at 50 % scale, 1708x800; the two
@@ -19595,6 +19601,22 @@ in CLAUDE.md describes.
   surface shader. Ten walls like this one would add tens of
   milliseconds. Candidates: a depth pre-pass, relief only near the
   player, or fewer steps per wall.
+  2026-11-13, cause found and fixed. Both guesses above were wrong.
+  The extra cost was the same at 25, 50 and 100 % scale (2.4 to 2.5 ms),
+  so it was not per pixel. The level vertex buffer asked for host-visible
+  memory and FindMemoryType took the first match, which on the RX 6600
+  (RADV) is system RAM: the card fetched every vertex across the bus each
+  frame. CreateRtBuffer now takes a preferred property; the level vertex
+  buffer prefers device-local host-visible memory and falls back when the
+  device has no such type or the allocation fails.
+  Measured, E1M1, Ultra raster, 1708x800 private display, lowest scene
+  pass of each run, before to after: 97875 triangles at 50 % 3.56 to
+  0.89 ms, at 100 % 4.81 to 2.40; 10443 triangles at 50 % 1.02 to 0.75,
+  at 100 % 2.43 to 2.25. Trace megakernel at 50 %, 97875 triangles:
+  3.5-4.1 to 3.3. CPU re-height 0.73 to 0.32 ms. Same picture outside the
+  profiler text. make and make test green.
+  Not run: Windows, other cards. Other host-visible buffers the card
+  reads each frame (sprites, lights) were left as they are: small.
   **Layman:** Giving one wall real depth slows the non-traced Ultra view more than it should; this needs solving before many walls get it.
   Kind: perf.
   Source: measurement-2026-11-13.

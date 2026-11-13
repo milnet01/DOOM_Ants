@@ -75,6 +75,13 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Walls with real depth no longer slow Ultra's rasterised view** (DOOM-0611)
+  The level's triangles were kept in the computer's main memory, so the
+  graphics card fetched every one across the bus each frame. They now
+  live in the card's own memory where it offers that. Measured
+  2026-11-13 on an RX 6600: E1M1 with STARTAN3's real depth draws its
+  scene in 0.9 ms instead of 3.6 ms at half scale.
+
 - **Ultra's ray-traced view no longer leaves bits of wall hanging in the sky beside a window** (DOOM-0609)
   After a turn, patches of the wall stayed over the sky inside each
   window. The step that sharpens the half-size picture treated sky as

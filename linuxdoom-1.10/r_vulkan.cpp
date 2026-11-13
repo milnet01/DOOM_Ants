@@ -2044,15 +2044,27 @@ constexpr float kPi = 3.14159265358979323846f;
 
 // A memory type satisfying `typeBits` (from VkMemoryRequirements) with all the
 // requested property flags (e.g. DEVICE_LOCAL, or HOST_VISIBLE|HOST_COHERENT).
-uint32_t FindMemoryType(uint32_t typeBits, VkMemoryPropertyFlags props)
+// False when the device has no such type; FindMemoryType is the fatal form.
+static bool TryFindMemoryType(uint32_t typeBits, VkMemoryPropertyFlags props, uint32_t* type)
 {
     VkPhysicalDeviceMemoryProperties mem = {};
     vkGetPhysicalDeviceMemoryProperties(g.phys, &mem);
     for (uint32_t i = 0; i < mem.memoryTypeCount; ++i)
         if ((typeBits & (1u << i)) &&
             (mem.memoryTypes[i].propertyFlags & props) == props)
-            return i;
-    I_Error("R_Vulkan: no memory type with the required properties.");
+        {
+            *type = i;
+            return true;
+        }
+    return false;
+}
+
+uint32_t FindMemoryType(uint32_t typeBits, VkMemoryPropertyFlags props)
+{
+    uint32_t type = 0;
+    if (!TryFindMemoryType(typeBits, props, &type))
+        I_Error("R_Vulkan: no memory type with the required properties.");
+    return type;
 }
 
 // A short-lived primary command buffer for one-off uploads (image staging
@@ -2116,9 +2128,12 @@ static const char* VkWhat(const char* call, const char* tag)
 // Buffer + dedicated allocation for ray-tracing use (AS storage, scratch, the TLAS
 // instance array). When the usage includes SHADER_DEVICE_ADDRESS the allocation
 // gets the device-address flag so BufferAddress works.
+// `preferred` (DOOM-0611) names extra properties to take when the device offers them
+// and the allocation fits; otherwise the buffer gets `props` alone, as before.
 void CreateRtBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
                     VkMemoryPropertyFlags props,
-                    VkBuffer* buf, VkDeviceMemory* mem, const char* tag = "rt")
+                    VkBuffer* buf, VkDeviceMemory* mem, const char* tag = "rt",
+                    VkMemoryPropertyFlags preferred = 0)
 {
     VkBufferCreateInfo bci = {};
     bci.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -2138,8 +2153,15 @@ void CreateRtBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
     mai.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     mai.pNext           = (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) ? &flags : nullptr;
     mai.allocationSize  = req.size;
-    mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, props);
-    Check(vkAllocateMemory(g.device, &mai, nullptr, mem), VkWhat("vkAllocateMemory", tag));
+    // The preferred heap can be small (the card's CPU-visible window) and full, so a
+    // failed allocation there falls back instead of stopping the game.
+    if (!preferred
+        || !TryFindMemoryType(req.memoryTypeBits, props | preferred, &mai.memoryTypeIndex)
+        || vkAllocateMemory(g.device, &mai, nullptr, mem) != VK_SUCCESS)
+    {
+        mai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, props);
+        Check(vkAllocateMemory(g.device, &mai, nullptr, mem), VkWhat("vkAllocateMemory", tag));
+    }
     Check(vkBindBufferMemory(g.device, *buf, *mem, 0), VkWhat("vkBindBufferMemory", tag));
 }
 
@@ -9204,9 +9226,14 @@ extern "C" void RB_Vulkan_BuildLevel(void)
         if (g.rtEnabled)
             usage |= VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
                    | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+        // DOOM-0611: ask for the card's own memory. The first host-visible type on a
+        // discrete card is system RAM, and the card then fetches every vertex across
+        // the bus each frame: 2.5 ms for 97,875 triangles on the RX 6600, against 0.1.
+        // CPU reads already go to vbufShadow (DOOM-0443), so only writes touch it.
         CreateRtBuffer(size, usage,
                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                       &g.vbufSlot[s], &g.vbufMemSlot[s], "vbuf");
+                       &g.vbufSlot[s], &g.vbufMemSlot[s], "vbuf",
+                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
         // Kept mapped for the whole level: RB_UpdateMeshHeights patches moving-sector
         // z's into it each frame (host-coherent, so no flush). Unmapped on rebuild
