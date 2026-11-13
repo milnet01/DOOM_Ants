@@ -70,6 +70,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Ultra's ray-traced view no longer leaves bits of wall hanging in the sky beside a window** (DOOM-0609)
+  After a turn, patches of the wall stayed over the sky inside each
+  window. The step that sharpens the half-size picture treated sky as
+  something that had not moved, and kept what was at that spot before.
+  Sky is now read fresh each frame.
+
 - **The blue circuit wall in E1M1's computer room can no longer be seen through in Ultra.** (DOOM-0607)
   Where the map cut that wall in two exactly on a step in its carved
   surface, the small face at the step was never built, and the room

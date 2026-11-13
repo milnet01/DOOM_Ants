@@ -19,6 +19,9 @@
 // space is the simple-TAA convention and adequate for phase 1 — a linear/HDR tap
 // point is an option an FSR backend may prefer, behind the same resource contract.
 //
+#extension GL_GOOGLE_include_directive : require
+#include "formulas/svgf_shared.glsl"   // TAAU_SKY_MOTION (DOOM-0609)
+
 layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(set = 0, binding = 0, rgba8) uniform readonly  image2D inColor;   // render-res denoised
@@ -121,9 +124,23 @@ void main()
     // (prev projection - p, where the ray went through p + jitter), while the history
     // is stored un-jittered, so the jitter comes off: a static camera reads history at
     // exactly d instead of resampling it at a fresh sub-pixel offset each frame.
-    // Sky and failed reprojections are written as exactly zero, which was never
-    // measured from the jittered ray: they keep history at d itself.
+    // A failed reprojection is written as exactly zero, which was never measured from
+    // the jittered ray: it keeps history at d itself.
     vec2 mv    = imageLoad(inMotion, ri).xy;
+    if (mv.x > 0.5 * TAAU_SKY_MOTION) {
+        // DOOM-0609: sky. It has no surface to follow, and the tracer draws it by pixel,
+        // without the jitter, so it is read where it is. History only softens the
+        // crawl of a wall's jittered edge against it: always clamped, and half replaced
+        // each frame, so a wall the edge has just uncovered is gone in a few frames.
+        // With zero motion it took the still-pixel path below, which kept that wall.
+        vec3 sky = clamp(sampleColor(rf, rdim), cmin, cmax);
+        vec3 h   = clamp(imageLoad(hist[prev], d).rgb, cmin, cmax);
+        vec3 o   = mix(h, sky, 0.5);
+        if (any(isnan(o)) || any(isinf(o))) o = sky;
+        imageStore(hist[cur], d, vec4(o, lumaNow));
+        if (pc.misc.w == 0u) imageStore(outColor, d, vec4(o, 1.0));
+        return;
+    }
     vec2 jit   = (mv == vec2(0.0)) ? vec2(0.0) : pc.jitter.xy;
     vec2 prevD = vec2(d) + (mv - jit) / scale;
 

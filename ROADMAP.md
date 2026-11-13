@@ -11485,13 +11485,29 @@ stay in their phase sections; this heading holds only work still to come.
   Source: user-report-2026-11-13.
   Lanes: renderer.
 
-- 📋 [DOOM-0609] **Ultra's ray-traced view leaves speckled trails of wall over the sky at window edges.**
+- ✅ [DOOM-0609] **Ultra's ray-traced view leaves speckled trails of wall over the sky at window edges.**
   User 2026-11-13, dev-shots shot-0076 to shot-0083: E1M1's armour room,
   Ultra, ray tracing on. Speckles of the wall's art sit over the sky
   next to each window's edge. The user: only in the ray-traced view;
   turning ray tracing off clears it.
   Not investigated. First guess, unverified: the denoiser's history is
   kept where a moving wall edge uncovers sky.
+  User 2026-11-13, more shots while turning and moving: dev-shots
+  shot-0086 to shot-0093 (E1M1; render_scale 50, upscaler 1, rt_view 6).
+  Seen in shot-0091 and shot-0093: blocks and rows of wall colour over
+  the sky inside each window, coarser than the screen's pixels.
+  Fixed 2026-11-13. Cause: svgf_composite.comp wrote a zero motion
+  vector for sky, and taau.comp reads zero as "did not move", so a sky
+  pixel kept the history at its own screen spot: the wall a window's
+  edge had just uncovered. DOOM-0595's long still-pixel memory then held
+  it. Sky now carries a marker (TAAU_SKY_MOTION) and the upscaler reads
+  it fresh, half blended with clamped history.
+  Seen on E1M1's armour room, Ultra traced, 50 % scale, turning with a
+  held key on a private display: before, wall patches in both windows'
+  sky; after, clean mid-turn and after a full spin. Standing still, same
+  moment after load: walls differ by 0.11 of 255 on average, sky by 1.5.
+  Strafing: seen clean with the fix only; no before capture. Not run:
+  Windows, -rtverify.
   **Layman:** With ray tracing on, bits of wall hang in the sky beside windows after you move; with it off the picture is clean.
   Kind: fix.
   Source: user-report-2026-11-13.
@@ -19533,7 +19549,7 @@ in CLAUDE.md describes.
   Source: user-request-2026-11-13.
   Lanes: renderer.
 
-- 📋 [DOOM-0610] **Build Ultra's Blender walls as real geometry where possible, instead of parallax.**
+- 🚧 [DOOM-0610] **Build Ultra's Blender walls as real geometry where possible, instead of parallax.**
   User 2026-11-13: "Where possible, please use real geometry for walls
   instead of the faking of 3D as I am finding the faking of 3D isn't
   working well especially at angles."

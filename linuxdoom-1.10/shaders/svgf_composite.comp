@@ -163,8 +163,9 @@ void main()
     // DOOM-0141: sky backdrop (matId < 0). gillum carries the DISPLAY-encoded sky
     // panorama (the mountains), passed through the denoiser untouched; emit it raw —
     // fullbright, NO tonemap — so the denoised sky matches the Solid/raster sky exactly
-    // (which writes the palette colour straight to the swapchain). Motion is zero for a
-    // view-locked backdrop (recomputed each frame, so no reprojection/ghosting).
+    // (which writes the palette colour straight to the swapchain). Its motion vector is
+    // the sky marker, TAAU_SKY_MOTION: the backdrop is redrawn each frame, and the
+    // upscaler must not reproject it (DOOM-0609).
     if (gp.w < 0.0) {
         vec3 sky = illum;
         if (any(isnan(sky)) || any(isinf(sky))) sky = vec3(0.0);
@@ -194,7 +195,7 @@ void main()
 #else
         imageStore(outColor, p, vec4(clamp(sky, 0.0, 1.0), 1.0));
 #endif
-        imageStore(motion, p, vec4(0.0));
+        imageStore(motion, p, vec4(TAAU_SKY_MOTION, 0.0, 0.0, 0.0));   // DOOM-0609
         return;
     }
 
@@ -261,8 +262,9 @@ void main()
     // PREVIOUS frame, as a displacement in render pixels (current -> previous). The
     // temporal upscaler (TAAU now; FSR later, same contract) reprojects its history
     // by this. Reuses the prev-camera basis already in this pass's push constants,
-    // through the same svgfReprojectPrev svgf_temporal uses (DOOM-0440). Sky /
-    // behind-camera writes zero (no motion -> the upscaler keeps the current sample).
+    // through the same svgfReprojectPrev svgf_temporal uses (DOOM-0440). Behind-camera
+    // writes zero: the upscaler keeps its history at the same pixel. Sky returned above
+    // with TAAU_SKY_MOTION (DOOM-0609).
     vec2 mv = vec2(0.0);
     if (gp.w >= 0.0) {
         vec2  prevScreen;

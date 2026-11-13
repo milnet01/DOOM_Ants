@@ -11,6 +11,11 @@
 #ifndef SVGF_SHARED_GLSL
 #define SVGF_SHARED_GLSL
 
+// DOOM-0609: the motion vector's x for a sky pixel. No surface moves this far in a frame,
+// so the upscaler reads it as "this is sky". Zero meant "did not move", and the upscaler
+// then kept its history at the same pixel: the wall a window's edge had just uncovered.
+const float TAAU_SKY_MOTION = 30000.0;
+
 // Rec.709 luminance of linear RGB.
 float lum(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 
