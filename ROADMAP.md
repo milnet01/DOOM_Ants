@@ -19469,6 +19469,32 @@ in CLAUDE.md describes.
   Left: walls and ceilings further down the use list (METAL2, SP_HOT1,
   BROWNHUG, STONE, SP_ROCK1, GRAYTALL, METAL1 and others). Not run:
   Windows.
+  2026-11-13, third batch live, waiting on the user's look. User the same
+  day: make the goo-room walls and the walls that read as wood look real,
+  one consistent look, and the computer walls more natural, after the
+  Alien films.
+  Rebuilt in Blender, replacing tinted photographs that ignored DOOM's
+  layout: STARTAN3, STARG3, STARTAN1, STARGR1 (walls/doom_startan.py) and
+  BROWN1, BROWN96, BROWNGRN, BROWN144 (walls/doom_brown.py). New:
+  BROWNHUG, METAL2, NUKEDGE1, SP_HOT1, and the flats FLAT10, MFLR8_2,
+  FLAT5_5.
+  Computer walls: lib/techparts.py's Kit now takes its metals from one
+  wear map, shows screens as one-colour tubes and leaves most small lamps
+  unlit; COMPTALL uses the Kit. The COMP walls were re-baked at their old
+  sizes; their rows are unchanged. TEKWALL1 and TEKWALL4 do not use the
+  Kit and were not re-baked.
+  The staging step ships no glow map for a material with no lamp.
+  Seen in Ultra raster on E1M1: STARTAN3, BROWN1, BROWN144, BROWNGRN,
+  COMPUTE2, COMPTALL. Not seen in game: the other new and rebuilt
+  materials, and nothing in the traced view.
+  Memory, one level per run, none dropped: E1M1 542 MB, E1M2 622,
+  E2M2 767 with 54 materials. Measured before the five big panel walls
+  went from 8 to 6 pixels a map unit: E1M3 651, E1M7 549, E2M1 290,
+  E2M4 650, E3M3 549, E3M6 434; E2M2 then dropped 2. E2M2 is under
+  1 MB from the 768 MB ceiling: the next material added there drops one.
+  Still not ruled on by the user: BIGDOOR1's sign and BIGDOOR7's boss.
+  Left: STONE, GRAY5, GRAY4, GRAYTALL, METAL1, SUPPORT2, the wood and
+  cobble flats, and DOOM II's walls. Not run: Windows.
   **Layman:** In Ultra, doors, lifts and the commonest walls and ceilings get new detailed surfaces with real depth, in a dark, worn, frightening style that keeps DOOM's layouts.
   Kind: feature.
   Source: user-request-2026-11-13.
