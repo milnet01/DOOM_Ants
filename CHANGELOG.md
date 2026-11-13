@@ -8,6 +8,13 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Ultra's wood doors, stone and marble walls, and seven ceilings have new art** (DOOM-0606)
+  The three hell doors are old dark planks under black iron, with ring
+  bolts, a knocker and a horned bronze boss. Stone walls are separate
+  chiselled blocks with moss in the joints; the green marble is veined.
+  The ceilings are black iron panels, pitted rusted plate, cast concrete,
+  concrete slabs, brushed steel and a panel of red lamps.
+
 - **Ultra's doors and lifts have new art: worn steel with rust, grime, old blood and lit warning lamps** (DOOM-0606)
   The big blast doors, the service door, the braced door, the placard
   door, the exit door, the door tracks, the key-colour lamp strips, the

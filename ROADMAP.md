@@ -19447,6 +19447,28 @@ in CLAUDE.md describes.
   materials" asks: E1M1 766 MB to 538 MB, same picture.
   Left: BIGDOOR5 to BIGDOOR7 (wood and iron), then walls and ceilings by
   use. Not run: Windows.
+  2026-11-13, second batch live, waiting on the user's look: BIGDOOR5 to
+  BIGDOOR7, WOOD1, WOOD5, STONE2, STONE3, GSTONE1, MARBLE1, SHAWN2, and
+  the flats CEIL5_1, CEIL5_2, FLAT5_4, FLAT1, FLAT23, TLITE6_5, DEM1_5.
+  Tool: lib/roughsurf.py, walls/doom_wood.py, walls/doom_stone2.py,
+  ceilings/doom_ceilings.py. Flats carry noPom, as the other flats do.
+  Seen in Ultra raster: BIGDOOR6 (E3M3), BIGDOOR7 (E3M1, also traced),
+  GSTONE1 (E2M1), STONE2 (E1M2). Not seen at a clear view: BIGDOOR5,
+  WOOD1, WOOD5, STONE3, MARBLE1, SHAWN2 and the ceilings; the game has no
+  look-up, and the capture spots chosen missed.
+  BIGDOOR1's placard is a drawn warning sign, not the original's company
+  emblem, and BIGDOOR7 has a horned boss and ring, not the original's
+  skulls: both are this item's choices, not yet the user's.
+  Memory: at 8 pixels a map unit one level dropped 9 materials at the
+  768 MB ceiling. The six large repeating walls were re-baked at 4,
+  DOOM-0537's density. Measured after, one level per run: E1M1 38
+  materials 575 MB, E1M2 43 in 651 MB, E2M1 22 in 282 MB, E2M2 49 in
+  757 MB, E3M3 33 in 534 MB; none dropped. E2M2 is 11 MB under the
+  ceiling, so the next art added there will drop something: the wide
+  DOOM-0537 computer walls are the largest users.
+  Left: walls and ceilings further down the use list (METAL2, SP_HOT1,
+  BROWNHUG, STONE, SP_ROCK1, GRAYTALL, METAL1 and others). Not run:
+  Windows.
   **Layman:** In Ultra, doors, lifts and the commonest walls and ceilings get new detailed surfaces with real depth, in a dark, worn, frightening style that keeps DOOM's layouts.
   Kind: feature.
   Source: user-request-2026-11-13.
