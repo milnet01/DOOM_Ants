@@ -8,6 +8,14 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Ultra's panel walls, goo-room walls and computer walls are rebuilt to match the doors** (DOOM-0606)
+  The tan, green and brown walls were tinted photographs that read as
+  wood. They are now pressed steel panels and riveted steel sheet in
+  DOOM's own layout, with rust runs and dents. The computer walls are
+  grimy off-white bulkheads with one-colour screens and mostly unlit
+  lamps. New: pitted brown plate, slime-crusted sheet at the goo's edge,
+  red hell blocks and rough ground floors.
+
 - **Ultra's wood doors, stone and marble walls, and seven ceilings have new art** (DOOM-0606)
   The three hell doors are old dark planks under black iron, with ring
   bolts, a knocker and a horned bronze boss. Stone walls are separate
