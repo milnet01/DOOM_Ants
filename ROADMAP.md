@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=611 -->
+<!-- ants-roadmap-id-high-water: DOOM=612 -->
 
 # Roadmap
 
@@ -19588,6 +19588,28 @@ in CLAUDE.md describes.
   User 2026-11-13: two rim steps, for STARTAN3 and the walls that
   follow. STARTAN3 already has them; nothing to change. Next: the other
   Blender walls, starting with BROWN1 and the STARTAN family.
+  2026-11-13, first batch after STARTAN3, live, waiting on the user's
+  look: STARG3, STARTAN1, STARGR1, BROWN1. Two rim steps each.
+  materials.csv: noPom. No engine change. The rows now come from
+  wallbake.py's Relief, shared by doom_startan.py and doom_brown.py;
+  STARTAN3's rows came out unchanged. BROWN1's plane is its tabs' faces;
+  its round ribs become two-step panels, which reads as panelled sheet,
+  not corrugation.
+  Seen in Ultra, square and grazing, raster and traced: BROWN1 on E2M2,
+  STARG3 and STARTAN1 on E1M3, STARGR1 on E1M1. STARG3's grazing spot
+  stood inside a monster; its square view is clear.
+  Measured at 50 % scale, private display, lowest of each run, before
+  then after. E2M2 at BROWN1: 9542 to 72980 triangles; HD art 742.4 MB,
+  56 materials, none dropped, both times (geometry is outside that
+  budget); raster scene 0.44 to 0.62 ms square, 0.64 to 0.73 grazing;
+  trace megakernel 2.53 to 2.97 and 2.65 to 3.07. E1M3: 75962 to 248346
+  triangles; raster scene 0.94 to 1.19 (STARG3), 0.75 to 1.18
+  (STARTAN1); megakernel 3.29 to 3.54 and 3.22 to 4.24. E1M1: 97875 to
+  162981; raster scene 0.60 to 0.82; megakernel 2.62 to 2.82.
+  Found: the per-tic CPU scan of every vertex grows with the triangles;
+  see DOOM-0612.
+  Left: BROWN96, BROWNGRN, BROWN144, METAL2, NUKEDGE1, the grey concrete
+  walls, STONE2 and the wood. Not run: Windows.
   **Layman:** Ultra's walls get real depth that holds up from every angle, instead of a painted-on trick that slides when seen from the side.
   Kind: feature.
   Source: user-request-2026-11-13.
@@ -19623,6 +19645,27 @@ in CLAUDE.md describes.
   **Layman:** Giving one wall real depth slows the non-traced Ultra view more than it should; this needs solving before many walls get it.
   Kind: perf.
   Source: measurement-2026-11-13.
+  Lanes: renderer.
+
+- 📋 [DOOM-0612] **The per-tic vertex scan costs more CPU with every wall given real depth.**
+  RB_UpdateMeshHeights visits every vertex once per game tic per
+  vertex-buffer copy, to move doors and lifts and to carry animated
+  textures and switch swaps. Relief walls multiply the vertices.
+  Measured 2026-11-13 on E1M3, Ultra, 50 % scale, private display, the
+  [cpu_build] reheight figure, lowest and highest row of one run, before
+  and after DOOM-0610's STARG3 and STARTAN1 rows (75962 to 248346
+  triangles): raster 0.15-0.21 to 0.75-1.74 ms a frame; traced
+  0.91-1.86 to 1.98-3.11. The raster view's whole CPU frame went from
+  1.76 to 2.92 ms; the traced view's did not rise (it waits on the card).
+  The machine was busy; the direction is clear, the sizes are rough.
+  The function's comment says not to narrow the scan (DOOM-0569, user
+  ruling 2026-11-09), so this needs the user before any change. One
+  route: relief faces stand on sectors that cannot move, so only their
+  texture id needs the scan; one check per wall could stand for all its
+  faces.
+  **Layman:** Each wall rebuilt with real depth adds a little processor work every frame; on a level full of them it adds up to about a millisecond.
+  Kind: perf.
+  Source: DOOM-0610-measurement-2026-11-13.
   Lanes: renderer.
 
 ## 0.13.0 — The player's experience
