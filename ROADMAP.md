@@ -19585,6 +19585,9 @@ in CLAUDE.md describes.
   frame time. The cost figures above are from before that fix. User the
   same day: STARTAN3 and the sky look resolved while turning and moving.
   Rim choice still open; two steps stay live.
+  User 2026-11-13: two rim steps, for STARTAN3 and the walls that
+  follow. STARTAN3 already has them; nothing to change. Next: the other
+  Blender walls, starting with BROWN1 and the STARTAN family.
   **Layman:** Ultra's walls get real depth that holds up from every angle, instead of a painted-on trick that slides when seen from the side.
   Kind: feature.
   Source: user-request-2026-11-13.
