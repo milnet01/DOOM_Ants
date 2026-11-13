@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=604 -->
+<!-- ants-roadmap-id-high-water: DOOM=605 -->
 
 # Roadmap
 
@@ -14929,7 +14929,7 @@ against.
   Source: review-code-perf-2026-11-09.
   Lanes: engine.
 
-- 🚧 [DOOM-0569] **Solid's rasterised frame builds sprites and light emitters that no raster pass reads.**
+- ✅ [DOOM-0569] **Solid's rasterised frame builds sprites and light emitters that no raster pass reads.**
   From review-code --performance 2026-11-09 (lanes 2, 3, 5). Unmeasured.
   Measure cpuBuildMs[1] and -frameledger p99 in Solid raster, in a
   sprite-heavy room, before and after.
@@ -14985,6 +14985,10 @@ against.
   and the bot draws none). Play-test owed: open a door and ride a lift in
   Solid and in Ultra; both should move as before.
   LEFT: BuildRasterPointLights' distance loop, and the smaller CPU items.
+  2026-11-13, CLOSED on the user's play-test: a door and a lift in Solid
+  and in Ultra, no issues seen. Shipped in e0d0677 (RAM sprite copy) and
+  8bfc969 (re-height once per gametic). The LEFT list above moved to
+  DOOM-0605.
   **Layman:** In Solid with ray tracing off, each frame still does preparation work only the ray-traced view uses.
   Kind: perf.
   Source: review-code-perf-2026-11-09.
@@ -15348,6 +15352,35 @@ against.
   **Layman:** Hex, diamond and square floor tiles in Ultra join up cleanly, as they do in Classic and Solid.
   Kind: fix.
   Source: user-report-2026-11-11.
+
+- 📋 [DOOM-0605] **BuildRasterPointLights compares every subsector with every light emitter each frame.**
+  Split from DOOM-0569 when it closed, 2026-11-13. This is what that item
+  left undone.
+  MEASURED 2026-11-12 on E1M6, Solid raster, render scale 50, private
+  display, perf record after e0d0677: BuildRasterPointLights 29.0% of
+  process CPU, the largest single part.
+  ALREADY TRIED AND REJECTED (DOOM-0569): one visible-emitter list per
+  sector, so REJECT is tested per sector and not per subsector. Same
+  pictures, no gain beyond the run-to-run shift. The cost is the distance
+  loop over subsectors x emitters, not the REJECT test. Do not retry it.
+  MEASURE before and after: [cpu_build] lights and the perf share, three
+  alternated runs a side, same map and scale. Captures must match in
+  raster and in -rtview 3.
+  ALSO CARRIED OVER, each under 2% by that perf run, so fix one only if a
+  new measurement says it is worth it:
+  - BuildDynamicEmitters: BSP walk per emissive triangle; store the sector.
+  - the dynamic-light merge, O(subsectors x triangles); the per-frame
+    rewrite half is settled by DOOM-0437.
+  - thing_verts: sin/cos of the camera angle per thing, twice a frame.
+  - sprite_cap.h: sorts model candidates even when all fit the budget.
+  - r_mesh.c: wall-light lookup by name, uncached.
+  - r_vulkan.cpp: device memory properties re-queried per call.
+  - the second sprite build and the FinalizeEmitters rewrite.
+  **Layman:** Each frame, Solid and Ultra measure the distance from every piece of the map to every light, which is the largest processor cost left in busy levels.
+  Kind: perf.
+  Source: split-from-DOOM-0569-2026-11-13.
+  Lanes: renderer.
+  Splits-from: DOOM-0569.
 
 ## 0.12.0 — Light and materials
 
