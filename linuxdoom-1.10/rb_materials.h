@@ -229,6 +229,21 @@ static inline void rb_apply_budget(rb_matctrl_t* table, int nmaterials,
     free(ent);
 }
 
+/* Drop the materials this level never shows, before the budget counts them: without
+   this every sidecar row is loaded on every level, and the ceiling fills with art no
+   wall here uses (DOOM-0606). used[i] is non-zero when the level mesh names material i,
+   at any size: a step that is closed at load is built with zero height, and still counts.
+   exempt[i] marks a material the mesh cannot name, which is kept (a pickup model's atlas).
+   Returns how many were dropped. A texture a switch or an animation swaps in later is not
+   in the mesh at load, so an HD row for one would be dropped here; none exists today. */
+static inline int rb_drop_unused(rb_matctrl_t* table, int nmaterials,
+                                 const char* used, const char* exempt) {
+    int dropped = 0;
+    for (int i = 0; i < nmaterials; i++)
+        if (table[i].usePBR && !used[i] && !exempt[i]) { table[i].usePBR = 0; dropped++; }
+    return dropped;
+}
+
 /* The executable's directory, set once by the engine (rb_asset_set_exe_dir) so the
    default root does not depend on where the game was launched from (DOOM-0410).
    Empty until set, which is the state the unit tests run in. */

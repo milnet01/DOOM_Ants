@@ -256,6 +256,20 @@ static void test_budget_pins_hero_over_bigger_derived() {
     check(nloaded == 1 && order[0] == 0, "budget: a hero is pinned ahead of a busier derived map");
     check(table[0].usePBR == 1 && table[1].usePBR == 0, "budget: the derived map is dropped");
 }
+static void test_drop_unused_keeps_what_the_level_names() {
+    // id0 on a wall here, id1 on no wall, id2 a pickup model (the mesh cannot name it),
+    // id3 already paletted and unused.
+    rb_matctrl_t table[4];
+    for (int i = 0; i < 4; i++) { table[i].usePBR = 1; table[i].uvScale = 1; table[i].flags = 0; }
+    table[3].usePBR = 0;
+    const char used[4]   = { 1, 0, 0, 0 };
+    const char exempt[4] = { 0, 0, 1, 0 };
+    int dropped = rb_drop_unused(table, 4, used, exempt);
+    check(dropped == 1, "unused: only the HD material no wall names is dropped");
+    check(table[0].usePBR == 1, "unused: a material the level names stays HD");
+    check(table[1].usePBR == 0, "unused: a material the level does not name goes paletted");
+    check(table[2].usePBR == 1, "unused: a model's atlas is kept though no wall names it");
+}
 
 /* --- Asset-root resolution (test audit 2026-07-26: was untested) ---------------
    rb_asset_path() joins $DOOMASSETDIR (or the built-in default) with a relative
@@ -342,6 +356,7 @@ int main() {
     test_parser_rejects_what_it_used_to_truncate();
     test_budget_drops_lowest_traffic();
     test_budget_pins_hero_over_bigger_derived();
+    test_drop_unused_keeps_what_the_level_names();
     test_asset_path();
     return check_summary("rb_materials");
 }

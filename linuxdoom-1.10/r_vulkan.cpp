@@ -7090,7 +7090,9 @@ static void EnsureHdMaterials()
 
     // 3. Traffic (world surface area per unified id) from the level mesh.
     std::vector<float> traffic(N, 0.0f);
-    if (g.levelMesh && g.levelMesh->verts) {
+    std::vector<char>  used(N, 0);      // named by the level mesh at any size, zero-height included
+    const bool haveMesh = g.levelMesh && g.levelMesh->verts;
+    if (haveMesh) {
         const rb_vertex_t* v = g.levelMesh->verts;
         int ntri = g.levelMesh->numverts / 3;
         for (int t = 0; t < ntri; t++) {
@@ -7100,8 +7102,12 @@ static void EnsureHdMaterials()
             float cx=ay*bz-az*by, cy=az*bx-ax*bz, cz=ax*by-ay*bx;
             float area = 0.5f * sqrtf(cx*cx + cy*cy + cz*cz);
             int id = (a.flags & RB_MESH_FLAT) ? g.matNumWall + a.texnum : a.texnum;
-            if (id >= 0 && id < N) traffic[id] += area;
+            if (id >= 0 && id < N) { traffic[id] += area; used[id] = 1; }
         }
+        // Load only what this level shows; a model's atlas is on no wall, so it is exempt.
+        int unused = rb_drop_unused(table.data(), N, used.data(), isModel.data());
+        if (unused)
+            printf("DOOM-0606: %d HD material(s) not on this level - not loaded.\n", unused);
     }
 
     // 4. Probe each HD material's v1 maps from their FILE HEADERS -- existence and the
