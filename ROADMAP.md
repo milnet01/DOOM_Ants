@@ -19612,6 +19612,23 @@ in CLAUDE.md describes.
   walls, STONE2 and the wood. Not run: Windows.
   User 2026-11-14: keep BROWN1's panelled look (two-step panels, not
   finer steps). DOOM-0612 is to be fixed before the second batch.
+  2026-11-14, second batch, live, waiting on the user's look: BROWN96,
+  BROWNGRN, BROWN144, METAL2, NUKEDGE1. Two rim steps each; noPom. No
+  engine change. doom_brown.py writes their rows: BROWN96's plane is its
+  tabs, BROWNGRN's its seam strap (its windows sink), NUKEDGE1's the
+  slime crust strip; BROWN144 and METAL2 their sheet faces. relief.csv
+  holds 307 rows. ab_capture.sh takes IWAD=, so METAL2 was seen on doom2
+  MAP06.
+  Seen in Ultra, square and grazing, raster and traced: BROWN96 and
+  NUKEDGE1 on E2M2, BROWNGRN on E1M1, BROWN144 on E1M3, METAL2 on MAP06.
+  Measured at 50 % scale, private display, lowest of each run, before
+  then after. E2M2: 72980 to 112292 triangles; HD art 742.4 MB, 56
+  materials, both times; raster scene 0.53 to 0.59 ms square at BROWN96;
+  trace megakernel 3.04 to 3.44. E1M3: 248346 to 313034; scene 1.18 to
+  1.39; megakernel 3.14 to 3.52. MAP06: 16047 to 217505; scene 0.66 to
+  0.93; megakernel 2.92 to 3.57. Per-tic scan (DOOM-0612 fixed) 0.02 to
+  0.03 ms raster everywhere.
+  Left: the grey concrete walls, STONE2 and the wood. Not run: Windows.
   **Layman:** Ultra's walls get real depth that holds up from every angle, instead of a painted-on trick that slides when seen from the side.
   Kind: feature.
   Source: user-request-2026-11-13.

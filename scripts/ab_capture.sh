@@ -19,7 +19,8 @@
 #   env:   any experiment gate you have compiled in, e.g. RB_NOLIQUIDLE=1
 #          DOOMCFG=<path>  override the temp config (default: ~/.doomrc, fog off)
 #          ONSCREEN=1      run on the user's real display instead of a private one
-#          MAP="2 1"       episode and map to warp to (default "1 1")
+#          MAP="2 1"       episode and map to warp to (default "1 1"); MAP=6 for a doom2 map
+#          IWAD=doom2.wad  the game data file in wads/ (default doom.wad)
 #
 # By default the engine runs on a PRIVATE GPU-backed display (xwfb-run + cage, the
 # same recipe as demoreel --gpu), so no window opens on the user's desktop and the
@@ -62,7 +63,7 @@ if [ -z "${ONSCREEN:-}" ]; then
           env WAYLAND_DISPLAY=doom-ab-no-wayland SDL_VIDEODRIVER=x11)
 fi
 "${WRAP[@]}" timeout -s TERM 40 "$REPO/linuxdoom-1.10/linux/linuxxdoom" \
-    -iwad "$REPO/wads/doom.wad" -config "$CFG" \
+    -iwad "$REPO/wads/${IWAD:-doom.wad}" -config "$CFG" \
     -warp ${MAP:-1 1} -warpto "$X" "$Y" "$DEG" \
     -inspect -freeze -noinput -devshot 150 "$@" > "$OUT/$NAME.log" 2>&1 || true
 
