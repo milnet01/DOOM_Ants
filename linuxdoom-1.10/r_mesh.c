@@ -55,6 +55,7 @@
 #include "patch_bounds.h"
 #include "atlas_bounds.h"
 #include "wall_relief.h"   // DOOM-0541 real depth in a wall
+#include "static_runs.h"   // DOOM-0612 walls the per-tic scan checks once
 
 // Texture geometry tables from r_data.c (no public header declares them).
 // texturewidthmask+1 is the wall's tiling width (matches how R_GetColumn masks
@@ -1009,6 +1010,16 @@ rb_mesh_t* RB_BuildLevelMesh(void)
     mesh->numverts = bld.count;
     mesh->numtris  = bld.count / 3;
     mesh->tri_ss   = bld.ssid;   // one subsector id per triangle (step 4c)
+    // DOOM-0612: two passes, one to size the array and one to fill it.
+    mesh->numruns  = RB_FindStaticRuns(bld.v, bld.count, 2, NULL);
+    mesh->runs     = NULL;
+    if (mesh->numruns)
+    {
+        mesh->runs = malloc((size_t)mesh->numruns * sizeof *mesh->runs);
+        if (!mesh->runs)
+            I_Error("RB_BuildLevelMesh: out of memory allocating %d vertex runs", mesh->numruns);
+        RB_FindStaticRuns(bld.v, bld.count, 2, mesh->runs);
+    }
     mesh->sky      = bld.sky;     // DOOM-0141: RT-only sky backdrop tris
     mesh->numsky   = bld.skycount;
 
@@ -1048,6 +1059,7 @@ void RB_FreeMesh(rb_mesh_t* mesh)
         return;
     free(mesh->verts);
     free(mesh->tri_ss);
+    free(mesh->runs);
     free(mesh->sky);
     free(mesh);
 }
@@ -1906,9 +1918,21 @@ static int float_bits_differ(float a, float b)
     return memcmp(&a, &b, sizeof a) != 0;
 }
 
+// A wall vertex's live texture id: what the software renderer samples for its sidedef slot
+// (DOOM-0066), or cur when the slot holds a WAD value out of range (DOOM-0073).
+static int wall_live_tex(const rb_vertex_t* v, int cur)
+{
+    const side_t* sd = &sides[v->vtexside];
+    int base = v->vtexslot == 0 ? sd->toptexture
+             : v->vtexslot == 2 ? sd->bottomtexture
+             : sd->midtexture;
+    return (base > 0 && base < numtextures) ? texturetranslation[base] : cur;
+}
+
 int RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst, rb_vertex_t* shadow)
 {
     int i;
+    int r = 0;              // next entry of mesh->runs (DOOM-0612)
     int moved = 0;          // any z actually changed this frame -> RT refit (step 5)
     int retex = 0;          // any live texture id changed -> NEE emitter rebuild (DOOM-0082)
     if (!mesh || !dst || !shadow)
@@ -1918,14 +1942,30 @@ int RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst, rb_vertex_t* s
     // mesh stays otherwise static). mesh->verts holds the build-time tags +
     // base geometry; dst[i] is the live GPU vertex (z gets the current height),
     // and shadow[i] its RAM twin, which is what gets read (DOOM-0443).
-    // The scan visits every vertex, not only those on moving sectors, on purpose: it
+    // The scan covers every vertex, not only those on moving sectors, on purpose: it
     // also carries animated textures and switch swaps, which can touch any face. The
-    // caller runs it once per game tic per vertex-buffer copy (DOOM-0569); do not
-    // narrow it further.
+    // caller runs it once per game tic per vertex-buffer copy (DOOM-0569). A run of
+    // wall vertices that never move shares one texture source, so it is checked once
+    // and written whole (DOOM-0612, user ruling 2026-11-14; static_runs.h). Do not
+    // narrow it further without the user.
     for (i = 0; i < mesh->numverts; i++)
     {
         const rb_vertex_t* v = &mesh->verts[i];
         float newz;
+        if (r < mesh->numruns && mesh->runs[r].first == i)
+        {
+            const int first = i, end = i + mesh->runs[r].count;
+            int newtex = wall_live_tex(v, shadow[first].texnum);
+            if (newtex != shadow[first].texnum)
+            {
+                for (; i < end; i++)
+                    shadow[i].texnum = dst[i].texnum = newtex;
+                retex = 1;
+            }
+            i = end - 1;
+            r++;
+            continue;
+        }
         // Live texture id (DOOM-0066). A pressed switch swaps the sidedef's
         // texture and animated walls/flats cycle the translation table each tic;
         // the baked texnum reflects neither. Re-derive exactly what the software
@@ -1954,14 +1994,7 @@ int RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst, rb_vertex_t* s
                 newtex = flattranslation[pic];
         }
         else if (v->vtexside >= 0)
-        {
-            const side_t* sd = &sides[v->vtexside];
-            int base = v->vtexslot == 0 ? sd->toptexture
-                     : v->vtexslot == 2 ? sd->bottomtexture
-                     : sd->midtexture;
-            if (base > 0 && base < numtextures)
-                newtex = texturetranslation[base];
-        }
+            newtex = wall_live_tex(v, newtex);
         // A pressed/reverted switch or an animated texture changes the live id;
         // flag it so the RT back-end refreshes the NEE emitter set (DOOM-0082).
         if (newtex != shadow[i].texnum)

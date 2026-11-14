@@ -83,6 +83,13 @@ All notable changes to DOOM_Ants are documented here. The format follows
   2026-11-13 on an RX 6600: E1M1 with STARTAN3's real depth draws its
   scene in 0.9 ms instead of 3.6 ms at half scale.
 
+- **Walls with real depth no longer cost processor time every tic** (DOOM-0612)
+  The check for changed textures visited every corner of every face, and
+  a wall with real depth has many. A wall that cannot move now has its
+  texture checked once for the whole wall. Measured 2026-11-14 on E1M3,
+  Ultra, rasterised view at half scale: 0.75 to 1.74 ms a frame before,
+  0.03 ms after.
+
 - **Ultra's ray-traced view no longer leaves bits of wall hanging in the sky beside a window** (DOOM-0609)
   After a turn, patches of the wall stayed over the sky inside each
   window. The step that sharpens the half-size picture treated sky as

@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=612 -->
+<!-- ants-roadmap-id-high-water: DOOM=613 -->
 
 # Roadmap
 
@@ -19610,6 +19610,8 @@ in CLAUDE.md describes.
   see DOOM-0612.
   Left: BROWN96, BROWNGRN, BROWN144, METAL2, NUKEDGE1, the grey concrete
   walls, STONE2 and the wood. Not run: Windows.
+  User 2026-11-14: keep BROWN1's panelled look (two-step panels, not
+  finer steps). DOOM-0612 is to be fixed before the second batch.
   **Layman:** Ultra's walls get real depth that holds up from every angle, instead of a painted-on trick that slides when seen from the side.
   Kind: feature.
   Source: user-request-2026-11-13.
@@ -19647,7 +19649,7 @@ in CLAUDE.md describes.
   Source: measurement-2026-11-13.
   Lanes: renderer.
 
-- 📋 [DOOM-0612] **The per-tic vertex scan costs more CPU with every wall given real depth.**
+- ✅ [DOOM-0612] **The per-tic vertex scan costs more CPU with every wall given real depth.**
   RB_UpdateMeshHeights visits every vertex once per game tic per
   vertex-buffer copy, to move doors and lifts and to carry animated
   textures and switch swaps. Relief walls multiply the vertices.
@@ -19663,9 +19665,41 @@ in CLAUDE.md describes.
   route: relief faces stand on sectors that cannot move, so only their
   texture id needs the scan; one check per wall could stand for all its
   faces.
+  User 2026-11-14: lift DOOM-0569's "do not narrow" for this case; fix
+  before the second batch. Done: static_runs.h groups consecutive wall
+  vertices that follow no plane and share sidedef, slot and texture; the
+  mesh keeps that list, and the scan checks each run once and writes it
+  whole. tests/static_runs_test.cpp holds the grouping.
+  Proved equal: a temporary build ran the old and new scans side by side
+  each tic and compared the RAM copy and the return value. Ultra, crafted
+  demos: E1M1 78500 scans, E1M3 2100 tics with lifts moving, mixmap
+  104000 scans: 0 differences. With a relief texture forced to flip every
+  70 scans: 51000 scans, 0 differences; a mutant that skipped one vertex
+  per run write showed 5040 of 10010.
+  Measured, 50 % scale, private display, [cpu_build] reheight, lowest to
+  highest row, after batch 1 then after this: E1M3 STARG3 raster 0.75-1.74
+  to 0.03; traced 1.98-3.11 to 0.09-0.11. STARTAN1 raster 0.78-0.99 to
+  0.03, traced 2.02-2.21 to 0.09-0.11. E2M2 BROWN1 raster 0.12-0.18 to
+  0.03-0.05. E1M1 STARGR1 raster 0.31-0.78 to 0.01. Raster captures match
+  the batch-1 ones but for the profiler text and one distant sprite.
+  Found: E1M1's and mixmap's crafted demos do not end under -timedemo in
+  Ultra; not looked into.
   **Layman:** Each wall rebuilt with real depth adds a little processor work every frame; on a level full of them it adds up to about a millisecond.
   Kind: perf.
   Source: DOOM-0610-measurement-2026-11-13.
+  Lanes: renderer.
+
+- 📋 [DOOM-0613] **Some crafted demos do not end under -timedemo in Ultra.**
+  Seen 2026-11-14 with a temporary DOOM-0612 comparison build, Ultra,
+  private display. The scratch kit's d1m1 (doom.wad) and mixmap (doom2)
+  demos ran until a 1200 s cutoff with no "timed N gametics" line; d1m3
+  and walkuse ended normally. One d1m3 run under a probe that changed
+  texturetranslation ended E1M3 early and then loaded E1M1 and kept going.
+  Not checked: whether a plain build or Classic does the same. The
+  2026-09-26 notes have these demos ending under Classic.
+  **Layman:** A test recording that should play once and quit kept the game running instead.
+  Kind: investigate.
+  Source: DOOM-0612-verification-2026-11-14.
   Lanes: renderer.
 
 ## 0.13.0 — The player's experience

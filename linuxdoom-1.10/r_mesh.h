@@ -153,11 +153,20 @@ typedef struct
 // is pure magenta (255,0,255), unused by any DOOM HUD/menu/font art.
 #define RB_OVERLAY_KEY  251
 
+// DOOM-0612: verts[first .. first+count) are wall vertices that never move and
+// share one texture source, so the per-tic scan checks them once (static_runs.h).
+typedef struct
+{
+    int first, count;
+} rb_vrun_t;
+
 typedef struct
 {
     rb_vertex_t* verts;     // numverts entries, owned by this struct
     int          numverts;  // always a multiple of 3
     int          numtris;   // numverts / 3
+    rb_vrun_t*   runs;      // numruns entries in vertex order, or NULL. Owned here.
+    int          numruns;
     int*         tri_ss;    // per-triangle subsector index (numtris entries), so a
                             // ray hit can find its room's GI probe (DOOM-0009 step
                             // 4c). -1 if untagged. Owned by this struct.
