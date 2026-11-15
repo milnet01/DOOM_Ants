@@ -19268,6 +19268,17 @@ in CLAUDE.md describes.
   slightly darker blue; filled to the top, no empty space for more
   liquid; it must read as glass, maybe with bubbles inside. MEDI not
   mentioned.
+  2026-11-15: BON1 redone per the user's notes, live, waiting on their
+  look. doom_bon1.py: the profile scaled by 0.8 to 13.8 high, 11.2 wide
+  (the sprite stands 14 high: 18 tall, top offset 14); liquid a little
+  darker and up to the lip, no empty neck; pale glass at the base and
+  lip; a painted glint and Voronoi bubbles in the colour and glow maps
+  (pickups bake no roughness map). 280 triangles (cap 300). Previous
+  builder kept as pickups/previous/doom_bon1-2026-11-05.py. Seen on E1M1
+  at 96 -3072 from 144 -2990 245, Ultra raster and traced: bubbles plain
+  in raster, softer traced. pickup_models_test and rb_model_test pass.
+  MEDI: no verdict. Next: batch 2, the keys and the ammo (user
+  2026-11-15).
   **Layman:** Health, armour, ammo, keys and power-ups become real 3D objects, so their glow can come from exactly the right spot inside them.
   Kind: feature.
   Source: user-request-2026-11-02.
