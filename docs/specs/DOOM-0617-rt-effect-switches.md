@@ -1,7 +1,7 @@
 <!-- ants-spec-format: 1 -->
 # DOOM-0617 — Ray tracing per effect: a fast base, a switch per traced effect, and a hardware test that picks them
 
-**Status:** spec draft (2026-11-15).
+**Status:** accepted (2026-11-15).
 **Kind:** feature.
 **Source:** ROADMAP DOOM-0617 (user requests 2026-11-15).
 **Serves:** DOOM-0279 (a steady 30 FPS in the traced views).
@@ -50,8 +50,9 @@ level (`RunGiBake`, `formulas/gi_probe.glsl`). Its fog is marched, not traced (`
 no reflection rays and no traced ambient occlusion.
 
 What the rasterised frame fakes (DOOM-0170): `mesh.frag` sums the nearest point lights per
-subsector from `BuildRasterPointLights`, with no cast shadows; SSAO darkens the ambient term
-only; blob decals sit under things; the flashlight alone has a shadow map. `mesh.frag` writes
+subsector from `BuildRasterPointLights`, with no cast shadows; SSAO darkens the ambient term, and
+the direct term by half (`AO_DIRECT_WEIGHT` in `formulas/scene_recombine.glsl`, the recombination
+the composite and the bloom bright pass share); blob decals sit under things; the flashlight alone has a shadow map. `mesh.frag` writes
 `outAmbient` and `outDirect`, whose alpha is linear depth. It writes no normal or world position.
 No raster shader uses ray queries, and no TLAS is bound to the raster pipeline layout.
 
@@ -127,25 +128,30 @@ On a GPU without ray tracing only Preset (Low and Medium) and Test My Hardware s
 
 The rasterised frame gains what a traced pass needs, then one compute pass per effect.
 
-- **What the scene pass adds.** `mesh.frag` writes a third target: the geometric normal and,
-  in the last component, the triangle's subsector, so a later pass can find that subsector's
-  point lights. World position is rebuilt from `outDirect.a`'s linear depth with the same camera
-  the scene pass used. The extra target is written only when `rt_mode` is 1.
-- **TLAS upkeep.** When `rt_mode` is 1, the frame runs `RecordRefitAS` as the traced frame does,
-  so doors and lifts in the TLAS move with the world. Shadow rays cull to the world mask (`0x01`,
-  as `occluded` does), so the sprite TLAS is not needed and is not built.
+- **What the scene pass adds.** `mesh.frag` writes two more targets: the geometric normal
+  (RGBA16F) and the triangle's subsector (R32UI), so a later pass can find that subsector's point
+  lights. The subsector is `0xFFFFFFFF` where `mesh.frag` adds no point lights: sprites, the weapon
+  and sky. World position is rebuilt from `outDirect.a`'s linear depth with the same camera the
+  scene pass used. The extra targets are written only when `rt_mode` is 1.
+- **TLAS upkeep.** When `rt_mode` is 1, the frame refits the world BLAS (`RecordRefitAS`, when
+  `g.blasDirty`) and then rebuilds the TLAS, as the traced frame does, so doors and lifts move with
+  the world. A refit alone leaves the TLAS on the old extents: the traced frame's rebuild is in
+  `BuildSpriteTlas`. Shadow rays cull to the world mask (`0x01`, as `occluded` does), so the
+  rebuild leaves out the sprite instance. The raster frame does not read the sprite buffer: it
+  holds the last traced frame's sprites.
 - **Traced Shadows.** A compute pass computes the point lights' direct light with a shadow ray
   per light, using the same per-subsector list and falloff as `mesh.frag`. When the switch is on,
-  `mesh.frag` leaves its point-light sum out of `outDirect`, and the composite adds this pass's
-  result in its place. It traces at the Trace Quality resolution — quarter, half or full of the
+  `mesh.frag` leaves its point-light sum out of `outDirect`, and `scene_recombine.glsl` adds this
+  pass's result to the direct term in its place, before the AO factor, so the composite and bloom
+  both see it. It traces at the Trace Quality resolution — quarter, half or full of the
   render resolution — accumulates over frames, and is upscaled with a depth-and-normal-aware
   (bilateral) filter, as idTech 8 does
   (`docs/research/DOOM-0279-rt-frame-time-2026-11-15.md` § 2). Lights past a fixed count per pixel,
   nearest first, keep the unshadowed sum, so a crowded room costs a bounded number of rays.
 - **Traced Corner Shading.** A compute pass casts short rays over the hemisphere at each pixel and
   writes the open fraction, at the same resolution and with the same accumulation and upscale.
-  When the switch is on it replaces SSAO's image in the composite; SSAO does not run. It darkens
-  the ambient term only, as SSAO does.
+  When the switch is on its image replaces SSAO's as the AO input to `scene_recombine.glsl`, so it
+  darkens the ambient and direct terms with SSAO's weights; SSAO does not run.
 - **Shared noise handling.** Both passes take a fresh random sample each frame and blend it into
   a history kept per pixel, re-projected with the camera and rejected where depth or normal
   disagree, as `svgf_temporal.comp` does for the traced frame.
@@ -165,25 +171,27 @@ default render scale. The settings rows keep their own values when a preset does
 
 ### 4.5 The hardware test
 
-- **When it runs.** At first launch, and again when the GPU identity changes. The identity is the
-  Vulkan vendor ID, device ID and driver version. It also runs when the player picks Test My
-  Hardware. At first launch it runs once the IWAD is chosen, before the title screen, with a line
-  of text saying what it is doing. Any key cancels it.
+- **When it runs.** The first time a 3D tier starts with no GPU identity recorded, and again when
+  the identity changes. The identity is the Vulkan vendor ID, device ID and driver version. It
+  also runs when the player picks Test My Hardware. It measures in the tier being started; Classic,
+  the default tier, does not start Vulkan, so it never runs there. A line of text says what it is
+  doing. Any key cancels it.
 - **What it measures.** It loads the IWAD's first map at the player start, with monsters held
   still (as `-freeze` does), and turns the camera a full circle over each test. For each preset,
   most demanding first, it renders a settling span and then a measured span. It keeps each
   frame's GPU time from the timestamps the profiler and `-frameledger` already read
   (`g.gpuTimerPool`, `RL_Active`).
 - **How it decides.** It picks the most demanding preset whose slow frames still meet the target:
-  the 99th-percentile frame time at or under the target frame time. The decision is a pure
+  the 99th-percentile frame time at or under the target frame time. When none meets it, Low. The decision is a pure
   function in a new header, so a test can hold it without a GPU (§ 8).
 - **The target.** Each preset is held to its view's floor in `docs/standards/performance.md`:
   30 FPS for a preset that traces, 60 FPS for one that does not. (§ 10 asks the user.)
 - **What it writes.** The chosen preset's rows, and the GPU identity it measured. A cancelled or
   failed test writes nothing and leaves the settings as they were. Low is the fallback when no
   test has completed.
-- **The player wins.** Changing any row by hand makes the preset Custom, and the test does not
-  run again on its own until the GPU identity changes.
+- **The player wins.** A row changed by hand keeps its value, and the Preset row shows Custom when
+  the rows match no preset (§ 4.2). A hand change also records the GPU identity, so the test does
+  not run again on its own until that identity changes.
 
 ## 5. Data & resources
 
@@ -199,13 +207,13 @@ New config keys, in `m_misc.c`'s `defaults[]`, each read through `config_bounds.
 | `gfx_gpu_id` | text: vendor, device and driver, hex | empty |
 
 `rt_view` stays, for the developer paths; the menu no longer writes it. A config from before this
-change has no `rt_mode`, so its defaults apply and the test runs at next launch, because
-`gfx_gpu_id` is empty.
+change has no `rt_mode`, so its defaults apply and the test runs the next time a 3D tier starts,
+because `gfx_gpu_id` is empty.
 
-New GPU resources, created only when `g.rtEnabled`: the normal-and-subsector target at render
-resolution (RGBA16F); for each Effects pass, a trace-resolution image, a full-resolution history
-pair and the upscaled result. The raster pipeline layout gains the TLAS binding the compute
-passes read. Two new compute shaders, one per effect, with a shared include for the history and
+New GPU resources, created only when `g.rtEnabled`: the normal (RGBA16F) and subsector (R32UI)
+targets at render resolution; for each Effects pass, a trace-resolution image, a full-resolution history
+pair and the upscaled result. The two compute passes have their own pipeline layouts, which
+bind the TLAS. Two new compute shaders, one per effect, with a shared include for the history and
 upscale.
 
 ## 6. Performance budget
@@ -214,7 +222,7 @@ Measured per `docs/standards/performance.md`, at the user's scale (`-scale 5`, `
 as in the research note), on E1M1's start under `-inspect -freeze`, interleaved A/B:
 
 - **Off:** the rasterised frame's GPU time does not grow: same build, `rt_mode` 0, against the
-  commit before B1. The new target is not written in Off.
+  commit before B1. The new targets are not written in Off.
 - **Effects, Traced Shadows on, Trace Quality Medium:** a target of at most 6 ms of GPU time over
   Off.
 - **Effects, Traced Corner Shading on, Trace Quality Medium:** a target of at most 3 ms over Off.
@@ -228,9 +236,10 @@ The 6 ms and 3 ms are design targets to bisect against, not measured figures.
 
 - **B1** Settings: the keys (§ 5), the menu rows (§ 4.2), `rt_mode` driving `rb_rtdebug` in place of
   `RB_ApplyTierRt`'s forcing, `~`. Effects draws as Off until B3. Check: `make test`; the rows
-  appear and save; Off and Full captures match the commit before.
-- **B2** The Effects frame's plumbing: the third target, the TLAS binding, `RecordRefitAS` in
-  Effects frames. Check: an Effects capture with both switches off matches Off; the Off frame time
+  appear and save; Off and Full captures match the commit before, its arm pinned with `-rtview 0`
+  or `-rtview 6`.
+- **B2** The Effects frame's plumbing: the normal and subsector targets, the TLAS binding, the refit
+  and TLAS rebuild in Effects frames. Check: an Effects capture with both switches off matches Off; the Off frame time
   is unchanged.
 - **B3** Traced Shadows. Check: a capture where a pillar stands between a lamp and a wall shows its
   shadow in Effects and not in Off; GPU time against § 6.
@@ -248,22 +257,24 @@ The 6 ms and 3 ms are design targets to bisect against, not measured figures.
   use at the commit before B1. *Breaks when:* a change for Effects reaches `RecordRtTrace` or
   `pathtrace.comp`.
 - **INV-2** — Off is today's rasterised view, pixel for pixel. *Test:* `scripts/ab_capture.sh`
-  at E1M1 start in `renderer 2` and `renderer 1` with `rt_mode` 0, against the commit before B1,
-  with a same-build repeat as the noise control: the difference within the control's. *Breaks
-  when:* the scene pass writes or reads the new target in Off, or the composite reads an Effects
+  at E1M1 start in `renderer 2` and `renderer 1` with `rt_mode` 0, against the commit before B1 pinned with
+  `-rtview 0` (there Ultra, `renderer 1`, draws traced), with a same-build repeat as the noise control: the difference within the control's. *Breaks
+  when:* the scene pass writes or reads the new targets in Off, or the composite reads an Effects
   image there.
 - **INV-3** — An Effects frame with both switches off looks like Off. *Test:* the same capture pair,
   `rt_mode` 1 with `rt_shadows` 0 and `rt_ao` 0 against `rt_mode` 0, same build. *Breaks when:*
   `mesh.frag` drops its point-light sum without the shadow pass adding it back, or SSAO stops when
   traced corner shading is off.
-- **INV-4** — Each effect is drawn once: never the fake and the traced version together, never
-  neither. *Test:* `tests/gfx_settings_test.cpp` holds the gate function that maps the settings to
-  the passes that run, over every combination of `rt_mode`, `rt_shadows`, `rt_ao` and `ssao`, and
-  checks each effect has exactly one source. *Breaks when:* the point-light sum and the shadow
+- **INV-4** — Each effect is drawn at most once, never the fake and the traced version together,
+  and is drawn whenever a setting asks for it. *Test:* `tests/gfx_settings_test.cpp` holds the gate
+  function that maps the settings to the passes that run, over every combination of `rt_shadows`,
+  `rt_ao` and `ssao` with `rt_mode` 0 and 1. It checks that point lights have exactly one source,
+  and corner shading one when `ssao` is on or `rt_mode` is 1 with `rt_ao` on, and none otherwise. *Breaks when:* the point-light sum and the shadow
   pass both add light, or SSAO and traced corner shading both darken.
 - **INV-5** — A door that moves moves in the traced shadows too. *Test:* a capture sequence at an
   E1M1 door with `rt_mode` 1 and Traced Shadows on, door shut then open: the light through the
-  doorway appears once it opens. *Breaks when:* `RecordRefitAS` stays inside `RecordRtTrace` only.
+  doorway appears once it opens. *Breaks when:* `RecordRefitAS` stays inside `RecordRtTrace` only, or the TLAS is not rebuilt
+  after the refit.
 - **INV-6** — A GPU without ray tracing never runs a traced pass. *Test:*
   `tests/gfx_settings_test.cpp` — with ray tracing unavailable, every preset and every `rt_mode`
   value resolve to the rasterised frame, and the test's decision never returns High or Ultra.
@@ -276,7 +287,8 @@ The 6 ms and 3 ms are design targets to bisect against, not measured figures.
 - **INV-8** — The test runs again only when the GPU identity changes or the player asks, and a
   cancelled or failed test changes nothing. *Test:* `tests/gfx_settings_test.cpp` on the
   should-run function: same identity (no), changed driver (yes), empty identity (yes); and on the
-  result writer: a cancelled result leaves every key as it was. *Breaks when:* the identity
+  result writer: a cancelled result leaves every key as it was, and a row changed by hand records
+  the identity. *Breaks when:* the identity
   compare is reduced to the device ID, or a partial result is written.
 - **INV-9** — A hand-edited config cannot break the settings. *Test:* `tests/config_bounds_test.cpp`
   gains the § 5 keys' bounds: negative, past the top, and text where a number belongs. *Breaks
@@ -303,6 +315,12 @@ The 6 ms and 3 ms are design targets to bisect against, not measured figures.
 
 - **The test's target.** § 4.5 holds a traced preset to 30 FPS and a rasterised one to 60. The
   user may prefer one target for both. Asked with this spec.
+- **What the traced shadow pass multiplies by.** `mesh.frag` builds the point-light term as
+  `POINT_LIGHT_STRENGTH * albedo * ((plight + ppool) * diffW)`, after a gain and roll-off over the
+  summed lights, plus a highlight `pspec` that uses the shading normal and the material's gloss.
+  No target § 4.3 names carries albedo, `diffW` or the highlight's inputs. Before B3, pin what the
+  pass outputs, which target carries the surface terms, and whether the highlight is shadowed.
+  Not yet decided.
 - **Trace Quality in Full.** Should the row also drive DOOM-0188's reduced-resolution lighting in
   the Full mode once that lands? Left to DOOM-0188.
 
