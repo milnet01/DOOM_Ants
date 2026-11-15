@@ -15489,6 +15489,13 @@ against.
   row and an automatic hardware test pick the switches the card can
   hold at 30 FPS. The research's quality levers (lighting resolution,
   denoiser) may still sit inside an effect. Next: the spec.
+  Spec: docs/specs/DOOM-0617-rt-effect-switches.md, accepted
+  2026-11-15 after one review-contract loop (the one-loop cap).
+  12 verified findings, 11 fixed (677e1c6). One design question
+  is left open in its section 10 and must be settled before B3:
+  what the traced shadow pass multiplies by (albedo, diffW and the
+  highlight inputs reach no target). Loop log:
+  docs/reviews/DOOM-0617-rt-effect-switches-loop-log.md.
   **Layman:** A quality menu like other PC games have: pick one preset, or tune each part, so the ray-traced view can trade a little sharpness for a steady 30 FPS.
   Kind: feature.
   Source: user-request-2026-11-15.
