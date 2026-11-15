@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=616 -->
+<!-- ants-roadmap-id-high-water: DOOM=618 -->
 
 # Roadmap
 
@@ -14454,6 +14454,20 @@ against.
   2026-10-26). 60 stays this item's stretch goal: the user's words,
   "unless you can come up with a very, very effective way of doing ray
   tracing without sacrificing the quality". Reaching 30 comes first.
+  2026-11-15, measured at f62bee4 (E1M1 start, the user's settings, 4270x2000
+  swapchain at render scale 50): 50.95 ms present-total, 19.6 FPS.
+  Megakernel 31.01, denoise+post+taau 16.23 (a-trous 10.28) ms; CPU under
+  1 ms. specular 0 saves about 4.5 ms of megakernel; rt_fog 0 about 3 ms;
+  RADV_PERFTEST=cswave32 nothing. Runs drift about 15%, so interleave A/B.
+  Two items in the 2026-11-09 list no longer hold: since DOOM-0597 every
+  pixel runs NEE when specular is on, so pathtrace.comp:1709's "3 of 4
+  lanes return early" applies only with the lobe off; and the a-trous
+  still filters specular when it is off. Shadow rays already use
+  TerminateOnFirstHit | Opaque. About 18 ms must go for 30 FPS, which no
+  lossless item on the list reaches alone. Research and table:
+  docs/research/DOOM-0279-rt-frame-time-2026-11-15.md. The way forward
+  the research points to is idTech 8's: lighting at reduced resolution,
+  denoised there, behind the new quality settings.
   **Layman:** The ray-traced mode runs at about 30 frames a second on this card; this is the long-term push to double that, and to stop each new effect quietly eating the difference.
   Kind: perf.
   Lanes: renderer, shaders.
@@ -15453,6 +15467,35 @@ against.
   Source: split-from-DOOM-0569-2026-11-13.
   Lanes: renderer.
   Splits-from: DOOM-0569.
+
+- 📋 [DOOM-0617] **Add ray-tracing quality settings: a preset row plus one row per costly part, each Low / Medium / High / Ultra.**
+  User 2026-11-15: "Perhaps we need quality settings in the settings menu
+  to manage quality of various aspects of this engine." Shape chosen by the
+  user the same day: one preset row (Low / Medium / High / Ultra, plus
+  Custom when a detail row is changed by hand) and a detail row per costly
+  part, each Low / Medium / High / Ultra. The existing Render Scale, Fog and
+  Bloom rows stay. The user also agreed (2026-11-15) that the default may
+  lose a little sharpness to reach 30 FPS, provided the loss sits behind
+  this setting, the top setting keeps today's look, and before-and-after
+  shots with FPS figures are shown first. Candidate rows, ranked in
+  docs/research/DOOM-0279-rt-frame-time-2026-11-15.md: lighting
+  resolution, denoiser, highlights, fog, bounces. Needs a spec
+  (menu, config and renderer). Serves DOOM-0279.
+  **Layman:** A quality menu like other PC games have: pick one preset, or tune each part, so the ray-traced view can trade a little sharpness for a steady 30 FPS.
+  Kind: feature.
+  Source: user-request-2026-11-15.
+  Lanes: renderer, menu.
+
+- 📋 [DOOM-0618] **List every ray-traced effect that has no faked twin in the rasterised view, and file each.**
+  User 2026-11-15: "For rasterised we also still need to fake the ray
+  traced effects as well." Order agreed the same day: right after the
+  ray-traced speed push (DOOM-0279), so the fakes copy the final set of
+  effects. The rule is CLAUDE.md's Render tiers table. DOOM-0238 (faked
+  fog and god rays) is one already filed.
+  **Layman:** The fast rasterised view should fake each ray-traced effect cheaply; this finds the ones it still lacks.
+  Kind: investigate.
+  Source: user-request-2026-11-15.
+  Lanes: renderer.
 
 ## 0.12.0 — Light and materials
 
