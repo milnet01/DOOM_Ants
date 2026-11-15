@@ -19563,6 +19563,12 @@ in CLAUDE.md describes.
   none dropped.
   Left: METAL1, the wood and cobble flats, DOOM II's walls. Not seen:
   anything in the traced view. Not run: Windows.
+  2026-11-15: METAL1 live, waiting on the user's look. New builder
+  walls/doom_metal1.py: hexfloor.py's hex layout stacked to 64x128,
+  wornmetal.py plates over a rusted backing; baked at 8, pom depth 2.1
+  after relevel. Seen in Ultra raster on E1M5 (-152 832 0) and E1M2
+  (1696 348 90). E1M2 loads 656.9 MB, 49 materials. User 2026-11-15: HD
+  art with parallax for now; real hex geometry is DOOM-0616.
   **Layman:** In Ultra, doors, lifts and the commonest walls and ceilings get new detailed surfaces with real depth, in a dark, worn, frightening style that keeps DOOM's layouts.
   Kind: feature.
   Source: user-request-2026-11-13.
@@ -19675,6 +19681,10 @@ in CLAUDE.md describes.
   2026-11-15: SP_HOT1 is back as real geometry (DOOM-0614 found no
   defect a player can see). relief.csv holds 663 rows. Left: METAL1,
   DOOM II's walls, cobble and wood flats.
+  2026-11-15: METAL1 cannot be real geometry (hexes; relief cuts
+  rectangles only). User chose HD art with parallax (DOOM-0606) and
+  slanted edges as DOOM-0616. Left: DOOM II's walls, cobble and wood
+  flats.
   **Layman:** Ultra's walls get real depth that holds up from every angle, instead of a painted-on trick that slides when seen from the side.
   Kind: feature.
   Source: user-request-2026-11-13.

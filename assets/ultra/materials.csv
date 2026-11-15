@@ -90,3 +90,4 @@ GRAY4,hero,heroes/concrete/GRAY4_alb.png,heroes/concrete/GRAY4_nrm.png,heroes/co
 GRAY5,hero,heroes/concrete/GRAY5_alb.png,heroes/concrete/GRAY5_nrm.png,heroes/concrete/GRAY5_rgh.png,,heroes/concrete/GRAY5_ao.png,,heroes/concrete/GRAY5_hgt.png,1,noPom|noDetile
 GRAY7,hero,heroes/concrete/GRAY7_alb.png,heroes/concrete/GRAY7_nrm.png,heroes/concrete/GRAY7_rgh.png,,heroes/concrete/GRAY7_ao.png,,heroes/concrete/GRAY7_hgt.png,1,noPom|noDetile
 GRAYTALL,hero,heroes/concrete/GRAYTALL_alb.png,heroes/concrete/GRAYTALL_nrm.png,heroes/concrete/GRAYTALL_rgh.png,,heroes/concrete/GRAYTALL_ao.png,,heroes/concrete/GRAYTALL_hgt.png,1,noPom|noDetile
+METAL1,hero,heroes/brownmetal/METAL1_alb.png,heroes/brownmetal/METAL1_nrm.png,heroes/brownmetal/METAL1_rgh.png,heroes/brownmetal/METAL1_met.png,heroes/brownmetal/METAL1_ao.png,,heroes/brownmetal/METAL1_hgt.png,1,pom|noDetile|depth=2.1

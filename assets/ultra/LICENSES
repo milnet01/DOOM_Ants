@@ -491,3 +491,9 @@ assets/ultra/heroes/concrete/GRAYTALL_nrm.png  Blender-Scripts/walls/doom_gray.p
 assets/ultra/heroes/concrete/GRAYTALL_rgh.png  Blender-Scripts/walls/doom_gray.py  CC0-first-party
 assets/ultra/heroes/concrete/GRAYTALL_ao.png  Blender-Scripts/walls/doom_gray.py  CC0-first-party
 assets/ultra/heroes/concrete/GRAYTALL_hgt.png  Blender-Scripts/walls/doom_gray.py  CC0-first-party
+assets/ultra/heroes/brownmetal/METAL1_alb.png  Blender-Scripts/walls/doom_metal1.py  CC0-first-party
+assets/ultra/heroes/brownmetal/METAL1_nrm.png  Blender-Scripts/walls/doom_metal1.py  CC0-first-party
+assets/ultra/heroes/brownmetal/METAL1_rgh.png  Blender-Scripts/walls/doom_metal1.py  CC0-first-party
+assets/ultra/heroes/brownmetal/METAL1_met.png  Blender-Scripts/walls/doom_metal1.py  CC0-first-party
+assets/ultra/heroes/brownmetal/METAL1_ao.png  Blender-Scripts/walls/doom_metal1.py  CC0-first-party
+assets/ultra/heroes/brownmetal/METAL1_hgt.png  Blender-Scripts/walls/doom_metal1.py  CC0-first-party

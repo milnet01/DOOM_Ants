@@ -8,6 +8,10 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **Ultra's grey hex-plate wall (METAL1) is worn steel with rust runs** (DOOM-0606)
+  Its hexes keep DOOM's layout over a rusted backing. Their depth is
+  still the painted kind: real geometry cannot cut hexes yet (DOOM-0616).
+
 - **Ultra's panel walls, goo-room walls and computer walls are rebuilt to match the doors** (DOOM-0606)
   The tan, green and brown walls were tinted photographs that read as
   wood. They are now pressed steel panels and riveted steel sheet in
