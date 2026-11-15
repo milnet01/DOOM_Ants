@@ -14468,6 +14468,11 @@ against.
   docs/research/DOOM-0279-rt-frame-time-2026-11-15.md. The way forward
   the research points to is idTech 8's: lighting at reduced resolution,
   denoised there, behind the new quality settings.
+  User 2026-11-15: ray tracing "should shift with the capability of
+  the hardware"; a top-end card should get more than today's look.
+  DOOM-0617's hardware test already picks the top preset a card holds;
+  presets past Ultra (more rays, full-resolution lighting) are later
+  work here, once the 30 FPS floor holds on the RX 6600.
   **Layman:** The ray-traced mode runs at about 30 frames a second on this card; this is the long-term push to double that, and to stop each new effect quietly eating the difference.
   Kind: perf.
   Lanes: renderer, shaders.
@@ -15496,6 +15501,11 @@ against.
   what the traced shadow pass multiplies by (albedo, diffW and the
   highlight inputs reach no target). Loop log:
   docs/reviews/DOOM-0617-rt-effect-switches-loop-log.md.
+  2026-11-15: the user answered the spec's open questions (loop log
+  row amend-1): test target 30 FPS traced / 60 not, "for a start";
+  highlights stay unshadowed at first; the test measures with Ultra's
+  art where supported; switches for Shadows and Corner Shading now.
+  Next: B1.
   **Layman:** A quality menu like other PC games have: pick one preset, or tune each part, so the ray-traced view can trade a little sharpness for a steady 30 FPS.
   Kind: feature.
   Source: user-request-2026-11-15.

@@ -77,7 +77,7 @@ All by the user, 2026-11-15, unless marked.
 - **An automatic test picks the settings for the hardware.**
 - **A preset row stays** (Low / Medium / High / Ultra, and Custom once a row is changed by hand),
   from the first shape agreed that day.
-- **Which effects get a switch now** (author's reading of § 2, put to the user with this spec):
+- **Which effects get a switch now** (user, 2026-11-15, as proposed from § 2):
   - *Shadows* — traced now. It is where nearly all the traced frame's cost goes.
   - *Corner shading* (ambient occlusion) — traced now. It is cheap, short rays.
   - *Reflections* — no switch until DOOM-0104 builds traced reflections; a switch with nothing
@@ -140,10 +140,13 @@ The rasterised frame gains what a traced pass needs, then one compute pass per e
   rebuild leaves out the sprite instance. The raster frame does not read the sprite buffer: it
   holds the last traced frame's sprites.
 - **Traced Shadows.** A compute pass computes the point lights' direct light with a shadow ray
-  per light, using the same per-subsector list and falloff as `mesh.frag`. When the switch is on,
-  `mesh.frag` leaves its point-light sum out of `outDirect`, and `scene_recombine.glsl` adds this
-  pass's result to the direct term in its place, before the AO factor, so the composite and bloom
-  both see it. It traces at the Trace Quality resolution — quarter, half or full of the
+  per light, using the same per-subsector list and falloff as `mesh.frag`. It outputs the shadowed
+  point-light sum after `mesh.frag`'s gain and roll-off, with no surface colour in it. When the
+  switch is on, `mesh.frag` leaves its point-light diffuse term out of `outDirect` and writes the
+  surface factor it would have multiplied by (`albedo * diffW`) to a surface target instead;
+  `scene_recombine.glsl` multiplies the two and adds the product to the direct term, before the AO
+  factor, so the composite and bloom both see it. The point-light highlight (`pspec`) stays in
+  `outDirect`, unshadowed (user, 2026-11-15: not at first). It traces at the Trace Quality resolution — quarter, half or full of the
   render resolution — accumulates over frames, and is upscaled with a depth-and-normal-aware
   (bilateral) filter, as idTech 8 does
   (`docs/research/DOOM-0279-rt-frame-time-2026-11-15.md` § 2). Lights past a fixed count per pixel,
@@ -173,8 +176,10 @@ default render scale. The settings rows keep their own values when a preset does
 
 - **When it runs.** The first time a 3D tier starts with no GPU identity recorded, and again when
   the identity changes. The identity is the Vulkan vendor ID, device ID and driver version. It
-  also runs when the player picks Test My Hardware. It measures in the tier being started; Classic,
-  the default tier, does not start Vulkan, so it never runs there. A line of text says what it is
+  also runs when the player picks Test My Hardware. It measures with Ultra's art wherever the card
+  supports Ultra, because the settings are shared and Ultra's art costs more (user, 2026-11-15);
+  otherwise with Solid's. Classic, the default tier, does not start Vulkan, so it never runs
+  there. A line of text says what it is
   doing. Any key cancels it.
 - **What it measures.** It loads the IWAD's first map at the player start, with monsters held
   still (as `-freeze` does), and turns the camera a full circle over each test. For each preset,
@@ -185,7 +190,8 @@ default render scale. The settings rows keep their own values when a preset does
   the 99th-percentile frame time at or under the target frame time. When none meets it, Low. The decision is a pure
   function in a new header, so a test can hold it without a GPU (§ 8).
 - **The target.** Each preset is held to its view's floor in `docs/standards/performance.md`:
-  30 FPS for a preset that traces, 60 FPS for one that does not. (§ 10 asks the user.)
+  30 FPS for a preset that traces, 60 FPS for one that does not (user, 2026-11-15, "for a
+  start"; § 10).
 - **What it writes.** The chosen preset's rows, and the GPU identity it measured. A cancelled or
   failed test writes nothing and leaves the settings as they were. Low is the fallback when no
   test has completed.
@@ -210,8 +216,8 @@ New config keys, in `m_misc.c`'s `defaults[]`, each read through `config_bounds.
 change has no `rt_mode`, so its defaults apply and the test runs the next time a 3D tier starts,
 because `gfx_gpu_id` is empty.
 
-New GPU resources, created only when `g.rtEnabled`: the normal (RGBA16F) and subsector (R32UI)
-targets at render resolution; for each Effects pass, a trace-resolution image, a full-resolution history
+New GPU resources, created only when `g.rtEnabled`: the normal (RGBA16F), subsector (R32UI) and
+surface-factor (RGBA16F) targets at render resolution; for each Effects pass, a trace-resolution image, a full-resolution history
 pair and the upscaled result. The two compute passes have their own pipeline layouts, which
 bind the TLAS. Two new compute shaders, one per effect, with a shared include for the history and
 upscale.
@@ -313,14 +319,9 @@ The 6 ms and 3 ms are design targets to bisect against, not measured figures.
 
 ## 10. Open questions
 
-- **The test's target.** § 4.5 holds a traced preset to 30 FPS and a rasterised one to 60. The
-  user may prefer one target for both. Asked with this spec.
-- **What the traced shadow pass multiplies by.** `mesh.frag` builds the point-light term as
-  `POINT_LIGHT_STRENGTH * albedo * ((plight + ppool) * diffW)`, after a gain and roll-off over the
-  summed lights, plus a highlight `pspec` that uses the shading normal and the material's gloss.
-  No target § 4.3 names carries albedo, `diffW` or the highlight's inputs. Before B3, pin what the
-  pass outputs, which target carries the surface terms, and whether the highlight is shadowed.
-  Not yet decided.
+- **Presets above today's look.** The user, 2026-11-15: ray tracing "should shift with the
+  capability of the hardware". The test already picks the top preset a card holds; presets past
+  Ultra (more rays, full-resolution lighting) are later work, filed on DOOM-0279.
 - **Trace Quality in Full.** Should the row also drive DOOM-0188's reduced-resolution lighting in
   the Full mode once that lands? Left to DOOM-0188.
 
