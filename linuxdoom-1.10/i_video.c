@@ -260,7 +260,9 @@ static void I_ToggleRtView(void)
 //      nudge of it anywhere in that window turns the player and silently changes the
 //      captured image -- measured as up to 10/255 mean-abs-error between two runs of an
 //      UNCHANGED build, against a golden gate that fails at 3.0. Those two modes imply
-//      this flag; they are never valid with input live.
+//      this flag; they are never valid with input live. So do -timedemo and -bootsmoke
+//      (DOOM-0613): SDL reads a gamepad whatever the display, and a press opens
+//      the menu mid-run.
 //
 //   2. COURTESY, which -noinput exists for. A profiling run is not a capture run -- it
 //      plays normally for tens of seconds -- yet it still seizes the pointer from whoever
@@ -275,7 +277,9 @@ static boolean I_InputDisabled(void)
     if (cached < 0)
 	cached = (M_CheckParm("-noinput")
 		  || M_CheckParm("-shotverify")
-		  || M_CheckParm("-shotcompare")) ? 1 : 0;
+		  || M_CheckParm("-shotcompare")
+		  || M_CheckParm("-timedemo")
+		  || M_CheckParm("-bootsmoke")) ? 1 : 0;
     return cached ? true : false;
 }
 

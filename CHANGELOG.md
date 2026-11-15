@@ -90,6 +90,13 @@ All notable changes to DOOM_Ants are documented here. The format follows
   Ultra, rasterised view at half scale: 0.75 to 1.74 ms a frame before,
   0.03 ms after.
 
+- **A timed demo or boot check can no longer be taken over by a gamepad** (DOOM-0613)
+  The game reads a plugged-in gamepad even when its window is hidden, so
+  a button pressed for something else opened the menu during a
+  `-timedemo` run and could start a new game that never finished.
+  `-timedemo` and `-bootsmoke` now ignore the keyboard, mouse and pad,
+  as `-shotverify` already did.
+
 - **Ultra's ray-traced view no longer leaves bits of wall hanging in the sky beside a window** (DOOM-0609)
   After a turn, patches of the wall stayed over the sky inside each
   window. The step that sharpens the half-size picture treated sky as
