@@ -19772,6 +19772,19 @@ in CLAUDE.md describes.
   SP_HOT1's rows are out of relief.csv until this is understood.
   Kit: Scratchpad/DOOM_Ants/d0610/rtest/r2.c (offline build of the two
   segs), probe/ (test-rectangle capture).
+  2026-11-15, later: diagonal walls in general are not it. STARTAN3 on
+  E1M1's diagonal line 110 (camera -119 -3526 42), raster, shows one
+  clean grid that matches the art, with and without its relief rows. So
+  the walls already live are not affected. What E3M1's line 181 has that
+  these do not: lower-unpegged (flags 0x11) and a seg offset truncated
+  from 344.81. Next: capture SP_HOT1 there with the line's flag cleared in
+  a test PWAD, then with the seg split moved.
+  2026-11-15, later still: not the pegging. A test PWAD with line 181's
+  lower-unpegged flag cleared (probe/e3m1-peg.wad) gives the same frame.
+  Look of the stray lines: thin, straight, some running past the wall's
+  own block rows onto the whole width, as if separate thin geometry stood
+  in front. Next: read which quads the mesh holds near line 181 (a DEV
+  dump of relief_emit's output for texnum SP_HOT1), and the seg split.
   **Layman:** On one slanted red-brick wall in E3M1, the new real-depth bricks showed extra grooves that cut through the middle of bricks, so SP_HOT1 keeps its old painted depth for now.
   Kind: investigate.
   Source: DOOM-0610-batch3-2026-11-15.
