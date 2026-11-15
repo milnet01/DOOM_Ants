@@ -123,6 +123,10 @@ All notable changes to DOOM_Ants are documented here. The format follows
   The shine used to smear the pattern into a pale haze, far away and up
   close. The smoothing step now stops at the bumps in the surface.
 
+- **Patterned Ultra floors line up from tile to tile.** (DOOM-0604)
+  Hex, diamond and square floor tiles no longer break their pattern
+  at every 64-unit cell. The anti-repeat shuffle now skips them.
+
 - **The FPS counter no longer reads 60/58 on a steady 60 frames a second** (DOOM-0507)
   It timed frames in whole milliseconds and rounded down, so a perfectly
   steady 60 showed a low of 58. It now times in microseconds and rounds

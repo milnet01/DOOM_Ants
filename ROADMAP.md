@@ -15395,7 +15395,7 @@ against.
   Source: user-report-2026-11-11.
   Evidence: linuxdoom-1.10/dev-shots/shot-0064.png
 
-- 🚧 [DOOM-0604] **Patterned Ultra floors line up from tile to tile.**
+- ✅ [DOOM-0604] **Patterned Ultra floors line up from tile to tile.**
   User 2026-11-11: Ultra floor tiles do not line up, indoors and
   outside; Classic and Solid do. The hero maps tile seamlessly on
   their own (2x2 tiling checked). De-tile (DOOM-0181) shifts and
@@ -15409,6 +15409,8 @@ against.
   shows the hexes aligned. Waiting-on: user play-test.
   Play-test 2026-11-11 (user): the patterned floor tiles line up
   perfectly now.
+  User 2026-11-15: close it; their 2026-11-11 play-test was the last
+  step.
   **Layman:** Hex, diamond and square floor tiles in Ultra join up cleanly, as they do in Classic and Solid.
   Kind: fix.
   Source: user-report-2026-11-11.
@@ -16278,6 +16280,8 @@ in CLAUDE.md describes.
   +0.35 at 1080p). OVER the 0.3 ms budget. Frame rate stays far above
   60 (frame about 3.8 ms).
   User 2026-11-05: accept; spec §6 raster budget raised to 0.4 ms. B6's timings now pass. Still open: the B4 look above.
+  User 2026-11-15: keep both, the traced red gleam and the raster gleam
+  at 1.0. Both Waiting-on questions above are settled.
   **Layman:** Shiny surfaces — metal, wet floors, slime — get realistic highlights like modern DOOM, without losing the classic look.
   Kind: feature.
   Source: user-request-2026-06-29.
@@ -19249,6 +19253,11 @@ in CLAUDE.md describes.
   sheet, Ultra traced and raster, E1M1: scratch/pick7/look-sheet.png.
   Waiting-on: user (do the new vial and medikit look right in play?
   Recommendation: keep; then STIM's verdict and batch 2, 2026-11-05).
+  User 2026-11-15: go on to the next batch (keys and ammo). The vial
+  needs more work: a bit smaller, closer to the original's size; a
+  slightly darker blue; filled to the top, no empty space for more
+  liquid; it must read as glass, maybe with bubbles inside. MEDI not
+  mentioned.
   **Layman:** Health, armour, ammo, keys and power-ups become real 3D objects, so their glow can come from exactly the right spot inside them.
   Kind: feature.
   Source: user-request-2026-11-02.
@@ -19650,6 +19659,9 @@ in CLAUDE.md describes.
   201350 triangles; scene 0.96 to 1.03, megakernel 2.23 to 2.61. E2M5
   (WOOD5): 37730 to 141146; scene 0.73 to 0.82, megakernel 3.05 to 3.14.
   Left: none of the three named groups. Not run: Windows.
+  User 2026-11-15: every upgraded wall on E1M1 and E1M2 looks great.
+  They will look at the other levels' walls as they play; the rest of
+  batches two and three stays open for their look.
   **Layman:** Ultra's walls get real depth that holds up from every angle, instead of a painted-on trick that slides when seen from the side.
   Kind: feature.
   Source: user-request-2026-11-13.
