@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=618 -->
+<!-- ants-roadmap-id-high-water: DOOM=621 -->
 
 # Roadmap
 
@@ -15481,6 +15481,14 @@ against.
   docs/research/DOOM-0279-rt-frame-time-2026-11-15.md: lighting
   resolution, denoiser, highlights, fog, bounces. Needs a spec
   (menu, config and renderer). Serves DOOM-0279.
+  User 2026-11-15, later the same day, chose a new shape over the
+  preset-plus-quality-rows one: the rasterised view is the base; each
+  traced effect (shadows, reflections, bounce light, corner shading)
+  has its own switch; an effect switched off is faked cheaply
+  (DOOM-0618); a Full ray tracing choice keeps today's look; a preset
+  row and an automatic hardware test pick the switches the card can
+  hold at 30 FPS. The research's quality levers (lighting resolution,
+  denoiser) may still sit inside an effect. Next: the spec.
   **Layman:** A quality menu like other PC games have: pick one preset, or tune each part, so the ray-traced view can trade a little sharpness for a steady 30 FPS.
   Kind: feature.
   Source: user-request-2026-11-15.
@@ -19322,6 +19330,12 @@ in CLAUDE.md describes.
   in raster, softer traced. pickup_models_test and rb_model_test pass.
   MEDI: no verdict. Next: batch 2, the keys and the ammo (user
   2026-11-15).
+  2026-11-15, later: the user liked the flask but not the painted
+  highlight, so doom_bon1.py paints bubbles only (builder kept as
+  pickups/previous/doom_bon1-2026-11-15.py). Only BON1_alb and
+  BON1_emis changed; the mesh and normal map are byte-identical. Seen
+  at E1M1 144 -2990 245, both views: the highlight is gone, the
+  bubbles stay. Moving bubbles: DOOM-0619. The decorations: DOOM-0620.
   **Layman:** Health, armour, ammo, keys and power-ups become real 3D objects, so their glow can come from exactly the right spot inside them.
   Kind: feature.
   Source: user-request-2026-11-02.
@@ -19914,6 +19928,48 @@ in CLAUDE.md describes.
   would cover it and other angled walls. Watch the trace cost: the
   ray-traced views miss their 30 FPS floor today (DOOM-0279).
   **Layman:** Walls with hexagon or slanted patterns, like the grey hex metal, can get real depth instead of painted-on depth.
+  Kind: feature.
+  Source: user-request-2026-11-15.
+  Lanes: renderer.
+
+- 📋 [DOOM-0619] **Make the bubbles in the health-bonus flask rise, in both views.**
+  User 2026-11-15: "If the bubbles can be animated, that would be
+  great." Today the bubbles are painted into BON1's colour and glow maps,
+  so they cannot move. The raster pass has no clock (mesh.frag reads no
+  time); the trace has one (misc6.x, the ripple time). Moving bubbles
+  need a clock in both and a per-model marker for the bubbling liquid.
+  Build it with the E1M1 props batch, whose lamps and barrel may want
+  the same clock. Serves DOOM-0539.
+  **Layman:** The little bubbles inside the blue health vial drift upward instead of sitting still.
+  Kind: feature.
+  Source: user-request-2026-11-15.
+  Lanes: renderer.
+
+- 📋 [DOOM-0620] **Give E1M1's decorations real models: barrels, floor lamps, tech columns and the candelabra.**
+  User 2026-11-15: "Can we also get the rest of the props in E1M1
+  created in 3D please (barrels / orbs / weapon pick ups / ammo)."
+  The user named floor lamps (COLU), tech columns (ELEC) and the
+  candelabra (CBRA) as wanted. The barrel (BAR1) is not a pickup, so
+  DOOM-0539's spec does not cover it: it animates and explodes (BEXP),
+  so the model must give way to the sprite when it is shot. The
+  weapons, ammo and remaining pickups are DOOM-0539's batch 2, spheres
+  included ("orbs are the pick ups you collect for health / armour").
+  Order (user 2026-11-15): after the DOOM-0617 spec.
+  **Layman:** The exploding barrels, the pole lamps, the tall tech pillars and the candle stand become real 3D objects, with their light inside them.
+  Kind: feature.
+  Source: user-request-2026-11-15.
+  Lanes: renderer.
+
+- 📋 [DOOM-0621] **Give Ultra art to the E1M1 walls and flats that still have none.**
+  User 2026-11-15: "I noted still some surfaces that need to be
+  updated." They chose to have the whole list done. E1M1 textures with
+  no row in assets/ultra/materials.csv on 2026-11-15: walls LITE3,
+  SLADWALL, SW1COMP, SW1STRTN, NUKE24, BRNBIGL, BRNBIGC, BRNBIGR,
+  EXITSIGN, PLANET1, STEP1; flats NUKAGE3, FLAT14, FLAT18, TLITE6_1,
+  TLITE6_4, TLITE6_6, STEP2, FLOOR1_1, FLOOR6_2. Most visible first.
+  Art direction: one worn-metal look (DOOM-0610). Order (user
+  2026-11-15): after the props.
+  **Layman:** The last plain-looking walls and floors in the first level get the same worn-metal HD treatment as the rest.
   Kind: feature.
   Source: user-request-2026-11-15.
   Lanes: renderer.
