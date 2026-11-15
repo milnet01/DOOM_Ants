@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=613 -->
+<!-- ants-roadmap-id-high-water: DOOM=614 -->
 
 # Roadmap
 
@@ -19629,6 +19629,27 @@ in CLAUDE.md describes.
   0.93; megakernel 2.92 to 3.57. Per-tic scan (DOOM-0612 fixed) 0.02 to
   0.03 ms raster everywhere.
   Left: the grey concrete walls, STONE2 and the wood. Not run: Windows.
+  2026-11-15, third batch, live, waiting on the user's look: GRAY1,
+  GRAY4, GRAY5, GRAY7, GRAYTALL, STONE (doom_gray.py), STONE2, STONE3,
+  GSTONE1 (doom_stone2.py), WOOD1, WOOD5 (doom_wood.py). Two rim steps
+  on blocks and planks; concrete slabs, joints and sunk panels as flat
+  steps. noPom. No engine change. wallbake.Relief takes width= and
+  wraps a block over a tile's side, which the stone courses need.
+  SP_HOT1 was built too and pulled: a second grid on E3M1, DOOM-0614.
+  relief.csv holds 584 rows.
+  Seen in Ultra, raster and traced: STONE2 on E1M4, STONE3 on E1M5,
+  GSTONE1 on E2M2, WOOD5 on E2M5, WOOD1 on E3M3, STONE on E1M3,
+  GRAYTALL on E1M2. GRAY4, GRAY5 and GRAY7 are mostly above or below
+  doorways and were not seen up close.
+  Measured at 50 % scale, private display, lowest of each run, before
+  then after, machine busy. E2M2: 112292 to 134626 triangles; HD art
+  742.4 MB, 56 materials, both times; raster scene 1.00 to 1.05 ms
+  square, 0.78 to 0.83 grazing; trace megakernel 3.87 to 4.17 and 3.77
+  to 4.22; per-tic scan unchanged (0.02 to 0.05). E1M4 (STONE2): scene
+  0.98 to 1.05, megakernel 3.05 to 3.62. E1M5 (STONE3): 102842 to
+  201350 triangles; scene 0.96 to 1.03, megakernel 2.23 to 2.61. E2M5
+  (WOOD5): 37730 to 141146; scene 0.73 to 0.82, megakernel 3.05 to 3.14.
+  Left: none of the three named groups. Not run: Windows.
   **Layman:** Ultra's walls get real depth that holds up from every angle, instead of a painted-on trick that slides when seen from the side.
   Kind: feature.
   Source: user-request-2026-11-13.
@@ -19706,7 +19727,7 @@ in CLAUDE.md describes.
   Source: DOOM-0610-measurement-2026-11-13.
   Lanes: renderer.
 
-- 📋 [DOOM-0613] **Some crafted demos do not end under -timedemo in Ultra.**
+- ✅ [DOOM-0613] **Some crafted demos do not end under -timedemo in Ultra.**
   Seen 2026-11-14 with a temporary DOOM-0612 comparison build, Ultra,
   private display. The scratch kit's d1m1 (doom.wad) and mixmap (doom2)
   demos ran until a 1200 s cutoff with no "timed N gametics" line; d1m3
@@ -19714,9 +19735,46 @@ in CLAUDE.md describes.
   texturetranslation ended E1M3 early and then loaded E1M1 and kept going.
   Not checked: whether a plain build or Classic does the same. The
   2026-09-26 notes have these demos ending under Classic.
+  2026-11-15: cause found and fixed. SDL reads a gamepad from the
+  system, not the display, so a hidden run sees the machine's real pad.
+  During a demo any press opens the menu, and further presses of the
+  confirm button choose New Game, an episode and a skill: E1M1 loads,
+  demo playback stops, and the run never reaches its end. That matches
+  both symptoms.
+  Proof, with a virtual Xbox pad on /dev/uinput (the real pad hidden by
+  SDL_GAMECONTROLLER_IGNORE_DEVICES) pressing A eight times during the
+  d1m1 crafted demo, Ultra, private display: before the fix no "timed"
+  line, killed at 300 s, the level built twice; after, "timed 2100
+  gametics", built once.
+  Fix: -timedemo and -bootsmoke now imply -noinput (I_InputDisabled),
+  as -shotverify and -shotcompare already did. ab_capture.sh already
+  passes -noinput. Closing the window still works.
   **Layman:** A test recording that should play once and quit kept the game running instead.
   Kind: investigate.
   Source: DOOM-0612-verification-2026-11-14.
+  Lanes: renderer.
+
+- 📋 [DOOM-0614] **SP_HOT1's relief shows a second, shifted block grid on E3M1's diagonal wall.**
+  Seen 2026-11-15, Ultra, raster and traced, private display, E3M1 line
+  181 (one-sided, diagonal, two segs; the second seg's offset 344 is the
+  truncated 344.81), camera -253 551 48. Thin grooves run through the
+  middle of painted blocks, as if a second block grid sat at an offset.
+  Deterministic between runs.
+  Ruled out: the rows (they overlay SP_HOT1's albedo exactly); the
+  builder (wall_relief.h run offline on both segs gives a clean grid);
+  the layout (GSTONE1 has the same rows and is clean on E2M2); the
+  texture (SP_HOT1 is clean on E2M5's straight line 1345); walls behind
+  or step faces (none within 16 units). Not yet tried: another texture
+  on a diagonal wall; whether the second grid is a shadow of the real
+  one. A probe with two test rectangles placed one about 30 texels left
+  and 20 up of where the art puts it, which the art-coordinate path
+  (relief_emit samples at the build's tu, tv) should make impossible.
+  SP_HOT1's rows are out of relief.csv until this is understood.
+  Kit: Scratchpad/DOOM_Ants/d0610/rtest/r2.c (offline build of the two
+  segs), probe/ (test-rectangle capture).
+  **Layman:** On one slanted red-brick wall in E3M1, the new real-depth bricks showed extra grooves that cut through the middle of bricks, so SP_HOT1 keeps its old painted depth for now.
+  Kind: investigate.
+  Source: DOOM-0610-batch3-2026-11-15.
   Lanes: renderer.
 
 ## 0.13.0 — The player's experience

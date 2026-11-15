@@ -45,11 +45,13 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
-- **Ultra's pressed-panel walls and its brown and riveted metal walls have real depth instead of faked depth** (DOOM-0610)
-  The seams, panels and channels of STARTAN3, STARG3, STARTAN1, STARGR1,
-  BROWN1, BROWN96, BROWNGRN, BROWN144, METAL2 and NUKEDGE1 are now built
-  as geometry, as the blue processor wall is, so they hold their shape
-  seen from the side. The other walls still use the fake.
+- **Ultra's panelled, metal, concrete, stone-block and wooden walls have real depth instead of faked depth** (DOOM-0610)
+  The seams, panels, joints, blocks and planks of STARTAN3, STARG3,
+  STARTAN1, STARGR1, BROWN1, BROWN96, BROWNGRN, BROWN144, METAL2,
+  NUKEDGE1, GRAY1, GRAY4, GRAY5, GRAY7, GRAYTALL, STONE, STONE2, STONE3,
+  GSTONE1, WOOD1 and WOOD5 are now built as geometry, as the blue
+  processor wall is, so they hold their shape seen from the side. The
+  other walls still use the fake.
 
 - **Ultra's new walls sit on their own wall plane, so their bands meet at corners; the goo room is darker; grey concrete and rough stone walls are new.** (DOOM-0606)
 
