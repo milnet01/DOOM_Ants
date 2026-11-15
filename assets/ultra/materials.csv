@@ -72,7 +72,7 @@ BROWN96,hero,heroes/brownmetal/BROWN96_alb.png,heroes/brownmetal/BROWN96_nrm.png
 BROWN144,hero,heroes/brownmetal/BROWN144_alb.png,heroes/brownmetal/BROWN144_nrm.png,heroes/brownmetal/BROWN144_rgh.png,heroes/brownmetal/BROWN144_met.png,heroes/brownmetal/BROWN144_ao.png,,heroes/brownmetal/BROWN144_hgt.png,1,noPom|noDetile
 METAL2,hero,heroes/brownmetal/METAL2_alb.png,heroes/brownmetal/METAL2_nrm.png,heroes/brownmetal/METAL2_rgh.png,heroes/brownmetal/METAL2_met.png,heroes/brownmetal/METAL2_ao.png,,heroes/brownmetal/METAL2_hgt.png,1,noPom|noDetile
 BROWNHUG,hero,heroes/brownmetal/BROWNHUG_alb.png,heroes/brownmetal/BROWNHUG_nrm.png,heroes/brownmetal/BROWNHUG_rgh.png,heroes/brownmetal/BROWNHUG_met.png,heroes/brownmetal/BROWNHUG_ao.png,,heroes/brownmetal/BROWNHUG_hgt.png,1,pom|depth=1.8
-SP_HOT1,hero,heroes/stone/SP_HOT1_alb.png,heroes/stone/SP_HOT1_nrm.png,heroes/stone/SP_HOT1_rgh.png,,heroes/stone/SP_HOT1_ao.png,,heroes/stone/SP_HOT1_hgt.png,1,pom|noDetile|depth=3.6
+SP_HOT1,hero,heroes/stone/SP_HOT1_alb.png,heroes/stone/SP_HOT1_nrm.png,heroes/stone/SP_HOT1_rgh.png,,heroes/stone/SP_HOT1_ao.png,,heroes/stone/SP_HOT1_hgt.png,1,noPom|noDetile
 FLAT10,hero,heroes/floor/FLAT10_alb.png,heroes/floor/FLAT10_nrm.png,heroes/floor/FLAT10_rgh.png,,heroes/floor/FLAT10_ao.png,,heroes/floor/FLAT10_hgt.png,1,noPom
 MFLR8_2,hero,heroes/floor/MFLR8_2_alb.png,heroes/floor/MFLR8_2_nrm.png,heroes/floor/MFLR8_2_rgh.png,,heroes/floor/MFLR8_2_ao.png,,heroes/floor/MFLR8_2_hgt.png,1,noPom
 FLAT5_5,hero,heroes/floor/FLAT5_5_alb.png,heroes/floor/FLAT5_5_nrm.png,heroes/floor/FLAT5_5_rgh.png,,heroes/floor/FLAT5_5_ao.png,,heroes/floor/FLAT5_5_hgt.png,1,noPom

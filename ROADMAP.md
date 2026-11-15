@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=614 -->
+<!-- ants-roadmap-id-high-water: DOOM=615 -->
 
 # Roadmap
 
@@ -19662,6 +19662,9 @@ in CLAUDE.md describes.
   User 2026-11-15: every upgraded wall on E1M1 and E1M2 looks great.
   They will look at the other levels' walls as they play; the rest of
   batches two and three stays open for their look.
+  2026-11-15: SP_HOT1 is back as real geometry (DOOM-0614 found no
+  defect a player can see). relief.csv holds 663 rows. Left: METAL1,
+  DOOM II's walls, cobble and wood flats.
   **Layman:** Ultra's walls get real depth that holds up from every angle, instead of a painted-on trick that slides when seen from the side.
   Kind: feature.
   Source: user-request-2026-11-13.
@@ -19766,7 +19769,7 @@ in CLAUDE.md describes.
   Source: DOOM-0612-verification-2026-11-14.
   Lanes: renderer.
 
-- 📋 [DOOM-0614] **SP_HOT1's relief shows a second, shifted block grid on E3M1's diagonal wall.**
+- ✅ [DOOM-0614] **SP_HOT1's relief shows a second, shifted block grid on E3M1's diagonal wall.**
   Seen 2026-11-15, Ultra, raster and traced, private display, E3M1 line
   181 (one-sided, diagonal, two segs; the second seg's offset 344 is the
   truncated 344.81), camera -253 551 48. Thin grooves run through the
@@ -19797,9 +19800,36 @@ in CLAUDE.md describes.
   own block rows onto the whole width, as if separate thin geometry stood
   in front. Next: read which quads the mesh holds near line 181 (a DEV
   dump of relief_emit's output for texnum SP_HOT1), and the seg split.
+  2026-11-15, solved: not a defect a player can see. The test camera
+  (-253 551) stood outside the map, behind line 186, a one-sided
+  SP_HOT1 wall parallel to line 181 and 66 units in front of it, facing
+  it. From behind, line 186's flat faces are culled but its relief side
+  faces are not; nearer the camera, its block grid looked about twice the
+  size of line 181's. A DEV dump of relief_emit's quads for line 181
+  showed one clean grid. From inside the corridor (-187 626 48, and the
+  seg join at -105 525 48), raster and traced, the wall is clean.
+  Also seen: the second seg starts 0.81 units along from where its
+  truncated offset (344) puts its art, so its blocks sit 0.81 units off
+  the first seg's. The flat wall's art shifts the same way, so relief and
+  art agree; not visible in the capture.
+  SP_HOT1's rows and noPom are back, as batch three had them. Side faces
+  seen from outside the map: DOOM-0615.
+  Kit: Scratchpad/DOOM_Ants/d0610/d0614/ (probe.diff, plot.py).
   **Layman:** On one slanted red-brick wall in E3M1, the new real-depth bricks showed extra grooves that cut through the middle of bricks, so SP_HOT1 keeps its old painted depth for now.
   Kind: investigate.
   Source: DOOM-0610-batch3-2026-11-15.
+  Lanes: renderer.
+
+- 💭 [DOOM-0615] **Relief side faces show through the back of a one-sided wall when seen from outside the map.**
+  Found on DOOM-0614: a camera behind E3M1's line 186 sees the side
+  faces of its relief, since only the flat faces are culled from behind.
+  A player reaches that spot only with the noclip cheat or a capture
+  spot that lands outside the map. Considered, not planned: no normal
+  play sees it. A fix would cull a side face whose wall's front faces
+  away from the eye.
+  **Layman:** If you walk through walls with the no-clipping cheat, the new real-depth walls show their groove edges from behind.
+  Kind: fix.
+  Source: DOOM-0614-2026-11-15.
   Lanes: renderer.
 
 ## 0.13.0 — The player's experience

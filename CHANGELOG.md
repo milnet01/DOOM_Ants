@@ -49,7 +49,7 @@ All notable changes to DOOM_Ants are documented here. The format follows
   The seams, panels, joints, blocks and planks of STARTAN3, STARG3,
   STARTAN1, STARGR1, BROWN1, BROWN96, BROWNGRN, BROWN144, METAL2,
   NUKEDGE1, GRAY1, GRAY4, GRAY5, GRAY7, GRAYTALL, STONE, STONE2, STONE3,
-  GSTONE1, WOOD1 and WOOD5 are now built as geometry, as the blue
+  GSTONE1, SP_HOT1, WOOD1 and WOOD5 are now built as geometry, as the blue
   processor wall is, so they hold their shape seen from the side. The
   other walls still use the fake.
 
