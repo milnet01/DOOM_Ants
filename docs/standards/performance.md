@@ -5,27 +5,29 @@ performance a feature, not an afterthought — but only in the place that actual
 costs: the GPU renderer. The 1997 CPU game loop is already fast enough on any
 modern machine; don't spend effort micro-optimising it.
 
-## The 60 FPS floor
+## The frame-rate floors
 
-The path tracer targets a **60 FPS floor** on the reference GPU (an AMD RX
-6600), in Ultra and in Solid's ray-traced view alike (user decision
-2026-10-26). Solid's rasterised view sits comfortably above it. A change that
-drops either ray-traced view below the floor on the reference hardware is a regression to fix or a trade to
-justify, not something to ship quietly.
+Each floor holds on the reference GPU (an AMD RX 6600).
 
-**Classic's floor is 35 FPS, the original game's.** Classic presents once per
-35 Hz game tic, as the 1997 game did, so it never reaches 60. A change that
-drops Classic below 35 is a regression (DOOM-0490).
+**Classic: 35 FPS, the original game's.** Classic presents once per 35 Hz game
+tic, as the 1997 game did, so it never reaches 60. A change that drops Classic
+below 35 is a regression (DOOM-0490).
 
-**The floor is absolute for Classic and the raster path; for the ray-traced views
-of Ultra and Solid it is currently a target, not a guarantee.** Ultra with RT
-engaged already sits below it (~45 FPS on the reference GPU), and an accepted
-look-trade may relax it further, in either ray-traced view — but
-only via the "trade to justify" branch above: state the before/after numbers, get the
-user's decision on the record, and ship a quality dial that lets them opt out. The
-worked example is **DOOM-0011 §6** (volumetric fog raised its own budget from ≤ 5 % to
-≤ 15 % of present-total, `~45 → ~39 FPS`, with `rb_fog` 0..3 as the opt-out). A feature
-may not relax the floor silently, and may never relax it for Classic or raster.
+**The rasterised views of Solid and Ultra: 60 FPS.** A change that drops one
+below 60 is a regression.
+
+**The ray-traced views of Solid and Ultra: a steady 30 FPS** (user decision
+2026-11-15). Steady means evenly paced frames, not a 30 average (DOOM-0277).
+The user measured Ultra traced on E1M1 at 22 FPS on 2026-11-15, so this floor
+is a target the views do not yet meet. Reaching 60 here is DOOM-0279's stretch
+goal.
+
+The Classic and raster floors are absolute. A change that drops a ray-traced
+view further is a regression to fix or a trade to justify, never something to
+ship quietly. To justify a trade: state the before and after numbers, get the
+user's decision on the record, and ship a quality dial that lets them opt out.
+The worked example is **DOOM-0011 §6**: volumetric fog raised its own budget
+from ≤ 5 % to ≤ 15 % of present-total, with `rb_fog` 0..3 as the opt-out.
 
 ## The main lever: render scale
 
@@ -43,7 +45,7 @@ before and after any performance-affecting change; don't guess.
 
 For a per-frame record, run with `-frameledger FILE` (`linuxdoom-1.10/d_ledger.c`
 lists its flags). It writes frameledger's run file, which `frameledger check`,
-`report` and `floor --fps 60` read. A private display gives a small window by
+`report` and `floor --fps 60` (`--fps 30` for a traced run) read. A private display gives a small window by
 default, so pass `-scale`: `-scale 6` with `render_scale` 50 traces 1920x1200.
 
 ## The comparison rule (this one bites)

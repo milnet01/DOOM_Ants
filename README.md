@@ -17,7 +17,8 @@ two stages:
    OSS sound code with SDL2. ✅ *Done — the engine builds and plays.*
 2. **The spin.** Evolve the renderer toward *true* 3D with hardware ray
    tracing (and path tracing where it's feasible), dynamic and volumetric
-   lighting, HD materials, and a solid 60 FPS floor — without losing the
+   lighting, HD materials, and a solid frame-rate floor (60 FPS rasterised,
+   a steady 30 ray traced) — without losing the
    feel of the original. 🚧 *In progress.*
 
 See [`ROADMAP.md`](ROADMAP.md) for the plan and [`CHANGELOG.md`](CHANGELOG.md)

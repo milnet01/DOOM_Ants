@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=615 -->
+<!-- ants-roadmap-id-high-water: DOOM=616 -->
 
 # Roadmap
 
@@ -14362,12 +14362,16 @@ against.
 
   Also needed: read the display's actual refresh rate rather than assuming
   60, and decide what happens on a 120/144 Hz panel (present every 4th).
+  User 2026-11-15: a steady 30 FPS is now the ray-traced views' floor
+  (performance standard). This item's pacing is part of it; the headroom
+  it was blocked on is still missing (E1M1 traced at 22 FPS,
+  user-measured 2026-11-15).
   **Layman:** Lock the ray-traced mode to a steady 30 frames a second, evenly spaced, so it feels smooth instead of stuttery even though it is not fast.
   Kind: perf.
   Source: user-request-2026-07-27.
   Lanes: renderer.
 
-- 📋 [DOOM-0279] **Get Ultra's ray-traced view back to 60 FPS - and give the remaining effects a budget to fit in.**
+- 📋 [DOOM-0279] **Get the ray-traced views to a steady 30 FPS, then toward 60 - and give the remaining effects a budget to fit in.**
   User, 2026-07-27: "please log a roadmap entry to try and get this back
   to 60 FPS even though I probably have to resign myself to the fact that
   it may not be possible on my hardware" - and, in the same breath, "keep
@@ -14444,6 +14448,12 @@ against.
   - bake.comp:76: one thread per probe runs 256 rays in sequence, so the
     level-load bake leaves the GPU idle. One workgroup per probe. LARGER.
   Source: review-code-perf-2026-11-09 (off-repo record), lanes 2, 4, 6, 7.
+  User 2026-11-15: Ultra traced on E1M1 runs at 22 FPS. "I love the look
+  ... but I would like it playable." The ray-traced views' floor is now
+  a steady 30 FPS (performance standard, replacing the 60 target of
+  2026-10-26). 60 stays this item's stretch goal: the user's words,
+  "unless you can come up with a very, very effective way of doing ray
+  tracing without sacrificing the quality". Reaching 30 comes first.
   **Layman:** The ray-traced mode runs at about 30 frames a second on this card; this is the long-term push to double that, and to stop each new effect quietly eating the difference.
   Kind: perf.
   Lanes: renderer, shaders.
@@ -19830,6 +19840,18 @@ in CLAUDE.md describes.
   **Layman:** If you walk through walls with the no-clipping cheat, the new real-depth walls show their groove edges from behind.
   Kind: fix.
   Source: DOOM-0614-2026-11-15.
+  Lanes: renderer.
+
+- 📋 [DOOM-0616] **Let Ultra's real-geometry walls have slanted edges, so hex and angled patterns get true depth.**
+  User 2026-11-15: "please ensure that the slanted edges is on the
+  roadmap." relief.csv and wall_relief.h (DOOM-0541) cut sunk rectangles
+  only, so METAL1's hex plates cannot be real geometry; it gets HD art
+  with parallax meanwhile (DOOM-0610). A polygon or slanted-edge row
+  would cover it and other angled walls. Watch the trace cost: the
+  ray-traced views miss their 30 FPS floor today (DOOM-0279).
+  **Layman:** Walls with hexagon or slanted patterns, like the grey hex metal, can get real depth instead of painted-on depth.
+  Kind: feature.
+  Source: user-request-2026-11-15.
   Lanes: renderer.
 
 ## 0.13.0 — The player's experience
