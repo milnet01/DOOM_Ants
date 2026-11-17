@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=627 -->
+<!-- ants-roadmap-id-high-water: DOOM=628 -->
 
 # Roadmap
 
@@ -20109,6 +20109,25 @@ in CLAUDE.md describes.
   **Layman:** A debug line that counts the lights in a level printed the same number before and after new lights were added, so it cannot be trusted to check them.
   Kind: investigate.
   Source: found-2026-11-17-DOOM-0620.
+  Lanes: renderer.
+
+- 📋 [DOOM-0628] **Stream Ultra's HD art in and out of video memory as the player moves through a level, paced to the drive it loads from.**
+  User 2026-11-17: "Can we perhaps build a system that streams the level
+  data in and out of memory keeping in mind what type of drives it will
+  run from as the player moves through the level?" What fills memory is
+  Ultra's HD art: E2M2 loads 754.4 MB of it at level start; the map's own
+  geometry is small. Today EnsureHdMaterials loads a level's whole set at
+  once (DOOM-0042, DOOM-0626); over the ceiling the rest stays paletted.
+  Questions for its spec: what decides "near" (distance alone fails in
+  DOOM: a long sightline or a teleporter shows far rooms at once, so the
+  REJECT table or the BSP's sight test may serve); what shows while a
+  texture loads (the paletted art, or a small mip loaded first); how the
+  drive is judged (time the first loads rather than guess its type); and
+  a loader thread beside Vulkan's upload. Several subsystems and hard to
+  build wrong, so it needs a spec and a contract review first.
+  **Layman:** Instead of loading every high-detail texture and prop when a level starts, the game loads what is near the player and lets go of what is far away, faster or slower depending on the drive.
+  Kind: feature.
+  Source: user-request-2026-11-17.
   Lanes: renderer.
 
 ## 0.13.0 — The player's experience
