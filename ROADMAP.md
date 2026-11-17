@@ -15600,6 +15600,14 @@ against.
   and sector ids, so the lab can split vanilla walls from 3D geometry
   (H9) and key caches by sector (H2). Output path given at run time;
   never committed (game data). Blocked by the lab's extras spec.
+  2026-11-17: ExperiRays' EXRAY-0001 (glTF extras and camera path)
+  is accepted by all three engines, commit 2c2efbc in ExperiRays. This
+  item is no longer blocked on it. DOOM_Ants' review asked for, and
+  got: step planes 3/4 with a clamp sector, texture re-pegging (v_span,
+  uv_scale baked into TEXCOORD_0), triangle_class, sky occluders,
+  model lights as a list with reach 0 = no cut-off, xfov, art sets
+  "solid" and "ultra". Exporter output is proved by loading it through
+  the lab's reader.
   **Layman:** A developer switch saves the current level's 3D shape and lights to a file the ray-tracing lab can load, so the lab can test ideas on real DOOM_Ants scenes.
   Kind: feature.
   Source: experirays-design-review-2026-11-17.
