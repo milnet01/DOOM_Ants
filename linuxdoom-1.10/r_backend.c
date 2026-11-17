@@ -45,6 +45,7 @@
 #include "palette_tint.h" // RB_FitPaletteTint: the palette flash as a blend (DOOM-0379)
 #include "d_net.h"        // NetUpdate: service the network mid-frame (DOOM-0456)
 #include "fixed_colormap.h" // RB_FixedMode: invulnerability / visor (DOOM-0455)
+#include "gfx_settings.h"   // the preset and rt_mode decisions (DOOM-0617)
 
 // A level is loaded once the BSP segs exist (r_state.h). Used by RB_Init to
 // catch up the scene build when a map was loaded before the back-end came up
@@ -54,6 +55,18 @@ extern int numsegs;
 // Selected mode (RB_*). Default Classic — exact parity for anyone who never
 // touches the menu option. Persisted by m_misc.c's defaults[] table.
 int rendermode = RB_CLASSIC;
+
+// DOOM-0617: see r_backend.h. Each starts at its config default (m_misc.c).
+int   gfx_preset = GFX_LOW;
+int   rt_mode    = RTM_OFF;
+int   rt_shadows = 1;
+int   rt_ao      = 1;
+int   rt_quality = RTQ_HALF;
+char* gfx_gpu_id = "";
+
+// The `~` key's memory: the last rt_mode other than Off. Not persisted -- a
+// saved rt_mode other than Off seeds it through RB_SetRtMode at boot.
+static int rt_mode_last = RTM_OFF;
 
 //
 // Classic back-end — wraps the existing software renderer unchanged. The
@@ -399,31 +412,80 @@ static rendermode_t RB_BestAvailableAtOrBelow(rendermode_t want)
     return RB_CLASSIC;
 }
 
-// DOOM-0169: the selected render tier drives the ray-tracing default, so the menu
-// choice matches what is drawn and each tier gets its intended look (resolves the
-// DOOM-0135 open question; user-confirmed 2026-07-04). Solid renders the raster
-// "original" view (rb_rtdebug 0) so it stays buttery-smooth; Ultra renders the
-// ray-traced view (rb_rtdebug 6). The `~` key still toggles RT within a tier
-// (I_ToggleRtView). Skipped while Debug Views is on (rb_rtdebug_menu) so the
-// developer diagnostic cycle keeps control of rb_rtdebug. Classic is the software
-// renderer and does not use the Vulkan tracer, so its rb_rtdebug is left alone.
-static void RB_ApplyTierRt(void)
+// DOOM-0617: rt_mode picks the view in both 3D tiers -- the tier picks the art,
+// rt_mode how it is traced (spec § 3). This replaces DOOM-0169's per-tier
+// forcing (Solid raster, Ultra traced). Skipped while Debug Views is on
+// (rb_rtdebug_menu), so the developer diagnostic cycle keeps control of
+// rb_rtdebug. Classic is the software renderer and does not use the Vulkan
+// tracer, so its rb_rtdebug is left alone.
+static void RB_ApplyRtMode(void)
 {
     extern int rb_rtdebug;          // r_vulkan.cpp
     extern int rb_rtdebug_menu;     // r_vulkan.cpp (DOOM-0135)
-    // DOOM-0380: Debug Views guards the TIER DEFAULT only. This used to return
-    // outright, which left the -rtview pin below it -- and rb_rtdebug_menu is
-    // persisted (m_misc.c), so a config left with Debug Views on made every
-    // -rtview N a silent no-op. Same invisible-toggle-state trap as DOOM-0205.
-    if (!rb_rtdebug_menu)                 // developer diagnostic cycle owns rb_rtdebug
-    {
-        if      (rendermode == RB_RASTER3D) rb_rtdebug = 0;   // Solid: raster original view
-        else if (rendermode == RB_RT3D)     rb_rtdebug = 6;   // Ultra: ray-traced view
-    }
+
+    if (!rb_rtdebug_menu && rendermode != RB_CLASSIC)
+        rb_rtdebug = GfxRtView(rt_mode);
+}
+
+boolean RB_RtCapable(void)
+{
+    return RB_ModeAvailable(RB_RT3D);
+}
+
+void RB_SetRtMode(int mode)
+{
+    rt_mode = RB_RtCapable() ? ConfigClamp(mode, RTM_OFF, RTM_FULL, RTM_OFF) : RTM_OFF;
+    if (rt_mode != RTM_OFF)
+        rt_mode_last = rt_mode;
+    RB_ApplyRtMode();
+}
+
+void RB_ToggleRtMode(void)
+{
+    RB_SetRtMode(GfxToggleRtMode(rt_mode, rt_mode_last, RB_RtCapable()));
+}
+
+static gfx_settings_t RB_GfxCurrent(void)
+{
+    extern int rb_renderscale;      // r_vulkan.cpp
+    gfx_settings_t s = { rt_mode, rt_shadows, rt_ao, rt_quality, rb_renderscale };
+    return s;
+}
+
+void RB_ApplyGfxPreset(int preset)
+{
+    extern int rb_renderscale;      // r_vulkan.cpp
+    gfx_settings_t s = RB_GfxCurrent();
+
+    GfxApplyPreset(&s, preset, RB_RtCapable());
+    rt_shadows     = s.rtShadows;
+    rt_ao          = s.rtAo;
+    rt_quality     = s.rtQuality;
+    rb_renderscale = s.renderScale;
+    RB_SetRtMode(s.rtMode);
+    gfx_preset     = RB_GfxPreset();
+}
+
+int RB_GfxPreset(void)
+{
+    gfx_settings_t s = RB_GfxCurrent();
+    return GfxMatchPreset(&s, RB_RtCapable());
+}
+
+// At boot and on each tier change: hold rt_mode to what this machine can do
+// (INV-6) and apply it, then let -rtview pin the view over it.
+static void RB_ApplyTierRt(void)
+{
+    extern int rb_rtdebug;          // r_vulkan.cpp
+
+    // DOOM-0380: Debug Views guards the rt_mode view only (RB_ApplyRtMode), never
+    // the -rtview pin below -- rb_rtdebug_menu is persisted, so a config left with
+    // Debug Views on would otherwise make every -rtview N a silent no-op.
+    RB_SetRtMode(rt_mode);
 
     // DOOM-0351: `-rtview N` pins the path-tracer view for a headless run, applied AFTER
-    // the tier default so it wins -- which is the whole point. The tier owns rb_rtdebug
-    // from a config, so `renderer 2` + `rt_view 6` is silently overridden at startup, and
+    // the rt_mode view so it wins -- which is the whole point. rt_mode owns rb_rtdebug
+    // from a config, so `rt_view 6` is silently overridden at startup, and
     // the two ways to reach Solid-with-RT (the `~` key, the menu's Ray Tracing row) are
     // both runtime-only and unreachable under -noinput. That left the one arm that
     // separates "the ray-traced CHAIN looks different" from "the HD ART looks different"
@@ -492,8 +554,8 @@ void RB_Init(void)
             rb_rtdebug = 6;
     }
 
-    // DOOM-0169: let the persisted tier pick its RT view before the back-end inits,
-    // so a fresh/persisted Solid config starts on the smooth raster path.
+    // DOOM-0617: let the persisted rt_mode pick the view before the back-end inits,
+    // so a fresh config starts on the smooth raster path.
     RB_ApplyTierRt();
 
     active = &backends[rendermode];
@@ -578,8 +640,7 @@ boolean RB_ApplyPendingMode(void)
         active->Shutdown();
 
     rendermode = mode;
-    // DOOM-0169: entering a tier picks its RT default (Solid raster / Ultra traced)
-    // so the view matches the menu choice; `~` still overrides within a tier.
+    // DOOM-0617: entering a 3D tier applies rt_mode, which both 3D tiers share.
     RB_ApplyTierRt();
     active = &backends[rendermode];
     if (!rebuild)

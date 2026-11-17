@@ -109,4 +109,21 @@ boolean     RB_ModeAvailable(rendermode_t mode);
 // skipping modes unavailable on this machine; returns `cur` if none other fits.
 rendermode_t RB_NextAvailableMode(rendermode_t cur);
 
+// DOOM-0617: the graphics preset and the ray-tracing settings, persisted under
+// the same names by m_misc.c. The decisions are gfx_settings.h's; these apply
+// them. rt_mode picks the view in both 3D tiers: RTM_FULL draws the traced
+// frame, RTM_OFF and RTM_EFFECTS the rasterised one.
+extern int   gfx_preset;     // GFX_*: written on save, from the rows (RB_GfxPreset)
+extern int   rt_mode;        // RTM_*
+extern int   rt_shadows;     // Traced Shadows, 0 / 1
+extern int   rt_ao;          // Traced Corner Shading, 0 / 1
+extern int   rt_quality;     // RTQ_*: Trace Quality
+extern char* gfx_gpu_id;     // the GPU the hardware test measured (B5)
+
+boolean RB_RtCapable(void);           // can this machine trace at all (Ultra available)
+void    RB_SetRtMode(int mode);       // set rt_mode and apply it to the view now
+void    RB_ToggleRtMode(void);        // the `~` key: Off <-> the last mode not Off
+void    RB_ApplyGfxPreset(int preset);
+int     RB_GfxPreset(void);           // the preset the rows match, or GFX_CUSTOM
+
 #endif

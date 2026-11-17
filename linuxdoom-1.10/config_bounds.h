@@ -32,7 +32,7 @@
 //
 // "0x" selects hex, matching what M_SaveDefaults writes for key bindings.
 // Everything else goes through %i, which accepts decimal and octal.
-static int ConfigParseInt (const char* text, int* out)
+static inline int ConfigParseInt (const char* text, int* out)
 {
     unsigned int	hex;
 
@@ -63,7 +63,7 @@ static int ConfigParseInt (const char* text, int* out)
 // deliberate for anything that names a control: a key index clamped to 255 is
 // silently unbound, and the user has no way to tell that from a key that simply
 // does not work. Returning the default leaves them a working game.
-static int ConfigClamp (int value, int lo, int hi, int fallback)
+static inline int ConfigClamp (int value, int lo, int hi, int fallback)
 {
     if (value < lo || value > hi)
 	return fallback;

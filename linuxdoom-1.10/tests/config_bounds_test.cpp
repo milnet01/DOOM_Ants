@@ -17,6 +17,7 @@
 #include <cstdio>
 
 #include "../config_bounds.h"
+#include "../gfx_settings.h"
 #include "check_util.h"
 
 int main()
@@ -97,6 +98,33 @@ int main()
     check_eq_int(ConfigClamp(7, 7, 7, 0), 7, "a single-value range keeps it");
     check_eq_int(ConfigClamp(8, 7, 7, 0), 0, "a single-value range rejects 8");
     check_eq_int(ConfigClamp(6, 7, 7, 0), 0, "a single-value range rejects 6");
+
+    // ---- DOOM-0617 INV-9: the graphics preset and ray-tracing keys ----
+    //
+    // Text where a number belongs is ConfigParseInt's, held above. These are the
+    // ranges: each value outside its key's range takes that key's default.
+    {
+        int preset = -1;
+        gfx_settings_t s = { -1, -1, -1, -1, 50 };
+        GfxClampSettings(&preset, &s, 1);
+        check(preset == GFX_LOW && s.rtMode == RTM_OFF && s.rtShadows == 1
+              && s.rtAo == 1 && s.rtQuality == RTQ_HALF,
+              "negative gfx/rt values each take their key's default");
+
+        preset = GFX_CUSTOM + 1;
+        s = { RTM_FULL + 1, 2, 2, RTQ_FULL + 1, 50 };
+        GfxClampSettings(&preset, &s, 1);
+        check(preset == GFX_LOW && s.rtMode == RTM_OFF && s.rtShadows == 1
+              && s.rtAo == 1 && s.rtQuality == RTQ_HALF,
+              "gfx/rt values one past the top each take their key's default");
+
+        preset = GFX_CUSTOM;
+        s = { RTM_FULL, 0, 0, RTQ_FULL, 50 };
+        GfxClampSettings(&preset, &s, 1);
+        check(preset == GFX_CUSTOM && s.rtMode == RTM_FULL && s.rtShadows == 0
+              && s.rtAo == 0 && s.rtQuality == RTQ_FULL,
+              "the top of each gfx/rt range is kept");
+    }
 
     return check_summary("config_bounds");
 }

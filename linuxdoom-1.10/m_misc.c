@@ -81,6 +81,7 @@ rcsid[] __attribute__((used)) = "$Id: m_misc.c,v 1.6 1997/02/03 22:45:10 b1 Exp 
 
 // Renderer back-end selection (DOOM-0026) — persisted via defaults[] below.
 #include "r_backend.h"
+#include "gfx_settings.h"   // GfxClampSettings (DOOM-0617)
 
 //
 // M_WriteFile
@@ -345,6 +346,13 @@ default_t	defaults[] =
     {"rt_wet",&rb_wet, 1},		// DOOM-0183: wet-liquid layers, default on
     {"rt_fog",&rb_fog, 2},		// DOOM-0011: volumetric fog strength 0..3, default Med
     {"rt_bloom",&rb_bloom, 2},		// DOOM-0331: bloom strength 0..3, default Medium
+    // DOOM-0617: the graphics preset and ray-tracing settings (r_backend.h).
+    {"gfx_preset",&gfx_preset, 0},		// 0 Low .. 3 Ultra, 4 Custom; written from the rows
+    {"rt_mode",&rt_mode, 0},			// 0 Off, 1 Effects, 2 Full
+    {"rt_shadows",&rt_shadows, 1},
+    {"rt_ao",&rt_ao, 1},
+    {"rt_quality",&rt_quality, 1},		// 0 quarter, 1 half, 2 full resolution
+    {"gfx_gpu_id",(int *) &gfx_gpu_id, (intptr_t) ""},	// the GPU the hardware test measured
 
 
 #ifdef NORMALUNIX
@@ -438,6 +446,10 @@ void M_SaveDefaults (void)
 {
     FILE*	f;
     char	tmpfile[PATH_MAX];
+
+    // DOOM-0617: the Preset row is derived from the rows below it, so the saved
+    // value is too -- a hand-changed row saves as Custom.
+    gfx_preset = RB_GfxPreset ();
 
     // DOOM-0254: vanilla truncated the real config first and wrote into it, so
     // a crash or a full disk mid-write left the user with a half-written (or
@@ -721,6 +733,18 @@ void M_LoadDefaults (void)
     rb_detile = ConfigClamp (rb_detile, 0, 2, 2);
     rb_fog    = ConfigClamp (rb_fog,    0, 3, 2);
     rb_bloom  = ConfigClamp (rb_bloom,  0, 3, 2);
+
+    // DOOM-0617 (INV-9). Range only: whether this machine can trace at all is
+    // not known until RB_Init, which holds rt_mode to Off without it.
+    {
+	gfx_settings_t s = { rt_mode, rt_shadows, rt_ao, rt_quality, 0 };
+
+	GfxClampSettings (&gfx_preset, &s, 1);
+	rt_mode    = s.rtMode;
+	rt_shadows = s.rtShadows;
+	rt_ao      = s.rtAo;
+	rt_quality = s.rtQuality;
+    }
 }
 
 

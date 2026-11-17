@@ -17,9 +17,10 @@ The player picks one of three ways to draw the world, from the in-game menu:
 | **Solid** | `RB_RASTER3D` | Vulkan rasteriser — the DOOM world on the GPU |
 | **Ultra** | `RB_RT3D` | Vulkan hardware **path tracer** — GI, ray-traced shadows |
 
-Solid and Ultra are the **same Vulkan backend** today; the `~` key
-(`rb_rtdebug`) switches raster vs. RT *within* that backend, while the menu
-selects the tier. Don't assume they are separate code paths.
+Solid and Ultra are the **same Vulkan backend** today. The tier picks the
+art; the Ray Tracing setting (`rt_mode`: the menu row and the `~` key) picks
+raster or traced *within* that backend, in both tiers (DOOM-0617). Don't
+assume they are separate code paths.
 
 ## The seam
 

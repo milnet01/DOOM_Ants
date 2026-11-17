@@ -68,6 +68,7 @@ rcsid[] __attribute__((used)) = "$Id: m_menu.c,v 1.7 1997/02/03 22:45:10 b1 Exp 
 #include "m_menu.h"
 
 #include "r_backend.h"   // renderer back-end toggle (DOOM-0026)
+#include "gfx_settings.h" // the preset and ray-tracing rows (DOOM-0617)
 #include "st_stuff.h"    // ST_Y: 320x200 status-bar top, the classic HUD-safe bound (DOOM-0206 L6)
 
 
@@ -240,6 +241,11 @@ void M_ChangeWet(int choice);
 void M_ChangeProfiler(int choice);
 // DOOM-0206 (L3): consolidated crisp Video menu (3D tiers) + its new Ray Tracing row.
 void M_ChangeRayTracing(int choice);
+// DOOM-0617: the preset and the Effects mode's rows.
+void M_ChangePreset(int choice);
+void M_ChangeRtShadows(int choice);
+void M_ChangeRtAo(int choice);
+void M_ChangeRtQuality(int choice);
 void M_VideoBack(int choice);
 void M_DrawVideoMenu(void);
 void M_SizeDisplay(int choice);
@@ -539,7 +545,11 @@ menu_t  RendererDef =
 enum
 {
     vid_renderer,       // tier selector (Classic/Solid/Ultra) — re-routes on Classic<->3D
-    vid_raytracing,     // NEW: RT on/off within the 3D tiers
+    vid_preset,         // Low/Medium/High/Ultra, or Custom (DOOM-0617)
+    vid_raytracing,     // Off/Effects/Full within the 3D tiers (DOOM-0617)
+    vid_rtshadows,      // Traced Shadows        -- these three show only in
+    vid_rtao,           // Traced Corner Shading -- Effects (M_VideoRowHidden)
+    vid_rtquality,      // Trace Quality
     vid_upscaler,
     vid_renderscale,
     vid_brightness,     // status 2 slider
@@ -568,7 +578,12 @@ enum
 menuitem_t VideoMenu[]=
 {
     {1,"",	M_ChangeRenderer,'r'},
+    {1,"",	M_ChangePreset,'n'},
     {1,"",	M_ChangeRayTracing,'t'},
+    // No jump keys on rows that can be hidden: the alphaKey search does not skip them.
+    {1,"",	M_ChangeRtShadows,0},
+    {1,"",	M_ChangeRtAo,0},
+    {1,"",	M_ChangeRtQuality,0},
     {1,"",	M_ChangeUpscaler,'u'},
     {1,"",	M_ChangeRenderScale,'c'},
     {2,"",	M_ChangeBrightness,'b'},
@@ -1560,7 +1575,8 @@ void M_DrawRendererMenu(void)
 //
 static const char* videoLabels[vid_end] =
 {
-    "Renderer", "Ray Tracing", "Upscaler", "Render Scale", "Brightness", "Sharpness",
+    "Renderer", "Preset", "Ray Tracing", "Traced Shadows", "Traced Corner Shading",
+    "Trace Quality", "Upscaler", "Render Scale", "Brightness", "Sharpness",
     "-  EFFECTS  -",
     "Flashlight", "SSAO", "De-tile", "Surface Detail", "Shine", "Dirt & Grime", "Wet Liquid", "Volumetric Fog",
     "Bloom",
@@ -1719,10 +1735,14 @@ static void M_VideoCrispValue(int i, crispval_t* cv)
     switch (i)
     {
       case vid_renderer:   cv->str = (const char*)RB_ModeMenuName(rendermode); break;
+      case vid_preset:     cv->str = gfxPresetNames[RB_GfxPreset()]; break;
       case vid_raytracing:
-	cv->str = (rb_rtdebug == 6) ? "On" : "Off";
+	cv->str = gfxRtModeNames[rt_mode];
 	if (rb_rtdebug_menu) cv->valcol = 0x707070FFu;   // greyed while Debug Views owns rb_rtdebug
 	break;
+      case vid_rtshadows:  cv->str = rt_shadows ? "On" : "Off"; break;
+      case vid_rtao:       cv->str = rt_ao ? "On" : "Off"; break;
+      case vid_rtquality:  cv->str = gfxQualityNames[rt_quality]; break;
       case vid_upscaler:   cv->str = upscalerNames[(rb_upscaler == 1) ? 1 : 0]; break;
       case vid_renderscale:
 	rsi = 0;
@@ -1751,6 +1771,38 @@ static void M_VideoCrispValue(int i, crispval_t* cv)
       case vid_back:       cv->centered = 1; break;
       default: break;
     }
+}
+
+// DOOM-0617 (spec § 4.2): the Ray Tracing row needs a GPU that traces, and the
+// Effects mode's rows show only while that row says Effects.
+static int M_VideoRowHidden(int i)
+{
+    switch (i)
+    {
+      case vid_raytracing:
+	return !RB_RtCapable();
+      case vid_rtshadows:
+      case vid_rtao:
+      case vid_rtquality:
+	return !RB_RtCapable() || rt_mode != RTM_EFFECTS;
+      default:
+	return 0;
+    }
+}
+
+// A hidden row must be skipped by the cursor too, and M_Responder skips status -1
+// rows (spacers); DOOM-0206 INV-4 keeps M_Responder untouched. Every row that can
+// hide is a status 1 row when shown. A cursor left on a row that has just hidden
+// (the `~` key can hide them with the menu open) moves up to the nearest shown row.
+static void M_VideoSyncRows(void)
+{
+    int i;
+
+    for (i = vid_raytracing ; i <= vid_rtquality ; i++)
+	VideoMenu[i].status = M_VideoRowHidden(i) ? -1 : 1;
+    if (currentMenu == &VideoDef)
+	while (itemOn > 0 && VideoMenu[itemOn].status == -1)
+	    itemOn--;
 }
 
 // DOOM-0211: RendererDef's rows are a subset of VideoDef's, so each takes the
@@ -1812,12 +1864,17 @@ static void M_DevCrispValue(int i, crispval_t* cv)
 }
 #endif
 
+// The most rows a crisp menu can list. The Video menu is the longest.
+#define MAXCRISPROWS	64
+
 typedef struct
 {
     menu_t*      menu;
     const char*  title;
     const char** labels;
     crispValFn   valueFn;   // NULL => label-only menu
+    void       (*syncRows)(void);    // NULL, or bring row statuses up to date before a draw
+    int        (*rowHidden)(int i);  // NULL, or nonzero for a row not drawn now
 } crispmenu_t;
 
 // The registry IS the crisp whitelist: only menus listed here draw crisp under a
@@ -1834,7 +1891,8 @@ static const crispmenu_t crispMenus[] =
     { &NewDef,     "CHOOSE SKILL",   skillLabels,   NULL },
     { &OptionsDef, "OPTIONS",        optionsLabels, M_OptionsCrispValue },
     { &SoundDef,   "SOUND VOLUME",   soundLabels,   M_SoundCrispValue },
-    { &VideoDef,   "VIDEO",          videoLabels,   M_VideoCrispValue },
+    { &VideoDef,   "VIDEO",          videoLabels,   M_VideoCrispValue,
+      M_VideoSyncRows, M_VideoRowHidden },
     { &RendererDef, "VIDEO",         rendererLabels, M_RendererCrispValue }
 #ifdef DOOM_DEV
     , { &DeveloperDef, "DEVELOPER",  developerLabels, M_DevCrispValue }
@@ -1875,6 +1933,7 @@ static void M_DrawCrispMenu(menu_t* menu)
     int nItems = menu->numitems;
     int rowH, rowStride, rowsTopY, titleY, marginX, valRightX, colX, labelOnly;
     int availH, maxRows, winRows, scrollTop, arrowRoom, v;
+    int vis[MAXCRISPROWS], nVis, selPos, k;   // the rows drawn, and the cursor's place among them
     float scale = 1.7f;   // INV-7: one comfortable, fixed glyph size for the whole menu
 
     // Menu backdrop (dim to the HUD-safe bound). Nothing else draws if the font never baked
@@ -1883,6 +1942,22 @@ static void M_DrawCrispMenu(menu_t* menu)
     rowH = rb_text_line_height(scale);
     if (rowH < 1 || !d)
 	return;
+
+    // DOOM-0617: rows that come and go (rowHidden). vis[] lists the rows drawn, in
+    // order, and the scroll window and row positions run over it, so a hidden row
+    // takes no space.
+    if (d->syncRows)
+	d->syncRows();
+    nVis = 0;
+    selPos = 0;
+    for (k = 0 ; k < nItems && nVis < MAXCRISPROWS ; k++)
+    {
+	if (d->rowHidden && d->rowHidden(k))
+	    continue;
+	if (k == itemOn)
+	    selPos = nVis;
+	vis[nVis++] = k;
+    }
 
     marginX   = dispW / 4;           // value menus: label column (narrower than v1 -> less "too wide")
     valRightX = dispW - dispW / 4;   // value menus: right-aligned value column
@@ -1929,10 +2004,10 @@ static void M_DrawCrispMenu(menu_t* menu)
     availH  = bottom - rowsTopY;
     maxRows = availH / rowStride;
     if (maxRows < 0) maxRows = 0;
-    if (maxRows >= nItems)
+    if (maxRows >= nVis)
     {
 	scrollTop = 0;
-	winRows   = nItems;
+	winRows   = nVis;
 	arrowRoom = 0;
     }
     else
@@ -1941,8 +2016,8 @@ static void M_DrawCrispMenu(menu_t* menu)
 	winRows   = maxRows - arrowRoom;
 	if (winRows > 0)
 	{
-	    scrollTop = itemOn - winRows / 2;
-	    if (scrollTop > nItems - winRows) scrollTop = nItems - winRows;
+	    scrollTop = selPos - winRows / 2;
+	    if (scrollTop > nVis - winRows) scrollTop = nVis - winRows;
 	    if (scrollTop < 0) scrollTop = 0;
 	}
 	else
@@ -1974,7 +2049,7 @@ static void M_DrawCrispMenu(menu_t* menu)
 	int aw = rb_text_width("^", scale);
 	rb_text_draw("^", (dispW - aw) / 2, rowsTopY - rowH, scale, headCol);
     }
-    if (arrowRoom && scrollTop + winRows < nItems)
+    if (arrowRoom && scrollTop + winRows < nVis)
     {
 	int aw = rb_text_width("v", scale);
 	rb_text_draw("v", (dispW - aw) / 2, rowsTopY + winRows * rowStride, scale, headCol);
@@ -1982,7 +2057,7 @@ static void M_DrawCrispMenu(menu_t* menu)
 
     for (v = 0 ; v < winRows ; v++)
     {
-	int i   = scrollTop + v;
+	int i   = vis[scrollTop + v];
 	int y   = rowsTopY + v * rowStride;
 	int st  = menu->menuitems[i].status;
 	int sel = (i == itemOn);
@@ -2043,14 +2118,14 @@ static void M_DrawCrispMenu(menu_t* menu)
     // rb_menu_safe_bottom), so map the selected row's display-Y centre back to virtual Y (skull
     // art ~16 tall -> -8 to centre it) and its X to just left of the label column. Chunky
     // beside the crisp text -- the user asked to keep the skull, not to make it crisp. Under
-    // scrolling the cursor's VISUAL row is (itemOn - scrollTop), which is inside [0, winRows)
-    // because scrollTop is clamped from itemOn -- but only when winRows > 0. When winRows == 0
+    // scrolling the cursor's VISUAL row is (selPos - scrollTop), which is inside [0, winRows)
+    // because scrollTop is clamped from selPos -- but only when winRows > 0. When winRows == 0
     // (maxRows==0: not even one row fits above the HUD-safe bound) no row was drawn for the
     // cursor to sit on, so the skull must not draw either (L5 review fix 2: it used to draw
     // unconditionally and could land well below the HUD-safe bound).
     if (winRows > 0)
     {
-	int rowTopY = rowsTopY + (itemOn - scrollTop) * rowStride;
+	int rowTopY = rowsTopY + (selPos - scrollTop) * rowStride;
 
 	if (rb_menu_cursor_ready())
 	{
@@ -2414,20 +2489,35 @@ void M_RendererChanged(int was)
 }
 
 //
-// DOOM-0206 (L3): the new Ray Tracing on/off row (both 3D tiers). On <=> rb_rtdebug==6,
-// Off <=> rb_rtdebug==0. No-op when Debug Views (rb_rtdebug_menu) owns rb_rtdebug — that
-// developer mode cycles it through the diagnostic set via the `~` key, so this row goes
-// visually greyed and its handler returns early (INV-4 forbids touching M_Responder, so
-// the row stays status 1 and Enter still fires here — hence the guard). Not persistence-
-// stable in Solid: RB_ApplyTierRt reclaims the tier default (0 Solid / 6 Ultra) at boot
-// and on every tier switch unless Debug Views is on (spec §4.5).
+// DOOM-0617: the Ray Tracing row, Off -> Effects -> Full (both 3D tiers; the spec's
+// § 4.1). No-op when Debug Views (rb_rtdebug_menu) owns rb_rtdebug — that developer
+// mode cycles it through the diagnostic set via the `~` key, so this row goes visually
+// greyed and its handler returns early (DOOM-0206 INV-4 forbids touching M_Responder,
+// so the row stays status 1 and Enter still fires here — hence the guard).
 //
 void M_ChangeRayTracing(int choice)
 {
     choice = 0;
     if (rb_rtdebug_menu)
 	return;
-    rb_rtdebug = (rb_rtdebug == 6) ? 0 : 6;
+    RB_SetRtMode(GfxNextRtMode(rt_mode, RB_RtCapable()));
+}
+
+// DOOM-0617: the Preset row sets the rows its preset names (gfx_settings.h).
+void M_ChangePreset(int choice)
+{
+    choice = 0;
+    RB_ApplyGfxPreset(GfxNextPreset(RB_GfxPreset(), RB_RtCapable()));
+}
+
+// DOOM-0617: the Effects mode's rows. They take effect from B3 and B4, when the
+// traced passes exist; until then Effects draws as Off.
+void M_ChangeRtShadows(int choice) { choice = 0; rt_shadows = !rt_shadows; }
+void M_ChangeRtAo(int choice)      { choice = 0; rt_ao = !rt_ao; }
+void M_ChangeRtQuality(int choice)
+{
+    choice = 0;
+    rt_quality = (rt_quality >= RTQ_FULL) ? RTQ_QUARTER : rt_quality + 1;
 }
 
 //
@@ -2861,17 +2951,17 @@ void M_ChangeRenderScale(int choice)
 }
 
 //
-// Toggle the path-tracer Debug Views (DOOM-0135). Off = the `~` key is a plain RT
-// on/off switch; On = `~` cycles the diagnostic views. Turning it off snaps the
-// view out of any diagnostic mode (1-4) to the denoised view, so the picture never
-// sticks on e.g. white-furnace once the cycle key is no longer reachable.
+// Toggle the path-tracer Debug Views (DOOM-0135). Off = the `~` key flips the Ray
+// Tracing setting; On = `~` cycles the diagnostic views. Turning it off puts the
+// view back to the one the Ray Tracing row names, so the picture never sticks on
+// e.g. white-furnace once the cycle key is no longer reachable.
 //
 void M_ChangeDebugViews(int choice)
 {
     choice = 0;
     rb_rtdebug_menu = rb_rtdebug_menu ? 0 : 1;
-    if (!rb_rtdebug_menu && rb_rtdebug >= 1 && rb_rtdebug <= 4)
-	rb_rtdebug = 6;
+    if (!rb_rtdebug_menu)
+	RB_SetRtMode(rt_mode);   // DOOM-0617: back to the view the Ray Tracing row names
 }
 
 //

@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=621 -->
+<!-- ants-roadmap-id-high-water: DOOM=624 -->
 
 # Roadmap
 
@@ -14206,6 +14206,31 @@ defect visible before a player finds it.
   Source: found-2026-11-13.
   Lanes: tools.
 
+- 📋 [DOOM-0623] **Ultra captures under -inspect -freeze differ on the barrels between runs of one build.**
+  Found 2026-11-17 checking DOOM-0617 B1 (INV-2). E1M1 at 1056 -3616 90,
+  renderer 1, -rtview 0, scripts/ab_capture.sh: two runs of the same
+  binary differed in 64 pixels (max 27/255), all on the two barrels;
+  the view 3 and view 6 arms showed the same. Solid was identical run to
+  run. Pairs taken back to back sometimes match exactly, so a control
+  can look clean and still miss it. Suspect a barrel state or glow that
+  -freeze does not hold, landing on a different tic per run.
+  **Layman:** Two identical test pictures of the same spot in Ultra come out slightly different on the barrels, which makes before/after checks harder to trust.
+  Kind: investigate.
+  Source: found-2026-11-17-DOOM-0617-B1.
+  Lanes: renderer, tests.
+
+- 📋 [DOOM-0624] **The first ab_capture.sh run into a new output folder draws a narrower frame than the runs after it.**
+  Found 2026-11-17: in three separate output folders the first capture
+  was 1423x800 and every later one 1708x800, with the same generated
+  config (widescreen 1, fillstretch 0). The engine runs with the output
+  folder as its working directory, so a file it writes there on the
+  first run likely changes the window on the next. Until fixed, discard
+  the first capture of a batch.
+  **Layman:** The first test picture in a batch comes out a different width from the rest, so it cannot be compared with them.
+  Kind: fix.
+  Source: found-2026-11-17-DOOM-0617-B1.
+  Lanes: tests.
+
 ## 0.11.0 — The frame budget
 
 Performance and pacing, and the benchmark harness that makes a regression
@@ -15190,13 +15215,19 @@ against.
   Source: user-request-2026-11-09.
   Lanes: renderer.
 
-- 📋 [DOOM-0596] **Dynamic resolution scaling: move the render scale each frame to hold 60 FPS.**
+- 📋 [DOOM-0596] **Dynamic resolution scaling: move the render scale each frame to hold the view's floor (30 FPS traced, 60 rasterised).**
   Today render_scale is a fixed preset (100/75/67/50). TAAU already
   takes any render size, and the traced passes draw into a sub-rectangle
   of full-size images, so a per-frame scale needs no reallocation.
   Needs: a GPU-time controller with hysteresis, floor/ceiling settings
   (e.g. 50-100 %), history handling when the scale changes, and a menu
   setting. Raster view too once DOOM-0594 lands.
+  The owner, 2026-11-17, relayed through ExperiRays: "I am happy for DRS
+  (dynamic resolution scaling) to be used as well", about the ray-traced
+  view at 50% upscaled to 4K. So the controller's target is the active
+  view's floor in docs/standards/performance.md: a steady 30 FPS in the
+  traced views (Full and Effects), 60 in the rasterised one. Timed
+  comparisons still run at a fixed scale.
   **Layman:** The game lowers its internal resolution a little in heavy scenes and raises it again when there is room, so the frame rate stays near 60.
   Kind: feature.
   Source: user-request-2026-11-09.
@@ -15473,7 +15504,7 @@ against.
   Lanes: renderer.
   Splits-from: DOOM-0569.
 
-- 📋 [DOOM-0617] **Add ray-tracing quality settings: a preset row plus one row per costly part, each Low / Medium / High / Ultra.**
+- 🚧 [DOOM-0617] **Add ray-tracing quality settings: a preset row plus one row per costly part, each Low / Medium / High / Ultra.**
   User 2026-11-15: "Perhaps we need quality settings in the settings menu
   to manage quality of various aspects of this engine." Shape chosen by the
   user the same day: one preset row (Low / Medium / High / Ultra, plus
@@ -15506,6 +15537,16 @@ against.
   highlights stay unshadowed at first; the test measures with Ultra's
   art where supported; switches for Shadows and Corner Shading now.
   Next: B1.
+  2026-11-17: B1 built. Keys gfx_preset, rt_mode, rt_shadows, rt_ao,
+  rt_quality, gfx_gpu_id; Video menu rows Preset, Ray Tracing
+  (Off/Effects/Full), Traced Shadows, Traced Corner Shading, Trace
+  Quality (the last three shown only in Effects); rt_mode drives
+  rb_rtdebug in both 3D tiers in place of RB_ApplyTierRt's forcing; `~`
+  flips Off and the last mode. Decisions in gfx_settings.h, held by
+  tests/gfx_settings_test.cpp and config_bounds_test.cpp (INV-9).
+  INV-1/INV-2 against 1cdfa2d: Solid Off pixel-identical; Ultra Off with
+  -rtview 0 pixel-identical; Full within the same-build noise; Effects
+  identical to Off. Next: B2.
   **Layman:** A quality menu like other PC games have: pick one preset, or tune each part, so the ray-traced view can trade a little sharpness for a steady 30 FPS.
   Kind: feature.
   Source: user-request-2026-11-15.
@@ -15521,6 +15562,18 @@ against.
   Kind: investigate.
   Source: user-request-2026-11-15.
   Lanes: renderer.
+
+- 📋 [DOOM-0622] **Show the drawn resolution beside the Render Scale percentage, e.g. 50% (1920x1080 -> 3840x2160).**
+  The owner, 2026-11-17, relayed through ExperiRays: "I want DOOM Ants
+  not to just give a percentage but also to give what resolution 50% is
+  upscaling from." The Video menu's Render Scale row shows only the
+  percentage today (renderScaleNames in m_menu.c). Show the drawn size
+  and the output size, read from the swapchain at draw time so a
+  window resize stays true. The Preset row sets the same value.
+  **Layman:** The Render Scale setting says what size the game really draws at and what it is upscaled to, not only a percentage.
+  Kind: ux.
+  Source: user-request-2026-11-17.
+  Lanes: menu.
 
 ## 0.12.0 — Light and materials
 

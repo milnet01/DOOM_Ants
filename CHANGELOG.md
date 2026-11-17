@@ -49,6 +49,13 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Ray tracing is one setting, the same in Solid and Ultra: Off, Effects or Full** (DOOM-0617)
+  The Video menu's Ray Tracing row and the `~` key set it. Full is the
+  ray-traced view as before. Effects draws like Off until its traced
+  shadows and corner shading land. A new Preset row (Low, Medium, High,
+  Ultra) sets it together with the render scale. Ultra no longer turns
+  ray tracing on by itself: choose Full, or press `~`.
+
 - **Ultra's panelled, metal, concrete, stone-block and wooden walls have real depth instead of faked depth** (DOOM-0610)
   The seams, panels, joints, blocks and planks of STARTAN3, STARG3,
   STARTAN1, STARGR1, BROWN1, BROWN96, BROWNGRN, BROWN144, METAL2,

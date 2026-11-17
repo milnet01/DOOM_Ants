@@ -34,6 +34,7 @@
 #include "m_argv.h"
 #include "d_main.h"
 #include "r_backend.h"   // rendermode / RB_CLASSIC (DOOM-0294's F12 screenshot)
+#include "gfx_settings.h" // gfxRtModeNames: the `~` key's log line (DOOM-0617)
 #include "g_game.h"      // G_ScreenShot: the Classic tier's half of that key
 #include "rb_image.h"    // rb_devshot_path: shared -devshot naming (DOOM-0294)
 #include "menu_text.h"   // DOOM-0211: the crisp menu queue this file draws under Classic
@@ -218,9 +219,9 @@ static void I_PostKeyEdge(boolean down, boolean* held, int doomkey)
 //
 // Toggle the path-tracer view (DOOM-0009), shared by the `~` key and the gamepad
 // touchpad (DOOM-0136). With the Debug Views menu toggle off (rb_rtdebug_menu==0)
-// it is a plain ray-tracing on/off switch (denoised SVGF <-> raster); with it on
-// it cycles the diagnostic views (mode 5, headless verify, is skipped). Flips the
-// renderer flag directly; the Vulkan present path reads it, no-op without RT.
+// it flips the Ray Tracing setting between Off and the last mode that was not
+// Off (DOOM-0617, RB_ToggleRtMode); with it on it cycles the diagnostic views
+// (mode 5, headless verify, is skipped). No-op without RT.
 static void I_ToggleRtView(void)
 {
     extern int rb_rtdebug;          // r_vulkan.cpp
@@ -233,7 +234,8 @@ static void I_ToggleRtView(void)
     }
     else
     {
-	rb_rtdebug = (rb_rtdebug == 0) ? 6 : 0;     // plain RT on/off
+	RB_ToggleRtMode();
+	printf("Ray tracing: %s\n", gfxRtModeNames[rt_mode]);
     }
     {
 	// Terminal proof of the active mode (the on-screen top-centre title is the
