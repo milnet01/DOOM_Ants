@@ -19321,7 +19321,7 @@ in CLAUDE.md describes.
   Kind: fix.
   Source: user-play-test-2026-11-02.
 
-- 📋 [DOOM-0539] **Replace every pickup's sprite with a real Blender model in the 3D views, with lights placed inside it.**
+- 🚧 [DOOM-0539] **Replace every pickup's sprite with a real Blender model in the 3D views, with lights placed inside it.**
   User 2026-11-02: new models for all the pickups, so that light sources can be set accurately within them. The engine has no model loader, so this needs one: a spec first (spec-format.md section 1). Monsters stay out of scope (DOOM-0080). Related: DOOM-0112 glowing collectibles, DOOM-0482 pickup light reach.
   Spec docs/specs/DOOM-0539-pickup-models.md accepted 2026-11-02:
   review-contract one loop (user cap of 2026-10-26), 21 verified, 21
@@ -19450,6 +19450,26 @@ in CLAUDE.md describes.
   BON1_emis changed; the mesh and normal map are byte-identical. Seen
   at E1M1 144 -2990 245, both views: the highlight is gone, the
   bubbles stay. Moving bubbles: DOOM-0619. The decorations: DOOM-0620.
+  2026-11-17: batch 2 built, live in Ultra, waiting on the user's
+  look. 21 models: weapons SHOT SGN2 MGUN LAUN PLAS BFUG CSAW (lying
+  on their sides), ammo CLIP AMMO SHEL SBOX ROCK BROK CELL CELP, armour
+  ARM1 ARM2 (vests lying face up, a small lit badge), spheres SOUL MEGA
+  PINV PINS (swirling orbs, one reach-0 light each, as the lamps).
+  Builders in Blender Scripts/pickups/; shared shapes in
+  lib/pickupshapes.py, worn materials in lib/propmats.py, pickupbake.py
+  gained tube, sphere, slab and swirl. pickup_models_test caught LAUN
+  below the floor (fixed). Lights: PLAS blue and BFUG green (reach 48,
+  72); plain ammo has none, as DOOM-0112 keeps it dark.
+  HD memory: E2M2 754.4 to 814.4 MB, E2M7 825.0, of 1024. INV-9, GPU
+  span medians, two runs per arm, -scale 3, with against without the 21
+  rows: E1M1 raster +0.00 ms, traced +0.09; E2M2 +0.09, +0.15; MAP18
+  +0.14, +0.00 (load ~11; GPU spans steady within 0.02).
+  Sheets: Scratchpad/DOOM_Ants/d0539b2/look/*-sheet.png.
+  Left for B6: the keys (BKEY RKEY YKEY BSKU RSKU YSKU) and BPAK PSTR
+  PVIS PMAP SUIT.
+  Waiting-on: user (do the batch 2 models look right in play?
+  Recommendation: keep; then the keys and the last power-ups,
+  2026-11-17).
   **Layman:** Health, armour, ammo, keys and power-ups become real 3D objects, so their glow can come from exactly the right spot inside them.
   Kind: feature.
   Source: user-request-2026-11-02.
