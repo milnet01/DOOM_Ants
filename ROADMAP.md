@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=628 -->
+<!-- ants-roadmap-id-high-water: DOOM=630 -->
 
 # Roadmap
 
@@ -20172,6 +20172,63 @@ in CLAUDE.md describes.
   **Layman:** Instead of loading every high-detail texture and prop when a level starts, the game loads what is near the player and lets go of what is far away, faster or slower depending on the drive.
   Kind: feature.
   Source: user-request-2026-11-17.
+  Lanes: renderer.
+
+- 📋 [DOOM-0629] **Flickering, strobing and glowing lights do not flicker in Solid and Ultra, and light switches do not change the room.**
+  User, 2026-11-17: "we don't have the flickering lights in Solid and Ultra."
+  Cause (code-read, not yet run): walls and floors take their sector's
+  lightlevel once, when RB_BuildLevelMesh emits them (emit_wall,
+  emit_flat_wall, emit_subsector_caps). The per-tic RB_UpdateMeshHeights
+  refreshes z and the live texture id but never the vertex `light` field.
+  The p_lights.c thinkers (T_FireFlicker, T_LightFlash, T_StrobeFlash,
+  T_Glow) and EV_TurnTagLightsOff / EV_LightTurnOn change
+  sector->lightlevel every tic, so Classic shows them and the 3D views do
+  not. Sprites and the weapon read the live level each frame, so in a
+  flickering room the monsters flicker and the walls do not.
+  Both views read the same vertex field (mesh.vert inLight;
+  pathtrace.comp vb.v[i0 + 10u]), so one refresh reaches both.
+  Shape of the fix: refresh `light` in RB_UpdateMeshHeights, writing only
+  on change. Walls light from seg->frontsector, which no vertex field
+  names (vsector is the moving-plane sector), so the mesh needs a CPU-side
+  light-sector index per vertex. Reuse the DOOM-0406 clamp (see
+  DOOM-0559). The static wall runs (DOOM-0612) skip per-vertex work and
+  need the light refresh too. A light change moves no geometry, so no
+  acceleration-structure refit.
+  Check: a test that changes a sector's lightlevel and sees the vertex
+  light follow; then E1M1's flickering areas side by side in Classic and
+  Solid.
+  **Layman:** In the original game some rooms flicker, strobe or pulse, and some switches turn a room's lights off. Solid and Ultra keep every wall and floor at the brightness it had when the level loaded.
+  Kind: fix.
+  Source: user-report-2026-11-17.
+  Lanes: renderer.
+
+- 📋 [DOOM-0630] **Solid and Ultra spread DOOM's light levels less than Classic, so dark rooms read brighter.**
+  User, 2026-11-17: "the original tends to be darker than Solid and
+  Ultra."
+  Likely cause (code-read; to be confirmed by a same-viewpoint capture):
+  the two renderers turn a sector's lightlevel into brightness differently.
+  Classic (R_InitLightTables) picks a colormap from
+  startmap = (15 - lightlevel/16) * 4 minus a distance term, so each
+  16-unit step in light level costs four of the 32 colormaps. Far away a
+  level-255 room stays at full brightness, a level-160 room falls to about
+  a third, and a level of 112 or below goes to the darkest colormap. Near
+  surfaces are brighter than that.
+  Solid's raster shade (mesh.frag) is linear instead:
+  lightlevel/255 * BASE_SECTOR_DIM (0.75) * a distance fade that reaches
+  its 0.35 floor only at 3000 units. Up close a level-112 room still shows
+  about a third of its texture's colour, and far fade is mild at DOOM's room sizes, so
+  dark rooms come out far brighter than Classic while full-bright rooms
+  come out dimmer. Point lights and bounce lift it further.
+  The traced view lights by its own transport plus an ambient floor of
+  sector light * AMBIENT_SECTOR_SCALE (pathtrace.comp), so it needs its
+  own comparison.
+  Open for the user: how close Solid should come to Classic's curve.
+  Interacts with BASE_SECTOR_DIM (DOOM-0170 spec, section 9 Q1).
+  Check: capture the same viewpoints in Classic and Solid and compare
+  mean brightness per sector light level.
+  **Layman:** Classic DOOM makes dim rooms very dark and lets far-away surfaces fade to black. Solid and Ultra turn the same light levels into a much flatter range, so the game looks brighter overall than the original.
+  Kind: fix.
+  Source: user-report-2026-11-17.
   Lanes: renderer.
 
 ## 0.13.0 — The player's experience
