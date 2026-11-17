@@ -15228,6 +15228,13 @@ against.
   view's floor in docs/standards/performance.md: a steady 30 FPS in the
   traced views (Full and Effects), 60 in the rasterised one. Timed
   comparisons still run at a fixed scale.
+  User 2026-11-17: "please use DRS to help maintain the required
+  frame rates for any given mode". Chosen the same day: the Render
+  Scale row gets a 'Dynamic' choice, the default, holding 30 FPS
+  traced and 60 rasterised; picking a fixed size turns it off (for
+  players who want a steady picture, and for timing tests). The row's
+  fixed sizes are DOOM-0622's. Build after DOOM-0539 batch 2, before
+  DOOM-0628.
   **Layman:** The game lowers its internal resolution a little in heavy scenes and raises it again when there is room, so the frame rate stays near 60.
   Kind: feature.
   Source: user-request-2026-11-09.
@@ -15570,6 +15577,15 @@ against.
   percentage today (renderScaleNames in m_menu.c). Show the drawn size
   and the output size, read from the swapchain at draw time so a
   window resize stays true. The Preset row sets the same value.
+  User 2026-11-17: "rather use resolution numbers and the
+  percentage can be in brackets next to the resolution numbers (50% of
+  4K)". It must follow the machine's own resolution (at 1440p, 50% is
+  of 1440p) and its shape (4:3, 16:9 or wider). Chosen the same day:
+  the row lists standard sizes that fit the screen, each with its
+  percentage, e.g. on 4K: 3840x2160 (100%), 3200x1800 (83%),
+  2560x1440 (67%), 1920x1080 (50% of 4K), 1280x720 (33%); on 4:3
+  1600x1200: 1600x1200, 1280x960, 1024x768, 800x600. A 'Dynamic'
+  choice joins the list (DOOM-0596). Build after DOOM-0539 batch 2.
   **Layman:** The Render Scale setting says what size the game really draws at and what it is upscaled to, not only a percentage.
   Kind: ux.
   Source: user-request-2026-11-17.
