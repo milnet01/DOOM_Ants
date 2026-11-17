@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=624 -->
+<!-- ants-roadmap-id-high-water: DOOM=625 -->
 
 # Roadmap
 
@@ -15574,6 +15574,20 @@ against.
   Kind: ux.
   Source: user-request-2026-11-17.
   Lanes: menu.
+
+- 📋 [DOOM-0625] **Export the loaded level as a glTF 2.0 binary scene for ExperiRays, written to scratch only.**
+  ExperiRays (/mnt/Games/Scripts/Linux/ExperiRays, docs/design.md close
+  call 5) reads engine scenes as glTF 2.0 binary plus the lab's own
+  `extras`, which get a spec there first. DOOM_Ants writes: the level
+  mesh as built for the BLAS (Ultra's real-geometry walls and models
+  included), material ids, the emitter list, and per-triangle subsector
+  and sector ids, so the lab can split vanilla walls from 3D geometry
+  (H9) and key caches by sector (H2). Output path given at run time;
+  never committed (game data). Blocked by the lab's extras spec.
+  **Layman:** A developer switch saves the current level's 3D shape and lights to a file the ray-tracing lab can load, so the lab can test ideas on real DOOM_Ants scenes.
+  Kind: feature.
+  Source: experirays-design-review-2026-11-17.
+  Lanes: renderer.
 
 ## 0.12.0 — Light and materials
 
