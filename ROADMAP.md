@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=625 -->
+<!-- ants-roadmap-id-high-water: DOOM=627 -->
 
 # Roadmap
 
@@ -16553,6 +16553,12 @@ in CLAUDE.md describes.
   new emissive G-buffer image the composite reads raw (un-denoised, not albedo-
   modulated); (b) bind the HD set into svgf_composite and sample maps[5] there.
   Prereq for any HD hero that carries a real emissive map.
+  2026-11-17 (DOOM-0620): emissive maps now ship. The floor lamp's
+  (COLU) lit band, the barrel's (BAR1) slime and the candelabra's (CBRA)
+  flames glow through _emis.png, which the rasterised view shows and the
+  traced play view (6) does not. So in the traced view those parts are
+  lit by the room, not glowing. The lamps still light the room there,
+  through their model lights.
   **Layman:** Glowing HD textures (e.g. a lit computer panel) currently only glow in the debug ray-traced view, not the normal denoised game view. Add a way for them to glow correctly in the real view too.
   Kind: enhancement.
   Source: in-session-2026-07-14 (DOOM-0042 T13).
@@ -20029,7 +20035,7 @@ in CLAUDE.md describes.
   Source: user-request-2026-11-15.
   Lanes: renderer.
 
-- 📋 [DOOM-0620] **Give E1M1's decorations real models: barrels, floor lamps, tech columns and the candelabra.**
+- 🚧 [DOOM-0620] **Give E1M1's decorations real models: barrels, floor lamps, tech columns and the candelabra.**
   User 2026-11-15: "Can we also get the rest of the props in E1M1
   created in 3D please (barrels / orbs / weapon pick ups / ammo)."
   The user named floor lamps (COLU), tech columns (ELEC) and the
@@ -20039,6 +20045,8 @@ in CLAUDE.md describes.
   weapons, ammo and remaining pickups are DOOM-0539's batch 2, spheres
   included ("orbs are the pick ups you collect for health / armour").
   Order (user 2026-11-15): after the DOOM-0617 spec.
+  2026-11-17: built, live in Ultra, waiting on the user's look. Builders in Blender Scripts/decorations/ (doom_bar1, doom_colu, doom_elec, doom_cbra; lib/pickupbake.py gained streaks()). Spec docs/specs/DOOM-0539-pickup-models.md amended: a model keys on the Thing's current sprite, so a shot barrel's BEXP stays DOOM's; a model ignores FF_FULLBRIGHT; a model light's reach 0 is a room light, which the lamp and candelabra use so Ultra raster rooms keep the sprite's brightness. Lamp and candelabra lights at the colour cap, 16. Traced lamp rooms are darker than with the sprite (E1M1 lamp room frame mean 64.8 to 46.9): the sprite lit as a big area to the floor. Glow maps do not show in the traced view (DOOM-0178). INV-9, GPU span medians, two runs per arm, -scale 3, with against without the four rows: E1M1 +0.07 ms raster, +0.07 traced; E2M2 +0.10, -0.2; MAP18 +0.02, 0. E2M2 HD memory 742.4 to 758.4 of 768 MB (DOOM-0626). Sheets: Scratchpad/DOOM_Ants/d0620/c3 and c4.
+  Waiting-on: user (do the barrels, lamps, tech columns and candelabra look right, and should traced lamp rooms be brighter? Recommendation: keep the darker, moodier lamp rooms, 2026-11-17).
   **Layman:** The exploding barrels, the pole lamps, the tall tech pillars and the candle stand become real 3D objects, with their light inside them.
   Kind: feature.
   Source: user-request-2026-11-15.
@@ -20056,6 +20064,33 @@ in CLAUDE.md describes.
   **Layman:** The last plain-looking walls and floors in the first level get the same worn-metal HD treatment as the rest.
   Kind: feature.
   Source: user-request-2026-11-15.
+  Lanes: renderer.
+
+- 📋 [DOOM-0626] **Load a level's pickup and decoration models only when it can show them, so DOOM-0539's batch 2 fits E2M2's texture memory.**
+  Found 2026-11-17 building DOOM-0620. EnsureHdMaterials loads every
+  models.csv row on every level: rb_drop_unused exempts a model's atlas
+  (isModel). E2M2 Ultra went 742.4 to 758.4 MB of 768 with the four
+  decoration models (d0620/e2m2.sh, two runs of one DEV build). Each model
+  is up to 4 MB, so batch 2's remaining pickups cannot fit. Options: load
+  only the sprites a level's things can show, including drops and
+  spawner targets, or smaller maps for small pickups (256 is 1 MB).
+  Spec docs/specs/DOOM-0539-pickup-models.md section 5 owns the budget.
+  **Layman:** The 3D props each take video memory on every level, even levels without them; the next batch of pickups would not fit on the fullest level.
+  Kind: enhancement.
+  Source: found-2026-11-17-DOOM-0620.
+  Lanes: renderer.
+
+- 📋 [DOOM-0627] **The NEE emitter diagnostic printed the same count with and without the decoration models.**
+  Found 2026-11-17 building DOOM-0620. E1M1 Ultra traced, -rtview 6:
+  the "RB_Vulkan NEE: N static + M sprite emitters" line read 170 + 57
+  in every run, with and without BAR1 COLU ELEC CBRA in models.csv, though
+  the nine barrels add nine model lights. Each log held one such line.
+  Suspected, not checked: it prints once before the HD load installs the
+  models, and its one-second throttle hides the later count in a short
+  run. DOOM-0539 INV-8 reads this line.
+  **Layman:** A debug line that counts the lights in a level printed the same number before and after new lights were added, so it cannot be trusted to check them.
+  Kind: investigate.
+  Source: found-2026-11-17-DOOM-0620.
   Lanes: renderer.
 
 ## 0.13.0 — The player's experience

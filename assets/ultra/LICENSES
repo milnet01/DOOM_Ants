@@ -96,6 +96,23 @@ assets/ultra/models/STIM.dmdl  pickups/doom_stim.py  CC0-first-party
 assets/ultra/models/STIM_alb.png  pickups/doom_stim.py  CC0-first-party
 assets/ultra/models/STIM_nrm.png  pickups/doom_stim.py  CC0-first-party
 assets/ultra/models/STIM_emis.png  pickups/doom_stim.py  CC0-first-party
+# DOOM-0620 decoration models: the same, from Blender Scripts/decorations.
+assets/ultra/models/BAR1.dmdl  decorations/doom_bar1.py  CC0-first-party
+assets/ultra/models/BAR1_alb.png  decorations/doom_bar1.py  CC0-first-party
+assets/ultra/models/BAR1_nrm.png  decorations/doom_bar1.py  CC0-first-party
+assets/ultra/models/BAR1_emis.png  decorations/doom_bar1.py  CC0-first-party
+assets/ultra/models/COLU.dmdl  decorations/doom_colu.py  CC0-first-party
+assets/ultra/models/COLU_alb.png  decorations/doom_colu.py  CC0-first-party
+assets/ultra/models/COLU_nrm.png  decorations/doom_colu.py  CC0-first-party
+assets/ultra/models/COLU_emis.png  decorations/doom_colu.py  CC0-first-party
+assets/ultra/models/ELEC.dmdl  decorations/doom_elec.py  CC0-first-party
+assets/ultra/models/ELEC_alb.png  decorations/doom_elec.py  CC0-first-party
+assets/ultra/models/ELEC_nrm.png  decorations/doom_elec.py  CC0-first-party
+assets/ultra/models/ELEC_emis.png  decorations/doom_elec.py  CC0-first-party
+assets/ultra/models/CBRA.dmdl  decorations/doom_cbra.py  CC0-first-party
+assets/ultra/models/CBRA_alb.png  decorations/doom_cbra.py  CC0-first-party
+assets/ultra/models/CBRA_nrm.png  decorations/doom_cbra.py  CC0-first-party
+assets/ultra/models/CBRA_emis.png  decorations/doom_cbra.py  CC0-first-party
 # DOOM-0537 COMP family walls: first-party, modelled and baked headlessly in Blender by scripts in the shared asset library
 assets/ultra/heroes/tech/COMPSPAN_alb.png  Blender-Scripts/walls/doom_compspan.py  CC0-first-party
 assets/ultra/heroes/tech/COMPSPAN_nrm.png  Blender-Scripts/walls/doom_compspan.py  CC0-first-party

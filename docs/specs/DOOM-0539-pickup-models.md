@@ -43,7 +43,9 @@ only wall and flat names (`ResolveDoomName`).
 - **Ultra only; Solid keeps its sprites.** Follows from `CLAUDE.md` § Render tiers: Solid enhances
   DOOM's art and Ultra substitutes for it, and a model is substituted art. Classic is untouched.
 - **Every pickup sprite, in both IWADs.** The set is every sprite whose `mobjinfo` carries
-  `MF_SPECIAL`, listed in §5. Monsters, barrels and lamps stay out (DOOM-0080).
+  `MF_SPECIAL`, listed in §5. Monsters stay out (DOOM-0080).
+- **And the decorations listed in §5** (DOOM-0620). User, 2026-11-15: "Can we also get the rest of
+  the props in E1M1 created in 3D please". Everything below holds for them as for a pickup.
 - **Show only.** A model never blocks anything: no game code reads it. It stays inside the space
   the sprite occupied, per INV-3.
 
@@ -79,17 +81,19 @@ float    lights[numLights][7]  x y z, r g b, reach
 `RB_MODEL_MAX_VERTS` is 900, so 300 triangles. `RB_MODEL_MAX_LIGHTS` is 4. `u v` run 0..1 across
 the atlas, with v 0 at the PNG's top row. The reader also refuses a value out of its range: a
 position past `RB_MODEL_MAX_EXTENT` on any axis, a normal not within 0.9..1.1 of unit length, `u v`
-outside 0..1, a light channel below 0 or over `RB_MODEL_MAX_LIGHT_RGB`, a reach of 0 or less or over
-`RB_MODEL_MAX_REACH` (DOOM-0547).
+outside 0..1, a light channel below 0 or over `RB_MODEL_MAX_LIGHT_RGB`, a reach below 0 or over
+`RB_MODEL_MAX_REACH` (DOOM-0547). A reach of 0 is a room light with no cut-off (§4.4).
 
 ### 4.3 Drawing
 
 `assets/ultra/models.csv` lists `sprite,file`. `RB_BuildSprites` gets one more branch: under
-`RB_RT3D`, a Thing with `MF_SPECIAL` whose sprite has a loaded model emits that model's triangles,
+`RB_RT3D`, a Thing whose current sprite has a loaded model emits that model's triangles,
 placed at the Thing and turned by a fixed angle from its map position, in place of `sprite_quad`.
 Each `u v` is multiplied by the first lump's width and height, because the shaders divide a vertex's
 UV by its material's texture size (`mesh.frag`, `hdBaseUV`). All of a sprite's animation frames
-share one model. Sector light and `FF_FULLBRIGHT` set `light` as they do in `sprite_quad`.
+share one model, and a Thing whose state changes to a sprite with no model draws that sprite: a
+shot barrel turns from `BAR1` to `BEXP`, so its explosion stays DOOM's. Sector light sets `light`;
+`FF_FULLBRIGHT` does not, so a lamp's model is shaded and its glow is its `_emis.png`.
 
 These vertices carry `RB_MESH_SPRITE | RB_MESH_MODEL`, a new flag at `0x400`, without
 `RB_MESH_EMISSIVE`, and `texnum` the sprite's first lump, so the existing id arithmetic holds.
@@ -117,6 +121,8 @@ flagged `RB_MESH_EMISSIVE | RB_MESH_MODEL`, carrying its colour in `nx ny nz` an
 drawn or traced as a surface. `BuildDynamicEmitters` reads colour and reach from these instead of
 `g.matEmissive`, so the traced view's emitters and the rasterised view's point lights both come from
 them. Reach limits the point lights alone (`g.frameDynReach`); the traced view's emitters have none.
+A reach of 0 sets no limit, as a lamp sprite's light has none: a lamp's or candelabra's light joins
+the room's shared sum below, so the room stays as bright as the sprite left it.
 `rgb` is the light's linear colour. The traced record multiplies it by `kModelLightTraceGain`, because
 a traced emitter's power scales with its area. `kSpriteEmitBoost` does not apply. `mesh.frag` uses a
 record's colour alone, normalised by its largest channel, so the gain does not reach the rasterised
@@ -139,6 +145,9 @@ Pickup sprites, from the game's own table, so an inventory test can compare (INV
 
 `AMMO ARM1 ARM2 BFUG BKEY BON1 BON2 BPAK BROK BSKU CELL CELP CLIP CSAW LAUN MEDI MEGA MGUN PINS PINV
 PLAS PMAP PSTR PVIS RKEY ROCK RSKU SBOX SGN2 SHEL SHOT SOUL STIM SUIT YKEY YSKU`
+
+Decorations (DOOM-0620), none of them `MF_SPECIAL`: `BAR1` (barrel), `COLU` (floor lamp), `ELEC`
+(tall tech column), `CBRA` (candelabra).
 
 Each of a model's three maps is at most 512x512: 1.33 MB of video memory with mips (`mbOf` in
 `EnsureHdMaterials`), so 4 MB per model, inside `kHdBudgetMB`'s accounting. A model's row has no
@@ -171,7 +180,8 @@ BLAS per model plus TLAS instances.
 - **INV-1** — Play is untouched: no game-logic file reads a model. *Test:*
   `grep -il rb_model linuxdoom-1.10/p_*.c` → no output. *Breaks when:* a model's size reaches a blocking or pickup check.
 - **INV-2** — Every pickup sprite has a model once B6 is done, and the list stays complete. *Test:*
-  `tests/pickup_models_test.cpp` compares `models.csv` against `MF_SPECIAL` in `info.c`. *Breaks
+  `tests/pickup_models_test.cpp` compares `models.csv` against `MF_SPECIAL` in `info.c`, and holds
+  §5's decorations in a table of their own. *Breaks
   when:* a sprite in §5 has no row, or a new `MF_SPECIAL` entry lands without one.
 - **INV-3** — A model stays inside the sprite's space: its footprint within the larger of the Thing's
   `radius` and half the sprite's width, its top within 1.25 times the sprite's top offset
@@ -180,6 +190,7 @@ BLAS per model plus TLAS instances.
   did not fill. *Test:*
   `tests/pickup_models_test.cpp` reads each `.dmdl`'s bounds against a table of those widths and offsets
   held in the test, copied from the IWADs, because a test takes no WAD (`docs/standards/testing.md`).
+  A decoration's row also holds its radius, which the test checks against `info.c`.
   *Breaks when:* a builder scales a model past those bounds.
 - **INV-4** — A malformed `.dmdl` is refused and that sprite draws as its sprite; it never crashes or
   reads out of bounds. Assets are read from a user-settable folder (`DOOMASSETDIR`), so this crosses
@@ -236,7 +247,7 @@ BLAS per model plus TLAS instances.
 
 ## 12. Cross-doc impact
 
-`docs/standards/assets.md` gains the models folder and its licence. `assets/ultra/LICENSES` gains each
+`docs/standards/assets.md` gains the models folder and its licence, decorations included. `assets/ultra/LICENSES` gains each
 model's PNGs, path by path. `CHANGELOG.md` on shipping. DOOM-0080's body points here for the file format.
 
 ## 13. Cold-eyes loop log

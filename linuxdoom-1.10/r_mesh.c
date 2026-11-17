@@ -2494,15 +2494,19 @@ int RB_WallTexEmits(int texnum)
     return wall_tex_light[texnum] ? 1 : 0;
 }
 
-// A thing's shade: its sector's light, or full on a fullbright frame.
-static float thing_light(const mobj_t* thing)
+// The light of the sector a thing stands in, 0..1.
+static float sector_light(const mobj_t* thing)
 {
     float light = thing->subsector->sector->lightlevel / 255.0f;
-    if (thing->frame & FF_FULLBRIGHT)
-        light = 1.0f;
     if (light < 0.0f) light = 0.0f;
     if (light > 1.0f) light = 1.0f;
     return light;
+}
+
+// A thing's shade: its sector's light, or full on a fullbright frame.
+static float thing_light(const mobj_t* thing)
+{
+    return (thing->frame & FF_FULLBRIGHT) ? 1.0f : sector_light(thing);
 }
 
 // One thing's billboard: the six vertices (two triangles) facing the eye, written
@@ -2599,8 +2603,8 @@ static boolean sprite_quad(const rb_view_t* view, mobj_t* thing, rb_vertex_t q[6
     return true;
 }
 
-// DOOM-0539: the Blender models standing in for pickup sprites, by sprite number. An empty
-// entry (numVerts 0) means that sprite stays a billboard.
+// DOOM-0539: the Blender models standing in for pickup and decoration sprites (DOOM-0620), by
+// sprite number. An empty entry (numVerts 0) means that sprite stays a billboard.
 static rb_model_t sprite_model[NUMSPRITES];
 
 void RB_SetSpriteModel(int sprite, rb_model_t* model)
@@ -2639,9 +2643,11 @@ int RB_SpriteFirstLump(const char* name, int* sprite)
     return -1;
 }
 
+// A Thing has a model when its current sprite has one, so a barrel's model gives way to the
+// explosion's sprite (BEXP) when it is shot (DOOM-0620).
 static const rb_model_t* thing_model(const mobj_t* thing)
 {
-    if (rendermode != RB_RT3D || !(thing->flags & MF_SPECIAL)
+    if (rendermode != RB_RT3D
         || (unsigned)thing->sprite >= NUMSPRITES || !sprite_model[thing->sprite].numVerts)
         return NULL;
     return &sprite_model[thing->sprite];
@@ -2657,7 +2663,7 @@ static model_place_t model_place(const mobj_t* thing)
     const unsigned hash = (unsigned)thing->x * 2654435761u ^ (unsigned)thing->y * 40503u;
     const float    a    = (hash >> 16) / 65536.0f * 2.0f * 3.14159265f;
     p.lump  = sprites[thing->sprite].spriteframes[0].lump[0];
-    p.light = thing_light(thing);
+    p.light = sector_light(thing);   // a lamp's model is shaded; its glow is its _emis map
     p.c     = cosf(a);
     p.s     = sinf(a);
     p.tx    = thing->x / (float)FRACUNIT;

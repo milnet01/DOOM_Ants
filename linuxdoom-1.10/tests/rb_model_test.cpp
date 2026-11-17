@@ -9,7 +9,8 @@
 //      a truncated or overlong body, and NaN or infinite values are each refused. So is a
 //      finite value out of its range: a position past RB_MODEL_MAX_EXTENT, a normal not
 //      near unit length, u or v outside 0..1, a light channel below 0 or over its cap, or a
-//      reach of 0 or less or over its cap (DOOM-0547).
+//      reach below 0 or over its cap (DOOM-0547). A reach of 0 loads: it is a room light with no
+//      cut-off, as a lamp sprite's is (DOOM-0620).
 //   3. A refused file leaves the model empty.
 //   4. A body at an odd offset in memory still loads.
 //   5. A file on disk loads, and one past the largest valid size is refused.
@@ -151,7 +152,6 @@ int main()
             { L + 4, -0.5f, "a negative green light channel is refused" },
             { L + 5, -0.5f, "a negative blue light channel is refused" },
             { L + 5, RB_MODEL_MAX_LIGHT_RGB + 1.0f, "a light channel over the cap is refused" },
-            { L + 6, 0.0f, "a zero reach is refused" },
             { L + 6, -30.0f, "a negative reach is refused" },
             { L + 6, RB_MODEL_MAX_REACH + 1.0f, "a reach over the cap is refused" },
         };
@@ -165,6 +165,9 @@ int main()
         poison(f, 6, 1.0f);
         poison(f, 7, 0.0f);
         check(!refused(f), "u 1 and v 0, the ends of the range, load");
+        auto r = good();
+        poison(r, L + 6, 0.0f);
+        check(!refused(r), "a zero reach loads: a room light with no cut-off");
         // Each cap is inclusive: a value exactly on it loads. Catches a `>` turned `>=`.
         auto g = good();
         poison(g, 2, -RB_MODEL_MAX_EXTENT);

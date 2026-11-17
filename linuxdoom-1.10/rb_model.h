@@ -22,6 +22,7 @@
 #define RB_MODEL_HEADER_SIZE 16u
 // DOOM-0547: ranges a finite value must also keep. A pickup is tens of units across, a light's
 // colour is near 0..1 and its reach under a few hundred units; the caps leave room above that.
+// A lamp's light (DOOM-0620) uses the colour cap, and reach 0 for no cut-off, as a lamp sprite.
 #define RB_MODEL_MAX_EXTENT    128.0f  // |x|, |y|, |z| of a vertex or a light
 #define RB_MODEL_MAX_LIGHT_RGB 16.0f
 #define RB_MODEL_MAX_REACH     1024.0f
@@ -105,7 +106,7 @@ static inline int RB_ModelParse(const void* data, size_t size, rb_model_t* out)
             || fabsf(l[2]) > RB_MODEL_MAX_EXTENT
             || l[3] < 0.0f || l[4] < 0.0f || l[5] < 0.0f || l[3] > RB_MODEL_MAX_LIGHT_RGB
             || l[4] > RB_MODEL_MAX_LIGHT_RGB || l[5] > RB_MODEL_MAX_LIGHT_RGB
-            || !(l[6] > 0.0f) || l[6] > RB_MODEL_MAX_REACH)
+            || l[6] < 0.0f || l[6] > RB_MODEL_MAX_REACH)   // 0: a room light, no cut-off
         {
             free(floats);
             return 0;

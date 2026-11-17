@@ -1,4 +1,5 @@
 // pickup_models_test.cpp — DOOM-0539 INV-2 and INV-3: the pickup list, and each model's size.
+// DOOM-0620 adds the decorations given models: barrels, floor lamps, tech columns, candelabra.
 //
 // Why this exists: a model that outgrows its sprite shows the player something standing where
 // nothing stood. A new MF_SPECIAL entry with no row here would keep drawing as a flat sprite,
@@ -6,8 +7,9 @@
 //
 // Contract:
 //   1. The table below names exactly the sprites of info.c's MF_SPECIAL entries (source scrape).
-//   2. Every .dmdl in assets/ultra/models names a sprite in the table and loads.
+//   2. Every .dmdl in assets/ultra/models names a sprite in either table and loads.
 //   3. Its footprint is within the larger of the Thing's radius and half the sprite's width.
+//      A decoration's radius is its own, checked against info.c by its spawn sprite.
 //   4. Its top is within 1.25 times the sprite's top offset, and it does not sink below the floor.
 //   5. Each light sits inside those bounds.
 //
@@ -51,17 +53,36 @@ const Sprite kSprites[] = {
 const float kThingRadius = 20.0f;   // every MF_SPECIAL entry in info.c; contract 1 checks it
 const float kTopSlack    = 1.25f;
 
+struct Decoration { Sprite sprite; int radius; };
+
+// DOOM-0620: decorations with a model. Width and top offset copied from the IWADs as above;
+// the radius is info.c's, which contract 3 checks.
+const Decoration kDecorations[] = {
+    {{"BAR1", 23,  28}, 10}, {{"COLU", 23, 43}, 16}, {{"ELEC", 38, 123}, 16},
+    {{"CBRA", 29,  57}, 16},
+};
+
 std::string slurp(const std::string& path)
 {
     std::ifstream f(path, std::ios::binary);
     return std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
 }
 
-const Sprite* find_sprite(const std::string& name)
+// The sprite's row and its Thing's radius, or nullptr when neither table names it.
+const Sprite* find_sprite(const std::string& name, float* radius)
 {
     for (const Sprite& s : kSprites)
         if (name == s.name)
+        {
+            *radius = kThingRadius;
             return &s;
+        }
+    for (const Decoration& d : kDecorations)
+        if (name == d.sprite.name)
+        {
+            *radius = (float)d.radius;
+            return &d.sprite;
+        }
     return nullptr;
 }
 
@@ -87,6 +108,7 @@ int main()
         const std::regex spawnLine(R"((S_\w+),\s*//\s*spawnstate)");
         const std::regex radiusLine(R"((\d+)\*FRACUNIT,\s*//\s*radius)");
         std::set<std::string> fromInfo;
+        std::map<std::string, int> spawnRadius;   // a spawn sprite's radius, last entry wins
         std::string line, spawn;
         int radius = 0;
         bool radiiAgree = true;
@@ -99,7 +121,10 @@ int main()
             else if (std::regex_search(line, m, spawnLine))
                 spawn = m[1];
             else if (std::regex_search(line, m, radiusLine))
+            {
                 radius = std::stoi(m[1]);
+                spawnRadius[stateSprite[spawn]] = radius;
+            }
             else if (line.find("// flags") != std::string::npos
                      && line.find("MF_SPECIAL") != std::string::npos)
             {
@@ -116,6 +141,13 @@ int main()
         for (const std::string& s : fromTable)
             check(fromInfo.count(s) == 1, ("table row is an MF_SPECIAL sprite: " + s).c_str());
         check(radiiAgree, "every MF_SPECIAL entry has the radius this test assumes");
+        for (const Decoration& d : kDecorations)
+        {
+            const std::string name = d.sprite.name;
+            check(fromInfo.count(name) == 0, ("decoration is not a pickup: " + name).c_str());
+            check(spawnRadius.count(name) == 1 && spawnRadius[name] == d.radius,
+                  ("decoration radius matches info.c: " + name).c_str());
+        }
     }
 
     // 2 to 5.
@@ -128,15 +160,16 @@ int main()
             continue;
         models++;
         const std::string name = e.path().stem().string();
-        const Sprite* s = find_sprite(name);
-        check(s != nullptr, (name + ".dmdl names a pickup sprite").c_str());
+        float radius = 0.0f;
+        const Sprite* s = find_sprite(name, &radius);
+        check(s != nullptr, (name + ".dmdl names a pickup or decoration sprite").c_str());
         const std::string bytes = slurp(e.path().string());
         rb_model_t m;
         check(RB_ModelParse(bytes.data(), bytes.size(), &m) == 1, (name + ".dmdl loads").c_str());
         if (!s || !m.floats)
             continue;
 
-        const float reach = std::max(kThingRadius, s->width / 2.0f);
+        const float reach = std::max(radius, s->width / 2.0f);
         const float top = kTopSlack * s->top;
         for (uint32_t i = 0; i < m.numVerts; i++)
         {
