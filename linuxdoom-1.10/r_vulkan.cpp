@@ -6759,7 +6759,7 @@ static const int   kHdMaxEdge   = 4096;
 // for a moment. 4096 bounds that at 64 MB and still admits 4K source art (user decision
 // 2026-10-27).
 static const int   kHdSourceMaxEdge = 4096;
-static const float kHdBudgetMB  = 768.0f;  // per-map VRAM ceiling
+static const float kHdBudgetMB  = 1024.0f; // per-map VRAM ceiling (DOOM-0042 spec; DOOM-0626)
 static const float kHdMipFactor = 4.0f / 3.0f;   // a full mip chain's share of an image (DOOM-0182)
 
 // Every map is uploaded. Roughness and metallic land in MatCtrl.maps[2] and [3], read by

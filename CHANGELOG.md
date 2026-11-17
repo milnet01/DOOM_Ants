@@ -49,6 +49,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Ultra loads only the 3D props a level can show, and allows 1 GB of HD art per level** (DOOM-0626)
+  A level loads the models of the things it holds and of what its
+  monsters drop, so unused props cost no video memory. The per-level
+  limit rose from 768 MB to 1 GB, so the next pickup batch fits the
+  fullest levels instead of falling back to flat sprites.
+
 - **Ray tracing is one setting, the same in Solid and Ultra: Off, Effects or Full** (DOOM-0617)
   The Video menu's Ray Tracing row and the `~` key set it. Full is the
   ray-traced view as before. Effects draws like Off until its traced

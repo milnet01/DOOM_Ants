@@ -20068,7 +20068,7 @@ in CLAUDE.md describes.
   Source: user-request-2026-11-15.
   Lanes: renderer.
 
-- 📋 [DOOM-0626] **Load a level's pickup and decoration models only when it can show them, so DOOM-0539's batch 2 fits E2M2's texture memory.**
+- ✅ [DOOM-0626] **Load a level's pickup and decoration models only when it can show them, so DOOM-0539's batch 2 fits E2M2's texture memory.**
   Found 2026-11-17 building DOOM-0620. EnsureHdMaterials loads every
   models.csv row on every level: rb_drop_unused exempts a model's atlas
   (isModel). E2M2 Ultra went 742.4 to 758.4 MB of 768 with the four
@@ -20089,6 +20089,10 @@ in CLAUDE.md describes.
   ceiling, rb_apply_budget turns models back to sprites first. The
   ceiling is DOOM-0042's soft default. Asked the user whether to raise
   it.
+  2026-11-17: user chose to raise the ceiling. kHdBudgetMB 768 to 1024
+  MB; DOOM-0042's spec default amended, its loop log moved to
+  docs/reviews/. E2M2 now has about 270 MB of room. CHANGELOG
+  Unreleased, Changed.
   **Layman:** The 3D props each take video memory on every level, even levels without them; the next batch of pickups would not fit on the fullest level.
   Kind: enhancement.
   Source: found-2026-11-17-DOOM-0620.
