@@ -493,6 +493,10 @@ void RB_LoadWallRelief(const char* path);
 int  RB_WallReliefLoaded(void);
 // A sprite name's first lump, and its number in *sprite. -1 when this WAD does not have it.
 int RB_SpriteFirstLump(const char* name, int* sprite);
+// DOOM-0626: marks the sprites this level can show, from its Things and what its monsters drop
+// when they die; RB_LevelShowsSprite then answers per sprite. Only those sprites' models load.
+void RB_MarkLevelSprites(void);
+int  RB_LevelShowsSprite(int sprite);
 
 // Build the player's weapon/flash psprites as a screen-space overlay, writing
 // rb_vertex_t triangles into out[] (up to maxverts). Positions are emitted in

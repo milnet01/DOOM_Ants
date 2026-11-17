@@ -151,7 +151,11 @@ Decorations (DOOM-0620), none of them `MF_SPECIAL`: `BAR1` (barrel), `COLU` (flo
 
 Each of a model's three maps is at most 512x512: 1.33 MB of video memory with mips (`mbOf` in
 `EnsureHdMaterials`), so 4 MB per model, inside `kHdBudgetMB`'s accounting. A model's row has no
-level-mesh traffic, so `rb_apply_budget` considers it last. `g.spriteVertCap` and `g.sprWorldVertCap`
+level-mesh traffic, so `rb_apply_budget` considers it last: over the ceiling, a model is the
+first row turned back to paletted, and its Things draw as sprites. A level loads only the models
+of sprites it can show, its Things' and the items its monsters drop when they die
+(`RB_MarkLevelSprites`; `tests/model_drops_test.cpp` holds its drop table to `P_KillMobj`;
+DOOM-0626). `g.spriteVertCap` and `g.sprWorldVertCap`
 both grow by the 12000-triangle budget's 36000 vertices plus room for the light triangles.
 `SPR_EMIT_MAX` grows from 1024 to 2048: `nee_merge_emitters` drops what passes it, and MAP18's 290
 pickups at 4 lights pass 1024. No new dependency.

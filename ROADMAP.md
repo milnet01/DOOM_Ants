@@ -20047,6 +20047,8 @@ in CLAUDE.md describes.
   Order (user 2026-11-15): after the DOOM-0617 spec.
   2026-11-17: built, live in Ultra, waiting on the user's look. Builders in Blender Scripts/decorations/ (doom_bar1, doom_colu, doom_elec, doom_cbra; lib/pickupbake.py gained streaks()). Spec docs/specs/DOOM-0539-pickup-models.md amended: a model keys on the Thing's current sprite, so a shot barrel's BEXP stays DOOM's; a model ignores FF_FULLBRIGHT; a model light's reach 0 is a room light, which the lamp and candelabra use so Ultra raster rooms keep the sprite's brightness. Lamp and candelabra lights at the colour cap, 16. Traced lamp rooms are darker than with the sprite (E1M1 lamp room frame mean 64.8 to 46.9): the sprite lit as a big area to the floor. Glow maps do not show in the traced view (DOOM-0178). INV-9, GPU span medians, two runs per arm, -scale 3, with against without the four rows: E1M1 +0.07 ms raster, +0.07 traced; E2M2 +0.10, -0.2; MAP18 +0.02, 0. E2M2 HD memory 742.4 to 758.4 of 768 MB (DOOM-0626). Sheets: Scratchpad/DOOM_Ants/d0620/c3 and c4.
   Waiting-on: user (do the barrels, lamps, tech columns and candelabra look right, and should traced lamp rooms be brighter? Recommendation: keep the darker, moodier lamp rooms, 2026-11-17).
+  User 2026-11-17: keep the darker traced lamp rooms. The remaining
+  question is the look of the four models in play.
   **Layman:** The exploding barrels, the pole lamps, the tall tech pillars and the candle stand become real 3D objects, with their light inside them.
   Kind: feature.
   Source: user-request-2026-11-15.
@@ -20075,6 +20077,18 @@ in CLAUDE.md describes.
   only the sprites a level's things can show, including drops and
   spawner targets, or smaller maps for small pickups (256 is 1 MB).
   Spec docs/specs/DOOM-0539-pickup-models.md section 5 owns the budget.
+  User 2026-11-17: load only the models a level can show, drops
+  included, rather than smaller maps.
+  2026-11-17: built. RB_MarkLevelSprites (r_mesh.c) marks each Thing's
+  sprite and its monsters' death drops (model_drops, held to P_KillMobj
+  by tests/model_drops_test.cpp); EnsureHdMaterials skips other
+  models.csv rows. Ultra, one DEV build: E1M1 43 materials 552.0 MB,
+  unchanged (it holds all eight props); E2M2 758.4 to 754.4 MB (it holds
+  seven of the eight); MAP18 426.3 MB. So the filter does not by itself
+  make batch 2 fit E2M2, which holds most props: over the 768 MB
+  ceiling, rb_apply_budget turns models back to sprites first. The
+  ceiling is DOOM-0042's soft default. Asked the user whether to raise
+  it.
   **Layman:** The 3D props each take video memory on every level, even levels without them; the next batch of pickups would not fit on the fullest level.
   Kind: enhancement.
   Source: found-2026-11-17-DOOM-0620.

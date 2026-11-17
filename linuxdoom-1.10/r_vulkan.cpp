@@ -7076,7 +7076,9 @@ static void EnsureHdMaterials()
     // DOOM-0539: pickup models. Each models.csv row loads its .dmdl and takes the control row
     // of its sprite's first lump, which is the id its triangles carry. Sprites the WAD lacks
     // are the other game's and are skipped; a bad .dmdl leaves its sprite a billboard (INV-4).
+    // DOOM-0626: so are sprites this level cannot show, so unused models cost no memory.
     RB_ClearSpriteModels();
+    RB_MarkLevelSprites();
     struct LoadedModel { int sprite; int id; rb_model_t model; };
     std::vector<LoadedModel> models;
     std::vector<char> isModel(N, 0);
@@ -7092,7 +7094,7 @@ static void EnsureHdMaterials()
             int sprite;
             const int lump = RB_SpriteFirstLump(spr, &sprite);
             const int id   = g.matNumWall + g.matNumFlat + lump;
-            if (lump < 0 || id >= N) continue;
+            if (lump < 0 || id >= N || !RB_LevelShowsSprite(sprite)) continue;
             rb_model_t model = {};
             FILE* df = rb_asset_path(full, sizeof(full), file) ? fopen(full, "rb") : nullptr;
             const bool ok = df && RB_ModelRead(df, &model);

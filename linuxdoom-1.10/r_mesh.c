@@ -2643,6 +2643,48 @@ int RB_SpriteFirstLump(const char* name, int* sprite)
     return -1;
 }
 
+// DOOM-0626: the item each monster drops when it dies, as P_KillMobj (p_inter.c) spawns it.
+// tests/model_drops_test.cpp keeps this table in step with that switch.
+static const struct { mobjtype_t monster, item; } model_drops[] = {
+    { MT_WOLFSS,    MT_CLIP },
+    { MT_POSSESSED, MT_CLIP },
+    { MT_SHOTGUY,   MT_SHOTGUN },
+    { MT_CHAINGUY,  MT_CHAINGUN },
+};
+
+static unsigned char level_sprite[NUMSPRITES];   // set by RB_MarkLevelSprites
+
+static void mark_spawn_sprite(mobjtype_t type)
+{
+    const int s = (int)states[mobjinfo[type].spawnstate].sprite;
+    if (s >= 0 && s < NUMSPRITES)
+        level_sprite[s] = 1;
+}
+
+void RB_MarkLevelSprites(void)
+{
+    int     s;
+    size_t  k;
+    mobj_t* thing;
+
+    memset(level_sprite, 0, sizeof level_sprite);
+    for (s = 0; s < numsectors; s++)
+        for (thing = sectors[s].thinglist; thing; thing = thing->snext)
+        {
+            if ((unsigned)thing->sprite < NUMSPRITES)
+                level_sprite[thing->sprite] = 1;
+            mark_spawn_sprite(thing->type);
+            for (k = 0; k < sizeof model_drops / sizeof model_drops[0]; k++)
+                if (thing->type == model_drops[k].monster)
+                    mark_spawn_sprite(model_drops[k].item);
+        }
+}
+
+int RB_LevelShowsSprite(int sprite)
+{
+    return sprite >= 0 && sprite < NUMSPRITES && level_sprite[sprite];
+}
+
 // A Thing has a model when its current sprite has one, so a barrel's model gives way to the
 // explosion's sprite (BEXP) when it is shot (DOOM-0620).
 static const rb_model_t* thing_model(const mobj_t* thing)
