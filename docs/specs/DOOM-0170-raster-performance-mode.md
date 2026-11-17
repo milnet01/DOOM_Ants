@@ -181,7 +181,10 @@ used as COLOUR only** (normalized by its max channel): the raw value is a radiom
 NEE quantity — sprite lamps carry a ×12 build boost and a big surface enters as many
 triangles — so summing it as raw intensity blows straight to white (confirmed on the
 first play-test). Normalizing keeps hue (a white lamp stays white) and drops the ×12/area
-scale; a `STRENGTH` dial (§6) sets the overall level, and the summed contribution is
+scale. A room light whose max channel is below `RASTER_LE_FULL` (§6) is divided by that
+instead, so it lights in proportion (DOOM-0630): a nukage floor's many faint triangles
+no longer act as full-strength lamps tinting a room green. A `STRENGTH` dial (§6) sets
+the overall level, and the summed contribution is
 **rolled off (Reinhard)** so a cluster of an emissive surface's triangles saturates
 gracefully to its colour instead of stacking past white. This compact per-subsector list
 (≤ N entries each) uploads to a new SSBO, packed nearest-first; the fragment shader
@@ -193,7 +196,8 @@ in-shader sort, bounded cost (INV-6):
 ```
 for k in this fragment's subsector list (≤ N, nearest-packed):
     Le      = light[k].Le;  m = max(Le.r, Le.g, Le.b);  if (m == 0) break
-    col     = Le / m                               // COLOUR only — hue kept, raw NEE ×12/area scale dropped
+    col     = Le / (reach > 0 ? m : max(m, LE_FULL))  // hue kept, raw NEE ×12/area scale dropped;
+                                                   // a room light fainter than LE_FULL lights in proportion (DOOM-0630)
     d       = light[k].centroid - worldPos
     dist2   = dot(d, d)
     atten   = 1 / (1 + dist2/RADIUS^2)             // smooth inverse-square-ish; RADIUS a tuned constant (§6)
@@ -214,8 +218,10 @@ leaves the walls nearby their own colour.
 the additive point lights + bounce have no headroom in already-lit areas (a white surface
 can't get brighter). The base shade is dimmed by `BASE_SECTOR_DIM` (§6); the point lights,
 bounce and flashlight lift lit areas back up while unlit areas sit a little darker — the
-performance-mode look. `1.0` = classic brightness; the seed is a play-test call (whether a
-room should go near-black for horror tension vs. stay softly lit stays §9 Q1).
+performance-mode look. DOOM-0630 settled the horror question below: the base shade is
+`horrorSectorShade(light) × horrorDistanceFade(light, dist) × BASE_SECTOR_DIM`, from
+`shaders/formulas/sector_light.glsl`, so a dim room is dark until a lamp or the torch
+lights it. `1.0` = classic brightness; the seed stays a play-test call.
 
 - **No cast shadows** here (that is the RT-on job, and the one raster shadow we do
   cast is the key light, §4.4). This matches DOOM-0010's stated RT-off behaviour:
@@ -375,10 +381,12 @@ shine flag (§4.6). **New CPU per-frame pass:** the per-subsector light-list bui
 | Reference scale (all FPS invariants) | 1920×1080 @ 100 % Render Scale, RX 6600 | §1 |
 | Frame budget at the floor | 16.6 ms (60 FPS) | INV-2 |
 | Point lights per subsector, `N` | **16** (`RASTER_MAX_LIGHTS_PER_SUBSECTOR`) | §4.1, §9 Q4 |
-| Point-light falloff radius, `RADIUS` | seed 512 world-units (tune 256–768) | §4.1, §9 Q4 |
+| Point-light falloff radius, `RADIUS` | 256 world-units (DOOM-0630; tune 256–768) | §4.1, §9 Q4 |
+| Room-light full strength, `RASTER_LE_FULL` | 6.0 (a room light with a lower max-channel `Le` lights in proportion; pickups exempt) | §4.1, DOOM-0630 |
+| Sector-light curve | `HORROR_LIGHT_LO` 0.25, `HORROR_LIGHT_HI` 0.80, `HORROR_DARK_REACH` 300 (`shaders/formulas/sector_light.glsl`) | §4.1, DOOM-0630 |
 | Point-light pop, `POINT_LIGHT_GAIN` | seed 3.0 (how fast a single light climbs to visible before the roll-off) | §4.1, §9 Q1 |
 | Pickup light reach, `PICKUP_LIGHT_REACH` | 96 world-units (`RASTER_PICKUP_LIGHT_REACH`, `r_vulkan.cpp`) | §4.1, DOOM-0482 |
-| Point-light ceiling, `POINT_LIGHT_STRENGTH` | seed 0.7 (max additive after the Reinhard roll-off; `Le` is colour-only) | §4.1, §9 Q1 |
+| Point-light ceiling, `POINT_LIGHT_STRENGTH` | seed 0.7 (max additive after the Reinhard roll-off; `Le` sets colour, and strength below `RASTER_LE_FULL`) | §4.1, §9 Q1 |
 | Base sector-light dim, `BASE_SECTOR_DIM` | seed 0.75 (1.0 = classic; gives the additive lights headroom) | §4.1, §9 Q1 |
 | Point-light CPU cull budget | ≤ **1 ms** / frame | §4.1 |
 | SSAO resolution / taps | half-res / 16 depth taps | §4.3 |
@@ -470,6 +478,7 @@ handed to the user for an on-RX-6600 play-test before the next begins.
   in a good way, or does it kill the horror-dark tension DOOM-0043 wanted to keep
   optional? Tuning call with the user after L1 lands (the DOOM-0043-deferred
   decision, now for RT-off). May end as a brightness dial, not on/off.
+  **Settled by DOOM-0630:** horror-dark, by the user's direction of 2026-11-17 (§4.1).
 - **Q2 (post-L2, deferred).** An outdoor directional "sun" as a second key light:
   stock DOOM has no sun direction/colour in map data, so deriving one from sky-flat
   sectors (e.g. a fixed down-tilted vector + a sky-tinted colour) is a follow-up,
@@ -477,47 +486,11 @@ handed to the user for an on-RX-6600 play-test before the next begins.
 - **Q3 (L3).** Which exact flats/textures get the shine flag (§4.6)? Start with the
   obvious liquids (nukage/water/blood) + known metal floor flats; refine by
   eyeballing during L3.
-- **Q4 (L1).** Point-light attenuation curve, the falloff `RADIUS` (seed 512
-  world-units, §6), and `N` (default 16, tune within **12–16**, §4.1/§6) — tune
+- **Q4 (L1).** Point-light attenuation curve, the falloff `RADIUS` (256
+  world-units since DOOM-0630, §6), and `N` (default 16, tune within **12–16**, §4.1/§6) — tune
   against the RT-on look so performance mode tracks quality mode as closely as
   raster allows (the PS5 goal).
 
 ## Cold-eyes loop log
 
-- **2026-07-09 — DOOM-0170 initial review (4 cold passes; 2 lanes each — accuracy/
-  conflicts + consistency/implementability).**
-  - **Loop 1** (0 CRITICAL): fixed the muzzle-flash-is-an-emitter error (it rides
-    `extralight`, not `emitBuf` — verified against `BuildDynamicEmitters`); corrected
-    the emitter record to a triangle *area* light (`v0 v1 v2 Le cdf pdf`, no
-    pos/intensity/radius); specified the nearest-N cull as a CPU per-subsector list
-    (not an in-shader sort over 100+ emitters); split Pass B into DIRECT/INDIRECT so
-    AO modulates the indirect term only (§4.3 was unbuildable against one combined
-    target); reconciled the DOOM-0169 raster-skip conflict (raster now reads the
-    probes, so the bake must run); pinned the reference scale (INV-2 was
-    unfalsifiable); gave blob shadows a pass slot (B′); added the §6 constants table
-    + a TOC; retitled §4.2 (mechanism, not "resolves").
-  - **Loop 2** (0 CRITICAL): loop-1 fixes held (not re-raised). Fixed the `DOOM-0145`
-    mis-citation (a Windows bug, not the Render Scale feature — repointed to
-    `render_scale`/`m_misc.c`); the `pcData[16]`/`mesh.vert` attribution (the shader
-    field is `pc.extralight`; `pcData[16]` is the `r_vulkan.cpp` upload); `DOOM-0009`
-    "shipped" → in-progress (roadmap 🚧); budgeted the new per-frame CPU cull (≤ 1 ms)
-    + added the per-pass ms table; made INV-3 numeric (1 %-low ≥ 0.6× mean, no frame
-    > 24.9 ms); "test scale" → "reference scale".
-  - **Loop 3** (0 CRITICAL/HIGH): fixed the bake-vs-INV-3 contradiction (`RunGiBake`
-    is synchronous — bake eager at load under the load screen, explicitly excluded
-    from INV-3's steady-state bar); deferred the undefined "sun" dominant light (DOOM
-    has no sun in map data — flashlight-only for now, §9 Q2); added the
-    sprite/billboard draw to the §3 pipeline (Pass A/B′ depend on it); reworded the
-    DOOM-0010 provenance (extends, not "is its RT-off portion"); added a **reciprocal
-    supersession pointer to DOOM-0009 §2**; retagged Q1 (L2→L1).
-  - **Loop 4** (0 CRITICAL/HIGH) — **polish-converged.** Only citation-label / wording
-    nits left: `RunGiBake`-synchronous cite §4.3→§4.1; removed a vestigial
-    mid-session-bake sentence; "sprite pass"→"Pass-B billboard draw"; deduped the
-    extralight mechanism to §4.1; reuse the stored emitter power weight
-    (reuse-before-rewrite); pinned the NORMAL+SHINE format; split two long sentences.
-    Stopped per the polish-convergence rule.
-  - **Verified against disk each loop:** emitter record layout
-    (`BuildStaticEmitterSet`/`BuildDynamicEmitters`), muzzle flash rides
-    `extralight`/`pcData[16]`, `RunGiBake` synchronous, `RB_ApplyTierRt` 0/6,
-    `render_scale` (`m_misc.c`), and every cited roadmap status.
-- **impl 2026-10-22 (DOOM-0482, no reviewer dispatched)** — Amendment, not a review loop. §4.1: each raster light record gains a reach (7 floats); pickups (MF_SPECIAL) carry PICKUP_LIGHT_REACH and fade to nothing there, every other light carries 0. §6 gains the dial. Records the user's decision of 2026-10-22, built and verified in the same commit (E1M2 Solid captures).
+Rows live in `../reviews/DOOM-0170-raster-performance-mode-loop-log.md`.

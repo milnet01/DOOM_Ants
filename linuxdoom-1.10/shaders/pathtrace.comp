@@ -133,6 +133,7 @@ layout(set = 1, binding = 2) uniform sampler2D materialTex[];
 // RT dispatch (the -rtverify path + the first frame) before a level's HD maps load.
 #define HD_SET 3
 #include "formulas/hd_set.glsl"
+#include "formulas/sector_light.glsl"   // DOOM-0630: the horror curve, shared with mesh.frag
 // The HD maps have mips for the rasterised view (DOOM-0182). The trace has no derivatives,
 // so it always reads the top level, and says so: an implicit LOD outside a fragment shader
 // is not defined.
@@ -1450,7 +1451,8 @@ vec3 primaryHitAddTerms(vec3 L, PrimaryHit h, PrimaryLight s, vec3 n, float secL
     // the bounced solution; the floor is a deliberate, designer-driven ambient seeded by the
     // sector lightlevel (§4.2). max() keeps GI wherever it already exceeds the floor, so lit
     // rooms are untouched (no double-count) and only dim/unprobed surfaces get lifted.
-    vec3 ambient = vec3(max(secLight * AMBIENT_SECTOR_SCALE, AMBIENT_FLOOR));
+    // DOOM-0630: the room's light through the same horror curve as the rasterised view.
+    vec3 ambient = vec3(max(horrorSectorShade(secLight) * AMBIENT_SECTOR_SCALE, AMBIENT_FLOOR));
     vec3 gi      = (s.subId < pc.misc2.y) ? giIrradiance(pc.probes, s.subId, s.shadeN)
                                           : vec3(0.0);
     L += modAlbedo * max(gi, ambient) * h.ao;   // AO dims fill light only

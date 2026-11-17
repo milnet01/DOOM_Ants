@@ -179,14 +179,19 @@ const float GI_BOUNCE_STRENGTH = 1.0;
 
 // DOOM-0170 L1b point-light dials (§6 seeds; §9 Q1/Q4 tuning). RASTER_MAX_LIGHTS must
 // match RASTER_MAX_LIGHTS_PER_SUBSECTOR in r_vulkan.cpp (shader_mirror_test checks). RADIUS is the half-bright
-// distance (world units). Each emitter's Le is used as COLOUR ONLY (normalized by its
-// max channel), because the raw Le is a radiometric NEE value (sprite lamps carry a ×12
-// build boost, big surfaces enter as many triangles) that summed as raw intensity blows
-// straight to white. STRENGTH sets the max additive level after the sum is rolled off.
+// distance (world units). An emitter's Le is used as COLOUR, normalized by its max channel,
+// because the raw Le is a radiometric NEE value (sprite lamps carry a ×12 build boost, big
+// surfaces enter as many triangles) that summed as raw intensity blows straight to white.
+// STRENGTH sets the max additive level after the sum is rolled off.
 const uint  RASTER_MAX_LIGHTS    = 16u;
 const uint  RASTER_LIGHT_FLOATS  = 7u;    // floats per light record (r_vulkan.cpp)
-const float RASTER_LIGHT_RADIUS  = 512.0;
+const float RASTER_LIGHT_RADIUS  = 256.0; // DOOM-0630: lamps light pools, not whole rooms
 const float RASTER_INV_RADIUS2   = 1.0 / (RASTER_LIGHT_RADIUS * RASTER_LIGHT_RADIUS);
+// DOOM-0630: the Le at which a room light (no reach) lights at full strength. A fainter one
+// (nukage's forced 0.19, a dim panel) lights in proportion, so a goo floor of many
+// triangles is a faint glow, not 16 full-strength lamps tinting the room green. A pickup's
+// light keeps full strength: it has its own roll-off (DOOM-0551).
+const float RASTER_LE_FULL       = 6.0;
 // Two decoupled dials so "how obvious a single lamp is" and "the ceiling that stops a
 // cluster blowing to white" tune independently: GAIN sets how fast a light climbs to
 // full before the roll-off (the pop), STRENGTH is the max additive level after it.
@@ -202,6 +207,7 @@ const float POINT_LIGHT_STRENGTH = 0.7;
 // base a touch; the lights/bounce/flashlight lift lit areas back up while unlit areas sit
 // a little darker (the "performance-mode" look). 1.0 = classic brightness; tune w/ user.
 const float BASE_SECTOR_DIM      = 0.75;
+#include "formulas/sector_light.glsl"   // DOOM-0630: the horror curve, shared with the trace
 
 // DOOM-0170 L2c — 3x3 PCF against the flashlight shadow map. 1.0 = lit, 0.0 = fully
 // shadowed. Fragments outside/behind the light frustum return 1.0 (the cone + facing terms
@@ -474,16 +480,17 @@ void main()
     // +/-1 light-level step on axis-aligned segs -- is the only orientation
     // effect DOOM has; it belongs in a per-vertex build-time pass, not here.)
     //
-    // DOOM-style distance diminishing: far surfaces fade toward dark (near keeps
-    // full sector light). The weapon psprite is NDC, so vDist is meaningless there.
+    // DOOM-style distance diminishing, DOOM-0630's horror curve: a dim room's light falls
+    // away with distance, faster the dimmer it is; a full-bright room keeps its light at
+    // any distance, as in Classic. The weapon psprite is NDC, so vDist is meaningless there.
     float distLight = 1.0;
     if ((vFlags & FLAG_PSPRITE) == 0)
-        distLight = clamp(1.0 - vDist / 3000.0, 0.35, 1.0);
+        distLight = horrorDistanceFade(vLight, vDist);
 
     // DOOM's non-directional sector light (with distance diminishing). This is the ambient
     // term SSAO occludes; an earlier Lambert key light here was dropped as unfaithful (see
-    // the DOOM-0069 note above). Max is 0.75 (BASE_SECTOR_DIM), so it never self-clips.
-    float sect = vLight * distLight * BASE_SECTOR_DIM;   // DOOM-0170 §9 Q1 rebalance
+    // the DOOM-0069 note above). Both factors are at most 1, so the max is BASE_SECTOR_DIM.
+    float sect = horrorSectorShade(vLight) * distLight * BASE_SECTOR_DIM;
 
     // DOOM-0170 L2b — accumulate AMBIENT (sector + bounce; AO-affected) and DIRECT (flashlight
     // + point lights; never AO'd) into separate targets. Sprites and the weapon psprite are
@@ -585,14 +592,14 @@ void main()
                 float m = max(Le.r, max(Le.g, Le.b));
                 if (m <= 0.0)
                     break;
-                vec3  col = Le / m;                     // unit-max colour, hue preserved
+                // DOOM-0482: a pickup carries a reach and fades to nothing there, so it
+                // lights the floor around it, not the walls nearby. 0 = no cut-off.
+                float reach = pc.lights.d[o + 6u];
+                vec3  col = Le / (reach > 0.0 ? m : max(m, RASTER_LE_FULL));  // hue kept
                 vec3  c   = vec3(pc.lights.d[o], pc.lights.d[o + 1u], pc.lights.d[o + 2u]);
                 vec3  dd  = c - vWorldPos;
                 float d2  = dot(dd, dd);
                 float att = 1.0 / (1.0 + d2 * RASTER_INV_RADIUS2);
-                // DOOM-0482: a pickup carries a reach and fades to nothing there, so it
-                // lights the floor around it, not the walls nearby. 0 = no cut-off.
-                float reach = pc.lights.d[o + 6u];
                 if (reach > 0.0)
                 {
                     float w = clamp(1.0 - sqrt(d2) / reach, 0.0, 1.0);

@@ -20213,7 +20213,7 @@ in CLAUDE.md describes.
   Source: user-report-2026-11-17.
   Lanes: renderer.
 
-- 📋 [DOOM-0630] **Solid and Ultra spread DOOM's light levels less than Classic, so dark rooms read brighter.**
+- ✅ [DOOM-0630] **Solid and Ultra spread DOOM's light levels less than Classic, so dark rooms read brighter.**
   User, 2026-11-17: "the original tends to be darker than Solid and
   Ultra."
   Likely cause (code-read; to be confirmed by a same-viewpoint capture):
@@ -20245,6 +20245,20 @@ in CLAUDE.md describes.
   User, 2026-11-17: "I will leave it to you to figure out how to achieve
   the moodier / horror look." The design is delegated; present the
   result for the user's look.
+  Shipped 2026-11-18, after the user approved same-spot sheets.
+  Measured cause: not the sector term (Solid's sector term alone was
+  already darker than Classic) but the raster lamps. Each emitter
+  triangle's Le was normalised to unit strength, so E1M3's nukage
+  (forced Le 0.19, many triangles) lit rooms as full-strength green
+  lamps, and every room came out about equally bright.
+  Fix, in both 3D views: shaders/formulas/sector_light.glsl eases a
+  room's light from black at 64 to full at 204, and in the rasterised
+  view a dim room's light falls away with distance (light 255 never
+  fades). A room light below RASTER_LE_FULL lights in proportion to
+  its Le (pickups exempt, DOOM-0551). Lamp radius 512 -> 256.
+  Ultra rasterised mean brightness, Classic / before / after:
+  light 255 87/97/88, 160 89/54/38, 128 55/58/41, 112 49/58/45,
+  96 57/36/21. Traced outdoor white-out is DOOM-0321, not this.
   **Layman:** Classic DOOM makes dim rooms very dark and lets far-away surfaces fade to black. Solid and Ultra turn the same light levels into a much flatter range, so the game looks brighter overall than the original.
   Kind: fix.
   Source: user-report-2026-11-17.

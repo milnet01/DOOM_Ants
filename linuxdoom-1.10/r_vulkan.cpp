@@ -1447,7 +1447,7 @@ static const float kBloomRasterGain  = 50.0f;
 // DOOM-0331 §10 Q5 — the largest value mesh.frag's sector term can reach, and therefore the
 // half of the AMBIENT ceiling that is not the GI bounce (RunGiBake prints their sum). It
 // MIRRORS BASE_SECTOR_DIM in mesh.frag, because C++ cannot read a GLSL constant: `sect =
-// vLight * distLight * BASE_SECTOR_DIM` with both factors in [0,1]. A mirror that silently
+// horrorSectorShade * distLight * BASE_SECTOR_DIM` with both factors in [0,1]. A mirror that silently
 // parts company with its original is how INV-4's floor was breached once already, so
 // bloom_threshold_test.cpp scrapes both and reddens if they differ.
 static const float kAmbientSectorMax = 0.75f;

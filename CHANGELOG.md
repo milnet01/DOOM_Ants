@@ -49,6 +49,14 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Solid and Ultra are darker and moodier: dim rooms are dark until a lamp or your torch lights them** (DOOM-0630)
+  A room's light now follows a horror curve in both 3D views. Rooms at
+  light 64 or below are black, mid-lit rooms sit a little below
+  Classic, and full-bright areas are unchanged. Faint glows such as
+  nukage no longer act as full-strength lamps, so rooms keep their own
+  colours instead of turning green, and lamps light pools rather than
+  whole rooms.
+
 - **Ultra loads only the 3D props a level can show, and allows 1 GB of HD art per level** (DOOM-0626)
   A level loads the models of the things it holds and of what its
   monsters drop, so unused props cost no video memory. The per-level
