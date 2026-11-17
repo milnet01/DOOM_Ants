@@ -20174,7 +20174,7 @@ in CLAUDE.md describes.
   Source: user-request-2026-11-17.
   Lanes: renderer.
 
-- 📋 [DOOM-0629] **Flickering, strobing and glowing lights do not flicker in Solid and Ultra, and light switches do not change the room.**
+- ✅ [DOOM-0629] **Flickering, strobing and glowing lights do not flicker in Solid and Ultra, and light switches do not change the room.**
   User, 2026-11-17: "we don't have the flickering lights in Solid and Ultra."
   Cause (code-read, not yet run): walls and floors take their sector's
   lightlevel once, when RB_BuildLevelMesh emits them (emit_wall,
@@ -20197,6 +20197,17 @@ in CLAUDE.md describes.
   Check: a test that changes a sector's lightlevel and sees the vertex
   light follow; then E1M1's flickering areas side by side in Classic and
   Solid.
+  Fixed 2026-11-17. RB_UpdateMeshHeights refreshes each wall and flat
+  vertex's light every tic, on the per-vertex walk and the static wall
+  runs. vert_light.h names the lighting sector: the vertex's sidedef's
+  sector for walls, relief walls and filled steps; vsector for caps.
+  The three build sites share its clamp. tests/vert_light_test.cpp
+  locks it; its wiring check failed on the unfixed code.
+  Checked in-game on E1M1's strobing room (sector 64), Solid raster, 70
+  consecutive frames: top-of-frame brightness spread 0.0 before, 43.9
+  to 48.8 after, with walls, ceiling and floor dimming together. Scan
+  cost unchanged within noise (Ultra traced, about 0.2-0.3 ms/frame for
+  both builds). The strobe dims less than Classic's; that is DOOM-0630.
   **Layman:** In the original game some rooms flicker, strobe or pulse, and some switches turn a room's lights off. Solid and Ultra keep every wall and floor at the brightness it had when the level loaded.
   Kind: fix.
   Source: user-report-2026-11-17.
@@ -20226,6 +20237,14 @@ in CLAUDE.md describes.
   Interacts with BASE_SECTOR_DIM (DOOM-0170 spec, section 9 Q1).
   Check: capture the same viewpoints in Classic and Solid and compare
   mean brightness per sector light level.
+  User direction, 2026-11-17: "we don't necessarily have to use
+  the\noriginal's method but I do want the game to be a horror
+  experience\nthrough visuals." So the goal is dark, threatening rooms,
+  not a\ncopy of Classic's colormap curve. Next: measure Classic vs
+  Solid vs\nUltra at the same viewpoints, then propose a curve.
+  User, 2026-11-17: "I will leave it to you to figure out how to achieve
+  the moodier / horror look." The design is delegated; present the
+  result for the user's look.
   **Layman:** Classic DOOM makes dim rooms very dark and lets far-away surfaces fade to black. Solid and Ultra turn the same light levels into a much flatter range, so the game looks brighter overall than the original.
   Kind: fix.
   Source: user-report-2026-11-17.

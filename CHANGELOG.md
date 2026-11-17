@@ -95,6 +95,11 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Flickering, strobing and glowing lights work in Solid and Ultra, and so do light switches** (DOOM-0629)
+  Walls and floors kept the brightness they had when the level loaded,
+  so only monsters and items flickered. They now follow their room's
+  light every tic, in the rasterised and ray-traced views.
+
 - **Walls with real depth no longer slow Ultra's rasterised view** (DOOM-0611)
   The level's triangles were kept in the computer's main memory, so the
   graphics card fetched every one across the bus each frame. They now

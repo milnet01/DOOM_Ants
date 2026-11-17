@@ -56,6 +56,7 @@
 #include "atlas_bounds.h"
 #include "wall_relief.h"   // DOOM-0541 real depth in a wall
 #include "static_runs.h"   // DOOM-0612 walls the per-tic scan checks once
+#include "vert_light.h"    // DOOM-0629 which sector's live light a vertex shows
 
 // Texture geometry tables from r_data.c (no public header declares them).
 // texturewidthmask+1 is the wall's tiling width (matches how R_GetColumn masks
@@ -251,9 +252,7 @@ static void emit_flat_wall(builder_t* bld, seg_t* seg, fixed_t bottomz, fixed_t 
     u0 = (seg->offset + seg->sidedef->textureoffset) / (float)FRACUNIT;
     u1 = u0 + len;
 
-    light = seg->frontsector->lightlevel / 255.0f;   // DOOM-0406 clamp, as emit_wall
-    if (light < 0.0f) light = 0.0f;
-    if (light > 1.0f) light = 1.0f;
+    light = RB_LevelLight(seg->frontsector->lightlevel);
 
     pic = flattranslation[pic];
     bl = mkv(x1, y1, zb, nx, ny, 0.0f, u0, -zb, pic, RB_MESH_FLAT, light);
@@ -575,14 +574,7 @@ static void emit_wall(builder_t* bld, seg_t* seg, fixed_t bottomz, fixed_t topz,
         }
     }
     vbot = vtop + (zt - zb);
-    // DOOM-0406: lightlevel is a raw short straight out of SECTORS, which
-    // security.md names a trust boundary, so a crafted WAD can put any 16-bit
-    // value there. Every sprite, blob and psprite site already clamps; walls and
-    // flats did not, and the ray-traced path reads this attribute as "0..1" with
-    // no clamp of its own (mesh.vert clamps, so only the raster view was covered).
-    light = seg->frontsector->lightlevel / 255.0f;
-    if (light < 0.0f) light = 0.0f;
-    if (light > 1.0f) light = 1.0f;
+    light = RB_LevelLight(seg->frontsector->lightlevel);   // DOOM-0406 clamp
 
     {
         relief_ctx_t c = { 0 };
@@ -762,9 +754,7 @@ static void emit_subsector_caps(builder_t* bld, int ssnum, const poly_t* cell)
         if (clipped.n < 3) return;                          // trimmed to nothing
     }
 
-    light  = sec->lightlevel / 255.0f;   // DOOM-0406: untrusted short, clamp as above
-    if (light < 0.0f) light = 0.0f;
-    if (light > 1.0f) light = 1.0f;
+    light  = RB_LevelLight(sec->lightlevel);
     secidx = (int)(sec - sectors);   // for the per-frame dynamic-height update
     // DOOM-0141: a sky-flat cap becomes RT-only sky backdrop geometry (occludes the
     // view like classic's sky) instead of being omitted; a normal flat caps as before.
@@ -1929,6 +1919,19 @@ static int wall_live_tex(const rb_vertex_t* v, int cur)
     return (base > 0 && base < numtextures) ? texturetranslation[base] : cur;
 }
 
+// DOOM-0629: a vertex's live light, from the sector vert_light.h names, or -1 for a
+// vertex nothing relights. Light thinkers and switches change lightlevel each tic.
+static float vert_live_light(const rb_vertex_t* v)
+{
+    int idx;
+    switch (RB_VertLightSource(v, &idx))
+    {
+      case RB_LIGHT_FROM_SIDE:   return RB_LevelLight(sides[idx].sector->lightlevel);
+      case RB_LIGHT_FROM_SECTOR: return RB_LevelLight(sectors[idx].lightlevel);
+      default:                   return -1.0f;
+    }
+}
+
 int RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst, rb_vertex_t* shadow)
 {
     int i;
@@ -1943,7 +1946,7 @@ int RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst, rb_vertex_t* s
     // base geometry; dst[i] is the live GPU vertex (z gets the current height),
     // and shadow[i] its RAM twin, which is what gets read (DOOM-0443).
     // The scan covers every vertex, not only those on moving sectors, on purpose: it
-    // also carries animated textures and switch swaps, which can touch any face. The
+    // also carries animated textures, switch swaps and sector light, which can touch any face. The
     // caller runs it once per game tic per vertex-buffer copy (DOOM-0569). A run of
     // wall vertices that never move shares one texture source, so it is checked once
     // and written whole (DOOM-0612, user ruling 2026-11-14; static_runs.h). Do not
@@ -1956,12 +1959,18 @@ int RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst, rb_vertex_t* s
         {
             const int first = i, end = i + mesh->runs[r].count;
             int newtex = wall_live_tex(v, shadow[first].texnum);
+            // One sidedef per run, so one sector lights it (vert_light.h).
+            const float newlight = vert_live_light(v);
+            int k;
             if (newtex != shadow[first].texnum)
             {
-                for (; i < end; i++)
-                    shadow[i].texnum = dst[i].texnum = newtex;
+                for (k = first; k < end; k++)
+                    shadow[k].texnum = dst[k].texnum = newtex;
                 retex = 1;
             }
+            if (newlight >= 0.0f && float_bits_differ(shadow[first].light, newlight))
+                for (k = first; k < end; k++)
+                    shadow[k].light = dst[k].light = newlight;
             i = end - 1;
             r++;
             continue;
@@ -2001,6 +2010,13 @@ int RB_UpdateMeshHeights(const rb_mesh_t* mesh, rb_vertex_t* dst, rb_vertex_t* s
         {
             shadow[i].texnum = dst[i].texnum = newtex;
             retex = 1;
+        }
+        // DOOM-0629: flicker, strobe, glow and light switches. Light moves no geometry,
+        // so it sets no RB_UPD_* bit; both views read the vertex light live.
+        {
+            const float newlight = vert_live_light(v);
+            if (newlight >= 0.0f && float_bits_differ(shadow[i].light, newlight))
+                shadow[i].light = dst[i].light = newlight;
         }
         if (v->vplane == RB_PLANE_FLOOR)
             newz = sectors[v->vsector].floorheight / (float)FRACUNIT;

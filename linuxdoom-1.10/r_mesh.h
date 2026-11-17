@@ -316,7 +316,8 @@ void RB_FreeMesh(rb_mesh_t* mesh);
 // into dst[] (which must hold mesh->numverts rb_vertex_t -- e.g. the mapped GPU
 // vertex buffer). Only vertices tagged with a moving RB_PLANE_* have their z
 // rewritten (to the live sector plane height, clamped for the *_STEP tags);
-// static vertices are untouched. Call once
+// static vertices keep their z. Every wall and flat vertex also takes its sector's
+// live light (DOOM-0629, vert_light.h). Call once
 // per frame so doors and lifts animate without rebuilding the mesh (DOOM-0049).
 // Returns an OR of the RB_UPD_* bits below: RB_UPD_MOVED when any vertex z changed
 // this frame (a door/lift mid-move) so the RT back-end refits its acceleration

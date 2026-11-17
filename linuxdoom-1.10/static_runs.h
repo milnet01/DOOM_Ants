@@ -2,8 +2,9 @@
 // per wall instead of once each.
 //
 // RB_UpdateMeshHeights visits every vertex each game tic. A wall vertex whose z
-// follows no plane (vplane NONE) needs only its live texture id, and every
-// vertex of one wall face reads that id from the same sidedef slot. DOOM-0610's
+// follows no plane (vplane NONE) needs only its live texture id and light, and
+// every vertex of one wall face reads that id from the same sidedef slot and that
+// light from the sidedef's sector (DOOM-0629). DOOM-0610's
 // relief walls are made of such vertices, many to a wall, so the scan checks a
 // run of them once and writes the result to all of them. A run is consecutive
 // vertices with the same sidedef, slot and baked texture, so they hold one id at
