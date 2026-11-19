@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=634 -->
+<!-- ants-roadmap-id-high-water: DOOM=635 -->
 
 # Roadmap
 
@@ -20425,6 +20425,21 @@ in CLAUDE.md describes.
   flat would also mirror its HD art, so fix both together.
   **Layman:** Floor and ceiling pictures may be flipped in Solid and Ultra compared with the original game; this checks, and fixes it if so.
   Kind: investigate.
+  Source: experirays-review-2026-11-19.
+  Lanes: renderer.
+
+- 📋 [DOOM-0635] **Hang a lower-unpegged step's texture from the far ceiling where both ceilings are sky, as the original does.**
+  Found answering ExperiRays (2026-11-19), by reading; not yet shown
+  on screen. Vanilla r_segs.c R_StoreWallRange sets worldtop = worldhigh
+  when the front and back ceilings are both sky, before the
+  ML_DONTPEGBOTTOM lower-wall rule, so the texture hangs from the BACK
+  ceiling. r_mesh.c emit_wall's PEG_LOWER case always anchors to the
+  front sector's ceiling. They differ when the two sky ceilings are at
+  different heights. Check first: find such a line in the IWADs and
+  compare Classic with Solid at the same spot; then fix the anchor, and
+  keep the per-frame peg (vtexsec) on the back ceiling.
+  **Layman:** On some outdoor steps the wall picture sits at the wrong height in Solid and Ultra compared with the original game.
+  Kind: fix.
   Source: experirays-review-2026-11-19.
   Lanes: renderer.
 
