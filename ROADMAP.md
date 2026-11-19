@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=630 -->
+<!-- ants-roadmap-id-high-water: DOOM=632 -->
 
 # Roadmap
 
@@ -11306,6 +11306,13 @@ stay in their phase sections; this heading holds only work still to come.
   rasterised view uses it. The traced view still reads the top level,
   because a trace has no screen derivatives, so this item stays open for
   that view.
+  2026-11-19, read in the code: this item's claim is stale. HD_TEX in
+  pathtrace.comp samples with textureGrad from a ray-cone footprint
+  (DOOM-0598, DOOM-0600), and every HD image has a full mip chain.
+  What is left: HD_TEX_W (the grime and dirt overlays) still reads
+  level 0; the comment above HD_TEX still says "always reads the top
+  level"; DOOM-0042's spec still says the clamp defaults to 1024 px
+  where kHdMaxEdge is 4096.
   **Layman:** Far-away walls in Ultra sparkle and crawl as you move, because the game has no smaller copies of its HD textures to use at a distance.
   Kind: implement.
   Source: DOOM-0410 split, review-code 2026-09-01 lane vk-materials.
@@ -20173,6 +20180,29 @@ in CLAUDE.md describes.
   Source: found-2026-11-17-DOOM-0620.
   Lanes: renderer.
 
+- 📋 [DOOM-0632] **Ship Ultra's HD art pre-packed in a GPU-compressed format, so a level loads without unpacking PNGs.**
+  User 2026-11-19 chose "Pack first, then stream": build this before
+  DOOM-0628 and show before-and-after shots with load times.
+  Measured 2026-11-19 (private display, load 3 to 7, release build at
+  acf7510, log timestamps; kit Scratchpad/DOOM_Ants/d0628/run.sh):
+  E2M2 Ultra, files cached: HD load 4.9 s twice, of which PNG decode
+  4.3 s and upload with mip blits 0.5 s. E1M1 cached: 2.2 s (decode
+  1.9, upload 0.4). E1M1 first read from the hard drive (sdb,
+  rotational): 13.6 s, 9.5 s of it before the first material finished.
+  The art is RGBA8 with a 4/3 mip factor (814.4 MB on E2M2); a
+  block-compressed format is 1 byte per pixel, a quarter of that.
+  Questions for its spec: the format per map (colour, normals, single
+  channels); mips stored in the file; one file per material or one
+  pack; the encoder and where it runs (bake time, never at load); what
+  the engine does on a card without the format; whether PNG stays as
+  the source and the fallback; release size; the quality check (the
+  user's eye on before-and-after shots). A new on-disk format, so it
+  needs a spec and the contract review.
+  **Layman:** The high-detail pictures are stored ready for the graphics card, so levels load in a fraction of the time and the art takes about a quarter of the video memory.
+  Kind: feature.
+  Source: user-request-2026-11-19.
+  Lanes: renderer, assets.
+
 - 📋 [DOOM-0628] **Stream Ultra's HD art in and out of video memory as the player moves through a level, paced to the drive it loads from.**
   User 2026-11-17: "Can we perhaps build a system that streams the level
   data in and out of memory keeping in mind what type of drives it will
@@ -20187,6 +20217,20 @@ in CLAUDE.md describes.
   drive is judged (time the first loads rather than guess its type); and
   a loader thread beside Vulkan's upload. Several subsystems and hard to
   build wrong, so it needs a spec and a contract review first.
+  User 2026-11-19, scope for the spec: a level start loads what can be
+  seen from the start point, then begins ("Short wait, then sharp");
+  the rest loads in the background as the player moves. Not chosen:
+  starting at once on low-detail art; keeping today's full load.
+  Facts read in the code the same day: the load is one blocking call
+  in Present (EnsureHdMaterials), PNG decode on the game's only
+  thread, one shared VkDeviceMemory, a descriptor set written once per
+  level, no eviction, and no per-frame visible-material set. Level of
+  detail is DOOM-0631, specced beside this.
+  User 2026-11-19: "Pack first, then stream". DOOM-0632 (packed,
+  GPU-compressed art) is built first; this item's spec is written
+  after it, on its measured load times. The load timings that led
+  there are on DOOM-0632. They show the drive matters most on a first
+  read from a hard drive, through seeks between small files.
   **Layman:** Instead of loading every high-detail texture and prop when a level starts, the game loads what is near the player and lets go of what is far away, faster or slower depending on the drive.
   Kind: feature.
   Source: user-request-2026-11-17.
@@ -20280,6 +20324,49 @@ in CLAUDE.md describes.
   **Layman:** Classic DOOM makes dim rooms very dark and lets far-away surfaces fade to black. Solid and Ultra turn the same light levels into a much flatter range, so the game looks brighter overall than the original.
   Kind: fix.
   Source: user-report-2026-11-17.
+  Lanes: renderer.
+
+- 📋 [DOOM-0631] **Add level of detail to the 3D views: far things draw from cheaper versions, with no visible pop-in.**
+  User 2026-11-19: "Along with the streaming system I also think we
+  need to add in a LOD (level of detail) system but without visible
+  pop in." To be designed with DOOM-0628 in one spec: both need the
+  same answer to "how near is this", and streaming's small-mip-first
+  placeholder is itself a texture level of detail. Questions for the
+  spec: what gets levels (the Blender models of DOOM-0539, DOOM-0620
+  and DOOM-0537; the HD maps' mips, where DOOM-0458 is still open for
+  the traced view); how a swap is hidden (a blend or dither over
+  distance, with a gap between the swap-in and swap-out distances);
+  and whether the traced view needs model levels at all, measured
+  before building.
+  User 2026-11-19, scope for the spec: "Hide existing swaps". Blend
+  the model-to-sprite swap (set_model_cutoff: 1024 map units or the
+  12000-triangle budget, a hard pop today) and blend textures as
+  streaming brings sharper mips. No simpler copies of models: every
+  .dmdl is 72 to 288 triangles, and the design leaves room to add
+  levels later. Not chosen: simpler model copies now; textures only.
+  One spec per id (the house rule), so this gets its own spec beside
+  DOOM-0628's, not a shared one.
+  User 2026-11-19, later, widening the scope: "I suggested LODs as
+  you said the geometry is getting a lot ... Even if we gain 1ms, it
+  is still a gain." So the spec also covers the real-geometry walls,
+  which is where the triangles are (levels of 134626 to 313034
+  triangles, DOOM-0610): a far wall draws flat, blended so the swap is
+  not seen. Simpler copies of the Thing models stay out: they are
+  capped at 12000 triangles in all. The gain has a measured ceiling,
+  the whole cost of the relief geometry: 0.14 ms in the raster scene
+  pass, 0.38 ms (E1M3) and 0.65 ms (MAP06) in the traced megakernel
+  (DOOM-0610, DOOM-0611). A level of detail recovers part of that.
+  The walls sit in one static mesh and one static BLAS, so the spec
+  must say how a far wall leaves both.
+  User 2026-11-19 also offered: "if we can use some form of
+  virtualised geometry, that is probably a win too." Recommended
+  against, the user's call: it pays at hundreds of millions of
+  triangles, these levels have under a third of a million, and it
+  cannot recover more than the ceiling above. The spec records it
+  under alternatives.
+  **Layman:** Things far from the player are drawn from simpler, cheaper versions, and the swap to the detailed version is blended so you never see it happen.
+  Kind: feature.
+  Source: user-request-2026-11-19.
   Lanes: renderer.
 
 ## 0.13.0 — The player's experience
