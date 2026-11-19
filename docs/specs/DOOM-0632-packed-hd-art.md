@@ -218,10 +218,12 @@ Each level carries a `codec`: 0 stored as is, 1 LZ4 block, 2 Zstandard frame. Th
 level compressed only when that is at least 5% smaller. The reader refuses a codec it was not
 built with, and the unpacked length must equal the computed size exactly.
 
-Which of 1 and 2 the baker emits, or neither, is decided by measurement at B3, on the rule in
-§ 10. One public test found Zstandard takes about 6 to 7% off BC7 data without further
-preparation (Source: https://walcht.github.io/walcht/guides/ktx-bcn-playground.html), so the gain
-on the colour maps may be too small to earn a dependency. The AppImage and the Windows zip already
+The baker emits codec 1, compressed with LZ4's high-compression mode, which the ordinary LZ4
+unpacker reads. Codec 2 keeps its number and has no reader. § 10's rule chose LZ4 on these
+figures, measured 2026-11-19 (roadmap DOOM-0632 holds the runs): E2M2's HD load from a cold hard
+drive took 1.0 to 1.2 s with LZ4 against 1.4 to 1.7 s stored, and 0.14 s against 0.10 s with
+the file cached. Zstandard was not built into the game: read and unpacked outside it, it was
+slower than LZ4 both cold and cached. The AppImage and the Windows zip already
 compress what they carry, so this affects the installed size and the hard-drive read, not the
 download.
 
@@ -236,7 +238,8 @@ download.
   `hdpack --list`'s names against the committed PNG list.
 
 Both build scripts build `hdpack` for the build host before staging, and each staging bakes its
-own pack; INV-9 makes the two identical.
+own pack; INV-9 makes the two identical. Both downloads carry LZ4's licence notice, which its
+BSD licence requires of a binary; B5 adds it, and a release cut before B5 needs it added first.
 `assets/ultra/LICENSES` still ships and still names each picture by its repository path; the
 pack's entry name is that path less `assets/ultra/`.
 
@@ -252,18 +255,21 @@ In a source tree the pack is git-ignored. Neither `make` nor `make hdpack` bakes
   2026-11-19), so they are GPL-compatible. `docs/standards/dependencies.md` records the commit
   and checksums. BC4 is encoded by the project's own `rb_bc4.h`: upstream's BC4 encoder sits in
   a second, larger source file, and a BC4 block is small enough to search directly.
-- **New dependency, only if § 10's rule picks one:** LZ4 or Zstandard, in the game and the baker,
-  at the latest stable release, recorded the same way. Zstandard is on the build host as a system
-  library; the Windows cross-build would need it staged under `mingw-deps/`.
+- **New vendored code, game and baker:** `lz4.c` and `lz4.h` from LZ4 unpack a level in the
+  game, the baker and the test. The baker adds `lz4hc.c` and `lz4hc.h` to compress. BSD
+  2-Clause, so GPL-compatible, and a binary must carry its notice (§ 4.6).
+  `docs/standards/dependencies.md` records the release and checksums. Vendored, so neither the
+  Linux nor the Windows build needs a library staged.
 - **Video memory.** The committed, shipped art is 538 PNGs holding 126.5 megapixels of colour and
   normal maps and 120.9 megapixels of single-channel maps. As RGBA8 with mips that is about
   1258 MiB; packed, about 238 MiB. Both are computed from the PNG headers, not measured on a card
   (`git ls-files assets/ultra`, less `heroes/bringup/`; kinds by file suffix; a 4/3 mip factor).
 - **Disk.** Those 538 PNGs are 156.2 MiB. The pack baked from them on 2026-11-19 is
-  249,397,058 bytes (237.8 MiB) with no general compression, so the installed art grows. That
-  bake took 1 min 52 s on the development machine at low priority.
-- **Host memory at load:** one level's bytes at a time when compressed; none beyond the staging
-  buffer when stored as is.
+  249,397,058 bytes (237.8 MiB) with no general compression. That
+  bake took 1 min 52 s on the development machine at low priority. With LZ4 (§ 4.5) the same
+  art is 137,978,258 bytes (131.6 MiB), less than the PNGs.
+- **Host memory at load:** one level's packed and unpacked bytes at a time when compressed; none
+  beyond the staging buffer when stored as is.
 
 ## 6. Performance budget
 
@@ -284,7 +290,8 @@ The three limits are design targets, not measurements.
 - **B2** The baker and `make hdpack`, with the encoder vendored. Check: it packs `assets/ultra`;
   `hdpack --list` names every committed PNG; two bakes of the same tree are byte-identical; a
   rebake after touching one PNG re-encodes one.
-- **B3** Measure § 10's compressor question on the hard drive and record the answer here.
+- **B3** LZ4 in the reader and the baker (§ 4.5). Check: `make test`; the rebaked pack's levels
+  unpack to the stored pack's bytes; HD load times, stored against LZ4, cold and cached.
 - **B4** The loader: probe, budget, upload. Check: the kit's times against § 6; a capture pair,
   pack against PNGs, through `scripts/ab_capture.sh`; `-hdallocfail` still falls back; `-hdpackfail`
   loads from PNGs; a run with the pack deleted matches today.
@@ -310,7 +317,6 @@ The three limits are design targets, not measurements.
 - **INV-3** — A level that unpacks to any length but the computed one is refused, and the
   unpacker is never given room for more. Broken by trusting a compressed stream's own length.
   *Test:* `tests/hd_pack_test.cpp`, a level whose stream unpacks long and one that unpacks short.
-  Applies only if B3 adopts a codec.
 - **INV-4** — An entry is used only when its PNG is absent or matches `srcBytes` and `srcMtime`;
   an edited PNG wins. Broken by a loader that prefers the pack on name alone. *Test:*
   `tests/hd_pack_test.cpp` on the decision function, with a matching, a longer, a re-dated and an
@@ -354,14 +360,14 @@ The three limits are design targets, not measurements.
 
 ## 10. Open questions
 
-- **Which general compressor, if any.** Decided at B3: bake E2M2's pictures three ways (stored,
-  LZ4, Zstandard), and time the HD load cold from the hard drive and cached. Adopt the one with
-  the lowest cold time, provided its cached time is within 0.1 s of stored; if neither beats
-  stored cold by 10%, adopt none and leave codecs 1 and 2 unbuilt.
+- **Which general compressor: LZ4** (§ 4.5). The rule it was chosen by: the lowest HD load time
+  cold from the hard drive, provided the cached time is within 0.1 s of stored and the cold time
+  beats stored by 10%.
 - **Whether `hgt` survives BC4.** Parallax steps would show as terracing. The user's eye at B6
   decides; format 4 is the remedy.
-- **The download grows by roughly 80 MiB** on § 5's estimate, less whatever the AppImage's and the
-  zip's own compression recover. Put to the user at B6 with the measured sizes.
+- **The download's size.** The packed art is smaller than the PNGs on disk (§ 5), but the
+  AppImage and the zip compress what they carry, and PNGs barely compress further. Put to the
+  user at B6 with the measured download sizes.
 - **`derived/` art.** It loads from PNGs. Packing it on the player's machine is not in this spec.
 
 ## 11. What checks this
@@ -370,7 +376,7 @@ The three limits are design targets, not measurements.
 |------|----------------------|
 | INV-1 | `tests/hd_pack_test.cpp` |
 | INV-2 | `tests/hd_pack_test.cpp` |
-| INV-3 | `tests/hd_pack_test.cpp`, only if a codec is adopted |
+| INV-3 | `tests/hd_pack_test.cpp` |
 | INV-4 | `tests/hd_pack_test.cpp` |
 | INV-5 | `tests/hd_pack_test.cpp` |
 | INV-6 | **nothing** automatic — `scripts/ab_capture.sh` by hand at B4 |
@@ -381,7 +387,7 @@ The three limits are design targets, not measurements.
 | Picture quality | **nothing** automatic — the user's eye at B6 |
 
 Files this touches: `linuxdoom-1.10/r_vulkan.cpp`, a new `linuxdoom-1.10/rb_hdpack.h`, the new
-baker source, `linuxdoom-1.10/Makefile`, `linuxdoom-1.10/tests/hd_pack_test.cpp`,
+baker source, the vendored `lz4.c`, `lz4.h`, `lz4hc.c` and `lz4hc.h`, `linuxdoom-1.10/Makefile`, `linuxdoom-1.10/tests/hd_pack_test.cpp`,
 `packaging/ultra-art.sh`, `packaging/build-appimage.sh`, `packaging/windows-build.sh`,
 `packaging/windows-smoke.sh`, `assets/ultra/.gitignore`.
 

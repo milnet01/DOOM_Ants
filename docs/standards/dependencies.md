@@ -157,6 +157,16 @@ sub-Makefile is not built by CI or the default `make`, so it's out of scope):
   `b90444a091530a13c61fa6375583fcc9bc9ca47e474fd71f818876de68c1b581`, of `bc7enc.h`
   `f40f4a956ed6a8845b7909e83831de09512424408b32ca29551bf49aee2fecf6`. Built into the baker
   only, never the game. Re-check upstream on the dependency sweep.
+- `linuxdoom-1.10/lz4.c`, `lz4.h`, `lz4hc.c` and `lz4hc.h` — vendored LZ4, copied unchanged
+  from `lib/` of `github.com/lz4/lz4` at release `v1.11.1` (2026-11-10), for the packed HD
+  art (DOOM-0632). `lz4.c` is built into the game, the baker and `hd_pack_test`; `lz4hc.c`
+  into the baker only. BSD 2-Clause; each file carries the notice, and a shipped binary must
+  too. SHA-256 of `lz4.c`
+  `2e58f124f1032f15aecc99772b7de624c4289245729fa5403506f00b06a54937`, of `lz4.h`
+  `c204caad0638a12c9ce80831094ec8fffb34aa57e74307067b08fc9452fc2611`, of `lz4hc.c`
+  `44344dc172a6b8f6e4b915d0e792f32911b966d1df1d39731674327ffaec40f3`, of `lz4hc.h`
+  `8b55bd835048b399ab451dad77d40227fcbcce5d2db7b622a79d92f36dc563e1`. Bump on the
+  dependency sweep.
 - `linuxdoom-1.10/stb_truetype.h` v1.26 — vendored single-header glyph rasterizer
   (menu text, DOOM-0206). Bump on the dependency sweep.
 - `linuxdoom-1.10/frameledger.h` — vendored run-file writer (DOOM-0502), copied

@@ -1,5 +1,6 @@
-// hd_pack_test.cpp — DOOM-0632 INV-1, INV-2, INV-4, INV-5: ultra.hdpack reads back as written,
-// a malformed one is refused, and the loader's take-it-from-the-pack decision holds.
+// hd_pack_test.cpp — DOOM-0632 INV-1 to INV-5: ultra.hdpack reads back as written, a malformed
+// one is refused, a compressed level must unpack to its computed size, and the loader's
+// take-it-from-the-pack decision holds.
 //
 // Why this exists: the pack is read from a folder the user can set (DOOMASSETDIR), so it is
 // untrusted input. A size or offset believed before it is checked reads out of bounds.
@@ -19,12 +20,16 @@
 //      block compression, a codec the build lacks, and a PNG that is longer or re-dated; it
 //      accepts an absent PNG and a matching one.
 //   5. The writer refuses names out of order, and writing twice gives the same bytes.
+//   6. An LZ4 level reads back as the bytes that were compressed. One whose stream unpacks
+//      longer than the level's computed size, or shorter, is refused, and the bytes past the
+//      level's size are never written.
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
 
+#include "../lz4.c"   // single-TU: the vendored unpacker rb_hdpack.h calls.
 #include "../rb_hdpack.h"
 #include "check_util.h"
 
@@ -120,6 +125,40 @@ bool accepted(const std::vector<unsigned char>& f, size_t avail, uint64_t fileBy
     return ok != 0;
 }
 bool accepted(const std::vector<unsigned char>& f) { return accepted(f, f.size(), f.size()); }
+
+// INV-3. Level 0 of a 16x8 RGBA8 picture is replaced by the LZ4 stream of `plainLen` bytes;
+// only a stream of exactly the level's size may read back.
+void lz4Level(size_t plainLen, bool wantOk, const char* what)
+{
+    std::vector<Pic> ps = { pic("heroes/a_alb.png", RB_HDPACK_RGBA8_UNORM, 16, 8, 9) };
+    const size_t size = ps[0].levels[0].size();
+    std::vector<unsigned char> plain(plainLen);
+    for (size_t i = 0; i < plainLen; i++) plain[i] = (unsigned char)(i / 24);   // compressible
+    std::vector<unsigned char> z(LZ4_compressBound((int)plainLen));
+    z.resize(LZ4_compress_default((const char*)plain.data(), (char*)z.data(), (int)plainLen, (int)z.size()));
+    ps[0].levels[0] = z;
+    ps[0].stored[0] = (uint32_t)z.size();
+    ps[0].codec[0]  = RB_HDPACK_LZ4;
+
+    std::vector<rb_hdpack_src_t> s = srcsOf(ps);
+    FILE* f = std::tmpfile();
+    rb_hdpack_t p;
+    const bool opened = f && !z.empty() && RB_HdPackWrite(f, s.data(), 1) && RB_HdPackOpen(f, &p);
+    check(opened, "a pack with an LZ4 level opens");
+    if (opened)
+    {
+        std::vector<unsigned char> got(size + 64, 0xEE);
+        const bool ok = RB_HdPackReadLevel(f, &p, &p.entries[0], 0, got.data()) != 0;
+        check(ok == wantOk, what);
+        if (wantOk)
+            check(std::memcmp(got.data(), plain.data(), size) == 0, "an LZ4 level's bytes read back");
+        bool clean = true;
+        for (size_t i = wantOk ? size : 0; i < got.size(); i++) clean = clean && got[i] == 0xEE;
+        check(clean, "nothing is written past the level, or at all when it is refused");
+        RB_HdPackFree(&p);
+    }
+    if (f) std::fclose(f);
+}
 
 void roundTrip()
 {
@@ -350,5 +389,8 @@ int main()
     decision();
     longName();
     writer();
+    lz4Level(16 * 8 * 4, true, "an LZ4 level of the computed size reads");
+    lz4Level(16 * 8 * 4 + 64, false, "an LZ4 level that unpacks long is refused");
+    lz4Level(16 * 8 * 4 - 12, false, "an LZ4 level that unpacks short is refused");
     return check_summary("hd_pack_test");
 }

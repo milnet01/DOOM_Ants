@@ -27,6 +27,7 @@
 #include <sys/stat.h>
 
 #include "bc7enc.h"
+#include "lz4hc.h"
 #include "rb_bc4.h"
 #include "rb_hdpack.h"
 #include "rb_image.h"
@@ -331,11 +332,18 @@ int main(int argc, char** argv)
     std::vector<rb_hdpack_src_t> srcs;
     for (size_t i = 0; i < pics.size(); i++)
     {
-        for (const auto& d : pics[i].levels)
+        // Spec § 4.5: a level goes on disk LZ4-compressed only when that is at least 5%
+        // smaller. The same bytes in give the same bytes out, on any number of threads.
+        for (auto& d : pics[i].levels)
         {
+            std::vector<unsigned char> z(LZ4_compressBound((int)d.size()));
+            const int n = LZ4_compress_HC((const char*)d.data(), (char*)z.data(), (int)d.size(),
+                                          (int)z.size(), LZ4HC_CLEVEL_DEFAULT);
+            const bool smaller = n > 0 && (uint64_t)n * 100 <= (uint64_t)d.size() * 95;
+            if (smaller) { z.resize(n); d = std::move(z); }
             ptrs[i].push_back(d.data());
             stored[i].push_back((uint32_t)d.size());
-            codec[i].push_back(RB_HDPACK_STORED);
+            codec[i].push_back(smaller ? RB_HDPACK_LZ4 : RB_HDPACK_STORED);
         }
         srcs.push_back({ pics[i].name.c_str(), (uint8_t)pics[i].format, (uint16_t)pics[i].w, (uint16_t)pics[i].h,
                          pics[i].srcBytes, pics[i].srcMtime, ptrs[i].data(), stored[i].data(), codec[i].data() });

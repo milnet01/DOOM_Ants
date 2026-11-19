@@ -181,6 +181,7 @@ OBJS=				\
 		$(O)/r_backend.o		\
 		$(O)/r_mesh.o			\
 		$(O)/rb_image.o		\
+		$(O)/lz4.o			\
 		$(O)/rb_text.o		\
 		$(O)/menu_text.o		\
 		$(O)/r_vulkan.o		\
@@ -300,15 +301,17 @@ nee-test:	$(O)/nee_sampling_test
 # A host tool, never linked into the game and not part of `all`: it turns an asset root's
 # PNGs into ultra.hdpack. `make hdpack` only builds it; run it to bake:
 #     linux/hdpack ../assets/ultra
-# bc7enc.cpp is vendored (dependencies standard) and is built without warnings on. The baker
-# is built without DEFS and the SDL flags: it uses neither.
+# bc7enc.cpp and the two LZ4 files are vendored (dependencies standard) and are built without
+# warnings on. The baker is built without DEFS and the SDL flags: it uses neither.
 HDPACK_CXXFLAGS=-g -O2 -Wall $(CXXSTD)
 hdpack:	$(O)/hdpack
 
-$(O)/hdpack:	hdpack.cpp bc7enc.cpp rb_image.c | $(O)
+$(O)/hdpack:	hdpack.cpp bc7enc.cpp rb_image.c lz4.c lz4hc.c | $(O)
 	$(CXX) $(HDPACK_CXXFLAGS) -w -c bc7enc.cpp -o $(O)/hdpack_bc7enc.o
 	$(CC) -g -O2 -Wall $(CSTD) -c rb_image.c -o $(O)/hdpack_rb_image.o
-	$(CXX) $(HDPACK_CXXFLAGS) -MMD -MP -MF $(O)/hdpack.d -MT $@ hdpack.cpp $(O)/hdpack_bc7enc.o $(O)/hdpack_rb_image.o -o $@ -lpthread
+	$(CC) -g -O2 -w $(CSTD) -c lz4.c -o $(O)/hdpack_lz4.o
+	$(CC) -g -O2 -w $(CSTD) -c lz4hc.c -o $(O)/hdpack_lz4hc.o
+	$(CXX) $(HDPACK_CXXFLAGS) -MMD -MP -MF $(O)/hdpack.d -MT $@ hdpack.cpp $(O)/hdpack_bc7enc.o $(O)/hdpack_rb_image.o $(O)/hdpack_lz4.o $(O)/hdpack_lz4hc.o -o $@ -lpthread
 
 -include $(O)/hdpack.d
 

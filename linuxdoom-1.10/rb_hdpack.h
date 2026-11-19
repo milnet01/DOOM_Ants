@@ -7,6 +7,8 @@
 // is computed from its format and dimensions, never read from the file (INV-2).
 //
 // Fields are little-endian and read with memcpy, as rb_model.h reads a .dmdl.
+//
+// A level may be stored LZ4-compressed (spec § 4.5), so every user links the vendored lz4.c.
 #ifndef RB_HDPACK_H
 #define RB_HDPACK_H
 
@@ -15,6 +17,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "lz4.h"
 
 #define RB_HDPACK_NAME        "ultra.hdpack"
 #define RB_HDPACK_VERSION     1u
@@ -39,6 +43,9 @@ enum
 };
 
 enum { RB_HDPACK_STORED = 0, RB_HDPACK_LZ4 = 1, RB_HDPACK_ZSTD = 2, RB_HDPACK_CODEC_END };
+// The codecs RB_HdPackReadLevel unpacks, as RB_HdPackUsable's codecMask. Zstandard has a
+// number and no reader: LZ4 won the measurement (spec § 10).
+#define RB_HDPACK_CODECS ((1u << RB_HDPACK_STORED) | (1u << RB_HDPACK_LZ4))
 
 typedef struct
 {
@@ -309,19 +316,42 @@ static inline int RB_HdPackUsable(const rb_hdpack_t* p, const rb_hdpack_entry_t*
     return 1;
 }
 
-// Reads one stored level into dst, which must hold RB_HdPackLevelBytes of it. Returns 1, or
-// 0 on a short read or a level that is not RB_HDPACK_STORED: no general compressor is built
-// yet (spec § 4.5, decided at B3).
+// Reads one level into dst, which must hold RB_HdPackLevelBytes of it. A stored level is read
+// straight into dst. An LZ4 level is unpacked in ordinary memory and then copied: the unpacker
+// reads back what it has written, and dst may be write-combined memory. The unpacker is given
+// room for exactly the computed size and must fill it (INV-3). Returns 1, or 0 on a short
+// read, a level that unpacks to another length, no memory, or a codec outside
+// RB_HDPACK_CODECS.
 static inline int RB_HdPackReadLevel(FILE* f, const rb_hdpack_t* p, const rb_hdpack_entry_t* e,
                                      uint32_t level, unsigned char* dst)
 {
     const rb_hdpack_mip_t* m;
+    unsigned char* packed;
+    unsigned char* plain;
+    uint32_t want;
+    int ok;
+
     if (level >= e->mipLevels)
         return 0;
     m = &p->mips[e->firstMip + level];
-    if (m->codec != RB_HDPACK_STORED || fseek(f, (long)m->offset, SEEK_SET) != 0)
+    if (fseek(f, (long)m->offset, SEEK_SET) != 0)
         return 0;
-    return fread(dst, 1, m->storedBytes, f) == m->storedBytes;
+    if (m->codec == RB_HDPACK_STORED)   // RB_HdPackParse checked storedBytes is the level's size
+        return fread(dst, 1, m->storedBytes, f) == m->storedBytes;
+    if (m->codec != RB_HDPACK_LZ4)
+        return 0;
+
+    want   = RB_HdPackLevelBytes(e->format, e->width, e->height, level);
+    packed = (unsigned char*)malloc(m->storedBytes);
+    plain  = (unsigned char*)malloc(want);
+    ok = packed && plain && fread(packed, 1, m->storedBytes, f) == m->storedBytes
+         && LZ4_decompress_safe((const char*)packed, (char*)plain, (int)m->storedBytes, (int)want)
+                == (int)want;
+    if (ok)
+        memcpy(dst, plain, want);
+    free(packed);
+    free(plain);
+    return ok;
 }
 
 // ---- Writing (the baker and the tests) ----

@@ -7011,9 +7011,8 @@ static bool BuildHdSet(const std::vector<HdSrc>& srcsIn, const rb_matctrl_t* tab
                 std::memcpy(dst, srcs[i].px, (size_t)srcs[i].w * srcs[i].h * 4);
                 return true;
             }
-            // Straight from the file into staging. Only stored levels reach here (the
-            // probe's codec mask), so nothing reads back what it wrote: staging is
-            // write-combined memory (the DOOM-0170 trap).
+            // Into staging, which is write-combined memory (the DOOM-0170 trap): the
+            // reader only ever writes it, unpacking a compressed level elsewhere first.
             if (pack->failRead
                 || !RB_HdPackReadLevel(pack->f, &pack->index, srcs[i].packed, level, dst))
             {
@@ -7190,7 +7189,7 @@ static bool LoadHdMaterials(bool usePack)
         const uint64_t bytes = png ? (uint64_t)st.st_size : 0;
         const int64_t  mtime = png ? (int64_t)st.st_mtime : 0;
         if (png && (bytes != e->srcBytes || mtime != e->srcMtime)) stale++;
-        return RB_HdPackUsable(&pack.index, e, srgb, g.bcSupported, 1u << RB_HDPACK_STORED,
+        return RB_HdPackUsable(&pack.index, e, srgb, g.bcSupported, RB_HDPACK_CODECS,
                                png, bytes, mtime) ? e : nullptr;
     };
 
