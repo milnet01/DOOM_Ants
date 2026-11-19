@@ -201,11 +201,13 @@ A header-only reader, `rb_hdpack.h`, shared by the game, the baker and the tests
 - **Read.** A `codec` 0 level is read from the file straight into the staging buffer. A
   compressed level is unpacked into ordinary memory first and then copied: a decompressor reads
   back what it has written, and the mapped staging buffer is write-combined memory (the DOOM-0170
-  trap, noted in `r_vulkan.cpp`).
+  trap, noted in `r_vulkan.cpp`). Pictures are read in the order they sit in the file, not the
+  budget's order, so a hard drive reads forward.
 - **A level that fails to read or unpack** during the upload makes `UploadImageBatch`, and so
   `BuildHdSet`, report failure. `EnsureHdMaterials` then repeats the HD load with the pack ignored,
   as it retries today after refused video memory: each picture takes its PNG, and if there is
   none, the existing rule: no albedo means the material is paletted, any other map stays default.
+  In a developer build `-hdpackfail` makes the first read report failure, to exercise this.
 - **Logging.** The `HD load done` line gains the count of pictures from the pack and from PNGs.
   Its total counts each picture's uploaded bytes, where today it assumes four bytes a pixel.
   A stale entry (PNG present and different) is counted and logged once per load, not per picture.
@@ -284,8 +286,8 @@ The three limits are design targets, not measurements.
   rebake after touching one PNG re-encodes one.
 - **B3** Measure § 10's compressor question on the hard drive and record the answer here.
 - **B4** The loader: probe, budget, upload. Check: the kit's times against § 6; a capture pair,
-  pack against PNGs, through `scripts/ab_capture.sh`; `-hdallocfail` still falls back; a run with
-  the pack deleted matches today.
+  pack against PNGs, through `scripts/ab_capture.sh`; `-hdallocfail` still falls back; `-hdpackfail`
+  loads from PNGs; a run with the pack deleted matches today.
 - **B5** The download: `ultra-art.sh`, both build scripts, `packaging/windows-smoke.sh`. Check:
   `release.sh`'s asset check passes and a staged AppImage loads E1M1 from the pack.
 - **B6** Show the user before-and-after shots and the load times. Any picture they find damaged

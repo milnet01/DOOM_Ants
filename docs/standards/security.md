@@ -25,6 +25,7 @@ validate before it trusts:
 | Command line & `@response` files | `d_main.c` | arg counts, `-warp` operands, response-file tokens |
 | User config `~/.doomrc` | `m_misc.c`, `m_menu.c` | out-of-range values index name/option arrays |
 | Save games (`.dsg`) | `p_saveg.c` | serialized state read back into structs |
+| Packed HD art (`ultra.hdpack`, under `DOOMASSETDIR`) | `RB_HdPackParse` in `rb_hdpack.h` | entry, level and name counts size allocations, and level offsets say where the loader reads; a level's unpacked size is computed, never read from the file (DOOM-0632) |
 
 ## The rule
 

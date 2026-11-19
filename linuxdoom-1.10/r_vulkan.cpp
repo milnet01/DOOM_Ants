@@ -40,9 +40,7 @@
 #include <cstdint>
 #include <cstdlib>     // exit() for the -rtverify self-test
 #include <algorithm>   // std::equal (DOOM-0289's clearance-moved compare)
-#ifdef DOOM_DEV
-#include <sys/stat.h>  // mkdir() for the DOOM-0294 developer screenshot folder
-#endif
+#include <sys/stat.h>  // stat() for DOOM-0632's stale-PNG check; mkdir() for DOOM-0294's screenshots
 #include <memory>      // std::unique_ptr (DOOM-0273's per-tile mask)
 #include <unordered_map> // DOOM-0011 L3: emitter -> lattice-cell clustering for the fog lights
 #include <vector>
@@ -68,6 +66,7 @@
 // (compiled in rb_image.c; self-guards extern "C").
 #include "rb_materials.h"
 #include "rb_image.h"
+#include "rb_hdpack.h"     // DOOM-0632: ultra.hdpack, the HD art packed for the GPU
 #include "rb_argparse.h"   // RB_ParseFloatArg -- refuse a non-numeric -rippletime value
 // DOOM-0405: the back-end's own entry points. Including it here is the point --
 // it makes every definition below get checked against the declaration the C side
@@ -707,6 +706,7 @@ struct VulkanState
     VkSampler hdSampler = VK_NULL_HANDLE;   // DOOM-0042: linear+mip+REPEAT for HD PBR maps
     VkSampler hdAnisoSampler = VK_NULL_HANDLE;   // DOOM-0600: hdSampler + 16x anisotropy, the hdTex[] maps
     bool      anisoSupported = false;            // DOOM-0600: samplerAnisotropy enabled
+    bool      bcSupported    = false;            // DOOM-0632: textureCompressionBC enabled
 
     // DOOM-0042 HD PBR material path (parallel to the R8 matImages). A new descriptor
     // set (set 3 of the RT pipeline): binding 0 = the per-material control SSBO, binding
@@ -1825,6 +1825,10 @@ void PickPhysicalAndDevice()
     // without it that sampler is plain trilinear, as before.
     g.anisoSupported = have2.features.samplerAnisotropy;
     enableBase.samplerAnisotropy = g.anisoSupported ? VK_TRUE : VK_FALSE;
+    // DOOM-0632: the packed HD art is BC7 and BC4. Optional: without it those pictures
+    // load from their PNGs, and the HD load says how many did.
+    g.bcSupported = have2.features.textureCompressionBC;
+    enableBase.textureCompressionBC = g.bcSupported ? VK_TRUE : VK_FALSE;
 
     VkDeviceCreateInfo dci = {};
     dci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -5966,11 +5970,18 @@ static void ComputeMaterialEmissive(const rb_atlas_t* a, std::vector<float>& out
 // its own aligned offset, which keeps the allocation count at 1 instead of N, well
 // clear of the driver's limit on big WADs (ADR 0001 tracks replacing it with VMA).
 // Every copy rides one staging buffer and one submission: a per-image submit+wait
-// would be thousands of GPU stalls at level load. fill(i, dst) writes image i's
-// texels, tightly packed.
+// would be thousands of GPU stalls at level load. fill(i, level, dst) writes one level of
+// image i, tightly packed, and returns false if it could not. level is 0 except for an image
+// with levelBytes.
 // mips: blit a full chain from the top level (DOOM-0182). The format must allow blits and
 // linear filtering; RGBA8 always does.
-struct BatchImage { uint32_t w, h, texelBytes; VkFormat format; bool mips = false; };
+// levelBytes: non-empty for an image that arrives with every mip level already made
+// (DOOM-0632), one size per level. fill is asked for each level and none is blitted, so the
+// format need not allow blits; texelBytes and mips are not read.
+// fillOrder: fills run in ascending fillOrder, ties in batch order. A packed image gives its
+// place in the file, so a hard drive reads forward instead of seeking per image.
+struct BatchImage { uint32_t w, h, texelBytes; VkFormat format; bool mips = false;
+                    std::vector<uint32_t> levelBytes; uint64_t fillOrder = 0; };
 
 // DOOM-0257: a host-visible transfer-source buffer that reports failure instead
 // of ending the game. CreateRtBuffer is the fatal twin every other caller uses.
@@ -6008,6 +6019,7 @@ static bool TryCreateStagingBuffer(VkDeviceSize size, VkBuffer* buf, VkDeviceMem
 // are empty. In the default mode a refused allocation is fatal, as before.
 // injectFail makes the first allocation report failure without asking the
 // driver, so the fallback can be exercised on a machine with memory to spare.
+// DOOM-0632: it also returns false, in either mode and as cleanly, when fill does.
 template <class Fill>
 static bool UploadImageBatch(const std::vector<BatchImage>& imgs, Fill fill,
                              VkPipelineStageFlags readStage, const char* tag,
@@ -6017,7 +6029,10 @@ static bool UploadImageBatch(const std::vector<BatchImage>& imgs, Fill fill,
 {
     auto what = [&](const char* call) { return VkWhat(call, tag); };
     const int n = (int)imgs.size();
+    auto prebuilt = [&](int i) { return !imgs[i].levelBytes.empty(); };
     auto levelsOf = [&](int i) {
+        if (prebuilt(i))
+            return (uint32_t)imgs[i].levelBytes.size();
         uint32_t levels = 1;
         if (imgs[i].mips)
             for (uint32_t edge = std::max(imgs[i].w, imgs[i].h); edge > 1; edge >>= 1)
@@ -6054,7 +6069,7 @@ static bool UploadImageBatch(const std::vector<BatchImage>& imgs, Fill fill,
         ici.samples = VK_SAMPLE_COUNT_1_BIT;
         ici.tiling = VK_IMAGE_TILING_OPTIMAL;
         ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
-                  | (imgs[i].mips ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0u);
+                  | (imgs[i].mips && !prebuilt(i) ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0u);
         ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         Check(vkCreateImage(g.device, &ici, nullptr, &images[i]), what("vkCreateImage"));
@@ -6083,15 +6098,25 @@ static bool UploadImageBatch(const std::vector<BatchImage>& imgs, Fill fill,
     for (int i = 0; i < n; i++)
         Check(vkBindImageMemory(g.device, images[i], memory, imgOffset[i]), what("vkBindImageMemory"));
 
-    // Each image's staging offset is 4-byte aligned (vkCmdCopyBufferToImage
-    // requires bufferOffset % 4 == 0).
-    std::vector<VkDeviceSize> texOffset(n);
+    // One staged copy per uploaded level: level 0 alone, or every level of a prebuilt
+    // image. Each offset is 4-byte aligned (vkCmdCopyBufferToImage requires
+    // bufferOffset % 4 == 0), and 16 for a prebuilt image: the offset must also be a
+    // multiple of the format's block size, and a BC7 block is 16 bytes.
+    struct Staged { int img; uint32_t level; VkDeviceSize offset; };
+    std::vector<Staged> staged;
     VkDeviceSize stageBytes = 0;
     for (int i = 0; i < n; i++)
     {
-        texOffset[i] = stageBytes;
-        VkDeviceSize sz = (VkDeviceSize)imgs[i].w * imgs[i].h * imgs[i].texelBytes;
-        stageBytes += (sz + 3) & ~(VkDeviceSize)3;
+        const VkDeviceSize align = prebuilt(i) ? 16 : 4;
+        for (uint32_t l = 0; l < (prebuilt(i) ? levelsOf(i) : 1u); l++)
+        {
+            const VkDeviceSize sz = prebuilt(i)
+                ? imgs[i].levelBytes[l]
+                : (VkDeviceSize)imgs[i].w * imgs[i].h * imgs[i].texelBytes;
+            stageBytes = (stageBytes + align - 1) & ~(align - 1);
+            staged.push_back({ i, l, stageBytes });
+            stageBytes += (sz + 3) & ~(VkDeviceSize)3;
+        }
     }
     VkBuffer staging = VK_NULL_HANDLE;
     VkDeviceMemory stagingMem = VK_NULL_HANDLE;
@@ -6106,9 +6131,19 @@ static bool UploadImageBatch(const std::vector<BatchImage>& imgs, Fill fill,
                        &staging, &stagingMem, "batch staging");
     unsigned char* sp = nullptr;
     Check(vkMapMemory(g.device, stagingMem, 0, stageBytes, 0, (void**)&sp), what("vkMapMemory staging"));
-    for (int i = 0; i < n; i++)
-        fill(i, sp + texOffset[i]);
+    std::stable_sort(staged.begin(), staged.end(), [&](const Staged& a, const Staged& b) {
+        return imgs[a.img].fillOrder < imgs[b.img].fillOrder;
+    });
+    bool filled = true;
+    for (const Staged& s : staged)
+        if (!fill(s.img, s.level, sp + s.offset)) { filled = false; break; }
     vkUnmapMemory(g.device, stagingMem);
+    if (!filled)
+    {
+        vkDestroyBuffer(g.device, staging, nullptr);
+        vkFreeMemory(g.device, stagingMem, nullptr);
+        return giveUp();
+    }
 
     // One command buffer: all UNDEFINED->TRANSFER_DST barriers, all copies, then
     // all TRANSFER_DST->SHADER_READ barriers.
@@ -6135,14 +6170,16 @@ static bool UploadImageBatch(const std::vector<BatchImage>& imgs, Fill fill,
     VkCommandBuffer cb = BeginOneTime();
     vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                          0, 0, nullptr, 0, nullptr, (uint32_t)n, toDst.data());
-    for (int i = 0; i < n; i++)
+    for (const Staged& s : staged)
     {
         VkBufferImageCopy region = {};
-        region.bufferOffset = texOffset[i];
+        region.bufferOffset = s.offset;
         region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.imageSubresource.mipLevel = s.level;
         region.imageSubresource.layerCount = 1;
-        region.imageExtent = { imgs[i].w, imgs[i].h, 1 };
-        vkCmdCopyBufferToImage(cb, staging, images[i],
+        region.imageExtent = { std::max(imgs[s.img].w >> s.level, 1u),
+                               std::max(imgs[s.img].h >> s.level, 1u), 1 };
+        vkCmdCopyBufferToImage(cb, staging, images[s.img],
                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
     }
     // DOOM-0182: each level from the one above. Every level but the last ends as a blit
@@ -6150,7 +6187,7 @@ static bool UploadImageBatch(const std::vector<BatchImage>& imgs, Fill fill,
     for (int i = 0; i < n; i++)
     {
         const uint32_t levels = levelsOf(i);
-        if (levels == 1)
+        if (levels == 1 || prebuilt(i))
             continue;
         VkImageMemoryBarrier b = toRead[i];
         b.subresourceRange.levelCount = 1;
@@ -6235,7 +6272,7 @@ static void UploadSurfaceMaps(const rb_atlas_t* a)
     std::vector<uint8_t> rgb(maxTexels * 3);
     std::unique_ptr<bool[]> transparent(new bool[maxTexels]);
     int seeThrough = 0;   // walls with an uncovered texel: kept flat (§4.1)
-    const bool ok = UploadImageBatch(imgs, [&](int i, unsigned char* dst) {
+    const bool ok = UploadImageBatch(imgs, [&](int i, uint32_t, unsigned char* dst) {
         const int ox = (int)a->rects[i].ox, oy = (int)a->rects[i].oy;
         const int w  = (int)a->rects[i].w,  h  = (int)a->rects[i].h;
         for (int row = 0; row < h; row++)
@@ -6252,6 +6289,7 @@ static void UploadSurfaceMaps(const rb_atlas_t* a)
             seeThrough++;
         surf::derive(rgb.data(), i < a->numwall ? transparent.get() : nullptr,
                      w, h, a->names[i], dst);
+        return true;
     }, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
        "surface map", g.surfImages, g.surfViews, g.surfMemory, /*mayFail=*/true);
     if (!ok)
@@ -6302,13 +6340,14 @@ void UploadAtlas()
     std::vector<BatchImage> imgs(n);
     for (int i = 0; i < n; i++)
         imgs[i] = { (uint32_t)(int)a->rects[i].w, (uint32_t)(int)a->rects[i].h, 1, VK_FORMAT_R8_UNORM };
-    UploadImageBatch(imgs, [&](int i, unsigned char* dst) {
+    UploadImageBatch(imgs, [&](int i, uint32_t, unsigned char* dst) {
         int ox = (int)a->rects[i].ox, oy = (int)a->rects[i].oy;
         int w  = (int)a->rects[i].w,  h  = (int)a->rects[i].h;
         for (int row = 0; row < h; row++)
             std::memcpy(dst + (size_t)row * w,
                         a->pixels + (size_t)(oy + row) * a->atlasw + ox,
                         (size_t)w);
+        return true;
     }, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, "material", g.matImages, g.matViews, g.matMemory);
 
     // One array write filling the bindless binding (2) slots [0,n).
@@ -6804,8 +6843,46 @@ static const HdMapSpec kHdV1Maps[] = {
     { RB_HGT,  "hgt",  false },
 };
 
-// A raw RGBA8 image handed to BuildHdSet (pixels owned by the caller).
-struct HdSrc { const unsigned char* px; int w, h; bool srgb; };
+// A picture handed to BuildHdSet: raw RGBA8 pixels (owned by the caller), or, with `packed`,
+// an entry of the open pack, whose levels BuildHdSet reads from the file (DOOM-0632).
+struct HdSrc { const unsigned char* px; int w, h; bool srgb;
+               const rb_hdpack_entry_t* packed = nullptr; };
+
+// DOOM-0632: ultra.hdpack, open for one HD load. `f` is null when there is no usable pack.
+// readFailed is set when a level would not read during the upload, which is how the load
+// tells that from refused video memory. failRead makes the first read report failure
+// without touching the file, so the retry can be exercised (-hdpackfail).
+struct HdPackFile
+{
+    FILE*       f = nullptr;
+    rb_hdpack_t index = {};
+    bool        readFailed = false, failRead = false;
+    ~HdPackFile() { if (f) fclose(f); RB_HdPackFree(&index); }
+};
+
+static_assert(RB_HDPACK_MAX_EDGE == kHdMaxEdge, "the pack reader's size cap is the loader's clamp");
+
+static VkFormat HdPackVkFormat(unsigned format)
+{
+    switch (format)
+    {
+        case RB_HDPACK_BC7_SRGB:   return VK_FORMAT_BC7_SRGB_BLOCK;
+        case RB_HDPACK_BC7_UNORM:  return VK_FORMAT_BC7_UNORM_BLOCK;
+        case RB_HDPACK_BC4_UNORM:  return VK_FORMAT_BC4_UNORM_BLOCK;
+        case RB_HDPACK_R8_UNORM:   return VK_FORMAT_R8_UNORM;
+        case RB_HDPACK_RGBA8_SRGB: return VK_FORMAT_R8G8B8A8_SRGB;
+        default:                   return VK_FORMAT_R8G8B8A8_UNORM;   // the reader refused the rest
+    }
+}
+
+// Video memory a packed picture takes, in MB: its levels' exact bytes.
+static float HdPackMB(const rb_hdpack_entry_t* e)
+{
+    uint64_t bytes = 0;
+    for (uint32_t l = 0; l < e->mipLevels; l++)
+        bytes += RB_HdPackLevelBytes(e->format, e->width, e->height, l);
+    return bytes / (1024.0f * 1024.0f);
+}
 
 // Resolve a DOOM material name to its unified bindless id (walls direct, flats after
 // numWall). Sprites are excluded from v1 HD. Mirrors r_vulkan.cpp's id math (:5098).
@@ -6893,16 +6970,19 @@ static void CreateHdSetLayout()
           "vkCreateDescriptorSetLayout(hd)");
 }
 
-// (Re)build the HD descriptor pool + set: upload the given RGBA8 maps into a fresh
-// bindless image array (with mips, for the rasterised view, DOOM-0182) and the control table into a device-local
+// (Re)build the HD descriptor pool + set: upload the given maps into a fresh
+// bindless image array (with mips, for the rasterised view, DOOM-0182; a packed map brings
+// its own, read from `pack`) and the control table into a device-local
 // SSBO, then write both bindings. An empty srcs list still creates one 1x1 dummy so
 // binding 1 is never a zero-length array. Frees any prior HD resources first. The
 // caller still owns srcs[].px and may free it once this returns (copied to staging).
 // DOOM-0257: returns false only with mayFail, when the image upload could not
 // get its memory. Nothing of the set then exists; the caller builds a smaller
 // one. Without mayFail a refused allocation is fatal.
+// DOOM-0632: it also returns false, with nothing built, when a packed level would not
+// read; pack->readFailed then says so. `pack` is needed only when a src is packed.
 static bool BuildHdSet(const std::vector<HdSrc>& srcsIn, const rb_matctrl_t* table, int nmat,
-                       bool mayFail = false, bool injectFail = false)
+                       bool mayFail = false, bool injectFail = false, HdPackFile* pack = nullptr)
 {
     FreeHdMaterials();
 
@@ -6914,10 +6994,33 @@ static bool BuildHdSet(const std::vector<HdSrc>& srcsIn, const rb_matctrl_t* tab
     // 1-4. The images, uploaded and viewed.
     std::vector<BatchImage> imgs(nimg);
     for (int i = 0; i < nimg; i++)
+    {
         imgs[i] = { (uint32_t)srcs[i].w, (uint32_t)srcs[i].h, 4,
                     srcs[i].srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM, true };
-    if (!UploadImageBatch(imgs, [&](int i, unsigned char* dst) {
-            std::memcpy(dst, srcs[i].px, (size_t)srcs[i].w * srcs[i].h * 4);
+        if (const rb_hdpack_entry_t* e = srcs[i].packed)
+        {
+            imgs[i].format    = HdPackVkFormat(e->format);
+            imgs[i].fillOrder = pack->index.mips[e->firstMip].offset;
+            for (uint32_t l = 0; l < e->mipLevels; l++)
+                imgs[i].levelBytes.push_back(RB_HdPackLevelBytes(e->format, e->width, e->height, l));
+        }
+    }
+    if (!UploadImageBatch(imgs, [&](int i, uint32_t level, unsigned char* dst) {
+            if (!srcs[i].packed)
+            {
+                std::memcpy(dst, srcs[i].px, (size_t)srcs[i].w * srcs[i].h * 4);
+                return true;
+            }
+            // Straight from the file into staging. Only stored levels reach here (the
+            // probe's codec mask), so nothing reads back what it wrote: staging is
+            // write-combined memory (the DOOM-0170 trap).
+            if (pack->failRead
+                || !RB_HdPackReadLevel(pack->f, &pack->index, srcs[i].packed, level, dst))
+            {
+                pack->readFailed = true;
+                return false;
+            }
+            return true;
         }, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
         "hd", g.hdImages, g.hdViews, g.hdMemory,
         mayFail, injectFail))
@@ -7037,13 +7140,14 @@ static void SetHdAssetExeDir()
     if (char* base = SDL_GetBasePath()) { rb_asset_set_exe_dir(base); SDL_free(base); }
 }
 
-// Per-level (Ultra only): load the current map's HD material sets and rebuild the HD
-// descriptor set. Idempotent (guarded by g.hdBuilt). Any per-material failure leaves
-// that material paletted; a missing materials.csv leaves everything paletted. Always
-// ends with a valid g.hdSet.
-static void EnsureHdMaterials()
+// Load the current map's HD material sets and rebuild the HD descriptor set. Any
+// per-material failure leaves that material paletted; a missing materials.csv leaves
+// everything paletted. Each picture comes from ultra.hdpack where usePack allows and the
+// pack has it, else from its PNG (DOOM-0632). Returns false only with usePack, when a
+// packed level would not read: no set exists then, and the caller loads again without the
+// pack. Otherwise it ends with a valid g.hdSet.
+static bool LoadHdMaterials(bool usePack)
 {
-    if (rendermode != TIER_RT3D || g.hdBuilt) return;
     const int N = RB_MaterialCount();
 
     // 0. Where the assets are, and the log says which root was used and why.
@@ -7054,6 +7158,41 @@ static void EnsureHdMaterials()
                (env && *env) ? "DOOMASSETDIR"
                : rb_asset_exe_root[0] ? "beside the executable" : "launch directory");
     }
+
+    // DOOM-0632: the pack, validated whole before any entry is used. Absent or refused,
+    // every picture loads from its PNG, as before there was a pack.
+    HdPackFile pack;
+    if (usePack) {
+        char pp[720];
+        pack.f = rb_asset_path(pp, sizeof(pp), RB_HDPACK_NAME) ? fopen(pp, "rb") : nullptr;
+        if (!pack.f)
+            printf("DOOM-0632: no %s - HD art loads from PNGs.\n", RB_HDPACK_NAME);
+        else if (RB_HdPackOpen(pack.f, &pack.index))
+            printf("DOOM-0632: %s holds %u picture(s).\n", RB_HDPACK_NAME, pack.index.entryCount);
+        else {
+            printf("DOOM-0632: %s refused - HD art loads from PNGs.\n", RB_HDPACK_NAME);
+            fclose(pack.f);
+            pack.f = nullptr;
+        }
+#ifdef DOOM_DEV
+        pack.failRead = M_CheckParm("-hdpackfail") != 0;   // exercise the retry on demand
+#endif
+    }
+    // The pack's entry for a picture when the loader may use it (spec § 4.4 Probe), else
+    // null and the picture takes its PNG. An entry whose PNG is present with another length
+    // or date is stale: the edited PNG wins (INV-4).
+    int stale = 0;
+    auto packEntry = [&](const char* rel, const char* full, bool srgb) -> const rb_hdpack_entry_t* {
+        const rb_hdpack_entry_t* e = pack.f ? RB_HdPackFind(&pack.index, rel) : nullptr;
+        if (!e) return nullptr;
+        struct stat st;
+        const bool     png   = stat(full, &st) == 0;
+        const uint64_t bytes = png ? (uint64_t)st.st_size : 0;
+        const int64_t  mtime = png ? (int64_t)st.st_mtime : 0;
+        if (png && (bytes != e->srcBytes || mtime != e->srcMtime)) stale++;
+        return RB_HdPackUsable(&pack.index, e, srgb, g.bcSupported, 1u << RB_HDPACK_STORED,
+                               png, bytes, mtime) ? e : nullptr;
+    };
 
     // 1. Load the sidecar (absent => all paletted; not an error).
     char csvPath[512];
@@ -7168,7 +7307,7 @@ static void EnsureHdMaterials()
     //    ever decoded and peak host RAM is bounded by the budget (DOOM-0410; before, every
     //    sidecar row was decoded first). Missing ALBEDO -> that material is paletted; a
     //    missing non-albedo map -> that slot stays default.
-    struct Planned { int id; int k; bool srgb; std::string path; };
+    struct Planned { int id; int k; bool srgb; std::string path; const rb_hdpack_entry_t* packed; };
     std::vector<Planned> planned;
     std::vector<float> estMB(N, 0.0f);
     std::vector<int>   isHero(N, 0);
@@ -7200,7 +7339,8 @@ static void EnsureHdMaterials()
                 printf("DOOM-0042: %s: %s map path too long - skipped.\n", r.name, ms.suffix);
                 continue;
             }
-            if (!rb_image_info(full, &w, &h)) {
+            const rb_hdpack_entry_t* pe = packEntry(relPath, full, ms.srgb);
+            if (!pe && !rb_image_info(full, &w, &h)) {
                 if (ms.k != RB_ALB && !isModel[id])   // a model bakes only the maps it needs
                     printf("DOOM-0042: %s: no %s map (%s) - default.\n", r.name, ms.suffix, full);
                 continue;
@@ -7213,8 +7353,8 @@ static void EnsureHdMaterials()
                 continue;
             }
             if (ms.k == RB_ALB) albedoOk = true;
-            estMB[id] += mbOf(w, h);
-            mine.push_back({ id, ms.k, ms.srgb, full });
+            estMB[id] += pe ? HdPackMB(pe) : mbOf(w, h);   // a packed picture's exact bytes
+            mine.push_back({ id, ms.k, ms.srgb, full, pe });
         }
         if (!albedoOk) {
             table[id].usePBR = 0;
@@ -7228,19 +7368,25 @@ static void EnsureHdMaterials()
     // The two global overlays (grime, dirt) are loaded after the materials and used to sit
     // outside the budget and the reported total (DOOM-0410). Probe them now and reserve
     // their share, so the ceiling covers everything uploaded.
-    struct Overlay { const char* rel; const char* tag; bool srgb; bool present; float mb; };
+    struct Overlay { const char* rel; const char* tag; bool srgb; bool present; float mb;
+                     const rb_hdpack_entry_t* packed; };
     Overlay overlays[2] = {
-        { "overlays/grunge.png", "DOOM-0179: grime overlay", false, false, 0.0f },
-        { "overlays/dirt.png",   "DOOM-0181: dirt overlay",  true,  false, 0.0f },
+        { "overlays/grunge.png", "DOOM-0179: grime overlay", false, false, 0.0f, nullptr },
+        { "overlays/dirt.png",   "DOOM-0181: dirt overlay",  true,  false, 0.0f, nullptr },
     };
     float overlayMB = 0.0f;
     for (Overlay& o : overlays) {
         char op[720]; int w = 0, h = 0;
-        if (rb_asset_path(op, sizeof(op), o.rel) && rb_image_info(op, &w, &h)
-            && w <= kHdSourceMaxEdge && h <= kHdSourceMaxEdge) {
-            o.present = true; o.mb = mbOf(w, h); overlayMB += o.mb;
+        if (!rb_asset_path(op, sizeof(op), o.rel)) continue;
+        o.packed = packEntry(o.rel, op, o.srgb);
+        if (o.packed || (rb_image_info(op, &w, &h)
+                         && w <= kHdSourceMaxEdge && h <= kHdSourceMaxEdge)) {
+            o.present = true; o.mb = o.packed ? HdPackMB(o.packed) : mbOf(w, h); overlayMB += o.mb;
         }
     }
+    if (stale)
+        printf("DOOM-0632: %d picture(s) changed since %s was baked - those load from PNGs.\n",
+               stale, RB_HDPACK_NAME);
 
     // 5. Budget: drop lowest-traffic over the ceiling; returns kept ids in upload order.
     int wanted = 0;
@@ -7262,6 +7408,7 @@ static void EnsureHdMaterials()
     std::vector<HdSrc> srcs;
     float usedMB = 0.0f;
     int   capDropped = 0;
+    auto srcMB = [&](const HdSrc& s) { return s.packed ? HdPackMB(s.packed) : mbOf(s.w, s.h); };
     auto decode = [&](const char* path, const char* what, rb_image_t* img) -> bool {
         // The planning pass already refused oversized maps; this re-check guards a file
         // replaced since then, because the limit exists to bound the decode itself.
@@ -7301,6 +7448,11 @@ static void EnsureHdMaterials()
         bool albedoOk = true;
         for (Planned& pm : planned) {
             if (pm.id != id) continue;
+            if (pm.packed) {                    // no decode: BuildHdSet reads its levels
+                table[id].maps[pm.k] = (int)srcs.size();
+                srcs.push_back({ nullptr, pm.packed->width, pm.packed->height, pm.srgb, pm.packed });
+                continue;
+            }
             char what[64]; snprintf(what, sizeof(what), "%s map[%d]", nm, pm.k);
             rb_image_t img;
             if (!decode(pm.path.c_str(), what, &img)) {
@@ -7320,7 +7472,7 @@ static void EnsureHdMaterials()
             continue;
         }
         for (size_t i = firstSrc; i < srcs.size(); i++) {
-            usedMB += kHdMipFactor * srcs[i].w * srcs[i].h * 4.0f / (1024.0f*1024.0f);
+            usedMB += srcMB(srcs[i]);
             printf("DOOM-0042: id %d %dx%d  (%.1f MB)\n", id, srcs[i].w, srcs[i].h, usedMB);
         }
     }
@@ -7343,14 +7495,18 @@ static void EnsureHdMaterials()
             printf("%s: no %s - off.\n", o.tag, o.rel);
             continue;
         }
-        rb_image_t img;
-        if (!decode(op, o.tag, &img)) continue;
         const int slot = (int)srcs.size();
+        if (o.packed)
+            srcs.push_back({ nullptr, o.packed->width, o.packed->height, o.srgb, o.packed });
+        else {
+            rb_image_t img;
+            if (!decode(op, o.tag, &img)) continue;
+            decoded.push_back(img);
+            srcs.push_back({ img.pixels, img.w, img.h, o.srgb });   // grime UNORM, dirt sRGB
+        }
         (oi == 0 ? g.hdGrungeIdx : g.hdDirtIdx) = slot;
-        decoded.push_back(img);
-        srcs.push_back({ img.pixels, img.w, img.h, o.srgb });   // grime UNORM, dirt sRGB
-        usedMB += kHdMipFactor * img.w * img.h * 4.0f / (1024.0f*1024.0f);
-        printf("%s id %d  %dx%d.\n", o.tag, slot, img.w, img.h);
+        usedMB += srcMB(srcs.back());
+        printf("%s id %d  %dx%d.\n", o.tag, slot, srcs.back().w, srcs.back().h);
     }
 
     // 7. Build the set (uploads images + SSBO), then free every decoded image (kept
@@ -7364,8 +7520,16 @@ static void EnsureHdMaterials()
 #ifdef DOOM_DEV
         injectFail = M_CheckParm("-hdallocfail") != 0;   // exercise the fallback on demand
 #endif
-        if (!BuildHdSet(srcs, table.data(), N, true, injectFail))
+        if (!BuildHdSet(srcs, table.data(), N, true, injectFail, &pack))
         {
+            if (pack.readFailed)
+            {
+                printf("DOOM-0632: %s would not read - loading the HD art again from PNGs.\n",
+                       RB_HDPACK_NAME);
+                for (rb_image_t& img : decoded) rb_image_free(&img);
+                for (LoadedModel& lm : models) RB_ModelFree(&lm.model);
+                return false;
+            }
             printf("DOOM-0042: not enough video memory for the HD set (%.1f MB) - "
                    "Ultra uses paletted art.\n", usedMB);
             for (int id = 0; id < N; id++) {
@@ -7390,8 +7554,21 @@ static void EnsureHdMaterials()
 
     int nHd = 0;                                // after cap and decode drops, not the budget's count
     for (int id = 0; id < N; id++) if (table[id].usePBR) nHd++;
-    printf("DOOM-0042: HD load done - %d material(s), %d image(s), %.1f MB.\n",
-           nHd, (int)srcs.size(), usedMB);
+    const int nPacked = (int)std::count_if(srcs.begin(), srcs.end(),
+                                           [](const HdSrc& s) { return s.packed != nullptr; });
+    printf("DOOM-0042: HD load done - %d material(s), %d image(s) (%d packed, %d from PNGs), "
+           "%.1f MB.\n", nHd, (int)srcs.size(), nPacked, (int)srcs.size() - nPacked, usedMB);
+    return true;
+}
+
+// Per-level (Ultra only): build the level's HD set. Idempotent (guarded by g.hdBuilt).
+// Always ends with a valid g.hdSet: a pack that will not read is dropped and the load
+// repeated from PNGs (DOOM-0632 § 4.4).
+static void EnsureHdMaterials()
+{
+    if (rendermode != TIER_RT3D || g.hdBuilt) return;
+    if (!LoadHdMaterials(true))
+        LoadHdMaterials(false);
     g.hdBuilt = true;
 }
 

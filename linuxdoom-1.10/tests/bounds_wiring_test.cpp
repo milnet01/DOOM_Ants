@@ -890,8 +890,9 @@ int main()
                 check(found, "DOOM-0257: found the definition of BuildHdSet in r_vulkan.cpp");
                 check(found && isBool, "DOOM-0257: BuildHdSet is defined `static bool` (it can fail)");
             }
-            // 2. EnsureHdMaterials tests BuildHdSet's result.
-            if (get_body("r_vulkan.cpp", vk, "EnsureHdMaterials", &b))
+            // 2. LoadHdMaterials, the load EnsureHdMaterials runs (DOOM-0632), tests
+            //    BuildHdSet's result.
+            if (get_body("r_vulkan.cpp", vk, "LoadHdMaterials", &b))
             {
                 bool negated = false;
                 for (size_t at = 0; (at = b.find("BuildHdSet", at)) != std::string::npos; at += 10)
@@ -901,7 +902,7 @@ int main()
                     while (before > 0 && std::isspace((unsigned char)b[before - 1])) before--;
                     if (before > 0 && b[before - 1] == '!') negated = true;
                 }
-                check(negated, "DOOM-0257: EnsureHdMaterials tests `!BuildHdSet(` to fall back to paletted art");
+                check(negated, "DOOM-0257: LoadHdMaterials tests `!BuildHdSet(` to fall back to paletted art");
             }
             // 3 and 4. the two upload functions can fail.
             if (get_body("r_vulkan.cpp", vk, "UploadImageBatch", &b))
