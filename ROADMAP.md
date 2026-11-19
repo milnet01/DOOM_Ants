@@ -20229,6 +20229,16 @@ in CLAUDE.md describes.
   so B4 (the loader) is built before B3 is decided.
   Next: B4 in r_vulkan.cpp: enable textureCompressionBC, probe the pack
   in EnsureHdMaterials, prebuilt levels in UploadImageBatch.
+  B4 built b8cbd51 (2026-11-19): the loader takes each picture from
+  ultra.hdpack and falls back to its PNG. Measured the same day on a
+  busy machine (load 15 to 19, another job on sdb): E2M2 Ultra cached,
+  HD load 0.15 s and 156.4 MB (4.9 s and 814.4 MB from PNGs); E1M1
+  cached 0.14 s; E1M1 cold 1.2 s with the drive free, 5.5 to 6.6 s
+  while the other job used it. Still owed for INV-10: the cold figure
+  and the -frameledger A/B on a quiet machine. Capture trap: -rtview 3
+  in Ultra shows the original art, so it cannot compare pack with PNGs;
+  use the rasterised view. Kit: Scratchpad/DOOM_Ants/d0632 (caps.sh,
+  fb.sh, order.py). Next: B3, the compressor choice, then B5.
   **Layman:** The high-detail pictures are stored ready for the graphics card, so levels load in a fraction of the time and the art takes about a quarter of the video memory.
   Kind: feature.
   Source: user-request-2026-11-19.
