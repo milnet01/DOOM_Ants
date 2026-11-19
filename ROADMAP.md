@@ -14505,6 +14505,16 @@ against.
   DOOM-0617's hardware test already picks the top preset a card holds;
   presets past Ultra (more rays, full-resolution lighting) are later
   work here, once the 30 FPS floor holds on the RX 6600.
+  User 2026-11-19: "I want you to use every trick there is to get the
+  cost of frames down" and "Come up with better calculations for ray
+  tracing for example." A standing direction, not one task. Where the
+  tricks already queued live: this release's planned items (the
+  reduced-resolution trace DOOM-0188, the radiance cache DOOM-0189,
+  async compute DOOM-0190, the denoiser DOOM-0191, the sprite BLAS
+  DOOM-0107), the new DOOM-0631 and DOOM-0632, and the ExperiRays
+  project, which the user set up on 2026-11-17 for original
+  ray-tracing methods. Not ranked against each other since
+  docs/research/DOOM-0279-rt-frame-time-2026-11-15.md.
   **Layman:** The ray-traced mode runs at about 30 frames a second on this card; this is the long-term push to double that, and to stop each new effect quietly eating the difference.
   Kind: perf.
   Lanes: renderer, shaders.
@@ -20198,6 +20208,12 @@ in CLAUDE.md describes.
   the source and the fallback; release size; the quality check (the
   user's eye on before-and-after shots). A new on-disk format, so it
   needs a spec and the contract review.
+  User 2026-11-19, later: "compression that is fast to
+  compress/decompress." For the spec: the GPU format is never
+  unpacked, so a fast general compressor (LZ4 or zstd class) can sit
+  on top of the packed file to make it smaller on disk. It pays on a
+  hard drive only if unpacking is quicker than reading the bytes it
+  saved; measure both on sdb before choosing.
   **Layman:** The high-detail pictures are stored ready for the graphics card, so levels load in a fraction of the time and the art takes about a quarter of the video memory.
   Kind: feature.
   Source: user-request-2026-11-19.
