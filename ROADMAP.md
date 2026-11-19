@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=633 -->
+<!-- ants-roadmap-id-high-water: DOOM=634 -->
 
 # Roadmap
 
@@ -20413,6 +20413,20 @@ in CLAUDE.md describes.
   Kind: chore.
   Source: frameledger-release-2026-11-19.
   Lanes: build.
+
+- 📋 [DOOM-0634] **Check whether the 3D views draw floor and ceiling pictures mirrored north to south.**
+  Found while reviewing ExperiRays' flats (2026-11-19). r_mesh.c gives
+  a flat vertex u = x and v = +y in map units (the mkv call in the cap
+  fan). Vanilla's R_MapPlane uses ds_yfrac = -viewy - ..., so a flat's
+  rows grow as DOOM y falls. Unverified: how the shaders and the atlas
+  map v to a texel row, so the flat may or may not be mirrored. Check: a
+  capture of a flat with readable direction (FLOOR1_6's arrows, or a
+  teleporter pad) in Classic against Solid at the same spot. A mirrored
+  flat would also mirror its HD art, so fix both together.
+  **Layman:** Floor and ceiling pictures may be flipped in Solid and Ultra compared with the original game; this checks, and fixes it if so.
+  Kind: investigate.
+  Source: experirays-review-2026-11-19.
+  Lanes: renderer.
 
 ## 0.13.0 — The player's experience
 
