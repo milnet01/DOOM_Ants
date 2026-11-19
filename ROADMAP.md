@@ -20239,6 +20239,15 @@ in CLAUDE.md describes.
   in Ultra shows the original art, so it cannot compare pack with PNGs;
   use the rasterised view. Kit: Scratchpad/DOOM_Ants/d0632 (caps.sh,
   fb.sh, order.py). Next: B3, the compressor choice, then B5.
+  B3 built a0399cd (2026-11-19): LZ4, by the spec's rule. The pack is
+  138.0 MB (249.4 MB stored; the PNGs are 163.8 MB). E2M2 Ultra HD
+  load, shared machine: cold from sdb 1.24 and 1.00 s with LZ4 against
+  1.69 and 1.44 s stored; cached 0.13 to 0.14 s against 0.09 to 0.11 s.
+  Zstandard was measured outside the game only (slower cold, and four
+  times slower to unpack). LZ4 v1.11.1 is vendored. Owed at B5 before
+  any release: LZ4's BSD licence notice in both downloads. Still owed
+  for INV-10 on a quiet machine: the cold figure and the -frameledger
+  A/B. Next: B5, packaging/ultra-art.sh and both build scripts.
   **Layman:** The high-detail pictures are stored ready for the graphics card, so levels load in a fraction of the time and the art takes about a quarter of the video memory.
   Kind: feature.
   Source: user-request-2026-11-19.
