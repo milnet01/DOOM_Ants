@@ -8,6 +8,18 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **The game now adjusts its own resolution to hold the frame rate** (DOOM-0596)
+  Render Scale has a new choice, Dynamic, and it is the default. In a
+  heavy scene the game draws a little smaller, and larger again when
+  there is room: it aims for 60 FPS in the rasterised view and 30 in
+  the ray-traced one, between a third of the screen's size and all of
+  it. Pick a fixed size to turn it off.
+
+- **Render Scale lists real sizes, not only percentages** (DOOM-0622)
+  The row now reads "1920x1080 (50%)". The sizes are standard ones
+  that fit your screen and its shape, so 83% of a 4K screen is exactly
+  3200x1800. Dynamic shows the size it is drawing at.
+
 - **Ultra's grey hex-plate wall (METAL1) is worn steel with rust runs** (DOOM-0606)
   Its hexes keep DOOM's layout over a rusted backing. Their depth is
   still the painted kind: real geometry cannot cut hexes yet (DOOM-0616).

@@ -261,7 +261,8 @@ extern int	mouseSensitivity;
 extern int	showMessages;
 extern int	fpsCorner;
 extern int	rb_upscaler;	// DOOM-0009 6-d temporal upscaler (0 Off, 1 TAAU)
-extern int	rb_renderscale;	// DOOM-0009 6-d render scale percent (100/75/67/50)
+extern int	rb_renderscale;	// the Render Scale row's fixed size, percent (render_scale.h)
+extern int	rb_drs;		// DOOM-0596: the row's Dynamic choice (0, 1)
 extern int	rb_exposure;	// DOOM-0096 Ultra/denoiser brightness slider (0..15)
 extern int	rb_sharpness;	// DOOM-0599 RCAS sharpening after TAAU (0 Off .. 5)
 extern int	rb_flashlight;	// DOOM-0044 player flashlight on/off (persisted)
@@ -330,6 +331,7 @@ default_t	defaults[] =
     {"renderer",&rendermode, RB_CLASSIC},
     {"upscaler",&rb_upscaler, 1},		// DOOM-0090: default Ultra to TAAU @ 50%
     {"render_scale",&rb_renderscale, 50},	// so it boots playable, not 8 FPS at native
+    {"render_scale_dynamic",&rb_drs, 1},	// DOOM-0596: the scale follows the frame time
     {"rt_brightness",&rb_exposure, 10},
     {"rt_sharpness",&rb_sharpness, 0},	// DOOM-0599: adds shimmer, so off by default
     {"flashlight",&rb_flashlight, 0},
@@ -733,6 +735,7 @@ void M_LoadDefaults (void)
     rb_detile = ConfigClamp (rb_detile, 0, 2, 2);
     rb_fog    = ConfigClamp (rb_fog,    0, 3, 2);
     rb_bloom  = ConfigClamp (rb_bloom,  0, 3, 2);
+    rb_drs    = ConfigClamp (rb_drs,    0, 1, 1);
 
     // DOOM-0617 (INV-9). Range only: whether this machine can trace at all is
     // not known until RB_Init, which holds rt_mode to Off without it.

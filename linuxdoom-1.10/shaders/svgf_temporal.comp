@@ -47,7 +47,8 @@ layout(push_constant) uniform PC {
     vec4  prevRight;  // xyz = previous-frame right, w = tan(hFov/2)
     vec4  prevUp;     // xyz = previous-frame up,    w = tan(vFov/2)
     uvec4 misc;       // x = cur parity, y = width, z = height, w = a-trous step
-    uvec4 misc2;      // x = a-trous ping, y = iter
+    uvec4 misc2;      // x = a-trous ping, y = iter; this pass: z, w = the previous
+                      // frame's width and height (DOOM-0596: the scale can move)
     uvec4 misc3;
 } pc;
 
@@ -131,17 +132,18 @@ void main()
 
     vec2  prevScreen;
     float vz;                                              // depth along prev view axis
+    int   pw = int(pc.misc2.z), ph = int(pc.misc2.w);    // the history's own size
     if (svgfReprojectPrev(wpos, pc.prevPos, pc.prevDir, pc.prevRight, pc.prevUp,
-                          w, h, prevScreen, vz)) {
+                          pw, ph, prevScreen, vz)) {
         ivec2 pp = ivec2(int(floor(prevScreen.x)), int(floor(prevScreen.y)));   // nearest pixel
-        if (pp.x >= 0 && pp.y >= 0 && pp.x < w && pp.y < h) {
+        if (pp.x >= 0 && pp.y >= 0 && pp.x < pw && pp.y < ph) {
             vec4 gpPrev = imageLoad(gpos[prev], pp);
             if (gpPrev.w >= 0.0) {                        // prev pixel was a surface
                 vec3  nPrev = imageLoad(gnorm[prev], pp).xyz;
                 // Accept if the reprojected pixel saw (nearly) the same world point.
                 // Tolerance scales with how much world space one pixel spans at this
                 // depth, so it is correct across DOOM's wide range of map scales.
-                float wpp = vz * 2.0 * pc.prevRight.w / float(w);
+                float wpp = vz * 2.0 * pc.prevRight.w / float(pw);
                 if (length(gpPrev.xyz - wpos) < max(4.0 * wpp, 2.0)
                     && dot(nPrev, n) > 0.9) {
                     histC = imageLoad(hcol[prev], pp).rgb;

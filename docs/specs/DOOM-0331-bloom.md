@@ -595,9 +595,8 @@ cost and matches every sibling dial's behaviour.
 
 **Copy `fogNames`, which already does this correctly** —
 `fogNames[(rb_fog >= 0 && rb_fog <= 3) ? rb_fog : 0]`, at both of its `m_menu.c`
-sites. `rb_renderscale`'s two-site clamp in `r_vulkan.cpp`
-(`rb_renderscale < 25 ? 25 : rb_renderscale > 100 ? 100 : rb_renderscale`) is the
-same shape on the engine side. Note what `videoLabels` is *not*: it is indexed by
+sites. `RsRenderSize` in `render_scale.h` holds `rb_renderscale` to its range in
+the same way on the engine side. Note what `videoLabels` is *not*: it is indexed by
 the `videoitem_e` **row**, never by a dial's value, so it is not one of the sites
 above and needs nothing.
 

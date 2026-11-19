@@ -172,6 +172,9 @@ Low and Medium are the rasterised view with every fake. Ultra is today's traced 
 default render scale. The settings rows keep their own values when a preset does not set them
 (— in the table).
 
+`render_scale` is the Render Scale row's fixed size. While that row says Dynamic (DOOM-0596) the
+renderer does not read it, so Low and Medium draw alike until a fixed size is picked.
+
 ### 4.5 The hardware test
 
 - **When it runs.** The first time a 3D tier starts with no GPU identity recorded, and again when

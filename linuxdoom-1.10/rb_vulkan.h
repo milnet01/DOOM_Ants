@@ -84,6 +84,8 @@ void RB_Vulkan_TierChanged(void);
 int  RB_Vulkan_HdArtFound(void);
 // DOOM-0502: fills the GPU and swapchain facts of a frameledger run's header.
 void RB_Vulkan_LedgerFacts(rl_facts_t* f);
+// DOOM-0622: the output's size and the size the world is drawn at this frame.
+void RB_Vulkan_RenderSize(int* outW, int* outH, int* drawW, int* drawH);
 
 #ifdef __cplusplus
 }

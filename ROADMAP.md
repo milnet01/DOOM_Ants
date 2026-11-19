@@ -15215,7 +15215,7 @@ against.
   Source: user-request-2026-11-09.
   Lanes: renderer.
 
-- 📋 [DOOM-0596] **Dynamic resolution scaling: move the render scale each frame to hold the view's floor (30 FPS traced, 60 rasterised).**
+- ✅ [DOOM-0596] **Dynamic resolution scaling: move the render scale each frame to hold the view's floor (30 FPS traced, 60 rasterised).**
   Today render_scale is a fixed preset (100/75/67/50). TAAU already
   takes any render size, and the traced passes draw into a sub-rectangle
   of full-size images, so a per-frame scale needs no reallocation.
@@ -15235,6 +15235,18 @@ against.
   players who want a steady picture, and for timing tests). The row's
   fixed sizes are DOOM-0622's. Build after DOOM-0539 batch 2, before
   DOOM-0628.
+  2026-11-19: built. Render Scale's Dynamic choice (config key
+  render_scale_dynamic, default on) steers by the fastest GPU frame
+  time of the last eight frames, between 33% and 100%; the decisions
+  are in render_scale.h, held by tests/render_scale_test.cpp. No
+  floor or ceiling settings: a fixed size is the opt-out. A
+  -frameledger run and the golden-image modes draw at the fixed
+  size. svgf_temporal.comp now reads its history at the previous
+  frame's size. Not yet shown: the scale settling on a quiet GPU.
+  Every hidden run shared the GPU with other sessions (40-85% busy
+  before the engine started), so the user's own play is the check.
+  Open for DOOM-0617: Low and Medium differ only by a fixed scale,
+  so under Dynamic they draw alike.
   **Layman:** The game lowers its internal resolution a little in heavy scenes and raises it again when there is room, so the frame rate stays near 60.
   Kind: feature.
   Source: user-request-2026-11-09.
@@ -15570,7 +15582,7 @@ against.
   Source: user-request-2026-11-15.
   Lanes: renderer.
 
-- 📋 [DOOM-0622] **Show the drawn resolution beside the Render Scale percentage, e.g. 50% (1920x1080 -> 3840x2160).**
+- ✅ [DOOM-0622] **Show the drawn resolution beside the Render Scale percentage, e.g. 50% (1920x1080 -> 3840x2160).**
   The owner, 2026-11-17, relayed through ExperiRays: "I want DOOM Ants
   not to just give a percentage but also to give what resolution 50% is
   upscaling from." The Video menu's Render Scale row shows only the
@@ -15586,6 +15598,12 @@ against.
   2560x1440 (67%), 1920x1080 (50% of 4K), 1280x720 (33%); on 4:3
   1600x1200: 1600x1200, 1280x960, 1024x768, 800x600. A 'Dynamic'
   choice joins the list (DOOM-0596). Build after DOOM-0539 batch 2.
+  2026-11-19: built with DOOM-0596. The row reads '1920x1080 (50%)'
+  or 'Dynamic (1920x1080)'. Sizes are standard heights for the
+  screen's shape, 33% and up; a screen too small for two of them
+  gets 100/75/67/50. A percentage that names a listed size draws at
+  exactly that size (83% of 4K is 3200x1800). The user's '(50% of
+  4K)' wording is shortened to '(50%)'.
   **Layman:** The Render Scale setting says what size the game really draws at and what it is upscaled to, not only a percentage.
   Kind: ux.
   Source: user-request-2026-11-17.

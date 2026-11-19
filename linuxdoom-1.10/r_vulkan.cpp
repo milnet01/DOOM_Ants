@@ -125,6 +125,7 @@ static_assert(sizeof(rb_matctrl_t) == 48, "rb_matctrl_t must be 48 bytes (std430
 #include "shaders/composite.vert.spv.h"
 #include "rb_exposure.h"
 #include "rb_sharpness.h"
+#include "render_scale.h"   // DOOM-0596 / DOOM-0622: RsRenderSize, DrsStep
 #include "shaders/composite.frag.spv.h"
 #include "shaders/text.vert.spv.h"          // DOOM-0206 L1b: display-res menu glyph text
 #include "shaders/text.frag.spv.h"
@@ -624,6 +625,11 @@ struct VulkanState
     VkQueryPool gpuTimerPool    = VK_NULL_HANDLE;
     float       timestampPeriod = 0.0f;   // ns per tick (0 = timestamps unusable)
     bool        gpuTimersInUse  = false;  // last frame wrote timestamps
+    // DOOM-0596: the Dynamic render scale. drsScaled says the last timed frame was one
+    // the scale applies to, so its time may steer the controller.
+    drs_t       drs             = DrsStart(50);   // the old default: boots playable
+    bool        drsScaled       = false;
+    uint32_t    svgfPrevW = 0, svgfPrevH = 0;   // the size the denoiser's history was drawn at
     bool        profRasterFrame = false;  // last timed frame was raster (routes the readback: raster passes vs RT passes)
     long long   gpuTimedFrame   = -1;     // DOOM-0502: the ledger frame that wrote those timestamps
     // [0]=sprite-AS [1]=megakernel [2]=denoise+TAAU [3]=blit, then the DOOM-0144
@@ -1281,6 +1287,9 @@ extern "C" { int rb_flashlight = 0; }
 // resolution as a percent of the display (100/75/67/50); only takes effect with an
 // upscaler active and on the mode-6 denoised path. C linkage for the C menu/config.
 extern "C" { int rb_upscaler = 1; int rb_renderscale = 50; int rb_exposure = 10; int rb_sharpness = 0; }   // DOOM-0090: TAAU @ 50% default
+// DOOM-0596: the Render Scale row's Dynamic choice (config key render_scale_dynamic).
+// On, the scale follows the measured GPU time (DrsStep) and rb_renderscale is not read.
+extern "C" { int rb_drs = 1; }
 
 // DOOM-0170 L2b — SSAO (contact/ambient shadows) on/off, persisted as "ssao". Per §6 each
 // screen-space effect gets its own gate so a misbehaving pass can be switched off in isolation.
@@ -1316,6 +1325,26 @@ extern "C" { int rb_detile = 2; }
 // ShadowUbo.flags.x, both 0 also when the maps were not made (SurfaceDetailLane).
 extern "C" { int rb_surface_detail = 1; }
 constexpr uint32_t kSurfaceDetailOn = 1u;   // the lane value the shaders test for
+// DOOM-0596: the render scale this frame draws at -- the controller's while the row
+// says Dynamic, otherwise the row's own. RsRenderSize holds it to its range.
+// A -frameledger run draws at the row's fixed size, so two runs compare the same work
+// (performance.md, the comparison rule); the golden-image modes pin rb_drs off themselves.
+static bool DrsOn()
+{
+    return rb_drs && !RL_Active() && g.gpuTimerPool;
+}
+
+static int RenderScalePct()
+{
+    return DrsOn() ? g.drs.pct : rb_renderscale;
+}
+
+// DOOM-0596: Dynamic needs each frame's GPU time, so it keeps the DOOM-0090 timestamps on.
+static bool GpuTimersWanted()
+{
+    return (rb_profile || RL_Active() || DrsOn()) && g.gpuTimerPool;
+}
+
 static uint32_t SurfaceDetailLane()
 {
     return (rb_surface_detail && g.surfMapsOn) ? kSurfaceDetailOn : 0u;
@@ -9383,10 +9412,10 @@ void RecordRtTrace(uint32_t idx)
     uint32_t renderW = dispW, renderH = dispH;
     float jitterX = 0.0f, jitterY = 0.0f;
     if (taauActive) {
-        uint32_t sc = (uint32_t)(rb_renderscale < 25 ? 25
-                                 : (rb_renderscale > 100 ? 100 : rb_renderscale));
-        renderW = ((dispW * sc / 100u) + 1u) & ~1u;   // round to even
-        renderH = ((dispH * sc / 100u) + 1u) & ~1u;
+        int rw, rh;
+        RsRenderSize((int)dispW, (int)dispH, RenderScalePct(), &rw, &rh);
+        renderW = ((uint32_t)rw + 1u) & ~1u;   // round to even
+        renderH = ((uint32_t)rh + 1u) & ~1u;
         if (renderW < 2u)    renderW = 2u;
         if (renderW > dispW) renderW = dispW;
         if (renderH < 2u)    renderH = 2u;
@@ -9403,7 +9432,7 @@ void RecordRtTrace(uint32_t idx)
     // DOOM-0090: per-pass GPU timer. Reset the pool + stamp the frame's GPU start,
     // then stamp each pass boundary below. Read back next frame (single-frame-in-
     // flight, so it's complete). Segments: sprite-AS / megakernel / denoise+TAAU / blit.
-    const bool prof = (rb_profile || RL_Active()) && g.gpuTimerPool;
+    const bool prof = GpuTimersWanted();
     if (prof) {
         vkCmdResetQueryPool(g.cmd, g.gpuTimerPool, 0, 10);
         vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, g.gpuTimerPool, 0);
@@ -9725,6 +9754,11 @@ void RecordRtTrace(uint32_t idx)
         svgfBarrier();
         vkCmdBindPipeline(g.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g.svgfTemporal);
         spc.misc[3] = 0; spc.misc2[0] = 0; spc.misc2[1] = 0;
+        // DOOM-0596: the size the history was drawn at. The scale can now move between
+        // frames, and svgf_temporal.comp looks its history up in that frame's pixels.
+        // The composite below overwrites these two lanes with its own values.
+        spc.misc2[2] = g.svgfPrevW ? g.svgfPrevW : w;
+        spc.misc2[3] = g.svgfPrevH ? g.svgfPrevH : h;
         vkCmdPushConstants(g.cmd, g.svgfPipeLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(spc), &spc);
         vkCmdDispatch(g.cmd, gx, gy, 1);
         // DOOM-0144: split the denoise+TAAU bucket into its sub-passes (slots 5/6/7).
@@ -10088,6 +10122,7 @@ void RecordRtTrace(uint32_t idx)
         vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 4);
         g.gpuTimersInUse = true;   // results ready to read at the top of next frame
         g.profRasterFrame = false; // this timed frame was the RT path -> RT readback interpretation
+        g.drsScaled = taauActive;  // DOOM-0596: without the upscaler the scale changes nothing
         g.gpuTimedFrame = RL_CurrentFrame();
     }
 
@@ -10104,6 +10139,7 @@ void RecordRtTrace(uint32_t idx)
         g.prevCamRight[3] = 1.0f;                                       // tan(hFov/2)
         g.prevCamUp[0] = 0.0f; g.prevCamUp[1] = 0.0f; g.prevCamUp[2] = 1.0f;
         g.prevCamUp[3] = (float)dispH / (float)dispW;                  // tan(vFov/2), display aspect
+        g.svgfPrevW = w; g.svgfPrevH = h;
         g.svgfFrame++;
     }
 }
@@ -10870,6 +10906,16 @@ extern "C" void RB_Vulkan_Present(void)
                 sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS)
         {
             const double k = (double)g.timestampPeriod / 1.0e6;   // ticks -> ms
+            // DOOM-0596: steer the Dynamic render scale by this frame's whole GPU span,
+            // against its view's floor (docs/standards/performance.md).
+            if (DrsOn() && g.drsScaled)
+            {
+                const int was = g.drs.pct;
+                DrsStep(&g.drs, (float)((double)(ts[g.profRasterFrame ? 6 : 4] - ts[0]) * k),
+                        g.profRasterFrame ? 1000.0f / 60.0f : 1000.0f / 30.0f);
+                if (g.drs.pct != was && rb_profile)
+                    printf("[drs] %d%% -> %d%%\n", was, g.drs.pct);
+            }
             // DOOM-0502: the same intervals as the buckets below, one frame at a time.
             // These count against the frame that submitted them, not the one reading now.
             if (RL_Active())
@@ -10975,6 +11021,14 @@ extern "C" void RB_Vulkan_Present(void)
                 g.profFrames = 0;
                 g.profLastReport = now;
             }
+            // DOOM-0596: Dynamic keeps the timers on with the profiler off. Without this
+            // the first line after `\` would average every frame since boot.
+            if (!rb_profile)
+            {
+                for (int pi = 0; pi < 10; pi++) g.profMs[pi] = 0.0;
+                g.profFrames = 0;
+                g.profLastReport = now;
+            }
         }
         g.gpuTimersInUse = false;
     }
@@ -11017,6 +11071,7 @@ extern "C" void RB_Vulkan_Present(void)
         {
             rb_rtdebug = 6; rb_rtdebug_menu = 0; rb_profile = 0;
             rb_upscaler = 1; rb_renderscale = 50; rb_exposure = 10; rb_sharpness = 0;
+            rb_drs = 0;   // DOOM-0596: a golden frame is drawn at a fixed size
             rb_detile = 2; rb_filth = 1; rb_wet = 1;
             // DOOM-0331 INV-7: bloom ships on by default (§3 decision 4), so an
             // unpinned dial would let ~/.doomrc back into the golden -- the same
@@ -11142,10 +11197,9 @@ extern "C" void RB_Vulkan_Present(void)
     // -> byte-identical to before). The saving is the SHADING (fewer viewport pixels); the pass
     // still clears the whole target to slate so the composite's linear edge tap never reads an
     // un-rendered texel (which would seam the screen's right/bottom edge).
-    uint32_t rsc = (uint32_t)(rb_renderscale < 25 ? 25
-                              : (rb_renderscale > 100 ? 100 : rb_renderscale));
-    uint32_t sceneW = (g.extent.width  * rsc) / 100u; if (sceneW < 1u) sceneW = 1u;
-    uint32_t sceneH = (g.extent.height * rsc) / 100u; if (sceneH < 1u) sceneH = 1u;
+    int rsw, rsh;
+    RsRenderSize((int)g.extent.width, (int)g.extent.height, RenderScalePct(), &rsw, &rsh);
+    uint32_t sceneW = (uint32_t)rsw, sceneH = (uint32_t)rsh;
     VkExtent2D sceneExtent = { sceneW, sceneH };
     float uvScale[2] = { (float)sceneW / (float)g.extent.width,
                          (float)sceneH / (float)g.extent.height };
@@ -11156,7 +11210,7 @@ extern "C" void RB_Vulkan_Present(void)
     // of the next present; profRasterFrame routes that readback to the raster interpretation.
     // RT frames drive the same 10-slot pool from RecordRtTrace, and the two are mutually
     // exclusive per frame, so they never collide.
-    const bool rprof = (rb_profile || RL_Active()) && g.gpuTimerPool;
+    const bool rprof = GpuTimersWanted();
     if (rprof) {
         vkCmdResetQueryPool(g.cmd, g.gpuTimerPool, 0, 10);
         vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, g.gpuTimerPool, 0);
@@ -11612,6 +11666,7 @@ extern "C" void RB_Vulkan_Present(void)
         vkCmdWriteTimestamp(g.cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g.gpuTimerPool, 6);  // after HUD/present
         g.gpuTimersInUse  = true;   // results ready to read at the top of next frame
         g.profRasterFrame = true;   // this timed frame was the raster path -> raster readback
+        g.drsScaled = true;
         g.gpuTimedFrame = RL_CurrentFrame();
     }
     }   // end of the non-RT (raster) recording branch
@@ -11948,6 +12003,15 @@ extern "C" void RB_Vulkan_Present(void)
     }
 }
 
+// DOOM-0622: what the Render Scale row shows -- the output's size, and the size the
+// world is drawn at this frame, which moves under Dynamic.
+extern "C" void RB_Vulkan_RenderSize(int* outW, int* outH, int* drawW, int* drawH)
+{
+    *outW = (int)g.extent.width;
+    *outH = (int)g.extent.height;
+    RsRenderSize(*outW, *outH, RenderScalePct(), drawW, drawH);
+}
+
 extern "C" void RB_Vulkan_LedgerFacts(rl_facts_t* f)
 {
     static char device[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE];
@@ -11965,7 +12029,9 @@ extern "C" void RB_Vulkan_LedgerFacts(rl_facts_t* f)
     f->api = "vulkan-1.2";
     f->width = (int)g.extent.width;
     f->height = (int)g.extent.height;
-    f->render_scale_pct = rb_renderscale < 25 ? 25 : (rb_renderscale > 100 ? 100 : rb_renderscale);
+    // A ledger run is never Dynamic (DrsOn), so the row's fixed size is the run's.
+    f->render_scale_pct = rb_renderscale < RS_CLAMP_MIN ? RS_CLAMP_MIN
+                        : (rb_renderscale > RS_MAX_PCT ? RS_MAX_PCT : rb_renderscale);
     f->vsync = g.presentVsync;
     f->pipelined = 1;       // the CPU build overlaps the previous frame's GPU work (DOOM-0074)
     f->frames_in_flight = (int)VulkanState::kFramesInFlight;

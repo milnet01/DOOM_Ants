@@ -31,11 +31,23 @@ from ≤ 5 % to ≤ 15 % of present-total, with `rb_fog` 0..3 as the opt-out.
 
 ## The main lever: render scale
 
-`rb_renderscale` (config key `render_scale`) renders the world at a fraction of
-native resolution and upscales — presets **100 / 75 / 67 / 50 %**. It defaults
-to **50 %** so the engine boots playable rather than at single-digit FPS at
-native. A temporal upscaler (TAAU) reconstructs the full-res image. This is the
-first knob for hitting the floor.
+The world is drawn at a fraction of native resolution and upscaled. In the
+traced view a temporal upscaler (TAAU) reconstructs the full-res image; the
+rasterised view is stretched (DOOM-0594). This is the first knob for hitting
+the floor.
+
+The Video menu's Render Scale row has two kinds of choice
+(`linuxdoom-1.10/render_scale.h`):
+
+- **Dynamic**, the default (config key `render_scale_dynamic`). The scale
+  follows the measured GPU time to hold the view's floor, between 33 % and
+  100 % (DOOM-0596).
+- **A fixed size**, listed as a resolution with its percentage (config key
+  `render_scale`, `rb_renderscale`). It defaults to **50 %**.
+
+A `-frameledger` run and the golden-image modes draw at the fixed size even
+when the row says Dynamic, so two runs compare the same work. A capture or a
+hand-timed run does not: put `render_scale_dynamic 0` in its config.
 
 ## Measuring
 

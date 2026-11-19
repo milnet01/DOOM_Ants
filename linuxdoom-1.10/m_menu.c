@@ -69,6 +69,7 @@ rcsid[] __attribute__((used)) = "$Id: m_menu.c,v 1.7 1997/02/03 22:45:10 b1 Exp 
 
 #include "r_backend.h"   // renderer back-end toggle (DOOM-0026)
 #include "gfx_settings.h" // the preset and ray-tracing rows (DOOM-0617)
+#include "render_scale.h" // the Render Scale row's sizes (DOOM-0622)
 #include "st_stuff.h"    // ST_Y: 320x200 status-bar top, the classic HUD-safe bound (DOOM-0206 L6)
 
 
@@ -1324,16 +1325,16 @@ void M_Episode(int choice)
 // with the Graphic Detail row -- DOOM-0206 v2 §4.6; detailLevel var itself stays.)
 static const char* msgValueNames[2]	= {"Off","On"};
 char	fpsPosNames[4][11]	= {"Off","Top-Left","Top-Centre","Top-Right"};
-// Temporal upscaler (DOOM-0009 6-d): selector text + the render-scale presets.
-// rb_upscaler / rb_renderscale live in r_vulkan.cpp (read by the path tracer).
+// Temporal upscaler (DOOM-0009 6-d): selector text. rb_upscaler, rb_renderscale
+// and rb_drs live in r_vulkan.cpp. The Render Scale row's sizes are render_scale.h's.
 extern int	rb_upscaler;
 extern int	rb_renderscale;
+extern int	rb_drs;			// DOOM-0596: the row's Dynamic choice
+void RB_Vulkan_RenderSize(int* outW, int* outH, int* drawW, int* drawH);
 extern int	rb_exposure;
 extern int	rb_sharpness;	// DOOM-0599 RCAS slider (0 Off .. 5), in r_vulkan.cpp
 extern int	rb_rtdebug_menu;	// DOOM-0135 Debug Views toggle
 char	upscalerNames[2][8]	= {"Off","TAAU"};
-int	renderScalePresets[4]	= {100,75,67,50};
-char	renderScaleNames[4][6]	= {"100%","75%","67%","50%"};
 // DOOM-0205: render-effect toggles surfaced in the Video menu (VideoDef). Each is the
 // same var bound in m_misc.c defaults[] (so a menu change persists to ~/.doomrc).
 extern int	rb_flashlight;		// F key      (rt config: flashlight)
@@ -1729,9 +1730,26 @@ typedef struct
 
 typedef void (*crispValFn)(int i, crispval_t* cv);
 
+// DOOM-0622: the Render Scale row says what size the world is drawn at, read from
+// the renderer each time so a resized window stays true: "1920x1080 (50%)", or
+// "Dynamic (1920x1080)" with the size the Dynamic choice is drawing at now.
+static const char* M_RenderScaleName(void)
+{
+    static char buf[40];
+    int		ow, oh, dw, dh;
+
+    RB_Vulkan_RenderSize(&ow, &oh, &dw, &dh);
+    if (rb_drs)
+	snprintf(buf, sizeof buf, "Dynamic (%dx%d)", dw, dh);
+    else
+	snprintf(buf, sizeof buf, "%dx%d (%d%%)", dw, dh,
+		 rb_renderscale < RS_CLAMP_MIN ? RS_CLAMP_MIN
+		 : (rb_renderscale > RS_MAX_PCT ? RS_MAX_PCT : rb_renderscale));
+    return buf;
+}
+
 static void M_VideoCrispValue(int i, crispval_t* cv)
 {
-    int rsi, k;
     switch (i)
     {
       case vid_renderer:   cv->str = (const char*)RB_ModeMenuName(rendermode); break;
@@ -1744,11 +1762,7 @@ static void M_VideoCrispValue(int i, crispval_t* cv)
       case vid_rtao:       cv->str = rt_ao ? "On" : "Off"; break;
       case vid_rtquality:  cv->str = gfxQualityNames[rt_quality]; break;
       case vid_upscaler:   cv->str = upscalerNames[(rb_upscaler == 1) ? 1 : 0]; break;
-      case vid_renderscale:
-	rsi = 0;
-	for (k = 0 ; k < 4 ; k++)
-	    if (renderScalePresets[k] == rb_renderscale) rsi = k;
-	cv->str = renderScaleNames[rsi]; break;
+      case vid_renderscale: cv->str = M_RenderScaleName(); break;
       case vid_brightness: cv->slider = 1; cv->num = rb_exposure; cv->den = 15; break;
       case vid_sharpness:  cv->slider = 1; cv->num = rb_sharpness; cv->den = 5; break;
       case vid_flashlight: cv->str = rb_flashlight ? "On" : "Off"; break;
@@ -2939,15 +2953,15 @@ void M_ChangeProfiler(int choice)
 }
 
 //
-// Cycle the path tracer's render scale: 100% -> 75% -> 67% -> 50% (DOOM-0009 6-d).
-// Takes effect on the Ultra denoised view when an upscaler is active.
+// Cycle the render scale: Dynamic, then each size this screen lists, largest
+// first (DOOM-0596, DOOM-0622). The traced view needs the upscaler on to use it.
 //
 void M_ChangeRenderScale(int choice)
 {
-    int i, k = 0;
+    int ow, oh, dw, dh;
     choice = 0;
-    for (i=0 ; i<4 ; i++) if (renderScalePresets[i]==rb_renderscale) k=i;
-    rb_renderscale = renderScalePresets[(k + 1) % 4];
+    RB_Vulkan_RenderSize(&ow, &oh, &dw, &dh);
+    RsNextChoice(ow, oh, &rb_drs, &rb_renderscale);
 }
 
 //
