@@ -20214,6 +20214,9 @@ in CLAUDE.md describes.
   on top of the packed file to make it smaller on disk. It pays on a
   hard drive only if unpacking is quicker than reading the bytes it
   saved; measure both on sdb before choosing.
+  Spec: docs/specs/DOOM-0632-packed-hd-art.md, accepted 2026-11-19
+  after one review-contract loop (two lanes, 10 findings fixed, capped
+  by the user's one-loop rule). Next: B1, the pack reader and its test.
   **Layman:** The high-detail pictures are stored ready for the graphics card, so levels load in a fraction of the time and the art takes about a quarter of the video memory.
   Kind: feature.
   Source: user-request-2026-11-19.

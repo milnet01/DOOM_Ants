@@ -1,7 +1,7 @@
 <!-- ants-spec-format: 1 -->
 # DOOM-0632 — Ship Ultra's HD art packed for the graphics card, so a level loads without unpacking PNGs
 
-**Status:** draft.
+**Status:** accepted (2026-11-19).
 **Kind:** feature.
 **Source:** ROADMAP DOOM-0632 (user requests 2026-11-19).
 **Serves:** DOOM-0279 (frame cost: the art takes less video memory).
@@ -240,9 +240,10 @@ In a source tree the pack is git-ignored. Neither `make` nor `make hdpack` bakes
 
 - **New file format:** `ultra.hdpack`, § 4.1. Version 1.
 - **New vendored code, baker only:** a BC7 and BC4 encoder. The candidate is `bc7enc.cpp` and
-  `rgbcx.h` from `github.com/richgel999/bc7enc_rdo`. Its licence was not confirmed while drafting;
-  B1 confirms it is GPL-compatible before anything is copied, and records version, upstream and
-  licence in `docs/standards/dependencies.md`.
+  `rgbcx.h` from `github.com/richgel999/bc7enc_rdo`. Those files are offered under MIT or public
+  domain, the taker's choice (the repository's `LICENSE`, and each file's own header; read
+  2026-11-19), so they are GPL-compatible. `rgbcx.h` is v1.13; the repository tags no releases.
+  B2 records version, upstream and licence in `docs/standards/dependencies.md`.
 - **New dependency, only if § 10's rule picks one:** LZ4 or Zstandard, in the game and the baker,
   at the latest stable release, recorded the same way. Zstandard is on the build host as a system
   library; the Windows cross-build would need it staged under `mingw-deps/`.
@@ -270,8 +271,7 @@ The three limits are design targets, not measurements.
 
 ## 7. Build order
 
-- **B1** `rb_hdpack.h` (reader and writer) and `tests/hd_pack_test.cpp`. Confirm the encoder's
-  licence. Check: `make test`.
+- **B1** `rb_hdpack.h` (reader and writer) and `tests/hd_pack_test.cpp`. Check: `make test`.
 - **B2** The baker and `make hdpack`, with the encoder vendored. Check: it packs `assets/ultra`;
   `hdpack --list` names every committed PNG; two bakes of the same tree are byte-identical; a
   rebake after touching one PNG re-encodes one.
