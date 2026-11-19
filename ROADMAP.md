@@ -20219,6 +20219,16 @@ in CLAUDE.md describes.
   by the user's one-loop rule). Next: B1, the pack reader and its test.
   B1 built 3491007 (2026-11-19): rb_hdpack.h and tests/hd_pack_test.cpp.
   Next: B2, the baker and `make hdpack`.
+  B2 built d2ef125 (2026-11-19): `make hdpack`, then
+  `linux/hdpack ../assets/ultra`. The committed art bakes to 249.4 MB
+  in 1 min 52 s; assets/ultra/ultra.hdpack is baked locally and ignored.
+  B3 first figures, same day: `zstd -3` takes the whole pack to 130.0 MB
+  and `-9` to 121.9 MB (about half; the public 6 to 7% figure does not
+  hold for this art), and unpacks it all in 0.77 s on one thread. LZ4 is
+  not installed and not yet measured. The spec's rule needs load times,
+  so B4 (the loader) is built before B3 is decided.
+  Next: B4 in r_vulkan.cpp: enable textureCompressionBC, probe the pack
+  in EnsureHdMaterials, prebuilt levels in UploadImageBatch.
   **Layman:** The high-detail pictures are stored ready for the graphics card, so levels load in a fraction of the time and the art takes about a quarter of the video memory.
   Kind: feature.
   Source: user-request-2026-11-19.
