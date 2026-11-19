@@ -94,6 +94,9 @@ no padding beyond what is listed.
 | `reserved` | u32 | 0 |
 | `fileBytes` | u64 | the whole file's length |
 
+The reader refuses a file of 2 GiB or more, so every offset fits a 32-bit seek on Windows, and
+a pack of more than 65536 entries.
+
 Then, in this order: the entry table, the mip table, the name block, the data. The data begins
 where the name block ends.
 
@@ -102,7 +105,7 @@ where the name block ends.
 | Field | Type | Meaning |
 |---|---|---|
 | `nameOffset` | u32 | into the name block |
-| `nameLen` | u16 | bytes, no terminator |
+| `nameLen` | u16 | bytes, no terminator; 1 to 191, what the loader's path buffers hold |
 | `format` | u8 | § 4.2 |
 | `mipLevels` | u8 | levels stored, level 0 first |
 | `width`, `height` | u16, u16 | level 0, in pixels |
