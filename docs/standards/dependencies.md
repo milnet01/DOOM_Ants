@@ -149,6 +149,14 @@ sub-Makefile is not built by CI or the default `make`, so it's out of scope):
 - `linuxdoom-1.10/stb_image.h` — vendored public-domain PNG decoder (stb_image v2.30),
   added for DOOM-0042 HD material loading. No link dependency. Re-check upstream on a
   sweep cadence; update the version noted here when bumped.
+- `linuxdoom-1.10/bc7enc.cpp` and `bc7enc.h` — vendored BC7 block encoder for the HD art
+  baker (`hdpack`, DOOM-0632), copied unchanged from `github.com/richgel999/bc7enc_rdo` at
+  commit `b9438627eef73a1157e84201b6fa6eb2ffd6d9f0` (2026-07-31; the repository tags no
+  releases). MIT or public domain, the taker's choice; the licence text is at the end of
+  `bc7enc.cpp`. SHA-256 of `bc7enc.cpp`
+  `b90444a091530a13c61fa6375583fcc9bc9ca47e474fd71f818876de68c1b581`, of `bc7enc.h`
+  `f40f4a956ed6a8845b7909e83831de09512424408b32ca29551bf49aee2fecf6`. Built into the baker
+  only, never the game. Re-check upstream on the dependency sweep.
 - `linuxdoom-1.10/stb_truetype.h` v1.26 — vendored single-header glyph rasterizer
   (menu text, DOOM-0206). Bump on the dependency sweep.
 - `linuxdoom-1.10/frameledger.h` — vendored run-file writer (DOOM-0502), copied

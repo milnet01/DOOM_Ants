@@ -54,7 +54,8 @@ current when you add or bump an asset.
 HD materials use a committed **`materials.csv` sidecar** to record each source
 asset (and its licence), while the **derived, regenerable** outputs live under a
 gitignored `derived/` tree — generated artifacts are not source. The same logic
-covers other generated files (`*.spv`, `*.spv.h`, `*.ttf.h`): they are built from
+covers other generated files (`*.spv`, `*.spv.h`, `*.ttf.h`, and `assets/ultra/ultra.hdpack`,
+the packed HD art `hdpack` bakes from the PNGs): they are built from
 committed inputs, so they are ignored, not tracked. See ADR
 `docs/decisions/0002-ultra-material-sidecar-and-loader.md` for the why.
 

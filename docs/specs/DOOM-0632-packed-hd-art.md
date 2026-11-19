@@ -145,9 +145,11 @@ the baker can later group them together, with no change to this format.
 
 A block format's level is `ceil(w/4) × ceil(h/4)` blocks. Formats 4 to 6 are the escape hatch:
 the baker uses 1 to 3 by kind, and a per-file override list in the baker moves one picture to an
-uncompressed format if the user's eye finds it damaged at B6. The kind comes from the file name's
-suffix, as `kHdV1Maps` spells them; a hero map whose name carries no suffix takes its kind from
-its `materials.csv` column.
+uncompressed format if the user's eye finds it damaged at B6.
+The kind comes from the file name's
+suffix, as `kHdV1Maps` spells them, or from the two overlay names. A picture whose name gives
+neither is left out of the pack and loads from its PNG; every committed picture carries one.
+The override list is `hdpack_overrides.csv` at the asset root, one `path,plain` row a picture.
 
 A BC4 picture returns its value in red, which is the channel every single-channel read takes
 (§ 2).
@@ -242,11 +244,12 @@ In a source tree the pack is git-ignored. Neither `make` nor `make hdpack` bakes
 ## 5. Data & resources
 
 - **New file format:** `ultra.hdpack`, § 4.1. Version 1.
-- **New vendored code, baker only:** a BC7 and BC4 encoder. The candidate is `bc7enc.cpp` and
-  `rgbcx.h` from `github.com/richgel999/bc7enc_rdo`. Those files are offered under MIT or public
+- **New vendored code, baker only:** `bc7enc.cpp` and `bc7enc.h` from
+  `github.com/richgel999/bc7enc_rdo`, the BC7 encoder. They are offered under MIT or public
   domain, the taker's choice (the repository's `LICENSE`, and each file's own header; read
-  2026-11-19), so they are GPL-compatible. `rgbcx.h` is v1.13; the repository tags no releases.
-  B2 records version, upstream and licence in `docs/standards/dependencies.md`.
+  2026-11-19), so they are GPL-compatible. `docs/standards/dependencies.md` records the commit
+  and checksums. BC4 is encoded by the project's own `rb_bc4.h`: upstream's BC4 encoder sits in
+  a second, larger source file, and a BC4 block is small enough to search directly.
 - **New dependency, only if § 10's rule picks one:** LZ4 or Zstandard, in the game and the baker,
   at the latest stable release, recorded the same way. Zstandard is on the build host as a system
   library; the Windows cross-build would need it staged under `mingw-deps/`.
@@ -254,8 +257,9 @@ In a source tree the pack is git-ignored. Neither `make` nor `make hdpack` bakes
   normal maps and 120.9 megapixels of single-channel maps. As RGBA8 with mips that is about
   1258 MiB; packed, about 238 MiB. Both are computed from the PNG headers, not measured on a card
   (`git ls-files assets/ultra`, less `heroes/bringup/`; kinds by file suffix; a 4/3 mip factor).
-- **Disk.** Those 538 PNGs are 156.2 MiB. The pack is about 238 MiB before any general
-  compression, so the installed art grows.
+- **Disk.** Those 538 PNGs are 156.2 MiB. The pack baked from them on 2026-11-19 is
+  249,397,058 bytes (237.8 MiB) with no general compression, so the installed art grows. That
+  bake took 1 min 52 s on the development machine at low priority.
 - **Host memory at load:** one level's bytes at a time when compressed; none beyond the staging
   buffer when stored as is.
 

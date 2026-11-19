@@ -227,7 +227,7 @@ endif
 # it and rebuilds, switching nothing rebuilds nothing.
 DEVSTAMP=$(O)/.dev-$(if $(filter 1,$(DEV)),on,off)
 
-.PHONY:	all clean windows generated test nee-test compile_commands.json
+.PHONY:	all clean windows generated test nee-test hdpack compile_commands.json
 
 all:	 $(O)/$(BIN)
 
@@ -295,6 +295,22 @@ test:	$(TEST_BINS)
 # tests/nee_sampling_test.cpp when it or nee_sampling.h changes).
 nee-test:	$(O)/nee_sampling_test
 	$(O)/nee_sampling_test
+
+# ---- The HD art baker (DOOM-0632) ----
+# A host tool, never linked into the game and not part of `all`: it turns an asset root's
+# PNGs into ultra.hdpack. `make hdpack` only builds it; run it to bake:
+#     linux/hdpack ../assets/ultra
+# bc7enc.cpp is vendored (dependencies standard) and is built without warnings on. The baker
+# is built without DEFS and the SDL flags: it uses neither.
+HDPACK_CXXFLAGS=-g -O2 -Wall $(CXXSTD)
+hdpack:	$(O)/hdpack
+
+$(O)/hdpack:	hdpack.cpp bc7enc.cpp rb_image.c | $(O)
+	$(CXX) $(HDPACK_CXXFLAGS) -w -c bc7enc.cpp -o $(O)/hdpack_bc7enc.o
+	$(CC) -g -O2 -Wall $(CSTD) -c rb_image.c -o $(O)/hdpack_rb_image.o
+	$(CXX) $(HDPACK_CXXFLAGS) -MMD -MP -MF $(O)/hdpack.d -MT $@ hdpack.cpp $(O)/hdpack_bc7enc.o $(O)/hdpack_rb_image.o -o $@ -lpthread
+
+-include $(O)/hdpack.d
 
 # Auto-generated header dependencies for the tests (-MMD), so editing a shared
 # header under test rebuilds exactly the affected tests — no manual `make clean`.

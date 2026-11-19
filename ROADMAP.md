@@ -20190,7 +20190,7 @@ in CLAUDE.md describes.
   Source: found-2026-11-17-DOOM-0620.
   Lanes: renderer.
 
-- 📋 [DOOM-0632] **Ship Ultra's HD art pre-packed in a GPU-compressed format, so a level loads without unpacking PNGs.**
+- 🚧 [DOOM-0632] **Ship Ultra's HD art pre-packed in a GPU-compressed format, so a level loads without unpacking PNGs.**
   User 2026-11-19 chose "Pack first, then stream": build this before
   DOOM-0628 and show before-and-after shots with load times.
   Measured 2026-11-19 (private display, load 3 to 7, release build at
@@ -20217,6 +20217,8 @@ in CLAUDE.md describes.
   Spec: docs/specs/DOOM-0632-packed-hd-art.md, accepted 2026-11-19
   after one review-contract loop (two lanes, 10 findings fixed, capped
   by the user's one-loop rule). Next: B1, the pack reader and its test.
+  B1 built 3491007 (2026-11-19): rb_hdpack.h and tests/hd_pack_test.cpp.
+  Next: B2, the baker and `make hdpack`.
   **Layman:** The high-detail pictures are stored ready for the graphics card, so levels load in a fraction of the time and the art takes about a quarter of the video memory.
   Kind: feature.
   Source: user-request-2026-11-19.
