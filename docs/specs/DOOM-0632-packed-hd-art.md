@@ -160,11 +160,11 @@ game.
   `rb_image_downscale_max` to `kHdMaxEdge`. Those are the loader's own steps, so level 0 is the
   picture the PNG path uploads.
 - **Mips:** the full chain to 1×1, the count `UploadImageBatch`'s `levelsOf` gives. Each level is
-  a 2×2 box filter of the one above; sRGB kinds are filtered in linear light. That is what the
-  blit does today.
+  a 2×2 box filter of the one above; sRGB kinds are filtered in linear light.
 - **Encode:** a vendored single-file encoder, compiled into the baker only (§ 5).
-- **Incremental:** a picture whose `srcBytes` and `srcMtime` match the existing pack's entry keeps
-  its encoded bytes. A rebake after one edit re-encodes one picture.
+- **Incremental:** a picture whose `srcBytes`, `srcMtime` and chosen `format` match the existing
+  pack's entry keeps its encoded bytes, so an override-list change re-encodes that picture. A
+  rebake after one edit re-encodes one picture.
 - **Deterministic:** the same files with the same modification times give the same bytes.
   Encoding may use several threads; the output may not depend on how many.
 - **`hdpack --list <pack>`** prints each entry's name, format, size and levels, and exits non-zero
@@ -183,8 +183,9 @@ A header-only reader, `rb_hdpack.h`, shared by the game, the baker and the tests
   first. An entry is used when all of these hold; otherwise that picture takes the PNG path, as
   today:
   - its `format` has the sRGB-ness the caller wants (`HdMapSpec::srgb`, or the overlay's);
-  - the device can sample the format: 4 to 6 always, 1 to 3 only when `textureCompressionBC` was
-    available and enabled at device creation;
+  - the device can sample the format: 4 to 6 always, 1 to 3 only when the device reports
+    `textureCompressionBC`. Device creation enables that feature where it is reported; today it
+    requests it nowhere;
   - the loose PNG is absent, or its length and modification time equal `srcBytes` and `srcMtime`.
 - **Budget.** A packed picture counts its exact unpacked bytes across its levels, in place of
   `mbOf`'s four-bytes-a-pixel estimate. `kHdBudgetMB` and `rb_apply_budget` are unchanged, so a
@@ -196,9 +197,12 @@ A header-only reader, `rb_hdpack.h`, shared by the game, the baker and the tests
   compressed level is unpacked into ordinary memory first and then copied: a decompressor reads
   back what it has written, and the mapped staging buffer is write-combined memory (the DOOM-0170
   trap, noted in `r_vulkan.cpp`).
-- **A level that fails to read or unpack** drops that picture to its PNG, and if there is none,
-  to the existing rule: no albedo means the material is paletted, any other map stays default.
+- **A level that fails to read or unpack** during the upload makes `UploadImageBatch`, and so
+  `BuildHdSet`, report failure. `EnsureHdMaterials` then repeats the HD load with the pack ignored,
+  as it retries today after refused video memory: each picture takes its PNG, and if there is
+  none, the existing rule: no albedo means the material is paletted, any other map stays default.
 - **Logging.** The `HD load done` line gains the count of pictures from the pack and from PNGs.
+  Its total counts each picture's uploaded bytes, where today it assumes four bytes a pixel.
   A stale entry (PNG present and different) is counted and logged once per load, not per picture.
 
 ### 4.5 The general compressor
@@ -224,12 +228,13 @@ download.
 - `check_ultra_art` expects exactly those non-PNG files and `ultra.hdpack`, and compares
   `hdpack --list`'s names against the committed PNG list.
 
-The pack is baked once on the build host and the same file goes in both downloads.
-`assets/ultra/LICENSES` still ships and still names each picture by its PNG path, which is the
-name the pack's entry carries.
+Both build scripts build `hdpack` for the build host before staging, and each staging bakes its
+own pack; INV-9 makes the two identical.
+`assets/ultra/LICENSES` still ships and still names each picture by its repository path; the
+pack's entry name is that path less `assets/ultra/`.
 
-In a source tree the pack is git-ignored. `make` does not build it; `make hdpack` does. Without
-it the game loads PNGs as today.
+In a source tree the pack is git-ignored. Neither `make` nor `make hdpack` bakes it; running
+`hdpack` on `assets/ultra` does. Without it the game loads PNGs as today.
 
 ## 5. Data & resources
 
@@ -257,7 +262,7 @@ as the before figures:
 
 - **E2M2 Ultra, files cached:** HD load at most 1.0 s (4.9 s today).
 - **E1M1 Ultra, first read from the hard drive:** HD load at most 3.0 s (13.6 s today).
-- **E2M2's HD set:** at most 260 MB of video memory (814.4 MB today).
+- **E2M2's HD set:** at most 260 MB, as the `HD load done` total reports it (814.4 MB today).
 - **Frame time does not grow** in either view: `-frameledger` at E2M2's start, interleaved A/B,
   pack against PNGs, per `docs/standards/performance.md`.
 
@@ -292,7 +297,7 @@ The three limits are design targets, not measurements.
   outside the data or overlap the tables, a `codec` 0 level of the wrong length, names out of
   order. Broken by any size taken from the file and used before it is checked. *Test:*
   `tests/hd_pack_test.cpp` builds one valid pack and one mutation per case; each must be refused
-  and the valid one accepted. Run under the address sanitiser by the headless recipe.
+  and the valid one accepted. Run once under the address sanitiser by hand; `make test` builds without it.
 - **INV-3** — A level that unpacks to any length but the computed one is refused, and the
   unpacker is never given room for more. Broken by trusting a compressed stream's own length.
   *Test:* `tests/hd_pack_test.cpp`, a level whose stream unpacks long and one that unpacks short.
@@ -304,19 +309,20 @@ The three limits are design targets, not measurements.
 - **INV-5** — An entry whose format's sRGB-ness differs from what the caller wants is not used.
   Broken by looking up on name alone, which would show a colour map un-gamma'd. *Test:*
   `tests/hd_pack_test.cpp` on the decision function.
-- **INV-6** — With no pack, the HD load is today's: the same pictures, sizes and log lines.
+- **INV-6** — With no pack, the HD load is today's: the same pictures and sizes.
   Broken by a loader change that leaks into the PNG path. *Test:* a capture pair by
   `scripts/ab_capture.sh`, this build with the pack removed against the commit before B4.
 - **INV-7** — A picture's level 0 in the pack has the size the PNG path uploads. Broken by a
   baker that clamps differently from `rb_image_downscale_max`. *Test:* `hdpack --list` sizes
   against `rb_image_fit_max` of each PNG's header size, in the B2 check script.
 - **INV-8** — The download's pack holds every committed PNG `ultra_art_files` lists and nothing
-  else. Broken by a bake from a dirty tree, or a PNG added without a rebake. *Test:*
+  else. Broken by a bake that skips or adds a picture. *Test:*
   `check_ultra_art`, which `release.sh` runs on both downloads.
 - **INV-9** — Baking the same files twice gives the same bytes. Broken by thread-order-dependent
   output or an uninitialised pad. *Test:* B2's double bake and `cmp`.
 - **INV-10** — The § 6 budgets hold. Broken by a decode, a blit or a per-picture file open left in
-  the packed path. *Test:* the timing kit and `-frameledger`, by hand at B4.
+  the packed path. *Test:* the timing kit, the `HD load done` total and `-frameledger`, by hand
+  at B4.
 
 ## 9. Alternatives
 
@@ -362,12 +368,13 @@ The three limits are design targets, not measurements.
 | INV-7 | **nothing** automatic — the B2 check script by hand |
 | INV-8 | `check_ultra_art`, on every release |
 | INV-9 | **nothing** automatic — the B2 double bake by hand |
-| INV-10 | **nothing** automatic — the timing kit and `-frameledger` by hand at B4 |
+| INV-10 | **nothing** automatic — the timing kit, the `HD load done` total and `-frameledger` by hand at B4 |
 | Picture quality | **nothing** automatic — the user's eye at B6 |
 
 Files this touches: `linuxdoom-1.10/r_vulkan.cpp`, a new `linuxdoom-1.10/rb_hdpack.h`, the new
 baker source, `linuxdoom-1.10/Makefile`, `linuxdoom-1.10/tests/hd_pack_test.cpp`,
-`packaging/ultra-art.sh`, `assets/ultra/.gitignore`.
+`packaging/ultra-art.sh`, `packaging/build-appimage.sh`, `packaging/windows-build.sh`,
+`packaging/windows-smoke.sh`, `assets/ultra/.gitignore`.
 
 ## 12. Cross-doc impact
 
