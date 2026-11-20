@@ -20117,6 +20117,14 @@ in CLAUDE.md describes.
   vials slimmer as well please." Two parts: the rising bubbles (this
   item, not built yet) and a slimmer flask in pickups/doom_bon1.py,
   which is a rebake and no engine change. Next after DOOM-0641.
+  2026-11-20: the slimmer flask is built (SLIM 0.72 in
+  pickups/doom_bon1.py: about 8 units wide, height kept); the user's
+  look is owed. Picture: Scratchpad d0641/c3/bon1-v0.png (E1M1, Ultra
+  rasterised). The rising bubbles are still not built. A way to build
+  them, not yet checked against the shaders: draw the bubbles in the
+  shader where a flagged model's glow map is lit, from a pattern that
+  moves up with a clock, and take the painted bubbles out of the bake.
+  pathtrace.comp has the clock (rippleTime); mesh.frag has none.
   **Layman:** The little bubbles inside the blue health vial drift upward instead of sitting still.
   Kind: feature.
   Source: user-request-2026-11-15.
