@@ -7246,7 +7246,7 @@ static bool LoadHdMaterials(bool usePack)
     // DOOM-0626: so are sprites this level cannot show, so unused models cost no memory.
     RB_ClearSpriteModels();
     RB_MarkLevelSprites();
-    struct LoadedModel { int sprite; int id; rb_model_t model; };
+    struct LoadedModel { int sprite; int id; rb_model_t model; std::string name; };
     std::vector<LoadedModel> models;
     std::vector<char> isModel(N, 0);
     char modelCsv[720];
@@ -7267,14 +7267,16 @@ static bool LoadHdMaterials(bool usePack)
             const bool ok = df && RB_ModelRead(df, &model);
             if (df) fclose(df);
             if (!ok) { printf("DOOM-0539: %s: refused - %s stays a sprite.\n", file, spr); continue; }
-            rb_matrow_t row = {};
-            std::strcpy(row.name, spr);
-            rows.push_back(row);
-            rowForId[id]        = (int)rows.size() - 1;
-            isModel[id]         = 1;
-            table[id].usePBR    = 1u;
-            table[id].flags     = RB_FLAG_NO_DETILE;   // de-tiling would scramble an atlas
-            models.push_back({ sprite, id, model });
+            if (!isModel[id]) {     // a sprite's later rows are variants on the same maps (DOOM-0641)
+                rb_matrow_t row = {};
+                std::strcpy(row.name, spr);
+                rows.push_back(row);
+                rowForId[id]        = (int)rows.size() - 1;
+                isModel[id]         = 1;
+                table[id].usePBR    = 1u;
+                table[id].flags     = RB_FLAG_NO_DETILE;   // de-tiling would scramble an atlas
+            }
+            models.push_back({ sprite, id, model, spr });
         }
         fclose(mf);
     }
@@ -7547,8 +7549,10 @@ static bool LoadHdMaterials(bool usePack)
     // DOOM-0539: only now is it known which models kept their albedo through the budget, the
     // image cap and the video memory. The rest draw as their sprites.
     for (LoadedModel& lm : models) {
-        if (table[lm.id].usePBR && table[lm.id].maps[RB_ALB] >= 0) RB_SetSpriteModel(lm.sprite, &lm.model);
-        else RB_ModelFree(&lm.model);
+        if (!table[lm.id].usePBR || table[lm.id].maps[RB_ALB] < 0) RB_ModelFree(&lm.model);
+        else if (!RB_AddSpriteModel(lm.sprite, &lm.model))
+            printf("DOOM-0641: %s has more models than a sprite can hold - one ignored.\n",
+                   lm.name.c_str());
     }
 
     int nHd = 0;                                // after cap and decode drops, not the budget's count

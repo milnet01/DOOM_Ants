@@ -88,7 +88,11 @@ outside 0..1, a light channel below 0 or over `RB_MODEL_MAX_LIGHT_RGB`, a reach 
 
 `assets/ultra/models.csv` lists `sprite,file`. `RB_BuildSprites` gets one more branch: under
 `RB_RT3D`, a Thing whose current sprite has a loaded model emits that model's triangles,
-placed at the Thing and turned by a fixed angle from its map position, in place of `sprite_quad`.
+placed at the Thing and turned by a fixed angle, in place of `sprite_quad`. The angle comes from
+where the map placed the Thing (`thing_hash`), so a shot barrel does not turn as it slides; a monster's
+drop has no such place and uses where it lies. A sprite may be named on up to four rows of
+`models.csv` (`RB_MODEL_VARIANTS`): each row is a variant, the same hash picks one per Thing, and
+all of them read the sprite's one set of maps (DOOM-0641).
 Each `u v` is multiplied by the first lump's width and height, because the shaders divide a vertex's
 UV by its material's texture size (`mesh.frag`, `hdBaseUV`). All of a sprite's animation frames
 share one model, and a Thing whose state changes to a sprite with no model draws that sprite: a
@@ -157,7 +161,8 @@ Decorations (DOOM-0620), none of them `MF_SPECIAL`: `BAR1` (barrel), `COLU` (flo
 (tall tech column), `CBRA` (candelabra).
 
 Each of a model's three maps is at most 512x512: 1.33 MB of video memory with mips (`mbOf` in
-`EnsureHdMaterials`), so 4 MB per model, inside `kHdBudgetMB`'s accounting. A model's row has no
+`EnsureHdMaterials`), so 4 MB per model, inside `kHdBudgetMB`'s accounting. A sprite with variants
+gives each a 512x512 quarter of 1024x1024 maps, 16 MB for the sprite (DOOM-0641). A model's row has no
 level-mesh traffic, so `rb_apply_budget` considers it last: over the ceiling, a model is the
 first row turned back to paletted, and its Things draw as sprites. A level loads only the models
 of sprites it can show, its Things' and the items its monsters drop when they die

@@ -2631,27 +2631,34 @@ static boolean sprite_quad(const rb_view_t* view, mobj_t* thing, rb_vertex_t q[6
 }
 
 // DOOM-0539: the Blender models standing in for pickup and decoration sprites (DOOM-0620), by
-// sprite number. An empty entry (numVerts 0) means that sprite stays a billboard.
-static rb_model_t sprite_model[NUMSPRITES];
+// sprite number. A sprite with none stays a billboard. One with several (DOOM-0641) shows
+// each Thing one of them, so barrels standing together differ.
+#define RB_MODEL_VARIANTS 4
+static rb_model_t    sprite_model[NUMSPRITES][RB_MODEL_VARIANTS];
+static unsigned char sprite_models[NUMSPRITES];     // how many of a sprite's entries are filled
 
-void RB_SetSpriteModel(int sprite, rb_model_t* model)
+int RB_AddSpriteModel(int sprite, rb_model_t* model)
 {
-    if (sprite < 0 || sprite >= NUMSPRITES)
+    if (sprite < 0 || sprite >= NUMSPRITES || sprite_models[sprite] == RB_MODEL_VARIANTS)
     {
         RB_ModelFree(model);
-        return;
+        return 0;
     }
-    RB_ModelFree(&sprite_model[sprite]);
-    sprite_model[sprite] = *model;
+    sprite_model[sprite][sprite_models[sprite]++] = *model;
     model->floats = NULL;
     model->numVerts = model->numLights = 0;
+    return 1;
 }
 
 void RB_ClearSpriteModels(void)
 {
-    int i;
+    int i, k;
     for (i = 0; i < NUMSPRITES; i++)
-        RB_ModelFree(&sprite_model[i]);
+    {
+        for (k = 0; k < sprite_models[i]; k++)
+            RB_ModelFree(&sprite_model[i][k]);
+        sprite_models[i] = 0;
+    }
 }
 
 int RB_SpriteFirstLump(const char* name, int* sprite)
@@ -2712,14 +2719,33 @@ int RB_LevelShowsSprite(int sprite)
     return sprite >= 0 && sprite < NUMSPRITES && level_sprite[sprite];
 }
 
+// A number a Thing keeps for life, from where the map placed it. A shot barrel slides, and
+// its model must neither turn nor change paint as it goes. A Thing the map did not place, a
+// monster's drop, has no spawn point (type 0) and never moves, so where it lies serves.
+static unsigned thing_hash(const mobj_t* thing)
+{
+    const int      placed = thing->spawnpoint.type != 0;
+    const unsigned x = placed ? (unsigned)thing->spawnpoint.x << FRACBITS : (unsigned)thing->x;
+    const unsigned y = placed ? (unsigned)thing->spawnpoint.y << FRACBITS : (unsigned)thing->y;
+    return x * 2654435761u ^ y * 40503u;
+}
+
 // A Thing has a model when its current sprite has one, so a barrel's model gives way to the
 // explosion's sprite (BEXP) when it is shot (DOOM-0620).
+// With several models, which one is fixed by thing_hash, as its turn is.
 static const rb_model_t* thing_model(const mobj_t* thing)
 {
+    unsigned n, g;
     if (rendermode != RB_RT3D
-        || (unsigned)thing->sprite >= NUMSPRITES || !sprite_model[thing->sprite].numVerts)
+        || (unsigned)thing->sprite >= NUMSPRITES || !sprite_models[thing->sprite])
         return NULL;
-    return &sprite_model[thing->sprite];
+    n = sprite_models[thing->sprite];
+    // Mixed again (MurmurHash3's last steps): maps place Things on a grid, and thing_hash alone
+    // gave grid neighbours the same model half the time, measured over both IWADs' barrels.
+    g = thing_hash(thing) >> 16;
+    g *= 0x85ebca6bu;  g ^= g >> 13;
+    g *= 0xc2b2ae35u;  g ^= g >> 16;
+    return &sprite_model[thing->sprite][g % n];
 }
 
 // Where a model stands: at the thing, turned by an angle its map position fixes, so a row of
@@ -2729,8 +2755,7 @@ typedef struct { float tx, ty, tz, c, s, light; int lump; } model_place_t;
 static model_place_t model_place(const mobj_t* thing)
 {
     model_place_t  p;
-    const unsigned hash = (unsigned)thing->x * 2654435761u ^ (unsigned)thing->y * 40503u;
-    const float    a    = (hash >> 16) / 65536.0f * 2.0f * 3.14159265f;
+    const float    a = (thing_hash(thing) >> 16) / 65536.0f * 2.0f * 3.14159265f;
     p.lump  = sprites[thing->sprite].spriteframes[0].lump[0];
     p.light = sector_light(thing);   // a lamp's model is shaded; its glow is its _emis map
     p.c     = cosf(a);

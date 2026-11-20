@@ -7,7 +7,8 @@
 //
 // Contract:
 //   1. The table below names exactly the sprites of info.c's MF_SPECIAL entries (source scrape).
-//   2. Every .dmdl in assets/ultra/models names a sprite in either table and loads.
+//   2. Every .dmdl in assets/ultra/models names a sprite in either table and loads. A file
+//      named <sprite>_<letter> is one more variant of that sprite's model (DOOM-0641).
 //   3. Its footprint is within the larger of the Thing's radius and half the sprite's width.
 //      A decoration's radius is its own, checked against info.c by its spawn sprite.
 //   4. Its top is within 1.25 times the sprite's top offset, and it does not sink below the floor.
@@ -159,13 +160,16 @@ int main()
         if (e.path().extension() != ".dmdl")
             continue;
         models++;
-        const std::string name = e.path().stem().string();
+        const std::string stem = e.path().stem().string();
+        const std::string name = stem.substr(0, 4);
+        check(stem.size() == 4 || (stem.size() == 6 && stem[4] == '_'),
+              (stem + ".dmdl is named <sprite> or <sprite>_<letter>").c_str());
         float radius = 0.0f;
         const Sprite* s = find_sprite(name, &radius);
         check(s != nullptr, (name + ".dmdl names a pickup or decoration sprite").c_str());
         const std::string bytes = slurp(e.path().string());
         rb_model_t m;
-        check(RB_ModelParse(bytes.data(), bytes.size(), &m) == 1, (name + ".dmdl loads").c_str());
+        check(RB_ModelParse(bytes.data(), bytes.size(), &m) == 1, (stem + ".dmdl loads").c_str());
         if (!s || !m.floats)
             continue;
 
@@ -174,12 +178,12 @@ int main()
         for (uint32_t i = 0; i < m.numVerts; i++)
         {
             const float* v = RB_ModelVert(&m, i);
-            check_inside(v[0], v[1], v[2], reach, top, name + " vertex");
+            check_inside(v[0], v[1], v[2], reach, top, stem + " vertex");
         }
         for (uint32_t i = 0; i < m.numLights; i++)
         {
             const float* l = RB_ModelLight(&m, i);
-            check_inside(l[0], l[1], l[2], reach, top, name + " light");
+            check_inside(l[0], l[1], l[2], reach, top, stem + " light");
         }
         RB_ModelFree(&m);
     }

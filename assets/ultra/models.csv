@@ -1,5 +1,6 @@
 # sprite,file. DOOM-0539: a pickup sprite (DOOM-0620: or a decoration's) and its model, relative to this folder. The maps
-# are found beside it as models/<sprite>_alb.png, _nrm.png and _emis.png.
+# are found beside it as models/<sprite>_alb.png, _nrm.png and _emis.png. A sprite named on up to four rows has that
+# many variants, all on the one set of maps; each Thing shows one, chosen by where the map put it (DOOM-0641).
 BON1,models/BON1.dmdl
 BON2,models/BON2.dmdl
 MEDI,models/MEDI.dmdl
@@ -26,6 +27,9 @@ SHEL,models/SHEL.dmdl
 SHOT,models/SHOT.dmdl
 SOUL,models/SOUL.dmdl
 BAR1,models/BAR1.dmdl
+BAR1,models/BAR1_b.dmdl
+BAR1,models/BAR1_c.dmdl
+BAR1,models/BAR1_d.dmdl
 COLU,models/COLU.dmdl
 ELEC,models/ELEC.dmdl
 CBRA,models/CBRA.dmdl

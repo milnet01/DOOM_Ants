@@ -492,8 +492,9 @@ typedef struct
 // passes 1; 0 keeps every thing a billboard.
 int RB_BuildSprites(const rb_view_t* view, rb_vertex_t* out, int maxverts, int models);
 
-// DOOM-0539: the model drawn for a sprite. Takes ownership of *model and empties it.
-void RB_SetSpriteModel(int sprite, rb_model_t* model);
+// DOOM-0539: one more model drawn for a sprite; with several, each Thing shows one (DOOM-0641).
+// Takes ownership of *model and empties it. Returns 0 when the sprite already holds its fill.
+int  RB_AddSpriteModel(int sprite, rb_model_t* model);
 void RB_ClearSpriteModels(void);
 
 // DOOM-0541: reads relief.csv's sunk rectangles for walls with real depth in Ultra. NULL clears them.

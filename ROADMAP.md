@@ -20112,6 +20112,11 @@ in CLAUDE.md describes.
   need a clock in both and a per-model marker for the bubbling liquid.
   Build it with the E1M1 props batch, whose lamps and barrel may want
   the same clock. Serves DOOM-0539.
+  User 2026-11-20, asking again: "I asked for an animation showing the
+  bubbles moving but currently they are static. Can you make the health
+  vials slimmer as well please." Two parts: the rising bubbles (this
+  item, not built yet) and a slimmer flask in pickups/doom_bon1.py,
+  which is a rebake and no engine change. Next after DOOM-0641.
   **Layman:** The little bubbles inside the blue health vial drift upward instead of sitting still.
   Kind: feature.
   Source: user-request-2026-11-15.
@@ -20741,6 +20746,23 @@ in CLAUDE.md describes.
   the material row once per sprite, not once per row.
   Not guaranteed: two neighbours can draw the same variant; the turn
   still shows different sides.
+  2026-11-20 built; the user's look is owed. Differs from the design
+  above in three ways. The bands and hoops are paint and relief on a
+  plain wall, not rings: twelve-sided rings for three hoops pass the
+  300-triangle cap, and the spare triangles made the drum 16-sided.
+  A Thing's turn and variant come from where the map placed it
+  (thing_hash, its spawn point), because a shot barrel slides and
+  would have turned and repainted as it went. The variant is mixed
+  again: thing_hash alone gave grid neighbours the same variant in
+  396 of 752 pairs over both IWADs' barrels; mixed, 182 of 752, with
+  the four variants at 158, 144, 140 and 163 barrels.
+  Bake: Scratchpad d0641/bake.sh (decorations/doom_bar1.py --variant
+  a..d, then lib/variantatlas.py). Pictures, Ultra rasterised:
+  d0641/c2 (E1M1 one barrel, E1M9 four in a row, E4M5 four). Not
+  captured: the traced view of the group, and 820 units away.
+  The packed art still holds the old barrel; the loader sees the PNGs
+  are newer and reads them, so a re-bake of the pack is only a
+  load-time matter.
   **Layman:** The 3D barrels get rust and stronger stripes, and come in a few different versions, each turned its own way, so two barrels side by side do not look the same.
   Kind: feature.
   Source: user-request-2026-11-20.
@@ -20751,8 +20773,12 @@ in CLAUDE.md describes.
   legitimate light source, the room should be quite dark." Said beside
   the emitter list sent to ExperiRays; no picture or room name reached
   the session.
-  Waiting-on: user (which room or picture prompted it. Recommendation:
-  start from E1M1's rooms that hold no emitter, 2026-11-20).
+  User 2026-11-20, answering which room: the question came from E2M1,
+  "but it actually applies to all maps, not just that room. I am
+  wanting the light to be calculated like it would be in real life.
+  Once we have that, then we can go back and start tweaking." So the
+  scope is every map, the order is physically honest light first and
+  tuning second, and no room is the special case.
   Start: list what lights a surface besides emitters (the sector light
   term, the baked bounce, any ambient floor) and measure each one's
   share in a room with no emitter. DOOM-0630 touched the same ground.
@@ -20767,6 +20793,29 @@ in CLAUDE.md describes.
   source, light that falls off with distance from the source, and
   glossy surfaces that carry the source as a streak (DOOM-0103's
   ground).
+  2026-11-20 inventory, by a reading helper, each line still to be
+  checked against the code before a design rests on it. Light with no
+  source today:
+  - Rasterised: the sector light term (`sect`, BASE_SECTOR_DIM, the
+    sector_light.glsl curve) on surfaces, sprites and the weapon; the
+    muzzle flash as a whole-view lift of vertex light (mesh.vert
+    extralight); FF_FULLBRIGHT read as light 1.
+  - Traced: the ambient floor in primaryHitAddTerms,
+    max(shade * AMBIENT_SECTOR_SCALE, AMBIENT_FLOOR), taken as a max
+    with the probe bounce; kPuddleGlow.
+  - Both, through the baked probes: a bake ray that escapes returns the
+    constant SKY_COLOR; no sun and no sky picture light a surface.
+  - Sourced but leaking: the rasterised point lights test no wall
+    unless rt_shadows is on; their strength above RASTER_LE_FULL is
+    thrown away, and falloff is 1/(1+d2/R2).
+  Already honest: traced emitter light (true inverse square, a shadow
+  ray each), the traced muzzle flash and torch, the baked bounce of
+  static emitters (three passes; sprite lights are not baked).
+  No config key or flag switches any unsourced term off: all are
+  shader constants, and BASE_SECTOR_DIM and GI_BOUNCE_STRENGTH are
+  mirrored in r_vulkan.cpp under DOOM-0331 INV-4. Nothing adapts
+  exposure to a dark room. Owning specs: DOOM-0170, DOOM-0331,
+  DOOM-0009, DOOM-0011, DOOM-0617.
   **Layman:** A room with no lamp, glowing panel, window or sky should be quite dark instead of evenly lit from nowhere.
   Kind: investigate.
   Source: user-request-2026-11-20.
