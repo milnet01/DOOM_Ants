@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=640 -->
+<!-- ants-roadmap-id-high-water: DOOM=642 -->
 
 # Roadmap
 
@@ -19505,6 +19505,9 @@ in CLAUDE.md describes.
   Waiting-on: user (do the batch 2 models look right in play?
   Recommendation: keep; then the keys and the last power-ups,
   2026-11-17).
+  User 2026-11-20: batch 1 and batch 2 seen in play and accepted.
+  Neither Waiting-on line above still waits. Next: the keys and the
+  last power-ups.
   **Layman:** Health, armour, ammo, keys and power-ups become real 3D objects, so their glow can come from exactly the right spot inside them.
   Kind: feature.
   Source: user-request-2026-11-02.
@@ -20128,6 +20131,9 @@ in CLAUDE.md describes.
   Waiting-on: user (do the barrels, lamps, tech columns and candelabra look right, and should traced lamp rooms be brighter? Recommendation: keep the darker, moodier lamp rooms, 2026-11-17).
   User 2026-11-17: keep the darker traced lamp rooms. The remaining
   question is the look of the four models in play.
+  User 2026-11-20: lamps, tech columns and candelabra seen in play and
+  accepted; the Waiting-on line above no longer waits. The barrels are
+  being redone under the barrel repaint item filed the same day.
   **Layman:** The exploding barrels, the pole lamps, the tall tech pillars and the candle stand become real 3D objects, with their light inside them.
   Kind: feature.
   Source: user-request-2026-11-15.
@@ -20505,6 +20511,7 @@ in CLAUDE.md describes.
   of the fade; the dot pattern is fixed, so it shows as a stipple while
   a Thing sits in the band. Not measured: frame time. The barrel's
   model and sprite look unlike each other at that distance: DOOM-0638.
+  User 2026-11-20: the fade seen in play and accepted.
   **Layman:** Things far from the player are drawn from simpler, cheaper versions, and the swap to the detailed version is blended so you never see it happen.
   Kind: feature.
   Source: user-request-2026-11-19.
@@ -20645,6 +20652,15 @@ in CLAUDE.md describes.
   the mip level the model's HD maps are read at, and its emissive map.
   It makes DOOM-0631's fade a dissolve between two different pictures.
   Check other models at the same distance before fixing one.
+  2026-11-20 cause found: the art, not the mip level or the emissive
+  map. BAR1_alb.png's side strip reads brightness 76 to 81 down its
+  whole height, with two hoops at 56, each about a fiftieth of the
+  height. The sprite BAR1A0 swings between 47 and 104 in three bands,
+  each a quarter of its height, and its top three rows are bright green
+  slime painted as seen from above. The model's slime top faces up, so
+  from 820 units at eye height it is edge-on. Measured with
+  Scratchpad/DOOM_Ants/d0638/spr.py. The repaint is the new barrel
+  item filed the same day.
   **Layman:** From a distance the 3D barrel loses its stripes and glowing green top, so it does not match the flat picture it fades from.
   Kind: investigate.
   Source: DOOM-0631-captures-2026-11-20.
@@ -20693,6 +20709,56 @@ in CLAUDE.md describes.
   **Layman:** In the rasterised view on a very large window, the automatic picture size does not settle: every ten seconds or so it drops to its smallest and works its way back up.
   Kind: investigate.
   Source: DOOM-0596-quiet-gpu-runs-2026-11-20.
+  Lanes: renderer.
+
+- 🚧 [DOOM-0641] **Repaint the barrel model with rust and bold bands, in several variants so neighbours differ.**
+  User 2026-11-20: "add some rust to the barrels ... in a way that the
+  barrels don't look alike or at least the barrels in close enough
+  proximity don't look alike." Asked how, the user chose both: several
+  different barrels, each also turned by its position.
+  Follows DOOM-0638: the present model is one even olive, so it reads
+  as a plain block from far away. The repaint needs bands broad enough
+  to survive at 820 units, as the sprite's do.
+  Shape: models.csv may name a sprite on more than one row; each row is
+  a variant, chosen by the Thing's map position. The variants share one
+  atlas.
+  2026-11-20 design, nothing built yet. Read: lib/pickupbake.py,
+  decorations/doom_bar1.py, r_vulkan.cpp's models.csv loop, r_mesh.c
+  sprite_model and thing_model, DOOM-0539's invariants (INV-2, INV-3
+  and INV-4 bind this).
+  Art: the sprite's dark bands sit at about z 5, 12 and 20 of 28, each
+  about 2.5 units tall, with a lighter strip above each; three hoops,
+  not two. Slime runs over the rim onto the top band stand in for the
+  sprite's green top, which a real barrel hides at eye height. Rust in
+  large blotches (low-frequency noise), reseeded per variant by giving
+  each noise node a 4D W value.
+  Variants: bake each as its own 512 atlas under a variant name, then a
+  small script tiles four into one 1024 atlas and rewrites each .dmdl's
+  UVs into its quarter (u' = (u + qx) / 2, v' = (v + qy) / 2; v 0 is the
+  top). models.csv gets one BAR1 row per variant.
+  Engine: sprite_model holds up to four models per sprite; thing_model
+  picks by the position hash model_place already makes. The loader adds
+  the material row once per sprite, not once per row.
+  Not guaranteed: two neighbours can draw the same variant; the turn
+  still shows different sides.
+  **Layman:** The 3D barrels get rust and stronger stripes, and come in a few different versions, each turned its own way, so two barrels side by side do not look the same.
+  Kind: feature.
+  Source: user-request-2026-11-20.
+  Lanes: renderer, assets.
+
+- 📋 [DOOM-0642] **Find where a room's light comes from when it has no real light source, and make such rooms dark.**
+  User 2026-11-20: "Where is the light coming from? If there is no
+  legitimate light source, the room should be quite dark." Said beside
+  the emitter list sent to ExperiRays; no picture or room name reached
+  the session.
+  Waiting-on: user (which room or picture prompted it. Recommendation:
+  start from E1M1's rooms that hold no emitter, 2026-11-20).
+  Start: list what lights a surface besides emitters (the sector light
+  term, the baked bounce, any ambient floor) and measure each one's
+  share in a room with no emitter. DOOM-0630 touched the same ground.
+  **Layman:** A room with no lamp, glowing panel, window or sky should be quite dark instead of evenly lit from nowhere.
+  Kind: investigate.
+  Source: user-request-2026-11-20.
   Lanes: renderer.
 
 ## 0.13.0 — The player's experience
