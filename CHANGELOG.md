@@ -61,6 +61,15 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Ultra's HD art ships as one packed file, so levels load far faster and the art takes about a fifth of the video memory** (DOOM-0632)
+  The pictures are stored in the form the graphics card uses, so
+  nothing is unpacked at load. Measured 2026-11-20 on a shared machine,
+  E2M2's HD art loaded in 0.14 to 0.29 s once cached, against 4.3 to
+  15.7 s from PNGs, and took 156.4 MB of video memory against 814.4 MB.
+  Both downloads are about 36 MB smaller. The PNGs stay in the source
+  tree as the originals, and the game falls back to them when the
+  packed file is missing. The downloads carry LZ4's licence notice.
+
 - **Solid and Ultra are darker and moodier: dim rooms are dark until a lamp or your torch lights them** (DOOM-0630)
   A room's light now follows a horror curve in both 3D views. Rooms at
   light 64 or below are black, mid-lit rooms sit a little below

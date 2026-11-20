@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=636 -->
+<!-- ants-roadmap-id-high-water: DOOM=637 -->
 
 # Roadmap
 
@@ -20190,7 +20190,7 @@ in CLAUDE.md describes.
   Source: found-2026-11-17-DOOM-0620.
   Lanes: renderer.
 
-- 🚧 [DOOM-0632] **Ship Ultra's HD art pre-packed in a GPU-compressed format, so a level loads without unpacking PNGs.**
+- ✅ [DOOM-0632] **Ship Ultra's HD art pre-packed in a GPU-compressed format, so a level loads without unpacking PNGs.**
   User 2026-11-19 chose "Pack first, then stream": build this before
   DOOM-0628 and show before-and-after shots with load times.
   Measured 2026-11-19 (private display, load 3 to 7, release build at
@@ -20275,7 +20275,12 @@ in CLAUDE.md describes.
   E2M2 156.4 MB (814.4). Still owed on a quiet machine for INV-10:
   the cold figure and the -frameledger A/B. Open for the user: any
   damaged picture, and whether height maps show terracing.
-  **Layman:** The high-detail pictures are stored ready for the graphics card, so levels load in a fraction of the time and the art takes about a quarter of the video memory.
+  Closed 2026-11-20. The user looked at the B6 comparison pictures
+  that day: "with my eyes all look good". No picture went on the
+  baker's override list. Height-map terracing was judged from the
+  stills only, not from play. INV-10's first-read budget and its
+  frame-time A/B are still unmeasured on a quiet machine: DOOM-0637.
+  **Layman:** The high-detail pictures are stored ready for the graphics card, so levels load in a fraction of the time and the art takes about a fifth of the video memory.
   Kind: feature.
   Source: user-request-2026-11-19.
   Lanes: renderer, assets.
@@ -20501,6 +20506,24 @@ in CLAUDE.md describes.
   Kind: chore.
   Source: peer-frameledger-2026-11-20.
   Lanes: tooling.
+
+- 📋 [DOOM-0637] **Measure the packed HD art's two unproven budgets on a quiet machine: first-read load and frame time.**
+  DOOM-0632 closed 2026-11-20 with INV-10 part-measured. Its spec's
+  section 6 sets four budgets. Two were met on a shared machine: E2M2
+  cached HD load (0.14 to 0.29 s against 1.0 s) and E2M2's HD set
+  (156.4 MB against 260 MB). Two are owed here, on a quiet machine:
+  1. E1M1 Ultra, first read from the hard drive, against 3.0 s. Shared
+     machine so far: 0.8 and 2.5 s. Kit:
+     Scratchpad/DOOM_Ants/d0632/b6time.sh 1 1 <rounds>.
+  2. Frame time does not grow in either view: -frameledger at E2M2's
+     start, interleaved A/B, pack against PNGs, per
+     docs/standards/performance.md. Never run.
+  Pin render_scale_dynamic 0. A miss is a defect against DOOM-0632's
+  spec; file it as its own item.
+  **Layman:** Two speed checks on the packed art were only ever run while other jobs shared the machine; this repeats them when it is quiet.
+  Kind: perf.
+  Source: DOOM-0632-close-2026-11-20.
+  Lanes: renderer.
 
 ## 0.13.0 — The player's experience
 
