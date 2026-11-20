@@ -198,8 +198,8 @@ int main()
     check(tail(cPc, 2) == "misc6 misc7 ", "RtPushConstants ends misc6, misc7");
     const auto glslUbo = members(ms, "uniform ShadowUbo");
     const auto cUbo    = members(vk, "struct ShadowUboData");
-    check(tail(glslUbo, 9) == "lightVP flags hd time ", "mesh.frag's ShadowUbo is lightVP, flags, hd, time");
-    check(tail(cUbo, 9) == "lightVP flags hd time ", "r_vulkan.cpp's ShadowUboData is lightVP, flags, hd, time");
+    check(tail(glslUbo, 9) == "lightVP flags hd misc ", "mesh.frag's ShadowUbo is lightVP, flags, hd, misc");
+    check(tail(cUbo, 9) == "lightVP flags hd misc ", "r_vulkan.cpp's ShadowUboData is lightVP, flags, hd, misc");
     const std::string sd = slurp(DOOM_TESTS_ROOT "/shaders/formulas/surface_detail.glsl");
     check(!sd.empty(), "surface_detail.glsl is readable");
     same(sd, "SURF_DETAIL_ON", vk, "kSurfaceDetailOn");

@@ -303,8 +303,9 @@ layout(push_constant) uniform PC {
                          // BIT-CAST float (rb_mesh_t::wispAngle). Occupies the SECOND of the
                          // two pad words misc6's alignment forced -- misc6 itself is full --
                          // so the push range is still 240 bytes and misc6 stays at offset 224.
-    uvec4    misc6;    // DOOM-0183: x = ripple time (float bits, seconds); y = wet toggle
-                       // (rb_wet: sheen/ripple/puddle only, not the glow).
+    uvec4    misc6;    // DOOM-0183: x = ripple time (float bits, seconds); y = bit 0 wet toggle
+                       // (rb_wet: sheen/ripple/puddle only, not the glow), bit 1
+                       // -sourcedlight (DOOM-0642).
                        // DOOM-0011: z = fog strength (rb_fog 0..3; 0 skips the march, INV-8).
                        // w = hell-haze density, BIT-CAST float (L4; 0 on non-hell levels,
                        // from rb_view_t::hazeDensity via r_backend.c's per-level rule).
@@ -621,7 +622,8 @@ bool  isLiquid(MatCtrl mc) { return (mc.flags & (LIQUID_NUKAGE | LIQUID_LAVA)) !
 float emisWeight(MatCtrl mc, vec3 albedo) {
     return isLiquid(mc) ? -1.0 : emissiveMask(albedo);
 }
-bool  wetOn()              { return pc.misc6.y == 1u; }
+bool  wetOn()              { return (pc.misc6.y & 1u) != 0u; }
+bool  sourcedLightOnly()   { return (pc.misc6.y & 2u) != 0u; }   // DOOM-0642's test switch
 float rippleTime()         { return uintBitsToFloat(pc.misc6.x); }
 
 // DOOM-0508: the Spectre's look in the traced view. Scale shrinks the ripple's waves to a
@@ -1463,6 +1465,7 @@ vec3 primaryHitAddTerms(vec3 L, PrimaryHit h, PrimaryLight s, vec3 n, float secL
     // rooms are untouched (no double-count) and only dim/unprobed surfaces get lifted.
     // DOOM-0630: the room's light through the same horror curve as the rasterised view.
     vec3 ambient = vec3(max(horrorSectorShade(secLight) * AMBIENT_SECTOR_SCALE, AMBIENT_FLOOR));
+    if (sourcedLightOnly()) ambient = vec3(0.0);   // DOOM-0642: the bounce alone
     vec3 gi      = (s.subId < pc.misc2.y) ? giIrradiance(pc.probes, s.subId, s.shadeN)
                                           : vec3(0.0);
     L += modAlbedo * max(gi, ambient) * h.ao;   // AO dims fill light only
@@ -1478,7 +1481,7 @@ vec3 primaryHitAddTerms(vec3 L, PrimaryHit h, PrimaryLight s, vec3 n, float secL
         if (s.nukage) L += wetSheen(h.hitP, s.shadeN);
         if (h.gooWet > 0.0) {
             L += wetSheen(h.hitP, n) * (h.gooWet * kPuddleSheenScale);
-            L += kPuddleGlow * kGooColour * h.gooWet;
+            if (!sourcedLightOnly()) L += kPuddleGlow * kGooColour * h.gooWet;
         }
     }
 

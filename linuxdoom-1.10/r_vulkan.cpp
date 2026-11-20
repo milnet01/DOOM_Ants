@@ -4447,6 +4447,18 @@ static float RippleSeconds()
     return rippleSec;
 }
 
+// DOOM-0642's test switch, `-sourcedlight`: both 3D views drop the light that comes from no
+// source, so a look capture shows what the real emitters alone give. Dropped: the sector
+// light on world surfaces and on sprites that are not lights themselves (with the muzzle
+// flash's whole-view lift, which rides it) in the rasterised view; the ambient floor and
+// the goo puddles' glow in the traced one. Kept: the weapon, which nothing else lights, and
+// the baked bounce, sky fill included. Changes nothing unless passed.
+static bool SourcedLightOnly()
+{
+    static const bool on = M_CheckParm("-sourcedlight") != 0;
+    return on;
+}
+
 // mesh.frag's ShadowUbo (set 1, binding 1), byte for byte. lightVP is written on
 // torch-on frames; DOOM-0273's flags every raster frame: x = surface detail
 // (SurfaceDetailLane), y = DOOM-0103's specular setting (SpecularLane), z = surface-map base,
@@ -4456,10 +4468,11 @@ struct ShadowUboData
     float    lightVP[16];
     uint32_t flags[4];
     uint32_t hd[4];      // DOOM-0182: mesh.frag's HD lane; see ShadowUbo there
-    float    time[4];    // DOOM-0619: x = RippleSeconds(), the trace's clock; the rest unused
+    float    misc[4];    // x = RippleSeconds(), the trace's clock (DOOM-0619); y = 1 under
+                         // -sourcedlight (DOOM-0642); the rest unused
 };
 static_assert(offsetof(ShadowUboData, flags) == 64, "flags follows lightVP, as in mesh.frag");
-static_assert(offsetof(ShadowUboData, time) == 96, "time follows hd, as in mesh.frag");
+static_assert(offsetof(ShadowUboData, misc) == 96, "misc follows hd, as in mesh.frag");
 
 // DOOM-0170 L2c — build the flashlight cast-shadow map (§4.4): a fixed 2048^2 depth image
 // the world renders into from the torch's viewpoint, plus its render pass, framebuffer,
@@ -9757,7 +9770,7 @@ void RecordRtTrace(uint32_t idx)
         // RB_BuildLevelMesh). Takes the SECOND of those two pad words -- misc6 is full --
         // so the push range stays 240 bytes and the 184-byte -rtverify prefix is untouched.
         uint32_t wispAngle;       // (with fogFloorZ, pads rejectAddr's 216 tail to 224)
-        uint32_t misc6[4];        // x = ripple time (float bits, seconds); y = wet toggle;
+        uint32_t misc6[4];        // x = ripple time (float bits, seconds); y = bit 0 wet toggle, bit 1 -sourcedlight;
                                   // z = fog strength (rb_fog 0..3, DOOM-0011); w = hell-haze (L4)
         uint32_t misc7[4];        // DOOM-0273: x = surface detail (SurfaceDetailLane); y = the
                                   // DOOM-0103 specular setting (SpecularLane); z = surface-map base
@@ -9818,7 +9831,7 @@ void RecordRtTrace(uint32_t idx)
     // layers only (rb_wet) -- never the glow (that Le is CPU-built).
     const float rippleSec = RippleSeconds();
     std::memcpy(&pc.misc6[0], &rippleSec, sizeof(float));
-    pc.misc6[1]    = rb_wet ? 1u : 0u;
+    pc.misc6[1]    = (rb_wet ? 1u : 0u) | (SourcedLightOnly() ? 2u : 0u);   // bit 1: DOOM-0642
     pc.misc7[0]    = SurfaceDetailLane();
     pc.misc7[1]    = SpecularLane();
     pc.misc7[2]    = (uint32_t)RB_MaterialCount();
@@ -11422,7 +11435,9 @@ extern "C" void RB_Vulkan_Present(void)
         hd[1] = (uint32_t)rb_detile;
         hd[2] = (g.hdDirtIdx >= 0) ? (uint32_t)g.hdDirtIdx : 0xFFFFFFFFu;
         hd[3] = rb_filth ? 1u : 0u;
-        static_cast<ShadowUboData*>(g.shadowUboMapped)->time[0] = RippleSeconds();   // DOOM-0619
+        float* misc = static_cast<ShadowUboData*>(g.shadowUboMapped)->misc;
+        misc[0] = RippleSeconds();                    // DOOM-0619
+        misc[1] = SourcedLightOnly() ? 1.0f : 0.0f;   // DOOM-0642
     }
 
     // DOOM-0170 L2c: flashlight cast-shadow map (Pass A). When the torch is on, render the

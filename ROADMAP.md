@@ -20129,7 +20129,7 @@ in CLAUDE.md describes.
   The note above was wrong on one point: mesh.frag did have a clock,
   a 35 Hz count for the Spectre. The bubbles do not use it. Both
   views now read one seconds clock (RippleSeconds in r_vulkan.cpp;
-  the rasterised view gets it in ShadowUbo.time), and one pattern
+  the rasterised view gets it in ShadowUbo.misc.x), and one pattern
   (shaders/formulas/bubbles.glsl), drawn in world space where a
   marked model's glow map is lit. The mark is a third word, bubbles,
   on the model's models.csv row (RB_FLAG_BUBBLES). The painted
@@ -20793,7 +20793,7 @@ in CLAUDE.md describes.
   Source: user-request-2026-11-20.
   Lanes: renderer, assets.
 
-- 📋 [DOOM-0642] **Find where a room's light comes from when it has no real light source, and make such rooms dark.**
+- 🚧 [DOOM-0642] **Find where a room's light comes from when it has no real light source, and make such rooms dark.**
   User 2026-11-20: "Where is the light coming from? If there is no
   legitimate light source, the room should be quite dark." Said beside
   the emitter list sent to ExperiRays; no picture or room name reached
@@ -20866,6 +20866,42 @@ in CLAUDE.md describes.
   a small source lights a small pool; a lit room still reads as
   lit. The gore is DOOM-0515 and DOOM-0576, the flames DOOM-0209,
   the gleam DOOM-0103.
+  2026-11-20: the inventory's lines were read in the code and hold
+  (mesh.frag `sect`, mesh.vert extralight, pathtrace.comp's ambient
+  max and kPuddleGlow, bake.comp's SKY_COLOR). One more found: in
+  the rasterised view a sprite takes no point light, so sector
+  light is all a monster has.
+  A test switch is built: `-sourcedlight` (SourcedLightOnly in
+  r_vulkan.cpp). Rasterised: no sector light on world surfaces or
+  on sprites that are not lights. Traced: no ambient floor, no
+  puddle glow. Kept on purpose: the weapon, which nothing else
+  lights, and the baked bounce with its sky fill, since the sky is
+  a real source. It changes nothing unless passed.
+  Measured 2026-11-20, Ultra, fog off, torch off, render scale 50,
+  mean brightness of the view out of 255, switch off then on; a
+  repeat with the switch off matched to 0.1 at every spot:
+  - E1M1 start `1056 -3616 90`: rasterised 50.5 to 24.5, traced
+    40.3 to 10.1.
+  - E1M1 sector 15 `2080 -2184 270`: rasterised 29.0 to 14.9,
+    traced 37.3 to 22.2.
+  - E2M1 start `0 48 90`: rasterised 10.9 to 1.3, traced 15.0 to
+    0.8.
+  - E2M1 sector 59 `-135 -891 236`: rasterised 28.9 to 14.7,
+    traced 31.9 to 9.9.
+  Pictures: Scratchpad d0642/s1/raster-sheet.png and
+  traced-sheet.png (left as today, right with the switch).
+  What the pictures show with the switch on: E2M1's first corridor
+  is black in both views, its candles lit but lighting nothing
+  (DOOM-0209). Rooms with screens and lamps keep about half their
+  light rasterised. In the rasterised view a monster is a black
+  shape; in the traced view it is dim but lit. E1M1's big wall of
+  screens goes dark rasterised: it shone by sector light, not by
+  a glow of its own. The blue floor at E1M1's start goes dark in
+  both.
+  Not done: any change to what the player sees by default. Next
+  is the user's look at the pictures, then a design: which real
+  sources each map has, and how the weapon and monsters get
+  sourced light.
   **Layman:** A room with no lamp, glowing panel, window or sky should be quite dark instead of evenly lit from nowhere.
   Kind: investigate.
   Source: user-request-2026-11-20.

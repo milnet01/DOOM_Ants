@@ -112,8 +112,9 @@ layout(set = 1, binding = 0) uniform sampler2D shadowMap;
 // every frame; lightVP only while the torch is on. r_vulkan.cpp's ShadowUboData mirrors it.
 // DOOM-0182: hd.x = the grime overlay's slot in hdTex[], hd.y = the de-tile dial, hd.z = the
 // dirt overlay's slot, hd.w = filth on.
-// DOOM-0619: time.x = seconds on the trace's ripple clock, for the bubbles.
-layout(set = 1, binding = 1) uniform ShadowUbo { mat4 lightVP; uvec4 flags; uvec4 hd; vec4 time; } shadow;
+// misc.x = seconds on the trace's ripple clock, for the bubbles (DOOM-0619). misc.y = 1 under
+// -sourcedlight, DOOM-0642's test switch (r_vulkan.cpp's SourcedLightOnly).
+layout(set = 1, binding = 1) uniform ShadowUbo { mat4 lightVP; uvec4 flags; uvec4 hd; vec4 misc; } shadow;
 
 // DOOM-0273: derived surface detail on walls and flats (one-sample parallax + the derived
 // normal for the flashlight and point lights). Not in the weapon overlay build, which
@@ -163,6 +164,7 @@ const int FLAG_FLAT    = 0x1;   // matches RB_MESH_FLAT in r_mesh.h
 const int FLAG_MASKED  = 0x2;   // matches RB_MESH_MASKED in r_mesh.h
 const int FLAG_SPRITE  = 0x4;   // matches RB_MESH_SPRITE in r_mesh.h
 const int FLAG_SHADOW  = 0x200; // matches RB_MESH_SHADOW in r_mesh.h
+const int FLAG_EMISSIVE = 0x20; // matches RB_MESH_EMISSIVE in r_mesh.h: a sprite that is a light
 const int FLAG_MODEL   = 0x400; // matches RB_MESH_MODEL in r_mesh.h
 const int FLAG_PSPRITE = 0x8;   // matches RB_MESH_PSPRITE in r_mesh.h
 const int FLAG_SKY     = 0x10;  // matches RB_MESH_SKY in r_mesh.h (NDC backdrop quad)
@@ -405,7 +407,7 @@ void main()
             // DOOM-0619: rising bubbles in a marked model's liquid, pale in colour and in glow.
             if ((mc.flags & kCtrlBubbles) != 0u)
             {
-                const float b = bubbleAt(vWorldPos, shadow.time.x, hdGlow);
+                const float b = bubbleAt(vWorldPos, shadow.misc.x, hdGlow);
                 hdCol  = mix(hdCol, kBubblePale, b);
                 hdGlow = mix(hdGlow, kBubblePale * max(hdGlow.r, max(hdGlow.g, hdGlow.b)), b);
             }
@@ -504,6 +506,10 @@ void main()
     // term SSAO occludes; an earlier Lambert key light here was dropped as unfaithful (see
     // the DOOM-0069 note above). Both factors are at most 1, so the max is BASE_SECTOR_DIM.
     float sect = horrorSectorShade(vLight) * distLight * BASE_SECTOR_DIM;
+    // DOOM-0642's test switch: no sector light, except on the weapon, which nothing else
+    // lights, and on a sprite that is itself a light.
+    if (shadow.misc.y > 0.5 && (vFlags & (FLAG_PSPRITE | FLAG_EMISSIVE)) == 0)
+        sect = 0.0;
 
     // DOOM-0170 L2b — accumulate AMBIENT (sector + bounce; AO-affected) and DIRECT (flashlight
     // + point lights; never AO'd) into separate targets. Sprites and the weapon psprite are
