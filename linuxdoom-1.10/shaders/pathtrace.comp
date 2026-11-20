@@ -134,6 +134,7 @@ layout(set = 1, binding = 2) uniform sampler2D materialTex[];
 #define HD_SET 3
 #include "formulas/hd_set.glsl"
 #include "formulas/sector_light.glsl"   // DOOM-0630: the horror curve, shared with mesh.frag
+#include "formulas/model_fade.glsl"     // DOOM-0631: the model-to-sprite dither, shared with mesh.frag
 // The HD maps have mips for the rasterised view (DOOM-0182). The trace has no derivatives,
 // so it always reads the top level, and says so: an implicit LOD outside a fragment shader
 // is not defined.
@@ -406,6 +407,9 @@ bool spriteCandidateOpaque(rayQueryEXT rq, bool seeThrough)
     vec2 bc   = rayQueryGetIntersectionBarycentricsEXT(rq, false);
     uint i0   = uint(prim) * 3u * 18u;
     if (seeThrough && (floatBitsToInt(pc.spriteVerts.v[i0 + 9u]) & FLAG_SHADOW) != 0)
+        return false;
+    // DOOM-0631: a model fading into its sprite shares the pixels with it.
+    if (!modelFadeKeeps(floatBitsToInt(pc.spriteVerts.v[i0 + 9u]), ivec2(gl_GlobalInvocationID.xy)))
         return false;
     // DOOM-0539: a model is solid, and its UVs run across its HD atlas, not this art. A
     // triangle of it without the sprite flag is one of its lights, which no ray sees.

@@ -449,6 +449,12 @@ $(SHADER_DIR)/pathtrace.comp.spv.h \
 $(SHADER_DIR)/mesh.frag.spv.h $(SHADER_DIR)/mesh_overlay.frag.spv.h: \
 		$(SHADER_DIR)/formulas/sector_light.glsl
 
+# DOOM-0631 — the model-to-sprite dither is shared by the path tracer and both variants of
+# the raster mesh.frag. Same missing-auto-dep hazard as the rules above.
+$(SHADER_DIR)/pathtrace.comp.spv.h \
+$(SHADER_DIR)/mesh.frag.spv.h $(SHADER_DIR)/mesh_overlay.frag.spv.h: \
+		$(SHADER_DIR)/formulas/model_fade.glsl
+
 # DOOM-0440 — lum and the previous-frame reprojection are shared by the SVGF passes;
 # DOOM-0609 — the sky marker in the motion vector by the composite and the upscaler.
 $(SHADER_DIR)/svgf_temporal.comp.spv.h $(SHADER_DIR)/svgf_atrous.comp.spv.h \

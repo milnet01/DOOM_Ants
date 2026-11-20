@@ -12,6 +12,7 @@
 #ifndef SPRITE_CAP_H
 #define SPRITE_CAP_H
 
+#include <math.h>
 #include <stdlib.h>
 
 // One thing that wants a billboard this frame. `order` is its place in the
@@ -72,6 +73,28 @@ static float RB_ModelCutoff(rb_model_cand_t* c, int n, int budget, float maxD2)
         sum += c[i].tris;
     }
     return maxD2;
+}
+
+// DOOM-0631: how much of a Thing's model shows at squared distance d2, in sixteenths, so
+// the swap to its sprite at the cutoff is a fade and not a pop. 16 is the model alone and
+// 0 the sprite alone; between, both are drawn and the shaders' dither shares the pixels.
+// The model fades out over the last `band` map units before the cutoff, or over the
+// cutoff's last quarter when the triangle budget has pulled it in, so a model close to
+// the eye is never half faded.
+static int RB_ModelFadeLevel(float d2, float cutD2, float band)
+{
+    float left, cut;
+    int   k;
+    if (!(d2 < cutD2))
+        return 0;
+    cut  = sqrtf(cutD2);
+    left = cut - sqrtf(d2);
+    if (band > cut * 0.25f)
+        band = cut * 0.25f;
+    if (left >= band)
+        return 16;
+    k = (int)ceilf(left / band * 16.0f);
+    return k < 1 ? 1 : k > 15 ? 15 : k;
 }
 
 #endif

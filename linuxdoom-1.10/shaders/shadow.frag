@@ -26,6 +26,7 @@ const int FLAG_MASKED = 0x2;   // matches RB_MESH_MASKED
 const int FLAG_SPRITE = 0x4;   // matches RB_MESH_SPRITE
 const int FLAG_SHADOW = 0x200; // matches RB_MESH_SHADOW
 const int FLAG_MODEL  = 0x400; // matches RB_MESH_MODEL
+const int FLAG_FADE_INV = 0x10000; // matches RB_MESH_FADE_INV
 
 void main()
 {
@@ -35,6 +36,10 @@ void main()
 
     // DOOM-0539: a light inside a pickup's model is not a surface.
     if ((vFlags & (FLAG_MODEL | FLAG_SPRITE)) == FLAG_MODEL)
+        discard;
+
+    // DOOM-0631: while a model fades into its sprite both are drawn; only the model casts.
+    if ((vFlags & FLAG_FADE_INV) != 0)
         discard;
 
     // Only cut-out surfaces need the test; opaque walls/flats cast solid.

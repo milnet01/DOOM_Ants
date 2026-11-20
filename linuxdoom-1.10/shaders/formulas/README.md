@@ -45,6 +45,12 @@ DOOM-0455's invulnerability and light-amp visor in the 3D views: the
 visor's look constants. Hand-written look calls, not Workbench curves. The
 spec is `docs/specs/DOOM-0455-fixed-colormap-3d.md`.
 
+## Hand-written — `model_fade.glsl`
+
+DOOM-0631's model-to-sprite fade: the flag bits that carry a model's share of
+the pixels and `modelFadeKeeps`, the ordered dither both views test. The bits
+mirror `RB_MESH_FADE_*` in `r_mesh.h`.
+
 ## Hand-written — `shown_emission.glsl`
 
 DOOM-0511's `shownEmission`: how bright an emitter looks on screen, apart

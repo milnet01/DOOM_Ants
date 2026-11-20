@@ -61,6 +61,13 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Changed
 
+- **Ultra's 3D pickups and props fade into their flat sprites with distance instead of popping** (DOOM-0631)
+  A pickup or prop far from you draws as its original sprite, and near
+  you as its 3D model. The change between the two used to happen in one
+  frame. Over the last stretch before the swap distance both are now
+  drawn, and a fine dot pattern shares the pixels between them, in the
+  rasterised and the ray-traced view.
+
 - **Ultra's HD art ships as one packed file, so levels load far faster and the art takes about a fifth of the video memory** (DOOM-0632)
   The pictures are stored in the form the graphics card uses, so
   nothing is unpacked at load. Measured 2026-11-20 on a shared machine,

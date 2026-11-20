@@ -19,6 +19,11 @@
 //      triangles fit the budget, none at or past the distance cap, and things at
 //      the distance of the first that does not fit draw as sprites too, so the
 //      budget is never passed. r_mesh.c gates a model on it (source scrape).
+//   5. DOOM-0631: RB_ModelFadeLevel fades a model into its sprite over the last
+//      stretch before that cutoff: the model alone nearer than the band, the
+//      sprite alone at or past the cutoff, both between, and never a half-faded
+//      model close to the eye when the budget pulls the cutoff in. The flag bits
+//      that carry the level read the same in r_mesh.h and the shaders (scrape).
 #include <cstdio>
 #include <fstream>
 #include <sstream>
@@ -113,8 +118,39 @@ int main()
               "4: two models at one distance that do not both fit both draw as sprites");
         check(RB_ModelCutoff(nullptr, 0, 12000, maxD2) == maxD2, "4: no models leaves the cap");
         const std::string src = slurp(DOOM_TESTS_ROOT "/r_mesh.c");
-        check(src.find("thing_d2(view, thing) < model_cut_d2") != std::string::npos,
+        check(src.find("RB_ModelFadeLevel(thing_d2(view, thing), model_cut_d2") != std::string::npos,
               "4: r_mesh.c draws a model only nearer than the cutoff");
+    }
+
+    // ---- 5: the model fades into its sprite before the cutoff (DOOM-0631) ----
+    {
+        const float cut = 1024.0f, band = 160.0f;
+        auto level = [&](float d, float c) { return RB_ModelFadeLevel(d * d, c * c, band); };
+        check(level(1024.0f, cut) == 0 && level(1100.0f, cut) == 0,
+              "5: at or past the cutoff the sprite draws alone");
+        check(level(864.0f, cut) == 16 && level(100.0f, cut) == 16,
+              "5: nearer than the band the model draws alone");
+        check(level(944.0f, cut) == 8, "5: half way through the band the two share the pixels evenly");
+        check(level(1023.9f, cut) == 1, "5: just inside the cutoff the model still has a share");
+        check(level(865.0f, cut) == 15, "5: just inside the band the sprite already has a share");
+        bool falls = true;
+        for (float d = 800.0f; d < 1040.0f; d += 0.5f)
+            falls = falls && level(d + 0.5f, cut) <= level(d, cut);
+        check(falls, "5: the model's share never grows with distance");
+        check(level(140.0f, 200.0f) == 16 && level(190.0f, 200.0f) < 16,
+              "5: a cutoff pulled in to 200 units fades over its last quarter, not over 160 units");
+        const std::string hdr  = slurp(DOOM_TESTS_ROOT "/r_mesh.h");
+        const std::string glsl = slurp(DOOM_TESTS_ROOT "/shaders/formulas/model_fade.glsl");
+        const std::string shd  = slurp(DOOM_TESTS_ROOT "/shaders/shadow.frag");
+        check(hdr.find("#define RB_MESH_FADE_SHIFT 12") != std::string::npos
+              && hdr.find("#define RB_MESH_FADE_MASK  0xF000") != std::string::npos
+              && hdr.find("#define RB_MESH_FADE_INV   0x10000") != std::string::npos,
+              "5: r_mesh.h holds the fade bits");
+        check(glsl.find("FLAG_FADE_SHIFT = 12;") != std::string::npos
+              && glsl.find("FLAG_FADE_MASK  = 0xF000;") != std::string::npos
+              && glsl.find("FLAG_FADE_INV   = 0x10000;") != std::string::npos
+              && shd.find("FLAG_FADE_INV = 0x10000;") != std::string::npos,
+              "5: the shaders read the same fade bits");
     }
 
     return check_summary("sprite_cap_test");

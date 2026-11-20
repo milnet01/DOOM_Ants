@@ -208,6 +208,7 @@ const float POINT_LIGHT_STRENGTH = 0.7;
 // a little darker (the "performance-mode" look). 1.0 = classic brightness; tune w/ user.
 const float BASE_SECTOR_DIM      = 0.75;
 #include "formulas/sector_light.glsl"   // DOOM-0630: the horror curve, shared with the trace
+#include "formulas/model_fade.glsl"     // DOOM-0631: the model-to-sprite dither, shared with the trace
 
 // DOOM-0170 L2c — 3x3 PCF against the flashlight shadow map. 1.0 = lit, 0.0 = fully
 // shadowed. Fragments outside/behind the light frustum return 1.0 (the cone + facing terms
@@ -236,6 +237,9 @@ void main()
 {
     // DOOM-0539: a light inside a pickup's model feeds the emitter list and is never seen.
     if ((vFlags & (FLAG_MODEL | FLAG_SPRITE)) == FLAG_MODEL)
+        discard;
+    // DOOM-0631: a model fading into its sprite shares the pixels with it.
+    if (!modelFadeKeeps(vFlags, ivec2(gl_FragCoord.xy)))
         discard;
 
 #ifndef SINGLE_TARGET

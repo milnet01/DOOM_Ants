@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=637 -->
+<!-- ants-roadmap-id-high-water: DOOM=638 -->
 
 # Roadmap
 
@@ -20421,7 +20421,7 @@ in CLAUDE.md describes.
   Source: user-report-2026-11-17.
   Lanes: renderer.
 
-- 📋 [DOOM-0631] **Add level of detail to the 3D views: far things draw from cheaper versions, with no visible pop-in.**
+- 🚧 [DOOM-0631] **Add level of detail to the 3D views: far things draw from cheaper versions, with no visible pop-in.**
   User 2026-11-19: "Along with the streaming system I also think we
   need to add in a LOD (level of detail) system but without visible
   pop in." To be designed with DOOM-0628 in one spec: both need the
@@ -20485,6 +20485,26 @@ in CLAUDE.md describes.
   Also read that day: no dither or cross-fade exists in mesh.frag or
   pathtrace.comp; models and sprites share one per-frame buffer; flag
   bits from 0x1000 are free and reach both views.
+  User 2026-11-20, on those figures: "Drop walls, do the pop fix".
+  Scope is now one thing: a Thing's model fades into its sprite over a
+  short distance instead of popping. Wall level of detail is dropped as
+  measured and not worth it; virtualised geometry with it. No spec:
+  one subsystem, cheap to redo (spec-format section 1). The fade
+  changes DOOM-0539's spec section 4.5, which is amended in place.
+  Built 2026-11-20, awaiting the user's look in play. A Thing within
+  the last 160 map units before the model cutoff draws both its model
+  and its sprite; an ordered 4x4 dither shares the pixels, in both
+  views (RB_ModelFadeLevel in sprite_cap.h, RB_MESH_FADE_* in r_mesh.h,
+  shaders/formulas/model_fade.glsl). tests/sprite_cap_test.cpp case 5
+  holds the levels and the flag bits; breaking the near-cutoff rule
+  made it fail. Seen in captures of the E1M1 barrel at 1060, 944 and
+  820 units, raster and traced (Scratchpad/DOOM_Ants/d0631/look); the
+  captures predate one later edit to the no-sprite edge case. Not
+  done, and known: when the triangle budget moves the cutoff a share
+  can still jump; the torch shadow still switches shape at the far end
+  of the fade; the dot pattern is fixed, so it shows as a stipple while
+  a Thing sits in the band. Not measured: frame time. The barrel's
+  model and sprite look unlike each other at that distance: DOOM-0638.
   **Layman:** Things far from the player are drawn from simpler, cheaper versions, and the swap to the detailed version is blended so you never see it happen.
   Kind: feature.
   Source: user-request-2026-11-19.
@@ -20573,6 +20593,21 @@ in CLAUDE.md describes.
   Kind: perf.
   Source: DOOM-0632-close-2026-11-20.
   Lanes: renderer.
+
+- 📋 [DOOM-0638] **Find why the barrel's 3D model looks like a plain olive block from far away, unlike its sprite.**
+  Seen 2026-11-20 in DOOM-0631's captures, both views, E1M1, barrel
+  at 1312 -3264 from 820 map units (bearing 175 from the barrel): the
+  model is a flat olive shape with no stripes and no bright slime top,
+  while the sprite at 1060 units shows both. Pictures:
+  Scratchpad/DOOM_Ants/d0631/look (zoom.png raster, zoom6.png traced;
+  rows are 1060, 944 and 820 units). Unverified cause; candidates are
+  the mip level the model's HD maps are read at, and its emissive map.
+  It makes DOOM-0631's fade a dissolve between two different pictures.
+  Check other models at the same distance before fixing one.
+  **Layman:** From a distance the 3D barrel loses its stripes and glowing green top, so it does not match the flat picture it fades from.
+  Kind: investigate.
+  Source: DOOM-0631-captures-2026-11-20.
+  Lanes: renderer, assets.
 
 ## 0.13.0 — The player's experience
 

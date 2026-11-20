@@ -144,6 +144,13 @@ typedef struct
 #define RB_MESH_HASMODEL 0x800 // DOOM-0539 §4.5: the billboard of a Thing whose model is past the
                               // distance or triangle budget. It keeps its self-glow, but casts no
                               // light: the model's light triangles, emitted beside it, do.
+// DOOM-0631: a Thing whose model is fading into its sprite draws both. Each vertex carries
+// the model's share of the pixels in sixteenths (1..15; 0 is no fade), and the sprite's
+// vertices carry RB_MESH_FADE_INV too, so it takes exactly the pixels the model leaves.
+// shaders/formulas/model_fade.glsl and shadow.frag mirror these three.
+#define RB_MESH_FADE_SHIFT 12
+#define RB_MESH_FADE_MASK  0xF000
+#define RB_MESH_FADE_INV   0x10000
 
 // Transparent-key palette index for the 2D HUD/menu compositor (DOOM-0008). In
 // the 3D back-ends the engine still draws every 2D element (status bar, menu,

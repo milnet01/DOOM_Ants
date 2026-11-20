@@ -139,6 +139,13 @@ map units, a Thing draws as its sprite. That quad carries `RB_MESH_HASMODEL`, a 
 it keeps its self-glow, and `BuildDynamicEmitters` skips it. The model's lights stay either way, so
 the room's light does not change with distance.
 
+The swap is a fade, not a pop (DOOM-0631). Over the last 160 map units before the cutoff, or the
+cutoff's last quarter when the budget has pulled it nearer, the Thing draws both its model and its
+sprite. `RB_ModelFadeLevel` gives the model's share of the pixels, the vertex flags carry it
+(`RB_MESH_FADE_*`), and `modelFadeKeeps` in `shaders/formulas/model_fade.glsl` shares the pixels
+between the two with an ordered dither in both views. Only the model casts the torch's shadow while
+both draw. When the budget moves the cutoff, a Thing's share can still jump.
+
 ## 5. Data & resources
 
 Pickup sprites, from the game's own table, so an inventory test can compare (INV-2):

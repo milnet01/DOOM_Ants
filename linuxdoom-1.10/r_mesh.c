@@ -2777,6 +2777,7 @@ static void model_lights(const mobj_t* thing, const rb_model_t* m, rb_vertex_t* 
 // RB_BuildSprites each call from the triangle budget and the distance cap.
 #define RB_MODEL_TRI_BUDGET 12000
 #define RB_MODEL_MAX_DIST   1024.0f
+#define RB_MODEL_FADE_DIST  160.0f      // DOOM-0631: the model fades to its sprite over this
 static float model_cut_d2;
 
 static float thing_d2(const rb_view_t* view, const mobj_t* thing)
@@ -2824,22 +2825,29 @@ static void set_model_cutoff(const rb_view_t* view)
 
 // Writes a thing's vertices to out and returns how many: 0 when it gets none, -1 when they
 // do not fit in room. A Thing with a model draws it when nearer than model_cut_d2 and it
-// fits; otherwise its billboard, flagged RB_MESH_HASMODEL. Its lights come either way.
+// fits; otherwise its billboard, flagged RB_MESH_HASMODEL. Over the last stretch before
+// the cutoff it draws both, each carrying its share of the pixels (DOOM-0631,
+// RB_ModelFadeLevel). Its lights come either way, once.
 static int thing_verts(const rb_view_t* view, mobj_t* thing, int models,
                        rb_vertex_t* out, int room)
 {
     rb_vertex_t       q[6];
     const rb_model_t* m      = models ? thing_model(thing) : NULL;
     const int         lights = m ? (int)(m->numLights * 3u) : 0;
+    const int         fade   = m ? RB_ModelFadeLevel(thing_d2(view, thing), model_cut_d2,
+                                                     RB_MODEL_FADE_DIST) : 0;
     int               quad, k;
 
-    if (m && thing_d2(view, thing) < model_cut_d2 && (int)m->numVerts + lights <= room)
+    quad = fade < 16 && sprite_quad(view, thing, q) ? 6 : 0;
+    // The model alone: nearer than the fade band, or in it with no sprite to share with.
+    if (fade > 0 && !quad && (int)m->numVerts + lights <= room)
     {
         model_verts(thing, m, out);
         model_lights(thing, m, out + m->numVerts);
         return (int)m->numVerts + lights;
     }
-    quad = sprite_quad(view, thing, q) ? 6 : 0;
+    if (fade == 16)
+        quad = sprite_quad(view, thing, q) ? 6 : 0;     // the model did not fit
     if (quad + lights == 0)
         return 0;
     if (room < quad + lights)
@@ -2847,6 +2855,20 @@ static int thing_verts(const rb_view_t* view, mobj_t* thing, int models,
     if (m)
         for (k = 0; k < quad; k++)
             q[k].flags |= RB_MESH_HASMODEL;
+    if (fade > 0 && fade < 16 && quad && (int)m->numVerts + quad + lights <= room)
+    {
+        // DOOM-0631: in the fade band both draw, and the dither shares the pixels.
+        model_verts(thing, m, out);
+        for (k = 0; k < (int)m->numVerts; k++)
+            out[k].flags |= fade << RB_MESH_FADE_SHIFT;
+        for (k = 0; k < quad; k++)
+            q[k].flags |= (fade << RB_MESH_FADE_SHIFT) | RB_MESH_FADE_INV;
+        out += m->numVerts;
+        quad += (int)m->numVerts;
+        memcpy(out, q, 6 * sizeof q[0]);
+        model_lights(thing, m, out + 6);
+        return quad + lights;
+    }
     memcpy(out, q, (size_t)quad * sizeof q[0]);
     if (m)
         model_lights(thing, m, out + quad);
