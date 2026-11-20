@@ -20756,6 +20756,17 @@ in CLAUDE.md describes.
   Start: list what lights a surface besides emitters (the sector light
   term, the baked bounce, any ambient floor) and measure each one's
   share in a room with no emitter. DOOM-0630 touched the same ground.
+  User 2026-11-20: a reference picture, "not to copy but to use as
+  reference": ~/Pictures/Screenshots/Screenshot_20261120_174859.png
+  (another DOOM mod; not to be committed). What it shows: a corridor
+  whose only light is the open sky at its far end. The hex floor and
+  the ceiling are near black except for a strong wet gleam in line
+  with the opening; the walls are dim and brighten only toward the
+  opening; corners and the near end fall to black. Nothing is lit
+  evenly. So the look wanted has three parts: no light without a
+  source, light that falls off with distance from the source, and
+  glossy surfaces that carry the source as a streak (DOOM-0103's
+  ground).
   **Layman:** A room with no lamp, glowing panel, window or sky should be quite dark instead of evenly lit from nowhere.
   Kind: investigate.
   Source: user-request-2026-11-20.
