@@ -14,7 +14,7 @@
 #   1. Runs the unit tests (make test) as a gate.
 #   2. Builds the Linux AppImage  -> packaging/build/doom_ants-<ver>-x86_64.AppImage
 #   3. Builds + zips the Windows build -> packaging/build/doom_ants-<ver>-windows-x86_64.zip,
-#      then checks that each artifact holds exactly Ultra's HD art.
+#      then checks that each artifact holds exactly Ultra's HD art, packed, and LZ4's notice.
 #   With --publish, additionally:
 #   4. Brings the CHANGELOG heading, its compare links and README's "Latest
 #      release" line up to <ver> -- whichever of them are not there already --
@@ -141,13 +141,16 @@ fi
 # Looks inside the finished files, so a reused artifact is checked as well.
 # shellcheck source=packaging/ultra-art.sh
 source "$REPO/packaging/ultra-art.sh"
-echo "==> Checking the HD art in both artifacts..."
+echo "==> Checking the HD art and LZ4's notice in both artifacts..."
+make -C "$REPO/linuxdoom-1.10" hdpack >/dev/null   # check_ultra_art lists the pack with it
 ART_DIR="$(mktemp -d -p "$DIST")"
 trap 'rm -rf "$ART_DIR"' EXIT
 ( cd "$ART_DIR" && "$APPIMAGE" --appimage-extract >/dev/null )
 check_ultra_art "$ART_DIR/squashfs-root/usr/bin/assets/ultra"
+check_lz4_notice "$ART_DIR/squashfs-root/usr/share/licenses/doom_ants/LICENSE-LZ4.txt"
 unzip -q "$WINZIP" -d "$ART_DIR/zip"
 check_ultra_art "$ART_DIR/zip/doom_ants-$VERSION-windows-x86_64/assets/ultra"
+check_lz4_notice "$ART_DIR/zip/doom_ants-$VERSION-windows-x86_64/LICENSE-LZ4.txt"
 rm -rf "$ART_DIR"
 trap - EXIT
 

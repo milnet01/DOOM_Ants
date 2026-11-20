@@ -38,6 +38,7 @@
 #      (DOOM-0413; it used to share 3)
 #   5  SKIP: the build passed, but the engine was not run -- wine or Xvfb is
 #      missing, or no IWAD was found (DOOM-0392; it used to exit 0)
+#   6  the HD pack reader's own test fails as a Windows program (DOOM-0632)
 #
 # SAFETY: everything runs on a private Xvfb display and in a throwaway
 # WINEPREFIX under the sandbox dir, so the game can never appear on the user's
@@ -200,6 +201,21 @@ export DISPLAY="$DISP"
 export WINEDEBUG=-all
 echo "==> Booting the Windows build under Wine (display $DISP, throwaway prefix)..."
 WINEDEBUG=-all timeout 60 wineboot -i >/dev/null 2>&1
+
+# ---- 4b. the HD pack reader, as Windows runs it (DOOM-0632) -------------------
+# rb_hdpack.h reads ultra.hdpack through fopen, fseek and ftell, where Windows
+# differs from Linux (text mode, a 32-bit long). The boot below is Classic and
+# opens no pack, so the reader's own test is run here as a Windows program.
+echo "==> Running the HD pack reader's test under Wine..."
+x86_64-w64-mingw32-g++ "$CXXSTD" -O2 -static "$ENG/tests/hd_pack_test.cpp" -o "$STAGE/hd_pack_test.exe" \
+  || { echo "FAIL: hd_pack_test does not build for Windows"; exit 1; }
+PACK_LOG="$SANDBOX/hd_pack_test.log"
+if ! ( cd "$STAGE" && timeout 120 wine hd_pack_test.exe ) > "$PACK_LOG" 2>&1; then
+  echo "FAIL: the HD pack reader's test fails as a Windows program."
+  tail -20 "$PACK_LOG" | sed 's/^/    /'
+  exit 6
+fi
+echo "    $(tail -1 "$PACK_LOG")"
 
 LOG="$SANDBOX/smoke.log"
 START=$(date +%s)

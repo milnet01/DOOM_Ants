@@ -32,8 +32,9 @@ OUT="$BUILD/doom_ants-$VERSION-x86_64.AppImage"
 # build; only release.sh, which knows the commit, writes a new one (DOOM-0392).
 rm -f "$OUT.commit"
 
-# 1. Build the native Linux binary.
+# 1. Build the native Linux binary, and the baker that packs the HD art (ultra-art.sh).
 make -C "$REPO/linuxdoom-1.10"
+make -C "$REPO/linuxdoom-1.10" hdpack
 
 # 2. Fetch the AppImage toolchain (cached under packaging/tools, git-ignored).
 #
@@ -95,13 +96,14 @@ fetch runtime-x86_64 \
 # 3. Assemble the AppDir.
 rm -rf "$APPDIR"
 mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/soundfonts" \
-         "$APPDIR/usr/share/applications" \
+         "$APPDIR/usr/share/applications" "$APPDIR/usr/share/licenses/doom_ants" \
          "$APPDIR/usr/share/icons/hicolor/256x256/apps" "$APPDIR/apprun-hooks"
 cp "$REPO/linuxdoom-1.10/linux/linuxxdoom" "$APPDIR/usr/bin/doom_ants"
 cp "$SOUNDFONT"                            "$APPDIR/usr/share/soundfonts/"
 cp "$PKG/doom_ants.desktop"                "$APPDIR/usr/share/applications/"
 cp "$PKG/doom_ants.png"                    "$APPDIR/usr/share/icons/hicolor/256x256/apps/"
 stage_ultra_art "$APPDIR/usr/bin/assets/ultra"   # beside the binary: rb_asset_set_exe_dir
+stage_lz4_notice "$APPDIR/usr/share/licenses/doom_ants/LICENSE-LZ4.txt"
 
 # Runtime hook: use the bundled soundfont for music, and look for the WAD next
 # to the .AppImage file (so dropping a WAD beside it and double-clicking works,

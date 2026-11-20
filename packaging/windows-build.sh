@@ -38,6 +38,7 @@ rm -f "$WINZIP.commit"
 # 1. Cross-compile the Windows binary.
 echo "==> Building Windows binary (make windows)..."
 make -C "$REPO/linuxdoom-1.10" windows
+make -C "$REPO/linuxdoom-1.10" hdpack   # for this machine: it packs the HD art (ultra-art.sh)
 EXE="$REPO/linuxdoom-1.10/mingw/doom_ants.exe"
 [ -f "$EXE" ] || { echo "windows-build.sh: doom_ants.exe was not produced" >&2; exit 1; }
 
@@ -52,6 +53,7 @@ NAME="doom_ants-$VERSION-windows-x86_64"
 mkdir -p "$STAGE/$NAME"
 cp "$EXE" "${WIN_RUNTIME_DLLS[@]}" "$STAGE/$NAME/"
 stage_ultra_art "$STAGE/$NAME/assets/ultra"
+stage_lz4_notice "$STAGE/$NAME/LICENSE-LZ4.txt"
 cat > "$STAGE/$NAME/README.txt" <<EOF
 DOOM_Ants $VERSION — Windows (x86_64)
 
@@ -60,7 +62,8 @@ Freedoom's freedoom1.wad or freedoom2.wad (free, from freedoom.github.io), the
 shareware doom1.wad, or doom.wad / doom2.wad. No WAD is included. The bundled
 DLLs are required; vulkan-1.dll is provided by your GPU driver. The assets folder
 holds the Ultra tier's HD art; keep it beside doom_ants.exe. Its sources and CC0
-licences are listed in assets/ultra/LICENSES.
+licences are listed in assets/ultra/LICENSES. LICENSE-LZ4.txt is the licence of
+LZ4, which the game uses to unpack that art.
 
 We do not condone piracy. DOOM Ants includes no DOOM game data. Use Freedoom,
 or the doom.wad or doom2.wad from a copy you own. DOOM is a trademark of

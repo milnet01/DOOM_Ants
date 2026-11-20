@@ -231,15 +231,22 @@ download.
 
 `packaging/ultra-art.sh` changes in two places:
 
-- `stage_ultra_art` stages the committed art to a scratch folder as today, with the `LICENSES`
-  check unchanged, bakes it with a list file of exactly `ultra_art_files`' PNGs, and copies to the
-  destination the pack plus every committed file that is not a PNG.
+- `stage_ultra_art` stages the committed art to the destination as today, with the `LICENSES`
+  check unchanged, bakes it there with a list file of exactly `ultra_art_files`' PNGs, and then
+  removes the PNGs. The destination is left holding the pack plus every committed file that is
+  not a PNG.
 - `check_ultra_art` expects exactly those non-PNG files and `ultra.hdpack`, and compares
   `hdpack --list`'s names against the committed PNG list.
 
-Both build scripts build `hdpack` for the build host before staging, and each staging bakes its
-own pack; INV-9 makes the two identical. Both downloads carry LZ4's licence notice, which its
-BSD licence requires of a binary; B5 adds it, and a release cut before B5 needs it added first.
+Both build scripts build `hdpack` for the build host before staging, and `release.sh` builds it
+before checking. Each staging bakes its own pack; INV-9 makes the two identical, because
+`git archive` dates every staged PNG by the commit. Both downloads carry LZ4's licence notice,
+which its BSD licence requires of a binary: `LICENSE-LZ4.txt`, beside `doom_ants.exe` in the zip
+and under `usr/share/licenses/doom_ants/` in the AppImage. It is the comment that opens the
+vendored `lz4.c`, and `release.sh` refuses a download without it.
+
+`packaging/windows-smoke.sh` builds `tests/hd_pack_test.cpp` for Windows and runs it under Wine.
+Its boot is Classic and opens no pack, so this is the only run of the reader as a Windows program.
 `assets/ultra/LICENSES` still ships and still names each picture by its repository path; the
 pack's entry name is that path less `assets/ultra/`.
 
@@ -389,7 +396,7 @@ The three limits are design targets, not measurements.
 Files this touches: `linuxdoom-1.10/r_vulkan.cpp`, a new `linuxdoom-1.10/rb_hdpack.h`, the new
 baker source, the vendored `lz4.c`, `lz4.h`, `lz4hc.c` and `lz4hc.h`, `linuxdoom-1.10/Makefile`, `linuxdoom-1.10/tests/hd_pack_test.cpp`,
 `packaging/ultra-art.sh`, `packaging/build-appimage.sh`, `packaging/windows-build.sh`,
-`packaging/windows-smoke.sh`, `assets/ultra/.gitignore`.
+`packaging/windows-smoke.sh`, `packaging/release.sh`, `assets/ultra/.gitignore`.
 
 ## 12. Cross-doc impact
 
@@ -398,7 +405,7 @@ baker source, the vendored `lz4.c`, `lz4.h`, `lz4hc.c` and `lz4hc.h`, `linuxdoom
 - `docs/standards/dependencies.md` § Where this project's dependencies live: the encoder, and the
   compressor if one is adopted.
 - `docs/standards/assets.md` § The sidecar / derived pattern: the pack is a derived, ignored file.
-- `docs/RELEASE_README.txt`: the art folder holds a pack, not PNGs.
+- `packaging/README.md`: the art ships as a pack, and the Windows smoke runs the reader's test.
 - `docs/specs/DOOM-0042-ultra-hd-pbr-materials.md`: the loader takes a picture from the pack
   first.
 - `CHANGELOG.md` on shipping.

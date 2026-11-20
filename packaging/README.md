@@ -37,7 +37,8 @@ A single self-contained file that runs on a fresh Linux install with no
 dependency setup — SDL2, SDL2_mixer, FluidSynth, a compact General-MIDI
 soundfont and Ultra's HD art are bundled, so the game and its music work out of
 the box. Only a DOOM `.wad` is needed (not redistributable). `ultra-art.sh` says
-which art files ship, and `release.sh` checks both downloads hold exactly those.
+which art files ship and bakes the pictures into one file, `ultra.hdpack`. `release.sh` checks
+both downloads hold exactly those files, that pack's pictures, and LZ4's licence notice.
 
 ```sh
 packaging/build-appimage.sh <version>   # -> packaging/build/doom_ants-<version>-x86_64.AppImage
@@ -77,7 +78,9 @@ The full run stages the `.exe` and its DLLs in a temp sandbox, starts a
 private `Xvfb` display, boots the game under Wine in a throwaway `WINEPREFIX`,
 and asserts the engine reached its `-bootsmoke` line. Exit codes are
 deliberately distinct — `2` never booted, `3` booted but never exited — so a
-shutdown hang cannot be normalised into "the smoke passes".
+shutdown hang cannot be normalised into "the smoke passes". Before the boot it
+builds the HD pack reader's test (`tests/hd_pack_test.cpp`) for Windows and runs
+it under Wine; a failure there exits `6`.
 
 Needs `wine` and `xorg-x11-server-Xvfb`; without them the script still runs the
 compile sweep and says plainly that the engine was not run. It never touches
