@@ -372,9 +372,9 @@ The three limits are design targets, not measurements.
   beats stored by 10%.
 - **Whether `hgt` survives BC4.** Parallax steps would show as terracing. The user's eye at B6
   decides; format 4 is the remedy.
-- **The download's size.** The packed art is smaller than the PNGs on disk (§ 5), but the
-  AppImage and the zip compress what they carry, and PNGs barely compress further. Put to the
-  user at B6 with the measured download sizes.
+- **The download's size: smaller.** Measured 2026-11-20 on one build, with the art swapped in
+  each download: the AppImage is 138.3 MB with the pack and 174.6 MB with the PNGs, and the
+  Windows zip 131.9 MB against 168.3 MB.
 - **`derived/` art.** It loads from PNGs. Packing it on the player's machine is not in this spec.
 
 ## 11. What checks this

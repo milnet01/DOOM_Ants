@@ -20259,6 +20259,22 @@ in CLAUDE.md describes.
   for B6. Next: B6, the before-and-after shots, load times and
   download sizes for the user. Still owed on a quiet machine for
   INV-10: the cold figure and the -frameledger A/B.
+  B6 prepared 2026-11-20, awaiting the user's look. Shots: four views
+  (E1M1 twice, E2M2 start, E1M3 start), rasterised and ray-traced,
+  PNGs against the pack, in Scratchpad/DOOM_Ants/d0632/b6out
+  (compare-*.png side by side, zoom-*.png centre at three times).
+  Mean difference 0.10 to 0.43 of 255; at most 1.7% of pixels differ
+  by more than 8; a repeat of one PNG shot differed by 0. Download
+  sizes, one build with the art swapped: AppImage 138.3 MB with the
+  pack, 174.6 MB with PNGs; Windows zip 131.9 against 168.3 MB. HD
+  load, shared machine at load 4 to 10, two rounds (b6time.sh): E1M1
+  cached 0.14 and 0.17 s with the pack, 1.7 and 11.2 s from PNGs;
+  first read 0.8 and 2.5 s against 6.8 and 32.5 s. E2M2 cached 0.14
+  and 0.29 s against 4.3 and 15.7 s; first read 0.9 and 4.0 s against
+  10.5 and 11.6 s. Video memory for the set: E1M1 112.0 MB (580.0),
+  E2M2 156.4 MB (814.4). Still owed on a quiet machine for INV-10:
+  the cold figure and the -frameledger A/B. Open for the user: any
+  damaged picture, and whether height maps show terracing.
   **Layman:** The high-detail pictures are stored ready for the graphics card, so levels load in a fraction of the time and the art takes about a quarter of the video memory.
   Kind: feature.
   Source: user-request-2026-11-19.
