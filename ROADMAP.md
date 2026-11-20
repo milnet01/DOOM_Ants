@@ -20464,6 +20464,27 @@ in CLAUDE.md describes.
   mips": with no streaming, no texture arrives late. Still in scope:
   blending the model-to-sprite swap, and drawing far relief walls flat
   with a blended swap.
+  Measured 2026-11-20, before any spec: what would flattening FAR
+  relief walls save? A scratch gate (not committed) kept relief only
+  within R map units of the camera at level build. Ultra, 50 % fixed
+  scale, private display, shared machine (load 5 to 17), two rounds,
+  lowest pass time of each arm. Kit and logs:
+  Scratchpad/DOOM_Ants/d0631 (exp.sh, tab.py).
+  Raster scene pass, all relief against relief within 1024 only:
+  E1M1 1.18 to 1.03 ms; E1M3 1.17 to 0.83; E2M2 0.87 to 0.80; MAP06
+  0.94 to 0.80. Within 2048 only: 1.15, 1.03, 0.79, 0.92. So a wall
+  level of detail at 1024 units saves at most 0.07 to 0.34 ms there.
+  Unexplained: E1M3 with no relief at all read 0.99, above its 1024 arm.
+  Traced megakernel, all relief against within 1024 only: E1M1 3.69 to
+  3.43; E1M3 3.89 to 3.95; E2M2 2.61 to 2.60; MAP06 3.43 to 3.60. No
+  saving outside the noise. With no relief at all: 2.62, 3.48, 2.61,
+  2.99. So in the traced view the cost is the relief near the camera,
+  and removing far relief recovers nothing measurable.
+  Triangles, all relief: E1M1 203937, E1M3 328622, E2M2 134626, MAP06
+  217505. The shadow pass read under 0.1 ms in every arm.
+  Also read that day: no dither or cross-fade exists in mesh.frag or
+  pathtrace.comp; models and sprites share one per-frame buffer; flag
+  bits from 0x1000 are free and reach both views.
   **Layman:** Things far from the player are drawn from simpler, cheaper versions, and the swap to the detailed version is blended so you never see it happen.
   Kind: feature.
   Source: user-request-2026-11-19.
