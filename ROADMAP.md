@@ -20803,6 +20803,8 @@ in CLAUDE.md describes.
   turns the camera short.
   The packed art was re-baked the same day (6 pictures); the pack is
   not tracked.
+  User 2026-11-20: find and fix the traced view's washed-out barrel
+  next, with before and after pictures.
   **Layman:** The 3D barrels get rust and stronger stripes, and come in a few different versions, each turned its own way, so two barrels side by side do not look the same.
   Kind: feature.
   Source: user-request-2026-11-20.
@@ -20917,6 +20919,10 @@ in CLAUDE.md describes.
   is the user's look at the pictures, then a design: which real
   sources each map has, and how the weapon and monsters get
   sourced light.
+  User 2026-11-20, after the sheets: design in this order. Real light
+  from candles, lamps and screens first (DOOM-0209), then sourced light
+  for monsters and the weapon in the rasterised view, then remove the
+  light that has no source. A short design comes first.
   **Layman:** A room with no lamp, glowing panel, window or sky should be quite dark instead of evenly lit from nowhere.
   Kind: investigate.
   Source: user-request-2026-11-20.
