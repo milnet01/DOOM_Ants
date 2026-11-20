@@ -20248,6 +20248,17 @@ in CLAUDE.md describes.
   any release: LZ4's BSD licence notice in both downloads. Still owed
   for INV-10 on a quiet machine: the cold figure and the -frameledger
   A/B. Next: B5, packaging/ultra-art.sh and both build scripts.
+  B5 built 48ee0b2 (2026-11-20): both downloads carry ultra.hdpack in
+  place of the PNGs, plus LICENSE-LZ4.txt. release.sh's check compares
+  the pack's names with the committed PNG list and refuses a download
+  without the notice. A build-only release run passed; the AppImage,
+  run outside the source tree, loaded E1M1 with 242 packed images and
+  none from PNGs. windows-smoke.sh now runs hd_pack_test as a Windows
+  program under Wine (passed). Sizes of that build: AppImage 138.3 MB,
+  Windows zip 131.9 MB; the PNG-carrying sizes are still to measure
+  for B6. Next: B6, the before-and-after shots, load times and
+  download sizes for the user. Still owed on a quiet machine for
+  INV-10: the cold figure and the -frameledger A/B.
   **Layman:** The high-detail pictures are stored ready for the graphics card, so levels load in a fraction of the time and the art takes about a quarter of the video memory.
   Kind: feature.
   Source: user-request-2026-11-19.
