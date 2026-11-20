@@ -10,7 +10,8 @@ struct MatCtrl {
     float uvScale;    // across the tile
     float uvScaleV;   // up the tile
     float pomDepth;   // relief's full height in map units; 0 = kPomHeightScale of a tile
-    uint  flags;      // bit0 pom, bit1 noPom, bit2 sprite, bit3 nukage, bit4 lava (DOOM-0183), bit5 noDetile
+    uint  flags;      // bit0 pom, bit1 noPom, bit2 sprite, bit3 nukage, bit4 lava (DOOM-0183), bit5 noDetile,
+                      // bit6 bubbles (DOOM-0619)
     uint  usePBR;     // 0 = paletted fallback
 };
 layout(set = HD_SET, binding = 0, std430) readonly buffer MatCtrlBuf { MatCtrl ctrl[]; };

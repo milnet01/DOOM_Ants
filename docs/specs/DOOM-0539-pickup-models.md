@@ -86,7 +86,9 @@ outside 0..1, a light channel below 0 or over `RB_MODEL_MAX_LIGHT_RGB`, a reach 
 
 ### 4.3 Drawing
 
-`assets/ultra/models.csv` lists `sprite,file`. `RB_BuildSprites` gets one more branch: under
+`assets/ultra/models.csv` lists `sprite,file`. A third word, `bubbles`, on a sprite's first row sets
+`RB_FLAG_BUBBLES` on its `ctrl[]` row: both views then draw rising bubbles where its glow map is lit
+(`shaders/formulas/bubbles.glsl`, DOOM-0619). `RB_BuildSprites` gets one more branch: under
 `RB_RT3D`, a Thing whose current sprite has a loaded model emits that model's triangles,
 placed at the Thing and turned by a fixed angle, in place of `sprite_quad`. The angle comes from
 where the map placed the Thing (`thing_hash`), so a shot barrel does not turn as it slides; a monster's

@@ -1,7 +1,8 @@
 # sprite,file. DOOM-0539: a pickup sprite (DOOM-0620: or a decoration's) and its model, relative to this folder. The maps
 # are found beside it as models/<sprite>_alb.png, _nrm.png and _emis.png. A sprite named on up to four rows has that
 # many variants, all on the one set of maps; each Thing shows one, chosen by where the map put it (DOOM-0641).
-BON1,models/BON1.dmdl
+# A third word, bubbles, on a sprite's first row draws rising bubbles where its glow map is lit (DOOM-0619).
+BON1,models/BON1.dmdl,bubbles
 BON2,models/BON2.dmdl
 MEDI,models/MEDI.dmdl
 STIM,models/STIM.dmdl

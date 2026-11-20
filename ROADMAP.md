@@ -20104,7 +20104,7 @@ in CLAUDE.md describes.
   Source: user-request-2026-11-15.
   Lanes: renderer.
 
-- 📋 [DOOM-0619] **Make the bubbles in the health-bonus flask rise, in both views.**
+- 🚧 [DOOM-0619] **Make the bubbles in the health-bonus flask rise, in both views.**
   User 2026-11-15: "If the bubbles can be animated, that would be
   great." Today the bubbles are painted into BON1's colour and glow maps,
   so they cannot move. The raster pass has no clock (mesh.frag reads no
@@ -20125,6 +20125,23 @@ in CLAUDE.md describes.
   shader where a flagged model's glow map is lit, from a pattern that
   moves up with a clock, and take the painted bubbles out of the bake.
   pathtrace.comp has the clock (rippleTime); mesh.frag has none.
+  2026-11-20: the rising bubbles are built; the user's look is owed.
+  The note above was wrong on one point: mesh.frag did have a clock,
+  a 35 Hz count for the Spectre. The bubbles do not use it. Both
+  views now read one seconds clock (RippleSeconds in r_vulkan.cpp;
+  the rasterised view gets it in ShadowUbo.time), and one pattern
+  (shaders/formulas/bubbles.glsl), drawn in world space where a
+  marked model's glow map is lit. The mark is a third word, bubbles,
+  on the model's models.csv row (RB_FLAG_BUBBLES). The painted
+  bubbles are out of pickups/doom_bon1.py and BON1's maps are
+  rebaked. Measured at E1M1 `96 -2990 270`, clock pinned with
+  -rippletime 1 and 3: the changed pixels sit on the flask in both
+  views, and a repeat at the same instant changes none there.
+  Pictures: Scratchpad d0642/c3/flask-sheet.png. Not checked by
+  eye: that the two views show the same bubbles at the same
+  instant; that the speed and number look right in play. The
+  traced view tints only the liquid's colour, since it adds no HD
+  glow to a model. Dials: the constants at the top of bubbles.glsl.
   **Layman:** The little bubbles inside the blue health vial drift upward instead of sitting still.
   Kind: feature.
   Source: user-request-2026-11-15.

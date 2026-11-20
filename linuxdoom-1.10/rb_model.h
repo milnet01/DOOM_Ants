@@ -134,13 +134,17 @@ static inline int RB_ModelRead(FILE* f, rb_model_t* out)
     return RB_ModelParse(buf, fread(buf, 1, sizeof buf, f), out);
 }
 
-// One line of models.csv, `sprite,file`. Returns 1 for a row, 0 for a comment or blank line,
-// -1 for anything else. A file path too long for its buffer is malformed, never truncated.
-static inline int RB_ModelCsvLine(const char* line, char sprite[5], char* file, size_t filesz)
+// One line of models.csv, `sprite,file` or `sprite,file,bubbles`. Returns 1 for a row, 0 for a
+// comment or blank line, -1 for anything else. A file path too long for its buffer is
+// malformed, never truncated. *bubbles is 1 for a row whose third word is `bubbles`
+// (DOOM-0619: the model's glowing liquid draws rising bubbles), else 0.
+static inline int RB_ModelCsvLine(const char* line, char sprite[5], char* file, size_t filesz,
+                                  int* bubbles)
 {
     const char* comma;
     size_t      len;
 
+    *bubbles = 0;
     line += strspn(line, " \t\r\n");
     if (!*line || *line == '#')
         return 0;
@@ -149,12 +153,18 @@ static inline int RB_ModelCsvLine(const char* line, char sprite[5], char* file, 
         return -1;
     memcpy(sprite, line, 4);
     sprite[4] = '\0';
-    len = strcspn(comma + 1, " \t\r\n");
-    if (len == 0 || len >= filesz || (comma + 1)[len + strspn(comma + 1 + len, " \t\r\n")])
+    len = strcspn(comma + 1, ", \t\r\n");
+    if (len == 0 || len >= filesz)
         return -1;
     memcpy(file, comma + 1, len);
     file[len] = '\0';
-    return 1;
+    line = comma + 1 + len;
+    if (!strncmp(line, ",bubbles", 8))
+    {
+        *bubbles = 1;
+        line += 8;
+    }
+    return line[strspn(line, " \t\r\n")] ? -1 : 1;
 }
 
 #endif

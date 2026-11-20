@@ -4393,6 +4393,60 @@ void DestroySceneTarget()
     }
 }
 
+// The seconds clock the moving surface effects ride: DOOM-0183's ripples and DOOM-0011's
+// wisps in the trace, DOOM-0619's bubbles in both views.
+static float RippleSeconds()
+{
+    // steady_clock is frame-rate-independent so kRippleSpeed has a fixed meaning, and immune
+    // to NTP jumps; zeroed at first use so the seconds stay small (float precision).
+    static const auto rippleT0 = std::chrono::steady_clock::now();
+    float rippleSec = std::chrono::duration<float>(std::chrono::steady_clock::now() - rippleT0).count();
+    // DOOM-0011 L1c: the shot modes must be time-INDEPENDENT. L1c's wisps ride this same
+    // clock and modulate the density of EVERY fog pixel, so a wall-clock reading would make
+    // each capture a different image and -shotcompare's MAE gate meaningless -- the same
+    // reason the noise volume itself is fixed-seed. Pin it to an arbitrary constant; the
+    // DOOM-0183 ripples riding this clock get the same determinism for free.
+    if (rb_shotverify == 1) rippleSec = 8.0f;
+    // DOOM-0300: `-rippletime <sec>` moves that pin. The wisps' whole job is to change over
+    // time, which is the one thing a single still frame cannot show -- measuring them means
+    // capturing the SAME view at several chosen instants and diffing. Without this the only
+    // way to move the pinned constant is a rebuild per sample. Verification affordance, in
+    // the same family as -warpto and -shotverify; it changes nothing unless passed.
+    {
+        static const float overrideSec = []() -> float {
+            int   p = M_CheckParm("-rippletime");
+            float v;
+            // A value that is not wholly a number is refused, not read as 0.0:
+            // atof("fast") was 0.0, which passes the >= 0 test below and pinned
+            // the ripple clock at zero.
+            //
+            // DOOM-0405: and the refusal is PRINTED. This flag exists to capture the
+            // same view at chosen instants and diff them; a refused value silently
+            // leaves the clock free-running, so the captures differ for a reason the
+            // person diffing them cannot see. The lambda runs once, so does the line.
+            if (!p)
+                return -1.0f;
+            if (p + 1 >= myargc) {
+                printf("-rippletime: no value given; the ripple clock runs free.\n");
+                return -1.0f;
+            }
+            if (!RB_ParseFloatArg(myargv[p + 1], &v)) {
+                printf("-rippletime: \"%s\" is not a finite number; "
+                       "the ripple clock runs free.\n", myargv[p + 1]);
+                return -1.0f;
+            }
+            if (v < 0.0f) {
+                printf("-rippletime: %g is negative; the ripple clock runs free.\n",
+                       (double)v);
+                return -1.0f;
+            }
+            return v;
+        }();
+        if (overrideSec >= 0.0f) rippleSec = overrideSec;
+    }
+    return rippleSec;
+}
+
 // mesh.frag's ShadowUbo (set 1, binding 1), byte for byte. lightVP is written on
 // torch-on frames; DOOM-0273's flags every raster frame: x = surface detail
 // (SurfaceDetailLane), y = DOOM-0103's specular setting (SpecularLane), z = surface-map base,
@@ -4402,8 +4456,10 @@ struct ShadowUboData
     float    lightVP[16];
     uint32_t flags[4];
     uint32_t hd[4];      // DOOM-0182: mesh.frag's HD lane; see ShadowUbo there
+    float    time[4];    // DOOM-0619: x = RippleSeconds(), the trace's clock; the rest unused
 };
 static_assert(offsetof(ShadowUboData, flags) == 64, "flags follows lightVP, as in mesh.frag");
+static_assert(offsetof(ShadowUboData, time) == 96, "time follows hd, as in mesh.frag");
 
 // DOOM-0170 L2c — build the flashlight cast-shadow map (§4.4): a fixed 2048^2 depth image
 // the world renders into from the torch's viewpoint, plus its render pass, framebuffer,
@@ -7255,7 +7311,8 @@ static bool LoadHdMaterials(bool usePack)
         char line[256];
         while (fgets(line, sizeof(line), mf)) {
             char spr[5], file[192], full[720];
-            const int rc = RB_ModelCsvLine(line, spr, file, sizeof(file));
+            int       bubbles;
+            const int rc = RB_ModelCsvLine(line, spr, file, sizeof(file), &bubbles);
             if (rc < 0) printf("DOOM-0539: %s: malformed row - skipped.\n", modelCsv);
             if (rc != 1) continue;
             int sprite;
@@ -7274,7 +7331,8 @@ static bool LoadHdMaterials(bool usePack)
                 rowForId[id]        = (int)rows.size() - 1;
                 isModel[id]         = 1;
                 table[id].usePBR    = 1u;
-                table[id].flags     = RB_FLAG_NO_DETILE;   // de-tiling would scramble an atlas
+                // De-tiling would scramble an atlas. A sprite's first row decides its bubbles.
+                table[id].flags     = RB_FLAG_NO_DETILE | (bubbles ? RB_FLAG_BUBBLES : 0u);
             }
             models.push_back({ sprite, id, model, spr });
         }
@@ -9756,55 +9814,9 @@ void RecordRtTrace(uint32_t idx)
     // DOOM-0187: filth master toggle (misc5.w) from rb_filth (1=on,0=off; `[` key). Not HD-gated —
     // applyGrime paints paletted surfaces too — so this is a plain runtime on/off of the stain layer.
     pc.misc5[3]    = rb_filth ? 1u : 0u;
-    // DOOM-0183: ripple time (seconds, wall-clock) + wet toggle (misc6). steady_clock is
-    // frame-rate-independent so kRippleSpeed has a fixed meaning, and immune to NTP jumps;
-    // zeroed at first use so the seconds stay small (float precision). y gates the shader's
-    // sheen/ripple/puddle layers only (rb_wet) — never the glow (that Le is CPU-built).
-    static const auto rippleT0 = std::chrono::steady_clock::now();
-    float rippleSec = std::chrono::duration<float>(std::chrono::steady_clock::now() - rippleT0).count();
-    // DOOM-0011 L1c: the shot modes must be time-INDEPENDENT. L1c's wisps ride this same
-    // clock and modulate the density of EVERY fog pixel, so a wall-clock reading would make
-    // each capture a different image and -shotcompare's MAE gate meaningless -- the same
-    // reason the noise volume itself is fixed-seed. Pin it to an arbitrary constant; the
-    // DOOM-0183 ripples riding this clock get the same determinism for free.
-    if (rb_shotverify == 1) rippleSec = 8.0f;
-    // DOOM-0300: `-rippletime <sec>` moves that pin. The wisps' whole job is to change over
-    // time, which is the one thing a single still frame cannot show -- measuring them means
-    // capturing the SAME view at several chosen instants and diffing. Without this the only
-    // way to move the pinned constant is a rebuild per sample. Verification affordance, in
-    // the same family as -warpto and -shotverify; it changes nothing unless passed.
-    {
-        static const float overrideSec = []() -> float {
-            int   p = M_CheckParm("-rippletime");
-            float v;
-            // A value that is not wholly a number is refused, not read as 0.0:
-            // atof("fast") was 0.0, which passes the >= 0 test below and pinned
-            // the ripple clock at zero.
-            //
-            // DOOM-0405: and the refusal is PRINTED. This flag exists to capture the
-            // same view at chosen instants and diff them; a refused value silently
-            // leaves the clock free-running, so the captures differ for a reason the
-            // person diffing them cannot see. The lambda runs once, so does the line.
-            if (!p)
-                return -1.0f;
-            if (p + 1 >= myargc) {
-                printf("-rippletime: no value given; the ripple clock runs free.\n");
-                return -1.0f;
-            }
-            if (!RB_ParseFloatArg(myargv[p + 1], &v)) {
-                printf("-rippletime: \"%s\" is not a finite number; "
-                       "the ripple clock runs free.\n", myargv[p + 1]);
-                return -1.0f;
-            }
-            if (v < 0.0f) {
-                printf("-rippletime: %g is negative; the ripple clock runs free.\n",
-                       (double)v);
-                return -1.0f;
-            }
-            return v;
-        }();
-        if (overrideSec >= 0.0f) rippleSec = overrideSec;
-    }
+    // DOOM-0183: ripple time + wet toggle (misc6). y gates the shader's sheen/ripple/puddle
+    // layers only (rb_wet) -- never the glow (that Le is CPU-built).
+    const float rippleSec = RippleSeconds();
     std::memcpy(&pc.misc6[0], &rippleSec, sizeof(float));
     pc.misc6[1]    = rb_wet ? 1u : 0u;
     pc.misc7[0]    = SurfaceDetailLane();
@@ -11410,6 +11422,7 @@ extern "C" void RB_Vulkan_Present(void)
         hd[1] = (uint32_t)rb_detile;
         hd[2] = (g.hdDirtIdx >= 0) ? (uint32_t)g.hdDirtIdx : 0xFFFFFFFFu;
         hd[3] = rb_filth ? 1u : 0u;
+        static_cast<ShadowUboData*>(g.shadowUboMapped)->time[0] = RippleSeconds();   // DOOM-0619
     }
 
     // DOOM-0170 L2c: flashlight cast-shadow map (Pass A). When the torch is on, render the

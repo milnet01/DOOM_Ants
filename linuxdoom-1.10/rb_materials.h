@@ -19,6 +19,8 @@ enum { RB_ALB = 0, RB_NRM, RB_RGH, RB_MET, RB_AO, RB_EMIS, RB_HGT };
 #define RB_FLAG_LIQUID_LAVA   16u
 /* Designed art, such as a computer panel: shuffling its cells to hide repeats would scramble it. */
 #define RB_FLAG_NO_DETILE 32u
+/* DOOM-0619: a model whose glowing liquid draws rising bubbles (models.csv, never the sidecar). */
+#define RB_FLAG_BUBBLES 64u
 #define RB_FLAG_BAD    0x80000000u   /* unknown flags token — caller treats row malformed */
 
 typedef struct {

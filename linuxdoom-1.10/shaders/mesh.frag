@@ -112,7 +112,8 @@ layout(set = 1, binding = 0) uniform sampler2D shadowMap;
 // every frame; lightVP only while the torch is on. r_vulkan.cpp's ShadowUboData mirrors it.
 // DOOM-0182: hd.x = the grime overlay's slot in hdTex[], hd.y = the de-tile dial, hd.z = the
 // dirt overlay's slot, hd.w = filth on.
-layout(set = 1, binding = 1) uniform ShadowUbo { mat4 lightVP; uvec4 flags; uvec4 hd; } shadow;
+// DOOM-0619: time.x = seconds on the trace's ripple clock, for the bubbles.
+layout(set = 1, binding = 1) uniform ShadowUbo { mat4 lightVP; uvec4 flags; uvec4 hd; vec4 time; } shadow;
 
 // DOOM-0273: derived surface detail on walls and flats (one-sample parallax + the derived
 // normal for the flashlight and point lights). Not in the weapon overlay build, which
@@ -155,6 +156,7 @@ vec2 hdWDx, hdWDy;   // the world coordinate's
 #define HD_POM_STEPS_FACING  12
 #define HD_POM_STEPS_GRAZING 24
 #include "formulas/hd_surface.glsl"
+#include "formulas/bubbles.glsl"        // DOOM-0619: shared with the trace
 #endif
 
 const int FLAG_FLAT    = 0x1;   // matches RB_MESH_FLAT in r_mesh.h
@@ -400,6 +402,13 @@ void main()
                 hdOcc = detileFor(mc) ? detileR(uint(mc.maps[4]), sUV, dG) : HD_TEX(mc.maps[4], sUV).r;
             if (mc.maps[5] >= 0)
                 hdGlow = detileFor(mc) ? detile(uint(mc.maps[5]), sUV, dG) : HD_TEX(mc.maps[5], sUV).rgb;
+            // DOOM-0619: rising bubbles in a marked model's liquid, pale in colour and in glow.
+            if ((mc.flags & kCtrlBubbles) != 0u)
+            {
+                const float b = bubbleAt(vWorldPos, shadow.time.x, hdGlow);
+                hdCol  = mix(hdCol, kBubblePale, b);
+                hdGlow = mix(hdGlow, kBubblePale * max(hdGlow.r, max(hdGlow.g, hdGlow.b)), b);
+            }
             if (mc.maps[2] >= 0)
                 specR = detileFor(mc) ? detileR(uint(mc.maps[2]), sUV, dG) : HD_TEX(mc.maps[2], sUV).r;
             if (mc.maps[3] >= 0)

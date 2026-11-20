@@ -223,16 +223,27 @@ int main()
     // 6.
     {
         char spr[5], file[16];
-        check(RB_ModelCsvLine("BON1,models/B.dmdl\n", spr, file, sizeof file) == 1
+        int  bub = 1;
+        check(RB_ModelCsvLine("BON1,models/B.dmdl\n", spr, file, sizeof file, &bub) == 1
                   && !std::strcmp(spr, "BON1") && !std::strcmp(file, "models/B.dmdl"),
               "a row gives its sprite and file");
-        check(RB_ModelCsvLine("  # note\n", spr, file, sizeof file) == 0, "a comment is no row");
-        check(RB_ModelCsvLine("\r\n", spr, file, sizeof file) == 0, "a blank line is no row");
-        check(RB_ModelCsvLine("BON,x.dmdl\n", spr, file, sizeof file) == -1, "a short sprite name is malformed");
-        check(RB_ModelCsvLine("BON1\n", spr, file, sizeof file) == -1, "no file column is malformed");
-        check(RB_ModelCsvLine("BON1,\n", spr, file, sizeof file) == -1, "an empty file is malformed");
-        check(RB_ModelCsvLine("BON1,a b\n", spr, file, sizeof file) == -1, "a second word is malformed");
-        check(RB_ModelCsvLine("BON1,models/too-long-path.dmdl\n", spr, file, sizeof file) == -1,
+        check(bub == 0, "a row with no third word does not bubble");
+        check(RB_ModelCsvLine("BON1,models/B.dmdl,bubbles\r\n", spr, file, sizeof file, &bub) == 1
+                  && !std::strcmp(file, "models/B.dmdl") && bub == 1,
+              "the word bubbles marks the row and stays out of the file name");
+        check(RB_ModelCsvLine("BON1,models/B.dmdl,bubble\n", spr, file, sizeof file, &bub) == -1,
+              "any other third word is malformed");
+        check(RB_ModelCsvLine("BON1,models/B.dmdl,\n", spr, file, sizeof file, &bub) == -1,
+              "an empty third word is malformed");
+        check(RB_ModelCsvLine("BON1,models/B.dmdl,bubbles,x\n", spr, file, sizeof file, &bub) == -1,
+              "a fourth word is malformed");
+        check(RB_ModelCsvLine("  # note\n", spr, file, sizeof file, &bub) == 0, "a comment is no row");
+        check(RB_ModelCsvLine("\r\n", spr, file, sizeof file, &bub) == 0, "a blank line is no row");
+        check(RB_ModelCsvLine("BON,x.dmdl\n", spr, file, sizeof file, &bub) == -1, "a short sprite name is malformed");
+        check(RB_ModelCsvLine("BON1\n", spr, file, sizeof file, &bub) == -1, "no file column is malformed");
+        check(RB_ModelCsvLine("BON1,\n", spr, file, sizeof file, &bub) == -1, "an empty file is malformed");
+        check(RB_ModelCsvLine("BON1,a b\n", spr, file, sizeof file, &bub) == -1, "a second word is malformed");
+        check(RB_ModelCsvLine("BON1,models/too-long-path.dmdl\n", spr, file, sizeof file, &bub) == -1,
               "a path too long is malformed, never cut short");
     }
 

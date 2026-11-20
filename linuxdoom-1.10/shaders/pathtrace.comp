@@ -674,6 +674,7 @@ vec3 wetSheen(vec3 hitP, vec3 n) {
 #define HD_POM_STEPS_FACING  16
 #define HD_POM_STEPS_GRAZING 32
 #include "formulas/hd_surface.glsl"
+#include "formulas/bubbles.glsl"        // DOOM-0619: shared with mesh.frag
 
 // DOOM-0141: sample the classic DOOM sky panorama for a primary ray. Mirrors the
 // raster path (mesh.frag FLAG_SKY): a cylindrical projection keyed on the view yaw
@@ -1352,6 +1353,11 @@ PrimaryHit primaryHitSurface(Verts vb, uint i0, bool isSprite, vec2 hitUV, vec3 
         h.albedo = hdAlbedo(h.mc, h.id, hitUV, h.sUV);   // HD if usePBR, else paletted
     }
     hdFine(false);
+    // DOOM-0619: rising bubbles in a marked model's liquid. The glow map only says where the
+    // liquid is; this view adds no HD glow to a model (see hdEmissive).
+    if (h.mc.usePBR != 0u && (h.mc.flags & kCtrlBubbles) != 0u)
+        h.albedo = mix(h.albedo, kBubblePale,
+                       bubbleAt(h.hitP, rippleTime(), hdEmissive(h.mc, h.id, h.sUV)));
     // DOOM-0181 L4: fetch AO ONCE here (de-tiled to match albedo/normal; §4.3) — it feeds
     // both the crevice-pooled filth in applyGrime and the ambient term. Paletted / no-AO
     // hits fall back to hdAO (== 1.0 there, so no crevice darkening). Mode 6 needs it

@@ -8,6 +8,11 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **The bubbles in Ultra's health-bonus flask rise** (DOOM-0619)
+  Small pale bubbles drift up through the blue liquid, in the
+  rasterised and the ray-traced view alike. They used to be painted
+  on and sat still.
+
 - **The game now adjusts its own resolution to hold the frame rate** (DOOM-0596)
   Render Scale has a new choice, Dynamic, and it is the default. In a
   heavy scene the game draws a little smaller, and larger again when

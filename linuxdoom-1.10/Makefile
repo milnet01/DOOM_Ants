@@ -455,6 +455,12 @@ $(SHADER_DIR)/pathtrace.comp.spv.h \
 $(SHADER_DIR)/mesh.frag.spv.h $(SHADER_DIR)/mesh_overlay.frag.spv.h: \
 		$(SHADER_DIR)/formulas/model_fade.glsl
 
+# DOOM-0619 — the rising bubbles are shared by the path tracer and the raster mesh.frag.
+# Same missing-auto-dep hazard as the rules above.
+$(SHADER_DIR)/pathtrace.comp.spv.h \
+$(SHADER_DIR)/mesh.frag.spv.h $(SHADER_DIR)/mesh_overlay.frag.spv.h: \
+		$(SHADER_DIR)/formulas/bubbles.glsl
+
 # DOOM-0440 — lum and the previous-frame reprojection are shared by the SVGF passes;
 # DOOM-0609 — the sky marker in the motion vector by the composite and the upscaler.
 $(SHADER_DIR)/svgf_temporal.comp.spv.h $(SHADER_DIR)/svgf_atrous.comp.spv.h \
