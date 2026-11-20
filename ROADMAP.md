@@ -20788,6 +20788,21 @@ in CLAUDE.md describes.
   The packed art still holds the old barrel; the loader sees the PNGs
   are newer and reads them, so a re-bake of the pack is only a
   load-time matter.
+  2026-11-20, the two captures that were owed, Ultra, Scratchpad
+  d0641/c4. Traced view of the group (E1M9 `-576 -1250 287`, E4M5
+  `1500 260 93`) and 820 units away (E1M1 `495 -3193 354`, both views).
+  Found: in the traced view the barrel loses its paint. The dark bands
+  and the rust that are strong in the rasterised picture (d0641/c2)
+  read as pale stripes on a bright olive drum. At 820 units the
+  rasterised barrel is a dark drum whose bands barely show, and the
+  traced one is a flat pale-green block. Cause not looked for. So the
+  repaint meets its far-away aim in neither view yet, and the traced
+  view needs its own look.
+  A trap met on the way: the `-warpto: player placed` log line prints
+  the angle times 256/360, not in degrees. Asking for a logged figure
+  turns the camera short.
+  The packed art was re-baked the same day (6 pictures); the pack is
+  not tracked.
   **Layman:** The 3D barrels get rust and stronger stripes, and come in a few different versions, each turned its own way, so two barrels side by side do not look the same.
   Kind: feature.
   Source: user-request-2026-11-20.
