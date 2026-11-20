@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=635 -->
+<!-- ants-roadmap-id-high-water: DOOM=636 -->
 
 # Roadmap
 
@@ -20472,6 +20472,19 @@ in CLAUDE.md describes.
   Kind: fix.
   Source: experirays-review-2026-11-19.
   Lanes: renderer.
+
+- ✅ [DOOM-0636] **Write the run file's `schema` from FLED_SCHEMA, not a literal 1.**
+  RL_BuildHeader in run_ledger.c appends the text {"schema":1 by hand.
+  FrameLedger's FLED-0040 (accepted 2026-11-20) defines FLED_SCHEMA in
+  frameledger.h as the lowest schema the header's own lines are valid
+  under, and asks an engine to write it. Both are 1 today, so no file
+  changes; the literal goes wrong when a vendored header needs schema 2.
+  Done 2026-11-20: RL_BuildHeader writes FLED_SCHEMA. The header text is
+  unchanged; run_ledger_test pins it and passes.
+  **Layman:** A one-line tidy-up so our timing files always carry the right format number after a FrameLedger update.
+  Kind: chore.
+  Source: peer-frameledger-2026-11-20.
+  Lanes: tooling.
 
 ## 0.13.0 — The player's experience
 

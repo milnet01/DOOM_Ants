@@ -108,7 +108,12 @@ static void RL_BuildHeader (double load_end, double gpu_busy_end)
     char* end = rl.header + sizeof rl.header;
     char text[64];
 
-    RL_Append (&p, end, "{\"schema\":1");
+    // FLED_SCHEMA is the schema frameledger.h's own lines are valid under (FLED-0040).
+#define RL_STR2(x) #x
+#define RL_STR(x) RL_STR2(x)
+    RL_Append (&p, end, "{\"schema\":" RL_STR(FLED_SCHEMA));
+#undef RL_STR
+#undef RL_STR2
     RL_AppendString (&p, end, "run_id", f->run_id);
     RL_AppendString (&p, end, "engine", "doom-ants");
     RL_Append (&p, end, ",\"tool\":{\"name\":\"linuxxdoom\",\"version\":");
