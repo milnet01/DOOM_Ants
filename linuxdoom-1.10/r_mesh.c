@@ -47,6 +47,7 @@
 #include "seg_project.h" // DOOM-0180 RB_ProjectOnLine (seg -> its linedef's line)
 #include "sky_seal.h"    // DOOM-0322 sky lid height, seals, upper-step kind
 #include "step_wall.h"   // DOOM-0500 step walls on both sides, clamped
+#include "flat_uv.h"     // DOOM-0634 which texel of a flat lands on a map point
 #include "sprite_cap.h"  // DOOM-0459 nearest-first order past the sprite cap
 #include "r_backend.h"  // rendermode: pickup models are Ultra art (DOOM-0539)
 #include "r_mesh.h"
@@ -681,14 +682,19 @@ static void emit_cap_poly(builder_t* bld, const poly_t* p, fixed_t height,
     float z  = height / (float)FRACUNIT;
     float nz = up ? 1.0f : -1.0f;
     rb_vertex_t pivot;
+    float u, v;
     int k;
     if (p->n < 3) return;
-    pivot = mkv(p->x[0], p->y[0], z, 0.0f, 0.0f, nz, p->x[0], p->y[0], flatnum, RB_MESH_FLAT, light);
+    RB_FlatUV(p->x[0], p->y[0], &u, &v);
+    pivot = mkv(p->x[0], p->y[0], z, 0.0f, 0.0f, nz, u, v, flatnum, RB_MESH_FLAT, light);
     pivot.vsector = secidx; pivot.vplane = plane;
     for (k = 1; k < p->n - 1; k++)
     {
-        rb_vertex_t va = mkv(p->x[k],   p->y[k],   z, 0.0f, 0.0f, nz, p->x[k],   p->y[k],   flatnum, RB_MESH_FLAT, light);
-        rb_vertex_t vb = mkv(p->x[k+1], p->y[k+1], z, 0.0f, 0.0f, nz, p->x[k+1], p->y[k+1], flatnum, RB_MESH_FLAT, light);
+        rb_vertex_t va, vb;
+        RB_FlatUV(p->x[k], p->y[k], &u, &v);
+        va = mkv(p->x[k],   p->y[k],   z, 0.0f, 0.0f, nz, u, v, flatnum, RB_MESH_FLAT, light);
+        RB_FlatUV(p->x[k+1], p->y[k+1], &u, &v);
+        vb = mkv(p->x[k+1], p->y[k+1], z, 0.0f, 0.0f, nz, u, v, flatnum, RB_MESH_FLAT, light);
         va.vsector = vb.vsector = secidx; va.vplane = vb.vplane = plane;
         if (up) push_tri(bld, pivot, va, vb);
         else    push_tri(bld, pivot, vb, va);   // flip winding so -z faces down

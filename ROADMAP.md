@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=639 -->
+<!-- ants-roadmap-id-high-water: DOOM=640 -->
 
 # Roadmap
 
@@ -20529,7 +20529,7 @@ in CLAUDE.md describes.
   Source: frameledger-release-2026-11-19.
   Lanes: build.
 
-- 📋 [DOOM-0634] **Check whether the 3D views draw floor and ceiling pictures mirrored north to south.**
+- ✅ [DOOM-0634] **Check whether the 3D views draw floor and ceiling pictures mirrored north to south.**
   Found while reviewing ExperiRays' flats (2026-11-19). r_mesh.c gives
   a flat vertex u = x and v = +y in map units (the mkv call in the cap
   fan). Vanilla's R_MapPlane uses ds_yfrac = -viewy - ..., so a flat's
@@ -20538,6 +20538,19 @@ in CLAUDE.md describes.
   capture of a flat with readable direction (FLOOR1_6's arrows, or a
   teleporter pad) in Classic against Solid at the same spot. A mirrored
   flat would also mirror its HD art, so fix both together.
+  2026-11-20: confirmed and fixed. E3M5's skull pit (sector 158,
+  FLAT5_6), camera 1568 600 facing 90: Classic drew each skull's crown
+  to the north, Solid to the south. The cap fan now takes its texture
+  coordinate from RB_FlatUV (flat_uv.h), which gives v = -y;
+  tests/flat_uv_test.cpp holds it against Classic's own span
+  arithmetic and failed before the fix. After it, Solid's rasterised
+  and traced views both match Classic at that spot. HD art is read at
+  the same coordinates, so it turned with it; no Ultra capture was
+  taken. Not run: the -shotcompare golden, which is 640x360 and the
+  hidden display's window gives 640x299. It shows E1M1's floor, so
+  expect it to need a re-bless. Pictures:
+  Scratchpad/DOOM_Ants/d0634 (pit.png before, pit-after.png,
+  pit-traced.png).
   **Layman:** Floor and ceiling pictures may be flipped in Solid and Ultra compared with the original game; this checks, and fixes it if so.
   Kind: investigate.
   Source: experirays-review-2026-11-19.
@@ -20644,6 +20657,32 @@ in CLAUDE.md describes.
   **Layman:** With the packed art, a few end-of-frame steps of the ray-traced view take longer than with the loose pictures, though they never read that art; the whole frame is no slower.
   Kind: investigate.
   Source: DOOM-0637-frame-time-AB-2026-11-20.
+  Lanes: renderer.
+
+- 📋 [DOOM-0640] **Find why Dynamic render scale keeps falling to its lowest size and climbing back in the rasterised view at a 4K-class window.**
+  Seen 2026-11-20 at 904535e, dev build, hidden display, Ultra, E1M1
+  start, window 4608x2400, -inspect -freeze, the user having said the
+  GPU was quiet. Kit: Scratchpad/DOOM_Ants/d0596/run.sh; logs in its
+  runs/q4k-*.
+  Traced view, 60 s: two moves, 50% to 37%, then 37 FPS throughout.
+  Settled, above the 30 floor.
+  Rasterised view, 60 s and 75 s: 28 and 52 moves. It holds 60 to 62%
+  at 81 to 87 FPS for up to 20 s, then one-second averages fall to 26
+  to 50 FPS, the scale drops to 33 to 43% in one move, and it climbs
+  back in steps. Four times in the second run it stepped up to 65% at
+  about 47 FPS just before the drop.
+  Unverified cause. DOOM-0637's fixed-scale run files at the same
+  window show bursts of slow frames with the GPU span itself at 26 to
+  42 ms against a 7 ms median, in two of three runs checked and none
+  in the third, so something loads the GPU in bursts of up to 20
+  frames. The controller steers by the fastest of the last eight
+  frames. Open: whether the bursts come from outside the engine, from
+  the hidden display, or from the engine; and whether the real 4K
+  display shows the same. At a 1708x800 window both views climbed to
+  100% and stayed.
+  **Layman:** In the rasterised view on a very large window, the automatic picture size does not settle: every ten seconds or so it drops to its smallest and works its way back up.
+  Kind: investigate.
+  Source: DOOM-0596-quiet-gpu-runs-2026-11-20.
   Lanes: renderer.
 
 ## 0.13.0 — The player's experience

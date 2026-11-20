@@ -131,6 +131,11 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Floor and ceiling pictures face the same way in Solid and Ultra as in Classic** (DOOM-0634)
+  The 3D views drew every floor and ceiling picture mirrored north to
+  south, so skulls, arrows and consoles pointed the wrong way. They
+  now match the original game, HD art included.
+
 - **Flickering, strobing and glowing lights work in Solid and Ultra, and so do light switches** (DOOM-0629)
   Walls and floors kept the brightness they had when the level loaded,
   so only monsters and items flickered. They now follow their room's
