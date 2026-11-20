@@ -20824,6 +20824,31 @@ in CLAUDE.md describes.
   mirrored in r_vulkan.cpp under DOOM-0331 INV-4. Nothing adapts
   exposure to a dark room. Owning specs: DOOM-0170, DOOM-0331,
   DOOM-0009, DOOM-0011, DOOM-0617.
+  User 2026-11-20: four more reference pictures, "not to copy", that
+  "show off dark rooms (using a flashlight), gore, flames, specular
+  highlights". Another DOOM mod; not to be committed. Files:
+  Scratchpad d0642/ref-candle.png and, in ~/Pictures/ClaudePaste/,
+  paste_20261120_182026_426_6beb24e3.png (torch),
+  paste_20261120_182035_998_a3b5b84f.png (panels and gore),
+  paste_20261120_182047_807_94a1bc56.png (lit room).
+  What they show:
+  - Candle: the room is black. One candle lights a small pool: the
+    near edge of a pillar, a patch of blood, and warm streaks on a
+    wet floor that point at the flame. The far wall is barely there.
+  - Torch: a tall flame with a soft glow around it and sparks. It
+    lights the wall beside it and little else.
+  - Panels and gore: glowing wall panels are bright themselves but
+    light the room only a little. The player's torch makes a soft
+    circle on the far wall and floor; blood and gore show inside
+    the circle and vanish outside it.
+  - Lit room: where a room does have light, it is plainly lit. The
+    dark floor carries a hard white gleam, a chrome column carries
+    sharp highlights, and the slime glows green.
+  What this adds to the look wanted: a dark room is played with the
+  player's own torch, so the torch must be good enough to play by;
+  a small source lights a small pool; a lit room still reads as
+  lit. The gore is DOOM-0515 and DOOM-0576, the flames DOOM-0209,
+  the gleam DOOM-0103.
   **Layman:** A room with no lamp, glowing panel, window or sky should be quite dark instead of evenly lit from nowhere.
   Kind: investigate.
   Source: user-request-2026-11-20.
