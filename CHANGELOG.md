@@ -136,6 +136,12 @@ All notable changes to DOOM_Ants are documented here. The format follows
   south, so skulls, arrows and consoles pointed the wrong way. They
   now match the original game, HD art included.
 
+- **Outdoor steps and their switches sit at the right height in Solid and Ultra** (DOOM-0635)
+  On a step between two open-sky areas of different heights, the wall
+  picture was drawn too low or too high. A switch on such a step, as
+  in E3M6, could end up down at the floor. It now sits where the
+  original game draws it.
+
 - **Flickering, strobing and glowing lights work in Solid and Ultra, and so do light switches** (DOOM-0629)
   Walls and floors kept the brightness they had when the level loaded,
   so only monsters and items flickered. They now follow their room's

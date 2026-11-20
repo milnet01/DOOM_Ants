@@ -538,7 +538,7 @@ static void emit_wall(builder_t* bld, seg_t* seg, fixed_t bottomz, fixed_t topz,
         int   lf   = seg->linedef->flags;
         // vtop = texel V at the top edge; anchorsec/anchorplane = the sector
         // plane the texture is pegged to (the top edge, the bottom edge, or --
-        // for a DONTPEGBOTTOM lower -- the front ceiling). On a door/lift that
+        // for a DONTPEGBOTTOM lower -- a ceiling). On a door/lift that
         // anchor plane slides and the texture rides with it (DOOM-0067).
         switch (pegkind)
         {
@@ -549,8 +549,13 @@ static void emit_wall(builder_t* bld, seg_t* seg, fixed_t bottomz, fixed_t topz,
           case PEG_LOWER:   // default: texture top at the step top (back floor)
             if (lf & ML_DONTPEGBOTTOM)
             {
-                vtop = seg->frontsector->ceilingheight / (float)FRACUNIT - zt;
-                anchorsec = botsec; anchorplane = RB_PLANE_CEIL;   // front ceiling
+                // The front ceiling, or the back one under two skies (step_wall.h).
+                const sector_t* peg = seg->backsector
+                    && RB_LowerPegFromBack(seg->frontsector->ceilingpic == skyflatnum,
+                                           seg->backsector->ceilingpic == skyflatnum)
+                    ? seg->backsector : seg->frontsector;
+                vtop = peg->ceilingheight / (float)FRACUNIT - zt;
+                anchorsec = (int)(peg - sectors); anchorplane = RB_PLANE_CEIL;
             }
             else { vtop = 0.0f; anchorsec = topsec; anchorplane = topplane; }
             break;

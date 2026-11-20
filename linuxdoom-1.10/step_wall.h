@@ -29,4 +29,13 @@ static int RB_UpperStepBottom(int ownCeil, int otherCeil)
     return otherCeil < ownCeil ? otherCeil : ownCeil;
 }
 
+// DOOM-0635: which ceiling a lower-unpegged step's texture hangs from. Classic
+// hangs it from the front ceiling, except where both ceilings are sky: there
+// R_StoreWallRange sets worldtop = worldhigh first, so it hangs from the back
+// one. Nonzero means the back ceiling.
+static int RB_LowerPegFromBack(int frontCeilIsSky, int backCeilIsSky)
+{
+    return frontCeilIsSky && backCeilIsSky;
+}
+
 #endif

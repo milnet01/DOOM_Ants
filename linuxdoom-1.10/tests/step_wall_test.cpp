@@ -77,5 +77,24 @@ int main()
               "2: r_mesh.c places an upper step's bottom edge with RB_UpperStepBottom");
     }
 
+    // ---- 3: DOOM-0635, the ceiling a lower-unpegged step hangs from --------
+    // Photographed 2026-11-20 at E3M6 linedef 662 (SW1BLUE, front ceiling 96,
+    // back ceiling 256, both sky), camera 896,3010 facing north: Classic drew
+    // the switch at eye level, Solid at the floor.
+    {
+        check_eq_int(RB_LowerPegFromBack(1, 1), 1,
+                     "3: both ceilings sky -> the texture hangs from the back ceiling");
+        check_eq_int(RB_LowerPegFromBack(1, 0), 0,
+                     "3: only the front ceiling sky -> the front ceiling");
+        check_eq_int(RB_LowerPegFromBack(0, 1), 0,
+                     "3: only the back ceiling sky -> the front ceiling");
+        check_eq_int(RB_LowerPegFromBack(0, 0), 0,
+                     "3: neither sky -> the front ceiling");
+
+        const std::string src = slurp(DOOM_TESTS_ROOT "/r_mesh.c");
+        check(src.find("RB_LowerPegFromBack(") != std::string::npos,
+              "3: r_mesh.c picks a lower-unpegged step's ceiling with RB_LowerPegFromBack");
+    }
+
     return check_summary("step_wall_test");
 }

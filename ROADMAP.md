@@ -20556,7 +20556,7 @@ in CLAUDE.md describes.
   Source: experirays-review-2026-11-19.
   Lanes: renderer.
 
-- 📋 [DOOM-0635] **Hang a lower-unpegged step's texture from the far ceiling where both ceilings are sky, as the original does.**
+- ✅ [DOOM-0635] **Hang a lower-unpegged step's texture from the far ceiling where both ceilings are sky, as the original does.**
   Found answering ExperiRays (2026-11-19), by reading; not yet shown
   on screen. Vanilla r_segs.c R_StoreWallRange sets worldtop = worldhigh
   when the front and back ceilings are both sky, before the
@@ -20566,6 +20566,16 @@ in CLAUDE.md describes.
   different heights. Check first: find such a line in the IWADs and
   compare Classic with Solid at the same spot; then fix the anchor, and
   keep the per-frame peg (vtexsec) on the back ceiling.
+  2026-11-20: shown and fixed. A scan of doom.wad and doom2.wad found
+  113 such sides (Scratchpad/DOOM_Ants/d0635/scan.py). E3M6 linedef
+  662 (SW1BLUE, front ceiling 96, back 256), camera 896 3010 facing
+  90: Classic drew the switch at eye level, Solid at the floor.
+  emit_wall now asks RB_LowerPegFromBack (step_wall.h) and pegs to
+  the back sector's ceiling under two skies, anchor sector included;
+  step_wall_test holds the rule and failed before the fix. After it,
+  Solid's rasterised view matches Classic at that spot. Not captured:
+  the traced view, Ultra, and a moving sky ceiling. Pictures:
+  Scratchpad/DOOM_Ants/d0635 (pair.png before, pair-after.png).
   **Layman:** On some outdoor steps the wall picture sits at the wrong height in Solid and Ultra compared with the original game.
   Kind: fix.
   Source: experirays-review-2026-11-19.
