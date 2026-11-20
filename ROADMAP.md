@@ -20469,7 +20469,7 @@ in CLAUDE.md describes.
   Source: user-request-2026-11-19.
   Lanes: renderer.
 
-- 📋 [DOOM-0633] **Move the vendored frameledger.h and its analyser from v0.2.0 to v0.7.0.**
+- ✅ [DOOM-0633] **Move the vendored frameledger.h and its analyser from v0.2.0 to v0.7.0.**
   frameledger v0.7.0 was published 2026-11-19 (tag v0.7.0, commit
   64690fc). Its session reports: archive frameledger-v0.7.0.zip, SHA-256
   e03ce95e1bf6fe81dbee7e0787c5c370edde98fb8acfe638c0d15c01f89ef1a2;
@@ -20478,6 +20478,11 @@ in CLAUDE.md describes.
   analyser: `report FILE --html PAGE`, the picture report. Unverified
   here: check the checksum and diff the header when copying. Update
   docs/standards/dependencies.md in the same commit.
+  Done 2026-11-20. The v0.7.0 archive's SHA-256 matched the reported
+  one. Its header differs from ours by the FLED_VERSION define and one
+  comment, as reported. Only the header is in this repository; the
+  analyser is not, so its move is the new pin in
+  docs/standards/dependencies.md. make and make test pass.
   **Layman:** The frame-timing tool we bundle has a newer release; this brings our copy up to date.
   Kind: chore.
   Source: frameledger-release-2026-11-19.
