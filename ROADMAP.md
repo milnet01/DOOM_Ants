@@ -20285,7 +20285,7 @@ in CLAUDE.md describes.
   Source: user-request-2026-11-19.
   Lanes: renderer, assets.
 
-- 📋 [DOOM-0628] **Stream Ultra's HD art in and out of video memory as the player moves through a level, paced to the drive it loads from.**
+- 💭 [DOOM-0628] **Stream Ultra's HD art in and out of video memory as the player moves through a level, paced to the drive it loads from.**
   User 2026-11-17: "Can we perhaps build a system that streams the level
   data in and out of memory keeping in mind what type of drives it will
   run from as the player moves through the level?" What fills memory is
@@ -20313,6 +20313,19 @@ in CLAUDE.md describes.
   after it, on its measured load times. The load timings that led
   there are on DOOM-0632. They show the drive matters most on a first
   read from a hard drive, through seeks between small files.
+  Shelved 2026-11-20, the user's call; no spec written. Measured after
+  DOOM-0632: the stored pack, every committed HD picture in the form
+  the card holds, is 249.4 MB against the 1024 MB limit (kHdBudgetMB);
+  E2M2's HD load is 0.14 to 0.29 s cached and 0.9 to 4.0 s on a first
+  read (shared machine). User 2026-11-20: "I still want us to look at
+  this as it isn't about level size but rather saving frame times, but
+  we can shelve it for now and if we need to bring it is again, we
+  can." So the reason to revive it is frame time, not load time or
+  memory alone. Unverified: whether art that is loaded but not drawn
+  costs any frame time. DOOM-0637's frame-time A/B (156.4 MB packed
+  against 814.4 MB of PNG art, same scene) is the first evidence either
+  way; read it before reviving this. DOOM-0631 goes ahead without the
+  part that depended on this (sharpening a texture as it streams in).
   **Layman:** Instead of loading every high-detail texture and prop when a level starts, the game loads what is near the player and lets go of what is far away, faster or slower depending on the drive.
   Kind: feature.
   Source: user-request-2026-11-17.
@@ -20446,6 +20459,11 @@ in CLAUDE.md describes.
   triangles, these levels have under a third of a million, and it
   cannot recover more than the ceiling above. The spec records it
   under alternatives.
+  2026-11-20: DOOM-0628 (streaming) is shelved, the user's call. This
+  item's scope loses "blend textures as streaming brings sharper
+  mips": with no streaming, no texture arrives late. Still in scope:
+  blending the model-to-sprite swap, and drawing far relief walls flat
+  with a blended swap.
   **Layman:** Things far from the player are drawn from simpler, cheaper versions, and the swap to the detailed version is blended so you never see it happen.
   Kind: feature.
   Source: user-request-2026-11-19.
@@ -20520,6 +20538,11 @@ in CLAUDE.md describes.
      docs/standards/performance.md. Never run.
   Pin render_scale_dynamic 0. A miss is a defect against DOOM-0632's
   spec; file it as its own item.
+  2026-11-20: the frame-time A/B here also bears on DOOM-0628
+  (streaming, shelved). The user's reason for streaming is frame time.
+  The A/B compares the same scene with 156.4 MB and 814.4 MB of art
+  loaded, so it shows whether the amount of loaded art moves frame
+  time at all.
   **Layman:** Two speed checks on the packed art were only ever run while other jobs shared the machine; this repeats them when it is quiet.
   Kind: perf.
   Source: DOOM-0632-close-2026-11-20.
