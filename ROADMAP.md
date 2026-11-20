@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=638 -->
+<!-- ants-roadmap-id-high-water: DOOM=639 -->
 
 # Roadmap
 
@@ -20571,7 +20571,7 @@ in CLAUDE.md describes.
   Source: peer-frameledger-2026-11-20.
   Lanes: tooling.
 
-- 📋 [DOOM-0637] **Measure the packed HD art's two unproven budgets on a quiet machine: first-read load and frame time.**
+- ✅ [DOOM-0637] **Measure the packed HD art's two unproven budgets on a quiet machine: first-read load and frame time.**
   DOOM-0632 closed 2026-11-20 with INV-10 part-measured. Its spec's
   section 6 sets four budgets. Two were met on a shared machine: E2M2
   cached HD load (0.14 to 0.29 s against 1.0 s) and E2M2's HD set
@@ -20589,6 +20589,24 @@ in CLAUDE.md describes.
   The A/B compares the same scene with 156.4 MB and 814.4 MB of art
   loaded, so it shows whether the amount of loaded art moves frame
   time at all.
+  Measured 2026-11-20 at 904535e, the user having said the GPU was
+  quiet (load average under 2; frameledger still warned that the GPU
+  read above 20% busy before some runs).
+  1. E1M1 Ultra, first read from the hard drive, release build, five
+     interleaved rounds: 0.60 to 0.65 s from the pack against 3.0 s.
+     From PNGs: 5.6 to 9.8 s. Met.
+  2. Frame time, E2M2 start, window 4608x2400 at render_scale 50,
+     three interleaved runs a side, frameledger compare, PNGs then
+     pack. Dev build, not the spec's release build: -inspect -freeze
+     hold the scene still. Rasterised, 3000 frames: frame/wall 7.57 to
+     7.36 ms, gpu/scene 4.93 to 4.67 ms; nothing slower. Traced, 1500
+     frames: frame/wall 41.0 to 41.4 ms, judged unchanged; gpu/trace
+     23.4 to 22.9 ms. Met. Five finishing passes read slower in the
+     traced view: DOOM-0639.
+  For DOOM-0628: with 814.4 MB loaded against 156.4 MB, frame time
+  moved by 0.2 ms rasterised and not measurably traced. The two arms
+  also differ in picture format, so this is not the amount alone.
+  Kit: Scratchpad/DOOM_Ants/d0637/ab.sh.
   **Layman:** Two speed checks on the packed art were only ever run while other jobs shared the machine; this repeats them when it is quiet.
   Kind: perf.
   Source: DOOM-0632-close-2026-11-20.
@@ -20608,6 +20626,25 @@ in CLAUDE.md describes.
   Kind: investigate.
   Source: DOOM-0631-captures-2026-11-20.
   Lanes: renderer, assets.
+
+- 📋 [DOOM-0639] **Find why the traced view's finishing passes read slower with the packed HD art than with PNGs.**
+  Seen 2026-11-20 in DOOM-0637's A/B: Ultra, E2M2 start, traced view,
+  window 4608x2400 at render_scale 50, dev build at 904535e, three
+  interleaved runs a side, 1500 frames each. Median ms, PNGs then pack:
+  gpu/taau 1.476 to 1.85, gpu/composite 0.778 to 0.997, gpu/bloom
+  0.319 to 0.396, gpu/tonemap 0.187 to 0.245, gpu/atrous 9.05 to 9.45.
+  Each arm's three runs agree to 0.02 ms, and the order alternated, so
+  it follows the arm. gpu/trace went the other way, 23.4 to 22.9, and
+  frame/wall is unchanged (41.0 to 41.4, inside the runs' spread). The
+  rasterised view shows nothing like it (composite 0.61 to 0.63).
+  Unverified cause. The slower passes do not sample HD art. Candidates:
+  how GPU timestamps split time between neighbouring passes, and where
+  the screen-sized images land in video memory after a smaller art
+  load. Run files: Scratchpad/DOOM_Ants/d0637 (v6-*.csv; ab.sh reruns).
+  **Layman:** With the packed art, a few end-of-frame steps of the ray-traced view take longer than with the loose pictures, though they never read that art; the whole frame is no slower.
+  Kind: investigate.
+  Source: DOOM-0637-frame-time-AB-2026-11-20.
+  Lanes: renderer.
 
 ## 0.13.0 — The player's experience
 

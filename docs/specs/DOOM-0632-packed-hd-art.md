@@ -1,8 +1,8 @@
 <!-- ants-spec-format: 1 -->
 # DOOM-0632 — Ship Ultra's HD art packed for the graphics card, so a level loads without unpacking PNGs
 
-**Status:** Shipped (2026-11-20). B1 to B6 built; the user passed the B6 pictures. Two of § 6's
-budgets are unmeasured on a quiet machine: DOOM-0637.
+**Status:** Shipped (2026-11-20). B1 to B6 built; the user passed the B6 pictures. § 6's
+budgets are met; DOOM-0637 holds the last two measurements.
 **Kind:** feature.
 **Source:** ROADMAP DOOM-0632 (user requests 2026-11-19).
 **Serves:** DOOM-0279 (frame cost: the art takes less video memory).
