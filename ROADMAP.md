@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=642 -->
+<!-- ants-roadmap-id-high-water: DOOM=643 -->
 
 # Roadmap
 
@@ -20961,9 +20961,30 @@ in CLAUDE.md describes.
   Found while writing it: sprites take no baked bounce in either
   view, and a candle's light never bounces (the bake holds wall and
   floor emitters only).
+  2026-11-21: the user read the design and answered its three
+  questions: the old light stays as a test switch only; the torch's
+  starting state is decided at B7's sheets; flicker drives lamps as
+  its own item after B7 (DOOM-0643). B1 is built: the candle and
+  candelabra sprites are on the faint-emit list (sprite_glows in
+  r_mesh.c). E2M1 start `0 48 90` under -sourcedlight, Ultra and
+  Solid, -rtview 0 and 6: the corridor was black and is now lit by
+  its three candles. Pictures: Scratchpad d0642/b1-*-before-after.png.
+  The user's look at them is owed. Next: B2, the screen sheet.
   **Layman:** A room with no lamp, glowing panel, window or sky should be quite dark instead of evenly lit from nowhere.
   Kind: investigate.
   Source: user-request-2026-11-20.
+  Lanes: renderer.
+
+- 📋 [DOOM-0643] **A room's flicker and strobe drive the lamps and candles in it.**
+  Once DOOM-0642 removes the light with no source (its B7), a room
+  whose map light special flickers or strobes goes still, because
+  the special changes only the room's brightness number. The lamps,
+  candles and emitting walls in such a room should follow the
+  special instead. User, 2026-11-21: yes, as its own item after
+  DOOM-0642 B7. Spec: docs/specs/DOOM-0642-honest-light.md section 3.
+  **Layman:** Rooms that flicker or strobe in the 1993 game keep flickering once their light comes from lamps instead of from nowhere.
+  Kind: feature.
+  Source: user-request-2026-11-21.
   Lanes: renderer.
 
 ## 0.13.0 — The player's experience

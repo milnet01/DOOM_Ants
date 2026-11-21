@@ -2379,6 +2379,9 @@ static boolean sprite_glows(spritenum_t s)
         case SPR_BKEY: case SPR_RKEY: case SPR_YKEY:          // keycards
         case SPR_BSKU: case SPR_RSKU: case SPR_YSKU:          // skull keys
         case SPR_STIM: case SPR_MEDI:                         // stimpack / medikit
+        // DOOM-0642: not collectibles. A candle flame is too few texels for the
+        // emitter gate, so these two take the same faint path or cast no light.
+        case SPR_CAND: case SPR_CBRA:                         // candle / candelabra
             return true;
         default:
             return false;

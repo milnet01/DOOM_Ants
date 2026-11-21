@@ -17,6 +17,8 @@
 //   5. DOOM-0157: with allowFaint (a sprite_glows collectible), a few-texel glow that
 //      the strict gate rejects self-illuminates FAINTLY in its own colour — but a
 //      genuinely dark tile still stays dark.
+//   6. DOOM-0642: a candle-sized tile casts nothing under the strict gate and casts
+//      light through the faint path.
 //
 // Intensity/threshold *tuning* (how faint is "faint", the exact peak level) is an
 // on-HW dial; this test locks the STRUCTURE (who qualifies, and in what colour) that
@@ -159,6 +161,25 @@ int main()
                                                 /*allowFaint=*/true);
         check(!emitter && le[1] == 0.0f,
               "allowFaint + fully dark: still REJECTED (nothing bright to emit)");
+    }
+
+    // --- DOOM-0642 INV-2: a candle's flame is too small for the peak gate ------------
+    // CANDA0 is 16x15 with two near-fullbright texels, so the strict gate gives it no
+    // light and a room lit only by candles is black. Through the faint path (r_mesh.c
+    // sprite_glows lists the candle and the candelabra) the flame sets its light.
+    {
+        const int w = 16, h = 15;
+        auto tile = make_tile(w, h, PAL_BLACK, PAL_WHITE, 2);
+        float strict[3] = { -1, -1, -1 };
+        bool e0 = emis::derive_material_le(tile.data(), w, 0, 0, w, h, pal, strict);
+        check(!e0 && strict[0] == 0.0f, "candle (strict gate): REJECTED, casts no light");
+
+        float faint[3] = { -1, -1, -1 };
+        bool e1 = emis::derive_material_le(tile.data(), w, 0, 0, w, h, pal, faint,
+                                           /*allowFaint=*/true);
+        check(e1 && faint[0] > 0.0f && faint[1] > 0.0f && faint[2] > 0.0f,
+              "candle (allowFaint): the flame casts light");
+        std::printf("  [candle]  Le=(%.3f, %.3f, %.3f)\n", faint[0], faint[1], faint[2]);
     }
 
     // --- Green switch: colour derivation is hue-agnostic -----------------------------

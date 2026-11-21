@@ -1,8 +1,7 @@
 <!-- ants-spec-format: 1 -->
 # DOOM-0642 — Honest light: every lit thing is lit by a source the player can find
 
-**Status:** spec draft (2026-11-21).
-**Owed before building:** the user's read, and the answers in section 10.
+**Status:** building; B1 is built (2026-11-21).
 **Kind:** feature.
 **Source:** ROADMAP DOOM-0642 (user requests 2026-11-20).
 **Delivers:** DOOM-0209 (candles and candelabra cast light), as its first stage.
@@ -41,12 +40,13 @@ list):
 
 Light that has a source, and its gaps:
 
-- **Candles and candelabra cast nothing.** `emis::derive_material_le` refuses a picture with
+- **Candles and candelabra cast nothing by the emitter gate; B1 puts them on the faint
+  path.** `emis::derive_material_le` refuses a picture with
   too few near-white texels (`kEmitterMinBrightTexels`). Scratchpad `d0642/lightle.py` runs
   that rule over `doom.wad`: `CANDA0` and `CBRAA0` come out at zero, and the lamp, the torches
   and the burning barrel pass. In Ultra the candelabra's model carries a light of its own, so
   the gap there is the candle alone. E2M1's first corridor holds only candles, which is why it
-  went black under `-sourcedlight`.
+  went black under `-sourcedlight` before B1.
 - **Sprite lights are direct light only.** `bake.comp` bakes the bounce of wall and floor
   emitters; a candle's light never bounces.
 - **A sprite takes no point light in the rasterised view.** The point-light block in
@@ -68,6 +68,10 @@ terms off for a test run. Its measurements are on the roadmap item.
   2026-11-20).
 - Solid and Ultra both get all of it, per `CLAUDE.md`'s render tiers. Classic is untouched.
 - A fullbright sprite still shows itself bright. A fireball is its own source.
+- The old light stays as a test switch only, never a menu option (user, 2026-11-21).
+- Whether the torch starts switched on is decided at B7's sheets (user, 2026-11-21).
+- A room's flicker and strobe will drive the lamps in it, as DOOM-0643, after B7 (user,
+  2026-11-21).
 - Decided here, not yet seen by the user: stage 3 becomes the default only after the user has
   looked at before-and-after sheets of it.
 
@@ -124,6 +128,7 @@ vertices.
 ## 7. Build order
 
 - **B1** — candles and candelabra emit. Check: E2M1's first corridor under `-sourcedlight`.
+  Built.
 - **B2** — the screen sheet, the user's pick, the list.
 - **B3** — static light Things in the bake.
 - **B4** — the subsector on sprite vertices; the bounce on sprites in the traced view.
@@ -171,12 +176,7 @@ Each of B1 to B6 ships on its own and leaves the default look no darker.
 
 ## 10. Open questions
 
-1. Should the old light stay as a menu option, or only as a test switch? Recommended: test
-   switch only; one look to tune.
-2. Should the torch start switched on, now that dark rooms need it? Recommended: decide at
-   B7's sheets, when the dark can be seen.
-3. Should a room's flicker and strobe (the map's light specials) drive the lamps in it?
-   Without it a flickering room goes still. Recommended: yes, as its own item after B7.
+None. The three asked of the user are decided in section 3.
 
 ## 11. What checks this
 
