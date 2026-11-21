@@ -305,7 +305,7 @@ layout(push_constant) uniform PC {
                          // so the push range is still 240 bytes and misc6 stays at offset 224.
     uvec4    misc6;    // DOOM-0183: x = ripple time (float bits, seconds); y = bit 0 wet toggle
                        // (rb_wet: sheen/ripple/puddle only, not the glow), bit 1
-                       // -sourcedlight (DOOM-0642).
+                       // -sourcedlight (DOOM-0642), bit 2 -skyonly.
                        // DOOM-0011: z = fog strength (rb_fog 0..3; 0 skips the march, INV-8).
                        // w = hell-haze density, BIT-CAST float (L4; 0 on non-hell levels,
                        // from rb_view_t::hazeDensity via r_backend.c's per-level rule).
@@ -624,6 +624,7 @@ float emisWeight(MatCtrl mc, vec3 albedo) {
 }
 bool  wetOn()              { return (pc.misc6.y & 1u) != 0u; }
 bool  sourcedLightOnly()   { return (pc.misc6.y & 2u) != 0u; }   // DOOM-0642's test switch
+bool  skyOnly()            { return (pc.misc6.y & 4u) != 0u; }   // -skyonly: no surface glows
 float rippleTime()         { return uintBitsToFloat(pc.misc6.x); }
 
 // DOOM-0508: the Spectre's look in the traced view. Scale shrinks the ripple's waves to a
@@ -1404,7 +1405,7 @@ PrimaryHit primaryHitSurface(Verts vb, uint i0, bool isSprite, vec2 hitUV, vec3 
     // if it's a fullbright light Thing (lamp/torch/barrel), so ammo pickups and
     // monsters don't glow. The per-texel value mask then keeps the glow on the
     // bright pixels (lamp top, not the dark stand).
-    h.addEmis = isSprite ? ((h.flags & FLAG_EMISSIVE) != 0) : true;
+    h.addEmis = !skyOnly() && (isSprite ? ((h.flags & FLAG_EMISSIVE) != 0) : true);
     return h;
 }
 

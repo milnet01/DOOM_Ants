@@ -4453,9 +4453,21 @@ static float RippleSeconds()
 // flash's whole-view lift, which rides it) in the rasterised view; the ambient floor and
 // the goo puddles' glow in the traced one. Kept: the weapon, which nothing else lights, and
 // the baked bounce, sky fill included. Changes nothing unless passed.
+//
+// `-skyonly` (user, 2026-11-21) goes further, to see the game lit by the sky alone: it
+// implies -sourcedlight, builds no emitter list (so no point light, no NEE, and a bake
+// of sky fill only), drops the torch, the muzzle flash, every surface's own glow and the
+// sector light on light sprites too. The weapon keeps its sector light, or it is a
+// black cut-out.
+static bool SkyOnly()
+{
+    static const bool on = M_CheckParm("-skyonly") != 0;
+    return on;
+}
+
 static bool SourcedLightOnly()
 {
-    static const bool on = M_CheckParm("-sourcedlight") != 0;
+    static const bool on = M_CheckParm("-sourcedlight") != 0 || SkyOnly();
     return on;
 }
 
@@ -4469,7 +4481,7 @@ struct ShadowUboData
     uint32_t flags[4];
     uint32_t hd[4];      // DOOM-0182: mesh.frag's HD lane; see ShadowUbo there
     float    misc[4];    // x = RippleSeconds(), the trace's clock (DOOM-0619); y = 1 under
-                         // -sourcedlight (DOOM-0642); the rest unused
+                         // -sourcedlight (DOOM-0642), 2 under -skyonly; the rest unused
 };
 static_assert(offsetof(ShadowUboData, flags) == 64, "flags follows lightVP, as in mesh.frag");
 static_assert(offsetof(ShadowUboData, misc) == 96, "misc follows hd, as in mesh.frag");
@@ -7784,6 +7796,11 @@ extern "C" void RB_Vulkan_RenderView(const rb_view_t* view)
     Mat4Mul(p, v, g.viewProj);              // MVP = proj * view
     g.haveCamera = true;
     g.lastView   = *view;                   // for the sprite build in Present
+    if (SkyOnly())
+    {
+        g.lastView.extralight = 0.0f;       // no muzzle flash in either view
+        rb_flashlight         = 0;          // no torch
+    }
 }
 
 extern "C" void RB_Vulkan_SetOverlay(const unsigned char* pixels, int w, int h)
@@ -7921,7 +7938,7 @@ static const float    RASTER_LAMP_POOL_REACH          = 160.0f;
 // casts world-occluded shadows onto its surroundings, then re-finalise the list.
 void BuildDynamicEmitters()
 {
-    if (!g.emitMapped || g.matEmissive.empty() || !g.sprWorldMapped)
+    if (!g.emitMapped || g.matEmissive.empty() || !g.sprWorldMapped || SkyOnly())
     {
         FinalizeEmitters(nullptr, nullptr);      // keep the static set live
         g.frameDynReach.clear();
@@ -8320,7 +8337,7 @@ static void BuildStaticEmitterSet(const rb_vertex_t* v)
     g.staticWgt.clear();
     g.staticEmitLiquid.clear();
     g.staticEmitSs.clear();
-    if (!g.levelMesh || g.matEmissive.empty() || !v)
+    if (!g.levelMesh || g.matEmissive.empty() || !v || SkyOnly())
         return;
 
     const int matCount = (int)(g.matEmissive.size() / 3);
@@ -9842,7 +9859,8 @@ void RecordRtTrace(uint32_t idx)
     // layers only (rb_wet) -- never the glow (that Le is CPU-built).
     const float rippleSec = RippleSeconds();
     std::memcpy(&pc.misc6[0], &rippleSec, sizeof(float));
-    pc.misc6[1]    = (rb_wet ? 1u : 0u) | (SourcedLightOnly() ? 2u : 0u);   // bit 1: DOOM-0642
+    pc.misc6[1]    = (rb_wet ? 1u : 0u) | (SourcedLightOnly() ? 2u : 0u)
+                   | (SkyOnly() ? 4u : 0u);   // bit 1: DOOM-0642; bit 2: -skyonly
     pc.misc7[0]    = SurfaceDetailLane();
     pc.misc7[1]    = SpecularLane();
     pc.misc7[2]    = (uint32_t)RB_MaterialCount();
@@ -11448,7 +11466,7 @@ extern "C" void RB_Vulkan_Present(void)
         hd[3] = rb_filth ? 1u : 0u;
         float* misc = static_cast<ShadowUboData*>(g.shadowUboMapped)->misc;
         misc[0] = RippleSeconds();                    // DOOM-0619
-        misc[1] = SourcedLightOnly() ? 1.0f : 0.0f;   // DOOM-0642
+        misc[1] = SkyOnly() ? 2.0f : SourcedLightOnly() ? 1.0f : 0.0f;   // DOOM-0642
     }
 
     // DOOM-0170 L2c: flashlight cast-shadow map (Pass A). When the torch is on, render the
