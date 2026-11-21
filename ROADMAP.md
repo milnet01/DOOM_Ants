@@ -13778,6 +13778,9 @@ defect visible before a player finds it.
   first. Every shipped materials.csv value still parses. Left: the
   seg-normal seam (r_mesh.c, use linedef dx/dy) and hdLod for models
   (pathtrace.comp); both need a look in the engine.
+  2026-11-21: the model half of the hdLod finding is fixed under
+  DOOM-0641 (a model hit takes its triangle's own UV rate). The
+  uvScaleV half stands: the world's fw still reads uvScale alone.
   **Layman:** Four small faults: the brightness setting can silently do nothing, a settings table accepts junk, a rare seam on HD walls, and 3D pickups can sparkle.
   Kind: review-fix.
   Source: review-code 2026-11-04, lanes 1, 2 and 4 (LOW); review-readability 2026-11-04, lane 3 lead.
@@ -20805,6 +20808,22 @@ in CLAUDE.md describes.
   not tracked.
   User 2026-11-20: find and fix the traced view's washed-out barrel
   next, with before and after pictures.
+  2026-11-21, the traced view's washed-out barrel: found and fixed.
+  Cause: pathtrace.comp's primaryHitSurface sized the texture
+  footprint as one texel per map unit, scaled by the sprite's width.
+  A model's UVs run across its own atlas, and the variants use a
+  quarter of it, so the tracer read a level several steps too blurry
+  and averaged the bands and rust away. A model hit now takes its
+  triangle's own rate, sqrt(UV area / world area). Every model gains
+  the same sharpness, not the barrel alone.
+  Pictures, Ultra traced, before over after: Scratchpad
+  d0641/out/*-before-after.png (after alone: d0641/c5). Mean absolute
+  change on the E1M9 barrels 1.9% of full scale and on the 820-unit
+  barrel 2.5%; on a wall beside each, 0.0005% and 0.
+  No test: the footprint is shader code no test runs; the pictures
+  are the proof. make test passes.
+  Still owed: the user's look, and the rasterised 820-unit barrel,
+  whose bands barely show.
   **Layman:** The 3D barrels get rust and stronger stripes, and come in a few different versions, each turned its own way, so two barrels side by side do not look the same.
   Kind: feature.
   Source: user-request-2026-11-20.

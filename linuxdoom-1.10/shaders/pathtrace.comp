@@ -1314,15 +1314,24 @@ PrimaryHit primaryHitSurface(Verts vb, uint i0, bool isSprite, vec2 hitUV, vec3 
         // keeps a hit with neither from reading the previous hit's level.
         const int lodMap = h.mc.maps[0] >= 0 ? h.mc.maps[0] : h.mc.maps[1];
         if (lodMap >= 0) {
-            float fw = tHit * hdPixelAngle * h.mc.uvScale / texSz.x
-                     * float(textureSize(hdTex[nonuniformEXT(lodMap)], 0).x);
+            // The pixel's width at the hit, and base UV per map unit. hitUV is one texel per
+            // map unit on the world's faces (hdBaseUV). DOOM-0641: a model's UVs run across
+            // its own atlas, so it takes its triangle's rate, sqrt(UV area / world area).
+            // The world's rate blurred the barrel's bands away.
+            const float w  = tHit * hdPixelAngle;
+            vec2        k  = vec2(h.mc.uvScale / texSz.x, h.mc.uvScaleV / texSz.y);
+            float       fw = w * h.mc.uvScale / texSz.x
+                           * float(textureSize(hdTex[nonuniformEXT(lodMap)], 0).x);
+            if (isSprite && (h.flags & FLAG_MODEL) != 0) {
+                const vec2 d1 = uv1 - uv0, d2 = uv2 - uv0;
+                k  = vec2(sqrt(abs(d1.x * d2.y - d1.y * d2.x) * k.x * k.y
+                               / max(length(cross(p1 - p0, p2 - p0)), 1e-8)));
+                fw = w * k.x * float(textureSize(hdTex[nonuniformEXT(lodMap)], 0).x);
+            }
             hdLod    = log2(max(fw, 1.0));
             hdTexLod = log2(max(fw / sqrt(max(abs(dot(dir, n)), 0.2)), 1.0));
-            // DOOM-0600: the footprint's axes in base-UV units (hdBaseUV: hitUV is one
-            // texel per world unit, scaled by uvScale / texSz). The long axis's 1/|cos| is
+            // DOOM-0600: the footprint's axes in base-UV units. The long axis's 1/|cos| is
             // capped at 64; past the sampler's 16x the hardware widens the level itself.
-            const float w  = tHit * hdPixelAngle;
-            const vec2  k  = vec2(h.mc.uvScale / texSz.x, h.mc.uvScaleV / texSz.y);
             vec3        ax = dir - n * dot(dir, n);
             ax = dot(ax, ax) > 1e-8 ? normalize(ax) : h.T;   // head-on: any surface axis
             const vec3  ay = cross(n, ax);
