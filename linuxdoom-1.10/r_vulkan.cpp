@@ -7895,14 +7895,18 @@ void FinalizeEmitters(const std::vector<float>* dynEmit, const std::vector<float
 
 // DOOM-0170 L1b: per-subsector nearest-N dynamic point-light cap. Must match
 // RASTER_MAX_LIGHTS in mesh.frag. Each record is 7 floats: centroid[3] Le[3] reach.
-// reach is 0 for a light with no cut-off; mesh.frag fades a light with one to nothing
-// at that distance (DOOM-0482).
+// reach is 0 for a wall or flat light, which has no cut-off; above zero mesh.frag fades the
+// light to nothing at that distance (DOOM-0482); below zero it adds a pool (DOOM-0645).
 static const uint32_t RASTER_MAX_LIGHTS_PER_SUBSECTOR = 16;
 static const uint32_t RASTER_LIGHT_FLOATS             = 7;
 // DOOM-0482: a pickup's raster light reaches this far (world units), so it lights the
 // floor around it and not a wall a few steps away. E1M2's Soulsphere stands about 115
 // units from a brown wall it used to turn purple.
 static const float    RASTER_PICKUP_LIGHT_REACH       = 96.0f;
+// DOOM-0645: a lamp, torch or fireball lights its room as before and also pools on the
+// floor and walls within this distance, so the light can be seen to come from it. E1M1's
+// floor lamps stand 16 units from their walls. Stored negative: see dynReach below.
+static const float    RASTER_LAMP_POOL_REACH          = 160.0f;
 
 // DOOM-0084: each frame, scan this frame's world-sprite billboards (already
 // built into g.sprWorldCpu, DOOM-0100 and DOOM-0569) for emissive ones — a sprite
@@ -7982,8 +7986,11 @@ void BuildDynamicEmitters()
         const float cyw = (tri[0].y + tri[1].y + tri[2].y) * (1.0f / 3.0f);
         const int   sec = (g.numSectors > 0u) ? RB_SectorAtPoint(cxw, cyw) : -1;
         dynSec.push_back(sec >= 0 ? (uint32_t)sec : 0xFFFFFFFFu);
-        dynReach.push_back(modelLight ? tri->vtexoff
-                           : (tri->flags & RB_MESH_PICKUP) ? RASTER_PICKUP_LIGHT_REACH : 0.0f);
+        // Above zero is a pickup's reach: a pool and nothing past it. Below zero is a room
+        // light with a pool of that size on top (DOOM-0645). mesh.frag reads the sign.
+        const float reach = modelLight ? tri->vtexoff
+                          : (tri->flags & RB_MESH_PICKUP) ? RASTER_PICKUP_LIGHT_REACH : 0.0f;
+        dynReach.push_back(reach > 0.0f ? reach : -RASTER_LAMP_POOL_REACH);
         litSprites++;
         maxLe = std::max(maxLe, emis::value(lr, lg, lb));
     }

@@ -205,6 +205,9 @@ const float POINT_LIGHT_GAIN     = 3.0;
 // they keep their grey and E2M1's red gleam is faint (traced view's is stronger).
 const float kRasterSpecStrength  = 1.0;
 const float POINT_LIGHT_STRENGTH = 0.7;
+// DOOM-0645: the top level of the pool close to a lamp, added on top of the room's point
+// light. Without it a lamp lit its walls evenly and nothing showed the light was the lamp's.
+const float LAMP_POOL_STRENGTH   = 1.5;
 
 // DOOM-0170 §9 Q1 — sector-light rebalance. DOOM's flat sector light is bright, so the
 // additive point lights + probe bounce have no headroom in already-bright areas. Dim the
@@ -601,6 +604,7 @@ void main()
             uint base = sub * (RASTER_MAX_LIGHTS * RASTER_LIGHT_FLOATS);
             vec3 plight = vec3(0.0);
             vec3 ppool  = vec3(0.0);   // DOOM-0539/0551: pickup lights, see below
+            vec3 plamp  = vec3(0.0);   // DOOM-0645: the pool close to a lamp, see below
 #ifndef SINGLE_TARGET
             vec3 pspec  = vec3(0.0);   // DOOM-0103: every slot's highlight, beside plight
 #endif
@@ -613,17 +617,22 @@ void main()
                     break;
                 // DOOM-0482: a pickup carries a reach and fades to nothing there, so it
                 // lights the floor around it, not the walls nearby. 0 = no cut-off.
+                // DOOM-0645: below zero is a lamp. It lights the room like a 0 and also
+                // pools within -reach, or its even wash cannot be seen to come from it.
                 float reach = pc.lights.d[o + 6u];
                 vec3  col = Le / (reach > 0.0 ? m : max(m, RASTER_LE_FULL));  // hue kept
                 vec3  c   = vec3(pc.lights.d[o], pc.lights.d[o + 1u], pc.lights.d[o + 2u]);
                 vec3  dd  = c - vWorldPos;
                 float d2  = dot(dd, dd);
                 float att = 1.0 / (1.0 + d2 * RASTER_INV_RADIUS2);
-                if (reach > 0.0)
+                float pool = 0.0;
+                if (reach != 0.0)
                 {
-                    float w = clamp(1.0 - sqrt(d2) / reach, 0.0, 1.0);
-                    att *= w * w;
+                    float w = clamp(1.0 - sqrt(d2) / abs(reach), 0.0, 1.0);
+                    pool = w * w;
                 }
+                if (reach > 0.0)
+                    att *= pool;
                 float ndl = max(dot(shadeN, dd * inversesqrt(max(d2, 1e-8))), 0.0);
 #ifndef SINGLE_TARGET
                 if (specLit && ndl > 0.0)
@@ -634,8 +643,9 @@ void main()
 #endif
                 // DOOM-0551: a light with a reach (a pickup's) rolls off in ppool, in every tier.
                 vec3 lit = col * att * ndl;
-                if (reach > 0.0) ppool  += lit;
-                else             plight += lit;
+                if (reach > 0.0)      ppool  += lit;
+                else                  plight += lit;
+                if (reach < 0.0)      plamp  += lit * pool;
             }
             // A big emissive surface enters as many emitter triangles, so summing the
             // nearest N over-counts one physical light. GAIN drives a single light up to
@@ -649,7 +659,11 @@ void main()
             // on its own, in Solid and Ultra alike.
             ppool *= POINT_LIGHT_GAIN;
             ppool = ppool / (1.0 + ppool);
-            direct += POINT_LIGHT_STRENGTH * albedo * ((plight + ppool) * diffW);   // point lights are DIRECT
+            // DOOM-0645: a lamp's pool rolls off on its brightest channel, so it keeps the
+            // lamp's colour where plight's per-channel roll-off has washed it to white.
+            plamp *= POINT_LIGHT_GAIN;
+            plamp /= 1.0 + max(plamp.r, max(plamp.g, plamp.b));
+            direct += albedo * ((POINT_LIGHT_STRENGTH * (plight + ppool) + LAMP_POOL_STRENGTH * plamp) * diffW);   // point lights are DIRECT
 #ifndef SINGLE_TARGET
             // The same gain and roll-off as plight, so one panel's many slots cannot stack
             // the highlight to white.

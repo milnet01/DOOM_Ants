@@ -129,6 +129,8 @@ drawn or traced as a surface. `BuildDynamicEmitters` reads colour and reach from
 them. Reach limits the point lights alone (`g.frameDynReach`); the traced view's emitters have none.
 A reach of 0 sets no limit, as a lamp sprite's light has none: a lamp's or candelabra's light joins
 the room's shared sum below, so the room stays as bright as the sprite left it.
+`BuildDynamicEmitters` stores such a light's reach as `-RASTER_LAMP_POOL_REACH`, which adds the
+close pool every lamp has (DOOM-0170 section 4.1, DOOM-0645).
 `rgb` is the light's linear colour. The traced record multiplies it by `kModelLightTraceGain`, because
 a traced emitter's power scales with its area. `kSpriteEmitBoost` does not apply. `mesh.frag` uses a
 record's colour alone, normalised by its largest channel, so the gain does not reach the rasterised

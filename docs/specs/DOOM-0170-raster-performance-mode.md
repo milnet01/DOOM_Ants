@@ -201,15 +201,27 @@ for k in this fragment's subsector list (≤ N, nearest-packed):
     d       = light[k].centroid - worldPos
     dist2   = dot(d, d)
     atten   = 1 / (1 + dist2/RADIUS^2)             // smooth inverse-square-ish; RADIUS a tuned constant (§6)
-    if (reach > 0) atten *= (1 - min(dist/reach, 1))^2   // pickups only (DOOM-0482)
+    pool    = reach != 0 ? (1 - min(dist/|reach|, 1))^2 : 0
+    if (reach > 0) atten *= pool                    // pickups only (DOOM-0482)
     diffuse += col * atten * max(dot(normal, normalize(d)), 0)
+    if (reach < 0) lamp += that same term * pool    // a lamp's close pool (DOOM-0645)
 diffuse = diffuse * GAIN                            // GAIN: a single light climbs to visible fast (the pop)
 diffuse = diffuse / (1 + diffuse)                  // Reinhard: a cluster saturates to colour, not white
-lit += STRENGTH * albedo * diffuse                 // STRENGTH = the ceiling after roll-off (§6/§9 Q1)
+lamp    = lamp * GAIN;  lamp = lamp / (1 + max channel of lamp)   // keeps the lamp's colour
+lit += albedo * (STRENGTH * diffuse + LAMP_POOL_STRENGTH * lamp)  // STRENGTH = the ceiling after roll-off (§6/§9 Q1)
 ```
 
+**Lamps pool close up (DOOM-0645, user request 2026-11-21).** A light Thing that is not a
+pickup (a lamp, torch, candle or fireball, sprite or model) carries
+`reach = -LAMP_POOL_REACH` (§6). It lights its room as a light with reach 0 does, and adds
+a second term that fades to nothing at `LAMP_POOL_REACH`. Without the second term the room
+light alone was near its roll-off ceiling across the lamp's whole room, so a wall beside
+the lamp was no brighter than one far from it. Measured at E1M1 `790 -3232 180` in Solid
+on 2026-11-21: the wall beside the lamp read 107 before and 222 after, of 255, and a wall
+further off 114 and 142.
+
 **Pickups glow close up (DOOM-0482, user decision 2026-10-22).** A pickup (a Thing
-with `MF_SPECIAL`) carries `reach = PICKUP_LIGHT_REACH` (§6); every other light carries
+with `MF_SPECIAL`) carries `reach = PICKUP_LIGHT_REACH` (§6); a wall or flat light carries
 0, meaning no cut-off. Equal-strength lights let E1M2's Soulsphere turn a brown wall
 about 115 units away purple. With the reach, a pickup lights the floor around it and
 leaves the walls nearby their own colour.
@@ -386,6 +398,8 @@ shine flag (§4.6). **New CPU per-frame pass:** the per-subsector light-list bui
 | Sector-light curve | `HORROR_LIGHT_LO` 0.25, `HORROR_LIGHT_HI` 0.80, `HORROR_DARK_REACH` 300 (`shaders/formulas/sector_light.glsl`) | §4.1, DOOM-0630 |
 | Point-light pop, `POINT_LIGHT_GAIN` | seed 3.0 (how fast a single light climbs to visible before the roll-off) | §4.1, §9 Q1 |
 | Pickup light reach, `PICKUP_LIGHT_REACH` | 96 world-units (`RASTER_PICKUP_LIGHT_REACH`, `r_vulkan.cpp`) | §4.1, DOOM-0482 |
+| Lamp pool reach, `LAMP_POOL_REACH` | 160 world-units (`RASTER_LAMP_POOL_REACH`, `r_vulkan.cpp`) | §4.1, DOOM-0645 |
+| Lamp pool ceiling, `LAMP_POOL_STRENGTH` | 1.5 (max additive from a lamp's close pool, on top of `POINT_LIGHT_STRENGTH`) | §4.1, DOOM-0645 |
 | Point-light ceiling, `POINT_LIGHT_STRENGTH` | seed 0.7 (max additive after the Reinhard roll-off; `Le` sets colour, and strength below `RASTER_LE_FULL`) | §4.1, §9 Q1 |
 | Base sector-light dim, `BASE_SECTOR_DIM` | seed 0.75 (1.0 = classic; gives the additive lights headroom) | §4.1, §9 Q1 |
 | Point-light CPU cull budget | ≤ **1 ms** / frame | §4.1 |

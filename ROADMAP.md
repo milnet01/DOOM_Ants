@@ -21012,7 +21012,7 @@ in CLAUDE.md describes.
   Source: user-request-2026-11-21.
   Lanes: renderer, assets.
 
-- 📋 [DOOM-0645] **E1M1's floor lamps are black in Ultra and light nothing near them in the rasterised view.**
+- ✅ [DOOM-0645] **E1M1's floor lamps are black in Ultra and light nothing near them in the rasterised view.**
   User, 2026-11-21: the lamp stands in E1M1 are black and do not
   seem to cast light; make them silver in line with the original
   and ensure they cast light.
@@ -21026,6 +21026,20 @@ in CLAUDE.md describes.
   -rtview 0, for the sprite and for the model, so the missing
   light is older than today's work. Cause not found yet: start at
   how mesh.frag treats a light whose reach is 0.
+  Built 2026-11-21. The body above was wrong on one point: the wall
+  beside the lamp was lit in the rasterised view. With the lamps
+  switched off it read 44 of 255 and with them on 107. The light was
+  an even wash: a wall further off read 114, so nothing showed it was
+  the lamp's. Cause: the room-light sum sits near its roll-off ceiling
+  across the lamp's whole room. Fix: a light Thing that is not a
+  pickup now adds a close pool (reach 160, strength 1.5, its own
+  colour-keeping roll-off) on top of the room light; DOOM-0170 section
+  4.1 and section 6 carry it. Solid at E1M1 `790 -3232 180`: wall
+  beside the lamp 107 to 222, floor 64 to 125. The traced captures
+  moved under 0.05% of pixels. The COLU model is steel grey, with a
+  faint glow that fades down the column, because the rasterised view
+  lights a model by its room alone. Open: the user's look.
+  Captures: Scratchpad d0645/after/ba-sheet.png, silver3/crops.png.
   **Layman:** The lamp stands should be silver like the 1993 game's and should visibly light the floor and walls around them.
   Kind: fix.
   Source: user-request-2026-11-21.

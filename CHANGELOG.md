@@ -136,6 +136,13 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **Floor lamps, torches and candles throw a pool of light in the rasterised view** (DOOM-0645)
+  A lamp used to brighten its whole room evenly, so nothing showed
+  the light was the lamp's. The floor and walls close to it are now
+  clearly brighter, in the lamp's own colour, in Solid and Ultra.
+  Ultra's floor lamp is steel grey like the 1993 game's, where it
+  was black.
+
 - **Floor and ceiling pictures face the same way in Solid and Ultra as in Classic** (DOOM-0634)
   The 3D views drew every floor and ceiling picture mirrored north to
   south, so skulls, arrows and consoles pointed the wrong way. They
