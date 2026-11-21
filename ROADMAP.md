@@ -16765,6 +16765,15 @@ in CLAUDE.md describes.
   with the user (candles = faint, torches = stronger). Relates to DOOM-0082
   (switch/lamp emitters), DOOM-0083 (forced-Le liquids/lava). Needs its own
   brainstorm -> spec -> cold-eyes cycle before implementing.
+  2026-11-21, cause measured. The candle and candelabra sprites cast
+  no light because emis::derive_material_le refuses a picture with
+  fewer near-white texels than kEmitterMinBrightTexels. Scratchpad
+  d0642/lightle.py runs that rule over doom.wad: CANDA0 and CBRAA0
+  come out at zero; the lamp, the six torches and the burning barrel
+  pass. In Ultra the candelabra's model has a light of its own, so
+  only the candle is dark there. E2M1 holds candles and no other
+  light Thing. The fix is stage 1 of
+  docs/specs/DOOM-0642-honest-light.md.
   **Layman:** Lit props like candelabras and torches glow in real life but stay dark in the 3D renderer — they should cast a warm light like the real DOOM light sources they are.
   Kind: enhancement.
   Source: user-request-2026-07-20.
@@ -20942,6 +20951,16 @@ in CLAUDE.md describes.
   from candles, lamps and screens first (DOOM-0209), then sourced light
   for monsters and the weapon in the rasterised view, then remove the
   light that has no source. A short design comes first.
+  2026-11-21: the short design is written as a spec draft,
+  docs/specs/DOOM-0642-honest-light.md, in the user's order. A spec
+  was owed for its design choices and its reach across both views
+  and the bake; no review gate is owed. Owed before building: the
+  user's read and three answers (its section 10): the old light as a
+  menu option or a test switch only; whether the torch starts on;
+  whether a room's flicker should drive its lamps.
+  Found while writing it: sprites take no baked bounce in either
+  view, and a candle's light never bounces (the bake holds wall and
+  floor emitters only).
   **Layman:** A room with no lamp, glowing panel, window or sky should be quite dark instead of evenly lit from nowhere.
   Kind: investigate.
   Source: user-request-2026-11-20.
