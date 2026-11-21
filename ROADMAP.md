@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=650 -->
+<!-- ants-roadmap-id-high-water: DOOM=651 -->
 
 # Roadmap
 
@@ -21162,6 +21162,24 @@ in CLAUDE.md describes.
   **Layman:** A test mode with no monsters and no danger, where the map starts lit only by the sky and number keys switch wall lights, floor lights, lamps, glow, room brightness, bounce light, the torch and the muzzle flash on and off.
   Kind: feature.
   Source: user-request-2026-11-21.
+  Lanes: renderer.
+
+- 📋 [DOOM-0651] **Traced fog glows with sky light deep inside rooms that cannot see the sky.**
+  User 2026-11-21, in the DOOM-0650 light lab: "the fog adds a little
+  light even in pitch black rooms." Measured, Solid, traced view,
+  E2M1 start `0 48 90`, every light off (-lightlab 0), view mean of 255:
+  fog off 0.8, fog High 45.9. A diagnostic run with the fog's sun share
+  dropped read 40.1, so most of it is the ambient sky share in
+  pathtrace.comp's fog march: kFogColor * kSkyShaftStrength *
+  kSkyAmbientFrac * mix(kIndoorSkyLight, 1, seepT). seepT, the seep
+  field's grade of nearness to an opening, is high in this sealed
+  corridor; E1M1's field reads 2020 of 2937 cells as seeped. Part fixed
+  with DOOM-0650: kIndoorSkyLight's floor (0.45) goes when the lab's
+  room switch is off. Left: a fog sky term that follows what the air can
+  see, not how near an opening it is. Pictures: Scratchpad d0650/fog.
+  **Layman:** Fog in a pitch-black room still glows grey, because the game guesses the room is near the open sky when it is not.
+  Kind: fix.
+  Source: user-report-2026-11-21.
   Lanes: renderer.
 
 ## 0.13.0 — The player's experience

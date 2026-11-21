@@ -96,7 +96,8 @@ enum
     LAB_FLATS  = 1 << 1,   // floor and ceiling lights, glowing liquids included
     LAB_LAMPS  = 1 << 2,   // light sprites and model lights: lamps, torches, candles
     LAB_GLOW   = 1 << 3,   // every light's own glow, as seen by the eye
-    LAB_ROOM   = 1 << 4,   // the room's brightness number and the traced ambient floor
+    LAB_ROOM   = 1 << 4,   // light with no source: the room's brightness number, the traced
+                           // ambient floor and the traced fog's indoor sky floor
     LAB_BOUNCE = 1 << 5,   // light from the lights above, bounced (the GI bake)
     LAB_MUZZLE = 1 << 6,   // the muzzle flash
     LAB_ALL    = (1 << 7) - 1

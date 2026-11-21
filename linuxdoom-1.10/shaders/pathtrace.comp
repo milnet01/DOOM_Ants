@@ -1164,7 +1164,9 @@ vec4 marchFog(vec3 ro, vec3 rd, float tHit, FogHit h)
         // reaches this sample then it reaches it -- a shaft through a roof light is bright
         // BECAUSE the room around it is not, and dimming the beam with the room would
         // destroy exactly the contrast L2 exists to produce.
-        float skyLight = mix(kIndoorSkyLight, 1.0, seepT);
+        // DOOM-0650: kIndoorSkyLight lights sealed air that sees no sky, so it is light
+        // with no source and goes with the sector light under sourcedLightOnly().
+        float skyLight = mix(sourcedLightOnly() ? 0.0 : kIndoorSkyLight, 1.0, seepT);
         // DOOM-0011 L4: mediumTint multiplies the SKY term only -- colour = light x medium
         // -- and it covers BOTH sky shares, so a shadowed hell interior tints the same as a
         // sunlit one, which is what a coloured medium does. Before kSkyShaftStrength, so
