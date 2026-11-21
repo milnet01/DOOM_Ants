@@ -21117,7 +21117,7 @@ in CLAUDE.md describes.
   Source: user-request-2026-11-21.
   Lanes: renderer.
 
-- 📋 [DOOM-0649] **Rasterised view: many dim lights crowd brighter ones out of a subsector's 16 slots.**
+- ✅ [DOOM-0649] **Rasterised view: many dim lights crowd brighter ones out of a subsector's 16 slots.**
   RebuildStaticPointLightCache in r_vulkan.cpp keeps each
   subsector's nearest RASTER_MAX_LIGHTS_PER_SUBSECTOR emitter
   triangles by distance alone, not by what they give. A long listed
@@ -21131,6 +21131,12 @@ in CLAUDE.md describes.
   instead to start from -skyonly and test each light on its own; this
   stays open until then. BuildRasterPointLights' merge must use the
   same key as the cache.
+  Closed by DOOM-0652 B1 (2026-11-21): the per-subsector nearest-16 list
+  is gone. Each light-grid cell lists every light whose range reaches
+  it, with no ranking (tests/light_grid_test.cpp, INV-3), so a dim light
+  can no longer push a bright one out. Every IWAD map loads with no cell
+  over RASTER_CELL_LIGHTS. The spots measured above were not
+  re-captured.
   **Layman:** In the smooth view, each spot of floor takes light from only its 16 nearest light pieces, so a wall of dim screens can push out a bright coloured lamp nearby and the room gets darker.
   Kind: fix.
   Source: found-2026-11-21 (DOOM-0642 B2 captures).
@@ -21182,7 +21188,7 @@ in CLAUDE.md describes.
   Source: user-report-2026-11-21.
   Lanes: renderer.
 
-- 📋 [DOOM-0652] **Rasterised view: hard straight light/dark lines across floors and walls that follow no wall.**
+- 🚧 [DOOM-0652] **Rasterised view: hard straight light/dark lines across floors and walls that follow no wall.**
   User 2026-11-21, light lab on E1M1, rasterised view: "There are
   these lines showing shaded vs light areas but where are these lines
   coming from. Before we get to choosing lighting conditions I think we
@@ -21201,6 +21207,17 @@ in CLAUDE.md describes.
   round. The user sees the same lines on ceilings. Spec:
   docs/specs/DOOM-0652-shared-light-grid.md (B1-B4). It also closes
   DOOM-0649.
+  B1 built 2026-11-21: clustered lights (128-unit lattice), the
+  (1-(d/R)^4)^2 window capped at 512 units, every light in range listed
+  per cell of the seep grid, REJECT gate kept. Captures (kit
+  d0652/ab.sh): the straight floor band at shot-0100's spot is gone; the
+  straight edges left at both spots also show with -lightlab 0, so they
+  are the probes' (B3). The far tails now end at 512 units, so walls far
+  from any light are darker; for the user to judge. For B4: the scene
+  pass at the busiest cells, Solid rasterised at 100 % scale in a
+  1708x800 window, went from 1.5-1.8 ms to 5.4-7.1 ms (E1M4, MAP28,
+  E3M6), above the 60 FPS floor but well below the old speed; and a full
+  grid rebuild (a switch press) costs up to 9.8 ms, a one-frame hitch.
   **Layman:** The smooth view lights the map in invisible patches, and the light jumps where two patches meet, drawing straight lines on floors.
   Kind: fix.
   Source: user-2026-11-21.

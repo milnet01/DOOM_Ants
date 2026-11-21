@@ -141,6 +141,14 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Fixed
 
+- **A wall of dim screens no longer darkens a bright lamp beside it** (DOOM-0649)
+  In the rasterised view each spot of floor took light from only its
+  16 nearest light pieces, so many dim ones could push a bright one
+  out. Now every light that reaches a spot lights it, and each light
+  fades smoothly to nothing at the edge of its reach. The straight
+  light/dark line this drew across E1M1's courtyard floor is gone;
+  walls far from any light are a little darker than before.
+
 - **Floor lamps, torches and candles throw a pool of light in the rasterised view** (DOOM-0645)
   A lamp used to brighten its whole room evenly, so nothing showed
   the light was the lamp's. The floor and walls close to it are now

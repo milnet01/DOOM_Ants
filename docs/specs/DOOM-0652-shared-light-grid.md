@@ -1,7 +1,7 @@
 <!-- ants-spec-format: 1 -->
 # DOOM-0652 — Light that fades smoothly: a shared light grid, wall-true lamp shadows and blended bounce light
 
-**Status:** accepted (2026-11-21). Not built; B1 is next.
+**Status:** accepted (2026-11-21). B1 built; B2 is next.
 **Kind:** fix.
 **Source:** ROADMAP DOOM-0652 (user report 2026-11-21, light lab on E1M1).
 **Also closes:** DOOM-0649 (dim lights crowd bright ones out of a subsector's 16 slots): the
@@ -160,9 +160,11 @@ short of it. Its weight goes to the corners left; with none left the answer is z
 
 ## 5. Data & resources
 
-- Light grid: cells × `RASTER_CELL_LIGHTS` × a light index (uint), plus a light table of
-  position, colour, range and reach. Host-visible, one copy per frame in flight, as
-  `g.lightBufSlot` is today. It replaces the per-subsector `lightBuf`.
+- Light grid: two words per cell (first entry, count) and the lists end to end, for the
+  static lights and again for the moving ones, plus a light table of position, colour,
+  range, reach and sector. No list is longer than `RASTER_CELL_LIGHTS`. Host-visible, one
+  copy per frame in flight in `g.lightBufSlot`, grown to fit. It replaces the per-subsector
+  `lightBuf`.
 - Polar maps: lights × `RASTER_POLAR_BINS` floats, device-local, written by compute.
 - Probes: lattice points × (16 floats today + 6 reach). The dense lattice is bounded by the seep
   field's `RB_SEEP_MAXDIM` squared, times `RB_PROBE_MAXLAYERS`. B4 measures the largest IWAD
@@ -186,7 +188,8 @@ Each stage ends with `make`, `make test` and the § 8 captures.
 
 - **B1 — Cluster lights, finite range, cell lists.** The shared cluster builder, the window, the
   grid, the `mesh.frag` loop. Occlusion stays on REJECT for now, gated per light by the
-  fragment's sector. Measure the worst cell over every IWAD map and set `RASTER_CELL_LIGHTS`.
+  fragment's sector. A cell also leaves out a light that no sector overlapping it can see
+  by REJECT, since the gate would skip it there anyway. Measure the worst cell over every IWAD map and set `RASTER_CELL_LIGHTS`.
   Amend DOOM-0170 INV-6.
 - **B2 — Polar wall maps.** The compute pass and the fragment test. Drop REJECT for raster
   lights, and rebuild on door and lift movement.

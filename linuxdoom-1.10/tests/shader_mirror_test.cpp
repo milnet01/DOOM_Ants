@@ -10,11 +10,13 @@
 //   - the torch's offset from the eye: FLASH_OFF_RIGHT/UP against kFlashOffRight/Up,
 //     which place the shadow pass's viewpoint. A mismatch detaches every flashlight
 //     shadow from the beam that casts it.
-//   - the per-subsector light slot count: RASTER_MAX_LIGHTS against
-//     RASTER_MAX_LIGHTS_PER_SUBSECTOR, the stride of the buffer the shader indexes.
-//     A mismatch reads the next subsector's lights, or past the buffer.
-//   - the floats per light record: RASTER_LIGHT_FLOATS on both sides (DOOM-0482).
+//   - the words per light record: RASTER_LIGHT_FLOATS on both sides (DOOM-0482).
 //     A mismatch reads every light after the first from the wrong offset.
+//   - DOOM-0652: the raster light grid's header words, r_vulkan.cpp's RG_* enum in
+//     order against mesh.frag's RG_* constants. A mismatch reads the grid's shape or
+//     its lists from the wrong word. And the half-bright radius, mesh.frag's
+//     RASTER_LIGHT_RADIUS against light_grid.h's RASTER_LIGHT_RADIUS, which each light's
+//     range is derived from: a mismatch ends lights where they are still bright.
 //   - the powerup mode codes, RB_FIXED_* in fixed_colormap.h and
 //     formulas/fixed_colormap.glsl, and RB_INVERSECOLORMAP against p_user.c's
 //     INVERSECOLORMAP (DOOM-0455 INV-2). A mismatch shows the wrong powerup, or
@@ -168,8 +170,34 @@ int main()
 
     same(ms, "FLASH_OFF_RIGHT", vk, "kFlashOffRight");
     same(ms, "FLASH_OFF_UP",    vk, "kFlashOffUp");
-    same(ms, "RASTER_MAX_LIGHTS", vk, "RASTER_MAX_LIGHTS_PER_SUBSECTOR");
     same(ms, "RASTER_LIGHT_FLOATS", vk, "RASTER_LIGHT_FLOATS");
+
+    // DOOM-0652: the grid header. The C side is an enum counting from 0, so its order
+    // gives each word; mesh.frag assigns each name its word.
+    const std::string lg = slurp(DOOM_TESTS_ROOT "/light_grid.h");
+    check(!lg.empty(), "light_grid.h is readable");
+    same(ms, "RASTER_LIGHT_RADIUS", lg, "RASTER_LIGHT_RADIUS");
+    {
+        const size_t at = vk.find("RG_ORIGIN_X, RG_ORIGIN_Y");
+        check(at != std::string::npos, "r_vulkan.cpp still declares the RG_* header enum");
+        const size_t end = at == std::string::npos ? at : vk.find('}', at);
+        int word = 0, seen = 0;
+        for (size_t p = at; at != std::string::npos && p < end; )
+        {
+            while (p < end && !isIdent(vk[p])) ++p;
+            size_t q = p;
+            while (q < end && isIdent(vk[q])) ++q;
+            if (q == p) break;
+            const std::string name = vk.substr(p, q - p);
+            double v = -1.0;
+            char what[160];
+            std::snprintf(what, sizeof what, "mesh.frag's %s is word %d, as in r_vulkan.cpp", name.c_str(), word);
+            check(assigned(ms, name.c_str(), &v) && v == word, what);
+            ++word; ++seen;
+            p = q;
+        }
+        check(seen == 16, "the RG_* header has 16 words on the C side");
+    }
 
     // DOOM-0455 INV-2: the powerup mode codes, C header against GLSL include.
     const std::string fh = slurp(DOOM_TESTS_ROOT "/fixed_colormap.h");

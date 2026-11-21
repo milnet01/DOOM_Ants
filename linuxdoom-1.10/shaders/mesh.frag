@@ -60,11 +60,16 @@ layout(location = 1) out vec4 outDirect;
 #include "formulas/gi_probe.glsl"
 #include "formulas/fixed_colormap.glsl"   // DOOM-0455: invulnerability + visor
 
-// DOOM-0170 L1b — per-subsector dynamic point lights derived from the same NEE
-// emitter list (torches/lamps/emissive walls). Flat float array: RASTER_MAX_LIGHTS
-// slots per subsector, 7 floats/light = centroid[3] Le[3] reach. Empty slots are zero
-// and packed nearest-first, so the shader stops at the first zero-Le slot.
-layout(buffer_reference, scalar) readonly buffer LightsRO { float d[]; };
+// DOOM-0652 — the raster light grid, built from the same NEE emitter list (torches,
+// lamps, emissive walls) by r_vulkan.cpp's BuildRasterPointLights. The comment above
+// RASTER_LIGHT_FLOATS there documents the layout. 32-bit words: a header (RG_* below), each cell's list of every light that
+// reaches it, and the lights, RASTER_LIGHT_FLOATS words each.
+layout(buffer_reference, scalar) readonly buffer LightsRO { uint u[]; };
+// Header words. MUST match r_vulkan.cpp's RG_* enum.
+const uint RG_ORIGIN_X = 0u, RG_ORIGIN_Y = 1u, RG_INV_CELL = 2u, RG_W = 3u, RG_H = 4u,
+           RG_IDX = 5u, RG_STATIC_LIGHTS = 6u, RG_CELLS = 7u, RG_DYN_LIGHTS = 8u,
+           RG_DYN_CELLS = 9u, RG_DYN_IDX = 10u, RG_SUBSEC = 11u, RG_REJECT = 12u,
+           RG_NUM_SECTORS = 13u, RG_NUM_SUB = 14u, RG_ON = 15u;
 
 // Must match mesh.vert's block byte-for-byte (shared push-constant range). The
 // sky path reads pc.yaw to pan the panorama; numWall/numFlat give the material-id
@@ -182,21 +187,16 @@ const float PI = 3.14159265358979;
 // DOOM-0331 INV-4 is read against; bloom_threshold_test.cpp fails if they differ.
 const float GI_BOUNCE_STRENGTH = 1.0;
 
-// DOOM-0170 L1b point-light dials (§6 seeds; §9 Q1/Q4 tuning). RASTER_MAX_LIGHTS must
-// match RASTER_MAX_LIGHTS_PER_SUBSECTOR in r_vulkan.cpp (shader_mirror_test checks). RADIUS is the half-bright
-// distance (world units). An emitter's Le is used as COLOUR, normalized by its max channel,
-// because the raw Le is a radiometric NEE value (sprite lamps carry a ×12 build boost, big
-// surfaces enter as many triangles) that summed as raw intensity blows straight to white.
-// STRENGTH sets the max additive level after the sum is rolled off.
-const uint  RASTER_MAX_LIGHTS    = 16u;
-const uint  RASTER_LIGHT_FLOATS  = 7u;    // floats per light record (r_vulkan.cpp)
+// DOOM-0170 L1b point-light dials (§6 seeds; §9 Q1/Q4 tuning). RADIUS is the half-bright
+// distance (world units) and MUST equal light_grid.h's RASTER_LIGHT_RADIUS, which sets
+// each light's range from it (shader_mirror_test checks). A light's colour arrives
+// already normalised (r_vulkan.cpp's RasterLightColour), because the raw Le is a
+// radiometric NEE value (sprite lamps carry a ×12 build boost) that summed as raw
+// intensity blows straight to white. STRENGTH sets the max additive level after the sum
+// is rolled off.
+const uint  RASTER_LIGHT_FLOATS  = 9u;    // words per light record (r_vulkan.cpp)
 const float RASTER_LIGHT_RADIUS  = 256.0; // DOOM-0630: lamps light pools, not whole rooms
 const float RASTER_INV_RADIUS2   = 1.0 / (RASTER_LIGHT_RADIUS * RASTER_LIGHT_RADIUS);
-// DOOM-0630: the Le at which a room light (no reach) lights at full strength. A fainter one
-// (nukage's forced 0.19, a dim panel) lights in proportion, so a goo floor of many
-// triangles is a faint glow, not 16 full-strength lamps tinting the room green. A pickup's
-// light keeps full strength: it has its own roll-off (DOOM-0551).
-const float RASTER_LE_FULL       = 6.0;
 // Two decoupled dials so "how obvious a single lamp is" and "the ceiling that stops a
 // cluster blowing to white" tune independently: GAIN sets how fast a light climbs to
 // full before the roll-off (the pop), STRENGTH is the max additive level after it.
@@ -599,57 +599,98 @@ void main()
             vec3 nrm = normalize(vNormal);
             ambient += GI_BOUNCE_STRENGTH * albedo * giIrradiance(pc.probes, sub, nrm);
 
-            // DOOM-0170 L1b: direct light from this subsector's nearest emitters. Each
-            // slot is a point approximation of an NEE area light — Le gives the COLOUR
-            // (normalized by its max channel so a white lamp stays white and the raw ×12
-            // NEE scale drops out), a smooth inverse-square falloff (half-bright at RADIUS)
-            // and a Lambert facing term. No cast shadows (that is the RT-on / key-light
-            // job, §4.4). Slots are nearest-packed; the first zero-Le slot ends the list.
-            uint base = sub * (RASTER_MAX_LIGHTS * RASTER_LIGHT_FLOATS);
+            // DOOM-0652: direct light from every light whose range reaches this
+            // fragment's cell of the light grid. Each is a point stand-in for a cluster of
+            // NEE area lights (or one moving sprite's): its colour, a smooth inverse-square
+            // falloff (half-bright at RADIUS) windowed to exactly zero at its range, and a
+            // Lambert facing term. No cast shadows (that is the RT-on / key-light job,
+            // §4.4). Until DOOM-0652 B2, a light the fragment's sector cannot see by
+            // REJECT is skipped.
             vec3 plight = vec3(0.0);
             vec3 ppool  = vec3(0.0);   // DOOM-0539/0551: pickup lights, see below
             vec3 plamp  = vec3(0.0);   // DOOM-0645: the pool close to a lamp, see below
 #ifndef SINGLE_TARGET
             vec3 pspec  = vec3(0.0);   // DOOM-0103: every slot's highlight, beside plight
 #endif
-            for (uint k = 0u; k < RASTER_MAX_LIGHTS; k++)
+            LightsRO L = pc.lights;
+            if (L.u[RG_ON] != 0u)
             {
-                uint o  = base + k * RASTER_LIGHT_FLOATS;
-                vec3 Le = vec3(pc.lights.d[o + 3u], pc.lights.d[o + 4u], pc.lights.d[o + 5u]);
-                float m = max(Le.r, max(Le.g, Le.b));
-                if (m <= 0.0)
-                    break;
-                // DOOM-0482: a pickup carries a reach and fades to nothing there, so it
-                // lights the floor around it, not the walls nearby. 0 = no cut-off.
-                // DOOM-0645: below zero is a lamp. It lights the room like a 0 and also
-                // pools within -reach, or its even wash cannot be seen to come from it.
-                float reach = pc.lights.d[o + 6u];
-                vec3  col = Le / (reach > 0.0 ? m : max(m, RASTER_LE_FULL));  // hue kept
-                vec3  c   = vec3(pc.lights.d[o], pc.lights.d[o + 1u], pc.lights.d[o + 2u]);
-                vec3  dd  = c - vWorldPos;
-                float d2  = dot(dd, dd);
-                float att = 1.0 / (1.0 + d2 * RASTER_INV_RADIUS2);
-                float pool = 0.0;
-                if (reach != 0.0)
+                uint  gw  = L.u[RG_W], gh = L.u[RG_H];
+                vec2  gp  = (vWorldPos.xy - vec2(uintBitsToFloat(L.u[RG_ORIGIN_X]),
+                                                 uintBitsToFloat(L.u[RG_ORIGIN_Y])))
+                          * uintBitsToFloat(L.u[RG_INV_CELL]) + 0.5;
+                uvec2 gc  = uvec2(clamp(ivec2(floor(gp)), ivec2(0), ivec2(gw, gh) - 1));
+                uint  cell = gc.y * gw + gc.x;
+                uint  sc   = L.u[RG_CELLS] + 2u * cell;
+                uint  sFirst = L.u[sc], ns = L.u[sc + 1u];
+                uint  dc   = L.u[RG_DYN_CELLS] + 2u * cell;
+                uint  dFirst = L.u[dc], nd = L.u[dc + 1u];
+                uint  numSec = L.u[RG_NUM_SECTORS];
+                // The header words the loop needs, read once.
+                uint  sLights = L.u[RG_STATIC_LIGHTS], sIdx = L.u[RG_IDX] + sFirst;
+                uint  dLights = L.u[RG_DYN_LIGHTS],    dIdx = L.u[RG_DYN_IDX] + dFirst;
+                uint  rejAt   = L.u[RG_REJECT];
+                uint  mySec  = (numSec > 0u && sub < L.u[RG_NUM_SUB]) ? L.u[L.u[RG_SUBSEC] + sub]
+                                                                      : 0xFFFFFFFFu;
+                for (uint k = 0u; k < ns + nd; k++)
                 {
-                    float w = clamp(1.0 - sqrt(d2) / abs(reach), 0.0, 1.0);
-                    pool = w * w;
-                }
-                if (reach > 0.0)
-                    att *= pool;
-                float ndl = max(dot(shadeN, dd * inversesqrt(max(d2, 1e-8))), 0.0);
+                    uint o = k < ns
+                           ? sLights + L.u[sIdx + k] * RASTER_LIGHT_FLOATS
+                           : dLights + L.u[dIdx + (k - ns)] * RASTER_LIGHT_FLOATS;
+                    // Position and range first: a light whose range ends short of this
+                    // fragment adds nothing, so its other words are not read.
+                    vec3  c     = vec3(uintBitsToFloat(L.u[o]), uintBitsToFloat(L.u[o + 1u]),
+                                       uintBitsToFloat(L.u[o + 2u]));
+                    float range = uintBitsToFloat(L.u[o + 3u]);
+                    vec3  dd  = c - vWorldPos;
+                    float d2  = dot(dd, dd);
+                    if (d2 >= range * range)
+                        continue;
+                    uint lsec = L.u[o + 8u];
+                    if (mySec < numSec && lsec < numSec)
+                    {
+                        uint bit = mySec * numSec + lsec;
+                        if (((L.u[rejAt + (bit >> 5u)] >> (bit & 31u)) & 1u) != 0u)
+                            continue;              // REJECT: this sector cannot see the light
+                    }
+                    vec3  col   = vec3(uintBitsToFloat(L.u[o + 4u]), uintBitsToFloat(L.u[o + 5u]),
+                                       uintBitsToFloat(L.u[o + 6u]));
+                    // DOOM-0482: a pickup carries a reach and fades to nothing there, so it
+                    // lights the floor around it, not the walls nearby. 0 = no own reach.
+                    // DOOM-0645: below zero is a lamp. It lights the room like a 0 and also
+                    // pools within -reach, or its even wash cannot be seen to come from it.
+                    float reach = uintBitsToFloat(L.u[o + 7u]);
+                    float d   = sqrt(d2);
+                    float att = 1.0 / (1.0 + d2 * RASTER_INV_RADIUS2);
+                    float pool = 0.0;
+                    if (reach != 0.0)
+                    {
+                        float w = clamp(1.0 - d / abs(reach), 0.0, 1.0);
+                        pool = w * w;
+                    }
+                    if (reach > 0.0)
+                        att *= pool;       // a pickup's range is its reach: already zero there
+                    else
+                    {
+                        // DOOM-0652 INV-2: (1 - (d/R)^4)^2, value and slope zero at the range.
+                        float q2 = d2 / (range * range);
+                        float t  = clamp(1.0 - q2 * q2, 0.0, 1.0);
+                        att *= t * t;
+                    }
+                    float ndl = max(dot(shadeN, dd * inversesqrt(max(d2, 1e-8))), 0.0);
 #ifndef SINGLE_TARGET
-                if (specLit && ndl > 0.0)
-                {
-                    float ndh = max(dot(shadeN, normalize(dd * inversesqrt(max(d2, 1e-8)) + specV)), 0.0);
-                    pspec += pow(ndh, specN) * specNorm * ndl * col * att;
-                }
+                    if (specLit && ndl > 0.0)
+                    {
+                        float ndh = max(dot(shadeN, normalize(dd * inversesqrt(max(d2, 1e-8)) + specV)), 0.0);
+                        pspec += pow(ndh, specN) * specNorm * ndl * col * att;
+                    }
 #endif
-                // DOOM-0551: a light with a reach (a pickup's) rolls off in ppool, in every tier.
-                vec3 lit = col * att * ndl;
-                if (reach > 0.0)      ppool  += lit;
-                else                  plight += lit;
-                if (reach < 0.0)      plamp  += lit * pool;
+                    // DOOM-0551: a light with a reach (a pickup's) rolls off in ppool, in every tier.
+                    vec3 lit = col * att * ndl;
+                    if (reach > 0.0)      ppool  += lit;
+                    else                  plight += lit;
+                    if (reach < 0.0)      plamp  += lit * pool;
+                }
             }
             // A big emissive surface enters as many emitter triangles, so summing the
             // nearest N over-counts one physical light. GAIN drives a single light up to

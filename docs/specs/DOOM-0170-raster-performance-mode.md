@@ -163,6 +163,11 @@ a point light: the layout is `v0[3] v1[3] v2[3] Le[3] cdf pdf` (per
 point-light approximation from each triangle — it cannot read `pos`/`intensity`
 fields, because there are none.
 
+**Superseded by DOOM-0652.** The rasterised view no longer keeps a per-subsector
+nearest-N list: each cell of a light grid lists every light whose range reaches it, and
+every light fades to zero at its range (`docs/specs/DOOM-0652-shared-light-grid.md` § 4).
+The rest of this subsection records the design it replaced.
+
 **Where the nearest-N cull runs — CPU, per subsector, per frame (not in-shader).**
 A map's light-heavy rooms can hold ~100+ emitters (DOOM-0092), so an in-shader
 loop-and-sort over the whole `emitBuf` is not affordable on the hot path. Instead,
@@ -238,8 +243,7 @@ lights it. `1.0` = classic brightness; the seed stays a play-test call.
 - **No cast shadows** here (that is the RT-on job, and the one raster shadow we do
   cast is the key light, §4.4). This matches DOOM-0010's stated RT-off behaviour:
   "the room brightens, no cast shadows".
-- **Default N = 16** (`RASTER_MAX_LIGHTS_PER_SUBSECTOR`); §9 Q4 tunes within 12–16.
-  INV-6 tests the cap at this default.
+- **The cap** is per light-grid cell, `RASTER_CELL_LIGHTS` in `light_grid.h` (DOOM-0652).
 - **The muzzle flash is *not* in this loop.** It is not an `emitBuf` emitter — it
   rides the existing `extralight` path, which in raster is a per-vertex screen
   brighten (the `pc.extralight` field in `mesh.vert`, uploaded as `pcData[16] =
@@ -392,7 +396,7 @@ shine flag (§4.6). **New CPU per-frame pass:** the per-subsector light-list bui
 |---|---|---|
 | Reference scale (all FPS invariants) | 1920×1080 @ 100 % Render Scale, RX 6600 | §1 |
 | Frame budget at the floor | 16.6 ms (60 FPS) | INV-2 |
-| Point lights per subsector, `N` | **16** (`RASTER_MAX_LIGHTS_PER_SUBSECTOR`) | §4.1, §9 Q4 |
+| Point lights per light-grid cell | `RASTER_CELL_LIGHTS` (`light_grid.h`, DOOM-0652) | §4.1, INV-6 |
 | Point-light falloff radius, `RADIUS` | 256 world-units (DOOM-0630; tune 256–768) | §4.1, §9 Q4 |
 | Room-light full strength, `RASTER_LE_FULL` | 6.0 (a room light with a lower max-channel `Le` lights in proportion; pickups exempt) | §4.1, DOOM-0630 |
 | Sector-light curve | `HORROR_LIGHT_LO` 0.25, `HORROR_LIGHT_HI` 0.80, `HORROR_DARK_REACH` 300 (`shaders/formulas/sector_light.glsl`) | §4.1, DOOM-0630 |
@@ -480,11 +484,11 @@ handed to the user for an on-RX-6600 play-test before the next begins.
 - **INV-5 (graceful fallback).** On a non-RT GPU (or `probeCount == 0`) the RT-off
   view renders without the baked bounce and without error. *Test:* force
   `probeCount = 0`; the frame renders with flat-ambient bounce, no validation error.
-- **INV-6 (bounded lights).** Per-fragment point-light cost is capped at the default
-  `N = 16` (§4.1) regardless of emitter count — the fragment loops only its
-  subsector's ≤ N list, never the full `emitBuf`. *Test:* a room with > 16 emitters
-  in view (e.g. a DOOM-0092 light-heavy scene) shows a per-subsector list length
-  ≤ 16 and no per-fragment cost growth beyond that cap.
+- **INV-6 (bounded lights).** Per-fragment point-light cost is capped at
+  `RASTER_CELL_LIGHTS` (`light_grid.h`) regardless of emitter count: the fragment loops
+  only its light-grid cell's list (DOOM-0652), never the full `emitBuf`. *Test:*
+  `tests/light_grid_test.cpp` checks a cell over the cap keeps the cap; the level-load
+  line `DOOM-0652 raster light grid` reports each map's longest list and its overflow.
 
 ## 9. Open questions (each names the layer that closes it)
 
