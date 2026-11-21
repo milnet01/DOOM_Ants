@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=651 -->
+<!-- ants-roadmap-id-high-water: DOOM=652 -->
 
 # Roadmap
 
@@ -21181,6 +21181,23 @@ in CLAUDE.md describes.
   Kind: fix.
   Source: user-report-2026-11-21.
   Lanes: renderer.
+
+- 📋 [DOOM-0652] **Rasterised view: hard straight light/dark lines across floors and walls that follow no wall.**
+  User 2026-11-21, light lab on E1M1, rasterised view: "There are
+  these lines showing shaded vs light areas but where are these lines
+  coming from. Before we get to choosing lighting conditions I think we
+  need to fix the lighting system first." Shots: dev-shots
+  shot-0099..0105 with their notes; shot-0103's red floor area has a
+  hard straight edge.
+  Lead, unproven: mesh.frag lights a fragment from its subsector alone:
+  one GI SH probe (giIrradiance) and the subsector's own nearest-16
+  light list (BuildRasterPointLights), with no blend across subsector
+  borders, so light steps at BSP split lines. Same list as DOOM-0649.
+  Cold reviews asked of Vestige, UT_Ants and ExperiRays.
+  **Layman:** The smooth view lights the map in invisible patches, and the light jumps where two patches meet, drawing straight lines on floors.
+  Kind: fix.
+  Source: user-2026-11-21.
+  Evidence: linuxdoom-1.10/dev-shots/shot-0103.png, linuxdoom-1.10/dev-shots/shot-0100.png
 
 ## 0.13.0 — The player's experience
 
