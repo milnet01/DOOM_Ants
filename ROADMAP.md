@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=652 -->
+<!-- ants-roadmap-id-high-water: DOOM=653 -->
 
 # Roadmap
 
@@ -21194,10 +21194,28 @@ in CLAUDE.md describes.
   light list (BuildRasterPointLights), with no blend across subsector
   borders, so light steps at BSP split lines. Same list as DOOM-0649.
   Cold reviews asked of Vestige, UT_Ants and ExperiRays.
+  Measured 2026-11-21 (kit Scratchpad d0652/ab.sh): -lightlab 79,
+  bounce off, keeps the bands at full strength; -lightlab 0, sky only,
+  shows them faint. So the nearest-16 point-light lists cause most of
+  it and the probes add a faint layer; the reviews had it the other way
+  round. The user sees the same lines on ceilings. Spec:
+  docs/specs/DOOM-0652-shared-light-grid.md (B1-B4). It also closes
+  DOOM-0649.
   **Layman:** The smooth view lights the map in invisible patches, and the light jumps where two patches meet, drawing straight lines on floors.
   Kind: fix.
   Source: user-2026-11-21.
   Evidence: linuxdoom-1.10/dev-shots/shot-0103.png, linuxdoom-1.10/dev-shots/shot-0100.png
+
+- 📋 [DOOM-0653] **Traced view speckles in dim areas: NEE picks lights by global power, not by what reaches the point.**
+  shadeSurface in pt_common.glsl picks a static emitter by a power CDF
+  over the whole map, so a dim corner far from the brightest lights
+  spends most samples on lights that give it nothing. Plan: pick from
+  the cell list that DOOM-0652's shared light grid builds, weighted by
+  estimated contribution at the point. Blocked by DOOM-0652 B1.
+  **Layman:** In the ray-traced view, dark corners look grainy because the game spends its light samples on bright lamps far away instead of the ones nearby.
+  Kind: fix.
+  Source: user-2026-11-21 (light lab handoff).
+  Lanes: renderer.
 
 ## 0.13.0 — The player's experience
 
