@@ -8364,7 +8364,9 @@ static void BuildStaticEmitterSet(const rb_vertex_t* v, bool allKinds = false)
     g.staticEmitSs.clear();
     const bool walls = allKinds || LightKindOn(LAB_WALLS);
     const bool flats = allKinds || LightKindOn(LAB_FLATS);
-    if (!g.levelMesh || g.matEmissive.empty() || !v || (!walls && !flats))
+    // Both kinds off still runs the loop, which then keeps nothing: an early return here
+    // would skip the dirty flag below, and the raster view kept the lights switched off.
+    if (!g.levelMesh || g.matEmissive.empty() || !v)
         return;
 
     const int matCount = (int)(g.matEmissive.size() / 3);
