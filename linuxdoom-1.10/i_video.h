@@ -67,6 +67,9 @@ void I_WaitVBL(int count);
 
 void I_ReadScreen (byte* scr);
 
+// DOOM-0650: which light-lab kinds are on, as the on-screen line words it.
+void I_LightLabSummary (char* out, int size);
+
 
 
 

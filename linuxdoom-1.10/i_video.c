@@ -504,36 +504,63 @@ static void I_DebugKeyMessage(const char* text)
 	players[consoleplayer].message = buf;
 }
 
+// DOOM-0650: the light lab's kinds of light, in key order: key N is kinds[N-1].
+// The torch has no LAB_* bit; it is rb_flashlight.
+static const struct { int bit; const char* name; } labKinds[] = {
+    { LAB_WALLS, "walls" }, { LAB_FLATS, "floors" }, { LAB_LAMPS, "lamps" },
+    { LAB_GLOW, "glow" },   { LAB_ROOM, "room" },    { LAB_BOUNCE, "bounce" },
+    { 0, "torch" },         { LAB_MUZZLE, "muzzle" },
+};
+#define LAB_KINDS ((int)(sizeof(labKinds) / sizeof(labKinds[0])))
+
+// Says which kinds are on, short enough to stay clear of a top-right FPS counter:
+// the sky is always on, so it goes unnamed, and past half on the kinds OFF are
+// named instead. Shared with the F12 capture's text file (G_DevShotInfo).
+void I_LightLabSummary(char* out, int size)
+{
+    extern int rb_flashlight;           // r_vulkan.cpp
+    int on[LAB_KINDS], count = 0, i;
+
+    for (i = 0; i < LAB_KINDS; i++)
+    {
+	on[i] = labKinds[i].bit ? (rb_lightlab & labKinds[i].bit) != 0 : rb_flashlight != 0;
+	count += on[i];
+    }
+    if (count == 0)
+	snprintf(out, size, "Sky only");
+    else if (count == LAB_KINDS)
+	snprintf(out, size, "All lights on");
+    else
+    {
+	int listOn = count * 2 <= LAB_KINDS;
+
+	snprintf(out, size, listOn ? "Lights on:" : "All on except:");
+	for (i = 0; i < LAB_KINDS; i++)
+	    if (on[i] == listOn)
+	    {
+		strncat(out, " ", size - strlen(out) - 1);
+		strncat(out, labKinds[i].name, size - strlen(out) - 1);
+	    }
+    }
+}
+
 // DOOM-0650: one light-lab key. 1-6 and 8 flip one LAB_* kind, 7 the handheld torch,
-// 9 puts every kind on and 0 takes every kind off, leaving the sky. The message names
-// the kinds now on, so the screen always says what lights the view.
+// 9 puts every kind on and 0 takes every kind off, leaving the sky.
 static void I_LightLabKey(int digit)
 {
     extern int rb_flashlight;           // r_vulkan.cpp
-    static const struct { int bit; const char* name; } kinds[] = {
-	{ LAB_WALLS, "walls" }, { LAB_FLATS, "flats" }, { LAB_LAMPS, "lamps" },
-	{ LAB_GLOW, "glow" },   { LAB_ROOM, "room" },   { LAB_BOUNCE, "bounce" },
-	{ 0, "torch" },         { LAB_MUZZLE, "muzzle" },
-    };
     char msg[64];
-    int  i;
 
     if (digit == 0)
 	rb_lightlab = 0, rb_flashlight = 0;
     else if (digit == 9)
 	rb_lightlab = LAB_ALL, rb_flashlight = 1;
-    else if (kinds[digit - 1].bit)
-	rb_lightlab ^= kinds[digit - 1].bit;
+    else if (labKinds[digit - 1].bit)
+	rb_lightlab ^= labKinds[digit - 1].bit;
     else
 	rb_flashlight = !rb_flashlight;
 
-    strcpy(msg, "Lit by: sky");
-    for (i = 0; i < (int)(sizeof(kinds) / sizeof(kinds[0])); i++)
-	if (kinds[i].bit ? (rb_lightlab & kinds[i].bit) != 0 : rb_flashlight != 0)
-	{
-	    strncat(msg, " ", sizeof(msg) - strlen(msg) - 1);
-	    strncat(msg, kinds[i].name, sizeof(msg) - strlen(msg) - 1);
-	}
+    I_LightLabSummary(msg, (int)sizeof msg);
     I_DebugKeyMessage(msg);
 }
 

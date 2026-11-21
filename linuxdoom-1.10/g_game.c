@@ -40,6 +40,7 @@ rcsid[] __attribute__((used)) = "$Id: g_game.c,v 1.8 1997/02/03 22:45:09 b1 Exp 
 #include "m_menu.h"
 #include "m_random.h"
 #include "i_system.h"
+#include "i_video.h"		// DOOM-0650: I_LightLabSummary for the shot note
 
 #include "p_setup.h"
 #include "p_saveg.h"
@@ -710,12 +711,32 @@ void G_DevShotInfo (const char* pngpath, int w, int h)
     fprintf (f, "renderer:\t%s, ray tracing %s\n", RB_ModeName (rendermode),
 	     rendermode != RB_CLASSIC && rb_rtdebug == 6 ? "on" : "off");
     fprintf (f, "image:\t\t%dx%d\n", w, h);
+    // DOOM-0650: in the light lab, which kinds of light were on.
+    if (lightlab)
+    {
+	extern int	rb_lightlab, rb_flashlight;	// r_vulkan.cpp
+	char		lab[64];
+
+	I_LightLabSummary (lab, (int)sizeof lab);
+	fprintf (f, "light lab:\t%s\t(-lightlab %d, torch %s)\n", lab, rb_lightlab,
+		 rb_flashlight ? "on" : "off");
+    }
+    fprintf (f, "launched:\t");
+    for (int i = 1; i < myargc; i++)
+	fprintf (f, "%s%s", i > 1 ? " " : "", myargv[i]);
+    fprintf (f, "\n");
     if (gamemode == commercial)
 	fprintf (f, "repeat:\t\t-warp %d", gamemap);
     else
 	fprintf (f, "repeat:\t\t-warp %d %d", gameepisode, gamemap);
-    fprintf (f, " -skill %d -warpto %d %d %u\n", gameskill + 1,
+    fprintf (f, " -skill %d -warpto %d %d %u", gameskill + 1,
 	     mo->x >> FRACBITS, mo->y >> FRACBITS, deg);
+    if (lightlab)
+    {
+	extern int	rb_lightlab;
+	fprintf (f, " -lightlab %d", rb_lightlab);
+    }
+    fprintf (f, "\n");
     fprintf (f, "\n# settings this frame was drawn with (config file format)\n");
     M_WriteDefaults (f);
 
