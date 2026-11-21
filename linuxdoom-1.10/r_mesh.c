@@ -2474,6 +2474,8 @@ static char wall_light_tex[][9] = {
     // Switches whose face carries a LIT indicator (DOOM-0082). The SW1/SW2 skull and
     // gargoyle switches are bronze relief, not lit, and are deliberately absent.
     "SW2COMP",  "SW2EXIT",  "SW2GRAY",  "SW2STON6",
+    // The lit strips beside a key door, and their skull-key forms (DOOM-0646)
+    "DOORBLU",  "DOORRED",  "DOORYEL",  "DOORBLU2", "DOORRED2", "DOORYEL2",
 };
 
 static byte* wall_tex_light;   // per-texture "is a light source" flag. Built once, cached.
@@ -2500,9 +2502,28 @@ static void ensure_wall_light_map(void)
 // texture at shownEmission's cap, whatever its Le. A name not here casts 1x.
 // REDWALL1: the user's references keep the room dark round a bright red cross; at 1x
 // its E2M1 corridor walls measured three times the reference's brightness.
+// Key-door strips (DOOM-0646): the yellow strip's texels are far brighter than the blue
+// and red ones, and at 1x a yellow door lit its wall where a blue or red one barely
+// did. Blue and red also read far dimmer to the eye than yellow at the same strength,
+// so they are set above it: at 4x a blue strip moved 0.1% of a traced frame's pixels.
 static struct { char name[9]; float cast; } wall_light_cast[] = {
     { "REDWALL1", 0.15f },
+    { "DOORBLU",  12.0f }, { "DOORRED",  8.0f },
+    { "DOORBLU2", 3.0f },  { "DOORRED2", 40.0f },
 };
+
+// DOOM-0646: listed walls whose brightest texels sit under the derivation's bright test,
+// so they are read at its lower one (emissive_derive.h kDimLightBrightLum).
+static char wall_dim_light[][9] = { "DOORBLU", "DOORRED" };
+
+int RB_WallTexDimLight(int texnum)
+{
+    int i;
+    for (i = 0; i < (int)(sizeof(wall_dim_light) / sizeof(wall_dim_light[0])); i++)
+        if (R_CheckTextureNumForName(wall_dim_light[i]) == texnum)
+            return 1;
+    return 0;
+}
 
 float RB_WallTexCastScale(int texnum)
 {

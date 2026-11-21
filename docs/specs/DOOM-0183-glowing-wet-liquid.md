@@ -203,9 +203,9 @@ today. The whole block is Ultra-RT-only by construction.
   allow-listed flats in `ComputeMaterialEmissive` (`r_vulkan.cpp:4371`), written
   into `g.matEmissive[id]`. This is a **new forced-constant path**, *not* the
   existing `derive_material_le` fallback: that routine's `allowFaint`
-  (DOOM-0157, `emissive_derive.h:86`) is **conditional** (it returns 0 unless the
-  tile holds a texel over `kBrightLum`, `emissive_derive.h:116`) and **per-texel
-  derived** (`Le = Σ bright texels / total × kEmissiveScale`, `:120`) — so it
+  (DOOM-0157, `emissive_derive.h`) is **conditional** (it returns 0 unless the
+  tile holds a texel over `kBrightLum`) and **per-texel
+  derived** (`Le = Σ bright texels / total × kEmissiveScale`) — so it
   neither guarantees emission nor gives a controllable colour. Forcing a constant
   `Le` for the named liquids sidesteps the peak-region gate entirely — the exact
   "may need a per-flat allow-list or a lowered threshold" case DOOM-0083 flagged —

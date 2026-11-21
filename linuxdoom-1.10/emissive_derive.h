@@ -23,6 +23,10 @@ namespace emis {
     // the emitted *colour + intensity*, and is unchanged from the original derivation
     // (so lamps that already read as lights keep their brightness).
     constexpr float kBrightLum = 0.5f;
+    // DOOM-0646: the same test for a listed wall the engine names as a dim light
+    // (r_mesh.c wall_dim_light). DOOM's blue and red key-door strips peak at 0.45, so
+    // they derived no light at all beside a yellow strip that did.
+    constexpr float kDimLightBrightLum = 0.25f;
 
     // DOOM-0082: a tile QUALIFIES as an NEE emitter when it contains a genuine
     // near-fullbright region (a switch's lit indicator, a lamp core, a screen) — NOT
@@ -83,9 +87,12 @@ namespace emis {
     // fails the peak gate but still holds a genuine bright speck emits a FAINT Le from
     // those bright texels instead of zero, so the eyes self-illuminate. The Le is the
     // bright texels averaged over the whole tile, so a few-texel glow is naturally dim.
+    //
+    // brightLum is the value a texel must pass to count; derive_listed_wall_le lowers it.
     inline bool derive_material_le(const uint8_t* pix, int stride, int ox, int oy,
                                    int w, int h, const float palLin[256][3],
-                                   float out[3], bool allowFaint = false)
+                                   float out[3], bool allowFaint = false,
+                                   float brightLum = kBrightLum)
     {
         out[0] = out[1] = out[2] = 0.0f;
         const int total = w * h;
@@ -101,7 +108,7 @@ namespace emis {
             {
                 const float* c = palLin[line[col]];
                 const float v = value(c[0], c[1], c[2]);
-                if (v > kBrightLum) { sr += c[0]; sg += c[1]; sb += c[2]; }
+                if (v > brightLum) { sr += c[0]; sg += c[1]; sb += c[2]; }
                 if (v >= kEmitterPeakLum) peakCount++;
             }
         }
@@ -121,6 +128,20 @@ namespace emis {
         out[1] = (float)(sg / total) * kEmissiveScale;
         out[2] = (float)(sb / total) * kEmissiveScale;
         return true;
+    }
+
+    // A wall the light list names (r_mesh.c wall_light_tex). The list has already said
+    // it is a light, so it takes the faint path. A `dim` one that is too dark for
+    // kBrightLum is read again at kDimLightBrightLum instead of casting nothing
+    // (DOOM-0646). Not every listed wall: COMPUTE2 is listed and also derives nothing,
+    // and whether it should cast is a separate call nobody has made.
+    inline bool derive_listed_wall_le(const uint8_t* pix, int stride, int ox, int oy,
+                                      int w, int h, const float palLin[256][3], float out[3],
+                                      bool dim)
+    {
+        return derive_material_le(pix, stride, ox, oy, w, h, palLin, out, true)
+            || (dim && derive_material_le(pix, stride, ox, oy, w, h, palLin, out, true,
+                                          kDimLightBrightLum));
     }
 }
 

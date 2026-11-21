@@ -8,6 +8,11 @@ All notable changes to DOOM_Ants are documented here. The format follows
 
 ### Added
 
+- **The coloured strips beside a key door are lights** (DOOM-0646)
+  The blue, yellow and red strips, and their skull-key forms, now
+  tint the wall and floor near them in their own colour, in Solid
+  and Ultra and in both views.
+
 - **The bubbles in Ultra's health-bonus flask rise** (DOOM-0619)
   Small pale bubbles drift up through the blue liquid, in the
   rasterised and the ray-traced view alike. They used to be painted

@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=646 -->
+<!-- ants-roadmap-id-high-water: DOOM=648 -->
 
 # Roadmap
 
@@ -21045,15 +21045,64 @@ in CLAUDE.md describes.
   Source: user-request-2026-11-21.
   Lanes: renderer.
 
-- 📋 [DOOM-0646] **The blue, yellow and red strips on key doors are lights and cast their colour.**
+- ✅ [DOOM-0646] **The blue, yellow and red strips on key doors are lights and cast their colour.**
   User, 2026-11-21. The key-door textures (DOORBLU, DOORRED,
   DOORYEL and the skull forms DOORBLU2, DOORRED2, DOORYEL2) are
   not on wall_light_tex in r_mesh.c, so they emit nothing. This is
   part of DOOM-0642 stage 1 (every screen and light casts light).
   Check each texture's derived colour and strength with captures
   in both views, in Solid and Ultra.
+  Built 2026-11-21. The six names are on wall_light_tex. Listing
+  alone lit only the yellow strips: DOORBLU and DOORRED peak at 0.45
+  linear, under the derivation's 0.5 bright test, and derived no
+  light. wall_dim_light names those two and they are read at 0.25.
+  wall_light_cast sets DOORBLU 12, DOORRED 8, DOORBLU2 3, DOORRED2
+  40, because blue and red read far dimmer than yellow at the same
+  strength. Captures before and after at E1M3 (blue, yellow), E1M2
+  (red) and E2M6 (skull forms), Solid and Ultra, -rtview 0 and 6:
+  Scratchpad d0646/sheet-blu-yel.png, sheet3-blu-red.png,
+  sheet3-skull.png. Pixels moved over 2% fuzz, Solid rasterised:
+  yellow 4.5%, red 2.7%, blue 1.1%. The traced blue and red move
+  about 0.6%. E2M6's skull spot is no equivalence fixture: a control
+  with none of this change read the same 2.5 levels darker as the
+  later runs, so the first two captures caught another light state.
+  Open: the user's look; the strips' own glow is DOOM-0647.
   **Layman:** The coloured strips beside a locked door glow and tint the wall and floor near them blue, yellow or red.
   Kind: enhancement.
+  Source: user-request-2026-11-21.
+  Lanes: renderer.
+
+- 📋 [DOOM-0647] **A key door's blue and red strips cast light but do not look lit themselves.**
+  Seen 2026-11-21 in the DOOM-0646 captures (Scratchpad
+  d0646/sheet-blu-red.png). The traced view shows a light's own glow
+  through `emissiveMask(albedo)` in pathtrace.comp, which weights a
+  texel by its brightness, and the strips' blue and red texels peak
+  at 0.45 linear. The rasterised view draws a wall light by its
+  room's light alone; it has no shown-glow term for Solid's walls.
+  User, 2026-11-21, on hearing the strips sit under the 0.5 bright
+  test: "Perhaps make them brighter than 0.5." Not built: the mask's
+  thresholds are shared by every emitter, so this needs a per-texture
+  way to say "this whole strip glows".
+  **Layman:** The blue and red strips beside a locked door should look like glowing lights, not dull paint.
+  Kind: enhancement.
+  Source: found-2026-11-21-doom-0646.
+  Lanes: renderer.
+
+- 💭 [DOOM-0648] **Consider a small many-lights system, in the spirit of Unreal's MegaLights.**
+  User, 2026-11-21, during DOOM-0646: "Sounds like we might also
+  need a system like Unreal's MegaLights feature but perhaps not as
+  big as Unreal's." What prompted it was a reading that extra faint
+  emitters darkened a far wall in the traced view. A control run
+  then showed that reading was wrong, so no need is measured yet.
+  Two limits it would address are real: the rasterised view lights a
+  fragment from its subsector's nearest 16 emitters
+  (RASTER_MAX_LIGHTS_PER_SUBSECTOR), and the traced view samples
+  emitters by power from one map-wide list. DOOM-0642 adds lights
+  stage by stage, so this is the place to measure first. Scalable
+  ray tracing work lives in project ExperiRays; check there before
+  designing here. Needs a spec.
+  **Layman:** A way for a room to be lit by many lights at once without slowing down, so adding lights never costs other lights their share.
+  Kind: research.
   Source: user-request-2026-11-21.
   Lanes: renderer.
 

@@ -6019,11 +6019,15 @@ static void ComputeMaterialEmissive(const rb_atlas_t* a, std::vector<float>& out
         // DOOM-0157: a glowing-collectible sprite lump (skull eyes, armour gleam) has
         // too few bright texels to clear the room-lighting peak gate, so grant it a
         // faint self-emission floor; flats and other sprites keep the strict gate.
-        const bool faint = id < a->numwall ||
-                           (id >= spriteBase &&
-                            RB_SpriteLumpGlows(id - spriteBase) != 0);
-        emis::derive_material_le(a->pixels, (int)a->atlasw, ox, oy, w, h,
-                                 palLin, &out[(size_t)id * 3], faint);
+        const bool faint = id >= spriteBase &&
+                           RB_SpriteLumpGlows(id - spriteBase) != 0;
+        if (id < a->numwall)
+            emis::derive_listed_wall_le(a->pixels, (int)a->atlasw, ox, oy, w, h,
+                                        palLin, &out[(size_t)id * 3],
+                                        RB_WallTexDimLight(id) != 0);
+        else
+            emis::derive_material_le(a->pixels, (int)a->atlasw, ox, oy, w, h,
+                                     palLin, &out[(size_t)id * 3], faint);
         if (id < a->numwall) {              // DOOM-0511: per-texture cast strength
             const float k = RB_WallTexCastScale(id);
             for (int c = 0; c < 3; c++)

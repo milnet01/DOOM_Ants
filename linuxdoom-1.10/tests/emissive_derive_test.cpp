@@ -34,7 +34,7 @@
 
 // A 256-entry linear-RGB palette with the handful of indices the tiles below use.
 // (derive_material_le takes an already-decoded palette, so no sRGB step here.)
-enum { PAL_BLACK = 0, PAL_RED = 1, PAL_GREEN = 2, PAL_WHITE = 3, PAL_MIDRED = 4 };
+enum { PAL_BLACK = 0, PAL_RED = 1, PAL_GREEN = 2, PAL_WHITE = 3, PAL_MIDRED = 4, PAL_DIMBLUE = 5 };
 static void build_palette(float pal[256][3])
 {
     for (int i = 0; i < 256; i++) { pal[i][0] = pal[i][1] = pal[i][2] = 0.0f; }
@@ -42,6 +42,7 @@ static void build_palette(float pal[256][3])
     pal[PAL_GREEN][1] = 1.0f;                                   // fullbright green
     pal[PAL_WHITE][0] = pal[PAL_WHITE][1] = pal[PAL_WHITE][2] = 1.0f; // fullbright white
     pal[PAL_MIDRED][0] = 0.6f;                                  // mid red (value 0.6): bright-ish, NOT fullbright
+    pal[PAL_DIMBLUE][2] = 0.45f;                                // DOORBLU's brightest blue: under kBrightLum
 }
 
 // Build a contiguous w*h tile filled with `bg`, then paint a `count`-texel block of
@@ -180,6 +181,36 @@ int main()
         check(e1 && faint[0] > 0.0f && faint[1] > 0.0f && faint[2] > 0.0f,
               "candle (allowFaint): the flame casts light");
         std::printf("  [candle]  Le=(%.3f, %.3f, %.3f)\n", faint[0], faint[1], faint[2]);
+    }
+
+    // --- DOOM-0646: a listed light too dark for the bright test still casts ----------
+    // DOORBLU is 8x128 and its brightest texels have value 0.45. Even the faint path
+    // gave it no light. A listed wall is read again at the lower test.
+    {
+        const int w = 8, h = 128;
+        auto tile = make_tile(w, h, PAL_BLACK, PAL_DIMBLUE, 56);
+        float faint[3] = { -1, -1, -1 };
+        bool e0 = emis::derive_material_le(tile.data(), w, 0, 0, w, h, pal, faint,
+                                           /*allowFaint=*/true);
+        check(!e0 && faint[2] == 0.0f, "blue key strip (faint path alone): casts no light");
+
+        float le[3] = { -1, -1, -1 };
+        bool e1 = emis::derive_listed_wall_le(tile.data(), w, 0, 0, w, h, pal, le, /*dim=*/true);
+        check(e1 && le[2] > 0.0f && le[0] == 0.0f && le[1] == 0.0f,
+              "blue key strip (listed wall): casts blue light");
+        std::printf("  [doorblu] Le=(%.3f, %.3f, %.3f)\n", le[0], le[1], le[2]);
+
+        // A listed wall that passes the usual test is not read again: same light as before.
+        auto bright = make_tile(w, h, PAL_BLACK, PAL_MIDRED, 56);
+        float a[3], b[3];
+        emis::derive_material_le(bright.data(), w, 0, 0, w, h, pal, a, /*allowFaint=*/true);
+        emis::derive_listed_wall_le(bright.data(), w, 0, 0, w, h, pal, b, /*dim=*/true);
+        check(a[0] == b[0] && a[0] > 0.0f, "listed wall over the usual test: light unchanged");
+
+        // A listed wall not named dim stays dark, as COMPUTE2 does.
+        float c[3] = { -1, -1, -1 };
+        bool e2 = emis::derive_listed_wall_le(tile.data(), w, 0, 0, w, h, pal, c, /*dim=*/false);
+        check(!e2 && c[2] == 0.0f, "dark listed wall not named dim: casts no light");
     }
 
     // --- Green switch: colour derivation is hue-agnostic -----------------------------

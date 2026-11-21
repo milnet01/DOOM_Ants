@@ -82,6 +82,12 @@ terms off for a test run. Its measurements are on the roadmap item.
 - **Candles and candelabra.** Their sprite lumps join the lumps that may emit faintly
   (`RB_SpriteLumpGlows`, the `allowFaint` path), so their flame texels set their light, as a
   pickup's glow does. No new table: strength comes from the art until tuning.
+- **Key-door strips (DOOM-0646, built 2026-11-21).** `DOORBLU`, `DOORRED`, `DOORYEL` and
+  their skull forms are on `wall_light_tex`. The plain blue and red strips have no texel
+  over `kBrightLum`, so `wall_dim_light` in `r_mesh.c` names them and they are read again
+  at `kDimLightBrightLum` (`emis::derive_listed_wall_le`). `wall_light_cast` sets the blue
+  and red strengths. `COMPUTE2` is listed and derives nothing in the same way; it is not
+  named dim, so it still casts nothing.
 - **Screens.** A capture sheet of each map's computer and screen textures that are not on
   `wall_light_tex` goes to the user; the ones the user calls lights join the list.
 - **Bounce from light Things.** Light Things that never move (candles, lamps, torches, the
