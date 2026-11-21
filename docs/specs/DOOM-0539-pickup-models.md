@@ -160,7 +160,7 @@ Pickup sprites, from the game's own table, so an inventory test can compare (INV
 PLAS PMAP PSTR PVIS RKEY ROCK RSKU SBOX SGN2 SHEL SHOT SOUL STIM SUIT YKEY YSKU`
 
 Decorations (DOOM-0620), none of them `MF_SPECIAL`: `BAR1` (barrel), `COLU` (floor lamp), `ELEC`
-(tall tech column), `CBRA` (candelabra).
+(tall tech column), `CBRA` (candelabra), `CAND` (candle, DOOM-0644).
 
 Each of a model's three maps is at most 512x512: 1.33 MB of video memory with mips (`mbOf` in
 `EnsureHdMaterials`), so 4 MB per model, inside `kHdBudgetMB`'s accounting. A sprite with variants

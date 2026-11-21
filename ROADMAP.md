@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=643 -->
+<!-- ants-roadmap-id-high-water: DOOM=646 -->
 
 # Roadmap
 
@@ -20984,6 +20984,62 @@ in CLAUDE.md describes.
   DOOM-0642 B7. Spec: docs/specs/DOOM-0642-honest-light.md section 3.
   **Layman:** Rooms that flicker or strobe in the 1993 game keep flickering once their light comes from lamps instead of from nowhere.
   Kind: feature.
+  Source: user-request-2026-11-21.
+  Lanes: renderer.
+
+- 🚧 [DOOM-0644] **Candles and candelabra burn with a flame-shaped flame in Ultra.**
+  User, 2026-11-21: "give candles and candelabras proper flames".
+  Today the candelabra model (doom_cbra.py) burns with three
+  rectangular blocks, and the candle (CAND) has no model. Work: a
+  teardrop flame and a wick on each candelabra candle; a candle
+  model with the same flame and a light of its own, through
+  DOOM-0539's model path. Ultra only: a model needs the HD art, and
+  Solid keeps the game's own candle picture. The flame is a still
+  shape; whether it should move is not decided.
+  2026-11-21: built. pickupbake.py gains flame(), a teardrop with a
+  blue foot, a pale body and an orange tip. doom_cbra.py uses it in
+  place of its three blocks (its stem went to six sides to stay
+  under the triangle cap). doom_cand.py is new: a wax stub in an
+  iron dish with a wick, the flame and one light, a third of the
+  candelabra's. CAND is in models.csv, LICENSES and the model
+  test's decoration table. Pictures: Scratchpad d0644/cand-close.png
+  (sprite left, model right; -rtview 0 above, 6 below) and
+  cbra-v0-before-after.png. E2M1's start under -sourcedlight is
+  still candle-lit with the model (d0644/sl-sheet.png). The user's
+  look is owed, and whether the flame should move.
+  **Layman:** In Ultra the candelabra's flames are square blocks and the candle is still the 1993 picture; both get a real candle flame.
+  Kind: enhancement.
+  Source: user-request-2026-11-21.
+  Lanes: renderer, assets.
+
+- 📋 [DOOM-0645] **E1M1's floor lamps are black in Ultra and light nothing near them in the rasterised view.**
+  User, 2026-11-21: the lamp stands in E1M1 are black and do not
+  seem to cast light; make them silver in line with the original
+  and ensure they cast light.
+  Seen 2026-11-21 at E1M1 `600 -3236 200`, render scale 100
+  (Scratchpad d0645/now/sheet.png): in Ultra the COLU model's body
+  is flat black (doom_colu.py's body colour is 0.05), where the
+  game's sprite is dark metal with grey highlights. With -rtview 0
+  the wall beside the lamp is unlit in both Solid and Ultra; with
+  -rtview 6 it is lit in both. The 2026-11-17 captures (Scratchpad
+  d0620/c4/lampnear-v0-*.png) show the same unlit wall with
+  -rtview 0, for the sprite and for the model, so the missing
+  light is older than today's work. Cause not found yet: start at
+  how mesh.frag treats a light whose reach is 0.
+  **Layman:** The lamp stands should be silver like the 1993 game's and should visibly light the floor and walls around them.
+  Kind: fix.
+  Source: user-request-2026-11-21.
+  Lanes: renderer.
+
+- 📋 [DOOM-0646] **The blue, yellow and red strips on key doors are lights and cast their colour.**
+  User, 2026-11-21. The key-door textures (DOORBLU, DOORRED,
+  DOORYEL and the skull forms DOORBLU2, DOORRED2, DOORYEL2) are
+  not on wall_light_tex in r_mesh.c, so they emit nothing. This is
+  part of DOOM-0642 stage 1 (every screen and light casts light).
+  Check each texture's derived colour and strength with captures
+  in both views, in Solid and Ultra.
+  **Layman:** The coloured strips beside a locked door glow and tint the wall and floor near them blue, yellow or red.
+  Kind: enhancement.
   Source: user-request-2026-11-21.
   Lanes: renderer.
 

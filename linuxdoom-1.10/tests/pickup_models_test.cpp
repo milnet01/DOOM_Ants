@@ -60,7 +60,7 @@ struct Decoration { Sprite sprite; int radius; };
 // the radius is info.c's, which contract 3 checks.
 const Decoration kDecorations[] = {
     {{"BAR1", 23,  28}, 10}, {{"COLU", 23, 43}, 16}, {{"ELEC", 38, 123}, 16},
-    {{"CBRA", 29,  57}, 16},
+    {{"CBRA", 29,  57}, 16}, {{"CAND", 16, 15}, 20},
 };
 
 std::string slurp(const std::string& path)

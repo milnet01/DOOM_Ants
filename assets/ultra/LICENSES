@@ -197,6 +197,10 @@ assets/ultra/models/CBRA.dmdl  decorations/doom_cbra.py  CC0-first-party
 assets/ultra/models/CBRA_alb.png  decorations/doom_cbra.py  CC0-first-party
 assets/ultra/models/CBRA_nrm.png  decorations/doom_cbra.py  CC0-first-party
 assets/ultra/models/CBRA_emis.png  decorations/doom_cbra.py  CC0-first-party
+assets/ultra/models/CAND.dmdl  decorations/doom_cand.py  CC0-first-party
+assets/ultra/models/CAND_alb.png  decorations/doom_cand.py  CC0-first-party
+assets/ultra/models/CAND_nrm.png  decorations/doom_cand.py  CC0-first-party
+assets/ultra/models/CAND_emis.png  decorations/doom_cand.py  CC0-first-party
 # DOOM-0537 COMP family walls: first-party, modelled and baked headlessly in Blender by scripts in the shared asset library
 assets/ultra/heroes/tech/COMPSPAN_alb.png  Blender-Scripts/walls/doom_compspan.py  CC0-first-party
 assets/ultra/heroes/tech/COMPSPAN_nrm.png  Blender-Scripts/walls/doom_compspan.py  CC0-first-party
