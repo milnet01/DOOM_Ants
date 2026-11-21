@@ -47,6 +47,7 @@
 // Command line parameters.
 //
 extern  boolean	nomonsters;	// checkparm of -nomonsters
+extern  boolean	lightlab;	// DOOM-0650: -lightlab, the light lab
 extern  boolean	respawnparm;	// checkparm of -respawn
 extern  boolean	fastparm;	// checkparm of -fast
 

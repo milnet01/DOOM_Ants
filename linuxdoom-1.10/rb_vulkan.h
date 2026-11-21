@@ -87,6 +87,22 @@ void RB_Vulkan_LedgerFacts(rl_facts_t* f);
 // DOOM-0622: the output's size and the size the world is drawn at this frame.
 void RB_Vulkan_RenderSize(int* outW, int* outH, int* drawW, int* drawH);
 
+// DOOM-0650: the light lab (`-lightlab`). The map starts lit by the sky alone; each
+// bit below puts one kind of light back. i_video.c's number keys flip them live.
+// The handheld torch is rb_flashlight, not a bit here.
+enum
+{
+    LAB_WALLS  = 1 << 0,   // wall textures that are lights (screens, light strips)
+    LAB_FLATS  = 1 << 1,   // floor and ceiling lights, glowing liquids included
+    LAB_LAMPS  = 1 << 2,   // light sprites and model lights: lamps, torches, candles
+    LAB_GLOW   = 1 << 3,   // every light's own glow, as seen by the eye
+    LAB_ROOM   = 1 << 4,   // the room's brightness number and the traced ambient floor
+    LAB_BOUNCE = 1 << 5,   // light from the lights above, bounced (the GI bake)
+    LAB_MUZZLE = 1 << 6,   // the muzzle flash
+    LAB_ALL    = (1 << 7) - 1
+};
+extern int rb_lightlab;    // LAB_* bits; read only under -lightlab
+
 #ifdef __cplusplus
 }
 #endif

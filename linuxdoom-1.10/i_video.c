@@ -38,6 +38,7 @@
 #include "g_game.h"      // G_ScreenShot: the Classic tier's half of that key
 #include "rb_image.h"    // rb_devshot_path: shared -devshot naming (DOOM-0294)
 #include "menu_text.h"   // DOOM-0211: the crisp menu queue this file draws under Classic
+#include "rb_vulkan.h"   // DOOM-0650: the light lab's LAB_* bits and rb_lightlab
 
 // Implemented in rb_image.c (vendored stb), same declaration r_vulkan.cpp uses.
 extern int stbi_write_png(const char* filename, int w, int h, int comp,
@@ -503,6 +504,39 @@ static void I_DebugKeyMessage(const char* text)
 	players[consoleplayer].message = buf;
 }
 
+// DOOM-0650: one light-lab key. 1-6 and 8 flip one LAB_* kind, 7 the handheld torch,
+// 9 puts every kind on and 0 takes every kind off, leaving the sky. The message names
+// the kinds now on, so the screen always says what lights the view.
+static void I_LightLabKey(int digit)
+{
+    extern int rb_flashlight;           // r_vulkan.cpp
+    static const struct { int bit; const char* name; } kinds[] = {
+	{ LAB_WALLS, "walls" }, { LAB_FLATS, "flats" }, { LAB_LAMPS, "lamps" },
+	{ LAB_GLOW, "glow" },   { LAB_ROOM, "room" },   { LAB_BOUNCE, "bounce" },
+	{ 0, "torch" },         { LAB_MUZZLE, "muzzle" },
+    };
+    char msg[64];
+    int  i;
+
+    if (digit == 0)
+	rb_lightlab = 0, rb_flashlight = 0;
+    else if (digit == 9)
+	rb_lightlab = LAB_ALL, rb_flashlight = 1;
+    else if (kinds[digit - 1].bit)
+	rb_lightlab ^= kinds[digit - 1].bit;
+    else
+	rb_flashlight = !rb_flashlight;
+
+    strcpy(msg, "Lit by: sky");
+    for (i = 0; i < (int)(sizeof(kinds) / sizeof(kinds[0])); i++)
+	if (kinds[i].bit ? (rb_lightlab & kinds[i].bit) != 0 : rb_flashlight != 0)
+	{
+	    strncat(msg, " ", sizeof(msg) - strlen(msg) - 1);
+	    strncat(msg, kinds[i].name, sizeof(msg) - strlen(msg) - 1);
+	}
+    I_DebugKeyMessage(msg);
+}
+
 static void I_GetEvent(SDL_Event* sdlevent)
 {
     event_t event;
@@ -532,6 +566,13 @@ static void I_GetEvent(SDL_Event* sdlevent)
 	if (sdlevent->key.keysym.sym == SDLK_f && !sdlevent->key.repeat && !menuactive)
 	{
 	    rb_flashlight = !rb_flashlight;
+	    break;
+	}
+	// DOOM-0650: in the light lab the number keys switch kinds of light, not weapons.
+	if (lightlab && !menuactive && !sdlevent->key.repeat
+	    && sdlevent->key.keysym.sym >= SDLK_0 && sdlevent->key.keysym.sym <= SDLK_9)
+	{
+	    I_LightLabKey(sdlevent->key.keysym.sym - SDLK_0);
 	    break;
 	}
 	// Backquote/tilde (`~`) controls the path-tracer view (DOOM-0009). DOOM-0135:

@@ -112,8 +112,9 @@ layout(set = 1, binding = 0) uniform sampler2D shadowMap;
 // every frame; lightVP only while the torch is on. r_vulkan.cpp's ShadowUboData mirrors it.
 // DOOM-0182: hd.x = the grime overlay's slot in hdTex[], hd.y = the de-tile dial, hd.z = the
 // dirt overlay's slot, hd.w = filth on.
-// misc.x = seconds on the trace's ripple clock, for the bubbles (DOOM-0619). misc.y = 1 under
-// -sourcedlight, DOOM-0642's test switch (r_vulkan.cpp's SourcedLightOnly), and 2 under -skyonly.
+// misc.x = seconds on the trace's ripple clock, for the bubbles (DOOM-0619). misc.y holds two
+// bits as a float (r_vulkan.cpp's RoomLightOff and GlowOff): 1 drops the sector light
+// (-sourcedlight, DOOM-0642), 2 drops every surface's own glow; -skyonly sets both.
 layout(set = 1, binding = 1) uniform ShadowUbo { mat4 lightVP; uvec4 flags; uvec4 hd; vec4 misc; } shadow;
 
 // DOOM-0273: derived surface detail on walls and flats (one-sample parallax + the derived
@@ -510,9 +511,11 @@ void main()
     // the DOOM-0069 note above). Both factors are at most 1, so the max is BASE_SECTOR_DIM.
     float sect = horrorSectorShade(vLight) * distLight * BASE_SECTOR_DIM;
     // DOOM-0642's test switch: no sector light, except on the weapon, which nothing else
-    // lights, and on a sprite that is itself a light. -skyonly takes it off that sprite too.
-    const int keepSect = shadow.misc.y > 1.5 ? FLAG_PSPRITE : (FLAG_PSPRITE | FLAG_EMISSIVE);
-    if (shadow.misc.y > 0.5 && (vFlags & keepSect) == 0)
+    // lights, and on a sprite that is itself a light, unless its glow is off too.
+    const uint lightOff = uint(shadow.misc.y + 0.5);
+    const bool glowOff  = (lightOff & 2u) != 0u;
+    const int  keepSect = glowOff ? FLAG_PSPRITE : (FLAG_PSPRITE | FLAG_EMISSIVE);
+    if ((lightOff & 1u) != 0u && (vFlags & keepSect) == 0)
         sect = 0.0;
 
     // DOOM-0170 L2b — accumulate AMBIENT (sector + bounce; AO-affected) and DIRECT (flashlight
@@ -677,8 +680,8 @@ void main()
 
 #ifndef SINGLE_TARGET
     ambient *= hdOcc;   // DOOM-0182: the HD AO map; 1.0 on everything else
-    if (shadow.misc.y > 1.5)
-        hdGlow = vec3(0.0);   // -skyonly: no surface shows its own glow
+    if (glowOff)
+        hdGlow = vec3(0.0);   // no surface shows its own glow (-skyonly, the light lab)
     // DOOM-0538: a lit screen or lamp shows whatever the room's light. DIRECT, so AO never dims
     // it and bloom may catch it, as DOOM-0331 INV-4 expects of an emitter.
     // A floor, not a sum: added on top of a bright albedo it passed the bloom ramp and every

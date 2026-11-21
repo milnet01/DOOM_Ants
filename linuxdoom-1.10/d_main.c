@@ -89,6 +89,7 @@ static const char rcsid[] __attribute__((used)) = "$Id: d_main.c,v 1.8 1997/02/0
 #include "p_setup.h"
 #include "r_local.h"
 #include "r_backend.h"
+#include "rb_vulkan.h"   // DOOM-0650: rb_lightlab and its LAB_* bits
 
 
 #include "d_main.h"
@@ -113,6 +114,7 @@ char*		wadfiles[MAXWADFILES];
 
 boolean		devparm;	// started game with -devparm
 boolean         nomonsters;	// checkparm of -nomonsters
+boolean         lightlab;	// DOOM-0650: -lightlab, the light lab
 boolean         respawnparm;	// checkparm of -respawn
 boolean         fastparm;	// checkparm of -fast
 boolean         nosound;	// checkparm of -nosound
@@ -1374,6 +1376,12 @@ void D_DoomMain (void)
     modifiedgame = false;
 	
     nomonsters = M_CheckParm ("-nomonsters");
+    // DOOM-0650: the light lab. A number after it is the LAB_* bits to start with, so a
+    // capture, which cannot press the number keys, can show one kind of light.
+    p = M_CheckParm ("-lightlab");
+    lightlab = p != 0;
+    if (p && p + 1 < myargc && myargv[p + 1][0] >= '0' && myargv[p + 1][0] <= '9')
+	rb_lightlab = atoi (myargv[p + 1]) & LAB_ALL;
     respawnparm = M_CheckParm ("-respawn");
     fastparm = M_CheckParm ("-fast");
     // DOOM-0327: read before I_Init() below, which is what opens the audio device.

@@ -554,7 +554,14 @@ void G_DoLoadLevel (void)
 	memset (players[i].frags,0,sizeof(players[i].frags)); 
     } 
 		 
+    // DOOM-0650: the light lab is a map to look at, not to play: no monsters, and the
+    // player can neither be hurt nor stopped by a wall. Set per level, because a new
+    // game from the menu clears nomonsters.
+    if (lightlab)
+	nomonsters = true;
     P_SetupLevel (gameepisode, gamemap, 0, gameskill);    
+    if (lightlab)
+	players[consoleplayer].cheats |= CF_GODMODE | CF_NOCLIP;
     G_WarpToSpot ();                    // DOOM-0268: -warpto X Y [ANGLE]
 #ifdef DOOM_DEV
     G_DevInspectFromArgv ();            // DOOM-0294: -inspect / -freeze

@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=649 -->
+<!-- ants-roadmap-id-high-water: DOOM=650 -->
 
 # Roadmap
 
@@ -21134,6 +21134,35 @@ in CLAUDE.md describes.
   **Layman:** In the smooth view, each spot of floor takes light from only its 16 nearest light pieces, so a wall of dim screens can push out a bright coloured lamp nearby and the room gets darker.
   Kind: fix.
   Source: found-2026-11-21 (DOOM-0642 B2 captures).
+
+- 🚧 [DOOM-0650] **Add a light lab: walk a map lit by the sky alone and switch each kind of light on and off live.**
+  User 2026-11-21: "build a copy of a map I don't have to use the game
+  to run but it runs the map with all the lighting off (except the
+  sky). If we can then turn various light sources on and off in
+  realtime we can then start to solve the issue with the lighting."
+  Built on DOOM-0642's -skyonly. Chosen the same day: walk through
+  walls rather than fly; lab first; the cheaper-maths track measures
+  formula costs here with the lab and hands the fitting to ExperiRays.
+  Design: -lightlab implies -nomonsters, god mode and no clip. Keys 1-8
+  toggle walls, floors and ceilings, lamps and torches, surface glow,
+  room brightness, bounce, the handheld torch, the muzzle flash; 9 all
+  on, 0 all off. Wall, flat and bounce changes rebuild the static
+  emitters and re-run the GI bake. The fog-light grid is not re-baked.
+  Built 2026-11-21. `./light-lab.sh [E M | doom2 M]` (local, gitignored,
+  beside run-doom-ants.sh). `-lightlab N` starts with LAB_* bits N, for
+  captures. Measured, Solid, render scale 100, view mean of 255,
+  rasterised / traced: E1M1 screens room sky only 0.5 / 0.8, walls
+  8.1 / 24.2, flats 7.6 / 4.8, lamps 3.0 / 0.8, glow 0.5 / 3.4, room
+  11.9 / 15.9, walls+bounce 8.4 / 24.9, all on 22.7 / 38.2, which is
+  today's 22.7 / 38.2. E2M1 start: sky only 0.5 / 0.8, candles 19.5 /
+  7.4, all on 34.6 / 20.7 against today's 34.6 / 20.7. Room brightness
+  alone gives half the rasterised light in the screens room. Kit:
+  Scratchpad d0650 (cap.sh). Not checked by a capture: a live key press,
+  which re-runs the bake; the user's first session checks it.
+  **Layman:** A test mode with no monsters and no danger, where the map starts lit only by the sky and number keys switch wall lights, floor lights, lamps, glow, room brightness, bounce light, the torch and the muzzle flash on and off.
+  Kind: feature.
+  Source: user-request-2026-11-21.
+  Lanes: renderer.
 
 ## 0.13.0 — The player's experience
 

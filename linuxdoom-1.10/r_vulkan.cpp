@@ -657,6 +657,7 @@ struct VulkanState
     VkDebugUtilsMessengerEXT debug = VK_NULL_HANDLE;
 
     rb_mesh_t* levelMesh = nullptr;   // current level's CPU geometry (DOOM-0008)
+    int        labBaked  = -1;        // DOOM-0650: lab bits the bake holds; -1 new level
 
     // GPU vertex buffer for the level mesh (uploaded at BuildLevel).
     VkBuffer       vbuf       = VK_NULL_HANDLE;
@@ -4471,6 +4472,25 @@ static bool SourcedLightOnly()
     return on;
 }
 
+// DOOM-0650: the light lab starts where -skyonly does, and rb_lightlab's LAB_* bits put
+// each kind of light back live (rb_lightlab, defined after this namespace). Outside the
+// lab a kind is on unless -skyonly took it.
+static bool LightLab()
+{
+    static const bool on = M_CheckParm("-lightlab") != 0;
+    return on;
+}
+
+static bool LightKindOn(int bit)
+{
+    return LightLab() ? (rb_lightlab & bit) != 0 : !SkyOnly();
+}
+
+// The two kinds the shaders drop themselves: mesh.frag's misc.y and pathtrace.comp's
+// misc6.y bits 1 and 2.
+static bool RoomLightOff() { return LightLab() ? !(rb_lightlab & LAB_ROOM) : SourcedLightOnly(); }
+static bool GlowOff()      { return !LightKindOn(LAB_GLOW); }
+
 // mesh.frag's ShadowUbo (set 1, binding 1), byte for byte. lightVP is written on
 // torch-on frames; DOOM-0273's flags every raster frame: x = surface detail
 // (SurfaceDetailLane), y = DOOM-0103's specular setting (SpecularLane), z = surface-map base,
@@ -7664,6 +7684,10 @@ static void EnsureHdMaterials()
 
 } // namespace
 
+// DOOM-0650: the light lab's LAB_* bits. Outside the anonymous namespace, because
+// rb_vulkan.h declares it at file scope for i_video.c.
+int rb_lightlab = 0;
+
 extern "C" void RB_Vulkan_TierChanged(void)
 {
     // Ultra builds its HD set lazily at the next Present (EnsureHdMaterials), so
@@ -7796,11 +7820,10 @@ extern "C" void RB_Vulkan_RenderView(const rb_view_t* view)
     Mat4Mul(p, v, g.viewProj);              // MVP = proj * view
     g.haveCamera = true;
     g.lastView   = *view;                   // for the sprite build in Present
-    if (SkyOnly())
-    {
+    if (!LightKindOn(LAB_MUZZLE))
         g.lastView.extralight = 0.0f;       // no muzzle flash in either view
-        rb_flashlight         = 0;          // no torch
-    }
+    if (SkyOnly() && !LightLab())
+        rb_flashlight = 0;                  // no torch; the lab leaves it to its key
 }
 
 extern "C" void RB_Vulkan_SetOverlay(const unsigned char* pixels, int w, int h)
@@ -7938,7 +7961,7 @@ static const float    RASTER_LAMP_POOL_REACH          = 160.0f;
 // casts world-occluded shadows onto its surroundings, then re-finalise the list.
 void BuildDynamicEmitters()
 {
-    if (!g.emitMapped || g.matEmissive.empty() || !g.sprWorldMapped || SkyOnly())
+    if (!g.emitMapped || g.matEmissive.empty() || !g.sprWorldMapped || !LightKindOn(LAB_LAMPS))
     {
         FinalizeEmitters(nullptr, nullptr);      // keep the static set live
         g.frameDynReach.clear();
@@ -8330,14 +8353,18 @@ void BuildRasterPointLights()
 // swap changed a face's live texnum (DOOM-0082) — reading the live buffer means a
 // now-lit switch enters the light set and a reverted one drops out. The Le table
 // is WAD-global (g.matEmissive); the vertex count is the mesh's (both buffers share it).
-static void BuildStaticEmitterSet(const rb_vertex_t* v)
+// allKinds ignores the light lab's switches (DOOM-0650), so a level load can size the
+// emitter buffer for the walls and flats the lab may switch on later.
+static void BuildStaticEmitterSet(const rb_vertex_t* v, bool allKinds = false)
 {
     g.prevStaticEmit.swap(g.staticEmit);
     g.staticEmit.clear();
     g.staticWgt.clear();
     g.staticEmitLiquid.clear();
     g.staticEmitSs.clear();
-    if (!g.levelMesh || g.matEmissive.empty() || !v || SkyOnly())
+    const bool walls = allKinds || LightKindOn(LAB_WALLS);
+    const bool flats = allKinds || LightKindOn(LAB_FLATS);
+    if (!g.levelMesh || g.matEmissive.empty() || !v || (!walls && !flats))
         return;
 
     const int matCount = (int)(g.matEmissive.size() / 3);
@@ -8348,7 +8375,10 @@ static void BuildStaticEmitterSet(const rb_vertex_t* v)
     {
         const rb_vertex_t* tri = &v[t * 3];
         const int texnum = tri->texnum;
-        const int id = (tri->flags & RB_MESH_FLAT) ? g.matNumWall + texnum : texnum;
+        const bool isFlat = (tri->flags & RB_MESH_FLAT) != 0;
+        if (!(isFlat ? flats : walls))
+            continue;   // the light lab has this kind switched off
+        const int id = isFlat ? g.matNumWall + texnum : texnum;
         if (id < 0 || id >= matCount)
             continue;
         const float* le = &g.matEmissive[(size_t)id * 3];
@@ -8431,12 +8461,14 @@ void BuildEmitterList()
     // Fill the cached static emitter set from the baked mesh. A later switch press
     // or animated-texture swap re-runs BuildStaticEmitterSet on the LIVE vertex
     // buffer (g.vbufMapped) so a now-lit switch enters the light set (DOOM-0082).
-    BuildStaticEmitterSet(g.levelMesh->verts);
+    BuildStaticEmitterSet(g.levelMesh->verts, LightLab());
 
     // Host-visible, persistently-mapped emitter buffer sized for the static set plus
     // a per-frame budget of emissive-sprite triangles (DOOM-0084). The megakernel
     // reads it by device address; FinalizeEmitters refills it each traced frame.
     g.emitCap = (uint32_t)g.staticWgt.size() + SPR_EMIT_MAX;
+    if (LightLab())
+        BuildStaticEmitterSet(g.levelMesh->verts);   // now the set the lab has on
     CreateRtBuffer((VkDeviceSize)g.emitCap * 14u * sizeof(float),
                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
@@ -8907,7 +8939,7 @@ void RunGiBake()
     static_assert(sizeof(BakePush) == 80, "bake push-constant layout must match the shader");
     bp.misc[0]     = g.probeCount;
     bp.misc[1]     = (uint32_t)g.matNumWall;
-    bp.misc[2]     = g.emitCount;
+    bp.misc[2]     = LightKindOn(LAB_BOUNCE) ? g.emitCount : 0u;   // 0: sky fill alone
     bp.vertsAddr   = BufferAddress(g.vbuf);
     bp.emitAddr    = g.emitBuf ? BufferAddress(g.emitBuf) : 0;
     bp.matEmisAddr = BufferAddress(g.matEmisBuf);
@@ -9440,6 +9472,7 @@ extern "C" void RB_Vulkan_BuildLevel(void)
     }
 
     g.levelMesh = RB_BuildLevelMesh();
+    g.labBaked  = -1;
 
     printf("RB_Vulkan_BuildLevel: %d triangles (%d vertices) from the map.\n",
            g.levelMesh->numtris, g.levelMesh->numverts);
@@ -9859,8 +9892,8 @@ void RecordRtTrace(uint32_t idx)
     // layers only (rb_wet) -- never the glow (that Le is CPU-built).
     const float rippleSec = RippleSeconds();
     std::memcpy(&pc.misc6[0], &rippleSec, sizeof(float));
-    pc.misc6[1]    = (rb_wet ? 1u : 0u) | (SourcedLightOnly() ? 2u : 0u)
-                   | (SkyOnly() ? 4u : 0u);   // bit 1: DOOM-0642; bit 2: -skyonly
+    pc.misc6[1]    = (rb_wet ? 1u : 0u) | (RoomLightOff() ? 2u : 0u)
+                   | (GlowOff() ? 4u : 0u);   // bit 1: DOOM-0642; bit 2: no glow (-skyonly)
     pc.misc7[0]    = SurfaceDetailLane();
     pc.misc7[1]    = SpecularLane();
     pc.misc7[2]    = (uint32_t)RB_MaterialCount();
@@ -11014,6 +11047,27 @@ static void RecordGamma(uint32_t idx)
     vkCmdEndRenderPass(g.cmd);
 }
 
+// DOOM-0650: the light lab's wall, flat and bounce switches change what the level-load
+// bake saw, so a press rebuilds the static emitters and bakes again. The fog-light grid
+// (DOOM-0011 L3) keeps its level-load lights. The wait makes the press a short hitch,
+// which the lab accepts: the previous frame may still be reading the emitter buffer.
+static void ApplyLightLab()
+{
+    const int bakedBits = LAB_WALLS | LAB_FLATS | LAB_BOUNCE;
+    if (!LightLab() || !g.levelMesh || !g.emitMapped)
+        return;
+    const int want = rb_lightlab & bakedBits;
+    if (g.labBaked < 0)
+        g.labBaked = want;     // a level load built and baked for the current switches
+    if (want == g.labBaked)
+        return;
+    g.labBaked = want;
+    vkDeviceWaitIdle(g.device);
+    BuildStaticEmitterSet(g.vbufShadow ? g.vbufShadow : g.levelMesh->verts);
+    FinalizeEmitters(nullptr, nullptr);   // static only: what the bake reads
+    RunGiBake();
+}
+
 extern "C" void RB_Vulkan_Present(void)
 {
     if (!g.ready)
@@ -11023,6 +11077,7 @@ extern "C" void RB_Vulkan_Present(void)
     // frame records. Idempotent (early-returns unless Ultra + not yet built); does its
     // own one-time GPU submits, so it must run outside the frame's command buffer.
     EnsureHdMaterials();
+    ApplyLightLab();   // DOOM-0650; also one-time submits, outside the frame
 
     // DOOM-0170 perf: CPU-side timing, same `\` toggle as the GPU pass timers. Captured
     // once here so all segments share the flag even if rb_profile flips mid-frame.
@@ -11466,7 +11521,7 @@ extern "C" void RB_Vulkan_Present(void)
         hd[3] = rb_filth ? 1u : 0u;
         float* misc = static_cast<ShadowUboData*>(g.shadowUboMapped)->misc;
         misc[0] = RippleSeconds();                    // DOOM-0619
-        misc[1] = SkyOnly() ? 2.0f : SourcedLightOnly() ? 1.0f : 0.0f;   // DOOM-0642
+        misc[1] = (RoomLightOff() ? 1.0f : 0.0f) + (GlowOff() ? 2.0f : 0.0f);   // DOOM-0642 bits
     }
 
     // DOOM-0170 L2c: flashlight cast-shadow map (Pass A). When the torch is on, render the
