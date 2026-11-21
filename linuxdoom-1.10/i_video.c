@@ -569,11 +569,25 @@ static void I_GetEvent(SDL_Event* sdlevent)
 	    break;
 	}
 	// DOOM-0650: in the light lab the number keys switch kinds of light, not weapons.
-	if (lightlab && !menuactive && !sdlevent->key.repeat
-	    && sdlevent->key.keysym.sym >= SDLK_0 && sdlevent->key.keysym.sym <= SDLK_9)
+	// The number pad works too, read by scancode so Num Lock does not matter; SDL
+	// numbers KP_1..KP_9 in a row and puts KP_0 after them.
+	if (lightlab && !menuactive && !sdlevent->key.repeat)
 	{
-	    I_LightLabKey(sdlevent->key.keysym.sym - SDLK_0);
-	    break;
+	    SDL_Keycode   sym  = sdlevent->key.keysym.sym;
+	    SDL_Scancode  scan = sdlevent->key.keysym.scancode;
+	    int           digit = -1;
+
+	    if (sym >= SDLK_0 && sym <= SDLK_9)
+		digit = sym - SDLK_0;
+	    else if (scan >= SDL_SCANCODE_KP_1 && scan <= SDL_SCANCODE_KP_9)
+		digit = scan - SDL_SCANCODE_KP_1 + 1;
+	    else if (scan == SDL_SCANCODE_KP_0)
+		digit = 0;
+	    if (digit >= 0)
+	    {
+		I_LightLabKey(digit);
+		break;
+	    }
 	}
 	// Backquote/tilde (`~`) controls the path-tracer view (DOOM-0009). DOOM-0135:
 	// with the "Debug Views" menu toggle OFF (the default, rb_rtdebug_menu==0) it
