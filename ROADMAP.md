@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=648 -->
+<!-- ants-roadmap-id-high-water: DOOM=649 -->
 
 # Roadmap
 
@@ -20970,6 +20970,17 @@ in CLAUDE.md describes.
   Solid, -rtview 0 and 6: the corridor was black and is now lit by
   its three candles. Pictures: Scratchpad d0642/b1-*-before-after.png.
   The user's look at them is owed. Next: B2, the screen sheet.
+  B2, 2026-11-21: the screen sheet (Scratchpad d0642/b2/pick.png) went to
+  the user, who picked LITE2, LITE4, LITE96, LITEMET, EXITSIGN,
+  COMPTALL, COMPWERD, COMP2, SILVER3, SW1COMP, SW1COMM, SW2COMM,
+  SW1BRCOM and SW2BRCOM, and left COMPBLUE, COMPTILE, COMPOHSO,
+  TEKGREN3, SW1TEK and SW2TEK dark. The list edit is in the working
+  tree, not committed: it darkened four rasterised rooms (DOOM-0649).
+  The user then redirected (2026-11-21): start from black, sky only,
+  and switch lights on one kind at a time to test each properly.
+  40494a4 adds the switch, -skyonly. Indoors falls to 0.5-3.6 of 255;
+  E1M1's open-sky spots keep 25-29 rasterised, 56-57 traced
+  (Scratchpad d0642/sky). Next: per-light-kind switches on top of it.
   **Layman:** A room with no lamp, glowing panel, window or sky should be quite dark instead of evenly lit from nowhere.
   Kind: investigate.
   Source: user-request-2026-11-20.
@@ -21105,6 +21116,24 @@ in CLAUDE.md describes.
   Kind: research.
   Source: user-request-2026-11-21.
   Lanes: renderer.
+
+- 📋 [DOOM-0649] **Rasterised view: many dim lights crowd brighter ones out of a subsector's 16 slots.**
+  RebuildStaticPointLightCache in r_vulkan.cpp keeps each
+  subsector's nearest RASTER_MAX_LIGHTS_PER_SUBSECTOR emitter
+  triangles by distance alone, not by what they give. A long listed
+  wall enters as many weak triangles. Found when B2's picks went on
+  wall_light_tex: rasterised view means fell at SILVER3 on MAP24
+  (123 to 104, its green wash gone), COMPTALL on E1M1 (40 to 36),
+  COMP2 on E2M2 (54 to 50) and SW1BRCOM on E1M3 (69 to 64); the
+  traced view held or rose at every spot. Kit and sheet: Scratchpad
+  d0642/b2 (cap.sh, ba-raster.png). Options put to the user: rank by
+  contribution (Le over distance), or 32 slots. The user chose
+  instead to start from -skyonly and test each light on its own; this
+  stays open until then. BuildRasterPointLights' merge must use the
+  same key as the cache.
+  **Layman:** In the smooth view, each spot of floor takes light from only its 16 nearest light pieces, so a wall of dim screens can push out a bright coloured lamp nearby and the room gets darker.
+  Kind: fix.
+  Source: found-2026-11-21 (DOOM-0642 B2 captures).
 
 ## 0.13.0 — The player's experience
 
