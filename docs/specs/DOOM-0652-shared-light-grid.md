@@ -1,7 +1,7 @@
 <!-- ants-spec-format: 1 -->
 # DOOM-0652 — Light that fades smoothly: a shared light grid, wall-true lamp shadows and blended bounce light
 
-**Status:** accepted (2026-11-21). B1 to B4 built and peer-reviewed; B5 in build.
+**Status:** Shipped (2026-11-22, f103b83). B1 to B5 built and peer-reviewed; user accepted the look 2026-11-22.
 **Kind:** fix.
 **Source:** ROADMAP DOOM-0652 (user report 2026-11-21, light lab on E1M1).
 **Also closes:** DOOM-0649 (dim lights crowd bright ones out of a subsector's 16 slots): the

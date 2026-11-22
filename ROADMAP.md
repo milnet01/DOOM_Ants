@@ -21213,7 +21213,7 @@ in CLAUDE.md describes.
   Source: user-report-2026-11-21.
   Lanes: renderer.
 
-- 🚧 [DOOM-0652] **Rasterised view: hard straight light/dark lines across floors and walls that follow no wall.**
+- ✅ [DOOM-0652] **Rasterised view: hard straight light/dark lines across floors and walls that follow no wall.**
   User 2026-11-21, light lab on E1M1, rasterised view: "There are
   these lines showing shaded vs light areas but where are these lines
   coming from. Before we get to choosing lighting conditions I think we
@@ -21321,6 +21321,8 @@ in CLAUDE.md describes.
   Vestige's per-cube open bit is the lever if the read cost matters.
   Look: B4 and B5 captures match closely (d0652/cmp_b5_*.png); for
   the user to judge with the earlier B2 and B3 pictures.
+  Closed 2026-11-22: B1-B5 built (last f103b83), both peer reviews
+  folded, user accepted the look the same day.
   **Layman:** The smooth view lights the map in invisible patches, and the light jumps where two patches meet, drawing straight lines on floors.
   Kind: fix.
   Source: user-2026-11-21.
