@@ -1,6 +1,6 @@
 <!-- ants-roadmap-format: 1 -->
 <!-- Generated from the Ants Terminal roadmap store. Edit it with roadmap_log; hand edits are discarded by the next write. -->
-<!-- ants-roadmap-id-high-water: DOOM=653 -->
+<!-- ants-roadmap-id-high-water: DOOM=654 -->
 
 # Roadmap
 
@@ -14240,6 +14240,17 @@ defect visible before a player finds it.
   Kind: fix.
   Source: found-2026-11-17-DOOM-0617-B1.
   Lanes: tests.
+
+- 📋 [DOOM-0654] **The vendored frameledger.h is 0.7.0; upstream is 0.8.0.**
+  linuxdoom-1.10/frameledger.h defines FLED_VERSION "0.7.0";
+  frameledger's include/frameledger.h is "0.8.0" (checked
+  2026-11-22). The dependencies standard wants the latest stable.
+  Re-vendor, read upstream's changelog for behaviour changes, and
+  check whether 0.8.0 settles DOOM-0608. run_ledger.c ignores
+  fled_row's FLED_DROPPED return; log or count it while there.
+  **Layman:** Our copy of the frame-timing helper is one version behind; update it.
+  Kind: chore.
+  Source: frameledger-guide-review-2026-11-22.
 
 ## 0.11.0 — The frame budget
 
