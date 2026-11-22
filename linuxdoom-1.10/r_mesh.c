@@ -2464,6 +2464,7 @@ static char wall_light_tex[][9] = {
     // Light panels and wall fixtures
     "LITE3",    "LITE5",    "LITEBLU1", "LITEBLU2", "LITEBLU3", "LITEBLU4",
     "LITERED",  "LITESTON", "TEKLITE",  "TEKLITE2", "BRICKLIT",
+    "LITE2",    "LITE4",    "LITE96",   "LITEMET",  "EXITSIGN",   // DOOM-0642 B2
     // Ordinary walls carrying a lit strip or slot (METAL6/7 are the same strip at
     // the top and at the bottom — hence their identical texel counts)
     "METAL6",   "METAL7",   "BIGBRIK3", "BRONZE4",  "TEKGREN5", "SPCDOOR1",
@@ -2471,9 +2472,11 @@ static char wall_light_tex[][9] = {
     // Computer screens and readouts
     "COMPSTA1", "COMPSTA2", "COMPUTE1", "COMPUTE2", "COMPUTE3", "PLANET1",
     "TEKWALL1", "TEKWALL2", "TEKWALL3", "TEKWALL4", "TEKWALL5", "TEKWALL6",
+    "COMPTALL", "COMPWERD", "COMP2",    "SILVER3",                // DOOM-0642 B2
     // Switches whose face carries a LIT indicator (DOOM-0082). The SW1/SW2 skull and
     // gargoyle switches are bronze relief, not lit, and are deliberately absent.
     "SW2COMP",  "SW2EXIT",  "SW2GRAY",  "SW2STON6",
+    "SW1COMP",  "SW1COMM",  "SW2COMM",  "SW1BRCOM", "SW2BRCOM",   // DOOM-0642 B2
     // The lit strips beside a key door, and their skull-key forms (DOOM-0646)
     "DOORBLU",  "DOORRED",  "DOORYEL",  "DOORBLU2", "DOORRED2", "DOORYEL2",
 };
